@@ -16,7 +16,6 @@ struct DeveloperSettingsView: View {
     let placeScanner: PlaceScanner?
     let autoAlbumEngine: AutoAlbumEngine?
 
-    @AppStorage(AppSettingsKeys.developerMode) private var developerMode = false
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
 
     @State private var enrichmentCount = 0
@@ -27,20 +26,12 @@ struct DeveloperSettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Developer Mode", isOn: $developerMode)
-            } footer: {
-                Text("Show detailed diagnostics and destructive actions used during development. Off by default.")
-            }
-
-            if developerMode {
-                appInfoSection
-                LocalPhotoDebugSection()
-                DropboxDebugSection(dropboxAuth: dropboxAuth, store: store)
-                BackupDebugSection(dropboxAuth: dropboxAuth, engine: backupEngine, dropboxStore: store)
-                placesDebugSection
-                albumsDebugSection
-            }
+            appInfoSection
+            LocalPhotoDebugSection()
+            DropboxDebugSection(dropboxAuth: dropboxAuth, store: store)
+            BackupDebugSection(dropboxAuth: dropboxAuth, engine: backupEngine, dropboxStore: store)
+            placesDebugSection
+            albumsDebugSection
         }
         .navigationTitle("Developer")
         .navigationBarTitleDisplayMode(.inline)
