@@ -40,7 +40,6 @@ struct DeveloperSettingsView: View {
                 BackupDebugSection(dropboxAuth: dropboxAuth, engine: backupEngine, dropboxStore: store)
                 placesDebugSection
                 albumsDebugSection
-                storageSection
             }
         }
         .navigationTitle("Developer")
@@ -98,21 +97,6 @@ struct DeveloperSettingsView: View {
         }
     }
 
-    // MARK: - Storage (destructive: all caches)
-
-    private var storageSection: some View {
-        Section("Storage — Debug") {
-            Button(role: .destructive) {
-                Task { await clearAllCaches() }
-            } label: {
-                workingLabel("Clear All Caches")
-            }
-            .disabled(isWorking)
-            Text("Photo thumbnails, Dropbox cache, and place index will all be deleted and rebuilt.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
     // MARK: - Helpers
 
     @ViewBuilder
@@ -139,13 +123,5 @@ struct DeveloperSettingsView: View {
         await placeScanner.clearCache()
         await placeScanner.rescan()
         cachedPlaceCount = await PlaceNameResolver.shared.cachedPlaceCount
-    }
-
-    private func clearAllCaches() async {
-        isWorking = true
-        defer { isWorking = false }
-        await ThumbnailCache.shared.clear()
-        if let store { await store.clearCache() }
-        if let placeScanner { await placeScanner.clearCache() }
     }
 }
