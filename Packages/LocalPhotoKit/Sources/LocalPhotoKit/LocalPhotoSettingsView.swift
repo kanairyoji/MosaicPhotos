@@ -20,7 +20,7 @@ public struct LocalPhotoSettingsView: View {
             LabeledContent("User albums", value: "\(albumCount)")
         }
 
-        Section("Photo Cache") {
+        Section {
             Picker("Memory limit", selection: $memoryLimitMB) {
                 Text("50 MB").tag(50)
                 Text("100 MB").tag(100)
@@ -48,6 +48,10 @@ public struct LocalPhotoSettingsView: View {
             } message: {
                 Text("All locally cached thumbnails will be deleted and re-fetched as you browse.")
             }
+        } header: {
+            Text("Photo Cache")
+        } footer: {
+            Text("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails.")
         }
         }
         .task {

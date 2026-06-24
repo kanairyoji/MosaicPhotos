@@ -30,8 +30,8 @@ extension HomeView {
             SourceRow(
                 systemImage: "iphone",
                 tint: .blue,
-                title: "Photos",
-                subtitle: "Browse your device photos"
+                title: "On-Device Photos",
+                subtitle: "Photos stored on this device"
             ) {
                 activeSource = .local
             }

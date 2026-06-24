@@ -10,7 +10,7 @@ public struct LocalPhotoContentView: View {
     /// ライブラリ全体を表示する。
     public init() {
         _store = State(initialValue: LocalPhotoStore())
-        title = "Photos"
+        title = "On-Device Photos"
     }
 
     /// バックアップ収集データから得た localIdentifier リストで写真を表示する。
