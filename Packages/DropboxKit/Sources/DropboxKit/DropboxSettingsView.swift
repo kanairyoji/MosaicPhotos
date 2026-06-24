@@ -3,6 +3,9 @@ import DropboxCore
 import PhotoSourceKit
 import SwiftUI
 
+/// Dropbox の通常設定：接続・サムネイル並列数・キャッシュ上限。
+/// 詳細な診断（トークン・キャッシュ状態・消去/再同期・チューニング定数）は `DropboxDebugSection` に分離し、
+/// app の Developer Options 画面が合成する。
 public struct DropboxSettingsView: View {
     let dropboxAuth: DropboxAuthService
     /// バックグラウンド同期状態の表示に使用するストア（省略可）。
@@ -11,9 +14,6 @@ public struct DropboxSettingsView: View {
     @AppStorage(DropboxCacheSettingsKeys.fullImageLimitMB) private var dropboxFullImageLimitMB = 200
     @AppStorage(DropboxCacheSettingsKeys.thumbnailConcurrency)
     private var thumbnailConcurrency = DropboxThumbnailSettings.defaultConcurrency
-    @State private var directTokenInput = ""
-    @State private var cacheDebugModel = DropboxCacheDebugModel()
-    @State private var showClearCacheConfirmation = false
 
     public init(dropboxAuth: DropboxAuthService, store: DropboxPhotoStore? = nil) {
         self.dropboxAuth = dropboxAuth
@@ -23,38 +23,16 @@ public struct DropboxSettingsView: View {
     public var body: some View {
         Group {
             dropboxConnectionSection
-            dropboxDebugSection
             performanceSection
             cacheLimitsSection
-            cacheStatusSection
-            tuningConstantsSection
         }
-        // Use onAppear (not .task) so the stats always refresh when the user
+        // Use onAppear (not .task) so the values always re-apply when the user
         // navigates back to the Settings tab, not just on first appearance.
         .onAppear {
-            cacheDebugModel.refresh()
             // DropboxCacheStore は UserDefaults を読まないため、
             // 設定タブの表示時に保存済みの値を実行中のキャッシュへ反映する。
             Task { await store?.applyCacheLimits(thumbnailMB: dropboxThumbLimitMB, fullImageMB: dropboxFullImageLimitMB) }
             store?.applyThumbnailConcurrency(thumbnailConcurrency)
-        }
-    }
-
-    // MARK: - Performance section
-
-    private var performanceSection: some View {
-        Section {
-            Stepper(value: $thumbnailConcurrency,
-                    in: DropboxThumbnailSettings.minConcurrency...DropboxThumbnailSettings.maxConcurrency) {
-                LabeledContent("Parallel downloads", value: "\(thumbnailConcurrency)")
-            }
-            .onChange(of: thumbnailConcurrency) { _, newValue in
-                store?.applyThumbnailConcurrency(newValue)
-            }
-        } header: {
-            Text("Thumbnail Performance")
-        } footer: {
-            Text("How many thumbnail batches Dropbox fetches at once (\(DropboxThumbnailSettings.minConcurrency)–\(DropboxThumbnailSettings.maxConcurrency)). Higher is faster when many thumbnails are visible, but too high may hit Dropbox rate limits. Default is \(DropboxThumbnailSettings.defaultConcurrency).")
         }
     }
 
@@ -117,10 +95,87 @@ public struct DropboxSettingsView: View {
         }
     }
 
-    // MARK: - Dropbox debug section
+    // MARK: - Performance section
 
-    private var dropboxDebugSection: some View {
-        Section("Dropbox — Debug") {
+    private var performanceSection: some View {
+        Section {
+            Stepper(value: $thumbnailConcurrency,
+                    in: DropboxThumbnailSettings.minConcurrency...DropboxThumbnailSettings.maxConcurrency) {
+                LabeledContent("Parallel downloads", value: "\(thumbnailConcurrency)")
+            }
+            .onChange(of: thumbnailConcurrency) { _, newValue in
+                store?.applyThumbnailConcurrency(newValue)
+            }
+        } header: {
+            Text("Thumbnail Performance")
+        } footer: {
+            Text("How many thumbnail batches Dropbox fetches at once (\(DropboxThumbnailSettings.minConcurrency)–\(DropboxThumbnailSettings.maxConcurrency)). Higher is faster when many thumbnails are visible, but too high may hit Dropbox rate limits. Default is \(DropboxThumbnailSettings.defaultConcurrency).")
+        }
+    }
+
+    // MARK: - Cache limits section
+
+    private var cacheLimitsSection: some View {
+        Section("Cache Limits") {
+            Picker("Thumbnail limit", selection: $dropboxThumbLimitMB) {
+                Text("25 MB").tag(25)
+                Text("50 MB").tag(50)
+                Text("100 MB").tag(100)
+                Text("200 MB").tag(200)
+            }
+            .onChange(of: dropboxThumbLimitMB) { _, newVal in
+                Task { await store?.applyCacheLimits(thumbnailMB: newVal, fullImageMB: dropboxFullImageLimitMB) }
+            }
+            Picker("Full image limit", selection: $dropboxFullImageLimitMB) {
+                Text("100 MB").tag(100)
+                Text("200 MB").tag(200)
+                Text("500 MB").tag(500)
+                Text("1 GB").tag(1024)
+            }
+            .onChange(of: dropboxFullImageLimitMB) { _, newVal in
+                Task { await store?.applyCacheLimits(thumbnailMB: dropboxThumbLimitMB, fullImageMB: newVal) }
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var keyWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.keyWindow
+    }
+}
+
+// MARK: - Debug section (Developer Options)
+
+/// Dropbox の詳細診断：認証トークン・キャッシュ状態・消去/再同期・チューニング定数・直接トークン投入。
+/// app の Developer Options 画面が合成して表示する（既定では非表示）。
+public struct DropboxDebugSection: View {
+    let dropboxAuth: DropboxAuthService
+    let store: DropboxPhotoStore?
+    @State private var directTokenInput = ""
+    @State private var cacheDebugModel = DropboxCacheDebugModel()
+    @State private var showClearCacheConfirmation = false
+
+    public init(dropboxAuth: DropboxAuthService, store: DropboxPhotoStore? = nil) {
+        self.dropboxAuth = dropboxAuth
+        self.store = store
+    }
+
+    public var body: some View {
+        Group {
+            authDebugSection
+            cacheStatusSection
+            tuningConstantsSection
+        }
+        .onAppear { cacheDebugModel.refresh() }
+    }
+
+    // MARK: - Auth debug
+
+    private var authDebugSection: some View {
+        Section("Dropbox — Auth") {
             if let cred = dropboxAuth.credential {
                 LabeledContent("Access token", value: masked(cred.accessToken))
                 LabeledContent("Refresh token", value: cred.refreshToken != nil ? "Present" : "None")
@@ -156,31 +211,6 @@ public struct DropboxSettingsView: View {
                 directTokenInput.trimmingCharacters(in: .whitespaces).isEmpty
                     || dropboxAuth.connectionStatus == .authenticating
             )
-        }
-    }
-
-    // MARK: - Cache limits section
-
-    private var cacheLimitsSection: some View {
-        Section("Cache Limits") {
-            Picker("Thumbnail limit", selection: $dropboxThumbLimitMB) {
-                Text("25 MB").tag(25)
-                Text("50 MB").tag(50)
-                Text("100 MB").tag(100)
-                Text("200 MB").tag(200)
-            }
-            .onChange(of: dropboxThumbLimitMB) { _, newVal in
-                Task { await store?.applyCacheLimits(thumbnailMB: newVal, fullImageMB: dropboxFullImageLimitMB) }
-            }
-            Picker("Full image limit", selection: $dropboxFullImageLimitMB) {
-                Text("100 MB").tag(100)
-                Text("200 MB").tag(200)
-                Text("500 MB").tag(500)
-                Text("1 GB").tag(1024)
-            }
-            .onChange(of: dropboxFullImageLimitMB) { _, newVal in
-                Task { await store?.applyCacheLimits(thumbnailMB: dropboxThumbLimitMB, fullImageMB: newVal) }
-            }
         }
     }
 
@@ -237,10 +267,10 @@ public struct DropboxSettingsView: View {
         }
     }
 
-    // MARK: - Tuning constants (debug, read-only)
+    // MARK: - Tuning constants (read-only)
 
     private var tuningConstantsSection: some View {
-        Section("Debug — Tuning Constants") {
+        Section("Dropbox — Tuning Constants") {
             let c = DropboxDebugConstants.self
             LabeledContent("Token refresh buffer", value: "\(c.tokenExpiryBufferSeconds) s")
             LabeledContent("Thumbnail batch size", value: "\(c.thumbnailBatchChunkSize)")
@@ -263,12 +293,6 @@ public struct DropboxSettingsView: View {
         f.allowedUnits = [.useKB, .useMB]
         f.countStyle = .file
         return f.string(fromByteCount: Int64(bytes))
-    }
-
-    private var keyWindow: UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.keyWindow
     }
 
     private func masked(_ token: String) -> String {

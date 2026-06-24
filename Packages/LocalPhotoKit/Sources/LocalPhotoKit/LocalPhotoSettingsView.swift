@@ -49,10 +49,6 @@ public struct LocalPhotoSettingsView: View {
                 Text("All locally cached thumbnails will be deleted and re-fetched as you browse.")
             }
         }
-
-        Section("Debug") {
-            LabeledContent("Thumbnail JPEG quality", value: "0.8")
-        }
         }
         .task {
             diskUsage = await ThumbnailCache.shared.currentDiskUsage()
@@ -76,6 +72,16 @@ public struct LocalPhotoSettingsView: View {
         f.allowedUnits = [.useKB, .useMB]
         f.countStyle = .file
         return f.string(fromByteCount: Int64(bytes))
+    }
+}
+
+/// 端末写真キャッシュの Debug 情報。app の Developer Options 画面が合成して表示する。
+public struct LocalPhotoDebugSection: View {
+    public init() {}
+    public var body: some View {
+        Section("Photos — Debug") {
+            LabeledContent("Thumbnail JPEG quality", value: "0.8")
+        }
     }
 }
 #endif

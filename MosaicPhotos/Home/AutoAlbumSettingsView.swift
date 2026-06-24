@@ -16,7 +16,6 @@ struct AutoAlbumSettingsView: View {
     @AppStorage(AutoAlbumSettingsKeys.maxTripGapDays)           private var maxTripGapDays = 2
     @AppStorage(AutoAlbumSettingsKeys.gridStepMilliDegrees)     private var gridStepMilliDeg = 20
 
-    @State private var enrichmentCount = 0
     @State private var taggedCount = 0
     @State private var untaggedCount = 0
     @AppStorage(AutoAlbumSettingsKeys.backgroundProcessingLevel)
@@ -122,17 +121,6 @@ struct AutoAlbumSettingsView: View {
                 Text("Changes apply on the next generation.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
-            Section("Debug") {
-                LabeledContent("Enriched photos", value: "\(enrichmentCount)")
-                Button("Clear Albums & Enrichment", role: .destructive) {
-                    Task {
-                        await engine?.clear()
-                        await refreshCounts()
-                    }
-                }
-                .disabled(engine == nil)
-            }
         }
         .task { await refreshCounts() }
         .onChange(of: engine?.isTagging) { _, _ in Task { await refreshCounts() } }
@@ -145,7 +133,6 @@ struct AutoAlbumSettingsView: View {
     }
 
     private func refreshCounts() async {
-        enrichmentCount = await engine?.enrichmentCount() ?? 0
         let counts = await engine?.recognitionCounts()
         taggedCount = counts?.tagged ?? 0
         untaggedCount = counts?.untagged ?? 0

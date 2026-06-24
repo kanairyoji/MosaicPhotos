@@ -47,7 +47,14 @@ struct SettingsView: View {
 
             switch selectedTab {
             case .general:
-                GeneralSettingsView(dropboxStore: store, placeScanner: placeScanner)
+                GeneralSettingsView()
+                Section {
+                    NavigationLink("Developer Options") {
+                        DeveloperSettingsView(
+                            dropboxAuth: dropboxAuth, store: store, backupEngine: backupEngine,
+                            placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
+                    }
+                }
             case .photos:
                 LocalPhotoSettingsView()
             case .dropbox:

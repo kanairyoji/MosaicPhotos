@@ -2,15 +2,13 @@ import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
 
-/// 「Places」タブ：場所アルバムの統計・グリッド粒度/再スキャン間隔の設定・Debug アクション。
+/// 「Places」：場所アルバムの統計・グリッド粒度/再スキャン間隔。
+/// 診断・キャッシュ消去（geocode キャッシュ・rescan）は Developer Options へ移設した。
 struct PlacesSettingsView: View {
     let scanner: PlaceScanner?
 
     @AppStorage(PlacesSettingsKeys.gridStepDegrees)      private var gridStep = 0.02
     @AppStorage(PlacesSettingsKeys.rescanIntervalSeconds) private var rescanInterval = 10
-
-    @State private var cachedPlaceCount = 0
-    @State private var isWorking = false
 
     var body: some View {
         Group {
@@ -36,51 +34,6 @@ struct PlacesSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            Section("Debug") {
-                LabeledContent("Geocoded places cached", value: "\(cachedPlaceCount)")
-
-                Button {
-                    Task { await rescanNow() }
-                } label: {
-                    workingLabel("Rescan now")
-                }
-                .disabled(isWorking || scanner == nil)
-
-                Button(role: .destructive) {
-                    Task { await clearAndRescan() }
-                } label: {
-                    workingLabel("Clear place + geocode caches")
-                }
-                .disabled(isWorking || scanner == nil)
-            }
         }
-        .task { cachedPlaceCount = await PlaceNameResolver.shared.cachedPlaceCount }
-    }
-
-    @ViewBuilder
-    private func workingLabel(_ title: String) -> some View {
-        if isWorking {
-            HStack { ProgressView().controlSize(.small); Text("Working…") }
-        } else {
-            Text(title)
-        }
-    }
-
-    private func rescanNow() async {
-        guard let scanner else { return }
-        isWorking = true
-        defer { isWorking = false }
-        await scanner.rescan()
-        cachedPlaceCount = await PlaceNameResolver.shared.cachedPlaceCount
-    }
-
-    private func clearAndRescan() async {
-        guard let scanner else { return }
-        isWorking = true
-        defer { isWorking = false }
-        await scanner.clearCache()
-        await scanner.rescan()
-        cachedPlaceCount = await PlaceNameResolver.shared.cachedPlaceCount
     }
 }

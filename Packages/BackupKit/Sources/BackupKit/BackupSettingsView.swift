@@ -3,7 +3,9 @@ import DropboxCore
 import Photos
 import SwiftUI
 
-/// バックアップ設定セクション。SettingsView の "Backup" タブに配置する。
+/// バックアップの通常設定：宛先・Dropbox フォルダ・実行・アップロード上限。
+/// 詳細な診断（進捗・フォルダ確認・ローカル/メタデータ統計・ログ）は `BackupDebugSection` に分離し、
+/// app の Developer Options 画面が合成する。
 public struct BackupSettingsView: View {
     let dropboxAuth: DropboxAuthService
     let engine: BackupEngine
@@ -12,8 +14,6 @@ public struct BackupSettingsView: View {
     @AppStorage(BackupSettingsKeys.destination) private var destination: BackupDestination = .disabled
     @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = "/MosaicPhotos"
     @AppStorage(BackupSettingsKeys.uploadLimit) private var uploadLimit = 10
-    @State private var folderCheckState: FolderCheckState = .idle
-    @State private var localStats: LocalStats?
 
     public init(dropboxAuth: DropboxAuthService, engine: BackupEngine, dropboxStore: DropboxPhotoStore? = nil) {
         self.dropboxAuth  = dropboxAuth
@@ -34,22 +34,12 @@ public struct BackupSettingsView: View {
                 dropboxFolderSection
                 uploadLimitSection
                 backupSection
-                progressDebugSection
-                debugControlSection
-                debugLocalRecordsSection
-                debugLocalStatsSection
-                debugMetadataStatsSection
-                debugLogSection
             }
         }
         .onChange(of: engine.phase) { _, newPhase in
             if case .completed = newPhase, let store = dropboxStore {
-                Task { await store.loadBackupMetadata(from: normalizedPath(dropboxFolder)) }
+                Task { await store.loadBackupMetadata(from: backupNormalizedPath(dropboxFolder)) }
             }
-        }
-        .task(id: destination) {
-            guard destination == .dropbox else { return }
-            localStats = await Task.detached { computeLocalStats() }.value
         }
     }
 
@@ -59,7 +49,7 @@ public struct BackupSettingsView: View {
         Section("Dropbox Folder") {
             if dropboxAuth.connectionStatus != .connected {
                 Label(
-                    "Dropbox is not connected. Go to the Dropbox tab to connect.",
+                    "Dropbox is not connected. Connect from Settings → Dropbox.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .foregroundStyle(.orange)
@@ -71,9 +61,6 @@ public struct BackupSettingsView: View {
                     .multilineTextAlignment(.trailing)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: dropboxFolder) { _, _ in
-                        folderCheckState = .idle
-                    }
             }
 
             Text("Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist.")
@@ -90,7 +77,7 @@ public struct BackupSettingsView: View {
                 Button("Cancel Backup", role: .destructive) { engine.cancel() }
             } else {
                 Button("Back Up Now") {
-                    engine.start(folder: normalizedPath(dropboxFolder))
+                    engine.start(folder: backupNormalizedPath(dropboxFolder))
                 }
                 .disabled(dropboxAuth.connectionStatus != .connected)
             }
@@ -168,11 +155,45 @@ public struct BackupSettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
+}
+
+// MARK: - Debug section (Developer Options)
+
+/// バックアップの詳細診断：進捗・フォルダ確認・ローカル/メタデータ統計・ログ。
+/// app の Developer Options 画面が合成して表示する（既定では非表示）。
+public struct BackupDebugSection: View {
+    let dropboxAuth: DropboxAuthService
+    let engine: BackupEngine
+    let dropboxStore: DropboxPhotoStore?
+
+    @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = "/MosaicPhotos"
+    @State private var folderCheckState: FolderCheckState = .idle
+    @State private var localStats: LocalStats?
+
+    public init(dropboxAuth: DropboxAuthService, engine: BackupEngine, dropboxStore: DropboxPhotoStore? = nil) {
+        self.dropboxAuth  = dropboxAuth
+        self.engine       = engine
+        self.dropboxStore = dropboxStore
+    }
+
+    public var body: some View {
+        Group {
+            progressDebugSection
+            debugControlSection
+            debugLocalRecordsSection
+            debugLocalStatsSection
+            debugMetadataStatsSection
+            debugLogSection
+        }
+        .task {
+            localStats = await Task.detached { computeLocalStats() }.value
+        }
+    }
 
     // MARK: - Debug: progress
 
     private var progressDebugSection: some View {
-        Section("Debug — Progress") {
+        Section("Backup — Progress") {
             LabeledContent("Backup records", value: "\(engine.recordCount)")
             LabeledContent("Uploaded IDs", value: "\(engine.uploadedIDCount)")
             LabeledContent("Metadata path", value: BackupEngine.metadataPathSuffix)
@@ -185,7 +206,7 @@ public struct BackupSettingsView: View {
     // MARK: - Debug: folder check
 
     private var debugControlSection: some View {
-        Section("Debug") {
+        Section("Backup — Folder Check") {
             HStack {
                 Button {
                     Task { await checkFolder() }
@@ -232,7 +253,7 @@ public struct BackupSettingsView: View {
     // MARK: - Debug: SwiftData backup records
 
     private var debugLocalRecordsSection: some View {
-        Section("Debug — Backup Records (Local DB)") {
+        Section("Backup — Records (Local DB)") {
             if engine.isAlbumsLoaded {
                 statRow("Backed-up photos", value: engine.recordCount, icon: "photo.on.rectangle")
                 statRow("Albums collected", value: engine.albumInfos.count, icon: "rectangle.stack")
@@ -258,7 +279,7 @@ public struct BackupSettingsView: View {
 
     @ViewBuilder
     private var debugLocalStatsSection: some View {
-        Section("Debug — Local Library") {
+        Section("Backup — Local Library") {
             if let s = localStats {
                 statRow("People",    value: s.peopleCount,    icon: "person.2")
                 statRow("Albums",    value: s.albumsCount,    icon: "rectangle.stack")
@@ -276,7 +297,7 @@ public struct BackupSettingsView: View {
 
     @ViewBuilder
     private var debugMetadataStatsSection: some View {
-        Section("Debug — Backup Metadata") {
+        Section("Backup — Metadata") {
             if let meta = dropboxStore?.backupMetadata {
                 let stats = MetadataStats(from: meta)
                 statRow("Backed-up entries", value: stats.entries,   icon: "photo.on.rectangle")
@@ -296,7 +317,7 @@ public struct BackupSettingsView: View {
     @ViewBuilder
     private var debugLogSection: some View {
         if !engine.log.isEmpty {
-            Section("Debug — Backup Log") {
+            Section("Backup — Log") {
                 ForEach(engine.log.reversed()) { entry in
                     HStack(alignment: .top, spacing: 8) {
                         Text(entry.time)
@@ -332,7 +353,7 @@ public struct BackupSettingsView: View {
 
     private func checkFolder() async {
         folderCheckState = .checking
-        let path = normalizedPath(dropboxFolder)
+        let path = backupNormalizedPath(dropboxFolder)
         if path != dropboxFolder { dropboxFolder = path }
 
         do {
@@ -371,16 +392,17 @@ public struct BackupSettingsView: View {
             folderCheckState = .error(error.localizedDescription)
         }
     }
+}
 
-    // MARK: - Helpers
+// MARK: - Helpers
 
-    private func normalizedPath(_ path: String) -> String {
-        var s = path.trimmingCharacters(in: .whitespaces)
-        if s.isEmpty { return "/" }
-        if !s.hasPrefix("/") { s = "/" + s }
-        while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
-        return s
-    }
+/// Dropbox パスの正規化（先頭スラッシュ付与・末尾スラッシュ除去）。本体と Debug の両方で使う。
+private func backupNormalizedPath(_ path: String) -> String {
+    var s = path.trimmingCharacters(in: .whitespaces)
+    if s.isEmpty { return "/" }
+    if !s.hasPrefix("/") { s = "/" + s }
+    while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
+    return s
 }
 
 // MARK: - Local stats
