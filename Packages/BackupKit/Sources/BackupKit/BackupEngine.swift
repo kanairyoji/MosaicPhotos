@@ -29,16 +29,18 @@ public final class BackupEngine {
     /// 直近のバックアップ実行ログ。Debug セクションで表示する。
     public private(set) var log: [BackupLogEntry] = []
     /// BackupAssetRecord から集計したアルバム一覧。
-    public private(set) var albumInfos: [BackupAlbumInfo] = []
+    public internal(set) var albumInfos: [BackupAlbumInfo] = []
     /// SwiftData に保存済みの BackupAssetRecord 総数。0 = バックアップ未実行 or 保存失敗。
-    public private(set) var recordCount: Int = 0
+    public internal(set) var recordCount: Int = 0
     /// loadAlbums() が完了したかどうか。ロード中と「空」を区別するために使う。
-    public private(set) var isAlbumsLoaded: Bool = false
+    public internal(set) var isAlbumsLoaded: Bool = false
 
+    // SwiftData レコード/アルバム永続化は BackupEngine+Store.swift（extension）に分離しているため、
+    // そこから参照する modelContext / addLog / 上記の集計状態は internal にしている。
     @ObservationIgnored private let tokenProvider: AccessTokenProvider
     @ObservationIgnored private let uploader: DropboxBackupUploader
     @ObservationIgnored private var backupTask: Task<Void, Never>?
-    @ObservationIgnored private var modelContext: ModelContext?
+    @ObservationIgnored var modelContext: ModelContext?
 
     // MARK: - Phase
 
@@ -86,18 +88,6 @@ public final class BackupEngine {
         saveUploadedIDs([])
     }
 
-    /// バックアップ済みの「ローカル localIdentifier → Dropbox path」対応。
-    /// 自動アルバムのローカル↔クラウド重複排除（BackupLinkProvider）に使う。
-    public func localToCloudPaths() -> [String: String] {
-        guard let context = modelContext,
-              let records = try? context.fetch(FetchDescriptor<BackupAssetRecord>()) else { return [:] }
-        var map: [String: String] = [:]
-        for record in records {
-            if let id = record.localIdentifier { map[id] = record.dropboxPath }
-        }
-        return map
-    }
-
     public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
         self.tokenProvider = auth
         self.uploader = DropboxBackupUploader(httpClient: httpClient)
@@ -140,7 +130,7 @@ public final class BackupEngine {
 
     // MARK: - Logging
 
-    private func addLog(_ message: String) {
+    func addLog(_ message: String) {
         log.append(BackupLogEntry(message))
     }
 
@@ -302,104 +292,7 @@ public final class BackupEngine {
 
     // MARK: - Metadata
 
-    private static let metadataSuffix = "/.mosaic/metadata.json"
-
-    private func buildMetadataEntries(
-        merging newEntries: [String: DropboxBackupMetadata.Entry]
-    ) -> [String: DropboxBackupMetadata.Entry] {
-        var result: [String: DropboxBackupMetadata.Entry] = [:]
-        if let context = modelContext,
-           let records = try? context.fetch(FetchDescriptor<BackupAssetRecord>()) {
-            for record in records {
-                result[record.dropboxPath] = DropboxBackupMetadata.Entry(
-                    people: record.people,
-                    albums: record.albums,
-                    isFavorite: record.isFavorite,
-                    date: record.creationDate.map { ISO8601DateFormatter().string(from: $0) },
-                    contentHash: record.contentHash
-                )
-            }
-        }
-        result.merge(newEntries) { _, new in new }
-        return result
-    }
-
-    // MARK: - SwiftData helpers
-
-    private func saveRecord(
-        dropboxPath: String, asset: PHAsset, filename: String,
-        people: [String], albums: [String], isFavorite: Bool
-    ) {
-        guard let context = modelContext else { return }
-        let path = dropboxPath.lowercased()
-        let descriptor = FetchDescriptor<BackupAssetRecord>(
-            predicate: #Predicate { $0.dropboxPath == path }
-        )
-        if let existing = try? context.fetch(descriptor).first {
-            existing.people     = people
-            existing.albums     = albums
-            existing.isFavorite = isFavorite
-            existing.backedUpAt = Date()
-        } else {
-            context.insert(BackupAssetRecord(
-                dropboxPath: dropboxPath, localIdentifier: asset.localIdentifier,
-                filename: filename, creationDate: asset.creationDate,
-                contentHash: nil, people: people, albums: albums, isFavorite: isFavorite
-            ))
-        }
-        try? context.save()
-    }
-
-    // MARK: - Album query
-
-    /// SwiftData から BackupAssetRecord を読み込み、albumInfos / recordCount を更新する。
-    /// ビュー表示時とバックアップ完了後に呼び出す。
-    public func loadAlbums() async {
-        await Task.yield()   // 呼び出し元の初回レンダリングを先に通す
-
-        guard let context = modelContext else {
-            addLog("[albums] modelContext is nil — ModelContainer failed to init. " +
-                   "Reinstall the app if this persists.")
-            isAlbumsLoaded = true
-            return
-        }
-
-        let records: [BackupAssetRecord]
-        do {
-            records = try context.fetch(FetchDescriptor<BackupAssetRecord>())
-        } catch {
-            addLog("[albums] SwiftData fetch failed: \(error.localizedDescription)")
-            isAlbumsLoaded = true
-            return
-        }
-
-        recordCount = records.count
-        let withAlbums = records.filter { !$0.albums.isEmpty }.count
-        addLog("[albums] records: \(records.count), with album tags: \(withAlbums)")
-
-        var byAlbum: [String: [BackupAssetRecord]] = [:]
-        for record in records {
-            for name in record.albums {
-                byAlbum[name, default: []].append(record)
-            }
-        }
-
-        let built = byAlbum.map { name, recs -> BackupAlbumInfo in
-            let ids = recs.compactMap { $0.localIdentifier }
-            let sorted = recs.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
-            return BackupAlbumInfo(
-                name: name,
-                photoCount: recs.count,
-                coverLocalIdentifier: sorted.last?.localIdentifier,
-                localIdentifiers: ids
-            )
-        }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-        albumInfos = built
-        isAlbumsLoaded = true
-        addLog("[albums] built \(built.count) album(s): \(built.map(\.name).joined(separator: ", "))")
-    }
+    static let metadataSuffix = "/.mosaic/metadata.json"
 
     // MARK: - Progress persistence
 
