@@ -1,0 +1,41 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Swift Package Manager
+.build/
+.swiftpm/
+*.resolved
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Claude Code session data
+.claude/
+
+# Credentials / secrets
+*.env
+secrets/
+# Dropbox app key — copy DropboxSecrets.swift.example to DropboxSecrets.swift and fill it in.
+MosaicPhotos/DropboxSecrets.swift
+
+# MobileCLIP: build venv/checkpoint (1.3GB) and generated on-device models (193MB).
+# Regenerate locally with scripts/build_mobileclip.sh (not committed; license + size).
+.mobileclip_build/
+MosaicPhotos/MobileCLIP/

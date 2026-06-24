@@ -1,0 +1,671 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BEF001A02FD42D3900CD8FB2 /* DropboxKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF002A02FD42D3900CD8FB2 /* DropboxKit */; };
+		BEF011A02FD42D3900CD8FB2 /* LocalPhotoKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF012A02FD42D3900CD8FB2 /* LocalPhotoKit */; };
+		BEF021A02FD42D3900CD8FB2 /* BackupKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF022A02FD42D3900CD8FB2 /* BackupKit */; };
+		BEF031A02FD42D3900CD8FB2 /* PhotosFeatureKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF032A02FD42D3900CD8FB2 /* PhotosFeatureKit */; };
+		BEF041A02FD42D3900CD8FB2 /* AutoAlbumCore in Frameworks */ = {isa = PBXBuildFile; productRef = BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BEFB46472FD3EAA900CD8FB2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEFB462C2FD3EAA800CD8FB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BEFB46332FD3EAA800CD8FB2;
+			remoteInfo = MosaicPhotos;
+		};
+		BEFB46512FD3EAA900CD8FB2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEFB462C2FD3EAA800CD8FB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BEFB46332FD3EAA800CD8FB2;
+			remoteInfo = MosaicPhotos;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		BEFB46342FD3EAA800CD8FB2 /* MosaicPhotos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MosaicPhotos.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BEFB46462FD3EAA900CD8FB2 /* MosaicPhotosTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MosaicPhotosTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BEFB46502FD3EAA900CD8FB2 /* MosaicPhotosUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MosaicPhotosUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		BEFB46362FD3EAA800CD8FB2 /* MosaicPhotos */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MosaicPhotos;
+			sourceTree = "<group>";
+		};
+		BEFB46492FD3EAA900CD8FB2 /* MosaicPhotosTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MosaicPhotosTests;
+			sourceTree = "<group>";
+		};
+		BEFB46532FD3EAA900CD8FB2 /* MosaicPhotosUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MosaicPhotosUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BEFB46312FD3EAA800CD8FB2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BEF011A02FD42D3900CD8FB2 /* LocalPhotoKit in Frameworks */,
+				BEF001A02FD42D3900CD8FB2 /* DropboxKit in Frameworks */,
+				BEF021A02FD42D3900CD8FB2 /* BackupKit in Frameworks */,
+				BEF031A02FD42D3900CD8FB2 /* PhotosFeatureKit in Frameworks */,
+				BEF041A02FD42D3900CD8FB2 /* AutoAlbumCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEFB46432FD3EAA900CD8FB2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEFB464D2FD3EAA900CD8FB2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		BEF003A02FD42D3900CD8FB2 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		BEFB462B2FD3EAA800CD8FB2 = {
+			isa = PBXGroup;
+			children = (
+				BEFB46362FD3EAA800CD8FB2 /* MosaicPhotos */,
+				BEFB46492FD3EAA900CD8FB2 /* MosaicPhotosTests */,
+				BEFB46532FD3EAA900CD8FB2 /* MosaicPhotosUITests */,
+				BEFB46352FD3EAA800CD8FB2 /* Products */,
+				BEF003A02FD42D3900CD8FB2 /* Packages */,
+			);
+			sourceTree = "<group>";
+		};
+		BEFB46352FD3EAA800CD8FB2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				BEFB46342FD3EAA800CD8FB2 /* MosaicPhotos.app */,
+				BEFB46462FD3EAA900CD8FB2 /* MosaicPhotosTests.xctest */,
+				BEFB46502FD3EAA900CD8FB2 /* MosaicPhotosUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		BEFB46332FD3EAA800CD8FB2 /* MosaicPhotos */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BEFB465A2FD3EAA900CD8FB2 /* Build configuration list for PBXNativeTarget "MosaicPhotos" */;
+			buildPhases = (
+				BEFB46302FD3EAA800CD8FB2 /* Sources */,
+				BEFB46312FD3EAA800CD8FB2 /* Frameworks */,
+				BEFB46322FD3EAA800CD8FB2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BEFB46362FD3EAA800CD8FB2 /* MosaicPhotos */,
+			);
+			name = MosaicPhotos;
+			packageProductDependencies = (
+				BEF012A02FD42D3900CD8FB2 /* LocalPhotoKit */,
+				BEF002A02FD42D3900CD8FB2 /* DropboxKit */,
+				BEF022A02FD42D3900CD8FB2 /* BackupKit */,
+				BEF032A02FD42D3900CD8FB2 /* PhotosFeatureKit */,
+				BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */,
+			);
+			productName = MosaicPhotos;
+			productReference = BEFB46342FD3EAA800CD8FB2 /* MosaicPhotos.app */;
+			productType = "com.apple.product-type.application";
+		};
+		BEFB46452FD3EAA900CD8FB2 /* MosaicPhotosTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BEFB465D2FD3EAA900CD8FB2 /* Build configuration list for PBXNativeTarget "MosaicPhotosTests" */;
+			buildPhases = (
+				BEFB46422FD3EAA900CD8FB2 /* Sources */,
+				BEFB46432FD3EAA900CD8FB2 /* Frameworks */,
+				BEFB46442FD3EAA900CD8FB2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BEFB46482FD3EAA900CD8FB2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BEFB46492FD3EAA900CD8FB2 /* MosaicPhotosTests */,
+			);
+			name = MosaicPhotosTests;
+			packageProductDependencies = (
+			);
+			productName = MosaicPhotosTests;
+			productReference = BEFB46462FD3EAA900CD8FB2 /* MosaicPhotosTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		BEFB464F2FD3EAA900CD8FB2 /* MosaicPhotosUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BEFB46602FD3EAA900CD8FB2 /* Build configuration list for PBXNativeTarget "MosaicPhotosUITests" */;
+			buildPhases = (
+				BEFB464C2FD3EAA900CD8FB2 /* Sources */,
+				BEFB464D2FD3EAA900CD8FB2 /* Frameworks */,
+				BEFB464E2FD3EAA900CD8FB2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BEFB46522FD3EAA900CD8FB2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BEFB46532FD3EAA900CD8FB2 /* MosaicPhotosUITests */,
+			);
+			name = MosaicPhotosUITests;
+			packageProductDependencies = (
+			);
+			productName = MosaicPhotosUITests;
+			productReference = BEFB46502FD3EAA900CD8FB2 /* MosaicPhotosUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BEFB462C2FD3EAA800CD8FB2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					BEFB46332FD3EAA800CD8FB2 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					BEFB46452FD3EAA900CD8FB2 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = BEFB46332FD3EAA800CD8FB2;
+					};
+					BEFB464F2FD3EAA900CD8FB2 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = BEFB46332FD3EAA800CD8FB2;
+					};
+				};
+			};
+			buildConfigurationList = BEFB462F2FD3EAA800CD8FB2 /* Build configuration list for PBXProject "MosaicPhotos" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = BEFB462B2FD3EAA800CD8FB2;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BEF010A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/LocalPhotoKit" */,
+				BEF000A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/DropboxKit" */,
+				BEF020A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/BackupKit" */,
+				BEF030A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PhotosFeatureKit" */,
+				BEF040A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/AutoAlbumCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BEFB46352FD3EAA800CD8FB2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				BEFB46332FD3EAA800CD8FB2 /* MosaicPhotos */,
+				BEFB46452FD3EAA900CD8FB2 /* MosaicPhotosTests */,
+				BEFB464F2FD3EAA900CD8FB2 /* MosaicPhotosUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		BEFB46322FD3EAA800CD8FB2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEFB46442FD3EAA900CD8FB2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEFB464E2FD3EAA900CD8FB2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		BEFB46302FD3EAA800CD8FB2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEFB46422FD3EAA900CD8FB2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEFB464C2FD3EAA900CD8FB2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		BEFB46482FD3EAA900CD8FB2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BEFB46332FD3EAA800CD8FB2 /* MosaicPhotos */;
+			targetProxy = BEFB46472FD3EAA900CD8FB2 /* PBXContainerItemProxy */;
+		};
+		BEFB46522FD3EAA900CD8FB2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BEFB46332FD3EAA800CD8FB2 /* MosaicPhotos */;
+			targetProxy = BEFB46512FD3EAA900CD8FB2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		BEFB46582FD3EAA900CD8FB2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		BEFB46592FD3EAA900CD8FB2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		BEFB465B2FD3EAA900CD8FB2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MosaicPhotos;
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "MosaicPhotos needs access to your photo library to display your photos.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kanai.MosaicPhotos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BEFB465C2FD3EAA900CD8FB2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MosaicPhotos;
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "MosaicPhotos needs access to your photo library to display your photos.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kanai.MosaicPhotos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BEFB465E2FD3EAA900CD8FB2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kanai.MosaicPhotosTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MosaicPhotos.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MosaicPhotos";
+			};
+			name = Debug;
+		};
+		BEFB465F2FD3EAA900CD8FB2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kanai.MosaicPhotosTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MosaicPhotos.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MosaicPhotos";
+			};
+			name = Release;
+		};
+		BEFB46612FD3EAA900CD8FB2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kanai.MosaicPhotosUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MosaicPhotos;
+			};
+			name = Debug;
+		};
+		BEFB46622FD3EAA900CD8FB2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MMLN9NXVM4;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kanai.MosaicPhotosUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MosaicPhotos;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		BEFB462F2FD3EAA800CD8FB2 /* Build configuration list for PBXProject "MosaicPhotos" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BEFB46582FD3EAA900CD8FB2 /* Debug */,
+				BEFB46592FD3EAA900CD8FB2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BEFB465A2FD3EAA900CD8FB2 /* Build configuration list for PBXNativeTarget "MosaicPhotos" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BEFB465B2FD3EAA900CD8FB2 /* Debug */,
+				BEFB465C2FD3EAA900CD8FB2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BEFB465D2FD3EAA900CD8FB2 /* Build configuration list for PBXNativeTarget "MosaicPhotosTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BEFB465E2FD3EAA900CD8FB2 /* Debug */,
+				BEFB465F2FD3EAA900CD8FB2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BEFB46602FD3EAA900CD8FB2 /* Build configuration list for PBXNativeTarget "MosaicPhotosUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BEFB46612FD3EAA900CD8FB2 /* Debug */,
+				BEFB46622FD3EAA900CD8FB2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		BEF000A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/DropboxKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/DropboxKit;
+		};
+		BEF010A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/LocalPhotoKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/LocalPhotoKit;
+		};
+		BEF020A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/BackupKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/BackupKit;
+		};
+		BEF030A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PhotosFeatureKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/PhotosFeatureKit;
+		};
+		BEF040A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/AutoAlbumCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AutoAlbumCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BEF002A02FD42D3900CD8FB2 /* DropboxKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF000A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/DropboxKit" */;
+			productName = DropboxKit;
+		};
+		BEF012A02FD42D3900CD8FB2 /* LocalPhotoKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF010A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/LocalPhotoKit" */;
+			productName = LocalPhotoKit;
+		};
+		BEF022A02FD42D3900CD8FB2 /* BackupKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF020A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/BackupKit" */;
+			productName = BackupKit;
+		};
+		BEF032A02FD42D3900CD8FB2 /* PhotosFeatureKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF030A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PhotosFeatureKit" */;
+			productName = PhotosFeatureKit;
+		};
+		BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF040A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/AutoAlbumCore" */;
+			productName = AutoAlbumCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = BEFB462C2FD3EAA800CD8FB2 /* Project object */;
+}
