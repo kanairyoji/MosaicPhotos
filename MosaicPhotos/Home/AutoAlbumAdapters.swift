@@ -3,6 +3,7 @@ import BackupKit
 import CoreGraphics
 import DropboxKit
 import Foundation
+import MobileCLIPKit
 import UIKit
 
 /// アプリのアダプタ（Dropbox / バックアップ / 人物 / Vision / CLIP）を結線して `AutoAlbumEngine` を

@@ -12,6 +12,7 @@
 		BEF021A02FD42D3900CD8FB2 /* BackupKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF022A02FD42D3900CD8FB2 /* BackupKit */; };
 		BEF031A02FD42D3900CD8FB2 /* PhotosFeatureKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF032A02FD42D3900CD8FB2 /* PhotosFeatureKit */; };
 		BEF041A02FD42D3900CD8FB2 /* AutoAlbumCore in Frameworks */ = {isa = PBXBuildFile; productRef = BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */; };
+		BEF051A02FD42D3900CD8FB2 /* MobileCLIPKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF052A02FD42D3900CD8FB2 /* MobileCLIPKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,6 +66,7 @@
 				BEF021A02FD42D3900CD8FB2 /* BackupKit in Frameworks */,
 				BEF031A02FD42D3900CD8FB2 /* PhotosFeatureKit in Frameworks */,
 				BEF041A02FD42D3900CD8FB2 /* AutoAlbumCore in Frameworks */,
+				BEF051A02FD42D3900CD8FB2 /* MobileCLIPKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,6 +140,7 @@
 				BEF022A02FD42D3900CD8FB2 /* BackupKit */,
 				BEF032A02FD42D3900CD8FB2 /* PhotosFeatureKit */,
 				BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */,
+				BEF052A02FD42D3900CD8FB2 /* MobileCLIPKit */,
 			);
 			productName = MosaicPhotos;
 			productReference = BEFB46342FD3EAA800CD8FB2 /* MosaicPhotos.app */;
@@ -227,6 +230,7 @@
 				BEF020A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/BackupKit" */,
 				BEF030A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PhotosFeatureKit" */,
 				BEF040A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/AutoAlbumCore" */,
+				BEF050A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/MobileCLIPKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BEFB46352FD3EAA800CD8FB2 /* Products */;
@@ -637,6 +641,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutoAlbumCore;
 		};
+		BEF050A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/MobileCLIPKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/MobileCLIPKit;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -664,6 +672,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BEF040A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/AutoAlbumCore" */;
 			productName = AutoAlbumCore;
+		};
+		BEF052A02FD42D3900CD8FB2 /* MobileCLIPKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF050A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/MobileCLIPKit" */;
+			productName = MobileCLIPKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

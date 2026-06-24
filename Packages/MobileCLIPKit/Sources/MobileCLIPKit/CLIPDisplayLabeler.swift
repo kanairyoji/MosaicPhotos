@@ -7,7 +7,9 @@ import os
 /// 検索は語彙ゼロのオープン語彙 CLIP のまま。本ラベラは「この写真に何が写っているか」を読める
 /// 言葉で**表示する**ためだけに、約300語の一般英語キーワード集合とのコサイン類似で上位概念を選ぶ。
 /// 画像は再読み込みせず、既に保存済みの `clipVector` を使うので軽い。
-final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
+public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
+    public init() {}
+
     private static let log = Logger(subsystem: "com.mosaicphotos.AutoAlbum", category: "labeler")
     private let lock = NSLock()
     private var conceptEmbeddings: [(tag: String, vector: [Float])]?
@@ -15,7 +17,7 @@ final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     private let margin: Float = 0.04   // 最上位類似度からこの差以内のものを採用
 
     /// ⚠️ nonisolated：概念埋め込みの一括構築（~300 text encode）をメインスレッドで走らせない。
-    nonisolated func labels(forEmbedding clipVector: Data) async -> [String] {
+    public nonisolated func labels(forEmbedding clipVector: Data) async -> [String] {
         guard let image = ClipMath.decode(clipVector), !image.isEmpty,
               let embeddings = ensureEmbeddings(), !embeddings.isEmpty else { return [] }
         var scored = embeddings.map { (tag: $0.tag, score: ClipMath.cosine(image, $0.vector)) }

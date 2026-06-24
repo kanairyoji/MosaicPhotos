@@ -10,8 +10,10 @@ import FoundationModels
 /// 任意言語の検索文を英語へ正規化する（CLIP は英語学習のため）。
 /// iOS 26 + Apple Intelligence 端末では Foundation Models（オンデバイス LLM）で翻訳。
 /// 既に英語、または FM 非対応なら原文をそのまま返す（CLIP は英語前提なので最善努力）。
-struct AppQueryTranslator: QueryTranslator {
-    func toEnglish(_ text: String) async -> String {
+public struct AppQueryTranslator: QueryTranslator {
+    public init() {}
+
+    public func toEnglish(_ text: String) async -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return text }
         if trimmed.allSatisfy({ $0.isASCII }) { return trimmed }   // 既に英語（ASCII）
