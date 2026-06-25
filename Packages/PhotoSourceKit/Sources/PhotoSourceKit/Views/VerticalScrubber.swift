@@ -11,9 +11,13 @@ import SwiftUI
 struct VerticalScrubber: View {
     /// ドラッグ位置（0=先頭 … 1=末尾）を通知する。
     let onScrub: (Double) -> Void
+    /// ドラッグの開始（true）／終了（false）を通知する。スクラブ中はサムネ取得・先読み・
+    /// 背景処理を止めて操作を滑らかにするために使う。
+    var onActiveChange: ((Bool) -> Void)?
 
     /// ハンドル位置（0…1）。末尾アンカー（タイムラインは下端が最新）に合わせ既定は 1。
     @State private var fraction: Double = 1
+    @State private var active = false
     @GestureState private var dragging = false
 
     // スロットリング用：最新の保留位置と、トレーリング発火が予約済みかのフラグ。
@@ -41,14 +45,17 @@ struct VerticalScrubber: View {
                     DragGesture(minimumDistance: 0)
                         .updating($dragging) { _, state, _ in state = true }
                         .onChanged { value in
+                            if !active { active = true; onActiveChange?(true) }   // ドラッグ開始
                             let f = Double((value.location.y - handleHeight / 2) / usable)
                             fraction = min(max(0, f), 1)   // ハンドルは即時追従（軽い）
                             scheduleScrub(fraction)        // scrollTo は合体スロットリング
                         }
                         .onEnded { _ in
-                            // ドラッグ終了時は最終位置へ確実にスクロールする。
+                            // ドラッグ終了時は最終位置へ確実にスクロールし、操作終了を通知する。
                             onScrub(fraction)
                             pendingFraction = nil
+                            active = false
+                            onActiveChange?(false)
                         }
                 )
                 .animation(.easeOut(duration: 0.12), value: dragging)

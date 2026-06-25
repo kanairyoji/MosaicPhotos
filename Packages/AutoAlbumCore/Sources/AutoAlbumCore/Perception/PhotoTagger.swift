@@ -21,6 +21,7 @@ final class PhotoTagger {
     func embedUnprocessed(batchSize: Int = 8,
                           betweenBatchNs: UInt64 = 2_500_000_000,   // 2.5s
                           maxBatches: Int = 20_000,
+                          shouldPause: @MainActor () -> Bool = { false },
                           onBatch: () async -> Void) async {
         guard let perception else {
             Self.log.info("embed: skipped — no perception provider injected")
@@ -39,6 +40,11 @@ final class PhotoTagger {
 
         var processed = 0
         for batch in 0..<maxBatches {
+            if Task.isCancelled { break }
+            // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
+            while shouldPause() && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
+            }
             if Task.isCancelled { break }
             let refKeys = await store.unembeddedRefKeys(limit: batchSize)
             guard !refKeys.isEmpty else {

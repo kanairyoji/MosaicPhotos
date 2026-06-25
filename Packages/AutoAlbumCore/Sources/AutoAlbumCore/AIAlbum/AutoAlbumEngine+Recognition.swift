@@ -71,7 +71,8 @@ extension AutoAlbumEngine {
         Task(priority: .background) {
             isTagging = true
             await tagger.embedUnprocessed(batchSize: preset.batchSize,
-                                          betweenBatchNs: preset.betweenBatchNs) {
+                                          betweenBatchNs: preset.betweenBatchNs,
+                                          shouldPause: { [weak self] in self?.isInteracting ?? false }) {
                 [weak self] in await self?.refreshAIAlbums()
             }
             isTagging = false
@@ -100,7 +101,8 @@ extension AutoAlbumEngine {
         let preset = Self.currentBackgroundPreset()
         isTagging = true
         await tagger.embedUnprocessed(batchSize: preset.batchSize,
-                                      betweenBatchNs: preset.betweenBatchNs) {
+                                      betweenBatchNs: preset.betweenBatchNs,
+                                      shouldPause: { [weak self] in self?.isInteracting ?? false }) {
             [weak self] in await self?.refreshAIAlbums()
         }
         isTagging = false

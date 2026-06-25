@@ -25,6 +25,12 @@ private enum PhotoInsightKey: EnvironmentKey {
     static let defaultValue: (@Sendable (String) async -> PhotoInsight?)? = nil
 }
 
+/// ユーザーが写真を能動操作中か（スクラブ等）を上位へ通知するシンク。アプリ側が背景処理
+/// （CLIP 埋め込み）の一時停止に使う。未注入なら無視（レイヤー分離）。
+private enum PhotoInteractionKey: EnvironmentKey {
+    static let defaultValue: ((Bool) -> Void)? = nil
+}
+
 public extension EnvironmentValues {
     var dismissToHome: (() -> Void)? {
         get { self[DismissToHomeKey.self] }
@@ -39,6 +45,11 @@ public extension EnvironmentValues {
     var photoInsight: (@Sendable (String) async -> PhotoInsight?)? {
         get { self[PhotoInsightKey.self] }
         set { self[PhotoInsightKey.self] = newValue }
+    }
+
+    var photoInteraction: ((Bool) -> Void)? {
+        get { self[PhotoInteractionKey.self] }
+        set { self[PhotoInteractionKey.self] = newValue }
     }
 }
 #endif

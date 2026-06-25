@@ -16,6 +16,13 @@ struct DenseGridView<Store: PhotoStore>: View {
 
     private let spacing: CGFloat = 2
 
+    @Environment(\.photoInteraction) private var photoInteraction
+    /// スクラブ中はサムネ取得・先読みを止める（A）。
+    @State private var isScrubbing = false
+    // 先読みの合体スロットリング（B）。最新の先頭 index を保持し、~120ms で1回だけ実行する。
+    @State private var pendingPrefetchIndex: Int?
+    @State private var prefetchScheduled = false
+
     var body: some View {
         let cols = max(1, columnCount)
         GeometryReader { geo in
@@ -28,15 +35,16 @@ struct DenseGridView<Store: PhotoStore>: View {
                 ScrollView {
                     LazyVGrid(columns: fixedColumns, spacing: spacing) {
                         ForEach(Array(store.items.enumerated()), id: \.element.id) { index, item in
-                            NavigationLink(value: index) {
-                                ThumbnailCell(store: store, item: item, side: cellSide)
+                            // ナビゲーションは index ではなく item.id（C）。並べ替え・件数変化に頑健。
+                            NavigationLink(value: item.id) {
+                                ThumbnailCell(store: store, item: item, side: cellSide, paused: isScrubbing)
                             }
                             .buttonStyle(.plain)
                             .onAppear {
                                 if store.hasMore && index >= store.items.count - 20 {
                                     Task { await store.loadMore() }
                                 }
-                                prefetchIfNeeded(from: index, cols: cols)
+                                if index % cols == 0 { requestPrefetch(from: index, cols: cols) }
                             }
                         }
                     }
@@ -52,12 +60,15 @@ struct DenseGridView<Store: PhotoStore>: View {
                 // 縦スクロール用スクラバー（写真が多いときだけ）。ドラッグ位置に比例してジャンプ。
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
-                        VerticalScrubber { fraction in
+                        VerticalScrubber(onScrub: { fraction in
                             let idx = Int((fraction * Double(store.items.count - 1)).rounded())
                             if store.items.indices.contains(idx) {
                                 proxy.scrollTo(store.items[idx].id, anchor: .top)
                             }
-                        }
+                        }, onActiveChange: { active in
+                            isScrubbing = active        // A: 取得停止
+                            photoInteraction?(active)   // G: 背景処理を譲る
+                        })
                     }
                 }
             }
@@ -66,14 +77,25 @@ struct DenseGridView<Store: PhotoStore>: View {
 
     // MARK: Prefetch
 
-    /// Fires a prefetch for the next ~3 rows starting at `index + 1`.
-    /// Only triggers for the first cell in each row to avoid redundant fan-out.
-    /// 実際の先読み方法は `store.prefetch` に委譲（ローカルは PHCachingImageManager、
-    /// それ以外は逐次取得）。
-    private func prefetchIfNeeded(from index: Int, cols: Int) {
-        guard index % cols == 0 else { return }  // only first cell per row
-        // 先読みウィンドウ。Dropbox は並行バッチ取得（最大4本×25枚）で捌けるので、
-        // パイプラインを埋めるために広めに取る（数画面ぶん先読み）。上限で要求爆発を防ぐ。
+    /// 先読みを ~120ms に1回へ合体する（B）。連続スクロールで毎行 `store.prefetch` を投げて
+    /// Task を量産しないようにし、スクラブ中は完全に停止する（A）。
+    private func requestPrefetch(from index: Int, cols: Int) {
+        guard !isScrubbing else { return }
+        pendingPrefetchIndex = index
+        guard !prefetchScheduled else { return }
+        prefetchScheduled = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            prefetchScheduled = false
+            guard !isScrubbing, let idx = pendingPrefetchIndex else { return }
+            pendingPrefetchIndex = nil
+            runPrefetch(from: idx, cols: cols)
+        }
+    }
+
+    /// `index + 1` から数画面ぶんを先読みする。実際の先読み方法は `store.prefetch` に委譲
+    /// （ローカルは PHCachingImageManager、それ以外は逐次取得）。
+    private func runPrefetch(from index: Int, cols: Int) {
         let budget = min(cols * 6, 120)
         let prefetchEnd = min(index + budget, store.items.count)
         guard index + 1 < prefetchEnd else { return }

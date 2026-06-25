@@ -20,6 +20,10 @@ struct GroupedGridView<Store: PhotoStore>: View {
     // セクションはメインアクタ外で生成して保持（68k 件規模のグルーピングで描画を固めない）。
     @State private var sections: [PhotoGridSection<Store.Item>] = []
 
+    @Environment(\.photoInteraction) private var photoInteraction
+    /// スクラブ中はサムネ取得を止める（A）。
+    @State private var isScrubbing = false
+
     var body: some View {
         GeometryReader { geo in
             let cellSide = max(1, (geo.size.width - spacing * CGFloat(colCount - 1)) / CGFloat(colCount))
@@ -32,8 +36,10 @@ struct GroupedGridView<Store: PhotoStore>: View {
                                     HStack(spacing: spacing) {
                                         // セルを item.id で識別し、スクラバーの scrollTo(item.id) の対象にする。
                                         ForEach(row.entries, id: \.item.id) { entry in
-                                            NavigationLink(value: entry.flatIndex) {
-                                                ThumbnailCell(store: store, item: entry.item, side: cellSide)
+                                            // ナビゲーションは flatIndex ではなく item.id（C）。
+                                            NavigationLink(value: entry.item.id) {
+                                                ThumbnailCell(store: store, item: entry.item, side: cellSide,
+                                                              paused: isScrubbing)
                                             }
                                             .buttonStyle(.plain)
                                         }
@@ -62,12 +68,15 @@ struct GroupedGridView<Store: PhotoStore>: View {
                 .defaultScrollAnchor(.bottom)
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
-                        VerticalScrubber { fraction in
+                        VerticalScrubber(onScrub: { fraction in
                             let idx = Int((fraction * Double(store.items.count - 1)).rounded())
                             if store.items.indices.contains(idx) {
                                 proxy.scrollTo(store.items[idx].id, anchor: .top)
                             }
-                        }
+                        }, onActiveChange: { active in
+                            isScrubbing = active
+                            photoInteraction?(active)   // G: 背景処理を譲る
+                        })
                     }
                 }
             }

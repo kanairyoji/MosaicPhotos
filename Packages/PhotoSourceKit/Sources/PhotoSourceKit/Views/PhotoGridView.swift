@@ -47,8 +47,9 @@ public struct PhotoGridView<Store: PhotoStore>: View {
 
     public var body: some View {
         content
-            .navigationDestination(for: Int.self) { index in
-                PhotoPageView(store: store, currentIndex: index)
+            // item.id で遷移する（C）。index 依存をやめ、巨大な enumerated 配列を作らない。
+            .navigationDestination(for: Store.Item.ID.self) { id in
+                PhotoPageView(store: store, startID: id)
             }
     }
 

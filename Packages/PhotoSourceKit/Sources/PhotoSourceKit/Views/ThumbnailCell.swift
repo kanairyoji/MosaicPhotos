@@ -11,6 +11,8 @@ struct ThumbnailCell<Store: PhotoStore>: View {
     /// 推定せず正確なコンテンツ高を持てる（スクロールジャンプ防止）、
     /// (2) 画像を正方形にセンタークロップできる。
     let side: CGFloat
+    /// スクラブ／高速移動中は true。通り過ぎるだけのセルでサムネ取得を投げないための一時停止。
+    var paused: Bool = false
     @State private var image: UIImage?
 
     var body: some View {
@@ -38,13 +40,21 @@ struct ThumbnailCell<Store: PhotoStore>: View {
         .frame(width: side, height: side)
         .clipped()
         .contentShape(Rectangle())
-        .task(id: item.id, priority: .userInitiated) {
-            image = nil
+        // paused を id に含め、スクラブ解除時（paused: true→false）に取得を再開する。
+        // ⚠️ image = nil でのリセットはしない（D: 同一セルは item 同一性で固定のため、
+        // チラつきと再取得を避ける）。スクラブ中（paused）は取得せずプレースホルダのまま。
+        .task(id: TaskKey(id: "\(item.id)", paused: paused), priority: .userInitiated) {
+            guard !paused, image == nil else { return }
             let scale = UIScreen.main.scale
             // サムネイル取得サイズはセルの実ピクセルサイズ（side × 画面倍率）に合わせる。
             let targetSize = CGSize(width: side * scale, height: side * scale)
             image = await store.thumbnail(for: item, targetSize: targetSize)
         }
+    }
+
+    private struct TaskKey: Equatable {
+        let id: String
+        let paused: Bool
     }
 }
 #endif

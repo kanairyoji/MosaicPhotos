@@ -24,6 +24,10 @@ struct SourceHostView<Content: View>: View {
             .environment(\.photoInsight) { [autoAlbumEngine] id in
                 await autoAlbumEngine.insight(forItemID: id)
             }
+            // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。
+            .environment(\.photoInteraction) { [autoAlbumEngine] interacting in
+                autoAlbumEngine.setInteracting(interacting)
+            }
             .sheet(isPresented: $showingSettings) {
                 NavigationStack {
                     SettingsView(dropboxAuth: dropboxStore.auth, store: dropboxStore,

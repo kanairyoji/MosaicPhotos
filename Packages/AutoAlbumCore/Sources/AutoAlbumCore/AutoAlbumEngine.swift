@@ -42,6 +42,9 @@ public final class AutoAlbumEngine {
     @ObservationIgnored private var observer: PhotoLibraryObserver?
     @ObservationIgnored private var libraryDirty = false
     @ObservationIgnored private var lastCloudSignature = 0
+    /// ユーザーが写真を能動操作中か（スクラブ等）。背景 CLIP 埋め込みを一時停止するために使う（G）。
+    /// Recognition extension から参照するため internal。
+    @ObservationIgnored var isInteracting = false
 
     @ObservationIgnored let labelProvider: LabelProvider?
 
@@ -64,6 +67,9 @@ public final class AutoAlbumEngine {
     }
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }
+
+    /// ユーザーが写真を能動操作中か（スクラブ等）を設定する。true の間は背景 CLIP 埋め込みを譲る（G）。
+    public func setInteracting(_ value: Bool) { isInteracting = value }
 
     // MARK: - Path albums
 

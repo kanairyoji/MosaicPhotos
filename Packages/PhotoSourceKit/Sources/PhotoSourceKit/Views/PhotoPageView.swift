@@ -7,18 +7,24 @@ import SwiftUI
 /// Toolbar shows `displayTitle` when available, otherwise formats `captureDate`.
 public struct PhotoPageView<Store: PhotoStore>: View {
     let store: Store
-    @State private var currentIndex: Int
+    /// 現在のページを **item.id** で保持する（C/E）。`Array(items.enumerated())` の
+    /// 6.7万件タプル配列を作らず、`ForEach(store.items)` を直接回す。
+    @State private var currentID: Store.Item.ID
 
-    public init(store: Store, currentIndex: Int) {
+    public init(store: Store, startID: Store.Item.ID) {
         self.store = store
-        self._currentIndex = State(initialValue: currentIndex)
+        self._currentID = State(initialValue: startID)
+    }
+
+    private var currentItem: Store.Item? {
+        store.items.first { $0.id == currentID }
     }
 
     public var body: some View {
-        TabView(selection: $currentIndex) {
-            ForEach(Array(store.items.enumerated()), id: \.element.id) { index, item in
+        TabView(selection: $currentID) {
+            ForEach(store.items) { item in
                 FullPhotoView(store: store, item: item)
-                    .tag(index)
+                    .tag(item.id)
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -27,8 +33,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                if currentIndex < store.items.count {
-                    let item = store.items[currentIndex]
+                if let item = currentItem {
                     if let title = item.displayTitle {
                         Text(title).font(.subheadline)
                     } else if let date = item.captureDate {
@@ -44,10 +49,12 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 await store.loadMore()
             }
         }
-        // Also trigger when swiping within 20 photos of the end to handle
-        // cases where multiple pages have already been prefetched.
-        .onChange(of: currentIndex) { _, newIndex in
-            if store.hasMore && newIndex >= store.items.count - 20 {
+        // Also trigger when swiping within 20 photos of the end. hasMore は通常 false
+        // （ページングなし）なので、その場合は firstIndex の走査も走らない。
+        .onChange(of: currentID) { _, newID in
+            guard store.hasMore,
+                  let index = store.items.firstIndex(where: { $0.id == newID }) else { return }
+            if index >= store.items.count - 20 {
                 Task { await store.loadMore() }
             }
         }
@@ -67,12 +74,16 @@ private struct FullPhotoView<Store: PhotoStore>: View {
     @State private var coordinate: CLLocationCoordinate2D?
     @State private var placeName: String?
     @State private var insight: PhotoInsight?
+    /// 情報パネルが可視になったか（F）。下までスクロールして初めて EXIF/位置/地名/insight を解決する。
+    @State private var infoRequested = false
     @Environment(\.photoInsight) private var photoInsight
 
     var body: some View {
         GeometryReader { geo in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
+                // LazyVStack：情報パネルは画面下（オフスクリーン）にあり、スクロールで可視化されるまで
+                // 構築・onAppear が走らない。ページ送りを画像ロードだけに絞って軽くする（F/E）。
+                LazyVStack(spacing: 0) {
                     photo
                         .frame(width: geo.size.width, height: geo.size.height)
                     PhotoInfoPanel(
@@ -83,32 +94,29 @@ private struct FullPhotoView<Store: PhotoStore>: View {
                         insight: insight
                     )
                     .frame(width: geo.size.width)
+                    .onAppear { infoRequested = true }
                 }
             }
             .scrollIndicators(.hidden)
             .background(Color.black)
         }
+        // フル画像のみ即ロード（取得時にディスクキャッシュ）。ページ送りはこれだけで軽い。
         .task(id: item.id) {
-            image = nil
-            failed = false
-            exif = nil
-            coordinate = nil
-            placeName = nil
-            insight = nil
-            // まずフル画像（取得時にディスクキャッシュされる）。
             if let loaded = await store.fullImage(for: item) {
                 image = loaded
             } else {
                 failed = true
             }
-            // 続いて情報を解決：EXIF（Dropbox はキャッシュ済みファイルから抽出）→ 位置 → 地名。
+        }
+        // 情報パネルが可視になってから EXIF→位置→地名→insight を解決する（F）。
+        .task(id: infoRequested) {
+            guard infoRequested else { return }
             exif = await store.metadata(for: item)
             let resolved = await store.location(for: item)
             coordinate = resolved
             if let resolved {
                 placeName = await PlaceNameResolver.shared.placeName(for: resolved)
             }
-            // 付加情報（状態・表示タグ・人物）。アプリが注入していれば取得。
             if let photoInsight {
                 insight = await photoInsight("\(item.id)")
             }
