@@ -21,11 +21,8 @@ struct GroupedGridView<Store: PhotoStore>: View {
     @State private var sections: [PhotoGridSection<Store.Item>] = []
 
     @Environment(\.photoInteraction) private var photoInteraction
-    /// スクラブ中（A）／高速スクロール中（R3）。どちらかの間は取得・背景処理を止める。
+    /// スクラブ中はサムネ取得・背景処理を止める（A）。
     @State private var isScrubbing = false
-    @State private var isFastScrolling = false
-
-    private var interacting: Bool { isScrubbing || isFastScrolling }
 
     var body: some View {
         GeometryReader { geo in
@@ -42,7 +39,7 @@ struct GroupedGridView<Store: PhotoStore>: View {
                                             // ナビゲーションは flatIndex ではなく item.id（C）。
                                             NavigationLink(value: entry.item.id) {
                                                 ThumbnailCell(store: store, item: entry.item, side: cellSide,
-                                                              paused: interacting)
+                                                              paused: isScrubbing)
                                             }
                                             .buttonStyle(.plain)
                                         }
@@ -69,7 +66,6 @@ struct GroupedGridView<Store: PhotoStore>: View {
                     .background(PinchRecognizerBridge(onEnded: onPinch))
                 }
                 .defaultScrollAnchor(.bottom)
-                .pauseOnFastScroll(enabled: !isScrubbing) { isFastScrolling = $0 }   // R3（スクラブ中は無効）
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
                         VerticalScrubber(onScrub: { fraction in
@@ -84,8 +80,8 @@ struct GroupedGridView<Store: PhotoStore>: View {
                 }
             }
         }
-        // G: 操作（スクラブ/高速スクロール）の開始・終了で背景 CLIP 埋め込みを譲る/再開。
-        .onChange(of: interacting) { _, active in
+        // G: スクラブの開始・終了で背景 CLIP 埋め込みを譲る/再開。
+        .onChange(of: isScrubbing) { _, active in
             photoInteraction?(active)
         }
         // items / 粒度 / 列数が変わったときだけ、メインアクタ外でセクションを再構築する。

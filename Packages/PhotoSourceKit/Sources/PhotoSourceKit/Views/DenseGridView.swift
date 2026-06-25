@@ -17,15 +17,11 @@ struct DenseGridView<Store: PhotoStore>: View {
     private let spacing: CGFloat = 2
 
     @Environment(\.photoInteraction) private var photoInteraction
-    /// スクラブ中（A）／高速スクロール中（R3）。どちらかの間は取得・先読み・背景処理を止める。
+    /// スクラブ中はサムネ取得・先読み・背景処理を止める（A）。
     @State private var isScrubbing = false
-    @State private var isFastScrolling = false
     // 先読みの合体スロットリング（B）。最新の先頭 index を保持し、~120ms で1回だけ実行する。
     @State private var pendingPrefetchIndex: Int?
     @State private var prefetchScheduled = false
-
-    /// ユーザーが能動操作中か（スクラブ or 高速スクロール）。
-    private var interacting: Bool { isScrubbing || isFastScrolling }
 
     var body: some View {
         let cols = max(1, columnCount)
@@ -41,7 +37,7 @@ struct DenseGridView<Store: PhotoStore>: View {
                         ForEach(Array(store.items.enumerated()), id: \.element.id) { index, item in
                             // ナビゲーションは index ではなく item.id（C）。並べ替え・件数変化に頑健。
                             NavigationLink(value: item.id) {
-                                ThumbnailCell(store: store, item: item, side: cellSide, paused: interacting)
+                                ThumbnailCell(store: store, item: item, side: cellSide, paused: isScrubbing)
                             }
                             .buttonStyle(.plain)
                             .onAppear {
@@ -61,9 +57,6 @@ struct DenseGridView<Store: PhotoStore>: View {
                     }
                 }
                 .defaultScrollAnchor(.bottom)
-                // R3: 高速スクロール中は取得・先読み・背景処理を止める。
-                // スクラブ中はスクラバー側の scrollTo と競合させないため無効化する。
-                .pauseOnFastScroll(enabled: !isScrubbing) { isFastScrolling = $0 }
                 // 縦スクロール用スクラバー（写真が多いときだけ）。ドラッグ位置に比例してジャンプ。
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
@@ -77,8 +70,8 @@ struct DenseGridView<Store: PhotoStore>: View {
                         })
                     }
                 }
-                // G: 操作（スクラブ/高速スクロール）の開始・終了で背景 CLIP 埋め込みを譲る/再開。
-                .onChange(of: interacting) { _, active in
+                // G: スクラブの開始・終了で背景 CLIP 埋め込みを譲る/再開。
+                .onChange(of: isScrubbing) { _, active in
                     photoInteraction?(active)
                 }
             }
@@ -90,14 +83,14 @@ struct DenseGridView<Store: PhotoStore>: View {
     /// 先読みを ~120ms に1回へ合体する（B）。連続スクロールで毎行 `store.prefetch` を投げて
     /// Task を量産しないようにし、スクラブ中は完全に停止する（A）。
     private func requestPrefetch(from index: Int, cols: Int) {
-        guard !interacting else { return }
+        guard !isScrubbing else { return }
         pendingPrefetchIndex = index
         guard !prefetchScheduled else { return }
         prefetchScheduled = true
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120))
             prefetchScheduled = false
-            guard !interacting, let idx = pendingPrefetchIndex else { return }
+            guard !isScrubbing, let idx = pendingPrefetchIndex else { return }
             pendingPrefetchIndex = nil
             runPrefetch(from: idx, cols: cols)
         }
