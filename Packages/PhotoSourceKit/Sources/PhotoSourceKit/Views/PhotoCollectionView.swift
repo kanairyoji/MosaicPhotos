@@ -116,15 +116,21 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
         private func makeLayout(columns: Int, grouped: Bool) -> UICollectionViewLayout {
             let cols = max(1, columns)
+            let fraction = 1.0 / CGFloat(cols)
+            // item 幅を 1/cols にし、subitems:[item] でグループが cols 個で自動的に埋まる。
+            // セル間の隙間は contentInsets（各辺 spacing/2）で作る（interItemSpacing だと
+            // 合計幅が超過して列が折り返す古典的問題があるため使わない）。
             let item = NSCollectionLayoutItem(layoutSize: .init(
-                widthDimension: .fractionalWidth(1), heightDimension: .fractionalHeight(1)))
+                widthDimension: .fractionalWidth(fraction),
+                heightDimension: .fractionalHeight(1.0)))
+            item.contentInsets = NSDirectionalEdgeInsets(
+                top: spacing / 2, leading: spacing / 2, bottom: spacing / 2, trailing: spacing / 2)
+            // グループ高 = コンテナ幅 × 1/cols ＝ 正方形の行。
             let group = NSCollectionLayoutGroup.horizontal(
-                layoutSize: .init(widthDimension: .fractionalWidth(1),
-                                  heightDimension: .fractionalWidth(1.0 / CGFloat(cols))),
-                repeatingSubitem: item, count: cols)
-            group.interItemSpacing = .fixed(spacing)
+                layoutSize: .init(widthDimension: .fractionalWidth(1.0),
+                                  heightDimension: .fractionalWidth(fraction)),
+                subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
-            section.interGroupSpacing = spacing
             if grouped {
                 let header = NSCollectionLayoutBoundarySupplementaryItem(
                     layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(32)),
