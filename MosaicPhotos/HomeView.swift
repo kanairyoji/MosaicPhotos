@@ -24,10 +24,10 @@ struct HomeView: View {
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
     /// Dropbox/バックアップのアダプタを注入し、ローカル＋クラウドを統合・重複排除して生成する。
     @State var autoAlbumEngine: AutoAlbumEngine
-    @State var activeSource: ActiveSource?
-    @State var selectedAlbum: LocalAlbumInfo?
-    @State var selectedPlace: PlaceAlbumInfo?
-    @State var selectedAutoAlbum: AutoAlbumInfo?
+    /// フルスクリーン表示の対象（ソース/端末アルバム/場所/自動アルバム）。
+    /// 4 つの `.fullScreenCover(item:)` を併用すると提示競合で別アルバムの中身が出る不具合があったため、
+    /// 単一の `.fullScreenCover(item:)` ＋ enum に統合する（`.sheet` で採った対策と同じ）。
+    @State var destination: HomeDestination?
     @State private var showingSettings = false
     /// AI アルバム作成/編集シートの対象（新規 or 既存）。
     /// 単一の `.sheet(item:)` に統合して、複数 .sheet 併用時の提示競合（編集が常に先頭になる不具合）を防ぐ。
@@ -74,31 +74,22 @@ struct HomeView: View {
                 AIAlbumComposerView(engine: autoAlbumEngine, editing: album)
             }
         }
-        .fullScreenCover(item: $activeSource) { source in
-            sourceHost(dismiss: { activeSource = nil }) {
-                switch source {
-                case .all:
+        .fullScreenCover(item: $destination) { dest in
+            sourceHost(dismiss: { destination = nil }) {
+                switch dest {
+                case .source(.all):
                     PhotoSourceContentView(store: mergedStore, title: "All Photos")
-                case .local:
+                case .source(.local):
                     LocalPhotoContentView()
-                case .cloud:
+                case .source(.cloud):
                     DropboxContentView(store: dropboxStore)
+                case .localAlbum(let album):
+                    LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
+                case .place(let place):
+                    PlacePhotosView(place: place, dropboxStore: dropboxStore)
+                case .autoAlbum(let album):
+                    AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore)
                 }
-            }
-        }
-        .fullScreenCover(item: $selectedAlbum) { album in
-            sourceHost(dismiss: { selectedAlbum = nil }) {
-                LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
-            }
-        }
-        .fullScreenCover(item: $selectedPlace) { place in
-            sourceHost(dismiss: { selectedPlace = nil }) {
-                PlacePhotosView(place: place, dropboxStore: dropboxStore)
-            }
-        }
-        .fullScreenCover(item: $selectedAutoAlbum) { album in
-            sourceHost(dismiss: { selectedAutoAlbum = nil }) {
-                AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore)
             }
         }
         .modifier(HomeLifecycleTasks(

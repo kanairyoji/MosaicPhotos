@@ -24,7 +24,7 @@ extension HomeView {
                 title: "All Photos",
                 subtitle: "Device + Dropbox combined"
             ) {
-                activeSource = .all
+                destination = .source(.all)
             }
 
             SourceRow(
@@ -33,7 +33,7 @@ extension HomeView {
                 title: "On-Device Photos",
                 subtitle: "Photos stored on this device"
             ) {
-                activeSource = .local
+                destination = .source(.local)
             }
 
             SourceRow(
@@ -42,7 +42,7 @@ extension HomeView {
                 title: "Cloud",
                 subtitle: cloudSubtitle
             ) {
-                activeSource = .cloud
+                destination = .source(.cloud)
             }
         } header: {
             Text("Sources")
@@ -73,7 +73,7 @@ extension HomeView {
             } else {
                 ForEach(albumScanner.albums) { album in
                     Button {
-                        selectedAlbum = album
+                        destination = .localAlbum(album)
                     } label: {
                         AlbumRow(album: album)
                     }
@@ -120,7 +120,7 @@ extension HomeView {
             } else {
                 ForEach(placeScanner.places) { place in
                     Button {
-                        selectedPlace = place
+                        destination = .place(place)
                     } label: {
                         PlaceRow(place: place, dropboxStore: dropboxStore)
                     }
@@ -166,7 +166,7 @@ extension HomeView {
                     .foregroundStyle(.secondary)
             } else {
                 AlbumCarousel(albums: autoAlbumEngine.albums, dropboxStore: dropboxStore) {
-                    selectedAutoAlbum = $0
+                    destination = .autoAlbum($0)
                 }
             }
         } header: {
@@ -205,7 +205,7 @@ extension HomeView {
             } else {
                 AlbumCarousel(
                     albums: autoAlbumEngine.aiAlbums, dropboxStore: dropboxStore,
-                    onSelect: { selectedAutoAlbum = $0 },
+                    onSelect: { destination = .autoAlbum($0) },
                     onEdit: { aiComposer = .edit($0) },
                     onDelete: { album in Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) } })
             }
@@ -246,7 +246,7 @@ extension HomeView {
                         .foregroundStyle(.secondary)
                 } else {
                     AlbumCarousel(albums: autoAlbumEngine.pathAlbums, dropboxStore: dropboxStore) {
-                        selectedAutoAlbum = $0
+                        destination = .autoAlbum($0)
                     }
                 }
             } header: {
@@ -295,6 +295,28 @@ extension HomeView {
 enum ActiveSource: String, Identifiable {
     case all, local, cloud
     var id: String { rawValue }
+}
+
+// MARK: - Full-screen destination
+
+/// ホームからフルスクリーン表示する対象。ソース（All/On-Device/Cloud）・端末アルバム・場所・
+/// 自動アルバムを **単一の** `.fullScreenCover(item:)` で扱うための統合 enum。
+/// 4 つの `.fullScreenCover` を併用すると提示競合で別アルバムの中身が表示される不具合があったため、
+/// 1 つに集約する（`AIComposerTarget` で `.sheet` に適用したのと同じ対策）。
+enum HomeDestination: Identifiable {
+    case source(ActiveSource)
+    case localAlbum(LocalAlbumInfo)
+    case place(PlaceAlbumInfo)
+    case autoAlbum(AutoAlbumInfo)
+
+    var id: String {
+        switch self {
+        case .source(let source): return "source-\(source.id)"
+        case .localAlbum(let album): return "album-\(album.id)"
+        case .place(let place): return "place-\(place.id)"
+        case .autoAlbum(let album): return "auto-\(album.id)"
+        }
+    }
 }
 
 // MARK: - AI composer target
