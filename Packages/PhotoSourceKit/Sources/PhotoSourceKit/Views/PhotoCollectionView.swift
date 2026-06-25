@@ -212,21 +212,23 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 snapshot.appendSections([single])
                 snapshot.appendItems(items.map { $0.id }, toSection: single)
             }
-            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
-                // レイアウト確定後に末尾へ寄せる（apply 直後は contentSize 未確定のことがある）。
+            // 67k 件の差分計算を避けるため reloadData 適用にする（起動時の main スレッド負荷を下げる）。
+            dataSource.applySnapshotUsingReloadData(snapshot) { [weak self] in
                 DispatchQueue.main.async { self?.scrollToBottomIfNeeded() }
             }
         }
 
-        /// 初回のみ、タイムライン末尾（最新）へスクロールする。bounds 未確定なら次回に持ち越す。
+        /// 初回のみ、タイムライン末尾（最新）へスクロールする。
+        /// ⚠️ `layoutIfNeeded()`（全 ~22,500 行のセル属性を一括計算）は起動時の大スパイクになるため使わない。
+        /// `scrollToItem(.bottom)` は対象付近だけを計算するので軽い（等間隔セルはオフセットを算術計算できる）。
         func scrollToBottomIfNeeded() {
-            guard !didInitialScroll, let cv = collectionView,
-                  cv.bounds.height > 0, !itemsByID.isEmpty else { return }
-            cv.layoutIfNeeded()
-            let maxY = max(0, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
-            guard maxY > 0 else { return }   // まだレイアウトが育っていない
+            guard !didInitialScroll, let cv = collectionView, cv.bounds.height > 0 else { return }
+            let lastSection = cv.numberOfSections - 1
+            guard lastSection >= 0 else { return }
+            let lastItem = cv.numberOfItems(inSection: lastSection) - 1
+            guard lastItem >= 0 else { return }
             didInitialScroll = true
-            cv.setContentOffset(CGPoint(x: 0, y: maxY), animated: false)
+            cv.scrollToItem(at: IndexPath(item: lastItem, section: lastSection), at: .bottom, animated: false)
         }
 
         // MARK: Scroll / scrubber

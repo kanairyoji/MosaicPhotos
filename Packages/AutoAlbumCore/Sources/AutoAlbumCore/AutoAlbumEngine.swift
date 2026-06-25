@@ -101,6 +101,13 @@ public final class AutoAlbumEngine {
             aiAlbums = all.filter { $0.strategyID == AIAlbumStrategy.strategyID }
         }
         isLoaded = true
+
+        // 実機の起動時メモリ/CPU スパイク回避：保存済みアルバムの表示は即時に行い、重い再生成・AI 再評価・
+        // 背景タグ付け（67k の clipVector ロードや CLIP モデル初期化）は、グリッドや Dropbox キャッシュの
+        // 初期読み込みと**同時に**走らないよう少し遅らせる（同時スパイクが jetsam/watchdog を誘発するため）。
+        try? await Task.sleep(for: .seconds(3))
+        if Task.isCancelled { return }
+
         let storedVersion = UserDefaults.standard.integer(forKey: AutoAlbumSettingsKeys.generationVersion)
         Self.log.info("loadOrGenerate: albums=\(albums.count) storedVersion=\(storedVersion) target=\(Self.generationVersion)")
         if albums.isEmpty || storedVersion != Self.generationVersion {
@@ -165,7 +172,8 @@ public final class AutoAlbumEngine {
         await store.refreshLocalLinkKeys(backupMap)
 
         // 4. 全付加情報 → 重複排除（linkKey でローカル優先）。
-        let allEnriched = await store.allEnrichedPhotos()
+        //    生成は意味検索を伴わないため clipVector を載せない軽量版を使う（実機メモリ削減）。
+        let allEnriched = await store.allEnrichedPhotosLite()
         var photos = dedupByLinkKey(allEnriched)
         if UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.excludeAlbumed) {
             let albumed = await PhotoEnricher.userAlbumedIdentifiers()

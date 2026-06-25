@@ -95,10 +95,17 @@ actor AutoAlbumStore {
         try? modelContext.save()
     }
 
-    /// 付加情報済みの全写真（戦略の入力）。
+    /// 付加情報済みの全写真（戦略の入力）。意味検索でのみ clipVector が要る。
     func allEnrichedPhotos() -> [EnrichedPhoto] {
         let records = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? []
         return records.map(\.asEnrichedPhoto)
+    }
+
+    /// clipVector を載せない軽量版（生成・重複排除・戦略・フォルダ用）。約130MBの埋め込みを
+    /// メモリへ持たないことで実機の起動時メモリスパイクを抑える。
+    func allEnrichedPhotosLite() -> [EnrichedPhoto] {
+        let records = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? []
+        return records.map(\.asEnrichedPhotoLite)
     }
 
     func enrichmentCount() -> Int {

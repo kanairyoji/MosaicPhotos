@@ -58,4 +58,13 @@ final class PhotoEnrichment {
                       isFavorite: isFavorite, aspect: aspect, people: people,
                       clipVector: clipVector)
     }
+
+    /// clipVector を**読まない**軽量版。意味検索を伴わない用途（生成・重複排除・戦略・フォルダ）で使い、
+    /// 67k×2KB の埋め込みをメモリへ載せない（実機のメモリ枯渇回避）。
+    var asEnrichedPhotoLite: EnrichedPhoto {
+        EnrichedPhoto(id: refKey, captureDate: captureDate, latitude: latitude, longitude: longitude,
+                      placeName: placeName, country: country, linkKey: linkKey, isScreenshot: isScreenshot,
+                      isFavorite: isFavorite, aspect: aspect, people: people,
+                      clipVector: nil)
+    }
 }
