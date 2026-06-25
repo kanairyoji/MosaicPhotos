@@ -92,8 +92,19 @@ extension MergedPhotoStore: PhotoStore {
         Self.resolveState(
             localState: localStore.state,
             hasLocalAssets: !localStore.assets.isEmpty,
-            hasDropbox: !dropboxStore.items.isEmpty
+            hasDropbox: !dropboxStore.items.isEmpty,
+            dropboxBusy: dropboxBusy
         )
+    }
+
+    /// Dropbox がまだ取得中か（ロード中 or 初回同期/差分取得中）。
+    /// T2: ローカルが空でも Dropbox 取得完了前に "No photos" を出さないために使う。
+    private var dropboxBusy: Bool {
+        if case .loading = dropboxStore.loadStatus { return true }
+        switch dropboxStore.syncState {
+        case .initialSync, .fetchingDelta: return true
+        default: return false
+        }
     }
 
     // MARK: - Pure helpers (テスト対象)
@@ -109,7 +120,8 @@ extension MergedPhotoStore: PhotoStore {
     /// 統合状態を解決する。ローカル権限が無い（needsSetup/failed）場合は全体をブロックし、
     /// いずれかにアイテムがあれば loaded、無ければローカルの読み込み状況に従う。
     nonisolated static func resolveState(
-        localState: PhotoLoadState, hasLocalAssets: Bool, hasDropbox: Bool
+        localState: PhotoLoadState, hasLocalAssets: Bool, hasDropbox: Bool,
+        dropboxBusy: Bool = false
     ) -> PhotoLoadState {
         switch localState {
         case .needsSetup, .failed:
@@ -121,7 +133,8 @@ extension MergedPhotoStore: PhotoStore {
         switch localState {
         case .idle:    return .idle
         case .loading: return .loading
-        default:       return .empty
+        // T2: ローカルが空でも Dropbox 取得中なら empty にせず loading を維持する。
+        default:       return dropboxBusy ? .loading : .empty
         }
     }
 

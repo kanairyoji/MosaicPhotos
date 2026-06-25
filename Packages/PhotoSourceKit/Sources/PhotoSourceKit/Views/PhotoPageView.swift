@@ -70,6 +70,8 @@ private struct FullPhotoView<Store: PhotoStore>: View {
     let item: Store.Item
     @State private var image: UIImage?
     @State private var failed = false
+    /// 「再試行」用。インクリメントすると画像ロード `.task` が再実行される。
+    @State private var retryToken = 0
     @State private var exif: PhotoExifInfo?
     @State private var coordinate: CLLocationCoordinate2D?
     @State private var placeName: String?
@@ -101,12 +103,19 @@ private struct FullPhotoView<Store: PhotoStore>: View {
             .background(Color.black)
         }
         // フル画像のみ即ロード（取得時にディスクキャッシュ）。ページ送りはこれだけで軽い。
-        .task(id: item.id) {
-            if let loaded = await store.fullImage(for: item) {
-                image = loaded
-            } else {
-                failed = true
+        // T1: 取得 nil（一時的なネットワーク断 -1005 等）は数回リトライし、
+        // 全滅したときだけ failed を立てる。読み込み中は "Loading…" を見せる。
+        .task(id: ImageKey(id: "\(item.id)", retry: retryToken)) {
+            failed = false
+            for attempt in 0..<3 {
+                if let loaded = await store.fullImage(for: item) {
+                    image = loaded
+                    return
+                }
+                if Task.isCancelled { return }
+                if attempt < 2 { try? await Task.sleep(for: .milliseconds(500)) }
             }
+            if !Task.isCancelled { failed = true }
         }
         // 情報パネルが可視になってから EXIF→位置→地名→insight を解決する（F）。
         .task(id: infoRequested) {
@@ -130,13 +139,32 @@ private struct FullPhotoView<Store: PhotoStore>: View {
                 .resizable()
                 .scaledToFit()
         } else if failed {
-            Text("Unable to display.")
-                .foregroundStyle(.secondary)
-                .colorScheme(.dark)
+            // T1: 失敗は "not found" 風ではなく、再試行できる控えめな表現にする。
+            VStack(spacing: 12) {
+                Image(systemName: "arrow.clockwise.circle")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.secondary)
+                Text("Couldn’t load. Tap to retry.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .colorScheme(.dark)
+            .contentShape(Rectangle())
+            .onTapGesture { retryToken += 1 }
         } else {
-            ProgressView()
-                .tint(.white)
+            VStack(spacing: 12) {
+                ProgressView().tint(.white)
+                Text("Loading…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .colorScheme(.dark)
         }
+    }
+
+    private struct ImageKey: Equatable {
+        let id: String
+        let retry: Int
     }
 }
 

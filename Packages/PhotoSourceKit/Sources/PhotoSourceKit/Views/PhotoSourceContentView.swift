@@ -102,7 +102,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 60))
                 .foregroundStyle(.secondary)
-            Text("No photos found.")
+            Text("No photos yet.")
         }
         .padding()
     }

@@ -40,11 +40,16 @@ struct ThumbnailCell<Store: PhotoStore>: View {
         .frame(width: side, height: side)
         .clipped()
         .contentShape(Rectangle())
-        // paused を id に含め、スクラブ解除時（paused: true→false）に取得を再開する。
+        // paused を id に含め、スクラブ/高速スクロール解除時（paused: true→false）に取得を再開する。
         // ⚠️ image = nil でのリセットはしない（D: 同一セルは item 同一性で固定のため、
-        // チラつきと再取得を避ける）。スクラブ中（paused）は取得せずプレースホルダのまま。
-        .task(id: TaskKey(id: "\(item.id)", paused: paused), priority: .userInitiated) {
+        // チラつきと再取得を避ける）。paused 中は取得せずプレースホルダのまま。
+        // 優先度は .utility（R2）：スクロール等の UI を最優先にし、画像は後追いで埋める。
+        .task(id: TaskKey(id: "\(item.id)", paused: paused), priority: .utility) {
             guard !paused, image == nil else { return }
+            // R1: 出現直後に取得せず少し待つ。高速スクロールで通り過ぎたセルは、この sleep 中に
+            // .task が自動キャンセルされ取得自体が走らない（＝画面操作を妨げない）。
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled, !paused, image == nil else { return }
             let scale = UIScreen.main.scale
             // サムネイル取得サイズはセルの実ピクセルサイズ（side × 画面倍率）に合わせる。
             let targetSize = CGSize(width: side * scale, height: side * scale)

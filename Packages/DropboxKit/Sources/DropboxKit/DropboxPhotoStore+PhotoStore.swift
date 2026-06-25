@@ -26,7 +26,17 @@ extension DropboxPhotoStore: PhotoStore {
         switch loadStatus {
         case .idle:    result = .idle
         case .loading: result = .loading
-        case .loaded:  result = items.isEmpty ? .empty : .loaded
+        case .loaded:
+            // T2: キャッシュが空でも初回同期・差分取得が進行中なら「読み込み中」を維持し、
+            // 取得完了前に "No photos" を一瞬出さない。
+            if items.isEmpty {
+                switch syncState {
+                case .initialSync, .fetchingDelta: result = .loading
+                default:                            result = .empty
+                }
+            } else {
+                result = .loaded
+            }
         case .failed(let message): result = .failed(message)
         }
         return result

@@ -21,8 +21,11 @@ struct GroupedGridView<Store: PhotoStore>: View {
     @State private var sections: [PhotoGridSection<Store.Item>] = []
 
     @Environment(\.photoInteraction) private var photoInteraction
-    /// スクラブ中はサムネ取得を止める（A）。
+    /// スクラブ中（A）／高速スクロール中（R3）。どちらかの間は取得・背景処理を止める。
     @State private var isScrubbing = false
+    @State private var isFastScrolling = false
+
+    private var interacting: Bool { isScrubbing || isFastScrolling }
 
     var body: some View {
         GeometryReader { geo in
@@ -39,7 +42,7 @@ struct GroupedGridView<Store: PhotoStore>: View {
                                             // ナビゲーションは flatIndex ではなく item.id（C）。
                                             NavigationLink(value: entry.item.id) {
                                                 ThumbnailCell(store: store, item: entry.item, side: cellSide,
-                                                              paused: isScrubbing)
+                                                              paused: interacting)
                                             }
                                             .buttonStyle(.plain)
                                         }
@@ -66,6 +69,7 @@ struct GroupedGridView<Store: PhotoStore>: View {
                     .background(PinchRecognizerBridge(onEnded: onPinch))
                 }
                 .defaultScrollAnchor(.bottom)
+                .pauseOnFastScroll { isFastScrolling = $0 }   // R3
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
                         VerticalScrubber(onScrub: { fraction in
@@ -75,11 +79,14 @@ struct GroupedGridView<Store: PhotoStore>: View {
                             }
                         }, onActiveChange: { active in
                             isScrubbing = active
-                            photoInteraction?(active)   // G: 背景処理を譲る
                         })
                     }
                 }
             }
+        }
+        // G: 操作（スクラブ/高速スクロール）の開始・終了で背景 CLIP 埋め込みを譲る/再開。
+        .onChange(of: interacting) { _, active in
+            photoInteraction?(active)
         }
         // items / 粒度 / 列数が変わったときだけ、メインアクタ外でセクションを再構築する。
         .task(id: "\(store.items.count)|\(grouping)|\(colCount)") {
