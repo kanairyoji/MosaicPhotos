@@ -7,6 +7,8 @@ import QuartzCore
 /// `onScrollGeometryChange` は iOS 18+ のため、未満では何もしない（R1 の出現遅延でも十分機能する）。
 @available(iOS 18.0, *)
 private struct ScrollVelocityPauseModifier: ViewModifier {
+    /// false の間は監視・通知を行わない（スクラバーのプログラム的 scrollTo と競合させないため）。
+    let enabled: Bool
     let onActiveChange: (Bool) -> Void
 
     @State private var lastOffset: CGFloat = 0
@@ -21,6 +23,8 @@ private struct ScrollVelocityPauseModifier: ViewModifier {
         content.onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y
         } action: { _, newY in
+            // スクラブ中など無効時は何もしない。基準だけ更新して誤検出を防ぐ。
+            guard enabled else { lastOffset = newY; lastTime = CACurrentMediaTime(); return }
             let now = CACurrentMediaTime()
             let dt = now - lastTime
             if lastTime != 0, dt > 0 {
@@ -49,10 +53,11 @@ private struct ScrollVelocityPauseModifier: ViewModifier {
 
 extension View {
     /// 高速スクロール中だけ `onActiveChange(true)`、落ち着いたら `false` を通知する。
+    /// `enabled: false`（例：スクラブ中）の間は監視・通知しない。
     @ViewBuilder
-    func pauseOnFastScroll(_ onActiveChange: @escaping (Bool) -> Void) -> some View {
+    func pauseOnFastScroll(enabled: Bool = true, _ onActiveChange: @escaping (Bool) -> Void) -> some View {
         if #available(iOS 18.0, *) {
-            modifier(ScrollVelocityPauseModifier(onActiveChange: onActiveChange))
+            modifier(ScrollVelocityPauseModifier(enabled: enabled, onActiveChange: onActiveChange))
         } else {
             self
         }

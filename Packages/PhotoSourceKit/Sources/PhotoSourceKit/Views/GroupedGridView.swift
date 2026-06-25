@@ -69,7 +69,7 @@ struct GroupedGridView<Store: PhotoStore>: View {
                     .background(PinchRecognizerBridge(onEnded: onPinch))
                 }
                 .defaultScrollAnchor(.bottom)
-                .pauseOnFastScroll { isFastScrolling = $0 }   // R3
+                .pauseOnFastScroll(enabled: !isScrubbing) { isFastScrolling = $0 }   // R3（スクラブ中は無効）
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
                         VerticalScrubber(onScrub: { fraction in

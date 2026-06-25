@@ -62,7 +62,8 @@ struct DenseGridView<Store: PhotoStore>: View {
                 }
                 .defaultScrollAnchor(.bottom)
                 // R3: 高速スクロール中は取得・先読み・背景処理を止める。
-                .pauseOnFastScroll { isFastScrolling = $0 }
+                // スクラブ中はスクラバー側の scrollTo と競合させないため無効化する。
+                .pauseOnFastScroll(enabled: !isScrubbing) { isFastScrolling = $0 }
                 // 縦スクロール用スクラバー（写真が多いときだけ）。ドラッグ位置に比例してジャンプ。
                 .overlay(alignment: .trailing) {
                     if store.items.count > 60 {
