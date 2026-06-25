@@ -11,7 +11,6 @@ private enum GridDisplayMode {
 }
 
 /// ズーム1段階＝（表示モード, 1行あたりの列数）。
-/// 大きい写真（1列）→ … → 最も多い 60 列まで。ピンチとスライダーの両方がこのラダーを進める。
 private struct ZoomLevel {
     let mode: GridDisplayMode
     let cols: Int
@@ -30,12 +29,16 @@ private let zoomLevels: [ZoomLevel] = [
 
 // MARK: - Grid view
 
-/// 写真グリッドの合成ルート。ズーム段階（列数ラダー）の状態を持ち、実レイアウトは
-/// `DenseGridView` / `GroupedGridView` に委譲する。ピンチとスライダーの両方で段階を変えられる。
+/// 写真グリッドの合成ルート。ズーム段階（列数ラダー）の状態を持ち、実体は `UICollectionView`
+/// ベースの `PhotoCollectionView` に委譲する（数万件規模での確実なスクラブ＋性能のため）。
+/// ピンチとスライダーの両方でズーム段階を変えられる。
 public struct PhotoGridView<Store: PhotoStore>: View {
     let store: Store
     /// ラダーのインデックス。既定はインデックス 2（dense 3 列）。
     @AppStorage(GridSettingsKeys.zoomLevel) private var zoomLevel = 2
+    @Environment(\.photoInteraction) private var photoInteraction
+    /// タップで開く写真（item.id）。`navigationDestination(item:)` で詳細へ push する。
+    @State private var selectedID: Store.Item.ID?
 
     public init(store: Store) { self.store = store }
 
@@ -43,25 +46,27 @@ public struct PhotoGridView<Store: PhotoStore>: View {
         zoomLevels[min(max(0, zoomLevel), zoomLevels.count - 1)]
     }
 
-    // MARK: Body
-
-    public var body: some View {
-        content
-            // item.id で遷移する（C）。index 依存をやめ、巨大な enumerated 配列を作らない。
-            .navigationDestination(for: Store.Item.ID.self) { id in
-                PhotoPageView(store: store, startID: id)
-            }
+    private var grouping: PhotoGridGrouping? {
+        switch level.mode {
+        case .dense:      return nil
+        case .monthGroup: return .month
+        case .yearGroup:  return .year
+        }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        switch level.mode {
-        case .dense:
-            DenseGridView(store: store, columnCount: level.cols, onPinch: onPinch)
-        case .monthGroup:
-            GroupedGridView(store: store, colCount: level.cols, grouping: .month, onPinch: onPinch)
-        case .yearGroup:
-            GroupedGridView(store: store, colCount: level.cols, grouping: .year, onPinch: onPinch)
+    public var body: some View {
+        PhotoCollectionView(
+            store: store,
+            items: store.items,
+            columnCount: level.cols,
+            grouping: grouping,
+            onPinch: onPinch,
+            onSelect: { selectedID = $0 },
+            onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る
+        )
+        .ignoresSafeArea(.container, edges: .horizontal)
+        .navigationDestination(item: $selectedID) { id in
+            PhotoPageView(store: store, startID: id)
         }
     }
 
