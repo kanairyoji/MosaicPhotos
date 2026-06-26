@@ -80,8 +80,9 @@ public final class PlaceScanner {
     public func refreshIfNeeded(dropboxItems: [DropboxFileItem]) async {
         lastDropboxItems = dropboxItems
         guard isLoaded, !isScanning else { return }
-        let signatureChanged = scanSignature(dropboxItems: dropboxItems) != lastScanSignature
-        guard signatureChanged || localLibraryDirty else { return }
+        // 署名計算（67k のハッシュ XOR）も毎ティック・メインで回さずオフメインで。
+        let signature = await Task.detached(priority: .utility) { placeScanSignature(dropboxItems) }.value
+        guard signature != lastScanSignature || localLibraryDirty else { return }
         localLibraryDirty = false
         await scan(dropboxItems: dropboxItems)
     }
@@ -100,13 +101,12 @@ public final class PlaceScanner {
         // 初回（places 空）は地名解決の都度 publish して段階表示する。
         // 再スキャンは地名キャッシュ済みで高速なので、無瞬断のため最後に一括反映する。
         let incremental = places.isEmpty
-        let signature = scanSignature(dropboxItems: dropboxItems)
 
         // 0. 写真アクセス権を確認（未決定なら要求）。Places は他ソースを開かなくても動くようにする。
-        //    これが無いと起動直後（権限 .notDetermined）はローカル写真が 0 件になっていた。
         let authStatus = await ensurePhotoAuthorization()
+        _ = authStatus
 
-        // 1. 候補収集（座標付き）。ローカルはバックグラウンドで列挙し、EXIF キャッシュを更新する。
+        // 1. ローカル候補収集（座標付き）。バックグラウンドで列挙し、EXIF キャッシュを更新する。
         let snapshot = localGPSCache
         let local = await Task.detached(priority: .utility) {
             fetchLocalLocatedCandidates(exifCache: snapshot)
@@ -114,29 +114,30 @@ public final class PlaceScanner {
         localGPSCache = local.cache
         localGPSStore.save(local.cache)
 
-#if DEBUG
-        print("[PhotosFeatureKit] PlaceScanner.scan — auth=\(authStatus.rawValue) " +
-              "local=\(local.candidates.count) cloud=\(dropboxItems.filter { $0.coordinate != nil }.count)")
-#endif
+        // 2. クラウド候補抽出（67k 件の compactMap）・グリッド集約・署名計算を **オフメイン**で行う
+        //    （メインスレッドで 67k を回すと起動・定期スキャンでカクつくため）。
+        let step = gridStep
+        let localCandidates = local.candidates
+        let (signature, byGrid) = await Task.detached(priority: .utility) {
+            () -> (Int, [String: [PlaceCandidate]]) in
+            let sig = placeScanSignature(dropboxItems)
+            let cloud = dropboxItems.compactMap { item -> PlaceCandidate? in
+                guard let coordinate = item.coordinate else { return nil }
+                return PlaceCandidate(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                      isLocal: false, identifier: item.path, date: item.captureDate)
+            }
+            var grid: [String: [PlaceCandidate]] = [:]
+            for candidate in localCandidates + cloud {
+                grid[GeoGridKey.key(latitude: candidate.latitude, longitude: candidate.longitude, step: step),
+                     default: []].append(candidate)
+            }
+            return (sig, grid)
+        }.value
 
-        let cloudCandidates: [PlaceCandidate] = dropboxItems.compactMap { item in
-            guard let coordinate = item.coordinate else { return nil }
-            return PlaceCandidate(latitude: coordinate.latitude, longitude: coordinate.longitude,
-                                  isLocal: false, identifier: item.path, date: item.captureDate)
-        }
-        let candidates = local.candidates + cloudCandidates
-        guard !candidates.isEmpty else {
+        guard !byGrid.isEmpty else {
             places = []
             lastScanSignature = signature
             return
-        }
-
-        // 2. グリッドキーで粗グループ化（ネットワーク無し）。粒度は設定で調整可能。
-        let step = gridStep
-        var byGrid: [String: [PlaceCandidate]] = [:]
-        for candidate in candidates {
-            byGrid[GeoGridKey.key(latitude: candidate.latitude, longitude: candidate.longitude, step: step), default: []]
-                .append(candidate)
         }
 
         // 3. ユニークキーを逐次ジオコーディングし、市区町村ごとに集約。
@@ -153,11 +154,6 @@ public final class PlaceScanner {
         await PlaceNameResolver.shared.persist()
         store.save(places)
         lastScanSignature = signature
-    }
-
-    /// 座標付き Dropbox アイテムのパス集合からスキャン署名を計算する。
-    private func scanSignature(dropboxItems: [DropboxFileItem]) -> Int {
-        placeScanSignature(dropboxItems)
     }
 
     /// 写真ライブラリのアクセス権を確認し、未決定なら要求する。

@@ -52,8 +52,10 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         private var dataSource: UICollectionViewDiffableDataSource<String, Store.Item.ID>!
         private let scrubber = ScrubberView()
 
-        /// id → Item（セル設定・先読みで Item 本体が要る）。
-        private var itemsByID: [Store.Item.ID: Store.Item] = [:]
+        /// 現在の一覧（COW で store の配列とバッファ共有＝追加コピーは軽い）と、id→index の対応。
+        /// 以前は id→Item の dict（67k 件の構造体コピー＝約10MB）だったが、index 参照に変えてメモリ削減。
+        private var items: [Store.Item] = []
+        private var idToIndex: [Store.Item.ID: Int] = [:]
         /// 現在適用済みの構成シグネチャ（再適用の要否判定）。
         private var appliedSignature = ""
         private var currentColumns = 0
@@ -143,7 +145,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
         private func configureDataSource(_ cv: UICollectionView) {
             let cellReg = UICollectionView.CellRegistration<ThumbCell, Store.Item.ID> { [weak self] cell, _, id in
-                guard let self, let item = self.itemsByID[id] else { return }
+                guard let self, let index = self.idToIndex[id], index < self.items.count else { return }
+                let item = self.items[index]
                 let px = self.cellPixelSize()
                 let store = self.store
                 cell.configure { await store.thumbnail(for: item, targetSize: px) }
@@ -187,11 +190,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         }
 
         private func applySnapshot(items: [Store.Item], grouping: PhotoGridGrouping?) {
-            // id → Item を更新。
-            var byID: [Store.Item.ID: Store.Item] = [:]
-            byID.reserveCapacity(items.count)
-            for item in items { byID[item.id] = item }
-            itemsByID = byID
+            // items 配列（COW・共有）と id→index を更新。dict に構造体をコピーしない。
+            self.items = items
+            var index: [Store.Item.ID: Int] = [:]
+            index.reserveCapacity(items.count)
+            for (i, item) in items.enumerated() { index[item.id] = i }
+            idToIndex = index
 
             var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
             if let grouping {
@@ -262,9 +266,28 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         }
 
         func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-            let items = indexPaths.compactMap { dataSource.itemIdentifier(for: $0).flatMap { itemsByID[$0] } }
-            guard !items.isEmpty else { return }
-            store.prefetch(items, targetSize: cellPixelSize())
+            let prefetch: [Store.Item] = indexPaths.compactMap { ip in
+                guard let id = dataSource.itemIdentifier(for: ip),
+                      let idx = idToIndex[id], idx < items.count else { return nil }
+                return items[idx]
+            }
+            guard !prefetch.isEmpty else { return }
+            store.prefetch(prefetch, targetSize: cellPixelSize())
+        }
+
+        // MARK: Scroll → 背景処理の一時停止（#3）
+        // スクラブだけでなく**通常スクロール中**も背景 CLIP 埋め込みを譲り、操作を滑らかにする。
+
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            onScrubbingChange(true)
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            if !decelerate { onScrubbingChange(false) }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            onScrubbingChange(false)
         }
     }
 }

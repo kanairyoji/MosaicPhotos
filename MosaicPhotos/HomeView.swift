@@ -160,6 +160,8 @@ private struct HomeLifecycleTasks: ViewModifier {
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする
             // （バックグラウンド同期や写真閲覧で座標が補完されると Places アルバムが増える）。
             .task {
+                // 起動直後の同時スパイクを避けるため初回 place スキャンを少し遅らせる（ホームの初回描画を優先）。
+                try? await Task.sleep(for: .seconds(1.5))
                 await placeScanner.loadOrScan(dropboxItems: dropboxStore.items)
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
@@ -174,8 +176,12 @@ private struct HomeLifecycleTasks: ViewModifier {
                     await autoAlbumEngine.refreshIfNeeded()
                 }
             }
-            // BackupSettingsView のデバッグ表示用にバックアップ記録もロードしておく。
-            .task { await backupEngine.loadAlbums() }
+            // BackupSettingsView のデバッグ表示用のバックアップ記録ロードは起動表示に不要なので、
+            // 起動スパイクを避けるため大きく遅延する（設定を開く頃には間に合う）。
+            .task {
+                try? await Task.sleep(for: .seconds(5))
+                await backupEngine.loadAlbums()
+            }
             .onChange(of: dropboxStore.auth.connectionStatus) { _, newStatus in
                 switch newStatus {
                 case .connected:
