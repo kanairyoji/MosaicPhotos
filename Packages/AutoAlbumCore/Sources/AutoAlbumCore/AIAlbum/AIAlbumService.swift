@@ -31,7 +31,9 @@ final class AIAlbumService {
         guard !trimmed.isEmpty else { return (.empty, nil) }
 
         let now = Date()
-        let all = await store.allEnrichedPhotos()
+        // clipVector を載せない軽量メタデータ（カタログ・構造化フィルタ用）。意味検索の埋め込みは
+        // rankedSearch 内でページングして読む（約138MBの一括ロードを避ける）。
+        let all = await store.allEnrichedPhotosLite()
         let catalog = AIAlbumCatalog.build(from: all)
         let query = await understanding.interpret(trimmed, catalog: catalog, now: now)
         queryCache[id] = query
@@ -51,7 +53,8 @@ final class AIAlbumService {
     func refresh(_ current: [AutoAlbumInfo]) async -> [AutoAlbumInfo] {
         guard !current.isEmpty else { return current }
         let now = Date()
-        let all = await store.allEnrichedPhotos()
+        // 軽量メタデータ（clipVector なし）。埋め込みは rankedSearch でページングして読む。
+        let all = await store.allEnrichedPhotosLite()
         let catalog = AIAlbumCatalog.build(from: all)
         let signature = catalog.places.count &* 1000 &+ catalog.people.count
         if signature != lastCatalogSignature { queryCache.removeAll(); lastCatalogSignature = signature }
@@ -82,10 +85,15 @@ final class AIAlbumService {
 
     // MARK: - Private
 
-    private func rankedSearch(_ all: [EnrichedPhoto], query: AIAlbumQuery,
+    private func rankedSearch(_ allLite: [EnrichedPhoto], query: AIAlbumQuery,
                               semanticText: String, now: Date) async -> [EnrichedPhoto] {
-        (await searcher.search(all, query: query, now: now, semanticText: semanticText))
-            .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+        // 意味検索の clipVector はストアからページ単位で読む（一度に全件を載せない）。
+        let members = await searcher.search(
+            baseLite: allLite, query: query, now: now, semanticText: semanticText,
+            loadPage: { [store] offset, limit in
+                await store.enrichmentVectorPage(offset: offset, limit: limit)
+            })
+        return members.sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
     }
 
     private func loadAll() async -> [AutoAlbumInfo] {

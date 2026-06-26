@@ -31,6 +31,43 @@ struct AIAlbumSearchTests {
         #expect(result.map { PhotoRef.decode($0.id)?.localIdentifier } == ["near"])
     }
 
+    @Test("バッチ版 search は純関数版と完全一致（メモリ削減で認識率は不変）")
+    func batchedEqualsPure() async {
+        let searcher = AIAlbumSearcher(textEmbedder: StubEmbedder(vector: [1, 0, 0]))
+        // distinct なコサインになる様々な角度。一部はフロア未満、1枚は clipVector なし。
+        let withClip = [
+            photo("a", place: "Tokyo", clip: [1.0, 0.0, 0.0]),
+            photo("b", place: "Tokyo", clip: [0.9, 0.1, 0.0]),
+            photo("c", place: "Tokyo", clip: [0.7, 0.7, 0.0]),
+            photo("d", place: "Tokyo", clip: [0.3, 0.95, 0.0]),
+            photo("e", place: "Tokyo", clip: [-1.0, 0.0, 0.0]),
+            photo("f", place: "Tokyo"),   // clipVector なし → 両方で除外
+        ]
+        var q = AIAlbumQuery()
+        q.placeTerms = ["tokyo"]
+        q.keywords = ["beach"]
+
+        // 純関数版（全件 clipVector 込み）。
+        let pure = await searcher.search(withClip, query: q, now: now, semanticText: "beach")
+
+        // バッチ版：lite メタ（clipVector なし）＋ refKey 昇順のページ取得（pageSize=2 で複数ページ）。
+        let lite = withClip.map {
+            EnrichedPhoto(id: $0.id, captureDate: $0.captureDate, latitude: $0.latitude,
+                          longitude: $0.longitude, placeName: $0.placeName, clipVector: nil)
+        }
+        let embedded = withClip
+            .compactMap { ph in ph.clipVector.map { (ph.id, $0) } }
+            .sorted { $0.0 < $1.0 }
+        let batched = await searcher.search(
+            baseLite: lite, query: q, now: now, semanticText: "beach", pageSize: 2,
+            loadPage: { offset, limit in
+                embedded.dropFirst(offset).prefix(limit).map { (refKey: $0.0, clipVector: $0.1) }
+            })
+
+        #expect(!pure.isEmpty)
+        #expect(pure.map(\.id) == batched.map(\.id))   // メンバー・順位ともに一致
+    }
+
     @Test("semanticText が指定されれば、keywords ではなくそれを CLIP に埋め込む")
     func usesSemanticTextForEmbedding() async {
         final class RecordingEmbedder: TextEmbedder, @unchecked Sendable {

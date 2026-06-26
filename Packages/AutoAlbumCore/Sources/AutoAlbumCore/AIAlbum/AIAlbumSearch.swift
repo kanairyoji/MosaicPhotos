@@ -64,6 +64,60 @@ struct AIAlbumSearcher {
         return query.hasStructuredConstraints ? base : []
     }
 
+    /// バッチ版 `search`：clipVector(約138MB) を一度に載せず、`loadPage` で **ページ単位**に読みながら
+    /// 各写真のコサインを算出する。スコア（Float）は全件保持しても軽いので、選抜ロジックは純関数版と
+    /// **完全に同一**（同じ `sorted.prefix(maxResults).filter(≥cutoff)`）＝結果は一致する。
+    /// - `all`: clipVector を載せない軽量メタデータ（構造化フィルタ・字句・カタログ用）。
+    /// - `loadPage(offset, limit)`: `(refKey, clipVector)` のページを返す（空ページで終端）。
+    func search(baseLite all: [EnrichedPhoto], query: AIAlbumQuery, now: Date, semanticText: String,
+                pageSize: Int = 4000,
+                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+    ) async -> [EnrichedPhoto] {
+        let base = PhotoQueryEngine.filter(all, with: query, now: now)
+
+        let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? query.keywords.joined(separator: ", ")
+            : semanticText
+        guard !phrase.isEmpty, !base.isEmpty else { return base }
+
+        let lexical = LexicalSearch.rank(base, keywords: query.keywords)
+
+        var semantic: [EnrichedPhoto] = []
+        if let textEmbedder, textEmbedder.isAvailable,
+           let vector = await textEmbedder.embed(phrase) {
+            let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            // スコアは全件保持（Float のみ＝軽い）。clipVector はページごとに読んで都度解放する。
+            var scored: [(photo: EnrichedPhoto, score: Float)] = []
+            scored.reserveCapacity(base.count)
+            var offset = 0
+            while true {
+                let page = await loadPage(offset, pageSize)
+                if page.isEmpty { break }
+                for entry in page {
+                    guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
+                    scored.append((photo, ClipMath.cosine(vector, v)))
+                }
+                offset += pageSize
+                if page.count < pageSize { break }
+            }
+            scored.sort { $0.score > $1.score }
+            if let top = scored.first?.score {
+                let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
+                semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
+            }
+            let isASCII = phrase.allSatisfy(\.isASCII)
+            let top = scored.first?.score ?? -1
+            Self.log.notice("aialbum: phrase=\"\(phrase, privacy: .public)\" ascii=\(isASCII, privacy: .public) embedded=\(scored.count, privacy: .public) top=\(top, privacy: .public) kept=\(semantic.count, privacy: .public)")
+            if !isASCII {
+                Self.log.notice("aialbum: query not translated to English (non-ASCII); semantic match will be poor")
+            }
+        }
+
+        let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
+        if !fused.isEmpty { return fused }
+        return query.hasStructuredConstraints ? base : []
+    }
+
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。
     /// タイトルはユーザー指定を優先し、空なら解釈タイトル→条件文の順で補完する。
     static func buildInfo(id: String, title: String, query: AIAlbumQuery, criteria: String,
