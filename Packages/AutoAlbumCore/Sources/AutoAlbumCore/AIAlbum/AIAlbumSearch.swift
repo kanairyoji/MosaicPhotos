@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import os
 
 /// AI アルバムの検索とアルバム情報の組み立て（純ロジック・テスト対象）。
@@ -132,37 +133,51 @@ struct AIAlbumSearcher {
         let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? includeTerms.joined(separator: ", ")
             : semanticText
-        guard !phrase.isEmpty, !base.isEmpty else { return base }
+
+        // 診断: なぜ空かを切り分けるための要約（base/埋め込み/しきい値/融合）。
+        var embeddedCount = 0
+        var topScore: Float = -1
+        var embedderAvailable = false
+
+        guard !phrase.isEmpty, !base.isEmpty else {
+            Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(phrase.isEmpty)")
+            return base
+        }
 
         let lexical = LexicalSearch.rank(base, keywords: includeTerms)
 
         var semantic: [EnrichedPhoto] = []
-        if let textEmbedder, textEmbedder.isAvailable,
-           let vector = await textEmbedder.embed(phrase) {
-            let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            var scored: [(photo: EnrichedPhoto, score: Float)] = []
-            scored.reserveCapacity(base.count)
-            var offset = 0
-            while true {
-                let page = await loadPage(offset, pageSize)
-                if page.isEmpty { break }
-                for entry in page {
-                    guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
-                    scored.append((photo, ClipMath.cosine(vector, v)))
+        if let textEmbedder, textEmbedder.isAvailable {
+            embedderAvailable = true
+            if let vector = await textEmbedder.embed(phrase) {
+                let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                var scored: [(photo: EnrichedPhoto, score: Float)] = []
+                scored.reserveCapacity(base.count)
+                var offset = 0
+                while true {
+                    let page = await loadPage(offset, pageSize)
+                    if page.isEmpty { break }
+                    for entry in page {
+                        guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
+                        scored.append((photo, ClipMath.cosine(vector, v)))
+                    }
+                    offset += pageSize
+                    if page.count < pageSize { break }
                 }
-                offset += pageSize
-                if page.count < pageSize { break }
-            }
-            scored.sort { $0.score > $1.score }
-            if let top = scored.first?.score {
-                let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
-                semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
+                scored.sort { $0.score > $1.score }
+                embeddedCount = scored.count
+                if let top = scored.first?.score {
+                    topScore = top
+                    let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
+                    semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
+                }
             }
         }
 
         let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
-        if !fused.isEmpty { return fused }
-        return spec.hasHardConstraints ? base : []
+        let result = fused.isEmpty ? (spec.hasHardConstraints ? base : []) : fused
+        Diagnostics.mark("aialbum: base=\(base.count)/\(all.count) hard=\(spec.hasHardConstraints) emb=\(embedderAvailable) scored=\(embeddedCount) top=\(String(format: "%.3f", topScore)) kept=\(semantic.count) lex=\(lexical.count) result=\(result.count)")
+        return result
     }
 
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。
