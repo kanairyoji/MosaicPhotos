@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-12 AI アルバム検索を合成可能な QuerySpec（OR/NOT/多ファセット）へ拡張
+- 状態: 採用（フラットな `AIAlbumQuery` の AND 専用を一般化。`AIAlbumQuery` は後方互換で残す）
+- 文脈: 「ここ2年の子供」「京都か奈良の家族のお気に入り、スクショ除く」等、アプリが持つ多様な情報（日付/場所/人物/人数/向き/位置/ソース/内容）への複雑条件・OR・NOT を柔軟に組みたい。
+- 決定: DNF（節の OR・節内 AND・各条件 NOT 可）の `QuerySpec`/`QueryClause`/`Condition` を新設。ハード条件（日付/場所/人物/人数/ソース/お気に入り/スクショ/向き/位置）は `QueryEvaluator` で評価、内容語(content)は CLIP でソフト採点（`AIAlbumSearcher.search(baseLite:spec:)`）。相対日付は `RelativeDateParser`（日英）で FM 非対応端末でも解釈。Foundation Models は `GeneratedSpec`（Generable・clauses=OR）で出力、RuleBased はフラット解釈を単一節へ橋渡し。`AIAlbumService` は `interpretSpec` 経由に配線。
+- 結果: AI アルバムが複雑条件・OR・相対日付に対応。除外内容(not(content))の減点と、日付/場所の多ソース解決（旅行アルバム由来）は次段（P2/後続）。純ロジック中心で `swift test` 担保。
+- 関連: `AIAlbum/QuerySpec.swift` / `QueryEvaluator.swift` / `RelativeDateParser.swift` / `AIAlbumSearch.swift` / `FoundationModelsQueryUnderstanding.swift` / `AIAlbumService.swift`。
+
 ## ADR-11 CLIP 画像エンコーダを fp16 のみにする（実機 ANE 優先）
 - 状態: 採用（旧「fp32（シミュレータ NaN 回避）」を置換）
 - 文脈: 実機ログで画像埋め込みが 1 枚 0.5〜1.3 秒と遅い。原因は画像エンコーダを `compute_precision=FLOAT32` で変換していたため、Neural Engine(ANE) に載らず GPU/CPU フォールバックしていたこと。元の fp32 はシミュレータの NaN 回避が目的だったが、シミュレータ最適化は本末転倒。

@@ -86,12 +86,12 @@ struct AIAlbumQueryTests {
         #expect(q.dateRange == nil)   // 「ここ数年」は FM に委ね、ルールベースは拾わない
     }
 
-    @Test("お気に入りは拾う（相対年「去年」は拾わない）")
+    @Test("お気に入りと相対年「去年」を拾う（RelativeDateParser 統合）")
     func interpretsFavorites() async {
         let catalog = AIAlbumCatalog(places: [], countries: [], people: [], earliest: nil, latest: nil)
         let q = await RuleBasedQueryUnderstanding().interpret("去年のお気に入り", catalog: catalog, now: now)
         #expect(q.favoritesOnly)
-        #expect(q.dateRange == nil)
+        #expect(q.dateRange == .year(2023))   // now=2024 → 去年=2023（旧仕様の「拾わない」から変更）
     }
 
     @Test("人物名と西暦4桁は拾う")

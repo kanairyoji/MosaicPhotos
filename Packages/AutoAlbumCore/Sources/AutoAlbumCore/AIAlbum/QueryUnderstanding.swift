@@ -4,6 +4,15 @@ import Foundation
 /// テストではスタブ、本番は端末 LLM（あれば）／ルールベース（フォールバック）。
 public protocol QueryUnderstanding: Sendable {
     func interpret(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> AIAlbumQuery
+    /// 合成可能な検索仕様（OR/NOT/複数ファセット）への解釈。既定はフラット解釈を単一節へ橋渡し。
+    /// OR を出せる実装（Foundation Models）はこれを上書きする。
+    func interpretSpec(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> QuerySpec
+}
+
+public extension QueryUnderstanding {
+    func interpretSpec(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> QuerySpec {
+        await interpret(text, catalog: catalog, now: now).asQuerySpec()
+    }
 }
 
 /// 既定の解釈器を返す。Apple Foundation Models（オンデバイス LLM）が使える端末ではそれを、
@@ -34,9 +43,10 @@ public struct RuleBasedQueryUnderstanding: QueryUnderstanding {
         query.favoritesOnly = lower.contains("favorite") || lower.contains("favourite")
             || text.contains("お気に入り")
 
-        // 西暦4桁のみ（相対表現は FM に任せる）。
-        if let year = Self.firstInt(in: text, pattern: "(?:19|20)\\d{2}") {
-            query.dateRange = .year(year)
+        // 相対・暦表現（ここN年・去年・過去Nヶ月・last N years 等）＋西暦4桁の保険。
+        // FM 非対応端末でも日付が効くよう純パーサで解釈する。
+        if let range = RelativeDateParser.parse(text, now: now) {
+            query.dateRange = range
         }
 
         // 場所/人物はカタログ（実データ）との部分一致で接地。ハードコード語彙ではない。

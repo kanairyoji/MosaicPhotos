@@ -169,13 +169,19 @@ struct AIAlbumSearcher {
     /// タイトルはユーザー指定を優先し、空なら解釈タイトル→条件文の順で補完する。
     static func buildInfo(id: String, title: String, query: AIAlbumQuery, criteria: String,
                           members: [EnrichedPhoto]) -> AutoAlbumInfo {
+        buildInfo(id: id, title: title, interpretedTitle: query.title, criteria: criteria, members: members)
+    }
+
+    /// QuerySpec 経路用：解釈タイトルを文字列で受ける版。
+    static func buildInfo(id: String, title: String, interpretedTitle: String, criteria: String,
+                          members: [EnrichedPhoto]) -> AutoAlbumInfo {
         let dates = members.compactMap(\.captureDate)
         let people = rankedByFrequency(members.flatMap(\.people))
         let located = members.filter(\.hasCoordinate)
         let lat = located.isEmpty ? nil : located.compactMap(\.latitude).reduce(0, +) / Double(located.count)
         let lon = located.isEmpty ? nil : located.compactMap(\.longitude).reduce(0, +) / Double(located.count)
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolved = !trimmedTitle.isEmpty ? trimmedTitle : (query.title.isEmpty ? criteria : query.title)
+        let resolved = !trimmedTitle.isEmpty ? trimmedTitle : (interpretedTitle.isEmpty ? criteria : interpretedTitle)
         return AutoAlbumInfo(
             id: id, strategyID: AIAlbumStrategy.strategyID,
             title: resolved, placeName: resolved, places: [resolved], country: nil, people: people,

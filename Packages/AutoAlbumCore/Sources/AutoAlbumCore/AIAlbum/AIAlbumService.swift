@@ -9,7 +9,7 @@ final class AIAlbumService {
     private let understanding: QueryUnderstanding
     private let searcher: AIAlbumSearcher
     private let translator: QueryTranslator?
-    private var queryCache: [String: AIAlbumQuery] = [:]
+    private var queryCache: [String: QuerySpec] = [:]
     private var lastCatalogSignature = -1
 
     init(store: AutoAlbumStore, understanding: QueryUnderstanding, textEmbedder: TextEmbedder?,
@@ -35,10 +35,11 @@ final class AIAlbumService {
         // rankedSearch 内でページングして読む（約138MBの一括ロードを避ける）。
         let all = await store.allEnrichedPhotosLite()
         let catalog = AIAlbumCatalog.build(from: all)
-        let query = await understanding.interpret(trimmed, catalog: catalog, now: now)
-        queryCache[id] = query
-        let members = await rankedSearch(all, query: query, semanticText: await englishPhrase(trimmed), now: now)
-        let info = AIAlbumSearcher.buildInfo(id: id, title: title, query: query, criteria: trimmed, members: members)
+        let spec = await understanding.interpretSpec(trimmed, catalog: catalog, now: now)
+        queryCache[id] = spec
+        let members = await rankedSearch(all, spec: spec, semanticText: await englishPhrase(trimmed), now: now)
+        let info = AIAlbumSearcher.buildInfo(id: id, title: title, interpretedTitle: spec.title,
+                                             criteria: trimmed, members: members)
         await store.upsert(albumInfo: info)
         return (.created(info), await loadAll())
     }
@@ -62,15 +63,15 @@ final class AIAlbumService {
         var updated: [AutoAlbumInfo] = []
         for album in current {
             guard let criteria = album.criteria, !criteria.isEmpty else { updated.append(album); continue }
-            let query: AIAlbumQuery
+            let spec: QuerySpec
             if let cached = queryCache[album.id] {
-                query = cached
+                spec = cached
             } else {
-                query = await understanding.interpret(criteria, catalog: catalog, now: now)
-                queryCache[album.id] = query
+                spec = await understanding.interpretSpec(criteria, catalog: catalog, now: now)
+                queryCache[album.id] = spec
             }
-            let members = await rankedSearch(all, query: query, semanticText: await englishPhrase(criteria), now: now)
-            let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, query: query,
+            let members = await rankedSearch(all, spec: spec, semanticText: await englishPhrase(criteria), now: now)
+            let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: spec.title,
                                                  criteria: criteria, members: members)
             await store.upsert(albumInfo: info)
             updated.append(info)
@@ -85,11 +86,11 @@ final class AIAlbumService {
 
     // MARK: - Private
 
-    private func rankedSearch(_ allLite: [EnrichedPhoto], query: AIAlbumQuery,
+    private func rankedSearch(_ allLite: [EnrichedPhoto], spec: QuerySpec,
                               semanticText: String, now: Date) async -> [EnrichedPhoto] {
         // 意味検索の clipVector はストアからページ単位で読む（一度に全件を載せない）。
         let members = await searcher.search(
-            baseLite: allLite, query: query, now: now, semanticText: semanticText,
+            baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
             loadPage: { [store] offset, limit in
                 await store.enrichmentVectorPage(offset: offset, limit: limit)
             })
