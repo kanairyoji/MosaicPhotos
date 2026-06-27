@@ -108,6 +108,14 @@ All AI lives in **`AutoAlbumCore`** (SwiftUI-free); the app injects the on-devic
 - **Display tags** — The full-screen info panel shows keyword tags via a separate **display-only** zero-shot step (`CLIPDisplayLabeler`): the stored image vector is compared against ~300 everyday English concepts. This never constrains search, which stays vocabulary-free.
 - **Seams** — `PhotoPerceptionProvider` (image → CLIP), `TextEmbedder` (text → CLIP), `QueryTranslator`, and `LabelProvider` are protocols in `AutoAlbumCore`; the app implements them with `MobileCLIPRuntime` and `FoundationModels`. `PhotoSourceKit` stays unaware of AI and receives per-photo info through a `photoInsight` environment closure.
 
+## Documentation
+
+An in-depth internal **architecture note** — design rationale (ADR), deep-dive implementation pages (concurrency, caching, data model), and a general, app-independent AI primer — is available as a multi-page HTML site:
+
+- **[Architecture Note → `docs/architecture-note/index.html`](docs/architecture-note/index.html)** — open in a browser (diagrams via Mermaid).
+
+> ⚠️ **The architecture note is written in Japanese only.** Its master records live as Markdown in `docs/architecture-note/records/`.
+
 ## Tech Stack
 
 | Area | Technology |
