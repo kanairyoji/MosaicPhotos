@@ -108,6 +108,13 @@ public enum Diagnostics {
     private static let log = Logger(subsystem: "com.mosaicphotos.Diagnostics", category: "diagnostics")
     private static var memorySource: DispatchSourceMemoryPressure?
 
+    /// 起動・主要フェーズの計測マーク。現在のメモリ使用量つきで診断ログへ 1 行追記する。
+    /// 起動チューニングの Before/After を実機の診断ログで確認するために使う（低頻度・軽量）。
+    public static func mark(_ label: String) {
+        let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
+        DiagnosticsLog.shared.append("MARK \(label) (footprint=\(mb))")
+    }
+
     public static func install() {
         let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
         DiagnosticsLog.shared.append("=== launch (footprint=\(mb)) ===")

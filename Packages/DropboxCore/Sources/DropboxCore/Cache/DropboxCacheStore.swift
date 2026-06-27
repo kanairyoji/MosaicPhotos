@@ -62,7 +62,9 @@ actor DropboxCacheStore {
 
         self.thumbnailByteLimit = thumbnailByteLimit
         self.fullImageByteLimit = fullImageByteLimit
-        thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit)
+        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）なので件数上限で十分。
+        // 0（未指定）のときは既定 1000 件（≒最大 60MB 程度）でキャップする（NSCache は圧迫時さらに破棄）。
+        thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit > 0 ? thumbnailMemoryCountLimit : 1000)
     }
 
     /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**

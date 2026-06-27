@@ -13,7 +13,7 @@ extension DropboxCacheStore {
 
     /// キャッシュの件数・実ディスク使用量（種別別バイト数）のスナップショット。
     func usageSnapshot() -> DropboxCacheUsage {
-        let itemCount = (try? modelContext.fetch(FetchDescriptor<CachedDropboxItem>()))?.count ?? 0
+        let itemCount = (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>())) ?? 0
         var thumbBytes = 0
         var fullBytes = 0
         if let entries = try? modelContext.fetch(FetchDescriptor<CacheUsageEntry>()) {

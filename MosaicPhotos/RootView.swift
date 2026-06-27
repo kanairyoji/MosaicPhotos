@@ -2,6 +2,7 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
+import MosaicSupport
 import PhotosFeatureKit
 import SwiftUI
 
@@ -34,6 +35,7 @@ final class HomeStores {
     /// 重いストアを順に構築する。各構築の前後で `Task.yield()` して主スレッドを解放し、
     /// 起動が 1 秒を超える場合でもローディング表示のタイマーが発火できるようにする。
     static func build() async -> HomeStores {
+        Diagnostics.mark("build: start")
         let auth = DropboxAuthService(appKey: DropboxConfig.appKey, redirectURI: DropboxConfig.redirectURI)
         await Task.yield()
         let dropboxStore = DropboxPhotoStore(auth: auth)
@@ -46,6 +48,7 @@ final class HomeStores {
         let placeScanner = PlaceScanner()
         await Task.yield()
         let autoAlbumEngine = makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine)
+        Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,
                           backupEngine: backupEngine, albumScanner: albumScanner,
                           placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)

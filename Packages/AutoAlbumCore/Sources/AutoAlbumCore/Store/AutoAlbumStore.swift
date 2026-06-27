@@ -46,9 +46,11 @@ actor AutoAlbumStore {
 
     // MARK: - Enrichment
 
-    /// 付加情報済みの全 refKey（差分判定用）。
+    /// 付加情報済みの全 refKey（差分判定用）。refKey 列のみを取得して他カラムを展開しない。
     func enrichedRefKeys() -> Set<String> {
-        let records = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? []
+        var descriptor = FetchDescriptor<PhotoEnrichment>()
+        descriptor.propertiesToFetch = [\.refKey]
+        let records = (try? modelContext.fetch(descriptor)) ?? []
         return Set(records.map(\.refKey))
     }
 

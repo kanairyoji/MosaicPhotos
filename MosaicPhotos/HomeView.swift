@@ -2,6 +2,7 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
+import MosaicSupport
 import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
@@ -156,7 +157,7 @@ private struct HomeLifecycleTasks: ViewModifier {
         content
             // アルバムスキャン：キャッシュがあれば即ロード、なければバックグラウンドでスキャン。
             // バックアップとは独立して動作する。
-            .task { await albumScanner.loadOrScan() }
+            .task { await albumScanner.loadOrScan(); Diagnostics.mark("albums loaded") }
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする
             // （バックグラウンド同期や写真閲覧で座標が補完されると Places アルバムが増える）。
@@ -164,6 +165,7 @@ private struct HomeLifecycleTasks: ViewModifier {
                 // 起動直後の同時スパイクを避けるため初回 place スキャンを少し遅らせる（ホームの初回描画を優先）。
                 try? await Task.sleep(for: .seconds(1.5))
                 await placeScanner.loadOrScan(dropboxItems: dropboxStore.items)
+                Diagnostics.mark("places loaded")
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
                     await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
@@ -172,6 +174,7 @@ private struct HomeLifecycleTasks: ViewModifier {
             // 自動アルバム（時間＋場所）：キャッシュ即ロード→無ければ生成。以降は写真追加で再生成。
             .task {
                 await autoAlbumEngine.loadOrGenerate()
+                Diagnostics.mark("autoAlbum loadOrGenerate done")
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
                     await autoAlbumEngine.refreshIfNeeded()
