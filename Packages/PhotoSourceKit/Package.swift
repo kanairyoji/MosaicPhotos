@@ -7,9 +7,15 @@ let package = Package(
     products: [
         .library(name: "PhotoSourceKit", targets: ["PhotoSourceKit"]),
     ],
+    dependencies: [
+        .package(path: "../MosaicSupport"),
+    ],
     targets: [
         .target(
             name: "PhotoSourceKit",
+            dependencies: [
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
+            ],
             path: "Sources/PhotoSourceKit"
         ),
         .testTarget(

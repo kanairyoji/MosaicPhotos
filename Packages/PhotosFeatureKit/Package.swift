@@ -11,6 +11,7 @@ let package = Package(
         .package(path: "../PhotoSourceKit"),
         .package(path: "../LocalPhotoKit"),
         .package(path: "../DropboxKit"),
+        .package(path: "../MosaicSupport"),
     ],
     targets: [
         .target(
@@ -19,6 +20,7 @@ let package = Package(
                 .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
                 .product(name: "LocalPhotoKit", package: "LocalPhotoKit"),
                 .product(name: "DropboxKit", package: "DropboxKit"),
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
             path: "Sources/PhotosFeatureKit"
         ),

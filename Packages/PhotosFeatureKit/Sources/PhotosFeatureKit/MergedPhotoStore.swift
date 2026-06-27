@@ -2,6 +2,7 @@
 import CoreLocation
 import DropboxKit
 import LocalPhotoKit
+import MosaicSupport
 import Observation
 import PhotoSourceKit
 import UIKit
@@ -68,12 +69,15 @@ public final class MergedPhotoStore {
         let filter = cloudPathFilter
         rebuildTask?.cancel()
         rebuildTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let t0 = CFAbsoluteTimeGetCurrent()
             let local = localSnapshot.map(MergedPhotoItem.local)
             let cloud = MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
                 .map(MergedPhotoItem.cloud)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
             let merged = (local + cloud).sortedByCaptureDateAscending()
             if Task.isCancelled { return }
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) total=\(merged.count) sort=\(Int(ms))ms")
             await self?.setItems(merged)
         }
     }

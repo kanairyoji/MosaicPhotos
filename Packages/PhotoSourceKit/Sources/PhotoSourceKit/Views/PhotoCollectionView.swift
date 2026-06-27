@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import MosaicSupport
 import SwiftUI
 import UIKit
 
@@ -190,12 +191,15 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         }
 
         private func applySnapshot(items: [Store.Item], grouping: PhotoGridGrouping?) {
+            // 【計測】このメソッドはメインスレッドで走り、68k 件規模では UI を固める主因。
+            let t0 = CFAbsoluteTimeGetCurrent()
             // items 配列（COW・共有）と id→index を更新。dict に構造体をコピーしない。
             self.items = items
             var index: [Store.Item.ID: Int] = [:]
             index.reserveCapacity(items.count)
             for (i, item) in items.enumerated() { index[item.id] = i }
             idToIndex = index
+            let indexMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
 
             var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
             if let grouping {
@@ -220,8 +224,13 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 snapshot.appendSections([single])
                 snapshot.appendItems(items.map { $0.id }, toSection: single)
             }
+            let buildMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000   // index＋グルーピング＋snapshot構築（main）
+            let sectionCount = snapshot.numberOfSections
             // 67k 件の差分計算を避けるため reloadData 適用にする（起動時の main スレッド負荷を下げる）。
             dataSource.applySnapshotUsingReloadData(snapshot) { [weak self] in
+                let applyMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000   // build＋apply 合計
+                Diagnostics.mark("grid.snapshot: items=\(items.count) sections=\(sectionCount) "
+                    + "index=\(Int(indexMs))ms build=\(Int(buildMs))ms total=\(Int(applyMs))ms")
                 DispatchQueue.main.async { self?.scrollToBottomIfNeeded() }
             }
         }
