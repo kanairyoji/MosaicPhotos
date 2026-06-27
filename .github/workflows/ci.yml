@@ -9,6 +9,11 @@ on:
     branches: [main]
   pull_request:
 
+# 最小権限（least privilege）。本ワークフローは checkout してテストを回すだけなので
+# 読み取りのみで十分（CodeQL: actions/missing-workflow-permissions 対策）。
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
