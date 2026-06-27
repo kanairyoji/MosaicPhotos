@@ -1,0 +1,44 @@
+name: CI
+
+# push（main）と全 PR でテストを自動実行する。
+# - fast: macOS の `swift test`（純ロジック）。署名不要・高速で、回帰の主検出ライン＝バッジ対象。
+# - ios:  iOS シミュレータのパッケージテスト。ランナーの iOS SDK / シミュレータ事情に依存するため
+#         best-effort（continue-on-error）。失敗してもワークフロー全体は赤にしない。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: macOS unit tests (fast)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: Run fast tests (swift test)
+        run: scripts/test.sh fast
+
+  ios:
+    name: iOS simulator tests (best-effort)
+    runs-on: macos-15
+    continue-on-error: true   # ランナーの iOS 26 SDK / シミュレータ有無に依存するため非ブロッキング
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: List available simulators
+        run: xcrun simctl list devices available | sed -n '1,80p'
+      - name: Run iOS simulator tests
+        env:
+          # 利用可能な端末名に合わせて調整可。OS=latest でその時点の最新 iOS を使う。
+          SIM: platform=iOS Simulator,name=iPhone 16 Pro,OS=latest
+        run: scripts/test.sh ios

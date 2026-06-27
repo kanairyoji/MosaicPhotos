@@ -1,0 +1,35 @@
+name: Release
+
+# タグ（v*）の push で GitHub Release を自動生成する（リリースノートも自動生成）。
+# 既に push 済みのタグ（例 v0.13）に対しては、Actions タブから "Run workflow" で
+# tag を指定して手動実行できる。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (例: v0.13)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping."
+          else
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          fi

@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-10 GitHub を CI・公開・リリースに活用
+- 状態: 採用
+- 文脈: 個人開発でも回帰検知・設計資料の公開・タグ運用の自動化が欲しい。秘密の誤コミットも機械的に防ぎたい。
+- 決定: GitHub Actions で CI（`scripts/test.sh fast` を gate、iOS sim は best-effort）/ Pages で `docs/architecture-note` を公開 / タグ push で Release 自動生成。リポジトリ設定で Secret scanning + Push Protection、CodeQL（default setup）を有効化。
+- 結果: push ごとに回帰検知、設計資料が公開URL化、リリースノート自動化、秘密混入の自動ブロック。ワークフロー push にはトークンの `workflow` スコープが必要。iOS 26 シミュレータはランナー事情に依存するため iOS テストは非ブロッキング。
+- 関連: `.github/workflows/ci.yml` / `pages.yml` / `release.yml`。
+
 ## ADR-9 Diagnostics で端末上ログ
 - 状態: 採用
 - 文脈: 実機で Mac/Console なしに不具合を追えない。

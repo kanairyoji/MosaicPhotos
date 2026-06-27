@@ -1,0 +1,37 @@
+name: Deploy docs to Pages
+
+# docs/architecture-note/（静的 HTML の設計資料）を GitHub Pages として公開する。
+# 事前に一度だけ：リポジトリの Settings → Pages → Build and deployment → Source を
+# 「GitHub Actions」に設定しておくこと（未設定だと最初の deploy が失敗する）。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/architecture-note/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Upload architecture note as Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/architecture-note
+      - id: deployment
+        uses: actions/deploy-pages@v4
