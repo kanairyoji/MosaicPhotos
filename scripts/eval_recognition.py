@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """オンデバイス画像認識（CLIP）の認識率を測るチューニング用プログラム。
 
-⚠️ これはユニットテスト/CI とは完全に独立した「手動実行専用」のツール。
+⚠️ ユニットテスト/CI とは完全に独立した「手動実行専用」のツール。
    出荷する Core ML モデル（MosaicPhotos/MobileCLIP/*.mlpackage）を coremltools で
-   そのまま実行し、Imagenette（ImageNet 自由配布サブセット・10クラス）に対する
-   zero-shot top-1 認識率を「X/100」で表示する。fp16 変換の影響も込みで検証できる。
+   そのまま実行し、認識率を測る。fp16 変換の影響も込みで検証できる。
+
+モード:
+  classify : 画像に対し候補クラス名のどれが最も近いか（zero-shot top-1）。
+             --classes imagenette（10クラス・やさしい）/ imagenet1k（1000クラス・厳しい）
+  query    : 自然文クエリで全画像をランキングし、top-1 画像が意図クラスかを判定
+             （オープン語彙の実利用に近い retrieval 評価）
 
 呼び出しは scripts/eval_recognition.sh 経由（venv・データ取得を面倒見る）。
 """
@@ -18,19 +23,34 @@ import numpy as np
 import coremltools as ct
 from PIL import Image
 
-# Imagenette の WNID → 人間可読ラベル（zero-shot の候補クラス）。
+# Imagenette の WNID → 人間可読ラベル / ImageNet-1k インデックス。
 IMAGENETTE = {
-    "n01440764": "tench",
-    "n02102040": "English springer",
-    "n02979186": "cassette player",
-    "n03000684": "chain saw",
-    "n03028079": "church",
-    "n03394916": "French horn",
-    "n03417042": "garbage truck",
-    "n03425413": "gas pump",
-    "n03445777": "golf ball",
-    "n03888257": "parachute",
+    "n01440764": ("tench", 0),
+    "n02102040": ("English springer", 217),
+    "n02979186": ("cassette player", 482),
+    "n03000684": ("chain saw", 491),
+    "n03028079": ("church", 497),
+    "n03394916": ("French horn", 566),
+    "n03417042": ("garbage truck", 569),
+    "n03425413": ("gas pump", 571),
+    "n03445777": ("golf ball", 574),
+    "n03888257": ("parachute", 701),
 }
+
+# 自然文クエリ（クラス名を直接言わない自由表現）→ 正解 WNID。オープン語彙 retrieval の評価用。
+QUERIES = [
+    ("a small freshwater fish held by a fisherman", "n01440764"),
+    ("a brown and white spaniel dog", "n02102040"),
+    ("an old portable audio tape player", "n02979186"),
+    ("a power tool for cutting wood", "n03000684"),
+    ("a building with a steeple where people worship", "n03028079"),
+    ("a brass wind instrument", "n03394916"),
+    ("a truck that collects household waste", "n03417042"),
+    ("a roadside fuel pump at a station", "n03425413"),
+    ("a small white ball used in a sport on grass", "n03445777"),
+    ("a canopy used to descend safely from the sky", "n03888257"),
+]
+
 PROMPT = "a photo of a {}"
 
 
@@ -50,82 +70,135 @@ def preprocess(path, size):
     return im.crop((left, top, left + size, top + size))
 
 
+def embed_text(txt_model, tokenizer, ctx, text):
+    toks = tokenizer([text]).numpy().astype(np.int32).reshape(1, ctx)
+    return np.array(txt_model.predict({"text": toks})["embedding"]).reshape(-1)
+
+
+def embed_image(img_model, im):
+    return np.array(img_model.predict({"image": im})["embedding"]).reshape(-1)
+
+
+def sample_images(images_dir, per_class, rng):
+    """[(path, wnid)] を返す。<images_dir>/<wnid>/*.JPEG 構造。"""
+    out = []
+    for wnid in IMAGENETTE:
+        cdir = os.path.join(images_dir, wnid)
+        if not os.path.isdir(cdir):
+            continue
+        files = [f for f in os.listdir(cdir) if f.lower().endswith((".jpeg", ".jpg", ".png"))]
+        rng.shuffle(files)
+        out += [(os.path.join(cdir, f), wnid) for f in files[:per_class]]
+    return out
+
+
+def run_classify(img_model, txt_model, tokenizer, ctx, samples, which):
+    if which == "imagenet1k":
+        import open_clip
+        names = list(open_clip.IMAGENET_CLASSNAMES)            # 1000・index 整合
+        target_index = {w: IMAGENETTE[w][1] for w in IMAGENETTE}
+        print(f"== building {len(names)} class text embeddings (imagenet1k) ==")
+    else:
+        wnids = list(IMAGENETTE.keys())
+        names = [IMAGENETTE[w][0] for w in wnids]              # 10
+        target_index = {w: i for i, w in enumerate(wnids)}     # クラス配列内の位置
+        print(f"== building {len(names)} class text embeddings (imagenette) ==")
+
+    class_mat = np.stack([embed_text(txt_model, tokenizer, ctx, PROMPT.format(n)) for n in names])
+
+    total, correct, nan = 0, 0, 0
+    per = {w: [0, 0] for w in IMAGENETTE}
+    mistakes = []
+    for path, wnid in samples:
+        vec = embed_image(img_model, preprocess(path, IMG_SIZE))
+        total += 1
+        per[wnid][1] += 1
+        if not np.all(np.isfinite(vec)):
+            nan += 1
+            continue
+        pred = int(np.argmax(class_mat @ vec))
+        if pred == target_index[wnid]:
+            correct += 1
+            per[wnid][0] += 1
+        elif len(mistakes) < 15:
+            mistakes.append((IMAGENETTE[wnid][0], names[pred], os.path.basename(path)))
+
+    print("\n== per-class (correct/total) ==")
+    for w in IMAGENETTE:
+        c, t = per[w]
+        if t:
+            print(f"  {IMAGENETTE[w][0]:<18} {c}/{t}")
+    _print_mistakes(mistakes)
+    return correct, total, nan
+
+
+def run_query(img_model, txt_model, tokenizer, ctx, samples):
+    print(f"== embedding {len(samples)} images for retrieval ==")
+    img_mat = np.stack([embed_image(img_model, preprocess(p, IMG_SIZE)) for p, _ in samples]).astype(np.float64)
+    wnids = [w for _, w in samples]
+    finite = np.all(np.isfinite(img_mat), axis=1)
+    nan = int((~finite).sum())
+    img_mat[~finite] = 0.0   # 非有限行は計算前にゼロ化（matmul の overflow/invalid 警告を防ぐ）
+
+    print("\n== query → top-1 image class ==")
+    correct = 0
+    for text, wnid in QUERIES:
+        qv = embed_text(txt_model, tokenizer, ctx, text).astype(np.float64)
+        scores = img_mat @ qv
+        scores[~finite] = -1e9
+        top = int(np.argmax(scores))
+        ok = wnids[top] == wnid
+        correct += int(ok)
+        mark = "✓" if ok else "✗"
+        print(f"  {mark} \"{text}\"\n      expected={IMAGENETTE[wnid][0]}  got={IMAGENETTE[wnids[top]][0]}")
+    return correct, len(QUERIES), nan
+
+
+def _print_mistakes(mistakes):
+    if mistakes:
+        print("\n== sample mistakes (true -> predicted) ==")
+        for true_l, pred_l, fn in mistakes:
+            print(f"  {true_l} -> {pred_l}   ({fn})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-dir", required=True)
     ap.add_argument("--images-dir", required=True, help="<dir>/<wnid>/*.JPEG の構造")
+    ap.add_argument("--mode", default="classify", choices=["classify", "query"])
+    ap.add_argument("--classes", default="imagenette", choices=["imagenette", "imagenet1k"])
     ap.add_argument("--per-class", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--compute-units", default="CPU_ONLY",
                     choices=["CPU_ONLY", "ALL", "CPU_AND_NE", "CPU_AND_GPU"])
     args = ap.parse_args()
-    random.seed(args.seed)
 
     cfg = json.load(open(os.path.join(args.model_dir, "mobileclip_config.json")))
-    size = int(cfg.get("imageSize", 256))
+    global IMG_SIZE
+    IMG_SIZE = int(cfg.get("imageSize", 256))
     ctx = int(cfg.get("contextLength", 77))
 
     cu = getattr(ct.ComputeUnit, args.compute_units)
-    print(f"== loading Core ML models (compute_units={args.compute_units}, imageSize={size}) ==")
+    print(f"== loading Core ML models (compute_units={args.compute_units}, imageSize={IMG_SIZE}) ==")
     img_model = ct.models.MLModel(os.path.join(args.model_dir, "MobileCLIPImageS2.mlpackage"), compute_units=cu)
     txt_model = ct.models.MLModel(os.path.join(args.model_dir, "MobileCLIPTextS2.mlpackage"), compute_units=cu)
     tokenizer = load_tokenizer()
 
-    # --- クラス（候補ラベル）のテキスト埋め込みを事前計算 ---
-    wnids = list(IMAGENETTE.keys())
-    class_vecs = []
-    for wnid in wnids:
-        toks = tokenizer([PROMPT.format(IMAGENETTE[wnid])]).numpy().astype(np.int32).reshape(1, ctx)
-        out = txt_model.predict({"text": toks})
-        class_vecs.append(np.array(out["embedding"]).reshape(-1))
-    class_mat = np.stack(class_vecs)  # [C, D]（モデル出力は正規化済み）
+    rng = random.Random(args.seed)
+    samples = sample_images(args.images_dir, args.per_class, rng)
 
-    # --- 画像をサンプリングして評価 ---
-    total, correct, nan_count = 0, 0, 0
-    per_class = {w: [0, 0] for w in wnids}   # wnid -> [correct, total]
-    mistakes = []
-    for wnid in wnids:
-        cdir = os.path.join(args.images_dir, wnid)
-        if not os.path.isdir(cdir):
-            continue
-        files = [f for f in os.listdir(cdir) if f.lower().endswith((".jpeg", ".jpg", ".png"))]
-        random.shuffle(files)
-        for fname in files[:args.per_class]:
-            try:
-                im = preprocess(os.path.join(cdir, fname), size)
-                out = img_model.predict({"image": im})
-            except Exception as e:
-                print(f"  ! predict failed for {fname}: {e}")
-                continue
-            vec = np.array(out["embedding"]).reshape(-1)
-            total += 1
-            per_class[wnid][1] += 1
-            if not np.all(np.isfinite(vec)):
-                nan_count += 1
-                continue  # NaN/Inf は不正解扱い
-            scores = class_mat @ vec
-            pred = int(np.argmax(scores))
-            if wnids[pred] == wnid:
-                correct += 1
-                per_class[wnid][0] += 1
-            elif len(mistakes) < 12:
-                mistakes.append((IMAGENETTE[wnid], IMAGENETTE[wnids[pred]], fname))
+    if args.mode == "query":
+        correct, total, nan = run_query(img_model, txt_model, tokenizer, ctx, samples)
+        unit = "queries"
+    else:
+        correct, total, nan = run_classify(img_model, txt_model, tokenizer, ctx, samples, args.classes)
+        unit = "images"
 
-    # --- 結果 ---
-    print("\n== per-class (correct/total) ==")
-    for wnid in wnids:
-        c, t = per_class[wnid]
-        if t:
-            print(f"  {IMAGENETTE[wnid]:<18} {c}/{t}")
-    if mistakes:
-        print("\n== sample mistakes (true -> predicted) ==")
-        for true_l, pred_l, fn in mistakes:
-            print(f"  {true_l} -> {pred_l}   ({fn})")
-    if nan_count:
-        print(f"\n⚠️ NaN/Inf embeddings: {nan_count}/{total} "
-              f"(fp16 が compute_units={args.compute_units} で不安定な可能性)")
+    if nan:
+        print(f"\n⚠️ NaN/Inf embeddings: {nan} (fp16 が compute_units={args.compute_units} で不安定な可能性)")
     pct = (100.0 * correct / total) if total else 0.0
-    print(f"\n=== RECOGNITION: {correct}/{total}  ({pct:.1f}%) ===")
+    label = args.mode if args.mode == "query" else f"classify/{args.classes}"
+    print(f"\n=== RECOGNITION [{label}]: {correct}/{total} {unit}  ({pct:.1f}%) ===")
     return 0
 
 
