@@ -14,8 +14,8 @@ public enum DropboxActivitySettingsKeys {
 /// - 同期: 1 ランプ（差分取得=青点滅 / 監視=緑 / 初回=青 / 失敗=赤 / 待機=灰）。
 /// - フル画像DL: ⬇＋本数。 バックアップ: ⬆ランプ。
 ///
-/// `DropboxActivityMonitor`（@Observable）を購読してライブ更新する。Developer Options の
-/// トグルが ON のときだけ `dropboxActivityBar()` モディファイア経由で表示される。
+/// `DropboxActivityMonitor`（@Observable）を購読してライブ更新する。Dropbox 設定の
+/// 「Show activity bar」トグル（既定 ON）が ON のときだけ `dropboxActivityBar()` 経由で表示される。
 public struct DropboxActivityBar: View {
     public init() {}
 
@@ -109,7 +109,7 @@ public struct DropboxActivityBar: View {
 // MARK: - Modifier
 
 private struct DropboxActivityBarModifier: ViewModifier {
-    @AppStorage(DropboxActivitySettingsKeys.showBar) private var enabled = false
+    @AppStorage(DropboxActivitySettingsKeys.showBar) private var enabled = true
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .top) {

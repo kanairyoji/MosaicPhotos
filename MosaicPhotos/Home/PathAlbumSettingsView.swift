@@ -26,7 +26,9 @@ struct PathAlbumSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Rules (first match wins)") {
+            rulesHelpSection
+
+            Section {
                 if rules.isEmpty {
                     Text("No rules yet.").foregroundStyle(.secondary)
                 }
@@ -43,6 +45,10 @@ struct PathAlbumSettingsView: View {
                         Label("Insert Examples", systemImage: "sparkles")
                     }
                 }
+            } header: {
+                Text("Rules (first match wins)")
+            } footer: {
+                Text("Each rule is a regular expression tested against a photo's full Dropbox path. Capture the album name with a named group (?<name>…); the template builds the title, where ${name} inserts what that group captured. Rules are tried top to bottom and the first match wins — paths matching no rule are ignored. Tap “Insert Examples” to start, then test any path in Preview below.")
             }
 
             Section("Preview") {
@@ -77,6 +83,55 @@ struct PathAlbumSettingsView: View {
         // 有効化したら自動で1回（軽量・バックグラウンド）再生成し、ホームの「Albums」に反映する。
         .onChange(of: enabled) { _, isOn in
             if isOn { Task { await engine?.generatePathAlbums() } }
+        }
+    }
+
+    // MARK: - How rules work (help)
+
+    private var rulesHelpSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Worked example").font(.caption.bold())
+                helpRow("Path", "/Trips/Hawaii 2024/IMG_1.jpg")
+                helpRow("Pattern", "^/Trips/(?<name>[^/]+)/")
+                helpRow("Template", "${name}")
+                helpRow("Album", "“Hawaii 2024”")
+
+                Divider().padding(.vertical, 2)
+
+                Text("Common pieces").font(.caption.bold())
+                helpToken("(?<name>…)", "capture group — its text fills ${name}")
+                helpToken("[^/]+", "one folder level (any chars except “/”)")
+                helpToken("^  /", "start of path  •  folder separator")
+                helpToken("\\d{4}", "exactly 4 digits (e.g. a year)")
+                helpToken("(?:…)?", "an optional part that isn't captured")
+            }
+            .padding(.vertical, 2)
+        } header: {
+            Text("How rules work")
+        }
+    }
+
+    @ViewBuilder
+    private func helpRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+        }
+    }
+
+    @ViewBuilder
+    private func helpToken(_ token: String, _ meaning: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(token)
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 72, alignment: .leading)
+            Text(meaning)
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

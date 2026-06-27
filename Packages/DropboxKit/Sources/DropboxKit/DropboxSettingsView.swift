@@ -14,6 +14,7 @@ public struct DropboxSettingsView: View {
     @AppStorage(DropboxCacheSettingsKeys.fullImageLimitMB) private var dropboxFullImageLimitMB = 200
     @AppStorage(DropboxCacheSettingsKeys.thumbnailConcurrency)
     private var thumbnailConcurrency = DropboxThumbnailSettings.defaultConcurrency
+    @AppStorage(DropboxActivitySettingsKeys.showBar) private var showActivityBar = true
 
     public init(dropboxAuth: DropboxAuthService, store: DropboxPhotoStore? = nil) {
         self.dropboxAuth = dropboxAuth
@@ -24,6 +25,7 @@ public struct DropboxSettingsView: View {
         Group {
             dropboxConnectionSection
             performanceSection
+            activitySection
             cacheLimitsSection
         }
         // Use onAppear (not .task) so the values always re-apply when the user
@@ -110,6 +112,18 @@ public struct DropboxSettingsView: View {
             Text("Thumbnail Performance")
         } footer: {
             Text("How many thumbnail batches Dropbox fetches at once (\(DropboxThumbnailSettings.minConcurrency)–\(DropboxThumbnailSettings.maxConcurrency)). Higher is faster when many thumbnails are visible, but too high may hit Dropbox rate limits. Default is \(DropboxThumbnailSettings.defaultConcurrency).")
+        }
+    }
+
+    // MARK: - Activity bar section
+
+    private var activitySection: some View {
+        Section {
+            Toggle("Show activity bar", isOn: $showActivityBar)
+        } header: {
+            Text("Activity Indicator")
+        } footer: {
+            Text("Shows a small bar at the top of the screen with live Dropbox activity: parallel thumbnail download slots and the prefetch queue, plus sync, full-image download and backup upload. Useful to see when Dropbox is busy.")
         }
     }
 
