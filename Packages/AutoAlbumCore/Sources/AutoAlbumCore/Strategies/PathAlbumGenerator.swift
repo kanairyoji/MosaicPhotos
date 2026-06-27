@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 
 /// フォルダ名アルバム（Dropbox パスから推測）の生成をまとめた協調オブジェクト。
 /// 状態（公開 pathAlbums）はエンジンが持ち、本オブジェクトは store を更新して結果を返す。
@@ -16,14 +17,17 @@ final class PathAlbumGenerator {
     /// 戻り値 = 新しい pathAlbums。設定 OFF・ルール無し・provider 無しのときは空にして store も空に。
     func generateFast() async -> [AutoAlbumInfo] {
         let rules = Self.rules()
+        Diagnostics.mark("pathAlbum.fast: enabled=\(Self.enabled) rules=\(rules.count) provider=\(cloudProvider != nil)")
         guard Self.enabled, !rules.isEmpty, let cloudProvider else {
             await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: [])
             return []
         }
         let metas = await cloudProvider.cloudPhotos()
+        Diagnostics.mark("pathAlbum.fast: metas=\(metas.count) — computing…")
         let infos = await Task.detached(priority: .utility) {
             computePathAlbums(metas: metas, rules: rules)
         }.value
+        Diagnostics.mark("pathAlbum.fast: done — albums=\(infos.count)")
         await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: infos)
         return infos
     }
@@ -32,7 +36,9 @@ final class PathAlbumGenerator {
     func makeFromEnriched(_ allEnriched: [EnrichedPhoto]) -> [AutoAlbumInfo] {
         let rules = Self.rules()
         guard Self.enabled, !rules.isEmpty else { return [] }
-        return PathAlbumStrategy(rules: rules).makeAlbums(fromCloud: allEnriched).map(pathInfo(from:))
+        let infos = PathAlbumStrategy(rules: rules).makeAlbums(fromCloud: allEnriched).map(pathInfo(from:))
+        Diagnostics.mark("pathAlbum.full: enriched=\(allEnriched.count) rules=\(rules.count) → albums=\(infos.count)")
+        return infos
     }
 
     // MARK: - Settings
