@@ -23,15 +23,16 @@ final class PhotoEnrichment {
     var people: [String]
     /// CLIP 埋め込みを試行済みか（取得不可でも true。未処理写真の抽出と無限ループ防止に使う）。
     var sceneTagged: Bool
-    var clipVector: Data?
     var enrichedAt: Date
+    // ※ CLIP 埋め込み（旧 clipVector）は別テーブル `PhotoEmbedding` へ分離した。
+    //   本テーブルの全件 fetch で巨大 blob を載せないため（実機メモリ枯渇＝起動クラッシュ対策）。
 
     init(refKey: String, kind: String, localIdentifier: String?, cloudPath: String?,
          captureDate: Date?, latitude: Double?, longitude: Double?, placeName: String?,
          country: String? = nil, linkKey: String? = nil, contentHash: String? = nil,
          isScreenshot: Bool = false, isFavorite: Bool = false, aspect: Double? = nil,
          people: [String] = [], sceneTagged: Bool = false,
-         clipVector: Data? = nil, enrichedAt: Date = Date()) {
+         enrichedAt: Date = Date()) {
         self.refKey = refKey
         self.kind = kind
         self.localIdentifier = localIdentifier
@@ -48,20 +49,12 @@ final class PhotoEnrichment {
         self.aspect = aspect
         self.people = people
         self.sceneTagged = sceneTagged
-        self.clipVector = clipVector
         self.enrichedAt = enrichedAt
     }
 
+    /// メタデータのみ（埋め込みは別テーブル）。`clipVector` は必要なら呼び出し側で
+    /// `PhotoEmbedding` から読んで `withClipVector(_:)` で合成する。
     var asEnrichedPhoto: EnrichedPhoto {
-        EnrichedPhoto(id: refKey, captureDate: captureDate, latitude: latitude, longitude: longitude,
-                      placeName: placeName, country: country, linkKey: linkKey, isScreenshot: isScreenshot,
-                      isFavorite: isFavorite, aspect: aspect, people: people,
-                      clipVector: clipVector)
-    }
-
-    /// clipVector を**読まない**軽量版。意味検索を伴わない用途（生成・重複排除・戦略・フォルダ）で使い、
-    /// 67k×2KB の埋め込みをメモリへ載せない（実機のメモリ枯渇回避）。
-    var asEnrichedPhotoLite: EnrichedPhoto {
         EnrichedPhoto(id: refKey, captureDate: captureDate, latitude: latitude, longitude: longitude,
                       placeName: placeName, country: country, linkKey: linkKey, isScreenshot: isScreenshot,
                       isFavorite: isFavorite, aspect: aspect, people: people,

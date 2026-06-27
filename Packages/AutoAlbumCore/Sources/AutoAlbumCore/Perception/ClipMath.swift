@@ -10,6 +10,27 @@ public enum ClipMath {
         return Data(bytes: &le, count: le.count * MemoryLayout<UInt32>.size)
     }
 
+    /// `[Float]` → `Data`（Float16 LE）。埋め込みの永続化はこの半精度を使い、DB と
+    /// ページ常駐量を約半分にする（CLIP コサインは fp16 でも実用上の精度を保つ）。
+    public static func encodeHalf(_ vector: [Float]) -> Data {
+        var le = vector.map { Float16($0).bitPattern.littleEndian }
+        return Data(bytes: &le, count: le.count * MemoryLayout<UInt16>.size)
+    }
+
+    /// Float16 LE `Data` → `[Float]`（fp32 へ復元）。壊れた長さは nil。
+    public static func decodeHalf(_ data: Data) -> [Float]? {
+        guard data.count % MemoryLayout<UInt16>.size == 0 else { return nil }
+        let count = data.count / MemoryLayout<UInt16>.size
+        var result = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let lo = data[data.startIndex + i * 2]
+            let hi = data[data.startIndex + i * 2 + 1]
+            let bits = UInt16(lo) | (UInt16(hi) << 8)
+            result[i] = Float(Float16(bitPattern: UInt16(littleEndian: bits)))
+        }
+        return result
+    }
+
     /// `Data` → `[Float]`。壊れた長さは nil。
     public static func decode(_ data: Data) -> [Float]? {
         guard data.count % MemoryLayout<UInt32>.size == 0 else { return nil }

@@ -13,12 +13,14 @@ actor AutoAlbumStore {
     /// 名前付き設定でコンテナを作る（他コンテナとの衝突回避・"AutoAlbumV9" は破棄採番＝
     /// OCR/固定語彙タグ列を撤去し CLIP 埋め込み中心へ移行したスキーマ変更に伴う再構築）。失敗時はインメモリ。
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
-        let schema = Schema([PhotoEnrichment.self, GeneratedAlbum.self])
+        let schema = Schema([PhotoEnrichment.self, GeneratedAlbum.self, PhotoEmbedding.self])
         if isStoredInMemoryOnly {
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         }
-        return makeResilientContainer(name: "AutoAlbumV9", schema: schema) { Self.log.error($0) }
+        // "AutoAlbumV10" は破棄採番：CLIP 埋め込みを PhotoEnrichment から別テーブル PhotoEmbedding
+        // （Float16）へ分離したスキーマ変更に伴う再構築。旧 V9 ストアは破棄され埋め込みは再生成される。
+        return makeResilientContainer(name: "AutoAlbumV10", schema: schema) { Self.log.error($0) }
     }
 
     /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
@@ -50,38 +52,50 @@ actor AutoAlbumStore {
         return Set(records.map(\.refKey))
     }
 
-    /// 付加情報を upsert する。kind/localIdentifier/cloudPath は refKey から導出する。
+    /// バッチ書き込みの単位。大量 upsert でも登録オブジェクトが際限なく溜まらないよう、
+    /// この件数ごとに**使い捨ての ModelContext** で save し、チャンク完了でその context ごと
+    /// 解放して常駐メモリを有界に保つ（C2）。
+    private static let writeChunk = 500
+
+    /// 付加情報を upsert する（メタデータのみ・埋め込みは別テーブル）。
+    /// kind/localIdentifier/cloudPath は refKey から導出する。大量挿入でも常駐が増えないよう
+    /// `writeChunk` 件ごとに使い捨て context を作って save し、登録オブジェクトを解放する。
     func upsert(_ photos: [EnrichedPhoto]) {
-        for photo in photos {
-            let key = photo.id
-            let descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == key })
-            let ref = PhotoRef.decode(key)
-            if let existing = try? modelContext.fetch(descriptor).first {
-                existing.captureDate = photo.captureDate
-                existing.latitude = photo.latitude
-                existing.longitude = photo.longitude
-                existing.placeName = photo.placeName
-                existing.country = photo.country
-                existing.linkKey = photo.linkKey
-                existing.isScreenshot = photo.isScreenshot
-                existing.isFavorite = photo.isFavorite
-                existing.aspect = photo.aspect
-                existing.people = photo.people
-                // 埋め込みは計算済みのときだけ更新（空で上書きしない）。
-                if photo.clipVector != nil { existing.clipVector = photo.clipVector }
-                existing.enrichedAt = Date()
-            } else {
-                modelContext.insert(PhotoEnrichment(
-                    refKey: key, kind: ref?.isLocal == true ? "local" : "cloud",
-                    localIdentifier: ref?.localIdentifier, cloudPath: ref?.cloudPath,
-                    captureDate: photo.captureDate, latitude: photo.latitude, longitude: photo.longitude,
-                    placeName: photo.placeName, country: photo.country, linkKey: photo.linkKey,
-                    isScreenshot: photo.isScreenshot, isFavorite: photo.isFavorite,
-                    aspect: photo.aspect, people: photo.people,
-                    clipVector: photo.clipVector))
+        guard !photos.isEmpty else { return }
+        var index = 0
+        while index < photos.count {
+            let end = min(index + Self.writeChunk, photos.count)
+            // チャンク単位の使い捨て context。スコープを抜けると登録済み @Model が解放される。
+            let ctx = ModelContext(modelContainer)
+            for photo in photos[index..<end] {
+                let key = photo.id
+                let descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == key })
+                let ref = PhotoRef.decode(key)
+                if let existing = try? ctx.fetch(descriptor).first {
+                    existing.captureDate = photo.captureDate
+                    existing.latitude = photo.latitude
+                    existing.longitude = photo.longitude
+                    existing.placeName = photo.placeName
+                    existing.country = photo.country
+                    existing.linkKey = photo.linkKey
+                    existing.isScreenshot = photo.isScreenshot
+                    existing.isFavorite = photo.isFavorite
+                    existing.aspect = photo.aspect
+                    existing.people = photo.people
+                    existing.enrichedAt = Date()
+                } else {
+                    ctx.insert(PhotoEnrichment(
+                        refKey: key, kind: ref?.isLocal == true ? "local" : "cloud",
+                        localIdentifier: ref?.localIdentifier, cloudPath: ref?.cloudPath,
+                        captureDate: photo.captureDate, latitude: photo.latitude, longitude: photo.longitude,
+                        placeName: photo.placeName, country: photo.country, linkKey: photo.linkKey,
+                        isScreenshot: photo.isScreenshot, isFavorite: photo.isFavorite,
+                        aspect: photo.aspect, people: photo.people))
+                }
             }
+            try? ctx.save()
+            index = end
         }
-        try? modelContext.save()
     }
 
     /// 既存のローカル付加情報の linkKey を、最新のバックアップ対応で更新する
@@ -97,36 +111,41 @@ actor AutoAlbumStore {
         if changed { try? modelContext.save() }
     }
 
-    /// 現存しない（削除/退避された）写真の付加情報を削除する。
+    /// 現存しない（削除/退避された）写真の付加情報を削除する。対応する埋め込み（PhotoEmbedding）も
+    /// 孤児にならないよう同時に削除する。
     func prune(keeping refKeys: Set<String>) {
         guard let records = try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>()) else { return }
+        var removed: [String] = []
         for record in records where !refKeys.contains(record.refKey) {
+            removed.append(record.refKey)
             modelContext.delete(record)
+        }
+        for key in removed {
+            let d = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == key })
+            if let emb = try? modelContext.fetch(d).first { modelContext.delete(emb) }
         }
         try? modelContext.save()
     }
 
-    /// 付加情報済みの全写真（戦略の入力）。clipVector を**載せない**軽量版。
-    /// 意味検索は `enrichmentVectorPage` でページングして埋め込みを読むため、全件 clipVector を
-    /// 一度にメモリへ載せる API はあえて持たない（約138MBの一括ロード＝実機メモリ枯渇の元を断つ）。
+    /// 付加情報済みの全写真（戦略の入力）。埋め込みは別テーブルなので、この fetch は
+    /// メタデータのみで軽量（巨大 blob を一切載せない）。
     func allEnrichedPhotosLite() -> [EnrichedPhoto] {
         let records = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? []
-        return records.map(\.asEnrichedPhotoLite)
+        return records.map(\.asEnrichedPhoto)
     }
 
-    /// 意味検索のバッチ化用：clipVector を持つ行を **page 単位**で `(refKey, clipVector)` として取り出す。
-    /// `refKey` 昇順で安定ページング（offset/limit）。全 67k の埋め込み(約138MB)を一度に載せず、
-    /// 1ページ分（例 4,000 件＝約8MB）だけをメモリに置くために使う。
+    /// 意味検索のバッチ化用：埋め込み（PhotoEmbedding）を **page 単位**で `(refKey, clipVector)` として
+    /// 取り出す。保存は Float16 だが、ここで fp32 LE（`ClipMath` が解釈する形式）へ復元して返すため
+    /// 下流（`AIAlbumSearcher` / `ClipMath.decode`）は変更不要。`refKey` 昇順で安定ページング。
+    /// 1ページ分（例 4,000 件）だけをメモリに置くために使う。
     func enrichmentVectorPage(offset: Int, limit: Int) -> [(refKey: String, clipVector: Data)] {
-        var descriptor = FetchDescriptor<PhotoEnrichment>(
-            predicate: #Predicate { $0.clipVector != nil },
-            sortBy: [SortDescriptor(\.refKey)])
+        var descriptor = FetchDescriptor<PhotoEmbedding>(sortBy: [SortDescriptor(\.refKey)])
         descriptor.fetchOffset = offset
         descriptor.fetchLimit = limit
         let records = (try? modelContext.fetch(descriptor)) ?? []
         return records.compactMap { rec in
-            guard let vector = rec.clipVector else { return nil }
-            return (refKey: rec.refKey, clipVector: vector)
+            guard let floats = ClipMath.decodeHalf(rec.vector) else { return nil }
+            return (refKey: rec.refKey, clipVector: ClipMath.encode(floats))
         }
     }
 
@@ -135,10 +154,16 @@ actor AutoAlbumStore {
     }
 
     /// 単一 refKey の付加情報＋埋め込み試行済みフラグ（フル画像ビューの情報・状態表示用）。
+    /// 表示タグ用に埋め込みを別テーブルから1件だけ読み、fp32 へ復元して合成する（単件なので軽い）。
     func insightRecord(refKey: String) -> (photo: EnrichedPhoto, tagged: Bool)? {
         let descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == refKey })
         guard let record = try? modelContext.fetch(descriptor).first else { return nil }
-        return (record.asEnrichedPhoto, record.sceneTagged)
+        var photo = record.asEnrichedPhoto
+        let embDesc = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == refKey })
+        if let emb = try? modelContext.fetch(embDesc).first, let floats = ClipMath.decodeHalf(emb.vector) {
+            photo = photo.withClipVector(ClipMath.encode(floats))
+        }
+        return (photo, record.sceneTagged)
     }
 
     // MARK: - Perception (CLIP 埋め込み・バックグラウンド増分付与。ローカル/クラウド両対応)
@@ -158,9 +183,10 @@ actor AutoAlbumStore {
     @discardableResult
     func clearPerception() -> Int {
         guard let records = try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>()) else { return 0 }
-        for record in records {
-            record.sceneTagged = false
-            record.clipVector = nil
+        for record in records { record.sceneTagged = false }
+        // 埋め込みは別テーブルごと削除する。
+        for emb in (try? modelContext.fetch(FetchDescriptor<PhotoEmbedding>())) ?? [] {
+            modelContext.delete(emb)
         }
         try? modelContext.save()
         return records.count
@@ -186,13 +212,21 @@ actor AutoAlbumStore {
         return records.map(\.refKey)
     }
 
-    /// refKey → 埋め込み を既存レコードへ反映する（取得不可でも sceneTagged を立てる＝処理済み）。
+    /// refKey → 埋め込み を反映する（取得不可でも sceneTagged を立てる＝処理済み）。
+    /// 埋め込みは fp32 で渡ってくるので Float16 にパックして別テーブル `PhotoEmbedding` へ upsert する。
     func applyPerception(_ byRefKey: [String: PhotoPerception]) {
         for (refKey, perception) in byRefKey {
             let descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == refKey })
             guard let record = try? modelContext.fetch(descriptor).first else { continue }
             record.sceneTagged = true
-            if perception.clipVector != nil { record.clipVector = perception.clipVector }
+            guard let fp32 = perception.clipVector, let floats = ClipMath.decode(fp32) else { continue }
+            let half = ClipMath.encodeHalf(floats)
+            let embDesc = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == refKey })
+            if let existing = try? modelContext.fetch(embDesc).first {
+                existing.vector = half
+            } else {
+                modelContext.insert(PhotoEmbedding(refKey: refKey, vector: half))
+            }
         }
         try? modelContext.save()
     }
@@ -254,6 +288,7 @@ actor AutoAlbumStore {
     func clearAll() {
         for record in (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? [] { modelContext.delete(record) }
         for album in (try? modelContext.fetch(FetchDescriptor<GeneratedAlbum>())) ?? [] { modelContext.delete(album) }
+        for emb in (try? modelContext.fetch(FetchDescriptor<PhotoEmbedding>())) ?? [] { modelContext.delete(emb) }
         try? modelContext.save()
     }
 }

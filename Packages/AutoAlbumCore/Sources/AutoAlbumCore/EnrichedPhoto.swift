@@ -53,6 +53,13 @@ public struct EnrichedPhoto: Sendable, Equatable {
                       clipVector: clipVector)
     }
 
+    public func withClipVector(_ vector: Data?) -> EnrichedPhoto {
+        EnrichedPhoto(id: id, captureDate: captureDate, latitude: latitude, longitude: longitude,
+                      placeName: placeName, country: country, linkKey: linkKey, isScreenshot: isScreenshot,
+                      isFavorite: isFavorite, aspect: aspect, people: people,
+                      clipVector: vector)
+    }
+
     public func withCoordinate(latitude: Double?, longitude: Double?) -> EnrichedPhoto {
         EnrichedPhoto(id: id, captureDate: captureDate, latitude: latitude, longitude: longitude,
                       placeName: placeName, country: country, linkKey: linkKey, isScreenshot: isScreenshot,

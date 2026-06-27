@@ -58,6 +58,38 @@ public final class DiagnosticsLog: @unchecked Sendable {
     private static func timestamp() -> String { formatter.string(from: Date()) }
 }
 
+/// メモリ圧迫中かどうかの共有フラグ。`Diagnostics` のメモリ圧迫ソースが warning/critical で立て、
+/// 一定時間後に自動で下ろす。背景の重い処理（CLIP 埋め込み等）が `isUnderPressure` を見て一時停止する。
+public final class MemoryPressureMonitor: @unchecked Sendable {
+    public static let shared = MemoryPressureMonitor()
+    private let lock = NSLock()
+    private var _underPressure = false
+    /// 圧迫フラグを下ろす予定の世代。連続イベントで延長するために使う。
+    private var generation = 0
+
+    private init() {}
+
+    public var isUnderPressure: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _underPressure
+    }
+
+    /// 圧迫を記録し、`autoClearAfter` 秒後に自動で解除する（その間に再発すれば延長）。
+    func markPressure(autoClearAfter seconds: TimeInterval = 20) {
+        lock.lock()
+        _underPressure = true
+        generation += 1
+        let gen = generation
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            if generation == gen { _underPressure = false }   // 後続イベントが無ければ解除
+            lock.unlock()
+        }
+    }
+}
+
 /// 現在のアプリのメモリ使用量（phys_footprint, MB）。取得できなければ nil。
 public func currentMemoryFootprintMB() -> Double? {
     var info = task_vm_info_data_t()
@@ -97,6 +129,8 @@ public enum Diagnostics {
             let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
             DiagnosticsLog.shared.append("MEMORY PRESSURE: \(level) (footprint=\(mb))")
             log.error("memory pressure: \(level, privacy: .public)")
+            // 背景の重い処理（CLIP 埋め込み）を一時停止させる（jetsam 回避）。
+            MemoryPressureMonitor.shared.markPressure()
         }
         source.resume()
         memorySource = source

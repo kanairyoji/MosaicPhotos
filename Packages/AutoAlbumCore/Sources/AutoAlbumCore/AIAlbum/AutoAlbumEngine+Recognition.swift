@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import PhotoSourceKit
 
 /// `AutoAlbumEngine` の「AI アルバム / 認識タグ付け / フル画像 insight」関連を分離した extension。
@@ -72,7 +73,9 @@ extension AutoAlbumEngine {
             isTagging = true
             await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                           betweenBatchNs: preset.betweenBatchNs,
-                                          shouldPause: { [weak self] in self?.isInteracting ?? false }) {
+                                          shouldPause: { [weak self] in
+                                          (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
+                                      }) {
                 [weak self] in await self?.refreshAIAlbums()
             }
             isTagging = false
@@ -102,7 +105,9 @@ extension AutoAlbumEngine {
         isTagging = true
         await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                       betweenBatchNs: preset.betweenBatchNs,
-                                      shouldPause: { [weak self] in self?.isInteracting ?? false }) {
+                                      shouldPause: { [weak self] in
+                                          (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
+                                      }) {
             [weak self] in await self?.refreshAIAlbums()
         }
         isTagging = false
