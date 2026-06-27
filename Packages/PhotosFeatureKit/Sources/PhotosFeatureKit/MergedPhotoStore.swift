@@ -177,6 +177,21 @@ extension MergedPhotoStore: PhotoStore {
         }
     }
 
+    /// 先読みを local / cloud に振り分ける。既定実装（1件ずつ thumbnail）だとローカルが
+    /// `PHCachingImageManager` の一括先読みを使えずスクロールが重いため、専用に分配する。
+    public func prefetch(_ items: [MergedPhotoItem], targetSize: CGSize) {
+        var locals: [LocalPhotoItem] = []
+        var clouds: [DropboxFileItem] = []
+        for item in items {
+            switch item {
+            case .local(let local): locals.append(local)
+            case .cloud(let cloud): clouds.append(cloud)
+            }
+        }
+        if !locals.isEmpty { localStore.prefetch(locals, targetSize: targetSize) }   // PHCachingImageManager 一括
+        if !clouds.isEmpty { dropboxStore.prefetch(clouds, targetSize: targetSize) } // Dropbox バッチャに集約
+    }
+
     public func fullImage(for item: MergedPhotoItem) async -> UIImage? {
         switch item {
         case .local(let local): return await localStore.fullImage(for: local)
