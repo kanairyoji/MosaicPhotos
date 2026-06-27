@@ -35,6 +35,16 @@ jobs:
           languages: swift
           build-mode: manual
 
+      # DropboxSecrets.swift は .gitignore 対象で CI に存在しない（実 appKey を上げないため）。
+      # 無ければビルド用のダミーを生成する（CodeQL は静的解析なので実キーは不要）。
+      - name: Provide dummy Dropbox secrets if missing
+        run: |
+          SECRETS="MosaicPhotos/DropboxSecrets.swift"
+          if [ ! -f "$SECRETS" ]; then
+            printf 'import Foundation\n\nenum DropboxSecrets {\n    static let appKey = "DUMMY_APP_KEY_FOR_CI"\n}\n' > "$SECRETS"
+            echo "created dummy $SECRETS"
+          fi
+
       # CI と同じ確実なビルド（署名なし・シミュレータ SDK）。CodeQL がコンパイルをトレースする。
       - name: Build for CodeQL
         run: |
