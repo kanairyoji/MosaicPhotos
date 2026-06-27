@@ -98,6 +98,6 @@ struct PathAlbumStrategyTests {
         let drafts = strategy.makeAlbums(fromCloud: photos, calendar: cal,
                                          locale: Locale(identifier: "ja_JP"), now: now)
         #expect(drafts.count == 1)
-        #expect(drafts.first?.placeName == "2023 08 Hawaii")   // (2023) を付けない
+        #expect(drafts.first?.placeName == "2023-08 Hawaii")   // 日付内ハイフンは温存・(2023) は付けない
     }
 }

@@ -85,11 +85,20 @@ public enum PathAlbumNamer {
         return out
     }
 
-    /// 軽い整形：半角 `_`/`-` を空白に、連続空白を1つに、トリム。
+    /// 軽い整形：`_` と単語区切りの `-` を空白に、連続空白を1つに、トリム。
+    /// ただし**日付内のハイフン（数字-数字）は残す**（例 `2025-10-05` はそのまま）。
     /// 日本語を含む任意の UTF-8 文字をそのまま許可する（長さで弾かない）。空白のみは空扱い。
     private static func normalized(_ s: String) -> String {
-        let spaced = s.replacingOccurrences(of: "_", with: " ")
-                      .replacingOccurrences(of: "-", with: " ")
+        let underscored = s.replacingOccurrences(of: "_", with: " ")
+        // 数字に挟まれていないハイフンだけ空白へ（日付 2025-10-05 のハイフンは温存）。
+        let spaced: String
+        if let re = compiled(#"(?<![0-9])-|-(?![0-9])"#, caseInsensitive: false) {
+            let ns = underscored as NSString
+            spaced = re.stringByReplacingMatches(
+                in: underscored, range: NSRange(location: 0, length: ns.length), withTemplate: " ")
+        } else {
+            spaced = underscored.replacingOccurrences(of: "-", with: " ")
+        }
         return spaced.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }
