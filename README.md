@@ -113,7 +113,7 @@ All AI lives in **`AutoAlbumCore`** (SwiftUI-free); the app injects the on-devic
 
 An in-depth internal **architecture note** — design rationale (ADR), deep-dive implementation pages (concurrency, caching, data model), and a general, app-independent AI primer — is available as a multi-page HTML site:
 
-- **[Architecture Note → `docs/architecture-note/index.html`](docs/architecture-note/index.html)** — open in a browser (diagrams via Mermaid).
+- **[Architecture Note → kanairyoji.github.io/MosaicPhotos](https://kanairyoji.github.io/MosaicPhotos/)** — published via GitHub Pages (diagrams via Mermaid). Source: [`docs/architecture-note/`](docs/architecture-note/).
 
 > ⚠️ **The architecture note is written in Japanese only.** Its master records live as Markdown in `docs/architecture-note/records/`.
 
