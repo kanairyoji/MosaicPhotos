@@ -100,7 +100,7 @@
 ## ADR-10 GitHub を CI・公開・リリースに活用
 - 状態: 採用
 - 文脈: 個人開発でも回帰検知・設計資料の公開・タグ運用の自動化が欲しい。秘密の誤コミットも機械的に防ぎたい。
-- 決定: GitHub Actions で CI（`scripts/test.sh fast` を gate、iOS sim は best-effort）/ Pages で `docs/architecture-note` を公開 / タグ push で Release 自動生成。リポジトリ設定で Secret scanning + Push Protection、CodeQL（default setup）を有効化。
+- 決定: GitHub Actions で CI（`scripts/test.sh fast` を gate、iOS sim は best-effort）/ Pages で `docs/architecture-note` を公開 / タグ push で Release 自動生成。リポジトリ設定で Secret scanning + Push Protection を有効化。CodeQL は **default setup の autobuild が Xcode+SPM 構成で失敗**するため、`build-mode: manual` の advanced ワークフロー（CI と同じ `xcodebuild -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO`）に切替（`.github/workflows/codeql.yml`）。
 - 結果: push ごとに回帰検知、設計資料が公開URL化、リリースノート自動化、秘密混入の自動ブロック。ワークフロー push にはトークンの `workflow` スコープが必要。iOS 26 シミュレータはランナー事情に依存するため iOS テストは非ブロッキング。
 - 関連: `.github/workflows/ci.yml` / `pages.yml` / `release.yml`。
 

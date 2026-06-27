@@ -1,0 +1,50 @@
+name: CodeQL
+
+# Swift（コンパイル言語）の CodeQL 解析。autobuild は Xcode+SPM 構成で失敗しやすいため、
+# CI で実績のあるビルドコマンド（iphonesimulator・署名なし）を手動指定してトレースさせる。
+#
+# ⚠️ リポジトリ設定で CodeQL の "Default setup" が有効だと、この advanced ワークフローと衝突する。
+#    Settings → Code security → Code scanning で Default setup を解除（Advanced に切替）すること。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 3 * * 1'   # 毎週月曜の定期スキャン
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze (swift)
+    runs-on: macos-15
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: swift
+          build-mode: manual
+
+      # CI と同じ確実なビルド（署名なし・シミュレータ SDK）。CodeQL がコンパイルをトレースする。
+      - name: Build for CodeQL
+        run: |
+          xcodebuild build \
+            -project MosaicPhotos.xcodeproj \
+            -scheme MosaicPhotos \
+            -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:swift"
