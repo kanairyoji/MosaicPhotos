@@ -23,6 +23,17 @@ open docs/architecture-note/index.html
 - `case-studies/` — メモリ枯渇の解消 / 起動の高速化
 - `appendix/` — 用語集 / 規約とテスト方針
 
+## 記録のマスターは Markdown（重要）
+
+設計判断・事例（バグ・大きめの課題対応）の**正本は `records/` 配下の Markdown**。
+
+- `records/decisions.md` — 設計判断（ADR）のマスター
+- `records/case-studies.md` — 事例・バグ・大きめの課題対応のマスター
+
+HTML（`design-decisions/adr.html` / `case-studies/*.html`）は、この MD から**必要なものを選んで**記載した派生物。全件を転記するとは限らない。
+
+**運用**: 設計判断・埋め込んだバグ・大きな課題対応をしたら、まず MD に 1 項追記して網羅する。HTML 化（取捨選択）は別途指示で行う。詳細は各 MD 冒頭の「運用ルール」とリポジトリ直下 `CLAUDE.md` の該当節を参照。
+
 ## メンテナンス
 
 - 目次（サイドバー）の定義は `assets/nav.js` の `NAV` 配列が唯一の出典。ページを増減したらここを更新する。
