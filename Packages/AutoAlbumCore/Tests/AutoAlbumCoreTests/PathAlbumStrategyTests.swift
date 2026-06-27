@@ -61,4 +61,43 @@ struct PathAlbumStrategyTests {
         let strategy = PathAlbumStrategy(rules: [], minPhotos: 1)
         #expect(strategy.makeAlbums(fromCloud: [cloud("/Trips/Bali/x.jpg", day: 1)]).isEmpty)
     }
+
+    // MARK: - フォルダ名の日付（名前+年グループ）
+
+    @Test("年違いのフォルダは別アルバム（タイトル『名前 (年)』・フォルダ日付を採用）")
+    func splitsByYear() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 6, day: 27))!
+        let r = [PathAlbumRule(pattern: "(?<name>[A-Za-z]+)/[^/]+$", template: "${name}")]
+        let strategy = PathAlbumStrategy(rules: r, minPhotos: 2)
+        let photos = [
+            cloud("/Trips/2023-08 Hawaii/a.jpg", day: 1), cloud("/Trips/2023-08 Hawaii/b.jpg", day: 2),
+            cloud("/Trips/2024-08 Hawaii/c.jpg", day: 3), cloud("/Trips/2024-08 Hawaii/d.jpg", day: 4),
+        ]
+        let drafts = strategy.makeAlbums(fromCloud: photos, calendar: cal,
+                                         locale: Locale(identifier: "ja_JP"), now: now)
+        #expect(drafts.count == 2)
+        #expect(Set(drafts.map(\.placeName)) == ["Hawaii (2023)", "Hawaii (2024)"])
+        #expect(drafts.allSatisfy { $0.places == ["Hawaii"] })
+        // フォルダ日付（2023-08）を採用していること（EXIF の月ではなく）。
+        let a = drafts.first { $0.placeName == "Hawaii (2023)" }!
+        #expect(cal.component(.year, from: a.startDate) == 2023)
+        #expect(cal.component(.month, from: a.startDate) == 8)
+    }
+
+    @Test("名前に年が含まれる場合は冗長な (年) を付けない（日付は除去しない）")
+    func keepsDateInNameNoRedundantSuffix() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 6, day: 27))!
+        let r = [PathAlbumRule(pattern: "^/Trips/(?<name>[^/]+)/", template: "${name}")]
+        let strategy = PathAlbumStrategy(rules: r, minPhotos: 2)
+        let photos = [cloud("/Trips/2023-08 Hawaii/a.jpg", day: 1),
+                      cloud("/Trips/2023-08 Hawaii/b.jpg", day: 2)]
+        let drafts = strategy.makeAlbums(fromCloud: photos, calendar: cal,
+                                         locale: Locale(identifier: "ja_JP"), now: now)
+        #expect(drafts.count == 1)
+        #expect(drafts.first?.placeName == "2023 08 Hawaii")   // (2023) を付けない
+    }
 }

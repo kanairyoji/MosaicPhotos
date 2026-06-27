@@ -16,32 +16,59 @@ public struct PathAlbumStrategy: Sendable {
         self.minPhotos = minPhotos
     }
 
+    /// グルーピングの 1 まとまり（名前＋年）。
+    private struct Group {
+        let name: String
+        let year: Int?
+        var members: [EnrichedPhoto] = []
+        var folderStarts: [Date] = []
+        var folderEnds: [Date] = []
+    }
+
     /// クラウド写真からフォルダ名アルバムの下書きを作る。新しい（endDate が大きい）順。
-    public func makeAlbums(fromCloud photos: [EnrichedPhoto]) -> [GeneratedAlbumDraft] {
+    /// フォルダ名から日付（`FolderDateParser`）も取り出し、**名前＋年でグループ**する
+    /// （年違いは別アルバム）。日付があればアルバムの期間に採用し、無ければメンバーの撮影日から算出。
+    /// 名前から日付は除去せず、表示は「名前 (年)」（名前に年が含まれていれば付けない）。
+    public func makeAlbums(fromCloud photos: [EnrichedPhoto],
+                           calendar: Calendar = .current, locale: Locale = .current,
+                           now: Date = Date()) -> [GeneratedAlbumDraft] {
         guard !rules.isEmpty else { return [] }
 
-        var byName: [String: [EnrichedPhoto]] = [:]
+        var groups: [String: Group] = [:]
         var order: [String] = []
         for photo in photos {
             guard let path = photo.ref?.cloudPath,
                   let name = PathAlbumNamer.name(forPath: path, rules: rules) else { continue }
-            if byName[name] == nil { order.append(name) }
-            byName[name, default: []].append(photo)
+            // 日付はフォルダ部（ファイル名を除く）から抽出（ファイル名中の日付に引っ張られないため）。
+            let dir = (path as NSString).deletingLastPathComponent
+            let folderDate = FolderDateParser.parse(dir, calendar: calendar, locale: locale, now: now)
+            let year = folderDate.map { calendar.component(.year, from: $0.start) }
+            let key = "\(name)|\(year.map(String.init) ?? "")"
+            if groups[key] == nil { groups[key] = Group(name: name, year: year); order.append(key) }
+            groups[key]!.members.append(photo)
+            if let folderDate {
+                groups[key]!.folderStarts.append(folderDate.start)
+                groups[key]!.folderEnds.append(folderDate.end)
+            }
         }
 
         var drafts: [GeneratedAlbumDraft] = []
-        for name in order {
-            guard let members = byName[name], members.count >= minPhotos else { continue }
-            let dates = members.compactMap(\.captureDate)
-            let start = dates.min() ?? .distantPast
-            let end = dates.max() ?? .distantPast
-            let located = members.filter(\.hasCoordinate)
+        for key in order {
+            guard let g = groups[key], g.members.count >= minPhotos else { continue }
+            // 期間：フォルダ日付があればそれ（複数フォルダなら union）、無ければ撮影日から。
+            let exif = g.members.compactMap(\.captureDate)
+            let start = g.folderStarts.min() ?? exif.min() ?? .distantPast
+            let end = g.folderEnds.max() ?? exif.max() ?? .distantPast
+            let located = g.members.filter(\.hasCoordinate)
             let lat = located.isEmpty ? nil : located.compactMap(\.latitude).reduce(0, +) / Double(located.count)
             let lon = located.isEmpty ? nil : located.compactMap(\.longitude).reduce(0, +) / Double(located.count)
+            // 表示名「名前 (年)」。名前に既に年が含まれる場合は冗長なので付けない（日付除去はしない）。
+            let title: String
+            if let y = g.year, !g.name.contains(String(y)) { title = "\(g.name) (\(y))" } else { title = g.name }
             drafts.append(GeneratedAlbumDraft(
-                strategyID: Self.strategyID, placeName: name, places: [name], country: nil,
-                startDate: start, endDate: end, memberRefs: members.map(\.id),
-                coverRef: pickCoverRef(members), people: rankedByFrequency(members.flatMap(\.people)),
+                strategyID: Self.strategyID, placeName: title, places: [g.name], country: nil,
+                startDate: start, endDate: end, memberRefs: g.members.map(\.id),
+                coverRef: pickCoverRef(g.members), people: rankedByFrequency(g.members.flatMap(\.people)),
                 latitude: lat, longitude: lon))
         }
         return drafts.sorted { $0.endDate > $1.endDate }
