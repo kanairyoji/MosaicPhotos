@@ -50,7 +50,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
         private var collectionView: UICollectionView!
         private var dataSource: UICollectionViewDiffableDataSource<String, Store.Item.ID>!
-        private let scrubber = ScrubberView()
+        private let scrubber = GridScrubberView()
 
         /// 現在の一覧（COW で store の配列とバッファ共有＝追加コピーは軽い）と、id→index の対応。
         /// 以前は id→Item の dict（67k 件の構造体コピー＝約10MB）だったが、index 参照に変えてメモリ削減。
@@ -144,7 +144,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         }
 
         private func configureDataSource(_ cv: UICollectionView) {
-            let cellReg = UICollectionView.CellRegistration<ThumbCell, Store.Item.ID> { [weak self] cell, _, id in
+            let cellReg = UICollectionView.CellRegistration<GridThumbnailCell, Store.Item.ID> { [weak self] cell, _, id in
                 guard let self, let index = self.idToIndex[id], index < self.items.count else { return }
                 let item = self.items[index]
                 let px = self.cellPixelSize()
@@ -155,7 +155,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 cv, indexPath, id in
                 cv.dequeueConfiguredReusableCell(using: cellReg, for: indexPath, item: id)
             }
-            let headerReg = UICollectionView.SupplementaryRegistration<SectionHeaderView>(
+            let headerReg = UICollectionView.SupplementaryRegistration<GridSectionHeaderView>(
                 elementKind: UICollectionView.elementKindSectionHeader
             ) { [weak self] view, _, indexPath in
                 guard let self else { return }
@@ -289,174 +289,6 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             onScrubbingChange(false)
         }
-    }
-}
-
-// MARK: - Cell
-
-private final class ThumbCell: UICollectionViewCell {
-    private let imageView = UIImageView()
-    private var loadTask: Task<Void, Never>?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        contentView.backgroundColor = .secondarySystemBackground
-        imageView.contentMode = .scaleAspectFill
-        imageView.clipsToBounds = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.clipsToBounds = true
-        contentView.addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    /// サムネイルをロードする。`prepareForReuse` でキャンセルされるため、高速スクロールで
-    /// 通り過ぎるセルは取得が走らない（出現直後に少し待ってから取得＝R1 相当）。
-    func configure(loader: @escaping () async -> UIImage?) {
-        loadTask?.cancel()
-        imageView.image = nil
-        loadTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
-            if Task.isCancelled { return }
-            let image = await loader()
-            if Task.isCancelled { return }
-            imageView.image = image
-        }
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        loadTask?.cancel()
-        loadTask = nil
-        imageView.image = nil
-    }
-}
-
-// MARK: - Section header
-
-private final class SectionHeaderView: UICollectionReusableView {
-    var title: String? {
-        didSet { label.text = title }
-    }
-    private let label = UILabel()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
-        blur.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(blur)
-        label.font = .preferredFont(forTextStyle: .subheadline)
-        label.adjustsFontForContentSizeCategory = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
-            blur.trailingAnchor.constraint(equalTo: trailingAnchor),
-            blur.topAnchor.constraint(equalTo: topAnchor),
-            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 5),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-}
-
-// MARK: - UIKit scrubber
-
-/// 右端の縦スクラバー（UIKit）。ハンドルをドラッグするとその位置（0…1）を `onScrub` で通知する。
-/// スクロール自体は `contentOffset` 直接制御のため、どんな大ジャンプも確実。
-private final class ScrubberView: UIView {
-    var onScrub: ((CGFloat) -> Void)?
-    var onActive: ((Bool) -> Void)?
-
-    private let handle = UIView()
-    private let chevron = UIImageView(image: UIImage(systemName: "chevron.up.chevron.down"))
-    private let handleHeight: CGFloat = 50
-    private let handleWidth: CGFloat = 34
-    private var fraction: CGFloat = 1   // 末尾（最新）start
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = .clear
-
-        handle.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
-        handle.layer.cornerRadius = handleHeight / 2
-        handle.layer.borderWidth = 0.5
-        handle.layer.borderColor = UIColor.separator.cgColor
-        handle.layer.shadowColor = UIColor.black.cgColor
-        handle.layer.shadowOpacity = 0.15
-        handle.layer.shadowRadius = 2
-        handle.layer.shadowOffset = .init(width: 0, height: 1)
-        addSubview(handle)
-
-        chevron.tintColor = .secondaryLabel
-        chevron.contentMode = .scaleAspectFit
-        chevron.translatesAutoresizingMaskIntoConstraints = false
-        handle.addSubview(chevron)
-        NSLayoutConstraint.activate([
-            chevron.centerXAnchor.constraint(equalTo: handle.centerXAnchor),
-            chevron.centerYAnchor.constraint(equalTo: handle.centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: 16),
-            chevron.heightAnchor.constraint(equalToConstant: 16),
-        ])
-
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        pan.minimumNumberOfTouches = 1
-        addGestureRecognizer(pan)
-        // ハンドル外のタップでも掴めるよう、ビュー全体をヒット対象にする。
-        isUserInteractionEnabled = true
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layoutHandle()
-    }
-
-    private func layoutHandle() {
-        let usable = max(1, bounds.height - handleHeight)
-        let y = min(max(0, fraction), 1) * usable
-        handle.frame = CGRect(x: bounds.width - handleWidth - 2, y: y, width: handleWidth, height: handleHeight)
-    }
-
-    @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
-        let usable = max(1, bounds.height - handleHeight)
-        let y = gr.location(in: self).y - handleHeight / 2
-        fraction = min(max(0, y / usable), 1)
-        layoutHandle()
-        onScrub?(fraction)
-        switch gr.state {
-        case .began:
-            onActive?(true)
-            animateHandle(active: true)
-        case .ended, .cancelled, .failed:
-            onActive?(false)
-            animateHandle(active: false)
-        default:
-            break
-        }
-    }
-
-    private func animateHandle(active: Bool) {
-        UIView.animate(withDuration: 0.12) {
-            self.handle.transform = active ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
-            self.handle.layer.shadowOpacity = active ? 0.3 : 0.15
-        }
-    }
-
-    // ハンドル付近を確実に掴めるように、右側の帯だけをヒット領域にする（左側は下のグリッドへ通す）。
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        point.x >= bounds.width - (handleWidth + 12)
     }
 }
 #endif

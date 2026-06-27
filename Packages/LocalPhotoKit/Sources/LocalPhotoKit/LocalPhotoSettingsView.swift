@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import LocalPhotoCore
 import Photos
+import PhotoSourceKit
 import SwiftUI
 
 public struct LocalPhotoSettingsView: View {
@@ -71,12 +72,7 @@ public struct LocalPhotoSettingsView: View {
         }
     }
 
-    private func formatBytes(_ bytes: Int) -> String {
-        let f = ByteCountFormatter()
-        f.allowedUnits = [.useKB, .useMB]
-        f.countStyle = .file
-        return f.string(fromByteCount: Int64(bytes))
-    }
+    // formatBytes は PhotoSourceKit の共通ヘルパへ集約。
 }
 
 /// 端末写真キャッシュの Debug 情報。app の Developer Options 画面が合成して表示する。

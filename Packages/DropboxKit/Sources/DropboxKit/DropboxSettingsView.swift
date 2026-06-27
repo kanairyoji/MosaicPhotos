@@ -288,12 +288,7 @@ public struct DropboxDebugSection: View {
 
     // MARK: - Helpers
 
-    private func formatBytes(_ bytes: Int) -> String {
-        let f = ByteCountFormatter()
-        f.allowedUnits = [.useKB, .useMB]
-        f.countStyle = .file
-        return f.string(fromByteCount: Int64(bytes))
-    }
+    // formatBytes は PhotoSourceKit の共通ヘルパへ集約。
 
     private func masked(_ token: String) -> String {
         String(token.prefix(8)) + "..."
