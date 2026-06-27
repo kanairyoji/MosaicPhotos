@@ -91,19 +91,26 @@ public final class BackupEngine {
     public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
         self.tokenProvider = auth
         self.uploader = DropboxBackupUploader(httpClient: httpClient)
-        do {
-            // ⚠️ 名前を明示して "BackupKit.store" を使う。
-            // 名前なし ModelContainer は "default.store" になり、
-            // DropboxCacheStore の ModelContainer と衝突してスキーマエラーになる（過去に発生）。
-            let config = ModelConfiguration("BackupKit", schema: Schema([BackupAssetRecord.self]))
-            let container = try ModelContainer(for: Schema([BackupAssetRecord.self]), configurations: [config])
-            modelContext = ModelContext(container)
-        } catch {
-            // ⚠️ ModelContainer 初期化失敗。この場合 recordCount は常に 0、
-            // saveRecord() は即 return し、loadAlbums() も何も返さない。
-            // スキーマ変更後に発生しやすい。アプリを削除して再インストールすると解消する。
-            BackupLogger.error("ModelContainer init failed: \(error)")
+        // ⚠️ 名前を明示して "BackupKit.store" を使う（名前なしは "default.store" になり
+        // DropboxCacheStore と衝突＝過去にクラッシュ）。壊れた/非互換ストアは削除して作り直す（自己修復）。
+        modelContext = ModelContext(Self.makeResilientContainer())
+    }
+
+    /// 名前付き永続コンテナを作る。失敗時は store ファイルを削除して再構築し、それでも駄目なら
+    /// インメモリへ。SwiftData が trap せず必ず ModelContainer を返し、起動時クラッシュを防ぐ
+    /// （バックアップ記録は再構築されるが、Dropbox 上の実ファイルは無事）。
+    private static func makeResilientContainer() -> ModelContainer {
+        let schema = Schema([BackupAssetRecord.self])
+        let config = ModelConfiguration("BackupKit", schema: schema)
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        BackupLogger.error("BackupEngine: 'BackupKit' store open failed; deleting and rebuilding.")
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
         }
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        BackupLogger.error("BackupEngine: 'BackupKit' store still failing; using in-memory store.")
+        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
     }
 
     // MARK: - Public API

@@ -14,16 +14,27 @@ actor AutoAlbumStore {
     /// OCR/固定語彙タグ列を撤去し CLIP 埋め込み中心へ移行したスキーマ変更に伴う再構築）。失敗時はインメモリ。
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoEnrichment.self, GeneratedAlbum.self])
-        let configuration = ModelConfiguration("AutoAlbumV9", schema: schema,
-                                               isStoredInMemoryOnly: isStoredInMemoryOnly)
-        do {
-            return try ModelContainer(for: schema, configurations: [configuration])
-        } catch {
-            log.error("AutoAlbumStore: persistent ModelContainer failed: \(error). Falling back to in-memory.")
+        if isStoredInMemoryOnly {
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            return (try? ModelContainer(for: schema, configurations: [memory]))
-                ?? (try! ModelContainer(for: schema))
+            return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         }
+        return makeResilientContainer(name: "AutoAlbumV9", schema: schema) { Self.log.error($0) }
+    }
+
+    /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
+    /// （自己修復）、それでも駄目ならインメモリへ。SwiftData が trap せず必ず ModelContainer を返すことで、
+    /// 起動時に壊れたストアでクラッシュするのを防ぐ（データは失うが回復＝再構築される）。
+    static func makeResilientContainer(name: String, schema: Schema, log: (String) -> Void) -> ModelContainer {
+        let config = ModelConfiguration(name, schema: schema)
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        log("ModelContainer '\(name)' open failed; deleting store and rebuilding (data reset).")
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
+        }
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        log("ModelContainer '\(name)' still failing; using in-memory store.")
+        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
     }
 
     /// 既存呼び出し（`AutoAlbumStore()` / `AutoAlbumStore(isStoredInMemoryOnly:)`）を維持する委譲 init。

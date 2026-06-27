@@ -7,9 +7,11 @@ import SwiftUI
 /// Reached via a NavigationLink from `DropboxSettingsView`.
 public struct DropboxCacheListView: View {
     let model: DropboxCacheDebugModel
+    let store: DropboxPhotoStore?
 
-    public init(model: DropboxCacheDebugModel) {
+    public init(model: DropboxCacheDebugModel, store: DropboxPhotoStore? = nil) {
         self.model = model
+        self.store = store
     }
 
     public var body: some View {
@@ -22,7 +24,7 @@ public struct DropboxCacheListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Refresh") { model.refresh() }
+                Button("Refresh") { Task { await model.refresh(store: store) } }
             }
         }
     }

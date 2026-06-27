@@ -47,20 +47,11 @@ actor DropboxCacheStore {
         // ⚠️ 名前を明示して "DropboxCache.store" を使う。
         // 名前なし ModelConfiguration は "default.store" になり、
         // BackupEngine の ModelContainer と衝突してスキーマエラーになる（過去に発生）。
-        let configuration = ModelConfiguration(
-            "DropboxCache",
-            schema: schema,
-            isStoredInMemoryOnly: isStoredInMemoryOnly
-        )
-        do {
-            modelContainer = try ModelContainer(for: schema, configurations: [configuration])
-        } catch {
-            // Falls back to an in-memory store so the cache degrades gracefully
-            // (no persistence, but the app keeps working) instead of crashing.
-            DropboxLogger.error("DropboxCacheStore: persistent ModelContainer failed: \(error). Falling back to in-memory store.")
-            let memoryConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            modelContainer = (try? ModelContainer(for: schema, configurations: [memoryConfiguration]))
-                ?? (try! ModelContainer(for: schema))
+        if isStoredInMemoryOnly {
+            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            modelContainer = (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
+        } else {
+            modelContainer = Self.makeResilientContainer(name: "DropboxCache", schema: schema)
         }
         modelContext = ModelContext(modelContainer)
 
@@ -72,6 +63,22 @@ actor DropboxCacheStore {
         self.thumbnailByteLimit = thumbnailByteLimit
         self.fullImageByteLimit = fullImageByteLimit
         thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit)
+    }
+
+    /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
+    /// （自己修復）、それでも駄目ならインメモリへ。SwiftData が trap せず必ず ModelContainer を返すことで、
+    /// 起動時に壊れたストアでクラッシュするのを防ぐ（キャッシュは再同期で回復する）。
+    static func makeResilientContainer(name: String, schema: Schema) -> ModelContainer {
+        let config = ModelConfiguration(name, schema: schema)
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        DropboxLogger.error("DropboxCacheStore: '\(name)' open failed; deleting store and rebuilding.")
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
+        }
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        DropboxLogger.error("DropboxCacheStore: '\(name)' still failing; using in-memory store.")
+        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
     }
 
     // MARK: - Metadata / sync state
@@ -168,6 +175,41 @@ actor DropboxCacheStore {
         DropboxLogger.verbose("applyDelta() saved — inserted=\(insertCount), updated=\(updateCount), removed=\(removed.count)")
     }
 
+    // MARK: - Debug snapshot（デバッグ画面用：別コンテナを開かず本アクター経由で読む）
+
+    /// デバッグ画面表示用のスナップショット（件数・使用量・直近アイテム/使用量）。
+    /// 以前は DropboxCacheDebugModel が同名 "DropboxCache" ストアを**第2のコンテナ**で開いていたが、
+    /// 同一ストアの二重オープンを避けるため、動作中の本アクターから読む。
+    func debugSnapshot(accountId: String) -> DropboxCacheDebugSnapshot {
+        let allItems = (try? modelContext.fetch(FetchDescriptor<CachedDropboxItem>())) ?? []
+        let allUsage = (try? modelContext.fetch(FetchDescriptor<CacheUsageEntry>())) ?? []
+        let syncState = fetchSyncState(accountId: accountId)
+        let thumbKind = CacheUsageEntry.CacheKind.thumbnail.rawValue
+        let fullKind = CacheUsageEntry.CacheKind.fullImage.rawValue
+        let thumb = allUsage.filter { $0.kind == thumbKind }
+        let full = allUsage.filter { $0.kind == fullKind }
+
+        var itemDesc = FetchDescriptor<CachedDropboxItem>(sortBy: [SortDescriptor(\.cachedAt, order: .reverse)])
+        itemDesc.fetchLimit = 50
+        let recentItems = ((try? modelContext.fetch(itemDesc)) ?? []).map {
+            DropboxCacheDebugSnapshot.Item(path: $0.path, name: $0.name, contentHash: $0.contentHash,
+                                           captureDate: $0.captureDate, cachedAt: $0.cachedAt)
+        }
+        var usageDesc = FetchDescriptor<CacheUsageEntry>(sortBy: [SortDescriptor(\.lastAccessedAt, order: .reverse)])
+        usageDesc.fetchLimit = 50
+        let recentUsage = ((try? modelContext.fetch(usageDesc)) ?? []).map {
+            DropboxCacheDebugSnapshot.Usage(key: $0.key, kind: $0.kind, byteSize: $0.byteSize,
+                                            lastAccessedAt: $0.lastAccessedAt)
+        }
+
+        return DropboxCacheDebugSnapshot(
+            itemCount: allItems.count,
+            thumbnailCount: thumb.count, thumbnailBytes: thumb.reduce(0) { $0 + $1.byteSize },
+            fullImageCount: full.count, fullImageBytes: full.reduce(0) { $0 + $1.byteSize },
+            lastSyncedAt: syncState?.lastSyncedAt, syncCursor: syncState?.cursor,
+            recentItems: recentItems, recentUsage: recentUsage)
+    }
+
     // MARK: - File naming
 
     func store(for kind: CacheUsageEntry.CacheKind) -> DiskImageStore {
@@ -185,5 +227,31 @@ actor DropboxCacheStore {
         let predicate = #Predicate<DropboxSyncState> { $0.accountId == accountId }
         return try? modelContext.fetch(FetchDescriptor(predicate: predicate)).first
     }
+}
+
+/// `DropboxCacheStore` のデバッグ用スナップショット（Sendable）。`@Model` を actor 外へ漏らさず値で返す。
+public struct DropboxCacheDebugSnapshot: Sendable {
+    public struct Item: Sendable {
+        public let path: String
+        public let name: String
+        public let contentHash: String?
+        public let captureDate: Date?
+        public let cachedAt: Date
+    }
+    public struct Usage: Sendable {
+        public let key: String
+        public let kind: String
+        public let byteSize: Int
+        public let lastAccessedAt: Date
+    }
+    public let itemCount: Int
+    public let thumbnailCount: Int
+    public let thumbnailBytes: Int
+    public let fullImageCount: Int
+    public let fullImageBytes: Int
+    public let lastSyncedAt: Date?
+    public let syncCursor: String?
+    public let recentItems: [Item]
+    public let recentUsage: [Usage]
 }
 #endif

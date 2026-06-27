@@ -248,6 +248,12 @@ public final class DropboxPhotoStore {
         await cache.usageSnapshot()
     }
 
+    /// デバッグ画面用のキャッシュスナップショット（件数・使用量・直近一覧）。
+    /// 別コンテナを開かず動作中のキャッシュアクターから読む（同一ストアの二重オープン回避）。
+    public func cacheDebugSnapshot() async -> DropboxCacheDebugSnapshot {
+        await cache.debugSnapshot(accountId: auth.credential?.accountId ?? "")
+    }
+
     /// 同期ループを停止して再開する（設定の Debug「Force re-sync」用）。
     /// キャッシュ済みカーソルがあれば polling を、無ければ initialSync を再起動する。
     public func forceResync() {

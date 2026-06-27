@@ -169,7 +169,7 @@ public struct DropboxDebugSection: View {
             cacheStatusSection
             tuningConstantsSection
         }
-        .onAppear { cacheDebugModel.refresh() }
+        .task { await cacheDebugModel.refresh(store: store) }
     }
 
     // MARK: - Auth debug
@@ -234,11 +234,11 @@ public struct DropboxDebugSection: View {
             }
             HStack {
                 Button("Refresh") {
-                    cacheDebugModel.refresh()
+                    Task { await cacheDebugModel.refresh(store: store) }
                 }
                 Spacer()
                 NavigationLink("View contents") {
-                    DropboxCacheListView(model: cacheDebugModel)
+                    DropboxCacheListView(model: cacheDebugModel, store: store)
                 }
             }
             if let store {
@@ -249,16 +249,8 @@ public struct DropboxDebugSection: View {
             }
             .alert("Clear Dropbox Cache?", isPresented: $showClearCacheConfirmation) {
                 Button("Clear", role: .destructive) {
-                    Task {
-                        // 動作中ストア経由で消去＋再同期する（cursor/syncState もリセットされ、
-                        // 消去後に空のまま再同期されない問題を防ぐ）。store が無い場合のみ単独消去。
-                        if let store {
-                            await store.clearCache()
-                        } else {
-                            cacheDebugModel.clearAll()
-                        }
-                        cacheDebugModel.refresh()
-                    }
+                    // 動作中ストア経由で消去＋再同期（cursor/syncState もリセット）→ 再取得。
+                    Task { await cacheDebugModel.clearAll(store: store) }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
