@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>並行・バックグラウンド処理の詳細 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "dd-concurrency";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / 並行・バックグラウンド処理</nav>
+      <h1>並行・バックグラウンド処理の詳細</h1>
+      <p class="lead">「UI を止めない」を最優先に、重い処理をアクタ/バックグラウンドへ逃がし、ユーザー操作とメモリ状態に応じて<strong>譲る</strong>。ここでは実際のパラメータと制御まで踏み込む。</p>
+
+      <h2>アクタ分離の地図</h2>
+      <table>
+        <tr><th>区分</th><th>実体</th><th>役割</th></tr>
+        <tr><td>MainActor</td><td>各ストア・エンジン（<code>@Observable</code>）</td><td>UI 状態・公開 API</td></tr>
+        <tr><td>専用アクタ</td><td><code>AutoAlbumStore</code>（@ModelActor）/ <code>DropboxCacheStore</code>（actor）/ <code>PlaceNameResolver</code>（actor）</td><td>DB・キャッシュ・地名解決の直列化</td></tr>
+        <tr><td>detached</td><td><code>Task.detached(priority: .utility)</code></td><td>全件列挙・グリッド集約・署名計算など CPU 仕事</td></tr>
+        <tr><td>background</td><td><code>Task(priority: .background)</code></td><td>CLIP 埋め込みの trickle 実行</td></tr>
+      </table>
+      <p>原則: <strong><code>@Model</code> はアクタ外へ出さない</strong>。境界をまたぐ値は <code>Sendable</code>（<code>EnrichedPhoto</code> / <code>AutoAlbumInfo</code> / <code>PlaceCandidate</code>）に変換する。</p>
+
+      <h2>背景 CLIP 埋め込みパイプライン</h2>
+      <p>全写真の画像埋め込みは <code>PhotoTagger.embedUnprocessed</code> が担う。一度に全部処理せず、<strong>小バッチ＋バッチ間スリープ</strong>で trickle する。</p>
+      <pre><code>func embedUnprocessed(
+    batchSize: Int = 8,
+    betweenBatchNs: UInt64 = 2_500_000_000,   // 2.5s
+    maxBatches: Int = 20_000,
+    shouldPause: @MainActor () -> Bool = { false },
+    onBatch: () async -> Void) async</code></pre>
+      <div class="mermaid">
+graph TD
+  S[開始] --> CK{Task.isCancelled?}
+  CK -->|はい| END[終了]
+  CK -->|いいえ| P{shouldPause?}
+  P -->|はい| W[0.3s 待って再確認]
+  W --> P
+  P -->|いいえ| F[unembeddedRefKeys limit=batchSize]
+  F --> E{空?}
+  E -->|はい| END
+  E -->|いいえ| PER[perception.perceive refKeys]
+  PER --> AP[applyPerception<br/>未取得も sceneTagged=true]
+  AP --> OB{16バッチ毎?}
+  OB -->|はい| RA[onBatch → AI 再評価]
+  OB -->|いいえ| SL
+  RA --> SL[betweenBatchNs スリープ]
+  SL --> CK
+      </div>
+      <p>ポイント:</p>
+      <ul>
+        <li><strong>未処理の抽出は limit 付き fetch</strong>（<code>unembeddedRefKeys(limit:)</code>）。全件ロードしない。</li>
+        <li><strong>取得不可でも <code>sceneTagged=true</code></strong> にして無限ループを防ぐ（画像が無い/壊れた写真）。</li>
+        <li><strong>onBatch は 16 バッチごと</strong>に呼び、AI アルバムを段階的に再評価（毎回やると重い）。</li>
+        <li>QoS は <code>.background</code>。UI 操作（<code>.userInitiated</code>）と CPU を奪い合わない。</li>
+      </ul>
+
+      <h2>「重さ」プリセット</h2>
+      <p>バッチ件数と休止秒を 1 段階にまとめ、設定で選べる（<code>BackgroundProcessing.presets</code>）。</p>
+      <table>
+        <tr><th>段階</th><th>batchSize</th><th>pauseSeconds</th><th>用途</th></tr>
+        <tr><td>Very Gentle</td><td>4</td><td>6.0</td><td>最も端末に優しい</td></tr>
+        <tr><td>Gentle（既定）</td><td>8</td><td>2.5</td><td>通常</td></tr>
+        <tr><td>Balanced</td><td>16</td><td>1.0</td><td>速さ重視</td></tr>
+        <tr><td>Fast</td><td>32</td><td>0.2</td><td>充電中などで一気に</td></tr>
+      </table>
+
+      <h2>「譲る」条件（協調的一時停止）</h2>
+      <p><code>shouldPause</code> が <code>true</code> の間は 0.3s スリープで待機する。条件は 2 つ。</p>
+      <pre><code>shouldPause: { isInteracting || MemoryPressureMonitor.shared.isUnderPressure }</code></pre>
+      <ul>
+        <li><strong>isInteracting</strong> — グリッドのスクロール/スクラブ中。Coordinator の <code>scrollViewWillBeginDragging</code> 等で立つ。</li>
+        <li><strong>isUnderPressure</strong> — メモリ圧迫中。<code>Diagnostics</code> のメモリ圧迫ソースが立て、約 20 秒後に自動解除。</li>
+      </ul>
+
+      <h2>Dropbox 側のスロットリング</h2>
+      <ul>
+        <li><strong>サムネ並列数</strong> — <code>DropboxThumbnailBatcher</code> がバッチで取得。並列数は設定（<code>DropboxCacheSettingsKeys.thumbnailConcurrency</code>）。</li>
+        <li><strong>初回同期の再代入間引き</strong> — ページごとに頻発する 6 万件規模の再フェッチ/再代入を <code>scheduleCacheRefresh</code> でスロットル（先頭即時＋以降 ~0.4s 間引き）。</li>
+      </ul>
+
+      <h2>段階起動（スパイク回避）</h2>
+      <p>起動直後に重い処理が同時に走らないよう時差で開始する（<code>HomeLifecycleTasks</code>）。詳細は <a href="../case-studies/launch-performance.html">起動の高速化</a>。</p>
+
+      <div class="box why">
+        <span class="box-h">設計の勘所</span>
+        「速く終わらせる」より「<strong>UI と端末を圧迫しない</strong>」を優先。trickle・QoS・協調的一時停止・段階起動の 4 つで、重い AI 処理を体感ゼロに近づけている。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/PhotoTagger.swift">PhotoTagger.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/BackgroundProcessing.swift">BackgroundProcessing.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift">AutoAlbumEngine+Recognition.swift</a> — scheduleBackgroundFill</li>
+          <li><a class="srclink" data-path="Packages/DropboxCore/Sources/DropboxCore/Store/DropboxThumbnailBatcher.swift">DropboxThumbnailBatcher.swift</a></li>
+        </ul>
+      </div>
+      <p>背景: <a href="../architecture/concurrency.html">並行性とアクター分離</a> / <a href="../tech/swift-observation.html">Swift Observation</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

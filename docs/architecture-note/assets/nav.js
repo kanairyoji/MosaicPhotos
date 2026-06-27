@@ -30,6 +30,11 @@
       { id: "feat-caching",       href: "features/caching.html",       label: "キャッシュ戦略" },
       { id: "feat-diagnostics",   href: "features/diagnostics.html",   label: "診断と堅牢性" },
     ]},
+    { title: "詳細実装 (Deep Dive)", items: [
+      { id: "dd-concurrency", href: "deep-dive/concurrency-internals.html", label: "並行・バックグラウンド処理" },
+      { id: "dd-cache",       href: "deep-dive/cache-internals.html",       label: "キャッシュ実装詳細" },
+      { id: "dd-data-model",  href: "deep-dive/data-model.html",            label: "データ構造詳細" },
+    ]},
     { title: "技術プライマー", items: [
       { id: "tech-observation",   href: "tech/swift-observation.html",        label: "Swift Observation" },
       { id: "tech-swiftdata",     href: "tech/swiftdata.html",                label: "SwiftData" },
@@ -38,6 +43,16 @@
       { id: "tech-coreml-fm",     href: "tech/coreml-foundationmodels.html",  label: "Core ML / Foundation Models" },
       { id: "tech-oauth",         href: "tech/oauth-pkce.html",               label: "OAuth2 + PKCE" },
       { id: "tech-spm",           href: "tech/spm-modularization.html",       label: "SPM モジュール分割" },
+    ]},
+    { title: "AI 基礎知識（汎用）", items: [
+      { id: "ai-overview",  href: "ai/01-overview.html",          label: "1. 全体像と章立て" },
+      { id: "ai-embeddings",href: "ai/02-neural-embeddings.html", label: "2. ニューラルネットと埋め込み" },
+      { id: "ai-transformer",href: "ai/03-transformers.html",     label: "3. Transformer と注意機構" },
+      { id: "ai-clip",      href: "ai/04-clip-contrastive.html",  label: "4. CLIP と対照学習" },
+      { id: "ai-vector",    href: "ai/05-vector-search.html",     label: "5. ベクトル検索と近傍探索" },
+      { id: "ai-quant",     href: "ai/06-quantization.html",      label: "6. 量子化と精度" },
+      { id: "ai-llm",       href: "ai/07-llm-ondevice.html",      label: "7. LLM とオンデバイス推論" },
+      { id: "ai-ranking",   href: "ai/08-ranking-fusion.html",    label: "8. ランキングと融合" },
     ]},
     { title: "設計判断・事例", items: [
       { id: "adr",            href: "design-decisions/adr.html",            label: "設計判断の記録 (ADR)" },

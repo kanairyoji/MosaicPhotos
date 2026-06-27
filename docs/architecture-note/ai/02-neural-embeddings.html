@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 2. ニューラルネットと埋め込み | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-embeddings";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 2. ニューラルネットと埋め込み</nav>
+      <h1>2. ニューラルネットと埋め込み</h1>
+      <p class="lead">ニューラルネットは「重みを調整して入力から有用な特徴を取り出す関数」。その途中で得られる<strong>意味の数値表現＝埋め込み</strong>が、検索の主役になる。</p>
+
+      <h2>ニューラルネットの超概要</h2>
+      <p>入力（画素や単語）に重みを掛けて足し、非線形関数を通す——これを何層も重ねる。学習とは、正解との誤差が小さくなるよう<strong>重みを少しずつ更新</strong>すること（誤差逆伝播）。層を深くすると、低レベル特徴（エッジ）から高レベル特徴（物体・概念）へと段階的に抽象化される。</p>
+      <div class="mermaid">
+graph LR
+  IN[入力] --> L1[層1<br/>低レベル特徴]
+  L1 --> L2[層2<br/>中レベル]
+  L2 --> L3[層3<br/>高レベル概念]
+  L3 --> OUT[出力 / 埋め込み]
+      </div>
+
+      <h2>ベクトルとは</h2>
+      <p>単に数値の並び。たとえば <code>[0.12, -0.98, 0.34, ...]</code>。AI では「意味の座標」として使う。次元数（要素数）が大きいほど多くの意味を表せる（CLIP は 512 次元が典型）。</p>
+
+      <h2>埋め込み = 意味の座標</h2>
+      <p>モデルの最終層付近で得られるベクトルを<strong>埋め込み</strong>と呼ぶ。よく訓練されたモデルでは、<strong>似た意味のものは近くに、違うものは遠くに</strong>配置される。これが「ベクトルの近さ＝意味の近さ」という検索の前提を生む。</p>
+      <div class="mermaid">
+graph TD
+  A["犬の写真"] --> P1["(0.8, 0.1)"]
+  B["子犬の写真"] --> P2["(0.79, 0.12)"]
+  C["車の写真"] --> P3["(-0.6, 0.7)"]
+  P1 --- N[近い = 似た意味]
+  P2 --- N
+  P3 --- F[遠い = 異なる意味]
+      </div>
+
+      <h2>類似度の測り方</h2>
+      <table>
+        <tr><th>指標</th><th>性質</th></tr>
+        <tr><td>ユークリッド距離</td><td>2 点間の直線距離。小さいほど近い。</td></tr>
+        <tr><td>内積 (dot)</td><td>大きいほど同方向。長さの影響を受ける。</td></tr>
+        <tr><td>コサイン類似</td><td>向きだけを見る（長さ非依存）。埋め込み比較の定番。-1〜1。</td></tr>
+      </table>
+      <p>多くの埋め込みは長さを 1 に正規化して使うため、コサイン類似と内積が一致する。詳しくは<a href="05-vector-search.html">第5章</a>。</p>
+
+      <h2>表現学習という発想</h2>
+      <p>分類や検索のたびに人手で特徴を設計するのではなく、<strong>モデルに良い表現（埋め込み）を学ばせる</strong>のが現代の主流。一度よい埋め込みが得られれば、検索・分類・推薦・クラスタリングなど多用途に流用できる。</p>
+
+      <div class="box note">
+        <span class="box-h">要点</span>
+        「埋め込み = 意味の座標」「近さ = 意味の近さ」。この 2 つを押さえれば、以降の章（CLIP・ベクトル検索）はすべてこの応用として理解できる。
+      </div>
+
+      <p>次へ: <a href="03-transformers.html">3. Transformer と注意機構</a></p>
+      <p>関連: <a href="../tech/clip-embeddings.html">CLIP と埋め込み（本アプリ）</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

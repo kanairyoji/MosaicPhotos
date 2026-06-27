@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>データ構造詳細 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "dd-data-model";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / データ構造詳細</nav>
+      <h1>データ構造詳細</h1>
+      <p class="lead">アルバム・付加情報・埋め込み・キャッシュの永続モデルと、それを安全に運ぶ Sendable 値型。両者の対応関係が設計の肝。</p>
+
+      <h2>統一キー: PhotoRef / refKey</h2>
+      <p>ローカル（<code>PHAsset.localIdentifier</code>）とクラウド（Dropbox path）を 1 つの文字列キーに統一する。</p>
+      <table>
+        <tr><th>種別</th><th>encoded（refKey）</th></tr>
+        <tr><td><code>.local(id)</code></td><td><code>"L-" + id</code></td></tr>
+        <tr><td><code>.cloud(path)</code></td><td><code>"C-" + path</code></td></tr>
+      </table>
+      <p><code>PhotoRef.decode</code> で逆変換。これにより付加情報・アルバムのメンバー・埋め込みをソース横断で同一キー管理できる。</p>
+
+      <h2>@Model と Sendable 値の対応</h2>
+      <div class="box why">
+        <span class="box-h">鉄則</span>
+        <code>@Model</code> は <code>@ModelActor</code> の外へ出さない。境界をまたぐときは必ず <code>Sendable</code> 値型へ変換する（<code>GeneratedAlbum.asInfo</code> / <code>PhotoEnrichment.asEnrichedPhoto</code>）。UI と actor の間で参照型の競合を起こさないため。
+      </div>
+      <table>
+        <tr><th>@Model（永続・actor 内）</th><th>Sendable 値（境界外）</th></tr>
+        <tr><td><code>GeneratedAlbum</code></td><td><code>AutoAlbumInfo</code></td></tr>
+        <tr><td><code>PhotoEnrichment</code></td><td><code>EnrichedPhoto</code></td></tr>
+        <tr><td><code>PhotoEmbedding</code></td><td>（ページで <code>(refKey, Data)</code> として取り出す）</td></tr>
+      </table>
+
+      <h2>付加情報: PhotoEnrichment</h2>
+      <p>写真 1 枚のメタデータ。<strong>埋め込みは含まない</strong>（別テーブル）。</p>
+      <table>
+        <tr><th>フィールド</th><th>意味</th></tr>
+        <tr><td><code>refKey</code> (unique)</td><td>統一キー</td></tr>
+        <tr><td><code>kind</code> / <code>localIdentifier</code> / <code>cloudPath</code></td><td>出所</td></tr>
+        <tr><td><code>captureDate</code> / <code>latitude</code> / <code>longitude</code> / <code>placeName</code> / <code>country</code></td><td>時間・場所</td></tr>
+        <tr><td><code>linkKey</code></td><td>ローカル↔クラウドの同一写真を束ねる鍵（重複排除）</td></tr>
+        <tr><td><code>people</code></td><td>人物名（People 由来）</td></tr>
+        <tr><td><code>isScreenshot</code> / <code>isFavorite</code> / <code>aspect</code></td><td>カバー選定・除外の判断材料</td></tr>
+        <tr><td><code>sceneTagged</code></td><td>CLIP 埋め込みを試行済みか（未処理抽出・無限ループ防止）</td></tr>
+      </table>
+
+      <h2>埋め込み: PhotoEmbedding（別テーブル・fp16）</h2>
+      <p>メタデータ取得が巨大 blob に触れないよう分離。<code>refKey</code>(unique) + <code>vector: Data</code>（Float16 パック・約1KB）。読み出し時に fp32 へ復元する。理由は <a href="../case-studies/memory.html">事例: メモリ枯渇</a>。</p>
+
+      <h2>生成アルバム: GeneratedAlbum / AutoAlbumInfo</h2>
+      <p>旅行・フォルダ・AI アルバムの永続レコード。Photos.app は変更しない<strong>仮想アルバム</strong>。</p>
+      <table>
+        <tr><th>フィールド</th><th>意味</th></tr>
+        <tr><td><code>id</code> (unique)</td><td>安定キー。<code>strategyID:開始epoch-終了epoch</code>（再生成時の upsert キー）</td></tr>
+        <tr><td><code>strategyID</code></td><td>生成戦略（TimePlace / PathAlbum / AIAlbum）</td></tr>
+        <tr><td><code>memberRefs</code> / <code>coverRef</code></td><td>メンバー・カバーの refKey（ローカル/クラウド混在）</td></tr>
+        <tr><td><code>places</code> / <code>country</code> / <code>startDate</code> / <code>endDate</code> / <code>latitude,longitude</code></td><td>表示・タイトル生成用</td></tr>
+        <tr><td><code>criteria</code></td><td>AI アルバムの元クエリ（編集で呼び戻す）。他種別は nil</td></tr>
+      </table>
+      <p><code>AutoAlbumInfo</code>（Sendable・Codable）は表示用の派生プロパティを持つ: <code>localIdentifiers</code>/<code>cloudPaths</code>（メンバー分解）、<code>placesLabel</code>（"A &amp; B +N"）、<code>nights</code>/<code>durationLabel</code>。Codable なので将来 Dropbox への JSON コピーにも使える。</p>
+
+      <h2>全体像（ER 風）</h2>
+      <div class="mermaid">
+graph LR
+  PR["refKey（PhotoRef）"]
+  PE["PhotoEnrichment<br/>メタ（refKey unique）"]
+  EM["PhotoEmbedding<br/>vector fp16（refKey unique）"]
+  GA["GeneratedAlbum<br/>memberRefs[]"]
+  PR --- PE
+  PR --- EM
+  GA -->|memberRefs / coverRef| PR
+  PE -. asEnrichedPhoto .-> EP["EnrichedPhoto（値）"]
+  GA -. asInfo .-> AI["AutoAlbumInfo（値）"]
+      </div>
+
+      <h2>スキーマのバージョニング</h2>
+      <p>スキーマを変えたら <code>ModelConfiguration</code> 名を採番して旧ストアを破棄→再構築する（現行 <code>"AutoAlbumV10"</code>）。マイグレーションを書かず<strong>破棄採番</strong>にしているのは、付加情報は再生成可能（写真本体が真実の源）だから。軽微な追加列は SwiftData の軽量マイグレーションに任せる（例: 座標列の追加）。</p>
+
+      <h2>Dropbox 側のモデル</h2>
+      <p><code>CachedDropboxItem</code>（path unique・contentHash で無効化）/ <code>CacheUsageEntry</code>（LRU 台帳）/ <code>DropboxSyncState</code>（カーソル）。詳細は <a href="cache-internals.html">キャッシュ実装詳細</a>。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/PhotoRef.swift">PhotoRef.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models">AutoAlbumCore/Models/</a> — PhotoEnrichment / PhotoEmbedding / GeneratedAlbum</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AutoAlbumInfo.swift">AutoAlbumInfo.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/EnrichedPhoto.swift">EnrichedPhoto.swift</a></li>
+        </ul>
+      </div>
+      <p>背景: <a href="../tech/swiftdata.html">SwiftData</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

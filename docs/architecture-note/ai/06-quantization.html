@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 6. 量子化と精度 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-quant";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 6. 量子化と精度</nav>
+      <h1>6. 量子化と精度</h1>
+      <p class="lead">数値を粗く表すほどメモリと計算は軽くなるが、精度は落ちる。どこまで粗くしてよいかが量子化の勘所。埋め込み検索は意外と粗さに強い。</p>
+
+      <h2>浮動小数点の精度</h2>
+      <table>
+        <tr><th>型</th><th>ビット/要素</th><th>1件512次元</th><th>特徴</th></tr>
+        <tr><td>fp32（単精度）</td><td>32</td><td>2048 B</td><td>標準。精度十分・サイズ大</td></tr>
+        <tr><td>fp16（半精度）</td><td>16</td><td>1024 B</td><td>サイズ半分。表現範囲は狭い</td></tr>
+        <tr><td>bf16</td><td>16</td><td>1024 B</td><td>範囲は fp32 並み・仮数は粗い（学習向き）</td></tr>
+        <tr><td>int8</td><td>8</td><td>512 B</td><td>1/4。スケール係数とセットで使う</td></tr>
+      </table>
+
+      <h2>スカラー量子化（int8 など）</h2>
+      <p>実数値を、ある範囲に対する整数に丸める。復元時はスケール（と必要ならゼロ点）を掛けて戻す。1 要素 1 バイトまで縮むが、丸め誤差が乗る。</p>
+      <pre><code>q = round((x - min) / scale)      // 量子化
+x ≈ q * scale + min                // 復元（近似）</code></pre>
+
+      <h2>直積量子化（PQ）</h2>
+      <p>ベクトルを小区間に分け、各区間を「代表ベクトルの番号」に置き換える。大幅に圧縮でき、距離計算もテーブル参照で高速化できる。ANN（<a href="05-vector-search.html">第5章</a>）と組み合わせる。</p>
+
+      <h2>なぜ埋め込みは粗さに強いのか</h2>
+      <p>検索で本当に必要なのは「どれが一番近いか」という<strong>相対順位</strong>であり、距離の絶対値ではない。多少の丸め誤差があっても順位は保たれやすい。とくに fp16 は、コサイン類似の値がほとんど変わらない。</p>
+      <div class="mermaid">
+graph LR
+  V32["fp32 ベクトル"] --> Q[fp16/int8 に量子化]
+  Q --> V16["軽いベクトル"]
+  V16 --> COS[コサイン類似]
+  COS --> R["順位はほぼ不変"]
+      </div>
+
+      <div class="box note">
+        <span class="box-h">実務の指針</span>
+        まず <strong>fp16</strong> でサイズ半減（精度ロスはほぼ無視できる）。さらに削るなら <strong>int8</strong>（順位はおおむね維持、わずかに recall 低下）。極端な圧縮（バイナリ化）は「粗いふるい→上位だけ高精度で再ランク」という二段構えで使う。
+      </div>
+
+      <h2>注意点</h2>
+      <ul>
+        <li>fp16 は表現範囲が狭い。極端に大きい/小さい値や <strong>NaN/Inf</strong> の混入に注意（壊れたベクトルは除外する）。</li>
+        <li>保存は粗く、<strong>計算時に fp32 へ戻す</strong>のも一手（保存サイズだけ削る）。</li>
+        <li>「モデルの重みの量子化」と「埋め込みの量子化」は別物。前者は推論速度・モデルサイズ、後者は索引サイズに効く。</li>
+      </ul>
+
+      <p>次へ: <a href="07-llm-ondevice.html">7. LLM とオンデバイス推論</a></p>
+      <p>本アプリでの応用: <a href="../case-studies/memory.html">事例: メモリ枯渇</a>（埋め込みを Float16 で保存）</p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

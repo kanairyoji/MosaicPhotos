@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 4. CLIP と対照学習 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-clip";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 4. CLIP と対照学習</nav>
+      <h1>4. CLIP と対照学習</h1>
+      <p class="lead">CLIP は画像エンコーダとテキストエンコーダを<strong>同じベクトル空間</strong>に揃えて学習したモデル。これにより「文で画像を検索する」が、追加学習なしで可能になる。</p>
+
+      <h2>2 つのエンコーダ</h2>
+      <p>画像用とテキスト用の別々のエンコーダがあり、どちらも入力を同じ次元の埋め込みに変換する。狙いは<strong>「対応する画像と文を近くに」「無関係な組を遠くに」</strong>配置すること。</p>
+      <div class="mermaid">
+graph LR
+  IMG[画像] --> IE[画像エンコーダ] --> VI[画像ベクトル]
+  TXT[キャプション] --> TE[テキストエンコーダ] --> VT[テキストベクトル]
+  VI --- SPACE[共有ベクトル空間]
+  VT --- SPACE
+      </div>
+
+      <h2>対照学習（contrastive learning）</h2>
+      <p>大量の「画像とその説明文」ペアで学習する。1 つのバッチに N 組あるとき、<strong>正しい組（対角）の類似度を上げ、誤った組（非対角）の類似度を下げる</strong>。これが「対照」の意味。</p>
+      <div class="mermaid">
+graph TD
+  B["バッチ: 画像1..N と 文1..N"] --> M["N×N 類似度行列"]
+  M --> D["対角（正しい組）→ 高く"]
+  M --> O["非対角（誤った組）→ 低く"]
+      </div>
+      <p>結果として、意味的に対応する画像と文が空間上で引き寄せられ、<strong>言語と視覚が同じ座標系</strong>で表現されるようになる。</p>
+
+      <h2>ゼロショットの力</h2>
+      <p>学習後は、未知のラベルでも<strong>文として埋め込めば</strong>分類・検索できる。たとえば候補ラベル "a photo of a cat / dog / car" を埋め込み、画像ベクトルと最も近いものを選ぶ——これがゼロショット分類。固定の分類クラスに縛られない。</p>
+      <div class="mermaid">
+graph LR
+  P[画像ベクトル] --> CMP{最も近い文は?}
+  L1["'a photo of a cat'"] --> CMP
+  L2["'a photo of a dog'"] --> CMP
+  CMP --> ANS[一致ラベル]
+      </div>
+
+      <h2>オープン語彙検索</h2>
+      <p>固定タグ方式は「決めた語」しか検索できないが、CLIP は任意の文を埋め込めるので、語彙外の自由なクエリ（"a child blowing bubbles"）でも画像と照合できる。これが<strong>オープン語彙</strong>。</p>
+
+      <h2>限界と注意</h2>
+      <ul>
+        <li>細かな属性（正確な個数、文字の読み取り）は苦手。OCR の代替にはならない。</li>
+        <li>学習データの偏りを引き継ぐ。</li>
+        <li>テキスト側は学習言語（多くは英語中心）に依存。非英語クエリは<strong>翻訳を前段に置く</strong>と精度が上がる（→ <a href="07-llm-ondevice.html">第7章</a>）。</li>
+      </ul>
+
+      <div class="box note">
+        <span class="box-h">要点</span>
+        CLIP = 「画像と文を同じ空間に揃えたモデル」。だから<strong>コサイン類似ひとつで</strong>言語↔画像の検索・ゼロショット分類ができる。
+      </div>
+
+      <p>次へ: <a href="05-vector-search.html">5. ベクトル検索と近傍探索</a></p>
+      <p>本アプリでの応用: <a href="../features/on-device-ai.html">オンデバイス AI</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

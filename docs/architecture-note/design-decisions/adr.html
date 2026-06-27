@@ -15,6 +15,15 @@
       <h1>設計判断の記録 (ADR)</h1>
       <p class="lead">「なぜそうしたか」を簡潔に残す。各項は 文脈 / 決定 / 結果（トレードオフ）で書く。</p>
 
+      <div class="box note">
+        <span class="box-h">この記録は Git で維持される（チャット履歴とは独立）</span>
+        本ページと事例は <code>docs/architecture-note/</code> 配下のファイルとしてリポジトリにコミットされている。AI とのチャット履歴が消えても残り、<code>git log</code> で変更経緯も追える。新しい設計判断をしたら、下記テンプレートで<strong>このファイルに 1 項追記</strong>して維持する。
+        <pre><code>&lt;h2&gt;ADR-N タイトル&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;文脈:&lt;/strong&gt; なぜ判断が必要か。&lt;br&gt;
+&lt;strong&gt;決定:&lt;/strong&gt; 何を選んだか。&lt;br&gt;
+&lt;strong&gt;結果:&lt;/strong&gt; 得たもの／トレードオフ。&lt;/p&gt;</code></pre>
+      </div>
+
       <h2>ADR-1 検索を語彙ゼロのオープン語彙 CLIP に一本化</h2>
       <p><strong>文脈:</strong> 固定タグ方式は語彙外検索に弱く、辞書の保守も負担。<br>
       <strong>決定:</strong> 固定語彙・OCR を捨て、CLIP のオープン語彙＋構造化条件＋字句の RRF 融合にする。<br>

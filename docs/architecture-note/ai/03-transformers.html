@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 3. Transformer と注意機構 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-transformer";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 3. Transformer と注意機構</nav>
+      <h1>3. Transformer と注意機構</h1>
+      <p class="lead">いまの言語モデルも画像モデル（ViT）も、中心は <strong>Transformer</strong>。鍵は「系列の各要素が、関連する他の要素に<strong>注意（attention）</strong>を向ける」仕組み。</p>
+
+      <h2>まずトークン化</h2>
+      <p>文はそのままでは扱えないので、<strong>トークン</strong>（単語や部分文字列）に区切り、各トークンを埋め込みベクトルにする。画像の場合（ViT）は、画像を小さなパッチに分割し、各パッチをベクトル化する。</p>
+      <div class="mermaid">
+graph LR
+  T["'a red car'"] --> TK["['a','red','car']"]
+  TK --> EMB["各トークンの埋め込み列"]
+  IMG[画像] --> PATCH["パッチ分割"]
+  PATCH --> PEMB["各パッチの埋め込み列"]
+      </div>
+
+      <h2>self-attention（自己注意）</h2>
+      <p>各トークンは「自分はどのトークンを参照すべきか」を計算する。たとえば "it" が文中の何を指すかを、関連の強い語に重みを置いて集約する。これにより<strong>文脈に応じた表現</strong>が得られる。</p>
+      <p>仕組みを乱暴に言うと、各要素から <strong>Query / Key / Value</strong> の 3 つのベクトルを作り、Query と各 Key の一致度（内積）で重みを決め、その重みで Value を加重平均する。</p>
+      <div class="mermaid">
+graph TD
+  Q[Query] --> S[各 Key との一致度]
+  K[Key] --> S
+  S --> W[重み（softmax）]
+  V[Value] --> O[加重平均 = 出力]
+  W --> O
+      </div>
+
+      <h2>Transformer ブロック</h2>
+      <p>self-attention の後に、各要素を独立に変換する小さな全結合層（FFN）を重ね、これを 1 ブロックとして何層も積む。<strong>multi-head</strong>（複数の注意を並列に持つ）で、異なる種類の関係を同時に捉える。</p>
+
+      <h2>なぜ強いのか</h2>
+      <ul>
+        <li><strong>長距離の依存</strong>を 1 ステップで捉えられる（RNN のように逐次でない）。</li>
+        <li><strong>並列計算</strong>しやすく、大規模化と相性が良い。</li>
+        <li>テキストも画像も<strong>同じ枠組み</strong>で扱える（→ CLIP のように両者を組み合わせやすい）。</li>
+      </ul>
+
+      <h2>ViT（Vision Transformer）</h2>
+      <p>画像をパッチ列として Transformer に入れる方式。CNN に代わり、CLIP の画像エンコーダにも使われる。出力を集約して 1 本の画像埋め込みにする。</p>
+
+      <div class="box note">
+        <span class="box-h">この章の要点</span>
+        Transformer は「要素同士の関連に注意を向けて文脈表現を作る」装置。テキストと画像を共通の方法で埋め込めることが、次章の CLIP につながる。
+      </div>
+
+      <p>次へ: <a href="04-clip-contrastive.html">4. CLIP と対照学習</a></p>
+      <p>関連: <a href="07-llm-ondevice.html">7. LLM とオンデバイス推論</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>
