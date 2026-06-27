@@ -49,6 +49,31 @@ struct PhotoGridGroupingTests {
         #expect(sections.map(\.title) == ["2018", "2019"])
     }
 
+    @Test("coalesceBelow: 1行に満たない連続月を範囲セクションへ束ねる")
+    func coalescesSmallMonths() {
+        // colCount=4。各月が1〜2枚（<4）→ 連続して束ねられ、密に詰まる。
+        let items = [
+            MockItem(id: 0, captureDate: date(2024, 1, 5)),
+            MockItem(id: 1, captureDate: date(2024, 2, 9)),
+            MockItem(id: 2, captureDate: date(2024, 2, 20)),
+            MockItem(id: 3, captureDate: date(2024, 3, 1)),
+        ]
+        let sections = photoGridSections(items: items, grouping: .month, colCount: 4, coalesceBelow: 4)
+        #expect(sections.count == 1)                        // 3か月が1セクションに
+        #expect(sections[0].title == "2024-01 – 2024-03")   // 範囲ラベル
+        #expect(sections[0].rows.count == 1)                // 4枚=1行に密集
+        #expect(sections[0].rows[0].entries.map(\.flatIndex) == [0, 1, 2, 3])
+    }
+
+    @Test("coalesceBelow: 1行を満たす月は単独セクションのまま")
+    func keepsFullMonthsStandalone() {
+        // 2024-01 が4枚（=colCount）→ 単独。2024-02 が1枚 → それ単独（範囲にならない）。
+        let items = (0..<4).map { MockItem(id: $0, captureDate: date(2024, 1, 1)) }
+            + [MockItem(id: 4, captureDate: date(2024, 2, 1))]
+        let sections = photoGridSections(items: items, grouping: .month, colCount: 4, coalesceBelow: 4)
+        #expect(sections.map(\.title) == ["2024-01", "2024-02"])
+    }
+
     @Test("captureDate が nil のものは Unknown セクション")
     func unknownDate() {
         let items = [MockItem(id: 0, captureDate: nil)]

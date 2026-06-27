@@ -35,34 +35,57 @@ public struct PhotoGridSection<Item>: Identifiable {
 ///
 /// View 非依存の純関数。`PhotoItem.captureDate` が `nil` のものは "Unknown" 扱い。
 /// 元の並び順（呼び出し側がソート済み）を保ったまま、隣接する同一ラベルを 1 セクションに束ねる。
+///
+/// - Parameter coalesceBelow: 0 より大きいとき、**写真数が `coalesceBelow` 未満（＝1行に満たない）の
+///   連続グループを 1 セクションに束ね**、範囲ラベル（"YYYY-MM – YYYY-MM"）にする。これにより
+///   1枚しかない月がヘッダー＋半端な行を量産せず、行を密に詰められる。`coalesceBelow` 以上のグループは
+///   従来どおり単独セクション（自分のラベル）。0（既定）なら従来動作。
 public func photoGridSections<Item: PhotoItem>(
     items: [Item],
     grouping: PhotoGridGrouping,
-    colCount: Int
+    colCount: Int,
+    coalesceBelow: Int = 0
 ) -> [PhotoGridSection<Item>] {
     // 月＝YYYY-MM / 年＝YYYY（DisplayDate で全体統一）。
     let label: (Date) -> String = grouping == .year ? DisplayDate.year : DisplayDate.ym
 
-    var result: [PhotoGridSection<Item>] = []
-    var currentTitle: String?
-    var currentEntries: [PhotoGridEntry<Item>] = []
-
-    func flush() {
-        guard let title = currentTitle, !currentEntries.isEmpty else { return }
-        result.append(PhotoGridSection(title: title,
-                                       rows: chunk(currentEntries, colCount: colCount)))
-    }
-
+    // 1) 隣接同一ラベルで raw グループ化（順序保持）。
+    var groups: [(label: String, entries: [PhotoGridEntry<Item>])] = []
     for (i, item) in items.enumerated() {
         let title = item.captureDate.map(label) ?? "Unknown"
-        if title != currentTitle {
-            flush()
-            currentTitle = title
-            currentEntries = []
+        if groups.last?.label == title {
+            groups[groups.count - 1].entries.append(PhotoGridEntry(flatIndex: i, item: item))
+        } else {
+            groups.append((title, [PhotoGridEntry(flatIndex: i, item: item)]))
         }
-        currentEntries.append(PhotoGridEntry(flatIndex: i, item: item))
     }
-    flush()
+
+    // 2) coalesceBelow 未満の小グループを範囲セクションへ束ねる（0/1 なら従来＝グループ＝セクション）。
+    guard coalesceBelow > 1 else {
+        return groups.map { PhotoGridSection(title: $0.label, rows: chunk($0.entries, colCount: colCount)) }
+    }
+
+    var result: [PhotoGridSection<Item>] = []
+    var pending: [(label: String, entries: [PhotoGridEntry<Item>])] = []
+
+    func flushPending() {
+        guard !pending.isEmpty else { return }
+        let merged = pending.flatMap { $0.entries }
+        let first = pending.first!.label, last = pending.last!.label
+        let title = first == last ? first : "\(first) – \(last)"
+        result.append(PhotoGridSection(title: title, rows: chunk(merged, colCount: colCount)))
+        pending = []
+    }
+
+    for g in groups {
+        if g.entries.count >= coalesceBelow {
+            flushPending()
+            result.append(PhotoGridSection(title: g.label, rows: chunk(g.entries, colCount: colCount)))
+        } else {
+            pending.append(g)
+        }
+    }
+    flushPending()
     return result
 }
 

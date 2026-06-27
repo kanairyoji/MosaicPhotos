@@ -199,7 +199,11 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
             var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
             if let grouping {
-                let sections = photoGridSections(items: items, grouping: grouping, colCount: max(1, currentColumns))
+                // 月グループは「1行に満たない連続月」を範囲セクションへ束ねて行を密にする
+                // （1枚月のヘッダー＋半端行の量産を防ぐ）。年グループは束ねない。
+                let coalesce = grouping == .month ? max(1, currentColumns) : 0
+                let sections = photoGridSections(items: items, grouping: grouping,
+                                                 colCount: max(1, currentColumns), coalesceBelow: coalesce)
                 // diffable はセクション識別子が一意必須。日付ソート済みなら通常重複しないが、
                 // 同名ラベルが非隣接で再出現してもクラッシュしないよう、出現順を保って統合する。
                 var order: [String] = []
