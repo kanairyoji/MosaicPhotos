@@ -18,9 +18,9 @@ struct HomeView: View {
     @State private var mergedStore: MergedPhotoStore
     @State private var backupEngine: BackupEngine
     /// アルバムスキャナー。バックアップと独立してローカル写真ライブラリを走査・キャッシュする。
-    @State var albumScanner = LocalAlbumScanner()
+    @State var albumScanner: LocalAlbumScanner
     /// 場所（市区町村）スキャナー。ローカル＋Dropbox の位置情報をまとめてグルーピングする。
-    @State var placeScanner = PlaceScanner()
+    @State var placeScanner: PlaceScanner
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
     /// Dropbox/バックアップのアダプタを注入し、ローカル＋クラウドを統合・重複排除して生成する。
     @State var autoAlbumEngine: AutoAlbumEngine
@@ -35,15 +35,16 @@ struct HomeView: View {
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
 
-    init() {
-        let auth = DropboxAuthService(appKey: DropboxConfig.appKey, redirectURI: DropboxConfig.redirectURI)
-        let dropboxStore = DropboxPhotoStore(auth: auth)
-        self._dropboxStore = State(initialValue: dropboxStore)
-        self._mergedStore = State(initialValue: MergedPhotoStore(dropboxStore: dropboxStore))
-        let backupEngine = BackupEngine(auth: auth)
-        self._backupEngine = State(initialValue: backupEngine)
-        self._autoAlbumEngine = State(initialValue:
-            makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine))
+    /// ストアは `HomeStores` で事前構築する（各ストアの `ModelContainer` 生成が同期的で重く、
+    /// `HomeView.init` で作ると最初の描画＝起動をブロックするため）。`RootView` が起動直後に
+    /// 非同期構築し、完成したものをここへ注入する。
+    init(stores: HomeStores) {
+        self._dropboxStore = State(initialValue: stores.dropboxStore)
+        self._mergedStore = State(initialValue: stores.mergedStore)
+        self._backupEngine = State(initialValue: stores.backupEngine)
+        self._albumScanner = State(initialValue: stores.albumScanner)
+        self._placeScanner = State(initialValue: stores.placeScanner)
+        self._autoAlbumEngine = State(initialValue: stores.autoAlbumEngine)
     }
 
     var body: some View {
