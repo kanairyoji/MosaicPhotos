@@ -10,6 +10,7 @@
              --classes imagenette（10クラス・やさしい）/ imagenet1k（1000クラス・厳しい）
   query    : 自然文クエリで全画像をランキングし、top-1 画像が意図クラスかを判定
              （オープン語彙の実利用に近い retrieval 評価）
+  confusion: 指定クラス（--focus-wnid）の誤判定先の内訳と、正解ラベルの top-5 / 順位を分析
 
 呼び出しは scripts/eval_recognition.sh 経由（venv・データ取得を面倒見る）。
 """
@@ -79,6 +80,13 @@ def embed_image(img_model, im):
     return np.array(img_model.predict({"image": im})["embedding"]).reshape(-1)
 
 
+def sanitize(mat):
+    """float64 化し、非有限（fp16 由来の NaN/Inf）行をゼロにする（matmul の警告防止）。"""
+    mat = np.asarray(mat, dtype=np.float64)
+    mat[~np.all(np.isfinite(mat), axis=1)] = 0.0
+    return mat
+
+
 def sample_images(images_dir, per_class, rng):
     """[(path, wnid)] を返す。<images_dir>/<wnid>/*.JPEG 構造。"""
     out = []
@@ -104,7 +112,7 @@ def run_classify(img_model, txt_model, tokenizer, ctx, samples, which):
         target_index = {w: i for i, w in enumerate(wnids)}     # クラス配列内の位置
         print(f"== building {len(names)} class text embeddings (imagenette) ==")
 
-    class_mat = np.stack([embed_text(txt_model, tokenizer, ctx, PROMPT.format(n)) for n in names])
+    class_mat = sanitize(np.stack([embed_text(txt_model, tokenizer, ctx, PROMPT.format(n)) for n in names]))
 
     total, correct, nan = 0, 0, 0
     per = {w: [0, 0] for w in IMAGENETTE}
@@ -154,6 +162,45 @@ def run_query(img_model, txt_model, tokenizer, ctx, samples):
     return correct, len(QUERIES), nan
 
 
+def run_confusion(img_model, txt_model, tokenizer, ctx, samples, focus_wnid):
+    """指定クラスの誤判定先（混同分布）と正解ラベルの順位を分析する。"""
+    import open_clip
+    names = list(open_clip.IMAGENET_CLASSNAMES)
+    print(f"== building {len(names)} class text embeddings ==")
+    class_mat = sanitize(np.stack([embed_text(txt_model, tokenizer, ctx, PROMPT.format(n)) for n in names]))
+
+    focus_idx = IMAGENETTE[focus_wnid][1]
+    focus_name = names[focus_idx]
+    imgs = [(p, w) for (p, w) in samples if w == focus_wnid]
+    print(f"\n== confusion analysis: '{focus_name}' (wnid={focus_wnid}, index={focus_idx}, n={len(imgs)}) ==")
+
+    top1 = top5 = 0
+    ranks = []
+    hist = {}
+    for path, _ in imgs:
+        vec = embed_image(img_model, preprocess(path, IMG_SIZE))
+        if not np.all(np.isfinite(vec)):
+            continue
+        order = np.argsort(-(class_mat @ vec))
+        rank = int(np.where(order == focus_idx)[0][0])  # 0-based
+        ranks.append(rank + 1)
+        top1 += int(rank == 0)
+        top5 += int(rank < 5)
+        pred = names[int(order[0])]
+        hist[pred] = hist.get(pred, 0) + 1
+
+    n = len(ranks)
+    print(f"\n  top-1 = {top1}/{n} ({100.0*top1/n:.1f}%)   top-5 = {top5}/{n} ({100.0*top5/n:.1f}%)")
+    if ranks:
+        rs = sorted(ranks)
+        print(f"  正解ラベルの順位: 中央値={rs[len(rs)//2]}  平均={sum(rs)/len(rs):.1f}  最悪={rs[-1]}")
+    print("\n  == top-1 予測ラベルの内訳（多い順） ==")
+    for label, cnt in sorted(hist.items(), key=lambda kv: -kv[1])[:15]:
+        star = "  ← 正解" if label == focus_name else ""
+        print(f"    {cnt:>4}  {label}{star}")
+    return top1, n, 0
+
+
 def _print_mistakes(mistakes):
     if mistakes:
         print("\n== sample mistakes (true -> predicted) ==")
@@ -165,13 +212,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-dir", required=True)
     ap.add_argument("--images-dir", required=True, help="<dir>/<wnid>/*.JPEG の構造")
-    ap.add_argument("--mode", default="classify", choices=["classify", "query"])
+    ap.add_argument("--mode", default="classify", choices=["classify", "query", "confusion"])
     ap.add_argument("--classes", default="imagenette", choices=["imagenette", "imagenet1k"])
+    ap.add_argument("--focus-wnid", default="n02979186", help="confusion モードで分析する WNID（既定: cassette player）")
     ap.add_argument("--per-class", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--compute-units", default="CPU_ONLY",
                     choices=["CPU_ONLY", "ALL", "CPU_AND_NE", "CPU_AND_GPU"])
     args = ap.parse_args()
+
+    # 非有限行はゼロ化済み。残る fp16 由来の数値警告（表示のみ・結果に影響なし）は抑制する。
+    np.seterr(over="ignore", invalid="ignore")
 
     cfg = json.load(open(os.path.join(args.model_dir, "mobileclip_config.json")))
     global IMG_SIZE
@@ -190,6 +241,9 @@ def main():
     if args.mode == "query":
         correct, total, nan = run_query(img_model, txt_model, tokenizer, ctx, samples)
         unit = "queries"
+    elif args.mode == "confusion":
+        correct, total, nan = run_confusion(img_model, txt_model, tokenizer, ctx, samples, args.focus_wnid)
+        unit = "images"
     else:
         correct, total, nan = run_classify(img_model, txt_model, tokenizer, ctx, samples, args.classes)
         unit = "images"
