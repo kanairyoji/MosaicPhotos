@@ -45,6 +45,7 @@ public struct LogChannel: Sendable {
         let msg = message()
         verboseLog.debug("\(msg, privacy: .public)")
         print("[\(label):verbose] \(msg)")
+        DiagnosticsLog.shared.append("[\(label)] \(msg)")
 #endif
     }
 
@@ -55,6 +56,7 @@ public struct LogChannel: Sendable {
         let msg = message()
         infoLog.info("\(msg, privacy: .public)")
         print("[\(label)] \(msg)")
+        DiagnosticsLog.shared.append("[\(label)] \(msg)")
 #endif
     }
 
@@ -63,5 +65,7 @@ public struct LogChannel: Sendable {
         let msg = message()
         errorLog.error("\(msg, privacy: .public)")
         print("[\(label)] ERROR: \(msg)")
+        // error は Release でも端末上の診断ログへ残す（実機で原因を追えるように）。
+        DiagnosticsLog.shared.append("[\(label)] ERROR: \(msg)")
     }
 }

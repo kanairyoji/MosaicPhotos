@@ -2,6 +2,8 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
+import MobileCLIPKit
+import MosaicSupport
 import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
@@ -27,6 +29,7 @@ struct DeveloperSettingsView: View {
     var body: some View {
         Form {
             appInfoSection
+            diagnosticsSection
             LocalPhotoDebugSection()
             DropboxDebugSection(dropboxAuth: dropboxAuth, store: store)
             BackupDebugSection(dropboxAuth: dropboxAuth, engine: backupEngine, dropboxStore: store)
@@ -50,6 +53,21 @@ struct DeveloperSettingsView: View {
             LabeledContent("Minimum iOS", value: "17.0")
             LabeledContent("Device", value: UIDevice.current.model)
             Toggle("Verbose logging", isOn: $verboseLogging)
+        }
+    }
+
+    // MARK: - Diagnostics（端末上のログ・メモリ）
+
+    private var diagnosticsSection: some View {
+        Section {
+            LabeledContent("Memory footprint",
+                           value: currentMemoryFootprintMB().map { String(format: "%.0f MB", $0) } ?? "—")
+            LabeledContent("CLIP model", value: MobileCLIP.modelsBundled ? "Bundled" : "Not bundled")
+            NavigationLink("Diagnostics log") { DiagnosticsLogView() }
+        } header: {
+            Text("Diagnostics")
+        } footer: {
+            Text("On-device log of errors, uncaught exceptions and memory pressure. Useful when the app misbehaves without a Mac/Console.")
         }
     }
 

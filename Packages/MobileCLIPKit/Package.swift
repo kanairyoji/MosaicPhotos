@@ -9,12 +9,14 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../AutoAlbumCore"),
+        .package(path: "../MosaicSupport"),
     ],
     targets: [
         .target(
             name: "MobileCLIPKit",
             dependencies: [
                 .product(name: "AutoAlbumCore", package: "AutoAlbumCore"),
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
             path: "Sources/MobileCLIPKit"
         ),

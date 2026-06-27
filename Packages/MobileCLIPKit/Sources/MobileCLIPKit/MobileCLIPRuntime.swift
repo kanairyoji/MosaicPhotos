@@ -1,11 +1,23 @@
 import CoreML
+import MosaicSupport
 import UIKit
+
+/// MobileCLIP モデル（.mlmodelc）が同梱されているか、ロードを発生させずに判定する。
+/// Developer Options の可視化用（ロードは重いので強制しない）。
+public enum MobileCLIP {
+    public static var modelsBundled: Bool {
+        Bundle.main.url(forResource: "MobileCLIPImageS2", withExtension: "mlmodelc") != nil
+            && Bundle.main.url(forResource: "MobileCLIPTextS2", withExtension: "mlmodelc") != nil
+    }
+}
 
 /// 同梱した MobileCLIP-S2（Core ML）を読み込み、画像／テキストを 512 次元埋め込みへ変換する。
 /// モデルが見つからない（未同梱）場合は `isAvailable == false` で、呼び出し側は CLIP 無しの
 /// 経路（Vision タグ＋NL 拡張）にフォールバックする。MLModel は推論スレッドセーフ。
 final class MobileCLIPRuntime: @unchecked Sendable {
     static let shared = MobileCLIPRuntime()
+
+    private static let log = LogChannel(subsystem: "com.mosaicphotos.MobileCLIPKit", label: "MobileCLIP")
 
     let isAvailable: Bool
 
@@ -28,10 +40,22 @@ final class MobileCLIPRuntime: @unchecked Sendable {
             guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else { return nil }
             return try? MLModel(contentsOf: url, configuration: config)
         }
+        let started = Date()
         let img = load("MobileCLIPImageS2")
         let txt = load("MobileCLIPTextS2")
         imageModel = img
         textModel = txt
+        // 起動後の動的ロード結果を診断ログに残す（実機でロード失敗・メモリ問題を追えるように）。
+        let bundled = MobileCLIP.modelsBundled
+        if img != nil && txt != nil {
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
+            Self.log.info("CLIP models loaded in \(ms)ms (footprint=\(mb))")
+        } else if bundled {
+            Self.log.error("CLIP models bundled but failed to load (image=\(img != nil), text=\(txt != nil))")
+        } else {
+            Self.log.info("CLIP models not bundled — AI search disabled")
+        }
         imageInputName = img?.modelDescription.inputDescriptionsByName.keys.first ?? ""
         imageOutputName = img?.modelDescription.outputDescriptionsByName.keys.first ?? ""
         textInputName = txt?.modelDescription.inputDescriptionsByName.keys.first ?? ""
