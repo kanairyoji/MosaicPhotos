@@ -3,6 +3,9 @@ import MosaicSupport
 import SwiftUI
 import UIKit
 
+/// 月グループで束ねる写真数の固定しきい値（列数非依存。これ未満の連続月を範囲セクションへ束ねる）。
+private let gridCoalesceThreshold = 4
+
 /// UICollectionView を土台にした写真グリッド（SwiftUI ラッパー）。
 ///
 /// SwiftUI の `ScrollView` + `LazyVGrid` は数万件規模で programmatic スクロールが不安定
@@ -62,6 +65,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         private var currentColumns = 0
         private var currentGrouped = false
         private var didInitialScroll = false
+        /// 非同期スナップショット構築の世代。古い構築結果を破棄するため。
+        private var snapshotToken = 0
 
         private let spacing: CGFloat = 2
 
@@ -180,7 +185,10 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             }
             scrubber.isHidden = items.count <= 60
 
-            let signature = "\(items.count)|\(columns)|\(String(describing: grouping))|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
+            // ⚠️ 列数はシグネチャに含めない：列変更（ピンチ）はレイアウト作り直しだけで済み、
+            //   スナップショット（id→index・グルーピング）は内容/グルーピング種別が変わらない限り
+            //   作り直さない（68k で 0.5〜1s の再構築を繰り返さないため）。coalesce も列非依存。
+            let signature = "\(items.count)|\(String(describing: grouping))|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
             if signature != appliedSignature {
                 appliedSignature = signature
                 applySnapshot(items: items, grouping: grouping)
@@ -191,47 +199,51 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         }
 
         private func applySnapshot(items: [Store.Item], grouping: PhotoGridGrouping?) {
-            // 【計測】このメソッドはメインスレッドで走り、68k 件規模では UI を固める主因。
+            // 重い構築（id→index・グルーピング・snapshot 構築）は **オフメイン**で行い、メインでは
+            // 反映（applySnapshotUsingReloadData）と参照テーブル代入のみ。68k で ~0.9s の UI 固まりを解消する。
+            snapshotToken += 1
+            let token = snapshotToken
             let t0 = CFAbsoluteTimeGetCurrent()
-            // items 配列（COW・共有）と id→index を更新。dict に構造体をコピーしない。
-            self.items = items
-            var index: [Store.Item.ID: Int] = [:]
-            index.reserveCapacity(items.count)
-            for (i, item) in items.enumerated() { index[item.id] = i }
-            idToIndex = index
-            let indexMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            Task.detached(priority: .userInitiated) { [weak self] in
+                // --- オフメイン構築（純データのみ） ---
+                var index: [Store.Item.ID: Int] = [:]
+                index.reserveCapacity(items.count)
+                for (i, item) in items.enumerated() { index[item.id] = i }
 
-            var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
-            if let grouping {
-                // 月グループは「1行に満たない連続月」を範囲セクションへ束ねて行を密にする
-                // （1枚月のヘッダー＋半端行の量産を防ぐ）。年グループは束ねない。
-                let coalesce = grouping == .month ? max(1, currentColumns) : 0
-                let sections = photoGridSections(items: items, grouping: grouping,
-                                                 colCount: max(1, currentColumns), coalesceBelow: coalesce)
-                // diffable はセクション識別子が一意必須。日付ソート済みなら通常重複しないが、
-                // 同名ラベルが非隣接で再出現してもクラッシュしないよう、出現順を保って統合する。
-                var order: [String] = []
-                var idsByTitle: [String: [Store.Item.ID]] = [:]
-                for section in sections {
-                    let ids = section.rows.flatMap { $0.entries.map { $0.item.id } }
-                    if idsByTitle[section.title] == nil { order.append(section.title) }
-                    idsByTitle[section.title, default: []].append(contentsOf: ids)
+                var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
+                if let grouping {
+                    // 月グループは「写真の少ない連続月」を範囲セクションへ束ねて行を密にする（列数非依存）。
+                    let coalesce = grouping == .month ? gridCoalesceThreshold : 0
+                    let sections = photoGridSections(items: items, grouping: grouping,
+                                                     colCount: 1, coalesceBelow: coalesce)
+                    var order: [String] = []
+                    var idsByTitle: [String: [Store.Item.ID]] = [:]
+                    for section in sections {
+                        let ids = section.rows.flatMap { $0.entries.map { $0.item.id } }
+                        if idsByTitle[section.title] == nil { order.append(section.title) }
+                        idsByTitle[section.title, default: []].append(contentsOf: ids)
+                    }
+                    snapshot.appendSections(order)
+                    for title in order { snapshot.appendItems(idsByTitle[title] ?? [], toSection: title) }
+                } else {
+                    snapshot.appendSections([""])   // dense：単一セクション（ヘッダなし）
+                    snapshot.appendItems(items.map { $0.id }, toSection: "")
                 }
-                snapshot.appendSections(order)
-                for title in order { snapshot.appendItems(idsByTitle[title] ?? [], toSection: title) }
-            } else {
-                let single = ""   // dense：単一セクション（ヘッダなし）
-                snapshot.appendSections([single])
-                snapshot.appendItems(items.map { $0.id }, toSection: single)
-            }
-            let buildMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000   // index＋グルーピング＋snapshot構築（main）
-            let sectionCount = snapshot.numberOfSections
-            // 67k 件の差分計算を避けるため reloadData 適用にする（起動時の main スレッド負荷を下げる）。
-            dataSource.applySnapshotUsingReloadData(snapshot) { [weak self] in
-                let applyMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000   // build＋apply 合計
-                Diagnostics.mark("grid.snapshot: items=\(items.count) sections=\(sectionCount) "
-                    + "index=\(Int(indexMs))ms build=\(Int(buildMs))ms total=\(Int(applyMs))ms")
-                DispatchQueue.main.async { self?.scrollToBottomIfNeeded() }
+                let buildMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                let sectionCount = snapshot.numberOfSections
+
+                // --- メインで反映（古い世代は破棄） ---
+                await MainActor.run { [weak self] in
+                    guard let self, token == self.snapshotToken else { return }
+                    self.items = items
+                    self.idToIndex = index
+                    self.dataSource.applySnapshotUsingReloadData(snapshot) { [weak self] in
+                        let totalMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                        Diagnostics.mark("grid.snapshot(bg): items=\(items.count) sections=\(sectionCount) "
+                            + "build=\(Int(buildMs))ms total=\(Int(totalMs))ms")
+                        DispatchQueue.main.async { self?.scrollToBottomIfNeeded() }
+                    }
+                }
             }
         }
 

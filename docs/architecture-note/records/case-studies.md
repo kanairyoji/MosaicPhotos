@@ -70,6 +70,14 @@
 - 関連: `scripts/convert_mobileclip.py`、`MobileCLIPRuntime`、`MosaicPhotosTests/ImageRecognitionTests.swift`。ADR-11。
 - 検証: 認識率ハーネス（`scripts/eval_recognition.sh`）で fp16 Core ML モデルを評価。Imagenette 画像に対し、(1) 10クラス zero-shot=**100/100**、(2) **1000クラス**(ImageNet-1k) zero-shot=**84/100**（誤りは English springer→Welsh Springer Spaniel 等の細分類で妥当）、(3) **自然文クエリ retrieval**（クラス名を言わない自由文10件）=**10/10**。fp16 化による認識率劣化は見られない。※ macOS CPU_ONLY では一部画像埋め込みが fp16 で数値不安定（ツール側で非有限を除外）。実機(ANE)の速度・精度は再解析で別途確認。
 
+## All サムネイルビュー（68k）が遅い（スナップショット構築がメインスレッド）
+- 症状: 端末＋Dropbox 統合の All ビュー（約68,512件）が表示・ピンチで重い。
+- 計測（`Diagnostics.mark`）: `merged.rebuild`（merge+sort・オフメイン）=144ms で問題なし。一方 `grid.snapshot`（`PhotoCollectionView.applySnapshot`・**メインスレッド**）= **build 901ms / total 1014ms**（id→index 208ms 含む・135セクション）。ピンチ/モード変更のたびに 485〜950ms を**繰り返し**発生。footprint 156〜246MB。
+- 原因: `applySnapshot`（id→index 構築・グルーピング・NSDiffableDataSourceSnapshot 構築・reloadData）が全部メインで走り UI を固める。さらにシグネチャに列数を含めていたためピンチ（列変更）で毎回フル再構築。先日の密表示で coalesce を列数依存にしたのも再構築を誘発。
+- 対処: (A) 重い構築（id→index・グルーピング・snapshot 構築）を `Task.detached` で**オフメイン**化し、メインは `applySnapshotUsingReloadData` と参照テーブル代入のみ（世代トークンで古い構築を破棄）。(B) シグネチャから列数を外し、**列変更はレイアウト作り直しのみ**で再スナップショットしない。coalesce を列数非依存の固定値（4）に。
+- 関連: `PhotoCollectionView.swift`、`PhotoGridGrouping.swift`。Swift5 モードのため非 Sendable（snapshot）のクロージャ越え捕捉は許容。
+- 学び: 大規模 diffable は **snapshot をバックグラウンドで構築 → メインで apply** が定石。UI を固める純データ構築は main で回さない。
+
 ## フォルダ名アルバムが動かない（正規表現を写真ごとに再コンパイル）
 - 症状: フォルダ名アルバムの日付抽出を入れた後、生成が事実上停止し「動かない」。
 - 原因: `FolderDateParser`（約10パターン）と `PathAlbumNamer`（ルール）が **写真1枚ごとに `NSRegularExpression` を毎回コンパイル**。Dropbox 67,639 枚 ×（10＋ルール数）で数十万回のコンパイルになり生成が終わらない。
