@@ -142,7 +142,13 @@ extension MergedPhotoStore: PhotoStore {
         // ローカル写真の権限要求・アセット読み込み。
         await localStore.start()
         // Dropbox キャッシュから即時ロード（SyncEngine は HomeView が管理するため起動しない）。
-        await dropboxStore.loadItems()
+        // ⚠️ 既にロード済みなら再ロードしない：cachedItems() は 67k 件を毎回 SwiftData から
+        //    実体化するため、All Photos を開くたびに呼ぶと無駄が大きい（実機ログで確認）。
+        //    同期で増えた分は scheduleCacheRefresh → dropboxStore.items 更新 → observeStores で
+        //    自動的に再ビルドされるので、ここで取りこぼすことはない。
+        if dropboxStore.items.isEmpty {
+            await dropboxStore.loadItems()
+        }
         // 読み込み直後に一度ビルド（Observation が取りこぼしても確実に反映）。
         rebuildItems()
     }
