@@ -25,7 +25,7 @@ let vec = out.featureValue(for: outputName)?.multiArrayValue   // 512次元</cod
       <div class="box why">
         <span class="box-h">このアプリでのハマりどころ</span>
         <ul>
-          <li>画像エンコーダの変換は <strong><code>compute_precision=FLOAT32</code></strong>。fp16 はシミュレータで NaN 化する。</li>
+          <li>画像エンコーダの変換は <strong><code>compute_precision=FLOAT16</code></strong>。実機の ANE は fp16 前提で、fp32 だと ANE 非対応＝埋め込みが大幅に遅くなる。fp16 は一部シミュレータで NaN 化し得るが、ランタイムの有限性チェックが nil に落とす（画像タワーの検証は実機）。</li>
           <li>前処理に mean/std 正規化を<strong>入れない</strong>（MobileCLIP は Resize/CenterCrop/ToTensor のみ）。</li>
           <li>実行ユニットは<strong>シミュレータ <code>.cpuOnly</code>・実機 <code>.all</code></strong>（シミュレータは ANE/MPSGraph が無く <code>.all</code> だと Espresso 例外）。</li>
           <li>モデルは<strong>遅延ロード</strong>（<code>static let shared</code>）で起動を重くしない。ロード結果は診断ログへ。</li>

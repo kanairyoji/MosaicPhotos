@@ -64,9 +64,12 @@ img_ml = ct.convert(
     inputs=[ct.ImageType(name="image", shape=img_example.shape, scale=1 / 255.0, bias=[0, 0, 0])],
     outputs=[ct.TensorType(name="embedding")],
     minimum_deployment_target=ct.target.iOS17,
-    # ⚠️ 既定の FLOAT16 だと画像タワー（conv/transformer ハイブリッド）がシミュレータで
-    # 数値オーバーフローし、埋め込みが全 NaN になる。FLOAT32 で変換して回避する。
-    compute_precision=ct.precision.FLOAT32,
+    # 画像エンコーダは FLOAT16 で変換する。実機の Neural Engine(ANE) は fp16 前提のため、
+    # fp32 だと ANE に載らず GPU/CPU フォールバックで埋め込みが大幅に遅くなる（実機ログで確認・
+    # 8枚あたり 4〜10s）。fp16 化で ANE 実行＝高速化を狙う。
+    # ※ fp16 は一部シミュレータで数値オーバーフローし埋め込みが NaN になり得るが、ランタイムの
+    #   有限性チェックが nil に落として安全に無効化するだけ（CLIP 機能の検証・本番は実機で行う）。
+    compute_precision=ct.precision.FLOAT16,
 )
 img_ml.save(os.path.join(OUT, "MobileCLIPImageS2.mlpackage"))
 print("saved image encoder")
