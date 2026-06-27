@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 
 /// AI アルバムの作成・再設定・削除・再評価をまとめた協調オブジェクト。
 /// 状態（公開アルバム配列）はエンジンが持ち、本サービスは store を更新して最新の AI アルバム一覧を返す。
@@ -38,6 +39,7 @@ final class AIAlbumService {
         let spec = await understanding.interpretSpec(trimmed, catalog: catalog, now: now)
         queryCache[id] = spec
         let members = await rankedSearch(all, spec: spec, semanticText: await englishPhrase(trimmed), now: now)
+        Diagnostics.mark("aialbum.make: '\(trimmed)' all=\(all.count) members=\(members.count)")
         let info = AIAlbumSearcher.buildInfo(id: id, title: title, interpretedTitle: spec.title,
                                              criteria: trimmed, members: members)
         await store.upsert(albumInfo: info)
@@ -52,6 +54,7 @@ final class AIAlbumService {
 
     /// 保存済みアルバムを現在のインデックスで再評価（取り込み進行で中身が埋まる）。
     func refresh(_ current: [AutoAlbumInfo]) async -> [AutoAlbumInfo] {
+        Diagnostics.mark("aialbum.refresh: aiAlbums=\(current.count)")
         guard !current.isEmpty else { return current }
         let now = Date()
         // 軽量メタデータ（clipVector なし）。埋め込みは rankedSearch でページングして読む。
