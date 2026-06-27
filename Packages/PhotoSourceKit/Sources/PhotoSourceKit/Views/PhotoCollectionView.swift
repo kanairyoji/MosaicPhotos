@@ -272,8 +272,14 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             let cols = CGFloat(max(1, currentColumns))
             let width = collectionView?.bounds.width ?? UIScreen.main.bounds.width
             let side = max(1, (width - spacing * (cols - 1)) / cols)
-            let scale = UIScreen.main.scale
-            return CGSize(width: side * scale, height: side * scale)
+            // サムネイルは端末スケール（×3）のフル解像度まで要らない。×2 上限にして
+            // デコードメモリを約56%削減（面積比 (2/3)^2≒0.44）。視覚劣化はほぼ無い。
+            let scale = min(UIScreen.main.scale, 2)
+            // 列数（ピンチ）が変わるたびに僅差サイズで別キャッシュが増えるのを防ぐため、
+            // 64px バケットへ量子化して 1 アセット 1 サイズに寄せる（重複デコードの抑制）。
+            let bucket: CGFloat = 64
+            let px = (side * scale / bucket).rounded(.up) * bucket
+            return CGSize(width: px, height: px)
         }
 
         // MARK: Gestures / delegate

@@ -22,7 +22,7 @@ extension DropboxCacheStore {
         let memory = thumbnailMemory
         await Task.detached(priority: .userInitiated) {
             if let decoded = store.decodedImage(forName: name) {
-                memory.insert(decoded, forKey: path)   // NSCache はスレッドセーフ
+                memory.insertDecoded(decoded, forKey: path)   // NSCache はスレッドセーフ・実コスト計上
             }
         }.value
         guard let image = thumbnailMemory.image(forKey: path) else { return nil }
@@ -31,7 +31,7 @@ extension DropboxCacheStore {
     }
 
     func storeThumbnail(_ image: UIImage, for path: String) {
-        thumbnailMemory.insert(image, forKey: path)
+        thumbnailMemory.insertDecoded(image, forKey: path)
         let name = DropboxCacheNaming.fileName(kind: .thumbnail, path: path)
         let store = thumbnailStore
         let sendable = SendableUIImage(image)
@@ -50,12 +50,17 @@ extension DropboxCacheStore {
         fullImageStore.data(forName: DropboxCacheNaming.fileName(kind: .fullImage, path: path))
     }
 
-    /// フル画像をキャッシュから返す。ディスク読み込み＋強制デコードをバックグラウンドで行う。
+    /// フル画像をキャッシュから返す。ディスク読み込み＋ダウンサンプル（画面相当）を
+    /// バックグラウンドで行う。ビューアはズーム無しのためフル解像度デコードは不要で、
+    /// 常駐・一時メモリを抑える（保存ファイルは原バイトのまま＝EXIF 保持）。
     func fullImage(for path: String) async -> UIImage? {
         let name = DropboxCacheNaming.fileName(kind: .fullImage, path: path)
         let store = fullImageStore
-        let decoded = await Task.detached(priority: .userInitiated) {
-            store.decodedImage(forName: name).map(SendableUIImage.init)
+        let decoded = await Task.detached(priority: .userInitiated) { () -> SendableUIImage? in
+            guard let data = store.data(forName: name) else { return nil }
+            return (ImageDownsampling.downsample(data: data)
+                ?? UIImage(data: data).map { $0.preparingForDisplay() ?? $0 })
+                .map(SendableUIImage.init)
         }.value
         guard let image = decoded?.image else { return nil }
         touchUsage(kind: .fullImage, path: path)

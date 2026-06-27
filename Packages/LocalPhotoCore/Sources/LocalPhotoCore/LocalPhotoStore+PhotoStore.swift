@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import ImageCacheKit
 import Photos
 import PhotoSourceKit
 import UIKit
@@ -50,7 +51,8 @@ extension LocalPhotoStore: PhotoStore {
 
     /// Fallback for protocol conformance; uses a scale-appropriate default size.
     public func thumbnail(for item: LocalPhotoItem) async -> UIImage? {
-        let scale = UIScreen.main.scale
+        // サムネイルは ×2 上限で十分（メモリ削減・グリッドのセル解像度ポリシーと整合）。
+        let scale = min(UIScreen.main.scale, 2)
         let side = 256 * scale
         return await thumbnail(for: item, targetSize: CGSize(width: side, height: side))
     }
@@ -88,9 +90,13 @@ extension LocalPhotoStore: PhotoStore {
             let options = PHImageRequestOptions()
             options.deliveryMode = .highQualityFormat
             options.isNetworkAccessAllowed = true
+            // ビューアはズーム無し（scaledToFit で画面表示）なのでフル解像度は不要。
+            // 画面相当の境界（約2048px）に収めて 1 枚あたりのデコード常駐を大幅削減する
+            // （フル解像度だと 1 枚 40MB 超になり、ページャの前後保持でピークが跳ねる）。
+            let max = ImageDownsampling.displayMaxPixel
             PHImageManager.default().requestImage(
                 for: item.asset,
-                targetSize: PHImageManagerMaximumSize,
+                targetSize: CGSize(width: max, height: max),
                 contentMode: .aspectFit,
                 options: options
             ) { img, _ in

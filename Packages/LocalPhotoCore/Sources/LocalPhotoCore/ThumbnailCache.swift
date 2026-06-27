@@ -61,7 +61,8 @@ public actor ThumbnailCache {
         // actor 内（オフメイン）で強制デコードし、描画時のメインスレッドデコードを回避。
         let img = decoded.preparingForDisplay() ?? decoded
 
-        memory.insert(img, forKey: key, cost: data.count)
+        // 実デコードサイズでコスト計上（JPEG バイトではなく）。totalCostLimit を正しく効かせる。
+        memory.insertDecoded(img, forKey: key)
         disk.touch(name: name)   // refresh LRU timestamp on disk hit
         return img
     }
@@ -70,7 +71,7 @@ public actor ThumbnailCache {
         guard let data = image.jpegData(compressionQuality: 0.8) else { return }
         // actor 内（オフメイン）で強制デコードしてからメモリ層へ。
         let prepared = image.preparingForDisplay() ?? image
-        memory.insert(prepared, forKey: key, cost: data.count)
+        memory.insertDecoded(prepared, forKey: key)
 
         let name = fileName(for: key)
         let oldSize = disk.fileSize(forName: name)

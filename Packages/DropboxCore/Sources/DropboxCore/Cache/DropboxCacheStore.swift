@@ -62,9 +62,11 @@ actor DropboxCacheStore {
 
         self.thumbnailByteLimit = thumbnailByteLimit
         self.fullImageByteLimit = fullImageByteLimit
-        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）なので件数上限で十分。
-        // 0（未指定）のときは既定 1000 件（≒最大 60MB 程度）でキャップする（NSCache は圧迫時さらに破棄）。
+        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）。
+        // 実デコードサイズでコスト計上する `insertDecoded` に合わせ、件数上限に加えて
+        // **総コスト上限（既定 48MB）** を設ける。0（未指定）のときは既定 1000 件でキャップ。
         thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit > 0 ? thumbnailMemoryCountLimit : 1000)
+        thumbnailMemory.setTotalCostLimit(48 * 1024 * 1024)
     }
 
     /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
@@ -91,8 +93,11 @@ actor DropboxCacheStore {
         let descriptor = FetchDescriptor<CachedDropboxItem>(
             sortBy: [SortDescriptor(\.captureDate, order: .forward)])
         guard let items = try? modelContext.fetch(descriptor) else { return [] }
+        // ⚠️ contentHash は**渡さない**（nil）。表示用の長寿命配列（67k 件）に 64 桁ハッシュ文字列を
+        //    常駐させると数MB級の無駄になる。変更検知は SwiftData 側の `CachedDropboxItem` と
+        //    `applyDelta`（delta parser が持つ contentHash）で行うため、表示アイテムには不要。
         let result = items
-            .map { DropboxFileItem(path: $0.path, name: $0.name, contentHash: $0.contentHash,
+            .map { DropboxFileItem(path: $0.path, name: $0.name,
                                    captureDate: $0.captureDate, latitude: $0.latitude, longitude: $0.longitude) }
         DropboxLogger.info("cachedItems() → \(result.count) items from SwiftData (accountId=\(accountId))")
         return result

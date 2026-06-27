@@ -355,10 +355,13 @@ public final class DropboxPhotoStore {
             DropboxLogger.error("fullImage() download failed — \(item.name): \(error.localizedDescription)")
             return nil
         }
-        // ★ 元バイト列のままキャッシュ（EXIF 保持）。デコード（強制）はバックグラウンドで。
+        // ★ 元バイト列のままキャッシュ（EXIF 保持）。表示用は画面相当へダウンサンプルして
+        //   常駐・一時メモリを抑える（ビューアはズーム無し＝フル解像度は不要）。
         await cache.storeFullImageData(data, for: item.path)
         let decoded = await Task.detached(priority: .userInitiated) {
-            UIImage(data: data).map { ($0.preparingForDisplay() ?? $0) }.map(SendableUIImage.init)
+            (ImageDownsampling.downsample(data: data)
+                ?? UIImage(data: data).map { $0.preparingForDisplay() ?? $0 })
+                .map(SendableUIImage.init)
         }.value
         guard let image = decoded?.image else { return nil }
         DropboxLogger.verbose("fullImage() downloaded \(data.count) bytes — \(item.name)")

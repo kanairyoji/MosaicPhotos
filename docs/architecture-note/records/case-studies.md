@@ -85,6 +85,21 @@
 - 関連: `DropboxPhotoStore.swift`（prefetch 上書き）、`PhotoLoading.swift`（既定の直列実装）、`DropboxThumbnailBatcher.swift`、`MergedPhotoStore.swift`。
 - 学び: バッチ集約するローダに対し「1 件取得を `await` で直列に並べる」既定先読みは集約・並行を無効化する。バッチ系ソースは先読みを**並行発火**してローダ側に集約させる。
 
+## メモリ常駐の圧縮（NSCache のコスト計算ズレ・フル解像度デコード・配列常駐）
+- 症状: 写真の多い環境でメモリ常駐が高く（実機 footprint 150〜250MB）、圧迫しやすい。CLIP 埋め込みの別テーブル化（ADR-6）後も残るメモリ消費を更に圧縮したい。
+- 原因（精査で判明した複数）:
+  1. **NSCache のコスト計算ズレ（最大要因）**: サムネイルのメモリ層は**デコード済み画像**を入れているのにコストを **JPEG バイト数**（約20KB）で計上していた。`totalCostLimit=100MB` は JPEG 換算なので、実デコード（1枚 0.3〜2.4MB）では**約10倍以上＝〜1GB 相当**まで保持し得た（写真比例の圧迫の主因）。
+  2. **グリッドサムネイルが端末スケール（×3）のフル解像度**。サムネイルに ×3 は不要。さらにピンチで列数が変わるたび僅差サイズのキーで重複デコードが増えていた。
+  3. **ビューアのフル画像がフル解像度デコード**。ローカルは `PHImageManagerMaximumSize`（1枚 40MB 超）、Dropbox はキャッシュ済み JPEG をフルデコード。ページャの前後保持でピークが跳ねる（ビューアはピンチズーム無し＝`scaledToFit` 表示なのでフル解像度は不要）。
+  4. **表示用アイテム配列に不要文字列が常駐**: `DropboxFileItem.contentHash`（64桁hex）を 67k 件分メモリ保持。表示では debug 表示しか使わない。
+- 対処:
+  1. `MemoryImageCache.insertDecoded`／`decodedCost`（幅px×高px×4）を新設し、ローカル `ThumbnailCache`・Dropbox `thumbnailMemory` を**実コスト計上**に。Dropbox は `totalCostLimit=48MB` を併設。メモリ警告（`didReceiveMemoryWarning`）で全消去するオブザーバも `MemoryImageCache` に追加。
+  2. `PhotoCollectionView.cellPixelSize` を **×2 上限**＋**64px バケット量子化**（1アセット1サイズに寄せ重複を抑制）。ローカル fallback も ×2 上限。
+  3. `ImageCacheKit.ImageDownsampling`（ImageIO `CGImageSourceCreateThumbnailAtIndex`・最大辺 2048）を新設し、ローカル fullImage は 2048 境界要求、Dropbox fullImage はダウンロード／キャッシュ両経路でダウンサンプル（保存は原バイトのまま＝EXIF 保持）。
+  4. `DropboxCacheStore.cachedItems()` の表示アイテム生成で **contentHash を渡さない**（同期の変更検知は `CachedDropboxItem`＋delta parser が担うため不要）。
+- 関連: `ImageCacheKit/MemoryImageCache.swift`・`ImageDownsampling.swift`／`LocalPhotoCore/ThumbnailCache.swift`・`LocalPhotoStore+PhotoStore.swift`／`DropboxCore/DropboxCacheStore.swift`・`+Binary.swift`・`DropboxPhotoStore.swift`／`PhotoSourceKit/PhotoCollectionView.swift`。ADR-6（埋め込み別テーブル）の続き。
+- 学び: **NSCache のコストは実バックストア（デコード後バイト）で計上する**。JPEG バイトで計上すると上限が桁で狂う。ズーム無しビューアはフル解像度をデコードしない（ImageIO ダウンサンプルでピーク削減）。長寿命の大規模配列には表示に使わない文字列を載せない。
+
 ## フォルダ名アルバムが動かない（正規表現を写真ごとに再コンパイル）
 - 症状: フォルダ名アルバムの日付抽出を入れた後、生成が事実上停止し「動かない」。
 - 原因: `FolderDateParser`（約10パターン）と `PathAlbumNamer`（ルール）が **写真1枚ごとに `NSRegularExpression` を毎回コンパイル**。Dropbox 67,639 枚 ×（10＋ルール数）で数十万回のコンパイルになり生成が終わらない。
