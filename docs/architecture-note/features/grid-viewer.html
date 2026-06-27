@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>グリッドと全画面ビューア | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-grid-viewer";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / グリッドと全画面ビューア</nav>
+      <h1>グリッドと全画面ビューア</h1>
+      <p class="lead">数万枚を滑らかにスクロールするため、グリッドは SwiftUI の <code>LazyVGrid</code> ではなく <strong>UICollectionView</strong> を <code>UIViewRepresentable</code> で載せている。</p>
+
+      <h2>なぜ UICollectionView なのか</h2>
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        6 万件規模では <code>LazyVGrid</code> + <code>ScrollViewReader</code> の <code>scrollTo(id)</code> が不安定で、右端スクラバーでの大ジャンプが効かなかった。<strong>contentOffset を直接操作できる UICollectionView</strong> に置き換えて根本解決した。差分更新・プリフェッチ・セル再利用も UIKit の成熟した仕組みに乗る。
+      </div>
+
+      <h2>構成要素</h2>
+      <table>
+        <tr><th>型</th><th>役割</th></tr>
+        <tr><td><code>PhotoCollectionView</code></td><td><code>UIViewRepresentable</code>。<code>UICollectionViewDiffableDataSource</code> + <code>CompositionalLayout</code>。Coordinator がスクロール検知を担う。</td></tr>
+        <tr><td><code>GridThumbnailCell</code></td><td>サムネイルセル。再利用時に前の画像要求をキャンセル。</td></tr>
+        <tr><td><code>GridSectionHeaderView</code></td><td>日付などのセクションヘッダ。</td></tr>
+        <tr><td><code>GridScrubberView</code></td><td>右端の高速スクラバー（contentOffset ベース）。</td></tr>
+        <tr><td><code>PhotoPageView</code> / <code>FullPhotoView</code> / <code>PhotoInfoPanel</code></td><td>全画面ページング・ズーム・情報パネル。</td></tr>
+      </table>
+
+      <h2>レイアウトの要点</h2>
+      <p>列数からセル幅を <code>fractionalWidth(1/cols)</code> + <code>contentInsets</code> で決める。<code>repeatingSubitem:count:</code> は意図せず横長になる不具合があったため、<code>subitems:[item]</code> を使う。</p>
+
+      <h2>スクロールと背景処理の協調</h2>
+      <p>スクロール中（ドラッグ・減速）は Coordinator が <code>onScrubbingChange</code> を発火し、背景の重い処理（CLIP 埋め込み）を一時停止させる。これにより操作中のカクつきを防ぐ。</p>
+      <div class="mermaid">
+sequenceDiagram
+  participant U as ユーザー
+  participant CV as UICollectionView
+  participant Co as Coordinator
+  participant T as PhotoTagger（背景）
+  U->>CV: ドラッグ開始
+  CV->>Co: scrollViewWillBeginDragging
+  Co->>T: isInteracting = true（譲る）
+  U->>CV: 指を離して減速終了
+  CV->>Co: scrollViewDidEndDecelerating
+  Co->>T: isInteracting = false（再開）
+      </div>
+
+      <h2>サムネイルのプリフェッチ</h2>
+      <p><code>UICollectionViewDataSourcePrefetching</code> で先のセルを前もって要求。端末写真は <code>PHCachingImageManager</code> の先読み窓（FIFO・直近 8 窓のみ保持し古い窓は <code>stopCaching</code>）でメモリを有界に保つ。</p>
+
+      <h2>全状態に共通の下部バー</h2>
+      <p><code>PhotoSourceContentView</code> はグリッド・未接続・空・失敗のどの状態でも、最下部に Home / Settings バーを表示する。状態が変わってもナビゲーションを失わない。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/PhotoCollectionView.swift">PhotoCollectionView.swift</a></li>
+          <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/GridScrubberView.swift">GridScrubberView.swift</a></li>
+          <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/PhotoSourceContentView.swift">PhotoSourceContentView.swift</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

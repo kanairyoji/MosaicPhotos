@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Core ML / Foundation Models | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-coreml-fm";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / Core ML / Foundation Models</nav>
+      <h1>Core ML / Foundation Models</h1>
+      <p class="lead">Core ML はオンデバイス推論の基盤（CLIP を動かす）。Foundation Models は OS 内蔵の小型 LLM（クエリ翻訳に使う）。どちらも通信不要。</p>
+
+      <h2>Core ML</h2>
+      <p>学習済みモデルを <code>.mlpackage</code> → コンパイルして <code>.mlmodelc</code> で同梱し、<code>MLModel</code> で推論する。入出力は <code>MLFeatureValue</code>（画像なら <code>MLImageConstraint</code>、テキストなら <code>MLMultiArray</code>）。</p>
+      <pre><code>let model = try MLModel(contentsOf: url, configuration: config)
+let provider = try MLDictionaryFeatureProvider(dictionary: [inputName: featureValue])
+let out = try model.prediction(from: provider)
+let vec = out.featureValue(for: outputName)?.multiArrayValue   // 512次元</code></pre>
+
+      <div class="box why">
+        <span class="box-h">このアプリでのハマりどころ</span>
+        <ul>
+          <li>画像エンコーダの変換は <strong><code>compute_precision=FLOAT32</code></strong>。fp16 はシミュレータで NaN 化する。</li>
+          <li>前処理に mean/std 正規化を<strong>入れない</strong>（MobileCLIP は Resize/CenterCrop/ToTensor のみ）。</li>
+          <li>実行ユニットは<strong>シミュレータ <code>.cpuOnly</code>・実機 <code>.all</code></strong>（シミュレータは ANE/MPSGraph が無く <code>.all</code> だと Espresso 例外）。</li>
+          <li>モデルは<strong>遅延ロード</strong>（<code>static let shared</code>）で起動を重くしない。ロード結果は診断ログへ。</li>
+        </ul>
+      </div>
+
+      <h2>Foundation Models</h2>
+      <p>Apple Intelligence のオンデバイス基盤モデル（<code>import FoundationModels</code>）。本アプリでは検索クエリの<strong>英語正規化（翻訳）</strong>に使う。CLIP のテキスト側が英語前提のため、前段で言語を揃えると精度が上がる。通信なし・APIキー不要。</p>
+      <div class="mermaid">
+graph LR
+  Q["日本語クエリ '紅葉の写真'"] --> FM[Foundation Models]
+  FM --> EN["'autumn leaves'"]
+  EN --> CLIP[MobileCLIP テキスト埋め込み]
+      </div>
+
+      <h2>同梱の扱い</h2>
+      <p>CLIP モデルと語彙は <code>MosaicPhotos/MobileCLIP/</code> に置き、サイズの都合で <code>.gitignore</code> 対象（<code>scripts/build_mobileclip.sh</code> で生成）。未同梱でもアプリは動作し、CLIP 機能だけ無効化される。<code>MobileCLIP.modelsBundled</code> でロードせず同梱判定できる。</p>
+
+      <p>関連: <a href="clip-embeddings.html">CLIP と埋め込み</a> / <a href="../features/on-device-ai.html">オンデバイス AI</a></p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit/MobileCLIPRuntime.swift">MobileCLIPRuntime.swift</a></li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit/AILanguageAdapters.swift">AILanguageAdapters.swift</a> — 翻訳アダプタ</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

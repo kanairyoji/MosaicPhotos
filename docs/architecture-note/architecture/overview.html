@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>全体アーキテクチャ | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "arch-overview";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / アーキテクチャ / 全体アーキテクチャ</nav>
+      <h1>全体アーキテクチャ</h1>
+      <p class="lead">「薄いアプリ層 + 役割ごとの SPM パッケージ」を基本方針に、ロジックと UI を分離する。アプリターゲットは<strong>組み立て（合成）だけ</strong>を担い、機能は再利用可能なパッケージに収める。</p>
+
+      <h2>3 つの設計原則</h2>
+      <ol>
+        <li><strong>ロジック層 / UI 層の分離（Core/UI 構成）</strong> — 端末写真と Dropbox は、SwiftUI 非依存の <em>Core</em>（<code>LocalPhotoCore</code> / <code>DropboxCore</code>）と、それに依存する <em>UI</em>（<code>LocalPhotoKit</code> / <code>DropboxKit</code>）に分ける。Core はテストしやすく、UI から独立して進化できる。</li>
+        <li><strong>合成ルート（Composition Root）</strong> — 依存の結線はアプリ層の一点に集約する。AI の各 seam は <a class="srclink" data-path="MosaicPhotos/Home/AutoAlbumAdapters.swift">AutoAlbumAdapters.swift</a> で <code>AutoAlbumEngine</code> に注入する。</li>
+        <li><strong>インターフェイスの統一</strong> — 写真ソースは <code>PhotoSourceKit</code> の <code>PhotoStore</code> / <code>PhotoItem</code> プロトコルに揃え、同じグリッド・全画面ビューを共有する。</li>
+      </ol>
+
+      <h2>レイヤ構造</h2>
+      <p>下に行くほど低レベル・依存なし。上の層は下の層に依存し、逆向きはない。</p>
+      <div class="mermaid">
+graph TD
+  APP["アプリ層 (MosaicPhotos)<br/>HomeView・合成・ルーティング"]
+  FEAT["統合層 (PhotosFeatureKit)<br/>MergedPhotoStore / PlaceScanner"]
+  AI["AI層 (AutoAlbumCore + MobileCLIPKit)<br/>生成・知覚・検索"]
+  UI["UI層 (LocalPhotoKit / DropboxKit)"]
+  CORE["ロジック層 (LocalPhotoCore / DropboxCore / BackupKit)"]
+  BASE["基盤 (PhotoSourceKit / ImageCacheKit / MosaicSupport)"]
+  APP --> FEAT
+  APP --> AI
+  FEAT --> UI
+  UI --> CORE
+  CORE --> BASE
+  AI --> BASE
+  FEAT --> BASE
+      </div>
+
+      <h2>画面とストアの対応</h2>
+      <p><code>HomeView</code> が各ストアを保持し、ソースごとに対応する画面へ全画面遷移する。表示は共通の <code>PhotoSourceContentView</code> に集約されている。</p>
+      <div class="mermaid">
+graph LR
+  HV[HomeView] --> ALL["All Photos<br/>MergedPhotoStore"]
+  HV --> PH["Photos<br/>LocalPhotoStore"]
+  HV --> CL["Cloud<br/>DropboxPhotoStore"]
+  HV --> AL["Albums<br/>AutoAlbumEngine"]
+  HV --> PL["Places<br/>PlaceScanner"]
+  ALL --> PSC[PhotoSourceContentView]
+  PH --> PSC
+  CL --> PSC
+  PSC --> GRID[PhotoCollectionView]
+  PSC --> PAGE[PhotoPageView]
+      </div>
+
+      <h2>なぜこの形か</h2>
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        <strong>アプリ層を薄く保つ</strong>ことで、機能の大半がパッケージ単位でビルド・テストできる（純ロジックは macOS の <code>swift test</code> で高速に回る）。UI とロジックを分けるのは、<code>PHImageManager</code> や <code>URLSession</code> といった副作用を <em>Core</em> に閉じ込め、UI を差し替え可能にするため。<a href="../design-decisions/adr.html">設計判断の記録</a>も参照。
+      </div>
+
+      <h2>レイヤをまたぐ規約</h2>
+      <ul>
+        <li><strong>MainActor 既定</strong> — アプリターゲットは <code>SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor</code>。詳細は<a href="concurrency.html">並行性とアクター分離</a>。</li>
+        <li><strong>@Observable のみ</strong> — <code>ObservableObject</code>/<code>Combine</code> は使わない。</li>
+        <li><strong>設定キー・ロガーの一元化</strong> — 各パッケージの専用 enum / <code>LogChannel</code> に集約。<a href="../appendix/conventions.html">規約</a>参照。</li>
+        <li><strong>PhotoSourceKit は AutoAlbumCore に依存しない</strong> — フル画像の付加情報は <code>photoInsight</code> 環境クロージャ経由で受け取り、レイヤを逆流させない。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="MosaicPhotos/HomeView.swift">HomeView.swift</a> — ルート画面とストア保持</li>
+          <li><a class="srclink" data-path="MosaicPhotos/RootView.swift">RootView.swift</a> — 起動時のストア非同期構築</li>
+          <li><a class="srclink" data-path="MosaicPhotos/Home/AutoAlbumAdapters.swift">AutoAlbumAdapters.swift</a> — AI の合成ルート</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

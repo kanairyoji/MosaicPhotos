@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: 起動の高速化 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-launch";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: 起動の高速化</nav>
+      <h1>事例: 起動の高速化とローディング表示</h1>
+      <p class="lead">起動が遅い・真っ白な待ち時間がある問題に、「重い構築を描画パスから外す」「処理を時差で起動する」「1 秒超で読み込み表示」で対処した。</p>
+
+      <h2>問題</h2>
+      <p>各ストア（Dropbox / Backup / AutoAlbum）は <code>init</code> で <code>ModelContainer</code> を<strong>同期構築</strong>する。これを <code>HomeView.init</code> で行うと、最初の描画＝起動がブロックされる。さらに起動直後に複数の重い処理が同時に走り、スパイクを生んでいた。</p>
+
+      <h2>対策 1: ストア構築を非同期化</h2>
+      <p><code>RootView</code> を新設し、起動直後に <code>HomeStores.build()</code> でストアを非同期構築する。各構築の合間に <code>Task.yield()</code> を挟んで主スレッドを解放し、その間にローディング表示のタイマーが動けるようにする。</p>
+      <div class="mermaid">
+sequenceDiagram
+  participant Root as RootView
+  participant Build as HomeStores.build()
+  Root->>Root: スプラッシュ描画（即時）
+  Root->>Build: 構築開始
+  loop 各ストア
+    Build->>Build: ModelContainer 生成
+    Build-->>Root: Task.yield（主スレッド解放）
+  end
+  Note over Root: 1秒経過してもまだなら「Now loading…」
+  Build-->>Root: 完成 → HomeView 表示
+      </div>
+
+      <h2>対策 2: 1 秒超でローディング表示</h2>
+      <p>別タスクで 1 秒タイマーを回し、それまでに準備できなければ <code>ProgressView</code> ＋「Now loading…」をフェードイン。<strong>高速起動ではローディングを出さない</strong>（チラつき防止）。スプラッシュ自体（アイコン＋アプリ名）は起動直後から出るので、真っ白な間がなくなる。</p>
+
+      <h2>対策 3: 段階起動でスパイク回避</h2>
+      <p>ホーム表示後のバックグラウンド処理を時差で開始する（<code>HomeLifecycleTasks</code>）。</p>
+      <table>
+        <tr><th>タイミング</th><th>処理</th></tr>
+        <tr><td>即時</td><td>アルバムスキャン（キャッシュ即ロード）</td></tr>
+        <tr><td>+1.5s</td><td>場所スキャン</td></tr>
+        <tr><td>+3s</td><td>自動アルバム再生成・AI 再評価・背景タグ付け</td></tr>
+        <tr><td>+5s</td><td>バックアップ記録ロード</td></tr>
+      </table>
+
+      <div class="box why">
+        <span class="box-h">学び</span>
+        同期的な重い初期化は「最初のフレーム」を遅らせる。<strong>描画 → 非同期構築 → 差し替え</strong>の順にし、構築は <code>yield</code> で分割するとローディング UI が成立する。重い処理は「即時に必要か」で並べ替え、不要なものは遅らせる。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="MosaicPhotos/RootView.swift">RootView.swift</a> — HomeStores.build / スプラッシュ / 1秒タイマー</li>
+          <li><a class="srclink" data-path="MosaicPhotos/HomeView.swift">HomeView.swift</a> — HomeLifecycleTasks（段階起動）</li>
+        </ul>
+      </div>
+      <p>背景: <a href="../architecture/data-flow.html">データの流れと起動</a> / <a href="../architecture/concurrency.html">並行性とアクター分離</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

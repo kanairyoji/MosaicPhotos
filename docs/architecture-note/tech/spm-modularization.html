@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPM モジュール分割 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-spm";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / SPM モジュール分割</nav>
+      <h1>SPM モジュール分割</h1>
+      <p class="lead">Swift Package Manager のローカルパッケージで、機能を独立したモジュールに分ける。境界が明確になり、ビルド・テストが速くなる。</p>
+
+      <h2>ローカルパッケージとは</h2>
+      <p>リポジトリ内の <code>Packages/Foo/Package.swift</code> をアプリから参照する。各パッケージは独立した <code>target</code> と <code>tests</code> を持ち、依存を <code>.package(path:)</code> で宣言する。</p>
+
+      <h2>分割の効能</h2>
+      <ul>
+        <li><strong>一方向依存の強制</strong> — UI がロジックに依存し、逆はできない（コンパイラが保証）。</li>
+        <li><strong>高速テスト</strong> — 純ロジックは macOS の <code>swift test</code> で UI を起動せず回る。</li>
+        <li><strong>関心の分離</strong> — 重い依存（Core ML）を 1 パッケージに隔離できる。</li>
+      </ul>
+
+      <h2>このアプリの工夫</h2>
+      <table>
+        <tr><th>手法</th><th>狙い</th></tr>
+        <tr><td>Core/UI 分離（<code>DropboxCore</code> / <code>DropboxKit</code>）</td><td>SwiftUI 非依存のロジックを独立して進化・テスト</td></tr>
+        <tr><td><code>@_exported import</code></td><td>UI パッケージが Core を再エクスポート。利用側は 1 import で済む</td></tr>
+        <tr><td>seam をプロトコル化（<code>AutoAlbumCore</code>）＋実装を別パッケージ（<code>MobileCLIPKit</code>）</td><td>Core ML 抜きで AI ロジックをテスト</td></tr>
+        <tr><td>各パッケージで <code>.iOS(.v17)</code> 宣言 + <code>@available</code> ゲート</td><td>アプリは iOS 26 でも、パッケージは macOS テストを維持</td></tr>
+      </table>
+
+      <div class="box why">
+        <span class="box-h">既知の落とし穴</span>
+        あるパッケージに<strong>新規ファイル</strong>を追加すると、それに依存する別パッケージの <code>.build</code> が stale になり「型が見つからない」で <code>swift test</code> が落ちることがある。<code>rm -rf Packages/*/.build</code> してから再実行で解消する。
+      </div>
+
+      <h2>アプリからの参照</h2>
+      <p>新しいパッケージを<strong>アプリが直接参照</strong>する場合は <code>project.pbxproj</code> に <code>XCLocalSwiftPackageReference</code> / <code>XCSwiftPackageProductDependency</code> / Frameworks フェーズの配線が要る。既存パッケージに transitive 依存するだけの新パッケージはアプリが直接参照しないため pbxproj 変更不要。</p>
+
+      <p>関連: <a href="../architecture/packages.html">パッケージと依存関係</a> / <a href="../appendix/conventions.html">規約とテスト方針</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

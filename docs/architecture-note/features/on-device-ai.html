@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>オンデバイス AI | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-on-device-ai";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / オンデバイス AI</nav>
+      <h1>オンデバイス AI</h1>
+      <p class="lead">固定の語彙リストや OCR を持たず、<strong>CLIP のオープン語彙</strong>で自然文検索を行う。通信なし・APIキー不要。クエリはまず英語へ翻訳してから埋め込む。</p>
+
+      <h2>全体像</h2>
+      <div class="mermaid">
+graph TD
+  Q["自然文クエリ（任意言語）"] --> TR[QueryTranslator<br/>Foundation Models で英語化]
+  TR --> TE[TextEmbedder<br/>MobileCLIP テキスト埋め込み]
+  IMG[各写真] --> PT[PhotoTagger<br/>背景で画像埋め込み]
+  PT --> EMB[(PhotoEmbedding<br/>fp16)]
+  TE --> SR[SemanticRanker<br/>コサイン類似]
+  EMB -->|ページング| SR
+  Q --> ST[構造化条件<br/>日付・場所・人物]
+  Q --> LX[字句検索<br/>地名・人物]
+  SR --> RRF[AIAlbumSearcher<br/>RRF 融合]
+  ST --> RRF
+  LX --> RRF
+  RRF --> RES[検索結果 / AI アルバム]
+      </div>
+
+      <h2>なぜ「語彙ゼロ」なのか</h2>
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        固定タグ方式（あらかじめ決めた数百語で分類）は語彙外の検索に弱い。CLIP は画像とテキストを<strong>同じベクトル空間</strong>に埋め込むため、「赤い傘」「夕焼けの海」のような自由な文を、語彙リストに無くてもコサイン類似で照合できる。これがオープン語彙検索。OCR・固定タグは持たない。
+      </div>
+
+      <h2>翻訳を前段に置く理由</h2>
+      <p>MobileCLIP のテキストエンコーダは英語中心。日本語クエリをそのまま入れると精度が落ちる。そこで <code>Foundation Models</code>（オンデバイス LLM）でクエリを<strong>英語へ正規化</strong>してから CLIP に渡す。翻訳もオンデバイスなので通信不要。</p>
+
+      <h2>検索の融合（RRF）</h2>
+      <p>意味検索（CLIP）だけでなく、構造化条件（日付・場所・人物）と字句一致（地名・人物名）も併用し、<strong>Reciprocal Rank Fusion</strong> で順位を統合する。これにより「去年 京都で 撮った 紅葉」のような複合クエリに強くなる。</p>
+      <ul>
+        <li><code>QueryUnderstanding</code> — クエリを構造化条件＋意味語に分解（ルールベース / Foundation Models）。</li>
+        <li><code>SemanticRanker</code> / <code>ClipMath</code> — コサイン類似で意味的に並べ替え。</li>
+        <li><code>LexicalSearch</code> — 地名・人物の字句一致。</li>
+        <li><code>AIAlbumSearcher</code> — 上記を RRF で融合し最終結果に。</li>
+      </ul>
+
+      <h2>知覚 seam（プロトコルと実装の分離）</h2>
+      <p><code>AutoAlbumCore</code> はプロトコルだけを定義し、Core ML 依存の実体は <code>MobileCLIPKit</code> が実装する。アプリが結線する。</p>
+      <table>
+        <tr><th>プロトコル（AutoAlbumCore）</th><th>実装（MobileCLIPKit）</th></tr>
+        <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → 埋め込み）</td></tr>
+        <tr><td><code>TextEmbedder</code></td><td><code>MobileCLIPTextEmbedder</code></td></tr>
+        <tr><td><code>QueryTranslator</code></td><td><code>AppQueryTranslator</code>（Foundation Models）</td></tr>
+        <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ）</td></tr>
+      </table>
+
+      <h2>表示タグは検索と分離</h2>
+      <p>フル画像に出すキーワードタグは <code>CLIPDisplayLabeler</code> が約 300 語の英語キーワードに対する<strong>ゼロショット</strong>（保存済み埋め込みを使う）で生成する。これは<strong>表示専用</strong>で、検索は語彙ゼロのまま縛らない。</p>
+
+      <h2>背景埋め込みのスロットリング</h2>
+      <p>全写真の画像埋め込みは <code>PhotoTagger.embedUnprocessed</code> が小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。重さは設定（段階）で調整でき、ユーザー操作中・メモリ圧迫中は処理を譲る。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・ClipMath</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception">AutoAlbumCore/Perception/</a> — seam・PhotoTagger</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳の実体</li>
+        </ul>
+      </div>
+
+      <p>背景: <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a> / <a href="../tech/coreml-foundationmodels.html">Core ML / Foundation Models</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>データの流れと起動 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "arch-data-flow";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / アーキテクチャ / データの流れと起動</nav>
+      <h1>データの流れと起動</h1>
+      <p class="lead">起動からホーム表示、各バックグラウンド処理までの流れ。「即時に見せる」と「重い処理は遅らせる」を両立させる。</p>
+
+      <h2>起動シーケンス</h2>
+      <p>各ストアは <code>init</code> で <code>ModelContainer</code> を同期構築するため重い。これを<strong>最初の描画パスから外す</strong>ため、<code>RootView</code> が起動直後に非同期で構築し、完成するまでスプラッシュを出す（1 秒を超えたら「Now loading…」）。</p>
+      <div class="mermaid">
+sequenceDiagram
+  participant App as MosaicPhotosApp
+  participant Root as RootView
+  participant Stores as HomeStores.build()
+  participant Home as HomeView
+  App->>App: Diagnostics.install()
+  App->>Root: 表示
+  Root->>Root: スプラッシュ描画（即時）
+  Root->>Stores: 非同期構築（合間に Task.yield）
+  Note over Root: 1秒超で「Now loading…」表示
+  Stores-->>Root: 各ストア完成
+  Root->>Home: HomeView(stores:)
+      </div>
+
+      <h2>ホーム表示後の段階起動</h2>
+      <p><code>HomeView</code> 表示後、バックグラウンド処理を時差で開始してピークを分散する（<code>HomeLifecycleTasks</code>）。</p>
+      <table>
+        <tr><th>タイミング</th><th>処理</th></tr>
+        <tr><td>即時</td><td>アルバムスキャン（キャッシュ即ロード→無ければ走査）</td></tr>
+        <tr><td>+1.5s</td><td>場所スキャン（ローカル + Dropbox 座標のグルーピング）</td></tr>
+        <tr><td>+3s</td><td>自動アルバムの再生成・AI 再評価・背景タグ付けの開始</td></tr>
+        <tr><td>+5s</td><td>バックアップ記録のロード（設定画面でのみ必要）</td></tr>
+      </table>
+
+      <h2>写真表示のデータフロー</h2>
+      <p>ソース画面は共通の <code>PhotoSourceContentView</code> が状態（権限/通信/完了/失敗）で分岐し、グリッドと全画面を出す。サムネイル・フル画像は <code>PhotoStore</code> 経由で取得し、キャッシュ層を通す。</p>
+      <div class="mermaid">
+graph TD
+  V[PhotoSourceContentView] --> S{PhotoLoadState}
+  S -->|loaded| G[PhotoCollectionView]
+  S -->|loading| L[ProgressView]
+  S -->|empty| E[空表示]
+  S -->|needsSetup/failed| N[案内 / 再試行]
+  G -->|サムネ要求| ST[PhotoStore.thumbnail]
+  ST --> CA{キャッシュ?}
+  CA -->|hit| IMG[即返す]
+  CA -->|miss| FE[取得 → キャッシュ → 返す]
+      </div>
+
+      <h2>AI の付加情報フロー</h2>
+      <p>写真は <code>PhotoEnrichment</code>（メタデータ）と <code>PhotoEmbedding</code>（CLIP 埋め込み・別テーブル）に分けて永続化される。検索は埋め込みを<strong>ページング</strong>で読み、メモリを有界に保つ。</p>
+      <div class="mermaid">
+graph LR
+  ENR[PhotoEnricher<br/>日付・場所・人物] --> SDM[(PhotoEnrichment)]
+  TAG[PhotoTagger<br/>背景CLIP埋め込み] --> SDE[(PhotoEmbedding fp16)]
+  Q[クエリ] --> TR[翻訳 Foundation Models]
+  TR --> TE[CLIP テキスト埋め込み]
+  TE --> SR[AIAlbumSearcher]
+  SDE -->|ページング| SR
+  SDM -->|メタ・字句| SR
+  SR --> RES[検索結果]
+      </div>
+
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        「保存済みアルバムは即表示、重い再生成・埋め込みは遅延」という二段構えにより、体感起動を速く保ちつつ最新化も行う。埋め込みを別テーブル＋ページングにしたのはメモリ枯渇対策（<a href="../case-studies/memory.html">事例</a>）。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="MosaicPhotos/RootView.swift">RootView.swift</a> — 非同期ストア構築・スプラッシュ</li>
+          <li><a class="srclink" data-path="MosaicPhotos/HomeView.swift">HomeView.swift</a> — HomeLifecycleTasks（段階起動）</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AutoAlbumEngine.swift">AutoAlbumEngine.swift</a> — loadOrGenerate</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

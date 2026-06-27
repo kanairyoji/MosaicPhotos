@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>診断と堅牢性 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-diagnostics";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / 診断と堅牢性</nav>
+      <h1>診断と堅牢性</h1>
+      <p class="lead">Mac/Console が使えない実機でも原因を追えるよう、端末上に診断ログを残す。SwiftData の起動時クラッシュは自己修復で回避する。</p>
+
+      <h2>端末診断（Diagnostics）</h2>
+      <p>アプリの <code>init()</code> で <code>Diagnostics.install()</code> を呼ぶと、次を <code>Caches/diagnostics.log</code> に記録する。</p>
+      <ul>
+        <li>未捕捉 ObjC 例外（<code>NSSetUncaughtExceptionHandler</code>）— 名前・理由・コールスタック。</li>
+        <li>メモリ圧迫（<code>DispatchSource.makeMemoryPressureSource</code>）— warning/critical とフットプリント。</li>
+        <li><code>LogChannel</code> の各レベル — <code>error</code> は Release でも、<code>info</code>/<code>verbose</code> は DEBUG のみ転記。</li>
+      </ul>
+      <p>Developer Options の <code>DiagnosticsLogView</code> で閲覧・共有・クリアできる。</p>
+      <div class="box note">
+        <span class="box-h">注意</span>
+        Swift の <code>fatalError</code> や SwiftData の trap はこのハンドラを通らず、標準クラッシュログ側に出る。
+      </div>
+
+      <h2>自己修復する ModelContainer</h2>
+      <p>SwiftData の <code>ModelContainer</code> 初期化は、ストア破損やスキーマ不整合のとき<strong>起動時に trap</strong>し、実機で原因不明のクラッシュになりやすい。そこで <code>makeResilientContainer(...)</code> が段階的にフォールバックする。</p>
+      <div class="mermaid">
+graph TD
+  A[ModelContainer 生成] --> B{成功?}
+  B -->|はい| OK[使用]
+  B -->|いいえ| C[ストアファイル削除<br/>.store / -wal / -shm]
+  C --> D[再生成]
+  D --> E{成功?}
+  E -->|はい| OK
+  E -->|いいえ| F[インメモリで起動]
+  F --> OK
+      </div>
+      <p>データは失うが<strong>起動は止めない</strong>（失敗は診断ログへ）。<code>AutoAlbumStore</code> / <code>DropboxCacheStore</code> / <code>BackupEngine</code> が採用。</p>
+
+      <h2>メモリ圧迫への対応</h2>
+      <p><code>MosaicSupport.MemoryPressureMonitor</code> が圧迫フラグを保持し、<code>Diagnostics</code> のメモリ圧迫ソースが warning/critical で立てる（一定時間後に自動解除）。背景の CLIP 埋め込みはこのフラグを見て一時停止し、jetsam を避ける。</p>
+
+      <h2>CLIP の可視化</h2>
+      <p><code>MobileCLIP.modelsBundled</code> でモデル同梱の有無をロードせず判定でき、Developer Options に表示する。ランタイムのロード結果（成功/失敗/未同梱・所要時間・フットプリント）も診断ログへ残す。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/Diagnostics.swift">Diagnostics.swift</a></li>
+          <li><a class="srclink" data-path="MosaicPhotos/Settings/DiagnosticsLogView.swift">DiagnosticsLogView.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a> — makeResilientContainer</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

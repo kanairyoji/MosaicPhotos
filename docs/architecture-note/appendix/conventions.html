@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>規約とテスト方針 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "appx-conventions";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 付録 / 規約とテスト方針</nav>
+      <h1>規約とテスト方針</h1>
+      <p class="lead">コードベースの一貫性を保つための約束と、2 系統のテストの回し方。</p>
+
+      <h2>コーディング規約（抜粋）</h2>
+      <ul>
+        <li><strong>状態管理</strong>: <code>@Observable</code> のみ。<code>ObservableObject</code>/<code>Combine</code> は使わない。</li>
+        <li><strong>並行性</strong>: アプリは既定 <code>@MainActor</code>。バックグラウンドのコールバックは <code>Task { @MainActor in }</code> で戻す。</li>
+        <li><strong>設定キーの一元化</strong>: <code>@AppStorage</code>/<code>UserDefaults</code> のキーは各パッケージの専用 enum に集約（<code>GridSettingsKeys</code> / <code>CacheSettingsKeys</code> / <code>DropboxCacheSettingsKeys</code> / <code>BackupSettingsKeys</code> / <code>AutoAlbumSettingsKeys</code> / アプリ層は <code>AppSettingsKeys</code>）。</li>
+        <li><strong>ロギングの一元化</strong>: <code>MosaicSupport.LogChannel</code> に集約。<code>error</code> は常時、<code>info</code>/<code>verbose</code> は DEBUG のみ。各レベルは診断ログにも転記。</li>
+        <li><strong>DI seam</strong>: 外部依存はプロトコル化しデフォルト引数で本番実装を注入（<code>HTTPClient</code> / <code>DateProvider</code> / <code>AccessTokenProvider</code>）。</li>
+        <li><strong>UI 文言は英語</strong>: 表示文字列は英語でハードコードしない方針（国際リリース前提）。コメント・コミットは日本語可。</li>
+        <li><strong>文字コード</strong>: ソース・API ボディ・Keychain 値はすべて UTF-8。</li>
+        <li><strong>機密の非保存</strong>: クレデンシャル・トークン・APIキーをファイルやログに書かない。</li>
+      </ul>
+
+      <h2>テストの 2 系統</h2>
+      <table>
+        <tr><th>系統</th><th>対象</th><th>実行</th></tr>
+        <tr><td>FAST（macOS）</td><td>Foundation のみの純ロジック（<code>PhotoSourceKit</code> / <code>AutoAlbumCore</code> / <code>BackupKit</code> など）</td><td><code>swift test</code></td></tr>
+        <tr><td>iOS Sim</td><td>UIKit / SwiftData / Photos 依存（<code>DropboxCore</code> / <code>PhotosFeatureKit</code>）</td><td><code>xcodebuild test -destination 'platform=iOS Simulator,...'</code></td></tr>
+      </table>
+      <pre><code># 全テスト一括（fast = macOS のみ / ios = シミュレータ / all = 両方）
+scripts/test.sh all
+
+# 個別（純ロジック）
+cd Packages/AutoAlbumCore &amp;&amp; swift test
+
+# アプリのビルド
+xcodebuild -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -sdk iphonesimulator build</code></pre>
+
+      <div class="box why">
+        <span class="box-h">落とし穴</span>
+        ローカルパッケージに<strong>新規ファイル</strong>を足すと、依存先の <code>.build</code> が stale になり「型が見つからない」で <code>swift test</code> が落ちることがある。<code>rm -rf Packages/*/.build</code> で解消。
+      </div>
+
+      <h2>検証ポリシー</h2>
+      <ul>
+        <li>シミュレータのアプリ画面スクショは撮らない（個人写真が写り得る）。検証はビルド・ログ・ユニットテスト・コンテナ内ファイル件数で行う。</li>
+        <li>破壊的操作（消去・初期化・上書き）はユーザー環境に対して事前確認。検証は使い捨て環境で。</li>
+        <li><code>git push</code> は明示指示があるときだけ。作業は基本 <code>main</code> 上で行いブランチは作らない。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="CLAUDE.md">CLAUDE.md</a> — 規約の一次情報源</li>
+          <li><a class="srclink" data-path="scripts/test.sh">scripts/test.sh</a> — テスト一括実行</li>
+          <li><a href="../tech/spm-modularization.html">SPM モジュール分割</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

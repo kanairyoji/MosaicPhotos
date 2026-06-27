@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLIP と埋め込み | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-clip";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / CLIP と埋め込み</nav>
+      <h1>CLIP と埋め込み</h1>
+      <p class="lead">CLIP は画像とテキストを<strong>同じベクトル空間</strong>に写す。「写真のベクトル」と「文のベクトル」の近さ（コサイン類似）を測れば、語彙リストなしで自然文検索ができる。</p>
+
+      <h2>埋め込み（embedding）とは</h2>
+      <p>画像や文を、意味を表す固定長の数値ベクトル（本アプリでは 512 次元）に変換したもの。似た意味のものはベクトル空間で近くに配置される。</p>
+      <div class="mermaid">
+graph LR
+  IMG[画像] --> IE[画像エンコーダ] --> VI["ベクトル(512次元)"]
+  TXT["文 'a red umbrella'"] --> TE[テキストエンコーダ] --> VT["ベクトル(512次元)"]
+  VI --- COS{コサイン類似}
+  VT --- COS
+  COS --> SCORE["近さ = 一致度"]
+      </div>
+
+      <h2>コサイン類似</h2>
+      <p>2 ベクトルのなす角の cos。1 に近いほど同方向＝意味が近い。長さに依存しないので埋め込み比較に向く。</p>
+      <pre><code>cos(a, b) = (a・b) / (|a| × |b|)   // -1 … 1</code></pre>
+
+      <h2>ゼロショット分類</h2>
+      <p>学習し直さずに、候補ラベル群（例: "beach", "mountain", "food" …）をテキスト埋め込みにして、画像ベクトルと最も近いものを選ぶ手法。本アプリの<strong>表示タグ</strong>はこの方式（約 300 語に対するゼロショット）。</p>
+
+      <h2>オープン語彙検索</h2>
+      <p>固定タグ方式は「決めた語」しか検索できない。CLIP は任意の文を埋め込めるので、語彙外の自由なクエリでも照合できる。これがオープン語彙。</p>
+
+      <div class="box why">
+        <span class="box-h">このアプリでの実装メモ</span>
+        <ul>
+          <li>モデルは <strong>MobileCLIP-S2</strong> を Core ML 化（512 次元）。</li>
+          <li>埋め込みは <code>ClipMath</code> で <code>Data</code> 化して永続化。検索用は fp32、保存は <strong>Float16</strong>（半分のサイズ）。</li>
+          <li>NaN/Inf を含むベクトルは壊れているので破棄（fp16 化の前処理で全滅を防ぐ）。</li>
+          <li>テキスト側は英語前提なので、クエリは Foundation Models で英訳してから埋め込む。</li>
+        </ul>
+      </div>
+
+      <p>関連: <a href="../features/on-device-ai.html">オンデバイス AI</a> / <a href="coreml-foundationmodels.html">Core ML / Foundation Models</a></p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/ClipMath.swift">ClipMath.swift</a> — encode/decode・cosine・fp16</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit/MobileCLIPRuntime.swift">MobileCLIPRuntime.swift</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

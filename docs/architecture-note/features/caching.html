@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>キャッシュ戦略 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-caching";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / キャッシュ戦略</nav>
+      <h1>キャッシュ戦略</h1>
+      <p class="lead">画像キャッシュのプリミティブ（メモリ + ディスク I/O）を <code>ImageCacheKit</code> に共通化し、端末写真と Dropbox の双方が利用する。破棄ポリシー（LRU）は利用側が持つ。</p>
+
+      <h2>2 層キャッシュ</h2>
+      <div class="mermaid">
+graph TD
+  REQ[サムネ/フル画像要求] --> MEM{MemoryImageCache<br/>NSCache}
+  MEM -->|hit| RET[即返す]
+  MEM -->|miss| DISK{DiskImageStore}
+  DISK -->|hit| LOAD[読み込み→メモリへ→返す]
+  DISK -->|miss| FETCH[ソースから取得→両層へ保存]
+      </div>
+      <ul>
+        <li><code>MemoryImageCache</code> — <code>NSCache</code> ラッパー（メモリ層）。</li>
+        <li><code>DiskImageStore</code> — ディレクトリ単位のディスク I/O と LRU 列挙。コアは Foundation のみ（macOS テスト可）、<code>UIImage</code> 便宜は <code>#if canImport(UIKit)</code>。</li>
+      </ul>
+
+      <h2>利用側ごとの破棄ポリシー</h2>
+      <table>
+        <tr><th>利用側</th><th>メタ管理</th><th>破棄</th></tr>
+        <tr><td><code>LocalPhotoCore</code> の <code>ThumbnailCache</code>（actor）</td><td>—</td><td>LRU（独自）</td></tr>
+        <tr><td><code>DropboxCore</code> の <code>DropboxCacheStore</code>（actor）</td><td>SwiftData（<code>CachedDropboxItem</code> / <code>CacheUsageEntry</code>）</td><td><code>CacheUsageEntry</code>（最終アクセス）ベースの LRU・容量上限</td></tr>
+      </table>
+
+      <h2>Dropbox キャッシュの無効化</h2>
+      <p>ファイルの <code>contentHash</code> 変更を検知してエントリを無効化する。バイナリは <code>Caches/DropboxKit/{thumbnails,fullimages}/</code> にハッシュ化ファイル名（<code>DropboxCacheNaming</code>）で保存。</p>
+
+      <h2>上限はユーザー設定</h2>
+      <p>サムネ/フル画像の上限は設定（Storage 画面）から変更でき、キーは各パッケージの専用 enum（<code>CacheSettingsKeys</code> / <code>DropboxCacheSettingsKeys</code>）に集約する。</p>
+
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        メモリ層と I/O プリミティブを 1 つのパッケージに集約しつつ、<strong>破棄ポリシーは各利用側が持つ</strong>。端末写真と Dropbox では無効化条件（contentHash の有無）も容量管理（SwiftData の有無）も異なるため、共通化しすぎず「プリミティブ共通・ポリシー個別」に留めている。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit">ImageCacheKit/</a></li>
+          <li><a class="srclink" data-path="Packages/DropboxCore/Sources/DropboxCore/Cache">DropboxCore/Cache/</a></li>
+          <li><a class="srclink" data-path="Packages/LocalPhotoCore/Sources/LocalPhotoCore/ThumbnailCache.swift">ThumbnailCache.swift</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

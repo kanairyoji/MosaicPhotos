@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>用語集 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "appx-glossary";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 付録 / 用語集</nav>
+      <h1>用語集</h1>
+      <p class="lead">本資料に出る用語の短い定義。</p>
+
+      <h2>AI / 検索</h2>
+      <table>
+        <tr><th>用語</th><th>意味</th></tr>
+        <tr><td>CLIP</td><td>画像とテキストを同じベクトル空間に写すモデル。本アプリは MobileCLIP-S2 を Core ML 化。</td></tr>
+        <tr><td>埋め込み (embedding)</td><td>意味を表す固定長の数値ベクトル（本アプリは 512 次元）。</td></tr>
+        <tr><td>コサイン類似</td><td>2 ベクトルの向きの近さ（-1〜1）。埋め込みの一致度に使う。</td></tr>
+        <tr><td>オープン語彙</td><td>固定リストに縛られず任意の文で検索できること。</td></tr>
+        <tr><td>ゼロショット</td><td>再学習なしで候補ラベルとの近さで分類する手法。表示タグに使用。</td></tr>
+        <tr><td>RRF</td><td>Reciprocal Rank Fusion。複数のランキングを順位で統合する手法。</td></tr>
+        <tr><td>Foundation Models</td><td>OS 内蔵のオンデバイス LLM。本アプリではクエリ英訳に使用。</td></tr>
+      </table>
+
+      <h2>永続化 / 並行性</h2>
+      <table>
+        <tr><th>用語</th><th>意味</th></tr>
+        <tr><td>SwiftData</td><td>Apple の永続化フレームワーク。<code>@Model</code> / <code>ModelContext</code> / <code>ModelContainer</code>。</td></tr>
+        <tr><td>@ModelActor</td><td>ModelContext を専用アクタに束縛して安全に並行アクセスする属性。</td></tr>
+        <tr><td>@Observable</td><td>Swift Observation の状態観測属性。参照プロパティ単位で再描画。</td></tr>
+        <tr><td>@MainActor</td><td>メインスレッドに隔離する属性。本アプリのアプリターゲットは既定 MainActor。</td></tr>
+        <tr><td>jetsam</td><td>iOS がメモリ不足時にプロセスを強制終了する仕組み。</td></tr>
+        <tr><td>watchdog</td><td>起動/応答が遅すぎるアプリを OS が終了させる監視。</td></tr>
+      </table>
+
+      <h2>本アプリ固有の型</h2>
+      <table>
+        <tr><th>用語</th><th>意味</th></tr>
+        <tr><td>PhotoStore / PhotoItem</td><td>写真ソースを統一する表示プロトコル（PhotoSourceKit）。</td></tr>
+        <tr><td>MergedPhotoStore</td><td>ローカル + Dropbox を統合する PhotoStore。</td></tr>
+        <tr><td>EnrichedPhoto</td><td>付加情報済みの 1 枚を表す Sendable 値型。</td></tr>
+        <tr><td>PhotoEnrichment / PhotoEmbedding</td><td>メタデータ / CLIP 埋め込み（fp16・別テーブル）の @Model。</td></tr>
+        <tr><td>refKey</td><td>ローカル/クラウドを統一する写真キー（"L-…"/"C-…"）。<code>PhotoRef</code> でエンコード。</td></tr>
+        <tr><td>seam</td><td>差し替え可能な継ぎ目。本アプリでは知覚・翻訳・ラベラのプロトコル境界。</td></tr>
+        <tr><td>合成ルート (Composition Root)</td><td>依存を結線する一点。本アプリは <code>AutoAlbumAdapters</code> など。</td></tr>
+      </table>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

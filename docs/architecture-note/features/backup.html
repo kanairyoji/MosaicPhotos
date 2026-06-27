@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>バックアップ | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-backup";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / バックアップ</nav>
+      <h1>バックアップ</h1>
+      <p class="lead">端末写真を Dropbox 上の指定フォルダへアップロードする。差分判定・人物/アルバム情報の付帯・上限制御を <code>BackupKit</code> が担う。</p>
+
+      <h2>構成</h2>
+      <table>
+        <tr><th>型</th><th>役割</th></tr>
+        <tr><td><code>BackupEngine</code></td><td><code>@MainActor @Observable</code>。バックアップ全体のオーケストレーションと進捗（phase）。</td></tr>
+        <tr><td><code>DropboxBackupUploader</code></td><td>写真/メタデータの HTTP アップロード。認証・SwiftData から独立しテスト対象。</td></tr>
+        <tr><td><code>BackupAssetReader</code></td><td><code>PHAsset</code> 本体データの取得。</td></tr>
+        <tr><td><code>BackupIndexing</code></td><td>People / Album インデックス構築（top-level・<code>Task.detached</code> 用）。</td></tr>
+        <tr><td><code>BackupPlanning</code></td><td>アップロード差分算出・エラー要約の<strong>純ロジック</strong>（テスト対象）。</td></tr>
+      </table>
+
+      <h2>処理フロー</h2>
+      <div class="mermaid">
+graph TD
+  ST[開始] --> AUTH[写真アクセス権要求]
+  AUTH --> IDX[People/Album インデックス構築]
+  IDX --> FETCH[PHAsset 一覧取得]
+  FETCH --> PLAN[BackupPlanning<br/>差分算出（上限考慮）]
+  PLAN --> UP[1枚ずつアップロード]
+  UP --> META[metadata.json 更新]
+  META --> DONE["完了（uploaded / skipped）"]
+      </div>
+
+      <h2>差分とメタデータ</h2>
+      <p>アップロード済み ID は <code>BackupAssetRecord</code>（SwiftData）で管理し、再実行時は未送信分だけを送る。1 回あたりの上限（10/50/100/500/無制限）を設定でき、<code>BackupPlanning</code> が純関数として差分を決める。People・Album 情報は <code>metadata.json</code> として Dropbox 側に持たせ、別端末や AI（重複排除の linkKey）でも参照できる。</p>
+
+      <h2>純ロジックの切り出し</h2>
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        差分算出（<code>BackupPlanning</code>）とアップロード（<code>DropboxBackupUploader</code>）を、認証や SwiftData から切り離した純ロジック/単機能にしている。これにより macOS の <code>swift test</code> で「どの写真を送るか」「エラー要約」をネットワークなしで検証できる。
+      </div>
+
+      <h2>UI と診断の分離</h2>
+      <p>通常設定は <code>BackupSettingsView</code>、詳細診断（進捗・フォルダ確認・統計・ログ）は <code>BackupDebugSection</code> に分け、後者は Developer Options 画面が合成して表示する。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/BackupKit/Sources/BackupKit/BackupEngine.swift">BackupEngine.swift</a></li>
+          <li><a class="srclink" data-path="Packages/BackupKit/Sources/BackupKit/BackupPlanning.swift">BackupPlanning.swift</a></li>
+          <li><a class="srclink" data-path="Packages/BackupKit/Sources/BackupKit/DropboxBackupUploader.swift">DropboxBackupUploader.swift</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

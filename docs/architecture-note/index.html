@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>概要 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script>window.DOCROOT = ""; window.PAGE = "index";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb">設計資料</nav>
+      <h1>MosaicPhotos 設計資料</h1>
+      <p class="lead">端末内と Dropbox の写真を統一的に閲覧し、語彙に縛られない自然文検索を<strong>オンデバイス AI</strong> で実現する iOS アプリ。その構造・設計判断・使っている技術をまとめた内部資料です。</p>
+
+      <div class="box note">
+        <span class="box-h">この資料の二つの目的</span>
+        <strong>1. 構造の把握</strong> — どの層がどう責務を持ち、なぜそう分けたか。<br>
+        <strong>2. 技術の学習</strong> — Swift Observation / SwiftData / PhotosKit / CLIP / Core ML / OAuth など、本アプリが用いる技術そのものを理解する。
+      </div>
+
+      <h2>このアプリを一言で</h2>
+      <p>外部 SDK を使わず標準フレームワークのみで構成。写真ソース（端末 / Dropbox）を共通インターフェイスに統一し、<strong>MobileCLIP（Core ML）</strong>でオープン語彙の意味検索を行う。クエリは <strong>Foundation Models</strong> で英語へ正規化してから CLIP テキスト埋め込みにかけ、各写真の画像埋め込みとコサイン類似で検索する。通信なし・APIキー不要。</p>
+
+      <div class="mermaid">
+graph TD
+  U[ユーザー] --> APP[MosaicPhotos アプリ]
+  APP --> SRC[写真ソース統一<br/>端末 + Dropbox]
+  APP --> AI[オンデバイス AI<br/>意味検索・自動アルバム]
+  SRC --> LOCAL[PhotosKit]
+  SRC --> CLOUD[Dropbox API]
+  AI --> CLIP[MobileCLIP / Core ML]
+  AI --> FM[Foundation Models<br/>クエリ翻訳]
+  AI --> SD[(SwiftData<br/>付加情報・埋め込み)]
+      </div>
+
+      <h2>技術スタック</h2>
+      <table>
+        <tr><th>領域</th><th>採用技術</th></tr>
+        <tr><td>言語 / UI</td><td>Swift / SwiftUI</td></tr>
+        <tr><td>状態管理</td><td>Swift Observation（<code>@Observable</code>）</td></tr>
+        <tr><td>端末写真</td><td>PhotosKit（<code>PHPhotoLibrary</code> / <code>PHImageManager</code>）</td></tr>
+        <tr><td>永続化</td><td>SwiftData（<code>@Model</code> / <code>@ModelActor</code>）+ Keychain</td></tr>
+        <tr><td>Dropbox</td><td><code>AuthenticationServices</code>（OAuth2 + PKCE）/ <code>URLSession</code></td></tr>
+        <tr><td>オンデバイス AI</td><td>MobileCLIP-S2（Core ML）/ Foundation Models</td></tr>
+        <tr><td>最小 iOS</td><td>26.0（各 SPM パッケージは <code>.iOS(.v17)</code> 宣言で macOS テストも維持）</td></tr>
+        <tr><td>構成</td><td>ローカル SPM パッケージ 11 個（Core/UI 分離）</td></tr>
+      </table>
+
+      <h2>読み進め方</h2>
+      <p>初めてなら上から順に。特定テーマを知りたいなら以下から。</p>
+      <div class="cards">
+        <a class="card" href="architecture/overview.html"><div class="card-t">全体アーキテクチャ</div><div class="card-d">レイヤリングと Core/UI 分離、合成ルートの考え方。</div></a>
+        <a class="card" href="architecture/packages.html"><div class="card-t">パッケージと依存関係</div><div class="card-d">11 パッケージの責務と依存グラフ。</div></a>
+        <a class="card" href="features/on-device-ai.html"><div class="card-t">オンデバイス AI</div><div class="card-d">CLIP 意味検索・翻訳前段・RRF 融合・表示タグ。</div></a>
+        <a class="card" href="features/grid-viewer.html"><div class="card-t">グリッドと全画面</div><div class="card-d">UICollectionView を SwiftUI に載せる設計。</div></a>
+        <a class="card" href="features/dropbox.html"><div class="card-t">Dropbox 連携</div><div class="card-d">OAuth PKCE・差分同期・キャッシュ LRU。</div></a>
+        <a class="card" href="case-studies/memory.html"><div class="card-t">事例: メモリ枯渇</div><div class="card-d">写真枚数に比例した起動クラッシュの解決。</div></a>
+        <a class="card" href="design-decisions/adr.html"><div class="card-t">設計判断の記録</div><div class="card-d">なぜその設計にしたかを ADR 形式で。</div></a>
+        <a class="card" href="appendix/glossary.html"><div class="card-t">用語集</div><div class="card-d">本資料に出る用語の短い定義。</div></a>
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="CLAUDE.md">CLAUDE.md</a> — リポジトリの開発ガイド（本資料の一次情報源）</li>
+          <li><a class="srclink" data-path="MosaicPhotos/MosaicPhotosApp.swift">MosaicPhotosApp.swift</a> — エントリーポイント</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="assets/nav.js"></script>
+</body>
+</html>

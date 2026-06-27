@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: メモリ枯渇の解消 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-memory";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: メモリ枯渇の解消</nav>
+      <h1>事例: 写真枚数に比例したメモリ枯渇の解消</h1>
+      <p class="lead">「写真ゼロの端末では起動するが、写真が多い端末では起動前に落ちる」。原因はメモリで、SwiftData の格納方法に潜んでいた。学習材料として顛末を残す。</p>
+
+      <h2>症状と切り分け</h2>
+      <ul>
+        <li>写真ゼロの端末 → 起動する。</li>
+        <li>写真が多い端末 → 起動できない。</li>
+      </ul>
+      <p>「写真枚数に比例して何かが増える」と仮説。起動経路のうち、枚数に比例する処理を疑った。</p>
+
+      <h2>真因</h2>
+      <p>CLIP 埋め込み <code>clipVector</code>（512×Float32 ≈ <strong>2KB/枚</strong>）を <code>PhotoEnrichment</code> の <strong>inline 属性</strong>として持っていた。SwiftData は <code>fetch(FetchDescriptor&lt;PhotoEnrichment&gt;())</code> で<strong>行を丸ごと展開</strong>する。プロパティを読まなくても blob ごとロードされる。</p>
+      <div class="box why">
+        <span class="box-h">致命的だった点</span>
+        「軽量版」を謳う <code>allEnrichedPhotosLite()</code> も内部は全件 fetch → <code>map</code>。結果の構造体から vector を外しても、<strong>fetch の時点で 67k × 2KB ≈ 138MB を確保</strong>していた。生成・重複排除・prune など複数経路が同じ全件 fetch を行うため、起動直後にこれが重なり jetsam に至っていた。写真ゼロなら行ゼロ＝展開なし＝起動する、という観測と一致。
+      </div>
+
+      <h2>対策（採用したフルセット）</h2>
+      <table>
+        <tr><th>施策</th><th>内容</th><th>効果</th></tr>
+        <tr><td>別テーブル化</td><td><code>clipVector</code> を <code>PhotoEmbedding</code> 別 <code>@Model</code> へ分離。メタデータ fetch が blob に一切触れない。</td><td>根本対処</td></tr>
+        <tr><td>Float16 化</td><td>埋め込みを半精度で保存（2KB→1KB）。<code>ClipMath.encodeHalf/decodeHalf</code>。読み出し時に fp32 復元。</td><td>DB・常駐を半減</td></tr>
+        <tr><td>ページング</td><td>検索は <code>enrichmentVectorPage(offset:limit:)</code> でページ単位に読む。</td><td>常駐をページ 1 枚分に</td></tr>
+        <tr><td>バッチ解放</td><td>大量 upsert は <code>writeChunk</code> 件ごとに使い捨て <code>ModelContext</code> で save→解放。</td><td>書き込み時の常駐を有界化</td></tr>
+        <tr><td>圧迫時停止</td><td>メモリ圧迫中は背景タグ付けを一時停止（<code>MemoryPressureMonitor</code>）。</td><td>jetsam 回避</td></tr>
+      </table>
+
+      <h2>変更の形</h2>
+      <div class="mermaid">
+graph LR
+  subgraph 変更前
+    PE1["PhotoEnrichment<br/>メタ + clipVector(2KB inline)"]
+  end
+  subgraph 変更後
+    PE2["PhotoEnrichment<br/>メタのみ（軽量）"]
+    EM["PhotoEmbedding<br/>refKey + vector(fp16)"]
+  end
+  PE1 -->|分離| PE2
+  PE1 -->|分離| EM
+      </div>
+
+      <h2>学び</h2>
+      <ul>
+        <li><strong>SwiftData の fetch は属性を丸ごと読む</strong>。大きな blob は別テーブルに逃がすか、読まない設計にする。</li>
+        <li>「軽量版」と名付けても、<strong>fetch のコストは消えない</strong>。命名でなく実測（経路）で確かめる。</li>
+        <li>スキーマ変更は <code>ModelConfiguration</code> 名を採番して旧ストアを破棄（<code>AutoAlbumV10</code>）。埋め込みは背景で再生成され、精度は徐々に回復する。</li>
+        <li>検証は実機スクショではなく、ビルド・ユニットテスト・診断ログのフットプリントで行う。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models/PhotoEmbedding.swift">PhotoEmbedding.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/ClipMath.swift">ClipMath.swift</a> — encodeHalf/decodeHalf</li>
+        </ul>
+      </div>
+      <p>背景: <a href="../tech/swiftdata.html">SwiftData</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

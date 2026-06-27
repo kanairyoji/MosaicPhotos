@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OAuth2 + PKCE | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-oauth";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / OAuth2 + PKCE</nav>
+      <h1>OAuth2 + PKCE</h1>
+      <p class="lead">他サービス（Dropbox）の認可を、パスワードを預からずトークンで得る仕組み。PKCE はネイティブアプリのための横取り対策。</p>
+
+      <h2>OAuth 2.0 認可コードフロー</h2>
+      <ol>
+        <li>アプリがブラウザでサービスの認可画面を開く。</li>
+        <li>ユーザーが許可すると、<strong>認可コード</strong>がリダイレクトで返る。</li>
+        <li>アプリがコードを<strong>アクセストークン</strong>と交換する。</li>
+        <li>以降はトークンで API を呼ぶ。期限切れは <strong>refresh トークン</strong>で更新。</li>
+      </ol>
+
+      <h2>なぜ PKCE が要るか</h2>
+      <p>ネイティブアプリはクライアントシークレットを安全に隠せない。カスタム URL スキームのリダイレクトは他アプリに横取りされ得る。PKCE（Proof Key for Code Exchange）は<strong>使い捨ての秘密</strong>でこれを防ぐ。</p>
+      <div class="mermaid">
+sequenceDiagram
+  participant App
+  participant Auth as 認可サーバ
+  App->>App: code_verifier をランダム生成
+  App->>App: code_challenge = SHA256(code_verifier)
+  App->>Auth: 認可要求（code_challenge を添付）
+  Auth-->>App: 認可コード
+  App->>Auth: コード + code_verifier を送信
+  Auth->>Auth: SHA256(verifier) が challenge と一致するか検証
+  Auth-->>App: アクセストークン
+      </div>
+      <p>コードを横取りしても <code>code_verifier</code> を知らなければトークンに換えられない。</p>
+
+      <h2>このアプリでの実装</h2>
+      <ul>
+        <li><code>ASWebAuthenticationSession</code> で認可画面を表示し、<code>MosaicPhotos://oauth/dropbox</code> でコールバックを受ける。</li>
+        <li><code>PKCEGenerator</code> が verifier/challenge を生成（純ロジック・テスト対象）。</li>
+        <li>トークンは <code>Security</code>（Keychain）に保存。<code>appKey</code>/<code>redirectURI</code> はアプリ層の設定に置き、Core は値を持たない。</li>
+        <li>機密値はログ・ファイルに書かない（セキュリティ方針）。</li>
+      </ul>
+
+      <p>関連: <a href="../features/dropbox.html">Dropbox 連携</a></p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/DropboxCore/Sources/DropboxCore/Auth">DropboxCore/Auth/</a> — DropboxAuthService / PKCEGenerator / Keychain</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>パッケージと依存関係 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "arch-packages";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / アーキテクチャ / パッケージと依存関係</nav>
+      <h1>パッケージと依存関係</h1>
+      <p class="lead">機能はローカル SPM パッケージ 11 個に分かれる。基盤 → ロジック → UI → 統合 → アプリ、と一方向に依存する。</p>
+
+      <h2>依存グラフ</h2>
+      <div class="mermaid">
+graph TD
+  subgraph 基盤
+    MS[MosaicSupport]
+    PSK[PhotoSourceKit]
+    ICK[ImageCacheKit]
+  end
+  subgraph ロジック層
+    LPC[LocalPhotoCore]
+    DBC[DropboxCore]
+    BK[BackupKit]
+    AAC[AutoAlbumCore]
+  end
+  subgraph UI層
+    LPK[LocalPhotoKit]
+    DBK[DropboxKit]
+    MCK[MobileCLIPKit]
+  end
+  PFK[PhotosFeatureKit]
+  APP[MosaicPhotos アプリ]
+
+  LPC --> PSK
+  LPC --> ICK
+  DBC --> ICK
+  DBC --> MS
+  BK --> DBC
+  BK --> MS
+  AAC --> MS
+  LPK --> LPC
+  LPK --> PSK
+  DBK --> DBC
+  DBK --> PSK
+  MCK --> AAC
+  MCK --> MS
+  PFK --> LPK
+  PFK --> DBK
+  PFK --> PSK
+  APP --> PFK
+  APP --> AAC
+  APP --> MCK
+  APP --> BK
+      </div>
+
+      <h2>各パッケージの責務</h2>
+      <table>
+        <tr><th>パッケージ</th><th>層</th><th>責務</th></tr>
+        <tr><td><code>MosaicSupport</code></td><td>基盤</td><td>横断ユーティリティ。共通ロガー <code>LogChannel</code>、端末診断 <code>Diagnostics</code>、メモリ圧迫監視。依存なし。</td></tr>
+        <tr><td><code>PhotoSourceKit</code></td><td>基盤</td><td>写真ソース共通基盤。<code>PhotoStore</code>/<code>PhotoItem</code>/<code>PhotoLoadState</code> と共通ビュー（グリッド・全画面）。逆ジオコーディング・EXIF などの純ロジック。</td></tr>
+        <tr><td><code>ImageCacheKit</code></td><td>基盤</td><td>メモリ（<code>MemoryImageCache</code>）+ ディスク I/O（<code>DiskImageStore</code>）の画像キャッシュプリミティブ。破棄ポリシーは利用側が持つ。</td></tr>
+        <tr><td><code>LocalPhotoCore</code></td><td>ロジック</td><td>端末写真ロジック。<code>LocalPhotoStore</code>、アルバム走査、サムネキャッシュ。SwiftUI 非依存。</td></tr>
+        <tr><td><code>DropboxCore</code></td><td>ロジック</td><td>Dropbox の認証（OAuth PKCE）・API・差分同期・キャッシュ（SwiftData + ImageCacheKit）。SwiftUI 非依存。</td></tr>
+        <tr><td><code>BackupKit</code></td><td>ロジック</td><td>端末写真 → Dropbox バックアップのオーケストレーション、アップロード、People/Album インデックス。</td></tr>
+        <tr><td><code>AutoAlbumCore</code></td><td>ロジック</td><td>自動アルバム生成・知覚・意味検索のロジック。SwiftUI 非依存・純ロジック中心でテストしやすい。</td></tr>
+        <tr><td><code>LocalPhotoKit</code></td><td>UI</td><td>端末写真の UI。<code>LocalPhotoCore</code> を <code>@_exported import</code>。</td></tr>
+        <tr><td><code>DropboxKit</code></td><td>UI</td><td>Dropbox の UI。<code>DropboxCore</code> を <code>@_exported import</code>。</td></tr>
+        <tr><td><code>MobileCLIPKit</code></td><td>UI/実装</td><td>CLIP/翻訳ランタイムと <code>AutoAlbumCore</code> の seam 実装（知覚アダプタ・表示ラベラ）。Core ML / Foundation Models を扱う。</td></tr>
+        <tr><td><code>PhotosFeatureKit</code></td><td>統合</td><td>ローカル + Dropbox を統合する <code>MergedPhotoStore</code> / <code>MergedPhotoItem</code>、場所グルーピングの <code>PlaceScanner</code>。</td></tr>
+      </table>
+
+      <h2>依存の向きに関する約束</h2>
+      <ul>
+        <li><strong>ロジック層はアプリを import しない</strong>。<code>DropboxCore</code> の依存は Foundation / AuthenticationServices / CryptoKit / Security / SwiftData / UIKit / ImageCacheKit / MosaicSupport のみ。</li>
+        <li><strong>UI は Core を再エクスポート</strong>（<code>@_exported import</code>）。アプリは <code>import DropboxKit</code> だけで両層の公開型を参照できる。</li>
+        <li><strong>知覚 seam はプロトコル + MobileCLIPKit 実装</strong>。<code>AutoAlbumCore</code> はプロトコルだけを定義し、Core ML 依存の実体は <code>MobileCLIPKit</code> が持つ。アプリが結線する。</li>
+      </ul>
+
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        Core/UI を分けると、SwiftUI を持たない純ロジックを macOS の <code>swift test</code> で高速に検証できる。AI の重い依存（Core ML）を <code>MobileCLIPKit</code> に隔離することで、<code>AutoAlbumCore</code> 本体はモデルなしでもテスト可能になる。詳細は <a href="../tech/spm-modularization.html">SPM モジュール分割</a>。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages">Packages/</a> — 全パッケージのソース</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Package.swift">MobileCLIPKit/Package.swift</a> — 依存宣言の例</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

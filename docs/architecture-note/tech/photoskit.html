@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhotosKit | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-photoskit";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / PhotosKit</nav>
+      <h1>PhotosKit</h1>
+      <p class="lead">端末の写真ライブラリにアクセスする Apple のフレームワーク。アセットの列挙・画像取得・変更監視を担う。</p>
+
+      <h2>主要な型</h2>
+      <table>
+        <tr><th>型</th><th>役割</th></tr>
+        <tr><td><code>PHPhotoLibrary</code></td><td>権限要求・ライブラリ全体・変更監視。</td></tr>
+        <tr><td><code>PHAsset</code></td><td>写真 1 枚のメタデータ（撮影日・座標・サイズ・お気に入り等）。実体ではなく軽量な参照。</td></tr>
+        <tr><td><code>PHFetchResult</code></td><td>アセットの遅延コレクション。<code>enumerateObjects</code> で走査。</td></tr>
+        <tr><td><code>PHImageManager</code> / <code>PHCachingImageManager</code></td><td>サムネ/フル画像の非同期取得と先読み。</td></tr>
+        <tr><td><code>PHAssetCollection</code></td><td>アルバム・スマートアルバム（People など）。</td></tr>
+      </table>
+
+      <h2>権限</h2>
+      <p>初回アクセス時に <code>requestAuthorization(for: .readWrite)</code> で許可を求める。<code>Info.plist</code> の <code>NSPhotoLibraryUsageDescription</code> が必須（本アプリは pbxproj の <code>INFOPLIST_KEY_*</code> で設定）。限定アクセス（<code>.limited</code>）もある。</p>
+
+      <h2>気をつける点</h2>
+      <ul>
+        <li><strong>コールバックはバックグラウンド</strong> — <code>PHImageManager</code> の completion は別スレッドで来るので <code>Task { @MainActor in }</code> でメインへ戻す。</li>
+        <li><strong>全件配列化はメモリに注意</strong> — <code>enumerateObjects</code> で <code>[PHAsset]</code> 化するのは O(枚数)。本体画像ではなく参照なので軽いが、数万件では無視できない。</li>
+        <li><strong>EXIF を読むときは本体データを取る</strong> — <code>PHAsset.location</code> が無い場合の GPS 補完は <code>requestImageDataAndOrientation</code> で本体を読む（重いのでキャッシュ前提）。</li>
+      </ul>
+
+      <h2>このアプリでの使われ方</h2>
+      <ul>
+        <li><code>LocalPhotoStore</code> — 一覧・権限・サムネ取得・先読み窓（FIFO）。</li>
+        <li><code>LocalAlbumScanner</code> — <code>PHAssetCollection</code> 走査（バックアップと独立）。</li>
+        <li><code>PlaceScanner</code> — 座標収集（<code>PHAsset.location</code> → EXIF 補完）。</li>
+        <li><code>BackupAssetReader</code> — バックアップ用の本体データ取得。</li>
+      </ul>
+
+      <p>関連: <a href="../features/photo-sources.html">写真ソースの統一</a> / <a href="../features/grid-viewer.html">グリッドと全画面ビューア</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

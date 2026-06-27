@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>並行性とアクター分離 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "arch-concurrency";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / アーキテクチャ / 並行性とアクター分離</nav>
+      <h1>並行性とアクター分離</h1>
+      <p class="lead">Swift Concurrency（async/await・actor）を全面採用。UI と状態は <code>@MainActor</code>、I/O や DB はアクター/バックグラウンドに逃がす。</p>
+
+      <h2>MainActor 既定</h2>
+      <p>アプリターゲットはビルド設定 <code>SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor</code> により、すべての型がデフォルトで <code>@MainActor</code>。UI 状態の更新は常にメインで行われ、データ競合を型レベルで防ぐ。</p>
+      <p>一方、<code>PHImageManager</code> や <code>URLSession</code> のコールバックはバックグラウンドスレッドで来る。これらは <code>Task { @MainActor in ... }</code> で明示的にメインへ戻す。</p>
+
+      <h2>重い処理はメインから逃がす</h2>
+      <p>写真ライブラリの全件列挙・座標集約・署名計算などは <code>Task.detached(priority: .utility)</code> でオフメイン実行し、結果（Sendable 値）だけをメインへ返す。</p>
+      <div class="mermaid">
+sequenceDiagram
+  participant Main as MainActor (UI)
+  participant Det as Task.detached (utility)
+  participant Geo as PlaceNameResolver (actor)
+  Main->>Det: 全PHAsset列挙・グリッド集約
+  Det-->>Main: PlaceCandidate[] (Sendable)
+  Main->>Geo: cityName(座標)
+  Geo-->>Main: 市区町村名
+  Main->>Main: places を更新 (@Observable)
+      </div>
+
+      <h2>@ModelActor で DB を隔離</h2>
+      <p>SwiftData の <code>ModelContext</code> はスレッド安全でない。<code>AutoAlbumStore</code> / <code>DropboxCacheStore</code> は <code>@ModelActor</code>（または <code>actor</code>）にして、コンテキストをアクタ専用 executor に束縛する。<strong><code>@Model</code> はアクタ外へ漏らさず、必ず Sendable 値（<code>EnrichedPhoto</code> 等）に変換して返す</strong>のが鉄則。</p>
+      <pre><code>@ModelActor
+actor AutoAlbumStore {
+    func allEnrichedPhotosLite() -> [EnrichedPhoto] {   // @Model ではなく値型を返す
+        let records = (try? modelContext.fetch(...)) ?? []
+        return records.map(\.asEnrichedPhoto)
+    }
+}</code></pre>
+
+      <h2>協調的な一時停止（背景処理を譲る）</h2>
+      <p>背景の CLIP 埋め込みは、ユーザー操作中（スクラブ）やメモリ圧迫中は処理を譲る。<code>PhotoTagger.embedUnprocessed</code> は <code>shouldPause</code> クロージャを受け取り、<code>true</code> の間は短いスリープで待機する。</p>
+      <pre><code>shouldPause: { isInteracting || MemoryPressureMonitor.shared.isUnderPressure }</code></pre>
+
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        起動直後に「グリッド初期表示・Dropbox キャッシュ読み込み・AI 再評価」が<strong>同時に</strong>走るとメモリ/CPU スパイクが jetsam・watchdog を誘発する。そこで <code>Task.sleep</code> による<strong>段階起動</strong>（place scan を +1.5s、backup を +5s、重い AI を +3s）でピークをずらす。詳細は <a href="../case-studies/launch-performance.html">起動の高速化</a>。
+      </div>
+
+      <h2>テスト用 seam（DI）</h2>
+      <p>外部依存はプロトコルで抽象化し、デフォルト引数で本番実装を注入する。<code>HTTPClient</code>（URLSession）/ <code>DateProvider</code>（時刻）/ <code>AccessTokenProvider</code>（トークン）はテストでスタブに差し替えられる。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a> — @ModelActor の例</li>
+          <li><a class="srclink" data-path="Packages/PhotosFeatureKit/Sources/PhotosFeatureKit/PlaceScanner.swift">PlaceScanner.swift</a> — Task.detached の例</li>
+          <li><a class="srclink" data-path="MosaicPhotos/HomeView.swift">HomeView.swift</a> — 段階起動（HomeLifecycleTasks）</li>
+        </ul>
+      </div>
+
+      <p>背景: <a href="../tech/swift-observation.html">Swift Observation</a> / <a href="../tech/swiftdata.html">SwiftData</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>
