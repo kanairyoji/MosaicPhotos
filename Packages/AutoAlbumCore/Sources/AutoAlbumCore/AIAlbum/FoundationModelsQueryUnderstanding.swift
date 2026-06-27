@@ -26,10 +26,80 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
         }
     }
 
-    // ⚠️ OR 対応の GeneratedSpec 経路は一旦無効化（FM が「子供」等を peopleAtLeast/位置などの
-    //    ハード条件にしてしまい、People インデックス等を満たさない写真を全除外＝空になる回帰のため）。
-    //    当面は実績ある flat 解釈（interpret）→ asQuerySpec（既定 interpretSpec）に委ねる。
-    //    OR/多ファセットは、ハード条件のサニタイズ（データで満たせない条件の抑制）＋実機検証の上で再投入する。
+    /// 合成可能仕様（OR/NOT/複数ファセット）への解釈。DNF（節の OR）を guided generation で出力する。
+    /// ⚠️ 過去の回帰（「子供」等を peopleAtLeast 等のハード条件にしてデータを満たさず全滅）を踏まえ、
+    ///    人物の有無や概念は **ハードにしない**（内容=ソフトで扱う）。日付は妥当性を検証する。
+    ///    さらに `AIAlbumSearcher` 側の安全網（ハードで全滅したら内容のみへ緩和）が二重の保険になる。
+    func interpretSpec(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> QuerySpec {
+        do {
+            let session = LanguageModelSession(instructions: Self.specInstructions(catalog: catalog, now: now))
+            let response = try await session.respond(to: text, generating: GeneratedSpec.self)
+            let spec = Self.toSpec(response.content, fallbackText: text, now: now)
+            // 念のため：節がすべて空（解釈不能）なら flat へフォールバック。
+            return spec.clauses.isEmpty ? await interpret(text, catalog: catalog, now: now).asQuerySpec() : spec
+        } catch {
+            return await RuleBasedQueryUnderstanding().interpretSpec(text, catalog: catalog, now: now)
+        }
+    }
+
+    private static func specInstructions(catalog: AIAlbumCatalog, now: Date) -> String {
+        let places = catalog.places.prefix(40).joined(separator: ", ")
+        let people = catalog.people.prefix(40).joined(separator: ", ")
+        let today = DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .none)
+        return """
+        Convert the user's request (any language) into a photo filter expressed as OR of groups (clauses).
+        Today is \(today).
+        Use EXACTLY ONE clause for normal requests; use multiple clauses ONLY for clear "A or B" alternatives.
+        Within a clause all fields are ANDed. Leave fields empty / 0 / false / "any" / "none" when not mentioned.
+        Place names ONLY from this catalog: [\(places)].
+        Person names ONLY from this catalog: [\(people)]. Use a person name ONLY when the user names that specific person.
+        dateKind is one of: none, year, lastYears, lastMonths, lastDays. dateValue is the 4-digit year for "year", or N for "lastX", else 0.
+        source is one of: any, local, cloud. orientation is one of: any, portrait, landscape, square.
+        favoritesOnly is true only for favorites.
+        contentInclude: visual content words IN ENGLISH (e.g. child, children, beach, dog, sunset). This is where general subjects like "children" go — NOT as a person filter. Empty if none.
+        contentExclude: visual content IN ENGLISH to exclude (e.g. "without people" -> ["people"]). Empty if none.
+        Provide a concise title in the user's language.
+        """
+    }
+
+    private static func toSpec(_ g: GeneratedSpec, fallbackText: String, now: Date) -> QuerySpec {
+        var clauses: [QueryClause] = []
+        for gc in g.clauses {
+            var conds: [Condition] = []
+            if !gc.places.isEmpty { conds.append(.place(gc.places)) }
+            if !gc.people.isEmpty { conds.append(.people(gc.people)) }   // 具体的な人物名のみ（catalog 接地）
+            if let range = sanitizedDate(kind: gc.dateKind, value: gc.dateValue, now: now) { conds.append(.date(range)) }
+            switch gc.source.lowercased() {
+            case "local": conds.append(.source(.local))
+            case "cloud": conds.append(.source(.cloud))
+            default: break
+            }
+            switch gc.orientation.lowercased() {
+            case "portrait":  conds.append(.orientation(.portrait))
+            case "landscape": conds.append(.orientation(.landscape))
+            case "square":    conds.append(.orientation(.square))
+            default: break
+            }
+            if gc.favoritesOnly { conds.append(.favorite) }
+            if !gc.contentInclude.isEmpty { conds.append(.content(gc.contentInclude)) }
+            if !gc.contentExclude.isEmpty { conds.append(.not(.content(gc.contentExclude))) }
+            if !conds.isEmpty { clauses.append(QueryClause(conds)) }
+        }
+        let title = g.title.isEmpty ? fallbackText : g.title
+        return QuerySpec(clauses: clauses, title: title)
+    }
+
+    /// 日付の妥当性チェック（FM の暴発を抑える）。年は妥当範囲のみ、lastX は N>=1 のみ採用。
+    private static func sanitizedDate(kind: String, value: Int, now: Date) -> AIAlbumDateRange? {
+        let thisYear = Calendar.current.component(.year, from: now)
+        switch kind.lowercased() {
+        case "year":       return (1900...(thisYear + 1)).contains(value) ? .year(value) : nil
+        case "lastyears":  return value >= 1 ? .lastYears(value) : nil
+        case "lastmonths": return value >= 1 ? .lastMonths(value) : nil
+        case "lastdays":   return value >= 1 ? .lastDays(value) : nil
+        default:           return nil
+        }
+    }
 
     private static func instructions(catalog: AIAlbumCatalog, now: Date) -> String {
         let places = catalog.places.prefix(40).joined(separator: ", ")
@@ -84,5 +154,40 @@ struct GeneratedAlbumQuery {
     var dateKind: String
     @Guide(description: "Year for 'year', or N for the 'lastX' kinds, otherwise 0")
     var dateValue: Int
+}
+
+/// 合成可能仕様（DNF）の guided generation スキーマ。clauses は OR、各 clause 内は AND。
+/// ※ 人数(peopleAtLeast)・位置(hasLocation)は意図的に持たせない（データを満たさず全滅する回帰を防ぐ。
+///   人物の有無や概念は contentInclude/contentExclude=ソフトで扱う）。
+@available(iOS 26.0, macOS 26.0, *)
+@Generable
+struct GeneratedSpec {
+    @Guide(description: "A concise album title in the user's language")
+    var title: String
+    @Guide(description: "OR groups; usually exactly one. Each group's conditions are ANDed.")
+    var clauses: [GeneratedClause]
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+@Generable
+struct GeneratedClause {
+    @Guide(description: "Place names from the catalog only. Empty if none.")
+    var places: [String]
+    @Guide(description: "Specific person names from the catalog only (only when the user names them). Empty otherwise.")
+    var people: [String]
+    @Guide(description: "Date filter kind: none, year, lastYears, lastMonths, or lastDays")
+    var dateKind: String
+    @Guide(description: "Year for 'year', or N for the 'lastX' kinds, otherwise 0")
+    var dateValue: Int
+    @Guide(description: "Photo source: any, local, or cloud")
+    var source: String
+    @Guide(description: "Orientation: any, portrait, landscape, or square")
+    var orientation: String
+    @Guide(description: "True only if the user wants favorites")
+    var favoritesOnly: Bool
+    @Guide(description: "Visual content words in English to match (e.g. child, children, beach). Empty if none.")
+    var contentInclude: [String]
+    @Guide(description: "Visual content words in English to exclude (e.g. people). Empty if none.")
+    var contentExclude: [String]
 }
 #endif

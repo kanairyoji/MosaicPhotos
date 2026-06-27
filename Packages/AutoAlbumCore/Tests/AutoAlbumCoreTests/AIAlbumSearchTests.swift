@@ -155,6 +155,17 @@ struct AIAlbumSearchTests {
         #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["kyoto", "osaka"])
     }
 
+    @Test("安全網: ハードで全滅でも内容の意図があれば内容のみへ緩和して空にしない")
+    func specRelaxesWhenHardEmpties() async {
+        let searcher = AIAlbumSearcher(textEmbedder: StubEmbedder(vector: [1, 0]))
+        let photos = [photo("a", place: "Tokyo", clip: [1, 0]), photo("b", place: "Osaka", clip: [1, 0])]
+        // place "mars" はどの写真にも該当しない（ハード全滅）→ 内容(beach)で緩和して採点。
+        let spec = QuerySpec(clauses: [QueryClause([.place(["mars"]), .content(["beach"])])])
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now, semanticText: "beach",
+                                           loadPage: pagedLoader(photos))
+        #expect(!result.isEmpty)   // 緩和により内容マッチが返る（「何も出ない」を防ぐ）
+    }
+
     @Test("QuerySpec: ハード（場所）＋内容（CLIP）で意味的に絞る")
     func specHardPlusContent() async {
         let searcher = AIAlbumSearcher(textEmbedder: StubEmbedder(vector: [1, 0]))

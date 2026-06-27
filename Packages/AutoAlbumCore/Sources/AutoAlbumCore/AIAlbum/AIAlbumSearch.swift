@@ -127,20 +127,29 @@ struct AIAlbumSearcher {
                 pageSize: Int = 4000,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
-        let base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
+        var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
         let includeTerms = spec.allContentTerms.include
 
         let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? includeTerms.joined(separator: ", ")
             : semanticText
+        let hasPhrase = !phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // 安全網: ハード条件で全滅したが意味検索の意図(phrase)がある場合、内容のみへ緩和して
+        // 「何も出ない」を避ける（解釈器がデータで満たせないハード条件を出した場合の保険）。
+        var relaxed = false
+        if base.isEmpty && spec.hasHardConstraints && hasPhrase {
+            base = spec.excludeScreenshots ? all.filter { !$0.isScreenshot } : all
+            relaxed = true
+        }
 
         // 診断: なぜ空かを切り分けるための要約（base/埋め込み/しきい値/融合）。
         var embeddedCount = 0
         var topScore: Float = -1
         var embedderAvailable = false
 
-        guard !phrase.isEmpty, !base.isEmpty else {
-            Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(phrase.isEmpty)")
+        guard hasPhrase, !base.isEmpty else {
+            Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(!hasPhrase)")
             return base
         }
 
@@ -175,8 +184,10 @@ struct AIAlbumSearcher {
         }
 
         let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
-        let result = fused.isEmpty ? (spec.hasHardConstraints ? base : []) : fused
-        Diagnostics.mark("aialbum: base=\(base.count)/\(all.count) hard=\(spec.hasHardConstraints) emb=\(embedderAvailable) scored=\(embeddedCount) top=\(String(format: "%.3f", topScore)) kept=\(semantic.count) lex=\(lexical.count) result=\(result.count)")
+        // 構造化条件がありヒット0なら base を返す（従来）。ただし緩和(relaxed)時は全件を返さず空にする
+        // （ハードが本来全滅＝該当なしのため、意味も当たらなければ空が正しい）。
+        let result = fused.isEmpty ? ((spec.hasHardConstraints && !relaxed) ? base : []) : fused
+        Diagnostics.mark("aialbum: base=\(base.count)/\(all.count) hard=\(spec.hasHardConstraints) relaxed=\(relaxed) emb=\(embedderAvailable) scored=\(embeddedCount) top=\(String(format: "%.3f", topScore)) kept=\(semantic.count) lex=\(lexical.count) result=\(result.count)")
         return result
     }
 

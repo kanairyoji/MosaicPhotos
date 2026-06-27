@@ -80,7 +80,7 @@
 - 状態: 採用（フラットな `AIAlbumQuery` の AND 専用を一般化。`AIAlbumQuery` は後方互換で残す）
 - 文脈: 「ここ2年の子供」「京都か奈良の家族のお気に入り、スクショ除く」等、アプリが持つ多様な情報（日付/場所/人物/人数/向き/位置/ソース/内容）への複雑条件・OR・NOT を柔軟に組みたい。
 - 決定: DNF（節の OR・節内 AND・各条件 NOT 可）の `QuerySpec`/`QueryClause`/`Condition` を新設。ハード条件（日付/場所/人物/人数/ソース/お気に入り/スクショ/向き/位置）は `QueryEvaluator` で評価、内容語(content)は CLIP でソフト採点（`AIAlbumSearcher.search(baseLite:spec:)`）。相対日付は `RelativeDateParser`（日英）で FM 非対応端末でも解釈。Foundation Models は `GeneratedSpec`（Generable・clauses=OR）で出力、RuleBased はフラット解釈を単一節へ橋渡し。`AIAlbumService` は `interpretSpec` 経由に配線。
-- 結果: 相対日付・複数ファセット・OR の基盤を整備。ただし **FM の OR 出力(GeneratedSpec)は一旦無効化**（FM が「子供」等を peopleAtLeast/位置などのハード条件にし、データを満たさない写真を全除外して AI アルバムが空になる回帰のため＝事例参照）。当面は実績ある flat 解釈→`asQuerySpec`→`QueryEvaluator`（旧 `PhotoQueryEngine` とパリティ）で動かし、相対日付の改善は維持。OR/多ファセットは「データで満たせないハード条件のサニタイズ＋実機検証」の上で再投入する。除外内容(not(content))・多ソース日付は後続。
+- 結果: 相対日付・複数ファセット・**OR を再投入**。回帰（全滅）対策を二重化: (1) FM スキーマから人数(peopleAtLeast)・位置(hasLocation)を**廃止**し、人物の有無・概念は内容(content=ソフト)で扱う／日付は妥当範囲のみ採用（`sanitizedDate`）。(2) `AIAlbumSearcher` に**安全網**＝ハード条件で base が全滅しても意味の意図があれば内容のみへ緩和（ただし緩和時にヒット0なら空を返し全件は出さない）。これで「データで満たせないハード条件」での全滅を防ぐ。除外内容(not(content))の減点・多ソース日付（旅行アルバム由来）は後続。
 - 関連: `AIAlbum/QuerySpec.swift` / `QueryEvaluator.swift` / `RelativeDateParser.swift` / `AIAlbumSearch.swift` / `FoundationModelsQueryUnderstanding.swift` / `AIAlbumService.swift`。
 
 ## ADR-11 CLIP 画像エンコーダを fp16 のみにする（実機 ANE 優先）
