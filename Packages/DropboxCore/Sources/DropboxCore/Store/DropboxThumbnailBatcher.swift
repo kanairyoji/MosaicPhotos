@@ -43,11 +43,13 @@ final class DropboxThumbnailBatcher {
         self.debounceNs = debounceNs
         self.chunkSize = chunkSize
         self.maxConcurrentRequests = DropboxThumbnailSettings.clampConcurrency(maxConcurrentRequests)
+        DropboxActivityMonitor.shared.setThumbnailCapacity(self.maxConcurrentRequests)
     }
 
     /// 同時バッチ数を変更する（常識的範囲にクランプ）。設定変更時に呼ぶ。
     func setMaxConcurrentRequests(_ value: Int) {
         maxConcurrentRequests = DropboxThumbnailSettings.clampConcurrency(value)
+        DropboxActivityMonitor.shared.setThumbnailCapacity(maxConcurrentRequests)
     }
 
     /// サムネイルを返す。キャッシュヒット時は即返し、ミス時はバッチへ積んで取得する。
@@ -63,6 +65,7 @@ final class DropboxThumbnailBatcher {
             await withCheckedContinuation { cont in
                 pendingItems[item.path] = item
                 thumbnailWaiters[token] = (item.path, cont)
+                DropboxActivityMonitor.shared.setThumbnailPending(pendingItems.count)
                 scheduleBatchFlushIfNeeded()
             }
         } onCancel: {
@@ -118,7 +121,10 @@ final class DropboxThumbnailBatcher {
     /// 並行実行し、1本完了するごとに次のチャンクを補充する（表示枚数が増えても
     /// ネットワーク往復が直列に積み上がらない）。実行中に積まれた新規要求も拾う。
     private func drain() async {
-        defer { isDraining = false }
+        defer {
+            isDraining = false
+            DropboxActivityMonitor.shared.setThumbnailActiveSlots(0)
+        }
         while !pendingItems.isEmpty {
             // MainActor 上で次のウェーブ（最大 maxConcurrentRequests 本）のチャンクを取り出す。
             var wave: [[DropboxFileItem]] = []
@@ -127,6 +133,9 @@ final class DropboxThumbnailBatcher {
                 for item in chunk { pendingItems[item.path] = nil }
                 wave.append(chunk)
             }
+            // 計測: このウェーブで稼働するスロット本数と、取り出し後の残り待ち枚数。
+            DropboxActivityMonitor.shared.setThumbnailActiveSlots(wave.count)
+            DropboxActivityMonitor.shared.setThumbnailPending(pendingItems.count)
             // ウェーブ内のバッチを並行取得（各子はチャンクのみ参照し MainActor 状態には触れない）。
             await withTaskGroup(of: Void.self) { group in
                 for chunk in wave {

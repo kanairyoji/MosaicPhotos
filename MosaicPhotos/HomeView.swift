@@ -100,6 +100,8 @@ struct HomeView: View {
             placeScanner: placeScanner,
             albumScanner: albumScanner,
             autoAlbumEngine: autoAlbumEngine))
+        // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
+        .dropboxActivityBar()
     }
 
     // MARK: - Settings bar

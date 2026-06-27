@@ -12,7 +12,9 @@ public final class DropboxPhotoStore {
     public private(set) var loadStatus: LoadStatus = .idle
     public private(set) var debugInfo: String = ""
     /// バックグラウンド同期エンジンの現在状態。SettingsView などで表示に使用する。
-    public private(set) var syncState: SyncState = .idle
+    public private(set) var syncState: SyncState = .idle {
+        didSet { DropboxActivityMonitor.shared.setSync(syncState.activityKind) }
+    }
     /// バックアップメタデータ（.mosaic/metadata.json）。ロード前は nil。
     public private(set) var backupMetadata: DropboxBackupMetadata?
 
@@ -47,6 +49,17 @@ public final class DropboxPhotoStore {
         /// 変更検知後の差分取得中。
         case fetchingDelta
         case error(String)
+
+        /// アクティビティ計測用の軽量マッピング。
+        var activityKind: DropboxActivityMonitor.SyncActivity {
+            switch self {
+            case .idle:         return .idle
+            case .initialSync:  return .initialSync
+            case .polling:      return .polling
+            case .fetchingDelta: return .fetchingDelta
+            case .error:        return .error
+            }
+        }
     }
 
     // MARK: - Init
@@ -316,6 +329,8 @@ public final class DropboxPhotoStore {
         }
         struct Arg: Encodable { let path: String }
         guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return nil }
+        DropboxActivityMonitor.shared.beginFullImage()
+        defer { DropboxActivityMonitor.shared.endFullImage() }
         return try? await apiClient.contentDownload(
             url: DropboxInternalConstants.downloadFileURL, apiArg: argString)
     }
@@ -330,6 +345,8 @@ public final class DropboxPhotoStore {
         DropboxLogger.verbose("fullImage() downloading from API — \(item.name)")
         struct Arg: Encodable { let path: String }
         guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return nil }
+        DropboxActivityMonitor.shared.beginFullImage()
+        defer { DropboxActivityMonitor.shared.endFullImage() }
         let data: Data
         do {
             data = try await apiClient.contentDownload(

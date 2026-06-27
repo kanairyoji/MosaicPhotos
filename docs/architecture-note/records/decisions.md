@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-14 Dropbox 通信アクティビティの可視化（スロット LED インジケータ）
+- 状態: 採用
+- 文脈: Dropbox 通信が「今どれだけ並行して動いているか」が見えず、サムネイル先読みの遅延（事例「ポツポツ」）の切り分けが体感頼みだった。各並列スロットの稼働状況を端末上で直接観察したい。
+- 決定: 横断的なライブ計測 `DropboxActivityMonitor`（`@MainActor @Observable` シングルトン・`Diagnostics`/`LogChannel` と同系列・**UIKit 非依存**＝macOS テスト維持）を新設し、各チャンネルが報告する: サムネイル（容量=`maxConcurrentRequests`／稼働スロット=in-flight バッチ本数／先読み待ち枚数）は `DropboxThumbnailBatcher`、同期は `DropboxPhotoStore.syncState` の `didSet`、フル画像 DL は `fullImage`/`originalImageData` を begin/end で計測、バックアップ upload は `BackupEngine.phase` の `didSet`。UI は `DropboxKit.DropboxActivityBar`（**形＝チャンネル／色＝状態（灰=待機・青=通信・緑=監視・赤=失敗）／数・塗り＝強度**）で、サムネイルは同時実行スロットをレーン（ピップ）表示。表示は Developer Options のトグル（既定 OFF・キー `DropboxActivitySettingsKeys.showBar`）で、`View.dropboxActivityBar()` を `HomeView`/`SourceHostView` 最上部へ重ねる（`allowsHitTesting(false)` で素通し）。
+- 結果: スロットの稼働本数・先読みキュー深さ・同期/DL/upload の同時状況が一目で分かり、並列化や並列数設定（`thumbnailConcurrency`）の効果を実機で確認できる。報告は MainActor 上の Int/enum 代入のみで軽量（表示 OFF でも常時更新）。fullScreenCover は別ビューツリーのため最上部表示は各ホストへ個別適用が必要。
+- 関連: `Support/DropboxActivityMonitor.swift` / `Store/DropboxThumbnailBatcher.swift` / `Store/DropboxPhotoStore.swift` / `BackupKit/BackupEngine.swift` / `DropboxKit/DropboxActivityBar.swift`、事例「ポツポツ」（[case-studies]）。
+
 ## ADR-13 フォルダ名アルバムに日付抽出を追加（名前＋年でグループ）
 - 状態: 採用
 - 文脈: Dropbox フォルダ名アルバムは名前しか取り出せず、日付（多様な表記）を活かせていなかった。クラウド写真は EXIF 日付を欠くことも多い。

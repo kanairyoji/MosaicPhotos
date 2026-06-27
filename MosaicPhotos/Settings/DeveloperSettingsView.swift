@@ -19,6 +19,7 @@ struct DeveloperSettingsView: View {
     let autoAlbumEngine: AutoAlbumEngine?
 
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
+    @AppStorage(DropboxActivitySettingsKeys.showBar) private var showDropboxActivityBar = false
 
     @State private var enrichmentCount = 0
     @State private var cachedPlaceCount = 0
@@ -53,6 +54,7 @@ struct DeveloperSettingsView: View {
             LabeledContent("Minimum iOS", value: "17.0")
             LabeledContent("Device", value: UIDevice.current.model)
             Toggle("Verbose logging", isOn: $verboseLogging)
+            Toggle("Dropbox activity bar", isOn: $showDropboxActivityBar)
         }
     }
 

@@ -35,5 +35,7 @@ struct SourceHostView<Content: View>: View {
                                  autoAlbumEngine: autoAlbumEngine)
                 }
             }
+            // Developer Options が ON のとき、最上部に Dropbox 通信アクティビティを重ねる。
+            .dropboxActivityBar()
     }
 }

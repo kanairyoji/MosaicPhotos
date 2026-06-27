@@ -25,7 +25,9 @@ public struct BackupLogEntry: Identifiable, Sendable {
 @Observable
 public final class BackupEngine {
 
-    public private(set) var phase: Phase = .idle
+    public private(set) var phase: Phase = .idle {
+        didSet { DropboxActivityMonitor.shared.setBackupActive(phase.isUploadingNetwork) }
+    }
     /// 直近のバックアップ実行ログ。Debug セクションで表示する。
     public private(set) var log: [BackupLogEntry] = []
     /// BackupAssetRecord から集計したアルバム一覧。
@@ -54,6 +56,14 @@ public final class BackupEngine {
         case completed(uploaded: Int, skipped: Int)
         case failed(String)
         case cancelled
+
+        /// 実ネットワークアップロード中か（写真/メタデータ送信）。アクティビティ計測用。
+        var isUploadingNetwork: Bool {
+            switch self {
+            case .uploading, .uploadingMetadata: return true
+            default: return false
+            }
+        }
     }
 
     public var isRunning: Bool {
