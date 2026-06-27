@@ -10,19 +10,32 @@ public final class MemoryImageCache: @unchecked Sendable {
     private let cache = NSCache<NSString, UIImage>()
     private var memoryWarningObserver: NSObjectProtocol?
 
+    // 圧迫時の段階縮小（E1）用。`configuredCostLimit` は本来の上限（0=無制限）。
+    // 圧迫中は totalCostLimit を一時的に絞り、一定時間後に元へ戻す。
+    private let stateLock = NSLock()
+    private var configuredCostLimit = 0
+    private var isUnderPressure = false
+    private var restoreWorkItem: DispatchWorkItem?
+    /// 圧迫時に確保する最小上限。無制限設定でもこの値まで絞る。
+    private static let pressureFloorBytes = 16 * 1024 * 1024
+    /// 圧迫後に元の上限へ戻すまでの待ち時間。
+    private static let pressureRestoreDelay: TimeInterval = 30
+
     /// - Parameters:
     ///   - totalCostLimit: 総コスト上限（バイト）。0 は無制限。
     ///   - countLimit: 件数上限。0 は無制限。
     public init(totalCostLimit: Int = 0, countLimit: Int = 0) {
+        configuredCostLimit = totalCostLimit
         if totalCostLimit > 0 { cache.totalCostLimit = totalCostLimit }
         if countLimit > 0 { cache.countLimit = countLimit }
-        // メモリ圧迫時はデコード済み画像を即解放する。NSCache も自動応答するが、
-        // 明示的に全消去して常駐ピークを確実に下げる（再取得はディスク/PHImageManager から）。
+        // メモリ圧迫時は全消去せず、上限を一時的に半分（下限あり）へ**段階縮小**する（E1）。
+        // NSCache が LRU 的に縮めるため、直近に使ったサムネイルは残り再デコードを減らせる。
+        // 一定時間後に元の上限へ戻す。
         memoryWarningObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
-            object: nil, queue: nil
+            object: nil, queue: .main
         ) { [weak self] _ in
-            self?.cache.removeAllObjects()
+            self?.handleMemoryPressure()
         }
     }
 
@@ -30,6 +43,32 @@ public final class MemoryImageCache: @unchecked Sendable {
         if let memoryWarningObserver {
             NotificationCenter.default.removeObserver(memoryWarningObserver)
         }
+        restoreWorkItem?.cancel()
+    }
+
+    // MARK: - Memory pressure (E1: 段階縮小)
+
+    private func handleMemoryPressure() {
+        stateLock.lock()
+        isUnderPressure = true
+        let target = configuredCostLimit > 0
+            ? max(Self.pressureFloorBytes, configuredCostLimit / 2)
+            : Self.pressureFloorBytes
+        restoreWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.restoreAfterPressure() }
+        restoreWorkItem = work
+        stateLock.unlock()
+
+        cache.totalCostLimit = target   // NSCache が新上限まで LRU で縮める
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pressureRestoreDelay, execute: work)
+    }
+
+    private func restoreAfterPressure() {
+        stateLock.lock()
+        isUnderPressure = false
+        let restore = configuredCostLimit
+        stateLock.unlock()
+        cache.totalCostLimit = restore   // 0=無制限へ戻る
     }
 
     public func image(forKey key: String) -> UIImage? {
@@ -63,7 +102,12 @@ public final class MemoryImageCache: @unchecked Sendable {
     }
 
     public func setTotalCostLimit(_ bytes: Int) {
-        cache.totalCostLimit = bytes
+        stateLock.lock()
+        configuredCostLimit = bytes
+        let pressured = isUnderPressure
+        stateLock.unlock()
+        // 圧迫中は縮小状態を維持し、restore 時に新しい configured へ戻す。
+        if !pressured { cache.totalCostLimit = bytes }
     }
 
     public func setCountLimit(_ count: Int) {

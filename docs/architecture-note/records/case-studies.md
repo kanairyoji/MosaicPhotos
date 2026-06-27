@@ -99,6 +99,7 @@
   4. `DropboxCacheStore.cachedItems()` の表示アイテム生成で **contentHash を渡さない**（同期の変更検知は `CachedDropboxItem`＋delta parser が担うため不要）。
 - 関連: `ImageCacheKit/MemoryImageCache.swift`・`ImageDownsampling.swift`／`LocalPhotoCore/ThumbnailCache.swift`・`LocalPhotoStore+PhotoStore.swift`／`DropboxCore/DropboxCacheStore.swift`・`+Binary.swift`・`DropboxPhotoStore.swift`／`PhotoSourceKit/PhotoCollectionView.swift`。ADR-6（埋め込み別テーブル）の続き。
 - 学び: **NSCache のコストは実バックストア（デコード後バイト）で計上する**。JPEG バイトで計上すると上限が桁で狂う。ズーム無しビューアはフル解像度をデコードしない（ImageIO ダウンサンプルでピーク削減）。長寿命の大規模配列には表示に使わない文字列を載せない。
+- 追補（上限のチューニング）: ローカルサムネのメモリ上限の既定を **Auto**（`ThumbnailMemoryBudget`＝物理 RAM の約1.5%・40〜120MB クランプ）にし、選択肢に 60MB を追加（`CacheSettingsKeys.memoryLimitMB` の **0=Auto**）。フル画像の最大辺を **2048→1600**（約36%減）。`MemoryImageCache` のメモリ警告応答を**全消去→段階縮小**（上限を一時的に半分・下限16MB、30秒後に復帰。`configuredCostLimit` を保持し圧迫中の `setTotalCostLimit` は復帰時に反映）に変更し、直近サムネを残して再デコードを抑える。関連: `ThumbnailMemoryBudget.swift` / `LocalPhotoSettingsView.swift` / `ImageDownsampling.swift` / `MemoryImageCache.swift`。
 
 ## フォルダ名アルバムが動かない（正規表現を写真ごとに再コンパイル）
 - 症状: フォルダ名アルバムの日付抽出を入れた後、生成が事実上停止し「動かない」。

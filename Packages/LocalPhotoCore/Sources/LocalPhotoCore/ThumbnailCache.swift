@@ -23,9 +23,10 @@ public actor ThumbnailCache {
         let directory = caches.appendingPathComponent("LocalPhotoKit/thumbnails", isDirectory: true)
         disk = DiskImageStore(directory: directory)
 
+        // memoryLimitMB は未設定(0)=「Auto」。Auto は端末 RAM に応じて自動算出する。
         let memMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.memoryLimitMB)
         let diskMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.diskLimitMB)
-        memory = MemoryImageCache(totalCostLimit: (memMB > 0 ? memMB : 100) * 1024 * 1024)
+        memory = MemoryImageCache(totalCostLimit: ThumbnailMemoryBudget.effectiveBytes(forSettingMB: memMB))
         maxDiskBytes = (diskMB > 0 ? diskMB : 500) * 1024 * 1024
 
         diskUsage = disk.totalUsage()

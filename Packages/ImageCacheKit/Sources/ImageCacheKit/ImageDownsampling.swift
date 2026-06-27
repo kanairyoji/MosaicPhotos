@@ -10,8 +10,9 @@ import UIKit
 /// 画面相当へ落としても視覚的な劣化はない。
 public enum ImageDownsampling {
 
-    /// 画面表示に十分な最大辺（px）。多くの iPhone のネイティブ長辺をカバーしつつ常駐を抑える。
-    public static let displayMaxPixel: CGFloat = 2048
+    /// 画面表示に十分な最大辺（px）。スマホの fit 表示では 1600px で劣化はほぼ判別不可で、
+    /// 1 枚あたりのデコード常駐を抑える（2048→1600 で約36%減）。
+    public static let displayMaxPixel: CGFloat = 1600
 
     /// `data` を最大辺 `maxPixel` に収まるよう（縦横比保持で）ダウンサンプルして返す。
     public static func downsample(data: Data, maxPixel: CGFloat = displayMaxPixel) -> UIImage? {

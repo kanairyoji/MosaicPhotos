@@ -5,7 +5,8 @@ import PhotoSourceKit
 import SwiftUI
 
 public struct LocalPhotoSettingsView: View {
-    @AppStorage(CacheSettingsKeys.memoryLimitMB) private var memoryLimitMB = 100
+    // 0 = Auto（端末 RAM に応じて自動）。既定は Auto。
+    @AppStorage(CacheSettingsKeys.memoryLimitMB) private var memoryLimitMB = 0
     @AppStorage(CacheSettingsKeys.diskLimitMB)   private var diskLimitMB   = 500
     @State private var diskUsage = 0
     @State private var photoCount = 0
@@ -23,7 +24,8 @@ public struct LocalPhotoSettingsView: View {
 
         Section {
             Picker("Memory limit", selection: $memoryLimitMB) {
-                Text("50 MB").tag(50)
+                Text("Auto (\(ThumbnailMemoryBudget.autoMB()) MB)").tag(0)
+                Text("60 MB").tag(60)
                 Text("100 MB").tag(100)
                 Text("200 MB").tag(200)
                 Text("400 MB").tag(400)
@@ -52,7 +54,7 @@ public struct LocalPhotoSettingsView: View {
         } header: {
             Text("Photo Cache")
         } footer: {
-            Text("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails.")
+            Text("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails. “Auto” scales the memory limit to this device's RAM.")
         }
         }
         .task {
@@ -65,7 +67,9 @@ public struct LocalPhotoSettingsView: View {
             }
         }
         .onChange(of: memoryLimitMB) { _, newVal in
-            Task { await ThumbnailCache.shared.updateMemoryLimit(newVal * 1024 * 1024) }
+            // 0=Auto は端末 RAM から解決する。
+            let bytes = ThumbnailMemoryBudget.effectiveBytes(forSettingMB: newVal)
+            Task { await ThumbnailCache.shared.updateMemoryLimit(bytes) }
         }
         .onChange(of: diskLimitMB) { _, newVal in
             Task { await ThumbnailCache.shared.updateDiskLimit(newVal * 1024 * 1024) }
