@@ -68,7 +68,7 @@
 - 原因: 画像エンコーダを `compute_precision=FLOAT32` で Core ML 変換していた（元はシミュレータの NaN 回避目的）。実機の Neural Engine(ANE) は fp16 前提のため、fp32 モデルは ANE に載らず GPU/CPU フォールバック＝遅い。
 - 対処: `convert_mobileclip.py` の画像エンコーダを `FLOAT16` に変更（ANE 対応）。fp16 はシミュレータで NaN 化し得るが、ランタイムの有限性チェックが nil に落とすため安全に無効化される。画像タワー依存テストはシミュレータでスキップし実機検証へ。
 - 関連: `scripts/convert_mobileclip.py`、`MobileCLIPRuntime`、`MosaicPhotosTests/ImageRecognitionTests.swift`。ADR-11。
-- 残課題: **モデル再生成（`bash scripts/build_mobileclip.sh`）＋実機での速度・認識率の実測**が必要。実測で fp16 の認識率劣化が無いことを確認する。
+- 検証: 認識率ハーネス（`scripts/eval_recognition.sh`）で fp16 Core ML モデルを評価 → Imagenette 10クラス zero-shot で **100/100**。fp16 化による認識率劣化なしを確認（macOS CPU_ONLY で NaN も無し）。実機の埋め込み速度は再解析で再計測予定。
 
 ## 67,639 件の Dropbox キャッシュを画面表示ごとに全リロード
 - 症状: 実機ログで All Photos を開くたびに `loadItems() — 67639 items` が走り、SwiftData から 67k 件を毎回実体化していた。
