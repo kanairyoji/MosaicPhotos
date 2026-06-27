@@ -31,7 +31,13 @@ struct DropboxCloudPhotoProvider: CloudPhotoProvider {
     let store: DropboxPhotoStore
 
     func cloudPhotos() async -> [CloudPhotoMeta] {
-        await MainActor.run {
+        // ⚠️ items は All Photos/Cloud を開くまで読み込まれない。フォルダ名アルバム生成や
+        //    クラウドのエンリッチはナビゲーション前にも走るため、空ならキャッシュから読み込む
+        //    （これを怠ると metas=0 → アルバム生成0、さらに再生成で既存アルバムを消してしまう）。
+        if await MainActor.run(body: { store.items.isEmpty }) {
+            await store.loadItems()
+        }
+        return await MainActor.run {
             store.items.map { item in
                 CloudPhotoMeta(path: item.path, captureDate: item.captureDate,
                                latitude: item.latitude, longitude: item.longitude,

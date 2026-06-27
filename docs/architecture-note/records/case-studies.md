@@ -76,6 +76,7 @@
 - 対処: (1) 両者の正規表現を `NSCache` で**コンパイル結果をキャッシュ**（スレッドセーフ）。(2) `PathAlbumStrategy` で**日付解析をフォルダ単位にメモ化**（写真ごとに再解析しない）。これで解析回数は「フォルダ数」程度に激減。
 - 関連: `FolderDateParser.swift` / `PathAlbumNamer.swift` / `PathAlbumStrategy.swift`。ADR-13。
 - 学び: 大量データ（数万件）を回す純ロジックでは、`NSRegularExpression` の**コンパイルをループ内で繰り返さない**（事前コンパイル/キャッシュ）。入力単位（フォルダ等）でのメモ化も併用する。
+- **真因（診断ログで確定）**: 上記の後も空のままで、ログ `pathAlbum.fast: enabled=true rules=1 provider=true / metas=0` から判明。`generateFast`（↻ボタン）が `cloudProvider.cloudPhotos()`＝`dropboxStore.items` を読むが、items は **All Photos/Cloud を開くまで読み込まれない**ため起動直後は 0 件 → 生成 0、さらに `replaceAlbums([])` で**既存フォルダアルバムを消す**二次被害。対処: `DropboxCloudPhotoProvider.cloudPhotos()` を「items が空ならキャッシュから `loadItems()` してから返す」自己完結型に修正（クラウドのエンリッチ・署名計算にも効く）。学び: **UI ナビゲーション依存の状態（store.items）を、UI 前に走る生成ロジックの入力にしない**（必要時に自分でロードする）。診断ログの威力＝推測でなく一行で確定。
 
 ## AI アルバムに何も入らなくなった（FM の OR 出力が過剰なハード条件を生成）
 - 症状: 合成可能検索（QuerySpec/OR）導入後、どの AI アルバムにも写真が入らなくなった。
