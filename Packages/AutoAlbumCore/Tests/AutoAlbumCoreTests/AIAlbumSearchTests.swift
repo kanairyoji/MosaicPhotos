@@ -135,4 +135,35 @@ struct AIAlbumSearchTests {
                                              criteria: "ここ数年の沖縄", members: [photo("a", place: "X")])
         #expect(info.title == "旅の記録")
     }
+
+    // MARK: - QuerySpec 版（OR / ハード＋内容）
+
+    private func pagedLoader(_ photos: [EnrichedPhoto]) -> (Int, Int) async -> [(refKey: String, clipVector: Data)] {
+        let embedded = photos.compactMap { ph in ph.clipVector.map { (ph.id, $0) } }.sorted { $0.0 < $1.0 }
+        return { offset, limit in embedded.dropFirst(offset).prefix(limit).map { (refKey: $0.0, clipVector: $0.1) } }
+    }
+
+    @Test("QuerySpec: OR（京都 or 大阪）のハード絞り込み（内容語なし）")
+    func specOrHardOnly() async {
+        let searcher = AIAlbumSearcher(textEmbedder: nil)
+        let photos = [photo("kyoto", place: "Kyoto", clip: [1, 0]),
+                      photo("osaka", place: "Osaka", clip: [1, 0]),
+                      photo("nagoya", place: "Nagoya", clip: [1, 0])]
+        let spec = QuerySpec(clauses: [QueryClause([.place(["kyoto"])]), QueryClause([.place(["osaka"])])])
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now, semanticText: "",
+                                           loadPage: pagedLoader(photos))
+        #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["kyoto", "osaka"])
+    }
+
+    @Test("QuerySpec: ハード（場所）＋内容（CLIP）で意味的に絞る")
+    func specHardPlusContent() async {
+        let searcher = AIAlbumSearcher(textEmbedder: StubEmbedder(vector: [1, 0]))
+        let photos = [photo("near", place: "Tokyo", clip: [1, 0]),
+                      photo("far", place: "Tokyo", clip: [-1, 0]),      // 閾値未満
+                      photo("osaka", place: "Osaka", clip: [1, 0])]     // 場所で除外
+        let spec = QuerySpec(clauses: [QueryClause([.place(["tokyo"]), .content(["beach"])])])
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now, semanticText: "beach",
+                                           loadPage: pagedLoader(photos))
+        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["near"])
+    }
 }

@@ -118,6 +118,53 @@ struct AIAlbumSearcher {
         return query.hasStructuredConstraints ? base : []
     }
 
+    /// QuerySpec（合成可能・OR/NOT/新ファセット対応）版のバッチ検索。
+    /// ハード条件は `QueryEvaluator`（節の OR）で絞り、ソフトは内容語(include)を CLIP で採点する。
+    /// 採点・選抜ロジックは既存の `search(baseLite:query:...)` と同一（フロア＋マージン＋上位K）。
+    /// ※ 除外内容（not(content)）の減点は次段で対応予定（本段では include のみ採点）。
+    func search(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
+                pageSize: Int = 4000,
+                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+    ) async -> [EnrichedPhoto] {
+        let base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
+        let includeTerms = spec.allContentTerms.include
+
+        let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? includeTerms.joined(separator: ", ")
+            : semanticText
+        guard !phrase.isEmpty, !base.isEmpty else { return base }
+
+        let lexical = LexicalSearch.rank(base, keywords: includeTerms)
+
+        var semantic: [EnrichedPhoto] = []
+        if let textEmbedder, textEmbedder.isAvailable,
+           let vector = await textEmbedder.embed(phrase) {
+            let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var scored: [(photo: EnrichedPhoto, score: Float)] = []
+            scored.reserveCapacity(base.count)
+            var offset = 0
+            while true {
+                let page = await loadPage(offset, pageSize)
+                if page.isEmpty { break }
+                for entry in page {
+                    guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
+                    scored.append((photo, ClipMath.cosine(vector, v)))
+                }
+                offset += pageSize
+                if page.count < pageSize { break }
+            }
+            scored.sort { $0.score > $1.score }
+            if let top = scored.first?.score {
+                let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
+                semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
+            }
+        }
+
+        let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
+        if !fused.isEmpty { return fused }
+        return spec.hasHardConstraints ? base : []
+    }
+
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。
     /// タイトルはユーザー指定を優先し、空なら解釈タイトル→条件文の順で補完する。
     static func buildInfo(id: String, title: String, query: AIAlbumQuery, criteria: String,
