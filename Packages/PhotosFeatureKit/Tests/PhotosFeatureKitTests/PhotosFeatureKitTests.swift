@@ -71,6 +71,21 @@ struct ResolveStateTests {
         #expect(MergedPhotoStore.resolveState(localState: .loaded, hasLocalAssets: false, hasDropbox: false) == .empty)
         #expect(MergedPhotoStore.resolveState(localState: .empty, hasLocalAssets: false, hasDropbox: false) == .empty)
     }
+
+    @Test("T2: アイテム無しでも Dropbox 取得中なら empty ではなく loading")
+    func dropboxBusyKeepsLoading() {
+        // ローカル完了・アイテム無し・Dropbox 取得中 → "No photos" を出さず loading を維持。
+        #expect(MergedPhotoStore.resolveState(
+            localState: .loaded, hasLocalAssets: false, hasDropbox: false, dropboxBusy: true) == .loading)
+        #expect(MergedPhotoStore.resolveState(
+            localState: .empty, hasLocalAssets: false, hasDropbox: false, dropboxBusy: true) == .loading)
+        // 取得完了（dropboxBusy=false）かつアイテム無し → empty。
+        #expect(MergedPhotoStore.resolveState(
+            localState: .loaded, hasLocalAssets: false, hasDropbox: false, dropboxBusy: false) == .empty)
+        // dropboxBusy でもアイテムがあれば loaded が優先。
+        #expect(MergedPhotoStore.resolveState(
+            localState: .loaded, hasLocalAssets: false, hasDropbox: true, dropboxBusy: true) == .loaded)
+    }
 }
 
 // MARK: - MergedPhotoItem
