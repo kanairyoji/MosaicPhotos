@@ -78,6 +78,13 @@
 - 関連: `PhotoCollectionView.swift`、`PhotoGridGrouping.swift`。Swift5 モードのため非 Sendable（snapshot）のクロージャ越え捕捉は許容。
 - 学び: 大規模 diffable は **snapshot をバックグラウンドで構築 → メインで apply** が定石。UI を固める純データ構築は main で回さない。
 
+## All ビューの Dropbox サムネイルが「ポツポツ」1 枚ずつ遅く出る（先読みの直列 await）
+- 症状: All サムネイルビューで Dropbox 写真のサムネイルが 1 枚ずつポツポツ現れ、表示が非常に遅い。スナップショットのオフメイン化（前項）後も改善せず。
+- 原因: `DropboxPhotoStore` が `prefetch` を上書きしておらず、`PhotoLoading` の**既定実装**（`for item in items { await thumbnail(...) }` の**直列 await**）を使っていた。1 枚ごとにネットワーク往復を待ってから次を要求するため、`DropboxThumbnailBatcher` のバッチ集約（25 枚/リクエスト）・並行取得（最大 8 本）が完全に殺され、実質「バッチサイズ 1・直列」で取得していた。
+- 対処: `DropboxPhotoStore.prefetch(_:targetSize:)` を上書きし、各 item を**並行発火**（`Task { await thumbnail(...) }`）してバッチャの `pendingItems` にまとめて積ませる。バッチャが 25 枚チャンク×最大 8 並行で一括取得し先読み窓が一気に埋まる。キャッシュ確認（メモリ→ディスク）は `thumbnail(for:)` 内で行われるためディスクヒット分はネットワーク不要。`MergedPhotoStore.prefetch` は local/cloud を振り分け、cloud をこの並行先読みへ流す。
+- 関連: `DropboxPhotoStore.swift`（prefetch 上書き）、`PhotoLoading.swift`（既定の直列実装）、`DropboxThumbnailBatcher.swift`、`MergedPhotoStore.swift`。
+- 学び: バッチ集約するローダに対し「1 件取得を `await` で直列に並べる」既定先読みは集約・並行を無効化する。バッチ系ソースは先読みを**並行発火**してローダ側に集約させる。
+
 ## フォルダ名アルバムが動かない（正規表現を写真ごとに再コンパイル）
 - 症状: フォルダ名アルバムの日付抽出を入れた後、生成が事実上停止し「動かない」。
 - 原因: `FolderDateParser`（約10パターン）と `PathAlbumNamer`（ルール）が **写真1枚ごとに `NSRegularExpression` を毎回コンパイル**。Dropbox 67,639 枚 ×（10＋ルール数）で数十万回のコンパイルになり生成が終わらない。

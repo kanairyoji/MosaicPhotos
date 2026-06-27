@@ -269,6 +269,24 @@ public final class DropboxPhotoStore {
         await thumbnailBatcher.thumbnail(for: item)
     }
 
+    /// スクロール先サムネイルの先読み。
+    ///
+    /// ⚠️ `PhotoLoading` の既定実装は `for item in items { await thumbnail(...) }` の **直列 await**
+    /// で、1 枚ごとにネットワーク往復を待ってから次へ進むため、`DropboxThumbnailBatcher` の
+    /// バッチ集約（25 枚/リクエスト）・並行取得（最大 8 本）が一切効かず、サムネイルが
+    /// 1 枚ずつ「ポツポツ」と現れて非常に遅くなる。
+    ///
+    /// ここでは各 item を**並行発火**し、バッチャの `pendingItems` にまとめて積ませる。
+    /// バッチャがそれらを 25 枚チャンク×最大 8 並行で一括取得するため、先読み窓が一気に埋まる。
+    /// キャッシュ確認（メモリ→ディスク）は `thumbnail(for:)` 内で行われるので、ディスク
+    /// ヒット分はネットワークを使わない（スクロール戻りでも無駄が出ない）。結果は破棄し
+    /// キャッシュへ載せるのが目的（待機者は作らない）。
+    public func prefetch(_ items: [DropboxFileItem], targetSize: CGSize) {
+        for item in items {
+            Task { [weak self] in _ = await self?.thumbnail(for: item) }
+        }
+    }
+
     // MARK: - Location
 
     /// 撮影地の座標。同期時に取れていれば即返し、無ければ get_metadata で単発取得して補完・保存する。
