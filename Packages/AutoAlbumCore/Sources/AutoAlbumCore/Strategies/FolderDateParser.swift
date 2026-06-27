@@ -162,12 +162,24 @@ public enum FolderDateParser {
         return (start, end)
     }
 
-    // MARK: - Regex helper
+    // MARK: - Regex helper（コンパイル結果をキャッシュ）
+
+    /// パターン→コンパイル済み正規表現のキャッシュ。`NSCache` はスレッドセーフ。
+    /// ※ 写真1枚ごとに同じパターンを毎回コンパイルすると 67k 件規模で処理が事実上停止するため必須。
+    private static let regexCache = NSCache<NSString, NSRegularExpression>()
+
+    private static func compiled(_ pattern: String, caseInsensitive: Bool) -> NSRegularExpression? {
+        let key = ((caseInsensitive ? "i:" : "") + pattern) as NSString
+        if let cached = regexCache.object(forKey: key) { return cached }
+        let opts: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
+        guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else { return nil }
+        regexCache.setObject(re, forKey: key)
+        return re
+    }
 
     /// 最初の一致のキャプチャ群を返す（index 0=全体, 1..=group）。無マッチ nil。
     private static func match(_ pattern: String, _ text: String, caseInsensitive: Bool = false) -> [String?]? {
-        let opts: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
-        guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else { return nil }
+        guard let re = compiled(pattern, caseInsensitive: caseInsensitive) else { return nil }
         let ns = text as NSString
         guard let m = re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
         return (0..<m.numberOfRanges).map { i in

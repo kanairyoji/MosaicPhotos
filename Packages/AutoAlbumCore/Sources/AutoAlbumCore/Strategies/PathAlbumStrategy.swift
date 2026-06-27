@@ -36,12 +36,19 @@ public struct PathAlbumStrategy: Sendable {
 
         var groups: [String: Group] = [:]
         var order: [String] = []
+        var dateByDir: [String: FolderDate?] = [:]   // フォルダ単位でメモ化（写真ごとに再解析しない）
         for photo in photos {
             guard let path = photo.ref?.cloudPath,
                   let name = PathAlbumNamer.name(forPath: path, rules: rules) else { continue }
             // 日付はフォルダ部（ファイル名を除く）から抽出（ファイル名中の日付に引っ張られないため）。
             let dir = (path as NSString).deletingLastPathComponent
-            let folderDate = FolderDateParser.parse(dir, calendar: calendar, locale: locale, now: now)
+            let folderDate: FolderDate?
+            if let cached = dateByDir[dir] {
+                folderDate = cached
+            } else {
+                folderDate = FolderDateParser.parse(dir, calendar: calendar, locale: locale, now: now)
+                dateByDir[dir] = folderDate
+            }
             let year = folderDate.map { calendar.component(.year, from: $0.start) }
             let key = "\(name)|\(year.map(String.init) ?? "")"
             if groups[key] == nil { groups[key] = Group(name: name, year: year); order.append(key) }

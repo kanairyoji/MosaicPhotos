@@ -27,11 +27,21 @@ public enum PathAlbumNamer {
 
     // MARK: - Private
 
+    /// パターン→コンパイル済み正規表現のキャッシュ（写真ごとの再コンパイルを避ける。67k 規模で必須）。
+    private static let regexCache = NSCache<NSString, NSRegularExpression>()
+
+    private static func compiled(_ pattern: String, caseInsensitive: Bool) -> NSRegularExpression? {
+        let key = ((caseInsensitive ? "i:" : "") + pattern) as NSString
+        if let cached = regexCache.object(forKey: key) { return cached }
+        guard let re = try? NSRegularExpression(
+            pattern: pattern, options: caseInsensitive ? [.caseInsensitive] : []) else { return nil }
+        regexCache.setObject(re, forKey: key)
+        return re
+    }
+
     private static func apply(_ rule: PathAlbumRule, to path: String, normalize: Bool) -> String? {
         guard !rule.pattern.isEmpty,
-              let regex = try? NSRegularExpression(
-                pattern: rule.pattern,
-                options: rule.caseInsensitive ? [.caseInsensitive] : [])
+              let regex = compiled(rule.pattern, caseInsensitive: rule.caseInsensitive)
         else { return nil }
         let ns = path as NSString
         guard let match = regex.firstMatch(in: path, range: NSRange(location: 0, length: ns.length)) else { return nil }
