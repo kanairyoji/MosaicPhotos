@@ -53,7 +53,7 @@ struct LicensesView: View {
                     LicenseItem(
                         name: "MobileCLIP-S2",
                         role: L("On-device semantic search & display tags (Core ML model)"),
-                        license: "Apple ML model license",
+                        license: "Code: MIT · Weights: Apple ML Research Model License (research only)",
                         url: "https://github.com/apple/ml-mobileclip",
                         text: appleMobileCLIPNotice),
                     LicenseItem(

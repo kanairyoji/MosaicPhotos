@@ -22,7 +22,7 @@ struct LicenseSection: Identifiable {
 
 let mosaicPhotosLicenseNotice = """
 MosaicPhotos
-Copyright (C) 2025 kanai
+Copyright (C) 2025 Ryoji KANAI <kanai@r89.org>
 
 This program is free software: you can redistribute it and/or modify it under the \
 terms of the GNU Affero General Public License as published by the Free Software \
@@ -104,10 +104,19 @@ func bsd3LicenseText(_ copyright: String) -> String {
 let appleMobileCLIPNotice = """
 MobileCLIP — © Apple Inc.
 
-This app bundles a Core ML model converted from Apple's MobileCLIP-S2 checkpoint.
-The source code and pretrained weights are provided by Apple under the licenses in
-the apple/ml-mobileclip repository (see LICENSE for code and LICENSE_weights for the
-pretrained weights). Refer to the repository for the full, authoritative license text.
+This app can bundle a Core ML model converted from Apple's MobileCLIP-S2. In the
+apple/ml-mobileclip repository the licenses are split:
+
+  • Code: MIT License (LICENSE)
+  • Pretrained model weights: Apple Machine Learning Research Model License
+    (LICENSE_MODELS) — permitted for Research Purposes only. Commercial
+    exploitation, product development, and use in any commercial product or
+    service are NOT permitted. Redistribution requires providing a copy of that
+    agreement to the recipient.
+  • Training data: CC-BY-NC-ND 4.0 (LICENSE_DATA; not distributed with this app).
+
+The model is generated locally (scripts/build_mobileclip.sh) and is not included in
+the source repository. See the repository for the full, authoritative license texts.
 
 https://github.com/apple/ml-mobileclip
 """
