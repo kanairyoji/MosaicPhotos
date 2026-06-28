@@ -45,7 +45,7 @@
 <td align="center" width="50%">
   <img src="docs/screenshots/ai-albums.png" width="230" alt="AI & folder albums"><br>
   <b>AI &amp; folder albums</b><br>
-  <sub>Your description becomes a living album that fills in as the library is indexed. Albums inferred from Dropbox folder names appear here too.</sub>
+  <sub>Your description becomes a living album that fills in as the library is indexed. Albums inferred from Dropbox folder names appear here too — dates in the folder name are parsed so they group as “name (year)”.</sub>
 </td>
 <td align="center" width="50%">
   <img src="docs/screenshots/photo-info.png" width="230" alt="Detected tags & photo info"><br>
@@ -68,7 +68,7 @@
 
 - **All Photos** — Your device and Dropbox photos merged into one chronological timeline.
 - **Time & Place** — Trips are detected automatically from capture time and location (multi-day, multi-city trips become a single album), with smart titles and covers.
-- **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”). The query is normalized to English **on-device** (Apple Foundation Models, with a fallback) and matched with **open-vocabulary CLIP image understanding** (MobileCLIP via Core ML) — no fixed keyword list — combined with structured filters (date, place, people). Works across **both device and Dropbox** photos.
+- **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”, or “Kyoto or Nara family favorites, no screenshots”). The query is normalized to English **on-device** (Apple Foundation Models, with a fallback) and matched with **open-vocabulary CLIP image understanding** (MobileCLIP via Core ML) — no fixed keyword list — combined with **composable structured conditions** (date / place / people / source / favorite / screenshot / orientation) that support **OR and NOT** (a DNF `QuerySpec`). Relative dates (“last 2 years”) are understood too. Works across **both device and Dropbox** photos.
 - **On-device image understanding** — Every photo (device and Dropbox) gets a CLIP image embedding in the background for semantic search; the full-screen info panel shows **detected keyword tags** (display-only zero-shot labels). No OCR, no third-party vision API. Background indexing has selectable **speed levels** (gentle → fast) to balance battery, network, and scrolling.
 - **Photos** — Browse your on-device library via PhotosKit, with fast thumbnail caching and a pinch-to-resize grid.
 - **Cloud** — Browse Dropbox photos. Background delta sync keeps the list fresh; thumbnails and originals are cached locally.
@@ -93,8 +93,10 @@ MosaicPhotos (app)
 ├── DropboxKit        Dropbox UI layer (depends on DropboxCore)
 ├── BackupKit         device → Dropbox backup engine
 ├── PhotosFeatureKit  merges local + Dropbox (MergedPhotoStore) and place grouping
-└── AutoAlbumCore     auto albums + on-device AI: Time & Place trips, folder-name albums,
-                      open-vocabulary CLIP semantic search, query understanding/translation
+├── AutoAlbumCore     auto albums + on-device AI logic (SwiftUI-free): Time & Place trips,
+│                     folder-name albums, composable query model (OR/NOT), search & fusion
+└── MobileCLIPKit     CLIP/translation runtime + AutoAlbumCore seam implementations
+                      (MobileCLIPRuntime, perception/language adapters, display labeler)
 ```
 
 - **Logic vs. UI separation** — `DropboxCore` (logic) and `DropboxKit` (UI) are separate packages; `DropboxCore` never imports SwiftUI.
@@ -104,10 +106,10 @@ MosaicPhotos (app)
 
 All AI lives in **`AutoAlbumCore`** (SwiftUI-free); the app injects the on-device implementations.
 
-- **Embeddings** — Each photo (device *and* Dropbox) is encoded once with **MobileCLIP-S2** (Core ML, 512-dim) into a normalized image vector, stored in SwiftData (`PhotoEnrichment.clipVector`). A `PhotoTagger` fills these in the background in small throttled batches (`.background` QoS; speed is user-selectable). Cloud photos are embedded from their cached thumbnails.
+- **Embeddings** — Each photo (device *and* Dropbox) is encoded once with **MobileCLIP-S2** (Core ML, 512-dim) into a normalized image vector. Vectors live in a **separate SwiftData table (`PhotoEmbedding`) stored as Float16**, so metadata fetches never load the blobs (this fixed a photo-count-proportional launch crash). A `PhotoTagger` fills these in the background in small throttled batches (`.background` QoS; speed is user-selectable). Cloud photos are embedded from their cached thumbnails.
 - **Search** — A query (any language) is normalized to English by **Apple Foundation Models** (`QueryTranslator`), embedded with the CLIP *text* encoder, and ranked by cosine similarity against the stored image vectors (`SemanticRanker`). This is **open-vocabulary** — no fixed keyword list. In parallel, the query is parsed into structured filters (date / place / people) and a lexical match (place / person names); the three signals are merged with **Reciprocal Rank Fusion** (`AIAlbumSearcher`).
 - **Display tags** — The full-screen info panel shows keyword tags via a separate **display-only** zero-shot step (`CLIPDisplayLabeler`): the stored image vector is compared against ~300 everyday English concepts. This never constrains search, which stays vocabulary-free.
-- **Seams** — `PhotoPerceptionProvider` (image → CLIP), `TextEmbedder` (text → CLIP), `QueryTranslator`, and `LabelProvider` are protocols in `AutoAlbumCore`; the app implements them with `MobileCLIPRuntime` and `FoundationModels`. `PhotoSourceKit` stays unaware of AI and receives per-photo info through a `photoInsight` environment closure.
+- **Seams** — `PhotoPerceptionProvider` (image → CLIP), `TextEmbedder` (text → CLIP), `QueryTranslator`, and `LabelProvider` are protocols in `AutoAlbumCore`; **`MobileCLIPKit`** implements them with `MobileCLIPRuntime` and `FoundationModels`, and the app's composition root wires them in. `PhotoSourceKit` stays unaware of AI and receives per-photo info through a `photoInsight` environment closure.
 
 ## Documentation
 
@@ -130,7 +132,7 @@ An in-depth internal **architecture note** — design rationale (ADR), deep-dive
 | Caching | SwiftData (metadata) + custom binary cache with LRU eviction |
 | On-device AI | MobileCLIP image/text embeddings (Core ML) for open-vocabulary search · Apple Foundation Models for query understanding & translation |
 | Minimum OS | iOS 26 |
-| Packaging | Swift Package Manager (10 local packages) |
+| Packaging | Swift Package Manager (11 local packages) |
 
 ## Privacy & Security
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>設計判断の記録 (ADR) | MosaicPhotos 設計資料</title>
+  <title>設計判断・事例ハイライト | MosaicPhotos 設計資料</title>
   <link rel="stylesheet" href="../assets/styles.css">
   <script>window.DOCROOT = "../"; window.PAGE = "adr";</script>
 </head>
@@ -11,69 +11,75 @@
   <div id="sidebar"></div>
   <main>
     <article>
-      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 設計判断の記録 (ADR)</nav>
-      <h1>設計判断の記録 (ADR)</h1>
-      <p class="lead">「なぜそうしたか」を簡潔に残す。各項は 文脈 / 決定 / 結果（トレードオフ）で書く。</p>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / ハイライト</nav>
+      <h1>設計判断・事例ハイライト（重要トップ 10）</h1>
+      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）と事例（バグ・性能対応）から、特に重要な <strong>10 個</strong>を抜粋して紹介する。各項は要点のみ。<strong>全件は Markdown のマスター</strong>を参照。</p>
 
       <div class="box note">
-        <span class="box-h">この記録は Git で維持される（チャット履歴とは独立）</span>
-        本ページと事例は <code>docs/architecture-note/</code> 配下のファイルとしてリポジトリにコミットされている。AI とのチャット履歴が消えても残り、<code>git log</code> で変更経緯も追える。新しい設計判断をしたら、下記テンプレートで<strong>このファイルに 1 項追記</strong>して維持する。
-        <pre><code>&lt;h2&gt;ADR-N タイトル&lt;/h2&gt;
-&lt;p&gt;&lt;strong&gt;文脈:&lt;/strong&gt; なぜ判断が必要か。&lt;br&gt;
-&lt;strong&gt;決定:&lt;/strong&gt; 何を選んだか。&lt;br&gt;
-&lt;strong&gt;結果:&lt;/strong&gt; 得たもの／トレードオフ。&lt;/p&gt;</code></pre>
+        <span class="box-h">このページは“抜粋”、正本は Markdown</span>
+        設計判断・事例の<strong>正本（マスター）</strong>はリポジトリ内の Markdown：
+        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>（ADR 全 14 件）と
+        <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">records/case-studies.md</a>（事例 全件）。
+        本 HTML はそこから<strong>重要なものを取捨選択</strong>した派生物で、全件は転記しない。新しい判断・事例はまずマスターへ追記する。
+        詳しい顛末は <a href="../case-studies/memory.html">事例: メモリ</a> / <a href="../case-studies/launch-performance.html">事例: 起動</a> の深掘りページも参照。
       </div>
 
-      <h2>ADR-1 検索を語彙ゼロのオープン語彙 CLIP に一本化</h2>
-      <p><strong>文脈:</strong> 固定タグ方式は語彙外検索に弱く、辞書の保守も負担。<br>
-      <strong>決定:</strong> 固定語彙・OCR を捨て、CLIP のオープン語彙＋構造化条件＋字句の RRF 融合にする。<br>
-      <strong>結果:</strong> 自由なクエリに強い。代わりに全写真の画像埋め込み（背景処理）が必要。表示タグだけは別途ゼロショットで出す。</p>
+      <h2><span class="tag">設計</span> 1. 検索を語彙ゼロのオープン語彙 CLIP に一本化 <span class="muted">(ADR-1)</span></h2>
+      <p><strong>文脈:</strong> 固定タグ方式は語彙外に弱く辞書保守も負担。<br>
+      <strong>決定:</strong> 固定語彙・OCR を捨て、CLIP のオープン語彙＋構造化条件＋字句の RRF 融合へ。<br>
+      <strong>結果:</strong> 自由なクエリに強い。代わりに全写真の画像埋め込み（背景処理）が必要。表示タグだけ別途ゼロショットで出す。</p>
 
-      <h2>ADR-2 写真ソースを共通プロトコルに統一</h2>
-      <p><strong>文脈:</strong> 端末・Dropbox・統合で同じ閲覧体験を出したい。<br>
-      <strong>決定:</strong> <code>PhotoStore</code>/<code>PhotoItem</code>/<code>PhotoLoadState</code> に揃え、共通ビューを共有。<br>
-      <strong>結果:</strong> 新ソースを足しても表示側は不変。各ソース固有の init パラメータは維持。</p>
-
-      <h2>ADR-3 ロジック層 / UI 層の分離（Core/UI）</h2>
+      <h2><span class="tag">設計</span> 2. ロジック層 / UI 層の分離（Core/UI） <span class="muted">(ADR-3)</span></h2>
       <p><strong>文脈:</strong> 副作用（PhotosKit/URLSession/SwiftData）を UI から切り離してテストしたい。<br>
       <strong>決定:</strong> <code>*Core</code>（SwiftUI 非依存）と <code>*Kit</code>（UI・<code>@_exported import</code>）に分割。<br>
-      <strong>結果:</strong> 純ロジックを macOS で高速テスト。import は 1 つで済む。パッケージ数は増える。</p>
+      <strong>結果:</strong> 純ロジックを macOS で高速テスト。import は 1 つで済む。パッケージ数は増える（現在 11 個）。</p>
 
-      <h2>ADR-4 グリッドを UICollectionView に置換</h2>
-      <p><strong>文脈:</strong> 6 万件で <code>LazyVGrid</code> + <code>scrollTo</code> のスクラバーが不安定。<br>
+      <h2><span class="tag">設計</span> 3. グリッドを UICollectionView に置換 <span class="muted">(ADR-4)</span></h2>
+      <p><strong>文脈:</strong> 6 万件超で <code>LazyVGrid</code> + <code>scrollTo</code> のスクラバーが不安定。<br>
       <strong>決定:</strong> <code>UIViewRepresentable</code> で UICollectionView（diffable・プリフェッチ・contentOffset スクラバー）を採用。<br>
-      <strong>結果:</strong> 大ジャンプが安定。UIKit のボイラープレートが増える。</p>
+      <strong>結果:</strong> 大ジャンプが安定。UIKit のボイラープレートは増える。</p>
 
-      <h2>ADR-5 単一 fullScreenCover + enum で遷移</h2>
-      <p><strong>文脈:</strong> 複数の <code>.fullScreenCover(item:)</code> を併用すると提示競合で別アルバムの中身が出る不具合。<br>
-      <strong>決定:</strong> 遷移先を単一の <code>HomeDestination</code> enum にまとめ、<code>.fullScreenCover</code> は 1 つに。<code>.sheet</code> も同様に統合。<br>
-      <strong>結果:</strong> 競合解消。分岐は <code>switch</code> に集約。</p>
-
-      <h2>ADR-6 CLIP 埋め込みを別テーブル + Float16</h2>
-      <p><strong>文脈:</strong> 埋め込みを <code>PhotoEnrichment</code> に inline 格納していたため、全件 fetch のたびに 138MB 級の blob を展開し、写真の多い実機で起動クラッシュ。<br>
-      <strong>決定:</strong> 埋め込みを <code>PhotoEmbedding</code> 別テーブルへ分離し、Float16 で保存。メタデータ fetch は blob に触れない。<br>
+      <h2><span class="tag">設計</span> 4. CLIP 埋め込みを別テーブル + Float16 <span class="muted">(ADR-6)</span></h2>
+      <p><strong>文脈:</strong> 埋め込みを <code>PhotoEnrichment</code> に inline 格納し、全件 fetch のたび 138MB 級 blob を展開 → 写真の多い実機で起動クラッシュ。<br>
+      <strong>決定:</strong> <code>PhotoEmbedding</code> 別テーブルへ分離し Float16 保存。メタデータ fetch は blob に触れない。<br>
       <strong>結果:</strong> 常駐が「ページ 1 枚分」に。スキーマ再構築（<code>AutoAlbumV10</code>）が必要。→ <a href="../case-studies/memory.html">事例</a>。</p>
 
-      <h2>ADR-7 ModelContainer を自己修復で構築</h2>
+      <h2><span class="tag">事例</span> 5. 写真枚数に比例したメモリ枯渇の解消</h2>
+      <p><strong>症状:</strong> 写真ゼロの端末は起動、写真が多い端末は起動前に落ちる。<br>
+      <strong>原因:</strong> 「軽量版」<code>allEnrichedPhotosLite()</code> も内部は全件 fetch で、fetch 時点に 67k×2KB≈138MB を確保（複数経路が重なり jetsam）。<br>
+      <strong>学び:</strong> SwiftData の fetch は属性を丸ごと読む。命名でなく実測（経路）で確かめる。→ <a href="../case-studies/memory.html">深掘り</a>。</p>
+
+      <h2><span class="tag">事例</span> 6. メモリ常駐の圧縮（NSCache のコスト計上ズレ）</h2>
+      <p><strong>症状:</strong> 写真が多いと常駐が高く圧迫しやすい（ADR-6 後も残存）。<br>
+      <strong>原因:</strong> サムネのメモリ層に<strong>デコード済み画像</strong>を入れるのにコストを <strong>JPEG バイト</strong>で計上 → 100MB 上限が実質約10倍（〜1GB 相当）に膨張。<br>
+      <strong>対処:</strong> 実デコードサイズでコスト計上、サムネ ×2＋bucket、フル画像を ImageIO でダウンサンプル、メモリ警告で段階縮小、上限を端末 RAM 連動の Auto に。→ <a href="../case-studies/memory.html">深掘り</a>。</p>
+
+      <h2><span class="tag">設計</span> 7. AI 検索を合成可能な QuerySpec（OR/NOT/多ファセット）へ <span class="muted">(ADR-12)</span></h2>
+      <p><strong>文脈:</strong> 「ここ2年の子供」「京都か奈良の家族のお気に入り、スクショ除く」等、複雑条件・OR・NOT を柔軟に組みたい。<br>
+      <strong>決定:</strong> DNF（節の OR・節内 AND・各条件 NOT）の <code>QuerySpec</code>。ハードは <code>QueryEvaluator</code>、内容語は CLIP でソフト採点。相対日付は <code>RelativeDateParser</code>（日英）。<br>
+      <strong>結果:</strong> 多ファセット＋OR を実現。全滅回帰には「ハードで空なら内容のみへ緩和」の安全網で対処。</p>
+
+      <h2><span class="tag">設計</span> 8. CLIP 画像エンコーダを fp16（実機 ANE 優先） <span class="muted">(ADR-11)</span></h2>
+      <p><strong>文脈:</strong> 画像埋め込みが 1 枚 0.5〜1.3 秒と遅い。原因は fp32 変換で Neural Engine に載らず GPU/CPU フォールバック。<br>
+      <strong>決定:</strong> 変換を <code>FLOAT16</code> に。fp16 はシミュレータで NaN 化し得るが有限性チェックで安全に無効化（画像タワーは実機検証）。<br>
+      <strong>結果:</strong> 実機の埋め込みが ANE で高速化。シミュレータ最適化に引きずられない。</p>
+
+      <h2><span class="tag">事例</span> 9. All サムネが「ポツポツ」1 枚ずつ遅く出る</h2>
+      <p><strong>症状:</strong> All ビューで Dropbox サムネが 1 枚ずつポツポツ現れ非常に遅い。<br>
+      <strong>原因:</strong> <code>prefetch</code> 未上書きで既定の<strong>直列 await</strong>を使用 → バッチャの集約（25枚/req）・並行（最大8本）が殺され実質バッチ 1・直列に。<br>
+      <strong>対処:</strong> 先読みを<strong>並行発火</strong>してバッチャに集約させる。学び＝バッチ系ローダに「1 件ずつ await」は集約を無効化する。</p>
+
+      <h2><span class="tag">設計</span> 10. ModelContainer を自己修復で構築 <span class="muted">(ADR-7)</span></h2>
       <p><strong>文脈:</strong> SwiftData は破損・不整合で起動時 trap し、実機で原因不明クラッシュ。<br>
       <strong>決定:</strong> <code>makeResilientContainer</code> で「削除→再試行→インメモリ」とフォールバック。<br>
-      <strong>結果:</strong> 起動を止めない。最悪データは失うが回復する。</p>
-
-      <h2>ADR-8 起動の重いストア構築を非同期化</h2>
-      <p><strong>文脈:</strong> <code>HomeView.init</code> が同期で <code>ModelContainer</code> を作り、最初の描画をブロック。<br>
-      <strong>決定:</strong> <code>RootView</code> が <code>HomeStores.build()</code> で非同期構築し、1 秒超でローディング表示。<br>
-      <strong>結果:</strong> 体感起動が改善。→ <a href="../case-studies/launch-performance.html">事例</a>。</p>
-
-      <h2>ADR-9 Diagnostics で端末上ログ</h2>
-      <p><strong>文脈:</strong> 実機で Mac/Console なしに不具合を追えない。<br>
-      <strong>決定:</strong> 未捕捉例外・メモリ圧迫・各ログを <code>Caches/diagnostics.log</code> に残し、Developer Options で閲覧/共有。<br>
-      <strong>結果:</strong> 実機の原因追跡が可能に。<code>fatalError</code>/SwiftData trap は対象外。</p>
+      <strong>結果:</strong> 起動を止めない。最悪データは失うが回復する（埋め込みは背景で再生成）。</p>
 
       <div class="box refs">
-        <span class="box-h">関連</span>
+        <span class="box-h">もっと読む</span>
         <ul>
+          <li>正本（全件）: <a class="srclink" data-path="docs/architecture-note/records/decisions.md">decisions.md</a> / <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">case-studies.md</a></li>
+          <li>深掘り: <a href="../case-studies/memory.html">事例: メモリ</a> / <a href="../case-studies/launch-performance.html">事例: 起動の高速化</a></li>
           <li><a href="../architecture/overview.html">全体アーキテクチャ</a></li>
-          <li><a href="../case-studies/memory.html">事例: メモリ枯渇の解消</a> / <a href="../case-studies/launch-performance.html">事例: 起動の高速化</a></li>
         </ul>
       </div>
     </article>

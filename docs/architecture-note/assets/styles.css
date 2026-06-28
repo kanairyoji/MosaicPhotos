@@ -146,6 +146,21 @@ pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
 .refs code { background: #fff; }
 .srclink { font-family: var(--mono); font-size: 13px; }
 
+/* ---- インラインタグ／補助ラベル（設計判断・事例ハイライト用） ---- */
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 1px 8px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  border: 1px solid #bcd9ff;
+  vertical-align: middle;
+}
+.muted { color: var(--muted, #888); font-weight: 400; font-size: 0.85em; }
+
 /* ---- テーブル ---- */
 table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14px; }
 th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }

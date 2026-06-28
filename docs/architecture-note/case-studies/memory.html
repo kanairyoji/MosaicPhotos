@@ -11,9 +11,9 @@
   <div id="sidebar"></div>
   <main>
     <article>
-      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: メモリ枯渇の解消</nav>
-      <h1>事例: 写真枚数に比例したメモリ枯渇の解消</h1>
-      <p class="lead">「写真ゼロの端末では起動するが、写真が多い端末では起動前に落ちる」。原因はメモリで、SwiftData の格納方法に潜んでいた。学習材料として顛末を残す。</p>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: メモリ枯渇と圧縮</nav>
+      <h1>事例: 写真枚数に比例したメモリ枯渇の解消と、その後の常駐圧縮</h1>
+      <p class="lead">「写真ゼロの端末では起動するが、写真が多い端末では起動前に落ちる」。原因はメモリで、SwiftData の格納方法に潜んでいた。さらにその後、サムネ／フル画像キャッシュの常駐も圧縮した。学習材料として顛末を残す。</p>
 
       <h2>症状と切り分け</h2>
       <ul>
@@ -61,12 +61,30 @@ graph LR
         <li>検証は実機スクショではなく、ビルド・ユニットテスト・診断ログのフットプリントで行う。</li>
       </ul>
 
+      <h2>続編: 常駐の圧縮（埋め込み別テーブル化の“その後”）</h2>
+      <p>構造的な枯渇（上記）を解消した後も、写真が多いと常駐が高めだった。精査すると<strong>複数の隠れ消費</strong>が見つかった。</p>
+      <table>
+        <tr><th>原因</th><th>内容</th><th>対処</th></tr>
+        <tr><td>NSCache のコスト計上ズレ<br>（最大要因）</td><td>サムネのメモリ層に<strong>デコード済み画像</strong>を入れるのにコストを <strong>JPEG バイト</strong>（約20KB）で計上。<code>totalCostLimit=100MB</code> が JPEG 換算のため、実デコード（0.3〜2.4MB/枚）では<strong>約10倍以上＝〜1GB 相当</strong>まで保持し得た。</td><td><code>insertDecoded</code>/<code>decodedCost</code>（幅px×高px×4）で<strong>実コスト計上</strong>。Dropbox 側は <code>totalCostLimit=48MB</code> 併設。</td></tr>
+        <tr><td>サムネがフル解像度</td><td>グリッドのセルを端末スケール（×3）で生成。ピンチの列数差で僅差サイズの<strong>重複デコード</strong>も増加。</td><td>×2 上限＋64px <strong>bucket 量子化</strong>（1アセット1サイズ）。</td></tr>
+        <tr><td>フル画像がフル解像度</td><td>ビューア（ズーム無し・<code>scaledToFit</code>）なのに 1 枚 40MB 超をデコード。ページャの前後保持でピーク増。</td><td><code>ImageDownsampling</code>（ImageIO・最大辺 1600）で表示時にダウンサンプル（保存は原バイト＝EXIF 保持）。</td></tr>
+        <tr><td>表示配列の常駐</td><td>表示用 <code>DropboxFileItem</code> に <code>contentHash</code>（64桁hex）を 67k 件分常駐。表示には不要。</td><td><code>cachedItems()</code> で <strong>contentHash を渡さない</strong>（変更検知は別テーブル＋delta parser）。</td></tr>
+        <tr><td>上限が固定・圧迫対応が雑</td><td>メモリ上限が固定値、メモリ警告時は全消去のみ。</td><td>上限を<strong>端末 RAM 連動の Auto</strong>（約1.5%・40〜120MB）に。メモリ警告時は全消去でなく<strong>段階縮小→復帰</strong>で直近サムネを温存。</td></tr>
+      </table>
+      <div class="box why">
+        <span class="box-h">この続編の学び</span>
+        <strong>NSCache のコストは実バックストア（デコード後バイト）で計上する。</strong> JPEG バイトで計上すると上限が桁で狂う。ズーム無しビューアはフル解像度をデコードしない（ImageIO ダウンサンプルでピーク削減）。長寿命の大規模配列に「表示に使わない文字列」を載せない。
+      </div>
+
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models/PhotoEmbedding.swift">PhotoEmbedding.swift</a></li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a></li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/ClipMath.swift">ClipMath.swift</a> — encodeHalf/decodeHalf</li>
+          <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit/MemoryImageCache.swift">MemoryImageCache.swift</a> — insertDecoded・段階縮小</li>
+          <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit/ImageDownsampling.swift">ImageDownsampling.swift</a> — ImageIO ダウンサンプル</li>
+          <li><a class="srclink" data-path="Packages/LocalPhotoCore/Sources/LocalPhotoCore/ThumbnailMemoryBudget.swift">ThumbnailMemoryBudget.swift</a> — Auto 予算</li>
         </ul>
       </div>
       <p>背景: <a href="../tech/swiftdata.html">SwiftData</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a></p>

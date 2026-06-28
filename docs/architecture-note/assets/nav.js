@@ -55,8 +55,8 @@
       { id: "ai-ranking",   href: "ai/08-ranking-fusion.html",    label: "8. ランキングと融合" },
     ]},
     { title: "設計判断・事例", items: [
-      { id: "adr",            href: "design-decisions/adr.html",            label: "設計判断の記録 (ADR)" },
-      { id: "case-memory",    href: "case-studies/memory.html",             label: "事例: メモリ枯渇の解消" },
+      { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト（重要トップ10）" },
+      { id: "case-memory",    href: "case-studies/memory.html",             label: "事例: メモリ枯渇と圧縮" },
       { id: "case-launch",    href: "case-studies/launch-performance.html", label: "事例: 起動の高速化" },
     ]},
     { title: "付録", items: [

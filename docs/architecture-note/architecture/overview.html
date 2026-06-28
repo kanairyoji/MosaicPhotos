@@ -60,7 +60,7 @@ graph LR
       <h2>なぜこの形か</h2>
       <div class="box why">
         <span class="box-h">設計判断</span>
-        <strong>アプリ層を薄く保つ</strong>ことで、機能の大半がパッケージ単位でビルド・テストできる（純ロジックは macOS の <code>swift test</code> で高速に回る）。UI とロジックを分けるのは、<code>PHImageManager</code> や <code>URLSession</code> といった副作用を <em>Core</em> に閉じ込め、UI を差し替え可能にするため。<a href="../design-decisions/adr.html">設計判断の記録</a>も参照。
+        <strong>アプリ層を薄く保つ</strong>ことで、機能の大半がパッケージ単位でビルド・テストできる（純ロジックは macOS の <code>swift test</code> で高速に回る）。UI とロジックを分けるのは、<code>PHImageManager</code> や <code>URLSession</code> といった副作用を <em>Core</em> に閉じ込め、UI を差し替え可能にするため。<a href="../design-decisions/adr.html">設計判断・事例ハイライト</a>も参照。
       </div>
 
       <h2>レイヤをまたぐ規約</h2>
