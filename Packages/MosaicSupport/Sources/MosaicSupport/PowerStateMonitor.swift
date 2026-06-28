@@ -53,8 +53,11 @@ public final class PowerStateMonitor {
 
     #if canImport(UIKit)
     private func refreshBattery() {
-        let state = UIDevice.current.batteryState
-        isOnPower = (state == .charging || state == .full)
+        // 「電池駆動と確定したとき（.unplugged）以外は電源扱い」にする。
+        // シミュレータや判定不能時は `.unknown` を返すため、charging/full のみで判定すると
+        // 充電中でないとみなされ背景処理が全部ゲートで止まる。`.unknown` は電源扱いにして
+        // ロックしない（実機は .charging/.full/.unplugged を正しく返す）。
+        isOnPower = (UIDevice.current.batteryState != .unplugged)
     }
     #endif
 
