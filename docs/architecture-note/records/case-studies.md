@@ -21,6 +21,19 @@
 
 ---
 
+## オンデバイス CLIP モデル選定の認識率ベンチマーク
+- 背景: 同梱 CLIP モデルの選定にあたり、出荷する Core ML モデルそのままで認識率を実測して比較した（`scripts/eval_recognition.sh`／`eval_recognition.py`）。
+- 評価条件: ImageNet-1k 1000クラスのゼロショット分類（各クラス20枚＝200枚・top-1）＋自然文クエリ10件。CoreMLTools で **CPU 実行**（fp16 の不安定要因を排除した決定的比較）。Imagenette(val) を画像ソースに使用。
+- 結果（top-1 / クエリ）:
+  - MobileCLIP-S2（旧・モバイル最適化・参考）= **81.0%** / 10件満点（画像enc 68MB）
+  - OpenCLIP ViT-B-16 / datacomp_xl = **75.0%** / 満点（画像enc 165MB・patch16＝約4倍重い）
+  - **OpenCLIP ViT-B-32 / datacomp_xl（採用）= 75.0%** / 満点（画像enc ~60MB・patch32＝軽い）
+  - OpenCLIP ViT-B-32 / openai = **64.5%** / 満点（~60MB）
+- 採否: **ViT-B-32/datacomp を採用**。軽量（patch32・~60MB）ながら 75% を達成し、自然文クエリは満点。ViT-B-16 は同等精度だが画像推論が約4倍重く、67k 枚の背景埋め込み（電池/時間）と相性が悪いため見送り。openai 重みは精度が低い。
+- 実装メモ: 変換は `scripts/convert_clip.py`（open_clip→Core ML・CLIP の mean/std を画像エンコーダ内に内包＝アプリ無改修・画像 fp16/テキスト fp32）。同梱ファイル名（`MobileCLIP*`）は互換のため据え置き（中身は OpenCLIP）。`MLImageConstraint` で自動リサイズ（imageSize 256→224 は config 経由）。モデル変更時は `perceptionVersion` を採番して全再埋め込み。
+- 関連: `scripts/convert_clip.py` / `scripts/eval_recognition.*` / `scripts/build_mobileclip.sh` / `AutoAlbumEngine`(perceptionVersion)。選定の意思決定全体は [[ADR-19]]。
+- 残課題: より精度の高い軽量モデルが出れば再ベンチ。200枚標本のためサンプル誤差あり（必要なら per-class を増やす）。
+
 ## 写真枚数に比例したメモリ枯渇（起動クラッシュ）
 - 症状: 写真ゼロの端末では起動するが、写真が多い端末では起動前に落ちる。
 - 原因: CLIP 埋め込み `clipVector`（512×fp32 ≈ 2KB/枚）を `PhotoEnrichment` に inline 格納。SwiftData は全件 fetch で行を丸ごと展開するため、`allEnrichedPhotosLite()` 等でも fetch 時点で 67k×2KB ≈ 138MB を確保し jetsam。複数経路の全件 fetch が起動直後に重なって悪化。

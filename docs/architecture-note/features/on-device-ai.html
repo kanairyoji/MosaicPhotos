@@ -19,7 +19,7 @@
       <div class="mermaid">
 graph TD
   Q["自然文クエリ（任意言語）"] --> TR[QueryTranslator<br/>Foundation Models で英語化]
-  TR --> TE[TextEmbedder<br/>MobileCLIP テキスト埋め込み]
+  TR --> TE[TextEmbedder<br/>CLIP テキスト埋め込み]
   IMG[各写真] --> PT[PhotoTagger<br/>背景で画像埋め込み]
   PT --> EMB[(PhotoEmbedding<br/>fp16)]
   TE --> SR[SemanticRanker<br/>コサイン類似]
@@ -32,6 +32,20 @@ graph TD
   RRF --> RES[検索結果 / AI アルバム]
       </div>
 
+      <h2>採用モデルと認識率ベンチマーク</h2>
+      <p>埋め込みには <strong>OpenCLIP <code>ViT-B-32</code>（DataComp 学習）</strong>を Core ML 化して使う。複数候補を、出荷する Core ML モデルそのままで認識率を測って選定した（<code>scripts/eval_recognition.sh</code>）。</p>
+      <table>
+        <tr><th>モデル</th><th>ImageNet-1k ゼロショット top-1</th><th>自然文クエリ</th><th>画像エンコーダ</th><th>備考</th></tr>
+        <tr><td><strong>OpenCLIP ViT-B-32 / datacomp（採用）</strong></td><td><strong>75.0%</strong></td><td>10/10</td><td>~60MB・patch32（軽い）</td><td>認識率と端末負荷のバランス</td></tr>
+        <tr><td>OpenCLIP ViT-B-16 / datacomp</td><td>75.0%</td><td>10/10</td><td>165MB・patch16（約4倍重い）</td><td>同精度だが重い</td></tr>
+        <tr><td>OpenCLIP ViT-B-32 / openai</td><td>64.5%</td><td>10/10</td><td>~60MB・patch32</td><td>精度低め</td></tr>
+        <tr><td>MobileCLIP-S2（参考・旧）</td><td>81.0%</td><td>10/10</td><td>68MB（モバイル最適化）</td><td>—</td></tr>
+      </table>
+      <div class="box note">
+        <span class="box-h">評価条件と選定</span>
+        ImageNet-1k 1000クラスのゼロショット分類（各クラス20枚=200枚）と自然文クエリ10件を、CoreMLTools で CPU 実行して測定。<strong>採用は ViT-B-32/datacomp</strong>＝軽量（patch32・画像エンコーダ ~60MB）ながら 75% を達成し、自然文クエリは満点。ViT-B-16 は同等精度だが画像推論が約4倍重く、67k 枚の背景埋め込み（電池/時間）と相性が悪いため見送り。モデル変更時は <code>perceptionVersion</code> を採番して全再埋め込みする。
+      </div>
+
       <h2>なぜ「語彙ゼロ」なのか</h2>
       <div class="box why">
         <span class="box-h">設計判断</span>
@@ -39,7 +53,7 @@ graph TD
       </div>
 
       <h2>翻訳を前段に置く理由</h2>
-      <p>MobileCLIP のテキストエンコーダは英語中心。日本語クエリをそのまま入れると精度が落ちる。そこで <code>Foundation Models</code>（オンデバイス LLM）でクエリを<strong>英語へ正規化</strong>してから CLIP に渡す。翻訳もオンデバイスなので通信不要。</p>
+      <p>CLIP（OpenCLIP ViT-B-32）のテキストエンコーダは英語中心。日本語クエリをそのまま入れると精度が落ちる。そこで <code>Foundation Models</code>（オンデバイス LLM）でクエリを<strong>英語へ正規化</strong>してから CLIP に渡す。翻訳もオンデバイスなので通信不要。</p>
 
       <h2>検索の融合（RRF）</h2>
       <p>意味検索（CLIP）だけでなく、構造化条件（日付・場所・人物）と字句一致（地名・人物名）も併用し、<strong>Reciprocal Rank Fusion</strong> で順位を統合する。これにより「去年 京都で 撮った 紅葉」のような複合クエリに強くなる。</p>
