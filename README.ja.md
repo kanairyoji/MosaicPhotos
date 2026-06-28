@@ -107,7 +107,7 @@ MosaicPhotos（アプリ）
 
 AI ロジックはすべて **`AutoAlbumCore`**（SwiftUI 非依存）にあり、オンデバイス実装をアプリ側が注入します。
 
-- **埋め込み** — 各写真（端末・Dropbox 両方）を **OpenCLIP ViT-B-32（DataComp・MIT）**（Core ML・512 次元）で一度だけ正規化済み画像ベクトルにエンコード。ベクトルは **SwiftData の別テーブル（`PhotoEmbedding`）に Float16 で保存**し、メタデータ fetch が blob に触れないようにしています（写真枚数比例の起動クラッシュを解消）。`PhotoTagger` が小さなバッチでバックグラウンド（`.background` QoS・速度はユーザー選択可）に埋めていきます。クラウド写真はキャッシュ済みサムネイルから埋め込みます。
+- **埋め込み** — 各写真（端末・Dropbox 両方）を **OpenCLIP ViT-B-32（DataComp）**（Core ML・512 次元）で一度だけ正規化済み画像ベクトルにエンコード。モデルは**オンデバイス認識率ベンチマーク**（`scripts/eval_recognition.sh`）で選定：ImageNet-1k ゼロショット **約75% top-1**、自然文クエリ **10/10**。認識率と端末負荷（軽量な patch32・画像エンコーダ ~60MB）のバランスで採用。ベクトルは **SwiftData の別テーブル（`PhotoEmbedding`）に Float16 で保存**し、メタデータ fetch が blob に触れないようにしています（写真枚数比例の起動クラッシュを解消）。`PhotoTagger` が小さなバッチでバックグラウンド（`.background` QoS・速度はユーザー選択可）に埋めていきます。クラウド写真はキャッシュ済みサムネイルから埋め込みます。
 - **検索** — クエリ（任意言語）を **Apple Foundation Models**（`QueryTranslator`）で英語に正規化し、CLIP の**テキスト**エンコーダで埋め込み、保存済み画像ベクトルとのコサイン類似で並べ替え（`SemanticRanker`）。これは**オープン語彙**で固定キーワードリストを持ちません。並行して構造化条件（日付/場所/人物）と字句一致（地名/人名）も求め、3 つの信号を **Reciprocal Rank Fusion**（`AIAlbumSearcher`）で統合します。
 - **表示タグ** — フル画像の情報パネルのキーワードは、別の**表示専用**ゼロショット（`CLIPDisplayLabeler`）で生成：保存済み画像ベクトルを約 300 語の一般英語概念と比較します。これは検索を一切縛りません（検索は語彙ゼロのまま）。
 - **シーム** — `PhotoPerceptionProvider`（画像→CLIP）/ `TextEmbedder`（テキスト→CLIP）/ `QueryTranslator` / `LabelProvider` は `AutoAlbumCore` のプロトコルで、**`MobileCLIPKit`** が `MobileCLIPRuntime`・`FoundationModels` で実装し、アプリの合成ルートが注入します。`PhotoSourceKit` は AI を知らず、写真ごとの情報は `photoInsight` 環境クロージャ経由で受け取ります。
