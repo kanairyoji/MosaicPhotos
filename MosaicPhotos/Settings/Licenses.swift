@@ -18,6 +18,32 @@ struct LicenseSection: Identifiable {
     let items: [LicenseItem]
 }
 
+// MARK: - 本アプリ（AGPL-3.0 ＋ デュアル配布）
+
+let mosaicPhotosLicenseNotice = """
+MosaicPhotos
+Copyright (C) 2025 Ryoji KANAI <kanai@r89.org>
+
+【ソースコードのライセンス】
+ソースコードは GNU Affero General Public License v3.0 もしくは（あなたの選択により）
+それ以降のバージョン（AGPL-3.0-or-later）で配布します。これらの条件のもとで再配布・改変
+できます。本ソフトウェアは無保証で提供されます。AGPL の全文は LICENSE ファイル
+（正文は英語）または https://www.gnu.org/licenses/agpl-3.0.html を参照してください。
+
+【デュアル配布】
+AGPL に加えて、著作権者（Ryoji KANAI）は同一の成果物を Apple App Store にて Apple の
+標準ライセンス条件のもとで配布します。これは AGPL に基づくソースコードへのあなたの権利に
+影響しません。
+
+リポジトリ: https://github.com/kanairyoji/MosaicPhotos
+
+--- English (reference) ---
+Source code is licensed under AGPL-3.0-or-later (see the LICENSE file; the AGPL is
+authoritative in English). In addition, the copyright holder also distributes the
+compiled app via the Apple App Store under Apple's standard terms; this does not
+affect your rights to the source under the AGPL.
+"""
+
 // MARK: - License body templates（標準ライセンスはテンプレートで正確に生成）
 
 func mitLicenseText(_ copyright: String) -> String {

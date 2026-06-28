@@ -169,6 +169,10 @@ Without the model the app still runs fully; only CLIP-based semantic search and 
 
 ## License
 
-The project license is **not decided yet** (to be determined).
+Source code is licensed under the **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** — see [LICENSE](LICENSE).
 
-Third-party assets bundled with or used to build the app are listed in-app under **Settings → Licenses** (and in `MosaicPhotos/Settings/Licenses.swift`): MobileCLIP (Apple — code MIT, weights research-only), the CLIP BPE vocabulary / tokenizer (MIT), build tools (coremltools, PyTorch, open_clip, Pillow, NumPy), and Mermaid (docs). Apple SDKs and SF Symbols are used under Apple's license terms.
+**Dual distribution:** in addition to the AGPL, the copyright holder (Ryoji KANAI) also distributes the compiled app via the Apple App Store under Apple's standard terms (see [NOTICE](NOTICE)). Contributions are accepted under the DCO with a relicensing grant — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Third-party assets are listed in-app under **Settings → Licenses** (and in `MosaicPhotos/Settings/Licenses.swift`): MobileCLIP (Apple — code MIT, **weights research-only**), the CLIP BPE vocabulary / tokenizer (MIT), build tools (coremltools, PyTorch, open_clip, Pillow, NumPy), and Mermaid (docs). Apple SDKs and SF Symbols are used under Apple's terms.
+
+> ⚠️ The MobileCLIP **weights** are research-only and not App-Store/commercial-redistributable; a permissively-licensed model is needed before shipping a bundled build (planned separately).

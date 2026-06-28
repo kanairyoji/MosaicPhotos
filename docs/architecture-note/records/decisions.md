@@ -76,10 +76,12 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
-## ADR-18 ライセンス：第三者資産はアプリ内「Licenses」で表示（本体ライセンスは保留）
-- 状態: 一部撤回（本体 AGPL-3.0 の採用は**撤回・保留**。第三者ライセンス表示画面は採用のまま）
-- 撤回の経緯: 当初は本体を AGPL-3.0 とし `LICENSE` を設置したが、(1) MobileCLIP の**重みが Apple ML Research Model License＝研究目的限定・商用不可で AGPL 非互換**、(2) **App Store 配布は GPL/AGPL と一般に非互換**、という2点から本体ライセンスは再検討とし、`LICENSE` と本体 AGPL の自己エントリを**一旦削除**（後日決定）。第三者ライブラリ/資産の帰属表示（`LicensesView`/`Licenses.swift`）は引き続き有効。
-- 文脈: 公開にあたり本アプリのライセンスを定め、使用ライブラリ/資産の必要な帰属表示を行いたい。
+## ADR-18 ライセンス：ソース AGPL-3.0＋デュアル配布（App Store は著作権者が Apple 条件で）／第三者はアプリ内表示
+- 状態: 採用（経緯: 当初 AGPL 採用 → 一旦撤回 → **デュアル方式で再採用**）
+- 文脈: 配布形態は「**アプリ＝App Store／ソース＝GitHub**」。本体ライセンスを定めつつ、GPL/AGPL × App Store の非互換を回避したい。
+- 決定: ソースは **AGPL-3.0-or-later**（`LICENSE` に公式全文・原文）。**デュアル配布**＝著作権者（単独）は同一成果物を App Store では Apple 標準条件で配布できる（AGPL は他者ライセンシーを縛るが著作権者自身は別条件で配布可）。第三者依存は MIT/BSD で両立可。将来コントリビュートで縛られないよう **`CONTRIBUTING.md` に DCO＋再ライセンス許諾**、宣言を `NOTICE` に明記。アプリ内「Settings → Licenses」に本アプリ(AGPL/デュアル)と第三者資産を表示。§7 例外方式は不採用（例外が全員に及ぶため。自分だけが App Store 配布するデュアルが適切）。
+- 結果: ソース公開（AGPL）と自分の App Store 配布が両立。**未解決の前提**: MobileCLIP の**重みは研究目的限定・商用不可で App Store 不可**のため、バンドル出荷前に**許容ライセンスのモデル（OpenCLIP の MIT/Apache 等）へ差し替え**が必要（別タスク）。例外条項では解けない。
+- 関連: `LICENSE` / `NOTICE` / `CONTRIBUTING.md` / `MosaicPhotos/Settings/Licenses.swift`・`LicensesView.swift` / README。
 - 文脈: 公開にあたり本アプリのライセンスを定め、使用ライブラリ/資産の必要な帰属表示を行いたい。
 - 決定: 本体を **AGPL-3.0-or-later** とし、リポジトリ直下に公式全文の `LICENSE`（原文のまま・翻訳しない）を設置。アプリは第三者の Swift ライブラリ依存ゼロ（全ローカルパッケージ）。同梱/使用する第三者資産を **設定 → Licenses**（`LicensesView`＋データ `Licenses.swift`）で一覧表示：本アプリ(AGPL)/同梱(MobileCLIP=Apple・CLIP 語彙/トークナイザ=MIT)/Apple(SDK・SF Symbols)/ビルドツール(coremltools=BSD3・PyTorch=BSD3・open_clip=MIT・ml-mobileclip=Apple・Pillow=HPND・NumPy=BSD3)/ドキュメント(Mermaid=MIT)。MIT/BSD3/HPND は正確なテンプレートで生成、Apple/PyTorch は告知＋upstream リンク。**ライセンス本文は英語原文のまま**、画面の枠・用途説明のみ日本語化。
 - 結果: 帰属を満たしつつアプリ内で確認可能。AGPL によりソース公開義務（GitHub 公開で充足）。第三者ライブラリ追加時は `Licenses.swift` に1項追加する運用。

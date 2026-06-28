@@ -1,0 +1,45 @@
+MosaicPhotos ライセンス告知（マスター = 日本語）
+Copyright (C) 2025 Ryoji KANAI <kanai@r89.org>
+
+※ この NOTICE の正本は日本語です。LICENSE（GNU AGPL 全文）および第三者ライセンスの
+   本文は、原文（英語）が正文です。末尾に参考用の英訳を付けます。
+
+■ ソースコードのライセンス
+MosaicPhotos のソースコードは GNU Affero General Public License v3.0 もしくは
+（あなたの選択により）それ以降のバージョン（AGPL-3.0-or-later）で配布します。
+全文は LICENSE ファイルを参照してください（AGPL の正文は英語です）。
+
+■ デュアル配布
+AGPL に加えて、著作権者（Ryoji KANAI）は同一の成果物を Apple App Store にて Apple の
+標準ライセンス条件のもとで配布します。これは、AGPL に基づくソースコードに対するあなたの
+権利には影響しません。
+
+■ コントリビュート
+コントリビュートは DCO（Developer Certificate of Origin）と、メンテナによる再ライセンスを
+認める許諾のもとで受け付けます。詳細は CONTRIBUTING.md を参照してください。
+
+■ 第三者コンポーネント
+本プロジェクトは第三者の資産・ツールを各々のライセンスのもとで利用します。一覧はアプリ内の
+「設定 → ライセンス」および MosaicPhotos/Settings/Licenses.swift を参照してください。
+なお MobileCLIP のモデルの重み（Apple Machine Learning Research Model License）は
+研究目的限定であり、本リポジトリには含めていません。これを同梱したビルドは商用・App Store
+での配布はできません（その場合は許容ライセンスのモデルへの差し替えが必要です）。
+
+------------------------------------------------------------------------------
+English (reference translation; the Japanese above is the master of this NOTICE.
+The AGPL text in LICENSE and third-party license texts are authoritative in English.)
+
+Source code license: MosaicPhotos source code is licensed under AGPL-3.0-or-later;
+see the LICENSE file (the AGPL is authoritative in English).
+
+Dual distribution: In addition to the AGPL, the copyright holder (Ryoji KANAI) also
+distributes the same work via the Apple App Store under Apple's standard terms. This
+does not affect your rights to the source code under the AGPL.
+
+Contributions: accepted under the DCO and a relicensing grant to the maintainer; see
+CONTRIBUTING.md.
+
+Third-party components: used under their own licenses; see "Settings -> Licenses" in
+the app. The MobileCLIP model weights (Apple ML Research Model License) are research-
+only and are not included in this repository; a build bundling them may not be
+distributed commercially or via the App Store.

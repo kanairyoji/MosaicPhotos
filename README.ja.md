@@ -169,6 +169,10 @@ bash scripts/build_mobileclip.sh   # MobileCLIP-S2 を変換 → MosaicPhotos/Mo
 
 ## ライセンス
 
-本体のライセンスは **未定（後日決定）** です。
+ソースコードは **GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）** で配布します（[LICENSE](LICENSE) 参照）。
 
-アプリに同梱／ビルドに使用する第三者の資産は、アプリ内 **設定 → ライセンス**（および `MosaicPhotos/Settings/Licenses.swift`）に一覧表示します：MobileCLIP（Apple — コード MIT・重みは研究目的限定）、CLIP の BPE 語彙／トークナイザ（MIT）、ビルドツール（coremltools・PyTorch・open_clip・Pillow・NumPy）、Mermaid（ドキュメント）。Apple SDK と SF Symbols は Apple のライセンス条件に従います。
+**デュアル配布:** AGPL に加えて、著作権者（Ryoji KANAI）はコンパイル済みアプリを Apple App Store で Apple 標準条件のもと配布します（[NOTICE](NOTICE) 参照）。コントリビュートは DCO ＋ 再ライセンス許諾のもとで受け付けます（[CONTRIBUTING.md](CONTRIBUTING.md)）。
+
+第三者の資産はアプリ内 **設定 → ライセンス**（および `MosaicPhotos/Settings/Licenses.swift`）に一覧表示します：MobileCLIP（Apple — コード MIT・**重みは研究目的限定**）、CLIP の BPE 語彙／トークナイザ（MIT）、ビルドツール（coremltools・PyTorch・open_clip・Pillow・NumPy）、Mermaid（ドキュメント）。Apple SDK と SF Symbols は Apple の条件に従います。
+
+> ⚠️ MobileCLIP の**重み**は研究目的限定で App Store/商用での再配布は不可です。バンドル版を出荷する前に、許容ライセンスのモデルへの差し替えが必要です（別途対応予定）。

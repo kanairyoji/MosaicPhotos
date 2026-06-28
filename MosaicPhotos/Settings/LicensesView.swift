@@ -35,6 +35,18 @@ struct LicensesView: View {
     private var sections: [LicenseSection] {
         [
             LicenseSection(
+                title: L("This app"),
+                footer: L("MosaicPhotos is free software under the GNU AGPL v3."),
+                items: [
+                    LicenseItem(
+                        name: "MosaicPhotos",
+                        role: L("This application"),
+                        license: "AGPL-3.0-or-later (source) · App Store build under Apple terms",
+                        url: "https://github.com/kanairyoji/MosaicPhotos/blob/main/LICENSE",
+                        text: mosaicPhotosLicenseNotice),
+                ]),
+
+            LicenseSection(
                 title: L("Bundled in the app"),
                 footer: L("Third-party assets distributed with the app."),
                 items: [
