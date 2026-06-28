@@ -1,7 +1,10 @@
 name: CodeQL
 
-# Swift（コンパイル言語）の CodeQL 解析。autobuild は Xcode+SPM 構成で失敗しやすいため、
-# CI で実績のあるビルドコマンド（iphonesimulator・署名なし）を手動指定してトレースさせる。
+# CodeQL 解析。2 言語を解析する:
+#  - swift   : コンパイル言語。autobuild は Xcode+SPM 構成で失敗しやすいため、CI で実績のある
+#              ビルドコマンド（iphonesimulator・署名なし）を手動指定してトレースさせる（build-mode: manual）。
+#  - actions : GitHub Actions のワークフロー YAML を静的解析（build-mode: none）。
+#              workflow の permissions 欠落（actions/missing-workflow-permissions）等を検出・追跡する。
 #
 # ⚠️ リポジトリ設定で CodeQL の "Default setup" が有効だと、この advanced ワークフローと衝突する。
 #    Settings → Code security → Code scanning で Default setup を解除（Advanced に切替）すること。
@@ -14,17 +17,29 @@ on:
     - cron: '23 3 * * 1'   # 毎週月曜の定期スキャン
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   analyze:
-    name: Analyze (swift)
+    name: Analyze (${{ matrix.language }})
     runs-on: macos-15
     permissions:
       security-events: write
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: swift
+            build-mode: manual
+          - language: actions
+            build-mode: none
     steps:
       - uses: actions/checkout@v4
 
       - name: Select latest Xcode
+        if: matrix.language == 'swift'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -32,12 +47,13 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: swift
-          build-mode: manual
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
 
       # DropboxSecrets.swift は .gitignore 対象で CI に存在しない（実 appKey を上げないため）。
       # 無ければビルド用のダミーを生成する（CodeQL は静的解析なので実キーは不要）。
       - name: Provide dummy Dropbox secrets if missing
+        if: matrix.language == 'swift'
         run: |
           SECRETS="MosaicPhotos/DropboxSecrets.swift"
           if [ ! -f "$SECRETS" ]; then
@@ -47,6 +63,7 @@ jobs:
 
       # CI と同じ確実なビルド（署名なし・シミュレータ SDK）。CodeQL がコンパイルをトレースする。
       - name: Build for CodeQL
+        if: matrix.language == 'swift'
         run: |
           xcodebuild build \
             -project MosaicPhotos.xcodeproj \
@@ -57,4 +74,4 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:swift"
+          category: "/language:${{ matrix.language }}"
