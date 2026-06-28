@@ -58,14 +58,44 @@ public final class DiagnosticsLog: @unchecked Sendable {
     private static func timestamp() -> String { formatter.string(from: Date()) }
 }
 
-/// メモリ圧迫中かどうかの共有フラグ。`Diagnostics` のメモリ圧迫ソースが warning/critical で立て、
-/// 一定時間後に自動で下ろす。背景の重い処理（CLIP 埋め込み等）が `isUnderPressure` を見て一時停止する。
+/// メモリ圧迫の段階。`DispatchSource` の warning / critical に対応する。
+public enum MemoryPressureLevel: String, Sendable {
+    case warning
+    case critical
+}
+
+/// メモリ圧迫イベント 1 件の記録（Developer Options 表示用）。
+public struct MemoryPressureEvent: Sendable {
+    public let date: Date
+    public let level: MemoryPressureLevel
+    public let footprintMB: Double?
+    public init(date: Date, level: MemoryPressureLevel, footprintMB: Double?) {
+        self.date = date
+        self.level = level
+        self.footprintMB = footprintMB
+    }
+}
+
+/// メモリ圧迫の中枢。`Diagnostics` のメモリ圧迫ソースが warning/critical を `handle(_:)` に流し込み、
+/// ここが (1) 圧迫フラグの設定（一定時間後に自動解除）、(2) 登録された**解放ハンドラ**の呼び出し、
+/// (3) 診断ログへの記録、(4) Developer Options 表示用の履歴/回数の蓄積、を一括で行う。
+/// 背景の重い処理（CLIP 埋め込み等）は `isUnderPressure` を見て一時停止し、画像キャッシュは
+/// `register(_:)` した解放ハンドラ経由で warning=縮小 / critical=全消去する。
 public final class MemoryPressureMonitor: @unchecked Sendable {
     public static let shared = MemoryPressureMonitor()
     private let lock = NSLock()
     private var _underPressure = false
     /// 圧迫フラグを下ろす予定の世代。連続イベントで延長するために使う。
     private var generation = 0
+
+    /// 圧迫時に呼ぶ解放ハンドラ（トークンで解除可能）。
+    private var handlers: [Int: @Sendable (MemoryPressureLevel) -> Void] = [:]
+    private var nextToken = 0
+
+    /// Developer Options 表示用：直近の圧迫イベント（古い順・末尾が最新）と累計回数。
+    private var events: [MemoryPressureEvent] = []
+    private var _totalCount = 0
+    private let maxEvents = 20
 
     private init() {}
 
@@ -74,19 +104,69 @@ public final class MemoryPressureMonitor: @unchecked Sendable {
         return _underPressure
     }
 
-    /// 圧迫を記録し、`autoClearAfter` 秒後に自動で解除する（その間に再発すれば延長）。
-    func markPressure(autoClearAfter seconds: TimeInterval = 20) {
+    /// 累計の圧迫イベント数。
+    public var totalPressureCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _totalCount
+    }
+
+    /// 直近の圧迫イベント（最新が先頭）。
+    public func recentEvents() -> [MemoryPressureEvent] {
+        lock.lock(); defer { lock.unlock() }
+        return events.reversed()
+    }
+
+    /// 圧迫時に呼ばれる解放ハンドラを登録する。戻り値のトークンで解除できる。
+    /// ハンドラは**バックグラウンドスレッドから呼ばれ得る**ためスレッドセーフに実装すること。
+    @discardableResult
+    public func register(_ handler: @escaping @Sendable (MemoryPressureLevel) -> Void) -> Int {
+        lock.lock()
+        let token = nextToken
+        nextToken += 1
+        handlers[token] = handler
+        lock.unlock()
+        return token
+    }
+
+    public func unregister(_ token: Int) {
+        lock.lock(); handlers[token] = nil; lock.unlock()
+    }
+
+    /// メモリ圧迫を受けて、圧迫フラグ設定・履歴記録・解放ハンドラ呼び出し・診断ログ追記を行う。
+    /// `autoClearAfter` 秒後に圧迫フラグを自動で下ろす（その間に再発すれば延長）。
+    public func handle(_ level: MemoryPressureLevel, autoClearAfter seconds: TimeInterval = 20) {
+        let footprint = currentMemoryFootprintMB()
         lock.lock()
         _underPressure = true
         generation += 1
         let gen = generation
+        _totalCount += 1
+        events.append(MemoryPressureEvent(date: Date(), level: level, footprintMB: footprint))
+        if events.count > maxEvents { events.removeFirst(events.count - maxEvents) }
+        let snapshot = Array(handlers.values)
         lock.unlock()
+
+        // 詳細ログ：レベル・フットプリント・端末 RAM・解放ハンドラ数。実機で切り分けられるように残す。
+        let fp = footprint.map { String(format: "%.0fMB", $0) } ?? "?"
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1024 / 1024 / 1024
+        DiagnosticsLog.shared.append(
+            "MEMORY PRESSURE: \(level.rawValue.uppercased()) "
+            + "(footprint=\(fp), deviceRAM=\(String(format: "%.1fGB", ramGB)), handlers=\(snapshot.count))")
+
+        // 登録された解放処理（画像キャッシュの縮小/全消去など）を実行してメモリを返す。
+        for h in snapshot { h(level) }
+
         DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak self] in
             guard let self else { return }
             lock.lock()
             if generation == gen { _underPressure = false }   // 後続イベントが無ければ解除
             lock.unlock()
         }
+    }
+
+    /// 後方互換：レベル不明の圧迫として warning 扱いで `handle(_:)` する。
+    func markPressure(autoClearAfter seconds: TimeInterval = 20) {
+        handle(.warning, autoClearAfter: seconds)
     }
 }
 
@@ -132,12 +212,12 @@ public enum Diagnostics {
         // メモリ圧迫（warning/critical）を使用量つきで記録（実機の jetsam 前兆を可視化）。
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global())
         source.setEventHandler {
-            let level = source.data.contains(.critical) ? "CRITICAL" : "warning"
-            let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
-            DiagnosticsLog.shared.append("MEMORY PRESSURE: \(level) (footprint=\(mb))")
-            log.error("memory pressure: \(level, privacy: .public)")
-            // 背景の重い処理（CLIP 埋め込み）を一時停止させる（jetsam 回避）。
-            MemoryPressureMonitor.shared.markPressure()
+            let level: MemoryPressureLevel = source.data.contains(.critical) ? .critical : .warning
+            log.error("memory pressure: \(level.rawValue, privacy: .public)")
+            // 記録・解放ハンドラ呼び出し・診断ログ・履歴は MemoryPressureMonitor に集約する。
+            // 背景の重い処理（CLIP 埋め込み）は isUnderPressure を見て自動停止、
+            // 画像キャッシュは登録ハンドラ経由で warning=縮小 / critical=全消去される（jetsam 回避）。
+            MemoryPressureMonitor.shared.handle(level)
         }
         source.resume()
         memorySource = source

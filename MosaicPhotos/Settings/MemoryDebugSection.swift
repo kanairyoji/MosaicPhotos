@@ -14,11 +14,14 @@ struct MemoryDebugSection: View {
     private var backgroundLevel = BackgroundProcessing.defaultIndex
 
     @State private var localDiskUsage = 0
+    @State private var pressureEvents: [MemoryPressureEvent] = []
+    @State private var pressureCount = 0
 
     var body: some View {
         deviceSection
         cacheSection
         processingSection
+        pressureSection
     }
 
     // MARK: - 端末 & 実行時
@@ -87,6 +90,33 @@ struct MemoryDebugSection: View {
             LabeledContent("Upsert write chunk", value: "\(AutoAlbumTuning.upsertWriteChunk)")
         } header: {
             Text("Memory — Background Processing")
+        }
+    }
+
+    // MARK: - 圧迫イベント履歴
+
+    private var pressureSection: some View {
+        Section {
+            LabeledContent("Pressure events (total)", value: "\(pressureCount)")
+            if pressureEvents.isEmpty {
+                Text("No memory-pressure events recorded.").foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(pressureEvents.prefix(8).enumerated()), id: \.offset) { _, e in
+                    LabeledContent(
+                        e.date.formatted(date: .omitted, time: .standard),
+                        value: e.level.rawValue + " · "
+                            + (e.footprintMB.map { String(format: "%.0f MB", $0) } ?? "—"))
+                }
+            }
+        } header: {
+            Text("Memory — Pressure history")
+        } footer: {
+            Text("On warning the image caches shrink (limit halved); on critical they are fully purged. "
+                 + "Each event is also written to diagnostics.log with device RAM and footprint.")
+        }
+        .task {
+            pressureCount = MemoryPressureMonitor.shared.totalPressureCount
+            pressureEvents = MemoryPressureMonitor.shared.recentEvents()
         }
     }
 

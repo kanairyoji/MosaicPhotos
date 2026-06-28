@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import MosaicSupport
 import UIKit
 
 /// `NSCache` を薄くラップしたインメモリ画像キャッシュ。
@@ -9,6 +10,8 @@ import UIKit
 public final class MemoryImageCache: @unchecked Sendable {
     private let cache = NSCache<NSString, UIImage>()
     private var memoryWarningObserver: NSObjectProtocol?
+    /// `MemoryPressureMonitor` への解放ハンドラ登録トークン。
+    private var pressureToken: Int?
 
     // 圧迫時の段階縮小（E1）用。`configuredCostLimit` は本来の上限（0=無制限）。
     // 圧迫中は totalCostLimit を一時的に絞り、一定時間後に元へ戻す。
@@ -37,11 +40,27 @@ public final class MemoryImageCache: @unchecked Sendable {
         ) { [weak self] _ in
             self?.handleMemoryPressure()
         }
+
+        // DispatchSource 起点の圧迫イベントでも解放する（UIKit 通知が来ないケースを補う）。
+        // warning=上限を半減して LRU で縮小 / critical=即時全消去で素早くメモリを返す。
+        pressureToken = MemoryPressureMonitor.shared.register { [weak self] level in
+            guard let self else { return }
+            switch level {
+            case .warning:
+                self.handleMemoryPressure()
+            case .critical:
+                self.cache.removeAllObjects()   // 即時全消去（最速の解放）
+                self.handleMemoryPressure()      // さらに上限も絞り restore を予約
+            }
+        }
     }
 
     deinit {
         if let memoryWarningObserver {
             NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
+        if let pressureToken {
+            MemoryPressureMonitor.shared.unregister(pressureToken)
         }
         restoreWorkItem?.cancel()
     }

@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-20 メモリ圧迫対応を中枢へ集約（解放ハンドラ登録＋詳細ログ＋履歴）
+- 状態: 採用
+- 文脈: メモリ節約後も実機で起動直後クラッシュ（jetsam）が起きていた。圧迫検知は `DispatchSource` にあったが「フラグ＋ログ」止まりで、画像キャッシュの解放は別系統（UIKit の `didReceiveMemoryWarning`）頼みのため、DispatchSource の critical では解放まで繋がらず、warning でも"上限半減"止まりだった。「圧迫時にログを出し・メモリを解放し・クラッシュを避ける」を一本化したい。
+- 決定: `MosaicSupport.MemoryPressureMonitor` を中枢化する。(1) `register(_:) -> token` で**解放ハンドラ**を登録できるようにし、(2) `handle(level:)` が圧迫フラグ設定・履歴記録・**全ハンドラ呼び出し**・診断ログ追記（レベル／footprint／端末RAM／ハンドラ数）を一括実行。`Diagnostics` の DispatchSource は `handle(.warning/.critical)` を流すだけにする。`MemoryImageCache` は `register` で **warning=上限半減（LRU 縮小）／critical=即時全消去（`removeAllObjects`）** を解放する（ImageCacheKit が MosaicSupport に依存）。背景 CLIP 埋め込みは従来どおり `isUnderPressure` で一時停止。Developer Options（`MemoryDebugSection`）に**累計回数＋直近イベント履歴**（時刻・レベル・footprint）を表示。CLIP モデルのアンロードと footprint 常時監視は今回スコープ外（再ロード遅延・常駐コスト）。
+- 結果: 圧迫イベントが単一経路で「ログ→解放」に直結。critical で素早くメモリを返し jetsam 余地を減らす。履歴で実機の前兆を切り分け可能。トレードオフ＝critical 全消去後はサムネ再デコードが一時的に増える（30秒で上限復帰）。
+- 関連: `MosaicSupport/Diagnostics.swift`（MemoryPressureMonitor）/ `ImageCacheKit/MemoryImageCache.swift` / `MosaicPhotos/Settings/MemoryDebugSection.swift`。E1 段階縮小（[[ADR-15]] 電源ゲート・背景処理停止）と併用。
+
 ## ADR-19 同梱 CLIP モデルを OpenCLIP ViT-B-32/DataComp（MIT）へ差し替え（権利フリー化）
 - 状態: 採用
 - 文脈: MobileCLIP-S2 の重みが Apple ML Research Model License（研究目的限定・商用不可）で AGPL／App Store 配布に使えない（[[ADR-18]] の残課題）。許容ライセンスのモデルへ差し替える。

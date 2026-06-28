@@ -7,9 +7,15 @@ let package = Package(
     products: [
         .library(name: "ImageCacheKit", targets: ["ImageCacheKit"]),
     ],
+    dependencies: [
+        .package(path: "../MosaicSupport"),
+    ],
     targets: [
         .target(
             name: "ImageCacheKit",
+            dependencies: [
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
+            ],
             path: "Sources/ImageCacheKit"
         ),
         .testTarget(
