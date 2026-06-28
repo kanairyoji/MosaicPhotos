@@ -34,10 +34,27 @@ run_fast() {
   done
 }
 
+# CI のシミュレータはコールドブートが遅く（200秒超の回がある）、その間にテストが
+# タイムアウトして "TEST FAILED" になるフレークが起きる。テスト前に対象シミュレータを
+# 明示的に起動して暖機し、ブート時間をテスト実行時間から切り離す。
+boot_sim() {
+  local name id
+  name=$(printf '%s' "$SIM" | sed -nE 's/.*name=([^,]+).*/\1/p')
+  [ -z "$name" ] && return 0
+  id=$(xcrun simctl list devices available 2>/dev/null | grep -F "$name (" | head -1 | grep -oE '[0-9A-Fa-f-]{36}' || true)
+  [ -z "$id" ] && return 0
+  echo "▶ booting simulator: $name ($id)"
+  xcrun simctl boot "$id" 2>/dev/null || true
+  xcrun simctl bootstatus "$id" -b 2>/dev/null || true
+}
+
 run_ios() {
+  boot_sim
   for pkg in "${IOS_PACKAGES[@]}"; do
     echo "▶ xcodebuild test: $pkg ($SIM)"
-    ( cd "Packages/$pkg" && xcodebuild test -scheme "$pkg" -destination "$SIM" -quiet )
+    # -retry-tests-on-failure: 遅いシミュレータでのフレークなタイムアウトを吸収（失敗分のみ再試行）。
+    ( cd "Packages/$pkg" && xcodebuild test -scheme "$pkg" -destination "$SIM" \
+        -retry-tests-on-failure -test-iterations 2 -quiet )
   done
 }
 

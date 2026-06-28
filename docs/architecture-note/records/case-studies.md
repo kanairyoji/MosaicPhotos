@@ -21,6 +21,13 @@
 
 ---
 
+## CI の iOS テストがコールドブートで間欠的に TEST FAILED
+- 症状: GitHub Actions の `scripts/test.sh ios`（DropboxCore/PhotosFeatureKit を iOS Sim で実行）が回によって "TEST FAILED"。ローカルや一部の CI ランは成功。
+- 原因: **シミュレータのコールドブートが遅い回（217〜258秒）だけ失敗**し、速い回（59秒）は成功。テスト本体ではなく、シミュレータ起動の遅延でテスト実行がタイムアウト気味になるフレーク（CI ランナーの負荷/初回ブート依存）。CI 全体は ios が `continue-on-error`（非ブロッキング）なので緑のままだが、ステップが赤く見えていた。
+- 対処: `run_ios` で**テスト前に対象シミュレータを明示起動して暖機**（`simctl boot` ＋ `simctl bootstatus -b`）し、ブート時間をテスト実行から切り離す。さらに `xcodebuild test` に **`-retry-tests-on-failure -test-iterations 2`** を付け、遅延由来のフレークを吸収（失敗分のみ再試行）。
+- 関連: `scripts/test.sh`（boot_sim/run_ios）、`.github/workflows/ci.yml`（ios は非ブロッキング）。
+- 残課題: それでも極端に遅いランは起こり得る（best-effort のまま）。一部 DropboxCacheStore/SyncEngine テストが ~4.5s と重め＝必要なら短縮余地。
+
 ## オンデバイス CLIP モデル選定の認識率ベンチマーク
 - 背景: 同梱 CLIP モデルの選定にあたり、出荷する Core ML モデルそのままで認識率を実測して比較した（`scripts/eval_recognition.sh`／`eval_recognition.py`）。
 - 評価条件: ImageNet-1k 1000クラスのゼロショット分類（各クラス20枚＝200枚・top-1）＋自然文クエリ10件。CoreMLTools で **CPU 実行**（fp16 の不安定要因を排除した決定的比較）。Imagenette(val) を画像ソースに使用。
