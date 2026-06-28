@@ -21,6 +21,13 @@
 
 ---
 
+## 実機クラッシュ: カバー取得で continuation を二重 resume（PHImageManager .opportunistic）
+- 症状: 実機起動直後に `SWIFT TASK CONTINUATION MISUSE: loadLocalCover(_:pixelSize:) tried to resume its continuation more than once` で停止。診断ログには無害な `accounts Code=7` / `Failed to get or decode unavailable reasons` も併発（クラッシュ原因ではない）。
+- 原因: `loadLocalCover`（`HomeRows.swift`）が `PHImageRequestOptions.deliveryMode = .opportunistic` を使用。opportunistic は「劣化版→確定版」と**結果ハンドラを複数回呼ぶ**仕様で、毎回 `continuation.resume(returning:)` していたため二重 resume で fatalError。写真がある実機ほどカバー取得が走り発症しやすい。
+- 対処: deliveryMode を**単一コールバックの `.highQualityFormat`** に変更し、さらに `NSLock` + `didResume` フラグで **resume を一度きりに保証**（将来 opportunistic へ戻しても安全）。ハングも避けるため確定版を待つのではなく最初の確定コールバックで resume。
+- 関連: `MosaicPhotos/Home/HomeRows.swift`。併せて存在しない SF Symbol `cloud.slash`（`No symbol named 'cloud.slash'` 警告）を `icloud.slash` に修正（`DropboxPhotoStore+PhotoStore.swift` / `HomeSections.swift`）。
+- 残課題: 他にも `withCheckedContinuation` で外部コールバックを包む箇所は、複数回呼ばれ得る API（Photos/旧 API）に注意。one-shot ガードを定石にする。
+
 ## 月グループで疎な月が密に表示されない（coalesce しきい値が perf 最適化で固定4に劣化）
 - 症状: 写真の少ない月が多いと、月グループ表示で「ヘッダー＋半端な1行」が並んで疎になる。特定ビュー限定に見えるが、実際は全ソース/アルバムビューが共通の `PhotoGridView`→`PhotoCollectionView` を使うため挙動は全ビュー共通。
 - 原因: 当初（ea80c1ab）は coalesce しきい値＝**実列数**（monthGroup は 15）で、1行に満たない連続月を範囲セクションに束ねていた。だが perf 最適化（29291a25「列変更＝ピンチで再構築しない」）でスナップショットのシグネチャから列数を外した副作用として coalesce を**固定値 4** に変更してしまい、monthGroup（15列）で 4〜14枚の月が束ねられず疎のまま残った。

@@ -276,7 +276,7 @@ extension HomeView {
         switch dropboxStore.auth.connectionStatus {
         case .connected:               return "cloud.fill"
         case .authenticating:          return "arrow.trianglehead.2.clockwise"
-        case .notConnected, .error:    return "cloud.slash"
+        case .notConnected, .error:    return "icloud.slash"
         }
     }
 

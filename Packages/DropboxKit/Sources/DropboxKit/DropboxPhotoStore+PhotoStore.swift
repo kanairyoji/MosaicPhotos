@@ -10,7 +10,7 @@ extension DropboxPhotoStore: PhotoStore {
             return .needsSetup(
                 message: "Not connected to Dropbox.",
                 detail: "Connect via the Settings tab.",
-                systemImage: "cloud.slash"
+                systemImage: "icloud.slash"
             )
         }
         // ⚠️ accountId が nil の場合は state = .idle → onChange ループになる（過去に発生）。
