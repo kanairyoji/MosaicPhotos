@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-15 バックグラウンド処理を電源状態でゲート（電池節約）
+- 状態: 採用
+- 文脈: 継続的なバックグラウンド処理（特に CLIP 背景埋め込み＝ANE/GPU 推論＋クラウドサムネDL、Dropbox 差分同期、定期再生成/場所スキャン、バックアップ）が電池を消費する。電源接続時だけ走らせたい。
+- 決定: 横断モニタ `MosaicSupport.PowerStateMonitor`（`@MainActor @Observable` シングルトン・`MemoryPressureMonitor` と同系列）を新設。`UIDevice.batteryState`＋`ProcessInfo.isLowPowerModeEnabled` と各通知を監視し、設定ポリシー（`BackgroundPowerPolicy`: whileCharging / always / off・キー `PowerStateMonitor.policyKey`・**既定 whileCharging**）と合わせて `backgroundAllowed()` を返す。whileCharging は「電源接続(charging/full) かつ 低電力モード OFF」。ゲート対象（スコープ最大）: CLIP 背景埋め込み（`shouldPause` に `!backgroundAllowed` を追加＝電源復帰で自動再開）/ 自動アルバム定期再生成（`refreshIfNeeded` の guard）/ 場所の定期再スキャン（Home のループで guard）/ Dropbox 差分同期（電源変化で `startSync`/`stopSync`）/ バックアップアップロード（ファイル間で一時停止→電源復帰で再開）。設定 UI は `AutoAlbumSettingsView` の「Background & Battery」3択。
+- 結果: 電池中は重い背景処理が止まり、電源接続で自動再開。初回起動の一回限りの読み込み・生成・キャッシュ表示は妨げない（継続/定期処理のみゲート）。トレードオフ: 既定で全ユーザーが「充電中のみ」に変わる（クラウド一覧は電池中は更新されない）。手動バックアップも電池中はファイル間で一時停止する（ログに明示）。ポリシー変更は埋め込み/ループには即時、Dropbox 同期は次の電源変化/再起動で反映。
+- 関連: `MosaicSupport/PowerStateMonitor.swift` / `AutoAlbumCore`（`AutoAlbumEngine+Recognition`・`AutoAlbumEngine.refreshIfNeeded`）/ `HomeView.swift`（evaluateSync・place ループ）/ `BackupKit/BackupEngine.swift` / `AutoAlbumSettingsView.swift`。
+
 ## ADR-14 Dropbox 通信アクティビティの可視化（スロット LED インジケータ）
 - 状態: 採用
 - 文脈: Dropbox 通信が「今どれだけ並行して動いているか」が見えず、サムネイル先読みの遅延（事例「ポツポツ」）の切り分けが体感頼みだった。各並列スロットの稼働状況を端末上で直接観察したい。

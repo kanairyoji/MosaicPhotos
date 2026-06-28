@@ -74,7 +74,10 @@ extension AutoAlbumEngine {
             await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                           betweenBatchNs: preset.betweenBatchNs,
                                           shouldPause: { [weak self] in
-                                          (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
+                                          // 操作中・メモリ圧迫中・電源条件を満たさないときは譲る（電源復帰で自動再開）。
+                                          (self?.isInteracting ?? false)
+                                              || MemoryPressureMonitor.shared.isUnderPressure
+                                              || !PowerStateMonitor.shared.backgroundAllowed()
                                       }) {
                 [weak self] in await self?.refreshAIAlbums()
             }

@@ -170,6 +170,8 @@ private struct HomeLifecycleTasks: ViewModifier {
                 Diagnostics.mark("places loaded")
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
+                    // 電源ポリシーを満たすときだけ定期再スキャン（逆ジオコーディング）を行う。
+                    guard PowerStateMonitor.shared.backgroundAllowed() else { continue }
                     await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
                 }
             }
@@ -191,19 +193,33 @@ private struct HomeLifecycleTasks: ViewModifier {
             .onChange(of: dropboxStore.auth.connectionStatus) { _, newStatus in
                 switch newStatus {
                 case .connected:
-                    dropboxStore.startSync()
+                    evaluateSync()
                 case .notConnected, .error:
                     dropboxStore.reset()
                 case .authenticating:
                     break
                 }
             }
+            // 電源状態・低電力モードの変化で Dropbox 差分同期を起動/停止する（電源ポリシー連動）。
+            .onChange(of: PowerStateMonitor.shared.isOnPower) { _, _ in evaluateSync() }
+            .onChange(of: PowerStateMonitor.shared.isLowPowerMode) { _, _ in evaluateSync() }
             .onAppear {
                 if case .connected = dropboxStore.auth.connectionStatus {
-                    dropboxStore.startSync()
+                    evaluateSync()
                     let folder = UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder) ?? "/MosaicPhotos"
                     Task { await dropboxStore.loadBackupMetadata(from: folder) }
                 }
             }
+    }
+
+    /// 電源ポリシーに応じて Dropbox 差分同期を起動/停止する。接続中のみ対象。
+    /// 充電中（かつ低電力 OFF）なら同期を開始、そうでなければ停止して通信・電池を抑える。
+    private func evaluateSync() {
+        guard case .connected = dropboxStore.auth.connectionStatus else { return }
+        if PowerStateMonitor.shared.backgroundAllowed() {
+            dropboxStore.startSync()
+        } else {
+            dropboxStore.stopSync()
+        }
     }
 }

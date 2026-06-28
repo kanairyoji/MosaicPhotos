@@ -2,6 +2,7 @@ import Foundation
 import Photos
 import SwiftData
 import DropboxCore
+import MosaicSupport
 
 // MARK: - Log entry
 
@@ -229,6 +230,16 @@ public final class BackupEngine {
 
         for (i, asset) in pending.enumerated() {
             guard !Task.isCancelled else { phase = .cancelled; return }
+
+            // 電源ポリシー：充電中（かつ低電力 OFF）以外は一時停止し、電源復帰で再開する。
+            if !PowerStateMonitor.shared.backgroundAllowed() {
+                addLog("Paused — waiting for power (charging + Low Power off)")
+                while !PowerStateMonitor.shared.backgroundAllowed() && !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(3))
+                }
+                guard !Task.isCancelled else { phase = .cancelled; return }
+                addLog("Resumed (on power)")
+            }
 
             // ファイルデータを取得
             let fetchResult = await BackupAssetReader.read(asset: asset, fallback: "photo_\(i + 1).jpg")

@@ -130,6 +130,8 @@ public final class AutoAlbumEngine {
     public func refreshIfNeeded() async {
         guard isLoaded, !isGenerating else { return }
         guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
+        // 電源ポリシー（既定: 充電中かつ低電力 OFF のみ）を満たさなければ定期再生成を行わない。
+        guard PowerStateMonitor.shared.backgroundAllowed() else { return }
         let cloudChanged = await cloudSignatureChanged()
         guard libraryDirty || cloudChanged else { return }
         libraryDirty = false
