@@ -3,9 +3,6 @@ import MosaicSupport
 import SwiftUI
 import UIKit
 
-/// 月グループで束ねる写真数の固定しきい値（列数非依存。これ未満の連続月を範囲セクションへ束ねる）。
-private let gridCoalesceThreshold = 4
-
 /// UICollectionView を土台にした写真グリッド（SwiftUI ラッパー）。
 ///
 /// SwiftUI の `ScrollView` + `LazyVGrid` は数万件規模で programmatic スクロールが不安定
@@ -185,20 +182,22 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             }
             scrubber.isHidden = items.count <= 60
 
-            // ⚠️ 列数はシグネチャに含めない：列変更（ピンチ）はレイアウト作り直しだけで済み、
-            //   スナップショット（id→index・グルーピング）は内容/グルーピング種別が変わらない限り
-            //   作り直さない（68k で 0.5〜1s の再構築を繰り返さないため）。coalesce も列非依存。
-            let signature = "\(items.count)|\(String(describing: grouping))|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
+            // 月グループは「1行に満たない（＝列数未満の）連続月」を範囲セクションへ束ねて密に表示する。
+            // しきい値は**実際の列数**（固定値ではない）。grouping==.month の列数はズーム段階で固定なので、
+            // dense/year のピンチ（列数変更）では coalesce は 0 のまま＝シグネチャ不変＝スナップショットを
+            // 作り直さない（68k で 0.5〜1s の再構築を繰り返さないための perf 配慮は維持）。
+            let coalesce = grouping == .month ? max(1, columns) : 0
+            let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
             if signature != appliedSignature {
                 appliedSignature = signature
-                applySnapshot(items: items, grouping: grouping)
+                applySnapshot(items: items, grouping: grouping, coalesce: coalesce)
             } else if !didInitialScroll {
                 // 構成は変わらないがレイアウトが整った可能性。末尾スクロールを再試行する。
                 DispatchQueue.main.async { [weak self] in self?.scrollToBottomIfNeeded() }
             }
         }
 
-        private func applySnapshot(items: [Store.Item], grouping: PhotoGridGrouping?) {
+        private func applySnapshot(items: [Store.Item], grouping: PhotoGridGrouping?, coalesce: Int) {
             // 重い構築（id→index・グルーピング・snapshot 構築）は **オフメイン**で行い、メインでは
             // 反映（applySnapshotUsingReloadData）と参照テーブル代入のみ。68k で ~0.9s の UI 固まりを解消する。
             snapshotToken += 1
@@ -212,8 +211,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
                 var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
                 if let grouping {
-                    // 月グループは「写真の少ない連続月」を範囲セクションへ束ねて行を密にする（列数非依存）。
-                    let coalesce = grouping == .month ? gridCoalesceThreshold : 0
+                    // 月グループは「写真の少ない連続月（列数未満）」を範囲セクションへ束ねて行を密にする。
+                    // coalesce は呼び出し側で算出した実列数（月以外は 0＝従来どおり束ねない）。
                     let sections = photoGridSections(items: items, grouping: grouping,
                                                      colCount: 1, coalesceBelow: coalesce)
                     var order: [String] = []
