@@ -75,6 +75,7 @@
 - **Albums** — Your user-created device albums, scanned and cached independently.
 - **Places** — Photos grouped by city using **on-device reverse geocoding**, combining located photos from both the device and Dropbox. Grows automatically as more location data arrives.
 - **Settings & Backup** — Connect Dropbox, tune cache limits, and back up device photos to Dropbox (with people / album / favorite metadata).
+- **Background work, battery & data** — Continuous/periodic background work (AI indexing, automatic albums, scanning, Dropbox sync, backup) is gated by **power** and **network** policies to save battery and cellular data. Defaults: run **only while charging** (Low Power Mode off) and use **Wi-Fi only**; both are configurable (Settings → General → Background & Battery). Photos you open or browse are always fetched — only automatic background traffic is limited. CLIP indexing is smart: on cellular it keeps indexing local photos and defers cloud photos to Wi-Fi. An optional top-of-screen **activity bar** visualizes power/network state and live background/Dropbox activity.
 
 > Viewing modes shared across every source: **dense**, **month**, and **year** grid layouts, pinch-to-resize, full-screen paging, and an EXIF info panel (camera, aperture, ISO, focal length).
 

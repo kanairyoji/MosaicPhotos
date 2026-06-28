@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>バックグラウンドと省電力・通信制御 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-background";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / バックグラウンドと省電力</nav>
+      <h1>バックグラウンドと省電力・通信制御</h1>
+      <p class="lead">CLIP 埋め込み・自動アルバム生成・スキャン・Dropbox 同期・バックアップなどの継続/定期処理を、<strong>電源</strong>と<strong>回線種別</strong>のポリシーでゲートして電池とデータ通信を節約する。状況は最上部の<strong>アクティビティバー</strong>で可視化する。</p>
+
+      <h2>バックグラウンド処理の一覧</h2>
+      <table>
+        <tr><th>処理</th><th>通信</th><th>電池</th><th>ゲート</th></tr>
+        <tr><td>Dropbox 差分同期（longpoll/delta）</td><td>あり</td><td>中</td><td>電源＋回線</td></tr>
+        <tr><td>端末→Dropbox バックアップ（手動起動）</td><td>あり</td><td>高</td><td>電源＋回線（ファイル間で一時停止）</td></tr>
+        <tr><td>CLIP 背景埋め込み（最重）</td><td>クラウド分のみ</td><td>最高</td><td>電源（全体）＋回線（クラウド分のみ）</td></tr>
+        <tr><td>自動アルバム生成・AI 再評価</td><td>なし</td><td>中</td><td>電源</td></tr>
+        <tr><td>場所スキャン（逆ジオコーディング）</td><td>あり</td><td>中</td><td>電源＋回線</td></tr>
+        <tr><td>アルバム走査</td><td>なし</td><td>低</td><td>電源（定期分）</td></tr>
+        <tr><td>サムネ/フル画像の<strong>閲覧時取得</strong></td><td>あり</td><td>—</td><td><strong>対象外</strong>（前景操作）</td></tr>
+      </table>
+      <div class="box note">
+        <span class="box-h">線引き</span>
+        止めるのは<strong>自動・継続のバックグラウンド処理</strong>だけ。ユーザーが今見ている写真の取得（サムネ/フル画像）は前景操作なので常に行う。
+      </div>
+
+      <h2>電源ゲート（PowerStateMonitor）</h2>
+      <p><code>UIDevice.batteryState</code> と <code>ProcessInfo.isLowPowerModeEnabled</code> を監視し、ポリシー <code>BackgroundPowerPolicy</code>（<strong>While charging=既定</strong> / Always / Off）と合わせて <code>backgroundAllowed()</code> を返す。<em>While charging</em> は「電源接続（charging/full）かつ 低電力モード OFF」。</p>
+      <div class="box note">
+        <span class="box-h">シミュレータ注意</span>
+        シミュレータは充電状態を <code>.unknown</code> で返すため、<code>charging/full</code> のみで判定すると背景処理が全部止まる。<strong>「<code>.unplugged</code> と確定したとき以外は電源扱い」</strong>にしてロックを避ける。
+      </div>
+
+      <h2>回線ゲート（NetworkStateMonitor）</h2>
+      <p><code>NWPathMonitor</code> で <code>isOnWiFi</code>（Wi-Fi/有線）・<code>isExpensive</code>（従量）・<code>isConstrained</code>（低データモード）を監視し、ポリシー <code>BackgroundDataPolicy</code>（Cellular allowed / <strong>Wi-Fi only=既定</strong> / Wi-Fi&nbsp;skip&nbsp;Low&nbsp;Data / Off）と合わせて <code>networkAllowed()</code> を返す。通信を伴う背景処理は <strong><code>backgroundAllowed()</code> かつ <code>networkAllowed()</code></strong> で実行する。</p>
+
+      <h3>CLIP 埋め込みのスマート方針</h3>
+      <p>埋め込みは回線NG時に<strong>クラウド写真（サムネDL）をスキップしてローカル写真だけ続行</strong>する（<code>unembeddedRefKeys(limit:localOnly:)</code> で DB 側に "L-" 前缀で絞り込み）。ローカルが尽きたら終了し、Wi-Fi/電源の復帰（<code>onChange</code>）で <code>scheduleBackgroundFill()</code> を再起動してクラウド分を拾い直す。</p>
+      <div class="mermaid">
+graph TD
+  A[背景埋め込みバッチ] --> P{電源OK?}
+  P -->|いいえ| W[待機（電源復帰で再開）]
+  P -->|はい| N{回線OK?}
+  N -->|はい| ALL[未処理を取得<br/>ローカル＋クラウド]
+  N -->|いいえ| LOCAL[ローカルのみ取得]
+  LOCAL --> Q{ローカル残り?}
+  Q -->|あり| ALL
+  Q -->|なし| DEFER[クラウド分を保留<br/>Wi-Fi 復帰で再開]
+      </div>
+
+      <h2>可視化：アクティビティバー</h2>
+      <p>画面最上部の 1 行に、左から<strong>電源チップ</strong>（稼働可=緑⚡／電池待ち=橙／Off=灰）・<strong>回線チップ</strong>（Wi-Fi=緑／保留=橙／Off・圏外=灰）・Dropbox 通信（サムネスロット・同期・DL・アップロード）・背景処理（AI 埋め込み＝残り枚数併記・アルバム生成・場所走査・アルバム走査、稼働中はパルス）を並べる。<strong>形＝チャンネル／色＝状態／数・塗り＝強度</strong>。各処理は <code>BackgroundActivityMonitor</code> / <code>DropboxActivityMonitor</code> / 各モニタへ報告し、バーが <code>@Observable</code> として購読する。設定「Show activity bar」（既定 ON）で表示。</p>
+
+      <h2>設定</h2>
+      <p>アプリ横断の設定なので、機能別ではなく設定ルートの <strong>General → Background &amp; Battery</strong>（<code>BackgroundSettingsView</code>）に「Power」「Background Data」を並べて置く。背景 CLIP の<strong>速度段階</strong>は Albums の Auto Albums 側（処理の重さ）に残す。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/PowerStateMonitor.swift">PowerStateMonitor.swift</a></li>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/NetworkStateMonitor.swift">NetworkStateMonitor.swift</a></li>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/BackgroundActivityMonitor.swift">BackgroundActivityMonitor.swift</a></li>
+          <li><a class="srclink" data-path="Packages/DropboxKit/Sources/DropboxKit/DropboxActivityBar.swift">DropboxActivityBar.swift</a></li>
+          <li><a class="srclink" data-path="MosaicPhotos/Settings/BackgroundSettingsView.swift">BackgroundSettingsView.swift</a></li>
+        </ul>
+      </div>
+      <p>設計判断: <a href="../design-decisions/adr.html">ハイライト</a>（ADR-14 バー / ADR-15 電源 / ADR-16 回線。全件は <code>records/decisions.md</code>）。背景の重さ段階は <a href="on-device-ai.html">オンデバイス AI</a> も参照。</p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

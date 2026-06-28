@@ -28,6 +28,7 @@
       { id: "feat-backup",        href: "features/backup.html",        label: "バックアップ" },
       { id: "feat-places",        href: "features/places.html",        label: "場所アルバム" },
       { id: "feat-caching",       href: "features/caching.html",       label: "キャッシュ戦略" },
+      { id: "feat-background",    href: "features/background.html",    label: "バックグラウンドと省電力" },
       { id: "feat-diagnostics",   href: "features/diagnostics.html",   label: "診断と堅牢性" },
     ]},
     { title: "詳細実装 (Deep Dive)", items: [
