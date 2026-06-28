@@ -76,9 +76,22 @@ graph LR
         <strong>NSCache のコストは実バックストア（デコード後バイト）で計上する。</strong> JPEG バイトで計上すると上限が桁で狂う。ズーム無しビューアはフル解像度をデコードしない（ImageIO ダウンサンプルでピーク削減）。長寿命の大規模配列に「表示に使わない文字列」を載せない。
       </div>
 
+      <h2>続編2: メモリ圧迫対応を中枢へ集約（解放＋ログ＋履歴）</h2>
+      <p>常駐を圧縮しても、低メモリ端末では起動直後に落ちることがあった。圧迫検知（<code>DispatchSource</code>）は「フラグ＋ログ」止まりで、画像キャッシュの解放は別系統の UIKit 通知頼みだったため、<strong>critical イベントが解放に直結していなかった</strong>（warning でも“上限半減”止まり）。これを <code>MemoryPressureMonitor</code> に一本化した。</p>
+      <ul>
+        <li><strong>解放ハンドラ登録</strong>: <code>register(_:)</code> でキャッシュ等が「圧迫時に呼ばれる解放処理」を登録。<code>handle(level:)</code> が圧迫フラグ設定・履歴記録・<strong>全ハンドラ呼び出し</strong>・診断ログ追記（レベル/footprint/端末RAM）を一括実行する。<code>Diagnostics</code> の <code>DispatchSource</code> は <code>handle(.warning/.critical)</code> を流すだけ。</li>
+        <li><strong>段階的解放</strong>: <code>MemoryImageCache</code> がハンドラを登録し、<strong>warning＝上限半減（LRU 縮小）／critical＝即時全消去</strong>で素早くメモリを返す。背景 CLIP 埋め込みは従来どおり <code>isUnderPressure</code> で一時停止。</li>
+        <li><strong>可視化</strong>: 直近の圧迫イベント（時刻・レベル・footprint）と累計回数を Developer Options（<code>MemoryDebugSection</code>）に表示し、実機での前兆を切り分け可能にした。</li>
+      </ul>
+      <div class="box why">
+        <span class="box-h">設計判断（ADR-20）</span>
+        圧迫イベントを<strong>単一経路で「ログ→解放」に直結</strong>させる。critical で全消去するとサムネ再デコードが一時的に増えるが（30秒で上限復帰）、jetsam を避けることを優先した。CLIP モデルのアンロードや footprint 常時監視は再ロード遅延・常駐コストを理由に今回スコープ外。
+      </div>
+
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/Diagnostics.swift">Diagnostics.swift</a> — MemoryPressureMonitor（解放ハンドラ・履歴）</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models/PhotoEmbedding.swift">PhotoEmbedding.swift</a></li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a></li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/ClipMath.swift">ClipMath.swift</a> — encodeHalf/decodeHalf</li>

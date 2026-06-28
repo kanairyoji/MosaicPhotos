@@ -34,6 +34,13 @@
       <h2>レイアウトの要点</h2>
       <p>列数からセル幅を <code>fractionalWidth(1/cols)</code> + <code>contentInsets</code> で決める。<code>repeatingSubitem:count:</code> は意図せず横長になる不具合があったため、<code>subitems:[item]</code> を使う。</p>
 
+      <h2>月グループの密度（最大密度パッキング）</h2>
+      <p>表示は <strong>dense / 月 / 年</strong> の3モード（ズーム段階で切替）。月グループでは、写真の少ない月が「ヘッダー＋半端な1行」を量産して<strong>疎</strong>になりやすい。これを <code>photoGridSections</code>（純関数・テスト対象）の<strong>貪欲パッキング</strong>で詰める：連続する月を「合計が <code>coalesceBelow</code> 枚（＝1行ぶん）に達するまで」蓄積して1セクションに区切り、複数月にまたがるときは範囲ラベル（<code>2024-01 – 2024-03</code>）にする。末尾に残った1行未満の月は直前セクションへ畳み込む。これで各セクションは最低1行ぶん埋まり、孤立した小さい月・半端行の量産を解消する。</p>
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        <code>coalesceBelow</code> は固定値ではなく<strong>実際の列数 × 行数設定</strong>。当初これを実列数にしていたが、スナップショット再構築を抑える性能最適化の副作用で固定値（4）へ劣化し疎に戻った回帰がある。<code>grouping==.month</code> の列数はズーム段階で固定のため、coalesce はスナップショットのシグネチャに含めても dense/year のピンチ（列数変更）では不変＝<strong>再構築しない</strong>（6.7万件で 0.5〜1s の再構築を繰り返さない配慮を維持）。密度（1セクションを閉じるまでの行数 1/3/5）は <code>GridSettingsKeys.monthSectionRows</code> でユーザー設定でき、設定 → General → Photo Grid から変更する。行数を増やすほど見出し（範囲ラベル）が減り粗く・密になる。
+      </div>
+
       <h2>スクロールと背景処理の協調</h2>
       <p>スクロール中（ドラッグ・減速）は Coordinator が <code>onScrubbingChange</code> を発火し、背景の重い処理（CLIP 埋め込み）を一時停止させる。これにより操作中のカクつきを防ぐ。</p>
       <div class="mermaid">
@@ -60,6 +67,7 @@ sequenceDiagram
         <span class="box-h">関連コード</span>
         <ul>
           <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/PhotoCollectionView.swift">PhotoCollectionView.swift</a></li>
+          <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Support/PhotoGridGrouping.swift">PhotoGridGrouping.swift</a>（貪欲パッキング・純関数）</li>
           <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/GridScrubberView.swift">GridScrubberView.swift</a></li>
           <li><a class="srclink" data-path="Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/PhotoSourceContentView.swift">PhotoSourceContentView.swift</a></li>
         </ul>
