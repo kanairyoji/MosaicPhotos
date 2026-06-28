@@ -20,10 +20,7 @@ struct BackgroundSettingsView: View {
             } header: {
                 Text("Background Work")
             } footer: {
-                Text("Applies across the whole app: AI indexing, automatic albums, place scanning, "
-                     + "Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode "
-                     + "is off — saves battery. “Always” ignores power state; “Off” pauses all background work. "
-                     + "Default: While charging.")
+                Text(L("Applies across the whole app: AI indexing, automatic albums, place scanning, Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode is off — saves battery. “Always” ignores power state; “Off” pauses all background work. Default: While charging."))
             }
 
             Section {
@@ -36,10 +33,7 @@ struct BackgroundSettingsView: View {
             } header: {
                 Text("Background Data")
             } footer: {
-                Text("Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, "
-                     + "reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also "
-                     + "pauses when Low Data Mode is on. Photos you open or browse are always fetched — only "
-                     + "automatic background traffic is limited. Default: Wi-Fi only.")
+                Text(L("Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only."))
             }
         }
         .navigationTitle("Background & Battery")

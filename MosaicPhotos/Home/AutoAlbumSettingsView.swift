@@ -40,9 +40,7 @@ struct AutoAlbumSettingsView: View {
             } header: {
                 Text("Background Processing")
             } footer: {
-                Text("How hard the app works in the background to add CLIP embeddings (used for search). "
-                     + "Lower is gentler on battery, network and scrolling but slower to finish; higher is faster but heavier. "
-                     + "Takes effect on the next batch.")
+                Text(L("How hard the app works in the background to add CLIP embeddings (used for search). Lower is gentler on battery, network and scrolling but slower to finish; higher is faster but heavier. Takes effect on the next batch."))
             }
 
             Section("Image Recognition (AI tags)") {

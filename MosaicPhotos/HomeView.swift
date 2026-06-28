@@ -80,7 +80,7 @@ struct HomeView: View {
             sourceHost(dismiss: { destination = nil }) {
                 switch dest {
                 case .source(.all):
-                    PhotoSourceContentView(store: mergedStore, title: "All Photos")
+                    PhotoSourceContentView(store: mergedStore, title: L("All Photos"))
                 case .source(.local):
                     LocalPhotoContentView()
                 case .source(.cloud):

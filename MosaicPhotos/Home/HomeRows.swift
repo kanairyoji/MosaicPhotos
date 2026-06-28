@@ -102,7 +102,7 @@ struct LibraryRow: View {
 
 /// 件数の表示文字列（"1 photo" / "N photos"）。
 func photoCountText(_ count: Int) -> String {
-    "\(count) photo\(count == 1 ? "" : "s")"
+    L("\(count) photos")
 }
 
 /// PHAsset.localIdentifier からカバーサムネイルを取得する（アルバム・場所・カード共通）。
@@ -175,7 +175,7 @@ struct AutoAlbumCard: View {
                 .foregroundStyle(.primary)
                 .lineLimit(2)
             // 日付は初日のみ（複数日でもシンプルに）。0 件は「該当なし」（取り込み済みだが一致なし）。
-            Text(album.photoCount == 0 ? "No matches" : DisplayDate.ymd(album.startDate))
+            Text(album.photoCount == 0 ? L("No matches") : DisplayDate.ymd(album.startDate))
                 .font(.footnote)
                 .foregroundStyle(.primary.opacity(0.7))
                 .lineLimit(1)

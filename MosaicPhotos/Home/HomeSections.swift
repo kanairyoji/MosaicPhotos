@@ -21,8 +21,8 @@ extension HomeView {
             SourceRow(
                 systemImage: "photo.stack",
                 tint: .indigo,
-                title: "All Photos",
-                subtitle: "Device + Dropbox combined"
+                title: L("All Photos"),
+                subtitle: L("Device + Dropbox combined")
             ) {
                 destination = .source(.all)
             }
@@ -30,8 +30,8 @@ extension HomeView {
             SourceRow(
                 systemImage: "iphone",
                 tint: .blue,
-                title: "On-Device Photos",
-                subtitle: "Photos stored on this device"
+                title: L("On-Device Photos"),
+                subtitle: L("Photos stored on this device")
             ) {
                 destination = .source(.local)
             }
@@ -39,7 +39,7 @@ extension HomeView {
             SourceRow(
                 systemImage: cloudIcon,
                 tint: .cyan,
-                title: "Cloud",
+                title: L("Cloud"),
                 subtitle: cloudSubtitle
             ) {
                 destination = .source(.cloud)
@@ -282,10 +282,10 @@ extension HomeView {
 
     var cloudSubtitle: String {
         switch dropboxStore.auth.connectionStatus {
-        case .connected:      return "Dropbox · Connected"
-        case .authenticating: return "Dropbox · Connecting..."
-        case .notConnected:   return "Dropbox · Not connected"
-        case .error:          return "Dropbox · Error"
+        case .connected:      return L("Dropbox · Connected")
+        case .authenticating: return L("Dropbox · Connecting...")
+        case .notConnected:   return L("Dropbox · Not connected")
+        case .error:          return L("Dropbox · Error")
         }
     }
 }
