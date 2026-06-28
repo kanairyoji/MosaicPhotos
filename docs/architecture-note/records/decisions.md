@@ -76,8 +76,10 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
-## ADR-18 ライセンス：本体 AGPL-3.0、第三者資産はアプリ内「Licenses」で表示
-- 状態: 採用
+## ADR-18 ライセンス：第三者資産はアプリ内「Licenses」で表示（本体ライセンスは保留）
+- 状態: 一部撤回（本体 AGPL-3.0 の採用は**撤回・保留**。第三者ライセンス表示画面は採用のまま）
+- 撤回の経緯: 当初は本体を AGPL-3.0 とし `LICENSE` を設置したが、(1) MobileCLIP の**重みが Apple ML Research Model License＝研究目的限定・商用不可で AGPL 非互換**、(2) **App Store 配布は GPL/AGPL と一般に非互換**、という2点から本体ライセンスは再検討とし、`LICENSE` と本体 AGPL の自己エントリを**一旦削除**（後日決定）。第三者ライブラリ/資産の帰属表示（`LicensesView`/`Licenses.swift`）は引き続き有効。
+- 文脈: 公開にあたり本アプリのライセンスを定め、使用ライブラリ/資産の必要な帰属表示を行いたい。
 - 文脈: 公開にあたり本アプリのライセンスを定め、使用ライブラリ/資産の必要な帰属表示を行いたい。
 - 決定: 本体を **AGPL-3.0-or-later** とし、リポジトリ直下に公式全文の `LICENSE`（原文のまま・翻訳しない）を設置。アプリは第三者の Swift ライブラリ依存ゼロ（全ローカルパッケージ）。同梱/使用する第三者資産を **設定 → Licenses**（`LicensesView`＋データ `Licenses.swift`）で一覧表示：本アプリ(AGPL)/同梱(MobileCLIP=Apple・CLIP 語彙/トークナイザ=MIT)/Apple(SDK・SF Symbols)/ビルドツール(coremltools=BSD3・PyTorch=BSD3・open_clip=MIT・ml-mobileclip=Apple・Pillow=HPND・NumPy=BSD3)/ドキュメント(Mermaid=MIT)。MIT/BSD3/HPND は正確なテンプレートで生成、Apple/PyTorch は告知＋upstream リンク。**ライセンス本文は英語原文のまま**、画面の枠・用途説明のみ日本語化。
 - 結果: 帰属を満たしつつアプリ内で確認可能。AGPL によりソース公開義務（GitHub 公開で充足）。第三者ライブラリ追加時は `Licenses.swift` に1項追加する運用。
