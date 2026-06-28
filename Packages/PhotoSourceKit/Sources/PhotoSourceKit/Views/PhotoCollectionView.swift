@@ -22,6 +22,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
     let columnCount: Int
     /// 日付セクション分け。nil = セクションなし（dense）。
     let grouping: PhotoGridGrouping?
+    /// 月グループで1セクションを閉じるまでに貯める行数（密度設定。1＝最大密度）。
+    let monthSectionRows: Int
     /// ピンチ終了時のスケール（>1 拡大／<1 縮小）。
     let onPinch: (CGFloat) -> Void
     /// セルタップ時に開く item.id。
@@ -38,7 +40,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.update(items: items, columns: max(1, columnCount), grouping: grouping)
+        context.coordinator.update(items: items, columns: max(1, columnCount), grouping: grouping,
+                                   monthSectionRows: max(1, monthSectionRows))
     }
 
     // MARK: - Coordinator
@@ -172,7 +175,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
         // MARK: Update / snapshot
 
-        func update(items: [Store.Item], columns: Int, grouping: PhotoGridGrouping?) {
+        func update(items: [Store.Item], columns: Int, grouping: PhotoGridGrouping?, monthSectionRows: Int) {
             let grouped = grouping != nil
             // レイアウト（列数/グルーピング）が変わったら作り直す。
             if columns != currentColumns || grouped != currentGrouped {
@@ -182,11 +185,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             }
             scrubber.isHidden = items.count <= 60
 
-            // 月グループは「1行に満たない（＝列数未満の）連続月」を範囲セクションへ束ねて密に表示する。
-            // しきい値は**実際の列数**（固定値ではない）。grouping==.month の列数はズーム段階で固定なので、
+            // 月グループは連続月を貪欲にまとめて密に表示する。しきい値は **列数 × 行数設定**
+            // ＝「monthSectionRows 行ぶん貯まったら 1 セクションを閉じる」。行数が大きいほど見出し
+            // （範囲ラベル）が減って粗く・密になる。grouping==.month の列数はズーム段階で固定なので、
             // dense/year のピンチ（列数変更）では coalesce は 0 のまま＝シグネチャ不変＝スナップショットを
             // 作り直さない（68k で 0.5〜1s の再構築を繰り返さないための perf 配慮は維持）。
-            let coalesce = grouping == .month ? max(1, columns) : 0
+            let coalesce = grouping == .month ? max(1, columns) * max(1, monthSectionRows) : 0
             let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
             if signature != appliedSignature {
                 appliedSignature = signature

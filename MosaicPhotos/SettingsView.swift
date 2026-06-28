@@ -91,6 +91,11 @@ struct SettingsView: View {
                     row(L("Background & Battery"), systemImage: "bolt.fill")
                 }
                 NavigationLink {
+                    GridDisplaySettingsView()
+                } label: {
+                    row(L("Photo Grid"), systemImage: "square.grid.3x3")
+                }
+                NavigationLink {
                     StorageSettingsView(store: store, placeScanner: placeScanner)
                 } label: {
                     row(L("Storage"), systemImage: "internaldrive")

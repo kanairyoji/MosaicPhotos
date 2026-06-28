@@ -36,6 +36,8 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     let store: Store
     /// ラダーのインデックス。既定はインデックス 2（dense 3 列）。
     @AppStorage(GridSettingsKeys.zoomLevel) private var zoomLevel = 2
+    /// 月グループの密度（1セクションを閉じるまでに貯める行数）。既定 1＝最大密度。
+    @AppStorage(GridSettingsKeys.monthSectionRows) private var monthSectionRows = 1
     @Environment(\.photoInteraction) private var photoInteraction
     /// タップで開く写真（item.id）。`navigationDestination(item:)` で詳細へ push する。
     @State private var selectedID: Store.Item.ID?
@@ -60,6 +62,7 @@ public struct PhotoGridView<Store: PhotoStore>: View {
             items: store.items,
             columnCount: level.cols,
             grouping: grouping,
+            monthSectionRows: max(1, monthSectionRows),
             onPinch: onPinch,
             onSelect: { selectedID = $0 },
             onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る

@@ -1,186 +1,1700 @@
 {
-  "sourceLanguage" : "en",
-  "strings" : {
-    "Licenses" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライセンス" } } } },
-    "This app" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "本アプリ" } } } },
-    "This application" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "本アプリケーション" } } } },
-    "Bundled in the app" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリに同梱" } } } },
-    "Build tools" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ビルドツール" } } } },
-    "Documentation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ドキュメント" } } } },
-    "MosaicPhotos is free software under the GNU AGPL v3." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "MosaicPhotos は GNU AGPL v3 のもとで配布されるフリーソフトウェアです。" } } } },
-    "Third-party assets distributed with the app." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリに同梱される第三者の資産。" } } } },
-    "Provided under Apple's license terms (not open-source dependencies)." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Apple のライセンス条件で提供（オープンソース依存ではありません）。" } } } },
-    "Used only to build/convert the model. Not distributed in the app." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "モデルのビルド/変換にのみ使用。アプリには同梱されません。" } } } },
-    "Used only by the design-note site, not in the app." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "設計資料サイトでのみ使用（アプリには非同梱）。" } } } },
-    "On-device semantic search & display tags (Core ML model)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "オンデバイスの意味検索と表示タグ（Core ML モデル）" } } } },
-    "Text tokenizer vocabulary (bpe_simple_vocab_16e6.txt)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "テキストトークナイザの語彙（bpe_simple_vocab_16e6.txt）" } } } },
-    "BPE tokenizer algorithm, ported to Swift" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "BPE トークナイザのアルゴリズム（Swift へ移植）" } } } },
-    "System frameworks and symbols" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "システムフレームワークとシンボル" } } } },
-    "Core ML model conversion" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Core ML モデルの変換" } } } },
-    "Model export" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "モデルのエクスポート" } } } },
-    "Reference model & tokenizer" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "参照モデルとトークナイザ" } } } },
-    "Model conversion package" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "モデル変換パッケージ" } } } },
-    "Image loading for evaluation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "評価用の画像読み込み" } } } },
-    "Numerical arrays for evaluation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "評価用の数値配列" } } } },
-    "Diagrams in the architecture note" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "設計資料の図" } } } },
-    "AI Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIアルバム" } } } },
-    "Edit AI Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIアルバムを編集" } } } },
-    "Create Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを作成" } } } },
-    "Update Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを更新" } } } },
-    "Please describe which photos to include." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "どの写真を含めるか説明してください。" } } } },
-    "Developer Options" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "開発者オプション" } } } },
-    "Connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続済み" } } } },
-    "Connecting…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続中…" } } } },
-    "Not connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "未接続" } } } },
-    "Error" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エラー" } } } },
-    "On" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "オン" } } } },
-    "Path" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "パス" } } } },
-    "Pattern" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "パターン" } } } },
-    "Template" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "テンプレート" } } } },
-    "Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム" } } } },
-    "capture group — its text fills ${name}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャプチャグループ — その文字が ${name} に入ります" } } } },
-    "one folder level (any chars except “/”)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダー1階層分（「/」以外の任意の文字）" } } } },
-    "start of path  •  folder separator" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "パスの先頭  •  フォルダー区切り" } } } },
-    "exactly 4 digits (e.g. a year)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ちょうど4桁の数字（例：年）" } } } },
-    "an optional part that isn't captured" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "任意の部分（キャプチャしない）" } } } },
-    "Enter a path to test your rules." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルールを試すパスを入力してください。" } } } },
-    "No match — this path would be ignored." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "一致なし — このパスは無視されます。" } } } },
-    "Rule #%lld → “%@”" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルール #%1$lld → 「%2$@」" } } } },
-    "%lld photos" : {
-      "localizations" : {
-        "en" : { "variations" : { "plural" : {
-          "one" : { "stringUnit" : { "state" : "translated", "value" : "%lld photo" } },
-          "other" : { "stringUnit" : { "state" : "translated", "value" : "%lld photos" } }
-        } } },
-        "ja" : { "variations" : { "plural" : {
-          "other" : { "stringUnit" : { "state" : "translated", "value" : "%lld 枚" } }
-        } } }
+  "sourceLanguage": "en",
+  "strings": {
+    "Licenses": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ライセンス"
+          }
+        }
       }
     },
-
-    "All Photos" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべての写真" } } } },
-    "Device + Dropbox combined" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "端末 + Dropbox を統合" } } } },
-    "On-Device Photos" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "端末の写真" } } } },
-    "Photos stored on this device" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末に保存された写真" } } } },
-    "Cloud" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "クラウド" } } } },
-    "Dropbox · Connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox · 接続済み" } } } },
-    "Dropbox · Connecting..." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox · 接続中..." } } } },
-    "Dropbox · Not connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox · 未接続" } } } },
-    "Dropbox · Error" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox · エラー" } } } },
-    "No matches" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "該当なし" } } } },
-    "No photos with location found." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "位置情報付きの写真が見つかりません" } } } },
-    "No trip albums yet." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "旅行アルバムはまだありません" } } } },
-    "No folder albums yet. Add rules in Settings → Albums → Folder Albums, then regenerate." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダーアルバムはまだありません。設定 → アルバム → フォルダーアルバム でルールを追加して再生成してください。" } } } },
-    "Describe an album — e.g. “Okinawa trips in recent years”." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを言葉で指定 — 例：「ここ数年の沖縄旅行」。" } } } },
-    "e.g. Okinawa trips in recent years / favorites with Mom" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "例：ここ数年の沖縄旅行 / 母とのお気に入り" } } } },
-    "Album name (optional)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム名（任意）" } } } },
-    "Refresh" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "更新" } } } },
-    "Album options" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムの操作" } } } },
-    "Edit Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを編集" } } } },
-    "Delete Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを削除" } } } },
-
-    "Sources" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ソース" } } } },
-    "Device Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "端末のアルバム" } } } },
-    "Time & Place" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間と場所" } } } },
-    "Time & Place Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間と場所のアルバム" } } } },
-    "AI Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIアルバム" } } } },
-    "Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム" } } } },
-    "Places" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "場所" } } } },
-    "Loading albums…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを読み込み中…" } } } },
-    "Loading places…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "場所を読み込み中…" } } } },
-    "Now loading…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込み中…" } } } },
-    "Generate Now" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "今すぐ生成" } } } },
-    "Regenerate Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを再生成" } } } },
-    "Generating…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "生成中…" } } } },
-    "Regenerating…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "再生成中…" } } } },
-    "Analyzing…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "解析中…" } } } },
-    "Searching…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索中…" } } } },
-    "Re-analyze All Photos" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべての写真を再解析" } } } },
-
-    "Settings" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定" } } } },
-    "Photo Sources" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真ソース" } } } },
-    "Backup" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックアップ" } } } },
-    "Auto Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動アルバム" } } } },
-    "Folder Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダーアルバム" } } } },
-    "Storage" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ストレージ" } } } },
-    "Background & Battery" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックグラウンドとバッテリー" } } } },
-    "Albums & Search" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムと検索" } } } },
-    "General" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "一般" } } } },
-    "Version" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バージョン" } } } },
-    "Language" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "言語" } } } },
-    "System" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "システム" } } } },
-    "Back" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "戻る" } } } },
-
-    "Use Dropbox for" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox の用途" } } } },
-    "Back up photos to Dropbox" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真を Dropbox にバックアップ" } } } },
-    "Make albums from folder names" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダー名からアルバムを作成" } } } },
-    "Set up backup and folder-name albums here right after connecting." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続後すぐに、ここでバックアップとフォルダー名アルバムを設定できます。" } } } },
-    "Searches your photos on-device by place, date, people and favorites. No network used." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "場所・日付・人物・お気に入りで端末内の写真を検索します。通信は使いません。" } } } },
-    "Photos to include" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "含める写真" } } } },
-    "Title" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "タイトル" } } } },
-
-    "Background Work" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックグラウンド処理" } } } },
-    "Power" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "電源" } } } },
-    "While charging" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "充電中のみ" } } } },
-    "Always" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "常に" } } } },
-    "Off" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "オフ" } } } },
-    "Background Data" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックグラウンド通信" } } } },
-    "Network" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "通信" } } } },
-    "Cellular allowed" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "モバイル通信も許可" } } } },
-    "Wi-Fi only" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Wi-Fi のみ" } } } },
-    "Wi-Fi, skip Low Data" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Wi-Fi（低データモードは除く）" } } } },
-    "Applies across the whole app: AI indexing, automatic albums, place scanning, Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode is off — saves battery. “Always” ignores power state; “Off” pauses all background work. Default: While charging." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリ全体に適用されます：AI 取り込み・自動アルバム・場所スキャン・Dropbox 同期・バックアップ。「充電中のみ」は電源接続中かつ低電力モードがオフのときだけ実行し、電池を節約します。「常に」は電源状態を無視、「オフ」はすべてのバックグラウンド処理を停止します。既定：充電中のみ。" } } } },
-    "Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックグラウンドの通信（Dropbox 同期・バックアップのアップロード・クラウド写真の取り込み・逆ジオコーディング）を制限します。「Wi-Fi のみ」はモバイル通信を避け、「Wi-Fi（低データモードは除く）」は低データモード時も停止します。閲覧・オープン中の写真は常に取得し、自動の背景通信だけを制限します。既定：Wi-Fi のみ。" } } } },
-
-    "Usage" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "使用量" } } } },
-    "Clear All Caches" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべてのキャッシュを消去" } } } },
-    "Clearing…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "消去中…" } } } },
-    "Frees disk space. Cached images are re-fetched on demand, so the app stays fully functional." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ディスク容量を解放します。キャッシュ画像は必要に応じて再取得されるため、アプリは問題なく動作します。" } } } },
-    "Photo thumbnails, Dropbox cache, and place index will all be deleted and rebuilt as you browse." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真のサムネイル・Dropbox キャッシュ・場所インデックスはすべて削除され、閲覧時に再構築されます。" } } } },
-
-    "Grouping" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "グルーピング" } } } },
-    "Grid granularity" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "グリッドの粒度" } } } },
-    "Fine (~1 km)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "細かい（約1 km）" } } } },
-    "Default (~2 km)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "標準（約2 km）" } } } },
-    "Coarse (~5 km)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "粗い（約5 km）" } } } },
-    "Very coarse (~10 km)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "とても粗い（約10 km）" } } } },
-    "Rescan interval" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "再スキャン間隔" } } } },
-    "Granularity changes take effect on the next rescan." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "粒度の変更は次回の再スキャンで反映されます。" } } } },
-
-    "Background Processing" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックグラウンド処理" } } } },
-    "Background speed" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "処理速度" } } } },
-    "Image Recognition (AI tags)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "画像認識（AIタグ）" } } } },
-    "Folder-name Albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダー名アルバム" } } } },
-    "Trip Detection" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "旅行の検出" } } } },
-    "Advanced" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細" } } } },
-    "Include Dropbox photos" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox の写真を含める" } } } },
-    "Auto-generate in background" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックグラウンドで自動生成" } } } },
-    "Away-from-home distance" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自宅から離れたとみなす距離" } } } },
-    "Exclude photos already in an album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "既にアルバムにある写真を除外" } } } },
-    "Changes apply on the next generation." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更は次回の生成で反映されます。" } } } },
-    "Location granularity" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "位置の粒度" } } } },
-    "Enable folder-name albums" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダー名アルバムを有効化" } } } },
-    "Clears all recognition tags (objects, scenes, text, CLIP) and re-analyzes every local photo with the latest model. Metadata (date, place, people) is kept. Runs in the background and may take a while." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "認識タグ（物体・シーン・テキスト・CLIP）をすべて消去し、すべての端末写真を最新モデルで再解析します。メタデータ（日付・場所・人物）は保持されます。バックグラウンドで実行され、時間がかかることがあります。" } } } },
-    "Consecutive days away from home are merged into one trip (a multi-day trip is not split per day). A larger merge gap tolerates more blank days within a trip; a stay at home starts a new trip." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自宅から離れた連続する日は1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。許容ギャップを大きくすると旅行中の空白日をより多く許容し、自宅での滞在は新しい旅行の区切りになります。" } } } },
-    "How hard the app works in the background to add CLIP embeddings (used for search). Lower is gentler on battery, network and scrolling but slower to finish; higher is faster but heavier. Takes effect on the next batch." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索に使う CLIP 埋め込みをバックグラウンドで付与する際の負荷の強さです。低いほど電池・通信・スクロールに優しい代わりに完了は遅く、高いほど速い代わりに重くなります。次のバッチから反映されます。" } } } },
-    "Infer a separate set of albums from Dropbox folder names via regex rules. Shown in the “Albums” section on the home screen." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "正規表現ルールで、Dropbox のフォルダー名から別系統のアルバムを推測します。ホーム画面の「アルバム」セクションに表示されます。" } } } },
-    "Albums appear in the “Albums” section on the home screen. They are built from Dropbox photos only, so connect Dropbox and load Cloud first. Runs in the background — regenerate after changing rules." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムはホーム画面の「アルバム」セクションに表示されます。Dropbox の写真のみから作成されるため、先に Dropbox に接続してクラウドを読み込んでください。バックグラウンドで実行されます。ルール変更後は再生成してください。" } } } },
-
-    "Rules (first match wins)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルール（最初に一致したものを採用）" } } } },
-    "Preview" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "プレビュー" } } } },
-    "No rules yet." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルールがまだありません" } } } },
-    "Add Rule" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルールを追加" } } } },
-    "Insert Examples" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "例を挿入" } } } },
-    "Ignore case" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "大文字小文字を無視" } } } },
-    "Invalid regular expression" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "正規表現が不正です" } } } },
-    "How rules work" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルールの仕組み" } } } },
-    "Worked example" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "具体例" } } } },
-    "Common pieces" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "よく使う要素" } } } },
-    "Name template (e.g. ${name})" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "名前テンプレート（例：${name}）" } } } },
-    "Regex pattern" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "正規表現パターン" } } } },
-    "Paste a sample path…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "サンプルパスを貼り付け…" } } } },
-    "Infer album names from the Dropbox folder each photo lives in, using the rules below. Paths that match no rule are ignored, so junk folders (e.g. Camera Uploads) are skipped. Off by default." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "下のルールを使い、各写真がある Dropbox フォルダーからアルバム名を推測します。どのルールにも一致しないパスは無視されるため、不要なフォルダー（例：Camera Uploads）はスキップされます。既定はオフです。" } } } },
-    "Each rule is a regular expression tested against a photo's full Dropbox path. Capture the album name with a named group (?<name>…); the template builds the title, where ${name} inserts what that group captured. Rules are tried top to bottom and the first match wins — paths matching no rule are ignored. Tap “Insert Examples” to start, then test any path in Preview below." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "各ルールは、写真の Dropbox フルパスに対して評価される正規表現です。名前付きグループ (?<name>…) でアルバム名を取り出し、テンプレートでタイトルを作ります（${name} はそのグループが取り込んだ文字に置き換わります）。ルールは上から順に試され、最初に一致したものを採用します（どれにも一致しないパスは無視）。まず「例を挿入」を押し、下のプレビューで任意のパスを試してください。" } } } }
+    "This app": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本アプリ"
+          }
+        }
+      }
+    },
+    "This application": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本アプリケーション"
+          }
+        }
+      }
+    },
+    "Bundled in the app": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリに同梱"
+          }
+        }
+      }
+    },
+    "Build tools": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ビルドツール"
+          }
+        }
+      }
+    },
+    "Documentation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ドキュメント"
+          }
+        }
+      }
+    },
+    "MosaicPhotos is free software under the GNU AGPL v3.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MosaicPhotos は GNU AGPL v3 のもとで配布されるフリーソフトウェアです。"
+          }
+        }
+      }
+    },
+    "Third-party assets distributed with the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリに同梱される第三者の資産。"
+          }
+        }
+      }
+    },
+    "Provided under Apple's license terms (not open-source dependencies).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple のライセンス条件で提供（オープンソース依存ではありません）。"
+          }
+        }
+      }
+    },
+    "Used only to build/convert the model. Not distributed in the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルのビルド/変換にのみ使用。アプリには同梱されません。"
+          }
+        }
+      }
+    },
+    "Used only by the design-note site, not in the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設計資料サイトでのみ使用（アプリには非同梱）。"
+          }
+        }
+      }
+    },
+    "On-device semantic search & display tags (Core ML model)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オンデバイスの意味検索と表示タグ（Core ML モデル）"
+          }
+        }
+      }
+    },
+    "Text tokenizer vocabulary (bpe_simple_vocab_16e6.txt)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テキストトークナイザの語彙（bpe_simple_vocab_16e6.txt）"
+          }
+        }
+      }
+    },
+    "BPE tokenizer algorithm, ported to Swift": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "BPE トークナイザのアルゴリズム（Swift へ移植）"
+          }
+        }
+      }
+    },
+    "System frameworks and symbols": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システムフレームワークとシンボル"
+          }
+        }
+      }
+    },
+    "Core ML model conversion": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Core ML モデルの変換"
+          }
+        }
+      }
+    },
+    "Model export": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルのエクスポート"
+          }
+        }
+      }
+    },
+    "Reference model & tokenizer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参照モデルとトークナイザ"
+          }
+        }
+      }
+    },
+    "Model conversion package": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル変換パッケージ"
+          }
+        }
+      }
+    },
+    "Image loading for evaluation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "評価用の画像読み込み"
+          }
+        }
+      }
+    },
+    "Numerical arrays for evaluation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "評価用の数値配列"
+          }
+        }
+      }
+    },
+    "Diagrams in the architecture note": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設計資料の図"
+          }
+        }
+      }
+    },
+    "AI Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIアルバム"
+          }
+        }
+      }
+    },
+    "Edit AI Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIアルバムを編集"
+          }
+        }
+      }
+    },
+    "Create Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを作成"
+          }
+        }
+      }
+    },
+    "Update Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを更新"
+          }
+        }
+      }
+    },
+    "Please describe which photos to include.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どの写真を含めるか説明してください。"
+          }
+        }
+      }
+    },
+    "Developer Options": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開発者オプション"
+          }
+        }
+      }
+    },
+    "Connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続済み"
+          }
+        }
+      }
+    },
+    "Connecting…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続中…"
+          }
+        }
+      }
+    },
+    "Not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未接続"
+          }
+        }
+      }
+    },
+    "Error": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エラー"
+          }
+        }
+      }
+    },
+    "On": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オン"
+          }
+        }
+      }
+    },
+    "Path": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パス"
+          }
+        }
+      }
+    },
+    "Pattern": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パターン"
+          }
+        }
+      }
+    },
+    "Template": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テンプレート"
+          }
+        }
+      }
+    },
+    "Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム"
+          }
+        }
+      }
+    },
+    "capture group — its text fills ${name}": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャプチャグループ — その文字が ${name} に入ります"
+          }
+        }
+      }
+    },
+    "one folder level (any chars except “/”)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー1階層分（「/」以外の任意の文字）"
+          }
+        }
+      }
+    },
+    "start of path  •  folder separator": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パスの先頭  •  フォルダー区切り"
+          }
+        }
+      }
+    },
+    "exactly 4 digits (e.g. a year)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ちょうど4桁の数字（例：年）"
+          }
+        }
+      }
+    },
+    "an optional part that isn't captured": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任意の部分（キャプチャしない）"
+          }
+        }
+      }
+    },
+    "Enter a path to test your rules.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールを試すパスを入力してください。"
+          }
+        }
+      }
+    },
+    "No match — this path would be ignored.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一致なし — このパスは無視されます。"
+          }
+        }
+      }
+    },
+    "Rule #%lld → “%@”": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルール #%1$lld → 「%2$@」"
+          }
+        }
+      }
+    },
+    "%lld photos": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld photo"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld photos"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 枚"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "All Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべての写真"
+          }
+        }
+      }
+    },
+    "Device + Dropbox combined": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末 + Dropbox を統合"
+          }
+        }
+      }
+    },
+    "On-Device Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末の写真"
+          }
+        }
+      }
+    },
+    "Photos stored on this device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この端末に保存された写真"
+          }
+        }
+      }
+    },
+    "Cloud": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド"
+          }
+        }
+      }
+    },
+    "Dropbox · Connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · 接続済み"
+          }
+        }
+      }
+    },
+    "Dropbox · Connecting...": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · 接続中..."
+          }
+        }
+      }
+    },
+    "Dropbox · Not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · 未接続"
+          }
+        }
+      }
+    },
+    "Dropbox · Error": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · エラー"
+          }
+        }
+      }
+    },
+    "No matches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該当なし"
+          }
+        }
+      }
+    },
+    "No photos with location found.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置情報付きの写真が見つかりません"
+          }
+        }
+      }
+    },
+    "No trip albums yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旅行アルバムはまだありません"
+          }
+        }
+      }
+    },
+    "No folder albums yet. Add rules in Settings → Albums → Folder Albums, then regenerate.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダーアルバムはまだありません。設定 → アルバム → フォルダーアルバム でルールを追加して再生成してください。"
+          }
+        }
+      }
+    },
+    "Describe an album — e.g. “Okinawa trips in recent years”.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを言葉で指定 — 例：「ここ数年の沖縄旅行」。"
+          }
+        }
+      }
+    },
+    "e.g. Okinawa trips in recent years / favorites with Mom": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例：ここ数年の沖縄旅行 / 母とのお気に入り"
+          }
+        }
+      }
+    },
+    "Album name (optional)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム名（任意）"
+          }
+        }
+      }
+    },
+    "Refresh": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        }
+      }
+    },
+    "Album options": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムの操作"
+          }
+        }
+      }
+    },
+    "Edit Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを編集"
+          }
+        }
+      }
+    },
+    "Delete Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを削除"
+          }
+        }
+      }
+    },
+    "Sources": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ソース"
+          }
+        }
+      }
+    },
+    "Device Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末のアルバム"
+          }
+        }
+      }
+    },
+    "Time & Place": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間と場所"
+          }
+        }
+      }
+    },
+    "Time & Place Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間と場所のアルバム"
+          }
+        }
+      }
+    },
+    "AI Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIアルバム"
+          }
+        }
+      }
+    },
+    "Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム"
+          }
+        }
+      }
+    },
+    "Places": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所"
+          }
+        }
+      }
+    },
+    "Loading albums…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを読み込み中…"
+          }
+        }
+      }
+    },
+    "Loading places…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所を読み込み中…"
+          }
+        }
+      }
+    },
+    "Now loading…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み込み中…"
+          }
+        }
+      }
+    },
+    "Generate Now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ生成"
+          }
+        }
+      }
+    },
+    "Regenerate Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを再生成"
+          }
+        }
+      }
+    },
+    "Generating…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成中…"
+          }
+        }
+      }
+    },
+    "Regenerating…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再生成中…"
+          }
+        }
+      }
+    },
+    "Analyzing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析中…"
+          }
+        }
+      }
+    },
+    "Searching…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索中…"
+          }
+        }
+      }
+    },
+    "Re-analyze All Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべての写真を再解析"
+          }
+        }
+      }
+    },
+    "Settings": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定"
+          }
+        }
+      }
+    },
+    "Photo Sources": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真ソース"
+          }
+        }
+      }
+    },
+    "Backup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップ"
+          }
+        }
+      }
+    },
+    "Auto Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動アルバム"
+          }
+        }
+      }
+    },
+    "Folder Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダーアルバム"
+          }
+        }
+      }
+    },
+    "Storage": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ストレージ"
+          }
+        }
+      }
+    },
+    "Background & Battery": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドとバッテリー"
+          }
+        }
+      }
+    },
+    "Albums & Search": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムと検索"
+          }
+        }
+      }
+    },
+    "General": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一般"
+          }
+        }
+      }
+    },
+    "Version": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョン"
+          }
+        }
+      }
+    },
+    "Language": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "言語"
+          }
+        }
+      }
+    },
+    "System": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム"
+          }
+        }
+      }
+    },
+    "Back": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "戻る"
+          }
+        }
+      }
+    },
+    "Use Dropbox for": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox の用途"
+          }
+        }
+      }
+    },
+    "Back up photos to Dropbox": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を Dropbox にバックアップ"
+          }
+        }
+      }
+    },
+    "Make albums from folder names": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー名からアルバムを作成"
+          }
+        }
+      }
+    },
+    "Set up backup and folder-name albums here right after connecting.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続後すぐに、ここでバックアップとフォルダー名アルバムを設定できます。"
+          }
+        }
+      }
+    },
+    "Searches your photos on-device by place, date, people and favorites. No network used.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所・日付・人物・お気に入りで端末内の写真を検索します。通信は使いません。"
+          }
+        }
+      }
+    },
+    "Photos to include": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "含める写真"
+          }
+        }
+      }
+    },
+    "Title": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タイトル"
+          }
+        }
+      }
+    },
+    "Background Work": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド処理"
+          }
+        }
+      }
+    },
+    "Power": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電源"
+          }
+        }
+      }
+    },
+    "While charging": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充電中のみ"
+          }
+        }
+      }
+    },
+    "Always": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常に"
+          }
+        }
+      }
+    },
+    "Off": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフ"
+          }
+        }
+      }
+    },
+    "Background Data": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド通信"
+          }
+        }
+      }
+    },
+    "Network": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通信"
+          }
+        }
+      }
+    },
+    "Cellular allowed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モバイル通信も許可"
+          }
+        }
+      }
+    },
+    "Wi-Fi only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wi-Fi のみ"
+          }
+        }
+      }
+    },
+    "Wi-Fi, skip Low Data": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wi-Fi（低データモードは除く）"
+          }
+        }
+      }
+    },
+    "Applies across the whole app: AI indexing, automatic albums, place scanning, Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode is off — saves battery. “Always” ignores power state; “Off” pauses all background work. Default: While charging.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリ全体に適用されます：AI 取り込み・自動アルバム・場所スキャン・Dropbox 同期・バックアップ。「充電中のみ」は電源接続中かつ低電力モードがオフのときだけ実行し、電池を節約します。「常に」は電源状態を無視、「オフ」はすべてのバックグラウンド処理を停止します。既定：充電中のみ。"
+          }
+        }
+      }
+    },
+    "Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドの通信（Dropbox 同期・バックアップのアップロード・クラウド写真の取り込み・逆ジオコーディング）を制限します。「Wi-Fi のみ」はモバイル通信を避け、「Wi-Fi（低データモードは除く）」は低データモード時も停止します。閲覧・オープン中の写真は常に取得し、自動の背景通信だけを制限します。既定：Wi-Fi のみ。"
+          }
+        }
+      }
+    },
+    "Usage": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用量"
+          }
+        }
+      }
+    },
+    "Clear All Caches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのキャッシュを消去"
+          }
+        }
+      }
+    },
+    "Clearing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "消去中…"
+          }
+        }
+      }
+    },
+    "Frees disk space. Cached images are re-fetched on demand, so the app stays fully functional.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ディスク容量を解放します。キャッシュ画像は必要に応じて再取得されるため、アプリは問題なく動作します。"
+          }
+        }
+      }
+    },
+    "Photo thumbnails, Dropbox cache, and place index will all be deleted and rebuilt as you browse.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真のサムネイル・Dropbox キャッシュ・場所インデックスはすべて削除され、閲覧時に再構築されます。"
+          }
+        }
+      }
+    },
+    "Grouping": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グルーピング"
+          }
+        }
+      }
+    },
+    "Grid granularity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グリッドの粒度"
+          }
+        }
+      }
+    },
+    "Fine (~1 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "細かい（約1 km）"
+          }
+        }
+      }
+    },
+    "Default (~2 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準（約2 km）"
+          }
+        }
+      }
+    },
+    "Coarse (~5 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粗い（約5 km）"
+          }
+        }
+      }
+    },
+    "Very coarse (~10 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "とても粗い（約10 km）"
+          }
+        }
+      }
+    },
+    "Rescan interval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再スキャン間隔"
+          }
+        }
+      }
+    },
+    "Granularity changes take effect on the next rescan.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粒度の変更は次回の再スキャンで反映されます。"
+          }
+        }
+      }
+    },
+    "Background Processing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド処理"
+          }
+        }
+      }
+    },
+    "Background speed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "処理速度"
+          }
+        }
+      }
+    },
+    "Image Recognition (AI tags)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像認識（AIタグ）"
+          }
+        }
+      }
+    },
+    "Folder-name Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー名アルバム"
+          }
+        }
+      }
+    },
+    "Trip Detection": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旅行の検出"
+          }
+        }
+      }
+    },
+    "Advanced": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "詳細"
+          }
+        }
+      }
+    },
+    "Include Dropbox photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox の写真を含める"
+          }
+        }
+      }
+    },
+    "Auto-generate in background": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドで自動生成"
+          }
+        }
+      }
+    },
+    "Away-from-home distance": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自宅から離れたとみなす距離"
+          }
+        }
+      }
+    },
+    "Exclude photos already in an album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既にアルバムにある写真を除外"
+          }
+        }
+      }
+    },
+    "Changes apply on the next generation.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更は次回の生成で反映されます。"
+          }
+        }
+      }
+    },
+    "Location granularity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置の粒度"
+          }
+        }
+      }
+    },
+    "Enable folder-name albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー名アルバムを有効化"
+          }
+        }
+      }
+    },
+    "Clears all recognition tags (objects, scenes, text, CLIP) and re-analyzes every local photo with the latest model. Metadata (date, place, people) is kept. Runs in the background and may take a while.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "認識タグ（物体・シーン・テキスト・CLIP）をすべて消去し、すべての端末写真を最新モデルで再解析します。メタデータ（日付・場所・人物）は保持されます。バックグラウンドで実行され、時間がかかることがあります。"
+          }
+        }
+      }
+    },
+    "Consecutive days away from home are merged into one trip (a multi-day trip is not split per day). A larger merge gap tolerates more blank days within a trip; a stay at home starts a new trip.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自宅から離れた連続する日は1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。許容ギャップを大きくすると旅行中の空白日をより多く許容し、自宅での滞在は新しい旅行の区切りになります。"
+          }
+        }
+      }
+    },
+    "How hard the app works in the background to add CLIP embeddings (used for search). Lower is gentler on battery, network and scrolling but slower to finish; higher is faster but heavier. Takes effect on the next batch.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索に使う CLIP 埋め込みをバックグラウンドで付与する際の負荷の強さです。低いほど電池・通信・スクロールに優しい代わりに完了は遅く、高いほど速い代わりに重くなります。次のバッチから反映されます。"
+          }
+        }
+      }
+    },
+    "Infer a separate set of albums from Dropbox folder names via regex rules. Shown in the “Albums” section on the home screen.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正規表現ルールで、Dropbox のフォルダー名から別系統のアルバムを推測します。ホーム画面の「アルバム」セクションに表示されます。"
+          }
+        }
+      }
+    },
+    "Albums appear in the “Albums” section on the home screen. They are built from Dropbox photos only, so connect Dropbox and load Cloud first. Runs in the background — regenerate after changing rules.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムはホーム画面の「アルバム」セクションに表示されます。Dropbox の写真のみから作成されるため、先に Dropbox に接続してクラウドを読み込んでください。バックグラウンドで実行されます。ルール変更後は再生成してください。"
+          }
+        }
+      }
+    },
+    "Rules (first match wins)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルール（最初に一致したものを採用）"
+          }
+        }
+      }
+    },
+    "Preview": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プレビュー"
+          }
+        }
+      }
+    },
+    "No rules yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールがまだありません"
+          }
+        }
+      }
+    },
+    "Add Rule": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールを追加"
+          }
+        }
+      }
+    },
+    "Insert Examples": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例を挿入"
+          }
+        }
+      }
+    },
+    "Ignore case": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "大文字小文字を無視"
+          }
+        }
+      }
+    },
+    "Invalid regular expression": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正規表現が不正です"
+          }
+        }
+      }
+    },
+    "How rules work": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールの仕組み"
+          }
+        }
+      }
+    },
+    "Worked example": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "具体例"
+          }
+        }
+      }
+    },
+    "Common pieces": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "よく使う要素"
+          }
+        }
+      }
+    },
+    "Name template (e.g. ${name})": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前テンプレート（例：${name}）"
+          }
+        }
+      }
+    },
+    "Regex pattern": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正規表現パターン"
+          }
+        }
+      }
+    },
+    "Paste a sample path…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サンプルパスを貼り付け…"
+          }
+        }
+      }
+    },
+    "Infer album names from the Dropbox folder each photo lives in, using the rules below. Paths that match no rule are ignored, so junk folders (e.g. Camera Uploads) are skipped. Off by default.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下のルールを使い、各写真がある Dropbox フォルダーからアルバム名を推測します。どのルールにも一致しないパスは無視されるため、不要なフォルダー（例：Camera Uploads）はスキップされます。既定はオフです。"
+          }
+        }
+      }
+    },
+    "Each rule is a regular expression tested against a photo's full Dropbox path. Capture the album name with a named group (?<name>…); the template builds the title, where ${name} inserts what that group captured. Rules are tried top to bottom and the first match wins — paths matching no rule are ignored. Tap “Insert Examples” to start, then test any path in Preview below.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "各ルールは、写真の Dropbox フルパスに対して評価される正規表現です。名前付きグループ (?<name>…) でアルバム名を取り出し、テンプレートでタイトルを作ります（${name} はそのグループが取り込んだ文字に置き換わります）。ルールは上から順に試され、最初に一致したものを採用します（どれにも一致しないパスは無視）。まず「例を挿入」を押し、下のプレビューで任意のパスを試してください。"
+          }
+        }
+      }
+    },
+    "Photo Grid": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真グリッド"
+          }
+        }
+      }
+    },
+    "Month grouping density": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月グループの密度"
+          }
+        }
+      }
+    },
+    "Fine (1 row)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "細かい（1行）"
+          }
+        }
+      }
+    },
+    "Medium (3 rows)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ふつう（3行）"
+          }
+        }
+      }
+    },
+    "Coarse (5 rows)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粗い（5行）"
+          }
+        }
+      }
+    },
+    "In month view, photos are packed densely and a date header appears each time this many rows fill up. Larger values show fewer headers and wider date ranges.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月表示では写真を密に詰め、この行数ぶん埋まるたびに日付の見出しを表示します。値を大きくすると見出しが減り、日付の範囲が広くなります。"
+          }
+        }
+      }
+    }
   },
-  "version" : "1.0"
+  "version": "1.0"
 }

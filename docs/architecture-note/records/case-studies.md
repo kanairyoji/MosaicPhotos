@@ -27,7 +27,8 @@
 - 対処: coalesce しきい値を実列数へ戻す（`grouping==.month ? max(1, columns) : 0`）。grouping==.month の列数はズーム段階で固定（dense/year では coalesce=0 で不変）なので、シグネチャに `c<coalesce>` を加えてもピンチ（dense/year の列変更）では再構築が起きず、perf 配慮（68k で再構築を繰り返さない）は維持。`applySnapshot(coalesce:)` で受け渡し。表示は全ビュー共通＝1か所の修正で全体に適用される。
 - 関連: `PhotoSourceKit/Views/PhotoCollectionView.swift`（signature/applySnapshot）、`Support/PhotoGridGrouping.swift`（coalesceBelow）。
 - 追補（最大密度パッキングへ強化）: しきい値を実列数に戻しても、(a) 大きい月に挟まれた**孤立した小さい月**、(b) 各セクション末尾の**半端な行**、が残り疎に見えた。`photoGridSections` の束ね処理を「連続月を 1 行ぶん（列数）に達するまで貪欲に蓄積して区切り、末尾の 1 行未満の余りは直前セクションへ畳み込む」**最大密度パッキング**に変更（ラベルは複数月で範囲 "YYYY-MM – YYYY-MM"）。これで各セクションは最低 1 行ぶん埋まり、孤立小月・半端行の量産を解消。ユーザー選択＝「最大密度（範囲ラベル・見出し最少）」。テスト追加（末尾畳み込み／孤立小月のパッキング）。
-- 残課題: 月見出しの粒度（どれだけ単独ヘッダーを残すか）は現状「1 行ぶん埋まれば単独、未満は隣へ吸収」固定。好みに応じて密度プリセットの設定化余地。
+- 設定化: 密度（1セクションを閉じるまでに貯める**行数**）をユーザー設定にした。`GridSettingsKeys.monthSectionRows`（既定1）→ `PhotoGridView`→`PhotoCollectionView` で `coalesce = 列数 × 行数`。UI は General → 「Photo Grid」（細1行/ふつう3行/粗5行）。行数が大きいほど見出し（範囲ラベル）が減り粗く・密になる（写真の詰め自体は1行設定で既に最密で、Nはヘッダー頻度＝末尾半端行/見出し行の削減）。
+- 残課題: プリセットは 1/3/5 の3段階。必要なら連続スライダー化や per-source 設定の余地。
 
 ## CI の iOS テストがコールドブートで間欠的に TEST FAILED
 - 症状: GitHub Actions の `scripts/test.sh ios`（DropboxCore/PhotosFeatureKit を iOS Sim で実行）が回によって "TEST FAILED"。ローカルや一部の CI ランは成功。
