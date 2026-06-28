@@ -99,7 +99,7 @@ public final class AutoAlbumEngine {
 
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
-    private static let perceptionVersion = 6
+    private static let perceptionVersion = 7   // v7: 同梱モデルを OpenCLIP ViT-B-32/DataComp(MIT) へ差替→全再埋め込み
 
     public func loadOrGenerate() async {
         ensureObserver()

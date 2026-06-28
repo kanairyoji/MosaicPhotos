@@ -76,6 +76,17 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-19 同梱 CLIP モデルを OpenCLIP ViT-B-32/DataComp（MIT）へ差し替え（権利フリー化）
+- 状態: 採用
+- 文脈: MobileCLIP-S2 の重みが Apple ML Research Model License（研究目的限定・商用不可）で AGPL／App Store 配布に使えない（[[ADR-18]] の残課題）。許容ライセンスのモデルへ差し替える。
+- 決定: **OpenCLIP `ViT-B-32` / `datacomp_xl_s13b_b90k`（重み・コードとも MIT）** を採用。汎用変換 `scripts/convert_clip.py`（open_clip→Core ML、**CLIP mean/std をモデル内に内包**して ImageType は scale=1/255 のまま＝アプリ無改修、画像 fp16／テキスト fp32）で変換し、`build_mobileclip.sh` を更新。同梱ファイル名（`MobileCLIP*` / `MobileCLIPKit` / `mobileclip_config.json`）は互換のため**据え置き**（中身は OpenCLIP）。Swift は `MLImageConstraint` による自動リサイズ＋正規化内包のため**無改修**（imageSize 256→224 は config 経由）。CLIP BPE 語彙・`CLIPTokenizer` は同一で流用。`perceptionVersion` を 7 に採番し**全写真を再埋め込み**。
+- 検証（認識率ハーネス・ImageNet-1k ゼロショット top-1・200枚・CPU／クエリ 10件）:
+  - MobileCLIP-S2（研究限定）= **81.0%**、ViT-B-16/datacomp = 75.0%、**ViT-B-32/datacomp = 75.0%（採用）**、ViT-B-32/openai = 64.5%。クエリは全候補 10/10。
+  - TinyCLIP は open_clip 非対応（独自アーキ・config 無し）でこのツールチェーンではロード不可のため候補から除外。
+  - 採用は**軽量（patch32・画像 enc ~60MB）かつ 75%** の ViT-B-32/datacomp（オンデバイス速度/省電力との両立）。MobileCLIP 比で約 -6pt だがクエリ性能は同等。
+- 結果: **MIT 化で AGPL＋App Store（デュアル）の最後の障害が解消**。NOTICE/README/アプリ内 Licenses を OpenCLIP へ更新し研究限定の警告を撤去。モデル本体は `.gitignore` 対象でローカル生成（`build_mobileclip.sh`）。
+- 関連: `scripts/convert_clip.py` / `scripts/build_mobileclip.sh` / `scripts/eval_recognition.*` / `AutoAlbumEngine`(perceptionVersion) / `Licenses.swift`・`LicensesView.swift` / `NOTICE` / `README`。
+
 ## ADR-18 ライセンス：ソース AGPL-3.0＋デュアル配布（App Store は著作権者が Apple 条件で）／第三者はアプリ内表示
 - 状態: 採用（経緯: 当初 AGPL 採用 → 一旦撤回 → **デュアル方式で再採用**）
 - 文脈: 配布形態は「**アプリ＝App Store／ソース＝GitHub**」。本体ライセンスを定めつつ、GPL/AGPL × App Store の非互換を回避したい。

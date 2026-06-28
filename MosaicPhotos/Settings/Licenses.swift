@@ -106,24 +106,19 @@ func bsd3LicenseText(_ copyright: String) -> String {
 
 // MARK: - 非テンプレ（Apple/PyTorch/Pillow）— 正確な全文は upstream を案内
 
-let appleMobileCLIPNotice = """
-MobileCLIP — © Apple Inc.
+let bundledClipModelNotice = """
+OpenCLIP — ViT-B-32 (DataComp)
 
-This app can bundle a Core ML model converted from Apple's MobileCLIP-S2. In the
-apple/ml-mobileclip repository the licenses are split:
-
-  • Code: MIT License (LICENSE)
-  • Pretrained model weights: Apple Machine Learning Research Model License
-    (LICENSE_MODELS) — permitted for Research Purposes only. Commercial
-    exploitation, product development, and use in any commercial product or
-    service are NOT permitted. Redistribution requires providing a copy of that
-    agreement to the recipient.
-  • Training data: CC-BY-NC-ND 4.0 (LICENSE_DATA; not distributed with this app).
+This app bundles a Core ML model converted from an OpenCLIP ViT-B-32 checkpoint
+trained on DataComp (pretrained tag: datacomp_xl_s13b_b90k). open_clip and these
+weights are released under the MIT License (commercial use and redistribution are
+permitted). The CLIP BPE tokenizer vocabulary is from OpenAI CLIP (also MIT).
 
 The model is generated locally (scripts/build_mobileclip.sh) and is not included in
-the source repository. See the repository for the full, authoritative license texts.
+the source repository. (The bundled file names keep the historical "MobileCLIP*"
+prefix for compatibility; the contents are OpenCLIP.)
 
-https://github.com/apple/ml-mobileclip
+open_clip: https://github.com/mlfoundations/open_clip   (MIT)
 """
 
 let pillowLicenseText = """

@@ -68,7 +68,7 @@
 
 - **All Photos** — Your device and Dropbox photos merged into one chronological timeline.
 - **Time & Place** — Trips are detected automatically from capture time and location (multi-day, multi-city trips become a single album), with smart titles and covers.
-- **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”, or “Kyoto or Nara family favorites, no screenshots”). The query is normalized to English **on-device** (Apple Foundation Models, with a fallback) and matched with **open-vocabulary CLIP image understanding** (MobileCLIP via Core ML) — no fixed keyword list — combined with **composable structured conditions** (date / place / people / source / favorite / screenshot / orientation) that support **OR and NOT** (a DNF `QuerySpec`). Relative dates (“last 2 years”) are understood too. Works across **both device and Dropbox** photos.
+- **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”, or “Kyoto or Nara family favorites, no screenshots”). The query is normalized to English **on-device** (Apple Foundation Models, with a fallback) and matched with **open-vocabulary CLIP image understanding** (OpenCLIP ViT-B-32 via Core ML) — no fixed keyword list — combined with **composable structured conditions** (date / place / people / source / favorite / screenshot / orientation) that support **OR and NOT** (a DNF `QuerySpec`). Relative dates (“last 2 years”) are understood too. Works across **both device and Dropbox** photos.
 - **On-device image understanding** — Every photo (device and Dropbox) gets a CLIP image embedding in the background for semantic search; the full-screen info panel shows **detected keyword tags** (display-only zero-shot labels). No OCR, no third-party vision API. Background indexing has selectable **speed levels** (gentle → fast) to balance battery, network, and scrolling.
 - **Photos** — Browse your on-device library via PhotosKit, with fast thumbnail caching and a pinch-to-resize grid.
 - **Cloud** — Browse Dropbox photos. Background delta sync keeps the list fresh; thumbnails and originals are cached locally.
@@ -107,7 +107,7 @@ MosaicPhotos (app)
 
 All AI lives in **`AutoAlbumCore`** (SwiftUI-free); the app injects the on-device implementations.
 
-- **Embeddings** — Each photo (device *and* Dropbox) is encoded once with **MobileCLIP-S2** (Core ML, 512-dim) into a normalized image vector. Vectors live in a **separate SwiftData table (`PhotoEmbedding`) stored as Float16**, so metadata fetches never load the blobs (this fixed a photo-count-proportional launch crash). A `PhotoTagger` fills these in the background in small throttled batches (`.background` QoS; speed is user-selectable). Cloud photos are embedded from their cached thumbnails.
+- **Embeddings** — Each photo (device *and* Dropbox) is encoded once with **OpenCLIP ViT-B-32 (DataComp, MIT)** (Core ML, 512-dim) into a normalized image vector. Vectors live in a **separate SwiftData table (`PhotoEmbedding`) stored as Float16**, so metadata fetches never load the blobs (this fixed a photo-count-proportional launch crash). A `PhotoTagger` fills these in the background in small throttled batches (`.background` QoS; speed is user-selectable). Cloud photos are embedded from their cached thumbnails.
 - **Search** — A query (any language) is normalized to English by **Apple Foundation Models** (`QueryTranslator`), embedded with the CLIP *text* encoder, and ranked by cosine similarity against the stored image vectors (`SemanticRanker`). This is **open-vocabulary** — no fixed keyword list. In parallel, the query is parsed into structured filters (date / place / people) and a lexical match (place / person names); the three signals are merged with **Reciprocal Rank Fusion** (`AIAlbumSearcher`).
 - **Display tags** — The full-screen info panel shows keyword tags via a separate **display-only** zero-shot step (`CLIPDisplayLabeler`): the stored image vector is compared against ~300 everyday English concepts. This never constrains search, which stays vocabulary-free.
 - **Seams** — `PhotoPerceptionProvider` (image → CLIP), `TextEmbedder` (text → CLIP), `QueryTranslator`, and `LabelProvider` are protocols in `AutoAlbumCore`; **`MobileCLIPKit`** implements them with `MobileCLIPRuntime` and `FoundationModels`, and the app's composition root wires them in. `PhotoSourceKit` stays unaware of AI and receives per-photo info through a `photoInsight` environment closure.
@@ -131,7 +131,7 @@ An in-depth internal **architecture note** — design rationale (ADR), deep-dive
 | Token storage | Keychain Services |
 | Dropbox API | `URLSession` async/await (no SDK) |
 | Caching | SwiftData (metadata) + custom binary cache with LRU eviction |
-| On-device AI | MobileCLIP image/text embeddings (Core ML) for open-vocabulary search · Apple Foundation Models for query understanding & translation |
+| On-device AI | OpenCLIP (ViT-B-32, DataComp/MIT) image/text embeddings (Core ML) for open-vocabulary search · Apple Foundation Models for query understanding & translation |
 | Minimum OS | iOS 26 |
 | Packaging | Swift Package Manager (11 local packages) |
 
@@ -159,10 +159,10 @@ scripts/test.sh app    # app-target unit tests
 
 ### On-device AI model (optional)
 
-Semantic search and the detected keyword tags use **MobileCLIP** (Core ML). The model is **not committed** (size) and is generated locally:
+Semantic search and the detected keyword tags use an **OpenCLIP** model (Core ML). The model is **not committed** (size) and is generated locally:
 
 ```bash
-bash scripts/build_mobileclip.sh   # converts MobileCLIP-S2 → MosaicPhotos/MobileCLIP/ (~250 MB)
+bash scripts/build_mobileclip.sh   # converts OpenCLIP ViT-B-32 (DataComp, MIT) → MosaicPhotos/MobileCLIP/
 ```
 
 Without the model the app still runs fully; only CLIP-based semantic search and keyword tags are disabled (structured filters by date/place/people keep working).
@@ -173,6 +173,4 @@ Source code is licensed under the **GNU Affero General Public License v3.0 or la
 
 **Dual distribution:** in addition to the AGPL, the copyright holder (Ryoji KANAI) also distributes the compiled app via the Apple App Store under Apple's standard terms (see [NOTICE](NOTICE)). Contributions are accepted under the DCO with a relicensing grant — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Third-party assets are listed in-app under **Settings → Licenses** (and in `MosaicPhotos/Settings/Licenses.swift`): MobileCLIP (Apple — code MIT, **weights research-only**), the CLIP BPE vocabulary / tokenizer (MIT), build tools (coremltools, PyTorch, open_clip, Pillow, NumPy), and Mermaid (docs). Apple SDKs and SF Symbols are used under Apple's terms.
-
-> ⚠️ The MobileCLIP **weights** are research-only and not App-Store/commercial-redistributable; a permissively-licensed model is needed before shipping a bundled build (planned separately).
+Third-party assets are listed in-app under **Settings → Licenses** (and in `MosaicPhotos/Settings/Licenses.swift`): the bundled CLIP model is **OpenCLIP ViT-B-32 (DataComp, MIT)**, the CLIP BPE vocabulary / tokenizer (MIT), build tools (coremltools, PyTorch, open_clip, Pillow, NumPy), and Mermaid (docs). Apple SDKs and SF Symbols are used under Apple's terms.

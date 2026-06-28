@@ -51,11 +51,11 @@ struct LicensesView: View {
                 footer: L("Third-party assets distributed with the app."),
                 items: [
                     LicenseItem(
-                        name: "MobileCLIP-S2",
+                        name: "OpenCLIP ViT-B-32 (DataComp)",
                         role: L("On-device semantic search & display tags (Core ML model)"),
-                        license: "Code: MIT · Weights: Apple ML Research Model License (research only)",
-                        url: "https://github.com/apple/ml-mobileclip",
-                        text: appleMobileCLIPNotice),
+                        license: "MIT",
+                        url: "https://github.com/mlfoundations/open_clip",
+                        text: bundledClipModelNotice),
                     LicenseItem(
                         name: "OpenAI CLIP — BPE vocabulary",
                         role: L("Text tokenizer vocabulary (bpe_simple_vocab_16e6.txt)"),
@@ -104,12 +104,6 @@ struct LicensesView: View {
                         license: "MIT",
                         url: "https://github.com/mlfoundations/open_clip",
                         text: mitLicenseText("Copyright (c) 2021 OpenCLIP authors (mlfoundations/open_clip)")),
-                    LicenseItem(
-                        name: "apple/ml-mobileclip (Python)",
-                        role: L("Model conversion package"),
-                        license: "Apple ML license",
-                        url: "https://github.com/apple/ml-mobileclip",
-                        text: appleMobileCLIPNotice),
                     LicenseItem(
                         name: "Pillow (PIL)",
                         role: L("Image loading for evaluation"),
