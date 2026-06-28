@@ -61,7 +61,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
         HStack {
             if let dismissToHome {
                 Button(action: dismissToHome) {
-                    Label("Home", systemImage: "house")
+                    Label(L("Home"), systemImage: "house")
                 }
                 .padding(.leading, 20)
             }
@@ -69,7 +69,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             if let showSettings {
                 Button(action: showSettings) {
                     Image(systemName: "gearshape")
-                        .accessibilityLabel("Settings")
+                        .accessibilityLabel(L("Settings"))
                 }
                 .padding(.trailing, 20)
             }
@@ -102,7 +102,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 60))
                 .foregroundStyle(.secondary)
-            Text("No photos yet.")
+            Text(L("No photos yet."))
         }
         .padding()
     }
@@ -112,13 +112,13 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 60))
                 .foregroundStyle(.secondary)
-            Text("Failed to load.")
+            Text(L("Failed to load."))
             Text(message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            Button("Retry") {
+            Button(L("Retry")) {
                 Task { await store.retry() }
             }
         }

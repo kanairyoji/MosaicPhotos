@@ -83,7 +83,7 @@ struct FullPhotoView<Store: PhotoStore>: View {
                 Image(systemName: "arrow.clockwise.circle")
                     .font(.system(size: 40))
                     .foregroundStyle(.secondary)
-                Text("Couldn’t load. Tap to retry.")
+                Text(L("Couldn’t load. Tap to retry."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -93,7 +93,7 @@ struct FullPhotoView<Store: PhotoStore>: View {
         } else {
             VStack(spacing: 12) {
                 ProgressView().tint(.white)
-                Text("Loading…")
+                Text(L("Loading…"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-17 UI 国際化を String Catalog で（base=英語・per-package・日本語追加）
+- 状態: 採用（Phase 1：`PhotoSourceKit` ＋ アプリ本体）
+- 文脈: UI 文字列は元々すべて英語ハードコード（base 言語が揃っている）。国際化したいが UI が多数のパッケージに分割されている。
+- 決定: **String Catalog（`.xcstrings`）** を採用、base=英語。**案A（per-package）**：各 UI パッケージに `Localizable.xcstrings` を置き `Package.swift` に `defaultLocalization: "en"` ＋ `resources: [.process("Localizable.xcstrings")]`（**SwiftPM CLI は `.xcstrings` を自動認識しないため明示宣言が必須**＝これが無いと `Bundle.module` 生成されず `swift test` が落ちる）。パッケージ内は `Text("x")` が既定で `Bundle.main` を見る問題を避けるため、`String(localized:bundle:.module)` を包む小ヘルパー **`L(_:)`** で全 API（Text/Label/Button/Section/navigationTitle 等は String を verbatim 表示）を一様にローカライズ。アプリ本体は `Text("x")` リテラルが既定で `Bundle.main` を見るのでコード改変不要、`MosaicPhotos/Localizable.xcstrings` を置き、`project.pbxproj` の `knownRegions` に `ja` 追加。**Developer Options/Debug は対象外（英語のまま）**。翻訳は機械翻訳。キー不一致は英語にフォールバック（安全）。
+- 結果: 端末ビルドで `ja.lproj`（アプリ本体＋`PhotoSourceKit_PhotoSourceKit.bundle` 双方）が生成され日本語化を確認。`swift test`（macOS）も通過。残：他 UI パッケージ（LocalPhotoKit/DropboxKit/PhotosFeatureKit/BackupKit）と動的 String（`PhotoLoadState` メッセージ等＝`Text(変数)` は verbatim で未翻訳）の対応は後続バッチ。日付/数値/地名はロケール対応（概ね自動）。
+- 関連: `PhotoSourceKit`（`Localization.swift`＝`L()`・`Localizable.xcstrings`・`Package.swift`）/ `MosaicPhotos/Localizable.xcstrings` / `project.pbxproj`（knownRegions）。
+
 ## ADR-16 バックグラウンドの「通信」を回線種別でゲート（Wi-Fi 優先・段階設定）
 - 状態: 採用
 - 文脈: 電源ゲート（[[ADR-15]]）に加え、背景処理のうち**通信を伴うもの**（Dropbox 同期・バックアップ upload・クラウド写真の CLIP 埋め込み＝サムネDL・逆ジオコーディング）をデータ通信量の観点で制御したい。Wi-Fi のときだけにしたい＋何段階か選びたい。ユーザーが**閲覧中に行う取得**（サムネ/フル画像）は前景操作なので止めない。

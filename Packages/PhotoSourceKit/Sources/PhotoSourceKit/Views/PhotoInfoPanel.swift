@@ -28,11 +28,11 @@ struct PhotoInfoPanel: View {
             insightSection
 
             VStack(alignment: .leading, spacing: 8) {
-                detail("File", exif?.fileName)
-                detail("Camera", cameraText)
-                detail("Lens", exif?.lensModel)
-                detail("Exposure", exposureText)
-                detail("Dimensions", dimensionsText)
+                detail(L("File"), exif?.fileName)
+                detail(L("Camera"), cameraText)
+                detail(L("Lens"), exif?.lensModel)
+                detail(L("Exposure"), exposureText)
+                detail(L("Dimensions"), dimensionsText)
             }
 
             if let coordinate {
@@ -63,11 +63,11 @@ struct PhotoInfoPanel: View {
                 if !insight.people.isEmpty {
                     header(systemImage: "person.2",
                            title: insight.people.joined(separator: ", "),
-                           subtitle: "People")
+                           subtitle: L("People"))
                 }
                 if !insight.tags.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
-                        Label("Detected", systemImage: "tag")
+                        Label(L("Detected"), systemImage: "tag")
                             .font(.caption).foregroundStyle(.secondary)
                         Text(insight.tags.joined(separator: " · "))
                             .font(.subheadline)
@@ -82,16 +82,16 @@ struct PhotoInfoPanel: View {
     private func statusRow(_ status: PhotoInsight.Status, hasSignals: Bool) -> some View {
         switch status {
         case .notIndexed:
-            Label("AI analysis: not indexed yet", systemImage: "hourglass")
+            Label(L("AI analysis: not indexed yet"), systemImage: "hourglass")
                 .font(.caption).foregroundStyle(.secondary)
         case .analyzing:
-            Label("AI analysis: in progress…", systemImage: "hourglass.circle")
+            Label(L("AI analysis: in progress…"), systemImage: "hourglass.circle")
                 .font(.caption).foregroundStyle(.secondary)
         case .ready where !hasSignals:
-            Label("AI analysis: done", systemImage: "sparkles")
+            Label(L("AI analysis: done"), systemImage: "sparkles")
                 .font(.caption).foregroundStyle(.secondary)
         case .ready:
-            Label("AI analysis", systemImage: "sparkles")
+            Label(L("AI analysis"), systemImage: "sparkles")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

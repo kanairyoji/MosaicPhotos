@@ -1,0 +1,96 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "AI analysis" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AI解析" } }
+      }
+    },
+    "AI analysis: done" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AI解析: 完了" } }
+      }
+    },
+    "AI analysis: in progress…" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AI解析: 処理中…" } }
+      }
+    },
+    "AI analysis: not indexed yet" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AI解析: 未解析" } }
+      }
+    },
+    "Camera" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラ" } }
+      }
+    },
+    "Couldn’t load. Tap to retry." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込めませんでした。タップで再試行。" } }
+      }
+    },
+    "Detected" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検出" } }
+      }
+    },
+    "Dimensions" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイズ" } }
+      }
+    },
+    "Exposure" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "露出" } }
+      }
+    },
+    "Failed to load." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込みに失敗しました" } }
+      }
+    },
+    "File" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイル" } }
+      }
+    },
+    "Home" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホーム" } }
+      }
+    },
+    "Lens" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "レンズ" } }
+      }
+    },
+    "Loading…" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込み中…" } }
+      }
+    },
+    "No photos yet." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真がありません" } }
+      }
+    },
+    "People" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "人物" } }
+      }
+    },
+    "Retry" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再試行" } }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
