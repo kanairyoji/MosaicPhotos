@@ -1,6 +1,29 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "AI Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIアルバム" } } } },
+    "Edit AI Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIアルバムを編集" } } } },
+    "Create Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを作成" } } } },
+    "Update Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを更新" } } } },
+    "Please describe which photos to include." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "どの写真を含めるか説明してください。" } } } },
+    "Developer Options" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "開発者オプション" } } } },
+    "Connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続済み" } } } },
+    "Connecting…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続中…" } } } },
+    "Not connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "未接続" } } } },
+    "Error" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エラー" } } } },
+    "On" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "オン" } } } },
+    "Path" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "パス" } } } },
+    "Pattern" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "パターン" } } } },
+    "Template" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "テンプレート" } } } },
+    "Album" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム" } } } },
+    "capture group — its text fills ${name}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャプチャグループ — その文字が ${name} に入ります" } } } },
+    "one folder level (any chars except “/”)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダー1階層分（「/」以外の任意の文字）" } } } },
+    "start of path  •  folder separator" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "パスの先頭  •  フォルダー区切り" } } } },
+    "exactly 4 digits (e.g. a year)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ちょうど4桁の数字（例：年）" } } } },
+    "an optional part that isn't captured" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "任意の部分（キャプチャしない）" } } } },
+    "Enter a path to test your rules." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルールを試すパスを入力してください。" } } } },
+    "No match — this path would be ignored." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "一致なし — このパスは無視されます。" } } } },
+    "Rule #%lld → “%@”" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ルール #%1$lld → 「%2$@」" } } } },
     "%lld photos" : {
       "localizations" : {
         "en" : { "variations" : { "plural" : {

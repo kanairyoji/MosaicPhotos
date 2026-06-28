@@ -41,40 +41,40 @@ struct SettingsView: View {
         List {
             Section("Photo Sources") {
                 NavigationLink {
-                    detail("On-Device Photos") { LocalPhotoSettingsView() }
+                    detail(L("On-Device Photos")) { LocalPhotoSettingsView() }
                 } label: {
-                    row("On-Device Photos", systemImage: "iphone")
+                    row(L("On-Device Photos"), systemImage: "iphone")
                 }
                 NavigationLink {
                     DropboxHubView(dropboxAuth: dropboxAuth, store: store,
                                    backupEngine: backupEngine, autoAlbumEngine: autoAlbumEngine)
                 } label: {
-                    row("Dropbox", systemImage: "cloud", value: dropboxStatusText)
+                    row("Dropbox", systemImage: "cloud", value: dropboxStatusText)   // ブランド名は非翻訳
                 }
                 NavigationLink {
-                    detail("Backup") {
+                    detail(L("Backup")) {
                         BackupSettingsView(dropboxAuth: dropboxAuth, engine: backupEngine, dropboxStore: store)
                     }
                 } label: {
-                    row("Backup", systemImage: "arrow.up.doc")
+                    row(L("Backup"), systemImage: "arrow.up.doc")
                 }
             }
 
             Section("Albums & Search") {
                 NavigationLink {
-                    detail("Auto Albums") { AutoAlbumSettingsView(engine: autoAlbumEngine) }
+                    detail(L("Auto Albums")) { AutoAlbumSettingsView(engine: autoAlbumEngine) }
                 } label: {
-                    row("Auto Albums", systemImage: "sparkles")
+                    row(L("Auto Albums"), systemImage: "sparkles")
                 }
                 NavigationLink {
                     PathAlbumSettingsView(engine: autoAlbumEngine)
                 } label: {
-                    row("Folder Albums", systemImage: "folder", value: pathAlbumsEnabled ? "On" : "Off")
+                    row(L("Folder Albums"), systemImage: "folder", value: pathAlbumsEnabled ? L("On") : L("Off"))
                 }
                 NavigationLink {
-                    detail("Places") { PlacesSettingsView(scanner: placeScanner) }
+                    detail(L("Places")) { PlacesSettingsView(scanner: placeScanner) }
                 } label: {
-                    row("Places", systemImage: "mappin.and.ellipse")
+                    row(L("Places"), systemImage: "mappin.and.ellipse")
                 }
             }
 
@@ -88,12 +88,12 @@ struct SettingsView: View {
                 NavigationLink {
                     BackgroundSettingsView()
                 } label: {
-                    row("Background & Battery", systemImage: "bolt.fill")
+                    row(L("Background & Battery"), systemImage: "bolt.fill")
                 }
                 NavigationLink {
                     StorageSettingsView(store: store, placeScanner: placeScanner)
                 } label: {
-                    row("Storage", systemImage: "internaldrive")
+                    row(L("Storage"), systemImage: "internaldrive")
                 }
             }
 
@@ -103,7 +103,7 @@ struct SettingsView: View {
                         dropboxAuth: dropboxAuth, store: store, backupEngine: backupEngine,
                         placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
                 } label: {
-                    row("Developer Options", systemImage: "hammer")
+                    row(L("Developer Options"), systemImage: "hammer")
                 }
             }
         }
@@ -112,7 +112,7 @@ struct SettingsView: View {
             ToolbarItem(placement: .navigationBarLeading) {
                 Button { dismiss() } label: {
                     Image(systemName: "chevron.left")
-                        .accessibilityLabel("Back")
+                        .accessibilityLabel(L("Back"))
                 }
             }
         }
@@ -140,10 +140,10 @@ struct SettingsView: View {
 
     private var dropboxStatusText: String? {
         switch dropboxAuth.connectionStatus {
-        case .connected:      return "Connected"
-        case .authenticating: return "Connecting…"
-        case .notConnected:   return "Not connected"
-        case .error:          return "Error"
+        case .connected:      return L("Connected")
+        case .authenticating: return L("Connecting…")
+        case .notConnected:   return L("Not connected")
+        case .error:          return L("Error")
         }
     }
 }

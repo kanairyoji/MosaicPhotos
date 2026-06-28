@@ -92,19 +92,19 @@ struct PathAlbumSettingsView: View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Worked example").font(.caption.bold())
-                helpRow("Path", "/Trips/Hawaii 2024/IMG_1.jpg")
-                helpRow("Pattern", "^/Trips/(?<name>[^/]+)/")
-                helpRow("Template", "${name}")
-                helpRow("Album", "“Hawaii 2024”")
+                helpRow(L("Path"), "/Trips/Hawaii 2024/IMG_1.jpg")
+                helpRow(L("Pattern"), "^/Trips/(?<name>[^/]+)/")
+                helpRow(L("Template"), "${name}")
+                helpRow(L("Album"), "“Hawaii 2024”")
 
                 Divider().padding(.vertical, 2)
 
                 Text("Common pieces").font(.caption.bold())
-                helpToken("(?<name>…)", "capture group — its text fills ${name}")
-                helpToken("[^/]+", "one folder level (any chars except “/”)")
-                helpToken("^  /", "start of path  •  folder separator")
-                helpToken("\\d{4}", "exactly 4 digits (e.g. a year)")
-                helpToken("(?:…)?", "an optional part that isn't captured")
+                helpToken("(?<name>…)", L("capture group — its text fills ${name}"))
+                helpToken("[^/]+", L("one folder level (any chars except “/”)"))
+                helpToken("^  /", L("start of path  •  folder separator"))
+                helpToken("\\d{4}", L("exactly 4 digits (e.g. a year)"))
+                helpToken("(?:…)?", L("an optional part that isn't captured"))
             }
             .padding(.vertical, 2)
         } header: {
@@ -165,11 +165,11 @@ struct PathAlbumSettingsView: View {
     }
 
     private var previewText: String {
-        guard !samplePath.isEmpty else { return "Enter a path to test your rules." }
+        guard !samplePath.isEmpty else { return L("Enter a path to test your rules.") }
         guard let result = PathAlbumNamer.preview(path: samplePath, rules: rules) else {
-            return "No match — this path would be ignored."
+            return L("No match — this path would be ignored.")
         }
-        return "Rule #\(result.index + 1) → “\(result.name)”"
+        return L("Rule #\(result.index + 1) → “\(result.name)”")
     }
 
     // MARK: - Persistence

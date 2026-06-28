@@ -17,32 +17,32 @@ struct SourceRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(tint.gradient)
-                        .frame(width: 48, height: 48)
+                        .frame(width: 38, height: 38)
                     Image(systemName: systemImage)
-                        .font(.system(size: 22, weight: .medium))
+                        .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(.white)
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                     Text(subtitle)
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 2)
         }
         .buttonStyle(.plain)
     }

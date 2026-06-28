@@ -53,13 +53,13 @@ struct AIAlbumComposerView: View {
                         if isWorking {
                             HStack { ProgressView().controlSize(.small); Text("Searching…") }
                         } else {
-                            Text(isEditing ? "Update Album" : "Create Album")
+                            Text(isEditing ? L("Update Album") : L("Create Album"))
                         }
                     }
                     .disabled(isWorking || criteria.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            .navigationTitle(isEditing ? "Edit AI Album" : "AI Album")
+            .navigationTitle(isEditing ? L("Edit AI Album") : L("AI Album"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -84,7 +84,7 @@ struct AIAlbumComposerView: View {
             // 0 件でも保存される。取り込み（メタデータ/タグ付け）が進むと背景で自動的に埋まる。
             dismiss()
         case .empty:
-            message = "Please describe which photos to include."
+            message = L("Please describe which photos to include.")
         }
     }
 }
