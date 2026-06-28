@@ -75,6 +75,11 @@ public final class BackupEngine {
         }
     }
 
+    /// 背景アップロードを行ってよいか（電源＋回線ポリシー）。アップロードループの一時停止判定に使う。
+    private var backgroundUploadAllowed: Bool {
+        PowerStateMonitor.shared.backgroundAllowed() && NetworkStateMonitor.shared.networkAllowed()
+    }
+
     // MARK: - Init
 
     /// アップロード上限の既定（テスト・フォールバック用）。0 にすると全件。
@@ -231,14 +236,15 @@ public final class BackupEngine {
         for (i, asset) in pending.enumerated() {
             guard !Task.isCancelled else { phase = .cancelled; return }
 
-            // 電源ポリシー：充電中（かつ低電力 OFF）以外は一時停止し、電源復帰で再開する。
-            if !PowerStateMonitor.shared.backgroundAllowed() {
-                addLog("Paused — waiting for power (charging + Low Power off)")
-                while !PowerStateMonitor.shared.backgroundAllowed() && !Task.isCancelled {
+            // 電源＋回線ポリシー：満たさない間は一時停止し、復帰で再開する
+            //（充電中かつ低電力OFF・既定で Wi-Fi のみ）。
+            if !backgroundUploadAllowed {
+                addLog("Paused — waiting for power / Wi-Fi")
+                while !backgroundUploadAllowed && !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(3))
                 }
                 guard !Task.isCancelled else { phase = .cancelled; return }
-                addLog("Resumed (on power)")
+                addLog("Resumed")
             }
 
             // ファイルデータを取得

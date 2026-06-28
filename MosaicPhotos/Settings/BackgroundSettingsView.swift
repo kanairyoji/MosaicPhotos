@@ -6,11 +6,13 @@ import SwiftUI
 struct BackgroundSettingsView: View {
     @AppStorage(PowerStateMonitor.policyKey)
     private var powerPolicyRaw = BackgroundPowerPolicy.whileCharging.rawValue
+    @AppStorage(NetworkStateMonitor.policyKey)
+    private var dataPolicyRaw = BackgroundDataPolicy.wifiOnly.rawValue
 
     var body: some View {
         Form {
             Section {
-                Picker("Run background work", selection: $powerPolicyRaw) {
+                Picker("Power", selection: $powerPolicyRaw) {
                     Text("While charging").tag(BackgroundPowerPolicy.whileCharging.rawValue)
                     Text("Always").tag(BackgroundPowerPolicy.always.rawValue)
                     Text("Off").tag(BackgroundPowerPolicy.off.rawValue)
@@ -22,6 +24,22 @@ struct BackgroundSettingsView: View {
                      + "Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode "
                      + "is off — saves battery. “Always” ignores power state; “Off” pauses all background work. "
                      + "Default: While charging.")
+            }
+
+            Section {
+                Picker("Network", selection: $dataPolicyRaw) {
+                    Text("Cellular allowed").tag(BackgroundDataPolicy.unrestricted.rawValue)
+                    Text("Wi-Fi only").tag(BackgroundDataPolicy.wifiOnly.rawValue)
+                    Text("Wi-Fi, skip Low Data").tag(BackgroundDataPolicy.wifiNoLowData.rawValue)
+                    Text("Off").tag(BackgroundDataPolicy.off.rawValue)
+                }
+            } header: {
+                Text("Background Data")
+            } footer: {
+                Text("Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, "
+                     + "reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also "
+                     + "pauses when Low Data Mode is on. Photos you open or browse are always fetched — only "
+                     + "automatic background traffic is limited. Default: Wi-Fi only.")
             }
         }
         .navigationTitle("Background & Battery")

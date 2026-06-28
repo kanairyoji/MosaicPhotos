@@ -67,7 +67,7 @@ extension AutoAlbumEngine {
 
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
     /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
-    func scheduleBackgroundFill() {
+    public func scheduleBackgroundFill() {
         let preset = Self.currentBackgroundPreset()
         Task(priority: .background) {
             isTagging = true
@@ -79,6 +79,7 @@ extension AutoAlbumEngine {
                                               || MemoryPressureMonitor.shared.isUnderPressure
                                               || !PowerStateMonitor.shared.backgroundAllowed()
                                       },
+                                          networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
                                           onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
                 [weak self] in await self?.refreshAIAlbums()
             }

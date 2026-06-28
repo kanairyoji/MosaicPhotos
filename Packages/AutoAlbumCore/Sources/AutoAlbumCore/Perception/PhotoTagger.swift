@@ -22,6 +22,7 @@ final class PhotoTagger {
                           betweenBatchNs: UInt64 = 2_500_000_000,   // 2.5s
                           maxBatches: Int = 20_000,
                           shouldPause: @MainActor () -> Bool = { false },
+                          networkAllowed: @MainActor () -> Bool = { true },
                           onProgress: @MainActor (Int) -> Void = { _ in },
                           onBatch: () async -> Void) async {
         guard let perception else {
@@ -48,9 +49,21 @@ final class PhotoTagger {
                 try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
             }
             if Task.isCancelled { break }
-            let refKeys = await store.unembeddedRefKeys(limit: batchSize)
+            // 回線NG（例: Wi-Fi 待ち）のときはクラウド写真（サムネDL）をスキップし、
+            // ローカル写真だけ進める（スマート方針 b）。Wi-Fi 復帰でクラウド分が再開される。
+            let netOK = networkAllowed()
+            let refKeys = await store.unembeddedRefKeys(limit: batchSize, localOnly: !netOK)
             guard !refKeys.isEmpty else {
-                Self.log.info("embed: no more unembedded photos — stopping at batch \(batch)")
+                // ローカルが尽きた。回線NGで残り（クラウド分）があれば「保留」、無ければ「完了」。
+                // どちらも終了し、回線/電源の復帰時にアプリ側が再起動する（isTagging を抱え続けない）。
+                if !netOK {
+                    let deferredCloud = await store.unembeddedCount()
+                    Self.log.info(deferredCloud > 0
+                        ? "embed: local done; \(deferredCloud) cloud photos deferred (no Wi-Fi)"
+                        : "embed: no more unembedded photos — stopping at batch \(batch)")
+                } else {
+                    Self.log.info("embed: no more unembedded photos — stopping at batch \(batch)")
+                }
                 break
             }
             let batchStart = Date()

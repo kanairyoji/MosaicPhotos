@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-16 バックグラウンドの「通信」を回線種別でゲート（Wi-Fi 優先・段階設定）
+- 状態: 採用
+- 文脈: 電源ゲート（[[ADR-15]]）に加え、背景処理のうち**通信を伴うもの**（Dropbox 同期・バックアップ upload・クラウド写真の CLIP 埋め込み＝サムネDL・逆ジオコーディング）をデータ通信量の観点で制御したい。Wi-Fi のときだけにしたい＋何段階か選びたい。ユーザーが**閲覧中に行う取得**（サムネ/フル画像）は前景操作なので止めない。
+- 決定: `MosaicSupport.NetworkStateMonitor`（`@MainActor @Observable`・`NWPathMonitor` 内包・電源/メモリ系モニタと同列・UIKit 非依存）を新設。`isReachable`/`isOnWiFi`(wifi||有線)/`isExpensive`/`isConstrained`(低データ) を監視し、ポリシー `BackgroundDataPolicy`（unrestricted / **wifiOnly=既定** / wifiNoLowData / off・キー `NetworkStateMonitor.policyKey`）と合わせ `networkAllowed()` を返す。通信を使う背景処理は **`backgroundAllowed()`（電源）かつ `networkAllowed()`（回線）** で実行。CLIP 埋め込みは**スマート方針**＝回線NG時は `unembeddedRefKeys(limit:localOnly:)` で**クラウド分をスキップしローカルだけ続行**、ローカルが尽きたら終了し、電源/回線の復帰（`onChange`）で `scheduleBackgroundFill()` を再起動してクラウド分を拾い直す。設定は General の `BackgroundSettingsView` に「Background Data」4段階を電源の隣へ。可視化はアクティビティバーに回線チップ（Wi-Fi 緑 / 保留 橙 / Off・圏外 灰）を電源チップの隣に追加（[[ADR-14]]）。
+- 結果: 既定でセルラーの背景通信を避けつつ、ローカル AI 処理はセルラーでも進み、Wi-Fi でクラウド分が再開。閲覧時取得は常に行う。トレードオフ: 既定で全ユーザーが「Wi-Fi のみ」に変わる（セルラーでは同期・バックアップ・クラウド埋め込みが保留）。`localOnly` 絞り込みは `refKey.starts(with:"L-")` の SwiftData 述語に依存。
+- 関連: `MosaicSupport/NetworkStateMonitor.swift` / `AutoAlbumCore`（`PhotoTagger.embedUnprocessed`・`AutoAlbumStore.unembeddedRefKeys(localOnly:)`・`scheduleBackgroundFill` を public 化）/ `HomeView.swift`（evaluateSync・resumeBackgroundWork・place ループ）/ `BackupKit/BackupEngine.swift` / `MosaicPhotos/Settings/BackgroundSettingsView.swift` / `DropboxKit/DropboxActivityBar.swift`。
+
 ## ADR-15 バックグラウンド処理を電源状態でゲート（電池節約）
 - 状態: 採用
 - 文脈: 継続的なバックグラウンド処理（特に CLIP 背景埋め込み＝ANE/GPU 推論＋クラウドサムネDL、Dropbox 差分同期、定期再生成/場所スキャン、バックアップ）が電池を消費する。電源接続時だけ走らせたい。

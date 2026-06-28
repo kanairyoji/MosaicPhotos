@@ -25,9 +25,11 @@ public struct DropboxActivityBar: View {
         let m = DropboxActivityMonitor.shared
         let bg = BackgroundActivityMonitor.shared
         let power = PowerStateMonitor.shared
+        let net = NetworkStateMonitor.shared
         HStack(spacing: 9) {
-            // 電源ゲート（背景処理の大元）。
+            // 電源ゲート＋回線ゲート（背景処理／背景通信の大元）。
             powerChip(power)
+            networkChip(net)
 
             divider
 
@@ -99,6 +101,22 @@ public struct DropboxActivityBar: View {
         }
         return Image(systemName: icon)
             .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(color)
+    }
+
+    // 回線ゲート: 背景通信OK(緑 Wi-Fi) / 回線はあるが保留(橙) / Off・圏外(灰)。
+    private func networkChip(_ n: NetworkStateMonitor) -> some View {
+        let icon: String
+        let color: Color
+        if n.policy == .off || !n.isReachable {
+            icon = "wifi.slash"; color = Color.secondary.opacity(0.5)
+        } else if n.networkAllowed() {
+            icon = "wifi"; color = .green
+        } else {
+            icon = "wifi.exclamationmark"; color = .orange   // 例: セルラーで Wi-Fi 待ち
+        }
+        return Image(systemName: icon)
+            .font(.system(size: 9, weight: .bold))
             .foregroundStyle(color)
     }
 

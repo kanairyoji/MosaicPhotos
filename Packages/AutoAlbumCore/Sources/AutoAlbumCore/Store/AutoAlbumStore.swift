@@ -207,8 +207,13 @@ actor AutoAlbumStore {
     }
 
     /// まだ埋め込みしていない写真の refKey（最大 limit 件・ローカル/クラウド両方）。
-    func unembeddedRefKeys(limit: Int) -> [String] {
-        var descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.sceneTagged == false })
+    /// 未埋め込みの refKey をバッチで返す。`localOnly` のときは**ローカル写真（"L-" 前缀）だけ**を
+    /// DB 側で絞り込む（回線NG時にクラウド分＝サムネDLを避けてローカルだけ進めるため）。
+    func unembeddedRefKeys(limit: Int, localOnly: Bool = false) -> [String] {
+        let predicate: Predicate<PhotoEnrichment> = localOnly
+            ? #Predicate { $0.sceneTagged == false && $0.refKey.starts(with: "L-") }
+            : #Predicate { $0.sceneTagged == false }
+        var descriptor = FetchDescriptor<PhotoEnrichment>(predicate: predicate)
         descriptor.fetchLimit = limit
         let records = (try? modelContext.fetch(descriptor)) ?? []
         return records.map(\.refKey)

@@ -170,8 +170,9 @@ private struct HomeLifecycleTasks: ViewModifier {
                 Diagnostics.mark("places loaded")
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
-                    // 電源ポリシーを満たすときだけ定期再スキャン（逆ジオコーディング）を行う。
-                    guard PowerStateMonitor.shared.backgroundAllowed() else { continue }
+                    // 電源＋回線ポリシーを満たすときだけ定期再スキャン（逆ジオコーディングは通信）を行う。
+                    guard PowerStateMonitor.shared.backgroundAllowed(),
+                          NetworkStateMonitor.shared.networkAllowed() else { continue }
                     await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
                 }
             }
@@ -200,9 +201,11 @@ private struct HomeLifecycleTasks: ViewModifier {
                     break
                 }
             }
-            // 電源状態・低電力モードの変化で Dropbox 差分同期を起動/停止する（電源ポリシー連動）。
-            .onChange(of: PowerStateMonitor.shared.isOnPower) { _, _ in evaluateSync() }
-            .onChange(of: PowerStateMonitor.shared.isLowPowerMode) { _, _ in evaluateSync() }
+            // 電源・回線の変化で Dropbox 差分同期を起動/停止し、背景埋め込みを再開する
+            //（電源復帰／Wi-Fi 復帰で保留分＝クラウド写真の埋め込みを拾い直す）。
+            .onChange(of: PowerStateMonitor.shared.isOnPower) { _, _ in resumeBackgroundWork() }
+            .onChange(of: PowerStateMonitor.shared.isLowPowerMode) { _, _ in resumeBackgroundWork() }
+            .onChange(of: NetworkStateMonitor.shared.networkAllowed()) { _, _ in resumeBackgroundWork() }
             // 背景スキャンの稼働状況をアクティビティバーへ橋渡し（下位パッケージに依存を足さない）。
             .onChange(of: placeScanner.isScanning) { _, v in BackgroundActivityMonitor.shared.isScanningPlaces = v }
             .onChange(of: albumScanner.isScanning) { _, v in BackgroundActivityMonitor.shared.isScanningAlbums = v }
@@ -215,14 +218,21 @@ private struct HomeLifecycleTasks: ViewModifier {
             }
     }
 
-    /// 電源ポリシーに応じて Dropbox 差分同期を起動/停止する。接続中のみ対象。
-    /// 充電中（かつ低電力 OFF）なら同期を開始、そうでなければ停止して通信・電池を抑える。
+    /// 電源・回線ポリシーに応じて Dropbox 差分同期を起動/停止する。接続中のみ対象。
+    /// 「電源OK かつ 回線OK」なら同期を開始、そうでなければ停止して通信・電池を抑える。
     private func evaluateSync() {
         guard case .connected = dropboxStore.auth.connectionStatus else { return }
-        if PowerStateMonitor.shared.backgroundAllowed() {
+        if PowerStateMonitor.shared.backgroundAllowed() && NetworkStateMonitor.shared.networkAllowed() {
             dropboxStore.startSync()
         } else {
             dropboxStore.stopSync()
         }
+    }
+
+    /// 電源/回線が復帰したら、同期の再評価と背景埋め込みの再起動を行う。
+    /// `scheduleBackgroundFill` は実行中なら no-op なので二重起動にはならない。
+    private func resumeBackgroundWork() {
+        evaluateSync()
+        autoAlbumEngine.scheduleBackgroundFill()
     }
 }
