@@ -1,28 +1,37 @@
 #if canImport(UIKit)
 import DropboxCore
+import MosaicSupport
 import SwiftUI
 
-/// Dropbox 通信アクティビティの表示トグル用キー（Developer Options から ON/OFF）。
+/// アクティビティバーの表示トグル用キー（設定 → Dropbox から ON/OFF）。
 public enum DropboxActivitySettingsKeys {
     public static let showBar = "debug.dropboxActivityBar"
 }
 
-/// 画面最上部に出す Dropbox 通信アクティビティの「スロット LED」インジケータ。
+/// 画面最上部に出す「アクティビティバー」。Dropbox 通信に加え、電源ゲートと
+/// バックグラウンド処理（AI 埋め込み・自動アルバム生成・場所/アルバム走査）の稼働状況を 1 行で示す。
 ///
 /// 形＝チャンネル / 色＝状態 / 数・塗り＝強度 の方針:
-/// - サムネイル: 同時実行スロットをレーン（ピップ）で表示。稼働=青／空き=灰、末尾に先読み待ち枚数。
-/// - 同期: 1 ランプ（差分取得=青点滅 / 監視=緑 / 初回=青 / 失敗=赤 / 待機=灰）。
-/// - フル画像DL: ⬇＋本数。 バックアップ: ⬆ランプ。
+/// - 電源: ⚡稼働可(緑) / 電池待ち(橙) / Off(灰)。背景処理が動くかの大元。
+/// - Dropbox: サムネ同時スロット(レーン)＋先読み待ち / 同期ランプ / フル画像DL / バックアップ。
+/// - 背景処理: AI 埋め込み(残り枚数)・アルバム生成・場所走査・アルバム走査の各ランプ（稼働中はパルス）。
 ///
-/// `DropboxActivityMonitor`（@Observable）を購読してライブ更新する。Dropbox 設定の
-/// 「Show activity bar」トグル（既定 ON）が ON のときだけ `dropboxActivityBar()` 経由で表示される。
+/// `DropboxActivityMonitor` / `BackgroundActivityMonitor` / `PowerStateMonitor`（いずれも @Observable）を
+/// 購読してライブ更新する。設定「Show activity bar」（既定 ON）が ON のときだけ表示される。
 public struct DropboxActivityBar: View {
     public init() {}
 
     public var body: some View {
         let m = DropboxActivityMonitor.shared
-        HStack(spacing: 10) {
-            // チャンネル識別ラベル。
+        let bg = BackgroundActivityMonitor.shared
+        let power = PowerStateMonitor.shared
+        HStack(spacing: 9) {
+            // 電源ゲート（背景処理の大元）。
+            powerChip(power)
+
+            divider
+
+            // ── Dropbox 通信 ──
             Image(systemName: "shippingbox.fill")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -41,27 +50,30 @@ public struct DropboxActivityBar: View {
                 }
             }
 
-            divider
-
             // 同期ランプ。
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(syncColor(m.sync))
-                    .symbolEffect(.pulse, options: .repeating, isActive: syncBusy(m.sync))
-            }
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(syncColor(m.sync))
+                .symbolEffect(.pulse, options: .repeating, isActive: syncBusy(m.sync))
 
             // フル画像ダウンロード。
             channelLamp(systemName: "arrow.down.circle.fill",
-                        active: m.fullImageActive > 0,
-                        count: m.fullImageActive,
-                        color: .teal)
-
+                        active: m.fullImageActive > 0, count: m.fullImageActive, color: .teal)
             // バックアップアップロード。
             channelLamp(systemName: "arrow.up.circle.fill",
-                        active: m.backupActive,
-                        count: 0,
-                        color: .orange)
+                        active: m.backupActive, count: 0, color: .orange)
+
+            divider
+
+            // ── バックグラウンド処理 ──
+            // AI 埋め込み（残り枚数を併記）。
+            bgLamp("sparkles", active: bg.isEmbedding, color: .purple, count: bg.embedRemaining)
+            // 自動アルバム生成。
+            bgLamp("rectangle.stack.fill", active: bg.isGeneratingAlbums, color: .blue)
+            // 場所スキャン。
+            bgLamp("mappin.and.ellipse", active: bg.isScanningPlaces, color: .green)
+            // アルバム走査。
+            bgLamp("photo.on.rectangle", active: bg.isScanningAlbums, color: .green)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
@@ -72,6 +84,42 @@ public struct DropboxActivityBar: View {
 
     private var divider: some View {
         Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1, height: 12)
+    }
+
+    // 電源ゲート: 稼働可(緑⚡) / 電池待ち(橙) / ポリシー Off(灰)。
+    private func powerChip(_ p: PowerStateMonitor) -> some View {
+        let icon: String
+        let color: Color
+        if p.policy == .off {
+            icon = "pause.circle.fill"; color = Color.secondary.opacity(0.5)
+        } else if p.backgroundAllowed() {
+            icon = "bolt.fill"; color = .green
+        } else {
+            icon = "bolt.slash.fill"; color = .orange
+        }
+        return Image(systemName: icon)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(color)
+    }
+
+    // 背景処理ランプ（稼働中はパルス、count>0 で枚数併記）。
+    @ViewBuilder
+    private func bgLamp(_ systemName: String, active: Bool, color: Color, count: Int = 0) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? color : Color.secondary.opacity(0.3))
+                .symbolEffect(.pulse, options: .repeating, isActive: active)
+            if active, count > 0 {
+                Text(compactCount(count))
+                    .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func compactCount(_ n: Int) -> String {
+        n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)"
     }
 
     @ViewBuilder

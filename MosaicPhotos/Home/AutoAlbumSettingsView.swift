@@ -1,5 +1,4 @@
 import AutoAlbumCore
-import MosaicSupport
 import SwiftUI
 
 /// 「Albums」タブ：時間＋場所の自動アルバム生成の制御・パラメータ・Debug。
@@ -21,8 +20,6 @@ struct AutoAlbumSettingsView: View {
     @State private var untaggedCount = 0
     @AppStorage(AutoAlbumSettingsKeys.backgroundProcessingLevel)
     private var backgroundLevel = BackgroundProcessing.defaultIndex
-    @AppStorage(PowerStateMonitor.policyKey)
-    private var powerPolicyRaw = BackgroundPowerPolicy.whileCharging.rawValue
 
     private var selectedPreset: BackgroundProcessingPreset {
         BackgroundProcessing.preset(at: backgroundLevel)
@@ -30,20 +27,6 @@ struct AutoAlbumSettingsView: View {
 
     var body: some View {
         Group {
-            Section {
-                Picker("Run background work", selection: $powerPolicyRaw) {
-                    Text("While charging").tag(BackgroundPowerPolicy.whileCharging.rawValue)
-                    Text("Always").tag(BackgroundPowerPolicy.always.rawValue)
-                    Text("Off").tag(BackgroundPowerPolicy.off.rawValue)
-                }
-            } header: {
-                Text("Background & Battery")
-            } footer: {
-                Text("When background work runs: AI indexing, automatic albums, place scanning, Dropbox sync and backup. "
-                     + "“While charging” runs only when plugged in and Low Power Mode is off — saves battery. "
-                     + "“Always” ignores power state; “Off” pauses all background work. Default: While charging.")
-            }
-
             Section {
                 Picker("Background speed", selection: $backgroundLevel) {
                     ForEach(BackgroundProcessing.presets) { preset in

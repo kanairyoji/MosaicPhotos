@@ -10,6 +10,7 @@ let package = Package(
     dependencies: [
         .package(path: "../DropboxCore"),
         .package(path: "../PhotoSourceKit"),
+        .package(path: "../MosaicSupport"),
     ],
     targets: [
         .target(
@@ -17,6 +18,7 @@ let package = Package(
             dependencies: [
                 .product(name: "DropboxCore", package: "DropboxCore"),
                 .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
             path: "Sources/DropboxKit"
         ),

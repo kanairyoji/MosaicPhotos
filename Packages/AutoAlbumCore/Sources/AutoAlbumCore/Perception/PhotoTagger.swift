@@ -22,6 +22,7 @@ final class PhotoTagger {
                           betweenBatchNs: UInt64 = 2_500_000_000,   // 2.5s
                           maxBatches: Int = 20_000,
                           shouldPause: @MainActor () -> Bool = { false },
+                          onProgress: @MainActor (Int) -> Void = { _ in },
                           onBatch: () async -> Void) async {
         guard let perception else {
             Self.log.info("embed: skipped — no perception provider injected")
@@ -32,10 +33,11 @@ final class PhotoTagger {
             return
         }
         isTagging = true
-        defer { isTagging = false }
+        defer { isTagging = false; onProgress(0) }
 
         let pending = await store.unembeddedCount()
         Self.log.info("embed: start — \(pending) photos pending (batchSize \(batchSize), throttled)")
+        onProgress(pending)
         let startedAt = Date()
 
         var processed = 0
@@ -64,6 +66,7 @@ final class PhotoTagger {
             Self.log.info("embed: batch \(batch) done — \(refKeys.count) photos in \(secs)s "
                           + "(\(withVector) with CLIP vector); total \(processed)")
 
+            onProgress(max(0, pending - processed))
             if batch % 16 == 15 { await onBatch() }
             // ★ バッチ間で休む：端末・ネットワーク・UI を圧迫しないよう trickle 処理にする。
             try? await Task.sleep(nanoseconds: betweenBatchNs)

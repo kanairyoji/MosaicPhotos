@@ -203,6 +203,9 @@ private struct HomeLifecycleTasks: ViewModifier {
             // 電源状態・低電力モードの変化で Dropbox 差分同期を起動/停止する（電源ポリシー連動）。
             .onChange(of: PowerStateMonitor.shared.isOnPower) { _, _ in evaluateSync() }
             .onChange(of: PowerStateMonitor.shared.isLowPowerMode) { _, _ in evaluateSync() }
+            // 背景スキャンの稼働状況をアクティビティバーへ橋渡し（下位パッケージに依存を足さない）。
+            .onChange(of: placeScanner.isScanning) { _, v in BackgroundActivityMonitor.shared.isScanningPlaces = v }
+            .onChange(of: albumScanner.isScanning) { _, v in BackgroundActivityMonitor.shared.isScanningAlbums = v }
             .onAppear {
                 if case .connected = dropboxStore.auth.connectionStatus {
                     evaluateSync()

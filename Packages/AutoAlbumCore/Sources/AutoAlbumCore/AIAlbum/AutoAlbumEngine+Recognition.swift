@@ -78,7 +78,8 @@ extension AutoAlbumEngine {
                                           (self?.isInteracting ?? false)
                                               || MemoryPressureMonitor.shared.isUnderPressure
                                               || !PowerStateMonitor.shared.backgroundAllowed()
-                                      }) {
+                                      },
+                                          onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
                 [weak self] in await self?.refreshAIAlbums()
             }
             isTagging = false
@@ -110,7 +111,8 @@ extension AutoAlbumEngine {
                                       betweenBatchNs: preset.betweenBatchNs,
                                       shouldPause: { [weak self] in
                                           (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
-                                      }) {
+                                      },
+                                      onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
             [weak self] in await self?.refreshAIAlbums()
         }
         isTagging = false

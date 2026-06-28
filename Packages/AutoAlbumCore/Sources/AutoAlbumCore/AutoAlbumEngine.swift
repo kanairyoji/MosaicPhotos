@@ -22,11 +22,20 @@ public final class AutoAlbumEngine {
     /// 自然文から作る AI アルバム（ユーザー作成・保存）。
     public internal(set) var aiAlbums: [AutoAlbumInfo] = []
     public private(set) var isLoaded = false
-    public private(set) var isGenerating = false
+    public private(set) var isGenerating = false {
+        didSet { BackgroundActivityMonitor.shared.generatingTimePlace = isGenerating }
+    }
     /// フォルダ名アルバムだけの軽量再生成中フラグ（地名解決を伴わないので速い）。
-    public private(set) var isGeneratingPath = false
+    public private(set) var isGeneratingPath = false {
+        didSet { BackgroundActivityMonitor.shared.generatingFolder = isGeneratingPath }
+    }
     /// Vision/CLIP タグ付けの実行中フラグ（UI のスピナー用）。
-    public internal(set) var isTagging = false
+    public internal(set) var isTagging = false {
+        didSet {
+            BackgroundActivityMonitor.shared.isEmbedding = isTagging
+            if !isTagging { BackgroundActivityMonitor.shared.embedRemaining = 0 }
+        }
+    }
     public internal(set) var status: String = ""
 
     @ObservationIgnored static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Engine")

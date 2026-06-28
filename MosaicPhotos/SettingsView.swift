@@ -79,6 +79,11 @@ struct SettingsView: View {
             Section("General") {
                 LabeledContent("Version", value: version)
                 NavigationLink {
+                    BackgroundSettingsView()
+                } label: {
+                    row("Background & Battery", systemImage: "bolt.fill")
+                }
+                NavigationLink {
                     StorageSettingsView(store: store, placeScanner: placeScanner)
                 } label: {
                     row("Storage", systemImage: "internaldrive")
