@@ -23,10 +23,10 @@ public struct BackupSettingsView: View {
 
     public var body: some View {
         Group {
-            Section("Backup Destination") {
-                Picker("Destination", selection: $destination) {
-                    Text("No backup").tag(BackupDestination.disabled)
-                    Text("Dropbox").tag(BackupDestination.dropbox)
+            Section(L("Backup Destination")) {
+                Picker(L("Destination"), selection: $destination) {
+                    Text(L("No backup")).tag(BackupDestination.disabled)
+                    Text(verbatim: "Dropbox").tag(BackupDestination.dropbox)
                 }
             }
 
@@ -46,24 +46,24 @@ public struct BackupSettingsView: View {
     // MARK: - Dropbox folder
 
     private var dropboxFolderSection: some View {
-        Section("Dropbox Folder") {
+        Section(L("Dropbox Folder")) {
             if dropboxAuth.connectionStatus != .connected {
                 Label(
-                    "Dropbox is not connected. Connect from Settings → Dropbox.",
+                    L("Dropbox is not connected. Connect from Settings → Dropbox."),
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .foregroundStyle(.orange)
                 .font(.callout)
             }
 
-            LabeledContent("Folder") {
+            LabeledContent(L("Folder")) {
                 TextField("/MosaicPhotos", text: $dropboxFolder)
                     .multilineTextAlignment(.trailing)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
             }
 
-            Text("Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist.")
+            Text(L("Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -72,11 +72,11 @@ public struct BackupSettingsView: View {
     // MARK: - Backup controls
 
     private var backupSection: some View {
-        Section("Backup") {
+        Section(L("Backup")) {
             if engine.isRunning {
-                Button("Cancel Backup", role: .destructive) { engine.cancel() }
+                Button(L("Cancel Backup"), role: .destructive) { engine.cancel() }
             } else {
-                Button("Back Up Now") {
+                Button(L("Back Up Now")) {
                     engine.start(folder: backupNormalizedPath(dropboxFolder))
                 }
                 .disabled(dropboxAuth.connectionStatus != .connected)
@@ -93,25 +93,25 @@ public struct BackupSettingsView: View {
             EmptyView()
 
         case .requestingPermission:
-            Label("Requesting photo library access…", systemImage: "lock.open")
+            Label(L("Requesting photo library access…"), systemImage: "lock.open")
                 .foregroundStyle(.secondary)
 
         case .buildingPeopleIndex:
-            Label("Reading albums and people…", systemImage: "rectangle.stack.person.crop")
+            Label(L("Reading albums and people…"), systemImage: "rectangle.stack.person.crop")
                 .foregroundStyle(.secondary)
 
         case .fetchingAssets:
-            Label("Loading photo library…", systemImage: "photo.stack")
+            Label(L("Loading photo library…"), systemImage: "photo.stack")
                 .foregroundStyle(.secondary)
 
         case .uploadingMetadata:
-            Label("Saving metadata…", systemImage: "arrow.up.doc")
+            Label(L("Saving metadata…"), systemImage: "arrow.up.doc")
                 .foregroundStyle(.secondary)
 
         case .uploading(let current, let total, let filename):
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: Double(current), total: Double(total))
-                Text("Uploading \(current) of \(total)")
+                Text(L("Uploading \(current) of \(total)"))
                     .font(.subheadline)
                 Text(filename)
                     .font(.caption)
@@ -123,7 +123,7 @@ public struct BackupSettingsView: View {
 
         case .completed(let uploaded, let skipped):
             Label(
-                "\(uploaded) uploaded · \(skipped) already backed up",
+                L("\(uploaded) uploaded · \(skipped) already backed up"),
                 systemImage: "checkmark.circle.fill"
             )
             .foregroundStyle(.green)
@@ -134,7 +134,7 @@ public struct BackupSettingsView: View {
                 .font(.callout)
 
         case .cancelled:
-            Label("Backup cancelled.", systemImage: "xmark.circle")
+            Label(L("Backup cancelled."), systemImage: "xmark.circle")
                 .foregroundStyle(.secondary)
         }
     }
@@ -142,15 +142,15 @@ public struct BackupSettingsView: View {
     // MARK: - Upload limit (user)
 
     private var uploadLimitSection: some View {
-        Section("Upload Limit") {
-            Picker("Per run", selection: $uploadLimit) {
+        Section(L("Upload Limit")) {
+            Picker(L("Per run"), selection: $uploadLimit) {
                 Text("10").tag(10)
                 Text("50").tag(50)
                 Text("100").tag(100)
                 Text("500").tag(500)
-                Text("Unlimited").tag(0)
+                Text(L("Unlimited")).tag(0)
             }
-            Text("Maximum number of photos uploaded in a single backup run.")
+            Text(L("Maximum number of photos uploaded in a single backup run."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

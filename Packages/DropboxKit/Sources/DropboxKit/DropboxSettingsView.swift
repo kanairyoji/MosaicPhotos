@@ -43,14 +43,14 @@ public struct DropboxSettingsView: View {
     private var dropboxConnectionSection: some View {
         Section("Dropbox") {
             HStack {
-                Text("Status")
+                Text(L("Status"))
                 Spacer()
                 dropboxStatusBadge
             }
 
             if case .connected = dropboxAuth.connectionStatus,
                let connectedAt = dropboxAuth.credential?.connectedAt {
-                LabeledContent("Connected", value: DisplayDate.dateTime(connectedAt))
+                LabeledContent(L("Connected"), value: DisplayDate.dateTime(connectedAt))
             }
 
             dropboxActionButton
@@ -61,16 +61,16 @@ public struct DropboxSettingsView: View {
     private var dropboxStatusBadge: some View {
         switch dropboxAuth.connectionStatus {
         case .notConnected:
-            Label("Not connected", systemImage: "minus.circle")
+            Label(L("Not connected"), systemImage: "minus.circle")
                 .foregroundStyle(.secondary)
         case .authenticating:
-            Label("Connecting...", systemImage: "arrow.trianglehead.2.clockwise")
+            Label(L("Connecting..."), systemImage: "arrow.trianglehead.2.clockwise")
                 .foregroundStyle(.blue)
         case .connected:
-            Label("Connected", systemImage: "checkmark.circle.fill")
+            Label(L("Connected"), systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .error:
-            Label("Error", systemImage: "exclamationmark.circle.fill")
+            Label(L("Error"), systemImage: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)
         }
     }
@@ -79,19 +79,19 @@ public struct DropboxSettingsView: View {
     private var dropboxActionButton: some View {
         switch dropboxAuth.connectionStatus {
         case .notConnected, .error:
-            Button("Connect to Dropbox") {
+            Button(L("Connect to Dropbox")) {
                 Task {
                     guard let anchor = keyWindow else { return }
                     await dropboxAuth.authenticate(presentationAnchor: anchor)
                 }
             }
         case .authenticating:
-            Button("Cancel", role: .cancel) {
+            Button(L("Cancel"), role: .cancel) {
                 dropboxAuth.cancelAuthentication()
             }
             .foregroundStyle(.secondary)
         case .connected:
-            Button("Disconnect", role: .destructive) {
+            Button(L("Disconnect"), role: .destructive) {
                 dropboxAuth.disconnect()
             }
         }
@@ -103,15 +103,15 @@ public struct DropboxSettingsView: View {
         Section {
             Stepper(value: $thumbnailConcurrency,
                     in: DropboxThumbnailSettings.minConcurrency...DropboxThumbnailSettings.maxConcurrency) {
-                LabeledContent("Parallel downloads", value: "\(thumbnailConcurrency)")
+                LabeledContent(L("Parallel downloads"), value: "\(thumbnailConcurrency)")
             }
             .onChange(of: thumbnailConcurrency) { _, newValue in
                 store?.applyThumbnailConcurrency(newValue)
             }
         } header: {
-            Text("Thumbnail Performance")
+            Text(L("Thumbnail Performance"))
         } footer: {
-            Text("How many thumbnail batches Dropbox fetches at once (\(DropboxThumbnailSettings.minConcurrency)–\(DropboxThumbnailSettings.maxConcurrency)). Higher is faster when many thumbnails are visible, but too high may hit Dropbox rate limits. Default is \(DropboxThumbnailSettings.defaultConcurrency).")
+            Text(L("How many thumbnail batches Dropbox fetches at once (\(DropboxThumbnailSettings.minConcurrency)–\(DropboxThumbnailSettings.maxConcurrency)). Higher is faster when many thumbnails are visible, but too high may hit Dropbox rate limits. Default is \(DropboxThumbnailSettings.defaultConcurrency)."))
         }
     }
 
@@ -119,19 +119,19 @@ public struct DropboxSettingsView: View {
 
     private var activitySection: some View {
         Section {
-            Toggle("Show activity bar", isOn: $showActivityBar)
+            Toggle(L("Show activity bar"), isOn: $showActivityBar)
         } header: {
-            Text("Activity Indicator")
+            Text(L("Activity Indicator"))
         } footer: {
-            Text("Shows a small bar at the top of the screen with live Dropbox activity: parallel thumbnail download slots and the prefetch queue, plus sync, full-image download and backup upload. Useful to see when Dropbox is busy.")
+            Text(L("Shows a small bar at the top of the screen with live Dropbox activity: parallel thumbnail download slots and the prefetch queue, plus sync, full-image download and backup upload. Useful to see when Dropbox is busy."))
         }
     }
 
     // MARK: - Cache limits section
 
     private var cacheLimitsSection: some View {
-        Section("Cache Limits") {
-            Picker("Thumbnail limit", selection: $dropboxThumbLimitMB) {
+        Section(L("Cache Limits")) {
+            Picker(L("Thumbnail limit"), selection: $dropboxThumbLimitMB) {
                 Text("25 MB").tag(25)
                 Text("50 MB").tag(50)
                 Text("100 MB").tag(100)
@@ -140,7 +140,7 @@ public struct DropboxSettingsView: View {
             .onChange(of: dropboxThumbLimitMB) { _, newVal in
                 Task { await store?.applyCacheLimits(thumbnailMB: newVal, fullImageMB: dropboxFullImageLimitMB) }
             }
-            Picker("Full image limit", selection: $dropboxFullImageLimitMB) {
+            Picker(L("Full image limit"), selection: $dropboxFullImageLimitMB) {
                 Text("100 MB").tag(100)
                 Text("200 MB").tag(200)
                 Text("500 MB").tag(500)

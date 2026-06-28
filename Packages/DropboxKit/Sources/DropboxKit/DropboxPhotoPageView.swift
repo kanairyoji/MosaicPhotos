@@ -43,7 +43,7 @@ private struct DropboxFullPhotoView: View {
                     .resizable()
                     .scaledToFit()
             } else if failed {
-                Text("Unable to display.")
+                Text(L("Unable to display."))
                     .foregroundStyle(.secondary)
                     .colorScheme(.dark)
             } else {

@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "LocalPhotoKit",
+    defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "LocalPhotoKit", targets: ["LocalPhotoKit"]),
@@ -10,6 +11,7 @@ let package = Package(
     dependencies: [
         .package(path: "../LocalPhotoCore"),
         .package(path: "../PhotoSourceKit"),
+        .package(path: "../MosaicSupport"),
     ],
     targets: [
         .target(
@@ -17,8 +19,10 @@ let package = Package(
             dependencies: [
                 .product(name: "LocalPhotoCore", package: "LocalPhotoCore"),
                 .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
-            path: "Sources/LocalPhotoKit"
+            path: "Sources/LocalPhotoKit",
+            resources: [.process("Localizable.xcstrings")]
         ),
     ]
 )

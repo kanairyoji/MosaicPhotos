@@ -62,6 +62,9 @@ final class HomeStores {
 struct RootView: View {
     @State private var stores: HomeStores?
     @State private var showLoadingIndicator = false
+    @AppStorage(AppLocale.key) private var appLanguageRaw = AppLanguage.system.rawValue
+
+    private var selectedLanguage: AppLanguage { AppLanguage(rawValue: appLanguageRaw) ?? .system }
 
     var body: some View {
         Group {
@@ -71,6 +74,10 @@ struct RootView: View {
                 LaunchView(showLoadingIndicator: showLoadingIndicator)
             }
         }
+        // アプリ本体の Text リテラルはこのロケールで切り替わる。パッケージの L() は AppLocale を見る。
+        .environment(\.locale, selectedLanguage == .system ? .autoupdatingCurrent
+                                                            : Locale(identifier: selectedLanguage.rawValue))
+        .onChange(of: appLanguageRaw) { _, _ in AppLocale.apply(selectedLanguage) }
         .task {
             // 1 秒経っても準備できなければローディングインジケータを出す。
             let loadingTimer = Task { @MainActor in

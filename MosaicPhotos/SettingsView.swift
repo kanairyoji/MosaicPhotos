@@ -2,6 +2,7 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
+import MosaicSupport
 import PhotosFeatureKit
 import SwiftUI
 
@@ -17,6 +18,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) private var pathAlbumsEnabled = false
+    @AppStorage(AppLocale.key) private var appLanguageRaw = AppLanguage.system.rawValue
 
     private let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
 
@@ -78,6 +80,11 @@ struct SettingsView: View {
 
             Section("General") {
                 LabeledContent("Version", value: version)
+                Picker("Language", selection: $appLanguageRaw) {
+                    Text("System").tag(AppLanguage.system.rawValue)
+                    Text(verbatim: "日本語").tag(AppLanguage.ja.rawValue)
+                    Text(verbatim: "English").tag(AppLanguage.en.rawValue)
+                }
                 NavigationLink {
                     BackgroundSettingsView()
                 } label: {

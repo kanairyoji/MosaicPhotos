@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DropboxKit",
+    defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "DropboxKit", targets: ["DropboxKit"]),
@@ -20,7 +21,8 @@ let package = Package(
                 .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
                 .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
-            path: "Sources/DropboxKit"
+            path: "Sources/DropboxKit",
+            resources: [.process("Localizable.xcstrings")]
         ),
         .testTarget(
             name: "DropboxKitTests",

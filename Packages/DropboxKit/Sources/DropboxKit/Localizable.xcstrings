@@ -1,0 +1,24 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Status" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ステータス" } } } },
+    "Connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続済み" } } } },
+    "Not connected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "未接続" } } } },
+    "Connecting..." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続中..." } } } },
+    "Error" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エラー" } } } },
+    "Connect to Dropbox" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox に接続" } } } },
+    "Cancel" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャンセル" } } } },
+    "Disconnect" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "切断" } } } },
+    "Parallel downloads" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "並列ダウンロード数" } } } },
+    "Thumbnail Performance" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "サムネイル性能" } } } },
+    "How many thumbnail batches Dropbox fetches at once (%lld–%lld). Higher is faster when many thumbnails are visible, but too high may hit Dropbox rate limits. Default is %lld." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox が一度に取得するサムネイルのバッチ数（%1$lld〜%2$lld）。表示中のサムネイルが多いときは大きいほど速くなりますが、大きすぎると Dropbox のレート制限に達することがあります。既定は %3$lld です。" } } } },
+    "Show activity bar" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティバーを表示" } } } },
+    "Activity Indicator" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティ表示" } } } },
+    "Shows a small bar at the top of the screen with live Dropbox activity: parallel thumbnail download slots and the prefetch queue, plus sync, full-image download and backup upload. Useful to see when Dropbox is busy." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "画面最上部に Dropbox の稼働状況を小さなバーで表示します：サムネイルの並列ダウンロードスロットと先読みキュー、同期・フル画像ダウンロード・バックアップアップロード。Dropbox が忙しいかどうかの確認に便利です。" } } } },
+    "Cache Limits" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャッシュ上限" } } } },
+    "Thumbnail limit" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "サムネイル上限" } } } },
+    "Full image limit" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フル画像上限" } } } },
+    "Unable to display." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "表示できません。" } } } }
+  },
+  "version" : "1.0"
+}

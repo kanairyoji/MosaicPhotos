@@ -1,12 +1,10 @@
 import Foundation
+import MosaicSupport
 
-/// PhotoSourceKit 内の UI 文字列を、本パッケージの String Catalog（`Localizable.xcstrings`・`.module`）で解決する。
-///
-/// SwiftUI のパッケージ内 `Text("key")` は既定で `Bundle.main` を見るため、パッケージ自身のカタログを
-/// 使うには `.module` 指定が要る。各 API（Text/Label/Button/Section/navigationTitle 等）は `String` を
-/// verbatim 表示するので、**生成時に localized 済みの String を渡す**この方式で一様にローカライズできる。
+/// PhotoSourceKit 内の UI 文字列を、本パッケージの String Catalog（`.module`）＋アプリの言語設定で解決する。
+/// アプリ内の言語切替（`AppLocale.overrideCode`）に追従する。
 ///
 /// ⚠️ 新しい UI 文字列はこの関数で包み、`Localizable.xcstrings` にキー（英語原文）と訳を追加すること。
 func L(_ key: String.LocalizationValue) -> String {
-    String(localized: key, bundle: .module)
+    AppLocale.string(key, bundle: .module)
 }
