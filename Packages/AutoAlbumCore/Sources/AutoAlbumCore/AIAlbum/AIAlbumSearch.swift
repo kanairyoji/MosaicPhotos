@@ -71,7 +71,7 @@ struct AIAlbumSearcher {
     /// - `all`: clipVector を載せない軽量メタデータ（構造化フィルタ・字句・カタログ用）。
     /// - `loadPage(offset, limit)`: `(refKey, clipVector)` のページを返す（空ページで終端）。
     func search(baseLite all: [EnrichedPhoto], query: AIAlbumQuery, now: Date, semanticText: String,
-                pageSize: Int = 4000,
+                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         let base = PhotoQueryEngine.filter(all, with: query, now: now)
@@ -124,7 +124,7 @@ struct AIAlbumSearcher {
     /// 採点・選抜ロジックは既存の `search(baseLite:query:...)` と同一（フロア＋マージン＋上位K）。
     /// ※ 除外内容（not(content)）の減点は次段で対応予定（本段では include のみ採点）。
     func search(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
-                pageSize: Int = 4000,
+                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)

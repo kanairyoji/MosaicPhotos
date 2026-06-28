@@ -62,6 +62,9 @@ enum DropboxInternalConstants {
 
     static let defaultThumbnailByteLimit = 50 * 1_024 * 1_024    // 50 MB
     static let defaultFullImageByteLimit = 200 * 1_024 * 1_024   // 200 MB
+    /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する。
+    static let thumbnailMemoryCostLimit = 48 * 1_024 * 1_024     // 48 MB
+    static let thumbnailMemoryCountLimit = 1000
 
     // MARK: - JPEG compression quality
 

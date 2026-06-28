@@ -14,6 +14,8 @@ public enum DropboxDebugConstants {
     public static var retryDelaySeconds: Int { Int(DropboxInternalConstants.retryDelayNs / 1_000_000_000) }
     public static var defaultThumbnailLimitMB: Int { DropboxInternalConstants.defaultThumbnailByteLimit / (1_024 * 1_024) }
     public static var defaultFullImageLimitMB: Int { DropboxInternalConstants.defaultFullImageByteLimit / (1_024 * 1_024) }
+    public static var thumbnailMemoryCostLimitMB: Int { DropboxInternalConstants.thumbnailMemoryCostLimit / (1_024 * 1_024) }
+    public static var thumbnailMemoryCountLimit: Int { DropboxInternalConstants.thumbnailMemoryCountLimit }
     public static var thumbnailJPEGQuality: Double { Double(DropboxInternalConstants.thumbnailJPEGQuality) }
     public static var fullImageJPEGQuality: Double { Double(DropboxInternalConstants.fullImageJPEGQuality) }
 }

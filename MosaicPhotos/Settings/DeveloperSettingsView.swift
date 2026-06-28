@@ -30,6 +30,7 @@ struct DeveloperSettingsView: View {
         Form {
             appInfoSection
             diagnosticsSection
+            MemoryDebugSection()
             LocalPhotoDebugSection()
             DropboxDebugSection(dropboxAuth: dropboxAuth, store: store)
             BackupDebugSection(dropboxAuth: dropboxAuth, engine: backupEngine, dropboxStore: store)

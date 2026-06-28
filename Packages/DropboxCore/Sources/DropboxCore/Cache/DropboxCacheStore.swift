@@ -65,8 +65,9 @@ actor DropboxCacheStore {
         // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）。
         // 実デコードサイズでコスト計上する `insertDecoded` に合わせ、件数上限に加えて
         // **総コスト上限（既定 48MB）** を設ける。0（未指定）のときは既定 1000 件でキャップ。
-        thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit > 0 ? thumbnailMemoryCountLimit : 1000)
-        thumbnailMemory.setTotalCostLimit(48 * 1024 * 1024)
+        thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit > 0 ? thumbnailMemoryCountLimit
+                                      : DropboxInternalConstants.thumbnailMemoryCountLimit)
+        thumbnailMemory.setTotalCostLimit(DropboxInternalConstants.thumbnailMemoryCostLimit)
     }
 
     /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**

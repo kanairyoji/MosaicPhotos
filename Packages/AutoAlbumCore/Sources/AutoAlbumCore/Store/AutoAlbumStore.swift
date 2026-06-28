@@ -57,7 +57,7 @@ actor AutoAlbumStore {
     /// バッチ書き込みの単位。大量 upsert でも登録オブジェクトが際限なく溜まらないよう、
     /// この件数ごとに**使い捨ての ModelContext** で save し、チャンク完了でその context ごと
     /// 解放して常駐メモリを有界に保つ（C2）。
-    private static let writeChunk = 500
+    private static let writeChunk = AutoAlbumTuning.upsertWriteChunk
 
     /// 付加情報を upsert する（メタデータのみ・埋め込みは別テーブル）。
     /// kind/localIdentifier/cloudPath は refKey から導出する。大量挿入でも常駐が増えないよう

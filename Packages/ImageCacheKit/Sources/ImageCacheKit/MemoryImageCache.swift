@@ -17,9 +17,9 @@ public final class MemoryImageCache: @unchecked Sendable {
     private var isUnderPressure = false
     private var restoreWorkItem: DispatchWorkItem?
     /// 圧迫時に確保する最小上限。無制限設定でもこの値まで絞る。
-    private static let pressureFloorBytes = 16 * 1024 * 1024
+    public static let pressureFloorBytes = 16 * 1024 * 1024
     /// 圧迫後に元の上限へ戻すまでの待ち時間。
-    private static let pressureRestoreDelay: TimeInterval = 30
+    public static let pressureRestoreDelay: TimeInterval = 30
 
     /// - Parameters:
     ///   - totalCostLimit: 総コスト上限（バイト）。0 は無制限。
