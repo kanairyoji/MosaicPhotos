@@ -95,6 +95,11 @@ struct SettingsView: View {
                 } label: {
                     row(L("Storage"), systemImage: "internaldrive")
                 }
+                NavigationLink {
+                    LicensesView()
+                } label: {
+                    row(L("Licenses"), systemImage: "doc.text")
+                }
             }
 
             Section {

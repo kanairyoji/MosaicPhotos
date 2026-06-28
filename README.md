@@ -166,3 +166,9 @@ bash scripts/build_mobileclip.sh   # converts MobileCLIP-S2 → MosaicPhotos/Mob
 ```
 
 Without the model the app still runs fully; only CLIP-based semantic search and keyword tags are disabled (structured filters by date/place/people keep working).
+
+## License
+
+MosaicPhotos is free software licensed under the **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** — see [LICENSE](LICENSE).
+
+Third-party assets bundled with or used to build the app are listed in-app under **Settings → Licenses** (and in `MosaicPhotos/Settings/Licenses.swift`): MobileCLIP (Apple), the CLIP BPE vocabulary / tokenizer (MIT), build tools (coremltools, PyTorch, open_clip, Pillow, NumPy), and Mermaid (docs). Apple SDKs and SF Symbols are used under Apple's license terms.

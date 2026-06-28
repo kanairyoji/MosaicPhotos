@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-18 ライセンス：本体 AGPL-3.0、第三者資産はアプリ内「Licenses」で表示
+- 状態: 採用
+- 文脈: 公開にあたり本アプリのライセンスを定め、使用ライブラリ/資産の必要な帰属表示を行いたい。
+- 決定: 本体を **AGPL-3.0-or-later** とし、リポジトリ直下に公式全文の `LICENSE`（原文のまま・翻訳しない）を設置。アプリは第三者の Swift ライブラリ依存ゼロ（全ローカルパッケージ）。同梱/使用する第三者資産を **設定 → Licenses**（`LicensesView`＋データ `Licenses.swift`）で一覧表示：本アプリ(AGPL)/同梱(MobileCLIP=Apple・CLIP 語彙/トークナイザ=MIT)/Apple(SDK・SF Symbols)/ビルドツール(coremltools=BSD3・PyTorch=BSD3・open_clip=MIT・ml-mobileclip=Apple・Pillow=HPND・NumPy=BSD3)/ドキュメント(Mermaid=MIT)。MIT/BSD3/HPND は正確なテンプレートで生成、Apple/PyTorch は告知＋upstream リンク。**ライセンス本文は英語原文のまま**、画面の枠・用途説明のみ日本語化。
+- 結果: 帰属を満たしつつアプリ内で確認可能。AGPL によりソース公開義務（GitHub 公開で充足）。第三者ライブラリ追加時は `Licenses.swift` に1項追加する運用。
+- 関連: `LICENSE` / `MosaicPhotos/Settings/Licenses.swift` / `LicensesView.swift` / `SettingsView.swift`。
+
 ## ADR-17 UI 国際化を String Catalog で（base=英語・per-package・日本語追加・アプリ内言語切替）
 - 状態: 採用（全 UI パッケージ＋アプリ本体・日英・言語切替つき）
 - 追補（全パッケージ化＋言語切替）: `PhotoSourceKit`/`LocalPhotoKit`/`DropboxKit`/`BackupKit` をすべて per-package で日本語化（`PhotosFeatureKit` は UI 文字列なし）。各パッケージは `L(_:)=AppLocale.string(_:bundle:.module)` を使う。**アプリ内言語切替**は `MosaicSupport.AppLocale`（`overrideCode` と `string(_:bundle:)`）＋`AppLanguage`（system/ja/en）で実現：設定 → General の「Language」ピッカー（既定 **System**＝端末が日本語なら日本語・それ以外は英語）。`RootView` が `.environment(\.locale,)` でアプリ本体 `Text` を、`AppLocale.overrideCode` で各パッケージ `L()` を同時に切り替える（端末設定に依らず日英を即切替）。`MosaicPhotosApp.init` で `AppLocale.loadFromDefaults()`。検証: 端末ビルドで `ja.lproj` が **アプリ＋4 パッケージバンドル**すべてに生成、`swift test` 通過。残: Developer/Debug は英語のまま（対象外）、`PhotoLoadState`/エラー文等の動的 String（`Text(変数)`）は英語フォールバック。
