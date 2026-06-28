@@ -36,10 +36,11 @@ public struct PhotoGridSection<Item>: Identifiable {
 /// View 非依存の純関数。`PhotoItem.captureDate` が `nil` のものは "Unknown" 扱い。
 /// 元の並び順（呼び出し側がソート済み）を保ったまま、隣接する同一ラベルを 1 セクションに束ねる。
 ///
-/// - Parameter coalesceBelow: 0 より大きいとき、**写真数が `coalesceBelow` 未満（＝1行に満たない）の
-///   連続グループを 1 セクションに束ね**、範囲ラベル（"YYYY-MM – YYYY-MM"）にする。これにより
-///   1枚しかない月がヘッダー＋半端な行を量産せず、行を密に詰められる。`coalesceBelow` 以上のグループは
-///   従来どおり単独セクション（自分のラベル）。0（既定）なら従来動作。
+/// - Parameter coalesceBelow: 1 より大きいとき（実用では**列数**を渡す）、**最大密度パッキング**を行う。
+///   連続するグループを「合計が `coalesceBelow` 枚（＝1行ぶん）に達するまで」貪欲に蓄積して 1 セクションに
+///   区切り、複数月にまたがるときは範囲ラベル（"YYYY-MM – YYYY-MM"）にする。末尾に余った 1 行未満の月は
+///   直前セクションへ畳み込む。これにより「ヘッダー＋半端な1行」や孤立した小さい月を抑え、行を密に詰める
+///   （各セクションは最低 1 行ぶん埋まる）。0/1（既定）なら従来＝グループ＝単独セクション。
 public func photoGridSections<Item: PhotoItem>(
     items: [Item],
     grouping: PhotoGridGrouping,
@@ -60,33 +61,40 @@ public func photoGridSections<Item: PhotoItem>(
         }
     }
 
-    // 2) coalesceBelow 未満の小グループを範囲セクションへ束ねる（0/1 なら従来＝グループ＝セクション）。
+    // 2) 最大密度パッキング：連続月を「1行ぶん（coalesceBelow 枚）」に達するまで貪欲に蓄積して区切る。
+    //    末尾に余った 1 行未満の月は直前セクションへ畳み込む（最後だけ疎になるのを防ぐ）。
+    //    0/1 なら従来＝グループ＝セクション（dense オフ）。
     guard coalesceBelow > 1 else {
         return groups.map { PhotoGridSection(title: $0.label, rows: chunk($0.entries, colCount: colCount)) }
     }
 
-    var result: [PhotoGridSection<Item>] = []
+    // セクション単位（＝グループの配列）を先に決める。末尾余りの「直前への畳み込み」が容易になる。
+    var buckets: [[(label: String, entries: [PhotoGridEntry<Item>])]] = []
     var pending: [(label: String, entries: [PhotoGridEntry<Item>])] = []
-
-    func flushPending() {
-        guard !pending.isEmpty else { return }
-        let merged = pending.flatMap { $0.entries }
-        let first = pending.first!.label, last = pending.last!.label
-        let title = first == last ? first : "\(first) – \(last)"
-        result.append(PhotoGridSection(title: title, rows: chunk(merged, colCount: colCount)))
-        pending = []
-    }
-
+    var pendingCount = 0
     for g in groups {
-        if g.entries.count >= coalesceBelow {
-            flushPending()
-            result.append(PhotoGridSection(title: g.label, rows: chunk(g.entries, colCount: colCount)))
-        } else {
-            pending.append(g)
+        pending.append(g)
+        pendingCount += g.entries.count
+        if pendingCount >= coalesceBelow {     // 1 行ぶん埋まったら区切る（＝各セクションは最低 1 行満たす）
+            buckets.append(pending)
+            pending = []
+            pendingCount = 0
         }
     }
-    flushPending()
-    return result
+    if !pending.isEmpty {                       // 末尾の 1 行未満の余り
+        if buckets.isEmpty {
+            buckets.append(pending)            // 全件で 1 行に満たない：単一セクション
+        } else {
+            buckets[buckets.count - 1].append(contentsOf: pending)  // 直前セクションへ畳み込む
+        }
+    }
+
+    return buckets.map { bucket in
+        let merged = bucket.flatMap { $0.entries }
+        let first = bucket.first!.label, last = bucket.last!.label
+        let title = first == last ? first : "\(first) – \(last)"
+        return PhotoGridSection(title: title, rows: chunk(merged, colCount: colCount))
+    }
 }
 
 // オフメイン（Task.detached）で生成して main へ渡すため、Item が Sendable なら Sendable。

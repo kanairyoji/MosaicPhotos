@@ -65,13 +65,36 @@ struct PhotoGridGroupingTests {
         #expect(sections[0].rows[0].entries.map(\.flatIndex) == [0, 1, 2, 3])
     }
 
-    @Test("coalesceBelow: 1行を満たす月は単独セクションのまま")
+    @Test("coalesceBelow: 連続して各1行ぶん埋まる月はそれぞれ単独セクション")
     func keepsFullMonthsStandalone() {
-        // 2024-01 が4枚（=colCount）→ 単独。2024-02 が1枚 → それ単独（範囲にならない）。
+        // 2024-01・2024-02 がそれぞれ4枚（=colCount）→ 各々で1行ぶん埋まるので単独セクション。
+        let items = (0..<4).map { MockItem(id: $0, captureDate: date(2024, 1, 1)) }
+            + (4..<8).map { MockItem(id: $0, captureDate: date(2024, 2, 1)) }
+        let sections = photoGridSections(items: items, grouping: .month, colCount: 4, coalesceBelow: 4)
+        #expect(sections.map(\.title) == ["2024-01", "2024-02"])
+    }
+
+    @Test("coalesceBelow: 末尾の1行未満の月は直前セクションへ畳み込む（最大密度）")
+    func foldsTrailingSmallMonthIntoPrevious() {
+        // 2024-01 が4枚（=colCount・単独成立）だが、末尾の 2024-02(1枚) は単独にせず直前へ畳み込む。
         let items = (0..<4).map { MockItem(id: $0, captureDate: date(2024, 1, 1)) }
             + [MockItem(id: 4, captureDate: date(2024, 2, 1))]
         let sections = photoGridSections(items: items, grouping: .month, colCount: 4, coalesceBelow: 4)
-        #expect(sections.map(\.title) == ["2024-01", "2024-02"])
+        #expect(sections.count == 1)
+        #expect(sections[0].title == "2024-01 – 2024-02")
+        #expect(sections[0].rows.count == 2)                     // 4 + 1
+        #expect(sections[0].rows[1].entries.map(\.flatIndex) == [4])
+    }
+
+    @Test("coalesceBelow: 大きい月に挟まれた小さい月も孤立させず密に詰める")
+    func packsIsolatedSmallMonths() {
+        // 1月(1)・2月(4)・3月(1)。2月で1行ぶん埋まり、末尾3月は直前へ畳み込む → 全体1セクション。
+        let items = [MockItem(id: 0, captureDate: date(2024, 1, 1))]
+            + (1..<5).map { MockItem(id: $0, captureDate: date(2024, 2, 1)) }
+            + [MockItem(id: 5, captureDate: date(2024, 3, 1))]
+        let sections = photoGridSections(items: items, grouping: .month, colCount: 4, coalesceBelow: 4)
+        #expect(sections.count == 1)
+        #expect(sections[0].title == "2024-01 – 2024-03")
     }
 
     @Test("captureDate が nil のものは Unknown セクション")
