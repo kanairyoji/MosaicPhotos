@@ -4,27 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MosaicPhotos ヘルプ</title>
-  <style>
-    :root { --fg:#1d1d1f; --muted:#6e6e73; --line:#e3e3e6; --accent:#0a6cff; --card:#f5f5f7; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-           color: var(--fg); line-height: 1.7; margin: 0; background:#fff; }
-    main { max-width: 760px; margin: 0 auto; padding: 28px 20px 80px; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    h1 { font-size: 30px; margin: 4px 0 6px; }
-    .lead { font-size: 17px; color: var(--muted); margin-bottom: 24px; }
-    .grid { display: grid; gap: 12px; }
-    .card { display: block; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; color: var(--fg); }
-    a.card:hover { border-color: var(--accent); text-decoration: none; }
-    .card h2 { font-size: 18px; margin: 0 0 4px; }
-    .card p { font-size: 15px; color: var(--muted); margin: 0; }
-    .soon { background: var(--card); border-style: dashed; }
-    .soon .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
-    .hero { text-align: center; margin: 4px 0 28px; }
-    .hero img { width: 230px; max-width: 60%; border: 1px solid var(--line); border-radius: 18px; }
-    footer { margin-top: 36px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
-  </style>
+  <link rel="stylesheet" href="./help.css">
 </head>
 <body>
   <main>
@@ -35,35 +15,34 @@
     <div class="hero"><img src="../screenshots/home.jpg" alt="ホーム画面"></div>
 
     <div class="grid">
-      <a class="card" href="./folder-albums.html">
-        <h2>フォルダアルバムの作り方（正規表現ガイド）</h2>
-        <p>Dropbox のフォルダ名から自動でアルバムを作る方法。コピペで使える例をたくさん載せています。</p>
-      </a>
-
       <a class="card" href="./basics.html">
         <h2>はじめに・基本の見かた</h2>
         <p>ホーム画面、All / Photos / Cloud の切り替え、グリッドのズーム・月グループ・全画面表示・写真情報。</p>
       </a>
-      <div class="card soon">
-        <h2>AI アルバムと意味検索<span class="tag">準備中</span></h2>
-        <p>自然文でアルバムを作る・写真を探す（オンデバイス CLIP）。</p>
-      </div>
-      <div class="card soon">
-        <h2>場所アルバム<span class="tag">準備中</span></h2>
-        <p>市区町村ごとの自動グループ表示。</p>
-      </div>
-      <div class="card soon">
-        <h2>Dropbox 連携とバックアップ<span class="tag">準備中</span></h2>
+      <a class="card" href="./ai-search.html">
+        <h2>AI アルバムと意味検索</h2>
+        <p>言葉でアルバムを作る・写真を探す（オンデバイス AI）。日付や場所などの条件も組み合わせ。</p>
+      </a>
+      <a class="card" href="./folder-albums.html">
+        <h2>フォルダアルバムの作り方（正規表現ガイド）</h2>
+        <p>Dropbox のフォルダ名から自動でアルバムを作る方法。コピペで使える例をたくさん。</p>
+      </a>
+      <a class="card" href="./places.html">
+        <h2>場所アルバム</h2>
+        <p>市区町村ごとの自動グループ表示。端末と Dropbox の写真をまとめて。</p>
+      </a>
+      <a class="card" href="./dropbox.html">
+        <h2>Dropbox 連携とバックアップ</h2>
         <p>接続、同期、端末写真の Dropbox へのバックアップ。</p>
-      </div>
-      <div class="card soon">
-        <h2>設定（電源・通信・キャッシュ・表示）<span class="tag">準備中</span></h2>
+      </a>
+      <a class="card" href="./settings.html">
+        <h2>設定（電源・通信・キャッシュ・表示）</h2>
         <p>バックグラウンド処理、グリッド密度、ストレージ、言語など。</p>
-      </div>
-      <div class="card soon">
-        <h2>困ったとき<span class="tag">準備中</span></h2>
+      </a>
+      <a class="card" href="./faq.html">
+        <h2>困ったとき（FAQ）</h2>
         <p>よくある質問とトラブルシューティング。</p>
-      </div>
+      </a>
     </div>
 
     <footer>

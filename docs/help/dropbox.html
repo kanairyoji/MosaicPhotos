@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dropbox 連携とバックアップ | MosaicPhotos ヘルプ</title>
+  <link rel="stylesheet" href="./help.css">
+</head>
+<body>
+  <main>
+    <div class="crumb"><a href="./index.html">MosaicPhotos ヘルプ</a> / Dropbox 連携とバックアップ</div>
+    <h1>Dropbox 連携とバックアップ</h1>
+    <p class="lead">Dropbox に接続すると、クラウド上の写真も端末の写真と<b>同じ画面</b>で見られます。さらに、
+      端末の写真を Dropbox へ<b>バックアップ</b>することもできます。</p>
+
+    <h2>接続する</h2>
+    <ul>
+      <li><b>設定 → Dropbox</b> から接続します。ブラウザで Dropbox にログインして許可すると完了です。</li>
+      <li>接続情報（トークン）は端末の<b>キーチェーン</b>に安全に保存され、ファイルに平文では残しません。</li>
+      <li>専用 SDK は使わず、標準の通信のみ。解析・トラッキングはありません。</li>
+    </ul>
+
+    <h2>クラウドの写真を見る</h2>
+    <div class="shot">
+      <img src="../screenshots/cloud.jpg" alt="クラウドのグリッド">
+      <div class="cap">
+        <ul>
+          <li>ホームの <b>クラウド</b>（または <b>すべての写真</b>）から閲覧できます。</li>
+          <li>一覧は<b>差分同期</b>で自動的に最新へ。初回は枚数が多いと読み込みに時間がかかります。</li>
+          <li>サムネイルと本体画像は<b>端末にキャッシュ</b>され、2 回目以降は速く表示されます。</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>端末の写真をバックアップする</h2>
+    <ul>
+      <li><b>設定 → Dropbox</b>（または <b>設定 → Backup</b>）から、端末の写真を Dropbox の指定フォルダへアップロードします。</li>
+      <li>人物・アルバム・お気に入りなどの<b>付加情報</b>も一緒に保存されます。</li>
+      <li>大量のときはバックグラウンドで少しずつ進みます（電源・通信の条件は<a href="./settings.html">設定</a>で調整）。</li>
+    </ul>
+
+    <h2>速度・容量の調整</h2>
+    <ul>
+      <li><b>サムネイルの並列取得数</b>：表示中のサムネが多いときに効きます（上げ過ぎると Dropbox 側の制限に当たることがあります）。</li>
+      <li><b>キャッシュ上限</b>：サムネイル／本体画像のディスク使用量の上限。<b>設定 → Storage</b> でも確認できます。</li>
+      <li>画面最上部の<b>アクティビティバー</b>で、同期・サムネ取得・ダウンロード・アップロードの動きを確認できます。</li>
+    </ul>
+
+    <p class="backtop"><a href="./index.html">← ヘルプのトップへ戻る</a></p>
+  </main>
+</body>
+</html>
