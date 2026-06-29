@@ -79,8 +79,8 @@
 ## ADR-21 逆ジオコーディングを同梱DBで完全オフライン化（GeoNames cities15000）
 - 状態: 採用
 - 文脈: 座標→地名の解決を `CLGeocoder`（オンライン・レート制限・要ネットワーク）で行っていた。一括生成時にスロットリングで失敗し、`PlaceNameResolver` が**失敗（空）を恒久キャッシュ**するため旅行アルバムが「Trip」で固定化、Places も地名にならない不具合が出ていた（[[ADR-1]] 系の自動アルバム品質に影響）。
-- 決定: GeoNames `cities15000`（約3.4万都市・CC BY 4.0）から生成したコンパクトなバイナリ `cities15000.bin`（約0.8MB）を `PhotoSourceKit` に同梱し、`OfflinePlaceDB` が**最近傍検索**で市区町村/都道府県/国を返す（`scripts/build_places.py` で生成、リトルエンディアン：lat/lon の f32 配列＋行政区/国プール＋都市名）。`PlaceNameResolver` のバックエンドをこれに置換し `CLGeocoder` を廃止。結果は決定的なのでグリッドキャッシュ（GeoGridKey）はそのまま安全に永続化できる。地名は GeoNames `name`（多くはローマ字）。
-- 結果: ネット問い合わせ**ゼロ**・即時・無制限・失敗なし。アルバム命名と Places の両方が安定（「Trip」固定が解消）、命名が同期化して非同期スロットリングも不要に。トレードオフ＝精度は「最も近い既知都市」（用途的に十分。都道府県・国は堅牢）、日本語地名はローマ字（後日 alternatenames で日本語化の余地）。バンドルは約0.8MB（CLIP 約60MB に比べ微小）。CC BY 4.0 を NOTICE/アプリ内 Licenses に表記。
+- 決定: GeoNames `cities15000`（約3.4万都市・CC BY 4.0）から生成したコンパクトなバイナリ `cities15000.bin`（約0.8MB）を `PhotoSourceKit` に同梱し、`OfflinePlaceDB` が**最近傍検索**で市区町村/都道府県/国を返す（`scripts/build_places.py` で生成、リトルエンディアン：lat/lon の f32 配列＋行政区/国プール＋都市名）。`PlaceNameResolver` のバックエンドをこれに置換し `CLGeocoder` を廃止。結果は決定的なのでグリッドキャッシュ（GeoGridKey）はそのまま安全に永続化できる。地名は**日本語優先**：GeoNames の言語別別名 `alternateNamesV2`（isolanguage=ja）から都市/都道府県/国の日本語名を取り込み、無ければローマ字の `name` へフォールバック（例 千代田区/東京都/日本、パリ/フランス、ニューヨーク）。
+- 結果: ネット問い合わせ**ゼロ**・即時・無制限・失敗なし。アルバム命名と Places の両方が安定（「Trip」固定が解消）、命名が同期化して非同期スロットリングも不要に。日本語で表示される。トレードオフ＝精度は「最も近い既知都市」（用途的に十分。都道府県・国は堅牢）、日本語名の無い一部の海外マイナー都市はローマ字。バンドルは約0.9MB（CLIP 約60MB に比べ微小）。CC BY 4.0 を NOTICE/アプリ内 Licenses に表記。
 - 関連: `PhotoSourceKit/Places/OfflinePlaceDB.swift`・`PlaceNameResolver.swift` / `scripts/build_places.py` / `Packages/PhotoSourceKit/Package.swift`(resource) / `NOTICE`・`Licenses`。
 
 ## ADR-20 メモリ圧迫対応を中枢へ集約（解放ハンドラ登録＋詳細ログ＋履歴）

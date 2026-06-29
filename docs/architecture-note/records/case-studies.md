@@ -30,7 +30,7 @@
   - (1) 逆ジオコーディングを**同梱DB（GeoNames cities15000）で完全オフライン化**（[[ADR-21]]）。失敗概念が消え、決定的に解決＝「Trip」固定が解消。
   - (2) **backfill を廃止**し、座標のある写真のみを旅行対象に（ユーザー要望「位置情報がない写真は入れない」）。
 - 関連: `TimePlaceStrategy.swift`(backfill 削除) / `AutoAlbumEngine.resolvePlaceIfNeeded` / `PlaceNameResolver`・`OfflinePlaceDB` / `TimePlaceStrategyTests`。
-- 残課題: 命名は「最も近い既知都市」。多都市旅行で centroid が半端な都市を指す場合があり、代表クラスタ座標での命名は今後の改善余地。日本語地名（現状ローマ字）も別途。
+- 残課題: 命名は「最も近い既知都市」。多都市旅行で centroid が半端な都市を指す場合があり、代表クラスタ座標での命名は今後の改善余地。地名は日本語優先（alternateNames の ja・無ければローマ字）で対応済み。
 
 ## サムネ遅延の主因がネット→ディスク再デコードへ移動（メモリ保持＋デコード並列制限）
 - 背景: 前項の改善後に再計測。効果は確認できた（ミス率 59%→35%→2.5%、ミス待ち 17s→8.7s→0.57s）。だが新たな主因が顕在化。`thumb-drain` カウンタで `cache.thumb.diskHit=1787(Σ230409ms)`＝**1枚 ~129ms**、`memHit=56`（=メモリにほぼ残らず毎回ディスク再デコード）。
