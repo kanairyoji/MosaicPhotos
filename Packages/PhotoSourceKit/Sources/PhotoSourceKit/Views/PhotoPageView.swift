@@ -24,7 +24,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     }
 
     private func topLabel(_ item: Store.Item) -> String? {
-        item.displayTitle ?? item.captureDate.map(DisplayDate.ymd)
+        // 撮影日時は日付＋時刻（yyyy-MM-dd HH:mm）。アルバム等で displayTitle があればそれを優先。
+        item.displayTitle ?? item.captureDate.map(DisplayDate.dateTime)
     }
 
     public var body: some View {
@@ -96,7 +97,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .padding(.top, 16)   // 安全領域上端（=アクティビティバー）のすぐ下。バーと重ねない
+                .padding(.top, 20)   // 安全領域上端（=アクティビティバー）のすぐ下。バーと重ねない
                 .allowsHitTesting(false)
             }
         }
