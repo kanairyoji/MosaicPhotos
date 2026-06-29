@@ -24,10 +24,12 @@
 ## フル画面ビューで最上部のアクティビティバーと日付が重なる
 - 症状: フル画面の写真ビューで、最上部のアクティビティバー（ツールチップ状の表示）と日付が同じ位置に重なって読めない。
 - 原因: アクティビティバーは `SourceHostView` の `overlay(alignment:.top)`（安全領域上端）に出す。一方フル画面の日付は `PhotoPageView` の**ナビバー principal タイトル**で、これも安全領域上端の中央＝**同じ位置**だった。
-- 対処: 日付をナビバータイトルから外し、`PhotoPageView` を **`ZStack(alignment: .top)`** にして安全領域上端基準に固定、写真(TabView)は `ignoresSafeArea` で全画面のまま、日付を上端から `padding(.top, 34)` だけ下げて**バーの下**へ置く。バーは `padding(.top, 0)` で最上端へ。
-  - 補足: 最初 `overlay + GeometryReader.safeAreaInsets` で組んだが、`ignoresSafeArea` 配下では inset 取得が不安定で日付が画面中央に出た。`ZStack(.top)` 基準（安全領域上端）に変更して安定。
-- 関連: `PhotoPageView.swift`(topLabelOverlay) / `DropboxActivityBar.swift`(modifier)。
-- 残課題: なし。
+- 対処: 日付をナビバータイトルから外し、`PhotoPageView` を **`ZStack(alignment: .top)`** にして安全領域上端基準に固定、写真(TabView)は `ignoresSafeArea` で全画面のまま、日付を上端から少し下げて**バーの下**へ置く。バーは `padding(.top, 0)` で最上端へ。
+  - 補足1: 最初 `overlay + GeometryReader.safeAreaInsets` で組んだが、`ignoresSafeArea` 配下では inset 取得が不安定で日付が画面中央に出た。`ZStack(.top)` 基準（安全領域上端）に変更して安定。
+  - 補足2: 「バーのすぐ下に寄せたい」要望に対し、ナビバーが残っていると安全領域上端がナビバーの**下**になり 1 段ぶん隙間が空く。**ナビバーを `toolbar(.hidden)` で隠してカスタム戻るボタン（左上 chevron・`@Environment(\.dismiss)`）**に置換し、ラベル基準＝アクティビティバー位置にしてすぐ下へ寄せた。トレードオフでエッジスワイプ戻しは無効になる（戻るボタンで代替）。
+  - 補足3: あわせて位置情報のある写真は**日付の下に地名**を表示（`task(id: currentID)` で `store.location(for:)`→`PlaceNameResolver.placeName`。オフライン DB なので即時）。
+- 関連: `PhotoPageView.swift`(topControls / resolveCurrentPlace) / `DropboxActivityBar.swift`(modifier)。
+- 残課題: ナビバー非表示でエッジスワイプ戻しが効かない（戻るボタンで代替・許容）。
 
 ## 旅行アルバムが「Trip」で固定／位置情報のない写真が混入
 - 症状: 時間と場所アルバムで、(1) 座標はあるのに名前が「Trip」のまま、(2) EXIF/位置情報のない写真が混ざる。
