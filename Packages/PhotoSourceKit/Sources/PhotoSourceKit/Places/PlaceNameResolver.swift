@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import MosaicSupport
 
 /// 逆ジオコーディング結果の主要コンポーネント（永続キャッシュ用）。
 public struct PlaceComponents: Codable, Sendable, Equatable {
@@ -63,11 +64,14 @@ public actor PlaceNameResolver {
     // MARK: - Private
 
     private func components(for coordinate: CLLocationCoordinate2D) async -> PlaceComponents? {
-        let key = GeoGridKey.key(coordinate)
+        // 地名はアプリの表示言語（日本語/英語）に追従させる。キャッシュも言語別に分ける。
+        let ja = AppLocale.isJapanese
+        let key = (ja ? "ja:" : "en:") + GeoGridKey.key(coordinate)
         if let cached = cache[key] { return cached.isEmpty ? nil : cached }
 
         // オフラインの都市DBで最近傍解決（即時・無制限・失敗なし）。圏外（海上等）は空。
-        let place = OfflinePlaceDB.shared.nearest(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let place = OfflinePlaceDB.shared.nearest(
+            latitude: coordinate.latitude, longitude: coordinate.longitude, japanese: ja)
         let components = PlaceComponents(
             locality: place?.city,
             administrativeArea: place?.admin,

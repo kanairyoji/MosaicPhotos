@@ -19,6 +19,29 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         store.items.first { $0.id == currentID }
     }
 
+    private func topLabel(_ item: Store.Item) -> String? {
+        item.displayTitle ?? item.captureDate.map(DisplayDate.ymd)
+    }
+
+    /// 日付/タイトルのラベル。最上部のアクティビティバー（安全領域上端）の**下**へ落として配置する。
+    @ViewBuilder
+    private var topLabelOverlay: some View {
+        GeometryReader { proxy in
+            if let item = currentItem, let label = topLabel(item) {
+                Text(label)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+                    .frame(maxWidth: .infinity)
+                    // 安全領域上端（ノッチ/ダイナミックアイランド下）＋アクティビティバーの高さぶん下げる。
+                    .padding(.top, proxy.safeAreaInsets.top + 36)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
     public var body: some View {
         TabView(selection: $currentID) {
             ForEach(store.items) { item in
@@ -29,18 +52,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Color.black)
         .ignoresSafeArea()
+        // 日付/タイトルは最上部のアクティビティバーと被らないよう、その下に独立配置する
+        // （以前はナビバーのタイトル＝バーと同じ位置で重なっていた）。
+        .overlay(alignment: .top) { topLabelOverlay }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                if let item = currentItem {
-                    if let title = item.displayTitle {
-                        Text(title).font(.subheadline)
-                    } else if let date = item.captureDate {
-                        Text(DisplayDate.ymd(date)).font(.subheadline)
-                    }
-                }
-            }
-        }
         // Pre-fetch the next page as soon as the page view opens, so photos are
         // ready before the user swipes near the end.
         .task {

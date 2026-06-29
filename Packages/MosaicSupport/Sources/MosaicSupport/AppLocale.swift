@@ -37,6 +37,12 @@ public enum AppLocale {
         return .autoupdatingCurrent
     }
 
+    /// 実効表示言語が日本語か（上書き言語＝なければ端末言語）。地名など UI 言語に追従させる用途。
+    public static var isJapanese: Bool {
+        let code = overrideCode ?? Locale.autoupdatingCurrent.language.languageCode?.identifier
+        return code == "ja"
+    }
+
     /// 文字列を上書き言語（無ければ bundle 既定＝端末設定）で解決する。
     /// 各パッケージの `L(_:)` から `bundle: .module` で呼ぶ。
     public static func string(_ key: String.LocalizationValue, bundle: Bundle) -> String {

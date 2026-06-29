@@ -4,7 +4,9 @@ import Foundation
 /// 最近傍検索する。`CLGeocoder` のオンライン依存・レート制限・失敗キャッシュ問題を回避するための実体。
 /// `PlaceNameResolver` の一次バックエンドとして使う。
 ///
-/// データ: GeoNames (https://www.geonames.org/) — CC BY 4.0。生成は `scripts/build_places.py`。
+/// 地名は**英語（ローマ字）と日本語**の両方を保持し、`japanese` 引数で切り替える（日本語が無い都市は
+/// 英語へフォールバック）。データ: GeoNames (https://www.geonames.org/) — CC BY 4.0。生成は
+/// `scripts/build_places.py`。
 public final class OfflinePlaceDB: @unchecked Sendable {
     public static let shared = OfflinePlaceDB()
 
@@ -16,11 +18,16 @@ public final class OfflinePlaceDB: @unchecked Sendable {
 
     private let lat: [Float]
     private let lon: [Float]
-    private let adminIdx: [UInt16]
-    private let countryIdx: [UInt16]
-    private let adminPool: [String]
-    private let countryPool: [String]
-    private let cityNames: [String]
+    private let cityEn: [String]
+    private let cityJa: [String]      // 空＝英語へフォールバック
+    private let adminEnPool: [String]
+    private let adminJaPool: [String]
+    private let adminEnIdx: [UInt16]
+    private let adminJaIdx: [UInt16]
+    private let countryEnPool: [String]
+    private let countryJaPool: [String]
+    private let countryEnIdx: [UInt16]
+    private let countryJaIdx: [UInt16]
     private let count: Int
 
     /// 最近傍がこの距離より遠ければ「地名なし」（海上・極地など）とみなす。
@@ -29,22 +36,27 @@ public final class OfflinePlaceDB: @unchecked Sendable {
     private init() {
         guard let url = Bundle.module.url(forResource: "cities15000", withExtension: "bin"),
               let data = try? Data(contentsOf: url),
-              let parsed = Self.parse(data) else {
-            lat = []; lon = []; adminIdx = []; countryIdx = []
-            adminPool = []; countryPool = []; cityNames = []; count = 0
+              let p = Self.parse(data) else {
+            lat = []; lon = []; cityEn = []; cityJa = []
+            adminEnPool = []; adminJaPool = []; adminEnIdx = []; adminJaIdx = []
+            countryEnPool = []; countryJaPool = []; countryEnIdx = []; countryJaIdx = []
+            count = 0
             return
         }
-        (lat, lon, adminIdx, countryIdx, adminPool, countryPool, cityNames) = parsed
+        lat = p.lat; lon = p.lon; cityEn = p.cityEn; cityJa = p.cityJa
+        adminEnPool = p.adminEnPool; adminJaPool = p.adminJaPool
+        adminEnIdx = p.adminEnIdx; adminJaIdx = p.adminJaIdx
+        countryEnPool = p.countryEnPool; countryJaPool = p.countryJaPool
+        countryEnIdx = p.countryEnIdx; countryJaIdx = p.countryJaIdx
         count = lat.count
     }
 
     public var isLoaded: Bool { count > 0 }
 
-    /// 最近傍の都市から地名を返す。圏外（遠すぎ）や未ロードなら nil。
-    public func nearest(latitude: Double, longitude: Double) -> Place? {
-        guard count > 0,
-              latitude.isFinite, longitude.isFinite else { return nil }
-        // ランキングは等距円筒近似（経度は cos 補正）で十分。最後に最近傍だけ正確距離で圏外判定。
+    /// 最近傍の都市から地名を返す。`japanese` で表示言語を選ぶ（日本語が無ければ英語へフォールバック）。
+    /// 圏外（遠すぎ）や未ロードなら nil。
+    public func nearest(latitude: Double, longitude: Double, japanese: Bool) -> Place? {
+        guard count > 0, latitude.isFinite, longitude.isFinite else { return nil }
         let qLatF = Float(latitude), qLonF = Float(longitude)
         let cosLat = Float(cos(latitude * .pi / 180))
         var best = -1
@@ -62,19 +74,31 @@ public final class OfflinePlaceDB: @unchecked Sendable {
         guard best >= 0,
               haversine(latitude, longitude, Double(lat[best]), Double(lon[best])) <= Self.maxMeters
         else { return nil }
-        let admin = adminPool[safe: Int(adminIdx[best])].flatMap { $0.isEmpty ? nil : $0 }
-        let country = countryPool[safe: Int(countryIdx[best])].flatMap { $0.isEmpty ? nil : $0 }
-        return Place(city: cityNames[best], admin: admin, country: country)
+
+        func choose(_ ja: String, _ en: String) -> String? {
+            let s = (japanese && !ja.isEmpty) ? ja : en
+            return s.isEmpty ? nil : s
+        }
+        let cityJaS = cityJa[best]
+        let city = choose(cityJaS, cityEn[best])
+        let admin = choose(adminJaPool[safe: Int(adminJaIdx[best])] ?? "",
+                           adminEnPool[safe: Int(adminEnIdx[best])] ?? "")
+        let country = choose(countryJaPool[safe: Int(countryJaIdx[best])] ?? "",
+                             countryEnPool[safe: Int(countryEnIdx[best])] ?? "")
+        return Place(city: city, admin: admin, country: country)
     }
 
     // MARK: - Parsing
 
-    private typealias Parsed = ([Float], [Float], [UInt16], [UInt16], [String], [String], [String])
+    private struct Parsed {
+        let lat: [Float], lon: [Float], cityEn: [String], cityJa: [String]
+        let adminEnPool: [String], adminJaPool: [String], adminEnIdx: [UInt16], adminJaIdx: [UInt16]
+        let countryEnPool: [String], countryJaPool: [String], countryEnIdx: [UInt16], countryJaIdx: [UInt16]
+    }
 
     private static func parse(_ data: Data) -> Parsed? {
         let bytes = [UInt8](data)
         var i = 0
-        func u8() -> Int { defer { i += 1 }; return Int(bytes[i]) }
         func u16() -> Int { let v = Int(bytes[i]) | (Int(bytes[i + 1]) << 8); i += 2; return v }
         func u32() -> Int {
             let v = Int(bytes[i]) | (Int(bytes[i + 1]) << 8) | (Int(bytes[i + 2]) << 16) | (Int(bytes[i + 3]) << 24)
@@ -86,34 +110,25 @@ public final class OfflinePlaceDB: @unchecked Sendable {
             let s = String(decoding: bytes[i..<i + len], as: UTF8.self)
             i += len; return s
         }
+        func floats(_ n: Int) -> [Float] { var a = [Float](); a.reserveCapacity(n); for _ in 0..<n { a.append(f32()) }; return a }
+        func u16s(_ n: Int) -> [UInt16] { var a = [UInt16](); a.reserveCapacity(n); for _ in 0..<n { a.append(UInt16(u16())) }; return a }
+        func pool() -> [String] { let c = u16(); var a = [String](); a.reserveCapacity(c); for _ in 0..<c { a.append(str()) }; return a }
+        func strs(_ n: Int) -> [String] { var a = [String](); a.reserveCapacity(n); for _ in 0..<n { a.append(str()) }; return a }
 
         guard bytes.count >= 12,
-              bytes[0] == 0x4D, bytes[1] == 0x50, bytes[2] == 0x43, bytes[3] == 0x31 else { return nil } // "MPC1"
+              bytes[0] == 0x4D, bytes[1] == 0x50, bytes[2] == 0x43, bytes[3] == 0x32 else { return nil } // "MPC2"
         i = 4
         _ = u32()                          // version
         let n = u32()
         guard n > 0, bytes.count > 12 + n * 12 else { return nil }
 
-        var la = [Float](); la.reserveCapacity(n)
-        var lo = [Float](); lo.reserveCapacity(n)
-        for _ in 0..<n { la.append(f32()) }
-        for _ in 0..<n { lo.append(f32()) }
-        var ai = [UInt16](); ai.reserveCapacity(n)
-        var ci = [UInt16](); ci.reserveCapacity(n)
-        for _ in 0..<n { ai.append(UInt16(u16())) }
-        for _ in 0..<n { ci.append(UInt16(u16())) }
-
-        let adminCount = u16()
-        var adminPool = [String](); adminPool.reserveCapacity(adminCount)
-        for _ in 0..<adminCount { adminPool.append(str()) }
-        let countryCount = u16()
-        var countryPool = [String](); countryPool.reserveCapacity(countryCount)
-        for _ in 0..<countryCount { countryPool.append(str()) }
-
-        var names = [String](); names.reserveCapacity(n)
-        for _ in 0..<n { names.append(str()) }
-
-        return (la, lo, ai, ci, adminPool, countryPool, names)
+        let la = floats(n), lo = floats(n)
+        let aen = u16s(n), aja = u16s(n), cen = u16s(n), cja = u16s(n)
+        let aenP = pool(), ajaP = pool(), cenP = pool(), cjaP = pool()
+        let cityEn = strs(n), cityJa = strs(n)
+        return Parsed(lat: la, lon: lo, cityEn: cityEn, cityJa: cityJa,
+                      adminEnPool: aenP, adminJaPool: ajaP, adminEnIdx: aen, adminJaIdx: aja,
+                      countryEnPool: cenP, countryJaPool: cjaP, countryEnIdx: cen, countryJaIdx: cja)
     }
 }
 

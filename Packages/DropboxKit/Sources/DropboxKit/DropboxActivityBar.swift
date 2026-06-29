@@ -181,7 +181,7 @@ private struct DropboxActivityBarModifier: ViewModifier {
         content.overlay(alignment: .top) {
             if enabled {
                 DropboxActivityBar()
-                    .padding(.top, 2)
+                    .padding(.top, 0)   // 安全領域上端にぴったり寄せる（フル画面の日付はこの下へ配置）
                     .transition(.opacity)
             }
         }

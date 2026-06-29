@@ -5,15 +5,16 @@
 都市の座標表（cities15000・約3.4万件）を同梱し、端末で最近傍検索することで、地名解決を
 **完全オフライン・即時・無制限**にする（アルバム名／場所アルバムの両方に効く）。
 
-地名は **日本語表記**を優先する：GeoNames の言語別別名（alternateNamesV2・isolanguage=ja）から
-都市/都道府県/国の日本語名を取り込み、日本語名が無いものはローマ字（GeoNames の name）へフォールバックする。
+地名は **英語（ローマ字）と日本語の両方**を持たせ、アプリ側が端末/設定の言語に応じて選ぶ。
+英語＝GeoNames の name（ローマ字）、日本語＝言語別別名 alternateNamesV2（isolanguage=ja）。
+日本語名が無い都市は ja を空にし、アプリ側で英語へフォールバックする。
 
 出力: Packages/PhotoSourceKit/Sources/PhotoSourceKit/Places/cities15000.bin（リトルエンディアン）
-  magic "MPC1"(4) / u32 version=1 / u32 N
-  f32 lat[N] / f32 lon[N] / u16 adminIdx[N] / u16 countryIdx[N]
-  u16 adminCount + adminCount×(u16 len + utf8)        # 行政区(都道府県/州)名プール
-  u16 countryCount + countryCount×(u16 len + utf8)    # 国名プール
-  N × (u16 len + utf8)                                 # 都市名（配列順）
+  magic "MPC2"(4) / u32 version=2 / u32 N
+  f32 lat[N] / f32 lon[N]
+  u16 adminEnIdx[N] / u16 adminJaIdx[N] / u16 countryEnIdx[N] / u16 countryJaIdx[N]
+  4 プール（adminEn / adminJa / countryEn / countryJa）：各 u16 count + count×(u16 len + utf8)
+  N×(u16 len + utf8) cityEn  ＋  N×(u16 len + utf8) cityJa（空＝英語へフォールバック）
 
 データ: GeoNames (https://www.geonames.org/) — CC BY 4.0。NOTICE / アプリ内 Licenses に表記する。
 """
@@ -104,53 +105,66 @@ def main() -> None:
                 if cur is None or score > cur[1]:
                     ja[gid] = (c[3], score)
 
-    def localized(gid, fallback):
+    def ja_or_empty(gid):
         v = ja.get(gid)
-        return v[0] if v else fallback
+        return v[0] if v else ""
 
-    # 出力用配列＋プールを構築（日本語優先）。
-    lats, lons, city_names = [], [], []
-    admin_pool, admin_idx, admin_map = [], [], {}
-    country_pool, country_idx, country_map = [], [], {}
+    # 出力用配列＋プールを構築（英語＝GeoNames name のローマ字、日本語＝alternateNames ja・無ければ空）。
+    # 端末/設定の言語に応じてアプリ側が en/ja を選ぶ（ja が空なら en へフォールバック）。
+    lats, lons, city_en, city_ja = [], [], [], []
+    pools = {k: ([], {}) for k in ("aen", "aja", "cen", "cja")}   # name pool + intern map
 
-    def intern(pool, mapping, value):
+    def intern(key, value):
+        pool, mapping = pools[key]
         i = mapping.get(value)
         if i is None:
             i = len(pool); pool.append(value); mapping[value] = i
         return i
 
+    admin_en_idx, admin_ja_idx, country_en_idx, country_ja_idx = [], [], [], []
     for gid, name, la, lo, cc, a1key in cities:
         lats.append(la); lons.append(lo)
-        city_names.append(localized(gid, name))
+        city_en.append(name)
+        city_ja.append(ja_or_empty(gid))
         a_name, a_gid = admin1.get(a1key, ("", None))
-        admin_idx.append(intern(admin_pool, admin_map, localized(a_gid, a_name) if a_gid else a_name))
+        admin_en_idx.append(intern("aen", a_name))
+        admin_ja_idx.append(intern("aja", ja_or_empty(a_gid) if a_gid else ""))
         c_name, c_gid = country.get(cc, (cc, None))
-        country_idx.append(intern(country_pool, country_map, localized(c_gid, c_name) if c_gid else c_name))
+        country_en_idx.append(intern("cen", c_name))
+        country_ja_idx.append(intern("cja", ja_or_empty(c_gid) if c_gid else ""))
 
     n = len(lats)
-    ja_cities = sum(1 for (gid, *_ ) in cities if gid in ja)
-    if len(admin_pool) > 65535 or len(country_pool) > 65535:
-        sys.exit("pool too large for u16 index")
+    ja_cities = sum(1 for s in city_ja if s)
+    for k in pools:
+        if len(pools[k][0]) > 65535:
+            sys.exit(f"pool {k} too large for u16 index")
 
     def pack_str(s: str) -> bytes:
         b = s.encode("utf-8")
         return struct.pack("<H", len(b)) + b
 
+    def pack_pool(key) -> bytes:
+        pool = pools[key][0]
+        return struct.pack("<H", len(pool)) + b"".join(pack_str(s) for s in pool)
+
     buf = bytearray()
-    buf += b"MPC1" + struct.pack("<II", 1, n)
+    buf += b"MPC2" + struct.pack("<II", 2, n)
     buf += struct.pack(f"<{n}f", *lats)
     buf += struct.pack(f"<{n}f", *lons)
-    buf += struct.pack(f"<{n}H", *admin_idx)
-    buf += struct.pack(f"<{n}H", *country_idx)
-    buf += struct.pack("<H", len(admin_pool)) + b"".join(pack_str(s) for s in admin_pool)
-    buf += struct.pack("<H", len(country_pool)) + b"".join(pack_str(s) for s in country_pool)
-    buf += b"".join(pack_str(s) for s in city_names)
+    buf += struct.pack(f"<{n}H", *admin_en_idx)
+    buf += struct.pack(f"<{n}H", *admin_ja_idx)
+    buf += struct.pack(f"<{n}H", *country_en_idx)
+    buf += struct.pack(f"<{n}H", *country_ja_idx)
+    buf += pack_pool("aen") + pack_pool("aja") + pack_pool("cen") + pack_pool("cja")
+    buf += b"".join(pack_str(s) for s in city_en)
+    buf += b"".join(pack_str(s) for s in city_ja)
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "wb") as f:
         f.write(buf)
     print(f"wrote {OUT}: {n} cities ({ja_cities} with {LANG} names), "
-          f"{len(admin_pool)} admin, {len(country_pool)} countries, {len(buf)/1024:.0f} KB")
+          f"admin en/ja={len(pools['aen'][0])}/{len(pools['aja'][0])}, "
+          f"country en/ja={len(pools['cen'][0])}/{len(pools['cja'][0])}, {len(buf)/1024:.0f} KB")
 
 
 if __name__ == "__main__":

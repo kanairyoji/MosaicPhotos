@@ -21,6 +21,13 @@
 
 ---
 
+## フル画面ビューで最上部のアクティビティバーと日付が重なる
+- 症状: フル画面の写真ビューで、最上部のアクティビティバー（ツールチップ状の表示）と日付が同じ位置に重なって読めない。
+- 原因: アクティビティバーは `SourceHostView` の `overlay(alignment:.top)`（安全領域上端）に出す。一方フル画面の日付は `PhotoPageView` の**ナビバー principal タイトル**で、これも安全領域上端の中央＝**同じ位置**だった。
+- 対処: 日付をナビバータイトルから外し、`PhotoPageView` の独立した top オーバーレイへ移して**バーの下**（`safeAreaInsets.top + 36pt`）に配置（`GeometryReader` で安全領域上端を取得）。バーは `padding(.top, 0)` で最上端へ寄せる。両者が縦に並んで重ならない。
+- 関連: `PhotoPageView.swift`(topLabelOverlay) / `DropboxActivityBar.swift`(modifier)。
+- 残課題: なし。
+
 ## 旅行アルバムが「Trip」で固定／位置情報のない写真が混入
 - 症状: 時間と場所アルバムで、(1) 座標はあるのに名前が「Trip」のまま、(2) EXIF/位置情報のない写真が混ざる。
 - 原因:
@@ -30,7 +37,7 @@
   - (1) 逆ジオコーディングを**同梱DB（GeoNames cities15000）で完全オフライン化**（[[ADR-21]]）。失敗概念が消え、決定的に解決＝「Trip」固定が解消。
   - (2) **backfill を廃止**し、座標のある写真のみを旅行対象に（ユーザー要望「位置情報がない写真は入れない」）。
 - 関連: `TimePlaceStrategy.swift`(backfill 削除) / `AutoAlbumEngine.resolvePlaceIfNeeded` / `PlaceNameResolver`・`OfflinePlaceDB` / `TimePlaceStrategyTests`。
-- 残課題: 命名は「最も近い既知都市」。多都市旅行で centroid が半端な都市を指す場合があり、代表クラスタ座標での命名は今後の改善余地。地名は日本語優先（alternateNames の ja・無ければローマ字）で対応済み。
+- 残課題: 命名は「最も近い既知都市」。多都市旅行で centroid が半端な都市を指す場合があり、代表クラスタ座標での命名は今後の改善余地。地名は表示言語に追従（日英両方を bin に保持し AppLocale で切替・日本語が無ければ英語）で対応済み。
 
 ## サムネ遅延の主因がネット→ディスク再デコードへ移動（メモリ保持＋デコード並列制限）
 - 背景: 前項の改善後に再計測。効果は確認できた（ミス率 59%→35%→2.5%、ミス待ち 17s→8.7s→0.57s）。だが新たな主因が顕在化。`thumb-drain` カウンタで `cache.thumb.diskHit=1787(Σ230409ms)`＝**1枚 ~129ms**、`memHit=56`（=メモリにほぼ残らず毎回ディスク再デコード）。
