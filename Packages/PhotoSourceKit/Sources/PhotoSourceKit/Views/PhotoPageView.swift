@@ -45,7 +45,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
                     .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-                    .padding(.top, 34)   // 安全領域上端（=バー位置）からさらに下げてバーと重ねない
+                    .padding(.top, 24)   // 安全領域上端（=バー位置）の少し下。バー直下に寄せる
                     .allowsHitTesting(false)
             }
         }
