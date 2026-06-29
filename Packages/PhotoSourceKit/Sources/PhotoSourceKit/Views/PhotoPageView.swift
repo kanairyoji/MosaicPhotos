@@ -96,7 +96,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .padding(.top, 6)   // 安全領域上端（=アクティビティバー）のすぐ下
+                .padding(.top, 16)   // 安全領域上端（=アクティビティバー）のすぐ下。バーと重ねない
                 .allowsHitTesting(false)
             }
         }
