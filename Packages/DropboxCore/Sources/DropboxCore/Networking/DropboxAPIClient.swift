@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 
 /// Dropbox の RPC / content ダウンロードについて、リクエスト構築・Bearer 認証ヘッダ付与・
 /// ステータス検証を集約する薄いクライアント。`HTTPClient` と `AccessTokenProvider` を注入
@@ -59,8 +60,13 @@ final class DropboxAPIClient {
     }
 
     private func send(_ request: URLRequest) async throws -> Data {
+        // 計測: エンドポイント別のネットワーク往復時間とバイト数。Dropbox 体感速度の最重要指標。
+        let t0 = PerfTrace.nowNs()
         let (data, response) = try await httpClient.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        PerfTrace.logSpan("net." + (request.url?.lastPathComponent ?? "?"),
+                          ms: PerfTrace.msSince(t0),
+                          detail: "\(data.count / 1024)KB status=\(status)")
         guard status == 200 else {
             throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
         }

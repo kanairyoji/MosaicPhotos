@@ -6,4 +6,7 @@ enum AppSettingsKeys {
     /// 詳細ログの抑制トグル。`MosaicSupport.LogChannel.verboseLoggingKey` と同一キー
     /// （app は MosaicSupport を直接 import しないため文字列で揃える）。
     static let verboseLogging = "debug.verboseLogging"
+    /// パフォーマンス計測（`MosaicSupport.PerfTrace.isEnabled`）の永続トグル。
+    /// 起動時にこの値で `PerfTrace.isEnabled` を初期化し、Developer Options で実機 ON/OFF できる。
+    static let perfTracing = "debug.perfTracing"
 }

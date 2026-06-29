@@ -2,6 +2,7 @@
 import CryptoKit
 import Foundation
 import ImageCacheKit
+import MosaicSupport
 import SwiftData
 import UIKit
 
@@ -89,6 +90,9 @@ actor DropboxCacheStore {
     // MARK: - Metadata / sync state
 
     func cachedItems(accountId: String) -> [DropboxFileItem] {
+        // 計測: SwiftData の全件 fetch + 値型変換の所要（起動・全件表示の重さの一因になりうる）。
+        let t0 = PerfTrace.nowNs()
+        defer { PerfTrace.logSpan("cache.fetchItems", ms: PerfTrace.msSince(t0)) }
         // 並べ替えは DB 側（SQLite）で行う。捕捉日時の昇順（nil は先頭＝最古扱い）。
         // 67k 件を Swift でソートしないことで CPU と一時配列を削減する。
         let descriptor = FetchDescriptor<CachedDropboxItem>(

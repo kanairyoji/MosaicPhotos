@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import ImageCacheKit
+import MosaicSupport
 import UIKit
 
 /// Dropbox サムネイルのオンデマンド取得をバッチにまとめて `get_thumbnail_batch` API
@@ -58,10 +59,13 @@ final class DropboxThumbnailBatcher {
     /// フェッチ結果はキャッシュへ書き込まれるため、セルが再描画された際に即ヒットする。
     func thumbnail(for item: DropboxFileItem) async -> UIImage? {
         if let cached = await cache.thumbnail(for: item.path) {
+            PerfTrace.count("thumb.cacheHit")
             return cached
         }
+        PerfTrace.count("thumb.cacheMiss")
         let token = UUID()
-        return await withTaskCancellationHandler {
+        let t0 = PerfTrace.nowNs()   // 計測: ミス時の待ち時間（バッチ集約→ネット→デコードまで）
+        let image = await withTaskCancellationHandler {
             await withCheckedContinuation { cont in
                 pendingItems[item.path] = item
                 thumbnailWaiters[token] = (item.path, cont)
@@ -75,6 +79,8 @@ final class DropboxThumbnailBatcher {
                 self?.cancelWaiter(token: token)
             }
         }
+        PerfTrace.count("thumb.missWaitMs", value: PerfTrace.msSince(t0))
+        return image
     }
 
     // MARK: - Private
@@ -124,6 +130,8 @@ final class DropboxThumbnailBatcher {
         defer {
             isDraining = false
             DropboxActivityMonitor.shared.setThumbnailActiveSlots(0)
+            // 計測: 1 ドレイン分の集計（キャッシュヒット率・デコード/待ち時間など）を 1 行にまとめて出す。
+            PerfTrace.flushCounters("thumb-drain")
         }
         while !pendingItems.isEmpty {
             // MainActor 上で次のウェーブ（最大 maxConcurrentRequests 本）のチャンクを取り出す。
@@ -189,12 +197,16 @@ final class DropboxThumbnailBatcher {
         }
 
         // ★ base64 デコード + 画像デコード（強制）をバックグラウンドで実行し、メインの負荷を避ける。
+        // 計測: 1 チャンク分のデコード所要と件数（ネットワークは net.* で別途計測済み）。
+        let tDecode = PerfTrace.nowNs()
         let decoded: [(String, SendableUIImage?)] = await Task.detached(priority: .userInitiated) {
             decodeInputs.map { input in
                 let image = UIImage(data: input.data).map { $0.preparingForDisplay() ?? $0 }
                 return (input.path, image.map(SendableUIImage.init))
             }
         }.value
+        PerfTrace.count("thumb.decodeMs", value: PerfTrace.msSince(tDecode))
+        PerfTrace.count("thumb.decodedItems", value: Double(decodeInputs.count))
 
         for (path, sendable) in decoded {
             let image = sendable?.image

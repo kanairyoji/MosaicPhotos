@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import ImageCacheKit
+import MosaicSupport
 import UIKit
 
 /// `DropboxCacheStore` のバイナリ（サムネイル／フル画像）取得・保存レイヤー。
@@ -15,17 +16,23 @@ extension DropboxCacheStore {
     /// デコード済み画像のみが境界を跨ぐため Sendable 問題を避けられ、actor をブロックしない。
     func thumbnail(for path: String) async -> UIImage? {
         if let cached = thumbnailMemory.image(forKey: path) {
+            PerfTrace.count("cache.thumb.memHit")
             return cached
         }
         let name = DropboxCacheNaming.fileName(kind: .thumbnail, path: path)
         let store = thumbnailStore
         let memory = thumbnailMemory
+        let t0 = PerfTrace.nowNs()   // 計測: ディスク読み込み＋強制デコードの所要
         await Task.detached(priority: .userInitiated) {
             if let decoded = store.decodedImage(forName: name) {
                 memory.insertDecoded(decoded, forKey: path)   // NSCache はスレッドセーフ・実コスト計上
             }
         }.value
-        guard let image = thumbnailMemory.image(forKey: path) else { return nil }
+        guard let image = thumbnailMemory.image(forKey: path) else {
+            PerfTrace.count("cache.thumb.miss")   // メモリにもディスクにも無い（ネット取得が必要）
+            return nil
+        }
+        PerfTrace.count("cache.thumb.diskHit", value: PerfTrace.msSince(t0))
         touchUsage(kind: .thumbnail, path: path)
         return image
     }

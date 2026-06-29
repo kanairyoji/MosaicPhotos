@@ -21,6 +21,18 @@
 
 ---
 
+## Dropbox パフォーマンス計測ハーネス（PerfTrace・ON/OFF 可・コードに常駐）
+- 背景: 実機で Dropbox 周りの動作が重い。原因の切り分けのため、ホットパスに常駐の計測コードを入れ、必要時だけ ON にして同じ計測を再現できるようにした（計測→ON、計測後→OFF、コードは残す方針）。
+- 仕組み: `MosaicSupport/PerfTrace.swift`。既定無効で、無効時は各 API が先頭で即 return するためオーバーヘッドは無視できる。ON/OFF は 2 通り = (1) コンパイルスイッチ `-DMOSAIC_PERF`（OTHER_SWIFT_FLAGS）で既定 ON、(2) 実行時 `PerfTrace.isEnabled`（Developer Options のトグル「Performance tracing (Dropbox)」で実機切替・`AppSettingsKeys.perfTracing` に永続化し起動時反映）。出力は os_signpost（Instruments の Points of Interest）と DiagnosticsLog（端末内ログ・Developer Options から閲覧）。API は `measureAsync` / `logSpan(ms:detail:)` / `mark` / `count(value:)` / `flushCounters(context:)`。
+- 計測点（Dropbox）:
+  - ネットワーク往復: `DropboxAPIClient.send` が `net.<endpoint>`（例 net.get_thumbnail_batch / net.download / net.list_folder）の ms とバイト数・status を 1 行出力。RPC・content・同期はすべてここを通るので一括カバー。最重要指標。
+  - サムネ: `DropboxThumbnailBatcher` で `thumb.cacheHit/cacheMiss`、ミス時の待ち `thumb.missWaitMs`、チャンクの `thumb.decodeMs` と `thumb.decodedItems` を集計し、1 ドレイン完了ごとに `flushCounters("thumb-drain")` で 1 行サマリ。
+  - キャッシュ層: `DropboxCacheStore.thumbnail` が `cache.thumb.memHit / diskHit(ms) / miss` を集計。
+  - 全件メタ: `DropboxCacheStore.cachedItems` が `cache.fetchItems`（SwiftData 全件 fetch+変換の ms）。
+  - フル画像: `DropboxPhotoStore.fullImage` が `fullImage.cacheHit` / `fullImage.download`（ms・KB）。
+- 関連: `Packages/MosaicSupport/Sources/MosaicSupport/PerfTrace.swift` ほか上記各ファイル、`MosaicPhotos/Settings/DeveloperSettingsView.swift`（トグル）、`MosaicPhotosApp.swift`（起動時反映）。
+- 残課題: 計測結果に基づく改善（プリフェッチ窓・並行数・キャッシュ命中率・初回同期）の最適化は別途。同じ枠組みで他機能にも横展開できる。
+
 ## 実機クラッシュ: カバー取得で continuation を二重 resume（PHImageManager .opportunistic）
 - 症状: 実機起動直後に `SWIFT TASK CONTINUATION MISUSE: loadLocalCover(_:pixelSize:) tried to resume its continuation more than once` で停止。診断ログには無害な `accounts Code=7` / `Failed to get or decode unavailable reasons` も併発（クラッシュ原因ではない）。
 - 原因: `loadLocalCover`（`HomeRows.swift`）が `PHImageRequestOptions.deliveryMode = .opportunistic` を使用。opportunistic は「劣化版→確定版」と**結果ハンドラを複数回呼ぶ**仕様で、毎回 `continuation.resume(returning:)` していたため二重 resume で fatalError。写真がある実機ほどカバー取得が走り発症しやすい。

@@ -19,6 +19,7 @@ struct DeveloperSettingsView: View {
     let autoAlbumEngine: AutoAlbumEngine?
 
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
+    @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
 
     @State private var enrichmentCount = 0
     @State private var cachedPlaceCount = 0
@@ -65,10 +66,13 @@ struct DeveloperSettingsView: View {
                            value: currentMemoryFootprintMB().map { String(format: "%.0f MB", $0) } ?? "—")
             LabeledContent("CLIP model", value: MobileCLIP.modelsBundled ? "Bundled" : "Not bundled")
             NavigationLink("Diagnostics log") { DiagnosticsLogView() }
+            Toggle("Performance tracing (Dropbox)", isOn: $perfTracing)
+                .onChange(of: perfTracing) { _, on in PerfTrace.isEnabled = on }
         } header: {
             Text("Diagnostics")
         } footer: {
-            Text("On-device log of errors, uncaught exceptions and memory pressure. Useful when the app misbehaves without a Mac/Console.")
+            Text("On-device log of errors, uncaught exceptions and memory pressure. Useful when the app misbehaves without a Mac/Console. "
+                 + "Performance tracing writes Dropbox timing (network/cache/decode) to the diagnostics log and os_signpost; turn on, reproduce, then off.")
         }
     }
 

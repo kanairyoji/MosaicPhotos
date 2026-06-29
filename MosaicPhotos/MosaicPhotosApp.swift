@@ -8,6 +8,8 @@ struct MosaicPhotosApp: App {
         Diagnostics.install()
         // アプリ内の言語設定（System/日本語/English）を起動時に反映する。
         AppLocale.loadFromDefaults()
+        // パフォーマンス計測の永続トグル（Developer Options）を起動時に反映する。既定 OFF。
+        PerfTrace.isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.perfTracing)
     }
 
     var body: some Scene {

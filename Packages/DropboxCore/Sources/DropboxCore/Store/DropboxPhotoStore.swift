@@ -2,6 +2,7 @@
 import CoreLocation
 import Foundation
 import ImageCacheKit
+import MosaicSupport
 import Observation
 import UIKit
 
@@ -338,8 +339,10 @@ public final class DropboxPhotoStore {
     // MARK: - Full image
 
     public func fullImage(for item: DropboxFileItem) async -> UIImage? {
+        let t0 = PerfTrace.nowNs()   // 計測: フル画像取得（キャッシュヒット or ダウンロード+デコード）
         if let cached = await cache.fullImage(for: item.path) {
             DropboxLogger.verbose("fullImage() cache hit — \(item.name)")
+            PerfTrace.logSpan("fullImage.cacheHit", ms: PerfTrace.msSince(t0))
             return cached
         }
         DropboxLogger.verbose("fullImage() downloading from API — \(item.name)")
@@ -365,6 +368,7 @@ public final class DropboxPhotoStore {
         }.value
         guard let image = decoded?.image else { return nil }
         DropboxLogger.verbose("fullImage() downloaded \(data.count) bytes — \(item.name)")
+        PerfTrace.logSpan("fullImage.download", ms: PerfTrace.msSince(t0), detail: "\(data.count / 1024)KB")
         return image
     }
 
