@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>フォルダアルバムの作り方（正規表現ガイド） | MosaicPhotos ヘルプ</title>
+  <style>
+    :root { --fg:#1d1d1f; --muted:#6e6e73; --line:#e3e3e6; --accent:#0a6cff; --code-bg:#f5f5f7; --ok:#0a7d33; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+           color: var(--fg); line-height: 1.75; margin: 0; background:#fff; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 20px 80px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .crumb { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+    h1 { font-size: 28px; line-height: 1.3; margin: 8px 0 4px; }
+    h2 { font-size: 21px; margin: 40px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+    h3 { font-size: 17px; margin: 24px 0 6px; }
+    p, li { font-size: 16px; }
+    .lead { font-size: 17px; color: var(--muted); }
+    code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px;
+           font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; }
+    pre { background: var(--code-bg); padding: 12px 14px; border-radius: 10px; overflow-x: auto; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 15px; display: block; overflow-x: auto; }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--code-bg); white-space: nowrap; }
+    .ex { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 14px 0; }
+    .ex .row { display: grid; grid-template-columns: 90px 1fr; gap: 6px 12px; align-items: baseline; }
+    .ex .k { color: var(--muted); font-size: 14px; }
+    .ex .v { font-size: 15px; }
+    .arrow { color: var(--muted); }
+    .album { color: var(--ok); font-weight: 600; }
+    .tip { background: #eef5ff; border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 8px; margin: 14px 0; }
+    .warn { background: #fff6e6; border-left: 4px solid #d98a00; padding: 10px 14px; border-radius: 8px; margin: 14px 0; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="crumb"><a href="./index.html">MosaicPhotos ヘルプ</a> / フォルダアルバム</div>
+    <h1>フォルダアルバムの作り方</h1>
+    <p class="lead">Dropbox の「フォルダ名」から自動でアルバムを作る機能です。たとえば
+      <code>/Trips/ハワイ 2024/</code> の中の写真を「ハワイ 2024」というアルバムにできます。
+      設定は <b>設定 → Albums → Folder Albums</b> で行います。</p>
+
+    <h2>仕組み（まずはこれだけ）</h2>
+    <p>1 つの「ルール」は、次の 2 つを決めるだけです。</p>
+    <ul>
+      <li><b>パターン</b> … どのフォルダを対象にするか（＝「探し方」）。</li>
+      <li><b>テンプレート</b> … アルバム名をどう作るか（＝「名前の作り方」）。既定は <code>${name}</code>。</li>
+    </ul>
+    <p>パターンの中で、<b>アルバム名にしたい部分</b>を <code>(?&lt;name&gt;…)</code> で囲って“印”を付けます。
+      その印で囲んだ文字が、テンプレートの <code>${name}</code> に入ります。これが基本のすべてです。</p>
+
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/Trips/ハワイ 2024/IMG_1.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/Trips/(?&lt;name&gt;[^/]+)/</code></div></div>
+      <div class="row"><div class="k">テンプレート</div><div class="v"><code>${name}</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">ハワイ 2024</span></div></div>
+    </div>
+
+    <div class="tip">ルールは<b>上から順に試され、最初に当たったものが使われます</b>。
+      どのルールにも当たらないフォルダ（例: Camera Uploads）は<b>無視</b>されます＝ゴミ箱的なフォルダは自然に除外できます。
+      迷ったら設定画面の <b>Preview</b> に実際のパスを貼って、その場で結果を確かめられます。</div>
+
+    <h2>部品の早見表（コピペで使えます）</h2>
+    <p>正規表現の“部品”の意味です。難しく見えますが、使うのは数個だけです。</p>
+    <table>
+      <tr><th>書き方</th><th>意味</th></tr>
+      <tr><td><code>^</code></td><td>パスの先頭（必ず <code>/</code> から始まります）</td></tr>
+      <tr><td><code>$</code></td><td>パスの末尾</td></tr>
+      <tr><td><code>/</code></td><td>フォルダの区切り</td></tr>
+      <tr><td><code>[^/]+</code></td><td><b>フォルダ 1 階層ぶん</b>（「/」以外の文字が 1 つ以上）。いちばん使います</td></tr>
+      <tr><td><code>\d</code> / <code>\d{4}</code> / <code>\d{2}</code></td><td>数字 1 文字 / ちょうど 4 文字（年など）/ ちょうど 2 文字（月など）</td></tr>
+      <tr><td><code>\s</code></td><td>空白 1 文字</td></tr>
+      <tr><td><code>(?&lt;name&gt;…)</code></td><td><b>アルバム名にする部分</b>の印（中身が <code>${name}</code> に入る）</td></tr>
+      <tr><td><code>( … )</code></td><td>番号付きで取り出す（<code>$1</code>, <code>$2</code>… で使う）</td></tr>
+      <tr><td><code>(?: … )</code></td><td>「まとめる」だけ（取り出さない）。次の <code>?</code> と組で“省略可能”に</td></tr>
+      <tr><td><code>?</code> / <code>*</code> / <code>+</code></td><td>直前が「0〜1 個」/「0 個以上」/「1 個以上」</td></tr>
+      <tr><td><code>.</code></td><td>任意の 1 文字</td></tr>
+      <tr><td><code>|</code></td><td>「または」（<code>(?:A|B)</code> で A か B）</td></tr>
+      <tr><td><code>\.</code></td><td>文字としての「.」（特殊文字を“ただの文字”にするには前に <code>\</code>）</td></tr>
+    </table>
+    <p>テンプレート側で使える記号:</p>
+    <table>
+      <tr><th>書き方</th><th>意味</th></tr>
+      <tr><td><code>${name}</code></td><td><code>(?&lt;name&gt;…)</code> で取り出した文字</td></tr>
+      <tr><td><code>$1</code> <code>$2</code></td><td>1 番目・2 番目の <code>( )</code> で取り出した文字</td></tr>
+      <tr><td><code>$$</code></td><td>文字としての「$」</td></tr>
+    </table>
+
+    <h2>例をたくさん</h2>
+    <p>あなたの Dropbox の構成に近いものを探して、そのままコピーして使ってください
+      （フォルダ名は日本語でも英語でも構いません）。</p>
+
+    <h3>1. 特定フォルダの直下を、そのままアルバム名に</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/Trips/京都旅行/IMG_1.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/Trips/(?&lt;name&gt;[^/]+)/</code></div></div>
+      <div class="row"><div class="k">テンプレート</div><div class="v"><code>${name}</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">京都旅行</span></div></div>
+    </div>
+
+    <h3>2. 日本語フォルダでも同じ</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/写真/沖縄/x.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/写真/(?&lt;name&gt;[^/]+)/</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">沖縄</span></div></div>
+    </div>
+
+    <h3>3. アンダースコアは自動で空白になります</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/写真/2024_08_沖縄/x.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/写真/(?&lt;name&gt;[^/]+)/</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">2024 08 沖縄</span></div></div>
+    </div>
+    <p class="lead" style="font-size:14px"><code>_</code> と、数字に挟まれていない <code>-</code> は空白に整えられます。
+      日付の <code>2025-10-05</code> の <code>-</code> は<b>そのまま残ります</b>。</p>
+
+    <h3>4. フォルダ名の先頭にある「日付」を取り除く</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/Photos/2024-08 沖縄旅行/x.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/Photos/(?:\d{4}[-_]\d{2}\s+)?(?&lt;name&gt;[^/]+)/</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">沖縄旅行</span></div></div>
+    </div>
+    <p class="lead" style="font-size:14px"><code>(?:\d{4}[-_]\d{2}\s+)?</code> は「<b>年-月と空白</b>が<b>あれば</b>読み飛ばす」という意味（<code>?</code> なので無くてもOK）。</p>
+
+    <h3>5. 「年フォルダ」と「イベント名」を組み合わせる</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/Pictures/2023/夏祭り/x.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/Pictures/(?&lt;year&gt;\d{4})/(?&lt;name&gt;[^/]+)/</code></div></div>
+      <div class="row"><div class="k">テンプレート</div><div class="v"><code>${name} (${year})</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">夏祭り (2023)</span></div></div>
+    </div>
+    <p class="lead" style="font-size:14px">印は複数置けます。テンプレートに <code>${year}</code> と <code>${name}</code> を好きに並べられます。</p>
+
+    <h3>6. 場所はどこでもいい「写真のすぐ上のフォルダ」をアルバム名に</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/任意/深い/階層/運動会/x.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>(?&lt;name&gt;[^/]+)/[^/]+$</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">運動会</span></div></div>
+    </div>
+    <p class="lead" style="font-size:14px"><code>[^/]+$</code> が末尾のファイル名、その手前の <code>(?&lt;name&gt;[^/]+)/</code> が「写真が入っているフォルダ」。
+      <code>^</code> を付けないので、どの階層にあっても当たります（万能ルール）。</p>
+
+    <h3>7. 複数の入口をまとめて対象に（または）</h3>
+    <div class="ex">
+      <div class="row"><div class="k">対象</div><div class="v"><code>/Trips/…</code> も <code>/旅行/…</code> も <code>/Travel/…</code> も</div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/(?:Trips|旅行|Travel)/(?&lt;name&gt;[^/]+)/</code></div></div>
+    </div>
+
+    <h3>8. 名前付きの印の代わりに「番号」で取り出す</h3>
+    <div class="ex">
+      <div class="row"><div class="k">フォルダ</div><div class="v"><code>/Albums/卒業式/x.jpg</code></div></div>
+      <div class="row"><div class="k">パターン</div><div class="v"><code>^/Albums/([^/]+)/</code></div></div>
+      <div class="row"><div class="k">テンプレート</div><div class="v"><code>$1</code></div></div>
+      <div class="row"><div class="k">できる名前</div><div class="v"><span class="arrow">→</span> <span class="album">卒業式</span></div></div>
+    </div>
+    <p class="lead" style="font-size:14px"><code>(?&lt;name&gt;…)</code> ＋ <code>${name}</code> と、<code>( … )</code> ＋ <code>$1</code> は同じことです。好きな方でOK。</p>
+
+    <h3>9. いらないフォルダは“何も書かない”だけで除外される</h3>
+    <p>たとえば <code>/Camera Uploads/…</code> を対象にしたくなければ、そのためのルールを作らないだけ。
+      どのルールにも当たらないので、自動的にアルバムになりません。</p>
+
+    <h2>うまくいかないとき</h2>
+    <ul>
+      <li><b>結果が出ない</b>：設定画面の <b>Preview</b> に実際のパス（例 <code>/Trips/京都旅行/IMG_1.jpg</code>）を貼って確認。
+        どのルールに当たったか・できる名前が表示されます。</li>
+      <li><b>順番</b>：ルールは上から試され最初に当たったものが勝ちます。<b>細かい（限定的な）ルールを上</b>、ざっくりルールを下に。</li>
+      <li><b>記号そのものを探したい</b>：<code>. ( ) [ ] + ? * ^ $ |</code> には特別な意味があります。
+        文字として探すには前に <code>\</code> を付けます（例：フォルダ <code>v1.0</code> は <code>v1\.0</code>）。</li>
+      <li><b>名前が空になる</b>：<code>${name}</code> を使うなら、パターンに <code>(?&lt;name&gt;…)</code> が必要です。
+        無い場合は <code>( )</code> で囲んで <code>$1</code> を使ってください。</li>
+      <li><b>大文字・小文字</b>：既定では区別しません（<code>/photos/</code> も <code>/Photos/</code> も当たります）。</li>
+    </ul>
+
+    <div class="tip">
+      <b>反映のしかた</b>：ルールを変えたら設定画面の <b>Regenerate Albums</b> を押してください。
+      フォルダアルバムは <b>Dropbox の写真</b>から作られるので、先に Dropbox を接続して Cloud を読み込んでおきます。
+      生成はバックグラウンドで進み、ホーム画面の「Albums」に表示されます。
+    </div>
+
+    <p style="margin-top:40px"><a href="./index.html">← ヘルプのトップへ戻る</a></p>
+  </main>
+</body>
+</html>

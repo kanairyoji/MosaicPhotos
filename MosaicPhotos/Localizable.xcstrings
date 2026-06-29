@@ -1694,6 +1694,16 @@
           }
         }
       }
+    },
+    "Help": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ヘルプ"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

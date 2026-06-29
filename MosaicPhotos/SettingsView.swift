@@ -22,6 +22,9 @@ struct SettingsView: View {
 
     private let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
 
+    /// オンライン版ヘルプ（設計資料と同じ GitHub Pages 上）。
+    private static let helpURL = URL(string: "https://kanairyoji.github.io/MosaicPhotos/help/")!
+
     init(
         dropboxAuth: DropboxAuthService,
         store: DropboxPhotoStore? = nil,
@@ -105,6 +108,16 @@ struct SettingsView: View {
                 } label: {
                     row(L("Licenses"), systemImage: "doc.text")
                 }
+                Link(destination: Self.helpURL) {
+                    HStack {
+                        Label(L("Help"), systemImage: "questionmark.circle")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .tint(.primary)   // 通常の設定行と同じ見た目（リンク色にしない）
             }
 
             Section {
