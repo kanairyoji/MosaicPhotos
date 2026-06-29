@@ -66,13 +66,13 @@ struct DeveloperSettingsView: View {
                            value: currentMemoryFootprintMB().map { String(format: "%.0f MB", $0) } ?? "—")
             LabeledContent("CLIP model", value: MobileCLIP.modelsBundled ? "Bundled" : "Not bundled")
             NavigationLink("Diagnostics log") { DiagnosticsLogView() }
-            Toggle("Performance tracing (Dropbox)", isOn: $perfTracing)
+            Toggle("Performance tracing", isOn: $perfTracing)
                 .onChange(of: perfTracing) { _, on in PerfTrace.isEnabled = on }
         } header: {
             Text("Diagnostics")
         } footer: {
             Text("On-device log of errors, uncaught exceptions and memory pressure. Useful when the app misbehaves without a Mac/Console. "
-                 + "Performance tracing writes Dropbox timing (network/cache/decode) to the diagnostics log and os_signpost; turn on, reproduce, then off.")
+                 + "Performance tracing writes screen-transition latency (screen.*) and Dropbox timing (network/cache/decode) to the diagnostics log and os_signpost; turn on, reproduce, then off.")
         }
     }
 

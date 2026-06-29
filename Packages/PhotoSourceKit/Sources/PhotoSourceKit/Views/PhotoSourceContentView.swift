@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import SwiftUI
+import MosaicSupport
 
 /// Root view that dispatches to the correct sub-view based on `store.state`.
 ///
@@ -47,9 +48,17 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             .safeAreaInset(edge: .bottom) { bottomBar }
         }
         .task { await store.start() }
+        // 計測: ソース画面が出てから最初のコンテンツ（loaded/empty）が確定するまでの所要。
+        // 「画面遷移後にグリッドが見えるまで」が重いケースを掴むため。
+        .onAppear { PerfTrace.beginScreen("grid.\(title)") }
         .onChange(of: store.state) { _, newState in
-            if case .idle = newState {
+            switch newState {
+            case .idle:
                 Task { await store.start() }
+            case .loaded, .empty, .failed, .needsSetup:
+                PerfTrace.endScreen("grid.\(title)")
+            case .loading:
+                break
             }
         }
     }

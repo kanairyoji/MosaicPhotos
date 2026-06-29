@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import SwiftUI
+import MosaicSupport
 
 // MARK: - Zoom ladder
 
@@ -64,12 +65,13 @@ public struct PhotoGridView<Store: PhotoStore>: View {
             grouping: grouping,
             monthSectionRows: max(1, monthSectionRows),
             onPinch: onPinch,
-            onSelect: { selectedID = $0 },
+            onSelect: { PerfTrace.beginScreen("open.photo"); selectedID = $0 },   // 計測: タップ→フル表示
             onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る
         )
         .ignoresSafeArea(.container, edges: .horizontal)
         .navigationDestination(item: $selectedID) { id in
             PhotoPageView(store: store, startID: id)
+                .perfScreenEnd("open.photo")   // 計測: フル表示の onAppear で所要を確定
         }
     }
 

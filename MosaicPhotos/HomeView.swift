@@ -71,6 +71,7 @@ struct HomeView: View {
                 SettingsView(dropboxAuth: dropboxStore.auth, store: dropboxStore, backupEngine: backupEngine,
                              placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
             }
+            .perfScreenEnd("home.settings")   // 計測: 設定シートを開く所要
         }
         .sheet(item: $aiComposer) { target in
             switch target {
@@ -99,6 +100,14 @@ struct HomeView: View {
                     AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore)
                 }
             }
+            .perfScreenEnd("home.present")   // 計測: ホーム→各画面のフルスクリーン表示の所要
+        }
+        // 計測: 遷移トリガ（タップ）時刻を記録。begin と end の差が「画面遷移の重さ」。
+        .onChange(of: destination?.id) { _, id in
+            if id != nil { PerfTrace.beginScreen("home.present") }
+        }
+        .onChange(of: showingSettings) { _, on in
+            if on { PerfTrace.beginScreen("home.settings") }
         }
         .modifier(HomeLifecycleTasks(
             dropboxStore: dropboxStore,

@@ -239,3 +239,15 @@
 - 対処: 遷移先を単一の `HomeDestination` enum＋1 つの `.fullScreenCover` に統合（`.sheet` も統合）。
 - 関連: `HomeView.swift`（コミット履歴参照）。ADR-5。
 - 残課題: なし。
+
+## 画面遷移のパフォーマンス計測点を追加（PerfTrace 拡張）
+- 症状: 画面遷移（ホーム→各画面、グリッド→フル写真、設定シート）が場面によって重い。どこで時間がかかるかを実機で測りたい。
+- 原因: 既存 `PerfTrace` は Dropbox の通信/キャッシュ/デコードしか計測しておらず、遷移の所要を出す手段がなかった。
+- 対処: `PerfTrace` に**画面遷移計測 API** `beginScreen(name)`/`endScreen(name)` を追加（name キーで開始時刻を保持→遷移先の onAppear で所要 ms を `screen.*` としてログ／signpost）。SwiftUI からは `View.perfScreenEnd(_:)`（PhotoSourceKit）で遷移先に付与。計測点:
+  - `home.present`＝ホームのタップ（`destination` セット）→ フルスクリーン表示の onAppear。
+  - `home.settings`＝設定シートを開く所要。
+  - `open.photo`＝グリッドのセルタップ → `PhotoPageView` の onAppear。
+  - `grid.<title>`＝ソース画面の onAppear → 初回コンテンツ（loaded/empty/failed）確定まで。
+  - 既定無効（オーバーヘッドなし）。Developer Options の「Performance tracing」トグル（`AppSettingsKeys.perfTracing`）で ON、再現、OFF。ログは Diagnostics log で閲覧・共有。
+- 関連: `PerfTrace.swift`(beginScreen/endScreen) / `PerfScreen.swift`(perfScreenEnd) / `PhotoGridView.swift` / `PhotoSourceContentView.swift` / `HomeView.swift` / `DeveloperSettingsView.swift`。
+- 残課題: ソース画面がキャッシュ済みで onAppear 時点ですでに loaded の場合、状態変化が起きず `grid.<title>` の end が出ない（瞬時＝重くないケースなので実害なし）。

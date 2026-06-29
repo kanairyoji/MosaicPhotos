@@ -68,6 +68,30 @@ public enum PerfTrace {
         DiagnosticsLog.shared.append("PERF MARK \(name)")
     }
 
+    // MARK: - 画面遷移の計測（開始＝タップ/トリガ時、終了＝遷移先の onAppear 等）
+
+    private static var pendingScreens: [String: UInt64] = [:]
+
+    /// 画面遷移の**開始**（タップ/トリガ時）に呼ぶ。同じ `name` を `endScreen` に渡すと所要を出す。
+    /// 無効時は何もしない（オーバーヘッドなし）。
+    public static func beginScreen(_ name: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        let n = name()
+        lock.lock(); pendingScreens[n] = nowNs(); lock.unlock()
+    }
+
+    /// 画面遷移の**完了**（遷移先の onAppear / 初回コンテンツ確定）で呼ぶ。
+    /// 対応する `beginScreen` があれば所要 ms を、無ければ appear のマークだけ残す。
+    public static func endScreen(_ name: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        let n = name()
+        lock.lock(); let start = pendingScreens.removeValue(forKey: n); lock.unlock()
+        guard let start else { mark("screen.\(n) appear"); return }
+        let ms = msSince(start)
+        os_signpost(.event, log: log, name: "screen", "%{public}@ %.1fms", n, ms)
+        DiagnosticsLog.shared.append(String(format: "PERF screen.%@ %.1fms", n, ms))
+    }
+
     // MARK: - カウンタ集計（高頻度イベント向け）
 
     /// 高頻度イベントを集計するカウンタを 1 つ加算する。`value` は ms やバイトなどの付随量（任意）。
