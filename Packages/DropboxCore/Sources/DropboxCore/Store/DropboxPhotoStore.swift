@@ -76,7 +76,10 @@ public final class DropboxPhotoStore {
 
     public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
         self.auth = auth
-        let apiClient = DropboxAPIClient(httpClient: httpClient, tokenProvider: auth)
+        // E: longpoll は専用セッションで送り、長時間保持の接続を他通信から隔離する。
+        let apiClient = DropboxAPIClient(
+            httpClient: httpClient, tokenProvider: auth,
+            longpollClient: URLSessionHTTPClient(session: .dropboxLongpoll))
         self.apiClient = apiClient
         self.thumbnailBatcher = DropboxThumbnailBatcher(apiClient: apiClient, cache: cache)
     }
@@ -334,6 +337,27 @@ public final class DropboxPhotoStore {
         }
         await cache.updateLocation(path: item.path, latitude: loc.latitude, longitude: loc.longitude)
         return CLLocationCoordinate2D(latitude: loc.latitude, longitude: loc.longitude)
+    }
+
+    /// ネット取得を伴わない座標。同期時に取れていれば返し、無ければ nil（get_metadata は叩かない）。
+    /// フル表示の場所ラベル用：開くたびの 4〜6s の get_metadata 往復を避ける。
+    public func cachedLocation(for item: DropboxFileItem) async -> CLLocationCoordinate2D? {
+        item.coordinate
+    }
+
+    /// 前後ページのフル画像を**先読み**する（バイト列だけ取得・保存、デコードはしない）。
+    /// 低優先で、すでにバイトがあれば何もしない。`beginFullImage` は立てない（背景埋め込みを
+    /// 過度に止めないため）。表示時の `fullImage` がこのキャッシュを即ヒットして体感が軽くなる。
+    public func prefetchFullImage(for item: DropboxFileItem) {
+        Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            if await self.cache.fullImageData(for: item.path) != nil { return }
+            struct Arg: Encodable { let path: String }
+            guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return }
+            guard let data = try? await self.apiClient.contentDownload(
+                url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else { return }
+            await self.cache.storeFullImageData(data, for: item.path)
+        }
     }
 
     // MARK: - Original data (for EXIF)

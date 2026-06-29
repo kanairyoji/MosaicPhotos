@@ -10,10 +10,13 @@ import MosaicSupport
 @MainActor
 final class DropboxAPIClient {
     private let httpClient: HTTPClient
+    /// longpoll（長時間保持）専用クライアント。未指定なら `httpClient` を使う（テストはスタブ共有）。
+    private let longpollClient: HTTPClient?
     private let tokenProvider: AccessTokenProvider
 
-    init(httpClient: HTTPClient, tokenProvider: AccessTokenProvider) {
+    init(httpClient: HTTPClient, tokenProvider: AccessTokenProvider, longpollClient: HTTPClient? = nil) {
         self.httpClient = httpClient
+        self.longpollClient = longpollClient
         self.tokenProvider = tokenProvider
     }
 
@@ -45,7 +48,8 @@ final class DropboxAPIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = jsonBody
         if let timeout { req.timeoutInterval = timeout }
-        return try await send(req)
+        // E: longpoll は専用セッション（あれば）で送り、長時間保持の接続を他通信から隔離する。
+        return try await send(req, client: longpollClient ?? httpClient)
     }
 
     /// content ダウンロード: `Dropbox-API-Arg` ヘッダ付きで Bearer 認証 POST し、本体バイナリを返す。
@@ -59,10 +63,10 @@ final class DropboxAPIClient {
         return try await send(req)
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    private func send(_ request: URLRequest, client: HTTPClient? = nil) async throws -> Data {
         // 計測: エンドポイント別のネットワーク往復時間とバイト数。Dropbox 体感速度の最重要指標。
         let t0 = PerfTrace.nowNs()
-        let (data, response) = try await httpClient.data(for: request)
+        let (data, response) = try await (client ?? httpClient).data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         PerfTrace.logSpan("net." + (request.url?.lastPathComponent ?? "?"),
                           ms: PerfTrace.msSince(t0),

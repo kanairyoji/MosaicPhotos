@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import SwiftUI
+import MosaicSupport
 
 /// Generic full-screen paging view. Swipe horizontally to navigate between items.
 /// 1 ページの中身は `FullPhotoView`、その情報パネルは `PhotoInfoPanel`（別ファイル）。
@@ -45,6 +46,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
             topControls
         }
         .toolbar(.hidden, for: .navigationBar)
+        // A: 写真ビュー表示中（＝タップ直後の遷移を含む）は背景 CLIP 埋め込みを止め、
+        //    遷移・デコードに CPU/ANE を明け渡す。閉じると自動再開。
+        .onAppear { BackgroundActivityMonitor.shared.isViewingPhoto = true; prefetchNeighbors() }
+        .onDisappear { BackgroundActivityMonitor.shared.isViewingPhoto = false }
         // 現在ページの位置情報→地名を解決（オフライン DB なので即時）。ページ切替で更新。
         .task(id: currentID) { await resolveCurrentPlace() }
         // Pre-fetch the next page as soon as the page view opens, so photos are
@@ -56,12 +61,22 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
         // Also trigger when swiping within 20 photos of the end. hasMore は通常 false
         // （ページングなし）なので、その場合は firstIndex の走査も走らない。
+        // あわせて D: 隣接ページのフル画像を先読みして、スワイプ時の黒画面待ちを減らす。
         .onChange(of: currentID) { _, newID in
+            prefetchNeighbors()
             guard store.hasMore,
                   let index = store.items.firstIndex(where: { $0.id == newID }) else { return }
             if index >= store.items.count - 20 {
                 Task { await store.loadMore() }
             }
+        }
+    }
+
+    /// D: 現在ページの前後 1 枚のフル画像を先読みする（クラウドはバイト取得・保存、ローカルは no-op）。
+    private func prefetchNeighbors() {
+        guard let idx = store.items.firstIndex(where: { $0.id == currentID }) else { return }
+        for offset in [1, -1] where store.items.indices.contains(idx + offset) {
+            store.prefetchFullImage(for: store.items[idx + offset])
         }
     }
 
@@ -104,10 +119,12 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     }
 
     /// 現在ページの位置情報を地名へ解決する。位置が無ければ場所行は出さない。
+    /// C: `cachedLocation` を使い、座標が未取得でも `get_metadata` の往復を起こさない
+    ///    （分かっていれば出す／無ければ出さない）。
     private func resolveCurrentPlace() async {
         currentPlace = nil
         guard let item = currentItem,
-              let coordinate = await store.location(for: item) else { return }
+              let coordinate = await store.cachedLocation(for: item) else { return }
         let resolved = await PlaceNameResolver.shared.placeName(for: coordinate)
         // 解決中に別ページへ移ったら破棄（task(id:) で基本キャンセルされるが二重防止）。
         if !Task.isCancelled { currentPlace = resolved }

@@ -251,3 +251,18 @@
   - 既定無効（オーバーヘッドなし）。Developer Options の「Performance tracing」トグル（`AppSettingsKeys.perfTracing`）で ON、再現、OFF。ログは Diagnostics log で閲覧・共有。
 - 関連: `PerfTrace.swift`(beginScreen/endScreen) / `PerfScreen.swift`(perfScreenEnd) / `PhotoGridView.swift` / `PhotoSourceContentView.swift` / `HomeView.swift` / `DeveloperSettingsView.swift`。
 - 残課題: ソース画面がキャッシュ済みで onAppear 時点ですでに loaded の場合、状態変化が起きず `grid.<title>` の end が出ない（瞬時＝重くないケースなので実害なし）。
+
+## 画面遷移が最大14.6秒：背景CLIPのCPU占有が主因（＋場所表示の get_metadata 回帰）
+- 症状: PerfTrace の実機(シミュレータ)ログで `screen.open.photo`（写真タップ→フル表示）が通常 ~100ms のところ **11.4s / 14.6s** に膨張。同時にサムネの `decodeMs` が単発 20.8s、`net.get_thumbnail_batch` が 14〜15s に膨れる。
+- 原因:
+  - **主因＝背景 CLIP タガーの CPU 占有**。ログに `[Tagger] embed: batch 4 done — 8 photos in 91.7s`。シミュレータは CLIP を `.cpuOnly` で実行するため 1 枚 ~11s かかり全 CPU を食い潰す。その間メインスレッドが遷移コミットを走らせられず `open.photo` が膨張、デコード・ネット継続も巻き添えで膨れる。タガーの停止判定は **8枚バッチの合間だけ**で、一度始まると最悪 91s 譲らない。譲り条件も「スクラブ／メモリ圧迫／クラウドサムネ中」のみで**フル画像取得・写真閲覧・遷移は対象外**だった。
+  - **回帰＝場所表示**。今回追加した「日付の下に地名」が `PhotoPageView` で毎ページ `location(for:)` を呼び、クラウド写真は座標未キャッシュ時に **get_metadata（4〜6s）をその場で叩いて**いた（非同期なので open.photo は膨らまないが無駄な往復＋競合）。
+  - ※ 11〜14s は**シミュレータ特有の増幅**（実機は ANE=`.all` で CLIP が速く CPU を空ける）。ただし構造的問題（停止粒度の粗さ・譲り条件の不足・回帰）は実機にも効くので是正。
+- 対処（A〜E）:
+  - A: タガーの**停止判定を 1 枚単位**に（`perceive` を 1 枚ずつ・各推論前に `shouldPause`）。譲り条件に **`fullImageBusy`**（`DropboxActivityMonitor.beginFullImage`→`BackgroundActivityMonitor` 橋渡し）と **`isViewingPhoto`**（タップ時=グリッド `onSelect`／フル表示 `onAppear` で true、グリッド復帰・`onDisappear` で false）を追加。
+  - B: **シミュレータでは背景埋め込みをスキップ**（`#if targetEnvironment(simulator)` 早期 return・実機は不変）。
+  - C: 場所ラベルは **`cachedLocation(for:)`**（ネット取得を伴わない＝Dropbox は座標キャッシュのみ・get_metadata を叩かない）を新設し `PhotoPageView` をそれに切替。開くたびの 4〜6s 往復を解消。
+  - D: フル画像の体感改善＝**隣接ページの先読み**（`prefetchFullImage`・クラウドはバイトのみ取得保存・デコードなし）＋**ロード中はサムネをぼかして先出し**（`FullPhotoView`、黒画面待ちを軽減）。
+  - E: **longpoll を専用 URLSession に隔離**（`URLSession.dropboxLongpoll`／`DropboxAPIClient.longpollClient`）。longpoll は別ホスト（notify）なので競合影響は限定的だが、30〜50s 保持の接続を共有セッションのスケジューリングから切り離す保険。
+- 関連: `PhotoTagger.swift`（1枚単位＋simulator skip）/ `AutoAlbumEngine+Recognition.swift`（shouldPause）/ `BackgroundActivityMonitor`（fullImageBusy・isViewingPhoto）/ `DropboxActivityMonitor`（橋渡し）/ `PhotoLoading`（cachedLocation・prefetchFullImage）/ `DropboxPhotoStore`・`MergedPhotoStore`（上書き）/ `PhotoPageView`・`PhotoGridView`・`FullPhotoView` / `HTTPClient`・`DropboxAPIClient`（longpoll 分離）。
+- 残課題: 効果は**実機**で再計測（シミュレータは B で背景埋め込みが止まる＝主因が出ない）。クラウドフル画像の download 6〜9s はネット律速で別途。E の効果は小さい見込み（別ホスト）。

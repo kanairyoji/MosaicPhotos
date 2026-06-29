@@ -29,6 +29,15 @@ public protocol PhotoLoading: AnyObject {
     /// Dropbox は同期時に取れていない場合があるため、必要なら単発取得で補完する。
     func location(for item: Item) async -> CLLocationCoordinate2D?
 
+    /// **ネット取得を伴わない**座標解決。すでに分かっている座標だけを返し、未取得なら nil。
+    /// フル表示の場所ラベルのように「分かれば出す／無ければ出さない」用途で、開くたびの
+    /// `get_metadata` 往復を避けるために使う。既定は `location(for:)`（ローカルは即時）。
+    func cachedLocation(for item: Item) async -> CLLocationCoordinate2D?
+
+    /// フル画像を**先読み**してキャッシュへ載せる（前後ページの体感改善）。既定は no-op。
+    /// `DropboxPhotoStore` はデコードせずバイト列だけ取得・保存する軽量実装で上書きする。
+    func prefetchFullImage(for item: Item)
+
     /// 元画像から EXIF 等の主要メタ情報を抽出する（詳細画面の情報パネル用）。既定は nil。
     func metadata(for item: Item) async -> PhotoExifInfo?
 }
@@ -56,6 +65,15 @@ public extension PhotoLoading {
     func location(for item: Item) async -> CLLocationCoordinate2D? {
         item.coordinate
     }
+
+    /// 既定: ネット取得を伴わない座標は通常の `location` に委譲（ローカルは即時・ネット不使用）。
+    /// ネット往復し得るソース（Dropbox）はこれを上書きしてキャッシュ済みのみ返す。
+    func cachedLocation(for item: Item) async -> CLLocationCoordinate2D? {
+        await location(for: item)
+    }
+
+    /// 既定: フル画像の先読みは何もしない（ローカルは PHImageManager が高速なため不要）。
+    func prefetchFullImage(for item: Item) {}
 
     /// 既定: メタ情報なし。
     func metadata(for item: Item) async -> PhotoExifInfo? { nil }

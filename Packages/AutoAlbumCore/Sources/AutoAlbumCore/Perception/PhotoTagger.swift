@@ -29,6 +29,13 @@ final class PhotoTagger {
             Self.log.info("embed: skipped — no perception provider injected")
             return
         }
+        // B: シミュレータは CLIP を cpuOnly で実行するため 1 枚 ~数秒〜十数秒かかり、全 CPU を
+        //    占有して画面遷移・デコードを飢餓させる（検証の妨げ＋ログ汚染）。実機（ANE）では速い。
+        //    シミュレータでは背景埋め込みを実行しない（実機の挙動は変えない）。
+        #if targetEnvironment(simulator)
+        Self.log.info("embed: skipped on simulator (CLIP runs cpuOnly here; measure on a device)")
+        return
+        #endif
         guard !isTagging else {
             Self.log.info("embed: skipped — already running")
             return
@@ -67,17 +74,28 @@ final class PhotoTagger {
                 break
             }
             let batchStart = Date()
-            let signals = await perception.perceive(refKeys: refKeys)
-            // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
-            var merged = signals
-            for key in refKeys where merged[key] == nil { merged[key] = PhotoPerception() }
-            await store.applyPerception(merged)
-            processed += refKeys.count
+            // A: 1 枚ずつ知覚し、各推論の前に `shouldPause` を確認する。バッチ（8枚）を一気に
+            //    処理すると、その間ずっと CPU/ANE を握って画面遷移を飢餓させるため、停止粒度を
+            //    1 枚にして操作・遷移・フル画像取得が来たら即譲れるようにする。
+            var merged: [String: PhotoPerception] = [:]
+            var withVector = 0
+            for key in refKeys {
+                while shouldPause() && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
+                }
+                if Task.isCancelled { break }
+                let signal = (await perception.perceive(refKeys: [key]))[key]
+                if signal?.clipVector != nil { withVector += 1 }
+                // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
+                merged[key] = signal ?? PhotoPerception()
+            }
+            if !merged.isEmpty { await store.applyPerception(merged) }
+            processed += merged.count
 
-            let withVector = signals.values.filter { $0.clipVector != nil }.count
             let secs = String(format: "%.1f", Date().timeIntervalSince(batchStart))
-            Self.log.info("embed: batch \(batch) done — \(refKeys.count) photos in \(secs)s "
+            Self.log.info("embed: batch \(batch) done — \(merged.count) photos in \(secs)s "
                           + "(\(withVector) with CLIP vector); total \(processed)")
+            if Task.isCancelled { break }
 
             onProgress(max(0, pending - processed))
             // AI 再検索（onBatch）は全件 fetch＋採点で footprint がスパイクする（~200→400MB）。

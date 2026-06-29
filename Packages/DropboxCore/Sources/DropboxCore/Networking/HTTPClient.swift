@@ -28,4 +28,14 @@ public extension URLSession {
         configuration.httpMaximumConnectionsPerHost = 8
         return URLSession(configuration: configuration)
     }()
+
+    /// longpoll 専用セッション。longpoll は 30〜50s 接続を保持し続けるため、共有セッションから
+    /// 隔離して、保持し続ける接続が他の通信（サムネ/RPC/フル画像）のスケジューリングや
+    /// タイムアウト管理に干渉しないようにする（longpoll は別ホスト＝notify だが、念のため分離）。
+    static let dropboxLongpoll: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpMaximumConnectionsPerHost = 1
+        configuration.timeoutIntervalForRequest = 120   // 接続を寝かせ続けてよいので長めに
+        return URLSession(configuration: configuration)
+    }()
 }

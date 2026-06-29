@@ -8,6 +8,8 @@ struct FullPhotoView<Store: PhotoStore>: View {
     let store: Store
     let item: Store.Item
     @State private var image: UIImage?
+    /// D: フル画像が来るまでの間に見せる手元サムネ（黒画面待ちを減らす）。
+    @State private var thumb: UIImage?
     @State private var failed = false
     /// 「再試行」用。インクリメントすると画像ロード `.task` が再実行される。
     @State private var retryToken = 0
@@ -46,6 +48,11 @@ struct FullPhotoView<Store: PhotoStore>: View {
         // 全滅したときだけ failed を立てる。読み込み中は "Loading…" を見せる。
         .task(id: ImageKey(id: "\(item.id)", retry: retryToken)) {
             failed = false
+            // D: まず手元のサムネを即表示し、フル画像が来たら差し替える（開いた直後の黒画面を減らす）。
+            thumb = nil
+            if image == nil, let quick = await store.thumbnail(for: item), !Task.isCancelled {
+                thumb = quick
+            }
             for attempt in 0..<3 {
                 if let loaded = await store.fullImage(for: item) {
                     image = loaded
@@ -91,11 +98,22 @@ struct FullPhotoView<Store: PhotoStore>: View {
             .contentShape(Rectangle())
             .onTapGesture { retryToken += 1 }
         } else {
-            VStack(spacing: 12) {
-                ProgressView().tint(.white)
-                Text(L("Loading…"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // D: フル画像ロード中。サムネがあれば薄く拡大して見せ、上にスピナーを重ねる
+            //    （黒画面より体感が軽い）。無ければ従来どおり黒＋スピナー。
+            ZStack {
+                if let thumb {
+                    Image(uiImage: thumb)
+                        .resizable()
+                        .scaledToFit()
+                        .blur(radius: 6)
+                        .opacity(0.55)
+                }
+                VStack(spacing: 12) {
+                    ProgressView().tint(.white)
+                    Text(L("Loading…"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .colorScheme(.dark)
         }

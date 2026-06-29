@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import Observation
 
 /// Dropbox の各通信チャンネルの「今どれだけ動いているか」を集約するライブ計測。
@@ -56,8 +57,15 @@ public final class DropboxActivityMonitor {
 
     public func setSync(_ activity: SyncActivity) { sync = activity }
 
-    public func beginFullImage() { fullImageActive += 1 }
-    public func endFullImage() { fullImageActive = max(0, fullImageActive - 1) }
+    public func beginFullImage() {
+        fullImageActive += 1
+        // 背景 CLIP 埋め込みに「フル画像取得中（重い）」を伝え、CPU を譲らせる（遷移の飢餓回避）。
+        BackgroundActivityMonitor.shared.fullImageBusy = true
+    }
+    public func endFullImage() {
+        fullImageActive = max(0, fullImageActive - 1)
+        if fullImageActive == 0 { BackgroundActivityMonitor.shared.fullImageBusy = false }
+    }
 
     public func setBackupActive(_ active: Bool) { backupActive = active }
 }

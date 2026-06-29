@@ -31,6 +31,12 @@ public final class BackgroundActivityMonitor {
     /// Dropbox サムネイルの取得（ドレイン）が稼働中か。クラウド閲覧中は CLIP 背景埋め込みを
     /// 一時停止させ、サムネのデコード/ネットと CPU を奪い合わないようにする（PhotoTagger が参照）。
     public var cloudThumbnailBusy = false
+    /// フル画像のダウンロード/デコードが稼働中か（`DropboxActivityMonitor.beginFullImage` が橋渡し）。
+    /// フル表示を開く瞬間に背景埋め込みが CPU を奪うと遷移が飢餓するため、その間は譲らせる。
+    public var fullImageBusy = false
+    /// フル画面の写真ビューを表示中か。閲覧中（＝タップ直後の遷移含む）は背景埋め込みを止め、
+    /// 遷移のメインスレッドを空ける（`PhotoPageView`/グリッドが報告）。
+    public var isViewingPhoto = false
 
     private init() {}
 }

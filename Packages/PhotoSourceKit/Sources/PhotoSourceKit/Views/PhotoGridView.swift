@@ -65,10 +65,17 @@ public struct PhotoGridView<Store: PhotoStore>: View {
             grouping: grouping,
             monthSectionRows: max(1, monthSectionRows),
             onPinch: onPinch,
-            onSelect: { PerfTrace.beginScreen("open.photo"); selectedID = $0 },   // 計測: タップ→フル表示
+            onSelect: {
+                PerfTrace.beginScreen("open.photo")   // 計測: タップ→フル表示
+                // A: タップ直後から背景 CLIP 埋め込みを止め、遷移のメインスレッドを空ける。
+                BackgroundActivityMonitor.shared.isViewingPhoto = true
+                selectedID = $0
+            },
             onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る
         )
         .ignoresSafeArea(.container, edges: .horizontal)
+        // グリッドが見えている＝閲覧していない。フラグの取りこぼし（遷移失敗等）も確実に解除する。
+        .onAppear { BackgroundActivityMonitor.shared.isViewingPhoto = false }
         .navigationDestination(item: $selectedID) { id in
             PhotoPageView(store: store, startID: id)
                 .perfScreenEnd("open.photo")   // 計測: フル表示の onAppear で所要を確定

@@ -216,6 +216,18 @@ extension MergedPhotoStore: PhotoStore {
         }
     }
 
+    public func cachedLocation(for item: MergedPhotoItem) async -> CLLocationCoordinate2D? {
+        switch item {
+        case .local(let local): return await localStore.cachedLocation(for: local)
+        case .cloud(let cloud): return await dropboxStore.cachedLocation(for: cloud)
+        }
+    }
+
+    public func prefetchFullImage(for item: MergedPhotoItem) {
+        // クラウドのみ先読み（ローカルは PHImageManager が高速で不要）。
+        if case .cloud(let cloud) = item { dropboxStore.prefetchFullImage(for: cloud) }
+    }
+
     public func metadata(for item: MergedPhotoItem) async -> PhotoExifInfo? {
         switch item {
         case .local(let local): return await localStore.metadata(for: local)
