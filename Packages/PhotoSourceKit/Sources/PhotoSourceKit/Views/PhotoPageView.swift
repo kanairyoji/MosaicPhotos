@@ -6,18 +6,45 @@ import MosaicSupport
 /// 1 ページの中身は `FullPhotoView`、その情報パネルは `PhotoInfoPanel`（別ファイル）。
 /// 上部に日付（＋場所が分かればその下に地名）を出す。ナビバーは隠してカスタム戻るボタンにし、
 /// ラベルを最上部のアクティビティバーの**すぐ下**へ寄せる（ナビバーぶんの隙間をなくす）。
+///
+/// ★ ページングは**現在ページ周辺だけを生成するウィンドウ方式**。`.page` スタイルの `TabView` は
+///   遅延生成されないため、`ForEach(store.items)` を直接回すと 6.7 万件ぶんのページを毎回構築して
+///   タップ→表示が十数秒固まる。現在 index の前後 `windowRadius` 件だけを `TabView` に渡し、端へ
+///   近づいたらウィンドウを中央へ寄せ直す（選択中の写真は常にウィンドウ内なので正しく表示される）。
 public struct PhotoPageView<Store: PhotoStore>: View {
     let store: Store
-    /// 現在のページを **item.id** で保持する（C/E）。`Array(items.enumerated())` の
-    /// 6.7万件タプル配列を作らず、`ForEach(store.items)` を直接回す。
+    /// 現在のページを **item.id** で保持する。
     @State private var currentID: Store.Item.ID
+    /// 生成するウィンドウの開始 index（store.items に対する下限）。
+    @State private var windowLowerBound: Int
     /// 現在ページの地名（位置情報があれば解決して日付の下に表示する）。
     @State private var currentPlace: String?
     @Environment(\.dismiss) private var dismiss
 
+    /// ウィンドウ半径（前後それぞれに生成する枚数）。中央±30＝最大61ページだけ構築する。
+    private static var windowRadius: Int { 30 }
+    /// 端から何枚以内に近づいたらウィンドウを再センタリングするか。
+    private static var recenterMargin: Int { 8 }
+
     public init(store: Store, startID: Store.Item.ID) {
+        // 計測: タップ（グリッドの onSelect で beginScreen）→ この init まで。
+        PerfTrace.endScreen("open.construct")
         self.store = store
         self._currentID = State(initialValue: startID)
+        let startIndex = store.items.firstIndex(where: { $0.id == startID }) ?? 0
+        self._windowLowerBound = State(initialValue: max(0, startIndex - Self.windowRadius))
+        PerfTrace.mark("PhotoPageView.init items=\(store.items.count) start=\(startIndex)")
+        // 計測: init → onAppear（body 構築＋遷移コミット）。ここが重ければページ構築が原因。
+        PerfTrace.beginScreen("open.render")
+    }
+
+    /// `TabView` に渡す現在ウィンドウのスライス（全 67k ではなく中央±radius のみ）。
+    private var windowItems: ArraySlice<Store.Item> {
+        let items = store.items
+        guard !items.isEmpty else { return items[items.startIndex..<items.startIndex] }
+        let lo = min(max(0, windowLowerBound), max(0, items.count - 1))
+        let hi = min(items.count, lo + Self.windowRadius * 2 + 1)
+        return items[lo..<hi]
     }
 
     private var currentItem: Store.Item? {
@@ -34,7 +61,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         // 「バーのすぐ下」に寄せられる（ナビバーが入ると 1 段ぶん下がってしまうため）。
         ZStack(alignment: .top) {
             TabView(selection: $currentID) {
-                ForEach(store.items) { item in
+                ForEach(windowItems) { item in
                     FullPhotoView(store: store, item: item)
                         .tag(item.id)
                 }
@@ -48,7 +75,11 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .toolbar(.hidden, for: .navigationBar)
         // A: 写真ビュー表示中（＝タップ直後の遷移を含む）は背景 CLIP 埋め込みを止め、
         //    遷移・デコードに CPU/ANE を明け渡す。閉じると自動再開。
-        .onAppear { BackgroundActivityMonitor.shared.isViewingPhoto = true; schedulePrefetch() }
+        .onAppear {
+            PerfTrace.endScreen("open.render")   // 計測: init→onAppear（ページ構築＋遷移）
+            BackgroundActivityMonitor.shared.isViewingPhoto = true
+            schedulePrefetch()
+        }
         .onDisappear { BackgroundActivityMonitor.shared.isViewingPhoto = false }
         // 現在ページの位置情報→地名を解決（オフライン DB なので即時）。ページ切替で更新。
         .task(id: currentID) { await resolveCurrentPlace() }
@@ -59,16 +90,28 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 await store.loadMore()
             }
         }
-        // Also trigger when swiping within 20 photos of the end. hasMore は通常 false
-        // （ページングなし）なので、その場合は firstIndex の走査も走らない。
-        // あわせて D: 次ページのフル画像を先読みして、スワイプ時の黒画面待ちを減らす。
         .onChange(of: currentID) { _, newID in
-            schedulePrefetch()
+            recenterWindowIfNeeded(around: newID)   // ウィンドウを中央へ寄せ直す（端に近づいたら）
+            schedulePrefetch()                       // D: 次ページのフル画像先読み
+            // ページング末尾近く（20枚以内）で追加ロード。hasMore は通常 false。
             guard store.hasMore,
                   let index = store.items.firstIndex(where: { $0.id == newID }) else { return }
             if index >= store.items.count - 20 {
                 Task { await store.loadMore() }
             }
+        }
+    }
+
+    /// スワイプで現在 index が端へ近づいたら、ウィンドウを現在 index 中心に寄せ直す。
+    /// 選択中の `currentID` は新ウィンドウ内に必ず含まれるので、表示中の写真は維持される。
+    private func recenterWindowIfNeeded(around id: Store.Item.ID) {
+        let items = store.items
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        let lo = windowLowerBound
+        let hi = min(items.count, lo + Self.windowRadius * 2 + 1)
+        if idx - lo < Self.recenterMargin || (hi - 1) - idx < Self.recenterMargin {
+            let maxLo = max(0, items.count - (Self.windowRadius * 2 + 1))
+            windowLowerBound = max(0, min(idx - Self.windowRadius, maxLo))
         }
     }
 
