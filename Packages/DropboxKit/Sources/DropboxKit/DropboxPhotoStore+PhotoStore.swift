@@ -10,7 +10,8 @@ extension DropboxPhotoStore: PhotoStore {
             return .needsSetup(
                 message: "Not connected to Dropbox.",
                 detail: "Connect via the Settings tab.",
-                systemImage: "icloud.slash"
+                systemImage: "icloud.slash",
+                action: .openAppSettings
             )
         }
         // ⚠️ accountId が nil の場合は state = .idle → onChange ループになる（過去に発生）。
@@ -19,7 +20,8 @@ extension DropboxPhotoStore: PhotoStore {
             return .needsSetup(
                 message: "Dropbox account ID is missing.",
                 detail: "Please disconnect and reconnect from the Settings tab.",
-                systemImage: "person.crop.circle.badge.xmark"
+                systemImage: "person.crop.circle.badge.xmark",
+                action: .openAppSettings
             )
         }
         let result: PhotoLoadState

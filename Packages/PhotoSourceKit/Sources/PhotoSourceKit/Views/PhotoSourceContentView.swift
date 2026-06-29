@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import SwiftUI
+import UIKit
 import MosaicSupport
 
 /// Root view that dispatches to the correct sub-view based on `store.state`.
@@ -13,6 +14,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     let header: Header
     @Environment(\.dismissToHome) private var dismissToHome
     @Environment(\.showSettings)  private var showSettings
+    @Environment(\.openURL)       private var openURL
 
     public init(store: Store, title: String, @ViewBuilder header: () -> Header = { EmptyView() }) {
         self.store = store
@@ -28,8 +30,8 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                     switch store.state {
                     case .idle, .loading:
                         ProgressView()
-                    case .needsSetup(let message, let detail, let systemImage):
-                        setupView(message: message, detail: detail, systemImage: systemImage)
+                    case .needsSetup(let message, let detail, let systemImage, let action):
+                        setupView(message: message, detail: detail, systemImage: systemImage, action: action)
                     case .loaded:
                         PhotoGridView(store: store)
                     case .empty:
@@ -89,7 +91,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
 
     // MARK: - Placeholder views
 
-    private func setupView(message: String, detail: String?, systemImage: String) -> some View {
+    private func setupView(message: String, detail: String?, systemImage: String, action: SetupAction?) -> some View {
         VStack(spacing: 16) {
             Image(systemName: systemImage)
                 .font(.system(size: 60))
@@ -102,8 +104,30 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
+            if let action {
+                setupActionButton(action)
+            }
         }
         .padding()
+    }
+
+    /// 解決アクションのボタン。OS 権限は iOS「設定」アプリ、アプリ内設定（Dropbox 接続）は設定シート。
+    @ViewBuilder
+    private func setupActionButton(_ action: SetupAction) -> some View {
+        switch action {
+        case .openSystemSettings:
+            Button(L("Open Settings")) {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+        case .openAppSettings:
+            if let showSettings {
+                Button(L("Open Settings"), action: showSettings)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
     }
 
     private var emptyView: some View {

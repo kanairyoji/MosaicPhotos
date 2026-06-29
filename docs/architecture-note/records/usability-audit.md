@@ -32,7 +32,7 @@
 - 影響: 片手操作で一番触る操作。親指の届きにくい左上だけ、というのは摩擦が大きい。
 - 提案: フル画面に **下スワイプで閉じる**（最上部での overscroll を検出して dismiss）を追加。注意点＝`FullPhotoView` は縦 `ScrollView` で写真の下に情報パネルを置く構造なので、スクロール位置 0 からの下方向ドラッグだけを dismiss に割り当て、情報パネルのスクロールと競合させない。エッジ戻るは戻すなら別途。
 - 関連: `PhotoPageView.swift`（topControls/dismiss）/ `FullPhotoView.swift`（縦 ScrollView）。
-- 状態: 未着手。
+- 状態: **実装**。`FullPhotoView` に最上部 overscroll 量（`PullDownKey` PreferenceKey・`fullPhotoScroll` 座標空間）で**下スワイプ閉じ**を追加（閾値 110pt、引っ張りに応じて軽い縮小＋退色のフィードバック）。情報パネルへの上スクロール（負方向）では発火しない。`@Environment(\.dismiss)` で pop。エッジスワイプ戻るは未対応（別途）。
 
 ### N2. ホームが縦長の単一リスト（7 セクション） — P3
 - 所見: Sources / Time&Place / People / AI / Folder / Device Albums / Places が 1 本の `List`。ソース（写真/クラウド/すべて）の切替は毎回ホームへ戻る前提で、常時アクセスできるタブが無い。
@@ -50,14 +50,15 @@
 - 影響: 「見えるのに操作できない」のは写真ビューアとして片手落ち。ハートを見たユーザーは押せると期待する。
 - 提案: フル画面のハートを**タップでトグル**（`PHAsset` の `isFavorite` を `PHPhotoLibrary.performChanges` で更新）。端末写真のみ対象、クラウドは非表示のまま。トグル後はグリッド/ライブラリ変更通知で反映。ハートのダブルタップ追加も定番。
 - 関連: `PhotoPageView.swift`（heart）/ `LocalPhotoStore`（PhotoKit 書き込み seam を追加）/ `PhotoLoading`（任意で `setFavorite` を追加）。
-- 状態: 未着手。
+- 状態: **実装**。`PhotoItem.supportsFavorite` と `PhotoLoading.setFavorite(_:_:)`（既定 false）を追加。`LocalPhotoStore` が `PHAssetChangeRequest.isFavorite` で書き込み、`MergedPhotoStore` はローカルへ振り分け。フル画面のハートを**トグルボタン**化（塗り=お気に入り/枠線=未設定、`favOverride` で楽観反映・失敗時revert）。
+  - **既知の限界**: `LocalPhotoStore` に `PHPhotoLibraryChangeObserver` が無いため、トグル後の**グリッドのハートは次回ロードまで追従しない**（即時反映するには全件再ソートを誘発するので意図的に避けた）。恒久対応は別タスク「ライブラリ変更監視の導入」（外部編集・新規写真にも効く）。書き込み権限が読み取り専用のときは false で楽観表示を戻す。
 
 ### F2. 写真権限の `needsSetup` に「設定を開く」ボタンが無い — P2
 - 所見: 権限未許可時の `setupView` は「Please allow access in the Settings app.」を**文言表示するだけ**。`LocalPhotoStore+PhotoStore` に `openSettings` ロジックはあるのにプレースホルダのボタンに繋がっていない。
 - 影響: ユーザーが手動で設定アプリへ行く必要があり、復帰率が下がる。
 - 提案: `PhotoLoadState.needsSetup` に任意のアクション（例 `openSettings`）を持たせ、`setupView` に「設定を開く」ボタンを出す。`UIApplication.openSettingsURLString` を開く。
 - 関連: `PhotoLoadState.swift` / `PhotoSourceContentView.setupView` / `LocalPhotoStore+PhotoStore`。
-- 状態: 未着手。
+- 状態: **実装**。`PhotoLoadState.needsSetup` に `action: SetupAction?`（`.openSystemSettings`／`.openAppSettings`）を追加。`setupView` が解決ボタン「Open Settings」を出す（OS 権限→iOS 設定アプリを `openURL`、Dropbox 未接続→アプリの設定シートを `showSettings`）。ローカル権限・Dropbox 未接続/アカウント欠落の各 needsSetup に設定済み。
 
 ---
 

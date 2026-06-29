@@ -43,7 +43,7 @@ struct FilteredCloudItemsTests {
 
 @Suite("MergedPhotoStore.resolveState")
 struct ResolveStateTests {
-    private let needsSetup = PhotoLoadState.needsSetup(message: "m", detail: nil, systemImage: "x")
+    private let needsSetup = PhotoLoadState.needsSetup(message: "m", detail: nil, systemImage: "x", action: nil)
 
     @Test("ローカルが needsSetup なら全体をブロック（Dropbox があっても）")
     func needsSetupBlocks() {

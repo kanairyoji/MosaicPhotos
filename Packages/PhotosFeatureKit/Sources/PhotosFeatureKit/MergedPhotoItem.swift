@@ -43,6 +43,14 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// お気に入りの付け外しはローカル写真のみ対応。
+    public var supportsFavorite: Bool {
+        switch self {
+        case .local(let item): return item.supportsFavorite
+        case .cloud:           return false
+        }
+    }
+
     public static func == (lhs: MergedPhotoItem, rhs: MergedPhotoItem) -> Bool {
         lhs.id == rhs.id
     }

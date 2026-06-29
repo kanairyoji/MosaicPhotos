@@ -228,6 +228,13 @@ extension MergedPhotoStore: PhotoStore {
         if case .cloud(let cloud) = item { dropboxStore.prefetchFullImage(for: cloud) }
     }
 
+    public func setFavorite(_ item: MergedPhotoItem, _ isFavorite: Bool) async -> Bool {
+        switch item {
+        case .local(let local): return await localStore.setFavorite(local, isFavorite)
+        case .cloud:            return false   // Dropbox はお気に入り非対応
+        }
+    }
+
     public func metadata(for item: MergedPhotoItem) async -> PhotoExifInfo? {
         switch item {
         case .local(let local): return await localStore.metadata(for: local)

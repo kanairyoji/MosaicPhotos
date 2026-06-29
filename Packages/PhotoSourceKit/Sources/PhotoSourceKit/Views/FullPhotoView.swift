@@ -19,7 +19,14 @@ struct FullPhotoView<Store: PhotoStore>: View {
     @State private var insight: PhotoInsight?
     /// 情報パネルが可視になったか（F）。下までスクロールして初めて EXIF/位置/地名/insight を解決する。
     @State private var infoRequested = false
+    /// N1: 最上部で下に引っ張った量（pt）。閾値超えで閉じる。
+    @State private var pullDown: CGFloat = 0
+    @State private var isDismissing = false
     @Environment(\.photoInsight) private var photoInsight
+    @Environment(\.dismiss) private var dismiss
+
+    /// 下スワイプで閉じる閾値（最上部からの引っ張り量）。
+    private static var dismissPull: CGFloat { 110 }
 
     var body: some View {
         GeometryReader { geo in
@@ -29,6 +36,9 @@ struct FullPhotoView<Store: PhotoStore>: View {
                 LazyVStack(spacing: 0) {
                     photo
                         .frame(width: geo.size.width, height: geo.size.height)
+                        // N1: 引っ張りに応じて軽く縮小＋退色させ「閉じる」フィードバックを出す。
+                        .scaleEffect(1 - min(pullDown, 240) / 2400, anchor: .center)
+                        .opacity(1 - min(pullDown, 240) / 600)
                     PhotoInfoPanel(
                         captureDate: item.captureDate,
                         placeName: placeName,
@@ -39,9 +49,23 @@ struct FullPhotoView<Store: PhotoStore>: View {
                     .frame(width: geo.size.width)
                     .onAppear { infoRequested = true }
                 }
+                // 最上部の overscroll 量を測る（情報パネルへの上スクロールでは負になり発火しない）。
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PullDownKey.self,
+                        value: proxy.frame(in: .named("fullPhotoScroll")).minY)
+                })
             }
             .scrollIndicators(.hidden)
             .background(Color.black)
+            .coordinateSpace(name: "fullPhotoScroll")
+            .onPreferenceChange(PullDownKey.self) { y in
+                pullDown = max(0, y)   // 上スクロール(負)は 0 に丸める
+                if y > Self.dismissPull, !isDismissing {
+                    isDismissing = true
+                    dismiss()
+                }
+            }
         }
         // フル画像のみ即ロード（取得時にディスクキャッシュ）。ページ送りはこれだけで軽い。
         // T1: 取得 nil（一時的なネットワーク断 -1005 等）は数回リトライし、
@@ -123,5 +147,11 @@ struct FullPhotoView<Store: PhotoStore>: View {
         let id: String
         let retry: Int
     }
+}
+
+/// N1: スクロール最上部の overscroll 量（下方向＝正）を伝える PreferenceKey。
+private struct PullDownKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 #endif

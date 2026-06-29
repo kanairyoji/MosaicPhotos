@@ -17,7 +17,8 @@ extension LocalPhotoStore: PhotoStore {
             return .needsSetup(
                 message: "Photo library access denied.",
                 detail: "Please allow access in the Settings app.",
-                systemImage: "photo.slash"
+                systemImage: "photo.slash",
+                action: .openSystemSettings
             )
         case .authorized, .limited:
             guard loadCompleted else { return .loading }
@@ -34,6 +35,21 @@ extension LocalPhotoStore: PhotoStore {
     public func retry() async {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             await UIApplication.shared.open(url)
+        }
+    }
+
+    /// お気に入りを PhotoKit へ書き込む（端末写真）。成功で true。
+    /// 注: グリッドの即時反映は意図的に行わない（変更監視を入れていないため、全件再ソートを誘発する
+    /// ストア更新は避ける）。フル画面側で楽観表示し、グリッドは次回ロードで追従する。
+    /// 書き込み権限が無い（読み取り専用許可）場合は false を返す。
+    public func setFavorite(_ item: LocalPhotoItem, _ isFavorite: Bool) async -> Bool {
+        let asset = item.asset
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest(for: asset).isFavorite = isFavorite
+            } completionHandler: { success, _ in
+                cont.resume(returning: success)
+            }
         }
     }
 

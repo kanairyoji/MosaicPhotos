@@ -19,6 +19,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     @State private var windowLowerBound: Int
     /// 現在ページの地名（位置情報があれば解決して日付の下に表示する）。
     @State private var currentPlace: String?
+    /// お気に入りの楽観反映（タップ直後に UI を即更新し、書き込み失敗時のみ戻す）。
+    @State private var favOverride: [Store.Item.ID: Bool] = [:]
     @Environment(\.dismiss) private var dismiss
 
     /// ウィンドウ半径（前後それぞれに生成する枚数）。中央±30＝最大61ページだけ構築する。
@@ -44,6 +46,23 @@ public struct PhotoPageView<Store: PhotoStore>: View {
 
     private var currentItem: Store.Item? {
         store.items.first { $0.id == currentID }
+    }
+
+    /// 現在ページのお気に入り状態（楽観反映があればそれを優先）。
+    private var currentIsFavorite: Bool {
+        if let override = favOverride[currentID] { return override }
+        return currentItem?.isFavorite ?? false
+    }
+
+    /// ハートのタップでお気に入りを付け外しする。UI は即時更新し、書き込み失敗時のみ戻す。
+    private func toggleFavorite() {
+        guard let item = currentItem, item.supportsFavorite else { return }
+        let newValue = !currentIsFavorite
+        favOverride[currentID] = newValue
+        Task {
+            let ok = await store.setFavorite(item, newValue)
+            if !ok { favOverride[currentID] = !newValue }
+        }
     }
 
     private func topLabel(_ item: Store.Item) -> String? {
@@ -137,14 +156,16 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 Spacer()
-                // お気に入り（端末写真）のとき右上にハートを出す（表示専用）。戻るボタンと左右対称に。
-                if currentItem?.isFavorite == true {
-                    Image(systemName: "heart.fill")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.pink)
-                        .frame(width: 34, height: 34)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .allowsHitTesting(false)
+                // お気に入り（端末写真のみ）。右上にトグルボタンとして出す。戻るボタンと左右対称。
+                // 塗り＝お気に入り／枠線＝未設定。タップで付け外し（PhotoKit へ書き込み）。
+                if currentItem?.supportsFavorite == true {
+                    Button { toggleFavorite() } label: {
+                        Image(systemName: currentIsFavorite ? "heart.fill" : "heart")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(currentIsFavorite ? Color.pink : .white)
+                            .frame(width: 34, height: 34)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
                 }
             }
             .padding(.horizontal, 10)

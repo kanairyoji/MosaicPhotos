@@ -12,10 +12,14 @@ public protocol PhotoItem: Identifiable, Hashable, Sendable {
     /// 端末写真の「お気に入り」か。グリッドのハート表示に使う。既定は false
     /// （クラウド等お気に入りの概念がないソースはそのまま false）。
     var isFavorite: Bool { get }
+    /// お気に入りの**付け外しに対応**するか（＝端末写真）。フル画面のハートをトグル操作にできる。
+    /// クラウド等は false でハートを出さない。既定は false。
+    var supportsFavorite: Bool { get }
 }
 
 public extension PhotoItem {
     var displayTitle: String? { nil }
     var coordinate: CLLocationCoordinate2D? { nil }
     var isFavorite: Bool { false }
+    var supportsFavorite: Bool { false }
 }

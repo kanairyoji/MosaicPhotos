@@ -38,6 +38,10 @@ public protocol PhotoLoading: AnyObject {
     /// `DropboxPhotoStore` はデコードせずバイト列だけ取得・保存する軽量実装で上書きする。
     func prefetchFullImage(for item: Item)
 
+    /// お気に入りを設定する（端末写真のみ）。成功で true。既定は no-op で false（非対応）。
+    /// `LocalPhotoStore` が PhotoKit へ書き込む実装で上書きする。
+    func setFavorite(_ item: Item, _ isFavorite: Bool) async -> Bool
+
     /// 元画像から EXIF 等の主要メタ情報を抽出する（詳細画面の情報パネル用）。既定は nil。
     func metadata(for item: Item) async -> PhotoExifInfo?
 }
@@ -74,6 +78,9 @@ public extension PhotoLoading {
 
     /// 既定: フル画像の先読みは何もしない（ローカルは PHImageManager が高速なため不要）。
     func prefetchFullImage(for item: Item) {}
+
+    /// 既定: お気に入りの書き込みに非対応（クラウド等）。false を返す。
+    func setFavorite(_ item: Item, _ isFavorite: Bool) async -> Bool { false }
 
     /// 既定: メタ情報なし。
     func metadata(for item: Item) async -> PhotoExifInfo? { nil }
