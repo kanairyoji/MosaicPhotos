@@ -197,8 +197,9 @@ struct AutoAlbumCard: View {
             case .local(let id):
                 cover = await loadLocalCover(id, pixelSize: pixel)
             case .cloud(let path):
+                // タイトル写真はフル画像から生成する（128px サムネ拡大だとカードで粗く見えるため）。
                 let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
-                cover = await dropboxStore.thumbnail(for: item)
+                cover = await dropboxStore.coverImage(for: item, maxPixel: pixel)
             case nil:
                 cover = nil
             }

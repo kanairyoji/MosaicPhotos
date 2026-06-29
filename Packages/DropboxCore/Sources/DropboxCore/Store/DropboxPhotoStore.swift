@@ -388,6 +388,31 @@ public final class DropboxPhotoStore {
         return image
     }
 
+    // MARK: - Album cover
+
+    /// アルバムのカバー（タイトル写真）用の画像を返す。**128px サムネの拡大ではなく、フル画像から**
+    /// `maxPixel` へダウンサンプルして生成するため粗くならない。フル画像バイトはキャッシュ優先で取得し、
+    /// 無ければダウンロードして保存（ビューアと共用）。表示サイズ相当へ落とすので常駐メモリも軽い。
+    public func coverImage(for item: DropboxFileItem, maxPixel: CGFloat) async -> UIImage? {
+        let data: Data
+        if let cached = await cache.fullImageData(for: item.path) {
+            data = cached
+        } else {
+            struct Arg: Encodable { let path: String }
+            guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return nil }
+            DropboxActivityMonitor.shared.beginFullImage()
+            defer { DropboxActivityMonitor.shared.endFullImage() }
+            guard let downloaded = try? await apiClient.contentDownload(
+                url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else { return nil }
+            await cache.storeFullImageData(downloaded, for: item.path)   // 原バイト保存（EXIF 保持）
+            data = downloaded
+        }
+        // カバーサイズへダウンサンプル（メイン外）。粗いサムネ拡大ではなく原画から作る。
+        return await Task.detached(priority: .userInitiated) {
+            ImageDownsampling.downsample(data: data, maxPixel: maxPixel).map(SendableUIImage.init)
+        }.value?.image
+    }
+
     // MARK: - Private helpers
 
     private func handleAccountSwitchIfNeeded(currentAccountId: String?) async {

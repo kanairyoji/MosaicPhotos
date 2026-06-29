@@ -21,6 +21,13 @@
 
 ---
 
+## アルバムのカバー（タイトル写真）が粗い＝128px サムネの拡大だった
+- 症状: アルバムカルーセルのカード（`AutoAlbumCard`・150pt）のクラウド写真カバーが粒状で見づらい。
+- 原因: クラウドカバーが `dropboxStore.thumbnail(for:)`（Dropbox の **128px** サムネ）を 300px(@2x) のカードへ拡大表示していた。ローカルカバーは `loadLocalCover(pixelSize:300)`（PHImageManager・原画から）で問題なし。
+- 対処: `DropboxPhotoStore.coverImage(for:maxPixel:)` を追加。**フル画像バイト**（キャッシュ優先、無ければ DL＋保存＝ビューアと共用）から `ImageDownsampling.downsample(maxPixel:)` で**カバーサイズ(300px)へ縮小**して生成。原画由来で鮮明、かつ 1600px ではなくカバーサイズへ落とすので常駐メモリも軽い（カバー多数でのスパイク回避）。`AutoAlbumCard` のクラウド分岐をこれに差し替え。
+- 関連: `DropboxPhotoStore`(coverImage) / `MosaicPhotos/Home/HomeRows.swift`(AutoAlbumCard)。`ImageDownsampling.downsample` は maxPixel 可変。
+- 残課題: 48pt の小さな一覧行（`PlaceRow`/`AlbumRow`）は 128px サムネのままで十分（拡大なし）なので据え置き。
+
 ## Dropbox の体感遅延を計測して三方向で改善（先読み行列・同期O(N²)・CLIP競合）
 - 背景: 実機で Dropbox の閲覧・同期が重い。下記の計測ハーネス PerfTrace の実機ログで原因を3つに切り分けた。(1) サムネ取得の行列待ち（ミス1枚あたり平均~17秒・ミス率~59%、`net.get_thumbnail_batch` は25枚で~1.9s）、(2) 初回同期がページごとに全件再読み込み（`cache.fetchItems` 0.85s/回が約40回＋毎回 merged/grid 再構築）、(3) CLIP 再埋め込み(v0→7・85k枚)がサムネのデコード/CPU と競合（モデル初回ロード14〜37s）。
 - 原因の核心:
