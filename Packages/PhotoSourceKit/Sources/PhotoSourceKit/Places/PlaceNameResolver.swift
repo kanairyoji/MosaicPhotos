@@ -12,14 +12,13 @@ public struct PlaceComponents: Codable, Sendable, Equatable {
     }
 }
 
-/// 座標 → 地名（逆ジオコーディング）の解決器。`CLGeocoder` はレート制限が強いため、
-/// 座標を粗いグリッドに丸めたキーでキャッシュし、actor で直列化する。
-/// キャッシュはディスクへ永続化し、一度解決した地点は再ジオコーディングしない。
+/// 座標 → 地名（逆ジオコーディング）の解決器。**同梱の都市DB（`OfflinePlaceDB`）で完全オフライン**に
+/// 最近傍解決する（旧 `CLGeocoder` はオンライン依存・レート制限・失敗の恒久キャッシュで「Trip」固定の
+/// 原因になっていたため廃止）。座標は粗いグリッドキーでキャッシュし、ディスクへ永続化する。
 public actor PlaceNameResolver {
     public static let shared = PlaceNameResolver()
 
     private var cache: [String: PlaceComponents]
-    private let geocoder = CLGeocoder()
     private let store = JSONFileStore<[String: PlaceComponents]>(filename: "PhotoSourceKit/placeNames.json")
 
     public init() {
@@ -67,14 +66,14 @@ public actor PlaceNameResolver {
         let key = GeoGridKey.key(coordinate)
         if let cached = cache[key] { return cached.isEmpty ? nil : cached }
 
-        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let placemark = try? await geocoder.reverseGeocodeLocation(location).first
+        // オフラインの都市DBで最近傍解決（即時・無制限・失敗なし）。圏外（海上等）は空。
+        let place = OfflinePlaceDB.shared.nearest(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let components = PlaceComponents(
-            locality: placemark?.locality,
-            administrativeArea: placemark?.administrativeArea,
-            country: placemark?.country
+            locality: place?.city,
+            administrativeArea: place?.admin,
+            country: place?.country
         )
-        cache[key] = components   // 失敗（空）もキャッシュして連打を防ぐ
+        cache[key] = components   // オフラインは決定的なので空（圏外）も安全にキャッシュできる
         return components.isEmpty ? nil : components
     }
 }

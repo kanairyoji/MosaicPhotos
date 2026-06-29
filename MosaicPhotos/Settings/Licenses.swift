@@ -121,6 +121,20 @@ prefix for compatibility; the contents are OpenCLIP.)
 open_clip: https://github.com/mlfoundations/open_clip   (MIT)
 """
 
+let geoNamesNotice = """
+GeoNames — cities15000
+
+This app bundles a compact place dataset (city coordinates with their administrative
+area and country) derived from the GeoNames "cities15000" export. It is used for
+fully on-device reverse geocoding — naming Time & Place albums and the Places view —
+so no network is needed to turn coordinates into place names.
+
+Data is generated locally (scripts/build_places.py) into a compact binary.
+
+Source: https://www.geonames.org/
+License: Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
+"""
+
 let pillowLicenseText = """
 The Python Imaging Library (PIL) is
 

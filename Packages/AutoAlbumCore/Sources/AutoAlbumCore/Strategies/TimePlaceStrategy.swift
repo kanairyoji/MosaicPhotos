@@ -3,7 +3,7 @@ import PhotoSourceKit
 
 /// 時間＋場所から「旅行・お出かけ」アルバムを抽出する戦略。
 ///
-/// 1. 座標の無い写真は前後の GPS から内挿補完（スクショ/編集写真も正しい旅行へ）。
+/// 1. **座標（位置情報）のある写真のみ**を対象にする（位置情報のない写真は旅行に含めない）。
 /// 2. 常用地点（自宅・職場・行きつけ）を「同一セルで撮影した“異なる日数”が閾値以上」で検出（複数可）。
 /// 3. 「自宅外の連続した撮影」を 1 旅行として束ねる（複数都市を跨いでも分割しない。時間ギャップで区切る）。
 /// 4. スクリーンショットを除外し、最小枚数以上のまとまりを「場所（国）· 日付範囲」アルバム化。
@@ -20,16 +20,17 @@ public struct TimePlaceStrategy: AlbumStrategy {
             .sorted { ($0.captureDate ?? .distantPast) < ($1.captureDate ?? .distantPast) }   // 昇順
         guard !sorted.isEmpty else { return [] }
 
-        let filled = backfillCoordinates(sorted)
-        let frequent = frequentLocations(filled, params: params)
-        let homeCountry = mostCommonCountry(filled)
+        // ⚠️ 位置情報のない写真は旅行に含めない（時間的に近い GPS を借りる backfill は廃止）。
+        // isAway は座標が無いと false を返すため、未測位写真は away にならず自然に除外される。
+        let frequent = frequentLocations(sorted, params: params)
+        let homeCountry = mostCommonCountry(sorted)
 
         // 日単位で「自宅外（away）写真」と「在宅日」を仕分ける。
         // 旅行 = 連続する away 日のまとまり。多日旅行を日ごとに分割しない（cohesion）が、
         // 在宅日を挟んだり大きく日が空いたら別の旅行に分ける。
         var awayByDay: [Int: [EnrichedPhoto]] = [:]
         var homeDays: Set<Int> = []
-        for photo in filled {
+        for photo in sorted {
             let day = dayBucket(photo.captureDate!)
             if isAway(photo, frequent: frequent, params: params) {
                 awayByDay[day, default: []].append(photo)
@@ -59,32 +60,6 @@ public struct TimePlaceStrategy: AlbumStrategy {
         return trips
             .compactMap { makeDraft(from: $0, params: params, homeCountry: homeCountry) }
             .sorted { $0.endDate > $1.endDate }   // 新しい旅行を先頭に
-    }
-
-    // MARK: - GPS backfill
-
-    /// 座標の無い写真に、時間的に最も近い GPS 付き写真の座標を補完する（O(n)・2 パス）。
-    func backfillCoordinates(_ sorted: [EnrichedPhoto]) -> [EnrichedPhoto] {
-        let n = sorted.count
-        var prev = [Int?](repeating: nil, count: n)
-        var last: Int?
-        for i in 0..<n { if sorted[i].hasCoordinate { last = i }; prev[i] = last }
-        var next = [Int?](repeating: nil, count: n)
-        var following: Int?
-        for i in stride(from: n - 1, through: 0, by: -1) { if sorted[i].hasCoordinate { following = i }; next[i] = following }
-
-        return sorted.enumerated().map { (i, photo) in
-            guard !photo.hasCoordinate, let pd = photo.captureDate else { return photo }
-            var best: EnrichedPhoto?
-            var bestDelta = Double.greatestFiniteMagnitude
-            for idx in [prev[i], next[i]].compactMap({ $0 }) {
-                guard let ld = sorted[idx].captureDate else { continue }
-                let d = abs(pd.timeIntervalSince(ld))
-                if d < bestDelta { bestDelta = d; best = sorted[idx] }
-            }
-            guard let best else { return photo }
-            return photo.withCoordinate(latitude: best.latitude, longitude: best.longitude)
-        }
     }
 
     // MARK: - Frequent locations

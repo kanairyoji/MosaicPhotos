@@ -127,15 +127,17 @@ struct TimePlaceStrategyTests {
         #expect(albums[0].memberRefs.allSatisfy { !$0.hasPrefix("s") })
     }
 
-    @Test("座標の無い写真は前後のGPSから補完して旅行に含める")
-    func backfillsMissingCoordinates() {
+    @Test("座標の無い写真は旅行に含めない（backfill 廃止）")
+    func excludesPhotosWithoutCoordinates() {
         let located1 = photo("o0", day: 10, sec: 0, osaka, place: "Osaka")
-        let gap = EnrichedPhoto(id: "x", captureDate: base.addingTimeInterval(10 * 86_400 + 60),
-                                latitude: nil, longitude: nil, placeName: nil)
+        let noLoc = EnrichedPhoto(id: "x", captureDate: base.addingTimeInterval(10 * 86_400 + 60),
+                                  latitude: nil, longitude: nil, placeName: nil)
         let located2 = photo("o2", day: 10, sec: 120, osaka, place: "Osaka")
-        let albums = strategy.makeAlbums(from: [located1, gap, located2], params: params)
+        let located3 = photo("o3", day: 10, sec: 180, osaka, place: "Osaka")
+        let albums = strategy.makeAlbums(from: [located1, noLoc, located2, located3], params: params)
         #expect(albums.count == 1)
-        #expect(albums[0].photoCount == 3)   // x も補完されて旅行に含まれる
+        #expect(albums[0].photoCount == 3)                         // 位置のある3枚だけ
+        #expect(albums[0].memberRefs.allSatisfy { $0 != "x" })     // 未測位の x は除外
     }
 
     @Test("多日にまたがる旅行は1アルバムにまとまり、日あたり少枚数でも破棄されない")

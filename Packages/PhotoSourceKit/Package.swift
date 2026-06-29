@@ -20,7 +20,11 @@ let package = Package(
             path: "Sources/PhotoSourceKit",
             // String Catalog を明示宣言（SwiftPM CLI は .xcstrings を自動認識しないため）。
             // これで Bundle.module が生成され、`L()` の解決先が確定する。
-            resources: [.process("Localizable.xcstrings")]
+            // オフライン逆ジオコーディング用の都市DB（cities15000.bin）も同梱する。
+            resources: [
+                .process("Localizable.xcstrings"),
+                .copy("Places/cities15000.bin"),
+            ]
         ),
         .testTarget(
             name: "PhotoSourceKitTests",

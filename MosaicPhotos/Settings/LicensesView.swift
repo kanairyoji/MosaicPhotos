@@ -68,6 +68,12 @@ struct LicensesView: View {
                         license: "MIT",
                         url: "https://github.com/mlfoundations/open_clip",
                         text: mitLicenseText("Copyright (c) 2021 OpenCLIP authors (mlfoundations/open_clip)")),
+                    LicenseItem(
+                        name: "GeoNames — cities15000",
+                        role: L("Offline reverse geocoding (album place names & Places)"),
+                        license: "CC BY 4.0",
+                        url: "https://www.geonames.org/",
+                        text: geoNamesNotice),
                 ]),
 
             LicenseSection(

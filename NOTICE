@@ -24,6 +24,8 @@ AGPL に加えて、著作権者（Ryoji KANAI）は同一の成果物を Apple 
 同梱する画像/テキスト CLIP モデルは OpenCLIP ViT-B-32（DataComp・MIT）で、商用・再配布が可能な
 権利フリーのモデルです（CLIP の語彙・トークナイザも MIT）。モデル本体はローカル生成のため
 リポジトリには含めていません。
+オフライン逆ジオコーディング（アルバムの地名・場所アルバム）用に、GeoNames の cities15000 から
+生成した都市データ（cities15000.bin）を同梱します。出典 GeoNames（CC BY 4.0・https://www.geonames.org/ ）。
 
 ------------------------------------------------------------------------------
 English (reference translation; the Japanese above is the master of this NOTICE.
@@ -42,4 +44,6 @@ CONTRIBUTING.md.
 Third-party components: used under their own licenses; see "Settings -> Licenses" in
 the app. The bundled image/text CLIP model is OpenCLIP ViT-B-32 (DataComp), MIT-
 licensed (commercial use and redistribution permitted); the model is generated
-locally and not included in this repository.
+locally and not included in this repository. The app also bundles a compact place
+dataset (cities15000.bin) derived from GeoNames "cities15000" for offline reverse
+geocoding (CC BY 4.0, https://www.geonames.org/).
