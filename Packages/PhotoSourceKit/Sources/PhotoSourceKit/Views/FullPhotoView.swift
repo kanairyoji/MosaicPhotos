@@ -25,8 +25,8 @@ struct FullPhotoView<Store: PhotoStore>: View {
     @Environment(\.photoInsight) private var photoInsight
     @Environment(\.dismiss) private var dismiss
 
-    /// 下スワイプで閉じる閾値（最上部からの引っ張り量）。
-    private static var dismissPull: CGFloat { 110 }
+    /// 下スワイプで閉じる閾値（最上部から下方向の overscroll 量・pt）。
+    private static var dismissPull: CGFloat { 60 }
 
     var body: some View {
         GeometryReader { geo in
@@ -49,23 +49,16 @@ struct FullPhotoView<Store: PhotoStore>: View {
                     .frame(width: geo.size.width)
                     .onAppear { infoRequested = true }
                 }
-                // 最上部の overscroll 量を測る（情報パネルへの上スクロールでは負になり発火しない）。
-                .background(GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: PullDownKey.self,
-                        value: proxy.frame(in: .named("fullPhotoScroll")).minY)
-                })
             }
             .scrollIndicators(.hidden)
             .background(Color.black)
-            .coordinateSpace(name: "fullPhotoScroll")
-            .onPreferenceChange(PullDownKey.self) { y in
-                pullDown = max(0, y)   // 上スクロール(負)は 0 に丸める
-                if y > Self.dismissPull, !isDismissing {
-                    isDismissing = true
-                    dismiss()
-                }
-            }
+            // N1: 最上部で下に引っ張ったら閉じる。iOS 18+ の onScrollGeometryChange で実 contentOffset を見る
+            //（情報パネルへの上スクロール＝contentOffset 正 では発火しない）。
+            .modifier(PullDownToDismiss(pullDown: $pullDown, threshold: Self.dismissPull) {
+                guard !isDismissing else { return }
+                isDismissing = true
+                dismiss()
+            })
         }
         // フル画像のみ即ロード（取得時にディスクキャッシュ）。ページ送りはこれだけで軽い。
         // T1: 取得 nil（一時的なネットワーク断 -1005 等）は数回リトライし、
@@ -149,9 +142,26 @@ struct FullPhotoView<Store: PhotoStore>: View {
     }
 }
 
-/// N1: スクロール最上部の overscroll 量（下方向＝正）を伝える PreferenceKey。
-private struct PullDownKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+/// N1: フル画面の「下スワイプで閉じる」。`ScrollView` の実 contentOffset を監視し、最上部から
+/// 下に引っ張った量（= -contentOffset.y）が閾値を超えたら閉じる。`pullDown` は引っ張り量を
+/// 呼び出し側へ返し（縮小/退色のフィードバック用）、上スクロール（情報パネル）では 0。
+private struct PullDownToDismiss: ViewModifier {
+    @Binding var pullDown: CGFloat
+    let threshold: CGFloat
+    let onDismiss: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y
+            } action: { _, y in
+                let pull = max(0, -y)
+                if pull != pullDown { pullDown = pull }
+                if pull > threshold { onDismiss() }
+            }
+        } else {
+            content   // iOS 17: 下スワイプ閉じは無効（戻るボタンで閉じる）。
+        }
+    }
 }
 #endif

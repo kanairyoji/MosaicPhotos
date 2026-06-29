@@ -32,7 +32,7 @@
 - 影響: 片手操作で一番触る操作。親指の届きにくい左上だけ、というのは摩擦が大きい。
 - 提案: フル画面に **下スワイプで閉じる**（最上部での overscroll を検出して dismiss）を追加。注意点＝`FullPhotoView` は縦 `ScrollView` で写真の下に情報パネルを置く構造なので、スクロール位置 0 からの下方向ドラッグだけを dismiss に割り当て、情報パネルのスクロールと競合させない。エッジ戻るは戻すなら別途。
 - 関連: `PhotoPageView.swift`（topControls/dismiss）/ `FullPhotoView.swift`（縦 ScrollView）。
-- 状態: **実装**。`FullPhotoView` に最上部 overscroll 量（`PullDownKey` PreferenceKey・`fullPhotoScroll` 座標空間）で**下スワイプ閉じ**を追加（閾値 110pt、引っ張りに応じて軽い縮小＋退色のフィードバック）。情報パネルへの上スクロール（負方向）では発火しない。`@Environment(\.dismiss)` で pop。エッジスワイプ戻るは未対応（別途）。
+- 状態: **実装**。`FullPhotoView` に**下スワイプ閉じ**を追加。当初 PreferenceKey＋座標空間で overscroll を測ったが**発火せず**（座標空間越しの伝播が不安定／rubber-band で閾値到達せず）、iOS 18+ の **`onScrollGeometryChange`** で実 `contentOffset.y` を監視する方式に変更（`PullDownToDismiss` modifier・閾値 60pt・引っ張りで軽い縮小＋退色）。情報パネルへの上スクロール（contentOffset 正）では発火しない。`@Environment(\.dismiss)` で pop。iOS 17 は無効（戻るボタン）。エッジスワイプ戻るは別途。
 
 ### N2. ホームが縦長の単一リスト（7 セクション） — P3
 - 所見: Sources / Time&Place / People / AI / Folder / Device Albums / Places が 1 本の `List`。ソース（写真/クラウド/すべて）の切替は毎回ホームへ戻る前提で、常時アクセスできるタブが無い。
