@@ -23,10 +23,21 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         item.displayTitle ?? item.captureDate.map(DisplayDate.ymd)
     }
 
-    /// 日付/タイトルのラベル。最上部のアクティビティバー（安全領域上端）の**下**へ落として配置する。
-    @ViewBuilder
-    private var topLabelOverlay: some View {
-        GeometryReader { proxy in
+    public var body: some View {
+        // ZStack(.top)＝**安全領域の上端**基準。写真(TabView)は ignoresSafeArea で全画面、
+        // 日付はその上端からわずかに下げて最上部のアクティビティバーの**下**へ置く
+        // （中央に出して写真を遮らない／バーと重ねない）。
+        ZStack(alignment: .top) {
+            TabView(selection: $currentID) {
+                ForEach(store.items) { item in
+                    FullPhotoView(store: store, item: item)
+                        .tag(item.id)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .background(Color.black)
+            .ignoresSafeArea()
+
             if let item = currentItem, let label = topLabel(item) {
                 Text(label)
                     .font(.subheadline.weight(.medium))
@@ -34,27 +45,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
                     .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-                    .frame(maxWidth: .infinity)
-                    // 安全領域上端（ノッチ/ダイナミックアイランド下）＋アクティビティバーの高さぶん下げる。
-                    .padding(.top, proxy.safeAreaInsets.top + 36)
+                    .padding(.top, 34)   // 安全領域上端（=バー位置）からさらに下げてバーと重ねない
+                    .allowsHitTesting(false)
             }
         }
-        .allowsHitTesting(false)
-    }
-
-    public var body: some View {
-        TabView(selection: $currentID) {
-            ForEach(store.items) { item in
-                FullPhotoView(store: store, item: item)
-                    .tag(item.id)
-            }
-        }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .background(Color.black)
-        .ignoresSafeArea()
-        // 日付/タイトルは最上部のアクティビティバーと被らないよう、その下に独立配置する
-        // （以前はナビバーのタイトル＝バーと同じ位置で重なっていた）。
-        .overlay(alignment: .top) { topLabelOverlay }
         .navigationBarTitleDisplayMode(.inline)
         // Pre-fetch the next page as soon as the page view opens, so photos are
         // ready before the user swipes near the end.

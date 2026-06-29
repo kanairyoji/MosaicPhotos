@@ -24,7 +24,8 @@
 ## フル画面ビューで最上部のアクティビティバーと日付が重なる
 - 症状: フル画面の写真ビューで、最上部のアクティビティバー（ツールチップ状の表示）と日付が同じ位置に重なって読めない。
 - 原因: アクティビティバーは `SourceHostView` の `overlay(alignment:.top)`（安全領域上端）に出す。一方フル画面の日付は `PhotoPageView` の**ナビバー principal タイトル**で、これも安全領域上端の中央＝**同じ位置**だった。
-- 対処: 日付をナビバータイトルから外し、`PhotoPageView` の独立した top オーバーレイへ移して**バーの下**（`safeAreaInsets.top + 36pt`）に配置（`GeometryReader` で安全領域上端を取得）。バーは `padding(.top, 0)` で最上端へ寄せる。両者が縦に並んで重ならない。
+- 対処: 日付をナビバータイトルから外し、`PhotoPageView` を **`ZStack(alignment: .top)`** にして安全領域上端基準に固定、写真(TabView)は `ignoresSafeArea` で全画面のまま、日付を上端から `padding(.top, 34)` だけ下げて**バーの下**へ置く。バーは `padding(.top, 0)` で最上端へ。
+  - 補足: 最初 `overlay + GeometryReader.safeAreaInsets` で組んだが、`ignoresSafeArea` 配下では inset 取得が不安定で日付が画面中央に出た。`ZStack(.top)` 基準（安全領域上端）に変更して安定。
 - 関連: `PhotoPageView.swift`(topLabelOverlay) / `DropboxActivityBar.swift`(modifier)。
 - 残課題: なし。
 
