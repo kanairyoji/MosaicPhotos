@@ -37,8 +37,9 @@ struct FullPhotoView<Store: PhotoStore>: View {
                     photo
                         .frame(width: geo.size.width, height: geo.size.height)
                         // N1: 引っ張りに応じて軽く縮小＋退色させ「閉じる」フィードバックを出す。
-                        .scaleEffect(1 - min(pullDown, 240) / 2400, anchor: .center)
-                        .opacity(1 - min(pullDown, 240) / 600)
+                        // 型は明示（CGFloat/Double を混ぜると割り算演算子が多義になりビルドが落ちる）。
+                        .scaleEffect(1 - min(pullDown, CGFloat(240)) / CGFloat(2400), anchor: .center)
+                        .opacity(1 - Double(min(pullDown, 240)) / 600)
                     PhotoInfoPanel(
                         captureDate: item.captureDate,
                         placeName: placeName,
