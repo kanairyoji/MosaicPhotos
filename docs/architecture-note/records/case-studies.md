@@ -36,6 +36,7 @@
 - 対処:
   - (1) 逆ジオコーディングを**同梱DB（GeoNames cities15000）で完全オフライン化**（[[ADR-21]]）。失敗概念が消え、決定的に解決＝「Trip」固定が解消。
   - (2) **backfill を廃止**し、座標のある写真のみを旅行対象に（ユーザー要望「位置情報がない写真は入れない」）。
+  - **既存アルバムは生成時に名前を保存する**ため、修正だけでは「Trip」が残る（`storedVersion == generationVersion` で再生成スキップ）。`AutoAlbumEngine.generationVersion` を 3→4 に上げ、起動時1回の自動再生成で地名付きへ作り直す。
 - 関連: `TimePlaceStrategy.swift`(backfill 削除) / `AutoAlbumEngine.resolvePlaceIfNeeded` / `PlaceNameResolver`・`OfflinePlaceDB` / `TimePlaceStrategyTests`。
 - 残課題: 命名は「最も近い既知都市」。多都市旅行で centroid が半端な都市を指す場合があり、代表クラスタ座標での命名は今後の改善余地。地名は表示言語に追従（日英両方を bin に保持し AppLocale で切替・日本語が無ければ英語）で対応済み。
 

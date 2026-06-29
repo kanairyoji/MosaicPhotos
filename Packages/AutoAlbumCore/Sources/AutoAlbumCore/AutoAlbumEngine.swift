@@ -95,7 +95,9 @@ public final class AutoAlbumEngine {
 
     /// 自動アルバム生成ロジックのバージョン。命名・グルーピングを変えたら上げる。
     /// 保存値と異なると起動時に1回だけ自動再生成し、既存アルバムへ改善を反映する。
-    private static let generationVersion = 3
+    /// v4: オフライン地名解決（GeoNames）＋未測位写真を旅行から除外＋日英の地名へ。
+    ///     既存の「Trip」固定アルバムを地名付きへ作り直す。
+    private static let generationVersion = 4
 
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
