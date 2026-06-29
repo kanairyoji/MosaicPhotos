@@ -207,6 +207,61 @@ struct AutoAlbumCard: View {
     }
 }
 
+// MARK: - People carousel (端末の人物・円形アバター)
+
+/// ピープルを円形アバターの横スクロールで表示する（Time & Place 直下）。タップで写真一覧へ。
+struct PeopleCarousel: View {
+    let people: [PersonAlbumInfo]
+    let onSelect: (PersonAlbumInfo) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 14) {
+                ForEach(people) { person in
+                    Button { onSelect(person) } label: { PersonCard(person: person) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+        }
+        .listRowInsets(EdgeInsets())
+    }
+}
+
+/// 円形アバター＋名前。アバターは端末写真から取得する。
+private struct PersonCard: View {
+    let person: PersonAlbumInfo
+    @State private var cover: UIImage?
+    private static let side: CGFloat = 84
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().fill(Color(uiColor: .secondarySystemBackground))
+                if let cover {
+                    Image(uiImage: cover).resizable().scaledToFill()
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: Self.side, height: Self.side)
+            .clipShape(Circle())
+
+            Text(person.name)
+                .font(.footnote)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(width: Self.side + 12)
+        .task(id: person.id) {
+            cover = await loadLocalCover(person.coverLocalIdentifier, pixelSize: Self.side * 2)
+        }
+    }
+}
+
 // MARK: - Place row
 
 struct PlaceRow: View {

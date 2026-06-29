@@ -188,6 +188,45 @@ extension HomeView {
         }
     }
 
+    // MARK: People section (端末の人物＝顔アルバム)
+
+    /// 端末の写真アプリで名前を付けた人を、円形アバターの横スクロールで表示する。
+    /// 表示は Time & Place の直下。タップでその人物の写真一覧へ。
+    @ViewBuilder
+    var peopleSection: some View {
+        Section {
+            if !peopleScanner.isLoaded {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading people…").font(.callout).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            } else if peopleScanner.people.isEmpty {
+                Label("No named people found.", systemImage: "person.crop.circle.badge.questionmark")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                PeopleCarousel(people: peopleScanner.people) { destination = .person($0) }
+            }
+        } header: {
+            HStack {
+                Text("People")
+                Spacer()
+                if peopleScanner.isScanning {
+                    ProgressView().controlSize(.mini)
+                } else if peopleScanner.isLoaded {
+                    Button {
+                        Task { await peopleScanner.scan() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     // MARK: AI albums section (自然文・オンデバイス)
 
     /// 自然文で作る AI アルバム。ヘッダーの「＋」でコンポーザーを開く。
@@ -306,6 +345,7 @@ enum ActiveSource: String, Identifiable {
 enum HomeDestination: Identifiable {
     case source(ActiveSource)
     case localAlbum(LocalAlbumInfo)
+    case person(PersonAlbumInfo)
     case place(PlaceAlbumInfo)
     case autoAlbum(AutoAlbumInfo)
 
@@ -313,6 +353,7 @@ enum HomeDestination: Identifiable {
         switch self {
         case .source(let source): return "source-\(source.id)"
         case .localAlbum(let album): return "album-\(album.id)"
+        case .person(let person): return "person-\(person.id)"
         case .place(let place): return "place-\(place.id)"
         case .autoAlbum(let album): return "auto-\(album.id)"
         }

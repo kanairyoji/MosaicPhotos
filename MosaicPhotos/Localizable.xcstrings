@@ -1704,6 +1704,36 @@
           }
         }
       }
+    },
+    "People": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープル"
+          }
+        }
+      }
+    },
+    "Loading people…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープルを読み込み中…"
+          }
+        }
+      }
+    },
+    "No named people found.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前を付けた人が見つかりません。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

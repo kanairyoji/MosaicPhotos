@@ -137,6 +137,8 @@ Packages/LocalPhotoCore/           ← 端末写真のロジック層（PhotoSou
     LocalPhotoStore.swift          @MainActor @Observable。PHAsset 一覧管理・権限処理
     LocalPhotoStore+PhotoStore.swift  PhotoStore 適合（サムネイル/フル画像取得・#if canImport(UIKit)）
     LocalAlbumScanner.swift        アルバム走査（バックアップと独立。JSONFileStore でキャッシュ）
+    PeopleScanner.swift / PersonAlbumInfo.swift  ピープル（人物＝顔アルバム・subtype 1000）走査・キャッシュ。
+                                   ホームの Time&Place 直下に円形アバターのカルーセルで表示（日本語ラベル「ピープル」）
     LocalAlbumInfo.swift           アルバム情報値オブジェクト
     LocalPhotoItem.swift           PHAsset を束ねる PhotoItem
     ThumbnailCache.swift           actor。MemoryImageCache + DiskImageStore による LRU キャッシュ
@@ -240,6 +242,7 @@ MosaicPhotosApp
         ├── [Photos]     LocalPhotoContentView      ← import LocalPhotoKit（LocalPhotoStore）
         ├── [Cloud]      DropboxContentView         ← import DropboxKit（DropboxPhotoStore）
         ├── [Albums]     端末アルバム / Time&Place 旅行 / フォルダ名 / AI アルバム ← AutoAlbumEngine
+        ├── [People]     ピープル（人物＝顔アルバム）← PeopleScanner（端末ローカル）。Time&Place 直下
         ├── [Places]     PlacePhotosView            ← PhotosFeatureKit の PlaceScanner / MergedPhotoStore（場所フィルタ）
         └── [Settings sheet] SettingsView（Settings.app 風グルーピング List → 各画面へ NavigationLink）
               ├── On-Device Photos  LocalPhotoSettingsView   ← import LocalPhotoKit

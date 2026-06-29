@@ -20,6 +20,8 @@ struct HomeView: View {
     @State private var backupEngine: BackupEngine
     /// アルバムスキャナー。バックアップと独立してローカル写真ライブラリを走査・キャッシュする。
     @State var albumScanner: LocalAlbumScanner
+    /// ピープル（人物＝顔アルバム）スキャナー。端末の写真アプリで名前を付けた人を取得する。
+    @State var peopleScanner: PeopleScanner
     /// 場所（市区町村）スキャナー。ローカル＋Dropbox の位置情報をまとめてグルーピングする。
     @State var placeScanner: PlaceScanner
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
@@ -44,6 +46,7 @@ struct HomeView: View {
         self._mergedStore = State(initialValue: stores.mergedStore)
         self._backupEngine = State(initialValue: stores.backupEngine)
         self._albumScanner = State(initialValue: stores.albumScanner)
+        self._peopleScanner = State(initialValue: stores.peopleScanner)
         self._placeScanner = State(initialValue: stores.placeScanner)
         self._autoAlbumEngine = State(initialValue: stores.autoAlbumEngine)
     }
@@ -53,6 +56,7 @@ struct HomeView: View {
             List {
                 sourceSection
                 autoAlbumsSection
+                peopleSection
                 aiAlbumsSection
                 pathAlbumsSection
                 albumsSection
@@ -87,6 +91,8 @@ struct HomeView: View {
                     DropboxContentView(store: dropboxStore)
                 case .localAlbum(let album):
                     LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
+                case .person(let person):
+                    LocalPhotoContentView(localIdentifiers: person.localIdentifiers, title: person.name)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore)
                 case .autoAlbum(let album):
@@ -99,6 +105,7 @@ struct HomeView: View {
             backupEngine: backupEngine,
             placeScanner: placeScanner,
             albumScanner: albumScanner,
+            peopleScanner: peopleScanner,
             autoAlbumEngine: autoAlbumEngine))
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
         .dropboxActivityBar()
@@ -148,6 +155,7 @@ private struct HomeLifecycleTasks: ViewModifier {
     let backupEngine: BackupEngine
     let placeScanner: PlaceScanner
     let albumScanner: LocalAlbumScanner
+    let peopleScanner: PeopleScanner
     let autoAlbumEngine: AutoAlbumEngine
 
     private var rescanIntervalSeconds: Int {
@@ -160,6 +168,8 @@ private struct HomeLifecycleTasks: ViewModifier {
             // アルバムスキャン：キャッシュがあれば即ロード、なければバックグラウンドでスキャン。
             // バックアップとは独立して動作する。
             .task { await albumScanner.loadOrScan(); Diagnostics.mark("albums loaded") }
+            // ピープル（人物＝顔アルバム）：キャッシュ即ロード→無ければスキャン。端末ライブラリのみ。
+            .task { await peopleScanner.loadOrScan() }
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする
             // （バックグラウンド同期や写真閲覧で座標が補完されると Places アルバムが増える）。
