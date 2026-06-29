@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Swift-SwiftUI-orange" alt="SwiftUI">
   <img src="https://img.shields.io/badge/AI-on--device%20CLIP-purple" alt="on-device CLIP">
   <img src="https://img.shields.io/badge/tests-270%2B%20passing-brightgreen" alt="tests">
-  <a href="https://kanairyoji.github.io/MosaicPhotos/"><img src="https://img.shields.io/badge/docs-Architecture%20Note-brightgreen" alt="Architecture Note"></a>
+  <a href="https://kanairyoji.github.io/MosaicPhotos/architecture-note/"><img src="https://img.shields.io/badge/docs-Architecture%20Note-brightgreen" alt="Architecture Note"></a>
 </p>
 
 <p align="center">
@@ -34,33 +34,38 @@
 <table>
 <tr>
 <td align="center" width="50%">
-  <img src="docs/screenshots/home.png" width="230" alt="Home"><br>
+  <img src="docs/screenshots/home.jpg" width="230" alt="Home"><br>
   <b>Home</b><br>
   <sub>Your device and Dropbox photos in one place — plus <b>Time&nbsp;&amp;&nbsp;Place</b> trips grouped automatically from when and where they were taken.</sub>
 </td>
 <td align="center" width="50%">
-  <img src="docs/screenshots/ai-compose.png" width="230" alt="AI Album composer"><br>
+  <img src="docs/screenshots/ai-compose.jpg" width="230" alt="AI Album composer"><br>
   <b>AI Albums — describe it</b><br>
-  <sub>Describe an album in plain words, in any language (e.g. “Landscape photos without people”). Interpreted and searched on-device with open-vocabulary CLIP.</sub>
+  <sub>Describe an album in plain words, in any language (e.g. “children in the last 2 years”, “landscape without people”). Interpreted and searched on-device with open-vocabulary CLIP.</sub>
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
-  <img src="docs/screenshots/ai-albums.png" width="230" alt="AI & folder albums"><br>
+  <img src="docs/screenshots/ai-albums.jpg" width="230" alt="AI & folder albums"><br>
   <b>AI &amp; folder albums</b><br>
   <sub>Your description becomes a living album that fills in as the library is indexed. Albums inferred from Dropbox folder names appear here too — dates in the folder name are parsed so they group as “name (year)”.</sub>
 </td>
 <td align="center" width="50%">
-  <img src="docs/screenshots/photo-info.png" width="230" alt="Detected tags & photo info"><br>
-  <b>Detected tags &amp; info</b><br>
-  <sub>Open any photo for on-device CLIP keyword tags, place, date, and full EXIF (camera, lens, exposure).</sub>
+  <img src="docs/screenshots/photo-info.jpg" width="230" alt="Photo info"><br>
+  <b>Photo info &amp; EXIF</b><br>
+  <sub>Open any photo for place, date, full EXIF (camera, lens, exposure) and a map — plus on-device CLIP keyword tags.</sub>
 </td>
 </tr>
 <tr>
-<td align="center" colspan="2">
-  <img src="docs/screenshots/cloud.png" width="230" alt="Cloud (Dropbox)"><br>
+<td align="center" width="50%">
+  <img src="docs/screenshots/cloud.jpg" width="230" alt="Grid browsing"><br>
   <b>Cloud (Dropbox)</b><br>
   <sub>Browse Dropbox photos in a pinch-to-resize grid. Background delta sync keeps it fresh; thumbnails and originals are cached locally.</sub>
+</td>
+<td align="center" width="50%">
+  <img src="docs/screenshots/grid-months.jpg" width="230" alt="Dense month grouping"><br>
+  <b>Dense month grouping</b><br>
+  <sub>Months with few photos are packed together under date-range headers (e.g. “2021-02 – 2021-04”) so the grid stays dense; adjustable in Settings → Photo Grid.</sub>
 </td>
 </tr>
 </table>
@@ -120,7 +125,7 @@ All AI lives in **`AutoAlbumCore`** (SwiftUI-free); the app injects the on-devic
 
 An in-depth internal **architecture note** — design rationale (ADR), deep-dive implementation pages (concurrency, caching, data model), and a general, app-independent AI primer — is available as a multi-page HTML site:
 
-- **[Architecture Note → kanairyoji.github.io/MosaicPhotos](https://kanairyoji.github.io/MosaicPhotos/)** — published via GitHub Pages (diagrams via Mermaid). Source: [`docs/architecture-note/`](docs/architecture-note/).
+- **[Architecture Note → kanairyoji.github.io/MosaicPhotos/architecture-note](https://kanairyoji.github.io/MosaicPhotos/architecture-note/)** — published via GitHub Pages (diagrams via Mermaid). Source: [`docs/architecture-note/`](docs/architecture-note/). End-user **[Help guide](https://kanairyoji.github.io/MosaicPhotos/help/)** is also published (source: [`docs/help/`](docs/help/)).
 
 > ⚠️ **The architecture note is written in Japanese only.** Its master records live as Markdown in `docs/architecture-note/records/`.
 

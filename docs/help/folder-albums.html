@@ -34,6 +34,9 @@
     .tip { background: #eef5ff; border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 8px; margin: 14px 0; }
     .warn { background: #fff6e6; border-left: 4px solid #d98a00; padding: 10px 14px; border-radius: 8px; margin: 14px 0; }
     ul { padding-left: 22px; }
+    .fig { text-align: center; margin: 18px 0; }
+    .fig img { width: 230px; max-width: 60%; border: 1px solid var(--line); border-radius: 16px; }
+    .fig figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -43,6 +46,11 @@
     <p class="lead">Dropbox の「フォルダ名」から自動でアルバムを作る機能です。たとえば
       <code>/Trips/ハワイ 2024/</code> の中の写真を「ハワイ 2024」というアルバムにできます。
       設定は <b>設定 → Albums → Folder Albums</b> で行います。</p>
+
+    <figure class="fig">
+      <img src="../screenshots/ai-albums.jpg" alt="ホームのアルバム一覧">
+      <figcaption>できたアルバムはホームの「アルバム」に並びます（フォルダ名から自動生成）。</figcaption>
+    </figure>
 
     <h2>仕組み（まずはこれだけ）</h2>
     <p>1 つの「ルール」は、次の 2 つを決めるだけです。</p>

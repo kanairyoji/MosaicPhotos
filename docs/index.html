@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MosaicPhotos</title>
+  <style>
+    :root { --fg:#1d1d1f; --muted:#6e6e73; --line:#e3e3e6; --accent:#0a6cff; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+           color: var(--fg); line-height: 1.7; margin: 0; background:#fff; }
+    main { max-width: 680px; margin: 0 auto; padding: 40px 20px 80px; }
+    h1 { font-size: 32px; margin: 0 0 6px; }
+    .lead { font-size: 17px; color: var(--muted); margin-bottom: 28px; }
+    .grid { display: grid; gap: 14px; }
+    a.card { display: block; border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; color: var(--fg); }
+    a.card:hover { border-color: var(--accent); text-decoration: none; }
+    .card h2 { font-size: 19px; margin: 0 0 4px; }
+    .card p { font-size: 15px; color: var(--muted); margin: 0; }
+    footer { margin-top: 36px; font-size: 13px; color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>MosaicPhotos</h1>
+    <p class="lead">端末内の写真と Dropbox の写真を、ひとつのアプリでまとめて見られる写真ビューワー。</p>
+    <div class="grid">
+      <a class="card" href="./help/">
+        <h2>ユーザーガイド（ヘルプ）</h2>
+        <p>使い方のマニュアル。フォルダアルバムの正規表現ガイドなど。</p>
+      </a>
+      <a class="card" href="./architecture-note/">
+        <h2>設計資料（開発者向け）</h2>
+        <p>アーキテクチャ・設計判断（ADR）・実装詳細・AI 基礎知識。</p>
+      </a>
+    </div>
+    <footer>
+      ソース: <a href="https://github.com/kanairyoji/MosaicPhotos">github.com/kanairyoji/MosaicPhotos</a>
+    </footer>
+  </main>
+</body>
+</html>

@@ -21,6 +21,8 @@
     .card p { font-size: 15px; color: var(--muted); margin: 0; }
     .soon { background: var(--card); border-style: dashed; }
     .soon .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+    .hero { text-align: center; margin: 4px 0 28px; }
+    .hero img { width: 230px; max-width: 60%; border: 1px solid var(--line); border-radius: 18px; }
     footer { margin-top: 36px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
   </style>
 </head>
@@ -30,16 +32,18 @@
     <p class="lead">端末内の写真と Dropbox の写真を、ひとつのアプリでまとめて見られる写真ビューワーです。
       使い方をトピック別にまとめています。</p>
 
+    <div class="hero"><img src="../screenshots/home.jpg" alt="ホーム画面"></div>
+
     <div class="grid">
       <a class="card" href="./folder-albums.html">
         <h2>フォルダアルバムの作り方（正規表現ガイド）</h2>
         <p>Dropbox のフォルダ名から自動でアルバムを作る方法。コピペで使える例をたくさん載せています。</p>
       </a>
 
-      <div class="card soon">
-        <h2>はじめに・基本の見かた<span class="tag">準備中</span></h2>
-        <p>ホーム画面、All / Photos / Cloud の切り替え、グリッドのズームと全画面表示。</p>
-      </div>
+      <a class="card" href="./basics.html">
+        <h2>はじめに・基本の見かた</h2>
+        <p>ホーム画面、All / Photos / Cloud の切り替え、グリッドのズーム・月グループ・全画面表示・写真情報。</p>
+      </a>
       <div class="card soon">
         <h2>AI アルバムと意味検索<span class="tag">準備中</span></h2>
         <p>自然文でアルバムを作る・写真を探す（オンデバイス CLIP）。</p>
@@ -63,7 +67,7 @@
     </div>
 
     <footer>
-      MosaicPhotos · 設計資料（開発者向け）は <a href="../index.html">こちら</a>。
+      MosaicPhotos · 設計資料（開発者向け）は <a href="../architecture-note/">こちら</a>。
     </footer>
   </main>
 </body>
