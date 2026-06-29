@@ -68,9 +68,10 @@ enum DropboxInternalConstants {
     static let thumbnailMemoryCountLimit = 1600
     /// 圧迫時にサムネメモリ層を絞る下限（既定 16MB だと残数が少なく再デコードが多発するため大きめ）。
     static let thumbnailMemoryPressureFloor = 40 * 1_024 * 1_024 // 40 MB（≈620枚を保持）
-    /// サムネのデコード（ディスク読込＋強制デコード／ネット応答のデコード）の同時実行上限。
-    /// 要求ごとに無制限の Task.detached を生むと協調スレッドプールが飽和し 1 枚が桁違いに遅くなる。
-    static let thumbnailDecodeConcurrency = max(2, ProcessInfo.processInfo.activeProcessorCount - 2)
+    /// サムネの**ディスク**デコード（読込＋強制デコード）の同時実行上限。デコード自体は ~3ms と軽く、
+    /// 待ちの大半はディスク I/O とキュー。コア数程度まで上げて行列を浅くする。ネット応答デコードは
+    /// バッチ並行数（maxConcurrentThumbnailRequests）で既に有界なので**本セマフォは通さない（分離）**。
+    static let thumbnailDecodeConcurrency = max(4, ProcessInfo.processInfo.activeProcessorCount)
 
     // MARK: - JPEG compression quality
 

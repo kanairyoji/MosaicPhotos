@@ -80,7 +80,10 @@ final class PhotoTagger {
                           + "(\(withVector) with CLIP vector); total \(processed)")
 
             onProgress(max(0, pending - processed))
-            if batch % 16 == 15 { await onBatch() }
+            // AI 再検索（onBatch）は全件 fetch＋採点で footprint がスパイクする（~200→400MB）。
+            // 背景再埋め込み中は周期を粗くしてスパイク頻度を下げ、メモリ圧迫イベントを減らす
+            // （圧迫が減るとサムネのメモリ保持も安定する）。最終結果は完了時の onBatch で必ず反映。
+            if batch % 48 == 47 { await onBatch() }
             // ★ バッチ間で休む：端末・ネットワーク・UI を圧迫しないよう trickle 処理にする。
             try? await Task.sleep(nanoseconds: betweenBatchNs)
         }

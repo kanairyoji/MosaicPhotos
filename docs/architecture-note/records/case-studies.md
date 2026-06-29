@@ -32,6 +32,7 @@
   - `AsyncSemaphore`（ImageCacheKit）を追加し、**サムネのデコード同時数を端末コア数依存（`max(2, cores-2)`）に制限**（`ThumbnailDecode.limiter`）。ディスク decode（`DropboxCacheStore+Binary`）とネット応答 decode（`DropboxThumbnailBatcher`）の両方が共有。
 - 関連: `ImageCacheKit`(MemoryImageCache・AsyncSemaphore) / `DropboxInternalConstants`(上限/下限/並列) / `DropboxCacheStore`(+Binary) / `DropboxThumbnailBatcher` / `LocalPhotoCore.ThumbnailCache`。
 - 残課題: 効果は再度 PerfTrace（`memHit/diskHit` 比、`diskHit` の ms）で確認。footprint 自体の削減（merged/grid・~400MB）は別途で、これが下がれば圧迫由来の縮小も減る。
+- 追補（再計測→N2 再調整＋N3）: N1+N2 適用後の再計測で **ミス率59%→10%・ミス待ち17s→2.8s・memHit 56→2081** と大幅改善。ただし `diskHit` が依然 ~101ms（実デコードは ~3ms＝大半はセマフォ待ち＋ディスクI/O）。そこで (N2 再調整) ディスクデコードの上限を `max(2,cores-2)`→**`max(4,cores)`** へ引き上げ、ネット応答デコードは（バッチ並行数で既に有界なので）セマフォから**外して分離**＝相互の待ちを解消。(N3) 背景再埋め込み中の AI フル再検索（全件 fetch＋採点で footprint ~200→400MB へスパイク）の周期を `batch%16`→**`batch%48`** に間引き、ピーク発生頻度を 1/3 に下げて圧迫イベントを削減（サムネ保持も安定）。最終結果は完了時の onBatch で必ず反映。
 
 ## アルバムのカバー（タイトル写真）が粗い＝128px サムネの拡大だった
 - 症状: アルバムカルーセルのカード（`AutoAlbumCard`・150pt）のクラウド写真カバーが粒状で見づらい。
