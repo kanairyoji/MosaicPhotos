@@ -137,8 +137,17 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 Spacer()
+                // お気に入り（端末写真）のとき右上にハートを出す（表示専用）。戻るボタンと左右対称に。
+                if currentItem?.isFavorite == true {
+                    Image(systemName: "heart.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.pink)
+                        .frame(width: 34, height: 34)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .allowsHitTesting(false)
+                }
             }
-            .padding(.leading, 10)
+            .padding(.horizontal, 10)
             .padding(.top, 4)
 
             if let item = currentItem, let label = topLabel(item) {
