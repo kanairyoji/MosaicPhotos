@@ -66,8 +66,7 @@ public struct PhotoGridView<Store: PhotoStore>: View {
             monthSectionRows: max(1, monthSectionRows),
             onPinch: onPinch,
             onSelect: {
-                PerfTrace.beginScreen("open.photo")       // 計測: タップ→フル表示(onAppear)
-                PerfTrace.beginScreen("open.construct")   // 計測: タップ→PhotoPageView.init
+                PerfTrace.beginScreen("open.photo")   // 計測: タップ→フル表示(onAppear)
                 // A: タップ直後から背景 CLIP 埋め込みを止め、遷移のメインスレッドを空ける。
                 BackgroundActivityMonitor.shared.isViewingPhoto = true
                 selectedID = $0

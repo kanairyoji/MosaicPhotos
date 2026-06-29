@@ -27,15 +27,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     private static var recenterMargin: Int { 8 }
 
     public init(store: Store, startID: Store.Item.ID) {
-        // 計測: タップ（グリッドの onSelect で beginScreen）→ この init まで。
-        PerfTrace.endScreen("open.construct")
         self.store = store
         self._currentID = State(initialValue: startID)
         let startIndex = store.items.firstIndex(where: { $0.id == startID }) ?? 0
         self._windowLowerBound = State(initialValue: max(0, startIndex - Self.windowRadius))
-        PerfTrace.mark("PhotoPageView.init items=\(store.items.count) start=\(startIndex)")
-        // 計測: init → onAppear（body 構築＋遷移コミット）。ここが重ければページ構築が原因。
-        PerfTrace.beginScreen("open.render")
     }
 
     /// `TabView` に渡す現在ウィンドウのスライス（全 67k ではなく中央±radius のみ）。
@@ -76,7 +71,6 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         // A: 写真ビュー表示中（＝タップ直後の遷移を含む）は背景 CLIP 埋め込みを止め、
         //    遷移・デコードに CPU/ANE を明け渡す。閉じると自動再開。
         .onAppear {
-            PerfTrace.endScreen("open.render")   // 計測: init→onAppear（ページ構築＋遷移）
             BackgroundActivityMonitor.shared.isViewingPhoto = true
             schedulePrefetch()
         }
