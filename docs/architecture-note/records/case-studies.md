@@ -21,6 +21,18 @@
 
 ---
 
+## サムネ遅延の主因がネット→ディスク再デコードへ移動（メモリ保持＋デコード並列制限）
+- 背景: 前項の改善後に再計測。効果は確認できた（ミス率 59%→35%→2.5%、ミス待ち 17s→8.7s→0.57s）。だが新たな主因が顕在化。`thumb-drain` カウンタで `cache.thumb.diskHit=1787(Σ230409ms)`＝**1枚 ~129ms**、`memHit=56`（=メモリにほぼ残らず毎回ディスク再デコード）。
+- 原因:
+  - **メモリ保持が弱い**: Dropbox サムネのメモリ層が 48MB/1000件（128px≈64KB→約740枚）で、数千枚スクロールで溢れて再デコード。加えて `MemoryImageCache` の critical 圧迫が `removeAllObjects()` で**全消去**し、閲覧中に残りを毎回デコードし直す storm を誘発（footprint ~400MB で圧迫が起きやすい）。
+  - **デコードのスレッド過多**: ディスクデコードが要求ごとに**無制限の `Task.detached`**（1ドレインで1787本）を生み、ネット応答デコード・CLIP タガー・grid 再構築と CPU を奪い合い、本来数msのデコードが ~129ms に膨張。
+- 対処（N1 メモリ保持＋N2 デコード並列制限）:
+  - `MemoryImageCache` に `purgeOnCritical`（既定 true）と per-instance `pressureFloor` を追加。**サムネキャッシュは `purgeOnCritical: false`**（critical でも全消去せず下限まで段階縮小＝直近を残す）。Dropbox/Local 両サムネに適用。
+  - Dropbox サムネのメモリ上限を 48MB/1000→**80MB/1600**、圧迫下限を 16MB→**40MB** に引き上げ保持を厚く。
+  - `AsyncSemaphore`（ImageCacheKit）を追加し、**サムネのデコード同時数を端末コア数依存（`max(2, cores-2)`）に制限**（`ThumbnailDecode.limiter`）。ディスク decode（`DropboxCacheStore+Binary`）とネット応答 decode（`DropboxThumbnailBatcher`）の両方が共有。
+- 関連: `ImageCacheKit`(MemoryImageCache・AsyncSemaphore) / `DropboxInternalConstants`(上限/下限/並列) / `DropboxCacheStore`(+Binary) / `DropboxThumbnailBatcher` / `LocalPhotoCore.ThumbnailCache`。
+- 残課題: 効果は再度 PerfTrace（`memHit/diskHit` 比、`diskHit` の ms）で確認。footprint 自体の削減（merged/grid・~400MB）は別途で、これが下がれば圧迫由来の縮小も減る。
+
 ## アルバムのカバー（タイトル写真）が粗い＝128px サムネの拡大だった
 - 症状: アルバムカルーセルのカード（`AutoAlbumCard`・150pt）のクラウド写真カバーが粒状で見づらい。
 - 原因: クラウドカバーが `dropboxStore.thumbnail(for:)`（Dropbox の **128px** サムネ）を 300px(@2x) のカードへ拡大表示していた。ローカルカバーは `loadLocalCover(pixelSize:300)`（PHImageManager・原画から）で問題なし。

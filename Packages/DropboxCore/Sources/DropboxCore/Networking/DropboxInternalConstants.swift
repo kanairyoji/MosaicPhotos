@@ -62,9 +62,15 @@ enum DropboxInternalConstants {
 
     static let defaultThumbnailByteLimit = 50 * 1_024 * 1_024    // 50 MB
     static let defaultFullImageByteLimit = 200 * 1_024 * 1_024   // 200 MB
-    /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する。
-    static let thumbnailMemoryCostLimit = 48 * 1_024 * 1_024     // 48 MB
-    static let thumbnailMemoryCountLimit = 1000
+    /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する（128px≈64KB）。
+    /// 保持を厚くしてディスク再デコード（実機で ~129ms/枚）を減らす。
+    static let thumbnailMemoryCostLimit = 80 * 1_024 * 1_024     // 80 MB（≈1250枚）
+    static let thumbnailMemoryCountLimit = 1600
+    /// 圧迫時にサムネメモリ層を絞る下限（既定 16MB だと残数が少なく再デコードが多発するため大きめ）。
+    static let thumbnailMemoryPressureFloor = 40 * 1_024 * 1_024 // 40 MB（≈620枚を保持）
+    /// サムネのデコード（ディスク読込＋強制デコード／ネット応答のデコード）の同時実行上限。
+    /// 要求ごとに無制限の Task.detached を生むと協調スレッドプールが飽和し 1 枚が桁違いに遅くなる。
+    static let thumbnailDecodeConcurrency = max(2, ProcessInfo.processInfo.activeProcessorCount - 2)
 
     // MARK: - JPEG compression quality
 

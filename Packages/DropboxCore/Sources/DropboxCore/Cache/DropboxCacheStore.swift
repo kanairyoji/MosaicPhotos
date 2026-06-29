@@ -33,7 +33,7 @@ actor DropboxCacheStore {
     // 破棄ポリシー（LRU）は本型が SwiftData(CacheUsageEntry) で持つ（mtime ではない）。
     let thumbnailStore: DiskImageStore
     let fullImageStore: DiskImageStore
-    let thumbnailMemory = MemoryImageCache()
+    let thumbnailMemory: MemoryImageCache
 
     var thumbnailByteLimit: Int
     var fullImageByteLimit: Int
@@ -63,12 +63,17 @@ actor DropboxCacheStore {
 
         self.thumbnailByteLimit = thumbnailByteLimit
         self.fullImageByteLimit = fullImageByteLimit
-        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）。
-        // 実デコードサイズでコスト計上する `insertDecoded` に合わせ、件数上限に加えて
-        // **総コスト上限（既定 48MB）** を設ける。0（未指定）のときは既定 1000 件でキャップ。
-        thumbnailMemory.setCountLimit(thumbnailMemoryCountLimit > 0 ? thumbnailMemoryCountLimit
-                                      : DropboxInternalConstants.thumbnailMemoryCountLimit)
-        thumbnailMemory.setTotalCostLimit(DropboxInternalConstants.thumbnailMemoryCostLimit)
+        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）。実デコードサイズで
+        // コスト計上する `insertDecoded` に合わせ、件数上限＋総コスト上限を設ける。
+        // ⚠️ critical 圧迫でも**全消去しない**（purgeOnCritical: false）。全消去すると閲覧中に毎回
+        //    ディスクから再デコードする storm になり激重化するため、段階縮小（下限まで）に留める。
+        thumbnailMemory = MemoryImageCache(
+            totalCostLimit: DropboxInternalConstants.thumbnailMemoryCostLimit,
+            countLimit: thumbnailMemoryCountLimit > 0 ? thumbnailMemoryCountLimit
+                : DropboxInternalConstants.thumbnailMemoryCountLimit,
+            purgeOnCritical: false,
+            pressureFloor: DropboxInternalConstants.thumbnailMemoryPressureFloor
+        )
     }
 
     /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**

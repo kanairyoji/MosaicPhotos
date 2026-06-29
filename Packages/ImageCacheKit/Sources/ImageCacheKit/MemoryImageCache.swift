@@ -19,15 +19,26 @@ public final class MemoryImageCache: @unchecked Sendable {
     private var configuredCostLimit = 0
     private var isUnderPressure = false
     private var restoreWorkItem: DispatchWorkItem?
-    /// 圧迫時に確保する最小上限。無制限設定でもこの値まで絞る。
+    /// 圧迫時に確保する最小上限（既定）。無制限設定でもこの値まで絞る。
     public static let pressureFloorBytes = 16 * 1024 * 1024
     /// 圧迫後に元の上限へ戻すまでの待ち時間。
     public static let pressureRestoreDelay: TimeInterval = 30
+    /// このインスタンスの圧迫時下限（小さいサムネを多く残したいキャッシュは大きめにする）。
+    private let pressureFloor: Int
+    /// critical 圧迫で**全消去するか**。サムネキャッシュは false（段階縮小に留め、直近を残して
+    /// ディスク再デコードの storm を防ぐ）。重い画像を持つキャッシュは true で素早く解放する。
+    private let purgeOnCritical: Bool
 
     /// - Parameters:
     ///   - totalCostLimit: 総コスト上限（バイト）。0 は無制限。
     ///   - countLimit: 件数上限。0 は無制限。
-    public init(totalCostLimit: Int = 0, countLimit: Int = 0) {
+    ///   - purgeOnCritical: critical 圧迫で全消去するか（既定 true）。サムネは false 推奨。
+    ///   - pressureFloor: 圧迫時の下限（バイト・既定 16MB）。サムネは大きめにして保持を効かせる。
+    public init(totalCostLimit: Int = 0, countLimit: Int = 0,
+                purgeOnCritical: Bool = true,
+                pressureFloor: Int = MemoryImageCache.pressureFloorBytes) {
+        self.purgeOnCritical = purgeOnCritical
+        self.pressureFloor = max(0, pressureFloor)
         configuredCostLimit = totalCostLimit
         if totalCostLimit > 0 { cache.totalCostLimit = totalCostLimit }
         if countLimit > 0 { cache.countLimit = countLimit }
@@ -42,15 +53,19 @@ public final class MemoryImageCache: @unchecked Sendable {
         }
 
         // DispatchSource 起点の圧迫イベントでも解放する（UIKit 通知が来ないケースを補う）。
-        // warning=上限を半減して LRU で縮小 / critical=即時全消去で素早くメモリを返す。
+        // warning=上限を半減して LRU で縮小 / critical=（purgeOnCritical のとき）即時全消去。
+        // サムネキャッシュは purgeOnCritical=false にして全消去せず段階縮小に留める（直近を残し、
+        // 閲覧中に毎回ディスク再デコードする storm を防ぐ）。
         pressureToken = MemoryPressureMonitor.shared.register { [weak self] level in
             guard let self else { return }
             switch level {
             case .warning:
                 self.handleMemoryPressure()
             case .critical:
-                self.cache.removeAllObjects()   // 即時全消去（最速の解放）
-                self.handleMemoryPressure()      // さらに上限も絞り restore を予約
+                if self.purgeOnCritical {
+                    self.cache.removeAllObjects()   // 重い画像キャッシュは即時全消去
+                }
+                self.handleMemoryPressure()          // 上限を下限まで絞り restore を予約
             }
         }
     }
@@ -71,8 +86,8 @@ public final class MemoryImageCache: @unchecked Sendable {
         stateLock.lock()
         isUnderPressure = true
         let target = configuredCostLimit > 0
-            ? max(Self.pressureFloorBytes, configuredCostLimit / 2)
-            : Self.pressureFloorBytes
+            ? max(pressureFloor, configuredCostLimit / 2)
+            : pressureFloor
         restoreWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.restoreAfterPressure() }
         restoreWorkItem = work

@@ -23,11 +23,14 @@ extension DropboxCacheStore {
         let store = thumbnailStore
         let memory = thumbnailMemory
         let t0 = PerfTrace.nowNs()   // 計測: ディスク読み込み＋強制デコードの所要
+        // デコード同時数を制限（要求ごとの無制限 detached でスレッド過多→CPU 競合で激遅になるのを防ぐ）。
+        await ThumbnailDecode.limiter.acquire()
         await Task.detached(priority: .userInitiated) {
             if let decoded = store.decodedImage(forName: name) {
                 memory.insertDecoded(decoded, forKey: path)   // NSCache はスレッドセーフ・実コスト計上
             }
         }.value
+        await ThumbnailDecode.limiter.release()
         guard let image = thumbnailMemory.image(forKey: path) else {
             PerfTrace.count("cache.thumb.miss")   // メモリにもディスクにも無い（ネット取得が必要）
             return nil

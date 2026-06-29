@@ -294,14 +294,17 @@ final class DropboxThumbnailBatcher {
         }
 
         // ★ base64 デコード + 画像デコード（強制）をバックグラウンドで実行し、メインの負荷を避ける。
+        // デコード同時数は ThumbnailDecode.limiter で全体制限（ディスク再デコードと CPU を奪い合わない）。
         // 計測: 1 チャンク分のデコード所要と件数（ネットワークは net.* で別途計測済み）。
         let tDecode = PerfTrace.nowNs()
+        await ThumbnailDecode.limiter.acquire()
         let decoded: [(String, SendableUIImage?)] = await Task.detached(priority: .userInitiated) {
             decodeInputs.map { input in
                 let image = UIImage(data: input.data).map { $0.preparingForDisplay() ?? $0 }
                 return (input.path, image.map(SendableUIImage.init))
             }
         }.value
+        await ThumbnailDecode.limiter.release()
         PerfTrace.count("thumb.decodeMs", value: PerfTrace.msSince(tDecode))
         PerfTrace.count("thumb.decodedItems", value: Double(decodeInputs.count))
 

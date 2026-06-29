@@ -26,7 +26,9 @@ public actor ThumbnailCache {
         // memoryLimitMB は未設定(0)=「Auto」。Auto は端末 RAM に応じて自動算出する。
         let memMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.memoryLimitMB)
         let diskMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.diskLimitMB)
-        memory = MemoryImageCache(totalCostLimit: ThumbnailMemoryBudget.effectiveBytes(forSettingMB: memMB))
+        // critical 圧迫でも全消去せず段階縮小に留める（サムネは小さく、再取得/再デコードの storm を避ける）。
+        memory = MemoryImageCache(totalCostLimit: ThumbnailMemoryBudget.effectiveBytes(forSettingMB: memMB),
+                                  purgeOnCritical: false)
         maxDiskBytes = (diskMB > 0 ? diskMB : 500) * 1024 * 1024
 
         diskUsage = disk.totalUsage()
