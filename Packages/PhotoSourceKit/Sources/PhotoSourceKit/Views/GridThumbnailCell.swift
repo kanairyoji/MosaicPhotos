@@ -6,6 +6,9 @@ import UIKit
 /// 通り過ぎるセルは取得が走らない（出現直後に少し待ってから取得＝画像は後追い）。
 final class GridThumbnailCell: UICollectionViewCell {
     private let imageView = UIImageView()
+    /// お気に入り（端末写真）のとき左下に出す小さなハート。明暗どちらの写真でも視認できるよう
+    /// 白＋影で描く（Apple 写真アプリと同様）。
+    private let heartView = UIImageView()
     private var loadTask: Task<Void, Never>?
 
     override init(frame: CGRect) {
@@ -16,17 +19,35 @@ final class GridThumbnailCell: UICollectionViewCell {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         contentView.clipsToBounds = true
         contentView.addSubview(imageView)
+
+        heartView.image = UIImage(systemName: "heart.fill")?
+            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 11, weight: .bold))
+        heartView.tintColor = .white
+        heartView.contentMode = .scaleAspectFit
+        heartView.translatesAutoresizingMaskIntoConstraints = false
+        heartView.isHidden = true
+        // 影で背景に溶けないようにする（白い写真の上でも見える）。
+        heartView.layer.shadowColor = UIColor.black.cgColor
+        heartView.layer.shadowOpacity = 0.6
+        heartView.layer.shadowRadius = 1.5
+        heartView.layer.shadowOffset = .zero
+        contentView.addSubview(heartView)
+
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
             imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+
+            heartView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+            heartView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(loader: @escaping () async -> UIImage?) {
+    func configure(isFavorite: Bool = false, loader: @escaping () async -> UIImage?) {
+        heartView.isHidden = !isFavorite
         loadTask?.cancel()
         imageView.image = nil
         loadTask = Task { @MainActor in
@@ -43,6 +64,7 @@ final class GridThumbnailCell: UICollectionViewCell {
         loadTask?.cancel()
         loadTask = nil
         imageView.image = nil
+        heartView.isHidden = true
     }
 }
 #endif

@@ -155,7 +155,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 let item = self.items[index]
                 let px = self.cellPixelSize()
                 let store = self.store
-                cell.configure { await store.thumbnail(for: item, targetSize: px) }
+                cell.configure(isFavorite: item.isFavorite) { await store.thumbnail(for: item, targetSize: px) }
             }
             dataSource = UICollectionViewDiffableDataSource<String, Store.Item.ID>(collectionView: cv) {
                 cv, indexPath, id in

@@ -9,9 +9,13 @@ public protocol PhotoItem: Identifiable, Hashable, Sendable {
     var displayTitle: String? { get }
     /// 撮影地の座標（取得できない場合は nil）。詳細画面の地図表示・場所グルーピングに使う。
     var coordinate: CLLocationCoordinate2D? { get }
+    /// 端末写真の「お気に入り」か。グリッドのハート表示に使う。既定は false
+    /// （クラウド等お気に入りの概念がないソースはそのまま false）。
+    var isFavorite: Bool { get }
 }
 
 public extension PhotoItem {
     var displayTitle: String? { nil }
     var coordinate: CLLocationCoordinate2D? { nil }
+    var isFavorite: Bool { false }
 }

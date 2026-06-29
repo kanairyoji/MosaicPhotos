@@ -35,6 +35,14 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// お気に入りはローカル写真のみ（Dropbox にはお気に入りの概念がない）。
+    public var isFavorite: Bool {
+        switch self {
+        case .local(let item): return item.isFavorite
+        case .cloud:           return false
+        }
+    }
+
     public static func == (lhs: MergedPhotoItem, rhs: MergedPhotoItem) -> Bool {
         lhs.id == rhs.id
     }

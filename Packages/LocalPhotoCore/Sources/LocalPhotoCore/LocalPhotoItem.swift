@@ -10,6 +10,8 @@ public struct LocalPhotoItem: PhotoItem {
     public var captureDate: Date? { asset.creationDate }
     /// PHAsset の位置情報（OS が永続化済みのため随時取得可能）。
     public var coordinate: CLLocationCoordinate2D? { asset.location?.coordinate }
+    /// 端末写真アプリの「お気に入り」フラグ（PHAsset から即時取得）。
+    public var isFavorite: Bool { asset.isFavorite }
 
     public static func == (lhs: LocalPhotoItem, rhs: LocalPhotoItem) -> Bool {
         lhs.asset.localIdentifier == rhs.asset.localIdentifier
