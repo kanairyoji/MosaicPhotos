@@ -192,6 +192,16 @@ extension MergedPhotoStore: PhotoStore {
         if !clouds.isEmpty { dropboxStore.prefetch(clouds, targetSize: targetSize) } // Dropbox バッチャに集約
     }
 
+    /// 先読みのキャンセルを cloud に振り分ける。Dropbox は未取得の先読みをキューから破棄する。
+    /// ローカルは `PHCachingImageManager` が先読み窓を自己管理するため no-op。
+    public func cancelPrefetch(_ items: [MergedPhotoItem]) {
+        var clouds: [DropboxFileItem] = []
+        for item in items {
+            if case .cloud(let cloud) = item { clouds.append(cloud) }
+        }
+        if !clouds.isEmpty { dropboxStore.cancelPrefetch(clouds) }
+    }
+
     public func fullImage(for item: MergedPhotoItem) async -> UIImage? {
         switch item {
         case .local(let local): return await localStore.fullImage(for: local)

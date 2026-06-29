@@ -309,6 +309,18 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             store.prefetch(prefetch, targetSize: cellPixelSize())
         }
 
+        /// スクロールで画面外へ出た先読みをキャンセルし、未取得分のネットワーク取得を止める。
+        /// これがないと先読みキューが深くなり、可視セルの取得が後ろに積まれて遅延する。
+        func collectionView(_ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]) {
+            let cancelled: [Store.Item] = indexPaths.compactMap { ip in
+                guard let id = dataSource.itemIdentifier(for: ip),
+                      let idx = idToIndex[id], idx < items.count else { return nil }
+                return items[idx]
+            }
+            guard !cancelled.isEmpty else { return }
+            store.cancelPrefetch(cancelled)
+        }
+
         // MARK: Scroll → 背景処理の一時停止（#3）
         // スクラブだけでなく**通常スクロール中**も背景 CLIP 埋め込みを譲り、操作を滑らかにする。
 

@@ -30,6 +30,15 @@ public final class DropboxPhotoStore {
     @ObservationIgnored private var lastCacheRefresh = Date.distantPast
     @ObservationIgnored private var trailingRefreshTask: Task<Void, Never>?
     private static let cacheRefreshInterval: TimeInterval = 0.4
+    /// 初回同期中は delta ページが多数届くため、UI 反映（全件 fetch＋マージ＋グリッド再構築）を
+    /// 粗い間隔へ間引いて O(N) 再処理の回数を抑える（完了時に最終反映を即時実行する）。
+    private static let initialSyncRefreshInterval: TimeInterval = 5.0
+
+    /// 現在の状態に応じた反映間隔。初回同期中だけ粗くする。
+    private var currentRefreshInterval: TimeInterval {
+        if case .initialSync = syncState { return Self.initialSyncRefreshInterval }
+        return Self.cacheRefreshInterval
+    }
 
     // MARK: - Enums
 
@@ -147,9 +156,13 @@ public final class DropboxPhotoStore {
                         default: break
                         }
                     }
+                    let wasInitialSync: Bool = { if case .initialSync = self.syncState { return true } else { return false } }()
                     self.syncState = newState
                     self.updateLoadStatus()
                     self.updateDebugInfo()
+                    // 初回同期が終わったら、間引いていた分の最終反映を即時に行う。
+                    let stillInitialSync: Bool = { if case .initialSync = newState { return true } else { return false } }()
+                    if wasInitialSync, !stillInitialSync { self.forceCacheRefreshSoon() }
                 }
             )
         }
@@ -163,7 +176,7 @@ public final class DropboxPhotoStore {
     private func scheduleCacheRefresh() {
         guard trailingRefreshTask == nil else { return }   // 既に保留中なら集約
         let elapsed = Date().timeIntervalSince(lastCacheRefresh)
-        let delay = max(0, Self.cacheRefreshInterval - elapsed)
+        let delay = max(0, currentRefreshInterval - elapsed)
         trailingRefreshTask = Task { [weak self] in
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -173,6 +186,14 @@ public final class DropboxPhotoStore {
             self.lastCacheRefresh = Date()
             await self.refreshItemsFromCache()
         }
+    }
+
+    /// 保留中の間引きを取り消し、最終反映を即時にスケジュールする（初回同期完了時など）。
+    private func forceCacheRefreshSoon() {
+        trailingRefreshTask?.cancel()
+        trailingRefreshTask = nil
+        lastCacheRefresh = .distantPast
+        scheduleCacheRefresh()
     }
 
     /// キャッシュから items を取得して反映する（内容が変わったときのみ再代入）。
@@ -283,22 +304,17 @@ public final class DropboxPhotoStore {
         await thumbnailBatcher.thumbnail(for: item)
     }
 
-    /// スクロール先サムネイルの先読み。
-    ///
-    /// ⚠️ `PhotoLoading` の既定実装は `for item in items { await thumbnail(...) }` の **直列 await**
-    /// で、1 枚ごとにネットワーク往復を待ってから次へ進むため、`DropboxThumbnailBatcher` の
-    /// バッチ集約（25 枚/リクエスト）・並行取得（最大 8 本）が一切効かず、サムネイルが
-    /// 1 枚ずつ「ポツポツ」と現れて非常に遅くなる。
-    ///
-    /// ここでは各 item を**並行発火**し、バッチャの `pendingItems` にまとめて積ませる。
-    /// バッチャがそれらを 25 枚チャンク×最大 8 並行で一括取得するため、先読み窓が一気に埋まる。
-    /// キャッシュ確認（メモリ→ディスク）は `thumbnail(for:)` 内で行われるので、ディスク
-    /// ヒット分はネットワークを使わない（スクロール戻りでも無駄が出ない）。結果は破棄し
-    /// キャッシュへ載せるのが目的（待機者は作らない）。
+    /// スクロール先サムネイルの先読み。バッチャの**低優先・LIFO・上限つき**プールへ積む。
+    /// キャッシュ済み（メモリ/ディスク）は `thumbnailExists` で除外しネットワークを使わない。
+    /// 可視セル要求（`thumbnail(for:)`）が常に優先されるため、先読みが表示を遅らせない。
     public func prefetch(_ items: [DropboxFileItem], targetSize: CGSize) {
-        for item in items {
-            Task { [weak self] in _ = await self?.thumbnail(for: item) }
-        }
+        thumbnailBatcher.prefetch(items)
+    }
+
+    /// 画面外へスクロールした先読みの取得を取り消す（無駄なネットワーク取得を止める）。
+    /// `PhotoCollectionView` の `cancelPrefetchingForItemsAt` から呼ばれる。
+    public func cancelPrefetch(_ items: [DropboxFileItem]) {
+        thumbnailBatcher.cancelPrefetch(items)
     }
 
     // MARK: - Location

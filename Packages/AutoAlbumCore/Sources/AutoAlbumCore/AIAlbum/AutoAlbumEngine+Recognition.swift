@@ -74,9 +74,11 @@ extension AutoAlbumEngine {
             await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                           betweenBatchNs: preset.betweenBatchNs,
                                           shouldPause: { [weak self] in
-                                          // 操作中・メモリ圧迫中・電源条件を満たさないときは譲る（電源復帰で自動再開）。
+                                          // 操作中・メモリ圧迫中・電源条件未達・クラウドのサムネ取得中は譲る
+                                          // （クラウド閲覧中は CPU/ANE をサムネのデコードに明け渡す。電源復帰や閲覧終了で自動再開）。
                                           (self?.isInteracting ?? false)
                                               || MemoryPressureMonitor.shared.isUnderPressure
+                                              || BackgroundActivityMonitor.shared.cloudThumbnailBusy
                                               || !PowerStateMonitor.shared.backgroundAllowed()
                                       },
                                           networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },

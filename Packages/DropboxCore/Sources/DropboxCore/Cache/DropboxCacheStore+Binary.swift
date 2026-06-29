@@ -37,6 +37,13 @@ extension DropboxCacheStore {
         return image
     }
 
+    /// サムネイルがメモリまたはディスクに存在するか（**デコードせず**安価に確認）。
+    /// 先読みで「キャッシュ済みは取得不要」を判定し、無駄なネットワーク取得を防ぐ。
+    func thumbnailExists(for path: String) -> Bool {
+        if thumbnailMemory.image(forKey: path) != nil { return true }
+        return thumbnailStore.fileExists(forName: DropboxCacheNaming.fileName(kind: .thumbnail, path: path))
+    }
+
     func storeThumbnail(_ image: UIImage, for path: String) {
         thumbnailMemory.insertDecoded(image, forKey: path)
         let name = DropboxCacheNaming.fileName(kind: .thumbnail, path: path)

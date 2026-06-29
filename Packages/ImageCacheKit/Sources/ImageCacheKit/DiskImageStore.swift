@@ -36,6 +36,11 @@ public final class DiskImageStore: @unchecked Sendable {
         try? Data(contentsOf: fileURL(forName: name))
     }
 
+    /// ファイルが存在するか（デコードせず存在だけを安価に確認する。先読みの取得要否判定に使う）。
+    public func fileExists(forName name: String) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(forName: name).path)
+    }
+
     public func fileSize(forName name: String) -> Int {
         (try? fileURL(forName: name).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
     }

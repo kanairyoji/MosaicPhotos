@@ -27,5 +27,10 @@ public final class BackgroundActivityMonitor {
     public var isScanningPlaces = false
     public var isScanningAlbums = false
 
+    // MARK: - 前景の重い処理（背景処理に譲らせる用）
+    /// Dropbox サムネイルの取得（ドレイン）が稼働中か。クラウド閲覧中は CLIP 背景埋め込みを
+    /// 一時停止させ、サムネのデコード/ネットと CPU を奪い合わないようにする（PhotoTagger が参照）。
+    public var cloudThumbnailBusy = false
+
     private init() {}
 }

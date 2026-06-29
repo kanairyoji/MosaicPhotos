@@ -21,6 +21,19 @@
 
 ---
 
+## Dropbox の体感遅延を計測して三方向で改善（先読み行列・同期O(N²)・CLIP競合）
+- 背景: 実機で Dropbox の閲覧・同期が重い。下記の計測ハーネス PerfTrace の実機ログで原因を3つに切り分けた。(1) サムネ取得の行列待ち（ミス1枚あたり平均~17秒・ミス率~59%、`net.get_thumbnail_batch` は25枚で~1.9s）、(2) 初回同期がページごとに全件再読み込み（`cache.fetchItems` 0.85s/回が約40回＋毎回 merged/grid 再構築）、(3) CLIP 再埋め込み(v0→7・85k枚)がサムネのデコード/CPU と競合（モデル初回ロード14〜37s）。
+- 原因の核心:
+  - 先読みに**キャンセル経路が無く**（`prefetchItemsAt` のみ実装、`cancelPrefetchingForItemsAt` 未実装）、`prefetch` は `Task{ thumbnail() }` を撃ちっぱなしで `pendingItems` が画面外に出ても消えず、3000件級の行列に。可視セルと先読みに**優先度差も無い**。
+  - 同期エンジンが delta ページごとに `onCacheUpdated()` を呼び、`DropboxPhotoStore` が全件 `cachedItems()`＋`items=` 再代入→`MergedPhotoStore` 全マージ→グリッド全再構築を約40回。既存スロットル(0.4s)はページ間隔(1〜3s)より短く無効。
+  - 背景タガーの `shouldPause` がスクラブとメモリ圧迫のみで、クラウド閲覧中の競合を考慮せず。
+- 対処:
+  - サムネバッチャ(`DropboxThumbnailBatcher`)を**2段優先キュー**へ刷新：可視(`thumbnail(for:)`・待機者あり)=最優先FIFO、先読み(`prefetch`・待機者なし)=低優先LIFO＋**上限600**。各ウェーブは可視→先読みの順で充填。`cancelPrefetch` を実装し `cancelPrefetchingForItemsAt`→`PhotoLoading.cancelPrefetch`→バッチャで**未取得の先読みを破棄**。先読みは `thumbnailExists`（メモリ/ディスク存在を**非デコード**判定）で既存分を除外。`inFlight` で二重フェッチ防止。
+  - 初回同期の UI 反映間隔を**状態依存**に（`initialSync` は 5s に間引き、polling は 0.4s）。完了時は `forceCacheRefreshSoon()` で即時最終反映。約40回→数回へ。
+  - タガーの `shouldPause` に `BackgroundActivityMonitor.cloudThumbnailBusy`（バッチャのドレイン中フラグ）を追加し、**クラウド閲覧中は背景埋め込みを譲る**。
+- 関連: `DropboxThumbnailBatcher` / `DropboxPhotoStore`(cancelPrefetch・refresh間引き) / `DropboxCacheStore+Binary`(thumbnailExists) / `ImageCacheKit.DiskImageStore`(fileExists) / `PhotoLoading`(cancelPrefetch) / `PhotoCollectionView`(cancel handler) / `MergedPhotoStore` / `MosaicSupport.BackgroundActivityMonitor`(cloudThumbnailBusy) / `AutoAlbumEngine+Recognition`(shouldPause)。
+- 残課題: ネット往復1.9s/25枚は固有（並列数 `maxConcurrentRequests` は設定で調整可だが429注意）。初回同期の増分マージ化、メモリピーク(~696MB)削減は別途。効果は再度 PerfTrace ログで定量確認する。
+
 ## Dropbox パフォーマンス計測ハーネス（PerfTrace・ON/OFF 可・コードに常駐）
 - 背景: 実機で Dropbox 周りの動作が重い。原因の切り分けのため、ホットパスに常駐の計測コードを入れ、必要時だけ ON にして同じ計測を再現できるようにした（計測→ON、計測後→OFF、コードは残す方針）。
 - 仕組み: `MosaicSupport/PerfTrace.swift`。既定無効で、無効時は各 API が先頭で即 return するためオーバーヘッドは無視できる。ON/OFF は 2 通り = (1) コンパイルスイッチ `-DMOSAIC_PERF`（OTHER_SWIFT_FLAGS）で既定 ON、(2) 実行時 `PerfTrace.isEnabled`（Developer Options のトグル「Performance tracing (Dropbox)」で実機切替・`AppSettingsKeys.perfTracing` に永続化し起動時反映）。出力は os_signpost（Instruments の Points of Interest）と DiagnosticsLog（端末内ログ・Developer Options から閲覧）。API は `measureAsync` / `logSpan(ms:detail:)` / `mark` / `count(value:)` / `flushCounters(context:)`。

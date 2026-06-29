@@ -21,6 +21,10 @@ public protocol PhotoLoading: AnyObject {
     /// `LocalPhotoStore` は `PHCachingImageManager` で上書きする。
     func prefetch(_ items: [Item], targetSize: CGSize)
 
+    /// 画面外へスクロールした先読みを取り消す（無駄な取得を止める）。既定は no-op。
+    /// `DropboxPhotoStore` は未取得の先読みをキューから破棄する。
+    func cancelPrefetch(_ items: [Item])
+
     /// 撮影地の座標を解決する。既定は `item.coordinate`。
     /// Dropbox は同期時に取れていない場合があるため、必要なら単発取得で補完する。
     func location(for item: Item) async -> CLLocationCoordinate2D?
@@ -44,6 +48,9 @@ public extension PhotoLoading {
             }
         }
     }
+
+    /// 既定: 先読みのキャンセルは何もしない（バッチ系ソースのみ上書き）。
+    func cancelPrefetch(_ items: [Item]) {}
 
     /// 既定の位置解決: アイテムが持つ座標をそのまま返す。
     func location(for item: Item) async -> CLLocationCoordinate2D? {
