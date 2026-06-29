@@ -48,7 +48,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .toolbar(.hidden, for: .navigationBar)
         // A: 写真ビュー表示中（＝タップ直後の遷移を含む）は背景 CLIP 埋め込みを止め、
         //    遷移・デコードに CPU/ANE を明け渡す。閉じると自動再開。
-        .onAppear { BackgroundActivityMonitor.shared.isViewingPhoto = true; prefetchNeighbors() }
+        .onAppear { BackgroundActivityMonitor.shared.isViewingPhoto = true; schedulePrefetch() }
         .onDisappear { BackgroundActivityMonitor.shared.isViewingPhoto = false }
         // 現在ページの位置情報→地名を解決（オフライン DB なので即時）。ページ切替で更新。
         .task(id: currentID) { await resolveCurrentPlace() }
@@ -61,9 +61,9 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
         // Also trigger when swiping within 20 photos of the end. hasMore は通常 false
         // （ページングなし）なので、その場合は firstIndex の走査も走らない。
-        // あわせて D: 隣接ページのフル画像を先読みして、スワイプ時の黒画面待ちを減らす。
+        // あわせて D: 次ページのフル画像を先読みして、スワイプ時の黒画面待ちを減らす。
         .onChange(of: currentID) { _, newID in
-            prefetchNeighbors()
+            schedulePrefetch()
             guard store.hasMore,
                   let index = store.items.firstIndex(where: { $0.id == newID }) else { return }
             if index >= store.items.count - 20 {
@@ -72,11 +72,18 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
     }
 
-    /// D: 現在ページの前後 1 枚のフル画像を先読みする（クラウドはバイト取得・保存、ローカルは no-op）。
-    private func prefetchNeighbors() {
-        guard let idx = store.items.firstIndex(where: { $0.id == currentID }) else { return }
-        for offset in [1, -1] where store.items.indices.contains(idx + offset) {
-            store.prefetchFullImage(for: store.items[idx + offset])
+    /// D: 現在ページの**次の 1 枚だけ**を、少し遅らせてフル画像先読みする。
+    /// 即時に前後2枚を取りに行くと、表示中の画像のダウンロードと帯域を食い合って逆に遅くなるため、
+    /// 表示画像を先に通してから（1.2s 後・まだ同じページにいれば）次の1枚だけ取りに行く。
+    /// クラウドはバイト取得・保存、ローカルは no-op。
+    private func schedulePrefetch() {
+        let pageID = currentID
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard pageID == currentID,
+                  let idx = store.items.firstIndex(where: { $0.id == currentID }),
+                  store.items.indices.contains(idx + 1) else { return }
+            store.prefetchFullImage(for: store.items[idx + 1])
         }
     }
 

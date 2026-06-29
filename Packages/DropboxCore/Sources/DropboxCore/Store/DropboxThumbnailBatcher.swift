@@ -223,11 +223,15 @@ final class DropboxThumbnailBatcher {
 
     /// 次のウェーブ（最大 `maxConcurrentRequests` 本・各 `chunkSize` 件）を可視優先で取り出す。
     private func nextWave() -> [[DropboxFileItem]] {
+        // フル写真を表示中（＝グリッドは裏で、先読みは当面不要）は**先読みを止める**。
+        // 取得スロット/帯域/CPU をフル画像のダウンロードと画面遷移に明け渡し、サクサク感を出す。
+        // 可視要求は引き続き処理する。閲覧を抜けて再スクロールすれば先読みは自然に再開する。
+        let allowPrefetch = !BackgroundActivityMonitor.shared.isViewingPhoto
         var wave: [[DropboxFileItem]] = []
         while wave.count < maxConcurrentRequests {
             var chunk: [DropboxFileItem] = []
             while chunk.count < chunkSize {
-                guard let item = takeVisible() ?? takePrefetch() else { break }
+                guard let item = takeVisible() ?? (allowPrefetch ? takePrefetch() : nil) else { break }
                 inFlight.insert(item.path)
                 chunk.append(item)
             }
@@ -298,7 +302,9 @@ final class DropboxThumbnailBatcher {
         // ThumbnailDecode.limiter は通さない（ディスク再デコードを待たせない＝分離）。
         // 計測: 1 チャンク分のデコード所要と件数（ネットワークは net.* で別途計測済み）。
         let tDecode = PerfTrace.nowNs()
-        let decoded: [(String, SendableUIImage?)] = await Task.detached(priority: .userInitiated) {
+        // デコードは `.utility`（UI=userInteractive・遷移より低い）に下げ、メインスレッド/遷移を
+        // 飢餓させない。サムネ表示は僅かに遅れても、スクロール・画面遷移の手応えを優先する。
+        let decoded: [(String, SendableUIImage?)] = await Task.detached(priority: .utility) {
             decodeInputs.map { input in
                 let image = UIImage(data: input.data).map { $0.preparingForDisplay() ?? $0 }
                 return (input.path, image.map(SendableUIImage.init))
