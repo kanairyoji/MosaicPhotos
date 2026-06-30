@@ -291,3 +291,11 @@
 - 対処（R4・部分）: 読み取り専用の `allEnrichedPhotosLite()` を**使い捨て ModelContext でページ fetch→値型化→破棄**（5,000件/ページ）に変更し、materialize を 1 ページに有界化。直前の prune/更新を見るよう save 済みにしてから読む。蓄積は軽量値型のみ。
 - 関連: `AutoAlbumStore.allEnrichedPhotosLite`。
 - 残課題（follow-up・要実機検証）: 支配的なのは `prune()`/`refreshLocalLinkKeys()` の全件 materialize。バッチ削除（`delete(model:where:)`）化や使い捨て context への移行で更にピークを下げられるが、67k 要素 predicate の IN 句や書き込み context の整合（長命 context の stale 化）に踏み込むため、**実機メモリ計測込みで別途**対応する（ブラインドで書き込み経路を変えない方針）。
+
+## ピープルが空＝PhotoKit に公開 People API が無い／顔クラスタリングへ作り直し
+- 症状: ホームの「ピープル」に人物が出ない。
+- 原因: `PeopleScanner`／backup の people インデックスが `fetchAssetCollections(with: .album, subtype: PHAssetCollectionSubtype(rawValue: 1000))`（コメントは「albumFaces」）で取得していたが、これは誤り。album サブタイプの顔は `albumSyncedFaces = 4`（Mac の iPhoto/Aperture から同期した旧 Faces 専用・現存ほぼ無し）で、**現代の「ピープル」（端末ML が作る名前付き人物）はプライバシー保護のため公開 PhotoKit API では一切アクセスできない**。`rawValue 1000` はどの正規サブタイプにも該当せず、fetch は常に空 → 人が出ない。
+- 対処（方針）: 公開 API で取れないため、**Vision で顔検出＋同梱 Core ML 顔認識モデル（権利フリー MobileFaceNet/ArcFace）で identity 埋め込み→逐次クラスタリング**する独自ピープルへ作り直す（ユーザー選択＝方式2・精度優先）。全オンデバイス・通信なし。旧 subtype-1000 経路は撤去予定。
+- フェーズ: (1)**済** クラスタリングのコア（`FaceClustering`・コサイン逐次クラスタ・純ロジック＋テスト）と seam（`FacePerceptionProvider` / `DetectedFaceSignal`）を AutoAlbumCore に追加。(2) 顔モデル変換スクリプト（`scripts/` ・CLIP と同流儀で gitignore 同梱）。(3) Vision 顔検出＋Core ML 埋め込みの実体（MobileCLIPKit）。(4) 永続層（`DetectedFace` @Model・ModelConfiguration 採番）＋背景パイプライン（CLIP タガー同様のスロットリング）。(5) UI 差し替え（ホーム「ピープル」＝顔クラスタ・アバターは顔切り抜き）＋命名。(6) 旧経路撤去。
+- 関連: `AutoAlbumCore/Faces/FaceClustering.swift`・`FaceSeams.swift`（+テスト）/ 旧 `LocalPhotoCore/PeopleScanner.swift`・`BackupKit/BackupIndexing.buildPeopleIndex`（撤去対象）。
+- 残課題: 顔モデルは権利フリー（MIT/Apache）を選定・Core ML 変換。クラスタしきい値はモデル依存で実機調整。命名 UI・永続化。メモリ/電池はタガーと同じ譲り機構に乗せる。
