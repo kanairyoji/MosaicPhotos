@@ -3,6 +3,10 @@ import MosaicSupport
 import SwiftUI
 import UIKit
 
+/// この列数以上の高密度表示ではお気に入りハートを出さない（セルが小さく画像を覆い隠すため）。
+/// 列ラダーは 1,2,3,4,5,15,30,50 なので、15 以上（15/30/50）でハート非表示。
+private let gridFavoriteColumnThreshold = 15
+
 /// UICollectionView を土台にした写真グリッド（SwiftUI ラッパー）。
 ///
 /// SwiftUI の `ScrollView` + `LazyVGrid` は数万件規模で programmatic スクロールが不安定
@@ -149,13 +153,27 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             return UICollectionViewCompositionalLayout(section: section)
         }
 
+        /// 可視セルだけを再構成する（ハート表示の即時切替用）。全 68k ではなく可視分のみなので軽い。
+        private func reconfigureVisibleItems() {
+            let visibleIDs = collectionView.indexPathsForVisibleItems
+                .compactMap { dataSource.itemIdentifier(for: $0) }
+            guard !visibleIDs.isEmpty else { return }
+            var snapshot = dataSource.snapshot()
+            snapshot.reconfigureItems(visibleIDs)
+            dataSource.apply(snapshot, animatingDifferences: false)
+        }
+
         private func configureDataSource(_ cv: UICollectionView) {
             let cellReg = UICollectionView.CellRegistration<GridThumbnailCell, Store.Item.ID> { [weak self] cell, _, id in
                 guard let self, let index = self.idToIndex[id], index < self.items.count else { return }
                 let item = self.items[index]
                 let px = self.cellPixelSize()
                 let store = self.store
-                cell.configure(isFavorite: item.isFavorite) { await store.thumbnail(for: item, targetSize: px) }
+                // セルが小さい高密度表示（15列以上）ではハートが画像を覆って見えなくなるため出さない。
+                let showFavorite = self.currentColumns < gridFavoriteColumnThreshold
+                cell.configure(isFavorite: item.isFavorite && showFavorite) {
+                    await store.thumbnail(for: item, targetSize: px)
+                }
             }
             dataSource = UICollectionViewDiffableDataSource<String, Store.Item.ID>(collectionView: cv) {
                 cv, indexPath, id in
@@ -179,9 +197,13 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             let grouped = grouping != nil
             // レイアウト（列数/グルーピング）が変わったら作り直す。
             if columns != currentColumns || grouped != currentGrouped {
+                // ハート表示しきい値（15列）をまたいだら、可視セルを再構成して即時反映する。
+                let favoriteVisibilityFlipped =
+                    (currentColumns < gridFavoriteColumnThreshold) != (columns < gridFavoriteColumnThreshold)
                 currentColumns = columns
                 currentGrouped = grouped
                 collectionView.setCollectionViewLayout(makeLayout(columns: columns, grouped: grouped), animated: false)
+                if favoriteVisibilityFlipped { reconfigureVisibleItems() }
             }
             scrubber.isHidden = items.count <= 60
 
