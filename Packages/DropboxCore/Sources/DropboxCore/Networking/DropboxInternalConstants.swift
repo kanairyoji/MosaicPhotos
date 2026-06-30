@@ -1,5 +1,4 @@
 import Foundation
-import MosaicSupport
 
 /// サムネイル並行取得の設定レンジ（UI と batcher が共有する公開定数）。
 /// 過大な同時数は Dropbox の 429（レート制限）や接続枯渇を招くため常識的な範囲に制限する。
@@ -40,13 +39,8 @@ enum DropboxInternalConstants {
     /// PKCE コードベリファイアの生成に使うランダムバイト数。
     static let pkceVerifierByteCount = 96
 
-    // MARK: - Thumbnail batch
+    // MARK: - Thumbnail API params（バッチ並行・容量などのチューニング値は +Tuning.swift）
 
-    static let thumbnailBatchChunkSize = 25
-    /// バッチ（get_thumbnail_batch）リクエストの同時実行数。直列だと表示枚数増加時に
-    /// ネットワーク往復が積み上がって遅いため、複数バッチを並行させて取得を高速化する。
-    static let maxConcurrentThumbnailRequests = 4
-    static let thumbnailBatchDebounceNs: UInt64 = 30_000_000   // 30 ms
     static let thumbnailFormat = "jpeg"
     static let thumbnailAPISize = "w128h128"
 
@@ -58,29 +52,6 @@ enum DropboxInternalConstants {
     /// URLRequest タイムアウト。longpoll の待機時間に十分な余裕を持たせる。
     static let longpollURLRequestTimeout: TimeInterval = 120
     static let retryDelayNs: UInt64 = 30_000_000_000           // 30 s
-
-    // MARK: - Cache defaults (DropboxCacheStore)
-
-    static let defaultThumbnailByteLimit = 50 * 1_024 * 1_024    // 50 MB
-    static let defaultFullImageByteLimit = 200 * 1_024 * 1_024   // 200 MB
-    /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する（128px≈64KB）。
-    /// **端末のメモリ予算から算出**する（固定値だと低RAM機でjetsam・高RAM機で取りこぼし）。
-    /// 圧迫時の動的縮小は MemoryPressureMonitor / MemoryImageCache が担う（ベース＝ここ・二段構え）。
-    static let thumbnailMemoryCostLimit = MemoryBudget.thumbnailCostLimit(budget: MemoryBudget.availableBytes())
-    /// 件数上限はコスト上限から導く（≈64KB/枚）。最低 800 枚は確保。
-    static let thumbnailMemoryCountLimit = max(800, thumbnailMemoryCostLimit / 65_536)
-    /// 圧迫時にサムネメモリ層を絞る下限。コスト上限の半分（残数が少ないと再デコードが多発するため）。
-    static let thumbnailMemoryPressureFloor = thumbnailMemoryCostLimit / 2
-    /// サムネの**ディスク**デコード（読込＋強制デコード）の同時実行上限。デコード自体は ~3ms と軽く、
-    /// 待ちの大半はディスク I/O とキュー（実機ログで diskHit ~775ms＝大半がこの順番待ち）。
-    /// コア数の2倍程度まで上げて行列を浅くする。ネット応答デコードはバッチ並行数
-    /// （maxConcurrentThumbnailRequests）で既に有界なので**本セマフォは通さない（分離）**。
-    static let thumbnailDecodeConcurrency = max(6, ProcessInfo.processInfo.activeProcessorCount * 2)
-
-    // MARK: - JPEG compression quality
-
-    static let thumbnailJPEGQuality: CGFloat = 0.85
-    static let fullImageJPEGQuality: CGFloat = 0.9
 
     // MARK: - Log truncation lengths
 
