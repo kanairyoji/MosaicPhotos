@@ -39,3 +39,8 @@ MosaicPhotos/DropboxSecrets.swift
 # Regenerate locally with scripts/build_mobileclip.sh (not committed; license + size).
 .mobileclip_build/
 MosaicPhotos/MobileCLIP/
+
+# Face model (people clustering): build venv and generated Core ML model.
+# Regenerate locally with scripts/build_facenet.sh (not committed; size).
+.facenet_build/
+MosaicPhotos/FaceModel/

@@ -188,40 +188,36 @@ extension HomeView {
         }
     }
 
-    // MARK: People section (端末の人物＝顔アルバム)
+    // MARK: People section (端末写真の顔クラスタ＝オンデバイス Vision+CLIP 顔モデル)
 
-    /// 端末の写真アプリで名前を付けた人を、円形アバターの横スクロールで表示する。
-    /// 表示は Time & Place の直下。タップでその人物の写真一覧へ。
+    /// 端末写真を顔検出＋クラスタリングして得た「人物」を、円形アバターの横スクロールで表示する。
+    /// 表示は Time & Place の直下。タップでその人物の写真一覧へ。顔モデル未同梱なら非表示。
     @ViewBuilder
     var peopleSection: some View {
-        Section {
-            if !peopleScanner.isLoaded {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading people…").font(.callout).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            } else if peopleScanner.people.isEmpty {
-                Label("No named people found.", systemImage: "person.crop.circle.badge.questionmark")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                PeopleCarousel(people: peopleScanner.people) { destination = .person($0) }
-            }
-        } header: {
-            HStack {
-                Text("People")
-                Spacer()
-                if peopleScanner.isScanning {
-                    ProgressView().controlSize(.mini)
-                } else if peopleScanner.isLoaded {
-                    Button {
-                        Task { await peopleScanner.scan() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise").font(.caption)
+        if peopleEngine.isFaceModelAvailable {
+            Section {
+                if peopleEngine.people.isEmpty {
+                    if peopleEngine.isScanning {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("Finding people…").font(.callout).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    } else {
+                        Label("No people found yet.", systemImage: "person.crop.circle.badge.questionmark")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                } else {
+                    PeopleCarousel(people: peopleEngine.people) { destination = .person($0) }
+                }
+            } header: {
+                HStack {
+                    Text("People")
+                    Spacer()
+                    if peopleEngine.isScanning {
+                        ProgressView().controlSize(.mini)
+                    }
                 }
             }
         }
@@ -345,7 +341,7 @@ enum ActiveSource: String, Identifiable {
 enum HomeDestination: Identifiable {
     case source(ActiveSource)
     case localAlbum(LocalAlbumInfo)
-    case person(PersonAlbumInfo)
+    case person(PersonInfo)
     case place(PlaceAlbumInfo)
     case autoAlbum(AutoAlbumInfo)
 

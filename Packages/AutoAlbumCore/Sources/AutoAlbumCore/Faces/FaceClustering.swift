@@ -29,6 +29,13 @@ public struct FaceClustering {
 
     public init(threshold: Float = 0.45) { self.threshold = threshold }
 
+    /// 既存クラスタから復元する（永続層からの増分クラスタリング用）。`nextID` は最大 id+1 から続ける。
+    public init(threshold: Float = 0.45, seedClusters: [Cluster]) {
+        self.threshold = threshold
+        self.clusters = seedClusters
+        self.nextID = (seedClusters.map(\.id).max() ?? -1) + 1
+    }
+
     /// 1 顔を割り当てる。最も近いクラスタが `threshold` 以上ならそこへ合流、無ければ新規。
     /// 返り値は割り当てられたクラスタ ID。
     @discardableResult

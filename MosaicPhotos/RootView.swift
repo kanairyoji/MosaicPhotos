@@ -18,19 +18,19 @@ final class HomeStores {
     let mergedStore: MergedPhotoStore
     let backupEngine: BackupEngine
     let albumScanner: LocalAlbumScanner
-    let peopleScanner: PeopleScanner
+    let peopleEngine: PeopleEngine
     let placeScanner: PlaceScanner
     let autoAlbumEngine: AutoAlbumEngine
 
     private init(dropboxStore: DropboxPhotoStore, mergedStore: MergedPhotoStore,
                  backupEngine: BackupEngine, albumScanner: LocalAlbumScanner,
-                 peopleScanner: PeopleScanner,
+                 peopleEngine: PeopleEngine,
                  placeScanner: PlaceScanner, autoAlbumEngine: AutoAlbumEngine) {
         self.dropboxStore = dropboxStore
         self.mergedStore = mergedStore
         self.backupEngine = backupEngine
         self.albumScanner = albumScanner
-        self.peopleScanner = peopleScanner
+        self.peopleEngine = peopleEngine
         self.placeScanner = placeScanner
         self.autoAlbumEngine = autoAlbumEngine
     }
@@ -48,14 +48,14 @@ final class HomeStores {
         let backupEngine = BackupEngine(auth: auth)
         await Task.yield()
         let albumScanner = LocalAlbumScanner()
-        let peopleScanner = PeopleScanner()
+        let peopleEngine = makePeopleEngine()
         let placeScanner = PlaceScanner()
         await Task.yield()
         let autoAlbumEngine = makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine)
         Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,
                           backupEngine: backupEngine, albumScanner: albumScanner,
-                          peopleScanner: peopleScanner,
+                          peopleEngine: peopleEngine,
                           placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
     }
 }

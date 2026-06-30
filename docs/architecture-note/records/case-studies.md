@@ -299,3 +299,13 @@
 - フェーズ: (1)**済** クラスタリングのコア（`FaceClustering`・コサイン逐次クラスタ・純ロジック＋テスト）と seam（`FacePerceptionProvider` / `DetectedFaceSignal`）を AutoAlbumCore に追加。(2) 顔モデル変換スクリプト（`scripts/` ・CLIP と同流儀で gitignore 同梱）。(3) Vision 顔検出＋Core ML 埋め込みの実体（MobileCLIPKit）。(4) 永続層（`DetectedFace` @Model・ModelConfiguration 採番）＋背景パイプライン（CLIP タガー同様のスロットリング）。(5) UI 差し替え（ホーム「ピープル」＝顔クラスタ・アバターは顔切り抜き）＋命名。(6) 旧経路撤去。
 - 関連: `AutoAlbumCore/Faces/FaceClustering.swift`・`FaceSeams.swift`（+テスト）/ 旧 `LocalPhotoCore/PeopleScanner.swift`・`BackupKit/BackupIndexing.buildPeopleIndex`（撤去対象）。
 - 残課題: 顔モデルは権利フリー（MIT/Apache）を選定・Core ML 変換。クラスタしきい値はモデル依存で実機調整。命名 UI・永続化。メモリ/電池はタガーと同じ譲り機構に乗せる。
+
+### 追補（実装完了・全フェーズ）
+顔クラスタリング版ピープルを完成させた（方式2・顔モデル同梱）。
+- モデル: **facenet-pytorch InceptionResnetV1 / VGGFace2（MIT・512次元L2正規化）**。`scripts/build_facenet.sh`＋`convert_facenet.py`（[0,1] 入力・fixed_image_standardization 内包・FLOAT16）で `MosaicPhotos/FaceModel/` へ生成（.gitignore）。
+- 永続: `FaceStore`（@ModelActor・**別コンテナ "FacesV1"**）＝CLIP 側（AutoAlbumV10）を壊さず追加。`DetectedFace`/`PersonCluster`（sum/count/代表顔）/`ScannedPhoto`（マーカー）。
+- 背景: `FaceTagger`（PhotoTagger と同じ小バッチ＋休止＋shouldPause〔メモリ/閲覧/電源〕＋simulator スキップ）。検出は Vision、埋め込みは `FaceModelRuntime`（MobileCLIPKit）。
+- クラスタ: `FaceClustering`（純・コサイン逐次・seed 復元で増分）。`PeopleEngine`（@MainActor @Observable）が `people: [PersonInfo]` を提供。
+- UI: ホーム「ピープル」を顔クラスタに差し替え（アバターは代表顔 bbox の切り抜き＝`loadFaceAvatar`）。候補 refKey はアプリが PHAsset 列挙（端末写真のみ）。顔モデル未同梱なら非表示。
+- 撤去: 旧 `PeopleScanner`/`PersonAlbumInfo`（subtype-1000）。
+- 検証: アプリ iOS ビルド成功 / AutoAlbumCore 92テスト通過。※ 実機で顔モデル同梱→クラスタ精度としきい値（既定0.45）を要調整。命名 UI は今後（現状 "Person N"）。

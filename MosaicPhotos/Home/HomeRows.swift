@@ -209,10 +209,10 @@ struct AutoAlbumCard: View {
 
 // MARK: - People carousel (端末の人物・円形アバター)
 
-/// ピープルを円形アバターの横スクロールで表示する（Time & Place 直下）。タップで写真一覧へ。
+/// ピープル（顔クラスタ）を円形アバターの横スクロールで表示する（Time & Place 直下）。タップで写真一覧へ。
 struct PeopleCarousel: View {
-    let people: [PersonAlbumInfo]
-    let onSelect: (PersonAlbumInfo) -> Void
+    let people: [PersonInfo]
+    let onSelect: (PersonInfo) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -229,18 +229,18 @@ struct PeopleCarousel: View {
     }
 }
 
-/// 円形アバター＋名前。アバターは端末写真から取得する。
+/// 円形アバター（代表顔の切り抜き）＋名前（未設定は "Person N"）＋枚数。
 private struct PersonCard: View {
-    let person: PersonAlbumInfo
-    @State private var cover: UIImage?
+    let person: PersonInfo
+    @State private var avatar: UIImage?
     private static let side: CGFloat = 84
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
                 Circle().fill(Color(uiColor: .secondarySystemBackground))
-                if let cover {
-                    Image(uiImage: cover).resizable().scaledToFill()
+                if let avatar {
+                    Image(uiImage: avatar).resizable().scaledToFill()
                 } else {
                     Image(systemName: "person.fill")
                         .font(.system(size: 30))
@@ -250,14 +250,16 @@ private struct PersonCard: View {
             .frame(width: Self.side, height: Self.side)
             .clipShape(Circle())
 
-            Text(person.name)
+            Text(person.displayName)
                 .font(.footnote)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
         .frame(width: Self.side + 12)
         .task(id: person.id) {
-            cover = await loadLocalCover(person.coverLocalIdentifier, pixelSize: Self.side * 2)
+            avatar = await loadFaceAvatar(coverRefKey: person.coverRefKey,
+                                          box: person.coverBoundingBox,
+                                          maxPixel: 480)
         }
     }
 }
