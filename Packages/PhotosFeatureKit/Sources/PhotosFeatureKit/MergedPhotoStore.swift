@@ -162,19 +162,26 @@ extension MergedPhotoStore: PhotoStore {
         await localStore.retry()
     }
 
-    public func thumbnail(for item: MergedPhotoItem) async -> UIImage? {
+    /// ローカル/クラウドへ 1:1 で振り分ける共通ヘルパ。各ローディングメソッドはこれで一行化する
+    /// （`switch case .local/.cloud` の繰り返しを 1 箇所に集約）。バッチ系（prefetch 等）は専用ロジック。
+    private func forward<T>(_ item: MergedPhotoItem,
+                            local: (LocalPhotoItem) async -> T,
+                            cloud: (DropboxFileItem) async -> T) async -> T {
         switch item {
-        case .local(let local): return await localStore.thumbnail(for: local)
-        case .cloud(let cloud): return await dropboxStore.thumbnail(for: cloud)
+        case .local(let l): return await local(l)
+        case .cloud(let c): return await cloud(c)
         }
     }
 
+    public func thumbnail(for item: MergedPhotoItem) async -> UIImage? {
+        await forward(item, local: { await localStore.thumbnail(for: $0) },
+                            cloud: { await dropboxStore.thumbnail(for: $0) })
+    }
+
     public func thumbnail(for item: MergedPhotoItem, targetSize: CGSize) async -> UIImage? {
-        switch item {
-        case .local(let local): return await localStore.thumbnail(for: local, targetSize: targetSize)
         // Dropbox のサムネイルは API 側で固定サイズ（w128h128）のため targetSize は使わない（設計通り）。
-        case .cloud(let cloud): return await dropboxStore.thumbnail(for: cloud)
-        }
+        await forward(item, local: { await localStore.thumbnail(for: $0, targetSize: targetSize) },
+                            cloud: { await dropboxStore.thumbnail(for: $0) })
     }
 
     /// 先読みを local / cloud に振り分ける。既定実装（1件ずつ thumbnail）だとローカルが
@@ -203,24 +210,18 @@ extension MergedPhotoStore: PhotoStore {
     }
 
     public func fullImage(for item: MergedPhotoItem) async -> UIImage? {
-        switch item {
-        case .local(let local): return await localStore.fullImage(for: local)
-        case .cloud(let cloud): return await dropboxStore.fullImage(for: cloud)
-        }
+        await forward(item, local: { await localStore.fullImage(for: $0) },
+                            cloud: { await dropboxStore.fullImage(for: $0) })
     }
 
     public func location(for item: MergedPhotoItem) async -> CLLocationCoordinate2D? {
-        switch item {
-        case .local(let local): return await localStore.location(for: local)
-        case .cloud(let cloud): return await dropboxStore.location(for: cloud)
-        }
+        await forward(item, local: { await localStore.location(for: $0) },
+                            cloud: { await dropboxStore.location(for: $0) })
     }
 
     public func cachedLocation(for item: MergedPhotoItem) async -> CLLocationCoordinate2D? {
-        switch item {
-        case .local(let local): return await localStore.cachedLocation(for: local)
-        case .cloud(let cloud): return await dropboxStore.cachedLocation(for: cloud)
-        }
+        await forward(item, local: { await localStore.cachedLocation(for: $0) },
+                            cloud: { await dropboxStore.cachedLocation(for: $0) })
     }
 
     public func prefetchFullImage(for item: MergedPhotoItem) {
@@ -229,17 +230,14 @@ extension MergedPhotoStore: PhotoStore {
     }
 
     public func setFavorite(_ item: MergedPhotoItem, _ isFavorite: Bool) async -> Bool {
-        switch item {
-        case .local(let local): return await localStore.setFavorite(local, isFavorite)
-        case .cloud:            return false   // Dropbox はお気に入り非対応
-        }
+        // Dropbox はお気に入り非対応＝常に false。
+        await forward(item, local: { await localStore.setFavorite($0, isFavorite) },
+                            cloud: { _ in false })
     }
 
     public func metadata(for item: MergedPhotoItem) async -> PhotoExifInfo? {
-        switch item {
-        case .local(let local): return await localStore.metadata(for: local)
-        case .cloud(let cloud): return await dropboxStore.metadata(for: cloud)
-        }
+        await forward(item, local: { await localStore.metadata(for: $0) },
+                            cloud: { await dropboxStore.metadata(for: $0) })
     }
 }
 #endif
