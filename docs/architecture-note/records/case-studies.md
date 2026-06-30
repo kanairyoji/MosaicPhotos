@@ -284,3 +284,10 @@
   - **ネット並行は固定のまま**（CPU/メモリ連動にすると速い端末ほど429を食う筋違いになる）。
 - 関連: `MosaicSupport/MemoryBudget.swift`（+テスト）/ `DropboxInternalConstants`（予算連動・並列係数）/ `MemoryImageCache`（圧迫縮小は既存）。
 - 残課題: 効果は v0.17 実機で再計測（diskHit/missWait・memHit比・footprint）。フォルダアルバム生成の 427MB スパイク（`allEnrichedPhotosLite()` 全件一括）はページング化が別途の課題。`maxPrefetchBacklog`(600) も予算連動の余地。
+
+## フォルダアルバム生成のメモリスパイク（@ModelActor 長命 context の全件 materialize）
+- 症状: 実機ログで `pathAlbum.full: enriched=85304 → albums=217 (footprint=427MB)`。フォルダ/自動アルバム生成時にメモリが大きくスパイク。
+- 原因: `AutoAlbumStore`（@ModelActor）の**長命 modelContext** が、`prune()`（全件 fetch）・`refreshLocalLinkKeys()`（local 全件 fetch）・`allEnrichedPhotosLite()`（全件 fetch）で **8.5万件の `PhotoEnrichment` @Model を materialize** し、save 後も登録が残って積み上がる。トリップ分割自体は全件の値型が必要だが、値型（`EnrichedPhoto`・軽量）ではなく @Model の materialize がピークの主因。
+- 対処（R4・部分）: 読み取り専用の `allEnrichedPhotosLite()` を**使い捨て ModelContext でページ fetch→値型化→破棄**（5,000件/ページ）に変更し、materialize を 1 ページに有界化。直前の prune/更新を見るよう save 済みにしてから読む。蓄積は軽量値型のみ。
+- 関連: `AutoAlbumStore.allEnrichedPhotosLite`。
+- 残課題（follow-up・要実機検証）: 支配的なのは `prune()`/`refreshLocalLinkKeys()` の全件 materialize。バッチ削除（`delete(model:where:)`）化や使い捨て context への移行で更にピークを下げられるが、67k 要素 predicate の IN 句や書き込み context の整合（長命 context の stale 化）に踏み込むため、**実機メモリ計測込みで別途**対応する（ブラインドで書き込み経路を変えない方針）。

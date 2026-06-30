@@ -132,8 +132,25 @@ actor AutoAlbumStore {
     /// 付加情報済みの全写真（戦略の入力）。埋め込みは別テーブルなので、この fetch は
     /// メタデータのみで軽量（巨大 blob を一切載せない）。
     func allEnrichedPhotosLite() -> [EnrichedPhoto] {
-        let records = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? []
-        return records.map(\.asEnrichedPhoto)
+        // R4: 8.5万件の @Model を一括 materialize するとメモリがスパイクするため、**使い捨て
+        // ModelContext でページ fetch→値型化→破棄**し、materialize を 1 ページに有界化する。
+        // 蓄積するのは軽量な値型（EnrichedPhoto）だけ。直前の prune/更新を見るよう save 済みにする。
+        try? modelContext.save()
+        let pageSize = 5000
+        var result: [EnrichedPhoto] = []
+        var offset = 0
+        while true {
+            let ctx = ModelContext(modelContainer)   // ページごとに破棄して materialize を解放
+            var descriptor = FetchDescriptor<PhotoEnrichment>(sortBy: [SortDescriptor(\.refKey)])
+            descriptor.fetchOffset = offset
+            descriptor.fetchLimit = pageSize
+            let records = (try? ctx.fetch(descriptor)) ?? []
+            if records.isEmpty { break }
+            result.append(contentsOf: records.map(\.asEnrichedPhoto))
+            offset += records.count
+            if records.count < pageSize { break }
+        }
+        return result
     }
 
     /// 意味検索のバッチ化用：埋め込み（PhotoEmbedding）を **page 単位**で `(refKey, clipVector)` として
