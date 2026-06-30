@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 
 /// サムネイル並行取得の設定レンジ（UI と batcher が共有する公開定数）。
 /// 過大な同時数は Dropbox の 429（レート制限）や接続枯渇を招くため常識的な範囲に制限する。
@@ -63,15 +64,18 @@ enum DropboxInternalConstants {
     static let defaultThumbnailByteLimit = 50 * 1_024 * 1_024    // 50 MB
     static let defaultFullImageByteLimit = 200 * 1_024 * 1_024   // 200 MB
     /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する（128px≈64KB）。
-    /// 保持を厚くしてディスク再デコード（実機で ~129ms/枚）を減らす。
-    static let thumbnailMemoryCostLimit = 80 * 1_024 * 1_024     // 80 MB（≈1250枚）
-    static let thumbnailMemoryCountLimit = 1600
-    /// 圧迫時にサムネメモリ層を絞る下限（既定 16MB だと残数が少なく再デコードが多発するため大きめ）。
-    static let thumbnailMemoryPressureFloor = 40 * 1_024 * 1_024 // 40 MB（≈620枚を保持）
+    /// **端末のメモリ予算から算出**する（固定値だと低RAM機でjetsam・高RAM機で取りこぼし）。
+    /// 圧迫時の動的縮小は MemoryPressureMonitor / MemoryImageCache が担う（ベース＝ここ・二段構え）。
+    static let thumbnailMemoryCostLimit = MemoryBudget.thumbnailCostLimit(budget: MemoryBudget.availableBytes())
+    /// 件数上限はコスト上限から導く（≈64KB/枚）。最低 800 枚は確保。
+    static let thumbnailMemoryCountLimit = max(800, thumbnailMemoryCostLimit / 65_536)
+    /// 圧迫時にサムネメモリ層を絞る下限。コスト上限の半分（残数が少ないと再デコードが多発するため）。
+    static let thumbnailMemoryPressureFloor = thumbnailMemoryCostLimit / 2
     /// サムネの**ディスク**デコード（読込＋強制デコード）の同時実行上限。デコード自体は ~3ms と軽く、
-    /// 待ちの大半はディスク I/O とキュー。コア数程度まで上げて行列を浅くする。ネット応答デコードは
-    /// バッチ並行数（maxConcurrentThumbnailRequests）で既に有界なので**本セマフォは通さない（分離）**。
-    static let thumbnailDecodeConcurrency = max(4, ProcessInfo.processInfo.activeProcessorCount)
+    /// 待ちの大半はディスク I/O とキュー（実機ログで diskHit ~775ms＝大半がこの順番待ち）。
+    /// コア数の2倍程度まで上げて行列を浅くする。ネット応答デコードはバッチ並行数
+    /// （maxConcurrentThumbnailRequests）で既に有界なので**本セマフォは通さない（分離）**。
+    static let thumbnailDecodeConcurrency = max(6, ProcessInfo.processInfo.activeProcessorCount * 2)
 
     // MARK: - JPEG compression quality
 

@@ -273,3 +273,14 @@
   - 対処: **ウィンドウ方式**に変更。現在 index の前後 `windowRadius=30`（最大61ページ）だけを `TabView` に渡し、端から 8 枚以内に近づいたら現在 index 中心へウィンドウを寄せ直す（`windowLowerBound` を更新）。選択中 `currentID` は常にウィンドウ内なので表示中の写真は維持。6.7万→最大61 で構築コストを定数化。
   - 計測強化: 切り分け用に `open.construct`（タップ→`PhotoPageView.init`）と `open.render`（init→`onAppear`＝ページ構築＋遷移）に分割計測を追加。次回ログで `open.render` が小さくなれば本対処が効いたと確認できる。
   - 関連: `PhotoPageView.swift`（windowItems / recenterWindowIfNeeded / 計測分割）/ `PhotoGridView.swift`（open.construct begin）。
+
+## サムネのメモリ上限・デコード並列を端末資源から決める（固定値→予算連動）
+- 背景: v0.16 の実機ログで、サムネのキャッシュヒットが遅い（`thumb-drain`: `diskHit=3344 Σ2.59M ms＝平均775ms/枚`、`missWaitMs Σ4.27M ms＝平均2.7s/枚`）。`memHit=1564` に対し `diskHit=3344`＝メモリキャッシュが小さく 2/3 が遅いディスク再デコードに回り、`diskHit` の大半は**デコードセマフォの順番待ち**（計測 t0 が acquire 前＝待ち込み）。デコード自体は ~36ms と速い。あわせて footprint が 237→**427MB**（フォルダアルバム生成）→385→280MB とスパイク。
+- 着眼（ユーザー指摘）: 「パラメータを固定で持つより CPU/メモリから決めた方がよいのでは？」。整理すると、**メモリ系上限＝端末メモリ予算から決めるべき**（固定80MBは低RAMでjetsam・高RAMで取りこぼし）、**CPU並列＝既にコア数連動**、**ネット並行＝資源でなくDropboxレート制限で決まるので固定**、が妥当。
+- 対処:
+  - `MosaicSupport.MemoryBudget` を追加。予算は **`os_proc_available_memory()`**（iOS 13+・kill されるまでの実バイト。physicalMemory より正直）、取得不可/他OSは physicalMemory の一部。`thumbnailCostLimit(budget:)`＝予算の約5%を **60〜192MB にクランプ**（純関数・テスト対象、`override` でDI可）。
+  - `DropboxInternalConstants` のサムネメモリ上限/件数/圧迫下限を**この予算算出に置換**（件数≈cost/64KB、下限=cost/2）。ベース＝予算連動／反応＝`MemoryPressureMonitor` の動的縮小、の**二段構え**。
+  - ディスクデコード並列 `thumbnailDecodeConcurrency` を `max(4,コア)`→**`max(6,コア×2)`** に引き上げ、diskHit の順番待ち行列を浅くする（デコードは軽いので低リスク）。
+  - **ネット並行は固定のまま**（CPU/メモリ連動にすると速い端末ほど429を食う筋違いになる）。
+- 関連: `MosaicSupport/MemoryBudget.swift`（+テスト）/ `DropboxInternalConstants`（予算連動・並列係数）/ `MemoryImageCache`（圧迫縮小は既存）。
+- 残課題: 効果は v0.17 実機で再計測（diskHit/missWait・memHit比・footprint）。フォルダアルバム生成の 427MB スパイク（`allEnrichedPhotosLite()` 全件一括）はページング化が別途の課題。`maxPrefetchBacklog`(600) も予算連動の余地。
