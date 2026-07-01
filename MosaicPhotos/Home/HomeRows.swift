@@ -209,10 +209,12 @@ struct AutoAlbumCard: View {
 
 // MARK: - People carousel (端末の人物・円形アバター)
 
-/// ピープル（顔クラスタ）を円形アバターの横スクロールで表示する（Time & Place 直下）。タップで写真一覧へ。
+/// ピープル（顔クラスタ）を円形アバターの横スクロールで表示する（Time & Place 直下）。
+/// タップで写真一覧へ。長押しで名前を付け直せる（`onRename`）。
 struct PeopleCarousel: View {
     let people: [PersonInfo]
     let onSelect: (PersonInfo) -> Void
+    let onRename: (PersonInfo) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -220,6 +222,13 @@ struct PeopleCarousel: View {
                 ForEach(people) { person in
                     Button { onSelect(person) } label: { PersonCard(person: person) }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                onRename(person)
+                            } label: {
+                                Label(L("Rename"), systemImage: "pencil")
+                            }
+                        }
                 }
             }
             .padding(.horizontal, 16)

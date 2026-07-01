@@ -209,7 +209,13 @@ extension HomeView {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    PeopleCarousel(people: peopleEngine.people) { destination = .person($0) }
+                    PeopleCarousel(
+                        people: peopleEngine.people,
+                        onSelect: { destination = .person($0) },
+                        onRename: { person in
+                            renamingPerson = person
+                            renameText = person.name ?? ""
+                        })
                 }
             } header: {
                 HStack {

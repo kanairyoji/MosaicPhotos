@@ -35,6 +35,9 @@ struct HomeView: View {
     /// AI アルバム作成/編集シートの対象（新規 or 既存）。
     /// 単一の `.sheet(item:)` に統合して、複数 .sheet 併用時の提示競合（編集が常に先頭になる不具合）を防ぐ。
     @State var aiComposer: AIComposerTarget?
+    /// ピープルの名前変更中の対象と入力テキスト（長押しメニューから）。
+    @State var renamingPerson: PersonInfo?
+    @State var renameText: String = ""
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// デバッグ：シミュレータでも顔スキャンを走らせる（Developer Options）。ON にした瞬間に開始する。
@@ -120,6 +123,19 @@ struct HomeView: View {
             albumScanner: albumScanner,
             peopleEngine: peopleEngine,
             autoAlbumEngine: autoAlbumEngine))
+        // ピープルの名前変更（長押しメニュー → 入力アラート）。空欄で保存すると "Person N" に戻る。
+        .alert(L("Rename Person"),
+               isPresented: Binding(get: { renamingPerson != nil },
+                                    set: { if !$0 { renamingPerson = nil } }),
+               presenting: renamingPerson) { person in
+            TextField(L("Name"), text: $renameText)
+            Button(L("Cancel"), role: .cancel) { renamingPerson = nil }
+            Button(L("Save")) {
+                let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                Task { await peopleEngine.rename(clusterID: person.clusterID, name: trimmed.isEmpty ? nil : trimmed) }
+                renamingPerson = nil
+            }
+        }
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
         .dropboxActivityBar()
         // デバッグ：シミュレータ顔スキャンのトグルを ON にしたら（起動後でも）その場で開始する。
