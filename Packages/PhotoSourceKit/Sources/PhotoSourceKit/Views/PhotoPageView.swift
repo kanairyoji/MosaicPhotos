@@ -169,7 +169,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.top, 4)
+            .padding(.top, 24)   // 日付チップと同じ高さ＝最上部のアクティビティバーの下に置く
 
             if let item = currentItem, let label = topLabel(item) {
                 VStack(spacing: 2) {
