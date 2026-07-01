@@ -295,6 +295,16 @@
         }
       }
     },
+    "Batch size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バッチサイズ"
+          }
+        }
+      }
+    },
     "Build tools": {
       "localizations": {
         "ja": {
@@ -375,12 +385,32 @@
         }
       }
     },
+    "Clear All": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて消去"
+          }
+        }
+      }
+    },
     "Clear All Caches": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "すべてのキャッシュを消去"
+          }
+        }
+      }
+    },
+    "Clear all caches?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのキャッシュを消去しますか？"
           }
         }
       }
@@ -401,6 +431,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "認識タグ（物体・シーン・テキスト・CLIP）をすべて消去し、すべての端末写真を最新モデルで再解析します。メタデータ（日付・場所・人物）は保持されます。バックグラウンドで実行され、時間がかかることがあります。"
+          }
+        }
+      }
+    },
+    "Close": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "閉じる"
           }
         }
       }
@@ -735,6 +775,16 @@
         }
       }
     },
+    "Folder albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダアルバム"
+          }
+        }
+      }
+    },
     "Folder-name Albums": {
       "localizations": {
         "ja": {
@@ -751,6 +801,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "ディスク容量を解放します。キャッシュ画像は必要に応じて再取得されるため、アプリは問題なく動作します。"
+          }
+        }
+      }
+    },
+    "From Dropbox folders": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox のフォルダから"
           }
         }
       }
@@ -945,6 +1005,16 @@
         }
       }
     },
+    "Last run": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回の実行"
+          }
+        }
+      }
+    },
     "Licenses": {
       "localizations": {
         "ja": {
@@ -995,6 +1065,16 @@
         }
       }
     },
+    "Located photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置情報のある写真"
+          }
+        }
+      }
+    },
     "Location granularity": {
       "localizations": {
         "ja": {
@@ -1021,6 +1101,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "ふつう（3行）"
+          }
+        }
+      }
+    },
+    "Merge gap (days)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめる間隔（日）"
+          }
+        }
+      }
+    },
+    "Min photos per trip": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旅行の最小枚数"
           }
         }
       }
@@ -1305,6 +1405,26 @@
         }
       }
     },
+    "Pause between batches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バッチ間の休止"
+          }
+        }
+      }
+    },
+    "Pending": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未処理"
+          }
+        }
+      }
+    },
     "People": {
       "localizations": {
         "ja": {
@@ -1335,6 +1455,16 @@
         }
       }
     },
+    "Photo thumbnail cache": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真サムネイルのキャッシュ"
+          }
+        }
+      }
+    },
     "Photo thumbnails, Dropbox cache, and place index will all be deleted and rebuilt as you browse.": {
       "localizations": {
         "ja": {
@@ -1361,6 +1491,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "含める写真"
+          }
+        }
+      }
+    },
+    "Place albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所アルバム"
           }
         }
       }
@@ -1471,6 +1611,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "正規表現パターン"
+          }
+        }
+      }
+    },
+    "Regular place ≥ days": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常用地とみなす日数"
           }
         }
       }
@@ -1621,6 +1771,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "システムフレームワークとシンボル"
+          }
+        }
+      }
+    },
+    "Tagged photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析済み"
           }
         }
       }
