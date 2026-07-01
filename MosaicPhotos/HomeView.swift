@@ -76,12 +76,11 @@ struct HomeView: View {
                 placesSection
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("MosaicPhotos")
             .safeAreaInset(edge: .bottom) { settingsBar }
-        }
-        // 最上部のアクティビティバー分の余白を確保し、ナビタイトルがバーに潜り込まないようにする。
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if activityBarShown { Color.clear.frame(height: 30) }
+            // システムの大タイトルはアクティビティバーと重なる（ナビバー chrome は safeAreaInset で
+            // 下がらない）。ナビバーを隠し、バーの下に独自タイトルヘッダーを置いて重なりを解消する。
+            .safeAreaInset(edge: .top, spacing: 0) { homeHeader }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
@@ -189,6 +188,21 @@ struct HomeView: View {
         }
         .frame(height: 49)
         .background(.bar)
+    }
+
+    /// ホーム上部の独自タイトルヘッダー（システムのナビバーは隠している）。
+    /// アクティビティバー表示時はその分の余白を上に確保し、タイトルがバーへ潜り込まないようにする。
+    private var homeHeader: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if activityBarShown { Color.clear.frame(height: 30) }
+            Text("MosaicPhotos")
+                .font(.largeTitle.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+        }
+        .background(Color(.systemGroupedBackground))
     }
 
     // MARK: - Source host wrapper
