@@ -17,6 +17,7 @@ struct DeveloperSettingsView: View {
     let backupEngine: BackupEngine
     let placeScanner: PlaceScanner?
     let autoAlbumEngine: AutoAlbumEngine?
+    var peopleEngine: PeopleEngine?
 
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
     @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
@@ -73,6 +74,11 @@ struct DeveloperSettingsView: View {
             #if targetEnvironment(simulator)
             Toggle("Face scan in Simulator (slow)", isOn: $faceScanOnSimulator)
             #endif
+            if let peopleEngine {
+                Button("Reset people (rescan faces)", role: .destructive) {
+                    Task { await peopleEngine.reset() }
+                }
+            }
         } header: {
             Text("Diagnostics")
         } footer: {

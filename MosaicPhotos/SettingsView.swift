@@ -15,6 +15,7 @@ struct SettingsView: View {
     let backupEngine: BackupEngine
     let placeScanner: PlaceScanner?
     let autoAlbumEngine: AutoAlbumEngine?
+    let peopleEngine: PeopleEngine?
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) private var pathAlbumsEnabled = false
@@ -30,13 +31,15 @@ struct SettingsView: View {
         store: DropboxPhotoStore? = nil,
         backupEngine: BackupEngine,
         placeScanner: PlaceScanner? = nil,
-        autoAlbumEngine: AutoAlbumEngine? = nil
+        autoAlbumEngine: AutoAlbumEngine? = nil,
+        peopleEngine: PeopleEngine? = nil
     ) {
         self.dropboxAuth = dropboxAuth
         self.store = store
         self.backupEngine = backupEngine
         self.placeScanner = placeScanner
         self.autoAlbumEngine = autoAlbumEngine
+        self.peopleEngine = peopleEngine
     }
 
     var body: some View {
@@ -124,7 +127,8 @@ struct SettingsView: View {
                 NavigationLink {
                     DeveloperSettingsView(
                         dropboxAuth: dropboxAuth, store: store, backupEngine: backupEngine,
-                        placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
+                        placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
+                        peopleEngine: peopleEngine)
                 } label: {
                     row(L("Developer Options"), systemImage: "hammer")
                 }

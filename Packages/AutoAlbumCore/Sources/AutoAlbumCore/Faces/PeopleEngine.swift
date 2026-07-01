@@ -18,6 +18,9 @@ public final class PeopleEngine {
     @ObservationIgnored private let tagger: FaceTagger
     @ObservationIgnored private let faceProvider: FacePerceptionProvider?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
+    /// 直近のスキャン候補（reset 後の再スキャンに使う）。
+    @ObservationIgnored private var lastCandidates: [String] = []
+    @ObservationIgnored private var lastAllowSimulator = false
 
     /// 「人物」とみなす最小顔数。
     private let minFaces = 3
@@ -43,6 +46,8 @@ public final class PeopleEngine {
     /// `allowSimulator` が true なら（Developer Options のデバッグトグル）シミュレータでも走らせる。
     public func startScan(candidateRefKeys: [String], allowSimulator: Bool = false) {
         guard isFaceModelAvailable else { isLoaded = true; return }
+        lastCandidates = candidateRefKeys
+        lastAllowSimulator = allowSimulator
         guard scanTask == nil else { return }
         scanTask = Task(priority: .background) { [weak self] in
             guard let self else { return }
@@ -76,11 +81,15 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
-    /// 全消去して再スキャンできるようにする。
+    /// 全消去して再スキャンする（直近の候補があれば自動で再開）。
     public func reset() async {
         scanTask?.cancel()
         scanTask = nil
         await store.reset()
         await loadPeople()
+        Diagnostics.mark("faces: reset — rescanning \(lastCandidates.count) candidates")
+        if !lastCandidates.isEmpty {
+            startScan(candidateRefKeys: lastCandidates, allowSimulator: lastAllowSimulator)
+        }
     }
 }

@@ -1,5 +1,6 @@
 import AutoAlbumCore
 import CoreGraphics
+import CoreImage
 import Foundation
 import MosaicSupport
 import Vision
@@ -33,31 +34,52 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         return result
     }
 
-    /// 戻り値 `.raw` は Vision が検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
-    /// `.error` は Vision の perform 失敗（シミュレータ非対応など）を切り分けるためのメッセージ。
+    /// 戻り値 `.raw` は検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
+    /// `.error` は Vision が使えず CIDetector にフォールバックした場合のメッセージ（切り分け用）。
     private func detect(in cg: CGImage) -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
+        let (boxes, error) = faceBoxes(in: cg)   // 正規化(原点左下)の顔矩形
+
+        let width = CGFloat(cg.width), height = CGFloat(cg.height)
+        var signals: [DetectedFaceSignal] = []
+        for box in boxes {
+            // 小さすぎる顔は埋め込み精度が低いので除外。
+            guard box.width >= 0.05, box.height >= 0.05 else { continue }
+            guard let crop = cropFace(cg, normalizedBox: box, width: width, height: height),
+                  let embedding = FaceModelRuntime.shared.embed(crop) else { continue }
+            signals.append(DetectedFaceSignal(
+                boundingBox: box,
+                embedding: ClipMath.encodeHalf(embedding),
+                quality: 1))
+        }
+        return (boxes.count, signals, error)
+    }
+
+    /// 顔矩形（Vision 正規化・原点左下）を返す。まず Vision（実機・高精度）、失敗（シミュレータの
+    /// "Could not create inference context" 等）なら CIDetector（Core Image・CPU・どこでも動く）へ。
+    private func faceBoxes(in cg: CGImage) -> (boxes: [CGRect], error: String?) {
         let request = VNDetectFaceRectanglesRequest()
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         do {
             try handler.perform([request])
+            return ((request.results ?? []).map(\.boundingBox), nil)
         } catch {
-            return (0, [], error.localizedDescription)
+            return (ciFaceBoxes(in: cg), error.localizedDescription)
         }
-        guard let faces = request.results else { return (0, [], nil) }
+    }
 
+    /// CIDetector による顔検出（シミュレータでも動く CPU 実装）。返り値は Vision と同じ
+    /// 正規化・原点左下の矩形。`CIFaceFeature.bounds` は画像座標・原点左下なので W/H で割る。
+    private func ciFaceBoxes(in cg: CGImage) -> [CGRect] {
+        let ci = CIImage(cgImage: cg)
+        let detector = CIDetector(ofType: CIDetectorTypeFace, context: nil,
+                                  options: [CIDetectorAccuracy: CIDetectorAccuracyHigh])
+        let features = detector?.features(in: ci) ?? []
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
-        var signals: [DetectedFaceSignal] = []
-        for face in faces {
-            // 小さすぎる顔は埋め込み精度が低いので除外。
-            guard face.boundingBox.width >= 0.05, face.boundingBox.height >= 0.05 else { continue }
-            guard let crop = cropFace(cg, normalizedBox: face.boundingBox, width: width, height: height),
-                  let embedding = FaceModelRuntime.shared.embed(crop) else { continue }
-            signals.append(DetectedFaceSignal(
-                boundingBox: face.boundingBox,
-                embedding: ClipMath.encodeHalf(embedding),
-                quality: face.confidence))
+        guard width > 0, height > 0 else { return [] }
+        return features.compactMap { $0 as? CIFaceFeature }.map {
+            CGRect(x: $0.bounds.origin.x / width, y: $0.bounds.origin.y / height,
+                   width: $0.bounds.width / width, height: $0.bounds.height / height)
         }
-        return (faces.count, signals, nil)
     }
 
     /// Vision の正規化 bbox（原点左下・y 上向き）→ CGImage のピクセル矩形（原点左上）へ変換し、

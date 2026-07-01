@@ -71,7 +71,8 @@ struct HomeView: View {
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
                 SettingsView(dropboxAuth: dropboxStore.auth, store: dropboxStore, backupEngine: backupEngine,
-                             placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
+                             placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
+                             peopleEngine: peopleEngine)
             }
             .perfScreenEnd("home.settings")   // 計測: 設定シートを開く所要
         }
