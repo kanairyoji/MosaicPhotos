@@ -2,6 +2,7 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import PhotosFeatureKit
+import PhotoSourceKit
 import SwiftUI
 
 // MARK: - Source host view
@@ -13,6 +14,7 @@ struct SourceHostView<Content: View>: View {
     let backupEngine: BackupEngine
     let placeScanner: PlaceScanner
     let autoAlbumEngine: AutoAlbumEngine
+    let peopleEngine: PeopleEngine
     let dismissToHome: () -> Void
     @ViewBuilder let content: () -> Content
     @State private var showingSettings = false
@@ -21,8 +23,12 @@ struct SourceHostView<Content: View>: View {
         content()
             .environment(\.dismissToHome, dismissToHome)
             .environment(\.showSettings, { showingSettings = true })
-            .environment(\.photoInsight) { [autoAlbumEngine] id in
-                await autoAlbumEngine.insight(forItemID: id)
+            .environment(\.photoInsight) { [autoAlbumEngine, peopleEngine] id in
+                // CLIP 由来の insight（タグ/解析状態）に、顔クラスタ由来の People 名を合成する。
+                var insight = await autoAlbumEngine.insight(forItemID: id) ?? PhotoInsight(status: .notIndexed)
+                let names = await peopleEngine.names(forItemID: id)
+                if !names.isEmpty { insight.people = names }
+                return insight
             }
             // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。
             .environment(\.photoInteraction) { [autoAlbumEngine] interacting in

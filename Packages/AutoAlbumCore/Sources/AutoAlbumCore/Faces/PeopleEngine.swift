@@ -84,6 +84,19 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    /// 写真（`PhotoItem.id`：生 localIdentifier か "L-…" refKey）に写っている人物の表示名。
+    /// フル画像ビューの People 表示に使う。顔スキャンは端末写真のみなのでクラウドは空。
+    public func names(forItemID id: String) async -> [String] {
+        var candidates: [String] = []
+        if PhotoRef.decode(id) != nil { candidates.append(id) }
+        candidates.append(PhotoRef.local(id).encoded)
+        for key in candidates {
+            let names = await store.peopleNames(refKey: key, minFaces: minFaces)
+            if !names.isEmpty { return names }
+        }
+        return []
+    }
+
     /// 代表写真の選択候補（クラスタ内の顔・写真ごと）。
     public func coverCandidates(clusterID: Int) async -> [PersonInfo.Face] {
         await store.facesForCluster(clusterID: clusterID)

@@ -136,6 +136,24 @@ actor FaceStore {
         return out
     }
 
+    /// この写真に写っている「人物」の表示名（フル画像ビューの People 表示用）。
+    /// 顔が属するクラスタのうち、人物とみなせる（`minFaces` 以上）ものの名前を返す。複数可。
+    func peopleNames(refKey: String, minFaces: Int) -> [String] {
+        let key = refKey
+        let faces = (try? modelContext.fetch(
+            FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.refKey == key }))) ?? []
+        var out: [String] = []
+        var seen = Set<Int>()
+        for f in faces where seen.insert(f.clusterID).inserted {
+            let cid = f.clusterID
+            var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
+            d.fetchLimit = 1
+            guard let c = try? modelContext.fetch(d).first, c.count >= minFaces else { continue }
+            out.append(c.name ?? "Person \(cid + 1)")
+        }
+        return out
+    }
+
     /// 代表写真（cover）を指定した顔に設定する。
     func setCover(clusterID: Int, faceID: String) {
         let cid = clusterID

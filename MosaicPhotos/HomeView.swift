@@ -199,6 +199,7 @@ struct HomeView: View {
             backupEngine: backupEngine,
             placeScanner: placeScanner,
             autoAlbumEngine: autoAlbumEngine,
+            peopleEngine: peopleEngine,
             dismissToHome: dismiss,
             content: content
         )

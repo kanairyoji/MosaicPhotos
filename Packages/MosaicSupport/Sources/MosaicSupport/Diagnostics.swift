@@ -45,6 +45,8 @@ public final class DiagnosticsLog: @unchecked Sendable {
 
     public func clear() {
         queue.sync { try? Data().write(to: fileURL) }
+        // クリア後もどのビルドで消したか分かるよう、先頭にバージョン行を残す。
+        append("=== cleared — MosaicPhotos \(appVersionLine()) ===")
     }
 
     /// 共有用のファイル URL。
@@ -170,6 +172,25 @@ public final class MemoryPressureMonitor: @unchecked Sendable {
     }
 }
 
+/// 診断ログに載せるビルド識別。アプリ版（CFBundleShortVersionString）＋ビルド番号
+/// （CFBundleVersion）に加え、**実行ファイルの更新日時＝ビルド日時**を付ける。ビルド日時は
+/// 毎ビルドで変わるため、アプリ版が同じでもどのビルドのログか判別できる。
+public func appVersionLine() -> String {
+    let info = Bundle.main.infoDictionary
+    let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+    let build = info?["CFBundleVersion"] as? String ?? "?"
+    var built = "?"
+    if let url = Bundle.main.executableURL,
+       let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+       let date = attrs[.modificationDate] as? Date {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        built = f.string(from: date)
+    }
+    return "v\(short) (build \(build)) · built \(built)"
+}
+
 /// 現在のアプリのメモリ使用量（phys_footprint, MB）。取得できなければ nil。
 public func currentMemoryFootprintMB() -> Double? {
     var info = task_vm_info_data_t()
@@ -197,7 +218,7 @@ public enum Diagnostics {
 
     public static func install() {
         let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
-        DiagnosticsLog.shared.append("=== launch (footprint=\(mb)) ===")
+        DiagnosticsLog.shared.append("=== launch — MosaicPhotos \(appVersionLine()) (footprint=\(mb)) ===")
 
         // ObjC 未捕捉例外（unrecognized selector / KVO / CoreData など）を記録してから落ちる。
         // ※ Swift の fatalError / precondition / SwiftData の trap はこのハンドラを通らない
