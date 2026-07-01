@@ -25,11 +25,13 @@ final class FaceTagger {
               onBatch: () async -> Void) async {
         guard let provider, provider.isAvailable else {
             Self.log.info("face scan: skipped — face model not bundled / provider unavailable")
+            Diagnostics.mark("faces: skipped — model not bundled/unavailable")
             return
         }
         // 顔モデルはシミュレータでは cpuOnly で重く遷移を飢餓させるため実行しない（実機で計測）。
         #if targetEnvironment(simulator)
         Self.log.info("face scan: skipped on simulator (face model runs cpuOnly here; measure on a device)")
+        Diagnostics.mark("faces: skipped on simulator — run on a device")
         return
         #endif
         guard !isRunning else { return }
@@ -38,12 +40,17 @@ final class FaceTagger {
 
         let done = await store.scannedRefKeys()
         let todo = candidateRefKeys.filter { !done.contains($0) }
-        guard !todo.isEmpty else { return }
+        Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(done.count) todo=\(todo.count)")
+        guard !todo.isEmpty else {
+            Diagnostics.mark("faces: nothing to scan (all done)")
+            return
+        }
         Self.log.info("face scan: start — \(todo.count) photos to scan (batch \(batchSize))")
         onProgress(todo.count)
 
         var index = 0
         var processed = 0
+        var facesFound = 0
         var batchNo = 0
         while index < todo.count, !Task.isCancelled {
             while shouldPause() && !Task.isCancelled {
@@ -57,16 +64,22 @@ final class FaceTagger {
 
             let signals = await provider.detectFaces(refKeys: batch)
             for refKey in batch {
-                await store.recordScan(refKey: refKey, faces: signals[refKey] ?? [])
+                let faces = signals[refKey] ?? []
+                facesFound += faces.count
+                await store.recordScan(refKey: refKey, faces: faces)
             }
             processed += batch.count
             onProgress(max(0, todo.count - processed))
 
             batchNo += 1
-            if batchNo % 8 == 0 { await onBatch() }   // 一覧をときどき更新
+            if batchNo % 8 == 0 {
+                Diagnostics.mark("faces: \(processed)/\(todo.count) scanned, faces=\(facesFound)")
+                await onBatch()   // 一覧をときどき更新
+            }
             try? await Task.sleep(nanoseconds: betweenBatchNs)
         }
         Self.log.info("face scan: finished — \(processed) photos")
+        Diagnostics.mark("faces: finished — scanned=\(processed) faces=\(facesFound)")
         await onBatch()
     }
 }

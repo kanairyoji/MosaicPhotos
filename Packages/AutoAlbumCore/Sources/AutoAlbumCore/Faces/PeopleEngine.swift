@@ -36,6 +36,7 @@ public final class PeopleEngine {
     public func loadPeople() async {
         people = await store.peopleClusters(minFaces: minFaces)
         isLoaded = true
+        Diagnostics.mark("faces: people=\(people.count) (>= \(minFaces) faces)")
     }
 
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
@@ -45,6 +46,7 @@ public final class PeopleEngine {
         scanTask = Task(priority: .background) { [weak self] in
             guard let self else { return }
             self.isScanning = true
+            BackgroundActivityMonitor.shared.isScanningFaces = true
             await self.tagger.scan(
                 candidateRefKeys: candidateRefKeys,
                 shouldPause: {
@@ -54,9 +56,14 @@ public final class PeopleEngine {
                         || BackgroundActivityMonitor.shared.cloudThumbnailBusy
                         || !PowerStateMonitor.shared.backgroundAllowed()
                 },
-                onProgress: { self.remaining = $0 },
+                onProgress: {
+                    self.remaining = $0
+                    BackgroundActivityMonitor.shared.faceScanRemaining = $0
+                },
                 onBatch: { [weak self] in await self?.loadPeople() })
             self.isScanning = false
+            BackgroundActivityMonitor.shared.isScanningFaces = false
+            BackgroundActivityMonitor.shared.faceScanRemaining = 0
             self.scanTask = nil
         }
     }

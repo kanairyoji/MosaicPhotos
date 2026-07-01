@@ -76,6 +76,8 @@ public struct DropboxActivityBar: View {
             bgLamp("mappin.and.ellipse", active: bg.isScanningPlaces, color: .green)
             // アルバム走査。
             bgLamp("photo.on.rectangle", active: bg.isScanningAlbums, color: .green)
+            // ピープル（顔スキャン・残り枚数を併記）。
+            bgLamp("person.2.fill", active: bg.isScanningFaces, color: .indigo, count: bg.faceScanRemaining)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)

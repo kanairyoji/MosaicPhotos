@@ -27,6 +27,12 @@ public final class BackgroundActivityMonitor {
     public var isScanningPlaces = false
     public var isScanningAlbums = false
 
+    // MARK: - ピープル（顔スキャン）
+    /// 顔検出＋埋め込み＋クラスタリングが稼働中か。
+    public var isScanningFaces = false
+    /// 未スキャンの残り枚数（おおよそ）。0 で非表示扱い。
+    public var faceScanRemaining = 0
+
     // MARK: - 前景の重い処理（背景処理に譲らせる用）
     /// Dropbox サムネイルの取得（ドレイン）が稼働中か。クラウド閲覧中は CLIP 背景埋め込みを
     /// 一時停止させ、サムネのデコード/ネットと CPU を奪い合わないようにする（PhotoTagger が参照）。
