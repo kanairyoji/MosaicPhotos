@@ -16,6 +16,19 @@ public struct PersonInfo: Identifiable, Sendable, Equatable {
     /// 名前未設定なら "Person N"。
     public var displayName: String { name ?? "Person \(clusterID + 1)" }
 
+    /// 代表写真の選択候補（クラスタ内の顔・写真ごと1つ）。ピッカー表示用。
+    public struct Face: Identifiable, Sendable, Equatable {
+        public let faceID: String
+        public let refKey: String
+        public let boundingBox: CGRect
+        public var id: String { faceID }
+        public init(faceID: String, refKey: String, boundingBox: CGRect) {
+            self.faceID = faceID
+            self.refKey = refKey
+            self.boundingBox = boundingBox
+        }
+    }
+
     public init(clusterID: Int, name: String?, count: Int,
                 coverRefKey: String?, coverBoundingBox: CGRect?, memberRefKeys: [String]) {
         self.clusterID = clusterID

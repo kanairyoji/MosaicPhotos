@@ -214,7 +214,7 @@ struct AutoAlbumCard: View {
 struct PeopleCarousel: View {
     let people: [PersonInfo]
     let onSelect: (PersonInfo) -> Void
-    let onRename: (PersonInfo) -> Void
+    let onLongPress: (PersonInfo) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -223,10 +223,11 @@ struct PeopleCarousel: View {
                     // Button＋contextMenu は「横スクロール×List 行」でヒット領域が行全体に化ける
                     // （バー全体がハイライトされ、常に先頭カードのメニューを拾う）ため、各カードに
                     // 直接タップ／長押しジェスチャを付けて確実にそのカードを対象にする。
+                    // タップ＝写真一覧、長押し＝メニュー（名前変更／代表写真の変更）。
                     PersonCard(person: person)
                         .contentShape(Rectangle())
                         .onTapGesture { onSelect(person) }
-                        .onLongPressGesture(minimumDuration: 0.4) { onRename(person) }
+                        .onLongPressGesture(minimumDuration: 0.4) { onLongPress(person) }
                 }
             }
             .padding(.horizontal, 16)

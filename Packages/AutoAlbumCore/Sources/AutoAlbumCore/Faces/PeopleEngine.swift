@@ -84,6 +84,17 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    /// 代表写真の選択候補（クラスタ内の顔・写真ごと）。
+    public func coverCandidates(clusterID: Int) async -> [PersonInfo.Face] {
+        await store.facesForCluster(clusterID: clusterID)
+    }
+
+    /// 代表写真（トップに出す顔）を選ぶ。
+    public func setCover(clusterID: Int, faceID: String) async {
+        await store.setCover(clusterID: clusterID, faceID: faceID)
+        await loadPeople()
+    }
+
     /// 全消去して再スキャンする（直近の候補があれば自動で再開）。
     public func reset() async {
         scanTask?.cancel()

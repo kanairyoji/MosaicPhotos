@@ -121,6 +121,32 @@ actor FaceStore {
         return result.sorted { $0.count > $1.count }
     }
 
+    /// クラスタの顔候補（写真ごとに 1 つ・代表写真ピッカー用）。
+    func facesForCluster(clusterID: Int) -> [PersonInfo.Face] {
+        let cid = clusterID
+        let faces = (try? modelContext.fetch(
+            FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
+        var seen = Set<String>()
+        var out: [PersonInfo.Face] = []
+        for f in faces where seen.insert(f.refKey).inserted {
+            out.append(PersonInfo.Face(
+                faceID: f.faceID, refKey: f.refKey,
+                boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh)))
+        }
+        return out
+    }
+
+    /// 代表写真（cover）を指定した顔に設定する。
+    func setCover(clusterID: Int, faceID: String) {
+        let cid = clusterID
+        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
+        d.fetchLimit = 1
+        if let c = try? modelContext.fetch(d).first {
+            c.coverFaceID = faceID
+            try? modelContext.save()
+        }
+    }
+
     func rename(clusterID: Int, name: String?) {
         let cid = clusterID
         var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })

@@ -35,9 +35,13 @@ struct HomeView: View {
     /// AI アルバム作成/編集シートの対象（新規 or 既存）。
     /// 単一の `.sheet(item:)` に統合して、複数 .sheet 併用時の提示競合（編集が常に先頭になる不具合）を防ぐ。
     @State var aiComposer: AIComposerTarget?
-    /// ピープルの名前変更中の対象と入力テキスト（長押しメニューから）。
+    /// ピープルの長押しメニュー対象（名前変更／代表写真の変更）。
+    @State var personActions: PersonInfo?
+    /// ピープルの名前変更中の対象と入力テキスト。
     @State var renamingPerson: PersonInfo?
     @State var renameText: String = ""
+    /// 代表写真ピッカーの対象。
+    @State var coverPickerPerson: PersonInfo?
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// デバッグ：シミュレータでも顔スキャンを走らせる（Developer Options）。ON にした瞬間に開始する。
@@ -123,6 +127,19 @@ struct HomeView: View {
             albumScanner: albumScanner,
             peopleEngine: peopleEngine,
             autoAlbumEngine: autoAlbumEngine))
+        // ピープル長押し → メニュー（名前変更／代表写真の変更）。
+        .confirmationDialog(personActions?.displayName ?? "",
+                            isPresented: Binding(get: { personActions != nil },
+                                                 set: { if !$0 { personActions = nil } }),
+                            presenting: personActions) { person in
+            Button(L("Rename")) { renamingPerson = person; renameText = person.name ?? "" }
+            Button(L("Choose Cover Photo")) { coverPickerPerson = person }
+            Button(L("Cancel"), role: .cancel) {}
+        }
+        // 代表写真ピッカー。
+        .sheet(item: $coverPickerPerson) { person in
+            PersonCoverPickerView(person: person, peopleEngine: peopleEngine)
+        }
         // ピープルの名前変更（長押しメニュー → 入力アラート）。空欄で保存すると "Person N" に戻る。
         .alert(L("Rename Person"),
                isPresented: Binding(get: { renamingPerson != nil },

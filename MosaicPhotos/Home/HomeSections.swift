@@ -212,10 +212,7 @@ extension HomeView {
                     PeopleCarousel(
                         people: peopleEngine.people,
                         onSelect: { destination = .person($0) },
-                        onRename: { person in
-                            renamingPerson = person
-                            renameText = person.name ?? ""
-                        })
+                        onLongPress: { personActions = $0 })
                 }
             } header: {
                 HStack {
