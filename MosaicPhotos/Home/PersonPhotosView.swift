@@ -46,21 +46,22 @@ struct PersonPhotosView: View {
     }
 }
 
-/// この人物として認識した顔の切り抜き（正方）。
+/// この人物として認識した顔の切り抜き（正方タイル）。
 private struct FaceTile: View {
     let face: PersonInfo.Face
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(Color(uiColor: .secondarySystemBackground))
-            if let image { Image(uiImage: image).resizable().scaledToFill() }
-        }
-        .aspectRatio(1, contentMode: .fill)
-        .clipped()
-        .task(id: face.id) {
-            image = await loadFaceAvatar(coverRefKey: face.refKey, box: face.boundingBox, maxPixel: 320)
-        }
+        Rectangle()
+            .fill(Color(uiColor: .secondarySystemBackground))
+            .aspectRatio(1, contentMode: .fit)   // 列幅ぴったりの正方形にする
+            .overlay {
+                if let image { Image(uiImage: image).resizable().scaledToFill() }
+            }
+            .clipped()
+            .task(id: face.id) {
+                image = await loadFaceAvatar(coverRefKey: face.refKey, box: face.boundingBox, maxPixel: 320)
+            }
     }
 }
 
@@ -76,13 +77,15 @@ struct PersonFaceDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage?
     @State private var showReassign = false
+    /// 顔の枠表示トグル（既定 OFF＝普通に画像を表示）。Person ビューから入ったこの画面だけの機能。
+    @State private var showFaceBox = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
                 if let image {
-                    PhotoWithFaceBox(image: image, box: face.boundingBox)
+                    PhotoWithFaceBox(image: image, box: face.boundingBox, showBox: showFaceBox)
                 } else {
                     ProgressView().tint(.white)
                 }
@@ -90,8 +93,13 @@ struct PersonFaceDetailView: View {
             .navigationTitle(person.displayName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .topBarLeading) {
                     Button(L("Done")) { dismiss() }
+                    // 戻る（Done）の横に「顔表示」トグル。ON で認識した顔に枠を出す。
+                    Button { showFaceBox.toggle() } label: {
+                        Image(systemName: showFaceBox ? "viewfinder.circle.fill" : "viewfinder")
+                    }
+                    .accessibilityLabel(L("Show face"))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(L("Not this person")) { showReassign = true }
@@ -114,21 +122,30 @@ struct PersonFaceDetailView: View {
 }
 
 /// 画像を aspectFit で表示し、認識した顔（Vision 正規化・原点左下）の位置に黄枠を重ねる。
+/// ★ 画像と枠を**同じ描画矩形 `fit`** に載せることで位置ズレを防ぐ（以前は画像が左上寄せなのに
+///   枠は中央寄せ前提で計算していてズレていた）。
 private struct PhotoWithFaceBox: View {
     let image: UIImage
     let box: CGRect   // 正規化・原点左下
+    let showBox: Bool
 
     var body: some View {
         GeometryReader { geo in
             let fit = Self.aspectFitRect(imageSize: image.size, in: geo.size)
             ZStack(alignment: .topLeading) {
+                // 画像は fit の位置・サイズに明示的に置く（GeometryReader/ZStack の既定配置に依存しない）。
                 Image(uiImage: image).resizable().scaledToFit()
-                Rectangle()
-                    .stroke(Color.yellow, lineWidth: 2)
-                    .frame(width: box.width * fit.width, height: box.height * fit.height)
-                    .offset(x: fit.minX + box.minX * fit.width,
-                            y: fit.minY + (1 - box.minY - box.height) * fit.height)   // y 反転
+                    .frame(width: fit.width, height: fit.height)
+                    .offset(x: fit.minX, y: fit.minY)
+                if showBox {
+                    Rectangle()
+                        .stroke(Color.yellow, lineWidth: 2)
+                        .frame(width: box.width * fit.width, height: box.height * fit.height)
+                        .offset(x: fit.minX + box.minX * fit.width,
+                                y: fit.minY + (1 - box.minY - box.height) * fit.height)   // y 反転
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
     }
 

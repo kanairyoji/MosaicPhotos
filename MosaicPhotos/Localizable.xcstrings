@@ -1575,6 +1575,16 @@
         }
       }
     },
+    "Show face": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔を表示"
+          }
+        }
+      }
+    },
     "Sources": {
       "localizations": {
         "ja": {
