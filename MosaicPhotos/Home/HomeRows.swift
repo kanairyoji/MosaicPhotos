@@ -220,15 +220,13 @@ struct PeopleCarousel: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 14) {
                 ForEach(people) { person in
-                    Button { onSelect(person) } label: { PersonCard(person: person) }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button {
-                                onRename(person)
-                            } label: {
-                                Label(L("Rename"), systemImage: "pencil")
-                            }
-                        }
+                    // Button＋contextMenu は「横スクロール×List 行」でヒット領域が行全体に化ける
+                    // （バー全体がハイライトされ、常に先頭カードのメニューを拾う）ため、各カードに
+                    // 直接タップ／長押しジェスチャを付けて確実にそのカードを対象にする。
+                    PersonCard(person: person)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onSelect(person) }
+                        .onLongPressGesture(minimumDuration: 0.4) { onRename(person) }
                 }
             }
             .padding(.horizontal, 16)
