@@ -20,6 +20,7 @@ final class FaceTagger {
     func scan(candidateRefKeys: [String],
               batchSize: Int = 8,
               betweenBatchNs: UInt64 = 2_500_000_000,
+              allowSimulator: Bool = false,
               shouldPause: @MainActor () -> Bool = { false },
               onProgress: @MainActor (Int) -> Void = { _ in },
               onBatch: () async -> Void) async {
@@ -28,11 +29,15 @@ final class FaceTagger {
             Diagnostics.mark("faces: skipped — model not bundled/unavailable")
             return
         }
-        // 顔モデルはシミュレータでは cpuOnly で重く遷移を飢餓させるため実行しない（実機で計測）。
+        // 顔モデルはシミュレータでは cpuOnly で重いため既定でスキップ（実機で計測）。
+        // ただし Developer Options のデバッグトグル（allowSimulator）が ON なら走らせる。
         #if targetEnvironment(simulator)
-        Self.log.info("face scan: skipped on simulator (face model runs cpuOnly here; measure on a device)")
-        Diagnostics.mark("faces: skipped on simulator — run on a device")
-        return
+        if !allowSimulator {
+            Self.log.info("face scan: skipped on simulator (enable in Developer Options to debug)")
+            Diagnostics.mark("faces: skipped on simulator — enable 'Face scan in Simulator' to run")
+            return
+        }
+        Diagnostics.mark("faces: running on simulator (debug・cpuOnly＝slow)")
         #endif
         guard !isRunning else { return }
         isRunning = true

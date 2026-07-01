@@ -37,6 +37,8 @@ struct HomeView: View {
     @State var aiComposer: AIComposerTarget?
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
+    /// デバッグ：シミュレータでも顔スキャンを走らせる（Developer Options）。ON にした瞬間に開始する。
+    @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
 
     /// ストアは `HomeStores` で事前構築する（各ストアの `ModelContainer` 生成が同期的で重く、
     /// `HomeView.init` で作ると最初の描画＝起動をブロックするため）。`RootView` が起動直後に
@@ -119,6 +121,11 @@ struct HomeView: View {
             autoAlbumEngine: autoAlbumEngine))
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
         .dropboxActivityBar()
+        // デバッグ：シミュレータ顔スキャンのトグルを ON にしたら（起動後でも）その場で開始する。
+        .task(id: faceScanOnSimulator) {
+            guard faceScanOnSimulator else { return }
+            peopleEngine.startScan(candidateRefKeys: await localImageRefKeys(), allowSimulator: true)
+        }
     }
 
     // MARK: - Settings bar
@@ -181,7 +188,8 @@ private struct HomeLifecycleTasks: ViewModifier {
             // ピープル（人物＝顔アルバム）：キャッシュ即ロード→無ければスキャン。端末ライブラリのみ。
             .task {
                 await peopleEngine.loadPeople()
-                peopleEngine.startScan(candidateRefKeys: await localImageRefKeys())
+                let allowSim = UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
+                peopleEngine.startScan(candidateRefKeys: await localImageRefKeys(), allowSimulator: allowSim)
             }
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする

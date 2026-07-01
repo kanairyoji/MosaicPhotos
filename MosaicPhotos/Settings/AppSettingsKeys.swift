@@ -9,4 +9,7 @@ enum AppSettingsKeys {
     /// パフォーマンス計測（`MosaicSupport.PerfTrace.isEnabled`）の永続トグル。
     /// 起動時にこの値で `PerfTrace.isEnabled` を初期化し、Developer Options で実機 ON/OFF できる。
     static let perfTracing = "debug.perfTracing"
+    /// ピープルの顔スキャンをシミュレータでも走らせる（既定 OFF）。デバッグ用。
+    /// 顔モデルは cpuOnly で遅いが動作はするので、実機が無いときの動作確認に使う。
+    static let faceScanOnSimulator = "debug.faceScanOnSimulator"
 }

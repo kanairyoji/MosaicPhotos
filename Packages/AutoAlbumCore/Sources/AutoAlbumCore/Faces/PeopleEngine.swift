@@ -40,7 +40,8 @@ public final class PeopleEngine {
     }
 
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
-    public func startScan(candidateRefKeys: [String]) {
+    /// `allowSimulator` が true なら（Developer Options のデバッグトグル）シミュレータでも走らせる。
+    public func startScan(candidateRefKeys: [String], allowSimulator: Bool = false) {
         guard isFaceModelAvailable else { isLoaded = true; return }
         guard scanTask == nil else { return }
         scanTask = Task(priority: .background) { [weak self] in
@@ -49,6 +50,7 @@ public final class PeopleEngine {
             BackgroundActivityMonitor.shared.isScanningFaces = true
             await self.tagger.scan(
                 candidateRefKeys: candidateRefKeys,
+                allowSimulator: allowSimulator,
                 shouldPause: {
                     MemoryPressureMonitor.shared.isUnderPressure
                         || BackgroundActivityMonitor.shared.isViewingPhoto

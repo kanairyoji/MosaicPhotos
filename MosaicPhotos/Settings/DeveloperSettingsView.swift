@@ -20,6 +20,7 @@ struct DeveloperSettingsView: View {
 
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
     @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
+    @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
 
     @State private var enrichmentCount = 0
     @State private var cachedPlaceCount = 0
@@ -65,9 +66,13 @@ struct DeveloperSettingsView: View {
             LabeledContent("Memory footprint",
                            value: currentMemoryFootprintMB().map { String(format: "%.0f MB", $0) } ?? "—")
             LabeledContent("CLIP model", value: MobileCLIP.modelsBundled ? "Bundled" : "Not bundled")
+            LabeledContent("Face model", value: FaceModel.modelBundled ? "Bundled" : "Not bundled")
             NavigationLink("Diagnostics log") { DiagnosticsLogView() }
             Toggle("Performance tracing", isOn: $perfTracing)
                 .onChange(of: perfTracing) { _, on in PerfTrace.isEnabled = on }
+            #if targetEnvironment(simulator)
+            Toggle("Face scan in Simulator (slow)", isOn: $faceScanOnSimulator)
+            #endif
         } header: {
             Text("Diagnostics")
         } footer: {
