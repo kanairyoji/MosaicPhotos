@@ -14,19 +14,36 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
 
     public func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]] {
         var result: [String: [DetectedFaceSignal]] = [:]
+        var loaded = 0, nilImage = 0, rawFaces = 0, embedded = 0, visionErr = 0
+        var lastError: String?
         for refKey in refKeys {
             guard let ref = PhotoRef.decode(refKey), let localID = ref.localIdentifier else { continue }
             // 顔検出に十分な解像度で取得（大きすぎると重いので 800px 程度）。
-            guard let cg = await loadLocalCGImage(localID, maxPixel: 800) else { continue }
-            result[refKey] = detect(in: cg)
+            guard let cg = await loadLocalCGImage(localID, maxPixel: 800) else { nilImage += 1; continue }
+            loaded += 1
+            let (raw, signals, error) = detect(in: cg)
+            if let error { visionErr += 1; lastError = error }
+            rawFaces += raw
+            embedded += signals.count
+            result[refKey] = signals
         }
+        // 切り分け用: 画像ロード成否・Vision 生検出数・埋め込み成功数・Vision エラー。
+        Diagnostics.mark("faces.detect: loaded=\(loaded) nil=\(nilImage) rawFaces=\(rawFaces) "
+                         + "embedded=\(embedded) visionErr=\(visionErr)\(lastError.map { " (\($0))" } ?? "")")
         return result
     }
 
-    private func detect(in cg: CGImage) -> [DetectedFaceSignal] {
+    /// 戻り値 `.raw` は Vision が検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
+    /// `.error` は Vision の perform 失敗（シミュレータ非対応など）を切り分けるためのメッセージ。
+    private func detect(in cg: CGImage) -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
         let request = VNDetectFaceRectanglesRequest()
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        guard (try? handler.perform([request])) != nil, let faces = request.results else { return [] }
+        do {
+            try handler.perform([request])
+        } catch {
+            return (0, [], error.localizedDescription)
+        }
+        guard let faces = request.results else { return (0, [], nil) }
 
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
         var signals: [DetectedFaceSignal] = []
@@ -40,7 +57,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 embedding: ClipMath.encodeHalf(embedding),
                 quality: face.confidence))
         }
-        return signals
+        return (faces.count, signals, nil)
     }
 
     /// Vision の正規化 bbox（原点左下・y 上向き）→ CGImage のピクセル矩形（原点左上）へ変換し、
