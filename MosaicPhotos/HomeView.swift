@@ -103,8 +103,7 @@ struct HomeView: View {
                 case .localAlbum(let album):
                     LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
                 case .person(let person):
-                    LocalPhotoContentView(localIdentifiers: localIdentifiers(from: person.memberRefKeys),
-                                          title: person.displayName)
+                    PersonPhotosView(person: person, peopleEngine: peopleEngine)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore)
                 case .autoAlbum(let album):

@@ -147,6 +147,68 @@ actor FaceStore {
         }
     }
 
+    /// 顔を別の人物へ付け替える。`toClusterID` が nil なら新規人物を作る。
+    /// 旧クラスタから重心(sum)/件数を引き、対象クラスタへ足す。旧が空になったら削除する。
+    func reassignFace(faceID: String, toClusterID: Int?) {
+        let fid = faceID
+        var fd = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.faceID == fid })
+        fd.fetchLimit = 1
+        guard let face = try? modelContext.fetch(fd).first,
+              let vec = ClipMath.decodeHalf(face.embedding) else { return }
+        let oldCID = face.clusterID
+        guard oldCID != toClusterID else { return }
+
+        removeFromCluster(clusterID: oldCID, vec: vec, faceID: faceID)
+        let targetCID = toClusterID ?? nextClusterID()
+        addToCluster(clusterID: targetCID, vec: vec, faceID: faceID)
+        face.clusterID = targetCID
+        try? modelContext.save()
+    }
+
+    private func nextClusterID() -> Int {
+        let clusters = (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
+        return (clusters.map(\.clusterID).max() ?? -1) + 1
+    }
+
+    private func removeFromCluster(clusterID: Int, vec: [Float], faceID: String) {
+        let cid = clusterID
+        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
+        d.fetchLimit = 1
+        guard let c = try? modelContext.fetch(d).first else { return }
+        if var sum = ClipMath.decodeHalf(c.sum), sum.count == vec.count {
+            for i in sum.indices { sum[i] -= vec[i] }
+            c.sum = ClipMath.encodeHalf(sum)
+        }
+        c.count = max(0, c.count - 1)
+        if c.count == 0 {
+            modelContext.delete(c)
+            return
+        }
+        if c.coverFaceID == faceID {
+            // 代表顔が抜けたら、残りの適当な顔を代表にする。
+            let other = (try? modelContext.fetch(
+                FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid })))?
+                .first { $0.faceID != faceID }
+            c.coverFaceID = other?.faceID
+        }
+    }
+
+    private func addToCluster(clusterID: Int, vec: [Float], faceID: String) {
+        let cid = clusterID
+        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
+        d.fetchLimit = 1
+        if let c = try? modelContext.fetch(d).first {
+            if var sum = ClipMath.decodeHalf(c.sum), sum.count == vec.count {
+                for i in sum.indices { sum[i] += vec[i] }
+                c.sum = ClipMath.encodeHalf(sum)
+            }
+            c.count += 1
+        } else {
+            modelContext.insert(PersonCluster(
+                clusterID: cid, sum: ClipMath.encodeHalf(vec), count: 1, name: nil, coverFaceID: faceID))
+        }
+    }
+
     func rename(clusterID: Int, name: String?) {
         let cid = clusterID
         var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })

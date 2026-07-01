@@ -264,7 +264,9 @@ private struct PersonCard: View {
                 .lineLimit(1)
         }
         .frame(width: Self.side + 12)
-        .task(id: person.id) {
+        // 代表写真(cover)を変えたら再読込されるよう、id に coverRefKey を含める
+        //（clusterID だけだと cover 変更で再読込されずトップの写真が更新されない）。
+        .task(id: person.coverRefKey ?? "\(person.id)") {
             avatar = await loadFaceAvatar(coverRefKey: person.coverRefKey,
                                           box: person.coverBoundingBox,
                                           maxPixel: 480)

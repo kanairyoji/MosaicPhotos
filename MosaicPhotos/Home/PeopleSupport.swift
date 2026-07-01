@@ -46,6 +46,13 @@ func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600)
     return UIImage(cgImage: cropped)
 }
 
+/// アスペクトを保った端末画像を取得する（顔矩形を重ねて表示するため正方クロップしない）。refKey 版。
+func loadLocalAspectImage(refKey: String, maxPixel: CGFloat = 1000) async -> UIImage? {
+    guard let localID = PhotoRef.decode(refKey)?.localIdentifier,
+          let cg = await requestAspectCGImage(localID, maxPixel: maxPixel) else { return nil }
+    return UIImage(cgImage: cg)
+}
+
 /// アスペクトを保った CGImage を取得する（顔矩形を正しくマッピングするため正方クロップしない）。
 private func requestAspectCGImage(_ localIdentifier: String, maxPixel: CGFloat) async -> CGImage? {
     let result = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)

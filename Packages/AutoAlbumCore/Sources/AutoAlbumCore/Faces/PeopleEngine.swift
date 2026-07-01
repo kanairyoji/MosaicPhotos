@@ -95,6 +95,12 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    /// 顔を別の人物へ付け替える（「この人は別の人」）。`toClusterID` が nil なら新規人物。
+    public func reassignFace(faceID: String, toClusterID: Int?) async {
+        await store.reassignFace(faceID: faceID, toClusterID: toClusterID)
+        await loadPeople()
+    }
+
     /// 全消去して再スキャンする（直近の候補があれば自動で再開）。
     public func reset() async {
         scanTask?.cancel()
