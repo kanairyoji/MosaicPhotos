@@ -42,6 +42,8 @@ struct HomeView: View {
     @State var renameText: String = ""
     /// 代表写真ピッカーの対象。
     @State var coverPickerPerson: PersonInfo?
+    /// 顔の管理（どの顔を認識したか確認・別の人へ付け替え）の対象。
+    @State var manageFacesPerson: PersonInfo?
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// デバッグ：シミュレータでも顔スキャンを走らせる（Developer Options）。ON にした瞬間に開始する。
@@ -103,7 +105,9 @@ struct HomeView: View {
                 case .localAlbum(let album):
                     LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
                 case .person(let person):
-                    PersonPhotosView(person: person, peopleEngine: peopleEngine)
+                    // 通常の写真ビューア（グリッド→フル画面で上スワイプ＝EXIF/場所）。専用ページは作らない。
+                    LocalPhotoContentView(localIdentifiers: localIdentifiers(from: person.memberRefKeys),
+                                          title: person.displayName)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore)
                 case .autoAlbum(let album):
@@ -133,11 +137,16 @@ struct HomeView: View {
                             presenting: personActions) { person in
             Button(L("Rename")) { renamingPerson = person; renameText = person.name ?? "" }
             Button(L("Choose Cover Photo")) { coverPickerPerson = person }
+            Button(L("Manage Faces")) { manageFacesPerson = person }
             Button(L("Cancel"), role: .cancel) {}
         }
         // 代表写真ピッカー。
         .sheet(item: $coverPickerPerson) { person in
             PersonCoverPickerView(person: person, peopleEngine: peopleEngine)
+        }
+        // 顔の管理（認識した顔の確認・別の人へ付け替え）。
+        .sheet(item: $manageFacesPerson) { person in
+            PersonPhotosView(person: person, peopleEngine: peopleEngine)
         }
         // ピープルの名前変更（長押しメニュー → 入力アラート）。空欄で保存すると "Person N" に戻る。
         .alert(L("Rename Person"),

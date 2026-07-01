@@ -1135,6 +1135,16 @@
         }
       }
     },
+    "Manage Faces": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔の管理"
+          }
+        }
+      }
+    },
     "Medium (3 rows)": {
       "localizations": {
         "ja": {
@@ -1821,6 +1831,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "解析済み"
+          }
+        }
+      }
+    },
+    "Tap a face that isn’t this person to move it to the correct person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物ではない顔をタップして、正しい人物へ移動できます。"
           }
         }
       }
