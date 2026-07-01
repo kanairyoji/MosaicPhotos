@@ -184,8 +184,11 @@ struct AutoAlbumCard: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
-            // 日付は初日のみ（複数日でもシンプルに）。0 件は「該当なし」（取り込み済みだが一致なし）。
-            Text(album.photoCount == 0 ? L("No matches") : DisplayDate.ymd(album.startDate))
+            // 日付は初日のみ（複数日でもシンプルに）。0 件は「該当なし」。
+            // 無意味な日付（1980 等）は「日時不明」にする（変な日時にしない）。
+            Text(album.photoCount == 0
+                 ? L("No matches")
+                 : (DisplayDate.meaningful(album.startDate).map(DisplayDate.ymd) ?? L("Date unknown")))
                 .font(.footnote)
                 .foregroundStyle(.primary.opacity(0.7))
                 .lineLimit(1)

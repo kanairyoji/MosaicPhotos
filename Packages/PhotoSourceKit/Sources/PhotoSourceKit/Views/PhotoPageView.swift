@@ -67,7 +67,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
 
     private func topLabel(_ item: Store.Item) -> String? {
         // 撮影日時は日付＋時刻（yyyy-MM-dd HH:mm）。アルバム等で displayTitle があればそれを優先。
-        item.displayTitle ?? item.captureDate.map(DisplayDate.dateTime)
+        // 無意味な日付（EXIF 欠落・0・1980 等）は「日時不明」と表示する（変な日時にしない）。
+        if let title = item.displayTitle { return title }
+        if let date = DisplayDate.meaningful(item.captureDate) { return DisplayDate.dateTime(date) }
+        return L("Date unknown")
     }
 
     public var body: some View {

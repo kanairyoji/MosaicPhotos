@@ -53,7 +53,8 @@ public func photoGridSections<Item: PhotoItem>(
     // 1) 隣接同一ラベルで raw グループ化（順序保持）。
     var groups: [(label: String, entries: [PhotoGridEntry<Item>])] = []
     for (i, item) in items.enumerated() {
-        let title = item.captureDate.map(label) ?? "Unknown"
+        // 無意味な日付（EXIF 欠落・0・1980 等）は "Unknown" に寄せる（変な年月見出しにしない）。
+        let title = DisplayDate.meaningful(item.captureDate).map(label) ?? "Unknown"
         if groups.last?.label == title {
             groups[groups.count - 1].entries.append(PhotoGridEntry(flatIndex: i, item: item))
         } else {

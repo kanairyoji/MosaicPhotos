@@ -46,6 +46,8 @@ struct HomeView: View {
     @State var manageFacesPerson: PersonInfo?
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
+    /// アクティビティバー表示時は、その分だけ上部に余白を確保してタイトルと重ならないようにする。
+    @AppStorage(DropboxActivitySettingsKeys.showBar) private var activityBarShown = true
     /// デバッグ：シミュレータでも顔スキャンを走らせる（Developer Options）。ON にした瞬間に開始する。
     @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
 
@@ -76,6 +78,10 @@ struct HomeView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("MosaicPhotos")
             .safeAreaInset(edge: .bottom) { settingsBar }
+        }
+        // 最上部のアクティビティバー分の余白を確保し、ナビタイトルがバーに潜り込まないようにする。
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if activityBarShown { Color.clear.frame(height: 30) }
         }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {

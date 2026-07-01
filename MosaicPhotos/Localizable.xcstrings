@@ -575,6 +575,16 @@
         }
       }
     },
+    "Date unknown": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日時不明"
+          }
+        }
+      }
+    },
     "Default (~2 km)": {
       "localizations": {
         "ja": {

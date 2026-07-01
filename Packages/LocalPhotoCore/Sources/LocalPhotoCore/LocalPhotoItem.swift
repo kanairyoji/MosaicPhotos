@@ -7,7 +7,8 @@ public struct LocalPhotoItem: PhotoItem {
     public let asset: PHAsset
 
     public var id: String { asset.localIdentifier }
-    public var captureDate: Date? { asset.creationDate }
+    /// 撮影日時。無意味な日付（EXIF 欠落・0 値・1970/1980 等）は nil＝日時不明として扱う。
+    public var captureDate: Date? { DisplayDate.meaningful(asset.creationDate) }
     /// PHAsset の位置情報（OS が永続化済みのため随時取得可能）。
     public var coordinate: CLLocationCoordinate2D? { asset.location?.coordinate }
     /// 端末写真アプリの「お気に入り」フラグ（PHAsset から即時取得）。
