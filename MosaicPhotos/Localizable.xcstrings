@@ -35,6 +35,46 @@
         }
       }
     },
+    "10 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "10秒"
+          }
+        }
+      }
+    },
+    "30 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30秒"
+          }
+        }
+      }
+    },
+    "5 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5秒"
+          }
+        }
+      }
+    },
+    "60 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60秒"
+          }
+        }
+      }
+    },
     "AI Album": {
       "localizations": {
         "ja": {
@@ -190,7 +230,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "バックグラウンドで自動生成"
+            "value": "背景で自動生成"
           }
         }
       }
@@ -200,7 +240,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "自宅から離れたとみなす距離"
+            "value": "自宅から離れた距離"
           }
         }
       }
@@ -260,7 +300,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "バックグラウンド処理"
+            "value": "背景処理"
           }
         }
       }
@@ -280,7 +320,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "処理速度"
+            "value": "背景処理の速度"
           }
         }
       }
@@ -350,7 +390,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "変更は次回の生成で反映されます。"
+            "value": "変更は次回の生成から反映されます。"
           }
         }
       }
@@ -430,7 +470,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "認識タグ（物体・シーン・テキスト・CLIP）をすべて消去し、すべての端末写真を最新モデルで再解析します。メタデータ（日付・場所・人物）は保持されます。バックグラウンドで実行され、時間がかかることがあります。"
+            "value": "認識タグ（物体・シーン・文字・CLIP）をすべて消去し、最新モデルで端末のすべての写真を再解析します。メタデータ（日付・場所・人物）は保持されます。背景で実行され、時間がかかる場合があります。"
           }
         }
       }
@@ -470,7 +510,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "粗い（約5 km）"
+            "value": "粗い（約5km）"
           }
         }
       }
@@ -510,7 +550,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "自宅から離れた連続する日は1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。許容ギャップを大きくすると旅行中の空白日をより多く許容し、自宅での滞在は新しい旅行の区切りになります。"
+            "value": "自宅から離れた連続する日を1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。まとめる間隔が大きいほど旅行中の空白日を許容し、自宅滞在で新しい旅行が始まります。"
           }
         }
       }
@@ -540,7 +580,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "標準（約2 km）"
+            "value": "標準（約2km）"
           }
         }
       }
@@ -730,7 +770,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "既にアルバムにある写真を除外"
+            "value": "すでにアルバムにある写真を除外"
           }
         }
       }
@@ -760,7 +800,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "細かい（約1 km）"
+            "value": "細かい（約1km）"
           }
         }
       }
@@ -790,7 +830,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダー名アルバム"
+            "value": "フォルダ名アルバム"
           }
         }
       }
@@ -850,7 +890,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "粒度の変更は次回の再スキャンで反映されます。"
+            "value": "粒度の変更は次回の再スキャンから反映されます。"
           }
         }
       }
@@ -860,7 +900,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "グリッドの粒度"
+            "value": "粒度"
           }
         }
       }
@@ -870,7 +910,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "グルーピング"
+            "value": "グループ化"
           }
         }
       }
@@ -890,7 +930,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "検索に使う CLIP 埋め込みをバックグラウンドで付与する際の負荷の強さです。低いほど電池・通信・スクロールに優しい代わりに完了は遅く、高いほど速い代わりに重くなります。次のバッチから反映されます。"
+            "value": "検索用の CLIP 埋め込みを背景でどれだけ積極的に付けるか。低いほど電池・通信・スクロールに優しいが完了は遅く、高いほど速いが重くなります。次のバッチから反映されます。"
           }
         }
       }
@@ -960,7 +1000,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "正規表現ルールで、Dropbox のフォルダー名から別系統のアルバムを推測します。ホーム画面の「アルバム」セクションに表示されます。"
+            "value": "Dropbox のフォルダ名から正規表現ルールで別のアルバム群を推定します。ホームの「アルバム」セクションに表示されます。"
           }
         }
       }
@@ -1940,7 +1980,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "とても粗い（約10 km）"
+            "value": "とても粗い（約10km）"
           }
         }
       }
