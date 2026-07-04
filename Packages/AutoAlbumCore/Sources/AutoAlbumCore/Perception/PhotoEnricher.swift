@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import ImageIO
+import MosaicSupport
 import Photos
 import PhotoSourceKit
 
@@ -42,7 +43,7 @@ struct PhotoEnricher {
             let place = await geocode(meta.latitude, meta.longitude)
             let country = await countryName(meta.latitude, meta.longitude)
             newPhotos.append(EnrichedPhoto(
-                id: refKey, captureDate: meta.captureDate, latitude: meta.latitude,
+                id: refKey, captureDate: CaptureDate.meaningful(meta.captureDate), latitude: meta.latitude,
                 longitude: meta.longitude, placeName: place, country: country, linkKey: meta.path))
         }
         await PlaceNameResolver.shared.persist()
@@ -112,7 +113,7 @@ private func fetchNewLocalPhotos(existing: Set<String>) -> (newRaws: [RawLocalPh
         }
         let aspect = asset.pixelHeight > 0 ? Double(asset.pixelWidth) / Double(asset.pixelHeight) : nil
         newRaws.append(RawLocalPhoto(
-            localIdentifier: id, captureDate: asset.creationDate, latitude: lat, longitude: lon,
+            localIdentifier: id, captureDate: CaptureDate.meaningful(asset.creationDate), latitude: lat, longitude: lon,
             isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot),
             isFavorite: asset.isFavorite, aspect: aspect))
     }

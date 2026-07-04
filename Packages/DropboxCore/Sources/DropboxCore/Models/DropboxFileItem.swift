@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import MosaicSupport
 
 public struct DropboxFileItem: Identifiable, Equatable, Hashable {
     public let path: String
@@ -8,6 +9,7 @@ public struct DropboxFileItem: Identifiable, Equatable, Hashable {
     /// detect remote changes and invalidate cached binaries cheaply.
     public let contentHash: String?
     /// 撮影日時。`media_info.time_taken` が取れればそれ、無ければ `client_modified`。
+    /// 無意味な日付（EXIF 欠落・0 値・1970/1980 等）は init で nil＝日時不明に落とす。
     public let captureDate: Date?
     /// 撮影地の緯度・経度（`list_folder` の `include_media_info` で取得。pending 時は nil）。
     public let latitude: Double?
@@ -24,7 +26,8 @@ public struct DropboxFileItem: Identifiable, Equatable, Hashable {
         self.path = path
         self.name = name
         self.contentHash = contentHash
-        self.captureDate = captureDate
+        // 生成点（同期パース・キャッシュ復元）でまとめてサニタイズする（入口で一度だけ）。
+        self.captureDate = CaptureDate.meaningful(captureDate)
         self.latitude = latitude
         self.longitude = longitude
     }
