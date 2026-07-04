@@ -72,44 +72,42 @@ public final class LocalPhotoStore {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         authorizationStatus = status
         if status == .authorized || status == .limited {
-            loadAssets()
+            await loadAssets()
         }
     }
 
-    private func loadAssets() {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-        options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+    /// 全列挙（数万件の fetch + enumerate + sort）は**メインスレッド外**（Task.detached）で行い、
+    /// メインは完成配列の代入のみ。ソース画面を開くたびメインで 67k 列挙して固まるのを防ぐ。
+    private func loadAssets() async {
+        let source = self.source
+        let list = await Task.detached(priority: .userInitiated) { () -> [PHAsset] in
+            let options = PHFetchOptions()
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+            options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
 
-        let result: PHFetchResult<PHAsset>
-        switch source {
-        case .all:
-            result = PHAsset.fetchAssets(with: options)
-        case .identifiers(let ids):
-            // fetchAssets(withLocalIdentifiers:) は sortDescriptors を無視するため
-            // 後段で creationDate 昇順にソートしなおす。
-            let unsorted = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
-            var list: [PHAsset] = []
-            list.reserveCapacity(unsorted.count)
-            unsorted.enumerateObjects { a, _, _ in list.append(a) }
-            list.sort { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
-            assets = list
-            loadCompleted = true
-            let snapshot = list
-            Task(priority: .utility) { [preloader = metadataPreloader] in
-                await preloader.start(assets: snapshot)
+            switch source {
+            case .all:
+                let result = PHAsset.fetchAssets(with: options)
+                var list: [PHAsset] = []
+                list.reserveCapacity(result.count)
+                result.enumerateObjects { asset, _, _ in list.append(asset) }
+                return list
+            case .identifiers(let ids):
+                // fetchAssets(withLocalIdentifiers:) は sortDescriptors を無視するため
+                // 後段で creationDate 昇順にソートしなおす。
+                let unsorted = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+                var list: [PHAsset] = []
+                list.reserveCapacity(unsorted.count)
+                unsorted.enumerateObjects { a, _, _ in list.append(a) }
+                list.sort { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+                return list
             }
-            return
-        }
+        }.value
 
-        var list: [PHAsset] = []
-        list.reserveCapacity(result.count)
-        result.enumerateObjects { asset, _, _ in list.append(asset) }
         assets = list
         loadCompleted = true
-        let snapshot = list
         Task(priority: .utility) { [preloader = metadataPreloader] in
-            await preloader.start(assets: snapshot)
+            await preloader.start(assets: list)
         }
     }
 }

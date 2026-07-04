@@ -5,29 +5,35 @@ import UIKit
 // MARK: - Candidate refKeys
 
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。
+/// ⚠️ アプリ層の top-level 関数はデフォルト MainActor になるため、全件列挙（数万件）は
+/// `Task.detached` で**メインスレッド外**へ逃がす（起動直後のホーム描画を固めない）。
 func localImageRefKeys() async -> [String] {
-    let opts = PHFetchOptions()
-    opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
-    let assets = PHAsset.fetchAssets(with: opts)
-    var keys: [String] = []
-    keys.reserveCapacity(assets.count)
-    assets.enumerateObjects { asset, _, _ in
-        keys.append(PhotoRef.local(asset.localIdentifier).encoded)
-    }
-    return keys
+    await Task.detached(priority: .utility) {
+        let opts = PHFetchOptions()
+        opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        let assets = PHAsset.fetchAssets(with: opts)
+        var keys: [String] = []
+        keys.reserveCapacity(assets.count)
+        assets.enumerateObjects { asset, _, _ in
+            keys.append(PhotoRef.local(asset.localIdentifier).encoded)
+        }
+        return keys
+    }.value
 }
 
 /// お気に入りマークの端末写真（画像）の refKey 集合（"L-…"）。
-/// ピープルの代表写真の自動選択（お気に入り優先）に使う。
+/// ピープルの代表写真の自動選択（お気に入り優先）に使う。列挙はメインスレッド外。
 func favoriteImageRefKeys() async -> Set<String> {
-    let opts = PHFetchOptions()
-    opts.predicate = NSPredicate(format: "favorite == YES && mediaType == %d", PHAssetMediaType.image.rawValue)
-    let assets = PHAsset.fetchAssets(with: opts)
-    var keys = Set<String>()
-    assets.enumerateObjects { asset, _, _ in
-        keys.insert(PhotoRef.local(asset.localIdentifier).encoded)
-    }
-    return keys
+    await Task.detached(priority: .utility) {
+        let opts = PHFetchOptions()
+        opts.predicate = NSPredicate(format: "favorite == YES && mediaType == %d", PHAssetMediaType.image.rawValue)
+        let assets = PHAsset.fetchAssets(with: opts)
+        var keys = Set<String>()
+        assets.enumerateObjects { asset, _, _ in
+            keys.insert(PhotoRef.local(asset.localIdentifier).encoded)
+        }
+        return keys
+    }.value
 }
 
 // MARK: - Cluster members → local identifiers
