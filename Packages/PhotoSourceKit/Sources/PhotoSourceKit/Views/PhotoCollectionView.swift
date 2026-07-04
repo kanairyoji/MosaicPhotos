@@ -172,7 +172,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 // セルが小さい高密度表示（15列以上）ではハートが画像を覆って見えなくなるため出さない。
                 let showFavorite = self.currentColumns < gridFavoriteColumnThreshold
                 cell.configure(isFavorite: item.isFavorite && showFavorite) {
-                    await store.thumbnail(for: item, targetSize: px)
+                    store.thumbnailStages(for: item, targetSize: px)
                 }
             }
             dataSource = UICollectionViewDiffableDataSource<String, Store.Item.ID>(collectionView: cv) {

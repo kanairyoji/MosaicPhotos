@@ -184,6 +184,16 @@ extension MergedPhotoStore: PhotoStore {
                             cloud: { await dropboxStore.thumbnail(for: $0) })
     }
 
+    /// 2段階サムネイル（プログレッシブ表示）をローカル実装へ転送する。
+    /// クラウドは既定実装（単発）のまま。転送しないと default 実装が使われ、ローカルの
+    /// degraded 先行・近似サイズ暫定表示が効かなくなる点に注意。
+    public func thumbnailStages(for item: MergedPhotoItem, targetSize: CGSize) -> AsyncStream<UIImage> {
+        switch item {
+        case .local(let l): return localStore.thumbnailStages(for: l, targetSize: targetSize)
+        case .cloud(let c): return dropboxStore.thumbnailStages(for: c, targetSize: targetSize)
+        }
+    }
+
     /// 先読みを local / cloud に振り分ける。既定実装（1件ずつ thumbnail）だとローカルが
     /// `PHCachingImageManager` の一括先読みを使えずスクロールが重いため、専用に分配する。
     public func prefetch(_ items: [MergedPhotoItem], targetSize: CGSize) {

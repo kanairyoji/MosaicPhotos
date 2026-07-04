@@ -65,6 +65,77 @@ extension LocalPhotoStore: PhotoStore {
         return image
     }
 
+    /// 2段階サムネイル（プログレッシブ表示）。届いた順にセルへ流す：
+    /// 1. キャッシュヒット（メモリ→ディスク）→ 単発で完了
+    /// 2. ミス時: 同一アセットの**別サイズ**のメモリキャッシュを暫定表示（ズーム直後を埋める）
+    /// 3. PHImageManager（opportunistic）の **degraded（低解像度プレビュー）をそのまま流し**、
+    ///    高品質が来たら差し替えて完了（従来は degraded を捨てて高品質まで空白だった）。
+    public func thumbnailStages(for item: LocalPhotoItem, targetSize: CGSize) -> AsyncStream<UIImage> {
+        let asset = item.asset
+        let manager = imageManager
+        let options = makeThumbnailOptions()
+        let key = "\(asset.localIdentifier):\(Int(targetSize.width))x\(Int(targetSize.height))"
+
+        return AsyncStream { continuation in
+            let task = Task { @MainActor in
+                defer { continuation.finish() }
+
+                // 1) キャッシュ（メモリ→ディスク。デコードは並列・オフメイン）
+                if let cached = await ThumbnailCache.shared.get(key) {
+                    continuation.yield(cached)
+                    return
+                }
+                if Task.isCancelled { return }
+
+                // 2) 別サイズの暫定表示（最終画質は 3) が差し替える）
+                if let near = await ThumbnailCache.shared.nearestMemoryImage(assetID: asset.localIdentifier) {
+                    continuation.yield(near)
+                }
+                if Task.isCancelled { return }
+
+                // 3) PHImageManager: degraded → 高品質の順に yield（opportunistic は複数回呼ばれる）
+                final class RequestBox: @unchecked Sendable {
+                    var id: PHImageRequestID = PHInvalidImageRequestID
+                    var finished = false
+                }
+                let box = RequestBox()
+                let final: UIImage? = await withTaskCancellationHandler {
+                    await withCheckedContinuation { (cont: CheckedContinuation<UIImage?, Never>) in
+                        box.id = manager.requestImage(
+                            for: asset, targetSize: targetSize,
+                            contentMode: .aspectFill, options: options
+                        ) { img, info in
+                            guard !box.finished else { return }
+                            let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
+                            if isCancelled {
+                                box.finished = true
+                                cont.resume(returning: nil)
+                                return
+                            }
+                            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                            if isDegraded {
+                                if let img { continuation.yield(img) }   // まず見せる
+                                return
+                            }
+                            box.finished = true
+                            cont.resume(returning: img)
+                        }
+                    }
+                } onCancel: {
+                    manager.cancelImageRequest(box.id)
+                }
+
+                if let final, !Task.isCancelled {
+                    continuation.yield(final)
+                    Task.detached(priority: .utility) {
+                        await ThumbnailCache.shared.set(final, for: key)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     /// Fallback for protocol conformance; uses a scale-appropriate default size.
     public func thumbnail(for item: LocalPhotoItem) async -> UIImage? {
         // サムネイルは ×2 上限で十分（メモリ削減・グリッドのセル解像度ポリシーと整合）。

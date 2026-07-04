@@ -21,6 +21,25 @@ public protocol PhotoThumbnailing: AnyObject {
     /// 画面外へスクロールした先読みを取り消す（無駄な取得を止める）。既定は no-op。
     /// `DropboxPhotoStore` は未取得の先読みをキューから破棄する。
     func cancelPrefetch(_ items: [Item])
+    /// **2段階サムネイル**：まず速い画像（低解像度プレビュー／近似サイズのキャッシュ）を流し、
+    /// 続いて最終画質を流す。グリッドは要素が届くたびに差し替えて「まず何か見える」を実現する。
+    /// 既定実装は `thumbnail(for:targetSize:)` の単発（1 要素）。`LocalPhotoStore` が上書きする。
+    func thumbnailStages(for item: Item, targetSize: CGSize) -> AsyncStream<UIImage>
+}
+
+public extension PhotoThumbnailing {
+    func thumbnailStages(for item: Item, targetSize: CGSize) -> AsyncStream<UIImage> {
+        AsyncStream { continuation in
+            let task = Task { [weak self] in
+                if let image = await self?.thumbnail(for: item, targetSize: targetSize),
+                   !Task.isCancelled {
+                    continuation.yield(image)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 /// フル画像の取得と先読み。

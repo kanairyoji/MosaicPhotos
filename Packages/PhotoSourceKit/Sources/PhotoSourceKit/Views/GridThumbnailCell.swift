@@ -46,16 +46,19 @@ final class GridThumbnailCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(isFavorite: Bool = false, loader: @escaping () async -> UIImage?) {
+    /// 2段階ロード：`stages` から届いた画像を順に差し替える（低解像度プレビュー → 最終画質）。
+    /// 「まず何か見える」を優先し、後から高品質へ置き換わる（プログレッシブ表示）。
+    func configure(isFavorite: Bool = false, stages: @escaping () -> AsyncStream<UIImage>) {
         heartView.isHidden = !isFavorite
         loadTask?.cancel()
         imageView.image = nil
         loadTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             if Task.isCancelled { return }
-            let image = await loader()
-            if Task.isCancelled { return }
-            imageView.image = image
+            for await image in stages() {
+                if Task.isCancelled { return }
+                imageView.image = image
+            }
         }
     }
 
