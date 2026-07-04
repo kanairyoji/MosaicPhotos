@@ -17,6 +17,19 @@ func localImageRefKeys() async -> [String] {
     return keys
 }
 
+/// お気に入りマークの端末写真（画像）の refKey 集合（"L-…"）。
+/// ピープルの代表写真の自動選択（お気に入り優先）に使う。
+func favoriteImageRefKeys() async -> Set<String> {
+    let opts = PHFetchOptions()
+    opts.predicate = NSPredicate(format: "favorite == YES && mediaType == %d", PHAssetMediaType.image.rawValue)
+    let assets = PHAsset.fetchAssets(with: opts)
+    var keys = Set<String>()
+    assets.enumerateObjects { asset, _, _ in
+        keys.insert(PhotoRef.local(asset.localIdentifier).encoded)
+    }
+    return keys
+}
+
 // MARK: - Cluster members → local identifiers
 
 /// クラスタのメンバー refKey をローカル localIdentifier 配列へ（クラウドは現状対象外）。

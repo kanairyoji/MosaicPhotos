@@ -111,17 +111,18 @@ actor FaceStore {
         return FaceClustering(threshold: Self.clusterThreshold, seedClusters: seed)
     }
 
-    /// クラスタリング結果を `PersonCluster` テーブルへ書き戻す（sum/count・新規は代表顔を設定）。
+    /// クラスタリング結果を `PersonCluster` テーブルへ書き戻す（sum/count のみ）。
+    /// `coverFaceID` は**ユーザーが代表写真を選んだときだけ** `setCover` が書く。未設定（nil）の
+    /// 代表は読み出し時（`peopleClusters`）に「お気に入り優先→先頭」で自動選択する。
     private func persist(_ clustering: FaceClustering) {
         for c in clustering.clusters {
             if let existing = cluster(c.id) {
                 existing.sum = ClipMath.encodeHalf(c.sum)
                 existing.count = c.count
-                if existing.coverFaceID == nil { existing.coverFaceID = c.faceIDs.first }
             } else {
                 modelContext.insert(PersonCluster(
                     clusterID: c.id, sum: ClipMath.encodeHalf(c.sum), count: c.count,
-                    name: nil, coverFaceID: c.faceIDs.first))
+                    name: nil, coverFaceID: nil))
             }
         }
     }
@@ -129,7 +130,9 @@ actor FaceStore {
     // MARK: - 取り出し（表示用）
 
     /// 「人物」とみなすクラスタ（メンバー数 `minFaces` 以上）を多い順に返す。
-    func peopleClusters(minFaces: Int = 3) -> [PersonInfo] {
+    /// 代表写真（cover）の優先順位: ユーザーが選んだ顔（`coverFaceID`・現存するもの）
+    /// → **お気に入りマークの写真**の顔（`favoriteRefKeys`）→ 認識した写真の先頭。
+    func peopleClusters(minFaces: Int = 3, favoriteRefKeys: Set<String> = []) -> [PersonInfo] {
         var result: [PersonInfo] = []
         for c in allClusters() where c.count >= minFaces {
             let faces = faces(inCluster: c.clusterID)
@@ -138,7 +141,9 @@ actor FaceStore {
             var members: [String] = []
             for f in faces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
 
-            let cover = c.coverFaceID.flatMap { fid in faces.first { $0.faceID == fid } } ?? faces.first
+            let cover = c.coverFaceID.flatMap { fid in faces.first { $0.faceID == fid } }
+                ?? faces.first { favoriteRefKeys.contains($0.refKey) }
+                ?? faces.first
             let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
             result.append(PersonInfo(
                 clusterID: c.clusterID, name: c.name, count: members.count,
@@ -210,8 +215,8 @@ actor FaceStore {
         c.sum = ClipMath.encodeHalf(updated.sum)
         c.count = updated.count
         if c.coverFaceID == faceID {
-            // 代表顔が抜けたら、残りの適当な顔を代表にする。
-            c.coverFaceID = faces(inCluster: clusterID).first { $0.faceID != faceID }?.faceID
+            // 代表顔が抜けたら未設定に戻し、読み出し時の自動選択（お気に入り優先→先頭）に任せる。
+            c.coverFaceID = nil
         }
     }
 
@@ -228,7 +233,7 @@ actor FaceStore {
             let seeded = FaceClustering.adding(vec, toSum: [Float](repeating: 0, count: vec.count), count: 0)
             modelContext.insert(PersonCluster(
                 clusterID: clusterID, sum: ClipMath.encodeHalf(seeded.sum), count: seeded.count,
-                name: nil, coverFaceID: faceID))
+                name: nil, coverFaceID: nil))
         }
     }
 

@@ -17,6 +17,9 @@ public final class PeopleEngine {
     @ObservationIgnored private let store: FaceStore
     @ObservationIgnored private let tagger: FaceTagger
     @ObservationIgnored private let faceProvider: FacePerceptionProvider?
+    /// お気に入り写真の refKey 集合（"L-…"）を返す seam（アプリ側＝PhotoKit が実装）。
+    /// 代表写真の自動選択で「お気に入りの写真を優先」するために使う。nil なら優先なし。
+    @ObservationIgnored private let favoriteRefKeysProvider: (() async -> Set<String>)?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
     @ObservationIgnored private var lastCandidates: [String] = []
@@ -25,10 +28,12 @@ public final class PeopleEngine {
     /// 「人物」とみなす最小顔数。
     private let minFaces = 3
 
-    public init(faceProvider: FacePerceptionProvider?) {
+    public init(faceProvider: FacePerceptionProvider?,
+                favoriteRefKeysProvider: (() async -> Set<String>)? = nil) {
         let store = FaceStore()
         self.store = store
         self.faceProvider = faceProvider
+        self.favoriteRefKeysProvider = favoriteRefKeysProvider
         self.tagger = FaceTagger(store: store, provider: faceProvider)
     }
 
@@ -36,10 +41,12 @@ public final class PeopleEngine {
     public var isFaceModelAvailable: Bool { faceProvider?.isAvailable ?? false }
 
     /// 永続済みのクラスタからピープル一覧を読み込む。
+    /// 代表写真はユーザー選択（保存済み）→ お気に入り写真 → 認識した写真の先頭、の順で決まる。
     public func loadPeople() async {
-        people = await store.peopleClusters(minFaces: minFaces)
+        let favorites = await favoriteRefKeysProvider?() ?? []
+        people = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites)
         isLoaded = true
-        Diagnostics.mark("faces: people=\(people.count) (>= \(minFaces) faces)")
+        Diagnostics.mark("faces: people=\(people.count) (>= \(minFaces) faces, favs=\(favorites.count))")
     }
 
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
