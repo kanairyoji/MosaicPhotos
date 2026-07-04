@@ -76,6 +76,29 @@ public struct FaceClustering {
         clusters.filter { $0.count >= minFaces }.sorted { $0.count > $1.count }
     }
 
+    // MARK: - Reassign（付け替え用の重心演算・純関数）
+
+    /// 顔をクラスタ重心（sum/count）へ追加した結果。`assign` と同じく**正規化してから**加算する
+    /// （永続層の付け替え＝`FaceStore.reassignFace` がこの規則からずれないよう一元化）。
+    public static func adding(_ embedding: [Float], toSum sum: [Float], count: Int) -> (sum: [Float], count: Int) {
+        let v = normalized(embedding)
+        // 次元不一致（壊れた埋め込み）でも count は顔の増減に合わせる（DetectedFace 行数と整合）。
+        guard v.count == sum.count else { return (sum, count + 1) }
+        var s = sum
+        for i in s.indices { s[i] += v[i] }
+        return (s, count + 1)
+    }
+
+    /// 顔をクラスタ重心から除いた結果。最後の 1 顔を除くと nil（＝クラスタ削除の合図）。
+    public static func removing(_ embedding: [Float], fromSum sum: [Float], count: Int) -> (sum: [Float], count: Int)? {
+        guard count > 1 else { return nil }
+        let v = normalized(embedding)
+        guard v.count == sum.count else { return (sum, count - 1) }
+        var s = sum
+        for i in s.indices { s[i] -= v[i] }
+        return (s, count - 1)
+    }
+
     // MARK: - Math（正規化済みコサイン＝内積）
 
     static func dot(_ a: [Float], _ b: [Float]) -> Float {

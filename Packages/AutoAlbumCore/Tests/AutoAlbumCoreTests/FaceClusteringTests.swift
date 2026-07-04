@@ -60,4 +60,49 @@ struct FaceClusteringTests {
         let n = FaceClustering.normalized([3, 4, 0])
         #expect(abs(FaceClustering.dot(n, n) - 1) < 1e-4)
     }
+
+    // MARK: - Reassign（付け替えの重心演算）
+
+    /// adding は assign と同じ正規化規則（正規化してから加算）。
+    @Test("adding は正規化してから sum に加算する")
+    func addingNormalizesFirst() {
+        // 大きさ 5 のベクトルでも、単位ベクトルとして足される。
+        let (sum, count) = FaceClustering.adding([3, 4, 0], toSum: [0, 0, 0], count: 0)
+        #expect(count == 1)
+        #expect(abs(sum[0] - 0.6) < 1e-4)
+        #expect(abs(sum[1] - 0.8) < 1e-4)
+    }
+
+    /// add → remove の往復で sum/count が元に戻る（付け替えを繰り返しても重心が壊れない）。
+    @Test("adding→removing の往復で重心が元に戻る")
+    func addRemoveRoundtrip() {
+        let base: [Float] = [1, 0, 0]
+        let extra: [Float] = [0, 3, 4]   // 非正規化で与える
+        let added = FaceClustering.adding(extra, toSum: base, count: 1)
+        #expect(added.count == 2)
+        let removed = FaceClustering.removing(extra, fromSum: added.sum, count: added.count)
+        #expect(removed != nil)
+        #expect(removed?.count == 1)
+        for i in 0..<3 {
+            #expect(abs((removed?.sum[i] ?? -1) - base[i]) < 1e-4)
+        }
+    }
+
+    /// 最後の 1 顔を除くと nil（クラスタ削除の合図）。
+    @Test("removing は最後の1顔で nil を返す")
+    func removingLastFaceSignalsDeletion() {
+        #expect(FaceClustering.removing([1, 0, 0], fromSum: [1, 0, 0], count: 1) == nil)
+        #expect(FaceClustering.removing([1, 0, 0], fromSum: [1, 0, 0], count: 0) == nil)
+    }
+
+    /// 次元不一致の埋め込みは sum を壊さない（count のみ増減）。
+    @Test("次元不一致でも sum を壊さない")
+    func dimensionMismatchIsSafe() {
+        let (sum, count) = FaceClustering.adding([1, 0], toSum: [0, 0, 0], count: 2)
+        #expect(sum == [0, 0, 0])
+        #expect(count == 3)
+        let removed = FaceClustering.removing([1, 0], fromSum: [5, 0, 0], count: 3)
+        #expect(removed?.sum == [5, 0, 0])
+        #expect(removed?.count == 2)
+    }
 }

@@ -6,6 +6,7 @@ import SwiftData
 /// 顔（`DetectedFace`）・クラスタ（`PersonCluster`）・スキャン済みマーカー（`ScannedPhoto`）を司る ModelActor。
 /// CLIP の `AutoAlbumStore` とは**別コンテナ**（"FacesV1"）なので、顔機能の追加で既存データを壊さない。
 /// `@Model` は actor 外へ出さず、Sendable 値（`PersonInfo` 等）に変換して返す。
+/// 重心（sum/count）の演算は `FaceClustering` の純関数に寄せ、ここは fetch/persist に徹する。
 @ModelActor
 actor FaceStore {
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Faces")
@@ -25,6 +26,38 @@ actor FaceStore {
 
     /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
     private static let clusterThreshold: Float = 0.45
+
+    // MARK: - Fetch helpers（FetchDescriptor の反復をここに集約）
+
+    private func cluster(_ clusterID: Int) -> PersonCluster? {
+        let cid = clusterID
+        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
+        d.fetchLimit = 1
+        return try? modelContext.fetch(d).first
+    }
+
+    private func allClusters() -> [PersonCluster] {
+        (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
+    }
+
+    private func face(byID faceID: String) -> DetectedFace? {
+        let fid = faceID
+        var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.faceID == fid })
+        d.fetchLimit = 1
+        return try? modelContext.fetch(d).first
+    }
+
+    private func faces(inCluster clusterID: Int) -> [DetectedFace] {
+        let cid = clusterID
+        return (try? modelContext.fetch(
+            FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
+    }
+
+    private func faces(inPhoto refKey: String) -> [DetectedFace] {
+        let key = refKey
+        return (try? modelContext.fetch(
+            FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.refKey == key }))) ?? []
+    }
 
     // MARK: - スキャン進捗
 
@@ -68,9 +101,8 @@ actor FaceStore {
 
     /// 永続化済みクラスタを `FaceClustering` に復元する（重心・件数・代表顔まで）。
     private func loadClustering() -> FaceClustering {
-        let records = (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
         var seed: [FaceClustering.Cluster] = []
-        for r in records {
+        for r in allClusters() {
             guard let sum = ClipMath.decodeHalf(r.sum) else { continue }
             seed.append(FaceClustering.Cluster(
                 id: r.clusterID, centroid: FaceClustering.normalized(sum),
@@ -82,10 +114,7 @@ actor FaceStore {
     /// クラスタリング結果を `PersonCluster` テーブルへ書き戻す（sum/count・新規は代表顔を設定）。
     private func persist(_ clustering: FaceClustering) {
         for c in clustering.clusters {
-            let cid = c.id
-            var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
-            d.fetchLimit = 1
-            if let existing = try? modelContext.fetch(d).first {
+            if let existing = cluster(c.id) {
                 existing.sum = ClipMath.encodeHalf(c.sum)
                 existing.count = c.count
                 if existing.coverFaceID == nil { existing.coverFaceID = c.faceIDs.first }
@@ -101,12 +130,9 @@ actor FaceStore {
 
     /// 「人物」とみなすクラスタ（メンバー数 `minFaces` 以上）を多い順に返す。
     func peopleClusters(minFaces: Int = 3) -> [PersonInfo] {
-        let clusters = (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
         var result: [PersonInfo] = []
-        for c in clusters where c.count >= minFaces {
-            let cid = c.clusterID
-            let faces = (try? modelContext.fetch(
-                FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
+        for c in allClusters() where c.count >= minFaces {
+            let faces = faces(inCluster: c.clusterID)
             // 写真キーは重複排除（同一写真に同一人物が複数顔ある場合）。
             var seen = Set<String>()
             var members: [String] = []
@@ -123,12 +149,9 @@ actor FaceStore {
 
     /// クラスタの顔候補（写真ごとに 1 つ・代表写真ピッカー用）。
     func facesForCluster(clusterID: Int) -> [PersonInfo.Face] {
-        let cid = clusterID
-        let faces = (try? modelContext.fetch(
-            FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
         var seen = Set<String>()
         var out: [PersonInfo.Face] = []
-        for f in faces where seen.insert(f.refKey).inserted {
+        for f in faces(inCluster: clusterID) where seen.insert(f.refKey).inserted {
             out.append(PersonInfo.Face(
                 faceID: f.faceID, refKey: f.refKey,
                 boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh)))
@@ -139,39 +162,28 @@ actor FaceStore {
     /// この写真に写っている「人物」の表示名（フル画像ビューの People 表示用）。
     /// 顔が属するクラスタのうち、人物とみなせる（`minFaces` 以上）ものの名前を返す。複数可。
     func peopleNames(refKey: String, minFaces: Int) -> [String] {
-        let key = refKey
-        let faces = (try? modelContext.fetch(
-            FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.refKey == key }))) ?? []
         var out: [String] = []
         var seen = Set<Int>()
-        for f in faces where seen.insert(f.clusterID).inserted {
-            let cid = f.clusterID
-            var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
-            d.fetchLimit = 1
-            guard let c = try? modelContext.fetch(d).first, c.count >= minFaces else { continue }
-            out.append(c.name ?? "Person \(cid + 1)")
+        for f in faces(inPhoto: refKey) where seen.insert(f.clusterID).inserted {
+            guard let c = cluster(f.clusterID), c.count >= minFaces else { continue }
+            out.append(c.name ?? "Person \(f.clusterID + 1)")
         }
         return out
     }
 
     /// 代表写真（cover）を指定した顔に設定する。
     func setCover(clusterID: Int, faceID: String) {
-        let cid = clusterID
-        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
-        d.fetchLimit = 1
-        if let c = try? modelContext.fetch(d).first {
-            c.coverFaceID = faceID
-            try? modelContext.save()
-        }
+        guard let c = cluster(clusterID) else { return }
+        c.coverFaceID = faceID
+        try? modelContext.save()
     }
 
+    // MARK: - 付け替え（「この人は別の人」）
+
     /// 顔を別の人物へ付け替える。`toClusterID` が nil なら新規人物を作る。
-    /// 旧クラスタから重心(sum)/件数を引き、対象クラスタへ足す。旧が空になったら削除する。
+    /// 重心演算は `FaceClustering.adding/removing`（`assign` と同じ正規化規則）に委譲する。
     func reassignFace(faceID: String, toClusterID: Int?) {
-        let fid = faceID
-        var fd = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.faceID == fid })
-        fd.fetchLimit = 1
-        guard let face = try? modelContext.fetch(fd).first,
+        guard let face = face(byID: faceID),
               let vec = ClipMath.decodeHalf(face.embedding) else { return }
         let oldCID = face.clusterID
         guard oldCID != toClusterID else { return }
@@ -184,57 +196,46 @@ actor FaceStore {
     }
 
     private func nextClusterID() -> Int {
-        let clusters = (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
-        return (clusters.map(\.clusterID).max() ?? -1) + 1
+        (allClusters().map(\.clusterID).max() ?? -1) + 1
     }
 
     private func removeFromCluster(clusterID: Int, vec: [Float], faceID: String) {
-        let cid = clusterID
-        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
-        d.fetchLimit = 1
-        guard let c = try? modelContext.fetch(d).first else { return }
-        if var sum = ClipMath.decodeHalf(c.sum), sum.count == vec.count {
-            for i in sum.indices { sum[i] -= vec[i] }
-            c.sum = ClipMath.encodeHalf(sum)
-        }
-        c.count = max(0, c.count - 1)
-        if c.count == 0 {
+        guard let c = cluster(clusterID) else { return }
+        guard let sum = ClipMath.decodeHalf(c.sum),
+              let updated = FaceClustering.removing(vec, fromSum: sum, count: c.count) else {
+            // 最後の 1 顔（または sum 破損）＝クラスタごと削除。
             modelContext.delete(c)
             return
         }
+        c.sum = ClipMath.encodeHalf(updated.sum)
+        c.count = updated.count
         if c.coverFaceID == faceID {
             // 代表顔が抜けたら、残りの適当な顔を代表にする。
-            let other = (try? modelContext.fetch(
-                FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid })))?
-                .first { $0.faceID != faceID }
-            c.coverFaceID = other?.faceID
+            c.coverFaceID = faces(inCluster: clusterID).first { $0.faceID != faceID }?.faceID
         }
     }
 
     private func addToCluster(clusterID: Int, vec: [Float], faceID: String) {
-        let cid = clusterID
-        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
-        d.fetchLimit = 1
-        if let c = try? modelContext.fetch(d).first {
-            if var sum = ClipMath.decodeHalf(c.sum), sum.count == vec.count {
-                for i in sum.indices { sum[i] += vec[i] }
-                c.sum = ClipMath.encodeHalf(sum)
+        if let c = cluster(clusterID) {
+            if let sum = ClipMath.decodeHalf(c.sum) {
+                let updated = FaceClustering.adding(vec, toSum: sum, count: c.count)
+                c.sum = ClipMath.encodeHalf(updated.sum)
+                c.count = updated.count
+            } else {
+                c.count += 1
             }
-            c.count += 1
         } else {
+            let seeded = FaceClustering.adding(vec, toSum: [Float](repeating: 0, count: vec.count), count: 0)
             modelContext.insert(PersonCluster(
-                clusterID: cid, sum: ClipMath.encodeHalf(vec), count: 1, name: nil, coverFaceID: faceID))
+                clusterID: clusterID, sum: ClipMath.encodeHalf(seeded.sum), count: seeded.count,
+                name: nil, coverFaceID: faceID))
         }
     }
 
     func rename(clusterID: Int, name: String?) {
-        let cid = clusterID
-        var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
-        d.fetchLimit = 1
-        if let c = try? modelContext.fetch(d).first {
-            c.name = (name?.isEmpty == true) ? nil : name
-            try? modelContext.save()
-        }
+        guard let c = cluster(clusterID) else { return }
+        c.name = (name?.isEmpty == true) ? nil : name
+        try? modelContext.save()
     }
 
     /// 全消去（再スキャン用）。
