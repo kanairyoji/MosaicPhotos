@@ -35,15 +35,9 @@ struct HomeView: View {
     /// AI アルバム作成/編集シートの対象（新規 or 既存）。
     /// 単一の `.sheet(item:)` に統合して、複数 .sheet 併用時の提示競合（編集が常に先頭になる不具合）を防ぐ。
     @State var aiComposer: AIComposerTarget?
-    /// ピープルの長押しメニュー対象（名前変更／代表写真の変更）。
+    /// ピープルの長押しメニュー対象。配下の UI（名前変更／代表写真／顔の管理）は
+    /// `PeopleActionsModifier`（Home/PeopleActions.swift）に分離している。
     @State var personActions: PersonInfo?
-    /// ピープルの名前変更中の対象と入力テキスト。
-    @State var renamingPerson: PersonInfo?
-    @State var renameText: String = ""
-    /// 代表写真ピッカーの対象。
-    @State var coverPickerPerson: PersonInfo?
-    /// 顔の管理（どの顔を認識したか確認・別の人へ付け替え）の対象。
-    @State var manageFacesPerson: PersonInfo?
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// アクティビティバー表示時は、その分だけ上部に余白を確保してタイトルと重ならないようにする。
@@ -137,37 +131,8 @@ struct HomeView: View {
             albumScanner: albumScanner,
             peopleEngine: peopleEngine,
             autoAlbumEngine: autoAlbumEngine))
-        // ピープル長押し → メニュー（名前変更／代表写真の変更）。
-        .confirmationDialog(personActions?.displayName ?? "",
-                            isPresented: Binding(get: { personActions != nil },
-                                                 set: { if !$0 { personActions = nil } }),
-                            presenting: personActions) { person in
-            Button(L("Rename")) { renamingPerson = person; renameText = person.name ?? "" }
-            Button(L("Choose Cover Photo")) { coverPickerPerson = person }
-            Button(L("Manage Faces")) { manageFacesPerson = person }
-            Button(L("Cancel"), role: .cancel) {}
-        }
-        // 代表写真ピッカー。
-        .sheet(item: $coverPickerPerson) { person in
-            PersonCoverPickerView(person: person, peopleEngine: peopleEngine)
-        }
-        // 顔の管理（認識した顔の確認・別の人へ付け替え）。
-        .sheet(item: $manageFacesPerson) { person in
-            PersonPhotosView(person: person, peopleEngine: peopleEngine)
-        }
-        // ピープルの名前変更（長押しメニュー → 入力アラート）。空欄で保存すると "Person N" に戻る。
-        .alert(L("Rename Person"),
-               isPresented: Binding(get: { renamingPerson != nil },
-                                    set: { if !$0 { renamingPerson = nil } }),
-               presenting: renamingPerson) { person in
-            TextField(L("Name"), text: $renameText)
-            Button(L("Cancel"), role: .cancel) { renamingPerson = nil }
-            Button(L("Save")) {
-                let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                Task { await peopleEngine.rename(clusterID: person.clusterID, name: trimmed.isEmpty ? nil : trimmed) }
-                renamingPerson = nil
-            }
-        }
+        // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
+        .peopleActions(for: $personActions, engine: peopleEngine)
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
         .dropboxActivityBar()
         // デバッグ：シミュレータ顔スキャンのトグルを ON にしたら（起動後でも）その場で開始する。
