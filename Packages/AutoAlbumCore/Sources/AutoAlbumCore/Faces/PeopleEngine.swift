@@ -57,14 +57,12 @@ public final class PeopleEngine {
                 candidateRefKeys: candidateRefKeys,
                 allowSimulator: allowSimulator,
                 shouldPause: {
-                    // 顔認識は重いので、**電源に接続されているときだけ**動かす（電池では動かさない）。
-                    // 低電力モード中も止める。加えて操作中・メモリ圧迫中・クラウド取得中は譲る。
-                    !PowerStateMonitor.shared.isOnPower
-                        || PowerStateMonitor.shared.isLowPowerMode
-                        || MemoryPressureMonitor.shared.isUnderPressure
-                        || BackgroundActivityMonitor.shared.isViewingPhoto
-                        || BackgroundActivityMonitor.shared.fullImageBusy
-                        || BackgroundActivityMonitor.shared.cloudThumbnailBusy
+                    // 顔認識は重いので、**電源に接続されているときだけ**動かす（電池では動かさない・
+                    // 低電力モード中も停止）。共通の譲り条件（メモリ圧迫・写真閲覧・取得中）は
+                    // BackgroundYield に一元化。
+                    BackgroundYield.shouldPause(
+                        powerOK: PowerStateMonitor.shared.isOnPower
+                            && !PowerStateMonitor.shared.isLowPowerMode)
                 },
                 onProgress: {
                     self.remaining = $0

@@ -74,15 +74,11 @@ extension AutoAlbumEngine {
             await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                           betweenBatchNs: preset.betweenBatchNs,
                                           shouldPause: { [weak self] in
-                                          // 操作中・メモリ圧迫中・電源条件未達・クラウドのサムネ取得中・
-                                          // フル画像取得中・写真ビュー表示中（＝タップ直後の遷移含む）は譲る
-                                          // （CPU/ANE を遷移・デコードに明け渡す。閲覧終了/電源復帰で自動再開）。
+                                          // 操作中は譲る。共通条件（メモリ圧迫・写真閲覧・フル画像/サムネ取得中）
+                                          // ＋電源条件（ユーザーのポリシー設定）は BackgroundYield に一元化。
                                           (self?.isInteracting ?? false)
-                                              || MemoryPressureMonitor.shared.isUnderPressure
-                                              || BackgroundActivityMonitor.shared.cloudThumbnailBusy
-                                              || BackgroundActivityMonitor.shared.fullImageBusy
-                                              || BackgroundActivityMonitor.shared.isViewingPhoto
-                                              || !PowerStateMonitor.shared.backgroundAllowed()
+                                              || BackgroundYield.shouldPause(
+                                                  powerOK: PowerStateMonitor.shared.backgroundAllowed())
                                       },
                                           networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
                                           onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
