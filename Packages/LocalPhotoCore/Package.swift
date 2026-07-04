@@ -10,6 +10,7 @@ let package = Package(
     dependencies: [
         .package(path: "../PhotoSourceKit"),
         .package(path: "../ImageCacheKit"),
+        .package(path: "../MosaicSupport"),
     ],
     targets: [
         .target(
@@ -17,6 +18,7 @@ let package = Package(
             dependencies: [
                 .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
                 .product(name: "ImageCacheKit", package: "ImageCacheKit"),
+                .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
             path: "Sources/LocalPhotoCore"
         ),

@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import SwiftUI
 import UIKit
 
@@ -39,7 +40,8 @@ struct FaceAvatarImage: View {
     private var cacheKey: String { FaceAvatarCache.key(refKey: refKey, box: box, maxPixel: maxPixel) }
 }
 
-/// 顔クロップ画像のメモリキャッシュ。`loadFaceAvatar`（PHImageManager 取得＋クロップ）の前段。
+/// 顔クロップ画像のキャッシュ（メモリ＋ディスク）。`loadFaceAvatar`（PHImageManager 取得＋クロップ）の前段。
+/// ディスク層があるので再起動後もフル画像の再取得・再クロップをしない（カルーセルの初期表示が速い）。
 enum FaceAvatarCache {
     private static let cache: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()
@@ -47,16 +49,47 @@ enum FaceAvatarCache {
         return c
     }()
 
+    private static let diskDir: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let dir = caches.appendingPathComponent("FaceAvatars", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     static func key(refKey: String?, box: CGRect?, maxPixel: CGFloat) -> String {
         let b = box.map { String(format: "%.4f,%.4f,%.4f,%.4f", $0.minX, $0.minY, $0.width, $0.height) } ?? "-"
         return "\(refKey ?? "-")|\(b)|\(Int(maxPixel))"
     }
 
+    private static func fileURL(for key: String) -> URL {
+        // キーには "/" 等が含まれるためハッシュ名にする。⚠️ Swift の Hasher はシードが実行ごとに
+        // 変わり再起動でヒットしなくなるため、安定な SHA256 を使う。
+        let digest = SHA256.hash(data: Data(key.utf8))
+        let name = digest.prefix(16).map { String(format: "%02x", $0) }.joined()
+        return diskDir.appendingPathComponent("\(name).jpg")
+    }
+
     static func load(refKey: String?, box: CGRect?, maxPixel: CGFloat) async -> UIImage? {
-        let k = key(refKey: refKey, box: box, maxPixel: maxPixel) as NSString
+        let keyString = key(refKey: refKey, box: box, maxPixel: maxPixel)
+        let k = keyString as NSString
         if let hit = cache.object(forKey: k) { return hit }
+
+        // ディスクヒット（読み込み・デコードはメイン外）
+        let url = fileURL(for: keyString)
+        let fromDisk = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else { return nil }
+            return img.preparingForDisplay() ?? img
+        }.value
+        if let fromDisk {
+            cache.setObject(fromDisk, forKey: k)
+            return fromDisk
+        }
+
         guard let image = await loadFaceAvatar(coverRefKey: refKey, box: box, maxPixel: maxPixel) else { return nil }
         cache.setObject(image, forKey: k)
+        Task.detached(priority: .utility) {
+            if let data = image.jpegData(compressionQuality: 0.85) { try? data.write(to: url) }
+        }
         return image
     }
 }

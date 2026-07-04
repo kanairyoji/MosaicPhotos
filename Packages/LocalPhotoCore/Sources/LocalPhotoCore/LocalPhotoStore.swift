@@ -18,7 +18,13 @@ public final class LocalPhotoStore {
     // MARK: - サムネイル取得 / 先読み（PHCachingImageManager）
 
     /// サムネイル取得と先読みを同一インスタンスで行う（キャッシュはインスタンス毎のため）。
-    @ObservationIgnored let imageManager = PHCachingImageManager()
+    /// 先読みは fast 品質のみ準備する（HQ まで事前生成すると先読みの CPU/メモリが跳ね、
+    /// スクロール中の本命取得と競合する。HQ は可視セルの requestImage 側で取得される）。
+    @ObservationIgnored let imageManager: PHCachingImageManager = {
+        let manager = PHCachingImageManager()
+        manager.allowsCachingHighQualityImages = false
+        return manager
+    }()
     /// 先読み中の窓（FIFO）。古い窓は stopCaching してメモリを有界に保つ。
     @ObservationIgnored private var cachingWindows: [(assets: [PHAsset], size: CGSize, options: PHImageRequestOptions)] = []
     private static let maxCachingWindows = 8

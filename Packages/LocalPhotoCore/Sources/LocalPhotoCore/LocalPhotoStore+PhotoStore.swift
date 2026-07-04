@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import ImageCacheKit
+import MosaicSupport
 import Photos
 import PhotoSourceKit
 import UIKit
@@ -82,13 +83,16 @@ extension LocalPhotoStore: PhotoStore {
 
                 // 1) キャッシュ（メモリ→ディスク。デコードは並列・オフメイン）
                 if let cached = await ThumbnailCache.shared.get(key) {
+                    PerfTrace.count("thumb.hit")
                     continuation.yield(cached)
                     return
                 }
+                PerfTrace.count("thumb.miss")
                 if Task.isCancelled { return }
 
                 // 2) 別サイズの暫定表示（最終画質は 3) が差し替える）
                 if let near = await ThumbnailCache.shared.nearestMemoryImage(assetID: asset.localIdentifier) {
+                    PerfTrace.count("thumb.nearSize")
                     continuation.yield(near)
                 }
                 if Task.isCancelled { return }
@@ -114,7 +118,10 @@ extension LocalPhotoStore: PhotoStore {
                             }
                             let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                             if isDegraded {
-                                if let img { continuation.yield(img) }   // まず見せる
+                                if let img {
+                                    PerfTrace.count("thumb.degradedFirst")
+                                    continuation.yield(img)   // まず見せる
+                                }
                                 return
                             }
                             box.finished = true
