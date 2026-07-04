@@ -51,10 +51,14 @@ struct HomeView: View {
     /// デバッグ：シミュレータでも顔スキャンを走らせる（Developer Options）。ON にした瞬間に開始する。
     @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
 
+    /// ストア一式（SettingsView / SourceHostView へ一括で渡す）。個別 @State は既存参照の互換用。
+    let stores: HomeStores
+
     /// ストアは `HomeStores` で事前構築する（各ストアの `ModelContainer` 生成が同期的で重く、
     /// `HomeView.init` で作ると最初の描画＝起動をブロックするため）。`RootView` が起動直後に
     /// 非同期構築し、完成したものをここへ注入する。
     init(stores: HomeStores) {
+        self.stores = stores
         self._dropboxStore = State(initialValue: stores.dropboxStore)
         self._mergedStore = State(initialValue: stores.mergedStore)
         self._backupEngine = State(initialValue: stores.backupEngine)
@@ -84,9 +88,7 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
-                SettingsView(dropboxAuth: dropboxStore.auth, store: dropboxStore, backupEngine: backupEngine,
-                             placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
-                             peopleEngine: peopleEngine)
+                SettingsView(stores: stores)
             }
             .perfScreenEnd("home.settings")   // 計測: 設定シートを開く所要
         }
@@ -215,11 +217,7 @@ struct HomeView: View {
         @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         SourceHostView(
-            dropboxStore: dropboxStore,
-            backupEngine: backupEngine,
-            placeScanner: placeScanner,
-            autoAlbumEngine: autoAlbumEngine,
-            peopleEngine: peopleEngine,
+            stores: stores,
             dismissToHome: dismiss,
             content: content
         )

@@ -12,12 +12,15 @@ import SwiftUI
 /// 先頭の Developer Mode トグル（既定 OFF）が ON のときだけ詳細診断・破壊的アクションを表示する。
 /// 各パッケージの Debug は public セクション View（`DropboxDebugSection` 等）を合成して再利用する。
 struct DeveloperSettingsView: View {
-    let dropboxAuth: DropboxAuthService
-    let store: DropboxPhotoStore?
-    let backupEngine: BackupEngine
-    let placeScanner: PlaceScanner?
-    let autoAlbumEngine: AutoAlbumEngine?
-    var peopleEngine: PeopleEngine?
+    /// ストア／エンジン一式（SettingsView と同じく一括で受け取り、引数漏れを防ぐ）。
+    let stores: HomeStores
+
+    private var dropboxAuth: DropboxAuthService { stores.dropboxStore.auth }
+    private var store: DropboxPhotoStore { stores.dropboxStore }
+    private var backupEngine: BackupEngine { stores.backupEngine }
+    private var placeScanner: PlaceScanner { stores.placeScanner }
+    private var autoAlbumEngine: AutoAlbumEngine { stores.autoAlbumEngine }
+    private var peopleEngine: PeopleEngine { stores.peopleEngine }
 
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
     @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
@@ -43,7 +46,7 @@ struct DeveloperSettingsView: View {
         .navigationTitle("Developer")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            enrichmentCount = await autoAlbumEngine?.enrichmentCount() ?? 0
+            enrichmentCount = await autoAlbumEngine.enrichmentCount()
             cachedPlaceCount = await PlaceNameResolver.shared.cachedPlaceCount
         }
     }
@@ -74,10 +77,8 @@ struct DeveloperSettingsView: View {
             #if targetEnvironment(simulator)
             Toggle("Face scan in Simulator (slow)", isOn: $faceScanOnSimulator)
             #endif
-            if let peopleEngine {
-                Button("Reset people (rescan faces)", role: .destructive) {
-                    Task { await peopleEngine.reset() }
-                }
+            Button("Reset people (rescan faces)", role: .destructive) {
+                Task { await peopleEngine.reset() }
             }
         } header: {
             Text("Diagnostics")
@@ -97,13 +98,13 @@ struct DeveloperSettingsView: View {
             } label: {
                 workingLabel("Rescan now")
             }
-            .disabled(isWorking || placeScanner == nil)
+            .disabled(isWorking)
             Button(role: .destructive) {
                 Task { await clearAndRescanPlaces() }
             } label: {
                 workingLabel("Clear place + geocode caches")
             }
-            .disabled(isWorking || placeScanner == nil)
+            .disabled(isWorking)
         }
     }
 
@@ -114,11 +115,10 @@ struct DeveloperSettingsView: View {
             LabeledContent("Enriched photos", value: "\(enrichmentCount)")
             Button("Clear Albums & Enrichment", role: .destructive) {
                 Task {
-                    await autoAlbumEngine?.clear()
-                    enrichmentCount = await autoAlbumEngine?.enrichmentCount() ?? 0
+                    await autoAlbumEngine.clear()
+                    enrichmentCount = await autoAlbumEngine.enrichmentCount()
                 }
             }
-            .disabled(autoAlbumEngine == nil)
         }
     }
 
@@ -134,7 +134,6 @@ struct DeveloperSettingsView: View {
     }
 
     private func rescanPlaces() async {
-        guard let placeScanner else { return }
         isWorking = true
         defer { isWorking = false }
         await placeScanner.rescan()
@@ -142,7 +141,6 @@ struct DeveloperSettingsView: View {
     }
 
     private func clearAndRescanPlaces() async {
-        guard let placeScanner else { return }
         isWorking = true
         defer { isWorking = false }
         await placeScanner.clearCache()

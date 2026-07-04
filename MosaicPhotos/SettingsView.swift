@@ -10,12 +10,9 @@ import SwiftUI
 /// 各行は詳細画面へ遷移し、ソースの状態（Dropbox 接続など）は行に inline 表示する。
 /// 詳細な診断・破壊的アクションは最下部の Developer Options に集約している。
 struct SettingsView: View {
-    let dropboxAuth: DropboxAuthService
-    let store: DropboxPhotoStore?
-    let backupEngine: BackupEngine
-    let placeScanner: PlaceScanner?
-    let autoAlbumEngine: AutoAlbumEngine?
-    let peopleEngine: PeopleEngine?
+    /// ストア／エンジン一式。個別引数で渡すと呼び出し側が増えるたびに漏れが出る
+    /// （実際に SourceHostView 経由で peopleEngine が渡らないバグがあった）ため、一括で受け取る。
+    let stores: HomeStores
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) private var pathAlbumsEnabled = false
@@ -26,21 +23,13 @@ struct SettingsView: View {
     /// オンライン版ヘルプ（設計資料と同じ GitHub Pages 上）。
     private static let helpURL = URL(string: "https://kanairyoji.github.io/MosaicPhotos/help/")!
 
-    init(
-        dropboxAuth: DropboxAuthService,
-        store: DropboxPhotoStore? = nil,
-        backupEngine: BackupEngine,
-        placeScanner: PlaceScanner? = nil,
-        autoAlbumEngine: AutoAlbumEngine? = nil,
-        peopleEngine: PeopleEngine? = nil
-    ) {
-        self.dropboxAuth = dropboxAuth
-        self.store = store
-        self.backupEngine = backupEngine
-        self.placeScanner = placeScanner
-        self.autoAlbumEngine = autoAlbumEngine
-        self.peopleEngine = peopleEngine
-    }
+    // 既存の body / 下位ビューが参照する個別名（読みやすさのための別名）。
+    private var dropboxAuth: DropboxAuthService { stores.dropboxStore.auth }
+    private var store: DropboxPhotoStore { stores.dropboxStore }
+    private var backupEngine: BackupEngine { stores.backupEngine }
+    private var placeScanner: PlaceScanner { stores.placeScanner }
+    private var autoAlbumEngine: AutoAlbumEngine { stores.autoAlbumEngine }
+    private var peopleEngine: PeopleEngine { stores.peopleEngine }
 
     var body: some View {
         // NavigationStack is provided by HomeView / SourceHostView; do not nest one here.
@@ -125,10 +114,7 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink {
-                    DeveloperSettingsView(
-                        dropboxAuth: dropboxAuth, store: store, backupEngine: backupEngine,
-                        placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
-                        peopleEngine: peopleEngine)
+                    DeveloperSettingsView(stores: stores)
                 } label: {
                     row(L("Developer Options"), systemImage: "hammer")
                 }

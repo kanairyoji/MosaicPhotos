@@ -10,16 +10,15 @@ import SwiftUI
 /// dismissToHome と showSettings を環境に注入するラッパー。
 /// 各ソース（All / Photos / Cloud / アルバム / 場所）のフルスクリーン表示で共通利用する。
 struct SourceHostView<Content: View>: View {
-    let dropboxStore: DropboxPhotoStore
-    let backupEngine: BackupEngine
-    let placeScanner: PlaceScanner
-    let autoAlbumEngine: AutoAlbumEngine
-    let peopleEngine: PeopleEngine
+    /// ストア／エンジン一式。個別引数だと SettingsView へ渡し忘れが起きる（実績あり）ため一括で受け取る。
+    let stores: HomeStores
     let dismissToHome: () -> Void
     @ViewBuilder let content: () -> Content
     @State private var showingSettings = false
 
     var body: some View {
+        let autoAlbumEngine = stores.autoAlbumEngine
+        let peopleEngine = stores.peopleEngine
         content()
             .environment(\.dismissToHome, dismissToHome)
             .environment(\.showSettings, { showingSettings = true })
@@ -36,9 +35,7 @@ struct SourceHostView<Content: View>: View {
             }
             .sheet(isPresented: $showingSettings) {
                 NavigationStack {
-                    SettingsView(dropboxAuth: dropboxStore.auth, store: dropboxStore,
-                                 backupEngine: backupEngine, placeScanner: placeScanner,
-                                 autoAlbumEngine: autoAlbumEngine)
+                    SettingsView(stores: stores)
                 }
             }
             // Developer Options が ON のとき、最上部に Dropbox 通信アクティビティを重ねる。
