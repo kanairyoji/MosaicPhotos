@@ -1,27 +1,216 @@
 {
-  "sourceLanguage" : "en",
-  "strings" : {
-    "Backup Destination" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックアップ先" } } } },
-    "Destination" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存先" } } } },
-    "No backup" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックアップしない" } } } },
-    "Dropbox Folder" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox フォルダー" } } } },
-    "Dropbox is not connected. Connect from Settings → Dropbox." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Dropbox に未接続です。設定 → Dropbox から接続してください。" } } } },
-    "Folder" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダー" } } } },
-    "Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真は Dropbox のこのフォルダーにバックアップされます。フォルダーが無ければ作成されます。" } } } },
-    "Backup" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックアップ" } } } },
-    "Cancel Backup" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックアップを中止" } } } },
-    "Back Up Now" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "今すぐバックアップ" } } } },
-    "Requesting photo library access…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真ライブラリへのアクセスを要求中…" } } } },
-    "Reading albums and people…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムと人物を読み込み中…" } } } },
-    "Loading photo library…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真ライブラリを読み込み中…" } } } },
-    "Saving metadata…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "メタデータを保存中…" } } } },
-    "Uploading %lld of %lld" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$lld / %2$lld 件をアップロード中" } } } },
-    "%lld uploaded · %lld already backed up" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$lld 件アップロード · %2$lld 件はバックアップ済み" } } } },
-    "Backup cancelled." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "バックアップを中止しました。" } } } },
-    "Upload Limit" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップロード上限" } } } },
-    "Per run" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "1回あたり" } } } },
-    "Unlimited" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "無制限" } } } },
-    "Maximum number of photos uploaded in a single backup run." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "1回のバックアップでアップロードする写真の最大数。" } } } }
+  "sourceLanguage": "en",
+  "strings": {
+    "%lld uploaded · %lld already backed up": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld枚アップロード · %2$lld枚はバックアップ済み"
+          }
+        }
+      }
+    },
+    "Back Up Now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐバックアップ"
+          }
+        }
+      }
+    },
+    "Backup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップ"
+          }
+        }
+      }
+    },
+    "Backup Destination": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップ先"
+          }
+        }
+      }
+    },
+    "Backup cancelled.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップを中止しました。"
+          }
+        }
+      }
+    },
+    "Cancel Backup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップを中止"
+          }
+        }
+      }
+    },
+    "Destination": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存先"
+          }
+        }
+      }
+    },
+    "Dropbox Folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox フォルダー"
+          }
+        }
+      }
+    },
+    "Dropbox is not connected. Connect from Settings → Dropbox.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox に未接続です。設定 → Dropbox から接続してください。"
+          }
+        }
+      }
+    },
+    "Folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー"
+          }
+        }
+      }
+    },
+    "Loading photo library…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真ライブラリを読み込み中…"
+          }
+        }
+      }
+    },
+    "Maximum number of photos uploaded in a single backup run.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1回のバックアップでアップロードする写真の最大数。"
+          }
+        }
+      }
+    },
+    "No backup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップしない"
+          }
+        }
+      }
+    },
+    "Per run": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1回あたり"
+          }
+        }
+      }
+    },
+    "Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真は Dropbox のこのフォルダーにバックアップされます。フォルダーが無ければ作成されます。"
+          }
+        }
+      }
+    },
+    "Reading albums and people…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムと人物を読み込み中…"
+          }
+        }
+      }
+    },
+    "Requesting photo library access…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真ライブラリへのアクセスを要求中…"
+          }
+        }
+      }
+    },
+    "Saving metadata…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メタデータを保存中…"
+          }
+        }
+      }
+    },
+    "Unlimited": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無制限"
+          }
+        }
+      }
+    },
+    "Upload Limit": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップロード上限"
+          }
+        }
+      }
+    },
+    "Uploading %lld of %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップロード中 %1$lld / %2$lld"
+          }
+        }
+      }
+    }
   },
-  "version" : "1.0"
+  "version": "1.0"
 }

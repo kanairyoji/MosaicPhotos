@@ -31,11 +31,12 @@ struct AutoAlbumSettingsView: View {
                 Picker("Background speed", selection: $backgroundLevel) {
                     ForEach(BackgroundProcessing.presets) { preset in
                         // 段階名＋その段のパラメータ（件数 / 休止秒）をそのまま提示する。
-                        Text("\(preset.name) — \(preset.batchSize)/batch · \(pause(preset))")
+                        // 段階名（"Balanced" 等）は動的 String なので個別キーで翻訳を引く。
+                        Text(L("\(presetName(preset)) — \(preset.batchSize)/batch · \(pause(preset))"))
                             .tag(preset.id)
                     }
                 }
-                LabeledContent("Batch size", value: "\(selectedPreset.batchSize) photos")
+                LabeledContent("Batch size", value: L("\(selectedPreset.batchSize) photos"))
                 LabeledContent("Pause between batches", value: pause(selectedPreset))
             } header: {
                 Text("Background Processing")
@@ -124,10 +125,15 @@ struct AutoAlbumSettingsView: View {
         .onChange(of: engine?.isTagging) { _, _ in Task { await refreshCounts() } }
     }
 
+    /// 段階名の翻訳（"Balanced" →「バランス」等）。キーはプリセット定義の英語名そのまま。
+    private func presetName(_ preset: BackgroundProcessingPreset) -> String {
+        L(String.LocalizationValue(preset.name))
+    }
+
     private func pause(_ preset: BackgroundProcessingPreset) -> String {
         preset.pauseSeconds < 1
-            ? String(format: "%.1fs pause", preset.pauseSeconds)
-            : "\(Int(preset.pauseSeconds))s pause"
+            ? String(format: L("%.1fs pause"), preset.pauseSeconds)
+            : L("\(Int(preset.pauseSeconds))s pause")
     }
 
     private func refreshCounts() async {

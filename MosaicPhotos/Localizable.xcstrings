@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%.1fs pause": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.1f秒休止"
+          }
+        }
+      }
+    },
+    "%@ — %lld/batch · %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$lld枚/回 · %3$@"
+          }
+        }
+      }
+    },
     "%lld photos": {
       "localizations": {
         "en": {
@@ -22,15 +42,19 @@
           }
         },
         "ja": {
-          "variations": {
-            "plural": {
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld 枚"
-                }
-              }
-            }
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld枚"
+          }
+        }
+      }
+    },
+    "%llds pause": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒休止"
           }
         }
       }
@@ -331,6 +355,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "バックアップ"
+          }
+        }
+      }
+    },
+    "Balanced": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バランス"
           }
         }
       }
@@ -785,6 +819,16 @@
         }
       }
     },
+    "Fast": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高速"
+          }
+        }
+      }
+    },
     "Finding people…": {
       "localizations": {
         "ja": {
@@ -891,6 +935,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "生成中…"
+          }
+        }
+      }
+    },
+    "Gentle": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "控えめ"
           }
         }
       }
@@ -2001,6 +2055,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "バージョン"
+          }
+        }
+      }
+    },
+    "Very Gentle": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "とても控えめ"
           }
         }
       }
