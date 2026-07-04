@@ -27,6 +27,12 @@ actor FaceStore {
     /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
     private static let clusterThreshold: Float = 0.45
 
+    /// 逐次クラスタリング状態のインメモリキャッシュ。以前は写真1枚のスキャンごとに
+    /// 全クラスタを fetch → Float16 復元しており、人物が増えるほど背景スキャンが遅くなる
+    /// 構造だった（O(クラスタ数)/枚）。recordScan 間で再利用し、重心を変える操作
+    /// （reassign/reset）で無効化する。
+    private var clusteringCache: FaceClustering?
+
     // MARK: - Fetch helpers（FetchDescriptor の反復をここに集約）
 
     private func cluster(_ clusterID: Int) -> PersonCluster? {
@@ -95,12 +101,15 @@ actor FaceStore {
                     embedding: face.embedding, quality: Double(face.quality), clusterID: cid))
             }
             persist(clustering)
+            clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）
         }
         try? modelContext.save()
     }
 
     /// 永続化済みクラスタを `FaceClustering` に復元する（重心・件数・代表顔まで）。
+    /// インメモリキャッシュがあればそれを使う（recordScan ごとの全復元を避ける）。
     private func loadClustering() -> FaceClustering {
+        if let cached = clusteringCache { return cached }
         var seed: [FaceClustering.Cluster] = []
         for r in allClusters() {
             guard let sum = ClipMath.decodeHalf(r.sum) else { continue }
@@ -198,6 +207,7 @@ actor FaceStore {
         addToCluster(clusterID: targetCID, vec: vec, faceID: faceID)
         face.clusterID = targetCID
         try? modelContext.save()
+        clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次回に再構築）
     }
 
     private func nextClusterID() -> Int {
@@ -249,5 +259,6 @@ actor FaceStore {
         try? modelContext.delete(model: PersonCluster.self)
         try? modelContext.delete(model: ScannedPhoto.self)
         try? modelContext.save()
+        clusteringCache = nil
     }
 }
