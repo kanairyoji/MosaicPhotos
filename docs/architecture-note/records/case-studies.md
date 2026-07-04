@@ -323,3 +323,17 @@
 - 対処: 付け替え用の重心演算を `FaceClustering.adding/removing`（純関数・assign と同じ正規化規則）に一元化し、`FaceStore` は fetch/persist に徹する。add→remove の往復で重心が元に戻ること・最後の1顔で nil（クラスタ削除の合図）・次元不一致でも count が顔数と整合することをテストで固定。
 - 関連: リファクタ R11+R6。`FaceClustering.swift` / `FaceStore.swift` / `FaceClusteringTests.swift`。
 - 残課題: 既存データで生ベクトル加減算により歪んだ重心は、ピープルのリセット（再スキャン）で再構築される。
+
+## サムネイルが高品質まで空白＋デコード直列化（プログレッシブ表示への転換）
+- 症状: グリッドの高速スクロール・ピンチズーム直後にセルが空白のままになり、反応が鈍く感じる。
+- 原因: 3 点の複合。(1) PHImageManager のオプションは opportunistic なのに、requestThumbnail が degraded（低解像度プレビュー）を**意図的に捨てて**高品質コールバックまで待っていた＝それまでセルは空白。(2) ローカル ThumbnailCache（actor）が get/set 内で JPEG デコード・エンコードまで行っており、**全セルの読み込みが actor で 1 本に直列化**（Dropbox 側で既に解決済みの問題と同型）。(3) キャッシュキーがサイズ付きのため、ズームで列数が変わると全セルがキャッシュミス。
+- 対処: `PhotoThumbnailing.thumbnailStages`（AsyncStream・既定は単発）を追加し、セルは届いた順に差し替えるプログレッシブ表示に。ローカル実装は「キャッシュ→別サイズの暫定表示（lastKeyByAsset 索引）→ degraded → 高品質」の順に流す。デコードは actor 外＋AsyncSemaphore（max(6, コア数×2)）で並列化し、actor は I/O とメモリ層のみに。先読みは `allowsCachingHighQualityImages = false` で fast 品質に限定。効果は PerfTrace カウンタ（thumb.hit/miss/nearSize/degradedFirst）で実測可能。
+- 関連: パフォーマンスチューニング一式（R1+R2+R3/F1+F2/F3/S1-S3）。`PhotoLoading.swift` / `GridThumbnailCell.swift` / `ThumbnailCache.swift` / `LocalPhotoStore+PhotoStore.swift`。
+- 残課題: Dropbox サムネイルの 2 段階化（現状は単発）。実機での hit/miss 比の確認としきい値調整。
+
+## メインスレッドでの PHAsset 全列挙（デフォルト MainActor の罠）
+- 症状: 起動直後・ソース画面を開くたびに UI が一瞬固まる。
+- 原因: ビルド設定 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` により、**アプリ層の top-level 関数も暗黙 MainActor** になる。PeopleSupport の refKey 列挙（顔スキャン候補・お気に入り集合）と LocalPhotoStore.loadAssets が、数万件の fetch+enumerate（+sort）をメインスレッドで実行していた。PlaceScanner や PhotoEnricher は Task.detached 済みだったが、最も頻繁に通る 2 経路が漏れていた。
+- 対処: いずれも Task.detached（utility/userInitiated）へ移し、メインは完成配列の代入のみに。
+- 関連: `PeopleSupport.swift` / `LocalPhotoStore.swift`。
+- 残課題: デフォルト MainActor 環境では「新しい top-level 関数・store メソッドが暗黙にメイン実行になる」ことをレビュー観点として持つ（同じ罠に再びはまりやすい）。
