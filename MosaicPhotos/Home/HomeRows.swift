@@ -243,23 +243,13 @@ struct PeopleCarousel: View {
 /// 円形アバター（代表顔の切り抜き）＋名前（未設定は "Person N"）＋枚数。
 private struct PersonCard: View {
     let person: PersonInfo
-    @State private var avatar: UIImage?
     private static let side: CGFloat = 84
 
     var body: some View {
         VStack(spacing: 6) {
-            ZStack {
-                Circle().fill(Color(uiColor: .secondarySystemBackground))
-                if let avatar {
-                    Image(uiImage: avatar).resizable().scaledToFill()
-                } else {
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: Self.side, height: Self.side)
-            .clipShape(Circle())
+            FaceAvatarImage(refKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 480)
+                .frame(width: Self.side, height: Self.side)
+                .clipShape(Circle())
 
             Text(person.displayName)
                 .font(.footnote)
@@ -267,13 +257,6 @@ private struct PersonCard: View {
                 .lineLimit(1)
         }
         .frame(width: Self.side + 12)
-        // 代表写真(cover)を変えたら再読込されるよう、id に coverRefKey を含める
-        //（clusterID だけだと cover 変更で再読込されずトップの写真が更新されない）。
-        .task(id: person.coverRefKey ?? "\(person.id)") {
-            avatar = await loadFaceAvatar(coverRefKey: person.coverRefKey,
-                                          box: person.coverBoundingBox,
-                                          maxPixel: 480)
-        }
     }
 }
 

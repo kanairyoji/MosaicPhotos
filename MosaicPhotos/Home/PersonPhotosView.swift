@@ -56,19 +56,12 @@ struct PersonPhotosView: View {
 /// この人物として認識した顔の切り抜き（正方タイル）。
 private struct FaceTile: View {
     let face: PersonInfo.Face
-    @State private var image: UIImage?
 
     var body: some View {
-        Rectangle()
-            .fill(Color(uiColor: .secondarySystemBackground))
+        Color.clear
             .aspectRatio(1, contentMode: .fit)   // 列幅ぴったりの正方形にする
-            .overlay {
-                if let image { Image(uiImage: image).resizable().scaledToFill() }
-            }
+            .overlay { FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320) }
             .clipped()
-            .task(id: face.id) {
-                image = await loadFaceAvatar(coverRefKey: face.refKey, box: face.boundingBox, maxPixel: 320)
-            }
     }
 }
 
@@ -83,7 +76,6 @@ private struct ReassignPickerView: View {
     let onPick: (Int?) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var faceImage: UIImage?
 
     var body: some View {
         NavigationStack {
@@ -91,12 +83,9 @@ private struct ReassignPickerView: View {
                 Section {
                     HStack {
                         Spacer()
-                        ZStack {
-                            Circle().fill(Color(uiColor: .secondarySystemBackground))
-                            if let faceImage { Image(uiImage: faceImage).resizable().scaledToFill() }
-                        }
-                        .frame(width: 96, height: 96)
-                        .clipShape(Circle())
+                        FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320)
+                            .frame(width: 96, height: 96)
+                            .clipShape(Circle())
                         Spacer()
                     }
                     .listRowBackground(Color.clear)
@@ -128,26 +117,15 @@ private struct ReassignPickerView: View {
                     Button(L("Cancel")) { dismiss() }
                 }
             }
-            .task(id: face.id) {
-                faceImage = await loadFaceAvatar(coverRefKey: face.refKey, box: face.boundingBox, maxPixel: 320)
-            }
         }
     }
 }
 
 private struct ReassignAvatar: View {
     let person: PersonInfo
-    @State private var image: UIImage?
     var body: some View {
-        ZStack {
-            Circle().fill(Color(uiColor: .secondarySystemBackground))
-            if let image { Image(uiImage: image).resizable().scaledToFill() }
-            else { Image(systemName: "person.fill").foregroundStyle(.secondary) }
-        }
-        .frame(width: 40, height: 40)
-        .clipShape(Circle())
-        .task(id: person.coverRefKey ?? "\(person.id)") {
-            image = await loadFaceAvatar(coverRefKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 200)
-        }
+        FaceAvatarImage(refKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 200)
+            .frame(width: 40, height: 40)
+            .clipShape(Circle())
     }
 }

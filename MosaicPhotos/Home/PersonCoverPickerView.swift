@@ -61,27 +61,16 @@ struct PersonCoverPickerView: View {
 private struct CoverCandidateAvatar: View {
     let face: PersonInfo.Face
     let isCurrent: Bool
-    @State private var image: UIImage?
     private static let side: CGFloat = 84
 
     var body: some View {
-        ZStack {
-            Circle().fill(Color(uiColor: .secondarySystemBackground))
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else {
-                ProgressView()
+        FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 400)
+            .frame(width: Self.side, height: Self.side)
+            .clipShape(Circle())
+            .overlay {
+                if isCurrent {
+                    Circle().strokeBorder(Color.accentColor, lineWidth: 3)
+                }
             }
-        }
-        .frame(width: Self.side, height: Self.side)
-        .clipShape(Circle())
-        .overlay {
-            if isCurrent {
-                Circle().strokeBorder(Color.accentColor, lineWidth: 3)
-            }
-        }
-        .task(id: face.id) {
-            image = await loadFaceAvatar(coverRefKey: face.refKey, box: face.boundingBox, maxPixel: 400)
-        }
     }
 }
