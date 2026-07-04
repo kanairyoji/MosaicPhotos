@@ -309,3 +309,17 @@
 - UI: ホーム「ピープル」を顔クラスタに差し替え（アバターは代表顔 bbox の切り抜き＝`loadFaceAvatar`）。候補 refKey はアプリが PHAsset 列挙（端末写真のみ）。顔モデル未同梱なら非表示。
 - 撤去: 旧 `PeopleScanner`/`PersonAlbumInfo`（subtype-1000）。
 - 検証: アプリ iOS ビルド成功 / AutoAlbumCore 92テスト通過。※ 実機で顔モデル同梱→クラスタ精度としきい値（既定0.45）を要調整。命名 UI は今後（現状 "Person N"）。
+
+## 設定画面のパラメータ増殖で peopleEngine の渡し忘れ（呼び出し側2箇所の不整合）
+- 症状: ソース画面（All/Photos/Cloud 等）から開いた設定 → Developer Options に「Reset people」ボタンが出ない。ホームから開いた設定では出る。
+- 原因: `SettingsView` の引数がエンジン追加のたびに増えて6個（auth/store/backup/place/autoAlbum/people）になり、呼び出し側が HomeView と SourceHostView の2箇所あるため、後から足した `peopleEngine`（optional・default nil）を SourceHostView 側に渡し忘れた。optional＋デフォルト引数のため**コンパイルエラーにならず**静かに機能が欠けた。
+- 対処: 個別引数をやめ、既存の `HomeStores`（ストア一式のコンテナ）をそのまま渡す形に集約（SettingsView / DeveloperSettingsView / SourceHostView）。既存 body は computed の別名で差分最小。今後エンジンが増えても呼び出し側の変更が不要。
+- 関連: リファクタ R9。`SettingsView.swift` / `DeveloperSettingsView.swift` / `SourceHostView.swift` / `HomeView.swift`。
+- 残課題: 下位ビュー（StorageSettingsView 等）は optional 引数のまま（プレビュー用途）。増えるようなら同様に集約する。
+
+## 顔の付け替えで重心演算が assign と不整合（正規化規則のズレ）
+- 症状: （潜在バグ・実害が顕在化する前に発見）「この人は別の人」で顔を付け替えるたびにクラスタ重心がわずかに歪み、繰り返すと同一人物の判定が劣化し得る。
+- 原因: 逐次クラスタリング `FaceClustering.assign` は埋め込みを**L2 正規化してから** sum に加算するのに、`FaceStore.reassignFace` の加減算は Float16 復元した**生ベクトル**を直接足し引きしていた。演算が2箇所に分かれ、規則（正規化）が片方にしか無かった。
+- 対処: 付け替え用の重心演算を `FaceClustering.adding/removing`（純関数・assign と同じ正規化規則）に一元化し、`FaceStore` は fetch/persist に徹する。add→remove の往復で重心が元に戻ること・最後の1顔で nil（クラスタ削除の合図）・次元不一致でも count が顔数と整合することをテストで固定。
+- 関連: リファクタ R11+R6。`FaceClustering.swift` / `FaceStore.swift` / `FaceClusteringTests.swift`。
+- 残課題: 既存データで生ベクトル加減算により歪んだ重心は、ピープルのリセット（再スキャン）で再構築される。

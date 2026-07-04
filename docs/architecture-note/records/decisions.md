@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-22 撮影日時のサニタイズは表示層でなくデータ入口で行う
+- 状態: 採用
+- 文脈: EXIF 欠落・0 値・カメラ既定値（1970/1980 等）の写真が「1980-01-01」等として表示・整列される。当初は表示3箇所（フル画面ラベル・アルバム日付・グリッド見出し）だけで `meaningful` 判定して「日時不明」化したが、ソート（`PhotoItemSorting`）・自動アルバム生成（`PhotoEnrichment` の保存値）・場所スキャンは生値のままで、無意味な日付が並び順や旅行アルバムの日付に混ざり続けた。
+- 決定: 判定の核を `MosaicSupport.CaptureDate.meaningful`（有効窓 1990-01-01〜現在+2日）に置き、**データの入口**でサニタイズする：`LocalPhotoItem.captureDate`（PHAsset）・`DropboxFileItem.init`（同期パース／キャッシュ復元の両生成点を一括）・`PhotoEnricher`（エンリッチ保存値）。表示層の `DisplayDate.meaningful` は委譲にして防御としては残す。
+- 結果: ソート・生成・グルーピングにも無意味な日付が入らない。入口が1関数に集約され閾値変更が1箇所。トレードオフ: 1990 年より前の正当なスキャン写真も「日時不明」になる（スマホ写真アプリの用途では許容）。既存の生成済みアルバムは再生成するまで旧日付が残る。
+- 関連: `MosaicSupport/CaptureDate.swift`（+テスト）、`DropboxFileItem.swift` / `PhotoEnricher.swift` / `LocalPhotoItem.swift`。
+
 ## ADR-21 逆ジオコーディングを同梱DBで完全オフライン化（GeoNames cities15000）
 - 状態: 採用
 - 文脈: 座標→地名の解決を `CLGeocoder`（オンライン・レート制限・要ネットワーク）で行っていた。一括生成時にスロットリングで失敗し、`PlaceNameResolver` が**失敗（空）を恒久キャッシュ**するため旅行アルバムが「Trip」で固定化、Places も地名にならない不具合が出ていた（[[ADR-1]] 系の自動アルバム品質に影響）。

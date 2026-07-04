@@ -104,7 +104,8 @@ struct MergedPhotoItemTests {
 
     @Test("captureDate / coordinate は内包する要素へ委譲する")
     func delegatesAccessors() {
-        let date = Date(timeIntervalSince1970: 1000)
+        // 有効窓（1990〜）内の日付を使う。無意味な日付は DropboxFileItem.init が nil に落とす（ADR-22）。
+        let date = Date(timeIntervalSince1970: 1_577_836_800)   // 2020-01-01
         let withLoc = cloud("/a.jpg", lat: 35.5, lon: 139.5, date: date)
         #expect(withLoc.captureDate == date)
         #expect(withLoc.coordinate?.latitude == 35.5)
@@ -113,6 +114,13 @@ struct MergedPhotoItemTests {
         let noLoc = cloud("/b.jpg")
         #expect(noLoc.coordinate == nil)
         #expect(noLoc.captureDate == nil)
+    }
+
+    @Test("無意味な撮影日時（1970 等）は入口で日時不明に落ちる")
+    func bogusCaptureDateSanitizedAtIngress() {
+        // ADR-22: DropboxFileItem.init がサニタイズするため、1970 の既定値は nil＝日時不明になる。
+        let bogus = cloud("/c.jpg", date: Date(timeIntervalSince1970: 1000))
+        #expect(bogus.captureDate == nil)
     }
 
     @Test("等価性・ハッシュは id 基準")
