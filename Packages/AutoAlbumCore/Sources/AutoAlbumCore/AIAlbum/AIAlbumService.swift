@@ -35,7 +35,7 @@ final class AIAlbumService {
         // clipVector を載せない軽量メタデータ（カタログ・構造化フィルタ用）。意味検索の埋め込みは
         // rankedSearch 内でページングして読む（約138MBの一括ロードを避ける）。
         let all = await store.allEnrichedPhotosLite()
-        let catalog = AIAlbumCatalog.build(from: all)
+        let catalog = await Self.buildCatalogOffMain(all)
         let spec = await understanding.interpretSpec(trimmed, catalog: catalog, now: now)
         queryCache[id] = spec
         let members = await rankedSearch(all, spec: spec, semanticText: await englishPhrase(trimmed), now: now)
@@ -59,7 +59,7 @@ final class AIAlbumService {
         let now = Date()
         // 軽量メタデータ（clipVector なし）。埋め込みは rankedSearch でページングして読む。
         let all = await store.allEnrichedPhotosLite()
-        let catalog = AIAlbumCatalog.build(from: all)
+        let catalog = await Self.buildCatalogOffMain(all)
         let signature = catalog.places.count &* 1000 &+ catalog.people.count
         if signature != lastCatalogSignature { queryCache.removeAll(); lastCatalogSignature = signature }
 
@@ -92,12 +92,23 @@ final class AIAlbumService {
     private func rankedSearch(_ allLite: [EnrichedPhoto], spec: QuerySpec,
                               semanticText: String, now: Date) async -> [EnrichedPhoto] {
         // 意味検索の clipVector はストアからページ単位で読む（一度に全件を載せない）。
-        let members = await searcher.search(
-            baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
-            loadPage: { [store] offset, limit in
-                await store.enrichmentVectorPage(offset: offset, limit: limit)
-            })
-        return members.sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+        // ⚠️ スコアリング（数万件×512 次元コサイン＋フィルタ）は CPU を食うので Task.detached で
+        // オフメイン実行する（本サービスは @MainActor。直呼びだと ~1s 級のメイン占有になる）。
+        let searcher = self.searcher
+        let store = self.store
+        return await Task.detached(priority: .utility) {
+            let members = await searcher.search(
+                baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
+                loadPage: { offset, limit in
+                    await store.enrichmentVectorPage(offset: offset, limit: limit)
+                })
+            return members.sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+        }.value
+    }
+
+    /// カタログ構築（85k 件の地名/人物集計）もオフメインで行う。
+    nonisolated private static func buildCatalogOffMain(_ all: [EnrichedPhoto]) async -> AIAlbumCatalog {
+        await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
     }
 
     private func loadAll() async -> [AutoAlbumInfo] {

@@ -22,7 +22,7 @@
 | **自動アルバム生成**（旅行/フォルダ） | 起動時 loadOrGenerate（キャッシュあれば即ロードのみ）／10秒ティックで差分検知時／手動「今すぐ生成」 | 定期＝heavyWorkAllowed＋backgroundEnabled 設定＋差分あり。初回と手動は例外（即実行） | 全体 22〜26s（85k件）。SwiftData fetch/prune/upsert＋純計算。メモリ +100〜150MB | **オフメイン**（E1: Store detached 生成＋A: 計算 detached） |
 | **CLIP 埋め込み**（意味検索の索引） | loadOrGenerate 完了時／AIアルバム作成時にスケジュール。以後トリクル実行 | heavyShouldPause を**1枚ごと**に確認（電源+アイドル+生成と相互排他）。クラウド分は回線ポリシーも | ~150–300ms/枚（ANE・モデルロード直後は ~1s）。既定プリセット Gentle=8枚/2.5s休止。残 72k枚 → 完了は日単位のトリクル。**モデルロード自体 16–35s・メモリ +150MB 級（遅延ロード・背景）** | オフメイン（推論 detached・保存 Store actor） |
 | **顔スキャン**（ピープル） | 起動タスクで候補列挙→スキャン開始（未スキャン分のみ） | heavyShouldPause を 1枚ごと確認（同上）。シミュレータは既定スキップ | 0.4〜5.6s/8枚バッチ（800px ロード＋Vision＋facenet×顔数）。残 13k枚 | オフメイン（検出 SE-0338 実行・保存 FaceStore=E1 で detached 生成） |
-| **AI アルバム再評価** | 埋め込みバッチ完了ごと＋loadOrGenerate 時 | 埋め込みに追従（＝実質 heavy ゲート内） | 意味スコアリング ~12.7k 件×512 次元＋ベクトルページ読み。~1s 級 | ⚠️ **一部メイン疑い**（AIAlbumService が @MainActor。残課題参照） |
+| **AI アルバム再評価** | 埋め込みバッチ完了ごと＋loadOrGenerate 時 | 埋め込みに追従（＝実質 heavy ゲート内） | 意味スコアリング ~12.7k 件×512 次元＋ベクトルページ読み。~1s 級 | オフメイン（スコアリング/カタログ構築を Task.detached 化済み） |
 | **場所スキャン** | 起動 1.5s 後に loadOrScan（キャッシュあれば即）／10秒ティックで差分時 | 定期＝backgroundAllowed＋回線ポリシー | 数秒（85k 座標グルーピング・オフライン地名DB）。起動時スパイク +100MB 級を観測 | オフメイン（Task.detached） |
 | **端末アルバムスキャン** | 起動時 loadOrScan（キャッシュあれば即） | ゲートなし（初回 UX 優先・軽中量） | 数秒（PHAssetCollection 列挙） | オフメイン（Task.detached） |
 | **Dropbox 同期**（差分/longpoll） | 接続時に開始・常駐 longpoll（~50s サイクル） | 接続中のみ。通信は回線ポリシー | ネットワーク待ちが主・CPU 軽。起動時の cachedItems 67k ロード ~1s | オフメイン（actor） |
@@ -40,7 +40,6 @@
 | **グリッドのレイアウト切替**（ピンチで列数変更） | `grid.layout` 24〜374ms（67k・列数による） | 単発なので許容。気になるなら次の候補 |
 | **グリッド snapshot の反映**（applySnapshotUsingReloadData） | メイン部分 ~100–150ms（構築 67〜790ms はオフメイン済み） | 許容 |
 | **画面遷移の初期化**（ソース画面 onAppear） | `screen.grid.*` 280〜330ms（大規模ソース） | 許容（PerfTrace で監視継続） |
-| **AI アルバム再評価の一部**（上記・@MainActor） | ~0.8–1.1s 疑い（scored=12.7k 時） | ⚠️ 残課題（下記） |
 | SwiftUI 差分・PHImage コールバック・セル反映 | 各 ~ms 級 | 正常 |
 
 ## 解消済みの主要問題（経緯）
@@ -52,9 +51,15 @@
 5. 起動直後の全処理同時突入（メモリ 668MB→ストール）→ 相互排他（D1）＋アイドルゲート（E2・起動直後は非アイドル）
 6. メイン上の PHAsset 全列挙・cloudPhotos 67k map 等 → detached（F1/F2/D3）
 
-## 残課題
+## 残課題（更新: 2026-07-05 に主要2件を解消）
 
-- **AIAlbumService（@MainActor）の再評価**: スコアリングをオフメイン化する余地。埋め込みと同時にしか走らないため優先度は中。次の実機ログの hang.begin で確定してから対応。
-- **スクリーンロック中の実行**: 現状は「アプリ起動中＋電源＋アイドル」でのみ進む。ロック中に進めるには BGProcessingTask（OS が充電＋アイドル時に起動）の導入が必要（未実装・指示待ち）。
+- ~~AIAlbumService（@MainActor）の再評価~~ → **解消**: スコアリング（searcher.search）と
+  カタログ構築（85k 集計）を Task.detached へ（`AIAlbumService.rankedSearch` / `buildCatalogOffMain`）。
+- ~~スクリーンロック中の実行~~ → **解消**: `BGProcessingTask` を導入（`HeavyWorkScheduler`・
+  識別子 `com.kanai.MosaicPhotos.heavywork`）。バックグラウンド遷移時に予約し、
+  **電源接続中（requiresExternalPower）に OS が起動**して generate 差分・CLIP 埋め込み・
+  顔スキャンを進める。期限切れは Task キャンセルで即応。部分 Info.plist（`Config/Info.plist`・
+  GENERATE_INFOPLIST_FILE とマージ）で UIBackgroundModes/PermittedIdentifiers を宣言。
 - アイドルしきい値 60 秒（`BackgroundYield.heavyWorkIdleSeconds`）は実機の体感で調整可。
-- CLIP モデル初回ロード（16–35s・背景）はアイドルゲート外（埋め込み初回要求時に遅延ロード）。ロード自体もアイドル時に寄せる余地あり。
+- CLIP モデル初回ロード（16–35s・背景）は埋め込み初回要求時の遅延ロード＝実質アイドル時
+  （埋め込み自体がアイドルゲート内でのみ動くため）。

@@ -442,6 +442,7 @@
 				DEVELOPMENT_TEAM = MMLN9NXVM4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = MosaicPhotos;
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "MosaicPhotos needs access to your photo library to display your photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -476,6 +477,7 @@
 				DEVELOPMENT_TEAM = MMLN9NXVM4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = MosaicPhotos;
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "MosaicPhotos needs access to your photo library to display your photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

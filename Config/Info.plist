@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- BGProcessingTask（スクリーンロック中の重い処理）用の部分 plist。
+	     GENERATE_INFOPLIST_FILE=YES と併用され、生成キー（INFOPLIST_KEY_*）とマージされる。
+	     配列キーは INFOPLIST_KEY_ ビルド設定で表現できないためここに置く。 -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.kanai.MosaicPhotos.heavywork</string>
+	</array>
+</dict>
+</plist>

@@ -91,7 +91,10 @@ struct RootView: View {
                     withAnimation(.easeIn(duration: 0.2)) { showLoadingIndicator = true }
                 }
             }
-            stores = await HomeStores.build()
+            let built = await HomeStores.build()
+            stores = built
+            // ロック中実行（BGProcessingTask）が同じストア群を再利用できるよう共有する。
+            HeavyWorkScheduler.stores = built
             loadingTimer.cancel()
         }
     }
