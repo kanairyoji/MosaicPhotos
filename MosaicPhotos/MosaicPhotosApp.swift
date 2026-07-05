@@ -10,6 +10,8 @@ struct MosaicPhotosApp: App {
         AppLocale.loadFromDefaults()
         // パフォーマンス計測の永続トグル（Developer Options）を起動時に反映する。既定 OFF。
         PerfTrace.isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.perfTracing)
+        // センサー: 起動（App.init）→ ホーム初回表示までの所要（endScreen は HomeView 側）。
+        PerfTrace.beginScreen("app.startup")
     }
 
     var body: some Scene {

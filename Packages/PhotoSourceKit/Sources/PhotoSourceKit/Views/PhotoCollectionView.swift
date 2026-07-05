@@ -202,8 +202,10 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                     (currentColumns < gridFavoriteColumnThreshold) != (columns < gridFavoriteColumnThreshold)
                 currentColumns = columns
                 currentGrouped = grouped
+                let tLayout = PerfTrace.nowNs()   // センサー: ズーム（列数変更）のレイアウト適用所要
                 collectionView.setCollectionViewLayout(makeLayout(columns: columns, grouped: grouped), animated: false)
                 if favoriteVisibilityFlipped { reconfigureVisibleItems() }
+                PerfTrace.logSpan("grid.layout", ms: PerfTrace.msSince(tLayout), detail: "cols=\(columns)")
             }
             scrubber.isHidden = items.count <= 60
 

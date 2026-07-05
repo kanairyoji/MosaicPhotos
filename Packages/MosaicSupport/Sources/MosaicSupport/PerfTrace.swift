@@ -16,14 +16,47 @@ import os
 ///  - DiagnosticsLog（端末内ログ。Mac なしで Developer Options から閲覧・共有できる）
 public enum PerfTrace {
 #if MOSAIC_PERF
-    public static var isEnabled = true
+    public static var isEnabled = true { didSet { updateSensors() } }
 #else
-    public static var isEnabled = false
+    public static var isEnabled = false { didSet { updateSensors() } }
 #endif
 
     private static let log = OSLog(subsystem: "com.mosaicphotos.perf", category: "PointsOfInterest")
     private static let lock = NSLock()
     private static var counters: [String: (count: Int, total: Double)] = [:]
+
+    // MARK: - 常駐センサー（有効中のみ）: メインスレッド監視＋定期フラッシュ
+
+    private static let flushQueue = DispatchQueue(label: "com.mosaicphotos.perf.flush", qos: .utility)
+    private static var flushTimer: DispatchSourceTimer?
+
+    /// ON: メインスレッド監視（MainThreadWatchdog）を開始し、10 秒ごとに
+    /// 「footprint＋メイン応答性サマリ」「集計カウンタ」を診断ログへ書く。OFF: 停止。
+    /// ※ 初期値では didSet が呼ばれないが、アプリ起動時に設定値を必ず代入するため実質常に反映される。
+    private static func updateSensors() {
+        if isEnabled {
+            MainThreadWatchdog.shared.start()
+            flushQueue.async {
+                guard flushTimer == nil else { return }
+                let t = DispatchSource.makeTimerSource(queue: flushQueue)
+                t.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(1))
+                t.setEventHandler {
+                    let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
+                    let main = MainThreadWatchdog.shared.flushSummary() ?? "main: idle"
+                    DiagnosticsLog.shared.append("PERF TICK footprint=\(mb) \(main)")
+                    flushCounters("tick")
+                }
+                t.resume()
+                flushTimer = t
+            }
+        } else {
+            MainThreadWatchdog.shared.stop()
+            flushQueue.async {
+                flushTimer?.cancel()
+                flushTimer = nil
+            }
+        }
+    }
 
     // MARK: - 時刻ヘルパ（手動計測用）
 

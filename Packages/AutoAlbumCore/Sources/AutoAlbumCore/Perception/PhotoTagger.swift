@@ -81,10 +81,13 @@ final class PhotoTagger {
             var withVector = 0
             for key in refKeys {
                 while shouldPause() && !Task.isCancelled {
+                    PerfTrace.count("clip.pauseWait")   // センサー: 譲り待ちの発生数
                     try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
                 }
                 if Task.isCancelled { break }
+                let tPerceive = PerfTrace.nowNs()
                 let signal = (await perception.perceive(refKeys: [key]))[key]
+                PerfTrace.count("clip.embedMs", value: PerfTrace.msSince(tPerceive))   // 1枚の知覚単価
                 if signal?.clipVector != nil { withVector += 1 }
                 // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
                 merged[key] = signal ?? PhotoPerception()

@@ -74,6 +74,7 @@ struct HomeView: View {
                 placesSection
             }
             .listStyle(.insetGrouped)
+            .onAppear { PerfTrace.endScreen("app.startup") }   // センサー: 起動→ホーム初回表示
             .safeAreaInset(edge: .bottom) { settingsBar }
             // システムの大タイトルはアクティビティバーと重なる（ナビバー chrome は safeAreaInset で
             // 下がらない）。ナビバーを隠し、バーの下に独自タイトルヘッダーを置いて重なりを解消する。

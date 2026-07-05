@@ -59,6 +59,7 @@ final class FaceTagger {
         var batchNo = 0
         while index < todo.count, !Task.isCancelled {
             while shouldPause() && !Task.isCancelled {
+                PerfTrace.count("face.pauseWait")   // センサー: 譲り待ちの発生数
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
             if Task.isCancelled { break }
@@ -67,7 +68,9 @@ final class FaceTagger {
             let batch = Array(todo[index..<end])
             index = end
 
+            let tBatch = PerfTrace.nowNs()
             let signals = await provider.detectFaces(refKeys: batch)
+            PerfTrace.count("face.batchMs", value: PerfTrace.msSince(tBatch))   // 1バッチの検出+埋め込み単価
             for refKey in batch {
                 let faces = signals[refKey] ?? []
                 facesFound += faces.count

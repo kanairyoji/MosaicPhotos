@@ -80,10 +80,19 @@ extension LocalPhotoStore: PhotoStore {
         return AsyncStream { continuation in
             let task = Task { @MainActor in
                 defer { continuation.finish() }
+                // センサー: 要求→最初の画像（体感）と→最終画質の遅延。firstYielded で一度だけ記録。
+                let t0 = PerfTrace.nowNs()
+                var firstYielded = false
+                func markFirst() {
+                    guard !firstYielded else { return }
+                    firstYielded = true
+                    PerfTrace.count("thumb.firstMs", value: PerfTrace.msSince(t0))
+                }
 
                 // 1) キャッシュ（メモリ→ディスク。デコードは並列・オフメイン）
                 if let cached = await ThumbnailCache.shared.get(key) {
                     PerfTrace.count("thumb.hit")
+                    markFirst()
                     continuation.yield(cached)
                     return
                 }
@@ -93,6 +102,7 @@ extension LocalPhotoStore: PhotoStore {
                 // 2) 別サイズの暫定表示（最終画質は 3) が差し替える）
                 if let near = await ThumbnailCache.shared.nearestMemoryImage(assetID: asset.localIdentifier) {
                     PerfTrace.count("thumb.nearSize")
+                    markFirst()
                     continuation.yield(near)
                 }
                 if Task.isCancelled { return }
@@ -120,6 +130,7 @@ extension LocalPhotoStore: PhotoStore {
                             if isDegraded {
                                 if let img {
                                     PerfTrace.count("thumb.degradedFirst")
+                                    Task { @MainActor in markFirst() }
                                     continuation.yield(img)   // まず見せる
                                 }
                                 return
@@ -133,6 +144,8 @@ extension LocalPhotoStore: PhotoStore {
                 }
 
                 if let final, !Task.isCancelled {
+                    markFirst()
+                    PerfTrace.count("thumb.finalMs", value: PerfTrace.msSince(t0))
                     continuation.yield(final)
                     Task.detached(priority: .utility) {
                         await ThumbnailCache.shared.set(final, for: key)

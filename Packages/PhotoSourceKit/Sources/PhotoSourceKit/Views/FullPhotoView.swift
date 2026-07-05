@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import CoreLocation
+import MosaicSupport
 import SwiftUI
 
 /// `PhotoPageView` の 1 ページ分。縦スクロールで写真が上にスライドし、下部に情報パネル（EXIF＋地図）が現れる。
@@ -66,14 +67,18 @@ struct FullPhotoView<Store: PhotoStore>: View {
         // 全滅したときだけ failed を立てる。読み込み中は "Loading…" を見せる。
         .task(id: ImageKey(id: "\(item.id)", retry: retryToken)) {
             failed = false
+            // センサー: ページ表示要求→サムネ即表示（体感）→フル画像確定の遅延。
+            let t0 = PerfTrace.nowNs()
             // D: まず手元のサムネを即表示し、フル画像が来たら差し替える（開いた直後の黒画面を減らす）。
             thumb = nil
             if image == nil, let quick = await store.thumbnail(for: item), !Task.isCancelled {
                 thumb = quick
+                PerfTrace.count("full.quickMs", value: PerfTrace.msSince(t0))
             }
             for attempt in 0..<3 {
                 if let loaded = await store.fullImage(for: item) {
                     image = loaded
+                    PerfTrace.count("full.finalMs", value: PerfTrace.msSince(t0))
                     return
                 }
                 if Task.isCancelled { return }
