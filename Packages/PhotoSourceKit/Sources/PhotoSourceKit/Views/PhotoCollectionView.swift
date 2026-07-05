@@ -137,11 +137,14 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             // item 幅を 1/cols にし、subitems:[item] でグループが cols 個で自動的に埋まる。
             // セル間の隙間は contentInsets（各辺 spacing/2）で作る（interItemSpacing だと
             // 合計幅が超過して列が折り返す古典的問題があるため使わない）。
+            // 高密度表示（15 列以上）は隙間を無くし、画像をびっちり敷き詰める
+            //（セルが小さく、隙間が相対的に大きく見えて目障りなため）。
+            let gap = effectiveSpacing(columns: cols)
             let item = NSCollectionLayoutItem(layoutSize: .init(
                 widthDimension: .fractionalWidth(fraction),
                 heightDimension: .fractionalHeight(1.0)))
             item.contentInsets = NSDirectionalEdgeInsets(
-                top: spacing / 2, leading: spacing / 2, bottom: spacing / 2, trailing: spacing / 2)
+                top: gap / 2, leading: gap / 2, bottom: gap / 2, trailing: gap / 2)
             // グループ高 = コンテナ幅 × 1/cols ＝ 正方形の行。
             let group = NSCollectionLayoutGroup.horizontal(
                 layoutSize: .init(widthDimension: .fractionalWidth(1.0),
@@ -311,10 +314,16 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             cv.setContentOffset(CGPoint(x: 0, y: CGFloat(min(max(0, fraction), 1)) * maxY), animated: false)
         }
 
+        /// セル間の実効間隔。高密度（15 列以上）は 0（びっちり）、それ以外は既定の spacing。
+        private func effectiveSpacing(columns: Int) -> CGFloat {
+            columns >= gridFavoriteColumnThreshold ? 0 : spacing
+        }
+
         private func cellPixelSize() -> CGSize {
             let cols = CGFloat(max(1, currentColumns))
             let width = collectionView?.bounds.width ?? UIScreen.main.bounds.width
-            let side = max(1, (width - spacing * (cols - 1)) / cols)
+            let gap = effectiveSpacing(columns: max(1, currentColumns))
+            let side = max(1, (width - gap * (cols - 1)) / cols)
             // サムネイルは端末スケール（×3）のフル解像度まで要らない。×2 上限にして
             // デコードメモリを約56%削減（面積比 (2/3)^2≒0.44）。視覚劣化はほぼ無い。
             let scale = min(UIScreen.main.scale, 2)
