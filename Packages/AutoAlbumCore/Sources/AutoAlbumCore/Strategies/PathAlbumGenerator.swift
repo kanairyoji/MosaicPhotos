@@ -33,7 +33,9 @@ final class PathAlbumGenerator {
     }
 
     /// フル生成用：エンリッチ済み全写真から（お気に入り/横長などでカバーを賢く選べる）。保存は呼び出し側。
-    func makeFromEnriched(_ allEnriched: [EnrichedPhoto]) -> [AutoAlbumInfo] {
+    /// `nonisolated static`：85k 件規模の純計算なので **Task.detached（オフメイン）から呼ぶ**
+    /// （@MainActor 上で実行するとメインを数秒塞ぐ — 実測 12s ハングの一因）。
+    nonisolated static func computeFromEnriched(_ allEnriched: [EnrichedPhoto]) -> [AutoAlbumInfo] {
         let rules = Self.rules()
         guard Self.enabled, !rules.isEmpty else { return [] }
         let infos = PathAlbumStrategy(rules: rules).makeAlbums(fromCloud: allEnriched).map(pathInfo(from:))
@@ -43,12 +45,12 @@ final class PathAlbumGenerator {
 
     // MARK: - Settings
 
-    private static var enabled: Bool {
+    nonisolated private static var enabled: Bool {
         UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.pathAlbumsEnabled)
     }
 
     /// 設定（JSON）からフォルダ名アルバムの抽出ルールを読む。
-    private static func rules() -> [PathAlbumRule] {
+    nonisolated private static func rules() -> [PathAlbumRule] {
         guard let json = UserDefaults.standard.string(forKey: AutoAlbumSettingsKeys.pathAlbumRules),
               let data = json.data(using: .utf8),
               let rules = try? JSONDecoder().decode([PathAlbumRule].self, from: data)

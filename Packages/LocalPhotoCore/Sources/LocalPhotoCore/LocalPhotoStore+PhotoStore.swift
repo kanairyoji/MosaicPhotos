@@ -78,7 +78,11 @@ extension LocalPhotoStore: PhotoStore {
         let key = "\(asset.localIdentifier):\(Int(targetSize.width))x\(Int(targetSize.height))"
 
         return AsyncStream { continuation in
-            let task = Task { @MainActor in
+            // ⚠️ MainActor で回さない（Task.detached）。スクラブ時は数千要求が並ぶため、MainActor に
+            // 載せると UI 処理とキューを奪い合い「キャッシュヒットなのに秒単位待ち」になる
+            // （実測: thumb.firstMs 平均 2.9s・ほぼ全部 hit）。PHImageManager はスレッドセーフ、
+            // キャッシュは actor、セルへの反映は消費側（MainActor）で行われるので表示は不変。
+            let task = Task.detached(priority: .userInitiated) {
                 defer { continuation.finish() }
                 // センサー: 要求→最初の画像（体感）と→最終画質の遅延。firstYielded で一度だけ記録。
                 let t0 = PerfTrace.nowNs()
@@ -111,6 +115,8 @@ extension LocalPhotoStore: PhotoStore {
                 final class RequestBox: @unchecked Sendable {
                     var id: PHImageRequestID = PHInvalidImageRequestID
                     var finished = false
+                    /// degraded を最初に見せた時刻（ns・0=未表示）。firstMs 計測用。
+                    var degradedShownNs: UInt64 = 0
                 }
                 let box = RequestBox()
                 let final: UIImage? = await withTaskCancellationHandler {
@@ -130,7 +136,7 @@ extension LocalPhotoStore: PhotoStore {
                             if isDegraded {
                                 if let img {
                                     PerfTrace.count("thumb.degradedFirst")
-                                    Task { @MainActor in markFirst() }
+                                    if box.degradedShownNs == 0 { box.degradedShownNs = PerfTrace.nowNs() }
                                     continuation.yield(img)   // まず見せる
                                 }
                                 return
@@ -144,6 +150,12 @@ extension LocalPhotoStore: PhotoStore {
                 }
 
                 if let final, !Task.isCancelled {
+                    // 体感（最初の画像）は degraded が先に出ていればその時刻で計上する。
+                    if !firstYielded, box.degradedShownNs != 0 {
+                        firstYielded = true
+                        PerfTrace.count("thumb.firstMs",
+                                        value: Double(box.degradedShownNs &- t0) / 1_000_000)
+                    }
                     markFirst()
                     PerfTrace.count("thumb.finalMs", value: PerfTrace.msSince(t0))
                     continuation.yield(final)

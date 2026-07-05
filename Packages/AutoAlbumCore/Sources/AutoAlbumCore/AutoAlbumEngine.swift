@@ -143,6 +143,9 @@ public final class AutoAlbumEngine {
         guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
         // 電源ポリシー（既定: 充電中かつ低電力 OFF のみ）を満たさなければ定期再生成を行わない。
         guard PowerStateMonitor.shared.backgroundAllowed() else { return }
+        // 写真閲覧・フル画像/サムネ取得中は重い再生成を始めない（オフメイン化済みでも
+        // CPU・メモリ・SwiftData I/O が操作と競合するため。次のティックで再判定）。
+        guard !BackgroundYield.uiBusy else { return }
         let cloudChanged = await cloudSignatureChanged()
         guard libraryDirty || cloudChanged else { return }
         libraryDirty = false
@@ -172,10 +175,15 @@ public final class AutoAlbumEngine {
         var currentRefKeys = localResult.current
 
         // 2. クラウド：設定 ON かつ provider があればエンリッチ。
+        //    67k 件のループ（refKey 生成・Set 操作・geocode）は Task.detached でオフメインに
+        //    （エンジンは @MainActor のため、直呼びだとこのループがメインスレッドを塞ぐ）。
         if includeCloud, let cloudProvider {
             let metas = await cloudProvider.cloudPhotos()
-            lastCloudSignature = Self.signature(of: metas)
-            let cloudResult = await enricher.enrichCloud(metas: metas, existing: existing)
+            let enricher = self.enricher
+            let (sig, cloudResult) = await Task.detached(priority: .utility) {
+                (Self.signature(of: metas), await enricher.enrichCloud(metas: metas, existing: existing))
+            }.value
+            lastCloudSignature = sig
             await store.upsert(cloudResult.new)
             currentRefKeys.formUnion(cloudResult.current)
         }
@@ -184,39 +192,49 @@ public final class AutoAlbumEngine {
         await store.prune(keeping: currentRefKeys)
         await store.refreshLocalLinkKeys(backupMap)
 
-        // 4. 全付加情報 → 重複排除（linkKey でローカル優先）。
+        // 4〜6. 重複排除・旅行抽出・フォルダ名アルバムは 85k 件規模の純計算。
+        //    まとめて Task.detached（オフメイン）で行い、メインは結果の代入だけにする
+        //    （従来はエンジン＝@MainActor 上で実行され、実測で main を最大 12 秒塞いでいた）。
         //    生成は意味検索を伴わないため clipVector を載せない軽量版を使う（実機メモリ削減）。
         let allEnriched = await store.allEnrichedPhotosLite()
-        var photos = dedupByLinkKey(allEnriched)
-        if UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.excludeAlbumed) {
-            let albumed = await PhotoEnricher.userAlbumedIdentifiers()
-            photos = photos.filter { ref in
-                guard let localId = PhotoRef.decode(ref.id)?.localIdentifier else { return true }
-                return !albumed.contains(localId)
-            }
-        }
-
-        // 5. 各戦略で時間＋場所アルバム化（地名が空なら代表座標を逆ジオコーディングして補完）。
+        let excludeAlbumed = UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.excludeAlbumed)
+        let albumed = excludeAlbumed ? await PhotoEnricher.userAlbumedIdentifiers() : []
         let params = AlbumGenParams.current
-        var infos: [AutoAlbumInfo] = []
-        for strategy in strategies {
-            for rawDraft in strategy.makeAlbums(from: photos, params: params) {
-                let draft = await resolvePlaceIfNeeded(rawDraft)
-                infos.append(AutoAlbumInfo(
-                    id: AutoAlbumComposer.stableID(draft), strategyID: draft.strategyID,
-                    title: AutoAlbumComposer.title(draft), placeName: draft.placeName, places: draft.places,
-                    country: draft.country, people: draft.people,
-                    startDate: draft.startDate, endDate: draft.endDate, coverRef: draft.coverRef,
-                    memberRefs: draft.memberRefs, photoCount: draft.photoCount,
-                    representativeDate: draft.representativeDate,
-                    latitude: draft.latitude, longitude: draft.longitude))
-            }
-        }
-        await PlaceNameResolver.shared.persist()
-        infos.sort { $0.representativeDate > $1.representativeDate }
+        let strategies = self.strategies
 
-        // 6. フォルダ名アルバム（任意・既定 OFF）。戦略ごとに差し替え（AI アルバムなど保存物は消さない）。
-        let pathInfos = pathGenerator.makeFromEnriched(allEnriched)
+        let (photos, infos, pathInfos) = await Task.detached(priority: .utility)
+        { () -> ([EnrichedPhoto], [AutoAlbumInfo], [AutoAlbumInfo]) in
+            var photos = dedupByLinkKey(allEnriched)
+            if excludeAlbumed {
+                photos = photos.filter { ref in
+                    guard let localId = PhotoRef.decode(ref.id)?.localIdentifier else { return true }
+                    return !albumed.contains(localId)
+                }
+            }
+
+            // 各戦略で時間＋場所アルバム化（地名が空なら代表座標を逆ジオコーディングして補完）。
+            var infos: [AutoAlbumInfo] = []
+            for strategy in strategies {
+                for rawDraft in strategy.makeAlbums(from: photos, params: params) {
+                    let draft = await Self.resolvePlaceIfNeeded(rawDraft)
+                    infos.append(AutoAlbumInfo(
+                        id: AutoAlbumComposer.stableID(draft), strategyID: draft.strategyID,
+                        title: AutoAlbumComposer.title(draft), placeName: draft.placeName, places: draft.places,
+                        country: draft.country, people: draft.people,
+                        startDate: draft.startDate, endDate: draft.endDate, coverRef: draft.coverRef,
+                        memberRefs: draft.memberRefs, photoCount: draft.photoCount,
+                        representativeDate: draft.representativeDate,
+                        latitude: draft.latitude, longitude: draft.longitude))
+                }
+            }
+            infos.sort { $0.representativeDate > $1.representativeDate }
+
+            // フォルダ名アルバム（任意・既定 OFF）。
+            let pathInfos = PathAlbumGenerator.computeFromEnriched(allEnriched)
+            return (photos, infos, pathInfos)
+        }.value
+
+        await PlaceNameResolver.shared.persist()
         await store.replaceAlbums(forStrategy: TimePlaceStrategy.strategyID, with: infos)
         await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: pathInfos)
         albums = infos
@@ -240,7 +258,8 @@ public final class AutoAlbumEngine {
     // MARK: - Private
 
     /// 地名が空のアルバムについて、代表座標から場所名を解決して draft に補う。
-    private func resolvePlaceIfNeeded(_ draft: GeneratedAlbumDraft) async -> GeneratedAlbumDraft {
+    /// `nonisolated static`：生成のオフメイン計算（Task.detached）から呼ぶ（中身は actor 呼び出しのみ）。
+    nonisolated private static func resolvePlaceIfNeeded(_ draft: GeneratedAlbumDraft) async -> GeneratedAlbumDraft {
         guard draft.places.isEmpty, let lat = draft.latitude, let lon = draft.longitude else { return draft }
         let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         guard let name = await PlaceNameResolver.shared.cityName(for: coordinate) else { return draft }
@@ -264,7 +283,7 @@ public final class AutoAlbumEngine {
         return sig != lastCloudSignature
     }
 
-    private static func signature(of metas: [CloudPhotoMeta]) -> Int {
+    nonisolated private static func signature(of metas: [CloudPhotoMeta]) -> Int {
         var sig = 0
         for meta in metas where meta.latitude != nil { sig ^= meta.path.hashValue }
         return sig
