@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import MosaicSupport
 import SwiftUI
 
 /// 「Albums」タブ：時間＋場所の自動アルバム生成の制御・パラメータ・Debug。
@@ -63,6 +64,16 @@ struct AutoAlbumSettingsView: View {
                 }
                 .disabled(engine == nil || engine?.isTagging == true)
                 Text("Clears all recognition tags (objects, scenes, text, CLIP) and re-analyzes every local photo with the latest model. Metadata (date, place, people) is kept. Runs in the background and may take a while.")
+                    .font(.caption).foregroundStyle(.secondary)
+                // C1: 重い処理は「充電中＋待機時間」にだけ進む方針を明示し、手動で即開始もできるようにする。
+                Button {
+                    BackgroundYield.boostHeavyWork()
+                    engine?.scheduleBackgroundFill()
+                } label: {
+                    Label(L("Process Now (while charging)"), systemImage: "bolt.badge.clock")
+                }
+                .disabled(engine == nil)
+                Text("Indexing runs automatically while the device is charging and idle (or locked). “Process Now” starts immediately for 30 minutes — charging is still required.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

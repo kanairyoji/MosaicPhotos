@@ -71,6 +71,11 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         private var didInitialScroll = false
         /// 非同期スナップショット構築の世代。古い構築結果を破棄するため。
         private var snapshotToken = 0
+        /// A1: ユーザーがスクロール/スクラブ中か。中は内容更新（snapshot 反映＝メイン ~150ms）を
+        /// 保留し、終了時に最新分だけ反映する（Dropbox 同期の差分が到着してもカクつかせない）。
+        private var isUserScrolling = false
+        private var pendingUpdate: (items: [Store.Item], columns: Int,
+                                    grouping: PhotoGridGrouping?, monthSectionRows: Int)?
 
         private let spacing: CGFloat = 2
 
@@ -106,7 +111,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
             // スクラバー（UIKit）。contentOffset を直接動かすので大ジャンプも確実。
             scrubber.onScrub = { [weak self] fraction in self?.scrollTo(fraction: fraction) }
-            scrubber.onActive = { [weak self] active in self?.onScrubbingChange(active) }
+            scrubber.onActive = { [weak self] active in self?.setUserScrolling(active) }
 
             let container = UIView()
             cv.translatesAutoresizingMaskIntoConstraints = false
@@ -199,6 +204,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         // MARK: Update / snapshot
 
         func update(items: [Store.Item], columns: Int, grouping: PhotoGridGrouping?, monthSectionRows: Int) {
+            // A1: スクロール中は最新引数だけ覚えて保留（終了時に 1 回だけ反映）。
+            // ピンチ（列数変更）はスクロール中に発生しないため、まとめて保留で問題ない。
+            if isUserScrolling {
+                pendingUpdate = (items, columns, grouping, monthSectionRows)
+                return
+            }
             let grouped = grouping != nil
             // レイアウト（列数/グルーピング）が変わったら作り直す。
             if columns != currentColumns || grouped != currentGrouped {
@@ -354,15 +365,26 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         // スクラブだけでなく**通常スクロール中**も背景 CLIP 埋め込みを譲り、操作を滑らかにする。
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            onScrubbingChange(true)
+            setUserScrolling(true)
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-            if !decelerate { onScrubbingChange(false) }
+            if !decelerate { setUserScrolling(false) }
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            onScrubbingChange(false)
+            setUserScrolling(false)
+        }
+
+        /// スクロール/スクラブの開始・終了を一元管理する。終了時に保留した内容更新を反映する（A1）。
+        func setUserScrolling(_ scrolling: Bool) {
+            isUserScrolling = scrolling
+            onScrubbingChange(scrolling)
+            if !scrolling, let p = pendingUpdate {
+                pendingUpdate = nil
+                update(items: p.items, columns: p.columns,
+                       grouping: p.grouping, monthSectionRows: p.monthSectionRows)
+            }
         }
     }
 }

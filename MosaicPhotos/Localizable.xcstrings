@@ -1059,6 +1059,16 @@
         }
       }
     },
+    "Indexing runs automatically while the device is charging and idle (or locked). “Process Now” starts immediately for 30 minutes — charging is still required.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引付けは、充電中で操作していないとき（またはロック中）に自動で進みます。「今すぐ処理」で 30 分間すぐに開始できます（充電中である必要があります）。"
+          }
+        }
+      }
+    },
     "Infer a separate set of albums from Dropbox folder names via regex rules. Shown in the “Albums” section on the home screen.": {
       "localizations": {
         "ja": {
@@ -1655,6 +1665,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "プレビュー"
+          }
+        }
+      }
+    },
+    "Process Now (while charging)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ処理（充電中のみ）"
           }
         }
       }

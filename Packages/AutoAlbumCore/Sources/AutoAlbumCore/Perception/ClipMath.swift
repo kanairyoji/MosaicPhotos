@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 
 /// CLIP 埋め込みベクトルの保存・比較の純ロジック（Foundation のみ・テスト対象）。
@@ -48,15 +49,15 @@ public enum ClipMath {
     }
 
     /// コサイン類似（-1…1）。次元不一致・ゼロベクトルは 0。
+    /// B1: vDSP（SIMD）で計算する。意味検索は数万件×512 次元をこの関数で採点するため、
+    /// スカラーループだと AI アルバム作成（ユーザーが待つ）の本体コストになっていた（~5-10 倍差）。
     public static func cosine(_ a: [Float], _ b: [Float]) -> Float {
         guard a.count == b.count, !a.isEmpty else { return 0 }
         var dot: Float = 0, na: Float = 0, nb: Float = 0
-        for i in 0..<a.count {
-            dot += a[i] * b[i]
-            na += a[i] * a[i]
-            nb += b[i] * b[i]
-        }
-        let denom = (na.squareRoot() * nb.squareRoot())
+        vDSP_dotpr(a, 1, b, 1, &dot, vDSP_Length(a.count))
+        vDSP_svesq(a, 1, &na, vDSP_Length(a.count))
+        vDSP_svesq(b, 1, &nb, vDSP_Length(b.count))
+        let denom = (na * nb).squareRoot()
         return denom == 0 ? 0 : dot / denom
     }
 }

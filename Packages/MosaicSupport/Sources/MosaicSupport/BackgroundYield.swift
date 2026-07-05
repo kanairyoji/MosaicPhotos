@@ -30,14 +30,24 @@ public enum BackgroundYield {
     /// 「人が使っている最中は背景でも重い処理を動かさない」方針（使用感優先）。
     public static var heavyWorkIdleSeconds: TimeInterval = 60
 
+    /// C1: 手動ブースト（設定の「今すぐ処理」）。期限内は**アイドル条件だけ**免除する
+    /// （電源接続・低電力 OFF・UI 非ビジーは維持＝「充電中のみ」の方針は変わらない）。
+    public static var manualBoostUntil = Date.distantPast
+
+    /// 「今すぐ処理」を有効化する（既定 30 分・電源接続中のみ効く）。
+    public static func boostHeavyWork(minutes: Double = 30) {
+        manualBoostUntil = Date().addingTimeInterval(minutes * 60)
+    }
+
     /// 重い処理の**開始/継続の共通条件**：電源接続中・低電力 OFF・UI 非ビジー・
-    /// 最後の操作から `heavyWorkIdleSeconds` 以上アイドル。
+    /// 最後の操作から `heavyWorkIdleSeconds` 以上アイドル（または手動ブースト中）。
     /// 起動直後は非アイドル扱い（lastInteractionAt=起動時刻）＝起動スパイクも自然に防ぐ。
     public static var heavyWorkAllowed: Bool {
         PowerStateMonitor.shared.isOnPower
             && !PowerStateMonitor.shared.isLowPowerMode
             && !uiBusy
-            && BackgroundActivityMonitor.shared.idleSeconds >= heavyWorkIdleSeconds
+            && (BackgroundActivityMonitor.shared.idleSeconds >= heavyWorkIdleSeconds
+                || Date() < manualBoostUntil)
     }
 
     /// 重い処理（CLIP 埋め込み・顔スキャン）の譲り判定：`heavyWorkAllowed` を満たさない、
