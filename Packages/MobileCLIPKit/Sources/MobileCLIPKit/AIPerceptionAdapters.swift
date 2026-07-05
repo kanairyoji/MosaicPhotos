@@ -30,12 +30,16 @@ public struct CLIPEmbeddingProvider: PhotoPerceptionProvider {
 
         var byKey: [String: PhotoPerception] = [:]
         var noImage = 0, embedded = 0
+
+        // 1) 画像ロード（P2: CLIP 入力は 224px なので 256px で十分＝取得/変換/メモリが約 1/4）。
+        var images: [CGImage] = []
+        var imageKeys: [String] = []
         for refKey in refKeys {
             await Task.yield()   // UI 操作中は協調的に後回し
             guard let ref = PhotoRef.decode(refKey) else { continue }
             let cg: CGImage?
             if let localId = ref.localIdentifier {
-                cg = await loadLocalCGImage(localId)
+                cg = await loadLocalCGImage(localId, maxPixel: 256)
             } else if let path = ref.cloudPath {
                 cg = await cloudImage(path)
             } else {
@@ -46,7 +50,14 @@ public struct CLIPEmbeddingProvider: PhotoPerceptionProvider {
                 byKey[refKey] = PhotoPerception()   // 取得不可でも「処理済み」にする
                 continue
             }
-            let vector = clip.encodeImage(cg).map { ClipMath.encode($0) }
+            images.append(cg)
+            imageKeys.append(refKey)
+        }
+
+        // 2) バッチ推論（P1: 1 枚ずつより 2〜4 倍のスループット。失敗時は runtime 内で単発へ救済）。
+        let vectors = clip.encodeImages(images)
+        for (i, refKey) in imageKeys.enumerated() {
+            let vector = vectors[i].map { ClipMath.encode($0) }
             if vector != nil { embedded += 1 }
             byKey[refKey] = PhotoPerception(clipVector: vector)
         }

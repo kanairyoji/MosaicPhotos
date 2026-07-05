@@ -63,6 +63,12 @@ extension AutoAlbumEngine {
         aiAlbums = await aiService.refresh(aiAlbums)
     }
 
+    /// デバッグ（Developer Options）: AI アルバムの**フル再評価**を即時実行する
+    /// （通常はドリフト検知＝アイドル時のみ。動作検証用）。
+    public func debugRefreshAIAlbumsFull() async {
+        await refreshAIAlbums()
+    }
+
     /// Phase 2: 埋め込み進行に伴う再評価は**増分**（新規 refKeys だけ採点してプールへマージ）。
     /// 全ベクトルのページ走査（~13MB/回）も LLM も走らない。時間スロットル（5 分）で頻度も抑える
     /// （スロットル中は refKeys を蓄積し、次回にまとめて処理＝取りこぼしなし）。

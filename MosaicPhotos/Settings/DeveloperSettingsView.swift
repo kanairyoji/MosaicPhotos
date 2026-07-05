@@ -25,6 +25,9 @@ struct DeveloperSettingsView: View {
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
     @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
     @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
+    /// デバッグ: 重い処理のゲートを全面無効化（ランタイムのみ・再起動でリセット）。
+    @State private var forceHeavyWork = BackgroundYield.debugForceHeavyWork
+    @State private var heavyWorking = false
 
     @State private var enrichmentCount = 0
     @State private var cachedPlaceCount = 0
@@ -36,6 +39,7 @@ struct DeveloperSettingsView: View {
         Form {
             appInfoSection
             diagnosticsSection
+            heavyWorkDebugSection
             MemoryDebugSection()
             LocalPhotoDebugSection()
             DropboxDebugSection(dropboxAuth: dropboxAuth, store: store)
@@ -85,6 +89,55 @@ struct DeveloperSettingsView: View {
         } footer: {
             Text("On-device log of errors, uncaught exceptions and memory pressure. Useful when the app misbehaves without a Mac/Console. "
                  + "Performance tracing writes screen-transition latency (screen.*) and Dropbox timing (network/cache/decode) to the diagnostics log and os_signpost; turn on, reproduce, then off.")
+        }
+    }
+
+    // MARK: - Heavy work debug（バックグラウンド専用処理の強制実行）
+
+    /// 通常は「電源＋アイドル（またはロック中）」でしか動かない重い処理を、その場で動かして検証する。
+    private var heavyWorkDebugSection: some View {
+        Section {
+            Toggle("Force heavy work gates open", isOn: $forceHeavyWork)
+                .onChange(of: forceHeavyWork) { _, on in BackgroundYield.debugForceHeavyWork = on }
+            LabeledContent("Heavy work allowed", value: BackgroundYield.heavyWorkAllowed ? "Yes" : "No")
+            Button {
+                Task {
+                    heavyWorking = true
+                    await autoAlbumEngine.generate()
+                    heavyWorking = false
+                }
+            } label: {
+                workingRow("Generate albums now", spinning: heavyWorking)
+            }
+            .disabled(heavyWorking)
+            Button {
+                Task {
+                    heavyWorking = true
+                    await autoAlbumEngine.debugRefreshAIAlbumsFull()
+                    heavyWorking = false
+                }
+            } label: {
+                workingRow("AI albums: full re-evaluate now", spinning: heavyWorking)
+            }
+            .disabled(heavyWorking)
+            Button("Start CLIP embedding now") {
+                autoAlbumEngine.scheduleBackgroundFill()
+            }
+        } header: {
+            Text("Heavy Work — Debug")
+        } footer: {
+            Text("These normally run only while charging and idle (or via the lock-screen background task). "
+                 + "The toggle disables the power/idle/UI gates until the app restarts. "
+                 + "Embedding still skips on the simulator (CLIP is CPU-only there).")
+        }
+    }
+
+    @ViewBuilder
+    private func workingRow(_ title: String, spinning: Bool) -> some View {
+        if spinning {
+            HStack { ProgressView().controlSize(.small); Text(title) }
+        } else {
+            Text(title)
         }
     }
 

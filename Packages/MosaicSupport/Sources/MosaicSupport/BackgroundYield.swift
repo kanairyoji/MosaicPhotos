@@ -30,6 +30,12 @@ public enum BackgroundYield {
     /// 「人が使っている最中は背景でも重い処理を動かさない」方針（使用感優先）。
     public static var heavyWorkIdleSeconds: TimeInterval = 60
 
+    /// デバッグ（Developer Options）: 重い処理のゲート（電源・低電力・アイドル・UIビジー）を
+    /// **全面的に無効化**する。バックグラウンドでしか動かない処理（アルバム生成・CLIP 埋め込み・
+    /// 顔スキャン・ドリフト再評価）をその場で動かして検証するためのもの。アプリ再起動でリセット。
+    /// ※ 生成との相互排他（isGeneratingAlbums）だけは維持する（メモリ保護）。
+    public static var debugForceHeavyWork = false
+
     /// C1: 手動ブースト（設定の「今すぐ処理」）。期限内は**アイドル条件だけ**免除する
     /// （電源接続・低電力 OFF・UI 非ビジーは維持＝「充電中のみ」の方針は変わらない）。
     public static var manualBoostUntil = Date.distantPast
@@ -43,7 +49,8 @@ public enum BackgroundYield {
     /// 最後の操作から `heavyWorkIdleSeconds` 以上アイドル（または手動ブースト中）。
     /// 起動直後は非アイドル扱い（lastInteractionAt=起動時刻）＝起動スパイクも自然に防ぐ。
     public static var heavyWorkAllowed: Bool {
-        PowerStateMonitor.shared.isOnPower
+        if debugForceHeavyWork { return true }
+        return PowerStateMonitor.shared.isOnPower
             && !PowerStateMonitor.shared.isLowPowerMode
             && !uiBusy
             && (BackgroundActivityMonitor.shared.idleSeconds >= heavyWorkIdleSeconds

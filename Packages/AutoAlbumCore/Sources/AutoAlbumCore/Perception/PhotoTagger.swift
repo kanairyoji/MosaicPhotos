@@ -51,6 +51,10 @@ final class PhotoTagger {
         var processed = 0
         /// 前回 onBatch 以降に埋め込んだ refKey（増分再評価用）。onBatch へ渡してクリアする。
         var newSinceNotify: [String] = []
+        // P3: 未埋め込みキーは 512 件まとめて取得しローカルで切り出す（従来はバッチ毎に
+        // SwiftData クエリ＝backlog 全体で数千回の往復だった）。回線状態が変わったら組み直す。
+        var keyQueue: [String] = []
+        var queueLocalOnly: Bool?
         for batch in 0..<maxBatches {
             if Task.isCancelled { break }
             // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
@@ -61,7 +65,15 @@ final class PhotoTagger {
             // 回線NG（例: Wi-Fi 待ち）のときはクラウド写真（サムネDL）をスキップし、
             // ローカル写真だけ進める（スマート方針 b）。Wi-Fi 復帰でクラウド分が再開される。
             let netOK = networkAllowed()
-            let refKeys = await store.unembeddedRefKeys(limit: batchSize, localOnly: !netOK)
+            if queueLocalOnly != !netOK {   // 回線状態が変わった＝クラウド分の含み方が変わるので組み直す
+                keyQueue = []
+                queueLocalOnly = !netOK
+            }
+            if keyQueue.isEmpty {
+                keyQueue = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
+            }
+            let refKeys = Array(keyQueue.prefix(batchSize))
+            keyQueue.removeFirst(refKeys.count)
             guard !refKeys.isEmpty else {
                 // ローカルが尽きた。回線NGで残り（クラウド分）があれば「保留」、無ければ「完了」。
                 // どちらも終了し、回線/電源の復帰時にアプリ側が再起動する（isTagging を抱え続けない）。
@@ -76,23 +88,31 @@ final class PhotoTagger {
                 break
             }
             let batchStart = Date()
-            // A: 1 枚ずつ知覚し、各推論の前に `shouldPause` を確認する。バッチ（8枚）を一気に
-            //    処理すると、その間ずっと CPU/ANE を握って画面遷移を飢餓させるため、停止粒度を
-            //    1 枚にして操作・遷移・フル画像取得が来たら即譲れるようにする。
+            // P1: ミニバッチ（8枚）単位で知覚し、ミニバッチの前に `shouldPause` を確認する。
+            //    バッチ推論（MLArrayBatchProvider）で ANE 呼び出しが償却され 2〜4 倍速い。
+            //    ANE 連続保持は 8 枚 ≈ 1 秒未満で、重い処理は電源＋アイドル時しか走らないため
+            //    譲り応答性（旧: 1 枚粒度）はミニバッチ粒度で十分。
             var merged: [String: PhotoPerception] = [:]
             var withVector = 0
-            for key in refKeys {
+            let miniBatchSize = 8
+            var index = 0
+            while index < refKeys.count {
                 while shouldPause() && !Task.isCancelled {
                     PerfTrace.count("clip.pauseWait")   // センサー: 譲り待ちの発生数
                     try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
                 }
                 if Task.isCancelled { break }
+                let chunk = Array(refKeys[index..<min(index + miniBatchSize, refKeys.count)])
+                index += chunk.count
                 let tPerceive = PerfTrace.nowNs()
-                let signal = (await perception.perceive(refKeys: [key]))[key]
-                PerfTrace.count("clip.embedMs", value: PerfTrace.msSince(tPerceive))   // 1枚の知覚単価
-                if signal?.clipVector != nil { withVector += 1 }
-                // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
-                merged[key] = signal ?? PhotoPerception()
+                let signals = await perception.perceive(refKeys: chunk)
+                PerfTrace.count("clip.embedMs", value: PerfTrace.msSince(tPerceive) / Double(chunk.count))
+                for key in chunk {
+                    let signal = signals[key]
+                    if signal?.clipVector != nil { withVector += 1 }
+                    // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
+                    merged[key] = signal ?? PhotoPerception()
+                }
             }
             if !merged.isEmpty { await store.applyPerception(merged) }
             newSinceNotify.append(contentsOf: merged.compactMap { $0.value.clipVector != nil ? $0.key : nil })
