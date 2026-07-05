@@ -20,13 +20,15 @@ public struct AppQueryTranslator: QueryTranslator {
 
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability {
-            let session = LanguageModelSession(
-                instructions: "Translate the user's text into natural English for an image search query. "
-                    + "Reply with ONLY the English translation — no quotes, no explanation.")
-            if let response = try? await session.respond(to: trimmed) {
-                let out = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !out.isEmpty { return out }
-            }
+            // ⚠️ LLM のセッション生成＋推論は Task.detached で確実にオフメイン化する。
+            let out: String? = await Task.detached(priority: .userInitiated) {
+                let session = LanguageModelSession(
+                    instructions: "Translate the user's text into natural English for an image search query. "
+                        + "Reply with ONLY the English translation — no quotes, no explanation.")
+                let response = try? await session.respond(to: trimmed)
+                return response?.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.value
+            if let out, !out.isEmpty { return out }
         }
         #endif
         return trimmed

@@ -16,14 +16,16 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
     }
 
     func interpret(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> AIAlbumQuery {
-        do {
-            let session = LanguageModelSession(instructions: Self.instructions(catalog: catalog, now: now))
-            let response = try await session.respond(to: text, generating: GeneratedAlbumQuery.self)
-            return Self.toQuery(response.content, fallbackText: text)
-        } catch {
-            // モデル未準備・コンテキスト超過などはルールベースで救済。
-            return await RuleBasedQueryUnderstanding().interpret(text, catalog: catalog, now: now)
-        }
+        // ⚠️ LLM のセッション生成＋推論は Task.detached で確実にオフメイン化する
+        //（呼び出し元は @MainActor のサービス。実測でメインを数秒塞いだ）。
+        let instructions = Self.instructions(catalog: catalog, now: now)
+        let generated: GeneratedAlbumQuery? = await Task.detached(priority: .userInitiated) {
+            let session = LanguageModelSession(instructions: instructions)
+            return try? await session.respond(to: text, generating: GeneratedAlbumQuery.self).content
+        }.value
+        if let generated { return Self.toQuery(generated, fallbackText: text) }
+        // モデル未準備・コンテキスト超過などはルールベースで救済。
+        return await RuleBasedQueryUnderstanding().interpret(text, catalog: catalog, now: now)
     }
 
     /// 合成可能仕様（OR/NOT/複数ファセット）への解釈。DNF（節の OR）を guided generation で出力する。
@@ -31,15 +33,18 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
     ///    人物の有無や概念は **ハードにしない**（内容=ソフトで扱う）。日付は妥当性を検証する。
     ///    さらに `AIAlbumSearcher` 側の安全網（ハードで全滅したら内容のみへ緩和）が二重の保険になる。
     func interpretSpec(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> QuerySpec {
-        do {
-            let session = LanguageModelSession(instructions: Self.specInstructions(catalog: catalog, now: now))
-            let response = try await session.respond(to: text, generating: GeneratedSpec.self)
-            let spec = Self.toSpec(response.content, fallbackText: text, now: now)
+        // ⚠️ LLM のセッション生成＋推論は Task.detached で確実にオフメイン化する（上記と同様）。
+        let instructions = Self.specInstructions(catalog: catalog, now: now)
+        let generated: GeneratedSpec? = await Task.detached(priority: .userInitiated) {
+            let session = LanguageModelSession(instructions: instructions)
+            return try? await session.respond(to: text, generating: GeneratedSpec.self).content
+        }.value
+        if let generated {
+            let spec = Self.toSpec(generated, fallbackText: text, now: now)
             // 念のため：節がすべて空（解釈不能）なら flat へフォールバック。
             return spec.clauses.isEmpty ? await interpret(text, catalog: catalog, now: now).asQuerySpec() : spec
-        } catch {
-            return await RuleBasedQueryUnderstanding().interpretSpec(text, catalog: catalog, now: now)
         }
+        return await RuleBasedQueryUnderstanding().interpretSpec(text, catalog: catalog, now: now)
     }
 
     private static func specInstructions(catalog: AIAlbumCatalog, now: Date) -> String {

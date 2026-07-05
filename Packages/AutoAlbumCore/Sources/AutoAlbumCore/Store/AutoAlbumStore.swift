@@ -168,6 +168,30 @@ actor AutoAlbumStore {
         }
     }
 
+    /// 増分評価用：指定 refKey 群の埋め込みだけを取り出す（fp32 復元済み）。
+    /// 新規に埋め込まれた写真だけを採点するため、全ページ走査を避ける。
+    func vectors(forRefKeys keys: [String]) -> [String: Data] {
+        guard !keys.isEmpty else { return [:] }
+        let set = keys
+        let descriptor = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { set.contains($0.refKey) })
+        let records = (try? modelContext.fetch(descriptor)) ?? []
+        var out: [String: Data] = [:]
+        for rec in records {
+            guard let floats = ClipMath.decodeHalf(rec.vector) else { continue }
+            out[rec.refKey] = ClipMath.encode(floats)
+        }
+        return out
+    }
+
+    /// 増分評価用：指定 refKey 群の付加情報（メタのみ・埋め込みなし）を取り出す。
+    func enrichedPhotos(forRefKeys keys: [String]) -> [EnrichedPhoto] {
+        guard !keys.isEmpty else { return [] }
+        let set = keys
+        let descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { set.contains($0.refKey) })
+        let records = (try? modelContext.fetch(descriptor)) ?? []
+        return records.map(\.asEnrichedPhoto)
+    }
+
     func enrichmentCount() -> Int {
         (try? modelContext.fetchCount(FetchDescriptor<PhotoEnrichment>())) ?? 0
     }

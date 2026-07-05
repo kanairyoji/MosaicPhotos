@@ -63,14 +63,18 @@ extension AutoAlbumEngine {
         aiAlbums = await aiService.refresh(aiAlbums)
     }
 
-    /// T5: 埋め込み進行に伴う再評価の**時間スロットル**。48 バッチごとの onBatch でも 1 回の
-    /// 再評価はベクトル約 13MB のページ読み＋採点を伴い、残 72k の消化中に累計 ~1.2GB の
-    /// ディスク読みになる。前回から 5 分未満かつ残作業ありならスキップ（完了時は必ず反映）。
-    func refreshAIAlbumsThrottled() async {
+    /// Phase 2: 埋め込み進行に伴う再評価は**増分**（新規 refKeys だけ採点してプールへマージ）。
+    /// 全ベクトルのページ走査（~13MB/回）も LLM も走らない。時間スロットル（5 分）で頻度も抑える
+    /// （スロットル中は refKeys を蓄積し、次回にまとめて処理＝取りこぼしなし）。
+    func refreshAIAlbumsThrottled(newRefKeys: [String]) async {
+        pendingNewEmbeds.append(contentsOf: newRefKeys)
         let remaining = BackgroundActivityMonitor.shared.embedRemaining
         if remaining > 0, Date().timeIntervalSince(lastAIRefreshAt) < 300 { return }
         lastAIRefreshAt = Date()
-        await refreshAIAlbums()
+        let pending = pendingNewEmbeds
+        pendingNewEmbeds = []
+        guard !pending.isEmpty else { return }
+        aiAlbums = await aiService.refreshIncremental(newRefKeys: pending, current: aiAlbums)
     }
 
     // MARK: - Recognition (Vision/CLIP タグ付け)
@@ -91,7 +95,7 @@ extension AutoAlbumEngine {
                                       },
                                           networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
                                           onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
-                [weak self] in await self?.refreshAIAlbumsThrottled()
+                [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
             }
             isTagging = false
         }
@@ -116,6 +120,8 @@ extension AutoAlbumEngine {
     public func reanalyzePhotos() async {
         guard !isTagging else { return }
         await store.clearPerception()
+        // 埋め込みを全消しするので、AI アルバムの評価状態（プール）もリセットする（解釈は保持）。
+        aiService.resetEvaluationState()
         let preset = Self.currentBackgroundPreset()
         isTagging = true
         await tagger.embedUnprocessed(batchSize: preset.batchSize,
@@ -124,7 +130,7 @@ extension AutoAlbumEngine {
                                           (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
                                       },
                                       onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
-            [weak self] in await self?.refreshAIAlbumsThrottled()
+            [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
         }
         isTagging = false
     }

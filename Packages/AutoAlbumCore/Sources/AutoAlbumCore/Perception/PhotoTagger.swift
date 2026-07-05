@@ -24,7 +24,7 @@ final class PhotoTagger {
                           shouldPause: @MainActor () -> Bool = { false },
                           networkAllowed: @MainActor () -> Bool = { true },
                           onProgress: @MainActor (Int) -> Void = { _ in },
-                          onBatch: () async -> Void) async {
+                          onBatch: (_ newRefKeys: [String]) async -> Void) async {
         guard let perception else {
             Self.log.info("embed: skipped — no perception provider injected")
             return
@@ -49,6 +49,8 @@ final class PhotoTagger {
         let startedAt = Date()
 
         var processed = 0
+        /// 前回 onBatch 以降に埋め込んだ refKey（増分再評価用）。onBatch へ渡してクリアする。
+        var newSinceNotify: [String] = []
         for batch in 0..<maxBatches {
             if Task.isCancelled { break }
             // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
@@ -93,6 +95,7 @@ final class PhotoTagger {
                 merged[key] = signal ?? PhotoPerception()
             }
             if !merged.isEmpty { await store.applyPerception(merged) }
+            newSinceNotify.append(contentsOf: merged.compactMap { $0.value.clipVector != nil ? $0.key : nil })
             processed += merged.count
 
             let secs = String(format: "%.1f", Date().timeIntervalSince(batchStart))
@@ -104,12 +107,16 @@ final class PhotoTagger {
             // AI 再検索（onBatch）は全件 fetch＋採点で footprint がスパイクする（~200→400MB）。
             // 背景再埋め込み中は周期を粗くしてスパイク頻度を下げ、メモリ圧迫イベントを減らす
             // （圧迫が減るとサムネのメモリ保持も安定する）。最終結果は完了時の onBatch で必ず反映。
-            if batch % 48 == 47 { await onBatch() }
+            if batch % 48 == 47 {
+                let newKeys = newSinceNotify
+                newSinceNotify = []
+                await onBatch(newKeys)
+            }
             // ★ バッチ間で休む：端末・ネットワーク・UI を圧迫しないよう trickle 処理にする。
             try? await Task.sleep(nanoseconds: betweenBatchNs)
         }
         let total = String(format: "%.1f", Date().timeIntervalSince(startedAt))
         Self.log.info("embed: finished — \(processed) photos in \(total)s")
-        await onBatch()
+        await onBatch(newSinceNotify)
     }
 }

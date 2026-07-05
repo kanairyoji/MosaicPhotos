@@ -127,6 +127,17 @@ struct AIAlbumSearcher {
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
+        await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
+                             pageSize: pageSize, loadPage: loadPage).members
+    }
+
+    /// `search(baseLite:spec:)` の本体。増分評価（Phase 2）のために**意味スコアのプール**
+    /// （refKey → コサイン・上位 `poolLimit` 件）も返す。プールは永続化され、以後は新規埋め込み分の
+    /// スコアだけをマージしてメンバーを更新できる（全ページ再走査をしない）。
+    func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
+                        pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
+                        loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+    ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
         let includeTerms = spec.allContentTerms.include
 
@@ -150,12 +161,13 @@ struct AIAlbumSearcher {
 
         guard hasPhrase, !base.isEmpty else {
             Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(!hasPhrase)")
-            return base
+            return (base, [:])
         }
 
         let lexical = LexicalSearch.rank(base, keywords: includeTerms)
 
         var semantic: [EnrichedPhoto] = []
+        var pool: [String: Float] = [:]
         if let textEmbedder, textEmbedder.isAvailable {
             embedderAvailable = true
             if let vector = await textEmbedder.embed(phrase) {
@@ -180,6 +192,9 @@ struct AIAlbumSearcher {
                     let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
                     semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
                 }
+                // 増分評価の土台となるプール（上位のみ・小さく永続化）。
+                pool = Dictionary(uniqueKeysWithValues:
+                    scored.prefix(Self.poolLimit).map { ($0.photo.id, $0.score) })
             }
         }
 
@@ -188,7 +203,32 @@ struct AIAlbumSearcher {
         // （ハードが本来全滅＝該当なしのため、意味も当たらなければ空が正しい）。
         let result = fused.isEmpty ? ((spec.hasHardConstraints && !relaxed) ? base : []) : fused
         Diagnostics.mark("aialbum: base=\(base.count)/\(all.count) hard=\(spec.hasHardConstraints) relaxed=\(relaxed) emb=\(embedderAvailable) scored=\(embeddedCount) top=\(String(format: "%.3f", topScore)) kept=\(semantic.count) lex=\(lexical.count) result=\(result.count)")
-        return result
+        return (result, pool)
+    }
+
+    // MARK: - 増分評価（Phase 2・純ロジック＝テスト対象）
+
+    /// プール保持数（メンバー上限より広く取り、マージ後の入れ替わりを安定させる）。
+    static let poolLimit = 300
+
+    /// 既存プールへ新規スコアをマージし、上位 `poolLimit` 件に刈り込む（純）。
+    static func mergePool(_ existing: [String: Float], adding new: [String: Float]) -> [String: Float] {
+        var merged = existing
+        for (key, score) in new { merged[key] = score }
+        guard merged.count > poolLimit else { return merged }
+        let kept = merged.sorted { $0.value > $1.value }.prefix(poolLimit)
+        return Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
+    }
+
+    /// プールから「メンバーに入るべき refKey」を返す（純）。フル評価と同じ
+    /// カットオフ規則（floor と top−margin の大きい方・上位 K）を適用する。
+    static func memberKeys(fromPool pool: [String: Float]) -> [String] {
+        guard let top = pool.values.max() else { return [] }
+        let cutoff = max(semanticFloor, top - semanticMargin)
+        return pool.filter { $0.value >= cutoff }
+            .sorted { $0.value > $1.value }
+            .prefix(maxResults)
+            .map(\.key)
     }
 
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。

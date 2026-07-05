@@ -56,6 +56,8 @@ public final class AutoAlbumEngine {
     @ObservationIgnored var isInteracting = false
     /// T5: AI アルバム再評価の時間スロットル用（Recognition extension が参照）。
     @ObservationIgnored var lastAIRefreshAt = Date.distantPast
+    /// Phase 2: スロットル中に蓄積する「新規に埋め込まれた refKey」（増分再評価の入力）。
+    @ObservationIgnored var pendingNewEmbeds: [String] = []
 
     @ObservationIgnored let labelProvider: LabelProvider?
 
@@ -160,8 +162,9 @@ public final class AutoAlbumEngine {
             UserDefaults.standard.set(Self.perceptionVersion, forKey: AutoAlbumSettingsKeys.perceptionVersion)
             Self.log.info("loadOrGenerate: perception v\(storedPerception)→\(Self.perceptionVersion), reset \(reset) photos for re-tagging")
         }
-        // メタデータが揃った時点で AI アルバムを再評価し、続けて Vision タグ付け＋再評価を背景で進める。
-        await refreshAIAlbums()
+        // 起動時の AI アルバム再評価は行わない（保存済みメンバーをそのまま表示）。
+        // 解釈は永続化済みで、追いつきはドリフト検知（refreshIfNeeded・アイドル時）と
+        // 埋め込み進行の増分評価（refreshAIAlbumsThrottled）が担う。
         Self.log.info("loadOrGenerate: scheduling background tagging")
         scheduleBackgroundFill()
     }
@@ -169,10 +172,17 @@ public final class AutoAlbumEngine {
     /// バックグラウンド自動生成が有効で、ローカル/クラウドに変化があれば再生成する（定期ティック用）。
     public func refreshIfNeeded() async {
         guard isLoaded, !isGenerating else { return }
-        guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
-        // 重い処理の共通方針: 電源接続＋低電力 OFF＋一定時間アイドルのときだけ定期再生成する
+        // 重い処理の共通方針: 電源接続＋低電力 OFF＋一定時間アイドルのときだけ動かす
         // （人が使っている気配がある間は背景でも動かさない・次のティックで再判定）。
         guard BackgroundYield.heavyWorkAllowed else { return }
+
+        // AI アルバムのドリフト検知（自動生成トグルとは独立）：埋め込みの進行に対して
+        // 評価済み時点が大きく遅れていたらフル再評価で整合を回復する（LLM は走らない）。
+        if let refreshed = await aiService.refreshIfDrifted(aiAlbums) {
+            aiAlbums = refreshed
+        }
+
+        guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
         let cloudChanged = await cloudSignatureChanged()
         guard libraryDirty || cloudChanged else { return }
         libraryDirty = false
