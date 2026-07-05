@@ -14,6 +14,12 @@ extension DropboxCacheStore {
     /// サムネイルを返す。メモリヒットは即返し、ミス時は**ディスク読み込み＋強制デコードを
     /// detached タスク（actor 外・並列）**で行い、結果をスレッドセーフな `NSCache` に入れて取り出す。
     /// デコード済み画像のみが境界を跨ぐため Sendable 問題を避けられ、actor をブロックしない。
+    /// メモリ層のみの即答（actor hop なし・`thumbnailMemory` は Sendable な NSCache ラッパ）。
+    /// 可視セルのヒット経路から actor キュー待ちを外すための fast path。
+    nonisolated func cachedThumbnail(for path: String) -> UIImage? {
+        thumbnailMemory.image(forKey: path)
+    }
+
     func thumbnail(for path: String) async -> UIImage? {
         if let cached = thumbnailMemory.image(forKey: path) {
             PerfTrace.count("cache.thumb.memHit")
@@ -22,9 +28,18 @@ extension DropboxCacheStore {
         let name = DropboxCacheNaming.fileName(kind: .thumbnail, path: path)
         let store = thumbnailStore
         let memory = thumbnailMemory
-        let t0 = PerfTrace.nowNs()   // 計測: ディスク読み込み＋強制デコードの所要
+        let t0 = PerfTrace.nowNs()   // 計測: デコード順番待ちの所要（queueMs）
         // デコード同時数を制限（要求ごとの無制限 detached でスレッド過多→CPU 競合で激遅になるのを防ぐ）。
         await ThumbnailDecode.limiter.acquire()
+        PerfTrace.count("cache.thumb.queueMs", value: PerfTrace.msSince(t0))
+        // ★ T2: スクラブで画面外へ消えたセルの要求（キャンセル済み）はデコードせず捨てる。
+        //    行列に数千件並んだとき、無効分のデコードが有効分を待たせるのを防ぐ。
+        if Task.isCancelled {
+            await ThumbnailDecode.limiter.release()
+            PerfTrace.count("cache.thumb.cancelled")
+            return nil
+        }
+        let t1 = PerfTrace.nowNs()   // 計測: 実デコードの所要（diskHit）
         await Task.detached(priority: .userInitiated) {
             if let decoded = store.decodedImage(forName: name) {
                 memory.insertDecoded(decoded, forKey: path)   // NSCache はスレッドセーフ・実コスト計上
@@ -35,7 +50,7 @@ extension DropboxCacheStore {
             PerfTrace.count("cache.thumb.miss")   // メモリにもディスクにも無い（ネット取得が必要）
             return nil
         }
-        PerfTrace.count("cache.thumb.diskHit", value: PerfTrace.msSince(t0))
+        PerfTrace.count("cache.thumb.diskHit", value: PerfTrace.msSince(t1))
         touchUsage(kind: .thumbnail, path: path)
         return image
     }

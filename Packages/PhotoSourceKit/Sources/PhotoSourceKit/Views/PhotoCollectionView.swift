@@ -144,8 +144,13 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
             if grouped {
+                // T6: ヘッダ高さは .estimated だと全セクション（最大 129）の measure パスが
+                // レイアウト差し替え（ズーム）ごとに走る。中身は 1 行ラベル＋上下 5pt で確定なので
+                // 計算値の .absolute にして measure を消す（Dynamic Type はレイアウト再生成時に追従）。
+                let headerHeight = UIFont.preferredFont(forTextStyle: .subheadline).lineHeight + 10
                 let header = NSCollectionLayoutBoundarySupplementaryItem(
-                    layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(32)),
+                    layoutSize: .init(widthDimension: .fractionalWidth(1),
+                                      heightDimension: .absolute(headerHeight.rounded(.up))),
                     elementKind: UICollectionView.elementKindSectionHeader, alignment: .top)
                 header.pinToVisibleBounds = true
                 section.boundarySupplementaryItems = [header]

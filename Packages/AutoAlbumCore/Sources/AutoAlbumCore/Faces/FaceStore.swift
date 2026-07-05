@@ -78,8 +78,17 @@ actor FaceStore {
 
     // MARK: - 記録＋逐次クラスタリング
 
+    /// 複数写真分の検出結果をまとめて記録する（T3: save をバッチ 1 回に）。
+    /// 従来は写真ごとに save しており、13k 枚のスキャンで 13k 回の SQLite save が発生していた。
+    func recordScans(_ batch: [(refKey: String, faces: [DetectedFaceSignal])]) {
+        for entry in batch {
+            recordScan(refKey: entry.refKey, faces: entry.faces, deferSave: true)
+        }
+        try? modelContext.save()
+    }
+
     /// 1 写真分の検出結果を記録する（顔行＋マーカー）。各顔を既存クラスタへ逐次割り当てる。
-    func recordScan(refKey: String, faces: [DetectedFaceSignal]) {
+    func recordScan(refKey: String, faces: [DetectedFaceSignal], deferSave: Bool = false) {
         // すでに記録済みなら二重記録しない。
         let key = refKey
         var marker = FetchDescriptor<ScannedPhoto>(predicate: #Predicate { $0.refKey == key })
@@ -103,7 +112,7 @@ actor FaceStore {
             persist(clustering)
             clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）
         }
-        try? modelContext.save()
+        if !deferSave { try? modelContext.save() }
     }
 
     /// 永続化済みクラスタを `FaceClustering` に復元する（重心・件数・代表顔まで）。

@@ -54,6 +54,8 @@ public final class AutoAlbumEngine {
     /// ユーザーが写真を能動操作中か（スクラブ等）。背景 CLIP 埋め込みを一時停止するために使う（G）。
     /// Recognition extension から参照するため internal。
     @ObservationIgnored var isInteracting = false
+    /// T5: AI アルバム再評価の時間スロットル用（Recognition extension が参照）。
+    @ObservationIgnored var lastAIRefreshAt = Date.distantPast
 
     @ObservationIgnored let labelProvider: LabelProvider?
 

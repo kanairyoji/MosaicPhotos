@@ -74,6 +74,11 @@ final class DropboxThumbnailBatcher {
     ///
     /// 呼び出し元 Task のキャンセルでは待機者だけを解放し、フェッチ自体は中断しない。
     func thumbnail(for item: DropboxFileItem) async -> UIImage? {
+        // メモリヒットは actor hop なしで即答（スクラブ時のキュー待ちを避ける）。
+        if let hot = cache.cachedThumbnail(for: item.path) {
+            PerfTrace.count("thumb.cacheHit")
+            return hot
+        }
         if let cached = await cache.thumbnail(for: item.path) {
             PerfTrace.count("thumb.cacheHit")
             return cached

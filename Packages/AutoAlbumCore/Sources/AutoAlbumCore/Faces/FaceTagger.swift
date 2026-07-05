@@ -71,11 +71,11 @@ final class FaceTagger {
             let tBatch = PerfTrace.nowNs()
             let signals = await provider.detectFaces(refKeys: batch)
             PerfTrace.count("face.batchMs", value: PerfTrace.msSince(tBatch))   // 1バッチの検出+埋め込み単価
-            for refKey in batch {
-                let faces = signals[refKey] ?? []
-                facesFound += faces.count
-                await store.recordScan(refKey: refKey, faces: faces)
+            let records = batch.map { refKey in
+                (refKey: refKey, faces: signals[refKey] ?? [])
             }
+            facesFound += records.reduce(0) { $0 + $1.faces.count }
+            await store.recordScans(records)   // T3: save はバッチ 1 回
             processed += batch.count
             onProgress(max(0, todo.count - processed))
 

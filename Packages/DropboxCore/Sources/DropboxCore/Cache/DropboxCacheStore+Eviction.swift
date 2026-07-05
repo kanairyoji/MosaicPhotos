@@ -96,16 +96,34 @@ extension DropboxCacheStore {
         try? modelContext.save()
     }
 
+    /// LRU の最終アクセス時刻を更新する。
+    /// ★ T2: 従来は**ディスクヒット 1 件ごとに fetch＋save**しており、スクラブ時（数千件/10s）に
+    /// SQLite save が actor へ殺到して diskHit の行列（平均 200ms〜1s）を作っていた。
+    /// LRU の時刻は分単位で十分なので、(1) 同一エントリは 5 分間再 touch しない、
+    /// (2) save は 50 件ごと（＋eviction 前の flush）にまとめる。
     func touchUsage(kind: CacheUsageEntry.CacheKind, path: String) {
+        let key = CacheUsageEntry.makeKey(kind: kind, path: path)
+        let now = Date()
+        if let last = recentTouches[key], now.timeIntervalSince(last) < 300 { return }
+        recentTouches[key] = now
+
         if let existing = fetchUsageEntry(kind: kind, path: path) {
-            existing.lastAccessedAt = Date()
-            try? modelContext.save()
+            existing.lastAccessedAt = now
+            pendingTouchSaves += 1
+            if pendingTouchSaves >= 50 { flushUsageTouches() }
         } else {
             // Binary exists on disk without a usage record (e.g. created before
             // this bookkeeping was introduced) — backfill one from the file size.
             let size = store(for: kind).fileSize(forName: DropboxCacheNaming.fileName(kind: kind, path: path))
             recordUsage(kind: kind, path: path, byteSize: size)
         }
+    }
+
+    /// 溜めた touch を保存する（容量チェック・削除の前に呼び、時刻の取りこぼしを防ぐ）。
+    func flushUsageTouches() {
+        guard pendingTouchSaves > 0 else { return }
+        pendingTouchSaves = 0
+        try? modelContext.save()
     }
 
     private func removeUsageEntry(kind: CacheUsageEntry.CacheKind, path: String) {
@@ -122,6 +140,7 @@ extension DropboxCacheStore {
     /// Evicts least-recently-accessed entries of `kind` until total usage is
     /// back under the configured byte limit.
     private func enforceCapacity(kind: CacheUsageEntry.CacheKind) {
+        flushUsageTouches()   // 溜めた LRU 時刻を反映してから容量判定する
         let limit = (kind == .thumbnail) ? thumbnailByteLimit : fullImageByteLimit
         let kindRaw = kind.rawValue
         let predicate = #Predicate<CacheUsageEntry> { $0.kind == kindRaw }

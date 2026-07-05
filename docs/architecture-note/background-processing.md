@@ -63,3 +63,22 @@
 - アイドルしきい値 60 秒（`BackgroundYield.heavyWorkIdleSeconds`）は実機の体感で調整可。
 - CLIP モデル初回ロード（16–35s・背景）は埋め込み初回要求時の遅延ロード＝実質アイドル時
   （埋め込み自体がアイドルゲート内でのみ動くため）。
+
+## 追加チューニング（T1〜T6・2026-07-05）
+
+- **T1 CLIP タワー分離ロード**: 両タワー同時ロード（16〜35s・+150MB）をやめ、テキスト塔（軽）は
+  必要時に即・**画像塔（重）は heavy ゲート内の初回埋め込み時のみ**ロード。起動直後の ANE/CPU/メモリ
+  スパイクがユーザー操作の時間帯から消える。タワー別のロード時間をログに記録。
+- **T2 Dropbox ディスクヒットの行列解消**: 真因は (1) LRU touch が**ヒット 1 件ごとに SQLite save**、
+  (2) キャンセル済みセルの要求もデコードし切る、(3) memHit ですら actor hop。→ touch を 5 分窓で
+  スロットル＋save 50 件バッチ化（eviction 前に flush）、limiter 取得後の Task.isCancelled で無効
+  デコードを破棄、nonisolated fast path（cachedThumbnail）で memHit の actor キュー待ちを除去。
+  計測も queueMs / diskHit（実デコード）に分離。
+- **T3 顔スキャン単価**: 検出解像度 800→640px（ロード/メモリ 36%減）＋ recordScan の save を
+  写真毎→バッチ毎（8→1 回）に。13k 枚 backlog の総時間と SQLite 負荷を削減。
+- **T4 EXIF 列挙のメモリスパイク**: PlaceScanner / PhotoEnricher の EXIF 読み（元データ同期取得）を
+  autoreleasepool で 1 アセットごとに解放（初回スキャンの +100〜300MB スパイク対策）。
+- **T5 AI 再評価の時間スロットル**: 48 バッチ間引きに加えて「前回から 5 分未満かつ残ありならスキップ」。
+  72k backlog 消化中のベクトル読みを累計 ~1.2GB → 数十 MB 規模へ（完了時は必ず反映）。
+- **T6 ズームのレイアウト切替**: セクションヘッダを .estimated → 計算値 .absolute にし、
+  最大 129 セクションの measure パスを除去（grid.layout 374ms の短縮を狙う・実測待ち）。

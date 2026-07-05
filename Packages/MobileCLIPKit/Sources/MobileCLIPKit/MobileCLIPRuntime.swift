@@ -11,23 +11,34 @@ public enum MobileCLIP {
     }
 }
 
-/// 同梱した MobileCLIP-S2（Core ML）を読み込み、画像／テキストを 512 次元埋め込みへ変換する。
+/// 同梱した CLIP（Core ML）を読み込み、画像／テキストを 512 次元埋め込みへ変換する。
 /// モデルが見つからない（未同梱）場合は `isAvailable == false` で、呼び出し側は CLIP 無しの
-/// 経路（Vision タグ＋NL 拡張）にフォールバックする。MLModel は推論スレッドセーフ。
+/// 経路にフォールバックする。MLModel は推論スレッドセーフ。
+///
+/// ★ T1: **タワー別の遅延ロード**。従来は初回アクセスで両タワーを同時ロードし、実機で
+/// 16〜35 秒＋メモリ +150MB 級のスパイクが起動直後（ユーザー操作の時間帯）に発生していた。
+/// - テキスト塔（軽い方）: 検索/AI アルバム再評価/表示タグの概念構築が必要 → 必要時に即ロード
+/// - 画像塔（重い方）: 背景の CLIP 埋め込みだけが必要 → **heavy ゲート内（電源＋アイドル）の
+///   初回 encodeImage で初めてロード**される（呼び出し元 PhotoTagger がゲート済みのため）
 final class MobileCLIPRuntime: @unchecked Sendable {
     static let shared = MobileCLIPRuntime()
 
     private static let log = LogChannel(subsystem: "com.mosaicphotos.MobileCLIPKit", label: "MobileCLIP")
 
+    /// モデルが同梱されているか（＝機能が使えるか）。**ロードは発生させない**。
+    /// 同梱だがロード失敗のケースは encode が nil を返し、機能無効と同等に安全に落ちる。
     let isAvailable: Bool
 
-    private let imageModel: MLModel?
-    private let textModel: MLModel?
-    private let imageInputName: String
-    private let imageOutputName: String
-    private let textInputName: String
-    private let textOutputName: String
-    private let imageConstraint: MLImageConstraint?
+    private let config: MLModelConfiguration
+    private let lock = NSLock()
+    /// nil = 未試行 / .some(nil) = ロード失敗（再試行しない） / .some(model) = ロード済み。
+    private var imageState: MLModel??
+    private var textState: MLModel??
+    private var imageInputName = ""
+    private var imageOutputName = ""
+    private var textInputName = ""
+    private var textOutputName = ""
+    private var imageConstraint: MLImageConstraint?
 
     private init() {
         let config = MLModelConfiguration()
@@ -36,38 +47,65 @@ final class MobileCLIPRuntime: @unchecked Sendable {
         #if targetEnvironment(simulator)
         config.computeUnits = .cpuOnly
         #endif
-        func load(_ name: String) -> MLModel? {
-            guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else { return nil }
-            return try? MLModel(contentsOf: url, configuration: config)
-        }
-        let started = Date()
-        let img = load("MobileCLIPImageS2")
-        let txt = load("MobileCLIPTextS2")
-        imageModel = img
-        textModel = txt
-        // 起動後の動的ロード結果を診断ログに残す（実機でロード失敗・メモリ問題を追えるように）。
-        let bundled = MobileCLIP.modelsBundled
-        if img != nil && txt != nil {
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
-            Self.log.info("CLIP models loaded in \(ms)ms (footprint=\(mb))")
-        } else if bundled {
-            Self.log.error("CLIP models bundled but failed to load (image=\(img != nil), text=\(txt != nil))")
-        } else {
+        self.config = config
+        isAvailable = MobileCLIP.modelsBundled
+        if !isAvailable {
             Self.log.info("CLIP models not bundled — AI search disabled")
         }
-        imageInputName = img?.modelDescription.inputDescriptionsByName.keys.first ?? ""
-        imageOutputName = img?.modelDescription.outputDescriptionsByName.keys.first ?? ""
-        textInputName = txt?.modelDescription.inputDescriptionsByName.keys.first ?? ""
-        textOutputName = txt?.modelDescription.outputDescriptionsByName.keys.first ?? ""
-        imageConstraint = img?.modelDescription.inputDescriptionsByName[img?.modelDescription
-            .inputDescriptionsByName.keys.first ?? ""]?.imageConstraint
-        isAvailable = (img != nil && txt != nil)
     }
+
+    // MARK: - タワー別の遅延ロード（スレッドセーフ・失敗は一度だけ記録）
+
+    private func loadTower(_ name: String, label: String) -> MLModel? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else {
+            Self.log.error("CLIP \(label) tower not bundled")
+            return nil
+        }
+        let started = Date()
+        let model = try? MLModel(contentsOf: url, configuration: config)
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
+        if model != nil {
+            Self.log.info("CLIP \(label) tower loaded in \(ms)ms (footprint=\(mb))")
+        } else {
+            Self.log.error("CLIP \(label) tower bundled but failed to load")
+        }
+        return model
+    }
+
+    /// テキスト塔（軽い方）。検索・AI アルバム再評価・表示タグの概念埋め込みが使う。
+    private func textModel() -> MLModel? {
+        lock.lock(); defer { lock.unlock() }
+        if let state = textState { return state }
+        let model = loadTower("MobileCLIPTextS2", label: "text")
+        if let model {
+            textInputName = model.modelDescription.inputDescriptionsByName.keys.first ?? ""
+            textOutputName = model.modelDescription.outputDescriptionsByName.keys.first ?? ""
+        }
+        textState = .some(model)
+        return model
+    }
+
+    /// 画像塔（重い方）。背景の CLIP 埋め込み（heavy ゲート内）だけが使う。
+    private func imageModel() -> MLModel? {
+        lock.lock(); defer { lock.unlock() }
+        if let state = imageState { return state }
+        let model = loadTower("MobileCLIPImageS2", label: "image")
+        if let model {
+            let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? ""
+            imageInputName = inputName
+            imageOutputName = model.modelDescription.outputDescriptionsByName.keys.first ?? ""
+            imageConstraint = model.modelDescription.inputDescriptionsByName[inputName]?.imageConstraint
+        }
+        imageState = .some(model)
+        return model
+    }
+
+    // MARK: - 推論（MLModel はスレッドセーフ・ロック外で実行）
 
     /// トークン ID 列（長さ 77）→ 正規化済み 512 次元埋め込み。
     func encodeText(_ tokens: [Int32]) -> [Float]? {
-        guard let textModel,
+        guard let textModel = textModel(),
               let arr = try? MLMultiArray(shape: [1, NSNumber(value: tokens.count)], dataType: .int32)
         else { return nil }
         let ptr = arr.dataPointer.bindMemory(to: Int32.self, capacity: tokens.count)
@@ -82,7 +120,7 @@ final class MobileCLIPRuntime: @unchecked Sendable {
 
     /// 画像 → 正規化済み 512 次元埋め込み。リサイズ/画素変換はモデルの画像制約に従い自動。
     func encodeImage(_ cgImage: CGImage) -> [Float]? {
-        guard let imageModel, let imageConstraint,
+        guard let imageModel = imageModel(), let imageConstraint,
               let fv = try? MLFeatureValue(cgImage: cgImage, constraint: imageConstraint, options: nil),
               let provider = try? MLDictionaryFeatureProvider(dictionary: [imageInputName: fv]),
               let out = try? imageModel.prediction(from: provider),

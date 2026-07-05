@@ -20,7 +20,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         for refKey in refKeys {
             guard let ref = PhotoRef.decode(refKey), let localID = ref.localIdentifier else { continue }
             // 顔検出に十分な解像度で取得（大きすぎると重いので 800px 程度）。
-            guard let cg = await loadLocalCGImage(localID, maxPixel: 800) else { nilImage += 1; continue }
+            // T3: 800→640px。Vision の顔検出には十分な解像度で、ロード・メモリを約36%削減
+                // （顔クロップは検出後に bbox 基準で切るため embedding 品質への影響は軽微）。
+                guard let cg = await loadLocalCGImage(localID, maxPixel: 640) else { nilImage += 1; continue }
             loaded += 1
             let (raw, signals, error) = detect(in: cg)
             if let error { visionErr += 1; lastError = error }

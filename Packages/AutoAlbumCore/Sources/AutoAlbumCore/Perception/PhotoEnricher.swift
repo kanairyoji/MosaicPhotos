@@ -98,24 +98,28 @@ private func fetchNewLocalPhotos(existing: Set<String>) -> (newRaws: [RawLocalPh
     var allRefKeys = Set<String>()
     var newRaws: [RawLocalPhoto] = []
     result.enumerateObjects { asset, _, _ in
-        let id = asset.localIdentifier
-        let refKey = "L-\(id)"
-        allRefKeys.insert(refKey)
-        guard !existing.contains(refKey) else { return }   // 既存は座標解決をスキップ
-        var lat: Double?
-        var lon: Double?
-        if let location = asset.location {
-            lat = location.coordinate.latitude
-            lon = location.coordinate.longitude
-        } else if let gps = readAssetExifGPS(asset) {
-            lat = gps.latitude
-            lon = gps.longitude
+        // T4: EXIF 読みは元データを同期取得するため、autoreleasepool で 1 アセットごとに解放
+        //（初回エンリッチのメモリスパイク対策・PlaceScanner と同型）。
+        autoreleasepool {
+            let id = asset.localIdentifier
+            let refKey = "L-\(id)"
+            allRefKeys.insert(refKey)
+            guard !existing.contains(refKey) else { return }   // 既存は座標解決をスキップ
+            var lat: Double?
+            var lon: Double?
+            if let location = asset.location {
+                lat = location.coordinate.latitude
+                lon = location.coordinate.longitude
+            } else if let gps = readAssetExifGPS(asset) {
+                lat = gps.latitude
+                lon = gps.longitude
+            }
+            let aspect = asset.pixelHeight > 0 ? Double(asset.pixelWidth) / Double(asset.pixelHeight) : nil
+            newRaws.append(RawLocalPhoto(
+                localIdentifier: id, captureDate: CaptureDate.meaningful(asset.creationDate), latitude: lat, longitude: lon,
+                isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot),
+                isFavorite: asset.isFavorite, aspect: aspect))
         }
-        let aspect = asset.pixelHeight > 0 ? Double(asset.pixelWidth) / Double(asset.pixelHeight) : nil
-        newRaws.append(RawLocalPhoto(
-            localIdentifier: id, captureDate: CaptureDate.meaningful(asset.creationDate), latitude: lat, longitude: lon,
-            isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot),
-            isFavorite: asset.isFavorite, aspect: aspect))
     }
     return (newRaws, allRefKeys)
 }

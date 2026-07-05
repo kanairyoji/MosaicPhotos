@@ -227,29 +227,34 @@ private func fetchLocalLocatedCandidates(
 
     var candidates: [PlaceCandidate] = []
     result.enumerateObjects { asset, _, _ in
-        let id = asset.localIdentifier
-        var coordinate: CLLocationCoordinate2D?
+        // T4: EXIF 読み（readExifGPS）は写真の**元データ**を同期取得する。autoreleasepool で
+        // 包まないと列挙が終わるまで元バイトが解放されず、初回スキャンでメモリが数百 MB
+        // スパイクする（実測 +100〜300MB）。1 アセットごとに確実に解放する。
+        autoreleasepool {
+            let id = asset.localIdentifier
+            var coordinate: CLLocationCoordinate2D?
 
-        if let location = asset.location {
-            coordinate = location.coordinate
-        } else {
-            // PHAsset.location が無い → EXIF を読む（キャッシュ優先）。
-            let gps: CachedGPS
-            if let cached = cache[id] {
-                gps = cached
+            if let location = asset.location {
+                coordinate = location.coordinate
             } else {
-                gps = readExifGPS(for: asset)
-                cache[id] = gps
+                // PHAsset.location が無い → EXIF を読む（キャッシュ優先）。
+                let gps: CachedGPS
+                if let cached = cache[id] {
+                    gps = cached
+                } else {
+                    gps = readExifGPS(for: asset)
+                    cache[id] = gps
+                }
+                if let lat = gps.lat, let lon = gps.lon {
+                    coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                }
             }
-            if let lat = gps.lat, let lon = gps.lon {
-                coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            }
-        }
 
-        guard let c = coordinate else { return }
-        candidates.append(PlaceCandidate(
-            latitude: c.latitude, longitude: c.longitude,
-            isLocal: true, identifier: id, date: asset.creationDate))
+            guard let c = coordinate else { return }
+            candidates.append(PlaceCandidate(
+                latitude: c.latitude, longitude: c.longitude,
+                isLocal: true, identifier: id, date: asset.creationDate))
+        }
     }
     return (candidates, cache)
 }

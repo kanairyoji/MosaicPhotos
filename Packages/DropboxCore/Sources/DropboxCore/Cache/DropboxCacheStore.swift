@@ -34,6 +34,9 @@ actor DropboxCacheStore {
     let thumbnailStore: DiskImageStore
     let fullImageStore: DiskImageStore
     let thumbnailMemory: MemoryImageCache
+    /// T2: LRU touch のスロットル（5 分窓）と save バッチ化（50 件ごと）の状態。
+    var recentTouches: [String: Date] = [:]
+    var pendingTouchSaves = 0
 
     var thumbnailByteLimit: Int
     var fullImageByteLimit: Int

@@ -63,6 +63,16 @@ extension AutoAlbumEngine {
         aiAlbums = await aiService.refresh(aiAlbums)
     }
 
+    /// T5: 埋め込み進行に伴う再評価の**時間スロットル**。48 バッチごとの onBatch でも 1 回の
+    /// 再評価はベクトル約 13MB のページ読み＋採点を伴い、残 72k の消化中に累計 ~1.2GB の
+    /// ディスク読みになる。前回から 5 分未満かつ残作業ありならスキップ（完了時は必ず反映）。
+    func refreshAIAlbumsThrottled() async {
+        let remaining = BackgroundActivityMonitor.shared.embedRemaining
+        if remaining > 0, Date().timeIntervalSince(lastAIRefreshAt) < 300 { return }
+        lastAIRefreshAt = Date()
+        await refreshAIAlbums()
+    }
+
     // MARK: - Recognition (Vision/CLIP タグ付け)
 
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
@@ -81,7 +91,7 @@ extension AutoAlbumEngine {
                                       },
                                           networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
                                           onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
-                [weak self] in await self?.refreshAIAlbums()
+                [weak self] in await self?.refreshAIAlbumsThrottled()
             }
             isTagging = false
         }
@@ -114,7 +124,7 @@ extension AutoAlbumEngine {
                                           (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
                                       },
                                       onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
-            [weak self] in await self?.refreshAIAlbums()
+            [weak self] in await self?.refreshAIAlbumsThrottled()
         }
         isTagging = false
     }
