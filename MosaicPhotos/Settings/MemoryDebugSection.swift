@@ -38,6 +38,8 @@ struct MemoryDebugSection: View {
             LabeledContent("On power", value: bool(power.isOnPower))
             LabeledContent("Power policy", value: powerPolicyName(power.policy))
             LabeledContent("Background allowed", value: bool(power.backgroundAllowed()))
+            LabeledContent("Idle seconds", value: String(format: "%.0fs", BackgroundActivityMonitor.shared.idleSeconds))
+            LabeledContent("Heavy work allowed", value: bool(BackgroundYield.heavyWorkAllowed))
             LabeledContent("Network", value: networkState(net))
             LabeledContent("Data policy", value: dataPolicyName(net.policy))
             LabeledContent("Background data allowed", value: bool(net.networkAllowed()))

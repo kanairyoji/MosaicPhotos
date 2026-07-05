@@ -36,13 +36,24 @@ public final class BackgroundActivityMonitor {
     // MARK: - 前景の重い処理（背景処理に譲らせる用）
     /// Dropbox サムネイルの取得（ドレイン）が稼働中か。クラウド閲覧中は CLIP 背景埋め込みを
     /// 一時停止させ、サムネのデコード/ネットと CPU を奪い合わないようにする（PhotoTagger が参照）。
-    public var cloudThumbnailBusy = false
+    public var cloudThumbnailBusy = false { didSet { if cloudThumbnailBusy { noteUserInteraction() } } }
     /// フル画像のダウンロード/デコードが稼働中か（`DropboxActivityMonitor.beginFullImage` が橋渡し）。
     /// フル表示を開く瞬間に背景埋め込みが CPU を奪うと遷移が飢餓するため、その間は譲らせる。
-    public var fullImageBusy = false
+    public var fullImageBusy = false { didSet { if fullImageBusy { noteUserInteraction() } } }
     /// フル画面の写真ビューを表示中か。閲覧中（＝タップ直後の遷移含む）は背景埋め込みを止め、
     /// 遷移のメインスレッドを空ける（`PhotoPageView`/グリッドが報告）。
-    public var isViewingPhoto = false
+    public var isViewingPhoto = false { didSet { if isViewingPhoto { noteUserInteraction() } } }
+
+    // MARK: - ユーザー操作のアイドル追跡（重い処理の実行許可判定用）
+    /// 最後にユーザー操作の気配（画面遷移・スクラブ・写真閲覧・スクロール起因の取得）を
+    /// 検知した時刻。起動時＝現在（起動直後は非アイドル扱い＝重い処理は始まらない）。
+    @ObservationIgnored public private(set) var lastInteractionAt = Date()
+
+    /// ユーザー操作を記録する（画面遷移・スクラブ等の発生点から呼ぶ）。
+    public func noteUserInteraction() { lastInteractionAt = Date() }
+
+    /// 最後の操作からの経過秒。
+    public var idleSeconds: TimeInterval { Date().timeIntervalSince(lastInteractionAt) }
 
     private init() {}
 }

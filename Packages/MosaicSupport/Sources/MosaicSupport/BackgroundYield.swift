@@ -18,13 +18,32 @@ public enum BackgroundYield {
     }
 
     /// 標準判定（電源条件込み）。`powerOK` が false なら常に譲る。
-    /// CLIP 埋め込み・顔スキャンが使う。**アルバム生成中も譲る**（相互排他）：起動直後に
-    /// generate（85k 件の SwiftData 処理）と ANE 推論・画像ロードが同時に走るとメモリが
-    /// 跳ね（実測 668MB）システム全体がストールするため、重い処理は同時に 1 種類に絞る。
-    /// ※ 生成側（refreshIfNeeded）は `uiBusy` を見る（この関数ではない）ので循環しない。
-    /// TODO(予定): 「電源接続かつ一定時間アイドル」のゲートをここに追加する（重い処理の
-    /// 開始条件を本判定に集約してあるため、追加はこの 1 箇所で済む）。
+    /// **アルバム生成中も譲る**（相互排他）：起動直後に generate（85k 件の SwiftData 処理）と
+    /// ANE 推論・画像ロードが同時に走るとメモリが跳ね（実測 668MB）システム全体がストールする。
     public static func shouldPause(powerOK: Bool) -> Bool {
         !powerOK || uiBusy || BackgroundActivityMonitor.shared.isGeneratingAlbums
+    }
+
+    // MARK: - 重い処理の実行方針（ユーザー指定・全アプリ共通）
+
+    /// 重い処理（アルバム生成・CLIP 埋め込み・顔スキャン）を許可するアイドル時間（秒）。
+    /// 「人が使っている最中は背景でも重い処理を動かさない」方針（使用感優先）。
+    public static var heavyWorkIdleSeconds: TimeInterval = 60
+
+    /// 重い処理の**開始/継続の共通条件**：電源接続中・低電力 OFF・UI 非ビジー・
+    /// 最後の操作から `heavyWorkIdleSeconds` 以上アイドル。
+    /// 起動直後は非アイドル扱い（lastInteractionAt=起動時刻）＝起動スパイクも自然に防ぐ。
+    public static var heavyWorkAllowed: Bool {
+        PowerStateMonitor.shared.isOnPower
+            && !PowerStateMonitor.shared.isLowPowerMode
+            && !uiBusy
+            && BackgroundActivityMonitor.shared.idleSeconds >= heavyWorkIdleSeconds
+    }
+
+    /// 重い処理（CLIP 埋め込み・顔スキャン）の譲り判定：`heavyWorkAllowed` を満たさない、
+    /// またはアルバム生成中（相互排他）なら譲る。
+    /// ※ 生成側（refreshIfNeeded）は `heavyWorkAllowed` を見る（自分のフラグは見ない）。
+    public static func heavyShouldPause() -> Bool {
+        !heavyWorkAllowed || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 }

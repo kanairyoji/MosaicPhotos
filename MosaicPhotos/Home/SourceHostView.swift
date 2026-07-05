@@ -1,6 +1,7 @@
 import AutoAlbumCore
 import BackupKit
 import DropboxKit
+import MosaicSupport
 import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
@@ -29,9 +30,10 @@ struct SourceHostView<Content: View>: View {
                 if !names.isEmpty { insight.people = names }
                 return insight
             }
-            // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。
+            // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。操作はアイドル判定にも記録する。
             .environment(\.photoInteraction) { [autoAlbumEngine] interacting in
                 autoAlbumEngine.setInteracting(interacting)
+                if interacting { BackgroundActivityMonitor.shared.noteUserInteraction() }
             }
             .sheet(isPresented: $showingSettings) {
                 NavigationStack {

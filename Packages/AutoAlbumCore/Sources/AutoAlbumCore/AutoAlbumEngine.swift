@@ -57,11 +57,38 @@ public final class AutoAlbumEngine {
 
     @ObservationIgnored let labelProvider: LabelProvider?
 
-    public init(cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
-                peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
-                perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
-                translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil) {
-        let store = AutoAlbumStore()
+    /// ⚠️ 直 init は「呼び出しスレッドで AutoAlbumStore（@ModelActor）を作る」＝ MainActor から
+    /// 呼ぶと全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走る（実測 14.5s ハング）。
+    /// **本番は `makeWithOffMainStore` を使う**こと（直 init はテスト用）。
+    public convenience init(cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
+                            peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
+                            perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
+                            translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil) {
+        self.init(cloudProvider: cloudProvider, backupLink: backupLink, peopleProvider: peopleProvider,
+                  queryUnderstanding: queryUnderstanding, perception: perception, textEmbedder: textEmbedder,
+                  translator: translator, labelProvider: labelProvider, store: nil)
+    }
+
+    /// 本番用ファクトリ。@ModelActor（AutoAlbumStore）を**オフメインで生成**してから組み立てる。
+    public static func makeWithOffMainStore(
+        cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
+        peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
+        perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
+        translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil
+    ) async -> AutoAlbumEngine {
+        let store = await Task.detached(priority: .userInitiated) { AutoAlbumStore() }.value
+        return AutoAlbumEngine(cloudProvider: cloudProvider, backupLink: backupLink,
+                               peopleProvider: peopleProvider, queryUnderstanding: queryUnderstanding,
+                               perception: perception, textEmbedder: textEmbedder,
+                               translator: translator, labelProvider: labelProvider, store: store)
+    }
+
+    init(cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
+         peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
+         perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
+         translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil,
+         store: AutoAlbumStore? = nil) {
+        let store = store ?? AutoAlbumStore()
         self.store = store
         self.cloudProvider = cloudProvider
         self.backupLink = backupLink
@@ -141,11 +168,9 @@ public final class AutoAlbumEngine {
     public func refreshIfNeeded() async {
         guard isLoaded, !isGenerating else { return }
         guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
-        // 電源ポリシー（既定: 充電中かつ低電力 OFF のみ）を満たさなければ定期再生成を行わない。
-        guard PowerStateMonitor.shared.backgroundAllowed() else { return }
-        // 写真閲覧・フル画像/サムネ取得中は重い再生成を始めない（オフメイン化済みでも
-        // CPU・メモリ・SwiftData I/O が操作と競合するため。次のティックで再判定）。
-        guard !BackgroundYield.uiBusy else { return }
+        // 重い処理の共通方針: 電源接続＋低電力 OFF＋一定時間アイドルのときだけ定期再生成する
+        // （人が使っている気配がある間は背景でも動かさない・次のティックで再判定）。
+        guard BackgroundYield.heavyWorkAllowed else { return }
         let cloudChanged = await cloudSignatureChanged()
         guard libraryDirty || cloudChanged else { return }
         libraryDirty = false

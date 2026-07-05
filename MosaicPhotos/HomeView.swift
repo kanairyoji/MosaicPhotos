@@ -81,6 +81,9 @@ struct HomeView: View {
             .safeAreaInset(edge: .top, spacing: 0) { homeHeader }
             .toolbar(.hidden, for: .navigationBar)
         }
+        // 画面遷移・設定シートはユーザー操作としてアイドル判定に記録する（重い処理の抑制）。
+        .onChange(of: destination == nil) { _, _ in BackgroundActivityMonitor.shared.noteUserInteraction() }
+        .onChange(of: showingSettings) { _, _ in BackgroundActivityMonitor.shared.noteUserInteraction() }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
                 SettingsView(stores: stores)

@@ -28,13 +28,29 @@ public final class PeopleEngine {
     /// 「人物」とみなす最小顔数。
     private let minFaces = 3
 
-    public init(faceProvider: FacePerceptionProvider?,
-                favoriteRefKeysProvider: (() async -> Set<String>)? = nil) {
-        let store = FaceStore()
+    /// FaceStore は internal のため注入はこの init（internal）経由。外部（アプリ）は
+    /// `makeWithOffMainStore` を使う。
+    init(faceProvider: FacePerceptionProvider?,
+         favoriteRefKeysProvider: (() async -> Set<String>)? = nil,
+         store: FaceStore? = nil) {
+        let store = store ?? FaceStore()
         self.store = store
         self.faceProvider = faceProvider
         self.favoriteRefKeysProvider = favoriteRefKeysProvider
         self.tagger = FaceTagger(store: store, provider: faceProvider)
+    }
+
+    /// 本番用ファクトリ。⚠️ @ModelActor（FaceStore）は「init したスレッド」で実行されるため、
+    /// **オフメインで生成**してから組み立てる（MainActor 直 init だと顔スキャンの SwiftData が
+    /// 全部メインスレッドで走る — AutoAlbumStore で実測 14.5s ハングになった同じ罠）。
+    public static func makeWithOffMainStore(
+        faceProvider: FacePerceptionProvider?,
+        favoriteRefKeysProvider: (() async -> Set<String>)? = nil
+    ) async -> PeopleEngine {
+        let store = await Task.detached(priority: .userInitiated) { FaceStore() }.value
+        return PeopleEngine(faceProvider: faceProvider,
+                            favoriteRefKeysProvider: favoriteRefKeysProvider,
+                            store: store)
     }
 
     /// 顔モデルが同梱され利用可能か（未同梱ならピープルは無効＝空表示）。
@@ -64,12 +80,9 @@ public final class PeopleEngine {
                 candidateRefKeys: candidateRefKeys,
                 allowSimulator: allowSimulator,
                 shouldPause: {
-                    // 顔認識は重いので、**電源に接続されているときだけ**動かす（電池では動かさない・
-                    // 低電力モード中も停止）。共通の譲り条件（メモリ圧迫・写真閲覧・取得中）は
-                    // BackgroundYield に一元化。
-                    BackgroundYield.shouldPause(
-                        powerOK: PowerStateMonitor.shared.isOnPower
-                            && !PowerStateMonitor.shared.isLowPowerMode)
+                    // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との
+                    // 相互排他）は BackgroundYield.heavyShouldPause に一元化。
+                    BackgroundYield.heavyShouldPause()
                 },
                 onProgress: {
                     self.remaining = $0

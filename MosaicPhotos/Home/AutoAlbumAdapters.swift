@@ -9,14 +9,17 @@ import UIKit
 /// アプリのアダプタ（Dropbox / バックアップ / 人物 / Vision / CLIP）を結線して `AutoAlbumEngine` を
 /// 生成する Composition Root。HomeView の init をスリムに保つ。
 @MainActor
-func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEngine) -> AutoAlbumEngine {
+func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEngine) async -> AutoAlbumEngine {
     // クラウド path → CGImage（Dropbox サムネイル）。CLIP 埋め込みに使う。
     let cloudImage: @Sendable (String) async -> CGImage? = { path in
         let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
         let image = await dropboxStore.thumbnail(for: item)
         return image?.cgImage
     }
-    return AutoAlbumEngine(
+    // ⚠️ @ModelActor は「init したスレッド」で実行される（SwiftData の罠）。MainActor で
+    // 生成すると全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走り
+    // 実測 14.5s ハングの真因になったため、オフメイン生成ファクトリを使う。
+    return await AutoAlbumEngine.makeWithOffMainStore(
         cloudProvider: DropboxCloudPhotoProvider(store: dropboxStore),
         backupLink: BackupLinkAdapter(engine: backupEngine),
         peopleProvider: PeopleProviderAdapter(),
@@ -28,9 +31,11 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
 
 /// ピープル（顔クラスタ）エンジンを組み立てる。顔検出/埋め込み実体は Vision+CoreML（MobileCLIPKit）。
 /// 顔モデル未同梱なら無効（空表示）になる。代表写真の自動選択用にお気に入り集合（PhotoKit）を注入する。
-func makePeopleEngine() -> PeopleEngine {
-    PeopleEngine(faceProvider: FacePerceptionAdapter(),
-                 favoriteRefKeysProvider: { await favoriteImageRefKeys() })
+func makePeopleEngine() async -> PeopleEngine {
+    // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
+    await PeopleEngine.makeWithOffMainStore(
+        faceProvider: FacePerceptionAdapter(),
+        favoriteRefKeysProvider: { await favoriteImageRefKeys() })
 }
 
 /// `DropboxPhotoStore.items` を AutoAlbumCore の中立メタデータへ写像する CloudPhotoProvider 実体。
