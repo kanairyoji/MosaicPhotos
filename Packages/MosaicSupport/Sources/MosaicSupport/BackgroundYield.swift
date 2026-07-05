@@ -18,7 +18,13 @@ public enum BackgroundYield {
     }
 
     /// 標準判定（電源条件込み）。`powerOK` が false なら常に譲る。
+    /// CLIP 埋め込み・顔スキャンが使う。**アルバム生成中も譲る**（相互排他）：起動直後に
+    /// generate（85k 件の SwiftData 処理）と ANE 推論・画像ロードが同時に走るとメモリが
+    /// 跳ね（実測 668MB）システム全体がストールするため、重い処理は同時に 1 種類に絞る。
+    /// ※ 生成側（refreshIfNeeded）は `uiBusy` を見る（この関数ではない）ので循環しない。
+    /// TODO(予定): 「電源接続かつ一定時間アイドル」のゲートをここに追加する（重い処理の
+    /// 開始条件を本判定に集約してあるため、追加はこの 1 箇所で済む）。
     public static func shouldPause(powerOK: Bool) -> Bool {
-        !powerOK || uiBusy
+        !powerOK || uiBusy || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 }

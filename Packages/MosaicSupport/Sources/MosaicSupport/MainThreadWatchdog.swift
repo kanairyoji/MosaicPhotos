@@ -22,8 +22,16 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     private var over250 = 0
     private var maxMs: Double = 0
 
+    /// 未返答の ping の送信時刻（ns・0=なし）。queue 上でのみ触る。
+    private var outstandingSinceNs: UInt64 = 0
+    /// このハングの「開始」を既に記録したか（1 ハングにつき 1 回だけ hang.begin を出す）。
+    private var hangBeginReported = false
+
     /// 即時ログするハングしきい値（ms）。
     public var hangImmediateMs: Double = 500
+    /// ハング「開始」を疑って即時記録するしきい値（ms）。解消を待たずに時刻を残すことで、
+    /// 「どのログ行の直後にメインが止まったか」をログの時系列で特定できるようにする。
+    public var hangBeginSuspectMs: Double = 1000
 
     private init() {}
 
@@ -46,11 +54,27 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     }
 
     private func ping() {
+        // 前回の ping が未返答＝メインが塞がっている。新しい ping は積まず（解消時の
+        // ラダー状ログを防ぐ）、しきい値を超えたら「開始」を一度だけ即時記録する。
+        if outstandingSinceNs != 0 {
+            let age = Double(DispatchTime.now().uptimeNanoseconds &- outstandingSinceNs) / 1_000_000
+            if age > hangBeginSuspectMs, !hangBeginReported {
+                hangBeginReported = true
+                DiagnosticsLog.shared.append(String(format: "PERF hang.begin main blocked ≥%.0fms — 直前のログ行の処理を疑う", age))
+            }
+            return
+        }
+
         let t0 = DispatchTime.now().uptimeNanoseconds
+        outstandingSinceNs = t0
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let ms = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1_000_000
             self.record(ms)
+            self.queue.async {
+                self.outstandingSinceNs = 0
+                self.hangBeginReported = false
+            }
         }
     }
 

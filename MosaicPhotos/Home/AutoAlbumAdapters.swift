@@ -44,13 +44,16 @@ struct DropboxCloudPhotoProvider: CloudPhotoProvider {
         if await MainActor.run(body: { store.items.isEmpty }) {
             await store.loadItems()
         }
-        return await MainActor.run {
-            store.items.map { item in
+        // main では snapshot（COW の配列コピー＝軽い）だけ取り、67k 件の map は
+        // オフメインで行う（generate から呼ばれるためメインを塞がない）。
+        let items = await MainActor.run { store.items }
+        return await Task.detached(priority: .utility) {
+            items.map { item in
                 CloudPhotoMeta(path: item.path, captureDate: item.captureDate,
                                latitude: item.latitude, longitude: item.longitude,
                                contentHash: item.contentHash)
             }
-        }
+        }.value
     }
 }
 
@@ -59,7 +62,8 @@ struct BackupLinkAdapter: BackupLinkProvider {
     let engine: BackupEngine
 
     func localToCloudPath() async -> [String: String] {
-        await MainActor.run { engine.localToCloudPaths() }
+        // generate から呼ばれるためオフメイン版を使う（全件 materialize をメインでやらない）。
+        await engine.localToCloudPathsDetached()
     }
 }
 

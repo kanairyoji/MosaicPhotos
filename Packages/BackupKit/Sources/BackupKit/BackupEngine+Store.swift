@@ -20,6 +20,21 @@ extension BackupEngine {
         return map
     }
 
+    /// `localToCloudPaths` の**オフメイン版**（自動アルバム生成用）。バックアップ記録が多いと
+    /// 全件 materialize がメインを塞ぐため、使い捨て `ModelContext` を Task.detached で回す。
+    nonisolated public func localToCloudPathsDetached() async -> [String: String] {
+        guard let container = await MainActor.run(body: { modelContext?.container }) else { return [:] }
+        return await Task.detached(priority: .utility) {
+            let ctx = ModelContext(container)
+            guard let records = try? ctx.fetch(FetchDescriptor<BackupAssetRecord>()) else { return [:] }
+            var map: [String: String] = [:]
+            for record in records {
+                if let id = record.localIdentifier { map[id] = record.dropboxPath }
+            }
+            return map
+        }.value
+    }
+
     // MARK: - Metadata
 
     func buildMetadataEntries(

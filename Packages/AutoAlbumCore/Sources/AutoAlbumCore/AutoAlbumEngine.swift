@@ -178,7 +178,9 @@ public final class AutoAlbumEngine {
         //    67k 件のループ（refKey 生成・Set 操作・geocode）は Task.detached でオフメインに
         //    （エンジンは @MainActor のため、直呼びだとこのループがメインスレッドを塞ぐ）。
         if includeCloud, let cloudProvider {
+            Diagnostics.mark("generate.step2: cloud metas…")
             let metas = await cloudProvider.cloudPhotos()
+            Diagnostics.mark("generate.step2: metas=\(metas.count) → enrich…")
             let enricher = self.enricher
             let (sig, cloudResult) = await Task.detached(priority: .utility) {
                 (Self.signature(of: metas), await enricher.enrichCloud(metas: metas, existing: existing))
@@ -189,6 +191,7 @@ public final class AutoAlbumEngine {
         }
 
         // 3. 現存しない写真の付加情報を削除。既存ローカルの linkKey をバックアップ最新で更新。
+        Diagnostics.mark("generate.step3: prune…")
         await store.prune(keeping: currentRefKeys)
         await store.refreshLocalLinkKeys(backupMap)
 
@@ -196,7 +199,9 @@ public final class AutoAlbumEngine {
         //    まとめて Task.detached（オフメイン）で行い、メインは結果の代入だけにする
         //    （従来はエンジン＝@MainActor 上で実行され、実測で main を最大 12 秒塞いでいた）。
         //    生成は意味検索を伴わないため clipVector を載せない軽量版を使う（実機メモリ削減）。
+        Diagnostics.mark("generate.step4: fetch lite…")
         let allEnriched = await store.allEnrichedPhotosLite()
+        Diagnostics.mark("generate.step4: lite=\(allEnriched.count) → detached compute…")
         let excludeAlbumed = UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.excludeAlbumed)
         let albumed = excludeAlbumed ? await PhotoEnricher.userAlbumedIdentifiers() : []
         let params = AlbumGenParams.current
@@ -234,6 +239,7 @@ public final class AutoAlbumEngine {
             return (photos, infos, pathInfos)
         }.value
 
+        Diagnostics.mark("generate.step5: compute done → save…")
         await PlaceNameResolver.shared.persist()
         await store.replaceAlbums(forStrategy: TimePlaceStrategy.strategyID, with: infos)
         await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: pathInfos)
