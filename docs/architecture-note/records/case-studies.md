@@ -337,3 +337,16 @@
 - 対処: いずれも Task.detached（utility/userInitiated）へ移し、メインは完成配列の代入のみに。
 - 関連: `PeopleSupport.swift` / `LocalPhotoStore.swift`。
 - 残課題: デフォルト MainActor 環境では「新しい top-level 関数・store メソッドが暗黙にメイン実行になる」ことをレビュー観点として持つ（同じ罠に再びはまりやすい）。
+
+## @ModelActor が全処理をメインスレッドで実行（init したスレッドに束縛される罠）
+- 症状: 操作中に最大 12〜14.5 秒のメインスレッドハング（設定が開かない等）。generate の純計算を Task.detached へ移しても解消せず、hang.begin センサーで「store 呼び出し（prune / fetch lite）の await 中」にメインが塞がると確定。
+- 原因: SwiftData の `@ModelActor` は **init したスレッドで実行される**（DefaultSerialModelExecutor が生成時の ModelContext に束縛される既知の挙動）。`AutoAlbumStore` / `FaceStore` を MainActor（HomeStores.build → Engine.init 内）で生成していたため、@ModelActor なのに 85k 件の fetch/prune/upsert・顔の recordScan が**全部メインスレッド**で走っていた。actor だから勝手にオフメインだと思い込みやすく、await 越しなので呼び出し側コードにも現れない。
+- 対処: `Task.detached` 内で Store を生成して注入するファクトリ（`AutoAlbumEngine.makeWithOffMainStore` / `PeopleEngine.makeWithOffMainStore`）を用意し、Composition Root から使用。直 init はテスト用に残し警告コメントを付けた。
+- 関連: パフォーマンス実機分析（diagnostics-3.log）。`AutoAlbumEngine.swift` / `PeopleEngine.swift` / `AutoAlbumAdapters.swift`。MainThreadWatchdog の hang.begin（D4）が特定の決め手。
+- 残課題: 新しい @ModelActor を追加するときは必ずオフメイン生成にする（レビュー観点）。DropboxCacheStore は自前 actor のため対象外。
+
+## 重い処理の実行方針を「電源接続＋一定時間アイドル」に統一（設計判断）
+- 症状/文脈: 背景 QoS でも、人が使っている最中に重い処理（アルバム生成・CLIP 埋め込み・顔スキャン）が動くと CPU/ANE/メモリを奪い使用感が落ちる。起動直後は全処理が同時突入しメモリ 668MB → システムストールも実測。
+- 対処: `BackgroundYield.heavyWorkAllowed / heavyShouldPause` に一元化：電源接続＋低電力 OFF＋最後のユーザー操作から 60 秒以上アイドル＋（CLIP/顔は）生成との相互排他。操作は `BackgroundActivityMonitor.noteUserInteraction`（画面遷移・スクラブ・閲覧・取得の発生点）で記録。起動直後は非アイドル扱い。初回生成と手動実行（今すぐ生成・再解析）は例外。
+- 関連: `BackgroundYield.swift` / `BackgroundActivityMonitor.swift`。従来の電源ポリシー設定（backgroundAllowed）はバックアップ・場所スキャン・Dropbox 同期に引き続き適用。
+- 残課題: スクリーンロック中の実行（BGProcessingTask）は未実装（フォアグラウンドのアイドルのみ）。しきい値 60 秒は実機の体感で調整。
