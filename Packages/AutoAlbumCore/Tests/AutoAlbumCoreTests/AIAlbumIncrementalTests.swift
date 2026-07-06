@@ -34,11 +34,13 @@ struct AIAlbumIncrementalTests {
         #expect(keys.first == "top")
     }
 
-    @Test("memberKeys は低スコアだけなら floor で全滅させる")
-    func memberFloor() {
-        // top=0.15 < floor(0.20) → cutoff=0.20 → 全員落ちる。
+    @Test("memberKeys は相対バンド（top−margin）のみ・score<=0 は落とす（フロア廃止）")
+    func memberRelativeBand() {
+        // 絶対フロアは廃止（ADR-24）。top=0.15 → cutoff=0.09 → 両方入る（審査層が刈る）。
         let pool: [String: Float] = ["a": 0.15, "b": 0.10]
-        #expect(AIAlbumSearcher.memberKeys(fromPool: pool).isEmpty)
+        #expect(Set(AIAlbumSearcher.memberKeys(fromPool: pool)) == Set(["a", "b"]))
+        // score<=0（無関係）は常に落ちる。
+        #expect(AIAlbumSearcher.memberKeys(fromPool: ["x": -0.1, "y": 0.0]).isEmpty)
     }
 
     @Test("memberKeys は上位 K で打ち切る")

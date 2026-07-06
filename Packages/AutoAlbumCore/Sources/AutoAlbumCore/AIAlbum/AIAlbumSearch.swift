@@ -9,10 +9,9 @@ struct AIAlbumSearcher {
     let textEmbedder: TextEmbedder?
 
     private static let log = Logger(subsystem: "com.mosaicphotos.AutoAlbum", category: "aialbum")
-    /// 意味検索の絶対フロア（低め）。MobileCLIP-S2 の一致コサインは概ね 0.20〜0.30 と低く圧縮されており、
-    /// 高い絶対しきい値だと全滅するため、明確な無関係（負・極小）だけを落とす低フロアにする。
-    static let semanticFloor: Float = 0.20
-    /// 上位帯マージン。最上位スコアからこの幅以内だけ採用（強いクエリほど絞り、弱いクエリは広めに）。
+    /// 上位帯マージン。最上位スコアからこの幅以内だけ採用（相対バンド）。
+    /// 絶対フロア（旧 0.20）は廃止（ADR-24: 閾値レス）＝ライブラリ分布に依存する定数を持たない。
+    /// 低スコア帯の候補は証拠ゲート・タグ除外・LLM 審査の積層が刈る。score<=0 だけは無関係として落とす。
     static let semanticMargin: Float = 0.06
     /// 1 アルバムの最大採用数（コサインは弱分離なので上位 K 件で打ち切ってノイズの裾を切る）。
     static let maxResults = 50
@@ -125,7 +124,7 @@ struct AIAlbumSearcher {
             }.sorted { $0.score > $1.score }
             // 低フロアで無関係を除外し、最上位から semanticMargin 以内の上位帯だけを、上位 K 件で打ち切る。
             if let top = scored.first?.score {
-                let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
+                let cutoff = max(1e-4, top - Self.semanticMargin)   // 相対バンドのみ（フロア廃止）
                 semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
             }
             let isASCII = phrase.allSatisfy(\.isASCII)
@@ -182,7 +181,7 @@ struct AIAlbumSearcher {
             }
             scored.sort { $0.score > $1.score }
             if let top = scored.first?.score {
-                let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
+                let cutoff = max(1e-4, top - Self.semanticMargin)   // 相対バンドのみ（フロア廃止）
                 semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
             }
             let isASCII = phrase.allSatisfy(\.isASCII)
@@ -281,7 +280,6 @@ struct AIAlbumSearcher {
 
         var semantic: [EnrichedPhoto] = []
         var pool: [String: Float] = [:]
-        var negDroppedIDs = Set<String>()
         if let textEmbedder, textEmbedder.isAvailable {
             embedderAvailable = true
             if let vector = await textEmbedder.embed(phrase) {
@@ -305,7 +303,6 @@ struct AIAlbumSearcher {
                             let neg = negVectors.map { ClipMath.cosine($0, v) }.max() ?? -1
                             if neg >= pos {   // 相対判定のみ（絶対閾値は廃止・ADR-24）
                                 excludedByNeg += 1
-                                negDroppedIDs.insert(photo.id)
                                 continue
                             }
                         }
@@ -321,7 +318,7 @@ struct AIAlbumSearcher {
                 embeddedCount = scored.count
                 if let top = scored.first?.score {
                     topScore = top
-                    let cutoff = max(Self.semanticFloor, top - Self.semanticMargin)
+                    let cutoff = max(1e-4, top - Self.semanticMargin)   // 相対バンドのみ（フロア廃止）
                     semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
                 }
                 // 増分評価の土台となるプール（上位のみ・小さく永続化）。
@@ -345,12 +342,10 @@ struct AIAlbumSearcher {
         let fused = HybridFusion.fuse([lexical, semantic, tagMatched].filter { !$0.isEmpty })
         // 構造化条件がありヒット0なら base を返す（従来）。ただし緩和(relaxed)時は全件を返さず空にする
         // （ハードが本来全滅＝該当なしのため、意味も当たらなければ空が正しい）。
-        // ⚠️ 除外（対比）で落とした写真はフォールバックでも**復活させない**：従来はここで生 base を
-        //   返したため、意味採用が 0 件のとき除外済みの人物写真が丸ごとアルバムに入った（実障害）。
-        //   「空にしない」より「除外を守る」を優先する。未埋め込み写真は判定不能のため残る
-        //   （埋め込みの進行とともにカバレッジが上がる）。
-        let fallbackBase = negDroppedIDs.isEmpty ? base : base.filter { !negDroppedIDs.contains($0.id) }
-        let result = fused.isEmpty ? ((spec.hasHardConstraints && !relaxed) ? fallbackBase : []) : fused
+        // 内容の意図（フレーズ）があるのにどの経路（タグ/意味/字句）でも当たらない場合は**空**を返す。
+        // 旧: ハード条件があれば base（例: 日付窓の全 7,508 枚）へフォールバックし、「子供」の意図が
+        // 消えた巨大アルバムになる実障害。証拠主義（ADR-24）＝索引が進めば自然に埋まる方を選ぶ。
+        let result = fused
         Diagnostics.mark("aialbum: base=\(base.count)/\(all.count) hard=\(spec.hasHardConstraints) relaxed=\(relaxed) emb=\(embedderAvailable) scored=\(embeddedCount) top=\(String(format: "%.3f", topScore)) kept=\(semantic.count) lex=\(lexical.count) result=\(result.count)")
         return (result, pool)
     }
@@ -370,10 +365,10 @@ struct AIAlbumSearcher {
     }
 
     /// プールから「メンバーに入るべき refKey」を返す（純）。フル評価と同じ
-    /// カットオフ規則（floor と top−margin の大きい方・上位 K）を適用する。
+    /// カットオフ規則（top−margin の相対バンド・score>0・上位 K）を適用する。
     static func memberKeys(fromPool pool: [String: Float]) -> [String] {
         guard let top = pool.values.max() else { return [] }
-        let cutoff = max(semanticFloor, top - semanticMargin)
+        let cutoff = max(1e-4, top - semanticMargin)
         return pool.filter { $0.value >= cutoff }
             .sorted { $0.value > $1.value }
             .prefix(maxResults)
