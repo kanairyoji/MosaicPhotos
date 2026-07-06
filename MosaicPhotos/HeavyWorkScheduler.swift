@@ -74,6 +74,54 @@ enum HeavyWorkScheduler {
         }
     }
 
+    // MARK: - 検証用（Developer Options・デバッガ不要）
+
+    /// BG タスクが OS に予約されているか（"scheduled" / "none"）。
+    static func pendingStatus() async -> String {
+        await withCheckedContinuation { cont in
+            BGTaskScheduler.shared.getPendingTaskRequests { requests in
+                cont.resume(returning: requests.contains { $0.identifier == taskID } ? "scheduled" : "none")
+            }
+        }
+    }
+
+    /// 検証実行中か（Developer Options のスピナー用）。
+    static var isDebugRunning = false
+
+    /// BG タスクと**同じルーチン**をその場で実行する（デバッガ不要の検証用）。
+    /// 実際の「ロック中に OS が起こす」部分は OS 裁量のため検証できないが、
+    /// ルーチン本体（ストア構築/再利用・Keychain 読み・generate/顔/埋め込み・完了判定）を
+    /// 前景で確認できる。実行中はゲートを一時的に全開にし、終了時に元へ戻す。
+    static func debugRunNow(timeLimit: TimeInterval = 180) {
+        guard !isDebugRunning else { return }
+        isDebugRunning = true
+        Diagnostics.mark("bgtask: debug run begin (limit=\(Int(timeLimit))s)")
+        let started = Date()
+        let previousForce = BackgroundYield.debugForceHeavyWork
+        BackgroundYield.debugForceHeavyWork = true
+
+        let work = Task { @MainActor in
+            await runHeavyWork()
+            finish(outcome: "manual-completed")
+        }
+        // 時間制限（実 BG の期限切れを模擬）。
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(timeLimit))
+            if isDebugRunning {
+                work.cancel()
+                finish(outcome: "manual-expired")
+            }
+        }
+
+        func finish(outcome: String) {
+            guard isDebugRunning else { return }
+            isDebugRunning = false
+            BackgroundYield.debugForceHeavyWork = previousForce
+            Diagnostics.mark("bgtask: debug run end (\(outcome))")
+            recordLastRun(started: started, outcome: outcome)
+        }
+    }
+
     /// D: 最終実行の記録（Developer Options で表示）。ログを開かずに夜間実行の有無を確認できる。
     private static func recordLastRun(started: Date, outcome: String) {
         let f = DateFormatter()

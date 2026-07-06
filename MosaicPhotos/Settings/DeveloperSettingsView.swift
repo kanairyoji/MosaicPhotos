@@ -28,6 +28,9 @@ struct DeveloperSettingsView: View {
     /// デバッグ: 重い処理のゲートを全面無効化（ランタイムのみ・再起動でリセット）。
     @State private var forceHeavyWork = BackgroundYield.debugForceHeavyWork
     @State private var heavyWorking = false
+    /// BG タスク検証: 予約状態と「その場実行」中フラグ。
+    @State private var bgPendingStatus = "…"
+    @State private var bgDebugRunning = false
 
     @State private var enrichmentCount = 0
     @State private var cachedPlaceCount = 0
@@ -40,6 +43,7 @@ struct DeveloperSettingsView: View {
             appInfoSection
             diagnosticsSection
             heavyWorkDebugSection
+            backgroundTaskDebugSection
             MemoryDebugSection()
             LocalPhotoDebugSection()
             DropboxDebugSection(dropboxAuth: dropboxAuth, store: store)
@@ -100,8 +104,6 @@ struct DeveloperSettingsView: View {
             Toggle("Force heavy work gates open", isOn: $forceHeavyWork)
                 .onChange(of: forceHeavyWork) { _, on in BackgroundYield.debugForceHeavyWork = on }
             LabeledContent("Heavy work allowed", value: BackgroundYield.heavyWorkAllowed ? "Yes" : "No")
-            LabeledContent("Last BG run",
-                           value: UserDefaults.standard.string(forKey: AppSettingsKeys.bgTaskLastRun) ?? "never")
             Button {
                 Task {
                     heavyWorking = true
@@ -132,6 +134,50 @@ struct DeveloperSettingsView: View {
                  + "The toggle disables the power/idle/UI gates until the app restarts. "
                  + "Embedding still skips on the simulator (CLIP is CPU-only there).")
         }
+    }
+
+    // MARK: - Background task debug（夜間処理の検証・デバッガ不要）
+
+    /// ロック中実行（BGProcessingTask）の検証用。実際の「OS がロック中に起こす」瞬間は
+    /// OS 裁量のため、(1) 予約されているか、(2) 最後にいつ実行されたか、(3) 同じルーチンを
+    /// その場で実行して中身を確認、の 3 点で検証できるようにする。
+    private var backgroundTaskDebugSection: some View {
+        Section {
+            LabeledContent("Scheduled", value: bgPendingStatus)
+            LabeledContent("Last BG run",
+                           value: UserDefaults.standard.string(forKey: AppSettingsKeys.bgTaskLastRun) ?? "never")
+            Button("Submit BG request now") {
+                HeavyWorkScheduler.submit()
+                Task { bgPendingStatus = await HeavyWorkScheduler.pendingStatus() }
+            }
+            Button {
+                bgDebugRunning = true
+                HeavyWorkScheduler.debugRunNow()
+                // 完了検知は簡易ポーリング（表示用）。ルーチン自体は独立して走る。
+                Task {
+                    while HeavyWorkScheduler.isDebugRunning {
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                    bgDebugRunning = false
+                }
+            } label: {
+                if bgDebugRunning {
+                    HStack { ProgressView().controlSize(.small); Text("Running BG routine… (max 3 min)") }
+                } else {
+                    Text("Run BG routine now (foreground test)")
+                }
+            }
+            .disabled(bgDebugRunning)
+        } header: {
+            Text("Background Task — Debug")
+        } footer: {
+            Text("Verifies the lock-screen task without a debugger: “Run BG routine now” executes the exact same "
+                 + "routine in the foreground (gates temporarily forced open, 3-minute cap, result recorded in "
+                 + "Last BG run as “manual-…”). The real lock-screen launch is at the OS's discretion — "
+                 + "verify overnight (charging + locked) via Last BG run. Note: on the simulator, scheduling "
+                 + "is unsupported and CLIP embedding is skipped.")
+        }
+        .task { bgPendingStatus = await HeavyWorkScheduler.pendingStatus() }
     }
 
     @ViewBuilder
