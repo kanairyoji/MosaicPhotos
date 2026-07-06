@@ -43,18 +43,46 @@ final class AIAlbumService {
     /// カタログ（地名/人物の語彙）は LLM の表記寄せヒントとして**このときだけ**構築する。
     private func interpretation(id: String, criteria: String, now: Date) async -> SavedInterpretation {
         // 検索文が同じでも、解釈器の版が古ければ作り直す（プロンプト改善を既存アルバムに波及させる）。
-        if let saved = interpretations.get(id), saved.criteria == criteria,
-           saved.version == SavedInterpretation.currentVersion { return saved }
+        if var saved = interpretations.get(id), saved.criteria == criteria,
+           saved.version == SavedInterpretation.currentVersion {
+            // 翻訳が保留（前回失敗）なら翻訳だけ再試行する（解釈はそのまま）。
+            if saved.translationPending == true, let translator {
+                let english = await translator.toEnglish(criteria)
+                if !Self.looksUntranslated(english) {
+                    saved.semanticText = english
+                    saved.translationPending = false
+                    interpretations.set(id, saved)
+                }
+            }
+            return saved
+        }
         let all = await store.allEnrichedPhotosLite()
         let catalog = await Self.buildCatalogOffMain(all)
-        // LLM 出力は必ずサニタイズする（プレースホルダ語・カタログ丸写し・include/exclude 衝突。
-        // 小型オンデバイス LLM はプロンプト改善だけでは信頼できない＝実障害2件・sanitizer 参照）。
+        // LLM 出力は必ずサニタイズする（プレースホルダ語・カタログ丸写し・include/exclude 衝突）。
+        // P0: さらに接地する＝日付は決定的パーサに置換・place/people はカタログ/原文出現のみ
+        // （小型オンデバイス LLM の構造化出力は信用しない＝実障害3件・sanitizer 参照）。
         let spec = QuerySpecSanitizer.sanitize(
-            await understanding.interpretSpec(criteria, catalog: catalog, now: now))
+            await understanding.interpretSpec(criteria, catalog: catalog, now: now),
+            criteria: criteria, now: now,
+            placeCatalog: catalog.places + catalog.countries,
+            peopleCatalog: catalog.people)
+        // P0: 翻訳失敗（日本語のまま等）は semanticText を空にして保存し、次回に再試行する。
+        // 失敗を静かにキャッシュすると CLIP に非英語が渡り採点が全ノイズ化する（実障害2件）。
         let english = (await translator?.toEnglish(criteria)) ?? criteria
-        let saved = SavedInterpretation(criteria: criteria, spec: spec, semanticText: english)
+        let failed = Self.looksUntranslated(english)
+        var saved = SavedInterpretation(criteria: criteria, spec: spec,
+                                        semanticText: failed ? "" : english)
+        saved.translationPending = failed
         interpretations.set(id, saved)
         return saved
+    }
+
+    /// 英訳として成立していないか（非 ASCII が 1/3 以上＝日本語のまま等）。純関数（テスト対象）。
+    nonisolated static func looksUntranslated(_ english: String) -> Bool {
+        let text = english.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return true }
+        let nonAscii = text.unicodeScalars.filter { !$0.isASCII }.count
+        return nonAscii * 3 > text.unicodeScalars.count
     }
 
     // MARK: - 作成 / 再設定 / 削除

@@ -55,6 +55,67 @@ struct QuerySpecSanitizerTests {
         #expect(out == spec)
     }
 
+    // MARK: - P0: 接地サニタイズ（決定的日付・place/people の接地）
+
+    private let now = Date()
+
+    @Test("日付は RelativeDateParser が唯一の出典（LLM の date は捨てて置換）")
+    func deterministicDateWins() {
+        // LLM が「ここ2年」を year 2026 と誤解釈した実障害の再現。
+        let llmSpec = QuerySpec(clauses: [QueryClause([
+            .date(.year(2026)),                 // ← LLM の誤り
+            .content(["child"]),
+        ])])
+        let out = QuerySpecSanitizer.sanitize(llmSpec, criteria: "ここ2年以内の子供の写真", now: now)
+        #expect(out.clauses.count == 1)
+        #expect(out.clauses[0].conditions.contains(.date(.lastYears(2))))     // パーサの結果
+        #expect(!out.clauses[0].conditions.contains(.date(.year(2026))))      // LLM の日付は消える
+        #expect(out.clauses[0].conditions.contains(.content(["child"])))
+    }
+
+    @Test("LLM の節が全滅しても決定的日付だけの節が立つ")
+    func dateOnlyClauseSurvives() {
+        let llmSpec = QuerySpec(clauses: [QueryClause([.place(["any"])])])   // サニタイズで全滅
+        let out = QuerySpecSanitizer.sanitize(llmSpec, criteria: "ここ2年の写真", now: now)
+        #expect(out.clauses == [QueryClause([.date(.lastYears(2))])])
+    }
+
+    @Test("原文に日付表現が無ければ LLM の date は消えるだけ（勝手に付与しない）")
+    func noDateWhenParserSilent() {
+        let llmSpec = QuerySpec(clauses: [QueryClause([.date(.year(2026)), .content(["beach"])])])
+        let out = QuerySpecSanitizer.sanitize(llmSpec, criteria: "ビーチの写真", now: now)
+        #expect(out.clauses == [QueryClause([.content(["beach"])])])
+    }
+
+    @Test("place/people はカタログ一致 or 原文出現のみ残す（幻覚語は消える）")
+    func groundingFiltersHallucinations() {
+        let llmSpec = QuerySpec(clauses: [QueryClause([
+            .place(["children", "沖縄県"]),     // "children" は幻覚（実障害）・沖縄県はカタログにある
+            .people(["children"]),              // 幻覚
+            .content(["child"]),
+        ])])
+        let out = QuerySpecSanitizer.sanitize(llmSpec, criteria: "沖縄の子供の写真", now: now,
+                                              placeCatalog: ["沖縄県", "港区"], peopleCatalog: ["Joe"])
+        #expect(out.clauses[0].conditions.contains(.place(["沖縄県"])))
+        #expect(!out.clauses[0].conditions.contains { if case .people = $0 { return true } else { return false } })
+    }
+
+    @Test("カタログに無くても原文にそのまま出現する語は残す（存在しない地名の許容）")
+    func criteriaTypedTermSurvives() {
+        let llmSpec = QuerySpec(clauses: [QueryClause([.place(["モルディブ"])])])
+        let out = QuerySpecSanitizer.sanitize(llmSpec, criteria: "モルディブの写真", now: now,
+                                              placeCatalog: ["港区"])
+        #expect(out.clauses[0].conditions.contains(.place(["モルディブ"])))
+    }
+
+    @Test("looksUntranslated: 日本語のままは true・英語は false")
+    func untranslatedDetection() {
+        #expect(AIAlbumService.looksUntranslated("ここ2年以内の子供の写真"))
+        #expect(!AIAlbumService.looksUntranslated("Photos of children from the last 2 years"))
+        #expect(AIAlbumService.looksUntranslated(""))
+        #expect(!AIAlbumService.looksUntranslated("Child"))
+    }
+
     @Test("positivePhrase: include 優先・無ければ否定節を落とした英訳文")
     func positivePhraseRules() {
         #expect(AIAlbumSearcher.positivePhrase(include: ["landscape"], semanticText: "whatever") == "landscape")

@@ -14,14 +14,18 @@ public struct SavedInterpretation: Codable, Sendable {
     /// v2: 例語のオウム返し・カタログ丸写しを禁止したプロンプト（2026-07）。
     /// v3: QuerySpecSanitizer（プレースホルダ除去・include/exclude 衝突解消）＋肯定フレーズの
     ///     否定節ストリップ（2026-07）。
-    public static let currentVersion = 3
+    /// v4: P0＝日付は RelativeDateParser を唯一の出典に・place/people はカタログ/原文接地のみ・
+    ///     翻訳失敗の非キャッシュ（2026-07）。
+    public static let currentVersion = 4
     public var version: Int?
     /// 解釈時の検索文（これが変わったときだけ再解釈する）。
     public var criteria: String
     /// LLM の解釈結果（相対日付は相対形のまま＝評価時に now で解決される）。
     public var spec: QuerySpec
-    /// CLIP 用の英訳（LLM 翻訳の結果）。
+    /// CLIP 用の英訳（LLM 翻訳の結果）。翻訳失敗時は **空**（日本語のまま CLIP に渡さない）。
     public var semanticText: String
+    /// 翻訳が未完了（失敗）か。true なら次の評価時に翻訳だけ再試行する。
+    public var translationPending: Bool?
     /// 増分評価: 意味スコアの上位プール（refKey → コサイン）。新規埋め込み分をここへマージする。
     public var scoredPool: [String: Float]
     /// 増分評価: 前回フル評価時点の埋め込み済み枚数（ドリフト検知＝差が開いたらフル再評価）。

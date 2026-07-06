@@ -17,6 +17,52 @@ enum QuerySpecSanitizer {
     /// （ユーザーが 1 つの検索文で 6 箇所以上を明示指定することは実際にはない）。
     private static let catalogDumpThreshold = 5
 
+    /// P0: 接地情報つきサニタイズ。
+    /// - 日付: **RelativeDateParser（決定的・日英）を唯一の出典**にする。LLM 由来の date は
+    ///   全部捨て、パーサが見つけた場合のみ全節に AND で付与する（clauses が空でも date だけの
+    ///   節を作る）。「ここ2年 → year 2026」のような LLM 誤解釈（実障害）を構造的に根絶する。
+    /// - place/people: **カタログに完全一致（ci）** または **原文（criteria）に文字どおり出現**
+    ///   する語だけ残す。LLM の幻覚語（place に "children" 等・実障害）はハード条件から消える。
+    static func sanitize(_ spec: QuerySpec, criteria: String, now: Date,
+                         placeCatalog: [String] = [], peopleCatalog: [String] = []) -> QuerySpec {
+        var out = sanitize(spec)
+        let criteriaLower = criteria.lowercased()
+        let placeSet = Set(placeCatalog.map { $0.lowercased() })
+        let peopleSet = Set(peopleCatalog.map { $0.lowercased() })
+
+        func grounded(_ terms: [String], catalog: Set<String>) -> [String] {
+            terms.filter { term in
+                let t = term.lowercased()
+                return catalog.contains(t) || criteriaLower.contains(t)
+            }
+        }
+
+        let parsedDate = RelativeDateParser.parse(criteria, now: now)
+        out.clauses = out.clauses.compactMap { clause -> QueryClause? in
+            var conds: [Condition] = clause.conditions.compactMap { cond in
+                switch cond {
+                case .date:
+                    return nil   // LLM 由来の日付は信用しない（決定的パーサに置換）
+                case .place(let terms):
+                    let g = grounded(terms, catalog: placeSet)
+                    return g.isEmpty ? nil : .place(g)
+                case .people(let terms):
+                    let g = grounded(terms, catalog: peopleSet)
+                    return g.isEmpty ? nil : .people(g)
+                default:
+                    return cond
+                }
+            }
+            if let parsedDate { conds.append(.date(parsedDate)) }
+            return conds.isEmpty ? nil : QueryClause(conds)
+        }
+        // LLM の節が全滅しても、決定的日付があればそれだけの節を立てる（「ここ2年」は必ず効く）。
+        if out.clauses.isEmpty, let parsedDate {
+            out.clauses = [QueryClause([.date(parsedDate)])]
+        }
+        return out
+    }
+
     static func sanitize(_ spec: QuerySpec) -> QuerySpec {
         var out = spec
         out.clauses = spec.clauses.compactMap { sanitizeClause($0) }

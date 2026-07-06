@@ -69,16 +69,30 @@ def main() -> None:
     print("==> 視覚タワーを変換")
 
     class VisionWrapper(torch.nn.Module):
+        """Idefics3 の可変アスペクト位置埋め込みは torch.bucketize を使い CoreML 変換不可。
+        固定 512px・マスク無しでは位置 ID は 0..N-1 の連番に確定するため、embeddings を
+        手展開して bucketize を迂回する（数値は同一）。"""
+
         def __init__(self, m):
             super().__init__()
-            self.vision = m.model.vision_model
+            vm = m.model.vision_model
+            self.patch_embedding = vm.embeddings.patch_embedding
+            self.position_embedding = vm.embeddings.position_embedding
+            self.encoder = vm.encoder
+            self.post_layernorm = vm.post_layernorm
             self.connector = m.model.connector
+            side = m.config.vision_config.image_size // m.config.vision_config.patch_size
+            self.register_buffer("pos_ids", torch.arange(side * side), persistent=False)
 
         def forward(self, pixel_values):
             # 入力は [0,1]（ImageType scale=1/255）。SigLIP 正規化（mean/std 0.5）を内包する。
             x = (pixel_values - 0.5) / 0.5
-            hs = self.vision(pixel_values=x).last_hidden_state
-            return self.connector(hs)   # (1, image_seq_len, hidden)
+            patches = self.patch_embedding(x)                    # (1, dim, 32, 32)
+            embeds = patches.flatten(2).transpose(1, 2)          # (1, 1024, dim)
+            h = embeds + self.position_embedding(self.pos_ids)   # 固定連番＝フル画像のときの bucketize と同値
+            h = self.encoder(inputs_embeds=h).last_hidden_state
+            h = self.post_layernorm(h)
+            return self.connector(h)   # (1, image_seq_len, hidden)
 
     vision = VisionWrapper(model).eval()
     example = torch.rand(1, 3, image_size, image_size)
