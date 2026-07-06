@@ -75,6 +75,11 @@ final class TagTagger {
                             betweenBatchNs: UInt64 = 1_000_000_000,
                             shouldPause: @MainActor () -> Bool = { false }) async {
         guard let provider, provider.isCaptioningAvailable else { return }
+        #if targetEnvironment(simulator)
+        // VLM は cpuOnly で 1 枚十数秒かかり検証の妨げになるため、シミュレータでは実行しない。
+        Diagnostics.mark("captions: skipped on simulator (VLM runs cpuOnly here)")
+        return
+        #endif
         var processed = 0
         while !Task.isCancelled {
             while shouldPause() && !Task.isCancelled {

@@ -65,11 +65,26 @@ struct PhotoInfoPanel: View {
                            title: insight.people.joined(separator: ", "),
                            subtitle: L("People"))
                 }
-                if !insight.tags.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label(L("Detected"), systemImage: "tag")
-                            .font(.caption).foregroundStyle(.secondary)
+                // タグ欄は**常時表示**（付与前でも欄があることで「解析待ち」だと分かる）。
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(L("Detected"), systemImage: "tag")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if insight.tags.isEmpty {
+                        Text(L("No tags yet — added automatically while charging"))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
                         Text(insight.tags.joined(separator: " · "))
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if let caption = insight.caption {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(L("AI description"), systemImage: "text.below.photo")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(caption)
                             .font(.subheadline)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }

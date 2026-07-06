@@ -10,14 +10,18 @@ public struct PhotoInsight: Sendable, Equatable {
         case ready        // 解析完了（タグ 0 件でも完了）
     }
 
-    /// 表示専用の CLIP ゼロショットタグ（dog/beach/sunset 等）。検索は語彙ゼロのまま、これは表示専用。
+    /// 表示タグ（Vision シーンタグ＋CLIP ゼロショットの補完）。検索のタグ台帳と同一ソース。
     public var tags: [String]
     public var people: [String]
+    /// VLM キャプション（英語・夜間バッチで後から埋まる）。未生成は nil。
+    public var caption: String?
     public var status: Status
 
-    public init(tags: [String] = [], people: [String] = [], status: Status = .ready) {
+    public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
+                status: Status = .ready) {
         self.tags = tags
         self.people = people
+        self.caption = caption
         self.status = status
     }
 

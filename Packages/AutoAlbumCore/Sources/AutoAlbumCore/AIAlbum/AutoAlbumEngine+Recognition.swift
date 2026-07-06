@@ -16,12 +16,18 @@ extension AutoAlbumEngine {
         for refKey in Self.candidateRefKeys(for: id) {
             guard let rec = await store.insightRecord(refKey: refKey) else { continue }
             let status: PhotoInsight.Status = rec.tagged ? .ready : .analyzing
-            // 表示専用タグ：保存済み CLIP ベクトルに対するゼロショット（検索は語彙ゼロのまま）。
-            var tags: [String] = []
+            // タグ表示は Vision シーンタグ（校正済み・検索と同一の台帳）を第一に、
+            // CLIP ゼロショットの表示ラベルで補完する（重複除去・最大10個）。
+            var tags = (await tagStore.tags(forRefKeys: [refKey]))[refKey] ?? []
             if let vector = rec.photo.clipVector, let labelProvider {
-                tags = await labelProvider.labels(forEmbedding: vector)
+                let clipLabels = await labelProvider.labels(forEmbedding: vector)
+                let seen = Set(tags.map { $0.lowercased() })
+                tags += clipLabels.filter { !seen.contains($0.lowercased()) }
             }
-            return PhotoInsight(tags: tags, people: rec.photo.people, status: status)
+            let caption = (await tagStore.captions(forRefKeys: [refKey]))[refKey]
+            return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
+                                caption: (caption?.isEmpty == false) ? caption : nil,
+                                status: status)
         }
         // 付加情報が無い＝まだ取り込まれていない。
         return PhotoInsight(status: .notIndexed)

@@ -16,10 +16,24 @@ struct AIAlbumSearcher {
     static let semanticMargin: Float = 0.06
     /// 1 アルバムの最大採用数（コサインは弱分離なので上位 K 件で打ち切ってノイズの裾を切る）。
     static let maxResults = 50
-    /// 除外概念のドロップしきい値。除外語（"people" 等）への類似がこの値以上、または肯定側
-    /// より近い写真は落とす。CLIP は文中の否定（"without people"）を理解できないため、
-    /// **除外は別ベクトルとの対比**で行う（単一文への埋め込みでは効かない）。
-    static let excludeDropThreshold: Float = 0.22
+    /// 除外の CLIP 対比は**相対判定のみ**（除外概念に肯定より近ければ落とす）。
+    /// 絶対しきい値（旧 0.22）はモデルの圧縮された分布と合わず「全写真の 97% を落とす」実障害に
+    /// なったため廃止（ADR-24: 閾値レス）。除外の精度はタグ・顔実測・キャプション＝証拠ゲートが担う。
+
+    /// 証拠ゲート（純・テスト対象）: 除外条件つきアルバムでは、**検証可能な証拠**
+    /// （シーンタグ / 顔実測 / キャプション）を 1 つも持たない写真をメンバーにしない。
+    /// 「人が写っていない」と主張できない写真を弱い CLIP 対比だけで通すと漏れる（実障害）。
+    /// 証拠は夜間バッチで増えるため、アルバムは索引の進行とともに自然に埋まっていく。
+    static func evidenceGated(_ members: [EnrichedPhoto],
+                              tags: [String: [String]],
+                              faceCounts: [String: Int],
+                              captions: [String: String]) -> [EnrichedPhoto] {
+        members.filter { photo in
+            !(tags[photo.id] ?? []).isEmpty
+                || faceCounts[photo.id] != nil
+                || (captions[photo.id]?.isEmpty == false)
+        }
+    }
 
     /// LLM 審査（P2）用の証拠行（純・テスト対象）。写真を見られない審査員に渡す 1 行サマリ。
     static func evidenceLine(index: Int, photo: EnrichedPhoto,
@@ -286,7 +300,7 @@ struct AIAlbumSearcher {
                         let pos = ClipMath.cosine(vector, v)
                         if !negVectors.isEmpty {
                             let neg = negVectors.map { ClipMath.cosine($0, v) }.max() ?? -1
-                            if neg >= pos || neg >= Self.excludeDropThreshold {
+                            if neg >= pos {   // 相対判定のみ（絶対閾値は廃止・ADR-24）
                                 excludedByNeg += 1
                                 negDroppedIDs.insert(photo.id)
                                 continue

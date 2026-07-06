@@ -104,6 +104,8 @@ final class AIAlbumService {
         var saved = await interpretation(id: id, criteria: trimmed, now: now)
         let all = await store.allEnrichedPhotosLite()
         var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+        // 証拠ゲート（除外つきのみ）→ LLM 審査の順で精度を担保する。
+        members = await evidenceGatedIfExcluding(members, spec: saved.spec)
         // P2 Verify: 候補のタグ/キャプション/顔数を LLM が読み、不適合を落とす（unsure は多数決）。
         members = await verified(members, criteria: trimmed)
         // P2 Refine: 空振りなら LLM がプローブ語（類義・関連概念）を生成して 1 回だけ再検索。
@@ -150,6 +152,7 @@ final class AIAlbumService {
             guard let criteria = album.criteria, !criteria.isEmpty else { updated.append(album); continue }
             var saved = await interpretation(id: album.id, criteria: criteria, now: now)
             var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+            members = await evidenceGatedIfExcluding(members, spec: saved.spec)
             members = await verified(members, criteria: criteria)
             saved.scoredPool = pool
             saved.evaluatedEmbedCount = embedCount
@@ -197,10 +200,10 @@ final class AIAlbumService {
             for photo in base {
                 guard let data = newVectors[photo.id], let v = ClipMath.decode(data) else { continue }
                 let pos = ClipMath.cosine(q.pos, v)
-                // 対策1: 除外概念との対比（フル評価と同じドロップ規則）。
+                // 対策1: 除外概念との対比（フル評価と同じ**相対**ドロップ規則）。
                 if !q.negs.isEmpty {
                     let neg = q.negs.map { ClipMath.cosine($0, v) }.max() ?? -1
-                    if neg >= pos || neg >= AIAlbumSearcher.excludeDropThreshold { continue }
+                    if neg >= pos { continue }
                 }
                 added[photo.id] = pos
             }
@@ -215,8 +218,9 @@ final class AIAlbumService {
             let newlyIn = base.filter { memberKeys.contains($0.id) && !existing.contains($0.id) }
             guard !newlyIn.isEmpty else { continue }
 
-            // P2: 増分の新規追加分だけ LLM 審査（小さいバッチ＝安価）。
-            let verifiedNew = await verified(newlyIn, criteria: criteria)
+            // P2: 増分の新規追加分も証拠ゲート → LLM 審査（小さいバッチ＝安価）。
+            let gatedNew = await evidenceGatedIfExcluding(newlyIn, spec: saved.spec)
+            let verifiedNew = await verified(gatedNew, criteria: criteria)
             guard !verifiedNew.isEmpty else { continue }
             let existingPhotos = await store.enrichedPhotos(forRefKeys: album.memberRefs)
             let members = (existingPhotos + verifiedNew)
@@ -261,6 +265,22 @@ final class AIAlbumService {
     /// 候補（上位 60 件）の証拠行（日付・場所・顔数・タグ・キャプション）を LLM が読み、
     /// 不適合を落とす。unsure は最大 2 回再判定して**多数決**（同数は keep＝安全側）。
     /// FM 無し・候補ゼロ・証拠皆無のときは素通し。
+    /// 除外条件つきアルバムの**証拠ゲート**: タグ/顔実測/キャプションを 1 つも持たない写真は
+    /// メンバーにしない（「〜が写っていない」を検証できないため）。除外なしのアルバムは素通し。
+    private func evidenceGatedIfExcluding(_ members: [EnrichedPhoto],
+                                          spec: QuerySpec) async -> [EnrichedPhoto] {
+        guard !spec.allContentTerms.exclude.isEmpty, !members.isEmpty else { return members }
+        let keys = members.map(\.id)
+        let tags = await tagStore?.tags(forRefKeys: keys) ?? [:]
+        let captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
+        let faces = await faceCountsProvider?() ?? [:]
+        let gated = AIAlbumSearcher.evidenceGated(members, tags: tags, faceCounts: faces, captions: captions)
+        if gated.count != members.count {
+            Diagnostics.mark("aialbum.evidenceGate: \(members.count) → \(gated.count) (deferred until indexed)")
+        }
+        return gated
+    }
+
     private func verified(_ members: [EnrichedPhoto], criteria: String) async -> [EnrichedPhoto] {
         guard let verifier, verifier.isAvailable, !members.isEmpty else { return members }
         let top = Array(members.prefix(60))

@@ -44,22 +44,38 @@ struct AIAlbumExclusionTests {
         #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["scenery"])
     }
 
-    /// 肯定に近くても、除外類似が絶対しきい値（excludeDropThreshold）以上なら落とす。
-    @Test("除外類似がしきい値以上なら肯定側が高くても落とす")
-    func contrastDropsAboveAbsoluteThreshold() async {
+    /// CLIP 対比は相対判定のみ（絶対閾値は廃止＝ADR-24）。肯定に近い写真は除外類似が
+    /// あっても残り、精度は証拠ゲート（タグ/顔/キャプション）が担う。
+    @Test("CLIP 対比は相対のみ（肯定優位なら残る・絶対閾値は無い）")
+    func contrastIsRelativeOnly() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0],
             AIAlbumSearcher.excludePrompt("people"): [0, 1],
         ])
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
-        // neg cos = 0.24 >= 0.22（しきい値）→ pos が高くても落ちる。
-        let photos = [photo("clean", clip: [1, 0.1]),         // neg≈0.10 → 残る
-                      photo("faintPerson", clip: [1, 0.25])]  // neg≈0.24 → 落ちる
+        let photos = [photo("clean", clip: [1, 0.1]),
+                      photo("faintPerson", clip: [1, 0.25])]   // neg≈0.24 だが pos≈0.97 優位 → 残る
         let spec = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
         let result = await searcher.search(baseLite: photos, spec: spec, now: now,
                                            semanticText: "",
                                            loadPage: pagedLoader(photos))
-        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["clean"])
+        #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["clean", "faintPerson"])
+    }
+
+    /// 証拠ゲート: タグ・顔実測・キャプションのいずれも無い写真は除外つきアルバムに入れない。
+    @Test("evidenceGated: 証拠ゼロの写真は落ち、いずれかがあれば残る")
+    func evidenceGateRules() {
+        let a = photo("tagged"), b = photo("faced"), c = photo("captioned"), d = photo("nothing")
+        let gated = AIAlbumSearcher.evidenceGated(
+            [a, b, c, d],
+            tags: [a.id: ["landscape"]],
+            faceCounts: [b.id: 0],
+            captions: [c.id: "A beach."])
+        #expect(Set(gated.map(\.id)) == Set([a.id, b.id, c.id]))
+        // 空キャプション・空タグは証拠にならない。
+        let gated2 = AIAlbumSearcher.evidenceGated([d], tags: [d.id: []], faceCounts: [:],
+                                                   captions: [d.id: ""])
+        #expect(gated2.isEmpty)
     }
 
     /// 顔スキャンの実測（faceCounts）: 顔がある写真はハード除外、未スキャンは CLIP に任せて残す。

@@ -42,6 +42,16 @@
         }
       }
     },
+    "AI description": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIによる説明"
+          }
+        }
+      }
+    },
     "Camera": {
       "localizations": {
         "ja": {
@@ -158,6 +168,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "写真がありません"
+          }
+        }
+      }
+    },
+    "No tags yet — added automatically while charging": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タグはまだありません — 充電中に自動で追加されます"
           }
         }
       }
