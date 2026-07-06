@@ -3,6 +3,14 @@ import CoreML
 import Foundation
 import MosaicSupport
 
+/// SmolVLM モデルが同梱されているか、ロードを発生させずに判定する（Developer Options 用）。
+public enum VLM {
+    public static var modelsBundled: Bool {
+        Bundle.main.url(forResource: "VLMVision", withExtension: "mlmodelc") != nil
+            && Bundle.main.url(forResource: "VLMDecoder", withExtension: "mlmodelc") != nil
+    }
+}
+
 /// 同梱 SmolVLM（写真キャプション生成）のランタイム。
 /// `scripts/build_smolvlm.sh` の生成物（MosaicPhotos/VLM/・.gitignore 対象）を遅延ロードする。
 /// 未同梱でもアプリは動作し、キャプション（AI アルバムの精度向上）だけ無効化される。

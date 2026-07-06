@@ -69,6 +69,12 @@ struct LicensesView: View {
                         url: "https://github.com/mlfoundations/open_clip",
                         text: mitLicenseText("Copyright (c) 2021 OpenCLIP authors (mlfoundations/open_clip)")),
                     LicenseItem(
+                        name: "SmolVLM-256M-Instruct (HuggingFaceTB)",
+                        role: L("On-device photo captions for AI albums (Core ML model)"),
+                        license: "Apache-2.0",
+                        url: "https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct",
+                        text: apacheLicenseText("Copyright 2025 Hugging Face (SmolVLM / SmolLM2 / SigLIP weights)")),
+                    LicenseItem(
                         name: "GeoNames — cities15000",
                         role: L("Offline reverse geocoding (album place names & Places)"),
                         license: "CC BY 4.0",

@@ -79,6 +79,7 @@ struct DeveloperSettingsView: View {
                            value: currentMemoryFootprintMB().map { String(format: "%.0f MB", $0) } ?? "—")
             LabeledContent("CLIP model", value: MobileCLIP.modelsBundled ? "Bundled" : "Not bundled")
             LabeledContent("Face model", value: FaceModel.modelBundled ? "Bundled" : "Not bundled")
+            LabeledContent("VLM (captions)", value: VLM.modelsBundled ? "Bundled" : "Not bundled")
             NavigationLink("Diagnostics log") { DiagnosticsLogView() }
             Toggle("Performance tracing", isOn: $perfTracing)
                 .onChange(of: perfTracing) { _, on in PerfTrace.isEnabled = on }
