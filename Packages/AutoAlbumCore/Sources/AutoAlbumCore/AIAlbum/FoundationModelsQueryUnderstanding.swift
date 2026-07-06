@@ -47,6 +47,26 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
         return await RuleBasedQueryUnderstanding().interpretSpec(text, catalog: catalog, now: now)
     }
 
+    /// P2 Refine: 空振り時のプローブ拡張。**単語リスト生成**は小型 LLM が最も得意な形で、
+    /// 構造化出力（実障害3件）と違い壊れにくい。出力はサニタイズ（英語・重複除去・上限）する。
+    func expandProbes(_ text: String) async -> [String] {
+        let instructions = """
+        The user searched their photo library but got no results. Generate 5-8 alternative ENGLISH \
+        search words for the same visual intent: synonyms, broader and narrower visual concepts. \
+        Single words or 2-word phrases only.
+        """
+        let generated: GeneratedProbes? = await Task.detached(priority: .userInitiated) {
+            let session = LanguageModelSession(instructions: instructions)
+            return try? await session.respond(to: text, generating: GeneratedProbes.self).content
+        }.value
+        guard let generated else { return [] }
+        var seen = Set<String>()
+        return generated.probes
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && $0.allSatisfy(\.isASCII) && seen.insert($0).inserted }
+            .prefix(8).map { $0 }
+    }
+
     private static func specInstructions(catalog: AIAlbumCatalog, now: Date) -> String {
         let places = catalog.places.prefix(40).joined(separator: ", ")
         let people = catalog.people.prefix(40).joined(separator: ", ")
@@ -143,6 +163,13 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
         }
         return query
     }
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+@Generable
+struct GeneratedProbes {
+    @Guide(description: "5-8 alternative English search words (synonyms / related visual concepts)")
+    var probes: [String]
 }
 
 /// Foundation Models の guided generation 用の出力スキーマ。

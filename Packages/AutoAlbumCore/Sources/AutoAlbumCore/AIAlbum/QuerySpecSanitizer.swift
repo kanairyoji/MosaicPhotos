@@ -63,6 +63,26 @@ enum QuerySpecSanitizer {
         return out
     }
 
+    /// P2 Refine: 全節の内容語（include）を指定プローブに差し替える（除外・ハードは維持）。
+    /// 節が無ければプローブだけの節を立てる。
+    static func withIncludeTerms(_ spec: QuerySpec, terms: [String]) -> QuerySpec {
+        guard !terms.isEmpty else { return spec }
+        var out = spec
+        if out.clauses.isEmpty {
+            out.clauses = [QueryClause([.content(terms)])]
+            return out
+        }
+        out.clauses = out.clauses.map { clause in
+            var conds = clause.conditions.filter { cond in
+                if case .content = cond { return false }
+                return true
+            }
+            conds.append(.content(terms))
+            return QueryClause(conds)
+        }
+        return out
+    }
+
     static func sanitize(_ spec: QuerySpec) -> QuerySpec {
         var out = spec
         out.clauses = spec.clauses.compactMap { sanitizeClause($0) }

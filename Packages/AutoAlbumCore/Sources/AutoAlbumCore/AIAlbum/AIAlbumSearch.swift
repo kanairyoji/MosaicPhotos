@@ -21,6 +21,23 @@ struct AIAlbumSearcher {
     /// **除外は別ベクトルとの対比**で行う（単一文への埋め込みでは効かない）。
     static let excludeDropThreshold: Float = 0.22
 
+    /// LLM 審査（P2）用の証拠行（純・テスト対象）。写真を見られない審査員に渡す 1 行サマリ。
+    static func evidenceLine(index: Int, photo: EnrichedPhoto,
+                             tags: [String], caption: String?, faceCount: Int?) -> String {
+        var parts: [String] = ["\(index))"]
+        if let date = photo.captureDate {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyy-MM-dd"
+            parts.append(f.string(from: date))
+        }
+        if let place = photo.placeName, !place.isEmpty { parts.append(place) }
+        if let faceCount { parts.append("faces=\(faceCount)") }
+        if !tags.isEmpty { parts.append("tags: " + tags.prefix(8).joined(separator: ", ")) }
+        if let caption, !caption.isEmpty { parts.append("caption: " + caption) }
+        return parts.joined(separator: " | ")
+    }
+
     /// タグとクエリ語の一致数（純・テスト対象）。部分一致（tag ⊂ term / term ⊂ tag・ci）。
     static func tagHits(_ tags: [String], terms: [String]) -> Int {
         guard !tags.isEmpty, !terms.isEmpty else { return 0 }

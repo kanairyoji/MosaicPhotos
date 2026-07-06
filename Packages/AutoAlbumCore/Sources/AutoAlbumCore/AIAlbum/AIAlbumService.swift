@@ -30,6 +30,8 @@ final class AIAlbumService {
 
     /// シーンタグ・キャプションのストア（検索の一次ランキングと LLM 審査の入力）。
     private let tagStore: TagStore?
+    /// P2: LLM 審査員（FM 無し端末では nil＝審査スキップ）。
+    private let verifier: AlbumCandidateVerifier? = makeDefaultVerifier()
 
     init(store: AutoAlbumStore, tagStore: TagStore? = nil,
          understanding: QueryUnderstanding, textEmbedder: TextEmbedder?,
@@ -101,7 +103,21 @@ final class AIAlbumService {
         interpretations.remove(id)   // 再設定（検索文変更）は解釈からやり直す
         var saved = await interpretation(id: id, criteria: trimmed, now: now)
         let all = await store.allEnrichedPhotosLite()
-        let (members, pool) = await rankedSearch(all, saved: saved, now: now)
+        var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+        // P2 Verify: 候補のタグ/キャプション/顔数を LLM が読み、不適合を落とす（unsure は多数決）。
+        members = await verified(members, criteria: trimmed)
+        // P2 Refine: 空振りなら LLM がプローブ語（類義・関連概念）を生成して 1 回だけ再検索。
+        if members.isEmpty {
+            let probes = await understanding.expandProbes(trimmed)
+            if !probes.isEmpty {
+                var alt = saved
+                alt.spec = QuerySpecSanitizer.withIncludeTerms(saved.spec, terms: probes)
+                let retry = await rankedSearch(all, saved: alt, now: now)
+                members = await verified(retry.members, criteria: trimmed)
+                if !members.isEmpty { pool = retry.pool }
+                Diagnostics.mark("aialbum.refine: probes=\(probes.joined(separator: ",")) → \(members.count)")
+            }
+        }
         saved.scoredPool = pool
         saved.evaluatedEmbedCount = await store.embeddedCount()
         interpretations.set(id, saved)
@@ -133,7 +149,8 @@ final class AIAlbumService {
         for album in current {
             guard let criteria = album.criteria, !criteria.isEmpty else { updated.append(album); continue }
             var saved = await interpretation(id: album.id, criteria: criteria, now: now)
-            let (members, pool) = await rankedSearch(all, saved: saved, now: now)
+            var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+            members = await verified(members, criteria: criteria)
             saved.scoredPool = pool
             saved.evaluatedEmbedCount = embedCount
             interpretations.set(album.id, saved)
@@ -198,8 +215,11 @@ final class AIAlbumService {
             let newlyIn = base.filter { memberKeys.contains($0.id) && !existing.contains($0.id) }
             guard !newlyIn.isEmpty else { continue }
 
+            // P2: 増分の新規追加分だけ LLM 審査（小さいバッチ＝安価）。
+            let verifiedNew = await verified(newlyIn, criteria: criteria)
+            guard !verifiedNew.isEmpty else { continue }
             let existingPhotos = await store.enrichedPhotos(forRefKeys: album.memberRefs)
-            let members = (existingPhotos + newlyIn)
+            let members = (existingPhotos + verifiedNew)
                 .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
             let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
                                                  criteria: criteria, members: members)
@@ -234,6 +254,51 @@ final class AIAlbumService {
     func resetEvaluationState() {
         interpretations.resetEvaluationStates()
         queryVectorCache = [:]
+    }
+
+    // MARK: - P2: LLM 審査（self-consistency）
+
+    /// 候補（上位 60 件）の証拠行（日付・場所・顔数・タグ・キャプション）を LLM が読み、
+    /// 不適合を落とす。unsure は最大 2 回再判定して**多数決**（同数は keep＝安全側）。
+    /// FM 無し・候補ゼロ・証拠皆無のときは素通し。
+    private func verified(_ members: [EnrichedPhoto], criteria: String) async -> [EnrichedPhoto] {
+        guard let verifier, verifier.isAvailable, !members.isEmpty else { return members }
+        let top = Array(members.prefix(60))
+        let keys = top.map(\.id)
+        let tags = await tagStore?.tags(forRefKeys: keys) ?? [:]
+        let captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
+        // 証拠（タグ/キャプション）が全く無いなら審査しても意味がない（全部 unsure になるだけ）。
+        guard !tags.isEmpty || !captions.isEmpty else { return members }
+        let faces = await faceCountsProvider?() ?? [:]
+
+        func line(_ index: Int, _ photo: EnrichedPhoto) -> String {
+            AIAlbumSearcher.evidenceLine(index: index, photo: photo,
+                                         tags: tags[photo.id] ?? [],
+                                         caption: captions[photo.id],
+                                         faceCount: faces[photo.id])
+        }
+
+        var votes: [Int: [CandidateVerdict]] = [:]
+        let first = await verifier.verify(criteria: criteria,
+                                          lines: top.indices.map { line($0, top[$0]) })
+        for i in top.indices { votes[i] = [first[i] ?? .keep] }
+
+        // self-consistency: unsure だけ最大 2 回再判定して票を集める。
+        var unsure = first.filter { $0.value == .unsure }.map(\.key).sorted()
+        var round = 0
+        while !unsure.isEmpty && round < 2 {
+            round += 1
+            let sub = await verifier.verify(criteria: criteria,
+                                            lines: unsure.enumerated().map { j, i in line(j, top[i]) })
+            for (j, i) in unsure.enumerated() { votes[i]?.append(sub[j] ?? .keep) }
+            unsure = unsure.filter { majorityVerdict(votes[$0] ?? []) == .unsure }
+        }
+
+        let kept = top.indices.filter { majorityVerdict(votes[$0] ?? []) != .drop }.map { top[$0] }
+        if kept.count != top.count {
+            Diagnostics.mark("aialbum.verify: \(top.count) → kept \(kept.count) (rounds=\(round + 1))")
+        }
+        return kept + members.dropFirst(top.count)
     }
 
     // MARK: - Private

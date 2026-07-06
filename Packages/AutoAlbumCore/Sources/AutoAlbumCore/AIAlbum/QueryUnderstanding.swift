@@ -13,6 +13,10 @@ public extension QueryUnderstanding {
     func interpretSpec(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> QuerySpec {
         await interpret(text, catalog: catalog, now: now).asQuerySpec()
     }
+
+    /// P2 Refine: 検索が空振りしたとき、クエリを言い換えた英語プローブ語（類義・下位概念）を生成する。
+    /// 既定は空（ルールベース＝拡張なし）。FM 実装が上書きする。
+    func expandProbes(_ text: String) async -> [String] { [] }
 }
 
 /// 既定の解釈器を返す。Apple Foundation Models（オンデバイス LLM）が使える端末ではそれを、
