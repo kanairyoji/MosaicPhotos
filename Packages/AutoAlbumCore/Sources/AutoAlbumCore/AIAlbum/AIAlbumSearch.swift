@@ -21,6 +21,18 @@ struct AIAlbumSearcher {
     /// **除外は別ベクトルとの対比**で行う（単一文への埋め込みでは効かない）。
     static let excludeDropThreshold: Float = 0.22
 
+    /// タグとクエリ語の一致数（純・テスト対象）。部分一致（tag ⊂ term / term ⊂ tag・ci）。
+    static func tagHits(_ tags: [String], terms: [String]) -> Int {
+        guard !tags.isEmpty, !terms.isEmpty else { return 0 }
+        let lowerTags = tags.map { $0.lowercased() }
+        var hits = 0
+        for term in terms {
+            let t = term.lowercased()
+            if lowerTags.contains(where: { $0 == t || $0.contains(t) || t.contains($0) }) { hits += 1 }
+        }
+        return hits
+    }
+
     /// 除外語 → CLIP プロンプト（ゼロショットの定番形）。
     static func excludePrompt(_ term: String) -> String { "a photo of \(term)" }
 
@@ -162,10 +174,12 @@ struct AIAlbumSearcher {
     func search(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 faceCounts: [String: Int]? = nil,
+                photoTags: [String: [String]] = [:],
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
-                             pageSize: pageSize, faceCounts: faceCounts, loadPage: loadPage).members
+                             pageSize: pageSize, faceCounts: faceCounts, photoTags: photoTags,
+                             loadPage: loadPage).members
     }
 
     /// `search(baseLite:spec:)` の本体。増分評価（Phase 2）のために**意味スコアのプール**
@@ -174,9 +188,13 @@ struct AIAlbumSearcher {
     /// - Parameter faceCounts: 顔スキャンの実測（refKey → 顔数・スキャン済みのみ）。
     ///   「人」系の除外があるとき、**顔が実際に写っている写真をハードに除外**する
     ///   （CLIP 対比より確実。未スキャン・クラウド写真は CLIP 対比が受け持つ）。
+    /// - Parameter photoTags: シーンタグ台帳（refKey → Vision 分類・精度校正済み）。
+    ///   タグ一致は**閾値レス**（写真内順位で付与済み・照合は集合演算）の一次ランキングとして
+    ///   意味検索と RRF 融合し、除外語はタグの離散一致でもハード除外する（P1）。
     func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
                         pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                         faceCounts: [String: Int]? = nil,
+                        photoTags: [String: [String]] = [:],
                         loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
@@ -186,6 +204,14 @@ struct AIAlbumSearcher {
         // 対策2: 顔の実測で「人が写っている」写真を除外（faceCounts が渡された＝人系の除外あり）。
         if let faceCounts {
             base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
+        }
+        // P1: 除外語にタグが一致する写真をハード除外（離散・閾値レス。例:「人が写っていない」×
+        // タグ people/person）。タグ未付与の写真は対象外（CLIP 対比が受け持つ）。
+        if !excludeTerms.isEmpty && !photoTags.isEmpty {
+            base = base.filter { photo in
+                guard let tags = photoTags[photo.id] else { return true }
+                return Self.tagHits(tags, terms: excludeTerms) == 0
+            }
         }
 
         // 対策1: 除外があるときの肯定側は include 語（無ければ否定節を落とした英訳文）を使う。
@@ -270,7 +296,19 @@ struct AIAlbumSearcher {
             }
         }
 
-        let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
+        // P1: タグ一致（一致数降順）を第3のランキングとして融合する。
+        var tagMatched: [EnrichedPhoto] = []
+        if !includeTerms.isEmpty && !photoTags.isEmpty {
+            tagMatched = base
+                .map { ($0, Self.tagHits(photoTags[$0.id] ?? [], terms: includeTerms)) }
+                .filter { $0.1 > 0 }
+                .sorted { $0.1 > $1.1 }
+                .map(\.0)
+            if !tagMatched.isEmpty {
+                Diagnostics.mark("aialbum: tagMatch terms=\(includeTerms.count) hits=\(tagMatched.count)")
+            }
+        }
+        let fused = HybridFusion.fuse([lexical, semantic, tagMatched].filter { !$0.isEmpty })
         // 構造化条件がありヒット0なら base を返す（従来）。ただし緩和(relaxed)時は全件を返さず空にする
         // （ハードが本来全滅＝該当なしのため、意味も当たらなければ空が正しい）。
         // ⚠️ 除外（対比）で落とした写真はフォールバックでも**復活させない**：従来はここで生 base を

@@ -60,6 +60,9 @@ public final class AutoAlbumEngine {
     @ObservationIgnored var pendingNewEmbeds: [String] = []
 
     @ObservationIgnored let labelProvider: LabelProvider?
+    /// シーンタグ・キャプションのストア／トリクル付与（TagsV1 別コンテナ）。
+    @ObservationIgnored let tagStore: TagStore
+    @ObservationIgnored let tagTagger: TagTagger
 
     /// ⚠️ 直 init は「呼び出しスレッドで AutoAlbumStore（@ModelActor）を作る」＝ MainActor から
     /// 呼ぶと全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走る（実測 14.5s ハング）。
@@ -78,27 +81,34 @@ public final class AutoAlbumEngine {
         cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
         peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
         perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
-        translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil
+        translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil,
+        tagProvider: TagPerceptionProvider? = nil
     ) async -> AutoAlbumEngine {
         let store = await Task.detached(priority: .userInitiated) { AutoAlbumStore() }.value
+        let tagStore = await Task.detached(priority: .userInitiated) { TagStore() }.value
         return AutoAlbumEngine(cloudProvider: cloudProvider, backupLink: backupLink,
                                peopleProvider: peopleProvider, queryUnderstanding: queryUnderstanding,
                                perception: perception, textEmbedder: textEmbedder,
-                               translator: translator, labelProvider: labelProvider, store: store)
+                               translator: translator, labelProvider: labelProvider, store: store,
+                               tagStore: tagStore, tagProvider: tagProvider)
     }
 
     init(cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
          peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
          perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
          translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil,
-         store: AutoAlbumStore? = nil) {
+         store: AutoAlbumStore? = nil, tagStore: TagStore? = nil,
+         tagProvider: TagPerceptionProvider? = nil) {
         let store = store ?? AutoAlbumStore()
+        let tagStore = tagStore ?? TagStore()
+        self.tagStore = tagStore
+        self.tagTagger = TagTagger(store: tagStore, provider: tagProvider)
         self.store = store
         self.cloudProvider = cloudProvider
         self.backupLink = backupLink
         self.peopleProvider = peopleProvider
         self.labelProvider = labelProvider
-        self.aiService = AIAlbumService(store: store,
+        self.aiService = AIAlbumService(store: store, tagStore: tagStore,
                                         understanding: queryUnderstanding ?? makeDefaultQueryUnderstanding(),
                                         textEmbedder: textEmbedder,
                                         translator: translator)

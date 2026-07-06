@@ -28,8 +28,13 @@ final class AIAlbumService {
     /// 「人」系の除外があるアルバムの評価で、顔が実際に写っている写真をハード除外するのに使う。
     var faceCountsProvider: (@Sendable () async -> [String: Int])?
 
-    init(store: AutoAlbumStore, understanding: QueryUnderstanding, textEmbedder: TextEmbedder?,
+    /// シーンタグ・キャプションのストア（検索の一次ランキングと LLM 審査の入力）。
+    private let tagStore: TagStore?
+
+    init(store: AutoAlbumStore, tagStore: TagStore? = nil,
+         understanding: QueryUnderstanding, textEmbedder: TextEmbedder?,
          translator: QueryTranslator? = nil) {
+        self.tagStore = tagStore
         self.store = store
         self.understanding = understanding
         self.translator = translator
@@ -274,10 +279,12 @@ final class AIAlbumService {
         let spec = saved.spec
         let semanticText = saved.semanticText
         let faceCounts = await faceCountsIfNeeded(for: spec)
+        // P1: タグ台帳（refKey → シーンタグ）。一次ランキングと離散除外に使う。
+        let tags = await tagStore?.allTags() ?? [:]
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
-                faceCounts: faceCounts,
+                faceCounts: faceCounts, photoTags: tags,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)
                 })

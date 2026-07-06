@@ -125,6 +125,47 @@ struct AIAlbumExclusionTests {
         #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["weak"])
     }
 
+    /// P1: シーンタグ（Vision 分類）とクエリ語の一致。
+    @Test("tagHits: 完全/部分一致（ci）を数える")
+    func tagHitCounting() {
+        #expect(AIAlbumSearcher.tagHits(["beach", "sunset", "outdoor"], terms: ["beach"]) == 1)
+        #expect(AIAlbumSearcher.tagHits(["beach", "sunset"], terms: ["Beach", "sunset"]) == 2)
+        #expect(AIAlbumSearcher.tagHits(["sandy_beach"], terms: ["beach"]) == 1)      // タグ ⊃ 語
+        #expect(AIAlbumSearcher.tagHits(["dog"], terms: ["dogs"]) == 1)               // 語 ⊃ タグ
+        #expect(AIAlbumSearcher.tagHits(["indoor"], terms: ["beach"]) == 0)
+        #expect(AIAlbumSearcher.tagHits([], terms: ["beach"]) == 0)
+    }
+
+    @Test("タグ一致は意味0件でもメンバーに入る（タグ＝閾値レスの一次ランキング）")
+    func tagMatchRanksWithoutSemantics() async {
+        // 埋め込み無し（textEmbedder nil）でもタグ一致でヒットする。
+        let searcher = AIAlbumSearcher(textEmbedder: nil)
+        let photos = [photo("beachShot", clip: nil), photo("indoorShot", clip: nil)]
+        let spec = QuerySpec(clauses: [QueryClause([.content(["beach"])])])
+        let tags = [PhotoRef.local("beachShot").encoded: ["beach", "outdoor"],
+                    PhotoRef.local("indoorShot").encoded: ["indoor", "room"]]
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "beach", photoTags: tags,
+                                           loadPage: pagedLoader(photos))
+        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["beachShot"])
+    }
+
+    @Test("除外語はタグの離散一致でもハード除外する")
+    func tagExclusionHardFilters() async {
+        let embedder = MappingEmbedder(map: [
+            "landscape": [1, 0],
+            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+        ])
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        let photos = [photo("clean", clip: [1, 0.05]), photo("tagged", clip: [1, 0.05])]
+        let spec = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
+        let tags = [PhotoRef.local("tagged").encoded: ["people", "outdoor"]]   // タグに people
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "", photoTags: tags,
+                                           loadPage: pagedLoader(photos))
+        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["clean"])
+    }
+
     /// 人系の除外語の判定（顔実測を使うかどうか）。
     @Test("hasPeopleExclusion は人系の語だけ true")
     func peopleExclusionDetection() {

@@ -27,7 +27,8 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         perception: CLIPEmbeddingProvider(cloudImage: cloudImage),
         textEmbedder: MobileCLIPTextEmbedder(),
         translator: AppQueryTranslator(),
-        labelProvider: CLIPDisplayLabeler())
+        labelProvider: CLIPDisplayLabeler(),
+        tagProvider: VisionTagAdapter(cloudImage: cloudImage))
     // 顔スキャンの実測を AI アルバム評価に結線（「人が写っていない」等の除外を確実にする）。
     engine.setFaceCountsProvider { await peopleEngine.scannedFaceCounts() }
     return engine

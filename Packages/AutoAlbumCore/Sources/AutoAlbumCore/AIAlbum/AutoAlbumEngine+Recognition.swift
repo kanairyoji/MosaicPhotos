@@ -91,6 +91,11 @@ extension AutoAlbumEngine {
         let preset = Self.currentBackgroundPreset()
         Task(priority: .background) {
             isTagging = true
+            // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を全量に行き渡らせる。
+            // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
+            let candidates = await store.enrichedRefKeys()
+            await tagTagger.tagUnprocessed(candidateRefKeys: Array(candidates),
+                                           shouldPause: { BackgroundYield.heavyShouldPause() })
             await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                           betweenBatchNs: preset.betweenBatchNs,
                                           shouldPause: { [weak self] in
@@ -103,6 +108,8 @@ extension AutoAlbumEngine {
                                           onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
                 [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
             }
+            // P3: 最後に VLM キャプション（1〜2 秒/枚・数晩がかり）。モデル未同梱なら即 return。
+            await tagTagger.captionUnprocessed(shouldPause: { BackgroundYield.heavyShouldPause() })
             isTagging = false
         }
     }
