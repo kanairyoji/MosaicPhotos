@@ -71,14 +71,16 @@ extension HomeView {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             } else {
-                ForEach(albumScanner.albums) { album in
-                    Button {
-                        destination = .localAlbum(album)
-                    } label: {
-                        AlbumRow(album: album)
-                    }
-                    .buttonStyle(.plain)
-                }
+                // 他のアルバム（Time & Place / AI / フォルダ）と同じ横スクロールカルーセルで表示する。
+                LibraryCarousel(
+                    items: albumScanner.albums,
+                    title: { $0.name },
+                    subtitle: { photoCountText($0.photoCount) },
+                    placeholderSystemImage: "photo.on.rectangle",
+                    cover: { album in
+                        await loadLocalCover(album.coverLocalIdentifier, pixelSize: 300)
+                    },
+                    onSelect: { destination = .localAlbum($0) })
             }
         } header: {
             HStack {
@@ -118,14 +120,24 @@ extension HomeView {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(placeScanner.places) { place in
-                    Button {
-                        destination = .place(place)
-                    } label: {
-                        PlaceRow(place: place, dropboxStore: dropboxStore)
-                    }
-                    .buttonStyle(.plain)
-                }
+                // 他のアルバムと同じ横スクロールカルーセルで表示する。
+                LibraryCarousel(
+                    items: placeScanner.places,
+                    title: { $0.placeName },
+                    subtitle: { photoCountText($0.photoCount) },
+                    placeholderSystemImage: "mappin.and.ellipse",
+                    cover: { [dropboxStore] place in
+                        // ローカルがあれば PHAsset、無ければ Dropbox（フル画像からカバー生成）。
+                        if let localID = place.coverLocalID {
+                            return await loadLocalCover(localID, pixelSize: 300)
+                        }
+                        if let path = place.coverCloudPath {
+                            let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
+                            return await dropboxStore.coverImage(for: item, maxPixel: 300)
+                        }
+                        return nil
+                    },
+                    onSelect: { destination = .place($0) })
             }
         } header: {
             HStack {

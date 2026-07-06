@@ -70,3 +70,83 @@ struct AlbumCarousel: View {
         .accessibilityLabel("Album options")
     }
 }
+
+// MARK: - Library carousel (端末アルバム・場所用の汎用横カルーセル)
+
+/// 端末アルバム・場所アルバムを、自動アルバム（AutoAlbumCard）と同じ見た目・サイズの
+/// 横スクロールカルーセルで表示する汎用ビュー。カバーの取得はクロージャで注入する。
+struct LibraryCarousel<Item: Identifiable>: View {
+    let items: [Item]
+    let title: (Item) -> String
+    let subtitle: (Item) -> String
+    let placeholderSystemImage: String
+    let cover: (Item) async -> UIImage?
+    let onSelect: (Item) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 12) {
+                ForEach(items) { item in
+                    Button { onSelect(item) } label: {
+                        LibraryCard(title: title(item), subtitle: subtitle(item),
+                                    placeholderSystemImage: placeholderSystemImage,
+                                    coverKey: "\(item.id)") { await cover(item) }
+                    }
+                    .buttonStyle(.plain)
+                    .id(item.id)
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+        }
+        .scrollTargetBehavior(.viewAligned)
+        .listRowInsets(EdgeInsets())
+    }
+}
+
+/// `AutoAlbumCard` と同じレイアウト（正方カバー＋下にタイトル/サブタイトル）の汎用カード。
+private struct LibraryCard: View {
+    let title: String
+    let subtitle: String
+    let placeholderSystemImage: String
+    let coverKey: String
+    let loadCover: () async -> UIImage?
+
+    @State private var cover: UIImage?
+    /// 正方カバーの一辺＝カード幅（AutoAlbumCard と同一・全アルバム共通）。
+    private static let side: CGFloat = 150
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemBackground))
+                if let cover {
+                    Image(uiImage: cover)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: placeholderSystemImage)
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: Self.side, height: Self.side)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.primary.opacity(0.7))
+                .lineLimit(1)
+        }
+        .frame(width: Self.side, alignment: .leading)
+        .task(id: coverKey) {
+            cover = await loadCover()
+        }
+    }
+}
