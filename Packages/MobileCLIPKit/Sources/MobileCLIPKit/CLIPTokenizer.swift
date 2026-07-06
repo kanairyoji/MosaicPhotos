@@ -3,7 +3,9 @@ import Foundation
 /// CLIP / MobileCLIP のテキスト用 BPE トークナイザ（open_clip の SimpleTokenizer 互換）。
 /// `bpe_simple_vocab_16e6.txt`（バンドル同梱）を読み、文字列 → トークン ID 列（長さ 77）へ変換する。
 /// テキストエンコーダ（Core ML）の入力に渡す。
-final class CLIPTokenizer {
+/// スレッド安全：唯一の可変状態（BPE キャッシュ）はロックで保護する（検索の対比採点＝detached、
+/// 表示ラベラの概念一括構築＝nonisolated、増分評価＝MainActor から**並行に**呼ばれる）。
+final class CLIPTokenizer: @unchecked Sendable {
     /// 同梱語彙から一度だけ構築する共有インスタンス（語彙が無ければ nil）。
     static let shared = CLIPTokenizer()
 
@@ -13,6 +15,7 @@ final class CLIPTokenizer {
     private let bosToken: Int
     private let eosToken: Int
     private let contextLength: Int
+    private let cacheLock = NSLock()
     private var cache: [String: String] = ["<|startoftext|>": "<|startoftext|>",
                                             "<|endoftext|>": "<|endoftext|>"]
 
@@ -103,7 +106,13 @@ final class CLIPTokenizer {
 
     /// 1 トークンを byte-encode してから BPE マージを適用し、サブワードを空白区切りで返す。
     private func bpe(_ token: String) -> String {
-        if let cached = cache[token] { return cached }
+        // ⚠️ 共有シングルトンのため cache はロック必須。無防備な並行書き込みで Dictionary の
+        // 内部構造が壊れ「NSTaggedPointerString count: unrecognized selector」等でクラッシュした（実障害）。
+        // 計算自体はロック外（重複計算は無害・結果は同一）。
+        cacheLock.lock()
+        let cached = cache[token]
+        cacheLock.unlock()
+        if let cached { return cached }
 
         // byte-level エンコード（UTF-8 各バイト → unicode 文字）
         var word = Array(token.utf8).compactMap { byteEncoder[$0] }
@@ -124,7 +133,9 @@ final class CLIPTokenizer {
         }
 
         let result = word.joined(separator: " ")
+        cacheLock.lock()
         cache[token] = result
+        cacheLock.unlock()
         return result
     }
 }
