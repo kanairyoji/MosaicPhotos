@@ -56,13 +56,17 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
         Today is \(today).
         Use EXACTLY ONE clause for normal requests; use multiple clauses ONLY for clear "A or B" alternatives.
         Within a clause all fields are ANDed. Leave fields empty / 0 / false / "any" / "none" when not mentioned.
-        Place names ONLY from this catalog: [\(places)].
+        places: leave EMPTY unless the user's request names a specific place. If it does, use only \
+        the matching name(s) from this catalog: [\(places)]. NEVER copy the whole catalog.
         Person names ONLY from this catalog: [\(people)]. Use a person name ONLY when the user names that specific person.
         dateKind is one of: none, year, lastYears, lastMonths, lastDays. dateValue is the 4-digit year for "year", or N for "lastX", else 0.
         source is one of: any, local, cloud. orientation is one of: any, portrait, landscape, square.
         favoritesOnly is true only for favorites.
-        contentInclude: visual content words IN ENGLISH (e.g. child, children, beach, dog, sunset). This is where general subjects like "children" go — NOT as a person filter. Empty if none.
-        contentExclude: visual content IN ENGLISH to exclude (e.g. "without people" -> ["people"]). Empty if none.
+        contentInclude: the visual subjects the user wants to SEE, translated to English single words \
+        (a request about "風景" -> ["landscape"]). General subjects like "children" go here — NOT as a \
+        person filter. Use ONLY words derived from the user's request; NEVER invent or copy sample words. Empty if none.
+        contentExclude: visual content the user wants to AVOID, in English ("人が写っていない" / \
+        "without people" -> ["people"]). Empty if none.
         Provide a concise title in the user's language.
         """
     }

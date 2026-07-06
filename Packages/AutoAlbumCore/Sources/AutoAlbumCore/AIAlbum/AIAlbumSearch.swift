@@ -204,6 +204,7 @@ struct AIAlbumSearcher {
 
         var semantic: [EnrichedPhoto] = []
         var pool: [String: Float] = [:]
+        var negDroppedIDs = Set<String>()
         if let textEmbedder, textEmbedder.isAvailable {
             embedderAvailable = true
             if let vector = await textEmbedder.embed(phrase) {
@@ -227,6 +228,7 @@ struct AIAlbumSearcher {
                             let neg = negVectors.map { ClipMath.cosine($0, v) }.max() ?? -1
                             if neg >= pos || neg >= Self.excludeDropThreshold {
                                 excludedByNeg += 1
+                                negDroppedIDs.insert(photo.id)
                                 continue
                             }
                         }
@@ -254,7 +256,12 @@ struct AIAlbumSearcher {
         let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
         // 構造化条件がありヒット0なら base を返す（従来）。ただし緩和(relaxed)時は全件を返さず空にする
         // （ハードが本来全滅＝該当なしのため、意味も当たらなければ空が正しい）。
-        let result = fused.isEmpty ? ((spec.hasHardConstraints && !relaxed) ? base : []) : fused
+        // ⚠️ 除外（対比）で落とした写真はフォールバックでも**復活させない**：従来はここで生 base を
+        //   返したため、意味採用が 0 件のとき除外済みの人物写真が丸ごとアルバムに入った（実障害）。
+        //   「空にしない」より「除外を守る」を優先する。未埋め込み写真は判定不能のため残る
+        //   （埋め込みの進行とともにカバレッジが上がる）。
+        let fallbackBase = negDroppedIDs.isEmpty ? base : base.filter { !negDroppedIDs.contains($0.id) }
+        let result = fused.isEmpty ? ((spec.hasHardConstraints && !relaxed) ? fallbackBase : []) : fused
         Diagnostics.mark("aialbum: base=\(base.count)/\(all.count) hard=\(spec.hasHardConstraints) relaxed=\(relaxed) emb=\(embedderAvailable) scored=\(embeddedCount) top=\(String(format: "%.3f", topScore)) kept=\(semantic.count) lex=\(lexical.count) result=\(result.count)")
         return (result, pool)
     }

@@ -42,7 +42,9 @@ final class AIAlbumService {
     /// 保存済み解釈を返す。無い・検索文が変わったときだけ LLM で解釈＋翻訳して保存する。
     /// カタログ（地名/人物の語彙）は LLM の表記寄せヒントとして**このときだけ**構築する。
     private func interpretation(id: String, criteria: String, now: Date) async -> SavedInterpretation {
-        if let saved = interpretations.get(id), saved.criteria == criteria { return saved }
+        // 検索文が同じでも、解釈器の版が古ければ作り直す（プロンプト改善を既存アルバムに波及させる）。
+        if let saved = interpretations.get(id), saved.criteria == criteria,
+           saved.version == SavedInterpretation.currentVersion { return saved }
         let all = await store.allEnrichedPhotosLite()
         let catalog = await Self.buildCatalogOffMain(all)
         let spec = await understanding.interpretSpec(criteria, catalog: catalog, now: now)

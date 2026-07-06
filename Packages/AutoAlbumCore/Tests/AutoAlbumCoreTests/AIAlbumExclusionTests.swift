@@ -101,6 +101,30 @@ struct AIAlbumExclusionTests {
         #expect(embedder.texts.contains(AIAlbumSearcher.excludePrompt("people")))
     }
 
+    /// 意味採用が 0 件で base へフォールバックするときも、除外で落とした写真は復活させない。
+    /// （実障害: negFilter dropped=370 なのに result=388＝生 base が返り人物写真が混入した）
+    @Test("フォールバック（意味0件→base）でも除外済みは復活しない")
+    func fallbackRespectsExclusion() async {
+        let embedder = MappingEmbedder(map: [
+            "landscape": [1, 0, 0],
+            AIAlbumSearcher.excludePrompt("people"): [0, 1, 0],
+        ])
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        // weak: pos≈0.15（floor 0.20 未満＝意味採用されない）・neg≈0.05（除外もされない）
+        // personShot: neg≈0.99 → 除外で落ちる
+        let photos = [photo("weak", clip: [0.15, 0.05, 0.99]),
+                      photo("personShot", clip: [0.1, 0.99, 0.05])]
+        // place ハードあり＝フォールバックは base を返す経路に入る。
+        let spec = QuerySpec(clauses: [QueryClause([.place(["tokyo"]),
+                                                    .content(["landscape"]),
+                                                    .not(.content(["people"]))])])
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "",
+                                           loadPage: pagedLoader(photos))
+        // 意味 0 件 → base フォールバックだが、personShot（除外済み）は含まれない。
+        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["weak"])
+    }
+
     /// 人系の除外語の判定（顔実測を使うかどうか）。
     @Test("hasPeopleExclusion は人系の語だけ true")
     func peopleExclusionDetection() {

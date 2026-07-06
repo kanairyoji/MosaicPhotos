@@ -9,6 +9,11 @@ import PhotoSourceKit
 /// 存在しない地名・人名が解釈に含まれても、照合（QueryEvaluator）は部分一致なので
 /// 該当写真が索引され次第、自動的に当たり始める。
 public struct SavedInterpretation: Codable, Sendable {
+    /// 解釈器（プロンプト）の版。プロンプト改善時に採番すると、保存済みの解釈が
+    /// **次の評価時に 1 回だけ再解釈**される（旧 JSON は nil ＝ 旧版扱い）。
+    /// v2: 例語のオウム返し・カタログ丸写しを禁止したプロンプト（2026-07）。
+    public static let currentVersion = 2
+    public var version: Int?
     /// 解釈時の検索文（これが変わったときだけ再解釈する）。
     public var criteria: String
     /// LLM の解釈結果（相対日付は相対形のまま＝評価時に now で解決される）。
@@ -22,6 +27,7 @@ public struct SavedInterpretation: Codable, Sendable {
 
     public init(criteria: String, spec: QuerySpec, semanticText: String,
                 scoredPool: [String: Float] = [:], evaluatedEmbedCount: Int = 0) {
+        self.version = Self.currentVersion
         self.criteria = criteria
         self.spec = spec
         self.semanticText = semanticText
