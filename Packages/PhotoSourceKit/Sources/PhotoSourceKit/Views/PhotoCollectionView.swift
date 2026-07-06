@@ -207,14 +207,11 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         // MARK: Update / snapshot
 
         func update(items: [Store.Item], columns: Int, grouping: PhotoGridGrouping?, monthSectionRows: Int) {
-            // A1: スクロール中は最新引数だけ覚えて保留（終了時に 1 回だけ反映）。
-            // ピンチ（列数変更）はスクロール中に発生しないため、まとめて保留で問題ない。
-            if isUserScrolling {
-                pendingUpdate = (items, columns, grouping, monthSectionRows)
-                return
-            }
             let grouped = grouping != nil
             // レイアウト（列数/グルーピング）が変わったら作り直す。
+            // ⚠️ ここは A1 の保留対象に**しない**：ピンチ（2本指）は UIScrollView のドラッグ判定も
+            // 発火させるため isUserScrolling=true になり、丸ごと保留するとピンチ操作（列数変更＝
+            // ユーザー操作そのもの）が反映されなくなる（実バグ）。レイアウトは常に即時反映する。
             if columns != currentColumns || grouped != currentGrouped {
                 // ハート表示しきい値（15列）をまたいだら、可視セルを再構成して即時反映する。
                 let favoriteVisibilityFlipped =
@@ -234,6 +231,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             // dense/year のピンチ（列数変更）では coalesce は 0 のまま＝シグネチャ不変＝スナップショットを
             // 作り直さない（68k で 0.5〜1s の再構築を繰り返さないための perf 配慮は維持）。
             let coalesce = grouping == .month ? max(1, columns) * max(1, monthSectionRows) : 0
+            // A1: スクロール/スクラブ中は**内容更新（snapshot 反映）だけ**保留し、終了時に最新分を反映する
+            //（Dropbox 同期の差分がブラウズ中に到着してもカクつかせない）。レイアウトは上で反映済み。
+            if isUserScrolling {
+                pendingUpdate = (items, columns, grouping, monthSectionRows)
+                return
+            }
             let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
             if signature != appliedSignature {
                 appliedSignature = signature
