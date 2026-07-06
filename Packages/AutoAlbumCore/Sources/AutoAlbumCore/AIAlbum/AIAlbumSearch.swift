@@ -16,6 +16,25 @@ struct AIAlbumSearcher {
     static let semanticMargin: Float = 0.06
     /// 1 アルバムの最大採用数（コサインは弱分離なので上位 K 件で打ち切ってノイズの裾を切る）。
     static let maxResults = 50
+    /// 除外概念のドロップしきい値。除外語（"people" 等）への類似がこの値以上、または肯定側
+    /// より近い写真は落とす。CLIP は文中の否定（"without people"）を理解できないため、
+    /// **除外は別ベクトルとの対比**で行う（単一文への埋め込みでは効かない）。
+    static let excludeDropThreshold: Float = 0.22
+
+    /// 除外語 → CLIP プロンプト（ゼロショットの定番形）。
+    static func excludePrompt(_ term: String) -> String { "a photo of \(term)" }
+
+    /// 除外語に「人」系の概念が含まれるか。含まれる場合は顔スキャンの実測（faceCount）を
+    /// 優先信号として使える（CLIP より確実・ローカルのスキャン済み写真のみ）。
+    static func hasPeopleExclusion(_ spec: QuerySpec) -> Bool {
+        let peopleWords: Set<String> = ["people", "person", "persons", "human", "humans",
+                                        "man", "men", "woman", "women", "child", "children",
+                                        "kid", "kids", "face", "faces", "crowd", "portrait"]
+        return spec.allContentTerms.exclude.contains { term in
+            let t = term.lowercased()
+            return peopleWords.contains(t) || t.contains("people") || t.contains("person")
+        }
+    }
 
     init(textEmbedder: TextEmbedder? = nil) {
         self.textEmbedder = textEmbedder
@@ -125,25 +144,42 @@ struct AIAlbumSearcher {
     /// ※ 除外内容（not(content)）の減点は次段で対応予定（本段では include のみ採点）。
     func search(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
+                faceCounts: [String: Int]? = nil,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
-                             pageSize: pageSize, loadPage: loadPage).members
+                             pageSize: pageSize, faceCounts: faceCounts, loadPage: loadPage).members
     }
 
     /// `search(baseLite:spec:)` の本体。増分評価（Phase 2）のために**意味スコアのプール**
     /// （refKey → コサイン・上位 `poolLimit` 件）も返す。プールは永続化され、以後は新規埋め込み分の
     /// スコアだけをマージしてメンバーを更新できる（全ページ再走査をしない）。
+    /// - Parameter faceCounts: 顔スキャンの実測（refKey → 顔数・スキャン済みのみ）。
+    ///   「人」系の除外があるとき、**顔が実際に写っている写真をハードに除外**する
+    ///   （CLIP 対比より確実。未スキャン・クラウド写真は CLIP 対比が受け持つ）。
     func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
                         pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
+                        faceCounts: [String: Int]? = nil,
                         loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
         let includeTerms = spec.allContentTerms.include
+        let excludeTerms = spec.allContentTerms.exclude
 
-        let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? includeTerms.joined(separator: ", ")
-            : semanticText
+        // 対策2: 顔の実測で「人が写っている」写真を除外（faceCounts が渡された＝人系の除外あり）。
+        if let faceCounts {
+            base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
+        }
+
+        // 対策1: 除外があるときの肯定側フレーズは **include 語だけ**にする。全文（英訳）には
+        // "without people" 等の否定が含まれ、CLIP は否定を理解せず逆に "people" へ引っ張られる。
+        let trimmedSemantic = semanticText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phrase: String
+        if !excludeTerms.isEmpty && !includeTerms.isEmpty {
+            phrase = includeTerms.joined(separator: ", ")
+        } else {
+            phrase = trimmedSemantic.isEmpty ? includeTerms.joined(separator: ", ") : trimmedSemantic
+        }
         let hasPhrase = !phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         // 安全網: ハード条件で全滅したが意味検索の意図(phrase)がある場合、内容のみへ緩和して
@@ -171,19 +207,36 @@ struct AIAlbumSearcher {
         if let textEmbedder, textEmbedder.isAvailable {
             embedderAvailable = true
             if let vector = await textEmbedder.embed(phrase) {
+                // 除外語は個別に埋め込み、画像ごとに「肯定より除外概念に近い／除外類似が高い」を落とす。
+                var negVectors: [[Float]] = []
+                for term in excludeTerms {
+                    if let neg = await textEmbedder.embed(Self.excludePrompt(term)) { negVectors.append(neg) }
+                }
                 let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
                 var scored: [(photo: EnrichedPhoto, score: Float)] = []
                 scored.reserveCapacity(base.count)
+                var excludedByNeg = 0
                 var offset = 0
                 while true {
                     let page = await loadPage(offset, pageSize)
                     if page.isEmpty { break }
                     for entry in page {
                         guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
-                        scored.append((photo, ClipMath.cosine(vector, v)))
+                        let pos = ClipMath.cosine(vector, v)
+                        if !negVectors.isEmpty {
+                            let neg = negVectors.map { ClipMath.cosine($0, v) }.max() ?? -1
+                            if neg >= pos || neg >= Self.excludeDropThreshold {
+                                excludedByNeg += 1
+                                continue
+                            }
+                        }
+                        scored.append((photo, pos))
                     }
                     offset += pageSize
                     if page.count < pageSize { break }
+                }
+                if !negVectors.isEmpty {
+                    Diagnostics.mark("aialbum: negFilter terms=\(excludeTerms.count) dropped=\(excludedByNeg)")
                 }
                 scored.sort { $0.score > $1.score }
                 embeddedCount = scored.count

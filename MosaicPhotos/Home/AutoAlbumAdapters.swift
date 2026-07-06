@@ -9,7 +9,8 @@ import UIKit
 /// アプリのアダプタ（Dropbox / バックアップ / 人物 / Vision / CLIP）を結線して `AutoAlbumEngine` を
 /// 生成する Composition Root。HomeView の init をスリムに保つ。
 @MainActor
-func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEngine) async -> AutoAlbumEngine {
+func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEngine,
+                         peopleEngine: PeopleEngine) async -> AutoAlbumEngine {
     // クラウド path → CGImage（Dropbox サムネイル）。CLIP 埋め込みに使う。
     let cloudImage: @Sendable (String) async -> CGImage? = { path in
         let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
@@ -19,7 +20,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     // ⚠️ @ModelActor は「init したスレッド」で実行される（SwiftData の罠）。MainActor で
     // 生成すると全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走り
     // 実測 14.5s ハングの真因になったため、オフメイン生成ファクトリを使う。
-    return await AutoAlbumEngine.makeWithOffMainStore(
+    let engine = await AutoAlbumEngine.makeWithOffMainStore(
         cloudProvider: DropboxCloudPhotoProvider(store: dropboxStore),
         backupLink: BackupLinkAdapter(engine: backupEngine),
         peopleProvider: PeopleProviderAdapter(),
@@ -27,6 +28,9 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         textEmbedder: MobileCLIPTextEmbedder(),
         translator: AppQueryTranslator(),
         labelProvider: CLIPDisplayLabeler())
+    // 顔スキャンの実測を AI アルバム評価に結線（「人が写っていない」等の除外を確実にする）。
+    engine.setFaceCountsProvider { await peopleEngine.scannedFaceCounts() }
+    return engine
 }
 
 /// ピープル（顔クラスタ）エンジンを組み立てる。顔検出/埋め込み実体は Vision+CoreML（MobileCLIPKit）。

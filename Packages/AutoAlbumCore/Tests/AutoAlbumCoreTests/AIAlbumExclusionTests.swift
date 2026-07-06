@@ -1,0 +1,117 @@
+import Foundation
+import Testing
+@testable import AutoAlbumCore
+
+/// 除外条件（「人が写っていない」等）の対比採点と顔実測フィルタ。
+/// CLIP は文中の否定（"without people"）を理解しないため、(1) 除外語は**別ベクトルとの対比**
+/// （肯定より近い／しきい値超で落とす）、(2) 人系の除外は**顔スキャンの実測**（faceCount）で
+/// ハード除外、の 2 段で実現する（設計の経緯は事例参照）。
+@Suite("AIAlbum exclusion (contrast + faceCounts)")
+struct AIAlbumExclusionTests {
+    private let now = Date()
+
+    private func photo(_ id: String, clip: [Float]? = nil) -> EnrichedPhoto {
+        EnrichedPhoto(id: PhotoRef.local(id).encoded, captureDate: now, latitude: nil, longitude: nil,
+                      placeName: "Tokyo", clipVector: clip.map { ClipMath.encode($0) })
+    }
+
+    private func pagedLoader(_ photos: [EnrichedPhoto]) -> (Int, Int) async -> [(refKey: String, clipVector: Data)] {
+        let embedded = photos.compactMap { ph in ph.clipVector.map { (ph.id, $0) } }.sorted { $0.0 < $1.0 }
+        return { offset, limit in embedded.dropFirst(offset).prefix(limit).map { (refKey: $0.0, clipVector: $0.1) } }
+    }
+
+    /// テキストごとに異なるベクトルを返す埋め込みスタブ（肯定と除外を区別するため）。
+    private struct MappingEmbedder: TextEmbedder {
+        let map: [String: [Float]]
+        var isAvailable: Bool { true }
+        func embed(_ text: String) async -> [Float]? { map[text] }
+    }
+
+    /// 「landscape・人以外」: 除外概念（people）に肯定より近い写真は落ちる。
+    @Test("除外語は対比で落とす（肯定より除外に近い写真を除外）")
+    func contrastDropsCloserToExcluded() async {
+        let embedder = MappingEmbedder(map: [
+            "landscape": [1, 0],
+            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+        ])
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        let photos = [photo("scenery", clip: [1, 0.05]),      // pos≈1.0, neg≈0.05 → 残る
+                      photo("withperson", clip: [0.6, 0.8])]  // pos=0.6, neg=0.8 → neg>pos で落ちる
+        let spec = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "Landscape photos without people",
+                                           loadPage: pagedLoader(photos))
+        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["scenery"])
+    }
+
+    /// 肯定に近くても、除外類似が絶対しきい値（excludeDropThreshold）以上なら落とす。
+    @Test("除外類似がしきい値以上なら肯定側が高くても落とす")
+    func contrastDropsAboveAbsoluteThreshold() async {
+        let embedder = MappingEmbedder(map: [
+            "landscape": [1, 0],
+            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+        ])
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        // neg cos = 0.24 >= 0.22（しきい値）→ pos が高くても落ちる。
+        let photos = [photo("clean", clip: [1, 0.1]),         // neg≈0.10 → 残る
+                      photo("faintPerson", clip: [1, 0.25])]  // neg≈0.24 → 落ちる
+        let spec = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "",
+                                           loadPage: pagedLoader(photos))
+        #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["clean"])
+    }
+
+    /// 顔スキャンの実測（faceCounts）: 顔がある写真はハード除外、未スキャンは CLIP に任せて残す。
+    @Test("faceCounts: 顔実測>0 は除外・0 は残す・未スキャンは通す")
+    func faceCountsHardFilter() async {
+        let embedder = MappingEmbedder(map: [
+            "landscape": [1, 0],
+            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+        ])
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        let photos = [photo("hasFace", clip: [1, 0]),
+                      photo("noFace", clip: [1, 0]),
+                      photo("unscanned", clip: [1, 0])]
+        let spec = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
+        let faceCounts = [PhotoRef.local("hasFace").encoded: 2,
+                          PhotoRef.local("noFace").encoded: 0]
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "", faceCounts: faceCounts,
+                                           loadPage: pagedLoader(photos))
+        #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["noFace", "unscanned"])
+    }
+
+    /// 除外があるとき、肯定側の埋め込みは全文（否定入り）でなく include 語だけを使う。
+    @Test("除外があるとき肯定側フレーズは include 語だけ（否定入り全文を埋め込まない）")
+    func positivePhraseAvoidsNegatedSentence() async {
+        final class RecordingEmbedder: TextEmbedder, @unchecked Sendable {
+            var texts: [String] = []
+            var isAvailable: Bool { true }
+            func embed(_ text: String) async -> [Float]? { texts.append(text); return [1, 0] }
+        }
+        let embedder = RecordingEmbedder()
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        let photos = [photo("a", clip: [1, 0])]
+        let spec = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
+        _ = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                  semanticText: "Landscape photos without people",
+                                  loadPage: pagedLoader(photos))
+        #expect(embedder.texts.first == "landscape")   // 否定入り全文ではない
+        #expect(embedder.texts.contains(AIAlbumSearcher.excludePrompt("people")))
+    }
+
+    /// 人系の除外語の判定（顔実測を使うかどうか）。
+    @Test("hasPeopleExclusion は人系の語だけ true")
+    func peopleExclusionDetection() {
+        func spec(excluding term: String) -> QuerySpec {
+            QuerySpec(clauses: [QueryClause([.not(.content([term]))])])
+        }
+        #expect(AIAlbumSearcher.hasPeopleExclusion(spec(excluding: "people")))
+        #expect(AIAlbumSearcher.hasPeopleExclusion(spec(excluding: "person")))
+        #expect(AIAlbumSearcher.hasPeopleExclusion(spec(excluding: "children")))
+        #expect(!AIAlbumSearcher.hasPeopleExclusion(spec(excluding: "cars")))
+        #expect(!AIAlbumSearcher.hasPeopleExclusion(spec(excluding: "text")))
+        #expect(!AIAlbumSearcher.hasPeopleExclusion(QuerySpec(clauses: [QueryClause([.content(["people"])])])))   // include は対象外
+    }
+}

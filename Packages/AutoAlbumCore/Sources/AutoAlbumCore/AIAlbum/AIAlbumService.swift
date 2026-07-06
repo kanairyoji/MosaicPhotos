@@ -19,9 +19,14 @@ final class AIAlbumService {
     private let searcher: AIAlbumSearcher
     private let translator: QueryTranslator?
     private let interpretations = AIAlbumInterpretationStore()
-    /// 英訳フレーズ → CLIP テキスト埋め込みのメモリキャッシュ（増分評価で毎回エンコードしない）。
-    private var queryVectorCache: [String: [Float]] = [:]
+    /// 英訳フレーズ＋除外語 → CLIP テキスト埋め込み（肯定＋除外群）のメモリキャッシュ
+    /// （増分評価で毎回エンコードしない）。
+    private var queryVectorCache: [String: (pos: [Float], negs: [[Float]])] = [:]
     private let textEmbedder: TextEmbedder?
+    /// 顔スキャンの実測（refKey → 顔数）を返す seam。FaceStore は別コンテナ（PeopleEngine 側）の
+    /// ため init 連鎖でなく Composition Root から `AutoAlbumEngine.setFaceCountsProvider` で結線する。
+    /// 「人」系の除外があるアルバムの評価で、顔が実際に写っている写真をハード除外するのに使う。
+    var faceCountsProvider: (@Sendable () async -> [String: Int])?
 
     init(store: AutoAlbumStore, understanding: QueryUnderstanding, textEmbedder: TextEmbedder?,
          translator: QueryTranslator? = nil) {
@@ -120,19 +125,29 @@ final class AIAlbumService {
                   saved.evaluatedEmbedCount > 0 else { continue }
 
             // ハード条件（相対日付は now で解決）を新規分に適用。
-            let base = QueryEvaluator.hardFilter(newPhotos, spec: saved.spec, now: now)
+            var base = QueryEvaluator.hardFilter(newPhotos, spec: saved.spec, now: now)
             saved.evaluatedEmbedCount += newRefKeys.count
+            // 対策2: 人系の除外があれば顔の実測（faceCount>0）をハード除外（フル評価と同じ規則）。
+            if let faceCounts = await faceCountsIfNeeded(for: saved.spec) {
+                base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
+            }
             guard !base.isEmpty else { interpretations.set(album.id, saved); continue }
 
             // 意味採点（クエリ埋め込みはキャッシュ）。埋め込み不可なら評価枚数だけ進める。
-            guard let queryVector = await queryVector(for: saved) else {
+            guard let q = await queryVectors(for: saved) else {
                 interpretations.set(album.id, saved)
                 continue
             }
             var added: [String: Float] = [:]
             for photo in base {
                 guard let data = newVectors[photo.id], let v = ClipMath.decode(data) else { continue }
-                added[photo.id] = ClipMath.cosine(queryVector, v)
+                let pos = ClipMath.cosine(q.pos, v)
+                // 対策1: 除外概念との対比（フル評価と同じドロップ規則）。
+                if !q.negs.isEmpty {
+                    let neg = q.negs.map { ClipMath.cosine($0, v) }.max() ?? -1
+                    if neg >= pos || neg >= AIAlbumSearcher.excludeDropThreshold { continue }
+                }
+                added[photo.id] = pos
             }
             guard !added.isEmpty else { interpretations.set(album.id, saved); continue }
 
@@ -185,16 +200,35 @@ final class AIAlbumService {
 
     // MARK: - Private
 
-    private func queryVector(for saved: SavedInterpretation) async -> [Float]? {
-        let phrase = saved.semanticText.isEmpty
-            ? saved.spec.allContentTerms.include.joined(separator: ", ")
-            : saved.semanticText
+    /// 増分評価用のクエリ埋め込み（肯定＋除外群）。フル評価（searchWithPool）と同じ規則：
+    /// 除外があるときの肯定側は include 語だけ（全文の否定は CLIP に効かないため）。
+    private func queryVectors(for saved: SavedInterpretation) async -> (pos: [Float], negs: [[Float]])? {
+        let include = saved.spec.allContentTerms.include
+        let exclude = saved.spec.allContentTerms.exclude
+        let phrase: String
+        if !exclude.isEmpty && !include.isEmpty {
+            phrase = include.joined(separator: ", ")
+        } else {
+            phrase = saved.semanticText.isEmpty ? include.joined(separator: ", ") : saved.semanticText
+        }
         guard !phrase.isEmpty else { return nil }
-        if let cached = queryVectorCache[phrase] { return cached }
+        let cacheKey = "\(phrase)|\(exclude.joined(separator: ","))"
+        if let cached = queryVectorCache[cacheKey] { return cached }
         guard let textEmbedder, textEmbedder.isAvailable,
-              let vector = await textEmbedder.embed(phrase) else { return nil }
-        queryVectorCache[phrase] = vector
-        return vector
+              let pos = await textEmbedder.embed(phrase) else { return nil }
+        var negs: [[Float]] = []
+        for term in exclude {
+            if let neg = await textEmbedder.embed(AIAlbumSearcher.excludePrompt(term)) { negs.append(neg) }
+        }
+        let result = (pos: pos, negs: negs)
+        queryVectorCache[cacheKey] = result
+        return result
+    }
+
+    /// 「人」系の除外があるアルバムなら顔の実測を取得する（無関係なアルバムでは取得しない）。
+    private func faceCountsIfNeeded(for spec: QuerySpec) async -> [String: Int]? {
+        guard AIAlbumSearcher.hasPeopleExclusion(spec), let faceCountsProvider else { return nil }
+        return await faceCountsProvider()
     }
 
     private func rankedSearch(_ allLite: [EnrichedPhoto], saved: SavedInterpretation,
@@ -206,9 +240,11 @@ final class AIAlbumService {
         let store = self.store
         let spec = saved.spec
         let semanticText = saved.semanticText
+        let faceCounts = await faceCountsIfNeeded(for: spec)
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
+                faceCounts: faceCounts,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)
                 })

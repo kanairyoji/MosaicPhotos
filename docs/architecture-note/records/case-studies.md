@@ -350,3 +350,10 @@
 - 対処: `BackgroundYield.heavyWorkAllowed / heavyShouldPause` に一元化：電源接続＋低電力 OFF＋最後のユーザー操作から 60 秒以上アイドル＋（CLIP/顔は）生成との相互排他。操作は `BackgroundActivityMonitor.noteUserInteraction`（画面遷移・スクラブ・閲覧・取得の発生点）で記録。起動直後は非アイドル扱い。初回生成と手動実行（今すぐ生成・再解析）は例外。
 - 関連: `BackgroundYield.swift` / `BackgroundActivityMonitor.swift`。従来の電源ポリシー設定（backgroundAllowed）はバックアップ・場所スキャン・Dropbox 同期に引き続き適用。
 - 残課題: スクリーンロック中の実行（BGProcessingTask）は未実装（フォアグラウンドのアイドルのみ）。しきい値 60 秒は実機の体感で調整。
+
+## 「人が写っていない風景写真」に人物写真が混入（否定条件が二重に不発）
+- 症状: AI アルバムの条件「人が写っていない風景写真」で、人が写っている写真が選ばれる。
+- 原因: 2 つの独立した不発。(1) **除外語が採点で未使用**＝LLM は contentExclude（["people"]）を正しく出していたが、`searchWithPool` は include しか読まず、QueryEvaluator も content 系を「ソフト＝採点側」として無視 → 除外の意図が誰にも適用されず捨てられていた。(2) **CLIP は否定を理解しない**＝英訳全文（"Landscape photos without people"）を単一ベクトルに埋め込んでおり、文中の "people" がむしろ人物写真への類似を引き上げる（既知のモデル特性）。
+- 対処: 否定を**対比**に変換する2段構え。(1) 対比採点＝除外があるとき肯定側は include 語だけを埋め込み、各除外語は "a photo of X" で個別に埋め込む。画像ごとに「除外類似 ≥ 肯定類似」または「除外類似 ≥ 0.22（excludeDropThreshold）」で落とす（フル評価・増分評価で同一規則）。(2) 顔実測の統合＝人系の除外語（hasPeopleExclusion）を含むアルバムでは、顔スキャン済み写真の faceCount>0 をハード除外（ScannedPhoto → PeopleEngine.scannedFaceCounts → AutoAlbumEngine.setFaceCountsProvider の seam・FaceStore は別コンテナのため Composition Root で結線）。未スキャン・クラウド写真は CLIP 対比が受け持つ。テスト 5 件（対比ドロップ・絶対しきい値・顔実測・肯定フレーズ規則・人系判定）で固定。
+- 関連: `AIAlbumSearch.swift` / `AIAlbumService.swift` / `FaceStore.swift` / `PeopleEngine.swift` / `AutoAlbumAdapters.swift` / `AIAlbumExclusionTests.swift`。ADR-23（解釈の永続化）の合成採点への拡張。
+- 残課題: excludeDropThreshold（0.22）は実機の分布で調整。後ろ姿など顔検出に掛からない人物は CLIP 対比頼み。将来は対比プロンプト辞書の拡充や上位候補の VLM 再検証も選択肢。

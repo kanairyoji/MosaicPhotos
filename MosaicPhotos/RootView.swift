@@ -51,7 +51,8 @@ final class HomeStores {
         let peopleEngine = await makePeopleEngine()
         let placeScanner = PlaceScanner()
         await Task.yield()
-        let autoAlbumEngine = await makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine)
+        let autoAlbumEngine = await makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine,
+                                                        peopleEngine: peopleEngine)
         Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,
                           backupEngine: backupEngine, albumScanner: albumScanner,

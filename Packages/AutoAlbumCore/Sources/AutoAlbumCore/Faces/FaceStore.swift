@@ -74,6 +74,15 @@ actor FaceStore {
     }
 
     func scannedCount() -> Int { (try? modelContext.fetchCount(FetchDescriptor<ScannedPhoto>())) ?? 0 }
+
+    /// 全スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」判定に使う。
+    func scannedFaceCounts() -> [String: Int] {
+        let markers = (try? modelContext.fetch(FetchDescriptor<ScannedPhoto>())) ?? []
+        var out: [String: Int] = [:]
+        out.reserveCapacity(markers.count)
+        for m in markers { out[m.refKey] = m.faceCount }
+        return out
+    }
     func faceCount() -> Int { (try? modelContext.fetchCount(FetchDescriptor<DetectedFace>())) ?? 0 }
 
     // MARK: - 記録＋逐次クラスタリング

@@ -108,6 +108,13 @@ public final class AutoAlbumEngine {
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }
 
+    /// 顔スキャンの実測（refKey → 顔数）を AI アルバム評価に結線する（「人が写っていない」等の
+    /// 除外判定に使う）。FaceStore は別コンテナ（PeopleEngine 側）のため、init 連鎖ではなく
+    /// Composition Root（アプリの AutoAlbumAdapters）から注入する。
+    public func setFaceCountsProvider(_ provider: @escaping @Sendable () async -> [String: Int]) {
+        aiService.faceCountsProvider = provider
+    }
+
     /// ユーザーが写真を能動操作中か（スクラブ等）を設定する。true の間は背景 CLIP 埋め込みを譲る（G）。
     public func setInteracting(_ value: Bool) { isInteracting = value }
 

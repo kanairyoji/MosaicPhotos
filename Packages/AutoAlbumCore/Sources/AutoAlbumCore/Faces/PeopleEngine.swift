@@ -115,6 +115,12 @@ public final class PeopleEngine {
         return []
     }
 
+    /// スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」条件に使う
+    /// （AutoAlbumEngine.setFaceCountsProvider へ Composition Root が結線する）。
+    public func scannedFaceCounts() async -> [String: Int] {
+        await store.scannedFaceCounts()
+    }
+
     /// 代表写真の選択候補（クラスタ内の顔・写真ごと）。
     public func coverCandidates(clusterID: Int) async -> [PersonInfo.Face] {
         await store.facesForCluster(clusterID: clusterID)
