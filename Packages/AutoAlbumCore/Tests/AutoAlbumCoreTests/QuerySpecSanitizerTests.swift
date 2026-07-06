@@ -108,6 +108,33 @@ struct QuerySpecSanitizerTests {
         #expect(out.clauses[0].conditions.contains(.place(["モルディブ"])))
     }
 
+    // MARK: - 決定的レキシコン（LLM ゼロでも意図が立つ）
+
+    @Test("レキシコン: 視覚語と人物否定を原文から決定的に抽出")
+    func lexiconExtraction() {
+        #expect(JapaneseVisualLexicon.includeTerms(in: "人が写っていない風景写真")
+                == ["landscape", "scenery", "outdoor"])
+        #expect(JapaneseVisualLexicon.includeTerms(in: "ここ2年以内の子供の写真")
+                == ["child", "children"])
+        #expect(JapaneseVisualLexicon.includeTerms(in: "レシート").isEmpty)
+        #expect(JapaneseVisualLexicon.hasPeopleNegation("人が写っていない風景写真"))
+        #expect(JapaneseVisualLexicon.hasPeopleNegation("Beach photos without people"))
+        #expect(!JapaneseVisualLexicon.hasPeopleNegation("子供の写真"))
+    }
+
+    @Test("addingExclusion: 全節へ追加・節が無ければ立てる・重複しない")
+    func addExclusion() {
+        let empty = QuerySpecSanitizer.addingExclusion(QuerySpec(), terms: ["people"])
+        #expect(empty.clauses == [QueryClause([.not(.content(["people"]))])])
+
+        let existing = QuerySpec(clauses: [QueryClause([.content(["landscape"]), .not(.content(["people"]))])])
+        #expect(QuerySpecSanitizer.addingExclusion(existing, terms: ["people"]) == existing)   // 重複なし
+
+        let withHard = QuerySpec(clauses: [QueryClause([.favorite])])
+        let out = QuerySpecSanitizer.addingExclusion(withHard, terms: ["people"])
+        #expect(out.clauses == [QueryClause([.favorite, .not(.content(["people"]))])])
+    }
+
     @Test("looksUntranslated: 日本語のままは true・英語は false")
     func untranslatedDetection() {
         #expect(AIAlbumService.looksUntranslated("ここ2年以内の子供の写真"))

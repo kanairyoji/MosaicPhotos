@@ -271,7 +271,10 @@ struct AIAlbumSearcher {
 
         guard hasPhrase, !base.isEmpty else {
             Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(!hasPhrase)")
-            return (base, [:])
+            // フレーズ無し（翻訳保留等）: ハード条件（日付/場所等）があればその絞り込み結果、
+            // 無ければ**空**を返す。旧: 無条件で base を返し、全滅解釈＋翻訳失敗の組で
+            // 「全 68,512 枚のアルバム」が生成される実障害になった。
+            return (spec.hasHardConstraints ? base : [], [:])
         }
 
         let lexical = LexicalSearch.rank(base, keywords: includeTerms)

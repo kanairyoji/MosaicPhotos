@@ -83,6 +83,21 @@ enum QuerySpecSanitizer {
         return out
     }
 
+    /// 決定的な除外語を全節へ追加する（節が無ければ除外だけの節を立てる）。既にあれば何もしない。
+    static func addingExclusion(_ spec: QuerySpec, terms: [String]) -> QuerySpec {
+        guard !terms.isEmpty else { return spec }
+        let existing = Set(spec.allContentTerms.exclude.map { $0.lowercased() })
+        let missing = terms.filter { !existing.contains($0.lowercased()) }
+        guard !missing.isEmpty else { return spec }
+        var out = spec
+        if out.clauses.isEmpty {
+            out.clauses = [QueryClause([.not(.content(missing))])]
+            return out
+        }
+        out.clauses = out.clauses.map { QueryClause($0.conditions + [.not(.content(missing))]) }
+        return out
+    }
+
     static func sanitize(_ spec: QuerySpec) -> QuerySpec {
         var out = spec
         out.clauses = spec.clauses.compactMap { sanitizeClause($0) }

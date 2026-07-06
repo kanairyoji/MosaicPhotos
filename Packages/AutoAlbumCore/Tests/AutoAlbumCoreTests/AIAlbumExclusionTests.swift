@@ -182,6 +182,17 @@ struct AIAlbumExclusionTests {
         #expect(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier } == ["clean"])
     }
 
+    /// フレーズ無し（翻訳保留等）でハード条件も無いとき、全写真を返さない（実障害: 68,512 枚アルバム）。
+    @Test("フレーズ無し＋ハード無しは空（全写真アルバムを作らない）")
+    func noPhraseNoHardReturnsEmpty() async {
+        let searcher = AIAlbumSearcher(textEmbedder: nil)
+        let photos = [photo("a", clip: [1, 0]), photo("b", clip: [0, 1])]
+        let spec = QuerySpec(clauses: [])   // 解釈全滅＋翻訳保留の状態
+        let result = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                           semanticText: "", loadPage: pagedLoader(photos))
+        #expect(result.isEmpty)
+    }
+
     /// 人系の除外語の判定（顔実測を使うかどうか）。
     @Test("hasPeopleExclusion は人系の語だけ true")
     func peopleExclusionDetection() {

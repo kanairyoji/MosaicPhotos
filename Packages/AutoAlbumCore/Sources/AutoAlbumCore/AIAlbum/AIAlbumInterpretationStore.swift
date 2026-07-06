@@ -16,7 +16,8 @@ public struct SavedInterpretation: Codable, Sendable {
     ///     否定節ストリップ（2026-07）。
     /// v4: P0＝日付は RelativeDateParser を唯一の出典に・place/people はカタログ/原文接地のみ・
     ///     翻訳失敗の非キャッシュ（2026-07）。
-    public static let currentVersion = 4
+    /// v5: 決定的レキシコン（日本語視覚語＋人物否定）を解釈に注入（2026-07）。
+    public static let currentVersion = 5
     public var version: Int?
     /// 解釈時の検索文（これが変わったときだけ再解釈する）。
     public var criteria: String

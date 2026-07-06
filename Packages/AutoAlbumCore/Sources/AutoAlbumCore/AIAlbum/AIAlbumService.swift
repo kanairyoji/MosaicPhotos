@@ -68,11 +68,21 @@ final class AIAlbumService {
         // LLM 出力は必ずサニタイズする（プレースホルダ語・カタログ丸写し・include/exclude 衝突）。
         // P0: さらに接地する＝日付は決定的パーサに置換・place/people はカタログ/原文出現のみ
         // （小型オンデバイス LLM の構造化出力は信用しない＝実障害3件・sanitizer 参照）。
-        let spec = QuerySpecSanitizer.sanitize(
+        var spec = QuerySpecSanitizer.sanitize(
             await understanding.interpretSpec(criteria, catalog: catalog, now: now),
             criteria: criteria, now: now,
             placeCatalog: catalog.places + catalog.countries,
             peopleCatalog: catalog.people)
+        // 決定的レキシコン（RelativeDateParser と同じ思想）: LLM が空振り/全滅しても、
+        // 頻出の視覚語（風景→landscape 等）と人物否定（人が写っていない→exclude people）は
+        // 原文から必ず立てる。LLM が動くときは LLM の内容語が優先（空のときだけ補う）。
+        if spec.allContentTerms.include.isEmpty {
+            let lex = JapaneseVisualLexicon.includeTerms(in: criteria)
+            if !lex.isEmpty { spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: lex) }
+        }
+        if JapaneseVisualLexicon.hasPeopleNegation(criteria) {
+            spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])
+        }
         // P0: 翻訳失敗（日本語のまま等）は semanticText を空にして保存し、次回に再試行する。
         // 失敗を静かにキャッシュすると CLIP に非英語が渡り採点が全ノイズ化する（実障害2件）。
         let english = (await translator?.toEnglish(criteria)) ?? criteria
