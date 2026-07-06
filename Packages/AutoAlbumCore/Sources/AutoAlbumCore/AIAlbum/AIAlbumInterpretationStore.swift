@@ -12,7 +12,9 @@ public struct SavedInterpretation: Codable, Sendable {
     /// 解釈器（プロンプト）の版。プロンプト改善時に採番すると、保存済みの解釈が
     /// **次の評価時に 1 回だけ再解釈**される（旧 JSON は nil ＝ 旧版扱い）。
     /// v2: 例語のオウム返し・カタログ丸写しを禁止したプロンプト（2026-07）。
-    public static let currentVersion = 2
+    /// v3: QuerySpecSanitizer（プレースホルダ除去・include/exclude 衝突解消）＋肯定フレーズの
+    ///     否定節ストリップ（2026-07）。
+    public static let currentVersion = 3
     public var version: Int?
     /// 解釈時の検索文（これが変わったときだけ再解釈する）。
     public var criteria: String

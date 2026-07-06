@@ -47,7 +47,10 @@ final class AIAlbumService {
            saved.version == SavedInterpretation.currentVersion { return saved }
         let all = await store.allEnrichedPhotosLite()
         let catalog = await Self.buildCatalogOffMain(all)
-        let spec = await understanding.interpretSpec(criteria, catalog: catalog, now: now)
+        // LLM 出力は必ずサニタイズする（プレースホルダ語・カタログ丸写し・include/exclude 衝突。
+        // 小型オンデバイス LLM はプロンプト改善だけでは信頼できない＝実障害2件・sanitizer 参照）。
+        let spec = QuerySpecSanitizer.sanitize(
+            await understanding.interpretSpec(criteria, catalog: catalog, now: now))
         let english = (await translator?.toEnglish(criteria)) ?? criteria
         let saved = SavedInterpretation(criteria: criteria, spec: spec, semanticText: english)
         interpretations.set(id, saved)
@@ -208,8 +211,8 @@ final class AIAlbumService {
         let include = saved.spec.allContentTerms.include
         let exclude = saved.spec.allContentTerms.exclude
         let phrase: String
-        if !exclude.isEmpty && !include.isEmpty {
-            phrase = include.joined(separator: ", ")
+        if !exclude.isEmpty {
+            phrase = AIAlbumSearcher.positivePhrase(include: include, semanticText: saved.semanticText)
         } else {
             phrase = saved.semanticText.isEmpty ? include.joined(separator: ", ") : saved.semanticText
         }

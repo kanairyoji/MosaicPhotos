@@ -24,6 +24,23 @@ struct AIAlbumSearcher {
     /// 除外語 → CLIP プロンプト（ゼロショットの定番形）。
     static func excludePrompt(_ term: String) -> String { "a photo of \(term)" }
 
+    /// 除外があるときの**肯定側フレーズ**。include 語があればそれ、無ければ英訳文から
+    /// 否定節を落とした先頭部を使う（"A landscape photo without any people." → "A landscape photo"）。
+    /// 否定入りの全文を CLIP に渡すと "people" が逆に人物写真を引き上げるため（CLIP は否定を
+    /// 理解しない）、肯定側には否定語を残さないことを保証する。
+    static func positivePhrase(include: [String], semanticText: String) -> String {
+        if !include.isEmpty { return include.joined(separator: ", ") }
+        let text = semanticText.trimmingCharacters(in: .whitespacesAndNewlines)
+        for marker in [" without ", " with no ", " except ", " excluding ", " but no "] {
+            if let range = text.range(of: marker, options: .caseInsensitive) {
+                let head = String(text[..<range.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !head.isEmpty { return head }
+            }
+        }
+        return text
+    }
+
     /// 除外語に「人」系の概念が含まれるか。含まれる場合は顔スキャンの実測（faceCount）を
     /// 優先信号として使える（CLIP より確実・ローカルのスキャン済み写真のみ）。
     static func hasPeopleExclusion(_ spec: QuerySpec) -> Bool {
@@ -171,12 +188,12 @@ struct AIAlbumSearcher {
             base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
         }
 
-        // 対策1: 除外があるときの肯定側フレーズは **include 語だけ**にする。全文（英訳）には
-        // "without people" 等の否定が含まれ、CLIP は否定を理解せず逆に "people" へ引っ張られる。
+        // 対策1: 除外があるときの肯定側は include 語（無ければ否定節を落とした英訳文）を使う。
+        // 全文には "without people" 等の否定が含まれ、CLIP は否定を理解せず逆に引っ張られる。
         let trimmedSemantic = semanticText.trimmingCharacters(in: .whitespacesAndNewlines)
         let phrase: String
-        if !excludeTerms.isEmpty && !includeTerms.isEmpty {
-            phrase = includeTerms.joined(separator: ", ")
+        if !excludeTerms.isEmpty {
+            phrase = Self.positivePhrase(include: includeTerms, semanticText: trimmedSemantic)
         } else {
             phrase = trimmedSemantic.isEmpty ? includeTerms.joined(separator: ", ") : trimmedSemantic
         }
