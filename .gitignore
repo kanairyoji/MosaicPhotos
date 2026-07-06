@@ -44,3 +44,8 @@ MosaicPhotos/MobileCLIP/
 # Regenerate locally with scripts/build_facenet.sh (not committed; size).
 .facenet_build/
 MosaicPhotos/FaceModel/
+
+# SmolVLM (photo captions for AI albums): build venv/checkpoint (~2GB) and generated models (~520MB).
+# Regenerate locally with scripts/build_smolvlm.sh (not committed; size).
+.smolvlm_build/
+MosaicPhotos/VLM/
