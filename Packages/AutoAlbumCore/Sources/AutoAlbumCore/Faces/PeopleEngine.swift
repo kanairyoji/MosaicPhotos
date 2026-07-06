@@ -115,6 +115,11 @@ public final class PeopleEngine {
         return []
     }
 
+    /// 全スキャン済み写真の refKey → 人物表示名（自動アルバム生成の people 付与＝PeopleProvider 用）。
+    public func peopleNamesByRefKey() async -> [String: [String]] {
+        await store.peopleNamesByRefKey(minFaces: minFaces)
+    }
+
     /// スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」条件に使う
     /// （AutoAlbumEngine.setFaceCountsProvider へ Composition Root が結線する）。
     public func scannedFaceCounts() async -> [String: Int] {

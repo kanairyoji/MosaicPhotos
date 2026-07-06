@@ -61,27 +61,3 @@ public enum ClipMath {
         return denom == 0 ? 0 : dot / denom
     }
 }
-
-/// クエリのテキスト埋め込みに対し、写真を意味的に並べ替える純ロジック（テスト対象）。
-/// `clipVector` を持つ写真のみ対象。閾値以上・上位 K を返す。
-public enum SemanticRanker {
-
-    public struct Scored: Sendable, Equatable {
-        public let photo: EnrichedPhoto
-        public let score: Float
-    }
-
-    /// `queryVector`（テキスト埋め込み）に近い順に写真を返す。
-    public static func rank(_ photos: [EnrichedPhoto], queryVector: [Float],
-                            topK: Int = 60, threshold: Float = 0.2) -> [Scored] {
-        guard !queryVector.isEmpty else { return [] }
-        var scored: [Scored] = []
-        for photo in photos {
-            guard let data = photo.clipVector, let vec = ClipMath.decode(data) else { continue }
-            let score = ClipMath.cosine(queryVector, vec)
-            if score >= threshold { scored.append(Scored(photo: photo, score: score)) }
-        }
-        scored.sort { $0.score > $1.score }
-        return Array(scored.prefix(topK))
-    }
-}

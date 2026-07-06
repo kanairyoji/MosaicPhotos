@@ -191,6 +191,24 @@ actor FaceStore {
         return out
     }
 
+    /// 全スキャン済み写真の refKey → 人物表示名（自動アルバム生成の people 付与用）。
+    /// 「人物」とみなせるクラスタ（minFaces 以上）のみ。未命名は "Person N"。
+    func peopleNamesByRefKey(minFaces: Int) -> [String: [String]] {
+        let clusters = allClusters().filter { $0.count >= minFaces }
+        var nameByCluster: [Int: String] = [:]
+        for c in clusters { nameByCluster[c.clusterID] = c.name ?? "Person \(c.clusterID + 1)" }
+        guard !nameByCluster.isEmpty else { return [:] }
+        let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        var out: [String: [String]] = [:]
+        for f in faces {
+            guard let name = nameByCluster[f.clusterID] else { continue }
+            if out[f.refKey]?.contains(name) != true {
+                out[f.refKey, default: []].append(name)
+            }
+        }
+        return out
+    }
+
     /// この写真に写っている「人物」の表示名（フル画像ビューの People 表示用）。
     /// 顔が属するクラスタのうち、人物とみなせる（`minFaces` 以上）ものの名前を返す。複数可。
     func peopleNames(refKey: String, minFaces: Int) -> [String] {

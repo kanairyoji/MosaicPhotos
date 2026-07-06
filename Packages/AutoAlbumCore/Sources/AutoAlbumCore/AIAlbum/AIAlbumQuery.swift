@@ -18,7 +18,7 @@ public enum AIAlbumResult: Sendable {
 }
 
 /// 自然文から解釈した構造化クエリ（DSL）。LLM/ルールベースの双方がこれを出力し、
-/// `PhotoQueryEngine` が写真メタデータ（`EnrichedPhoto`）への述語に変換する。
+/// `asQuerySpec()` で `QuerySpec` へ橋渡しし、評価は `QueryEvaluator` が行う（旧 PhotoQueryEngine は撤去）。
 public struct AIAlbumQuery: Sendable, Codable, Equatable {
     /// アルバム表示名（解釈結果。空ならアプリ側で原文を使う）。
     public var title: String
@@ -48,9 +48,6 @@ public struct AIAlbumQuery: Sendable, Codable, Equatable {
 
     /// ユーザー指定の構造化条件（場所/人物/期間/お気に入り/ソース）があるか。
     /// `excludeScreenshots` は既定 true の内部既定なので条件には数えない。
-    public var hasStructuredConstraints: Bool {
-        !placeTerms.isEmpty || !peopleTerms.isEmpty || dateRange != nil || favoritesOnly || source != .any
-    }
 }
 
 /// 期間指定。相対（ここ数年など）はアプリ側で現在日時から確定する（LLM に日付演算させない）。

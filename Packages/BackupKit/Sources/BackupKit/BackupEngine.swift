@@ -172,18 +172,18 @@ public final class BackupEngine {
         guard !Task.isCancelled else { phase = .cancelled; return }
 
         // 2. People + アルバム インデックスをバックグラウンドで構築
-        // ⚠️ buildPeopleIndex / buildAlbumIndex はファイル末尾のトップレベル関数である必要がある。
+        // ⚠️ buildAlbumIndex はファイル末尾のトップレベル関数である必要がある。
         // インスタンスメソッドとして定義すると Task.detached クロージャ内でコンパイラが
         // self のインスタンスメソッドを優先して解決し、@MainActor 型を Task.detached に
         // 渡せないコンパイルエラーになる（過去に発生）。
+        // 旧 People インデックス（写真アプリの People アルバム走査＝subtype-1000）は非公開化で
+        // **常に空**だったため撤去。metadata の people は空を維持する（互換のためキーは残す）。
         phase = .buildingPeopleIndex
-        addLog("Building People / Album index…")
-        let (peopleIndex, albumIndex) = await Task.detached {
-            (buildPeopleIndex(), buildAlbumIndex())
-        }.value
-        let uniquePeople = Set(peopleIndex.values.flatMap { $0 }).count
+        addLog("Building Album index…")
+        let peopleIndex: [String: [String]] = [:]
+        let albumIndex = await Task.detached { buildAlbumIndex() }.value
         let uniqueAlbums = Set(albumIndex.values.flatMap { $0 }).count
-        addLog("Index built — people: \(uniquePeople), albums: \(uniqueAlbums)")
+        addLog("Index built — albums: \(uniqueAlbums)")
         guard !Task.isCancelled else { phase = .cancelled; return }
 
         // 3. 全画像アセットを日付昇順で取得

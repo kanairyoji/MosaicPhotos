@@ -99,104 +99,6 @@ struct AIAlbumSearcher {
         self.textEmbedder = textEmbedder
     }
 
-    /// `semanticText` は英訳済みの自然文（CLIP 意味検索用）。空なら keywords を連結して使う。
-    func search(_ all: [EnrichedPhoto], query: AIAlbumQuery, now: Date,
-                semanticText: String = "") async -> [EnrichedPhoto] {
-        // 構造化条件（場所/日付/人物/お気に入り/ソース）で絞る。
-        let base = PhotoQueryEngine.filter(all, with: query, now: now)
-
-        // 意味検索に使う英文（自然文）。語彙ゼロのオープン語彙 CLIP。空なら keywords を連結。
-        let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? query.keywords.joined(separator: ", ")
-            : semanticText
-        guard !phrase.isEmpty, !base.isEmpty else { return base }
-
-        // ハイブリッド：字句（地名/人物の固有名詞）＋ 意味（CLIP）を RRF で融合。
-        let lexical = LexicalSearch.rank(base, keywords: query.keywords)
-
-        var semantic: [EnrichedPhoto] = []
-        if let textEmbedder, textEmbedder.isAvailable,
-           let vector = await textEmbedder.embed(phrase) {
-            // 各写真の生コサインを算出（分布をログするため SemanticRanker ではなく直接計算）。
-            let scored = base.compactMap { photo -> (photo: EnrichedPhoto, score: Float)? in
-                guard let data = photo.clipVector, let v = ClipMath.decode(data) else { return nil }
-                return (photo, ClipMath.cosine(vector, v))
-            }.sorted { $0.score > $1.score }
-            // 低フロアで無関係を除外し、最上位から semanticMargin 以内の上位帯だけを、上位 K 件で打ち切る。
-            if let top = scored.first?.score {
-                let cutoff = max(1e-4, top - Self.semanticMargin)   // 相対バンドのみ（フロア廃止）
-                semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
-            }
-            let isASCII = phrase.allSatisfy(\.isASCII)
-            let top = scored.first?.score ?? -1
-            Self.log.notice("aialbum: phrase=\"\(phrase, privacy: .public)\" ascii=\(isASCII, privacy: .public) embedded=\(scored.count, privacy: .public) top=\(top, privacy: .public) kept=\(semantic.count, privacy: .public)")
-            if !isASCII {
-                Self.log.notice("aialbum: query not translated to English (non-ASCII); semantic match will be poor")
-            }
-        }
-
-        let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
-        if !fused.isEmpty { return fused }
-        // 当たらなかった場合：構造化条件（場所/人物/期間/お気に入り）があればそれを返す。
-        // 内容語だけ（構造化条件なし）で当たらないときに base＝全写真へフォールバックすると、
-        // 無関係な写真（CLIP 未埋め込み＝タグなしも含む）が丸ごと入ってしまうため、空を返す。
-        return query.hasStructuredConstraints ? base : []
-    }
-
-    /// バッチ版 `search`：clipVector(約138MB) を一度に載せず、`loadPage` で **ページ単位**に読みながら
-    /// 各写真のコサインを算出する。スコア（Float）は全件保持しても軽いので、選抜ロジックは純関数版と
-    /// **完全に同一**（同じ `sorted.prefix(maxResults).filter(≥cutoff)`）＝結果は一致する。
-    /// - `all`: clipVector を載せない軽量メタデータ（構造化フィルタ・字句・カタログ用）。
-    /// - `loadPage(offset, limit)`: `(refKey, clipVector)` のページを返す（空ページで終端）。
-    func search(baseLite all: [EnrichedPhoto], query: AIAlbumQuery, now: Date, semanticText: String,
-                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
-                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
-    ) async -> [EnrichedPhoto] {
-        let base = PhotoQueryEngine.filter(all, with: query, now: now)
-
-        let phrase = semanticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? query.keywords.joined(separator: ", ")
-            : semanticText
-        guard !phrase.isEmpty, !base.isEmpty else { return base }
-
-        let lexical = LexicalSearch.rank(base, keywords: query.keywords)
-
-        var semantic: [EnrichedPhoto] = []
-        if let textEmbedder, textEmbedder.isAvailable,
-           let vector = await textEmbedder.embed(phrase) {
-            let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            // スコアは全件保持（Float のみ＝軽い）。clipVector はページごとに読んで都度解放する。
-            var scored: [(photo: EnrichedPhoto, score: Float)] = []
-            scored.reserveCapacity(base.count)
-            var offset = 0
-            while true {
-                let page = await loadPage(offset, pageSize)
-                if page.isEmpty { break }
-                for entry in page {
-                    guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
-                    scored.append((photo, ClipMath.cosine(vector, v)))
-                }
-                offset += pageSize
-                if page.count < pageSize { break }
-            }
-            scored.sort { $0.score > $1.score }
-            if let top = scored.first?.score {
-                let cutoff = max(1e-4, top - Self.semanticMargin)   // 相対バンドのみ（フロア廃止）
-                semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
-            }
-            let isASCII = phrase.allSatisfy(\.isASCII)
-            let top = scored.first?.score ?? -1
-            Self.log.notice("aialbum: phrase=\"\(phrase, privacy: .public)\" ascii=\(isASCII, privacy: .public) embedded=\(scored.count, privacy: .public) top=\(top, privacy: .public) kept=\(semantic.count, privacy: .public)")
-            if !isASCII {
-                Self.log.notice("aialbum: query not translated to English (non-ASCII); semantic match will be poor")
-            }
-        }
-
-        let fused = HybridFusion.fuse([lexical, semantic].filter { !$0.isEmpty })
-        if !fused.isEmpty { return fused }
-        return query.hasStructuredConstraints ? base : []
-    }
-
     /// QuerySpec（合成可能・OR/NOT/新ファセット対応）版のバッチ検索。
     /// ハード条件は `QueryEvaluator`（節の OR）で絞り、ソフトは内容語(include)を CLIP で採点する。
     /// 採点・選抜ロジックは既存の `search(baseLite:query:...)` と同一（フロア＋マージン＋上位K）。
@@ -377,12 +279,6 @@ struct AIAlbumSearcher {
 
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。
     /// タイトルはユーザー指定を優先し、空なら解釈タイトル→条件文の順で補完する。
-    static func buildInfo(id: String, title: String, query: AIAlbumQuery, criteria: String,
-                          members: [EnrichedPhoto]) -> AutoAlbumInfo {
-        buildInfo(id: id, title: title, interpretedTitle: query.title, criteria: criteria, members: members)
-    }
-
-    /// QuerySpec 経路用：解釈タイトルを文字列で受ける版。
     static func buildInfo(id: String, title: String, interpretedTitle: String, criteria: String,
                           members: [EnrichedPhoto]) -> AutoAlbumInfo {
         let dates = members.compactMap(\.captureDate)

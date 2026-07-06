@@ -47,37 +47,6 @@ struct AIAlbumQueryTests {
 
     // MARK: - Filter
 
-    @Test("場所＋期間でフィルタする")
-    func filtersByPlaceAndDate() {
-        let photos = [
-            photo("a", year: 2022, place: "Okinawa"),
-            photo("b", year: 2019, place: "Okinawa"),   // 期間外
-            photo("c", year: 2023, place: "Kyoto"),      // 場所外
-        ]
-        var q = AIAlbumQuery()
-        q.placeTerms = ["okinawa"]
-        q.dateRange = .lastYears(3)   // 2021〜2024
-        let result = PhotoQueryEngine.filter(photos, with: q, now: now, calendar: utcCal)
-        #expect(result.map(\.id) == [PhotoRef.local("a").encoded])
-    }
-
-    @Test("お気に入り・スクショ除外・人物でフィルタする")
-    func filtersBySignals() {
-        let photos = [
-            photo("a", year: 2023, people: ["Mom"], favorite: true),
-            photo("b", year: 2023, people: ["Mom"], favorite: false),
-            photo("s", year: 2023, people: ["Mom"], favorite: true, screenshot: true),
-        ]
-        var q = AIAlbumQuery()
-        q.favoritesOnly = true
-        q.excludeScreenshots = true
-        q.peopleTerms = ["mom"]
-        let result = PhotoQueryEngine.filter(photos, with: q, now: now, calendar: utcCal)
-        #expect(result.map(\.id) == [PhotoRef.local("a").encoded])
-    }
-
-    // MARK: - Rule-based understanding
-
     @Test("場所はカタログ語彙で接地（相対期間はハードコードしないので nil）")
     func interpretsPlaceNoRelativeDate() async {
         let catalog = AIAlbumCatalog(places: ["沖縄", "京都"], countries: ["日本"], people: [], earliest: nil, latest: nil)

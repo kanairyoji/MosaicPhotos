@@ -23,7 +23,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     let engine = await AutoAlbumEngine.makeWithOffMainStore(
         cloudProvider: DropboxCloudPhotoProvider(store: dropboxStore),
         backupLink: BackupLinkAdapter(engine: backupEngine),
-        peopleProvider: PeopleProviderAdapter(),
+        peopleProvider: FacePeopleProvider(engine: peopleEngine),
         perception: CLIPEmbeddingProvider(cloudImage: cloudImage),
         textEmbedder: MobileCLIPTextEmbedder(),
         translator: AppQueryTranslator(),
@@ -77,10 +77,20 @@ struct BackupLinkAdapter: BackupLinkProvider {
     }
 }
 
-/// 顔認識（People）インデックスから localId→人物名 対応を供給する PeopleProvider 実体。
-/// 実体は BackupKit の `BackupPeopleIndex`（写真ライブラリの People アルバムを走査）。
-struct PeopleProviderAdapter: PeopleProvider {
+/// 顔クラスタ（PeopleEngine）から localId→人物名 対応を供給する PeopleProvider 実体。
+/// 旧実装（BackupPeopleIndex＝写真アプリの People アルバム走査）は subtype-1000 が非公開化され
+/// **常に空**を返す死線だったため撤去し、自前の顔クラスタリング結果に置き換えた。
+struct FacePeopleProvider: PeopleProvider {
+    let engine: PeopleEngine
+
     func peopleByLocalIdentifier() async -> [String: [String]] {
-        await BackupPeopleIndex.build()
+        // FaceStore のキーは refKey（"L-<localId>"）。enrich 側は localIdentifier キーを期待する。
+        let byRefKey = await engine.peopleNamesByRefKey()
+        var out: [String: [String]] = [:]
+        out.reserveCapacity(byRefKey.count)
+        for (refKey, names) in byRefKey {
+            if let localId = PhotoRef.decode(refKey)?.localIdentifier { out[localId] = names }
+        }
+        return out
     }
 }
