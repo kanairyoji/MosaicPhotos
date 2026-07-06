@@ -41,7 +41,7 @@
 <td align="center" width="50%">
   <img src="docs/screenshots/ai-compose.jpg" width="230" alt="AI Album composer"><br>
   <b>AI Albums — describe it</b><br>
-  <sub>Describe an album in plain words, in any language (e.g. “children in the last 2 years”, “landscape without people”). Interpreted and searched on-device with open-vocabulary CLIP.</sub>
+  <sub>Describe an album in plain words, in any language (e.g. “children in the last 2 years”, “landscape without people”). Interpreted once by the on-device LLM, then matched with scene tags, CLIP and an LLM review — all on device.</sub>
 </td>
 </tr>
 <tr>
@@ -53,7 +53,7 @@
 <td align="center" width="50%">
   <img src="docs/screenshots/photo-info.jpg" width="230" alt="Photo info"><br>
   <b>Photo info &amp; EXIF</b><br>
-  <sub>Open any photo for place, date, full EXIF (camera, lens, exposure) and a map — plus on-device CLIP keyword tags.</sub>
+  <sub>Open any photo for place, date, full EXIF (camera, lens, exposure) and a map — plus detected scene tags and an AI description, generated on device.</sub>
 </td>
 </tr>
 <tr>
@@ -76,8 +76,8 @@
 
 - **All Photos** — Your device and Dropbox photos merged into one chronological timeline.
 - **Time & Place** — Trips are detected automatically from capture time and location (multi-day, multi-city trips become a single album), with smart titles and covers.
-- **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”, or “Kyoto or Nara family favorites, no screenshots”). The query is normalized to English **on-device** (Apple Foundation Models, with a fallback) and matched with **open-vocabulary CLIP image understanding** (OpenCLIP ViT-B-32 via Core ML) — no fixed keyword list — combined with **composable structured conditions** (date / place / people / source / favorite / screenshot / orientation) that support **OR and NOT** (a DNF `QuerySpec`). Relative dates (“last 2 years”) are understood too. Works across **both device and Dropbox** photos.
-- **On-device image understanding** — Every photo (device and Dropbox) gets a CLIP image embedding in the background for semantic search; the full-screen info panel shows **detected keyword tags** (display-only zero-shot labels). No OCR, no third-party vision API. Background indexing has selectable **speed levels** (gentle → fast) to balance battery, network, and scrolling.
+- **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”, or “Kyoto or Nara family favorites, no screenshots”). The request is interpreted **once** by the on-device LLM (Apple Foundation Models, persisted; deterministic parsers ground dates, places and common visual words) and matched by a **layered, threshold-free pipeline**: calibrated **scene tags** (built-in Vision classifier, ~1,300 classes) + **CLIP contrast** (OpenCLIP ViT-B-32 via Core ML, positive vs. negative concepts) + lexical match, fused and then **reviewed by the on-device LLM** against each photo's evidence (tags, face counts, captions — with majority voting on unsure cases). Exclusions like “without people” combine real **face detection counts** with tag and CLIP evidence. Relative dates (“last 2 years”) are parsed deterministically. Works across **both device and Dropbox** photos.
+- **On-device image understanding** — Photos are indexed in the background in three passes: **scene tags** (Vision, precision-calibrated), **CLIP embeddings** (batched ANE inference), and optional **VLM captions** (bundled SmolVLM-256M, one short English sentence per photo — runs over several nights). The full-screen info panel always shows the tag field (and the AI description once generated). Heavy indexing runs **only while charging and idle** — including while the device is locked (BGProcessingTask) — so it never gets in the way. No OCR, no third-party vision API, no network.
 - **Photos** — Browse your on-device library via PhotosKit, with fast thumbnail caching and a pinch-to-resize grid.
 - **Cloud** — Browse Dropbox photos. Background delta sync keeps the list fresh; thumbnails and originals are cached locally.
 - **Albums** — Your user-created device albums, scanned and cached independently.
@@ -105,8 +105,8 @@ MosaicPhotos (app)
 ├── PhotosFeatureKit  merges local + Dropbox (MergedPhotoStore) and place grouping
 ├── AutoAlbumCore     auto albums + on-device AI logic (SwiftUI-free): Time & Place trips,
 │                     folder-name albums, composable query model (OR/NOT), search & fusion
-└── MobileCLIPKit     CLIP/translation runtime + AutoAlbumCore seam implementations
-                      (MobileCLIPRuntime, perception/language adapters, display labeler)
+└── MobileCLIPKit     AI runtimes + AutoAlbumCore seam implementations (CLIP, Vision scene
+                      tags, SmolVLM captions + GPT2 tokenizer, face model, display labeler)
 ```
 
 - **Logic vs. UI separation** — `DropboxCore` (logic) and `DropboxKit` (UI) are separate packages; `DropboxCore` never imports SwiftUI.
@@ -117,9 +117,10 @@ MosaicPhotos (app)
 All AI lives in **`AutoAlbumCore`** (SwiftUI-free); the app injects the on-device implementations.
 
 - **Embeddings** — Each photo (device *and* Dropbox) is encoded once with **OpenCLIP ViT-B-32 (DataComp)** (Core ML, 512-dim) into a normalized image vector. The model was chosen by an **on-device recognition benchmark** (`scripts/eval_recognition.sh`): ImageNet-1k zero-shot **≈75% top-1** and **10/10** natural-language queries, balancing accuracy against on-device cost (lightweight patch-32 image encoder ≈60MB). Vectors live in a **separate SwiftData table (`PhotoEmbedding`) stored as Float16**, so metadata fetches never load the blobs (this fixed a photo-count-proportional launch crash). A `PhotoTagger` fills these in the background in small throttled batches (`.background` QoS; speed is user-selectable). Cloud photos are embedded from their cached thumbnails.
-- **Search** — A query (any language) is normalized to English by **Apple Foundation Models** (`QueryTranslator`), embedded with the CLIP *text* encoder, and ranked by cosine similarity against the stored image vectors (`SemanticRanker`). This is **open-vocabulary** — no fixed keyword list. In parallel, the query is parsed into structured filters (date / place / people) and a lexical match (place / person names); the three signals are merged with **Reciprocal Rank Fusion** (`AIAlbumSearcher`).
-- **Display tags** — The full-screen info panel shows keyword tags via a separate **display-only** zero-shot step (`CLIPDisplayLabeler`): the stored image vector is compared against ~300 everyday English concepts. This never constrains search, which stays vocabulary-free.
-- **Seams** — `PhotoPerceptionProvider` (image → CLIP), `TextEmbedder` (text → CLIP), `QueryTranslator`, and `LabelProvider` are protocols in `AutoAlbumCore`; **`MobileCLIPKit`** implements them with `MobileCLIPRuntime` and `FoundationModels`, and the app's composition root wires them in. `PhotoSourceKit` stays unaware of AI and receives per-photo info through a `photoInsight` environment closure.
+- **Scene tags & captions** — Alongside CLIP, every photo gets **scene tags** from the built-in Vision classifier (~1,300 classes, precision-calibrated with `hasMinimumRecall(forPrecision:)` — no hand-tuned thresholds) and, if the optional **SmolVLM-256M** model is bundled (`scripts/build_smolvlm.sh`, Apache-2.0), a one-sentence **English caption**. All three indexes are filled by a nightly pipeline (tags → embeddings → captions) that runs only while **charging and idle**, including locked (BGProcessingTask).
+- **Interpretation** — A request is interpreted **once** when the album is created (Apple Foundation Models, guided generation) and persisted with a version. Small on-device LLMs produce unreliable structure, so the output is defensively sanitized and grounded by deterministic layers: dates come from `RelativeDateParser` (JA/EN) only, places/people must match the catalog or the original text, and a small `JapaneseVisualLexicon` extracts common visual words and people-negations even when the LLM fails.
+- **Search** — Hard conditions filter first (`QueryEvaluator`), then three signals are fused with **Reciprocal Rank Fusion**: **tag matches** (discrete, threshold-free), **CLIP contrast** (positive vs. per-exclusion negative embeddings, relative comparison only), and lexical matches. Exclusion-bearing albums pass an **evidence gate** (a photo must have tags, a face count, or a caption to qualify) and finally an **LLM review** (`AlbumVerifier`): the model reads each candidate's evidence line and keeps/drops it, re-judging unsure cases with majority voting. Re-evaluation is incremental — only newly indexed photos are scored and merged into a persisted score pool.
+- **Seams** — Perception (`PhotoPerceptionProvider`, `TagPerceptionProvider`), text (`TextEmbedder`, `QueryTranslator`), and review (`AlbumCandidateVerifier`) are protocols in `AutoAlbumCore`; **`MobileCLIPKit`** implements them (CLIP runtime, Vision tags, SmolVLM runtime + GPT2 tokenizer), and the app's composition root wires them in. `PhotoSourceKit` stays unaware of AI and receives per-photo info through a `photoInsight` environment closure.
 
 ## Documentation
 
@@ -140,7 +141,7 @@ An in-depth internal **architecture note** — design rationale (ADR), deep-dive
 | Token storage | Keychain Services |
 | Dropbox API | `URLSession` async/await (no SDK) |
 | Caching | SwiftData (metadata) + custom binary cache with LRU eviction |
-| On-device AI | OpenCLIP (ViT-B-32, DataComp/MIT) image/text embeddings (Core ML) for open-vocabulary search · Apple Foundation Models for query understanding & translation |
+| On-device AI | Vision image classification (built-in, ~1,300 classes) · OpenCLIP ViT-B-32 (DataComp/MIT) embeddings · SmolVLM-256M captions (Apache-2.0, optional) — all Core ML · Apple Foundation Models for interpretation, translation & candidate review |
 | Minimum OS | iOS 26 |
 | Packaging | Swift Package Manager (11 local packages) |
 
