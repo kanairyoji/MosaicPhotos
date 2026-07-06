@@ -29,6 +29,15 @@ enum HeavyWorkScheduler {
         }
     }
 
+    /// 起動時の保険（B）: 予約が残っていなければ入れ直す。
+    /// force-quit 後の復帰や OS 側の予約破棄で「いつまでも予約が無い」状態を防ぐ。
+    static func submitIfMissing() {
+        BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            guard !requests.contains(where: { $0.identifier == taskID }) else { return }
+            submit()
+        }
+    }
+
     /// バックグラウンド遷移時に次回実行を予約する。電源接続が条件（OS が満たされるまで起動しない）。
     static func submit() {
         let request = BGProcessingTaskRequest(identifier: taskID)
@@ -45,9 +54,11 @@ enum HeavyWorkScheduler {
 
     private static func handle(_ task: BGProcessingTask) {
         Diagnostics.mark("bgtask: begin")
+        let started = Date()
         let work = Task { @MainActor in
             await runHeavyWork()
             Diagnostics.mark("bgtask: end (completed)")
+            recordLastRun(started: started, outcome: "completed")
             task.setTaskCompleted(success: true)
             submit()   // 次回分を再予約（残作業はまた次のロック中に進む）
         }
@@ -56,10 +67,21 @@ enum HeavyWorkScheduler {
             Diagnostics.mark("bgtask: expired — cancelling")
             work.cancel()
             Task { @MainActor in
+                recordLastRun(started: started, outcome: "expired")
                 task.setTaskCompleted(success: false)
                 submit()
             }
         }
+    }
+
+    /// D: 最終実行の記録（Developer Options で表示）。ログを開かずに夜間実行の有無を確認できる。
+    private static func recordLastRun(started: Date, outcome: String) {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        let mins = Int(Date().timeIntervalSince(started) / 60)
+        UserDefaults.standard.set("\(f.string(from: started)) — \(outcome) (\(mins)m)",
+                                  forKey: AppSettingsKeys.bgTaskLastRun)
     }
 
     /// 重い処理を一通り進める。フォアグラウンドと同じゲート（heavyShouldPause）を通るが、
@@ -76,7 +98,14 @@ enum HeavyWorkScheduler {
         if Task.isCancelled { return }
 
         // 1. アルバム生成（差分があるときだけ・~26s 上限・キャンセル非対応だが有界）。
-        await stores.autoAlbumEngine.refreshIfNeeded()
+        // C: バックグラウンドは前景よりメモリ上限（jetsam）が厳しく、generate はピークが大きい
+        //（前景実測 ~550MB）。残り許容量に余裕が無ければスキップし、軽い処理だけ進める。
+        let availableMB = MemoryBudget.availableBytes() / 1_048_576
+        if availableMB > 700 {
+            await stores.autoAlbumEngine.refreshIfNeeded()
+        } else {
+            Diagnostics.mark("bgtask: skip generate (available=\(availableMB)MB)")
+        }
         if Task.isCancelled { return }
 
         // 2. 顔スキャン＋CLIP 埋め込みを開始（それぞれ内部でトリクル実行・1枚ごとに譲り判定）。

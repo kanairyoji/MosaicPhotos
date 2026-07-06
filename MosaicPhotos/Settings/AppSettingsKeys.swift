@@ -12,4 +12,6 @@ enum AppSettingsKeys {
     /// ピープルの顔スキャンをシミュレータでも走らせる（既定 OFF）。デバッグ用。
     /// 顔モデルは cpuOnly で遅いが動作はするので、実機が無いときの動作確認に使う。
     static let faceScanOnSimulator = "debug.faceScanOnSimulator"
+    /// D: BGProcessingTask の最終実行記録（開始時刻・結果・所要分。Developer Options で表示）。
+    static let bgTaskLastRun = "debug.bgTaskLastRun"
 }

@@ -100,6 +100,8 @@ struct DeveloperSettingsView: View {
             Toggle("Force heavy work gates open", isOn: $forceHeavyWork)
                 .onChange(of: forceHeavyWork) { _, on in BackgroundYield.debugForceHeavyWork = on }
             LabeledContent("Heavy work allowed", value: BackgroundYield.heavyWorkAllowed ? "Yes" : "No")
+            LabeledContent("Last BG run",
+                           value: UserDefaults.standard.string(forKey: AppSettingsKeys.bgTaskLastRun) ?? "never")
             Button {
                 Task {
                     heavyWorking = true

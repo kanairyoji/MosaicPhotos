@@ -16,6 +16,8 @@ struct MosaicPhotosApp: App {
         PerfTrace.beginScreen("app.startup")
         // BGProcessingTask（スクリーンロック中の重い処理）は launch 完了前の登録が必須。
         HeavyWorkScheduler.register()
+        // B: 予約の保険（force-quit 後の復帰などで予約が消えていたら入れ直す）。
+        HeavyWorkScheduler.submitIfMissing()
     }
 
     var body: some Scene {
