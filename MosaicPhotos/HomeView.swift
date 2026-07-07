@@ -231,8 +231,9 @@ private struct HomeLifecycleTasks: ViewModifier {
                 Diagnostics.mark("places loaded")
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
-                    // 電源＋回線ポリシーを満たすときだけ定期再スキャン（逆ジオコーディングは通信）を行う。
-                    guard PowerStateMonitor.shared.backgroundAllowed(),
+                    // 重い処理の中央ゲート（電源＋Wi-Fi＋ロック中）＋回線ポリシーを満たすときだけ
+                    // 定期再スキャンする（操作中は動かさない方針・逆ジオコーディングは通信）。
+                    guard BackgroundYield.heavyWorkAllowed,
                           NetworkStateMonitor.shared.networkAllowed() else { continue }
                     await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
                 }

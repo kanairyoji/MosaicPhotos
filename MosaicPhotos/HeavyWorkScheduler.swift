@@ -135,6 +135,9 @@ enum HeavyWorkScheduler {
     /// 重い処理を一通り進める。フォアグラウンドと同じゲート（heavyShouldPause）を通るが、
     /// BG 中は操作が発生しないためアイドル条件は自然に満たされる。
     private static func runHeavyWork() async {
+        // BGTask 実行中＝アプリは非アクティブ確定。バックグラウンド起動では scenePhase の
+        // 変化が来ないことがあり、初期値（true）のままだと中央ゲートが開かない。
+        BackgroundYield.isAppActive = false
         // ストア群：フォアグラウンドの生き残りを再利用、無ければ（BG からのプロセス再起動）構築。
         let stores: HomeStores
         if let existing = Self.stores {

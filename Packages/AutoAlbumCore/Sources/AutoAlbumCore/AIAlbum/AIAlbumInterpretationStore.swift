@@ -27,6 +27,10 @@ public struct SavedInterpretation: Codable, Sendable {
     public var semanticText: String
     /// 翻訳が未完了（失敗）か。true なら次の評価時に翻訳だけ再試行する。
     public var translationPending: Bool?
+    /// 本番化（FM 解釈＋LLM 審査つきフル評価）が未実施か。
+    /// アルバム作成/編集時は**即時プレビュー**（決定的レイヤーのみ・LLM なし）で仮メンバーを出し、
+    /// 夜間（電源＋Wi-Fi＋ロック中）に本番化する（ユーザー操作を重くしない方針）。
+    public var pendingFinalization: Bool?
     /// 増分評価: 意味スコアの上位プール（refKey → コサイン）。新規埋め込み分をここへマージする。
     public var scoredPool: [String: Float]
     /// 増分評価: 前回フル評価時点の埋め込み済み枚数（ドリフト検知＝差が開いたらフル再評価）。

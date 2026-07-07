@@ -193,6 +193,10 @@ public final class AutoAlbumEngine {
         // （人が使っている気配がある間は背景でも動かさない・次のティックで再判定）。
         guard BackgroundYield.heavyWorkAllowed else { return }
 
+        // プレビューのままの AI アルバムを本番化（FM 解釈＋LLM 審査つきフル評価）。
+        // 作成時は決定的プレビューだけ出す方針のため、本番化はこのゲート内（夜間）で行う。
+        aiAlbums = await aiService.finalizePending(aiAlbums)
+
         // AI アルバムのドリフト検知（自動生成トグルとは独立）：埋め込みの進行に対して
         // 評価済み時点が大きく遅れていたらフル再評価で整合を回復する（LLM は走らない）。
         if let refreshed = await aiService.refreshIfDrifted(aiAlbums) {

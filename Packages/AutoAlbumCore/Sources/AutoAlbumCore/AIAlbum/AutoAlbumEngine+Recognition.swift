@@ -97,6 +97,9 @@ extension AutoAlbumEngine {
         let preset = Self.currentBackgroundPreset()
         Task(priority: .background) {
             isTagging = true
+            // 表示ラベラの概念埋め込み（約300語）を前倒しで構築する（初回に写真を開いた瞬間の
+            // 数秒のフォアグラウンド負荷を夜間へ移す）。
+            await labelProvider?.prewarm()
             // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を全量に行き渡らせる。
             // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
             let candidates = await store.enrichedRefKeys()

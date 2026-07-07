@@ -23,8 +23,12 @@ struct MosaicPhotosApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .task { BackgroundYield.isAppActive = (scenePhase == .active) }
         }
         .onChange(of: scenePhase) { _, phase in
+            // 重い処理の中央ゲート: アクティブ（＝ユーザーが操作中）の間は一切動かさない。
+            // 画面ロック/アプリ切替（inactive/background）で解放される（実行の主役は BGTask）。
+            BackgroundYield.isAppActive = (phase == .active)
             // バックグラウンド遷移（ロック含む）で次回の重い処理を予約する。
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
             if phase == .background { HeavyWorkScheduler.submit() }

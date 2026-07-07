@@ -72,5 +72,11 @@ public protocol QueryTranslator: Sendable {
 /// これはフル画像表示のチップ用途に限る。未提供ならタグ無し。
 public protocol LabelProvider: Sendable {
     func labels(forEmbedding clipVector: Data) async -> [String]
+    /// 概念埋め込み等の遅延初期化を夜間に前倒しする（既定は何もしない）。
+    func prewarm() async
 }
 
+
+public extension LabelProvider {
+    func prewarm() async {}
+}

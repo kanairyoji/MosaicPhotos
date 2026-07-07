@@ -58,20 +58,28 @@ final class FaceTagger {
         var facesFound = 0
         var batchNo = 0
         while index < todo.count, !Task.isCancelled {
-            while shouldPause() && !Task.isCancelled {
-                PerfTrace.count("face.pauseWait")   // センサー: 譲り待ちの発生数
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            if Task.isCancelled { break }
-
             let end = min(index + batchSize, todo.count)
             let batch = Array(todo[index..<end])
             index = end
 
-            let tBatch = PerfTrace.nowNs()
-            let signals = await provider.detectFaces(refKeys: batch)
-            PerfTrace.count("face.batchMs", value: PerfTrace.msSince(tBatch))   // 1バッチの検出+埋め込み単価
-            let records = batch.map { refKey in
+            // ⚠️ 停止判定は 1 枚単位（検出+埋め込みは 1 枚数百 ms〜。バッチ一括だと
+            // ロック解除直後の譲りが遅れる）。保存はバッチ 1 回（T3）を維持。
+            var signals: [String: [DetectedFaceSignal]] = [:]
+            var scanned: [String] = []   // 実際に推論まで到達した写真（キャンセル時の途中まで）
+            for refKey in batch {
+                while shouldPause() && !Task.isCancelled {
+                    PerfTrace.count("face.pauseWait")   // センサー: 譲り待ちの発生数
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if Task.isCancelled { break }
+                let tOne = PerfTrace.nowNs()
+                let one = await provider.detectFaces(refKeys: [refKey])
+                PerfTrace.count("face.photoMs", value: PerfTrace.msSince(tOne))
+                signals.merge(one) { a, _ in a }
+                scanned.append(refKey)   // 顔ゼロ（dict に無い）も走査済み＝再スキャンしない
+            }
+            guard !scanned.isEmpty else { break }
+            let records = scanned.map { refKey in
                 (refKey: refKey, faces: signals[refKey] ?? [])
             }
             facesFound += records.reduce(0) { $0 + $1.faces.count }

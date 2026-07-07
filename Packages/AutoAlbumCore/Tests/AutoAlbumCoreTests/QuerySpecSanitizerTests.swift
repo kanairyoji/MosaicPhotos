@@ -135,6 +135,31 @@ struct QuerySpecSanitizerTests {
         #expect(out.clauses == [QueryClause([.favorite, .not(.content(["people"]))])])
     }
 
+    // MARK: - 即時プレビュー解釈（LLM なし・作成時の 1〜2 秒応答）
+
+    @Test("previewInterpretation: 日付＋視覚語＋人物否定を決定的に立て、pending を立てる")
+    func previewBuildsDeterministicSpec() {
+        let saved = AIAlbumService.previewInterpretation(criteria: "ここ2年以内の子供の写真", now: now)
+        #expect(saved.pendingFinalization == true)
+        #expect(saved.translationPending == true)
+        #expect(saved.semanticText.isEmpty)   // FM 翻訳は夜間
+        #expect(saved.spec.allContentTerms.include == ["child", "children"])
+        #expect(saved.spec.clauses.allSatisfy { $0.conditions.contains(.date(.lastYears(2))) })
+
+        let neg = AIAlbumService.previewInterpretation(criteria: "人が写っていない風景写真", now: now)
+        #expect(neg.spec.allContentTerms.include == ["landscape", "scenery", "outdoor"])
+        #expect(neg.spec.allContentTerms.exclude == ["people"])
+    }
+
+    @Test("previewInterpretation: 英語入力（レキシコン外）は原文を include に使う")
+    func previewEnglishPassthrough() {
+        let saved = AIAlbumService.previewInterpretation(criteria: "Ramen", now: now)
+        #expect(saved.spec.allContentTerms.include == ["ramen"])
+        // 日本語のレキシコン外は include なし（純ハード or 夜間の本番化待ち）。
+        let jp = AIAlbumService.previewInterpretation(criteria: "レシート", now: now)
+        #expect(jp.spec.allContentTerms.include.isEmpty)
+    }
+
     @Test("looksUntranslated: 日本語のままは true・英語は false")
     func untranslatedDetection() {
         #expect(AIAlbumService.looksUntranslated("ここ2年以内の子供の写真"))

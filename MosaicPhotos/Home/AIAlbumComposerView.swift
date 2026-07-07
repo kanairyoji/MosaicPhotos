@@ -42,6 +42,17 @@ struct AIAlbumComposerView: View {
                     Text("Searches your photos on-device by place, date, people and favorites. No network used.")
                 }
 
+                // 動作タイミングの説明（プレビュー→夜間本番化の2段階を明示。
+                // 「作らないと勘違い」を防ぐため、いつ増える/良くなるかを書く）。
+                Section {
+                } footer: {
+                    Label {
+                        Text("You'll see a quick preview right away. The album is then fully analyzed and refined while your iPhone is locked, charging, and connected to Wi-Fi (typically overnight) — results improve automatically as photos are indexed.")
+                    } icon: {
+                        Image(systemName: "moon.zzz")
+                    }
+                }
+
                 if let message {
                     Section { Text(message).foregroundStyle(.secondary) }
                 }

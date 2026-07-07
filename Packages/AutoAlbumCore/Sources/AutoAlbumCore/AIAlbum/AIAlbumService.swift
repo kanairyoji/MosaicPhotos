@@ -51,7 +51,8 @@ final class AIAlbumService {
     private func interpretation(id: String, criteria: String, now: Date) async -> SavedInterpretation {
         // 検索文が同じでも、解釈器の版が古ければ作り直す（プロンプト改善を既存アルバムに波及させる）。
         if var saved = interpretations.get(id), saved.criteria == criteria,
-           saved.version == SavedInterpretation.currentVersion {
+           saved.version == SavedInterpretation.currentVersion,
+           saved.pendingFinalization != true {   // プレビュー解釈は本番化の対象（キャッシュ扱いしない）
             // 翻訳が保留（前回失敗）なら翻訳だけ再試行する（解釈はそのまま）。
             if saved.translationPending == true, let translator {
                 let english = await translator.toEnglish(criteria)
@@ -90,8 +91,80 @@ final class AIAlbumService {
         var saved = SavedInterpretation(criteria: criteria, spec: spec,
                                         semanticText: failed ? "" : english)
         saved.translationPending = failed
+        saved.pendingFinalization = false   // full 解釈済み
         interpretations.set(id, saved)
         return saved
+    }
+
+    /// 即時プレビュー用の解釈（純・LLM なし・テスト対象）。決定的レイヤーだけで仮の spec を作る：
+    /// 日付=RelativeDateParser・視覚語/人物否定=JapaneseVisualLexicon。semanticText は空
+    /// （FM 翻訳は夜間）。pendingFinalization/translationPending を立てて返す。
+    nonisolated static func previewInterpretation(criteria: String, now: Date) -> SavedInterpretation {
+        var spec = QuerySpec()
+        let includes = JapaneseVisualLexicon.includeTerms(in: criteria)
+        // 英語入力なら原文の語をそのまま include に使える（ASCII のみのとき）。
+        if includes.isEmpty && criteria.allSatisfy(\.isASCII) {
+            spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: [criteria.lowercased()])
+        } else if !includes.isEmpty {
+            spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: includes)
+        }
+        if JapaneseVisualLexicon.hasPeopleNegation(criteria) {
+            spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])
+        }
+        if let date = RelativeDateParser.parse(criteria, now: now) {
+            if spec.clauses.isEmpty {
+                spec.clauses = [QueryClause([.date(date)])]
+            } else {
+                spec.clauses = spec.clauses.map { QueryClause($0.conditions + [.date(date)]) }
+            }
+        }
+        var saved = SavedInterpretation(criteria: criteria, spec: spec, semanticText: "")
+        saved.translationPending = true
+        saved.pendingFinalization = true
+        return saved
+    }
+
+    /// 夜間の本番化: プレビューのまま（pendingFinalization）のアルバムだけ FM 解釈＋フル評価
+    /// （証拠ゲート・LLM 審査・Refine 込み）を行う。ゲートが閉じたら残りは次回夜間へ。
+    func finalizePending(_ albums: [AutoAlbumInfo], now: Date = Date()) async -> [AutoAlbumInfo] {
+        let pendingIDs = albums.filter { interpretations.get($0.id)?.pendingFinalization == true }.map(\.id)
+        guard !pendingIDs.isEmpty else { return albums }
+        Diagnostics.mark("aialbum.finalize: \(pendingIDs.count) pending")
+        var out = albums
+        let all = await store.allEnrichedPhotosLite()
+        let embedCount = await store.embeddedCount()
+        for id in pendingIDs {
+            if BackgroundYield.heavyShouldPause() { break }   // ロック解除等 → 残りは次回夜間へ
+            guard let index = out.firstIndex(where: { $0.id == id }),
+                  let criteria = out[index].criteria, !criteria.isEmpty else { continue }
+            // interpretation() は pending の解釈をキャッシュ扱いしない＝ここで FM 解釈が走る。
+            var saved = await interpretation(id: id, criteria: criteria, now: now)
+            var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+            members = await evidenceGatedIfExcluding(members, spec: saved.spec)
+            members = await verified(members, criteria: criteria)
+            // Refine: 空振りなら LLM がプローブ語を生成して 1 回だけ再検索（作成時から夜間へ移動）。
+            if members.isEmpty {
+                let probes = await understanding.expandProbes(criteria)
+                if !probes.isEmpty {
+                    var alt = saved
+                    alt.spec = QuerySpecSanitizer.withIncludeTerms(saved.spec, terms: probes)
+                    let retry = await rankedSearch(all, saved: alt, now: now)
+                    members = await verified(retry.members, criteria: criteria)
+                    if !members.isEmpty { pool = retry.pool }
+                    Diagnostics.mark("aialbum.refine: probes=\(probes.joined(separator: ",")) → \(members.count)")
+                }
+            }
+            saved.scoredPool = pool
+            saved.evaluatedEmbedCount = embedCount
+            interpretations.set(id, saved)
+            let info = AIAlbumSearcher.buildInfo(id: id, title: out[index].title,
+                                                 interpretedTitle: saved.spec.title,
+                                                 criteria: criteria, members: members)
+            await store.upsert(albumInfo: info)
+            out[index] = info
+            Diagnostics.mark("aialbum.finalize: '\(criteria)' → members=\(members.count)")
+        }
+        return out
     }
 
     /// 英訳として成立していないか（非 ASCII が 1/3 以上＝日本語のまま等）。純関数（テスト対象）。
@@ -111,25 +184,13 @@ final class AIAlbumService {
 
         let now = Date()
         interpretations.remove(id)   // 再設定（検索文変更）は解釈からやり直す
-        var saved = await interpretation(id: id, criteria: trimmed, now: now)
+        // 作成/編集は**即時プレビュー**（決定的レイヤーのみ・LLM なし＝1〜2 秒）。
+        // FM 解釈＋LLM 審査つきの本番化は夜間（finalizePending・電源＋Wi-Fi＋ロック中）に行う。
+        var saved = Self.previewInterpretation(criteria: trimmed, now: now)
         let all = await store.allEnrichedPhotosLite()
         var (members, pool) = await rankedSearch(all, saved: saved, now: now)
-        // 証拠ゲート（除外つきのみ）→ LLM 審査の順で精度を担保する。
+        // 証拠ゲート（除外つきのみ）はプレビューでも適用（除外の精度は落とさない）。
         members = await evidenceGatedIfExcluding(members, spec: saved.spec)
-        // P2 Verify: 候補のタグ/キャプション/顔数を LLM が読み、不適合を落とす（unsure は多数決）。
-        members = await verified(members, criteria: trimmed)
-        // P2 Refine: 空振りなら LLM がプローブ語（類義・関連概念）を生成して 1 回だけ再検索。
-        if members.isEmpty {
-            let probes = await understanding.expandProbes(trimmed)
-            if !probes.isEmpty {
-                var alt = saved
-                alt.spec = QuerySpecSanitizer.withIncludeTerms(saved.spec, terms: probes)
-                let retry = await rankedSearch(all, saved: alt, now: now)
-                members = await verified(retry.members, criteria: trimmed)
-                if !members.isEmpty { pool = retry.pool }
-                Diagnostics.mark("aialbum.refine: probes=\(probes.joined(separator: ",")) → \(members.count)")
-            }
-        }
         saved.scoredPool = pool
         saved.evaluatedEmbedCount = await store.embeddedCount()
         interpretations.set(id, saved)

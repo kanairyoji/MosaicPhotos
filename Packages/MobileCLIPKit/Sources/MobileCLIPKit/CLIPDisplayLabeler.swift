@@ -16,6 +16,12 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     private let maxTags = 6
     private let margin: Float = 0.04   // 最上位類似度からこの差以内のものを採用
 
+    /// 概念埋め込み（約300語の text encode）を事前構築する（夜間パイプラインの先頭で呼ばれる）。
+    /// これにより初回に写真を開いた瞬間の数秒の構築コストがフォアグラウンドから消える。
+    public nonisolated func prewarm() async {
+        _ = ensureEmbeddings()
+    }
+
     /// ⚠️ nonisolated：概念埋め込みの一括構築（~300 text encode）をメインスレッドで走らせない。
     public nonisolated func labels(forEmbedding clipVector: Data) async -> [String] {
         guard let image = ClipMath.decode(clipVector), !image.isEmpty,

@@ -2198,6 +2198,16 @@
           }
         }
       }
+    },
+    "You'll see a quick preview right away. The album is then fully analyzed and refined while your iPhone is locked, charging, and connected to Wi-Fi (typically overnight) — results improve automatically as photos are indexed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作成するとすぐに簡易プレビューが表示されます。その後、iPhone がロックされ、電源と Wi-Fi に接続されている間（主に夜間）に AI が本格的な解析を行い、写真のインデックスが進むにつれて自動で精度が上がっていきます。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

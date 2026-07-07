@@ -47,20 +47,26 @@ final class TagTagger {
         var index = 0
         var processed = 0
         while index < todo.count, !Task.isCancelled {
-            while shouldPause() && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            if Task.isCancelled { break }
-
             let end = min(index + batchSize, todo.count)
             let batch = Array(todo[index..<end])
             index = end
 
-            let tBatch = PerfTrace.nowNs()
-            let results = await provider.sceneTags(refKeys: batch)
-            PerfTrace.count("tags.batchMs", value: PerfTrace.msSince(tBatch))
-            await store.recordTags(batch.map { ($0, results[$0] ?? []) })
-            processed += batch.count
+            // ⚠️ 停止判定は 1 枚単位（クラウド写真はネット取得込みで 1 枚数秒かかり得るため、
+            // バッチ一括だと譲りが数十秒遅れる＝ロック解除直後の操作が重くなる）。保存はバッチ 1 回。
+            var results: [(refKey: String, tags: [String])] = []
+            for refKey in batch {
+                while shouldPause() && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if Task.isCancelled { break }
+                let tOne = PerfTrace.nowNs()
+                let one = await provider.sceneTags(refKeys: [refKey])
+                PerfTrace.count("tags.photoMs", value: PerfTrace.msSince(tOne))
+                results.append((refKey, one[refKey] ?? []))
+            }
+            guard !results.isEmpty else { break }
+            await store.recordTags(results)
+            processed += results.count
             onProgress(max(0, todo.count - processed))
             if processed % 256 == 0 {
                 Diagnostics.mark("tags: \(processed)/\(todo.count) tagged")
@@ -82,18 +88,24 @@ final class TagTagger {
         #endif
         var processed = 0
         while !Task.isCancelled {
-            while shouldPause() && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            if Task.isCancelled { break }
             let batch = await store.captionPending(limit: batchSize)
             guard !batch.isEmpty else { break }
-            let tBatch = PerfTrace.nowNs()
-            let results = await provider.captions(refKeys: batch)
-            PerfTrace.count("caption.batchMs", value: PerfTrace.msSince(tBatch))
-            // 取得できなかった写真も空で記録して無限ループを防ぐ。
-            await store.recordCaptions(batch.map { ($0, results[$0] ?? "") })
-            processed += batch.count
+            // 停止判定は 1 枚単位（VLM は 1 枚 1〜2 秒＝バッチ一括だと譲りが数秒遅れる）。
+            var results: [(refKey: String, caption: String)] = []
+            for refKey in batch {
+                while shouldPause() && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if Task.isCancelled { break }
+                let tOne = PerfTrace.nowNs()
+                let one = await provider.captions(refKeys: [refKey])
+                PerfTrace.count("caption.photoMs", value: PerfTrace.msSince(tOne))
+                // 取得できなかった写真も空で記録して無限ループを防ぐ。
+                results.append((refKey, one[refKey] ?? ""))
+            }
+            guard !results.isEmpty else { break }
+            await store.recordCaptions(results)
+            processed += results.count
             if processed % 64 == 0 { Diagnostics.mark("captions: \(processed) done") }
             try? await Task.sleep(nanoseconds: betweenBatchNs)
         }
