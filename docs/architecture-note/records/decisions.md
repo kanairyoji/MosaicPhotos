@@ -82,6 +82,7 @@
 - 決定: (1) 中央ゲート `BackgroundYield.heavyWorkAllowed` を「電源＋低電力OFF＋**アプリ非アクティブ（scenePhase）**＋**Wi-Fi**」へ変更しアイドル判定を廃止。手動ブースト（今すぐ処理）だけ非アクティブ/Wi-Fi を免除。BGTask 起動時は scenePhase 変化が来ないため `runHeavyWork` 冒頭で非アクティブを明示（初期値 true のままゲートが開かない罠）。(2) 停止判定を **1 枚単位**に統一（タグ/顔/キャプション。CLIP は既に1枚単位）。(3) AI アルバム作成は**2段階**＝作成時は決定的プレビュー（レキシコン＋日付＋タグ照合・LLMなし・1〜2秒・`pendingFinalization`）→ 夜間に `finalizePending`（FM解釈＋証拠ゲート＋LLM審査＋Refine）で本番化。(4) 場所の定期再スキャンにも同ゲート適用。(5) 表示ラベラの概念埋め込み（約300語）を夜間パイプライン先頭で prewarm（写真初回オープンの数秒負荷を排除）。(6) 作成画面に動作タイミングの説明（プレビュー→夜間本番化）を明記。
 - 結果: フォアグラウンドでは重い処理が一切走らず操作が軽くなる。索引の進行は「充電＋Wi-Fi＋ロック」時間帯に限定され初回全量は日数を要する（エスケープハッチ=今すぐ処理）。BGTask は OS 裁量のため毎晩の実行保証はない。
 - 関連: `BackgroundYield` / `MosaicPhotosApp`（scenePhase）/ `HeavyWorkScheduler` / `TagTagger`・`FaceTagger`（1枚粒度）/ `AIAlbumService.previewInterpretation`・`finalizePending` / `AIAlbumComposerView`。ADR-20・ADR-23・ADR-24。
+- 追記（2026-07-08・5段階のユーザー設定化）: 固定ゲートをやめ、**実行タイミングをユーザーが 5 段階で選択**できるようにした（`HeavyWorkTiming`・既定は従来どおり「おまかせ＝夜間のみ」）。段階は単調に条件を緩める: 一時停止 → おまかせ（電源+Wi-Fi+非使用）→ 充電中はアプリ使用中の合間も（アプリ内全タッチを `TouchActivityTracker`（UIWindow 上の認識器）で捕捉し 20 秒アイドルで開始・タッチ即停止）→ バッテリーでも（残量 20% 以上）→ 制限なし（モバイル回線も）。低電力モード・メモリ圧迫は全段階でブロック（安全弁）。battery 以上では BGTask の `requiresExternalPower` も外す。判定は純関数 `HeavyWorkTiming.allows`（単調性を総当たりテストで固定）。設定 UI は AutoAlbumSettingsView「処理のタイミング」（各段の条件と影響を footer に明記）。
 
 ## ADR-24 AI アルバム検索を「タグ台帳＋LLM審査」へ再設計（閾値レス・エージェント型）
 - 状態: 採用（ADR-23 の検索段を拡張）

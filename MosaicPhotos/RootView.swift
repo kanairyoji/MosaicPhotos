@@ -84,7 +84,8 @@ struct RootView: View {
         .environment(\.locale, selectedLanguage == .system ? .autoupdatingCurrent
                                                             : Locale(identifier: selectedLanguage.rawValue))
         .onChange(of: appLanguageRaw) { _, _ in AppLocale.apply(selectedLanguage) }
-        .task {
+        .task { TouchActivityTracker.install() }
+            .task {
             // 1 秒経っても準備できなければローディングインジケータを出す。
             let loadingTimer = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(1))

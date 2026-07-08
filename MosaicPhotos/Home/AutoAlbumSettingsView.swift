@@ -21,13 +21,48 @@ struct AutoAlbumSettingsView: View {
     @State private var untaggedCount = 0
     @AppStorage(AutoAlbumSettingsKeys.backgroundProcessingLevel)
     private var backgroundLevel = BackgroundProcessing.defaultIndex
+    @AppStorage(HeavyWorkTiming.defaultsKey)
+    private var heavyWorkTiming = HeavyWorkTiming.nightly.rawValue
 
     private var selectedPreset: BackgroundProcessingPreset {
         BackgroundProcessing.preset(at: backgroundLevel)
     }
 
+    private var timingFooter: String {
+        switch HeavyWorkTiming(rawValue: heavyWorkTiming) ?? .nightly {
+        case .paused:
+            return L("Nothing runs automatically. Use “Process Now” to index manually.")
+        case .nightly:
+            return L("Runs only while your iPhone is charging, on Wi-Fi, and not in use (locked or in another app) — typically overnight. Zero impact while you use the app.")
+        case .chargeActive:
+            return L("Additionally runs between your interactions while the app is open (charging + Wi-Fi). Stops the instant you touch the screen; slight warmth possible.")
+        case .battery:
+            return L("Additionally runs on battery (Wi-Fi, above 20% charge, Low Power Mode off). Uses battery.")
+        case .unlimited:
+            return L("Runs whenever possible, including on mobile data. Uses battery and may use significant cellular data.")
+        }
+    }
+
     var body: some View {
         Group {
+            // AI 処理を「いつ動かすか」（5段階・既定=夜間のみ）。「どれくらい強く動かすか」
+            // （下の Background speed）とは別軸。判定本体は HeavyWorkTiming.allows（テスト済み）。
+            Section {
+                Picker("When to process", selection: $heavyWorkTiming) {
+                    Text(L("Paused — manual only")).tag(HeavyWorkTiming.paused.rawValue)
+                    Text(L("Automatic — while not in use (recommended)")).tag(HeavyWorkTiming.nightly.rawValue)
+                    Text(L("Also while using the app (charging)")).tag(HeavyWorkTiming.chargeActive.rawValue)
+                    Text(L("Also on battery (Wi-Fi)")).tag(HeavyWorkTiming.battery.rawValue)
+                    Text(L("No limits (mobile data too)")).tag(HeavyWorkTiming.unlimited.rawValue)
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } header: {
+                Text("Processing Timing")
+            } footer: {
+                Text(timingFooter)
+            }
+
             Section {
                 Picker("Background speed", selection: $backgroundLevel) {
                     ForEach(BackgroundProcessing.presets) { preset in

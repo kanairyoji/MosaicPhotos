@@ -2208,6 +2208,126 @@
           }
         }
       }
+    },
+    "Processing Timing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "処理のタイミング"
+          }
+        }
+      }
+    },
+    "When to process": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いつ処理するか"
+          }
+        }
+      }
+    },
+    "Paused — manual only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時停止 — 手動のみ"
+          }
+        }
+      }
+    },
+    "Automatic — while not in use (recommended)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "おまかせ — 使っていない間だけ（推奨）"
+          }
+        }
+      }
+    },
+    "Also while using the app (charging)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリ使用中も（充電時）"
+          }
+        }
+      }
+    },
+    "Also on battery (Wi-Fi)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バッテリーでも（Wi-Fi）"
+          }
+        }
+      }
+    },
+    "No limits (mobile data too)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "制限なし（モバイル通信も）"
+          }
+        }
+      }
+    },
+    "Nothing runs automatically. Use “Process Now” to index manually.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動では何も実行しません。「今すぐ処理」で手動実行できます。"
+          }
+        }
+      }
+    },
+    "Runs only while your iPhone is charging, on Wi-Fi, and not in use (locked or in another app) — typically overnight. Zero impact while you use the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone が充電中・Wi-Fi 接続中で、使われていないとき（ロック中や他のアプリの使用中）だけ実行します（主に夜間）。アプリの操作には一切影響しません。"
+          }
+        }
+      }
+    },
+    "Additionally runs between your interactions while the app is open (charging + Wi-Fi). Stops the instant you touch the screen; slight warmth possible.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加えて、アプリを開いている間も操作の合間に実行します（充電＋Wi-Fi 時）。画面に触れた瞬間に停止します。端末が少し温かくなることがあります。"
+          }
+        }
+      }
+    },
+    "Additionally runs on battery (Wi-Fi, above 20% charge, Low Power Mode off). Uses battery.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加えて、バッテリー駆動でも実行します（Wi-Fi・残量20%以上・低電力モードOFF時）。バッテリーを消費します。"
+          }
+        }
+      }
+    },
+    "Runs whenever possible, including on mobile data. Uses battery and may use significant cellular data.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能なかぎり常に実行します（モバイル通信も使用）。バッテリーを消費し、通信量が大きくなる場合があります。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -46,16 +46,24 @@ public enum BackgroundYield {
         manualBoostUntil = Date().addingTimeInterval(minutes * 60)
     }
 
-    /// 重い処理の**開始/継続の共通条件**：電源接続中・低電力 OFF・**Wi-Fi 接続中**・
-    /// **アプリ非アクティブ（画面ロック/切替）**。手動ブースト中は非アクティブ/Wi-Fi を免除
-    /// （明示操作＝フォアグラウンド実行を許可）。
-    /// 旧方式（アイドル60秒）は「充電しながら閲覧中に走り出して操作が重くなる」ため廃止した。
+    /// 重い処理の**開始/継続の共通条件**。ユーザー設定（`HeavyWorkTiming`・5段階）に従う。
+    /// 既定は nightly＝電源＋Wi-Fi＋アプリ非使用時のみ（ADR-25）。手動ブースト中は
+    /// 使用状況/回線条件を免除（明示操作＝フォアグラウンド実行を許可。電源系の安全弁は維持）。
     public static var heavyWorkAllowed: Bool {
         if debugForceHeavyWork { return true }
-        let powerOK = PowerStateMonitor.shared.isOnPower && !PowerStateMonitor.shared.isLowPowerMode
-        guard powerOK else { return false }
-        if Date() < manualBoostUntil { return true }
-        return !isAppActive && NetworkStateMonitor.shared.isOnWiFi && !uiBusy
+        if Date() < manualBoostUntil {
+            return PowerStateMonitor.shared.isOnPower && !PowerStateMonitor.shared.isLowPowerMode
+        }
+        guard !uiBusy else { return false }
+        let idle = BackgroundActivityMonitor.shared.idleSeconds >= HeavyWorkTiming.foregroundIdleSeconds
+        return HeavyWorkTiming.current.allows(
+            isOnPower: PowerStateMonitor.shared.isOnPower,
+            isLowPowerMode: PowerStateMonitor.shared.isLowPowerMode,
+            isOnWiFi: NetworkStateMonitor.shared.isOnWiFi,
+            isReachable: NetworkStateMonitor.shared.isReachable,
+            isAppActive: isAppActive,
+            foregroundIdle: idle,
+            batteryLevel: PowerStateMonitor.shared.batteryLevel)
     }
 
     /// 重い処理（CLIP 埋め込み・顔スキャン）の譲り判定：`heavyWorkAllowed` を満たさない、

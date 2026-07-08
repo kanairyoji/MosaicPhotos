@@ -32,6 +32,8 @@ public final class PowerStateMonitor {
     public private(set) var isOnPower: Bool = true
     /// 低電力モードか。
     public private(set) var isLowPowerMode: Bool = false
+    /// バッテリー残量（0...1）。取得不可（macOS テスト・監視無効）は 1.0 扱い＝残量でブロックしない。
+    public private(set) var batteryLevel: Float = 1.0
 
     private init() {
         isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -48,6 +50,11 @@ public final class PowerStateMonitor {
         ) { [weak self] _ in
             Task { @MainActor in self?.refreshBattery() }
         }
+        NotificationCenter.default.addObserver(
+            forName: UIDevice.batteryLevelDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshBattery() }
+        }
         #endif
     }
 
@@ -58,6 +65,8 @@ public final class PowerStateMonitor {
         // 充電中でないとみなされ背景処理が全部ゲートで止まる。`.unknown` は電源扱いにして
         // ロックしない（実機は .charging/.full/.unplugged を正しく返す）。
         isOnPower = (UIDevice.current.batteryState != .unplugged)
+        let level = UIDevice.current.batteryLevel
+        batteryLevel = level >= 0 ? level : 1.0   // -1（不明）は残量でブロックしない
     }
     #endif
 
