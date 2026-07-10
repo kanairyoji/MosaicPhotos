@@ -76,6 +76,13 @@
 - 結果: 体感起動が改善。
 - 関連: コミット 8bc97dd、事例「起動の高速化」。
 
+## ADR-26 横断リファクタリング＝共通足場の抽出と肥大型の責務分割（挙動不変）
+- 状態: 採用
+- 文脈: 機能追加が続き、同じ骨格のコピーが層をまたいで蓄積（背景トリクル 4 ループ / 自己修復 ModelContainer 3 実装 / Core ML ランタイム 3 種のロード・推論 / BPE トークナイザ 2 種の足場 / UI 小物パターン約 25 箇所）。また最大級の型（AIAlbumService 462 行・BackupEngine 346 行・DropboxThumbnailBatcher 329 行）に複数責務が同居し、変更の影響範囲が読みにくくなっていた。
+- 決定: **挙動不変（ログ文言・PerfTrace ラベル・public API・永続化フォーマット・見た目を維持）**を絶対条件に、(1) 共通足場の抽出＝`BackgroundTrickle`（1 枚単位の譲り骨格・AutoAlbumCore）/ `makeResilientModelContainer`（MosaicSupport）/ `CoreMLModelSupport`・`BPESupport`（MobileCLIPKit。bpe() 本体は CLIP=最左 1 箇所マージと GPT2=全出現一括マージでアルゴリズムが異なるため共通化しない）/ `BusyLabel`・`LoadingRow`・`sectionHeader`・`loadCover`（アプリ層）、(2) 責務分割＝AIAlbumService→`AIAlbumInterpreter`/`AIAlbumVerificationCoordinator`/`QueryEmbedder`（フル評価と増分評価の「同じ規則」不変条件をコピペ同期から型共有に）、BackupEngine→`BackupRunner`/`BackupProgressStore`、Batcher→`DropboxThumbnailBatchRequest`(純)/`DropboxThumbnailChunkFetcher`。あわせて死線（旧行ベースのホーム行 3 型）と誤情報（Minimum iOS 表示）・既定値リテラルの散在を整理。
+- 結果: 譲りポリシー・コンテナ復旧・モデルロードの方針変更が各 1 箇所で済む。トークナイザは同梱語彙での並置比較でビット等価を実測確認。キュー戦略・審査規則が独立テスト可能に。トレードオフはファイル数の増加と、共通骨格（BackgroundTrickle 等）への間接参照が 1 段増えること。
+- 関連: コミット a07e38b8〜dcea41af（7 コミット）。ADR-25（1 枚単位の停止判定）・ADR-23/24（同じ規則の不変条件）。
+
 ## ADR-25 重い処理は「電源＋Wi-Fi＋画面ロック中」のみ実行（フォアグラウンド完全停止）
 - 状態: 採用（ADR-20/ヘビーワークゲートの後継）
 - 文脈: 旧ゲートは「電源＋低電力OFF＋アイドル60秒」。充電しながら閲覧中に60秒触らないと重い処理（顔認識・タグ付け・再評価）が走り出し、操作再開時にバッチ途中（クラウド写真のタグ付けは1バッチ最大約27秒）が譲れず操作が固まった。「操作あり」の検出も狭く（ホームのスクロール等はアイドル扱い）、誤発火した。ユーザー方針:「操作中は一切動かさない。電源＋Wi-Fi＋ロック中に動かす。AIアルバム作成もなるべくそのタイミングに」。
