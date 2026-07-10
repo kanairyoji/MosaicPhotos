@@ -8,7 +8,7 @@ struct PlacesSettingsView: View {
     let scanner: PlaceScanner?
 
     @AppStorage(PlacesSettingsKeys.gridStepDegrees)      private var gridStep = 0.02
-    @AppStorage(PlacesSettingsKeys.rescanIntervalSeconds) private var rescanInterval = 10
+    @AppStorage(PlacesSettingsKeys.rescanIntervalSeconds) private var rescanInterval = PlacesSettingsKeys.defaultRescanIntervalSeconds
 
     var body: some View {
         Group {

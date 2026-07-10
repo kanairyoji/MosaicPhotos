@@ -13,7 +13,7 @@ public struct BackupDebugSection: View {
     let engine: BackupEngine
     let dropboxStore: DropboxPhotoStore?
 
-    @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = "/MosaicPhotos"
+    @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = BackupSettingsKeys.defaultDropboxFolder
     @State private var folderCheckState: FolderCheckState = .idle
     @State private var localStats: LocalStats?
 

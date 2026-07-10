@@ -12,7 +12,7 @@ public struct BackupSettingsView: View {
     let dropboxStore: DropboxPhotoStore?
 
     @AppStorage(BackupSettingsKeys.destination) private var destination: BackupDestination = .disabled
-    @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = "/MosaicPhotos"
+    @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = BackupSettingsKeys.defaultDropboxFolder
     @AppStorage(BackupSettingsKeys.uploadLimit) private var uploadLimit = 10
 
     public init(dropboxAuth: DropboxAuthService, engine: BackupEngine, dropboxStore: DropboxPhotoStore? = nil) {
@@ -57,7 +57,7 @@ public struct BackupSettingsView: View {
             }
 
             LabeledContent(L("Folder")) {
-                TextField("/MosaicPhotos", text: $dropboxFolder)
+                TextField(BackupSettingsKeys.defaultDropboxFolder, text: $dropboxFolder)
                     .multilineTextAlignment(.trailing)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)

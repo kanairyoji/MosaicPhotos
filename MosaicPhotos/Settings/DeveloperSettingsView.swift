@@ -65,7 +65,8 @@ struct DeveloperSettingsView: View {
         Section("App") {
             LabeledContent("Build", value: build)
             LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "-")
-            LabeledContent("Minimum iOS", value: "17.0")
+            LabeledContent("Minimum iOS",
+                           value: Bundle.main.object(forInfoDictionaryKey: "MinimumOSVersion") as? String ?? "-")
             LabeledContent("Device", value: UIDevice.current.model)
             Toggle("Verbose logging", isOn: $verboseLogging)
         }

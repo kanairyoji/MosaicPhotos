@@ -101,8 +101,7 @@ struct AIAlbumSearcher {
 
     /// QuerySpec（合成可能・OR/NOT/新ファセット対応）版のバッチ検索。
     /// ハード条件は `QueryEvaluator`（節の OR）で絞り、ソフトは内容語(include)を CLIP で採点する。
-    /// 採点・選抜ロジックは既存の `search(baseLite:query:...)` と同一（フロア＋マージン＋上位K）。
-    /// ※ 除外内容（not(content)）の減点は次段で対応予定（本段では include のみ採点）。
+    /// `searchWithPool` の薄いラッパ（メンバーのみ返す・採点＝フロア＋マージン＋上位K）。
     func search(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 faceCounts: [String: Int]? = nil,

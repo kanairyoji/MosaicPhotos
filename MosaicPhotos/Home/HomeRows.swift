@@ -1,6 +1,5 @@
 import AutoAlbumCore
 import DropboxKit
-import LocalPhotoKit
 import Photos
 import PhotoSourceKit
 import SwiftUI
@@ -48,58 +47,6 @@ struct SourceRow: View {
     }
 }
 
-// MARK: - Library row (アルバム / 場所 共通)
-
-/// アルバム・場所セクションの共通行。カバー（48pt）＋タイトル＋件数＋シェブロン。
-/// カバー読込は呼び出し側のクロージャに委譲する（ローカル PHAsset / Dropbox サムネイル）。
-struct LibraryRow: View {
-    let title: String
-    let subtitle: String
-    let placeholderSystemImage: String
-    let coverKey: String
-    let loadCover: () async -> UIImage?
-
-    @State private var cover: UIImage?
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                    .frame(width: 48, height: 48)
-                if let cover {
-                    Image(uiImage: cover)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                } else {
-                    Image(systemName: placeholderSystemImage)
-                        .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 6)
-        .task(id: coverKey) { cover = await loadCover() }
-    }
-}
-
 /// 件数の表示文字列（"1 photo" / "N photos"）。
 func photoCountText(_ count: Int) -> String {
     L("\(count) photos")
@@ -127,22 +74,6 @@ func loadLocalCover(_ localIdentifier: String?, pixelSize: CGFloat = 96) async -
             guard !didResume else { return }   // 2 回目以降のコールバックは無視（二重 resume 防止）
             didResume = true
             continuation.resume(returning: image)
-        }
-    }
-}
-
-// MARK: - Album row
-
-struct AlbumRow: View {
-    let album: LocalAlbumInfo
-    var body: some View {
-        LibraryRow(
-            title: album.name,
-            subtitle: photoCountText(album.photoCount),
-            placeholderSystemImage: "photo.on.rectangle",
-            coverKey: album.id
-        ) {
-            await loadLocalCover(album.coverLocalIdentifier)
         }
     }
 }
@@ -257,30 +188,5 @@ private struct PersonCard: View {
                 .lineLimit(1)
         }
         .frame(width: Self.side + 12)
-    }
-}
-
-// MARK: - Place row
-
-struct PlaceRow: View {
-    let place: PlaceAlbumInfo
-    let dropboxStore: DropboxPhotoStore
-    var body: some View {
-        LibraryRow(
-            title: place.placeName,
-            subtitle: photoCountText(place.photoCount),
-            placeholderSystemImage: "mappin.and.ellipse",
-            coverKey: place.id
-        ) {
-            // ローカルがあれば PHAsset、無ければ Dropbox サムネイル。
-            if let localID = place.coverLocalID {
-                return await loadLocalCover(localID)
-            }
-            if let path = place.coverCloudPath {
-                let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
-                return await dropboxStore.thumbnail(for: item)
-            }
-            return nil
-        }
     }
 }

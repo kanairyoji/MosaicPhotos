@@ -207,7 +207,7 @@ private struct HomeLifecycleTasks: ViewModifier {
 
     private var rescanIntervalSeconds: Int {
         let secs = UserDefaults.standard.integer(forKey: PlacesSettingsKeys.rescanIntervalSeconds)
-        return secs > 0 ? secs : 10
+        return secs > 0 ? secs : PlacesSettingsKeys.defaultRescanIntervalSeconds
     }
 
     func body(content: Content) -> some View {
@@ -274,7 +274,7 @@ private struct HomeLifecycleTasks: ViewModifier {
             .onAppear {
                 if case .connected = dropboxStore.auth.connectionStatus {
                     evaluateSync()
-                    let folder = UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder) ?? "/MosaicPhotos"
+                    let folder = UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder) ?? BackupSettingsKeys.defaultDropboxFolder
                     Task { await dropboxStore.loadBackupMetadata(from: folder) }
                 }
             }
