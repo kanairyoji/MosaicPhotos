@@ -113,7 +113,7 @@ struct DeveloperSettingsView: View {
                     heavyWorking = false
                 }
             } label: {
-                workingRow("Generate albums now", spinning: heavyWorking)
+                BusyLabel("Generate albums now", isBusy: heavyWorking)
             }
             .disabled(heavyWorking)
             Button {
@@ -123,7 +123,7 @@ struct DeveloperSettingsView: View {
                     heavyWorking = false
                 }
             } label: {
-                workingRow("AI albums: full re-evaluate now", spinning: heavyWorking)
+                BusyLabel("AI albums: full re-evaluate now", isBusy: heavyWorking)
             }
             .disabled(heavyWorking)
             Button("Start CLIP embedding now") {
@@ -163,11 +163,8 @@ struct DeveloperSettingsView: View {
                     bgDebugRunning = false
                 }
             } label: {
-                if bgDebugRunning {
-                    HStack { ProgressView().controlSize(.small); Text("Running BG routine… (max 3 min)") }
-                } else {
-                    Text("Run BG routine now (foreground test)")
-                }
+                BusyLabel("Run BG routine now (foreground test)",
+                          busy: "Running BG routine… (max 3 min)", isBusy: bgDebugRunning)
             }
             .disabled(bgDebugRunning)
         } header: {
@@ -182,15 +179,6 @@ struct DeveloperSettingsView: View {
         .task { bgPendingStatus = await HeavyWorkScheduler.pendingStatus() }
     }
 
-    @ViewBuilder
-    private func workingRow(_ title: String, spinning: Bool) -> some View {
-        if spinning {
-            HStack { ProgressView().controlSize(.small); Text(title) }
-        } else {
-            Text(title)
-        }
-    }
-
     // MARK: - Places debug
 
     private var placesDebugSection: some View {
@@ -199,13 +187,13 @@ struct DeveloperSettingsView: View {
             Button {
                 Task { await rescanPlaces() }
             } label: {
-                workingLabel("Rescan now")
+                BusyLabel("Rescan now", busy: "Working…", isBusy: isWorking)
             }
             .disabled(isWorking)
             Button(role: .destructive) {
                 Task { await clearAndRescanPlaces() }
             } label: {
-                workingLabel("Clear place + geocode caches")
+                BusyLabel("Clear place + geocode caches", busy: "Working…", isBusy: isWorking)
             }
             .disabled(isWorking)
         }
@@ -226,15 +214,6 @@ struct DeveloperSettingsView: View {
     }
 
     // MARK: - Helpers
-
-    @ViewBuilder
-    private func workingLabel(_ title: String) -> some View {
-        if isWorking {
-            HStack { ProgressView().controlSize(.small); Text("Working…") }
-        } else {
-            Text(title)
-        }
-    }
 
     private func rescanPlaces() async {
         isWorking = true

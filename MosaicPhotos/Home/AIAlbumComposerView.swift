@@ -61,11 +61,8 @@ struct AIAlbumComposerView: View {
                     Button {
                         Task { await submit() }
                     } label: {
-                        if isWorking {
-                            HStack { ProgressView().controlSize(.small); Text("Searching…") }
-                        } else {
-                            Text(isEditing ? L("Update Album") : L("Create Album"))
-                        }
+                        BusyLabel(idle: Text(isEditing ? L("Update Album") : L("Create Album")),
+                                  busy: Text("Searching…"), isBusy: isWorking)
                     }
                     .disabled(isWorking || criteria.trimmingCharacters(in: .whitespaces).isEmpty)
                 }

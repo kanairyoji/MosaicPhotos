@@ -13,8 +13,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
                          peopleEngine: PeopleEngine) async -> AutoAlbumEngine {
     // クラウド path → CGImage（Dropbox サムネイル）。CLIP 埋め込みに使う。
     let cloudImage: @Sendable (String) async -> CGImage? = { path in
-        let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
-        let image = await dropboxStore.thumbnail(for: item)
+        let image = await dropboxStore.thumbnail(for: dropboxFileItem(path: path))
         return image?.cgImage
     }
     // ⚠️ @ModelActor は「init したスレッド」で実行される（SwiftData の罠）。MainActor で

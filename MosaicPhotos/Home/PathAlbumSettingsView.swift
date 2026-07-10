@@ -65,11 +65,8 @@ struct PathAlbumSettingsView: View {
                 Button {
                     Task { await engine?.generatePathAlbums() }
                 } label: {
-                    if engine?.isGeneratingPath == true {
-                        HStack { ProgressView().controlSize(.small); Text("Regenerating…") }
-                    } else {
-                        Text("Regenerate Albums")
-                    }
+                    BusyLabel("Regenerate Albums", busy: "Regenerating…",
+                              isBusy: engine?.isGeneratingPath == true)
                 }
                 .disabled(engine == nil || engine?.isGeneratingPath == true || !enabled)
                 Text("Albums appear in the “Albums” section on the home screen. They are built from Dropbox photos only, so connect Dropbox and load Cloud first. Runs in the background — regenerate after changing rules.")

@@ -78,65 +78,57 @@ func loadLocalCover(_ localIdentifier: String?, pixelSize: CGFloat = 96) async -
     }
 }
 
+/// クラウド path から Dropbox アイテムを組み立てる（表示名は lastPathComponent）。
+/// `@Sendable` なアダプタ（CLIP 用画像ローダ等）からも呼ぶため nonisolated。
+nonisolated func dropboxFileItem(path: String) -> DropboxFileItem {
+    DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
+}
+
+/// カバー画像の共通リゾルバ：ローカル PHAsset があれば優先、無ければ Dropbox。
+/// クラウド側はフル画像からカバー生成する（128px サムネ拡大だとカードで粗く見えるため）。
+func loadCover(localID: String?, cloudPath: String?,
+               dropboxStore: DropboxPhotoStore, maxPixel: CGFloat) async -> UIImage? {
+    if let localID {
+        return await loadLocalCover(localID, pixelSize: maxPixel)
+    }
+    if let cloudPath {
+        return await dropboxStore.coverImage(for: dropboxFileItem(path: cloudPath), maxPixel: maxPixel)
+    }
+    return nil
+}
+
+/// `PhotoRef`（ローカル/クラウド統一キー）からのカバー解決（自動アルバムのカバー用）。
+func loadCover(for ref: PhotoRef?, dropboxStore: DropboxPhotoStore, maxPixel: CGFloat) async -> UIImage? {
+    switch ref {
+    case .local(let id):   return await loadCover(localID: id, cloudPath: nil, dropboxStore: dropboxStore, maxPixel: maxPixel)
+    case .cloud(let path): return await loadCover(localID: nil, cloudPath: path, dropboxStore: dropboxStore, maxPixel: maxPixel)
+    case nil:              return nil
+    }
+}
+
 // MARK: - Auto album card (時間＋場所・横カルーセル用の正方カード)
 
-/// 正方形のカバー画像と、その下にテキストでアルバム名（訪問地）・期間・件数を表示するカード。
+/// 自動アルバム（時間＋場所 / AI / フォルダ）用カード。レイアウトは `LibraryCard`（正方カバー＋
+/// 下にテキスト）と共通で、ここではタイトル・日付・カバー（PhotoRef 解決）の組み立てだけを持つ。
 /// 文字は画像に埋め込まず下にテキスト表示するため、明るい写真でも見切れず読める。
-/// すべてのアルバム種別（時間＋場所 / AI / フォルダ）で同一サイズに統一する。
 struct AutoAlbumCard: View {
     let album: AutoAlbumInfo
     let dropboxStore: DropboxPhotoStore
 
-    @State private var cover: UIImage?
-
-    /// 正方カバーの一辺＝カード幅（全アルバム共通）。
-    private static let side: CGFloat = 150
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                if let cover {
-                    Image(uiImage: cover)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: "airplane")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: Self.side, height: Self.side)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
+        LibraryCard(
             // アルバム名（訪問地）＋国名。画像に被せずテキスト表示。
-            Text("\(album.placesLabel)\(album.country.map { ", \($0)" } ?? "")")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
+            title: "\(album.placesLabel)\(album.country.map { ", \($0)" } ?? "")",
             // 日付は初日のみ（複数日でもシンプルに）。0 件は「該当なし」。
             // 無意味な日付（1980 等）は「日時不明」にする（変な日時にしない）。
-            Text(album.photoCount == 0
-                 ? L("No matches")
-                 : (DisplayDate.meaningful(album.startDate).map(DisplayDate.ymd) ?? L("Date unknown")))
-                .font(.footnote)
-                .foregroundStyle(.primary.opacity(0.7))
-                .lineLimit(1)
-        }
-        .frame(width: Self.side, alignment: .leading)
-        .task(id: album.id) {
-            let pixel = Self.side * 2
-            switch album.coverPhotoRef {
-            case .local(let id):
-                cover = await loadLocalCover(id, pixelSize: pixel)
-            case .cloud(let path):
-                // タイトル写真はフル画像から生成する（128px サムネ拡大だとカードで粗く見えるため）。
-                let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
-                cover = await dropboxStore.coverImage(for: item, maxPixel: pixel)
-            case nil:
-                cover = nil
-            }
+            subtitle: album.photoCount == 0
+                ? L("No matches")
+                : (DisplayDate.meaningful(album.startDate).map(DisplayDate.ymd) ?? L("Date unknown")),
+            placeholderSystemImage: "airplane",
+            coverKey: album.id
+        ) {
+            await loadCover(for: album.coverPhotoRef, dropboxStore: dropboxStore,
+                            maxPixel: LibraryCard.side * 2)
         }
     }
 }

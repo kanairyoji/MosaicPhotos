@@ -105,8 +105,10 @@ struct LibraryCarousel<Item: Identifiable>: View {
     }
 }
 
-/// `AutoAlbumCard` と同じレイアウト（正方カバー＋下にタイトル/サブタイトル）の汎用カード。
-private struct LibraryCard: View {
+/// 正方カバー＋下にタイトル/サブタイトルの共通カード。カバー取得はクロージャで注入する。
+/// 全アルバム種別（端末アルバム / 場所 / 時間＋場所 / AI / フォルダ）で同一レイアウト・サイズに統一する
+/// （自動アルバムは `AutoAlbumCard` がこのカードに組み立てを載せる薄いラッパー）。
+struct LibraryCard: View {
     let title: String
     let subtitle: String
     let placeholderSystemImage: String
@@ -114,8 +116,19 @@ private struct LibraryCard: View {
     let loadCover: () async -> UIImage?
 
     @State private var cover: UIImage?
-    /// 正方カバーの一辺＝カード幅（AutoAlbumCard と同一・全アルバム共通）。
-    private static let side: CGFloat = 150
+    /// 正方カバーの一辺＝カード幅（全アルバム共通）。
+    static let side: CGFloat = 150
+
+    // `@State` が private のため memberwise init も private になる。別ファイル（AutoAlbumCard）
+    // から使えるよう明示 init を持つ。
+    init(title: String, subtitle: String, placeholderSystemImage: String,
+         coverKey: String, loadCover: @escaping () async -> UIImage?) {
+        self.title = title
+        self.subtitle = subtitle
+        self.placeholderSystemImage = placeholderSystemImage
+        self.coverKey = coverKey
+        self.loadCover = loadCover
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

@@ -91,11 +91,8 @@ struct AutoAlbumSettingsView: View {
                         await refreshCounts()
                     }
                 } label: {
-                    if engine?.isTagging == true {
-                        HStack { ProgressView().controlSize(.small); Text("Analyzing…") }
-                    } else {
-                        Text("Re-analyze All Photos")
-                    }
+                    BusyLabel("Re-analyze All Photos", busy: "Analyzing…",
+                              isBusy: engine?.isTagging == true)
                 }
                 .disabled(engine == nil || engine?.isTagging == true)
                 Text("Clears all recognition tags (objects, scenes, text, CLIP) and re-analyzes every local photo with the latest model. Metadata (date, place, people) is kept. Runs in the background and may take a while.")
@@ -120,11 +117,8 @@ struct AutoAlbumSettingsView: View {
                 Button {
                     Task { await engine?.generate() }
                 } label: {
-                    if engine?.isGenerating == true {
-                        HStack { ProgressView().controlSize(.small); Text("Generating…") }
-                    } else {
-                        Text("Generate Now")
-                    }
+                    BusyLabel("Generate Now", busy: "Generating…",
+                              isBusy: engine?.isGenerating == true)
                 }
                 .disabled(engine == nil || engine?.isGenerating == true)
                 Toggle("Include Dropbox photos", isOn: $includeCloud)

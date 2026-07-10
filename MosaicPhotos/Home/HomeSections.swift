@@ -56,13 +56,7 @@ extension HomeView {
         Section {
             if !albumScanner.isLoaded {
                 // キャッシュロード / スキャン完了前
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading albums…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
+                LoadingRow("Loading albums…")
             } else if albumScanner.albums.isEmpty {
                 Label(
                     "No user-created albums found.",
@@ -83,22 +77,8 @@ extension HomeView {
                     onSelect: { destination = .localAlbum($0) })
             }
         } header: {
-            HStack {
-                Text("Device Albums")
-                Spacer()
-                if albumScanner.isScanning {
-                    ProgressView().controlSize(.mini)
-                } else if albumScanner.isLoaded {
-                    Button {
-                        Task { await albumScanner.scan() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-            }
+            sectionHeader("Device Albums", isBusy: albumScanner.isScanning,
+                          onAction: albumScanner.isLoaded ? { Task { await albumScanner.scan() } } : nil)
         }
     }
 
@@ -108,13 +88,7 @@ extension HomeView {
     var placesSection: some View {
         Section {
             if !placeScanner.isLoaded {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading places…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
+                LoadingRow("Loading places…")
             } else if placeScanner.places.isEmpty {
                 Label("No photos with location found.", systemImage: "mappin.slash")
                     .font(.callout)
@@ -128,34 +102,16 @@ extension HomeView {
                     placeholderSystemImage: "mappin.and.ellipse",
                     cover: { [dropboxStore] place in
                         // ローカルがあれば PHAsset、無ければ Dropbox（フル画像からカバー生成）。
-                        if let localID = place.coverLocalID {
-                            return await loadLocalCover(localID, pixelSize: 300)
-                        }
-                        if let path = place.coverCloudPath {
-                            let item = DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
-                            return await dropboxStore.coverImage(for: item, maxPixel: 300)
-                        }
-                        return nil
+                        await loadCover(localID: place.coverLocalID, cloudPath: place.coverCloudPath,
+                                        dropboxStore: dropboxStore, maxPixel: 300)
                     },
                     onSelect: { destination = .place($0) })
             }
         } header: {
-            HStack {
-                Text("Places")
-                Spacer()
-                if placeScanner.isScanning {
-                    ProgressView().controlSize(.mini)
-                } else if placeScanner.isLoaded {
-                    Button {
-                        Task { await placeScanner.scan(dropboxItems: dropboxStore.items) }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-            }
+            sectionHeader("Places", isBusy: placeScanner.isScanning,
+                          onAction: placeScanner.isLoaded
+                              ? { Task { await placeScanner.scan(dropboxItems: dropboxStore.items) } }
+                              : nil)
         }
     }
 
@@ -165,13 +121,7 @@ extension HomeView {
     var autoAlbumsSection: some View {
         Section {
             if !autoAlbumEngine.isLoaded {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading albums…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
+                LoadingRow("Loading albums…")
             } else if autoAlbumEngine.albums.isEmpty {
                 Label("No trip albums yet.", systemImage: "airplane")
                     .font(.callout)
@@ -182,21 +132,8 @@ extension HomeView {
                 }
             }
         } header: {
-            HStack {
-                Text("Time & Place")
-                Spacer()
-                if autoAlbumEngine.isGenerating {
-                    ProgressView().controlSize(.mini)
-                } else if autoAlbumEngine.isLoaded {
-                    Button {
-                        Task { await autoAlbumEngine.generate() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise").font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-            }
+            sectionHeader("Time & Place", isBusy: autoAlbumEngine.isGenerating,
+                          onAction: autoAlbumEngine.isLoaded ? { Task { await autoAlbumEngine.generate() } } : nil)
         }
     }
 
@@ -210,11 +147,7 @@ extension HomeView {
             Section {
                 if peopleEngine.people.isEmpty {
                     if peopleEngine.isScanning {
-                        HStack(spacing: 10) {
-                            ProgressView().controlSize(.small)
-                            Text("Finding people…").font(.callout).foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 4)
+                        LoadingRow("Finding people…")
                     } else {
                         Label("No people found yet.", systemImage: "person.crop.circle.badge.questionmark")
                             .font(.callout)
@@ -227,13 +160,7 @@ extension HomeView {
                         onLongPress: { personActions = $0 })
                 }
             } header: {
-                HStack {
-                    Text("People")
-                    Spacer()
-                    if peopleEngine.isScanning {
-                        ProgressView().controlSize(.mini)
-                    }
-                }
+                sectionHeader("People", isBusy: peopleEngine.isScanning)
             }
         }
     }
@@ -260,17 +187,8 @@ extension HomeView {
                     onDelete: { album in Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) } })
             }
         } header: {
-            HStack {
-                Text("AI Albums")
-                Spacer()
-                Button {
-                    aiComposer = .create
-                } label: {
-                    Image(systemName: "plus").font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
+            sectionHeader("AI Albums", isBusy: false, actionIcon: "plus",
+                          onAction: { aiComposer = .create })
         }
     }
 
@@ -284,11 +202,7 @@ extension HomeView {
         if pathAlbumsEnabled {
             Section {
                 if !autoAlbumEngine.isLoaded {
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text("Loading albums…").font(.callout).foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
+                    LoadingRow("Loading albums…")
                 } else if autoAlbumEngine.pathAlbums.isEmpty {
                     Label("No folder albums yet. Add rules in Settings → Albums → Folder Albums, then regenerate.",
                           systemImage: "folder")
@@ -300,22 +214,9 @@ extension HomeView {
                     }
                 }
             } header: {
-                HStack {
-                    Text("Albums")
-                    Spacer()
-                    if autoAlbumEngine.isGeneratingPath {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        // フォルダ名アルバムだけの軽量再生成（地名解決なし・バックグラウンド）。
-                        Button {
-                            Task { await autoAlbumEngine.generatePathAlbums() }
-                        } label: {
-                            Image(systemName: "arrow.clockwise").font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                    }
-                }
+                // フォルダ名アルバムだけの軽量再生成（地名解決なし・バックグラウンド）。
+                sectionHeader("Albums", isBusy: autoAlbumEngine.isGeneratingPath,
+                              onAction: { Task { await autoAlbumEngine.generatePathAlbums() } })
             }
         }
     }
@@ -337,6 +238,46 @@ extension HomeView {
         case .notConnected:   return L("Dropbox · Not connected")
         case .error:          return L("Dropbox · Error")
         }
+    }
+}
+
+// MARK: - Section building blocks（各セクション共通の部品）
+
+/// セクションヘッダ共通部品：タイトル＋右端に「実行中スピナー or アクションボタン」。
+/// `isBusy` 中は mini スピナー、そうでなければ `onAction`（省略可）のアイコンボタンを出す。
+@ViewBuilder
+private func sectionHeader(_ title: LocalizedStringKey, isBusy: Bool,
+                           actionIcon: String = "arrow.clockwise",
+                           onAction: (() -> Void)? = nil) -> some View {
+    HStack {
+        Text(title)
+        Spacer()
+        if isBusy {
+            ProgressView().controlSize(.mini)
+        } else if let onAction {
+            Button(action: onAction) {
+                Image(systemName: actionIcon).font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// セクションのロード中に出す行（小スピナー＋説明文）。
+private struct LoadingRow: View {
+    let text: LocalizedStringKey
+
+    init(_ text: LocalizedStringKey) { self.text = text }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 }
 

@@ -23,11 +23,7 @@ struct StorageSettingsView: View {
                 Button(role: .destructive) {
                     showConfirm = true
                 } label: {
-                    if isClearing {
-                        HStack { ProgressView().controlSize(.small); Text("Clearing…") }
-                    } else {
-                        Text("Clear All Caches")
-                    }
+                    BusyLabel("Clear All Caches", busy: "Clearing…", isBusy: isClearing)
                 }
                 .disabled(isClearing)
                 .confirmationDialog("Clear all caches?", isPresented: $showConfirm, titleVisibility: .visible) {
