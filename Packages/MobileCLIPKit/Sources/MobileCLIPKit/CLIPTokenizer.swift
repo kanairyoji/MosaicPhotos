@@ -19,7 +19,7 @@ final class CLIPTokenizer: @unchecked Sendable {
     private var cache: [String: String] = ["<|startoftext|>": "<|startoftext|>",
                                             "<|endoftext|>": "<|endoftext|>"]
 
-    private struct Pair: Hashable { let a: String; let b: String }
+    private typealias Pair = BPESupport.Pair
 
     /// バンドルの語彙ファイルから初期化。見つからない/壊れている場合は nil。
     init?(contextLength: Int = 77) {
@@ -27,31 +27,19 @@ final class CLIPTokenizer: @unchecked Sendable {
               let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         self.contextLength = contextLength
 
-        // byte → unicode 文字（open_clip bytes_to_unicode）
-        var bs: [Int] = Array(33...126) + Array(161...172) + Array(174...255)
-        var cs = bs
-        var n = 0
-        for b in 0...255 where !bs.contains(b) {
-            bs.append(b); cs.append(256 + n); n += 1
-        }
+        // byte → unicode 文字（open_clip bytes_to_unicode・GPT2 と共通の写像）
+        let bytePairs = BPESupport.byteUnicodePairs()
         var byteEnc: [UInt8: String] = [:]
-        for (b, c) in zip(bs, cs) {
-            byteEnc[UInt8(b)] = String(UnicodeScalar(c)!)
-        }
+        for (b, ch) in bytePairs { byteEnc[b] = String(ch) }
         self.byteEncoder = byteEnc
 
         // merges = 行[1 ..< 49152-256-2+1] = 行[1 ..< 48895]
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let mergeLines = lines.count > 1 ? Array(lines[1..<min(lines.count, 48895)]) : []
-        var merges: [Pair] = []
-        merges.reserveCapacity(mergeLines.count)
-        for line in mergeLines {
-            let parts = line.split(separator: " ")
-            if parts.count == 2 { merges.append(Pair(a: String(parts[0]), b: String(parts[1]))) }
-        }
+        let merges = BPESupport.parseMerges(mergeLines)
 
-        // vocab 構築
-        var vocab = cs.map { String(UnicodeScalar($0)!) }          // base 256
+        // vocab 構築（base 256 の並びは bytes_to_unicode の割り当て順＝トークン ID に効く）
+        var vocab = bytePairs.map { String($0.char) }               // base 256
         vocab += vocab.map { $0 + "</w>" }                          // +256
         for m in merges { vocab.append(m.a + m.b) }                 // + merges
         vocab.append("<|startoftext|>")
@@ -64,9 +52,7 @@ final class CLIPTokenizer: @unchecked Sendable {
         self.bosToken = enc["<|startoftext|>"] ?? 49406
         self.eosToken = enc["<|endoftext|>"] ?? 49407
 
-        var ranks: [Pair: Int] = [:]
-        for (i, m) in merges.enumerated() { ranks[m] = i }
-        self.bpeRanks = ranks
+        self.bpeRanks = BPESupport.mergeRanks(merges)
     }
 
     /// 文字列 → 長さ `contextLength` のトークン ID（Int32）。BOS/EOS 付与、0 パディング、末尾切り詰め。
@@ -119,15 +105,9 @@ final class CLIPTokenizer: @unchecked Sendable {
         guard !word.isEmpty else { return token }
         word[word.count - 1] += "</w>"
 
+        // 最小ランクの隣接ペアを**最左の 1 箇所ずつ**マージする（GPT2Tokenizer は全出現一括＝別物）。
         while word.count > 1 {
-            // 最小ランクの隣接ペアを探す
-            var best: (rank: Int, index: Int)?
-            for i in 0..<(word.count - 1) {
-                if let r = bpeRanks[Pair(a: word[i], b: word[i + 1])] {
-                    if best == nil || r < best!.rank { best = (r, i) }
-                }
-            }
-            guard let (_, idx) = best else { break }
+            guard let (_, idx) = BPESupport.lowestRankedPair(in: word, ranks: bpeRanks) else { break }
             word[idx] = word[idx] + word[idx + 1]
             word.remove(at: idx + 1)
         }

@@ -48,33 +48,26 @@ final class VLMRuntime: @unchecked Sendable {
             && Bundle.main.url(forResource: "vlm_config", withExtension: "json") != nil
     }
 
-    private let lock = NSLock()
-    private var loaded: Loaded??   // nil=未試行 / .some(nil)=失敗（再試行しない）
+    private let box = LoadOnce<Loaded>()
 
     private struct Loaded {
         let config: Config
-        let vision: MLModel
+        let vision: CoreMLModelHandle   // 入力名・画像制約込み
         let decoder: MLModel
-        let embeddings: Data          // fp16 (vocab, hidden) — 行ルックアップ
+        let embeddings: Data            // fp16 (vocab, hidden) — 行ルックアップ
         let tokenizer: GPT2Tokenizer
-        let visionInputName: String
-        let visionConstraint: MLImageConstraint
     }
 
     private func load() -> Loaded? {
-        lock.lock(); defer { lock.unlock() }
-        if let loaded { return loaded }
-        let result = Self.loadAll()
-        loaded = .some(result)
-        return result
+        box.get { Self.loadAll() }
     }
 
     private static func loadAll() -> Loaded? {
         let bundle = Bundle.main
         guard let cfgURL = bundle.url(forResource: "vlm_config", withExtension: "json"),
               let cfg = try? JSONDecoder().decode(Config.self, from: Data(contentsOf: cfgURL)),
-              let visionURL = bundle.url(forResource: "VLMVision", withExtension: "mlmodelc"),
-              let decoderURL = bundle.url(forResource: "VLMDecoder", withExtension: "mlmodelc"),
+              let visionURL = CoreMLModelLoader.bundledModelURL("VLMVision"),
+              let decoderURL = CoreMLModelLoader.bundledModelURL("VLMDecoder"),
               let embedURL = bundle.url(forResource: "vlm_embed_tokens", withExtension: "bin"),
               let tokenizer = GPT2Tokenizer()
         else {
@@ -82,11 +75,8 @@ final class VLMRuntime: @unchecked Sendable {
             return nil
         }
         let started = Date()
-        let mlConfig = MLModelConfiguration()
-        #if targetEnvironment(simulator)
-        mlConfig.computeUnits = .cpuOnly
-        #endif
-        guard let vision = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
+        let mlConfig = CoreMLModelLoader.makeConfiguration()
+        guard let visionModel = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
               let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig),
               // 56MB は mmap（alwaysMapped）で常駐を抑える。
               let embeddings = try? Data(contentsOf: embedURL, options: .alwaysMapped)
@@ -98,17 +88,14 @@ final class VLMRuntime: @unchecked Sendable {
             log.error("VLM embed size mismatch: \(embeddings.count)")
             return nil
         }
-        let inputName = vision.modelDescription.inputDescriptionsByName.keys.first ?? "image"
-        guard let constraint = vision.modelDescription
-            .inputDescriptionsByName[inputName]?.imageConstraint else {
+        let vision = CoreMLModelHandle(model: visionModel)
+        guard vision.imageConstraint != nil else {
             log.error("VLM vision input constraint missing")
             return nil
         }
-        let ms = Int(Date().timeIntervalSince(started) * 1000)
-        let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
-        log.info("VLM loaded in \(ms)ms (footprint=\(mb))")
+        log.info("VLM \(CoreMLModelLoader.loadStamp(since: started))")
         return Loaded(config: cfg, vision: vision, decoder: decoder, embeddings: embeddings,
-                      tokenizer: tokenizer, visionInputName: inputName, visionConstraint: constraint)
+                      tokenizer: tokenizer)
     }
 
     // MARK: - キャプション生成
@@ -119,9 +106,8 @@ final class VLMRuntime: @unchecked Sendable {
         let cfg = m.config
 
         // 1) 視覚埋め込み（1, imageSeqLen, hidden）
-        guard let fv = try? MLFeatureValue(cgImage: cgImage, constraint: m.visionConstraint, options: nil),
-              let provider = try? MLDictionaryFeatureProvider(dictionary: [m.visionInputName: fv]),
-              let vout = try? await m.vision.prediction(from: provider),
+        guard let provider = m.vision.imageProvider(for: cgImage),
+              let vout = try? await m.vision.model.prediction(from: provider),
               let imageEmbeds = vout.featureValue(for: "image_embeds")?.multiArrayValue
         else { return nil }
 

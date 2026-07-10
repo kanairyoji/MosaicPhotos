@@ -14,7 +14,7 @@ final class GPT2Tokenizer: @unchecked Sendable {
     /// 特殊トークン（<|im_start|>・<end_of_utterance> 等）。エンコード時に文字列一致で分離する。
     private let specialTokens: [String: Int]
 
-    private struct Pair: Hashable { let a: String; let b: String }
+    private typealias Pair = BPESupport.Pair
 
     init?() {
         guard let vocabURL = Bundle.main.url(forResource: "vlm_vocab", withExtension: "json"),
@@ -34,29 +34,13 @@ final class GPT2Tokenizer: @unchecked Sendable {
         self.encoder = enc
         self.decoder = Dictionary(uniqueKeysWithValues: enc.map { ($0.value, $0.key) })
 
-        var ranks: [Pair: Int] = [:]
-        for (i, line) in mergesText.split(separator: "\n").enumerated() {
-            let parts = line.split(separator: " ")
-            if parts.count == 2 { ranks[Pair(a: String(parts[0]), b: String(parts[1]))] = i }
-        }
-        self.bpeRanks = ranks
+        // ランク値は詰め直されるが、bpe() が使うのは相対順のみ（不正行の読み飛ばしは従来どおり）。
+        self.bpeRanks = BPESupport.mergeRanks(BPESupport.parseMerges(mergesText.split(separator: "\n")))
 
         // byte → unicode（GPT2 bytes_to_unicode・CLIP と同一の写像）
-        var bs: [Int] = Array(33...126) + Array(161...172) + Array(174...255)
-        var cs = bs
-        var n = 0
-        for b in 0...255 where !bs.contains(b) {
-            bs.append(b); cs.append(256 + n); n += 1
-        }
-        var byteEnc: [UInt8: Character] = [:]
-        var byteDec: [Character: UInt8] = [:]
-        for (b, c) in zip(bs, cs) {
-            let ch = Character(UnicodeScalar(c)!)
-            byteEnc[UInt8(b)] = ch
-            byteDec[ch] = UInt8(b)
-        }
+        let byteEnc = BPESupport.bytesToUnicode()
         self.byteEncoder = byteEnc
-        self.byteDecoder = byteDec
+        self.byteDecoder = Dictionary(uniqueKeysWithValues: byteEnc.map { ($0.value, $0.key) })
     }
 
     // MARK: - Encode（固定英語プロンプト用）
@@ -109,15 +93,9 @@ final class GPT2Tokenizer: @unchecked Sendable {
     private func bpe(_ token: String) -> [String] {
         var word = token.map { String($0) }
         guard word.count > 1 else { return word }
+        // 最小ランクの隣接ペアの**全出現を一括**マージする（CLIPTokenizer は最左 1 箇所ずつ＝別物）。
         while true {
-            var best: (pair: Pair, rank: Int)?
-            for i in 0..<(word.count - 1) {
-                let pair = Pair(a: word[i], b: word[i + 1])
-                if let rank = bpeRanks[pair], best == nil || rank < best!.rank {
-                    best = (pair, rank)
-                }
-            }
-            guard let (pair, _) = best else { break }
+            guard let (pair, _) = BPESupport.lowestRankedPair(in: word, ranks: bpeRanks) else { break }
             var merged: [String] = []
             var i = 0
             while i < word.count {

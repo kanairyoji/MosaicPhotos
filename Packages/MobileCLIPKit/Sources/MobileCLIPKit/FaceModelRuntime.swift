@@ -17,24 +17,15 @@ final class FaceModelRuntime: @unchecked Sendable {
     private static let log = LogChannel(subsystem: "com.mosaicphotos.MobileCLIPKit", label: "Faces")
 
     let isAvailable: Bool
-    private let model: MLModel?
-    private let inputName: String
-    private let outputName: String
-    private let constraint: MLImageConstraint?
+    private let handle: CoreMLModelHandle?
 
     private init() {
-        let config = MLModelConfiguration()
-        #if targetEnvironment(simulator)
-        config.computeUnits = .cpuOnly
-        #endif
+        let config = CoreMLModelLoader.makeConfiguration()
         var loaded: MLModel?
-        if let url = Bundle.main.url(forResource: "FaceEmbedder", withExtension: "mlmodelc") {
+        if let url = CoreMLModelLoader.bundledModelURL("FaceEmbedder") {
             loaded = try? MLModel(contentsOf: url, configuration: config)
         }
-        model = loaded
-        inputName = loaded?.modelDescription.inputDescriptionsByName.keys.first ?? ""
-        outputName = loaded?.modelDescription.outputDescriptionsByName.keys.first ?? ""
-        constraint = loaded?.modelDescription.inputDescriptionsByName[inputName]?.imageConstraint
+        handle = loaded.map(CoreMLModelHandle.init)
         isAvailable = loaded != nil
         if loaded != nil {
             Self.log.info("face model loaded")
@@ -45,15 +36,9 @@ final class FaceModelRuntime: @unchecked Sendable {
         }
     }
 
-    /// 顔切り抜き画像 → 512 次元 L2 正規化埋め込み。NaN/Inf は壊れとみなし nil。
+    /// 顔切り抜き画像 → 512 次元 L2 正規化埋め込み。NaN/Inf は壊れとみなし nil
+    /// （有限性ガードは CoreMLModelHandle 側で共通に行う）。
     func embed(_ cgImage: CGImage) -> [Float]? {
-        guard let model, let constraint,
-              let fv = try? MLFeatureValue(cgImage: cgImage, constraint: constraint, options: nil),
-              let provider = try? MLDictionaryFeatureProvider(dictionary: [inputName: fv]),
-              let out = try? model.prediction(from: provider),
-              let arr = out.featureValue(for: outputName)?.multiArrayValue
-        else { return nil }
-        let v = (0..<arr.count).map { Float(truncating: arr[$0]) }
-        return v.allSatisfy { $0.isFinite } ? v : nil
+        handle?.predictVector(from: cgImage)
     }
 }
