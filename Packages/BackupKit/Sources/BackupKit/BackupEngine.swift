@@ -4,24 +4,12 @@ import SwiftData
 import DropboxCore
 import MosaicSupport
 
-// MARK: - Log entry
-
-public struct BackupLogEntry: Identifiable, Sendable {
-    public let id = UUID()
-    public let time: String
-    public let message: String
-
-    init(_ message: String) {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        self.time    = f.string(from: Date())
-        self.message = message
-    }
-}
-
 // MARK: - Engine
 
 /// ローカル写真を Dropbox へバックアップするエンジン。
+/// 実行本体（権限→差分算出→アップロードループ→metadata 送信）は `BackupRunner` に分離し、
+/// ここは @Observable な状態公開（phase / log / アルバム集計）と起動・キャンセルの
+/// 薄いコーディネータに絞る。進捗の UI 反映は `BackupRunnerDelegate` 適合（ファイル末尾）で受ける。
 @MainActor
 @Observable
 public final class BackupEngine {
@@ -42,6 +30,7 @@ public final class BackupEngine {
     // そこから参照する modelContext / addLog / 上記の集計状態は internal にしている。
     @ObservationIgnored private let tokenProvider: AccessTokenProvider
     @ObservationIgnored private let uploader: DropboxBackupUploader
+    @ObservationIgnored private let progressStore = BackupProgressStore()
     @ObservationIgnored private var backupTask: Task<Void, Never>?
     @ObservationIgnored var modelContext: ModelContext?
 
@@ -75,11 +64,6 @@ public final class BackupEngine {
         }
     }
 
-    /// 背景アップロードを行ってよいか（電源＋回線ポリシー）。アップロードループの一時停止判定に使う。
-    private var backgroundUploadAllowed: Bool {
-        PowerStateMonitor.shared.backgroundAllowed() && NetworkStateMonitor.shared.networkAllowed()
-    }
-
     // MARK: - Init
 
     /// アップロード上限の既定（テスト・フォールバック用）。0 にすると全件。
@@ -94,14 +78,14 @@ public final class BackupEngine {
     }
 
     /// バックアップ進捗として保存済みのローカル ID 数（設定表示用）。
-    public var uploadedIDCount: Int { loadUploadedIDs().count }
+    public var uploadedIDCount: Int { progressStore.loadUploadedIDs().count }
 
     /// metadata.json のパス接尾辞（設定の Debug 表示用）。
     public static var metadataPathSuffix: String { metadataSuffix }
 
     /// バックアップ進捗（アップロード済み ID 一覧）を消去する。次回は全件再判定になる（Debug 用）。
     public func clearUploadProgress() {
-        saveUploadedIDs([])
+        progressStore.saveUploadedIDs([])
     }
 
     public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
@@ -133,7 +117,17 @@ public final class BackupEngine {
         phase = .requestingPermission
         backupTask = Task { [weak self] in
             guard let self else { return }
-            await self.run(folder: folder)
+            let runner = BackupRunner(
+                tokenProvider: self.tokenProvider,
+                uploader: self.uploader,
+                progressStore: self.progressStore,
+                uploadLimit: { self.effectiveUploadLimit },
+                delegate: self
+            )
+            // 完走時のみアルバム一覧を更新する（runner の戻り値で通知される）。
+            if await runner.run(folder: folder) {
+                await self.loadAlbums()
+            }
             self.backupTask = nil
         }
     }
@@ -153,193 +147,34 @@ public final class BackupEngine {
         log.append(BackupLogEntry(message))
     }
 
-    // MARK: - Backup main loop
-
-    private func run(folder: String) async {
-        addLog("Starting backup → \(folder)")
-
-        // 1. 写真ライブラリのアクセス権を取得
-        let authStatus = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        addLog("Photo library auth: \(authStatus.debugDescription)")
-        guard authStatus == .authorized || authStatus == .limited else {
-            fail("Photo library access denied. Allow access in Settings → Privacy → Photos.")
-            return
-        }
-        guard !Task.isCancelled else { phase = .cancelled; return }
-
-        // 2. People + アルバム インデックスをバックグラウンドで構築
-        // ⚠️ buildAlbumIndex はファイル末尾のトップレベル関数である必要がある。
-        // インスタンスメソッドとして定義すると Task.detached クロージャ内でコンパイラが
-        // self のインスタンスメソッドを優先して解決し、@MainActor 型を Task.detached に
-        // 渡せないコンパイルエラーになる（過去に発生）。
-        // 旧 People インデックス（写真アプリの People アルバム走査＝subtype-1000）は非公開化で
-        // **常に空**だったため撤去。metadata の people は空を維持する（互換のためキーは残す）。
-        phase = .buildingPeopleIndex
-        addLog("Building Album index…")
-        let peopleIndex: [String: [String]] = [:]
-        let albumIndex = await Task.detached { buildAlbumIndex() }.value
-        let uniqueAlbums = Set(albumIndex.values.flatMap { $0 }).count
-        addLog("Index built — albums: \(uniqueAlbums)")
-        guard !Task.isCancelled else { phase = .cancelled; return }
-
-        // 3. 全画像アセットを日付昇順で取得
-        phase = .fetchingAssets
-        let fetchOpts = PHFetchOptions()
-        fetchOpts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-        let result = PHAsset.fetchAssets(with: .image, options: fetchOpts)
-        var assets: [PHAsset] = []
-        result.enumerateObjects { a, _, _ in assets.append(a) }
-        addLog("Total assets: \(assets.count)")
-        guard !Task.isCancelled else { phase = .cancelled; return }
-
-        // 4. 既アップロード済みをスキップ（差分算出は BackupPlanning に集約・テスト可能）。
-        //    上限は設定（uploadLimit）優先。> 0 で 1 回のアップロード上限を適用（0 = 無制限）。
-        let limit = effectiveUploadLimit
-        let doneIDs = loadUploadedIDs()
-        let plan = BackupPlanning.pendingUploads(
-            allIdentifiers: assets.map(\.localIdentifier),
-            alreadyUploaded: doneIDs,
-            limit: limit
-        )
-        let pendingSet = Set(plan.pending)
-        let pending = assets.filter { pendingSet.contains($0.localIdentifier) }
-        let alreadySkipped = plan.skipped
-        addLog("Pending: \(pending.count) (already backed up: \(alreadySkipped)\(limit > 0 ? ", limit \(limit)" : ""))")
-
-        guard !pending.isEmpty else {
-            addLog("Nothing to upload.")
-            phase = .completed(uploaded: 0, skipped: alreadySkipped)
-            return
-        }
-
-        // 5. Dropbox 認証
-        addLog("Fetching Dropbox access token…")
-        let token: String
-        do {
-            token = try await tokenProvider.freshAccessToken()
-            addLog("Token OK")
-        } catch {
-            fail("Authentication failed: \(error.localizedDescription)")
-            return
-        }
-
-        // 6. 1 枚ずつアップロード
-        var uploadedCount = 0
-        var skippedCount  = 0
-        var trackedIDs    = doneIDs
-        var newEntries: [String: DropboxBackupMetadata.Entry] = [:]
-
-        for (i, asset) in pending.enumerated() {
-            guard !Task.isCancelled else { phase = .cancelled; return }
-
-            // 電源＋回線ポリシー：満たさない間は一時停止し、復帰で再開する
-            //（充電中かつ低電力OFF・既定で Wi-Fi のみ）。
-            if !backgroundUploadAllowed {
-                addLog("Paused — waiting for power / Wi-Fi")
-                while !backgroundUploadAllowed && !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(3))
-                }
-                guard !Task.isCancelled else { phase = .cancelled; return }
-                addLog("Resumed")
-            }
-
-            // ファイルデータを取得
-            let fetchResult = await BackupAssetReader.read(asset: asset, fallback: "photo_\(i + 1).jpg")
-            switch fetchResult {
-            case .skipped(let filename, let reason):
-                addLog("[\(i+1)/\(pending.count)] SKIP \(filename): \(reason)")
-                skippedCount += 1
-                continue
-            case .success:
-                break
-            }
-            guard case .success(let data, let filename) = fetchResult else { continue }
-
-            phase = .uploading(current: i + 1, total: pending.count, filename: filename)
-            guard !Task.isCancelled else { phase = .cancelled; return }
-
-            let dropboxPath = folder + "/" + filename
-            addLog("[\(i+1)/\(pending.count)] \(filename) (\(data.count) bytes) → \(dropboxPath)")
-
-            switch await uploader.upload(data: data, to: dropboxPath, token: token) {
-            case .uploaded:
-                uploadedCount += 1
-                trackedIDs.insert(asset.localIdentifier)
-                addLog("  ✓ uploaded")
-
-                let people     = peopleIndex[asset.localIdentifier] ?? []
-                let albums     = albumIndex[asset.localIdentifier] ?? []
-                let isFavorite = asset.isFavorite
-                newEntries[dropboxPath.lowercased()] = DropboxBackupMetadata.Entry(
-                    people: people,
-                    albums: albums,
-                    isFavorite: isFavorite,
-                    date: asset.creationDate.map { ISO8601DateFormatter().string(from: $0) }
-                )
-                saveRecord(
-                    dropboxPath: dropboxPath, asset: asset, filename: filename,
-                    people: people, albums: albums, isFavorite: isFavorite
-                )
-                if uploadedCount % 5 == 0 { saveUploadedIDs(trackedIDs) }
-
-            case .alreadyExists:
-                addLog("  → already exists on Dropbox (409)")
-                trackedIDs.insert(asset.localIdentifier)
-
-            case .error(let code, let body):
-                let summary = BackupPlanning.dropboxErrorSummary(from: body)
-                addLog("  ✗ HTTP \(code): \(summary)")
-                fail("HTTP \(code) uploading \"\(filename)\"\n\(summary)")
-                saveUploadedIDs(trackedIDs)
-                return
-
-            case .networkError(let msg):
-                addLog("  ✗ network error: \(msg)")
-                fail("Network error uploading \"\(filename)\": \(msg)")
-                saveUploadedIDs(trackedIDs)
-                return
-            }
-        }
-
-        saveUploadedIDs(trackedIDs)
-
-        // 7. metadata.json を Dropbox へ送信（既存 SwiftData レコードと新規分をマージ）
-        if !newEntries.isEmpty {
-            phase = .uploadingMetadata
-            addLog("Uploading metadata.json (\(newEntries.count) new entries)…")
-            let metadata = DropboxBackupMetadata(entries: buildMetadataEntries(merging: newEntries))
-            let metaPath = folder + Self.metadataSuffix
-            let metaResult = await uploader.uploadMetadata(metadata, to: metaPath, token: token)
-            addLog("metadata.json: \(metaResult)")
-        }
-
-        let totalSkipped = alreadySkipped + skippedCount + (pending.count - uploadedCount - skippedCount)
-        addLog("Done — uploaded: \(uploadedCount), skipped: \(totalSkipped)")
-        phase = .completed(uploaded: uploadedCount, skipped: totalSkipped)
-        // バックアップ完了後にアルバム一覧を更新する
-        await loadAlbums()
-    }
-
     // MARK: - Metadata
 
     static let metadataSuffix = "/.mosaic/metadata.json"
+}
 
-    // MARK: - Progress persistence
+// MARK: - BackupRunnerDelegate
 
-    private static let uploadedIDsKey = BackupSettingsKeys.uploadedLocalIDs
+/// `BackupRunner` からの進捗・ログ・レコード保存を @Observable な状態に反映する。
+/// phase は `private(set)` のため、同一ファイル内の extension で受ける。
+extension BackupEngine: BackupRunnerDelegate {
 
-    private func loadUploadedIDs() -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: Self.uploadedIDsKey) ?? [])
+    func runnerSetPhase(_ newPhase: Phase) {
+        phase = newPhase
     }
 
-    private func saveUploadedIDs(_ ids: Set<String>) {
-        UserDefaults.standard.set(Array(ids), forKey: Self.uploadedIDsKey)
+    func runnerLog(_ message: String) {
+        addLog(message)
     }
 
-    // MARK: - Helpers
+    func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
+                          people: [String], albums: [String], isFavorite: Bool) {
+        saveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
+                   people: people, albums: albums, isFavorite: isFavorite)
+    }
 
-    private func fail(_ message: String) {
-        addLog("FAILED: \(message)")
-        phase = .failed(message)
+    func runnerBuildMetadataEntries(
+        merging newEntries: [String: DropboxBackupMetadata.Entry]
+    ) -> [String: DropboxBackupMetadata.Entry] {
+        buildMetadataEntries(merging: newEntries)
     }
 }

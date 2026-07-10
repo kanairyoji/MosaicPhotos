@@ -19,9 +19,13 @@ import UIKit
 ///   キャッシュへ書く（churn が収まれば即ヒット）。
 /// - **背景処理へ譲る**：ドレイン稼働中は `BackgroundActivityMonitor.cloudThumbnailBusy` を立て、
 ///   CLIP 背景埋め込みに CPU を譲らせる。
+///
+/// 1 チャンク分のネットワーク取得・デコード・キャッシュ書き込みは `DropboxThumbnailChunkFetcher`、
+/// DTO とエンコード/デコードは `DropboxThumbnailBatchRequest`（純ロジック）に分離している。
 @MainActor
 final class DropboxThumbnailBatcher {
-    private let apiClient: DropboxAPIClient
+    /// 1 チャンク分の取得 I/O（ネットワーク→デコード→キャッシュ）。キュー管理から分離。
+    private let fetcher: DropboxThumbnailChunkFetcher
     private let cache: DropboxCacheStore
     /// バッチ集約のデバウンス時間。テストでは短縮して決定性を上げる。
     private let debounceNs: UInt64
@@ -54,7 +58,7 @@ final class DropboxThumbnailBatcher {
         chunkSize: Int = DropboxInternalConstants.thumbnailBatchChunkSize,
         maxConcurrentRequests: Int = DropboxInternalConstants.maxConcurrentThumbnailRequests
     ) {
-        self.apiClient = apiClient
+        self.fetcher = DropboxThumbnailChunkFetcher(apiClient: apiClient, cache: cache)
         self.cache = cache
         self.debounceNs = debounceNs
         self.chunkSize = chunkSize
@@ -258,72 +262,13 @@ final class DropboxThumbnailBatcher {
         return nil
     }
 
+    /// 1 チャンク分の取得。ネットワーク・デコード・キャッシュ書き込みは fetcher（I/O ユニット）に
+    /// 委譲し、結果を待機者へ配送する。キュー状態（inFlight）の管理はここに残す。
     private func fetchThumbnailChunk(_ items: [DropboxFileItem]) async {
         defer { for item in items { inFlight.remove(item.path) } }
-
-        struct Entry: Encodable {
-            let path: String
-            let format: String = DropboxInternalConstants.thumbnailFormat
-            let size: String = DropboxInternalConstants.thumbnailAPISize
-        }
-        struct BatchArg: Encodable { let entries: [Entry] }
-        struct ResultEntry: Decodable {
-            let tag: String
-            let thumbnail: String?
-            enum CodingKeys: String, CodingKey { case tag = ".tag"; case thumbnail }
-        }
-        struct BatchResult: Decodable { let entries: [ResultEntry] }
-
-        guard let body = try? JSONEncoder().encode(BatchArg(entries: items.map { Entry(path: $0.path) })) else {
-            items.forEach { deliver(nil, forPath: $0.path) }
-            return
-        }
-        // 認証ヘッダ付与・POST・ステータス検証は DropboxAPIClient に委譲。
-        guard let data = try? await apiClient.rpc(url: DropboxInternalConstants.getThumbnailBatchURL, jsonBody: body),
-              let result = try? JSONDecoder().decode(BatchResult.self, from: data) else {
-            DropboxLogger.error("fetchThumbnailChunk() batch request failed (\(items.count) items)")
-            items.forEach { deliver(nil, forPath: $0.path) }
-            return
-        }
-
-        // 成功エントリの base64 を取り出し、成功しなかったものは即 nil 配送。
-        var decodeInputs: [(path: String, data: Data)] = []
-        for (item, entry) in zip(items, result.entries) {
-            if entry.tag == "success",
-               let b64 = entry.thumbnail,
-               let imgData = Data(base64Encoded: b64) {
-                decodeInputs.append((item.path, imgData))
-            } else {
-                deliver(nil, forPath: item.path)
-            }
-        }
-        // result.entries が items より少ない場合（異常系）は残りを nil で配送
-        if result.entries.count < items.count {
-            items.dropFirst(result.entries.count).forEach { deliver(nil, forPath: $0.path) }
-        }
-
-        // ★ base64 デコード + 画像デコード（強制）をバックグラウンドで実行し、メインの負荷を避ける。
-        // 並行数はバッチ並行数（maxConcurrentThumbnailRequests）で既に有界なので、ディスクデコード用の
-        // ThumbnailDecode.limiter は通さない（ディスク再デコードを待たせない＝分離）。
-        // 計測: 1 チャンク分のデコード所要と件数（ネットワークは net.* で別途計測済み）。
-        let tDecode = PerfTrace.nowNs()
-        // デコードは `.utility`（UI=userInteractive・遷移より低い）に下げ、メインスレッド/遷移を
-        // 飢餓させない。サムネ表示は僅かに遅れても、スクロール・画面遷移の手応えを優先する。
-        let decoded: [(String, SendableUIImage?)] = await Task.detached(priority: .utility) {
-            decodeInputs.map { input in
-                let image = UIImage(data: input.data).map { $0.preparingForDisplay() ?? $0 }
-                return (input.path, image.map(SendableUIImage.init))
-            }
-        }.value
-        PerfTrace.count("thumb.decodeMs", value: PerfTrace.msSince(tDecode))
-        PerfTrace.count("thumb.decodedItems", value: Double(decodeInputs.count))
-
-        for (path, sendable) in decoded {
-            let image = sendable?.image
-            if let image { await cache.storeThumbnail(image, for: path) }
+        await fetcher.fetch(items) { image, path in
             deliver(image, forPath: path)
         }
-        DropboxLogger.verbose("fetchThumbnailChunk() \(items.count) items in 1 request")
     }
 }
 #endif
