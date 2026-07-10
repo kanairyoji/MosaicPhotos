@@ -13,23 +13,42 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / バックグラウンドと省電力</nav>
       <h1>バックグラウンドと省電力・通信制御</h1>
-      <p class="lead">CLIP 埋め込み・自動アルバム生成・スキャン・Dropbox 同期・バックアップなどの継続/定期処理を、<strong>電源</strong>と<strong>回線種別</strong>のポリシーでゲートして電池とデータ通信を節約する。状況は最上部の<strong>アクティビティバー</strong>で可視化する。</p>
+      <p class="lead">シーンタグ付け・CLIP 埋め込み・VLM キャプション・顔スキャン・自動アルバム生成といった<strong>重い処理</strong>は、原則として<strong>アプリを使っていない時間帯（画面ロック中の <code>BGProcessingTask</code>）</strong>にだけ動かし、フォアグラウンドでは一切走らせない（ADR-25）。実行タイミングはユーザーが 5 段階で選べる。状況は最上部の<strong>アクティビティバー</strong>で可視化する。</p>
+
+      <div class="box why">
+        <span class="box-h">なぜ「使っていない時だけ」なのか（ADR-25）</span>
+        旧ゲートは「電源＋低電力OFF＋<strong>アイドル 60 秒</strong>」だった。充電しながら閲覧中に 60 秒触らないと重い処理が走り出し、操作を再開してもクラウド写真のタグ付け（1 バッチ最大約 27 秒）が譲れず操作が固まった。そこで<strong>アイドル判定を廃止</strong>し、「電源＋低電力OFF＋<strong>アプリ非アクティブ（scenePhase）</strong>＋<strong>Wi-Fi</strong>」に変更。フォアグラウンドでは重い処理をゼロにした。停止判定も全処理<strong>1 枚単位</strong>に統一し、操作・遷移が来たら即譲る。
+      </div>
+
+      <h2>重い処理の実行タイミング（5 段階設定 / HeavyWorkTiming）</h2>
+      <p>固定ゲートをやめ、<strong>実行タイミングをユーザーが 5 段階で選択</strong>できる（<code>HeavyWorkTiming</code>・純関数 <code>allows(...)</code> で判定）。段階は単調に条件を緩める。<strong>低電力モード・メモリ圧迫はどの段階でも常にブロック</strong>する安全弁。</p>
+      <table>
+        <tr><th>段階</th><th>いつ重い処理を動かすか</th></tr>
+        <tr><td>一時停止 (paused)</td><td>手動「今すぐ処理」以外は動かさない</td></tr>
+        <tr><td><strong>おまかせ (nightly・既定)</strong></td><td>電源＋Wi-Fi＋アプリ非使用（画面ロック/切替中）。実質は夜間の <code>BGProcessingTask</code></td></tr>
+        <tr><td>充電中は合間も (chargeActive)</td><td>上記に加え、<strong>充電中はアプリ使用中の合間も</strong>（全タッチを <code>TouchActivityTracker</code> で捕捉し 20 秒アイドルで開始・タッチで即停止）</td></tr>
+        <tr><td>バッテリーでも (battery)</td><td>電源につないでいなくても残量 20% 以上なら実行（BGTask の <code>requiresExternalPower</code> も外す）</td></tr>
+        <tr><td>制限なし (unlimited)</td><td>モバイル回線も含めいつでも</td></tr>
+      </table>
+      <p>中央ゲートは <code>BackgroundYield.heavyWorkAllowed</code>。BGTask 起動時は scenePhase 変化が来ないため <code>runHeavyWork</code> 冒頭で非アクティブを明示する（初期値のままゲートが開かない罠への対処）。設定 UI は Albums の Auto Albums 側「処理のタイミング」に置き、各段の条件と影響を footer に明記する。</p>
 
       <h2>バックグラウンド処理の一覧</h2>
       <table>
         <tr><th>処理</th><th>通信</th><th>電池</th><th>ゲート</th></tr>
-        <tr><td>Dropbox 差分同期（longpoll/delta）</td><td>あり</td><td>中</td><td>電源＋回線</td></tr>
+        <tr><td><strong>重い処理</strong>（シーンタグ・CLIP 埋め込み・VLM キャプション・顔スキャン・AI 再評価・自動アルバム生成）</td><td>クラウド埋め込み分のみ</td><td>最高</td><td><strong>HeavyWorkTiming</strong>（既定＝電源＋Wi-Fi＋非使用）＋低電力OFF＋メモリ非圧迫。1 枚単位で譲る</td></tr>
+        <tr><td>Dropbox 差分同期（longpoll/delta）</td><td>あり</td><td>中</td><td>接続中＋回線</td></tr>
         <tr><td>端末→Dropbox バックアップ（手動起動）</td><td>あり</td><td>高</td><td>電源＋回線（ファイル間で一時停止）</td></tr>
-        <tr><td>CLIP 背景埋め込み（最重）</td><td>クラウド分のみ</td><td>最高</td><td>電源（全体）＋回線（クラウド分のみ）</td></tr>
-        <tr><td>自動アルバム生成・AI 再評価</td><td>なし</td><td>中</td><td>電源</td></tr>
-        <tr><td>場所スキャン（逆ジオコーディング）</td><td>あり</td><td>中</td><td>電源＋回線</td></tr>
-        <tr><td>アルバム走査</td><td>なし</td><td>低</td><td>電源（定期分）</td></tr>
+        <tr><td>場所スキャン（オフライン逆ジオコーディング）</td><td>なし</td><td>中</td><td>backgroundAllowed（電源ポリシー）</td></tr>
+        <tr><td>アルバム走査</td><td>なし</td><td>低</td><td>初回はゲートなし（UX 優先）／定期は電源</td></tr>
         <tr><td>サムネ/フル画像の<strong>閲覧時取得</strong></td><td>あり</td><td>—</td><td><strong>対象外</strong>（前景操作）</td></tr>
       </table>
       <div class="box note">
         <span class="box-h">線引き</span>
         止めるのは<strong>自動・継続のバックグラウンド処理</strong>だけ。ユーザーが今見ている写真の取得（サムネ/フル画像）は前景操作なので常に行う。
       </div>
+
+      <h2>AI アルバム作成は 2 段階（即時プレビュー→夜間本番化）</h2>
+      <p>重い処理を使用中に走らせないため、AI アルバムの作成は 2 段階に分ける。作成時は<strong>決定的プレビュー</strong>（レキシコン＋日付＋タグ照合・LLM なし・1〜2 秒）で即座にメンバーを見せ、<code>pendingFinalization</code> を立てる。実際の LLM 解釈・証拠ゲート・審査（<code>finalizePending</code>）は<strong>夜間パイプライン</strong>で本番化する。作成画面にはこのタイミングを明記する。</p>
 
       <h2>電源ゲート（PowerStateMonitor）</h2>
       <p><code>UIDevice.batteryState</code> と <code>ProcessInfo.isLowPowerModeEnabled</code> を監視し、ポリシー <code>BackgroundPowerPolicy</code>（<strong>While charging=既定</strong> / Always / Off）と合わせて <code>backgroundAllowed()</code> を返す。<em>While charging</em> は「電源接続（charging/full）かつ 低電力モード OFF」。</p>
@@ -64,14 +83,15 @@ graph TD
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/BackgroundProcessing.swift">BackgroundProcessing.swift</a> — HeavyWorkTiming（5 段階）</li>
+          <li><a class="srclink" data-path="MosaicPhotos/HeavyWorkScheduler.swift">HeavyWorkScheduler.swift</a> — BGProcessingTask（夜間）</li>
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/PowerStateMonitor.swift">PowerStateMonitor.swift</a></li>
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/NetworkStateMonitor.swift">NetworkStateMonitor.swift</a></li>
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/BackgroundActivityMonitor.swift">BackgroundActivityMonitor.swift</a></li>
           <li><a class="srclink" data-path="Packages/DropboxKit/Sources/DropboxKit/DropboxActivityBar.swift">DropboxActivityBar.swift</a></li>
-          <li><a class="srclink" data-path="MosaicPhotos/Settings/BackgroundSettingsView.swift">BackgroundSettingsView.swift</a></li>
         </ul>
       </div>
-      <p>設計判断: <a href="../design-decisions/adr.html">ハイライト</a>（ADR-14 バー / ADR-15 電源 / ADR-16 回線。全件は <code>records/decisions.md</code>）。背景の重さ段階は <a href="on-device-ai.html">オンデバイス AI</a> も参照。</p>
+      <p>設計判断: <a href="../design-decisions/adr.html">ハイライト</a>（<strong>ADR-25 重い処理は使っていない時だけ</strong> / ADR-14 バー / ADR-15 電源 / ADR-16 回線。全件は <code>records/decisions.md</code>）。背景の重さ段階は <a href="on-device-ai.html">オンデバイス AI</a> も参照。</p>
     </article>
     <div id="pager"></div>
   </main>

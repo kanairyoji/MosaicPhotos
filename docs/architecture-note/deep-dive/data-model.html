@@ -44,10 +44,14 @@
         <tr><td><code>kind</code> / <code>localIdentifier</code> / <code>cloudPath</code></td><td>出所</td></tr>
         <tr><td><code>captureDate</code> / <code>latitude</code> / <code>longitude</code> / <code>placeName</code> / <code>country</code></td><td>時間・場所</td></tr>
         <tr><td><code>linkKey</code></td><td>ローカル↔クラウドの同一写真を束ねる鍵（重複排除）</td></tr>
-        <tr><td><code>people</code></td><td>人物名（People 由来）</td></tr>
+        <tr><td><code>people</code></td><td>人物名（顔クラスタ由来。旧 PhotoKit People は撤去）</td></tr>
         <tr><td><code>isScreenshot</code> / <code>isFavorite</code> / <code>aspect</code></td><td>カバー選定・除外の判断材料</td></tr>
         <tr><td><code>sceneTagged</code></td><td>CLIP 埋め込みを試行済みか（未処理抽出・無限ループ防止）</td></tr>
       </table>
+      <div class="box note">
+        <span class="box-h">別コンテナに分けるもの</span>
+        シーンタグ／VLM キャプションは <code>TagStore</code>（<strong>TagsV1</strong>）、顔クラスタは <code>FaceStore</code>（<strong>FacesV1</strong>）と、AI アルバム本体（<code>AutoAlbumV10</code>）とは別の <code>ModelConfiguration</code> に分離する。スキーマ変更や破棄採番が互いのデータを壊さないため。
+      </div>
 
       <h2>埋め込み: PhotoEmbedding（別テーブル・fp16）</h2>
       <p>メタデータ取得が巨大 blob に触れないよう分離。<code>refKey</code>(unique) + <code>vector: Data</code>（Float16 パック・約1KB）。読み出し時に fp32 へ復元する。理由は <a href="../case-studies/memory.html">事例: メモリ枯渇</a>。</p>

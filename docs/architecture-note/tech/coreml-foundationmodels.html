@@ -26,19 +26,19 @@ let vec = out.featureValue(for: outputName)?.multiArrayValue   // 512次元</cod
         <span class="box-h">このアプリでのハマりどころ</span>
         <ul>
           <li>画像エンコーダの変換は <strong><code>compute_precision=FLOAT16</code></strong>。実機の ANE は fp16 前提で、fp32 だと ANE 非対応＝埋め込みが大幅に遅くなる。fp16 は一部シミュレータで NaN 化し得るが、ランタイムの有限性チェックが nil に落とす（画像タワーの検証は実機）。</li>
-          <li>前処理に mean/std 正規化を<strong>入れない</strong>（MobileCLIP は Resize/CenterCrop/ToTensor のみ）。</li>
+          <li><strong>CLIP の mean/std 正規化は画像エンコーダ内に内包</strong>する（OpenCLIP へ差し替えた ADR-19 での変更点）。ImageType は <code>scale=1/255</code> のままにし、アプリの入力経路を不変に保つ。</li>
           <li>実行ユニットは<strong>シミュレータ <code>.cpuOnly</code>・実機 <code>.all</code></strong>（シミュレータは ANE/MPSGraph が無く <code>.all</code> だと Espresso 例外）。</li>
           <li>モデルは<strong>遅延ロード</strong>（<code>static let shared</code>）で起動を重くしない。ロード結果は診断ログへ。</li>
         </ul>
       </div>
 
       <h2>Foundation Models</h2>
-      <p>Apple Intelligence のオンデバイス基盤モデル（<code>import FoundationModels</code>）。本アプリでは検索クエリの<strong>英語正規化（翻訳）</strong>に使う。CLIP のテキスト側が英語前提のため、前段で言語を揃えると精度が上がる。通信なし・APIキー不要。</p>
+      <p>Apple Intelligence のオンデバイス基盤モデル（<code>import FoundationModels</code>）。本アプリでは (1) 検索クエリの<strong>英語正規化（翻訳）・構造化解釈</strong>（作成時 1 回・永続化）と、(2) 候補の <strong>LLM 審査</strong>（<code>AlbumVerifier</code>・keep/drop/unsure の多数決）に使う。CLIP のテキスト側が英語前提のため、前段で言語を揃えると精度が上がる。通信なし・APIキー不要。</p>
       <div class="mermaid">
 graph LR
   Q["日本語クエリ '紅葉の写真'"] --> FM[Foundation Models]
   FM --> EN["'autumn leaves'"]
-  EN --> CLIP[MobileCLIP テキスト埋め込み]
+  EN --> CLIP[OpenCLIP テキスト埋め込み]
       </div>
 
       <h2>同梱の扱い</h2>

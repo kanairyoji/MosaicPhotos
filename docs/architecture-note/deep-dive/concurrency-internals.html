@@ -70,11 +70,11 @@ graph TD
       </table>
 
       <h2>「譲る」条件（協調的一時停止）</h2>
-      <p><code>shouldPause</code> が <code>true</code> の間は 0.3s スリープで待機する。条件は 2 つ。</p>
-      <pre><code>shouldPause: { isInteracting || MemoryPressureMonitor.shared.isUnderPressure }</code></pre>
+      <p>そもそも重い処理が動くのは <code>BackgroundYield.heavyWorkAllowed</code>（既定＝電源＋低電力OFF＋アプリ非アクティブ＋Wi-Fi。<a href="../features/background.html">5 段階設定</a>）が真のときだけ。加えて処理中も、次のいずれかが立つ間は <strong>1 枚ごとに</strong> <code>shouldPause</code> を確認して 0.3s スリープで待機し即譲る（ADR-25。8 枚一括だと画面遷移が飢餓するため 1 枚単位）。</p>
       <ul>
-        <li><strong>isInteracting</strong> — グリッドのスクロール/スクラブ中。Coordinator の <code>scrollViewWillBeginDragging</code> 等で立つ。</li>
-        <li><strong>isUnderPressure</strong> — メモリ圧迫中。<code>Diagnostics</code> のメモリ圧迫ソースが立て、約 20 秒後に自動解除。</li>
+        <li><strong>ユーザー操作中</strong> — グリッドのスクロール/スクラブ、画面遷移、<strong>写真ビュー表示中</strong>（タップ直後含む）。</li>
+        <li><strong>メモリ圧迫中</strong> — <code>MemoryPressureMonitor.isUnderPressure</code>（約 20 秒後に自動解除）。</li>
+        <li><strong>クラウド取得中</strong> — Dropbox サムネのドレイン中（<code>cloudThumbnailBusy</code>）・フル画像取得中（<code>fullImageBusy</code>）。</li>
       </ul>
 
       <h2>Dropbox 側のスロットリング</h2>

@@ -58,17 +58,19 @@ graph TD
       </div>
 
       <h2>AI の付加情報フロー</h2>
-      <p>写真は <code>PhotoEnrichment</code>（メタデータ）と <code>PhotoEmbedding</code>（CLIP 埋め込み・別テーブル）に分けて永続化される。検索は埋め込みを<strong>ページング</strong>で読み、メモリを有界に保つ。</p>
+      <p>写真のメタデータ（<code>PhotoEnrichment</code>）・CLIP 埋め込み（<code>PhotoEmbedding</code>・別テーブル fp16）・シーンタグ/キャプション（<code>TagStore</code>・TagsV1 別コンテナ）に分けて永続化する。検索は埋め込みを<strong>ページング</strong>で読み、メモリを有界に保つ。</p>
       <div class="mermaid">
 graph LR
-  ENR[PhotoEnricher<br/>日付・場所・人物] --> SDM[(PhotoEnrichment)]
-  TAG[PhotoTagger<br/>背景CLIP埋め込み] --> SDE[(PhotoEmbedding fp16)]
-  Q[クエリ] --> TR[翻訳 Foundation Models]
-  TR --> TE[CLIP テキスト埋め込み]
-  TE --> SR[AIAlbumSearcher]
-  SDE -->|ページング| SR
-  SDM -->|メタ・字句| SR
-  SR --> RES[検索結果]
+  ENR[PhotoEnricher<br/>日付・場所] --> SDM[(PhotoEnrichment)]
+  TG[TagTagger<br/>Vision タグ→CLIP→VLM] --> SDE[(PhotoEmbedding fp16)]
+  TG --> SDT[(TagStore<br/>タグ・キャプション)]
+  Q[クエリ] --> TR[翻訳・解釈 FM<br/>作成時1回・永続化]
+  TR --> SRch[AIAlbumSearcher<br/>RRF 融合]
+  SDE -->|CLIP 対比| SRch
+  SDT -->|タグ一致| SRch
+  SDM -->|メタ・字句| SRch
+  SRch --> VF[LLM 審査<br/>AlbumVerifier]
+  VF --> RES[検索結果]
       </div>
 
       <div class="box why">

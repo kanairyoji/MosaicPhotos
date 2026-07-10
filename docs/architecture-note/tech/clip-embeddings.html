@@ -39,7 +39,7 @@ graph LR
       <div class="box why">
         <span class="box-h">このアプリでの実装メモ</span>
         <ul>
-          <li>モデルは <strong>MobileCLIP-S2</strong> を Core ML 化（512 次元）。</li>
+          <li>モデルは <strong>OpenCLIP ViT-B-32 / DataComp（MIT）</strong>を Core ML 化（512 次元。ファイル名 <code>MobileCLIP*</code> は互換のため据え置き）。</li>
           <li>埋め込みは <code>ClipMath</code> で <code>Data</code> 化して永続化。検索用は fp32、保存は <strong>Float16</strong>（半分のサイズ）。</li>
           <li>NaN/Inf を含むベクトルは壊れているので破棄（fp16 化の前処理で全滅を防ぐ）。</li>
           <li>テキスト側は英語前提なので、クエリは Foundation Models で英訳してから埋め込む。</li>

@@ -3,12 +3,15 @@
 > パフォーマンスチューニング（2026-07 実機計測シリーズ）後の現状。実測値は iPhone 実機
 > （ローカル 17,695 枚・Dropbox 67,639 枚・計 85,334 枚）の diagnostics ログに基づく。
 > 実行条件の中枢は `MosaicSupport.BackgroundYield`（重い処理）と `PowerStateMonitor`（電源ポリシー）。
+>
+> ⚠️ **ゲートの現行仕様は末尾「ゲート改定（ADR-25）」＋ decisions.md ADR-25 を参照**。下表の
+> 「アイドル60秒」は旧仕様で、ADR-25（電源＋Wi-Fi＋アプリ非使用・のち 5 段階の `HeavyWorkTiming`）に置換済み。
 
 ## 実行条件の3層
 
 | 層 | 条件 | 対象 |
 |---|---|---|
-| **重い処理**（heavyWorkAllowed） | 電源接続 AND 低電力OFF AND **最後の操作から60秒以上アイドル** AND UI非ビジー。CLIP/顔はさらにアルバム生成と相互排他 | アルバム生成（定期）・CLIP 埋め込み・顔スキャン |
+| **重い処理**（heavyWorkAllowed） | 【ADR-25 で置換】電源接続 AND 低電力OFF AND **アプリ非アクティブ（scenePhase）** AND **Wi-Fi**（既定「おまかせ」段階。5 段階の `HeavyWorkTiming` で緩和可）。停止判定は 1 枚単位 | シーンタグ・CLIP 埋め込み・VLM キャプション・顔スキャン・アルバム生成・AI 再評価 |
 | **中程度**（backgroundAllowed＝設定の電源ポリシー） | 既定「充電中かつ低電力OFF」（設定で変更可）＋回線ポリシー | バックアップ・場所の定期再スキャン・Dropbox 同期 |
 | **ユーザー連動**（ゲートなし・意図的） | 閲覧中の体感を支える処理はいつでも動く | サムネ取得/先読み・フル画像取得・メタ先読み |
 
@@ -60,7 +63,7 @@
   **電源接続中（requiresExternalPower）に OS が起動**して generate 差分・CLIP 埋め込み・
   顔スキャンを進める。期限切れは Task キャンセルで即応。部分 Info.plist（`Config/Info.plist`・
   GENERATE_INFOPLIST_FILE とマージ）で UIBackgroundModes/PermittedIdentifiers を宣言。
-- アイドルしきい値 60 秒（`BackgroundYield.heavyWorkIdleSeconds`）は実機の体感で調整可。
+- ~~アイドルしきい値 60 秒~~ → **ADR-25 で廃止**（フォアグラウンドでは重い処理を一切動かさない方針へ）。
 - CLIP モデル初回ロード（16–35s・背景）は埋め込み初回要求時の遅延ロード＝実質アイドル時
   （埋め込み自体がアイドルゲート内でのみ動くため）。
 
@@ -98,3 +101,20 @@
 重い処理の実行条件は「電源＋低電力OFF＋**アプリ非アクティブ（画面ロック/切替）**＋**Wi-Fi**」。
 アイドル60秒判定は廃止（フォアグラウンドでは一切動かない）。停止判定は全処理 1 枚単位。
 AI アルバム作成は「即時プレビュー（決定的・LLMなし）→夜間本番化（finalizePending）」の2段階。
+
+### 追記: 5 段階のユーザー設定（`HeavyWorkTiming`）
+
+固定ゲートをやめ、**実行タイミングをユーザーが選ぶ 5 段階**にした（既定は従来と同じ nightly）。
+段階は単調に条件を緩める。判定は純関数 `HeavyWorkTiming.allows`（単調性を総当たりテストで固定）。
+
+| 段階 | 条件 |
+|---|---|
+| `paused` | 自動実行なし（「今すぐ処理」のみ） |
+| `nightly`（既定） | 電源＋Wi-Fi＋アプリ非使用（ロック中含む）。フォアグラウンドでは一切動かない |
+| `chargeActive` | ＋アプリ使用中も操作の合間（タッチから 20 秒アイドル・`TouchActivityTracker`。タッチで即停止） |
+| `battery` | ＋バッテリー駆動でも（残量 20% 以上・Wi-Fi）。BGTask の `requiresExternalPower` も外す |
+| `unlimited` | ＋モバイル回線でも |
+
+全段階の**安全弁**: 低電力モード・メモリ圧迫中はブロック。
+「今すぐ処理」（`boostHeavyWork`・既定 30 分）は使用状況/回線条件を免除するが、**電源接続と低電力 OFF は維持**する。
+なおクラウド写真の埋め込みは回線ポリシーが重ねて守り、Wi-Fi でなければローカル写真を先に進めて保留する（`PhotoTagger`）。

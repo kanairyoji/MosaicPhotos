@@ -18,13 +18,17 @@
       <h2>AI / 検索</h2>
       <table>
         <tr><th>用語</th><th>意味</th></tr>
-        <tr><td>CLIP</td><td>画像とテキストを同じベクトル空間に写すモデル。本アプリは MobileCLIP-S2 を Core ML 化。</td></tr>
+        <tr><td>CLIP</td><td>画像とテキストを同じベクトル空間に写すモデル。本アプリは OpenCLIP ViT-B-32 / DataComp を Core ML 化（ファイル名は互換で <code>MobileCLIP*</code>）。</td></tr>
         <tr><td>埋め込み (embedding)</td><td>意味を表す固定長の数値ベクトル（本アプリは 512 次元）。</td></tr>
         <tr><td>コサイン類似</td><td>2 ベクトルの向きの近さ（-1〜1）。埋め込みの一致度に使う。</td></tr>
         <tr><td>オープン語彙</td><td>固定リストに縛られず任意の文で検索できること。</td></tr>
         <tr><td>ゼロショット</td><td>再学習なしで候補ラベルとの近さで分類する手法。表示タグに使用。</td></tr>
+        <tr><td>シーンタグ</td><td>OS 内蔵 Vision 分類（約1,300クラス・校正済み足切り）で全写真へ付与する離散タグ。検索の一次ランキング兼表示タグ。</td></tr>
+        <tr><td>VLM キャプション</td><td>SmolVLM-256M が写真ごとに生成する英語短文。LLM 審査の「目」に使う。</td></tr>
         <tr><td>RRF</td><td>Reciprocal Rank Fusion。複数のランキングを順位で統合する手法。</td></tr>
-        <tr><td>Foundation Models</td><td>OS 内蔵のオンデバイス LLM。本アプリではクエリ英訳に使用。</td></tr>
+        <tr><td>LLM 審査 (AlbumVerifier)</td><td>候補の証拠行を Foundation Models が keep/drop/unsure 判定し多数決する最終段。</td></tr>
+        <tr><td>ピープル (顔クラスタ)</td><td>Vision 顔検出＋同梱 facenet で埋め込み→逐次クラスタリングした自前の「人物」（端末写真のみ・FacesV1 別コンテナ）。</td></tr>
+        <tr><td>Foundation Models</td><td>OS 内蔵のオンデバイス LLM。本アプリではクエリ翻訳・解釈と LLM 審査に使用。</td></tr>
       </table>
 
       <h2>永続化 / 並行性</h2>

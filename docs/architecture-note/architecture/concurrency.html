@@ -44,8 +44,7 @@ actor AutoAlbumStore {
 }</code></pre>
 
       <h2>協調的な一時停止（背景処理を譲る）</h2>
-      <p>背景の CLIP 埋め込みは、ユーザー操作中（スクラブ）やメモリ圧迫中は処理を譲る。<code>PhotoTagger.embedUnprocessed</code> は <code>shouldPause</code> クロージャを受け取り、<code>true</code> の間は短いスリープで待機する。</p>
-      <pre><code>shouldPause: { isInteracting || MemoryPressureMonitor.shared.isUnderPressure }</code></pre>
+      <p>背景の重い処理（CLIP 埋め込み・シーンタグ・顔スキャン）は、そもそも<strong>アプリを使っていない時間帯だけ</strong>動き（ADR-25。<a href="../features/background.html">実行タイミング</a>）、処理中もユーザー操作中・メモリ圧迫中・クラウド取得中は<strong>1 枚ごとに</strong>処理を譲る。共通の <code>BackgroundTrickle</code> 骨格が <code>shouldPause</code> を毎枚確認し、<code>true</code> の間は短いスリープで待機する。</p>
 
       <div class="box why">
         <span class="box-h">設計判断</span>

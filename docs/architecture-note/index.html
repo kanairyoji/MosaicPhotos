@@ -22,17 +22,19 @@
       </div>
 
       <h2>このアプリを一言で</h2>
-      <p>外部 SDK を使わず標準フレームワークのみで構成。写真ソース（端末 / Dropbox）を共通インターフェイスに統一し、<strong>MobileCLIP（Core ML）</strong>でオープン語彙の意味検索を行う。クエリは <strong>Foundation Models</strong> で英語へ正規化してから CLIP テキスト埋め込みにかけ、各写真の画像埋め込みとコサイン類似で検索する。通信なし・APIキー不要。</p>
+      <p>外部 SDK を使わず標準フレームワークのみで構成。写真ソース（端末 / Dropbox）を共通インターフェイスに統一し、<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）で語彙に縛られない自然文検索を行う。夜間に <strong>Vision シーンタグ → OpenCLIP 埋め込み（Core ML）→ VLM キャプション</strong>を全写真へ付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句を RRF 融合し、<strong>Foundation Models</strong> の LLM 審査で決める。通信なし・APIキー不要。</p>
 
       <div class="mermaid">
 graph TD
   U[ユーザー] --> APP[MosaicPhotos アプリ]
   APP --> SRC[写真ソース統一<br/>端末 + Dropbox]
-  APP --> AI[オンデバイス AI<br/>意味検索・自動アルバム]
+  APP --> AI[オンデバイス AI<br/>意味検索・自動アルバム・ピープル]
   SRC --> LOCAL[PhotosKit]
   SRC --> CLOUD[Dropbox API]
-  AI --> CLIP[MobileCLIP / Core ML]
-  AI --> FM[Foundation Models<br/>クエリ翻訳]
+  AI --> TAG[Vision シーンタグ<br/>約1,300クラス]
+  AI --> CLIP[OpenCLIP ViT-B-32 / Core ML]
+  AI --> VLM[SmolVLM キャプション]
+  AI --> FM[Foundation Models<br/>翻訳・LLM 審査]
   AI --> SD[(SwiftData<br/>付加情報・埋め込み)]
       </div>
 
@@ -44,7 +46,7 @@ graph TD
         <tr><td>端末写真</td><td>PhotosKit（<code>PHPhotoLibrary</code> / <code>PHImageManager</code>）</td></tr>
         <tr><td>永続化</td><td>SwiftData（<code>@Model</code> / <code>@ModelActor</code>）+ Keychain</td></tr>
         <tr><td>Dropbox</td><td><code>AuthenticationServices</code>（OAuth2 + PKCE）/ <code>URLSession</code></td></tr>
-        <tr><td>オンデバイス AI</td><td>MobileCLIP-S2（Core ML）/ Foundation Models</td></tr>
+        <tr><td>オンデバイス AI</td><td>Vision シーンタグ / OpenCLIP ViT-B-32（Core ML）/ SmolVLM-256M / Foundation Models</td></tr>
         <tr><td>最小 iOS</td><td>26.0（各 SPM パッケージは <code>.iOS(.v17)</code> 宣言で macOS テストも維持）</td></tr>
         <tr><td>構成</td><td>ローカル SPM パッケージ 11 個（Core/UI 分離）</td></tr>
       </table>
@@ -54,7 +56,7 @@ graph TD
       <div class="cards">
         <a class="card" href="architecture/overview.html"><div class="card-t">全体アーキテクチャ</div><div class="card-d">レイヤリングと Core/UI 分離、合成ルートの考え方。</div></a>
         <a class="card" href="architecture/packages.html"><div class="card-t">パッケージと依存関係</div><div class="card-d">11 パッケージの責務と依存グラフ。</div></a>
-        <a class="card" href="features/on-device-ai.html"><div class="card-t">オンデバイス AI</div><div class="card-d">CLIP 意味検索・翻訳前段・RRF 融合・表示タグ。</div></a>
+        <a class="card" href="features/on-device-ai.html"><div class="card-t">オンデバイス AI</div><div class="card-d">タグ台帳＋LLM 審査・CLIP 意味検索・ピープル・表示タグ。</div></a>
         <a class="card" href="features/grid-viewer.html"><div class="card-t">グリッドと全画面</div><div class="card-d">UICollectionView を SwiftUI に載せる設計。</div></a>
         <a class="card" href="features/dropbox.html"><div class="card-t">Dropbox 連携</div><div class="card-d">OAuth PKCE・差分同期・キャッシュ LRU。</div></a>
         <a class="card" href="case-studies/memory.html"><div class="card-t">事例: メモリ枯渇と圧縮</div><div class="card-d">写真枚数比例の起動クラッシュ解決と、その後の常駐圧縮。</div></a>

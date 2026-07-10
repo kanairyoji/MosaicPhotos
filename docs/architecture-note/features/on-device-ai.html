@@ -13,23 +13,42 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / オンデバイス AI</nav>
       <h1>オンデバイス AI</h1>
-      <p class="lead">固定の語彙リストや OCR を持たず、<strong>CLIP のオープン語彙</strong>で自然文検索を行う。通信なし・APIキー不要。クエリはまず英語へ翻訳してから埋め込む。</p>
+      <p class="lead">固定の語彙リストや OCR を持たず、任意言語の自然文で AI アルバム／意味検索を行う。実装は<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）：シーンタグ・CLIP 埋め込み・VLM キャプションを夜間に付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句の RRF 融合＋LLM 審査で決める。通信なし・APIキー不要。</p>
 
-      <h2>全体像</h2>
+      <h2>索引（夜間パイプライン）と検索</h2>
+      <p>索引は<strong>夜間バッチ</strong>（電源＋Wi-Fi＋アプリ非使用の <code>BGProcessingTask</code>・<a href="background.html">実行タイミング参照</a>）で、全写真へ次の順に付与する。</p>
+      <ol>
+        <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）</li>
+        <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・意味検索の索引・fp16）</li>
+        <li><strong>VLM キャプション</strong>（SmolVLM-256M・写真ごとの英語短文・LLM 審査の「目」）</li>
+      </ol>
       <div class="mermaid">
 graph TD
-  Q["自然文クエリ（任意言語）"] --> TR[QueryTranslator<br/>Foundation Models で英語化]
-  TR --> TE[TextEmbedder<br/>CLIP テキスト埋め込み]
-  IMG[各写真] --> PT[PhotoTagger<br/>背景で画像埋め込み]
-  PT --> EMB[(PhotoEmbedding<br/>fp16)]
-  TE --> SR[SemanticRanker<br/>コサイン類似]
-  EMB -->|ページング| SR
-  Q --> ST[構造化条件<br/>日付・場所・人物]
-  Q --> LX[字句検索<br/>地名・人物]
-  SR --> RRF[AIAlbumSearcher<br/>RRF 融合]
-  ST --> RRF
-  LX --> RRF
-  RRF --> RES[検索結果 / AI アルバム]
+  Q["自然文クエリ（任意言語）"] --> INT["解釈（作成時1回・永続化）<br/>FoundationModels + Sanitizer + レキシコン"]
+  INT --> HARD["ハード条件（決定的）<br/>日付=RelativeDateParser・場所/人物"]
+  INT --> TE["CLIP テキスト埋め込み<br/>（英訳して埋め込む）"]
+  subgraph 夜間索引
+    TAGS[(Vision シーンタグ)]
+    EMB[(PhotoEmbedding fp16)]
+    CAP[(VLM キャプション)]
+  end
+  HARD --> FUSE["RRF 融合（AIAlbumSearcher）"]
+  TE --> FUSE
+  TAGS -->|タグ一致 離散| FUSE
+  EMB -->|CLIP 対比| FUSE
+  LX["字句検索<br/>地名・人物"] --> FUSE
+  FUSE --> GATE["証拠ゲート<br/>除外つきはタグ/顔/キャプションの証拠必須"]
+  GATE --> VERIFY["LLM 審査（AlbumVerifier）<br/>keep/drop/unsure・多数決"]
+  CAP --> VERIFY
+  VERIFY --> RES["検索結果 / AI アルバム"]
+      </div>
+      <div class="box why">
+        <span class="box-h">なぜ「閾値レス」へ再設計したか（ADR-24）</span>
+        以前は生 CLIP コサイン＋絶対閾値だったが、ユーザーのライブラリ分布が事前に不明で閾値を調整できず「除外が 97% を落とす」「意味採用 0 件」が起きた。そこで<strong>タグ一致（離散・閾値レス）</strong>を第 3 のランキングに加え、除外は<strong>肯定/否定ベクトルの相対判定</strong>（絶対閾値なし）にし、最終判断を<strong>LLM 審査</strong>（言語判定）に委ねた。判定根拠がタグ/キャプションで可視化されデバッグ可能になる。
+      </div>
+      <div class="box note">
+        <span class="box-h">解釈は「作成時に 1 回だけ」（ADR-23）</span>
+        検索文→<code>QuerySpec</code>・英訳の LLM 解釈は<strong>アルバム作成/編集時に 1 回だけ</strong>実行して <code>AIAlbumInterpretationStore</code>（JSONFileStore・版管理）へ永続化する。起動時・写真追加時に LLM は走らない（旧方式は毎起動で全アルバム再解釈し 9.4s のメインハングになっていた）。再評価は増分（新規埋め込み分だけ採点）＋ドリフト検知のフル再評価。
       </div>
 
       <h2>採用モデルと認識率ベンチマーク</h2>
@@ -46,46 +65,45 @@ graph TD
         ImageNet-1k 1000クラスのゼロショット分類（各クラス20枚=200枚）と自然文クエリ10件を、CoreMLTools で CPU 実行して測定。<strong>採用は ViT-B-32/datacomp</strong>＝軽量（patch32・画像エンコーダ ~60MB）ながら 75% を達成し、自然文クエリは満点。ViT-B-16 は同等精度だが画像推論が約4倍重く、67k 枚の背景埋め込み（電池/時間）と相性が悪いため見送り。モデル変更時は <code>perceptionVersion</code> を採番して全再埋め込みする。
       </div>
 
-      <h2>なぜ「語彙ゼロ」なのか</h2>
-      <div class="box why">
-        <span class="box-h">設計判断</span>
-        固定タグ方式（あらかじめ決めた数百語で分類）は語彙外の検索に弱い。CLIP は画像とテキストを<strong>同じベクトル空間</strong>に埋め込むため、「赤い傘」「夕焼けの海」のような自由な文を、語彙リストに無くてもコサイン類似で照合できる。これがオープン語彙検索。OCR・固定タグは持たない。
-      </div>
-
       <h2>翻訳を前段に置く理由</h2>
-      <p>CLIP（OpenCLIP ViT-B-32）のテキストエンコーダは英語中心。日本語クエリをそのまま入れると精度が落ちる。そこで <code>Foundation Models</code>（オンデバイス LLM）でクエリを<strong>英語へ正規化</strong>してから CLIP に渡す。翻訳もオンデバイスなので通信不要。</p>
+      <p>CLIP（OpenCLIP ViT-B-32）のテキストエンコーダは英語中心。日本語クエリをそのまま入れると精度が落ちる。そこで <code>Foundation Models</code>（オンデバイス LLM）でクエリを<strong>英語へ正規化</strong>してから CLIP に渡す。翻訳もオンデバイスなので通信不要。翻訳失敗はキャッシュしない（誤訳の固定化を避ける）。</p>
 
-      <h2>検索の融合（RRF）</h2>
-      <p>意味検索（CLIP）だけでなく、構造化条件（日付・場所・人物）と字句一致（地名・人物名）も併用し、<strong>Reciprocal Rank Fusion</strong> で順位を統合する。これにより「去年 京都で 撮った 紅葉」のような複合クエリに強くなる。</p>
+      <h2>検索の融合（RRF）と証拠ゲート・審査</h2>
+      <p>検索は 4 層。決定的なハード条件で絞り、複数のランキングを <strong>Reciprocal Rank Fusion</strong> で束ね、除外つきは証拠を要求し、最後に LLM が言語で判定する。</p>
       <ul>
-        <li><code>QueryUnderstanding</code> — クエリを構造化条件＋意味語に分解（ルールベース / Foundation Models）。</li>
-        <li><code>SemanticRanker</code> / <code>ClipMath</code> — コサイン類似で意味的に並べ替え。</li>
-        <li><code>LexicalSearch</code> — 地名・人物の字句一致。</li>
-        <li><code>AIAlbumSearcher</code> — 上記を RRF で融合し最終結果に。</li>
+        <li><strong>P0 接地</strong>: 日付は <code>RelativeDateParser</code>（日英）を唯一の出典・場所/人物はカタログ/原文出現に接地。<code>QuerySpecSanitizer</code> がプレースホルダ除去・include/exclude 衝突解消。</li>
+        <li><strong>P1 融合</strong>: Vision シーンタグ一致（離散・閾値レス）＋CLIP 対比（除外は肯定/否定ベクトルの相対判定）＋<code>LexicalSearch</code>（地名/人物）を <code>AIAlbumSearcher</code> が RRF 融合。除外語はタグの離散一致でもハード除外。</li>
+        <li><strong>P2 証拠ゲート＋審査</strong>: 除外つきはタグ/顔実測/キャプションの証拠を必須にし、上位候補を <code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure 判定。unsure は最大 2 回の再判定で多数決。空振り時はプローブ語を生成して 1 回だけ再検索（Refine）。</li>
       </ul>
 
       <h2>知覚 seam（プロトコルと実装の分離）</h2>
-      <p><code>AutoAlbumCore</code> はプロトコルだけを定義し、Core ML 依存の実体は <code>MobileCLIPKit</code> が実装する。アプリが結線する。</p>
+      <p><code>AutoAlbumCore</code> はプロトコルだけを定義し、Core ML / Vision / Foundation Models 依存の実体は <code>MobileCLIPKit</code> が実装する。アプリの <code>AutoAlbumAdapters</code> が結線する。</p>
       <table>
         <tr><th>プロトコル（AutoAlbumCore）</th><th>実装（MobileCLIPKit）</th></tr>
-        <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → 埋め込み）</td></tr>
+        <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → CLIP 埋め込み）</td></tr>
         <tr><td><code>TextEmbedder</code></td><td><code>MobileCLIPTextEmbedder</code></td></tr>
+        <tr><td><code>TagPerceptionProvider</code></td><td><code>VisionTagAdapter</code>（シーンタグ＋VLM キャプション）</td></tr>
+        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み）</td></tr>
         <tr><td><code>QueryTranslator</code></td><td><code>AppQueryTranslator</code>（Foundation Models）</td></tr>
         <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ）</td></tr>
       </table>
 
-      <h2>表示タグは検索と分離</h2>
-      <p>フル画像に出すキーワードタグは <code>CLIPDisplayLabeler</code> が約 300 語の英語キーワードに対する<strong>ゼロショット</strong>（保存済み埋め込みを使う）で生成する。これは<strong>表示専用</strong>で、検索は語彙ゼロのまま縛らない。</p>
+      <h2>ピープル（顔クラスタ）</h2>
+      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出（<code>VNDetectFaceRectanglesRequest</code>）＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは <code>AutoAlbumCore/Faces</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>＝CLIP データを壊さない・<code>PeopleEngine</code> ファサード）。<strong>端末写真のみ</strong>対象で、顔モデル未同梱ならセクション非表示。</p>
 
-      <h2>背景埋め込みのスロットリング</h2>
-      <p>全写真の画像埋め込みは <code>PhotoTagger.embedUnprocessed</code> が小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。重さは設定（段階）で調整でき、ユーザー操作中・メモリ圧迫中は処理を譲る。</p>
+      <h2>表示タグは検索と同じ台帳</h2>
+      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。VLM キャプションも「AI description」欄に表示（生成済みのみ）。タグ/キャプションは <strong>TagsV1 別コンテナ</strong>で、夜間バッチ（<code>TagTagger</code>）が付与する。</p>
+
+      <h2>背景処理のスロットリング</h2>
+      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>（CPU で数秒かかり検証を妨げるため）。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
 
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・ClipMath</li>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception">AutoAlbumCore/Perception/</a> — seam・PhotoTagger</li>
-          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳の実体</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・審査・解釈永続化</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags">AutoAlbumCore/Tags/</a> — TagStore / TagTagger</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Faces">AutoAlbumCore/Faces/</a> — 顔クラスタ・PeopleEngine</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳/VLM/顔の実体</li>
         </ul>
       </div>
 

@@ -62,16 +62,16 @@ graph TD
       <h2>各パッケージの責務</h2>
       <table>
         <tr><th>パッケージ</th><th>層</th><th>責務</th></tr>
-        <tr><td><code>MosaicSupport</code></td><td>基盤</td><td>横断ユーティリティ。共通ロガー <code>LogChannel</code>、端末診断 <code>Diagnostics</code>、メモリ圧迫監視。依存なし。</td></tr>
+        <tr><td><code>MosaicSupport</code></td><td>基盤</td><td>横断ユーティリティ。共通ロガー <code>LogChannel</code>、端末診断 <code>Diagnostics</code>、メモリ圧迫監視、自己修復 <code>makeResilientModelContainer</code>、電源/回線/重い処理ゲート。依存なし。</td></tr>
         <tr><td><code>PhotoSourceKit</code></td><td>基盤</td><td>写真ソース共通基盤。<code>PhotoStore</code>/<code>PhotoItem</code>/<code>PhotoLoadState</code> と共通ビュー（グリッド・全画面）。逆ジオコーディング・EXIF などの純ロジック。</td></tr>
         <tr><td><code>ImageCacheKit</code></td><td>基盤</td><td>メモリ（<code>MemoryImageCache</code>）+ ディスク I/O（<code>DiskImageStore</code>）の画像キャッシュプリミティブ。破棄ポリシーは利用側が持つ。</td></tr>
         <tr><td><code>LocalPhotoCore</code></td><td>ロジック</td><td>端末写真ロジック。<code>LocalPhotoStore</code>、アルバム走査、サムネキャッシュ。SwiftUI 非依存。</td></tr>
         <tr><td><code>DropboxCore</code></td><td>ロジック</td><td>Dropbox の認証（OAuth PKCE）・API・差分同期・キャッシュ（SwiftData + ImageCacheKit）。SwiftUI 非依存。</td></tr>
         <tr><td><code>BackupKit</code></td><td>ロジック</td><td>端末写真 → Dropbox バックアップのオーケストレーション、アップロード、People/Album インデックス。</td></tr>
-        <tr><td><code>AutoAlbumCore</code></td><td>ロジック</td><td>自動アルバム生成・知覚・意味検索のロジック。SwiftUI 非依存・純ロジック中心でテストしやすい。</td></tr>
+        <tr><td><code>AutoAlbumCore</code></td><td>ロジック</td><td>自動アルバム生成・知覚・意味検索（タグ台帳＋LLM 審査）・シーンタグ台帳（<code>TagStore</code>）・ピープル顔クラスタ（<code>Faces</code>）のロジック。SwiftUI 非依存・純ロジック中心でテストしやすい。共通の背景トリクル骨格 <code>BackgroundTrickle</code> を持つ。</td></tr>
         <tr><td><code>LocalPhotoKit</code></td><td>UI</td><td>端末写真の UI。<code>LocalPhotoCore</code> を <code>@_exported import</code>。</td></tr>
         <tr><td><code>DropboxKit</code></td><td>UI</td><td>Dropbox の UI。<code>DropboxCore</code> を <code>@_exported import</code>。</td></tr>
-        <tr><td><code>MobileCLIPKit</code></td><td>UI/実装</td><td>CLIP/翻訳ランタイムと <code>AutoAlbumCore</code> の seam 実装（知覚アダプタ・表示ラベラ）。Core ML / Foundation Models を扱う。</td></tr>
+        <tr><td><code>MobileCLIPKit</code></td><td>UI/実装</td><td>CLIP/翻訳/VLM キャプション/顔モデルのランタイムと <code>AutoAlbumCore</code> の seam 実装（知覚・タグ・顔アダプタ・表示ラベラ）。Core ML / Vision / Foundation Models を扱う。Core ML ロードと BPE の共通足場（<code>CoreMLModelSupport</code>・<code>BPESupport</code>）を持つ。</td></tr>
         <tr><td><code>PhotosFeatureKit</code></td><td>統合</td><td>ローカル + Dropbox を統合する <code>MergedPhotoStore</code> / <code>MergedPhotoItem</code>、場所グルーピングの <code>PlaceScanner</code>。</td></tr>
       </table>
 
@@ -85,6 +85,11 @@ graph TD
       <div class="box why">
         <span class="box-h">設計判断</span>
         Core/UI を分けると、SwiftUI を持たない純ロジックを macOS の <code>swift test</code> で高速に検証できる。AI の重い依存（Core ML）を <code>MobileCLIPKit</code> に隔離することで、<code>AutoAlbumCore</code> 本体はモデルなしでもテスト可能になる。詳細は <a href="../tech/spm-modularization.html">SPM モジュール分割</a>。
+      </div>
+
+      <div class="box note">
+        <span class="box-h">共通足場の抽出と責務分割（ADR-26）</span>
+        機能追加でコピーが蓄積した骨格を<strong>挙動不変</strong>で共通化した：背景トリクル（<code>BackgroundTrickle</code>）・自己修復コンテナ（<code>makeResilientModelContainer</code>）・Core ML ロード/BPE（<code>CoreMLModelSupport</code>/<code>BPESupport</code>）・UI 小物（<code>BusyLabel</code>/<code>LoadingRow</code>/<code>sectionHeader</code>/<code>loadCover</code>）。あわせて肥大した型を分割した（<code>AIAlbumService</code>→<code>AIAlbumInterpreter</code>/<code>AIAlbumVerificationCoordinator</code>/<code>QueryEmbedder</code>、<code>BackupEngine</code>→<code>BackupRunner</code>/<code>BackupProgressStore</code>、<code>DropboxThumbnailBatcher</code>→<code>DropboxThumbnailBatchRequest</code>/<code>DropboxThumbnailChunkFetcher</code>）。
       </div>
 
       <div class="box refs">

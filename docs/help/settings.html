@@ -15,21 +15,37 @@
     <h2>設定の構成</h2>
     <table>
       <tr><th>グループ</th><th>主な項目</th></tr>
-      <tr><td>Photo Sources</td><td>端末の写真 / Dropbox / バックアップ</td></tr>
-      <tr><td>Albums &amp; Search</td><td>AI・旅行アルバム（Auto Albums）/ <a href="./folder-albums.html">フォルダアルバム</a> / 場所（Places）</td></tr>
-      <tr><td>General</td><td>言語 / Background &amp; Battery / Photo Grid / Storage / Licenses / ヘルプ</td></tr>
+      <tr><td>Photo Sources</td><td>端末の写真（On-Device Photos）/ Dropbox / バックアップ（Backup）</td></tr>
+      <tr><td>Albums &amp; Search</td><td>Auto Albums（AI・旅行アルバム＋<b>AI 処理のタイミング</b>）/ <a href="./folder-albums.html">Folder Albums</a> / Places（場所）</td></tr>
+      <tr><td>General</td><td>バージョン / 言語 / Background &amp; Battery / Photo Grid / Storage / Licenses / ヘルプ</td></tr>
       <tr><td>Developer Options</td><td>開発者向けの詳細診断（通常は不要）</td></tr>
     </table>
 
-    <h2>Background &amp; Battery（電源・通信）</h2>
-    <p>バックグラウンドで進む処理（AI の取り込み、自動アルバム生成、Dropbox 同期、バックアップなど）を、
-      <b>電源</b>と<b>通信</b>の条件でゲートして、電池とモバイル通信を節約します。</p>
+    <h2>AI 処理のタイミング（いつ動かすか）</h2>
+    <p><b>設定 → Auto Albums → 処理のタイミング（Processing Timing / “When to process”）</b>で、
+      重い処理（写真の索引付け・顔スキャン・AI アルバムの本確定）を<b>いつ進めるか</b>を 5 段階から選べます。
+      上ほど控えめ、下ほど積極的に進みます。</p>
+    <table>
+      <tr><th>段階</th><th>意味</th></tr>
+      <tr><td>一時停止（Paused）</td><td>自動では動かしません。「今すぐ処理」でだけ手動実行。</td></tr>
+      <tr><td><b>おまかせ（Automatic・既定）</b></td><td>充電中・Wi-Fi・<b>アプリを使っていない時（ロック中や他アプリ利用中）</b>だけ。ふつうは夜間に進み、使用中は<b>一切動かない</b>ので操作が重くなりません。</td></tr>
+      <tr><td>アプリ使用中も（充電時）</td><td>充電＋Wi-Fi なら、操作の合間（約 20 秒 無操作）にも進みます。画面に触れると即停止。多少発熱することがあります。</td></tr>
+      <tr><td>バッテリーでも（Wi-Fi）</td><td>電源に繋いでいなくても、残量 20% 以上・Wi-Fi なら進みます。電池を消費します。</td></tr>
+      <tr><td>制限なし（モバイル通信も）</td><td>可能なときはいつでも。モバイル通信も使い、電池・通信量を多く消費することがあります。</td></tr>
+    </table>
+    <div class="tip">どの段階でも、<b>低電力モード中とメモリが逼迫している間は動きません</b>（安全弁）。
+      同じ画面の <b>「今すぐ処理」</b>を押すと、その場で 30 分だけ処理を進められます（充電が必要）。</div>
+
+    <h2>Background &amp; Battery（アプリ横断の電源・通信）</h2>
+    <p><b>設定 → General → Background &amp; Battery</b>。上の「処理のタイミング」とは<b>別軸</b>で、
+      アプリ全体のバックグラウンド動作（AI の索引、自動アルバム生成、<b>場所スキャン、Dropbox 同期、バックアップ</b>など）を、
+      <b>電源</b>と<b>通信</b>の条件でまとめてゲートします。</p>
     <ul>
-      <li><b>電源</b>：<b>充電中のみ</b>（既定）/ 常に / オフ。</li>
-      <li><b>通信</b>：<b>Wi-Fi のみ</b>（既定）/ セルラーも許可 など。</li>
+      <li><b>Power（電源）</b>：<b>充電中のみ</b>（既定）/ 常に / オフ。「充電中のみ」は低電力モードが切れているときだけ動きます。</li>
+      <li><b>Network（通信）</b>：モバイル通信も許可 / <b>Wi-Fi のみ</b>（既定）/ Wi-Fi（低データモードは除く）/ オフ。</li>
     </ul>
-    <div class="tip">いま<b>見ている・開いている写真は常に取得</b>されます。制限されるのは“自動の裏側の処理”だけなので、
-      閲覧が止まることはありません。AI の取り込みは賢く、セルラー時は端末写真を進めつつクラウド写真は Wi-Fi まで待ちます。</div>
+    <div class="tip">いま<b>見ている・開いている写真は常に取得</b>されます。制限されるのは“自動の裏側の通信・処理”だけなので、
+      閲覧が止まることはありません。</div>
 
     <h2>Photo Grid（表示の密度）</h2>
     <p>月グループ表示の<b>詰め具合</b>を選べます（細：1 行 / ふつう：3 行 / 粗：5 行）。
