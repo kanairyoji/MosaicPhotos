@@ -139,43 +139,43 @@ struct QuerySpecSanitizerTests {
 
     @Test("previewInterpretation: 日付＋視覚語＋人物否定を決定的に立て、pending を立てる")
     func previewBuildsDeterministicSpec() {
-        let saved = AIAlbumService.previewInterpretation(criteria: "ここ2年以内の子供の写真", now: now)
+        let saved = AIAlbumInterpreter.previewInterpretation(criteria: "ここ2年以内の子供の写真", now: now)
         #expect(saved.pendingFinalization == true)
         #expect(saved.translationPending == true)
         #expect(saved.semanticText.isEmpty)   // FM 翻訳は夜間
         #expect(saved.spec.allContentTerms.include == ["child", "children"])
         #expect(saved.spec.clauses.allSatisfy { $0.conditions.contains(.date(.lastYears(2))) })
 
-        let neg = AIAlbumService.previewInterpretation(criteria: "人が写っていない風景写真", now: now)
+        let neg = AIAlbumInterpreter.previewInterpretation(criteria: "人が写っていない風景写真", now: now)
         #expect(neg.spec.allContentTerms.include == ["landscape", "scenery", "outdoor"])
         #expect(neg.spec.allContentTerms.exclude == ["people"])
     }
 
     @Test("previewInterpretation: 英語入力（レキシコン外）は原文を include に使う")
     func previewEnglishPassthrough() {
-        let saved = AIAlbumService.previewInterpretation(criteria: "Ramen", now: now)
+        let saved = AIAlbumInterpreter.previewInterpretation(criteria: "Ramen", now: now)
         #expect(saved.spec.allContentTerms.include == ["ramen"])
         // 日本語のレキシコン外は include なし（純ハード or 夜間の本番化待ち）。
-        let jp = AIAlbumService.previewInterpretation(criteria: "レシート", now: now)
+        let jp = AIAlbumInterpreter.previewInterpretation(criteria: "レシート", now: now)
         #expect(jp.spec.allContentTerms.include.isEmpty)
     }
 
     @Test("looksUntranslated: 日本語のままは true・英語は false")
     func untranslatedDetection() {
-        #expect(AIAlbumService.looksUntranslated("ここ2年以内の子供の写真"))
-        #expect(!AIAlbumService.looksUntranslated("Photos of children from the last 2 years"))
-        #expect(AIAlbumService.looksUntranslated(""))
-        #expect(!AIAlbumService.looksUntranslated("Child"))
+        #expect(AIAlbumInterpreter.looksUntranslated("ここ2年以内の子供の写真"))
+        #expect(!AIAlbumInterpreter.looksUntranslated("Photos of children from the last 2 years"))
+        #expect(AIAlbumInterpreter.looksUntranslated(""))
+        #expect(!AIAlbumInterpreter.looksUntranslated("Child"))
     }
 
     @Test("positivePhrase: include 優先・無ければ否定節を落とした英訳文")
     func positivePhraseRules() {
-        #expect(AIAlbumSearcher.positivePhrase(include: ["landscape"], semanticText: "whatever") == "landscape")
-        #expect(AIAlbumSearcher.positivePhrase(
+        #expect(QueryEmbedder.positivePhrase(include: ["landscape"], semanticText: "whatever") == "landscape")
+        #expect(QueryEmbedder.positivePhrase(
             include: [], semanticText: "A landscape photo without any people.") == "A landscape photo")
-        #expect(AIAlbumSearcher.positivePhrase(
+        #expect(QueryEmbedder.positivePhrase(
             include: [], semanticText: "Beach photos with no crowds") == "Beach photos")
-        #expect(AIAlbumSearcher.positivePhrase(
+        #expect(QueryEmbedder.positivePhrase(
             include: [], semanticText: "Sunset photos") == "Sunset photos")   // マーカー無し＝そのまま
     }
 }

@@ -21,7 +21,7 @@ struct AlbumVerifierTests {
     func evidenceLineFormat() {
         let photo = EnrichedPhoto(id: "L-x", captureDate: Date(timeIntervalSince1970: 1_700_000_000),
                                   latitude: nil, longitude: nil, placeName: "沖縄県")
-        let line = AIAlbumSearcher.evidenceLine(index: 3, photo: photo,
+        let line = AIAlbumVerificationCoordinator.evidenceLine(index: 3, photo: photo,
                                                 tags: ["beach", "outdoor"],
                                                 caption: "A sandy beach at sunset.",
                                                 faceCount: 0)
@@ -35,7 +35,7 @@ struct AlbumVerifierTests {
     @Test("証拠行: 欠けている情報は出さない")
     func evidenceLineOmitsMissing() {
         let photo = EnrichedPhoto(id: "L-y", captureDate: nil, latitude: nil, longitude: nil, placeName: nil)
-        let line = AIAlbumSearcher.evidenceLine(index: 0, photo: photo, tags: [], caption: nil, faceCount: nil)
+        let line = AIAlbumVerificationCoordinator.evidenceLine(index: 0, photo: photo, tags: [], caption: nil, faceCount: nil)
         #expect(line == "0)")
     }
 

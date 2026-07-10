@@ -32,7 +32,7 @@ struct AIAlbumExclusionTests {
     func contrastDropsCloserToExcluded() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0],
-            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+            QueryEmbedder.excludePrompt("people"): [0, 1],
         ])
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
         let photos = [photo("scenery", clip: [1, 0.05]),      // pos≈1.0, neg≈0.05 → 残る
@@ -50,7 +50,7 @@ struct AIAlbumExclusionTests {
     func contrastIsRelativeOnly() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0],
-            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+            QueryEmbedder.excludePrompt("people"): [0, 1],
         ])
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
         let photos = [photo("clean", clip: [1, 0.1]),
@@ -66,14 +66,14 @@ struct AIAlbumExclusionTests {
     @Test("evidenceGated: 証拠ゼロの写真は落ち、いずれかがあれば残る")
     func evidenceGateRules() {
         let a = photo("tagged"), b = photo("faced"), c = photo("captioned"), d = photo("nothing")
-        let gated = AIAlbumSearcher.evidenceGated(
+        let gated = AIAlbumVerificationCoordinator.evidenceGated(
             [a, b, c, d],
             tags: [a.id: ["landscape"]],
             faceCounts: [b.id: 0],
             captions: [c.id: "A beach."])
         #expect(Set(gated.map(\.id)) == Set([a.id, b.id, c.id]))
         // 空キャプション・空タグは証拠にならない。
-        let gated2 = AIAlbumSearcher.evidenceGated([d], tags: [d.id: []], faceCounts: [:],
+        let gated2 = AIAlbumVerificationCoordinator.evidenceGated([d], tags: [d.id: []], faceCounts: [:],
                                                    captions: [d.id: ""])
         #expect(gated2.isEmpty)
     }
@@ -83,7 +83,7 @@ struct AIAlbumExclusionTests {
     func faceCountsHardFilter() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0],
-            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+            QueryEmbedder.excludePrompt("people"): [0, 1],
         ])
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
         let photos = [photo("hasFace", clip: [1, 0]),
@@ -114,7 +114,7 @@ struct AIAlbumExclusionTests {
                                   semanticText: "Landscape photos without people",
                                   loadPage: pagedLoader(photos))
         #expect(embedder.texts.first == "landscape")   // 否定入り全文ではない
-        #expect(embedder.texts.contains(AIAlbumSearcher.excludePrompt("people")))
+        #expect(embedder.texts.contains(QueryEmbedder.excludePrompt("people")))
     }
 
     /// 意味採用が 0 件で base へフォールバックするときも、除外で落とした写真は復活させない。
@@ -123,7 +123,7 @@ struct AIAlbumExclusionTests {
     func fallbackRespectsExclusion() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0, 0],
-            AIAlbumSearcher.excludePrompt("people"): [0, 1, 0],
+            QueryEmbedder.excludePrompt("people"): [0, 1, 0],
         ])
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
         // weak: pos≈0.15（floor 0.20 未満＝意味採用されない）・neg≈0.05（除外もされない）
@@ -170,7 +170,7 @@ struct AIAlbumExclusionTests {
     func tagExclusionHardFilters() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0],
-            AIAlbumSearcher.excludePrompt("people"): [0, 1],
+            QueryEmbedder.excludePrompt("people"): [0, 1],
         ])
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
         let photos = [photo("clean", clip: [1, 0.05]), photo("tagged", clip: [1, 0.05])]
