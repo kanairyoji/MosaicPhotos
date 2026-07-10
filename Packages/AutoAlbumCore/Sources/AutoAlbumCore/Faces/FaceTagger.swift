@@ -56,44 +56,37 @@ final class FaceTagger {
         var index = 0
         var processed = 0
         var facesFound = 0
-        var batchNo = 0
-        while index < todo.count, !Task.isCancelled {
-            let end = min(index + batchSize, todo.count)
-            let batch = Array(todo[index..<end])
-            index = end
-
-            // ⚠️ 停止判定は 1 枚単位（検出+埋め込みは 1 枚数百 ms〜。バッチ一括だと
-            // ロック解除直後の譲りが遅れる）。保存はバッチ 1 回（T3）を維持。
-            var signals: [String: [DetectedFaceSignal]] = [:]
-            var scanned: [String] = []   // 実際に推論まで到達した写真（キャンセル時の途中まで）
-            for refKey in batch {
-                while shouldPause() && !Task.isCancelled {
-                    PerfTrace.count("face.pauseWait")   // センサー: 譲り待ちの発生数
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                }
-                if Task.isCancelled { break }
-                let tOne = PerfTrace.nowNs()
+        // ⚠️ 停止判定は 1 枚単位（検出+埋め込みは 1 枚数百 ms〜。バッチ一括だと
+        // ロック解除直後の譲りが遅れる）。保存はバッチ 1 回（T3）を維持。
+        await BackgroundTrickle.run(
+            betweenBatchNs: betweenBatchNs,
+            shouldPause: shouldPause,
+            pausePerfLabel: "face.pauseWait",   // センサー: 譲り待ちの発生数
+            unitPerfLabel: "face.photoMs",
+            nextBatch: { _ in
+                let end = min(index + batchSize, todo.count)
+                defer { index = end }
+                return Array(todo[index..<end])
+            },
+            processUnit: { refKey in
                 let one = await provider.detectFaces(refKeys: [refKey])
-                PerfTrace.count("face.photoMs", value: PerfTrace.msSince(tOne))
-                signals.merge(one) { a, _ in a }
-                scanned.append(refKey)   // 顔ゼロ（dict に無い）も走査済み＝再スキャンしない
-            }
-            guard !scanned.isEmpty else { break }
-            let records = scanned.map { refKey in
-                (refKey: refKey, faces: signals[refKey] ?? [])
-            }
-            facesFound += records.reduce(0) { $0 + $1.faces.count }
-            await store.recordScans(records)   // T3: save はバッチ 1 回
-            processed += batch.count
-            onProgress(max(0, todo.count - processed))
+                // 顔ゼロ（dict に無い）も走査済み（空配列）＝再スキャンしない。
+                return (refKey: refKey, faces: one[refKey] ?? [])
+            },
+            commitBatch: { batchIndex, batch, records in
+                // records は実際に推論まで到達した写真のみ（キャンセル時の途中まで）。
+                guard !records.isEmpty else { return .stop }
+                facesFound += records.reduce(0) { $0 + $1.faces.count }
+                await store.recordScans(records)   // T3: save はバッチ 1 回
+                processed += batch.count
+                onProgress(max(0, todo.count - processed))
 
-            batchNo += 1
-            if batchNo % 8 == 0 {
-                Diagnostics.mark("faces: \(processed)/\(todo.count) scanned, faces=\(facesFound)")
-                await onBatch()   // 一覧をときどき更新
-            }
-            try? await Task.sleep(nanoseconds: betweenBatchNs)
-        }
+                if (batchIndex + 1) % 8 == 0 {
+                    Diagnostics.mark("faces: \(processed)/\(todo.count) scanned, faces=\(facesFound)")
+                    await onBatch()   // 一覧をときどき更新
+                }
+                return .proceed
+            })
         Self.log.info("face scan: finished — \(processed) photos")
         Diagnostics.mark("faces: finished — scanned=\(processed) faces=\(facesFound)")
         await onBatch()

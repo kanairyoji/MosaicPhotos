@@ -46,33 +46,31 @@ final class TagTagger {
 
         var index = 0
         var processed = 0
-        while index < todo.count, !Task.isCancelled {
-            let end = min(index + batchSize, todo.count)
-            let batch = Array(todo[index..<end])
-            index = end
-
-            // ⚠️ 停止判定は 1 枚単位（クラウド写真はネット取得込みで 1 枚数秒かかり得るため、
-            // バッチ一括だと譲りが数十秒遅れる＝ロック解除直後の操作が重くなる）。保存はバッチ 1 回。
-            var results: [(refKey: String, tags: [String])] = []
-            for refKey in batch {
-                while shouldPause() && !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                }
-                if Task.isCancelled { break }
-                let tOne = PerfTrace.nowNs()
+        // ⚠️ 停止判定は 1 枚単位（クラウド写真はネット取得込みで 1 枚数秒かかり得るため、
+        // バッチ一括だと譲りが数十秒遅れる＝ロック解除直後の操作が重くなる）。保存はバッチ 1 回。
+        await BackgroundTrickle.run(
+            betweenBatchNs: betweenBatchNs,
+            shouldPause: shouldPause,
+            unitPerfLabel: "tags.photoMs",
+            nextBatch: { _ in
+                let end = min(index + batchSize, todo.count)
+                defer { index = end }
+                return Array(todo[index..<end])
+            },
+            processUnit: { refKey in
                 let one = await provider.sceneTags(refKeys: [refKey])
-                PerfTrace.count("tags.photoMs", value: PerfTrace.msSince(tOne))
-                results.append((refKey, one[refKey] ?? []))
-            }
-            guard !results.isEmpty else { break }
-            await store.recordTags(results)
-            processed += results.count
-            onProgress(max(0, todo.count - processed))
-            if processed % 256 == 0 {
-                Diagnostics.mark("tags: \(processed)/\(todo.count) tagged")
-            }
-            try? await Task.sleep(nanoseconds: betweenBatchNs)
-        }
+                return (refKey: refKey, tags: one[refKey] ?? [])
+            },
+            commitBatch: { _, _, results in
+                guard !results.isEmpty else { return .stop }
+                await store.recordTags(results)
+                processed += results.count
+                onProgress(max(0, todo.count - processed))
+                if processed % 256 == 0 {
+                    Diagnostics.mark("tags: \(processed)/\(todo.count) tagged")
+                }
+                return .proceed
+            })
         Diagnostics.mark("tags: finished — \(processed) tagged")
     }
 
@@ -87,28 +85,25 @@ final class TagTagger {
         return
         #endif
         var processed = 0
-        while !Task.isCancelled {
-            let batch = await store.captionPending(limit: batchSize)
-            guard !batch.isEmpty else { break }
-            // 停止判定は 1 枚単位（VLM は 1 枚 1〜2 秒＝バッチ一括だと譲りが数秒遅れる）。
-            var results: [(refKey: String, caption: String)] = []
-            for refKey in batch {
-                while shouldPause() && !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                }
-                if Task.isCancelled { break }
-                let tOne = PerfTrace.nowNs()
+        // 停止判定は 1 枚単位（VLM は 1 枚 1〜2 秒＝バッチ一括だと譲りが数秒遅れる）。
+        // todo は静的な差分でなく「キャプション未生成」の動的クエリで都度供給する。
+        await BackgroundTrickle.run(
+            betweenBatchNs: betweenBatchNs,
+            shouldPause: shouldPause,
+            unitPerfLabel: "caption.photoMs",
+            nextBatch: { _ in await store.captionPending(limit: batchSize) },
+            processUnit: { refKey in
                 let one = await provider.captions(refKeys: [refKey])
-                PerfTrace.count("caption.photoMs", value: PerfTrace.msSince(tOne))
                 // 取得できなかった写真も空で記録して無限ループを防ぐ。
-                results.append((refKey, one[refKey] ?? ""))
-            }
-            guard !results.isEmpty else { break }
-            await store.recordCaptions(results)
-            processed += results.count
-            if processed % 64 == 0 { Diagnostics.mark("captions: \(processed) done") }
-            try? await Task.sleep(nanoseconds: betweenBatchNs)
-        }
+                return (refKey: refKey, caption: one[refKey] ?? "")
+            },
+            commitBatch: { _, _, results in
+                guard !results.isEmpty else { return .stop }
+                await store.recordCaptions(results)
+                processed += results.count
+                if processed % 64 == 0 { Diagnostics.mark("captions: \(processed) done") }
+                return .proceed
+            })
         if processed > 0 { Diagnostics.mark("captions: finished — \(processed)") }
     }
 }

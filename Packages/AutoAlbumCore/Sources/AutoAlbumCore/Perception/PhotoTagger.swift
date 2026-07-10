@@ -55,86 +55,87 @@ final class PhotoTagger {
         // SwiftData クエリ＝backlog 全体で数千回の往復だった）。回線状態が変わったら組み直す。
         var keyQueue: [String] = []
         var queueLocalOnly: Bool?
-        for batch in 0..<maxBatches {
-            if Task.isCancelled { break }
-            // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
-            while shouldPause() && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
-            }
-            if Task.isCancelled { break }
-            // 回線NG（例: Wi-Fi 待ち）のときはクラウド写真（サムネDL）をスキップし、
-            // ローカル写真だけ進める（スマート方針 b）。Wi-Fi 復帰でクラウド分が再開される。
-            let netOK = networkAllowed()
-            if queueLocalOnly != !netOK {   // 回線状態が変わった＝クラウド分の含み方が変わるので組み直す
-                keyQueue = []
-                queueLocalOnly = !netOK
-            }
-            if keyQueue.isEmpty {
-                keyQueue = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
-            }
-            let refKeys = Array(keyQueue.prefix(batchSize))
-            keyQueue.removeFirst(refKeys.count)
-            guard !refKeys.isEmpty else {
-                // ローカルが尽きた。回線NGで残り（クラウド分）があれば「保留」、無ければ「完了」。
-                // どちらも終了し、回線/電源の復帰時にアプリ側が再起動する（isTagging を抱え続けない）。
-                if !netOK {
-                    let deferredCloud = await store.unembeddedCount()
-                    Self.log.info(deferredCloud > 0
-                        ? "embed: local done; \(deferredCloud) cloud photos deferred (no Wi-Fi)"
-                        : "embed: no more unembedded photos — stopping at batch \(batch)")
-                } else {
-                    Self.log.info("embed: no more unembedded photos — stopping at batch \(batch)")
+        var batchStart = Date()
+        // P1: ミニバッチ（8枚）単位で知覚し、ミニバッチの前に `shouldPause` を確認する
+        //    （BackgroundTrickle の「1 単位」＝このミニバッチ）。
+        //    バッチ推論（MLArrayBatchProvider）で ANE 呼び出しが償却され 2〜4 倍速い。
+        //    ANE 連続保持は 8 枚 ≈ 1 秒未満で、重い処理は電源＋アイドル時しか走らないため
+        //    譲り応答性（旧: 1 枚粒度）はミニバッチ粒度で十分。
+        let miniBatchSize = 8
+        await BackgroundTrickle.run(
+            maxBatches: maxBatches,
+            betweenBatchNs: betweenBatchNs,
+            shouldPause: shouldPause,
+            pausePerfLabel: "clip.pauseWait",   // センサー: 譲り待ちの発生数
+            unitPerfLabel: "clip.embedMs",
+            unitPerfDivisor: { (chunk: [String]) in Double(chunk.count) },   // 1 枚あたり ms に換算
+            nextBatch: { batch in
+                // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
+                await BackgroundTrickle.waitWhilePaused(shouldPause)
+                if Task.isCancelled { return [] }
+                // 回線NG（例: Wi-Fi 待ち）のときはクラウド写真（サムネDL）をスキップし、
+                // ローカル写真だけ進める（スマート方針 b）。Wi-Fi 復帰でクラウド分が再開される。
+                let netOK = networkAllowed()
+                if queueLocalOnly != !netOK {   // 回線状態が変わった＝クラウド分の含み方が変わるので組み直す
+                    keyQueue = []
+                    queueLocalOnly = !netOK
                 }
-                break
-            }
-            let batchStart = Date()
-            // P1: ミニバッチ（8枚）単位で知覚し、ミニバッチの前に `shouldPause` を確認する。
-            //    バッチ推論（MLArrayBatchProvider）で ANE 呼び出しが償却され 2〜4 倍速い。
-            //    ANE 連続保持は 8 枚 ≈ 1 秒未満で、重い処理は電源＋アイドル時しか走らないため
-            //    譲り応答性（旧: 1 枚粒度）はミニバッチ粒度で十分。
-            var merged: [String: PhotoPerception] = [:]
-            var withVector = 0
-            let miniBatchSize = 8
-            var index = 0
-            while index < refKeys.count {
-                while shouldPause() && !Task.isCancelled {
-                    PerfTrace.count("clip.pauseWait")   // センサー: 譲り待ちの発生数
-                    try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
+                if keyQueue.isEmpty {
+                    keyQueue = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
                 }
-                if Task.isCancelled { break }
-                let chunk = Array(refKeys[index..<min(index + miniBatchSize, refKeys.count)])
-                index += chunk.count
-                let tPerceive = PerfTrace.nowNs()
+                let refKeys = Array(keyQueue.prefix(batchSize))
+                keyQueue.removeFirst(refKeys.count)
+                guard !refKeys.isEmpty else {
+                    // ローカルが尽きた。回線NGで残り（クラウド分）があれば「保留」、無ければ「完了」。
+                    // どちらも終了し、回線/電源の復帰時にアプリ側が再起動する（isTagging を抱え続けない）。
+                    if !netOK {
+                        let deferredCloud = await store.unembeddedCount()
+                        Self.log.info(deferredCloud > 0
+                            ? "embed: local done; \(deferredCloud) cloud photos deferred (no Wi-Fi)"
+                            : "embed: no more unembedded photos — stopping at batch \(batch)")
+                    } else {
+                        Self.log.info("embed: no more unembedded photos — stopping at batch \(batch)")
+                    }
+                    return []
+                }
+                batchStart = Date()
+                return stride(from: 0, to: refKeys.count, by: miniBatchSize).map {
+                    Array(refKeys[$0..<min($0 + miniBatchSize, refKeys.count)])
+                }
+            },
+            processUnit: { (chunk: [String]) -> [String: PhotoPerception] in
                 let signals = await perception.perceive(refKeys: chunk)
-                PerfTrace.count("clip.embedMs", value: PerfTrace.msSince(tPerceive) / Double(chunk.count))
+                var perceived: [String: PhotoPerception] = [:]
                 for key in chunk {
-                    let signal = signals[key]
-                    if signal?.clipVector != nil { withVector += 1 }
                     // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
-                    merged[key] = signal ?? PhotoPerception()
+                    perceived[key] = signals[key] ?? PhotoPerception()
                 }
-            }
-            if !merged.isEmpty { await store.applyPerception(merged) }
-            newSinceNotify.append(contentsOf: merged.compactMap { $0.value.clipVector != nil ? $0.key : nil })
-            processed += merged.count
+                return perceived
+            },
+            commitBatch: { batch, _, results in
+                var merged: [String: PhotoPerception] = [:]
+                for perceived in results { merged.merge(perceived) { a, _ in a } }
+                let withVector = merged.values.filter { $0.clipVector != nil }.count
+                if !merged.isEmpty { await store.applyPerception(merged) }
+                newSinceNotify.append(contentsOf: merged.compactMap { $0.value.clipVector != nil ? $0.key : nil })
+                processed += merged.count
 
-            let secs = String(format: "%.1f", Date().timeIntervalSince(batchStart))
-            Self.log.info("embed: batch \(batch) done — \(merged.count) photos in \(secs)s "
-                          + "(\(withVector) with CLIP vector); total \(processed)")
-            if Task.isCancelled { break }
+                let secs = String(format: "%.1f", Date().timeIntervalSince(batchStart))
+                Self.log.info("embed: batch \(batch) done — \(merged.count) photos in \(secs)s "
+                              + "(\(withVector) with CLIP vector); total \(processed)")
+                if Task.isCancelled { return .stop }
 
-            onProgress(max(0, pending - processed))
-            // AI 再検索（onBatch）は全件 fetch＋採点で footprint がスパイクする（~200→400MB）。
-            // 背景再埋め込み中は周期を粗くしてスパイク頻度を下げ、メモリ圧迫イベントを減らす
-            // （圧迫が減るとサムネのメモリ保持も安定する）。最終結果は完了時の onBatch で必ず反映。
-            if batch % 48 == 47 {
-                let newKeys = newSinceNotify
-                newSinceNotify = []
-                await onBatch(newKeys)
-            }
-            // ★ バッチ間で休む：端末・ネットワーク・UI を圧迫しないよう trickle 処理にする。
-            try? await Task.sleep(nanoseconds: betweenBatchNs)
-        }
+                onProgress(max(0, pending - processed))
+                // AI 再検索（onBatch）は全件 fetch＋採点で footprint がスパイクする（~200→400MB）。
+                // 背景再埋め込み中は周期を粗くしてスパイク頻度を下げ、メモリ圧迫イベントを減らす
+                // （圧迫が減るとサムネのメモリ保持も安定する）。最終結果は完了時の onBatch で必ず反映。
+                if batch % 48 == 47 {
+                    let newKeys = newSinceNotify
+                    newSinceNotify = []
+                    await onBatch(newKeys)
+                }
+                return .proceed
+            })
         let total = String(format: "%.1f", Date().timeIntervalSince(startedAt))
         Self.log.info("embed: finished — \(processed) photos in \(total)s")
         await onBatch(newSinceNotify)
