@@ -115,18 +115,14 @@ public final class BackupEngine {
     /// 名前付き永続コンテナを作る。失敗時は store ファイルを削除して再構築し、それでも駄目なら
     /// インメモリへ。SwiftData が trap せず必ず ModelContainer を返し、起動時クラッシュを防ぐ
     /// （バックアップ記録は再構築されるが、Dropbox 上の実ファイルは無事）。
+    /// 実体は MosaicSupport の共通ロジック（自己修復）。
     private static func makeResilientContainer() -> ModelContainer {
         let schema = Schema([BackupAssetRecord.self])
-        let config = ModelConfiguration("BackupKit", schema: schema)
-        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-        BackupLogger.error("BackupEngine: 'BackupKit' store open failed; deleting and rebuilding.")
-        for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
-        }
-        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-        BackupLogger.error("BackupEngine: 'BackupKit' store still failing; using in-memory store.")
-        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
+        return makeResilientModelContainer(
+            name: "BackupKit", schema: schema,
+            openFailedMessage: "BackupEngine: 'BackupKit' store open failed; deleting and rebuilding.",
+            memoryFallbackMessage: "BackupEngine: 'BackupKit' store still failing; using in-memory store.",
+            log: { BackupLogger.error($0) })
     }
 
     // MARK: - Public API

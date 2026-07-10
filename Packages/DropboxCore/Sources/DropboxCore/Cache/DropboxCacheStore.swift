@@ -55,7 +55,13 @@ actor DropboxCacheStore {
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             modelContainer = (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         } else {
-            modelContainer = Self.makeResilientContainer(name: "DropboxCache", schema: schema)
+            // 壊れた/非互換ストアは削除して作り直し、それでも駄目ならインメモリへ
+            // （自己修復＝MosaicSupport の共通ロジック。キャッシュは再同期で回復する）。
+            modelContainer = makeResilientModelContainer(
+                name: "DropboxCache", schema: schema,
+                openFailedMessage: "DropboxCacheStore: 'DropboxCache' open failed; deleting store and rebuilding.",
+                memoryFallbackMessage: "DropboxCacheStore: 'DropboxCache' still failing; using in-memory store.",
+                log: { DropboxLogger.error($0) })
         }
         modelContext = ModelContext(modelContainer)
 
@@ -77,22 +83,6 @@ actor DropboxCacheStore {
             purgeOnCritical: false,
             pressureFloor: DropboxInternalConstants.thumbnailMemoryPressureFloor
         )
-    }
-
-    /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
-    /// （自己修復）、それでも駄目ならインメモリへ。SwiftData が trap せず必ず ModelContainer を返すことで、
-    /// 起動時に壊れたストアでクラッシュするのを防ぐ（キャッシュは再同期で回復する）。
-    static func makeResilientContainer(name: String, schema: Schema) -> ModelContainer {
-        let config = ModelConfiguration(name, schema: schema)
-        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-        DropboxLogger.error("DropboxCacheStore: '\(name)' open failed; deleting store and rebuilding.")
-        for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
-        }
-        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-        DropboxLogger.error("DropboxCacheStore: '\(name)' still failing; using in-memory store.")
-        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
     }
 
     // MARK: - Metadata / sync state

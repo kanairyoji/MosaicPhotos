@@ -26,17 +26,13 @@ actor AutoAlbumStore {
     /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
     /// （自己修復）、それでも駄目ならインメモリへ。SwiftData が trap せず必ず ModelContainer を返すことで、
     /// 起動時に壊れたストアでクラッシュするのを防ぐ（データは失うが回復＝再構築される）。
+    /// 実体は MosaicSupport の共通ロジック。TagStore / FaceStore もこの窓口を共用する。
     static func makeResilientContainer(name: String, schema: Schema, log: (String) -> Void) -> ModelContainer {
-        let config = ModelConfiguration(name, schema: schema)
-        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-        log("ModelContainer '\(name)' open failed; deleting store and rebuilding (data reset).")
-        for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
-        }
-        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-        log("ModelContainer '\(name)' still failing; using in-memory store.")
-        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
+        makeResilientModelContainer(
+            name: name, schema: schema,
+            openFailedMessage: "ModelContainer '\(name)' open failed; deleting store and rebuilding (data reset).",
+            memoryFallbackMessage: "ModelContainer '\(name)' still failing; using in-memory store.",
+            log: log)
     }
 
     /// 既存呼び出し（`AutoAlbumStore()` / `AutoAlbumStore(isStoredInMemoryOnly:)`）を維持する委譲 init。
