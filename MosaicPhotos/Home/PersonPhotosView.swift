@@ -129,3 +129,71 @@ private struct ReassignAvatar: View {
             .clipShape(Circle())
     }
 }
+
+// MARK: - Merge people
+
+/// 人物アルバムの統合先を選ぶピッカー。`source` を選んだ人物へまとめる（同一人物が 2 つに
+/// 割れたときの修正）。統合は元に戻せないので、選択時に確認アラートを挟む。
+struct PersonMergePickerView: View {
+    let source: PersonInfo
+    let peopleEngine: PeopleEngine
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var pendingTarget: PersonInfo?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 6) {
+                            ReassignAvatar(person: source)
+                                .frame(width: 72, height: 72)
+                            Text(source.displayName).font(.subheadline.weight(.semibold))
+                        }
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                } footer: {
+                    Text(L("Choose the person to merge “\(source.displayName)” into. All their photos will move to that person."))
+                }
+                Section(L("Merge into")) {
+                    ForEach(peopleEngine.people.filter { $0.clusterID != source.clusterID }) { p in
+                        Button {
+                            pendingTarget = p
+                        } label: {
+                            HStack(spacing: 12) {
+                                ReassignAvatar(person: p)
+                                Text(p.displayName).foregroundStyle(.primary)
+                                Spacer()
+                                Text(L("\(p.count) photos")).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(L("Merge Person"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L("Cancel")) { dismiss() }
+                }
+            }
+            .alert(L("Merge people?"), isPresented: Binding(get: { pendingTarget != nil },
+                                                            set: { if !$0 { pendingTarget = nil } }),
+                   presenting: pendingTarget) { target in
+                Button(L("Cancel"), role: .cancel) { pendingTarget = nil }
+                Button(L("Merge")) {
+                    let src = source.clusterID, dst = target.clusterID
+                    Task {
+                        await peopleEngine.mergePerson(from: src, into: dst)
+                        dismiss()
+                    }
+                }
+            } message: { target in
+                Text(L("“\(source.displayName)” will be merged into “\(target.displayName)”. This can’t be undone automatically."))
+            }
+        }
+    }
+}

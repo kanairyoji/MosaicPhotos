@@ -102,6 +102,13 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    /// 人物 src を人物 dst に統合する（同一人物が別々に認識されたときの修正）。
+    /// src の顔は全て dst へ移り、src は消える。名前・代表写真は dst を優先。
+    public func mergePerson(from srcClusterID: Int, into dstClusterID: Int) async {
+        await store.mergeClusters(from: srcClusterID, into: dstClusterID)
+        await loadPeople()
+    }
+
     /// 写真（`PhotoItem.id`：生 localIdentifier か "L-…" refKey）に写っている人物の表示名。
     /// フル画像ビューの People 表示に使う。顔スキャンは端末写真のみなのでクラウドは空。
     public func names(forItemID id: String) async -> [String] {

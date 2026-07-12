@@ -18,6 +18,8 @@ struct PeopleActionsModifier: ViewModifier {
     @State private var coverPickerPerson: PersonInfo?
     /// 顔の管理（どの顔を認識したか確認・別の人へ付け替え）の対象。
     @State private var manageFacesPerson: PersonInfo?
+    /// 別の人物へ統合する対象（統合元）。
+    @State private var mergeSourcePerson: PersonInfo?
 
     func body(content: Content) -> some View {
         content
@@ -29,6 +31,7 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Rename")) { renamingPerson = person; renameText = person.name ?? "" }
                 Button(L("Choose Cover Photo")) { coverPickerPerson = person }
                 Button(L("Manage Faces")) { manageFacesPerson = person }
+                Button(L("Merge into Another Person…")) { mergeSourcePerson = person }
                 Button(L("Cancel"), role: .cancel) {}
             }
             // 代表写真ピッカー。
@@ -38,6 +41,10 @@ struct PeopleActionsModifier: ViewModifier {
             // 顔の管理（認識した顔の確認・別の人へ付け替え）。
             .sheet(item: $manageFacesPerson) { person in
                 PersonPhotosView(person: person, peopleEngine: peopleEngine)
+            }
+            // 別の人物へ統合（同一人物が 2 つに割れたときの修正）。
+            .sheet(item: $mergeSourcePerson) { person in
+                PersonMergePickerView(source: person, peopleEngine: peopleEngine)
             }
             // 名前変更（入力アラート）。空欄で保存すると "Person N" に戻る。
             .alert(L("Rename Person"),

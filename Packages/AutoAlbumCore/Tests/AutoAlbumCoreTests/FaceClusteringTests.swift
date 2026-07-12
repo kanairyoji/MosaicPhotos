@@ -88,6 +88,30 @@ struct FaceClusteringTests {
         }
     }
 
+    /// 統合＝生合計の加算・件数の合算。1 顔ずつ adding したのと等価（重心が加重平均になる）。
+    @Test("merging は sum を加算し count を合算する")
+    func mergingCombinesSums() {
+        let a = FaceClustering.merging(sumA: [1, 0, 0], countA: 2, sumB: [0, 2, 0], countB: 3)
+        #expect(a.count == 5)
+        #expect(a.sum == [1, 2, 0])
+        // 1 顔ずつ足したのと一致（正規化済みベクトルを sum に積む規則）。
+        let step1 = FaceClustering.adding([1, 0, 0], toSum: [0, 0, 0], count: 0)   // (1,0,0),1
+        let step2 = FaceClustering.adding([0, 1, 0], toSum: step1.sum, count: step1.count) // (1,1,0),2
+        let merged = FaceClustering.merging(sumA: step1.sum, countA: step1.count,
+                                            sumB: FaceClustering.adding([0, 1, 0], toSum: [0, 0, 0], count: 0).sum,
+                                            countB: 1)
+        #expect(merged.sum == step2.sum)
+        #expect(merged.count == step2.count)
+    }
+
+    /// 次元不一致（壊れた sum）でも件数は合算し、多い方の sum を残す（安全側）。
+    @Test("merging は次元不一致でも件数を合算する")
+    func mergingDimensionMismatch() {
+        let r = FaceClustering.merging(sumA: [1, 0, 0], countA: 5, sumB: [0, 1], countB: 2)
+        #expect(r.count == 7)
+        #expect(r.sum == [1, 0, 0])   // 件数の多い A 側を残す
+    }
+
     /// 最後の 1 顔を除くと nil（クラスタ削除の合図）。
     @Test("removing は最後の1顔で nil を返す")
     func removingLastFaceSignalsDeletion() {

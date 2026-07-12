@@ -89,6 +89,19 @@ public struct FaceClustering {
         return (s, count + 1)
     }
 
+    /// 2 クラスタの生合計・件数を統合する（人物アルバムの統合用）。重心 = normalize(sum) なので、
+    /// 生合計を単純加算すれば加重平均の重心になり、1 顔ずつ `adding` した場合と数学的に等価。
+    /// 次元不一致（壊れた sum）のときは件数だけ合算し、多い方の sum を残す（安全側）。
+    public static func merging(sumA: [Float], countA: Int,
+                               sumB: [Float], countB: Int) -> (sum: [Float], count: Int) {
+        guard sumA.count == sumB.count else {
+            return (countA >= countB ? sumA : sumB, countA + countB)
+        }
+        var s = sumA
+        for i in s.indices { s[i] += sumB[i] }
+        return (s, countA + countB)
+    }
+
     /// 顔をクラスタ重心から除いた結果。最後の 1 顔を除くと nil（＝クラスタ削除の合図）。
     public static func removing(_ embedding: [Float], fromSum sum: [Float], count: Int) -> (sum: [Float], count: Int)? {
         guard count > 1 else { return nil }

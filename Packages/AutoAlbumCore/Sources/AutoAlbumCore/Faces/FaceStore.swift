@@ -298,6 +298,29 @@ actor FaceStore {
         try? modelContext.save()
     }
 
+    /// 人物クラスタ src を dst に統合する（同一人物が 2 クラスタに割れたときの修正）。
+    /// src の顔を全て dst へ付け替え、重心（sum/count）を合流し、src のクラスタ行を削除する。
+    /// 名前・代表顔は dst を優先し、dst が未設定のときだけ src から引き継ぐ。
+    func mergeClusters(from srcID: Int, into dstID: Int) {
+        guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return }
+        // 顔を一括付け替え（DetectedFace.clusterID）。
+        for f in faces(inCluster: srcID) { f.clusterID = dstID }
+        // 重心（生合計と件数）を合流。
+        if let sSum = ClipMath.decodeHalf(src.sum), let dSum = ClipMath.decodeHalf(dst.sum) {
+            let merged = FaceClustering.merging(sumA: dSum, countA: dst.count,
+                                                sumB: sSum, countB: src.count)
+            dst.sum = ClipMath.encodeHalf(merged.sum)
+            dst.count = merged.count
+        } else {
+            dst.count += src.count
+        }
+        if (dst.name?.isEmpty ?? true), let n = src.name, !n.isEmpty { dst.name = n }
+        if dst.coverFaceID == nil { dst.coverFaceID = src.coverFaceID }
+        modelContext.delete(src)
+        try? modelContext.save()
+        clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次スキャンで再構築）
+    }
+
     /// 全消去（再スキャン用）。
     func reset() {
         try? modelContext.delete(model: DetectedFace.self)
