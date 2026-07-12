@@ -38,17 +38,13 @@ public struct DropboxActivityBar: View {
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            // サムネイル並列スロット（レーン LED）。
+            // サムネイル並列スロット（レーン LED）。レーン数は容量固定なので幅は一定。
+            // 先読み待ち（pending）は塗りの有無ではなく、待機がある間だけレーン末尾を薄く点す。
             HStack(spacing: 3) {
                 ForEach(0..<max(m.thumbnailSlotCapacity, 1), id: \.self) { i in
                     Capsule(style: .continuous)
                         .fill(i < m.thumbnailActiveSlots ? Color.blue : Color.secondary.opacity(0.25))
                         .frame(width: 5, height: 11)
-                }
-                if m.thumbnailPending > 0 {
-                    Text("⟳\(m.thumbnailPending)")
-                        .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -60,24 +56,24 @@ public struct DropboxActivityBar: View {
 
             // フル画像ダウンロード。
             channelLamp(systemName: "arrow.down.circle.fill",
-                        active: m.fullImageActive > 0, count: m.fullImageActive, color: .teal)
+                        active: m.fullImageActive > 0, color: .teal)
             // バックアップアップロード。
             channelLamp(systemName: "arrow.up.circle.fill",
-                        active: m.backupActive, count: 0, color: .orange)
+                        active: m.backupActive, color: .orange)
 
             divider
 
             // ── バックグラウンド処理 ──
-            // AI 埋め込み（残り枚数を併記）。
-            bgLamp("sparkles", active: bg.isEmbedding, color: .purple, count: bg.embedRemaining)
+            // AI 埋め込み。
+            bgLamp("sparkles", active: bg.isEmbedding, color: .purple)
             // 自動アルバム生成。
             bgLamp("rectangle.stack.fill", active: bg.isGeneratingAlbums, color: .blue)
             // 場所スキャン。
             bgLamp("mappin.and.ellipse", active: bg.isScanningPlaces, color: .green)
             // アルバム走査。
             bgLamp("photo.on.rectangle", active: bg.isScanningAlbums, color: .green)
-            // ピープル（顔スキャン・残り枚数を併記）。
-            bgLamp("person.2.fill", active: bg.isScanningFaces, color: .indigo, count: bg.faceScanRemaining)
+            // ピープル（顔スキャン）。
+            bgLamp("person.2.fill", active: bg.isScanningFaces, color: .indigo)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
@@ -122,38 +118,20 @@ public struct DropboxActivityBar: View {
             .foregroundStyle(color)
     }
 
-    // 背景処理ランプ（稼働中はパルス、count>0 で枚数併記）。
-    @ViewBuilder
-    private func bgLamp(_ systemName: String, active: Bool, color: Color, count: Int = 0) -> some View {
-        HStack(spacing: 2) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? color : Color.secondary.opacity(0.3))
-                .symbolEffect(.pulse, options: .repeating, isActive: active)
-            if active, count > 0 {
-                Text(compactCount(count))
-                    .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-        }
+    // 背景処理ランプ（稼働中は色＋パルス）。数値は出さない（幅を固定に保つため。残り枚数は
+    // 設定「AI 解析の状況」で確認できる）。
+    private func bgLamp(_ systemName: String, active: Bool, color: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(active ? color : Color.secondary.opacity(0.3))
+            .symbolEffect(.pulse, options: .repeating, isActive: active)
     }
 
-    private func compactCount(_ n: Int) -> String {
-        n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)"
-    }
-
-    @ViewBuilder
-    private func channelLamp(systemName: String, active: Bool, count: Int, color: Color) -> some View {
-        HStack(spacing: 2) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? color : Color.secondary.opacity(0.3))
-            if active, count > 1 {
-                Text("\(count)")
-                    .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-        }
+    // Dropbox 通信ランプ（稼働中は色）。こちらも数値は出さない（幅固定）。
+    private func channelLamp(systemName: String, active: Bool, color: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(active ? color : Color.secondary.opacity(0.3))
     }
 
     private func syncColor(_ s: DropboxActivityMonitor.SyncActivity) -> Color {
