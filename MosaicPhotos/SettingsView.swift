@@ -57,6 +57,13 @@ struct SettingsView: View {
 
             Section("Albums & Search") {
                 NavigationLink {
+                    detail(L("AI Analysis")) {
+                        AIAnalysisStatusView(engine: autoAlbumEngine, people: peopleEngine)
+                    }
+                } label: {
+                    row(L("AI Analysis"), systemImage: "wand.and.stars", value: analysisStatusText)
+                }
+                NavigationLink {
                     detail(L("Auto Albums")) { AutoAlbumSettingsView(engine: autoAlbumEngine) }
                 } label: {
                     row(L("Auto Albums"), systemImage: "sparkles")
@@ -149,6 +156,15 @@ struct SettingsView: View {
         Form { content() }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// AI Analysis の行に出す状態（解析中ならその旨、それ以外は inline 表示なし）。
+    private var analysisStatusText: String? {
+        let m = BackgroundActivityMonitor.shared
+        if autoAlbumEngine.isTagging || m.isEmbedding || peopleEngine.isScanning {
+            return L("Analyzing…")
+        }
+        return nil
     }
 
     private var dropboxStatusText: String? {

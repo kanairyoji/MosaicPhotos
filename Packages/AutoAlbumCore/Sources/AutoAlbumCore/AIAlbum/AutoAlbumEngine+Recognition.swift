@@ -137,6 +137,18 @@ extension AutoAlbumEngine {
         return (await tagged, await untagged)
     }
 
+    /// 画像解析の進捗スナップショット（ユーザー向け「AI 解析の状況」画面用）。
+    /// `total`（取り込み済み写真数＝分母）と、各パスの完了数を 1 回で取得する。
+    /// 完了時刻は `AnalysisActivity.lastActivity(_:)` で別途読む（UserDefaults・同期）。
+    public func analysisProgress() async -> AnalysisProgress {
+        async let total = store.enrichmentCount()
+        async let embedded = store.embeddedCount()
+        async let tagged = tagStore.taggedCount()
+        async let captioned = tagStore.captionedCount()
+        return AnalysisProgress(total: await total, embedded: await embedded,
+                                sceneTagged: await tagged, captioned: await captioned)
+    }
+
     /// 全写真の認識結果（CLIP 埋め込み・キャプション）を消去し、最新ロジックで一から付け直す。
     /// 「再解析」用。完了まで await する（UI はスピナー表示）。
     public func reanalyzePhotos() async {

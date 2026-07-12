@@ -117,6 +117,7 @@ final class PhotoTagger {
                 for perceived in results { merged.merge(perceived) { a, _ in a } }
                 let withVector = merged.values.filter { $0.clipVector != nil }.count
                 if !merged.isEmpty { await store.applyPerception(merged) }
+                if !merged.isEmpty { AnalysisActivity.recordActivity(.embeddings) }
                 newSinceNotify.append(contentsOf: merged.compactMap { $0.value.clipVector != nil ? $0.key : nil })
                 processed += merged.count
 

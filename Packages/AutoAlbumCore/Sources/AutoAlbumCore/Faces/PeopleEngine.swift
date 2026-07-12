@@ -126,6 +126,14 @@ public final class PeopleEngine {
         await store.scannedFaceCounts()
     }
 
+    /// 顔スキャンの進捗統計（ユーザー向け「AI 解析の状況」画面用）。
+    /// `scanned`＝スキャン済み写真数、`faces`＝検出顔総数。件数取得のみで軽い（辞書は返さない）。
+    public func scanStats() async -> (scanned: Int, faces: Int) {
+        async let scanned = store.scannedCount()
+        async let faces = store.faceCount()
+        return (await scanned, await faces)
+    }
+
     /// 代表写真の選択候補（クラスタ内の顔・写真ごと）。
     public func coverCandidates(clusterID: Int) async -> [PersonInfo.Face] {
         await store.facesForCluster(clusterID: clusterID)

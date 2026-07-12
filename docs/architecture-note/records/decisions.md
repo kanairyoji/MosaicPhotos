@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-27 AI 解析の進捗をユーザー向けに可視化（各パスの最終実行時刻を永続化）
+- 状態: 採用
+- 文脈: オンデバイス AI（意味検索の CLIP 埋め込み・シーンタグ・キャプション・顔スキャン）は既定でフォアグラウンド停止＝夜間トリクル（ADR-25）のため、ユーザーからは「動いているのか・どこまで済んだのか」が全く見えなかった。進捗の数値は Developer Options や AutoAlbumSettings に断片的に出ていたが、デバッグ用で分散し、最終実行時刻はBGタスク全体（`bgTaskLastRun`）しか無かった。
+- 決定: 設定「Albums & Search」に**ユーザー向け専用画面「AI Analysis（AI 解析の状況）」**を新設。(1) 各パスの「完了数／総数（進捗バー＋%）」を表示（分母は取り込み済み写真数＝`enrichmentCount`。CLIP/タグ/キャプションで共有、顔は端末写真数）。(2) **各パスの最終実行時刻を新規に永続化**＝`AnalysisActivity`（UserDefaults・パス別キー）を各タガーの**バッチ確定点で記録**（実際に 1 枚以上処理したときだけ＝空振りで更新しない＝「止まっている」を正しく反映）。(3) 「解析中」は `BackgroundActivityMonitor`（ライブ）を body 直読みで即時反映。(4) 集約取得は `AutoAlbumEngine.analysisProgress()`（1 回で total/embedded/sceneTagged/captioned）と `PeopleEngine.scanStats()` を新設（従来 internal だった TagStore/FaceStore の件数を public 委譲で薄く露出）。キャプション/顔はモデル未同梱ならセクション非表示。デバッグ用の詳細（Developer Options）は従来どおり別に残す。
+- 結果: 「動いていない／完了したか分からない」が解消。文字列は英語 base＋日本語訳を String Catalog に追加（補間キーは位置指定 `%2$lld…%1$lld` で語順対応）。トレードオフは公開 API と UserDefaults キーが増える点、及び分母を `enrichmentCount` で近似する点（取り込み前の写真は母数に入らない＝生成前は 0/0 と出る）。
+- 関連: `MosaicPhotos/Settings/AIAnalysisStatusView.swift`、`AutoAlbumCore/AnalysisActivity.swift`（`AnalysisProgress` 含む）、`AutoAlbumEngine+Recognition.analysisProgress()`、`PeopleEngine.scanStats()`、各タガーのバッチ確定点。ADR-25（夜間トリクル）。
+
 ## ADR-1 検索を語彙ゼロのオープン語彙 CLIP に一本化
 - 状態: 採用
 - 文脈: 固定タグ方式は語彙外検索に弱く、辞書の保守も負担。

@@ -21,6 +21,16 @@ func localImageRefKeys() async -> [String] {
     }.value
 }
 
+/// 端末写真（画像）の総数。顔スキャンの進捗の分母（AI 解析の状況画面）に使う。
+/// `fetchAssets(...).count` は遅延評価なので列挙より軽い。取得はメインスレッド外。
+func localImagePhotoCount() async -> Int {
+    await Task.detached(priority: .utility) {
+        let opts = PHFetchOptions()
+        opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        return PHAsset.fetchAssets(with: opts).count
+    }.value
+}
+
 /// お気に入りマークの端末写真（画像）の refKey 集合（"L-…"）。
 /// ピープルの代表写真の自動選択（お気に入り優先）に使う。列挙はメインスレッド外。
 func favoriteImageRefKeys() async -> Set<String> {

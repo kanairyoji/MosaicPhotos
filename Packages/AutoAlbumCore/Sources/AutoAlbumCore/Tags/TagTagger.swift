@@ -65,6 +65,7 @@ final class TagTagger {
                 guard !results.isEmpty else { return .stop }
                 await store.recordTags(results)
                 processed += results.count
+                AnalysisActivity.recordActivity(.sceneTags)
                 onProgress(max(0, todo.count - processed))
                 if processed % 256 == 0 {
                     Diagnostics.mark("tags: \(processed)/\(todo.count) tagged")
@@ -101,6 +102,7 @@ final class TagTagger {
                 guard !results.isEmpty else { return .stop }
                 await store.recordCaptions(results)
                 processed += results.count
+                AnalysisActivity.recordActivity(.captions)
                 if processed % 64 == 0 { Diagnostics.mark("captions: \(processed) done") }
                 return .proceed
             })

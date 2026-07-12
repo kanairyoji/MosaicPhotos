@@ -79,6 +79,7 @@ final class FaceTagger {
                 facesFound += records.reduce(0) { $0 + $1.faces.count }
                 await store.recordScans(records)   // T3: save はバッチ 1 回
                 processed += batch.count
+                AnalysisActivity.recordActivity(.faces)
                 onProgress(max(0, todo.count - processed))
 
                 if (batchIndex + 1) % 8 == 0 {
