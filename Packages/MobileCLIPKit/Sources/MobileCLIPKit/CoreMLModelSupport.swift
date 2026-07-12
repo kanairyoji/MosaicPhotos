@@ -13,10 +13,14 @@ enum CoreMLModelLoader {
     /// ランタイム共通の MLModelConfiguration。
     /// シミュレータは MPSGraph/ANE バックエンドが無く .all だと Espresso 例外で推論が失敗するため
     /// CPU に固定する（実機は .all のまま ANE/GPU を活用）。
-    static func makeConfiguration() -> MLModelConfiguration {
+    /// `avoidNeuralEngine`: 実機でも ANE を使わず CPU+GPU に固定する。Florence(VLM) の encoder-decoder は
+    /// cross-attention の ANE 数値が不安定で、全写真同一の無関係キャプションになる不具合が出たため VLM で使う。
+    static func makeConfiguration(avoidNeuralEngine: Bool = false) -> MLModelConfiguration {
         let config = MLModelConfiguration()
         #if targetEnvironment(simulator)
         config.computeUnits = .cpuOnly
+        #else
+        if avoidNeuralEngine { config.computeUnits = .cpuAndGPU }
         #endif
         return config
     }

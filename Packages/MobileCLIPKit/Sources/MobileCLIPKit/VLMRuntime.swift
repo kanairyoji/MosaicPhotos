@@ -67,7 +67,9 @@ final class VLMRuntime: @unchecked Sendable {
             return nil
         }
         let started = Date()
-        let mlConfig = CoreMLModelLoader.makeConfiguration()
+        // Florence は encoder-decoder（cross-attention）で、実機 ANE だと数値が壊れ全写真同一の
+        // 無関係キャプションになる（Mac の CPU_AND_NE では正常）。ANE を避けて CPU+GPU で走らせる。
+        let mlConfig = CoreMLModelLoader.makeConfiguration(avoidNeuralEngine: true)
         guard let visionModel = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
               let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig)
         else {
@@ -125,6 +127,8 @@ final class VLMRuntime: @unchecked Sendable {
 
         let text = m.tokenizer.decode(generated)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let idsStr = generated.prefix(8).map(String.init).joined(separator: " ")
+        Diagnostics.mark("VLM caption ids=[\(idsStr)] text=\(text.prefix(60))")
         return text.isEmpty ? nil : text
     }
 

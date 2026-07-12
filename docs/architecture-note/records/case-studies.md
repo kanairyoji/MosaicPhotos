@@ -21,6 +21,13 @@
 
 ---
 
+## Florence キャプションが実機で全写真同一の無関係テキストになる（ANE の cross-attention）
+- 症状: VLM を Florence-2-base に替えたら、実機で生成されるキャプションが**どの写真も "Trump doing from…" 等の同一・無関係テキスト**になる（「説明を確認」画面で発覚）。Mac（coremltools・CPU_AND_NE）では正しく "The image shows a gas pump with a sign that reads Please Prepay…" が出る。
+- 原因: **実機 Neural Engine（ANE）が Florence の encoder-decoder の cross-attention を正しく計算しない**。同梱モデル・Swift の貪欲デコード・トークナイザ復号はすべて正しく（Mac Core ML で生成IDが `[0,133('The'),2274('image')…]` と検証済み・base-vocab/Swift-merge どちらの復号も一致）、実機 `.all`（ANE 優先）でのみ壊れる。SmolVLM は**デコーダ単独**だったため ANE で問題が出ず、encoder-decoder に替えて初めて顕在化した。切り分け: (1) Mac Core ML で ID と復号が正しいことを確認 → Swift ロジック/資産は無罪、(2) 差分は実機 ANE のみ → ANE 起因と断定。
+- 対処: **VLM だけ ANE を避けて CPU+GPU で走らせる**（`CoreMLModelLoader.makeConfiguration(avoidNeuralEngine:)` を追加し `computeUnits = .cpuAndGPU`）。CLIP/顔は `.all` のまま。誤キャプションは `captionModelVersion` を 2→3 に上げて起動時に全消去＆付け直し。確認用に `VLMRuntime.caption` へ生成ID＋テキストの Diagnostics ログを追加。
+- 関連: `MobileCLIPKit/CoreMLModelSupport.makeConfiguration(avoidNeuralEngine:)`・`VLMRuntime.loadAll`（VLM 用 config）・`AutoAlbumEngine.captionModelVersion`(2→3)・`scripts/convert_florence.py`。[[ADR-32]]。
+- 残課題: CPU+GPU でも駄目なら CPU_ONLY（確実だが低速）へ。実機での速度・正しさは要再計測（Mac 値は ~0.4秒/枚だが ANE 前提だった）。座標bin後処理を使う OCR タスク化は今後。
+
 ## AI アルバム作成/更新でシートが固まって見える（重い検索を待ってから閉じていた）
 - 症状: AI アルバムのコンポーザーで「アルバムを更新／作成」を押すと画面が固まる。タップに反応した手応えが無く、しばらくして閉じる。
 - 原因: `AIAlbumComposerView.submit()` が `await engine.updateAIAlbum/createAIAlbum` の**完了を待ってから** `dismiss()` していた。作成/更新は決定的プレビューでも「全写真メタの取得（`allEnrichedPhotosLite`・85k）＋タグ台帳取得（`allTags`）＋数万件×512 次元のスコアリング」を伴い数秒かかる。スコアリング自体は `Task.detached` でオフメインだが、シートは結果を待つ間ずっと開いたままで、`BusyLabel`（"Searching…"）は出るものの体感は「固まった」。ユーザーはタップが効いたのかも分からなかった。

@@ -159,7 +159,7 @@ public final class AutoAlbumEngine {
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
     private static let perceptionVersion = 8   // v8: CLIP を INT8 量子化（重み半減・精度ほぼ不変）→全再埋め込み（ADR-31）
-    private static let captionModelVersion = 2 // v2: VLM を SmolVLM→Florence-2-base へ差替→全キャプション付け直し（ADR-32）
+    private static let captionModelVersion = 3 // v3: Florence を ANE→CPU+GPU に変更（ANE で全写真同一の誤キャプション）→誤キャプション破棄＆付け直し（ADR-32）
 
     public func loadOrGenerate() async {
         ensureObserver()
