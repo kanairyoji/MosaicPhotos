@@ -100,6 +100,11 @@ struct PhotoInfoPanel: View {
                     }
                 }
             }
+        } else {
+            // insight のロード完了前（closure が SwiftData/顔照会で少し遅い等）。
+            // ここを空にすると「AI 解析欄が丸ごと消える」ので、必ずロード中を出す（空欄に見せない）。
+            Label(L("AI analysis: loading…"), systemImage: "hourglass")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
