@@ -3,7 +3,7 @@ import CoreML
 import Foundation
 import MosaicSupport
 
-/// SmolVLM モデルが同梱されているか、ロードを発生させずに判定する（Developer Options 用）。
+/// VLM モデルが同梱されているか、ロードを発生させずに判定する（Developer Options 用）。
 public enum VLM {
     public static var modelsBundled: Bool {
         Bundle.main.url(forResource: "VLMVision", withExtension: "mlmodelc") != nil
@@ -11,34 +11,28 @@ public enum VLM {
     }
 }
 
-/// 同梱 SmolVLM（写真キャプション生成）のランタイム。
-/// `scripts/build_smolvlm.sh` の生成物（MosaicPhotos/VLM/・.gitignore 対象）を遅延ロードする。
-/// 未同梱でもアプリは動作し、キャプション（AI アルバムの精度向上）だけ無効化される。
+/// 同梱 VLM（写真キャプション生成）のランタイム。採用モデルは **Florence-2-base（MIT）**（ADR-32）。
+/// `scripts/build_florence.sh` の生成物（MosaicPhotos/VLM/・.gitignore 対象）を遅延ロードする。
+/// 未同梱でもアプリは動作し、キャプション（AI アルバムの精度向上・フル画像の AI description）だけ無効化される。
 ///
-/// 実行方式（変換スクリプトの割り切りと対）:
-/// - デコーダは KV キャッシュ無しの固定長（256）全系列 forward。各ステップで全系列を流し、
-///   末尾位置の logits を貪欲に選ぶ。135M・短出力（〜48 トークン）なら夜間バッチに十分。
-/// - トークン埋め込みは vlm_embed_tokens.bin（fp16）を Swift 側でルックアップし、
-///   `<image>` 位置に視覚埋め込み（VLMVision の出力）を差し込む。
+/// 実行方式（変換スクリプトの割り切りと対・encoder-decoder 型）:
+/// - VLMVision（エンコーダ）: 画像1枚 → encoder 隠れ状態＋mask（タスク "<DETAILED_CAPTION>" と画像正規化を内包）。
+/// - VLMDecoder（デコーダ）: decoder_input_ids[1,MAXLEN] を固定長で全系列 forward し、現在位置の logits を
+///   貪欲に選ぶ（KV キャッシュ無し・動的長は ANE 非対応のため固定長＝SmolVLM 時代と同方式）。
+/// - SmolVLM と違い**トークン埋め込み表は不要**（Florence デコーダはトークン ID を直接受ける）。復号のみ
+///   `GPT2Tokenizer`（byte-level BPE・BART も同一写像）で行う。
 final class VLMRuntime: @unchecked Sendable {
     static let shared = VLMRuntime()
 
     private static let log = LogChannel(subsystem: "com.mosaicphotos.MobileCLIPKit", label: "VLM")
 
     private struct Config: Decodable {
-        let hiddenSize: Int
-        let vocabSize: Int
-        let seqLen: Int
+        let maxLen: Int
         let maxNewTokens: Int
-        let imageSize: Int
-        let imageSeqLen: Int
-        let imageTokenId: Int
-        let fakeImageTokenId: Int
-        let globalImgTokenId: Int
-        let endOfUtteranceId: Int
+        let vocabSize: Int
+        let decoderStartTokenId: Int
         let eosTokenId: Int
-        let promptPrefix: String
-        let promptSuffix: String
+        let padTokenId: Int
     }
 
     /// 同梱判定（ロードを発生させない）。
@@ -52,9 +46,8 @@ final class VLMRuntime: @unchecked Sendable {
 
     private struct Loaded {
         let config: Config
-        let vision: CoreMLModelHandle   // 入力名・画像制約込み
+        let vision: CoreMLModelHandle   // 入力名・画像制約込み（image → encoder_hidden/encoder_mask）
         let decoder: MLModel
-        let embeddings: Data            // fp16 (vocab, hidden) — 行ルックアップ
         let tokenizer: GPT2Tokenizer
     }
 
@@ -68,7 +61,6 @@ final class VLMRuntime: @unchecked Sendable {
               let cfg = try? JSONDecoder().decode(Config.self, from: Data(contentsOf: cfgURL)),
               let visionURL = CoreMLModelLoader.bundledModelURL("VLMVision"),
               let decoderURL = CoreMLModelLoader.bundledModelURL("VLMDecoder"),
-              let embedURL = bundle.url(forResource: "vlm_embed_tokens", withExtension: "bin"),
               let tokenizer = GPT2Tokenizer()
         else {
             log.info("VLM not bundled — captions disabled")
@@ -77,15 +69,9 @@ final class VLMRuntime: @unchecked Sendable {
         let started = Date()
         let mlConfig = CoreMLModelLoader.makeConfiguration()
         guard let visionModel = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
-              let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig),
-              // 56MB は mmap（alwaysMapped）で常駐を抑える。
-              let embeddings = try? Data(contentsOf: embedURL, options: .alwaysMapped)
+              let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig)
         else {
             log.error("VLM bundled but failed to load")
-            return nil
-        }
-        guard embeddings.count == cfg.vocabSize * cfg.hiddenSize * 2 else {
-            log.error("VLM embed size mismatch: \(embeddings.count)")
             return nil
         }
         let vision = CoreMLModelHandle(model: visionModel)
@@ -93,85 +79,56 @@ final class VLMRuntime: @unchecked Sendable {
             log.error("VLM vision input constraint missing")
             return nil
         }
-        log.info("VLM \(CoreMLModelLoader.loadStamp(since: started))")
-        return Loaded(config: cfg, vision: vision, decoder: decoder, embeddings: embeddings,
-                      tokenizer: tokenizer)
+        log.info("VLM(Florence) \(CoreMLModelLoader.loadStamp(since: started))")
+        return Loaded(config: cfg, vision: vision, decoder: decoder, tokenizer: tokenizer)
     }
 
     // MARK: - キャプション生成
 
-    /// 写真 1 枚 → 短い英語キャプション（貪欲デコード・失敗は nil）。1〜2 秒/枚（実機）。
+    /// 写真 1 枚 → 英語キャプション（貪欲デコード・失敗は nil）。実機 Core ML で 〜0.5 秒/枚。
     func caption(for cgImage: CGImage) async -> String? {
         guard let m = load() else { return nil }
         let cfg = m.config
 
-        // 1) 視覚埋め込み（1, imageSeqLen, hidden）
+        // 1) エンコーダ: 画像 → encoder_hidden [1,N,D], encoder_mask [1,N]
         guard let provider = m.vision.imageProvider(for: cgImage),
               let vout = try? await m.vision.model.prediction(from: provider),
-              let imageEmbeds = vout.featureValue(for: "image_embeds")?.multiArrayValue
+              let encoderHidden = vout.featureValue(for: "encoder_hidden")?.multiArrayValue,
+              let encoderMask = vout.featureValue(for: "encoder_mask")?.multiArrayValue
         else { return nil }
 
-        // 2) プロンプトのトークン列（<image> ブロックを展開）
-        var ids = m.tokenizer.encode(cfg.promptPrefix)
-        ids.append(cfg.fakeImageTokenId)
-        ids.append(cfg.globalImgTokenId)
-        ids.append(contentsOf: Array(repeating: cfg.imageTokenId, count: cfg.imageSeqLen))
-        ids.append(cfg.fakeImageTokenId)
-        ids.append(contentsOf: m.tokenizer.encode(cfg.promptSuffix))
-        guard ids.count + 4 < cfg.seqLen else { return nil }
+        // 2) デコーダ入力バッファ（固定長・PAD 埋め・先頭に decoder_start）
+        guard let decIds = try? MLMultiArray(shape: [1, NSNumber(value: cfg.maxLen)], dataType: .int32)
+        else { return nil }
+        let idPtr = decIds.dataPointer.bindMemory(to: Int32.self, capacity: cfg.maxLen)
+        for i in 0..<cfg.maxLen { idPtr[i] = Int32(cfg.padTokenId) }
+        idPtr[0] = Int32(cfg.decoderStartTokenId)
 
-        // 3) inputs_embeds を構築（fp16・<image> 位置に視覚埋め込みを差し込む）
-        guard let embeds = try? MLMultiArray(shape: [1, NSNumber(value: cfg.seqLen),
-                                                     NSNumber(value: cfg.hiddenSize)],
-                                             dataType: .float16) else { return nil }
-        let embedPtr = embeds.dataPointer.bindMemory(to: UInt16.self,
-                                                     capacity: cfg.seqLen * cfg.hiddenSize)
-        var imageRow = 0
-        m.embeddings.withUnsafeBytes { (table: UnsafeRawBufferPointer) in
-            let tablePtr = table.bindMemory(to: UInt16.self)
-            let imgPtr = imageEmbeds.dataPointer.bindMemory(to: UInt16.self,
-                                                            capacity: cfg.imageSeqLen * cfg.hiddenSize)
-            for (pos, id) in ids.enumerated() {
-                let dst = embedPtr + pos * cfg.hiddenSize
-                if id == cfg.imageTokenId {
-                    let src = imgPtr + imageRow * cfg.hiddenSize
-                    dst.update(from: src, count: cfg.hiddenSize)
-                    imageRow += 1
-                } else {
-                    let src = tablePtr.baseAddress! + id * cfg.hiddenSize
-                    dst.update(from: src, count: cfg.hiddenSize)
-                }
-            }
-        }
-
-        // 4) 貪欲デコード（各ステップで全系列 forward・末尾 logits の argmax）
+        // 3) 貪欲デコード（各ステップで全系列 forward・現在位置 step の logits を argmax）
         var generated: [Int] = []
-        var length = ids.count
-        for _ in 0..<cfg.maxNewTokens {
+        let steps = min(cfg.maxNewTokens, cfg.maxLen - 1)
+        for step in 0..<steps {
             if Task.isCancelled { return nil }
-            guard length < cfg.seqLen,
-                  let dprov = try? MLDictionaryFeatureProvider(
-                    dictionary: ["inputs_embeds": MLFeatureValue(multiArray: embeds)]),
-                  let dout = try? await m.decoder.prediction(from: dprov),
+            guard let prov = try? MLDictionaryFeatureProvider(dictionary: [
+                "decoder_input_ids": MLFeatureValue(multiArray: decIds),
+                "encoder_hidden": MLFeatureValue(multiArray: encoderHidden),
+                "encoder_mask": MLFeatureValue(multiArray: encoderMask),
+            ]),
+                  let dout = try? await m.decoder.prediction(from: prov),
                   let logits = dout.featureValue(for: "logits")?.multiArrayValue
             else { break }
-            let next = Self.argmaxRow(logits, row: length - 1, vocab: cfg.vocabSize)
-            if next == cfg.eosTokenId || next == cfg.endOfUtteranceId { break }
+            let next = Self.argmaxRow(logits, row: step, vocab: cfg.vocabSize)
+            if next == cfg.eosTokenId { break }
             generated.append(next)
-            // 次トークンの埋め込みを書き込んで系列を 1 伸ばす。
-            m.embeddings.withUnsafeBytes { (table: UnsafeRawBufferPointer) in
-                let tablePtr = table.bindMemory(to: UInt16.self)
-                let dst = embedPtr + length * cfg.hiddenSize
-                dst.update(from: tablePtr.baseAddress! + next * cfg.hiddenSize, count: cfg.hiddenSize)
-            }
-            length += 1
+            idPtr[step + 1] = Int32(next)   // 系列を 1 伸ばす
         }
+
         let text = m.tokenizer.decode(generated)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
     }
 
-    /// logits (1, seqLen, vocab) fp16 の指定行 argmax。
+    /// logits (1, maxLen, vocab) fp16 の指定行 argmax。
     private static func argmaxRow(_ logits: MLMultiArray, row: Int, vocab: Int) -> Int {
         let ptr = logits.dataPointer.bindMemory(to: UInt16.self, capacity: logits.count)
         let base = row * vocab

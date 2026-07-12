@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-32 VLM キャプションを SmolVLM-256M から Florence-2-base へ置き換える
+- 状態: 採用
+- 文脈: 同梱 VLM（SmolVLM-256M・Apache-2.0）は 1枚 1〜2秒（実機）と遅く、夜間バッチでキャプションが行き渡らない一因だった（ADR-30）。「VLM でしか取れない情報は残す」前提で、より軽量・高速なモバイル向け VLM を検討。候補比較（`scripts/bench_vlm.py`・Mac PyTorch MPS）で **Florence-2-base（MIT・約231M）** が SmolVLM（256M）比で自然文キャプションが約5倍速く、内容は同等以上（OCR も滲む）と判明。さらに **Core ML 変換 PoC**（`scripts/convert_florence_poc.py`）で、実機出荷経路の Core ML/ANE でも動作し **~0.4秒/枚**（エンコーダ150ms＋デコーダ6〜7ms/token）＝SmolVLM の 1〜2秒に対し 3〜5倍速が保たれることを確認。
+- 決定: **Florence-2-base を採用**（タスク `<DETAILED_CAPTION>` を焼き込み・1文〜数文の自然文説明）。実行方式は encoder-decoder 型: **VLMVision**（画像→encoder隠れ状態＋mask・画像正規化 mean/std とタスクをエンコーダに内包・ImageType scale=1/255）＋ **VLMDecoder**（decoder_input_ids[1,MAXLEN] を固定長で全系列 forward し現在位置の logits を貪欲選択・KVキャッシュ無し・動的長は ANE 非対応のため固定長＝SmolVLM 時代と同方式）。SmolVLM と違い**トークン埋め込み表は不要**（デコーダがトークン ID を直接受ける）＝Swift は復号のみ（`GPT2Tokenizer`・byte-level BPE は BART も同一写像）。encoder/decoder 間は fp16 で直結（キャスト copy 回避）。ビルドは `scripts/build_florence.sh`＋`convert_florence.py`（transformers 4.49 固定＝remote code の都合・ランタイムは Core ML なので無関係）。`captionModelVersion`(1→2) を採番し、起動時 `TagStore.resetCaptions()` で旧 SmolVLM キャプションを 1回クリア→新モデルで付け直す（`captionPending` は `caption==nil` のみ対象＝クリアしないと旧が残るギャップを塞ぐ）。ライセンスは HF モデルカードで MIT を確認。
+- 結果: キャプションが 3〜5倍速くなり、内容は同等以上＋看板文字（OCR）まで拾える。同梱サイズは 442MB（VLMVision 258＋VLMDecoder 184）で SmolVLM 491MB より僅かに小。トレードオフ: (1) 全写真の再キャプション（夜間・段階的）。(2) 固定長デコーダは O(L²) 再計算だが 〜48 token で ~0.3秒＝許容。(3) Florence の remote code は transformers 4.49 でしか変換できない（ビルド環境の固定で対応）。(4) タスク展開の落とし穴＝task_ids は processor 経由で作る必要（literal トークン化はタスク名をエコー・変換時に踏んで修正）。(5) 検証は Mac Core ML(CPU_AND_NE)＋Python 復号一致まで（実機 ANE の最終確認は要・シミュレータは VLM スキップ設計）。phase 2 で Florence の INT8 化（~230MB）や OCR/領域タスクの活用余地。
+- 関連: `MobileCLIPKit/VLMRuntime`(Florence 化)・`GPT2Tokenizer`(復号流用)・`VisionTagAdapter`(seam 不変)・`scripts/convert_florence.py`/`build_florence.sh`/`convert_florence_poc.py`/`bench_vlm.py`・`AutoAlbumEngine.captionModelVersion`(1→2)・`TagStore.resetCaptions`・`AutoAlbumSettingsKeys.captionModelVersion`・`LicensesView`(MIT 表記)。[[ADR-30]]（インターリーブ）・[[ADR-24]]（多層 AI）。
+
 ## ADR-31 CLIP を INT8 重み量子化して容量を半減する（精度ほぼ不変）
 - 状態: 採用
 - 文脈: 同梱 CLIP（OpenCLIP ViT-B-32/DataComp・fp16）は 289MB（画像168＋テキスト121）と大きい。「似た精度で軽く」を目標に、現行fp16／INT8量子化／TinyCLIP-40M の3構成を Core ML で実測比較した（`scripts/bench_clip.py`・Imagenette×1000クラス zero-shot・Mac CPU）。結果: 現行 289MB/75.0%、**INT8 145MB/76.0%**、TinyCLIP 161MB/61.0%（fp32では67%だが fp16変換で低下）。TinyCLIP は −14pt と精度低下が大きく、テキスト側の語彙埋め込み表で 161MB と INT8 より重い＝不採用。

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# ⚠️ 後継あり: 現行の VLM は Florence-2-base（scripts/build_florence.sh・ADR-32）。本スクリプトは
+#    旧 SmolVLM 用で参考のため残置（Florence の方が 3〜5倍速く OCR も拾える）。新規は build_florence.sh を使う。
+#
 # 同梱する小型 VLM（写真キャプション生成＝AI アルバムの精度向上用）を Core ML へ変換して配置する。
 # ※ ローカルの Mac で実行（ネットDL・Python・coremltools が必要）。build_facenet.sh と同流儀。
 #

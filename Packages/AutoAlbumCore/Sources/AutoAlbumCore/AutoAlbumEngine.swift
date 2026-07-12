@@ -159,6 +159,7 @@ public final class AutoAlbumEngine {
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
     private static let perceptionVersion = 8   // v8: CLIP を INT8 量子化（重み半減・精度ほぼ不変）→全再埋め込み（ADR-31）
+    private static let captionModelVersion = 2 // v2: VLM を SmolVLM→Florence-2-base へ差替→全キャプション付け直し（ADR-32）
 
     public func loadOrGenerate() async {
         ensureObserver()
@@ -187,6 +188,13 @@ public final class AutoAlbumEngine {
             let reset = await store.resetSceneTagged()
             UserDefaults.standard.set(Self.perceptionVersion, forKey: AutoAlbumSettingsKeys.perceptionVersion)
             Self.log.info("loadOrGenerate: perception v\(storedPerception)→\(Self.perceptionVersion), reset \(reset) photos for re-tagging")
+        }
+        // VLM モデルを差し替えたら、既存キャプションを 1 回だけクリアして新モデルで付け直す。
+        let storedCaption = UserDefaults.standard.integer(forKey: AutoAlbumSettingsKeys.captionModelVersion)
+        if storedCaption != Self.captionModelVersion {
+            let reset = await tagStore.resetCaptions()
+            UserDefaults.standard.set(Self.captionModelVersion, forKey: AutoAlbumSettingsKeys.captionModelVersion)
+            Self.log.info("loadOrGenerate: caption model v\(storedCaption)→\(Self.captionModelVersion), cleared \(reset) captions for re-captioning")
         }
         // 起動時の AI アルバム再評価は行わない（保存済みメンバーをそのまま表示）。
         // 解釈は永続化済みで、追いつきはドリフト検知（refreshIfNeeded・アイドル時）と

@@ -84,6 +84,16 @@ actor TagStore {
 
     // MARK: - キャプション（VLM・タグより後から埋まる）
 
+    /// 既存キャプションを全消去する（VLM モデル差し替え時＝`captionModelVersion` 変更で 1 回）。
+    /// caption を nil に戻すと `captionPending` が再び対象にし、新モデルで付け直される。
+    func resetCaptions() -> Int {
+        guard let records = try? modelContext.fetch(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil })) else { return 0 }
+        for r in records { r.caption = nil }
+        try? modelContext.save()
+        return records.count
+    }
+
     /// キャプション未生成（caption == nil）の件数。インターリーブの進捗判定に使う。
     func captionPendingCount() -> Int {
         (try? modelContext.fetchCount(
