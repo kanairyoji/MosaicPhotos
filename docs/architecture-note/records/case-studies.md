@@ -21,6 +21,13 @@
 
 ---
 
+## AI アルバム作成/更新でシートが固まって見える（重い検索を待ってから閉じていた）
+- 症状: AI アルバムのコンポーザーで「アルバムを更新／作成」を押すと画面が固まる。タップに反応した手応えが無く、しばらくして閉じる。
+- 原因: `AIAlbumComposerView.submit()` が `await engine.updateAIAlbum/createAIAlbum` の**完了を待ってから** `dismiss()` していた。作成/更新は決定的プレビューでも「全写真メタの取得（`allEnrichedPhotosLite`・85k）＋タグ台帳取得（`allTags`）＋数万件×512 次元のスコアリング」を伴い数秒かかる。スコアリング自体は `Task.detached` でオフメインだが、シートは結果を待つ間ずっと開いたままで、`BusyLabel`（"Searching…"）は出るものの体感は「固まった」。ユーザーはタップが効いたのかも分からなかった。
+- 対処: **作成/更新を待たずに即 dismiss** する方式へ変更。(1) `AutoAlbumEngine.beginMakeAIAlbum(id:title:criteria:)` を追加＝実処理を engine 保持のバックグラウンド Task で走らせ（シートより長生き）、`isMakingAIAlbum` フラグを立てる。(2) コンポーザーの Button は同期 `submit()` で `beginMakeAIAlbum` を呼び即 `dismiss()`。(3) 進捗フィードバックは **AI アルバムのセクションヘッダーのスピナー**（`sectionHeader("AI Albums", isBusy: engine.isMakingAIAlbum)`）で示し、完了時に `aiAlbums`（Observable）更新で自動的にカルーセルへ反映。0 件でも保存され、取り込みが進めば背景で自動的に埋まる設計は不変。空検索はボタン無効化＋`beginMakeAIAlbum` 内でも二重ガード。
+- 関連: `MosaicPhotos/Home/AIAlbumComposerView.swift`（submit を同期化・即 dismiss）/ `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.beginMakeAIAlbum` / `AutoAlbumEngine.isMakingAIAlbum` / `MosaicPhotos/Home/HomeSections.swift`（AI Albums ヘッダーの isBusy 結線）。[[ADR-23]]（解釈は作成時 1 回・プレビューは決定的）。
+- 残課題: 作成直後にアルバムがカルーセルへ現れるまで数秒あり、その間はヘッダーのスピナーのみが手掛かり（空アルバムを即挿入してから埋める方式は今回入れていない）。
+
 ## CI（iOS シミュレータ）で DropboxCore テストが 194 秒ハング→TEST FAILED
 - 症状: GitHub Actions の iOS ジョブで `DropboxCore` のテストが失敗。ログにはテストのアサーション失敗が一切無く、`Testing started completed. 194.161 sec` の後に `** TEST FAILED **`（exit 65）。ローカル（iPhone 17 Pro）では 50 テストが約 1.4 秒で成功し**再現しない**。
 - 原因: `DropboxSyncEngine.pollLoop` が、longpoll が `changes:false` を返したとき**待ちを一切入れず即座に再 longpoll する**構造だった。本番の longpoll はサーバ側で最大 30 秒ブロックするのでビジーループ化しないが、テストのスタブ（`routingStub`）は即座に返すため**タイトなビジーループ**になる。`pollLoop` は `@MainActor` なので、この busy loop が毎反復 `onStateChanged(.polling)` を叩きつつ main actor を占有し、遅い CI ランナーでは `waitUntil`/`stop()` など他の main-actor 作業が飢餓。テスト全体が進まず 194 秒で打ち切られて FAILED になっていた（ローカルは速いので `stop()` が即通り顕在化しない＝フレーク）。ジョブは `continue-on-error`（best-effort）だが赤バッジは出る。

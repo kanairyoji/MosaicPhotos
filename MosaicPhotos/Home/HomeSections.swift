@@ -187,7 +187,7 @@ extension HomeView {
                     onDelete: { album in Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) } })
             }
         } header: {
-            sectionHeader("AI Albums", isBusy: false, actionIcon: "plus",
+            sectionHeader("AI Albums", isBusy: autoAlbumEngine.isMakingAIAlbum, actionIcon: "plus",
                           onAction: { aiComposer = .create })
         }
     }

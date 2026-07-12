@@ -29,6 +29,9 @@ public final class AutoAlbumEngine {
     public private(set) var isGeneratingPath = false {
         didSet { BackgroundActivityMonitor.shared.generatingFolder = isGeneratingPath }
     }
+    /// AI アルバムを作成/更新中のフラグ（UI のスピナー用）。コンポーザーは即 dismiss し、
+    /// 実処理はバックグラウンドで進むため、AI アルバムのセクションヘッダーでこの間だけ回す。
+    public internal(set) var isMakingAIAlbum = false
     /// Vision/CLIP タグ付けの実行中フラグ（UI のスピナー用）。
     public internal(set) var isTagging = false {
         didSet {

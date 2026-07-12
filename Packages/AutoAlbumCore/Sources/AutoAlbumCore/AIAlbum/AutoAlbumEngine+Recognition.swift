@@ -54,6 +54,23 @@ extension AutoAlbumEngine {
         await makeAIAlbum(id: id, title: title, criteria: criteria)
     }
 
+    /// AI アルバムの作成/更新を**バックグラウンドで**開始する（UI を待たせない）。
+    /// コンポーザーはこれを呼んで即 dismiss してよい。進捗は `isMakingAIAlbum`（ヘッダーのスピナー）と
+    /// 完了時の `aiAlbums` 更新で反映される。`id == nil` なら新規作成、指定ありなら再設定。
+    /// 検索文が空なら何もしない（コンポーザー側でもボタンを無効化しているが二重に防ぐ）。
+    public func beginMakeAIAlbum(id: String?, title: String, criteria: String) {
+        guard !criteria.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isMakingAIAlbum = true
+        Task {
+            defer { isMakingAIAlbum = false }
+            if let id {
+                _ = await updateAIAlbum(id: id, title: title, criteria: criteria)
+            } else {
+                _ = await createAIAlbum(title: title, criteria: criteria)
+            }
+        }
+    }
+
     public func deleteAIAlbum(id: String) async {
         aiAlbums = await aiService.delete(id: id)
     }

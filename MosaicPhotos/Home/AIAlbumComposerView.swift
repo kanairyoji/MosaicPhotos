@@ -11,8 +11,6 @@ struct AIAlbumComposerView: View {
 
     @State private var title: String
     @State private var criteria: String
-    @State private var isWorking = false
-    @State private var message: String?
 
     private var isEditing: Bool { editing != nil }
 
@@ -53,18 +51,13 @@ struct AIAlbumComposerView: View {
                     }
                 }
 
-                if let message {
-                    Section { Text(message).foregroundStyle(.secondary) }
-                }
-
                 Section {
                     Button {
-                        Task { await submit() }
+                        submit()
                     } label: {
-                        BusyLabel(idle: Text(isEditing ? L("Update Album") : L("Create Album")),
-                                  busy: Text("Searching…"), isBusy: isWorking)
+                        Text(isEditing ? L("Update Album") : L("Create Album"))
                     }
-                    .disabled(isWorking || criteria.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(criteria.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .navigationTitle(isEditing ? L("Edit AI Album") : L("AI Album"))
@@ -77,22 +70,12 @@ struct AIAlbumComposerView: View {
         }
     }
 
-    private func submit() async {
-        isWorking = true
-        message = nil
-        let result: AIAlbumResult
-        if let editing {
-            result = await engine.updateAIAlbum(id: editing.id, title: title, criteria: criteria)
-        } else {
-            result = await engine.createAIAlbum(title: title, criteria: criteria)
-        }
-        isWorking = false
-        switch result {
-        case .created:
-            // 0 件でも保存される。取り込み（メタデータ/タグ付け）が進むと背景で自動的に埋まる。
-            dismiss()
-        case .empty:
-            message = L("Please describe which photos to include.")
-        }
+    private func submit() {
+        // 検索は数万件の走査で数秒かかり得るため、**この場では待たない**。
+        // 実処理はバックグラウンドで進め（engine が保持・シートより長生き）、シートは即閉じる。
+        // ⚠️ 待たせるとタップが「固まった」ように見える（実障害）。0 件でも保存され、
+        // 取り込みが進むと背景で自動的に埋まる。進捗は AI アルバムのヘッダーのスピナーで示す。
+        engine.beginMakeAIAlbum(id: editing?.id, title: title, criteria: criteria)
+        dismiss()
     }
 }
