@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-29 ピープルの人物統合と、AI アルバムの人物名検索（決定的接地＋LLM 補強）
+- 状態: 採用
+- 文脈: (1) 同一人物が顔クラスタリングで 2 人物に割れることがあり、まとめる手段が無かった（1 顔ずつの付け替えのみ）。(2) 人物アルバム名はフルネーム（「木村太郎」）が多いのに、AI アルバムのクエリで名だけ（「太郎」）や複数人物（「太郎と花子」）を指してもヒットしなかった。原因は評価（`QueryEvaluator` の people 部分一致）ではなく、**接地**（サニタイズがカタログ完全一致 or 原文出現しか通さない・"Person N" 混じりカタログ）と**解釈器の出力**（人名抽出は夜間 LLM のみ・作成時プレビューでは立たない）にあった。
+- 決定: **(A) 人物統合** — `FaceClustering.merging`（生合計の加算＝加重平均重心・1 顔ずつ adding と等価）＋`FaceStore.mergeClusters(from:into:)`（顔の一括付け替え・sum/count マージ・統合元削除・clusteringCache 無効化）＋`PeopleEngine.mergePerson`。UI は長押しメニュー「別の人物へ統合…」→ ピッカー → 確認。名前・代表写真は統合先を優先。**(B) 人物名検索** — 決定的な純ロジック `PersonNameGrounder` を主軸に据える。名前付きクラスタのフルネーム一覧（`PeopleEngine.namedClusterNames`・"Person N" 除外）をカタログに、クエリ原文から各フルネームの「全体＋前方（姓）＋後方（名）の部分文字列（長さ2以上・中間片は作らず誤爆抑制）」で照合し、該当フルネームを `.people(...)` 条件（部分一致 OR）に載せる。**作成時プレビューと夜間解釈の両方で接地**するので、LLM 非依存で即ヒットする（夜間 LLM はあだ名・ローマ字ゆれの補強）。カタログは `AutoAlbumEngine.setNamedPeopleProvider` で Composition Root から注入。視覚語抽出は人名部分を除いた残りで行う（「花子」の「花」を flower と誤抽出しないよう `strippingNames`）。
+- 結果: 割れた人物をまとめられ、「太郎」「太郎と花子」「木村（姓で同姓全員）」がヒットする。純ロジックはテスト済み（merging の加算等価・接地の姓名部分一致・中間片非マッチ・視覚語の誤抽出回避）。トレードオフ: (1) 統合は自動 undo なし（確認アラートで担保）。(2) 接地は `EnrichedPhoto.people`（索引時に焼き込み）を評価するため、リネーム/統合の直後は再エンリッチまで旧名が残り得る（既存の版管理＝criteria 変更/version bump で追従）。(3) 複数人物は OR（「両方写る」AND 生成経路は今回入れていない）。
+- 関連: `Faces/FaceClustering.merging`・`FaceStore.mergeClusters`・`PeopleEngine.mergePerson`/`namedClusterNames`、`MosaicPhotos/Home/PersonPhotosView`（PersonMergePickerView）・`PeopleActions`、`AIAlbum/PersonNameGrounder`・`QuerySpecSanitizer.addingPeople`・`AIAlbumInterpreter`（preview/interpretation）・`AIAlbumService`・`AutoAlbumEngine.setNamedPeopleProvider`・`AutoAlbumAdapters`。ADR-23（解釈の永続化）・ADR-24（people 部分一致）。
+
 ## ADR-28 フル画像の情報パネルに抽出情報を漏れなく出す（顔数・スクショ。CLIP はラベル化済み）
 - 状態: 採用
 - 文脈: 「画像から抽出した情報は全てフル画面に出したい」との要望。監査の結果、写真 1 枚から永続化している情報のうち **顔の数**（`ScannedPhoto.faceCount`・実測）と **スクリーンショット判定**（`PhotoEnrichment.isScreenshot`）が `PhotoInsight` 型に載っておらず、`insight()` が構築時に捨てていて画面に出ていなかった。CLIP 512 次元ベクトル（`PhotoEmbedding.vector`）は生では意味不明だが、既に `CLIPDisplayLabeler`（約300語ゼロショット・最大6語）で語化され Vision シーンタグと統合して「Detected」欄に表示済み（＝ベクトルのキーワード化は実装済み・眠っていない）。

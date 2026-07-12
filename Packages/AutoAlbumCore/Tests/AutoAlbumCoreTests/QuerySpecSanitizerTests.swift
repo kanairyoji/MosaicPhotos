@@ -151,6 +151,23 @@ struct QuerySpecSanitizerTests {
         #expect(neg.spec.allContentTerms.exclude == ["people"])
     }
 
+    @Test("previewInterpretation: 人物名を接地して people 条件を立てる（太郎と花子）")
+    func previewGroundsPeople() {
+        let saved = AIAlbumInterpreter.previewInterpretation(
+            criteria: "太郎と花子", now: now, namedPeople: ["木村太郎", "木村花子", "田中一郎"])
+        // people 条件に両名のフルネームが載る（部分一致・OR）。
+        let peopleTerms = saved.spec.clauses.flatMap { clause in
+            clause.conditions.compactMap { cond -> [String]? in
+                if case .people(let t) = cond { return t } else { return nil }
+            }
+        }.flatMap { $0 }
+        #expect(peopleTerms.contains("木村太郎"))
+        #expect(peopleTerms.contains("木村花子"))
+        #expect(!peopleTerms.contains("田中一郎"))
+        // 人物名に接地できたときは原文丸ごとの content 化はしない。
+        #expect(saved.spec.allContentTerms.include.isEmpty)
+    }
+
     @Test("previewInterpretation: 英語入力（レキシコン外）は原文を include に使う")
     func previewEnglishPassthrough() {
         let saved = AIAlbumInterpreter.previewInterpretation(criteria: "Ramen", now: now)

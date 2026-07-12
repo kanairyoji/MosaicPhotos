@@ -30,6 +30,8 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         tagProvider: VisionTagAdapter(cloudImage: cloudImage))
     // 顔スキャンの実測を AI アルバム評価に結線（「人が写っていない」等の除外を確実にする）。
     engine.setFaceCountsProvider { await peopleEngine.scannedFaceCounts() }
+    // 名前付き人物の一覧を AI アルバムの人物名検索に結線（「太郎と花子」→ 木村太郎/木村花子 等）。
+    engine.setNamedPeopleProvider { await peopleEngine.namedClusterNames() }
     return engine
 }
 

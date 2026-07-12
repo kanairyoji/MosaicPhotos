@@ -38,6 +38,13 @@ final class AIAlbumService {
         set { verification.faceCountsProvider = newValue }
     }
 
+    /// 名前付き人物（顔クラスタ）のフルネーム一覧を返す seam（人物名検索の接地用）。
+    /// 解釈器へ委譲。Composition Root が `AutoAlbumEngine.setNamedPeopleProvider` で結線する。
+    var namedPeopleProvider: (@Sendable () async -> [String])? {
+        get { interpreter.namedPeopleProvider }
+        set { interpreter.namedPeopleProvider = newValue }
+    }
+
     /// シーンタグ・キャプションのストア（検索の一次ランキングと LLM 審査の入力）。
     private let tagStore: TagStore?
 
@@ -109,7 +116,9 @@ final class AIAlbumService {
         interpreter.remove(id: id)   // 再設定（検索文変更）は解釈からやり直す
         // 作成/編集は**即時プレビュー**（決定的レイヤーのみ・LLM なし＝1〜2 秒）。
         // FM 解釈＋LLM 審査つきの本番化は夜間（finalizePending・電源＋Wi-Fi＋ロック中）に行う。
-        var saved = AIAlbumInterpreter.previewInterpretation(criteria: trimmed, now: now)
+        let namedPeople = await namedPeopleProvider?() ?? []
+        var saved = AIAlbumInterpreter.previewInterpretation(criteria: trimmed, now: now,
+                                                             namedPeople: namedPeople)
         let all = await store.allEnrichedPhotosLite()
         var (members, pool) = await rankedSearch(all, saved: saved, now: now)
         // 証拠ゲート（除外つきのみ）はプレビューでも適用（除外の精度は落とさない）。

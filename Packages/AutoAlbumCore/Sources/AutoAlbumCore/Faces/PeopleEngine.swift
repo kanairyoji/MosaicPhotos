@@ -139,6 +139,12 @@ public final class PeopleEngine {
         await store.peopleNamesByRefKey(minFaces: minFaces)
     }
 
+    /// 名前を付けた人物のフルネーム一覧（"Person N" の未命名は除く）。
+    /// AI アルバムの人物名検索の接地カタログに使う。`people` は @Observable なので最新読み込み後に呼ぶ。
+    public func namedClusterNames() -> [String] {
+        people.compactMap { $0.name }.filter { !$0.isEmpty }
+    }
+
     /// スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」条件に使う
     /// （AutoAlbumEngine.setFaceCountsProvider へ Composition Root が結線する）。
     public func scannedFaceCounts() async -> [String: Int] {

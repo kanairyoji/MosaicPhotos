@@ -98,6 +98,31 @@ enum QuerySpecSanitizer {
         return out
     }
 
+    /// 人物名条件（`.people`・部分一致 OR）を各節に AND で加える（節が無ければ 1 節作る）。
+    /// 既に同じ語群の `.people` があれば重複させない。接地済みフルネームを載せる用途。
+    static func addingPeople(_ spec: QuerySpec, names: [String]) -> QuerySpec {
+        let fresh = names.filter { !$0.isEmpty }
+        guard !fresh.isEmpty else { return spec }
+        var out = spec
+        if out.clauses.isEmpty {
+            out.clauses = [QueryClause([.people(fresh)])]
+            return out
+        }
+        out.clauses = out.clauses.map { clause in
+            // 既存の people 語群にマージ（重複除去・大小無視）。
+            var existing: [String] = []
+            var others: [Condition] = []
+            for cond in clause.conditions {
+                if case .people(let terms) = cond { existing.append(contentsOf: terms) }
+                else { others.append(cond) }
+            }
+            var seen = Set(existing.map { $0.lowercased() })
+            for n in fresh where !seen.contains(n.lowercased()) { existing.append(n); seen.insert(n.lowercased()) }
+            return QueryClause(others + [.people(existing)])
+        }
+        return out
+    }
+
     static func sanitize(_ spec: QuerySpec) -> QuerySpec {
         var out = spec
         out.clauses = spec.clauses.compactMap { sanitizeClause($0) }

@@ -15,10 +15,19 @@ final class AIAlbumInterpreter {
     private let translator: QueryTranslator?
     private let interpretations = AIAlbumInterpretationStore()
 
+    /// 名前付き人物（顔クラスタ）のフルネーム一覧を供給する seam。人物名検索の接地に使う
+    /// （Composition Root が PeopleEngine を結線する）。未設定なら人物名接地は行わない。
+    var namedPeopleProvider: (@Sendable () async -> [String])?
+
     init(store: AutoAlbumStore, understanding: QueryUnderstanding, translator: QueryTranslator?) {
         self.store = store
         self.understanding = understanding
         self.translator = translator
+    }
+
+    /// 現在の名前付き人物一覧（プロバイダ未設定なら空）。
+    private func currentNamedPeople() async -> [String] {
+        await namedPeopleProvider?() ?? []
     }
 
     // MARK: - 保存済み解釈への窓口（永続化はすべてここを経由する）
@@ -69,11 +78,18 @@ final class AIAlbumInterpreter {
             criteria: criteria, now: now,
             placeCatalog: catalog.places + catalog.countries,
             peopleCatalog: catalog.people)
+        // 人物名の接地（決定的）: クエリが名前付き人物（フルネーム）を指すなら people 条件を足す。
+        // 姓名の部分指定（太郎→木村太郎）・複数人物（太郎と花子）に対応。LLM が拾えた分と統合される。
+        let named = await currentNamedPeople()
+        let grounded = PersonNameGrounder.groundedNames(in: criteria, names: named)
+        if !grounded.isEmpty { spec = QuerySpecSanitizer.addingPeople(spec, names: grounded) }
         // 決定的レキシコン（RelativeDateParser と同じ思想）: LLM が空振り/全滅しても、
         // 頻出の視覚語（風景→landscape 等）と人物否定（人が写っていない→exclude people）は
         // 原文から必ず立てる。LLM が動くときは LLM の内容語が優先（空のときだけ補う）。
+        // 視覚語抽出は人名部分を除いた残りで行う（「花子」の「花」を flower と誤抽出しない）。
+        let visualText = PersonNameGrounder.strippingNames(from: criteria, matched: grounded)
         if spec.allContentTerms.include.isEmpty {
-            let lex = JapaneseVisualLexicon.includeTerms(in: criteria)
+            let lex = JapaneseVisualLexicon.includeTerms(in: visualText)
             if !lex.isEmpty { spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: lex) }
         }
         if JapaneseVisualLexicon.hasPeopleNegation(criteria) {
@@ -94,14 +110,24 @@ final class AIAlbumInterpreter {
     /// 即時プレビュー用の解釈（純・LLM なし・テスト対象）。決定的レイヤーだけで仮の spec を作る：
     /// 日付=RelativeDateParser・視覚語/人物否定=JapaneseVisualLexicon。semanticText は空
     /// （FM 翻訳は夜間）。pendingFinalization/translationPending を立てて返す。
-    nonisolated static func previewInterpretation(criteria: String, now: Date) -> SavedInterpretation {
+    nonisolated static func previewInterpretation(criteria: String, now: Date,
+                                                  namedPeople: [String] = []) -> SavedInterpretation {
         var spec = QuerySpec()
-        let includes = JapaneseVisualLexicon.includeTerms(in: criteria)
+        // 人物名の接地（決定的）を最優先で立てる。名前付き人物を指すクエリは、視覚語推定より
+        // 人物条件を優先したい（「太郎」は被写体語ではなく人物）。
+        let grounded = PersonNameGrounder.groundedNames(in: criteria, names: namedPeople)
+        // 視覚語抽出は人名部分を除いた残りで行う（「花子」の「花」を flower と誤抽出しない）。
+        let visualText = PersonNameGrounder.strippingNames(from: criteria, matched: grounded)
+        let includes = JapaneseVisualLexicon.includeTerms(in: visualText)
         // 英語入力なら原文の語をそのまま include に使える（ASCII のみのとき）。
-        if includes.isEmpty && criteria.allSatisfy(\.isASCII) {
+        // ただし人物名に接地できたときは、原文丸ごとの content 化はしない（人物条件を主にする）。
+        if grounded.isEmpty && includes.isEmpty && criteria.allSatisfy(\.isASCII) {
             spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: [criteria.lowercased()])
         } else if !includes.isEmpty {
             spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: includes)
+        }
+        if !grounded.isEmpty {
+            spec = QuerySpecSanitizer.addingPeople(spec, names: grounded)
         }
         if JapaneseVisualLexicon.hasPeopleNegation(criteria) {
             spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])

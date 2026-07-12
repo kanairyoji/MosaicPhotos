@@ -125,6 +125,12 @@ public final class AutoAlbumEngine {
         aiService.faceCountsProvider = provider
     }
 
+    /// 名前付き人物（顔クラスタ）のフルネーム一覧を AI アルバムの人物名検索へ結線する
+    /// （「太郎と花子」→「木村太郎」「木村花子」等の接地に使う）。Composition Root から注入。
+    public func setNamedPeopleProvider(_ provider: @escaping @Sendable () async -> [String]) {
+        aiService.namedPeopleProvider = provider
+    }
+
     /// ユーザーが写真を能動操作中か（スクラブ等）を設定する。true の間は背景 CLIP 埋め込みを譲る（G）。
     public func setInteracting(_ value: Bool) { isInteracting = value }
 
