@@ -209,6 +209,11 @@ final class DropboxSyncEngine {
                     }
                 } else {
                     DropboxLogger.verbose("SyncEngine: longpoll — no changes")
+                    // longpoll が即座に返った場合（本番では稀・テストのスタブでは常時）に、
+                    // 待ち無しで再 longpoll するとビジーループ化して main actor を飢餓させる。
+                    // 最小待ちを入れて協調的にする（cancel されたら即 break）。
+                    try await Task.sleep(nanoseconds: DropboxInternalConstants.pollNoChangeMinDelayNs)
+                    guard !Task.isCancelled else { break }
                 }
 
             } catch is CancellationError {

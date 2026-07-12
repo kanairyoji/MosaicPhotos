@@ -52,6 +52,11 @@ enum DropboxInternalConstants {
     /// URLRequest タイムアウト。longpoll の待機時間に十分な余裕を持たせる。
     static let longpollURLRequestTimeout: TimeInterval = 120
     static let retryDelayNs: UInt64 = 30_000_000_000           // 30 s
+    /// longpoll が「変更なし」を返した後、次の longpoll までの最小待ち。
+    /// 本番の longpoll はサーバ側で最大 `longpollTimeoutSeconds` ブロックするので実害は無いが、
+    /// もし longpoll が即座に返る場合（テストのスタブや異常）に pollLoop がビジーループ化して
+    /// CPU を食い潰す（CI で main actor 飢餓→ハング）のを防ぐ協調的な下限。
+    static let pollNoChangeMinDelayNs: UInt64 = 1_000_000_000   // 1 s
 
     // MARK: - Log truncation lengths
 

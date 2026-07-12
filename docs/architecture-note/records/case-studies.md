@@ -21,6 +21,13 @@
 
 ---
 
+## CI（iOS シミュレータ）で DropboxCore テストが 194 秒ハング→TEST FAILED
+- 症状: GitHub Actions の iOS ジョブで `DropboxCore` のテストが失敗。ログにはテストのアサーション失敗が一切無く、`Testing started completed. 194.161 sec` の後に `** TEST FAILED **`（exit 65）。ローカル（iPhone 17 Pro）では 50 テストが約 1.4 秒で成功し**再現しない**。
+- 原因: `DropboxSyncEngine.pollLoop` が、longpoll が `changes:false` を返したとき**待ちを一切入れず即座に再 longpoll する**構造だった。本番の longpoll はサーバ側で最大 30 秒ブロックするのでビジーループ化しないが、テストのスタブ（`routingStub`）は即座に返すため**タイトなビジーループ**になる。`pollLoop` は `@MainActor` なので、この busy loop が毎反復 `onStateChanged(.polling)` を叩きつつ main actor を占有し、遅い CI ランナーでは `waitUntil`/`stop()` など他の main-actor 作業が飢餓。テスト全体が進まず 194 秒で打ち切られて FAILED になっていた（ローカルは速いので `stop()` が即通り顕在化しない＝フレーク）。ジョブは `continue-on-error`（best-effort）だが赤バッジは出る。
+- 対処: no-changes 経路に**協調的な最小待ち**（`DropboxInternalConstants.pollNoChangeMinDelayNs = 1s`＋`Task.sleep`＋cancel 時 break）を追加。本番は longpoll が既に約 30 秒ブロックするので実害ゼロ、テストはビジーループが消えて決定的になる（`stop()` テストは cancel で sleep を即中断して終了）。CI と同フラグ（`-retry-tests-on-failure -test-iterations 2`）でローカル成功を確認。
+- 関連: `Sync/DropboxSyncEngine.pollLoop`（no-changes に guard sleep）/ `Networking/DropboxInternalConstants.pollNoChangeMinDelayNs`（新設）/ `.github/workflows/ci.yml`（ios は best-effort）。[[ADR-10]]（GitHub を CI に活用）。
+- 残課題: longpoll が異常に早く返り続ける本番ケース（サーバ障害等）でも 1s 間隔に律速される＝過剰ポーリングを防げるが、指数バックオフまでは入れていない（現状は error 経路のみ 30s）。
+
 ## フル画面ビューで最上部のアクティビティバーと日付が重なる
 - 症状: フル画面の写真ビューで、最上部のアクティビティバー（ツールチップ状の表示）と日付が同じ位置に重なって読めない。
 - 原因: アクティビティバーは `SourceHostView` の `overlay(alignment:.top)`（安全領域上端）に出す。一方フル画面の日付は `PhotoPageView` の**ナビバー principal タイトル**で、これも安全領域上端の中央＝**同じ位置**だった。
