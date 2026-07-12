@@ -161,13 +161,20 @@ final class VLMRuntime: @unchecked Sendable {
 
     /// logits (1, maxLen, vocab) fp16 の指定行 argmax。
     private static func argmaxRow(_ logits: MLMultiArray, row: Int, vocab: Int) -> Int {
-        let ptr = logits.dataPointer.bindMemory(to: UInt16.self, capacity: logits.count)
         let base = row * vocab
         var bestIndex = 0
         var bestValue = -Float.infinity
-        for i in 0..<vocab {
-            let v = Float(Float16(bitPattern: ptr[base + i]))
-            if v > bestValue { bestValue = v; bestIndex = i }
+        // デコーダは fp32（実機の fp16 argmax 反転を避けるため）だが、念のため両 dtype に対応する。
+        switch logits.dataType {
+        case .float32:
+            let ptr = logits.dataPointer.bindMemory(to: Float.self, capacity: logits.count)
+            for i in 0..<vocab where ptr[base + i] > bestValue { bestValue = ptr[base + i]; bestIndex = i }
+        default:
+            let ptr = logits.dataPointer.bindMemory(to: UInt16.self, capacity: logits.count)
+            for i in 0..<vocab {
+                let v = Float(Float16(bitPattern: ptr[base + i]))
+                if v > bestValue { bestValue = v; bestIndex = i }
+            }
         }
         return bestIndex
     }

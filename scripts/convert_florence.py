@@ -84,14 +84,16 @@ enc_ml.save(os.path.join(OUT, "VLMVision.mlpackage")); print("saved VLMVision")
 PAD = lm_cfg.pad_token_id
 dec_ids0 = torch.full((1, MAXLEN), PAD, dtype=torch.int32); dec_ids0[0, 0] = lm_cfg.decoder_start_token_id
 dec_traced = torch.jit.trace(dec_mod, (dec_ids0, enc_hidden, enc_mask), check_trace=False)
-# encoder_hidden/mask は VLMVision の出力（fp16）をそのまま繋ぐため fp16 入力にする
-# （fp32 にすると Swift 側で毎回キャスト copy が要る）。
+# ⚠️ デコーダは compute_precision=FLOAT32。fp16 だと**実機**でのみ Mac と logits が乖離し、
+#    近接トークンの argmax が反転して全写真同一の無関係テキスト(言語モデルの地の文)を吐く
+#    （Mac は全 compute unit で正常・encoder は fp16 でも一致・case-studies 参照）。encoder は fp16 のまま。
+# encoder_hidden/mask 入力は fp16（VLMVision 出力を直結）→ デコーダ内部で fp32 に upcast される。
 dec_ml = ct.convert(dec_traced,
     inputs=[ct.TensorType(name="decoder_input_ids", shape=(1, MAXLEN), dtype=np.int32),
             ct.TensorType(name="encoder_hidden", shape=enc_hidden.shape, dtype=np.float16),
             ct.TensorType(name="encoder_mask", shape=enc_mask.shape, dtype=np.float16)],
     outputs=[ct.TensorType(name="logits")],
-    compute_precision=ct.precision.FLOAT16, minimum_deployment_target=ct.target.iOS17)
+    compute_precision=ct.precision.FLOAT32, minimum_deployment_target=ct.target.iOS17)
 dec_ml.save(os.path.join(OUT, "VLMDecoder.mlpackage")); print("saved VLMDecoder")
 
 # ---- トークナイザ資産（vocab / merges）＋ config ----
