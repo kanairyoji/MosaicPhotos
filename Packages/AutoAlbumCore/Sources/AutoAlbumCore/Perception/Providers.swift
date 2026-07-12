@@ -74,6 +74,14 @@ public protocol LabelProvider: Sendable {
     func labels(forEmbedding clipVector: Data) async -> [String]
     /// 概念埋め込み等の遅延初期化を夜間に前倒しする（既定は何もしない）。
     func prewarm() async
+    /// ラベル生成が**即応できる**か（概念埋め込みが構築済みか）。false のとき `labels(...)` を呼ぶと
+    /// CLIP テキストタワーのロード（〜数十秒）＋約300語の構築が同期で走り得るので、フル画像 insight は
+    /// これが true のときだけ CLIP ラベルを合成する（Vision タグは常に即表示）。既定 true。
+    var isReady: Bool { get }
+}
+
+public extension LabelProvider {
+    var isReady: Bool { true }
 }
 
 

@@ -26,13 +26,18 @@ struct SourceHostView<Content: View>: View {
             .environment(\.photoInsight) { [autoAlbumEngine, peopleEngine] id in
                 // CLIP 由来の insight（タグ/解析状態）に、顔クラスタ由来の People 名と顔数を合成する。
                 // 3 つの照会は**並行**で走らせる（顔照会が遅くても insight 表示を遅らせない）。
+                let t0 = Date()
+                Diagnostics.mark("insightClosure enter id=\(id.prefix(28))")
                 async let base = autoAlbumEngine.insight(forItemID: id)
                 async let names = peopleEngine.names(forItemID: id)
                 async let faces = peopleEngine.faceCount(forItemID: id)
                 var insight = await base ?? PhotoInsight(status: .notIndexed)
+                let tBase = Int(Date().timeIntervalSince(t0) * 1000)
                 let resolvedNames = await names
                 if !resolvedNames.isEmpty { insight.people = resolvedNames }
                 insight.faceCount = await faces
+                let tAll = Int(Date().timeIntervalSince(t0) * 1000)
+                Diagnostics.mark("insightClosure exit id=\(id.prefix(28)) status=\(String(describing: insight.status)) names=\(resolvedNames.count) faces=\(insight.faceCount ?? -1) base=\(tBase)ms all=\(tAll)ms")
                 return insight
             }
             // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。操作はアイドル判定にも記録する。

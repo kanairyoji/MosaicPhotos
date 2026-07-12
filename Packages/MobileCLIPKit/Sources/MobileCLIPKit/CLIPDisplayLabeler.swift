@@ -22,6 +22,13 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
         _ = ensureEmbeddings()
     }
 
+    /// 概念埋め込みが構築済みか（構築を発生させない即時判定）。未構築のとき insight は CLIP ラベルを
+    /// スキップして Vision タグだけで即返す（初回の CLIP テキストタワー〜数十秒ロードで固まらないように）。
+    public var isReady: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return conceptEmbeddings != nil
+    }
+
     /// ⚠️ nonisolated：概念埋め込みの一括構築（~300 text encode）をメインスレッドで走らせない。
     public nonisolated func labels(forEmbedding clipVector: Data) async -> [String] {
         guard let image = ClipMath.decode(clipVector), !image.isEmpty,
