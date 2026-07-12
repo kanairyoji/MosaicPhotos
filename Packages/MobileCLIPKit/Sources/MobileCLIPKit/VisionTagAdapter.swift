@@ -8,7 +8,7 @@ import Vision
 /// - シーンタグ: **OS 内蔵の Vision 画像分類**（`VNClassifyImageRequest`・約1,300クラス）。
 ///   信頼度は Apple が校正済みで、`hasMinimumRecall(_:forPrecision:)` により
 ///   「精度 0.9 を満たすタグだけ採る」という**原理的な足切り**ができる（自前閾値が不要）。
-/// - キャプション: Florence-2-base（同梱時のみ・`VLMRuntime`）。
+/// - キャプション: SmolVLM（同梱時のみ・`VLMRuntime`）。
 public struct VisionTagAdapter: TagPerceptionProvider {
     /// クラウド path → CGImage（Dropbox サムネイル）。CLIPEmbeddingProvider と同じ seam。
     let cloudImage: @Sendable (String) async -> CGImage?

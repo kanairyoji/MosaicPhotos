@@ -24,9 +24,9 @@
 ## Florence キャプションが実機で全写真同一の無関係テキストになる（fp16 デコーダの logits 乖離）
 - 症状: VLM を Florence-2-base に替えたら、実機で生成されるキャプションが**どの写真も "Trump doing from…" 等の同一・無関係テキスト**（言語モデルの地の文＝ニュース調）になる。Mac（coremltools・**全 compute unit：CPU/GPU/ANE/ALL**）では "The image shows a gas pump with a sign that reads Please Prepay…" と正しい。
 - 原因: **実機の fp16 デコーダ演算が Mac と乖離し、近接トークンの argmax が反転**（生成2トークン目が Mac=133('The') → 実機=140('Trump')）、そこから系列全体が破綻。段階的に切り分けた: (1) Mac 全 compute unit で ID・復号とも正常＝Swift ロジック/資産/トークナイザは無罪、(2) 実機ログで **encoder 出力は有限**（nonFinite=0・min/max・値域とも Mac と一致）＝encoder・fp16 NaN は無罪、(3) mask も全1で正常（Mac で mask=0 は空出力になり "Trump" 系ではない）、(4) 残るは**デコーダの fp16 数値**のみ。encoder は fp16 でも Mac と一致するのに、デコーダは fp16 で iPhone と Mac が食い違う（近接 logits の反転に敏感）。ANE を避けて CPU+GPU にしても実機 GPU の fp16 で同様に壊れた。
-- 対処: **デコーダだけ `compute_precision=FLOAT32`**（encoder は fp16 のまま・入力 encoder_hidden も fp16 で受けて内部 upcast）。logits 出力が fp32 になるので `VLMRuntime.argmaxRow` を dtype 対応に。誤キャプションは `captionModelVersion` を 4 に上げて全消去＆付け直し。VLM は ANE 回避（CPU+GPU）も併用。確認用に encoder 有限性・生成ID・テキストのログを追加。
-- 関連: `scripts/convert_florence.py`（デコーダ FLOAT32）・`VLMRuntime.argmaxRow`(dtype対応)/`caption`(診断ログ)・`CoreMLModelSupport.makeConfiguration(avoidNeuralEngine:)`・`AutoAlbumEngine.captionModelVersion`(→4)。[[ADR-32]]・[[ADR-11]]（CLIP fp16 の教訓）。
-- 残課題: デコーダ fp32 でモデルが 184→367MB（VLM 計 626MB）・実機 footprint が既に ~1GB でメモリ余力は要監視（駄目なら encoder のみ残し decoder を蒸留/量子化、または lm_head だけ fp16 等）。速度も実機再計測（fp32 で遅くなる可能性）。切り分けは Mac だけでは限界（実機 fp16 の癖は実機ログ必須）。
+- 試した対処と結末: (A) VLM を ANE 回避（CPU+GPU）→ **実機 GPU の fp16 でも破綻・効果なし**。(B) デコーダ `compute_precision=FLOAT32`→ **実機 GPU では依然破綻**（fp32 でも GPU 経路は Mac と食い違う・かつ 184→367MB でメモリ悪化）。(C) `computeUnits=.cpuOnly` なら Mac の CPU_ONLY（検証済み・正しい）と一致する見込みだが、**CPU 固定は 3〜5秒/枚（Mac 実測 1.3秒）と遅く、Florence を選んだ最大の理由（ANE で速い）が消える**。→ **最終判断: Florence を撤回し SmolVLM-256M に戻す**（decoder-only で ANE 動作実績あり・速い。[[ADR-32]] 撤回）。誤キャプションは `captionModelVersion` を 5 に上げて全消去＆SmolVLM で付け直し。
+- 関連: `scripts/convert_florence*.py`/`build_florence.sh`/`bench_vlm.py`（参考として残置）・`VLMRuntime`（SmolVLM に復元）・`CoreMLModelSupport`（cpuOnly 分岐撤去）・`AutoAlbumEngine.captionModelVersion`(→5)。[[ADR-32]]・[[ADR-11]]（CLIP fp16 の教訓）。
+- 教訓: **Core ML の正しさは Mac だけでは検証しきれない**。Mac は全 compute unit で正しくても、実機 ANE/GPU の fp16 は encoder-decoder の cross-attention で Mac と乖離し得る（decoder-only では顕在化しない）。新モデル採用前に**実機での正しさ確認**（生成ID/有限性ログ）を段取りに入れる。今回は encoder=有限・mask=正常・fp32でも駄目、と 4 ラウンドの実機ログで切り分けた。
 
 ## AI アルバム作成/更新でシートが固まって見える（重い検索を待ってから閉じていた）
 - 症状: AI アルバムのコンポーザーで「アルバムを更新／作成」を押すと画面が固まる。タップに反応した手応えが無く、しばらくして閉じる。

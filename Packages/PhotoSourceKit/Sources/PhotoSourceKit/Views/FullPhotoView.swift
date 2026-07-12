@@ -91,16 +91,8 @@ struct FullPhotoView<Store: PhotoStore>: View {
         // AI 解析欄が空のまま（insight=nil でパネルが丸ごと非表示）にならないようにする。
         .task(id: infoRequested) {
             guard infoRequested else { return }
-            Diagnostics.mark("panel.task start id=\(String("\(item.id)").prefix(28)) hasInsightClosure=\(photoInsight != nil)")
             async let insightLoad: Void = {
-                if let photoInsight {
-                    let t = Date()
-                    let got = await photoInsight("\(item.id)")
-                    insight = got
-                    Diagnostics.mark("panel.insight set id=\(String("\(item.id)").prefix(28)) status=\(String(describing: got?.status)) in \(Int(Date().timeIntervalSince(t)*1000))ms")
-                } else {
-                    Diagnostics.mark("panel.insight SKIPPED (no closure) id=\(String("\(item.id)").prefix(28))")
-                }
+                if let photoInsight { insight = await photoInsight("\(item.id)") }
             }()
             async let metaLoad: Void = {
                 exif = await store.metadata(for: item)

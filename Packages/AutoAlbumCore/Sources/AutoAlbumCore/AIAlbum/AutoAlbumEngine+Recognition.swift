@@ -20,13 +20,10 @@ extension AutoAlbumEngine {
             // タグ表示は Vision シーンタグ（校正済み・検索と同一の台帳）を第一に、
             // CLIP ゼロショットの表示ラベルで補完する（重複除去・最大10個）。
             var tags = (await tagStore.tags(forRefKeys: [refKey]))[refKey] ?? []
-            let visionCount = tags.count
             // CLIP 表示ラベルは**準備できているときだけ**合成する。未構築だと labels() が CLIP テキスト
             // タワーのロード（初回〜数十秒）＋約300語構築を同期で走らせ、insight が返らず（パネルが
             // 空/loading のまま）になる（実測: 画像タワー 34s）。prewarm 完了までは Vision タグだけで即返す。
-            var clipReady = false
             if let vector = rec.photo.clipVector, let labelProvider, labelProvider.isReady {
-                clipReady = true
                 let clipLabels = await labelProvider.labels(forEmbedding: vector)
                 let seen = Set(tags.map { $0.lowercased() })
                 tags += clipLabels.filter { !seen.contains($0.lowercased()) }
@@ -35,7 +32,6 @@ extension AutoAlbumEngine {
             let hasCaption = caption?.isEmpty == false
             // キャプション未生成でも、VLM 同梱なら夜間に付く見込み＝「生成中」を出す（空欄に見せない）。
             let captionPending = !hasCaption && tagTagger.isCaptioningAvailable
-            Diagnostics.mark("insight HIT id=\(id.prefix(28)) key=\(refKey.prefix(28)) status=\(rec.tagged ? "ready" : "analyzing") visionTags=\(visionCount) totalTags=\(tags.count) caption=\(hasCaption) captionPending=\(captionPending) clip=\(rec.photo.clipVector != nil) clipLabelsReady=\(clipReady)")
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
                                 caption: hasCaption ? caption : nil,
                                 captionPending: captionPending,
@@ -43,8 +39,6 @@ extension AutoAlbumEngine {
                                 status: status)
         }
         // 付加情報が無い＝まだ取り込まれていない。
-        let tried = keys.map { String($0.prefix(20)) }.joined(separator: " | ")
-        Diagnostics.mark("insight MISS id=\(id.prefix(28)) triedKeys=[\(tried)]")
         return PhotoInsight(status: .notIndexed)
     }
 
