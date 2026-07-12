@@ -1,6 +1,7 @@
 import AutoAlbumCore
 import MobileCLIPKit
 import MosaicSupport
+import PhotosFeatureKit
 import SwiftUI
 
 /// 「AI 解析の状況」（ユーザー向け・設定 → Albums & Search）。
@@ -15,6 +16,7 @@ import SwiftUI
 struct AIAnalysisStatusView: View {
     let engine: AutoAlbumEngine
     let people: PeopleEngine
+    let mergedStore: MergedPhotoStore
 
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0, captioned: 0)
     @State private var faceScanned = 0
@@ -112,7 +114,7 @@ struct AIAnalysisStatusView: View {
             // 生成された説明文を実際に一覧で確認する（動いているかを目視で確かめる）。
             if progress.captioned > 0 {
                 NavigationLink {
-                    CaptionedPhotosView(engine: engine)
+                    CaptionedPhotosView(engine: engine, mergedStore: mergedStore)
                 } label: {
                     Label(L("Review descriptions"), systemImage: "text.magnifyingglass")
                 }

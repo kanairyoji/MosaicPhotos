@@ -58,7 +58,8 @@ struct SettingsView: View {
             Section("Albums & Search") {
                 NavigationLink {
                     detail(L("AI Analysis")) {
-                        AIAnalysisStatusView(engine: autoAlbumEngine, people: peopleEngine)
+                        AIAnalysisStatusView(engine: autoAlbumEngine, people: peopleEngine,
+                                             mergedStore: stores.mergedStore)
                     }
                 } label: {
                     row(L("AI Analysis"), systemImage: "wand.and.stars", value: analysisStatusText)
