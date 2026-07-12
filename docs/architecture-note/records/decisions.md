@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-31 CLIP を INT8 重み量子化して容量を半減する（精度ほぼ不変）
+- 状態: 採用
+- 文脈: 同梱 CLIP（OpenCLIP ViT-B-32/DataComp・fp16）は 289MB（画像168＋テキスト121）と大きい。「似た精度で軽く」を目標に、現行fp16／INT8量子化／TinyCLIP-40M の3構成を Core ML で実測比較した（`scripts/bench_clip.py`・Imagenette×1000クラス zero-shot・Mac CPU）。結果: 現行 289MB/75.0%、**INT8 145MB/76.0%**、TinyCLIP 161MB/61.0%（fp32では67%だが fp16変換で低下）。TinyCLIP は −14pt と精度低下が大きく、テキスト側の語彙埋め込み表で 161MB と INT8 より重い＝不採用。
+- 決定: **現行 ViT-B-32 を INT8 重み量子化（`linear_quantize_weights`・linear_symmetric・weight_threshold=512）**して据え置く。モデル・埋め込み次元(512)・入力経路すべて不変。容量 **289→145MB**、精度は 75→76%（誤差・量子化ノイズ）、メモリも微減。CPU では速度同等（重みのみ量子化＝計算時 fp16 に復元）、実機 ANE ではメモリ帯域減で微有利の見込み。`scripts/convert_clip.py` に `QUANTIZE=int8` パス（`maybe_quantize`）を追加、`build_mobileclip.sh` は既定 ON。`perceptionVersion` を 7→8 に採番し、起動時 `resetSceneTagged()` で全写真を**再埋め込み**（埋め込み値が僅かに動くため。数晩・夜間トリクル）。
+- 結果: 同梱容量が半減し、精度・機能は不変。トレードオフ: (1) 再埋め込みが 85k 枚ぶん走る（夜間・段階的）。移行中は旧fp16と新INT8の埋め込みが混在するが、同一モデルの量子化差はごく小さく検索への実害は軽微（別モデル差し替えと違い空間がほぼ動かない）。(2) テキスト側量子化で inf を含む const 1つが「量子化スキップ」警告（fp16 のまま残り無害）。(3) 実機 ANE での fp16/INT8 NaN はランタイムの有限性チェックが nil 落としで保険。
+- 関連: `scripts/convert_clip.py`（maybe_quantize）・`scripts/build_mobileclip.sh`（QUANTIZE 既定int8）・`scripts/bench_clip.py`（3構成比較）・`AutoAlbumEngine.perceptionVersion`(7→8)・`AutoAlbumStore.resetSceneTagged`。[[ADR-11]]（fp16 image encoder）。
+
 ## ADR-30 CLIP 埋め込みと VLM キャプションを夜間バッチでインターリーブする
 - 状態: 採用
 - 文脈: 実機で VLM キャプションが 1 枚も出力されない不具合。原因は `scheduleBackgroundFill()` のパス順が **タグ → CLIP 埋め込み（全量）→ キャプション** の逐次で、キャプションが**埋め込みの完了を待つ**構造だったこと。実機は 85,418 枚中 17,981 枚（約 21%）しか埋め込めておらず（毎晩の電源＋アイドル窓は短く、1 枚 ANE でも枚数が多い）、埋め込みが 100% になるまでキャプションが 1 枚も始まらない＝事実上キャプションが永遠に未着手だった。

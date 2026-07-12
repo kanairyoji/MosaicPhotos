@@ -76,6 +76,17 @@ img_traced = torch.jit.trace(ImageEncoder(model, mean, std), img_example, check_
 embed_dim = int(img_traced(img_example).shape[-1])
 print("embedding dim:", embed_dim)
 
+# INT8 重み量子化（QUANTIZE=int8 のとき）。重みのみ int8・線形対称で fp16 の約半分に。
+# 精度はほぼ不変（ViT-B-32 で zero-shot 75→76%＝誤差）。ADR-31 / case-studies 参照。
+QUANTIZE = os.environ.get("QUANTIZE", "").lower()
+def maybe_quantize(mlmodel):
+    if QUANTIZE != "int8":
+        return mlmodel
+    import coremltools.optimize.coreml as cto
+    cfg = cto.OptimizationConfig(global_config=cto.OpLinearQuantizerConfig(
+        mode="linear_symmetric", dtype="int8", weight_threshold=512))
+    return cto.linear_quantize_weights(mlmodel, cfg)
+
 img_ml = ct.convert(
     img_traced,
     inputs=[ct.ImageType(name="image", shape=img_example.shape, scale=1 / 255.0, bias=[0, 0, 0])],
@@ -83,8 +94,8 @@ img_ml = ct.convert(
     minimum_deployment_target=ct.target.iOS17,
     compute_precision=ct.precision.FLOAT16,   # 実機 ANE 前提
 )
-img_ml.save(os.path.join(OUT, "MobileCLIPImageS2.mlpackage"))
-print("saved image encoder")
+maybe_quantize(img_ml).save(os.path.join(OUT, "MobileCLIPImageS2.mlpackage"))
+print("saved image encoder" + (" (int8)" if QUANTIZE == "int8" else ""))
 
 txt_example = torch.zeros(1, CONTEXT, dtype=torch.int32)
 txt_traced = torch.jit.trace(TextEncoder(model), txt_example, check_trace=False)
@@ -93,9 +104,10 @@ txt_ml = ct.convert(
     inputs=[ct.TensorType(name="text", shape=(1, CONTEXT), dtype=np.int32)],
     outputs=[ct.TensorType(name="embedding")],
     minimum_deployment_target=ct.target.iOS17,
+    compute_precision=ct.precision.FLOAT16,
 )
-txt_ml.save(os.path.join(OUT, "MobileCLIPTextS2.mlpackage"))
-print("saved text encoder")
+maybe_quantize(txt_ml).save(os.path.join(OUT, "MobileCLIPTextS2.mlpackage"))
+print("saved text encoder" + (" (int8)" if QUANTIZE == "int8" else ""))
 
 with open(os.path.join(OUT, "mobileclip_config.json"), "w") as f:
     json.dump({"imageSize": img_size, "contextLength": CONTEXT, "embedDim": embed_dim,
