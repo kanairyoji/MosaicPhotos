@@ -86,18 +86,23 @@ struct FullPhotoView<Store: PhotoStore>: View {
             }
             if !Task.isCancelled { failed = true }
         }
-        // 情報パネルが可視になってから EXIF→位置→地名→insight を解決する（F）。
+        // 情報パネルが可視になってから解決する（F）。AI 解析（insight）と メタ/位置解決は
+        // **独立に並行**して走らせる：位置解決（クラウドは通信・逆ジオコーディング）が遅い/失敗しても
+        // AI 解析欄が空のまま（insight=nil でパネルが丸ごと非表示）にならないようにする。
         .task(id: infoRequested) {
             guard infoRequested else { return }
-            exif = await store.metadata(for: item)
-            let resolved = await store.location(for: item)
-            coordinate = resolved
-            if let resolved {
-                placeName = await PlaceNameResolver.shared.placeName(for: resolved)
-            }
-            if let photoInsight {
-                insight = await photoInsight("\(item.id)")
-            }
+            async let insightLoad: Void = {
+                if let photoInsight { insight = await photoInsight("\(item.id)") }
+            }()
+            async let metaLoad: Void = {
+                exif = await store.metadata(for: item)
+                let resolved = await store.location(for: item)
+                coordinate = resolved
+                if let resolved {
+                    placeName = await PlaceNameResolver.shared.placeName(for: resolved)
+                }
+            }()
+            _ = await (insightLoad, metaLoad)
         }
     }
 
