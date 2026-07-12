@@ -98,6 +98,16 @@ struct PhotoInfoPanel: View {
                             .font(.subheadline)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                } else if insight.captionPending {
+                    // VLM 同梱で未生成＝これから付く。空欄に見せず「生成中」を出す（タグ欄と同じ考え方）。
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(L("AI description"), systemImage: "text.below.photo")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(L("Generating while charging…"))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         } else {

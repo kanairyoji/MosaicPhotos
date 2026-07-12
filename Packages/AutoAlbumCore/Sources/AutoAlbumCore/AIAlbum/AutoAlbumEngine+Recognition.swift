@@ -32,9 +32,13 @@ extension AutoAlbumEngine {
                 tags += clipLabels.filter { !seen.contains($0.lowercased()) }
             }
             let caption = (await tagStore.captions(forRefKeys: [refKey]))[refKey]
-            Diagnostics.mark("insight HIT id=\(id.prefix(28)) key=\(refKey.prefix(28)) status=\(rec.tagged ? "ready" : "analyzing") visionTags=\(visionCount) totalTags=\(tags.count) caption=\(caption?.isEmpty == false) clip=\(rec.photo.clipVector != nil) clipLabelsReady=\(clipReady)")
+            let hasCaption = caption?.isEmpty == false
+            // キャプション未生成でも、VLM 同梱なら夜間に付く見込み＝「生成中」を出す（空欄に見せない）。
+            let captionPending = !hasCaption && tagTagger.isCaptioningAvailable
+            Diagnostics.mark("insight HIT id=\(id.prefix(28)) key=\(refKey.prefix(28)) status=\(rec.tagged ? "ready" : "analyzing") visionTags=\(visionCount) totalTags=\(tags.count) caption=\(hasCaption) captionPending=\(captionPending) clip=\(rec.photo.clipVector != nil) clipLabelsReady=\(clipReady)")
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
-                                caption: (caption?.isEmpty == false) ? caption : nil,
+                                caption: hasCaption ? caption : nil,
+                                captionPending: captionPending,
                                 isScreenshot: rec.photo.isScreenshot,
                                 status: status)
         }

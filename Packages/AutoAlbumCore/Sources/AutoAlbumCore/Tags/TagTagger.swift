@@ -27,6 +27,9 @@ final class TagTagger {
         self.provider = provider
     }
 
+    /// VLM キャプションが利用可能か（モデル同梱時のみ true）。フル画像の「生成中」表示に使う。
+    var isCaptioningAvailable: Bool { provider?.isCaptioningAvailable ?? false }
+
     /// 未タグ写真にシーンタグを付ける（バッチ 8・save はバッチ 1 回）。
     /// Vision 分類は CPU/ANE で軽い（数十 ms/枚）ため CLIP 埋め込みより速く全量に行き渡る。
     func tagUnprocessed(candidateRefKeys: [String],

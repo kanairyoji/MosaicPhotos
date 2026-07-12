@@ -198,6 +198,16 @@
         }
       }
     },
+    "Generating while charging…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "充電中に生成されます…"
+          }
+        }
+      }
+    },
     "No faces" : {
       "localizations" : {
         "ja" : {
