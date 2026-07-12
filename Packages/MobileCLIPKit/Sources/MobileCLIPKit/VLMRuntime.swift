@@ -98,6 +98,11 @@ final class VLMRuntime: @unchecked Sendable {
               let encoderHidden = vout.featureValue(for: "encoder_hidden")?.multiArrayValue,
               let encoderMask = vout.featureValue(for: "encoder_mask")?.multiArrayValue
         else { return nil }
+        // 診断: 実機で encoder 出力が非有限（fp16 NaN/Inf）だと cross-attention が死に、デコーダが
+        // 画像を無視して言語モデルの地の文を吐く。ここで有限性を確認する。
+        let ehStats = Self.finiteStats(encoderHidden)
+        let emStats = Self.finiteStats(encoderMask)
+        Diagnostics.mark("VLM encoder: hidden nonFinite=\(ehStats.nonFinite)/\(ehStats.count) min=\(ehStats.min) max=\(ehStats.max) | mask nonFinite=\(emStats.nonFinite)/\(emStats.count)")
 
         // 2) デコーダ入力バッファ（固定長・PAD 埋め・先頭に decoder_start）
         guard let decIds = try? MLMultiArray(shape: [1, NSNumber(value: cfg.maxLen)], dataType: .int32)
@@ -130,6 +135,28 @@ final class VLMRuntime: @unchecked Sendable {
         let idsStr = generated.prefix(8).map(String.init).joined(separator: " ")
         Diagnostics.mark("VLM caption ids=[\(idsStr)] text=\(text.prefix(60))")
         return text.isEmpty ? nil : text
+    }
+
+    /// MLMultiArray の有限性統計（非有限数・最小/最大）。fp16/fp32 両対応。診断用。
+    private static func finiteStats(_ a: MLMultiArray) -> (count: Int, nonFinite: Int, min: Float, max: Float) {
+        let n = a.count
+        var nonFinite = 0
+        var mn = Float.infinity, mx = -Float.infinity
+        func acc(_ v: Float) {
+            if !v.isFinite { nonFinite += 1 } else { if v < mn { mn = v }; if v > mx { mx = v } }
+        }
+        switch a.dataType {
+        case .float16:
+            let ptr = a.dataPointer.bindMemory(to: UInt16.self, capacity: n)
+            for i in 0..<n { acc(Float(Float16(bitPattern: ptr[i]))) }
+        case .float32:
+            let ptr = a.dataPointer.bindMemory(to: Float.self, capacity: n)
+            for i in 0..<n { acc(ptr[i]) }
+        default:
+            let ptr = a.dataPointer.bindMemory(to: Double.self, capacity: n)
+            for i in 0..<n { acc(Float(ptr[i])) }
+        }
+        return (n, nonFinite, mn.isFinite ? mn : 0, mx.isFinite ? mx : 0)
     }
 
     /// logits (1, maxLen, vocab) fp16 の指定行 argmax。
