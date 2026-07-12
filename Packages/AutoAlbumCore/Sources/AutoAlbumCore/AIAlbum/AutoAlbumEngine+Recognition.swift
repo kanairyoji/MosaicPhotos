@@ -106,20 +106,35 @@ extension AutoAlbumEngine {
             let candidates = await store.enrichedRefKeys()
             await tagTagger.tagUnprocessed(candidateRefKeys: Array(candidates),
                                            shouldPause: { BackgroundYield.heavyShouldPause() })
-            await tagger.embedUnprocessed(batchSize: preset.batchSize,
-                                          betweenBatchNs: preset.betweenBatchNs,
-                                          shouldPause: { [weak self] in
-                                          // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋
-                                          // 生成との相互排他）は BackgroundYield.heavyShouldPause に一元化。
-                                          (self?.isInteracting ?? false)
-                                              || BackgroundYield.heavyShouldPause()
-                                      },
-                                          networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
-                                          onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
-                [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
+            // P2/P3: CLIP 埋め込みと VLM キャプションを**インターリーブ**で進める。
+            // ⚠️ 逐次（埋め込み全量→キャプション）だと、埋め込みが 85k 枚すべて終わるまで
+            //    キャプションが 1 枚も始まらない（実測 21% で滞留＝キャプション永遠に未着手）。
+            //    そこで両者を少量ずつ交互に回し、どちらも進捗しなくなったら終了する。
+            let embedPause: @MainActor () -> Bool = { [weak self] in
+                // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との相互排他）は
+                // BackgroundYield.heavyShouldPause に一元化。埋め込みは操作中も譲る。
+                (self?.isInteracting ?? false) || BackgroundYield.heavyShouldPause()
             }
-            // P3: 最後に VLM キャプション（1〜2 秒/枚・数晩がかり）。モデル未同梱なら即 return。
-            await tagTagger.captionUnprocessed(shouldPause: { BackgroundYield.heavyShouldPause() })
+            let captionPause: @MainActor () -> Bool = { BackgroundYield.heavyShouldPause() }
+            while !BackgroundYield.heavyShouldPause() {
+                let embedBefore = await store.unembeddedCount()
+                await tagger.embedUnprocessed(batchSize: preset.batchSize,
+                                              betweenBatchNs: preset.betweenBatchNs,
+                                              maxBatches: 12,
+                                              shouldPause: embedPause,
+                                              networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
+                                              onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
+                    [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
+                }
+                let embedAfter = await store.unembeddedCount()
+                if BackgroundYield.heavyShouldPause() { break }
+                let capBefore = await tagStore.captionPendingCount()
+                await tagTagger.captionUnprocessed(maxBatches: 3, shouldPause: captionPause)
+                let capAfter = await tagStore.captionPendingCount()
+                // どちらも 1 枚も進まなかった＝残作業なし（またはシミュレータで両方スキップ）→ 終了。
+                let progressed = (embedAfter < embedBefore) || (capAfter < capBefore)
+                if !progressed { break }
+            }
             isTagging = false
         }
     }

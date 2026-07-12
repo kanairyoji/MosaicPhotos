@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-30 CLIP 埋め込みと VLM キャプションを夜間バッチでインターリーブする
+- 状態: 採用
+- 文脈: 実機で VLM キャプションが 1 枚も出力されない不具合。原因は `scheduleBackgroundFill()` のパス順が **タグ → CLIP 埋め込み（全量）→ キャプション** の逐次で、キャプションが**埋め込みの完了を待つ**構造だったこと。実機は 85,418 枚中 17,981 枚（約 21%）しか埋め込めておらず（毎晩の電源＋アイドル窓は短く、1 枚 ANE でも枚数が多い）、埋め込みが 100% になるまでキャプションが 1 枚も始まらない＝事実上キャプションが永遠に未着手だった。
+- 決定: 埋め込みとキャプションを**少量ずつ交互（ラウンドロビン）に回す**。タグ（数十 ms/枚・検索の一次ランキング）は従来どおり先に全量へ行き渡らせ、その後 `while !heavyShouldPause()` で「埋め込み 12 バッチ → キャプション 3 バッチ」を繰り返す。各ランタイムに `maxBatches` を渡してバッチ数で切り上げられるようにし（`PhotoTagger.embedUnprocessed` は既存、`TagTagger.captionUnprocessed` に追加）、`AutoAlbumStore.unembeddedCount()` と `TagStore.captionPendingCount()`（新設）で **1 ラウンドの前後差** を見て、両方とも 1 枚も進まなければ終了する。この終了判定はシミュレータ（埋め込み・キャプション両方 `#if targetEnvironment(simulator)` でスキップ）でも安全に即終了する。譲り条件は従来と同じ（埋め込み＝操作中も譲る＋`heavyShouldPause`、キャプション＝`heavyShouldPause`）。
+- 結果: 埋め込みが未完でもキャプションが並行して進み始める。停止判定は 1 枚単位のまま（ロック解除直後の操作は即譲る）。トレードオフ: (1) 埋め込みの全量完了は交互ぶん僅かに遅くなる（キャプションに窓を分けるため）が、両者とも「数晩がかり」の性質なので体感差は小さい。(2) ラウンドの前後差カウント（`fetchCount` 2 回/ラウンド）が増えるが、12+3 バッチ＝60 枚超に 1 回なので無視できる。(3) バッチ比（12:3）は実機の 1 枚所要（埋め込み速い・キャプション遅い）に合わせた暫定値で、`BackgroundProcessing` プリセット化は将来課題。
+- 関連: `AIAlbum/AutoAlbumEngine+Recognition.scheduleBackgroundFill`・`Perception/PhotoTagger.embedUnprocessed`（maxBatches）・`Tags/TagTagger.captionUnprocessed`（maxBatches 追加）・`Tags/TagStore.captionPendingCount`（新設）・`AutoAlbumStore.unembeddedCount`・`BackgroundTrickle`。ADR-24（多層 AI・夜間トリクル）・ADR-25（電源＋Wi-Fi＋ロック中）。
+
 ## ADR-29 ピープルの人物統合と、AI アルバムの人物名検索（決定的接地＋LLM 補強）
 - 状態: 採用
 - 文脈: (1) 同一人物が顔クラスタリングで 2 人物に割れることがあり、まとめる手段が無かった（1 顔ずつの付け替えのみ）。(2) 人物アルバム名はフルネーム（「木村太郎」）が多いのに、AI アルバムのクエリで名だけ（「太郎」）や複数人物（「太郎と花子」）を指してもヒットしなかった。原因は評価（`QueryEvaluator` の people 部分一致）ではなく、**接地**（サニタイズがカタログ完全一致 or 原文出現しか通さない・"Person N" 混じりカタログ）と**解釈器の出力**（人名抽出は夜間 LLM のみ・作成時プレビューでは立たない）にあった。

@@ -78,6 +78,7 @@ final class TagTagger {
     /// タグ済み・キャプション未生成の写真に VLM キャプションを付ける（1 枚 1〜2 秒・数晩がかり）。
     func captionUnprocessed(batchSize: Int = 4,
                             betweenBatchNs: UInt64 = 1_000_000_000,
+                            maxBatches: Int = .max,
                             shouldPause: @MainActor () -> Bool = { false }) async {
         guard let provider, provider.isCaptioningAvailable else { return }
         #if targetEnvironment(simulator)
@@ -89,6 +90,7 @@ final class TagTagger {
         // 停止判定は 1 枚単位（VLM は 1 枚 1〜2 秒＝バッチ一括だと譲りが数秒遅れる）。
         // todo は静的な差分でなく「キャプション未生成」の動的クエリで都度供給する。
         await BackgroundTrickle.run(
+            maxBatches: maxBatches,
             betweenBatchNs: betweenBatchNs,
             shouldPause: shouldPause,
             unitPerfLabel: "caption.photoMs",

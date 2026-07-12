@@ -84,6 +84,12 @@ actor TagStore {
 
     // MARK: - キャプション（VLM・タグより後から埋まる）
 
+    /// キャプション未生成（caption == nil）の件数。インターリーブの進捗判定に使う。
+    func captionPendingCount() -> Int {
+        (try? modelContext.fetchCount(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil }))) ?? 0
+    }
+
     /// キャプション未生成（タグ付けは済み）の refKey を返す（夜間トリクルの対象）。
     func captionPending(limit: Int) -> [String] {
         var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil },
