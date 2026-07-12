@@ -132,6 +132,33 @@ bash scripts/build_florence.sh
 
 ---
 
+## 3. SmolVLM の量子化（視覚のみ INT8）と GIT-base 比較（2026-07）
+
+Florence 撤回後、SmolVLM-256M を「軽く」する策と、より軽い代替（GIT-base）を実測比較した。
+
+### 結果（Core ML サイズ・Mac CPU 速度・PyTorch 品質）
+
+| 構成 | サイズ | 速度(1枚) | メモリ(PyTorch RSS) | 品質 |
+|---|---|---|---|---|
+| SmolVLM fp16（原本） | 491MB（V179+D258+embed54） | ~3.3秒 | 1887MB | 詳細（7〜29語） |
+| SmolVLM 両方 INT8 | 287MB | ~3.3秒（CPU同速） | — | **劣化リスク大** |
+| **SmolVLM 視覚のみ INT8**（採用） | **402MB**（V90+D258+embed54） | ~3.3秒 | — | **維持** |
+| GIT-base（microsoft・MIT） | ~350MB見込み | ~0.5秒（5〜6倍速） | 1025MB | 短文・幻覚多（"pay phone"等） |
+
+### 重要な発見: 量子化への強さは部品で正反対
+- **視覚エンコーダ（VLMVision）は INT8 に強い**: 出力は連続ベクトル（画像埋め込み）。fp16 と INT8 の **cos≈0.999**（実測 0.9988/0.9983）＝実質無害。
+- **言語デコーダ（VLMDecoder）は INT8 に弱い**: 49,280 語から次単語を argmax で選ぶ離散決定なので、丸めで単語が入れ替わる。fp16 と INT8 の**次単語 argmax 一致率 26%**＝キャプションが崩れる。
+- → **視覚だけ INT8・デコーダは fp16 のまま**が最適（採用）。削減は ~90MB（491→402MB・約18%）と小さいが、品質を保ったまま安全に軽量化。大きく縮めるにはデコーダを 4bit＋per-channel＋キャリブレーション等で丁寧に量子化する必要（要検証）。
+- GIT-base は 5〜6倍速・軽量でアーキも ANE 安全寄り（画像前置＋自己注意）だが、COCO 学習で**短く誤りが多い**ため不採用。
+
+### 再現手順
+```bash
+bash scripts/build_smolvlm.sh                    # 視覚のみ INT8 量子化は既定 ON
+QUANTIZE_VISION=none bash scripts/build_smolvlm.sh  # 視覚も fp16 のまま（原本）にするとき
+```
+
+---
+
 ## 付記: 評価の限界と今後
 
 - すべて Mac 実測で、**iPhone ANE の絶対値は別途実機計測が必要**（シミュレータは VLM をスキップする設計）。

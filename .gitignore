@@ -46,10 +46,13 @@ MosaicPhotos/MobileCLIP/
 MosaicPhotos/FaceModel/
 
 # VLM (photo captions for AI albums): build venv/checkpoint (~2GB) and generated models (~450MB).
-# Regenerate locally with scripts/build_florence.sh (Florence-2-base・現行) / build_smolvlm.sh（旧）.
+# Regenerate locally with scripts/build_smolvlm.sh（現行・視覚のみINT8）/ build_florence.sh（撤回・参考）.
 .smolvlm_build/
 .vlmbench_flor/
 MosaicPhotos/VLM/
 
 # CLIP model comparison / quantization work dir (bench models). Regenerate with scripts/bench_clip.py etc.
 .clipbench/
+
+# VLM quantization work dir (bench models). Regenerate with scripts.
+.vlm_q/

@@ -14,6 +14,7 @@
 """
 import argparse
 import json
+import os
 import struct
 import sys
 from pathlib import Path
@@ -108,6 +109,15 @@ def main() -> None:
         minimum_deployment_target=ct.target.iOS17,
         convert_to="mlprogram",
     )
+    # 視覚エンコーダのみ INT8 重み量子化（既定 ON・179→~90MB）。出力は連続ベクトル（画像埋め込み）で
+    # 量子化に強く、fp16 との一致は cos≈0.999＝実質無害。デコーダ（言語 LM）は次単語の argmax が
+    # 量子化に敏感（fp16 と一致26%）なので fp16 のまま残す（ADR-32 / model-evaluations 参照）。
+    if os.environ.get("QUANTIZE_VISION", "int8").lower() == "int8":
+        import coremltools.optimize.coreml as cto
+        qcfg = cto.OptimizationConfig(global_config=cto.OpLinearQuantizerConfig(
+            mode="linear_symmetric", dtype="int8", weight_threshold=512))
+        mlv = cto.linear_quantize_weights(mlv, qcfg)
+        log("vision encoder quantized to INT8 (~half size, cos≈0.999)")
     mlv.save(str(out / "VLMVision.mlpackage"))
 
     # ---- 2) デコーダ（inputs_embeds 固定長 → logits）--------------------------
