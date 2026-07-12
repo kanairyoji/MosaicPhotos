@@ -279,6 +279,56 @@
         }
       }
     },
+    "Review descriptions" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "説明を確認"
+          }
+        }
+      }
+    },
+    "No descriptions yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "説明はまだありません"
+          }
+        }
+      }
+    },
+    "Descriptions are generated on device while charging. Check back later." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "説明は充電中に端末上で生成されます。しばらくしてから確認してください。"
+          }
+        }
+      }
+    },
+    "Showing %lld photos with an AI description." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 説明が付いた写真を %lld 枚表示しています。"
+          }
+        }
+      }
+    },
+    "On-device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末内"
+          }
+        }
+      }
+    },
     "Album" : {
       "localizations" : {
         "ja" : {

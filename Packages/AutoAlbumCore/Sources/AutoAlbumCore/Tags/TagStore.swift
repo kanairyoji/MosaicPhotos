@@ -66,6 +66,17 @@ actor TagStore {
             FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil }))) ?? 0
     }
 
+    /// キャプション済みの (refKey, caption) を先頭から最大 limit 件返す（確認 UI 用）。
+    func captionedSamples(limit: Int) -> [(refKey: String, caption: String)] {
+        var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil },
+                                                sortBy: [SortDescriptor(\.refKey)])
+        d.fetchLimit = limit
+        return ((try? modelContext.fetch(d)) ?? []).compactMap { r in
+            guard let c = r.caption, !c.isEmpty else { return nil }
+            return (refKey: r.refKey, caption: c)
+        }
+    }
+
     /// バッチ記録（save は 1 回）。既存レコードは更新（版を上げて再タグした場合も上書き）。
     func recordTags(_ batch: [(refKey: String, tags: [String])]) {
         for entry in batch {

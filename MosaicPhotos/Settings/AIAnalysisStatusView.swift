@@ -109,6 +109,14 @@ struct AIAnalysisStatusView: View {
         Section {
             progressRow(done: progress.captioned, total: progress.total, running: engine.isTagging)
             lastRunRow(.captions)
+            // 生成された説明文を実際に一覧で確認する（動いているかを目視で確かめる）。
+            if progress.captioned > 0 {
+                NavigationLink {
+                    CaptionedPhotosView(engine: engine)
+                } label: {
+                    Label(L("Review descriptions"), systemImage: "text.magnifyingglass")
+                }
+            }
         } header: {
             Text("AI Descriptions")
         } footer: {

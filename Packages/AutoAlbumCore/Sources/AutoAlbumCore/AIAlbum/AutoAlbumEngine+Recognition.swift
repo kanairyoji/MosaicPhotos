@@ -177,6 +177,12 @@ extension AutoAlbumEngine {
         return BackgroundProcessing.preset(at: index)
     }
 
+    /// キャプション済みの写真サンプル（refKey・説明文）。設定「AIによる説明」の確認 UI 用。
+    /// VLM キャプションが実際に付いているかを、生成された説明文で目視確認できるようにする。
+    public func captionedSamples(limit: Int = 200) async -> [(refKey: String, caption: String)] {
+        await tagStore.captionedSamples(limit: limit)
+    }
+
     /// 埋め込み済み／未処理の写真数（設定画面の進捗表示用）。
     public func recognitionCounts() async -> (tagged: Int, untagged: Int) {
         async let tagged = store.embeddedCount()
