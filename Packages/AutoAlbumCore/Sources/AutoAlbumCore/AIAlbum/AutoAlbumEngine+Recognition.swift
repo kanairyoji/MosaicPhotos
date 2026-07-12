@@ -27,6 +27,7 @@ extension AutoAlbumEngine {
             let caption = (await tagStore.captions(forRefKeys: [refKey]))[refKey]
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
                                 caption: (caption?.isEmpty == false) ? caption : nil,
+                                isScreenshot: rec.photo.isScreenshot,
                                 status: status)
         }
         // 付加情報が無い＝まだ取り込まれていない。

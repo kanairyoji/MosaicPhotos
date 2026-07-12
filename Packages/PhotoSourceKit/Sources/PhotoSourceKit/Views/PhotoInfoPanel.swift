@@ -60,10 +60,20 @@ struct PhotoInfoPanel: View {
                 // 状態は常に表示（未処理／解析中／完了が分かるように）。
                 statusRow(insight.status, hasSignals: insight.hasSignals)
 
+                if insight.isScreenshot {
+                    Label(L("Screenshot"), systemImage: "camera.viewfinder")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
                 if !insight.people.isEmpty {
                     header(systemImage: "person.2",
                            title: insight.people.joined(separator: ", "),
-                           subtitle: L("People"))
+                           subtitle: peopleSubtitle)
+                } else if let faceText = faceCountText {
+                    // 名前は未設定でも「何人写っているか」は出す（顔スキャン済みのとき）。
+                    header(systemImage: "person.crop.square",
+                           title: faceText,
+                           subtitle: L("Detected faces"))
                 }
                 // タグ欄は**常時表示**（付与前でも欄があることで「解析待ち」だと分かる）。
                 VStack(alignment: .leading, spacing: 4) {
@@ -108,6 +118,22 @@ struct PhotoInfoPanel: View {
         case .ready:
             Label(L("AI analysis"), systemImage: "sparkles")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// 人物名の下に出すサブタイトル。顔数が分かるときは「People · N faces」にする。
+    private var peopleSubtitle: String {
+        if let faceText = faceCountText { return "\(L("People")) · \(faceText)" }
+        return L("People")
+    }
+
+    /// 「N faces / N face / No faces」。顔スキャン済み（faceCount != nil）のときだけ返す。
+    private var faceCountText: String? {
+        guard let n = insight?.faceCount else { return nil }
+        switch n {
+        case 0:  return L("No faces")
+        case 1:  return L("1 face")
+        default: return L("\(n) faces")
         }
     }
 

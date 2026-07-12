@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-28 フル画像の情報パネルに抽出情報を漏れなく出す（顔数・スクショ。CLIP はラベル化済み）
+- 状態: 採用
+- 文脈: 「画像から抽出した情報は全てフル画面に出したい」との要望。監査の結果、写真 1 枚から永続化している情報のうち **顔の数**（`ScannedPhoto.faceCount`・実測）と **スクリーンショット判定**（`PhotoEnrichment.isScreenshot`）が `PhotoInsight` 型に載っておらず、`insight()` が構築時に捨てていて画面に出ていなかった。CLIP 512 次元ベクトル（`PhotoEmbedding.vector`）は生では意味不明だが、既に `CLIPDisplayLabeler`（約300語ゼロショット・最大6語）で語化され Vision シーンタグと統合して「Detected」欄に表示済み（＝ベクトルのキーワード化は実装済み・眠っていない）。
+- 決定: `PhotoInsight` に `faceCount: Int?`（未スキャン=nil で「0 と未計測」を区別）と `isScreenshot: Bool` を追加。顔数は `FaceStore.faceCount(refKey:)`（単一・軽い fetch）→ `PeopleEngine.faceCount(forItemID:)` を新設し、人物名と同じく `SourceHostView` の photoInsight クロージャで合成（顔スキャンは端末のみ＝クラウドは nil）。isScreenshot は `insight()` が `rec.photo` から詰める。パネルは、人物名があれば「名前 · N faces」、名前が無くても顔スキャン済みなら「N faces（Detected faces）」を出し、スクショは「Screenshot」バッジを出す。CLIP ラベルは現状の統合表示を維持（生ベクトルは出さない）。
+- 結果: 抽出済みの情報がフル画面に出揃った（タグ＝Vision＋CLIP語化・キャプション・人物名・顔数・スクショ・場所・日付・EXIF・地図・解析状態）。未表示のまま残すのは内部値（aspect・contentHash・linkKey・顔 bbox/embedding）と、AI 抽出でないユーザーフラグ（isFavorite＝別途ハートで表示）。
+- 関連: `PhotoInsight.swift`、`PhotoInfoPanel.insightSection`、`AutoAlbumEngine.insight`、`PeopleEngine.faceCount(forItemID:)` / `FaceStore.faceCount(refKey:)`、`SourceHostView`。CLIP 語化は `CLIPDisplayLabeler`。
+
 ## ADR-27 AI 解析の進捗をユーザー向けに可視化（各パスの最終実行時刻を永続化）
 - 状態: 採用
 - 文脈: オンデバイス AI（意味検索の CLIP 埋め込み・シーンタグ・キャプション・顔スキャン）は既定でフォアグラウンド停止＝夜間トリクル（ADR-25）のため、ユーザーからは「動いているのか・どこまで済んだのか」が全く見えなかった。進捗の数値は Developer Options や AutoAlbumSettings に断片的に出ていたが、デバッグ用で分散し、最終実行時刻はBGタスク全体（`bgTaskLastRun`）しか無かった。

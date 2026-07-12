@@ -115,6 +115,18 @@ public final class PeopleEngine {
         return []
     }
 
+    /// 写真（`PhotoItem.id`：生 localIdentifier か "L-…" refKey）に写っている顔の数（実測）。
+    /// フル画像ビューの表示用。未スキャン（クラウド含む）は nil＝「まだ数えていない」。
+    public func faceCount(forItemID id: String) async -> Int? {
+        var candidates: [String] = []
+        if PhotoRef.decode(id) != nil { candidates.append(id) }
+        candidates.append(PhotoRef.local(id).encoded)
+        for key in candidates {
+            if let n = await store.faceCount(refKey: key) { return n }
+        }
+        return nil
+    }
+
     /// 全スキャン済み写真の refKey → 人物表示名（自動アルバム生成の people 付与＝PeopleProvider 用）。
     public func peopleNamesByRefKey() async -> [String: [String]] {
         await store.peopleNamesByRefKey(minFaces: minFaces)

@@ -85,6 +85,15 @@ actor FaceStore {
     }
     func faceCount() -> Int { (try? modelContext.fetchCount(FetchDescriptor<DetectedFace>())) ?? 0 }
 
+    /// 1 写真の顔数（実測）。未スキャンは nil（＝「まだ数えていない」と「顔 0」を区別できる）。
+    /// フル画像ビューの表示用（何人写っているか）。
+    func faceCount(refKey: String) -> Int? {
+        let key = refKey
+        var d = FetchDescriptor<ScannedPhoto>(predicate: #Predicate { $0.refKey == key })
+        d.fetchLimit = 1
+        return (try? modelContext.fetch(d))?.first?.faceCount
+    }
+
     // MARK: - 記録＋逐次クラスタリング
 
     /// 複数写真分の検出結果をまとめて記録する（T3: save をバッチ 1 回に）。

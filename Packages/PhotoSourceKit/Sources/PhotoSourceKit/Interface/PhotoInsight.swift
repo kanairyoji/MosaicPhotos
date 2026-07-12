@@ -15,17 +15,24 @@ public struct PhotoInsight: Sendable, Equatable {
     public var people: [String]
     /// VLM キャプション（英語・夜間バッチで後から埋まる）。未生成は nil。
     public var caption: String?
+    /// この写真で検出した顔の数（顔スキャン済みのみ・実測）。未スキャン（クラウド含む）は nil。
+    public var faceCount: Int?
+    /// スクリーンショット判定（撮影ではなく画面キャプチャか）。
+    public var isScreenshot: Bool
     public var status: Status
 
     public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
+                faceCount: Int? = nil, isScreenshot: Bool = false,
                 status: Status = .ready) {
         self.tags = tags
         self.people = people
         self.caption = caption
+        self.faceCount = faceCount
+        self.isScreenshot = isScreenshot
         self.status = status
     }
 
     public var hasSignals: Bool {
-        !tags.isEmpty || !people.isEmpty
+        !tags.isEmpty || !people.isEmpty || (faceCount ?? 0) > 0 || caption != nil
     }
 }

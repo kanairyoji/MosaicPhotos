@@ -24,10 +24,11 @@ struct SourceHostView<Content: View>: View {
             .environment(\.dismissToHome, dismissToHome)
             .environment(\.showSettings, { showingSettings = true })
             .environment(\.photoInsight) { [autoAlbumEngine, peopleEngine] id in
-                // CLIP 由来の insight（タグ/解析状態）に、顔クラスタ由来の People 名を合成する。
+                // CLIP 由来の insight（タグ/解析状態）に、顔クラスタ由来の People 名と顔数を合成する。
                 var insight = await autoAlbumEngine.insight(forItemID: id) ?? PhotoInsight(status: .notIndexed)
                 let names = await peopleEngine.names(forItemID: id)
                 if !names.isEmpty { insight.people = names }
+                insight.faceCount = await peopleEngine.faceCount(forItemID: id)
                 return insight
             }
             // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。操作はアイドル判定にも記録する。
