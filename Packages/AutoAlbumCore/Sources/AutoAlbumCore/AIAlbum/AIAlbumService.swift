@@ -38,6 +38,13 @@ final class AIAlbumService {
         set { verification.faceCountsProvider = newValue }
     }
 
+    /// Phase 2（ADR-35）: 候補上位へのオンデマンドキャプション生成（審査の証拠を濃くする）。
+    /// エンジンが TagPerceptionProvider＋TagStore で結線する。
+    var captionOnDemand: (@Sendable ([String]) async -> [String: String])? {
+        get { verification.captionOnDemand }
+        set { verification.captionOnDemand = newValue }
+    }
+
     /// 名前付き人物（顔クラスタ）のフルネーム一覧を返す seam（人物名検索の接地用）。
     /// 解釈器へ委譲。Composition Root が `AutoAlbumEngine.setNamedPeopleProvider` で結線する。
     var namedPeopleProvider: (@Sendable () async -> [String])? {
@@ -202,12 +209,8 @@ final class AIAlbumService {
             var added: [String: Float] = [:]
             for photo in base {
                 guard let data = newVectors[photo.id], let v = ClipMath.decode(data) else { continue }
-                let pos = ClipMath.cosine(q.positive, v)
-                // 対策1: 除外概念との対比（フル評価と同じ**相対**ドロップ規則）。
-                if !q.negatives.isEmpty {
-                    let neg = q.negatives.map { ClipMath.cosine($0, v) }.max() ?? -1
-                    if neg >= pos { continue }
-                }
+                // 採点規則（max-over-probes＋除外の相対判定）はフル評価と同一（QueryEmbedder に一元化）。
+                guard let pos = QueryEmbedder.semanticScore(q, photoVector: v) else { continue }
                 added[photo.id] = pos
             }
             guard !added.isEmpty else { interpreter.save(saved, for: album.id); continue }
@@ -273,9 +276,11 @@ final class AIAlbumService {
         let phrase = QueryEmbedder.phrase(include: include, exclude: exclude,
                                           semanticText: saved.semanticText)
         guard !phrase.isEmpty else { return nil }
-        let cacheKey = "\(phrase)|\(exclude.joined(separator: ","))"
+        let probes = saved.probes ?? []
+        let cacheKey = "\(phrase)|\(probes.joined(separator: ","))|\(exclude.joined(separator: ","))"
         if let cached = queryVectorCache[cacheKey] { return cached }
-        guard let result = await embedder.embed(phrase: phrase, excludeTerms: exclude) else { return nil }
+        guard let result = await embedder.embed(phrase: phrase, probes: probes,
+                                                excludeTerms: exclude) else { return nil }
         queryVectorCache[cacheKey] = result
         return result
     }
@@ -295,13 +300,14 @@ final class AIAlbumService {
         let store = self.store
         let spec = saved.spec
         let semanticText = saved.semanticText
+        let probes = saved.probes ?? []
         let faceCounts = await faceCountsIfNeeded(for: spec)
         // P1: タグ台帳（refKey → シーンタグ）。一次ランキングと離散除外に使う。
         let tags = await tagStore?.allTags() ?? [:]
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
-                faceCounts: faceCounts, photoTags: tags,
+                probes: probes, faceCounts: faceCounts, photoTags: tags,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)
                 })

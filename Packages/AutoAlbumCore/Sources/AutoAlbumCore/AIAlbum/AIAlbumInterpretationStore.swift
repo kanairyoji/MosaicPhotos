@@ -17,7 +17,9 @@ public struct SavedInterpretation: Codable, Sendable {
     /// v4: P0＝日付は RelativeDateParser を唯一の出典に・place/people はカタログ/原文接地のみ・
     ///     翻訳失敗の非キャッシュ（2026-07）。
     /// v5: 決定的レキシコン（日本語視覚語＋人物否定）を解釈に注入（2026-07）。
-    public static let currentVersion = 5
+    /// v6: マルチプローブ＝FM の言い換えプローブを解釈時に生成・永続化し、意味採点を
+    ///     max-over-probes に（言い換えの取りこぼし回収・ADR-35・2026-07）。
+    public static let currentVersion = 6
     public var version: Int?
     /// 解釈時の検索文（これが変わったときだけ再解釈する）。
     public var criteria: String
@@ -35,6 +37,9 @@ public struct SavedInterpretation: Codable, Sendable {
     public var scoredPool: [String: Float]
     /// 増分評価: 前回フル評価時点の埋め込み済み枚数（ドリフト検知＝差が開いたらフル再評価）。
     public var evaluatedEmbedCount: Int
+    /// FM 生成の言い換えプローブ（英語・最大4・解釈時に 1 回生成して永続化）。意味採点は
+    /// 主フレーズ＋プローブの max-over-probes（旧 JSON は nil＝プローブ無し）。
+    public var probes: [String]?
 
     public init(criteria: String, spec: QuerySpec, semanticText: String,
                 scoredPool: [String: Float] = [:], evaluatedEmbedCount: Int = 0) {

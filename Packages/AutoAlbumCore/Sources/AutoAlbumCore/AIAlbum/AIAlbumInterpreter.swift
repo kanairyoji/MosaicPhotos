@@ -103,6 +103,12 @@ public final class AIAlbumInterpreter {
                                         semanticText: failed ? "" : english)
         saved.translationPending = failed
         saved.pendingFinalization = false   // full 解釈済み
+        // マルチプローブ（ADR-35）: FM に言い換え（同義語・上位/下位概念）を生成させて永続化する。
+        // 単語リスト生成は小型 LLM が壊れにくい形（expandProbes は空振り Refine と同じ実装）。
+        // 採点は主フレーズ＋プローブの max-over-probes＝言い換えの取りこぼしを回収する。
+        // 非 ASCII（英語でない）は CLIP に渡せないため落とす。ここも解釈時 1 回だけ（ADR-23）。
+        let rawProbes = await understanding.expandProbes(criteria)
+        saved.probes = Array(rawProbes.filter { $0.allSatisfy(\.isASCII) }.prefix(4))
         interpretations.set(id, saved)
         return saved
     }

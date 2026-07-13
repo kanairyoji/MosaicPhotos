@@ -7,10 +7,24 @@ import Foundation
 struct QueryEmbedder: Sendable {
     let textEmbedder: TextEmbedder?
 
-    /// クエリ埋め込みの結果（肯定ベクトル＋除外語ベクトル群）。
+    /// クエリ埋め込みの結果（肯定ベクトル群＋除外語ベクトル群）。
+    /// 肯定は**マルチプローブ**（主フレーズ＋FM の言い換えプローブ・ADR-35）。
     struct QueryVectors: Sendable {
-        let positive: [Float]
+        let positives: [[Float]]
         let negatives: [[Float]]
+        var positive: [Float] { positives[0] }   // 主フレーズ（従来互換）
+    }
+
+    /// 肯定側の意味スコア＝**プローブ群との最大コサイン**（どれか 1 つの言い回しに近ければ拾う＝
+    /// 言い換えの取りこぼし回収）。除外概念のほうが近ければ nil（相対判定のみ・絶対閾値なし＝ADR-24）。
+    /// フル評価（searchWithPool）と増分評価（refreshIncremental）は必ずこの同一規則で採点する。
+    static func semanticScore(_ q: QueryVectors, photoVector v: [Float]) -> Float? {
+        let pos = q.positives.map { ClipMath.cosine($0, v) }.max() ?? -1
+        if !q.negatives.isEmpty {
+            let neg = q.negatives.map { ClipMath.cosine($0, v) }.max() ?? -1
+            if neg >= pos { return nil }
+        }
+        return pos
     }
 
     /// 除外語 → CLIP プロンプト（ゼロショットの定番形）。
@@ -44,15 +58,23 @@ struct QueryEmbedder: Sendable {
         return trimmed.isEmpty ? include.joined(separator: ", ") : trimmed
     }
 
-    /// 肯定フレーズ＋除外語群を埋め込む。埋め込み不可（モデル未同梱・肯定の embed 失敗）なら
-    /// nil＝意味採点なし（除外語の embed 失敗は個別にスキップ＝従来どおり）。
-    func embed(phrase: String, excludeTerms: [String]) async -> QueryVectors? {
+    /// 肯定フレーズ（＋言い換えプローブ）＋除外語群を埋め込む。埋め込み不可（モデル未同梱・
+    /// 主フレーズの embed 失敗）なら nil＝意味採点なし（プローブ/除外語の失敗は個別にスキップ）。
+    /// プローブは主フレーズと重複しないものだけ・最大 4 本（FM 生成分のサニタイズは解釈側）。
+    func embed(phrase: String, probes: [String] = [], excludeTerms: [String]) async -> QueryVectors? {
         guard let textEmbedder, textEmbedder.isAvailable,
-              let positive = await textEmbedder.embed(phrase) else { return nil }
+              let main = await textEmbedder.embed(phrase) else { return nil }
+        var positives: [[Float]] = [main]
+        let lowerPhrase = phrase.lowercased()
+        for probe in probes.prefix(4) {
+            let p = probe.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !p.isEmpty, p.lowercased() != lowerPhrase else { continue }
+            if let v = await textEmbedder.embed(p) { positives.append(v) }
+        }
         var negatives: [[Float]] = []
         for term in excludeTerms {
             if let neg = await textEmbedder.embed(Self.excludePrompt(term)) { negatives.append(neg) }
         }
-        return QueryVectors(positive: positive, negatives: negatives)
+        return QueryVectors(positives: positives, negatives: negatives)
     }
 }

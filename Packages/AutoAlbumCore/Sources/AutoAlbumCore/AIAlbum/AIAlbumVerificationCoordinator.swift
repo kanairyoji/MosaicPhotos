@@ -12,6 +12,13 @@ final class AIAlbumVerificationCoordinator {
     private let verifier: AlbumCandidateVerifier?
     /// 顔スキャンの実測（refKey → 顔数）を返す seam（`AIAlbumService` 経由で Composition Root から結線）。
     var faceCountsProvider: (@Sendable () async -> [String: Int])?
+    /// Phase 2（ADR-35）: 候補写真への**オンデマンドキャプション生成**（refKeys → 生成 caption）。
+    /// キャプションは通常お気に入り限定（ADR-34）だが、AI アルバムの**候補上位だけ**は審査の証拠を
+    /// 濃くするため予算つきで生成する（「候補だけに重い VLM を注ぐ」）。実体はエンジンが結線
+    /// （TagPerceptionProvider.captions ＋ TagStore へ永続化・シミュレータ/VLM 未同梱では nil）。
+    var captionOnDemand: (@Sendable ([String]) async -> [String: String])?
+    /// 1 回の審査でオンデマンド生成するキャプションの上限（500M VLM ~4秒/枚 × 40 ≈ 3分弱・夜間）。
+    static let captionBudget = 40
 
     init(tagStore: TagStore?, verifier: AlbumCandidateVerifier? = makeDefaultVerifier()) {
         self.tagStore = tagStore
@@ -78,7 +85,19 @@ final class AIAlbumVerificationCoordinator {
         let top = Array(members.prefix(60))
         let keys = top.map(\.id)
         let tags = await tagStore?.tags(forRefKeys: keys) ?? [:]
-        let captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
+        var captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
+        // Phase 2（ADR-35）: キャプション未生成の候補上位に**その場で生成**して証拠を濃くする
+        // （通常はお気に入り限定＝ADR-34 だが、候補上位だけは予算つきで例外・keys は融合スコア順）。
+        if let captionOnDemand {
+            let missing = keys.filter { captions[$0]?.isEmpty != false }.prefix(Self.captionBudget)
+            if !missing.isEmpty {
+                let generated = await captionOnDemand(Array(missing))
+                if !generated.isEmpty {
+                    captions.merge(generated) { _, new in new }
+                    Diagnostics.mark("aialbum.verify: on-demand captions +\(generated.count)/\(missing.count)")
+                }
+            }
+        }
         // 証拠（タグ/キャプション）が全く無いなら審査しても意味がない（全部 unsure になるだけ）。
         guard !tags.isEmpty || !captions.isEmpty else { return members }
         let faces = await faceCountsProvider?() ?? [:]

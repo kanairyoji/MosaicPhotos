@@ -33,6 +33,8 @@ final class SearchQualityTests: XCTestCase {
             let id: String, category: String, text: String, en: String
             let expected: [String]
             let place: [String]?
+            /// 夜間 FM(expandProbes) 生成の代替（マルチプローブ採点 ADR-35 用）。
+            let probes: [String]?
         }
         let metadata: [String: Meta]
         let queries: [Query]
@@ -107,6 +109,7 @@ final class SearchQualityTests: XCTestCase {
             }
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: photos, spec: spec, now: now, semanticText: q.en,
+                probes: q.probes ?? [],
                 photoTags: tags,
                 loadPage: { offset, limit in
                     guard offset < vectors.count else { return [] }

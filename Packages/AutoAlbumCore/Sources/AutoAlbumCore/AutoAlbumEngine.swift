@@ -117,6 +117,24 @@ public final class AutoAlbumEngine {
                                         translator: translator)
         self.pathGenerator = PathAlbumGenerator(store: store, cloudProvider: cloudProvider)
         self.tagger = PhotoTagger(store: store, perception: perception)
+        // Phase 2（ADR-35）: AI アルバム候補の上位に**オンデマンドでキャプション**を付けて
+        // LLM 審査の証拠を濃くする（通常はお気に入り限定＝ADR-34 の例外・予算つき・夜間の審査時のみ）。
+        // 生成分は TagStore に永続化するので、次回以降は再生成しない。
+        if let tagProvider, tagProvider.isCaptioningAvailable {
+            aiService.captionOnDemand = { [tagStore] refKeys in
+                #if targetEnvironment(simulator)
+                return [:]   // VLM は cpuOnly で 1 枚十数秒＝シミュレータでは生成しない
+                #else
+                let generated = await tagProvider.captions(refKeys: refKeys)
+                let nonEmpty = generated.filter { !$0.value.isEmpty }
+                if !nonEmpty.isEmpty {
+                    await tagStore.recordCaptions(nonEmpty.map { (refKey: $0.key, caption: $0.value) })
+                    AnalysisActivity.recordActivity(.captions)
+                }
+                return nonEmpty
+                #endif
+            }
+        }
     }
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }

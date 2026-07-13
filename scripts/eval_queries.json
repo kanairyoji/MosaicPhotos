@@ -1,5 +1,5 @@
 {
-  "_readme": "検索品質ハーネス（SearchQualityTests）のクエリ集。expected は正解クラス（Imagenette wnid）。en は夜間 FM 翻訳後の semanticText 相当（空なら決定的チャンネルのみ）。metadata はハーネスが各クラスの写真へ合成する place/people（日付はクラス index+1 月/2024 を Swift 側で決定的に付与）。category: semantic-en=英語直接 / paraphrase-en=英語言い換え / ja-lexicon=レキシコン内日本語 / ja-free=レキシコン外の自由日本語（翻訳頼み） / hard=日付・場所・人物条件 / mixed=ハード＋意味。place はハード場所条件のヒント（夜間 FM 解釈の代替＝決定的に spec へ足す。プレビュー解釈は場所抽出をしないため）",
+  "_readme": "検索品質ハーネス（SearchQualityTests）のクエリ集。expected は正解クラス（Imagenette wnid）。en は夜間 FM 翻訳後の semanticText 相当（空なら決定的チャンネルのみ）。metadata はハーネスが各クラスの写真へ合成する place/people（日付はクラス index+1 月/2024 を Swift 側で決定的に付与）。category: semantic-en=英語直接 / paraphrase-en=英語言い換え / ja-lexicon=レキシコン内日本語 / ja-free=レキシコン外の自由日本語（翻訳頼み） / hard=日付・場所・人物条件 / mixed=ハード＋意味。place はハード場所条件のヒント（夜間 FM 解釈の代替＝決定的に spec へ足す。プレビュー解釈は場所抽出をしないため）。probes は夜間 FM(expandProbes)生成の代替（言い換え・同義語・上位/下位概念＝マルチプローブ採点 ADR-35 用）",
   "metadata": {
     "n01440764": {
       "place": "Okinawa, Japan"
@@ -46,6 +46,11 @@
       "en": "a church",
       "expected": [
         "n03028079"
+      ],
+      "probes": [
+        "cathedral",
+        "chapel",
+        "church building"
       ]
     },
     {
@@ -55,6 +60,12 @@
       "en": "a building with a steeple where people worship",
       "expected": [
         "n03028079"
+      ],
+      "probes": [
+        "church",
+        "cathedral",
+        "chapel",
+        "temple"
       ]
     },
     {
@@ -64,6 +75,11 @@
       "en": "a fish",
       "expected": [
         "n01440764"
+      ],
+      "probes": [
+        "fishing",
+        "freshwater fish",
+        "carp"
       ]
     },
     {
@@ -73,6 +89,12 @@
       "en": "a person holding a freshly caught fish",
       "expected": [
         "n01440764"
+      ],
+      "probes": [
+        "fish",
+        "fishing",
+        "angler",
+        "catch"
       ]
     },
     {
@@ -82,6 +104,11 @@
       "en": "a dog",
       "expected": [
         "n02102040"
+      ],
+      "probes": [
+        "puppy",
+        "pet dog",
+        "spaniel"
       ]
     },
     {
@@ -91,6 +118,12 @@
       "en": "a cute puppy going for a walk",
       "expected": [
         "n02102040"
+      ],
+      "probes": [
+        "dog",
+        "puppy",
+        "pet",
+        "dog walk"
       ]
     },
     {
@@ -100,6 +133,12 @@
       "en": "a brass musical instrument",
       "expected": [
         "n03394916"
+      ],
+      "probes": [
+        "french horn",
+        "trumpet",
+        "brass band",
+        "horn"
       ]
     },
     {
@@ -109,6 +148,12 @@
       "en": "a small white ball on the grass",
       "expected": [
         "n03445777"
+      ],
+      "probes": [
+        "golf ball",
+        "golf",
+        "golf course",
+        "ball"
       ]
     },
     {
@@ -118,6 +163,12 @@
       "en": "descending from the sky with a canopy",
       "expected": [
         "n03888257"
+      ],
+      "probes": [
+        "parachute",
+        "skydiving",
+        "paragliding",
+        "canopy"
       ]
     },
     {
@@ -127,6 +178,12 @@
       "en": "a truck that collects household waste",
       "expected": [
         "n03417042"
+      ],
+      "probes": [
+        "garbage truck",
+        "trash truck",
+        "waste collection",
+        "dump truck"
       ]
     },
     {
@@ -136,6 +193,12 @@
       "en": "a petrol station",
       "expected": [
         "n03425413"
+      ],
+      "probes": [
+        "gas station",
+        "fuel pump",
+        "gas pump",
+        "petrol"
       ]
     },
     {
@@ -145,6 +208,12 @@
       "en": "an old portable audio tape player",
       "expected": [
         "n02979186"
+      ],
+      "probes": [
+        "cassette player",
+        "cassette",
+        "walkman",
+        "tape recorder"
       ]
     },
     {
@@ -154,6 +223,12 @@
       "en": "a power tool for cutting wood",
       "expected": [
         "n03000684"
+      ],
+      "probes": [
+        "chainsaw",
+        "saw",
+        "logging",
+        "power tool"
       ]
     },
     {
@@ -163,6 +238,11 @@
       "en": "a photo of a church",
       "expected": [
         "n03028079"
+      ],
+      "probes": [
+        "church",
+        "cathedral",
+        "chapel"
       ]
     },
     {
@@ -172,6 +252,11 @@
       "en": "a photo of a dog",
       "expected": [
         "n02102040"
+      ],
+      "probes": [
+        "dog",
+        "puppy",
+        "pet"
       ]
     },
     {
@@ -181,6 +266,12 @@
       "en": "a place of worship with a steeple",
       "expected": [
         "n03028079"
+      ],
+      "probes": [
+        "church",
+        "cathedral",
+        "chapel",
+        "shrine"
       ]
     },
     {
@@ -190,6 +281,12 @@
       "en": "a person holding a freshly caught fish",
       "expected": [
         "n01440764"
+      ],
+      "probes": [
+        "fish",
+        "fishing",
+        "angler",
+        "catch"
       ]
     },
     {
@@ -199,6 +296,12 @@
       "en": "a garbage truck",
       "expected": [
         "n03417042"
+      ],
+      "probes": [
+        "garbage truck",
+        "trash truck",
+        "waste collection",
+        "dump truck"
       ]
     },
     {
@@ -208,6 +311,12 @@
       "en": "refueling at a gas station",
       "expected": [
         "n03425413"
+      ],
+      "probes": [
+        "gas station",
+        "fuel pump",
+        "gas pump",
+        "refueling"
       ]
     },
     {
@@ -217,6 +326,12 @@
       "en": "a small white ball on the grass",
       "expected": [
         "n03445777"
+      ],
+      "probes": [
+        "golf ball",
+        "golf",
+        "golf course",
+        "ball"
       ]
     },
     {
@@ -226,6 +341,12 @@
       "en": "descending with a parachute",
       "expected": [
         "n03888257"
+      ],
+      "probes": [
+        "parachute",
+        "skydiving",
+        "canopy",
+        "parachutist"
       ]
     },
     {
@@ -235,6 +356,12 @@
       "en": "a brass musical instrument",
       "expected": [
         "n03394916"
+      ],
+      "probes": [
+        "musical instrument",
+        "french horn",
+        "trumpet",
+        "brass"
       ]
     },
     {
@@ -289,6 +416,10 @@
       ],
       "place": [
         "Okinawa"
+      ],
+      "probes": [
+        "fish",
+        "fishing"
       ]
     },
     {
@@ -301,6 +432,12 @@
       ],
       "place": [
         "Kyoto"
+      ],
+      "probes": [
+        "church",
+        "temple",
+        "old building",
+        "architecture"
       ]
     }
   ]

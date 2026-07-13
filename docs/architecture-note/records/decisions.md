@@ -21,6 +21,14 @@
 
 ---
 
+## ADR-35 自然文検索の強化: マルチプローブ採点＋候補へのオンデマンドキャプション
+- 状態: 採用
+- 文脈: 自然文検索を「もっと柔軟に」する構想（ReACT 2フェーズのエージェント検索）の第一歩として、まず**評価ハーネス**（`SearchQualityTests`・Imagenette 200枚×28クエリ・Recall@k）で現行パイプラインを計測した。結果、**精度はほぼ完璧（memberP 0.99）だが言い換え表現の再現率が弱い**（paraphrase-en 0.61 / ja-free 0.68）＝改善ターゲットは「取りこぼしの回収」と数値で確定（model-evaluations §4）。
+- 決定: 2 つの決定的強化を導入する。**(A) マルチプローブ採点** — 解釈時（夜間・FM）に `expandProbes`（空振り Refine と同じ単語リスト生成＝小型 LLM が壊れにくい形）で言い換えプローブ（英語・最大4）を生成し `SavedInterpretation.probes` へ永続化（ADR-23 の「解釈は 1 回」を維持・版 v6 採番で既存アルバムも次回夜間に再解釈）。意味採点は主フレーズ＋プローブの **max-over-probes**（どれかの言い回しに近ければ拾う）。採点規則は `QueryEmbedder.semanticScore` に一元化し、フル評価（`searchWithPool`）と増分評価（`refreshIncremental`）が必ず同一規則を使う。**(B) 候補へのオンデマンドキャプション** — LLM 審査（`AlbumVerifier`）の直前に、候補上位のキャプション未生成分へ**その場で VLM を回して証拠を濃くする**（予算 40 枚/審査・生成分は TagStore へ永続化＝再生成しない・シミュレータ/VLM 未同梱は無効）。キャプションのお気に入り限定（ADR-34）の**意図された例外**＝「候補だけに重いモデルを注ぐ」。
+- 結果: ハーネス A/B で**言い換え再現率 +17〜18pt**（paraphrase-en 0.61→0.79 / ja-free 0.68→0.85・全体 memberR 0.76→0.86）。精度は 0.99→0.96 と微減だが、本番はこの後段の LLM 審査（B で証拠も濃くなる）が刈る。トレードオフ: (1) 解釈時に FM 呼び出しが 1 回増える（プローブ生成・夜間）。(2) 審査時に VLM 最大40枚 ≈ 3 分弱（夜間・電源＋ロック中ゲート内）。(3) ハーネスのプローブはクエリ集の固定値＝FM 生成品質そのものは実機で別途確認。
+- 残課題（ReACT 構想の残り）: Phase 1 の **FM 駆動の絞り込みループ**（観測＝プール集計→行動選択の反復）は未実装。今回の決定的強化で再現率ギャップの大半を回収できたため、残る価値（複雑な複合クエリの反復精化）は実機で A/B してから判断する。実装する場合も「閉じた行動空間・回数上限・決定的フォールバック」の設計（本 ADR 検討時の議論）に従う。
+- 関連: `AIAlbum/QueryEmbedder`（QueryVectors.positives・semanticScore 一元化）・`AIAlbumSearch`（probes・public化）・`AIAlbumService`（queryVectors/rankedSearch/refreshIncremental・captionOnDemand 転送）・`AIAlbumInterpretationStore`（probes・v6）・`AIAlbumInterpreter`（プローブ生成・public化）・`AIAlbumVerificationCoordinator`（captionOnDemand・予算40）・`AutoAlbumEngine`（結線）・`MultiProbeTests`・`SearchQualityTests`／`scripts/gen_eval_fixture.py`・`eval_queries.json`。ADR-23・ADR-24・ADR-34・[[model-evaluations]] §4。
+
 ## ADR-34 VLM を SmolVLM-500M に格上げ＋キャプションはお気に入り限定にする
 - 状態: 採用
 - 文脈: SmolVLM-256M のキャプションは曖昧（物体誤認・「文字がある板」止まり）で、テキストベースの意味検索強化の頭打ち要因。より良い VLM を実測比較（`bench_vlm_quality.py`）: **SmolVLM-500M**（Apache・decoder-only＝ANE安全確実）は物体を正しく特定し看板の文字（"Please Prepay"）まで読む＝明確に高品質。SmolVLM2-500M も同等（画像は v1 が素直）。**FastVLM-0.5B は最速・高品質だが `apple-amlr`（研究用途限定）で製品同梱不可**＝不採用。500M は Core ML で **877MB**（デコーダ 691MB fp16・視覚 INT8 94MB・埋込 90MB＝256M の 402MB の約2.2倍）でメモリが律速。実機で自己検証（next-token torch=coreml 一致）・footprint 確認の上で採用。

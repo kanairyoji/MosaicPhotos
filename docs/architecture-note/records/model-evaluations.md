@@ -223,6 +223,22 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 cat .mobileclip_build/eval/report.txt
 ```
 
+### 追記: マルチプローブ導入の A/B（ADR-35・2026-07）
+
+意味採点を「主フレーズのみ」→「主フレーズ＋FM 言い換えプローブ（最大4）の **max-over-probes**」に
+変更した効果（同ハーネス・プローブはクエリ集の `probes` 欄＝FM `expandProbes` 出力の決定的代替）:
+
+| 指標 | ベースライン | マルチプローブ | Δ |
+|---|---|---|---|
+| paraphrase-en memberR | 0.61 | **0.79** | **+0.18** |
+| ja-free memberR | 0.68 | **0.85** | **+0.17** |
+| 全体 memberR | 0.76 | **0.86** | **+0.10** |
+| 全体 memberP | 0.99 | 0.96 | −0.03 |
+| 全体 R@20 | 0.81 | 0.82 | +0.01 |
+
+**狙いどおり弱点だった言い換え再現率が +17〜18pt**。精度の微減（−0.03）はプローブが拾う近縁写真で、
+本番ではこの後段に LLM 審査（AlbumVerifier・ハーネス対象外）が入って刈られる。判断: 採用。
+
 ---
 
 ## 付記: 評価の限界と今後

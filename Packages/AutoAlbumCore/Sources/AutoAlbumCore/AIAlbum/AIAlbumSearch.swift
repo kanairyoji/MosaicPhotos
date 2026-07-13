@@ -53,14 +53,15 @@ public struct AIAlbumSearcher {
     /// ハード条件は `QueryEvaluator`（節の OR）で絞り、ソフトは内容語(include)を CLIP で採点する。
     /// `searchWithPool` の薄いラッパ（メンバーのみ返す・採点＝フロア＋マージン＋上位K）。
     func search(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
+                probes: [String] = [],
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 faceCounts: [String: Int]? = nil,
                 photoTags: [String: [String]] = [:],
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
-                             pageSize: pageSize, faceCounts: faceCounts, photoTags: photoTags,
-                             loadPage: loadPage).members
+                             probes: probes, pageSize: pageSize, faceCounts: faceCounts,
+                             photoTags: photoTags, loadPage: loadPage).members
     }
 
     /// `search(baseLite:spec:)` の本体。増分評価（Phase 2）のために**意味スコアのプール**
@@ -72,7 +73,10 @@ public struct AIAlbumSearcher {
     /// - Parameter photoTags: シーンタグ台帳（refKey → Vision 分類・精度校正済み）。
     ///   タグ一致は**閾値レス**（写真内順位で付与済み・照合は集合演算）の一次ランキングとして
     ///   意味検索と RRF 融合し、除外語はタグの離散一致でもハード除外する（P1）。
+    /// - Parameter probes: FM 生成の言い換えプローブ（解釈時に 1 回生成・永続化）。意味採点は
+    ///   主フレーズ＋プローブの max-over-probes＝言い換えの取りこぼしを回収する（ADR-35）。
     public func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
+                               probes: [String] = [],
                                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                                faceCounts: [String: Int]? = nil,
                                photoTags: [String: [String]] = [:],
@@ -131,8 +135,9 @@ public struct AIAlbumSearcher {
         // クエリ埋め込み（肯定＋除外語の個別埋め込み）は `QueryEmbedder` に集約
         // （増分評価＝AIAlbumService.queryVectors と同一実装）。
         if let q = await QueryEmbedder(textEmbedder: textEmbedder)
-            .embed(phrase: phrase, excludeTerms: excludeTerms) {
-            // 除外語は個別に埋め込み、画像ごとに「肯定より除外概念に近い／除外類似が高い」を落とす。
+            .embed(phrase: phrase, probes: probes, excludeTerms: excludeTerms) {
+            // 採点規則（max-over-probes＋除外の相対判定）は QueryEmbedder.semanticScore に一元化
+            // （増分評価＝AIAlbumService.refreshIncremental と同一実装）。
             let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             var scored: [(photo: EnrichedPhoto, score: Float)] = []
             scored.reserveCapacity(base.count)
@@ -143,13 +148,9 @@ public struct AIAlbumSearcher {
                 if page.isEmpty { break }
                 for entry in page {
                     guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
-                    let pos = ClipMath.cosine(q.positive, v)
-                    if !q.negatives.isEmpty {
-                        let neg = q.negatives.map { ClipMath.cosine($0, v) }.max() ?? -1
-                        if neg >= pos {   // 相対判定のみ（絶対閾値は廃止・ADR-24）
-                            excludedByNeg += 1
-                            continue
-                        }
+                    guard let pos = QueryEmbedder.semanticScore(q, photoVector: v) else {
+                        excludedByNeg += 1
+                        continue
                     }
                     scored.append((photo, pos))
                 }
