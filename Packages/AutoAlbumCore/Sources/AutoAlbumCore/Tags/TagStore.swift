@@ -117,21 +117,19 @@ actor TagStore {
             FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil }))) ?? 0
     }
 
-    /// キャプション未生成（タグ付けは済み）の refKey を返す（夜間トリクルの対象）。
+    /// キャプション未生成（タグ付けは済み＝レコードあり）の refKey **集合**を返す。
     /// `favorites` 指定時はその集合内のみ（キャプションはお気に入り限定のため）。
-    func captionPending(limit: Int, favorites: Set<String>? = nil) -> [String] {
-        var d: FetchDescriptor<PhotoTagRecord>
+    /// 処理順（新しい順）は呼び出し側が撮影日で並べる（本ストアは日付を持たない）。
+    func captionPendingSet(favorites: Set<String>? = nil) -> Set<String> {
+        let d: FetchDescriptor<PhotoTagRecord>
         if let favorites {
             guard !favorites.isEmpty else { return [] }
             d = FetchDescriptor<PhotoTagRecord>(
-                predicate: #Predicate { favorites.contains($0.refKey) && $0.caption == nil },
-                sortBy: [SortDescriptor(\.refKey)])
+                predicate: #Predicate { favorites.contains($0.refKey) && $0.caption == nil })
         } else {
-            d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil },
-                                                sortBy: [SortDescriptor(\.refKey)])
+            d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil })
         }
-        d.fetchLimit = limit
-        return ((try? modelContext.fetch(d)) ?? []).map(\.refKey)
+        return Set(((try? modelContext.fetch(d)) ?? []).map(\.refKey))
     }
 
     func recordCaptions(_ batch: [(refKey: String, caption: String)]) {

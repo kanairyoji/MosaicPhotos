@@ -79,29 +79,38 @@ final class TagTagger {
     }
 
     /// タグ済み・キャプション未生成の写真に VLM キャプションを付ける（1 枚 1〜2 秒・数晩がかり）。
-    /// `favorites` 指定時はその集合（お気に入り）のみを対象にする（重い文章生成をお気に入り限定に絞る）。
+    /// `favoritesNewestFirst` はお気に入り（キャプション対象）を**撮影日降順**に並べた列で、
+    /// この順に処理する＝新しい写真から先に説明が付く（全解析パス共通の方針）。
     func captionUnprocessed(batchSize: Int = 4,
                             betweenBatchNs: UInt64 = 1_000_000_000,
                             maxBatches: Int = .max,
-                            favorites: Set<String>? = nil,
+                            favoritesNewestFirst: [String]? = nil,
                             shouldPause: @MainActor () -> Bool = { false }) async {
         guard let provider, provider.isCaptioningAvailable else { return }
         // お気に入り限定でその集合が空なら、付ける対象が無いので即終了（毎回の空クエリを避ける）。
-        if let favorites, favorites.isEmpty { return }
+        if let favoritesNewestFirst, favoritesNewestFirst.isEmpty { return }
         #if targetEnvironment(simulator)
         // VLM は cpuOnly で 1 枚十数秒かかり検証の妨げになるため、シミュレータでは実行しない。
         Diagnostics.mark("captions: skipped on simulator (VLM runs cpuOnly here)")
         return
         #endif
+        // 未生成（タグ済みレコードのみ）を新しい順の静的キューにする。実行中の新規写真は次回巡回で拾う。
+        let pending = await store.captionPendingSet(favorites: favoritesNewestFirst.map(Set.init))
+        var queue: [String] = favoritesNewestFirst.map { $0.filter(pending.contains) }
+            ?? pending.sorted()
+        guard !queue.isEmpty else { return }
         var processed = 0
         // 停止判定は 1 枚単位（VLM は 1 枚 1〜2 秒＝バッチ一括だと譲りが数秒遅れる）。
-        // todo は静的な差分でなく「キャプション未生成」の動的クエリで都度供給する。
         await BackgroundTrickle.run(
             maxBatches: maxBatches,
             betweenBatchNs: betweenBatchNs,
             shouldPause: shouldPause,
             unitPerfLabel: "caption.photoMs",
-            nextBatch: { _ in await store.captionPending(limit: batchSize, favorites: favorites) },
+            nextBatch: { _ in
+                let batch = Array(queue.prefix(batchSize))
+                queue.removeFirst(batch.count)
+                return batch
+            },
             processUnit: { refKey in
                 let one = await provider.captions(refKeys: [refKey])
                 // 取得できなかった写真も空で記録して無限ループを防ぐ。

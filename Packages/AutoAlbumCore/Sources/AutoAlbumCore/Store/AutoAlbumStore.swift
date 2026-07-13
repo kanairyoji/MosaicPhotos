@@ -246,14 +246,41 @@ actor AutoAlbumStore {
     /// まだ埋め込みしていない写真の refKey（最大 limit 件・ローカル/クラウド両方）。
     /// 未埋め込みの refKey をバッチで返す。`localOnly` のときは**ローカル写真（"L-" 前缀）だけ**を
     /// DB 側で絞り込む（回線NG時にクラウド分＝サムネDLを避けてローカルだけ進めるため）。
+    /// **新しい写真から先に**返す（撮影日降順・日付なしは最後）＝撮りたての写真が検索へ最速で反映される。
     func unembeddedRefKeys(limit: Int, localOnly: Bool = false) -> [String] {
         let predicate: Predicate<PhotoEnrichment> = localOnly
             ? #Predicate { $0.sceneTagged == false && $0.refKey.starts(with: "L-") }
             : #Predicate { $0.sceneTagged == false }
-        var descriptor = FetchDescriptor<PhotoEnrichment>(predicate: predicate)
+        var descriptor = FetchDescriptor<PhotoEnrichment>(
+            predicate: predicate,
+            sortBy: [SortDescriptor(\.captureDate, order: .reverse)])
         descriptor.fetchLimit = limit
         let records = (try? modelContext.fetch(descriptor)) ?? []
         return records.map(\.refKey)
+    }
+
+    /// 取り込み済み写真の refKey を**撮影日降順**（新しい順・日付なしは最後）で返す。
+    /// シーンタグ付与など「新しい写真から先に解析する」パスの候補列挙に使う。
+    func enrichedRefKeysNewestFirst() -> [String] {
+        var descriptor = FetchDescriptor<PhotoEnrichment>(
+            sortBy: [SortDescriptor(\.captureDate, order: .reverse)])
+        descriptor.propertiesToFetch = [\.refKey, \.captureDate]
+        let records = (try? modelContext.fetch(descriptor)) ?? []
+        return records.map(\.refKey)
+    }
+
+    /// 指定 refKey 群を**撮影日降順**（新しい順）に並べ替えて返す。未取り込みの refKey は末尾。
+    /// キャプション（お気に入り限定）の処理順に使う。
+    func newestFirst(refKeys: Set<String>) -> [String] {
+        guard !refKeys.isEmpty else { return [] }
+        let keys = refKeys
+        var descriptor = FetchDescriptor<PhotoEnrichment>(
+            predicate: #Predicate { keys.contains($0.refKey) },
+            sortBy: [SortDescriptor(\.captureDate, order: .reverse)])
+        descriptor.propertiesToFetch = [\.refKey, \.captureDate]
+        let ordered = ((try? modelContext.fetch(descriptor)) ?? []).map(\.refKey)
+        let missing = refKeys.subtracting(ordered)
+        return ordered + missing.sorted()
     }
 
     /// refKey → 埋め込み を反映する（取得不可でも sceneTagged を立てる＝処理済み）。

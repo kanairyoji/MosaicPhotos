@@ -129,8 +129,9 @@ extension AutoAlbumEngine {
             await labelProvider?.prewarm()
             // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を全量に行き渡らせる。
             // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
-            let candidates = await store.enrichedRefKeys()
-            await tagTagger.tagUnprocessed(candidateRefKeys: Array(candidates),
+            // 候補は**新しい写真から先に**（撮影日降順）＝撮りたての写真が検索へ最速で反映される。
+            let candidates = await store.enrichedRefKeysNewestFirst()
+            await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                            shouldPause: { BackgroundYield.heavyShouldPause() })
             // P2/P3: CLIP 埋め込みと VLM キャプションを**インターリーブ**で進める。
             // ⚠️ 逐次（埋め込み全量→キャプション）だと、埋め込みが 85k 枚すべて終わるまで
@@ -144,8 +145,10 @@ extension AutoAlbumEngine {
             let captionPause: @MainActor () -> Bool = { BackgroundYield.heavyShouldPause() }
             // VLM キャプション（重い文章生成）は**お気に入り限定**。最新のお気に入り集合を取り込む
             // （favorite は変化するので毎回の背景実行で更新。新規お気に入りは次回巡回で付く）。
+            // 処理順は**撮影日降順**（新しい写真から先に説明が付く）。
             await refreshFavoritesCache()
             let favorites = favoritesCache
+            let favoritesOrdered = await store.newestFirst(refKeys: favorites)
             while !BackgroundYield.heavyShouldPause() {
                 let embedBefore = await store.unembeddedCount()
                 await tagger.embedUnprocessed(batchSize: preset.batchSize,
@@ -159,7 +162,8 @@ extension AutoAlbumEngine {
                 let embedAfter = await store.unembeddedCount()
                 if BackgroundYield.heavyShouldPause() { break }
                 let capBefore = await tagStore.captionPendingCount(favorites: favorites)
-                await tagTagger.captionUnprocessed(maxBatches: 3, favorites: favorites, shouldPause: captionPause)
+                await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: favoritesOrdered,
+                                                   shouldPause: captionPause)
                 let capAfter = await tagStore.captionPendingCount(favorites: favorites)
                 // どちらも 1 枚も進まなかった＝残作業なし（お気に入り分のキャプション完了含む）→ 終了。
                 let progressed = (embedAfter < embedBefore) || (capAfter < capBefore)

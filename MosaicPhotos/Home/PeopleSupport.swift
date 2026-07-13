@@ -6,10 +6,13 @@ import UIKit
 // MARK: - Candidate refKeys
 
 /// 同期済みクラウド写真の refKey 一覧（"C-<path>"）。ピープルの顔スキャン候補（クラウド分）に使う。
-/// クラウドはキャッシュ済み 128px サムネで顔検出する（追加DL無し・低解像度＝大きい顔中心）。
+/// クラウドはキャッシュ済みサムネ（thumbnailAPISize）で顔検出する（追加DL無し・大きい顔中心）。
+/// **撮影日降順**（新しい順・日付なしは最後）＝新しい写真から先に解析する。
 @MainActor
 func cloudImageRefKeys(dropboxStore: DropboxPhotoStore) -> [String] {
-    dropboxStore.items.map { PhotoRef.cloud($0.path).encoded }
+    dropboxStore.items
+        .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+        .map { PhotoRef.cloud($0.path).encoded }
 }
 
 /// ローカル＋クラウドの画像 refKey（顔スキャン候補の全体）。クラウド同期が未完なら cloud 分は
@@ -27,6 +30,8 @@ func localImageRefKeys() async -> [String] {
     await Task.detached(priority: .utility) {
         let opts = PHFetchOptions()
         opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        // 新しい写真から先に解析する（全解析パス共通の方針＝撮りたての写真が最速で反映される）。
+        opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let assets = PHAsset.fetchAssets(with: opts)
         var keys: [String] = []
         keys.reserveCapacity(assets.count)

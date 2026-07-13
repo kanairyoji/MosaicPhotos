@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-36 画像解析はすべて「新しい写真から先に」処理する
+- 状態: 採用
+- 文脈: 各解析パスの処理順が不定（CLIP 埋め込み＝SQLite の既定順・シーンタグ＝Set 列挙順・キャプション＝refKey 昇順・顔＝PHFetch 既定順）で、撮りたての写真の解析がいつ終わるか運任せだった。ユーザーは新しい写真ほど早く検索・アルバムに反映されてほしい。
+- 決定: **全解析パスの供給順を撮影日降順（新しい順・日付なしは最後）に統一**する。(1) CLIP 埋め込み＝`unembeddedRefKeys` に `SortDescriptor(\.captureDate, .reverse)`、(2) シーンタグ＝候補列挙を `enrichedRefKeysNewestFirst()` に、(3) VLM キャプション＝お気に入りを `newestFirst(refKeys:)` で並べ静的キューで処理（TagStore は日付を持たないため AutoAlbumStore 側で整列・動的クエリ→静的キューに変更・実行中の新規は次回巡回）、(4) 顔スキャン＝`localImageRefKeys` に PHFetch の creationDate 降順＋`cloudImageRefKeys` を captureDate 降順ソート（FaceTagger/TagTagger は候補順を保存するため列挙側の整列だけで効く）。
+- 結果: 撮りたて・同期したての写真から解析され、検索/アルバム/ピープルへの反映が最速になる。コスト: ソート付き fetch の増分は「512枚ドレインごとに ~数十ms」級で推論（1枚百ms〜秒）に対し無視できる。PHFetch は creationDate 索引済み。トレードオフ: キャプションが動的クエリ→実行開始時の静的キューになり、実行中に増えた対象は次回巡回まで待つ（従来と同じ巡回粒度）。
+- 関連: `AutoAlbumStore.unembeddedRefKeys`/`enrichedRefKeysNewestFirst`/`newestFirst(refKeys:)`・`TagStore.captionPendingSet`・`TagTagger.captionUnprocessed(favoritesNewestFirst:)`・`AutoAlbumEngine+Recognition.scheduleBackgroundFill`・`PeopleSupport.localImageRefKeys`/`cloudImageRefKeys`。ADR-30（インターリーブ）・ADR-34（お気に入り限定キャプション）。
+
 ## ADR-35 自然文検索の強化: マルチプローブ採点＋候補へのオンデマンドキャプション
 - 状態: 採用
 - 文脈: 自然文検索を「もっと柔軟に」する構想（ReACT 2フェーズのエージェント検索）の第一歩として、まず**評価ハーネス**（`SearchQualityTests`・Imagenette 200枚×28クエリ・Recall@k）で現行パイプラインを計測した。結果、**精度はほぼ完璧（memberP 0.99）だが言い換え表現の再現率が弱い**（paraphrase-en 0.61 / ja-free 0.68）＝改善ターゲットは「取りこぼしの回収」と数値で確定（model-evaluations §4）。
