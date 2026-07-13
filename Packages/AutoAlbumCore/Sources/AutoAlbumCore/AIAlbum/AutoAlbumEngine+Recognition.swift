@@ -30,8 +30,9 @@ extension AutoAlbumEngine {
             }
             let caption = (await tagStore.captions(forRefKeys: [refKey]))[refKey]
             let hasCaption = caption?.isEmpty == false
-            // キャプション未生成でも、VLM 同梱なら夜間に付く見込み＝「生成中」を出す（空欄に見せない）。
-            let captionPending = !hasCaption && tagTagger.isCaptioningAvailable
+            // キャプションは**お気に入り限定**なので、「生成中」は VLM 同梱かつ未生成かつ**お気に入り**のときだけ出す
+            // （非お気に入りは今後も付かないので空欄でよい・誤って「生成中」を出さない）。
+            let captionPending = !hasCaption && tagTagger.isCaptioningAvailable && favoritesCache.contains(refKey)
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
                                 caption: hasCaption ? caption : nil,
                                 captionPending: captionPending,
@@ -141,6 +142,10 @@ extension AutoAlbumEngine {
                 (self?.isInteracting ?? false) || BackgroundYield.heavyShouldPause()
             }
             let captionPause: @MainActor () -> Bool = { BackgroundYield.heavyShouldPause() }
+            // VLM キャプション（重い文章生成）は**お気に入り限定**。最新のお気に入り集合を取り込む
+            // （favorite は変化するので毎回の背景実行で更新。新規お気に入りは次回巡回で付く）。
+            await refreshFavoritesCache()
+            let favorites = favoritesCache
             while !BackgroundYield.heavyShouldPause() {
                 let embedBefore = await store.unembeddedCount()
                 await tagger.embedUnprocessed(batchSize: preset.batchSize,
@@ -153,10 +158,10 @@ extension AutoAlbumEngine {
                 }
                 let embedAfter = await store.unembeddedCount()
                 if BackgroundYield.heavyShouldPause() { break }
-                let capBefore = await tagStore.captionPendingCount()
-                await tagTagger.captionUnprocessed(maxBatches: 3, shouldPause: captionPause)
-                let capAfter = await tagStore.captionPendingCount()
-                // どちらも 1 枚も進まなかった＝残作業なし（またはシミュレータで両方スキップ）→ 終了。
+                let capBefore = await tagStore.captionPendingCount(favorites: favorites)
+                await tagTagger.captionUnprocessed(maxBatches: 3, favorites: favorites, shouldPause: captionPause)
+                let capAfter = await tagStore.captionPendingCount(favorites: favorites)
+                // どちらも 1 枚も進まなかった＝残作業なし（お気に入り分のキャプション完了含む）→ 終了。
                 let progressed = (embedAfter < embedBefore) || (capAfter < capBefore)
                 if !progressed { break }
             }
@@ -188,12 +193,17 @@ extension AutoAlbumEngine {
     /// `total`（取り込み済み写真数＝分母）と、各パスの完了数を 1 回で取得する。
     /// 完了時刻は `AnalysisActivity.lastActivity(_:)` で別途読む（UserDefaults・同期）。
     public func analysisProgress() async -> AnalysisProgress {
+        await refreshFavoritesCache()
+        let favorites = favoritesCache
         async let total = store.enrichmentCount()
         async let embedded = store.embeddedCount()
         async let tagged = tagStore.taggedCount()
-        async let captioned = tagStore.captionedCount()
+        // キャプションはお気に入り限定なので、済み枚数もお気に入り分（=お気に入り総数−未生成）で数える。
+        async let capPending = tagStore.captionPendingCount(favorites: favorites)
+        let captionedFav = max(0, favorites.count - (await capPending))
         return AnalysisProgress(total: await total, embedded: await embedded,
-                                sceneTagged: await tagged, captioned: await captioned)
+                                sceneTagged: await tagged, captioned: captionedFav,
+                                captionableTotal: favorites.count)
     }
 
     /// 全写真の認識結果（CLIP 埋め込み・キャプション）を消去し、最新ロジックで一から付け直す。

@@ -41,11 +41,14 @@ public struct AnalysisProgress: Sendable {
     public var sceneTagged: Int
     /// VLM キャプション生成済みの枚数（モデル未同梱なら常に 0）。
     public var captioned: Int
+    /// キャプション対象の総数＝**お気に入り写真数**（キャプションはお気に入り限定のため分母はこれ）。
+    public var captionableTotal: Int
 
-    public init(total: Int, embedded: Int, sceneTagged: Int, captioned: Int) {
+    public init(total: Int, embedded: Int, sceneTagged: Int, captioned: Int, captionableTotal: Int = 0) {
         self.total = total
         self.embedded = embedded
         self.sceneTagged = sceneTagged
         self.captioned = captioned
+        self.captionableTotal = captionableTotal
     }
 }

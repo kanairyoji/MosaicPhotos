@@ -134,6 +134,23 @@ public final class AutoAlbumEngine {
         aiService.namedPeopleProvider = provider
     }
 
+    /// お気に入り（Favorite）写真の refKey 集合を供給する seam。VLM キャプション（重い文章生成）は
+    /// **お気に入りのみ**に付与するため、キャプション対象の絞り込みとフル画像の「生成中」表示に使う。
+    /// Composition Root（アプリ）が PHAsset の favorite==YES を注入する。
+    @ObservationIgnored var favoriteRefKeysProvider: (@Sendable () async -> Set<String>)?
+    /// お気に入り集合のキャッシュ（insight の captionPending 判定・キャプション進捗分母に使う・
+    /// scheduleBackgroundFill と analysisProgress で更新）。
+    @ObservationIgnored var favoritesCache: Set<String> = []
+
+    public func setFavoriteRefKeysProvider(_ provider: @escaping @Sendable () async -> Set<String>) {
+        favoriteRefKeysProvider = provider
+    }
+
+    /// お気に入り集合を取り込み直してキャッシュする。
+    func refreshFavoritesCache() async {
+        if let p = favoriteRefKeysProvider { favoritesCache = await p() }
+    }
+
     /// ユーザーが写真を能動操作中か（スクラブ等）を設定する。true の間は背景 CLIP 埋め込みを譲る（G）。
     public func setInteracting(_ value: Bool) { isInteracting = value }
 
@@ -159,7 +176,7 @@ public final class AutoAlbumEngine {
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
     private static let perceptionVersion = 8   // v8: CLIP を INT8 量子化（重み半減・精度ほぼ不変）→全再埋め込み（ADR-31）
-    private static let captionModelVersion = 5 // v5: Florence を撤回し SmolVLM-256M に戻す（実機で Florence が ANE/GPU で破綻・CPU固定では遅くSmolVLMの利点消失）→Florence の誤キャプション破棄＆付け直し（ADR-32）
+    private static let captionModelVersion = 6 // v6: SmolVLM-256M→500M を検証（高品質だが 877MB・実機メモリ要確認）→全キャプション付け直し
 
     public func loadOrGenerate() async {
         ensureObserver()

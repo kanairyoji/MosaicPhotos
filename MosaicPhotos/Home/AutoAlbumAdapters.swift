@@ -32,6 +32,8 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     engine.setFaceCountsProvider { await peopleEngine.scannedFaceCounts() }
     // 名前付き人物の一覧を AI アルバムの人物名検索に結線（「太郎と花子」→ 木村太郎/木村花子 等）。
     engine.setNamedPeopleProvider { await peopleEngine.namedClusterNames() }
+    // VLM キャプション（重い文章生成）をお気に入り限定にするため、お気に入り集合（PHAsset）を結線。
+    engine.setFavoriteRefKeysProvider { await favoriteImageRefKeys() }
     return engine
 }
 

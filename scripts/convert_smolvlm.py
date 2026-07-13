@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-MODEL_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
+MODEL_ID = os.environ.get("SMOLVLM_MODEL", "HuggingFaceTB/SmolVLM-256M-Instruct")
 SEQ_LEN = 256          # デコーダ固定長（プロンプト ~90 + 画像 64 + 生成 48 に十分）
 MAX_NEW_TOKENS = 48    # Swift 側の既定（config に書き出すだけ）
 CAPTION_PROMPT = (

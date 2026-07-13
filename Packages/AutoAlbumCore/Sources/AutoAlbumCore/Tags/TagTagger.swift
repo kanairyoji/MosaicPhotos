@@ -79,11 +79,15 @@ final class TagTagger {
     }
 
     /// タグ済み・キャプション未生成の写真に VLM キャプションを付ける（1 枚 1〜2 秒・数晩がかり）。
+    /// `favorites` 指定時はその集合（お気に入り）のみを対象にする（重い文章生成をお気に入り限定に絞る）。
     func captionUnprocessed(batchSize: Int = 4,
                             betweenBatchNs: UInt64 = 1_000_000_000,
                             maxBatches: Int = .max,
+                            favorites: Set<String>? = nil,
                             shouldPause: @MainActor () -> Bool = { false }) async {
         guard let provider, provider.isCaptioningAvailable else { return }
+        // お気に入り限定でその集合が空なら、付ける対象が無いので即終了（毎回の空クエリを避ける）。
+        if let favorites, favorites.isEmpty { return }
         #if targetEnvironment(simulator)
         // VLM は cpuOnly で 1 枚十数秒かかり検証の妨げになるため、シミュレータでは実行しない。
         Diagnostics.mark("captions: skipped on simulator (VLM runs cpuOnly here)")
@@ -97,7 +101,7 @@ final class TagTagger {
             betweenBatchNs: betweenBatchNs,
             shouldPause: shouldPause,
             unitPerfLabel: "caption.photoMs",
-            nextBatch: { _ in await store.captionPending(limit: batchSize) },
+            nextBatch: { _ in await store.captionPending(limit: batchSize, favorites: favorites) },
             processUnit: { refKey in
                 let one = await provider.captions(refKeys: [refKey])
                 // 取得できなかった写真も空で記録して無限ループを防ぐ。

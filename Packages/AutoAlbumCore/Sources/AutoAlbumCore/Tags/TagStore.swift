@@ -106,15 +106,30 @@ actor TagStore {
     }
 
     /// キャプション未生成（caption == nil）の件数。インターリーブの進捗判定に使う。
-    func captionPendingCount() -> Int {
-        (try? modelContext.fetchCount(
+    /// `favorites` 指定時はその集合内のみ数える（キャプションはお気に入り限定のため）。
+    func captionPendingCount(favorites: Set<String>? = nil) -> Int {
+        if let favorites {
+            guard !favorites.isEmpty else { return 0 }
+            return (try? modelContext.fetchCount(FetchDescriptor<PhotoTagRecord>(
+                predicate: #Predicate { favorites.contains($0.refKey) && $0.caption == nil }))) ?? 0
+        }
+        return (try? modelContext.fetchCount(
             FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil }))) ?? 0
     }
 
     /// キャプション未生成（タグ付けは済み）の refKey を返す（夜間トリクルの対象）。
-    func captionPending(limit: Int) -> [String] {
-        var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil },
+    /// `favorites` 指定時はその集合内のみ（キャプションはお気に入り限定のため）。
+    func captionPending(limit: Int, favorites: Set<String>? = nil) -> [String] {
+        var d: FetchDescriptor<PhotoTagRecord>
+        if let favorites {
+            guard !favorites.isEmpty else { return [] }
+            d = FetchDescriptor<PhotoTagRecord>(
+                predicate: #Predicate { favorites.contains($0.refKey) && $0.caption == nil },
+                sortBy: [SortDescriptor(\.refKey)])
+        } else {
+            d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil },
                                                 sortBy: [SortDescriptor(\.refKey)])
+        }
         d.fetchLimit = limit
         return ((try? modelContext.fetch(d)) ?? []).map(\.refKey)
     }

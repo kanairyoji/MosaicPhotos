@@ -6,7 +6,7 @@
 # 同梱する小型 VLM（写真キャプション生成＝AI アルバムの精度向上用）を Core ML へ変換して配置する。
 # ※ ローカルの Mac で実行（ネットDL・Python・coremltools が必要）。build_facenet.sh と同流儀。
 #
-# 採用モデル: HuggingFaceTB/SmolVLM-256M-Instruct（コード・重みとも **Apache-2.0＝権利フリー**）。
+# 採用モデル: HuggingFaceTB/SmolVLM-500M-Instruct（Apache-2.0・高品質・ADR-34。SMOLVLM_MODEL で差替可）。
 #   SigLIP 視覚エンコーダ + SmolLM2-135M デコーダ。写真 1 枚 → 短い英語キャプション。
 #   夜間バッチ（電源＋アイドル/ロック中）で全写真に少しずつ付与する想定（数晩がかりで良い）。
 #
@@ -37,8 +37,10 @@ python -m pip install --upgrade pip wheel >/dev/null
 echo "==> 2) 依存をインストール（torch / transformers / coremltools）"
 pip install "torch>=2.3" "numpy<2" "coremltools>=8.1" "transformers>=4.49" "accelerate" "pillow" >/dev/null
 
-echo "==> 3) Core ML へ変換（DL 含め 20〜40 分・初回はモデル ~1GB をダウンロード）"
-python "$ROOT/scripts/convert_smolvlm.py" "$OUT" --work "$WORK"
+# 採用は SmolVLM-500M（高品質・ADR-34）。SMOLVLM_MODEL で 256M 等へ差し替え可。視覚のみ INT8（既定）。
+SMOLVLM_MODEL="${SMOLVLM_MODEL:-HuggingFaceTB/SmolVLM-500M-Instruct}"
+echo "==> 3) Core ML へ変換（$SMOLVLM_MODEL・DL 含め 20〜40 分・初回はモデル ~1GB をダウンロード）"
+SMOLVLM_MODEL="$SMOLVLM_MODEL" python "$ROOT/scripts/convert_smolvlm.py" "$OUT" --work "$WORK"
 
 echo "==> 完了。生成物:"
 ls -la "$OUT"

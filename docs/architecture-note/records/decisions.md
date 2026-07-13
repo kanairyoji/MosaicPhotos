@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-34 VLM を SmolVLM-500M に格上げ＋キャプションはお気に入り限定にする
+- 状態: 採用
+- 文脈: SmolVLM-256M のキャプションは曖昧（物体誤認・「文字がある板」止まり）で、テキストベースの意味検索強化の頭打ち要因。より良い VLM を実測比較（`bench_vlm_quality.py`）: **SmolVLM-500M**（Apache・decoder-only＝ANE安全確実）は物体を正しく特定し看板の文字（"Please Prepay"）まで読む＝明確に高品質。SmolVLM2-500M も同等（画像は v1 が素直）。**FastVLM-0.5B は最速・高品質だが `apple-amlr`（研究用途限定）で製品同梱不可**＝不採用。500M は Core ML で **877MB**（デコーダ 691MB fp16・視覚 INT8 94MB・埋込 90MB＝256M の 402MB の約2.2倍）でメモリが律速。実機で自己検証（next-token torch=coreml 一致）・footprint 確認の上で採用。
+- 決定: **VLM を SmolVLM-500M へ格上げ**（`convert_smolvlm.py` は `SMOLVLM_MODEL` で差替・視覚のみ INT8 は据え置き・Swift ランタイムは config 駆動で hidden 960 等を自動追従）。さらに **キャプション（重い文章生成）はお気に入り（PHAsset favorite）限定**にする＝タグ/CLIP埋め込み/顔は全写真のまま、VLM だけ絞る。実装: `AutoAlbumEngine.favoriteRefKeysProvider`＋`favoritesCache`（Composition Root が `favoriteImageRefKeys` を注入）／`TagStore.captionPending(favorites:)`・`captionPendingCount(favorites:)`／`captionUnprocessed(favorites:)`／`scheduleBackgroundFill` のインターリーブでお気に入り集合を渡す。進捗分母は**お気に入り数**（`AnalysisProgress.captionableTotal`）、フル画像の「生成中」プレースホルダも**お気に入りのみ**表示。`captionModelVersion` を 6 に採番し旧キャプション破棄＆付け直し。
+- 結果: favorite にした写真だけ高品質な一文説明が付く（重い VLM を少数に絞って現実的に）。AI アルバム生成側は**キャプションを元々「任意の補助証拠」扱い**（証拠ゲートは tag か caption・FM 審査の任意コンテキスト・ランキングには不使用）なので**構造変更は不要**（favorite 限定でも破綻しない）。トレードオフ: (1) 500M は 877MB・実機 footprint 増＝メモリ律速（要実機監視）。(2) 非お気に入り・クラウド（favorite 概念なし）はキャプション無し＝テキスト検索の網羅は限定的。(3) お気に入り変更は次回夜間巡回で追従。
+- 関連: `scripts/convert_smolvlm.py`(SMOLVLM_MODEL)・`build_smolvlm.sh`・`bench_vlm_quality.py`・`AutoAlbumEngine`(favoriteRefKeysProvider/favoritesCache)・`TagStore`/`TagTagger`(favorites)・`AutoAlbumEngine+Recognition`(scheduleBackgroundFill/insight/analysisProgress)・`AnalysisProgress.captionableTotal`・`AIAnalysisStatusView`・`AutoAlbumAdapters`。ADR-31（CLIP INT8）・ADR-32（Florence撤回）・[[model-evaluations]]。
+
 ## ADR-33 ピープル（顔クラスタ）をクラウド写真にも広げる（128px サムネ・追加DL無し・option B）
 - 状態: 採用
 - 文脈: 顔認識（Vision 検出＋顔モデル埋め込み→クラスタ）は端末写真のみ（候補は PHAsset 列挙・画像は 640px ロード）だった。クラウド（Dropbox）写真でも人物を出したい。ただし顔検出は最も解像度が要る（小さい顔を拾うため端末は 640px）一方、クラウド分析は通信を増やさない方針で**キャッシュ済み 128px サムネ**を再利用している（ADR-24 系）。「品質 vs 通信」で 3 案を提示し、ユーザーが **B（128px で動かす・追加DL無し・低品質許容）** を選択。

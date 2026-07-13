@@ -56,3 +56,6 @@ MosaicPhotos/VLM/
 
 # VLM quantization work dir (bench models). Regenerate with scripts.
 .vlm_q/
+
+# SmolVLM-500M conversion work dir (models). Regenerate with build_smolvlm.sh.
+.smolvlm500/

@@ -185,12 +185,12 @@
     "100 km" : {
 
     },
-    "A one-sentence description generated on device for each photo. This is the slowest pass and runs over several nights." : {
+    "A one-sentence description generated on device, for your favorite photos only (it's the heaviest pass). Mark photos as favorites to have them described." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "各写真について端末内で生成する一文の説明です。もっとも時間のかかる処理で、数晩かけて進みます。"
+            "value" : "端末内で生成する一文の説明です。もっとも重い処理のため、お気に入りの写真だけに付けます。説明が欲しい写真はお気に入りにしてください。"
           }
         }
       }

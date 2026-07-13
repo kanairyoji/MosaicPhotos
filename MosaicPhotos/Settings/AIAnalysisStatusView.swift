@@ -111,7 +111,7 @@ struct AIAnalysisStatusView: View {
 
     private var captionsSection: some View {
         Section {
-            progressRow(done: progress.captioned, total: progress.total, running: engine.isTagging)
+            progressRow(done: progress.captioned, total: progress.captionableTotal, running: engine.isTagging)
             lastRunRow(.captions)
             // 生成された説明文を実際に一覧で確認する（動いているかを目視で確かめる）。
             if progress.captioned > 0 {
@@ -124,7 +124,7 @@ struct AIAnalysisStatusView: View {
         } header: {
             Text("AI Descriptions")
         } footer: {
-            Text("A one-sentence description generated on device for each photo. This is the slowest pass and runs over several nights.")
+            Text("A one-sentence description generated on device, for your favorite photos only (it's the heaviest pass). Mark photos as favorites to have them described.")
         }
     }
 

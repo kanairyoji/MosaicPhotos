@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **MosaicPhotos** は iOS (iPhone) 向けの写真ビューワーアプリ。端末内の写真と Dropbox 上の写真を、ソース別（All / Photos / Cloud）・端末アルバム別・場所（市区町村）別に閲覧できる。外部 SDK は使用せず、すべて標準フレームワークで実装している。
 
-加えて **オンデバイス AI** を持つ：自然文（任意言語）の **AI アルバム / 意味検索**を「タグ台帳＋LLM審査」の多層構成（ADR-23/24）で実現する。索引は夜間バッチ（電源＋アイドル/ロック中 BGTask）で **Vision シーンタグ（約1,300クラス・精度校正済み）→ CLIP 埋め込み（OpenCLIP ViT-B-32・INT8量子化・Core ML・ADR-31）→ VLM キャプション（SmolVLM-256M・任意同梱）** の順に全写真へ付与。検索は「決定的ハード条件（日付=RelativeDateParser・場所/人物接地・レキシコン）→ タグ一致＋CLIP 対比＋字句の RRF 融合 → 証拠ゲート → FM LLM 審査（多数決）」。解釈（LLM）はアルバム作成時に 1 回だけ実行して永続化する。通信なし・API キー不要。
+加えて **オンデバイス AI** を持つ：自然文（任意言語）の **AI アルバム / 意味検索**を「タグ台帳＋LLM審査」の多層構成（ADR-23/24）で実現する。索引は夜間バッチ（電源＋アイドル/ロック中 BGTask）で **Vision シーンタグ（約1,300クラス・精度校正済み）→ CLIP 埋め込み（OpenCLIP ViT-B-32・INT8量子化・Core ML・ADR-31）→ VLM キャプション（SmolVLM-500M・**お気に入り限定**・任意同梱）** の順に付与（タグ/埋め込みは全写真・キャプションはお気に入りのみ）。検索は「決定的ハード条件（日付=RelativeDateParser・場所/人物接地・レキシコン）→ タグ一致＋CLIP 対比＋字句の RRF 融合 → 証拠ゲート → FM LLM 審査（多数決）」。解釈（LLM）はアルバム作成時に 1 回だけ実行して永続化する。通信なし・API キー不要。
 
 
 ### 技術スタック
@@ -21,7 +21,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 | トークン保存 | `Security`（Keychain Services） |
 | Dropbox API | `URLSession` async/await（外部 SDK 不使用） |
 | Dropbox キャッシュ | SwiftData（メタデータ）+ `ImageCacheKit`（バイナリ。`DropboxCacheStore`（actor）が `MemoryImageCache`/`DiskImageStore` を利用） |
-| オンデバイス AI | 多層構成（ADR-24）: **Vision 画像分類**（OS 内蔵・約1,300クラス・`hasMinimumRecall(forPrecision:)` の校正済み足切り）＋ **OpenCLIP ViT-B-32（DataComp・MIT・INT8量子化＝容量半減/精度ほぼ不変・ADR-31）**（Core ML・画像/テキスト埋め込み。ファイル名 `MobileCLIP*` は互換のため据え置き）＋ **SmolVLM-256M-Instruct（Apache-2.0・任意同梱）**（写真キャプション・`scripts/build_smolvlm.sh` で生成。**視覚エンコーダのみ INT8 量子化**＝出力ベクトルは量子化に強く cos≈0.999／言語デコーダは次単語 argmax が敏感で fp16 のまま。491→402MB。※ Florence-2-base への差替を試みたが実機 ANE/GPU の fp16 で破綻し撤回＝ADR-32）。クエリ解釈・翻訳・候補審査は Apple Foundation Models（`FoundationModels`）で、解釈は**作成時 1 回・永続化**（ADR-23）＋防御的サニタイズ＋決定的レキシコン。ロジックは `AutoAlbumCore`、各ランタイム/seam 実装は `MobileCLIPKit` に集約 |
+| オンデバイス AI | 多層構成（ADR-24）: **Vision 画像分類**（OS 内蔵・約1,300クラス・`hasMinimumRecall(forPrecision:)` の校正済み足切り）＋ **OpenCLIP ViT-B-32（DataComp・MIT・INT8量子化＝容量半減/精度ほぼ不変・ADR-31）**（Core ML・画像/テキスト埋め込み。ファイル名 `MobileCLIP*` は互換のため据え置き）＋ **SmolVLM-500M-Instruct（Apache-2.0・任意同梱・お気に入り写真限定）**（写真キャプション・`scripts/build_smolvlm.sh` で生成。**視覚エンコーダのみ INT8 量子化**＝出力ベクトルは量子化に強く cos≈0.999／言語デコーダは次単語 argmax が敏感で fp16 のまま。合計 877MB。重い文章生成なので**お気に入り（PHAsset favorite）のみに付与**＝ADR-34。※ 256M より高品質だがメモリ大／FastVLM は apple-amlr で不採用／Florence は ANE 破綻で撤回＝ADR-32）。クエリ解釈・翻訳・候補審査は Apple Foundation Models（`FoundationModels`）で、解釈は**作成時 1 回・永続化**（ADR-23）＋防御的サニタイズ＋決定的レキシコン。ロジックは `AutoAlbumCore`、各ランタイム/seam 実装は `MobileCLIPKit` に集約 |
 | 端末診断 | `MosaicSupport` の `Diagnostics`：未捕捉例外（`NSSetUncaughtExceptionHandler`）・メモリ圧迫（`DispatchSource`）・各ログを `Caches/diagnostics.log` に追記し、Developer Options で閲覧/共有（実機で Mac/Console なしに原因追跡） |
 | 最小 iOS | iOS 26.0（アプリターゲットの `IPHONEOS_DEPLOYMENT_TARGET`。各 SPM パッケージは `.iOS(.v17)` 宣言＋`@available` ゲートで macOS テストも維持） |
 | パッケージ管理 | Swift Package Manager（ローカルパッケージ 11 個。基盤: `MosaicSupport` / `PhotoSourceKit` / `ImageCacheKit`、ローカル写真: `LocalPhotoCore`(ロジック) / `LocalPhotoKit`(UI)、Dropbox: `DropboxCore`(ロジック) / `DropboxKit`(UI)、`BackupKit`、写真機能統合: `PhotosFeatureKit`、自動アルバム/AI: `AutoAlbumCore`、CLIP ランタイム/AI seam 実装: `MobileCLIPKit`） |
