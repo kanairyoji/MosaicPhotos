@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-33 ピープル（顔クラスタ）をクラウド写真にも広げる（128px サムネ・追加DL無し・option B）
+- 状態: 採用
+- 文脈: 顔認識（Vision 検出＋顔モデル埋め込み→クラスタ）は端末写真のみ（候補は PHAsset 列挙・画像は 640px ロード）だった。クラウド（Dropbox）写真でも人物を出したい。ただし顔検出は最も解像度が要る（小さい顔を拾うため端末は 640px）一方、クラウド分析は通信を増やさない方針で**キャッシュ済み 128px サムネ**を再利用している（ADR-24 系）。「品質 vs 通信」で 3 案を提示し、ユーザーが **B（128px で動かす・追加DL無し・低品質許容）** を選択。
+- 決定: **クラウド写真も 128px の Dropbox キャッシュサムネで顔検出**する（追加ダウンロード無し・CLIP/タグと同じ経路）。実装: `FacePerceptionAdapter` に `cloudImage` を注入し cloud refKey を処理／候補列挙を `allImageRefKeys`（PHAsset ＋ `dropboxStore.items` の "C-…"）に拡張（4 呼び出し箇所）／人物アルバムを `PersonAlbumView`（メンバー限定 MergedPhotoStore・local+cloud）で表示／代表顔アバター・顔タイルの `loadFaceAvatar` を `HeavyWorkScheduler.stores.dropboxStore` 経由でクラウド対応。顔スキャンの進捗分母もクラウド件数を合算。
+- 結果: クラウド写真でもピープルが動き、人物アルバムに端末＋クラウド両方のメンバーが出る。トレードオフ（割り切り）: **128px では小さい/遠い顔を取りこぼし、顔埋め込みも粗く別人誤判定が増える＝大きく写った顔（ポートレート/自撮り）中心**。代表顔アバターも 128px からの切り抜きでボケる。クラウド同期が未完なら候補が空になり得るが、夜間 BGTask/再起動の次回スキャン（増分）で拾う。良い品質が要るなら将来 option C（顔用だけ w256〜640 を 1 枚 1 回取得・通信方針の見直し要）。
+- 関連: `MobileCLIPKit/FacePerceptionAdapter`(cloudImage)・`MosaicPhotos/Home/PeopleSupport`(allImageRefKeys/cloudPaths/loadFaceAvatar)・`PersonAlbumView`(新規)・`AutoAlbumAdapters.makePeopleEngine`(dropboxStore)・`HomeView`/`HeavyWorkScheduler`/`AIAnalysisStatusView`(候補列挙)。ADR-29（人物統合・人物名検索）・ADR-24（クラウド分析の 128px 再利用）。
+
 ## ADR-32 VLM キャプションを Florence-2-base へ置き換え → **撤回して SmolVLM に戻す**
 - 状態: **撤回**（採用 → 実機で破綻し撤回。SmolVLM-256M を継続採用）
 - 撤回理由（2026-07・実機検証の結論）: Florence-2-base は Mac の Core ML では全 compute unit で正しく動く（~0.4秒/枚）が、**実機の ANE でも GPU でも fp16 演算が Mac と食い違い、全写真同一の無関係テキスト**（言語モデルの地の文）を吐く。段階切り分けで encoder 出力は有限（fp16 NaN でない）・mask も正常と確認でき、**デコーダの fp16 数値が実機で乖離**（近接 logits の argmax 反転）と判明。fp32 化しても実機 GPU では直らず、`computeUnits=.cpuOnly` なら Mac と一致して正しくなる見込みだが、**CPU 固定では 3〜5秒/枚（Mac 実測 1.3秒）と遅く、Florence を選んだ最大の理由（ANE で 3〜5倍速）が消える**。「CPU 固定なら ANE で速い SmolVLM の方が良い」との判断で撤回。※ SmolVLM が遅くて行き渡らない問題の真因はパイプライン順序バグ（ADR-30）で、それは修正済みのため SmolVLM でも夜間に行き渡る。

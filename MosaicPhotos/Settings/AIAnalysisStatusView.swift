@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import DropboxKit
 import MobileCLIPKit
 import MosaicSupport
 import PhotosFeatureKit
@@ -17,6 +18,7 @@ struct AIAnalysisStatusView: View {
     let engine: AutoAlbumEngine
     let people: PeopleEngine
     let mergedStore: MergedPhotoStore
+    let dropboxStore: DropboxPhotoStore
 
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0, captioned: 0)
     @State private var faceScanned = 0
@@ -149,7 +151,7 @@ struct AIAnalysisStatusView: View {
                 BackgroundYield.boostHeavyWork()
                 engine.scheduleBackgroundFill()
                 if facesAvailable, !people.isScanning {
-                    Task { people.startScan(candidateRefKeys: await localImageRefKeys()) }
+                    Task { people.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: dropboxStore)) }
                 }
             } label: {
                 Label(L("Analyze Now (while charging)"), systemImage: "bolt.badge.clock")
@@ -211,7 +213,8 @@ struct AIAnalysisStatusView: View {
         let s = await stats
         faceScanned = s.scanned
         facesDetected = s.faces
-        localPhotoTotal = await localTotal
+        // 顔スキャンは端末＋クラウド両方が対象になったので分母も合算（クラウドは同期済み件数）。
+        localPhotoTotal = await localTotal + (facesAvailable ? dropboxStore.items.count : 0)
     }
 
     private func percentText(done: Int, total: Int) -> String {

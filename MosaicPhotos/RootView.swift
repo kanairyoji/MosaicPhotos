@@ -48,7 +48,7 @@ final class HomeStores {
         let backupEngine = BackupEngine(auth: auth)
         await Task.yield()
         let albumScanner = LocalAlbumScanner()
-        let peopleEngine = await makePeopleEngine()
+        let peopleEngine = await makePeopleEngine(dropboxStore: dropboxStore)
         let placeScanner = PlaceScanner()
         await Task.yield()
         let autoAlbumEngine = await makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine,

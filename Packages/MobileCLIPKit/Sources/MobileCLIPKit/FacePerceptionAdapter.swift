@@ -6,10 +6,17 @@ import MosaicSupport
 import Vision
 
 /// `FacePerceptionProvider` の実体。Vision で顔を検出し、顔を切り抜いて同梱 Core ML 顔モデルで
-/// identity 埋め込みを得る。端末写真（"L-…"）のみ対応（ローカルから画像取得）。
+/// identity 埋め込みを得る。端末写真（"L-…"）は 640px で、クラウド（"C-…"）は `cloudImage` 経由の
+/// キャッシュ済みサムネ（w128h128・追加DL無し）で処理する。クラウドは低解像度なので**大きく写った顔
+/// 中心**（集合写真・引きの顔は苦手）＝品質は割り切り（ADR: option B）。
 /// 顔モデル未同梱なら `isAvailable == false`／空を返し、ピープルは無効になるだけ。
 public struct FacePerceptionAdapter: FacePerceptionProvider {
-    public init() {}
+    /// クラウド path → CGImage（Dropbox のキャッシュ済み 128px サムネ）。nil なら端末写真のみ対象。
+    let cloudImage: (@Sendable (String) async -> CGImage?)?
+
+    public init(cloudImage: (@Sendable (String) async -> CGImage?)? = nil) {
+        self.cloudImage = cloudImage
+    }
 
     public var isAvailable: Bool { FaceModel.modelBundled && FaceModelRuntime.shared.isAvailable }
 
@@ -18,11 +25,19 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         var loaded = 0, nilImage = 0, rawFaces = 0, embedded = 0, visionErr = 0
         var lastError: String?
         for refKey in refKeys {
-            guard let ref = PhotoRef.decode(refKey), let localID = ref.localIdentifier else { continue }
-            // 顔検出に十分な解像度で取得（大きすぎると重いので 800px 程度）。
-            // T3: 800→640px。Vision の顔検出には十分な解像度で、ロード・メモリを約36%削減
+            guard let ref = PhotoRef.decode(refKey) else { continue }
+            let source: CGImage?
+            if let localID = ref.localIdentifier {
+                // 端末写真: 顔検出に十分な 640px。T3: 800→640px でロード/メモリを約36%削減
                 // （顔クロップは検出後に bbox 基準で切るため embedding 品質への影響は軽微）。
-                guard let cg = await loadLocalCGImage(localID, maxPixel: 640) else { nilImage += 1; continue }
+                source = await loadLocalCGImage(localID, maxPixel: 640)
+            } else if let path = ref.cloudPath, let cloudImage {
+                // クラウド: キャッシュ済み 128px サムネを再利用（追加ダウンロード無し・低解像度）。
+                source = await cloudImage(path)
+            } else {
+                source = nil
+            }
+            guard let cg = source else { nilImage += 1; continue }
             loaded += 1
             let (raw, signals, error) = detect(in: cg)
             if let error { visionErr += 1; lastError = error }

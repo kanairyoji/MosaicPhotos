@@ -110,9 +110,8 @@ struct HomeView: View {
                 case .localAlbum(let album):
                     LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
                 case .person(let person):
-                    // 通常の写真ビューア（グリッド→フル画面で上スワイプ＝EXIF/場所）。専用ページは作らない。
-                    LocalPhotoContentView(localIdentifiers: localIdentifiers(from: person.memberRefKeys),
-                                          title: person.displayName)
+                    // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
+                    PersonAlbumView(person: person, dropboxStore: dropboxStore)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore)
                 case .autoAlbum(let album):
@@ -142,7 +141,7 @@ struct HomeView: View {
         // デバッグ：シミュレータ顔スキャンのトグルを ON にしたら（起動後でも）その場で開始する。
         .task(id: faceScanOnSimulator) {
             guard faceScanOnSimulator else { return }
-            peopleEngine.startScan(candidateRefKeys: await localImageRefKeys(), allowSimulator: true)
+            peopleEngine.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: dropboxStore), allowSimulator: true)
         }
     }
 
@@ -219,7 +218,7 @@ private struct HomeLifecycleTasks: ViewModifier {
             .task {
                 await peopleEngine.loadPeople()
                 let allowSim = UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
-                peopleEngine.startScan(candidateRefKeys: await localImageRefKeys(), allowSimulator: allowSim)
+                peopleEngine.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: dropboxStore), allowSimulator: allowSim)
             }
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする

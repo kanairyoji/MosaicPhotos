@@ -161,7 +161,7 @@ enum HeavyWorkScheduler {
         if Task.isCancelled { return }
 
         // 2. 顔スキャン＋CLIP 埋め込みを開始（それぞれ内部でトリクル実行・1枚ごとに譲り判定）。
-        stores.peopleEngine.startScan(candidateRefKeys: await localImageRefKeys())
+        stores.peopleEngine.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: stores.dropboxStore))
         stores.autoAlbumEngine.scheduleBackgroundFill()
 
         // 3. 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。進捗はモニタで観測。

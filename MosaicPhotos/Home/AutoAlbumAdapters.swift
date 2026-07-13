@@ -37,10 +37,14 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
 
 /// ピープル（顔クラスタ）エンジンを組み立てる。顔検出/埋め込み実体は Vision+CoreML（MobileCLIPKit）。
 /// 顔モデル未同梱なら無効（空表示）になる。代表写真の自動選択用にお気に入り集合（PhotoKit）を注入する。
-func makePeopleEngine() async -> PeopleEngine {
+/// クラウド写真の顔検出用に Dropbox のキャッシュ済みサムネ（128px・追加DL無し）を注入する。
+func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
+    let cloudImage: @Sendable (String) async -> CGImage? = { path in
+        await dropboxStore.thumbnail(for: dropboxFileItem(path: path))?.cgImage
+    }
     // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
-    await PeopleEngine.makeWithOffMainStore(
-        faceProvider: FacePerceptionAdapter(),
+    return await PeopleEngine.makeWithOffMainStore(
+        faceProvider: FacePerceptionAdapter(cloudImage: cloudImage),
         favoriteRefKeysProvider: { await favoriteImageRefKeys() })
 }
 

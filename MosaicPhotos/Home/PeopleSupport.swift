@@ -1,8 +1,24 @@
 import AutoAlbumCore
+import DropboxKit
 import Photos
 import UIKit
 
 // MARK: - Candidate refKeys
+
+/// 同期済みクラウド写真の refKey 一覧（"C-<path>"）。ピープルの顔スキャン候補（クラウド分）に使う。
+/// クラウドはキャッシュ済み 128px サムネで顔検出する（追加DL無し・低解像度＝大きい顔中心）。
+@MainActor
+func cloudImageRefKeys(dropboxStore: DropboxPhotoStore) -> [String] {
+    dropboxStore.items.map { PhotoRef.cloud($0.path).encoded }
+}
+
+/// ローカル＋クラウドの画像 refKey（顔スキャン候補の全体）。クラウド同期が未完なら cloud 分は
+/// 空になり得るが、夜間 BGTask/再起動の次回スキャンで拾われる（スキャンは未処理分のみの増分）。
+@MainActor
+func allImageRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
+    let cloud = cloudImageRefKeys(dropboxStore: dropboxStore)
+    return await localImageRefKeys() + cloud
+}
 
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。
 /// ⚠️ アプリ層の top-level 関数はデフォルト MainActor になるため、全件列挙（数万件）は
@@ -48,17 +64,31 @@ func favoriteImageRefKeys() async -> Set<String> {
 
 // MARK: - Cluster members → local identifiers
 
-/// クラスタのメンバー refKey をローカル localIdentifier 配列へ（クラウドは現状対象外）。
+/// クラスタのメンバー refKey をローカル localIdentifier 配列へ。
 func localIdentifiers(from refKeys: [String]) -> [String] {
     refKeys.compactMap { PhotoRef.decode($0)?.localIdentifier }
+}
+
+/// クラスタのメンバー refKey をクラウド（Dropbox）path 配列へ。人物アルバムのクラウドメンバー表示用。
+func cloudPaths(from refKeys: [String]) -> [String] {
+    refKeys.compactMap { PhotoRef.decode($0)?.cloudPath }
 }
 
 // MARK: - Face avatar
 
 /// 代表顔の写真からアバター（顔の切り抜き）を作る。`box` は Vision の正規化矩形（原点左下）。
 func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600) async -> UIImage? {
-    guard let coverRefKey, let box, let localID = PhotoRef.decode(coverRefKey)?.localIdentifier,
-          let cg = await requestAspectCGImage(localID, maxPixel: maxPixel) else { return nil }
+    guard let coverRefKey, let box, let ref = PhotoRef.decode(coverRefKey) else { return nil }
+    let source: CGImage?
+    if let localID = ref.localIdentifier {
+        source = await requestAspectCGImage(localID, maxPixel: maxPixel)
+    } else if let path = ref.cloudPath {
+        // クラウド顔: Dropbox のキャッシュ済み 128px サムネから切り抜く（低解像度アバター・追加DL無し）。
+        source = await HeavyWorkScheduler.stores?.dropboxStore.thumbnail(for: dropboxFileItem(path: path))?.cgImage
+    } else {
+        source = nil
+    }
+    guard let cg = source else { return nil }
     let width = CGFloat(cg.width), height = CGFloat(cg.height)
     let margin: CGFloat = 0.35
     var b = box.insetBy(dx: -box.width * margin, dy: -box.height * margin)
