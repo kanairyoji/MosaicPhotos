@@ -45,6 +45,17 @@ final class AIAlbumService {
         set { verification.captionOnDemand = newValue }
     }
 
+    /// 顔クラスタの**現在の**人物名（refKey → 名前）を返す seam。人物条件（.people 等）は
+    /// `EnrichedPhoto.people`（初回焼き込み・更新されない）でなく **live 照合**する（実障害:
+    /// 後から命名した人物が検索に反映されない）。Composition Root から結線。
+    var peopleByRefKeyProvider: (@Sendable () async -> [String: [String]])?
+
+    /// 人物条件があるアルバムだけ live 人物名マップを取得する（無関係なアルバムでは取得しない）。
+    private func peopleMapIfNeeded(for spec: QuerySpec) async -> [String: [String]]? {
+        guard spec.hasPeopleConditions, let peopleByRefKeyProvider else { return nil }
+        return await peopleByRefKeyProvider()
+    }
+
     /// 名前付き人物（顔クラスタ）のフルネーム一覧を返す seam（人物名検索の接地用）。
     /// 解釈器へ委譲。Composition Root が `AutoAlbumEngine.setNamedPeopleProvider` で結線する。
     var namedPeopleProvider: (@Sendable () async -> [String])? {
@@ -193,7 +204,8 @@ final class AIAlbumService {
                   saved.evaluatedEmbedCount > 0 else { continue }
 
             // ハード条件（相対日付は now で解決）を新規分に適用。
-            var base = QueryEvaluator.hardFilter(newPhotos, spec: saved.spec, now: now)
+            var base = QueryEvaluator.hardFilter(newPhotos, spec: saved.spec, now: now,
+                                                 peopleByRefKey: await peopleMapIfNeeded(for: saved.spec))
             saved.evaluatedEmbedCount += newRefKeys.count
             // 対策2: 人系の除外があれば顔の実測（faceCount>0）をハード除外（フル評価と同じ規則）。
             if let faceCounts = await faceCountsIfNeeded(for: saved.spec) {
@@ -302,12 +314,15 @@ final class AIAlbumService {
         let semanticText = saved.semanticText
         let probes = saved.probes ?? []
         let faceCounts = await faceCountsIfNeeded(for: spec)
+        // 人物条件は焼き込みでなく live 人物名（PeopleEngine）で照合する（命名/統合の追従）。
+        let peopleMap = await peopleMapIfNeeded(for: spec)
         // P1: タグ台帳（refKey → シーンタグ）。一次ランキングと離散除外に使う。
         let tags = await tagStore?.allTags() ?? [:]
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
                 probes: probes, faceCounts: faceCounts, photoTags: tags,
+                peopleByRefKey: peopleMap,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)
                 })

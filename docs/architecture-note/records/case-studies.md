@@ -28,6 +28,17 @@
 - 関連: `scripts/convert_florence*.py`/`build_florence.sh`/`bench_vlm.py`（参考として残置）・`VLMRuntime`（SmolVLM に復元）・`CoreMLModelSupport`（cpuOnly 分岐撤去）・`AutoAlbumEngine.captionModelVersion`(→5)。[[ADR-32]]・[[ADR-11]]（CLIP fp16 の教訓）。
 - 教訓: **Core ML の正しさは Mac だけでは検証しきれない**。Mac は全 compute unit で正しくても、実機 ANE/GPU の fp16 は encoder-decoder の cross-attention で Mac と乖離し得る（decoder-only では顕在化しない）。新モデル採用前に**実機での正しさ確認**（生成ID/有限性ログ）を段取りに入れる。今回は encoder=有限・mask=正常・fp32でも駄目、と 4 ラウンドの実機ログで切り分けた。
 
+## AI アルバム「太郎と花子」が 0 件／「人のいない風景」に人物写真が混入（実機・一晩運用）
+- 症状: (1) ピープルに「山田太郎」「山田花子」があるのに、AI アルバム「太郎と花子」で写真がピックアップされない。(2)「人のいない風景」アルバムに人が写った写真が入る（ADR-35 導入の翌朝に観測）。
+- 原因:
+  - (1) 人物名の接地（ADR-29）は正しく `.people(["山田太郎",…])` を作るが、照合先の `EnrichedPhoto.people` は**初回エンリッチ時に一度だけ焼き込まれ、以後更新されない**（`enrichLocal` はエンリッチ済み refKey をスキップ・peopleMap は新規写真のみ）。顔クラスタは最初は無名（"Person N"）で**後から**命名されるため、ほぼ全写真が「命名前」にエンリッチ済み＝people は空のまま。ハード条件なので 0 件。ADR-29 は「リネーム直後は旧名が残り得る」と注記していたが、実際は再エンリッチの仕組み自体が無く恒久の問題だった。
+  - (2) 多層の穴の複合。主犯は **ADR-35 のマルチプローブが除外対比を弱めた回帰**：除外は「neg ≥ max(肯定)」の相対判定で、プローブが肯定の最大値を底上げすると落ちにくくなる（ハーネスでも精度 0.99→0.96 と観測・導入翌晩に顕在化）。副次: 顔検出は「顔」であって「人」ではない（後ろ姿・遠景は faceCount=0 で素通り・クラウドは 128px でさらに取りこぼし）／Vision 語彙（実測 1303 クラス）には people の他に adult・child・crowd があり除外語 "people" と部分一致しない／審査の unsure→keep は除外系では逆向き。
+- 対処（ユーザー選択: 1=恒久案・2=プローブ対策のみ）:
+  - (1) **人物条件の live 照合**: `QueryEvaluator.hardFilter` に `peopleByRefKey`（PeopleEngine の現在のクラスタ名・refKey→名前）を渡し、`.people`/`.peopleAtLeast` は焼き込みでなく live マップで評価（未収載は焼き込みへフォールバック）。seam は faceCounts と同型（`AIAlbumService.peopleByRefKeyProvider`・人物条件があるアルバムのみ取得・`setPeopleByRefKeyProvider` で Composition Root から結線）。命名/統合/クラスタ成長が**即**検索に反映される。
+  - (2) **除外語があるアルバムではプローブを使わない**（`QueryEmbedder.embed` で excludeTerms 非空なら probes 無視＝ADR-35 以前の対比挙動を維持）。埋め込みの唯一の実装点で無効化するのでフル評価・増分評価の両方に効く。
+- 関連: `QueryEvaluator`(peopleByRefKey)・`QuerySpec.hasPeopleConditions`・`AIAlbumService`(peopleByRefKeyProvider/peopleMapIfNeeded)・`AutoAlbumEngine.setPeopleByRefKeyProvider`・`AutoAlbumAdapters`・`QueryEmbedder.embed`(除外時プローブ無効)・`PeopleLiveMatchTests`/`MultiProbeTests`。[[ADR-29]]・[[ADR-35]]。
+- 残課題: (2) の副次の穴は未対応＝タグ除外の人系同義語（adult/child/crowd）正規化・除外系審査の unsure→drop・人体検出（`VNDetectHumanRectanglesRequest`＝後ろ姿対応）の導入。審査の証拠行に人物名が無く、人物アルバムのメンバーを審査が誤 drop し得る点も未対応（実機で観測されたら追加）。
+
 ## AI アルバム作成/更新でシートが固まって見える（重い検索を待ってから閉じていた）
 - 症状: AI アルバムのコンポーザーで「アルバムを更新／作成」を押すと画面が固まる。タップに反応した手応えが無く、しばらくして閉じる。
 - 原因: `AIAlbumComposerView.submit()` が `await engine.updateAIAlbum/createAIAlbum` の**完了を待ってから** `dismiss()` していた。作成/更新は決定的プレビューでも「全写真メタの取得（`allEnrichedPhotosLite`・85k）＋タグ台帳取得（`allTags`）＋数万件×512 次元のスコアリング」を伴い数秒かかる。スコアリング自体は `Task.detached` でオフメインだが、シートは結果を待つ間ずっと開いたままで、`BusyLabel`（"Searching…"）は出るものの体感は「固まった」。ユーザーはタップが効いたのかも分からなかった。

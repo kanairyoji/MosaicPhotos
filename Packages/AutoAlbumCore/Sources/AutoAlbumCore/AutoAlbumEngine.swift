@@ -152,6 +152,13 @@ public final class AutoAlbumEngine {
         aiService.namedPeopleProvider = provider
     }
 
+    /// 顔クラスタの**現在の**人物名（refKey → 名前）を AI アルバムの人物条件評価へ結線する。
+    /// 人物名はリネーム/統合/クラスタ成長で変わるため、焼き込み（EnrichedPhoto.people）でなく
+    /// **検索時に live 照合**する（実障害: 後から命名した人物が検索に反映されない）。
+    public func setPeopleByRefKeyProvider(_ provider: @escaping @Sendable () async -> [String: [String]]) {
+        aiService.peopleByRefKeyProvider = provider
+    }
+
     /// お気に入り（Favorite）写真の refKey 集合を供給する seam。VLM キャプション（重い文章生成）は
     /// **お気に入りのみ**に付与するため、キャプション対象の絞り込みとフル画像の「生成中」表示に使う。
     /// Composition Root（アプリ）が PHAsset の favorite==YES を注入する。

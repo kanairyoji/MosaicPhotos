@@ -61,12 +61,16 @@ struct QueryEmbedder: Sendable {
     /// 肯定フレーズ（＋言い換えプローブ）＋除外語群を埋め込む。埋め込み不可（モデル未同梱・
     /// 主フレーズの embed 失敗）なら nil＝意味採点なし（プローブ/除外語の失敗は個別にスキップ）。
     /// プローブは主フレーズと重複しないものだけ・最大 4 本（FM 生成分のサニタイズは解釈側）。
+    /// ⚠️ **除外語があるアルバムではプローブを使わない**。除外の対比は「neg ≥ max(肯定)」の相対判定で、
+    /// プローブが肯定の最大値を底上げすると除外が効かなくなる（実障害:「人のいない風景」に人物写真が
+    /// 混入＝ADR-35 の回帰）。除外つきは主フレーズのみ＝ADR-35 以前の対比挙動を維持する。
     func embed(phrase: String, probes: [String] = [], excludeTerms: [String]) async -> QueryVectors? {
         guard let textEmbedder, textEmbedder.isAvailable,
               let main = await textEmbedder.embed(phrase) else { return nil }
         var positives: [[Float]] = [main]
         let lowerPhrase = phrase.lowercased()
-        for probe in probes.prefix(4) {
+        let effectiveProbes = excludeTerms.isEmpty ? probes : []
+        for probe in effectiveProbes.prefix(4) {
             let p = probe.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !p.isEmpty, p.lowercased() != lowerPhrase else { continue }
             if let v = await textEmbedder.embed(p) { positives.append(v) }

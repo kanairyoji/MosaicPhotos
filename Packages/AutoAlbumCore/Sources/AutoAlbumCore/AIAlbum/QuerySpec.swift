@@ -77,6 +77,19 @@ public struct QuerySpec: Sendable, Codable, Equatable {
     public var hasContent: Bool {
         let t = allContentTerms; return !t.include.isEmpty || !t.exclude.isEmpty
     }
+
+    /// 人物条件（.people / .peopleAtLeast・.not 内含む）を含むか。
+    /// 含むときだけ live 人物名マップ（PeopleEngine）を取得する（無関係なアルバムでは取得しない）。
+    public var hasPeopleConditions: Bool {
+        func containsPeople(_ cond: Condition) -> Bool {
+            switch cond {
+            case .people, .peopleAtLeast: return true
+            case .not(let inner): return containsPeople(inner)
+            default: return false
+            }
+        }
+        return clauses.contains { $0.conditions.contains(where: containsPeople) }
+    }
 }
 
 // MARK: - 既存 AIAlbumQuery からの橋渡し（後方互換）

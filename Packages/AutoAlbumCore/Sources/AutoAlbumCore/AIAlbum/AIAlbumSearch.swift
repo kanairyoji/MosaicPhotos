@@ -57,11 +57,13 @@ public struct AIAlbumSearcher {
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 faceCounts: [String: Int]? = nil,
                 photoTags: [String: [String]] = [:],
+                peopleByRefKey: [String: [String]]? = nil,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
                              probes: probes, pageSize: pageSize, faceCounts: faceCounts,
-                             photoTags: photoTags, loadPage: loadPage).members
+                             photoTags: photoTags, peopleByRefKey: peopleByRefKey,
+                             loadPage: loadPage).members
     }
 
     /// `search(baseLite:spec:)` の本体。増分評価（Phase 2）のために**意味スコアのプール**
@@ -75,14 +77,16 @@ public struct AIAlbumSearcher {
     ///   意味検索と RRF 融合し、除外語はタグの離散一致でもハード除外する（P1）。
     /// - Parameter probes: FM 生成の言い換えプローブ（解釈時に 1 回生成・永続化）。意味採点は
     ///   主フレーズ＋プローブの max-over-probes＝言い換えの取りこぼしを回収する（ADR-35）。
+    /// - Parameter peopleByRefKey: 顔クラスタの**現在の**人物名（live 照合・QueryEvaluator 参照）。
     public func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
                                probes: [String] = [],
                                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                                faceCounts: [String: Int]? = nil,
                                photoTags: [String: [String]] = [:],
+                               peopleByRefKey: [String: [String]]? = nil,
                                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
-        var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
+        var base = QueryEvaluator.hardFilter(all, spec: spec, now: now, peopleByRefKey: peopleByRefKey)
         let includeTerms = spec.allContentTerms.include
         let excludeTerms = spec.allContentTerms.exclude
 

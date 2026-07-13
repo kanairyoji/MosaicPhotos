@@ -65,6 +65,28 @@ struct MultiProbeTests {
         #expect(with.contains { PhotoRef.decode($0.id)?.localIdentifier == "mainHit" })
     }
 
+    @Test("除外語があるときはプローブを使わない（対比が弱まる回帰の防止）")
+    func exclusionDisablesProbes() async {
+        let embedder = MappingEmbedder(map: [
+            "landscape": [1, 0],
+            "mountain view": [0, 1],
+            QueryEmbedder.excludePrompt("people"): [0.3, 0.8],
+        ])
+        // 除外あり: プローブは埋め込まれない（positives は主フレーズ 1 本のみ）
+        let q = await QueryEmbedder(textEmbedder: embedder)
+            .embed(phrase: "landscape", probes: ["mountain view"], excludeTerms: ["people"])
+        #expect(q?.positives.count == 1)
+        // 実障害の再現: 人物入り写真 v は主フレーズ pos(0.28) < neg(0.75) → 落ちる。
+        // もしプローブが有効だと max-pos(≈0.8) > neg となり素通りしていた。
+        let v: [Float] = [0.28, 0.75]
+        #expect(QueryEmbedder.semanticScore(q!, photoVector: v) == nil)
+
+        // 除外なし: プローブは通常どおり有効。
+        let q2 = await QueryEmbedder(textEmbedder: embedder)
+            .embed(phrase: "landscape", probes: ["mountain view"], excludeTerms: [])
+        #expect(q2?.positives.count == 2)
+    }
+
     @Test("embed はプローブの空・主フレーズ重複を捨て、最大4本に丸める")
     func embedSanitizesProbes() async {
         let embedder = MappingEmbedder(map: [
