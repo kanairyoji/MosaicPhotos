@@ -35,6 +35,8 @@ private let zoomLevels: [ZoomLevel] = [
 /// ピンチとスライダーの両方でズーム段階を変えられる。
 public struct PhotoGridView<Store: PhotoStore>: View {
     let store: Store
+    /// 絞り込み条件（お気に入りのみ等・`PhotoSourceContentView` の下部バーから指定）。
+    let filter: PhotoFilter
     /// ラダーのインデックス。既定はインデックス 2（dense 3 列）。
     @AppStorage(GridSettingsKeys.zoomLevel) private var zoomLevel = 2
     /// 月グループの密度（1セクションを閉じるまでに貯める行数）。既定 1＝最大密度。
@@ -43,7 +45,13 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     /// タップで開く写真（item.id）。`navigationDestination(item:)` で詳細へ push する。
     @State private var selectedID: Store.Item.ID?
 
-    public init(store: Store) { self.store = store }
+    public init(store: Store, filter: PhotoFilter = PhotoFilter()) {
+        self.store = store
+        self.filter = filter
+    }
+
+    /// フィルタ適用後の表示アイテム（未フィルタなら store.items をそのまま）。
+    private var visibleItems: [Store.Item] { filter.apply(store.items) }
 
     private var level: ZoomLevel {
         zoomLevels[min(max(0, zoomLevel), zoomLevels.count - 1)]
@@ -58,26 +66,37 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     }
 
     public var body: some View {
-        PhotoCollectionView(
-            store: store,
-            items: store.items,
-            columnCount: level.cols,
-            grouping: grouping,
-            monthSectionRows: max(1, monthSectionRows),
-            onPinch: onPinch,
-            onSelect: {
-                PerfTrace.beginScreen("open.photo")   // 計測: タップ→フル表示(onAppear)
-                // A: タップ直後から背景 CLIP 埋め込みを止め、遷移のメインスレッドを空ける。
-                BackgroundActivityMonitor.shared.isViewingPhoto = true
-                selectedID = $0
-            },
-            onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る
-        )
-        .ignoresSafeArea(.container, edges: .horizontal)
+        Group {
+            if filter.isActive && visibleItems.isEmpty {
+                // フィルタで 0 件（例: お気に入りが無いソース）。空グリッドだと故障に見えるため明示する。
+                ContentUnavailableView(L("No favorites"), systemImage: "heart",
+                                       description: Text(L("Mark photos with a heart to see them here.")))
+            } else {
+                PhotoCollectionView(
+                    store: store,
+                    items: visibleItems,
+                    columnCount: level.cols,
+                    grouping: grouping,
+                    monthSectionRows: max(1, monthSectionRows),
+                    onPinch: onPinch,
+                    onSelect: {
+                        PerfTrace.beginScreen("open.photo")   // 計測: タップ→フル表示(onAppear)
+                        // A: タップ直後から背景 CLIP 埋め込みを止め、遷移のメインスレッドを空ける。
+                        BackgroundActivityMonitor.shared.isViewingPhoto = true
+                        selectedID = $0
+                    },
+                    onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る
+                )
+                .ignoresSafeArea(.container, edges: .horizontal)
+            }
+        }
         // グリッドが見えている＝閲覧していない。フラグの取りこぼし（遷移失敗等）も確実に解除する。
         .onAppear { BackgroundActivityMonitor.shared.isViewingPhoto = false }
         .navigationDestination(item: $selectedID) { id in
-            PhotoPageView(store: store, startID: id)
+            // フィルタ中はフル画面のスワイプ送りも**フィルタ後の並び**でページングする
+            // （未フィルタ時は nil＝store.items を直接参照し、追加ロードも従来どおり）。
+            PhotoPageView(store: store, startID: id,
+                          pagingItems: filter.isActive ? visibleItems : nil)
                 .perfScreenEnd("open.photo")   // 計測: フル表示の onAppear で所要を確定
         }
     }

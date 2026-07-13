@@ -13,9 +13,12 @@ import MosaicSupport
 ///   近づいたらウィンドウを中央へ寄せ直す（選択中の写真は常にウィンドウ内なので正しく表示される）。
 public struct PhotoPageView<Store: PhotoStore>: View {
     let store: Store
+    /// ページング対象の固定リスト（フィルタ中のグリッドから渡される）。nil なら store.items を直接参照。
+    /// 固定リストのときは追加ロード（loadMore）トリガを行わない（スナップショットのため）。
+    private let pagingItems: [Store.Item]?
     /// 現在のページを **item.id** で保持する。
     @State private var currentID: Store.Item.ID
-    /// 生成するウィンドウの開始 index（store.items に対する下限）。
+    /// 生成するウィンドウの開始 index（allItems に対する下限）。
     @State private var windowLowerBound: Int
     /// 現在ページの地名（位置情報があれば解決して日付の下に表示する）。
     @State private var currentPlace: String?
@@ -28,16 +31,21 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     /// 端から何枚以内に近づいたらウィンドウを再センタリングするか。
     private static var recenterMargin: Int { 8 }
 
-    public init(store: Store, startID: Store.Item.ID) {
+    public init(store: Store, startID: Store.Item.ID, pagingItems: [Store.Item]? = nil) {
         self.store = store
+        self.pagingItems = pagingItems
         self._currentID = State(initialValue: startID)
-        let startIndex = store.items.firstIndex(where: { $0.id == startID }) ?? 0
+        let items = pagingItems ?? store.items
+        let startIndex = items.firstIndex(where: { $0.id == startID }) ?? 0
         self._windowLowerBound = State(initialValue: max(0, startIndex - Self.windowRadius))
     }
 
+    /// ページング対象（固定リスト or store.items）。
+    private var allItems: [Store.Item] { pagingItems ?? store.items }
+
     /// `TabView` に渡す現在ウィンドウのスライス（全 67k ではなく中央±radius のみ）。
     private var windowItems: ArraySlice<Store.Item> {
-        let items = store.items
+        let items = allItems
         guard !items.isEmpty else { return items[items.startIndex..<items.startIndex] }
         let lo = min(max(0, windowLowerBound), max(0, items.count - 1))
         let hi = min(items.count, lo + Self.windowRadius * 2 + 1)
@@ -45,7 +53,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     }
 
     private var currentItem: Store.Item? {
-        store.items.first { $0.id == currentID }
+        allItems.first { $0.id == currentID }
     }
 
     /// 現在ページのお気に入り状態（楽観反映があればそれを優先）。
@@ -110,7 +118,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
             recenterWindowIfNeeded(around: newID)   // ウィンドウを中央へ寄せ直す（端に近づいたら）
             schedulePrefetch()                       // D: 次ページのフル画像先読み
             // ページング末尾近く（20枚以内）で追加ロード。hasMore は通常 false。
-            guard store.hasMore,
+            // 固定リスト（フィルタ中）はスナップショットなので追加ロードしない。
+            guard pagingItems == nil, store.hasMore,
                   let index = store.items.firstIndex(where: { $0.id == newID }) else { return }
             if index >= store.items.count - 20 {
                 Task { await store.loadMore() }
@@ -121,7 +130,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     /// スワイプで現在 index が端へ近づいたら、ウィンドウを現在 index 中心に寄せ直す。
     /// 選択中の `currentID` は新ウィンドウ内に必ず含まれるので、表示中の写真は維持される。
     private func recenterWindowIfNeeded(around id: Store.Item.ID) {
-        let items = store.items
+        let items = allItems
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
         let lo = windowLowerBound
         let hi = min(items.count, lo + Self.windowRadius * 2 + 1)
@@ -139,10 +148,11 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         let pageID = currentID
         Task {
             try? await Task.sleep(for: .seconds(1.2))
+            let items = allItems
             guard pageID == currentID,
-                  let idx = store.items.firstIndex(where: { $0.id == currentID }),
-                  store.items.indices.contains(idx + 1) else { return }
-            store.prefetchFullImage(for: store.items[idx + 1])
+                  let idx = items.firstIndex(where: { $0.id == currentID }),
+                  items.indices.contains(idx + 1) else { return }
+            store.prefetchFullImage(for: items[idx + 1])
         }
     }
 

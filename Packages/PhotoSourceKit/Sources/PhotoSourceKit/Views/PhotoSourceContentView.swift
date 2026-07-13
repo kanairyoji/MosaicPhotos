@@ -15,6 +15,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     @Environment(\.dismissToHome) private var dismissToHome
     @Environment(\.showSettings)  private var showSettings
     @Environment(\.openURL)       private var openURL
+    /// 絞り込み条件（お気に入りのみ等）。画面ごとの一時状態（開き直すと解除）。
+    @State private var filter = PhotoFilter()
+    @State private var showFilterSheet = false
 
     public init(store: Store, title: String, @ViewBuilder header: () -> Header = { EmptyView() }) {
         self.store = store
@@ -33,7 +36,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                     case .needsSetup(let message, let detail, let systemImage, let action):
                         setupView(message: message, detail: detail, systemImage: systemImage, action: action)
                     case .loaded:
-                        PhotoGridView(store: store)
+                        PhotoGridView(store: store, filter: filter)
                     case .empty:
                         emptyView
                     case .failed(let message):
@@ -77,6 +80,15 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                 .padding(.leading, 20)
             }
             Spacer()
+            // フィルタ（Home と Settings の間・中央）。有効中はアイコンを塗り＋アクセント色で示す。
+            Button { showFilterSheet = true } label: {
+                Image(systemName: filter.isActive
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease.circle")
+                    .foregroundStyle(filter.isActive ? Color.accentColor : Color.primary)
+                    .accessibilityLabel(L("Filter"))
+            }
+            Spacer()
             if let showSettings {
                 Button(action: showSettings) {
                     Image(systemName: "gearshape")
@@ -87,6 +99,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
         }
         .frame(height: 49)
         .background(.bar)
+        .sheet(isPresented: $showFilterSheet) {
+            PhotoFilterSheet(filter: $filter)
+        }
     }
 
     // MARK: - Placeholder views
