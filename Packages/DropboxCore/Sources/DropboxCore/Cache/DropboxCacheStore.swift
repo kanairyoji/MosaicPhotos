@@ -72,8 +72,8 @@ actor DropboxCacheStore {
 
         self.thumbnailByteLimit = thumbnailByteLimit
         self.fullImageByteLimit = fullImageByteLimit
-        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（w128h128・約64KB）。実デコードサイズで
-        // コスト計上する `insertDecoded` に合わせ、件数上限＋総コスト上限を設ける。
+        // メモリ常駐を有界化：Dropbox サムネは固定サイズ（thumbnailAPISize＝w256h256・デコード約256KB）。
+        // 実デコードサイズでコスト計上する `insertDecoded` に合わせ、件数上限＋総コスト上限を設ける。
         // ⚠️ critical 圧迫でも**全消去しない**（purgeOnCritical: false）。全消去すると閲覧中に毎回
         //    ディスクから再デコードする storm になり激重化するため、段階縮小（下限まで）に留める。
         thumbnailMemory = MemoryImageCache(
@@ -83,6 +83,26 @@ actor DropboxCacheStore {
             purgeOnCritical: false,
             pressureFloor: DropboxInternalConstants.thumbnailMemoryPressureFloor
         )
+
+        // サムネの API サイズ（w128h128→w256h256 等）を変更したら、旧サイズのキャッシュを
+        // **一度だけ全消去**する。ファイル名（SHA256(path).jpg）にサイズが入らないため、放置すると
+        // 旧 128px がそのまま使われ「ぼやけたまま」になる。LRU 削除もファイル名再計算ベースなので
+        // 命名変更では旧ファイルが孤児になる＝マーカー方式が正解。消去後は再取得で自然に埋まる。
+        let sizeMarkerKey = "dropboxThumbnailAPISizeCached"
+        let storedSize = UserDefaults.standard.string(forKey: sizeMarkerKey)
+        if storedSize != DropboxInternalConstants.thumbnailAPISize {
+            // マーカー無し（nil）は「初回インストール」と「マーカー導入前の旧版からの更新（128px
+            // キャッシュ持ち）」を区別できないため、**無条件でクリア**する（初回は空＝実質 no-op）。
+            thumbnailStore.clear()
+            if let entries = try? modelContext.fetch(FetchDescriptor<CacheUsageEntry>()) {
+                for entry in entries where entry.kind == CacheUsageEntry.CacheKind.thumbnail.rawValue {
+                    modelContext.delete(entry)
+                }
+                try? modelContext.save()
+            }
+            DropboxLogger.info("thumbnail API size \(storedSize ?? "(none)") → \(DropboxInternalConstants.thumbnailAPISize) — cleared thumbnail cache")
+            UserDefaults.standard.set(DropboxInternalConstants.thumbnailAPISize, forKey: sizeMarkerKey)
+        }
     }
 
     // MARK: - Metadata / sync state

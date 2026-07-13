@@ -28,6 +28,14 @@
 - 関連: `scripts/convert_florence*.py`/`build_florence.sh`/`bench_vlm.py`（参考として残置）・`VLMRuntime`（SmolVLM に復元）・`CoreMLModelSupport`（cpuOnly 分岐撤去）・`AutoAlbumEngine.captionModelVersion`(→5)。[[ADR-32]]・[[ADR-11]]（CLIP fp16 の教訓）。
 - 教訓: **Core ML の正しさは Mac だけでは検証しきれない**。Mac は全 compute unit で正しくても、実機 ANE/GPU の fp16 は encoder-decoder の cross-attention で Mac と乖離し得る（decoder-only では顕在化しない）。新モデル採用前に**実機での正しさ確認**（生成ID/有限性ログ）を段取りに入れる。今回は encoder=有限・mask=正常・fp32でも駄目、と 4 ラウンドの実機ログで切り分けた。
 
+## Dropbox のサムネイルが 3 列グリッドでぼやける（w128h128 の約2倍引き伸ばし）
+- 症状: サムネイルビュー（3 列）で Dropbox 写真だけがぼんやりする。端末写真はくっきり。
+- 原因: Dropbox サムネの取得サイズが **w128h128** 固定なのに対し、3 列のセルは実描画 **約260px**（画面約130pt×スケール2・要求は320pxバケット）＝`scaleAspectFill` で**約2倍に引き伸ばし**。端末写真は PHImageManager が要求サイズどおり返すため差が出る。128px は 5 列以上の高密度表示を想定した値で、1〜4 列では不足。
+- 対処: `thumbnailAPISize` を **w256h256** に引き上げ（案A・1〜4列をカバー）。追従して (1) メモリ件数上限の換算を 64KB→256KB/枚に（下限 800→300 枚・バイト上限は予算算出のまま）、(2) **サイズ変更マーカーで旧キャッシュを一度だけ全消去**——ファイル名（SHA256(path).jpg）にサイズが入らないため、放置すると旧 128px がそのまま使われ続ける。LRU 削除もファイル名再計算ベースなので**命名変更では旧ファイルが孤児になる**＝マーカー方式（UserDefaults にサイズを記録・不一致なら thumbnails ディレクトリ＋使用量エントリをクリア）が正解。マーカー無し（旧版からの更新）と初回インストールは区別できないため**無条件クリア**（初回は空で no-op）。
+- 副次効果: クラウド写真の AI 解析（CLIP 224px 入力・シーンタグ・顔検出=ADR-33・VLM）はこのキャッシュ済みサムネを再利用しているため、**解析入力も 128→256px に向上**（特に顔検出の取りこぼし改善が見込める）。
+- トレードオフ: 通信・ディスクが約3〜4倍/枚（数KB→十数KB・初回同期が主）。デコード後メモリ4倍/枚＝メモリ層に載る枚数減（コスト上限ベースの NSCache が自動調整・圧迫時は MemoryPressureMonitor の段階縮小）。
+- 関連: `DropboxInternalConstants.thumbnailAPISize`(w256h256)・`+Tuning`(件数換算)・`DropboxCacheStore`(サイズ変更マーカー)・`MemoryBudget.thumbnailCostLimit`。[[ADR-33]]（クラウド顔検出はサムネサイズに追従）。
+
 ## AI アルバム「太郎と花子」が 0 件／「人のいない風景」に人物写真が混入（実機・一晩運用）
 - 症状: (1) ピープルに「山田太郎」「山田花子」があるのに、AI アルバム「太郎と花子」で写真がピックアップされない。(2)「人のいない風景」アルバムに人が写った写真が入る（ADR-35 導入の翌朝に観測）。
 - 原因:

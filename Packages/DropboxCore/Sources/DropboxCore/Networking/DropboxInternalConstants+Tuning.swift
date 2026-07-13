@@ -19,12 +19,13 @@ extension DropboxInternalConstants {
 
     static let defaultThumbnailByteLimit = 50 * 1_024 * 1_024    // 50 MB
     static let defaultFullImageByteLimit = 200 * 1_024 * 1_024   // 200 MB
-    /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する（128px≈64KB）。
+    /// サムネのメモリ層（NSCache）の上限。実デコードサイズでコスト計上する（256px≈256KB）。
     /// **端末のメモリ予算から算出**する（固定値だと低RAM機でjetsam・高RAM機で取りこぼし）。
     /// 圧迫時の動的縮小は MemoryPressureMonitor / MemoryImageCache が担う（ベース＝ここ・二段構え）。
     static let thumbnailMemoryCostLimit = MemoryBudget.thumbnailCostLimit(budget: MemoryBudget.availableBytes())
-    /// 件数上限はコスト上限から導く（≈64KB/枚）。最低 800 枚は確保。
-    static let thumbnailMemoryCountLimit = max(800, thumbnailMemoryCostLimit / 65_536)
+    /// 件数上限はコスト上限から導く（≈256KB/枚・w256h256）。最低 300 枚は確保
+    /// （3 列×十数行分。旧 128px 時代は 64KB/枚換算で下限 800 枚だった）。
+    static let thumbnailMemoryCountLimit = max(300, thumbnailMemoryCostLimit / 262_144)
     /// 圧迫時にサムネメモリ層を絞る下限。コスト上限の半分（残数が少ないと再デコードが多発するため）。
     static let thumbnailMemoryPressureFloor = thumbnailMemoryCostLimit / 2
     /// サムネの**ディスク**デコード（読込＋強制デコード）の同時実行上限。デコード自体は ~3ms と軽く、

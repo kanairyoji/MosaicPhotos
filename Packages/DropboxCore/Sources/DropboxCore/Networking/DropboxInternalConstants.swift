@@ -42,7 +42,12 @@ enum DropboxInternalConstants {
     // MARK: - Thumbnail API params（バッチ並行・容量などのチューニング値は +Tuning.swift）
 
     static let thumbnailFormat = "jpeg"
-    static let thumbnailAPISize = "w128h128"
+    /// サムネイルの取得サイズ。3列グリッドのセルは実描画 ~260px（130pt×2）のため、
+    /// w128h128 だと約2倍の引き伸ばしで**ぼやける**（実障害）。w256h256 で 1〜4 列をカバーする。
+    /// 副次効果: クラウド写真の AI 解析（CLIP 224px 入力・タグ・顔検出・VLM）もこのサムネを
+    /// 再利用しているため解析品質も上がる。⚠️ 変更時は `DropboxCacheStore` のサイズ変更マーカーが
+    /// 旧キャッシュを一度だけ全消去する（ファイル名にサイズが入らないため放置すると旧画像が残る）。
+    static let thumbnailAPISize = "w256h256"
 
     // MARK: - Sync / list_folder
 
