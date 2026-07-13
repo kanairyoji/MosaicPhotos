@@ -9,7 +9,7 @@ import Foundation
 /// 解釈に存在しない地名・人名が含まれてもよい。照合（QueryEvaluator）は部分一致なので、
 /// 該当写真が索引され次第、自動的に当たり始める（再解釈は不要）。
 @MainActor
-final class AIAlbumInterpreter {
+public final class AIAlbumInterpreter {
     private let store: AutoAlbumStore
     private let understanding: QueryUnderstanding
     private let translator: QueryTranslator?
@@ -110,8 +110,9 @@ final class AIAlbumInterpreter {
     /// 即時プレビュー用の解釈（純・LLM なし・テスト対象）。決定的レイヤーだけで仮の spec を作る：
     /// 日付=RelativeDateParser・視覚語/人物否定=JapaneseVisualLexicon。semanticText は空
     /// （FM 翻訳は夜間）。pendingFinalization/translationPending を立てて返す。
-    nonisolated static func previewInterpretation(criteria: String, now: Date,
-                                                  namedPeople: [String] = []) -> SavedInterpretation {
+    /// public: 検索品質ハーネス（SearchQualityTests）が本番と同じ決定的解釈を使うため。
+    public nonisolated static func previewInterpretation(criteria: String, now: Date,
+                                                         namedPeople: [String] = []) -> SavedInterpretation {
         var spec = QuerySpec()
         // 人物名の接地（決定的）を最優先で立てる。名前付き人物を指すクエリは、視覚語推定より
         // 人物条件を優先したい（「太郎」は被写体語ではなく人物）。

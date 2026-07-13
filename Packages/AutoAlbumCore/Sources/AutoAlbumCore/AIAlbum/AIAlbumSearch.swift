@@ -5,7 +5,7 @@ import os
 /// AI アルバムの検索とアルバム情報の組み立て（純ロジック・テスト対象）。
 /// 「日付/場所/人物などのハード条件 → 内容語のソフト絞り込み」で、内容語で全滅する場合は
 /// ハード条件のみの結果に戻す（タグ未計算でも no-match にしない）。
-struct AIAlbumSearcher {
+public struct AIAlbumSearcher {
     let textEmbedder: TextEmbedder?
 
     private static let log = Logger(subsystem: "com.mosaicphotos.AutoAlbum", category: "aialbum")
@@ -43,7 +43,9 @@ struct AIAlbumSearcher {
         }
     }
 
-    init(textEmbedder: TextEmbedder? = nil) {
+    /// public: 検索品質ハーネス（SearchQualityTests・Recall@k のベースライン計測）が実物の
+    /// 検索パイプラインを外部から回すため。アプリ本体は AIAlbumService 経由で使う。
+    public init(textEmbedder: TextEmbedder? = nil) {
         self.textEmbedder = textEmbedder
     }
 
@@ -70,11 +72,11 @@ struct AIAlbumSearcher {
     /// - Parameter photoTags: シーンタグ台帳（refKey → Vision 分類・精度校正済み）。
     ///   タグ一致は**閾値レス**（写真内順位で付与済み・照合は集合演算）の一次ランキングとして
     ///   意味検索と RRF 融合し、除外語はタグの離散一致でもハード除外する（P1）。
-    func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
-                        pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
-                        faceCounts: [String: Int]? = nil,
-                        photoTags: [String: [String]] = [:],
-                        loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+    public func searchWithPool(baseLite all: [EnrichedPhoto], spec: QuerySpec, now: Date, semanticText: String,
+                               pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
+                               faceCounts: [String: Int]? = nil,
+                               photoTags: [String: [String]] = [:],
+                               loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now)
         let includeTerms = spec.allContentTerms.include

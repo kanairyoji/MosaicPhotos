@@ -1,0 +1,307 @@
+{
+  "_readme": "検索品質ハーネス（SearchQualityTests）のクエリ集。expected は正解クラス（Imagenette wnid）。en は夜間 FM 翻訳後の semanticText 相当（空なら決定的チャンネルのみ）。metadata はハーネスが各クラスの写真へ合成する place/people（日付はクラス index+1 月/2024 を Swift 側で決定的に付与）。category: semantic-en=英語直接 / paraphrase-en=英語言い換え / ja-lexicon=レキシコン内日本語 / ja-free=レキシコン外の自由日本語（翻訳頼み） / hard=日付・場所・人物条件 / mixed=ハード＋意味。place はハード場所条件のヒント（夜間 FM 解釈の代替＝決定的に spec へ足す。プレビュー解釈は場所抽出をしないため）",
+  "metadata": {
+    "n01440764": {
+      "place": "Okinawa, Japan"
+    },
+    "n02102040": {
+      "place": "Sapporo, Japan",
+      "people": [
+        "木村太郎"
+      ]
+    },
+    "n02979186": {
+      "place": "Osaka, Japan"
+    },
+    "n03000684": {
+      "place": "Nagano, Japan"
+    },
+    "n03028079": {
+      "place": "Kyoto, Japan"
+    },
+    "n03394916": {
+      "place": "Vienna, Austria"
+    },
+    "n03417042": {
+      "place": "Tokyo, Japan"
+    },
+    "n03425413": {
+      "place": "Yokohama, Japan"
+    },
+    "n03445777": {
+      "place": "Miyazaki, Japan"
+    },
+    "n03888257": {
+      "place": "Hakuba, Japan",
+      "people": [
+        "木村花子"
+      ]
+    }
+  },
+  "queries": [
+    {
+      "id": "q01",
+      "category": "semantic-en",
+      "text": "a church",
+      "en": "a church",
+      "expected": [
+        "n03028079"
+      ]
+    },
+    {
+      "id": "q02",
+      "category": "paraphrase-en",
+      "text": "a building with a steeple where people worship",
+      "en": "a building with a steeple where people worship",
+      "expected": [
+        "n03028079"
+      ]
+    },
+    {
+      "id": "q03",
+      "category": "semantic-en",
+      "text": "a fish",
+      "en": "a fish",
+      "expected": [
+        "n01440764"
+      ]
+    },
+    {
+      "id": "q04",
+      "category": "paraphrase-en",
+      "text": "a person holding a freshly caught fish",
+      "en": "a person holding a freshly caught fish",
+      "expected": [
+        "n01440764"
+      ]
+    },
+    {
+      "id": "q05",
+      "category": "semantic-en",
+      "text": "a dog",
+      "en": "a dog",
+      "expected": [
+        "n02102040"
+      ]
+    },
+    {
+      "id": "q06",
+      "category": "paraphrase-en",
+      "text": "a cute puppy going for a walk",
+      "en": "a cute puppy going for a walk",
+      "expected": [
+        "n02102040"
+      ]
+    },
+    {
+      "id": "q07",
+      "category": "paraphrase-en",
+      "text": "a brass musical instrument",
+      "en": "a brass musical instrument",
+      "expected": [
+        "n03394916"
+      ]
+    },
+    {
+      "id": "q08",
+      "category": "paraphrase-en",
+      "text": "a small white ball on the grass",
+      "en": "a small white ball on the grass",
+      "expected": [
+        "n03445777"
+      ]
+    },
+    {
+      "id": "q09",
+      "category": "paraphrase-en",
+      "text": "descending from the sky with a canopy",
+      "en": "descending from the sky with a canopy",
+      "expected": [
+        "n03888257"
+      ]
+    },
+    {
+      "id": "q10",
+      "category": "paraphrase-en",
+      "text": "a truck that collects household waste",
+      "en": "a truck that collects household waste",
+      "expected": [
+        "n03417042"
+      ]
+    },
+    {
+      "id": "q11",
+      "category": "paraphrase-en",
+      "text": "a petrol station",
+      "en": "a petrol station",
+      "expected": [
+        "n03425413"
+      ]
+    },
+    {
+      "id": "q12",
+      "category": "paraphrase-en",
+      "text": "an old portable audio tape player",
+      "en": "an old portable audio tape player",
+      "expected": [
+        "n02979186"
+      ]
+    },
+    {
+      "id": "q13",
+      "category": "paraphrase-en",
+      "text": "a power tool for cutting wood",
+      "en": "a power tool for cutting wood",
+      "expected": [
+        "n03000684"
+      ]
+    },
+    {
+      "id": "q14",
+      "category": "ja-lexicon",
+      "text": "教会の写真",
+      "en": "a photo of a church",
+      "expected": [
+        "n03028079"
+      ]
+    },
+    {
+      "id": "q15",
+      "category": "ja-lexicon",
+      "text": "犬の写真",
+      "en": "a photo of a dog",
+      "expected": [
+        "n02102040"
+      ]
+    },
+    {
+      "id": "q16",
+      "category": "ja-free",
+      "text": "礼拝をする場所",
+      "en": "a place of worship with a steeple",
+      "expected": [
+        "n03028079"
+      ]
+    },
+    {
+      "id": "q17",
+      "category": "ja-free",
+      "text": "釣り上げた魚を持っている人",
+      "en": "a person holding a freshly caught fish",
+      "expected": [
+        "n01440764"
+      ]
+    },
+    {
+      "id": "q18",
+      "category": "ja-free",
+      "text": "ゴミ収集車",
+      "en": "a garbage truck",
+      "expected": [
+        "n03417042"
+      ]
+    },
+    {
+      "id": "q19",
+      "category": "ja-free",
+      "text": "ガソリンスタンドで給油",
+      "en": "refueling at a gas station",
+      "expected": [
+        "n03425413"
+      ]
+    },
+    {
+      "id": "q20",
+      "category": "ja-free",
+      "text": "芝生の上の白いボール",
+      "en": "a small white ball on the grass",
+      "expected": [
+        "n03445777"
+      ]
+    },
+    {
+      "id": "q21",
+      "category": "ja-free",
+      "text": "パラシュートで降下しているところ",
+      "en": "descending with a parachute",
+      "expected": [
+        "n03888257"
+      ]
+    },
+    {
+      "id": "q22",
+      "category": "ja-free",
+      "text": "音楽の楽器",
+      "en": "a brass musical instrument",
+      "expected": [
+        "n03394916"
+      ]
+    },
+    {
+      "id": "q23",
+      "category": "hard",
+      "text": "京都の写真",
+      "en": "",
+      "expected": [
+        "n03028079"
+      ],
+      "place": [
+        "Kyoto"
+      ]
+    },
+    {
+      "id": "q24",
+      "category": "hard",
+      "text": "沖縄の写真",
+      "en": "",
+      "expected": [
+        "n01440764"
+      ],
+      "place": [
+        "Okinawa"
+      ]
+    },
+    {
+      "id": "q25",
+      "category": "hard",
+      "text": "太郎の写真",
+      "en": "",
+      "expected": [
+        "n02102040"
+      ]
+    },
+    {
+      "id": "q26",
+      "category": "hard",
+      "text": "花子が写っている写真",
+      "en": "",
+      "expected": [
+        "n03888257"
+      ]
+    },
+    {
+      "id": "q27",
+      "category": "mixed",
+      "text": "沖縄で撮った魚の写真",
+      "en": "a fish",
+      "expected": [
+        "n01440764"
+      ],
+      "place": [
+        "Okinawa"
+      ]
+    },
+    {
+      "id": "q28",
+      "category": "mixed",
+      "text": "京都の古い建物",
+      "en": "an old traditional building",
+      "expected": [
+        "n03028079"
+      ],
+      "place": [
+        "Kyoto"
+      ]
+    }
+  ]
+}

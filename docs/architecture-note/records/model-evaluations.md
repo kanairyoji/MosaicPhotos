@@ -174,6 +174,57 @@ decoder-only(ANE安全) 縛りで、256M より良い候補を実測（`bench_vl
 
 ---
 
+## 4. 自然文検索の品質ベースライン（SearchQualityTests・2026-07）
+
+エージェント型検索（ReACT 2フェーズ・検討中）に着手する前に、**現行パイプラインの検索品質を数値化**する
+回帰ハーネスを整備し、ベースラインを計測した。
+
+### 方法
+- ハーネス: `MosaicPhotosTests/SearchQualityTests`（手動実行・フィクスチャ無し環境ではスキップ）。
+  **本番と同じ検索パイプライン**（決定的プレビュー解釈 → タグ＋CLIP＋字句の RRF 融合＋ハード条件）を
+  実物のテキストタワー/トークナイザで回す。画像埋め込みは `scripts/gen_eval_fixture.py` が Mac で前計算
+  （シミュレータの画像タワーは fp16 NaN のため）。
+- データ: Imagenette 10クラス×20枚＝200枚。日付（クラスごとの月）・場所・人物（木村太郎/花子）を合成。
+- クエリ: `scripts/eval_queries.json` 28問（英語直接/英語言い換え/日本語レキシコン内/日本語自由文/
+  ハード条件/複合）。翻訳（夜間FM相当）は `en` 欄、場所解釈は `place` ヒントで決定的に代替。
+  FM の解釈・審査はテスト環境で不可＝**ベースラインは審査（AlbumVerifier）前の検索品質**。
+- 指標: R@20（プール順位の上位20に正解20枚が何割入るか）/ memberP・memberR（採用メンバーの精度・再現率）。
+
+### ベースライン結果（現行パイプライン）
+
+| カテゴリ | n | R@20 | memberP | memberR |
+|---|---|---|---|---|
+| semantic-en（英語直接） | 3 | 0.95 | 0.94 | 0.92 |
+| paraphrase-en（英語言い換え） | 10 | 0.93 | 1.00 | **0.61** |
+| ja-lexicon（レキシコン内日本語） | 2 | 1.00 | 1.00 | 0.93 |
+| ja-free（自由日本語・翻訳頼み） | 7 | 0.92 | 0.99 | **0.68** |
+| hard（場所/人物条件） | 4 | (0.00)* | 1.00 | 1.00 |
+| mixed（ハード＋意味） | 2 | 1.00 | 1.00 | 0.88 |
+| **全体** | 28 | 0.81 | **0.99** | **0.76** |
+
+\* hard は意味テキスト空＝プール無し（R@20 は定義上 0）。members は完全（ハード条件のみで確定）。
+
+### 読み取り
+- **精度は極めて高い**（memberP≈0.99）＝誤った写真はほぼ入らない。**弱点は再現率**：特に言い換え系
+  （paraphrase-en 0.61 / ja-free 0.68）で、正解の3〜4割が semanticMargin（上位帯 0.06）の外に落ちる。
+  柔軟な自然文対応の改善ターゲットは「**取りこぼしの回収**」（マルチプローブ・キャプションチャンネル・
+  Phase 2 の unsure 再判定）と数値で確定した。
+- **タグチャンネルはこのハーネスでは無効**（Vision classify がシミュレータ＋160px 画像で 0 タグ）。
+  ベースラインは CLIP＋字句＋ハードのみの成績。実機ではタグが加わる分だけ上振れする。
+- フィクスチャは 10 クラスの易しい分離。実ライブラリより甘い数値になるが、**相対比較（改良前後の回帰
+  検出）には十分**。
+
+### 再現手順
+```bash
+source .mobileclip_build/venv/bin/activate && python scripts/gen_eval_fixture.py
+xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:MosaicPhotosTests/SearchQualityTests
+cat .mobileclip_build/eval/report.txt
+```
+
+---
+
 ## 付記: 評価の限界と今後
 
 - すべて Mac 実測で、**iPhone ANE の絶対値は別途実機計測が必要**（シミュレータは VLM をスキップする設計）。
