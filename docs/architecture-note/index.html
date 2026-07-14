@@ -22,7 +22,7 @@
       </div>
 
       <h2>このアプリを一言で</h2>
-      <p>外部 SDK を使わず標準フレームワークのみで構成。写真ソース（端末 / Dropbox）を共通インターフェイスに統一し、<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）で語彙に縛られない自然文検索を行う。夜間に <strong>Vision シーンタグ → OpenCLIP 埋め込み（Core ML）→ VLM キャプション</strong>を全写真へ付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句を RRF 融合し、<strong>Foundation Models</strong> の LLM 審査で決める。通信なし・APIキー不要。</p>
+      <p>外部 SDK・ライブラリを使わず、コードは標準フレームワークのみで構成（AI はオープンソースの学習済みモデルを同梱し Core ML で実行）。写真ソース（端末 / Dropbox）を共通インターフェイスに統一し、<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）で語彙に縛られない自然文検索を行う。夜間に <strong>Vision シーンタグ → OpenCLIP 埋め込み（Core ML）→ VLM キャプション</strong>を全写真へ付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句を RRF 融合し、<strong>Foundation Models</strong> の LLM 審査で決める。通信なし・APIキー不要。</p>
 
       <div class="mermaid">
 graph TD

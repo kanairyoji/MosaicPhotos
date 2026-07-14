@@ -5,7 +5,7 @@
 <h1 align="center">MosaicPhotos</h1>
 
 <p align="center">
-  A privacy-first iOS photo viewer that unifies your <b>device library</b> and <b>Dropbox</b> into one experience — built entirely with standard Apple frameworks, <b>no third-party SDKs</b>.
+  A privacy-first iOS photo viewer that unifies your <b>device library</b> and <b>Dropbox</b> into one experience — built with <b>no third-party SDKs or libraries</b> — all code uses standard Apple frameworks; the AI runs bundled open-source models (OpenCLIP / SmolVLM / facenet) on Apple's Core ML.
 </p>
 
 <p align="center">
@@ -153,7 +153,7 @@ An in-depth internal **architecture note** — design rationale (ADR), deep-dive
 
 ## Privacy & Security
 
-- **No third-party SDKs** — everything uses standard Apple frameworks.
+- **No third-party SDKs or libraries** — all code uses standard Apple frameworks. The AI ships bundled open-source model weights (OpenCLIP / SmolVLM / facenet, licenses below) executed by Apple's Core ML / Vision / Foundation Models.
 - **OAuth 2.0 + PKCE** for Dropbox; access/refresh tokens are stored in the **Keychain**, never in plain files.
 - **On-device processing** — reverse geocoding, EXIF parsing and all AI (tags, embeddings, captions, faces, LLM) happen locally.
 - No analytics, no tracking.

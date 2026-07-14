@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-**MosaicPhotos** は iOS (iPhone) 向けの写真ビューワーアプリ。端末内の写真と Dropbox 上の写真を、ソース別（All / Photos / Cloud）・端末アルバム別・場所（市区町村）別に閲覧できる。外部 SDK は使用せず、すべて標準フレームワークで実装している。
+**MosaicPhotos** は iOS (iPhone) 向けの写真ビューワーアプリ。端末内の写真と Dropbox 上の写真を、ソース別（All / Photos / Cloud）・端末アルバム別・場所（市区町村）別に閲覧できる。外部 SDK・ライブラリは不使用（コードはすべて標準フレームワーク）。AI はオープンソースの学習済みモデル（OpenCLIP / SmolVLM / facenet）を同梱し、OS 内蔵の Core ML・Vision・Foundation Models で実行する。
 
 加えて **オンデバイス AI** を持つ：自然文（任意言語）の **AI アルバム / 意味検索**を「タグ台帳＋LLM審査」の多層構成（ADR-23/24）で実現する。索引は夜間バッチ（電源＋アイドル/ロック中 BGTask）で **Vision シーンタグ（約1,300クラス・精度校正済み）→ CLIP 埋め込み（OpenCLIP ViT-B-32・INT8量子化・Core ML・ADR-31）→ VLM キャプション（SmolVLM-500M・**お気に入り限定**・任意同梱）** の順に付与（タグ/埋め込みは全写真・キャプションはお気に入りのみ）。検索は「決定的ハード条件（日付=RelativeDateParser・場所/人物接地・レキシコン）→ タグ一致＋CLIP 対比＋字句の RRF 融合 → 証拠ゲート → FM LLM 審査（多数決）」。解釈（LLM）はアルバム作成時に 1 回だけ実行して永続化する。通信なし・API キー不要。
 

@@ -5,7 +5,7 @@
 <h1 align="center">MosaicPhotos</h1>
 
 <p align="center">
-  端末内の写真と <b>Dropbox</b> の写真を 1 つの体験に統合する、プライバシー重視の iOS 写真ビューワー。すべて標準 Apple フレームワークで実装し、<b>外部 SDK は不使用</b>です。
+  端末内の写真と <b>Dropbox</b> の写真を 1 つの体験に統合する、プライバシー重視の iOS 写真ビューワー。<b>外部 SDK・ライブラリは不使用</b>（コードはすべて標準 Apple フレームワーク）。AI はオープンソースの学習済みモデル（OpenCLIP / SmolVLM / facenet）を同梱し、OS 内蔵の Core ML で実行します。
 </p>
 
 <p align="center">
