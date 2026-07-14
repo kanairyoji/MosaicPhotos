@@ -76,12 +76,32 @@
         }
       }
     },
+    "All": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて"
+          }
+        }
+      }
+    },
     "Camera": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "カメラ"
+          }
+        }
+      }
+    },
+    "Cloud": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド"
           }
         }
       }
@@ -276,6 +296,16 @@
         }
       }
     },
+    "No matching photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該当する写真がありません"
+          }
+        }
+      }
+    },
     "No photos yet.": {
       "localizations": {
         "ja": {
@@ -292,6 +322,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "タグはまだありません — 充電中に自動で追加されます"
+          }
+        }
+      }
+    },
+    "On-device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末内"
           }
         }
       }
@@ -340,12 +380,42 @@
         }
       }
     },
+    "Show only photos from your device or from Dropbox.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末内の写真だけ、または Dropbox の写真だけを表示します。"
+          }
+        }
+      }
+    },
     "Show only photos marked as favorites. Cloud photos have no favorites and will be hidden.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "お気に入りに設定した写真だけを表示します。クラウド写真にはお気に入りが無いため表示されません。"
+          }
+        }
+      }
+    },
+    "Source": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ソース"
+          }
+        }
+      }
+    },
+    "Try changing the filter.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フィルター条件を変えてみてください。"
           }
         }
       }

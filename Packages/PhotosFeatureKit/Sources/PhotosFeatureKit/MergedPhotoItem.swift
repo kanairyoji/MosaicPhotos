@@ -35,6 +35,14 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// ソース種別（フィルタの「端末のみ／クラウドのみ」絞り込み用）。
+    public var isCloudSource: Bool {
+        switch self {
+        case .local: return false
+        case .cloud: return true
+        }
+    }
+
     /// お気に入りはローカル写真のみ（Dropbox にはお気に入りの概念がない）。
     public var isFavorite: Bool {
         switch self {

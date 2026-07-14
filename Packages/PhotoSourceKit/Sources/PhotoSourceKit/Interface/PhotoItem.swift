@@ -15,6 +15,9 @@ public protocol PhotoItem: Identifiable, Hashable, Sendable {
     /// お気に入りの**付け外しに対応**するか（＝端末写真）。フル画面のハートをトグル操作にできる。
     /// クラウド等は false でハートを出さない。既定は false。
     var supportsFavorite: Bool { get }
+    /// クラウド（Dropbox 等）由来の写真か。フィルタ（ソース絞り込み）に使う。
+    /// 既定は false（＝端末写真扱い）。クラウド系アイテムが true を返す。
+    var isCloudSource: Bool { get }
 }
 
 public extension PhotoItem {
@@ -22,4 +25,5 @@ public extension PhotoItem {
     var coordinate: CLLocationCoordinate2D? { nil }
     var isFavorite: Bool { false }
     var supportsFavorite: Bool { false }
+    var isCloudSource: Bool { false }
 }

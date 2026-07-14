@@ -21,6 +21,21 @@ struct PhotoFilterSheet: View {
                 } footer: {
                     Text(L("Show only photos marked as favorites. Cloud photos have no favorites and will be hidden."))
                 }
+                Section {
+                    Picker(selection: $filter.source) {
+                        Text(L("All")).tag(PhotoFilter.Source.all)
+                        Label(L("On-device"), systemImage: "iphone").tag(PhotoFilter.Source.localOnly)
+                        Label(L("Cloud"), systemImage: "cloud").tag(PhotoFilter.Source.cloudOnly)
+                    } label: {
+                        Label {
+                            Text(L("Source"))
+                        } icon: {
+                            Image(systemName: "externaldrive").foregroundStyle(.blue)
+                        }
+                    }
+                } footer: {
+                    Text(L("Show only photos from your device or from Dropbox."))
+                }
             }
             .navigationTitle(L("Filter Photos"))
             .navigationBarTitleDisplayMode(.inline)

@@ -68,9 +68,16 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     public var body: some View {
         Group {
             if filter.isActive && visibleItems.isEmpty {
-                // フィルタで 0 件（例: お気に入りが無いソース）。空グリッドだと故障に見えるため明示する。
-                ContentUnavailableView(L("No favorites"), systemImage: "heart",
-                                       description: Text(L("Mark photos with a heart to see them here.")))
+                // フィルタで 0 件。空グリッドだと故障に見えるため明示する（お気に入り条件のみのときは
+                // ハートの付け方の案内、ソース条件を含むときは汎用メッセージ）。
+                if filter.favoritesOnly && filter.source == .all {
+                    ContentUnavailableView(L("No favorites"), systemImage: "heart",
+                                           description: Text(L("Mark photos with a heart to see them here.")))
+                } else {
+                    ContentUnavailableView(L("No matching photos"),
+                                           systemImage: "line.3.horizontal.decrease.circle",
+                                           description: Text(L("Try changing the filter.")))
+                }
             } else {
                 PhotoCollectionView(
                     store: store,
