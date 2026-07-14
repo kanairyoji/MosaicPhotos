@@ -61,6 +61,17 @@ actor TagStore {
         (try? modelContext.fetchCount(FetchDescriptor<PhotoTagRecord>())) ?? 0
     }
 
+    /// タグの頻度上位（識別子・降順）。AI アルバム作成のサジェストチップ
+    /// （「よく写るもの」＝頻出タグ∩レキシコンの日本語表示）に使う。
+    func topTags(limit: Int) -> [String] {
+        var counts: [String: Int] = [:]
+        let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
+        for record in records {
+            for tag in record.tags { counts[tag, default: 0] += 1 }
+        }
+        return counts.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
+    }
+
     func captionedCount() -> Int {
         (try? modelContext.fetchCount(
             FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil }))) ?? 0

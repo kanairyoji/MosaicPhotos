@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-37 AI アルバム作成の入力支援（サジェストチップ＋接地プレビュー＋ヒット件数）
+- 状態: 採用
+- 文脈: AI アルバムの検索文は自由入力のみで、(1) ライブラリに何があるか（命名済み人物・地名・頻出被写体）を思い出しながら書く必要があり、(2) 書いた文がどう解釈されるか（人物に接地したか・場所が効くか）が作ってみるまで分からなかった。
+- 決定: コンポーザーに 3 つの入力支援を追加する（すべて既存の決定的レイヤーの流用＝表示と実検索が乖離しない）。**(1) サジェストチップ** — ライブラリから観測された語をタップで挿入。**確実にヒットする語だけ**を出す: 人物=命名済み顔クラスタ（`namedPeopleProvider`）/ 場所=カタログ実在の地名（`AIAlbumCatalog` 頻度順）/ よく写るもの=頻出タグ（`TagStore.topTags` 新設）∩レキシコン（`japaneseLabel(forTag:)` 新設で日本語表示・表示も接地も保証）/ 日付=パーサ対応の定型（去年・今年・一昨年）。**(2) 接地プレビュー** — 入力の解釈のされ方を色付きチップで表示（人物=ピンク「山田太郎」・場所=緑・視覚語=青「海 → sea」・日付=橙「期間」）。インライン色付けでなくチップ方式＝「太郎 → 山田太郎」の正規化先まで見せられ、`previewInterpretation`/`PersonNameGrounder`/`groundedPairs`（新設）/`RelativeDateParser` の流用で実装が薄い。**(3) ハード条件のヒット件数** — 人物/場所/日付条件があるとき「条件に合致: N 枚」をライブ表示（`QueryEvaluator.hardFilter` をオフメインで・0 件は橙で警告）。基盤は `AutoAlbumEngine+Suggestions`（ライブラリスナップショット 5 分キャッシュ＝タイプごとの 85k 再フェッチ回避・接地プレビューは 350ms debounce）。
+- 結果: 空振りしないアルバムをチップから組み立てられ、入力中に「誰・どこ・何が効くか」と概算ヒット数が見える。トレードオフ: (1) スナップショット初回構築（85k lite＋カタログ＋タグ集計）はコンポーザー初回表示時の一拍（以後 5 分キャッシュ）。(2) 件数はハード条件のみ（意味検索込みは重いので出さない・夜間に精緻化の注記を維持）。(3) インライン色付け（AttributedString TextEditor）は Phase 2 候補として見送り。
+- 関連: `AutoAlbumEngine+Suggestions`（AIAlbumSuggestions/GroundingPreview/スナップショット）・`TagStore.topTags`・`JapaneseVisualLexicon.groundedPairs`/`japaneseLabel(forTag:)`（public 化）・`AIAlbumComposerView`（チップ UI・debounce）・`LexiconSuggestionTests`。ADR-23（解釈の決定的プレビュー）・ADR-29（人物接地）。
+
 ## ADR-36 画像解析はすべて「新しい写真から先に」処理する
 - 状態: 採用
 - 文脈: 各解析パスの処理順が不定（CLIP 埋め込み＝SQLite の既定順・シーンタグ＝Set 列挙順・キャプション＝refKey 昇順・顔＝PHFetch 既定順）で、撮りたての写真の解析がいつ終わるか運任せだった。ユーザーは新しい写真ほど早く検索・アルバムに反映されてほしい。

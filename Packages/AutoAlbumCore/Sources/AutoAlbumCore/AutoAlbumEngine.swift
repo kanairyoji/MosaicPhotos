@@ -57,6 +57,9 @@ public final class AutoAlbumEngine {
     /// ユーザーが写真を能動操作中か（スクラブ等）。背景 CLIP 埋め込みを一時停止するために使う（G）。
     /// Recognition extension から参照するため internal。
     @ObservationIgnored var isInteracting = false
+    /// AI アルバム作成のサジェスト/接地プレビュー用のスナップショット（Suggestions extension が管理・
+    /// 5 分で失効）。コンポーザーを開いている間のタイプごとの 85k 再フェッチを避ける。
+    @ObservationIgnored var suggestionSnapshot: AIAlbumSuggestionSnapshot?
     /// T5: AI アルバム再評価の時間スロットル用（Recognition extension が参照）。
     @ObservationIgnored var lastAIRefreshAt = Date.distantPast
     /// Phase 2: スロットル中に蓄積する「新規に埋め込まれた refKey」（増分再評価の入力）。

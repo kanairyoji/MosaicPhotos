@@ -99,3 +99,24 @@ struct MultiProbeTests {
         #expect(q?.positives.count == 3)
     }
 }
+
+/// レキシコンの接地プレビュー/逆引き API（ADR-37・コンポーザーのサジェスト/色付きチップ用）。
+@Suite("JapaneseVisualLexicon suggestion APIs (ADR-37)")
+struct LexiconSuggestionTests {
+    @Test("groundedPairs は（日本語, 英語代表）対を返す")
+    func groundedPairsReturnsJpEnPairs() {
+        let pairs = JapaneseVisualLexicon.groundedPairs(in: "沖縄の海と夕日の写真")
+        let jp = pairs.map(\.japanese)
+        #expect(jp.contains("海"))
+        #expect(jp.contains("夕日"))
+        #expect(pairs.first { $0.japanese == "海" }?.english == "beach")
+    }
+
+    @Test("japaneseLabel はタグ→日本語代表語（対応なしは nil）")
+    func japaneseLabelReverseLookup() {
+        #expect(JapaneseVisualLexicon.japaneseLabel(forTag: "beach") == "海")
+        #expect(JapaneseVisualLexicon.japaneseLabel(forTag: "dog") == "犬")
+        #expect(JapaneseVisualLexicon.japaneseLabel(forTag: "sunset") == "夕日")
+        #expect(JapaneseVisualLexicon.japaneseLabel(forTag: "manhole") == nil)
+    }
+}

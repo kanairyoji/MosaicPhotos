@@ -6,7 +6,7 @@ import Foundation
 /// 壊れ得る（実障害多数）。RelativeDateParser（日付）と同じ思想で、**よく使う視覚概念と
 /// 人物否定だけは決定的に抽出**し、LLM ゼロでもタグ照合・除外・証拠ゲートが機能するようにする。
 /// 網羅は目的でない（LLM が動くときは LLM が上書きする補助線）。
-enum JapaneseVisualLexicon {
+public enum JapaneseVisualLexicon {
 
     /// 日本語の視覚語 → 英語タグ語（Vision 分類・CLIP と照合できる語）。
     private static let visualWords: [(jp: [String], en: [String])] = [
@@ -58,6 +58,29 @@ enum JapaneseVisualLexicon {
             for en in entry.en where seen.insert(en).inserted { out.append(en) }
         }
         return out
+    }
+
+    /// 入力に含まれる視覚語の（日本語, 英語代表）対。コンポーザーの**接地プレビュー**
+    /// （「海 → sea」のような色付きチップ）に使う。抽出規則は `includeTerms` と同一。
+    public static func groundedPairs(in criteria: String) -> [(japanese: String, english: String)] {
+        let lower = criteria.lowercased()
+        var out: [(japanese: String, english: String)] = []
+        for entry in visualWords {
+            guard let jp = entry.jp.first(where: { criteria.contains($0) || lower.contains($0) }),
+                  let en = entry.en.first else { continue }
+            out.append((japanese: jp, english: en))
+        }
+        return out
+    }
+
+    /// 英語タグ（Vision 識別子等）→ 日本語代表語。頻出タグをサジェストチップとして
+    /// **日本語表示**するための逆引き（対応が無いタグは nil＝チップに出さない）。
+    public static func japaneseLabel(forTag tag: String) -> String? {
+        let t = tag.lowercased()
+        for entry in visualWords where entry.en.contains(where: { $0 == t || t.contains($0) || $0.contains(t) }) {
+            return entry.jp.first
+        }
+        return nil
     }
 
     /// 「人が写っていない」系の否定表現を含むか。
