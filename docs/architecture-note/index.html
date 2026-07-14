@@ -46,7 +46,7 @@ graph TD
         <tr><td>端末写真</td><td>PhotosKit（<code>PHPhotoLibrary</code> / <code>PHImageManager</code>）</td></tr>
         <tr><td>永続化</td><td>SwiftData（<code>@Model</code> / <code>@ModelActor</code>）+ Keychain</td></tr>
         <tr><td>Dropbox</td><td><code>AuthenticationServices</code>（OAuth2 + PKCE）/ <code>URLSession</code></td></tr>
-        <tr><td>オンデバイス AI</td><td>Vision シーンタグ / OpenCLIP ViT-B-32（Core ML）/ SmolVLM-256M / Foundation Models</td></tr>
+        <tr><td>オンデバイス AI</td><td>Vision シーンタグ / OpenCLIP ViT-B-32（Core ML・INT8）/ SmolVLM-500M（お気に入りのみ）/ Foundation Models</td></tr>
         <tr><td>最小 iOS</td><td>26.0（各 SPM パッケージは <code>.iOS(.v17)</code> 宣言で macOS テストも維持）</td></tr>
         <tr><td>構成</td><td>ローカル SPM パッケージ 11 個（Core/UI 分離）</td></tr>
       </table>

@@ -12,13 +12,13 @@
   <main>
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / ハイライト</nav>
-      <h1>設計判断・事例ハイライト（重要トップ 12）</h1>
-      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）と事例（バグ・性能対応）から、特に重要な <strong>12 個</strong>を抜粋して紹介する。各項は要点のみ。<strong>全件は Markdown のマスター</strong>を参照。</p>
+      <h1>設計判断・事例ハイライト（重要トップ 14）</h1>
+      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）と事例（バグ・性能対応）から、特に重要な <strong>14 個</strong>を抜粋して紹介する。各項は要点のみ。<strong>全件は Markdown のマスター</strong>を参照。</p>
 
       <div class="box note">
         <span class="box-h">このページは“抜粋”、正本は Markdown</span>
         設計判断・事例の<strong>正本（マスター）</strong>はリポジトリ内の Markdown：
-        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>（ADR 全 26 件）と
+        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>（ADR 全 37 件）と
         <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">records/case-studies.md</a>（事例 全件）。
         本 HTML はそこから<strong>重要なものを取捨選択</strong>した派生物で、全件は転記しない。新しい判断・事例はまずマスターへ追記する。
         詳しい顛末は <a href="../case-studies/memory.html">事例: メモリ</a> / <a href="../case-studies/launch-performance.html">事例: 起動</a> の深掘りページも参照。
@@ -83,6 +83,16 @@
       <p><strong>文脈:</strong> 機能追加で同じ骨格のコピーが層をまたいで蓄積（背景トリクル・自己修復コンテナ・Core ML ロード・BPE・UI 小物）。最大級の型に複数責務が同居。<br>
       <strong>決定:</strong> <strong>挙動不変</strong>を絶対条件に共通足場（<code>BackgroundTrickle</code>/<code>makeResilientModelContainer</code>/<code>CoreMLModelSupport</code>/<code>BPESupport</code> 等）を抽出し、肥大型を分割（<code>AIAlbumService</code>・<code>BackupEngine</code>・<code>DropboxThumbnailBatcher</code>）。<br>
       <strong>結果:</strong> 譲りポリシー・コンテナ復旧・モデルロードの変更が各 1 箇所で済む。トークナイザは同梱語彙でビット等価を実測確認。</p>
+
+      <h2><span class="tag">設計</span> 13. モデル選定は「実測＋実機確認」で決める <span class="muted">(ADR-31・ADR-32・ADR-34)</span></h2>
+      <p><strong>文脈:</strong> 画像認識が重く、CLIP / VLM の軽量化・置き換え候補を比較したい。カタログスペックでは判断できない。<br>
+      <strong>決定:</strong> 共通ベンチ（Imagenette 実写＋Core ML 実行）で<strong>メモリ・速度・精度を実測</strong>して選ぶ。CLIP は INT8 量子化を採用（289→145MB・精度不変）。VLM は Florence-2-base を一度採用したが、<strong>実機 ANE/GPU の fp16 で cross-attention が破綻</strong>（全写真で無関係な文）し撤回、SmolVLM（decoder-only＝ANE 安全）へ回帰。のち SmolVLM-500M＋視覚のみ INT8 に更新し、最重量のキャプション生成は<strong>お気に入りのみ</strong>に限定。<br>
+      <strong>結果:</strong> 学びが 2 つ。(a) <strong>量子化耐性は部品で非対称</strong>——連続ベクトル出力（視覚エンコーダ）は INT8 に強く、LLM デコーダは argmax が反転して壊れる。(b) <strong>Core ML の正しさは Mac だけでは検証できない</strong>——Mac の全 compute unit で正常でも実機 fp16 で壊れた。実測記録は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>。</p>
+
+      <h2><span class="tag">設計</span> 14. 検索品質は回帰ハーネスで数値検証してから直す <span class="muted">(ADR-35)</span></h2>
+      <p><strong>文脈:</strong> 「自然文アルバムをもっと良く」——だが何が弱いか感覚では特定できず、直した“つもり”の劣化も検知できない。<br>
+      <strong>決定:</strong> 正解ラベル付き評価セット（Imagenette 200 枚＋28 クエリ）で実パイプラインを走らせる <code>SearchQualityTests</code> を常設。ベースライン計測で「言い換えの取りこぼし」が弱点と数値で特定し、対策（LLM 言い換えプローブの max-over-probes ＋審査時オンデマンドキャプション）を同ハーネスの A/B で検証してから採用。<br>
+      <strong>結果:</strong> 言い換え再現率 +17〜18pt を数値で確認。以後の検索変更は同ハーネスの回帰チェックを通す。実運用で見つかった穴（人物名 0 件・除外×プローブの相互作用）も事例として正本に記録。</p>
 
       <div class="box refs">
         <span class="box-h">もっと読む</span>

@@ -13,24 +13,24 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / オンデバイス AI</nav>
       <h1>オンデバイス AI</h1>
-      <p class="lead">固定の語彙リストや OCR を持たず、任意言語の自然文で AI アルバム／意味検索を行う。実装は<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）：シーンタグ・CLIP 埋め込み・VLM キャプションを夜間に付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句の RRF 融合＋LLM 審査で決める。通信なし・APIキー不要。</p>
+      <p class="lead">固定の語彙リストや OCR を持たず、任意言語の自然文で AI アルバム／意味検索を行う。実装は<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）：シーンタグ・CLIP 埋め込み・VLM キャプションを夜間に付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句の RRF 融合＋証拠ゲート＋LLM 審査で決める。通信なし・API キー不要。<strong>モデルと検索品質はすべて実測で決める</strong>（<a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>）。</p>
 
       <h2>索引（夜間パイプライン）と検索</h2>
-      <p>索引は<strong>夜間バッチ</strong>（電源＋Wi-Fi＋アプリ非使用の <code>BGProcessingTask</code>・<a href="background.html">実行タイミング参照</a>）で、全写真へ次の順に付与する。</p>
+      <p>索引は<strong>夜間バッチ</strong>（電源＋Wi-Fi＋アプリ非使用の <code>BGProcessingTask</code>・<a href="background.html">実行タイミング参照</a>）で、<strong>新しい写真から先に</strong>（撮影日降順・ADR-36）次の順に付与する。</p>
       <ol>
-        <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）</li>
-        <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・意味検索の索引・fp16）</li>
-        <li><strong>VLM キャプション</strong>（SmolVLM-256M・写真ごとの英語短文・LLM 審査の「目」）</li>
+        <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）— 全写真</li>
+        <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・<strong>INT8 量子化</strong>・意味検索の索引）— 全写真</li>
+        <li><strong>VLM キャプション</strong>（SmolVLM-500M・英語一文・LLM 審査の「目」）— <strong>お気に入りのみ</strong>（最重量パスの集中投下・ADR-34。AI アルバム審査時は候補上位にもオンデマンド生成＝ADR-35）</li>
       </ol>
       <div class="mermaid">
 graph TD
-  Q["自然文クエリ（任意言語）"] --> INT["解釈（作成時1回・永続化）<br/>FoundationModels + Sanitizer + レキシコン"]
-  INT --> HARD["ハード条件（決定的）<br/>日付=RelativeDateParser・場所/人物"]
-  INT --> TE["CLIP テキスト埋め込み<br/>（英訳して埋め込む）"]
-  subgraph 夜間索引
+  Q["自然文クエリ（任意言語）"] --> INT["解釈（作成時1回・永続化）<br/>FoundationModels + Sanitizer + レキシコン<br/>＋言い換えプローブ生成（最大4）"]
+  INT --> HARD["ハード条件（決定的）<br/>日付=RelativeDateParser・場所カタログ接地・<br/>人物=顔クラスタへライブ接地"]
+  INT --> TE["CLIP テキスト埋め込み<br/>（英訳＋プローブ＝max-over-probes）"]
+  subgraph 夜間索引（新しい写真から先に）
     TAGS[(Vision シーンタグ)]
     EMB[(PhotoEmbedding fp16)]
-    CAP[(VLM キャプション)]
+    CAP[(VLM キャプション<br/>お気に入りのみ)]
   end
   HARD --> FUSE["RRF 融合（AIAlbumSearcher）"]
   TE --> FUSE
@@ -38,7 +38,8 @@ graph TD
   EMB -->|CLIP 対比| FUSE
   LX["字句検索<br/>地名・人物"] --> FUSE
   FUSE --> GATE["証拠ゲート<br/>除外つきはタグ/顔/キャプションの証拠必須"]
-  GATE --> VERIFY["LLM 審査（AlbumVerifier）<br/>keep/drop/unsure・多数決"]
+  GATE --> OD["オンデマンドキャプション<br/>候補上位の未生成分に生成（予算つき）"]
+  OD --> VERIFY["LLM 審査（AlbumVerifier）<br/>keep/drop/unsure・多数決"]
   CAP --> VERIFY
   VERIFY --> RES["検索結果 / AI アルバム"]
       </div>
@@ -47,34 +48,37 @@ graph TD
         以前は生 CLIP コサイン＋絶対閾値だったが、ユーザーのライブラリ分布が事前に不明で閾値を調整できず「除外が 97% を落とす」「意味採用 0 件」が起きた。そこで<strong>タグ一致（離散・閾値レス）</strong>を第 3 のランキングに加え、除外は<strong>肯定/否定ベクトルの相対判定</strong>（絶対閾値なし）にし、最終判断を<strong>LLM 審査</strong>（言語判定）に委ねた。判定根拠がタグ/キャプションで可視化されデバッグ可能になる。
       </div>
       <div class="box note">
-        <span class="box-h">解釈は「作成時に 1 回だけ」（ADR-23）</span>
-        検索文→<code>QuerySpec</code>・英訳の LLM 解釈は<strong>アルバム作成/編集時に 1 回だけ</strong>実行して <code>AIAlbumInterpretationStore</code>（JSONFileStore・版管理）へ永続化する。起動時・写真追加時に LLM は走らない（旧方式は毎起動で全アルバム再解釈し 9.4s のメインハングになっていた）。再評価は増分（新規埋め込み分だけ採点）＋ドリフト検知のフル再評価。
+        <span class="box-h">解釈は「作成時に 1 回だけ」＋言い換えプローブ（ADR-23・ADR-35）</span>
+        検索文→<code>QuerySpec</code>・英訳・<strong>言い換えプローブ（最大 4）</strong>の LLM 解釈は<strong>アルバム作成/編集時に 1 回だけ</strong>実行して <code>AIAlbumInterpretationStore</code>（JSONFileStore・版管理）へ永続化する。起動時・写真追加時に LLM は走らない。意味採点は主フレーズ＋プローブの <strong>max-over-probes</strong>＝言い換え表現の取りこぼしを回収（ハーネス実測で言い換え再現率 +17〜18pt）。ただし<strong>除外つきアルバムではプローブを対比に使わない</strong>（肯定の最大値が底上げされ除外が素通りする回帰の防止）。再評価は増分（新規埋め込み分だけ採点）＋ドリフト検知のフル再評価。
       </div>
 
-      <h2>採用モデルと認識率ベンチマーク</h2>
-      <p>埋め込みには <strong>OpenCLIP <code>ViT-B-32</code>（DataComp 学習）</strong>を Core ML 化して使う。複数候補を、出荷する Core ML モデルそのままで認識率を測って選定した（<code>scripts/eval_recognition.sh</code>）。</p>
+      <h2>採用モデル（すべて実測で選定・詳細は model-evaluations.md）</h2>
       <table>
-        <tr><th>モデル</th><th>ImageNet-1k ゼロショット top-1</th><th>自然文クエリ</th><th>画像エンコーダ</th><th>備考</th></tr>
-        <tr><td><strong>OpenCLIP ViT-B-32 / datacomp（採用）</strong></td><td><strong>75.0%</strong></td><td>10/10</td><td>~60MB・patch32（軽い）</td><td>認識率と端末負荷のバランス</td></tr>
-        <tr><td>OpenCLIP ViT-B-16 / datacomp</td><td>75.0%</td><td>10/10</td><td>165MB・patch16（約4倍重い）</td><td>同精度だが重い</td></tr>
-        <tr><td>OpenCLIP ViT-B-32 / openai</td><td>64.5%</td><td>10/10</td><td>~60MB・patch32</td><td>精度低め</td></tr>
-        <tr><td>MobileCLIP-S2（参考・旧）</td><td>81.0%</td><td>10/10</td><td>68MB（モバイル最適化）</td><td>—</td></tr>
+        <tr><th>役割</th><th>採用</th><th>サイズ</th><th>選定の根拠（実測）</th></tr>
+        <tr><td>意味検索の埋め込み</td><td><strong>OpenCLIP ViT-B-32 / DataComp・INT8 量子化</strong>（ADR-31）</td><td>289→<strong>145MB</strong></td><td>Core ML ベンチで INT8 は精度不変（75.0→76.0%）。TinyCLIP-40M は −14pt で不採用</td></tr>
+        <tr><td>シーンタグ</td><td>Vision 分類（OS 内蔵）</td><td>0MB</td><td>約1,300クラス・精度校正 API・追加コストなし＝価値/コスト比最良</td></tr>
+        <tr><td>キャプション</td><td><strong>SmolVLM-500M</strong>・視覚のみ INT8（ADR-34）</td><td>877MB</td><td>256M より明確に高品質（看板の文字も読む）。<strong>Florence-2 は一度採用後、実機 ANE/GPU の fp16 で cross-attention が破綻し撤回</strong>（ADR-32）。FastVLM は apple-amlr（研究限定）で不採用。decoder-only＝ANE 安全が必須条件</td></tr>
+        <tr><td>顔（ピープル）</td><td>facenet InceptionResnetV1（VGGFace2・MIT）</td><td>45MB</td><td>512 次元 identity 埋め込み＋逐次クラスタリング</td></tr>
       </table>
       <div class="box note">
-        <span class="box-h">評価条件と選定</span>
-        ImageNet-1k 1000クラスのゼロショット分類（各クラス20枚=200枚）と自然文クエリ10件を、CoreMLTools で CPU 実行して測定。<strong>採用は ViT-B-32/datacomp</strong>＝軽量（patch32・画像エンコーダ ~60MB）ながら 75% を達成し、自然文クエリは満点。ViT-B-16 は同等精度だが画像推論が約4倍重く、67k 枚の背景埋め込み（電池/時間）と相性が悪いため見送り。モデル変更時は <code>perceptionVersion</code> を採番して全再埋め込みする。
+        <span class="box-h">量子化の非対称性（学び）</span>
+        <strong>出力が連続ベクトルの部品（CLIP・VLM 視覚エンコーダ）は INT8 に強い</strong>（fp16 と cos≈0.999）。一方 <strong>LLM デコーダは弱い</strong>（次単語 argmax が反転・fp16 と一致 26%）。よって CLIP は全体 INT8、SmolVLM は視覚のみ INT8・デコーダ fp16 とした。また <strong>Core ML の正しさは Mac だけでは検証できない</strong>——Florence は Mac の全 compute unit で正常でも実機 fp16 で破綻した。新モデルは実機ログ（生成 ID・有限性）で確認してから採用する。
       </div>
-
-      <h2>翻訳を前段に置く理由</h2>
-      <p>CLIP（OpenCLIP ViT-B-32）のテキストエンコーダは英語中心。日本語クエリをそのまま入れると精度が落ちる。そこで <code>Foundation Models</code>（オンデバイス LLM）でクエリを<strong>英語へ正規化</strong>してから CLIP に渡す。翻訳もオンデバイスなので通信不要。翻訳失敗はキャッシュしない（誤訳の固定化を避ける）。</p>
 
       <h2>検索の融合（RRF）と証拠ゲート・審査</h2>
       <p>検索は 4 層。決定的なハード条件で絞り、複数のランキングを <strong>Reciprocal Rank Fusion</strong> で束ね、除外つきは証拠を要求し、最後に LLM が言語で判定する。</p>
       <ul>
-        <li><strong>P0 接地</strong>: 日付は <code>RelativeDateParser</code>（日英）を唯一の出典・場所/人物はカタログ/原文出現に接地。<code>QuerySpecSanitizer</code> がプレースホルダ除去・include/exclude 衝突解消。</li>
-        <li><strong>P1 融合</strong>: Vision シーンタグ一致（離散・閾値レス）＋CLIP 対比（除外は肯定/否定ベクトルの相対判定）＋<code>LexicalSearch</code>（地名/人物）を <code>AIAlbumSearcher</code> が RRF 融合。除外語はタグの離散一致でもハード除外。</li>
-        <li><strong>P2 証拠ゲート＋審査</strong>: 除外つきはタグ/顔実測/キャプションの証拠を必須にし、上位候補を <code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure 判定。unsure は最大 2 回の再判定で多数決。空振り時はプローブ語を生成して 1 回だけ再検索（Refine）。</li>
+        <li><strong>P0 接地</strong>: 日付は <code>RelativeDateParser</code>（日英）を唯一の出典・場所はカタログ/原文出現に接地・<strong>人物名は顔クラスタへ接地</strong>（<code>PersonNameGrounder</code>＝「太郎」→山田太郎・姓名の部分指定対応）。人物条件の評価は焼き込みでなく<strong>現在のクラスタ名でライブ照合</strong>（改名/統合が即反映）。<code>QuerySpecSanitizer</code> がプレースホルダ除去・include/exclude 衝突解消。</li>
+        <li><strong>P1 融合</strong>: Vision シーンタグ一致（離散・閾値レス）＋CLIP 対比（max-over-probes・除外は相対判定のみ）＋<code>LexicalSearch</code>（地名/人物）を <code>AIAlbumSearcher</code> が RRF 融合。除外語はタグの離散一致でもハード除外。</li>
+        <li><strong>P2 証拠ゲート＋審査</strong>: 除外つきはタグ/顔実測/キャプションの証拠を必須にし、<strong>キャプションの無い候補上位にはその場で生成</strong>（予算 40 枚/審査・ADR-35）してから <code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure 判定。unsure は最大 2 回の再判定で多数決。空振り時はプローブ語を生成して 1 回だけ再検索（Refine）。</li>
       </ul>
+      <div class="box note">
+        <span class="box-h">検索品質は回帰ハーネスで数値管理</span>
+        <code>SearchQualityTests</code>（Imagenette 200 枚＋正解ラベル付き 28 クエリ・実パイプライン実行）で Recall@20 / 精度 / 再現率を計測する。ベースライン（精度 0.99・再現率 0.76）で「言い換えの取りこぼし」が弱点と数値で特定し、マルチプローブ導入の A/B（再現率 0.76→0.86）も同ハーネスで検証した。実行手順は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">model-evaluations.md</a> §4。
+      </div>
+
+      <h2>作成 UI の入力支援（ADR-37）</h2>
+      <p>コンポーザーは<strong>本番検索と同じ決定的レイヤー</strong>で入力を支援する（＝プレビューが実際とズレない）。(1) <strong>サジェストチップ</strong>＝ライブラリから観測された語（命名済み人物・カタログ実在の地名・頻出タグ∩レキシコンの日本語・日付定型）をタップで挿入——<strong>確実にヒットする語だけ</strong>を出す。(2) <strong>接地プレビュー</strong>＝入力がどう解釈されたか（人物/場所/視覚語/日付）を色付きチップで表示。(3) <strong>ハード条件のヒット件数</strong>をライブ表示（0 件は作る前に分かる）。基盤はライブラリスナップショット（5 分キャッシュ）＋350ms debounce。</p>
 
       <h2>知覚 seam（プロトコルと実装の分離）</h2>
       <p><code>AutoAlbumCore</code> はプロトコルだけを定義し、Core ML / Vision / Foundation Models 依存の実体は <code>MobileCLIPKit</code> が実装する。アプリの <code>AutoAlbumAdapters</code> が結線する。</p>
@@ -83,31 +87,32 @@ graph TD
         <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → CLIP 埋め込み）</td></tr>
         <tr><td><code>TextEmbedder</code></td><td><code>MobileCLIPTextEmbedder</code></td></tr>
         <tr><td><code>TagPerceptionProvider</code></td><td><code>VisionTagAdapter</code>（シーンタグ＋VLM キャプション）</td></tr>
-        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み）</td></tr>
+        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み・端末 640px／クラウドはキャッシュ済みサムネ）</td></tr>
         <tr><td><code>QueryTranslator</code></td><td><code>AppQueryTranslator</code>（Foundation Models）</td></tr>
-        <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ）</td></tr>
+        <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ・準備済みのときだけ合成＝初回ロードで UI を塞がない）</td></tr>
       </table>
 
       <h2>ピープル（顔クラスタ）</h2>
-      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出（<code>VNDetectFaceRectanglesRequest</code>）＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは <code>AutoAlbumCore/Faces</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>＝CLIP データを壊さない・<code>PeopleEngine</code> ファサード）。<strong>端末写真のみ</strong>対象で、顔モデル未同梱ならセクション非表示。</p>
+      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出（<code>VNDetectFaceRectanglesRequest</code>）＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは <code>AutoAlbumCore/Faces</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード）。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 640px、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>で検出——低解像度ぶん大きく写った顔中心という割り切り。長押しメニューから改名・代表写真・顔の付け替え・<strong>同一人物の統合</strong>（ADR-29）。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/統合が即反映）。顔モデル未同梱ならセクション非表示。</p>
 
-      <h2>表示タグは検索と同じ台帳</h2>
-      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。VLM キャプションも「AI description」欄に表示（生成済みのみ）。タグ/キャプションは <strong>TagsV1 別コンテナ</strong>で、夜間バッチ（<code>TagTagger</code>）が付与する。</p>
+      <h2>表示タグ・説明文は検索と同じ台帳</h2>
+      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。VLM キャプションは「AI description」欄に表示（お気に入り＝生成対象で未生成なら「充電中に生成されます…」を表示）。顔の数・スクリーンショット判定・解析状態も同パネルに出す。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析・説明文の確認画面）で可視化する。</p>
 
       <h2>背景処理のスロットリング</h2>
-      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>（CPU で数秒かかり検証を妨げるため）。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
+      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。CLIP 埋め込みと VLM キャプションは<strong>インターリーブ</strong>（ADR-30・逐次だとキャプションが永遠に未着手になる実障害の修正）。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
 
       <div class="box refs">
-        <span class="box-h">関連コード</span>
+        <span class="box-h">関連コード・記録</span>
         <ul>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・審査・解釈永続化</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・審査・解釈永続化・作成支援</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags">AutoAlbumCore/Tags/</a> — TagStore / TagTagger</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Faces">AutoAlbumCore/Faces/</a> — 顔クラスタ・PeopleEngine</li>
           <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳/VLM/顔の実体</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a> — モデル比較・検索品質ベースラインの実測記録</li>
         </ul>
       </div>
 
-      <p>背景: <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a> / <a href="../tech/coreml-foundationmodels.html">Core ML / Foundation Models</a></p>
+      <p>背景: <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a> / <a href="../tech/coreml-foundationmodels.html">Core ML / Foundation Models</a> / <a href="../ai/06-quantization.html">量子化と精度</a></p>
     </article>
     <div id="pager"></div>
   </main>
