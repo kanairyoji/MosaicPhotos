@@ -15,6 +15,52 @@
       <h1>AI アルバム実装詳細</h1>
       <p class="lead">自然文（任意言語）からアルバムを作る経路を、コードの登場人物と処理順で追う。設計の全体像は<a href="../features/on-device-ai.html">オンデバイス AI</a>を先に。ここでは <code>AIAlbumService</code> を起点に「解釈 → 検索 → 審査 → 増分評価」の各フェーズを実装レベルで説明する。すべて <code>AutoAlbumCore</code>（SwiftUI 非依存・macOS でテスト可能）にある。</p>
 
+      <h2>まず例で追う</h2>
+      <p>ライブラリ 60,000 枚・ピープルに「山田太郎」「山田花子」が命名済みという前提で、検索文<strong>「去年の沖縄で太郎が海で遊んでいる写真」</strong>からアルバムを作る流れを追う。</p>
+
+      <h3>ステップ 1: 「作成」タップの瞬間（1〜2 秒・LLM なし）</h3>
+      <p>まず LLM を使わない<strong>即時プレビュー</strong>が走る。決定的な辞書とパーサだけで検索文を分解する：</p>
+      <table>
+        <tr><th>検索文の断片</th><th>解釈する部品</th><th>結果</th></tr>
+        <tr><td>「去年」</td><td><code>RelativeDateParser</code></td><td>日付範囲 2025-01-01〜12-31（<strong>ハード条件</strong>）</td></tr>
+        <tr><td>「太郎」</td><td><code>PersonNameGrounder</code></td><td>顔クラスタ「山田太郎」に接地（<strong>ハード条件</strong>）</td></tr>
+        <tr><td>「海」</td><td><code>JapaneseVisualLexicon</code></td><td>内容語 <code>beach</code>（ランキング用）</td></tr>
+        <tr><td>「沖縄」</td><td>（この時点では解釈されない）</td><td>夜間の LLM 解釈でカタログ接地され場所条件になる</td></tr>
+      </table>
+      <p>検索は 3 段階で絞る：</p>
+      <ol>
+        <li><strong>ハードフィルタ</strong>: 60,000 枚 →「去年」で 8,000 枚 →「山田太郎の顔がある」で 900 枚。足切りのみで順位は付けない。</li>
+        <li><strong>3 本のランキング</strong>: 残り 900 枚を独立に順位付け。<strong>タグ</strong>＝シーンタグに <code>beach</code> を持つ写真（例: 120 枚・一致数順）／<strong>CLIP</strong>＝<code>beach</code> のテキスト埋め込みと各写真の画像埋め込みのコサイン（上位バンドのみ採用）／<strong>字句</strong>＝地名・人物メタデータへの文字一致。</li>
+        <li><strong>RRF 融合</strong>: 3 つの順位表を「順位の逆数の和」で 1 本に統合。タグでも CLIP でも上位に来る写真（＝複数の証拠がある写真）が勝つ。単一スコアの閾値調整を捨てて「複数の目の合議」にしたのが要点。</li>
+      </ol>
+      <p>ここまでで例えば 45 枚のアルバムが<strong>その場で表示</strong>される。内部では「まだ仮」フラグ（<code>pendingFinalization</code>）が立っている。</p>
+
+      <h3>ステップ 2: 夜間の本番化（充電＋ロック中・LLM が動く）</h3>
+      <p><strong>LLM 解釈（1 回だけ・永続化）</strong>: Foundation Models が検索文を構造化し、即時版で拾えなかったものを補う——「沖縄」を地名カタログに実在確認して<strong>場所のハード条件</strong>に、英訳 <code>"Taro playing at the beach in Okinawa"</code> を CLIP 用に、<strong>言い換えプローブ</strong> <code>["swimming in the sea", "child playing in ocean waves", …]</code> を生成（採点は主フレーズとプローブの最大類似＝max-over-probes）。再検索で候補が例えば 60 枚になる。</p>
+      <p><strong>LLM 審査</strong>: 候補ごとに「証拠行」を組み立てて keep / drop / unsure を判定させる：</p>
+      <pre>#12 tags=[beach, child, water] faces=2 caption="A boy playing in the waves"
+    date=2025-08-14 place=沖縄県恩納村   → keep
+#31 tags=[aquarium, fish, indoor] faces=1 caption=なし
+    date=2025-08-15 place=沖縄県那覇市   → drop（水族館は「海で遊ぶ」ではない）</pre>
+      <p>キャプション未生成の候補上位には<strong>その場で VLM が生成</strong>する（1 審査 40 枚まで・生成分は台帳に永続化＝捨てない）。unsure は 2 回まで再判定して多数決。0 件ならプローブ語で 1 回だけ再検索する。</p>
+
+      <h3>ステップ 3: 以後、写真が増えたら（自動追従）</h3>
+      <p>新しい写真 30 枚が夜間に索引されると、<strong>その 30 枚だけ</strong>を保存済みクエリベクトルで採点し、永続化された<strong>スコアプール</strong>（上位 300 件の refKey→類似スコア表）へマージしてメンバーを引き直す。60,000 枚の再走査も LLM も走らない。ズレが蓄積したら（埋め込み 500 枚以上の差）フル再評価で整合を取り直す。</p>
+
+      <div class="box why">
+        <span class="box-h">この複雑さは実障害の積み上げ（シンプル化検討の材料）</span>
+        <table>
+          <tr><th>機構</th><th>無かったときに起きた実障害</th></tr>
+          <tr><td>解釈の永続化（作成時 1 回）</td><td>毎起動 LLM 再解釈 → 9.4 秒のメインハング</td></tr>
+          <tr><td>決定的接地（日付・人物・辞書）</td><td>小型 LLM の幻覚地名・プレースホルダ・カタログ丸写し</td></tr>
+          <tr><td>タグ台帳＋閾値レス＋RRF</td><td>絶対閾値が調整不能（「除外が 97% 落とす」「採用 0 件」）</td></tr>
+          <tr><td>証拠ゲート＋LLM 審査</td><td>CLIP スコアだけの「もっともらしい誤検出」</td></tr>
+          <tr><td>即時プレビュー→夜間本番の 2 段階</td><td>作成タップで画面フリーズ</td></tr>
+          <tr><td>スコアプール＋増分評価</td><td>写真追加のたびに全件再走査</td></tr>
+          <tr><td>空なら空を返すポリシー</td><td>「全 68,512 枚のアルバム」等の巨大アルバム誤生成</td></tr>
+        </table>
+      </div>
+
       <h2>登場人物（クラス地図）</h2>
       <table>
         <tr><th>フェーズ</th><th>型</th><th>責務</th></tr>

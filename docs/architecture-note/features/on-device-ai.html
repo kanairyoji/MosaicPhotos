@@ -20,7 +20,7 @@
       <ol>
         <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）— 全写真</li>
         <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・<strong>INT8 量子化</strong>・意味検索の索引）— 全写真</li>
-        <li><strong>VLM キャプション</strong>（SmolVLM-500M・英語一文・LLM 審査の「目」）— <strong>お気に入りのみ</strong>（最重量パスの集中投下・ADR-34。AI アルバム審査時は候補上位にもオンデマンド生成＝ADR-35）</li>
+        <li><strong>VLM キャプション</strong>（SmolVLM-500M・英語一文・LLM 審査の「目」）— <strong>お気に入りを中心とした重要写真</strong>（最重量パスの集中投下・ADR-34。AI アルバム審査時は候補上位にもオンデマンド生成し、生成分は台帳へ永続化＝ADR-35）</li>
       </ol>
       <div class="mermaid">
 graph TD
@@ -30,7 +30,7 @@ graph TD
   subgraph IDX["夜間索引（新しい写真から先に）"]
     TAGS[(Vision シーンタグ)]
     EMB[(PhotoEmbedding fp16)]
-    CAP[(VLM キャプション<br/>お気に入りのみ)]
+    CAP[(VLM キャプション<br/>お気に入り中心)]
   end
   HARD --> FUSE["RRF 融合（AIAlbumSearcher）"]
   TE --> FUSE
