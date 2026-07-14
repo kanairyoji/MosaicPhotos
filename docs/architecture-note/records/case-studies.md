@@ -397,3 +397,10 @@
 - 対処: 否定を**対比**に変換する2段構え。(1) 対比採点＝除外があるとき肯定側は include 語だけを埋め込み、各除外語は "a photo of X" で個別に埋め込む。画像ごとに「除外類似 ≥ 肯定類似」または「除外類似 ≥ 0.22（excludeDropThreshold）」で落とす（フル評価・増分評価で同一規則）。(2) 顔実測の統合＝人系の除外語（hasPeopleExclusion）を含むアルバムでは、顔スキャン済み写真の faceCount>0 をハード除外（ScannedPhoto → PeopleEngine.scannedFaceCounts → AutoAlbumEngine.setFaceCountsProvider の seam・FaceStore は別コンテナのため Composition Root で結線）。未スキャン・クラウド写真は CLIP 対比が受け持つ。テスト 5 件（対比ドロップ・絶対しきい値・顔実測・肯定フレーズ規則・人系判定）で固定。
 - 関連: `AIAlbumSearch.swift` / `AIAlbumService.swift` / `FaceStore.swift` / `PeopleEngine.swift` / `AutoAlbumAdapters.swift` / `AIAlbumExclusionTests.swift`。ADR-23（解釈の永続化）の合成採点への拡張。
 - 残課題: excludeDropThreshold（0.22）は実機の分布で調整。後ろ姿など顔検出に掛からない人物は CLIP 対比頼み。将来は対比プロンプト辞書の拡充や上位候補の VLM 再検証も選択肢。
+
+## フルネーム指定の AI アルバムに同姓の家族全員が混入（人物接地の部分照合が波及）
+- 症状: AI アルバムの条件に「木村太郎」とフルネームを入れたのに、木村花子ら**同姓の家族全員**の写真がヒットする。
+- 原因: `PersonNameGrounder.groundedNames` は姓名の部分指定（「太郎」→木村太郎）に対応するため、各カタログ名から「全体＋前方（姓）＋後方（名）」の照合片を作りクエリ原文と突き合わせる。フルネーム「木村太郎」を入力すると、木村**花子**の姓片「木村」がクエリに含まれるため花子も接地され、ハード条件 people が家族全員に広がっていた。
+- 対処: 2 パス照合に変更。第 1 パスで**フルネーム完全一致**（長い名前優先）を拾い、一致箇所をクエリから消費（空白化）してから、第 2 パスで残りに対して部分照合する。「木村太郎と花子」のような複合指定は従来どおり両方に当たる。テスト 3 件（波及なし・複合・最長優先）で固定。
+- 関連: `PersonNameGrounder.swift` / `PersonNameGrounderTests.swift`。ADR-35 の人物ライブ照合とは独立（接地＝解釈側の問題）。
+- 残課題: **1 文字の名（例「健」）は部分照合の対象外**（照合片は長さ 2 以上・1 文字は「健康」「健やか」等の通常語に誤爆するため現仕様として維持）。フルネーム入力またはコンポーザーのサジェストチップ（フルネームを挿入）なら当たる。形態素境界を使った安全な 1 文字照合は将来課題。
