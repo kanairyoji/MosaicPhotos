@@ -21,6 +21,10 @@ public protocol PhotoStore: PhotoLoading, Observable {
     var hasMore: Bool { get }
     /// True while a `loadMore()` call is in progress.
     var isLoadingMore: Bool { get }
+    /// ローカル＋クラウドの**混在ソース**か（フィルタの「ソース」欄の表示可否）。
+    /// ⚠️ プロトコル**要件**であること（extension のデフォルトのみだと、ジェネリック経由の呼び出しが
+    /// 常にデフォルト false に静的束縛され、MergedPhotoStore の true が無視される実障害）。
+    var isMixedSource: Bool { get }
 
     func start() async
     func retry() async
