@@ -92,6 +92,9 @@ public final class MergedPhotoStore {
 extension MergedPhotoStore: PhotoStore {
     public typealias Item = MergedPhotoItem
 
+    /// ローカル＋Dropbox の混在ソース＝フィルタの「ソース」欄（端末のみ/クラウドのみ）を出す。
+    public var isMixedSource: Bool { true }
+
     public var state: PhotoLoadState {
         Self.resolveState(
             localState: localStore.state,

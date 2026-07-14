@@ -100,7 +100,8 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
         .frame(height: 49)
         .background(.bar)
         .sheet(isPresented: $showFilterSheet) {
-            PhotoFilterSheet(filter: $filter)
+            // ソース欄は混在ソースのビューのみ（単一ソースでは意味がないため出さない）。
+            PhotoFilterSheet(filter: $filter, showsSourceOptions: store.isMixedSource)
         }
     }
 

@@ -34,5 +34,8 @@ public extension PhotoStore {
     var hasMore: Bool { false }
     var isLoadingMore: Bool { false }
     func loadMore() async { }
+    /// ローカル＋クラウドの**混在ソース**か。フィルタの「ソース」欄は混在ビューでのみ意味があるため、
+    /// 単一ソース（写真タブ＝端末のみ・クラウドタブ＝Dropbox のみ）では非表示にする。既定 false。
+    var isMixedSource: Bool { false }
 }
 #endif
