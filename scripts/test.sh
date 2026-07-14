@@ -53,8 +53,27 @@ run_ios() {
   for pkg in "${IOS_PACKAGES[@]}"; do
     echo "▶ xcodebuild test: $pkg ($SIM)"
     # -retry-tests-on-failure: 遅いシミュレータでのフレークなタイムアウトを吸収（失敗分のみ再試行）。
-    ( cd "Packages/$pkg" && xcodebuild test -scheme "$pkg" -destination "$SIM" \
-        -retry-tests-on-failure -test-iterations 2 -quiet )
+    # -test-timeouts-enabled: ハングを「名前付きのテスト失敗」に変換する（ジョブ全体の黙り込み防止。
+    #   CI ランナーはローカルの数倍遅いことがあるため許容時間は長めに取る）。
+    # -resultBundlePath: 失敗時に失敗テスト名を出せるよう xcresult を必ず残す（-quiet はテスト名を
+    #   出さないため、これが無いと CI ログから原因テストが特定できない）。
+    local bundle=".build/TestResults-$pkg.xcresult"
+    if ! ( cd "Packages/$pkg" && rm -rf "$bundle" && xcodebuild test -scheme "$pkg" -destination "$SIM" \
+        -retry-tests-on-failure -test-iterations 2 \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
+        -resultBundlePath "$bundle" -quiet ); then
+      echo "❌ $pkg: TEST FAILED — 失敗テストの概要:"
+      xcrun xcresulttool get test-results summary --path "Packages/$pkg/$bundle" 2>/dev/null \
+        | python3 -c 'import json, sys
+try:
+    d = json.load(sys.stdin)
+    for f in d.get("testFailures", []):
+        print("  - " + str(f.get("testName", "?")) + ": " + str(f.get("failureText", ""))[:300])
+    print("  (result=" + str(d.get("result")) + ", failedTests=" + str(d.get("failedTests")) + ")")
+except Exception as e:
+    print("  (xcresult parse failed: " + str(e) + ")")' || true
+      exit 1
+    fi
   done
 }
 

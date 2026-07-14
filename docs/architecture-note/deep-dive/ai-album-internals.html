@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI アルバム実装詳細 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "dd-ai-album";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / AI アルバム実装詳細</nav>
+      <h1>AI アルバム実装詳細</h1>
+      <p class="lead">自然文（任意言語）からアルバムを作る経路を、コードの登場人物と処理順で追う。設計の全体像は<a href="../features/on-device-ai.html">オンデバイス AI</a>を先に。ここでは <code>AIAlbumService</code> を起点に「解釈 → 検索 → 審査 → 増分評価」の各フェーズを実装レベルで説明する。すべて <code>AutoAlbumCore</code>（SwiftUI 非依存・macOS でテスト可能）にある。</p>
+
+      <h2>登場人物（クラス地図）</h2>
+      <table>
+        <tr><th>フェーズ</th><th>型</th><th>責務</th></tr>
+        <tr><td rowspan="6">解釈</td><td><code>AIAlbumInterpreter</code></td><td>解釈の窓口。保存済み解釈の取得/保存・FM 解釈の実行・プレビュー解釈（決定的）・プローブ生成</td></tr>
+        <tr><td><code>FoundationModelsQueryUnderstanding</code></td><td>Apple Foundation Models で検索文→構造化 <code>QuerySpec</code>（＋英訳・言い換えプローブ）</td></tr>
+        <tr><td><code>QuerySpecSanitizer</code></td><td>小型 LLM の出力を防御的に接地（プレースホルダ除去・カタログ丸写し検出・include/exclude 衝突解消）</td></tr>
+        <tr><td><code>RelativeDateParser</code> / <code>PersonNameGrounder</code> / <code>JapaneseVisualLexicon</code></td><td>決定的レイヤー。日付（唯一の出典）・人物名の顔クラスタ接地（「太郎」→山田太郎）・頻出視覚語/人物否定の抽出</td></tr>
+        <tr><td><code>SavedInterpretation</code></td><td>永続化される解釈（spec・英訳・プローブ・スコアプール・評価済み埋め込み数・<code>version</code>）</td></tr>
+        <tr><td><code>AIAlbumInterpretationStore</code></td><td>JSONFileStore による解釈の永続化・版管理（<code>currentVersion</code> 不一致で再解釈）</td></tr>
+        <tr><td rowspan="5">検索</td><td><code>QueryEvaluator</code></td><td>ハード条件（日付/場所/人物/スクショ）の決定的フィルタ。人物は<strong>現在の</strong>顔クラスタ名でライブ照合</td></tr>
+        <tr><td><code>QueryEmbedder</code></td><td>クエリ埋め込みの一元化：肯定フレーズ選定・プローブ埋め込み・採点規則 <code>semanticScore</code>（max-over-probes＋除外の相対判定）</td></tr>
+        <tr><td><code>AIAlbumSearcher</code></td><td>検索の本体 <code>searchWithPool</code>。ハード → タグ/意味/字句 → RRF 融合。増分評価用のスコアプールも返す</td></tr>
+        <tr><td><code>LexicalSearch</code> / <code>HybridFusion</code></td><td>字句ランキング（地名/人物）と Reciprocal Rank Fusion（k=60）</td></tr>
+        <tr><td><code>ClipMath</code></td><td>vDSP コサイン・Float16 エンコード/デコード（純関数）</td></tr>
+        <tr><td rowspan="2">審査</td><td><code>AIAlbumVerificationCoordinator</code></td><td>証拠ゲート・証拠行の組み立て・オンデマンドキャプション（予算 40 枚/審査）・審査の呼び出し</td></tr>
+        <tr><td><code>AlbumVerifier</code>（<code>AlbumCandidateVerifier</code>）</td><td>FM LLM による keep/drop/unsure 判定。<code>majorityVerdict</code>（純関数）で多数決集計</td></tr>
+        <tr><td rowspan="3">永続化</td><td><code>AutoAlbumStore</code>（@ModelActor）</td><td><code>PhotoEnrichment</code>（メタ）/ <code>PhotoEmbedding</code>（CLIP・別テーブル）/ <code>GeneratedAlbum</code></td></tr>
+        <tr><td><code>TagStore</code>（@ModelActor・TagsV1）</td><td>Vision シーンタグ＋VLM キャプションの台帳</td></tr>
+        <tr><td><code>FaceStore</code>（@ModelActor・FacesV1）</td><td>顔クラスタ（人物名・顔数の実測）</td></tr>
+      </table>
+      <p>これらを統括するファサードが <code>AutoAlbumEngine</code>（@MainActor @Observable）で、アプリの <code>AutoAlbumAdapters</code>（Composition Root）が seam（<code>TextEmbedder</code> / <code>QueryTranslator</code> / タグ・顔・キャプションの各 provider）を注入する。</p>
+
+      <h2>ライフサイクル：即時プレビュー → 夜間本番化</h2>
+      <p>作成/編集（<code>AIAlbumService.make</code>）は<strong>LLM を一切呼ばない</strong>。決定的レイヤーだけの「プレビュー解釈」（<code>AIAlbumInterpreter.previewInterpretation</code>：レキシコン・日付パーサ・人物接地）で 1〜2 秒で結果を出し、<code>pendingFinalization</code> フラグ付きで保存する。FM 解釈と LLM 審査を含む本番化は夜間（<code>finalizePending</code>・電源＋Wi-Fi＋ロック中）に行う。UI を固めず、重い推論を夜間ゲートに寄せるための 2 段構えである（ADR-25/28）。</p>
+      <div class="mermaid">
+graph TD
+  MAKE["make(id, title, criteria)"] --> PREV["previewInterpretation<br/>決定的レイヤーのみ・LLM なし"]
+  PREV --> RS1["rankedSearch＋証拠ゲート"]
+  RS1 --> SAVE1["保存: pendingFinalization=true<br/>0 件でも保存する"]
+  SAVE1 -.夜間 BGTask.-> FIN["finalizePending"]
+  FIN --> INT["FM 解釈（interpretation）<br/>QuerySpec＋英訳＋プローブ → 永続化"]
+  INT --> RS2["rankedSearch（フル）"]
+  RS2 --> GATE["証拠ゲート（除外つきのみ）"]
+  GATE --> VER["LLM 審査（verified）"]
+  VER --> REF{"0 件?"}
+  REF -->|はい| PROBE["expandProbes → 1 回だけ再検索＋再審査"]
+  REF -->|いいえ| DONE["GeneratedAlbum を upsert"]
+  PROBE --> DONE
+      </div>
+      <ul>
+        <li><strong>0 件でも保存する</strong>：アルバムは“生きた条件”であり、索引が進めば夜間再評価で自然に埋まる（証拠主義）。</li>
+        <li><code>finalizePending</code> はアルバムごとに <code>BackgroundYield.heavyShouldPause()</code> を確認し、ゲートが閉じたら（ロック解除等）残りを次回夜間へ持ち越す。</li>
+        <li>再設定（検索文の変更）は <code>interpreter.remove(id:)</code> で解釈を破棄してやり直す。解釈のスキーマを変えたら <code>SavedInterpretation.currentVersion</code> を採番——版不一致の保存済み解釈は次回 <code>interpretation()</code> で自動再解釈される。</li>
+      </ul>
+
+      <h2>フェーズ 1：解釈（LLM は作成後の夜間に 1 回だけ）</h2>
+      <p><code>interpretation(id:criteria:now:)</code> は保存済みが現行版ならそれを返し、なければ FM で解釈して<strong>必ず決定的レイヤーで上書き接地</strong>する。小型 LLM の構造化出力は信用しない（ADR-23）：</p>
+        <ul>
+        <li><strong>日付</strong>は <code>RelativeDateParser</code>（日英対応）が<strong>唯一の出典</strong>。LLM が出した日付範囲は捨てる。</li>
+        <li><strong>場所</strong>はライブラリの地名カタログ or 原文に実在するものだけ採用（幻覚地名の混入防止）。</li>
+        <li><strong>人物</strong>は <code>PersonNameGrounder</code> が命名済み顔クラスタへ接地。「太郎と花子」→ 山田太郎・山田花子（姓だけ・名だけの部分一致も解決）。</li>
+        <li><strong>視覚語</strong>は <code>JapaneseVisualLexicon</code>（決定的辞書）が頻出語と人物否定（「人が写っていない」等）を抽出し、LLM 出力とマージ。</li>
+        <li><code>QuerySpecSanitizer</code> がプレースホルダ（"PLACE" 等）除去・カタログ丸写し検出・include/exclude 衝突解消を行う。</li>
+        <li><strong>言い換えプローブ（最大 4）</strong>もこのとき生成して永続化（ADR-35）。以降の再評価で LLM は走らない。</li>
+      </ul>
+
+      <h2>フェーズ 2：検索（searchWithPool）</h2>
+      <p>本体は <code>AIAlbumSearcher.searchWithPool</code>。純ロジックなので macOS テストで固めてある（<code>AIAlbumSearcherTests</code> / <code>MultiProbeTests</code> 等）。処理順：</p>
+      <ol>
+        <li><strong>ハード条件</strong>：<code>QueryEvaluator.hardFilter</code>。人物条件は <code>peopleByRefKey</code>（現在の顔クラスタ名）で<strong>ライブ照合</strong>し、無ければ焼き込み値（<code>EnrichedPhoto.people</code>）へフォールバック。改名・統合が即反映される。</li>
+        <li><strong>顔実測の除外</strong>：「人が写っていない」系の除外があるときは <code>faceCounts</code>（顔スキャン実測）で顔のある写真をハード除外。未スキャン分は CLIP 対比が受け持つ。</li>
+        <li><strong>タグのハード除外</strong>：除外語がシーンタグに離散一致する写真を落とす（閾値レス）。</li>
+        <li><strong>肯定フレーズの選定</strong>：<code>QueryEmbedder.phrase(include:exclude:semanticText:)</code>。除外があるときは include 語だけを使う——全文には "without people" 等の否定が含まれ、<strong>CLIP は否定を理解せず逆に引っ張られる</strong>ため。</li>
+        <li><strong>意味採点</strong>：埋め込みは <code>loadPage</code>（<code>PhotoEmbedding</code> を refKey 昇順でページング）でストリームし、全件をメモリに持たない。採点は <code>QueryEmbedder.semanticScore</code> ＝「主フレーズ＋プローブの max-over-probes。除外語ベクトルのコサインが肯定側の最大値以上なら nil（相対判定・絶対閾値なし）」。<strong>除外つきのときはプローブを埋め込まない</strong>（肯定側の最大値が底上げされ除外が素通りした回帰の防止）。採用は上位から <code>top − 0.06</code> の相対バンドのみ（フロア閾値は廃止）・最大 50 件。</li>
+        <li><strong>タグ一致ランキング</strong>：include 語とシーンタグの一致数降順（離散・閾値レス）。</li>
+        <li><strong>字句ランキング</strong>：<code>LexicalSearch.rank</code>（地名・人物名のマッチ）。</li>
+        <li><strong>RRF 融合</strong>：<code>HybridFusion.fuse([lexical, semantic, tagMatched], k: 60)</code>。複数経路に現れる写真が上位に来る。</li>
+      </ol>
+      <div class="box why">
+        <span class="box-h">「空を返す」判断は実障害から決めた</span>
+        (a) フレーズ無し（翻訳保留等）でハード条件も無いときは<strong>空</strong>を返す——旧実装は無条件で base を返し「全 68,512 枚のアルバム」が生成された。(b) フレーズがあるのにタグ/意味/字句のどれにも当たらないときも<strong>空</strong>——旧実装は日付窓の全 7,508 枚へフォールバックし「子供」の意図が消えた。証拠主義（ADR-24）：索引が進めば自然に埋まる方を選ぶ。
+      </div>
+
+      <h2>フェーズ 3：証拠ゲートと LLM 審査</h2>
+      <p><code>AIAlbumVerificationCoordinator</code> が担う。</p>
+      <ul>
+        <li><strong>証拠ゲート</strong>（<code>evidenceGated</code>・除外つきクエリのみ）：シーンタグ・顔実測・キャプションのいずれの証拠も無い候補を落とす。CLIP スコアだけの「もっともらしい誤検出」を審査に上げない。</li>
+        <li><strong>オンデマンドキャプション</strong>（ADR-35）：審査対象のうちキャプション未生成の候補上位に、その場で VLM キャプションを生成する。予算は <code>captionBudget = 40</code> 枚/審査（500M VLM ≈ 4 秒/枚 × 40 ≈ 3 分弱・夜間実行）。生成分は台帳（TagsV1）へ保存され次回から再利用される。</li>
+        <li><strong>審査</strong>（<code>verified</code>）：候補ごとに証拠行（<code>evidenceLine</code>＝タグ・顔数・キャプション・日付/場所）を組み立て、<code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure を返す。unsure は最大 2 回再判定し <code>majorityVerdict</code>（純関数）で多数決。LLM が使えない環境では審査をスキップして融合結果をそのまま使う（劣化はするが空にはならない）。</li>
+      </ul>
+
+      <h2>フェーズ 4：再評価（増分＋ドリフト検知）</h2>
+      <p>写真の取り込みが進んだときの更新は LLM を使わない。</p>
+      <ul>
+        <li><strong>増分</strong>（<code>refreshIncremental(newRefKeys:)</code>）：新規に埋め込みが付いた写真<strong>だけ</strong>を保存済みクエリベクトルで採点し、永続化された<strong>スコアプール</strong>（refKey → コサイン・上位 300 件）へ <code>mergePool</code> でマージ → <code>memberKeys(fromPool:)</code> でメンバー再算出。全ページ再走査をしないので夜間バッチ内で安価に回る。採点規則は <code>QueryEmbedder.semanticScore</code> を共有し、フル検索と増分で結果が食い違わないことをテストで固定している。</li>
+        <li><strong>ドリフト検知</strong>（<code>refreshIfDrifted(threshold: 500)</code>）：評価済み埋め込み数（<code>evaluatedEmbedCount</code>）と現在の埋め込み総数の差が閾値を超えたらフル再評価（<code>refresh</code>）を走らせ、増分の累積誤差をリセットする。</li>
+      </ul>
+
+      <h2>コンポーザーの入力支援は同じ決定的レイヤーの再利用</h2>
+      <p><code>AutoAlbumEngine+Suggestions</code>（ADR-37）。サジェストチップ（命名済み人物・カタログ地名・頻出タグ∩レキシコン・日付定型）は <code>FaceStore</code> / 地名カタログ / <code>TagStore.topTags</code> から、接地プレビューは <code>previewInterpretation</code> と同じ経路（<code>PersonNameGrounder</code> / <code>JapaneseVisualLexicon.groundedPairs</code> / <code>RelativeDateParser</code>）から作る。<strong>本番検索と同じ部品を使うことで「プレビューと実際の解釈がズレない」ことを構造的に保証</strong>する。ライブラリスナップショットは 5 分キャッシュ、プレビューは 350ms debounce。</p>
+
+      <h2>テストの置き場所</h2>
+      <table>
+        <tr><th>対象</th><th>テスト</th><th>実行環境</th></tr>
+        <tr><td>検索・融合・増分・プローブ</td><td><code>AutoAlbumCoreTests</code>（<code>AIAlbumSearcherTests</code> / <code>MultiProbeTests</code> / <code>LexicalSearchTests</code> ほか）</td><td>macOS <code>swift test</code>（FAST）</td></tr>
+        <tr><td>検索品質（Recall@k・実パイプライン）</td><td><code>SearchQualityTests</code>（Imagenette 200 枚＋28 クエリ・要モデル同梱）</td><td>アプリテストターゲット（実機/シミュレータ）</td></tr>
+        <tr><td>CLIP の有限性・自然文一致</td><td><code>ImageRecognitionTests</code></td><td>アプリテストターゲット（モデル未同梱はスキップ）</td></tr>
+      </table>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumService.swift">AIAlbumService.swift</a> — make / finalizePending / refresh*</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumSearch.swift">AIAlbumSearch.swift</a> — searchWithPool・増分の純ロジック</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/QueryEmbedder.swift">QueryEmbedder.swift</a> — フレーズ選定・semanticScore</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumVerificationCoordinator.swift">AIAlbumVerificationCoordinator.swift</a> — 証拠ゲート・オンデマンドキャプション・審査</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumInterpreter.swift">AIAlbumInterpreter.swift</a> — 解釈・接地・プローブ</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a> — 検索品質ベースライン・A/B の実測</li>
+        </ul>
+      </div>
+
+      <p>背景: <a href="../features/on-device-ai.html">オンデバイス AI（全体像）</a> / <a href="../ai/08-ranking-fusion.html">ランキングと融合</a> / <a href="../ai/07-llm-ondevice.html">LLM とオンデバイス推論</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

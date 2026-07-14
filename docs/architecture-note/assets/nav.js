@@ -35,6 +35,7 @@
       { id: "dd-concurrency", href: "deep-dive/concurrency-internals.html", label: "並行・バックグラウンド処理" },
       { id: "dd-cache",       href: "deep-dive/cache-internals.html",       label: "キャッシュ実装詳細" },
       { id: "dd-data-model",  href: "deep-dive/data-model.html",            label: "データ構造詳細" },
+      { id: "dd-ai-album",    href: "deep-dive/ai-album-internals.html",    label: "AI アルバム実装詳細" },
     ]},
     { title: "技術プライマー", items: [
       { id: "tech-observation",   href: "tech/swift-observation.html",        label: "Swift Observation" },

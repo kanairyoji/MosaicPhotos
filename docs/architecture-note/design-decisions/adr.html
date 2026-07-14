@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>設計判断・事例ハイライト | MosaicPhotos 設計資料</title>
+  <title>設計判断ハイライト | MosaicPhotos 設計資料</title>
   <link rel="stylesheet" href="../assets/styles.css">
   <script>window.DOCROOT = "../"; window.PAGE = "adr";</script>
 </head>
@@ -12,8 +12,8 @@
   <main>
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / ハイライト</nav>
-      <h1>設計判断・事例ハイライト（重要トップ 14）</h1>
-      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）と事例（バグ・性能対応）から、特に重要な <strong>14 個</strong>を抜粋して紹介する。各項は要点のみ。<strong>全件は Markdown のマスター</strong>を参照。</p>
+      <h1>設計判断ハイライト（重要トップ 10）</h1>
+      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）から、特に重要な <strong>10 個</strong>を抜粋して紹介する。各項は要点のみ。個別のバグ・性能対応の顛末（事例）は正本の case-studies.md と深掘りページへ。<strong>全件は Markdown のマスター</strong>を参照。</p>
 
       <div class="box note">
         <span class="box-h">このページは“抜粋”、正本は Markdown</span>
@@ -44,52 +44,32 @@
       <strong>決定:</strong> <code>PhotoEmbedding</code> 別テーブルへ分離し Float16 保存。メタデータ fetch は blob に触れない。<br>
       <strong>結果:</strong> 常駐が「ページ 1 枚分」に。スキーマ再構築（<code>AutoAlbumV10</code>）が必要。→ <a href="../case-studies/memory.html">事例</a>。</p>
 
-      <h2><span class="tag">事例</span> 5. 写真枚数に比例したメモリ枯渇の解消</h2>
-      <p><strong>症状:</strong> 写真ゼロの端末は起動、写真が多い端末は起動前に落ちる。<br>
-      <strong>原因:</strong> 「軽量版」<code>allEnrichedPhotosLite()</code> も内部は全件 fetch で、fetch 時点に 67k×2KB≈138MB を確保（複数経路が重なり jetsam）。<br>
-      <strong>学び:</strong> SwiftData の fetch は属性を丸ごと読む。命名でなく実測（経路）で確かめる。→ <a href="../case-studies/memory.html">深掘り</a>。</p>
-
-      <h2><span class="tag">事例</span> 6. メモリ常駐の圧縮（NSCache のコスト計上ズレ）</h2>
-      <p><strong>症状:</strong> 写真が多いと常駐が高く圧迫しやすい（ADR-6 後も残存）。<br>
-      <strong>原因:</strong> サムネのメモリ層に<strong>デコード済み画像</strong>を入れるのにコストを <strong>JPEG バイト</strong>で計上 → 100MB 上限が実質約10倍（〜1GB 相当）に膨張。<br>
-      <strong>対処:</strong> 実デコードサイズでコスト計上、サムネ ×2＋bucket、フル画像を ImageIO でダウンサンプル、メモリ警告で段階縮小、上限を端末 RAM 連動の Auto に。→ <a href="../case-studies/memory.html">深掘り</a>。</p>
-
-      <h2><span class="tag">設計</span> 7. AI 検索を合成可能な QuerySpec（OR/NOT/多ファセット）へ <span class="muted">(ADR-12)</span></h2>
+      <h2><span class="tag">設計</span> 5. AI 検索を合成可能な QuerySpec（OR/NOT/多ファセット）へ <span class="muted">(ADR-12)</span></h2>
       <p><strong>文脈:</strong> 「ここ2年の子供」「京都か奈良の家族のお気に入り、スクショ除く」等、複雑条件・OR・NOT を柔軟に組みたい。<br>
       <strong>決定:</strong> DNF（節の OR・節内 AND・各条件 NOT）の <code>QuerySpec</code>。ハードは <code>QueryEvaluator</code>、相対日付は <code>RelativeDateParser</code>（日英）。<br>
       <strong>結果:</strong> 多ファセット＋OR を実現。<code>QuerySpec</code> は現在も解釈の内部表現として残り、採点は ADR-24 のタグ一致＋CLIP 対比＋LLM 審査へ発展した（旧フラット検索 API は撤去）。</p>
 
-      <h2><span class="tag">設計</span> 8. CLIP 画像エンコーダを fp16（実機 ANE 優先） <span class="muted">(ADR-11)</span></h2>
-      <p><strong>文脈:</strong> 画像埋め込みが 1 枚 0.5〜1.3 秒と遅い。原因は fp32 変換で Neural Engine に載らず GPU/CPU フォールバック。<br>
-      <strong>決定:</strong> 変換を <code>FLOAT16</code> に。fp16 はシミュレータで NaN 化し得るが有限性チェックで安全に無効化（画像タワーは実機検証）。<br>
-      <strong>結果:</strong> 実機の埋め込みが ANE で高速化。シミュレータ最適化に引きずられない。</p>
-
-      <h2><span class="tag">事例</span> 9. All サムネが「ポツポツ」1 枚ずつ遅く出る</h2>
-      <p><strong>症状:</strong> All ビューで Dropbox サムネが 1 枚ずつポツポツ現れ非常に遅い。<br>
-      <strong>原因:</strong> <code>prefetch</code> 未上書きで既定の<strong>直列 await</strong>を使用 → バッチャの集約（25枚/req）・並行（最大8本）が殺され実質バッチ 1・直列に。<br>
-      <strong>対処:</strong> 先読みを<strong>並行発火</strong>してバッチャに集約させる。学び＝バッチ系ローダに「1 件ずつ await」は集約を無効化する。</p>
-
-      <h2><span class="tag">設計</span> 10. ModelContainer を自己修復で構築 <span class="muted">(ADR-7)</span></h2>
+      <h2><span class="tag">設計</span> 6. ModelContainer を自己修復で構築 <span class="muted">(ADR-7)</span></h2>
       <p><strong>文脈:</strong> SwiftData は破損・不整合で起動時 trap し、実機で原因不明クラッシュ。<br>
       <strong>決定:</strong> <code>makeResilientContainer</code> で「削除→再試行→インメモリ」とフォールバック。<br>
       <strong>結果:</strong> 起動を止めない。最悪データは失うが回復する（埋め込みは背景で再生成）。</p>
 
-      <h2><span class="tag">設計</span> 11. 重い処理は「使っていない時だけ」＋5 段階タイミング <span class="muted">(ADR-25)</span></h2>
+      <h2><span class="tag">設計</span> 7. 重い処理は「使っていない時だけ」＋5 段階タイミング <span class="muted">(ADR-25)</span></h2>
       <p><strong>文脈:</strong> 旧ゲート「電源＋アイドル 60 秒」は、充電閲覧中に触らないと重い処理が走り出し、操作再開時にバッチ途中（最大約 27 秒）が譲れず固まった。<br>
       <strong>決定:</strong> アイドル判定を廃止し「電源＋低電力OFF＋<strong>アプリ非アクティブ＋Wi-Fi</strong>」へ。停止判定は全処理 1 枚単位。AI アルバム作成は<strong>即時プレビュー（決定的）→夜間本番化（LLM）</strong>の 2 段階。のちに実行タイミングを<strong>5 段階のユーザー設定</strong>（<code>HeavyWorkTiming</code>・純関数で判定）へ発展。<br>
       <strong>結果:</strong> フォアグラウンドで重い処理がゼロになり操作が軽い。初回全量索引は「充電＋Wi-Fi＋ロック」時間帯に限定され日数を要する（エスケープハッチ＝今すぐ処理）。→ <a href="../features/background.html">バックグラウンド</a>。</p>
 
-      <h2><span class="tag">設計</span> 12. 横断リファクタリング＝共通足場の抽出と責務分割 <span class="muted">(ADR-26)</span></h2>
+      <h2><span class="tag">設計</span> 8. 横断リファクタリング＝共通足場の抽出と責務分割 <span class="muted">(ADR-26)</span></h2>
       <p><strong>文脈:</strong> 機能追加で同じ骨格のコピーが層をまたいで蓄積（背景トリクル・自己修復コンテナ・Core ML ロード・BPE・UI 小物）。最大級の型に複数責務が同居。<br>
       <strong>決定:</strong> <strong>挙動不変</strong>を絶対条件に共通足場（<code>BackgroundTrickle</code>/<code>makeResilientModelContainer</code>/<code>CoreMLModelSupport</code>/<code>BPESupport</code> 等）を抽出し、肥大型を分割（<code>AIAlbumService</code>・<code>BackupEngine</code>・<code>DropboxThumbnailBatcher</code>）。<br>
       <strong>結果:</strong> 譲りポリシー・コンテナ復旧・モデルロードの変更が各 1 箇所で済む。トークナイザは同梱語彙でビット等価を実測確認。</p>
 
-      <h2><span class="tag">設計</span> 13. モデル選定は「実測＋実機確認」で決める <span class="muted">(ADR-31・ADR-32・ADR-34)</span></h2>
+      <h2><span class="tag">設計</span> 9. モデル選定は「実測＋実機確認」で決める <span class="muted">(ADR-31・ADR-32・ADR-34)</span></h2>
       <p><strong>文脈:</strong> 画像認識が重く、CLIP / VLM の軽量化・置き換え候補を比較したい。カタログスペックでは判断できない。<br>
       <strong>決定:</strong> 共通ベンチ（Imagenette 実写＋Core ML 実行）で<strong>メモリ・速度・精度を実測</strong>して選ぶ。CLIP は INT8 量子化を採用（289→145MB・精度不変）。VLM は Florence-2-base を一度採用したが、<strong>実機 ANE/GPU の fp16 で cross-attention が破綻</strong>（全写真で無関係な文）し撤回、SmolVLM（decoder-only＝ANE 安全）へ回帰。のち SmolVLM-500M＋視覚のみ INT8 に更新し、最重量のキャプション生成は<strong>お気に入りのみ</strong>に限定。<br>
       <strong>結果:</strong> 学びが 2 つ。(a) <strong>量子化耐性は部品で非対称</strong>——連続ベクトル出力（視覚エンコーダ）は INT8 に強く、LLM デコーダは argmax が反転して壊れる。(b) <strong>Core ML の正しさは Mac だけでは検証できない</strong>——Mac の全 compute unit で正常でも実機 fp16 で壊れた。実測記録は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>。</p>
 
-      <h2><span class="tag">設計</span> 14. 検索品質は回帰ハーネスで数値検証してから直す <span class="muted">(ADR-35)</span></h2>
+      <h2><span class="tag">設計</span> 10. 検索品質は回帰ハーネスで数値検証してから直す <span class="muted">(ADR-35)</span></h2>
       <p><strong>文脈:</strong> 「自然文アルバムをもっと良く」——だが何が弱いか感覚では特定できず、直した“つもり”の劣化も検知できない。<br>
       <strong>決定:</strong> 正解ラベル付き評価セット（Imagenette 200 枚＋28 クエリ）で実パイプラインを走らせる <code>SearchQualityTests</code> を常設。ベースライン計測で「言い換えの取りこぼし」が弱点と数値で特定し、対策（LLM 言い換えプローブの max-over-probes ＋審査時オンデマンドキャプション）を同ハーネスの A/B で検証してから採用。<br>
       <strong>結果:</strong> 言い換え再現率 +17〜18pt を数値で確認。以後の検索変更は同ハーネスの回帰チェックを通す。実運用で見つかった穴（人物名 0 件・除外×プローブの相互作用）も事例として正本に記録。</p>

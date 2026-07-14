@@ -27,7 +27,7 @@ graph TD
   Q["自然文クエリ（任意言語）"] --> INT["解釈（作成時1回・永続化）<br/>FoundationModels + Sanitizer + レキシコン<br/>＋言い換えプローブ生成（最大4）"]
   INT --> HARD["ハード条件（決定的）<br/>日付=RelativeDateParser・場所カタログ接地・<br/>人物=顔クラスタへライブ接地"]
   INT --> TE["CLIP テキスト埋め込み<br/>（英訳＋プローブ＝max-over-probes）"]
-  subgraph 夜間索引（新しい写真から先に）
+  subgraph IDX["夜間索引（新しい写真から先に）"]
     TAGS[(Vision シーンタグ)]
     EMB[(PhotoEmbedding fp16)]
     CAP[(VLM キャプション<br/>お気に入りのみ)]
