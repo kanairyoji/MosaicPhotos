@@ -126,29 +126,49 @@ final class AIAlbumService {
     // MARK: - 作成 / 再設定 / 削除
 
     /// 作成/再設定（共通）。**0 件でも保存**する。戻り値: (結果, 更新後の AI アルバム一覧 or nil)。
-    func make(id: String, title: String, criteria: String) async -> (result: AIAlbumResult, albums: [AutoAlbumInfo]?) {
+    /// - Parameter baseLite: 呼び出し側（エンジン）が保持する構築済みライブラリスナップショット。
+    ///   コンポーザーはチップ/接地プレビュー用に全メタ（数万件の SwiftData fetch＝make の最重量部）を
+    ///   既に取得しているため、それを渡すと再フェッチを丸ごと省ける。プレビュー（ヒット件数）と
+    ///   同じデータで検索するので表示との一貫性も保たれる。nil なら従来どおりフェッチ。
+    func make(id: String, title: String, criteria: String,
+              baseLite: [EnrichedPhoto]? = nil) async -> (result: AIAlbumResult, albums: [AutoAlbumInfo]?) {
         let trimmed = criteria.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return (.empty, nil) }
 
         let now = Date()
+        let t0 = CFAbsoluteTimeGetCurrent()
         interpreter.remove(id: id)   // 再設定（検索文変更）は解釈からやり直す
         // 作成/編集は**即時プレビュー**（決定的レイヤーのみ・LLM なし＝1〜2 秒）。
         // FM 解釈＋LLM 審査つきの本番化は夜間（finalizePending・電源＋Wi-Fi＋ロック中）に行う。
         let namedPeople = await namedPeopleProvider?() ?? []
         var saved = AIAlbumInterpreter.previewInterpretation(criteria: trimmed, now: now,
                                                              namedPeople: namedPeople)
-        let all = await store.allEnrichedPhotosLite()
+        let all: [EnrichedPhoto]
+        if let baseLite { all = baseLite } else { all = await store.allEnrichedPhotosLite() }
+        let tFetch = CFAbsoluteTimeGetCurrent()
         var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+        let tSearch = CFAbsoluteTimeGetCurrent()
         // 証拠ゲート（除外つきのみ）はプレビューでも適用（除外の精度は落とさない）。
         members = await verification.evidenceGatedIfExcluding(members, spec: saved.spec)
         saved.scoredPool = pool
         saved.evaluatedEmbedCount = await store.embeddedCount()
         interpreter.save(saved, for: id)
-        Diagnostics.mark("aialbum.make: '\(trimmed)' all=\(all.count) members=\(members.count)")
+        // 体感速度の実測用（診断ログ）: どのフェーズが支配的かを端末で切り分けられるようにする。
+        Diagnostics.mark("aialbum.make: '\(trimmed)' all=\(all.count) members=\(members.count) "
+            + "snapshot=\(baseLite != nil) fetch=\(Int((tFetch - t0) * 1000))ms "
+            + "search=\(Int((tSearch - tFetch) * 1000))ms "
+            + "total=\(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
         let info = AIAlbumSearcher.buildInfo(id: id, title: title, interpretedTitle: saved.spec.title,
                                              criteria: trimmed, members: members)
         await store.upsert(albumInfo: info)
         return (.created(info), await loadAll())
+    }
+
+    /// CLIP テキストタワーの遅延ロードを前倒しで温める（コンポーザー表示時に呼ぶ）。
+    /// 未ロードのまま「作成」を押すと初回ロード（Core ML コンパイル・数秒〜十数秒）が
+    /// make の検索フェーズに乗ってしまう。捨てクエリを 1 回埋め込んでロードを済ませておく。
+    func prewarmTextEmbedder() async {
+        _ = await embedder.textEmbedder?.embed("a photo")
     }
 
     func delete(id: String) async -> [AutoAlbumInfo] {

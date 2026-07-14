@@ -70,7 +70,8 @@ extension AutoAlbumEngine {
     public func beginMakeAIAlbum(id: String?, title: String, criteria: String) {
         guard !criteria.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         isMakingAIAlbum = true
-        Task {
+        // ユーザーが結果を待っている操作なので userInitiated（既定優先度だと背景タグ付けと同格になる）。
+        Task(priority: .userInitiated) {
             defer { isMakingAIAlbum = false }
             if let id {
                 _ = await updateAIAlbum(id: id, title: title, criteria: criteria)
@@ -80,12 +81,30 @@ extension AutoAlbumEngine {
         }
     }
 
+    /// コンポーザー表示時の事前準備（体感速度）: CLIP テキストタワーの遅延ロードを入力中に
+    /// 済ませておく（未ロードだと「作成」タップ後の検索フェーズに初回ロードが乗る）。
+    /// スナップショット（全メタ）はコンポーザーの `albumSuggestions()` 呼び出しが構築する。
+    public func prepareAIComposer() {
+        Task(priority: .userInitiated) {
+            await aiService.prewarmTextEmbedder()
+        }
+    }
+
     public func deleteAIAlbum(id: String) async {
         aiAlbums = await aiService.delete(id: id)
     }
 
     private func makeAIAlbum(id: String, title: String, criteria: String) async -> AIAlbumResult {
-        let (result, albums) = await aiService.make(id: id, title: title, criteria: criteria)
+        // コンポーザーがチップ/接地プレビュー用に構築済みのスナップショット（5 分以内）を渡し、
+        // make 内の全メタ再フェッチ（数万件の SwiftData fetch＝最重量部）を省く。
+        // 新規写真の反映は夜間の増分再評価が受け持つので 5 分の鮮度で十分。
+        let lite: [EnrichedPhoto]? = {
+            guard let snap = suggestionSnapshot,
+                  Date().timeIntervalSince(snap.builtAt) < 300 else { return nil }
+            return snap.lite
+        }()
+        let (result, albums) = await aiService.make(id: id, title: title, criteria: criteria,
+                                                    baseLite: lite)
         if let albums { aiAlbums = albums }
         if case .created = result { scheduleBackgroundFill() }   // 取り込み途中でも背景で埋める
         return result

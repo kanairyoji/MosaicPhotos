@@ -1,3 +1,4 @@
+import MosaicSupport
 import Observation
 import Photos
 
@@ -86,6 +87,7 @@ public final class LocalPhotoStore {
     /// メインは完成配列の代入のみ。ソース画面を開くたびメインで 67k 列挙して固まるのを防ぐ。
     private func loadAssets() async {
         let source = self.source
+        let t0 = CFAbsoluteTimeGetCurrent()
         let list = await Task.detached(priority: .userInitiated) { () -> [PHAsset] in
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
@@ -110,6 +112,11 @@ public final class LocalPhotoStore {
             }
         }.value
 
+        // アルバムを開く体感速度の実測用: identifiers 指定（アルバム/ピープル/AI アルバム）の
+        // fetch はライブラリ規模に比例して遅くなり得るため、件数と所要を診断ログに残す。
+        if case .identifiers(let ids) = source {
+            Diagnostics.mark("local.loadAssets: ids=\(ids.count) → \(list.count) in \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
+        }
         assets = list
         loadCompleted = true
         Task(priority: .utility) { [preloader = metadataPreloader] in

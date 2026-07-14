@@ -87,6 +87,8 @@ struct AIAlbumComposerView: View {
             }
         }
         .task {
+            // CLIP テキストタワーを入力中に温める（未ロードだと「作成」タップ後に初回ロードが乗る）。
+            engine.prepareAIComposer()
             suggestions = await engine.albumSuggestions()
             // 編集時は既存の検索文の接地プレビューを即時に出す。
             refreshPreview(debounce: false)
