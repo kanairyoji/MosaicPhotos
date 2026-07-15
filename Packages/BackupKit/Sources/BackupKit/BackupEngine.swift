@@ -25,6 +25,9 @@ public final class BackupEngine {
     public internal(set) var recordCount: Int = 0
     /// loadAlbums() が完了したかどうか。ロード中と「空」を区別するために使う。
     public internal(set) var isAlbumsLoaded: Bool = false
+    /// オフロード台帳のメモリキャッシュ: アルバム名 → クラウド代替の Dropbox パス（撮影日昇順）。
+    /// 端末アルバムを開くたびに SwiftData を引かず同期参照できるようにする（台帳が空なら空辞書）。
+    @ObservationIgnored private var offloadedPathsByAlbum: [String: [String]] = [:]
 
     // SwiftData レコード/アルバム永続化は BackupEngine+Store.swift（extension）に分離しているため、
     // そこから参照する modelContext / addLog / 上記の集計状態は internal にしている。
@@ -100,6 +103,7 @@ public final class BackupEngine {
         // ⚠️ 名前を明示して "BackupKit.store" を使う（名前なしは "default.store" になり
         // DropboxCacheStore と衝突＝過去にクラッシュ）。壊れた/非互換ストアは削除して作り直す（自己修復）。
         modelContext = ModelContext(Self.makeResilientContainer())
+        reloadOffloadLedger()
     }
 
     /// 名前付き永続コンテナを作る。失敗時は store ファイルを削除して再構築し、それでも駄目なら
@@ -107,7 +111,7 @@ public final class BackupEngine {
     /// （バックアップ記録は再構築されるが、Dropbox 上の実ファイルは無事）。
     /// 実体は MosaicSupport の共通ロジック（自己修復）。
     private static func makeResilientContainer() -> ModelContainer {
-        let schema = Schema([BackupAssetRecord.self])
+        let schema = Schema([BackupAssetRecord.self, OffloadRecord.self])
         return makeResilientModelContainer(
             name: "BackupKit", schema: schema,
             openFailedMessage: "BackupEngine: 'BackupKit' store open failed; deleting and rebuilding.",
@@ -146,6 +150,81 @@ public final class BackupEngine {
         if isRunning {
             addLog("Cancelled by user.")
             phase = .cancelled
+        }
+    }
+
+    // MARK: - Offload ledger (ADR-39)
+
+    /// アルバム名に対するクラウド代替（オフロード済み写真の Dropbox パス・撮影日昇順）。
+    /// 端末アルバムの合成表示（DeviceAlbumPhotosView）が cloudPathFilter に使う。同期・キャッシュ参照。
+    public func offloadedPaths(inAlbum name: String) -> [String] {
+        offloadedPathsByAlbum[name] ?? []
+    }
+
+    /// 台帳の総件数（Developer Options の診断用）。
+    public var offloadRecordCount: Int {
+        offloadedPathsByAlbum.values.reduce(0) { $0 + $1.count }
+    }
+
+    /// オフロード実行の記録（将来のオフロード機能が削除の直後に呼ぶ）。upsert。
+    public func recordOffloads(_ items: [(localIdentifier: String, dropboxPath: String,
+                                          albums: [String], captureDate: Date?, contentHash: String?)]) {
+        guard let context = modelContext else { return }
+        for item in items {
+            let id = item.localIdentifier
+            let descriptor = FetchDescriptor<OffloadRecord>(
+                predicate: #Predicate { $0.localIdentifier == id })
+            if let existing = try? context.fetch(descriptor).first {
+                context.delete(existing)
+            }
+            context.insert(OffloadRecord(localIdentifier: item.localIdentifier,
+                                         dropboxPath: item.dropboxPath.lowercased(),
+                                         albums: item.albums,
+                                         captureDate: item.captureDate,
+                                         contentHash: item.contentHash))
+        }
+        try? context.save()
+        reloadOffloadLedger()
+    }
+
+    /// 台帳からの削除（復元＝端末へ再取り込みしたとき）。
+    public func removeOffloads(localIdentifiers: [String]) {
+        guard let context = modelContext else { return }
+        let ids = Set(localIdentifiers)
+        let all = (try? context.fetch(FetchDescriptor<OffloadRecord>())) ?? []
+        for record in all where ids.contains(record.localIdentifier) {
+            context.delete(record)
+        }
+        try? context.save()
+        reloadOffloadLedger()
+    }
+
+    /// 機種変更・再インストール後の台帳再構築: metadata v2 の `offloadedAt` マーカー付き
+    /// エントリから復元する（ユーザー削除の写真は対象外＝マーカーの有無で区別）。
+    /// 既存台帳が空のときだけ実行する（実端末の台帳が正）。
+    public func rebuildOffloadLedgerIfEmpty(from metadata: DropboxBackupMetadata) {
+        guard offloadRecordCount == 0 else { return }
+        let candidates = BackupMetadataPlanning.offloadCandidates(from: metadata.entries)
+        guard !candidates.isEmpty else { return }
+        addLog("Rebuilding offload ledger from metadata (\(candidates.count) entries)…")
+        recordOffloads(candidates)
+    }
+
+    /// 台帳を SwiftData から読み直してメモリキャッシュを更新する（起動時・変更時）。
+    func reloadOffloadLedger() {
+        guard let context = modelContext,
+              let records = try? context.fetch(FetchDescriptor<OffloadRecord>()) else {
+            offloadedPathsByAlbum = [:]
+            return
+        }
+        var byAlbum: [String: [(Date?, String)]] = [:]
+        for record in records {
+            for album in record.albums {
+                byAlbum[album, default: []].append((record.captureDate, record.dropboxPath))
+            }
+        }
+        offloadedPathsByAlbum = byAlbum.mapValues { list in
+            list.sorted { ($0.0 ?? .distantPast) < ($1.0 ?? .distantPast) }.map(\.1)
         }
     }
 

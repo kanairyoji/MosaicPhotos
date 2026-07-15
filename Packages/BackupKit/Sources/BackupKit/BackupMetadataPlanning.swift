@@ -30,11 +30,29 @@ enum BackupMetadataPlanning {
         return base.merging(adding)
     }
 
+    /// metadata v2 からオフロード台帳の再構築候補を取り出す（機種変更・再インストール用）。
+    /// **`offloadedAt` マーカーが付いたエントリだけ**が対象＝ユーザーが写真アプリで削除した
+    /// 写真をアルバムに蘇らせない（マーカーはアプリのオフロード実行時にのみ付く）。
+    static func offloadCandidates(
+        from entries: [String: DropboxBackupMetadata.Entry]
+    ) -> [(localIdentifier: String, dropboxPath: String, albums: [String],
+           captureDate: Date?, contentHash: String?)] {
+        let iso = ISO8601DateFormatter()
+        return entries.compactMap { path, entry in
+            guard entry.offloadedAt != nil, let id = entry.localIdentifier else { return nil }
+            return (localIdentifier: id, dropboxPath: path, albums: entry.albums,
+                    captureDate: entry.date.flatMap { iso.date(from: $0) },
+                    contentHash: entry.contentHash)
+        }
+    }
+
     /// 既存カタログ（無ければ nil）へ、今回触ったシャードとアルバム/人物カタログを反映する。
     static func updatedCatalog(existing: Data?, touchedShards: [String],
-                               albums: [String], people: [String]) -> BackupCatalog {
+                               albums: [String], people: [String],
+                               albumIDs: [String: String]? = nil) -> BackupCatalog {
         let base = existing.flatMap { try? JSONDecoder().decode(BackupCatalog.self, from: $0) }
             ?? BackupCatalog()
-        return base.updating(touchedShards: touchedShards, albums: albums, people: people)
+        return base.updating(touchedShards: touchedShards, albums: albums, people: people,
+                             albumIDs: albumIDs)
     }
 }

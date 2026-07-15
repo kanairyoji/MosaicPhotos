@@ -92,6 +92,7 @@ final class BackupRunner {
         // 旧 People インデックス（subtype-1000）は常に空だったため撤去済み。
         let peopleIndex: [String: [String]] = await peopleNamesProvider?() ?? [:]
         let albumIndex = await Task.detached { buildAlbumIndex() }.value
+        let albumIDIndex = await Task.detached { buildAlbumIDIndex() }.value
         let uniqueAlbums = Set(albumIndex.values.flatMap { $0 }).count
         addLog("Index built — albums: \(uniqueAlbums), people entries: \(peopleIndex.count)")
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
@@ -249,7 +250,7 @@ final class BackupRunner {
             let peopleNames = Array(Set(peopleIndex.values.flatMap { $0 })).sorted()
             let catalog = BackupMetadataPlanning.updatedCatalog(
                 existing: existingCatalog, touchedShards: Array(byShard.keys),
-                albums: albumNames, people: peopleNames)
+                albums: albumNames, people: peopleNames, albumIDs: albumIDIndex)
             let catResult = await uploader.uploadJSON(catalog, to: catalogPath, token: token)
             addLog("  catalog.json (shards=\(catalog.shards.count)): \(catResult)")
         }

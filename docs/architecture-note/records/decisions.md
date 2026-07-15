@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-39 オフロード台帳と端末アルバムの合成表示（クラウド代替）
+- 状態: 採用
+- 文脈: 将来のオフロード（バックアップ済みローカル写真の検証つき削除）後も、端末アルバムを「何事もなかったかのように」表示したい。単純に「metadata の albums 逆引きで、端末に無い写真を全部クラウドから補完」すると、**ユーザーが写真アプリで意図的に削除した写真まで蘇ってしまう**——補完してよいのは「アプリ自身がオフロードした写真」だけであり、その区別には削除の主体を記録する台帳が必要。
+- 決定: (1) **オフロード台帳** `OffloadRecord`（@Model・BackupKit ストアに追加）＝アプリが削除した写真の localIdentifier / dropboxPath / 所属アルバム / 撮影日を記録。エンジンがメモリキャッシュ（アルバム名→パス・撮影日昇順）を持ち同期参照できる。再インストール時は metadata v2 の **`offloadedAt` マーカー**（Entry に追加・オフロード実行時にのみ付く）から台帳を再構築（`rebuildOffloadLedgerIfEmpty`・ユーザー削除の写真は対象外）。(2) **端末アルバムの合成表示** `DeviceAlbumPhotosView`＝PHAssetCollection 現存メンバー（ローカル）＋台帳のクラウド代替を、メンバー限定 `MergedPhotoStore` で混在表示（PersonAlbumView / AutoAlbumPhotosView と同型・撮影日ソートで元の位置に混ざる）。台帳が空なら cloudPathFilter が空集合＝従来表示と完全に同一。(3) **アルバム改名対策**＝カタログに `albumIDs`（アルバム名→PHAssetCollection.localIdentifier・マージ保持で旧名対応も残る）を先行追加。
+- 結果: オフロード実装時に必要な「削除の主体の区別」「アルバム表示の穴埋め」「改名追跡」の 3 点が先に揃い、削除機能そのもの（contentHash 照合→削除→記録）だけを足せばよい状態になった。現時点では台帳が常に空のため動作は不変。トレードオフ: (1) 台帳キャッシュはアルバム数×オフロード枚数に比例（数万枚規模でも数 MB 級・許容）。(2) アルバム内の手動並び順は撮影日ソートで代替（忠実な再現は将来課題）。(3) 復元（端末へ再取り込み）時の台帳削除 API（`removeOffloads`）は用意済みだが呼び出し元（復元機能）は未実装。
+- 関連: `BackupKit/OffloadRecord.swift`・`BackupEngine`（ledger API＋キャッシュ）・`BackupMetadataPlanning.offloadCandidates`・`BackupIndexing.buildAlbumIDIndex`・`DropboxCore/BackupMetadataV2.swift`（albumIDs）・`DropboxBackupMetadata.Entry.offloadedAt`・`MosaicPhotos/Home/DeviceAlbumPhotosView.swift`・`HomeView`（結線）。ADR-38（メタデータ v2）の続き。
+
 ## ADR-38 バックアップメタデータ v2（カタログ＋撮影月シャード・再生成不能情報の保全）
 - 状態: 採用
 - 文脈: 将来「バックアップ済みのローカル写真を端末から削除（オフロード）してストレージを空ける」機能を計画している。削除後もアルバム表示・人物・場所・検索が成立するには、**端末を削除すると再生成できない情報**を Dropbox 側に保全する必要がある。調査の結果、既存 v1（単一 `.mosaic/metadata.json`）には 2 つの問題があった: (1) **欠落** — アルバム/お気に入り/撮影日は保存済みだが、人物名（顔クラスタのユーザー命名＝v1 では常に空）・GPS（EXIF に無い写真は PHAsset が唯一の出典）・localIdentifier（ローカル⇔クラウド対応表）・スクリーンショット判定・VLM キャプションが未保存。(2) **スケール** — 全エントリを毎バックアップで丸ごと書き直すため、6 万枚規模で 15〜25MB/回になる。

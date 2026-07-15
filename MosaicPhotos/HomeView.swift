@@ -108,7 +108,10 @@ struct HomeView: View {
                 case .source(.cloud):
                     DropboxContentView(store: dropboxStore)
                 case .localAlbum(let album):
-                    LocalPhotoContentView(localIdentifiers: album.localIdentifiers, title: album.name)
+                    // 端末アルバム＝ローカル現存分＋オフロード済みクラウド代替の合成表示（ADR-39）。
+                    // 台帳が空なら従来のローカルのみ表示と完全に同じ。
+                    DeviceAlbumPhotosView(album: album, dropboxStore: dropboxStore,
+                                          backupEngine: backupEngine)
                 case .person(let person):
                     // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
                     PersonAlbumView(person: person, dropboxStore: dropboxStore)
@@ -274,7 +277,14 @@ private struct HomeLifecycleTasks: ViewModifier {
                 if case .connected = dropboxStore.auth.connectionStatus {
                     evaluateSync()
                     let folder = UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder) ?? BackupSettingsKeys.defaultDropboxFolder
-                    Task { await dropboxStore.loadBackupMetadata(from: folder) }
+                    Task {
+                        await dropboxStore.loadBackupMetadata(from: folder)
+                        // 機種変更・再インストール後: 台帳が空なら metadata v2 の offloadedAt
+                        // マーカーから台帳を再構築する（通常は台帳が正・ADR-39）。
+                        if let metadata = dropboxStore.backupMetadata {
+                            backupEngine.rebuildOffloadLedgerIfEmpty(from: metadata)
+                        }
+                    }
                 }
             }
     }

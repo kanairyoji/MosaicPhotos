@@ -30,6 +30,11 @@ public struct DropboxBackupMetadata: Codable, Sendable {
         public var caption: String?
         /// オフロード前検証（contentHash 照合）に成功した日時（ISO 8601）。将来のオフロード機能用。
         public var verifiedAt: String?
+        /// アプリがオフロード（検証つきローカル削除）を実行した日時（ISO 8601）。
+        /// **ユーザーが写真アプリで消した写真と区別する**ためのマーカー。再インストール時の
+        /// オフロード台帳の再構築は、このマーカーが付いたエントリだけを対象にする（誤って
+        /// ユーザー削除の写真をアルバムに蘇らせない）。
+        public var offloadedAt: String?
 
         public init(
             people: [String],
@@ -42,7 +47,8 @@ public struct DropboxBackupMetadata: Codable, Sendable {
             longitude: Double? = nil,
             isScreenshot: Bool? = nil,
             caption: String? = nil,
-            verifiedAt: String? = nil
+            verifiedAt: String? = nil,
+            offloadedAt: String? = nil
         ) {
             self.people     = people
             self.albums     = albums
@@ -55,6 +61,7 @@ public struct DropboxBackupMetadata: Codable, Sendable {
             self.isScreenshot = isScreenshot
             self.caption = caption
             self.verifiedAt = verifiedAt
+            self.offloadedAt = offloadedAt
         }
     }
 

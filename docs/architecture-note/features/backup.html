@@ -47,6 +47,9 @@ graph TD
         <li>人物名・キャプションは BackupKit から AutoAlbumCore へ依存せず、seam（<code>peopleNamesProvider</code> / <code>captionsProvider</code>）で Composition Root（<code>AutoAlbumAdapters</code>）が結線する。</li>
       </ul>
 
+      <h2>オフロード台帳と端末アルバムの合成表示（ADR-39）</h2>
+      <p>将来のオフロード（バックアップ済みローカル写真の検証つき削除）に備え、<strong>台帳と表示合成</strong>を先行実装している。<code>OffloadRecord</code>（SwiftData）が「アプリが削除した写真」の localIdentifier / Dropbox パス / 所属アルバムを記録し、端末アルバムを開く <code>DeviceAlbumPhotosView</code> が「PHAssetCollection 現存メンバー＋台帳のクラウド代替」をメンバー限定 <code>MergedPhotoStore</code> で混在表示する（撮影日ソートで元の位置に混ざる）。補完の条件を<strong>「台帳にある」に限定</strong>するのが要点＝ユーザーが写真アプリで意図的に削除した写真を蘇らせない。再インストール時は metadata v2 の <code>offloadedAt</code> マーカーから台帳を再構築する。台帳が空（現状）のときの表示は従来と完全に同一。</p>
+
       <h2>純ロジックの切り出し</h2>
       <div class="box why">
         <span class="box-h">設計判断</span>

@@ -21,6 +21,19 @@ extension PHAuthorizationStatus {
 // インスタンスメソッドとして定義すると Task.detached クロージャ内でコンパイラが
 // @MainActor 型の self を捕捉しようとしてコンパイルエラーになる（過去に発生）。
 
+/// アルバム名 → PHAssetCollection.localIdentifier（カタログの改名対策・ADR-39）。
+/// buildAlbumIndex と同じ理由でトップレベル関数（Task.detached から呼ぶ）。
+func buildAlbumIDIndex() -> [String: String] {
+    var ids: [String: String] = [:]
+    let collections = PHAssetCollection.fetchAssetCollections(
+        with: .album, subtype: .albumRegular, options: nil)
+    collections.enumerateObjects { collection, _, _ in
+        guard let name = collection.localizedTitle, !name.isEmpty else { return }
+        ids[name] = collection.localIdentifier
+    }
+    return ids
+}
+
 func buildAlbumIndex() -> [String: [String]] {
     var index: [String: [String]] = [:]
     let collections = PHAssetCollection.fetchAssetCollections(

@@ -78,6 +78,42 @@ struct BackupMetadataPlanningTests {
         #expect(fresh.shards == ["2025-08"])
     }
 
+    @Test("offloadCandidates は offloadedAt マーカー付きエントリだけを返す（ユーザー削除と区別）")
+    func offloadCandidatesFilter() {
+        let entries: [String: DropboxBackupMetadata.Entry] = [
+            // アプリがオフロードした写真（マーカーあり）→ 対象
+            "/a/1.jpg": DropboxBackupMetadata.Entry(
+                people: [], albums: ["旅行"], date: "2025-08-14T10:00:00Z",
+                contentHash: "h1", localIdentifier: "ID-1", offloadedAt: "2026-07-15T00:00:00Z"),
+            // バックアップ済みだが端末にもある通常の写真（マーカーなし）→ 対象外
+            "/a/2.jpg": DropboxBackupMetadata.Entry(
+                people: [], albums: ["旅行"], localIdentifier: "ID-2"),
+            // マーカーはあるが localIdentifier が無い（不完全）→ 対象外
+            "/a/3.jpg": DropboxBackupMetadata.Entry(
+                people: [], offloadedAt: "2026-07-15T00:00:00Z"),
+        ]
+        let candidates = BackupMetadataPlanning.offloadCandidates(from: entries)
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.localIdentifier == "ID-1")
+        #expect(candidates.first?.dropboxPath == "/a/1.jpg")
+        #expect(candidates.first?.albums == ["旅行"])
+        #expect(candidates.first?.captureDate != nil)
+    }
+
+    @Test("updatedCatalog は albumIDs をマージ（改名の旧対応も残す）")
+    func catalogAlbumIDs() throws {
+        let base = BackupCatalog(shards: [], albums: ["旧名"], people: [],
+                                 albumIDs: ["旧名": "COLL-1"])
+        let baseData = try JSONEncoder().encode(base)
+        let updated = BackupMetadataPlanning.updatedCatalog(
+            existing: baseData, touchedShards: [], albums: ["新名"], people: [],
+            albumIDs: ["新名": "COLL-1"])
+        // 旧名の対応も残る＝「旧名 → COLL-1 → 新名」の追跡が可能
+        #expect(updated.albumIDs?["旧名"] == "COLL-1")
+        #expect(updated.albumIDs?["新名"] == "COLL-1")
+        #expect(updated.albums == ["新名"])
+    }
+
     @Test("Entry v2: v1 の JSON を読める＋新フィールドがラウンドトリップする")
     func entryCompatibility() throws {
         // v1 形式（新フィールド無し）のデコード

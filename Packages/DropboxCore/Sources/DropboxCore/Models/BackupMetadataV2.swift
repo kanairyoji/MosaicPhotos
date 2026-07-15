@@ -45,18 +45,25 @@ public struct BackupCatalog: Codable, Sendable {
     public var albums: [String]
     /// 命名済み人物（顔クラスタ）のフルネーム一覧。
     public var people: [String]
+    /// アルバム名 → PHAssetCollection.localIdentifier。エントリはアルバムを**名前**で参照するため、
+    /// オフロード後にユーザーがアルバムを改名すると紐付けが切れる。この対応表があれば
+    /// 「旧名 → アルバム ID → 現在の名前」で追跡できる（改名対策・Optional＝旧カタログと互換）。
+    public var albumIDs: [String: String]?
 
-    public init(shards: [String] = [], albums: [String] = [], people: [String] = []) {
+    public init(shards: [String] = [], albums: [String] = [], people: [String] = [],
+                albumIDs: [String: String]? = nil) {
         self.schemaVersion = 2
         self.updatedAt = ISO8601DateFormatter().string(from: Date())
         self.shards = shards
         self.albums = albums
         self.people = people
+        self.albumIDs = albumIDs
     }
 
     /// シャード追加＋カタログ情報更新（重複なし・順序維持）。
     public func updating(touchedShards: [String], albums newAlbums: [String],
-                         people newPeople: [String]) -> BackupCatalog {
+                         people newPeople: [String],
+                         albumIDs newAlbumIDs: [String: String]? = nil) -> BackupCatalog {
         var out = self
         for s in touchedShards where !out.shards.contains(s) { out.shards.append(s) }
         out.shards.sort()
@@ -65,6 +72,12 @@ public struct BackupCatalog: Codable, Sendable {
         // （権限縮退などで一覧が取れなかった実行で消してしまわないため）。
         if !newAlbums.isEmpty { out.albums = newAlbums }
         if !newPeople.isEmpty { out.people = newPeople }
+        if let newAlbumIDs, !newAlbumIDs.isEmpty {
+            // 既存とマージ（改名で消えた旧名のエントリも追跡できるよう、旧 ID 対応は残す）。
+            var ids = out.albumIDs ?? [:]
+            ids.merge(newAlbumIDs) { _, new in new }
+            out.albumIDs = ids
+        }
         out.updatedAt = ISO8601DateFormatter().string(from: Date())
         return out
     }
