@@ -169,6 +169,64 @@ public final class BackupEngine {
         }
     }
 
+    // MARK: - Reconcile with Dropbox（照合・実態への修復）
+
+    /// バックアップ記録・台帳を **Dropbox の実ファイル一覧と照合**して実態に合わせる。
+    /// - ファイルが存在しない記録 → 削除（次回バックアップで再アップロード対象に戻る）
+    /// - content_hash が一致しない記録 → 削除（別物が同パスにある＝信用しない）
+    /// - 台帳（UserDefaults）も「照合に合格した記録の localIdentifier」へ**置き換える**
+    ///   （409 誤記録時代の「記録なし済み ID」もここで一掃される）
+    /// 戻り値: (照合に合格した件数, 削除した記録数, リモートの実ファイル数)。認証/通信失敗は nil。
+    public func reconcileWithDropbox() async -> (verified: Int, removed: Int, remoteFiles: Int)? {
+        guard let token = try? await tokenProvider.freshAccessToken() else {
+            addLog("Reconcile: authentication failed")
+            return nil
+        }
+        let root = backupNormalizedPath(
+            UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                ?? BackupSettingsKeys.defaultDropboxFolder)
+        guard let remote = await uploader.listFolder(root: root, token: token) else {
+            addLog("Reconcile: could not list \(root)")
+            return nil
+        }
+        guard let context = modelContext else { return nil }
+        let records = (try? context.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
+        var removed = 0
+        var verifiedIDs: Set<String> = []
+        for record in records {
+            let path = record.dropboxPath.lowercased()
+            if let remoteHash = remote[path],
+               record.contentHash == nil || record.contentHash == remoteHash {
+                // 実在し、hash も矛盾しない（旧記録＝hash なしは実在のみで合格）。
+                if let id = record.localIdentifier { verifiedIDs.insert(id) }
+            } else {
+                context.delete(record)
+                removed += 1
+            }
+        }
+        try? context.save()
+        progressStore.saveUploadedIDs(verifiedIDs)
+        reloadBackedUpIDs()
+        addLog("Reconcile: verified \(verifiedIDs.count), removed \(removed) stale record(s), remote files \(remote.count)")
+        await loadAlbums()
+        return (verifiedIDs.count, removed, remote.count)
+    }
+
+    /// バックアップの記録を**全消去**する（台帳＋SwiftData 記録。オフロード台帳は対象外）。
+    /// Debug 用: 次回バックアップは全量が対象に戻る（Dropbox に実在する分は 409→hash 照合で
+    /// 再アップロードなしに「済み」へ復帰する）。
+    public func clearAllBackupRecords() {
+        progressStore.saveUploadedIDs([])
+        if let context = modelContext {
+            let records = (try? context.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
+            records.forEach(context.delete)
+            try? context.save()
+        }
+        reloadBackedUpIDs()
+        addLog("Cleared ALL backup records and upload progress")
+        Task { await loadAlbums() }
+    }
+
     // MARK: - Nightly auto backup (ADR-42)
 
     /// 夜間の重い処理ウィンドウ（BGProcessingTask・電源＋Wi-Fi＋非使用）からの自動バックアップ。

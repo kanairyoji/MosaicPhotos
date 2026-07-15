@@ -52,14 +52,48 @@ public struct BackupDebugSection: View {
         }
     }
 
+    @State private var reconcileResult: String?
+    @State private var isReconciling = false
+
     private var progressDebugSection: some View {
-        Section("Backup — Progress") {
+        Section {
             LabeledContent("Backup records", value: "\(engine.recordCount)")
             LabeledContent("Uploaded IDs", value: "\(engine.uploadedIDCount)")
             LabeledContent("Metadata path", value: BackupEngine.metadataPathSuffix)
-            Button("Clear Upload Progress", role: .destructive) {
-                engine.clearUploadProgress()
+            // Dropbox の実ファイル一覧（list_folder・再帰）と記録/台帳を照合して実態に合わせる。
+            // 「Dropbox 側でファイルを消した」「409 誤記録時代の済み ID」をここで一掃できる。
+            Button {
+                isReconciling = true
+                Task {
+                    if let r = await engine.reconcileWithDropbox() {
+                        reconcileResult = "verified \(r.verified), removed \(r.removed) stale, remote files \(r.remoteFiles)"
+                    } else {
+                        reconcileResult = "failed (auth or network)"
+                    }
+                    isReconciling = false
+                }
+            } label: {
+                if isReconciling {
+                    HStack { ProgressView().controlSize(.small); Text("Reconciling…") }
+                } else {
+                    Text("Reconcile with Dropbox (verify records)")
+                }
             }
+            .disabled(isReconciling || engine.isRunning)
+            if let reconcileResult {
+                Text(reconcileResult).font(.caption).foregroundStyle(.secondary)
+            }
+            // 台帳（UserDefaults）だけでなく SwiftData 記録も消す全消去。
+            // ⚠️ 台帳のみのクリアは、済み判定が「台帳 ∪ 記録」になったため見かけ上効かない。
+            Button("Clear ALL Backup Records (progress + records)", role: .destructive) {
+                engine.clearAllBackupRecords()
+                reconcileResult = nil
+            }
+            .disabled(engine.isRunning)
+        } header: {
+            Text("Backup — Progress")
+        } footer: {
+            Text("Reconcile lists actual files on Dropbox and drops records whose file is missing or has a different content hash. Clear ALL wipes progress and records; the next backup re-verifies existing files via 409 + hash without re-uploading.")
         }
     }
 

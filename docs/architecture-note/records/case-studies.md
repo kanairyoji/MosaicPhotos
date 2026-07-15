@@ -418,3 +418,10 @@
 - 対処: 済み判定を「**UserDefaults 台帳 ∪ SwiftData 記録**」に変更（記録は実アップロード成功時にのみ追加される確かな出典で、Clear upload progress では消えない）。実行時に台帳へ差分を書き戻して自己修復する。バッジ・状況表示（backupStatus）のキャッシュも同じ統合出典に。あわせてフォールバックファイル名を「photo_<実行内インデックス>.jpg」（実行をまたいで別写真が同名になり 409 を誘発する設計バグ）から localIdentifier 由来の安定名に修正。
 - 関連: ADR-40/41。`BackupRunner.swift` / `BackupEngine.swift`。事例「バックアップの 409 を無確認で済み扱い」の続き。
 - 残課題: 既に二重になったファイルの掃除は手動（ルート直下の旧ファイルを Dropbox 上で削除してよい——記録・台帳は端末フォルダ側でも成立する）。将来の監査パスで「同一 localIdentifier の複数記録」を検出して案内するのが望ましい。
+
+## 「Clear Upload Progress」が効かない＋バックアップ済み数が Dropbox 全消去後も減らない
+- 症状: Dropbox のファイルを全削除し、Debug の「Clear Upload Progress」を押してからバックアップしても「10 枚アップロード・40 枚バックアップ済み」と表示。クリアボタンは見かけ上何も起こさない。
+- 原因: 二重アップロード修正（別事例）で済み判定を「UserDefaults 台帳 ∪ SwiftData 記録」にしたため、台帳だけを消すクリアボタンでは記録（40 件）から数が即復元される。さらに Dropbox 側でファイルを消しても、端末の記録は残るため表示と実態が乖離する——「実態（Dropbox）を出典にした修復手段」が無いことが根本。
+- 対処: (1) **Reconcile with Dropbox**（照合）を実装: `files/list_folder`（再帰・continue 対応）でバックアップフォルダ以下の実ファイル一覧（path→content_hash）を取得し、実在しない/hash が矛盾する記録を削除、台帳も「照合に合格した記録」へ置き換える（409 誤記録時代の記録なし済み ID もここで一掃）。(2) **Clear ALL Backup Records**（台帳＋記録の全消去）を Debug に追加——全消去しても Dropbox に実在する分は次回バックアップの 409→hash 照合で再アップロードなしに「済み」へ復帰する。
+- 関連: ADR-40〜42。`DropboxBackupUploader.listFolder` / `BackupEngine.reconcileWithDropbox` / `clearAllBackupRecords` / `BackupDebugSection`。
+- 残課題: 照合は手動（Debug）。夜間の自動監査（定期 reconcile）への昇格は運用を見て判断。

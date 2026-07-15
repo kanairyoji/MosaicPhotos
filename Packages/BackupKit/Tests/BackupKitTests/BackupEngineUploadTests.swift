@@ -112,6 +112,26 @@ struct DropboxBackupUploaderTests {
         #expect(arg?.contains("写") == false)
     }
 
+    @Test("listFolder はファイルのみを path→hash で返す（フォルダは除外・not_found は空）")
+    func listFolder() async {
+        let body = #"""
+        {"entries":[
+          {".tag":"file","path_lower":"/backup/a.jpg","content_hash":"h1"},
+          {".tag":"folder","path_lower":"/backup/.mosaic"},
+          {".tag":"file","path_lower":"/backup/.mosaic/catalog.json","content_hash":"h2"}
+        ],"cursor":"cur","has_more":false}
+        """#
+        let (uploader, _) = makeUploader(.status(200, body: body))
+        let files = await uploader.listFolder(root: "/backup", token: "tok")
+        #expect(files == ["/backup/a.jpg": "h1", "/backup/.mosaic/catalog.json": "h2"])
+        // フォルダ未作成（409 not_found）は「ファイルゼロ」＝空辞書
+        let (missing, _) = makeUploader(.status(409, body: #"{"error_summary":"path/not_found/"}"#))
+        #expect(await missing.listFolder(root: "/none", token: "tok") == [:])
+        // サーバエラーは nil（照合を中断＝記録を消さない）
+        let (broken, _) = makeUploader(.status(500, body: "boom"))
+        #expect(await broken.listFolder(root: "/backup", token: "tok") == nil)
+    }
+
     @Test("getMetadata は content_hash と size を返す・404 は nil")
     func getMetadata() async {
         let (uploader, _) = makeUploader(.status(200, body:

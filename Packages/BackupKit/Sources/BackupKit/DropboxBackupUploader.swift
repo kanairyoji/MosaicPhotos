@@ -65,6 +65,54 @@ struct DropboxBackupUploader {
         return RemoteFileInfo(contentHash: meta.content_hash, size: meta.size)
     }
 
+    /// バックアップフォルダ以下の**実ファイル一覧**（path_lower → content_hash）を再帰取得する。
+    /// 照合（reconcile）用: 記録・台帳を Dropbox の実態に合わせる出典。エラー時は nil、
+    /// フォルダ未作成（not_found）は空辞書（＝ファイルなし）。
+    func listFolder(root: String, token: String) async -> [String: String]? {
+        struct StartBody: Encodable { let path: String; let recursive = true; let limit = 2000 }
+        struct ContinueBody: Encodable { let cursor: String }
+        struct Entry: Decodable {
+            let tag: String; let path_lower: String?; let content_hash: String?
+            enum CodingKeys: String, CodingKey { case tag = ".tag", path_lower, content_hash }
+        }
+        struct Resp: Decodable { let entries: [Entry]; let cursor: String; let has_more: Bool }
+
+        var out: [String: String] = [:]
+        var cursor: String?
+        repeat {
+            let url = cursor == nil
+                ? "https://api.dropboxapi.com/2/files/list_folder"
+                : "https://api.dropboxapi.com/2/files/list_folder/continue"
+            let body: Data?
+            if let cursor {
+                body = try? JSONEncoder().encode(ContinueBody(cursor: cursor))
+            } else {
+                body = try? JSONEncoder().encode(StartBody(path: root))
+            }
+            guard let body else { return nil }
+            var req = URLRequest(url: URL(string: url)!)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+            req.timeoutInterval = 60
+            guard let (data, resp) = try? await httpClient.data(for: req),
+                  let code = (resp as? HTTPURLResponse)?.statusCode else { return nil }
+            if code == 409 {
+                // フォルダ自体が無い＝ファイルゼロ（初回照合・Dropbox 側で全削除された等）。
+                return cursor == nil ? [:] : nil
+            }
+            guard code == 200, let parsed = try? JSONDecoder().decode(Resp.self, from: data) else {
+                return nil
+            }
+            for entry in parsed.entries where entry.tag == "file" {
+                if let path = entry.path_lower { out[path] = entry.content_hash ?? "" }
+            }
+            cursor = parsed.has_more ? parsed.cursor : nil
+        } while cursor != nil
+        return out
+    }
+
     /// 写真本体をアップロードする（ADR-40: 検証つき）。
     /// - `expectedHash`: ローカルで計算した content_hash。応答の hash と**一致して初めて成功**。
     /// - `autorename`: 409（同パス既存）時に別名保存を許可するか。既定 false（初回試行）。
