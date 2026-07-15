@@ -50,6 +50,9 @@ graph TD
       <h2>オフロード台帳と端末アルバムの合成表示（ADR-39）</h2>
       <p>将来のオフロード（バックアップ済みローカル写真の検証つき削除）に備え、<strong>台帳と表示合成</strong>を先行実装している。<code>OffloadRecord</code>（SwiftData）が「アプリが削除した写真」の localIdentifier / Dropbox パス / 所属アルバムを記録し、端末アルバムを開く <code>DeviceAlbumPhotosView</code> が「PHAssetCollection 現存メンバー＋台帳のクラウド代替」をメンバー限定 <code>MergedPhotoStore</code> で混在表示する（撮影日ソートで元の位置に混ざる）。補完の条件を<strong>「台帳にある」に限定</strong>するのが要点＝ユーザーが写真アプリで意図的に削除した写真を蘇らせない。再インストール時は metadata v2 の <code>offloadedAt</code> マーカーから台帳を再構築する。台帳が空（現状）のときの表示は従来と完全に同一。</p>
 
+      <h2>夜間の自動バックアップと状況表示（ADR-42）</h2>
+      <p>宛先が Dropbox のとき、夜間の重い処理ウィンドウ（BGProcessingTask・電源＋Wi-Fi＋非使用）で AI 索引と並んで<strong>バックアップも自動実行</strong>される（手動と同じ経路：上限設定・電源/回線ポーズ・検証つきアップロード）。期限切れ時は明示キャンセル——「済み」記録は hash 検証後にしか付かないため、中断しても次回差分から安全に再開する。バックアップ画面の先頭には<strong>「バックアップ済み X / Y」と残数</strong>を常時表示する。</p>
+
       <h2>端末フォルダ分離（家族共有・ADR-41）</h2>
       <p>1 つの Dropbox アカウントを家族で共有する想定で、バックアップは <code>&lt;ルート&gt;/&lt;表示名&gt;-&lt;短ID&gt;/</code>（例 <code>/MosaicPhotos/iPhone-3F2A8C/</code>）に保存する。ファイルだけでなく <strong><code>.mosaic</code> メタデータも端末ごとに分離</strong>され、download→merge→upload 方式のメタデータが端末間で後勝ち競合する問題（ADR-38 の単一端末制約）が構造的に消える。短 ID は初回生成して <strong>Keychain に永続化</strong>（再インストール後も同一フォルダ）。既存のフラットな旧ファイルは移動せず、メタデータ読み込みは「ルート＋端末フォルダ」の複数ルート統合で互換を保つ。</p>
 

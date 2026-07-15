@@ -14,6 +14,8 @@ public struct BackupSettingsView: View {
     @AppStorage(BackupSettingsKeys.destination) private var destination: BackupDestination = .disabled
     @AppStorage(BackupSettingsKeys.dropboxFolder) private var dropboxFolder = BackupSettingsKeys.defaultDropboxFolder
     @AppStorage(BackupSettingsKeys.uploadLimit) private var uploadLimit = 10
+    /// バックアップ状況（対象総数・完了数）。表示時と完了時に更新する。
+    @State private var status: (total: Int, done: Int)?
 
     public init(dropboxAuth: DropboxAuthService, engine: BackupEngine, dropboxStore: DropboxPhotoStore? = nil) {
         self.dropboxAuth  = dropboxAuth
@@ -46,10 +48,13 @@ public struct BackupSettingsView: View {
             }
         }
         .onChange(of: engine.phase) { _, newPhase in
-            if case .completed = newPhase, let store = dropboxStore {
-                Task {
-                    let root = backupNormalizedPath(dropboxFolder)
-                    await store.loadBackupMetadata(from: [root, BackupEngine.deviceBackupRoot(for: root)])
+            if case .completed = newPhase {
+                Task { status = await engine.backupStatus() }
+                if let store = dropboxStore {
+                    Task {
+                        let root = backupNormalizedPath(dropboxFolder)
+                        await store.loadBackupMetadata(from: [root, BackupEngine.deviceBackupRoot(for: root)])
+                    }
                 }
             }
         }
@@ -85,6 +90,29 @@ public struct BackupSettingsView: View {
 
     private var backupSection: some View {
         Section(L("Backup")) {
+            // バックアップ状況（総数・完了数・残数）。夜間自動バックアップ（ADR-42）の
+            // 進み具合を、実行していないときでも確認できるようにする。
+            if let status {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label(L("Backed up"), systemImage: "checkmark.icloud")
+                        Spacer()
+                        Text(verbatim: "\(status.done) / \(status.total)")
+                            .foregroundStyle(.secondary)
+                    }
+                    if status.total > status.done {
+                        Text(String(format: L("%d photos remaining — runs automatically at night (charging, Wi-Fi)"),
+                                    status.total - status.done))
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if status.total > 0 {
+                        Text(L("All photos are backed up."))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                HStack { ProgressView(); Text(L("Checking status…")).foregroundStyle(.secondary) }
+            }
+
             if engine.isRunning {
                 Button(L("Cancel Backup"), role: .destructive) { engine.cancel() }
             } else {
@@ -96,6 +124,7 @@ public struct BackupSettingsView: View {
 
             backupPhaseView
         }
+        .task { status = await engine.backupStatus() }
     }
 
     @ViewBuilder
@@ -169,15 +198,4 @@ public struct BackupSettingsView: View {
     }
 }
 
-// MARK: - Helpers
-
-/// Dropbox パスの正規化（先頭スラッシュ付与・末尾スラッシュ除去）。
-/// 通常設定（本ファイル）と `BackupDebugSection` の両方で使うため internal。
-func backupNormalizedPath(_ path: String) -> String {
-    var s = path.trimmingCharacters(in: .whitespaces)
-    if s.isEmpty { return "/" }
-    if !s.hasPrefix("/") { s = "/" + s }
-    while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
-    return s
-}
 #endif

@@ -169,6 +169,42 @@ public final class BackupEngine {
         }
     }
 
+    // MARK: - Nightly auto backup (ADR-42)
+
+    /// 夜間の重い処理ウィンドウ（BGProcessingTask・電源＋Wi-Fi＋非使用）からの自動バックアップ。
+    /// 宛先が Dropbox に設定されているときだけ、手動と同じ経路（上限設定・電源/回線ポーズ込み）で
+    /// 実行する。実行中なら何もしない。
+    public func startNightlyIfEnabled() {
+        guard !isRunning else { return }
+        let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
+            .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
+        guard destination == .dropbox else { return }
+        let folder = backupNormalizedPath(
+            UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                ?? BackupSettingsKeys.defaultDropboxFolder)
+        addLog("Nightly backup starting…")
+        start(folder: folder)
+    }
+
+    // MARK: - Backup status (画面表示用)
+
+    /// バックアップ状況（対象総数・完了数）。ライブラリ全列挙はオフメインで行う。
+    /// 完了数は「現在ライブラリにある写真のうちバックアップ済み記録があるもの」
+    /// （削除済み写真の記録は数えない＝残数が負にならない）。
+    public func backupStatus() async -> (total: Int, done: Int) {
+        let doneIDs = backedUpIDs
+        return await Task.detached(priority: .userInitiated) {
+            let result = PHAsset.fetchAssets(with: .image, options: nil)
+            var total = 0
+            var done = 0
+            result.enumerateObjects { asset, _, _ in
+                total += 1
+                if doneIDs.contains(asset.localIdentifier) { done += 1 }
+            }
+            return (total, done)
+        }.value
+    }
+
     // MARK: - Backed-up lookup
 
     /// この localIdentifier の写真は Dropbox へバックアップ済みか（フル画像ビューのバッジ用）。

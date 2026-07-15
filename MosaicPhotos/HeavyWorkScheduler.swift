@@ -1,5 +1,6 @@
 import AutoAlbumCore
 import BackgroundTasks
+import BackupKit
 import MosaicSupport
 import SwiftUI
 
@@ -164,13 +165,24 @@ enum HeavyWorkScheduler {
         stores.peopleEngine.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: stores.dropboxStore))
         stores.autoAlbumEngine.scheduleBackgroundFill()
 
+        // 2.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
+        // 手動と同じ経路（1 回の上限設定・電源/回線ポーズ・検証つきアップロード）を通る。
+        stores.backupEngine.startNightlyIfEnabled()
+
         // 3. 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。進捗はモニタで観測。
         let monitor = BackgroundActivityMonitor.shared
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
             let working = monitor.isEmbedding || monitor.isScanningFaces
                 || monitor.embedRemaining > 0 || monitor.faceScanRemaining > 0
+                || stores.backupEngine.isRunning
             if !working { break }   // 全部片付いた
+        }
+        // 期限切れ（キャンセル）時は夜間バックアップも止める（アップロード途中で
+        // プロセスが吊るされるより明示キャンセルが安全。「済み」記録は検証後のみ
+        // 付くので、中断しても次回に差分から再開される）。
+        if Task.isCancelled, stores.backupEngine.isRunning {
+            stores.backupEngine.cancel()
         }
     }
 }

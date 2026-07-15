@@ -17,3 +17,15 @@ public enum BackupSettingsKeys {
     /// ⚠️ 自動オフロード本体は未実装。UI は選択時に案内を出して 0 へ戻す（先行して設定枠だけ用意）。
     public static let offloadAutoThresholdMB = "offloadAutoThresholdMB"
 }
+
+// MARK: - Helpers
+
+/// Dropbox パスの正規化（先頭スラッシュ付与・末尾スラッシュ除去）。
+/// 通常設定・Debug セクション・エンジン（夜間自動実行）で共用するため internal（UIKit 非依存）。
+func backupNormalizedPath(_ path: String) -> String {
+    var s = path.trimmingCharacters(in: .whitespaces)
+    if s.isEmpty { return "/" }
+    if !s.hasPrefix("/") { s = "/" + s }
+    while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
+    return s
+}
