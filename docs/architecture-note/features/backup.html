@@ -50,6 +50,9 @@ graph TD
       <h2>オフロード台帳と端末アルバムの合成表示（ADR-39）</h2>
       <p>将来のオフロード（バックアップ済みローカル写真の検証つき削除）に備え、<strong>台帳と表示合成</strong>を先行実装している。<code>OffloadRecord</code>（SwiftData）が「アプリが削除した写真」の localIdentifier / Dropbox パス / 所属アルバムを記録し、端末アルバムを開く <code>DeviceAlbumPhotosView</code> が「PHAssetCollection 現存メンバー＋台帳のクラウド代替」をメンバー限定 <code>MergedPhotoStore</code> で混在表示する（撮影日ソートで元の位置に混ざる）。補完の条件を<strong>「台帳にある」に限定</strong>するのが要点＝ユーザーが写真アプリで意図的に削除した写真を蘇らせない。再インストール時は metadata v2 の <code>offloadedAt</code> マーカーから台帳を再構築する。台帳が空（現状）のときの表示は従来と完全に同一。</p>
 
+      <h2>端末フォルダ分離（家族共有・ADR-41）</h2>
+      <p>1 つの Dropbox アカウントを家族で共有する想定で、バックアップは <code>&lt;ルート&gt;/&lt;表示名&gt;-&lt;短ID&gt;/</code>（例 <code>/MosaicPhotos/iPhone-3F2A8C/</code>）に保存する。ファイルだけでなく <strong><code>.mosaic</code> メタデータも端末ごとに分離</strong>され、download→merge→upload 方式のメタデータが端末間で後勝ち競合する問題（ADR-38 の単一端末制約）が構造的に消える。短 ID は初回生成して <strong>Keychain に永続化</strong>（再インストール後も同一フォルダ）。既存のフラットな旧ファイルは移動せず、メタデータ読み込みは「ルート＋端末フォルダ」の複数ルート統合で互換を保つ。</p>
+
       <h2>検証つきアップロードとオフロード（ADR-40）</h2>
       <p>アップロードの「済み」判定は <strong>content_hash の一致</strong>を必須にした：ローカルで Dropbox の content_hash（4MB ブロック SHA-256 連結 → SHA-256・<code>DropboxContentHash</code> 純関数）を計算し、<code>files/upload</code> 応答の hash と一致して初めて記録する（HTTP 200 でも不一致なら済みにしない）。<strong>409（同パス既存）は get_metadata で同一性を確認</strong>し、不一致（同名の別写真）は autorename で別名アップロードする——旧実装は無確認で「済み」にしており、オフロードでの永久喪失リスクだった。</p>
       <p>オフロード（検証つき削除）は<strong>「削除は証明の後」</strong>を不変条件に：直前再検証（hash/サイズのリモート実測一致・編集検知・Live Photo 除外）→ 台帳記録 → PhotoKit 削除（OS 確認ダイアログ必須・「最近削除した項目」30 日）→ キャンセルならロールバック → metadata マーカー。UI は<strong>ドライラン既定</strong>（何も消さない検証一覧）で、実削除は Developer Options のゲート＋1 回の上限つき。安全性は <code>OffloadSafetyTests</code>（偽 Dropbox＋削除モック）が「消してはいけない全ケースで削除要求ゼロ」を機械的に保証する。</p>

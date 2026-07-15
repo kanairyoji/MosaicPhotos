@@ -127,10 +127,20 @@ public final class BackupEngine {
 
     // MARK: - Public API
 
+    /// バックアップの実保存先（端末フォルダ・ADR-41）: `<root>/<表示名>-<短ID>`。
+    /// 家族で 1 アカウントを共有しても、ファイルも `.mosaic` メタデータも端末ごとに分離される。
+    public static func deviceBackupRoot(for rootFolder: String) -> String {
+        rootFolder + "/" + BackupDeviceIdentity.currentFolderName()
+    }
+
     public func start(folder: String) {
         guard !isRunning else { return }
         log.removeAll()
         phase = .requestingPermission
+        // ADR-41: アップロード・メタデータはすべて端末フォルダ配下に保存する
+        //（既存のフラットな旧ファイルは移動しない＝記録はフルパス基準なのでそのまま整合）。
+        let deviceRoot = Self.deviceBackupRoot(for: folder)
+        addLog("Device folder: \(BackupDeviceIdentity.currentFolderName())")
         backupTask = Task { [weak self] in
             guard let self else { return }
             let runner = BackupRunner(
@@ -143,7 +153,7 @@ public final class BackupEngine {
                 captionsProvider: self.captionsProvider
             )
             // 完走時のみアルバム一覧を更新する（runner の戻り値で通知される）。
-            if await runner.run(folder: folder) {
+            if await runner.run(folder: deviceRoot) {
                 await self.loadAlbums()
             }
             self.backupTask = nil

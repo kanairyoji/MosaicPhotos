@@ -278,7 +278,9 @@ private struct HomeLifecycleTasks: ViewModifier {
                     evaluateSync()
                     let folder = UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder) ?? BackupSettingsKeys.defaultDropboxFolder
                     Task {
-                        await dropboxStore.loadBackupMetadata(from: folder)
+                        // ADR-41: ルート（旧・フラット時代の既存分）＋この端末のフォルダを統合して読む。
+                        await dropboxStore.loadBackupMetadata(
+                            from: [folder, BackupEngine.deviceBackupRoot(for: folder)])
                         // 機種変更・再インストール後: 台帳が空なら metadata v2 の offloadedAt
                         // マーカーから台帳を再構築する（通常は台帳が正・ADR-39）。
                         if let metadata = dropboxStore.backupMetadata {

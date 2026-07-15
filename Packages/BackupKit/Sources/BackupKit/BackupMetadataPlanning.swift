@@ -49,10 +49,12 @@ enum BackupMetadataPlanning {
     /// 既存カタログ（無ければ nil）へ、今回触ったシャードとアルバム/人物カタログを反映する。
     static func updatedCatalog(existing: Data?, touchedShards: [String],
                                albums: [String], people: [String],
-                               albumIDs: [String: String]? = nil) -> BackupCatalog {
+                               albumIDs: [String: String]? = nil,
+                               deviceID: String? = nil,
+                               deviceName: String? = nil) -> BackupCatalog {
         let base = existing.flatMap { try? JSONDecoder().decode(BackupCatalog.self, from: $0) }
             ?? BackupCatalog()
         return base.updating(touchedShards: touchedShards, albums: albums, people: people,
-                             albumIDs: albumIDs)
+                             albumIDs: albumIDs, deviceID: deviceID, deviceName: deviceName)
     }
 }

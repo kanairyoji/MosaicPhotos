@@ -47,7 +47,10 @@ public struct BackupSettingsView: View {
         }
         .onChange(of: engine.phase) { _, newPhase in
             if case .completed = newPhase, let store = dropboxStore {
-                Task { await store.loadBackupMetadata(from: backupNormalizedPath(dropboxFolder)) }
+                Task {
+                    let root = backupNormalizedPath(dropboxFolder)
+                    await store.loadBackupMetadata(from: [root, BackupEngine.deviceBackupRoot(for: root)])
+                }
             }
         }
     }

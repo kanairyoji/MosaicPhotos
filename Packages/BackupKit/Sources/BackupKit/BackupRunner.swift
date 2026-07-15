@@ -285,7 +285,9 @@ final class BackupRunner {
             let peopleNames = Array(Set(peopleIndex.values.flatMap { $0 })).sorted()
             let catalog = BackupMetadataPlanning.updatedCatalog(
                 existing: existingCatalog, touchedShards: Array(byShard.keys),
-                albums: albumNames, people: peopleNames, albumIDs: albumIDIndex)
+                albums: albumNames, people: peopleNames, albumIDs: albumIDIndex,
+                deviceID: BackupDeviceIdentity.currentID(),
+                deviceName: BackupDeviceIdentity.currentDisplayName())
             let catResult = await uploader.uploadJSON(catalog, to: catalogPath, token: token)
             addLog("  catalog.json (shards=\(catalog.shards.count)): \(catResult)")
         }

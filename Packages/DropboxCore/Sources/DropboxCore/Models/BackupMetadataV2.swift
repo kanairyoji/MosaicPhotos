@@ -49,21 +49,31 @@ public struct BackupCatalog: Codable, Sendable {
     /// オフロード後にユーザーがアルバムを改名すると紐付けが切れる。この対応表があれば
     /// 「旧名 → アルバム ID → 現在の名前」で追跡できる（改名対策・Optional＝旧カタログと互換）。
     public var albumIDs: [String: String]?
+    /// この端末フォルダの所有端末 ID（Keychain 永続の短 ID・ADR-41）。機種変更・再インストール時に
+    /// 「この Dropbox にあるバックアップフォルダ一覧」から自分のものを見分ける材料。
+    public var deviceID: String?
+    /// 所有端末の表示名（"iPhone" 等・汎用）。
+    public var deviceName: String?
 
     public init(shards: [String] = [], albums: [String] = [], people: [String] = [],
-                albumIDs: [String: String]? = nil) {
+                albumIDs: [String: String]? = nil,
+                deviceID: String? = nil, deviceName: String? = nil) {
         self.schemaVersion = 2
         self.updatedAt = ISO8601DateFormatter().string(from: Date())
         self.shards = shards
         self.albums = albums
         self.people = people
         self.albumIDs = albumIDs
+        self.deviceID = deviceID
+        self.deviceName = deviceName
     }
 
     /// シャード追加＋カタログ情報更新（重複なし・順序維持）。
     public func updating(touchedShards: [String], albums newAlbums: [String],
                          people newPeople: [String],
-                         albumIDs newAlbumIDs: [String: String]? = nil) -> BackupCatalog {
+                         albumIDs newAlbumIDs: [String: String]? = nil,
+                         deviceID newDeviceID: String? = nil,
+                         deviceName newDeviceName: String? = nil) -> BackupCatalog {
         var out = self
         for s in touchedShards where !out.shards.contains(s) { out.shards.append(s) }
         out.shards.sort()
@@ -78,6 +88,8 @@ public struct BackupCatalog: Codable, Sendable {
             ids.merge(newAlbumIDs) { _, new in new }
             out.albumIDs = ids
         }
+        if let newDeviceID { out.deviceID = newDeviceID }
+        if let newDeviceName { out.deviceName = newDeviceName }
         out.updatedAt = ISO8601DateFormatter().string(from: Date())
         return out
     }

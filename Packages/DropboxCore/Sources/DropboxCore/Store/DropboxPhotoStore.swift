@@ -253,30 +253,40 @@ public final class DropboxPhotoStore {
     /// 月別シャード）を**上書きマージ**する（ADR-38）。どちらも無ければ nil のまま。
     /// バックアップ完了後、または起動時に呼び出す。
     public func loadBackupMetadata(from folderPath: String) async {
-        // 1) v1（凍結ベース）。無ければ空から始める。
-        var merged = await downloadJSON(DropboxBackupMetadata.self,
-                                        path: folderPath + DropboxInternalConstants.backupMetadataSuffix)
-            ?? DropboxBackupMetadata()
-        let v1Count = merged.entries.count
+        await loadBackupMetadata(from: [folderPath])
+    }
 
-        // 2) v2 カタログ → 各シャードを上書きマージ（新しい書き込みは常に v2 側）。
+    /// 複数ルート版（ADR-41）。端末フォルダ導入後は「バックアップルート（旧・フラット時代の
+    /// 既存分）＋この端末のフォルダ」の 2 箇所を統合して読む。
+    public func loadBackupMetadata(from folderPaths: [String]) async {
+        var merged = DropboxBackupMetadata()
+        var v1Count = 0
         var shardCount = 0
-        if let catalog = await downloadJSON(BackupCatalog.self,
-                                            path: folderPath + BackupMetadataV2.catalogSuffix) {
-            for shard in catalog.shards {
-                guard let shardData = await downloadJSON(
-                    DropboxBackupMetadata.self,
-                    path: folderPath + BackupMetadataV2.shardSuffix(shard)) else { continue }
-                merged = merged.merging(shardData.entries)
-                shardCount += 1
+        for folderPath in folderPaths {
+            // 1) v1（凍結ベース）。無ければスキップ。
+            if let v1 = await downloadJSON(DropboxBackupMetadata.self,
+                                           path: folderPath + DropboxInternalConstants.backupMetadataSuffix) {
+                merged = merged.merging(v1.entries)
+                v1Count += v1.entries.count
+            }
+            // 2) v2 カタログ → 各シャードを上書きマージ（新しい書き込みは常に v2 側）。
+            if let catalog = await downloadJSON(BackupCatalog.self,
+                                                path: folderPath + BackupMetadataV2.catalogSuffix) {
+                for shard in catalog.shards {
+                    guard let shardData = await downloadJSON(
+                        DropboxBackupMetadata.self,
+                        path: folderPath + BackupMetadataV2.shardSuffix(shard)) else { continue }
+                    merged = merged.merging(shardData.entries)
+                    shardCount += 1
+                }
             }
         }
         guard v1Count > 0 || shardCount > 0 else {
-            DropboxLogger.info("loadBackupMetadata() — no metadata found (\(folderPath))")
+            DropboxLogger.info("loadBackupMetadata() — no metadata found (\(folderPaths.joined(separator: ", ")))")
             return
         }
         backupMetadata = merged
-        DropboxLogger.info("loadBackupMetadata() — loaded \(merged.entries.count) entries (v1=\(v1Count), shards=\(shardCount))")
+        DropboxLogger.info("loadBackupMetadata() — loaded \(merged.entries.count) entries (v1=\(v1Count), shards=\(shardCount), roots=\(folderPaths.count))")
     }
 
     /// downloadJSON 用の Dropbox-API-Arg（ジェネリック関数内に型をネストできないため外出し）。
