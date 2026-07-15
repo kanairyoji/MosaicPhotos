@@ -211,35 +211,34 @@ public final class OffloadService {
         return (ids, skipped)
     }
 
-    /// 触った撮影月シャードに offloadedAt / verifiedAt を書き込む。
+    /// 触った撮影月シャードに offloadedAt / verifiedAt を書き込む
+    /// （download→merge→upload は `MetadataShardWriter` に集約＝B3）。
     private func uploadOffloadMarkers(for assets: [OffloadableAsset], token: String) async {
-        // シャード（撮影月）ごとにまとめて、既存エントリへマーカーだけ足して書き戻す。
         let folderByPath: (String) -> String? = { path in
             // "/Folder/name.jpg" → "/Folder"（バックアップフォルダ直下前提）
             guard let idx = path.lastIndex(of: "/") else { return nil }
             return String(path[..<idx])
         }
         let now = ISO8601DateFormatter().string(from: Date())
+        let writer = MetadataShardWriter(uploader: uploader, token: token)
         var byShard: [String: [OffloadableAsset]] = [:]
         for asset in assets {
             byShard[BackupMetadataV2.shardName(for: asset.captureDate), default: []].append(asset)
         }
         for (shard, shardAssets) in byShard {
             guard let folder = folderByPath(shardAssets[0].dropboxPath) else { continue }
-            let shardPath = folder + BackupMetadataV2.shardSuffix(shard)
-            let existing = await uploader.download(path: shardPath, token: token)
-            var metadata = existing.flatMap { try? JSONDecoder().decode(DropboxBackupMetadata.self, from: $0) }
-                ?? DropboxBackupMetadata()
-            for asset in shardAssets {
-                var entry = metadata.entries[asset.dropboxPath]
-                    ?? DropboxBackupMetadata.Entry(people: [], albums: asset.albums,
-                                                   localIdentifier: asset.localIdentifier)
-                entry.offloadedAt = now
-                entry.verifiedAt = now
-                metadata.entries[asset.dropboxPath] = entry
-            }
-            let result = await uploader.uploadJSON(metadata, to: shardPath, token: token)
-            log("offload.marker: meta/\(shard).json (\(shardAssets.count) marker(s)): \(result)")
+            let assetByPath = Dictionary(uniqueKeysWithValues: shardAssets.map { ($0.dropboxPath, $0) })
+            await writer.updateEntries(
+                paths: shardAssets.map(\.dropboxPath), folder: folder, shardName: shard,
+                mutate: { entry in
+                    entry.offloadedAt = now
+                    entry.verifiedAt = now
+                },
+                makeDefault: { path in
+                    DropboxBackupMetadata.Entry(people: [], albums: assetByPath[path]?.albums ?? [],
+                                                localIdentifier: assetByPath[path]?.localIdentifier)
+                },
+                log: { line in self.log(line) })
         }
     }
 }

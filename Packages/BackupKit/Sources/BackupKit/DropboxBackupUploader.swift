@@ -31,19 +31,60 @@ struct DropboxBackupUploader {
     private static let downloadURL = "https://content.dropboxapi.com/2/files/download"
     private static let getMetadataURL = "https://api.dropboxapi.com/2/files/get_metadata"
 
+    // MARK: - 共通リクエストビルダー（B2: 5 エンドポイントのコピペを一元化）
+
+    /// content 系（upload/download）: Dropbox-API-Arg ヘッダ＋任意ボディ。
+    private static func contentRequest(url: String, argStr: String, body: Data?,
+                                       token: String, timeout: TimeInterval) -> URLRequest {
+        var req = URLRequest(url: URL(string: url)!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(argStr, forHTTPHeaderField: "Dropbox-API-Arg")
+        if let body {
+            req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+        }
+        req.timeoutInterval = timeout
+        return req
+    }
+
+    /// RPC 系（get_metadata/list_folder）: JSON ボディ。
+    private static func rpcRequest(url: String, jsonBody: Data, token: String) -> URLRequest {
+        var req = URLRequest(url: URL(string: url)!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = jsonBody
+        req.timeoutInterval = 60
+        return req
+    }
+
+    /// RPC を投げて 200 なら Decodable を返す（それ以外は nil）。B4: JSON 取得の一元化。
+    private func rpcJSON<T: Decodable, B: Encodable>(_ type: T.Type, url: String,
+                                                     body: B, token: String) async -> T? {
+        guard let jsonBody = try? JSONEncoder().encode(body) else { return nil }
+        let req = Self.rpcRequest(url: url, jsonBody: jsonBody, token: token)
+        guard let (data, resp) = try? await httpClient.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
     /// パスのファイルをダウンロードする（メタデータ v2 のシャード/カタログ読み込み用）。
     /// 存在しない・エラー時は nil（呼び出し側は「初回＝空から作る」として扱う）。
     func download(path: String, token: String) async -> Data? {
         struct Arg: Encodable { let path: String }
         guard let argStr = encodeDropboxAPIArg(Arg(path: path)) else { return nil }
-        var req = URLRequest(url: URL(string: Self.downloadURL)!)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue(argStr, forHTTPHeaderField: "Dropbox-API-Arg")
-        req.timeoutInterval = 60
+        let req = Self.contentRequest(url: Self.downloadURL, argStr: argStr, body: nil,
+                                      token: token, timeout: 60)
         guard let (data, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return data
+    }
+
+    /// パスの JSON ファイルをダウンロードしてデコードする（B4）。
+    func fetchJSON<T: Decodable>(_ type: T.Type, path: String, token: String) async -> T? {
+        guard let data = await download(path: path, token: token) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     /// Dropbox 上のファイル実体情報（content_hash / size）を取得する。
@@ -51,17 +92,9 @@ struct DropboxBackupUploader {
     /// クラウドに実在する」ことの確認に使う（記録の hash ではなくリモートの実測を見る）。
     func getMetadata(path: String, token: String) async -> RemoteFileInfo? {
         struct Body: Encodable { let path: String }
-        guard let body = try? JSONEncoder().encode(Body(path: path)) else { return nil }
-        var req = URLRequest(url: URL(string: Self.getMetadataURL)!)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
-        req.timeoutInterval = 60
-        guard let (data, resp) = try? await httpClient.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         struct Meta: Decodable { let content_hash: String?; let size: Int? }
-        guard let meta = try? JSONDecoder().decode(Meta.self, from: data) else { return nil }
+        guard let meta = await rpcJSON(Meta.self, url: Self.getMetadataURL,
+                                       body: Body(path: path), token: token) else { return nil }
         return RemoteFileInfo(contentHash: meta.content_hash, size: meta.size)
     }
 
@@ -90,12 +123,7 @@ struct DropboxBackupUploader {
                 body = try? JSONEncoder().encode(StartBody(path: root))
             }
             guard let body else { return nil }
-            var req = URLRequest(url: URL(string: url)!)
-            req.httpMethod = "POST"
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = body
-            req.timeoutInterval = 60
+            let req = Self.rpcRequest(url: url, jsonBody: body, token: token)
             guard let (data, resp) = try? await httpClient.data(for: req),
                   let code = (resp as? HTTPURLResponse)?.statusCode else { return nil }
             if code == 409 {
@@ -194,13 +222,6 @@ struct DropboxBackupUploader {
     /// JSONEncoder の出力をそのまま setValue すると、非ASCII文字を URLSession が
     /// RFC 7230 違反として無言で破壊し、Dropbox がエラーを返す（過去に発生）。
     private static func makeRequest(argStr: String, body: Data, token: String, timeout: TimeInterval) -> URLRequest {
-        var req = URLRequest(url: URL(string: uploadURL)!)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        req.setValue(argStr, forHTTPHeaderField: "Dropbox-API-Arg")
-        req.httpBody = body
-        req.timeoutInterval = timeout
-        return req
+        contentRequest(url: uploadURL, argStr: argStr, body: body, token: token, timeout: timeout)
     }
 }
