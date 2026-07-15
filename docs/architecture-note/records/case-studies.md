@@ -411,3 +411,10 @@
 - 対処: 409 時は `files/get_metadata` でリモートの content_hash を取得しローカル計算値と照合。一致＝済み（検証済みとして記録）、不一致＝**autorename で別名アップロード**。あわせて通常アップロードも応答の content_hash 照合を必須化（HTTP 200 でも不一致なら済みにしない）。`OffloadSafetyTests` / `DropboxBackupUploaderTests` で固定。
 - 関連: ADR-40。`DropboxBackupUploader.swift` / `BackupRunner.swift` / `DropboxContentHash.swift`。
 - 残課題: 既存の「済み」記録に 409 由来の誤記録が混ざっている可能性（オフロードは実行時にその場で hash 再検証するため実害はないが、監査パスで洗い出すのが望ましい）。
+
+## 台帳クリア＋端末フォルダ移行で同一写真が二重アップロードされる
+- 症状: シミュレータ検証で、バックアップを繰り返すと Dropbox 上にファイルが増え続け、同じ写真がルート直下（/mosaicphotos/img_xxx.heic）と端末フォルダ（/mosaicphotos/iphone-xxxxxx/img_xxx.heic）の両方に存在した（SwiftData 記録: 写真 40 枚に対し記録 60 件・20 枚が 2 パスに重複）。
+- 原因: 2 つの操作の相互作用。(1) 409 誤記録（別事例）の修復として **Clear upload progress** を実行し、済み台帳（UserDefaults）が空になった。(2) 直後の ADR-41 で**アップロード先が端末フォルダに変わった**ため、ルート直下の既存ファイルとの 409 重複検知（同一パス前提）が働かず、台帳の空白を埋める再アップロードがすべて新規ファイルとして端末フォルダに入った。差分判定の出典が「消える可能性のある台帳」だけだったことが根本原因。
+- 対処: 済み判定を「**UserDefaults 台帳 ∪ SwiftData 記録**」に変更（記録は実アップロード成功時にのみ追加される確かな出典で、Clear upload progress では消えない）。実行時に台帳へ差分を書き戻して自己修復する。バッジ・状況表示（backupStatus）のキャッシュも同じ統合出典に。あわせてフォールバックファイル名を「photo_<実行内インデックス>.jpg」（実行をまたいで別写真が同名になり 409 を誘発する設計バグ）から localIdentifier 由来の安定名に修正。
+- 関連: ADR-40/41。`BackupRunner.swift` / `BackupEngine.swift`。事例「バックアップの 409 を無確認で済み扱い」の続き。
+- 残課題: 既に二重になったファイルの掃除は手動（ルート直下の旧ファイルを Dropbox 上で削除してよい——記録・台帳は端末フォルダ側でも成立する）。将来の監査パスで「同一 localIdentifier の複数記録」を検出して案内するのが望ましい。

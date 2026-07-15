@@ -212,9 +212,18 @@ public final class BackupEngine {
         backedUpIDs.contains(localIdentifier)
     }
 
-    /// バックアップ済み ID キャッシュを progressStore から読み直す。
+    /// バックアップ済み ID キャッシュを「UserDefaults 台帳 ∪ SwiftData 記録」から読み直す。
+    /// 記録は実アップロード成功時にのみ追加される確かな出典（台帳クリア後も残る）で、
+    /// バッジ・状況表示・差分判定が実態（実際に上げた写真）を反映するようにする。
     func reloadBackedUpIDs() {
-        backedUpIDs = progressStore.loadUploadedIDs()
+        backedUpIDs = progressStore.loadUploadedIDs().union(recordedLocalIdentifiers())
+    }
+
+    /// SwiftData 記録にある localIdentifier 集合（実アップロード済みの確かな出典）。
+    func recordedLocalIdentifiers() -> Set<String> {
+        guard let context = modelContext,
+              let records = try? context.fetch(FetchDescriptor<BackupAssetRecord>()) else { return [] }
+        return Set(records.compactMap(\.localIdentifier))
     }
 
     // MARK: - Offload ledger (ADR-39)
@@ -327,6 +336,10 @@ extension BackupEngine: BackupRunnerDelegate {
                    people: people, albums: albums, isFavorite: isFavorite,
                    contentHash: contentHash)
         backedUpIDs.insert(asset.localIdentifier)   // バッジ判定キャッシュを即時更新
+    }
+
+    func runnerRecordedLocalIdentifiers() -> Set<String> {
+        recordedLocalIdentifiers()
     }
 
 }

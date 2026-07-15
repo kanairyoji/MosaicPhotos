@@ -19,6 +19,11 @@ protocol BackupRunnerDelegate: AnyObject {
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
                           people: [String], albums: [String], isFavorite: Bool,
                           contentHash: String?)
+    /// SwiftData 記録にある「実際にアップロード済み」の localIdentifier 集合。
+    /// UserDefaults の台帳が消えても（Clear upload progress・再インストール等）、
+    /// 記録から差分判定を自己修復し**二重アップロードを防ぐ**（実障害: 台帳クリア＋
+    /// 端末フォルダ移行の組み合わせで同一写真がルートと端末フォルダに重複した）。
+    func runnerRecordedLocalIdentifiers() -> Set<String>
 }
 
 // MARK: - Runner
@@ -112,7 +117,15 @@ final class BackupRunner {
         // 4. 既アップロード済みをスキップ（差分算出は BackupPlanning に集約・テスト可能）。
         //    上限は設定（uploadLimit）優先。> 0 で 1 回のアップロード上限を適用（0 = 無制限）。
         let limit = uploadLimit()
-        let doneIDs = progressStore.loadUploadedIDs()
+        // 済み判定は「UserDefaults 台帳 ∪ SwiftData 記録」。記録は実アップロード成功時のみ
+        // 追加される確かな出典で、台帳が消えた場合の自己修復を担う（重複アップロード防止）。
+        let ledgerIDs = progressStore.loadUploadedIDs()
+        let recordIDs = delegate.runnerRecordedLocalIdentifiers()
+        let doneIDs = ledgerIDs.union(recordIDs)
+        if doneIDs.count > ledgerIDs.count {
+            addLog("Restored \(doneIDs.count - ledgerIDs.count) backed-up ID(s) from records")
+            progressStore.saveUploadedIDs(doneIDs)   // 台帳側も修復
+        }
         let plan = BackupPlanning.pendingUploads(
             allIdentifiers: assets.map(\.localIdentifier),
             alreadyUploaded: doneIDs,
@@ -165,7 +178,11 @@ final class BackupRunner {
             }
 
             // ファイルデータを取得
-            let fetchResult = await BackupAssetReader.read(asset: asset, fallback: "photo_\(i + 1).jpg")
+            // フォールバック名は localIdentifier 由来の安定名にする。旧: "photo_\(i+1).jpg"
+            // ＝実行ごとに 1 から振り直され、別の写真が同名になって 409 を誘発する設計バグだった。
+            let stableFallback = "photo_" + asset.localIdentifier.prefix(8)
+                .replacingOccurrences(of: "/", with: "-") + ".jpg"
+            let fetchResult = await BackupAssetReader.read(asset: asset, fallback: stableFallback)
             switch fetchResult {
             case .skipped(let filename, let reason):
                 addLog("[\(i+1)/\(pending.count)] SKIP \(filename): \(reason)")
