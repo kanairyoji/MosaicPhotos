@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-40 オフロードの多層防御と検証つきアップロード（content_hash）
+- 状態: 採用
+- 文脈: オフロード（バックアップ済みローカル写真の削除）はバグが即「写真の永久喪失」になり得る。テスト方法と確実性の設計を先に固めた。調査で現行アップロードに**具体的欠陥**を発見: (1) HTTP 200 を無条件に成功扱い（応答の content_hash 未検証＝壊れた保存を検出できない）。(2) **409（同パス既存）を無確認で「済み」扱い**——同名の別写真（IMG_0001.jpg は普通に衝突する）が「バックアップ済み」と誤記録され、オフロードで消すと永久喪失する。
+- 決定: **「削除は証明の後」**を不変条件に多層防御で実装。(a) **検証つきアップロード**＝ローカルで Dropbox content_hash（4MB ブロック SHA-256 連結→SHA-256・`DropboxContentHash` 純関数・独立計算のテストベクタで検証）を計算し、`files/upload` 応答の hash と**一致して初めて「済み」**（不一致は `.hashMismatch`＝絶対に済み記録しない）。409 は `files/get_metadata` で同一性確認→不一致なら **autorename** で別名アップロード。(b) **オフロードの判定**は純関数 `OffloadPlanning.verdict` に集約: Live Photo除外・バックアップ後編集除外・データ取得不能除外・**その場での hash/サイズ完全一致必須**（記録でなくリモート実測と照合）。(c) **実行順序**＝直前再検証 → 台帳記録（先）→ PhotoKit 削除（OS 確認ダイアログ必須・「最近削除した項目」30 日）→ キャンセルなら台帳ロールバック → metadata へ offloadedAt/verifiedAt マーカー。(d) **段階導入**＝ドライラン既定（何も消さない検証一覧）・実削除は Developer Options ゲート＋1 回の上限（既定 10）。(e) **テスト戦略**＝層1: hash/判定の純関数（Python で独立計算した期待値）・層2: 偽 Dropbox（HTTPClient スタブ）＋削除モック（`PhotoDeleter` seam）で「消してはいけない全ケースで削除要求ゼロ」を機械的に保証（クラウド不在/hash不一致/サイズ不一致/読込不能/編集済み/Live/キャンセル→ロールバック/上限/ドライラン）。
+- 結果: 削除の前提がすべて実測（今この瞬間の一致）になり、部分アップロード・同名衝突・編集消失の各事故経路がテストで封じられた。トレードオフ: (1) アップロードごとに hash 計算（数 MB で ~10ms・無視可）と 409 時の get_metadata 1 往復。(2) 実機での実削除はテスト用写真での段階運用が前提（ドライラン → 少数 → 拡大）。(3) 動画・Live Photo・iCloud 最適化写真はオフロード対象外（スキップ理由を UI に明示）。
+- 関連: `BackupKit/DropboxContentHash.swift`・`DropboxBackupUploader`（検証つき upload / get_metadata）・`BackupRunner`（409 の hash 照合＋autorename）・`OffloadService` / `OffloadPlanning` / `PhotoDeleter` / `PhotoKitDeleter`・`OffloadSettingsView`（ドライラン UI）・`BackupDebugSection`（実削除ゲート）・`DropboxContentHashTests` / `OffloadSafetyTests`。ADR-38/39 の続き。
+
 ## ADR-39 オフロード台帳と端末アルバムの合成表示（クラウド代替）
 - 状態: 採用
 - 文脈: 将来のオフロード（バックアップ済みローカル写真の検証つき削除）後も、端末アルバムを「何事もなかったかのように」表示したい。単純に「metadata の albums 逆引きで、端末に無い写真を全部クラウドから補完」すると、**ユーザーが写真アプリで意図的に削除した写真まで蘇ってしまう**——補完してよいのは「アプリ自身がオフロードした写真」だけであり、その区別には削除の主体を記録する台帳が必要。

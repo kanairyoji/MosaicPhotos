@@ -15,8 +15,10 @@ protocol BackupRunnerDelegate: AnyObject {
     /// 実行ログ 1 行の追記。
     func runnerLog(_ message: String)
     /// アップロード成功 1 件の SwiftData レコード保存（BackupEngine+Store）。
+    /// `contentHash` は検証済みの Dropbox content_hash（オフロード前検証の照合キー）。
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
-                          people: [String], albums: [String], isFavorite: Bool)
+                          people: [String], albums: [String], isFavorite: Bool,
+                          contentHash: String?)
 }
 
 // MARK: - Runner
@@ -180,24 +182,45 @@ final class BackupRunner {
             let dropboxPath = folder + "/" + filename
             addLog("[\(i+1)/\(pending.count)] \(filename) (\(data.count) bytes) → \(dropboxPath)")
 
-            switch await uploader.upload(data: data, to: dropboxPath, token: token) {
-            case .uploaded:
+            // ADR-40: ローカルで content_hash を計算し、応答の hash と一致して初めて「済み」にする。
+            let localHash = DropboxContentHash.hash(of: data)
+            var result = await uploader.upload(data: data, to: dropboxPath, token: token,
+                                               expectedHash: localHash)
+            if result == .alreadyExists {
+                // 409（同パスに既存）: 同一内容か **hash で確認**する。旧実装は無確認で「済み」
+                // 扱いにしており、同名の別写真が「バックアップ済み」と誤記録される＝オフロードで
+                // 永久喪失し得る欠陥だった。不一致なら autorename で別名アップロードする。
+                let remote = await uploader.getMetadata(path: dropboxPath, token: token)
+                if let remote, remote.contentHash == localHash {
+                    addLog("  → already exists with identical content (hash verified)")
+                    result = .uploaded(path: dropboxPath.lowercased(), contentHash: localHash)
+                } else {
+                    addLog("  → name collision with different content — retrying with autorename")
+                    result = await uploader.upload(data: data, to: dropboxPath, token: token,
+                                                   expectedHash: localHash, autorename: true)
+                }
+            }
+
+            switch result {
+            case .uploaded(let savedPath, let hash):
                 uploadedCount += 1
                 trackedIDs.insert(asset.localIdentifier)
-                addLog("  ✓ uploaded")
+                addLog("  ✓ uploaded (hash verified)\(savedPath == dropboxPath.lowercased() ? "" : " as \(savedPath)")")
 
                 let people     = peopleIndex[asset.localIdentifier] ?? []
                 let albums     = albumIndex[asset.localIdentifier] ?? []
                 let isFavorite = asset.isFavorite
                 // v2（ADR-38）: 端末を削除すると再生成できない情報を漏れなく保全する。
+                // パスは実際に保存された savedPath（autorename 時は要求と異なる）。
                 newEntries.append(BackupMetadataPlanning.NewEntry(
-                    path: dropboxPath.lowercased(),
+                    path: savedPath,
                     date: asset.creationDate,
                     entry: DropboxBackupMetadata.Entry(
                         people: people,
                         albums: albums,
                         isFavorite: isFavorite,
                         date: asset.creationDate.map { ISO8601DateFormatter().string(from: $0) },
+                        contentHash: hash,
                         localIdentifier: asset.localIdentifier,
                         latitude: asset.location?.coordinate.latitude,
                         longitude: asset.location?.coordinate.longitude,
@@ -205,14 +228,26 @@ final class BackupRunner {
                         caption: captionsByID[asset.localIdentifier]
                     )))
                 delegate.runnerSaveRecord(
-                    dropboxPath: dropboxPath, asset: asset, filename: filename,
-                    people: people, albums: albums, isFavorite: isFavorite
+                    dropboxPath: savedPath, asset: asset, filename: filename,
+                    people: people, albums: albums, isFavorite: isFavorite,
+                    contentHash: hash
                 )
                 if uploadedCount % 5 == 0 { progressStore.saveUploadedIDs(trackedIDs) }
 
+            case .hashMismatch(let expected, let actual):
+                // HTTP 200 でも中身の検証に失敗＝壊れて保存された疑い。**絶対に「済み」にしない**
+                //（次回実行で再アップロードされる）。連続するなら回線/API の異常なので実行を止める。
+                addLog("  ✗ content hash mismatch — expected \(expected.prefix(12))…, got \((actual ?? "nil").prefix(12))…")
+                fail("Content hash mismatch uploading \"\(filename)\" — not marked as backed up; will retry next run")
+                progressStore.saveUploadedIDs(trackedIDs)
+                return false
+
             case .alreadyExists:
-                addLog("  → already exists on Dropbox (409)")
-                trackedIDs.insert(asset.localIdentifier)
+                // autorename=true の再試行後には発生しない想定（保険）。
+                addLog("  ✗ unexpected 409 after autorename")
+                fail("Unexpected conflict uploading \"\(filename)\"")
+                progressStore.saveUploadedIDs(trackedIDs)
+                return false
 
             case .error(let code, let body):
                 let summary = BackupPlanning.dropboxErrorSummary(from: body)

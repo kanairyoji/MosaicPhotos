@@ -39,7 +39,8 @@ extension BackupEngine {
 
     func saveRecord(
         dropboxPath: String, asset: PHAsset, filename: String,
-        people: [String], albums: [String], isFavorite: Bool
+        people: [String], albums: [String], isFavorite: Bool,
+        contentHash: String? = nil
     ) {
         guard let context = modelContext else { return }
         let path = dropboxPath.lowercased()
@@ -51,11 +52,12 @@ extension BackupEngine {
             existing.albums     = albums
             existing.isFavorite = isFavorite
             existing.backedUpAt = Date()
+            if let contentHash { existing.contentHash = contentHash }
         } else {
             context.insert(BackupAssetRecord(
                 dropboxPath: dropboxPath, localIdentifier: asset.localIdentifier,
                 filename: filename, creationDate: asset.creationDate,
-                contentHash: nil, people: people, albums: albums, isFavorite: isFavorite
+                contentHash: contentHash, people: people, albums: albums, isFavorite: isFavorite
             ))
         }
         try? context.save()

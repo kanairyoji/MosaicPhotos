@@ -26,6 +26,7 @@ public struct BackupDebugSection: View {
     public var body: some View {
         Group {
             progressDebugSection
+            offloadGateSection
             debugControlSection
             debugLocalRecordsSection
             debugLocalStatsSection
@@ -38,6 +39,18 @@ public struct BackupDebugSection: View {
     }
 
     // MARK: - Debug: progress
+
+    /// オフロード実削除のゲート（ADR-40 の段階導入）。既定 OFF＝ドライランのみ。
+    private var offloadGateSection: some View {
+        Section {
+            Toggle("Offload: allow real deletion",
+                   isOn: Binding(
+                       get: { UserDefaults.standard.bool(forKey: BackupSettingsKeys.offloadRealDeletionEnabled) },
+                       set: { UserDefaults.standard.set($0, forKey: BackupSettingsKeys.offloadRealDeletionEnabled) }))
+        } footer: {
+            Text("OFF (default): Offload screen is dry-run only. ON: the delete button appears — deletion still requires the system confirmation dialog and stays in Recently Deleted for 30 days.")
+        }
+    }
 
     private var progressDebugSection: some View {
         Section("Backup — Progress") {

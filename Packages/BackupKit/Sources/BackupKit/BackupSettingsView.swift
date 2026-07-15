@@ -34,6 +34,15 @@ public struct BackupSettingsView: View {
                 dropboxFolderSection
                 uploadLimitSection
                 backupSection
+                Section {
+                    NavigationLink {
+                        OffloadSettingsView(engine: engine)
+                    } label: {
+                        Label(L("Offload (free up device storage)"), systemImage: "externaldrive.badge.minus")
+                    }
+                } footer: {
+                    Text(L("Preview which backed-up photos could be safely removed from this device."))
+                }
             }
         }
         .onChange(of: engine.phase) { _, newPhase in

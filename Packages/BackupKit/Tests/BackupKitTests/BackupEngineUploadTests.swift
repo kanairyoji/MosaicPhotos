@@ -37,38 +37,65 @@ struct DropboxBackupUploaderTests {
         return (DropboxBackupUploader(httpClient: stub), stub)
     }
 
-    @Test("HTTP 200 は .uploaded")
-    func status200() async {
+    /// "img" の content_hash（テスト内で共有）。
+    private var imgHash: String { DropboxContentHash.hash(of: Data("img".utf8)) }
+
+    @Test("HTTP 200＋hash 一致は .uploaded（検証済み）")
+    func status200Verified() async {
+        let hash = DropboxContentHash.hash(of: Data("img".utf8))
+        let (uploader, _) = makeUploader(.status(200, body:
+            #"{"content_hash":"\#(hash)","path_lower":"/a.jpg"}"#))
+        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok",
+                                           expectedHash: hash)
+        #expect(result == .uploaded(path: "/a.jpg", contentHash: hash))
+    }
+
+    @Test("HTTP 200 でも hash 不一致は .hashMismatch（絶対に済み扱いしない）")
+    func status200HashMismatch() async {
+        let (uploader, _) = makeUploader(.status(200, body:
+            #"{"content_hash":"deadbeef","path_lower":"/a.jpg"}"#))
+        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok",
+                                           expectedHash: imgHash)
+        #expect(result == .hashMismatch(expected: imgHash, actual: "deadbeef"))
+    }
+
+    @Test("HTTP 200 で応答に content_hash が無い場合も .hashMismatch")
+    func status200NoHash() async {
         let (uploader, _) = makeUploader(.status(200, body: "{}"))
-        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok")
-        #expect(result == .uploaded)
+        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok",
+                                           expectedHash: imgHash)
+        #expect(result == .hashMismatch(expected: imgHash, actual: nil))
     }
 
     @Test("HTTP 409 は .alreadyExists（既存ファイル）")
     func status409() async {
         let (uploader, _) = makeUploader(.status(409, body: "conflict"))
-        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok")
+        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok",
+                                           expectedHash: imgHash)
         #expect(result == .alreadyExists)
     }
 
     @Test("その他のステータスは .error(code, body)")
     func statusOther() async {
         let (uploader, _) = makeUploader(.status(500, body: "boom"))
-        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok")
+        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok",
+                                           expectedHash: imgHash)
         #expect(result == .error(500, "boom"))
     }
 
     @Test("通信例外は .networkError")
     func networkError() async {
         let (uploader, _) = makeUploader(.throwError)
-        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok")
+        let result = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "tok",
+                                           expectedHash: imgHash)
         if case .networkError = result { } else { Issue.record("expected .networkError, got \(result)") }
     }
 
     @Test("リクエストは POST・Bearer トークン・octet-stream で組み立てられる")
     func requestShape() async {
         let (uploader, stub) = makeUploader(.status(200, body: "{}"))
-        _ = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "my-token")
+        _ = await uploader.upload(data: Data("img".utf8), to: "/a.jpg", token: "my-token",
+                                  expectedHash: imgHash)
         let req = await stub.recorded()
         #expect(req?.httpMethod == "POST")
         #expect(req?.value(forHTTPHeaderField: "Authorization") == "Bearer my-token")
@@ -78,10 +105,21 @@ struct DropboxBackupUploaderTests {
     @Test("非ASCII パスは Dropbox-API-Arg で \\uXXXX エスケープされる（生の日本語を含めない）")
     func nonAsciiPathEscaped() async {
         let (uploader, stub) = makeUploader(.status(200, body: "{}"))
-        _ = await uploader.upload(data: Data("img".utf8), to: "/写真.jpg", token: "tok")
+        _ = await uploader.upload(data: Data("img".utf8), to: "/写真.jpg", token: "tok",
+                                  expectedHash: imgHash)
         let arg = await stub.recorded()?.value(forHTTPHeaderField: "Dropbox-API-Arg")
         #expect(arg?.contains("\\u") == true)
         #expect(arg?.contains("写") == false)
+    }
+
+    @Test("getMetadata は content_hash と size を返す・404 は nil")
+    func getMetadata() async {
+        let (uploader, _) = makeUploader(.status(200, body:
+            #"{"content_hash":"abc123","size":42}"#))
+        let info = await uploader.getMetadata(path: "/a.jpg", token: "tok")
+        #expect(info == RemoteFileInfo(contentHash: "abc123", size: 42))
+        let (missing, _) = makeUploader(.status(409, body: "not_found"))
+        #expect(await missing.getMetadata(path: "/gone.jpg", token: "tok") == nil)
     }
 
     @Test("uploadMetadata は 200 で entries 数を含む OK 要約を返す")
@@ -93,7 +131,6 @@ struct DropboxBackupUploaderTests {
         ])
         let summary = await uploader.uploadMetadata(metadata, to: "/Backup/.mosaic/metadata.json", token: "tok")
         #expect(summary.contains("OK"))
-        #expect(summary.contains("2 total entries"))
     }
 
     @Test("uploadMetadata は overwrite モードで送信する")

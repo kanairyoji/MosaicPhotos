@@ -34,8 +34,9 @@ public final class BackupEngine {
 
     // SwiftData レコード/アルバム永続化は BackupEngine+Store.swift（extension）に分離しているため、
     // そこから参照する modelContext / addLog / 上記の集計状態は internal にしている。
-    @ObservationIgnored private let tokenProvider: AccessTokenProvider
-    @ObservationIgnored private let uploader: DropboxBackupUploader
+    // internal: BackupEngine+Offload（同モジュール extension）からも使う。
+    @ObservationIgnored let tokenProvider: AccessTokenProvider
+    @ObservationIgnored let uploader: DropboxBackupUploader
     @ObservationIgnored private let progressStore = BackupProgressStore()
     @ObservationIgnored private var backupTask: Task<Void, Never>?
     @ObservationIgnored var modelContext: ModelContext?
@@ -274,9 +275,11 @@ extension BackupEngine: BackupRunnerDelegate {
     }
 
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
-                          people: [String], albums: [String], isFavorite: Bool) {
+                          people: [String], albums: [String], isFavorite: Bool,
+                          contentHash: String?) {
         saveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
-                   people: people, albums: albums, isFavorite: isFavorite)
+                   people: people, albums: albums, isFavorite: isFavorite,
+                   contentHash: contentHash)
         backedUpIDs.insert(asset.localIdentifier)   // バッジ判定キャッシュを即時更新
     }
 
