@@ -284,7 +284,7 @@ private struct HomeLifecycleTasks: ViewModifier {
                         // 機種変更・再インストール後: 台帳が空なら metadata v2 の offloadedAt
                         // マーカーから台帳を再構築する（通常は台帳が正・ADR-39）。
                         if let metadata = dropboxStore.backupMetadata {
-                            backupEngine.rebuildOffloadLedgerIfEmpty(from: metadata)
+                            await backupEngine.rebuildOffloadLedgerIfEmpty(from: metadata)
                         }
                     }
                 }

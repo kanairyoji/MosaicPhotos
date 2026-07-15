@@ -23,7 +23,7 @@ protocol BackupRunnerDelegate: AnyObject {
     /// UserDefaults の台帳が消えても（Clear upload progress・再インストール等）、
     /// 記録から差分判定を自己修復し**二重アップロードを防ぐ**（実障害: 台帳クリア＋
     /// 端末フォルダ移行の組み合わせで同一写真がルートと端末フォルダに重複した）。
-    func runnerRecordedLocalIdentifiers() -> Set<String>
+    func runnerRecordedLocalIdentifiers() async -> Set<String>
 }
 
 // MARK: - Runner
@@ -120,7 +120,7 @@ final class BackupRunner {
         // 済み判定は「UserDefaults 台帳 ∪ SwiftData 記録」。記録は実アップロード成功時のみ
         // 追加される確かな出典で、台帳が消えた場合の自己修復を担う（重複アップロード防止）。
         let ledgerIDs = progressStore.loadUploadedIDs()
-        let recordIDs = delegate.runnerRecordedLocalIdentifiers()
+        let recordIDs = await delegate.runnerRecordedLocalIdentifiers()
         let doneIDs = ledgerIDs.union(recordIDs)
         if doneIDs.count > ledgerIDs.count {
             addLog("Restored \(doneIDs.count - ledgerIDs.count) backed-up ID(s) from records")

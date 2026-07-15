@@ -7,9 +7,10 @@ import MosaicSupport
 // MARK: - Engine
 
 /// ローカル写真を Dropbox へバックアップするエンジン。
-/// 実行本体（権限→差分算出→アップロードループ→metadata 送信）は `BackupRunner` に分離し、
-/// ここは @Observable な状態公開（phase / log / アルバム集計）と起動・キャンセルの
-/// 薄いコーディネータに絞る。進捗の UI 反映は `BackupRunnerDelegate` 適合（ファイル末尾）で受ける。
+/// 実行本体（権限→差分算出→アップロードループ→metadata 送信）は `BackupRunner` に、
+/// SwiftData 永続化は `BackupStore`（@ModelActor・**オフメイン**）に分離し、
+/// ここは @Observable な状態公開（phase / log / アルバム集計 / 各キャッシュ）と
+/// 起動・キャンセルの薄いコーディネータに絞る（A1/B1 リファクタリング）。
 @MainActor
 @Observable
 public final class BackupEngine {
@@ -28,18 +29,30 @@ public final class BackupEngine {
     /// オフロード台帳のメモリキャッシュ: アルバム名 → クラウド代替の Dropbox パス（撮影日昇順）。
     /// 端末アルバムを開くたびに SwiftData を引かず同期参照できるようにする（台帳が空なら空辞書）。
     @ObservationIgnored private var offloadedPathsByAlbum: [String: [String]] = [:]
+    /// オフロード台帳の総件数（キャッシュ・Developer Options の診断用）。
+    @ObservationIgnored private var offloadCount = 0
     /// バックアップ済み localIdentifier のメモリキャッシュ（フル画像ビューのバッジ判定用・同期参照）。
-    /// 起動時に progressStore から読み、アップロード成功のたびに追記、完了フェーズで読み直す。
+    /// 「UserDefaults 台帳 ∪ SwiftData 記録」。起動時に**オフメインで**ウォームし、
+    /// アップロード成功のたびに追記、完了フェーズで読み直す。
     @ObservationIgnored private var backedUpIDs: Set<String> = []
+    /// キャッシュのウォーム完了フラグ。完了前のバッジ判定は nil（非表示）を返す
+    /// （未ウォームで false を返すと「未バックアップ」と誤表示するため）。
+    @ObservationIgnored private var cachesWarmed = false
+    /// バックアップ状況（総数・完了数）のキャッシュ（A3）。画面を開くたびの全ライブラリ列挙を避け、
+    /// バックアップ完了・記録変更のタイミングで無効化する。
+    @ObservationIgnored private var cachedStatus: (total: Int, done: Int)?
 
-    // SwiftData レコード/アルバム永続化は BackupEngine+Store.swift（extension）に分離しているため、
-    // そこから参照する modelContext / addLog / 上記の集計状態は internal にしている。
     // internal: BackupEngine+Offload（同モジュール extension）からも使う。
     @ObservationIgnored let tokenProvider: AccessTokenProvider
     @ObservationIgnored let uploader: DropboxBackupUploader
     @ObservationIgnored private let progressStore = BackupProgressStore()
     @ObservationIgnored private var backupTask: Task<Void, Never>?
-    @ObservationIgnored var modelContext: ModelContext?
+    /// SwiftData ストア（@ModelActor・オフメイン生成）。生成完了を待たずに engine init を返すため
+    /// Task で保持し、利用側は `store()` で await する。
+    @ObservationIgnored private let storeTask: Task<BackupStore, Never>
+
+    /// SwiftData ストアへのアクセサ（生成完了を待つ）。
+    func store() async -> BackupStore { await storeTask.value }
 
     // MARK: - Phase
 
@@ -97,32 +110,34 @@ public final class BackupEngine {
     public static var metadataPathSuffix: String { metadataSuffix }
 
     /// バックアップ進捗（アップロード済み ID 一覧）を消去する。次回は全件再判定になる（Debug 用）。
+    /// ⚠️ SwiftData 記録は残る＝済み判定（台帳∪記録）は変わらない。記録ごと消すのは
+    /// `clearAllBackupRecords()`。
     public func clearUploadProgress() {
-        backedUpIDs = []
         progressStore.saveUploadedIDs([])
+        invalidateStatus()
+        Task { await reloadBackedUpIDs() }
     }
 
     public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
         self.tokenProvider = auth
         self.uploader = DropboxBackupUploader(httpClient: httpClient)
-        // ⚠️ 名前を明示して "BackupKit.store" を使う（名前なしは "default.store" になり
-        // DropboxCacheStore と衝突＝過去にクラッシュ）。壊れた/非互換ストアは削除して作り直す（自己修復）。
-        modelContext = ModelContext(Self.makeResilientContainer())
-        reloadOffloadLedger()
-        reloadBackedUpIDs()
+        // SwiftData は BackupStore（@ModelActor）へ分離し**オフメイン生成**する。
+        // 旧実装は init で全記録 fetch×2 がメインで走り、記録が増えると起動ハングの構図だった。
+        self.storeTask = Task { await BackupStore.makeDetached() }
+        Task { await warmCaches() }
     }
 
-    /// 名前付き永続コンテナを作る。失敗時は store ファイルを削除して再構築し、それでも駄目なら
-    /// インメモリへ。SwiftData が trap せず必ず ModelContainer を返し、起動時クラッシュを防ぐ
-    /// （バックアップ記録は再構築されるが、Dropbox 上の実ファイルは無事）。
-    /// 実体は MosaicSupport の共通ロジック（自己修復）。
-    private static func makeResilientContainer() -> ModelContainer {
-        let schema = Schema([BackupAssetRecord.self, OffloadRecord.self])
-        return makeResilientModelContainer(
-            name: "BackupKit", schema: schema,
-            openFailedMessage: "BackupEngine: 'BackupKit' store open failed; deleting and rebuilding.",
-            memoryFallbackMessage: "BackupEngine: 'BackupKit' store still failing; using in-memory store.",
-            log: { BackupLogger.error($0) })
+    /// 起動時のキャッシュウォーム（オフロード台帳＋済み ID）。すべてオフメイン（store actor）で
+    /// fetch し、完成した値だけをメインで代入する。
+    private func warmCaches() async {
+        let store = await store()
+        async let ledger = store.offloadLedgerSnapshot()
+        async let recorded = store.recordedLocalIdentifiers()
+        let (byAlbum, count) = await ledger
+        offloadedPathsByAlbum = byAlbum
+        offloadCount = count
+        backedUpIDs = progressStore.loadUploadedIDs().union(await recorded)
+        cachesWarmed = true
     }
 
     // MARK: - Public API
@@ -189,24 +204,10 @@ public final class BackupEngine {
             addLog("Reconcile: could not list \(root)")
             return nil
         }
-        guard let context = modelContext else { return nil }
-        let records = (try? context.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
-        var removed = 0
-        var verifiedIDs: Set<String> = []
-        for record in records {
-            let path = record.dropboxPath.lowercased()
-            if let remoteHash = remote[path],
-               record.contentHash == nil || record.contentHash == remoteHash {
-                // 実在し、hash も矛盾しない（旧記録＝hash なしは実在のみで合格）。
-                if let id = record.localIdentifier { verifiedIDs.insert(id) }
-            } else {
-                context.delete(record)
-                removed += 1
-            }
-        }
-        try? context.save()
+        let (verifiedIDs, removed) = await store().reconcile(remote: remote)
         progressStore.saveUploadedIDs(verifiedIDs)
-        reloadBackedUpIDs()
+        invalidateStatus()
+        await reloadBackedUpIDs()
         addLog("Reconcile: verified \(verifiedIDs.count), removed \(removed) stale record(s), remote files \(remote.count)")
         await loadAlbums()
         return (verifiedIDs.count, removed, remote.count)
@@ -215,16 +216,13 @@ public final class BackupEngine {
     /// バックアップの記録を**全消去**する（台帳＋SwiftData 記録。オフロード台帳は対象外）。
     /// Debug 用: 次回バックアップは全量が対象に戻る（Dropbox に実在する分は 409→hash 照合で
     /// 再アップロードなしに「済み」へ復帰する）。
-    public func clearAllBackupRecords() {
+    public func clearAllBackupRecords() async {
         progressStore.saveUploadedIDs([])
-        if let context = modelContext {
-            let records = (try? context.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
-            records.forEach(context.delete)
-            try? context.save()
-        }
-        reloadBackedUpIDs()
+        await store().deleteAllRecords()
+        invalidateStatus()
+        await reloadBackedUpIDs()
         addLog("Cleared ALL backup records and upload progress")
-        Task { await loadAlbums() }
+        await loadAlbums()
     }
 
     // MARK: - Nightly auto backup (ADR-42)
@@ -244,14 +242,17 @@ public final class BackupEngine {
         start(folder: folder)
     }
 
-    // MARK: - Backup status (画面表示用)
+    // MARK: - Backup status (画面表示用・A3 キャッシュつき)
 
-    /// バックアップ状況（対象総数・完了数）。ライブラリ全列挙はオフメインで行う。
+    /// バックアップ状況（対象総数・完了数）。結果はキャッシュし、バックアップ完了・記録変更で
+    /// 無効化する（画面を開くたびの全ライブラリ列挙を避ける）。ライブラリ全列挙はオフメイン。
     /// 完了数は「現在ライブラリにある写真のうちバックアップ済み記録があるもの」
     /// （削除済み写真の記録は数えない＝残数が負にならない）。
     public func backupStatus() async -> (total: Int, done: Int) {
+        if let cachedStatus { return cachedStatus }
+        if !cachesWarmed { await warmCaches() }
         let doneIDs = backedUpIDs
-        return await Task.detached(priority: .userInitiated) {
+        let status = await Task.detached(priority: .userInitiated) {
             let result = PHAsset.fetchAssets(with: .image, options: nil)
             var total = 0
             var done = 0
@@ -261,27 +262,31 @@ public final class BackupEngine {
             }
             return (total, done)
         }.value
+        cachedStatus = status
+        return status
+    }
+
+    /// 状況キャッシュの無効化（記録・台帳が変わったとき）。
+    private func invalidateStatus() {
+        cachedStatus = nil
     }
 
     // MARK: - Backed-up lookup
 
     /// この localIdentifier の写真は Dropbox へバックアップ済みか（フル画像ビューのバッジ用）。
-    public func isBackedUp(localIdentifier: String) -> Bool {
-        backedUpIDs.contains(localIdentifier)
+    /// キャッシュのウォーム前は nil（呼び出し側はバッジ非表示にする＝誤って「未バックアップ」を
+    /// 出さない）。
+    public func isBackedUp(localIdentifier: String) -> Bool? {
+        guard cachesWarmed else { return nil }
+        return backedUpIDs.contains(localIdentifier)
     }
 
     /// バックアップ済み ID キャッシュを「UserDefaults 台帳 ∪ SwiftData 記録」から読み直す。
-    /// 記録は実アップロード成功時にのみ追加される確かな出典（台帳クリア後も残る）で、
-    /// バッジ・状況表示・差分判定が実態（実際に上げた写真）を反映するようにする。
-    func reloadBackedUpIDs() {
-        backedUpIDs = progressStore.loadUploadedIDs().union(recordedLocalIdentifiers())
-    }
-
-    /// SwiftData 記録にある localIdentifier 集合（実アップロード済みの確かな出典）。
-    func recordedLocalIdentifiers() -> Set<String> {
-        guard let context = modelContext,
-              let records = try? context.fetch(FetchDescriptor<BackupAssetRecord>()) else { return [] }
-        return Set(records.compactMap(\.localIdentifier))
+    /// 記録は実アップロード成功時にのみ追加される確かな出典（台帳クリア後も残る）。
+    func reloadBackedUpIDs() async {
+        let recorded = await store().recordedLocalIdentifiers()
+        backedUpIDs = progressStore.loadUploadedIDs().union(recorded)
+        cachesWarmed = true
     }
 
     // MARK: - Offload ledger (ADR-39)
@@ -292,71 +297,40 @@ public final class BackupEngine {
         offloadedPathsByAlbum[name] ?? []
     }
 
-    /// 台帳の総件数（Developer Options の診断用）。
-    public var offloadRecordCount: Int {
-        offloadedPathsByAlbum.values.reduce(0) { $0 + $1.count }
-    }
+    /// 台帳の総件数（Developer Options の診断用・キャッシュ参照）。
+    public var offloadRecordCount: Int { offloadCount }
 
-    /// オフロード実行の記録（将来のオフロード機能が削除の直後に呼ぶ）。upsert。
+    /// オフロード実行の記録（オフロード機能が**削除の直前**に呼ぶ）。upsert・完了まで await。
     public func recordOffloads(_ items: [(localIdentifier: String, dropboxPath: String,
-                                          albums: [String], captureDate: Date?, contentHash: String?)]) {
-        guard let context = modelContext else { return }
-        for item in items {
-            let id = item.localIdentifier
-            let descriptor = FetchDescriptor<OffloadRecord>(
-                predicate: #Predicate { $0.localIdentifier == id })
-            if let existing = try? context.fetch(descriptor).first {
-                context.delete(existing)
-            }
-            context.insert(OffloadRecord(localIdentifier: item.localIdentifier,
-                                         dropboxPath: item.dropboxPath.lowercased(),
-                                         albums: item.albums,
-                                         captureDate: item.captureDate,
-                                         contentHash: item.contentHash))
-        }
-        try? context.save()
-        reloadOffloadLedger()
+                                          albums: [String], captureDate: Date?, contentHash: String?)]) async {
+        await store().upsertOffloads(items)
+        await reloadOffloadLedger()
+        invalidateStatus()
     }
 
-    /// 台帳からの削除（復元＝端末へ再取り込みしたとき）。
-    public func removeOffloads(localIdentifiers: [String]) {
-        guard let context = modelContext else { return }
-        let ids = Set(localIdentifiers)
-        let all = (try? context.fetch(FetchDescriptor<OffloadRecord>())) ?? []
-        for record in all where ids.contains(record.localIdentifier) {
-            context.delete(record)
-        }
-        try? context.save()
-        reloadOffloadLedger()
+    /// 台帳からの削除（復元＝端末へ再取り込みしたとき・削除キャンセルのロールバック）。
+    public func removeOffloads(localIdentifiers: [String]) async {
+        await store().removeOffloads(localIdentifiers: localIdentifiers)
+        await reloadOffloadLedger()
     }
 
     /// 機種変更・再インストール後の台帳再構築: metadata v2 の `offloadedAt` マーカー付き
     /// エントリから復元する（ユーザー削除の写真は対象外＝マーカーの有無で区別）。
     /// 既存台帳が空のときだけ実行する（実端末の台帳が正）。
-    public func rebuildOffloadLedgerIfEmpty(from metadata: DropboxBackupMetadata) {
+    public func rebuildOffloadLedgerIfEmpty(from metadata: DropboxBackupMetadata) async {
+        if !cachesWarmed { await warmCaches() }
         guard offloadRecordCount == 0 else { return }
         let candidates = BackupMetadataPlanning.offloadCandidates(from: metadata.entries)
         guard !candidates.isEmpty else { return }
         addLog("Rebuilding offload ledger from metadata (\(candidates.count) entries)…")
-        recordOffloads(candidates)
+        await recordOffloads(candidates)
     }
 
-    /// 台帳を SwiftData から読み直してメモリキャッシュを更新する（起動時・変更時）。
-    func reloadOffloadLedger() {
-        guard let context = modelContext,
-              let records = try? context.fetch(FetchDescriptor<OffloadRecord>()) else {
-            offloadedPathsByAlbum = [:]
-            return
-        }
-        var byAlbum: [String: [(Date?, String)]] = [:]
-        for record in records {
-            for album in record.albums {
-                byAlbum[album, default: []].append((record.captureDate, record.dropboxPath))
-            }
-        }
-        offloadedPathsByAlbum = byAlbum.mapValues { list in
-            list.sorted { ($0.0 ?? .distantPast) < ($1.0 ?? .distantPast) }.map(\.1)
-        }
+    /// 台帳キャッシュを store から読み直す（変更時）。
+    func reloadOffloadLedger() async {
+        let (byAlbum, count) = await store().offloadLedgerSnapshot()
+        offloadedPathsByAlbum = byAlbum
+        offloadCount = count
     }
 
     // MARK: - Logging
@@ -378,9 +352,12 @@ extension BackupEngine: BackupRunnerDelegate {
 
     func runnerSetPhase(_ newPhase: Phase) {
         phase = newPhase
-        // 完了時に progressStore から読み直す（409＝Dropbox に既存で「済み」扱いになった分は
-        // runnerSaveRecord を通らないため、ここで確実に取り込む）。
-        if case .completed = newPhase { reloadBackedUpIDs() }
+        // 完了時に台帳∪記録から読み直す（409＝Dropbox に既存で「済み」扱いになった分は
+        // runnerSaveRecord を通らないため、ここで確実に取り込む）。状況キャッシュも無効化。
+        if case .completed = newPhase {
+            invalidateStatus()
+            Task { await reloadBackedUpIDs() }
+        }
     }
 
     func runnerLog(_ message: String) {
@@ -390,14 +367,20 @@ extension BackupEngine: BackupRunnerDelegate {
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
                           people: [String], albums: [String], isFavorite: Bool,
                           contentHash: String?) {
-        saveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
-                   people: people, albums: albums, isFavorite: isFavorite,
-                   contentHash: contentHash)
-        backedUpIDs.insert(asset.localIdentifier)   // バッジ判定キャッシュを即時更新
+        // 永続化はオフメイン（store actor）。バッジ判定キャッシュだけ即時更新する。
+        let localIdentifier = asset.localIdentifier
+        let creationDate = asset.creationDate
+        Task {
+            await store().upsertRecord(dropboxPath: dropboxPath, localIdentifier: localIdentifier,
+                                       filename: filename, creationDate: creationDate,
+                                       contentHash: contentHash,
+                                       people: people, albums: albums, isFavorite: isFavorite)
+        }
+        backedUpIDs.insert(localIdentifier)
+        invalidateStatus()
     }
 
-    func runnerRecordedLocalIdentifiers() -> Set<String> {
-        recordedLocalIdentifiers()
+    func runnerRecordedLocalIdentifiers() async -> Set<String> {
+        await store().recordedLocalIdentifiers()
     }
-
 }

@@ -162,8 +162,8 @@ public final class OffloadService {
     public func execute(assets: [OffloadableAsset], limit: Int,
                         recordLedger: ([(localIdentifier: String, dropboxPath: String,
                                         albums: [String], captureDate: Date?,
-                                        contentHash: String?)]) -> Void,
-                        rollbackLedger: ([String]) -> Void) async -> (deleted: [String], skipped: [(String, String)]) {
+                                        contentHash: String?)]) async -> Void,
+                        rollbackLedger: ([String]) async -> Void) async -> (deleted: [String], skipped: [(String, String)]) {
         guard let token = try? await tokenProvider.freshAccessToken() else {
             log("offload.execute: authentication failed")
             return ([], [])
@@ -193,14 +193,14 @@ public final class OffloadService {
              albums: v.asset.albums, captureDate: v.asset.captureDate,
              contentHash: Optional(v.hash))
         }
-        recordLedger(ledgerItems)
+        await recordLedger(ledgerItems)   // 記録の完了を待ってから削除する（不変条件）
 
         // 3. 削除（PhotoKit＝OS 確認ダイアログ・「最近削除した項目」へ）。
         let ids = verified.map(\.asset.localIdentifier)
         let deleted = await deleter.delete(localIdentifiers: ids)
         guard deleted else {
             log("offload.execute: deletion cancelled — rolling back ledger (\(ids.count))")
-            rollbackLedger(ids)
+            await rollbackLedger(ids)
             return ([], skipped)
         }
         log("offload.execute: deleted \(ids.count) photo(s), verified hashes, ledger recorded")

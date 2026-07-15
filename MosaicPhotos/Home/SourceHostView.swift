@@ -35,6 +35,7 @@ struct SourceHostView<Content: View>: View {
                 insight.faceCount = await faces
                 // バックアップ状態のバッジ（端末写真のみ）。id は "L-…"/"C-…"（refKey）または
                 // 生の localIdentifier / Dropbox パス。クラウド写真は対象外（nil＝非表示）。
+                // キャッシュのウォーム前は nil（バッジ非表示）＝誤って「未バックアップ」を出さない。
                 if let localID = Self.localIdentifier(fromItemID: id) {
                     insight.isBackedUp = await backupEngine.isBackedUp(localIdentifier: localID)
                 }

@@ -86,7 +86,7 @@ public struct BackupDebugSection: View {
             // 台帳（UserDefaults）だけでなく SwiftData 記録も消す全消去。
             // ⚠️ 台帳のみのクリアは、済み判定が「台帳 ∪ 記録」になったため見かけ上効かない。
             Button("Clear ALL Backup Records (progress + records)", role: .destructive) {
-                engine.clearAllBackupRecords()
+                Task { await engine.clearAllBackupRecords() }
                 reconcileResult = nil
             }
             .disabled(engine.isRunning)
