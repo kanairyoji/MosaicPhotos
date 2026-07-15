@@ -11,10 +11,14 @@ public struct OffloadSettingsView: View {
 
     @AppStorage(BackupSettingsKeys.offloadRealDeletionEnabled) private var realDeletionEnabled = false
     @AppStorage(BackupSettingsKeys.offloadMaxPerRun) private var maxPerRun = 10
+    /// 自動オフロードの発動条件（空き容量 MB・0 = オフロードしない）。本体は未実装のため、
+    /// 0 以外を選ぶと案内を出して 0 へ戻す（設定枠の先行実装）。
+    @AppStorage(BackupSettingsKeys.offloadAutoThresholdMB) private var autoThresholdMB = 0
     @State private var plan: OffloadPlan?
     @State private var isPlanning = false
     @State private var isExecuting = false
     @State private var lastResult: String?
+    @State private var showsNotImplemented = false
 
     public init(engine: BackupEngine) {
         self.engine = engine
@@ -27,6 +31,24 @@ public struct OffloadSettingsView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 Picker(L("Photos per run"), selection: $maxPerRun) {
                     ForEach([5, 10, 25, 50], id: \.self) { Text("\($0)").tag($0) }
+                }
+            }
+
+            Section {
+                Picker(L("Auto offload"), selection: $autoThresholdMB) {
+                    Text(L("Don't offload")).tag(0)
+                    ForEach([125, 250, 500, 1024, 2048], id: \.self) { mb in
+                        Text(mb >= 1024 ? "\(mb / 1024) GB" : "\(mb) MB").tag(mb)
+                    }
+                }
+            } footer: {
+                Text(L("When free space on this device drops below the selected amount, verified old photos will be offloaded automatically."))
+            }
+            .onChange(of: autoThresholdMB) { _, newValue in
+                // 自動オフロード本体は未実装。選択されたら案内を出して「オフロードしない」へ戻す。
+                if newValue != 0 {
+                    showsNotImplemented = true
+                    autoThresholdMB = 0
                 }
             }
 
@@ -58,6 +80,11 @@ public struct OffloadSettingsView: View {
             }
         }
         .navigationTitle(L("Offload"))
+        .alert(L("Auto offload is not available yet"), isPresented: $showsNotImplemented) {
+            Button(L("OK"), role: .cancel) {}
+        } message: {
+            Text(L("Automatic offloading is not implemented yet. The setting has been reset to “Don't offload”."))
+        }
     }
 
     @ViewBuilder

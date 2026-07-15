@@ -13,4 +13,7 @@ public enum BackupSettingsKeys {
     public static let offloadRealDeletionEnabled = "offloadRealDeletionEnabled"
     /// 1 回のオフロードで削除する上限枚数（既定 10・段階導入）。
     public static let offloadMaxPerRun = "offloadMaxPerRun"
+    /// 自動オフロードの発動条件（空き容量のしきい値 MB・0 = オフロードしない）。
+    /// ⚠️ 自動オフロード本体は未実装。UI は選択時に案内を出して 0 へ戻す（先行して設定枠だけ用意）。
+    public static let offloadAutoThresholdMB = "offloadAutoThresholdMB"
 }
