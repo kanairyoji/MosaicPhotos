@@ -28,6 +28,9 @@ public final class BackupEngine {
     /// オフロード台帳のメモリキャッシュ: アルバム名 → クラウド代替の Dropbox パス（撮影日昇順）。
     /// 端末アルバムを開くたびに SwiftData を引かず同期参照できるようにする（台帳が空なら空辞書）。
     @ObservationIgnored private var offloadedPathsByAlbum: [String: [String]] = [:]
+    /// バックアップ済み localIdentifier のメモリキャッシュ（フル画像ビューのバッジ判定用・同期参照）。
+    /// 起動時に progressStore から読み、アップロード成功のたびに追記、完了フェーズで読み直す。
+    @ObservationIgnored private var backedUpIDs: Set<String> = []
 
     // SwiftData レコード/アルバム永続化は BackupEngine+Store.swift（extension）に分離しているため、
     // そこから参照する modelContext / addLog / 上記の集計状態は internal にしている。
@@ -94,6 +97,7 @@ public final class BackupEngine {
 
     /// バックアップ進捗（アップロード済み ID 一覧）を消去する。次回は全件再判定になる（Debug 用）。
     public func clearUploadProgress() {
+        backedUpIDs = []
         progressStore.saveUploadedIDs([])
     }
 
@@ -104,6 +108,7 @@ public final class BackupEngine {
         // DropboxCacheStore と衝突＝過去にクラッシュ）。壊れた/非互換ストアは削除して作り直す（自己修復）。
         modelContext = ModelContext(Self.makeResilientContainer())
         reloadOffloadLedger()
+        reloadBackedUpIDs()
     }
 
     /// 名前付き永続コンテナを作る。失敗時は store ファイルを削除して再構築し、それでも駄目なら
@@ -151,6 +156,18 @@ public final class BackupEngine {
             addLog("Cancelled by user.")
             phase = .cancelled
         }
+    }
+
+    // MARK: - Backed-up lookup
+
+    /// この localIdentifier の写真は Dropbox へバックアップ済みか（フル画像ビューのバッジ用）。
+    public func isBackedUp(localIdentifier: String) -> Bool {
+        backedUpIDs.contains(localIdentifier)
+    }
+
+    /// バックアップ済み ID キャッシュを progressStore から読み直す。
+    func reloadBackedUpIDs() {
+        backedUpIDs = progressStore.loadUploadedIDs()
     }
 
     // MARK: - Offload ledger (ADR-39)
@@ -247,6 +264,9 @@ extension BackupEngine: BackupRunnerDelegate {
 
     func runnerSetPhase(_ newPhase: Phase) {
         phase = newPhase
+        // 完了時に progressStore から読み直す（409＝Dropbox に既存で「済み」扱いになった分は
+        // runnerSaveRecord を通らないため、ここで確実に取り込む）。
+        if case .completed = newPhase { reloadBackedUpIDs() }
     }
 
     func runnerLog(_ message: String) {
@@ -257,6 +277,7 @@ extension BackupEngine: BackupRunnerDelegate {
                           people: [String], albums: [String], isFavorite: Bool) {
         saveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
                    people: people, albums: albums, isFavorite: isFavorite)
+        backedUpIDs.insert(asset.localIdentifier)   // バッジ判定キャッシュを即時更新
     }
 
 }

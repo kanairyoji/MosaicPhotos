@@ -21,11 +21,14 @@ public struct PhotoInsight: Sendable, Equatable {
     public var faceCount: Int?
     /// スクリーンショット判定（撮影ではなく画面キャプチャか）。
     public var isScreenshot: Bool
+    /// Dropbox へバックアップ済みか。nil = 対象外（クラウド写真）または判定不能。
+    public var isBackedUp: Bool?
     public var status: Status
 
     public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
                 captionPending: Bool = false,
                 faceCount: Int? = nil, isScreenshot: Bool = false,
+                isBackedUp: Bool? = nil,
                 status: Status = .ready) {
         self.tags = tags
         self.people = people
@@ -33,6 +36,7 @@ public struct PhotoInsight: Sendable, Equatable {
         self.captionPending = captionPending
         self.faceCount = faceCount
         self.isScreenshot = isScreenshot
+        self.isBackedUp = isBackedUp
         self.status = status
     }
 

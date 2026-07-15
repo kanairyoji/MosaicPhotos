@@ -86,6 +86,16 @@
         }
       }
     },
+    "Backed up to Dropbox": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox にバックアップ済み"
+          }
+        }
+      }
+    },
     "Camera": {
       "localizations": {
         "ja": {
@@ -322,6 +332,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "タグはまだありません — 充電中に自動で追加されます"
+          }
+        }
+      }
+    },
+    "Not backed up": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未バックアップ"
           }
         }
       }

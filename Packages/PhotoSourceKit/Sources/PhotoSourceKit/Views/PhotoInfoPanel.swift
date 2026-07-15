@@ -65,6 +65,17 @@ struct PhotoInfoPanel: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
+                // バックアップ状態（端末写真のみ・クラウド写真は nil＝非表示）。
+                if let backedUp = insight.isBackedUp {
+                    if backedUp {
+                        Label(L("Backed up to Dropbox"), systemImage: "checkmark.icloud")
+                            .font(.caption).foregroundStyle(.green)
+                    } else {
+                        Label(L("Not backed up"), systemImage: "icloud.slash")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
                 if !insight.people.isEmpty {
                     header(systemImage: "person.2",
                            title: insight.people.joined(separator: ", "),
