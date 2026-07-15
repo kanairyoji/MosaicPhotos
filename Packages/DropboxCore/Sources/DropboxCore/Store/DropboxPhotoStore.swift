@@ -248,24 +248,47 @@ public final class DropboxPhotoStore {
 
     // MARK: - Backup metadata
 
-    /// バックアップフォルダの `.mosaic/metadata.json` をダウンロードして `backupMetadata` に保持する。
+    /// バックアップメタデータを読み込んで `backupMetadata` に保持する。
+    /// v1（凍結された `.mosaic/metadata.json`）をベースに、v2（`.mosaic/catalog.json`＋
+    /// 月別シャード）を**上書きマージ**する（ADR-38）。どちらも無ければ nil のまま。
     /// バックアップ完了後、または起動時に呼び出す。
     public func loadBackupMetadata(from folderPath: String) async {
-        let metaPath = folderPath + DropboxInternalConstants.backupMetadataSuffix
-        struct Arg: Encodable { let path: String }
-        guard let argString = encodeDropboxAPIArg(Arg(path: metaPath)) else { return }
+        // 1) v1（凍結ベース）。無ければ空から始める。
+        var merged = await downloadJSON(DropboxBackupMetadata.self,
+                                        path: folderPath + DropboxInternalConstants.backupMetadataSuffix)
+            ?? DropboxBackupMetadata()
+        let v1Count = merged.entries.count
 
-        guard let data = try? await apiClient.contentDownload(
-            url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else {
-            DropboxLogger.info("loadBackupMetadata() — not found or error (\(metaPath))")
+        // 2) v2 カタログ → 各シャードを上書きマージ（新しい書き込みは常に v2 側）。
+        var shardCount = 0
+        if let catalog = await downloadJSON(BackupCatalog.self,
+                                            path: folderPath + BackupMetadataV2.catalogSuffix) {
+            for shard in catalog.shards {
+                guard let shardData = await downloadJSON(
+                    DropboxBackupMetadata.self,
+                    path: folderPath + BackupMetadataV2.shardSuffix(shard)) else { continue }
+                merged = merged.merging(shardData.entries)
+                shardCount += 1
+            }
+        }
+        guard v1Count > 0 || shardCount > 0 else {
+            DropboxLogger.info("loadBackupMetadata() — no metadata found (\(folderPath))")
             return
         }
-        guard let metadata = try? JSONDecoder().decode(DropboxBackupMetadata.self, from: data) else {
-            DropboxLogger.error("loadBackupMetadata() — JSON decode failed")
-            return
-        }
-        backupMetadata = metadata
-        DropboxLogger.info("loadBackupMetadata() — loaded \(metadata.entries.count) entries")
+        backupMetadata = merged
+        DropboxLogger.info("loadBackupMetadata() — loaded \(merged.entries.count) entries (v1=\(v1Count), shards=\(shardCount))")
+    }
+
+    /// downloadJSON 用の Dropbox-API-Arg（ジェネリック関数内に型をネストできないため外出し）。
+    private struct DownloadArg: Encodable { let path: String }
+
+    /// Dropbox からパスの JSON をダウンロードしてデコードする（無い/壊れているときは nil）。
+    private func downloadJSON<T: Decodable>(_ type: T.Type, path: String) async -> T? {
+        guard let argString = encodeDropboxAPIArg(DownloadArg(path: path)),
+              let data = try? await apiClient.contentDownload(
+                  url: DropboxInternalConstants.downloadFileURL, apiArg: argString)
+        else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     // MARK: - Cache limit configuration

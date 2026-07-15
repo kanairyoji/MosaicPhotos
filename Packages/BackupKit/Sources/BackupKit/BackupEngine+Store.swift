@@ -35,28 +35,6 @@ extension BackupEngine {
         }.value
     }
 
-    // MARK: - Metadata
-
-    func buildMetadataEntries(
-        merging newEntries: [String: DropboxBackupMetadata.Entry]
-    ) -> [String: DropboxBackupMetadata.Entry] {
-        var result: [String: DropboxBackupMetadata.Entry] = [:]
-        if let context = modelContext,
-           let records = try? context.fetch(FetchDescriptor<BackupAssetRecord>()) {
-            for record in records {
-                result[record.dropboxPath] = DropboxBackupMetadata.Entry(
-                    people: record.people,
-                    albums: record.albums,
-                    isFavorite: record.isFavorite,
-                    date: record.creationDate.map { ISO8601DateFormatter().string(from: $0) },
-                    contentHash: record.contentHash
-                )
-            }
-        }
-        result.merge(newEntries) { _, new in new }
-        return result
-    }
-
     // MARK: - SwiftData helpers
 
     func saveRecord(

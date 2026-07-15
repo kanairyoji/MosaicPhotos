@@ -70,6 +70,12 @@ public final class BackupEngine {
     /// 実際に使う値は設定（`BackupSettingsKeys.uploadLimit`）が優先される。
     public var debugUploadLimit = 10
 
+    /// 人物名（localIdentifier → 命名済み顔クラスタのフルネーム）を返す seam（ADR-38）。
+    /// BackupKit は AutoAlbumCore に依存しないため、アプリ（Composition Root）が PeopleEngine を結線する。
+    @ObservationIgnored public var peopleNamesProvider: (@Sendable () async -> [String: [String]])?
+    /// VLM キャプション（localIdentifier → 説明文）を返す seam（ADR-38）。アプリが TagStore を結線する。
+    @ObservationIgnored public var captionsProvider: (@Sendable ([String]) async -> [String: String])?
+
     /// 実効アップロード上限。設定キーが存在すればその値、無ければ `debugUploadLimit`。
     var effectiveUploadLimit: Int {
         UserDefaults.standard.object(forKey: BackupSettingsKeys.uploadLimit) == nil
@@ -122,7 +128,9 @@ public final class BackupEngine {
                 uploader: self.uploader,
                 progressStore: self.progressStore,
                 uploadLimit: { self.effectiveUploadLimit },
-                delegate: self
+                delegate: self,
+                peopleNamesProvider: self.peopleNamesProvider,
+                captionsProvider: self.captionsProvider
             )
             // 完走時のみアルバム一覧を更新する（runner の戻り値で通知される）。
             if await runner.run(folder: folder) {
@@ -172,9 +180,4 @@ extension BackupEngine: BackupRunnerDelegate {
                    people: people, albums: albums, isFavorite: isFavorite)
     }
 
-    func runnerBuildMetadataEntries(
-        merging newEntries: [String: DropboxBackupMetadata.Entry]
-    ) -> [String: DropboxBackupMetadata.Entry] {
-        buildMetadataEntries(merging: newEntries)
-    }
 }

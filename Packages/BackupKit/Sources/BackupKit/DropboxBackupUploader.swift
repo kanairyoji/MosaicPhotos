@@ -15,6 +15,22 @@ struct DropboxBackupUploader {
     let httpClient: HTTPClient
 
     private static let uploadURL = "https://content.dropboxapi.com/2/files/upload"
+    private static let downloadURL = "https://content.dropboxapi.com/2/files/download"
+
+    /// パスのファイルをダウンロードする（メタデータ v2 のシャード/カタログ読み込み用）。
+    /// 存在しない・エラー時は nil（呼び出し側は「初回＝空から作る」として扱う）。
+    func download(path: String, token: String) async -> Data? {
+        struct Arg: Encodable { let path: String }
+        guard let argStr = encodeDropboxAPIArg(Arg(path: path)) else { return nil }
+        var req = URLRequest(url: URL(string: Self.downloadURL)!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(argStr, forHTTPHeaderField: "Dropbox-API-Arg")
+        req.timeoutInterval = 60
+        guard let (data, resp) = try? await httpClient.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return data
+    }
 
     /// 写真本体を `mode=add` でアップロードする。
     func upload(data: Data, to path: String, token: String) async -> BackupUploadResult {
@@ -62,6 +78,37 @@ struct DropboxBackupUploader {
             let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
             if code == 200 {
                 return "OK (\(metadata.entries.count) total entries, \(jsonData.count) bytes)"
+            } else {
+                let body = String(data: respData, encoding: .utf8) ?? ""
+                return "HTTP \(code): \(BackupPlanning.dropboxErrorSummary(from: body))"
+            }
+        } catch {
+            return "network error: \(error.localizedDescription)"
+        }
+    }
+
+    /// overwrite アップロード用の Dropbox-API-Arg（ジェネリック関数内に型をネストできないため外出し）。
+    private struct OverwriteArg: Encodable {
+        let path: String
+        let mode = "overwrite"
+        let mute = true
+    }
+
+    /// 任意の Encodable を JSON で overwrite アップロードする（v2 カタログ/シャード用）。
+    /// 戻り値は表示用の結果文字列（uploadMetadata と同形式）。
+    func uploadJSON<T: Encodable>(_ value: T, to path: String, token: String) async -> String {
+        guard let jsonData = try? JSONEncoder().encode(value) else {
+            return "failed (JSON encode error)"
+        }
+        guard let argStr = encodeDropboxAPIArg(OverwriteArg(path: path)) else {
+            return "failed (arg encode error)"
+        }
+        let req = Self.makeRequest(argStr: argStr, body: jsonData, token: token, timeout: 60)
+        do {
+            let (respData, resp) = try await httpClient.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            if code == 200 {
+                return "OK (\(jsonData.count) bytes)"
             } else {
                 let body = String(data: respData, encoding: .utf8) ?? ""
                 return "HTTP \(code): \(BackupPlanning.dropboxErrorSummary(from: body))"

@@ -199,6 +199,11 @@ extension AutoAlbumEngine {
         return BackgroundProcessing.preset(at: index)
     }
 
+    /// refKey → 生成済み VLM キャプション。バックアップの metadata 保全（ADR-38）などアプリ側から使う。
+    public func captions(forRefKeys keys: [String]) async -> [String: String] {
+        await tagStore.captions(forRefKeys: keys)
+    }
+
     /// キャプション済みの写真サンプル（refKey・説明文）。設定「AIによる説明」の確認 UI 用。
     /// VLM キャプションが実際に付いているかを、生成された説明文で目視確認できるようにする。
     public func captionedSamples(limit: Int = 200) async -> [(refKey: String, caption: String)] {

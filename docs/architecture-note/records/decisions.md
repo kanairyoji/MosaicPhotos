@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-38 バックアップメタデータ v2（カタログ＋撮影月シャード・再生成不能情報の保全）
+- 状態: 採用
+- 文脈: 将来「バックアップ済みのローカル写真を端末から削除（オフロード）してストレージを空ける」機能を計画している。削除後もアルバム表示・人物・場所・検索が成立するには、**端末を削除すると再生成できない情報**を Dropbox 側に保全する必要がある。調査の結果、既存 v1（単一 `.mosaic/metadata.json`）には 2 つの問題があった: (1) **欠落** — アルバム/お気に入り/撮影日は保存済みだが、人物名（顔クラスタのユーザー命名＝v1 では常に空）・GPS（EXIF に無い写真は PHAsset が唯一の出典）・localIdentifier（ローカル⇔クラウド対応表）・スクリーンショット判定・VLM キャプションが未保存。(2) **スケール** — 全エントリを毎バックアップで丸ごと書き直すため、6 万枚規模で 15〜25MB/回になる。
+- 決定: **v2 = カタログ＋撮影月シャード**へ移行する。`.mosaic/catalog.json`（スキーマ版・シャード一覧・アルバム/人物カタログ・数 KB）＋ `.mosaic/meta/<YYYY-MM>.json`（撮影月ごとのエントリ集・**触った月だけ**ダウンロード→マージ→アップロード）。Entry に Optional フィールドを追加（localIdentifier / latitude / longitude / isScreenshot / caption / verifiedAt）＝ v1 JSON と相互に読める。人物名は `PeopleEngine.peopleNamesByRefKey()`、キャプションは `TagStore` から seam（`peopleNamesProvider` / `captionsProvider`・Composition Root 結線）で取得。**v1 は凍結**（新規書き込みは v2 のみ）とし、読み込み（`DropboxPhotoStore.loadBackupMetadata`）は「v1 ベース → カタログのシャードを上書きマージ」で統合する。シャード決定は UTC の撮影月（端末 TZ 依存だと同じ写真が別シャードに入るため）・日付不明は `undated`。`verifiedAt` はオフロード実装時の「contentHash 照合済み」記録用に先行定義。
+- 結果: 再生成不能情報が漏れなく Dropbox に残り、オフロード・機種変更・再インストール後の復元材料が揃う。メタデータ通信は「触った月＋カタログ」に有界化。純ロジック（シャード分割/マージ/カタログ更新）は `BackupMetadataPlanning` に分離し macOS テストで固定。トレードオフ: (1) シャード更新は download→merge→upload の 2 往復/月（同時実行や他端末との競合はラストライター勝ち＝バックアップは単一端末運用前提）。(2) v1 ファイルは残置（読み込み統合でカバー・全量 v2 移行ツールは未実装）。(3) オフロード本体（検証つき削除・refKey 移行・アルバム表示の合成）は次段。
+- 関連: `DropboxCore/Models/BackupMetadataV2.swift`（BackupCatalog）・`DropboxBackupMetadata.Entry`（v2 フィールド）・`DropboxPhotoStore.loadBackupMetadata`・`BackupKit/BackupMetadataPlanning.swift`・`BackupRunner`（収集と書き込み）・`DropboxBackupUploader.download/uploadJSON`・`AutoAlbumAdapters`（結線）・`BackupMetadataPlanningTests`。ADR-34（キャプション）・ADR-33（顔クラスタ）。
+
 ## ADR-37 AI アルバム作成の入力支援（サジェストチップ＋接地プレビュー＋ヒット件数）
 - 状態: 採用
 - 文脈: AI アルバムの検索文は自由入力のみで、(1) ライブラリに何があるか（命名済み人物・地名・頻出被写体）を思い出しながら書く必要があり、(2) 書いた文がどう解釈されるか（人物に接地したか・場所が効くか）が作ってみるまで分からなかった。

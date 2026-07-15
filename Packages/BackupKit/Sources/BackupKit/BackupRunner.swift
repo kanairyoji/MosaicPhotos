@@ -17,10 +17,6 @@ protocol BackupRunnerDelegate: AnyObject {
     /// アップロード成功 1 件の SwiftData レコード保存（BackupEngine+Store）。
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
                           people: [String], albums: [String], isFavorite: Bool)
-    /// 既存 SwiftData レコードと新規分をマージした metadata entries を構築する。
-    func runnerBuildMetadataEntries(
-        merging newEntries: [String: DropboxBackupMetadata.Entry]
-    ) -> [String: DropboxBackupMetadata.Entry]
 }
 
 // MARK: - Runner
@@ -39,19 +35,28 @@ final class BackupRunner {
     private let uploadLimit: () -> Int
     /// 通知先。runner は engine の Task ローカルにのみ生存するため強参照でも循環しない。
     private let delegate: BackupRunnerDelegate
+    /// 人物名（localIdentifier → 命名済み顔クラスタのフルネーム）。アプリが PeopleEngine を結線する。
+    /// ユーザー入力（命名）は端末を削除すると再生成できないため metadata に保全する（ADR-38）。
+    private let peopleNamesProvider: (@Sendable () async -> [String: [String]])?
+    /// VLM キャプション（localIdentifier → 説明文）。アプリが TagStore を結線する。
+    private let captionsProvider: (@Sendable ([String]) async -> [String: String])?
 
     init(
         tokenProvider: AccessTokenProvider,
         uploader: DropboxBackupUploader,
         progressStore: BackupProgressStore,
         uploadLimit: @escaping () -> Int,
-        delegate: BackupRunnerDelegate
+        delegate: BackupRunnerDelegate,
+        peopleNamesProvider: (@Sendable () async -> [String: [String]])? = nil,
+        captionsProvider: (@Sendable ([String]) async -> [String: String])? = nil
     ) {
         self.tokenProvider = tokenProvider
         self.uploader = uploader
         self.progressStore = progressStore
         self.uploadLimit = uploadLimit
         self.delegate = delegate
+        self.peopleNamesProvider = peopleNamesProvider
+        self.captionsProvider = captionsProvider
     }
 
     /// 背景アップロードを行ってよいか（電源＋回線ポリシー）。アップロードループの一時停止判定に使う。
@@ -83,10 +88,12 @@ final class BackupRunner {
         // **常に空**だったため撤去。metadata の people は空を維持する（互換のためキーは残す）。
         setPhase(.buildingPeopleIndex)
         addLog("Building Album index…")
-        let peopleIndex: [String: [String]] = [:]
+        // 人物名はアプリの顔クラスタ（PeopleEngine・ユーザー命名）から取得する（v2・ADR-38）。
+        // 旧 People インデックス（subtype-1000）は常に空だったため撤去済み。
+        let peopleIndex: [String: [String]] = await peopleNamesProvider?() ?? [:]
         let albumIndex = await Task.detached { buildAlbumIndex() }.value
         let uniqueAlbums = Set(albumIndex.values.flatMap { $0 }).count
-        addLog("Index built — albums: \(uniqueAlbums)")
+        addLog("Index built — albums: \(uniqueAlbums), people entries: \(peopleIndex.count)")
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
 
         // 3. 全画像アセットを日付昇順で取得
@@ -119,6 +126,10 @@ final class BackupRunner {
             return false
         }
 
+        // 4.5 アップロード対象のキャプションを一括取得（アプリ生成・小さいテキストのみ）。
+        let captionsByID: [String: String] =
+            await captionsProvider?(pending.map(\.localIdentifier)) ?? [:]
+
         // 5. Dropbox 認証
         addLog("Fetching Dropbox access token…")
         let token: String
@@ -134,7 +145,7 @@ final class BackupRunner {
         var uploadedCount = 0
         var skippedCount  = 0
         var trackedIDs    = doneIDs
-        var newEntries: [String: DropboxBackupMetadata.Entry] = [:]
+        var newEntries: [BackupMetadataPlanning.NewEntry] = []
 
         for (i, asset) in pending.enumerated() {
             guard !Task.isCancelled else { setPhase(.cancelled); return false }
@@ -177,12 +188,21 @@ final class BackupRunner {
                 let people     = peopleIndex[asset.localIdentifier] ?? []
                 let albums     = albumIndex[asset.localIdentifier] ?? []
                 let isFavorite = asset.isFavorite
-                newEntries[dropboxPath.lowercased()] = DropboxBackupMetadata.Entry(
-                    people: people,
-                    albums: albums,
-                    isFavorite: isFavorite,
-                    date: asset.creationDate.map { ISO8601DateFormatter().string(from: $0) }
-                )
+                // v2（ADR-38）: 端末を削除すると再生成できない情報を漏れなく保全する。
+                newEntries.append(BackupMetadataPlanning.NewEntry(
+                    path: dropboxPath.lowercased(),
+                    date: asset.creationDate,
+                    entry: DropboxBackupMetadata.Entry(
+                        people: people,
+                        albums: albums,
+                        isFavorite: isFavorite,
+                        date: asset.creationDate.map { ISO8601DateFormatter().string(from: $0) },
+                        localIdentifier: asset.localIdentifier,
+                        latitude: asset.location?.coordinate.latitude,
+                        longitude: asset.location?.coordinate.longitude,
+                        isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot),
+                        caption: captionsByID[asset.localIdentifier]
+                    )))
                 delegate.runnerSaveRecord(
                     dropboxPath: dropboxPath, asset: asset, filename: filename,
                     people: people, albums: albums, isFavorite: isFavorite
@@ -210,14 +230,28 @@ final class BackupRunner {
 
         progressStore.saveUploadedIDs(trackedIDs)
 
-        // 7. metadata.json を Dropbox へ送信（既存 SwiftData レコードと新規分をマージ）
+        // 7. メタデータ v2（ADR-38）: 触った撮影月シャードだけをマージ更新し、カタログを書く。
+        //    v1 metadata.json は凍結（読み込み側が v1 ベース＋v2 上書きで統合する）。
         if !newEntries.isEmpty {
             setPhase(.uploadingMetadata)
-            addLog("Uploading metadata.json (\(newEntries.count) new entries)…")
-            let metadata = DropboxBackupMetadata(entries: delegate.runnerBuildMetadataEntries(merging: newEntries))
-            let metaPath = folder + BackupEngine.metadataSuffix
-            let metaResult = await uploader.uploadMetadata(metadata, to: metaPath, token: token)
-            addLog("metadata.json: \(metaResult)")
+            let byShard = BackupMetadataPlanning.groupedByShard(newEntries)
+            addLog("Uploading metadata v2 (\(newEntries.count) entries → \(byShard.count) shard(s))…")
+            for (shard, entries) in byShard.sorted(by: { $0.key < $1.key }) {
+                let shardPath = folder + BackupMetadataV2.shardSuffix(shard)
+                let existing = await uploader.download(path: shardPath, token: token)
+                let merged = BackupMetadataPlanning.mergedShard(existing: existing, adding: entries)
+                let result = await uploader.uploadJSON(merged, to: shardPath, token: token)
+                addLog("  meta/\(shard).json (+\(entries.count) → \(merged.entries.count)): \(result)")
+            }
+            let catalogPath = folder + BackupMetadataV2.catalogSuffix
+            let existingCatalog = await uploader.download(path: catalogPath, token: token)
+            let albumNames = Array(Set(albumIndex.values.flatMap { $0 })).sorted()
+            let peopleNames = Array(Set(peopleIndex.values.flatMap { $0 })).sorted()
+            let catalog = BackupMetadataPlanning.updatedCatalog(
+                existing: existingCatalog, touchedShards: Array(byShard.keys),
+                albums: albumNames, people: peopleNames)
+            let catResult = await uploader.uploadJSON(catalog, to: catalogPath, token: token)
+            addLog("  catalog.json (shards=\(catalog.shards.count)): \(catResult)")
         }
 
         let totalSkipped = alreadySkipped + skippedCount + (pending.count - uploadedCount - skippedCount)
