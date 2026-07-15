@@ -31,20 +31,31 @@ public struct AIAlbumGroundingPreview: Sendable, Equatable {
     public init() {}
 }
 
-/// サジェスト/プレビュー用のライブラリスナップショット（engine が保持・5 分失効）。
+/// サジェスト/プレビュー用のライブラリスナップショット。
+/// 失効は時間でなく**件数変化**で判定する（A5）: enrichment 総数と埋め込み済み数が
+/// 変わらない限り再利用（COUNT クエリ 2 本 ≪ 全メタ再フェッチ）。夜間バッチが進んだ
+/// 次のコンポーザー表示で自然に再構築される。
 struct AIAlbumSuggestionSnapshot {
     let lite: [EnrichedPhoto]
     let catalog: AIAlbumCatalog
     let people: [String]           // 命名済み顔クラスタのフルネーム
     let topTags: [String]
     let builtAt: Date
+    let enrichmentCount: Int       // 構築時の取り込み済み写真数
+    let embeddedCount: Int         // 構築時の埋め込み済み写真数
 }
 
 extension AutoAlbumEngine {
 
-    /// スナップショットの取得（5 分キャッシュ）。初回はライブラリ全メタ＋カタログ＋頻出タグを構築する。
+    /// スナップショットの取得。件数（取り込み済み・埋め込み済み）が変わっていなければ
+    /// キャッシュを再利用する（A5・COUNT クエリ 2 本で判定）。初回・変化時はライブラリ
+    /// 全メタ＋カタログ＋頻出タグを構築する。
     private func suggestionData() async -> AIAlbumSuggestionSnapshot {
-        if let cached = suggestionSnapshot, Date().timeIntervalSince(cached.builtAt) < 300 {
+        async let enrichmentCountTask = store.enrichmentCount()
+        async let embeddedCountTask = store.embeddedCount()
+        let (enrichmentCount, embeddedCount) = (await enrichmentCountTask, await embeddedCountTask)
+        if let cached = suggestionSnapshot,
+           cached.enrichmentCount == enrichmentCount, cached.embeddedCount == embeddedCount {
             return cached
         }
         let lite = await store.allEnrichedPhotosLite()
@@ -53,7 +64,9 @@ extension AutoAlbumEngine {
         let catalog = await Task.detached(priority: .userInitiated) { AIAlbumCatalog.build(from: lite) }.value
         let snapshot = AIAlbumSuggestionSnapshot(lite: lite, catalog: catalog,
                                                  people: await people, topTags: await tags,
-                                                 builtAt: Date())
+                                                 builtAt: Date(),
+                                                 enrichmentCount: enrichmentCount,
+                                                 embeddedCount: embeddedCount)
         suggestionSnapshot = snapshot
         return snapshot
     }

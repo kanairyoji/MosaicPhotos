@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-43 バックアップ系のオフメイン化と横断リファクタリング（体感チューニング一式）
+- 状態: 採用
+- 文脈: リファクタリング＋パフォーマンス候補の棚卸しで、体感に効く問題を複数特定した。(A1) BackupEngine が plain ModelContext を直接使い、起動時の全記録 fetch×2・毎枚 save・照合の全件 fetch が**メインスレッド**で走る（AutoAlbumStore の実測 14.5s ハングと同型の罠）。(A2) バックアップメタデータを毎起動フルダウンロード（v1 最大 15〜25MB＋全シャード・逐次）し MainActor でデコード。(A3) バックアップ画面を開くたび全ライブラリ列挙。(A4) フル画像の情報パネルが 1 枚ごとに直列 4 fetch。(A5) コンポーザーのスナップショットが 5 分で無条件失効（再訪のたび 85k 再フェッチ）。構造面では (B1) BackupEngine の肥大、(B2) uploader 5 エンドポイントのリクエスト組み立てコピペ、(B3) シャード書き込みの 2 実装、(B4) JSON 取得の 3 実装、(B6) Runner 330 行の一本道。
+- 決定: (A1/B1) SwiftData を **`BackupStore`（@ModelActor・`makeDetached()` でオフメイン生成）**へ全面移管し、境界は Sendable 値（`BackupRecordLite`）。Engine はキャッシュ＋コーディネータに縮退、起動時キャッシュウォームは非同期化。`isBackedUp` はウォーム前 nil（誤バッジ防止）。(A2) メタデータ読み込みを **rev ベースのローカルキャッシュ**（get_metadata で版数確認・一致なら Caches から・不一致のみ DL）＋**並列取得**＋**オフメインデコード/マージ**に。(A3) 状況集計をキャッシュし記録変更で無効化。(A4) insight のタグ/キャプション/CLIP ラベル照会を並列化。(A5) スナップショット失効を「時間」から「**件数変化**」（enrichment/embedded の COUNT 比較）に変更＝夜間バッチが進まない限り再構築しない。(B2) contentRequest/rpcRequest/rpcJSON へ一元化。(B3) `MetadataShardWriter` に download→merge→upload を集約。(B4) `fetchJSON` に一元化。(B6) Runner をフェーズメソッド（権限→索引→差分→アップロード→メタデータ）へ分割（挙動不変）。
+- 結果: 起動時のメインスレッド SwiftData がゼロに・メタデータの起動時通信は「rev 確認のみ」（変更が無ければ本文 DL ゼロ）・情報パネルとコンポーザー再訪が高速化。トレードオフ: (1) rev 確認の RPC は JSON ファイル数ぶん発生（数百バイト×N・並列）。(2) バッジはキャッシュウォーム完了まで非表示（数百 ms 級）。(3) OffloadService の台帳コールバックが async 化（「記録が先」の不変条件は await で担保・テスト更新済み）。B5（QuerySpec の DNF 簡素化）は検索品質ハーネスでの検証つきで別途。
+- 関連: `BackupKit/BackupStore.swift`・`MetadataShardWriter.swift`・`BackupRunner`（フェーズ分割）・`DropboxBackupUploader`（共通ビルダー）・`DropboxPhotoStore.fetchCachedJSON`・`AutoAlbumEngine+Recognition.insight`・`AutoAlbumEngine+Suggestions`。ADR-26（横断リファクタリング）・事例「@ModelActor がメインで実行」の続き。
+
 ## ADR-42 夜間の自動バックアップ（重い処理ウィンドウへの相乗り）＋状況表示
 - 状態: 採用
 - 文脈: バックアップは手動「Back Up Now」のみで、アプリを開いたまま完走を待つ必要があった。一方、AI 索引（タグ/埋め込み/キャプション/顔）は夜間の BGProcessingTask（電源＋Wi-Fi＋非使用・ADR-25）で自動進行しており、バックアップも同じ条件で動くのが自然。また「どこまでバックアップされているか」が実行中の進捗（N/M）以外に見えなかった。

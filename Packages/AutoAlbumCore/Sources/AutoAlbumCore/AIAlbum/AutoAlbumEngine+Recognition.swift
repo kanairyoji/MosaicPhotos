@@ -17,18 +17,28 @@ extension AutoAlbumEngine {
         for refKey in keys {
             guard let rec = await store.insightRecord(refKey: refKey) else { continue }
             let status: PhotoInsight.Status = rec.tagged ? .ready : .analyzing
-            // タグ表示は Vision シーンタグ（校正済み・検索と同一の台帳）を第一に、
-            // CLIP ゼロショットの表示ラベルで補完する（重複除去・最大10個）。
-            var tags = (await tagStore.tags(forRefKeys: [refKey]))[refKey] ?? []
+            // A4 パフォーマンス: タグ・キャプションの照会を**並列**で発行する（旧: 直列 await ×3
+            // ＝スワイプ連打時のパネル表示遅延）。CLIP 表示ラベルも rec を得た時点で並行に走らせる。
+            async let tagsTask = tagStore.tags(forRefKeys: [refKey])
+            async let captionTask = tagStore.captions(forRefKeys: [refKey])
             // CLIP 表示ラベルは**準備できているときだけ**合成する。未構築だと labels() が CLIP テキスト
             // タワーのロード（初回〜数十秒）＋約300語構築を同期で走らせ、insight が返らず（パネルが
             // 空/loading のまま）になる（実測: 画像タワー 34s）。prewarm 完了までは Vision タグだけで即返す。
-            if let vector = rec.photo.clipVector, let labelProvider, labelProvider.isReady {
-                let clipLabels = await labelProvider.labels(forEmbedding: vector)
+            async let clipLabelsTask: [String] = {
+                if let vector = rec.photo.clipVector, let labelProvider, labelProvider.isReady {
+                    return await labelProvider.labels(forEmbedding: vector)
+                }
+                return []
+            }()
+            // タグ表示は Vision シーンタグ（校正済み・検索と同一の台帳）を第一に、
+            // CLIP ゼロショットの表示ラベルで補完する（重複除去・最大10個）。
+            var tags = (await tagsTask)[refKey] ?? []
+            let clipLabels = await clipLabelsTask
+            if !clipLabels.isEmpty {
                 let seen = Set(tags.map { $0.lowercased() })
                 tags += clipLabels.filter { !seen.contains($0.lowercased()) }
             }
-            let caption = (await tagStore.captions(forRefKeys: [refKey]))[refKey]
+            let caption = (await captionTask)[refKey]
             let hasCaption = caption?.isEmpty == false
             // キャプションは**お気に入り限定**なので、「生成中」は VLM 同梱かつ未生成かつ**お気に入り**のときだけ出す
             // （非お気に入りは今後も付かないので空欄でよい・誤って「生成中」を出さない）。
@@ -95,12 +105,13 @@ extension AutoAlbumEngine {
     }
 
     private func makeAIAlbum(id: String, title: String, criteria: String) async -> AIAlbumResult {
-        // コンポーザーがチップ/接地プレビュー用に構築済みのスナップショット（5 分以内）を渡し、
+        // コンポーザーがチップ/接地プレビュー用に構築済みのスナップショットを渡し、
         // make 内の全メタ再フェッチ（数万件の SwiftData fetch＝最重量部）を省く。
-        // 新規写真の反映は夜間の増分再評価が受け持つので 5 分の鮮度で十分。
+        // 鮮度は件数変化で管理される（A5・コンポーザー表示のたびに検証済み）。make は常に
+        // コンポーザー経由なので実質最新。保険として 30 分の上限だけ残す。
         let lite: [EnrichedPhoto]? = {
             guard let snap = suggestionSnapshot,
-                  Date().timeIntervalSince(snap.builtAt) < 300 else { return nil }
+                  Date().timeIntervalSince(snap.builtAt) < 1800 else { return nil }
             return snap.lite
         }()
         let (result, albums) = await aiService.make(id: id, title: title, criteria: criteria,
