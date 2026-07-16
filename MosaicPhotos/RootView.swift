@@ -44,6 +44,15 @@ final class HomeStores {
         let auth = DropboxAuthService(appKey: DropboxConfig.appKey, redirectURI: DropboxConfig.redirectURI)
         await Task.yield()
         let dropboxStore = DropboxPhotoStore(auth: auth)
+        // ADR-44: 同期対象＝「選択ソースフォルダ＋バックアップフォルダ」（常に両方）。
+        // バックアップフォルダを含めることで、オフロードのクラウド代替・バックアップ済み
+        // 写真の表示がソースフォルダ設定に左右されない。
+        dropboxStore.syncRootsProvider = {
+            let backupRoot = backupNormalizedPath(
+                UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                    ?? BackupSettingsKeys.defaultDropboxFolder)
+            return [DropboxSourceSettings.currentSourceFolder(), backupRoot]
+        }
         await Task.yield()
         let mergedStore = MergedPhotoStore(dropboxStore: dropboxStore)
         await Task.yield()

@@ -61,8 +61,10 @@ extension DropboxCacheStore {
         if let items = try? modelContext.fetch(FetchDescriptor<CachedDropboxItem>()) {
             for item in items { modelContext.delete(item) }
         }
-        if let state = fetchSyncState(accountId: accountId) {
-            modelContext.delete(state)
+        // SyncState は素の accountId 行に加え、フォルダスコープの複合キー行
+        //（"accountId|/path"・ADR-44）も持ち得るため、全行を削除する（単一アカウント運用）。
+        if let states = try? modelContext.fetch(FetchDescriptor<DropboxSyncState>()) {
+            for state in states { modelContext.delete(state) }
         }
         if let entries = try? modelContext.fetch(FetchDescriptor<CacheUsageEntry>()) {
             for entry in entries { modelContext.delete(entry) }

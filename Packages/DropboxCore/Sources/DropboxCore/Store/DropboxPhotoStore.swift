@@ -25,6 +25,9 @@ public final class DropboxPhotoStore {
     @ObservationIgnored let apiClient: DropboxAPIClient
     @ObservationIgnored let thumbnailBatcher: DropboxThumbnailBatcher
     @ObservationIgnored private var lastKnownAccountId: String?
+    /// 同期対象ルートの供給 seam（ADR-44）。アプリ（Composition Root）が
+    /// 「選択ソースフォルダ＋バックアップフォルダ」を返すよう結線する。既定は全体。
+    @ObservationIgnored public var syncRootsProvider: () -> [String] = { [""] }
     @ObservationIgnored private var syncEngine: DropboxSyncEngine?
 
     // キャッシュ→items 反映のスロットリング用。
@@ -140,6 +143,25 @@ public final class DropboxPhotoStore {
         syncState = .initialSync(fetched: 0)
         updateLoadStatus()
 
+        // ADR-44: 同期対象ルート（選択フォルダ＋バックアップフォルダ・正規化/包含畳み込み済み）。
+        // 前回と変わっていたら、カーソルはパスに紐づくためキャッシュを破棄して作り直す
+        //（スコープ外アイテムの残留と cursor 不整合を防ぐ）。
+        let roots = DropboxSourceSettings.normalizedRoots(syncRootsProvider())
+        let rootsMarkerKey = "dropboxSyncRoots:\(accountId)"
+        let rootsMarker = roots.joined(separator: "\u{1F}")
+        if let stored = UserDefaults.standard.string(forKey: rootsMarkerKey), stored != rootsMarker {
+            DropboxLogger.info("startSync() — sync roots changed; resetting cache for rescan")
+            Task {
+                await cache.clearAll(accountId: accountId)
+                items = []
+                UserDefaults.standard.set(rootsMarker, forKey: rootsMarkerKey)
+                syncEngine?.start(accountId: accountId, roots: roots)
+            }
+            // エンジン生成は下で済ませてから上の Task が start する（既存エンジンがあればそのまま）。
+        } else {
+            UserDefaults.standard.set(rootsMarker, forKey: rootsMarkerKey)
+        }
+
         if syncEngine == nil {
             syncEngine = DropboxSyncEngine(
                 apiClient: apiClient,
@@ -171,8 +193,12 @@ public final class DropboxPhotoStore {
             )
         }
 
-        syncEngine?.start(accountId: accountId)
-        DropboxLogger.info("DropboxPhotoStore: startSync() accountId=\(accountId)")
+        // ルート変更時は上の Task（クリア後）が start する。通常はここで即 start。
+        let storedMarker = UserDefaults.standard.string(forKey: "dropboxSyncRoots:\(accountId)")
+        if storedMarker == rootsMarker {
+            syncEngine?.start(accountId: accountId, roots: roots)
+        }
+        DropboxLogger.info("DropboxPhotoStore: startSync() accountId=\(accountId) roots=\(roots.map { $0.isEmpty ? "/" : $0 })")
     }
 
     /// キャッシュ→items 反映をスロットリングして実行する。
@@ -244,6 +270,15 @@ public final class DropboxPhotoStore {
         lastKnownAccountId = nil
         backupMetadata = nil
         DropboxLogger.info("resetLoad() — state cleared")
+    }
+
+    /// 読み込み対象フォルダの変更を適用する（ADR-44・設定 UI から呼ぶ）。
+    /// 同期を止めて再スタートする。ルートが変わっていれば startSync 内の
+    /// マーカー検知がキャッシュを破棄して初回同期をやり直す。
+    public func applySourceFolderChange() {
+        syncEngine?.stop()
+        syncState = .idle
+        startSync()
     }
 
     // MARK: - Backup metadata

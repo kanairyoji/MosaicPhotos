@@ -21,9 +21,14 @@ public struct DropboxSettingsView: View {
         self.store = store
     }
 
+    /// 読み込み対象フォルダの編集中テキスト（確定時に適用）。
+    @State private var sourceFolderText = UserDefaults.standard.string(
+        forKey: DropboxSourceSettings.sourceFolderKey) ?? "/"
+
     public var body: some View {
         Group {
             dropboxConnectionSection
+            sourceFolderSection
             performanceSection
             activitySection
             cacheLimitsSection
@@ -36,6 +41,37 @@ public struct DropboxSettingsView: View {
             Task { await store?.applyCacheLimits(thumbnailMB: dropboxThumbLimitMB, fullImageMB: dropboxFullImageLimitMB) }
             store?.applyThumbnailConcurrency(thumbnailConcurrency)
         }
+    }
+
+    // MARK: - Source folder (ADR-44)
+
+    private var sourceFolderSection: some View {
+        Section {
+            TextField(L("Folder path (\u{201C}/\u{201D} = everything)"), text: $sourceFolderText)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit { applySourceFolder() }
+            if normalizedPreview != DropboxSourceSettings.currentSourceFolder() {
+                Button(L("Apply (resyncs the folder)")) { applySourceFolder() }
+            }
+        } header: {
+            Text(L("Source Folder"))
+        } footer: {
+            Text(L("Only photos under this folder are shown and indexed. Default \u{201C}/\u{201D} covers your whole Dropbox. Your backup folder is always included. Changing the folder clears the cached listing and rescans."))
+        }
+    }
+
+    private var normalizedPreview: String {
+        DropboxSourceSettings.normalized(sourceFolderText)
+    }
+
+    private func applySourceFolder() {
+        let normalized = DropboxSourceSettings.normalized(sourceFolderText)
+        sourceFolderText = normalized.isEmpty ? "/" : normalized
+        UserDefaults.standard.set(sourceFolderText, forKey: DropboxSourceSettings.sourceFolderKey)
+        // 同期を再スタート（ルートが変わっていれば store 側のマーカー検知が
+        // キャッシュ破棄→初回同期をやり直す）。
+        store?.applySourceFolderChange()
     }
 
     // MARK: - Dropbox connection section

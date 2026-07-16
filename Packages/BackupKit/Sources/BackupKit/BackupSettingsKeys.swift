@@ -22,7 +22,7 @@ public enum BackupSettingsKeys {
 
 /// Dropbox パスの正規化（先頭スラッシュ付与・末尾スラッシュ除去）。
 /// 通常設定・Debug セクション・エンジン（夜間自動実行）で共用するため internal（UIKit 非依存）。
-func backupNormalizedPath(_ path: String) -> String {
+public func backupNormalizedPath(_ path: String) -> String {
     var s = path.trimmingCharacters(in: .whitespaces)
     if s.isEmpty { return "/" }
     if !s.hasPrefix("/") { s = "/" + s }

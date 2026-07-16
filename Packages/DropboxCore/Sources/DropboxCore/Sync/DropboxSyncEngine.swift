@@ -55,10 +55,15 @@ final class DropboxSyncEngine {
 
     // MARK: - Start / Stop
 
-    func start(accountId: String) {
+    /// 同期を開始する（ADR-44: マルチルート対応）。
+    /// - Parameter roots: 同期対象ルートの配列（正規化済み・非包含）。"" = アカウント全体。
+    ///   先頭がユーザー選択のソースフォルダ（UI 状態を駆動）、以降はバックアップフォルダ等の
+    ///   追加スコープ（**静かに**同期＝UI 状態を変えない・エラーのみログ）。
+    func start(accountId: String, roots: [String] = [""]) {
         stop()
-        syncTask = Task { await syncLoop(accountId: accountId) }
-        DropboxLogger.info("SyncEngine: start() accountId=\(accountId)")
+        let effectiveRoots = roots.isEmpty ? [""] : roots
+        syncTask = Task { await syncAll(accountId: accountId, roots: effectiveRoots) }
+        DropboxLogger.info("SyncEngine: start() accountId=\(accountId) roots=\(effectiveRoots.map { $0.isEmpty ? "/" : $0 })")
     }
 
     func stop() {
@@ -68,78 +73,106 @@ final class DropboxSyncEngine {
 
     // MARK: - Sync loop entry point
 
-    private func syncLoop(accountId: String) async {
-        let cursor = (await cache.syncStateInfo(accountId: accountId))?.cursor
+    /// ルートごとの同期ループを並行に走らせる（通常 1〜2 本）。
+    private func syncAll(accountId: String, roots: [String]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for (index, root) in roots.enumerated() {
+                let isPrimary = (index == 0)
+                group.addTask { @MainActor [weak self] in
+                    await self?.syncLoop(accountId: accountId, root: root, isPrimary: isPrimary)
+                }
+            }
+            await group.waitForAll()
+        }
+    }
+
+    /// カーソルの保存キー。ルート "" は従来どおり素の accountId（既存インストールのカーソルを
+    /// 生かし、全体スコープのままの更新で不要な全再同期を起こさない）。フォルダルートは
+    /// "accountId|/path" の複合キー（DropboxSyncState の行を流用・アイテムはグローバル共有）。
+    private static func scopeKey(accountId: String, root: String) -> String {
+        root.isEmpty ? accountId : accountId + "|" + root.lowercased()
+    }
+
+    private func syncLoop(accountId: String, root: String, isPrimary: Bool) async {
+        let scopeKey = Self.scopeKey(accountId: accountId, root: root)
+        let cursor = (await cache.syncStateInfo(accountId: scopeKey))?.cursor
         let itemCount = await cache.cachedItemCount(accountId: accountId)
         // カーソルがあっても **アイテムが 0** ならキャッシュ不整合（取りこぼし・空のまま固定）とみなし、
         // ポーリングではなく初回スキャンをやり直して自己修復する（「接続済みなのに No photos」の解消）。
         if let cursor, itemCount > 0 {
-            DropboxLogger.info("SyncEngine: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
-            await pollLoop(accountId: accountId, startCursor: cursor)
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
+            await pollLoop(scopeKey: scopeKey, startCursor: cursor, isPrimary: isPrimary)
         } else {
-            DropboxLogger.info("SyncEngine: \(cursor == nil ? "no cursor" : "cursor present but 0 items") — starting initial sync")
-            await initialSync(accountId: accountId)
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(cursor == nil ? "no cursor" : "cursor present but 0 items") — starting initial sync")
+            await initialSync(accountId: accountId, root: root, scopeKey: scopeKey, isPrimary: isPrimary)
         }
+    }
+
+    /// UI 状態の報告（プライマリルートのみ）。追加ルートは静かに同期する。
+    private func reportState(_ state: DropboxPhotoStore.SyncState, isPrimary: Bool) {
+        if isPrimary { onStateChanged(state) }
     }
 
     // MARK: - Parallel initial sync
 
-    private func initialSync(accountId: String) async {
+    private func initialSync(accountId: String, root: String, scopeKey: String, isPrimary: Bool) async {
         do {
-            onStateChanged(.initialSync(fetched: 0))
+            reportState(.initialSync(fetched: 0), isPrimary: isPrimary)
 
             // Step 1: ロングポールのベースラインカーソルをスキャン開始前に確保。
             // これにより、スキャン中の変更はポーリングフェーズで差分として拾われる。
-            let baselineCursor = try await getLatestCursor()
-            guard !Task.isCancelled else { onStateChanged(.idle); return }
-            DropboxLogger.info("SyncEngine: baseline cursor acquired")
+            let baselineCursor = try await getLatestCursor(path: root)
+            guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: baseline cursor acquired")
 
-            // Step 2: ルートの非再帰スキャン（ルート直下ファイル + トップレベルフォルダ一覧）
-            var rootImages: [DropboxFileItem] = []
-            var topFolders: [String] = []
-            var shallowCursor: String? = nil
-            var shallowHasMore = true
-            while shallowHasMore {
-                guard !Task.isCancelled else { onStateChanged(.idle); return }
-                let page = try await fetchDeltaPage(cursor: shallowCursor, path: "", recursive: false)
-                rootImages.append(contentsOf: page.added)
-                topFolders.append(contentsOf: page.subfolderPaths)
-                shallowCursor = page.cursor
-                shallowHasMore = page.hasMore
+            // Step 2: スキャン対象フォルダ列を決める。
+            // - 全体（root == ""）: ルートの非再帰スキャン → ルート直下ファイル＋トップレベルフォルダ列
+            //   （フォルダごとに進捗書き込み＝万件規模でスピナー固定を防ぐ従来方式）。
+            // - フォルダ指定: そのフォルダ 1 本を再帰スキャン（ページ単位で進捗書き込み）。
+            var allImages: [DropboxFileItem] = []
+            var scanFolders: [String] = []
+            if root.isEmpty {
+                var topFolders: [String] = []
+                var shallowCursor: String? = nil
+                var shallowHasMore = true
+                while shallowHasMore {
+                    guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+                    let page = try await fetchDeltaPage(cursor: shallowCursor, path: "", recursive: false)
+                    allImages.append(contentsOf: page.added)
+                    topFolders.append(contentsOf: page.subfolderPaths)
+                    shallowCursor = page.cursor
+                    shallowHasMore = page.hasMore
+                }
+                DropboxLogger.info("SyncEngine: root scan — \(allImages.count) root images, \(topFolders.count) top-level folders")
+                // ルート直下の画像をすぐに書き込む（フォルダスキャン中も即表示）
+                if !allImages.isEmpty {
+                    await cache.applyDelta(accountId: scopeKey,
+                                     added: allImages, removed: [],
+                                     newCursor: baselineCursor)
+                    onCacheUpdated()
+                }
+                scanFolders = topFolders
+            } else {
+                scanFolders = [root]
             }
-            DropboxLogger.info("SyncEngine: root scan — \(rootImages.count) root images, \(topFolders.count) top-level folders")
 
-            var allImages = rootImages
-
-            // ルート直下の画像をすぐに書き込む（フォルダスキャン中も即表示）
-            if !rootImages.isEmpty {
-                await cache.applyDelta(accountId: accountId,
-                                 added: rootImages, removed: [],
-                                 newCursor: baselineCursor)
-                onCacheUpdated()
-            }
-
-            // Step 3: 各トップレベルフォルダを順番に再帰スキャン。
+            // Step 3: 各フォルダを順番に再帰スキャン。
             // ⚠️ withThrowingTaskGroup で @MainActor タスクを並列化すると iOS 17 で
             //    group の結果が返ってこなくなる問題が発生したため、逐次処理に変更。
-            //    @MainActor 上では await ごとにアクターを手放すため
-            //    UI 応答性は損なわれない。
             // ⚠️ ページ単位で即時書き込む（ページ完了ごとに applyDelta + onCacheUpdated）。
-            //    以前はフォルダの全ページ完了後に一括書き込みしていたが、
-            //    万件規模の Dropbox では全ページ完了まで UI がスピナーのままになる問題があった。
-            for folderPath in topFolders {
-                guard !Task.isCancelled else { onStateChanged(.idle); return }
+            for folderPath in scanFolders {
+                guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
                 var cur: String? = nil
                 var more = true
                 while more {
-                    guard !Task.isCancelled else { onStateChanged(.idle); return }
+                    guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
                     let pg = try await fetchDeltaPage(cursor: cur, path: folderPath, recursive: true)
                     if !pg.added.isEmpty {
                         allImages.append(contentsOf: pg.added)
-                        await cache.applyDelta(accountId: accountId,
+                        await cache.applyDelta(accountId: scopeKey,
                                          added: pg.added, removed: [],
                                          newCursor: baselineCursor)
-                        onStateChanged(.initialSync(fetched: allImages.count))
+                        reportState(.initialSync(fetched: allImages.count), isPrimary: isPrimary)
                         onCacheUpdated()
                     }
                     cur = pg.cursor
@@ -147,38 +180,42 @@ final class DropboxSyncEngine {
                 }
             }
 
-            guard !Task.isCancelled else { onStateChanged(.idle); return }
+            guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
 
             // Step 4: 古いキャッシュエントリを除去し、最終カーソルを確実に保存。
-            let cachedPaths = Set(await cache.cachedItems(accountId: accountId).map(\.path))
+            // ⚠️ prune は**このルートの配下だけ**を対象にする（マルチルートで他ルートの
+            //    アイテムを消さない）。root == "" は正規化により単独なので全体が対象。
+            let prefix = root.isEmpty ? "" : root.lowercased() + "/"
+            let cachedPaths = Set(await cache.cachedItems(accountId: accountId).map(\.path)
+                .filter { prefix.isEmpty || $0.lowercased().hasPrefix(prefix) })
             let fetchedPaths = Set(allImages.map(\.path))
             let stalePaths = Array(cachedPaths.subtracting(fetchedPaths))
 
-            await cache.applyDelta(accountId: accountId,
+            await cache.applyDelta(accountId: scopeKey,
                              added: [], removed: stalePaths,
                              newCursor: baselineCursor)
             // 空 Dropbox・ stale 削除・画像なしの場合も必ず onCacheUpdated を呼び
             // .polling 移行前に state を確定させる。
             onCacheUpdated()
-            DropboxLogger.info("SyncEngine: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
-            await pollLoop(accountId: accountId, startCursor: baselineCursor)
+            await pollLoop(scopeKey: scopeKey, startCursor: baselineCursor, isPrimary: isPrimary)
 
         } catch is CancellationError {
-            onStateChanged(.idle)
+            reportState(.idle, isPrimary: isPrimary)
         } catch {
-            DropboxLogger.error("SyncEngine: initial sync error — \(error.localizedDescription)")
-            onStateChanged(.error(error.localizedDescription))
+            DropboxLogger.error("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync error — \(error.localizedDescription)")
+            reportState(.error(error.localizedDescription), isPrimary: isPrimary)
         }
     }
 
     // MARK: - Longpoll loop
 
-    private func pollLoop(accountId: String, startCursor: String) async {
+    private func pollLoop(scopeKey: String, startCursor: String, isPrimary: Bool) async {
         var cursor = startCursor
 
         while !Task.isCancelled {
-            onStateChanged(.polling)
+            reportState(.polling, isPrimary: isPrimary)
 
             do {
                 let result = try await longpoll(cursor: cursor)
@@ -191,13 +228,13 @@ final class DropboxSyncEngine {
                 }
 
                 if result.changes {
-                    onStateChanged(.fetchingDelta)
+                    reportState(.fetchingDelta, isPrimary: isPrimary)
                     var deltaHasMore = true
                     while deltaHasMore && !Task.isCancelled {
                         let page = try await fetchDeltaPage(cursor: cursor)
                         deltaHasMore = page.hasMore
                         cursor = page.cursor
-                        await cache.applyDelta(accountId: accountId,
+                        await cache.applyDelta(accountId: scopeKey,
                                          added: page.added, removed: page.removed,
                                          newCursor: page.cursor)
                         if !page.added.isEmpty || !page.removed.isEmpty {
@@ -220,7 +257,7 @@ final class DropboxSyncEngine {
                 break
             } catch {
                 DropboxLogger.error("SyncEngine: poll error — \(error.localizedDescription)")
-                onStateChanged(.error(error.localizedDescription))
+                reportState(.error(error.localizedDescription), isPrimary: isPrimary)
                 do {
                     try await Task.sleep(nanoseconds: DropboxInternalConstants.retryDelayNs)
                 } catch {
@@ -229,7 +266,7 @@ final class DropboxSyncEngine {
             }
         }
 
-        onStateChanged(.idle)
+        reportState(.idle, isPrimary: isPrimary)
         DropboxLogger.info("SyncEngine: poll loop ended")
     }
 
@@ -237,9 +274,9 @@ final class DropboxSyncEngine {
 
     /// 現時点の最新カーソルを取得する。ファイル一覧は返さない。
     /// 並列初回スキャン前に呼び出し、スキャン中の変更をポーリングで拾う起点とする。
-    private func getLatestCursor() async throws -> String {
+    private func getLatestCursor(path: String = "") async throws -> String {
         struct Body: Encodable {
-            let path = ""
+            let path: String
             let recursive = true
             let limit = DropboxInternalConstants.listFolderPageLimit
         }
@@ -247,7 +284,7 @@ final class DropboxSyncEngine {
 
         let data = try await rpc(
             DropboxInternalConstants.listFolderLatestCursorURL,
-            body: try JSONEncoder().encode(Body()),
+            body: try JSONEncoder().encode(Body(path: path)),
             endpoint: "getLatestCursor")
         return try JSONDecoder().decode(Response.self, from: data).cursor
     }
