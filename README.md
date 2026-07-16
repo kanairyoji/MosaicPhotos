@@ -68,6 +68,18 @@
   <sub>Months with few photos are packed together under date-range headers (e.g. “2021-02 – 2021-04”) so the grid stays dense; adjustable in Settings → Photo Grid.</sub>
 </td>
 </tr>
+<tr>
+<td align="center" width="50%">
+  <img src="docs/screenshots/ai-analysis.jpg" width="230" alt="AI Analysis Status"><br>
+  <b>AI Analysis Status</b><br>
+  <sub>See exactly what the on-device AI has done: per-pass progress (semantic index, scene tags, AI descriptions), last-run times, an <i>Analyze&nbsp;Now</i> button, and a screen to review generated descriptions next to their photos.</sub>
+</td>
+<td align="center" width="50%">
+  <img src="docs/screenshots/grid-dense.jpg" width="230" alt="Grid with filters"><br>
+  <b>Fast grids with filters</b><br>
+  <sub>Every grid scrolls through tens of thousands of photos smoothly. The bottom-bar filter button narrows any view to favorites only, or to device-only / cloud-only photos.</sub>
+</td>
+</tr>
 </table>
 
 <sub>Screenshots captured in the iOS Simulator.</sub>
@@ -84,7 +96,7 @@
 - **Cloud** — Browse Dropbox photos. Background delta sync keeps the list fresh; thumbnails (256 px) and originals are cached locally.
 - **Albums** — Your user-created device albums, scanned and cached independently.
 - **Places** — Photos grouped by city using **on-device reverse geocoding**, combining located photos from both the device and Dropbox. Grows automatically as more location data arrives.
-- **Settings & Backup** — Connect Dropbox, tune cache limits, and back up device photos to Dropbox (with people / album / favorite metadata).
+- **Backup — verified, automatic, family-friendly** — Back up device photos to Dropbox with **content-hash verification**: a photo is only marked “backed up” after Dropbox confirms the uploaded bytes match (name collisions are detected the same way and auto-renamed). Runs **automatically at night** alongside the AI indexing (charging + Wi-Fi + not in use), with a **“Backed up X / Y”** status in Settings and a per-photo badge in the full-screen view. Each device backs up into its **own subfolder** (e.g. `iPhone-3F2A8C`), so a family sharing one Dropbox account never collides. Preserved alongside each photo: albums, favorites, people names, GPS and AI descriptions — everything needed to survive a reinstall or a future device-storage **offload** (a verified, dry-run-first preview screen already ships).
 - **Background work, battery & data** — Two independent controls keep battery and cellular data in check.
   - **Processing Timing** (Settings → Albums & Search → Auto Albums) decides **when the heavy AI work runs** (scene tags, CLIP embeddings, captions, face scanning, album generation), in five steps: *Paused — manual only* · *Automatic — while not in use* (**default**: charging + Wi-Fi + app not in use, including locked via BGProcessingTask) · *Also while using the app (charging)* · *Also on battery (Wi-Fi)* · *No limits (mobile data too)*. At every level, Low Power Mode and memory pressure always pause the work.
   - **Background & Battery** (Settings → General) is the app-wide policy for the remaining continuous/periodic background work (Dropbox sync, backup, scanning): **power** (While charging / Always / Off — default *While charging*) and **network** (Cellular allowed / Wi-Fi only / Wi-Fi, skip Low Data / Off — default *Wi-Fi only*). Photos you open or browse are always fetched — only automatic background traffic is limited. An optional top-of-screen **activity bar** visualizes power/network state and live background/Dropbox activity.
@@ -105,7 +117,8 @@ MosaicPhotos (app)
 ├── LocalPhotoKit     device-photo UI (depends on LocalPhotoCore)
 ├── DropboxCore       Dropbox logic — OAuth/PKCE, HTTP API client, sync engine, cache (SwiftUI-free)
 ├── DropboxKit        Dropbox UI layer (depends on DropboxCore)
-├── BackupKit         device → Dropbox backup engine
+├── BackupKit         device → Dropbox backup: verified uploads (content hash), nightly
+│                     auto-run, per-device folders, offload ledger + preview
 ├── PhotosFeatureKit  merges local + Dropbox (MergedPhotoStore) and place grouping
 ├── AutoAlbumCore     auto albums + on-device AI logic (SwiftUI-free): Time & Place trips,
 │                     folder-name albums, composable query model (OR/NOT), search & fusion,
