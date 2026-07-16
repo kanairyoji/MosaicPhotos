@@ -81,4 +81,14 @@ public struct MobileCLIPTextEmbedder: TextEmbedder {
             MobileCLIPRuntime.shared.encodeText(tokens)
         }.value
     }
+
+    /// テキストタワーの遅延ロード（Core ML コンパイル・初回数秒）を **utility 優先度**で前倒しする。
+    /// userInitiated だと画面遷移アニメーションと性能コアを奪い合い、コンポーザーの開閉が
+    /// もたつく（実障害）。ウォームアップは急がない＝低優先度で十分。
+    public func prewarm() async {
+        await Task.detached(priority: .utility) {
+            guard MobileCLIPRuntime.shared.isAvailable, let tokenizer = CLIPTokenizer.shared else { return }
+            _ = MobileCLIPRuntime.shared.encodeText(tokenizer.encode("a photo"))
+        }.value
+    }
 }

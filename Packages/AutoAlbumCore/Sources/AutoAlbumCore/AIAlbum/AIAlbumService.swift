@@ -168,7 +168,7 @@ final class AIAlbumService {
     /// 未ロードのまま「作成」を押すと初回ロード（Core ML コンパイル・数秒〜十数秒）が
     /// make の検索フェーズに乗ってしまう。捨てクエリを 1 回埋め込んでロードを済ませておく。
     func prewarmTextEmbedder() async {
-        _ = await embedder.textEmbedder?.embed("a photo")
+        await embedder.textEmbedder?.prewarm()
     }
 
     func delete(id: String) async -> [AutoAlbumInfo] {
@@ -223,28 +223,37 @@ final class AIAlbumService {
                   var saved = interpreter.saved(for: album.id), saved.criteria == criteria,
                   saved.evaluatedEmbedCount > 0 else { continue }
 
-            // ハード条件（相対日付は now で解決）を新規分に適用。
-            var base = QueryEvaluator.hardFilter(newPhotos, spec: saved.spec, now: now,
-                                                 peopleByRefKey: await peopleMapIfNeeded(for: saved.spec))
+            // ハード条件の適用＋意味採点（decode＋vDSP コサイン×新規枚数）は**オフメイン**で行う。
+            // 増分再評価はフォアグラウンドの埋め込み進行中にも走るため、メインに載せると
+            // 閲覧操作と CPU を奪い合う（AI アルバム見直しの一環・ADR-43 系）。
+            let spec = saved.spec
+            let peopleMap = await peopleMapIfNeeded(for: spec)
+            let faceCounts = await faceCountsIfNeeded(for: spec)
             saved.evaluatedEmbedCount += newRefKeys.count
-            // 対策2: 人系の除外があれば顔の実測（faceCount>0）をハード除外（フル評価と同じ規則）。
-            if let faceCounts = await faceCountsIfNeeded(for: saved.spec) {
-                base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
-            }
-            guard !base.isEmpty else { interpreter.save(saved, for: album.id); continue }
-
-            // 意味採点（クエリ埋め込みはキャッシュ）。埋め込み不可なら評価枚数だけ進める。
+            // 意味採点のクエリ埋め込み（キャッシュ）。埋め込み不可なら評価枚数だけ進める。
             guard let q = await queryVectors(for: saved) else {
                 interpreter.save(saved, for: album.id)
                 continue
             }
-            var added: [String: Float] = [:]
-            for photo in base {
-                guard let data = newVectors[photo.id], let v = ClipMath.decode(data) else { continue }
-                // 採点規則（max-over-probes＋除外の相対判定）はフル評価と同一（QueryEmbedder に一元化）。
-                guard let pos = QueryEmbedder.semanticScore(q, photoVector: v) else { continue }
-                added[photo.id] = pos
-            }
+            let (base, added) = await Task.detached(priority: .utility) {
+                () -> ([EnrichedPhoto], [String: Float]) in
+                // ハード条件（相対日付は now で解決）を新規分に適用。
+                var base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
+                                                     peopleByRefKey: peopleMap)
+                // 対策2: 人系の除外があれば顔の実測（faceCount>0）をハード除外（フル評価と同じ規則）。
+                if let faceCounts {
+                    base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
+                }
+                var added: [String: Float] = [:]
+                for photo in base {
+                    guard let data = newVectors[photo.id], let v = ClipMath.decode(data) else { continue }
+                    // 採点規則（max-over-probes＋除外の相対判定）はフル評価と同一（QueryEmbedder に一元化）。
+                    guard let pos = QueryEmbedder.semanticScore(q, photoVector: v) else { continue }
+                    added[photo.id] = pos
+                }
+                return (base, added)
+            }.value
+            guard !base.isEmpty else { interpreter.save(saved, for: album.id); continue }
             guard !added.isEmpty else { interpreter.save(saved, for: album.id); continue }
 
             saved.scoredPool = AIAlbumSearcher.mergePool(saved.scoredPool, adding: added)

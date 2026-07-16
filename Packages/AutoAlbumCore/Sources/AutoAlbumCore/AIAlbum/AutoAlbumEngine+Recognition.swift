@@ -95,7 +95,9 @@ extension AutoAlbumEngine {
     /// 済ませておく（未ロードだと「作成」タップ後の検索フェーズに初回ロードが乗る）。
     /// スナップショット（全メタ）はコンポーザーの `albumSuggestions()` 呼び出しが構築する。
     public func prepareAIComposer() {
-        Task(priority: .userInitiated) {
+        // utility: ウォームアップは急がない。userInitiated だとシートの開閉アニメーションと
+        // CPU を奪い合ってもたつく（実障害）。ロード自体も embedder 側で utility 実行。
+        Task(priority: .utility) {
             await aiService.prewarmTextEmbedder()
         }
     }

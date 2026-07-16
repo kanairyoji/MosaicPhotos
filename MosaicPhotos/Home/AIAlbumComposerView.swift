@@ -87,6 +87,10 @@ struct AIAlbumComposerView: View {
             }
         }
         .task {
+            // 表示アニメーション（約 0.3s）を先に通す。スナップショット再構築・CLIP テキスト
+            // タワーの初回ロードが遷移と同時に始まると CPU を奪い合い、開閉がもたつく（実障害）。
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
             // CLIP テキストタワーを入力中に温める（未ロードだと「作成」タップ後に初回ロードが乗る）。
             engine.prepareAIComposer()
             suggestions = await engine.albumSuggestions()

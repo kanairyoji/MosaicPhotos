@@ -61,7 +61,8 @@ extension AutoAlbumEngine {
         let lite = await store.allEnrichedPhotosLite()
         async let tags = tagStore.topTags(limit: 40)
         async let people = aiService.namedPeopleProvider?() ?? []
-        let catalog = await Task.detached(priority: .userInitiated) { AIAlbumCatalog.build(from: lite) }.value
+        // utility: 表示を直接待たせない前処理（チップは出来次第表示される）。
+        let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: lite) }.value
         let snapshot = AIAlbumSuggestionSnapshot(lite: lite, catalog: catalog,
                                                  people: await people, topTags: await tags,
                                                  builtAt: Date(),

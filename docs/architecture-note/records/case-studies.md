@@ -425,3 +425,10 @@
 - 対処: (1) **Reconcile with Dropbox**（照合）を実装: `files/list_folder`（再帰・continue 対応）でバックアップフォルダ以下の実ファイル一覧（path→content_hash）を取得し、実在しない/hash が矛盾する記録を削除、台帳も「照合に合格した記録」へ置き換える（409 誤記録時代の記録なし済み ID もここで一掃）。(2) **Clear ALL Backup Records**（台帳＋記録の全消去）を Debug に追加——全消去しても Dropbox に実在する分は次回バックアップの 409→hash 照合で再アップロードなしに「済み」へ復帰する。
 - 関連: ADR-40〜42。`DropboxBackupUploader.listFolder` / `BackupEngine.reconcileWithDropbox` / `clearAllBackupRecords` / `BackupDebugSection`。
 - 残課題: 照合は手動（Debug）。夜間の自動監査（定期 reconcile）への昇格は運用を見て判断。
+
+## AI アルバム編集シートの開閉がもたつく（ウォームアップとの CPU 競合）
+- 症状: AI アルバムの編集画面を開いて閉じるだけで妙に時間がかかる（シートの開閉アニメーションがもたつく）。
+- 原因: シート表示と**同時**に走るウォームアップ群との CPU 競合。(1) CLIP テキストタワーの初回ロード（Core ML コンパイル・数秒）を `userInitiated` の detached タスクで実行しており、性能コアを遷移アニメーションと奪い合っていた。(2) サジェスト用スナップショット再構築（85k lite フェッチ＋カタログ構築）も userInitiated。メインスレッドのブロックではなく**優先度の高い並行 CPU 負荷**が原因（dismiss 自体は即時設計だった）。
+- 対処: (a) コンポーザーの `.task` を **350ms 遅延**させ、表示アニメーション完了後にウォームアップを開始。(b) `TextEmbedder.prewarm()`（既定 no-op）を新設し、テキストタワーの前倒しロードを **utility 優先度**で実行（実クエリの embed は userInitiated のまま）。(c) カタログ構築も utility に。(d) あわせて増分再評価（refreshIncremental）の採点ループ（hardFilter＋decode＋vDSP コサイン×新規枚数）が **MainActor で実行**されていたのをオフメイン（detached・utility）へ——フォアグラウンドの埋め込み進行中に閲覧操作とメインを奪い合っていた。
+- 関連: `AIAlbumComposerView` / `AutoAlbumEngine+Recognition.prepareAIComposer` / `MobileCLIPTextEmbedder.prewarm` / `AIAlbumService.refreshIncremental`。ADR-43（体感チューニング）の続き。
+- 残課題: 開閉の所要は実機で要確認（PerfTrace `home.present` で計測可能）。JSONFileStore（解釈の保存）はメイン実行のまま（書き込みは KB 級で許容）。

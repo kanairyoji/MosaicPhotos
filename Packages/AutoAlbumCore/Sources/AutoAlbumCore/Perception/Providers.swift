@@ -59,6 +59,14 @@ public protocol PhotoPerceptionProvider: Sendable {
 public protocol TextEmbedder: Sendable {
     var isAvailable: Bool { get }
     func embed(_ text: String) async -> [Float]?
+    /// モデルの遅延ロードを**低優先度で**前倒しする（コンポーザー表示時のウォームアップ用）。
+    /// embed(_:) は実クエリ用の高優先度なので、ウォームアップに使うと画面遷移アニメーションと
+    /// CPU を奪い合う（実障害: 編集シートの開閉がもたつく）。既定は no-op。
+    func prewarm() async
+}
+
+public extension TextEmbedder {
+    func prewarm() async {}
 }
 
 /// 任意言語の検索文を英語へ正規化する（CLIP は英語学習のため）。実体はアプリ側
