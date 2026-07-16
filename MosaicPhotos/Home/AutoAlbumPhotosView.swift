@@ -13,8 +13,11 @@ struct AutoAlbumPhotosView: View {
     @State private var store: MergedPhotoStore
     private let album: AutoAlbumInfo
 
-    init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore) {
-        let localStore = LocalPhotoStore(localIdentifiers: album.localIdentifiers)
+    init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex) {
+        // 索引（起動時構築）があれば辞書引きで即構築、無ければ従来のフェッチにフォールバック。
+        let memberIDs = album.localIdentifiers
+        let localStore = assetIndex.assets(for: memberIDs).map { LocalPhotoStore(preloadedAssets: $0) }
+            ?? LocalPhotoStore(localIdentifiers: memberIDs)
         _store = State(initialValue: MergedPhotoStore(
             dropboxStore: dropboxStore,
             localStore: localStore,

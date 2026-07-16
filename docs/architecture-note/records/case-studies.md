@@ -432,3 +432,10 @@
 - 対処: (a) コンポーザーの `.task` を **350ms 遅延**させ、表示アニメーション完了後にウォームアップを開始。(b) `TextEmbedder.prewarm()`（既定 no-op）を新設し、テキストタワーの前倒しロードを **utility 優先度**で実行（実クエリの embed は userInitiated のまま）。(c) カタログ構築も utility に。(d) あわせて増分再評価（refreshIncremental）の採点ループ（hardFilter＋decode＋vDSP コサイン×新規枚数）が **MainActor で実行**されていたのをオフメイン（detached・utility）へ——フォアグラウンドの埋め込み進行中に閲覧操作とメインを奪い合っていた。
 - 関連: `AIAlbumComposerView` / `AutoAlbumEngine+Recognition.prepareAIComposer` / `MobileCLIPTextEmbedder.prewarm` / `AIAlbumService.refreshIncremental`。ADR-43（体感チューニング）の続き。
 - 残課題: 開閉の所要は実機で要確認（PerfTrace `home.present` で計測可能）。JSONFileStore（解釈の保存）はメイン実行のまま（書き込みは KB 級で許容）。
+
+## アルバム系ビューのオープンが遅い（メンバー ID フェッチのライブラリ走査）
+- 症状: AI アルバム（＋ピープル/場所/端末アルバム）を開くと表示までワンテンポ待たされる。
+- 原因: 開くたびに `PHAsset.fetchAssets(withLocalIdentifiers:)` を実行しており、メンバーが数千件あるとライブラリ走査で数百 ms 級かかる（オフメインだが time-to-first-content を直接遅らせる）。`local.loadAssets` の計測マークで確認可能。
+- 対処: **PHAsset 全ライブラリ索引（`LocalAssetIndex`）**を起動後の段階起動（3 秒遅延・utility）で一度だけ構築し、アルバムオープンを **O(メンバー数) の辞書引き**（`LocalPhotoStore(preloadedAssets:)` 新設）に変更。索引未構築時は従来フェッチにフォールバック、索引構築後に追加された写真は不足分だけ小さく追いフェッチ（取りこぼしなし）。AI アルバム・ピープル・場所・端末アルバムの 4 ビューすべてに適用。
+- 関連: `MosaicPhotos/Home/LocalAssetIndex.swift` / `LocalPhotoCore.LocalPhotoStore（preloaded init）` / 各アルバムビュー。ADR-43 の続き。
+- 残課題: 索引は起動時スナップショット（追いフェッチで補正）。PHPhotoLibraryChangeObserver での自動更新は必要になったら。索引の常駐（数万 PHAsset 参照＋ID 文字列 ≈ 10MB 級）は LocalPhotoStore(.all) と同規模で許容。

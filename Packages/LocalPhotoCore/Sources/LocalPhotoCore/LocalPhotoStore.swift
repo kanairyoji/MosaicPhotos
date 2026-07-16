@@ -59,6 +59,8 @@ public final class LocalPhotoStore {
         /// BackupAssetRecord から集計した localIdentifier リストで取得する。
         /// PHAssetCollection は使わない（アルバム情報はバックアップ収集データに依存する）。
         case identifiers([String])
+        /// PHAsset を**構築済みで**受け取る（LocalAssetIndex の辞書引き・フェッチ不要）。
+        case preloaded
     }
     @ObservationIgnored private let source: Source
 
@@ -75,9 +77,23 @@ public final class LocalPhotoStore {
         authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
 
+    /// 解決済みの PHAsset 群で即座に構築する（アルバムを開く体感高速化）。
+    /// `fetchAssets(withLocalIdentifiers:)` はメンバー数が多いと数百 ms 級のライブラリ走査に
+    /// なるため、起動時に構築した索引（LocalAssetIndex）の辞書引き結果を直接受け取る。
+    /// 並び順は呼び出し側で撮影日昇順に整えて渡す。
+    public init(preloadedAssets: [PHAsset]) {
+        source = .preloaded
+        authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        // ⚠️ init 内の代入では didSet（items 構築）が走らないため、両方を明示的に設定する。
+        assets = preloadedAssets
+        items = preloadedAssets.map { LocalPhotoItem(asset: $0) }
+        loadCompleted = true
+    }
+
     public func requestAccess() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         authorizationStatus = status
+        if case .preloaded = source { return }   // 構築済み＝フェッチ不要
         if status == .authorized || status == .limited {
             await loadAssets()
         }
@@ -100,6 +116,8 @@ public final class LocalPhotoStore {
                 list.reserveCapacity(result.count)
                 result.enumerateObjects { asset, _, _ in list.append(asset) }
                 return list
+            case .preloaded:
+                return []   // requestAccess でガード済み（到達しない）
             case .identifiers(let ids):
                 // fetchAssets(withLocalIdentifiers:) は sortDescriptors を無視するため
                 // 後段で creationDate 昇順にソートしなおす。

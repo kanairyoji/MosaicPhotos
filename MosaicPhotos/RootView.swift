@@ -21,6 +21,8 @@ final class HomeStores {
     let peopleEngine: PeopleEngine
     let placeScanner: PlaceScanner
     let autoAlbumEngine: AutoAlbumEngine
+    /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
+    let assetIndex = LocalAssetIndex()
 
     private init(dropboxStore: DropboxPhotoStore, mergedStore: MergedPhotoStore,
                  backupEngine: BackupEngine, albumScanner: LocalAlbumScanner,

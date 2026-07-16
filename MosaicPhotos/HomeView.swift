@@ -22,6 +22,7 @@ struct HomeView: View {
     @State var albumScanner: LocalAlbumScanner
     /// ピープル（人物＝顔アルバム）スキャナー。端末の写真アプリで名前を付けた人を取得する。
     @State var peopleEngine: PeopleEngine
+    let assetIndex: LocalAssetIndex
     /// 場所（市区町村）スキャナー。ローカル＋Dropbox の位置情報をまとめてグルーピングする。
     @State var placeScanner: PlaceScanner
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
@@ -60,6 +61,7 @@ struct HomeView: View {
         self._peopleEngine = State(initialValue: stores.peopleEngine)
         self._placeScanner = State(initialValue: stores.placeScanner)
         self._autoAlbumEngine = State(initialValue: stores.autoAlbumEngine)
+        self.assetIndex = stores.assetIndex
     }
 
     var body: some View {
@@ -111,14 +113,14 @@ struct HomeView: View {
                     // 端末アルバム＝ローカル現存分＋オフロード済みクラウド代替の合成表示（ADR-39）。
                     // 台帳が空なら従来のローカルのみ表示と完全に同じ。
                     DeviceAlbumPhotosView(album: album, dropboxStore: dropboxStore,
-                                          backupEngine: backupEngine)
+                                          backupEngine: backupEngine, assetIndex: assetIndex)
                 case .person(let person):
                     // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
-                    PersonAlbumView(person: person, dropboxStore: dropboxStore)
+                    PersonAlbumView(person: person, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 case .place(let place):
-                    PlacePhotosView(place: place, dropboxStore: dropboxStore)
+                    PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 case .autoAlbum(let album):
-                    AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore)
+                    AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 }
             }
             .perfScreenEnd("home.present")   // 計測: ホーム→各画面のフルスクリーン表示の所要
@@ -136,7 +138,8 @@ struct HomeView: View {
             placeScanner: placeScanner,
             albumScanner: albumScanner,
             peopleEngine: peopleEngine,
-            autoAlbumEngine: autoAlbumEngine))
+            autoAlbumEngine: autoAlbumEngine,
+            assetIndex: assetIndex))
         // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
         .peopleActions(for: $personActions, engine: peopleEngine)
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
@@ -206,6 +209,7 @@ private struct HomeLifecycleTasks: ViewModifier {
     let albumScanner: LocalAlbumScanner
     let peopleEngine: PeopleEngine
     let autoAlbumEngine: AutoAlbumEngine
+    let assetIndex: LocalAssetIndex
 
     private var rescanIntervalSeconds: Int {
         let secs = UserDefaults.standard.integer(forKey: PlacesSettingsKeys.rescanIntervalSeconds)
@@ -254,6 +258,11 @@ private struct HomeLifecycleTasks: ViewModifier {
             .task {
                 try? await Task.sleep(for: .seconds(5))
                 await backupEngine.loadAlbums()
+            }
+            // PHAsset 索引（アルバム系ビューの高速オープン用）。起動スパイクを避けて遅延構築。
+            .task {
+                try? await Task.sleep(for: .seconds(3))
+                assetIndex.buildIfNeeded()
             }
             .onChange(of: dropboxStore.auth.connectionStatus) { _, newStatus in
                 switch newStatus {
