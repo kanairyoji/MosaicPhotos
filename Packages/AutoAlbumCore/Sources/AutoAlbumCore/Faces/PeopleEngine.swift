@@ -177,14 +177,30 @@ public final class PeopleEngine {
     }
 
     /// 全消去して再スキャンする（直近の候補があれば自動で再開）。
+    /// 修正ジャーナル（負例＝ADR-45）は**残す**ので、再スキャンでも既知の誤りは再発しない。
     public func reset() async {
+        await reset(includingCorrections: false)
+    }
+
+    /// `includingCorrections` が true なら修正の学習（負例エグゼンプラ）も消す
+    /// （Developer Options の「学習もリセット」用）。通常の再スキャンは false。
+    public func reset(includingCorrections: Bool) async {
         scanTask?.cancel()
         scanTask = nil
-        await store.reset()
+        if includingCorrections {
+            await store.resetIncludingCorrections()
+        } else {
+            await store.reset()
+        }
         await loadPeople()
-        Diagnostics.mark("faces: reset — rescanning \(lastCandidates.count) candidates")
+        Diagnostics.mark("faces: reset(corrections=\(includingCorrections)) — rescanning \(lastCandidates.count) candidates")
         if !lastCandidates.isEmpty {
             startScan(candidateRefKeys: lastCandidates, allowSimulator: lastAllowSimulator)
         }
+    }
+
+    /// 修正ジャーナルの件数（Developer Options の診断表示用・ADR-45）。
+    public func correctionCount() async -> Int {
+        await store.correctionCount()
     }
 }

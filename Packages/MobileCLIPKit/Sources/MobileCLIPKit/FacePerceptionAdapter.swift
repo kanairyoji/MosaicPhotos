@@ -54,33 +54,47 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// 戻り値 `.raw` は検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
     /// `.error` は Vision が使えず CIDetector にフォールバックした場合のメッセージ（切り分け用）。
     private func detect(in cg: CGImage) -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
-        let (boxes, error) = faceBoxes(in: cg)   // 正規化(原点左下)の顔矩形
+        let (faces, error) = faceObservations(in: cg)   // 正規化(原点左下)の矩形＋品質
 
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
         var signals: [DetectedFaceSignal] = []
-        for box in boxes {
+        for face in faces {
             // 小さすぎる顔は埋め込み精度が低いので除外。
-            guard box.width >= 0.05, box.height >= 0.05 else { continue }
-            guard let crop = cropFace(cg, normalizedBox: box, width: width, height: height),
+            guard face.box.width >= 0.05, face.box.height >= 0.05 else { continue }
+            guard let crop = cropFace(cg, normalizedBox: face.box, width: width, height: height),
                   let embedding = FaceModelRuntime.shared.embed(crop) else { continue }
+            // ADR-45: 実際の顔品質（Vision faceCaptureQuality）を伝える。ぼけ顔・横顔は
+            // クラスタリングで低重み／フロア未満なら未割当になり、重心を汚さない。
             signals.append(DetectedFaceSignal(
-                boundingBox: box,
+                boundingBox: face.box,
                 embedding: ClipMath.encodeHalf(embedding),
-                quality: 1))
+                quality: face.quality))
         }
-        return (boxes.count, signals, error)
+        return (faces.count, signals, error)
     }
 
-    /// 顔矩形（Vision 正規化・原点左下）を返す。まず Vision（実機・高精度）、失敗（シミュレータの
-    /// "Could not create inference context" 等）なら CIDetector（Core Image・CPU・どこでも動く）へ。
-    private func faceBoxes(in cg: CGImage) -> (boxes: [CGRect], error: String?) {
-        let request = VNDetectFaceRectanglesRequest()
+    /// 顔矩形（Vision 正規化・原点左下）＋品質（0…1）を返す。
+    /// まず Vision の **faceCaptureQuality**（検出＋品質を同時取得）、失敗（シミュレータの
+    /// "Could not create inference context" 等）なら顔矩形のみ→CIDetector にフォールバック
+    /// （品質は 1＝中立。実機はほぼ常に品質つきで取れる）。
+    private func faceObservations(in cg: CGImage) -> (faces: [(box: CGRect, quality: Float)], error: String?) {
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        let qualityRequest = VNDetectFaceCaptureQualityRequest()
         do {
-            try handler.perform([request])
-            return ((request.results ?? []).map(\.boundingBox), nil)
+            try handler.perform([qualityRequest])
+            let obs = qualityRequest.results ?? []
+            if !obs.isEmpty {
+                return (obs.map { ($0.boundingBox, $0.faceCaptureQuality ?? 1) }, nil)
+            }
+            return ([], nil)   // 顔なし（エラーではない）
         } catch {
-            return (ciFaceBoxes(in: cg), error.localizedDescription)
+            // フォールバック 1: 矩形のみ（品質は取れないので 1）。
+            let rectRequest = VNDetectFaceRectanglesRequest()
+            if (try? handler.perform([rectRequest])) != nil, let rects = rectRequest.results {
+                return (rects.map { ($0.boundingBox, 1) }, error.localizedDescription)
+            }
+            // フォールバック 2: CIDetector（シミュレータ）。
+            return (ciFaceBoxes(in: cg).map { ($0, 1) }, error.localizedDescription)
         }
     }
 

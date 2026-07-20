@@ -119,6 +119,68 @@ struct FaceClusteringTests {
         #expect(FaceClustering.removing([1, 0, 0], fromSum: [1, 0, 0], count: 0) == nil)
     }
 
+    // MARK: - 品質ゲート（ADR-45）
+
+    /// 品質フロア未満の顔は割り当てられず -1（未割当）を返す＝重心を汚さない。
+    @Test("品質フロア未満は未割当(-1)")
+    func lowQualityUnassigned() {
+        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0.3)
+        let cid = clustering.assign(faceID: "blurry", embedding: [1, 0, 0], quality: 0.1)
+        #expect(cid == FaceClustering.unassigned)
+        #expect(clustering.clusters.isEmpty)   // 新規クラスタも作らない
+    }
+
+    /// 品質重み: 高品質の顔ほど重心を強く引く（低品質の外れ顔が重心を動かしにくい）。
+    @Test("品質重みで重心が高品質側に寄る")
+    func qualityWeightedCentroid() {
+        var clustering = FaceClustering(threshold: -1, qualityFloor: 0)   // 必ず 1 クラスタに集める
+        clustering.assign(faceID: "hi", embedding: [1, 0, 0], quality: 1.0)
+        clustering.assign(faceID: "lo", embedding: [0, 1, 0], quality: 0.1)   // 低品質の別方向
+        // 重心は高品質側 [1,0,0] に大きく寄る（x >> y）。
+        let c = clustering.clusters[0].centroid
+        #expect(c[0] > c[1])
+        #expect(c[0] > 0.9)
+    }
+
+    // MARK: - 負例エグゼンプラ（ADR-45）
+
+    /// 負例: 「A は X の人ではない」と記録済みなら、A に似た顔は X へ入らず新規/次点になる。
+    @Test("負例で同じ誤りを繰り返さない")
+    func negativeExemplarRejects() {
+        // クラスタ X = [1,0,0] 方向。
+        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0)
+        clustering.assign(faceID: "x1", embedding: [1, 0, 0])
+        clustering.assign(faceID: "x2", embedding: [0.98, 0.03, 0])
+        let xCentroid = clustering.clusters[0].centroid
+
+        // 「[0.9,0.1,0] のような顔は X ではない」という負例。
+        let negatives = [FaceClustering.NegativePair(
+            faceCentroid: FaceClustering.normalized([0.9, 0.1, 0]),
+            wrongCentroid: xCentroid)]
+
+        // X に近い（本来なら合流する）新顔だが、負例に該当 → X へは入らず新規クラスタになる。
+        let cid = clustering.assign(faceID: "new", embedding: [0.9, 0.1, 0],
+                                    quality: 1, negatives: negatives)
+        #expect(cid != clustering.clusters[0].id)
+        #expect(clustering.clusters.count == 2)
+    }
+
+    /// 負例に無関係な顔は従来どおり合流する（過剰拒否しない）。
+    @Test("負例に無関係な顔は普通に合流")
+    func negativeDoesNotOverReject() {
+        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0)
+        clustering.assign(faceID: "x1", embedding: [1, 0, 0])
+        let xCentroid = clustering.clusters[0].centroid
+        // 別人 [0,1,0] についての負例（今回の入力とは無関係）。
+        let negatives = [FaceClustering.NegativePair(
+            faceCentroid: FaceClustering.normalized([0, 1, 0]),
+            wrongCentroid: xCentroid)]
+        let cid = clustering.assign(faceID: "x2", embedding: [0.99, 0.02, 0],
+                                    quality: 1, negatives: negatives)
+        #expect(cid == clustering.clusters[0].id)   // 同一人物なので合流
+        #expect(clustering.clusters.count == 1)
+    }
+
     /// 次元不一致の埋め込みは sum を壊さない（count のみ増減）。
     @Test("次元不一致でも sum を壊さない")
     func dimensionMismatchIsSafe() {

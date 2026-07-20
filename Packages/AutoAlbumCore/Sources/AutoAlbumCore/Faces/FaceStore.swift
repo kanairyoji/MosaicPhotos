@@ -12,7 +12,8 @@ actor FaceStore {
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Faces")
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
-        let schema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self])
+        // FaceCorrection は追加テーブル（ADR-45）＝加算的マイグレーション（既存の顔データは保持）。
+        let schema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self, FaceCorrection.self])
         if isStoredInMemoryOnly {
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
@@ -26,12 +27,19 @@ actor FaceStore {
 
     /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
     private static let clusterThreshold: Float = 0.45
+    /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
+    private static let qualityFloor: Float = 0.15
+    /// 負例エグゼンプラの上限（コスト有界化・新しい順に保持）。
+    private static let maxNegatives = 400
 
     /// 逐次クラスタリング状態のインメモリキャッシュ。以前は写真1枚のスキャンごとに
     /// 全クラスタを fetch → Float16 復元しており、人物が増えるほど背景スキャンが遅くなる
     /// 構造だった（O(クラスタ数)/枚）。recordScan 間で再利用し、重心を変える操作
     /// （reassign/reset）で無効化する。
     private var clusteringCache: FaceClustering?
+    /// 負例エグゼンプラ（修正ジャーナル由来・ADR-45）のインメモリキャッシュ。
+    /// clusteringCache と同じライフサイクルで再利用し、修正追加で無効化する。
+    private var negativesCache: [FaceClustering.NegativePair]?
 
     // MARK: - Fetch helpers（FetchDescriptor の反復をここに集約）
 
@@ -117,10 +125,13 @@ actor FaceStore {
 
         if !faces.isEmpty {
             var clustering = loadClustering()
+            let negatives = loadNegatives()
             for (i, face) in faces.enumerated() {
                 guard let vec = ClipMath.decodeHalf(face.embedding) else { continue }
                 let faceID = "\(refKey)#\(i)"
-                let cid = clustering.assign(faceID: faceID, embedding: vec)
+                // 品質重み＋負例つき割り当て（ADR-45）。フロア未満は -1（未割当・重心を汚さない）。
+                let cid = clustering.assign(faceID: faceID, embedding: vec,
+                                            quality: face.quality, negatives: negatives)
                 modelContext.insert(DetectedFace(
                     faceID: faceID, refKey: refKey,
                     bx: face.boundingBox.origin.x, by: face.boundingBox.origin.y,
@@ -144,7 +155,34 @@ actor FaceStore {
                 id: r.clusterID, centroid: FaceClustering.normalized(sum),
                 sum: sum, count: r.count, faceIDs: r.coverFaceID.map { [$0] } ?? []))
         }
-        return FaceClustering(threshold: Self.clusterThreshold, seedClusters: seed)
+        return FaceClustering(threshold: Self.clusterThreshold, qualityFloor: Self.qualityFloor,
+                              seedClusters: seed)
+    }
+
+    /// 修正ジャーナル（ADR-45）から負例エグゼンプラを復元する。埋め込みキーなので
+    /// 再スキャン・モデル入れ替えを跨いで効く。新しい順に上限まで。
+    private func loadNegatives() -> [FaceClustering.NegativePair] {
+        if let cached = negativesCache { return cached }
+        var d = FetchDescriptor<FaceCorrection>(
+            predicate: #Predicate { $0.wrongEmbedding != nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        d.fetchLimit = Self.maxNegatives
+        let rows = (try? modelContext.fetch(d)) ?? []
+        let pairs: [FaceClustering.NegativePair] = rows.compactMap { r in
+            guard let wrong = r.wrongEmbedding,
+                  let fe = ClipMath.decodeHalf(r.faceEmbedding),
+                  let we = ClipMath.decodeHalf(wrong) else { return nil }
+            return FaceClustering.NegativePair(
+                faceCentroid: FaceClustering.normalized(fe),
+                wrongCentroid: FaceClustering.normalized(we))
+        }
+        negativesCache = pairs
+        return pairs
+    }
+
+    /// 修正ジャーナルの件数（Developer Options / 診断用）。
+    func correctionCount() -> Int {
+        (try? modelContext.fetchCount(FetchDescriptor<FaceCorrection>())) ?? 0
     }
 
     /// クラスタリング結果を `PersonCluster` テーブルへ書き戻す（sum/count のみ）。
@@ -246,23 +284,40 @@ actor FaceStore {
               let vec = ClipMath.decodeHalf(face.embedding) else { return }
         let oldCID = face.clusterID
         guard oldCID != toClusterID else { return }
+        let quality = Float(face.quality)
 
-        removeFromCluster(clusterID: oldCID, vec: vec, faceID: faceID)
+        // ADR-45: 「この顔はこの人ではない」を負例として記録（付け替え元に**他の顔がいた**とき、
+        // ＝ 誤って一緒にされていたときだけ）。単独クラスタからの分離は誤りの信号ではないので除外。
+        if let oldCluster = cluster(oldCID), oldCluster.count >= 2,
+           let oldSum = ClipMath.decodeHalf(oldCluster.sum) {
+            recordCorrection(kind: "reassign", faceEmbedding: face.embedding,
+                             wrongEmbedding: ClipMath.encodeHalf(oldSum))
+        }
+
+        removeFromCluster(clusterID: oldCID, vec: vec, quality: quality, faceID: faceID)
         let targetCID = toClusterID ?? nextClusterID()
-        addToCluster(clusterID: targetCID, vec: vec, faceID: faceID)
+        addToCluster(clusterID: targetCID, vec: vec, quality: quality, faceID: faceID)
         face.clusterID = targetCID
         try? modelContext.save()
         clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次回に再構築）
+    }
+
+    /// 修正ジャーナルへ 1 件追記（ADR-45）。負例キャッシュを無効化する。
+    private func recordCorrection(kind: String, faceEmbedding: Data, wrongEmbedding: Data?) {
+        modelContext.insert(FaceCorrection(
+            id: UUID().uuidString, kind: kind,
+            faceEmbedding: faceEmbedding, wrongEmbedding: wrongEmbedding, createdAt: Date()))
+        negativesCache = nil
     }
 
     private func nextClusterID() -> Int {
         (allClusters().map(\.clusterID).max() ?? -1) + 1
     }
 
-    private func removeFromCluster(clusterID: Int, vec: [Float], faceID: String) {
+    private func removeFromCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String) {
         guard let c = cluster(clusterID) else { return }
         guard let sum = ClipMath.decodeHalf(c.sum),
-              let updated = FaceClustering.removing(vec, fromSum: sum, count: c.count) else {
+              let updated = FaceClustering.removing(vec, fromSum: sum, count: c.count, quality: quality) else {
             // 最後の 1 顔（または sum 破損）＝クラスタごと削除。
             modelContext.delete(c)
             return
@@ -275,17 +330,18 @@ actor FaceStore {
         }
     }
 
-    private func addToCluster(clusterID: Int, vec: [Float], faceID: String) {
+    private func addToCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String) {
         if let c = cluster(clusterID) {
             if let sum = ClipMath.decodeHalf(c.sum) {
-                let updated = FaceClustering.adding(vec, toSum: sum, count: c.count)
+                let updated = FaceClustering.adding(vec, toSum: sum, count: c.count, quality: quality)
                 c.sum = ClipMath.encodeHalf(updated.sum)
                 c.count = updated.count
             } else {
                 c.count += 1
             }
         } else {
-            let seeded = FaceClustering.adding(vec, toSum: [Float](repeating: 0, count: vec.count), count: 0)
+            let seeded = FaceClustering.adding(vec, toSum: [Float](repeating: 0, count: vec.count),
+                                               count: 0, quality: quality)
             modelContext.insert(PersonCluster(
                 clusterID: clusterID, sum: ClipMath.encodeHalf(seeded.sum), count: seeded.count,
                 name: nil, coverFaceID: nil))
@@ -316,17 +372,31 @@ actor FaceStore {
         }
         if (dst.name?.isEmpty ?? true), let n = src.name, !n.isEmpty { dst.name = n }
         if dst.coverFaceID == nil { dst.coverFaceID = src.coverFaceID }
+        // ADR-45: 統合（＝同一人物）を記録（負例ではないので wrongEmbedding は nil）。将来の
+        // モデル入れ替え時の replay 材料。src の重心埋め込みを faceEmbedding として残す。
+        if let sSum = ClipMath.decodeHalf(src.sum) {
+            recordCorrection(kind: "merge", faceEmbedding: ClipMath.encodeHalf(sSum), wrongEmbedding: nil)
+        }
         modelContext.delete(src)
         try? modelContext.save()
         clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次スキャンで再構築）
     }
 
     /// 全消去（再スキャン用）。
+    /// ⚠️ 修正ジャーナル（FaceCorrection）は**消さない**（ADR-45）。負例は埋め込みキーなので、
+    /// 再スキャン中の割り当てで自動的に再適用され、既知の誤りが再発しない。
     func reset() {
         try? modelContext.delete(model: DetectedFace.self)
         try? modelContext.delete(model: PersonCluster.self)
         try? modelContext.delete(model: ScannedPhoto.self)
         try? modelContext.save()
         clusteringCache = nil
+        negativesCache = nil   // 次スキャンで DB から読み直す（ジャーナルは残存）
+    }
+
+    /// 修正ジャーナルも含めた完全消去（Developer Options の「学習もリセット」用）。
+    func resetIncludingCorrections() {
+        try? modelContext.delete(model: FaceCorrection.self)
+        reset()
     }
 }

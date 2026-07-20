@@ -51,6 +51,31 @@ final class PersonCluster {
     }
 }
 
+/// ユーザーの顔認識修正の記録（ADR-45）。「この顔はこの人ではない」を**埋め込みで**永続化し、
+/// 以後のクラスタリングで同じ誤りを繰り返さないための負例エグゼンプラにする。
+/// clusterID はスキャンごとに変わるため、cluster ではなく**埋め込み**をキーにする＝
+/// **再スキャン・モデル入れ替えを跨いで**効く（ADR-45 の肝）。`reset()` でも消さない。
+@Model
+final class FaceCorrection {
+    @Attribute(.unique) var id: String
+    /// "reassign"（付け替え＝負例）/ "merge"（統合＝将来のための記録）。
+    var kind: String
+    /// 修正した顔の埋め込み（Float16・正規化前）。入力顔がこれに近ければ「同じ人」とみなす。
+    var faceEmbedding: Data
+    /// 誤って入っていたクラスタの重心埋め込み（Float16・正規化前）。候補クラスタがこれに近ければ
+    /// 「同じ誤りクラスタ」とみなし、合流を拒否する。reassign のみ（merge は nil）。
+    var wrongEmbedding: Data?
+    var createdAt: Date
+
+    init(id: String, kind: String, faceEmbedding: Data, wrongEmbedding: Data?, createdAt: Date) {
+        self.id = id
+        self.kind = kind
+        self.faceEmbedding = faceEmbedding
+        self.wrongEmbedding = wrongEmbedding
+        self.createdAt = createdAt
+    }
+}
+
 /// 顔スキャン済みマーカー（顔が 0 件の写真も「処理済み」と分かるように記録する）。
 @Model
 final class ScannedPhoto {

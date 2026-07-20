@@ -87,8 +87,11 @@ struct DeveloperSettingsView: View {
             #if targetEnvironment(simulator)
             Toggle("Face scan in Simulator (slow)", isOn: $faceScanOnSimulator)
             #endif
-            Button("Reset people (rescan faces)", role: .destructive) {
+            Button("Reset people (rescan faces, keep corrections)", role: .destructive) {
                 Task { await peopleEngine.reset() }
+            }
+            Button("Reset people + corrections (forget learning)", role: .destructive) {
+                Task { await peopleEngine.reset(includingCorrections: true) }
             }
         } header: {
             Text("Diagnostics")

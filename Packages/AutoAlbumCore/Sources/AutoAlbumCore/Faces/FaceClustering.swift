@@ -12,6 +12,29 @@ import Foundation
 public struct FaceClustering {
     /// 同一クラスタとみなすコサイン下限。
     public let threshold: Float
+    /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さないように）。
+    /// Vision の faceCaptureQuality（0…1）想定。`assign` は -1（未割当）を返す。
+    public let qualityFloor: Float
+
+    /// 未割当を表すクラスタ ID（品質フロア未満・負例で全拒否のとき）。
+    public static let unassigned = -1
+
+    /// 負例エグゼンプラ（ユーザー修正「この顔はこの人ではない」の記憶・ADR-45）。
+    /// `faceCentroid` に近い顔が `wrongCentroid` に近いクラスタへ入ろうとしたら拒否する。
+    /// すべて正規化済みで持つ（保存側の埋め込みから復元して渡す）。
+    public struct NegativePair: Sendable, Equatable {
+        public let faceCentroid: [Float]
+        public let wrongCentroid: [Float]
+        public init(faceCentroid: [Float], wrongCentroid: [Float]) {
+            self.faceCentroid = faceCentroid
+            self.wrongCentroid = wrongCentroid
+        }
+    }
+
+    /// 負例判定のしきい値。`faceCentroid` と入力顔の類似がこれ以上（＝ほぼ同じ人）かつ、
+    /// `wrongCentroid` と候補クラスタ重心の類似がこれ以上（＝同じ誤りクラスタ）なら拒否。
+    public static let negativeSameThreshold: Float = 0.55
+    public static let negativeWrongThreshold: Float = 0.88
 
     public struct Cluster: Sendable, Equatable {
         public var id: Int
@@ -27,40 +50,63 @@ public struct FaceClustering {
     public private(set) var clusters: [Cluster] = []
     private var nextID = 0
 
-    public init(threshold: Float = 0.45) { self.threshold = threshold }
+    public init(threshold: Float = 0.45, qualityFloor: Float = 0.15) {
+        self.threshold = threshold
+        self.qualityFloor = qualityFloor
+    }
 
     /// 既存クラスタから復元する（永続層からの増分クラスタリング用）。`nextID` は最大 id+1 から続ける。
-    public init(threshold: Float = 0.45, seedClusters: [Cluster]) {
+    public init(threshold: Float = 0.45, qualityFloor: Float = 0.15, seedClusters: [Cluster]) {
         self.threshold = threshold
+        self.qualityFloor = qualityFloor
         self.clusters = seedClusters
         self.nextID = (seedClusters.map(\.id).max() ?? -1) + 1
     }
 
-    /// 1 顔を割り当てる。最も近いクラスタが `threshold` 以上ならそこへ合流、無ければ新規。
-    /// 返り値は割り当てられたクラスタ ID。
+    /// 1 顔を割り当てる（品質重み・負例つき・ADR-45）。
+    /// - `quality` 未満（フロア）: 割り当てず -1 を返す（顔行は記録されるが重心を汚さない）。
+    /// - 重心加算は品質で重み付け（ぼけ顔ほど寄与を小さく）。
+    /// - `negatives` で拒否されたクラスタは飛ばして次点へ（全滅なら新規）。
+    /// 返り値は割り当てられたクラスタ ID（未割当は -1）。
     @discardableResult
-    public mutating func assign(faceID: String, embedding: [Float]) -> Int {
+    public mutating func assign(faceID: String, embedding: [Float],
+                                quality: Float = 1, negatives: [NegativePair] = []) -> Int {
         let v = FaceClustering.normalized(embedding)
+        if quality < qualityFloor { return FaceClustering.unassigned }
 
-        var bestIndex = -1
-        var bestSim: Float = -2
-        for (i, c) in clusters.enumerated() {
-            let sim = FaceClustering.dot(v, c.centroid)
-            if sim > bestSim { bestSim = sim; bestIndex = i }
+        // 類似度降順で候補を見て、しきい値以上かつ負例に拒否されない最初のクラスタへ合流。
+        let scored = clusters.indices
+            .map { (index: $0, sim: FaceClustering.dot(v, clusters[$0].centroid)) }
+            .sorted { $0.sim > $1.sim }
+        for cand in scored {
+            guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
+            if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
+                continue
+            }
+            let w = max(quality, 0.01)
+            for i in clusters[cand.index].sum.indices { clusters[cand.index].sum[i] += v[i] * w }
+            clusters[cand.index].count += 1
+            clusters[cand.index].faceIDs.append(faceID)
+            clusters[cand.index].centroid = FaceClustering.normalized(clusters[cand.index].sum)
+            return clusters[cand.index].id
         }
+        // 該当クラスタなし → 新規（sum は品質重み付き＝以後の removing と整合）。
+        let id = nextID
+        nextID += 1
+        let w = max(quality, 0.01)
+        clusters.append(Cluster(id: id, centroid: v, sum: v.map { $0 * w }, count: 1, faceIDs: [faceID]))
+        return id
+    }
 
-        if bestIndex >= 0, bestSim >= threshold {
-            for i in clusters[bestIndex].sum.indices { clusters[bestIndex].sum[i] += v[i] }
-            clusters[bestIndex].count += 1
-            clusters[bestIndex].faceIDs.append(faceID)
-            clusters[bestIndex].centroid = FaceClustering.normalized(clusters[bestIndex].sum)
-            return clusters[bestIndex].id
-        } else {
-            let id = nextID
-            nextID += 1
-            clusters.append(Cluster(id: id, centroid: v, sum: v, count: 1, faceIDs: [faceID]))
-            return id
+    /// 入力顔 `v`（正規化済み）が候補クラスタ重心 `centroid` へ入ることを、負例が拒否するか。
+    static func negativeRejects(_ v: [Float], centroid: [Float], negatives: [NegativePair]) -> Bool {
+        for n in negatives {
+            if dot(v, n.faceCentroid) >= negativeSameThreshold,
+               dot(centroid, n.wrongCentroid) >= negativeWrongThreshold {
+                return true
+            }
         }
+        return false
     }
 
     /// 全顔をまとめてクラスタリングする（純関数。再クラスタ・テスト用）。
@@ -80,12 +126,14 @@ public struct FaceClustering {
 
     /// 顔をクラスタ重心（sum/count）へ追加した結果。`assign` と同じく**正規化してから**加算する
     /// （永続層の付け替え＝`FaceStore.reassignFace` がこの規則からずれないよう一元化）。
-    public static func adding(_ embedding: [Float], toSum sum: [Float], count: Int) -> (sum: [Float], count: Int) {
+    public static func adding(_ embedding: [Float], toSum sum: [Float], count: Int,
+                              quality: Float = 1) -> (sum: [Float], count: Int) {
         let v = normalized(embedding)
+        let w = max(quality, 0.01)   // assign の重み付けと一致（reassign 後も重心が整合）
         // 次元不一致（壊れた埋め込み）でも count は顔の増減に合わせる（DetectedFace 行数と整合）。
         guard v.count == sum.count else { return (sum, count + 1) }
         var s = sum
-        for i in s.indices { s[i] += v[i] }
+        for i in s.indices { s[i] += v[i] * w }
         return (s, count + 1)
     }
 
@@ -103,12 +151,14 @@ public struct FaceClustering {
     }
 
     /// 顔をクラスタ重心から除いた結果。最後の 1 顔を除くと nil（＝クラスタ削除の合図）。
-    public static func removing(_ embedding: [Float], fromSum sum: [Float], count: Int) -> (sum: [Float], count: Int)? {
+    public static func removing(_ embedding: [Float], fromSum sum: [Float], count: Int,
+                                quality: Float = 1) -> (sum: [Float], count: Int)? {
         guard count > 1 else { return nil }
         let v = normalized(embedding)
+        let w = max(quality, 0.01)
         guard v.count == sum.count else { return (sum, count - 1) }
         var s = sum
-        for i in s.indices { s[i] -= v[i] }
+        for i in s.indices { s[i] -= v[i] * w }
         return (s, count - 1)
     }
 
