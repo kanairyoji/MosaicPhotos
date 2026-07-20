@@ -17,7 +17,7 @@ struct PersonPhotosView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                Text(L("Tap a face that isn’t this person to move it to the correct person."))
+                Text(L("Tap a face that isn’t this person. Choose “Not this person” to just remove it, or pick the correct person."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -25,8 +25,16 @@ struct PersonPhotosView: View {
                     .padding(.top, 8)
                 LazyVGrid(columns: columns, spacing: 3) {
                     ForEach(faces) { face in
+                        // タップ＝正しい人物を選ぶ／長押し＝相手を選ばず「別の人」として外す。
                         Button { reassignFace = face } label: { FaceTile(face: face) }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    removeFace(face)
+                                } label: {
+                                    Label(L("Not this person"), systemImage: "person.crop.circle.badge.xmark")
+                                }
+                            }
                     }
                 }
                 .padding(3)
@@ -49,6 +57,15 @@ struct PersonPhotosView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// 相手を選ばず「この人ではない」として外す（新規クラスタへ分離）。
+    /// ADR-45: これは負例（この顔 ≠ この人物）として学習され、再発を防ぐ。
+    private func removeFace(_ face: PersonInfo.Face) {
+        Task {
+            await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: nil)
+            faces = await peopleEngine.coverCandidates(clusterID: person.clusterID)
         }
     }
 }
@@ -94,10 +111,13 @@ private struct ReassignPickerView: View {
                     Button {
                         onPick(nil); dismiss()
                     } label: {
-                        Label(L("New person"), systemImage: "person.crop.circle.badge.plus")
+                        Label(L("Not this person (don’t pick anyone)"),
+                              systemImage: "person.crop.circle.badge.xmark")
                     }
+                } footer: {
+                    Text(L("Removes this face from the person. It becomes its own new person; the app learns from this so the mistake isn’t repeated."))
                 }
-                Section(L("Choose the correct person")) {
+                Section(L("Or choose the correct person")) {
                     ForEach(peopleEngine.people.filter { $0.clusterID != currentClusterID }) { p in
                         Button {
                             onPick(p.clusterID); dismiss()
