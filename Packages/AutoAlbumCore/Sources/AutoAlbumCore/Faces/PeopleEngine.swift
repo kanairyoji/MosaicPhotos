@@ -89,6 +89,11 @@ public final class PeopleEngine {
                     BackgroundActivityMonitor.shared.faceScanRemaining = $0
                 },
                 onBatch: { [weak self] in await self?.loadPeople() })
+            // B2: スキャン完了後、修正が増えていれば制約付き再クラスタリングで全体を最適化
+            //（夜間ウィンドウ内・数秒・順序依存の誤りを解消する）。
+            if !BackgroundYield.heavyShouldPause() {
+                await self.rebuildClustersIfNeeded()
+            }
             self.isScanning = false
             BackgroundActivityMonitor.shared.isScanningFaces = false
             BackgroundActivityMonitor.shared.faceScanRemaining = 0
@@ -202,5 +207,57 @@ public final class PeopleEngine {
     /// 修正ジャーナルの件数（Developer Options の診断表示用・ADR-45）。
     public func correctionCount() async -> Int {
         await store.correctionCount()
+    }
+
+    // MARK: - 人物レビュー（A1/A2・ADR-46）
+
+    /// レビューカード（「同じ人物？」「この写真は◯◯さん？」）を生成する。
+    /// 判断が割れるケースだけを選ぶアクティブラーニング＝1 回答あたりの精度改善を最大化。
+    public func reviewItems(limit: Int = 30) async -> [FaceReviewItem] {
+        await store.reviewItems(minFaces: minFaces, limit: limit)
+    }
+
+    /// 「同じ人物ですか？」への回答（A1）。
+    /// はい → 統合（正例として学習）。いいえ → 「別人」記録（負例・以後提案しない）。
+    public func answerSamePerson(aClusterID: Int, bClusterID: Int, same: Bool) async {
+        if same {
+            await store.mergeClusters(from: bClusterID, into: aClusterID)
+        } else {
+            await store.markNotSamePerson(clusterA: aClusterID, clusterB: bClusterID)
+        }
+        await loadPeople()
+    }
+
+    /// 「この写真は「◯◯」さんですか？」への回答（A2）。
+    /// はい → 確認済み（アンカー＋正例）。いいえ → 分離（負例として学習）。
+    public func answerIsThisPerson(faceID: String, yes: Bool) async {
+        if yes {
+            await store.confirmFace(faceID: faceID)
+        } else {
+            await store.reassignFace(faceID: faceID, toClusterID: nil)
+        }
+        await loadPeople()
+    }
+
+    // MARK: - 制約付き再クラスタリング（B2・ADR-46）
+
+    /// 修正が増えていたら全体を割り当て直す（夜間スキャン完了後に呼ばれる）。
+    /// 命名済み/確認済みクラスタは ID・名前を保持し、確認顔は must-link として固定。
+    public func rebuildClustersIfNeeded() async {
+        let markerKey = "faceRebuildCorrectionCount"
+        let current = await store.correctionCount()
+        let lastRebuilt = UserDefaults.standard.integer(forKey: markerKey)
+        guard current > lastRebuilt else { return }
+        let result = await store.rebuildClusters()
+        UserDefaults.standard.set(current, forKey: markerKey)
+        Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) (corrections \(lastRebuilt)→\(current))")
+        await loadPeople()
+    }
+
+    /// Developer Options 用: 即時再クラスタリング（動作検証）。
+    public func debugRebuildClustersNow() async {
+        let result = await store.rebuildClusters()
+        Diagnostics.mark("faces: manual rebuild — clusters=\(result.clusters) moved=\(result.moved)")
+        await loadPeople()
     }
 }

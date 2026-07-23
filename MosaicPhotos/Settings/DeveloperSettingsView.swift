@@ -93,6 +93,9 @@ struct DeveloperSettingsView: View {
             Button("Reset people + corrections (forget learning)", role: .destructive) {
                 Task { await peopleEngine.reset(includingCorrections: true) }
             }
+            Button("Rebuild people clusters now (constrained)") {
+                Task { await peopleEngine.debugRebuildClustersNow() }
+            }
         } header: {
             Text("Diagnostics")
         } footer: {

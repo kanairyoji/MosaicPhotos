@@ -45,6 +45,10 @@ public struct FaceClustering {
         public var count: Int
         /// メンバーの faceID（永続層のキー）。
         public var faceIDs: [String]
+        /// マルチプロトタイプ（B3・ADR-46）: ユーザーが確認した顔（アンカー）の正規化済み埋め込み。
+        /// 割り当ては「重心またはいずれかのアンカーとの最大類似」で判定＝人物内のばらつき
+        /// （年代・眼鏡・角度）で単一重心から遠くなった顔でも正しく合流できる。
+        public var prototypes: [[Float]] = []
     }
 
     public private(set) var clusters: [Cluster] = []
@@ -56,11 +60,14 @@ public struct FaceClustering {
     }
 
     /// 既存クラスタから復元する（永続層からの増分クラスタリング用）。`nextID` は最大 id+1 から続ける。
-    public init(threshold: Float = 0.45, qualityFloor: Float = 0.15, seedClusters: [Cluster]) {
+    /// `minimumNextID`: 新規クラスタ ID の下限（再クラスタリングで、削除予定の旧 ID と
+    /// 衝突しないよう既存全 ID より先から振るため・B2）。
+    public init(threshold: Float = 0.45, qualityFloor: Float = 0.15, seedClusters: [Cluster],
+                minimumNextID: Int = 0) {
         self.threshold = threshold
         self.qualityFloor = qualityFloor
         self.clusters = seedClusters
-        self.nextID = (seedClusters.map(\.id).max() ?? -1) + 1
+        self.nextID = max((seedClusters.map(\.id).max() ?? -1) + 1, minimumNextID)
     }
 
     /// 1 顔を割り当てる（品質重み・負例つき・ADR-45）。
@@ -75,8 +82,9 @@ public struct FaceClustering {
         if quality < qualityFloor { return FaceClustering.unassigned }
 
         // 類似度降順で候補を見て、しきい値以上かつ負例に拒否されない最初のクラスタへ合流。
+        // 類似度は「重心 or アンカー（確認済みの顔）との最大」（B3 マルチプロトタイプ）。
         let scored = clusters.indices
-            .map { (index: $0, sim: FaceClustering.dot(v, clusters[$0].centroid)) }
+            .map { (index: $0, sim: FaceClustering.similarity(v, to: clusters[$0])) }
             .sorted { $0.sim > $1.sim }
         for cand in scored {
             guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
@@ -96,6 +104,15 @@ public struct FaceClustering {
         let w = max(quality, 0.01)
         clusters.append(Cluster(id: id, centroid: v, sum: v.map { $0 * w }, count: 1, faceIDs: [faceID]))
         return id
+    }
+
+    /// クラスタとの類似度＝重心と全プロトタイプ（アンカー）のうちの最大（B3）。
+    static func similarity(_ v: [Float], to cluster: Cluster) -> Float {
+        var best = dot(v, cluster.centroid)
+        for p in cluster.prototypes {
+            best = max(best, dot(v, p))
+        }
+        return best
     }
 
     /// 入力顔 `v`（正規化済み）が候補クラスタ重心 `centroid` へ入ることを、負例が拒否するか。

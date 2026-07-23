@@ -23,6 +23,8 @@ struct HomeView: View {
     /// ピープル（人物＝顔アルバム）スキャナー。端末の写真アプリで名前を付けた人を取得する。
     @State var peopleEngine: PeopleEngine
     let assetIndex: LocalAssetIndex
+    /// 人物レビュー（「同じ人物？」確認カード・ADR-46）のシート表示。
+    @State var showingFaceReview = false
     /// 場所（市区町村）スキャナー。ローカル＋Dropbox の位置情報をまとめてグルーピングする。
     @State var placeScanner: PlaceScanner
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
@@ -142,6 +144,9 @@ struct HomeView: View {
             assetIndex: assetIndex))
         // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
         .peopleActions(for: $personActions, engine: peopleEngine)
+        .sheet(isPresented: $showingFaceReview) {
+            FaceReviewView(peopleEngine: peopleEngine)
+        }
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
         .dropboxActivityBar()
         // デバッグ：シミュレータ顔スキャンのトグルを ON にしたら（起動後でも）その場で開始する。

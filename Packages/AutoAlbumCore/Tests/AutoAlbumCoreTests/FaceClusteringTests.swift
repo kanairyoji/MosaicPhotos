@@ -181,6 +181,35 @@ struct FaceClusteringTests {
         #expect(clustering.clusters.count == 1)
     }
 
+    // MARK: - マルチプロトタイプ（B3・ADR-46）
+
+    /// アンカー（確認済みの顔）に近ければ、重心から遠くても合流できる。
+    @Test("アンカー類似で重心から遠い顔も合流（B3）")
+    func prototypeRescuesFarFace() {
+        // 重心は [1,0,0] 方向・アンカーは [0.6,0.8,0]（例: 若い頃の顔）。
+        let anchor = FaceClustering.normalized([0.6, 0.8, 0])
+        let seed = FaceClustering.Cluster(
+            id: 0, centroid: [1, 0, 0], sum: [1, 0, 0], count: 1,
+            faceIDs: ["a"], prototypes: [anchor])
+        var clustering = FaceClustering(threshold: 0.9, qualityFloor: 0, seedClusters: [seed])
+        // 重心とは cos≈0.6 だがアンカーとは cos≈1.0 → しきい値 0.9 でも合流。
+        let cid = clustering.assign(faceID: "young", embedding: [0.6, 0.8, 0])
+        #expect(cid == 0)
+        // アンカーが無ければ新規になっていたことも確認。
+        var without = FaceClustering(threshold: 0.9, qualityFloor: 0, seedClusters: [
+            FaceClustering.Cluster(id: 0, centroid: [1, 0, 0], sum: [1, 0, 0], count: 1, faceIDs: ["a"])])
+        #expect(without.assign(faceID: "young", embedding: [0.6, 0.8, 0]) != 0)
+    }
+
+    /// minimumNextID: 新規クラスタ ID は既存全 ID より先から振られる（B2 再クラスタ用）。
+    @Test("minimumNextID で新規 ID の下限を指定できる")
+    func minimumNextID() {
+        var clustering = FaceClustering(threshold: 0.9, qualityFloor: 0,
+                                        seedClusters: [], minimumNextID: 100)
+        let cid = clustering.assign(faceID: "x", embedding: [1, 0, 0])
+        #expect(cid == 100)
+    }
+
     /// 次元不一致の埋め込みは sum を壊さない（count のみ増減）。
     @Test("次元不一致でも sum を壊さない")
     func dimensionMismatchIsSafe() {

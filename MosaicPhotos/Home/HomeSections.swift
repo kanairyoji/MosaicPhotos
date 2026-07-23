@@ -160,7 +160,11 @@ extension HomeView {
                         onLongPress: { personActions = $0 })
                 }
             } header: {
-                sectionHeader("People", isBusy: peopleEngine.isScanning)
+                // レビュー（「同じ人物？」確認カード）: 答えるほど認識が良くなる（ADR-46）。
+                sectionHeader("People", isBusy: peopleEngine.isScanning,
+                              actionIcon: "checkmark.seal",
+                              onAction: peopleEngine.people.count >= 1
+                                  ? { showingFaceReview = true } : nil)
             }
         }
     }

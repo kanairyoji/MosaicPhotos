@@ -19,6 +19,10 @@ final class DetectedFace {
     var quality: Double
     /// 割り当てられたクラスタ ID（未割当は -1）。
     var clusterID: Int
+    /// ユーザーがこの人物だと**確認**した日時（ADR-46・A2）。確認済みの顔は
+    /// (1) クラスタのアンカー（マルチプロトタイプ）になり、(2) 再クラスタリングで
+    /// must-link（必ずこの人物へ）として扱われ、(3) レビューで再度尋ねない。
+    var confirmedAt: Date?
 
     init(faceID: String, refKey: String, bx: Double, by: Double, bw: Double, bh: Double,
          embedding: Data, quality: Double, clusterID: Int) {
@@ -63,15 +67,21 @@ final class FaceCorrection {
     /// 修正した顔の埋め込み（Float16・正規化前）。入力顔がこれに近ければ「同じ人」とみなす。
     var faceEmbedding: Data
     /// 誤って入っていたクラスタの重心埋め込み（Float16・正規化前）。候補クラスタがこれに近ければ
-    /// 「同じ誤りクラスタ」とみなし、合流を拒否する。reassign のみ（merge は nil）。
+    /// 「同じ誤りクラスタ」とみなし、合流を拒否する。reassign/notSame のみ（merge/confirm は nil）。
     var wrongEmbedding: Data?
+    /// 記録時点のペア類似度（しきい値校正＝ADR-46 B1 の材料）。
+    /// kind により意味が変わる: reassign=顔×誤り重心（負例）/ merge=重心×重心（正例）/
+    /// confirm=顔×所属重心（正例）/ notSame=重心×重心（負例）。
+    var similarity: Double?
     var createdAt: Date
 
-    init(id: String, kind: String, faceEmbedding: Data, wrongEmbedding: Data?, createdAt: Date) {
+    init(id: String, kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
+         similarity: Double? = nil, createdAt: Date) {
         self.id = id
         self.kind = kind
         self.faceEmbedding = faceEmbedding
         self.wrongEmbedding = wrongEmbedding
+        self.similarity = similarity
         self.createdAt = createdAt
     }
 }
