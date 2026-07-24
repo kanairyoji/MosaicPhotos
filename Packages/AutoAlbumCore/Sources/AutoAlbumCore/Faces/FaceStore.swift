@@ -274,11 +274,26 @@ actor FaceStore {
     }
 
     /// この写真に写っている**指定クラスタの**顔矩形（Vision 正規化・原点左下）。
-    /// 人物アルバムの全画面表示で「どの顔をこの人物として認識したか」を枠で示す用。
+    /// 人物アルバムで「どの顔をこの人物として認識したか」をチェックする用途なので、
+    /// 同じ写真の複数の顔が同一クラスタに入っていても（混入の疑い）、
+    /// **重心に最も近い 1 顔だけ**を返す（全部に枠が付くとどれがこの人物か
+    /// 分からず目的を果たせない＝実フィードバック）。
     func faceBoxes(refKey: String, clusterID: Int) -> [CGRect] {
-        faces(inPhoto: refKey)
-            .filter { $0.clusterID == clusterID }
-            .map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
+        let members = faces(inPhoto: refKey).filter { $0.clusterID == clusterID }
+        guard members.count > 1 else {
+            return members.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
+        }
+        var best: (face: DetectedFace, sim: Float)?
+        if let c = cluster(clusterID), let sum = ClipMath.decodeHalf(c.sum) {
+            let centroid = FaceClustering.normalized(sum)
+            for f in members {
+                guard let v = ClipMath.decodeHalf(f.embedding) else { continue }
+                let sim = FaceClustering.dot(FaceClustering.normalized(v), centroid)
+                if best == nil || sim > best!.sim { best = (f, sim) }
+            }
+        }
+        let chosen = best?.face ?? members[0]
+        return [CGRect(x: chosen.bx, y: chosen.by, width: chosen.bw, height: chosen.bh)]
     }
 
     /// クラスタの顔候補（写真ごとに 1 つ・代表写真ピッカー用）。

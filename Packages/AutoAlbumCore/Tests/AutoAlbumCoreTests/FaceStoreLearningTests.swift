@@ -97,6 +97,32 @@ struct FaceStoreLearningTests {
         #expect(!after.contains { $0.id == first.id })
     }
 
+    @Test("faceBoxes: 同一写真に同一クラスタの顔が複数でも最良の1顔のみ")
+    func faceBoxesReturnsBestSingleFace() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // クラスタの核（x 方向）を作る。
+        for i in 0..<5 {
+            await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])])
+        }
+        // 1 枚の写真に 2 顔: 重心に近い顔（本人）と遠い顔（混入）が同一クラスタに入る状況。
+        let near = DetectedFaceSignal(boundingBox: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2),
+                                      embedding: ClipMath.encodeHalf([1, 0.05, 0]), quality: 1)
+        let far = DetectedFaceSignal(boundingBox: CGRect(x: 0.6, y: 0.6, width: 0.2, height: 0.2),
+                                     embedding: ClipMath.encodeHalf([1, 0.9, 0]), quality: 1)
+        await store.recordScan(refKey: "L-multi", faces: [near, far])
+        let people = await store.peopleClusters(minFaces: 3)
+        guard let cid = people.first?.clusterID else {
+            Issue.record("クラスタが作られない")
+            return
+        }
+        let boxes = await store.faceBoxes(refKey: "L-multi", clusterID: cid)
+        // 両顔が同一クラスタに入った場合でも、返るのは重心に近い near の 1 枠のみ。
+        #expect(boxes.count <= 1)
+        if let box = boxes.first {
+            #expect(abs(box.origin.x - 0.1) < 1e-6)
+        }
+    }
+
     @Test("制約付き再クラスタ（B2）: 命名クラスタの ID と名前が保持される")
     func rebuildPreservesNamedClusters() async {
         let store = await makeStore()
