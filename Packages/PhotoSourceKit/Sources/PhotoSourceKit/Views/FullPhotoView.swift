@@ -8,6 +8,9 @@ import SwiftUI
 struct FullPhotoView<Store: PhotoStore>: View {
     let store: Store
     let item: Store.Item
+    /// 顔ハイライトの表示指示（PhotoPageView の左上トグル）。ページ送りしても状態を保つよう
+    /// 親が持つ。**既定 OFF**・ON のときだけ矩形を取得して枠を描く。
+    var showFaceHighlights: Bool = false
     @State private var image: UIImage?
     /// D: フル画像が来るまでの間に見せる手元サムネ（黒画面待ちを減らす）。
     @State private var thumb: UIImage?
@@ -28,9 +31,6 @@ struct FullPhotoView<Store: PhotoStore>: View {
     @Environment(\.dismiss) private var dismiss
     /// 認識した顔のハイライト矩形（Vision 正規化・原点左下）。人物アルバムから開いたときのみ。
     @State private var faceHighlights: [CGRect] = []
-    /// 顔ハイライトの表示中フラグ。**既定は非表示**で、ボタンを押したときだけ枠を出す
-    ///（常時表示は鑑賞の邪魔・たまに確認したい機能という実フィードバック）。
-    @State private var showFaceHighlights = false
     @State private var faceHighlightsFetched = false
 
     /// 下スワイプで閉じる閾値（最上部から下方向の overscroll 量・pt）。
@@ -137,27 +137,12 @@ struct FullPhotoView<Store: PhotoStore>: View {
                         .allowsHitTesting(false)
                     }
                 }
-                // 人物アルバムから開いたときだけ出す小ボタン。押すと認識した顔を黄枠で表示/非表示。
-                .overlay(alignment: .bottomTrailing) {
-                    if faceHighlightProvider != nil {
-                        Button {
-                            Task {
-                                if !faceHighlightsFetched, let provider = faceHighlightProvider {
-                                    faceHighlights = await provider("\(item.id)")
-                                    faceHighlightsFetched = true
-                                }
-                                showFaceHighlights.toggle()
-                            }
-                        } label: {
-                            Image(systemName: "person.and.viewfinder")
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(showFaceHighlights ? .yellow : .white)
-                                .padding(10)
-                                .background(.black.opacity(0.45), in: Circle())
-                        }
-                        .accessibilityLabel(L("Show recognized face"))
-                        .padding(16)
-                    }
+                // ON になったら初回だけ矩形を取得する（OFF のままなら一切コストなし）。
+                .task(id: showFaceHighlights) {
+                    guard showFaceHighlights, !faceHighlightsFetched,
+                          let provider = faceHighlightProvider else { return }
+                    faceHighlights = await provider("\(item.id)")
+                    faceHighlightsFetched = true
                 }
         } else if failed {
             // T1: 失敗は "not found" 風ではなく、再試行できる控えめな表現にする。

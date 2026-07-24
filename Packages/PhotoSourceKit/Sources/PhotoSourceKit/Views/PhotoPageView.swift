@@ -25,6 +25,9 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     /// お気に入りの楽観反映（タップ直後に UI を即更新し、書き込み失敗時のみ戻す）。
     @State private var favOverride: [Store.Item.ID: Bool] = [:]
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.faceHighlightProvider) private var faceHighlightProvider
+    /// 顔ハイライト（人物アルバムのみ）。ページ送りしても維持する画面単位のトグル。
+    @State private var showFaceHighlights = false
 
     /// ウィンドウ半径（前後それぞれに生成する枚数）。中央±30＝最大61ページだけ構築する。
     private static var windowRadius: Int { 30 }
@@ -87,7 +90,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         ZStack(alignment: .top) {
             TabView(selection: $currentID) {
                 ForEach(windowItems) { item in
-                    FullPhotoView(store: store, item: item)
+                    FullPhotoView(store: store, item: item, showFaceHighlights: showFaceHighlights)
                         .tag(item.id)
                 }
             }
@@ -167,6 +170,18 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                         .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
                         .background(.ultraThinMaterial, in: Circle())
+                }
+                // 顔ハイライト（人物アルバムのみ）。暗い写真上でも見えるよう、戻るボタンと
+                // 同じ左上のマテリアル丸ボタンにする（実フィードバック：右下の黒地は視認不可）。
+                if faceHighlightProvider != nil {
+                    Button { showFaceHighlights.toggle() } label: {
+                        Image(systemName: "person.and.viewfinder")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(showFaceHighlights ? Color.yellow : .white)
+                            .frame(width: 34, height: 34)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel(L("Show recognized face"))
                 }
                 Spacer()
                 // お気に入り（端末写真のみ）。右上にトグルボタンとして出す。戻るボタンと左右対称。

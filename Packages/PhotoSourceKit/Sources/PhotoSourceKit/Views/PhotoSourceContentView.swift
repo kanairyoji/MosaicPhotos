@@ -53,6 +53,19 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle(title)
+            // 顔ハイライト（人物アルバムのみ）。下部バーでは気付かれなかったため、
+            // タイトル横＝ナビバー右上に置く（実フィードバック）。ON 中はサムネに黄枠。
+            .toolbar {
+                if faceHighlightGrid != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { showFaceBoxes.toggle() } label: {
+                            Image(systemName: "person.and.viewfinder")
+                                .foregroundStyle(showFaceBoxes ? Color.yellow : Color.accentColor)
+                        }
+                        .accessibilityLabel(L("Show recognized face"))
+                    }
+                }
+            }
             // Home / Settings バーは全状態（プレースホルダー含む）に表示する。
             // 未接続・空・失敗の各状態でもホーム/設定へ遷移できるようにするため。
             .safeAreaInset(edge: .bottom) { bottomBar }
@@ -92,15 +105,6 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                       : "line.3.horizontal.decrease.circle")
                     .foregroundStyle(filter.isActive ? Color.accentColor : Color.primary)
                     .accessibilityLabel(L("Filter"))
-            }
-            // 顔ハイライト（人物アルバムのみ）。ON 中はサムネイルに認識した顔の黄枠を重ねる。
-            if faceHighlightGrid != nil {
-                Button { showFaceBoxes.toggle() } label: {
-                    Image(systemName: "person.and.viewfinder")
-                        .foregroundStyle(showFaceBoxes ? Color.yellow : Color.primary)
-                        .accessibilityLabel(L("Show recognized face"))
-                }
-                .padding(.leading, 24)
             }
             Spacer()
             if let showSettings {
