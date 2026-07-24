@@ -490,7 +490,10 @@ actor FaceStore {
     ///   クラスタ対。「別人」と記録済みの対は出さない。
     /// - A2 境界の顔: クラスタ内で重心類似が最も低い（しきい値＋0.10 未満）未確認の顔
     ///   ＝混入している別人が最も出やすい位置。
-    func reviewItems(minFaces: Int, limit: Int = 30) -> [FaceReviewItem] {
+    /// - Parameter excluding: 出題済み（既定回数見せたが答えられなかった）カード ID。
+    ///   同じ質問を繰り返さず、次点の候補で埋める（実フィードバック対応）。
+    func reviewItems(minFaces: Int, limit: Int = 30,
+                     excluding: Set<String> = []) -> [FaceReviewItem] {
         let thr = calibratedThreshold()
         let clusters = allClusters().filter { $0.count >= minFaces }
         guard clusters.count >= 1 else { return [] }
@@ -549,10 +552,12 @@ actor FaceStore {
         for cand in mergeCandidates.sorted(by: { $0.sim > $1.sim }) {
             guard items.count < limit else { break }
             guard let fa = coverFace[cand.a], let fb = coverFace[cand.b] else { continue }
-            items.append(.samePerson(aClusterID: cand.a, aName: name[cand.a] ?? "",
-                                     aFace: fa,
-                                     bClusterID: cand.b, bName: name[cand.b] ?? "",
-                                     bFace: fb, similarity: cand.sim))
+            let item = FaceReviewItem.samePerson(
+                aClusterID: cand.a, aName: name[cand.a] ?? "", aFace: fa,
+                bClusterID: cand.b, bName: name[cand.b] ?? "", bFace: fb,
+                similarity: cand.sim)
+            if excluding.contains(item.id) { continue }
+            items.append(item)
         }
 
         // A2: 境界の顔（クラスタごとに最大 2・類似が低い順）。命名済みクラスタを優先。
@@ -568,20 +573,24 @@ actor FaceStore {
                 if sim < thr + 0.10 { boundary.append((f, sim)) }
             }
             guard let cover = coverFace[c.clusterID] else { continue }
-            for entry in boundary.sorted(by: { $0.sim < $1.sim }).prefix(2) {
-                guard items.count < limit else { break }
+            var perCluster = 0
+            for entry in boundary.sorted(by: { $0.sim < $1.sim }) {
+                guard items.count < limit, perCluster < 2 else { break }
                 // 未命名（Person N）は name=nil ＝ UI が「代表の顔と並べて比較」カードにする
                 //（名前を出しても誰か分からず答えられない・実フィードバック）。
                 // 境界顔自身が代表と同一（1 枚だけのケース等）は比較にならないので出さない。
                 let displayName = (c.name?.isEmpty == false) ? c.name : nil
                 if displayName == nil && cover.faceID == entry.face.faceID { continue }
-                items.append(.isThisPerson(
+                let item = FaceReviewItem.isThisPerson(
                     face: PersonInfo.Face(faceID: entry.face.faceID, refKey: entry.face.refKey,
                                           boundingBox: CGRect(x: entry.face.bx, y: entry.face.by,
                                                               width: entry.face.bw, height: entry.face.bh)),
                     clusterID: c.clusterID, name: displayName,
                     coverFace: cover,
-                    similarity: entry.sim))
+                    similarity: entry.sim)
+                if excluding.contains(item.id) { continue }   // 出題済み → 次点で埋める
+                items.append(item)
+                perCluster += 1
             }
         }
         return items

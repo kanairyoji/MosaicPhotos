@@ -420,6 +420,16 @@
         }
       }
     },
+    "Show recognized face": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "認識した顔を表示"
+          }
+        }
+      }
+    },
     "Source": {
       "localizations": {
         "ja": {

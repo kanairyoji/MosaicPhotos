@@ -80,6 +80,23 @@ struct FaceStoreLearningTests {
         }
     }
 
+    @Test("excluding: 出題済みカードは除外され、次点候補で埋まる")
+    func excludingSuppressesShownCards() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<10 {
+            await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])])
+        }
+        await store.recordScan(refKey: "L-edge", faces: [signal([1, 1.88, 0])])
+        let items = await store.reviewItems(minFaces: 3, limit: 30)
+        guard let first = items.first else {
+            Issue.record("レビューが生成されない")
+            return
+        }
+        // 出題済みとして除外 → 同じカードは返らない。
+        let after = await store.reviewItems(minFaces: 3, limit: 30, excluding: [first.id])
+        #expect(!after.contains { $0.id == first.id })
+    }
+
     @Test("制約付き再クラスタ（B2）: 命名クラスタの ID と名前が保持される")
     func rebuildPreservesNamedClusters() async {
         let store = await makeStore()

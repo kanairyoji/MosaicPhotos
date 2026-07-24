@@ -28,6 +28,10 @@ struct FullPhotoView<Store: PhotoStore>: View {
     @Environment(\.dismiss) private var dismiss
     /// 認識した顔のハイライト矩形（Vision 正規化・原点左下）。人物アルバムから開いたときのみ。
     @State private var faceHighlights: [CGRect] = []
+    /// 顔ハイライトの表示中フラグ。**既定は非表示**で、ボタンを押したときだけ枠を出す
+    ///（常時表示は鑑賞の邪魔・たまに確認したい機能という実フィードバック）。
+    @State private var showFaceHighlights = false
+    @State private var faceHighlightsFetched = false
 
     /// 下スワイプで閉じる閾値（最上部から下方向の overscroll 量・pt）。
     private static var dismissPull: CGFloat { 60 }
@@ -119,7 +123,7 @@ struct FullPhotoView<Store: PhotoStore>: View {
                 // scaledToFit の Image はビュー枠＝画像そのもの（レターボックスなし）なので、
                 // Vision 正規化座標（原点左下）を y 反転して重ねるだけでよい。
                 .overlay {
-                    if !faceHighlights.isEmpty {
+                    if showFaceHighlights, !faceHighlights.isEmpty {
                         GeometryReader { geo in
                             ForEach(Array(faceHighlights.enumerated()), id: \.offset) { _, box in
                                 RoundedRectangle(cornerRadius: 6)
@@ -133,9 +137,27 @@ struct FullPhotoView<Store: PhotoStore>: View {
                         .allowsHitTesting(false)
                     }
                 }
-                .task(id: item.id) {
-                    guard let provider = faceHighlightProvider else { return }
-                    faceHighlights = await provider("\(item.id)")
+                // 人物アルバムから開いたときだけ出す小ボタン。押すと認識した顔を黄枠で表示/非表示。
+                .overlay(alignment: .bottomTrailing) {
+                    if faceHighlightProvider != nil {
+                        Button {
+                            Task {
+                                if !faceHighlightsFetched, let provider = faceHighlightProvider {
+                                    faceHighlights = await provider("\(item.id)")
+                                    faceHighlightsFetched = true
+                                }
+                                showFaceHighlights.toggle()
+                            }
+                        } label: {
+                            Image(systemName: "person.and.viewfinder")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(showFaceHighlights ? .yellow : .white)
+                                .padding(10)
+                                .background(.black.opacity(0.45), in: Circle())
+                        }
+                        .accessibilityLabel(L("Show recognized face"))
+                        .padding(16)
+                    }
                 }
         } else if failed {
             // T1: 失敗は "not found" 風ではなく、再試行できる控えめな表現にする。

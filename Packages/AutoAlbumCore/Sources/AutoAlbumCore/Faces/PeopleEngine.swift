@@ -227,8 +227,26 @@ public final class PeopleEngine {
     /// レビューカード（「同じ人物？」「この写真は◯◯さん？」）を生成する。
     /// 判断が割れるケースだけを選ぶアクティブラーニング＝1 回答あたりの精度改善を最大化。
     public func reviewItems(limit: Int = 30) async -> [FaceReviewItem] {
-        await store.reviewItems(minFaces: minFaces, limit: limit)
+        await store.reviewItems(minFaces: minFaces, limit: limit,
+                                excluding: overexposedReviewIDs())
     }
+
+    /// カードを実際に表示したら呼ぶ（スキップ検知）。`reviewShownLimit` 回見せても
+    /// 答えられなかったカードは以後出題せず、別の質問（次点候補）に切り替える。
+    public func noteReviewShown(itemID: String) {
+        var counts = (UserDefaults.standard.dictionary(forKey: Self.reviewShownKey) as? [String: Int]) ?? [:]
+        counts[itemID, default: 0] += 1
+        UserDefaults.standard.set(counts, forKey: Self.reviewShownKey)
+    }
+
+    /// 既定回数以上見せたのに未回答のカード ID（＝もう聞かない）。
+    private func overexposedReviewIDs() -> Set<String> {
+        let counts = (UserDefaults.standard.dictionary(forKey: Self.reviewShownKey) as? [String: Int]) ?? [:]
+        return Set(counts.filter { $0.value >= Self.reviewShownLimit }.keys)
+    }
+
+    private static let reviewShownKey = "faceReviewShownCounts"
+    private static let reviewShownLimit = 3
 
     /// 「同じ人物ですか？」への回答（A1）。
     /// はい → 統合（正例として学習）。いいえ → 「別人」記録（負例・以後提案しない）。

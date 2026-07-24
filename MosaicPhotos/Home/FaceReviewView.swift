@@ -42,6 +42,13 @@ struct FaceReviewView: View {
             .task {
                 items = await peopleEngine.reviewItems()
                 isLoading = false
+                if let first = items.first { peopleEngine.noteReviewShown(itemID: first.id) }
+            }
+            // 表示したカードを記録する（3 回見せても答えられなかった質問は以後出さず、
+            // 次点の候補に切り替える＝「毎回同じ写真を聞かれる」の対策）。
+            .task(id: index) {
+                guard !isLoading, index > 0, index < items.count else { return }
+                peopleEngine.noteReviewShown(itemID: items[index].id)
             }
         }
     }
