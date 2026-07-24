@@ -10,6 +10,10 @@ final class GridThumbnailCell: UICollectionViewCell {
     /// 白＋影で描く（Apple 写真アプリと同様）。
     private let heartView = UIImageView()
     private var loadTask: Task<Void, Never>?
+    /// 顔ハイライト（人物アルバムの「顔を表示」トグル中のみ）。単位座標（原点左上）を黄枠で描く。
+    private let faceLayer = CAShapeLayer()
+    private var faceRects: [CGRect] = []
+    private var faceTask: Task<Void, Never>?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -32,6 +36,11 @@ final class GridThumbnailCell: UICollectionViewCell {
         heartView.layer.shadowRadius = 1.5
         heartView.layer.shadowOffset = .zero
         contentView.addSubview(heartView)
+
+        faceLayer.strokeColor = UIColor.systemYellow.cgColor
+        faceLayer.fillColor = nil
+        faceLayer.lineWidth = 1.5
+        contentView.layer.addSublayer(faceLayer)
 
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -62,12 +71,52 @@ final class GridThumbnailCell: UICollectionViewCell {
         }
     }
 
+    /// 顔ハイライトの設定。nil で消去、クロージャで単位座標矩形（原点左上）を非同期取得して描く。
+    func setFaceBoxes(_ load: (() async -> [CGRect])?) {
+        faceTask?.cancel()
+        faceRects = []
+        faceLayer.path = nil
+        guard let load else { return }
+        faceTask = Task { @MainActor in
+            let rects = await load()
+            if Task.isCancelled { return }
+            faceRects = rects
+            setNeedsLayout()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        faceLayer.frame = contentView.bounds
+        if faceRects.isEmpty {
+            faceLayer.path = nil
+        } else {
+            let w = contentView.bounds.width
+            let h = contentView.bounds.height
+            let path = CGMutablePath()
+            for r in faceRects {
+                let rect = CGRect(x: r.origin.x * w, y: r.origin.y * h,
+                                  width: r.width * w, height: r.height * h)
+                let corner = min(3, rect.width / 2, rect.height / 2)
+                path.addRoundedRect(in: rect, cornerWidth: corner, cornerHeight: corner)
+            }
+            faceLayer.path = path
+        }
+        CATransaction.commit()
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         loadTask?.cancel()
         loadTask = nil
         imageView.image = nil
         heartView.isHidden = true
+        faceTask?.cancel()
+        faceTask = nil
+        faceRects = []
+        faceLayer.path = nil
     }
 }
 #endif

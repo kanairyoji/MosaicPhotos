@@ -34,6 +34,9 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
     let onSelect: (Store.Item.ID) -> Void
     /// スクラブの開始(true)/終了(false)。背景処理の一時停止に使う。
     let onScrubbingChange: (Bool) -> Void
+    /// 顔ハイライト（人物アルバムの「顔を表示」トグル中のみ非 nil）。
+    /// item.id → 正方形クロップ表示の単位座標矩形（原点左上）。nil なら枠を描かない。
+    let faceHighlight: (@Sendable (String) async -> [CGRect])?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(store: store, onPinch: onPinch, onSelect: onSelect, onScrubbingChange: onScrubbingChange)
@@ -45,7 +48,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.update(items: items, columns: max(1, columnCount), grouping: grouping,
-                                   monthSectionRows: max(1, monthSectionRows))
+                                   monthSectionRows: max(1, monthSectionRows),
+                                   faceHighlight: faceHighlight)
     }
 
     // MARK: - Coordinator
@@ -76,6 +80,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         private var isUserScrolling = false
         private var pendingUpdate: (items: [Store.Item], columns: Int,
                                     grouping: PhotoGridGrouping?, monthSectionRows: Int)?
+        /// 顔ハイライト provider（トグル OFF は nil）。切替時は可視セルを再構成して即反映する。
+        private var faceHighlight: (@Sendable (String) async -> [CGRect])?
 
         private let spacing: CGFloat = 2
 
@@ -187,6 +193,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 cell.configure(isFavorite: item.isFavorite && showFavorite) {
                     store.thumbnailStages(for: item, targetSize: px)
                 }
+                if let faceHighlight = self.faceHighlight {
+                    let key = "\(id)"
+                    cell.setFaceBoxes { await faceHighlight(key) }
+                } else {
+                    cell.setFaceBoxes(nil)
+                }
             }
             dataSource = UICollectionViewDiffableDataSource<String, Store.Item.ID>(collectionView: cv) {
                 cv, indexPath, id in
@@ -206,7 +218,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
         // MARK: Update / snapshot
 
-        func update(items: [Store.Item], columns: Int, grouping: PhotoGridGrouping?, monthSectionRows: Int) {
+        func update(items: [Store.Item], columns: Int, grouping: PhotoGridGrouping?, monthSectionRows: Int,
+                    faceHighlight: (@Sendable (String) async -> [CGRect])? = nil) {
+            // 顔ハイライトの ON/OFF が切り替わったら可視セルを再構成して即反映する。
+            let faceFlipped = (self.faceHighlight != nil) != (faceHighlight != nil)
+            self.faceHighlight = faceHighlight
+            if faceFlipped, collectionView != nil { reconfigureVisibleItems() }
             let grouped = grouping != nil
             // レイアウト（列数/グルーピング）が変わったら作り直す。
             // ⚠️ ここは A1 の保留対象に**しない**：ピンチ（2本指）は UIScrollView のドラッグ判定も
@@ -395,7 +412,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             if !scrolling, let p = pendingUpdate {
                 pendingUpdate = nil
                 update(items: p.items, columns: p.columns,
-                       grouping: p.grouping, monthSectionRows: p.monthSectionRows)
+                       grouping: p.grouping, monthSectionRows: p.monthSectionRows,
+                       faceHighlight: faceHighlight)
             }
         }
     }

@@ -18,6 +18,10 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     /// 絞り込み条件（お気に入りのみ等）。画面ごとの一時状態（開き直すと解除）。
     @State private var filter = PhotoFilter()
     @State private var showFilterSheet = false
+    /// 顔ハイライト（人物アルバムのみ・環境で provider が注入されたときだけボタンを出す）。
+    /// たまに確認したい機能なので既定 OFF・画面ごとの一時状態。
+    @Environment(\.faceHighlightGridProvider) private var faceHighlightGrid
+    @State private var showFaceBoxes = false
 
     public init(store: Store, title: String, @ViewBuilder header: () -> Header = { EmptyView() }) {
         self.store = store
@@ -36,7 +40,8 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                     case .needsSetup(let message, let detail, let systemImage, let action):
                         setupView(message: message, detail: detail, systemImage: systemImage, action: action)
                     case .loaded:
-                        PhotoGridView(store: store, filter: filter)
+                        PhotoGridView(store: store, filter: filter,
+                                      faceHighlight: showFaceBoxes ? faceHighlightGrid : nil)
                     case .empty:
                         emptyView
                     case .failed(let message):
@@ -87,6 +92,15 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                       : "line.3.horizontal.decrease.circle")
                     .foregroundStyle(filter.isActive ? Color.accentColor : Color.primary)
                     .accessibilityLabel(L("Filter"))
+            }
+            // 顔ハイライト（人物アルバムのみ）。ON 中はサムネイルに認識した顔の黄枠を重ねる。
+            if faceHighlightGrid != nil {
+                Button { showFaceBoxes.toggle() } label: {
+                    Image(systemName: "person.and.viewfinder")
+                        .foregroundStyle(showFaceBoxes ? Color.yellow : Color.primary)
+                        .accessibilityLabel(L("Show recognized face"))
+                }
+                .padding(.leading, 24)
             }
             Spacer()
             if let showSettings {

@@ -45,9 +45,14 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     /// タップで開く写真（item.id）。`navigationDestination(item:)` で詳細へ push する。
     @State private var selectedID: Store.Item.ID?
 
-    public init(store: Store, filter: PhotoFilter = PhotoFilter()) {
+    /// 顔ハイライト provider（人物アルバムのトグル中のみ非 nil・セルに黄枠を重ねる）。
+    let faceHighlight: (@Sendable (String) async -> [CGRect])?
+
+    public init(store: Store, filter: PhotoFilter = PhotoFilter(),
+                faceHighlight: (@Sendable (String) async -> [CGRect])? = nil) {
         self.store = store
         self.filter = filter
+        self.faceHighlight = faceHighlight
     }
 
     /// フィルタ適用後の表示アイテム（未フィルタなら store.items をそのまま）。
@@ -92,7 +97,8 @@ public struct PhotoGridView<Store: PhotoStore>: View {
                         BackgroundActivityMonitor.shared.isViewingPhoto = true
                         selectedID = $0
                     },
-                    onScrubbingChange: { active in photoInteraction?(active) }   // G: 背景処理を譲る
+                    onScrubbingChange: { active in photoInteraction?(active) },   // G: 背景処理を譲る
+                    faceHighlight: faceHighlight
                 )
                 .ignoresSafeArea(.container, edges: .horizontal)
             }

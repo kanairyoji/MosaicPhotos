@@ -36,6 +36,13 @@ final class LocalAssetIndex {
         }
     }
 
+    /// 単一 ID の PHAsset（索引にあれば辞書引き・無ければ単発フェッチ）。
+    func asset(for id: String) -> PHAsset? {
+        buildIfNeeded()
+        if let asset = byID?[id] { return asset }
+        return PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+    }
+
     /// メンバー ID 群に対応する PHAsset（撮影日昇順）。索引未構築なら nil
     /// （呼び出し側は従来の `LocalPhotoStore(localIdentifiers:)` へフォールバック）。
     func assets(for ids: [String]) -> [PHAsset]? {

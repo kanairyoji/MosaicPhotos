@@ -1,9 +1,11 @@
 import AutoAlbumCore
 import DropboxKit
 import LocalPhotoKit
+import Photos
 import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
+import UIKit
 
 // MARK: - Person photo album (ローカル＋クラウドのメンバーを表示)
 
@@ -15,11 +17,13 @@ struct PersonAlbumView: View {
     private let title: String
     private let person: PersonInfo
     private let peopleEngine: PeopleEngine
+    private let assetIndex: LocalAssetIndex
 
     init(person: PersonInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
          peopleEngine: PeopleEngine) {
         self.person = person
         self.peopleEngine = peopleEngine
+        self.assetIndex = assetIndex
         // 索引（起動時構築）があれば辞書引きで即構築、無ければ従来のフェッチにフォールバック。
         let memberIDs = localIdentifiers(from: person.memberRefKeys)
         let localStore = assetIndex.assets(for: memberIDs).map { LocalPhotoStore(preloadedAssets: $0) }
@@ -39,5 +43,34 @@ struct PersonAlbumView: View {
             .environment(\.faceHighlightProvider) { [peopleEngine, clusterID = person.clusterID] id in
                 await peopleEngine.faceHighlights(forItemID: id, clusterID: clusterID)
             }
+            // サムネイルグリッド用（下部バーの「顔を表示」トグル）。グリッドは中央正方形
+            // トリミング表示なので、元画像のアスペクト比で正方形クロップ座標へ変換して渡す。
+            .environment(\.faceHighlightGridProvider) { id in
+                await gridFaceRects(itemID: id)
+            }
+    }
+
+    /// グリッドセル用の顔矩形（正方形クロップの単位座標・原点左上）。
+    private func gridFaceRects(itemID: String) async -> [CGRect] {
+        let boxes = await peopleEngine.faceHighlights(forItemID: itemID, clusterID: person.clusterID)
+        guard !boxes.isEmpty else { return [] }
+        return FaceBoxMapping.squareCropUnitRects(visionBoxes: boxes,
+                                                  aspectRatio: await originalAspect(itemID: itemID))
+    }
+
+    /// 元画像のアスペクト比（幅/高さ）。端末写真は PHAsset のピクセル寸法
+    /// （グリッドのサムネは正方形トリミング済みのことがあり当てにならない）、
+    /// クラウド写真はキャッシュ済みサムネ（Dropbox はアスペクト保持）から推定。不明は 1。
+    private func originalAspect(itemID: String) async -> CGFloat {
+        if itemID.hasPrefix("L-"),
+           let asset = assetIndex.asset(for: String(itemID.dropFirst(2))),
+           asset.pixelWidth > 0, asset.pixelHeight > 0 {
+            return CGFloat(asset.pixelWidth) / CGFloat(asset.pixelHeight)
+        }
+        if let item = store.items.first(where: { $0.id == itemID }),
+           let thumb = await store.thumbnail(for: item), thumb.size.height > 0 {
+            return thumb.size.width / thumb.size.height
+        }
+        return 1
     }
 }

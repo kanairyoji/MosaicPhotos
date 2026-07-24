@@ -27,6 +27,20 @@ private enum PhotoInsightKey: EnvironmentKey {
 
 /// ユーザーが写真を能動操作中か（スクラブ等）を上位へ通知するシンク。アプリ側が背景処理
 /// （CLIP 埋め込み）の一時停止に使う。未注入なら無視（レイヤー分離）。
+/// グリッド（サムネイル）用の顔ハイライト。`PhotoItem.id` を受け取り、**中央正方形クロップ表示の
+/// 単位座標（原点左上）**に変換済みの矩形を返す（変換は注入側＝元画像のアスペクト比を知っている層が行う）。
+/// nil（既定）ならグリッドの顔ボタン自体を出さない。
+private enum FaceHighlightGridKey: EnvironmentKey {
+    static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
+}
+
+extension EnvironmentValues {
+    public var faceHighlightGridProvider: (@Sendable (String) async -> [CGRect])? {
+        get { self[FaceHighlightGridKey.self] }
+        set { self[FaceHighlightGridKey.self] = newValue }
+    }
+}
+
 private enum FaceHighlightKey: EnvironmentKey {
     static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
 }
