@@ -118,7 +118,8 @@ struct HomeView: View {
                                           backupEngine: backupEngine, assetIndex: assetIndex)
                 case .person(let person):
                     // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
-                    PersonAlbumView(person: person, dropboxStore: dropboxStore, assetIndex: assetIndex)
+                    PersonAlbumView(person: person, dropboxStore: dropboxStore, assetIndex: assetIndex,
+                                    peopleEngine: peopleEngine)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 case .autoAlbum(let album):

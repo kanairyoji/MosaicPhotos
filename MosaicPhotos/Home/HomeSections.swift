@@ -161,10 +161,27 @@ extension HomeView {
                 }
             } header: {
                 // レビュー（「同じ人物？」確認カード）: 答えるほど認識が良くなる（ADR-46）。
-                sectionHeader("People", isBusy: peopleEngine.isScanning,
-                              actionIcon: "checkmark.seal",
-                              onAction: peopleEngine.people.count >= 1
-                                  ? { showingFaceReview = true } : nil)
+                // ⚠️ 小さな ✓ アイコンでは存在に気付かれない（実フィードバック）ため、
+                // テキスト付きの色付きカプセルボタンにする。
+                HStack {
+                    Text("People")
+                    Spacer()
+                    if peopleEngine.isScanning {
+                        ProgressView().controlSize(.mini)
+                    } else if peopleEngine.people.count >= 1 {
+                        Button {
+                            showingFaceReview = true
+                        } label: {
+                            Label(L("Review"), systemImage: "checkmark.seal.fill")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
     }

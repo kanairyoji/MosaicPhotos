@@ -10,15 +10,18 @@ public enum FaceReviewItem: Sendable, Identifiable, Equatable {
     case samePerson(aClusterID: Int, aName: String, aFace: PersonInfo.Face,
                     bClusterID: Int, bName: String, bFace: PersonInfo.Face,
                     similarity: Float)
-    /// 「この写真は「◯◯」さんですか？」— クラスタの**境界**にいる顔の確認（A2・混入の検出）。
+    /// クラスタの**境界**にいる顔の確認（A2・混入の検出）。
+    /// - `name` が非 nil（命名済み）:「この写真は「◯◯」さんですか？」
+    /// - `name` が nil（未命名）: 名前を出しても答えられないため、代表の顔（`coverFace`）と
+    ///   並べて「この 2 枚は同じ人物ですか？」という**見た目だけで判断できる**カードにする。
     /// はい → 確認済み（アンカー＋正例）。いいえ → 分離（負例）。
-    case isThisPerson(face: PersonInfo.Face, clusterID: Int, name: String,
-                      similarity: Float)
+    case isThisPerson(face: PersonInfo.Face, clusterID: Int, name: String?,
+                      coverFace: PersonInfo.Face, similarity: Float)
 
     public var id: String {
         switch self {
         case .samePerson(let a, _, _, let b, _, _, _): return "same|\(a)|\(b)"
-        case .isThisPerson(let face, let c, _, _):      return "confirm|\(face.faceID)|\(c)"
+        case .isThisPerson(let face, let c, _, _, _):   return "confirm|\(face.faceID)|\(c)"
         }
     }
 }

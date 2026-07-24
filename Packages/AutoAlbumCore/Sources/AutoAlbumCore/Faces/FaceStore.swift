@@ -273,6 +273,14 @@ actor FaceStore {
         return result.sorted { $0.count > $1.count }
     }
 
+    /// この写真に写っている**指定クラスタの**顔矩形（Vision 正規化・原点左下）。
+    /// 人物アルバムの全画面表示で「どの顔をこの人物として認識したか」を枠で示す用。
+    func faceBoxes(refKey: String, clusterID: Int) -> [CGRect] {
+        faces(inPhoto: refKey)
+            .filter { $0.clusterID == clusterID }
+            .map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
+    }
+
     /// クラスタの顔候補（写真ごとに 1 つ・代表写真ピッカー用）。
     func facesForCluster(clusterID: Int) -> [PersonInfo.Face] {
         var seen = Set<String>()
@@ -494,7 +502,8 @@ actor FaceStore {
         for c in clusters {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
-            name[c.clusterID] = c.name ?? "Person \(c.clusterID + 1)"
+            // 未命名は空（UI は名前ラベルを出さない。"Person N" は誰か分からず判断の助けにならない）。
+            name[c.clusterID] = (c.name?.isEmpty == false) ? (c.name ?? "") : ""
             let members = faces(inCluster: c.clusterID)
             let cover = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
                 ?? members.first
@@ -558,13 +567,20 @@ actor FaceStore {
                 let sim = FaceClustering.dot(FaceClustering.normalized(vec), cen)
                 if sim < thr + 0.10 { boundary.append((f, sim)) }
             }
+            guard let cover = coverFace[c.clusterID] else { continue }
             for entry in boundary.sorted(by: { $0.sim < $1.sim }).prefix(2) {
                 guard items.count < limit else { break }
+                // 未命名（Person N）は name=nil ＝ UI が「代表の顔と並べて比較」カードにする
+                //（名前を出しても誰か分からず答えられない・実フィードバック）。
+                // 境界顔自身が代表と同一（1 枚だけのケース等）は比較にならないので出さない。
+                let displayName = (c.name?.isEmpty == false) ? c.name : nil
+                if displayName == nil && cover.faceID == entry.face.faceID { continue }
                 items.append(.isThisPerson(
                     face: PersonInfo.Face(faceID: entry.face.faceID, refKey: entry.face.refKey,
                                           boundingBox: CGRect(x: entry.face.bx, y: entry.face.by,
                                                               width: entry.face.bw, height: entry.face.bh)),
-                    clusterID: c.clusterID, name: name[c.clusterID] ?? "",
+                    clusterID: c.clusterID, name: displayName,
+                    coverFace: cover,
                     similarity: entry.sim))
             }
         }

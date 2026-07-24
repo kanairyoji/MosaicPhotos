@@ -164,6 +164,19 @@ public final class PeopleEngine {
         return (await scanned, await faces)
     }
 
+    /// 写真（`PhotoItem.id`：refKey か生 ID）に写る**この人物の**顔矩形（全画面のハイライト用）。
+    public func faceHighlights(forItemID id: String, clusterID: Int) async -> [CGRect] {
+        var candidates: [String] = []
+        if PhotoRef.decode(id) != nil { candidates.append(id) }
+        candidates.append(PhotoRef.local(id).encoded)
+        candidates.append(PhotoRef.cloud(id).encoded)
+        for key in candidates {
+            let boxes = await store.faceBoxes(refKey: key, clusterID: clusterID)
+            if !boxes.isEmpty { return boxes }
+        }
+        return []
+    }
+
     /// 代表写真の選択候補（クラスタ内の顔・写真ごと）。
     public func coverCandidates(clusterID: Int) async -> [PersonInfo.Face] {
         await store.facesForCluster(clusterID: clusterID)

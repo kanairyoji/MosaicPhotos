@@ -24,7 +24,10 @@ struct FullPhotoView<Store: PhotoStore>: View {
     @State private var pullDown: CGFloat = 0
     @State private var isDismissing = false
     @Environment(\.photoInsight) private var photoInsight
+    @Environment(\.faceHighlightProvider) private var faceHighlightProvider
     @Environment(\.dismiss) private var dismiss
+    /// 認識した顔のハイライト矩形（Vision 正規化・原点左下）。人物アルバムから開いたときのみ。
+    @State private var faceHighlights: [CGRect] = []
 
     /// 下スワイプで閉じる閾値（最上部から下方向の overscroll 量・pt）。
     private static var dismissPull: CGFloat { 60 }
@@ -112,6 +115,28 @@ struct FullPhotoView<Store: PhotoStore>: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
+                // 人物アルバムから開いたとき、認識した顔（その人物のもの）を枠で示す。
+                // scaledToFit の Image はビュー枠＝画像そのもの（レターボックスなし）なので、
+                // Vision 正規化座標（原点左下）を y 反転して重ねるだけでよい。
+                .overlay {
+                    if !faceHighlights.isEmpty {
+                        GeometryReader { geo in
+                            ForEach(Array(faceHighlights.enumerated()), id: \.offset) { _, box in
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(.yellow, lineWidth: 2)
+                                    .frame(width: box.width * geo.size.width,
+                                           height: box.height * geo.size.height)
+                                    .position(x: (box.midX) * geo.size.width,
+                                              y: (1 - box.midY) * geo.size.height)
+                            }
+                        }
+                        .allowsHitTesting(false)
+                    }
+                }
+                .task(id: item.id) {
+                    guard let provider = faceHighlightProvider else { return }
+                    faceHighlights = await provider("\(item.id)")
+                }
         } else if failed {
             // T1: 失敗は "not found" 風ではなく、再試行できる控えめな表現にする。
             VStack(spacing: 12) {

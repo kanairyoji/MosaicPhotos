@@ -33,6 +33,7 @@
   - **B3 マルチプロトタイプ**: クラスタ類似度を「重心 or アンカー群との最大」に拡張。年代・眼鏡・角度で重心から遠い顔も、確認済みアンカーに近ければ合流する（A2 の回答がそのまま認識力になる相互強化）。
 - 結果: 「間違い探し」から「確認カードに答える」へ操作性が転換し、回答が統合・アンカー・負例・しきい値校正・再クラスタの 5 経路で精度に還流する。ジャーナルは埋め込みキーなので再スキャン・将来のモデル入れ替えを跨いで有効。トレードオフ: (1) レビュー生成はクラスタ対 O(k²)＋境界顔の全メンバー走査（数万顔で数秒・シート表示時のみ・ローディング表示）。(2) 再クラスタは O(顔数×クラスタ数)（数万顔で数秒・夜間のみ・修正が増えたときだけ）。(3) 校正の最低サンプル 8 未満は挙動不変。残: 埋め込みモデル更新（facenet→ArcFace 系・実測比較）は本 ADR の土台の上に後続（フェーズ C）。
 - 関連: `FaceCalibration.swift`・`FaceReview.swift`・`FaceClustering`（prototypes/similarity/minimumNextID）・`FaceStore`（reviewItems/confirmFace/markNotSamePerson/rebuildClusters/校正キャッシュ）・`PeopleEngine`（reviewItems/answer*/rebuildClustersIfNeeded）・`FaceReviewView`・`FaceCalibrationTests`/`FaceStoreLearningTests`/`FaceClusteringTests`。ADR-45 の続き。
+- 追記（2026-07・実機フィードバック 3 点）: (1) **未命名クラスタのカードは名前で尋ねない**＝「Person 1 さんですか？」は誰のことか分からず答えられない。命名済みだけ名前カード、未命名は**代表の顔と境界の顔を並べた「同じ人物ですか？」**（見た目だけで判断可能）に変更（`FaceReviewItem.isThisPerson` に `name: String?`＋`coverFace` を追加・境界顔＝代表顔のときはカード自体を出さない）。(2) **レビュー導線が小さな ✓ アイコンでは気付かれない**→ ピープルのヘッダーをテキスト付きの色付きカプセルボタン（checkmark.seal.fill＋「Review／人物を確認」）に変更。(3) **複数人が写る写真でどの顔をこの人物と認識したか分からない**→ 人物アルバムの全画面表示で該当クラスタの顔を黄枠でハイライト（`FaceStore.faceBoxes(refKey:clusterID:)`→`PeopleEngine.faceHighlights`→PhotoSourceKit の新環境クロージャ `faceHighlightProvider`。PhotoSourceKit は AutoAlbumCore 非依存のまま＝`photoInsight` と同じ seam パターン。Vision 正規化座標を scaledToFit 画像上へ y 反転でマッピング）。
 
 ## ADR-45 顔認識をユーザー修正から学習する（品質ゲート＋負例エグゼンプラ＋修正ジャーナル）
 - 状態: 採用

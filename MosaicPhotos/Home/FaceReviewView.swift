@@ -61,12 +61,24 @@ struct FaceReviewView: View {
                 Text(L("Are these the same person?"))
                     .font(.title3.weight(.semibold))
 
-            case .isThisPerson(let face, _, let name, _):
-                FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 480)
-                    .frame(width: 160, height: 160)
-                    .clipShape(Circle())
-                Text(L("Is this “\(name)”?"))
-                    .font(.title3.weight(.semibold))
+            case .isThisPerson(let face, _, let name, let coverFace, _):
+                if let name {
+                    // 命名済み: 名前で尋ねられる（誰のことか分かる）。
+                    FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 480)
+                        .frame(width: 160, height: 160)
+                        .clipShape(Circle())
+                    Text(L("Is this “\(name)”?"))
+                        .font(.title3.weight(.semibold))
+                } else {
+                    // 未命名: "Person N" では誰か分からないので、代表の顔と並べて
+                    // **見た目だけで**判断できる形にする（実フィードバック対応）。
+                    HStack(spacing: 24) {
+                        personColumn(face: coverFace, name: "")
+                        personColumn(face: face, name: "")
+                    }
+                    Text(L("Are these the same person?"))
+                        .font(.title3.weight(.semibold))
+                }
             }
 
             Text(L("Your answers teach the app — recognition improves as you review."))
@@ -92,7 +104,9 @@ struct FaceReviewView: View {
             FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 400)
                 .frame(width: 120, height: 120)
                 .clipShape(Circle())
-            Text(name).font(.subheadline)
+            if !name.isEmpty {
+                Text(name).font(.subheadline)
+            }
         }
     }
 
@@ -132,7 +146,7 @@ struct FaceReviewView: View {
             switch item {
             case .samePerson(let a, _, _, let b, _, _, _):
                 await peopleEngine.answerSamePerson(aClusterID: a, bClusterID: b, same: yes)
-            case .isThisPerson(let face, _, _, _):
+            case .isThisPerson(let face, _, _, _, _):
                 await peopleEngine.answerIsThisPerson(faceID: face.faceID, yes: yes)
             }
         }

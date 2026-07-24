@@ -41,7 +41,7 @@ struct FaceStoreLearningTests {
         await store.recordScan(refKey: "L-edge", faces: [signal([1, 1.88, 0])])
         let items = await store.reviewItems(minFaces: 3, limit: 30)
         let confirmItem = items.compactMap { item -> PersonInfo.Face? in
-            if case .isThisPerson(let face, _, _, _) = item { return face }
+            if case .isThisPerson(let face, _, _, _, _) = item { return face }
             return nil
         }.first { $0.refKey == "L-edge" }
         #expect(confirmItem != nil)
@@ -51,7 +51,7 @@ struct FaceStoreLearningTests {
             await store.confirmFace(faceID: face.faceID)
             let after = await store.reviewItems(minFaces: 3, limit: 30)
             #expect(!after.contains { item in
-                if case .isThisPerson(let f, _, _, _) = item { return f.faceID == face.faceID }
+                if case .isThisPerson(let f, _, _, _, _) = item { return f.faceID == face.faceID }
                 return false
             })
             #expect(await store.correctionCount() == 1)

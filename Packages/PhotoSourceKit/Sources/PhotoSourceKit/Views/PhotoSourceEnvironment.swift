@@ -27,6 +27,10 @@ private enum PhotoInsightKey: EnvironmentKey {
 
 /// ユーザーが写真を能動操作中か（スクラブ等）を上位へ通知するシンク。アプリ側が背景処理
 /// （CLIP 埋め込み）の一時停止に使う。未注入なら無視（レイヤー分離）。
+private enum FaceHighlightKey: EnvironmentKey {
+    static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
+}
+
 private enum PhotoInteractionKey: EnvironmentKey {
     static let defaultValue: ((Bool) -> Void)? = nil
 }
@@ -45,6 +49,14 @@ public extension EnvironmentValues {
     var photoInsight: (@Sendable (String) async -> PhotoInsight?)? {
         get { self[PhotoInsightKey.self] }
         set { self[PhotoInsightKey.self] = newValue }
+    }
+
+    /// 全画面写真で**認識した顔をハイライト**する矩形群（Vision 正規化座標・原点左下）。
+    /// 人物アルバム（PersonAlbumView）が「その人物の顔だけ」を返すよう注入する。
+    /// nil（既定）ならハイライトなし＝通常の全画面表示。
+    var faceHighlightProvider: (@Sendable (String) async -> [CGRect])? {
+        get { self[FaceHighlightKey.self] }
+        set { self[FaceHighlightKey.self] = newValue }
     }
 
     var photoInteraction: ((Bool) -> Void)? {
