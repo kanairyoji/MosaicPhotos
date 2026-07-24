@@ -175,8 +175,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 // 同じ左上のマテリアル丸ボタンにする（実フィードバック：右下の黒地は視認不可）。
                 if faceHighlightProvider != nil {
                     Button { showFaceHighlights.toggle() } label: {
-                        Image(systemName: "person.and.viewfinder")
-                            .font(.subheadline.weight(.bold))
+                        // 一目で「顔」と分かるスマイルアイコン。ON は黄色の塗りで明示
+                        //（グレーの person.and.viewfinder は機能が伝わらない＝実フィードバック）。
+                        Image(systemName: showFaceHighlights ? "face.smiling.inverse" : "face.smiling")
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(showFaceHighlights ? Color.yellow : .white)
                             .frame(width: 34, height: 34)
                             .background(.ultraThinMaterial, in: Circle())
