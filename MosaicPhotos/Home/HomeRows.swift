@@ -163,7 +163,7 @@ struct PeopleCarousel: View {
     }
 }
 
-/// 円形アバター（代表顔の切り抜き）＋名前（未設定は "Person N"）＋枚数。
+/// 代表顔の切り抜き（他のアルバムカバーと同じ角丸四角）＋名前（未設定は "Person N"）＋枚数。
 private struct PersonCard: View {
     let person: PersonInfo
     private static let side: CGFloat = 84
@@ -172,7 +172,7 @@ private struct PersonCard: View {
         VStack(spacing: 6) {
             FaceAvatarImage(refKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 480)
                 .frame(width: Self.side, height: Self.side)
-                .clipShape(Circle())
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text(person.displayName)
                 .font(.footnote)
