@@ -21,6 +21,19 @@
 
 ---
 
+## ADR-48 顔情報の拡充（顔向きゲート・品質フロア引き上げ・目閉じ/笑顔・サイズ閾値）
+- 状態: 採用
+- 文脈: 顔クラスタの混入（別人が混ざる）の主要因は、横顔・ぼけ顔・目閉じ・小さすぎる顔の埋め込みが信頼できないのに正面顔と同じ重みでクラスタへ入ることだった（face-info-expansion）。ArcFace への換装（最大効果・フェーズ C）とは独立に、公開 API だけで取れる信号でゲートを強化できる。
+- 決定: 優先度 1〜5 を実装（6=ArcFace 換装はモデル変換・同梱が必要な別作業のため対象外のまま）。
+  - **顔向きゲート**: `VNDetectFaceLandmarksRequest` を品質リクエストと**同一 perform** に追加し、yaw/roll を取得（観測の対応づけは bbox IoU>0.3）。**|yaw|≥30° または |roll|≥45° は品質を 0.2 へキャップ**＝フロア未満で未割当（横顔の誤クラスタ混入の主因を遮断）。
+  - **品質フロア 0.15 → 0.40**: ぼけ顔の重心汚染を削減。フロア未満も `DetectedFace` として記録は残す（顔数・枠表示用）。
+  - **目閉じ**: ランドマークの目領域の縦横比（<0.15）で近似判定し品質 ×0.6。
+  - **顔サイズ閾値**: ローカル 0.05 / **クラウド 0.15**（低解像度サムネの誤検出削減・従来は両方 0.05）。
+  - **笑顔フラグ**: CIDetector（`CIDetectorSmile`）を 1 パス追加し bbox で照合、`DetectedFace.hasSmile`（optional 追加＝FacesV1 据え置きの軽量マイグレーション）へ保存。**代表顔の自動選択**（coverFaceID 未指定時）を「品質＋笑顔 +0.3＋顔サイズ +0.2」のスコア選択に変更。
+  - 品質調整は純ロジック `FaceQualityGate`（AutoAlbumCore・テスト対象）に集約し、adapter は取得と委譲のみ。シミュレータ/フォールバック検出（yaw 等が nil）は減衰なし＝従来挙動。
+- 結果: 新規スキャン分から横顔・目閉じ・微小顔がクラスタへ入らなくなり、混入と「同じ写真に複数の枠」が減る。代表顔は笑顔・高品質に寄る。既存の顔行は保存済み品質のままだが、**夜間の制約付き再クラスタ（ADR-46 B2）が新フロア 0.40 で全体を割り当て直す**ため段階的に浄化される（顔向き減衰の完全適用は再スキャン＝Developer Options の Reset people で前倒し可）。トレードオフ: (1) ランドマーク＋CIDetector ぶん 1 枚あたり数十 ms 増（夜間のみ）。(2) フロア引き上げでクラウド（低解像度）顔の採用数が減る＝クラウド中心の人物アルバムは小さくなる（誤りより取りこぼしを選ぶ・安全側）。
+- 関連: `FaceSeams.swift`（FaceQualityGate/DetectedFaceSignal.hasSmile）・`FaceModels.swift`（DetectedFace.hasSmile）・`FaceStore.swift`（フロア 0.40・bestCoverFace）・`FacePerceptionAdapter.swift`（一括 perform・IoU 対応づけ・CIDetector 笑顔）・`FaceInfoExpansionTests`。ADR-45/46 の続き。指示書 `docs/architecture-note/features/face-info-expansion.md` は実装完了につき削除（ArcFace 換装＝フェーズ C は ADR-46 残課題として継続）。
+
 ## ADR-47 写真付帯情報の拡充（Vision 一括パス：OCR・動物・人数・美的スコア・アセット種別）
 - 状態: 採用
 - 文脈: 写真 1 枚から取得する情報がシーン分類（VNClassifyImageRequest）のみで、看板・書類・スクショ内の文字、ペット種別、人数、見栄えなどの信号を捨てていた。Vision は同一画像への複数リクエストを 1 回の `perform([...])` に載せると前処理・ロードを共有できる。

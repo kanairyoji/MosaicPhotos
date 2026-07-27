@@ -23,15 +23,18 @@ final class DetectedFace {
     /// (1) クラスタのアンカー（マルチプロトタイプ）になり、(2) 再クラスタリングで
     /// must-link（必ずこの人物へ）として扱われ、(3) レビューで再度尋ねない。
     var confirmedAt: Date?
+    /// 笑顔か（CIFaceFeature・face-info-expansion）。代表顔の自動選択で加点。未計測は nil。
+    var hasSmile: Bool?
 
     init(faceID: String, refKey: String, bx: Double, by: Double, bw: Double, bh: Double,
-         embedding: Data, quality: Double, clusterID: Int) {
+         embedding: Data, quality: Double, clusterID: Int, hasSmile: Bool? = nil) {
         self.faceID = faceID
         self.refKey = refKey
         self.bx = bx; self.by = by; self.bw = bw; self.bh = bh
         self.embedding = embedding
         self.quality = quality
         self.clusterID = clusterID
+        self.hasSmile = hasSmile
     }
 }
 

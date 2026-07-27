@@ -28,7 +28,9 @@ actor FaceStore {
     /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
     private static let clusterThreshold: Float = 0.45
     /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
-    private static let qualityFloor: Float = 0.15
+    /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
+    /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。
+    private static let qualityFloor: Float = 0.40
     /// 負例エグゼンプラの上限（コスト有界化・新しい順に保持）。
     private static let maxNegatives = 400
 
@@ -77,6 +79,16 @@ actor FaceStore {
 
     private func allClusters() -> [PersonCluster] {
         (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
+    }
+
+    /// 代表顔の自動選択スコア: 品質を軸に、笑顔（+0.3）と顔の大きさ（bw・最大+0.2）で加点。
+    /// ユーザーが代表を指定済み（coverFaceID）の場合は呼ばれない。
+    static func bestCoverFace(_ faces: [DetectedFace]) -> DetectedFace? {
+        faces.max { coverScore($0) < coverScore($1) }
+    }
+
+    private static func coverScore(_ f: DetectedFace) -> Double {
+        f.quality + (f.hasSmile == true ? 0.3 : 0) + min(f.bw, 1.0) * 0.2
     }
 
     private func face(byID faceID: String) -> DetectedFace? {
@@ -161,7 +173,8 @@ actor FaceStore {
                     faceID: faceID, refKey: refKey,
                     bx: face.boundingBox.origin.x, by: face.boundingBox.origin.y,
                     bw: face.boundingBox.size.width, bh: face.boundingBox.size.height,
-                    embedding: face.embedding, quality: Double(face.quality), clusterID: cid))
+                    embedding: face.embedding, quality: Double(face.quality), clusterID: cid,
+                    hasSmile: face.hasSmile))
             }
             persist(clustering)
             clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）
@@ -262,9 +275,10 @@ actor FaceStore {
             var members: [String] = []
             for f in faces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
 
+            // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先する（face-info-expansion 優先度 5）。
             let cover = c.coverFaceID.flatMap { fid in faces.first { $0.faceID == fid } }
-                ?? faces.first { favoriteRefKeys.contains($0.refKey) }
-                ?? faces.first
+                ?? Self.bestCoverFace(faces.filter { favoriteRefKeys.contains($0.refKey) })
+                ?? Self.bestCoverFace(faces)
             let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
             result.append(PersonInfo(
                 clusterID: c.clusterID, name: c.name, count: members.count,
@@ -524,7 +538,7 @@ actor FaceStore {
             name[c.clusterID] = (c.name?.isEmpty == false) ? (c.name ?? "") : ""
             let members = faces(inCluster: c.clusterID)
             let cover = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
-                ?? members.first
+                ?? Self.bestCoverFace(members)
             if let f = cover {
                 coverFace[c.clusterID] = PersonInfo.Face(
                     faceID: f.faceID, refKey: f.refKey,
