@@ -17,6 +17,13 @@ public enum FaceQualityGate {
     public static let eyesClosedFactor: Float = 0.6
     /// 顔矩形の最小辺（正規化）。クラウドは低解像度サムネのため大きい顔のみ採る。
     public static func minFaceSide(isCloud: Bool) -> CGFloat { isCloud ? 0.15 : 0.05 }
+    /// 顔検出の最低信頼度（VNFaceObservation.confidence）。これ未満は「顔でない」誤検出と
+    /// みなして埋め込み自体を行わない（模様・ぼけた物体などの偽陽性対策）。
+    public static let minDetectionConfidence: Float = 0.8
+    /// クロップ再検証: 顔中心に切り抜いた画像内でもう一度顔検出したとき、検出顔がクロップ幅の
+    /// この割合以上を占めること（占めなければ「顔でない」と判断して棄却）。
+    public static let cropVerifyMinSide: CGFloat = 0.25
+
     /// 顔矩形の最小辺（**絶対ピクセル**）。比率を満たしても実ピクセルが小さすぎる顔は
     /// 埋め込みが機能しないため除外する（比率ゲートと二段構え）。
     public static let minFacePixels: CGFloat = 32

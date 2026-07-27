@@ -56,6 +56,8 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     private struct FaceObservation {
         var box: CGRect
         var quality: Float
+        /// 顔検出そのものの信頼度（VNFaceObservation.confidence・フォールバックは 1）。
+        var confidence: Float = 1
         var yaw: Float?
         var roll: Float?
         var eyesClosed: Bool?
@@ -70,43 +72,123 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// face-info-expansion: 顔向き（yaw/roll）・目閉じ・笑顔を追加取得し、
     /// 品質を `FaceQualityGate` で一元調整する（横顔はフロア未満＝クラスタへ入れない）。
     private func detect(in cg: CGImage, isCloud: Bool) -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
+        let (analyses, error) = analyzeFaces(in: cg, isCloud: isCloud)
+        return (analyses.count, analyses.compactMap(\.signal), error)
+    }
+
+    /// 顔ゲートの判定レポート（検証ハーネス・Developer 用の公開型）。
+    /// 「どの顔が・どの理由で・どの数値で」通過/棄却されたかを 1 顔ずつ返す。
+    public struct FaceGateReport: Sendable {
+        public let pixelSize: CGSize
+        public let confidence: Float
+        public let rawQuality: Float
+        public let adjustedQuality: Float
+        public let blurVariance: Float?
+        public let meanLuma: Float?
+        public let yaw: Float?
+        public let roll: Float?
+        public let accepted: Bool
+        /// 棄却理由: size-ratio / size-pixels / low-confidence / crop-failed / not-a-face /
+        /// embed-failed。通過は nil（adjustedQuality がフロア未満なら「記録のみ・クラスタ不参加」）。
+        public let rejectReason: String?
+    }
+
+    /// 画像 1 枚をゲート込みで解析してレポートを返す（**検証ハーネス用**・埋め込み含む本番同一経路）。
+    /// 端末へ入れて大量スキャンせずとも、問題写真をフォルダに置いてしきい値を素早く調整できる。
+    public func debugAnalyze(_ cg: CGImage, isCloud: Bool = false) -> [FaceGateReport] {
+        analyzeFaces(in: cg, isCloud: isCloud).analyses.map(\.report)
+    }
+
+    private struct FaceAnalysis {
+        var report: FaceGateReport
+        var signal: DetectedFaceSignal?
+    }
+
+    private func analyzeFaces(in cg: CGImage, isCloud: Bool) -> (analyses: [FaceAnalysis], error: String?) {
         let (faces, error) = faceObservations(in: cg)   // 正規化(原点左下)の矩形＋品質＋向き＋属性
 
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
         // 小さすぎる顔は埋め込み精度が低いので除外（クラウドは低解像度サムネのため大きい顔のみ）。
         let minSide = FaceQualityGate.minFaceSide(isCloud: isCloud)
-        var signals: [DetectedFaceSignal] = []
+        var out: [FaceAnalysis] = []
         for face in faces {
-            guard face.box.width >= minSide, face.box.height >= minSide else { continue }
-            // ADR-51: 両目ランドマークがあれば**アライメント切り抜き**（目線を水平・両目中点を
-            // 標準位置に正規化）。facenet の学習形式に合い、同一人物の埋め込みが近づく。
-            // ランドマークなし/計画不能（過大な傾き等）は従来の bbox 切り抜きへフォールバック。
             let pixelBox = CGRect(x: face.box.origin.x * width, y: face.box.origin.y * height,
                                   width: face.box.width * width, height: face.box.height * height)
-            // 比率を満たしても実ピクセルが小さすぎる顔は埋め込みが機能しない → 除外（二段構え）。
-            guard pixelBox.width >= FaceQualityGate.minFacePixels,
-                  pixelBox.height >= FaceQualityGate.minFacePixels else { continue }
-            let aligned: CGImage? = {
-                guard let l = face.eyeLeft, let r = face.eyeRight,
-                      let plan = FaceAlignment.plan(leftEye: l, rightEye: r, pixelBox: pixelBox)
-                else { return nil }
-                return alignedCrop(cg, plan: plan)
-            }()
-            guard let crop = aligned ?? cropFace(cg, normalizedBox: face.box, width: width, height: height),
-                  let embedding = FaceModelRuntime.shared.embed(crop) else { continue }
-            // ADR-45/47/52: 実品質（faceCaptureQuality）に顔向き・目閉じ・ぼけ・露出の減衰を
-            // 適用して伝える。強いぼけ・極端な露出・横顔はフロア未満（未割当）＝重心を汚さない。
-            let metrics = Self.faceMetrics(crop)
-            let adjusted = FaceQualityGate.adjustedQuality(
-                quality: face.quality, yaw: face.yaw, roll: face.roll, eyesClosed: face.eyesClosed,
-                blurVariance: metrics?.blurVariance, meanLuma: metrics?.meanLuma)
-            signals.append(DetectedFaceSignal(
-                boundingBox: face.box,
-                embedding: ClipMath.encodeHalf(embedding),
-                quality: adjusted,
-                hasSmile: face.hasSmile))
+            var reason: String?
+            var signal: DetectedFaceSignal?
+            var metrics: (blurVariance: Float, meanLuma: Float)?
+            var adjusted = face.quality
+
+            if face.box.width < minSide || face.box.height < minSide {
+                reason = "size-ratio"
+            } else if pixelBox.width < FaceQualityGate.minFacePixels
+                        || pixelBox.height < FaceQualityGate.minFacePixels {
+                // 比率を満たしても実ピクセルが小さすぎる顔は埋め込みが機能しない（二段構え）。
+                reason = "size-pixels"
+            } else if face.confidence < FaceQualityGate.minDetectionConfidence {
+                // ADR-53: 検出信頼度が低い「顔でない」誤検出（模様・ぼけた物体）を弾く。
+                reason = "low-confidence"
+            } else {
+                // ADR-51: 両目ランドマークがあればアライメント切り抜き（目線を水平・標準位置へ）。
+                // 計画不能（過大な傾き等）は従来の bbox 切り抜きへフォールバック。
+                let aligned: CGImage? = {
+                    guard let l = face.eyeLeft, let r = face.eyeRight,
+                          let plan = FaceAlignment.plan(leftEye: l, rightEye: r, pixelBox: pixelBox)
+                    else { return nil }
+                    return alignedCrop(cg, plan: plan)
+                }()
+                let crop = aligned ?? cropFace(cg, normalizedBox: face.box, width: width, height: height)
+                if let crop {
+                    if !verifyFaceInCrop(crop) {
+                        // ADR-53: 顔中心のクロップ内で再検出できない＝顔でない（二段検出）。
+                        reason = "not-a-face"
+                    } else {
+                        // ADR-45/47/52: 実品質に顔向き・目閉じ・ぼけ・露出の減衰を適用。
+                        // フロア未満は未割当（記録のみ・重心を汚さない）。
+                        metrics = Self.faceMetrics(crop)
+                        adjusted = FaceQualityGate.adjustedQuality(
+                            quality: face.quality, yaw: face.yaw, roll: face.roll,
+                            eyesClosed: face.eyesClosed,
+                            blurVariance: metrics?.blurVariance, meanLuma: metrics?.meanLuma)
+                        if let embedding = FaceModelRuntime.shared.embed(crop) {
+                            signal = DetectedFaceSignal(
+                                boundingBox: face.box,
+                                embedding: ClipMath.encodeHalf(embedding),
+                                quality: adjusted,
+                                hasSmile: face.hasSmile)
+                        } else {
+                            reason = "embed-failed"
+                        }
+                    }
+                } else {
+                    reason = "crop-failed"
+                }
+            }
+            out.append(FaceAnalysis(
+                report: FaceGateReport(pixelSize: pixelBox.size,
+                                       confidence: face.confidence,
+                                       rawQuality: face.quality,
+                                       adjustedQuality: adjusted,
+                                       blurVariance: metrics?.blurVariance,
+                                       meanLuma: metrics?.meanLuma,
+                                       yaw: face.yaw, roll: face.roll,
+                                       accepted: signal != nil,
+                                       rejectReason: reason),
+                signal: signal))
         }
-        return (faces.count, signals, error)
+        return (out, error)
+    }
+
+    /// クロップ再検証（ADR-53）: 顔中心に切り抜いた画像内でもう一度顔検出し、
+    /// 実際に顔があるか確認する（模様・物体の誤検出はここで落ちる）。クロップは顔中心なので
+    /// 検出顔がクロップ幅の一定割合以上を占めることを要求する。Vision が使えない環境
+    ///（シミュレータの一部）では判定不能＝棄却しない。
+    private func verifyFaceInCrop(_ crop: CGImage) -> Bool {
+        let request = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cgImage: crop, options: [:])
+        guard (try? handler.perform([request])) != nil else { return true }
+        guard let results = request.results, !results.isEmpty else { return false }
+        return results.contains { $0.boundingBox.width >= FaceQualityGate.cropVerifyMinSide }
     }
 
     /// 顔観測（Vision 正規化・原点左下）を返す。**1 回の perform** で品質＋ランドマークを取得し、
@@ -135,6 +217,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                     .map { smiles[$0].hasSmile }
                 return FaceObservation(box: o.boundingBox,
                                        quality: o.faceCaptureQuality ?? 1,
+                                       confidence: o.confidence,
                                        yaw: yaw, roll: roll,
                                        eyesClosed: eyesClosed, hasSmile: smile,
                                        eyeLeft: Self.regionCenter(lm?.landmarks?.leftEye, imageSize: imageSize),
@@ -146,7 +229,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             let rectRequest = VNDetectFaceRectanglesRequest()
             if (try? handler.perform([rectRequest])) != nil, let rects = rectRequest.results {
                 return (rects.map {
-                    FaceObservation(box: $0.boundingBox, quality: 1,
+                    FaceObservation(box: $0.boundingBox, quality: 1, confidence: $0.confidence,
                                     yaw: $0.yaw?.floatValue, roll: $0.roll?.floatValue,
                                     eyesClosed: nil, hasSmile: nil)
                 }, error.localizedDescription)

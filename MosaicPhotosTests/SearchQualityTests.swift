@@ -170,7 +170,7 @@ final class SearchQualityTests: XCTestCase {
         for p in fixture.photos {
             let path = root.appendingPathComponent(p.file).path
             guard let cg = UIImage(contentsOfFile: path)?.cgImage else { tags[p.refKey] = []; continue }
-            tags[p.refKey] = VisionTagAdapter.classify(cg)   // 本番と同一の足切り（precision 0.9）
+            tags[p.refKey] = VisionTagAdapter.sense(cg).tags   // 本番と同一の足切り（precision 0.75・ADR-50）
         }
         try JSONEncoder().encode(tags).write(to: cacheURL)
         return tags

@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-53 顔の偽陽性対策（検出信頼度ゲート＋クロップ再検証）と検証ハーネス
+- 状態: 採用
+- 文脈: ぼけて顔ですらない写真（模様・物体）が顔として登場する実障害。原因は 2 系統: (1) ADR-48/52 のゲートは**スキャン時**に効くため、v2 全再スキャン（ADR-51）が完了するまで旧来のゲート前データが残る。(2) 検出信頼度（`VNFaceObservation.confidence`）を見ておらず、「切り抜いた結果が本当に顔か」の再確認も無かったため、偽陽性がぼけ/露出ゲートをすり抜け得た（模様は鮮明・適正露出のことがある）。また、しきい値調整のたびに端末へ入れて大量スキャンする検証ループが遅すぎる問題があった。
+- 決定: (1) **検出信頼度ゲート**: confidence < 0.8 の顔は埋め込み自体を行わない。(2) **クロップ再検証（二段検出）**: 顔中心に切り抜いた画像内でもう一度 `VNDetectFaceRectanglesRequest` を実行し、クロップ幅の 25% 以上を占める顔が検出できなければ「顔でない」と棄却（模様・物体の誤検出はここで落ちる）。Vision 不能環境（シミュレータの一部）は判定不能＝棄却しない。(3) **検証ハーネス**: adapter の判定経路を `analyzeFaces`（1 顔ごとの `FaceGateReport`＝通過/棄却理由・信頼度・品質・ぼけ・露出・寸法）に再構成し、公開 `debugAnalyze` を新設。`FaceGateHarnessTests`（アプリターゲット・XCTest）が **`~/DEV/tmp/face-samples/` の問題写真**を本番同一経路（1024px ロード込み）で解析して `FACEGATE:` 行に判定表を出す。**端末投入・ライブラリスキャン不要**で「写真を置く→1 コマンド→数値を見て `FaceQualityGate` を調整→再実行」を数十秒で回せる（フォルダ/モデル無しは skip・最終確認は実機）。
+- 結果: 偽陽性は「低信頼度」「クロップ内に顔なし」の 2 段で落ち、ぼけ/露出/サイズと合わせ 6 種のゲートになる。しきい値調整の反復が実機大量スキャンからハーネス実行へ短縮。トレードオフ: 顔 1 つあたり Vision 矩形検出が 1 回増える（クロップは小さく数 ms 級・夜間のみ）。既存の汚染データは v2 再スキャン完了までは残る（Developer Options の Force heavy work + Run BG routine now で前倒し可能）。
+- 関連: `FaceSeams.swift`（minDetectionConfidence/cropVerifyMinSide）・`FacePerceptionAdapter`（analyzeFaces/FaceGateReport/debugAnalyze/verifyFaceInCrop）・`MosaicPhotosTests/FaceGateHarnessTests.swift`。ADR-48/51/52 の続き。
+
 ## ADR-52 顔ごとのぼけ・露出ゲート＋絶対ピクセルの最小顔サイズ
 - 状態: 採用
 - 文脈: ADR-48 のゲート（顔向き・目閉じ・正規化サイズ比）後も、ぼけた顔・極端な露出（暗部/白飛び）の顔が faceCaptureQuality だけでは十分に弾けず、クラスタ精度を下げる不確かな埋め込みが混入し得た。また最小顔サイズが正規化比率のみのため、低解像度画像では比率を満たしても実ピクセルが小さすぎる顔が通っていた。Apple の per-face ぼけ/露出スコア API は SPI で使えないため、公開手段で同等のゲートを作る。
