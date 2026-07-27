@@ -68,6 +68,7 @@ public final class AutoAlbumEngine {
     @ObservationIgnored let labelProvider: LabelProvider?
     /// シーンタグ・キャプションのストア／トリクル付与（TagsV1 別コンテナ）。
     @ObservationIgnored let tagStore: TagStore
+    @ObservationIgnored let usageStore: UsageStore
     @ObservationIgnored let tagTagger: TagTagger
 
     /// ⚠️ 直 init は「呼び出しスレッドで AutoAlbumStore（@ModelActor）を作る」＝ MainActor から
@@ -92,11 +93,12 @@ public final class AutoAlbumEngine {
     ) async -> AutoAlbumEngine {
         let store = await Task.detached(priority: .userInitiated) { AutoAlbumStore() }.value
         let tagStore = await Task.detached(priority: .userInitiated) { TagStore() }.value
+        let usageStore = await Task.detached(priority: .userInitiated) { UsageStore() }.value
         return AutoAlbumEngine(cloudProvider: cloudProvider, backupLink: backupLink,
                                peopleProvider: peopleProvider, queryUnderstanding: queryUnderstanding,
                                perception: perception, textEmbedder: textEmbedder,
                                translator: translator, labelProvider: labelProvider, store: store,
-                               tagStore: tagStore, tagProvider: tagProvider)
+                               tagStore: tagStore, tagProvider: tagProvider, usageStore: usageStore)
     }
 
     init(cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
@@ -104,10 +106,11 @@ public final class AutoAlbumEngine {
          perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
          translator: QueryTranslator? = nil, labelProvider: LabelProvider? = nil,
          store: AutoAlbumStore? = nil, tagStore: TagStore? = nil,
-         tagProvider: TagPerceptionProvider? = nil) {
+         tagProvider: TagPerceptionProvider? = nil, usageStore: UsageStore? = nil) {
         let store = store ?? AutoAlbumStore()
         let tagStore = tagStore ?? TagStore()
         self.tagStore = tagStore
+        self.usageStore = usageStore ?? UsageStore()
         self.tagTagger = TagTagger(store: tagStore, provider: tagProvider)
         self.store = store
         self.cloudProvider = cloudProvider

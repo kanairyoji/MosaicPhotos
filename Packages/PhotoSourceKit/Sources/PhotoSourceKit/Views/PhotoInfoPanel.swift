@@ -120,6 +120,23 @@ struct PhotoInfoPanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                // 利用カウンタ（閲覧/共有/再生）。insight が取れた写真は常時表示（0 でも出す＝
+                // 「数えている」ことが分かる）。再生は動画対応まで常に 0 なので >0 のときだけ。
+                if let views = insight.viewCount {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(L("Activity"), systemImage: "chart.bar")
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Label("\(views)", systemImage: "eye")
+                            Label("\(insight.shareCount ?? 0)", systemImage: "square.and.arrow.up")
+                            if let plays = insight.playCount, plays > 0 {
+                                Label("\(plays)", systemImage: "play.circle")
+                            }
+                        }
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 // 写真内テキスト（OCR・photo-info-expansion）。検出された写真だけ表示する。
                 if let ocr = insight.ocrText, !ocr.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {

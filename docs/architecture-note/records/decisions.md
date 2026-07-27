@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-49 写真の利用カウンタ（閲覧・再生・共有）と共有機能
+- 状態: 採用
+- 文脈: 写真ごとの利用状況（見た/再生した/共有した回数）を持ちたい（お気に入りは PHAsset.favorite で既存）。共有機能自体が未実装だったため、共有カウントには共有ボタンの新設が前提になる。
+- 決定: (1) **別コンテナ "UsageV1"**（TagsV1/FacesV1 と同じパターン）に `PhotoUsageRecord`（refKey・view/play/shareCount・lastViewedAt）を置き、`UsageStore`（@ModelActor・オフメイン生成）で加算・照会。(2) **閲覧カウント**＝フル画面ページに **0.7 秒以上とどまった**ときだけ 1 回（`task(id: currentID)` のキャンセルが番人＝高速スワイプの通過は数えない）。(3) **共有**＝`PhotoPageView` 右上に共有ボタンを新設（フル画像をロードして UIActivityViewController へ）。`completionWithItemsHandler` の completed のときだけカウント（キャンセルは数えない）。(4) **再生**＝動画/Live Photo 未対応のためスキーマとイベント経路だけ用意（常に 0・表示は >0 のときのみ）。(5) イベントは PhotoSourceKit の環境クロージャ `photoUsageEvent`（AutoAlbumCore 非依存の enum）→ アプリ層（SourceHostView）→ `AutoAlbumEngine.recordUsage`（`canonicalRefKey` で "L-…"/"C-…" へ正規化）の seam 構成（photoInsight と同型）。(6) 表示は情報パネルの「アクティビティ」行（目/共有アイコン＋回数・insight に合成）。
+- 結果: 全ソース（All/Photos/Cloud/アルバム/場所/人物）のフル画面で閲覧・共有が記録され、情報パネルで確認できる。将来「よく見る写真」系の AI アルバム条件にも使える台帳になる。トレードオフ: (1) 閲覧のたびに 1 upsert（actor・軽量）。(2) 共有はフル画像ロード後にシート表示（クラウドは取得待ちでスピナー）。(3) play は現状ダーク（動画対応時に配線）。
+- 関連: `AutoAlbumCore/Usage/PhotoUsage.swift`・`AutoAlbumEngine.recordUsage`/`canonicalRefKey`・`PhotoSourceEnvironment.photoUsageEvent`・`PhotoPageView`（滞在カウント・共有ボタン・ActivityShareSheet）・`PhotoInfoPanel`（アクティビティ行）・`SourceHostView`（橋渡し）・`PhotoUsageTests`。
+
 ## ADR-48 顔情報の拡充（顔向きゲート・品質フロア引き上げ・目閉じ/笑顔・サイズ閾値）
 - 状態: 採用
 - 文脈: 顔クラスタの混入（別人が混ざる）の主要因は、横顔・ぼけ顔・目閉じ・小さすぎる顔の埋め込みが信頼できないのに正面顔と同じ重みでクラスタへ入ることだった（face-info-expansion）。ArcFace への換装（最大効果・フェーズ C）とは独立に、公開 API だけで取れる信号でゲートを強化できる。

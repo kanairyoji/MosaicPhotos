@@ -27,6 +27,24 @@ private enum PhotoInsightKey: EnvironmentKey {
 
 /// ユーザーが写真を能動操作中か（スクラブ等）を上位へ通知するシンク。アプリ側が背景処理
 /// （CLIP 埋め込み）の一時停止に使う。未注入なら無視（レイヤー分離）。
+/// 写真の利用イベント（フル画面の閲覧・共有・将来の再生）。AutoAlbumCore 非依存を保つため
+/// PhotoSourceKit 側の enum で表し、アプリ層（SourceHostView）がエンジンへ橋渡しする。
+public enum PhotoUsageEvent: Sendable {
+    case view, play, share
+}
+
+private enum PhotoUsageEventKey: EnvironmentKey {
+    static let defaultValue: (@Sendable (PhotoUsageEvent, String) async -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    /// 利用イベントの記録クロージャ（`PhotoItem.id` を渡す）。nil なら記録しない。
+    public var photoUsageEvent: (@Sendable (PhotoUsageEvent, String) async -> Void)? {
+        get { self[PhotoUsageEventKey.self] }
+        set { self[PhotoUsageEventKey.self] = newValue }
+    }
+}
+
 /// グリッド（サムネイル）用の顔ハイライト。`PhotoItem.id` を受け取り、**中央正方形クロップ表示の
 /// 単位座標（原点左上）**に変換済みの矩形を返す（変換は注入側＝元画像のアスペクト比を知っている層が行う）。
 /// nil（既定）ならグリッドの顔ボタン自体を出さない。

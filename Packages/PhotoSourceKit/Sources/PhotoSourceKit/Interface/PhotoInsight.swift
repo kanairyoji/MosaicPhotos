@@ -19,6 +19,10 @@ public struct PhotoInsight: Sendable, Equatable {
     public var captionPending: Bool
     /// 写真内テキスト（OCR・photo-info-expansion）。未検出は nil。
     public var ocrText: String?
+    /// 利用カウンタ（フル画面の閲覧/再生/共有・記録なしは nil＝0 扱いで表示）。
+    public var viewCount: Int?
+    public var playCount: Int?
+    public var shareCount: Int?
     /// この写真で検出した顔の数（顔スキャン済みのみ・実測）。未スキャン（クラウド含む）は nil。
     public var faceCount: Int?
     /// スクリーンショット判定（撮影ではなく画面キャプチャか）。
@@ -29,6 +33,7 @@ public struct PhotoInsight: Sendable, Equatable {
 
     public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
                 captionPending: Bool = false, ocrText: String? = nil,
+                viewCount: Int? = nil, playCount: Int? = nil, shareCount: Int? = nil,
                 faceCount: Int? = nil, isScreenshot: Bool = false,
                 isBackedUp: Bool? = nil,
                 status: Status = .ready) {
@@ -37,6 +42,9 @@ public struct PhotoInsight: Sendable, Equatable {
         self.caption = caption
         self.captionPending = captionPending
         self.ocrText = ocrText
+        self.viewCount = viewCount
+        self.playCount = playCount
+        self.shareCount = shareCount
         self.faceCount = faceCount
         self.isScreenshot = isScreenshot
         self.isBackedUp = isBackedUp

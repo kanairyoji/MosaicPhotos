@@ -22,6 +22,7 @@ extension AutoAlbumEngine {
             async let tagsTask = tagStore.tags(forRefKeys: [refKey])
             async let captionTask = tagStore.captions(forRefKeys: [refKey])
             async let ocrTask = tagStore.ocrTexts(forRefKeys: [refKey])
+            async let usageTask = usageStore.counts(forRefKeys: [refKey])
             // CLIP 表示ラベルは**準備できているときだけ**合成する。未構築だと labels() が CLIP テキスト
             // タワーのロード（初回〜数十秒）＋約300語構築を同期で走らせ、insight が返らず（パネルが
             // 空/loading のまま）になる（実測: 画像タワー 34s）。prewarm 完了までは Vision タグだけで即返す。
@@ -45,15 +46,34 @@ extension AutoAlbumEngine {
             // （非お気に入りは今後も付かないので空欄でよい・誤って「生成中」を出さない）。
             let captionPending = !hasCaption && tagTagger.isCaptioningAvailable && favoritesCache.contains(refKey)
             let ocrText = (await ocrTask)[refKey]
+            let usage = (await usageTask)[refKey]
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
                                 caption: hasCaption ? caption : nil,
                                 captionPending: captionPending,
                                 ocrText: ocrText,
+                                viewCount: usage?.viewCount,
+                                playCount: usage?.playCount,
+                                shareCount: usage?.shareCount,
                                 isScreenshot: rec.photo.isScreenshot,
                                 status: status)
         }
         // 付加情報が無い＝まだ取り込まれていない。
         return PhotoInsight(status: .notIndexed)
+    }
+
+    // MARK: - 利用カウンタ（閲覧/再生/共有）
+
+    /// 利用イベントを記録する（フル画面の閲覧・共有シートの完了・将来の再生）。
+    /// `id` は insight と同じくソースにより形式が違うため、正規の refKey に解決して記録する。
+    public func recordUsage(_ kind: PhotoUsageEventKind, itemID id: String) async {
+        await usageStore.increment(kind, refKey: Self.canonicalRefKey(for: id))
+    }
+
+    /// 生 id → 正規 refKey。既に "L-…"/"C-…" ならそのまま、Dropbox パス（"/" 始まり）は
+    /// cloud、それ以外（PHAsset の localIdentifier）は local としてエンコードする。
+    nonisolated static func canonicalRefKey(for id: String) -> String {
+        if PhotoRef.decode(id) != nil { return id }
+        return id.hasPrefix("/") ? PhotoRef.cloud(id).encoded : PhotoRef.local(id).encoded
     }
 
     /// id（生 localIdentifier / 生 path / 既に refKey）→ 試す refKey 候補。

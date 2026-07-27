@@ -23,6 +23,15 @@ struct SourceHostView<Content: View>: View {
         content()
             .environment(\.dismissToHome, dismissToHome)
             .environment(\.showSettings, { showingSettings = true })
+            // 利用カウンタ（閲覧/再生/共有）: PhotoSourceKit のイベントをエンジンの台帳へ記録する。
+            .environment(\.photoUsageEvent) { [autoAlbumEngine] event, id in
+                let kind: PhotoUsageEventKind = switch event {
+                case .view: .view
+                case .play: .play
+                case .share: .share
+                }
+                await autoAlbumEngine.recordUsage(kind, itemID: id)
+            }
             .environment(\.photoInsight) { [autoAlbumEngine, peopleEngine, backupEngine = stores.backupEngine] id in
                 // CLIP 由来の insight（タグ/解析状態）に、顔クラスタ由来の People 名と顔数を合成する。
                 // 3 つの照会は**並行**で走らせる（顔照会が遅くても insight 表示を遅らせない）。
