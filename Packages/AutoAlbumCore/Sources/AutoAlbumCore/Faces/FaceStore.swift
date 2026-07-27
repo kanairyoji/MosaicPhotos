@@ -596,7 +596,12 @@ actor FaceStore {
         for c in ordered {
             guard items.count < limit, let cen = centroid[c.clusterID] else { continue }
             var boundary: [(face: DetectedFace, sim: Float)] = []
-            for f in faces(inCluster: c.clusterID) where f.confirmedAt == nil {
+            // 品質フロア未満の顔は出題しない（ADR-53 追補）。境界レビューは「最も疑わしい顔」を
+            // 選ぶため、旧データに残る誤検出（模様等の偽陽性・低品質）がそのまま最優先で出て
+            // 「顔じゃないカード」になる実障害があった。フロア未満は再スキャンで浄化されるまで
+            // 表示にも出さない（ユーザーに判断を求める価値がない）。
+            for f in faces(inCluster: c.clusterID)
+                where f.confirmedAt == nil && f.quality >= Double(Self.qualityFloor) {
                 guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
                 let sim = FaceClustering.dot(FaceClustering.normalized(vec), cen)
                 if sim < thr + 0.10 { boundary.append((f, sim)) }
