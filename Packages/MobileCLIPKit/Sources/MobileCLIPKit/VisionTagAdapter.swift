@@ -2,12 +2,19 @@ import AutoAlbumCore
 import CoreGraphics
 import Foundation
 import MosaicSupport
+import Photos
 import Vision
 
 /// `TagPerceptionProvider` の実体。
-/// - シーンタグ: **OS 内蔵の Vision 画像分類**（`VNClassifyImageRequest`・約1,300クラス）。
-///   信頼度は Apple が校正済みで、`hasMinimumRecall(_:forPrecision:)` により
-///   「精度 0.9 を満たすタグだけ採る」という**原理的な足切り**ができる（自前閾値が不要）。
+/// - 付帯情報（photo-info-expansion）: **1 回の `VNImageRequestHandler.perform([...])`** で
+///   シーン分類・OCR・動物種別・人物矩形・美的スコアを一括取得する（前処理・ロードを共有）。
+///   - シーンタグ: `VNClassifyImageRequest`（約1,300クラス）。信頼度は Apple が校正済みで、
+///     `hasMinimumRecall(_:forPrecision:)` により「精度 0.9 を満たすタグだけ採る」原理的な足切り。
+///   - OCR: `VNRecognizeTextRequest`（accurate・言語自動判定）。看板・書類・スクショの文字。
+///   - 動物: `VNRecognizeAnimalsRequest`（cat/dog）。分類より確実なのでタグへ合流。
+///   - 人物数: `VNDetectHumanRectanglesRequest`（上半身）。
+///   - 美的スコア: `VNCalculateImageAestheticsScoresRequest`（iOS 18+・-1〜1）。
+///   さらにローカル写真は PHAsset の種別（スクショ/パノラマ/Live Photo 等）をタグに合流する。
 /// - キャプション: SmolVLM（同梱時のみ・`VLMRuntime`）。
 public struct VisionTagAdapter: TagPerceptionProvider {
     /// クラウド path → CGImage（Dropbox サムネイル）。CLIPEmbeddingProvider と同じ seam。
@@ -17,41 +24,113 @@ public struct VisionTagAdapter: TagPerceptionProvider {
         self.cloudImage = cloudImage
     }
 
-    public var isTaggingAvailable: Bool { true }   // Vision 分類は OS 内蔵
+    public var isTaggingAvailable: Bool { true }   // Vision は OS 内蔵
 
-    public func sceneTags(refKeys: [String]) async -> [String: [String]] {
-        var out: [String: [String]] = [:]
+    public func senseInfo(refKeys: [String]) async -> [String: PhotoSenseInfo] {
+        var out: [String: PhotoSenseInfo] = [:]
         for refKey in refKeys {
             await Task.yield()
             guard let ref = PhotoRef.decode(refKey) else { continue }
             let cg: CGImage?
             if let localId = ref.localIdentifier {
-                cg = await loadLocalCGImage(localId, maxPixel: 384)
+                // OCR は解像度が要る（384px では小さな文字が潰れる）ため、分類のみだった頃の
+                // 384px から 1024px へ引き上げる（分類は内部で縮小されるためコスト増は OCR ぶんのみ）。
+                cg = await loadLocalCGImage(localId, maxPixel: 1024)
             } else if let path = ref.cloudPath {
                 cg = await cloudImage(path)
             } else {
                 cg = nil
             }
             guard let cg else {
-                out[refKey] = []   // 取得不可も「処理済み」にして無限ループを防ぐ
+                out[refKey] = PhotoSenseInfo()   // 取得不可も「処理済み」にして無限ループを防ぐ
                 continue
             }
-            out[refKey] = Self.classify(cg)
+            var info = Self.sense(cg)
+            // ローカル写真はアセット種別（1 行で取れる高信頼シグナル）もタグへ合流する。
+            if let localId = ref.localIdentifier {
+                info.tags = Self.mergeTags(info.tags, adding: Self.assetKindTags(localIdentifier: localId))
+            }
+            out[refKey] = info
         }
         return out
     }
 
-    /// Vision 分類 → 精度 0.9 を満たす識別子（最大 10 個・信頼度順）。
-    static func classify(_ cg: CGImage) -> [String] {
-        let request = VNClassifyImageRequest()
+    /// Vision 一括パス（1 回の perform で全リクエストを実行）。
+    static func sense(_ cg: CGImage) -> PhotoSenseInfo {
+        let classify = VNClassifyImageRequest()
+        let text = VNRecognizeTextRequest()
+        text.recognitionLevel = .accurate
+        text.automaticallyDetectsLanguage = true
+        let animals = VNRecognizeAnimalsRequest()
+        let humans = VNDetectHumanRectanglesRequest()
+        humans.upperBodyOnly = true   // 顔が写らない後ろ姿・上半身も人数に含める
+
+        var requests: [VNRequest] = [classify, text, animals, humans]
+        var aestheticsRequest: VNRequest?
+        if #available(iOS 18.0, macOS 15.0, *) {
+            let r = VNCalculateImageAestheticsScoresRequest()
+            aestheticsRequest = r
+            requests.append(r)
+        }
+
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        guard (try? handler.perform([request])) != nil else { return [] }
-        let observations = request.results ?? []
-        return observations
+        guard (try? handler.perform(requests)) != nil else { return PhotoSenseInfo() }
+
+        // シーンタグ（精度 0.9・最大 10 個・信頼度順）。
+        var tags = (classify.results ?? [])
             .filter { $0.hasMinimumRecall(0.01, forPrecision: 0.9) }
             .sorted { $0.confidence > $1.confidence }
             .prefix(10)
             .map(\.identifier)
+
+        // 動物種別（cat/dog）。専用検出器の方が分類より確実なのでタグへ合流する。
+        let animalTags = (animals.results ?? []).flatMap { observation in
+            observation.labels.filter { $0.confidence >= 0.7 }.map { $0.identifier.lowercased() }
+        }
+        tags = mergeTags(tags, adding: animalTags)
+
+        // OCR（信頼度順に連結・最大 300 文字＝台帳を太らせない）。
+        let lines = (text.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let joined = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let ocr = joined.isEmpty ? nil : String(joined.prefix(300))
+
+        let humanCount = humans.results?.count ?? 0
+
+        var aesthetic: Double?
+        if #available(iOS 18.0, macOS 15.0, *),
+           let r = aestheticsRequest as? VNCalculateImageAestheticsScoresRequest,
+           let score = r.results?.first?.overallScore {
+            aesthetic = Double(score)
+        }
+
+        return PhotoSenseInfo(tags: tags, ocrText: ocr, humanCount: humanCount, aesthetic: aesthetic)
+    }
+
+    /// PHAsset の種別タグ（スクショ/パノラマ/Live Photo/HDR/ポートレート/バースト）。
+    /// 1 行で取れる高信頼シグナル（photo-info-expansion 項目 3）。検索タグ・表示タグ共用。
+    static func assetKindTags(localIdentifier: String) -> [String] {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier],
+                                              options: nil).firstObject else { return [] }
+        var tags: [String] = []
+        let sub = asset.mediaSubtypes
+        if sub.contains(.photoScreenshot) { tags.append("screenshot") }
+        if sub.contains(.photoPanorama) { tags.append("panorama") }
+        if sub.contains(.photoLive) { tags.append("live photo") }
+        if sub.contains(.photoHDR) { tags.append("hdr") }
+        if sub.contains(.photoDepthEffect) { tags.append("portrait") }
+        if asset.representsBurst { tags.append("burst") }
+        return tags
+    }
+
+    /// タグ集合の合流（小文字比較で重複除去・元の順序維持）。
+    static func mergeTags(_ base: [String], adding extra: [String]) -> [String] {
+        var seen = Set(base.map { $0.lowercased() })
+        var out = base
+        for tag in extra where !seen.contains(tag.lowercased()) {
+            seen.insert(tag.lowercased())
+            out.append(tag)
+        }
+        return out
     }
 
     // MARK: - キャプション（SmolVLM・P3）

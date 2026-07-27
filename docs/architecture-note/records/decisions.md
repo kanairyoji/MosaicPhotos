@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-47 写真付帯情報の拡充（Vision 一括パス：OCR・動物・人数・美的スコア・アセット種別）
+- 状態: 採用
+- 文脈: 写真 1 枚から取得する情報がシーン分類（VNClassifyImageRequest）のみで、看板・書類・スクショ内の文字、ペット種別、人数、見栄えなどの信号を捨てていた。Vision は同一画像への複数リクエストを 1 回の `perform([...])` に載せると前処理・ロードを共有できる。
+- 決定: (1) **知覚 seam を `senseInfo`（`PhotoSenseInfo`）へ拡張**し、`VisionTagAdapter` が 1 回の Vision パスで シーン分類＋**OCR**（`VNRecognizeTextRequest` accurate・言語自動判定・最大300字）＋**動物種別**（`VNRecognizeAnimalsRequest`・信頼度0.7・タグへ合流）＋**人数**（`VNDetectHumanRectanglesRequest` 上半身）＋**美的スコア**（`VNCalculateImageAestheticsScores`・iOS 18+・-1〜1）を取得。ローカル写真は **PHAsset 種別タグ**（screenshot/panorama/live photo/hdr/portrait/burst）も合流。OCR 解像度のためローカル読み込みを 384→1024px に引き上げ（分類は内部縮小のためコスト増は OCR ぶんのみ）。(2) **台帳（PhotoTagRecord）に optional 追加**（ocrText/humanCount/aesthetic＝軽量マイグレーション・コンテナ名 TagsV1 据え置き）し、`currentVersion` を 2 に採番→既存写真も夜間に再タグ（キャプションは保持）。(3) **AI アルバム**: OCR 台帳を字句検索（`LexicalSearch.rank(ocrTexts:)`）の新チャネルに（看板/固有名詞の検索という新次元）。動物・種別タグは既存のタグ一致ランキング/離散除外にそのまま乗る。美的スコアは `pickCoverRef` の加点（±40・お気に入り100は超えない）でカバー選択を改善。(4) **フル写真ビュー**: 情報パネルに「写真内のテキスト」欄（検出時のみ・4行まで）。
+- 結果: 検索が「見た目（CLIP）＋シーン（タグ）＋文字（OCR）」の3系統になり、スクショ・書類・看板系のクエリに強くなる。タグ拡充・カバー改善は追加コストほぼゼロ（同一パス）。トレードオフ: (1) 夜間再タグ 1 巡が発生（版上げ・OCR accurate で 1 枚あたり従来比+数百ms）。(2) クラウド写真の OCR は 256px サムネ品質のため大きな文字のみ。(3) 美的スコアは iOS 18 未満の実行環境では nil（挙動不変）。
+- 関連: `TagTagger.swift`（PhotoSenseInfo/seam）・`TagStore.swift`（v2）・`VisionTagAdapter.swift`（一括パス）・`LexicalSearch`/`AIAlbumSearcher`/`AIAlbumService`（OCR 結線）・`CoverSelection`（美的加点）・`PhotoInsight`/`PhotoInfoPanel`（表示）・`PhotoSenseInfoTests`/`LexicalSearchTests`。指示書 `docs/architecture-note/features/photo-info-expansion.md` は実装完了につき削除。
+
 ## ADR-46 人物レビュー（アクティブラーニング）としきい値校正・制約付き再クラスタリング・マルチプロトタイプ
 - 状態: 採用
 - 文脈: ADR-45（負例＋品質ゲート）後も 2 症状が残る: (1) 同一人物が複数アルバムに割れる（人物内ばらつき＞固定しきい値・単一重心の限界）、(2) 1 アルバムに複数人が混入。またユーザーが「アルバムから間違いを探す」のは非効率で、iPhone 写真アプリの「この人は◯◯さんですか？」（**判断が割れるケースだけ尋ねるアクティブラーニング**）の方が操作性・学習効率とも高い。逐次クラスタリングは追加順に依存し、早い段階の誤りを後から自己修正できない構造問題もある。

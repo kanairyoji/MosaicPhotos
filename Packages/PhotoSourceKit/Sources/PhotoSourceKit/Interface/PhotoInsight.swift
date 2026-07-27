@@ -17,6 +17,8 @@ public struct PhotoInsight: Sendable, Equatable {
     public var caption: String?
     /// キャプションがこれから生成される見込みか（VLM 同梱かつ未生成）。true のとき「生成中」を出す。
     public var captionPending: Bool
+    /// 写真内テキスト（OCR・photo-info-expansion）。未検出は nil。
+    public var ocrText: String?
     /// この写真で検出した顔の数（顔スキャン済みのみ・実測）。未スキャン（クラウド含む）は nil。
     public var faceCount: Int?
     /// スクリーンショット判定（撮影ではなく画面キャプチャか）。
@@ -26,7 +28,7 @@ public struct PhotoInsight: Sendable, Equatable {
     public var status: Status
 
     public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
-                captionPending: Bool = false,
+                captionPending: Bool = false, ocrText: String? = nil,
                 faceCount: Int? = nil, isScreenshot: Bool = false,
                 isBackedUp: Bool? = nil,
                 status: Status = .ready) {
@@ -34,6 +36,7 @@ public struct PhotoInsight: Sendable, Equatable {
         self.people = people
         self.caption = caption
         self.captionPending = captionPending
+        self.ocrText = ocrText
         self.faceCount = faceCount
         self.isScreenshot = isScreenshot
         self.isBackedUp = isBackedUp
@@ -41,6 +44,6 @@ public struct PhotoInsight: Sendable, Equatable {
     }
 
     public var hasSignals: Bool {
-        !tags.isEmpty || !people.isEmpty || (faceCount ?? 0) > 0 || caption != nil
+        !tags.isEmpty || !people.isEmpty || (faceCount ?? 0) > 0 || caption != nil || ocrText != nil
     }
 }

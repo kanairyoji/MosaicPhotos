@@ -3,15 +3,19 @@ import Foundation
 /// 字句検索（完全一致寄り）。OCR 文字・地名・国・人物に対し、語の部分一致でスコアリングする純ロジック。
 /// CLIP の意味検索が苦手な「看板/書類/固有名詞」を拾う。マッチ数の多い順に返す。
 public enum LexicalSearch {
-    public static func rank(_ photos: [EnrichedPhoto], keywords: [String]) -> [EnrichedPhoto] {
+    /// - Parameter ocrTexts: refKey → 写真内テキスト（OCR 台帳・photo-info-expansion）。
+    ///   看板・書類・スクリーンショット内の文字をクエリ語で引けるようにする。
+    public static func rank(_ photos: [EnrichedPhoto], keywords: [String],
+                            ocrTexts: [String: String] = [:]) -> [EnrichedPhoto] {
         let terms = keywords.map { $0.lowercased() }.filter { !$0.isEmpty }
         guard !terms.isEmpty else { return [] }
 
         var scored: [(photo: EnrichedPhoto, score: Int)] = []
         for photo in photos {
-            let fields = ([photo.placeName, photo.country].compactMap { $0 }
+            var fields = ([photo.placeName, photo.country].compactMap { $0 }
                           + photo.people)
                 .map { $0.lowercased() }
+            if let ocr = ocrTexts[photo.id] { fields.append(ocr.lowercased()) }
             guard !fields.isEmpty else { continue }
             var score = 0
             for term in terms {

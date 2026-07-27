@@ -21,6 +21,7 @@ extension AutoAlbumEngine {
             // ＝スワイプ連打時のパネル表示遅延）。CLIP 表示ラベルも rec を得た時点で並行に走らせる。
             async let tagsTask = tagStore.tags(forRefKeys: [refKey])
             async let captionTask = tagStore.captions(forRefKeys: [refKey])
+            async let ocrTask = tagStore.ocrTexts(forRefKeys: [refKey])
             // CLIP 表示ラベルは**準備できているときだけ**合成する。未構築だと labels() が CLIP テキスト
             // タワーのロード（初回〜数十秒）＋約300語構築を同期で走らせ、insight が返らず（パネルが
             // 空/loading のまま）になる（実測: 画像タワー 34s）。prewarm 完了までは Vision タグだけで即返す。
@@ -43,9 +44,11 @@ extension AutoAlbumEngine {
             // キャプションは**お気に入り限定**なので、「生成中」は VLM 同梱かつ未生成かつ**お気に入り**のときだけ出す
             // （非お気に入りは今後も付かないので空欄でよい・誤って「生成中」を出さない）。
             let captionPending = !hasCaption && tagTagger.isCaptioningAvailable && favoritesCache.contains(refKey)
+            let ocrText = (await ocrTask)[refKey]
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
                                 caption: hasCaption ? caption : nil,
                                 captionPending: captionPending,
+                                ocrText: ocrText,
                                 isScreenshot: rec.photo.isScreenshot,
                                 status: status)
         }

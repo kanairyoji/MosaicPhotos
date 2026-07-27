@@ -440,6 +440,16 @@
         }
       }
     },
+    "Text in photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真内のテキスト"
+          }
+        }
+      }
+    },
     "Try changing the filter.": {
       "localizations": {
         "ja": {

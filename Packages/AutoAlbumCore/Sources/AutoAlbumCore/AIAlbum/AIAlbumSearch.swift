@@ -57,12 +57,13 @@ public struct AIAlbumSearcher {
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 faceCounts: [String: Int]? = nil,
                 photoTags: [String: [String]] = [:],
+                ocrTexts: [String: String] = [:],
                 peopleByRefKey: [String: [String]]? = nil,
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
                              probes: probes, pageSize: pageSize, faceCounts: faceCounts,
-                             photoTags: photoTags, peopleByRefKey: peopleByRefKey,
+                             photoTags: photoTags, ocrTexts: ocrTexts, peopleByRefKey: peopleByRefKey,
                              loadPage: loadPage).members
     }
 
@@ -83,6 +84,7 @@ public struct AIAlbumSearcher {
                                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                                faceCounts: [String: Int]? = nil,
                                photoTags: [String: [String]] = [:],
+                               ocrTexts: [String: String] = [:],
                                peopleByRefKey: [String: [String]]? = nil,
                                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
@@ -131,7 +133,8 @@ public struct AIAlbumSearcher {
             return (spec.hasHardConstraints ? base : [], [:])
         }
 
-        let lexical = LexicalSearch.rank(base, keywords: includeTerms)
+        // 字句検索は地名/人物に加えて OCR 台帳（写真内テキスト）も引く（photo-info-expansion）。
+        let lexical = LexicalSearch.rank(base, keywords: includeTerms, ocrTexts: ocrTexts)
 
         var semantic: [EnrichedPhoto] = []
         var pool: [String: Float] = [:]
@@ -226,8 +229,9 @@ public struct AIAlbumSearcher {
 
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。
     /// タイトルはユーザー指定を優先し、空なら解釈タイトル→条件文の順で補完する。
+    /// - Parameter aesthetics: refKey → 美的スコア（Vision・-1〜1）。カバー選択の加点に使う。
     static func buildInfo(id: String, title: String, interpretedTitle: String, criteria: String,
-                          members: [EnrichedPhoto]) -> AutoAlbumInfo {
+                          members: [EnrichedPhoto], aesthetics: [String: Double] = [:]) -> AutoAlbumInfo {
         let dates = members.compactMap(\.captureDate)
         let people = rankedByFrequency(members.flatMap(\.people))
         let located = members.filter(\.hasCoordinate)
@@ -239,7 +243,8 @@ public struct AIAlbumSearcher {
             id: id, strategyID: AIAlbumStrategy.strategyID,
             title: resolved, placeName: resolved, places: [resolved], country: nil, people: people,
             startDate: dates.min() ?? .distantPast, endDate: dates.max() ?? .distantPast,
-            coverRef: pickCoverRef(members), memberRefs: members.map(\.id), photoCount: members.count,
+            coverRef: pickCoverRef(members, aesthetics: aesthetics),
+            memberRefs: members.map(\.id), photoCount: members.count,
             representativeDate: dates.max() ?? Date(), latitude: lat, longitude: lon, criteria: criteria)
     }
 }

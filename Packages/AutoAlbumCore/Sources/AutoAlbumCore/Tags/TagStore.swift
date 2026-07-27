@@ -16,12 +16,22 @@ final class PhotoTagRecord {
     var caption: String?
     /// タグ付けロジックの版（分類器・しきい値変更時に採番して再タグ）。
     var version: Int
+    /// 写真内テキスト（OCR）。未検出/未計測は nil。※ v2 で追加（optional＝軽量マイグレーション）
+    var ocrText: String?
+    /// 写っている人物の数（Vision 人物矩形）。未計測は nil。
+    var humanCount: Int?
+    /// 美的スコア（-1〜1・iOS 18+）。未計測は nil。
+    var aesthetic: Double?
 
-    init(refKey: String, tags: [String], caption: String? = nil, version: Int) {
+    init(refKey: String, tags: [String], caption: String? = nil, version: Int,
+         ocrText: String? = nil, humanCount: Int? = nil, aesthetic: Double? = nil) {
         self.refKey = refKey
         self.tags = tags
         self.caption = caption
         self.version = version
+        self.ocrText = ocrText
+        self.humanCount = humanCount
+        self.aesthetic = aesthetic
     }
 }
 
@@ -31,8 +41,9 @@ final class PhotoTagRecord {
 actor TagStore {
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Tags")
 
-    /// 現行のタグ付け版。
-    static let currentVersion = 1
+    /// 現行のタグ付け版。v2: OCR・動物・人物数・美的スコア・アセット種別タグを追加
+    /// （photo-info-expansion）。版上げで既存写真も夜間に再タグされ新フィールドが埋まる。
+    static let currentVersion = 2
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoTagRecord.self])
@@ -89,16 +100,24 @@ actor TagStore {
     }
 
     /// バッチ記録（save は 1 回）。既存レコードは更新（版を上げて再タグした場合も上書き）。
-    func recordTags(_ batch: [(refKey: String, tags: [String])]) {
+    /// キャプションは触らない（v1 → v2 の再タグで生成済みキャプションを消さない）。
+    func recordTags(_ batch: [(refKey: String, info: PhotoSenseInfo)]) {
         for entry in batch {
             let key = entry.refKey
             var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.refKey == key })
             d.fetchLimit = 1
             if let existing = try? modelContext.fetch(d).first {
-                existing.tags = entry.tags
+                existing.tags = entry.info.tags
+                existing.ocrText = entry.info.ocrText
+                existing.humanCount = entry.info.humanCount
+                existing.aesthetic = entry.info.aesthetic
                 existing.version = Self.currentVersion
             } else {
-                modelContext.insert(PhotoTagRecord(refKey: key, tags: entry.tags, version: Self.currentVersion))
+                modelContext.insert(PhotoTagRecord(refKey: key, tags: entry.info.tags,
+                                                   version: Self.currentVersion,
+                                                   ocrText: entry.info.ocrText,
+                                                   humanCount: entry.info.humanCount,
+                                                   aesthetic: entry.info.aesthetic))
             }
         }
         try? modelContext.save()
@@ -177,6 +196,37 @@ actor TagStore {
         var out: [String: [String]] = [:]
         out.reserveCapacity(records.count)
         for r in records where !r.tags.isEmpty { out[r.refKey] = r.tags }
+        return out
+    }
+
+    /// 全 OCR 台帳（refKey → 写真内テキスト・非空のみ）。字句検索（LexicalSearch）用。
+    func allOcrTexts() -> [String: String] {
+        let records = (try? modelContext.fetch(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.ocrText != nil }))) ?? []
+        var out: [String: String] = [:]
+        for r in records { if let t = r.ocrText, !t.isEmpty { out[r.refKey] = t } }
+        return out
+    }
+
+    /// 指定 refKey 群の OCR テキスト（フル画像の情報パネル用）。
+    func ocrTexts(forRefKeys keys: [String]) -> [String: String] {
+        guard !keys.isEmpty else { return [:] }
+        let set = keys
+        let records = (try? modelContext.fetch(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+        var out: [String: String] = [:]
+        for r in records { if let t = r.ocrText, !t.isEmpty { out[r.refKey] = t } }
+        return out
+    }
+
+    /// 指定 refKey 群の美的スコア（カバー選択用）。
+    func aesthetics(forRefKeys keys: [String]) -> [String: Double] {
+        guard !keys.isEmpty else { return [:] }
+        let set = keys
+        let records = (try? modelContext.fetch(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+        var out: [String: Double] = [:]
+        for r in records { if let a = r.aesthetic { out[r.refKey] = a } }
         return out
     }
 

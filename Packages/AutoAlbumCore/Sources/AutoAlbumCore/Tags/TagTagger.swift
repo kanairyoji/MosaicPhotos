@@ -1,12 +1,35 @@
 import Foundation
 import MosaicSupport
 
-/// シーンタグ（Vision 分類）とキャプション（VLM）の知覚 seam。実体はアプリ側（MobileCLIPKit）。
+/// 写真 1 枚から Vision 一括パスで取得する付帯情報（photo-info-expansion）。
+/// タグ（シーン分類＋動物＋アセット種別）・OCR テキスト・人物数・美的スコアをまとめて持つ。
+public struct PhotoSenseInfo: Sendable, Equatable {
+    /// シーンタグ（Vision 分類・precision 0.9 フィルタ）＋動物種別（VNRecognizeAnimals）＋
+    /// アセット種別タグ（screenshot / panorama / live photo 等・ローカルのみ）。英語・小文字。
+    public var tags: [String]
+    /// 写真内テキスト（OCR・`VNRecognizeTextRequest`）。検出なしは nil。
+    public var ocrText: String?
+    /// 写っている人物の数（`VNDetectHumanRectanglesRequest`・上半身検出）。未計測は nil。
+    public var humanCount: Int?
+    /// 美的スコア（`VNCalculateImageAestheticsScores`・-1〜1・iOS 18+）。未計測は nil。
+    public var aesthetic: Double?
+
+    public init(tags: [String] = [], ocrText: String? = nil,
+                humanCount: Int? = nil, aesthetic: Double? = nil) {
+        self.tags = tags
+        self.ocrText = ocrText
+        self.humanCount = humanCount
+        self.aesthetic = aesthetic
+    }
+}
+
+/// シーンタグ等（Vision 一括パス）とキャプション（VLM）の知覚 seam。実体はアプリ側（MobileCLIPKit）。
 public protocol TagPerceptionProvider: Sendable {
     /// Vision 分類が使えるか（分類は OS 内蔵なので通常 true）。
     var isTaggingAvailable: Bool { get }
-    /// refKey 群 → シーンタグ（英語識別子・precision フィルタ済み）。取得不可の写真は空配列。
-    func sceneTags(refKeys: [String]) async -> [String: [String]]
+    /// refKey 群 → 付帯情報（タグ・OCR・人数・美的スコアを 1 回の Vision パスで）。
+    /// 取得不可の写真は空 info（「処理済み」として記録し無限ループを防ぐ）。
+    func senseInfo(refKeys: [String]) async -> [String: PhotoSenseInfo]
     /// VLM キャプションが使えるか（モデル同梱時のみ true）。
     var isCaptioningAvailable: Bool { get }
     /// refKey 群 → 短文キャプション（英語）。取得不可の写真は結果に含めない。
@@ -61,8 +84,8 @@ final class TagTagger {
                 return Array(todo[index..<end])
             },
             processUnit: { refKey in
-                let one = await provider.sceneTags(refKeys: [refKey])
-                return (refKey: refKey, tags: one[refKey] ?? [])
+                let one = await provider.senseInfo(refKeys: [refKey])
+                return (refKey: refKey, info: one[refKey] ?? PhotoSenseInfo())
             },
             commitBatch: { _, _, results in
                 guard !results.isEmpty else { return .stop }

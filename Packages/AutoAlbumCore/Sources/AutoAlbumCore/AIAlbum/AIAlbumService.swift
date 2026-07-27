@@ -115,7 +115,8 @@ final class AIAlbumService {
             interpreter.save(saved, for: id)
             let info = AIAlbumSearcher.buildInfo(id: id, title: out[index].title,
                                                  interpretedTitle: saved.spec.title,
-                                                 criteria: criteria, members: members)
+                                                 criteria: criteria, members: members,
+                                                 aesthetics: await coverAesthetics(members))
             await store.upsert(albumInfo: info)
             out[index] = info
             Diagnostics.mark("aialbum.finalize: '\(criteria)' → members=\(members.count)")
@@ -159,7 +160,8 @@ final class AIAlbumService {
             + "search=\(Int((tSearch - tFetch) * 1000))ms "
             + "total=\(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
         let info = AIAlbumSearcher.buildInfo(id: id, title: title, interpretedTitle: saved.spec.title,
-                                             criteria: trimmed, members: members)
+                                             criteria: trimmed, members: members,
+                                             aesthetics: await coverAesthetics(members))
         await store.upsert(albumInfo: info)
         return (.created(info), await loadAll())
     }
@@ -199,7 +201,8 @@ final class AIAlbumService {
             saved.evaluatedEmbedCount = embedCount
             interpreter.save(saved, for: album.id)
             let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
-                                                 criteria: criteria, members: members)
+                                                 criteria: criteria, members: members,
+                                                 aesthetics: await coverAesthetics(members))
             await store.upsert(albumInfo: info)
             updated.append(info)
         }
@@ -273,7 +276,8 @@ final class AIAlbumService {
             let members = (existingPhotos + verifiedNew)
                 .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
             let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
-                                                 criteria: criteria, members: members)
+                                                 criteria: criteria, members: members,
+                                                 aesthetics: await coverAesthetics(members))
             await store.upsert(albumInfo: info)
             updated[index] = info
             touched += 1
@@ -327,6 +331,11 @@ final class AIAlbumService {
     }
 
     /// 「人」系の除外があるアルバムなら顔の実測を取得する（無関係なアルバムでは取得しない）。
+    /// メンバーの美的スコア（カバー選択の加点用・photo-info-expansion）。
+    private func coverAesthetics(_ members: [EnrichedPhoto]) async -> [String: Double] {
+        await tagStore?.aesthetics(forRefKeys: members.map(\.id)) ?? [:]
+    }
+
     private func faceCountsIfNeeded(for spec: QuerySpec) async -> [String: Int]? {
         guard AIAlbumSearcher.hasPeopleExclusion(spec), let faceCountsProvider else { return nil }
         return await faceCountsProvider()
@@ -347,10 +356,12 @@ final class AIAlbumService {
         let peopleMap = await peopleMapIfNeeded(for: spec)
         // P1: タグ台帳（refKey → シーンタグ）。一次ランキングと離散除外に使う。
         let tags = await tagStore?.allTags() ?? [:]
+        // OCR 台帳（refKey → 写真内テキスト）。字句検索チャネルへ（photo-info-expansion）。
+        let ocr = await tagStore?.allOcrTexts() ?? [:]
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
-                probes: probes, faceCounts: faceCounts, photoTags: tags,
+                probes: probes, faceCounts: faceCounts, photoTags: tags, ocrTexts: ocr,
                 peopleByRefKey: peopleMap,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)

@@ -120,6 +120,17 @@ struct PhotoInfoPanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                // 写真内テキスト（OCR・photo-info-expansion）。検出された写真だけ表示する。
+                if let ocr = insight.ocrText, !ocr.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(L("Text in photo"), systemImage: "text.viewfinder")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(ocr)
+                            .font(.subheadline)
+                            .lineLimit(4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
         } else {
             // insight のロード完了前（closure が SwiftData/顔照会で少し遅い等）。

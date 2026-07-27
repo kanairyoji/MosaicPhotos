@@ -2,13 +2,16 @@ import Foundation
 
 /// アルバムのカバー写真を賢く選ぶ共通ロジック（旅行・フォルダアルバム共用・純）。
 /// お気に入り＞横長＞座標あり＞中心時刻に近い、でスコアし最良の1枚の id を返す。
-func pickCoverRef(_ members: [EnrichedPhoto]) -> String? {
+func pickCoverRef(_ members: [EnrichedPhoto], aesthetics: [String: Double] = [:]) -> String? {
     guard !members.isEmpty else { return nil }
     let sortedDates = members.compactMap(\.captureDate).sorted()
     let median = sortedDates.isEmpty ? nil : sortedDates[sortedDates.count / 2]
     func score(_ p: EnrichedPhoto) -> Double {
         var s = 0.0
         if p.isFavorite { s += 100 }
+        // 美的スコア（Vision・-1〜1・photo-info-expansion）。お気に入り（100）は超えない範囲で
+        // 「見栄えのする写真」をカバーに寄せる（未計測は 0＝従来どおり）。
+        s += (aesthetics[p.id] ?? 0) * 40
         if let a = p.aspect, a > 1.1 { s += 10 }   // 横長
         if p.hasCoordinate { s += 5 }
         if let pd = p.captureDate, let median { s -= abs(pd.timeIntervalSince(median)) / 86_400 }

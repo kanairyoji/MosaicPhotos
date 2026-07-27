@@ -22,6 +22,19 @@ struct LexicalSearchTests {
         #expect(result.map { PhotoRef.decode($0.id)?.localIdentifier } == ["c", "a"])
     }
 
+    @Test("OCR 台帳のテキストにもヒットする（photo-info-expansion）")
+    func matchesOcrText() {
+        let photos = [
+            photo("a", place: "Osaka"),
+            photo("b", place: "Tokyo"),
+        ]
+        let ocr = [PhotoRef.local("b").encoded: "Welcome to Narita Airport Terminal 1"]
+        let result = LexicalSearch.rank(photos, keywords: ["narita"], ocrTexts: ocr)
+        #expect(result.map { PhotoRef.decode($0.id)?.localIdentifier } == ["b"])
+        // OCR 台帳なしでは当たらない（従来挙動の維持）。
+        #expect(LexicalSearch.rank(photos, keywords: ["narita"]).isEmpty)
+    }
+
     @Test("一致が無ければ空")
     func emptyWhenNoMatch() {
         let photos = [photo("a", place: "Osaka"), photo("b", place: "Tokyo")]
