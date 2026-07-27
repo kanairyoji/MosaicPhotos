@@ -14,7 +14,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     // クラウド path → CGImage（Dropbox サムネイル）。CLIP 埋め込みに使う。
     let cloudImage: @Sendable (String) async -> CGImage? = { path in
         let image = await dropboxStore.thumbnail(for: dropboxFileItem(path: path))
-        return image?.cgImage
+        return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
     // ⚠️ @ModelActor は「init したスレッド」で実行される（SwiftData の罠）。MainActor で
     // 生成すると全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走り
@@ -66,7 +66,8 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
 /// クラウド写真の顔検出用に Dropbox のキャッシュ済みサムネ（128px・追加DL無し）を注入する。
 func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
     let cloudImage: @Sendable (String) async -> CGImage? = { path in
-        await dropboxStore.thumbnail(for: dropboxFileItem(path: path))?.cgImage
+        let image = await dropboxStore.thumbnail(for: dropboxFileItem(path: path))
+        return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
     // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
     return await PeopleEngine.makeWithOffMainStore(

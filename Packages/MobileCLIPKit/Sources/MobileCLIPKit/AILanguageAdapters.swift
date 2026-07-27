@@ -49,7 +49,23 @@ nonisolated func loadLocalCGImage(_ localIdentifier: String, maxPixel: CGFloat =
         PHImageManager.default().requestImage(
             for: asset, targetSize: target, contentMode: .aspectFit, options: options
         ) { image, _ in
-            continuation.resume(returning: image?.cgImage)
+            continuation.resume(returning: image.flatMap(orientationNormalizedCGImage))
         }
     }
+}
+
+/// UIImage → 向きを **.up に正規化した** CGImage。
+///
+/// ⚠️ `UIImage.cgImage` は EXIF 回転が**未適用の生ビットマップ**のことがある（HEIC 等・
+/// PHImageManager はターゲットサイズにより回転適用済み/未適用のどちらも返し得る）。
+/// 生のまま使うと、検出時と表示時で別表現を掴んだ写真だけ顔矩形がズレる（実障害）。
+/// すべての CGImage 化をこの関数に通し、座標系を常に「表示と同じ向き」に揃える。
+public func orientationNormalizedCGImage(_ image: UIImage) -> CGImage? {
+    if image.imageOrientation == .up { return image.cgImage }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let redrawn = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+        image.draw(in: CGRect(origin: .zero, size: image.size))
+    }
+    return redrawn.cgImage
 }

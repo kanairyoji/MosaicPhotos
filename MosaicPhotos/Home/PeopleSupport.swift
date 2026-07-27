@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import MobileCLIPKit
 import DropboxKit
 import Photos
 import UIKit
@@ -89,7 +90,8 @@ func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600)
         source = await requestAspectCGImage(localID, maxPixel: maxPixel)
     } else if let path = ref.cloudPath {
         // クラウド顔: Dropbox のキャッシュ済み 128px サムネから切り抜く（低解像度アバター・追加DL無し）。
-        source = await HeavyWorkScheduler.stores?.dropboxStore.thumbnail(for: dropboxFileItem(path: path))?.cgImage
+        source = await HeavyWorkScheduler.stores?.dropboxStore.thumbnail(for: dropboxFileItem(path: path))
+            .flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（検出座標と同じ向きに）
     } else {
         source = nil
     }
@@ -135,7 +137,8 @@ private func requestAspectCGImage(_ localIdentifier: String, maxPixel: CGFloat) 
             lock.lock(); defer { lock.unlock() }
             guard !didResume else { return }
             didResume = true
-            cont.resume(returning: image?.cgImage)
+            // EXIF 回転を正規化（検出時と別表現を掴んでも顔矩形がズレないように）。
+            cont.resume(returning: image.flatMap(orientationNormalizedCGImage))
         }
     }
 }
