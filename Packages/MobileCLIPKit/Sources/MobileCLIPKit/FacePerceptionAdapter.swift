@@ -28,9 +28,10 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             guard let ref = PhotoRef.decode(refKey) else { continue }
             let source: CGImage?
             if let localID = ref.localIdentifier {
-                // 端末写真: 顔検出に十分な 640px。T3: 800→640px でロード/メモリを約36%削減
-                // （顔クロップは検出後に bbox 基準で切るため embedding 品質への影響は軽微）。
-                source = await loadLocalCGImage(localID, maxPixel: 640)
+                // 端末写真: 1024px（ADR-51・旧 640px）。集合写真の端の小さい顔も埋め込みに
+                // 足る解像度を確保する。メモリ増（約2.6倍/枚）は夜間・1枚ずつ処理＋
+                // メモリ圧迫ゲート（shouldPause）で吸収する。
+                source = await loadLocalCGImage(localID, maxPixel: 1024)
             } else if let path = ref.cloudPath, let cloudImage {
                 // クラウド: キャッシュ済み 128px サムネを再利用（追加ダウンロード無し・低解像度）。
                 source = await cloudImage(path)
@@ -51,7 +52,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         return result
     }
 
-    /// 1 顔分の観測（矩形・品質・向き・目閉じ・笑顔）。
+    /// 1 顔分の観測（矩形・品質・向き・目閉じ・笑顔・両目中心）。
     private struct FaceObservation {
         var box: CGRect
         var quality: Float
@@ -59,6 +60,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         var roll: Float?
         var eyesClosed: Bool?
         var hasSmile: Bool?
+        /// 両目の中心（ピクセル・原点左下）。アライメント切り抜き（ADR-51）に使う。
+        var eyeLeft: CGPoint?
+        var eyeRight: CGPoint?
     }
 
     /// 戻り値 `.raw` は検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
@@ -74,7 +78,18 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         var signals: [DetectedFaceSignal] = []
         for face in faces {
             guard face.box.width >= minSide, face.box.height >= minSide else { continue }
-            guard let crop = cropFace(cg, normalizedBox: face.box, width: width, height: height),
+            // ADR-51: 両目ランドマークがあれば**アライメント切り抜き**（目線を水平・両目中点を
+            // 標準位置に正規化）。facenet の学習形式に合い、同一人物の埋め込みが近づく。
+            // ランドマークなし/計画不能（過大な傾き等）は従来の bbox 切り抜きへフォールバック。
+            let pixelBox = CGRect(x: face.box.origin.x * width, y: face.box.origin.y * height,
+                                  width: face.box.width * width, height: face.box.height * height)
+            let aligned: CGImage? = {
+                guard let l = face.eyeLeft, let r = face.eyeRight,
+                      let plan = FaceAlignment.plan(leftEye: l, rightEye: r, pixelBox: pixelBox)
+                else { return nil }
+                return alignedCrop(cg, plan: plan)
+            }()
+            guard let crop = aligned ?? cropFace(cg, normalizedBox: face.box, width: width, height: height),
                   let embedding = FaceModelRuntime.shared.embed(crop) else { continue }
             // ADR-45/47: 実品質（faceCaptureQuality）に顔向き・目閉じの減衰を適用して伝える。
             // 横顔・大傾きはフロア未満（未割当）になり、重心を汚さない。
@@ -103,6 +118,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             guard !obs.isEmpty else { return ([], nil) }   // 顔なし（エラーではない）
             let landmarks = landmarksRequest.results ?? []
             let smiles = ciSmileBoxes(in: cg)
+            let imageSize = CGSize(width: cg.width, height: cg.height)
             let faces = obs.map { o -> FaceObservation in
                 // ランドマーク観測は bbox の重なり（IoU 最大）で対応づける。
                 let lm = Self.bestMatch(for: o.boundingBox, in: landmarks.map(\.boundingBox))
@@ -115,7 +131,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 return FaceObservation(box: o.boundingBox,
                                        quality: o.faceCaptureQuality ?? 1,
                                        yaw: yaw, roll: roll,
-                                       eyesClosed: eyesClosed, hasSmile: smile)
+                                       eyesClosed: eyesClosed, hasSmile: smile,
+                                       eyeLeft: Self.regionCenter(lm?.landmarks?.leftEye, imageSize: imageSize),
+                                       eyeRight: Self.regionCenter(lm?.landmarks?.rightEye, imageSize: imageSize))
             }
             return (faces, nil)
         } catch {
@@ -149,6 +167,30 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             if iou > 0.3, iou > (best?.iou ?? 0) { best = (i, iou) }
         }
         return best?.index
+    }
+
+    /// ランドマーク領域の中心（ピクセル・原点左下）。
+    private static func regionCenter(_ region: VNFaceLandmarkRegion2D?, imageSize: CGSize) -> CGPoint? {
+        guard let points = region?.pointsInImage(imageSize: imageSize), !points.isEmpty else { return nil }
+        let sum = points.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
+        return CGPoint(x: sum.x / CGFloat(points.count), y: sum.y / CGFloat(points.count))
+    }
+
+    /// アライメント切り抜き（ADR-51）。計画（回転角・出力辺・目標位置）どおりに
+    /// CGContext で回転描画する。CGContext は原点左下（y 上向き）＝計画と同じ座標系。
+    private func alignedCrop(_ cg: CGImage, plan: FaceAlignmentPlan) -> CGImage? {
+        let side = Int(plan.side.rounded())
+        guard side >= 16 else { return nil }
+        guard let ctx = CGContext(data: nil, width: side, height: side,
+                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.translateBy(x: plan.target.x, y: plan.target.y)
+        ctx.rotate(by: -plan.angle)
+        ctx.translateBy(x: -plan.eyeMid.x, y: -plan.eyeMid.y)
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: CGFloat(cg.width), height: CGFloat(cg.height)))
+        return ctx.makeImage()
     }
 
     /// ランドマークから目閉じを近似する（左右とも縦横比 < 0.15 なら閉眼）。

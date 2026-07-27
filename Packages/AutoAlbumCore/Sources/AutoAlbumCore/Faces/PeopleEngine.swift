@@ -76,6 +76,9 @@ public final class PeopleEngine {
             guard let self else { return }
             self.isScanning = true
             BackgroundActivityMonitor.shared.isScanningFaces = true
+            // 版上げ（埋め込みパイプライン変更＝ADR-51）なら全再スキャンへ移行する
+            //（命名は写真の重なりで持ち越し・修正ジャーナルは残す）。
+            await self.migrateScanVersionIfNeeded()
             await self.tagger.scan(
                 candidateRefKeys: candidateRefKeys,
                 allowSimulator: allowSimulator,
@@ -91,6 +94,8 @@ public final class PeopleEngine {
                 onBatch: { [weak self] in await self?.loadPeople() })
             // B2: スキャン完了後、修正が増えていれば制約付き再クラスタリングで全体を最適化
             //（夜間ウィンドウ内・数秒・順序依存の誤りを解消する）。
+            // 版上げ再スキャン中なら、進んだ分だけ名前を段階的に戻す（数晩に分かれても可）。
+            await self.reapplyCarryoverNames()
             if !BackgroundYield.heavyShouldPause() {
                 await self.rebuildClustersIfNeeded()
             }
@@ -98,6 +103,79 @@ public final class PeopleEngine {
             BackgroundActivityMonitor.shared.isScanningFaces = false
             BackgroundActivityMonitor.shared.faceScanRemaining = 0
             self.scanTask = nil
+        }
+    }
+
+    // MARK: - スキャン版数（埋め込みパイプラインの版・ADR-51）
+
+    /// 顔スキャンパイプラインの現行版。v2: 顔アライメント（目の位置正規化）＋処理解像度
+    /// 640→1024px。**埋め込みの作り方が変わる版上げでは新旧の埋め込みを混在させられない**
+    /// （コサイン類似度が壊れる）ため、全再スキャンする。
+    static let faceScanVersion = 2
+    private static let faceScanVersionKey = "faceScanVersion"
+
+    /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
+    /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
+    private func migrateScanVersionIfNeeded() async {
+        let stored = UserDefaults.standard.integer(forKey: Self.faceScanVersionKey)
+        guard stored < Self.faceScanVersion else { return }
+        if await store.scannedCount() > 0 {
+            let snapshot = await store.namedClusterEntries()
+            if !snapshot.isEmpty { saveCarryover(NameCarryover(savedAt: Date(), entries:
+                snapshot.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) })) }
+            await store.reset()
+            Diagnostics.mark("faces: scan pipeline v\(stored == 0 ? 1 : stored)→v\(Self.faceScanVersion) "
+                             + "— full rescan (carrying \(snapshot.count) names)")
+            await loadPeople()
+        }
+        UserDefaults.standard.set(Self.faceScanVersion, forKey: Self.faceScanVersionKey)
+    }
+
+    /// 持ち越し名の再適用（スキャンセッションの末尾で呼ぶ）。全件消化したらファイルを消す。
+    private func reapplyCarryoverNames() async {
+        guard var carryover = loadCarryover() else { return }
+        // 90 日消化されない残り（写真削除等で照合不能）は破棄する。
+        if Date().timeIntervalSince(carryover.savedAt) > 90 * 86_400 {
+            saveCarryover(nil)
+            return
+        }
+        let before = carryover.entries.count
+        let remaining = await store.reapplyNames(carryover.entries.map { ($0.name, $0.memberRefKeys) })
+        guard remaining.count != before else { return }
+        Diagnostics.mark("faces: carryover names applied \(before - remaining.count)/\(before)")
+        carryover.entries = remaining.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) }
+        saveCarryover(carryover.entries.isEmpty ? nil : carryover)
+        await loadPeople()
+    }
+
+    /// 名前持ち越しの永続化（Application Support・再起動/数晩に跨る再スキャンに耐える）。
+    private struct NameCarryover: Codable {
+        var savedAt: Date
+        var entries: [Entry]
+        struct Entry: Codable {
+            var name: String
+            var memberRefKeys: [String]
+        }
+    }
+
+    private var carryoverURL: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("face-name-carryover.json")
+    }
+
+    private func loadCarryover() -> NameCarryover? {
+        guard let data = try? Data(contentsOf: carryoverURL) else { return nil }
+        return try? JSONDecoder().decode(NameCarryover.self, from: data)
+    }
+
+    private func saveCarryover(_ carryover: NameCarryover?) {
+        guard let carryover else {
+            try? FileManager.default.removeItem(at: carryoverURL)
+            return
+        }
+        if let data = try? JSONEncoder().encode(carryover) {
+            try? data.write(to: carryoverURL, options: .atomic)
         }
     }
 
