@@ -36,6 +36,62 @@ struct FaceInfoExpansionTests {
         #expect(FaceQualityGate.minFaceSide(isCloud: true) == 0.15)
     }
 
+    // MARK: - ぼけ・露出ゲート（ADR-52）
+
+    @Test("強いぼけはフロア未満へキャップ・軽いぼけは減衰・鮮明は無変化")
+    func blurGate() {
+        let cap = FaceQualityGate.profileCap
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                blurVariance: 5, meanLuma: 128) == cap)
+        let soft = FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                   blurVariance: 30, meanLuma: 128)
+        #expect(abs(soft - 0.9 * FaceQualityGate.blurSoftFactor) < 1e-6)
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                blurVariance: 200, meanLuma: 128) == 0.9)
+        // 未計測（nil）は減衰しない。
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil) == 0.9)
+    }
+
+    @Test("露出: 極端な暗部/白飛びはキャップ・暗め/明るめは減衰")
+    func exposureGate() {
+        let cap = FaceQualityGate.profileCap
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                blurVariance: 200, meanLuma: 10) == cap)
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                blurVariance: 200, meanLuma: 250) == cap)
+        let dark = FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                   blurVariance: 200, meanLuma: 30)
+        #expect(abs(dark - 0.9 * FaceQualityGate.exposureFactor) < 1e-6)
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                blurVariance: 200, meanLuma: 128) == 0.9)
+    }
+
+    @Test("FaceImageMetrics: 市松模様は高分散・平坦は低分散・平均輝度が正しい")
+    func imageMetrics() {
+        let side = 8
+        // 平坦（全 100）: エッジなし → 分散 0・平均 100。
+        let flat = [Float](repeating: 100, count: side * side)
+        let flatMetrics = FaceImageMetrics.compute(luma: flat, width: side, height: side)
+        #expect(flatMetrics != nil)
+        #expect(flatMetrics!.blurVariance < 1e-6)
+        #expect(abs(flatMetrics!.meanLuma - 100) < 1e-4)
+        // 市松模様（0/255）: 強エッジ → 大きな分散。
+        var checker = [Float](repeating: 0, count: side * side)
+        for y in 0..<side {
+            for x in 0..<side where (x + y) % 2 == 0 { checker[y * side + x] = 255 }
+        }
+        let checkerMetrics = FaceImageMetrics.compute(luma: checker, width: side, height: side)
+        #expect(checkerMetrics!.blurVariance > FaceQualityGate.blurSoftFloor)
+        // 不正サイズは nil。
+        #expect(FaceImageMetrics.compute(luma: [1, 2, 3], width: 3, height: 3) == nil)
+        #expect(FaceImageMetrics.compute(luma: flat, width: 2, height: 32) == nil)
+    }
+
+    @Test("絶対ピクセルの最小顔サイズが定義されている")
+    func minFacePixels() {
+        #expect(FaceQualityGate.minFacePixels == 32)
+    }
+
     // MARK: - 品質フロア 0.40（FaceStore 経由）
 
     @Test("フロア未満（品質0.3）の顔はクラスタへ入らない（記録は残る）")

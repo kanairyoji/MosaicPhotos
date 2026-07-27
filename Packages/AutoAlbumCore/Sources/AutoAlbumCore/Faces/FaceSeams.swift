@@ -17,14 +17,44 @@ public enum FaceQualityGate {
     public static let eyesClosedFactor: Float = 0.6
     /// 顔矩形の最小辺（正規化）。クラウドは低解像度サムネのため大きい顔のみ採る。
     public static func minFaceSide(isCloud: Bool) -> CGFloat { isCloud ? 0.15 : 0.05 }
+    /// 顔矩形の最小辺（**絶対ピクセル**）。比率を満たしても実ピクセルが小さすぎる顔は
+    /// 埋め込みが機能しないため除外する（比率ゲートと二段構え）。
+    public static let minFacePixels: CGFloat = 32
 
-    /// Vision の faceCaptureQuality に顔向き・目閉じの減衰を適用した「クラスタリング用品質」。
+    // ぼけゲート（顔クロップを 64px 正方に縮小した輝度のラプラシアン分散・0〜255 スケール）。
+    /// これ未満は強いぼけ → 品質をフロア未満へキャップ（クラスタに入れない）。
+    public static let blurHardFloor: Float = 15
+    /// これ未満は軽いぼけ → 品質を減衰。
+    public static let blurSoftFloor: Float = 60
+    public static let blurSoftFactor: Float = 0.7
+
+    // 露出ゲート（同じ縮小輝度の平均・0〜255）。
+    /// 極端な暗部/白飛び → 品質をフロア未満へキャップ。
+    public static let lumaHardDark: Float = 20
+    public static let lumaHardBright: Float = 235
+    /// 暗め/明るめ → 品質を減衰。
+    public static let lumaSoftDark: Float = 40
+    public static let lumaSoftBright: Float = 215
+    public static let exposureFactor: Float = 0.6
+
+    /// Vision の faceCaptureQuality に顔向き・目閉じ・ぼけ・露出の減衰を適用した
+    /// 「クラスタリング用品質」。未計測（nil）の指標は減衰しない（フォールバック検出でも動く）。
     public static func adjustedQuality(quality: Float, yaw: Float?, roll: Float?,
-                                       eyesClosed: Bool?) -> Float {
+                                       eyesClosed: Bool?,
+                                       blurVariance: Float? = nil,
+                                       meanLuma: Float? = nil) -> Float {
         var q = quality
         if let yaw, abs(yaw) >= yawLimit { q = min(q, profileCap) }
         if let roll, abs(roll) >= rollLimit { q = min(q, profileCap) }
         if eyesClosed == true { q *= eyesClosedFactor }
+        if let blurVariance {
+            if blurVariance < blurHardFloor { q = min(q, profileCap) }
+            else if blurVariance < blurSoftFloor { q *= blurSoftFactor }
+        }
+        if let meanLuma {
+            if meanLuma < lumaHardDark || meanLuma > lumaHardBright { q = min(q, profileCap) }
+            else if meanLuma < lumaSoftDark || meanLuma > lumaSoftBright { q *= exposureFactor }
+        }
         return q
     }
 }

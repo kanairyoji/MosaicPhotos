@@ -83,6 +83,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             // ランドマークなし/計画不能（過大な傾き等）は従来の bbox 切り抜きへフォールバック。
             let pixelBox = CGRect(x: face.box.origin.x * width, y: face.box.origin.y * height,
                                   width: face.box.width * width, height: face.box.height * height)
+            // 比率を満たしても実ピクセルが小さすぎる顔は埋め込みが機能しない → 除外（二段構え）。
+            guard pixelBox.width >= FaceQualityGate.minFacePixels,
+                  pixelBox.height >= FaceQualityGate.minFacePixels else { continue }
             let aligned: CGImage? = {
                 guard let l = face.eyeLeft, let r = face.eyeRight,
                       let plan = FaceAlignment.plan(leftEye: l, rightEye: r, pixelBox: pixelBox)
@@ -91,10 +94,12 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             }()
             guard let crop = aligned ?? cropFace(cg, normalizedBox: face.box, width: width, height: height),
                   let embedding = FaceModelRuntime.shared.embed(crop) else { continue }
-            // ADR-45/47: 実品質（faceCaptureQuality）に顔向き・目閉じの減衰を適用して伝える。
-            // 横顔・大傾きはフロア未満（未割当）になり、重心を汚さない。
+            // ADR-45/47/52: 実品質（faceCaptureQuality）に顔向き・目閉じ・ぼけ・露出の減衰を
+            // 適用して伝える。強いぼけ・極端な露出・横顔はフロア未満（未割当）＝重心を汚さない。
+            let metrics = Self.faceMetrics(crop)
             let adjusted = FaceQualityGate.adjustedQuality(
-                quality: face.quality, yaw: face.yaw, roll: face.roll, eyesClosed: face.eyesClosed)
+                quality: face.quality, yaw: face.yaw, roll: face.roll, eyesClosed: face.eyesClosed,
+                blurVariance: metrics?.blurVariance, meanLuma: metrics?.meanLuma)
             signals.append(DetectedFaceSignal(
                 boundingBox: face.box,
                 embedding: ClipMath.encodeHalf(embedding),
@@ -167,6 +172,23 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             if iou > 0.3, iou > (best?.iou ?? 0) { best = (i, iou) }
         }
         return best?.index
+    }
+
+    /// 顔クロップの画質指標（ぼけ・露出）。64px 正方のグレースケールへ縮小して輝度を取り、
+    /// 計算自体は純ロジック（`FaceImageMetrics`）に委譲する（クロップサイズ非依存のスケール）。
+    private static func faceMetrics(_ crop: CGImage) -> (blurVariance: Float, meanLuma: Float)? {
+        let side = 64
+        guard let ctx = CGContext(data: nil, width: side, height: side,
+                                  bitsPerComponent: 8, bytesPerRow: side,
+                                  space: CGColorSpaceCreateDeviceGray(),
+                                  bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: side, height: side))
+        guard let data = ctx.data else { return nil }
+        let buffer = data.bindMemory(to: UInt8.self, capacity: side * side)
+        var luma = [Float](repeating: 0, count: side * side)
+        for i in 0..<(side * side) { luma[i] = Float(buffer[i]) }
+        return FaceImageMetrics.compute(luma: luma, width: side, height: side)
     }
 
     /// ランドマーク領域の中心（ピクセル・原点左下）。

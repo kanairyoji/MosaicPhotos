@@ -21,6 +21,38 @@ public struct FaceAlignmentPlan: Sendable, Equatable {
     public let target: CGPoint
 }
 
+/// 顔クロップの画質指標（純ロジック・テスト対象）。ぼけ＝ラプラシアン分散、露出＝平均輝度。
+/// 入力は「64px 正方などの固定サイズへ縮小した輝度（0〜255・行優先）」＝クロップの大きさに
+/// よらず同じスケールで比較できる（しきい値は FaceQualityGate に集約）。
+public enum FaceImageMetrics {
+    /// 輝度バッファから（ぼけ分散・平均輝度）を計算する。3×3 未満や不正サイズは nil。
+    public static func compute(luma: [Float], width: Int, height: Int)
+        -> (blurVariance: Float, meanLuma: Float)? {
+        guard width >= 3, height >= 3, luma.count == width * height else { return nil }
+        var mean: Float = 0
+        for v in luma { mean += v }
+        mean /= Float(luma.count)
+        // 4 近傍ラプラシアン（エッジ量）。ぼけ画像はエッジが失われ分散が小さくなる。
+        var lapSum: Float = 0
+        var lapSquaredSum: Float = 0
+        var count = 0
+        for y in 1..<(height - 1) {
+            for x in 1..<(width - 1) {
+                let i = y * width + x
+                let lap = 4 * luma[i] - luma[i - 1] - luma[i + 1]
+                        - luma[i - width] - luma[i + width]
+                lapSum += lap
+                lapSquaredSum += lap * lap
+                count += 1
+            }
+        }
+        let n = Float(count)
+        let lapMean = lapSum / n
+        let variance = max(0, lapSquaredSum / n - lapMean * lapMean)
+        return (variance, mean)
+    }
+}
+
 public enum FaceAlignment {
     /// 両目中点の縦位置（上からの割合）。
     public static let eyeVerticalFromTop: CGFloat = 0.35
