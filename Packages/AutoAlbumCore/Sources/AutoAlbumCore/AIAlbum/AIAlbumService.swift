@@ -116,7 +116,8 @@ final class AIAlbumService {
             let info = AIAlbumSearcher.buildInfo(id: id, title: out[index].title,
                                                  interpretedTitle: saved.spec.title,
                                                  criteria: criteria, members: members,
-                                                 aesthetics: await coverAesthetics(members))
+                                                 aesthetics: await coverAesthetics(members),
+                                                 usage: await coverUsage(members))
             await store.upsert(albumInfo: info)
             out[index] = info
             Diagnostics.mark("aialbum.finalize: '\(criteria)' → members=\(members.count)")
@@ -161,7 +162,8 @@ final class AIAlbumService {
             + "total=\(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
         let info = AIAlbumSearcher.buildInfo(id: id, title: title, interpretedTitle: saved.spec.title,
                                              criteria: trimmed, members: members,
-                                             aesthetics: await coverAesthetics(members))
+                                             aesthetics: await coverAesthetics(members),
+                                                 usage: await coverUsage(members))
         await store.upsert(albumInfo: info)
         return (.created(info), await loadAll())
     }
@@ -202,7 +204,8 @@ final class AIAlbumService {
             interpreter.save(saved, for: album.id)
             let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
                                                  criteria: criteria, members: members,
-                                                 aesthetics: await coverAesthetics(members))
+                                                 aesthetics: await coverAesthetics(members),
+                                                 usage: await coverUsage(members))
             await store.upsert(albumInfo: info)
             updated.append(info)
         }
@@ -277,7 +280,8 @@ final class AIAlbumService {
                 .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
             let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
                                                  criteria: criteria, members: members,
-                                                 aesthetics: await coverAesthetics(members))
+                                                 aesthetics: await coverAesthetics(members),
+                                                 usage: await coverUsage(members))
             await store.upsert(albumInfo: info)
             updated[index] = info
             touched += 1
@@ -334,6 +338,13 @@ final class AIAlbumService {
     /// メンバーの美的スコア（カバー選択の加点用・photo-info-expansion）。
     private func coverAesthetics(_ members: [EnrichedPhoto]) async -> [String: Double] {
         await tagStore?.aesthetics(forRefKeys: members.map(\.id)) ?? [:]
+    }
+
+    /// 利用カウンタの照会（エンジンが UsageStore を結線する・カバー選択の加点用）。
+    var usageCounts: (@Sendable ([String]) async -> [String: PhotoUsageCounts])?
+
+    private func coverUsage(_ members: [EnrichedPhoto]) async -> [String: PhotoUsageCounts] {
+        await usageCounts?(members.map(\.id)) ?? [:]
     }
 
     private func faceCountsIfNeeded(for spec: QuerySpec) async -> [String: Int]? {

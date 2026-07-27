@@ -21,6 +21,14 @@
 
 ---
 
+## ADR-50 認識・検索パラメーターのチューニング（タグ 2 段化・OCR 足切り・カバーの利用シグナル）
+- 状態: 採用
+- 文脈: 各種しきい値の総点検を実施。顔クラスタリング系（品質フロア 0.40・顔向きゲート・クラウド顔サイズ 0.15 等＝ADR-48）と付帯情報系（OCR/人数/美的スコア＝ADR-47）は点検の結果いずれも適正で変更なし。残る改善は (a) シーンタグの精度しきい値が検索用途には狭すぎる、(b) OCR に信頼度の足切りがない、(c) カバー選定が利用シグナル（共有/閲覧＝ADR-49 の台帳）を使っていない、の 3 点だった。
+- 決定: (1) **シーンタグの 2 段化**: 台帳（検索インデックス）は precision 0.9→**0.75**・最大 10→**25 個**に広げ再現率を上げる。**表示は従来どおり insight 側で上位 10** に絞る（役割別の 2 段構成）。`TagStore.currentVersion` を 3 に採番し夜間に全再タグ。(2) **OCR の信頼度足切り**: 認識候補の confidence **0.3 未満は捨てる**（低信頼の誤読が字句検索を汚すのを防ぐ）。(3) **カバー選定に利用シグナルを追加**: `pickCoverRef` に共有済み **+15**・閲覧回数 **+min(view,10)** を加点（`UsageStore` を AIAlbumService へ結線）。序列は お気に入り(100) > 美的(±40) > 共有(15) > 横長(10)/閲覧(≤10) > GPS(5) を維持＝明示操作ほど強い。(4) しきい値レス方針（ADR-24）の semanticMargin 0.06・RRF k=60・顔系の各値は点検のうえ据え置き。
+- 結果: タグ一致の検索再現率が上がり（曖昧なシーンも 25 個枠で拾える）、除外条件のタグ照合も広がる。カバーは「共有した・よく見返す」写真に寄る。トレードオフ: (1) 再タグ 1 巡（v3）。(2) precision 0.75 のタグはノイズも増えるが、検索は RRF 融合＋証拠ゲート＋LLM 審査の積層が刈る（表示は 10 個のまま体感不変）。
+- 保留（新機能・別判断）: イベント検出レシピとホリデー検出の加重和は「閾値の見直し」ではなく生成戦略の新設になるため今回は見送り。採用候補値を残す —— イベント: Wedding=3.5h/10人/シーン5枚(2種以上・wedding,bride,groom,bridesmaid)、Celebration=3h/4人/10枚(graduation,ceremony,wedding)、Concert=5分/2枚(concert,singer,deejay,microphone)、Hiking=1枚(hiking,mountain,canyon,waterfall,forest)、Beaching=2枚(beach,surfing,shore,sand,swimsuit)、NightOut=3h/2枚(nightclub,bar,cocktail,wine)、Museum=1h/12枚(illustrations,painting,museum)、Dinner=40分/2枚(restaurant,food)。ホリデー: 加重和=Scene 0.6＋Location 0.25＋Date 0.15・判定しきい値 0.8・シーン重要度 0.3/0.4/0.6/1.0。
+- 関連: `VisionTagAdapter.sense`（0.75/25・OCR 足切り）・`TagStore.currentVersion=3`・`CoverSelection.pickCoverRef(usage:)`・`AIAlbumService.usageCounts`（結線）・`PhotoSenseInfoTests`。ADR-47/48/49 の続き。
+
 ## ADR-49 写真の利用カウンタ（閲覧・再生・共有）と共有機能
 - 状態: 採用
 - 文脈: 写真ごとの利用状況（見た/再生した/共有した回数）を持ちたい（お気に入りは PHAsset.favorite で既存）。共有機能自体が未実装だったため、共有カウントには共有ボタンの新設が前提になる。

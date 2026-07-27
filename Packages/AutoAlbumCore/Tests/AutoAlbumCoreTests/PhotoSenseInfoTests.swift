@@ -57,4 +57,20 @@ struct PhotoSenseInfoTests {
         // スコアなしは従来どおり（クラッシュしない）。
         #expect(pickCoverRef(members) != nil)
     }
+
+    @Test("pickCoverRef は共有済み・閲覧回数で加点する（お気に入りは超えない）")
+    func coverPrefersSharedAndViewed() {
+        func photo(_ id: String, favorite: Bool = false) -> EnrichedPhoto {
+            EnrichedPhoto(id: id, captureDate: nil, latitude: nil, longitude: nil,
+                          placeName: nil, country: nil, isFavorite: favorite, people: [])
+        }
+        let members = [photo("L-a"), photo("L-b"), photo("L-c")]
+        // 共有した写真（+15）が閲覧のみ（上限+10）より優先される。
+        let usage = ["L-b": PhotoUsageCounts(viewCount: 0, playCount: 0, shareCount: 2),
+                     "L-c": PhotoUsageCounts(viewCount: 30, playCount: 0, shareCount: 0)]
+        #expect(pickCoverRef(members, usage: usage) == "L-b")
+        // お気に入り（+100）は利用シグナルより強い。
+        let withFav = [photo("L-a", favorite: true), photo("L-b")]
+        #expect(pickCoverRef(withFav, usage: usage) == "L-a")
+    }
 }

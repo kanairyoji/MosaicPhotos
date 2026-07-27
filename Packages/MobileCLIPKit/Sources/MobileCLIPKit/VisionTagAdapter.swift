@@ -76,11 +76,12 @@ public struct VisionTagAdapter: TagPerceptionProvider {
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         guard (try? handler.perform(requests)) != nil else { return PhotoSenseInfo() }
 
-        // シーンタグ（精度 0.9・最大 10 個・信頼度順）。
+        // シーンタグ（精度 0.75・最大 25 個・信頼度順）。検索インデックスは広めに取る
+        // （表示は insight 側で上位 10 に絞る＝役割別の 2 段構成）。
         var tags = (classify.results ?? [])
-            .filter { $0.hasMinimumRecall(0.01, forPrecision: 0.9) }
+            .filter { $0.hasMinimumRecall(0.01, forPrecision: 0.75) }
             .sorted { $0.confidence > $1.confidence }
-            .prefix(10)
+            .prefix(25)
             .map(\.identifier)
 
         // 動物種別（cat/dog）。専用検出器の方が分類より確実なのでタグへ合流する。
@@ -89,8 +90,12 @@ public struct VisionTagAdapter: TagPerceptionProvider {
         }
         tags = mergeTags(tags, adding: animalTags)
 
-        // OCR（信頼度順に連結・最大 300 文字＝台帳を太らせない）。
-        let lines = (text.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        // OCR（低信頼の誤読を足切りし、信頼度順に連結・最大 300 文字＝台帳を太らせない）。
+        let lines = (text.results ?? []).compactMap { obs -> String? in
+            guard let candidate = obs.topCandidates(1).first,
+                  candidate.confidence >= 0.3 else { return nil }
+            return candidate.string
+        }
         let joined = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         let ocr = joined.isEmpty ? nil : String(joined.prefix(300))
 

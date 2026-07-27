@@ -41,9 +41,10 @@ final class PhotoTagRecord {
 actor TagStore {
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Tags")
 
-    /// 現行のタグ付け版。v2: OCR・動物・人物数・美的スコア・アセット種別タグを追加
-    /// （photo-info-expansion）。版上げで既存写真も夜間に再タグされ新フィールドが埋まる。
-    static let currentVersion = 2
+    /// 現行のタグ付け版。v2: OCR・動物・人物数・美的スコア・アセット種別タグを追加。
+    /// v3: シーンタグを precision 0.75・最大 25 個へ拡大（検索インデックスは広めに・
+    /// 表示は上位 10 のまま）＋ OCR の信頼度足切り。版上げで既存写真も夜間に再タグされる。
+    static let currentVersion = 3
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoTagRecord.self])

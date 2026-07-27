@@ -121,6 +121,10 @@ public final class AutoAlbumEngine {
                                         understanding: queryUnderstanding ?? makeDefaultQueryUnderstanding(),
                                         textEmbedder: textEmbedder,
                                         translator: translator)
+        // カバー選定の利用シグナル（共有/閲覧）: AIAlbumService から UsageStore を引けるようにする。
+        aiService.usageCounts = { [usageStore = self.usageStore] keys in
+            await usageStore.counts(forRefKeys: keys)
+        }
         self.pathGenerator = PathAlbumGenerator(store: store, cloudProvider: cloudProvider)
         self.tagger = PhotoTagger(store: store, perception: perception)
         // Phase 2（ADR-35）: AI アルバム候補の上位に**オンデマンドでキャプション**を付けて

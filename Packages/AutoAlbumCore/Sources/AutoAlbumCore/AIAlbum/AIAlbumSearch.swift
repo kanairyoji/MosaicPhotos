@@ -230,8 +230,10 @@ public struct AIAlbumSearcher {
     /// メンバー写真から AI アルバムの表示情報を組み立てる（純）。
     /// タイトルはユーザー指定を優先し、空なら解釈タイトル→条件文の順で補完する。
     /// - Parameter aesthetics: refKey → 美的スコア（Vision・-1〜1）。カバー選択の加点に使う。
+    /// - Parameter usage: refKey → 利用カウンタ（共有/閲覧）。カバー選択の加点に使う。
     static func buildInfo(id: String, title: String, interpretedTitle: String, criteria: String,
-                          members: [EnrichedPhoto], aesthetics: [String: Double] = [:]) -> AutoAlbumInfo {
+                          members: [EnrichedPhoto], aesthetics: [String: Double] = [:],
+                          usage: [String: PhotoUsageCounts] = [:]) -> AutoAlbumInfo {
         let dates = members.compactMap(\.captureDate)
         let people = rankedByFrequency(members.flatMap(\.people))
         let located = members.filter(\.hasCoordinate)
@@ -243,7 +245,7 @@ public struct AIAlbumSearcher {
             id: id, strategyID: AIAlbumStrategy.strategyID,
             title: resolved, placeName: resolved, places: [resolved], country: nil, people: people,
             startDate: dates.min() ?? .distantPast, endDate: dates.max() ?? .distantPast,
-            coverRef: pickCoverRef(members, aesthetics: aesthetics),
+            coverRef: pickCoverRef(members, aesthetics: aesthetics, usage: usage),
             memberRefs: members.map(\.id), photoCount: members.count,
             representativeDate: dates.max() ?? Date(), latitude: lat, longitude: lon, criteria: criteria)
     }
