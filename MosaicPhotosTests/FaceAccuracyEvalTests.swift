@@ -240,6 +240,20 @@ final class FaceAccuracyEvalTests: XCTestCase {
             printRow(String(format: "sizeAdapt thr=%.2f m0.05 smax=%.2f", thr, sizeMax),
                      score(clusters: clusters))
         }
+
+        // E) 純度の事後検査（外れ値除去・ADR-59）: 現行本番構成（thr0.50/margin0.05/size0.10）の
+        // 出力に外れ値除去を重ねる。混入を事後的に抜いて純度を上げられるか。
+        print("FACEEVAL[\(name)]: === E 外れ値除去（現行本番構成の後段） ===")
+        let embByID = Dictionary(uniqueKeysWithValues: samples.map { ($0.file, $0.embedding) })
+        let prod = FaceClustering.clusterAll(faces, threshold: 0.50, qualityFloor: 0.40,
+                                             qualities: qualities, assignMargin: 0.05,
+                                             sizeAdaptiveMarginMax: 0.10)
+        printRow("prod (no prune)", score(clusters: prod))
+        for factor in [Float(1.5), 1.8, 2.2] {
+            let pruned = FaceClusteringVariants.pruneOutliers(prod, embeddings: embByID,
+                                                              dropFactor: factor, minCount: 4)
+            printRow(String(format: "prune factor=%.1f", factor), score(clusters: pruned))
+        }
         print("FACEEVAL[\(name)]: 完了")
     }
 

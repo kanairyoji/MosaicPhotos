@@ -44,6 +44,41 @@ struct FaceClusteringVariantsTests {
         #expect(midCluster?.count == 1)                      // 単独のまま
     }
 
+    @Test("外れ値除去: 混入した別人顔を抜いて単独クラスタにする")
+    func pruneRemovesOutlier() {
+        // A の顔 5 ＋ 混入した別人 1（明確に離れている）。
+        var faceIDs = (0..<5).map { "a\($0)" }
+        var emb: [String: [Float]] = [:]
+        for i in 0..<5 { emb["a\(i)"] = [1, 0.02 * Float(i), 0] }
+        emb["intruder"] = FaceClustering.normalized([0, 1, 0])   // 別人（cos≈0）
+        faceIDs.append("intruder")
+        let cluster = FaceClustering.Cluster(id: 0, centroid: [1, 0, 0], sum: [1, 0, 0],
+                                             count: 6, faceIDs: faceIDs)
+        let result = FaceClusteringVariants.pruneOutliers([cluster], embeddings: emb,
+                                                          dropFactor: 1.8, minCount: 4)
+        // intruder が抜けて本体（5 顔）＋単独（intruder）の 2 クラスタに。
+        #expect(result.count == 2)
+        let main = result.max { $0.count < $1.count }
+        #expect(main?.count == 5)
+        #expect(main?.faceIDs.contains("intruder") == false)
+    }
+
+    @Test("外れ値除去: 均質なクラスタは無変化・小クラスタは検査しない")
+    func pruneKeepsCleanCluster() {
+        var emb: [String: [Float]] = [:]
+        for i in 0..<6 { emb["a\(i)"] = [1, 0.01 * Float(i), 0] }   // 全て近い
+        let clean = FaceClustering.Cluster(id: 0, centroid: [1, 0, 0], sum: [1, 0, 0],
+                                           count: 6, faceIDs: (0..<6).map { "a\($0)" })
+        #expect(FaceClusteringVariants.pruneOutliers([clean], embeddings: emb).count == 1)
+        // minCount 未満（3 顔）は検査対象外＝そのまま。
+        var small: [String: [Float]] = ["x0": [1, 0, 0], "x1": [1, 0, 0], "x2": [0, 1, 0]]
+        let smallCluster = FaceClustering.Cluster(id: 0, centroid: [1, 0, 0], sum: [1, 0, 0],
+                                                  count: 3, faceIDs: ["x0", "x1", "x2"])
+        #expect(FaceClusteringVariants.pruneOutliers([smallCluster], embeddings: small,
+                                                     minCount: 4).count == 1)
+        _ = small
+    }
+
     @Test("中央値重心: 外れ顔 1 つに引っ張られず本体の顔を保持する")
     func medianResistsOutlier() {
         // A の顔 5 ＋（誤って似た）外れ 1。平均重心は外れに引っ張られるが中央値は動かない。

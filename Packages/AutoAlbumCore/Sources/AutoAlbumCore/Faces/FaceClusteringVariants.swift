@@ -79,6 +79,58 @@ public enum FaceClusteringVariants {
         return cores + singles
     }
 
+    /// D) クラスタ純度の事後検査（外れ値除去・ADR-59）: 各クラスタで「メンバーのロバスト重心
+    /// （要素中央値）からの距離」を見て、重み付き中央値距離に基づく外れ値を弾く。混入した
+    /// 別人顔を事後的に排除して純度を上げる。弾いた顔は再割り当てせず単独クラスタにする
+    /// （＝レビューの受け皿・自動再統合はしない）。
+    /// - Parameter dropFactor: 中央値距離の何倍を超えたら外れ値とみなすか（大きいほど緩い）。
+    /// - Parameter minCount: 外れ値検査を行う最小クラスタサイズ（小さすぎる群は中央値が不安定）。
+    /// - Returns: 外れ値を除去したクラスタ群（除去顔は単独クラスタとして残す）。
+    /// - Parameter minAbsDist: 外れ値とみなす**絶対**距離の下限（1-cos）。均質クラスタでは
+    ///   中央値距離が極小になり相対倍率だけだと正常な顔まで弾くため、絶対距離でも守る。
+    public static func pruneOutliers(_ clusters: [FaceClustering.Cluster],
+                                     embeddings: [String: [Float]],
+                                     dropFactor: Float = 1.8,
+                                     minCount: Int = 4,
+                                     minAbsDist: Float = 0.30) -> [FaceClustering.Cluster] {
+        var result: [FaceClustering.Cluster] = []
+        var nextID = (clusters.map(\.id).max() ?? -1) + 1
+        for c in clusters {
+            let members = c.faceIDs.compactMap { fid in embeddings[fid].map { (fid, FaceClustering.normalized($0)) } }
+            guard members.count >= minCount else { result.append(c); continue }
+            // ロバスト重心（要素中央値）。
+            let dims = members[0].1.count
+            var median = [Float](repeating: 0, count: dims)
+            for d in 0..<dims {
+                let col = members.map { $0.1[d] }.sorted()
+                median[d] = col[col.count / 2]
+            }
+            let centroid = FaceClustering.normalized(median)
+            // 各メンバーの距離（1 - cos）と、その中央値。
+            let dists = members.map { (fid: $0.0, dist: 1 - FaceClustering.dot($0.1, centroid)) }
+            let sortedDist = dists.map(\.dist).sorted()
+            let medianDist = sortedDist[sortedDist.count / 2]
+            // 中央値距離 × dropFactor を超える顔は外れ値。全滅回避のため最大でも半数まで。
+            // 外れ値＝「中央値距離の dropFactor 倍超」かつ「絶対距離 minAbsDist 超」の両方。
+            let threshold = max(medianDist * dropFactor, minAbsDist)
+            let outliers = dists.filter { $0.dist > threshold }.map(\.fid)
+            let keepFraction = members.count - outliers.count
+            guard !outliers.isEmpty, keepFraction >= members.count / 2 else { result.append(c); continue }
+            let outlierSet = Set(outliers)
+            var kept = c
+            kept.faceIDs = c.faceIDs.filter { !outlierSet.contains($0) }
+            kept.count = kept.faceIDs.count
+            result.append(kept)
+            for fid in outliers {
+                guard let vec = embeddings[fid].map(FaceClustering.normalized) else { continue }
+                result.append(FaceClustering.Cluster(id: nextID, centroid: vec, sum: vec,
+                                                     count: 1, faceIDs: [fid]))
+                nextID += 1
+            }
+        }
+        return result
+    }
+
     /// C) ロバスト重心（中央値）2 パス: 通常の貪欲でまとめた後、各クラスタの重心を
     /// **要素ごとの中央値**で作り直して全顔を再帰属する。平均重心は混入 1 つに
     /// 引っ張られるが、中央値は外れ顔の影響を受けにくい。
