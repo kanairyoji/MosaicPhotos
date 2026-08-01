@@ -322,10 +322,29 @@ final class FaceAccuracyEvalTests: XCTestCase {
         var byPerson: [String: [Sample]] = [:]
         for sm in samples { byPerson[sm.person, default: []].append(sm) }
 
-        var multiPersons: [FacePersonGrouping.PersonModel] = []   // 2 階層（複数クラスタ）
+        var multiPersons: [FacePersonGrouping.PersonModel] = []   // 2 階層（自動クラスタリング）
         var fusedPersons: [FacePersonGrouping.PersonModel] = []   // 融合（1 重心）
+        // 年齢帯固定分割（各値は年齢境界・登録顔を帯ごとの重心にする）。
+        let bandConfigs: [(label: String, bounds: [Int])] = [
+            ("帯2(<5/≥5)", [5]),
+            ("帯3(<3/3-10/≥10)", [3, 10]),
+            ("帯4(Baby/Child/Young/Adult)", [3, 10, 20]),
+            ("帯5(<1/<2/<4/<6/≥6)", [1, 2, 4, 6]),
+        ]
+        var bandedPersons: [[FacePersonGrouping.PersonModel]] = bandConfigs.map { _ in [] }
+        var autoClusterCounts: [Int] = []
         var queries: [(embedding: [Float], truth: Int, age: Int?)] = []
         var personID = 0
+        func bandRep(_ train: [Sample], bounds: [Int]) -> [[Float]] {
+            var bands: [Int: [[Float]]] = [:]
+            for sm in train {
+                guard let age = sm.age else { continue }
+                var b = bounds.count
+                for (i, bound) in bounds.enumerated() where age < bound { b = i; break }
+                bands[b, default: []].append(sm.embedding)
+            }
+            return bands.keys.sorted().compactMap { FacePersonGrouping.fusedRep(bands[$0]!) }
+        }
         for (person, group) in byPerson.sorted(by: { $0.key < $1.key }) {
             // temporal: 年齢昇順で前80%登録・後20%クエリ（若い頃を登録→成長後を識別）。
             // mixed: file 名ソート・index%5==4 をクエリ（全時期が登録に混在＝実運用に近い）。
@@ -350,9 +369,18 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10)
             let reps = clusters.map(\.centroid)
             multiPersons.append(.init(personID: personID, clusterReps: reps.isEmpty ? [train[0].embedding] : reps))
+            autoClusterCounts.append(max(1, reps.count))
             // 融合: 登録顔全体を 1 重心へ。
             let fused = FacePersonGrouping.fusedRep(train.map(\.embedding)) ?? train[0].embedding
             fusedPersons.append(.init(personID: personID, clusterReps: [fused]))
+            // 年齢帯固定分割の各設定。
+            if train.allSatisfy({ $0.age != nil }) {
+                for (idx, cfg) in bandConfigs.enumerated() {
+                    let bandReps = bandRep(train, bounds: cfg.bounds)
+                    bandedPersons[idx].append(.init(personID: personID,
+                        clusterReps: bandReps.isEmpty ? [fused] : bandReps))
+                }
+            }
             for q in query { queries.append((q.embedding, personID, q.age)) }
         }
         guard queries.count >= 20 else {
@@ -379,15 +407,16 @@ final class FaceAccuracyEvalTests: XCTestCase {
 
         let multi = identifyRate(multiPersons)
         let fused = identifyRate(fusedPersons)
+        let avgAuto = autoClusterCounts.isEmpty ? 0
+            : Double(autoClusterCounts.reduce(0, +)) / Double(autoClusterCounts.count)
         print("FACEEVAL[\(name)]: === 2 階層 vs 融合の人物識別精度・\(temporal ? "時系列分割(若→成長後)" : "年齢混在分割(実運用)")（クエリ \(queries.count) 件・\(multiPersons.count) 人） ===")
-        print(String(format: "FACEEVAL[%@]:  融合（人物=1重心）   識別率=%.1f%%", name, fused.all * 100))
-        print(String(format: "FACEEVAL[%@]:  2階層（人物=複数クラスタ）識別率=%.1f%%", name, multi.all * 100))
-        for bucket in multi.byAge.keys.sorted() {
-            let m = multi.byAge[bucket]!, f = fused.byAge[bucket] ?? (0, 0)
-            print(String(format: "FACEEVAL[%@]:   年齢%@ クエリ%d: 融合=%.0f%% → 2階層=%.0f%%",
-                         name, bucket, m.n,
-                         f.n > 0 ? Double(f.hit) / Double(f.n) * 100 : 0,
-                         Double(m.hit) / Double(m.n) * 100))
+        print(String(format: "FACEEVAL[%@]:  融合（人物=1重心）        識別率=%.1f%%", name, fused.all * 100))
+        print(String(format: "FACEEVAL[%@]:  2階層(自動・平均%.1fクラスタ) 識別率=%.1f%%", name, avgAuto, multi.all * 100))
+        for (idx, cfg) in bandConfigs.enumerated() where !bandedPersons[idx].isEmpty {
+            let r = identifyRate(bandedPersons[idx])
+            let avgBand = Double(bandedPersons[idx].map { $0.clusterReps.count }.reduce(0, +)) / Double(bandedPersons[idx].count)
+            print(String(format: "FACEEVAL[%@]:  2階層(%@ 平均%.1f) 識別率=%.1f%%",
+                         name, cfg.label, avgBand, r.all * 100))
         }
     }
 
