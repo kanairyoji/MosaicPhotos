@@ -369,11 +369,15 @@ public final class PeopleEngine {
         let correctionsGrew = current > lastRebuilt
         let scansGrew = scanned - lastScanned >= 500
         let stale = lastDate.map { Date().timeIntervalSince($0) > 30 * 86_400 } ?? (scanned > 0)
-        guard correctionsGrew || scansGrew || stale else { return }
+        // 既定しきい値の変更（ADR-56 の 0.45→0.60 等）も再クラスタ対象（版上げ不要の調整を反映）。
+        let thresholdKey = "faceRebuildBaseThreshold"
+        let thresholdChanged = Float(defaults.double(forKey: thresholdKey)) != FaceStore.clusterThreshold
+        guard correctionsGrew || scansGrew || stale || thresholdChanged else { return }
         let result = await store.rebuildClusters()
         defaults.set(current, forKey: markerKey)
         defaults.set(scanned, forKey: scanMarkerKey)
         defaults.set(Date(), forKey: dateMarkerKey)
+        defaults.set(Double(FaceStore.clusterThreshold), forKey: thresholdKey)
         Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) "
                          + "(corrections \(lastRebuilt)→\(current), scans \(lastScanned)→\(scanned), stale=\(stale))")
         await loadPeople()

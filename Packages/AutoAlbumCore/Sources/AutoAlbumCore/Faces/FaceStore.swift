@@ -26,7 +26,9 @@ actor FaceStore {
     }
 
     /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
-    private static let clusterThreshold: Float = 0.45
+    /// クラスタリング既定しきい値。FG-NET 実測（ADR-56）で B-Cubed F1 が最大となった 0.60
+    /// （0.45 比で F1 0.444→0.542・純度 0.42→0.72）。校正（FaceCalibration）が上書きし得る。
+    static let clusterThreshold: Float = 0.60
     /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
     /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
     /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。

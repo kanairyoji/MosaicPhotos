@@ -137,7 +137,7 @@ struct FacePhase1Tests {
         let store = FaceStore(isStoredInMemoryOnly: true)
         // 兄弟想定: 類似度 ≈ 0.40（帯域内）の 2 人が同じ写真に 3 回一緒に写る。
         let a: [Float] = [1, 0, 0]
-        let b: [Float] = [0.4, 0.917, 0]   // cos ≈ 0.40
+        let b: [Float] = [0.55, 0.835, 0]   // cos ≈ 0.55（帯域 [0.50,1.0] 内）
         for i in 0..<3 {
             await store.recordScan(refKey: "L-both\(i)", faces: [signal(a), signal(b)])
         }
@@ -152,7 +152,7 @@ struct FacePhase1Tests {
             await store.recordScan(refKey: "L-p\(i)", faces: [signal([1, 0, 0.01 * Float(i)])])
         }
         for i in 0..<3 {
-            await store.recordScan(refKey: "L-q\(i)", faces: [signal([0.4, 0.917, 0])])
+            await store.recordScan(refKey: "L-q\(i)", faces: [signal([0.55, 0.835, 0])])
         }
         let items = await store.reviewItems(minFaces: 3, limit: 30)
         #expect(items.contains { if case .samePerson = $0 { return true }; return false })
