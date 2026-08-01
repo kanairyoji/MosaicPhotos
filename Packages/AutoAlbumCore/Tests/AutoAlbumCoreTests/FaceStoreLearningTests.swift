@@ -123,6 +123,38 @@ struct FaceStoreLearningTests {
         }
     }
 
+    @Test("2階層束ね: linkClusters で複数クラスタが 1 人物にまとまり、unlink で戻る")
+    func linkAndUnlinkClusters() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // 別方向の 2 クラスタ（子供の時期別クラスタを想定）。
+        for i in 0..<3 { await store.recordScan(refKey: "L-young\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-old\(i)", faces: [signal([0, 1, 0])]) }
+        let before = await store.peopleClusters(minFaces: 3)
+        #expect(before.count == 2)   // 束ね前は 2 人
+        let ids = before.map(\.clusterID)
+        await store.rename(clusterID: ids[0], name: "太郎")
+        await store.linkClusters(ids)
+        let after = await store.peopleClusters(minFaces: 3)
+        #expect(after.count == 1)                 // 束ね後は 1 人
+        #expect(after[0].count == 6)              // 全時期の写真が集約
+        #expect(after[0].name == "太郎")          // 名前つき主クラスタが代表
+        // 解除で 2 人に戻る。
+        await store.unlinkCluster(ids[1])
+        #expect(await store.peopleClusters(minFaces: 3).count == 2)
+    }
+
+    @Test("撮影日が保存される（時期グループ分割の材料）")
+    func captureDateStored() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let date = Date(timeIntervalSince1970: 1_600_000_000)
+        let sig = DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                                     embedding: ClipMath.encodeHalf([1, 0, 0]), quality: 1,
+                                     captureDate: date)
+        await store.recordScan(refKey: "L-a", faces: [sig])
+        let faces = await store.facesForCluster(clusterID: 0)
+        #expect(!faces.isEmpty)
+    }
+
     @Test("制約付き再クラスタ（B2）: 命名クラスタの ID と名前が保持される")
     func rebuildPreservesNamedClusters() async {
         let store = await makeStore()

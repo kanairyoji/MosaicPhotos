@@ -285,24 +285,76 @@ actor FaceStore {
     /// 代表写真（cover）の優先順位: ユーザーが選んだ顔（`coverFaceID`・現存するもの）
     /// → **お気に入りマークの写真**の顔（`favoriteRefKeys`）→ 認識した写真の先頭。
     func peopleClusters(minFaces: Int = 3, favoriteRefKeys: Set<String> = []) -> [PersonInfo] {
+        // 2 階層（ADR-61）: personGroupID が同じクラスタを 1 人物に束ねる（子供の時期クラスタ）。
+        // nil のクラスタは従来どおり単独（1 クラスタ=1 人物）＝全 nil なら旧挙動と一致。
+        var groups: [String: [PersonCluster]] = [:]
+        var order: [String] = []
+        for c in allClusters() {
+            let key = c.personGroupID.map { "g\($0)" } ?? "c\(c.clusterID)"
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(c)
+        }
         var result: [PersonInfo] = []
-        for c in allClusters() where c.count >= minFaces {
-            let faces = faces(inCluster: c.clusterID)
-            // 写真キーは重複排除（同一写真に同一人物が複数顔ある場合）。
+        for key in order {
+            let clustersInGroup = groups[key]!
+            // 束ね内の全クラスタの顔を集約し、写真キーを重複排除。
+            var allFaces: [DetectedFace] = []
+            for c in clustersInGroup { allFaces += faces(inCluster: c.clusterID) }
             var seen = Set<String>()
             var members: [String] = []
-            for f in faces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
-
-            // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先する（face-info-expansion 優先度 5）。
-            let cover = c.coverFaceID.flatMap { fid in faces.first { $0.faceID == fid } }
-                ?? Self.bestCoverFace(faces.filter { favoriteRefKeys.contains($0.refKey) })
-                ?? Self.bestCoverFace(faces)
+            for f in allFaces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
+            guard members.count >= minFaces else { continue }
+            // 主クラスタ: 名前つき優先 → メンバー最多。表示 ID・名前・代表はここが持つ。
+            let primary = clustersInGroup.first { $0.name?.isEmpty == false }
+                ?? clustersInGroup.max { $0.count < $1.count } ?? clustersInGroup[0]
+            let primaryFaces = faces(inCluster: primary.clusterID)
+            // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先（face-info-expansion 優先度 5）。
+            let cover = primary.coverFaceID.flatMap { fid in allFaces.first { $0.faceID == fid } }
+                ?? Self.bestCoverFace(allFaces.filter { favoriteRefKeys.contains($0.refKey) })
+                ?? Self.bestCoverFace(primaryFaces)
+                ?? Self.bestCoverFace(allFaces)
             let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
             result.append(PersonInfo(
-                clusterID: c.clusterID, name: c.name, count: members.count,
+                clusterID: primary.clusterID, name: primary.name, count: members.count,
                 coverRefKey: cover?.refKey, coverBoundingBox: box, memberRefKeys: members))
         }
         return result.sorted { $0.count > $1.count }
+    }
+
+    // MARK: - 2 階層の人物束ね（ADR-61）
+
+    /// 複数クラスタを 1 人物に束ねる（**融合しない**＝各クラスタの純度を保ったまま personGroupID を
+    /// 揃える）。ユーザーが「同じ子（成長で分裂）」と指定したときに呼ぶ。既存の束ねグループも巻き込む
+    /// （推移的）。名前・代表は主クラスタが持つ（peopleClusters が解決）。
+    func linkClusters(_ clusterIDs: [Int]) {
+        let picked = clusterIDs.compactMap { cluster($0) }
+        guard picked.count >= 2 else { return }
+        let existingGroups = Set(picked.compactMap { $0.personGroupID })
+        let gid = existingGroups.min() ?? (picked.map(\.clusterID).min() ?? picked[0].clusterID)
+        var targets = Set(picked.map(\.clusterID))
+        // 既存グループの他メンバーも同じ gid に寄せる（複数回の束ねで分断しない）。
+        if !existingGroups.isEmpty {
+            for c in allClusters() where c.personGroupID.map(existingGroups.contains) == true {
+                targets.insert(c.clusterID)
+            }
+        }
+        for c in allClusters() where targets.contains(c.clusterID) { c.personGroupID = gid }
+        try? modelContext.save()
+        clusteringCache = nil
+    }
+
+    /// 束ねから 1 クラスタを外す（別人だった等）。personGroupID を nil に戻す。
+    func unlinkCluster(_ clusterID: Int) {
+        cluster(clusterID)?.personGroupID = nil
+        try? modelContext.save()
+        clusteringCache = nil
+    }
+
+    /// ある人物（主クラスタ ID で指定）に束ねられた全クラスタ ID（自分含む）。
+    func linkedClusterIDs(primary clusterID: Int) -> [Int] {
+        guard let c = cluster(clusterID) else { return [clusterID] }
+        guard let gid = c.personGroupID else { return [clusterID] }
+        return allClusters().filter { $0.personGroupID == gid }.map(\.clusterID)
     }
 
     /// この写真に写っている**指定クラスタの**顔矩形（Vision 正規化・原点左下）。
