@@ -25,9 +25,12 @@ final class DetectedFace {
     var confirmedAt: Date?
     /// 笑顔か（CIFaceFeature・face-info-expansion）。代表顔の自動選択で加点。未計測は nil。
     var hasSmile: Bool?
+    /// 撮影日（時期グループ分割用・ADR-61）。子供は撮影日≒年齢で成長段階の代理。未取得は nil。
+    var captureDate: Date?
 
     init(faceID: String, refKey: String, bx: Double, by: Double, bw: Double, bh: Double,
-         embedding: Data, quality: Double, clusterID: Int, hasSmile: Bool? = nil) {
+         embedding: Data, quality: Double, clusterID: Int, hasSmile: Bool? = nil,
+         captureDate: Date? = nil) {
         self.faceID = faceID
         self.refKey = refKey
         self.bx = bx; self.by = by; self.bw = bw; self.bh = bh
@@ -35,6 +38,7 @@ final class DetectedFace {
         self.quality = quality
         self.clusterID = clusterID
         self.hasSmile = hasSmile
+        self.captureDate = captureDate
     }
 }
 
@@ -48,13 +52,18 @@ final class PersonCluster {
     var count: Int
     var name: String?
     var coverFaceID: String?
+    /// 2 階層の人物束ね ID（ADR-61）。**同じ値のクラスタは 1 人物**（子供の成長で分裂した
+    /// 時期クラスタを束ねる）。nil = 従来どおり 1 クラスタ=1 人物。名前・代表は束ねの主クラスタが持つ。
+    var personGroupID: Int?
 
-    init(clusterID: Int, sum: Data, count: Int, name: String? = nil, coverFaceID: String? = nil) {
+    init(clusterID: Int, sum: Data, count: Int, name: String? = nil, coverFaceID: String? = nil,
+         personGroupID: Int? = nil) {
         self.clusterID = clusterID
         self.sum = sum
         self.count = count
         self.name = name
         self.coverFaceID = coverFaceID
+        self.personGroupID = personGroupID
     }
 }
 

@@ -76,12 +76,16 @@ public struct DetectedFaceSignal: Sendable, Equatable {
     public let quality: Float
     /// 笑顔か（CIFaceFeature.hasSmile・face-info-expansion）。未計測は nil。
     public let hasSmile: Bool?
+    /// 撮影日（時期グループ分割用・ADR-61）。アプリが refKey から解決して載せる。未取得は nil。
+    public let captureDate: Date?
 
-    public init(boundingBox: CGRect, embedding: Data, quality: Float = 1, hasSmile: Bool? = nil) {
+    public init(boundingBox: CGRect, embedding: Data, quality: Float = 1, hasSmile: Bool? = nil,
+                captureDate: Date? = nil) {
         self.boundingBox = boundingBox
         self.embedding = embedding
         self.quality = quality
         self.hasSmile = hasSmile
+        self.captureDate = captureDate
     }
 }
 

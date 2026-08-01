@@ -189,7 +189,7 @@ actor FaceStore {
                     bx: face.boundingBox.origin.x, by: face.boundingBox.origin.y,
                     bw: face.boundingBox.size.width, bh: face.boundingBox.size.height,
                     embedding: face.embedding, quality: Double(face.quality), clusterID: cid,
-                    hasSmile: face.hasSmile))
+                    hasSmile: face.hasSmile, captureDate: face.captureDate))
             }
             persist(clustering)
             clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）

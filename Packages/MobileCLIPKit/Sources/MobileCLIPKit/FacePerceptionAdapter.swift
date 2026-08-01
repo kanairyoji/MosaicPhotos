@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreImage
 import Foundation
 import MosaicSupport
+import Photos
 import Vision
 
 /// `FacePerceptionProvider` の実体。Vision で顔を検出し、顔を切り抜いて同梱 Core ML 顔モデルで
@@ -40,7 +41,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             }
             guard let cg = source else { nilImage += 1; continue }
             loaded += 1
-            let (raw, signals, error) = detect(in: cg, isCloud: ref.localIdentifier == nil)
+            var (raw, signals, error) = detect(in: cg, isCloud: ref.localIdentifier == nil)
+            // ADR-61: 撮影日を載せる（時期グループ分割用）。ローカルは PHAsset.creationDate。
+            // クラウドは seam 未整備のため当面 nil（personReps は nil を最古扱いで動く）。
+            if let localID = ref.localIdentifier, let date = Self.creationDate(localID) {
+                signals = signals.map { DetectedFaceSignal(
+                    boundingBox: $0.boundingBox, embedding: $0.embedding, quality: $0.quality,
+                    hasSmile: $0.hasSmile, captureDate: date) }
+            }
             if let error { visionErr += 1; lastError = error }
             rawFaces += raw
             embedded += signals.count
@@ -195,6 +203,11 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 signal: signal))
         }
         return (out, error)
+    }
+
+    /// PHAsset の撮影日（ADR-61・時期グループ分割用）。取得不可は nil。
+    private static func creationDate(_ localIdentifier: String) -> Date? {
+        PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject?.creationDate
     }
 
     /// 水平反転（マルチクロップ埋め込み用）。
