@@ -304,7 +304,91 @@ final class FaceAccuracyEvalTests: XCTestCase {
             }
         }
 
+        // === 2 階層（人物=複数クラスタの束）vs 融合（人物=1 重心）の識別精度（ADR-61） ===
+        // 各人物の顔を登録80%/クエリ20%に決定的分割（file 名ソート・index%5==4 をクエリ）。
+        // 登録顔から人物モデルを 2 方式で作り、クエリ顔を全人物へ argmax 帰属→正解人物率を比較。
+        // 2 階層が融合を上回れば「クラスタを別々に保ち上位で束ねる」設計の優位が実証される。
+        evaluatePersonGrouping(samples: samples, name: name, temporal: false)   // 年齢混在分割（実運用に近い）
+        if samples.contains(where: { $0.age != nil }) {
+            evaluatePersonGrouping(samples: samples, name: name, temporal: true)   // 時系列分割（成長差を跨ぐ）
+        }
+
         print("FACEEVAL[\(name)]: 完了")
+    }
+
+    // MARK: - 2 階層 vs 融合の識別精度（ADR-61）
+
+    private func evaluatePersonGrouping(samples: [Sample], name: String, temporal: Bool) {
+        var byPerson: [String: [Sample]] = [:]
+        for sm in samples { byPerson[sm.person, default: []].append(sm) }
+
+        var multiPersons: [FacePersonGrouping.PersonModel] = []   // 2 階層（複数クラスタ）
+        var fusedPersons: [FacePersonGrouping.PersonModel] = []   // 融合（1 重心）
+        var queries: [(embedding: [Float], truth: Int, age: Int?)] = []
+        var personID = 0
+        for (person, group) in byPerson.sorted(by: { $0.key < $1.key }) {
+            // temporal: 年齢昇順で前80%登録・後20%クエリ（若い頃を登録→成長後を識別）。
+            // mixed: file 名ソート・index%5==4 をクエリ（全時期が登録に混在＝実運用に近い）。
+            let sorted = temporal
+                ? group.sorted { ($0.age ?? 0, $0.file) < ($1.age ?? 0, $1.file) }
+                : group.sorted { $0.file < $1.file }
+            guard sorted.count >= 3 else { continue }
+            var train: [Sample] = [], query: [Sample] = []
+            if temporal {
+                let split = Int(Double(sorted.count) * 0.8)
+                train = Array(sorted[..<split]); query = Array(sorted[split...])
+            } else {
+                for (i, sm) in sorted.enumerated() { if i % 5 == 4 { query.append(sm) } else { train.append(sm) } }
+            }
+            guard train.count >= 2, !query.isEmpty else { continue }
+            personID += 1
+            // 2 階層: 登録顔を人物内クラスタリング（現行本番構成）→各クラスタ重心を代表に。
+            let clusters = FaceClustering.clusterAll(
+                train.map { (faceID: $0.file, embedding: $0.embedding) },
+                threshold: 0.50, qualityFloor: 0.40,
+                qualities: Dictionary(uniqueKeysWithValues: train.map { ($0.file, $0.quality) }),
+                assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10)
+            let reps = clusters.map(\.centroid)
+            multiPersons.append(.init(personID: personID, clusterReps: reps.isEmpty ? [train[0].embedding] : reps))
+            // 融合: 登録顔全体を 1 重心へ。
+            let fused = FacePersonGrouping.fusedRep(train.map(\.embedding)) ?? train[0].embedding
+            fusedPersons.append(.init(personID: personID, clusterReps: [fused]))
+            for q in query { queries.append((q.embedding, personID, q.age)) }
+        }
+        guard queries.count >= 20 else {
+            print("FACEEVAL[\(name)]: 識別評価スキップ（クエリ \(queries.count) 件）")
+            return
+        }
+
+        func identifyRate(_ persons: [FacePersonGrouping.PersonModel]) -> (all: Double, byAge: [String: (hit: Int, n: Int)]) {
+            var hit = 0
+            var byAge: [String: (hit: Int, n: Int)] = [:]
+            for q in queries {
+                let pred = FacePersonGrouping.nearestPerson(q.embedding, persons: persons)?.personID
+                let correct = pred == q.truth
+                if correct { hit += 1 }
+                if let age = q.age {
+                    let bucket = Self.ageBucket(age)
+                    var e = byAge[bucket] ?? (0, 0)
+                    e.n += 1; if correct { e.hit += 1 }
+                    byAge[bucket] = e
+                }
+            }
+            return (Double(hit) / Double(queries.count), byAge)
+        }
+
+        let multi = identifyRate(multiPersons)
+        let fused = identifyRate(fusedPersons)
+        print("FACEEVAL[\(name)]: === 2 階層 vs 融合の人物識別精度・\(temporal ? "時系列分割(若→成長後)" : "年齢混在分割(実運用)")（クエリ \(queries.count) 件・\(multiPersons.count) 人） ===")
+        print(String(format: "FACEEVAL[%@]:  融合（人物=1重心）   識別率=%.1f%%", name, fused.all * 100))
+        print(String(format: "FACEEVAL[%@]:  2階層（人物=複数クラスタ）識別率=%.1f%%", name, multi.all * 100))
+        for bucket in multi.byAge.keys.sorted() {
+            let m = multi.byAge[bucket]!, f = fused.byAge[bucket] ?? (0, 0)
+            print(String(format: "FACEEVAL[%@]:   年齢%@ クエリ%d: 融合=%.0f%% → 2階層=%.0f%%",
+                         name, bucket, m.n,
+                         f.n > 0 ? Double(f.hit) / Double(f.n) * 100 : 0,
+                         Double(m.hit) / Double(m.n) * 100))
+        }
     }
 
     // MARK: - 埋め込み抽出（キャッシュつき）
