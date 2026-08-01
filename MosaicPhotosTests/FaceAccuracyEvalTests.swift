@@ -254,6 +254,56 @@ final class FaceAccuracyEvalTests: XCTestCase {
                                                               dropFactor: factor, minCount: 4)
             printRow(String(format: "prune factor=%.1f", factor), score(clusters: pruned))
         }
+        // === 年齢を使ったクラスタリング（FG-NET の年齢ラベルで上限効果を計測・ADR-60） ===
+        // 年齢は「推定で得られる想定の入力」として使う（人物ラベルは評価にのみ使用＝cheat しない）。
+        let ageByFile = Dictionary(uniqueKeysWithValues: samples.compactMap { sm in sm.age.map { (sm.file, $0) } })
+        if ageByFile.count == samples.count, !reducedGrid {
+            print("FACEEVAL[\(name)]: === 年齢クラスタリング（年齢を完璧に知っていた場合の上限） ===")
+            let prod = FaceClustering.clusterAll(faces, threshold: 0.50, qualityFloor: 0.40,
+                                                 qualities: qualities, assignMargin: 0.05,
+                                                 sizeAdaptiveMarginMax: 0.10)
+            printRow("prod（年齢不使用・現行本番）", score(clusters: prod))
+
+            // 案 X-1: 年齢層で顔を分割→各層内で現行クラスタリング（層をまたぐ統合なし）。
+            func ageBand(_ a: Int) -> Int {
+                switch a { case ..<3: return 0; case ..<10: return 1; case ..<20: return 2
+                           case ..<45: return 3; default: return 4 }
+            }
+            var byBand: [Int: [(faceID: String, embedding: [Float])]] = [:]
+            for f in faces { byBand[ageBand(ageByFile[f.faceID]!), default: []].append(f) }
+            var bandClusters: [FaceClustering.Cluster] = []
+            for (band, bandFaces) in byBand {
+                let cs = FaceClustering.clusterAll(bandFaces, threshold: 0.50, qualityFloor: 0.40,
+                                                   qualities: qualities, assignMargin: 0.05,
+                                                   sizeAdaptiveMarginMax: 0.10)
+                for c in cs {
+                    var offset = c            // 層をまたぐと別クラスタ扱いにするため ID をずらす
+                    offset.id = c.id + band * 100_000
+                    bandClusters.append(offset)
+                }
+            }
+            printRow("X-1 年齢層で分類→各層内", score(clusters: bandClusters))
+
+            // 案 X-2: 年齢連結。現行クラスタの後、代表類似度が中程度（[thr-0.20, thr)）かつ
+            // 年齢範囲が重なる/近い（±3年）クラスタ対を統合＝成長チェーンを繋ぐ。
+            var ageRange: [Int: (lo: Int, hi: Int)] = [:]
+            for c in prod {
+                let ages = c.faceIDs.compactMap { ageByFile[$0] }
+                if let mn = ages.min(), let mx = ages.max() { ageRange[c.id] = (mn, mx) }
+            }
+            func ageConnectable(_ a: Int, _ b: Int) -> Bool {
+                guard let ra = ageRange[a], let rb = ageRange[b] else { return false }
+                return max(ra.lo, rb.lo) <= min(ra.hi, rb.hi) + 3   // 重なり or 3年以内の隣接
+            }
+            for chainThr in [Float(0.35), 0.40, 0.45] {
+                let plan = FaceClustering.chainMergePlan(clusters: prod, threshold: chainThr) { x, y in
+                    !ageConnectable(x, y)   // 年齢が連続しない対は統合をブロック
+                }
+                printRow(String(format: "X-2 年齢連結 chain=%.2f", chainThr),
+                         score(clusters: prod, mergePlan: plan))
+            }
+        }
+
         print("FACEEVAL[\(name)]: 完了")
     }
 
