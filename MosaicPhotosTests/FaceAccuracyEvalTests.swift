@@ -332,6 +332,8 @@ final class FaceAccuracyEvalTests: XCTestCase {
             ("帯5(<1/<2/<4/<6/≥6)", [1, 2, 4, 6]),
         ]
         var bandedPersons: [[FacePersonGrouping.PersonModel]] = bandConfigs.map { _ in [] }
+        var adaptivePersons: [FacePersonGrouping.PersonModel] = []   // 子供のみ帯分割・大人は融合
+        var childCount = 0, adultCount = 0
         var autoClusterCounts: [Int] = []
         var queries: [(embedding: [Float], truth: Int, age: Int?)] = []
         var personID = 0
@@ -380,6 +382,18 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     bandedPersons[idx].append(.init(personID: personID,
                         clusterReps: bandReps.isEmpty ? [fused] : bandReps))
                 }
+                // 適応: 子供（12歳以下を含む）なら帯3分割、大人だけなら融合。
+                // 実運用では「子供か否か」を VLM で代表顔に問う（ここは年齢ラベルで上限を代用）。
+                let isChild = train.contains { ($0.age ?? 99) <= 12 }
+                if isChild {
+                    childCount += 1
+                    let bandReps = bandRep(train, bounds: [3, 10])
+                    adaptivePersons.append(.init(personID: personID,
+                        clusterReps: bandReps.isEmpty ? [fused] : bandReps))
+                } else {
+                    adultCount += 1
+                    adaptivePersons.append(.init(personID: personID, clusterReps: [fused]))
+                }
             }
             for q in query { queries.append((q.embedding, personID, q.age)) }
         }
@@ -417,6 +431,11 @@ final class FaceAccuracyEvalTests: XCTestCase {
             let avgBand = Double(bandedPersons[idx].map { $0.clusterReps.count }.reduce(0, +)) / Double(bandedPersons[idx].count)
             print(String(format: "FACEEVAL[%@]:  2階層(%@ 平均%.1f) 識別率=%.1f%%",
                          name, cfg.label, avgBand, r.all * 100))
+        }
+        if !adaptivePersons.isEmpty {
+            let r = identifyRate(adaptivePersons)
+            print(String(format: "FACEEVAL[%@]:  ★適応(子供%d人=帯3分割/大人%d人=融合) 識別率=%.1f%%",
+                         name, childCount, adultCount, r.all * 100))
         }
     }
 
