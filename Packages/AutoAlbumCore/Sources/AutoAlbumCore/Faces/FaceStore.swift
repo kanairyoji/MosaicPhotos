@@ -364,18 +364,25 @@ actor FaceStore {
     /// **重心に最も近い 1 顔だけ**を返す（全部に枠が付くとどれがこの人物か
     /// 分からず目的を果たせない＝実フィードバック）。
     func faceBoxes(refKey: String, clusterID: Int) -> [CGRect] {
-        let members = faces(inPhoto: refKey).filter { $0.clusterID == clusterID }
+        // 2 階層束ね（ADR-61）: 束ねた人物は全時期クラスタの顔をこの人物として扱う。
+        let groupIDs = Set(linkedClusterIDs(primary: clusterID))
+        let members = faces(inPhoto: refKey).filter { groupIDs.contains($0.clusterID) }
         guard members.count > 1 else {
             return members.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
         }
-        var best: (face: DetectedFace, sim: Float)?
-        if let c = cluster(clusterID), let sum = ClipMath.decodeHalf(c.sum) {
-            let centroid = FaceClustering.normalized(sum)
-            for f in members {
-                guard let v = ClipMath.decodeHalf(f.embedding) else { continue }
-                let sim = FaceClustering.dot(FaceClustering.normalized(v), centroid)
-                if best == nil || sim > best!.sim { best = (f, sim) }
+        // 束ねグループの重心（属するクラスタ重心の平均）に最も近い 1 顔を選ぶ。
+        var centroids: [[Float]] = []
+        for gid in groupIDs {
+            if let c = cluster(gid), let sum = ClipMath.decodeHalf(c.sum) {
+                centroids.append(FaceClustering.normalized(sum))
             }
+        }
+        var best: (face: DetectedFace, sim: Float)?
+        for f in members {
+            guard let v = ClipMath.decodeHalf(f.embedding) else { continue }
+            let nv = FaceClustering.normalized(v)
+            let sim = centroids.map { FaceClustering.dot(nv, $0) }.max() ?? -1
+            if best == nil || sim > best!.sim { best = (f, sim) }
         }
         let chosen = best?.face ?? members[0]
         return [CGRect(x: chosen.bx, y: chosen.by, width: chosen.bw, height: chosen.bh)]
@@ -393,12 +400,32 @@ actor FaceStore {
         return out
     }
 
+    /// clusterID → その人物の表示名（2 階層束ねを反映＝サブクラスタも主クラスタの名前）。
+    /// 人物とみなす閾値 `minFaces` は**束ねグループの合計写真数**で判定する。未命名は "Person N"。
+    /// 検索・名前表示が束ねた人物を 1 人として扱うための共通解決（ADR-61）。
+    private func personNameByCluster(minFaces: Int) -> [Int: String] {
+        var groups: [String: [PersonCluster]] = [:]
+        for c in allClusters() {
+            let key = c.personGroupID.map { "g\($0)" } ?? "c\(c.clusterID)"
+            groups[key, default: []].append(c)
+        }
+        var out: [Int: String] = [:]
+        for (_, cs) in groups {
+            var seen = Set<String>()
+            for c in cs { for f in faces(inCluster: c.clusterID) { seen.insert(f.refKey) } }
+            guard seen.count >= minFaces else { continue }
+            let primary = cs.first { $0.name?.isEmpty == false }
+                ?? cs.max { $0.count < $1.count } ?? cs[0]
+            let name = primary.name ?? "Person \(primary.clusterID + 1)"
+            for c in cs { out[c.clusterID] = name }
+        }
+        return out
+    }
+
     /// 全スキャン済み写真の refKey → 人物表示名（自動アルバム生成の people 付与用）。
-    /// 「人物」とみなせるクラスタ（minFaces 以上）のみ。未命名は "Person N"。
+    /// 「人物」とみなせるクラスタ（minFaces 以上）のみ。未命名は "Person N"。2 階層束ね反映。
     func peopleNamesByRefKey(minFaces: Int) -> [String: [String]] {
-        let clusters = allClusters().filter { $0.count >= minFaces }
-        var nameByCluster: [Int: String] = [:]
-        for c in clusters { nameByCluster[c.clusterID] = c.name ?? "Person \(c.clusterID + 1)" }
+        let nameByCluster = personNameByCluster(minFaces: minFaces)
         guard !nameByCluster.isEmpty else { return [:] }
         let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
         var out: [String: [String]] = [:]
@@ -411,14 +438,15 @@ actor FaceStore {
         return out
     }
 
-    /// この写真に写っている「人物」の表示名（フル画像ビューの People 表示用）。
-    /// 顔が属するクラスタのうち、人物とみなせる（`minFaces` 以上）ものの名前を返す。複数可。
+    /// この写真に写っている「人物」の表示名（フル画像ビューの People 表示用）。2 階層束ね反映
+    /// （束ねた人物は名前で重複排除＝サブクラスタが同じ写真に複数あっても 1 回）。
     func peopleNames(refKey: String, minFaces: Int) -> [String] {
+        let nameByCluster = personNameByCluster(minFaces: minFaces)
         var out: [String] = []
-        var seen = Set<Int>()
-        for f in faces(inPhoto: refKey) where seen.insert(f.clusterID).inserted {
-            guard let c = cluster(f.clusterID), c.count >= minFaces else { continue }
-            out.append(c.name ?? "Person \(f.clusterID + 1)")
+        var seen = Set<String>()
+        for f in faces(inPhoto: refKey) {
+            guard let name = nameByCluster[f.clusterID], seen.insert(name).inserted else { continue }
+            out.append(name)
         }
         return out
     }

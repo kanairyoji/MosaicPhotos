@@ -143,6 +143,24 @@ struct FaceStoreLearningTests {
         #expect(await store.peopleClusters(minFaces: 3).count == 2)
     }
 
+    @Test("2階層束ね: 写真の人物名が主クラスタ名に解決（束ねた全時期で1人）")
+    func peopleNamesFollowGrouping() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // 太郎の乳児期([1,0,0])と児童期([0,1,0])＋同じ写真に両時期の顔（成長合成の擬似）。
+        for i in 0..<3 { await store.recordScan(refKey: "L-y\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-o\(i)", faces: [signal([0, 1, 0])]) }
+        let people = await store.peopleClusters(minFaces: 3)
+        let ids = people.map(\.clusterID)
+        await store.rename(clusterID: ids[0], name: "太郎")
+        // 束ね前: L-y0 は 1 クラスタの名前。
+        let before = await store.peopleNames(refKey: "L-y0", minFaces: 3)
+        #expect(before.count == 1)
+        await store.linkClusters(ids)
+        // 束ね後: 両時期のクラスタが「太郎」に解決。別時期写真も同名。
+        #expect(await store.peopleNames(refKey: "L-y0", minFaces: 3) == ["太郎"])
+        #expect(await store.peopleNames(refKey: "L-o0", minFaces: 3) == ["太郎"])
+    }
+
     @Test("撮影日が保存される（時期グループ分割の材料）")
     func captureDateStored() async {
         let store = FaceStore(isStoredInMemoryOnly: true)
