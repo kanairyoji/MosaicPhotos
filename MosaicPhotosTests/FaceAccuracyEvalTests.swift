@@ -223,6 +223,23 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 faces, threshold: thr, qualityFloor: 0.40, qualities: qualities)
             printRow(String(format: "median thr=%.2f", thr), score(clusters: clusters))
         }
+
+        // D) サイズ適応マージン（ADR-58）: 現行採用（margin0.05・thr0.55）にサイズ適応を重ねる。
+        print("FACEEVAL[\(name)]: === D サイズ適応マージン（現行=margin0.05 に上乗せ） ===")
+        // 参照: 現行本番構成（固定マージンのみ）。
+        printRow("current margin0.05 thr0.55", score(clusters: FaceClustering.clusterAll(
+            faces, threshold: 0.55, qualityFloor: 0.40, qualities: qualities, assignMargin: 0.05)))
+        // 縮小グリッド（LFW）は FG-NET 最良近傍のみ確認（退行チェック）。
+        let sizeGrid: [(Float, Float)] = reducedGrid
+            ? [(0.50, 0.05), (0.50, 0.10)]
+            : [(0.50, 0.05), (0.50, 0.10), (0.50, 0.15), (0.55, 0.05), (0.55, 0.10), (0.55, 0.15)]
+        for (thr, sizeMax) in sizeGrid {
+            let clusters = FaceClustering.clusterAll(
+                faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05, sizeAdaptiveMarginMax: sizeMax)
+            printRow(String(format: "sizeAdapt thr=%.2f m0.05 smax=%.2f", thr, sizeMax),
+                     score(clusters: clusters))
+        }
         print("FACEEVAL[\(name)]: 完了")
     }
 

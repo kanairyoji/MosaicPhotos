@@ -36,9 +36,9 @@ struct FaceStoreLearningTests {
         for i in 0..<10 {
             await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])])
         }
-        // 境界の顔: 重心との事前 cos ≈ 0.57（しきい値 0.55 で合流）→ 追加後 cos ≈ 0.63
-        // ＝境界帯（< thr+0.10 = 0.65）。10 メンバーの同一埋め込みに対し edge の寄与 1/11。
-        await store.recordScan(refKey: "L-edge", faces: [signal([1, 1.45, 0])])
+        // 境界の顔: 重心との事前 cos ≈ 0.52（しきい値 0.50 で合流）→ 追加後 cos ≈ 0.59
+        // ＝境界帯（< thr+0.10 = 0.60）。10 メンバーの同一埋め込みに対し edge の寄与 1/11。
+        await store.recordScan(refKey: "L-edge", faces: [signal([1, 1.643, 0])])
         let items = await store.reviewItems(minFaces: 3, limit: 30)
         let confirmItem = items.compactMap { item -> PersonInfo.Face? in
             if case .isThisPerson(let face, _, _, _, _) = item { return face }
@@ -86,7 +86,7 @@ struct FaceStoreLearningTests {
         for i in 0..<10 {
             await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])])
         }
-        await store.recordScan(refKey: "L-edge", faces: [signal([1, 1.45, 0])])
+        await store.recordScan(refKey: "L-edge", faces: [signal([1, 1.643, 0])])
         let items = await store.reviewItems(minFaces: 3, limit: 30)
         guard let first = items.first else {
             Issue.record("レビューが生成されない")

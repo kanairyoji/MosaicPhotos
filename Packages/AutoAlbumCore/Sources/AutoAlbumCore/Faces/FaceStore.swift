@@ -26,12 +26,14 @@ actor FaceStore {
     }
 
     /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
-    /// クラスタリング既定しきい値。マージンゲート併用時の FG-NET 実測（ADR-57）で
-    /// F1 最大となった 0.55（マージンなし 0.60 の F1 0.542 → 0.55＋margin0.05 で 0.585・
-    /// 純度 0.849）。校正（FaceCalibration）が上書きし得る。
-    static let clusterThreshold: Float = 0.55
-    /// マージンゲート幅（ADR-57・FG-NET 実測で 0.05 が最良。0.10 は網羅が崩れる）。
+    /// クラスタリング既定しきい値。サイズ適応マージン併用時の FG-NET 実測（ADR-58）で
+    /// F1 最大となった 0.50（thr0.50＋margin0.05＋sizeMax0.10 で F1 0.589・純度 0.879）。
+    /// 校正（FaceCalibration）が上書きし得る。
+    static let clusterThreshold: Float = 0.50
+    /// マージンゲート幅（ADR-57・1 位/2 位の差がこれ未満なら合流しない）。
     static let assignMargin: Float = 0.05
+    /// サイズ適応マージンの最大上乗せ（ADR-58・小/新クラスタの合流を厳しくする）。
+    static let sizeAdaptiveMarginMax: Float = 0.10
     /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
     /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
     /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。
@@ -211,6 +213,7 @@ actor FaceStore {
         var clustering = FaceClustering(threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor,
                                         seedClusters: seed)
         clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
+        clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
         return clustering
     }
 
@@ -708,6 +711,7 @@ actor FaceStore {
         var clustering = FaceClustering(threshold: thr, qualityFloor: Self.qualityFloor,
                                         seedClusters: seeds, minimumNextID: maxExistingID + 1)
         clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
+        clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
         let pending = allFaces.filter { !confirmedFaceIDs.contains($0.faceID) }
             .sorted { $0.quality > $1.quality }
         // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。

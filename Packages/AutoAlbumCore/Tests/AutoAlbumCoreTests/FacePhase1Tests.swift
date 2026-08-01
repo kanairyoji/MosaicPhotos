@@ -105,6 +105,39 @@ struct FacePhase1Tests {
         #expect(guarded[3] == nil)   // B-C が blocked → C は孤立
     }
 
+    // MARK: - サイズ適応マージン（ADR-58）
+
+    @Test("sizeMargin: シングルトンで最大・成熟サイズで 0・線形減衰")
+    func sizeMarginDecay() {
+        var c = FaceClustering(threshold: 0.55)
+        c.sizeAdaptiveMarginMax = 0.05
+        c.sizeAdaptiveMatureCount = 11
+        #expect(abs(c.sizeMargin(forCount: 1) - 0.05) < 1e-6)      // 最大
+        #expect(abs(c.sizeMargin(forCount: 11) - 0) < 1e-6)        // 成熟で 0
+        #expect(c.sizeMargin(forCount: 20) == 0)                   // 成熟超も 0
+        // 中間は単調減少。
+        #expect(c.sizeMargin(forCount: 3) < c.sizeMargin(forCount: 2))
+        // 無効（max 0）なら常に 0。
+        var off = FaceClustering(threshold: 0.55)
+        #expect(off.sizeMargin(forCount: 1) == 0)
+    }
+
+    @Test("小クラスタは紛らわしい顔を吸い込まず、成熟クラスタは吸収する")
+    func sizeAdaptiveRejectsSmallCluster() {
+        // 小クラスタ（2 顔）に対し、しきい値ギリギリ（sim≈0.57）の顔を入れる。
+        let faces: [(faceID: String, embedding: [Float])] = [
+            ("a1", [1, 0, 0]), ("a2", [0.99, 0.05, 0]),
+            ("near", FaceClustering.normalized([1, 0.95, 0])),   // 重心と cos≈0.74
+        ]
+        // sizeMargin なし: near は合流する。
+        let base = FaceClustering.clusterAll(faces, threshold: 0.55, qualityFloor: 0)
+        #expect(base.count == 1)
+        // sizeMargin あり（max 0.25 で誇張）: 2 顔の小クラスタは実効しきい値が上がり合流しない。
+        let adaptive = FaceClustering.clusterAll(faces, threshold: 0.55, qualityFloor: 0,
+                                                 sizeAdaptiveMarginMax: 0.25)
+        #expect(adaptive.count == 2)
+    }
+
     // MARK: - A. 同一写真 cannot-link
 
     @Test("同一写真の 2 顔は同一埋め込みでも別クラスタになる")

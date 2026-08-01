@@ -23,8 +23,9 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 
 | パラメーター | 現行値 | 定義場所 |
 |---|---|---|
-| クラスタリングしきい値（既定） | 0.55（ADR-57・マージンゲート併用） | `FaceStore.clusterThreshold` |
+| クラスタリングしきい値（既定） | 0.50（ADR-58・サイズ適応併用） | `FaceStore.clusterThreshold` |
 | マージンゲート幅 | 0.05（1位と2位の差がこれ未満なら合流しない） | `FaceStore.assignMargin` |
+| サイズ適応マージン最大 | 0.10（小/新クラスタの合流を厳しく・成熟11で0） | `FaceStore.sizeAdaptiveMarginMax` |
 | しきい値校正の可動域 | 0.35〜0.70 | `FaceCalibration.clampRange` |
 | 校正の最小サンプル数 | 正負各 8 | `FaceCalibration.minSamples` |
 | 品質フロア（未満はクラスタ不参加） | 0.40 | `FaceStore.qualityFloor` |
@@ -130,6 +131,24 @@ FG-NET +32% / LFW +36% の両面改善。本番配線: `FaceClustering.assignMar
 マージンゲートとの併用は未計測。
 
 **高速化**: `FaceClustering.dot` を vDSP 化（照合が夜間再クラスタとハーネスの支配項のため）。
+
+### 2026-08-01 — サイズ適応マージンの採用（ADR-58）
+
+**採用: サイズ適応マージン**＝小さい/新しいクラスタほど合流の実効しきい値を上げる
+（count=1 で最大上乗せ・成熟サイズ11 で 0 に線形減衰）。成長期に分岐した小クラスタが
+兄弟を吸い込むのを防ぎ、確立した本人には寛容にする。本番構成:
+`clusterThreshold=0.50`＋`assignMargin=0.05`＋`sizeAdaptiveMarginMax=0.10`。
+
+| 構成 | FG-NET F1 | FG-NET 純度 | LFW F1 | LFW 純度 |
+|---|---|---|---|---|
+| current（thr0.55・margin0.05） | 0.585 | 0.849 | 0.775 | 0.867 |
+| **sizeAdapt thr0.50 m0.05 smax0.10（採用）** | **0.589** | 0.879 | **0.785** | 0.902 |
+| sizeAdapt smax0.05 | 0.587 | 0.849 | 0.777 | 0.871 |
+| sizeAdapt smax0.15 | 0.551（網羅低下） | 0.889 | — | — |
+| sizeOnly（固定マージンなし） | 0.520 | 0.690 | — | — |
+
+両データセットで純度・F1 とも改善（FG-NET +0.004/+0.030・LFW +0.010/+0.035）。
+smax0.15 は網羅が崩れ、固定マージンとの併用が必須（sizeOnly は劣化）。
 
 ## 運用ルール
 

@@ -85,6 +85,20 @@ public struct FaceClustering {
     /// （＝どちらの人物か紛らわしい）の顔は合流させず新規にする。兄弟のような
     /// 「両方にそこそこ似ている」顔の引き込みを防ぐ（FG-NET 実測で F1 0.542→0.585）。
     public var assignMargin: Float = 0
+    /// サイズ適応マージン（ADR-58・0 = 無効）: **小さい/新しいクラスタほど合流を厳しく**する。
+    /// 合流に要求する実効しきい値を「threshold ＋ sizeMargin(count)」に引き上げる。
+    /// count=1 で最大 `sizeAdaptiveMarginMax`、`sizeAdaptiveMatureCount` 以上で 0（成熟クラスタは素の
+    /// しきい値）。成長期に分岐した小クラスタが兄弟を吸い込むのを防ぎ、確立した本人には寛容にする。
+    public var sizeAdaptiveMarginMax: Float = 0
+    public var sizeAdaptiveMatureCount: Int = 11
+
+    /// クラスタサイズに応じた上乗せマージン（純・線形減衰。count>=mature で 0）。
+    func sizeMargin(forCount count: Int) -> Float {
+        guard sizeAdaptiveMarginMax > 0, count < sizeAdaptiveMatureCount else { return 0 }
+        let mature = Float(max(2, sizeAdaptiveMatureCount))
+        let frac = (mature - Float(count)) / (mature - 1)   // count=1→1, count=mature→0
+        return max(0, min(1, frac)) * sizeAdaptiveMarginMax
+    }
     /// 既存の代表とこの類似度未満のときだけ新代表として追加（似た代表を重複させない）。
     public static let prototypeDiversityMax: Float = 0.75
     /// 代表に採用する顔の最低品質（ぼけ顔を代表にしない）。
@@ -141,6 +155,8 @@ public struct FaceClustering {
         for cand in scored {
             guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
             if excludedClusterIDs.contains(clusters[cand.index].id) { continue }   // cannot-link
+            // サイズ適応マージン（ADR-58）: 小/新クラスタは実効しきい値を上げて合流を厳しくする。
+            if cand.sim < threshold + sizeMargin(forCount: clusters[cand.index].count) { continue }
             if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
                 continue
             }
@@ -241,9 +257,13 @@ public struct FaceClustering {
                                   threshold: Float = 0.45,
                                   qualityFloor: Float = 0.15,
                                   qualities: [String: Float] = [:],
-                                  autoPrototypeLimit: Int = 0) -> [Cluster] {
+                                  autoPrototypeLimit: Int = 0,
+                                  assignMargin: Float = 0,
+                                  sizeAdaptiveMarginMax: Float = 0) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
+        clustering.assignMargin = assignMargin
+        clustering.sizeAdaptiveMarginMax = sizeAdaptiveMarginMax
         for f in faces {
             clustering.assign(faceID: f.faceID, embedding: f.embedding,
                               quality: qualities[f.faceID] ?? 1)
