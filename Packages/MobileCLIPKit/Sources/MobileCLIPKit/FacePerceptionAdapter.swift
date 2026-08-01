@@ -99,6 +99,16 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         analyzeFaces(in: cg, isCloud: isCloud).analyses.map(\.report)
     }
 
+    /// 精度計測ハーネス用: レポート＋採用顔の埋め込み（fp32・正規化済み）を返す。
+    /// 経路は本番（detect）と完全に同一（マルチクロップ平均含む）。
+    public func debugAnalyzeWithEmbeddings(_ cg: CGImage, isCloud: Bool = false)
+        -> [(report: FaceGateReport, embedding: [Float]?, quality: Float?)] {
+        analyzeFaces(in: cg, isCloud: isCloud).analyses.map { analysis in
+            let vec = analysis.signal.flatMap { ClipMath.decodeHalf($0.embedding) }
+            return (analysis.report, vec, analysis.signal?.quality)
+        }
+    }
+
     private struct FaceAnalysis {
         var report: FaceGateReport
         var signal: DetectedFaceSignal?

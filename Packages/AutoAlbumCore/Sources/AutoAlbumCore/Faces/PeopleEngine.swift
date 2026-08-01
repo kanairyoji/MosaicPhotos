@@ -113,7 +113,7 @@ public final class PeopleEngine {
     /// ズレていた写真の作り直し）。v4: マルチクロップ埋め込み平均（ADR-54）。
     /// **埋め込みの作り方が変わる版上げでは新旧の埋め込みを混在させられない**
     /// （コサイン類似度が壊れる）ため、全再スキャンする。
-    static let faceScanVersion = 4
+    public static let faceScanVersion = 4
     private static let faceScanVersionKey = "faceScanVersion"
 
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。

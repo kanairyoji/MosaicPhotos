@@ -21,6 +21,13 @@
 
 ---
 
+## ADR-55 顔認識の精度計測ハーネス（正解ラベル付きデータセット＋B-Cubed/TAR@FAR）
+- 状態: 採用
+- 文脈: 顔認識の改善（ADR-45〜54）を重ねてきたが、精度を**数値で**測る仕組みがなく、しきい値・ゲート変更の効果は実機の体感に頼っていた（変更→端末で大量スキャン→目視、のループは遅すぎる）。難所（兄弟・0〜15 歳の成長）を含む計測基盤が要る。
+- 決定: (1) **データセット**: `scripts/fetch_face_eval_datasets.sh` が `~/DEV/tmp/face-eval/` に収集。`fgnet/`＝FG-NET Aging Database（82 人・1,002 枚・0〜69 歳の同一人物成長写真・ファイル名から人物 ID/年齢の labels.csv を自動生成。学術用途公開のため**内部評価のみ・同梱/再配布禁止**）＋ `own/`＝自前写真テンプレート（images/＋labels.csv。実ライブラリの兄弟・成長期はここが最も実態に合う）。(2) **評価 API**: `FacePerceptionAdapter.debugAnalyzeWithEmbeddings`＝本番同一経路（検出→全ゲート→アライメント→マルチクロップ平均）で埋め込みまで返す。(3) **指標（純ロジック `FaceEvalMetrics`・テスト付き）**: クラスタリング品質＝**B-Cubed P/R/F1**＋ペア一致 P/R/F1（precision=混入・recall=分裂と対応し、変更がどちらを動かしたか分離して見える）。検証＝同一/別人ペア類似度から **TAR@FAR 1%/0.1%**・最良 F1 しきい値。(4) **ハーネス**: `FaceAccuracyEvalTests`（シミュレータ・実機不要）が全データセットを評価し、年齢帯別の顔採用率・年齢差バケット別の同一人物類似度・「別人×両者12歳以下」（兄弟の代理）・**しきい値スイープ表（0.35〜0.70）**を `FACEEVAL:` 行に出力。埋め込みはデータセット内に `embeddings-v{faceScanVersion}.json` でキャッシュ（2 回目以降は指標計算のみ・版上げで自動無効化）。
+- 結果: 「変更→1 コマンド→数値」の計測ループが成立し、しきい値 0.58 論争などを実データで決着できる。トレードオフ: (1) シミュレータは CoreML CPU 実行のため絶対値は実機と微差（相対比較には十分）。(2) FG-NET は白黒スキャン混在の研究データで、実ライブラリの分布とは異なる＝**own/ の自前ラベル写真が本命**（FG-NET はモデル間・変更前後の相対比較用）。(3) 並列テスト実行では print が出ないため `-parallel-testing-enabled NO` で実行する。
+- 関連: `FaceEvalMetrics.swift`・`FaceAccuracyEvalTests.swift`・`scripts/fetch_face_eval_datasets.sh`・`FacePerceptionAdapter.debugAnalyzeWithEmbeddings`・`FaceEvalMetricsTests`。事例: Swift の `split(separator: "\n")` は CRLF（"\r\n"＝1 書記素）にマッチせず CSV が 0 件パースになる罠（`components(separatedBy: .newlines)` で解消）。
+
 ## ADR-54 顔認識フェーズ1（cannot-link・共起 notSame・マルチクロップ埋め込み・サジェスト帯域拡張ほか）
 - 状態: 採用
 - 文脈: 外部レビュー由来の改善タスク 6 件を検証したところ、採用可 3・修正のうえ採用 2・誤り 1（ArcFace「MIT」→実際は非商用限定）だった。加えて「モデル不要でデータだけで効く」制約 2 件（同一写真 cannot-link・共起 notSame）を追加し、フェーズ 1 として一括実装（再スキャンは v4 の 1 回に集約）。

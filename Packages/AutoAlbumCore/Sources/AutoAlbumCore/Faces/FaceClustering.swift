@@ -206,7 +206,7 @@ public struct FaceClustering {
 
     // MARK: - Math（正規化済みコサイン＝内積）
 
-    static func dot(_ a: [Float], _ b: [Float]) -> Float {
+    public static func dot(_ a: [Float], _ b: [Float]) -> Float {
         guard a.count == b.count else { return -2 }
         var s: Float = 0
         for i in a.indices { s += a[i] * b[i] }
