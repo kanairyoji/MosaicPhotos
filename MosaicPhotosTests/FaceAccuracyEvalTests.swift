@@ -187,19 +187,33 @@ final class FaceAccuracyEvalTests: XCTestCase {
             threshold += 0.05
         }
 
-        print("FACEEVAL[\(name)]: === P3 連鎖統合（base/proto 両方の上で chain） ===")
-        for useProto in [false, true] {
-            for clusterThr in [Float(0.55), 0.60, 0.65] {
-                let clusters = FaceClustering.clusterAll(faces, threshold: clusterThr, qualityFloor: 0.40,
-                                                         qualities: qualities,
-                                                         autoPrototypeLimit: useProto ? 5 : 0)
-                for chainThr in [Float(0.50), 0.55, 0.60] where chainThr <= clusterThr {
-                    let plan = FaceClustering.chainMergePlan(clusters: clusters, threshold: chainThr)
-                    printRow(String(format: "%@ thr=%.2f chain=%.2f", useProto ? "proto" : "base ",
-                                    clusterThr, chainThr),
-                             score(clusters: clusters, mergePlan: plan))
+        print("FACEEVAL[\(name)]: === 系統1 バリアント（ADR-57・推移性なしで再現率回復を狙う） ===")
+        // A) マージンゲート付き貪欲。
+        for thr in [Float(0.55), 0.60] {
+            for margin in [Float(0.05), 0.10] {
+                let clusters = FaceClusteringVariants.marginGatedCluster(
+                    faces, threshold: thr, margin: margin, qualityFloor: 0.40, qualities: qualities)
+                printRow(String(format: "marginGated thr=%.2f m=%.2f", thr, margin),
+                         score(clusters: clusters))
+            }
+        }
+        // B) 二段階＋比率テスト。
+        for core in [Float(0.65), 0.70] {
+            for attach in [Float(0.50), 0.55] {
+                for margin in [Float(0.05), 0.10] {
+                    let clusters = FaceClusteringVariants.twoStageCluster(
+                        faces, coreThreshold: core, attachThreshold: attach, margin: margin,
+                        qualityFloor: 0.40, qualities: qualities)
+                    printRow(String(format: "twoStage c=%.2f a=%.2f m=%.2f", core, attach, margin),
+                             score(clusters: clusters))
                 }
             }
+        }
+        // C) ロバスト重心（中央値・2 パス）。
+        for thr in [Float(0.55), 0.60, 0.65] {
+            let clusters = FaceClusteringVariants.medianRefinedCluster(
+                faces, threshold: thr, qualityFloor: 0.40, qualities: qualities)
+            printRow(String(format: "median thr=%.2f", thr), score(clusters: clusters))
         }
         print("FACEEVAL[\(name)]: 完了")
     }
