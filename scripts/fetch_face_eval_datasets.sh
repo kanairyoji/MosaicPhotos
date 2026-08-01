@@ -52,6 +52,43 @@ with open(os.path.join(root, "labels.csv"), "w", newline="") as f:
 print(f"fgnet/labels.csv: {len(rows)} 行")
 PY
 
+# --- negatives（顔のない画像＝偽陽性計測用。風景・物・猫犬＝顔検出の典型的誤検出源） ---
+mkdir -p "$ROOT/negatives/images"
+NEG_COUNT=$(ls "$ROOT/negatives/images" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NEG_COUNT" -lt 18 ]; then
+  echo "negatives をダウンロード中（Wikimedia Commons・パブリックドメイン/CC0）..."
+  i=0
+  while IFS= read -r url; do
+    i=$((i+1))
+    out="$ROOT/negatives/images/neg$(printf %02d $i).jpg"
+    # Wikimedia は UA 無しのリクエストを拒否するため UA を明示する。
+    [ -f "$out" ] || curl -fsL --retry 2 -A "MosaicPhotosFaceEval/1.0 (internal accuracy testing)" \
+      -o "$out" "$url" || echo "  取得失敗（スキップ）: $url"
+  done <<'URLS'
+https://commons.wikimedia.org/wiki/Special:FilePath/Hopetoun_falls.jpg?width=1024
+https://commons.wikimedia.org/wiki/Special:FilePath/Half_Dome_with_Eastern_Yosemite_Valley_%2850MP%29.jpg?width=1024
+https://upload.wikimedia.org/wikipedia/commons/a/a5/Tsunami_by_hokusai_19th_century.jpg
+https://upload.wikimedia.org/wikipedia/commons/4/45/A_small_cup_of_coffee.JPG
+https://upload.wikimedia.org/wikipedia/commons/6/68/Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01A.jpg
+https://upload.wikimedia.org/wikipedia/commons/2/25/Siam_lilacpoint.jpg
+https://upload.wikimedia.org/wikipedia/commons/2/26/YellowLabradorLooking_new.jpg
+https://upload.wikimedia.org/wikipedia/commons/1/18/TrailKitty.jpg
+https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg
+https://upload.wikimedia.org/wikipedia/commons/b/b6/Felis_catus-cat_on_snow.jpg
+https://commons.wikimedia.org/wiki/Special:FilePath/Poecile_atricapillus_CT3.jpg?width=1024
+https://commons.wikimedia.org/wiki/Special:FilePath/Fesa_de_Vella_o_la_Vall_de_Gallinera.JPG?width=1024
+https://upload.wikimedia.org/wikipedia/commons/e/e1/FullMoon2010.jpg
+https://commons.wikimedia.org/wiki/Special:FilePath/Fronalpstock_big.jpg?width=1024
+https://upload.wikimedia.org/wikipedia/commons/1/1a/Bachalpseeflowers.jpg
+https://commons.wikimedia.org/wiki/Special:FilePath/Pahoeoe_fountain_original.jpg?width=1024
+https://commons.wikimedia.org/wiki/Special:FilePath/Chocolate_Cupcakes_with_Raspberry_Buttercream.jpg?width=1024
+https://commons.wikimedia.org/wiki/Special:FilePath/Emperor_Penguin_Manchot_empereur.jpg?width=1024
+https://commons.wikimedia.org/wiki/Special:FilePath/Calliphora_sp_Portrait.jpg?width=1024
+https://commons.wikimedia.org/wiki/Special:FilePath/Sadovyi_%22Round%22_lake.jpg?width=1024
+URLS
+fi
+echo "negatives: $(ls "$ROOT/negatives/images" | wc -l | tr -d ' ') 枚"
+
 # --- own（自前写真テンプレート） ---
 mkdir -p "$ROOT/own/images"
 if [ ! -f "$ROOT/own/labels.csv" ]; then

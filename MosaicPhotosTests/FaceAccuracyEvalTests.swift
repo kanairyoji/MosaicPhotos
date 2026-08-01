@@ -56,6 +56,41 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 try evaluate(datasetDir: "\(root)/\(dataset)", name: dataset)
             }
         }
+
+        // P4: ネガティブセット（顔のない画像）での偽陽性計測。labels.csv 不要・images のみ。
+        let negativesDir = "\(root)/negatives/images"
+        if FileManager.default.fileExists(atPath: negativesDir) {
+            evaluateNegatives(imagesDir: negativesDir)
+        }
+    }
+
+    /// 顔のない画像群で「顔として採用されてしまった数」＝偽陽性率を測る。
+    private func evaluateNegatives(imagesDir: String) {
+        let extensions: Set<String> = ["jpg", "jpeg", "png", "heic", "heif"]
+        let urls = ((try? FileManager.default.contentsOfDirectory(
+            at: URL(fileURLWithPath: imagesDir), includingPropertiesForKeys: nil)) ?? [])
+            .filter { extensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard !urls.isEmpty else { return }
+        let adapter = FacePerceptionAdapter()
+        var images = 0
+        var falseAccepted = 0
+        var imagesWithFalse = 0
+        for url in urls {
+            autoreleasepool {
+                guard let cg = Self.loadCGImage(url, maxPixel: 1024) else { return }
+                images += 1
+                let accepted = adapter.debugAnalyze(cg).filter(\.accepted).count
+                if accepted > 0 {
+                    imagesWithFalse += 1
+                    falseAccepted += accepted
+                    print("FACEEVAL[negatives]: 偽陽性 \(url.lastPathComponent) → \(accepted) 顔")
+                }
+            }
+        }
+        guard images > 0 else { return }
+        print(String(format: "FACEEVAL[negatives]: 顔なし %d 枚中 誤採用あり %d 枚（%.1f%%）・誤採用顔 %d 個",
+                     images, imagesWithFalse, Double(imagesWithFalse) / Double(images) * 100, falseAccepted))
     }
 
     // MARK: - 1 データセットの評価
@@ -118,28 +153,53 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
 
         // --- クラスタリング（本番と同じ FaceClustering・品質降順＝再クラスタと同順） ---
+        // バリアント: ベースライン / P2 自動プロトタイプ（K=5）/ P2＋P3 連鎖統合（数種のしきい値）。
         let truth = Dictionary(uniqueKeysWithValues: samples.map { ($0.file, $0.person) })
-        print("FACEEVAL[\(name)]: しきい値スイープ（B-Cubed 精度/再現率/F1・ペア F1・クラスタ数）")
-        var threshold: Float = 0.35
-        while threshold <= 0.701 {
-            let ordered = samples.sorted { $0.quality > $1.quality }
-            let clusters = FaceClustering.clusterAll(
-                ordered.map { (faceID: $0.file, embedding: $0.embedding) },
-                threshold: threshold, qualityFloor: 0.40,
-                qualities: Dictionary(uniqueKeysWithValues: ordered.map { ($0.file, $0.quality) }))
+        let ordered = samples.sorted { $0.quality > $1.quality }
+        let faces = ordered.map { (faceID: $0.file, embedding: $0.embedding) }
+        let qualities = Dictionary(uniqueKeysWithValues: ordered.map { ($0.file, $0.quality) })
+
+        func score(clusters: [FaceClustering.Cluster], mergePlan: [Int: Int] = [:]) -> FaceEvalMetrics.ClusteringScore? {
             var assignments: [String: Int] = [:]
             var nextSingleton = -1
-            for s in samples { assignments[s.file] = nextSingleton; nextSingleton -= 1 }   // 未割当は一意な負ID
+            for sample in samples { assignments[sample.file] = nextSingleton; nextSingleton -= 1 }
             for c in clusters {
-                for fid in c.faceIDs { assignments[fid] = c.id }
+                let finalID = mergePlan[c.id] ?? c.id
+                for fid in c.faceIDs { assignments[fid] = finalID }
             }
-            if let score = FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth) {
-                let marker = abs(threshold - 0.45) < 0.001 ? " ←現行既定" : ""
-                print(String(format: "FACEEVAL[%@]:  thr=%.2f  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d%@",
-                             name, threshold, score.bcubedPrecision, score.bcubedRecall,
-                             score.bcubedF1, score.pairF1, score.clusterCount, marker))
-            }
+            return FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth)
+        }
+        func printRow(_ label: String, _ s: FaceEvalMetrics.ClusteringScore?) {
+            guard let s else { return }
+            print(String(format: "FACEEVAL[%@]:  %@  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d",
+                         name, label, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1, s.pairF1, s.clusterCount))
+        }
+
+        print("FACEEVAL[\(name)]: === ベースライン（重心のみ） vs P2 自動プロトタイプ（K=5） ===")
+        var threshold: Float = 0.45
+        while threshold <= 0.701 {
+            let base = FaceClustering.clusterAll(faces, threshold: threshold, qualityFloor: 0.40,
+                                                 qualities: qualities)
+            printRow(String(format: "base  thr=%.2f", threshold), score(clusters: base))
+            let proto = FaceClustering.clusterAll(faces, threshold: threshold, qualityFloor: 0.40,
+                                                  qualities: qualities, autoPrototypeLimit: 5)
+            printRow(String(format: "proto thr=%.2f", threshold), score(clusters: proto))
             threshold += 0.05
+        }
+
+        print("FACEEVAL[\(name)]: === P3 連鎖統合（base/proto 両方の上で chain） ===")
+        for useProto in [false, true] {
+            for clusterThr in [Float(0.55), 0.60, 0.65] {
+                let clusters = FaceClustering.clusterAll(faces, threshold: clusterThr, qualityFloor: 0.40,
+                                                         qualities: qualities,
+                                                         autoPrototypeLimit: useProto ? 5 : 0)
+                for chainThr in [Float(0.50), 0.55, 0.60] where chainThr <= clusterThr {
+                    let plan = FaceClustering.chainMergePlan(clusters: clusters, threshold: chainThr)
+                    printRow(String(format: "%@ thr=%.2f chain=%.2f", useProto ? "proto" : "base ",
+                                    clusterThr, chainThr),
+                             score(clusters: clusters, mergePlan: plan))
+                }
+            }
         }
         print("FACEEVAL[\(name)]: 完了")
     }

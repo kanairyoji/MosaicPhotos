@@ -47,6 +47,64 @@ struct FacePhase1Tests {
         #expect(FaceClustering.averagedEmbedding([]) == nil)
     }
 
+    // MARK: - P2 自動プロトタイプ / P3 連鎖統合（ADR-56）
+
+    @Test("selectPrototypes は多様な代表を最遠点順に選び、似た顔は追加しない")
+    func selectPrototypesDiversity() {
+        let members: [(embedding: [Float], quality: Float)] = [
+            ([1, 0, 0], 1.0), ([0.99, 0.05, 0], 0.9),   // ほぼ同じ向き
+            ([0, 1, 0], 0.8),                            // 別の見た目（例: 幼児期）
+            ([0, 0, 1], 0.3),                            // 品質不足 → 代表にしない
+        ]
+        let protos = FaceClustering.selectPrototypes(members, limit: 5)
+        #expect(protos.count == 2)   // [1,0,0] 系から 1 つ＋[0,1,0]（低品質は除外・重複は追加しない）
+        #expect(FaceClustering.selectPrototypes(members, limit: 0).isEmpty)
+    }
+
+    @Test("自動プロトタイプ: 重心から遠い成長後の顔もプロトタイプ経由で合流する")
+    func autoPrototypeRescues() {
+        var clustering = FaceClustering(threshold: 0.6, qualityFloor: 0)
+        clustering.autoPrototypeLimit = 5
+        clustering.assign(faceID: "baby1", embedding: [1, 0, 0])
+        clustering.assign(faceID: "baby2", embedding: [0.98, 0.1, 0])
+        // 幼児期と cos≈0.6 の「成長後」の顔: しきい値 0.6 でギリギリ合流し、代表として保持される。
+        let grown: [Float] = FaceClustering.normalized([0.6, 0.8, 0])
+        let cid = clustering.assign(faceID: "grown1", embedding: grown)
+        #expect(cid == clustering.clusters[0].id)
+        #expect(clustering.clusters[0].prototypes.count >= 2)   // 初回顔＋成長後の顔
+        // さらに成長した顔（幼児期とは cos≈0.28 で重心では届かない）が、代表経由で合流する。
+        let cid2 = clustering.assign(faceID: "grown2", embedding: FaceClustering.normalized([0.3, 0.95, 0]))
+        #expect(cid2 == clustering.clusters[0].id)
+        // 無効（limit 0）なら grown2（重心と cos≈0.35 で届かない）は新規クラスタになる
+        //（＝上の合流がプロトタイプ経由だったことの対照）。
+        var off = FaceClustering(threshold: 0.6, qualityFloor: 0)
+        off.assign(faceID: "baby1", embedding: [1, 0, 0])
+        off.assign(faceID: "baby2", embedding: [0.98, 0.1, 0])
+        off.assign(faceID: "grown2", embedding: FaceClustering.normalized([0.3, 0.95, 0]))
+        #expect(off.clusters.count == 2)
+    }
+
+    @Test("chainMergePlan は推移的に統合し、blocked ペアは統合しない")
+    func chainMergeTransitive() {
+        func cluster(_ id: Int, _ centroid: [Float]) -> FaceClustering.Cluster {
+            let v = FaceClustering.normalized(centroid)
+            return FaceClustering.Cluster(id: id, centroid: v, sum: v, count: 3, faceIDs: [])
+        }
+        // A(0°)-B(40°)-C(80°): 隣接は cos≈0.77 で繋がり、A-C は cos≈0.17 でも鎖で同一へ。
+        let a = cluster(1, [1, 0, 0])
+        let b = cluster(2, [cos(Float.pi * 40 / 180), sin(Float.pi * 40 / 180), 0])
+        let c = cluster(3, [cos(Float.pi * 80 / 180), sin(Float.pi * 80 / 180), 0])
+        let plan = FaceClustering.chainMergePlan(clusters: [a, b, c], threshold: 0.7)
+        #expect(plan[2] == 1)
+        #expect(plan[3] == 1)   // 推移的統合（A-C 直接類似は 0.17）
+        // blocked（別人記録・共起など）は繋がない。
+        let guarded = FaceClustering.chainMergePlan(clusters: [a, b, c], threshold: 0.7) { x, y in
+            Set([x, y]) == Set([2, 3])
+        }
+        #expect(guarded[2] == 1)
+        #expect(guarded[3] == nil)   // B-C が blocked → C は孤立
+    }
+
     // MARK: - A. 同一写真 cannot-link
 
     @Test("同一写真の 2 顔は同一埋め込みでも別クラスタになる")

@@ -75,6 +75,37 @@ public struct FaceClustering {
     /// - 重心加算は品質で重み付け（ぼけ顔ほど寄与を小さく）。
     /// - `negatives` で拒否されたクラスタは飛ばして次点へ（全滅なら新規）。
     /// 返り値は割り当てられたクラスタ ID（未割当は -1）。
+    // MARK: - 自動プロトタイプ（P2・ADR-56）
+
+    /// クラスタごとに自動維持する代表埋め込みの上限（0 = 無効）。ユーザー確認に頼らず、
+    /// 成長期など「1 つの重心では表せない」人物の多様な見た目を代表群で覆う。
+    public var autoPrototypeLimit: Int = 0
+    /// 既存の代表とこの類似度未満のときだけ新代表として追加（似た代表を重複させない）。
+    public static let prototypeDiversityMax: Float = 0.75
+    /// 代表に採用する顔の最低品質（ぼけ顔を代表にしない）。
+    public static let prototypeMinQuality: Float = 0.5
+
+    /// メンバー埋め込みから最遠点サンプリングで代表 K 個を選ぶ（再クラスタ時の作り直し用・純）。
+    /// 先頭は品質最高の顔、以降は「既存代表との最大類似度が最小」の顔を貪欲に追加。
+    public static func selectPrototypes(_ members: [(embedding: [Float], quality: Float)],
+                                        limit: Int) -> [[Float]] {
+        guard limit > 0 else { return [] }
+        let eligible = members.filter { $0.quality >= prototypeMinQuality }
+            .map { (normalized($0.embedding), $0.quality) }
+        guard let first = eligible.max(by: { $0.1 < $1.1 }) else { return [] }
+        var prototypes: [[Float]] = [first.0]
+        while prototypes.count < limit {
+            var best: (vec: [Float], sim: Float)?
+            for (vec, _) in eligible {
+                let sim = prototypes.map { dot(vec, $0) }.max() ?? -1
+                if best == nil || sim < best!.sim { best = (vec, sim) }
+            }
+            guard let candidate = best, candidate.sim < prototypeDiversityMax else { break }
+            prototypes.append(candidate.vec)
+        }
+        return prototypes
+    }
+
     /// - Parameter excludedClusterIDs: 合流を許さないクラスタ（**同一写真 cannot-link**：
     ///   1 枚の写真に同じ人物は 1 回しか写らないため、同じ写真の先行顔が入ったクラスタを除外する）。
     @discardableResult
@@ -100,6 +131,7 @@ public struct FaceClustering {
             clusters[cand.index].count += 1
             clusters[cand.index].faceIDs.append(faceID)
             clusters[cand.index].centroid = FaceClustering.normalized(clusters[cand.index].sum)
+            maintainAutoPrototype(v, quality: quality, at: cand.index)
             return clusters[cand.index].id
         }
         // 該当クラスタなし → 新規（sum は品質重み付き＝以後の removing と整合）。
@@ -107,7 +139,61 @@ public struct FaceClustering {
         nextID += 1
         let w = max(quality, 0.01)
         clusters.append(Cluster(id: id, centroid: v, sum: v.map { $0 * w }, count: 1, faceIDs: [faceID]))
+        maintainAutoPrototype(v, quality: quality, at: clusters.count - 1)
         return id
+    }
+
+    /// オンラインの自動プロトタイプ維持: 合流した顔が既存代表のどれとも似ていなければ
+    /// （多様性しきい値未満）新しい代表として保持する（成長・眼鏡・髪型の変化を代表群で覆う）。
+    private mutating func maintainAutoPrototype(_ v: [Float], quality: Float, at index: Int) {
+        guard autoPrototypeLimit > 0,
+              quality >= Self.prototypeMinQuality,
+              clusters[index].prototypes.count < autoPrototypeLimit else { return }
+        let maxSim = clusters[index].prototypes.map { Self.dot(v, $0) }.max() ?? -1
+        if maxSim < Self.prototypeDiversityMax {
+            clusters[index].prototypes.append(v)
+        }
+    }
+
+    // MARK: - クラスタ連鎖統合（P3・ADR-56）
+
+    /// 代表群（重心＋プロトタイプ）どうしの最大類似度が `threshold` 以上のクラスタ対を
+    /// **推移的に**統合する計画を返す（純・Union-Find）。年齢帯で 0-5↔5-10↔10-15 と
+    /// 鎖状に繋がれば、直接は似ていない両端も同一人物にまとまる。
+    /// - Parameter blocked: 統合してはいけない対（別人記録・共起・命名不一致など）の判定。
+    /// - Returns: 旧クラスタ ID → 統合先クラスタ ID（変化がない ID は含まない）。
+    public static func chainMergePlan(clusters: [Cluster], threshold: Float,
+                                      blocked: (Int, Int) -> Bool = { _, _ in false }) -> [Int: Int] {
+        guard clusters.count >= 2 else { return [:] }
+        func representatives(_ c: Cluster) -> [[Float]] { [c.centroid] + c.prototypes }
+        // Union-Find（代表 ID は小さい方へ寄せる）。
+        var parent: [Int: Int] = Dictionary(uniqueKeysWithValues: clusters.map { ($0.id, $0.id) })
+        func find(_ x: Int) -> Int {
+            var root = x
+            while parent[root] != root { root = parent[root]! }
+            return root
+        }
+        for i in clusters.indices {
+            for j in (i + 1)..<clusters.count {
+                let a = clusters[i], b = clusters[j]
+                guard !blocked(a.id, b.id) else { continue }
+                var best: Float = -1
+                for ra in representatives(a) {
+                    for rb in representatives(b) {
+                        best = max(best, dot(ra, rb))
+                    }
+                }
+                guard best >= threshold else { continue }
+                let rootA = find(a.id), rootB = find(b.id)
+                if rootA != rootB { parent[max(rootA, rootB)] = min(rootA, rootB) }
+            }
+        }
+        var plan: [Int: Int] = [:]
+        for c in clusters {
+            let root = find(c.id)
+            if root != c.id { plan[c.id] = root }
+        }
+        return plan
     }
 
     /// クラスタとの類似度＝重心と全プロトタイプ（アンカー）のうちの最大（B3）。
@@ -136,8 +222,10 @@ public struct FaceClustering {
     public static func clusterAll(_ faces: [(faceID: String, embedding: [Float])],
                                   threshold: Float = 0.45,
                                   qualityFloor: Float = 0.15,
-                                  qualities: [String: Float] = [:]) -> [Cluster] {
+                                  qualities: [String: Float] = [:],
+                                  autoPrototypeLimit: Int = 0) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
+        clustering.autoPrototypeLimit = autoPrototypeLimit
         for f in faces {
             clustering.assign(faceID: f.faceID, embedding: f.embedding,
                               quality: qualities[f.faceID] ?? 1)
