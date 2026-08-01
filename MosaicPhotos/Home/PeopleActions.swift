@@ -31,7 +31,13 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Rename")) { renamingPerson = person; renameText = person.name ?? "" }
                 Button(L("Choose Cover Photo")) { coverPickerPerson = person }
                 Button(L("Manage Faces")) { manageFacesPerson = person }
-                Button(L("Merge into Another Person…")) { mergeSourcePerson = person }
+                Button(L("Group with Another Person…")) { mergeSourcePerson = person }
+                if person.isGrouped {
+                    Button(L("Separate Grouped Person"), role: .destructive) {
+                        let id = person.clusterID
+                        Task { await peopleEngine.ungroupPerson(clusterID: id) }
+                    }
+                }
                 Button(L("Cancel"), role: .cancel) {}
             }
             // 代表写真ピッカー。

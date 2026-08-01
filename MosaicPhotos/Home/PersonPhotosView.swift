@@ -152,8 +152,8 @@ private struct ReassignAvatar: View {
 
 // MARK: - Merge people
 
-/// 人物アルバムの統合先を選ぶピッカー。`source` を選んだ人物へまとめる（同一人物が 2 つに
-/// 割れたときの修正）。統合は元に戻せないので、選択時に確認アラートを挟む。
+/// 人物の束ね先を選ぶピッカー。`source` を選んだ人物と「同じ人（成長で分裂）」として束ねる。
+/// 融合せず純度を保ち、後で解除できる（ADR-61）。選択時に確認アラートを挟む。
 struct PersonMergePickerView: View {
     let source: PersonInfo
     let peopleEngine: PeopleEngine
@@ -176,9 +176,9 @@ struct PersonMergePickerView: View {
                     }
                     .listRowBackground(Color.clear)
                 } footer: {
-                    Text(L("Choose the person to merge “\(source.displayName)” into. All their photos will move to that person."))
+                    Text(L("Choose the person to group “\(source.displayName)” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later."))
                 }
-                Section(L("Merge into")) {
+                Section(L("Group with")) {
                     ForEach(peopleEngine.people.filter { $0.clusterID != source.clusterID }) { p in
                         Button {
                             pendingTarget = p
@@ -193,26 +193,26 @@ struct PersonMergePickerView: View {
                     }
                 }
             }
-            .navigationTitle(L("Merge Person"))
+            .navigationTitle(L("Group as Same Person"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L("Cancel")) { dismiss() }
                 }
             }
-            .alert(L("Merge people?"), isPresented: Binding(get: { pendingTarget != nil },
+            .alert(L("Group as same person?"), isPresented: Binding(get: { pendingTarget != nil },
                                                             set: { if !$0 { pendingTarget = nil } }),
                    presenting: pendingTarget) { target in
                 Button(L("Cancel"), role: .cancel) { pendingTarget = nil }
-                Button(L("Merge")) {
+                Button(L("Group")) {
                     let src = source.clusterID, dst = target.clusterID
                     Task {
-                        await peopleEngine.mergePerson(from: src, into: dst)
+                        await peopleEngine.linkPeople([src, dst])
                         dismiss()
                     }
                 }
             } message: { target in
-                Text(L("“\(source.displayName)” will be merged into “\(target.displayName)”. This can’t be undone automatically."))
+                Text(L("“\(source.displayName)” and “\(target.displayName)” will be shown as the same person. You can separate them later."))
             }
         }
     }

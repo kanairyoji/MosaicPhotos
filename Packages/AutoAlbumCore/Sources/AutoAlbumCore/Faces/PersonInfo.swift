@@ -11,6 +11,8 @@ public struct PersonInfo: Identifiable, Sendable, Equatable {
     public let coverBoundingBox: CGRect?
     /// このクラスタに属する写真キー（重複排除済み・代表度＝顔の多い写真順ではなく登場順）。
     public let memberRefKeys: [String]
+    /// 2 階層で複数クラスタを束ねた人物か（ADR-61）。true なら「束ねを解除」を提示できる。
+    public var isGrouped: Bool = false
 
     public var id: Int { clusterID }
     /// 名前未設定なら "Person N"。
@@ -30,12 +32,14 @@ public struct PersonInfo: Identifiable, Sendable, Equatable {
     }
 
     public init(clusterID: Int, name: String?, count: Int,
-                coverRefKey: String?, coverBoundingBox: CGRect?, memberRefKeys: [String]) {
+                coverRefKey: String?, coverBoundingBox: CGRect?, memberRefKeys: [String],
+                isGrouped: Bool = false) {
         self.clusterID = clusterID
         self.name = name
         self.count = count
         self.coverRefKey = coverRefKey
         self.coverBoundingBox = coverBoundingBox
         self.memberRefKeys = memberRefKeys
+        self.isGrouped = isGrouped
     }
 }

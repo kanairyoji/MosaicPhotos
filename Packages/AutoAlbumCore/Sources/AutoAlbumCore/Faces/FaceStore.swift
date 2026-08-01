@@ -316,7 +316,8 @@ actor FaceStore {
             let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
             result.append(PersonInfo(
                 clusterID: primary.clusterID, name: primary.name, count: members.count,
-                coverRefKey: cover?.refKey, coverBoundingBox: box, memberRefKeys: members))
+                coverRefKey: cover?.refKey, coverBoundingBox: box, memberRefKeys: members,
+                isGrouped: clustersInGroup.count > 1))
         }
         return result.sorted { $0.count > $1.count }
     }

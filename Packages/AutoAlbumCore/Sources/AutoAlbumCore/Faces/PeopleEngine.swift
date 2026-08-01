@@ -189,6 +189,28 @@ public final class PeopleEngine {
 
     /// 人物 src を人物 dst に統合する（同一人物が別々に認識されたときの修正）。
     /// src の顔は全て dst へ移り、src は消える。名前・代表写真は dst を優先。
+    /// 2 階層束ね（ADR-61）: 複数の人物を「同じ人（子供の成長で分裂）」として束ねる。
+    /// **融合しない**＝各クラスタの純度と時期の分かれを保ったまま 1 人物として表示・検索する。
+    /// 後で `unlinkPerson` で解除できる。
+    public func linkPeople(_ clusterIDs: [Int]) async {
+        await store.linkClusters(clusterIDs)
+        await loadPeople()
+    }
+
+    /// 束ねから 1 クラスタを外す（別人だった等）。
+    public func unlinkPerson(clusterID: Int) async {
+        await store.unlinkCluster(clusterID)
+        await loadPeople()
+    }
+
+    /// この人物の束ねを全解除する（束ねられた全クラスタを単独に戻す）。
+    public func ungroupPerson(clusterID: Int) async {
+        for id in await store.linkedClusterIDs(primary: clusterID) {
+            await store.unlinkCluster(id)
+        }
+        await loadPeople()
+    }
+
     public func mergePerson(from srcClusterID: Int, into dstClusterID: Int) async {
         await store.mergeClusters(from: srcClusterID, into: dstClusterID)
         await loadPeople()

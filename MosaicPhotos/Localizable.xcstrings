@@ -667,6 +667,16 @@
         }
       }
     },
+    "Choose the person to group “%@” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」と同じ人物（例: 成長した子供）として束ねる相手を選びます。写真はまとめて表示され、後で解除できます。"
+          }
+        }
+      }
+    },
     "Choose the person to merge “%@” into. All their photos will move to that person.": {
       "localizations": {
         "ja": {
@@ -1337,6 +1347,56 @@
           "stringUnit": {
             "state": "translated",
             "value": "粒度"
+          }
+        }
+      }
+    },
+    "Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねる"
+          }
+        }
+      }
+    },
+    "Group as Same Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねる"
+          }
+        }
+      }
+    },
+    "Group as same person?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねますか？"
+          }
+        }
+      }
+    },
+    "Group with": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねる"
+          }
+        }
+      }
+    },
+    "Group with Another Person…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人物と束ねる…"
           }
         }
       }
@@ -2690,6 +2750,16 @@
         }
       }
     },
+    "Separate Grouped Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねを解除"
+          }
+        }
+      }
+    },
     "Set up backup and folder-name albums here right after connecting.": {
       "localizations": {
         "ja": {
@@ -3211,6 +3281,16 @@
     "~10 km": {},
     "~2 km": {},
     "~5 km": {},
+    "“%@” and “%@” will be shown as the same person. You can separate them later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」と「%@」は同じ人物として表示されます。後で解除できます。"
+          }
+        }
+      }
+    },
     "“%@” will be merged into “%@”. This can’t be undone automatically.": {
       "localizations": {
         "ja": {
