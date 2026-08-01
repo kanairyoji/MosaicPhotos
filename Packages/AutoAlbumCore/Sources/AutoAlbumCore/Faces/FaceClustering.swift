@@ -75,9 +75,12 @@ public struct FaceClustering {
     /// - 重心加算は品質で重み付け（ぼけ顔ほど寄与を小さく）。
     /// - `negatives` で拒否されたクラスタは飛ばして次点へ（全滅なら新規）。
     /// 返り値は割り当てられたクラスタ ID（未割当は -1）。
+    /// - Parameter excludedClusterIDs: 合流を許さないクラスタ（**同一写真 cannot-link**：
+    ///   1 枚の写真に同じ人物は 1 回しか写らないため、同じ写真の先行顔が入ったクラスタを除外する）。
     @discardableResult
     public mutating func assign(faceID: String, embedding: [Float],
-                                quality: Float = 1, negatives: [NegativePair] = []) -> Int {
+                                quality: Float = 1, negatives: [NegativePair] = [],
+                                excludedClusterIDs: Set<Int> = []) -> Int {
         let v = FaceClustering.normalized(embedding)
         if quality < qualityFloor { return FaceClustering.unassigned }
 
@@ -88,6 +91,7 @@ public struct FaceClustering {
             .sorted { $0.sim > $1.sim }
         for cand in scored {
             guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
+            if excludedClusterIDs.contains(clusters[cand.index].id) { continue }   // cannot-link
             if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
                 continue
             }
@@ -127,11 +131,32 @@ public struct FaceClustering {
     }
 
     /// 全顔をまとめてクラスタリングする（純関数。再クラスタ・テスト用）。
+    /// ⚠️ 以前は qualityFloor/quality を渡し忘れており、呼び出し側の設定が無視されていた
+    /// （本番経路は未使用のため実害なし・API 衛生として修正）。
     public static func clusterAll(_ faces: [(faceID: String, embedding: [Float])],
-                                  threshold: Float = 0.45) -> [Cluster] {
-        var clustering = FaceClustering(threshold: threshold)
-        for f in faces { clustering.assign(faceID: f.faceID, embedding: f.embedding) }
+                                  threshold: Float = 0.45,
+                                  qualityFloor: Float = 0.15,
+                                  qualities: [String: Float] = [:]) -> [Cluster] {
+        var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
+        for f in faces {
+            clustering.assign(faceID: f.faceID, embedding: f.embedding,
+                              quality: qualities[f.faceID] ?? 1)
+        }
         return clustering.clusters
+    }
+
+    /// 複数クロップの埋め込みを要素平均→再正規化する（マルチクロップ埋め込み・純関数）。
+    /// アライメント済み・水平反転・bbox 切り抜きの 3 埋め込みを平均すると、切り抜きの
+    /// ゆらぎに対して同一人物の埋め込みが安定する。次元不一致は多数派に合わせず nil。
+    public static func averagedEmbedding(_ vectors: [[Float]]) -> [Float]? {
+        guard let first = vectors.first, !first.isEmpty else { return nil }
+        guard vectors.allSatisfy({ $0.count == first.count }) else { return nil }
+        var sum = [Float](repeating: 0, count: first.count)
+        for v in vectors {
+            let n = normalized(v)
+            for i in sum.indices { sum[i] += n[i] }
+        }
+        return normalized(sum)
     }
 
     /// 「人物」とみなすクラスタ（メンバー数 `minFaces` 以上）を多い順に返す。

@@ -137,7 +137,8 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                     else { return nil }
                     return alignedCrop(cg, plan: plan)
                 }()
-                let crop = aligned ?? cropFace(cg, normalizedBox: face.box, width: width, height: height)
+                let bboxCrop = cropFace(cg, normalizedBox: face.box, width: width, height: height)
+                let crop = aligned ?? bboxCrop
                 if let crop {
                     if !verifyFaceInCrop(crop) {
                         // ADR-53: 顔中心のクロップ内で再検出できない＝顔でない（二段検出）。
@@ -150,10 +151,17 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                             quality: face.quality, yaw: face.yaw, roll: face.roll,
                             eyesClosed: face.eyesClosed,
                             blurVariance: metrics?.blurVariance, meanLuma: metrics?.meanLuma)
-                        if let embedding = FaceModelRuntime.shared.embed(crop) {
+                        // マルチクロップ埋め込み（ADR-54）: 主クロップ＋水平反転＋（アライメント時は）
+                        // bbox 切り抜きの埋め込みを平均→再正規化。切り抜きのゆらぎ・左右非対称に
+                        // 対する安定性が上がる（推論 3 回は夜間のみ・facenet は軽量）。
+                        var crops: [CGImage] = [crop]
+                        if let flipped = Self.horizontallyFlipped(crop) { crops.append(flipped) }
+                        if aligned != nil, let bboxCrop { crops.append(bboxCrop) }
+                        let vectors = crops.compactMap { FaceModelRuntime.shared.embed($0) }
+                        if let averaged = FaceClustering.averagedEmbedding(vectors) {
                             signal = DetectedFaceSignal(
                                 boundingBox: face.box,
-                                embedding: ClipMath.encodeHalf(embedding),
+                                embedding: ClipMath.encodeHalf(averaged),
                                 quality: adjusted,
                                 hasSmile: face.hasSmile)
                         } else {
@@ -177,6 +185,18 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 signal: signal))
         }
         return (out, error)
+    }
+
+    /// 水平反転（マルチクロップ埋め込み用）。
+    private static func horizontallyFlipped(_ cg: CGImage) -> CGImage? {
+        guard let ctx = CGContext(data: nil, width: cg.width, height: cg.height,
+                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.translateBy(x: CGFloat(cg.width), y: 0)
+        ctx.scaleBy(x: -1, y: 1)
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        return ctx.makeImage()
     }
 
     /// クロップ再検証（ADR-53）: 顔中心に切り抜いた画像内でもう一度顔検出し、

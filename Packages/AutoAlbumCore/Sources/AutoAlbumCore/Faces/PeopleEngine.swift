@@ -110,9 +110,10 @@ public final class PeopleEngine {
 
     /// 顔スキャンパイプラインの現行版。v2: 顔アライメント（目の位置正規化）＋処理解像度
     /// 640→1024px。v3: EXIF 回転の正規化（HEIC 等の未回転ビットマップで顔矩形・埋め込みが
-    /// ズレていた写真の作り直し）。**埋め込みの作り方が変わる版上げでは新旧の埋め込みを
-    /// 混在させられない**（コサイン類似度が壊れる）ため、全再スキャンする。
-    static let faceScanVersion = 3
+    /// ズレていた写真の作り直し）。v4: マルチクロップ埋め込み平均（ADR-54）。
+    /// **埋め込みの作り方が変わる版上げでは新旧の埋め込みを混在させられない**
+    /// （コサイン類似度が壊れる）ため、全再スキャンする。
+    static let faceScanVersion = 4
     private static let faceScanVersionKey = "faceScanVersion"
 
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
@@ -355,12 +356,26 @@ public final class PeopleEngine {
     /// 命名済み/確認済みクラスタは ID・名前を保持し、確認顔は must-link として固定。
     public func rebuildClustersIfNeeded() async {
         let markerKey = "faceRebuildCorrectionCount"
+        let scanMarkerKey = "faceRebuildScannedCount"
+        let dateMarkerKey = "faceRebuildLastDate"
+        let defaults = UserDefaults.standard
         let current = await store.correctionCount()
-        let lastRebuilt = UserDefaults.standard.integer(forKey: markerKey)
-        guard current > lastRebuilt else { return }
+        let scanned = await store.scannedCount()
+        let lastRebuilt = defaults.integer(forKey: markerKey)
+        let lastScanned = defaults.integer(forKey: scanMarkerKey)
+        let lastDate = defaults.object(forKey: dateMarkerKey) as? Date
+        // 発火条件（ADR-54 で拡張）: 修正が増えた／新規スキャンが 500 写真以上進んだ／
+        // 30 日以上再クラスタしていない、のいずれか（順序依存の誤りを定期的に自己修復する）。
+        let correctionsGrew = current > lastRebuilt
+        let scansGrew = scanned - lastScanned >= 500
+        let stale = lastDate.map { Date().timeIntervalSince($0) > 30 * 86_400 } ?? (scanned > 0)
+        guard correctionsGrew || scansGrew || stale else { return }
         let result = await store.rebuildClusters()
-        UserDefaults.standard.set(current, forKey: markerKey)
-        Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) (corrections \(lastRebuilt)→\(current))")
+        defaults.set(current, forKey: markerKey)
+        defaults.set(scanned, forKey: scanMarkerKey)
+        defaults.set(Date(), forKey: dateMarkerKey)
+        Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) "
+                         + "(corrections \(lastRebuilt)→\(current), scans \(lastScanned)→\(scanned), stale=\(stale))")
         await loadPeople()
     }
 

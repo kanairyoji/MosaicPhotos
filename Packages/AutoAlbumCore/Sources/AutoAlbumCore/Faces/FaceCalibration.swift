@@ -13,7 +13,9 @@ public enum FaceCalibration {
     /// 校正に必要な最小サンプル数（正例・負例それぞれ）。未満なら既定値のまま。
     public static let minSamples = 8
     /// 校正結果の可動域（異常なサンプルでしきい値が暴れないための安全域）。
-    public static let clampRange: ClosedRange<Float> = 0.35...0.60
+    /// 上限 0.70: ユーザー修正が「より高いしきい値が正しい」ことを示す場合に校正が
+    /// そこまで動けるようにする（既定 0.45 は据え置き・固定値の引き上げは実測後に判断）。
+    public static let clampRange: ClosedRange<Float> = 0.35...0.70
 
     /// 正例（同一人物ペアの類似度）と負例（別人ペアの類似度）から最適しきい値を求める。
     /// 分類精度（正例 ≥ t かつ 負例 < t の数）を最大化する境界を選び、同点なら既定値に近い方。

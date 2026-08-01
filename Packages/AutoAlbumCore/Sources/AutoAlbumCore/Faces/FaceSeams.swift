@@ -26,11 +26,12 @@ public enum FaceQualityGate {
 
     /// 顔矩形の最小辺（**絶対ピクセル**）。比率を満たしても実ピクセルが小さすぎる顔は
     /// 埋め込みが機能しないため除外する（比率ゲートと二段構え）。
-    public static let minFacePixels: CGFloat = 32
+    /// 顔モデル（facenet）は 160px 入力を期待するため、48px 未満は拡大しても品質が出ない。
+    public static let minFacePixels: CGFloat = 48
 
     // ぼけゲート（顔クロップを 64px 正方に縮小した輝度のラプラシアン分散・0〜255 スケール）。
     /// これ未満は強いぼけ → 品質をフロア未満へキャップ（クラスタに入れない）。
-    public static let blurHardFloor: Float = 15
+    public static let blurHardFloor: Float = 25
     /// これ未満は軽いぼけ → 品質を減衰。
     public static let blurSoftFloor: Float = 60
     public static let blurSoftFactor: Float = 0.7

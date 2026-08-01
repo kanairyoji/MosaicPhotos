@@ -43,6 +43,9 @@ struct FaceInfoExpansionTests {
         let cap = FaceQualityGate.profileCap
         #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
                                                 blurVariance: 5, meanLuma: 128) == cap)
+        // 20 は新 hardFloor(25) 未満 → キャップ（旧 15 基準では soft だった帯）。
+        #expect(FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
+                                                blurVariance: 20, meanLuma: 128) == cap)
         let soft = FaceQualityGate.adjustedQuality(quality: 0.9, yaw: nil, roll: nil, eyesClosed: nil,
                                                    blurVariance: 30, meanLuma: 128)
         #expect(abs(soft - 0.9 * FaceQualityGate.blurSoftFactor) < 1e-6)
@@ -89,7 +92,7 @@ struct FaceInfoExpansionTests {
 
     @Test("絶対ピクセルの最小顔サイズが定義されている")
     func minFacePixels() {
-        #expect(FaceQualityGate.minFacePixels == 32)
+        #expect(FaceQualityGate.minFacePixels == 48)
     }
 
     // MARK: - 品質フロア 0.40（FaceStore 経由）
