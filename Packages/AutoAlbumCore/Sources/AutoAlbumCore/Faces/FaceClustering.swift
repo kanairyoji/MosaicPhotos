@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 
 /// 顔埋め込み（identity 埋め込み・コサイン類似）の**逐次クラスタリング**。
@@ -80,6 +81,10 @@ public struct FaceClustering {
     /// クラスタごとに自動維持する代表埋め込みの上限（0 = 無効）。ユーザー確認に頼らず、
     /// 成長期など「1 つの重心では表せない」人物の多様な見た目を代表群で覆う。
     public var autoPrototypeLimit: Int = 0
+    /// マージンゲート（ADR-57・0 = 無効）: 1 位クラスタと 2 位クラスタの類似度差がこれ未満
+    /// （＝どちらの人物か紛らわしい）の顔は合流させず新規にする。兄弟のような
+    /// 「両方にそこそこ似ている」顔の引き込みを防ぐ（FG-NET 実測で F1 0.542→0.585）。
+    public var assignMargin: Float = 0
     /// 既存の代表とこの類似度未満のときだけ新代表として追加（似た代表を重複させない）。
     public static let prototypeDiversityMax: Float = 0.75
     /// 代表に採用する顔の最低品質（ぼけ顔を代表にしない）。
@@ -120,6 +125,19 @@ public struct FaceClustering {
         let scored = clusters.indices
             .map { (index: $0, sim: FaceClustering.similarity(v, to: clusters[$0])) }
             .sorted { $0.sim > $1.sim }
+        // マージンゲート: 上位 2 クラスタが両方しきい値以上で差が小さい＝紛らわしい顔は
+        // どちらにも入れない（除外・負例より先に判定する＝cannot-link されたクラスタとの
+        // 紛らわしさも「別人と紛らわしい」証拠として扱う）。
+        if assignMargin > 0, scored.count >= 2,
+           scored[0].sim >= threshold, scored[1].sim >= threshold,
+           scored[0].sim - scored[1].sim < assignMargin {
+            let id = nextID
+            nextID += 1
+            let w = max(quality, 0.01)
+            clusters.append(Cluster(id: id, centroid: v, sum: v.map { $0 * w }, count: 1, faceIDs: [faceID]))
+            maintainAutoPrototype(v, quality: quality, at: clusters.count - 1)
+            return id
+        }
         for cand in scored {
             guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
             if excludedClusterIDs.contains(clusters[cand.index].id) { continue }   // cannot-link
@@ -296,8 +314,10 @@ public struct FaceClustering {
 
     public static func dot(_ a: [Float], _ b: [Float]) -> Float {
         guard a.count == b.count else { return -2 }
+        // vDSP: 512 次元×数千顔×数百クラスタの照合が本番（夜間再クラスタ）と
+        // 精度ハーネスの支配項になるため SIMD 化する（デバッグビルドでも桁で速い）。
         var s: Float = 0
-        for i in a.indices { s += a[i] * b[i] }
+        vDSP_dotpr(a, 1, b, 1, &s, vDSP_Length(a.count))
         return s
     }
 

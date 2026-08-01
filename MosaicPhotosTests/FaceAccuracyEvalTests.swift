@@ -51,7 +51,10 @@ final class FaceAccuracyEvalTests: XCTestCase {
             .sorted()
         try XCTSkipUnless(!datasets.isEmpty, "images/ + labels.csv を持つデータセットがない: \(root)")
 
-        for dataset in datasets {
+        // FACE_EVAL_ONLY=lfw のように対象データセットを絞れる（長時間実行の分割用）。
+        let only = ProcessInfo.processInfo.environment["FACE_EVAL_ONLY"]?
+            .split(separator: ",").map(String.init)
+        for dataset in datasets where only == nil || only!.contains(dataset) {
             try autoreleasepool {
                 try evaluate(datasetDir: "\(root)/\(dataset)", name: dataset)
             }
@@ -115,11 +118,12 @@ final class FaceAccuracyEvalTests: XCTestCase {
         reportAcceptanceByAge(samples: samples, labels: labels, name: name)
 
         // --- 検証（ペア類似度） ---
+        let skipVerify = ProcessInfo.processInfo.environment["FACE_EVAL_SKIP_VERIFY"] == "1"
         var sameSims: [Float] = []
         var differentSims: [Float] = []
         var sameByAgeGap: [String: [Float]] = [:]
         var childDifferentSims: [Float] = []   // 別人×両方 12 歳以下＝「兄弟の難しさ」の代理
-        for i in samples.indices {
+        for i in samples.indices where !skipVerify {
             for j in (i + 1)..<samples.count {
                 let sim = FaceClustering.dot(samples[i].embedding, samples[j].embedding)
                 if samples[i].person == samples[j].person {
@@ -175,30 +179,34 @@ final class FaceAccuracyEvalTests: XCTestCase {
                          name, label, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1, s.pairF1, s.clusterCount))
         }
 
+        // 大規模データセット（LFW 等）は貪欲クラスタリングが O(顔数×クラスタ数×次元) で
+        // 重い（デバッグビルド）ため、確認に必要な構成へグリッドを縮小する。
+        let reducedGrid = samples.count > 2000
         print("FACEEVAL[\(name)]: === ベースライン（重心のみ） vs P2 自動プロトタイプ（K=5） ===")
-        var threshold: Float = 0.45
-        while threshold <= 0.701 {
+        let baseThresholds: [Float] = reducedGrid ? [0.55, 0.60] : [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
+        for threshold in baseThresholds {
             let base = FaceClustering.clusterAll(faces, threshold: threshold, qualityFloor: 0.40,
                                                  qualities: qualities)
             printRow(String(format: "base  thr=%.2f", threshold), score(clusters: base))
-            let proto = FaceClustering.clusterAll(faces, threshold: threshold, qualityFloor: 0.40,
-                                                  qualities: qualities, autoPrototypeLimit: 5)
-            printRow(String(format: "proto thr=%.2f", threshold), score(clusters: proto))
-            threshold += 0.05
+            if !reducedGrid {
+                let proto = FaceClustering.clusterAll(faces, threshold: threshold, qualityFloor: 0.40,
+                                                      qualities: qualities, autoPrototypeLimit: 5)
+                printRow(String(format: "proto thr=%.2f", threshold), score(clusters: proto))
+            }
         }
 
         print("FACEEVAL[\(name)]: === 系統1 バリアント（ADR-57・推移性なしで再現率回復を狙う） ===")
         // A) マージンゲート付き貪欲。
         for thr in [Float(0.55), 0.60] {
-            for margin in [Float(0.05), 0.10] {
+            for margin in (reducedGrid ? [Float(0.05)] : [Float(0.05), 0.10]) {
                 let clusters = FaceClusteringVariants.marginGatedCluster(
                     faces, threshold: thr, margin: margin, qualityFloor: 0.40, qualities: qualities)
                 printRow(String(format: "marginGated thr=%.2f m=%.2f", thr, margin),
                          score(clusters: clusters))
             }
         }
-        // B) 二段階＋比率テスト。
-        for core in [Float(0.65), 0.70] {
+        // B) 二段階＋比率テスト（縮小グリッドでは省略＝FG-NET で敗退済みの確認不要）。
+        for core in (reducedGrid ? [] : [Float(0.65), 0.70]) {
             for attach in [Float(0.50), 0.55] {
                 for margin in [Float(0.05), 0.10] {
                     let clusters = FaceClusteringVariants.twoStageCluster(
@@ -210,7 +218,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
             }
         }
         // C) ロバスト重心（中央値・2 パス）。
-        for thr in [Float(0.55), 0.60, 0.65] {
+        for thr in (reducedGrid ? [Float(0.60)] : [Float(0.55), 0.60, 0.65]) {
             let clusters = FaceClusteringVariants.medianRefinedCluster(
                 faces, threshold: thr, qualityFloor: 0.40, qualities: qualities)
             printRow(String(format: "median thr=%.2f", thr), score(clusters: clusters))

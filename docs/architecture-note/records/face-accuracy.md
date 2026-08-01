@@ -23,7 +23,8 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 
 | パラメーター | 現行値 | 定義場所 |
 |---|---|---|
-| クラスタリングしきい値（既定） | 0.60（ADR-56 で 0.45 から変更） | `FaceStore.clusterThreshold` |
+| クラスタリングしきい値（既定） | 0.55（ADR-57・マージンゲート併用） | `FaceStore.clusterThreshold` |
+| マージンゲート幅 | 0.05（1位と2位の差がこれ未満なら合流しない） | `FaceStore.assignMargin` |
 | しきい値校正の可動域 | 0.35〜0.70 | `FaceCalibration.clampRange` |
 | 校正の最小サンプル数 | 正負各 8 | `FaceCalibration.minSamples` |
 | 品質フロア（未満はクラスタ不参加） | 0.40 | `FaceStore.qualityFloor` |
@@ -99,6 +100,36 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 換装の妙味なし。選択肢は商用モデルライセンスの取得か、合成データ学習モデルの成熟待ち。
 
 **未計測**: 実ライブラリ分布での絶対値（own/ は使わない方針のため、FG-NET の相対比較で判断）。
+
+### 2026-08-01 — 系統1 バリアント計測と採用（ADR-57）＋ LFW 追加
+
+**LFW（成人・易しいケース・4,862 枚/901 人・deepfunneled 間引き）を追加**。
+検出 100.0%（4861/4862）・TAR@FAR1% = **98.6%** / TAR@FAR0.1% = 94.0%・最良 F1 しきい値 0.66。
+→ FG-NET（TAR@FAR1% 48.1%）との対比で「facenet は同年代の大人には十分強く、
+弱点は年齢変化に集中している」ことを確認。リグレッション番犬として常設。
+
+**クラスタリングバリアント（B-Cubed F1・両データセット）**
+
+| 構成 | FG-NET | LFW |
+|---|---|---|
+| base thr=0.55 | 0.530 | 0.742 |
+| base thr=0.60（旧採用） | 0.542 | 0.793 |
+| **marginGated thr=0.55 m=0.05（採用）** | **0.585** | 0.775 |
+| marginGated thr=0.60 m=0.05 | 0.562 | 0.796 |
+| marginGated m=0.10 | 0.484〜0.490 | —（網羅崩壊で不採用） |
+| twoStage（二段階＋比率テスト） | 0.530〜0.561 | —（劣後で不採用） |
+| median thr=0.60（中央値重心） | 0.563 | 0.807 |
+
+**採用: マージンゲート付き貪欲（thr=0.55・margin=0.05）** — 難所（FG-NET）で最大の
+F1 0.585（旧採用比 +8%・純度 0.849）。LFW は base0.60 比 −0.018 の微差だが、
+実ライブラリの難所（兄弟＋成長期）は FG-NET 型のため難所側を優先。旧本番（0.45）比では
+FG-NET +32% / LFW +36% の両面改善。本番配線: `FaceClustering.assignMargin`
+（逐次スキャン・夜間再クラスタ共通）＋ `FaceStore.clusterThreshold=0.55` / `assignMargin=0.05`。
+
+**次点候補（未採用・将来の組み合わせ余地）**: 中央値重心（LFW 最良 0.807・FG-NET 0.563）。
+マージンゲートとの併用は未計測。
+
+**高速化**: `FaceClustering.dot` を vDSP 化（照合が夜間再クラスタとハーネスの支配項のため）。
 
 ## 運用ルール
 

@@ -63,25 +63,34 @@ if [ ! -d "$ROOT/lfw/images" ]; then
   UNZIP_DIR="$ROOT/lfw-unzip"
   rm -rf "$UNZIP_DIR"; mkdir -p "$UNZIP_DIR"
   unzip -q "$ZIP" -d "$UNZIP_DIR"
+  # 配布 zip は入れ子（外側に CSV 群＋内側に lfw-deepfunneled.zip）。内側も展開する。
+  INNER=$(find "$UNZIP_DIR" -name "lfw-deepfunneled.zip" | head -1)
+  [ -n "$INNER" ] && unzip -q "$INNER" -d "$UNZIP_DIR/extracted"
   python3 - "$UNZIP_DIR" "$ROOT/lfw" <<'PY'
 import csv, os, shutil, sys
 src_root, dst_root = sys.argv[1], sys.argv[2]
-# zip 内の lfw-deepfunneled ディレクトリ（人物名ディレクトリの親）を探す。
+# 人物名ディレクトリ（中に *_0001.jpg）を持つ親ディレクトリを探す。
 base = None
-for dirpath, dirnames, _ in os.walk(src_root):
-    if os.path.basename(dirpath) == "lfw-deepfunneled" and any(
-            os.path.isdir(os.path.join(dirpath, d)) for d in dirnames):
-        inner = os.path.join(dirpath, "lfw-deepfunneled")
-        base = inner if os.path.isdir(inner) else dirpath
+for dirpath, dirnames, filenames in os.walk(src_root):
+    for d in dirnames:
+        sub = os.path.join(dirpath, d)
+        entries = [f for f in os.listdir(sub)[:20]
+                   if os.path.isfile(os.path.join(sub, f)) and not f.startswith(".")]
+        if any(f.lower().endswith("_0001.jpg") for f in entries):
+            base = dirpath
+            break
+    if base:
         break
-assert base, "lfw-deepfunneled が見つからない"
+assert base, "lfw の人物ディレクトリが見つからない"
 os.makedirs(os.path.join(dst_root, "images"), exist_ok=True)
 rows = []
 for person in sorted(os.listdir(base)):
     pdir = os.path.join(base, person)
     if not os.path.isdir(pdir):
         continue
-    files = sorted(f for f in os.listdir(pdir) if f.lower().endswith(".jpg"))
+    # AppleDouble（._*）と隠しファイルは除外（zip 由来のメタデータで画像ではない）。
+    files = sorted(f for f in os.listdir(pdir)
+                   if f.lower().endswith(".jpg") and not f.startswith("."))
     if len(files) < 3:      # クラスタリング評価には 1 人 3 枚以上
         continue
     for f in files[:10]:    # 有名人の偏り（1 人 500 枚等）を抑える
