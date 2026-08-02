@@ -21,6 +21,31 @@
 
 ---
 
+## ADR-62 コードリファクタリング一式（PHAsset 画像ローダ統一・日付/Store 構築の集約・分割）
+- 状態: 採用
+- 文脈: 重複と分散が保守性・バグの温床になっていた。特に (a) PHAsset からの画像取得が 8 箇所以上で
+  個別に手書きされ、`PHImageRequestOptions`（deliveryMode/resizeMode/network）と**向き正規化の有無**が
+  バラバラ（グリッドサムネ・顔クロップの回転ズレの温床）、(b) アルバム日付の `dates.min()/max() ?? .distantPast`
+  が各戦略に散在（1980 混入の温床）、(c) メンバー限定 `MergedPhotoStore` 構築が 4 ビューに複写、
+  (d) 二重 resume 防止（lock+guard）の定型重複、(e) 未使用ビュー・肥大ファイル。
+- 決定:
+  - **画像ローダ統一**: `MosaicSupport.PHAssetImageLoader` に集約（全画像コンシューマが共通依存するのは
+    MosaicSupport のみ＝新規依存エッジ不要）。`makeOptions`/`Quality` は Photos のみで成立させ macOS テストを
+    維持、UIImage 系は `#if canImport(UIKit)`。向き正規化（`normalizedUp`/`normalizedUpCGImage`）・
+    二重 resume 防止を内包。`loadLocalCover`/`requestAspectCGImage`/`loadLocalCGImage`/グリッドサムネ/
+    キャプション等を委譲化。`orientationNormalizedCGImage` は互換名を残し委譲（呼び出し側不変）。
+  - **日付集約**: `AlbumDates`（純・`CaptureDate.meaningful` で 1980 等を除外）に一本化。TimePlace/Path/AI が利用。
+  - **Store 構築**: `MergedPhotoStore.forMembers(localIDs:cloudPaths:dropboxStore:assetIndex:)` に集約（4 ビュー）。
+  - **分割/削除**: 未使用 `LocalThumbnailView`/`LocalPhotoPageView` を削除。`DropboxPhotoStore` の
+    バックアップメタデータ節を `+BackupMetadata.swift` へ抽出（`backupMetadata` を internal(set) に）。
+- 結果: 画像経路の向きが一元管理になり、キャッシュクリア後の検証で縦横写真の**一部が正立化**（向きラベルが
+  正しい写真）。ただし PHImageManager が `.up` ラベルで**生の回転ピクセル**を返す一部写真は未解決＝
+  グリッド横倒しの完全解消と顔クロップは EXIF 実値ベースの別対応が要（継続課題）。重複が大幅減り、
+  今後の画像取得は 1 経路に集約。トレードオフ: MosaicSupport が Photos/UIKit ユーティリティを持つ（既に
+  PowerStateMonitor で UIKit 使用の前例あり）。
+- 関連: `PHAssetImageLoader`・`AlbumDates`・`MergedPhotoStore+Members`・`DropboxPhotoStore+BackupMetadata`／
+  コミット 2d2c3d59・95be4abc・d258c009。回転の未解決分は case-studies「代表顔/グリッド回転」項に継続。
+
 ## ADR-61 2 階層人物モデル（人物=複数クラスタの束）の検証: 識別では融合に優位なし・UI 保留
 - 状態: 保留（純ロジック＋評価のみ実装・本番データモデル/UI 未着手）
 - 文脈: 「1 人=1 クラスタ」の前提を捨て、同一人物が成長帯別に複数クラスタになることを許容し、上位の「人物（Person）」で束ねる案。融合（物理的に 1 重心へ潰す＝現行の統合）だと成長期に重心が壊れる懸念があり、クラスタを別々に保ったまま束ねれば純度を保てるのではという仮説。**大きな UI/データモデル変更に進む前に、検証可能な核（純ロジック＋評価）で優位を確かめる方針**。
