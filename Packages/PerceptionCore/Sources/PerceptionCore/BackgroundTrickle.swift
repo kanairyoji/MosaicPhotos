@@ -63,8 +63,23 @@ public enum BackgroundTrickle {
             }
             if await commitBatch(batchIndex, batch, results) == .stop { break }
             // ★ バッチ間で休む：端末・ネットワーク・UI を圧迫しない trickle 処理にする。
-            try? await Task.sleep(nanoseconds: betweenBatchNs)
+            //   候補D: サーマル状態で休止を自動調整（熱に余裕なら 1x＝プリセット通り、逼迫したら
+            //   休止を延ばして発熱/サーマルスロットリングを避ける＝連続処理の実効速度を守る）。
+            let pauseNs = UInt64(Double(betweenBatchNs) * thermalPauseMultiplier())
+            try? await Task.sleep(nanoseconds: pauseNs)
             batchIndex += 1
+        }
+    }
+
+    /// バッチ間スリープのサーマル係数（候補D）。重い処理は電源＋アイドル中のみだが、連続処理で
+    /// 温まるため、逼迫時は休止を延ばして緩める（ユーザー選択のプリセットより速くはしない＝1x が上限）。
+    public static func thermalPauseMultiplier() -> Double {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal:  return 1.0
+        case .fair:     return 1.5
+        case .serious:  return 3.0
+        case .critical: return 8.0
+        @unknown default: return 1.0
         }
     }
 }

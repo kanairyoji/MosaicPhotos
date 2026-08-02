@@ -73,28 +73,36 @@ final class TagTagger {
 
         var index = 0
         var processed = 0
-        // ⚠️ 停止判定は 1 枚単位（クラウド写真はネット取得込みで 1 枚数秒かかり得るため、
-        // バッチ一括だと譲りが数十秒遅れる＝ロック解除直後の操作が重くなる）。保存はバッチ 1 回。
+        // 候補C: 「単位」を **4 枚ミニバッチ**にし、senseInfo 内でロード＋Vision 一括パスを並列化する。
+        // 停止判定はミニバッチ単位だが、内部が並列なので実時間は 1 枚相当＝譲り応答性はほぼ維持。
+        // 保存はバッチ 1 回。
+        let miniBatchSize = 4
         await BackgroundTrickle.run(
             betweenBatchNs: betweenBatchNs,
             shouldPause: shouldPause,
             unitPerfLabel: "tags.photoMs",
+            unitPerfDivisor: { (chunk: [String]) in Double(max(1, chunk.count)) },   // 1 枚あたり ms
             nextBatch: { _ in
                 let end = min(index + batchSize, todo.count)
                 defer { index = end }
-                return Array(todo[index..<end])
+                let batch = Array(todo[index..<end])
+                return stride(from: 0, to: batch.count, by: miniBatchSize).map {
+                    Array(batch[$0..<min($0 + miniBatchSize, batch.count)])
+                }
             },
-            processUnit: { refKey in
-                let one = await provider.senseInfo(refKeys: [refKey])
-                return (refKey: refKey, info: one[refKey] ?? PhotoSenseInfo())
+            processUnit: { (chunk: [String]) in
+                let dict = await provider.senseInfo(refKeys: chunk)
+                return chunk.map { (refKey: $0, info: dict[$0] ?? PhotoSenseInfo()) }
             },
             commitBatch: { _, _, results in
-                guard !results.isEmpty else { return .stop }
-                await store.recordTags(results)
-                processed += results.count
+                let flat = results.flatMap { $0 }
+                guard !flat.isEmpty else { return .stop }
+                await store.recordTags(flat)
+                let before = processed
+                processed += flat.count
                 AnalysisActivity.recordActivity(.sceneTags)
                 onProgress(max(0, todo.count - processed))
-                if processed % 256 == 0 {
+                if processed / 256 != before / 256 {
                     Diagnostics.mark("tags: \(processed)/\(todo.count) tagged")
                 }
                 return .proceed

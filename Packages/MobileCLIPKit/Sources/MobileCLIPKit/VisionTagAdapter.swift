@@ -27,32 +27,30 @@ public struct VisionTagAdapter: TagPerceptionProvider {
     public var isTaggingAvailable: Bool { true }   // Vision は OS 内蔵
 
     public func senseInfo(refKeys: [String]) async -> [String: PhotoSenseInfo] {
-        var out: [String: PhotoSenseInfo] = [:]
-        for refKey in refKeys {
-            await Task.yield()
-            guard let ref = PhotoRef.decode(refKey) else { continue }
-            let cg: CGImage?
+        guard !refKeys.isEmpty else { return [:] }
+        let cloud = cloudImage
+        // 候補C: 画像ロード＋Vision 一括パスを**同時数枚**並列化（Vision は CPU/ANE でコア並列が効く）。
+        // 取得不可の写真も空 info を返して「処理済み」にし無限ループを防ぐ。
+        return await boundedConcurrentResults(refKeys, maxConcurrent: 3) { refKey in
+            guard let ref = PhotoRef.decode(refKey) else { return PhotoSenseInfo() }
             if let localId = ref.localIdentifier {
-                // OCR は解像度が要る（384px では小さな文字が潰れる）ため、分類のみだった頃の
-                // 384px から 1024px へ引き上げる（分類は内部で縮小されるためコスト増は OCR ぶんのみ）。
-                cg = await loadLocalCGImage(localId, maxPixel: 1024)
+                // 候補C: PHAsset は **1 回だけ**フェッチして画像取得と種別タグで共用（再フェッチ削減）。
+                // OCR は解像度が要る（384px では小文字が潰れる）ため 1024px（分類は内部で縮小）。
+                guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localId],
+                                                      options: nil).firstObject,
+                      let cg = await PHAssetImageLoader.image(
+                          for: asset, targetSize: CGSize(width: 1024, height: 1024),
+                          quality: .full, allowsNetwork: false)?.cgImage
+                else { return PhotoSenseInfo() }
+                var info = Self.sense(cg)
+                info.tags = Self.mergeTags(info.tags, adding: Self.assetKindTags(from: asset))
+                return info
             } else if let path = ref.cloudPath {
-                cg = await cloudImage(path)
-            } else {
-                cg = nil
+                guard let cg = await cloud(path) else { return PhotoSenseInfo() }
+                return Self.sense(cg)
             }
-            guard let cg else {
-                out[refKey] = PhotoSenseInfo()   // 取得不可も「処理済み」にして無限ループを防ぐ
-                continue
-            }
-            var info = Self.sense(cg)
-            // ローカル写真はアセット種別（1 行で取れる高信頼シグナル）もタグへ合流する。
-            if let localId = ref.localIdentifier {
-                info.tags = Self.mergeTags(info.tags, adding: Self.assetKindTags(localIdentifier: localId))
-            }
-            out[refKey] = info
+            return PhotoSenseInfo()
         }
-        return out
     }
 
     /// Vision 一括パス（1 回の perform で全リクエストを実行）。
@@ -116,6 +114,11 @@ public struct VisionTagAdapter: TagPerceptionProvider {
     static func assetKindTags(localIdentifier: String) -> [String] {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier],
                                               options: nil).firstObject else { return [] }
+        return assetKindTags(from: asset)
+    }
+
+    /// フェッチ済み PHAsset から種別タグ（senseInfo が画像取得で使った asset を再利用＝再フェッチ削減）。
+    static func assetKindTags(from asset: PHAsset) -> [String] {
         var tags: [String] = []
         let sub = asset.mediaSubtypes
         if sub.contains(.photoScreenshot) { tags.append("screenshot") }

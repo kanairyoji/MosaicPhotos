@@ -31,27 +31,19 @@ public struct CLIPEmbeddingProvider: PhotoPerceptionProvider {
         var byKey: [String: PhotoPerception] = [:]
         var noImage = 0, embedded = 0
 
-        // 1) 画像ロード（P2: CLIP 入力は 224px なので 256px で十分＝取得/変換/メモリが約 1/4）。
+        // 1) 画像ロード（候補A: ミニバッチ内を並列ロード＝直列ボトルネック解消）。
+        //    CLIP 入力は 224px なので 256px で十分（P2: 取得/変換/メモリが約 1/4）。
+        let loaded = await loadRefImages(refKeys, maxPixel: 256, cloudImage: cloudImage)
         var images: [CGImage] = []
         var imageKeys: [String] = []
         for refKey in refKeys {
-            await Task.yield()   // UI 操作中は協調的に後回し
-            guard let ref = PhotoRef.decode(refKey) else { continue }
-            let cg: CGImage?
-            if let localId = ref.localIdentifier {
-                cg = await loadLocalCGImage(localId, maxPixel: 256)
-            } else if let path = ref.cloudPath {
-                cg = await cloudImage(path)
+            if let cg = loaded[refKey] {
+                images.append(cg)
+                imageKeys.append(refKey)
             } else {
-                cg = nil
-            }
-            guard let cg else {
                 noImage += 1
                 byKey[refKey] = PhotoPerception()   // 取得不可でも「処理済み」にする
-                continue
             }
-            images.append(cg)
-            imageKeys.append(refKey)
         }
 
         // 2) バッチ推論（P1: 1 枚ずつより 2〜4 倍のスループット。失敗時は runtime 内で単発へ救済）。

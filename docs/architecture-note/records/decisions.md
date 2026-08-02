@@ -21,6 +21,35 @@
 
 ---
 
+## ADR-63 AI 学習パイプラインの高速化（並列ロード・顔埋め込みバッチ・タグ並列・適応スロットル）
+- 状態: 採用
+- 文脈: 夜間バックログ（タグ/CLIP 埋め込み/顔/キャプション）の消化を速くしたい。実コード精査で判明した
+  ボトルネック: (1) **画像ロードが逐次**（CLIP/タグ/顔の各知覚が `for refKey { await load }`＝ANE の
+  バッチ推論に対しロードが直列の律速）、(2) **顔埋め込みが非バッチ**（顔ごと×マルチクロップ3で単発推論・
+  CLIP はバッチ済みなのに facenet は1枚ずつ）、(3) タグの**画像間並列なし**＋`assetKindTags` の PHAsset
+  再フェッチ、(4) スロットルが固定（発熱時の緩和なし）。既に最適化済み: CLIP 8枚バッチ推論・Vision 1回
+  perform・タワー別遅延ロード・実行は電源＋アイドル＋ロック中のみ（ADR-25）。
+- 決定（候補A〜D）:
+  - **A: 画像ロードの並列化**。`loadRefImages`/`boundedConcurrentResults`（同時数制限つき TaskGroup）を
+    追加し、CLIP 知覚のミニバッチ内ロードを並列化（256px・同時4）。ロード律速を解消。
+  - **B: 顔埋め込みのバッチ化**。`FaceModelRuntime.embed([CGImage])`（`MLArrayBatchProvider`）を追加し、
+    `analyzeFaces` を「全顔の全クロップを平坦配列に集約→1回バッチ→顔ごとに平均」へ再構成。
+    **クロップ内容・平均・品質ゲートは不変＝精度は変えない**（速度だけ）。
+  - **C: タグの並列化＋再フェッチ削減**。`VisionTagAdapter.senseInfo` をロード＋Vision 一括パスの
+    並列（同時3）に。ローカルは PHAsset を**1回だけ**フェッチして画像取得と種別タグで共用。
+    `TagTagger` の「単位」を 4 枚ミニバッチに（内部並列なので譲り応答性はほぼ維持）。
+  - **D: 適応スロットル**。`BackgroundTrickle` のバッチ間スリープに**サーマル係数**（nominal 1x /
+    fair 1.5x / serious 3x / critical 8x）。ユーザー選択のプリセットより速くはせず（1x が上限）、
+    逼迫時のみ緩めて発熱/サーマルスロットリングを回避＝連続処理の実効速度を守る。全タガー共通。
+  - CLIP 埋め込み・顔検出の**入力サイズ/内容は不変**（知覚バージョンは据え置き＝再埋め込み不要）。
+- 結果: 各パスのロード律速が外れ、顔は単発推論の償却が効く見込み（実測は実機・PerfTrace の
+  `clip.embedMs`/`face.photoMs`/`tags.photoMs` で確認）。精度・保存内容は不変。トレードオフ: 並列ロードで
+  瞬間メモリが「同時数×入力px」ぶん増える（256px CLIP は軽微・同時数で有界）。タグの譲り粒度が 1→4 枚に
+  なるが内部並列で実時間は同等。**シミュレータでは CLIP/顔/VLM は元々スキップ**のため、効果検証は実機。
+- 関連: `AIImageLoading`(loadRefImages/boundedConcurrentResults)・`AIPerceptionAdapters`(perceive 並列化)・
+  `FaceModelRuntime.embed([...])`・`FacePerceptionAdapter.analyzeFaces`(3パス化)・`VisionTagAdapter.senseInfo`・
+  `TagTagger`(ミニバッチ)・`BackgroundTrickle`(thermalPauseMultiplier)。[[ADR-25]]（実行方針）。
+
 ## ADR-62 コードリファクタリング一式（PHAsset 画像ローダ統一・日付/Store 構築の集約・分割）
 - 状態: 採用
 - 文脈: 重複と分散が保守性・バグの温床になっていた。特に (a) PHAsset からの画像取得が 8 箇所以上で

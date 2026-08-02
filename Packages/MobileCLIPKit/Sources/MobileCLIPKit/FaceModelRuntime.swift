@@ -41,4 +41,28 @@ final class FaceModelRuntime: @unchecked Sendable {
     func embed(_ cgImage: CGImage) -> [Float]? {
         handle?.predictVector(from: cgImage)
     }
+
+    /// 候補B: 複数の顔クロップを**バッチ推論**する（CLIP の `encodeImages` と同型）。
+    /// 1 枚の写真の複数顔×マルチクロップ（アライメント/反転/bbox）をまとめて 1 回の ANE 呼び出しに
+    /// でき、顔ごと・クロップごとの単発推論の呼び出しオーバーヘッドを償却する（精度は不変）。
+    /// 返り値は入力と同じ並び（変換失敗・非有限は nil）。バッチ失敗時は 1 枚ずつへフォールバック。
+    func embed(_ images: [CGImage]) -> [[Float]?] {
+        guard !images.isEmpty else { return [] }
+        guard images.count > 1, let handle else { return images.map { embed($0) } }
+        var providers: [MLFeatureProvider] = []
+        var indexMap: [Int] = []
+        for (index, cg) in images.enumerated() {
+            guard let provider = handle.imageProvider(for: cg) else { continue }
+            providers.append(provider)
+            indexMap.append(index)
+        }
+        var results: [[Float]?] = Array(repeating: nil, count: images.count)
+        guard !providers.isEmpty else { return results }
+        if let out = try? handle.model.predictions(fromBatch: MLArrayBatchProvider(array: providers)) {
+            for i in 0..<out.count { results[indexMap[i]] = handle.vector(from: out.features(at: i)) }
+            return results
+        }
+        for (i, cg) in images.enumerated() { results[i] = embed(cg) }
+        return results
+    }
 }

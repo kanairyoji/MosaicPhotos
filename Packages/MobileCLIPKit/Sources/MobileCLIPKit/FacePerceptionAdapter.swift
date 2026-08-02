@@ -122,33 +122,52 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         var signal: DetectedFaceSignal?
     }
 
+    /// 1 枚分の顔解析（品質ゲート＋マルチクロップ埋め込み）。
+    /// 候補B: **全顔の全クロップ（アライメント/反転/bbox）を平坦配列に集めて 1 回でバッチ推論**する。
+    /// クロップ内容・平均は従来どおり＝精度不変。顔ごと・クロップごとの単発推論オーバーヘッドを償却する。
     private func analyzeFaces(in cg: CGImage, isCloud: Bool) -> (analyses: [FaceAnalysis], error: String?) {
         let (faces, error) = faceObservations(in: cg)   // 正規化(原点左下)の矩形＋品質＋向き＋属性
 
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
         // 小さすぎる顔は埋め込み精度が低いので除外（クラウドは低解像度サムネのため大きい顔のみ）。
         let minSide = FaceQualityGate.minFaceSide(isCloud: isCloud)
-        var out: [FaceAnalysis] = []
+
+        /// 顔ごとの中間状態（埋め込み前）。`cropRange` は flatCrops への索引範囲（nil＝棄却で埋め込み無し）。
+        struct Row {
+            var pixelSize: CGSize
+            var confidence: Float
+            var rawQuality: Float
+            var adjusted: Float
+            var blur: Float?
+            var luma: Float?
+            var yaw: Float?
+            var roll: Float?
+            var box: CGRect
+            var hasSmile: Bool?
+            var reason: String?
+            var cropRange: Range<Int>?
+        }
+        var rows: [Row] = []
+        var flatCrops: [CGImage] = []
+
+        // Pass 1: 品質ゲート・クロップ生成。埋め込み対象のクロップを平坦配列へ集める。
         for face in faces {
             let pixelBox = CGRect(x: face.box.origin.x * width, y: face.box.origin.y * height,
                                   width: face.box.width * width, height: face.box.height * height)
-            var reason: String?
-            var signal: DetectedFaceSignal?
-            var metrics: (blurVariance: Float, meanLuma: Float)?
-            var adjusted = face.quality
+            var row = Row(pixelSize: pixelBox.size, confidence: face.confidence,
+                          rawQuality: face.quality, adjusted: face.quality, blur: nil, luma: nil,
+                          yaw: face.yaw, roll: face.roll, box: face.box, hasSmile: face.hasSmile,
+                          reason: nil, cropRange: nil)
 
             if face.box.width < minSide || face.box.height < minSide {
-                reason = "size-ratio"
+                row.reason = "size-ratio"
             } else if pixelBox.width < FaceQualityGate.minFacePixels
                         || pixelBox.height < FaceQualityGate.minFacePixels {
-                // 比率を満たしても実ピクセルが小さすぎる顔は埋め込みが機能しない（二段構え）。
-                reason = "size-pixels"
+                row.reason = "size-pixels"
             } else if face.confidence < FaceQualityGate.minDetectionConfidence {
-                // ADR-53: 検出信頼度が低い「顔でない」誤検出（模様・ぼけた物体）を弾く。
-                reason = "low-confidence"
+                row.reason = "low-confidence"
             } else {
-                // ADR-51: 両目ランドマークがあればアライメント切り抜き（目線を水平・標準位置へ）。
-                // 計画不能（過大な傾き等）は従来の bbox 切り抜きへフォールバック。
+                // ADR-51: 両目ランドマークがあればアライメント切り抜き（無ければ bbox へフォールバック）。
                 let aligned: CGImage? = {
                     guard let l = face.eyeLeft, let r = face.eyeRight,
                           let plan = FaceAlignment.plan(leftEye: l, rightEye: r, pixelBox: pixelBox)
@@ -159,45 +178,58 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 let crop = aligned ?? bboxCrop
                 if let crop {
                     if !verifyFaceInCrop(crop) {
-                        // ADR-53: 顔中心のクロップ内で再検出できない＝顔でない（二段検出）。
-                        reason = "not-a-face"
+                        row.reason = "not-a-face"   // ADR-53: 二段検出
                     } else {
-                        // ADR-45/47/52: 実品質に顔向き・目閉じ・ぼけ・露出の減衰を適用。
-                        // フロア未満は未割当（記録のみ・重心を汚さない）。
-                        metrics = Self.faceMetrics(crop)
-                        adjusted = FaceQualityGate.adjustedQuality(
+                        let metrics = Self.faceMetrics(crop)
+                        row.blur = metrics?.blurVariance
+                        row.luma = metrics?.meanLuma
+                        row.adjusted = FaceQualityGate.adjustedQuality(
                             quality: face.quality, yaw: face.yaw, roll: face.roll,
                             eyesClosed: face.eyesClosed,
                             blurVariance: metrics?.blurVariance, meanLuma: metrics?.meanLuma)
-                        // マルチクロップ埋め込み（ADR-54）: 主クロップ＋水平反転＋（アライメント時は）
-                        // bbox 切り抜きの埋め込みを平均→再正規化。切り抜きのゆらぎ・左右非対称に
-                        // 対する安定性が上がる（推論 3 回は夜間のみ・facenet は軽量）。
+                        // マルチクロップ（ADR-54）: 主＋水平反転＋（アライメント時は）bbox。
                         var crops: [CGImage] = [crop]
                         if let flipped = Self.horizontallyFlipped(crop) { crops.append(flipped) }
                         if aligned != nil, let bboxCrop { crops.append(bboxCrop) }
-                        let vectors = crops.compactMap { FaceModelRuntime.shared.embed($0) }
-                        if let averaged = FaceClustering.averagedEmbedding(vectors) {
-                            signal = DetectedFaceSignal(
-                                boundingBox: face.box,
-                                embedding: ClipMath.encodeHalf(averaged),
-                                quality: adjusted,
-                                hasSmile: face.hasSmile)
-                        } else {
-                            reason = "embed-failed"
-                        }
+                        let start = flatCrops.count
+                        flatCrops.append(contentsOf: crops)
+                        row.cropRange = start..<flatCrops.count
                     }
                 } else {
-                    reason = "crop-failed"
+                    row.reason = "crop-failed"
+                }
+            }
+            rows.append(row)
+        }
+
+        // Pass 2: 全クロップを 1 回でバッチ推論（顔・クロップを跨いで償却）。
+        let vectors = FaceModelRuntime.shared.embed(flatCrops)
+
+        // Pass 3: 顔ごとに自分のクロップの埋め込みを平均→再正規化して signal を組む。
+        var out: [FaceAnalysis] = []
+        for row in rows {
+            var signal: DetectedFaceSignal?
+            var reason = row.reason
+            if let range = row.cropRange {
+                let v = range.compactMap { vectors[$0] }
+                if let averaged = FaceClustering.averagedEmbedding(v) {
+                    signal = DetectedFaceSignal(
+                        boundingBox: row.box,
+                        embedding: ClipMath.encodeHalf(averaged),
+                        quality: row.adjusted,
+                        hasSmile: row.hasSmile)
+                } else {
+                    reason = "embed-failed"
                 }
             }
             out.append(FaceAnalysis(
-                report: FaceGateReport(pixelSize: pixelBox.size,
-                                       confidence: face.confidence,
-                                       rawQuality: face.quality,
-                                       adjustedQuality: adjusted,
-                                       blurVariance: metrics?.blurVariance,
-                                       meanLuma: metrics?.meanLuma,
-                                       yaw: face.yaw, roll: face.roll,
+                report: FaceGateReport(pixelSize: row.pixelSize,
+                                       confidence: row.confidence,
+                                       rawQuality: row.rawQuality,
+                                       adjustedQuality: row.adjusted,
+                                       blurVariance: row.blur,
+                                       meanLuma: row.luma,
+                                       yaw: row.yaw, roll: row.roll,
                                        accepted: signal != nil,
                                        rejectReason: reason),
                 signal: signal))
