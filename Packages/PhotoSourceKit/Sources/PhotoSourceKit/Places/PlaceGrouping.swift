@@ -20,7 +20,7 @@ public struct PlaceCandidate: Sendable, Equatable {
 /// 市区町村名でまとめた候補から `PlaceAlbumInfo` を構築する純ロジック（テスト対象）。
 public enum PlaceGrouping {
     /// - Parameter byCity: 地名 → その地名の候補一覧。
-    /// - Returns: 代表日時の昇順（＝下が新しい）に並べた場所アルバム。
+    /// - Returns: **枚数の多い順**（同数なら代表日時＝最近の写真が新しい順）に並べた場所アルバム。
     public static func build(byCity: [String: [PlaceCandidate]]) -> [PlaceAlbumInfo] {
         byCity.compactMap { name, members -> PlaceAlbumInfo? in
             guard !members.isEmpty else { return nil }
@@ -39,6 +39,11 @@ public enum PlaceGrouping {
                 representativeDate: sorted.compactMap(\.date).max() ?? .distantPast
             )
         }
-        .sorted { $0.representativeDate < $1.representativeDate }
+        // 枚数の多い順。同数なら「最近の写真を含む方」（代表日時＝メンバー最大日時）が先。
+        .sorted { a, b in
+            a.photoCount != b.photoCount
+                ? a.photoCount > b.photoCount
+                : a.representativeDate > b.representativeDate
+        }
     }
 }
