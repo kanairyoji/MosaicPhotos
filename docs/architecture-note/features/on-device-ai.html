@@ -58,7 +58,7 @@ graph TD
         <tr><td>意味検索の埋め込み</td><td><strong>OpenCLIP ViT-B-32 / DataComp・INT8 量子化</strong>（ADR-31）</td><td>289→<strong>145MB</strong></td><td>Core ML ベンチで INT8 は精度不変（75.0→76.0%）。TinyCLIP-40M は −14pt で不採用</td></tr>
         <tr><td>シーンタグ</td><td>Vision 分類（OS 内蔵）</td><td>0MB</td><td>約1,300クラス・精度校正 API・追加コストなし＝価値/コスト比最良</td></tr>
         <tr><td>キャプション</td><td><strong>SmolVLM-500M</strong>・視覚のみ INT8（ADR-34）</td><td>877MB</td><td>256M より明確に高品質（看板の文字も読む）。<strong>Florence-2 は一度採用後、実機 ANE/GPU の fp16 で cross-attention が破綻し撤回</strong>（ADR-32）。FastVLM は apple-amlr（研究限定）で不採用。decoder-only＝ANE 安全が必須条件</td></tr>
-        <tr><td>顔（ピープル）</td><td>facenet InceptionResnetV1（VGGFace2・MIT）</td><td>45MB</td><td>512 次元 identity 埋め込み＋逐次クラスタリング</td></tr>
+        <tr><td>顔（ピープル）</td><td>facenet InceptionResnetV1（VGGFace2・MIT）</td><td>45MB</td><td>512 次元 identity 埋め込み＋逐次クラスタリング。精度・アルゴリズムは<strong>データセット計測で選定</strong>（FG-NET/LFW・<code>face-accuracy.md</code>）。同年代の識別は強く、弱点は年齢変化＝許諾ライセンスの上位モデルが無く据え置き（ArcFace 系は学習済み重みが非商用）</td></tr>
       </table>
       <div class="box note">
         <span class="box-h">量子化の非対称性（学び）</span>
@@ -87,16 +87,25 @@ graph TD
         <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → CLIP 埋め込み）</td></tr>
         <tr><td><code>TextEmbedder</code></td><td><code>MobileCLIPTextEmbedder</code></td></tr>
         <tr><td><code>TagPerceptionProvider</code></td><td><code>VisionTagAdapter</code>（シーンタグ＋VLM キャプション）</td></tr>
-        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み・端末 640px／クラウドはキャッシュ済みサムネ）</td></tr>
+        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み・端末 1024px／クラウドはキャッシュ済みサムネ）</td></tr>
         <tr><td><code>QueryTranslator</code></td><td><code>AppQueryTranslator</code>（Foundation Models）</td></tr>
         <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ・準備済みのときだけ合成＝初回ロードで UI を塞がない）</td></tr>
       </table>
 
       <h2>ピープル（顔クラスタ）</h2>
-      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出（<code>VNDetectFaceRectanglesRequest</code>）＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは <code>AutoAlbumCore/Faces</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード）。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 640px、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>で検出——低解像度ぶん大きく写った顔中心という割り切り。長押しメニューから改名・代表写真・顔の付け替え・<strong>同一人物の統合</strong>（ADR-29）。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/統合が即反映）。顔モデル未同梱ならセクション非表示。</p>
+      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは <code>AutoAlbumCore/Faces</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード・純ロジック各種）。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 1024px（旧 640px）、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>。長押しメニューから改名・代表写真・顔の付け替え・<strong>別の人物と束ねる</strong>。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/束ねが即反映）。顔モデル未同梱ならセクション非表示。</p>
+      <p><strong>精度は「候補→データセット計測→採否」の反復で作った</strong>（<code>FaceAccuracyEvalTests</code>／<code>FaceEvalMetrics</code>・台帳 <code>face-accuracy.md</code>・FG-NET/LFW）。効いた変更だけを採用し、直感に反して悪化した案（外れ値除去・年齢分類・自動細分割の 2 階層）は計測で棄却した。</p>
+      <ul>
+        <li><strong>不確かな顔を弾く多段ゲート</strong>（ADR-48/52/53）: 検出信頼度・クロップ再検証（二段検出）・ぼけ（ラプラシアン分散）・露出（平均輝度）・絶対 48px／正規化サイズ比・顔向き（yaw/roll）・目閉じで品質を減衰し、フロア 0.40 未満はクラスタに入れない。偽陽性は顔なし画像で <strong>0%</strong>。</li>
+        <li><strong>埋め込みの安定化</strong>（ADR-51/54）: 両目ランドマークで<strong>アライメント</strong>＋<strong>マルチクロップ平均</strong>＋EXIF 回転の正規化。</li>
+        <li><strong>クラスタリング</strong>（ADR-56〜58）: 既定しきい値 0.50（校正 0.35〜0.70）＋<strong>マージンゲート</strong>（1 位/2 位の差 &lt;0.05 の紛らわしい顔は入れない）＋<strong>サイズ適応マージン</strong>（小/新クラスタほど厳しく）＋同一写真 cannot-link＋共起 notSame。<strong>混入率は初期 58%→12%</strong>（FG-NET）。</li>
+        <li><strong>ユーザー修正から学習</strong>（ADR-45/46）: 品質重み・負例エグゼンプラ（埋め込みキーで再スキャン跨ぎ）・確認済み顔アンカー・しきい値校正。「同じ人物ですか？」<strong>レビュー</strong>で判断が割れるケースだけ尋ねる。パイプライン版を上げると全再スキャンし、<strong>命名は写真の重なりで持ち越す</strong>（ADR-51）。</li>
+        <li><strong>2 階層の人物束ね</strong>（ADR-61）: 成長で複数クラスタに分かれた子供を <strong>1 人物として束ねる</strong>（<code>personGroupID</code>・融合せず純度を保つ・後で解除可）。子供は撮影日（≒年齢）で時期グループ・大人は融合。「束ねる＝子供」なので年齢推定 API・VLM 判定は不要。表示・検索・名前・顔ハイライトは束ねを反映。純ロジックは <code>FacePersonGrouping</code>。子供の成長を跨ぐ識別が計測で +3.8pt、大人は融合維持で 99.1%。</li>
+        <li><strong>顔ハイライト</strong>: 人物アルバムの「顔を表示」トグルで、認識した顔（束ねた全時期）をサムネ／全画面に黄枠表示（<code>faceHighlightProvider</code>／<code>FaceBoxMapping</code>・PhotoSourceKit は AutoAlbumCore 非依存を維持）。</li>
+      </ul>
 
       <h2>表示タグ・説明文は検索と同じ台帳</h2>
-      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。VLM キャプションは「AI description」欄に表示（お気に入り＝生成対象で未生成なら「充電中に生成されます…」を表示）。顔の数・スクリーンショット判定・解析状態も同パネルに出す。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析・説明文の確認画面）で可視化する。</p>
+      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。シーンタグは <strong>1 回の Vision 一括パス</strong>で <strong>OCR（写真内テキスト）・動物種別・人数・美的スコア・アセット種別（スクショ/パノラマ/Live Photo 等）</strong>も同時取得し（ADR-47）、OCR は字句検索の一チャネル・美的スコアはカバー選択・種別はタグ検索に使う。フル画像の情報パネルには「写真内のテキスト」欄・<strong>利用カウンタ（閲覧/共有回数）</strong>も出る（ADR-49）。VLM キャプションは「AI description」欄に表示（お気に入り＝生成対象で未生成なら「充電中に生成されます…」を表示）。顔の数・スクリーンショット判定・解析状態も同パネルに出す。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析・説明文の確認画面）で可視化する。</p>
 
       <h2>背景処理のスロットリング</h2>
       <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。CLIP 埋め込みと VLM キャプションは<strong>インターリーブ</strong>（ADR-30・逐次だとキャプションが永遠に未着手になる実障害の修正）。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
