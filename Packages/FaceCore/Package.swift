@@ -2,32 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "AutoAlbumCore",
+    name: "FaceCore",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
-        .library(name: "AutoAlbumCore", targets: ["AutoAlbumCore"]),
+        .library(name: "FaceCore", targets: ["FaceCore"]),
     ],
     dependencies: [
-        .package(path: "../PhotoSourceKit"),
         .package(path: "../MosaicSupport"),
         .package(path: "../PerceptionCore"),
-        .package(path: "../FaceCore"),
     ],
     targets: [
         .target(
-            name: "AutoAlbumCore",
+            name: "FaceCore",
             dependencies: [
-                .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
                 .product(name: "MosaicSupport", package: "MosaicSupport"),
                 .product(name: "PerceptionCore", package: "PerceptionCore"),
-                .product(name: "FaceCore", package: "FaceCore"),
             ],
-            path: "Sources/AutoAlbumCore"
+            path: "Sources/FaceCore"
         ),
         .testTarget(
-            name: "AutoAlbumCoreTests",
-            dependencies: ["AutoAlbumCore"],
-            path: "Tests/AutoAlbumCoreTests"
+            name: "FaceCoreTests",
+            dependencies: ["FaceCore"],
+            path: "Tests/FaceCoreTests"
         ),
     ]
 )

@@ -1,3 +1,4 @@
+import FaceCore
 import Foundation
 
 /// 解釈（検索文 → QuerySpec・英訳）のライフサイクル。LLM 解釈＋翻訳＋防御的サニタイズ＋

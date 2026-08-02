@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// 2 階層の人物モデル（人物=複数クラスタの束）の帰属ロジック（ADR-61）。
 @Suite("FacePersonGrouping")

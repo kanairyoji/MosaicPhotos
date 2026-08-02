@@ -1,5 +1,5 @@
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 @Suite("FaceClustering")
 struct FaceClusteringTests {

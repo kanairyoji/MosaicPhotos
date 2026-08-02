@@ -2,7 +2,7 @@ import PerceptionCore
 import CoreGraphics
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// FaceStore の学習ループ（ADR-46）をインメモリ SwiftData で統合テストする:
 /// レビュー生成（A1/A2）→ 回答（統合/確認/分離）→ 制約付き再クラスタ（B2）。

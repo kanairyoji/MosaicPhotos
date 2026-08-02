@@ -2,7 +2,7 @@ import PerceptionCore
 import CoreGraphics
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// 顔認識フェーズ1（ADR-54）: clusterAll 衛生修正・マルチクロップ平均・
 /// 同一写真 cannot-link・共起 notSame・統合サジェスト帯域拡張。

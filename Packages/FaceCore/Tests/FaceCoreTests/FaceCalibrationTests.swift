@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// しきい値の自動校正（B1・ADR-46）の純ロジック。
 @Suite("FaceCalibration (threshold from corrections)")

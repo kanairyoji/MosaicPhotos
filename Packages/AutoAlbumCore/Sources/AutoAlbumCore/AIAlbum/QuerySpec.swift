@@ -1,3 +1,4 @@
+import FaceCore
 import Foundation
 
 /// 合成可能な検索条件（DNF: 節の OR・節内は AND・各条件は NOT 可）。

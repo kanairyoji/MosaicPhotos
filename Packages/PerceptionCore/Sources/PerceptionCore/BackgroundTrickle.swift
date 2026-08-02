@@ -8,10 +8,10 @@ import MosaicSupport
 /// バッチ一括で確認すると、ロック解除直後の操作までの譲りが単位所要 × バッチ件数ぶん遅れる。
 /// 「1 単位」は通常 1 枚。CLIP 埋め込みのみミニバッチ（≤8枚・ANE 償却で 2〜4 倍速）を単位とする。
 @MainActor
-enum BackgroundTrickle {
+public enum BackgroundTrickle {
 
     /// バッチ確定（保存・通知）後にループを続けるかどうか。
-    enum BatchOutcome {
+    public enum BatchOutcome {
         /// バッチ間スリープ（`betweenBatchNs`）を挟んで次バッチへ。
         case proceed
         /// スリープせず即終了（結果空＝推論に到達せずキャンセル、など）。
@@ -20,7 +20,7 @@ enum BackgroundTrickle {
 
     /// `shouldPause` が立っている間 0.3s ずつ眠って譲る（キャンセルで抜ける）。
     /// `pausePerfLabel` を渡すと譲り待ちの発生数を PerfTrace に数える（センサー用途）。
-    static func waitWhilePaused(_ shouldPause: @MainActor () -> Bool,
+    public static func waitWhilePaused(_ shouldPause: @MainActor () -> Bool,
                                 pausePerfLabel: String? = nil) async {
         while shouldPause() && !Task.isCancelled {
             if let pausePerfLabel { PerfTrace.count(pausePerfLabel) }
@@ -35,7 +35,7 @@ enum BackgroundTrickle {
     ///   （`unitPerfDivisor` で 1 枚あたりへ換算できる。既定 1）。
     /// - `commitBatch`: バッチ結果の保存・進捗/周期通知（save はバッチ 1 回、の置き場）。
     ///   キャンセルで途中までになった部分結果もそのまま渡す。`.stop` でスリープせず終了。
-    static func run<Unit, UnitResult>(
+    public static func run<Unit, UnitResult>(
         maxBatches: Int = .max,
         betweenBatchNs: UInt64,
         shouldPause: @MainActor () -> Bool,

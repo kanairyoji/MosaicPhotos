@@ -1,3 +1,4 @@
+import FaceCore
 import PerceptionCore
 import Foundation
 import MosaicSupport

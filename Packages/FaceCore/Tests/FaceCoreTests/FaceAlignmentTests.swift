@@ -2,7 +2,7 @@ import PerceptionCore
 import CoreGraphics
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// 顔アライメント計画（ADR-51）と版上げ時の名前持ち越し。
 @Suite("FaceAlignment + name carryover", .serialized)

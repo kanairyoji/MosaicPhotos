@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// 精度指標（B-Cubed / ペア一致 / TAR@FAR）の純ロジック検証。
 @Suite("FaceEvalMetrics")

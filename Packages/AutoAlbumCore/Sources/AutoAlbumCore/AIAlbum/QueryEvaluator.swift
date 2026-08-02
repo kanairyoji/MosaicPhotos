@@ -1,3 +1,4 @@
+import FaceCore
 import Foundation
 
 /// `QuerySpec` のハード条件（日付/場所/人物/ソース/フラグ/向き/位置）を `EnrichedPhoto` 配列へ

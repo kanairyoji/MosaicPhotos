@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// 評価用クラスタリングバリアント（ADR-57 系統1）の純ロジック検証。
 @Suite("FaceClusteringVariants")

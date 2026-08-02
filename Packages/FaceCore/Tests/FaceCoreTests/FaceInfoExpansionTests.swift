@@ -2,7 +2,7 @@ import PerceptionCore
 import CoreGraphics
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+@testable import FaceCore
 
 /// 顔情報の拡充（face-info-expansion）: 品質ゲート（横顔/傾き/目閉じ）・サイズ閾値・
 /// 品質フロア 0.40・笑顔による代表顔選択。
