@@ -21,6 +21,38 @@
 
 ---
 
+## ADR-65 重い画像処理を UI から隔離する（低優先レーン・QoS 付け直し・GPU 回避・UI 譲り）
+- 状態: 採用
+- 文脈: 「別プロセスに移して nice で優先度を下げる」を iOS でやりたい（不可）が、前景でたまに UI が
+  重くなる。AI 本体（CLIP/顔/VLM 埋め込み）は既に電源＋ロック中のみ（ADR-25）＝前景では走らないが、
+  **画像表示の機構**（サムネデコード・顔アバター生成・カバー生成・PHAsset 列挙・オンデマンド CLIP）が
+  各所で `.userInitiated`（UI 近傍の高 QoS）で走り、コアを UI と奪い合っていた（Task 優先度分布は
+  `.userInitiated` 26／`.utility` 29／`.background` 2）。サブシステムごとに個別リミッタはあるが、全体を
+  束ねる低優先レーンが無かった。
+- 決定（提案1〜5）:
+  - **1 低優先レーンに集約**: `MosaicSupport.HeavyImageLane`（actor で**同時数=コア数−2**に制限＋
+    body は呼び出し側コンテキストで実行）。急ぎでないバルク画像処理（顔アバター・カバー生成・先読み系）を
+    通す＝バーストで全コアを飽和させ UI/レンダーサーバを飢餓させない。
+  - **2 QoS 付け直し（nice 相当）**: ユーザーが今待っている画像だけ `.userInitiated`、非緊急は `.utility`/
+    `.background` へ。降格: 顔アバター生成/デコード・カバー生成・FaceStore 初期化・バックアップメタデータ
+    デコード（画面を開く操作＝`loadAssets` の 67k 列挙は据え置き）。
+  - **3 2レーン化（緊急 vs バルク）**: 可視セル・タップしたフル画像＝レーンを通さず直接・高 QoS。
+    バルク（一覧の顔アバター/カバー）＝ HeavyImageLane。Dropbox サムネは既存の2段バッチャが該当。
+  - **4 GPU 競合の回避**: 実機の Core ML を `.all`→**`.cpuAndNeuralEngine`**（ANE 主体・GPU 回避）。
+    GPU は UI 合成（Metal）と食い合うため、前景推論（検索の CLIP テキスト埋め込み）が UI 描画とコアを
+    奪わないようにする。同梱モデルは INT8/fp16 で ANE 向け＝速度低下は小さい見込み。
+  - **5 UI 中は譲る**: `BackgroundActivityMonitor` に nonisolated な **UI ビジー・スナップショット**
+    （写真表示・**スクロール中**・クラウド/フル取得中の OR）を追加。`HeavyImageLane.waitWhileUIBusy` が
+    これを見てバルク処理を一時停止・アイドルで再開。グリッドのスクロール状態を `isScrollingGrid` で報告。
+- 結果: バルク画像処理が「同時数制限＋低 QoS＋スクロール中は譲る」の1本のレーンに乗り、UI とのコア/
+  GPU 競合が構造的に減る（＝別プロセス低優先ワーカの近似）。可視セル・フル画像の即応性は据え置き。
+  効果の定量は実機 `MainThreadWatchdog`（>83ms ヒッチ）＋ `PerfTrace` で before/after 計測して確認する。
+  トレードオフ: (4) は夜間（ロック中）に GPU を使わない＝GPU 有利なモデルは僅かに遅くなり得る（前景の
+  滑らかさ優先・要実機確認）。
+- 関連: `HeavyImageLane`・`BackgroundActivityMonitor`(isUIBusySnapshot/isScrollingGrid)・`FaceAvatarImage`・
+  `HomeRows.loadLocalCover`・`PeopleEngine`(FaceStore init)・`DropboxPhotoStore+BackupMetadata`・
+  `CoreMLModelSupport.makeConfiguration`・`PhotoCollectionView`(スクロール報告)。[[ADR-25]]（実行方針）。
+
 ## ADR-64 UI/描画の向きテスト手法（四隅オラクル＋4層戦略）
 - 状態: 採用
 - 文脈: グリッドサムネ横倒し（ADR-62 系・真因＝小 targetSize で PHImageManager が向きの狂ったサムネを

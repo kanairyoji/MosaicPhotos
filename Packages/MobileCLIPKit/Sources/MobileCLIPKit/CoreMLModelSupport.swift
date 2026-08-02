@@ -17,6 +17,12 @@ enum CoreMLModelLoader {
         let config = MLModelConfiguration()
         #if targetEnvironment(simulator)
         config.computeUnits = .cpuOnly
+        #else
+        // 提案4: 実機は **ANE＋CPU（GPU 回避）** にする。GPU は UI 合成（Metal）と食い合うため、
+        //   前景で走る推論（検索の CLIP テキスト埋め込み等）が UI 描画とコアを奪い合うのを避ける。
+        //   同梱モデルは INT8/fp16 で ANE 向けに変換済み＝ANE 主体でも速度低下は小さい見込み。
+        //   （夜間の重い処理は電源＋ロック中のみ＝そこでは GPU 空きだが、前景の滑らかさを優先）。
+        config.computeUnits = .cpuAndNeuralEngine
         #endif
         return config
     }

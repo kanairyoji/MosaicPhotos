@@ -55,9 +55,13 @@ func photoCountText(_ count: Int) -> String {
 
 /// PHAsset.localIdentifier からカバーサムネイルを取得する（アルバム・場所・カード共通）。
 /// 実体は共通ローダ `PHAssetImageLoader`（確定版のみ・向き正規化・二重 resume 防止を内包）。
+/// カードカバーは一覧で大量に生成されるバルク処理なので、低優先レーン（同時数制限＋スクロール中は
+/// 譲る）を通す（提案1/3/5）。ユーザーが待つ主写真ではないので UI に譲って構わない。
 func loadLocalCover(_ localIdentifier: String?, pixelSize: CGFloat = 96) async -> UIImage? {
-    await PHAssetImageLoader.image(localIdentifier: localIdentifier, maxPixel: pixelSize,
-                                   contentMode: .aspectFill, quality: .full)
+    await HeavyImageLane.run {
+        await PHAssetImageLoader.image(localIdentifier: localIdentifier, maxPixel: pixelSize,
+                                       contentMode: .aspectFill, quality: .full)
+    }
 }
 
 /// クラウド path から Dropbox アイテムを組み立てる（表示名は lastPathComponent）。

@@ -48,7 +48,8 @@ public final class PeopleEngine {
         faceProvider: FacePerceptionProvider?,
         favoriteRefKeysProvider: (() async -> Set<String>)? = nil
     ) async -> PeopleEngine {
-        let store = await Task.detached(priority: .userInitiated) { FaceStore() }.value
+        // 起動背景の SwiftData 初期化（ユーザーが直接待つ処理ではない）＝ .utility へ（提案2）。
+        let store = await Task.detached(priority: .utility) { FaceStore() }.value
         return PeopleEngine(faceProvider: faceProvider,
                             favoriteRefKeysProvider: favoriteRefKeysProvider,
                             store: store)

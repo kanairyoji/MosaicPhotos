@@ -409,6 +409,9 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         func setUserScrolling(_ scrolling: Bool) {
             isUserScrolling = scrolling
             onScrubbingChange(scrolling)
+            // 提案5: 低優先レーン（HeavyImageLane）が参照する共通「UI ビジー」信号へも報告し、
+            // スクロール中は先読みデコード・顔アバター生成などのバルク処理を譲らせる。
+            BackgroundActivityMonitor.shared.isScrollingGrid = scrolling
             if !scrolling, let p = pendingUpdate {
                 pendingUpdate = nil
                 update(items: p.items, columns: p.columns,

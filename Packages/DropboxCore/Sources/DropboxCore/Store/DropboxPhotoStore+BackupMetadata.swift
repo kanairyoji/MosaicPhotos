@@ -105,7 +105,8 @@ extension DropboxPhotoStore {
         guard let argString = encodeDropboxAPIArg(MetaDownloadArg(path: path)),
               let data = try? await apiClient.contentDownload(
                   url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else { return nil }
-        let decoded = await Task.detached(priority: .userInitiated, operation: {
+        // バックアップメタデータの JSON デコードは UI が直接待つ処理ではない＝ .utility へ（提案2）。
+        let decoded = await Task.detached(priority: .utility, operation: {
             try? JSONDecoder().decode(T.self, from: data)
         }).value
         guard let decoded else { return nil }

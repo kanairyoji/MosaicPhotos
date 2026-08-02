@@ -1,5 +1,6 @@
 import CoreGraphics
 import CryptoKit
+import MosaicSupport
 import SwiftUI
 import UIKit
 
@@ -74,18 +75,24 @@ enum FaceAvatarCache {
         let k = keyString as NSString
         if let hit = cache.object(forKey: k) { return hit }
 
-        // ディスクヒット（読み込み・デコードはメイン外）
+        // ディスクヒット（読み込み・デコードはメイン外）。顔アバターはカルーセルで大量に生成される
+        // バルク処理なので、低優先レーン（同時数制限＋スクロール中は譲る）＋ .utility QoS で走らせる
+        // （提案1/2/5）。ユーザーが待つ主写真ではないので UI に譲って構わない。
         let url = fileURL(for: keyString)
-        let fromDisk = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-            guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else { return nil }
-            return img.preparingForDisplay() ?? img
+        let fromDisk = await Task.detached(priority: .utility) { () -> UIImage? in
+            await HeavyImageLane.run {
+                guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else { return nil }
+                return img.preparingForDisplay() ?? img
+            }
         }.value
         if let fromDisk {
             cache.setObject(fromDisk, forKey: k)
             return fromDisk
         }
 
-        guard let image = await loadFaceAvatar(coverRefKey: refKey, box: box, maxPixel: maxPixel) else { return nil }
+        guard let image = await HeavyImageLane.run(yieldToUI: true, {
+            await loadFaceAvatar(coverRefKey: refKey, box: box, maxPixel: maxPixel)
+        }) else { return nil }
         cache.setObject(image, forKey: k)
         Task.detached(priority: .utility) {
             if let data = image.jpegData(compressionQuality: 0.85) { try? data.write(to: url) }
