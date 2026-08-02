@@ -1,3 +1,4 @@
+import PerceptionCore
 import Foundation
 
 /// 戦略が生成するアルバムの下書き（永続化前の Sendable 値）。

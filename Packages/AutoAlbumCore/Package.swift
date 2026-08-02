@@ -10,6 +10,7 @@ let package = Package(
     dependencies: [
         .package(path: "../PhotoSourceKit"),
         .package(path: "../MosaicSupport"),
+        .package(path: "../PerceptionCore"),
     ],
     targets: [
         .target(
@@ -17,6 +18,7 @@ let package = Package(
             dependencies: [
                 .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
                 .product(name: "MosaicSupport", package: "MosaicSupport"),
+                .product(name: "PerceptionCore", package: "PerceptionCore"),
             ],
             path: "Sources/AutoAlbumCore"
         ),

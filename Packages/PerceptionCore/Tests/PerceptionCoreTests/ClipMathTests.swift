@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AutoAlbumCore
+import PerceptionCore
 
 @Suite("ClipMath")
 struct ClipMathTests {

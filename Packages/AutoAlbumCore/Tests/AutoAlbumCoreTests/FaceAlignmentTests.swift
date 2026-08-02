@@ -1,3 +1,4 @@
+import PerceptionCore
 import CoreGraphics
 import Foundation
 import Testing

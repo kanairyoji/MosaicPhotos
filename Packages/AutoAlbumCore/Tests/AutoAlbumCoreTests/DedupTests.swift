@@ -1,3 +1,4 @@
+import PerceptionCore
 import Foundation
 import Testing
 @testable import AutoAlbumCore

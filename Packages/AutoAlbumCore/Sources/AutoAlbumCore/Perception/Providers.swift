@@ -1,3 +1,4 @@
+import PerceptionCore
 import Foundation
 
 /// クラウド（Dropbox）写真1枚分の中立メタデータ。AutoAlbumCore を Dropbox 非依存に保つための値型。

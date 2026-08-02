@@ -1,3 +1,4 @@
+import PerceptionCore
 import CoreLocation
 import Foundation
 import MosaicSupport

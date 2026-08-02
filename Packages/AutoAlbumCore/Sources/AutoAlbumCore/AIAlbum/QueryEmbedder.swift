@@ -1,3 +1,4 @@
+import PerceptionCore
 import Foundation
 
 /// クエリ埋め込み（肯定フレーズの選定＋除外語ベクトルの生成）の**唯一の実装**。

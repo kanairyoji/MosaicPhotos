@@ -1,3 +1,4 @@
+import PerceptionCore
 import Foundation
 
 /// アルバム生成の入力となる「付加情報済みの1枚」。ローカル/クラウドを統一する Sendable 値型。
