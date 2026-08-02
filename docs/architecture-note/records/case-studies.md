@@ -28,6 +28,20 @@
 - 関連: `scripts/convert_florence*.py`/`build_florence.sh`/`bench_vlm.py`（参考として残置）・`VLMRuntime`（SmolVLM に復元）・`CoreMLModelSupport`（cpuOnly 分岐撤去）・`AutoAlbumEngine.captionModelVersion`(→5)。[[ADR-32]]・[[ADR-11]]（CLIP fp16 の教訓）。
 - 教訓: **Core ML の正しさは Mac だけでは検証しきれない**。Mac は全 compute unit で正しくても、実機 ANE/GPU の fp16 は encoder-decoder の cross-attention で Mac と乖離し得る（decoder-only では顕在化しない）。新モデル採用前に**実機での正しさ確認**（生成ID/有限性ログ）を段取りに入れる。今回は encoder=有限・mask=正常・fp32でも駄目、と 4 ラウンドの実機ログで切り分けた。
 
+## フォルダ名アルバムを開くとヘッダーは「325 photos」なのにグリッドが空
+- 症状: Dropbox のパス（フォルダ名）から作るアルバム（例「ヒロック」）を開くと、上部ヘッダーは「325 photos・期間」と出るのに、サムネイルグリッドが**真っ白（0 件）**。クラウド本体（Cloud ソース）は正常に表示される。
+- 原因: **保存済みフォルダアルバムのメンバー（クラウドパス）が現在の `dropboxStore.items` と 1 件も一致していなかった**。実データを SwiftData から直接確認して確定: アルバムのメンバーは `C-/写真/ヒロック/…jpeg`（325件）だが、現在の Dropbox キャッシュ（`ZCACHEDDROPBOXITEM`）は全て `/mosaicphotos/iphone-e7ec95/img_XXXX.jpg`＝**別 Dropbox アカウント時代のパス**が残存。`MergedPhotoStore.filteredCloudItems` は `filter.contains($0.path)` の完全一致なので交差が空→ `merged.rebuild: local=0 cloud=0 total=0`（診断ログで確認）。真因は「**フォルダアルバムは起動時に SwiftData から読むだけで再生成されない**」こと。`generate()`（起動時・版ゲート）は**エンリッチ台帳**からパスアルバムを作るが台帳にも旧アカウントのクラウドパスが残るため旧パスのまま。現在の一覧を出典にする `generateFast()`（=`generatePathAlbums`）は**セクションの更新ボタンでしか走らない**。結果、アカウント/フォルダ構成が変わると保存済みメンバーが現存パスとずれ、開いても 0 件になる。
+- 対処: `AutoAlbumEngine.loadOrGenerate` の遅延セクションで、`pathAlbumsEnabled` のとき `generatePathAlbums()`（現在の `cloudProvider.cloudPhotos()`＝`dropboxStore.items` を出典）を毎起動走らせて**自己修復**。存在しないパスのアルバムは消え、現存フォルダのアルバムは現行 `item.path` で作り直される（＝フィルタと必ず一致）。ログで検証: `pathAlbum.fast: metas=7396 → done albums=20`。パスは path_lower で一貫（`DropboxFileItem.path`＝`path_lower`、`CloudPhotoMeta.path`＝`item.path`、`PhotoRef` は前置詞のみで無損失）なので、同一出典で作れば一致は構造的に保証される。
+- 関連: `AutoAlbumEngine.loadOrGenerate`（自己修復追加）・`PathAlbumGenerator.generateFast`/`computeFromEnriched`・`MergedPhotoStore.filteredCloudItems`・`AutoAlbumInfo.cloudPaths`。
+- 残課題: 旧アカウントのクラウドエンリッチ/顔レコードが台帳に残る（別アカウントへ切替時の一括パージは未実装）。**ビジュアル検証はシミュレータのスクリーンショット＋SwiftData 直読み＋診断ログ**で行った（実機不要の切り分け）。
+
+## ピープルの代表顔が食べ物/桜など「顔でない領域」になる（誤検出・回転ではない）
+- 症状: ピープルのカルーセルで一部の人物（例 Person 3 / Person 29）の代表顔アバターが、**料理や桜など顔でない領域**を切り抜いている。ユーザー体感は「顔の切り取り位置が写真の縦横回転を考慮していない」。
+- 原因（切り分け）: 回転クロップのズレではなく**顔の誤検出**の可能性が高い。(1) 検出（`loadLocalCGImage`）もアバター（`requestAspectCGImage`→`loadFaceAvatar`）も**両方 `.highQualityFormat`＋`orientationNormalizedCGImage`（.up 正規化）を通る**ため、box とクロップの向きは一致する（＝回転ズレは起きにくい）。(2) SwiftData 直読みで Person 3（clusterID=2）の代表は自動選択（`coverFaceID` 未設定）で、クラスタ内の顔は**全て quality=1.0（＝品質信号が取れないときの既定値）**、box 座標（0.46,0.44,0.22×0.29）は写真中央の妥当な位置。**quality が一律 1.0＝Vision の品質/ランドマークが機能せず、食べ物・模様を「顔」と誤検出したもの**が品質ゲートを素通りして代表になったと推測（シミュレータの顔検出は device 校正前提のため信号を出せない＝実機と挙動が異なる）。
+- 対処: 未対応（本コミットでは記録のみ）。候補: (a) `faceScanVersion` を上げて実機で再スキャン（現行ゲート ADR-48/52/53 が誤検出を弾く・stale 一掃）、(b) 誤検出耐性のゲート強化。**シミュレータ計測ではなく実機データで判断すべき**（face-accuracy 台帳の方針）。
+- 関連: `PeopleSupport.loadFaceAvatar`/`requestAspectCGImage`・`FacePerceptionAdapter`（quality=1.0 の既定）・`FaceStore+People.bestCoverFace`・`FaceQualityGate`。[[ADR-48]]/[[ADR-52]]/[[ADR-53]]。
+- 残課題: グリッドサムネの一部が **90° 横倒し**で表示される別バグを併発（カバー＝`.highQualityFormat` は正立／グリッド＝`LocalPhotoStore` の `.opportunistic` 配信が一部アセットで向き未適用）。`resizeMode=.exact` の実験はサムネのディスクキャッシュが旧画像を返すため不確定＝キャッシュクリア＋perf 検証を伴う修正が必要（未対応）。
+
 ## Dropbox のサムネイルが 3 列グリッドでぼやける（w128h128 の約2倍引き伸ばし）
 - 症状: サムネイルビュー（3 列）で Dropbox 写真だけがぼんやりする。端末写真はくっきり。
 - 原因: Dropbox サムネの取得サイズが **w128h128** 固定なのに対し、3 列のセルは実描画 **約260px**（画面約130pt×スケール2・要求は320pxバケット）＝`scaleAspectFill` で**約2倍に引き伸ばし**。端末写真は PHImageManager が要求サイズどおり返すため差が出る。128px は 5 列以上の高密度表示を想定した値で、1〜4 列では不足。

@@ -26,6 +26,7 @@ extension HomeView {
             ) {
                 destination = .source(.all)
             }
+            .listRowInsets(Self.sourceRowInsets)
 
             SourceRow(
                 systemImage: "iphone",
@@ -35,6 +36,7 @@ extension HomeView {
             ) {
                 destination = .source(.local)
             }
+            .listRowInsets(Self.sourceRowInsets)
 
             SourceRow(
                 systemImage: cloudIcon,
@@ -44,9 +46,16 @@ extension HomeView {
             ) {
                 destination = .source(.cloud)
             }
+            .listRowInsets(Self.sourceRowInsets)
         } header: {
             Text("Sources")
         }
+    }
+
+    /// ソース 3 行の行インセット。`.insetGrouped` 既定（上下 ~11pt）は 3 行並ぶと間延びするため、
+    /// 上下を詰めて 1 かたまりに見せる。
+    private static var sourceRowInsets: EdgeInsets {
+        EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)
     }
 
     // MARK: Device albums section

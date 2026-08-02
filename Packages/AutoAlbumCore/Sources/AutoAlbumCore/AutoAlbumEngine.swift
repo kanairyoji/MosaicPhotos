@@ -253,6 +253,16 @@ public final class AutoAlbumEngine {
         // 起動時の AI アルバム再評価は行わない（保存済みメンバーをそのまま表示）。
         // 解釈は永続化済みで、追いつきはドリフト検知（refreshIfNeeded・アイドル時）と
         // 埋め込み進行の増分評価（refreshAIAlbumsThrottled）が担う。
+        // フォルダ名アルバムは現在の Dropbox 一覧から作り直して自己修復する。
+        // ⚠️ `generate()` はエンリッチ台帳（過去のアカウント/同期時点のクラウドパスが残り得る）から
+        //    パスアルバムを作るため、Dropbox のアカウントやフォルダ構成が変わると保存済みメンバーが
+        //    現在の `dropboxStore.items` と 1 件も一致せず、開いてもサムネイルが 0 件になる（実障害）。
+        //    `generatePathAlbums()`（=generateFast）は cloudProvider の現在の一覧を出典にするので、
+        //    存在しないパスのアルバムは消え、現存フォルダのアルバムは正しいパスで作り直される。
+        if UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.pathAlbumsEnabled) {
+            await generatePathAlbums()
+        }
+
         Self.log.info("loadOrGenerate: scheduling background tagging")
         scheduleBackgroundFill()
     }
