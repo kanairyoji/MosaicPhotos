@@ -119,10 +119,14 @@ extension LocalPhotoStore: PhotoStore {
                     var degradedShownNs: UInt64 = 0
                 }
                 let box = RequestBox()
+                // ⚠️ 小さい targetSize だと PHImageManager が一部写真で向きの狂った埋め込みサムネを返す
+                //    （縦横写真がグリッドで 90° 倒れる／フル画面＝大サイズは正立）。最低 640px で取得し、
+                //    表示・キャッシュはセルサイズへ縮小する（保存容量は不変・実測 640 で解消）。
+                let reqSize = PHAssetImageLoader.orientationSafeSize(targetSize)
                 let final: UIImage? = await withTaskCancellationHandler {
                     await withCheckedContinuation { (cont: CheckedContinuation<UIImage?, Never>) in
                         box.id = manager.requestImage(
-                            for: asset, targetSize: targetSize,
+                            for: asset, targetSize: reqSize,
                             contentMode: .aspectFill, options: options
                         ) { img, info in
                             guard !box.finished else { return }
@@ -158,9 +162,9 @@ extension LocalPhotoStore: PhotoStore {
                     }
                     markFirst()
                     PerfTrace.count("thumb.finalMs", value: PerfTrace.msSince(t0))
-                    // EXIF 回転を表示向きへ焼き込む（縦横写真がグリッドで 90° 倒れる実障害の対策）。
-                    // キャッシュにも正立版を保存する。
-                    let oriented = PHAssetImageLoader.normalizedUp(final)
+                    // 640px で取得した画像をセルサイズへ縮小＋向き .up 焼き込み（保存容量は不変）。
+                    let cellPixel = max(targetSize.width, targetSize.height)
+                    let oriented = PHAssetImageLoader.resizedUp(final, maxPixel: cellPixel)
                     continuation.yield(oriented)
                     Task.detached(priority: .utility) {
                         await ThumbnailCache.shared.set(oriented, for: key)
@@ -233,6 +237,9 @@ extension LocalPhotoStore: PhotoStore {
         // 先読み（startPrefetch）と同じインスタンス・同じ options を使うことでキャッシュにヒットさせる。
         let manager = imageManager
         let options = makeThumbnailOptions()
+        // 小さい要求だと一部写真で向きが狂うため 640px 下限で取得し、返す前にセルサイズへ縮小する。
+        let reqSize = PHAssetImageLoader.orientationSafeSize(targetSize)
+        let cellPixel = max(targetSize.width, targetSize.height)
 
         final class RequestBox: @unchecked Sendable {
             var id: PHImageRequestID = PHInvalidImageRequestID
@@ -244,7 +251,7 @@ extension LocalPhotoStore: PhotoStore {
             await withCheckedContinuation { continuation in
                 box.id = manager.requestImage(
                     for: asset,
-                    targetSize: targetSize,
+                    targetSize: reqSize,
                     contentMode: .aspectFill,
                     options: options
                 ) { img, info in
@@ -260,7 +267,9 @@ extension LocalPhotoStore: PhotoStore {
                     // img == nil の場合はエラーなので即座に nil を返す。
                     if !isDegraded || img == nil {
                         box.resumed = true
-                        continuation.resume(returning: img)
+                        continuation.resume(returning: img.map {
+                            PHAssetImageLoader.resizedUp($0, maxPixel: cellPixel)
+                        })
                     }
                 }
             }

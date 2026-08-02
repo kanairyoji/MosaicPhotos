@@ -38,11 +38,10 @@
   - **Store 構築**: `MergedPhotoStore.forMembers(localIDs:cloudPaths:dropboxStore:assetIndex:)` に集約（4 ビュー）。
   - **分割/削除**: 未使用 `LocalThumbnailView`/`LocalPhotoPageView` を削除。`DropboxPhotoStore` の
     バックアップメタデータ節を `+BackupMetadata.swift` へ抽出（`backupMetadata` を internal(set) に）。
-- 結果: 画像経路の向きが一元管理になり、キャッシュクリア後の検証で縦横写真の**一部が正立化**（向きラベルが
-  正しい写真）。ただし PHImageManager が `.up` ラベルで**生の回転ピクセル**を返す一部写真は未解決＝
-  グリッド横倒しの完全解消と顔クロップは EXIF 実値ベースの別対応が要（継続課題）。重複が大幅減り、
-  今後の画像取得は 1 経路に集約。トレードオフ: MosaicSupport が Photos/UIKit ユーティリティを持つ（既に
-  PowerStateMonitor で UIKit 使用の前例あり）。
+- 結果: 画像経路の向きが一元管理になり、重複が大幅減り、今後の画像取得は 1 経路に集約。**残っていた
+  グリッド横倒しは後続で真因（小さい targetSize）を特定し解決**（`orientationSafePixel`=640 下限で取得→
+  縮小・case-studies「グリッド…横倒し」項）。トレードオフ: MosaicSupport が Photos/UIKit ユーティリティを
+  持つ（既に PowerStateMonitor で UIKit 使用の前例あり）。
 - 関連: `PHAssetImageLoader`・`AlbumDates`・`MergedPhotoStore+Members`・`DropboxPhotoStore+BackupMetadata`／
   コミット 2d2c3d59・95be4abc・d258c009。回転の未解決分は case-studies「代表顔/グリッド回転」項に継続。
 

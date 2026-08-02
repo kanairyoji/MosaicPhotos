@@ -38,8 +38,10 @@ public final class LocalPhotoStore {
 
     /// スクロール先のサムネイルを PHCachingImageManager で先読みする。
     /// 直近 `maxCachingWindows` 窓のみ保持し、古い窓は stopCaching（同一 options で対応付け）。
-    func startPrefetch(assets: [PHAsset], targetSize: CGSize) {
+    func startPrefetch(assets: [PHAsset], targetSize rawTarget: CGSize) {
         guard !assets.isEmpty else { return }
+        // 実取得と同じ「向き安全サイズ」で先読みする（サイズ不一致だと先読みキャッシュに当たらない）。
+        let targetSize = PHAssetImageLoader.orientationSafeSize(rawTarget)
         let options = makeThumbnailOptions()
         imageManager.startCachingImages(for: assets, targetSize: targetSize,
                                         contentMode: .aspectFill, options: options)

@@ -32,6 +32,17 @@ public enum PHAssetImageLoader {
         return o
     }
 
+    /// 小さい targetSize だと PHImageManager が一部写真で**向きの狂った**埋め込みサムネを返すため、
+    /// 取得は最低この画素で行い、表示サイズへ縮小する（グリッド横倒し・顔クロップずれの対策・
+    /// 実測: 640 で解消／465 では発生）。UIKit 非依存なので macOS（Photos のみ）でも参照可。
+    public static let orientationSafePixel: CGFloat = 640
+
+    /// 取得サイズを orientationSafePixel 下限へ引き上げた正方 target（グリッドの直 requestImage 用）。
+    public static func orientationSafeSize(_ target: CGSize) -> CGSize {
+        CGSize(width: max(target.width, orientationSafePixel),
+               height: max(target.height, orientationSafePixel))
+    }
+
     #if canImport(UIKit)
     /// asset から**向き正規化済み**の UIImage をワンショット取得する。
     /// 劣化版（opportunistic の途中経過）コールバックは無視して確定版だけを返し、
@@ -56,23 +67,48 @@ public enum PHAssetImageLoader {
         }
     }
 
-    /// localIdentifier から取得（fetch 込み・正方 target）。
+    /// UIImage を長辺 maxPixel 以下へ縮小しつつ向きを .up に焼き込む（既に小さく .up ならそのまま）。
+    /// 大きめに取得した画像を表示/キャッシュサイズへ落とすのに使う（保存容量は増やさない）。
+    public static func resizedUp(_ image: UIImage, maxPixel: CGFloat) -> UIImage {
+        let longSide = max(image.size.width, image.size.height)
+        let needsResize = maxPixel > 0 && longSide > maxPixel
+        guard needsResize || image.imageOrientation != .up else { return image }
+        let scale = needsResize ? maxPixel / longSide : 1
+        let size = CGSize(width: max(1, (image.size.width * scale).rounded()),
+                          height: max(1, (image.size.height * scale).rounded()))
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// localIdentifier から取得（fetch 込み・正方 target）。`renderFloor` 下限で取得して maxPixel へ縮小
+    /// （向き安全化）。CLIP/顔検出など現状の入力を変えたくない経路は `renderFloor: 0` を渡す。
     public static func image(localIdentifier: String?, maxPixel: CGFloat,
                              contentMode: PHImageContentMode = .aspectFit,
-                             quality: Quality = .full, allowsNetwork: Bool = true) async -> UIImage? {
+                             quality: Quality = .full, allowsNetwork: Bool = true,
+                             renderFloor: CGFloat = orientationSafePixel) async -> UIImage? {
         guard let localIdentifier,
               let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject
         else { return nil }
-        return await image(for: asset, targetSize: CGSize(width: maxPixel, height: maxPixel),
-                           contentMode: contentMode, quality: quality, allowsNetwork: allowsNetwork)
+        let reqPixel = max(maxPixel, renderFloor)
+        let img = await image(for: asset, targetSize: CGSize(width: reqPixel, height: reqPixel),
+                              contentMode: contentMode, quality: quality, allowsNetwork: allowsNetwork)
+        guard let img else { return nil }
+        return reqPixel > maxPixel ? resizedUp(img, maxPixel: maxPixel) : img
     }
 
-    /// localIdentifier から**向き .up 正規化済み CGImage** を取得する（CLIP/顔などピクセル処理向け）。
+    /// localIdentifier から**向き .up 正規化済み CGImage** を取得する（表示のカバー/顔アバター向け）。
+    /// CLIP/顔検出は入力を変えないよう `renderFloor: 0` を渡す（呼び出し側で指定）。
     public static func cgImage(localIdentifier: String?, maxPixel: CGFloat,
                                contentMode: PHImageContentMode = .aspectFit,
-                               allowsNetwork: Bool = true) async -> CGImage? {
+                               allowsNetwork: Bool = true,
+                               renderFloor: CGFloat = orientationSafePixel) async -> CGImage? {
         await image(localIdentifier: localIdentifier, maxPixel: maxPixel,
-                    contentMode: contentMode, quality: .full, allowsNetwork: allowsNetwork)?.cgImage
+                    contentMode: contentMode, quality: .full, allowsNetwork: allowsNetwork,
+                    renderFloor: renderFloor)?.cgImage
     }
 
     /// UIImage の EXIF 回転を**表示向き（.up）に焼き込んだ** UIImage を返す。

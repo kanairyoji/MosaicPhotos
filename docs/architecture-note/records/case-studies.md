@@ -40,7 +40,15 @@
 - 原因（切り分け）: 回転クロップのズレではなく**顔の誤検出**の可能性が高い。(1) 検出（`loadLocalCGImage`）もアバター（`requestAspectCGImage`→`loadFaceAvatar`）も**両方 `.highQualityFormat`＋`orientationNormalizedCGImage`（.up 正規化）を通る**ため、box とクロップの向きは一致する（＝回転ズレは起きにくい）。(2) SwiftData 直読みで Person 3（clusterID=2）の代表は自動選択（`coverFaceID` 未設定）で、クラスタ内の顔は**全て quality=1.0（＝品質信号が取れないときの既定値）**、box 座標（0.46,0.44,0.22×0.29）は写真中央の妥当な位置。**quality が一律 1.0＝Vision の品質/ランドマークが機能せず、食べ物・模様を「顔」と誤検出したもの**が品質ゲートを素通りして代表になったと推測（シミュレータの顔検出は device 校正前提のため信号を出せない＝実機と挙動が異なる）。
 - 対処: 未対応（本コミットでは記録のみ）。候補: (a) `faceScanVersion` を上げて実機で再スキャン（現行ゲート ADR-48/52/53 が誤検出を弾く・stale 一掃）、(b) 誤検出耐性のゲート強化。**シミュレータ計測ではなく実機データで判断すべき**（face-accuracy 台帳の方針）。
 - 関連: `PeopleSupport.loadFaceAvatar`/`requestAspectCGImage`・`FacePerceptionAdapter`（quality=1.0 の既定）・`FaceStore+People.bestCoverFace`・`FaceQualityGate`。[[ADR-48]]/[[ADR-52]]/[[ADR-53]]。
-- 残課題: グリッドサムネの一部が **90° 横倒し**で表示される別バグを併発（カバー＝`.highQualityFormat` は正立／グリッド＝`LocalPhotoStore` の `.opportunistic` 配信が一部アセットで向き未適用）。`resizeMode=.exact` の実験はサムネのディスクキャッシュが旧画像を返すため不確定＝キャッシュクリア＋perf 検証を伴う修正が必要（未対応）。
+- 残課題: 併発していた「グリッドサムネ 90° 横倒し」は真因特定のうえ解決（下記の別項）。
+
+## グリッドのサムネで縦横写真が 90° 横倒し（真因＝小さい targetSize・PHImageManager の埋め込みサムネ）
+- 症状: 端末写真のグリッド（人物/場所/端末アルバム）で、一部の縦横写真が **90° 倒れて**表示される。同じ写真をフル画面で開くと**正立**。カバー（カルーセルの角丸）も概ね正立。顔アバターの切り抜きズレも同根と疑われた。
+- 切り分け（シミュレータ＋キャッシュ都度クリア＋スクショで A/B）: 以下を1つずつ変えても**横倒しのまま**＝いずれも無関係と確定 — `resizeMode`（.fast/.exact）、`deliveryMode`（.opportunistic/.highQualityFormat）、画像マネージャ（`PHCachingImageManager`/`PHImageManager.default()`）、`contentMode`（.aspectFill/.aspectFit）。**唯一効いたのは targetSize**：グリッドの約 465px 要求だと横倒し、**1024px 要求で全写真が正立**、続けて **640px でも全解消**（465 では発生）。
+- 原因: **PHImageManager は小さい targetSize 要求に対し、一部写真で「向きの狂った（EXIF 未適用の）埋め込み/OS サムネ」を返す**。大きい要求（≥640）だとフル画像から正しい向きでデコードするため正立になる。フル画面が正しかったのは大サイズ要求だったから。顔検出は 1024px 入力なので影響なし、顔**アバター**（200〜480px）は影響を受け得た。
+- 対処: 取得を **`orientationSafePixel`(=640) 下限**で行い、表示・キャッシュはセルサイズへ**縮小**する（`PHAssetImageLoader.orientationSafeSize` / `resizedUp`）。**キャッシュ保存サイズ・容量は不変**（縮小してから保存・キーもセルサイズ）。増えるのは未キャッシュ写真の初回デコードのみ（約1.9倍・以後キャッシュ）。先読み（`startCachingImages`）も同じ 640 下限に揃えてヒットを保つ。表示系（グリッド `thumbnailStages`/`requestThumbnail`・カバー `loadLocalCover`・顔アバター `requestAspectCGImage`・キャプション）に適用。**CLIP 埋め込み/顔検出は `renderFloor: 0` で従来の入力を維持**（知覚を変えない）。
+- 関連: `PHAssetImageLoader`（orientationSafePixel/orientationSafeSize/resizedUp/renderFloor）・`LocalPhotoStore`(startPrefetch)・`LocalPhotoStore+PhotoStore`(thumbnailStages/requestThumbnail)・`AILanguageAdapters.loadLocalCGImage`(renderFloor:0)。[[ADR-62]]（画像ローダ統一の続き）。検証: シミュレータのスクショで人物アルバム全写真の正立を確認。
+- 教訓: PHImageManager は**小さいサムネ要求で向きを落とすことがある**。向きが要る用途（グリッド・顔クロップ）は一定サイズ以上で取得して縮小する。deliveryMode/resizeMode/manager を疑う前に **targetSize を疑え**。
 
 ## Dropbox のサムネイルが 3 列グリッドでぼやける（w128h128 の約2倍引き伸ばし）
 - 症状: サムネイルビュー（3 列）で Dropbox 写真だけがぼんやりする。端末写真はくっきり。

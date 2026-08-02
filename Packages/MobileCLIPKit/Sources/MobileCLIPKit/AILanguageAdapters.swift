@@ -39,7 +39,9 @@ public struct AppQueryTranslator: QueryTranslator {
 /// PHAsset（localIdentifier）→ CGImage をメインスレッド外で読み込む共通ヘルパ（CLIP 埋め込み用）。
 /// 実体は `MosaicSupport.PHAssetImageLoader`（向き正規化・二重 resume 防止を内包）に委譲。
 nonisolated func loadLocalCGImage(_ localIdentifier: String, maxPixel: CGFloat = 512) async -> CGImage? {
-    await PHAssetImageLoader.cgImage(localIdentifier: localIdentifier, maxPixel: maxPixel, allowsNetwork: false)
+    // renderFloor: 0 で従来どおりの入力サイズを維持（CLIP 埋め込み・顔検出の入力を変えない）。
+    await PHAssetImageLoader.cgImage(localIdentifier: localIdentifier, maxPixel: maxPixel,
+                                     allowsNetwork: false, renderFloor: 0)
 }
 
 /// UIImage → 向きを **.up に正規化した** CGImage（互換名・実体は共通ローダへ委譲）。
