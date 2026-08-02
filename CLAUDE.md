@@ -24,7 +24,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 | オンデバイス AI | 多層構成（ADR-24）: **Vision 画像分類**（OS 内蔵・約1,300クラス・`hasMinimumRecall(forPrecision:)` の校正済み足切り）＋ **OpenCLIP ViT-B-32（DataComp・MIT・INT8量子化＝容量半減/精度ほぼ不変・ADR-31）**（Core ML・画像/テキスト埋め込み。ファイル名 `MobileCLIP*` は互換のため据え置き）＋ **SmolVLM-500M-Instruct（Apache-2.0・任意同梱・お気に入り写真限定）**（写真キャプション・`scripts/build_smolvlm.sh` で生成。**視覚エンコーダのみ INT8 量子化**＝出力ベクトルは量子化に強く cos≈0.999／言語デコーダは次単語 argmax が敏感で fp16 のまま。合計 877MB。重い文章生成なので**お気に入り（PHAsset favorite）のみに付与**＝ADR-34。※ 256M より高品質だがメモリ大／FastVLM は apple-amlr で不採用／Florence は ANE 破綻で撤回＝ADR-32）。クエリ解釈・翻訳・候補審査は Apple Foundation Models（`FoundationModels`）で、解釈は**作成時 1 回・永続化**（ADR-23）＋防御的サニタイズ＋決定的レキシコン。ロジックは `AutoAlbumCore`、各ランタイム/seam 実装は `MobileCLIPKit` に集約 |
 | 端末診断 | `MosaicSupport` の `Diagnostics`：未捕捉例外（`NSSetUncaughtExceptionHandler`）・メモリ圧迫（`DispatchSource`）・各ログを `Caches/diagnostics.log` に追記し、Developer Options で閲覧/共有（実機で Mac/Console なしに原因追跡） |
 | 最小 iOS | iOS 26.0（アプリターゲットの `IPHONEOS_DEPLOYMENT_TARGET`。各 SPM パッケージは `.iOS(.v17)` 宣言＋`@available` ゲートで macOS テストも維持） |
-| パッケージ管理 | Swift Package Manager（ローカルパッケージ 11 個。基盤: `MosaicSupport` / `PhotoSourceKit` / `ImageCacheKit`、ローカル写真: `LocalPhotoCore`(ロジック) / `LocalPhotoKit`(UI)、Dropbox: `DropboxCore`(ロジック) / `DropboxKit`(UI)、`BackupKit`、写真機能統合: `PhotosFeatureKit`、自動アルバム/AI: `AutoAlbumCore`、CLIP ランタイム/AI seam 実装: `MobileCLIPKit`） |
+| パッケージ管理 | Swift Package Manager（ローカルパッケージ 13 個。基盤: `MosaicSupport` / `PhotoSourceKit` / `ImageCacheKit` / **`PerceptionCore`**（ClipMath・PhotoRef・BackgroundTrickle・AnalysisActivity＝CLIP と顔の共通下層）、ローカル写真: `LocalPhotoCore`(ロジック) / `LocalPhotoKit`(UI)、Dropbox: `DropboxCore`(ロジック) / `DropboxKit`(UI)、`BackupKit`、写真機能統合: `PhotosFeatureKit`、**顔認識/ピープル: `FaceCore`**（依存 PerceptionCore・顔クラスタ一式）、自動アルバム/AI: `AutoAlbumCore`（`@_exported import` で PerceptionCore/FaceCore を再エクスポート＝consumer は import AutoAlbumCore のまま）、CLIP ランタイム/AI seam 実装: `MobileCLIPKit`） |
 
 ---
 
@@ -98,6 +98,7 @@ MosaicPhotos/                      ← メインアプリターゲット（合�
     DeveloperSettingsView.swift    Developer Options。各パッケージの Debug セクション（DropboxDebugSection 等）＋診断（メモリ/CLIP 同梱/ログ）を合成
     DiagnosticsLogView.swift       端末上の診断ログ（diagnostics.log）の閲覧・共有・クリア
     AppSettingsKeys.swift          アプリ層の @AppStorage キー集約
+  ※ 顔認識ロジックは Packages/FaceCore/（旧 AutoAlbumCore/Faces）へ分離・共通プリミティブは Packages/PerceptionCore/
   MobileCLIP/                      CLIP の Core ML モデル＋語彙（.gitignore 対象・scripts/build_mobileclip.sh で生成）
   FaceModel/                       顔認識モデル（.gitignore 対象・scripts/build_facenet.sh で生成）
   VLM/                             SmolVLM（キャプション・.gitignore 対象・scripts/build_smolvlm.sh で生成）
