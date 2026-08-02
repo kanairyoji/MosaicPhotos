@@ -176,84 +176,75 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
     }
 
-    /// 上部のオーバーレイ：左上に戻るボタン、中央にアクティビティバー直下の日付＋場所。
-    /// アクション（お気に入り/共有/顔）は下部バー（`bottomControls`）へ集約し、他画面と統一する。
+    /// 上部のオーバーレイ：中央にアクティビティバー直下の日付＋場所のみ。
+    /// 戻る／アクション（お気に入り/共有/顔）は下部バー（`bottomControls`）へ集約し、他画面と統一する。
     @ViewBuilder
     private var topControls: some View {
-        ZStack(alignment: .top) {
-            HStack {
-                Button { dismiss() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(.ultraThinMaterial, in: Circle())
+        if let item = currentItem, let label = topLabel(item) {
+            VStack(spacing: 2) {
+                Text(label)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                if let place = currentPlace, !place.isEmpty {
+                    Text(place)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
                 }
-                Spacer()
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 24)   // 日付チップと同じ高さ＝最上部のアクティビティバーの下に置く
-
-            if let item = currentItem, let label = topLabel(item) {
-                VStack(spacing: 2) {
-                    Text(label)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white)
-                    if let place = currentPlace, !place.isEmpty {
-                        Text(place)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .padding(.top, 24)   // 安全領域上端（=アクティビティバー）のすぐ下。バーと重ねない
-                .allowsHitTesting(false)
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.top, 24)   // 安全領域上端（=アクティビティバー）のすぐ下。バーと重ねない
+            .allowsHitTesting(false)
         }
     }
 
-    /// 下部の操作バー（グリッドと同じ位置＝画面下）。お気に入り・共有・顔ハイライト。
-    /// 暗い写真でも見えるよう、各ボタンはすりガラスの丸ボタンで統一する。
+    /// 下部の操作バー（グリッドと同じ位置・同じ不透明背景＝`.bar`）。左端に戻る、
+    /// 右側にお気に入り・共有・顔ハイライト。透過の丸ボタンだと写真に溶けて見えないため、
+    /// グリッド下部バーと同じ全幅の不透明バーに載せて視認性を確保する。
     @ViewBuilder
     private var bottomControls: some View {
-        HStack(spacing: 28) {
-            if currentItem?.supportsFavorite == true {
-                Button { toggleFavorite() } label: {
-                    barIcon(currentIsFavorite ? "heart.fill" : "heart",
-                            tint: currentIsFavorite ? Color.pink : .white)
-                }
-                .accessibilityLabel(L("Favorite"))
+        HStack {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .imageScale(.large)
+                    .accessibilityLabel(L("Back"))
             }
-            Button { prepareShare() } label: {
-                if isPreparingShare {
-                    ProgressView().tint(.white).frame(width: 40, height: 40)
-                        .background(.ultraThinMaterial, in: Circle())
-                } else {
-                    barIcon("square.and.arrow.up", tint: .white)
-                }
-            }
-            .disabled(isPreparingShare)
-            .accessibilityLabel(L("Share"))
-            if faceHighlightProvider != nil {
-                Button { showFaceHighlights.toggle() } label: {
-                    barIcon(showFaceHighlights ? "face.smiling.inverse" : "face.smiling",
-                            tint: showFaceHighlights ? Color.yellow : .white)
-                }
-                .accessibilityLabel(L("Show recognized face"))
-            }
-        }
-        .padding(.bottom, 8)
-    }
+            .padding(.leading, 20)
 
-    private func barIcon(_ name: String, tint: Color) -> some View {
-        Image(systemName: name)
-            .font(.title3.weight(.semibold))
-            .foregroundStyle(tint)
-            .frame(width: 40, height: 40)
-            .background(.ultraThinMaterial, in: Circle())
+            Spacer()
+
+            HStack(spacing: 32) {
+                if currentItem?.supportsFavorite == true {
+                    Button { toggleFavorite() } label: {
+                        Image(systemName: currentIsFavorite ? "heart.fill" : "heart")
+                            .foregroundStyle(currentIsFavorite ? Color.pink : Color.primary)
+                    }
+                    .accessibilityLabel(L("Favorite"))
+                }
+                Button { prepareShare() } label: {
+                    if isPreparingShare {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .disabled(isPreparingShare)
+                .accessibilityLabel(L("Share"))
+                if faceHighlightProvider != nil {
+                    Button { showFaceHighlights.toggle() } label: {
+                        Image(systemName: showFaceHighlights ? "face.smiling.inverse" : "face.smiling")
+                            .foregroundStyle(showFaceHighlights ? Color.yellow : Color.primary)
+                    }
+                    .accessibilityLabel(L("Show recognized face"))
+                }
+            }
+            .imageScale(.large)
+            .padding(.trailing, 20)
+        }
+        .frame(height: 49)
+        .background(.bar)
     }
 
     /// 共有の準備: フル画像をロードして共有シートを開く（キャッシュ済みなら即時）。

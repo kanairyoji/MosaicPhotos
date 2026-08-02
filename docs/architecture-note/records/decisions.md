@@ -129,6 +129,17 @@
 - 保留（新機能・別判断）: イベント検出レシピとホリデー検出の加重和は「閾値の見直し」ではなく生成戦略の新設になるため今回は見送り。採用候補値を残す —— イベント: Wedding=3.5h/10人/シーン5枚(2種以上・wedding,bride,groom,bridesmaid)、Celebration=3h/4人/10枚(graduation,ceremony,wedding)、Concert=5分/2枚(concert,singer,deejay,microphone)、Hiking=1枚(hiking,mountain,canyon,waterfall,forest)、Beaching=2枚(beach,surfing,shore,sand,swimsuit)、NightOut=3h/2枚(nightclub,bar,cocktail,wine)、Museum=1h/12枚(illustrations,painting,museum)、Dinner=40分/2枚(restaurant,food)。ホリデー: 加重和=Scene 0.6＋Location 0.25＋Date 0.15・判定しきい値 0.8・シーン重要度 0.3/0.4/0.6/1.0。
 - 関連: `VisionTagAdapter.sense`（0.75/25・OCR 足切り）・`TagStore.currentVersion=3`・`CoverSelection.pickCoverRef(usage:)`・`AIAlbumService.usageCounts`（結線）・`PhotoSenseInfoTests`。ADR-47/48/49 の続き。
 
+## ADR-50 UI 操作性の統一（操作は下部・メニューは「…＋長押し」・画面内メニュー）
+- 状態: 採用
+- 文脈: 操作導線がバラバラで迷いを生んでいた。(a) フル画面ビューは操作を**上部**に置く一方、ホーム/グリッドは**下部バー**、(b) ホームカードのサブメニューが AI アルバム＝「…」ボタン、人物＝長押し、と入口が不統一、(c) アルバムを開いた画面内から編集/削除に辿れない、(d) フル画面下部バーの操作アイコンを透過の丸ボタン（`.ultraThinMaterial`）にしたら**明るい写真に溶けて視認できない**、戻るが左上のまま。
+- 決定:
+  - **操作は下部に統一**: `PhotoPageView` のお気に入り/共有/顔ハイライトと**戻るボタン**を下部へ集約。下部バーはグリッド（`PhotoSourceContentView`）と同じ**全幅・不透明 `.bar` 背景（高さ49）**にして写真に溶けないようにする（丸ガラスボタンは廃止）。戻るは**左下**、アクションは右側。上部は日付＋地名ラベルのみ。
+  - **メニューは「…＋長押し」の両方**: ホームの自動アルバムカード（`AlbumCarousel`）に長押し `contextMenu` を追加、人物カード（`HomeRows.PersonCard`）に「…」ボタンを追加。アイコンは `ellipsis.circle(.fill)` に統一、破壊的操作は `role: .destructive`。
+  - **画面内メニュー seam**: `PhotoSourceContentView` に環境キー `sourceMenuContent`（`(@MainActor () -> AnyView)?`）＋右上ツールバー項目を追加（`PhotoSourceKit` は `AutoAlbumCore` 非依存のまま）。中身は呼び出し側が決める＝AI アルバム画面＝削除 `Menu`、人物アルバム画面＝既存 `peopleActions`（改名/代表/顔管理/束ね）を「…」→確認ダイアログで開く。
+  - 作業中に **ADR-49 の共有ボタンがコード未実装だった退行**を発見（README/ADR には記載）。`ActivityShareSheet`（UIActivityViewController ラッパー・completed 時のみ `photoUsageEvent(.share)`）として実装し直した。
+- 結果: 全画面で「操作は下」に統一、サブメニューは「…」でも長押しでも開け、アルバム画面内からも編集/削除できる。下部バーは不透明背景でどの写真でも視認可能。ビジュアル確認はシミュレータのスクリーンショット（UI テストで座標タップ→フル画面を撮影・確認後にテスト削除）で実施。
+- 関連: `PhotoPageView`（topControls/bottomControls・`.bar` 背景・戻る左下・ActivityShareSheet）・`PhotoSourceContentView`/`PhotoSourceEnvironment`（`sourceMenuContent`）・`AlbumCarousel`（contextMenu）・`HomeRows`（PersonCard の「…」）・`AutoAlbumPhotosView`（onDelete→Menu）・`PersonAlbumView`（menuTarget＋peopleActions）・`HomeView`（結線）。ADR-49 の続き。
+
 ## ADR-49 写真の利用カウンタ（閲覧・再生・共有）と共有機能
 - 状態: 採用
 - 文脈: 写真ごとの利用状況（見た/再生した/共有した回数）を持ちたい（お気に入りは PHAsset.favorite で既存）。共有機能自体が未実装だったため、共有カウントには共有ボタンの新設が前提になる。
