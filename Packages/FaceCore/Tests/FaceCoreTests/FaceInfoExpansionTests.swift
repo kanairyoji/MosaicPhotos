@@ -98,8 +98,11 @@ struct FaceInfoExpansionTests {
 
     // MARK: - 品質フロア 0.40（FaceStore 経由）
 
-    @Test("フロア未満（品質0.3）の顔はクラスタへ入らない（記録は残る）")
-    func floorKeepsLowQualityOut() async {
+    // ADR-66（recall 回復）: フロア未満の顔は重心には寄与しない（純度は不変）が、最寄り人物に近ければ
+    // 第2パスで membership だけ割り当てて表示する（「人が写っているのに People に出ない」を減らす）。
+    // 純度不変（sum/count/centroid 不変）は FaceClusteringTests.secondPassMembershipOnly で担保。
+    @Test("フロア未満（品質0.3）の顔は重心を汚さず membership だけ割り当てる（ADR-66）")
+    func floorKeepsLowQualityOutOfCentroidButAssignsMembership() async {
         let store = FaceStore(isStoredInMemoryOnly: true)
         func signal(_ v: [Float], quality: Float) -> DetectedFaceSignal {
             DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
@@ -108,12 +111,12 @@ struct FaceInfoExpansionTests {
         for i in 0..<3 {
             await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0], quality: 1)])
         }
-        // 同じ顔でも品質 0.3（< 0.40）は未割当＝クラスタの顔数が増えない。
+        // 同じ人物の低品質顔（0.3 < 0.40）: 重心には入らない（sum 不変）が、近い（cos=1.0）ので
+        // 第2パスで membership 割当＝アルバムに出る（count は 4 になる）。
         await store.recordScan(refKey: "L-blurry", faces: [signal([1, 0, 0], quality: 0.3)])
         let people = await store.peopleClusters(minFaces: 3)
         #expect(people.count == 1)
-        #expect(people.first?.count == 3)   // blurry は含まれない
-        // 記録自体は残る（顔数・枠表示用）。
+        #expect(people.first?.count == 4)   // ADR-66: blurry も表示メンバーに含まれる（recall 回復）
         #expect(await store.scannedCount() == 4)
     }
 

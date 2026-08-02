@@ -177,6 +177,32 @@ public struct FaceClustering {
         return id
     }
 
+    /// 第2パス割当のしきい値（membership のみ）。データセット計測（FG-NET/LFW）で決定:
+    /// 0.55 で FG-NET は捨てていた顔の 89% を回復（正解 88%）・LFW は 98% 回復（正解 98.5%）。
+    /// 重心を汚さないので既存クラスタの純度は不変。
+    public static let secondPassThreshold: Float = 0.55
+
+    /// フロア未満で未割当だった顔（横顔・ぶれ等・埋め込みはある）を、**重心を汚さず**最寄りクラスタへ
+    /// membership だけ割り当てる（recall 回復・ADR-66）。sum/count/centroid/prototype は変えず faceIDs にだけ
+    /// 加える＝クラスタの純度は不変。閾値未満・cannot-link（同一写真の占有）除外は未割当のまま。
+    /// 「人が写っているのに People に出ない」を減らす（品質フロアで捨てていた顔を最寄り人物に表示する）。
+    public mutating func assignMembershipOnly(faceID: String, embedding: [Float],
+                                              excludedClusterIDs: Set<Int> = [],
+                                              threshold: Float = secondPassThreshold) -> Int {
+        guard !clusters.isEmpty else { return FaceClustering.unassigned }
+        let v = FaceClustering.normalized(embedding)
+        let scored = clusters.indices
+            .map { (index: $0, sim: FaceClustering.similarity(v, to: clusters[$0])) }
+            .sorted { $0.sim > $1.sim }
+        for cand in scored {
+            guard cand.sim >= threshold else { break }
+            if excludedClusterIDs.contains(clusters[cand.index].id) { continue }   // 同一写真 cannot-link
+            clusters[cand.index].faceIDs.append(faceID)   // membership のみ（重心は不変）
+            return clusters[cand.index].id
+        }
+        return FaceClustering.unassigned
+    }
+
     /// オンラインの自動プロトタイプ維持: 合流した顔が既存代表のどれとも似ていなければ
     /// （多様性しきい値未満）新しい代表として保持する（成長・眼鏡・髪型の変化を代表群で覆う）。
     private mutating func maintainAutoPrototype(_ v: [Float], quality: Float, at index: Int) {

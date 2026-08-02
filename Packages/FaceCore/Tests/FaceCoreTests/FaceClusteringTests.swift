@@ -130,6 +130,50 @@ struct FaceClusteringTests {
         #expect(clustering.clusters.isEmpty)   // 新規クラスタも作らない
     }
 
+    // 第2パス（ADR-66・recall 回復）: フロア未満で捨てていた顔を、重心を汚さず最寄り人物へ membership 割当。
+    @Test("第2パス: フロア未満の顔を重心を汚さず最寄りへ割り当てる")
+    func secondPassMembershipOnly() {
+        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0.4)
+        let a: [Float] = [1, 0, 0]
+        clustering.assign(faceID: "a0", embedding: a, quality: 1.0)
+        clustering.assign(faceID: "a1", embedding: a, quality: 1.0)
+        let before = clustering.clusters[0]
+
+        // フロア未満（0.2）で主割当は未割当になる、a に近い顔（cos≈0.98 ≥ 0.55）。
+        let lowFace: [Float] = [0.98, 0.2, 0]
+        #expect(clustering.assign(faceID: "low", embedding: lowFace, quality: 0.2)
+                == FaceClustering.unassigned)
+
+        // 第2パス: 最寄りクラスタへ membership 割当。
+        let cid = clustering.assignMembershipOnly(faceID: "low", embedding: lowFace)
+        #expect(cid == before.id)
+        // 重心・sum・count は不変（純度を保つ）。faceIDs にだけ加わる。
+        #expect(clustering.clusters[0].sum == before.sum)
+        #expect(clustering.clusters[0].count == before.count)
+        #expect(clustering.clusters[0].centroid == before.centroid)
+        #expect(clustering.clusters[0].faceIDs.contains("low"))
+    }
+
+    @Test("第2パス: 閾値未満（別人）は割り当てない")
+    func secondPassRejectsFar() {
+        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0.4)
+        clustering.assign(faceID: "a0", embedding: [1, 0, 0], quality: 1.0)
+        // 直交（cos 0）＝閾値 0.55 未満。
+        #expect(clustering.assignMembershipOnly(faceID: "far", embedding: [0, 1, 0])
+                == FaceClustering.unassigned)
+    }
+
+    @Test("第2パス: 同一写真 cannot-link で除外クラスタには入れない")
+    func secondPassRespectsExclusion() {
+        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0.4)
+        clustering.assign(faceID: "a0", embedding: [1, 0, 0], quality: 1.0)
+        let cid0 = clustering.clusters[0].id
+        // 近い顔でも、そのクラスタを除外（同一写真で既に使用）していれば割り当てない。
+        #expect(clustering.assignMembershipOnly(faceID: "low", embedding: [0.98, 0.2, 0],
+                                                excludedClusterIDs: [cid0])
+                == FaceClustering.unassigned)
+    }
+
     /// 品質重み: 高品質の顔ほど重心を強く引く（低品質の外れ顔が重心を動かしにくい）。
     @Test("品質重みで重心が高品質側に寄る")
     func qualityWeightedCentroid() {

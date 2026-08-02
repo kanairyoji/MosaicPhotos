@@ -81,6 +81,21 @@ extension FaceStore {
             if cid >= 0 { usedByPhoto[f.refKey, default: []].insert(cid) }
         }
 
+        // 第2パス（ADR-66・recall 回復）: 品質フロア未満で捨てていた顔（横顔・ぶれ・小さめ等・埋め込みは
+        // ある）を、**重心を汚さず**最寄り人物へ membership だけ割り当てる。純度は不変（sum/count 不変）。
+        // 「人が写っているのに People に出ない」を減らす。データセット計測で閾値 0.55 を採用。
+        for f in pending where (newAssignment[f.faceID] ?? FaceClustering.unassigned) < 0
+            && Float(f.quality) < Self.qualityFloor {
+            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
+            let cid = clustering.assignMembershipOnly(
+                faceID: f.faceID, embedding: vec,
+                excludedClusterIDs: usedByPhoto[f.refKey] ?? [])
+            if cid >= 0 {
+                newAssignment[f.faceID] = cid
+                usedByPhoto[f.refKey, default: []].insert(cid)
+            }
+        }
+
         // 3) 書き戻し: 顔の clusterID（確認顔は種のまま）・種以外の旧クラスタ行は削除して再作成。
         var moved = 0
         for f in allFaces {

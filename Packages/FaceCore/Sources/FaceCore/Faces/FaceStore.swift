@@ -181,9 +181,15 @@ actor FaceStore {
                 guard let vec = ClipMath.decodeHalf(face.embedding) else { continue }
                 let faceID = "\(refKey)#\(i)"
                 // 品質重み＋負例つき割り当て（ADR-45）。フロア未満は -1（未割当・重心を汚さない）。
-                let cid = clustering.assign(faceID: faceID, embedding: vec,
+                var cid = clustering.assign(faceID: faceID, embedding: vec,
                                             quality: face.quality, negatives: negatives,
                                             excludedClusterIDs: usedClusters)
+                // 第2パス（ADR-66・recall 回復）: フロア未満で未割当なら、重心を汚さず最寄り人物へ
+                // membership だけ割り当てる（クラスタ形成前なら未割当のまま＝夜間 rebuild が拾う）。
+                if cid < 0 && face.quality < Self.qualityFloor {
+                    cid = clustering.assignMembershipOnly(faceID: faceID, embedding: vec,
+                                                          excludedClusterIDs: usedClusters)
+                }
                 if cid >= 0 { usedClusters.insert(cid) }
                 modelContext.insert(DetectedFace(
                     faceID: faceID, refKey: refKey,
