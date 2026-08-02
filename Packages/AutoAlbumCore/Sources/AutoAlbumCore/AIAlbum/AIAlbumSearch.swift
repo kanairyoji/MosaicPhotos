@@ -235,7 +235,7 @@ public struct AIAlbumSearcher {
     static func buildInfo(id: String, title: String, interpretedTitle: String, criteria: String,
                           members: [EnrichedPhoto], aesthetics: [String: Double] = [:],
                           usage: [String: PhotoUsageCounts] = [:]) -> AutoAlbumInfo {
-        let dates = members.compactMap(\.captureDate)
+        let (startDate, endDate) = AlbumDates.range(members.map(\.captureDate))
         let people = rankedByFrequency(members.flatMap(\.people))
         let located = members.filter(\.hasCoordinate)
         let lat = located.isEmpty ? nil : located.compactMap(\.latitude).reduce(0, +) / Double(located.count)
@@ -245,9 +245,10 @@ public struct AIAlbumSearcher {
         return AutoAlbumInfo(
             id: id, strategyID: AIAlbumStrategy.strategyID,
             title: resolved, placeName: resolved, places: [resolved], country: nil, people: people,
-            startDate: dates.min() ?? .distantPast, endDate: dates.max() ?? .distantPast,
+            startDate: startDate, endDate: endDate,
             coverRef: pickCoverRef(members, aesthetics: aesthetics, usage: usage),
             memberRefs: members.map(\.id), photoCount: members.count,
-            representativeDate: dates.max() ?? Date(), latitude: lat, longitude: lon, criteria: criteria)
+            representativeDate: endDate != .distantPast ? endDate : Date(),
+            latitude: lat, longitude: lon, criteria: criteria)
     }
 }

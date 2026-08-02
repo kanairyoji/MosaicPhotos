@@ -26,15 +26,10 @@ struct PersonAlbumView: View {
         self.person = person
         self.peopleEngine = peopleEngine
         self.assetIndex = assetIndex
-        // 索引（起動時構築）があれば辞書引きで即構築、無ければ従来のフェッチにフォールバック。
-        let memberIDs = localIdentifiers(from: person.memberRefKeys)
-        let localStore = assetIndex.assets(for: memberIDs).map { LocalPhotoStore(preloadedAssets: $0) }
-            ?? LocalPhotoStore(localIdentifiers: memberIDs)
-        _store = State(initialValue: MergedPhotoStore(
-            dropboxStore: dropboxStore,
-            localStore: localStore,
-            cloudPathFilter: Set(cloudPaths(from: person.memberRefKeys))
-        ))
+        _store = State(initialValue: .forMembers(
+            localIDs: localIdentifiers(from: person.memberRefKeys),
+            cloudPaths: cloudPaths(from: person.memberRefKeys),
+            dropboxStore: dropboxStore, assetIndex: assetIndex))
         title = person.displayName
     }
 

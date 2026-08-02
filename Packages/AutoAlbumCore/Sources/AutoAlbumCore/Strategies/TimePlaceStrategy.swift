@@ -96,9 +96,7 @@ public struct TimePlaceStrategy: AlbumStrategy {
         let members = run.filter { !$0.isScreenshot }   // スクショ除外
         guard members.count >= params.minTripPhotos else { return nil }
 
-        let dates = members.compactMap(\.captureDate)
-        let start = dates.min() ?? .distantPast
-        let end = dates.max() ?? .distantPast
+        let (start, end) = AlbumDates.range(members.map(\.captureDate))
 
         let places = rankedByFrequency(members.compactMap(\.placeName))
         let memberCountry = mostCommonCountry(members)

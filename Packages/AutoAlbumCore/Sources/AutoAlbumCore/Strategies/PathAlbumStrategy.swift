@@ -1,5 +1,4 @@
 import Foundation
-import MosaicSupport
 
 /// Dropbox のパス（フォルダ名）からアルバム名を推測してグルーピングする戦略。
 /// 正規表現ルールでパス → 名前を抽出し、同名の写真を1アルバムにまとめる。
@@ -64,10 +63,11 @@ public struct PathAlbumStrategy: Sendable {
         for key in order {
             guard let g = groups[key], g.members.count >= minPhotos else { continue }
             // 期間：フォルダ日付があればそれ（複数フォルダなら union）、無ければ撮影日から。
-            // カメラ既定の 1980 等（1990 未満）は無意味なので除外し、開始日が偽の 1980 にならないようにする。
-            let exif = g.members.compactMap { CaptureDate.meaningful($0.captureDate) }
-            let start = g.folderStarts.min() ?? exif.min() ?? .distantPast
-            let end = g.folderEnds.max() ?? exif.max() ?? .distantPast
+            // カメラ既定の 1980 等（1990 未満）は無意味なので除外（AlbumDates）。開始日が偽にならないよう
+            // フォルダ名由来の日付を優先し、無ければ有効な撮影日から。
+            let exif = AlbumDates.meaningfulSorted(g.members.map(\.captureDate))
+            let start = g.folderStarts.min() ?? exif.first ?? .distantPast
+            let end = g.folderEnds.max() ?? exif.last ?? .distantPast
             let located = g.members.filter(\.hasCoordinate)
             let lat = located.isEmpty ? nil : located.compactMap(\.latitude).reduce(0, +) / Double(located.count)
             let lon = located.isEmpty ? nil : located.compactMap(\.longitude).reduce(0, +) / Double(located.count)

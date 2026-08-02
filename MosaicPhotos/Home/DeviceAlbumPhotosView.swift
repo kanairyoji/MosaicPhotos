@@ -20,15 +20,10 @@ struct DeviceAlbumPhotosView: View {
 
     init(album: LocalAlbumInfo, dropboxStore: DropboxPhotoStore, backupEngine: BackupEngine,
          assetIndex: LocalAssetIndex) {
-        // 索引（起動時構築）があれば辞書引きで即構築、無ければ従来のフェッチにフォールバック。
-        let memberIDs = album.localIdentifiers
-        let localStore = assetIndex.assets(for: memberIDs).map { LocalPhotoStore(preloadedAssets: $0) }
-            ?? LocalPhotoStore(localIdentifiers: memberIDs)
-        let offloaded = backupEngine.offloadedPaths(inAlbum: album.name)
-        _store = State(initialValue: MergedPhotoStore(
-            dropboxStore: dropboxStore,
-            localStore: localStore,
-            cloudPathFilter: Set(offloaded)))
+        _store = State(initialValue: .forMembers(
+            localIDs: album.localIdentifiers,
+            cloudPaths: backupEngine.offloadedPaths(inAlbum: album.name),
+            dropboxStore: dropboxStore, assetIndex: assetIndex))
         title = album.name
     }
 

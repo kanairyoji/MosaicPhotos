@@ -13,14 +13,9 @@ struct PlacePhotosView: View {
     private let title: String
 
     init(place: PlaceAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex) {
-        // 索引（起動時構築）があれば辞書引きで即構築、無ければ従来のフェッチにフォールバック。
-        let localStore = assetIndex.assets(for: place.localIDs).map { LocalPhotoStore(preloadedAssets: $0) }
-            ?? LocalPhotoStore(localIdentifiers: place.localIDs)
-        _store = State(initialValue: MergedPhotoStore(
-            dropboxStore: dropboxStore,
-            localStore: localStore,
-            cloudPathFilter: Set(place.cloudPaths)
-        ))
+        _store = State(initialValue: .forMembers(
+            localIDs: place.localIDs, cloudPaths: place.cloudPaths,
+            dropboxStore: dropboxStore, assetIndex: assetIndex))
         title = place.placeName
     }
 
