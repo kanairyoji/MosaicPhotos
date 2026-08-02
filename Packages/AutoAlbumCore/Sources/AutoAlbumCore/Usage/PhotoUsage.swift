@@ -53,7 +53,7 @@ actor UsageStore {
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         }
-        return AutoAlbumStore.makeResilientContainer(name: "UsageV1", schema: schema) { Self.log.error($0) }
+        return resilientModelContainer(name: "UsageV1", schema: schema) { Self.log.error($0) }
     }
 
     init(isStoredInMemoryOnly: Bool = false) {

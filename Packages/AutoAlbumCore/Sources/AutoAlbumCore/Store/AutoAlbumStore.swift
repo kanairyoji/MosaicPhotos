@@ -20,19 +20,7 @@ actor AutoAlbumStore {
         }
         // "AutoAlbumV10" は破棄採番：CLIP 埋め込みを PhotoEnrichment から別テーブル PhotoEmbedding
         // （Float16）へ分離したスキーマ変更に伴う再構築。旧 V9 ストアは破棄され埋め込みは再生成される。
-        return makeResilientContainer(name: "AutoAlbumV10", schema: schema) { Self.log.error($0) }
-    }
-
-    /// 名前付き永続コンテナを作る。壊れた/非互換ストアで失敗したら **store ファイルを削除して作り直し**
-    /// （自己修復）、それでも駄目ならインメモリへ。SwiftData が trap せず必ず ModelContainer を返すことで、
-    /// 起動時に壊れたストアでクラッシュするのを防ぐ（データは失うが回復＝再構築される）。
-    /// 実体は MosaicSupport の共通ロジック。TagStore / FaceStore もこの窓口を共用する。
-    static func makeResilientContainer(name: String, schema: Schema, log: (String) -> Void) -> ModelContainer {
-        makeResilientModelContainer(
-            name: name, schema: schema,
-            openFailedMessage: "ModelContainer '\(name)' open failed; deleting store and rebuilding (data reset).",
-            memoryFallbackMessage: "ModelContainer '\(name)' still failing; using in-memory store.",
-            log: log)
+        return resilientModelContainer(name: "AutoAlbumV10", schema: schema) { Self.log.error($0) }
     }
 
     /// 既存呼び出し（`AutoAlbumStore()` / `AutoAlbumStore(isStoredInMemoryOnly:)`）を維持する委譲 init。

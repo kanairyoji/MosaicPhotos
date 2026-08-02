@@ -15,6 +15,17 @@ import SwiftData
 ///   - openFailedMessage: 初回オープン失敗（store 削除→再構築へ進む）時のログ文言。
 ///   - memoryFallbackMessage: 再構築も失敗（インメモリへ落とす）時のログ文言。
 ///   - log: 失敗を記録するログチャネル（呼び出し元の `LogChannel.error` 等を注入する）。
+/// 便利版: name からメッセージを自動生成する `makeResilientModelContainer`。
+/// 各パッケージの @ModelActor ストア（AutoAlbum/Tags/Faces/Usage）が別コンテナ生成に共用する。
+public func resilientModelContainer(name: String, schema: Schema,
+                                    log: @escaping (String) -> Void = { _ in }) -> ModelContainer {
+    makeResilientModelContainer(
+        name: name, schema: schema,
+        openFailedMessage: "ModelContainer '\(name)' open failed; deleting store and rebuilding (data reset).",
+        memoryFallbackMessage: "ModelContainer '\(name)' still failing; using in-memory store.",
+        log: log)
+}
+
 public func makeResilientModelContainer(
     name: String,
     schema: Schema,
