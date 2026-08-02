@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import Foundation
 import MosaicSupport
 
@@ -120,3 +121,4 @@ extension DropboxPhotoStore {
             .appendingPathComponent("DropboxKit/backup-metadata", isDirectory: true)
     }
 }
+#endif
