@@ -21,6 +21,32 @@
 
 ---
 
+## ADR-64 UI/描画の向きテスト手法（四隅オラクル＋4層戦略）
+- 状態: 採用
+- 文脈: グリッドサムネ横倒し（ADR-62 系・真因＝小 targetSize で PHImageManager が向きの狂ったサムネを
+  返す実行時挙動）は**純ロジックのユニットテストでは捕まらず**、UI/描画の実挙動を対象にするテストが
+  不足していた。再発防止の手法を整備する。
+- 決定: 共通の武器として**四隅オラクル**（四象限に赤/緑/青/黄を塗った非対称マーカー画像→向きを尊重して
+  レンダリングした四隅の色で向きの崩れを検出＝`OrientationOracle`）を作り、4 層で使う。
+  - **Layer 1 純描画ロジック**: `PHAssetImageLoader.normalizedUp`/`resizedUp`/`orientationSafeSize` を
+    オラクルで検証（.up 焼き込み・縮小しても見た目維持・小要求は 640 下限）。iOS Sim・高速・決定的。
+  - **Layer 2 seam でバグ本丸を再現**（★中核）: 向き安全サムネの契約を純関数 `orientationSafeThumbnail(
+    cellSize:fetch:)` に切り出し、`LocalPhotoStore.requestThumbnail` はこれ経由に（実フェッチ=rawThumbnail）。
+    テストは「**小要求だと向きの狂った画像を返す偽装フェッチャ**」を注入し、出力が正立になること＋
+    fetch が 640 下限で呼ばれることをアサート。**実機/写真ライブラリ無しでバグ級の退行を自動検出**できる。
+  - **Layer 3 実 PHImageManager 経路（フィクスチャ PHAsset・opt-in）**: 縦長マーカーを写真ライブラリへ
+    一時保存→`LocalPhotoStore.thumbnail` を小/大で呼び正立を確認→**必ず削除**。`RUN_PHOTO_FIXTURE_TESTS=1`
+    のときだけ実行（写真ライブラリ書き込みのため既定スキップ）。
+  - **Layer 4 XCUITest 視覚回帰**（opt-in）: 主要画面（ホーム/グリッド/フル写真/人物）へ遷移して名前付き
+    スクショを添付＝手動手順の formalize。`RUN_VISUAL_REGRESSION=1` のときだけ（個人写真が写り得るため
+    既定スキップ・添付はローカル限定）。将来 perceptual-hash でゴールデン比較すれば完全自動化。
+- 結果: Layer 1/2 は常時実行され、向き系の退行を CI で自動検出（Layer 2 は契約が小要求へ退行すると失敗）。
+  Layer 3/4 は opt-in の忠実度・視覚回帰。テスト自身の妥当性も担保（`testFakeModelsTheBug` で偽装が実際に
+  向きを崩すことを確認）。トレードオフ: 実行時挙動（PHImageManager の版差）そのものは seam の偽装で近似。
+- 関連: `MosaicPhotosTests/OrientationOracle`・`ImageOrientationTests`(L1/L2)・`PhotoFixtureOrientationTests`(L3)・
+  `MosaicPhotosUITests/VisualRegressionUITests`(L4)・`PHAssetImageLoader.orientationSafeThumbnail`・
+  `LocalPhotoStore.requestThumbnail`/`rawThumbnail`。ADR-62 の続き（横倒し修正の再発防止）。
+
 ## ADR-63 AI 学習パイプラインの高速化（並列ロード・顔埋め込みバッチ・タグ並列・適応スロットル）
 - 状態: 採用
 - 文脈: 夜間バックログ（タグ/CLIP 埋め込み/顔/キャプション）の消化を速くしたい。実コード精査で判明した

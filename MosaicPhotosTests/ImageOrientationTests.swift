@@ -14,55 +14,12 @@ import XCTest
 /// 並びが変わるので検出できる。
 final class ImageOrientationTests: XCTestCase {
 
-    // MARK: - オラクル（四隅の色）
-
-    private enum Corner: String { case red, green, blue, yellow, other }
-
-    /// 非対称マーカー画像（.up）。四象限に赤/緑/青/黄。
+    // 四隅オラクル（マーカー生成・四隅の色）は OrientationOracle に集約（Layer 1/2/3 共用）。
     private func markerImage(width: CGFloat, height: CGFloat) -> UIImage {
-        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
-        return UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: fmt).image { ctx in
-            let c = ctx.cgContext
-            let w = width / 2, h = height / 2
-            c.setFillColor(UIColor.red.cgColor);    c.fill(CGRect(x: 0, y: 0, width: w, height: h))      // 左上
-            c.setFillColor(UIColor.green.cgColor);  c.fill(CGRect(x: w, y: 0, width: w, height: h))      // 右上
-            c.setFillColor(UIColor.blue.cgColor);   c.fill(CGRect(x: 0, y: h, width: w, height: h))      // 左下
-            c.setFillColor(UIColor.yellow.cgColor); c.fill(CGRect(x: w, y: h, width: w, height: h))      // 右下
-        }
+        OrientationOracle.markerImage(width: width, height: height)
     }
-
-    /// 画像を**向きを尊重して**レンダリングし、四象限の中心色を返す（[左上,右上,左下,右下]）。
-    private func cornerColors(_ image: UIImage) -> [Corner] {
-        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
-        let cg = UIGraphicsImageRenderer(size: image.size, format: fmt).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: image.size))
-        }.cgImage!
-        let w = cg.width, h = cg.height
-        // 各象限の中心を読む。
-        let points = [(w / 4, h / 4), (3 * w / 4, h / 4), (w / 4, 3 * h / 4), (3 * w / 4, 3 * h / 4)]
-        return points.map { classify(pixel(cg, x: $0.0, y: $0.1)) }
-    }
-
-    /// CGImage の 1 画素 (x,y) の RGBA を読む。
-    private func pixel(_ cg: CGImage, x: Int, y: Int) -> (r: Int, g: Int, b: Int) {
-        var data = [UInt8](repeating: 0, count: 4)
-        let cs = CGColorSpaceCreateDeviceRGB()
-        let ctx = CGContext(data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.draw(cg, in: CGRect(x: -CGFloat(x), y: -CGFloat(cg.height - 1 - y),
-                                width: CGFloat(cg.width), height: CGFloat(cg.height)))
-        return (Int(data[0]), Int(data[1]), Int(data[2]))
-    }
-
-    private func classify(_ p: (r: Int, g: Int, b: Int)) -> Corner {
-        let hi = 140, lo = 110
-        switch (p.r, p.g, p.b) {
-        case let (r, g, b) where r > hi && g < lo && b < lo: return .red
-        case let (r, g, b) where g > hi && r < lo && b < lo: return .green
-        case let (r, g, b) where b > hi && r < lo && g < lo: return .blue
-        case let (r, g, b) where r > hi && g > hi && b < lo: return .yellow
-        default: return .other
-        }
+    private func cornerColors(_ image: UIImage) -> [OrientationOracle.Corner] {
+        OrientationOracle.cornerColors(image)
     }
 
     // MARK: - normalizedUp: 見た目を保ったまま .up へ焼き込む
@@ -101,6 +58,63 @@ final class ImageOrientationTests: XCTestCase {
         let out = PHAssetImageLoader.resizedUp(base, maxPixel: 640)
         // 小さく .up なら拡大しない（そのまま or 同寸）。
         XCTAssertLessThanOrEqual(max(out.size.width, out.size.height), 100)
+    }
+
+    // MARK: - Layer 2: seam で「小要求だと向きが崩れる fetch」を偽装しても出力が正立になる
+
+    /// 画像を 90° 回した**生ピクセル**を `.up` として返す（PHImageManager の「小要求で向きの狂った
+    /// サムネを返す」挙動を模す。imageOrientation は .up のまま中身だけ回っている＝再正規化では直らない）。
+    private func rotate90PixelsLabeledUp(_ img: UIImage) -> UIImage {
+        let size = CGSize(width: img.size.height, height: img.size.width)
+        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
+            let c = ctx.cgContext
+            c.translateBy(x: size.width, y: 0)
+            c.rotate(by: .pi / 2)
+            img.draw(in: CGRect(origin: .zero, size: img.size))
+        }
+    }
+
+    /// 偽装フェッチャ: 要求サイズが 640 未満なら向きの狂った画像を、640 以上なら正しい画像を返す。
+    /// = 今回のバグ（小 targetSize でだけ崩れる）をシミュレートする。要求サイズを記録する。
+    private final class FakeFetcher {
+        let upright: UIImage
+        let rotated: UIImage
+        var requestedSizes: [CGSize] = []
+        init(upright: UIImage, rotated: UIImage) { self.upright = upright; self.rotated = rotated }
+        func fetch(_ size: CGSize) -> UIImage? {
+            requestedSizes.append(size)
+            return max(size.width, size.height) < PHAssetImageLoader.orientationSafePixel ? rotated : upright
+        }
+    }
+
+    func testFakeModelsTheBug() {
+        // まず偽装が「小要求で向きを崩す」ことを保証（テスト自体の妥当性）。
+        let base = markerImage(width: 120, height: 80)
+        let rotated = rotate90PixelsLabeledUp(base)
+        XCTAssertNotEqual(cornerColors(rotated), cornerColors(base),
+                          "rotate90 が向きを崩していない＝この後の Layer2 テストが無意味になる")
+    }
+
+    func testOrientationSafeThumbnailStaysUprightDespiteSmallRequestBug() async throws {
+        let base = markerImage(width: 120, height: 80)
+        let fake = FakeFetcher(upright: base, rotated: rotate90PixelsLabeledUp(base))
+
+        // グリッドのセル相当（640 未満）を要求。契約は 640 下限へ引き上げるので、偽装は正しい画像を返す。
+        let cell = CGSize(width: 240, height: 240)
+        let out = await PHAssetImageLoader.orientationSafeThumbnail(cellSize: cell) { size in
+            fake.fetch(size)
+        }
+
+        let result = try XCTUnwrap(out)
+        // (1) fetch は 640 下限で呼ばれた（＝バグを踏まない要求サイズ）。
+        XCTAssertTrue(fake.requestedSizes.allSatisfy {
+            max($0.width, $0.height) >= PHAssetImageLoader.orientationSafePixel
+        }, "orientationSafeThumbnail が 640 未満で fetch している（横倒しバグを踏む）")
+        // (2) 出力は正立（四隅がマーカーどおり）。契約が小要求へ退行すれば偽装が崩れた画像を返し失敗する。
+        XCTAssertEqual(cornerColors(result), cornerColors(base), "出力が横倒し（契約が退行）")
+        // (3) 縮小されている（セルサイズ以下）。
+        XCTAssertLessThanOrEqual(max(result.size.width, result.size.height), 240)
     }
 
     // MARK: - orientationSafeSize: 小サイズ要求を 640 下限へ

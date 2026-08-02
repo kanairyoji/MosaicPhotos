@@ -67,6 +67,19 @@ public enum PHAssetImageLoader {
         }
     }
 
+    /// 向き安全サムネの**契約**（seam でテスト可能な純関数）。
+    /// (1) `cellSize` を orientationSafePixel 下限へ引き上げて `fetch` する（小要求で向きが崩れる
+    ///     PHImageManager の挙動を回避）、(2) 得た画像をセルサイズへ縮小＋向き .up 正規化する。
+    /// `fetch` は「要求サイズ → 画像」を注入する（本番は PHImageManager、テストは偽装フェッチャ）。
+    /// これにより「小要求だと向きの狂った画像を返す fetch」でも出力が正立になることを実機/写真ライブラリ
+    /// 無しで検証できる（Layer 2）。
+    public static func orientationSafeThumbnail(
+        cellSize: CGSize, fetch: (CGSize) async -> UIImage?
+    ) async -> UIImage? {
+        let raw = await fetch(orientationSafeSize(cellSize))
+        return raw.map { resizedUp($0, maxPixel: max(cellSize.width, cellSize.height)) }
+    }
+
     /// UIImage を長辺 maxPixel 以下へ縮小しつつ向きを .up に焼き込む（既に小さく .up ならそのまま）。
     /// 大きめに取得した画像を表示/キャッシュサイズへ落とすのに使う（保存容量は増やさない）。
     public static func resizedUp(_ image: UIImage, maxPixel: CGFloat) -> UIImage {

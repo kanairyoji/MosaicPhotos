@@ -234,12 +234,18 @@ extension LocalPhotoStore: PhotoStore {
     // MARK: - Private
 
     private func requestThumbnail(for asset: PHAsset, targetSize: CGSize) async -> UIImage? {
-        // 先読み（startPrefetch）と同じインスタンス・同じ options を使うことでキャッシュにヒットさせる。
+        // 向き安全サムネの契約（640 下限で取得→セルサイズへ縮小＋向き正規化）を共通関数に委譲する。
+        // 実フェッチは PHImageManager（下 rawThumbnail）。契約は seam でテスト可能（Layer 2）。
+        await PHAssetImageLoader.orientationSafeThumbnail(cellSize: targetSize) { [weak self] reqSize in
+            await self?.rawThumbnail(for: asset, targetSize: reqSize)
+        }
+    }
+
+    /// PHImageManager での素の取得（向き正規化・縮小は呼び出し側 = orientationSafeThumbnail が行う）。
+    /// 先読み（startPrefetch）と同じインスタンス・options を使うことでキャッシュにヒットさせる。
+    private func rawThumbnail(for asset: PHAsset, targetSize: CGSize) async -> UIImage? {
         let manager = imageManager
         let options = makeThumbnailOptions()
-        // 小さい要求だと一部写真で向きが狂うため 640px 下限で取得し、返す前にセルサイズへ縮小する。
-        let reqSize = PHAssetImageLoader.orientationSafeSize(targetSize)
-        let cellPixel = max(targetSize.width, targetSize.height)
 
         final class RequestBox: @unchecked Sendable {
             var id: PHImageRequestID = PHInvalidImageRequestID
@@ -251,7 +257,7 @@ extension LocalPhotoStore: PhotoStore {
             await withCheckedContinuation { continuation in
                 box.id = manager.requestImage(
                     for: asset,
-                    targetSize: reqSize,
+                    targetSize: targetSize,
                     contentMode: .aspectFill,
                     options: options
                 ) { img, info in
@@ -267,9 +273,7 @@ extension LocalPhotoStore: PhotoStore {
                     // img == nil の場合はエラーなので即座に nil を返す。
                     if !isDegraded || img == nil {
                         box.resumed = true
-                        continuation.resume(returning: img.map {
-                            PHAssetImageLoader.resizedUp($0, maxPixel: cellPixel)
-                        })
+                        continuation.resume(returning: img)
                     }
                 }
             }
