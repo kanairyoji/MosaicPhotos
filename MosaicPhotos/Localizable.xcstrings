@@ -770,6 +770,16 @@
         }
       }
     },
+    "Cloud Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウドアルバム"
+          }
+        }
+      }
+    },
     "Coarse (5 rows)": {
       "localizations": {
         "ja": {

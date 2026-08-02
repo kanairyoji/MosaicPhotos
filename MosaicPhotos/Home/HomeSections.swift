@@ -245,7 +245,8 @@ extension HomeView {
                 }
             } header: {
                 // フォルダ名アルバムだけの軽量再生成（地名解決なし・バックグラウンド）。
-                sectionHeader("Albums", isBusy: autoAlbumEngine.isGeneratingPath,
+            // 実体は Dropbox のパス（フォルダ名）から作るため「クラウドアルバム」と表示する。
+                sectionHeader("Cloud Albums", isBusy: autoAlbumEngine.isGeneratingPath,
                               onAction: { Task { await autoAlbumEngine.generatePathAlbums() } })
             }
         }

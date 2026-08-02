@@ -69,9 +69,8 @@ private struct AutoAlbumDetailHeader: View {
                 Text("\(album.placesLabel)\(album.country.map { ", \($0)" } ?? "")")
                     .font(.headline)
                     .lineLimit(1)
-                // 日付範囲＋滞在日数。
-                Label("\(DisplayDate.range(album.startDate, album.endDate)) · \(album.durationLabel)",
-                      systemImage: "calendar")
+                // 日付範囲＋滞在日数。取れない（カメラ既定の 1980 等・1990 未満）なら「日時不明」。
+                Label(dateLine, systemImage: "calendar")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -86,6 +85,16 @@ private struct AutoAlbumDetailHeader: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    /// 日付行。開始/終了が「意味のある日付」なら範囲＋滞在日数、取れなければ「日時不明」。
+    /// カメラ既定値の 1980 等（1990 未満）や欠落は `DisplayDate.meaningful` で無意味として弾く。
+    private var dateLine: String {
+        guard let start = DisplayDate.meaningful(album.startDate),
+              let end = DisplayDate.meaningful(album.endDate) else {
+            return L("Date unknown")
+        }
+        return "\(DisplayDate.range(start, end)) · \(album.durationLabel)"
     }
 
     private var peopleAndCountText: String {
