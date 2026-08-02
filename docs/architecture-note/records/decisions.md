@@ -21,6 +21,27 @@
 
 ---
 
+## ADR-68 地名の高精度化: オフライン先行＋Apple(CLGeocoder)で背景補正（トリップ）
+- 状態: 採用
+- 文脈: 時間と場所アルバムの地名がずれる。原因はオフライン都市 DB（`OfflinePlaceDB`・人口1.5万以上へ
+  **最寄りスナップ**）の粗さ（小さな町・郊外は最寄り大都市名に丸まる／区・町名 subLocality を出せない）。
+  一方、旧 `CLGeocoder`（オンライン）は**レート制限**と**失敗の恒久キャッシュ**で「Trip」固定になり撤去
+  された経緯がある。Apple の精度を、旧実装の失敗を避けて取り込みたい。
+- 決定: **ハイブリッド**。(1) 表示は従来どおり**オフラインで即時**（ネット不要）、(2) **背景（夜間・
+  電源＋Wi-Fi＋ロック中＝ADR-25 ゲート）**で `CLGeocoder.reverseGeocodeLocation(_:preferredLocale:)` により
+  高精度化。旧失敗を避ける核心:
+  - **成功だけキャッシュ上書き**（`PlaceComponents.refined=true`＋`subLocality` 追加）、**失敗はキャッシュ
+    しない**（次回リトライ＝「Trip 固定」の根絶）。
+  - **1 件/1.2s** のスロットル・対象は**トリップ代表座標に限定**（少数）＝レート制限に当たらない。
+  - 既に refined 済みグリッドセルはスキップ＝**収束後は無コスト**。`shouldContinue`（heavy ゲート）で中断。
+  - 高精度化で名前が変わったら trips を**作り直して**表示更新。`refined>0` のときだけ（通常は 1 回）。
+  - `PlaceComponents` の新フィールドは optional＝旧キャッシュ JSON はキー欠落で nil に decode され互換。
+- 結果: 正確な市区町村・区名になり、トリップは地点数が少ないのですぐ収束。オフラインは残るので圏外/未接続
+  でも動く（粗い名前→夜間に高精度化）。トレードオフ: 夜間に少量の通信（Wi-Fi 時のみ）。場所アルバム
+  （Places グリッド）は今回対象外＝トリップ（ユーザー指摘）に限定（必要なら同様に拡張可）。
+- 関連: `PlaceNameResolver.refineWithAppleGeocoder`・`PlaceComponents`(subLocality/refined)・
+  `AutoAlbumEngine.refreshIfNeeded/refinePlaceNames`。[[ADR-25]]（実行方針）。旧オフライン化の再検討。
+
 ## ADR-67 Dropbox 写真のお気に入り（アプリ側）＋解析の処理順をお気に入り優先に
 - 状態: 採用
 - 文脈: (1) お気に入りはローカル（`PHAsset.isFavorite`）専用で、Dropbox 写真にはハートも出せなかった

@@ -3,14 +3,29 @@ import Foundation
 import MosaicSupport
 
 /// 逆ジオコーディング結果の主要コンポーネント（永続キャッシュ用）。
+/// `subLocality`/`refined` は後付け（optional）＝旧キャッシュ JSON はキー欠落で nil に decode され互換。
 public struct PlaceComponents: Codable, Sendable, Equatable {
     public let locality: String?
+    /// 区・町名など（CLGeocoder のみ・オフライン都市 DB では取れない）。
+    public let subLocality: String?
     public let administrativeArea: String?
     public let country: String?
+    /// Apple（CLGeocoder）で高精度化済みか。オフラインの粗い結果（nil/false）は背景で上書き対象。
+    public let refined: Bool?
+
+    public init(locality: String?, subLocality: String? = nil,
+                administrativeArea: String?, country: String?, refined: Bool? = nil) {
+        self.locality = locality
+        self.subLocality = subLocality
+        self.administrativeArea = administrativeArea
+        self.country = country
+        self.refined = refined
+    }
 
     public var isEmpty: Bool {
-        locality == nil && administrativeArea == nil && country == nil
+        locality == nil && subLocality == nil && administrativeArea == nil && country == nil
     }
+    public var isRefined: Bool { refined == true }
 }
 
 /// 座標 → 地名（逆ジオコーディング）の解決器。**同梱の都市DB（`OfflinePlaceDB`）で完全オフライン**に
@@ -60,6 +75,49 @@ public actor PlaceNameResolver {
 
     /// キャッシュ済みの地点数（設定表示用）。
     public var cachedPlaceCount: Int { cache.count }
+
+    // MARK: - Apple（CLGeocoder）による背景高精度化
+
+    /// 座標群の地名を **Apple の逆ジオコーディング（CLGeocoder）で高精度化**する。
+    /// オフライン都市 DB は「最寄りの大都市へスナップ」で粗いため、区・町名（subLocality）や正確な
+    /// 市区町村を Apple から取り込む。旧実装の失敗（レート制限・失敗の恒久固着）を避けるため:
+    /// - **成功だけキャッシュを上書き**し（`refined=true`）、**失敗はキャッシュしない**（次回リトライ）。
+    /// - 1 件ずつ `minInterval` 間隔で（レート制限回避）。対象は代表座標（トリップ等・少数）に限定。
+    /// - 既に `refined` 済みのグリッドセルは飛ばす。`shouldContinue` が false で中断。
+    /// 戻り値＝新たに高精度化できた地点数。0 なら表示更新は不要。
+    public func refineWithAppleGeocoder(coordinates: [CLLocationCoordinate2D],
+                                        maxRequests: Int = 300,
+                                        minInterval: TimeInterval = 1.2,
+                                        shouldContinue: @Sendable () async -> Bool = { true }) async -> Int {
+        let ja = AppLocale.isJapanese
+        let locale = Locale(identifier: ja ? "ja_JP" : "en_US")
+        let geocoder = CLGeocoder()
+        var refinedCount = 0
+        var requests = 0
+        var seenKeys = Set<String>()
+        for coord in coordinates {
+            guard await shouldContinue(), requests < maxRequests else { break }
+            let key = (ja ? "ja:" : "en:") + GeoGridKey.key(coord)
+            if seenKeys.contains(key) { continue }       // 同一グリッドセルは 1 回だけ
+            seenKeys.insert(key)
+            if cache[key]?.isRefined == true { continue } // 既に Apple 解決済み
+
+            requests += 1
+            let placemarks = try? await geocoder.reverseGeocodeLocation(
+                CLLocation(latitude: coord.latitude, longitude: coord.longitude),
+                preferredLocale: locale)
+            if let p = placemarks?.first {
+                let comp = PlaceComponents(locality: p.locality, subLocality: p.subLocality,
+                                           administrativeArea: p.administrativeArea,
+                                           country: p.country, refined: true)
+                if !comp.isEmpty { cache[key] = comp; refinedCount += 1 }
+            }
+            // 失敗（ネット/レート制限/圏外）はキャッシュしない＝次回リトライ（旧「Trip 固定」を避ける）。
+            try? await Task.sleep(nanoseconds: UInt64(minInterval * 1_000_000_000))
+        }
+        if refinedCount > 0 { store.save(cache) }
+        return refinedCount
+    }
 
     // MARK: - Private
 
