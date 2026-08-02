@@ -10,7 +10,7 @@ import SwiftData
 /// 重心（sum/count）の演算は `FaceClustering` の純関数に寄せ、ここは fetch/persist に徹する。
 @ModelActor
 actor FaceStore {
-    private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Faces")
+    static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Faces")
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         // FaceCorrection は追加テーブル（ADR-45）＝加算的マイグレーション（既存の顔データは保持）。
@@ -38,23 +38,23 @@ actor FaceStore {
     /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
     /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
     /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。
-    private static let qualityFloor: Float = 0.40
+    static let qualityFloor: Float = 0.40
     /// 共起 notSame: 2 クラスタが同じ写真にこれ以上の回数一緒に写っていたら「別人」とみなし
     /// 統合サジェストを出さない（同一人物は 1 枚の写真に 1 回しか写れない・偶発の誤検出は許容）。
     static let coOccurrenceNotSame = 3
     /// 負例エグゼンプラの上限（コスト有界化・新しい順に保持）。
-    private static let maxNegatives = 400
+    static let maxNegatives = 400
 
     /// 逐次クラスタリング状態のインメモリキャッシュ。以前は写真1枚のスキャンごとに
     /// 全クラスタを fetch → Float16 復元しており、人物が増えるほど背景スキャンが遅くなる
     /// 構造だった（O(クラスタ数)/枚）。recordScan 間で再利用し、重心を変える操作
     /// （reassign/reset）で無効化する。
-    private var clusteringCache: FaceClustering?
+    var clusteringCache: FaceClustering?
     /// 負例エグゼンプラ（修正ジャーナル由来・ADR-45）のインメモリキャッシュ。
     /// clusteringCache と同じライフサイクルで再利用し、修正追加で無効化する。
-    private var negativesCache: [FaceClustering.NegativePair]?
+    var negativesCache: [FaceClustering.NegativePair]?
     /// 校正済みしきい値のキャッシュ（B1・ADR-46）。修正追加で無効化。
-    private var thresholdCache: Float?
+    var thresholdCache: Float?
 
     /// ユーザー修正から校正したしきい値（サンプル不足なら既定 0.45）。
     func calibratedThreshold() -> Float {
@@ -81,14 +81,14 @@ actor FaceStore {
 
     // MARK: - Fetch helpers（FetchDescriptor の反復をここに集約）
 
-    private func cluster(_ clusterID: Int) -> PersonCluster? {
+    func cluster(_ clusterID: Int) -> PersonCluster? {
         let cid = clusterID
         var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
         d.fetchLimit = 1
         return try? modelContext.fetch(d).first
     }
 
-    private func allClusters() -> [PersonCluster] {
+    func allClusters() -> [PersonCluster] {
         (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
     }
 
@@ -98,24 +98,24 @@ actor FaceStore {
         faces.max { coverScore($0) < coverScore($1) }
     }
 
-    private static func coverScore(_ f: DetectedFace) -> Double {
+    static func coverScore(_ f: DetectedFace) -> Double {
         f.quality + (f.hasSmile == true ? 0.3 : 0) + min(f.bw, 1.0) * 0.2
     }
 
-    private func face(byID faceID: String) -> DetectedFace? {
+    func face(byID faceID: String) -> DetectedFace? {
         let fid = faceID
         var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.faceID == fid })
         d.fetchLimit = 1
         return try? modelContext.fetch(d).first
     }
 
-    private func faces(inCluster clusterID: Int) -> [DetectedFace] {
+    func faces(inCluster clusterID: Int) -> [DetectedFace] {
         let cid = clusterID
         return (try? modelContext.fetch(
             FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
     }
 
-    private func faces(inPhoto refKey: String) -> [DetectedFace] {
+    func faces(inPhoto refKey: String) -> [DetectedFace] {
         let key = refKey
         return (try? modelContext.fetch(
             FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.refKey == key }))) ?? []
@@ -200,7 +200,7 @@ actor FaceStore {
 
     /// 永続化済みクラスタを `FaceClustering` に復元する（重心・件数・代表顔まで）。
     /// インメモリキャッシュがあればそれを使う（recordScan ごとの全復元を避ける）。
-    private func loadClustering() -> FaceClustering {
+    func loadClustering() -> FaceClustering {
         if let cached = clusteringCache { return cached }
         let anchors = anchorsByCluster()
         var seed: [FaceClustering.Cluster] = []
@@ -220,7 +220,7 @@ actor FaceStore {
 
     /// クラスタごとのアンカー（確認済みの顔の正規化済み埋め込み・新しい順に最大 5）。
     /// B3 マルチプロトタイプ: 割り当ては「重心 or アンカーとの最大類似」になる。
-    private func anchorsByCluster(limitPerCluster: Int = 5) -> [Int: [[Float]]] {
+    func anchorsByCluster(limitPerCluster: Int = 5) -> [Int: [[Float]]] {
         let confirmed = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
             predicate: #Predicate { $0.confirmedAt != nil },
             sortBy: [SortDescriptor(\.confirmedAt, order: .reverse)]))) ?? []
@@ -235,7 +235,7 @@ actor FaceStore {
 
     /// 修正ジャーナル（ADR-45）から負例エグゼンプラを復元する。埋め込みキーなので
     /// 再スキャン・モデル入れ替えを跨いで効く。新しい順に上限まで。
-    private func loadNegatives() -> [FaceClustering.NegativePair] {
+    func loadNegatives() -> [FaceClustering.NegativePair] {
         if let cached = negativesCache { return cached }
         var d = FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.wrongEmbedding != nil },
@@ -267,7 +267,7 @@ actor FaceStore {
     /// クラスタリング結果を `PersonCluster` テーブルへ書き戻す（sum/count のみ）。
     /// `coverFaceID` は**ユーザーが代表写真を選んだときだけ** `setCover` が書く。未設定（nil）の
     /// 代表は読み出し時（`peopleClusters`）に「お気に入り優先→先頭」で自動選択する。
-    private func persist(_ clustering: FaceClustering) {
+    func persist(_ clustering: FaceClustering) {
         for c in clustering.clusters {
             if let existing = cluster(c.id) {
                 existing.sum = ClipMath.encodeHalf(c.sum)
@@ -280,622 +280,4 @@ actor FaceStore {
         }
     }
 
-    // MARK: - 取り出し（表示用）
-
-    /// 「人物」とみなすクラスタ（メンバー数 `minFaces` 以上）を多い順に返す。
-    /// 代表写真（cover）の優先順位: ユーザーが選んだ顔（`coverFaceID`・現存するもの）
-    /// → **お気に入りマークの写真**の顔（`favoriteRefKeys`）→ 認識した写真の先頭。
-    func peopleClusters(minFaces: Int = 3, favoriteRefKeys: Set<String> = []) -> [PersonInfo] {
-        // 2 階層（ADR-61）: personGroupID が同じクラスタを 1 人物に束ねる（子供の時期クラスタ）。
-        // nil のクラスタは従来どおり単独（1 クラスタ=1 人物）＝全 nil なら旧挙動と一致。
-        var groups: [String: [PersonCluster]] = [:]
-        var order: [String] = []
-        for c in allClusters() {
-            let key = c.personGroupID.map { "g\($0)" } ?? "c\(c.clusterID)"
-            if groups[key] == nil { order.append(key) }
-            groups[key, default: []].append(c)
-        }
-        var result: [PersonInfo] = []
-        for key in order {
-            let clustersInGroup = groups[key]!
-            // 束ね内の全クラスタの顔を集約し、写真キーを重複排除。
-            var allFaces: [DetectedFace] = []
-            for c in clustersInGroup { allFaces += faces(inCluster: c.clusterID) }
-            var seen = Set<String>()
-            var members: [String] = []
-            for f in allFaces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
-            guard members.count >= minFaces else { continue }
-            // 主クラスタ: 名前つき優先 → メンバー最多。表示 ID・名前・代表はここが持つ。
-            let primary = clustersInGroup.first { $0.name?.isEmpty == false }
-                ?? clustersInGroup.max { $0.count < $1.count } ?? clustersInGroup[0]
-            let primaryFaces = faces(inCluster: primary.clusterID)
-            // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先（face-info-expansion 優先度 5）。
-            let cover = primary.coverFaceID.flatMap { fid in allFaces.first { $0.faceID == fid } }
-                ?? Self.bestCoverFace(allFaces.filter { favoriteRefKeys.contains($0.refKey) })
-                ?? Self.bestCoverFace(primaryFaces)
-                ?? Self.bestCoverFace(allFaces)
-            let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
-            result.append(PersonInfo(
-                clusterID: primary.clusterID, name: primary.name, count: members.count,
-                coverRefKey: cover?.refKey, coverBoundingBox: box, memberRefKeys: members,
-                isGrouped: clustersInGroup.count > 1))
-        }
-        return result.sorted { $0.count > $1.count }
-    }
-
-    // MARK: - 2 階層の人物束ね（ADR-61）
-
-    /// 複数クラスタを 1 人物に束ねる（**融合しない**＝各クラスタの純度を保ったまま personGroupID を
-    /// 揃える）。ユーザーが「同じ子（成長で分裂）」と指定したときに呼ぶ。既存の束ねグループも巻き込む
-    /// （推移的）。名前・代表は主クラスタが持つ（peopleClusters が解決）。
-    func linkClusters(_ clusterIDs: [Int]) {
-        let picked = clusterIDs.compactMap { cluster($0) }
-        guard picked.count >= 2 else { return }
-        let existingGroups = Set(picked.compactMap { $0.personGroupID })
-        let gid = existingGroups.min() ?? (picked.map(\.clusterID).min() ?? picked[0].clusterID)
-        var targets = Set(picked.map(\.clusterID))
-        // 既存グループの他メンバーも同じ gid に寄せる（複数回の束ねで分断しない）。
-        if !existingGroups.isEmpty {
-            for c in allClusters() where c.personGroupID.map(existingGroups.contains) == true {
-                targets.insert(c.clusterID)
-            }
-        }
-        for c in allClusters() where targets.contains(c.clusterID) { c.personGroupID = gid }
-        try? modelContext.save()
-        clusteringCache = nil
-    }
-
-    /// 束ねから 1 クラスタを外す（別人だった等）。personGroupID を nil に戻す。
-    func unlinkCluster(_ clusterID: Int) {
-        cluster(clusterID)?.personGroupID = nil
-        try? modelContext.save()
-        clusteringCache = nil
-    }
-
-    /// ある人物（主クラスタ ID で指定）に束ねられた全クラスタ ID（自分含む）。
-    func linkedClusterIDs(primary clusterID: Int) -> [Int] {
-        guard let c = cluster(clusterID) else { return [clusterID] }
-        guard let gid = c.personGroupID else { return [clusterID] }
-        return allClusters().filter { $0.personGroupID == gid }.map(\.clusterID)
-    }
-
-    /// この写真に写っている**指定クラスタの**顔矩形（Vision 正規化・原点左下）。
-    /// 人物アルバムで「どの顔をこの人物として認識したか」をチェックする用途なので、
-    /// 同じ写真の複数の顔が同一クラスタに入っていても（混入の疑い）、
-    /// **重心に最も近い 1 顔だけ**を返す（全部に枠が付くとどれがこの人物か
-    /// 分からず目的を果たせない＝実フィードバック）。
-    func faceBoxes(refKey: String, clusterID: Int) -> [CGRect] {
-        // 2 階層束ね（ADR-61）: 束ねた人物は全時期クラスタの顔をこの人物として扱う。
-        let groupIDs = Set(linkedClusterIDs(primary: clusterID))
-        let members = faces(inPhoto: refKey).filter { groupIDs.contains($0.clusterID) }
-        guard members.count > 1 else {
-            return members.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
-        }
-        // 束ねグループの重心（属するクラスタ重心の平均）に最も近い 1 顔を選ぶ。
-        var centroids: [[Float]] = []
-        for gid in groupIDs {
-            if let c = cluster(gid), let sum = ClipMath.decodeHalf(c.sum) {
-                centroids.append(FaceClustering.normalized(sum))
-            }
-        }
-        var best: (face: DetectedFace, sim: Float)?
-        for f in members {
-            guard let v = ClipMath.decodeHalf(f.embedding) else { continue }
-            let nv = FaceClustering.normalized(v)
-            let sim = centroids.map { FaceClustering.dot(nv, $0) }.max() ?? -1
-            if best == nil || sim > best!.sim { best = (f, sim) }
-        }
-        let chosen = best?.face ?? members[0]
-        return [CGRect(x: chosen.bx, y: chosen.by, width: chosen.bw, height: chosen.bh)]
-    }
-
-    /// クラスタの顔候補（写真ごとに 1 つ・代表写真ピッカー用）。
-    func facesForCluster(clusterID: Int) -> [PersonInfo.Face] {
-        var seen = Set<String>()
-        var out: [PersonInfo.Face] = []
-        for f in faces(inCluster: clusterID) where seen.insert(f.refKey).inserted {
-            out.append(PersonInfo.Face(
-                faceID: f.faceID, refKey: f.refKey,
-                boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh)))
-        }
-        return out
-    }
-
-    /// clusterID → その人物の表示名（2 階層束ねを反映＝サブクラスタも主クラスタの名前）。
-    /// 人物とみなす閾値 `minFaces` は**束ねグループの合計写真数**で判定する。未命名は "Person N"。
-    /// 検索・名前表示が束ねた人物を 1 人として扱うための共通解決（ADR-61）。
-    private func personNameByCluster(minFaces: Int) -> [Int: String] {
-        var groups: [String: [PersonCluster]] = [:]
-        for c in allClusters() {
-            let key = c.personGroupID.map { "g\($0)" } ?? "c\(c.clusterID)"
-            groups[key, default: []].append(c)
-        }
-        var out: [Int: String] = [:]
-        for (_, cs) in groups {
-            var seen = Set<String>()
-            for c in cs { for f in faces(inCluster: c.clusterID) { seen.insert(f.refKey) } }
-            guard seen.count >= minFaces else { continue }
-            let primary = cs.first { $0.name?.isEmpty == false }
-                ?? cs.max { $0.count < $1.count } ?? cs[0]
-            let name = primary.name ?? "Person \(primary.clusterID + 1)"
-            for c in cs { out[c.clusterID] = name }
-        }
-        return out
-    }
-
-    /// 全スキャン済み写真の refKey → 人物表示名（自動アルバム生成の people 付与用）。
-    /// 「人物」とみなせるクラスタ（minFaces 以上）のみ。未命名は "Person N"。2 階層束ね反映。
-    func peopleNamesByRefKey(minFaces: Int) -> [String: [String]] {
-        let nameByCluster = personNameByCluster(minFaces: minFaces)
-        guard !nameByCluster.isEmpty else { return [:] }
-        let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-        var out: [String: [String]] = [:]
-        for f in faces {
-            guard let name = nameByCluster[f.clusterID] else { continue }
-            if out[f.refKey]?.contains(name) != true {
-                out[f.refKey, default: []].append(name)
-            }
-        }
-        return out
-    }
-
-    /// この写真に写っている「人物」の表示名（フル画像ビューの People 表示用）。2 階層束ね反映
-    /// （束ねた人物は名前で重複排除＝サブクラスタが同じ写真に複数あっても 1 回）。
-    func peopleNames(refKey: String, minFaces: Int) -> [String] {
-        let nameByCluster = personNameByCluster(minFaces: minFaces)
-        var out: [String] = []
-        var seen = Set<String>()
-        for f in faces(inPhoto: refKey) {
-            guard let name = nameByCluster[f.clusterID], seen.insert(name).inserted else { continue }
-            out.append(name)
-        }
-        return out
-    }
-
-    /// 代表写真（cover）を指定した顔に設定する。
-    func setCover(clusterID: Int, faceID: String) {
-        guard let c = cluster(clusterID) else { return }
-        c.coverFaceID = faceID
-        try? modelContext.save()
-    }
-
-    // MARK: - 付け替え（「この人は別の人」）
-
-    /// 顔を別の人物へ付け替える。`toClusterID` が nil なら新規人物を作る。
-    /// 重心演算は `FaceClustering.adding/removing`（`assign` と同じ正規化規則）に委譲する。
-    func reassignFace(faceID: String, toClusterID: Int?) {
-        guard let face = face(byID: faceID),
-              let vec = ClipMath.decodeHalf(face.embedding) else { return }
-        let oldCID = face.clusterID
-        guard oldCID != toClusterID else { return }
-        let quality = Float(face.quality)
-
-        // ADR-45: 「この顔はこの人ではない」を負例として記録（付け替え元に**他の顔がいた**とき、
-        // ＝ 誤って一緒にされていたときだけ）。単独クラスタからの分離は誤りの信号ではないので除外。
-        if let oldCluster = cluster(oldCID), oldCluster.count >= 2,
-           let oldSum = ClipMath.decodeHalf(oldCluster.sum) {
-            let sim = FaceClustering.dot(FaceClustering.normalized(vec),
-                                         FaceClustering.normalized(oldSum))
-            recordCorrection(kind: "reassign", faceEmbedding: face.embedding,
-                             wrongEmbedding: ClipMath.encodeHalf(oldSum), similarity: sim)
-        }
-        // ADR-46: 付け替え先を**ユーザーが選んだ**＝「この顔はこの人」という確認。
-        // 正例として記録し、アンカー（マルチプロトタイプ）にする。
-        if let toClusterID, let target = cluster(toClusterID),
-           let targetSum = ClipMath.decodeHalf(target.sum) {
-            let sim = FaceClustering.dot(FaceClustering.normalized(vec),
-                                         FaceClustering.normalized(targetSum))
-            recordCorrection(kind: "confirm", faceEmbedding: face.embedding,
-                             wrongEmbedding: nil, similarity: sim)
-            face.confirmedAt = Date()
-        }
-
-        removeFromCluster(clusterID: oldCID, vec: vec, quality: quality, faceID: faceID)
-        let targetCID = toClusterID ?? nextClusterID()
-        addToCluster(clusterID: targetCID, vec: vec, quality: quality, faceID: faceID)
-        face.clusterID = targetCID
-        try? modelContext.save()
-        clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次回に再構築）
-    }
-
-    /// 「この写真はこの人？」に **はい**（A2・ADR-46）。顔を確認済み（アンカー）にし、
-    /// 正例（顔×所属クラスタ重心の類似）をしきい値校正の材料として記録する。
-    func confirmFace(faceID: String) {
-        guard let face = face(byID: faceID),
-              let vec = ClipMath.decodeHalf(face.embedding),
-              let c = cluster(face.clusterID),
-              let sum = ClipMath.decodeHalf(c.sum) else { return }
-        let sim = FaceClustering.dot(FaceClustering.normalized(vec),
-                                     FaceClustering.normalized(sum))
-        recordCorrection(kind: "confirm", faceEmbedding: face.embedding,
-                         wrongEmbedding: nil, similarity: sim)
-        face.confirmedAt = Date()
-        try? modelContext.save()
-    }
-
-    /// 「同じ人物？」に **いいえ**（A1・ADR-46）。2 クラスタを「別人」として記録する。
-    /// 以後この対は (1) 統合サジェストに出さない、(2) 双方向の負例として合流を拒否する。
-    func markNotSamePerson(clusterA: Int, clusterB: Int) {
-        guard let a = cluster(clusterA), let b = cluster(clusterB),
-              let aSum = ClipMath.decodeHalf(a.sum), let bSum = ClipMath.decodeHalf(b.sum) else { return }
-        let sim = FaceClustering.dot(FaceClustering.normalized(aSum),
-                                     FaceClustering.normalized(bSum))
-        recordCorrection(kind: "notSame", faceEmbedding: ClipMath.encodeHalf(aSum),
-                         wrongEmbedding: ClipMath.encodeHalf(bSum), similarity: sim)
-        try? modelContext.save()
-    }
-
-    /// 修正ジャーナルへ 1 件追記（ADR-45/46）。負例・校正キャッシュを無効化する。
-    private func recordCorrection(kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
-                                  similarity: Float? = nil) {
-        modelContext.insert(FaceCorrection(
-            id: UUID().uuidString, kind: kind,
-            faceEmbedding: faceEmbedding, wrongEmbedding: wrongEmbedding,
-            similarity: similarity.map(Double.init), createdAt: Date()))
-        negativesCache = nil
-        thresholdCache = nil
-        clusteringCache = nil   // しきい値が変わり得るため次スキャンで再構築
-    }
-
-    private func nextClusterID() -> Int {
-        (allClusters().map(\.clusterID).max() ?? -1) + 1
-    }
-
-    private func removeFromCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String) {
-        guard let c = cluster(clusterID) else { return }
-        guard let sum = ClipMath.decodeHalf(c.sum),
-              let updated = FaceClustering.removing(vec, fromSum: sum, count: c.count, quality: quality) else {
-            // 最後の 1 顔（または sum 破損）＝クラスタごと削除。
-            modelContext.delete(c)
-            return
-        }
-        c.sum = ClipMath.encodeHalf(updated.sum)
-        c.count = updated.count
-        if c.coverFaceID == faceID {
-            // 代表顔が抜けたら未設定に戻し、読み出し時の自動選択（お気に入り優先→先頭）に任せる。
-            c.coverFaceID = nil
-        }
-    }
-
-    private func addToCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String) {
-        if let c = cluster(clusterID) {
-            if let sum = ClipMath.decodeHalf(c.sum) {
-                let updated = FaceClustering.adding(vec, toSum: sum, count: c.count, quality: quality)
-                c.sum = ClipMath.encodeHalf(updated.sum)
-                c.count = updated.count
-            } else {
-                c.count += 1
-            }
-        } else {
-            let seeded = FaceClustering.adding(vec, toSum: [Float](repeating: 0, count: vec.count),
-                                               count: 0, quality: quality)
-            modelContext.insert(PersonCluster(
-                clusterID: clusterID, sum: ClipMath.encodeHalf(seeded.sum), count: seeded.count,
-                name: nil, coverFaceID: nil))
-        }
-    }
-
-    func rename(clusterID: Int, name: String?) {
-        guard let c = cluster(clusterID) else { return }
-        c.name = (name?.isEmpty == true) ? nil : name
-        try? modelContext.save()
-    }
-
-    /// 人物クラスタ src を dst に統合する（同一人物が 2 クラスタに割れたときの修正）。
-    /// src の顔を全て dst へ付け替え、重心（sum/count）を合流し、src のクラスタ行を削除する。
-    /// 名前・代表顔は dst を優先し、dst が未設定のときだけ src から引き継ぐ。
-    func mergeClusters(from srcID: Int, into dstID: Int) {
-        guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return }
-        // ADR-45/46: 統合（＝同一人物）を正例として記録。類似度は**統合前**の重心同士で測る
-        //（統合後の dst.sum には src が混ざり、値が不当に高くなるため）。
-        if let sSum = ClipMath.decodeHalf(src.sum), let dSumBefore = ClipMath.decodeHalf(dst.sum) {
-            let sim = FaceClustering.dot(FaceClustering.normalized(sSum),
-                                         FaceClustering.normalized(dSumBefore))
-            recordCorrection(kind: "merge", faceEmbedding: ClipMath.encodeHalf(sSum),
-                             wrongEmbedding: nil, similarity: sim)
-        }
-        // 顔を一括付け替え（DetectedFace.clusterID）。
-        for f in faces(inCluster: srcID) { f.clusterID = dstID }
-        // 重心（生合計と件数）を合流。
-        if let sSum = ClipMath.decodeHalf(src.sum), let dSum = ClipMath.decodeHalf(dst.sum) {
-            let merged = FaceClustering.merging(sumA: dSum, countA: dst.count,
-                                                sumB: sSum, countB: src.count)
-            dst.sum = ClipMath.encodeHalf(merged.sum)
-            dst.count = merged.count
-        } else {
-            dst.count += src.count
-        }
-        if (dst.name?.isEmpty ?? true), let n = src.name, !n.isEmpty { dst.name = n }
-        if dst.coverFaceID == nil { dst.coverFaceID = src.coverFaceID }
-        modelContext.delete(src)
-        try? modelContext.save()
-        clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次スキャンで再構築）
-    }
-
-    // MARK: - 人物レビュー（A1/A2・ADR-46）
-
-    /// レビューカードの生成。**判断が割れるケースだけ**を選ぶ（アクティブラーニング）:
-    /// - A1 統合サジェスト: 重心類似が「合流の一歩手前」（しきい値−0.10 〜 しきい値）の
-    ///   クラスタ対。「別人」と記録済みの対は出さない。
-    /// - A2 境界の顔: クラスタ内で重心類似が最も低い（しきい値＋0.10 未満）未確認の顔
-    ///   ＝混入している別人が最も出やすい位置。
-    /// - Parameter excluding: 出題済み（既定回数見せたが答えられなかった）カード ID。
-    ///   同じ質問を繰り返さず、次点の候補で埋める（実フィードバック対応）。
-    func reviewItems(minFaces: Int, limit: Int = 30,
-                     excluding: Set<String> = []) -> [FaceReviewItem] {
-        let thr = calibratedThreshold()
-        let clusters = allClusters().filter { $0.count >= minFaces }
-        guard clusters.count >= 1 else { return [] }
-
-        // 重心（正規化）と表示用の代表顔・メンバー写真集合（共起判定用）を用意。
-        var centroid: [Int: [Float]] = [:]
-        var coverFace: [Int: PersonInfo.Face] = [:]
-        var name: [Int: String] = [:]
-        var photoSets: [Int: Set<String>] = [:]
-        for c in clusters {
-            guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
-            centroid[c.clusterID] = FaceClustering.normalized(sum)
-            // 未命名は空（UI は名前ラベルを出さない。"Person N" は誰か分からず判断の助けにならない）。
-            name[c.clusterID] = (c.name?.isEmpty == false) ? (c.name ?? "") : ""
-            let members = faces(inCluster: c.clusterID)
-            photoSets[c.clusterID] = Set(members.map(\.refKey))
-            let cover = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
-                ?? Self.bestCoverFace(members)
-            if let f = cover {
-                coverFace[c.clusterID] = PersonInfo.Face(
-                    faceID: f.faceID, refKey: f.refKey,
-                    boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh))
-            }
-        }
-
-        // 「別人」と記録済みの対（重心埋め込みで照合＝ID の揺れに強い）。
-        let notSameRows = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
-            predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
-            row -> ([Float], [Float])? in
-            guard let wrong = row.wrongEmbedding,
-                  let a = ClipMath.decodeHalf(row.faceEmbedding),
-                  let b = ClipMath.decodeHalf(wrong) else { return nil }
-            return (FaceClustering.normalized(a), FaceClustering.normalized(b))
-        }
-        func isMarkedNotSame(_ a: [Float], _ b: [Float]) -> Bool {
-            for (ra, rb) in notSameRows {
-                if (FaceClustering.dot(a, ra) >= 0.9 && FaceClustering.dot(b, rb) >= 0.9)
-                    || (FaceClustering.dot(a, rb) >= 0.9 && FaceClustering.dot(b, ra) >= 0.9) {
-                    return true
-                }
-            }
-            return false
-        }
-
-        var items: [FaceReviewItem] = []
-
-        // A1: 統合サジェスト（類似度の高い対から）。上限は設けない（帯域 [thr−0.10, 1.0]）:
-        // 制約付き再クラスタは命名クラスタを別々の種として保持するため、しきい値**以上**の
-        // 高類似ペアも統合されずに残り得る（従来は出題対象外だった実ギャップ）。
-        // 共起抑制: 同じ写真に一緒に写った回数が一定以上のペアは**別人**（同一人物は
-        // 1 枚に 1 回しか写れない）ので提案しない（兄弟の誤統合防止・ユーザー操作ゼロ）。
-        let ids = clusters.map(\.clusterID)
-        var mergeCandidates: [(a: Int, b: Int, sim: Float)] = []
-        for i in ids.indices {
-            for j in (i + 1)..<ids.count {
-                guard let ca = centroid[ids[i]], let cb = centroid[ids[j]] else { continue }
-                let sim = FaceClustering.dot(ca, cb)
-                guard sim >= thr - 0.10, !isMarkedNotSame(ca, cb) else { continue }
-                let coOccurrence = (photoSets[ids[i]] ?? []).intersection(photoSets[ids[j]] ?? []).count
-                guard coOccurrence < Self.coOccurrenceNotSame else { continue }
-                mergeCandidates.append((ids[i], ids[j], sim))
-            }
-        }
-        for cand in mergeCandidates.sorted(by: { $0.sim > $1.sim }) {
-            guard items.count < limit else { break }
-            guard let fa = coverFace[cand.a], let fb = coverFace[cand.b] else { continue }
-            let item = FaceReviewItem.samePerson(
-                aClusterID: cand.a, aName: name[cand.a] ?? "", aFace: fa,
-                bClusterID: cand.b, bName: name[cand.b] ?? "", bFace: fb,
-                similarity: cand.sim)
-            if excluding.contains(item.id) { continue }
-            items.append(item)
-        }
-
-        // A2: 境界の顔（クラスタごとに最大 2・類似が低い順）。命名済みクラスタを優先。
-        let ordered = clusters.sorted {
-            (($0.name?.isEmpty == false) ? 0 : 1, -$0.count) < (($1.name?.isEmpty == false) ? 0 : 1, -$1.count)
-        }
-        for c in ordered {
-            guard items.count < limit, let cen = centroid[c.clusterID] else { continue }
-            var boundary: [(face: DetectedFace, sim: Float)] = []
-            // 品質フロア未満の顔は出題しない（ADR-53 追補）。境界レビューは「最も疑わしい顔」を
-            // 選ぶため、旧データに残る誤検出（模様等の偽陽性・低品質）がそのまま最優先で出て
-            // 「顔じゃないカード」になる実障害があった。フロア未満は再スキャンで浄化されるまで
-            // 表示にも出さない（ユーザーに判断を求める価値がない）。
-            for f in faces(inCluster: c.clusterID)
-                where f.confirmedAt == nil && f.quality >= Double(Self.qualityFloor) {
-                guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-                let sim = FaceClustering.dot(FaceClustering.normalized(vec), cen)
-                if sim < thr + 0.10 { boundary.append((f, sim)) }
-            }
-            guard let cover = coverFace[c.clusterID] else { continue }
-            var perCluster = 0
-            for entry in boundary.sorted(by: { $0.sim < $1.sim }) {
-                guard items.count < limit, perCluster < 2 else { break }
-                // 未命名（Person N）は name=nil ＝ UI が「代表の顔と並べて比較」カードにする
-                //（名前を出しても誰か分からず答えられない・実フィードバック）。
-                // 境界顔自身が代表と同一（1 枚だけのケース等）は比較にならないので出さない。
-                let displayName = (c.name?.isEmpty == false) ? c.name : nil
-                if displayName == nil && cover.faceID == entry.face.faceID { continue }
-                let item = FaceReviewItem.isThisPerson(
-                    face: PersonInfo.Face(faceID: entry.face.faceID, refKey: entry.face.refKey,
-                                          boundingBox: CGRect(x: entry.face.bx, y: entry.face.by,
-                                                              width: entry.face.bw, height: entry.face.bh)),
-                    clusterID: c.clusterID, name: displayName,
-                    coverFace: cover,
-                    similarity: entry.sim)
-                if excluding.contains(item.id) { continue }   // 出題済み → 次点で埋める
-                items.append(item)
-                perCluster += 1
-            }
-        }
-        return items
-    }
-
-    // MARK: - 制約付き再クラスタリング（B2・ADR-46）
-
-    /// 全顔を**制約つきで**割り当て直す。逐次クラスタリングの順序依存（早い段階の誤りを
-    /// 後から直せない）を断つ夜間ジョブ。
-    /// - 種クラスタ: 命名済み or 確認顔ありのクラスタは **ID・名前・代表を保持**し、
-    ///   確認顔（アンカー）を must-link として先に固定する。
-    /// - 残りの顔を**品質降順**に割り当て（高品質の顔が先にクラスタの核を作る）。
-    ///   しきい値は校正済み・負例も適用。
-    /// 戻り値: (クラスタ数, 割り当てが変わった顔数)。
-    func rebuildClusters() -> (clusters: Int, moved: Int) {
-        let allFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-        guard !allFaces.isEmpty else { return (0, 0) }
-        let thr = calibratedThreshold()
-        let negatives = loadNegatives()
-        let existing = allClusters()
-        let maxExistingID = existing.map(\.clusterID).max() ?? -1
-
-        // 1) 種クラスタ（命名済み or 確認顔あり）: アンカーだけから重心を作り直す。
-        //    アンカーが無い（名前のみ）の種は現重心を 1 票として方向を維持する。
-        var seeds: [FaceClustering.Cluster] = []
-        var seedIDs = Set<Int>()
-        var confirmedFaceIDs = Set<String>()
-        for c in existing {
-            let members = faces(inCluster: c.clusterID)
-            let anchors = members.filter { $0.confirmedAt != nil }
-            let isSeed = (c.name?.isEmpty == false) || !anchors.isEmpty
-            guard isSeed else { continue }
-            var sum: [Float] = []
-            var count = 0
-            var protos: [[Float]] = []
-            for a in anchors {
-                guard let vec = ClipMath.decodeHalf(a.embedding) else { continue }
-                if sum.isEmpty { sum = [Float](repeating: 0, count: vec.count) }
-                let added = FaceClustering.adding(vec, toSum: sum, count: count,
-                                                  quality: Float(a.quality))
-                sum = added.sum
-                count = added.count
-                protos.append(FaceClustering.normalized(vec))
-                confirmedFaceIDs.insert(a.faceID)
-            }
-            if sum.isEmpty {
-                guard let cur = ClipMath.decodeHalf(c.sum) else { continue }
-                sum = FaceClustering.normalized(cur)   // 現重心を 1 票（方向のみ維持）
-                count = 1
-            }
-            seeds.append(FaceClustering.Cluster(
-                id: c.clusterID, centroid: FaceClustering.normalized(sum),
-                sum: sum, count: count, faceIDs: [], prototypes: protos))
-            seedIDs.insert(c.clusterID)
-        }
-
-        // 2) 残りの顔を品質降順に割り当て（新規クラスタ ID は既存の最大より先から）。
-        var clustering = FaceClustering(threshold: thr, qualityFloor: Self.qualityFloor,
-                                        seedClusters: seeds, minimumNextID: maxExistingID + 1)
-        clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
-        clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
-        let pending = allFaces.filter { !confirmedFaceIDs.contains($0.faceID) }
-            .sorted { $0.quality > $1.quality }
-        // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。
-        // 確認顔は種クラスタに残るため、その写真×クラスタの占有を先に登録する。
-        var usedByPhoto: [String: Set<Int>] = [:]
-        for f in allFaces where confirmedFaceIDs.contains(f.faceID) && f.clusterID >= 0 {
-            usedByPhoto[f.refKey, default: []].insert(f.clusterID)
-        }
-        var newAssignment: [String: Int] = [:]
-        for f in pending {
-            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-            let cid = clustering.assign(
-                faceID: f.faceID, embedding: vec,
-                quality: Float(f.quality), negatives: negatives,
-                excludedClusterIDs: usedByPhoto[f.refKey] ?? [])
-            newAssignment[f.faceID] = cid
-            if cid >= 0 { usedByPhoto[f.refKey, default: []].insert(cid) }
-        }
-
-        // 3) 書き戻し: 顔の clusterID（確認顔は種のまま）・種以外の旧クラスタ行は削除して再作成。
-        var moved = 0
-        for f in allFaces {
-            let newID = confirmedFaceIDs.contains(f.faceID) ? f.clusterID
-                : (newAssignment[f.faceID] ?? FaceClustering.unassigned)
-            if f.clusterID != newID { moved += 1 }
-            f.clusterID = newID
-        }
-        for c in existing where !seedIDs.contains(c.clusterID) {
-            modelContext.delete(c)
-        }
-        persist(clustering)
-        try? modelContext.save()
-        clusteringCache = nil
-        Self.log.info("faces: rebuild — clusters=\(clustering.clusters.count) moved=\(moved) thr=\(thr)")
-        return (clustering.clusters.count, moved)
-    }
-
-    /// 全消去（再スキャン用）。
-    /// ⚠️ 修正ジャーナル（FaceCorrection）は**消さない**（ADR-45）。負例は埋め込みキーなので、
-    /// 再スキャン中の割り当てで自動的に再適用され、既知の誤りが再発しない。
-    // MARK: - スキャン版数移行（名前の持ち越し・ADR-51）
-
-    /// 命名済みクラスタのスナップショット（版上げ再スキャンの前に取得）。
-    /// メンバー refKey は照合に十分な数（既定 500）に丸める。
-    func namedClusterEntries(maxMembers: Int = 500) -> [(name: String, memberRefKeys: [String])] {
-        var out: [(name: String, memberRefKeys: [String])] = []
-        for c in allClusters() {
-            guard let name = c.name, !name.isEmpty else { continue }
-            var seen = Set<String>()
-            var keys: [String] = []
-            for f in faces(inCluster: c.clusterID) where seen.insert(f.refKey).inserted {
-                keys.append(f.refKey)
-            }
-            out.append((name, Array(keys.prefix(maxMembers))))
-        }
-        return out
-    }
-
-    /// 再スキャン後の名前の再適用。旧クラスタのメンバー写真（refKey）との重なりが最大の
-    /// 新クラスタへ名前を戻す（写真は再スキャンしても変わらない＝安定キー）。
-    /// 一致条件: 重なり ≥ max(2, 旧メンバーの 20%)。スキャンが数晩に分かれても、
-    /// 条件を満たした分から段階的に戻る。戻り値は**未適用の残り**（次回セッションで再試行）。
-    func reapplyNames(_ entries: [(name: String, memberRefKeys: [String])])
-        -> [(name: String, memberRefKeys: [String])] {
-        var remaining: [(name: String, memberRefKeys: [String])] = []
-        var takenNames = Set(allClusters().compactMap { c -> String? in
-            (c.name?.isEmpty == false) ? c.name : nil
-        })
-        for entry in entries {
-            // 既に同名クラスタがある（ユーザーが手で付け直した等）→ 消化済み扱い。
-            if takenNames.contains(entry.name) { continue }
-            let keys = entry.memberRefKeys
-            let rows = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
-                predicate: #Predicate { keys.contains($0.refKey) && $0.clusterID >= 0 }))) ?? []
-            var overlap: [Int: Set<String>] = [:]
-            for f in rows { overlap[f.clusterID, default: []].insert(f.refKey) }
-            let need = max(2, entry.memberRefKeys.count / 5)
-            if let best = overlap.max(by: { $0.value.count < $1.value.count }),
-               best.value.count >= need,
-               let c = cluster(best.key), c.name?.isEmpty ?? true {
-                c.name = entry.name
-                takenNames.insert(entry.name)
-                continue
-            }
-            remaining.append(entry)
-        }
-        try? modelContext.save()
-        return remaining
-    }
-
-    func reset() {
-        try? modelContext.delete(model: DetectedFace.self)
-        try? modelContext.delete(model: PersonCluster.self)
-        try? modelContext.delete(model: ScannedPhoto.self)
-        try? modelContext.save()
-        clusteringCache = nil
-        negativesCache = nil   // 次スキャンで DB から読み直す（ジャーナルは残存）
-    }
-
-    /// 修正ジャーナルも含めた完全消去（Developer Options の「学習もリセット」用）。
-    func resetIncludingCorrections() {
-        try? modelContext.delete(model: FaceCorrection.self)
-        reset()
-    }
 }
