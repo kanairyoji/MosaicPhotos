@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import MosaicSupport
 import Photos
 import PhotosFeatureKit
 import SwiftUI
@@ -106,20 +107,11 @@ private struct CaptionThumbnail: View {
             image = img
             return
         }
-        // 2) フォールバック: 統合スナップショットに無いローカル写真は PhotosKit で直接
+        // 2) フォールバック: 統合スナップショットに無いローカル写真は共通ローダで直接（向き正規化込み）。
         guard case .local(let localID)? = PhotoRef.decode(refKey) else { return }
-        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localID], options: nil)
-        guard let asset = assets.firstObject else { return }
-        let opts = PHImageRequestOptions()
-        opts.isNetworkAccessAllowed = true
-        opts.deliveryMode = .highQualityFormat
-        opts.resizeMode = .fast
-        let img: UIImage? = await withCheckedContinuation { cont in
-            PHImageManager.default().requestImage(for: asset, targetSize: target,
-                                                  contentMode: .aspectFill, options: opts) { result, _ in
-                cont.resume(returning: result)
-            }
+        if let img = await PHAssetImageLoader.image(localIdentifier: localID, maxPixel: target.width,
+                                                    contentMode: .aspectFill, quality: .full) {
+            image = img
         }
-        if let img { image = img }
     }
 }

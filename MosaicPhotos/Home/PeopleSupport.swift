@@ -1,6 +1,7 @@
 import AutoAlbumCore
 import MobileCLIPKit
 import DropboxKit
+import MosaicSupport
 import Photos
 import UIKit
 
@@ -119,26 +120,9 @@ func loadLocalAspectImage(refKey: String, maxPixel: CGFloat = 1000) async -> UII
     return UIImage(cgImage: cg)
 }
 
-/// アスペクトを保った CGImage を取得する（顔矩形を正しくマッピングするため正方クロップしない）。
+/// アスペクトを保った**向き正規化済み** CGImage を取得する（顔矩形を正しくマッピングするため
+/// 正方クロップしない）。実体は共通ローダ `PHAssetImageLoader`（顔検出の入力と同一経路）。
 private func requestAspectCGImage(_ localIdentifier: String, maxPixel: CGFloat) async -> CGImage? {
-    let result = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
-    guard let asset = result.firstObject else { return nil }
-    let options = PHImageRequestOptions()
-    options.deliveryMode = .highQualityFormat
-    options.resizeMode = .fast
-    options.isNetworkAccessAllowed = true
-    let target = CGSize(width: maxPixel, height: maxPixel)
-    let lock = NSLock()
-    var didResume = false
-    return await withCheckedContinuation { (cont: CheckedContinuation<CGImage?, Never>) in
-        PHImageManager.default().requestImage(
-            for: asset, targetSize: target, contentMode: .aspectFit, options: options
-        ) { image, _ in
-            lock.lock(); defer { lock.unlock() }
-            guard !didResume else { return }
-            didResume = true
-            // EXIF 回転を正規化（検出時と別表現を掴んでも顔矩形がズレないように）。
-            cont.resume(returning: image.flatMap(orientationNormalizedCGImage))
-        }
-    }
+    await PHAssetImageLoader.cgImage(localIdentifier: localIdentifier, maxPixel: maxPixel,
+                                     contentMode: .aspectFit, allowsNetwork: true)
 }

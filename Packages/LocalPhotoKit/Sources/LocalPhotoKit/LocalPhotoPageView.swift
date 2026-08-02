@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import LocalPhotoCore
+import MosaicSupport
 import Photos
 import SwiftUI
 
@@ -55,17 +56,10 @@ private struct LocalFullPhotoView: View {
 
     private func load() {
         guard image == nil else { return }
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .opportunistic
-        options.isNetworkAccessAllowed = true
-        PHImageManager.default().requestImage(
-            for: asset,
-            targetSize: PHImageManagerMaximumSize,
-            contentMode: .aspectFit,
-            options: options
-        ) { img, _ in
-            Task { @MainActor in
-                if let img { image = img }
+        Task { @MainActor in
+            if let img = await PHAssetImageLoader.image(for: asset, targetSize: PHImageManagerMaximumSize,
+                                                        contentMode: .aspectFit, quality: .progressive) {
+                image = img
             }
         }
     }

@@ -1,5 +1,6 @@
 import AutoAlbumCore
 import DropboxKit
+import MosaicSupport
 import Photos
 import PhotoSourceKit
 import SwiftUI
@@ -53,29 +54,10 @@ func photoCountText(_ count: Int) -> String {
 }
 
 /// PHAsset.localIdentifier からカバーサムネイルを取得する（アルバム・場所・カード共通）。
+/// 実体は共通ローダ `PHAssetImageLoader`（確定版のみ・向き正規化・二重 resume 防止を内包）。
 func loadLocalCover(_ localIdentifier: String?, pixelSize: CGFloat = 96) async -> UIImage? {
-    guard let localIdentifier else { return nil }
-    let result = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
-    guard let asset = result.firstObject else { return nil }
-    let options = PHImageRequestOptions()
-    // ⚠️ .opportunistic は「劣化版→確定版」と結果ハンドラを複数回呼ぶため、withCheckedContinuation を
-    //    二重 resume して実機でクラッシュしていた（SWIFT TASK CONTINUATION MISUSE）。確定版を 1 回だけ
-    //    返す .highQualityFormat にし、さらに resume を一度きりに保証する（ロックで二重 resume を根絶）。
-    options.deliveryMode = .highQualityFormat
-    options.resizeMode = .fast
-    let lock = NSLock()
-    var didResume = false
-    return await withCheckedContinuation { continuation in
-        PHImageManager.default().requestImage(
-            for: asset, targetSize: CGSize(width: pixelSize, height: pixelSize),
-            contentMode: .aspectFill, options: options
-        ) { image, _ in
-            lock.lock(); defer { lock.unlock() }
-            guard !didResume else { return }   // 2 回目以降のコールバックは無視（二重 resume 防止）
-            didResume = true
-            continuation.resume(returning: image)
-        }
-    }
+    await PHAssetImageLoader.image(localIdentifier: localIdentifier, maxPixel: pixelSize,
+                                   contentMode: .aspectFill, quality: .full)
 }
 
 /// クラウド path から Dropbox アイテムを組み立てる（表示名は lastPathComponent）。

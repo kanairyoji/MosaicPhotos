@@ -158,9 +158,12 @@ extension LocalPhotoStore: PhotoStore {
                     }
                     markFirst()
                     PerfTrace.count("thumb.finalMs", value: PerfTrace.msSince(t0))
-                    continuation.yield(final)
+                    // EXIF 回転を表示向きへ焼き込む（縦横写真がグリッドで 90° 倒れる実障害の対策）。
+                    // キャッシュにも正立版を保存する。
+                    let oriented = PHAssetImageLoader.normalizedUp(final)
+                    continuation.yield(oriented)
                     Task.detached(priority: .utility) {
-                        await ThumbnailCache.shared.set(final, for: key)
+                        await ThumbnailCache.shared.set(oriented, for: key)
                     }
                 }
             }

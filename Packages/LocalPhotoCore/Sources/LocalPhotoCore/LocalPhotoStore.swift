@@ -32,11 +32,8 @@ public final class LocalPhotoStore {
 
     /// requestImage と startCaching で同一の値を使う（キャッシュヒットのため）。
     func makeThumbnailOptions() -> PHImageRequestOptions {
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .opportunistic
-        options.resizeMode = .fast
-        options.isNetworkAccessAllowed = true
-        return options
+        // オプションは共通ローダの生成点に統一（段階配信＝progressive）。
+        return PHAssetImageLoader.makeOptions(quality: .progressive, allowsNetwork: true)
     }
 
     /// スクロール先のサムネイルを PHCachingImageManager で先読みする。

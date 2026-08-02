@@ -1,5 +1,6 @@
 import AutoAlbumCore
 import CoreGraphics
+import MosaicSupport
 import Photos
 import UIKit
 
@@ -36,36 +37,17 @@ public struct AppQueryTranslator: QueryTranslator {
 }
 
 /// PHAsset（localIdentifier）→ CGImage をメインスレッド外で読み込む共通ヘルパ（CLIP 埋め込み用）。
+/// 実体は `MosaicSupport.PHAssetImageLoader`（向き正規化・二重 resume 防止を内包）に委譲。
 nonisolated func loadLocalCGImage(_ localIdentifier: String, maxPixel: CGFloat = 512) async -> CGImage? {
-    guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else {
-        return nil
-    }
-    let options = PHImageRequestOptions()
-    options.deliveryMode = .highQualityFormat
-    options.resizeMode = .fast
-    options.isNetworkAccessAllowed = false
-    let target = CGSize(width: maxPixel, height: maxPixel)
-    return await withCheckedContinuation { continuation in
-        PHImageManager.default().requestImage(
-            for: asset, targetSize: target, contentMode: .aspectFit, options: options
-        ) { image, _ in
-            continuation.resume(returning: image.flatMap(orientationNormalizedCGImage))
-        }
-    }
+    await PHAssetImageLoader.cgImage(localIdentifier: localIdentifier, maxPixel: maxPixel, allowsNetwork: false)
 }
 
-/// UIImage → 向きを **.up に正規化した** CGImage。
+/// UIImage → 向きを **.up に正規化した** CGImage（互換名・実体は共通ローダへ委譲）。
 ///
 /// ⚠️ `UIImage.cgImage` は EXIF 回転が**未適用の生ビットマップ**のことがある（HEIC 等・
 /// PHImageManager はターゲットサイズにより回転適用済み/未適用のどちらも返し得る）。
 /// 生のまま使うと、検出時と表示時で別表現を掴んだ写真だけ顔矩形がズレる（実障害）。
 /// すべての CGImage 化をこの関数に通し、座標系を常に「表示と同じ向き」に揃える。
 public func orientationNormalizedCGImage(_ image: UIImage) -> CGImage? {
-    if image.imageOrientation == .up { return image.cgImage }
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    let redrawn = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
-        image.draw(in: CGRect(origin: .zero, size: image.size))
-    }
-    return redrawn.cgImage
+    PHAssetImageLoader.normalizedUpCGImage(image)
 }
