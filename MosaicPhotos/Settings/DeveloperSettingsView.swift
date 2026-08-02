@@ -35,6 +35,7 @@ struct DeveloperSettingsView: View {
     @State private var enrichmentCount = 0
     @State private var cachedPlaceCount = 0
     @State private var isWorking = false
+    @State private var placeRefineStatus = ""
 
     private let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
 
@@ -190,6 +191,17 @@ struct DeveloperSettingsView: View {
     private var placesDebugSection: some View {
         Section("Places — Debug") {
             LabeledContent("Geocoded places cached", value: "\(cachedPlaceCount)")
+            // Apple（CLGeocoder）の地名補正を手動キック（動作確認用）。夜間の背景処理を待たずに実行し、
+            // 代表トリップ 1 点の実ジオコーディング結果（サンプル）＋高精度化した地点数を表示する。
+            Button {
+                Task { await refinePlaceNamesNow() }
+            } label: {
+                BusyLabel("Fetch Apple place names now (CLGeocoder)", busy: "Geocoding…", isBusy: isWorking)
+            }
+            .disabled(isWorking)
+            if !placeRefineStatus.isEmpty {
+                Text(placeRefineStatus).font(.caption).foregroundStyle(.secondary)
+            }
             Button {
                 Task { await rescanPlaces() }
             } label: {
@@ -220,6 +232,13 @@ struct DeveloperSettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private func refinePlaceNamesNow() async {
+        isWorking = true
+        defer { isWorking = false }
+        placeRefineStatus = await autoAlbumEngine.refinePlaceNamesNow()
+        cachedPlaceCount = await PlaceNameResolver.shared.cachedPlaceCount
+    }
 
     private func rescanPlaces() async {
         isWorking = true

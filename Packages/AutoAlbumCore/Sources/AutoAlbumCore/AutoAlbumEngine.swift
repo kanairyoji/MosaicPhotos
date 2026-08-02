@@ -286,7 +286,7 @@ public final class AutoAlbumEngine {
 
         // 地名の高精度化（Apple・背景）: 生成済みトリップの代表座標を CLGeocoder で高精度化し、
         // 名前が変わったら trips を作り直す。成功のみ永続・失敗はリトライ・既補正はスキップ＝収束後は無コスト。
-        await refinePlaceNames()
+        await refinePlaceNames(shouldContinue: { await MainActor.run { BackgroundYield.heavyWorkAllowed } })
 
         guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
         let cloudChanged = await cloudSignatureChanged()
@@ -295,22 +295,40 @@ public final class AutoAlbumEngine {
         await generate()
     }
 
-    /// 生成済みトリップの代表座標を Apple（CLGeocoder）で高精度化し、名前が変わったら trips を作り直す。
-    /// オフライン都市 DB の「最寄り大都市スナップ」を、正確な市区町村・区名（subLocality）へ置き換える。
-    /// 対象はトリップ代表座標（少数）に限定＝レート制限に当たらない。既に高精度化済みなら 0 件で即帰る。
-    private func refinePlaceNames() async {
-        let coords = albums.compactMap { a -> CLLocationCoordinate2D? in
+    /// トリップ代表座標。
+    private var tripCoordinates: [CLLocationCoordinate2D] {
+        albums.compactMap { a in
             guard let lat = a.latitude, let lon = a.longitude else { return nil }
             return CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }
-        guard !coords.isEmpty else { return }
+    }
+
+    /// 生成済みトリップの代表座標を Apple（CLGeocoder）で高精度化し、名前が変わったら trips を作り直す。
+    /// オフライン都市 DB の「最寄り大都市スナップ」を、正確な市区町村・区名（subLocality）へ置き換える。
+    /// 対象はトリップ代表座標（少数）に限定＝レート制限に当たらない。既に高精度化済みなら 0 件で即帰る。
+    /// 戻り値＝新たに高精度化した地点数。`shouldContinue` は heavy ゲート（背景）や `{ true }`（手動）。
+    @discardableResult
+    private func refinePlaceNames(shouldContinue: @escaping @Sendable () async -> Bool) async -> Int {
+        let coords = tripCoordinates
+        guard !coords.isEmpty else { return 0 }
         let refined = await PlaceNameResolver.shared.refineWithAppleGeocoder(
-            coordinates: coords,
-            shouldContinue: { await MainActor.run { BackgroundYield.heavyWorkAllowed } })
+            coordinates: coords, shouldContinue: shouldContinue)
         if refined > 0 {
             Self.log.info("place refine: \(refined) coords upgraded via CLGeocoder — regenerating trips")
             await generate()
         }
+        return refined
+    }
+
+    /// デバッグ: Apple(CLGeocoder)の地名補正を**今すぐ**実行する（heavy ゲート無視）。動作確認用に、
+    /// 代表トリップ 1 点の直接ジオコーディング結果（サンプル）と高精度化した地点数を人間可読で返す。
+    public func refinePlaceNamesNow() async -> String {
+        guard let first = tripCoordinates.first else {
+            return "トリップがありません（先に『時間と場所』を生成してください）"
+        }
+        let sample = await PlaceNameResolver.shared.debugGeocode(first) ?? "(取得できず＝通信不可/圏外)"
+        let refined = await refinePlaceNames(shouldContinue: { true })
+        return "Apple 地名 OK — 例: \(sample) ／ 高精度化 \(refined) 地点"
     }
 
     public func generate() async {

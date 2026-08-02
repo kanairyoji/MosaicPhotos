@@ -119,6 +119,19 @@ public actor PlaceNameResolver {
         return refinedCount
     }
 
+    /// デバッグ: 1 座標を **CLGeocoder で直接**逆ジオコーディングして人間可読の地名を返す
+    /// （キャッシュ・refined 判定を通さない＝Apple が実際に返す値そのもの・動作確認用）。取得不可は nil。
+    public func debugGeocode(_ coordinate: CLLocationCoordinate2D) async -> String? {
+        let ja = AppLocale.isJapanese
+        let locale = Locale(identifier: ja ? "ja_JP" : "en_US")
+        let placemarks = try? await CLGeocoder().reverseGeocodeLocation(
+            CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude),
+            preferredLocale: locale)
+        guard let p = placemarks?.first else { return nil }
+        return [p.subLocality, p.locality, p.administrativeArea, p.country]
+            .compactMap { $0 }.joined(separator: ", ")
+    }
+
     // MARK: - Private
 
     private func components(for coordinate: CLLocationCoordinate2D) async -> PlaceComponents? {
