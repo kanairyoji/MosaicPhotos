@@ -30,6 +30,9 @@ public final class DropboxPhotoStore {
     /// 「選択ソースフォルダ＋バックアップフォルダ」を返すよう結線する。既定は全体。
     @ObservationIgnored public var syncRootsProvider: () -> [String] = { [""] }
     @ObservationIgnored private var syncEngine: DropboxSyncEngine?
+    /// アプリ側クラウドお気に入り（cloudPath 集合・UserDefaults 永続）。Dropbox に favorite 概念が
+    /// 無いため、cloudPath 単位でアプリが管理する（+Favorites 拡張が読み書き・items へ刻印）。
+    @ObservationIgnored var cloudFavoritePaths: Set<String> = DropboxPhotoStore.loadCloudFavorites()
 
     // キャッシュ→items 反映のスロットリング用。
     @ObservationIgnored private var lastCacheRefresh = Date.distantPast
@@ -104,7 +107,7 @@ public final class DropboxPhotoStore {
             return
         }
 
-        let cached = await cache.cachedItems(accountId: accountId)
+        let cached = stampFavorites(await cache.cachedItems(accountId: accountId))
         // 内容が同一なら再代入しない。@Observable 通知が発火して
         // PhotoGridView が再評価され、サムネイル取得中のセルが churn するのを防ぐ。
         if cached != items {
@@ -113,6 +116,13 @@ public final class DropboxPhotoStore {
         updateLoadStatus()
         updateDebugInfo()
         DropboxLogger.info("loadItems() — \(cached.count) items from cache")
+    }
+
+    /// 表示中 items 内の 1 アイテムのお気に入り刻印を更新する（+Favorites 拡張が private setter を
+    /// 跨がないための橋渡し）。グリッド/情報パネルの★表示へ即反映する。
+    func updateDisplayedFavorite(path: String, isFavorite: Bool) {
+        guard let idx = items.firstIndex(where: { $0.path == path }) else { return }
+        items[idx] = items[idx].withFavorite(isFavorite)
     }
 
     /// バックグラウンド差分同期ループを開始する。Dropbox 接続時に呼び出す。
@@ -230,7 +240,7 @@ public final class DropboxPhotoStore {
     /// キャッシュから items を取得して反映する（内容が変わったときのみ再代入）。
     private func refreshItemsFromCache() async {
         guard let accountId = auth.credential?.accountId else { return }
-        let cached = await cache.cachedItems(accountId: accountId)
+        let cached = stampFavorites(await cache.cachedItems(accountId: accountId))
         if cached != items {
             items = cached
         }

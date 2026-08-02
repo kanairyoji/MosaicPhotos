@@ -22,6 +22,7 @@ final class PhotoTagger {
     func embedUnprocessed(batchSize: Int = 8,
                           betweenBatchNs: UInt64 = 2_500_000_000,   // 2.5s
                           maxBatches: Int = 20_000,
+                          favorites: Set<String> = [],
                           shouldPause: @MainActor () -> Bool = { false },
                           networkAllowed: @MainActor () -> Bool = { true },
                           onProgress: @MainActor (Int) -> Void = { _ in },
@@ -82,7 +83,11 @@ final class PhotoTagger {
                     queueLocalOnly = !netOK
                 }
                 if keyQueue.isEmpty {
-                    keyQueue = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
+                    // 撮影日降順のページを、お気に入り(ローカル→クラウド)→その他 の順に並べ替える
+                    // （AnalysisOrder）。ページ単位の並べ替え＝各撮影日窓の中でお気に入りを先に処理する
+                    // （全 85k をメモリに載せない paging と両立するための近似）。
+                    let page = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
+                    keyQueue = AnalysisOrder.ordered(page, favorites: favorites)
                 }
                 let refKeys = Array(keyQueue.prefix(batchSize))
                 keyQueue.removeFirst(refKeys.count)

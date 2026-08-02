@@ -25,6 +25,15 @@ func allImageRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
     return await localImageRefKeys() + cloud
 }
 
+/// 解析（顔スキャン等）の**処理順**に並べた候補: お気に入り（ローカル→クラウド）→ その他
+/// （ローカル→クラウド）、各群は新→古（`AnalysisOrder`）。お気に入りから先に People へ反映される。
+@MainActor
+func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
+    let all = await allImageRefKeys(dropboxStore: dropboxStore)     // ローカル(新→古)＋クラウド(新→古)
+    let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)
+    return AnalysisOrder.ordered(all, favorites: favorites)
+}
+
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。
 /// ⚠️ アプリ層の top-level 関数はデフォルト MainActor になるため、全件列挙（数万件）は
 /// `Task.detached` で**メインスレッド外**へ逃がす（起動直後のホーム描画を固めない）。
@@ -54,9 +63,8 @@ func localImagePhotoCount() async -> Int {
     }.value
 }
 
-/// お気に入りマークの端末写真（画像）の refKey 集合（"L-…"）。
-/// ピープルの代表写真の自動選択（お気に入り優先）に使う。列挙はメインスレッド外。
-func favoriteImageRefKeys() async -> Set<String> {
+/// お気に入りの端末写真（画像）の refKey 集合（"L-…"）。列挙はメインスレッド外。
+func localFavoriteImageRefKeys() async -> Set<String> {
     await Task.detached(priority: .utility) {
         let opts = PHFetchOptions()
         opts.predicate = NSPredicate(format: "favorite == YES && mediaType == %d", PHAssetMediaType.image.rawValue)
@@ -67,6 +75,16 @@ func favoriteImageRefKeys() async -> Set<String> {
         }
         return keys
     }.value
+}
+
+/// お気に入りの refKey 集合（ローカル "L-…" ＋ クラウド "C-…"）。
+/// ローカルは PHAsset.isFavorite、クラウドはアプリ側お気に入り（`DropboxPhotoStore.favoriteCloudPaths`）。
+/// 代表写真の自動選択・解析の処理順（お気に入り優先）に使う。
+@MainActor
+func favoriteImageRefKeys(dropboxStore: DropboxPhotoStore) async -> Set<String> {
+    var keys = await localFavoriteImageRefKeys()
+    for path in dropboxStore.favoriteCloudPaths { keys.insert(PhotoRef.cloud(path).encoded) }
+    return keys
 }
 
 // MARK: - Cluster members → local identifiers

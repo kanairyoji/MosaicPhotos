@@ -21,6 +21,31 @@
 
 ---
 
+## ADR-67 Dropbox 写真のお気に入り（アプリ側）＋解析の処理順をお気に入り優先に
+- 状態: 採用
+- 文脈: (1) お気に入りはローカル（`PHAsset.isFavorite`）専用で、Dropbox 写真にはハートも出せなかった
+  （Dropbox に favorite 概念が無い）。(2) 解析（顔スキャン・CLIP 埋め込み・シーンタグ）の処理順が
+  「ローカル全部→クラウド全部（各新→古）」で、お気に入りが優先されていなかった。ユーザーは
+  **お気に入り（大事な写真）から先に**解析して People 等へ反映したい。
+- 決定:
+  - **クラウドお気に入り（アプリ側）**: Dropbox は cloudPath 単位でアプリが管理する。`DropboxFileItem` に
+    `isFavorite`（stored・既定 false）を持たせ、`DropboxPhotoStore` が UserDefaults 永続集合
+    （`cloudFavoritePaths`）から items 構築時に**刻印**する。`DropboxFileItem: PhotoItem` で
+    `supportsFavorite = true`＝フル画面/グリッドのハートが出る。`DropboxPhotoStore.setFavorite` で
+    付け外し（永続＋表示 items へ即刻印）。`MergedPhotoItem`/`MergedPhotoStore` は既存の forward で自動対応。
+  - **解析の処理順（`AnalysisOrder`・純ロジック）**: **お気に入り(ローカル→クラウド)→その他(ローカル→
+    クラウド)、各群は新→古**。refKey の "L-"/"C-" と favorites 集合で 4 群に**安定分割**（群内の新→古は
+    維持）。favorites はローカル（PHAsset）＋クラウド（`favoriteCloudPaths`）を合流（`favoriteImageRefKeys`）。
+    適用: 顔スキャン（`analysisOrderedRefKeys`）・シーンタグ（候補を並べ替え）・CLIP 埋め込み
+    （store paging のため**各ページを並べ替え**＝撮影日窓ごとにお気に入り先行の近似）。
+- 結果: Dropbox 写真もお気に入りにでき、その集合が「代表写真の自動選択」「解析の処理順」に効く。
+  お気に入りから先に People/検索へ反映される。トレードオフ: CLIP はページ単位の近似（全 85k を
+  メモリに載せない paging と両立）。クラウドお気に入りは path 依存＝別アカウントへ切替時は別集合になる。
+- 関連: `DropboxFileItem.isFavorite/withFavorite`・`DropboxPhotoStore+Favorites`（永続・刻印・setFavorite）・
+  `DropboxFileItem+PhotoItem`（supportsFavorite）・`AnalysisOrder`＋`AnalysisOrderTests`・
+  `PeopleSupport.favoriteImageRefKeys/analysisOrderedRefKeys`・`AutoAlbumEngine+Recognition`（タグ/CLIP 順）・
+  `PhotoTagger.embedUnprocessed`（favorites）。
+
 ## ADR-66 顔の recall 回復: 品質フロア未満の顔を重心を汚さず membership 割当（第2パス）
 - 状態: 採用
 - 文脈: 「人が写っているのに People に出ない」写真がある。混入対策（ADR-48/52/53/56-58）で precision を

@@ -35,7 +35,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     // 人物条件の評価は焼き込みでなく**現在の**顔クラスタ名で live 照合（命名/統合を即反映）。
     engine.setPeopleByRefKeyProvider { await peopleEngine.peopleNamesByRefKey() }
     // VLM キャプション（重い文章生成）をお気に入り限定にするため、お気に入り集合（PHAsset）を結線。
-    engine.setFavoriteRefKeysProvider { await favoriteImageRefKeys() }
+    engine.setFavoriteRefKeysProvider { await favoriteImageRefKeys(dropboxStore: dropboxStore) }
 
     // バックアップ metadata v2（ADR-38）: 端末を削除すると再生成できない情報の保全を結線する。
     // 人物名（顔クラスタのユーザー命名）— refKey "L-<id>" を localIdentifier キーに変換して渡す。
@@ -72,7 +72,7 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
     // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
     return await PeopleEngine.makeWithOffMainStore(
         faceProvider: FacePerceptionAdapter(cloudImage: cloudImage),
-        favoriteRefKeysProvider: { await favoriteImageRefKeys() })
+        favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) })
 }
 
 /// `DropboxPhotoStore.items` を AutoAlbumCore の中立メタデータへ写像する CloudPhotoProvider 実体。

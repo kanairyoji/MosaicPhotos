@@ -151,7 +151,7 @@ struct AIAnalysisStatusView: View {
                 BackgroundYield.boostHeavyWork()
                 engine.scheduleBackgroundFill()
                 if facesAvailable, !people.isScanning {
-                    Task { people.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: dropboxStore)) }
+                    Task { people.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: dropboxStore)) }
                 }
             } label: {
                 Label(L("Analyze Now (while charging)"), systemImage: "bolt.badge.clock")

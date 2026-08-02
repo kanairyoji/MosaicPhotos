@@ -14,6 +14,9 @@ public struct DropboxFileItem: Identifiable, Equatable, Hashable {
     /// 撮影地の緯度・経度（`list_folder` の `include_media_info` で取得。pending 時は nil）。
     public let latitude: Double?
     public let longitude: Double?
+    /// アプリ側お気に入り（Dropbox に favorite 概念は無いので、cloudPath 単位でアプリが管理する）。
+    /// `DropboxPhotoStore` が items 構築時に永続集合から**刻印**する（既定 false）。
+    public let isFavorite: Bool
 
     public init(
         path: String,
@@ -21,7 +24,8 @@ public struct DropboxFileItem: Identifiable, Equatable, Hashable {
         contentHash: String? = nil,
         captureDate: Date? = nil,
         latitude: Double? = nil,
-        longitude: Double? = nil
+        longitude: Double? = nil,
+        isFavorite: Bool = false
     ) {
         self.path = path
         self.name = name
@@ -30,6 +34,13 @@ public struct DropboxFileItem: Identifiable, Equatable, Hashable {
         self.captureDate = CaptureDate.meaningful(captureDate)
         self.latitude = latitude
         self.longitude = longitude
+        self.isFavorite = isFavorite
+    }
+
+    /// お気に入りだけ差し替えた複製（`DropboxPhotoStore` の刻印・トグルで使う）。
+    public func withFavorite(_ favorite: Bool) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: name, contentHash: contentHash, captureDate: captureDate,
+                        latitude: latitude, longitude: longitude, isFavorite: favorite)
     }
 
     public var id: String { path }

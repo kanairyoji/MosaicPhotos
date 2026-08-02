@@ -183,10 +183,14 @@ extension AutoAlbumEngine {
             // 表示ラベラの概念埋め込み（約300語）を前倒しで構築する（初回に写真を開いた瞬間の
             // 数秒のフォアグラウンド負荷を夜間へ移す）。
             await labelProvider?.prewarm()
+            // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
+            await refreshFavoritesCache()
+            let favorites = favoritesCache
             // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を全量に行き渡らせる。
             // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
-            // 候補は**新しい写真から先に**（撮影日降順）＝撮りたての写真が検索へ最速で反映される。
-            let candidates = await store.enrichedRefKeysNewestFirst()
+            // 候補は **お気に入り(ローカル→クラウド)→その他(ローカル→クラウド)・各新→古**（AnalysisOrder）。
+            let candidates = AnalysisOrder.ordered(await store.enrichedRefKeysNewestFirst(),
+                                                   favorites: favorites)
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                            shouldPause: { BackgroundYield.heavyShouldPause() })
             // P2/P3: CLIP 埋め込みと VLM キャプションを**インターリーブ**で進める。
@@ -199,17 +203,15 @@ extension AutoAlbumEngine {
                 (self?.isInteracting ?? false) || BackgroundYield.heavyShouldPause()
             }
             let captionPause: @MainActor () -> Bool = { BackgroundYield.heavyShouldPause() }
-            // VLM キャプション（重い文章生成）は**お気に入り限定**。最新のお気に入り集合を取り込む
-            // （favorite は変化するので毎回の背景実行で更新。新規お気に入りは次回巡回で付く）。
+            // VLM キャプション（重い文章生成）は**お気に入り限定**（favorites は上で取り込み済み）。
             // 処理順は**撮影日降順**（新しい写真から先に説明が付く）。
-            await refreshFavoritesCache()
-            let favorites = favoritesCache
             let favoritesOrdered = await store.newestFirst(refKeys: favorites)
             while !BackgroundYield.heavyShouldPause() {
                 let embedBefore = await store.unembeddedCount()
                 await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                               betweenBatchNs: preset.betweenBatchNs,
                                               maxBatches: 12,
+                                              favorites: favorites,
                                               shouldPause: embedPause,
                                               networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
                                               onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
@@ -278,10 +280,13 @@ extension AutoAlbumEngine {
         await store.clearPerception()
         // 埋め込みを全消しするので、AI アルバムの評価状態（プール）もリセットする（解釈は保持）。
         aiService.resetEvaluationState()
+        await refreshFavoritesCache()
+        let favorites = favoritesCache
         let preset = Self.currentBackgroundPreset()
         isTagging = true
         await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                       betweenBatchNs: preset.betweenBatchNs,
+                                      favorites: favorites,
                                       shouldPause: { [weak self] in
                                           (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
                                       },

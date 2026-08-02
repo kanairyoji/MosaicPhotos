@@ -157,7 +157,7 @@ struct HomeView: View {
         // デバッグ：シミュレータ顔スキャンのトグルを ON にしたら（起動後でも）その場で開始する。
         .task(id: faceScanOnSimulator) {
             guard faceScanOnSimulator else { return }
-            peopleEngine.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: dropboxStore), allowSimulator: true)
+            peopleEngine.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: dropboxStore), allowSimulator: true)
         }
     }
 
@@ -235,7 +235,7 @@ private struct HomeLifecycleTasks: ViewModifier {
             .task {
                 await peopleEngine.loadPeople()
                 let allowSim = UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
-                peopleEngine.startScan(candidateRefKeys: await allImageRefKeys(dropboxStore: dropboxStore), allowSimulator: allowSim)
+                peopleEngine.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: dropboxStore), allowSimulator: allowSim)
             }
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする
