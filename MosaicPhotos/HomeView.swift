@@ -123,7 +123,11 @@ struct HomeView: View {
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 case .autoAlbum(let album):
-                    AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore, assetIndex: assetIndex)
+                    // AI アルバムは画面内「…」からも削除できる（ホームカードの操作と統一）。
+                    AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore, assetIndex: assetIndex,
+                        onDelete: album.strategyID == AIAlbumStrategy.strategyID
+                            ? { Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) }; destination = nil }
+                            : nil)
                 }
             }
             .perfScreenEnd("home.present")   // 計測: ホーム→各画面のフルスクリーン表示の所要

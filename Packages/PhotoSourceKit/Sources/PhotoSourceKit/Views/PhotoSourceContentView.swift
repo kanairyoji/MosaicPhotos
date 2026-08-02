@@ -21,6 +21,7 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     /// 顔ハイライト（人物アルバムのみ・環境で provider が注入されたときだけボタンを出す）。
     /// たまに確認したい機能なので既定 OFF・画面ごとの一時状態。
     @Environment(\.faceHighlightGridProvider) private var faceHighlightGrid
+    @Environment(\.sourceMenuContent) private var sourceMenuContent
     @State private var showFaceBoxes = false
 
     public init(store: Store, title: String, @ViewBuilder header: () -> Header = { EmptyView() }) {
@@ -53,6 +54,14 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle(title)
+            // アルバム画面内の「…」メニュー（ホームカードの「…」/長押しと同じ操作を画面内でも）。
+            .toolbar {
+                // アルバム画面内の操作。中身（Menu か …→ダイアログ か）は呼び出し側が決める
+                //（AI アルバム＝Menu、人物＝…ボタン→確認ダイアログ）。
+                if let sourceMenuContent {
+                    ToolbarItem(placement: .topBarTrailing) { sourceMenuContent() }
+                }
+            }
             // Home / Settings バーは全状態（プレースホルダー含む）に表示する。
             // 未接続・空・失敗の各状態でもホーム/設定へ遷移できるようにするため。
             .safeAreaInset(edge: .bottom) { bottomBar }

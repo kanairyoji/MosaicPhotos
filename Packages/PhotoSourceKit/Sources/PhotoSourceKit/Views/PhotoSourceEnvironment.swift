@@ -48,6 +48,20 @@ extension EnvironmentValues {
 /// グリッド（サムネイル）用の顔ハイライト。`PhotoItem.id` を受け取り、**中央正方形クロップ表示の
 /// 単位座標（原点左上）**に変換済みの矩形を返す（変換は注入側＝元画像のアスペクト比を知っている層が行う）。
 /// nil（既定）ならグリッドの顔ボタン自体を出さない。
+/// 写真一覧画面（グリッド）右上の「…」メニュー。アルバム固有の操作（編集/削除/改名/束ね等）を
+/// ナビバー右上に出すための seam（AutoAlbumCore 非依存を保つため呼び出し側が AnyView を渡す）。
+/// nil（既定）なら「…」ボタン自体を出さない。ホームカードの「…」/長押しと同じ操作を画面内でも提供。
+private enum SourceMenuKey: EnvironmentKey {
+    static let defaultValue: (@MainActor () -> AnyView)? = nil
+}
+
+extension EnvironmentValues {
+    public var sourceMenuContent: (@MainActor () -> AnyView)? {
+        get { self[SourceMenuKey.self] }
+        set { self[SourceMenuKey.self] = newValue }
+    }
+}
+
 private enum FaceHighlightGridKey: EnvironmentKey {
     static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
 }

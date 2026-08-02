@@ -26,8 +26,12 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     @State private var favOverride: [Store.Item.ID: Bool] = [:]
     @Environment(\.dismiss) private var dismiss
     @Environment(\.faceHighlightProvider) private var faceHighlightProvider
+    @Environment(\.photoUsageEvent) private var photoUsageEvent
     /// 顔ハイライト（人物アルバムのみ）。ページ送りしても維持する画面単位のトグル。
     @State private var showFaceHighlights = false
+    /// 共有シートに渡すフル画像（ロード完了で表示）。
+    @State private var shareItem: ShareImageItem?
+    @State private var isPreparingShare = false
 
     /// ウィンドウ半径（前後それぞれに生成する枚数）。中央±30＝最大61ページだけ構築する。
     private static var windowRadius: Int { 30 }
@@ -87,7 +91,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     public var body: some View {
         // ナビバーを隠すことで上部ラベルの基準（安全領域上端）＝アクティビティバー位置になり、
         // 「バーのすぐ下」に寄せられる（ナビバーが入ると 1 段ぶん下がってしまうため）。
-        ZStack(alignment: .top) {
+        ZStack {
             TabView(selection: $currentID) {
                 ForEach(windowItems) { item in
                     FullPhotoView(store: store, item: item, showFaceHighlights: showFaceHighlights)
@@ -98,9 +102,22 @@ public struct PhotoPageView<Store: PhotoStore>: View {
             .background(Color.black)
             .ignoresSafeArea()
 
-            topControls
+            // 上部＝ナビ（戻る）＋写真情報のみ、下部＝操作（お気に入り/共有/顔）。
+            // 他画面（グリッド）が下部操作なので、フル画面もアクションは下部に統一する。
+            VStack(spacing: 0) {
+                topControls
+                Spacer()
+                bottomControls
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $shareItem) { item in
+            ActivityShareSheet(image: item.image) { completed in
+                guard completed, let photoUsageEvent else { return }
+                let id = "\(currentID)"
+                Task { await photoUsageEvent(.share, id) }
+            }
+        }
         // A: 写真ビュー表示中（＝タップ直後の遷移を含む）は背景 CLIP 埋め込みを止め、
         //    遷移・デコードに CPU/ANE を明け渡す。閉じると自動再開。
         .onAppear {
@@ -159,7 +176,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
     }
 
-    /// 上部のオーバーレイ：左上にカスタム戻るボタン、中央にアクティビティバー直下の日付＋場所。
+    /// 上部のオーバーレイ：左上に戻るボタン、中央にアクティビティバー直下の日付＋場所。
+    /// アクション（お気に入り/共有/顔）は下部バー（`bottomControls`）へ集約し、他画面と統一する。
     @ViewBuilder
     private var topControls: some View {
         ZStack(alignment: .top) {
@@ -171,32 +189,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                         .frame(width: 34, height: 34)
                         .background(.ultraThinMaterial, in: Circle())
                 }
-                // 顔ハイライト（人物アルバムのみ）。暗い写真上でも見えるよう、戻るボタンと
-                // 同じ左上のマテリアル丸ボタンにする（実フィードバック：右下の黒地は視認不可）。
-                if faceHighlightProvider != nil {
-                    Button { showFaceHighlights.toggle() } label: {
-                        // 一目で「顔」と分かるスマイルアイコン。ON は黄色の塗りで明示
-                        //（グレーの person.and.viewfinder は機能が伝わらない＝実フィードバック）。
-                        Image(systemName: showFaceHighlights ? "face.smiling.inverse" : "face.smiling")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(showFaceHighlights ? Color.yellow : .white)
-                            .frame(width: 34, height: 34)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel(L("Show recognized face"))
-                }
                 Spacer()
-                // お気に入り（端末写真のみ）。右上にトグルボタンとして出す。戻るボタンと左右対称。
-                // 塗り＝お気に入り／枠線＝未設定。タップで付け外し（PhotoKit へ書き込み）。
-                if currentItem?.supportsFavorite == true {
-                    Button { toggleFavorite() } label: {
-                        Image(systemName: currentIsFavorite ? "heart.fill" : "heart")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(currentIsFavorite ? Color.pink : .white)
-                            .frame(width: 34, height: 34)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 24)   // 日付チップと同じ高さ＝最上部のアクティビティバーの下に置く
@@ -222,6 +215,59 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
     }
 
+    /// 下部の操作バー（グリッドと同じ位置＝画面下）。お気に入り・共有・顔ハイライト。
+    /// 暗い写真でも見えるよう、各ボタンはすりガラスの丸ボタンで統一する。
+    @ViewBuilder
+    private var bottomControls: some View {
+        HStack(spacing: 28) {
+            if currentItem?.supportsFavorite == true {
+                Button { toggleFavorite() } label: {
+                    barIcon(currentIsFavorite ? "heart.fill" : "heart",
+                            tint: currentIsFavorite ? Color.pink : .white)
+                }
+                .accessibilityLabel(L("Favorite"))
+            }
+            Button { prepareShare() } label: {
+                if isPreparingShare {
+                    ProgressView().tint(.white).frame(width: 40, height: 40)
+                        .background(.ultraThinMaterial, in: Circle())
+                } else {
+                    barIcon("square.and.arrow.up", tint: .white)
+                }
+            }
+            .disabled(isPreparingShare)
+            .accessibilityLabel(L("Share"))
+            if faceHighlightProvider != nil {
+                Button { showFaceHighlights.toggle() } label: {
+                    barIcon(showFaceHighlights ? "face.smiling.inverse" : "face.smiling",
+                            tint: showFaceHighlights ? Color.yellow : .white)
+                }
+                .accessibilityLabel(L("Show recognized face"))
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func barIcon(_ name: String, tint: Color) -> some View {
+        Image(systemName: name)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(tint)
+            .frame(width: 40, height: 40)
+            .background(.ultraThinMaterial, in: Circle())
+    }
+
+    /// 共有の準備: フル画像をロードして共有シートを開く（キャッシュ済みなら即時）。
+    private func prepareShare() {
+        guard !isPreparingShare, let item = currentItem else { return }
+        isPreparingShare = true
+        Task {
+            defer { isPreparingShare = false }
+            if let image = await store.fullImage(for: item) {
+                shareItem = ShareImageItem(image: image)
+            }
+        }
+    }
+
     /// 現在ページの位置情報を地名へ解決する。位置が無ければ場所行は出さない。
     /// C: `cachedLocation` を使い、座標が未取得でも `get_metadata` の往復を起こさない
     ///    （分かっていれば出す／無ければ出さない）。
@@ -234,4 +280,26 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         if !Task.isCancelled { currentPlace = resolved }
     }
 }
+
+/// 共有シートに渡す 1 画像（sheet(item:) 用の Identifiable ラッパー）。
+private struct ShareImageItem: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+/// UIActivityViewController の SwiftUI ラッパー。完了ハンドラで「実際に共有したか」を返す
+/// （キャンセルはカウントしない）。
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let image: UIImage
+    let onFinish: (Bool) -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, completed, _, _ in onFinish(completed) }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 #endif

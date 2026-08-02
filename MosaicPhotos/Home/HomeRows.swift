@@ -154,6 +154,18 @@ struct PeopleCarousel: View {
                         .contentShape(Rectangle())
                         .onTapGesture { onSelect(person) }
                         .onLongPressGesture(minimumDuration: 0.4) { onLongPress(person) }
+                        // AI アルバムのカードと同じく「…」ボタンでもメニューを開ける（アクセス方法の統一）。
+                        .overlay(alignment: .topTrailing) {
+                            Button { onLongPress(person) } label: {
+                                Image(systemName: "ellipsis.circle.fill")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .black.opacity(0.45))
+                                    .padding(4)
+                            }
+                            .accessibilityLabel("Person options")
+                            .offset(x: -8)
+                        }
                 }
             }
             .padding(.horizontal, 16)

@@ -12,8 +12,11 @@ import SwiftUI
 struct AutoAlbumPhotosView: View {
     @State private var store: MergedPhotoStore
     private let album: AutoAlbumInfo
+    /// 画面内「…」メニューの削除アクション（AI アルバムのみ・nil なら「…」を出さない）。
+    private let onDelete: (() -> Void)?
 
-    init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex) {
+    init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
+         onDelete: (() -> Void)? = nil) {
         // 索引（起動時構築）があれば辞書引きで即構築、無ければ従来のフェッチにフォールバック。
         let memberIDs = album.localIdentifiers
         let localStore = assetIndex.assets(for: memberIDs).map { LocalPhotoStore(preloadedAssets: $0) }
@@ -23,12 +26,27 @@ struct AutoAlbumPhotosView: View {
             localStore: localStore,
             cloudPathFilter: Set(album.cloudPaths)))
         self.album = album
+        self.onDelete = onDelete
     }
 
     var body: some View {
         PhotoSourceContentView(store: store, title: album.placesLabel) {
             AutoAlbumDetailHeader(album: album)
         }
+        // アルバム画面内の「…」メニュー（ホームカードの「…」/長押しと同じ操作を画面内でも）。
+        .environment(\.sourceMenuContent, menuContent)
+    }
+
+    private var menuContent: (@MainActor () -> AnyView)? {
+        guard let onDelete else { return nil }
+        return { AnyView(
+            Menu {
+                Button(role: .destructive) { onDelete() } label: {
+                    Label("Delete Album", systemImage: "trash")
+                }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel(Text("Album options"))
+        ) }
     }
 }
 

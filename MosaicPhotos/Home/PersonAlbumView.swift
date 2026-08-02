@@ -18,6 +18,8 @@ struct PersonAlbumView: View {
     private let person: PersonInfo
     private let peopleEngine: PeopleEngine
     private let assetIndex: LocalAssetIndex
+    /// 画面内「…」メニューの対象（設定すると人物メニュー＝改名/代表/顔管理/束ね が開く）。
+    @State private var menuTarget: PersonInfo?
 
     init(person: PersonInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
          peopleEngine: PeopleEngine) {
@@ -47,6 +49,14 @@ struct PersonAlbumView: View {
             // トリミング表示なので、元画像のアスペクト比で正方形クロップ座標へ変換して渡す。
             .environment(\.faceHighlightGridProvider) { id in
                 await gridFaceRects(itemID: id)
+            }
+            // 画面内「…」→ ホームカードの長押しと同じ人物メニュー（改名/代表/顔管理/束ね）。
+            .peopleActions(for: $menuTarget, engine: peopleEngine)
+            .environment(\.sourceMenuContent) { [person] in
+                AnyView(
+                    Button { menuTarget = person } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel(Text("Person options"))
+                )
             }
     }
 

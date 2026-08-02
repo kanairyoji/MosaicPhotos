@@ -38,6 +38,7 @@ struct AlbumCarousel: View {
                     .overlay(alignment: .topTrailing) {
                         if hasMenu { menuButton(for: album) }
                     }
+                    .contextMenu { if hasMenu { menuItems(for: album) } }   // 長押しでも同じメニュー
                     .id(album.id)
                 }
             }
@@ -49,17 +50,23 @@ struct AlbumCarousel: View {
         .listRowInsets(EdgeInsets())
     }
 
+    /// メニュー項目（「…」ボタンと長押し contextMenu で共用＝アクセス方法を統一）。
+    @ViewBuilder
+    private func menuItems(for album: AutoAlbumInfo) -> some View {
+        if let onEdit {
+            Button { onEdit(album) } label: { Label("Edit Album", systemImage: "pencil") }
+        }
+        if let onDelete {
+            Button(role: .destructive) { onDelete(album) } label: {
+                Label("Delete Album", systemImage: "trash")
+            }
+        }
+    }
+
     /// カードごとの「…」メニュー。`Menu` は per-card のタップ対象なので、その album に確実に束縛される。
     private func menuButton(for album: AutoAlbumInfo) -> some View {
         Menu {
-            if let onEdit {
-                Button { onEdit(album) } label: { Label("Edit Album", systemImage: "pencil") }
-            }
-            if let onDelete {
-                Button(role: .destructive) { onDelete(album) } label: {
-                    Label("Delete Album", systemImage: "trash")
-                }
-            }
+            menuItems(for: album)
         } label: {
             Image(systemName: "ellipsis.circle.fill")
                 .font(.title3)
