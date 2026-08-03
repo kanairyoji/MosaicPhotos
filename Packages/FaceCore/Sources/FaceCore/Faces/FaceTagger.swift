@@ -23,6 +23,7 @@ final class FaceTagger {
               betweenBatchNs: UInt64 = 2_500_000_000,
               allowSimulator: Bool = false,
               shouldPause: @MainActor () -> Bool = { false },
+              networkAllowed: @MainActor () -> Bool = { true },
               onProgress: @MainActor (Int) -> Void = { _ in },
               onBatch: () async -> Void) async {
         guard let provider, provider.isAvailable else {
@@ -45,8 +46,15 @@ final class FaceTagger {
         defer { isRunning = false; onProgress(0) }
 
         let done = await store.scannedRefKeys()
-        let todo = candidateRefKeys.filter { !done.contains($0) }
-        Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(done.count) todo=\(todo.count)")
+        // ローカル("L-")を必ず先に、クラウド("C-")は後回し（母数が巨大で細切れ窓では終わらないため）。
+        // 回線が許可されない（例: Wi-Fi 待ち）ときはクラウド分を今回は対象から外す＝端末内写真だけ
+        // 進める（Wi-Fi 復帰時の次回スキャンでクラウドを拾う。顔検出はキャッシュ済みサムネDLを要する）。
+        let cloudOK = networkAllowed()
+        let localTodo = candidateRefKeys.filter { $0.hasPrefix("L-") && !done.contains($0) }
+        let cloudTodo = cloudOK ? candidateRefKeys.filter { $0.hasPrefix("C-") && !done.contains($0) } : []
+        let todo = localTodo + cloudTodo
+        Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(done.count) "
+                         + "todo=\(todo.count) (local=\(localTodo.count) cloud=\(cloudTodo.count)\(cloudOK ? "" : " deferred:no-wifi"))")
         guard !todo.isEmpty else {
             Diagnostics.mark("faces: nothing to scan (all done)")
             return

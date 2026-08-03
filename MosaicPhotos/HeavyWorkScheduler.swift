@@ -140,34 +140,34 @@ enum HeavyWorkScheduler {
         // BGTask 実行中＝アプリは非アクティブ確定。バックグラウンド起動では scenePhase の
         // 変化が来ないことがあり、初期値（true）のままだと中央ゲートが開かない。
         BackgroundYield.isAppActive = false
-        // ストア群：フォアグラウンドの生き残りを再利用、無ければ（BG からのプロセス再起動）構築。
-        let stores: HomeStores
-        if let existing = Self.stores {
-            stores = existing
-        } else {
-            stores = await HomeStores.build()
-            Self.stores = stores
-        }
+        // ストア群：プロセス内で唯一の共有インスタンス（前景 RootView と同じ）。別々に build すると
+        // PeopleEngine/AutoAlbumEngine が二重化し顔/タグが二重起動するため必ず shared() を使う。
+        let stores = await HomeStores.shared()
+        Self.stores = stores
         if Task.isCancelled { return }
 
-        // 1. アルバム生成（差分があるときだけ・~26s 上限・キャンセル非対応だが有界）。
-        // C: バックグラウンドは前景よりメモリ上限（jetsam）が厳しく、generate はピークが大きい
-        //（前景実測 ~550MB）。残り許容量に余裕が無ければスキップし、軽い処理だけ進める。
+        // 1. 顔スキャン＋CLIP 埋め込み/タグを**先に**開始する（それぞれ内部でトリクル実行・
+        //    1枚ごとに譲り判定）。BG 窓は短く（数秒〜数分で expire することが多い）、generate を
+        //    先に await すると窓を食い潰して顔/埋め込みが開始すらしない実障害があった（Fix C）。
+        //    これらは端末内写真なら通信不要で走る（Fix B・ローカルゲート）。
+        stores.peopleEngine.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore))
+        stores.autoAlbumEngine.scheduleBackgroundFill()
+
+        // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
+        // 手動と同じ経路（1 回の上限設定・電源/回線ポーズ・検証つきアップロード）を通る。
+        stores.backupEngine.startNightlyIfEnabled()
+
+        // 2. アルバム生成（差分があるときだけ・~26s 上限）。**顔/埋め込みを起こした後**に回す。
+        // generate はピークが大きく（実測 ~550〜880MB）BG の厳しい jetsam 上限に触れてアプリごと
+        // kill され、進捗が振り出しに戻る主因だった。残り許容量に**十分**な余裕がある時だけ実行する
+        // （閾値を 700→900MB に引き上げ・Fix A）。余裕が無ければスキップし軽い処理だけ進める。
         let availableMB = MemoryBudget.availableBytes() / 1_048_576
-        if availableMB > 700 {
+        if availableMB > 900 {
             await stores.autoAlbumEngine.refreshIfNeeded()
         } else {
             Diagnostics.mark("bgtask: skip generate (available=\(availableMB)MB)")
         }
         if Task.isCancelled { return }
-
-        // 2. 顔スキャン＋CLIP 埋め込みを開始（それぞれ内部でトリクル実行・1枚ごとに譲り判定）。
-        stores.peopleEngine.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore))
-        stores.autoAlbumEngine.scheduleBackgroundFill()
-
-        // 2.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
-        // 手動と同じ経路（1 回の上限設定・電源/回線ポーズ・検証つきアップロード）を通る。
-        stores.backupEngine.startNightlyIfEnabled()
 
         // 3. 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。進捗はモニタで観測。
         let monitor = BackgroundActivityMonitor.shared

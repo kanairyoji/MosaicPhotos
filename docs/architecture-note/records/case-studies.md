@@ -461,3 +461,20 @@
 - 対処: **PHAsset 全ライブラリ索引（`LocalAssetIndex`）**を起動後の段階起動（3 秒遅延・utility）で一度だけ構築し、アルバムオープンを **O(メンバー数) の辞書引き**（`LocalPhotoStore(preloadedAssets:)` 新設）に変更。索引未構築時は従来フェッチにフォールバック、索引構築後に追加された写真は不足分だけ小さく追いフェッチ（取りこぼしなし）。AI アルバム・ピープル・場所・端末アルバムの 4 ビューすべてに適用。
 - 関連: `MosaicPhotos/Home/LocalAssetIndex.swift` / `LocalPhotoCore.LocalPhotoStore（preloaded init）` / 各アルバムビュー。ADR-43 の続き。
 - 残課題: 索引は起動時スナップショット（追いフェッチで補正）。PHPhotoLibraryChangeObserver での自動更新は必要になったら。索引の常駐（数万 PHAsset 参照＋ID 文字列 ≈ 10MB 級）は LocalPhotoStore(.all) と同規模で許容。
+
+## 夜間のオンデバイス解析が進まない（Wi-Fi 一律ゲート＋generate 再実行 jetsam＋二重起動）
+- 症状: 実機を数晩充電しても People が埋まらず（ピープル 0）、顔スキャン・CLIP 埋め込みがほとんど進まない。診断ログ（diagnostics-11）で確認: (1) 顔スキャンの `already` が一晩で 4,280→5,640 とごく僅かしか増えない、(2) `generate`/`pathAlbum.full` が一晩で **24 回**走り footprint が **833〜884MB** まで跳ね、その直後に `footprint=2MB` の再起動が頻発（＝jetsam kill 濃厚）、(3) 起動毎に `faces: start` / `tags: start` が **2 回**、(4) 終盤に `[Tagger] embed: skipped — already running`。
+- 原因: 複合。
+  1. **Wi-Fi 一律ゲート**: [[ADR-25]] のゲート（`HeavyWorkTiming.allows`）が全作業に回線条件を課していたため、通信不要な**端末内写真の顔スキャン/埋め込み/タグまで** Wi-Fi 未接続/未検出（BG 起動直後は `NWPathMonitor` 初回コールバック前＝`isOnWiFi=false`）で停止。
+  2. **generate の再実行ループ**: クラウド署名 `lastCloudSignature` がプロセス変数で**起動毎に 0 リセット**＋署名が `String.hashValue`（プロセス毎に seed 変動＝**起動を跨いで不安定**）だったため、jetsam 再起動のたびに「クラウドが変わった」と誤判定 →86k 件の重い generate（~800MB）を再実行 → また jetsam、の悪循環。
+  3. **二重起動**: BG 起動プロセスで `HeavyWorkScheduler.runHeavyWork` が独自に `HomeStores.build()` する一方、UI シーンの `RootView` も別に build し、**PeopleEngine/AutoAlbumEngine が二重化**→顔/タグが 2 本走る。
+  4. **BG 窓を generate が食う**: `runHeavyWork` が generate を**先に** await（~26s）してから顔/埋め込みを起動するため、数秒〜数分で expire する BG 窓では顔/埋め込みが開始すらしない。
+  5. People が 0 の直接契機は Developer Options の「Reset people + corrections」手動実行（14:02）だが、上記で再スキャンが追いつかず 0 のまま回復不能だった。
+- 対処（ADR-69＋本項）:
+  - **ローカル/クラウドのゲート分離**（[[ADR-69]]）: `heavyShouldPause()` を回線不要の `heavyWorkAllowedLocal` に。クラウド分は `FaceTagger`（ローカル先・クラウド後回し・回線NGは除外）／`PhotoTagger`（既存 networkAllowed）／Vision タグ（回線NGはローカルのみ）で個別ゲート。
+  - **署名の永続化＋決定的化**: `lastCloudSignature` を UserDefaults 永続にし、署名を **FNV-1a（起動を跨いで安定）**へ。jetsam 再起動での無駄な generate を根絶。
+  - **単一 HomeStores**: `HomeStores.shared()`（in-flight 集約）で RootView と BGTask が同一インスタンスを共有＝二重化解消。
+  - **BG 窓の順序**: `runHeavyWork` で**顔/埋め込みを先に**起こし、generate は空きメモリが十分（>900MB・700 から引き上げ）な時だけ後回しで実行。
+  - **二重起動抑止**: `scheduleBackgroundFill` は `isTagging` を**同期的に**立ててから Task を起こす。
+- 関連: `BackgroundYield`/`HeavyWorkTiming`(requiresNetwork)・`FaceTagger.scan`・`PeopleEngine.startScan`・`AutoAlbumEngine+Recognition`(scheduleBackgroundFill)・`AutoAlbumEngine`(signature/lastCloudSignature)・`RootView`(HomeStores.shared)・`HeavyWorkScheduler.runHeavyWork`・`HeavyWorkTimingTests`。[[ADR-25]]/[[ADR-69]]。
+- 残課題: generate 自体のピーク（86k 件をメモリ展開＝~800MB）は据え置き（頻度を断って jetsam を回避した）。将来はページング化で峰を下げる余地。BG 窓が数秒で expire するのは OS 裁量で不可避＝1 窓あたりの生産性を上げる方針で対処。クラウド顔スキャン（68k 枚）はローカル完了後・Wi-Fi＋余裕時に少しずつ。

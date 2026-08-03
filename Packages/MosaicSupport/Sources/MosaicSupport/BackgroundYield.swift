@@ -46,10 +46,18 @@ public enum BackgroundYield {
         manualBoostUntil = Date().addingTimeInterval(minutes * 60)
     }
 
-    /// 重い処理の**開始/継続の共通条件**。ユーザー設定（`HeavyWorkTiming`・5段階）に従う。
-    /// 既定は nightly＝電源＋Wi-Fi＋アプリ非使用時のみ（ADR-25）。手動ブースト中は
-    /// 使用状況/回線条件を免除（明示操作＝フォアグラウンド実行を許可。電源系の安全弁は維持）。
-    public static var heavyWorkAllowed: Bool {
+    /// 重い処理の**開始/継続の共通条件**（回線を要する作業向け＝クラウド分を含む）。ユーザー設定
+    /// （`HeavyWorkTiming`・5段階）に従う。既定は nightly＝電源＋Wi-Fi＋アプリ非使用時のみ（ADR-25）。
+    /// 手動ブースト中は使用状況/回線条件を免除（明示操作＝フォアグラウンド実行を許可。電源系の安全弁は維持）。
+    public static var heavyWorkAllowed: Bool { heavyWorkAllowed(requiresNetwork: true) }
+
+    /// **ローカル専用**の重い処理（端末内写真の顔スキャン・CLIP 埋め込み）向けの許可判定。
+    /// 通信を要しないため **Wi-Fi 条件を課さない**（電源＋非使用＋低電力OFF だけで走る）。
+    /// これが無いと、Wi-Fi 未接続/未検出の夜間に端末内写真の解析まで止まっていた（実障害）。
+    /// クラウド分（サムネDL）は各処理が `NetworkStateMonitor.networkAllowed()` で個別に守る。
+    public static var heavyWorkAllowedLocal: Bool { heavyWorkAllowed(requiresNetwork: false) }
+
+    private static func heavyWorkAllowed(requiresNetwork: Bool) -> Bool {
         if debugForceHeavyWork { return true }
         if Date() < manualBoostUntil {
             return PowerStateMonitor.shared.isOnPower && !PowerStateMonitor.shared.isLowPowerMode
@@ -63,13 +71,15 @@ public enum BackgroundYield {
             isReachable: NetworkStateMonitor.shared.isReachable,
             isAppActive: isAppActive,
             foregroundIdle: idle,
-            batteryLevel: PowerStateMonitor.shared.batteryLevel)
+            batteryLevel: PowerStateMonitor.shared.batteryLevel,
+            requiresNetwork: requiresNetwork)
     }
 
-    /// 重い処理（CLIP 埋め込み・顔スキャン）の譲り判定：`heavyWorkAllowed` を満たさない、
-    /// またはアルバム生成中（相互排他）なら譲る。
-    /// ※ 生成側（refreshIfNeeded）は `heavyWorkAllowed` を見る（自分のフラグは見ない）。
+    /// 重い処理（CLIP 埋め込み・顔スキャン・Vision タグ）の譲り判定：**ローカル許可**を満たさない、
+    /// またはアルバム生成中（相互排他）なら譲る。ローカル処理は回線条件を課さない（Wi-Fi 不要）。
+    /// クラウド分（サムネDL）は各処理側が `NetworkStateMonitor.networkAllowed()` で別途ゲートする。
+    /// ※ 生成側（refreshIfNeeded）は回線ありの `heavyWorkAllowed` を見る（自分のフラグは見ない）。
     public static func heavyShouldPause() -> Bool {
-        !heavyWorkAllowed || BackgroundActivityMonitor.shared.isGeneratingAlbums
+        !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 }

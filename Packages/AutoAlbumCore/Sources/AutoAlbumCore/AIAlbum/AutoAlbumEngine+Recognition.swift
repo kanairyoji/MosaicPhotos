@@ -177,9 +177,13 @@ extension AutoAlbumEngine {
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
     /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
     public func scheduleBackgroundFill() {
+        // D: 二重起動の抑止。前景の起動タスクと夜間 BGTask が同じエンジンに対して同時に呼び得るため、
+        //    実行中フラグを**同期的に**立ててから Task を起こす（Task 内で立てると 2 本すり抜ける）。
+        guard !isTagging else { return }
+        isTagging = true
         let preset = Self.currentBackgroundPreset()
         Task(priority: .background) {
-            isTagging = true
+            defer { isTagging = false }
             // 表示ラベラの概念埋め込み（約300語）を前倒しで構築する（初回に写真を開いた瞬間の
             // 数秒のフォアグラウンド負荷を夜間へ移す）。
             await labelProvider?.prewarm()
@@ -189,7 +193,11 @@ extension AutoAlbumEngine {
             // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を全量に行き渡らせる。
             // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
             // 候補は **お気に入り(ローカル→クラウド)→その他(ローカル→クラウド)・各新→古**（AnalysisOrder）。
-            let candidates = AnalysisOrder.ordered(await store.enrichedRefKeysNewestFirst(),
+            // クラウド写真のタグ付けはサムネDLを要するため、回線NG（Wi-Fi 待ち等）なら今回はローカルのみ
+            // （Wi-Fi 復帰後の次回にクラウド分を拾う）。ローカルは通信不要なので常に進む（Fix B）。
+            let tagNetOK = NetworkStateMonitor.shared.networkAllowed()
+            let tagPool = await store.enrichedRefKeysNewestFirst()
+            let candidates = AnalysisOrder.ordered(tagNetOK ? tagPool : tagPool.filter { $0.hasPrefix("L-") },
                                                    favorites: favorites)
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                            shouldPause: { BackgroundYield.heavyShouldPause() })
@@ -227,7 +235,7 @@ extension AutoAlbumEngine {
                 let progressed = (embedAfter < embedBefore) || (capAfter < capBefore)
                 if !progressed { break }
             }
-            isTagging = false
+            // isTagging は先頭の defer で必ず戻す（二重起動抑止と対）。
         }
     }
 

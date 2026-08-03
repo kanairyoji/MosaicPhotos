@@ -86,8 +86,13 @@ public final class PeopleEngine {
                 allowSimulator: allowSimulator,
                 shouldPause: {
                     // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との
-                    // 相互排他）は BackgroundYield.heavyShouldPause に一元化。
+                    // 相互排他）は BackgroundYield.heavyShouldPause に一元化。端末内写真の顔検出は
+                    // 通信不要なので Wi-Fi は要求しない（ローカルゲート）。
                     BackgroundYield.heavyShouldPause()
+                },
+                networkAllowed: {
+                    // クラウド写真の顔検出はキャッシュ済みサムネDLを要するため回線ポリシーに従う。
+                    NetworkStateMonitor.shared.networkAllowed()
                 },
                 onProgress: {
                     self.remaining = $0

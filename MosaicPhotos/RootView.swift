@@ -37,8 +37,29 @@ final class HomeStores {
         self.autoAlbumEngine = autoAlbumEngine
     }
 
+    /// プロセス内で唯一の共有インスタンス（構築済み）。前景（RootView）と夜間 BGTask
+    /// （`HeavyWorkScheduler`）が**別々に build すると PeopleEngine/AutoAlbumEngine が二重化**し、
+    /// 顔スキャン・タグ付けが二重起動する（実障害＝起動毎に faces/tags start が 2 回）。
+    @ObservationIgnored private static var shared: HomeStores?
+    /// 構築中の in-flight タスク（同時要求を 1 本に集約する）。
+    @ObservationIgnored private static var buildTask: Task<HomeStores, Never>?
+
+    /// 共有インスタンスを返す（未構築なら 1 度だけ build・並行要求は同じタスクを待つ）。
+    /// RootView と HeavyWorkScheduler はどちらもこれを使い、同一の store 群を共有する。
+    static func shared() async -> HomeStores {
+        if let shared { return shared }
+        if let buildTask { return await buildTask.value }
+        let task = Task { @MainActor in await build() }
+        buildTask = task
+        let result = await task.value
+        shared = result
+        buildTask = nil
+        return result
+    }
+
     /// 重いストアを順に構築する。各構築の前後で `Task.yield()` して主スレッドを解放し、
     /// 起動が 1 秒を超える場合でもローディング表示のタイマーが発火できるようにする。
+    /// ※ 直接は呼ばず `shared()` 経由で使う（プロセス内で 1 度だけ構築するため）。
     static func build() async -> HomeStores {
         Diagnostics.mark("build: start")
         let auth = DropboxAuthService(appKey: DropboxConfig.appKey, redirectURI: DropboxConfig.redirectURI)
@@ -104,7 +125,7 @@ struct RootView: View {
                     withAnimation(.easeIn(duration: 0.2)) { showLoadingIndicator = true }
                 }
             }
-            let built = await HomeStores.build()
+            let built = await HomeStores.shared()
             stores = built
             // ロック中実行（BGProcessingTask）が同じストア群を再利用できるよう共有する。
             HeavyWorkScheduler.stores = built

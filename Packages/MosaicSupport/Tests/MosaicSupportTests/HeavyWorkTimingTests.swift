@@ -11,10 +11,12 @@ struct HeavyWorkTimingTests {
                         power: Bool = true, lowPower: Bool = false,
                         wifi: Bool = true, reachable: Bool = true,
                         active: Bool = false, idle: Bool = false,
-                        battery: Float = 1.0) -> Bool {
+                        battery: Float = 1.0,
+                        requiresNetwork: Bool = true) -> Bool {
         t.allows(isOnPower: power, isLowPowerMode: lowPower,
                  isOnWiFi: wifi, isReachable: reachable,
-                 isAppActive: active, foregroundIdle: idle, batteryLevel: battery)
+                 isAppActive: active, foregroundIdle: idle, batteryLevel: battery,
+                 requiresNetwork: requiresNetwork)
     }
 
     @Test("paused は常に不可（夜間条件が揃っていても）")
@@ -49,6 +51,19 @@ struct HeavyWorkTimingTests {
     func unlimitedRules() {
         #expect(allows(.unlimited, power: false, wifi: false, reachable: true, battery: 0.5))
         #expect(!allows(.unlimited, power: false, wifi: false, reachable: false, battery: 0.5))
+    }
+
+    @Test("ローカル処理(requiresNetwork:false)は Wi-Fi 不要で走る・電源/低電力の安全弁は維持")
+    func localWorkIgnoresNetwork() {
+        // 端末内写真の顔スキャン・CLIP 埋め込みは通信不要（Fix B）。
+        // nightly・充電＋非使用なら Wi-Fi/回線が無くても可。
+        #expect(allows(.nightly, wifi: false, reachable: false, requiresNetwork: false))
+        // ただし電源・低電力・使用中の安全弁は requiresNetwork に関わらず効く。
+        #expect(!allows(.nightly, power: false, wifi: false, requiresNetwork: false))       // 電源必須
+        #expect(!allows(.nightly, lowPower: true, wifi: false, requiresNetwork: false))     // 低電力は不可
+        #expect(!allows(.nightly, wifi: false, active: true, idle: true, requiresNetwork: false)) // 前面は不可
+        // 対照: 回線を要する作業（requiresNetwork:true）は従来どおり Wi-Fi 必須。
+        #expect(!allows(.nightly, wifi: false, requiresNetwork: true))
     }
 
     @Test("低電力モードは全段階で不可（安全弁）")

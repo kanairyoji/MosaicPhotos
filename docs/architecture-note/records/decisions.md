@@ -42,6 +42,31 @@
 - 関連: `PlaceNameResolver.refineWithAppleGeocoder`・`PlaceComponents`(subLocality/refined)・
   `AutoAlbumEngine.refreshIfNeeded/refinePlaceNames`。[[ADR-25]]（実行方針）。旧オフライン化の再検討。
 
+## ADR-69 重い処理のゲートを「ローカル＝通信不要／クラウド＝回線ゲート」に分離
+- 状態: 採用（[[ADR-25]] の精緻化）
+- 文脈: [[ADR-25]] で「重い処理は電源＋Wi-Fi＋ロック中のみ」に単純化した際、**回線条件を全作業に一律**で
+  課していた（`HeavyWorkTiming.allows` が常に networkOK を要求）。しかし**端末内写真の顔スキャン・CLIP
+  埋め込み・Vision タグは通信不要**。そのため夜間に Wi-Fi が未接続/未検出（例: BG 起動直後は
+  `NWPathMonitor` の初回コールバック前で `isOnWiFi=false`／モバイル運用）だと、**ローカル解析まで丸ごと
+  停止**していた（実機ログで顔スキャンが一晩でほとんど進まず＝[[case: 夜間のオンデバイス解析が進まない]]）。
+  皮肉なことに CLIP 埋め込みの内側ループは「Wi-Fi 無ければローカルのみ進める」実装を既に持っていたが、
+  外側の共通ゲート（`heavyShouldPause`）が先に止めるため**死にコード**だった。
+- 決定: 共通ゲートを 2 系統に分ける。
+  - `HeavyWorkTiming.allows(..., requiresNetwork:)` に引数追加。`false` なら回線条件を課さない（電源・
+    低電力・使用中の安全弁は不変）。
+  - `BackgroundYield.heavyWorkAllowedLocal`（回線不要）を新設。**`heavyShouldPause()` はローカル版**を見る
+    ようにし、顔スキャン・埋め込み・タグはこれを使う＝Wi-Fi 無しでも端末内写真は進む。
+  - `heavyWorkAllowed`（回線あり）は据え置き。**generate/地名補正**（クラウドメタ・通信を伴う）はこちら。
+  - **クラウド分は各処理が個別ゲート**: 埋め込みは `PhotoTagger` が `networkAllowed()` でクラウドのサムネDL
+    をスキップ（既存）、顔スキャンは `FaceTagger.scan` が候補を **ローカル先・クラウドは後回し**に並べ替え、
+    回線NG なら今回はクラウドを対象から外す、Vision タグも回線NG ならローカルのみ。
+- 結果: 夜間に Wi-Fi が無くても端末内写真の People/タグ/埋め込みが埋まる。クラウド分（通信を要する）は
+  従来どおり Wi-Fi 待ち。トレードオフ: 「Wi-Fi のみ」の 5 段階説明は**クラウド通信の話**に限定される
+  （ローカル計算は段階に関わらず電源＋非使用で走る）＝説明を UI に補足。
+- 関連: `HeavyWorkTiming.allows(requiresNetwork:)`・`BackgroundYield.heavyWorkAllowedLocal/heavyShouldPause`・
+  `FaceTagger.scan`(local-first/cloud-defer)・`AutoAlbumEngine+Recognition`(tag local-only)・
+  `PeopleEngine.startScan`(networkAllowed 結線)。`HeavyWorkTimingTests`。
+
 ## ADR-67 Dropbox 写真のお気に入り（アプリ側）＋解析の処理順をお気に入り優先に
 - 状態: 採用
 - 文脈: (1) お気に入りはローカル（`PHAsset.isFavorite`）専用で、Dropbox 写真にはハートも出せなかった

@@ -44,10 +44,14 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
     ///   - isAppActive: アプリがフォアグラウンドでアクティブか
     ///   - foregroundIdle: アプリ使用中だが最後のタッチから `foregroundIdleSeconds` 以上経過したか
     ///   - batteryLevel: 残量（0...1。取得不可は 1 を渡す）
+    ///   - requiresNetwork: この作業が回線を必要とするか。**端末内写真の顔スキャン・CLIP 埋め込みは
+    ///     通信不要なので false**（電源＋非使用だけで走る・ADR）。クラウド分（サムネDL）を含む作業は
+    ///     true＝Wi-Fi（unlimited のみモバイル可）を要求する。false なら回線条件を課さない。
     public func allows(isOnPower: Bool, isLowPowerMode: Bool,
                        isOnWiFi: Bool, isReachable: Bool,
                        isAppActive: Bool, foregroundIdle: Bool,
-                       batteryLevel: Float) -> Bool {
+                       batteryLevel: Float,
+                       requiresNetwork: Bool = true) -> Bool {
         guard self != .paused, !isLowPowerMode else { return false }
 
         // 前面で操作中（タッチから間もない）はどの段階でも動かさない。
@@ -61,8 +65,10 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
             || (self >= .battery && batteryLevel >= Self.minimumBatteryLevel)
         guard powerOK else { return false }
 
-        // 回線。unlimited だけモバイル回線も許す（ローカル写真の処理も回線条件に含める＝
-        // 挙動を段階の説明どおり単純に保つ。クラウド写真の Wi-Fi 従属は既存ポリシーが重ねて守る）。
+        // 回線。回線を要する作業のみ課す。unlimited だけモバイル回線も許す。
+        // ローカル処理（requiresNetwork=false）は回線条件を課さない＝Wi-Fi が無い/未検出でも
+        // 端末内写真の解析が進む（クラウド分の Wi-Fi 従属は各処理側が networkAllowed で重ねて守る）。
+        guard requiresNetwork else { return true }
         let networkOK = self >= .unlimited ? isReachable : isOnWiFi
         return networkOK
     }

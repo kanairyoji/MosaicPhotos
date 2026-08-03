@@ -55,7 +55,14 @@ public final class AutoAlbumEngine {
     @ObservationIgnored let tagger: PhotoTagger
     @ObservationIgnored private var observer: PhotoLibraryObserver?
     @ObservationIgnored private var libraryDirty = false
-    @ObservationIgnored private var lastCloudSignature = 0
+    /// 前回 generate 時のクラウド署名。**UserDefaults に永続**する（Fix A）。
+    /// 以前はプロセス起動ごとに 0 に戻るため、jetsam 再起動のたびに「署名が変わった」と誤判定して
+    /// 86k 件の重い generate（実測 ~800MB）を再実行 → また jetsam、という悪循環になっていた。
+    @ObservationIgnored private var lastCloudSignature: Int {
+        get { UserDefaults.standard.integer(forKey: Self.lastCloudSignatureKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.lastCloudSignatureKey) }
+    }
+    private static let lastCloudSignatureKey = "autoalbum.lastCloudSignature"
     /// ユーザーが写真を能動操作中か（スクラブ等）。背景 CLIP 埋め込みを一時停止するために使う（G）。
     /// Recognition extension から参照するため internal。
     @ObservationIgnored var isInteracting = false
@@ -469,9 +476,19 @@ public final class AutoAlbumEngine {
     }
 
     nonisolated private static func signature(of metas: [CloudPhotoMeta]) -> Int {
-        var sig = 0
-        for meta in metas where meta.latitude != nil { sig ^= meta.path.hashValue }
-        return sig
+        // ⚠️ Swift の String.hashValue はプロセス毎に seed が変わり**起動を跨いで不安定**。
+        // 署名を UserDefaults へ永続（Fix A）するため、決定的ハッシュ（FNV-1a）で算出する。
+        // XOR は順序非依存なので集合の署名として安定する。
+        var sig: UInt64 = 0
+        for meta in metas where meta.latitude != nil { sig ^= stableHash(meta.path) }
+        return Int(bitPattern: UInt(truncatingIfNeeded: sig))
+    }
+
+    /// 起動を跨いで安定な決定的ハッシュ（FNV-1a・UTF8）。
+    nonisolated private static func stableHash(_ s: String) -> UInt64 {
+        var h: UInt64 = 1_469_598_103_934_665_603
+        for b in s.utf8 { h = (h ^ UInt64(b)) &* 1_099_511_628_211 }
+        return h
     }
 
     private func ensurePhotoAuthorization() async -> PHAuthorizationStatus {
