@@ -40,7 +40,13 @@ func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
 func localImageRefKeys() async -> [String] {
     await Task.detached(priority: .utility) {
         let opts = PHFetchOptions()
-        opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        // 顔スキャンはスクリーンショットを対象外にする（(a)・顔がまず写らないのに 1 枚 ~1s かかり
+        // backlog を膨らませる）。この候補パスは顔スキャン専用（CLIP 埋め込み/タグは別の候補経路）
+        // なので、除外しても検索/タグ付けには影響しない。除外分は「スキャン済み」記録も作らない
+        // ＝候補に上がらないだけ（将来スクショに人物が必要になれば設定で戻せる）。
+        opts.predicate = NSPredicate(
+            format: "mediaType == %d && (mediaSubtypes & %d) == 0",
+            PHAssetMediaType.image.rawValue, PHAssetMediaSubtype.photoScreenshot.rawValue)
         // 新しい写真から先に解析する（全解析パス共通の方針＝撮りたての写真が最速で反映される）。
         opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let assets = PHAsset.fetchAssets(with: opts)

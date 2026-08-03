@@ -492,3 +492,15 @@
 - 対処: `runHeavyWork` で `allowSimulator = BackgroundYield.debugForceHeavyWork || faceScanOnSimulator` を渡す。「Run BG routine now」は `debugForceHeavyWork=true` にするので、**トグル無しでもその場で顔スキャンが走る**（同時に heavyShouldPause も開くので 180s 窓の間は一時停止しない）。実機は `#if targetEnvironment(simulator)` ガード外なので不変。
 - 関連: `HeavyWorkScheduler.runHeavyWork`（allowSim 追加）・`FaceTagger.scan`（simulator ガード）・`PeopleEngine.startScan`。[[ADR-25]]。
 - 残課題: foreground の「Face scan in Simulator」トグル単体では（app active ゲートで）走らない。simulator 検証は「Run BG routine now」または「Force heavy work gates open」＋トグルで行う（実機は夜間 BGTask が本番経路）。
+
+## 顔スキャンの高速化検討（スクショ除外＋所要内訳の計測・検出解像度は計測不能で保留）
+- 症状/背景: 実機ログ（diagnostics-11）で顔スキャンが **約1.0s/枚**（64枚バッチ≈66s）、ローカル未処理 ~12,000枚＝純計算 3.3 時間で全体の最大ボトルネック。効率化を検討した。
+- 分析（ログ実測・MARK タイムスタンプ差）: generate の 10〜28 分は **BG サスペンド由来で実 CPU ではない**（実 CPU は 20〜45s/回）。cloudPhotos<1s・launch→albums 3〜9s は許容。支配項は per-photo の ML 推論（顔・CLIP）。
+- 対処:
+  - **(a) スクリーンショットを顔スキャン候補から除外**: `localImageRefKeys` の fetch predicate に `(mediaSubtypes & photoScreenshot)==0` を追加。顔がまず写らないのに 1 枚 ~1s かかり backlog を膨らませていた。この候補パスは**顔スキャン専用**（CLIP 埋め込み/タグは別経路）なので検索/タグに影響しない。ライブラリの 1〜3 割削減見込み。
+  - **所要内訳の計測を追加**: `faces.detect` ログに `load=…ms infer=…ms` を出す。ANE 実機で「1 枚 ~1s」のうちロードと推論のどちらが支配的かを次回ログで可視化する（判断材料）。
+- 保留（理由つき）:
+  - **(b) 検出解像度の 2 段化（1024→640 検出）**: 効果はあり得るが**計測不能**。リスクは「高解像度の集合写真の小さい顔の検出再現率」で、それを含むデータが無い（`face-eval/own/images` は空、LFW は 250px 中央顔、FG-NET は単一顔＝いずれも検出解像度を stress しない）。ADR-51 はユーザー実写真で 1024px を選定済み（プライバシーで削除）。**盲目的に下げると ADR-51 の小顔再現率を退行させ得る**ため、上記 load/infer 計測 →（Vision 支配なら）代表的な集合写真を用意して再計測、の順で判断する。
+  - **(c) 画像プリフェッチ**: ロード支配なら有効だが、1024px CGImage(~4MB/枚) を先読み保持すると**直近の jetsam 対策と相反する**。load/infer 計測でロードが有意な割合と分かってから、メモリを抱えない形（1〜2枚のみのパイプライン等）で実装する。
+- 関連: `PeopleSupport.localImageRefKeys`・`FacePerceptionAdapter.detectFaces`(load/infer 計測)。ADR-51（顔処理解像度）・[[ADR-25]]。
+- 残課題: 次回実機ログで load/infer 内訳を確認 →(c)/(b) の可否を数値で判断。

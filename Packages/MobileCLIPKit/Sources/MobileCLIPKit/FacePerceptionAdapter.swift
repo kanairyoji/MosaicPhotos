@@ -26,9 +26,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         var result: [String: [DetectedFaceSignal]] = [:]
         var loaded = 0, nilImage = 0, rawFaces = 0, embedded = 0, visionErr = 0
         var lastError: String?
+        // 計測(b/c 判断用): 画像ロード ms と 推論(Vision 検出＋facenet 埋め込み) ms を分けて集計する。
+        // ANE 実機で「1 枚 ~1s」のうちロードと推論のどちらが支配的かを次回ログで可視化する
+        // （ロード支配ならプリフェッチ(c)、Vision 支配なら検出解像度(b) の効果が見込める）。
+        var loadMs = 0.0, inferMs = 0.0
         for refKey in refKeys {
             guard let ref = PhotoRef.decode(refKey) else { continue }
             let source: CGImage?
+            let tLoad = CFAbsoluteTimeGetCurrent()
             if let localID = ref.localIdentifier {
                 // 端末写真: 1024px（ADR-51・旧 640px）。集合写真の端の小さい顔も埋め込みに
                 // 足る解像度を確保する。メモリ増（約2.6倍/枚）は夜間・1枚ずつ処理＋
@@ -40,9 +45,12 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             } else {
                 source = nil
             }
+            loadMs += (CFAbsoluteTimeGetCurrent() - tLoad) * 1000
             guard let cg = source else { nilImage += 1; continue }
             loaded += 1
+            let tInfer = CFAbsoluteTimeGetCurrent()
             var (raw, signals, error) = detect(in: cg, isCloud: ref.localIdentifier == nil)
+            inferMs += (CFAbsoluteTimeGetCurrent() - tInfer) * 1000
             // ADR-61: 撮影日を載せる（時期グループ分割用）。ローカルは PHAsset.creationDate。
             // クラウドは seam 未整備のため当面 nil（personReps は nil を最古扱いで動く）。
             if let localID = ref.localIdentifier, let date = Self.creationDate(localID) {
@@ -55,9 +63,11 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             embedded += signals.count
             result[refKey] = signals
         }
-        // 切り分け用: 画像ロード成否・Vision 生検出数・埋め込み成功数・Vision エラー。
+        // 切り分け用: 画像ロード成否・Vision 生検出数・埋め込み成功数・Vision エラー＋所要内訳(ms)。
         Diagnostics.mark("faces.detect: loaded=\(loaded) nil=\(nilImage) rawFaces=\(rawFaces) "
-                         + "embedded=\(embedded) visionErr=\(visionErr)\(lastError.map { " (\($0))" } ?? "")")
+                         + "embedded=\(embedded) visionErr=\(visionErr) "
+                         + "load=\(Int(loadMs))ms infer=\(Int(inferMs))ms"
+                         + "\(lastError.map { " (\($0))" } ?? "")")
         return result
     }
 
