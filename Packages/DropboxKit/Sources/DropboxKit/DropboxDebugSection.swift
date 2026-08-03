@@ -32,32 +32,32 @@ public struct DropboxDebugSection: View {
     // MARK: - Auth debug
 
     private var authDebugSection: some View {
-        Section("Dropbox — Auth") {
+        Section {
             if let cred = dropboxAuth.credential {
-                LabeledContent("Access token", value: masked(cred.accessToken))
-                LabeledContent("Refresh token", value: cred.refreshToken != nil ? "Present" : "None")
+                LabeledContent("アクセストークン", value: masked(cred.accessToken))
+                LabeledContent("リフレッシュトークン", value: cred.refreshToken != nil ? "あり" : "なし")
                 if let expiresAt = cred.expiresAt {
-                    LabeledContent("Expires", value: DisplayDate.dateTime(expiresAt))
+                    LabeledContent("有効期限", value: DisplayDate.dateTime(expiresAt))
                 }
                 if let lastRefreshed = cred.lastRefreshedAt {
-                    LabeledContent("Last refreshed", value: DisplayDate.dateTime(lastRefreshed))
+                    LabeledContent("最終更新", value: DisplayDate.dateTime(lastRefreshed))
                 }
                 if let accountId = cred.accountId {
-                    LabeledContent("Account ID", value: accountId)
+                    LabeledContent("アカウント ID", value: accountId)
                 }
             }
             if case .error(let msg) = dropboxAuth.connectionStatus {
-                LabeledContent("Error detail", value: msg)
+                LabeledContent("エラー詳細", value: msg)
                 if let e = dropboxAuth.lastError {
-                    LabeledContent("Error date", value: DisplayDate.dateTime(e.date))
+                    LabeledContent("エラー日時", value: DisplayDate.dateTime(e.date))
                 }
             }
 
-            TextField("Enter access token directly", text: $directTokenInput)
+            TextField("アクセストークンを直接入力", text: $directTokenInput)
                 .font(.system(.caption, design: .monospaced))
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-            Button("Apply") {
+            Button("適用") {
                 let token = directTokenInput.trimmingCharacters(in: .whitespaces)
                 directTokenInput = ""
                 Task {
@@ -68,70 +68,84 @@ public struct DropboxDebugSection: View {
                 directTokenInput.trimmingCharacters(in: .whitespaces).isEmpty
                     || dropboxAuth.connectionStatus == .authenticating
             )
+        } header: {
+            Text("Dropbox：認証")
+        } footer: {
+            Text("Dropbox の認証トークンとエラー状態です。トークンを手動で貼り付けて適用することもできます"
+                 + "（通常は不要・検証用）。トークンは先頭のみ表示します。")
         }
     }
 
     // MARK: - Cache status section
 
     private var cacheStatusSection: some View {
-        Section("Cache Status") {
+        Section {
             if let store {
-                LabeledContent("Sync", value: syncStateLabel(store.syncState))
+                LabeledContent("同期", value: syncStateLabel(store.syncState))
             }
             if let s = cacheDebugModel.stats {
-                LabeledContent("Files in DB", value: "\(s.itemCount)")
-                LabeledContent("Thumbnails", value: "\(s.thumbnailCount) · \(formatBytes(s.thumbnailBytes))")
-                LabeledContent("Full images", value: "\(s.fullImageCount) · \(formatBytes(s.fullImageBytes))")
+                LabeledContent("DB 内のファイル数", value: "\(s.itemCount)")
+                LabeledContent("サムネイル", value: "\(s.thumbnailCount) · \(formatBytes(s.thumbnailBytes))")
+                LabeledContent("フル画像", value: "\(s.fullImageCount) · \(formatBytes(s.fullImageBytes))")
                 if let d = s.lastSyncedAt {
-                    LabeledContent("Last synced", value: DisplayDate.dateTime(d))
+                    LabeledContent("最終同期", value: DisplayDate.dateTime(d))
                 }
             } else {
-                Text("Not loaded")
+                Text("未読み込み")
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Button("Refresh") {
+                Button("更新") {
                     Task { await cacheDebugModel.refresh(store: store) }
                 }
                 Spacer()
-                NavigationLink("View contents") {
+                NavigationLink("キャッシュ内容を見る") {
                     DropboxCacheListView(model: cacheDebugModel, store: store)
                 }
             }
             if let store {
-                Button("Force Re-sync") { store.forceResync() }
+                Button("強制的に再同期") { store.forceResync() }
             }
-            Button("Clear Dropbox Cache", role: .destructive) {
+            Button("Dropbox キャッシュを消去", role: .destructive) {
                 showClearCacheConfirmation = true
             }
-            .alert("Clear Dropbox Cache?", isPresented: $showClearCacheConfirmation) {
-                Button("Clear", role: .destructive) {
+            .alert("Dropbox キャッシュを消去しますか？", isPresented: $showClearCacheConfirmation) {
+                Button("消去", role: .destructive) {
                     // 動作中ストア経由で消去＋再同期（cursor/syncState もリセット）→ 再取得。
                     Task { await cacheDebugModel.clearAll(store: store) }
                 }
-                Button("Cancel", role: .cancel) {}
+                Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("All cached metadata and files will be deleted. This cannot be undone.")
+                Text("キャッシュしたメタデータとファイルをすべて削除します。この操作は取り消せません。")
             }
+        } header: {
+            Text("Dropbox：キャッシュの状態")
+        } footer: {
+            Text("同期状態と、ローカルにキャッシュしたファイル数／サムネ／フル画像の容量です。"
+                 + "「強制的に再同期」はカーソルをリセットして最初から取得し直します。")
         }
     }
 
     // MARK: - Tuning constants (read-only)
 
     private var tuningConstantsSection: some View {
-        Section("Dropbox — Tuning Constants") {
+        Section {
             let c = DropboxDebugConstants.self
-            LabeledContent("Token refresh buffer", value: "\(c.tokenExpiryBufferSeconds) s")
-            LabeledContent("Thumbnail batch size", value: "\(c.thumbnailBatchChunkSize)")
-            LabeledContent("Thumbnail batch debounce", value: "\(c.thumbnailBatchDebounceMs) ms")
-            LabeledContent("Thumbnail API size", value: c.thumbnailAPISize)
-            LabeledContent("list_folder page limit", value: "\(c.listFolderPageLimit)")
-            LabeledContent("Parallel folder scans", value: "\(c.parallelFolderScanBatchSize)")
-            LabeledContent("Longpoll timeout", value: "\(c.longpollTimeoutSeconds) s")
-            LabeledContent("Retry delay", value: "\(c.retryDelaySeconds) s")
-            LabeledContent("JPEG quality (thumb/full)", value: "\(c.thumbnailJPEGQuality) / \(c.fullImageJPEGQuality)")
-            LabeledContent("Default limits (thumb/full)", value: "\(c.defaultThumbnailLimitMB) MB / \(c.defaultFullImageLimitMB) MB")
-            LabeledContent("PKCE verifier bytes", value: "\(c.pkceVerifierByteCount)")
+            LabeledContent("トークン更新の余裕", value: "\(c.tokenExpiryBufferSeconds) 秒")
+            LabeledContent("サムネのバッチサイズ", value: "\(c.thumbnailBatchChunkSize)")
+            LabeledContent("サムネのバッチ間引き", value: "\(c.thumbnailBatchDebounceMs) ms")
+            LabeledContent("サムネの API サイズ", value: c.thumbnailAPISize)
+            LabeledContent("list_folder の 1 ページ上限", value: "\(c.listFolderPageLimit)")
+            LabeledContent("フォルダ走査の並列数", value: "\(c.parallelFolderScanBatchSize)")
+            LabeledContent("longpoll のタイムアウト", value: "\(c.longpollTimeoutSeconds) 秒")
+            LabeledContent("リトライ間隔", value: "\(c.retryDelaySeconds) 秒")
+            LabeledContent("JPEG 品質（サムネ/フル）", value: "\(c.thumbnailJPEGQuality) / \(c.fullImageJPEGQuality)")
+            LabeledContent("既定の上限（サムネ/フル）", value: "\(c.defaultThumbnailLimitMB) MB / \(c.defaultFullImageLimitMB) MB")
+            LabeledContent("PKCE verifier のバイト数", value: "\(c.pkceVerifierByteCount)")
+        } header: {
+            Text("Dropbox：チューニング定数")
+        } footer: {
+            Text("同期・サムネ取得・認証まわりの内部定数（読み取り専用）です。")
         }
     }
 
@@ -145,11 +159,11 @@ public struct DropboxDebugSection: View {
 
     private func syncStateLabel(_ state: DropboxPhotoStore.SyncState) -> String {
         switch state {
-        case .idle:                    return "Idle"
-        case .initialSync(let n):      return "Initial sync · \(n) photos"
-        case .polling:                 return "Watching for changes"
-        case .fetchingDelta:           return "Fetching changes…"
-        case .error(let msg):          return "Error: \(msg)"
+        case .idle:                    return "待機中"
+        case .initialSync(let n):      return "初回同期中 · \(n) 枚"
+        case .polling:                 return "変更を監視中"
+        case .fetchingDelta:           return "変更を取得中…"
+        case .error(let msg):          return "エラー: \(msg)"
         }
     }
 }

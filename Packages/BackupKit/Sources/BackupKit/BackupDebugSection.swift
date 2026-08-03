@@ -43,12 +43,15 @@ public struct BackupDebugSection: View {
     /// オフロード実削除のゲート（ADR-40 の段階導入）。既定 OFF＝ドライランのみ。
     private var offloadGateSection: some View {
         Section {
-            Toggle("Offload: allow real deletion",
+            Toggle("オフロード：実削除を許可",
                    isOn: Binding(
                        get: { UserDefaults.standard.bool(forKey: BackupSettingsKeys.offloadRealDeletionEnabled) },
                        set: { UserDefaults.standard.set($0, forKey: BackupSettingsKeys.offloadRealDeletionEnabled) }))
+        } header: {
+            Text("バックアップ：オフロード")
         } footer: {
-            Text("OFF (default): Offload screen is dry-run only. ON: the delete button appears — deletion still requires the system confirmation dialog and stays in Recently Deleted for 30 days.")
+            Text("OFF（既定）：オフロード画面はドライラン（試算）のみ。ON：削除ボタンが表示されます。"
+                 + "削除にはシステムの確認ダイアログが必要で、30 日間は「最近削除した項目」に残ります。")
         }
     }
 
@@ -57,26 +60,26 @@ public struct BackupDebugSection: View {
 
     private var progressDebugSection: some View {
         Section {
-            LabeledContent("Backup records", value: "\(engine.recordCount)")
-            LabeledContent("Uploaded IDs", value: "\(engine.uploadedIDCount)")
-            LabeledContent("Metadata path", value: BackupEngine.metadataPathSuffix)
+            LabeledContent("バックアップ記録", value: "\(engine.recordCount)")
+            LabeledContent("アップロード済み ID", value: "\(engine.uploadedIDCount)")
+            LabeledContent("メタデータのパス", value: BackupEngine.metadataPathSuffix)
             // Dropbox の実ファイル一覧（list_folder・再帰）と記録/台帳を照合して実態に合わせる。
             // 「Dropbox 側でファイルを消した」「409 誤記録時代の済み ID」をここで一掃できる。
             Button {
                 isReconciling = true
                 Task {
                     if let r = await engine.reconcileWithDropbox() {
-                        reconcileResult = "verified \(r.verified), removed \(r.removed) stale, remote files \(r.remoteFiles)"
+                        reconcileResult = "検証 \(r.verified) 件、無効な記録を \(r.removed) 件削除、リモートのファイル \(r.remoteFiles) 件"
                     } else {
-                        reconcileResult = "failed (auth or network)"
+                        reconcileResult = "失敗（認証または通信）"
                     }
                     isReconciling = false
                 }
             } label: {
                 if isReconciling {
-                    HStack { ProgressView().controlSize(.small); Text("Reconciling…") }
+                    HStack { ProgressView().controlSize(.small); Text("照合中…") }
                 } else {
-                    Text("Reconcile with Dropbox (verify records)")
+                    Text("Dropbox と照合（記録を検証）")
                 }
             }
             .disabled(isReconciling || engine.isRunning)
@@ -85,31 +88,33 @@ public struct BackupDebugSection: View {
             }
             // 台帳（UserDefaults）だけでなく SwiftData 記録も消す全消去。
             // ⚠️ 台帳のみのクリアは、済み判定が「台帳 ∪ 記録」になったため見かけ上効かない。
-            Button("Clear ALL Backup Records (progress + records)", role: .destructive) {
+            Button("バックアップ記録をすべて消去（進捗＋記録）", role: .destructive) {
                 Task { await engine.clearAllBackupRecords() }
                 reconcileResult = nil
             }
             .disabled(engine.isRunning)
         } header: {
-            Text("Backup — Progress")
+            Text("バックアップ：進捗")
         } footer: {
-            Text("Reconcile lists actual files on Dropbox and drops records whose file is missing or has a different content hash. Clear ALL wipes progress and records; the next backup re-verifies existing files via 409 + hash without re-uploading.")
+            Text("「Dropbox と照合」は Dropbox 上の実ファイルを一覧し、ファイルが無い／内容ハッシュが違う記録を"
+                 + "削除します。「すべて消去」は進捗と記録を消しますが、次回のバックアップは 409＋ハッシュで既存"
+                 + "ファイルを再検証するので再アップロードは発生しません。")
         }
     }
 
     // MARK: - Debug: folder check
 
     private var debugControlSection: some View {
-        Section("Backup — Folder Check") {
+        Section("バックアップ：フォルダ確認") {
             HStack {
                 Button {
                     Task { await checkFolder() }
                 } label: {
                     if folderCheckState == .checking {
                         ProgressView().controlSize(.small).padding(.trailing, 4)
-                        Text("Checking…")
+                        Text("確認中…")
                     } else {
-                        Label("Check Folder", systemImage: "arrow.clockwise.circle")
+                        Label("フォルダを確認", systemImage: "arrow.clockwise.circle")
                     }
                 }
                 .disabled(
@@ -130,13 +135,13 @@ public struct BackupDebugSection: View {
         case .idle, .checking:
             EmptyView()
         case .found:
-            Label("Folder found", systemImage: "checkmark.circle.fill")
+            Label("フォルダあり", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green).font(.callout)
         case .notFound:
-            Label("Not found — will be created", systemImage: "folder.badge.plus")
+            Label("見つかりません（作成されます）", systemImage: "folder.badge.plus")
                 .foregroundStyle(.orange).font(.callout)
         case .isFile:
-            Label("Path is a file, not a folder", systemImage: "exclamationmark.circle.fill")
+            Label("パスはフォルダでなくファイルです", systemImage: "exclamationmark.circle.fill")
                 .foregroundStyle(.red).font(.callout)
         case .error(let msg):
             Label(msg, systemImage: "exclamationmark.circle.fill")
@@ -147,23 +152,23 @@ public struct BackupDebugSection: View {
     // MARK: - Debug: SwiftData backup records
 
     private var debugLocalRecordsSection: some View {
-        Section("Backup — Records (Local DB)") {
+        Section("バックアップ：記録（ローカル DB）") {
             if engine.isAlbumsLoaded {
-                statRow("Backed-up photos", value: engine.recordCount, icon: "photo.on.rectangle")
-                statRow("Albums collected", value: engine.albumInfos.count, icon: "rectangle.stack")
+                statRow("バックアップ済み写真", value: engine.recordCount, icon: "photo.on.rectangle")
+                statRow("収集したアルバム", value: engine.albumInfos.count, icon: "rectangle.stack")
                 if engine.recordCount == 0 {
-                    Text("No records yet. Run a backup first.")
+                    Text("まだ記録がありません。先にバックアップを実行してください。")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 } else if engine.albumInfos.isEmpty {
-                    Text("Photos backed up but none belong to a user-created album.")
+                    Text("写真はバックアップ済みですが、ユーザー作成アルバムに属するものはありません。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } else {
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("Loading…").foregroundStyle(.secondary).font(.callout)
+                    Text("読み込み中…").foregroundStyle(.secondary).font(.callout)
                 }
             }
         }
@@ -173,15 +178,15 @@ public struct BackupDebugSection: View {
 
     @ViewBuilder
     private var debugLocalStatsSection: some View {
-        Section("Backup — Local Library") {
+        Section("バックアップ：端末ライブラリ") {
             if let s = localStats {
-                statRow("People",    value: s.peopleCount,    icon: "person.2")
-                statRow("Albums",    value: s.albumsCount,    icon: "rectangle.stack")
-                statRow("Favorites", value: s.favoritesCount, icon: "heart")
+                statRow("ピープル",     value: s.peopleCount,    icon: "person.2")
+                statRow("アルバム",     value: s.albumsCount,    icon: "rectangle.stack")
+                statRow("お気に入り",   value: s.favoritesCount, icon: "heart")
             } else {
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("Loading…").foregroundStyle(.secondary).font(.callout)
+                    Text("読み込み中…").foregroundStyle(.secondary).font(.callout)
                 }
             }
         }
@@ -191,15 +196,15 @@ public struct BackupDebugSection: View {
 
     @ViewBuilder
     private var debugMetadataStatsSection: some View {
-        Section("Backup — Metadata") {
+        Section("バックアップ：メタデータ") {
             if let meta = dropboxStore?.backupMetadata {
                 let stats = MetadataStats(from: meta)
-                statRow("Backed-up entries", value: stats.entries,   icon: "photo.on.rectangle")
-                statRow("Unique people",     value: stats.people,    icon: "person.2")
-                statRow("Unique albums",     value: stats.albums,    icon: "rectangle.stack")
-                statRow("Favorites",         value: stats.favorites, icon: "heart")
+                statRow("バックアップ済みエントリ", value: stats.entries,   icon: "photo.on.rectangle")
+                statRow("人物（ユニーク）",       value: stats.people,    icon: "person.2")
+                statRow("アルバム（ユニーク）",   value: stats.albums,    icon: "rectangle.stack")
+                statRow("お気に入り",             value: stats.favorites, icon: "heart")
             } else {
-                Text("No backup metadata loaded.")
+                Text("バックアップのメタデータが読み込まれていません。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -211,7 +216,7 @@ public struct BackupDebugSection: View {
     @ViewBuilder
     private var debugLogSection: some View {
         if !engine.log.isEmpty {
-            Section("Backup — Log") {
+            Section("バックアップ：ログ") {
                 ForEach(engine.log.reversed()) { entry in
                     HStack(alignment: .top, spacing: 8) {
                         Text(entry.time)

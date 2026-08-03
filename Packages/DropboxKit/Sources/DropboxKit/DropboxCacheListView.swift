@@ -20,11 +20,11 @@ public struct DropboxCacheListView: View {
             itemsSection
             usageSection
         }
-        .navigationTitle("Cache Contents")
+        .navigationTitle("キャッシュ内容")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Refresh") { Task { await model.refresh(store: store) } }
+                Button("更新") { Task { await model.refresh(store: store) } }
             }
         }
     }
@@ -32,32 +32,32 @@ public struct DropboxCacheListView: View {
     // MARK: - Sections
 
     private var summarySection: some View {
-        Section("Summary") {
+        Section("概要") {
             if let s = model.stats {
-                LabeledContent("Files in DB", value: "\(s.itemCount)")
-                LabeledContent("Thumbnails", value: "\(s.thumbnailCount)  (\(formatBytes(s.thumbnailBytes)))")
-                LabeledContent("Full images", value: "\(s.fullImageCount)  (\(formatBytes(s.fullImageBytes)))")
+                LabeledContent("DB 内のファイル数", value: "\(s.itemCount)")
+                LabeledContent("サムネイル", value: "\(s.thumbnailCount)  (\(formatBytes(s.thumbnailBytes)))")
+                LabeledContent("フル画像", value: "\(s.fullImageCount)  (\(formatBytes(s.fullImageBytes)))")
                 if let d = s.lastSyncedAt {
-                    LabeledContent("Last synced", value: DisplayDate.dateTime(d))
+                    LabeledContent("最終同期", value: DisplayDate.dateTime(d))
                 }
                 if let cursor = s.syncCursor {
-                    LabeledContent("Sync cursor") {
+                    LabeledContent("同期カーソル") {
                         Text(cursor.prefix(24) + (cursor.count > 24 ? "…" : ""))
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                     }
                 }
             } else {
-                Text("No data — tap Refresh")
+                Text("データなし — 「更新」をタップ")
                     .foregroundStyle(.secondary)
             }
         }
     }
 
     private var itemsSection: some View {
-        Section("Cached Files (\(model.items.count))") {
+        Section("キャッシュ済みファイル（\(model.items.count)）") {
             if model.items.isEmpty {
-                Text("No cached file metadata")
+                Text("キャッシュされたファイル情報はありません")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(model.items) { item in
@@ -68,9 +68,9 @@ public struct DropboxCacheListView: View {
     }
 
     private var usageSection: some View {
-        Section("Usage Entries (\(model.usageEntries.count))") {
+        Section("使用状況エントリ（\(model.usageEntries.count)）") {
             if model.usageEntries.isEmpty {
-                Text("No usage entries")
+                Text("使用状況エントリはありません")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(model.usageEntries) { entry in

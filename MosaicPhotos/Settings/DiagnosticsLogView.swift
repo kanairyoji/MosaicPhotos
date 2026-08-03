@@ -8,17 +8,17 @@ struct DiagnosticsLogView: View {
 
     var body: some View {
         ScrollView {
-            Text(text.isEmpty ? "No diagnostics recorded yet." : text)
+            Text(text.isEmpty ? "まだ診断ログはありません。" : text)
                 .font(.system(.caption2, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
         }
-        .navigationTitle("Diagnostics Log")
+        .navigationTitle("診断ログ")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Clear", role: .destructive) {
+                Button("消去", role: .destructive) {
                     DiagnosticsLog.shared.clear()
                     text = ""
                 }
@@ -30,7 +30,7 @@ struct DiagnosticsLogView: View {
                 Button {
                     text = DiagnosticsLog.shared.recentText()
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label("更新", systemImage: "arrow.clockwise")
                 }
             }
         }

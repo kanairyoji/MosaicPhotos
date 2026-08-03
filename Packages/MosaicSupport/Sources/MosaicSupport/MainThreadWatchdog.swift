@@ -60,7 +60,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             let age = Double(DispatchTime.now().uptimeNanoseconds &- outstandingSinceNs) / 1_000_000
             if age > hangBeginSuspectMs, !hangBeginReported {
                 hangBeginReported = true
-                DiagnosticsLog.shared.append(String(format: "PERF hang.begin main blocked ≥%.0fms — 直前のログ行の処理を疑う", age))
+                DiagnosticsLog.shared.append(String(format: "PERF hang.begin main blocked ≥%.0fms — suspect the processing at the previous log line", age))
             }
             return
         }

@@ -83,8 +83,8 @@ public struct LocalPhotoSettingsView: View {
 public struct LocalPhotoDebugSection: View {
     public init() {}
     public var body: some View {
-        Section("Photos — Debug") {
-            LabeledContent("Thumbnail JPEG quality", value: "0.8")
+        Section("写真ソース：ローカル（端末）") {
+            LabeledContent("サムネの JPEG 品質", value: "0.8")
         }
     }
 }
