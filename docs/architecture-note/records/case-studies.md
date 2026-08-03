@@ -485,3 +485,10 @@
 - 対処: 設計判断として [[ADR-70]]（モデル常駐制御: 遅延化 1-a／直列ロード 1-c／フェーズ相互排他 1-b／使用後・圧迫時解放 1-d）・[[ADR-71]]（UI の大規模処理を off-main/間引き: MergedStore デバウンス 2-a／Dropbox 比較の署名化 2-b／map・sort の off-main 2-c/2-d／PlaceGrouping 間引き 2-e）・[[ADR-72]]（generate 省メモリ 3-a／バックアップと AI の非同時実行 3-b）を実施。
 - 関連: ADR-70/71/72 の「関連」を参照。app iOS ビルド緑・fast/ios テスト緑。
 - 残課題: generate 自体の 86k メモリ展開はチャンク化の余地を残す（今回は返り値の削減＋頻度/常駐の抑制で jetsam 回避）。モデル推論の同時実行を semaphore で厳密に絞るのは将来の選択肢（現状はフェーズ相互排他＋ロード直列化で実質担保）。
+
+## シミュレータで顔スキャンが走らない（ADR-25 フォアグラウンド停止で simulator の入口が消えた）
+- 症状: シミュレータでピープルの数が増えない。「Run BG routine now」を押しても増えない。
+- 原因: `FaceTagger.scan` はシミュレータでは既定でスキップ（cpuOnly で重いため）、`allowSimulator: true` のときだけ走る。foreground の `.task` は「Face scan in Simulator」トグルで allowSimulator を渡すが、[[ADR-25]] のフォアグラウンド完全停止で `heavyShouldPause`（アプリ操作中）に阻まれて実際には走らない。一方 `HeavyWorkScheduler.runHeavyWork`（＝「Run BG routine now」）は `startScan(...)` を **allowSimulator 無し（既定 false）** で呼んでいたため、シミュレータでは常にスキップ。結果、simulator に顔スキャンの入口が 1 つも残っていなかった（顔認識ロジック自体は正常）。
+- 対処: `runHeavyWork` で `allowSimulator = BackgroundYield.debugForceHeavyWork || faceScanOnSimulator` を渡す。「Run BG routine now」は `debugForceHeavyWork=true` にするので、**トグル無しでもその場で顔スキャンが走る**（同時に heavyShouldPause も開くので 180s 窓の間は一時停止しない）。実機は `#if targetEnvironment(simulator)` ガード外なので不変。
+- 関連: `HeavyWorkScheduler.runHeavyWork`（allowSim 追加）・`FaceTagger.scan`（simulator ガード）・`PeopleEngine.startScan`。[[ADR-25]]。
+- 残課題: foreground の「Face scan in Simulator」トグル単体では（app active ゲートで）走らない。simulator 検証は「Run BG routine now」または「Force heavy work gates open」＋トグルで行う（実機は夜間 BGTask が本番経路）。

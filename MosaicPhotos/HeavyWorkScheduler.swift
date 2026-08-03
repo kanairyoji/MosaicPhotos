@@ -150,7 +150,14 @@ enum HeavyWorkScheduler {
         //    1枚ごとに譲り判定）。BG 窓は短く（数秒〜数分で expire することが多い）、generate を
         //    先に await すると窓を食い潰して顔/埋め込みが開始すらしない実障害があった（Fix C）。
         //    これらは端末内写真なら通信不要で走る（Fix B・ローカルゲート）。
-        stores.peopleEngine.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore))
+        // シミュレータでは FaceTagger が既定でスキップするため、**この BG ルーチンでは顔スキャンを許可**
+        // する（`debugForceHeavyWork`＝「Run BG routine now」/ゲート強制時、または「Face scan in
+        // Simulator」トグル ON 時）。これが無いと Run BG routine を押しても People が増えなかった。
+        let allowSim = BackgroundYield.debugForceHeavyWork
+            || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
+        stores.peopleEngine.startScan(
+            candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
+            allowSimulator: allowSim)
         stores.autoAlbumEngine.scheduleBackgroundFill()
 
         // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
