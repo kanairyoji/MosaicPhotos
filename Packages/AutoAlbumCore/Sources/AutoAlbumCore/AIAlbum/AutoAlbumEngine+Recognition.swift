@@ -176,17 +176,32 @@ extension AutoAlbumEngine {
 
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
     /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
+    /// 未タグ写真の Vision タグ付け＋CLIP 埋め込み＋VLM キャプションをバックグラウンドで進める。
+    /// ※ 一時停止で滞留したタスクは、ゲートが開けば（`heavyShouldPause` が false になれば）内部の
+    ///   `waitWhilePaused` で**自分で再開**する。生成フラグ滞留の安全弁は
+    ///   `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）とデバッグ全開バイパスが担う。
     public func scheduleBackgroundFill() {
         // D: 二重起動の抑止。前景の起動タスクと夜間 BGTask が同じエンジンに対して同時に呼び得るため、
         //    実行中フラグを**同期的に**立ててから Task を起こす（Task 内で立てると 2 本すり抜ける）。
-        guard !isTagging else { return }
+        // 一時停止で滞留したタスクはゲートが開けば内部の waitWhilePaused で自分で再開する（force 撤去）。
+        // 真因の画像ロードハング（PHAssetImageLoader）は修正済みなので、以前 isTagging を握り続けていた
+        // launch タスクも自力で解けて完了する。
+        guard !isTagging else {
+            Diagnostics.mark("bgfill: skip — already tagging/embedding")
+            return
+        }
         isTagging = true
         let preset = Self.currentBackgroundPreset()
         Task(priority: .background) {
             defer { isTagging = false }
-            // 表示ラベラの概念埋め込み（約300語）を前倒しで構築する（初回に写真を開いた瞬間の
-            // 数秒のフォアグラウンド負荷を夜間へ移す）。
-            await labelProvider?.prewarm()
+            Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.heavyShouldPause()) "
+                             + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
+            // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。
+            // ANE 直列化ゲートを通す（CLIP テキスト塔ロード＋埋め込みが顔検出と同時に ANE を使わないように）。
+            Task(priority: .background) { [weak self] in
+                guard let self, let labeler = self.labelProvider else { return }
+                await MLInferenceGate.shared.run { await labeler.prewarm() }
+            }
             // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
             await refreshFavoritesCache()
             let favorites = favoritesCache
@@ -214,6 +229,9 @@ extension AutoAlbumEngine {
             // VLM キャプション（重い文章生成）は**お気に入り限定**（favorites は上で取り込み済み）。
             // 処理順は**撮影日降順**（新しい写真から先に説明が付く）。
             let favoritesOrdered = await store.newestFirst(refKeys: favorites)
+            Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.heavyShouldPause()) "
+                             + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums) "
+                             + "unembedded=\(await store.unembeddedCount()))")
             while !BackgroundYield.heavyShouldPause() {
                 let embedBefore = await store.unembeddedCount()
                 await tagger.embedUnprocessed(batchSize: preset.batchSize,

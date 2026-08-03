@@ -53,16 +53,37 @@ public enum PHAssetImageLoader {
         let options = makeOptions(quality: quality, allowsNetwork: allowsNetwork)
         let lock = NSLock()
         var resumed = false
+        var lastDegraded: UIImage?
         return await withCheckedContinuation { (cont: CheckedContinuation<UIImage?, Never>) in
+            func finish(_ image: UIImage?) {
+                lock.lock(); defer { lock.unlock() }
+                guard !resumed else { return }   // 2 回目以降 / タイムアウトの二重確定を防ぐ
+                resumed = true
+                cont.resume(returning: image)
+            }
             PHImageManager.default().requestImage(
                 for: asset, targetSize: targetSize, contentMode: contentMode, options: options
             ) { image, info in
-                // opportunistic の劣化版は待って確定版のみ返す（ちらつき・向き未確定を避ける）。
-                if (info?[PHImageResultIsDegradedKey] as? Bool) == true { return }
-                lock.lock(); defer { lock.unlock() }
-                guard !resumed else { return }   // 2 回目以降のコールバックは無視
-                resumed = true
-                cont.resume(returning: image.map(normalizedUp))
+                if (info?[PHImageResultIsDegradedKey] as? Bool) == true {
+                    // opportunistic の劣化版。**通信可**なら確定版を待つ（ちらつき回避）。
+                    // ⚠️ **通信不可**（allowsNetwork=false・背景解析）で iCloud のみの写真は、確定版が
+                    //   永遠に来ず withCheckedContinuation が resume されず**永久ハング**する（実障害:
+                    //   顔スキャンが最初の iCloud 写真で固まり 0 枚のまま）。その場合はローカルの劣化版で
+                    //   確定する（低解像度だがハングしない）。まだ来ていなければ覚えておく。
+                    if allowsNetwork {
+                        lock.lock(); lastDegraded = image.map(normalizedUp); lock.unlock()
+                        return
+                    }
+                    finish(image.map(normalizedUp))
+                    return
+                }
+                finish(image.map(normalizedUp))
+            }
+            // 安全弁: どのコールバックでも確定しないまま一定時間が過ぎたら、劣化版（あれば）または nil で
+            // 確定する（PHImageManager が確定コールバックを返さない写真で永久ハングしないための最終防壁）。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) {
+                lock.lock(); let fallback = lastDegraded; lock.unlock()
+                finish(fallback)
             }
         }
     }

@@ -336,9 +336,9 @@ public final class AutoAlbumEngine {
         guard let first = tripCoordinates.first else {
             return "トリップがありません（先に『時間と場所』を生成してください）"
         }
-        let sample = await PlaceNameResolver.shared.debugGeocode(first) ?? "(取得できず＝通信不可/圏外)"
+        let sample = await PlaceNameResolver.shared.debugGeocode(first) ?? "（取得できず＝通信不可／圏外）"
         let refined = await refinePlaceNames(shouldContinue: { true })
-        return "Apple 地名 OK — 例: \(sample) ／ 高精度化 \(refined) 地点"
+        return "Apple の地名 取得成功 — 例: \(sample) ／ 高精度化 \(refined) 地点"
     }
 
     public func generate() async {

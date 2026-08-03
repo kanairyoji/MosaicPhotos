@@ -32,32 +32,29 @@ enum CoreMLModelLoader {
         Bundle.main.url(forResource: name, withExtension: "mlmodelc")
     }
 
-    /// 重いモデル**ロードの直列化ゲート**（1-c）。`MLModel(contentsOf:)` はロード時に大きな一時
-    /// メモリを確保するため、CLIP 画像塔・facenet・VLM(877MB) が**同時にロード**するとピークが跳ねて
-    /// jetsam を誘発する。全ランタイムのロードをこのグローバルロックに通し、**同時に 1 つだけ**
-    /// ロードする（推論自体はロック外＝並列のまま）。夜間パイプラインの直列化（1-b）と二重の安全網。
-    private static let loadGate = NSLock()
-    static func serializedLoad<T>(_ body: () -> T?) -> T? {
-        loadGate.lock(); defer { loadGate.unlock() }
-        return body()
-    }
+    /// ⚠️ 旧 `serializedLoad`（グローバル NSLock でモデルロードを直列化・1-c）は**撤去**した。
+    /// 実機で 1 つのロードが詰まると facenet/CLIP 埋め込みが**全て永久ブロック**され、顔認識が動かなく
+    /// なる事例が出たため（ADR-70 導入後に発生。導入前＝並列ロードは正常に動いていた）。ロード時の
+    /// 一時メモリ増よりも、確実にロード完了することを優先する（＝並列ロードに戻す）。
 
     /// 同梱モデルをロードし、結果を診断ログへ残す（実機で Mac なしに追えるように）。
-    /// `subject` はログの主語（例 "CLIP image tower"）。ログ文言は
-    /// 「\(subject) loaded in \(ms)ms (footprint=\(mb))」形式で従来と互換。
+    /// `subject` はログの主語（例 "CLIP image tower"）。開始時にも `loading…` を残し、ロードが詰まって
+    /// いる場合に「開始したが完了しない」と分かるようにする（診断）。
     static func loadBundledModel(named name: String, configuration: MLModelConfiguration,
                                  log: LogChannel, subject: String) -> MLModel? {
         guard let url = bundledModelURL(name) else {
             log.error("\(subject) not bundled")
             return nil
         }
+        Diagnostics.mark("model loading… \(subject)")
         let started = Date()
-        // 1-c: ロードは直列化ゲートを通す（同時ロードでピークが跳ねるのを防ぐ）。
-        let model = serializedLoad { try? MLModel(contentsOf: url, configuration: configuration) }
+        let model = try? MLModel(contentsOf: url, configuration: configuration)
         if model != nil {
             log.info("\(subject) \(loadStamp(since: started))")
+            Diagnostics.mark("model loaded \(subject) \(loadStamp(since: started))")
         } else {
             log.error("\(subject) bundled but failed to load")
+            Diagnostics.mark("model FAILED \(subject)")
         }
         return model
     }

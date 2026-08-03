@@ -110,7 +110,8 @@ final class PhotoTagger {
                 }
             },
             processUnit: { (chunk: [String]) -> [String: PhotoPerception] in
-                let signals = await perception.perceive(refKeys: chunk)
+                // ANE 直列化ゲート（顔検出と同時に ANE を使わせない・diagnostics-19 の Vision 永久ハング対策）。
+                let signals = await MLInferenceGate.shared.run { await perception.perceive(refKeys: chunk) }
                 var perceived: [String: PhotoPerception] = [:]
                 for key in chunk {
                     // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。

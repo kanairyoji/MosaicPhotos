@@ -504,3 +504,14 @@
   - **(c) 画像プリフェッチ**: ロード支配なら有効だが、1024px CGImage(~4MB/枚) を先読み保持すると**直近の jetsam 対策と相反する**。load/infer 計測でロードが有意な割合と分かってから、メモリを抱えない形（1〜2枚のみのパイプライン等）で実装する。
 - 関連: `PeopleSupport.localImageRefKeys`・`FacePerceptionAdapter.detectFaces`(load/infer 計測)。ADR-51（顔処理解像度）・[[ADR-25]]。
 - 残課題: 次回実機ログで load/infer 内訳を確認 →(c)/(b) の可否を数値で判断。
+
+## 実機で顔スキャンが動かない（People=0）＝真因は Vision×CLIP の ANE 同時実行デッドロック
+- 症状: 実機で「夜間ルーチンを今すぐ実行」しても顔スキャンが 1 枚も進まず People=0 のまま。埋め込みは動くことがある。
+- 真因: **顔検出（Vision `VNImageRequestHandler.perform`＝ANE）と CLIP 埋め込み／モデルロード（Core ML＝ANE）を同時に走らせると Neural Engine がデッドロック**し、Vision の perform が永久に返らない（detectFaces の逐次マークで「image 768x1024 ロード完了 → vision start の直後に停止」を確認）。以前顔スキャンが動いていたのは CLIP 埋め込みが Wi-Fi ゲートで止まっていて顔検出が ANE を独占できていたためで、ADR-69 で埋め込みが常時走るようになって表面化した。
+- 対処: `PerceptionCore.MLInferenceGate`（actor の公平 FIFO ゲート・`run{ }`）を新設し、**ANE 系の重い処理を 1 つずつに直列化**する（顔検出＝`FaceTagger`、CLIP 埋め込み＝`PhotoTagger`、Vision タグ＝`TagTagger`、VLM キャプション、表示ラベラ prewarm）。単体では固まらないので、同時実行させなければデッドロックしない。ロード時に数十秒の順番待ちは出るが夜間トリクルなので許容。
+- 追跡中に併せて見つかり修正した実バグ（本件と独立）:
+  - `PHAssetImageLoader.image(for:)` の `PHImageManager` 継続が、**劣化版を無視して確定版だけで resume** していたため、`allowsNetwork:false`（背景解析）× iCloud 写真で確定版が来ず**永久ハング**。→ 劣化版で確定＋20秒タイムアウトを追加。
+  - `CoreMLModelLoader.serializedLoad`（全モデルロードを 1 本の NSLock で直列化）が、1 つのロードの詰まりで**全モデルロードを永久ブロック**。→ 撤去（並列ロードに戻す）。
+  - 生成フラグ滞留の安全弁（`BackgroundActivityMonitor.isGeneratingAlbums` の時間失効）＋デバッグ全開時の相互排他バイパス。
+- 関連: `PerceptionCore/MLInferenceGate.swift`（新規）・`FaceTagger`/`PhotoTagger`/`TagTagger`/`AutoAlbumEngine+Recognition`・`PHAssetImageLoader`・`CoreMLModelSupport`・`BackgroundActivityMonitor`/`BackgroundYield`。[[ADR-69]]。
+- 教訓: **ANE は単一資源**。Vision と Core ML を別スレッドから同時に叩くとデッドロックし得る。オンデバイスで複数の ANE 系推論を並行させず直列化する。`withCheckedContinuation` × コールバックは「特定条件でしか resume しない」実装だと、その条件が来ないケースで永久ハングするので必ずタイムアウト等の必ず resume する経路を用意する。

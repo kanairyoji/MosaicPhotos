@@ -8,7 +8,8 @@ import MosaicSupport
 final class FaceTagger {
     private let store: FaceStore
     private let provider: FacePerceptionProvider?
-    private var isRunning = false
+    /// 実行中フラグ（force 差し替え時に PeopleEngine が旧タスクの終了を待つため read 可能にする）。
+    private(set) var isRunning = false
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "FaceTagger")
 
     init(store: FaceStore, provider: FacePerceptionProvider?) {
@@ -39,9 +40,12 @@ final class FaceTagger {
             Diagnostics.mark("faces: skipped on simulator — enable 'Face scan in Simulator' to run")
             return
         }
-        Diagnostics.mark("faces: running on simulator (debug・cpuOnly＝slow)")
+        Diagnostics.mark("faces: running on simulator (debug, cpuOnly = slow)")
         #endif
-        guard !isRunning else { return }
+        guard !isRunning else {
+            Diagnostics.mark("faces: tagger.scan skip — isRunning=true (old task not finished)")
+            return
+        }
         isRunning = true
         defer { isRunning = false; onProgress(0) }
 
@@ -78,7 +82,10 @@ final class FaceTagger {
                 return Array(todo[index..<end])
             },
             processUnit: { refKey in
-                let one = await provider.detectFaces(refKeys: [refKey])
+                // ANE 直列化ゲート: 顔検出(Vision)と CLIP 埋め込み/ロード(Core ML)を同時に ANE で走らせると
+                // Vision の perform が永久に返らない実障害（diagnostics-19）。1 枚の検出＋埋め込みをゲートに
+                // 通し、埋め込み側と同時実行させない。
+                let one = await MLInferenceGate.shared.run { await provider.detectFaces(refKeys: [refKey]) }
                 // 顔ゼロ（dict に無い）も走査済み（空配列）＝再スキャンしない。
                 return (refKey: refKey, faces: one[refKey] ?? [])
             },

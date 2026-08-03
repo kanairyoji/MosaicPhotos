@@ -89,9 +89,8 @@ final class VLMRuntime: @unchecked Sendable {
         }
         let started = Date()
         let mlConfig = CoreMLModelLoader.makeConfiguration()
-        // 1-c: 2 つの重いモデル(≈821MB)のロードを直列化ゲートに通す（同時ロードのピークを避ける）。
-        guard let visionModel = CoreMLModelLoader.serializedLoad({ try? MLModel(contentsOf: visionURL, configuration: mlConfig) }),
-              let decoder = CoreMLModelLoader.serializedLoad({ try? MLModel(contentsOf: decoderURL, configuration: mlConfig) }),
+        guard let visionModel = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
+              let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig),
               // 56MB は mmap（alwaysMapped）で常駐を抑える。
               let embeddings = try? Data(contentsOf: embedURL, options: .alwaysMapped)
         else {

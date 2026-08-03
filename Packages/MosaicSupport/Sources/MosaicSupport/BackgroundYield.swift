@@ -79,7 +79,10 @@ public enum BackgroundYield {
     /// またはアルバム生成中（相互排他）なら譲る。ローカル処理は回線条件を課さない（Wi-Fi 不要）。
     /// クラウド分（サムネDL）は各処理側が `NetworkStateMonitor.networkAllowed()` で別途ゲートする。
     /// ※ 生成側（refreshIfNeeded）は回線ありの `heavyWorkAllowed` を見る（自分のフラグは見ない）。
+    /// ※ **デバッグ全開時（debugForceHeavyWork）は生成との相互排他も外す**。「夜間ルーチンを今すぐ実行」
+    ///   で検証するとき、generate のフラグ滞留で顔/埋め込みが一切動かないのを避ける（メモリは検証者が承知）。
     public static func heavyShouldPause() -> Bool {
-        !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
+        if debugForceHeavyWork { return false }
+        return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 }

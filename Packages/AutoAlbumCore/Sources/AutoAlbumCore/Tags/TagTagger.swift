@@ -101,7 +101,8 @@ final class TagTagger {
                 }
             },
             processUnit: { (chunk: [String]) in
-                let dict = await provider.senseInfo(refKeys: chunk)
+                // ANE 直列化ゲート（顔検出と Vision タグを同時に ANE で走らせない・diagnostics-19 対策）。
+                let dict = await MLInferenceGate.shared.run { await provider.senseInfo(refKeys: chunk) }
                 return chunk.map { (refKey: $0, info: dict[$0] ?? PhotoSenseInfo()) }
             },
             commitBatch: { _, _, results in
@@ -154,7 +155,8 @@ final class TagTagger {
                 return batch
             },
             processUnit: { refKey in
-                let one = await provider.captions(refKeys: [refKey])
+                // ANE 直列化ゲート（VLM キャプションと顔検出/CLIP を同時に ANE で走らせない・diagnostics-19 対策）。
+                let one = await MLInferenceGate.shared.run { await provider.captions(refKeys: [refKey]) }
                 // 取得できなかった写真も空で記録して無限ループを防ぐ。
                 return (refKey: refKey, caption: one[refKey] ?? "")
             },

@@ -155,6 +155,7 @@ enum HeavyWorkScheduler {
         // Simulator」トグル ON 時）。これが無いと Run BG routine を押しても People が増えなかった。
         let allowSim = BackgroundYield.debugForceHeavyWork
             || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
+        // 一時停止で滞留した既存タスクはゲートが開けば内部で自動再開する（真因の画像ロードハングは修正済み）。
         stores.peopleEngine.startScan(
             candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
             allowSimulator: allowSim)

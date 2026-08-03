@@ -19,9 +19,23 @@ public final class BackgroundActivityMonitor {
     public var embedRemaining = 0
 
     // MARK: - 自動アルバム生成
-    public var generatingTimePlace = false
-    public var generatingFolder = false
-    public var isGeneratingAlbums: Bool { generatingTimePlace || generatingFolder }
+    public var generatingTimePlace = false { didSet { if generatingTimePlace != oldValue { timePlaceStartedAt = generatingTimePlace ? Date() : nil } } }
+    public var generatingFolder = false { didSet { if generatingFolder != oldValue { folderStartedAt = generatingFolder ? Date() : nil } } }
+    @ObservationIgnored private var timePlaceStartedAt: Date?
+    @ObservationIgnored private var folderStartedAt: Date?
+    /// 生成との相互排他（顔スキャン・CLIP 埋め込みは生成中は譲る）の**安全弁**。
+    /// generate が万一ハング（await で詰まる等）してフラグが立ちっぱなしになっても、背景解析を
+    /// **永久に止めない**よう、一定時間を超えたら「生成中でない」とみなす（実機で解析が全く進まない事例）。
+    /// 通常の generate は 20〜45s なのでこの猶予で誤判定しない。
+    private static let maxGeneratingSeconds: TimeInterval = 150
+    public var isGeneratingAlbums: Bool {
+        Self.stillActive(generatingTimePlace, timePlaceStartedAt) || Self.stillActive(generatingFolder, folderStartedAt)
+    }
+    private static func stillActive(_ flag: Bool, _ startedAt: Date?) -> Bool {
+        guard flag else { return false }
+        guard let startedAt else { return true }
+        return Date().timeIntervalSince(startedAt) < maxGeneratingSeconds
+    }
 
     // MARK: - スキャン
     public var isScanningPlaces = false

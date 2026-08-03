@@ -69,11 +69,29 @@ public final class PeopleEngine {
 
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
     /// `allowSimulator` が true なら（Developer Options のデバッグトグル）シミュレータでも走らせる。
+    /// ※ 一時停止で滞留した既存スキャンは、ゲートが開けば（`BackgroundYield.heavyShouldPause` が
+    ///   false になれば）**自分で再開**するので、force のような再生成は行わない（旧実装の await 詰まり
+    ///   を撤去）。生成フラグ滞留の安全弁は `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）と
+    ///   デバッグ全開時の相互排他バイパスが担う。
     public func startScan(candidateRefKeys: [String], allowSimulator: Bool = false) {
-        guard isFaceModelAvailable else { isLoaded = true; return }
+        // 診断: startScan がなぜ走らない/走るのかを可視化する（実機で faces:start が一切出ない事例の切り分け）。
+        guard isFaceModelAvailable else {
+            Diagnostics.mark("faces: startScan skip — model unavailable "
+                             + "(provider=\(faceProvider != nil ? "yes" : "nil") "
+                             + "available=\(faceProvider?.isAvailable ?? false))")
+            isLoaded = true
+            return
+        }
         lastCandidates = candidateRefKeys
         lastAllowSimulator = allowSimulator
-        guard scanTask == nil else { return }
+        // 一時停止で滞留したスキャンは、ゲートが開けば（heavyShouldPause=false）内部の waitWhilePaused で
+        // 自分で再開する（旧: force による差し替えは isRunning レースで詰まったため撤去）。真因の画像ロード
+        // ハング（PHAssetImageLoader）は別途修正済みなので、再開後は正常に検出まで進む。
+        guard scanTask == nil else {
+            Diagnostics.mark("faces: startScan skip — already running (resumes when gate opens)")
+            return
+        }
+        Diagnostics.mark("faces: startScan → begin (candidates=\(candidateRefKeys.count) allowSim=\(allowSimulator))")
         scanTask = Task(priority: .background) { [weak self] in
             guard let self else { return }
             self.isScanning = true
@@ -312,8 +330,12 @@ public final class PeopleEngine {
     /// `includingCorrections` が true なら修正の学習（負例エグゼンプラ）も消す
     /// （Developer Options の「学習もリセット」用）。通常の再スキャンは false。
     public func reset(includingCorrections: Bool) async {
-        scanTask?.cancel()
+        // 進行中スキャンを止め、**完了を待ってから**ストアを消す（FaceTagger.isRunning のクリアと
+        // ストア書き込みの停止を保証。待たずに再スキャンすると isRunning が残って無言 skip する）。
+        let running = scanTask
+        running?.cancel()
         scanTask = nil
+        await running?.value
         if includingCorrections {
             await store.resetIncludingCorrections()
         } else {
