@@ -227,14 +227,24 @@ extension AutoAlbumEngine {
                 }
                 let embedAfter = await store.unembeddedCount()
                 if BackgroundYield.heavyShouldPause() { break }
-                let capBefore = await tagStore.captionPendingCount(favorites: favorites)
-                await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: favoritesOrdered,
-                                                   shouldPause: captionPause)
-                let capAfter = await tagStore.captionPendingCount(favorites: favorites)
+                // 1-b: VLM(≈877MB) は**顔スキャンが動いていない間だけ**回す（facenet と同時常駐させない）。
+                // 顔スキャン中はキャプションを見送り、埋め込みだけ進める（お気に入りキャプションは最優先で
+                // ないので次の窓で拾う）。これでモデル同時常駐のピークを抑える。
+                var capBefore = 0, capAfter = 0
+                if !BackgroundActivityMonitor.shared.isScanningFaces {
+                    capBefore = await tagStore.captionPendingCount(favorites: favorites)
+                    await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: favoritesOrdered,
+                                                       shouldPause: captionPause)
+                    capAfter = await tagStore.captionPendingCount(favorites: favorites)
+                    // 1-d: キャプションフェーズが一巡したら VLM を解放（CLIP 画像塔と同時常駐しない）。
+                    tagTagger.releaseCaptionModel()
+                }
                 // どちらも 1 枚も進まなかった＝残作業なし（お気に入り分のキャプション完了含む）→ 終了。
                 let progressed = (embedAfter < embedBefore) || (capAfter < capBefore)
                 if !progressed { break }
             }
+            // ループを抜けたら VLM は必ず解放しておく（顔スキャン中でキャプション未実行だった場合も）。
+            tagTagger.releaseCaptionModel()
             // isTagging は先頭の defer で必ず戻す（二重起動抑止と対）。
         }
     }

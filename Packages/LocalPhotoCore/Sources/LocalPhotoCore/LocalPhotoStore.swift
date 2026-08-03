@@ -5,12 +5,18 @@ import Photos
 @MainActor
 @Observable
 public final class LocalPhotoStore {
-    public private(set) var assets: [PHAsset] = [] {
-        didSet { items = assets.map { LocalPhotoItem(asset: $0) } }
-    }
-    /// PhotoStore 用アイテム。`assets` 設定時に一度だけ構築してキャッシュする
-    /// （SwiftUI が毎レンダーで読むため、computed の `map` を都度実行しないようメモ化）。
+    /// 2-c: 以前は didSet で `assets.map { LocalPhotoItem(...) }`（All で ~18k 割り当て）を
+    /// **メインアクタ**で回していた。map は loadAssets 側の detached タスクで作って両方まとめて
+    /// 代入する（`setLoaded`）。init（preloaded）は同期経路なので明示設定する。
+    public private(set) var assets: [PHAsset] = []
+    /// PhotoStore 用アイテム。`assets` と対で設定する（SwiftUI が毎レンダー読むためメモ化）。
     public private(set) var items: [LocalPhotoItem] = []
+
+    /// assets と items を一括更新する（対で保つ・didSet 廃止に伴う唯一の代入経路）。
+    private func setLoaded(assets: [PHAsset], items: [LocalPhotoItem]) {
+        self.assets = assets
+        self.items = items
+    }
     public private(set) var authorizationStatus: PHAuthorizationStatus
     var loadCompleted = false
 
@@ -83,10 +89,18 @@ public final class LocalPhotoStore {
     public init(preloadedAssets: [PHAsset]) {
         source = .preloaded
         authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        // ⚠️ init 内の代入では didSet（items 構築）が走らないため、両方を明示的に設定する。
-        assets = preloadedAssets
-        items = preloadedAssets.map { LocalPhotoItem(asset: $0) }
-        loadCompleted = true
+        // 2-d: 撮影日昇順ソート＋LocalPhotoItem の map（大きいアルバムで数千件）を **off-main** で行い、
+        // 完成した (assets, items) をメインで一括代入する。索引側（LocalAssetIndex.assets(for:)）は
+        // ソートしないので、整列はここに一本化する。準備完了まで items は空＝グリッドは一瞬ロード表示。
+        Task { [weak self] in
+            let (sorted, mapped) = await Task.detached(priority: .userInitiated) { () -> ([PHAsset], [LocalPhotoItem]) in
+                let s = preloadedAssets.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+                return (s, s.map { LocalPhotoItem(asset: $0) })
+            }.value
+            guard let self else { return }
+            self.setLoaded(assets: sorted, items: mapped)
+            self.loadCompleted = true
+        }
     }
 
     public func requestAccess() async {
@@ -103,30 +117,34 @@ public final class LocalPhotoStore {
     private func loadAssets() async {
         let source = self.source
         let t0 = CFAbsoluteTimeGetCurrent()
-        let list = await Task.detached(priority: .userInitiated) { () -> [PHAsset] in
+        // 2-c: fetch＋enumerate＋sort に加えて **LocalPhotoItem の map もこの detached 内**で作り、
+        // メインには完成した (assets, items) を渡すだけにする（18k 割り当てをメインから外す）。
+        let (list, mapped) = await Task.detached(priority: .userInitiated) { () -> ([PHAsset], [LocalPhotoItem]) in
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
             options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
 
+            let list: [PHAsset]
             switch source {
             case .all:
                 let result = PHAsset.fetchAssets(with: options)
-                var list: [PHAsset] = []
-                list.reserveCapacity(result.count)
-                result.enumerateObjects { asset, _, _ in list.append(asset) }
-                return list
+                var acc: [PHAsset] = []
+                acc.reserveCapacity(result.count)
+                result.enumerateObjects { asset, _, _ in acc.append(asset) }
+                list = acc
             case .preloaded:
-                return []   // requestAccess でガード済み（到達しない）
+                list = []   // requestAccess でガード済み（到達しない）
             case .identifiers(let ids):
                 // fetchAssets(withLocalIdentifiers:) は sortDescriptors を無視するため
                 // 後段で creationDate 昇順にソートしなおす。
                 let unsorted = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
-                var list: [PHAsset] = []
-                list.reserveCapacity(unsorted.count)
-                unsorted.enumerateObjects { a, _, _ in list.append(a) }
-                list.sort { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
-                return list
+                var acc: [PHAsset] = []
+                acc.reserveCapacity(unsorted.count)
+                unsorted.enumerateObjects { a, _, _ in acc.append(a) }
+                acc.sort { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+                list = acc
             }
+            return (list, list.map { LocalPhotoItem(asset: $0) })
         }.value
 
         // アルバムを開く体感速度の実測用: identifiers 指定（アルバム/ピープル/AI アルバム）の
@@ -134,7 +152,7 @@ public final class LocalPhotoStore {
         if case .identifiers(let ids) = source {
             Diagnostics.mark("local.loadAssets: ids=\(ids.count) → \(list.count) in \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
         }
-        assets = list
+        setLoaded(assets: list, items: mapped)
         loadCompleted = true
         Task(priority: .utility) { [preloader = metadataPreloader] in
             await preloader.start(assets: list)

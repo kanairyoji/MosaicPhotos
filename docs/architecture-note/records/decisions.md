@@ -67,6 +67,66 @@
   `FaceTagger.scan`(local-first/cloud-defer)・`AutoAlbumEngine+Recognition`(tag local-only)・
   `PeopleEngine.startScan`(networkAllowed 結線)。`HeavyWorkTimingTests`。
 
+## ADR-70 オンデバイス AI モデルの常駐制御（遅延・直列ロード・使用後解放）
+- 状態: 採用
+- 文脈: Core ML モデル（CLIP 画像/テキスト塔・facenet・VLM=SmolVLM≈877MB）は各ランタイムが
+  `LoadOnce` で遅延ロードするが、**一度読むとプロセス終了まで常駐**し、**モデル横断のロード制御が無い**。
+  夜間 1 窓の `runHeavyWork` が顔スキャン(facenet)と CLIP 埋め込み/VLM キャプションを**並行**起動する
+  ため、facenet＋CLIP2塔＋VLM(877MB) が**同時常駐**してメモリが跳ね jetsam を誘発していた。さらに
+  facenet だけ `.shared` アクセスで **eager ロード**し、`isFaceModelAvailable` を評価するホーム描画
+  （メインスレッド）で起動時に読まれていた（[[case: 夜間のオンデバイス解析が進まない]] の続き）。
+- 決定:
+  - **1-a｜顔モデルを遅延化**: `FaceModelRuntime` を `LoadOnce` 化し、`isAvailable`/`FacePerceptionAdapter`
+    は**同梱判定(バンドルURL)のみ**に（`.shared` に触れてもロードしない）。実ロードは初回 `embed`。
+  - **1-c｜ロードの直列化ゲート**: `CoreMLModelLoader.serializedLoad`（グローバル NSLock）を全モデルの
+    `MLModel(contentsOf:)` に通し、**同時に 1 つだけ**ロード（ロード時の一時メモリ確保ピークを重ねない。
+    推論自体はロック外＝並列のまま）。
+  - **1-b｜フェーズの相互排他**: 夜間パイプラインで **VLM キャプションは顔スキャンが動いていない間だけ**
+    実行（`isScanningFaces` を見て見送り）。facenet と VLM(877MB) を同時常駐させない。
+  - **1-d｜使用後/圧迫時に解放**: `LoadOnce.reset()` を追加。VLM は**キャプションフェーズ完了後**に解放
+    （`TagPerceptionProvider.releaseCaptionModelIfLoaded`）＋**メモリ圧迫時**に最優先解放
+    （`MemoryPressureMonitor.register` に登録）。CLIP/facenet は小さいので常駐維持。
+- 結果: 同時常駐するモデルを実質「1 つ＋作業セット」に抑え、起動時のメイン同期ロードも消えた。
+  トレードオフ: VLM は解放後の再キャプションで再ロード（お気に入り限定・低頻度なので許容）。
+- 関連: `CoreMLModelSupport`(serializedLoad/LoadOnce.reset/isLoaded)・`FaceModelRuntime`(遅延化)・
+  `FacePerceptionAdapter.isAvailable`・`VLMRuntime`(release/pressure 登録)・`VisionTagAdapter`・
+  `TagTagger`/`AutoAlbumEngine+Recognition`(フェーズ相互排他・解放)。[[ADR-25]]/[[ADR-69]]。
+
+## ADR-71 UI を軽く保つ（メインアクタの大規模コレクション処理を off-main／間引き）
+- 状態: 採用
+- 文脈: 実機ログで、Dropbox 同期中に**メインアクタで 67k 件級の処理が 0.4 秒ごと**に走っていた
+  （UI がもたつく原因）。調査で複数箇所を特定。
+- 決定:
+  - **2-a｜MergedPhotoStore 再構築のデバウンス**: Observation の変化ごとに 68k の merge+sort を投げず、
+    0.4 秒トレーリングで 1 回に集約。初回 `start()` のみ即時。
+  - **2-b｜Dropbox items の比較を off-main 署名化**: `cached != items`（67k 全比較・メイン）を、
+    off-main の `Hasher` 署名比較に置換。変化時だけ `stampFavorites`＋代入。`items=[]` の各所で署名リセット。
+  - **2-c｜LocalPhotoStore の map を off-main**: `assets` の didSet（~18k の LocalPhotoItem 生成・メイン）を
+    廃し、fetch と同じ detached タスクで (assets, items) を作って一括代入（`setLoaded`）。
+  - **2-d｜メンバーアルバムの sort/map を off-main**: `LocalAssetIndex.assets(for:)` はソートしない
+    （辞書引き＋追いフェッチのみ）。整列＋map は `LocalPhotoStore(preloadedAssets:)` の detached へ一本化
+    （準備中は一瞬ロード表示）。
+  - **2-e｜PlaceGrouping 逐次再構築の間引き**: 初回スキャンの段階表示を**8 セルごと**に（O(都市数²) の
+    メイン再構築を削減）。最後に必ず 1 回。
+- 結果: 同期中の UI 引っかかりを解消（メインの大規模処理を除去/間引き）。トレードオフ: items 反映は
+  最大 0.4 秒デバウンス分・大アルバムのオープンは一瞬ロード表示（体感許容）。
+- 関連: `MergedPhotoStore`(debounce)・`DropboxPhotoStore`(itemsSignature/reflectCachedItems)・
+  `LocalPhotoStore`(setLoaded・preloaded 非同期)・`LocalAssetIndex.assets(for:)`・`PlaceScanner`。
+
+## ADR-72 夜間バッチのメモリ/実行制御（generate 省メモリ・バックアップと AI の非同時実行）
+- 状態: 採用（[[ADR-25]]/[[case: 夜間のオンデバイス解析が進まない]] の続き）
+- 文脈: `generate` は 86k 件を扱いメモリピークが大きく、`runHeavyWork` はバックアップと AI を**同一窓で
+  同時**に起こしていた（どちらもメモリ/IO 重）。
+- 決定:
+  - **3-a｜generate の返り値を件数に**: detached 計算が `photos`（86k の EnrichedPhoto 配列）を**メインへ
+    返して .count だけ**に使っていたのを `Int` に変更（86k×文字列複数の配列をメインで握らない）。
+  - **3-b｜バックアップと AI を非同時実行**: `runHeavyWork` は **CLIP 埋め込みの残作業が 0 の窓でだけ**
+    バックアップを開始（`pendingEmbedCount()`）。AI が一巡するまでバックアップは見送り（差分再開で取りこぼし無し）。
+  - **3-c｜generate を軽い処理の後に**（[[case]] 側で実施済み）＋空きメモリ >900MB の窓だけ実行を維持。
+- 結果: generate のメイン常駐ピーク減・重い処理の同時実行を回避。トレードオフ: バックアップは AI 完了まで
+  後ろ倒し（夜間の別窓で回る）。
+- 関連: `AutoAlbumEngine.generate`(photoCount)/`pendingEmbedCount`・`HeavyWorkScheduler.runHeavyWork`。
+
 ## ADR-67 Dropbox 写真のお気に入り（アプリ側）＋解析の処理順をお気に入り優先に
 - 状態: 採用
 - 文脈: (1) お気に入りはローカル（`PHAsset.isFavorite`）専用で、Dropbox 写真にはハートも出せなかった

@@ -141,15 +141,23 @@ public final class PlaceScanner {
         }
 
         // 3. ユニークキーを逐次ジオコーディングし、市区町村ごとに集約。
+        // 2-e: 段階表示の `PlaceGrouping.build` は**メインアクタ**で全 byCity を作り直すため、
+        // グリッドセル 1 つごとに呼ぶと初回スキャンで O(都市数²) の再構築がメインに乗る。
+        // **8 セルごと**に間引いて段階表示する（体感は十分・メイン負荷を大幅減）。最後に必ず 1 回。
         var byCity: [String: [PlaceCandidate]] = [:]
+        var sinceRebuild = 0
         for (_, group) in byGrid {
             guard let first = group.first else { continue }
             let representative = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
             let city = await PlaceNameResolver.shared.cityName(for: representative)
             byCity[city ?? "Unknown", default: []].append(contentsOf: group)
-            if incremental { places = PlaceGrouping.build(byCity: byCity) }   // 段階表示
+            sinceRebuild += 1
+            if incremental, sinceRebuild >= 8 {   // 段階表示（間引き）
+                places = PlaceGrouping.build(byCity: byCity)
+                sinceRebuild = 0
+            }
         }
-        if !incremental { places = PlaceGrouping.build(byCity: byCity) }      // 一括反映（無瞬断）
+        places = PlaceGrouping.build(byCity: byCity)   // 最終反映（増分・一括とも必ず 1 回）
 
         await PlaceNameResolver.shared.persist()
         store.save(places)

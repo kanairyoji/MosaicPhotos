@@ -478,3 +478,10 @@
   - **二重起動抑止**: `scheduleBackgroundFill` は `isTagging` を**同期的に**立ててから Task を起こす。
 - 関連: `BackgroundYield`/`HeavyWorkTiming`(requiresNetwork)・`FaceTagger.scan`・`PeopleEngine.startScan`・`AutoAlbumEngine+Recognition`(scheduleBackgroundFill)・`AutoAlbumEngine`(signature/lastCloudSignature)・`RootView`(HomeStores.shared)・`HeavyWorkScheduler.runHeavyWork`・`HeavyWorkTimingTests`。[[ADR-25]]/[[ADR-69]]。
 - 残課題: generate 自体のピーク（86k 件をメモリ展開＝~800MB）は据え置き（頻度を断って jetsam を回避した）。将来はページング化で峰を下げる余地。BG 窓が数秒で expire するのは OS 裁量で不可避＝1 窓あたりの生産性を上げる方針で対処。クラウド顔スキャン（68k 枚）はローカル完了後・Wi-Fi＋余裕時に少しずつ。
+
+## オンデバイス AI の常駐メモリと UI 負荷の作り込み（モデル同時ロード・メインアクタの大規模処理）
+- 症状: 夜間バッチが重く（jetsam 再起動が頻発）、Dropbox 同期中に UI がもたつく。診断で (1) facenet+CLIP2塔+VLM(877MB) が**同時常駐**し得る、(2) 顔モデルが**起動時にメインで eager ロード**、(3) 同期中に**メインアクタで 67k 件級の処理が 0.4 秒ごと**（items 全比較・merge 再ソート・map）と判明。
+- 原因: モデルは遅延ロードだが**横断のロード制御・解放が無く**常駐が単調増加。UI 側は重い集約処理がメインアクタに残っていた（Observation の変化ごとに再構築・didSet の map・逐次 grouping 再構築）。
+- 対処: 設計判断として [[ADR-70]]（モデル常駐制御: 遅延化 1-a／直列ロード 1-c／フェーズ相互排他 1-b／使用後・圧迫時解放 1-d）・[[ADR-71]]（UI の大規模処理を off-main/間引き: MergedStore デバウンス 2-a／Dropbox 比較の署名化 2-b／map・sort の off-main 2-c/2-d／PlaceGrouping 間引き 2-e）・[[ADR-72]]（generate 省メモリ 3-a／バックアップと AI の非同時実行 3-b）を実施。
+- 関連: ADR-70/71/72 の「関連」を参照。app iOS ビルド緑・fast/ios テスト緑。
+- 残課題: generate 自体の 86k メモリ展開はチャンク化の余地を残す（今回は返り値の削減＋頻度/常駐の抑制で jetsam 回避）。モデル推論の同時実行を semaphore で厳密に絞るのは将来の選択肢（現状はフェーズ相互排他＋ロード直列化で実質担保）。

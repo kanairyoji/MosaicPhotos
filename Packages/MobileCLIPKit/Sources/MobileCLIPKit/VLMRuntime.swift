@@ -50,6 +50,19 @@ final class VLMRuntime: @unchecked Sendable {
 
     private let box = LoadOnce<Loaded>()
 
+    private init() {
+        // 1-d: メモリ圧迫時は VLM(≈877MB) を最優先で解放する（最大のモデル・お気に入り限定で低頻度＝
+        // 解放しても再ロードは次回キャプション時のみ）。登録は shared 生成時に 1 回。
+        _ = MemoryPressureMonitor.shared.register { [weak self] _ in self?.release() }
+    }
+
+    /// ロード済みの VLM を解放する（1-d・圧迫時／キャプションフェーズ完了後）。未ロードなら無処理。
+    func release() {
+        guard box.isLoaded else { return }
+        box.reset()
+        Self.log.info("VLM released (freed ≈877MB)")
+    }
+
     private struct Loaded {
         let config: Config
         let vision: CoreMLModelHandle   // 入力名・画像制約込み
@@ -76,8 +89,9 @@ final class VLMRuntime: @unchecked Sendable {
         }
         let started = Date()
         let mlConfig = CoreMLModelLoader.makeConfiguration()
-        guard let visionModel = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
-              let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig),
+        // 1-c: 2 つの重いモデル(≈821MB)のロードを直列化ゲートに通す（同時ロードのピークを避ける）。
+        guard let visionModel = CoreMLModelLoader.serializedLoad({ try? MLModel(contentsOf: visionURL, configuration: mlConfig) }),
+              let decoder = CoreMLModelLoader.serializedLoad({ try? MLModel(contentsOf: decoderURL, configuration: mlConfig) }),
               // 56MB は mmap（alwaysMapped）で常駐を抑える。
               let embeddings = try? Data(contentsOf: embedURL, options: .alwaysMapped)
         else {

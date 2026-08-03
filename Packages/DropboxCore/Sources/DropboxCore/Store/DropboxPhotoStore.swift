@@ -10,6 +10,8 @@ import UIKit
 @Observable
 public final class DropboxPhotoStore {
     public private(set) var items: [DropboxFileItem] = []
+    /// 2-b: 直近反映した items の内容署名（off-main 計算・メインの全比較を避ける）。
+    @ObservationIgnored private var lastItemsSignature: Int?
     public private(set) var loadStatus: LoadStatus = .idle
     public private(set) var debugInfo: String = ""
     /// バックグラウンド同期エンジンの現在状態。SettingsView などで表示に使用する。
@@ -107,15 +109,40 @@ public final class DropboxPhotoStore {
             return
         }
 
-        let cached = stampFavorites(await cache.cachedItems(accountId: accountId))
-        // 内容が同一なら再代入しない。@Observable 通知が発火して
-        // PhotoGridView が再評価され、サムネイル取得中のセルが churn するのを防ぐ。
-        if cached != items {
-            items = cached
+        let count = await reflectCachedItems(accountId: accountId)
+        DropboxLogger.info("loadItems() — \(count) items from cache")
+    }
+
+    /// キャッシュの内容を `items` に反映する（`loadItems` と `refreshItemsFromCache` の共通処理）。
+    /// 2-b: 以前は 67k 件の `cached != items` 全比較を **0.4 秒ごとにメインアクタ**で回していた
+    /// （同期中ずっと UI 税）。**署名（Hasher）を off-main で計算**して変化検知し、変わったときだけ
+    /// stampFavorites の map＋代入を行う。同一なら @Observable 通知も発火しない（セル churn 防止）。
+    @discardableResult
+    private func reflectCachedItems(accountId: String) async -> Int {
+        let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
+        let favPaths = cloudFavoritePaths
+        let sig = await Task.detached(priority: .utility) {
+            Self.itemsSignature(raw, favoritePaths: favPaths)
+        }.value
+        if sig != lastItemsSignature {
+            lastItemsSignature = sig
+            items = stampFavorites(raw)
         }
         updateLoadStatus()
         updateDebugInfo()
-        DropboxLogger.info("loadItems() — \(cached.count) items from cache")
+        return raw.count
+    }
+
+    /// items の内容署名（count＋各アイテムの Hashable＋お気に入り membership）。off-main で計算する。
+    /// プロセス内の比較専用なので Hasher の per-process seed で問題ない。
+    nonisolated static func itemsSignature(_ items: [DropboxFileItem], favoritePaths: Set<String>) -> Int {
+        var h = Hasher()
+        h.combine(items.count)
+        for it in items {
+            h.combine(it)
+            h.combine(favoritePaths.contains(it.path))
+        }
+        return h.finalize()
     }
 
     /// 表示中 items 内の 1 アイテムのお気に入り刻印を更新する（+Favorites 拡張が private setter を
@@ -164,7 +191,7 @@ public final class DropboxPhotoStore {
             DropboxLogger.info("startSync() — sync roots changed; resetting cache for rescan")
             Task {
                 await cache.clearAll(accountId: accountId)
-                items = []
+                items = []; lastItemsSignature = nil
                 UserDefaults.standard.set(rootsMarker, forKey: rootsMarkerKey)
                 syncEngine?.start(accountId: accountId, roots: roots)
             }
@@ -237,15 +264,10 @@ public final class DropboxPhotoStore {
         scheduleCacheRefresh()
     }
 
-    /// キャッシュから items を取得して反映する（内容が変わったときのみ再代入）。
+    /// キャッシュから items を取得して反映する（内容が変わったときのみ再代入・2-b の署名比較）。
     private func refreshItemsFromCache() async {
         guard let accountId = auth.credential?.accountId else { return }
-        let cached = stampFavorites(await cache.cachedItems(accountId: accountId))
-        if cached != items {
-            items = cached
-        }
-        updateLoadStatus()
-        updateDebugInfo()
+        await reflectCachedItems(accountId: accountId)
     }
 
     /// バックグラウンド同期ループを停止する。
@@ -276,7 +298,7 @@ public final class DropboxPhotoStore {
 
     func resetLoad() {
         loadStatus = .idle
-        items = []
+        items = []; lastItemsSignature = nil
         debugInfo = ""
         lastKnownAccountId = nil
         backupMetadata = nil
@@ -334,7 +356,7 @@ public final class DropboxPhotoStore {
         guard let previous = lastKnownAccountId, previous != currentAccountId else { return }
         DropboxLogger.info("account switched \(previous) → \(currentAccountId ?? "nil") — clearing cache")
         await cache.clearAll(accountId: previous)
-        items = []
+        items = []; lastItemsSignature = nil
     }
 
     private func updateLoadStatus() {

@@ -43,8 +43,10 @@ final class LocalAssetIndex {
         return PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
     }
 
-    /// メンバー ID 群に対応する PHAsset（撮影日昇順）。索引未構築なら nil
+    /// メンバー ID 群に対応する PHAsset。索引未構築なら nil
     /// （呼び出し側は従来の `LocalPhotoStore(localIdentifiers:)` へフォールバック）。
+    /// 2-d: **ソートはしない**（撮影日昇順への整列は `LocalPhotoStore(preloadedAssets:)` が
+    /// off-main で行う）。ここは辞書引き＋不足分の追いフェッチだけ＝メインでの sort を避ける。
     func assets(for ids: [String]) -> [PHAsset]? {
         buildIfNeeded()
         guard let byID else { return nil }
@@ -60,6 +62,6 @@ final class LocalAssetIndex {
             fetched.enumerateObjects { asset, _, _ in found.append(asset) }
             Diagnostics.mark("assetIndex: top-up fetch \(missing.count) missing → \(fetched.count)")
         }
-        return found.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+        return found
     }
 }

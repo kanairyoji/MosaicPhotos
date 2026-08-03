@@ -145,6 +145,9 @@ public struct VisionTagAdapter: TagPerceptionProvider {
 
     public var isCaptioningAvailable: Bool { VLMRuntime.shared.isAvailable }
 
+    /// キャプション後に VLM(≈877MB) を解放し、CLIP 画像塔・facenet と同時常駐させない（1-d）。
+    public func releaseCaptionModelIfLoaded() { VLMRuntime.shared.release() }
+
     public func captions(refKeys: [String]) async -> [String: String] {
         guard VLMRuntime.shared.isAvailable else { return [:] }
         var out: [String: String] = [:]

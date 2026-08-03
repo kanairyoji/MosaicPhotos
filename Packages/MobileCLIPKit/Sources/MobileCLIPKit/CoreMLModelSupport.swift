@@ -32,6 +32,16 @@ enum CoreMLModelLoader {
         Bundle.main.url(forResource: name, withExtension: "mlmodelc")
     }
 
+    /// 重いモデル**ロードの直列化ゲート**（1-c）。`MLModel(contentsOf:)` はロード時に大きな一時
+    /// メモリを確保するため、CLIP 画像塔・facenet・VLM(877MB) が**同時にロード**するとピークが跳ねて
+    /// jetsam を誘発する。全ランタイムのロードをこのグローバルロックに通し、**同時に 1 つだけ**
+    /// ロードする（推論自体はロック外＝並列のまま）。夜間パイプラインの直列化（1-b）と二重の安全網。
+    private static let loadGate = NSLock()
+    static func serializedLoad<T>(_ body: () -> T?) -> T? {
+        loadGate.lock(); defer { loadGate.unlock() }
+        return body()
+    }
+
     /// 同梱モデルをロードし、結果を診断ログへ残す（実機で Mac なしに追えるように）。
     /// `subject` はログの主語（例 "CLIP image tower"）。ログ文言は
     /// 「\(subject) loaded in \(ms)ms (footprint=\(mb))」形式で従来と互換。
@@ -42,7 +52,8 @@ enum CoreMLModelLoader {
             return nil
         }
         let started = Date()
-        let model = try? MLModel(contentsOf: url, configuration: configuration)
+        // 1-c: ロードは直列化ゲートを通す（同時ロードでピークが跳ねるのを防ぐ）。
+        let model = serializedLoad { try? MLModel(contentsOf: url, configuration: configuration) }
         if model != nil {
             log.info("\(subject) \(loadStamp(since: started))")
         } else {
@@ -124,5 +135,19 @@ final class LoadOnce<Value>: @unchecked Sendable {
         let value = load()
         state = .some(value)
         return value
+    }
+
+    /// ロード済みモデルを解放する（1-d・メモリ圧迫時や重い VLM の使用後）。次回 `get` で再ロードされる。
+    /// 失敗センチネルも消すので、以前失敗していても再試行する。
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        state = nil
+    }
+
+    /// 現在ロード済みか（解放判断用・ロードは起こさない）。
+    var isLoaded: Bool {
+        lock.lock(); defer { lock.unlock() }
+        if case .some(.some) = state { return true }
+        return false
     }
 }

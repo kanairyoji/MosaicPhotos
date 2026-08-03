@@ -35,6 +35,13 @@ public protocol TagPerceptionProvider: Sendable {
     var isCaptioningAvailable: Bool { get }
     /// refKey 群 → 短文キャプション（英語）。取得不可の写真は結果に含めない。
     func captions(refKeys: [String]) async -> [String: String]
+    /// キャプション用の重いモデル（VLM≈877MB）がロード済みなら解放する（1-d）。
+    /// キャプションフェーズ完了後に呼び、CLIP 画像塔・facenet と同時常駐しないようにする。既定は無処理。
+    func releaseCaptionModelIfLoaded()
+}
+
+public extension TagPerceptionProvider {
+    func releaseCaptionModelIfLoaded() {}
 }
 
 /// タグ・キャプションの夜間トリクル付与（FaceTagger と同パターン）。
@@ -53,6 +60,9 @@ final class TagTagger {
 
     /// VLM キャプションが利用可能か（モデル同梱時のみ true）。フル画像の「生成中」表示に使う。
     var isCaptioningAvailable: Bool { provider?.isCaptioningAvailable ?? false }
+
+    /// キャプションモデル（VLM）を解放する（1-d・キャプションフェーズ完了後に呼ぶ）。
+    func releaseCaptionModel() { provider?.releaseCaptionModelIfLoaded() }
 
     /// 未タグ写真にシーンタグを付ける（バッチ 8・save はバッチ 1 回）。
     /// Vision 分類は CPU/ANE で軽い（数十 ms/枚）ため CLIP 埋め込みより速く全量に行き渡る。

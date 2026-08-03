@@ -19,7 +19,8 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         self.cloudImage = cloudImage
     }
 
-    public var isAvailable: Bool { FaceModel.modelBundled && FaceModelRuntime.shared.isAvailable }
+    /// 同梱判定のみ（**ロードを起こさない**・1-a）。実ロードは初回 `detectFaces`→`embed` まで遅延。
+    public var isAvailable: Bool { FaceModel.modelBundled }
 
     public func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]] {
         var result: [String: [DetectedFaceSignal]] = [:]

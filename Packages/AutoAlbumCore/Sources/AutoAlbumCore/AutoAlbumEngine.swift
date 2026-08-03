@@ -158,6 +158,9 @@ public final class AutoAlbumEngine {
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }
 
+    /// 未 CLIP 埋め込みの写真数（3-b: バックアップを AI 残作業と同一窓で走らせないための判定用）。
+    public func pendingEmbedCount() async -> Int { await store.unembeddedCount() }
+
     /// 顔スキャンの実測（refKey → 顔数）を AI アルバム評価に結線する（「人が写っていない」等の
     /// 除外判定に使う）。FaceStore は別コンテナ（PeopleEngine 側）のため、init 連鎖ではなく
     /// Composition Root（アプリの AutoAlbumAdapters）から注入する。
@@ -393,8 +396,10 @@ public final class AutoAlbumEngine {
         let params = AlbumGenParams.current
         let strategies = self.strategies
 
-        let (photos, infos, pathInfos) = await Task.detached(priority: .utility)
-        { () -> ([EnrichedPhoto], [AutoAlbumInfo], [AutoAlbumInfo]) in
+        // 3-a: 以前は `photos`（86k の EnrichedPhoto 配列）を**メインへ返して .count だけ**に使い、
+        // 86k×文字列複数の配列をメイン側に握り続けていた。返すのは件数だけにして常駐ピークを下げる。
+        let (photoCount, infos, pathInfos) = await Task.detached(priority: .utility)
+        { () -> (Int, [AutoAlbumInfo], [AutoAlbumInfo]) in
             var photos = dedupByLinkKey(allEnriched)
             if excludeAlbumed {
                 photos = photos.filter { ref in
@@ -422,7 +427,7 @@ public final class AutoAlbumEngine {
 
             // フォルダ名アルバム（任意・既定 OFF）。
             let pathInfos = PathAlbumGenerator.computeFromEnriched(allEnriched)
-            return (photos, infos, pathInfos)
+            return (photos.count, infos, pathInfos)
         }.value
 
         Diagnostics.mark("generate.step5: compute done → save…")
@@ -432,9 +437,9 @@ public final class AutoAlbumEngine {
         albums = infos
         pathAlbums = pathInfos
         UserDefaults.standard.set(Self.generationVersion, forKey: AutoAlbumSettingsKeys.generationVersion)
-        status = "\(infos.count) trips · \(pathInfos.count) folders · \(photos.count) photos"
+        status = "\(infos.count) trips · \(pathInfos.count) folders · \(photoCount) photos"
         let secs = String(format: "%.1f", Date().timeIntervalSince(t0))
-        Self.log.info("generate: end in \(secs)s — \(infos.count) trips, \(pathInfos.count) folders, \(photos.count) photos")
+        Self.log.info("generate: end in \(secs)s — \(infos.count) trips, \(pathInfos.count) folders, \(photoCount) photos")
     }
 
     public func clear() async {

@@ -16,30 +16,29 @@ final class FaceModelRuntime: @unchecked Sendable {
     static let shared = FaceModelRuntime()
     private static let log = LogChannel(subsystem: "com.mosaicphotos.MobileCLIPKit", label: "Faces")
 
-    let isAvailable: Bool
-    private let handle: CoreMLModelHandle?
+    /// 同梱判定（**ロードを起こさない**）。以前は `.shared` に触れた瞬間に init が同期ロードしていた
+    /// ため、`isFaceModelAvailable` を評価するホーム描画（メインスレッド）で facenet が読まれていた
+    /// （People を開かなくても起動時にロード＝1-a）。CLIP/VLM と同じく同梱判定は URL チェックのみに。
+    var isAvailable: Bool { FaceModel.modelBundled }
 
-    private init() {
-        let config = CoreMLModelLoader.makeConfiguration()
-        var loaded: MLModel?
-        if let url = CoreMLModelLoader.bundledModelURL("FaceEmbedder") {
-            loaded = try? MLModel(contentsOf: url, configuration: config)
-        }
-        handle = loaded.map(CoreMLModelHandle.init)
-        isAvailable = loaded != nil
-        if loaded != nil {
-            Self.log.info("face model loaded")
-        } else if FaceModel.modelBundled {
-            Self.log.error("face model bundled but failed to load")
-        } else {
-            Self.log.info("face model not bundled — people disabled")
+    private let box = LoadOnce<CoreMLModelHandle>()
+    private let config = CoreMLModelLoader.makeConfiguration()
+
+    private init() {}
+
+    /// 初回利用まで遅延ロードする（`LoadOnce`・多重ロード防止＋失敗は再試行しない）。
+    private func handle() -> CoreMLModelHandle? {
+        box.get {
+            CoreMLModelLoader.loadBundledModel(named: "FaceEmbedder", configuration: config,
+                                               log: Self.log, subject: "face model")
+                .map(CoreMLModelHandle.init)
         }
     }
 
     /// 顔切り抜き画像 → 512 次元 L2 正規化埋め込み。NaN/Inf は壊れとみなし nil
     /// （有限性ガードは CoreMLModelHandle 側で共通に行う）。
     func embed(_ cgImage: CGImage) -> [Float]? {
-        handle?.predictVector(from: cgImage)
+        handle()?.predictVector(from: cgImage)
     }
 
     /// 候補B: 複数の顔クロップを**バッチ推論**する（CLIP の `encodeImages` と同型）。
@@ -48,7 +47,7 @@ final class FaceModelRuntime: @unchecked Sendable {
     /// 返り値は入力と同じ並び（変換失敗・非有限は nil）。バッチ失敗時は 1 枚ずつへフォールバック。
     func embed(_ images: [CGImage]) -> [[Float]?] {
         guard !images.isEmpty else { return [] }
-        guard images.count > 1, let handle else { return images.map { embed($0) } }
+        guard images.count > 1, let handle = handle() else { return images.map { embed($0) } }
         var providers: [MLFeatureProvider] = []
         var indexMap: [Int] = []
         for (index, cg) in images.enumerated() {

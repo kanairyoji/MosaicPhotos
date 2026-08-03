@@ -154,8 +154,15 @@ enum HeavyWorkScheduler {
         stores.autoAlbumEngine.scheduleBackgroundFill()
 
         // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
-        // 手動と同じ経路（1 回の上限設定・電源/回線ポーズ・検証つきアップロード）を通る。
-        stores.backupEngine.startNightlyIfEnabled()
+        // 3-b: **AI（CLIP 埋め込み）の残作業が無い窓でだけ**開始する。両方ともメモリ/IO が重く、
+        // 同一窓で同時に走らせるとピークが跳ねる。埋め込みが残る間はバックアップを見送り、AI が一巡した
+        // 後の窓で回す（バックアップは差分から再開されるので遅延しても取りこぼさない）。
+        let embedBacklog = await stores.autoAlbumEngine.pendingEmbedCount()
+        if embedBacklog == 0 {
+            stores.backupEngine.startNightlyIfEnabled()
+        } else {
+            Diagnostics.mark("bgtask: defer backup (embed backlog=\(embedBacklog))")
+        }
 
         // 2. アルバム生成（差分があるときだけ・~26s 上限）。**顔/埋め込みを起こした後**に回す。
         // generate はピークが大きく（実測 ~550〜880MB）BG の厳しい jetsam 上限に触れてアプリごと

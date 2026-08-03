@@ -32,6 +32,11 @@ public final class MergedPhotoStore {
     /// merge + sort はメインアクタ外（Task.detached）で行い、完成品をここへ代入する。
     public private(set) var items: [MergedPhotoItem] = []
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
+    /// 2-a: 再構築のデバウンス用タイマー。Dropbox 初回同期は 0.4 秒ごとに `items` を差し替えるため、
+    /// 変化のたびに 68k 件の merge+sort を走らせると（off-main でも .userInitiated で）UI と競合する。
+    /// 連続する変化をまとめて 1 回に集約する。
+    @ObservationIgnored private var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private let rebuildDebounce: Duration = .milliseconds(400)
 
     public init(
         dropboxStore: DropboxPhotoStore,
@@ -56,8 +61,18 @@ public final class MergedPhotoStore {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.observeStores()      // re-arm
-                self.rebuildItems()
+                self.scheduleRebuild()    // 2-a: デバウンスして 1 回にまとめる
             }
+        }
+    }
+
+    /// 2-a: 変化の連続を 1 回の再構築に集約する（トレーリングデバウンス）。
+    private func scheduleRebuild() {
+        debounceTask?.cancel()
+        debounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: self?.rebuildDebounce ?? .milliseconds(400))
+            guard !Task.isCancelled, let self else { return }
+            self.rebuildItems()
         }
     }
 
