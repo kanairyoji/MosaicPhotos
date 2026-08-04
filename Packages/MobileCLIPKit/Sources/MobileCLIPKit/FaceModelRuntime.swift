@@ -35,12 +35,11 @@ final class FaceModelRuntime: @unchecked Sendable {
     }
 
     /// ロード済み顔モデルを解放する（critical 圧迫時）。次回の embed で再ロードされる。
+    /// **同期**で完了させる（圧迫ハンドラから呼ばれるため）。
     private func release() {
-        Task { [box] in
-            guard await box.isLoaded else { return }
-            await box.reset()
-            Self.log.info("face model released (memory pressure)")
-        }
+        guard box.isLoaded else { return }
+        box.reset()
+        Self.log.info("face model released (memory pressure)")
     }
 
     /// 初回利用まで遅延ロードする（`LoadOnce`・二重ロード防止＋失敗は再試行しない）。
@@ -89,7 +88,10 @@ final class FaceModelRuntime: @unchecked Sendable {
         var results: [[Float]?] = Array(repeating: nil, count: images.count)
         guard !providers.isEmpty else { return results }
         if let out = try? handle.model.predictions(fromBatch: MLArrayBatchProvider(array: providers)) {
-            for i in 0..<out.count { results[indexMap[i]] = handle.vector(from: out.features(at: i)) }
+            // 範囲外アクセス回避（CLIP 側と同じ理由）。
+            for i in 0..<min(out.count, indexMap.count) {
+                results[indexMap[i]] = handle.vector(from: out.features(at: i))
+            }
             return results
         }
         for (i, cg) in images.enumerated() { results[i] = await unsafeEmbed(cg) }

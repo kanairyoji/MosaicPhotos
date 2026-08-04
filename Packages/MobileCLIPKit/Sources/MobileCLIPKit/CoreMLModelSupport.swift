@@ -73,9 +73,31 @@ enum CoreMLModelLoader {
 
     /// MLMultiArray → [Float]。NaN/Inf が混じったベクトルは壊れているので nil にする
     /// （コサイン類似が NaN 化し、検索・ゼロショット・顔クラスタが全滅するのを防ぐ）。
+    ///
+    /// 添字アクセス（`m[i]`）は 1 要素ごとに `NSNumber` を作るため、512 次元 ×（顔数 × 3 クロップ）
+    /// ぶんの箱詰めが積み上がる。連続領域なら型付きバッファで一括に読む。
+    /// ストライドが連続でない場合と未知の dataType は、従来の添字アクセスへフォールバックする
+    /// （速度より正しさを優先。連続でないのに一括読みすると**静かに順序が壊れる**）。
     static func finiteFloats(_ m: MLMultiArray) -> [Float]? {
-        let result = (0..<m.count).map { Float(truncating: m[$0]) }
+        let result: [Float]
+        if isContiguous(m), m.dataType == .float32 {
+            result = m.withUnsafeBufferPointer(ofType: Float.self) { Array($0) }
+        } else if isContiguous(m), m.dataType == .float16 {
+            result = m.withUnsafeBufferPointer(ofType: Float16.self) { $0.map { Float($0) } }
+        } else {
+            result = (0..<m.count).map { Float(truncating: m[$0]) }
+        }
         return result.allSatisfy { $0.isFinite } ? result : nil
+    }
+
+    /// 末尾次元から順にストライドが積形になっているか（＝row-major で隙間なく並んでいるか）。
+    private static func isContiguous(_ m: MLMultiArray) -> Bool {
+        var expected = 1
+        for axis in stride(from: m.shape.count - 1, through: 0, by: -1) {
+            if m.strides[axis].intValue != expected { return false }
+            expected *= m.shape[axis].intValue
+        }
+        return true
     }
 }
 
@@ -91,10 +113,19 @@ struct CoreMLModelHandle: @unchecked Sendable {
 
     init(model: MLModel) {
         self.model = model
-        let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? ""
+        let inputs = model.modelDescription.inputDescriptionsByName
+        let outputs = model.modelDescription.outputDescriptionsByName
+        // ⚠️ `Dictionary.keys.first` は**順序不定**。同梱モデルはすべて単一入出力なので今は当たらないが、
+        // モデルを差し替えて入出力が増えたとき、実行ごとに違う名前を掴んで静かに壊れる。
+        // 名前でソートして決定的に選び、複数あった場合は診断ログに残して気づけるようにする。
+        let inputName = inputs.keys.sorted().first ?? ""
         self.inputName = inputName
-        self.outputName = model.modelDescription.outputDescriptionsByName.keys.first ?? ""
-        self.imageConstraint = model.modelDescription.inputDescriptionsByName[inputName]?.imageConstraint
+        self.outputName = outputs.keys.sorted().first ?? ""
+        self.imageConstraint = inputs[inputName]?.imageConstraint
+        if inputs.count > 1 || outputs.count > 1 {
+            Diagnostics.mark("model has multiple I/O — using input=\(inputName) output=\(outputName) "
+                             + "(inputs=\(inputs.count) outputs=\(outputs.count))")
+        }
     }
 
     /// 画像 → 入力 FeatureProvider（リサイズ/画素変換はモデルの画像制約に従い自動）。
@@ -121,13 +152,23 @@ struct CoreMLModelHandle: @unchecked Sendable {
     }
 }
 
-/// 「.some(nil)=失敗を記録し再試行しない」センチネル付きの**非同期**遅延ロード箱。
+/// 「.some(nil)=失敗を記録し再試行しない」センチネル付きの遅延ロード箱。
 /// 重いモデルロードを初回利用まで遅らせつつ、失敗を毎回リトライしない（ログ洪水と無駄を防ぐ）。
 ///
-/// ⚠️ 旧実装は NSLock ＋ 同期ロードだった。`MLModel(contentsOf:)` が数十秒かかる間ロックを握ったまま
-/// 協調スレッドをブロックするため、actor ＋ async ロードへ移した。actor は再入するので、ロード中に
-/// 別の `get` が入って**二重ロード**しないよう、実行中の Task を保持して合流させる。
-actor LoadOnce<Value: Sendable> {
+/// ## なぜ actor ではなく NSLock なのか（ADR-74 追補）
+/// ロード自体は **async**（`MLModel.load`）にする必要がある——同期 `MLModel(contentsOf:)` は CLIP
+/// 画像塔で実機 16〜35 秒かかり、その間ロックを握ったまま協調スレッドを 1 本潰していた。
+/// 一方で **`reset()` / `isLoaded` は同期でなければならない**。メモリ圧迫ハンドラ
+/// （`MemoryPressureMonitor.handle` はハンドラを同期的に呼ぶ）から呼ばれるため、actor にすると
+/// `Task { await box.reset() }` となり「critical 圧迫を受けたのに解放は後回し」になる。
+/// VLM は 877MB あり、jetsam との競争で不利になる。
+/// そこで **状態は NSLock、ロードは Task で await** のハイブリッドにする。
+///
+/// `@unchecked Sendable` の根拠（不変条件）: 可変状態はすべて private・アクセスは必ず `lock` 経由・
+/// **ロックを `await` 越しに保持しない**（`get` は必ず unlock してから await する）・
+/// 可変参照を外へ出さない。
+final class LoadOnce<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
     /// nil = 未試行 / .some(nil) = ロード失敗（再試行しない） / .some(value) = ロード済み。
     private var state: Value??
     /// 実行中のロード（後続の `get` はこれに合流する＝二重ロード防止）。
@@ -137,31 +178,47 @@ actor LoadOnce<Value: Sendable> {
 
     /// ロード済みならそれを、未試行なら `load()` を一度だけ実行して結果を返す。
     func get(_ load: @Sendable @escaping () async -> Value?) async -> Value? {
-        if let state { return state }
-        if let inFlight { return await inFlight.value }
+        lock.lock()
+        if let state {
+            lock.unlock()
+            return state
+        }
+        if let inFlight {
+            lock.unlock()                 // ← await の前に必ず手放す
+            return await inFlight.value
+        }
         let startedAt = generation
         let task = Task { await load() }
         inFlight = task
+        lock.unlock()                     // ← await の前に必ず手放す
+
         let value = await task.value
+
+        lock.lock()
         // ロード中に reset()（圧迫解放）が割り込んでいたら、この結果は確定させない
         // ——確定させると「解放したのに次の get でロード済みが返る」ことになる。
         if generation == startedAt {
             state = .some(value)
             inFlight = nil
         }
+        lock.unlock()
         return value
     }
 
     /// ロード済みモデルを解放する（1-d・メモリ圧迫時や重い VLM の使用後）。次回 `get` で再ロードされる。
     /// 失敗センチネルも消すので、以前失敗していても再試行する。
+    /// **同期**であることが重要（メモリ圧迫ハンドラから即時に効かせるため）。
     func reset() {
+        lock.lock()
         state = nil
         inFlight = nil
         generation &+= 1
+        lock.unlock()
     }
 
     /// 現在ロード済みか（解放判断用・ロードは起こさない）。
     var isLoaded: Bool {
+        lock.lock(); defer { lock.unlock() }
         if case .some(.some) = state { return true }
         return false
     }

@@ -63,6 +63,9 @@ public actor MLInferenceGate {
     private var nextWaiterID = 0
     /// enqueue より先にキャンセルが届いた待機者の ID（登録時に先頭へ入れるため保持する）。
     private var earlyCancels: Set<Int> = []
+    /// 「まだ待機中（払い出し前）」の待機者 ID。`promote` が **払い出し済みの ID を
+    /// `earlyCancels` に書き込んで永久に残す**のを防ぐために持つ（下記参照）。
+    private var pendingIDs: Set<Int> = []
 
     private func acquire(_ priority: MLInferencePriority) async {
         if !busy {
@@ -71,6 +74,7 @@ public actor MLInferenceGate {
         }
         let id = nextWaiterID
         nextWaiterID &+= 1
+        pendingIDs.insert(id)
         // キャンセルされた待機者は**列の先頭へ繰り上げる**（`run` の戻り値は非 Optional なので、
         // ゲートを取らずに body を飛ばすことはできない＝待ち時間だけを最短化する）。
         // これで「キャンセル済みなのに行列の最後尾で順番待ち」が無くなり、BGTask 期限切れの
@@ -82,6 +86,9 @@ public actor MLInferenceGate {
         } onCancel: {
             Task { await self.promote(id) }
         }
+        // 払い出し済み。この後に届く promote は無視させる（`pendingIDs` から外す）。
+        pendingIDs.remove(id)
+        earlyCancels.remove(id)   // 取りこぼしの保険（通常は enqueue が消費済み）
     }
 
     private func enqueue(_ waiter: Waiter, priority: MLInferencePriority) {
@@ -98,6 +105,12 @@ public actor MLInferenceGate {
 
     /// キャンセルされた待機者を自分の優先度クラスの先頭へ繰り上げる。
     /// まだ enqueue されていなければ `earlyCancels` に覚えておき、登録時に先頭へ入れる。
+    ///
+    /// ⚠️ 「どちらの列にも居ない」には **2 通り**ある。(a) まだ enqueue 前、(b) **もう払い出し済み**
+    /// （onCancel の `Task` が actor に届く前に `release()` がその待機者を resume して列から外した）。
+    /// (b) を (a) と誤認して `earlyCancels` に入れると、その ID は二度と enqueue されないので
+    /// **永久に残り Set が無制限に増える**。スクロール中の先読み破棄のような高頻度経路で効くため、
+    /// `pendingIDs`（払い出し前だけ真）で 2 つを区別する。
     private func promote(_ id: Int) {
         if let index = interactiveWaiters.firstIndex(where: { $0.id == id }) {
             if index > 0 {
@@ -113,8 +126,20 @@ public actor MLInferenceGate {
             }
             return
         }
-        earlyCancels.insert(id)   // enqueue 前にキャンセルが届いた
+        guard pendingIDs.contains(id) else { return }   // (b) 払い出し済み＝記録しない
+        earlyCancels.insert(id)                         // (a) enqueue 前にキャンセルが届いた
     }
+
+    /// テスト用の内部状態スナップショット（本番経路では使わない）。
+    /// 待機列と `earlyCancels` が処理後にきちんと空へ戻ることを検証するために公開する。
+    var debugState: (interactive: Int, background: Int, earlyCancels: Int, pending: Int, busy: Bool) {
+        (interactiveWaiters.count, backgroundWaiters.count, earlyCancels.count, pendingIDs.count, busy)
+    }
+
+    /// テスト用: 「**払い出し済み**（もう待機していない）ID に遅れて届いた promote」を模擬する。
+    /// この競合（onCancel の Task が actor に届く前に `release()` が resume してしまう）は
+    /// スケジューリング依存で決定的に再現できないため、契約そのものを直接検証するための seam。
+    func debugPromoteStaleWaiter(_ id: Int) { promote(id) }
 
     private func release() {
         // interactive を優先して起こす（前景がユーザーを待たせないように）。

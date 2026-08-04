@@ -58,12 +58,12 @@ final class VLMRuntime: @unchecked Sendable {
     }
 
     /// ロード済みの VLM を解放する（1-d・圧迫時／キャプションフェーズ完了後）。未ロードなら無処理。
+    /// **同期**で完了させる——877MB と最大なので、圧迫ハンドラから戻る前に手放す必要がある
+    /// （`Task` に逃がすと jetsam との競争で不利になる）。
     func release() {
-        Task { [box] in
-            guard await box.isLoaded else { return }
-            await box.reset()
-            Self.log.info("VLM released (freed ≈877MB)")
-        }
+        guard box.isLoaded else { return }
+        box.reset()
+        Self.log.info("VLM released (freed ≈877MB)")
     }
 
     /// `MLModel` を含むため暗黙の Sendable にならない。`LoadOnce` に載せるだけなので明示する

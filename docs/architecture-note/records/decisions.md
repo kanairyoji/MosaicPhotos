@@ -220,6 +220,26 @@
   は有効なのに言語モードは Swift 5）＝**コンパイラはデータ競合を検査していない**。各 `Package.swift` にも
   `swiftSettings` が無くアプリと既定分離が非対称。まず `SWIFT_STRICT_CONCURRENCY=complete` を警告のまま
   常設し、自動生成ラッパーの扱いを決めてから Swift 6 言語モードへ、が安全な順序。
+- 追補（ADR-75 の自己レビューで判明した不具合と是正）:
+  - **`earlyCancels` の無制限増加（混入バグ）**: `promote` は「どちらの列にも居ない＝まだ enqueue 前」と
+    決めつけていたが、実際には (b)**もう払い出し済み**（onCancel の `Task` が actor に届く前に
+    `release()` が resume して列から外した）というケースがある。(b) を (a) と誤認して `earlyCancels` に
+    書き込むと、その ID は二度と enqueue されないので**永久に残り Set が無制限に増える**。
+    スクロール中の先読み破棄で高頻度に起きるため `AsyncSemaphore` / `HeavyImageLane` で特に効く。
+    → `pendingIDs`（払い出し前だけ真）で 2 つを区別する。3 ファイルとも同修正。
+  - **メモリ圧迫時の解放が非同期化していた退行**: [[ADR-74]] の `LoadOnce` actor 化により
+    `reset()` / `isLoaded` が async になり、圧迫ハンドラ（`MemoryPressureMonitor.handle` は同期呼び出し）
+    から `Task { await box.reset() }` となっていた。877MB の VLM を jetsam との競争で後回しにするため、
+    **NSLock ＋ async ロードのハイブリッド**へ戻す（ロードは async のまま＝協調スレッドを塞がない、
+    `reset()`/`isLoaded` は同期に復帰）。ロックは `await` を跨いで保持しない。
+  - **ゲートのテストを新設**: `MLInferenceGateTests`（`PerceptionCore`・macOS `swift test`）。優先度順・
+    キャンセル繰り上げ・二重 resume なし・内部状態の後始末を検証する。上記の混入バグは
+    **意図的にバグを再導入して失敗することを確認済み**（`testStalePromoteIsNotRecorded`）。
+    競合そのものはスケジューラ依存で決定的に再現できないため、`debugPromoteStaleWaiter` seam で
+    契約を直接検証している。
+  - 軽微 3 件も同時に解消: `finiteFloats` の `NSNumber` 箱詰め（連続領域なら型付きバッファで一括読み・
+    非連続は従来経路へフォールバック）、`CoreMLModelHandle` の `.keys.first` 非決定性（名前ソート＋
+    複数入出力なら診断ログ）、バッチ結果の範囲外アクセス（`min(out.count, indexMap.count)`）。
 
 ## ADR-67 Dropbox 写真のお気に入り（アプリ側）＋解析の処理順をお気に入り優先に
 - 状態: 採用

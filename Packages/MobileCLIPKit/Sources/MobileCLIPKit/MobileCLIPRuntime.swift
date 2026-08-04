@@ -50,15 +50,12 @@ final class MobileCLIPRuntime: @unchecked Sendable {
 
     /// ロード済みタワーを解放する（critical 圧迫時）。次回の encode で再ロードされる。
     /// 実行中の推論は自分のハンドルを強参照しているので、途中で消えることはない。
+    /// **同期**で完了させる——圧迫ハンドラから呼ばれるので、`Task` に逃がすと解放が後回しになる。
     private func releaseAll() {
-        Task { [imageBox, textBox] in
-            let imageLoaded = await imageBox.isLoaded
-            let textLoaded = await textBox.isLoaded
-            let wasLoaded = imageLoaded || textLoaded
-            await imageBox.reset()
-            await textBox.reset()
-            if wasLoaded { Self.log.info("CLIP towers released (memory pressure)") }
-        }
+        let wasLoaded = imageBox.isLoaded || textBox.isLoaded
+        imageBox.reset()
+        textBox.reset()
+        if wasLoaded { Self.log.info("CLIP towers released (memory pressure)") }
     }
 
     // MARK: - タワー別の遅延ロード（二重ロード防止・失敗は一度だけ記録）
@@ -138,7 +135,9 @@ final class MobileCLIPRuntime: @unchecked Sendable {
         guard !providers.isEmpty else { return results }
 
         if let out = try? image.model.predictions(fromBatch: MLArrayBatchProvider(array: providers)) {
-            for i in 0..<out.count {
+            // out.count は providers.count と一致するはずだが、信じて indexMap を引くと
+            // 食い違ったときに範囲外アクセスで落ちる。少ない方に合わせる（安全側）。
+            for i in 0..<min(out.count, indexMap.count) {
                 results[indexMap[i]] = image.vector(from: out.features(at: i))
             }
             return results
