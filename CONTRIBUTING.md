@@ -34,23 +34,42 @@
 再現するには各自で導入が必要です。必須ではありません。
 
 導入しているのは [dpearson2699/swift-ios-skills](https://github.com/dpearson2699/swift-ios-skills)
-の `ios-ai-ml-skills` バンドル（Apple の Core ML / Vision / Foundation Models 等の
-リファレンス）で、本プロジェクトのオンデバイス AI（`MobileCLIPKit` / `FaceCore` /
-`PerceptionCore`）に対応します。
+の 4 スキルです（設定 → Licenses → Special Thanks にも記載）。**別々のバンドル**に入っている
+点に注意してください。
+
+| スキル | バンドル | 本プロジェクトでの対象 |
+|---|---|---|
+| `apple-on-device-ai` | `ios-ai-ml-skills` | モデル変換・量子化・オンデバイス実行 |
+| `coreml` | `ios-ai-ml-skills` | `MobileCLIPKit` の Core ML ランタイム |
+| `vision-framework` | `ios-ai-ml-skills` | `FacePerceptionAdapter` / `VisionTagAdapter` |
+| `swift-concurrency` | `swift-core-skills` | `PerceptionCore` の ANE ゲート・actor・Sendable |
+
+まずマーケットプレイスを登録します。
 
 ```
 /plugin marketplace add dpearson2699/swift-ios-skills
+```
+
+AI/ML の 3 スキルはバンドル単位で入ります（`natural-language` と `speech-recognition` も
+同時に入りますが、本アプリでは未使用です）。
+
+```
 /plugin install ios-ai-ml-skills@swift-ios-skills
 ```
 
-`/plugin install` が無反応の場合は、マーケットプレイスの clone から直接コピーしても同じです：
+`swift-concurrency` は `swift-core-skills` バンドル（10 スキル）に含まれます。バンドルごと
+入れると SwiftUI・Charts など未使用のものまで増えるため、**必要な 1 つだけをコピー**するのを
+勧めます。`/plugin install` が無反応な場合の回避策も同じ方法です。
 
 ```bash
 src=~/.claude/plugins/marketplaces/swift-ios-skills/skills
-for s in apple-on-device-ai coreml natural-language speech-recognition vision-framework; do
+for s in apple-on-device-ai coreml vision-framework swift-concurrency; do
   cp -R "$src/$s" ~/.claude/skills/"$s"
 done
 ```
+
+コピー方式は**自動更新されません**。追従したいときは marketplace を更新してから上のコピーを
+やり直してください。
 
 ⚠️ これらのスキルは**一般論**であり、本プロジェクトの決定と矛盾する箇所があります
 （`CLAUDE.md` の「外部スキルとの優先順位」を参照）。矛盾時はプロジェクトの決定が優先します。
