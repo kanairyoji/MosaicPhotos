@@ -141,6 +141,26 @@ struct LicensesView: View {
                         url: "https://github.com/mermaid-js/mermaid",
                         text: mitLicenseText("Copyright (c) 2014-2024 Knut Sveidqvist")),
                 ]),
+
+            // 謝辞。上のセクションと違い「アプリに含まれるものの権利表記」ではないので、
+            // 混同を避けるため独立させ、各項目にも「配布物ではない」旨を明記する。
+            LicenseSection(
+                title: L("Special Thanks"),
+                footer: L("Not included in the app or its source. Listed here with thanks to their author."),
+                items: [
+                    LicenseItem(
+                        name: "ios-ai-ml-skills",
+                        role: L("Core ML & Vision reference that shaped the on-device AI rework"),
+                        license: "Derek Pearson · PolyForm Perimeter 1.0.0",
+                        url: "https://github.com/dpearson2699/swift-ios-skills",
+                        text: aiMlSkillsThanksNotice),
+                    LicenseItem(
+                        name: "swift-core-skills",
+                        role: L("Swift concurrency reference that shaped the inference gate review"),
+                        license: "Derek Pearson · PolyForm Perimeter 1.0.0",
+                        url: "https://github.com/dpearson2699/swift-ios-skills",
+                        text: swiftConcurrencySkillThanksNotice),
+                ]),
         ]
     }
 }

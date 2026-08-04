@@ -196,6 +196,60 @@ authoritative license and notice are available at:
 https://github.com/pytorch/pytorch/blob/main/LICENSE
 """
 
+// MARK: - Special Thanks（開発を助けてもらったもの。アプリにも配布物にも含まれない）
+
+/// 謝辞の共通末尾（出所・ライセンス・「配布物ではない」の明示）。
+private let skillsProvenance = """
+
+Required Notice: Copyright (c) 2025 dpearson2699 (https://github.com/dpearson2699)
+
+Not part of this app: these are reference documents kept on the developer's
+machine (~/.claude/skills). They are not linked into the app binary and are not
+included in the source repository. Installing them is optional and not required
+to build MosaicPhotos — see CONTRIBUTING.md.
+
+License: PolyForm Perimeter License 1.0.0 — a source-available license, not an
+OSI-approved open source license. It permits any purpose except providing a
+product that competes with the software itself.
+https://polyformproject.org/licenses/perimeter/1.0.0
+
+Source: https://github.com/dpearson2699/swift-ios-skills (v3.9.1)
+"""
+
+let aiMlSkillsThanksNotice = """
+ios-ai-ml-skills — by Derek Pearson (dpearson2699)
+
+Thank you. This bundle of Claude Code skills documents Apple's on-device ML
+frameworks, and an AI coding assistant used it to review this app's Core ML and
+Vision code:
+
+  apple-on-device-ai   On-device model runtimes, conversion and compression
+  coreml               Core ML loading, prediction, compute-unit configuration
+  vision-framework     Vision requests (face detection, classification, OCR)
+
+That review led to the rework of how this app serialises Neural Engine access,
+moved Core ML model loading off the synchronous path, and made the CLIP and face
+models release themselves under memory pressure.
+
+The bundle also installs natural-language and speech-recognition, which this app
+does not use.
+\(skillsProvenance)
+"""
+
+let swiftConcurrencySkillThanksNotice = """
+swift-core-skills — by Derek Pearson (dpearson2699)
+
+Thank you. One skill from this bundle is used here:
+
+  swift-concurrency    Actor isolation, Sendable, strict concurrency diagnostics
+
+It guided a review of this app's concurrency: giving the Neural Engine gate
+separate queues for foreground and background work, making waiters respond to
+cancellation, and replacing unprotected global mutable state with lock-guarded
+storage.
+\(skillsProvenance)
+"""
+
 let appleFrameworksNotice = """
 Apple SDKs & SF Symbols — © Apple Inc.
 
