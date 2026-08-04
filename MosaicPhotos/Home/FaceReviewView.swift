@@ -39,11 +39,7 @@ struct FaceReviewView: View {
                     }
                 }
             }
-            .task {
-                items = await peopleEngine.reviewItems()
-                isLoading = false
-                if let first = items.first { peopleEngine.noteReviewShown(itemID: first.id) }
-            }
+            .task { await load() }
             // 表示したカードを記録する（3 回見せても答えられなかった質問は以後出さず、
             // 次点の候補に切り替える＝「毎回同じ写真を聞かれる」の対策）。
             .task(id: index) {
@@ -51,6 +47,16 @@ struct FaceReviewView: View {
                 peopleEngine.noteReviewShown(itemID: items[index].id)
             }
         }
+    }
+
+    /// レビュー候補を取り込む。完了画面の「Find more」からも呼べるようにしてある
+    /// （スキャンの進行につれて候補は増えるので、シートを閉じ直さずに次を探せる）。
+    private func load() async {
+        isLoading = true
+        items = await peopleEngine.reviewItems()
+        index = 0
+        isLoading = false
+        if let first = items.first { peopleEngine.noteReviewShown(itemID: first.id) }
     }
 
     // MARK: - Card
@@ -142,6 +148,17 @@ struct FaceReviewView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
+            // 顔スキャンが進むと候補は増える。閉じて開き直さずに次を探せるようにする。
+            Button(L("Find more")) { Task { await load() } }
+                .buttonStyle(.bordered)
+                .padding(.top, 8)
+            if peopleEngine.isScanning {
+                Text(L("Still scanning photos — more will appear as it progresses."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
         }
     }
 

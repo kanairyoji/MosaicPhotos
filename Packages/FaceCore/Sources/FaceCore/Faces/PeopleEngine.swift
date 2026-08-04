@@ -357,9 +357,14 @@ public final class PeopleEngine {
 
     /// レビューカード（「同じ人物？」「この写真は◯◯さん？」）を生成する。
     /// 判断が割れるケースだけを選ぶアクティブラーニング＝1 回答あたりの精度改善を最大化。
+    /// ⚠️ 所要は `people.reviewItems` として計測する。生成はクラスタ数ぶんの fetch ＋ 重心の総当たり
+    /// 比較で、しかも顔スキャンと**同じ `@ModelActor`** 上で走るため、スキャン中は書き込みの後ろに
+    /// 並んで待たされる。「Finding faces to review…」が長い場合の切り分けに使う。
     public func reviewItems(limit: Int = 30) async -> [FaceReviewItem] {
-        await store.reviewItems(minFaces: minFaces, limit: limit,
-                                excluding: overexposedReviewIDs())
+        await PerfTrace.measureAsync("people.reviewItems") {
+            await store.reviewItems(minFaces: minFaces, limit: limit,
+                                    excluding: overexposedReviewIDs())
+        }
     }
 
     /// カードを実際に表示したら呼ぶ（スキップ検知）。`reviewShownLimit` 回見せても

@@ -172,12 +172,18 @@ extension HomeView {
                 // レビュー（「同じ人物？」確認カード）: 答えるほど認識が良くなる（ADR-46）。
                 // ⚠️ 小さな ✓ アイコンでは存在に気付かれない（実フィードバック）ため、
                 // テキスト付きの色付きカプセルボタンにする。
-                HStack {
+                // ⚠️ スキャン中も Review を出す。以前は `if isScanning { spinner } else if …` と
+                // **排他**にしていたため、顔スキャンが何時間も続くトリクル処理である以上
+                // ボタンがほとんど画面に出ず、ユーザーからは「確認がめったに出てこない・
+                // クルクルばかり」に見えていた（実フィードバック）。レビューは台帳を読むだけで
+                // スキャンと競合しないので、いつでも開けてよい。進行中の表示は併記する。
+                HStack(spacing: 8) {
                     Text("People")
                     Spacer()
                     if peopleEngine.isScanning {
                         ProgressView().controlSize(.mini)
-                    } else if peopleEngine.people.count >= 1 {
+                    }
+                    if peopleEngine.people.count >= 1 {
                         Button {
                             showingFaceReview = true
                         } label: {
