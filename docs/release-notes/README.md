@@ -71,6 +71,20 @@ Xcode の Archive → Distribute App、または Transporter を使う。
 4. ビルドが processing 完了したら `app_versions_attach_build`。
 5. `app_versions_submit_for_review`（ないし `review_submissions_*`）で提出。
 
+### 提出でつまずいたとき
+
+- `STATE_ERROR.ENTITY_STATE_INVALID`（「appStoreVersions ... is not in valid state」）は
+  **メタデータの不足**。API は総括エラーしか返さず**どの項目が欠けているか分からない**ので、
+  Web UI で 1.14 のページを開いて「審査に追加」を押し、赤字の指摘を読むのが速い。
+  1.14 では **en-US の iPad スクリーンショット欠落**が原因だった。
+  アプリは `TARGETED_DEVICE_FAMILY = "1,2"`（iPhone+iPad）なので、
+  **ロケールごとに iPhone と iPad の両方**が要る。
+- 提出を取り消すとバージョンは **`DEVELOPER_REJECTED`** になる。
+  **新しいバージョンを作る必要はない**（同じ versionString は二重に作れない）。
+  ビルドもメタデータも残っているので `app_versions_submit_for_review` でそのまま再提出できる。
+- 提出フローが途中で失敗すると**空の reviewSubmission が残る**ことがある。
+  Apple が「cancellable な状態ではない」と返して MCP からは消せないが、中身が空なら実害はない。
+
 ### MCP で出来ないこと（Web UI か Xcode で行う）
 
 - **バイナリのアップロード**: Xcode の Archive → Distribute App、または Transporter。
