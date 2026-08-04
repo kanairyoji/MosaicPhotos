@@ -321,3 +321,27 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
   - マスター（正本）: `docs/architecture-note/records/decisions.md`（設計判断＝ADR）/ `docs/architecture-note/records/case-studies.md`（事例・バグ・課題対応）。各ファイル冒頭の「運用ルール」と「テンプレート」に従う（ADR は `## ADR-N` 連番＋文脈/決定/結果、事例は症状/原因/対処/関連/残課題）。
   - HTML（`docs/architecture-note/design-decisions/adr.html` / `case-studies/*.html`）は MD からの**派生物**で、**指示に応じて取捨選択**して記載する（全件転記しない）。HTML 目次の定義は `docs/architecture-note/assets/nav.js` の `NAV` 配列が唯一の出典。
   - 順序: まず MD に追記（網羅）→ 必要なら HTML 化（選択）。撤回・変更時は MD の項を消さず状態を追記して経緯を残す。
+
+---
+
+## 外部スキルとの優先順位
+
+Apple フレームワークの一般リファレンス（Claude Code スキル `coreml` / `vision-framework` /
+`apple-on-device-ai` ほか。導入手順は `CONTRIBUTING.md`）を併用する。導入は任意で、
+リポジトリ外（`~/.claude/skills/`）にあるためコードからは見えない。
+
+**スキルは一般論、本ファイルと `docs/architecture-note/records/*.md` は実測に基づく決定**。
+矛盾したら後者が勝つ。特に以下はスキルの推奨と意図的に異なるので、「直す」対象ではない：
+
+- **ANE の直列化（`PerceptionCore/MLInferenceGate`）**: Vision の `perform` と Core ML 推論が
+  ANE を同時に使うと実機でデッドロックした（diagnostics-19）。ANE を使う重い処理は**同時に 1 つ**。
+  スキルには無い制約なので、推論・モデルロードを足すときは必ずゲートを通す。
+- **`computeUnits = .cpuAndNeuralEngine`（実機）**: スキルの既定は `.all` だが、GPU は UI 合成
+  （Metal）と食い合うため意図的に除外している。シミュレータは `.cpuOnly`（ANE 不在で Espresso 例外）。
+- **レガシー `VN*` API を使用**: スキルは iOS 18+ の新 Vision API を推奨するが、顔パイプラインは
+  データセット計測でしきい値を校正済み（`face-accuracy.md`）。API 移行は数値の再校正を伴うため行わない。
+- **モデルは `Bundle.main` 同梱＋`.gitignore`**: スキルの Background Assets / ODR は採らない
+  （通信なし・API キー不要が要件）。生成は `scripts/build_*.sh`。
+
+一方、スキルが**足りない部分を埋めるのは歓迎**（`MLComputePlan` によるデバイス割り当て確認、
+メモリ圧迫時のモデル解放、`MLModel.load` の async ロード等）。採用したら本ファイルに追記する。

@@ -27,6 +27,34 @@
 - ビルド／テストの手順は `README.md` と `CLAUDE.md`（`scripts/test.sh`）を参照。
 - 重要な設計判断・事例は `docs/architecture-note/records/*.md` に記録してください（CLAUDE.md 参照）。
 
+### Claude Code スキル（任意・AI 支援開発を行う場合）
+
+本リポジトリは AI コーディング支援（Claude Code）を併用して開発しています。スキルは
+`~/.claude/skills/` に置かれ**リポジトリ外**（`.claude/` は `.gitignore` 対象）なので、
+再現するには各自で導入が必要です。必須ではありません。
+
+導入しているのは [dpearson2699/swift-ios-skills](https://github.com/dpearson2699/swift-ios-skills)
+の `ios-ai-ml-skills` バンドル（Apple の Core ML / Vision / Foundation Models 等の
+リファレンス）で、本プロジェクトのオンデバイス AI（`MobileCLIPKit` / `FaceCore` /
+`PerceptionCore`）に対応します。
+
+```
+/plugin marketplace add dpearson2699/swift-ios-skills
+/plugin install ios-ai-ml-skills@swift-ios-skills
+```
+
+`/plugin install` が無反応の場合は、マーケットプレイスの clone から直接コピーしても同じです：
+
+```bash
+src=~/.claude/plugins/marketplaces/swift-ios-skills/skills
+for s in apple-on-device-ai coreml natural-language speech-recognition vision-framework; do
+  cp -R "$src/$s" ~/.claude/skills/"$s"
+done
+```
+
+⚠️ これらのスキルは**一般論**であり、本プロジェクトの決定と矛盾する箇所があります
+（`CLAUDE.md` の「外部スキルとの優先順位」を参照）。矛盾時はプロジェクトの決定が優先します。
+
 ------------------------------------------------------------------------------
 ## English (reference translation; the Japanese above is the master)
 
