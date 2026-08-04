@@ -24,8 +24,8 @@ struct FaceAvatarImage: View {
     var body: some View {
         ZStack {
             Color(uiColor: .secondarySystemBackground)
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+            if let displayed {
+                Image(uiImage: displayed).resizable().scaledToFill()
             } else {
                 Image(systemName: placeholderIcon)
                     .font(.system(size: 22))
@@ -33,9 +33,19 @@ struct FaceAvatarImage: View {
             }
         }
         // 代表写真(cover)変更で box/refKey が変われば再読込される（キーに両方含む）。
-        .task(id: cacheKey) {
+        .task {
             image = await FaceAvatarCache.load(refKey: refKey, box: box, maxPixel: maxPixel)
         }
+        // ⚠️ キーが変わったら **@State ごと作り直す**。`.task(id:)` だけだと SwiftUI は
+        // 同じビューを再利用するため、次の読み込みが終わるまで `image` に**前の顔が残る**。
+        // 人物レビューでは質問文だけ先に切り替わり、古い顔を見たまま答えてしまう実害があった。
+        .id(cacheKey)
+    }
+
+    /// 表示する画像。`image` は新しいキーでは必ず nil から始まる（`.id` で作り直すため）ので、
+    /// メモリキャッシュにある分は同フレームで出す＝キャッシュ済みでもちらつかせない。
+    private var displayed: UIImage? {
+        image ?? FaceAvatarCache.peek(refKey: refKey, box: box, maxPixel: maxPixel)
     }
 
     private var cacheKey: String { FaceAvatarCache.key(refKey: refKey, box: box, maxPixel: maxPixel) }
@@ -68,6 +78,17 @@ enum FaceAvatarCache {
         let digest = SHA256.hash(data: Data(key.utf8))
         let name = digest.prefix(16).map { String(format: "%02x", $0) }.joined()
         return diskDir.appendingPathComponent("\(name).jpg")
+    }
+
+    /// メモリ層だけを同期で引く（描画中に使える＝キャッシュ済みならプレースホルダを挟まない）。
+    static func peek(refKey: String?, box: CGRect?, maxPixel: CGFloat) -> UIImage? {
+        cache.object(forKey: key(refKey: refKey, box: box, maxPixel: maxPixel) as NSString)
+    }
+
+    /// 先読み（人物レビューの次カードなど）。メモリにあれば何もしない。
+    static func prefetch(refKey: String?, box: CGRect?, maxPixel: CGFloat) {
+        guard peek(refKey: refKey, box: box, maxPixel: maxPixel) == nil else { return }
+        Task { _ = await load(refKey: refKey, box: box, maxPixel: maxPixel) }
     }
 
     static func load(refKey: String?, box: CGRect?, maxPixel: CGFloat) async -> UIImage? {

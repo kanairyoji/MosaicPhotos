@@ -13,6 +13,14 @@ struct FaceReviewView: View {
     @State private var index = 0
     @State private var isLoading = true
     @State private var answered = 0
+    /// このカードの顔画像が揃ったか。揃うまではカードを出さず、回答もさせない
+    /// （前の質問の顔を見たまま答えてしまうのを防ぐ）。次カードは先読みするので通常は一瞬。
+    @State private var cardReady = false
+
+    /// 顔アバターの読み込みサイズ。**先読みとキャッシュキーを一致させるため**ここで一元管理する
+    /// （表示側と数値がずれると先読みが効かず、毎回プレースホルダから始まる）。
+    private static let columnPixel: CGFloat = 400
+    private static let singlePixel: CGFloat = 480
 
     var body: some View {
         NavigationStack {
@@ -20,7 +28,17 @@ struct FaceReviewView: View {
                 if isLoading {
                     ProgressView(L("Finding faces to review…"))
                 } else if index < items.count {
-                    cardView(items[index])
+                    let item = items[index]
+                    // カードごとに identity を分ける＝回答して次へ進んだら**作り直す**
+                    // （画像の @State を持ち越さない）。
+                    cardView(item)
+                        .id(item.id)
+                        .task(id: item.id) {
+                            cardReady = false
+                            await preloadAvatars(of: item)
+                            cardReady = true
+                            prefetchNextAvatars()
+                        }
                 } else {
                     doneView
                 }
@@ -77,7 +95,8 @@ struct FaceReviewView: View {
             case .isThisPerson(let face, _, let name, let coverFace, _):
                 if let name {
                     // 命名済み: 名前で尋ねられる（誰のことか分かる）。
-                    FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 480)
+                    FaceAvatarImage(refKey: face.refKey, box: face.boundingBox,
+                                    maxPixel: Self.singlePixel)
                         .frame(width: 160, height: 160)
                         .clipShape(Circle())
                     Text(L("Is this “\(name)”?"))
@@ -110,11 +129,48 @@ struct FaceReviewView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
         }
+        // 顔が出るまではカードを見せず、回答も受け付けない（レイアウトは保つので跳ねない）。
+        .opacity(cardReady ? 1 : 0)
+        .disabled(!cardReady)
+        .overlay { if !cardReady { ProgressView() } }
+    }
+
+    // MARK: - Avatar preload
+
+    /// カードに出る顔アバターの読み込み指定（表示側と同じ maxPixel を使う＝キャッシュキー一致）。
+    private func avatarSpecs(of item: FaceReviewItem) -> [(refKey: String?, box: CGRect?, pixel: CGFloat)] {
+        switch item {
+        case .samePerson(_, _, let aFace, _, _, let bFace, _):
+            return [(aFace.refKey, aFace.boundingBox, Self.columnPixel),
+                    (bFace.refKey, bFace.boundingBox, Self.columnPixel)]
+        case .isThisPerson(let face, _, let name, let coverFace, _):
+            if name != nil {
+                return [(face.refKey, face.boundingBox, Self.singlePixel)]
+            }
+            return [(coverFace.refKey, coverFace.boundingBox, Self.columnPixel),
+                    (face.refKey, face.boundingBox, Self.columnPixel)]
+        }
+    }
+
+    /// このカードの顔を**描画前に**揃える。
+    private func preloadAvatars(of item: FaceReviewItem) async {
+        for spec in avatarSpecs(of: item) {
+            _ = await FaceAvatarCache.load(refKey: spec.refKey, box: spec.box, maxPixel: spec.pixel)
+        }
+    }
+
+    /// 次のカードを先読みしておく（回答直後の待ちを実質ゼロにする）。
+    private func prefetchNextAvatars() {
+        let next = index + 1
+        guard next < items.count else { return }
+        for spec in avatarSpecs(of: items[next]) {
+            FaceAvatarCache.prefetch(refKey: spec.refKey, box: spec.box, maxPixel: spec.pixel)
+        }
     }
 
     private func personColumn(face: PersonInfo.Face, name: String) -> some View {
         VStack(spacing: 8) {
-            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 400)
+            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: Self.columnPixel)
                 .frame(width: 120, height: 120)
                 .clipShape(Circle())
             if !name.isEmpty {
