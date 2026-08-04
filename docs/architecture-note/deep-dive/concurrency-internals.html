@@ -77,6 +77,22 @@ graph TD
         <li><strong>クラウド取得中</strong> — Dropbox サムネのドレイン中（<code>cloudThumbnailBusy</code>）・フル画像取得中（<code>fullImageBusy</code>）。</li>
       </ul>
 
+      <h2>ANE 直列化ゲート（MLInferenceGate）</h2>
+      <p>端末の Neural Engine は共有資源で、<strong>Vision の <code>perform</code> と Core ML の推論/ロードを同時に走らせるとデッドロックする</strong>（実機で確認。Vision が永久に返らず、顔スキャンが最初の 1 枚で固まった）。単体では固まらないので、直列化すれば回避できる。</p>
+      <table>
+        <tr><th>論点</th><th>採った設計</th><th>理由</th></tr>
+        <tr><td>ゲートを掛ける場所</td><td>ANE に触れる場所の内側（<code>MobileCLIPRuntime</code> / <code>FaceModelRuntime</code> / <code>VLMRuntime</code> / <code>VisionTagAdapter</code> / <code>FacePerceptionAdapter</code>）</td><td>呼び出し側（夜間タガー）で包む方式は漏れる。実際、前景の検索経路が素通りしていた。また画像ロード（ANE を使わない I/O）までゲートに入り占有時間が伸びる</td></tr>
+        <tr><td>粒度</td><td>段ごと（顔観測／クロップ再検証／埋め込みバッチ、概念埋め込みは 1 語ずつ）</td><td>1 枚まるごと包むと顔の多い写真で数秒間ゲートを占有し、他の解析が飢える</td></tr>
+        <tr><td>優先度</td><td>interactive / background の 2 列。解放時は interactive を先に起こす</td><td>前景の検索が夜間バッチの待ち行列（タグ付けは同時 3 件が並ぶ）の後ろに回らないようにする</td></tr>
+        <tr><td>キャンセル</td><td>待機中にキャンセルされたら<strong>自分の優先度クラスの先頭へ繰り上げ</strong></td><td><code>acquire</code>/<code>release</code> の 1:1 対応を壊さずに待ち時間だけ最短化する（待たずに抜けさせるとゲート未取得で本体が走る）</td></tr>
+        <tr><td>入れ子</td><td>禁止。同一タスクの再入はタスクローカルで検出して素通し＋アサート</td><td>非再入ゲートなので、入れ子で呼ぶと本当に固まる</td></tr>
+      </table>
+      <p>残る最悪ケースとして、<strong>優先度は待機列の順序を変えるだけで実行中の保持者は横取りできない</strong>。モデルロード（CLIP 画像塔は実機 16〜35 秒）がゲート内で走るため、その最中に来た前景要求はロード完了まで待つ。ロードをゲート外へ出せば解消するが「ロードと推論の同時実行が ANE で安全か」は実機未検証のため、確認するまではゲート内に置いている。</p>
+
+      <h2>計測はプロセス中断を跨がない</h2>
+      <p>バックグラウンド実行中、OS はアプリを任意のタイミングで suspend する。ところが計測に使う時計は<strong>中断中も進み続ける</strong>ため、実機ログに「メインスレッドが 29 分ブロックされた」「1 枚の画像ロードに 29 分」といった<strong>偽の値</strong>が並んでいた（実際は suspend と resume の間隔）。背景実行を診断するための仕組みが、背景実行でこそ壊れていたことになる。</p>
+      <p>対策として <code>ProcessSuspension</code> が 1 秒周期のタイマーで<strong>自分の発火間隔</strong>を見張り、大幅に遅れて発火したら中断とみなして世代を進める（メインスレッドの状態と独立に判定できるのが要点）。計測側は開始時の世代を控え、変わっていたらそのサンプルを捨てる。</p>
+
       <h2>Dropbox 側のスロットリング</h2>
       <ul>
         <li><strong>サムネ並列数</strong> — <code>DropboxThumbnailBatcher</code> がバッチで取得。並列数は設定（<code>DropboxCacheSettingsKeys.thumbnailConcurrency</code>）。</li>

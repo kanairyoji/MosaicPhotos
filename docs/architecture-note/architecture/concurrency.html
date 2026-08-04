@@ -51,6 +51,19 @@ actor AutoAlbumStore {
         起動直後に「グリッド初期表示・Dropbox キャッシュ読み込み・AI 再評価」が<strong>同時に</strong>走るとメモリ/CPU スパイクが jetsam・watchdog を誘発する。そこで <code>Task.sleep</code> による<strong>段階起動</strong>（place scan を +1.5s、backup を +5s、重い AI を +3s）でピークをずらす。詳細は <a href="../case-studies/launch-performance.html">起動の高速化</a>。
       </div>
 
+      <h2>Neural Engine の直列化（ANE ゲート）</h2>
+      <p>Vision の顔検出と Core ML の CLIP 推論・モデルロードが<strong>同時に Neural Engine を使うと実機でデッドロック</strong>し、Vision の <code>perform</code> が永久に返らない障害があった（顔スキャンが 1 枚目で固まる）。対策として、ANE を使う重い処理は <code>PerceptionCore.MLInferenceGate</code> を通し<strong>同時に 1 つだけ</strong>実行する。</p>
+      <ul>
+        <li><strong>ゲートを取る場所</strong> — ANE に実際に触れる場所（<code>MobileCLIPKit</code> の各ランタイム/アダプタ）の内側。呼び出し側の夜間タガーでは包まない。</li>
+        <li><strong>優先度は 2 列</strong> — 前景（検索・AI アルバム作成）と背景（夜間バッチ）で待機列を分け、解放時は前景を先に起こす。</li>
+        <li><strong>キャンセルに応答する</strong> — 待機中にキャンセルされた要求は列の先頭へ繰り上げ、順番待ちで足止めしない。</li>
+      </ul>
+
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        「同時に 1 つ」という横断的な不変条件を<strong>呼び出し側に守らせる設計は必ず漏れる</strong>。実際、呼び出し側で包む方式では前景の CLIP テキスト埋め込みだけがゲートを素通りしていた。リソースに触れる場所そのものに閉じ込めるのが正解だった（ADR-73）。詳細は <a href="../deep-dive/concurrency-internals.html">並行・バックグラウンド処理</a>。
+      </div>
+
       <h2>テスト用 seam（DI）</h2>
       <p>外部依存はプロトコルで抽象化し、デフォルト引数で本番実装を注入する。<code>HTTPClient</code>（URLSession）/ <code>DateProvider</code>（時刻）/ <code>AccessTokenProvider</code>（トークン）はテストでスタブに差し替えられる。</p>
 

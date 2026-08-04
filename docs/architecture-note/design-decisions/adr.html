@@ -59,10 +59,10 @@
       <strong>決定:</strong> アイドル判定を廃止し「電源＋低電力OFF＋<strong>アプリ非アクティブ＋Wi-Fi</strong>」へ。停止判定は全処理 1 枚単位。AI アルバム作成は<strong>即時プレビュー（決定的）→夜間本番化（LLM）</strong>の 2 段階。のちに実行タイミングを<strong>5 段階のユーザー設定</strong>（<code>HeavyWorkTiming</code>・純関数で判定）へ発展。<br>
       <strong>結果:</strong> フォアグラウンドで重い処理がゼロになり操作が軽い。初回全量索引は「充電＋Wi-Fi＋ロック」時間帯に限定され日数を要する（エスケープハッチ＝今すぐ処理）。→ <a href="../features/background.html">バックグラウンド</a>。</p>
 
-      <h2><span class="tag">設計</span> 8. 横断リファクタリング＝共通足場の抽出と責務分割 <span class="muted">(ADR-26)</span></h2>
-      <p><strong>文脈:</strong> 機能追加で同じ骨格のコピーが層をまたいで蓄積（背景トリクル・自己修復コンテナ・Core ML ロード・BPE・UI 小物）。最大級の型に複数責務が同居。<br>
-      <strong>決定:</strong> <strong>挙動不変</strong>を絶対条件に共通足場（<code>BackgroundTrickle</code>/<code>makeResilientModelContainer</code>/<code>CoreMLModelSupport</code>/<code>BPESupport</code> 等）を抽出し、肥大型を分割（<code>AIAlbumService</code>・<code>BackupEngine</code>・<code>DropboxThumbnailBatcher</code>）。<br>
-      <strong>結果:</strong> 譲りポリシー・コンテナ復旧・モデルロードの変更が各 1 箇所で済む。トークナイザは同梱語彙でビット等価を実測確認。</p>
+      <h2><span class="tag">設計</span> 8. 共有ハード資源（ANE）は「触れる場所」で直列化する <span class="muted">(ADR-70・ADR-73・ADR-75)</span></h2>
+      <p><strong>文脈:</strong> Vision の顔検出と Core ML の CLIP 推論・モデルロードが<strong>同時に Neural Engine を使うと実機でデッドロック</strong>し、Vision の <code>perform</code> が永久に返らない（顔スキャンが 1 枚目で固まり People=0）。単体では固まらない。以前は CLIP 埋め込みが回線ゲートで止まっており、顔スキャンが ANE を独占できていたため顕在化していなかった。<br>
+      <strong>決定:</strong> ANE を使う処理を <code>MLInferenceGate</code> に通し<strong>同時に 1 つだけ</strong>実行する。ゲートを取るのは<strong>ANE に実際に触れる場所</strong>（各ランタイム/アダプタ）の内側で、呼び出し側の夜間タガーでは包まない。待機列は前景/背景の 2 本に分け、キャンセルされた待機者は列の先頭へ繰り上げる。<br>
+      <strong>結果:</strong> 学びが 2 つ。(a) <strong>横断的な不変条件を呼び出し側に守らせる設計は必ず漏れる</strong>——実際、呼び出し側で包む方式では前景の検索経路だけが素通りし、さらにゲートの<strong>内側</strong>で 3 並列の Vision が走って不変条件を自ら破っていた。(b) <strong>漏れは「新しい経路」ではなく「既にある別経路」で起きる</strong>。ゲート本体は <code>PerceptionCore</code>（顔と CLIP の共有下層）に置き、テストで優先度・キャンセル・後始末を検証している。</p>
 
       <h2><span class="tag">設計</span> 9. モデル選定は「実測＋実機確認」で決める <span class="muted">(ADR-31・ADR-32・ADR-34)</span></h2>
       <p><strong>文脈:</strong> 画像認識が重く、CLIP / VLM の軽量化・置き換え候補を比較したい。カタログスペックでは判断できない。<br>

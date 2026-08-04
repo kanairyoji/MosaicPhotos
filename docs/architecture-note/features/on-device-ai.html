@@ -93,7 +93,7 @@ graph TD
       </table>
 
       <h2>ピープル（顔クラスタ）</h2>
-      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは <code>AutoAlbumCore/Faces</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード・純ロジック各種）。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 1024px（旧 640px）、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>。長押しメニューから改名・代表写真・顔の付け替え・<strong>別の人物と束ねる</strong>。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/束ねが即反映）。顔モデル未同梱ならセクション非表示。</p>
+      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは独立パッケージ <code>FaceCore</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード・純ロジック各種）。CLIP と共有する下層（ベクトル演算・写真キー・背景トリクル・ANE ゲート）は <code>PerceptionCore</code> にある。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 1024px（旧 640px）、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>。長押しメニューから改名・代表写真・顔の付け替え・<strong>別の人物と束ねる</strong>。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/束ねが即反映）。顔モデル未同梱ならセクション非表示。</p>
       <p><strong>精度は「候補→データセット計測→採否」の反復で作った</strong>（<code>FaceAccuracyEvalTests</code>／<code>FaceEvalMetrics</code>・台帳 <code>face-accuracy.md</code>・FG-NET/LFW）。効いた変更だけを採用し、直感に反して悪化した案（外れ値除去・年齢分類・自動細分割の 2 階層）は計測で棄却した。</p>
       <ul>
         <li><strong>不確かな顔を弾く多段ゲート</strong>（ADR-48/52/53）: 検出信頼度・クロップ再検証（二段検出）・ぼけ（ラプラシアン分散）・露出（平均輝度）・絶対 48px／正規化サイズ比・顔向き（yaw/roll）・目閉じで品質を減衰し、フロア 0.40 未満はクラスタに入れない。偽陽性は顔なし画像で <strong>0%</strong>。</li>
@@ -104,11 +104,16 @@ graph TD
         <li><strong>顔ハイライト</strong>: 人物アルバムの「顔を表示」トグルで、認識した顔（束ねた全時期）をサムネ／全画面に黄枠表示（<code>faceHighlightProvider</code>／<code>FaceBoxMapping</code>・PhotoSourceKit は AutoAlbumCore 非依存を維持）。</li>
       </ul>
 
+      <div class="box why">
+        <span class="box-h">顔と CLIP は Neural Engine を奪い合う（ADR-70/73）</span>
+        Vision の顔検出（<code>perform</code>）と Core ML の CLIP 推論・モデルロードが<strong>同時に ANE を使うと実機でデッドロック</strong>し、顔スキャンが最初の 1 枚で固まる障害があった。以前は CLIP 埋め込みが回線ゲートで止まっていて顔スキャンが ANE を独占できていたため顕在化していなかった。現在は <code>MLInferenceGate</code> で<strong>同時に 1 つだけ</strong>に直列化し、ゲートは「ANE に触れる場所」の内側で取る。詳細は <a href="../deep-dive/concurrency-internals.html">並行・バックグラウンド処理</a>。
+      </div>
+
       <h2>表示タグ・説明文は検索と同じ台帳</h2>
       <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。シーンタグは <strong>1 回の Vision 一括パス</strong>で <strong>OCR（写真内テキスト）・動物種別・人数・美的スコア・アセット種別（スクショ/パノラマ/Live Photo 等）</strong>も同時取得し（ADR-47）、OCR は字句検索の一チャネル・美的スコアはカバー選択・種別はタグ検索に使う。フル画像の情報パネルには「写真内のテキスト」欄・<strong>利用カウンタ（閲覧/共有回数）</strong>も出る（ADR-49）。VLM キャプションは「AI description」欄に表示（お気に入り＝生成対象で未生成なら「充電中に生成されます…」を表示）。顔の数・スクリーンショット判定・解析状態も同パネルに出す。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析・説明文の確認画面）で可視化する。</p>
 
       <h2>背景処理のスロットリング</h2>
-      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。CLIP 埋め込みと VLM キャプションは<strong>インターリーブ</strong>（ADR-30・逐次だとキャプションが永遠に未着手になる実障害の修正）。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
+      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。CLIP 埋め込みと VLM キャプションは<strong>インターリーブ</strong>（ADR-30・逐次だとキャプションが永遠に未着手になる実障害の修正）。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>。モデルは <strong>critical のメモリ圧迫で解放</strong>し（VLM は全レベル）、次回利用時に再ロードする。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
 
       <div class="box refs">
         <span class="box-h">関連コード・記録</span>
