@@ -23,6 +23,10 @@ enum HeavyWorkScheduler {
     /// 不変の `let` なので nonisolated で安全。
     nonisolated static let taskID = "com.kanai.MosaicPhotos.heavywork"
 
+    /// CLIP 埋め込みの残作業を理由にバックアップを連続で見送れる上限。これを超えたら
+    /// 埋め込みが残っていてもバックアップの窓を 1 回明け渡す（飢餓の防止・上記 1.5 を参照）。
+    private static let maxBackupDeferrals = 3
+
     /// フォアグラウンドで構築済みのストア群（RootView が設定）。アプリがメモリに残ったまま
     /// BG 起動された場合はこれを再利用し、プロセス再起動時のみ作り直す。
     static var stores: HomeStores?
@@ -172,11 +176,24 @@ enum HeavyWorkScheduler {
         // 3-b: **AI（CLIP 埋め込み）の残作業が無い窓でだけ**開始する。両方ともメモリ/IO が重く、
         // 同一窓で同時に走らせるとピークが跳ねる。埋め込みが残る間はバックアップを見送り、AI が一巡した
         // 後の窓で回す（バックアップは差分から再開されるので遅延しても取りこぼさない）。
+        // ⚠️ ADR-72 は「埋め込み残 0 の窓でだけバックアップ」としていたが、実機ログ（diagnostics-20）で
+        // **バックアップが事実上始まらない**ことが分かった。残 44,017 枚に対し 1 窓あたり 192 枚
+        // （trickle の maxBatches 上限）しか進まないため、残 0 になるまで数十時間ぶんの窓が必要で、
+        // その間バックアップは毎回見送られていた（`bgtask: defer backup (embed backlog=44017)` が反復）。
+        // 「同時に走らせない」という元の意図は保ちつつ、**連続して見送った回数に上限**を設けて
+        // 必ず順番が回るようにする（公平性）。バックアップは差分再開なので飛び飛びでも取りこぼさない。
         let embedBacklog = await stores.autoAlbumEngine.pendingEmbedCount()
-        if embedBacklog == 0 {
+        let deferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.backupDeferralStreak)
+        if embedBacklog == 0 || deferrals >= Self.maxBackupDeferrals {
+            if embedBacklog > 0 {
+                Diagnostics.mark("bgtask: backup turn (deferred \(deferrals)x, embed backlog=\(embedBacklog))")
+            }
+            UserDefaults.standard.set(0, forKey: AppSettingsKeys.backupDeferralStreak)
             stores.backupEngine.startNightlyIfEnabled()
         } else {
-            Diagnostics.mark("bgtask: defer backup (embed backlog=\(embedBacklog))")
+            UserDefaults.standard.set(deferrals + 1, forKey: AppSettingsKeys.backupDeferralStreak)
+            Diagnostics.mark("bgtask: defer backup \(deferrals + 1)/\(Self.maxBackupDeferrals) "
+                             + "(embed backlog=\(embedBacklog))")
         }
 
         // 2. アルバム生成（差分があるときだけ・~26s 上限）。**顔/埋め込みを起こした後**に回す。

@@ -21,6 +21,55 @@
 
 ---
 
+## 実機ログの所要値が壁時計で汚染されていた（「メインが 29 分ブロック」の正体はプロセス中断）
+- 症状: 実機ログ（diagnostics-20・4 時間）に `PERF hang main=1764917ms`（**29.4 分**）が出る。
+  `faces.detect` の `load=` 合計 1,868,367ms のうち **1,769,333ms が単一の外れ値**（中央値は 81ms）。
+  `face.photoMs=1(Σ492753.8ms)`、`embed: batch … in 1866.7s` も同様。
+- 原因: **バックグラウンドでの OS によるプロセス中断（suspend）**。計測に使う時計は中断中も進む
+  （`CFAbsoluteTimeGetCurrent` は壁時計、`DispatchTime.uptimeNanoseconds` も端末が起きていれば進む）。
+  該当箇所を追うと `10:22:38 main: idle` → `10:51:48` の空白がそのまま「ハング」として記録されていた。
+  **背景実行を診断するために作った仕組みが、背景実行でこそ壊れていた。**
+- 対処: `MosaicSupport/ProcessSuspension` を新設。1 秒周期のタイマーが**自分の発火間隔**を見張り、
+  予定より大幅に遅れて発火したら中断とみなして `epoch` を進める（メインスレッドの状態と独立に判定
+  できるのが要点）。計測側は開始時の `epoch` を控え、`didSuspend(since:)` が true ならサンプルを捨てる。
+  適用: `MainThreadWatchdog`（hang / hang.begin の両方）・`BackgroundTrickle` の単位計測
+  （face.photoMs / clip.embedMs / tags.photoMs / caption.photoMs）・`FacePerceptionAdapter` の
+  load/infer（捨てた枚数は `suspended=N` としてログに残す）。
+- 関連: `MosaicSupport/{ProcessSuspension,MainThreadWatchdog,Diagnostics}.swift`・
+  `PerceptionCore/BackgroundTrickle.swift`・`MobileCLIPKit/FacePerceptionAdapter.swift`。
+- 残課題: 中断の検出は 1 秒周期＋3 秒しきい値なので、3 秒未満の短い中断は取りこぼす（実害は小さい）。
+- 教訓: **診断値は「測った条件」ごと疑う。**この汚染のせいで、同じログから 2 回誤った結論を出した
+  （「メインが 29 分ブロック」「埋め込みが 4 時間で 64 枚」）。後者は `head`/`tail` で別々の実行を
+  同一視した読み違いで、実際は 1 回の実行が 192 枚上限、6 回で約 1,000 枚進んでいた。
+  **集計する前に、外れ値と実行境界を必ず確認すること。**
+
+## バックアップが永久に始まらない（CLIP 埋め込みの残作業を待ち続ける）
+- 症状: 実機ログに `bgtask: defer backup (embed backlog=44017)` が繰り返し出るだけで、夜間バックアップが
+  一度も開始されない。
+- 原因: [[ADR-72]] の「CLIP 埋め込みの残作業が **0** の窓でだけバックアップを開始」。意図（メモリ/IO の重い
+  処理を同一窓で走らせない）は妥当だが、**残 0 に到達する見込みが無い**規模だと飢餓になる。
+  実測では 1 窓あたり 192 枚（trickle の maxBatches 上限）で、残 44,017 枚 ＝ 約 230 窓ぶん必要だった。
+- 対処: 連続して見送った回数を `AppSettingsKeys.backupDeferralStreak` に持ち、上限（3 回）に達したら
+  埋め込みが残っていてもバックアップへ窓を 1 回明け渡す。バックアップは差分再開なので飛び飛びでよい。
+- 関連: `HeavyWorkScheduler.runHeavyWork`・`AppSettingsKeys`。[[ADR-72]]。
+- 教訓: 「A が終わったら B」は、A が有限時間で終わる保証がある時だけ成り立つ。**待ち合わせには必ず
+  上限（タイムアウト・回数）を付ける。**
+
+## メンバーストアが使い捨てられるたびに全体を再構築していた（18 秒で 546 回）
+- 症状: 実機ログの起動直後、`merged.rebuild: local=6 cloud=0 total=6` が 18 秒間に **546 回**
+  （毎秒 40〜61 回）記録される。`local=6` は 6 枚しか持たない小さなメンバーストア。
+- 原因: `PlacePhotosView` / `AutoAlbumPhotosView` / `PersonAlbumView` / `DeviceAlbumPhotosView` の 4 画面が
+  `_store = State(initialValue: .forMembers(…))` の形でストアを作る。**SwiftUI はビューの再評価のたびに
+  `init` を実行する**ため（`State` は最初の値しか採らないので結果は捨てられる）、使い捨てストアが大量に
+  生まれる。`MergedPhotoStore.init` が `observeStores()` を張っていたので、捨てられるはずのストアまでが
+  `localStore.items` / `dropboxStore.items` の変化に反応して merge+sort を走らせていた。
+  デバウンス（400ms）は**ストアごと**なので、インスタンスが増えると効かない。
+- 対処: 監視の開始を `init` から `start()`（＝実際に画面へ出たとき）へ移す。`start()` されないストアは
+  何も監視せずそのまま破棄される。4 画面の呼び出し側は変更不要。
+- 関連: `PhotosFeatureKit/MergedPhotoStore.swift`。
+- 教訓: SwiftUI の `init` は**何度でも走る**。`State(initialValue:)` に副作用のある生成を置かない。
+  デバウンスはインスタンス単位なので、インスタンスが増える経路では防波堤にならない。
+
 ## ANE 直列化ゲートに穴があった（前景の CLIP テキスト塔が素通り／ゲート内で 3 並列）
 - 症状: 実害は未観測（レビューで発見・予防的修正）。だが diagnostics-19（Vision `perform` が永久に返らず
   顔スキャンが 1 枚目で固まる）を起こす条件が、[[ADR-70]] のゲート導入後も**2 経路残っていた**。

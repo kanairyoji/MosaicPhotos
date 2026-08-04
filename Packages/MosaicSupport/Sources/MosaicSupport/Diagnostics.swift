@@ -245,6 +245,10 @@ public enum Diagnostics {
         let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
         DiagnosticsLog.shared.append("=== launch — MosaicPhotos \(appVersionLine()) (footprint=\(mb)) ===")
 
+        // プロセス中断（suspend）の検出。これが無いと、背景実行中の計測値が壁時計で汚染され
+        // 「メインが 29 分ブロック」「画像ロードに 29 分」といった偽の値がログを埋める。
+        ProcessSuspension.install()
+
         // ObjC 未捕捉例外（unrecognized selector / KVO / CoreData など）を記録してから落ちる。
         // ※ Swift の fatalError / precondition / SwiftData の trap はこのハンドラを通らない
         //   （それらは Xcode/Organizer の標準クラッシュログに出る）。

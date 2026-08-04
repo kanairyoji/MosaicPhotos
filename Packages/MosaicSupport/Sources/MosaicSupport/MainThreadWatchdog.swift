@@ -24,6 +24,9 @@ public final class MainThreadWatchdog: @unchecked Sendable {
 
     /// 未返答の ping の送信時刻（ns・0=なし）。queue 上でのみ触る。
     private var outstandingSinceNs: UInt64 = 0
+    /// ping 送信時の中断世代。返答時に変わっていたら、その待ち時間は**プロセス中断**であって
+    /// メインスレッドのブロックではない（実機ログで「メインが 29 分ブロック」と誤報していた）。
+    private var outstandingEpoch = 0
     /// このハングの「開始」を既に記録したか（1 ハングにつき 1 回だけ hang.begin を出す）。
     private var hangBeginReported = false
 
@@ -57,6 +60,8 @@ public final class MainThreadWatchdog: @unchecked Sendable {
         // 前回の ping が未返答＝メインが塞がっている。新しい ping は積まず（解消時の
         // ラダー状ログを防ぐ）、しきい値を超えたら「開始」を一度だけ即時記録する。
         if outstandingSinceNs != 0 {
+            // 中断を跨いだ待ちは「ブロック」ではないので報告しない（誤報の主因だった）。
+            if ProcessSuspension.didSuspend(since: outstandingEpoch) { return }
             let age = Double(DispatchTime.now().uptimeNanoseconds &- outstandingSinceNs) / 1_000_000
             if age > hangBeginSuspectMs, !hangBeginReported {
                 hangBeginReported = true
@@ -66,11 +71,14 @@ public final class MainThreadWatchdog: @unchecked Sendable {
         }
 
         let t0 = DispatchTime.now().uptimeNanoseconds
+        let epoch = ProcessSuspension.epoch
         outstandingSinceNs = t0
+        outstandingEpoch = epoch
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let ms = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1_000_000
-            self.record(ms)
+            // 送信〜返答の間に中断があったサンプルは、待ち時間の実体が suspend なので捨てる。
+            if !ProcessSuspension.didSuspend(since: epoch) { self.record(ms) }
             self.queue.async {
                 self.outstandingSinceNs = 0
                 self.hangBeginReported = false

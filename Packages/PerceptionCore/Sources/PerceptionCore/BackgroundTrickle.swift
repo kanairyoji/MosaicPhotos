@@ -57,8 +57,13 @@ public enum BackgroundTrickle {
                 await waitWhilePaused(shouldPause, pausePerfLabel: pausePerfLabel)
                 if Task.isCancelled { break }
                 let tUnit = PerfTrace.nowNs()
+                let epoch = ProcessSuspension.epoch
                 let result = await processUnit(unit)
-                PerfTrace.count(unitPerfLabel, value: PerfTrace.msSince(tUnit) / unitPerfDivisor(unit))
+                // 中断（suspend）を跨いだ単位は、所要が壁時計で汚染されているので計上しない
+                // （実機ログで face.photoMs=1(Σ492753.8ms) のような偽値が出ていた）。
+                if !ProcessSuspension.didSuspend(since: epoch) {
+                    PerfTrace.count(unitPerfLabel, value: PerfTrace.msSince(tUnit) / unitPerfDivisor(unit))
+                }
                 results.append(result)
             }
             if await commitBatch(batchIndex, batch, results) == .stop { break }

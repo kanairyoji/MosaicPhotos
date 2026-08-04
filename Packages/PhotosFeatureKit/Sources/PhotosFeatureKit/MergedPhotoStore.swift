@@ -37,6 +37,8 @@ public final class MergedPhotoStore {
     /// 連続する変化をまとめて 1 回に集約する。
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private let rebuildDebounce: Duration = .milliseconds(400)
+    /// `start()` で監視を張ったか（init では張らない・二重登録防止）。
+    @ObservationIgnored private var isObserving = false
 
     public init(
         dropboxStore: DropboxPhotoStore,
@@ -46,7 +48,13 @@ public final class MergedPhotoStore {
         self.dropboxStore = dropboxStore
         self.localStore = localStore ?? LocalPhotoStore()
         self.cloudPathFilter = cloudPathFilter
-        observeStores()
+        // ⚠️ ここで observeStores() を張らないこと。監視の開始は `start()`（＝実際に画面に出たとき）まで
+        // 遅らせる。SwiftUI のビューは再評価のたびに init が走るため、`State(initialValue: .forMembers(…))`
+        // 方式（PlacePhotos / AutoAlbumPhotos / PersonAlbum / DeviceAlbumPhotos の 4 画面）では
+        // **使い捨てのストアが大量に生まれる**。init で監視を張ると、その捨てられるはずのストアまでもが
+        // localStore/dropboxStore の変化に反応して merge+sort を走らせてしまう。
+        // 実機ログ（diagnostics-20）では 18 秒で 546 回の `merged.rebuild`（うち local=6 の小さなメンバー
+        // ストア）が記録されていた。start() されないストアは何も監視せず、そのまま破棄される。
     }
 
     // MARK: - Off-main merge/sort
@@ -161,6 +169,11 @@ extension MergedPhotoStore: PhotoStore {
     }
 
     public func start() async {
+        // 監視はここで初めて張る（init ではなく・上の注記を参照）。多重呼び出しでも二重登録しない。
+        if !isObserving {
+            isObserving = true
+            observeStores()
+        }
         // ローカル写真の権限要求・アセット読み込み。
         await localStore.start()
         // Dropbox キャッシュから即時ロード（SyncEngine は HomeView が管理するため起動しない）。

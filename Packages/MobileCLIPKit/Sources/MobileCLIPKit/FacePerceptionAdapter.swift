@@ -29,10 +29,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         // 計測(b/c 判断用): 画像ロード ms と 推論(Vision 検出＋facenet 埋め込み) ms を分けて集計する。
         // ANE 実機で「1 枚 ~1s」のうちロードと推論のどちらが支配的かを次回ログで可視化する
         // （ロード支配ならプリフェッチ(c)、Vision 支配なら検出解像度(b) の効果が見込める）。
-        var loadMs = 0.0, inferMs = 0.0
+        // ⚠️ 所要は**プロセス中断（suspend）を跨いだら計上しない**。`CFAbsoluteTimeGetCurrent` は
+        // 壁時計なので suspend 中も進み、1 枚が 29 分に化けて合計を壊す（実機ログ diagnostics-20 で
+        // load 合計 1,868,367ms のうち 1,769,333ms が単一の外れ値だった。中央値は 81ms）。
+        var loadMs = 0.0, inferMs = 0.0, discarded = 0
         for refKey in refKeys {
             guard let ref = PhotoRef.decode(refKey) else { continue }
             let source: CGImage?
+            let suspensionEpoch = ProcessSuspension.epoch
             let tLoad = CFAbsoluteTimeGetCurrent()
             if let localID = ref.localIdentifier {
                 // 端末写真: 1024px（ADR-51・旧 640px）。集合写真の端の小さい顔も埋め込みに
@@ -45,7 +49,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             } else {
                 source = nil
             }
-            loadMs += (CFAbsoluteTimeGetCurrent() - tLoad) * 1000
+            let loadElapsed = (CFAbsoluteTimeGetCurrent() - tLoad) * 1000
             guard let cg = source else { nilImage += 1; continue }
             loaded += 1
             // ⚠️ ANE 直列化ゲートは `detect` の内側（Vision perform／facenet 推論の各段）で取る。
@@ -54,7 +58,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             // ゲートを占有していた（load/infer の実測内訳はそのための計測）。
             let tInfer = CFAbsoluteTimeGetCurrent()
             var (raw, signals, error) = await detect(in: cg, isCloud: ref.localIdentifier == nil)
-            inferMs += (CFAbsoluteTimeGetCurrent() - tInfer) * 1000
+            let inferElapsed = (CFAbsoluteTimeGetCurrent() - tInfer) * 1000
+            // 中断を跨いだ 1 枚は所要を捨てる（件数だけ数えてログに出す）。
+            if ProcessSuspension.didSuspend(since: suspensionEpoch) {
+                discarded += 1
+            } else {
+                loadMs += loadElapsed
+                inferMs += inferElapsed
+            }
             // ADR-61: 撮影日を載せる（時期グループ分割用）。ローカルは PHAsset.creationDate。
             // クラウドは seam 未整備のため当面 nil（personReps は nil を最古扱いで動く）。
             if let localID = ref.localIdentifier, let date = Self.creationDate(localID) {
@@ -71,6 +82,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         Diagnostics.mark("faces.detect: loaded=\(loaded) nil=\(nilImage) rawFaces=\(rawFaces) "
                          + "embedded=\(embedded) visionErr=\(visionErr) "
                          + "load=\(Int(loadMs))ms infer=\(Int(inferMs))ms"
+                         + (discarded > 0 ? " suspended=\(discarded)" : "")
                          + "\(lastError.map { " (\($0))" } ?? "")")
         return result
     }
