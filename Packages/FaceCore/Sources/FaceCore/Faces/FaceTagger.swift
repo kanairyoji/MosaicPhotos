@@ -82,10 +82,10 @@ final class FaceTagger {
                 return Array(todo[index..<end])
             },
             processUnit: { refKey in
-                // ANE 直列化ゲート: 顔検出(Vision)と CLIP 埋め込み/ロード(Core ML)を同時に ANE で走らせると
-                // Vision の perform が永久に返らない実障害（diagnostics-19）。1 枚の検出＋埋め込みをゲートに
-                // 通し、埋め込み側と同時実行させない。
-                let one = await MLInferenceGate.shared.run { await provider.detectFaces(refKeys: [refKey]) }
+                // ANE 直列化ゲート（diagnostics-19）は **provider 側（FacePerceptionAdapter）の内側**で
+                // 取る。ここで包むと画像ロードまでゲートに入り、その間ほかの解析が全部止まるため
+                // （ADR-73）。ここでは包まないこと＝包むと入れ子になる。
+                let one = await provider.detectFaces(refKeys: [refKey])
                 // 顔ゼロ（dict に無い）も走査済み（空配列）＝再スキャンしない。
                 return (refKey: refKey, faces: one[refKey] ?? [])
             },

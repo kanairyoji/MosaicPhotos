@@ -16,7 +16,12 @@ import SwiftUI
 /// 実行内容はフォアグラウンドの背景処理と同一（generate 差分・CLIP 埋め込み・顔スキャン）で、
 /// 各ループは `Task.isCancelled` を見るため、OS の期限切れ（expiration）で速やかに停止する。
 enum HeavyWorkScheduler {
-    static let taskID = "com.kanai.MosaicPhotos.heavywork"
+    /// ⚠️ `nonisolated`：アプリターゲットは `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` なので、
+    /// 無印だと MainActor 隔離になる。この値は `BGTaskScheduler.getPendingTaskRequests` の
+    /// **完了ハンドラ（任意スレッド）**から読むため、MainActor 隔離のままだと Swift 6 でエラーになる
+    /// （Swift 5 モードでは警告すら出ないが、実際に別スレッドから MainActor 状態を触っている）。
+    /// 不変の `let` なので nonisolated で安全。
+    nonisolated static let taskID = "com.kanai.MosaicPhotos.heavywork"
 
     /// フォアグラウンドで構築済みのストア群（RootView が設定）。アプリがメモリに残ったまま
     /// BG 起動された場合はこれを再利用し、プロセス再起動時のみ作り直す。
@@ -34,8 +39,10 @@ enum HeavyWorkScheduler {
     /// force-quit 後の復帰や OS 側の予約破棄で「いつまでも予約が無い」状態を防ぐ。
     static func submitIfMissing() {
         BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            // ⚠️ この完了ハンドラは**任意スレッド**で呼ばれる。`submit()` は MainActor 隔離
+            //（アプリ既定）なので、直接呼ばず MainActor へ跳ぶ。
             guard !requests.contains(where: { $0.identifier == taskID }) else { return }
-            submit()
+            Task { @MainActor in submit() }
         }
     }
 

@@ -30,7 +30,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         var quality: Float
     }
 
-    func testAccuracyOnDatasets() throws {
+    func testAccuracyOnDatasets() async throws {
         let root = ProcessInfo.processInfo.environment["FACE_EVAL_DIR"]
             ?? "/Users/kanai/DEV/tmp/face-eval"
         var isDirectory: ObjCBool = false
@@ -55,20 +55,18 @@ final class FaceAccuracyEvalTests: XCTestCase {
         let only = ProcessInfo.processInfo.environment["FACE_EVAL_ONLY"]?
             .split(separator: ",").map(String.init)
         for dataset in datasets where only == nil || only!.contains(dataset) {
-            try autoreleasepool {
-                try evaluate(datasetDir: "\(root)/\(dataset)", name: dataset)
-            }
+            try await evaluate(datasetDir: "\(root)/\(dataset)", name: dataset)
         }
 
         // P4: ネガティブセット（顔のない画像）での偽陽性計測。labels.csv 不要・images のみ。
         let negativesDir = "\(root)/negatives/images"
         if FileManager.default.fileExists(atPath: negativesDir) {
-            evaluateNegatives(imagesDir: negativesDir)
+            await evaluateNegatives(imagesDir: negativesDir)
         }
     }
 
     /// 顔のない画像群で「顔として採用されてしまった数」＝偽陽性率を測る。
-    private func evaluateNegatives(imagesDir: String) {
+    private func evaluateNegatives(imagesDir: String) async {
         let extensions: Set<String> = ["jpg", "jpeg", "png", "heic", "heif"]
         let urls = ((try? FileManager.default.contentsOfDirectory(
             at: URL(fileURLWithPath: imagesDir), includingPropertiesForKeys: nil)) ?? [])
@@ -80,15 +78,14 @@ final class FaceAccuracyEvalTests: XCTestCase {
         var falseAccepted = 0
         var imagesWithFalse = 0
         for url in urls {
-            autoreleasepool {
-                guard let cg = Self.loadCGImage(url, maxPixel: 1024) else { return }
-                images += 1
-                let accepted = adapter.debugAnalyze(cg).filter(\.accepted).count
-                if accepted > 0 {
-                    imagesWithFalse += 1
-                    falseAccepted += accepted
-                    print("FACEEVAL[negatives]: 偽陽性 \(url.lastPathComponent) → \(accepted) 顔")
-                }
+            // autoreleasepool は await を跨げないため、デコード（一時オブジェクトの主因）だけを包む。
+            guard let cg = autoreleasepool(invoking: { Self.loadCGImage(url, maxPixel: 1024) }) else { continue }
+            images += 1
+            let accepted = await adapter.debugAnalyze(cg).filter(\.accepted).count
+            if accepted > 0 {
+                imagesWithFalse += 1
+                falseAccepted += accepted
+                print("FACEEVAL[negatives]: 偽陽性 \(url.lastPathComponent) → \(accepted) 顔")
             }
         }
         guard images > 0 else { return }
@@ -98,7 +95,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
 
     // MARK: - 1 データセットの評価
 
-    private func evaluate(datasetDir: String, name: String) throws {
+    private func evaluate(datasetDir: String, name: String) async throws {
         let labels = try Self.loadLabels(csvPath: "\(datasetDir)/labels.csv")
         guard !labels.isEmpty else {
             print("FACEEVAL[\(name)]: labels.csv が空 — スキップ")
@@ -107,7 +104,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         print("FACEEVAL[\(name)]: ラベル \(labels.count) 枚 — 埋め込み抽出開始")
 
         // 埋め込み（キャッシュあり）。パイプライン版数がキャッシュ名に入るので版上げで自動無効化。
-        let (samples, rejected) = try extractEmbeddings(datasetDir: datasetDir, labels: labels)
+        let (samples, rejected) = try await extractEmbeddings(datasetDir: datasetDir, labels: labels)
         let detectionRate = Double(samples.count) / Double(labels.count)
         print(String(format: "FACEEVAL[%@]: 顔採用 %d/%d（%.1f%%）・棄却/未検出 %d",
                      name, samples.count, labels.count, detectionRate * 100, rejected))
@@ -443,7 +440,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
 
     private func extractEmbeddings(datasetDir: String,
                                    labels: [(file: String, person: String, age: Int?)])
-        throws -> (samples: [Sample], rejected: Int) {
+        async throws -> (samples: [Sample], rejected: Int) {
         let cacheURL = URL(fileURLWithPath: "\(datasetDir)/embeddings-v\(PeopleEngine.faceScanVersion).json")
         var cache: [String: [Float]] = [:]
         var qualityCache: [String: Float] = [:]
@@ -468,14 +465,11 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 }
                 continue
             }
-            autoreleasepool {
-                let url = URL(fileURLWithPath: "\(datasetDir)/images/\(label.file)")
-                guard let cg = Self.loadCGImage(url, maxPixel: 1024) else {
-                    cache[label.file] = []; cacheDirty = true; rejected += 1
-                    return
-                }
+            // autoreleasepool は await を跨げないため、デコードだけを包む。
+            let url = URL(fileURLWithPath: "\(datasetDir)/images/\(label.file)")
+            if let cg = autoreleasepool(invoking: { Self.loadCGImage(url, maxPixel: 1024) }) {
                 // 1 画像 1 人物前提（FG-NET 等）: 採用顔のうち最大の顔を主対象とする。
-                let results = adapter.debugAnalyzeWithEmbeddings(cg)
+                let results = await adapter.debugAnalyzeWithEmbeddings(cg)
                 let best = results
                     .filter { $0.embedding != nil }
                     .max { $0.report.pixelSize.width < $1.report.pixelSize.width }
@@ -489,8 +483,10 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     cache[label.file] = []
                     rejected += 1
                 }
-                cacheDirty = true
+            } else {
+                cache[label.file] = []; rejected += 1
             }
+            cacheDirty = true
             processed += 1
             if processed % 100 == 0 {
                 print("FACEEVAL: … \(processed) 枚処理（採用 \(samples.count)）")

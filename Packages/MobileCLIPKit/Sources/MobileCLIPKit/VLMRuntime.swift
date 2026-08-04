@@ -1,3 +1,4 @@
+import AutoAlbumCore   // MLInferenceGate（PerceptionCore を再エクスポート）
 import CoreGraphics
 import CoreML
 import Foundation
@@ -58,12 +59,16 @@ final class VLMRuntime: @unchecked Sendable {
 
     /// ロード済みの VLM を解放する（1-d・圧迫時／キャプションフェーズ完了後）。未ロードなら無処理。
     func release() {
-        guard box.isLoaded else { return }
-        box.reset()
-        Self.log.info("VLM released (freed ≈877MB)")
+        Task { [box] in
+            guard await box.isLoaded else { return }
+            await box.reset()
+            Self.log.info("VLM released (freed ≈877MB)")
+        }
     }
 
-    private struct Loaded {
+    /// `MLModel` を含むため暗黙の Sendable にならない。`LoadOnce` に載せるだけなので明示する
+    /// （実体はロード後 immutable・推論は MLModel 側でスレッドセーフ）。
+    private struct Loaded: @unchecked Sendable {
         let config: Config
         let vision: CoreMLModelHandle   // 入力名・画像制約込み
         let decoder: MLModel
@@ -71,11 +76,11 @@ final class VLMRuntime: @unchecked Sendable {
         let tokenizer: GPT2Tokenizer
     }
 
-    private func load() -> Loaded? {
-        box.get { Self.loadAll() }
+    private func load() async -> Loaded? {
+        await box.get { await Self.loadAll() }
     }
 
-    private static func loadAll() -> Loaded? {
+    private static func loadAll() async -> Loaded? {
         let bundle = Bundle.main
         guard let cfgURL = bundle.url(forResource: "vlm_config", withExtension: "json"),
               let cfg = try? JSONDecoder().decode(Config.self, from: Data(contentsOf: cfgURL)),
@@ -89,8 +94,8 @@ final class VLMRuntime: @unchecked Sendable {
         }
         let started = Date()
         let mlConfig = CoreMLModelLoader.makeConfiguration()
-        guard let visionModel = try? MLModel(contentsOf: visionURL, configuration: mlConfig),
-              let decoder = try? MLModel(contentsOf: decoderURL, configuration: mlConfig),
+        guard let visionModel = try? await MLModel.load(contentsOf: visionURL, configuration: mlConfig),
+              let decoder = try? await MLModel.load(contentsOf: decoderURL, configuration: mlConfig),
               // 56MB は mmap（alwaysMapped）で常駐を抑える。
               let embeddings = try? Data(contentsOf: embedURL, options: .alwaysMapped)
         else {
@@ -114,8 +119,14 @@ final class VLMRuntime: @unchecked Sendable {
     // MARK: - キャプション生成
 
     /// 写真 1 枚 → 短い英語キャプション（貪欲デコード・失敗は nil）。1〜2 秒/枚（実機）。
+    /// ANE 直列化ゲートは**ここ**で掛ける（呼び出し側の TagTagger では包まない）。画像ロードを
+    /// ゲート外に出すためで、ゲート内はロード＋視覚エンコード＋デコードループだけになる。
     func caption(for cgImage: CGImage) async -> String? {
-        guard let m = load() else { return nil }
+        await MLInferenceGate.shared.run { await self.unsafeCaption(for: cgImage) }
+    }
+
+    private func unsafeCaption(for cgImage: CGImage) async -> String? {
+        guard let m = await load() else { return nil }
         let cfg = m.config
 
         // 1) 視覚埋め込み（1, imageSeqLen, hidden）

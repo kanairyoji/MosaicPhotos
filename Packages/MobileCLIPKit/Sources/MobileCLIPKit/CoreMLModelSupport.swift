@@ -40,15 +40,19 @@ enum CoreMLModelLoader {
     /// 同梱モデルをロードし、結果を診断ログへ残す（実機で Mac なしに追えるように）。
     /// `subject` はログの主語（例 "CLIP image tower"）。開始時にも `loading…` を残し、ロードが詰まって
     /// いる場合に「開始したが完了しない」と分かるようにする（診断）。
+    ///
+    /// ⚠️ **async ロード必須**。同期 `MLModel(contentsOf:)` は CLIP 画像塔で実機 16〜35 秒かかり、
+    /// その間 Swift 並行の協調スレッドを 1 本まるごとブロックしていた（`LoadOnce` の NSLock 内で実行して
+    /// いたため）。`MLModel.load` なら待ちがサスペンドになり、スレッドは他の仕事に回せる。
     static func loadBundledModel(named name: String, configuration: MLModelConfiguration,
-                                 log: LogChannel, subject: String) -> MLModel? {
+                                 log: LogChannel, subject: String) async -> MLModel? {
         guard let url = bundledModelURL(name) else {
             log.error("\(subject) not bundled")
             return nil
         }
         Diagnostics.mark("model loading… \(subject)")
         let started = Date()
-        let model = try? MLModel(contentsOf: url, configuration: configuration)
+        let model = try? await MLModel.load(contentsOf: url, configuration: configuration)
         if model != nil {
             log.info("\(subject) \(loadStamp(since: started))")
             Diagnostics.mark("model loaded \(subject) \(loadStamp(since: started))")
@@ -117,33 +121,47 @@ struct CoreMLModelHandle: @unchecked Sendable {
     }
 }
 
-/// NSLock ＋「.some(nil)=失敗を記録し再試行しない」センチネルの遅延ロード箱。
+/// 「.some(nil)=失敗を記録し再試行しない」センチネル付きの**非同期**遅延ロード箱。
 /// 重いモデルロードを初回利用まで遅らせつつ、失敗を毎回リトライしない（ログ洪水と無駄を防ぐ）。
-final class LoadOnce<Value>: @unchecked Sendable {
-    private let lock = NSLock()
+///
+/// ⚠️ 旧実装は NSLock ＋ 同期ロードだった。`MLModel(contentsOf:)` が数十秒かかる間ロックを握ったまま
+/// 協調スレッドをブロックするため、actor ＋ async ロードへ移した。actor は再入するので、ロード中に
+/// 別の `get` が入って**二重ロード**しないよう、実行中の Task を保持して合流させる。
+actor LoadOnce<Value: Sendable> {
     /// nil = 未試行 / .some(nil) = ロード失敗（再試行しない） / .some(value) = ロード済み。
     private var state: Value??
+    /// 実行中のロード（後続の `get` はこれに合流する＝二重ロード防止）。
+    private var inFlight: Task<Value?, Never>?
+    /// `reset()` の世代。ロード中に解放が割り込んだかの判定に使う（`Task` は値型で同一性比較できない）。
+    private var generation = 0
 
     /// ロード済みならそれを、未試行なら `load()` を一度だけ実行して結果を返す。
-    /// ロードはロック内で走る（多重ロード防止）。推論はロック外で行うこと。
-    func get(_ load: () -> Value?) -> Value? {
-        lock.lock(); defer { lock.unlock() }
+    func get(_ load: @Sendable @escaping () async -> Value?) async -> Value? {
         if let state { return state }
-        let value = load()
-        state = .some(value)
+        if let inFlight { return await inFlight.value }
+        let startedAt = generation
+        let task = Task { await load() }
+        inFlight = task
+        let value = await task.value
+        // ロード中に reset()（圧迫解放）が割り込んでいたら、この結果は確定させない
+        // ——確定させると「解放したのに次の get でロード済みが返る」ことになる。
+        if generation == startedAt {
+            state = .some(value)
+            inFlight = nil
+        }
         return value
     }
 
     /// ロード済みモデルを解放する（1-d・メモリ圧迫時や重い VLM の使用後）。次回 `get` で再ロードされる。
     /// 失敗センチネルも消すので、以前失敗していても再試行する。
     func reset() {
-        lock.lock(); defer { lock.unlock() }
         state = nil
+        inFlight = nil
+        generation &+= 1
     }
 
     /// 現在ロード済みか（解放判断用・ロードは起こさない）。
     var isLoaded: Bool {
-        lock.lock(); defer { lock.unlock() }
         if case .some(.some) = state { return true }
         return false
     }

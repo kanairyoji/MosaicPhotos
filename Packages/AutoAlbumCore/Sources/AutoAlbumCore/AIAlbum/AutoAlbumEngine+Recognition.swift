@@ -197,10 +197,11 @@ extension AutoAlbumEngine {
             Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
             // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。
-            // ANE 直列化ゲートを通す（CLIP テキスト塔ロード＋埋め込みが顔検出と同時に ANE を使わないように）。
+            // ANE 直列化ゲートは encodeText の内側で**1 語ずつ**取る（ADR-73）。ここでまとめて包むと
+            // 約300語ぶんゲートを握り続け、その間の顔スキャン・タグ付けが完全に止まる。
             Task(priority: .background) { [weak self] in
                 guard let self, let labeler = self.labelProvider else { return }
-                await MLInferenceGate.shared.run { await labeler.prewarm() }
+                await labeler.prewarm()
             }
             // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
             await refreshFavoritesCache()

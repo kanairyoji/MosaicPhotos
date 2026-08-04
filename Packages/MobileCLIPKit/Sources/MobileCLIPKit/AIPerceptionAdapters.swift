@@ -47,7 +47,8 @@ public struct CLIPEmbeddingProvider: PhotoPerceptionProvider {
         }
 
         // 2) バッチ推論（P1: 1 枚ずつより 2〜4 倍のスループット。失敗時は runtime 内で単発へ救済）。
-        let vectors = clip.encodeImages(images)
+        //    ANE 直列化ゲートは encodeImages の内側。上の画像ロードはゲート外＝他の推論を止めない。
+        let vectors = await clip.encodeImages(images)
         for (i, refKey) in imageKeys.enumerated() {
             let vector = vectors[i].map { ClipMath.encode($0) }
             if vector != nil { embedded += 1 }
@@ -66,11 +67,16 @@ public struct MobileCLIPTextEmbedder: TextEmbedder {
 
     public var isAvailable: Bool { MobileCLIPRuntime.shared.isAvailable && CLIPTokenizer.shared != nil }
 
+    /// ⚠️ ここは**前景**（検索・AI アルバム作成）から呼ばれる。`encodeText` は内部で ANE 直列化ゲートを
+    /// 取るので、夜間の顔スキャン（Vision perform）と ANE を同時に使わない。以前はこの経路だけゲートを
+    /// 通っておらず、diagnostics-19 と同じ「Vision × Core ML 同時」が成立していた。
     public func embed(_ text: String) async -> [Float]? {
         guard MobileCLIPRuntime.shared.isAvailable, let tokenizer = CLIPTokenizer.shared else { return nil }
         let tokens = tokenizer.encode(text)
         return await Task.detached(priority: .userInitiated) {
-            MobileCLIPRuntime.shared.encodeText(tokens)
+            // ADR-75: ユーザーが検索結果を待っているので ANE ゲートの interactive 列に入れる
+            //（夜間バッチの待ち行列の後ろに並ばない）。
+            await MobileCLIPRuntime.shared.encodeText(tokens, priority: .interactive)
         }.value
     }
 
@@ -80,7 +86,7 @@ public struct MobileCLIPTextEmbedder: TextEmbedder {
     public func prewarm() async {
         await Task.detached(priority: .utility) {
             guard MobileCLIPRuntime.shared.isAvailable, let tokenizer = CLIPTokenizer.shared else { return }
-            _ = MobileCLIPRuntime.shared.encodeText(tokenizer.encode("a photo"))
+            _ = await MobileCLIPRuntime.shared.encodeText(tokenizer.encode("a photo"))
         }.value
     }
 }

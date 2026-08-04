@@ -21,6 +21,37 @@
 
 ---
 
+## ANE 直列化ゲートに穴があった（前景の CLIP テキスト塔が素通り／ゲート内で 3 並列）
+- 症状: 実害は未観測（レビューで発見・予防的修正）。だが diagnostics-19（Vision `perform` が永久に返らず
+  顔スキャンが 1 枚目で固まる）を起こす条件が、[[ADR-70]] のゲート導入後も**2 経路残っていた**。
+- 原因: ゲートを **呼び出し側（夜間タガー）で掛ける**方式だったこと。ゲートは「包んだ経路」しか守らない。
+  - **漏れ**: 前景の CLIP テキスト塔＝`QueryEmbedder` → `TextEmbedder.embed` と `AIAlbumService` の
+    `prewarm` は誰も包んでおらず、Core ML 推論が無防備に走っていた。夜間の顔スキャン（Vision・ゲート内）と
+    重なれば「Vision × Core ML 同時」が成立する。しかも AI アルバム作成は**ユーザーが起きている時間帯**の
+    操作なので、夜間バッチと重なる現実的な窓がある。`CLIPDisplayLabeler.prewarm` は包まれていたのに、
+    同じテキスト塔を使う検索経路だけが漏れていた＝**包み忘れが起きやすい方式だった**ことの証左。
+  - **内側で自壊**: `TagTagger` はゲートを取った内側で `VisionTagAdapter.senseInfo` を呼び、その中の
+    `boundedConcurrentResults(maxConcurrent: 3)` が `VNImageRequestHandler.perform` を **3 本同時**に
+    走らせていた。「ANE は同時に 1 つ」という不変条件を、ゲートの内側で破っていた。この並列化は
+    ゲート導入前の判断が残ったもので、両者は両立していなかった。
+  - 副次: provider 呼び出し全体を包んでいたため、**画像ロード（ANE を使わない I/O）までゲート内**に入り、
+    その間ほかの推論が全部止まっていた（`FacePerceptionAdapter` が load/infer を分けて計測していたのは
+    まさにこの内訳を知るため）。
+- 対処: ゲートを **ANE に触れる場所（`MobileCLIPKit` の各ランタイム/アダプタ）の内側**へ移し、呼び出し側の
+  ゲートを全撤去（[[ADR-73]]）。非再入ゲートなので入れ子は致命的 → `@TaskLocal` で同一タスクの再入を
+  検出して素通し＋`assertionFailure` の安全網を入れた。粒度は段ごと（顔観測／クロップ再検証／埋め込み、
+  概念埋め込みは 1 語ずつ）に分け、1 回のゲートを長く握らないようにした。
+  併せて: Core ML ロードを async 化（NSLock ＋同期ロードで協調スレッドを 16〜35 秒ブロックしていた）、
+  CLIP/facenet を critical 圧迫で解放（従来は VLM のみ）、笑顔検出の `CIDetector` を写真ごとの生成から
+  static へ（`context: nil` は毎回 `CIContext` を作る）＝[[ADR-74]]。
+- 関連: `PerceptionCore/MLInferenceGate.swift`・`MobileCLIPKit/*`・`FaceCore/FaceTagger.swift`・
+  `AutoAlbumCore/{TagTagger,PhotoTagger,AutoAlbumEngine+Recognition}.swift`。[[ADR-70]]・[[ADR-73]]・[[ADR-74]]。
+- 残課題: 「ANE に触れたらゲートを取る」は規約（`CLAUDE.md`）とアサーション頼み＝機械的な強制ではない。
+  `MLComputePlan`（iOS 17.4+）で INT8 CLIP・facenet が実際に ANE に載っているかは未検証（載っていない
+  オペは CPU に落ちるので、直列化の必要範囲が変わる可能性がある）。
+- 教訓: **横断的な不変条件（「同時に 1 つ」）を呼び出し側に守らせる設計は必ず漏れる。**リソースに触れる
+  場所そのものに閉じ込めること。漏れは「新しい経路が増えたとき」ではなく「既にある別経路」で起きていた。
+
 ## Florence キャプションが実機で全写真同一の無関係テキストになる（fp16 デコーダの logits 乖離）
 - 症状: VLM を Florence-2-base に替えたら、実機で生成されるキャプションが**どの写真も "Trump doing from…" 等の同一・無関係テキスト**（言語モデルの地の文＝ニュース調）になる。Mac（coremltools・**全 compute unit：CPU/GPU/ANE/ALL**）では "The image shows a gas pump with a sign that reads Please Prepay…" と正しい。
 - 原因: **実機の fp16 デコーダ演算が Mac と乖離し、近接トークンの argmax が反転**（生成2トークン目が Mac=133('The') → 実機=140('Trump')）、そこから系列全体が破綻。段階的に切り分けた: (1) Mac 全 compute unit で ID・復号とも正常＝Swift ロジック/資産/トークナイザは無罪、(2) 実機ログで **encoder 出力は有限**（nonFinite=0・min/max・値域とも Mac と一致）＝encoder・fp16 NaN は無罪、(3) mask も全1で正常（Mac で mask=0 は空出力になり "Trump" 系ではない）、(4) 残るは**デコーダの fp16 数値**のみ。encoder は fp16 でも Mac と一致するのに、デコーダは fp16 で iPhone と Mac が食い違う（近接 logits の反転に敏感）。ANE を避けて CPU+GPU にしても実機 GPU の fp16 で同様に壊れた。

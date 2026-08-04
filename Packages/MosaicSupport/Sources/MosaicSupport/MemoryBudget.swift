@@ -14,8 +14,23 @@ import os
 /// 取得不可/他プラットフォームは `physicalMemory` の一定割合をフォールバックにする。
 /// 値は時々で変動するので**起動時に1回読んでベースに使う**想定（毎回は読まない）。
 public enum MemoryBudget {
+    /// テスト用の固定予算を保持する箱。保護なしの `static var` だと Swift 6 でエラーになるため
+    /// ロック内に閉じ込める（不変条件: 状態は private・アクセスは必ず lock 経由・同期メソッドのみ）。
+    private final class OverrideBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: UInt64?
+        var current: UInt64? {
+            get { lock.lock(); defer { lock.unlock() }; return value }
+            set { lock.lock(); value = newValue; lock.unlock() }
+        }
+    }
+    private static let overrideBox = OverrideBox()
+
     /// テスト用に予算を固定注入する（nil なら実測）。決定的なテストのための seam。
-    public static var override: UInt64?
+    public static var override: UInt64? {
+        get { overrideBox.current }
+        set { overrideBox.current = newValue }
+    }
 
     /// アプリが使えるメモリ予算（概算バイト）。
     public static func availableBytes() -> UInt64 {

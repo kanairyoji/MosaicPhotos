@@ -1,3 +1,4 @@
+import AutoAlbumCore   // MLInferenceGate（PerceptionCore を再エクスポート）
 import CoreML
 import MosaicSupport
 import UIKit
@@ -24,30 +25,60 @@ final class FaceModelRuntime: @unchecked Sendable {
     private let box = LoadOnce<CoreMLModelHandle>()
     private let config = CoreMLModelLoader.makeConfiguration()
 
-    private init() {}
+    private init() {
+        // 1-d: critical 圧迫でのみ解放する（facenet は CLIP 画像塔より軽いが、常駐させる理由もない）。
+        // warning で手放すと夜間の顔スキャン中に再ロードを繰り返すため、critical 限定にする。
+        _ = MemoryPressureMonitor.shared.register { [weak self] level in
+            guard level == .critical else { return }
+            self?.release()
+        }
+    }
 
-    /// 初回利用まで遅延ロードする（`LoadOnce`・多重ロード防止＋失敗は再試行しない）。
-    private func handle() -> CoreMLModelHandle? {
-        box.get {
-            CoreMLModelLoader.loadBundledModel(named: "FaceEmbedder", configuration: config,
-                                               log: Self.log, subject: "face model")
+    /// ロード済み顔モデルを解放する（critical 圧迫時）。次回の embed で再ロードされる。
+    private func release() {
+        Task { [box] in
+            guard await box.isLoaded else { return }
+            await box.reset()
+            Self.log.info("face model released (memory pressure)")
+        }
+    }
+
+    /// 初回利用まで遅延ロードする（`LoadOnce`・二重ロード防止＋失敗は再試行しない）。
+    private func handle() async -> CoreMLModelHandle? {
+        await box.get { [config] in
+            await CoreMLModelLoader.loadBundledModel(named: "FaceEmbedder", configuration: config,
+                                                     log: Self.log, subject: "face model")
                 .map(CoreMLModelHandle.init)
         }
     }
 
+    // MARK: - 推論（ANE 直列化ゲートの内側で実行・`unsafe*` は保持済み前提）
+
     /// 顔切り抜き画像 → 512 次元 L2 正規化埋め込み。NaN/Inf は壊れとみなし nil
     /// （有限性ガードは CoreMLModelHandle 側で共通に行う）。
-    func embed(_ cgImage: CGImage) -> [Float]? {
-        handle()?.predictVector(from: cgImage)
+    func embed(_ cgImage: CGImage) async -> [Float]? {
+        await MLInferenceGate.shared.run { await self.unsafeEmbed(cgImage) }
+    }
+
+    private func unsafeEmbed(_ cgImage: CGImage) async -> [Float]? {
+        await handle()?.predictVector(from: cgImage)
     }
 
     /// 候補B: 複数の顔クロップを**バッチ推論**する（CLIP の `encodeImages` と同型）。
     /// 1 枚の写真の複数顔×マルチクロップ（アライメント/反転/bbox）をまとめて 1 回の ANE 呼び出しに
     /// でき、顔ごと・クロップごとの単発推論の呼び出しオーバーヘッドを償却する（精度は不変）。
     /// 返り値は入力と同じ並び（変換失敗・非有限は nil）。バッチ失敗時は 1 枚ずつへフォールバック。
-    func embed(_ images: [CGImage]) -> [[Float]?] {
+    func embed(_ images: [CGImage]) async -> [[Float]?] {
         guard !images.isEmpty else { return [] }
-        guard images.count > 1, let handle = handle() else { return images.map { embed($0) } }
+        return await MLInferenceGate.shared.run { await self.unsafeEmbed(images) }
+    }
+
+    private func unsafeEmbed(_ images: [CGImage]) async -> [[Float]?] {
+        guard images.count > 1, let handle = await handle() else {
+            var out: [[Float]?] = []
+            for cg in images { out.append(await unsafeEmbed(cg)) }
+            return out
+        }
         var providers: [MLFeatureProvider] = []
         var indexMap: [Int] = []
         for (index, cg) in images.enumerated() {
@@ -61,7 +92,7 @@ final class FaceModelRuntime: @unchecked Sendable {
             for i in 0..<out.count { results[indexMap[i]] = handle.vector(from: out.features(at: i)) }
             return results
         }
-        for (i, cg) in images.enumerated() { results[i] = embed(cg) }
+        for (i, cg) in images.enumerated() { results[i] = await unsafeEmbed(cg) }
         return results
     }
 }

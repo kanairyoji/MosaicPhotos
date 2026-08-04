@@ -20,7 +20,7 @@ import XCTest
 ///    数値の傾向確認・しきい値の当たり付けに使い、最終確認は実機で行う。
 final class FaceGateHarnessTests: XCTestCase {
 
-    func testAnalyzeSampleFolder() throws {
+    func testAnalyzeSampleFolder() async throws {
         // シミュレータのホームはサンドボックス内なので、Mac のパスを直接指定する。
         let dir = ProcessInfo.processInfo.environment["FACE_SAMPLES_DIR"] ?? "/Users/kanai/DEV/tmp/face-samples"
         var isDirectory: ObjCBool = false
@@ -44,7 +44,7 @@ final class FaceGateHarnessTests: XCTestCase {
                 print("FACEGATE: \(url.lastPathComponent) — 読み込み失敗")
                 continue
             }
-            let reports = adapter.debugAnalyze(cg)
+            let reports = await adapter.debugAnalyze(cg)
             totalFaces += reports.count
             accepted += reports.filter(\.accepted).count
             print("FACEGATE: \(url.lastPathComponent) 検出=\(reports.count)")

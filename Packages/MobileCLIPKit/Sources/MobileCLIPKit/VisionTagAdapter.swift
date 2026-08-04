@@ -29,7 +29,11 @@ public struct VisionTagAdapter: TagPerceptionProvider {
     public func senseInfo(refKeys: [String]) async -> [String: PhotoSenseInfo] {
         guard !refKeys.isEmpty else { return [:] }
         let cloud = cloudImage
-        // 候補C: 画像ロード＋Vision 一括パスを**同時数枚**並列化（Vision は CPU/ANE でコア並列が効く）。
+        // 候補C: **画像ロードだけ**を同時数枚まで並列化する（PHImageManager のデコード／Dropbox サムネ
+        // 取得＝ANE を使わない I/O なので並列で得をする）。Vision 一括パス（`sense`）は内部で ANE 直列化
+        // ゲートを取るため、ここで 3 並列にしても推論は 1 つずつ実行される。
+        // ⚠️ 以前は呼び出し側（TagTagger）がゲートを取った**内側**でこの 3 並列が回っており、
+        //    「ANE は同時に 1 つ」という不変条件をゲートの内側で破っていた（diagnostics-19 の再発条件）。
         // 取得不可の写真も空 info を返して「処理済み」にし無限ループを防ぐ。
         return await boundedConcurrentResults(refKeys, maxConcurrent: 3) { refKey in
             guard let ref = PhotoRef.decode(refKey) else { return PhotoSenseInfo() }
@@ -42,19 +46,25 @@ public struct VisionTagAdapter: TagPerceptionProvider {
                           for: asset, targetSize: CGSize(width: 1024, height: 1024),
                           quality: .full, allowsNetwork: false)?.cgImage
                 else { return PhotoSenseInfo() }
-                var info = Self.sense(cg)
+                var info = await Self.sense(cg)
                 info.tags = Self.mergeTags(info.tags, adding: Self.assetKindTags(from: asset))
                 return info
             } else if let path = ref.cloudPath {
                 guard let cg = await cloud(path) else { return PhotoSenseInfo() }
-                return Self.sense(cg)
+                return await Self.sense(cg)
             }
             return PhotoSenseInfo()
         }
     }
 
     /// Vision 一括パス（1 回の perform で全リクエストを実行）。
-    static func sense(_ cg: CGImage) -> PhotoSenseInfo {
+    /// ANE 直列化ゲートは**ここ**で掛ける（呼び出し側の TagTagger では包まない）。
+    static func sense(_ cg: CGImage) async -> PhotoSenseInfo {
+        await MLInferenceGate.shared.run { unsafeSense(cg) }
+    }
+
+    /// ゲート保持済み前提の本体（入れ子で `run` を呼ばないこと）。
+    private static func unsafeSense(_ cg: CGImage) -> PhotoSenseInfo {
         let classify = VNClassifyImageRequest()
         let text = VNRecognizeTextRequest()
         text.recognitionLevel = .accurate

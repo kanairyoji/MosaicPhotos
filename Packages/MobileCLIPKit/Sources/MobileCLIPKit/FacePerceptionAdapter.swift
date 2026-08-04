@@ -48,8 +48,12 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             loadMs += (CFAbsoluteTimeGetCurrent() - tLoad) * 1000
             guard let cg = source else { nilImage += 1; continue }
             loaded += 1
+            // ⚠️ ANE 直列化ゲートは `detect` の内側（Vision perform／facenet 推論の各段）で取る。
+            // 上の画像ロードはゲート外＝ロード中に他の推論（CLIP 埋め込み・Vision タグ）を止めない。
+            // 以前は呼び出し側の FaceTagger が detectFaces 全体を包んでおり、ロード時間ぶんも
+            // ゲートを占有していた（load/infer の実測内訳はそのための計測）。
             let tInfer = CFAbsoluteTimeGetCurrent()
-            var (raw, signals, error) = detect(in: cg, isCloud: ref.localIdentifier == nil)
+            var (raw, signals, error) = await detect(in: cg, isCloud: ref.localIdentifier == nil)
             inferMs += (CFAbsoluteTimeGetCurrent() - tInfer) * 1000
             // ADR-61: 撮影日を載せる（時期グループ分割用）。ローカルは PHAsset.creationDate。
             // クラウドは seam 未整備のため当面 nil（personReps は nil を最古扱いで動く）。
@@ -90,8 +94,8 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// `.error` は Vision が使えず CIDetector にフォールバックした場合のメッセージ（切り分け用）。
     /// face-info-expansion: 顔向き（yaw/roll）・目閉じ・笑顔を追加取得し、
     /// 品質を `FaceQualityGate` で一元調整する（横顔はフロア未満＝クラスタへ入れない）。
-    private func detect(in cg: CGImage, isCloud: Bool) -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
-        let (analyses, error) = analyzeFaces(in: cg, isCloud: isCloud)
+    private func detect(in cg: CGImage, isCloud: Bool) async -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
+        let (analyses, error) = await analyzeFaces(in: cg, isCloud: isCloud)
         return (analyses.count, analyses.compactMap(\.signal), error)
     }
 
@@ -114,15 +118,15 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
 
     /// 画像 1 枚をゲート込みで解析してレポートを返す（**検証ハーネス用**・埋め込み含む本番同一経路）。
     /// 端末へ入れて大量スキャンせずとも、問題写真をフォルダに置いてしきい値を素早く調整できる。
-    public func debugAnalyze(_ cg: CGImage, isCloud: Bool = false) -> [FaceGateReport] {
-        analyzeFaces(in: cg, isCloud: isCloud).analyses.map(\.report)
+    public func debugAnalyze(_ cg: CGImage, isCloud: Bool = false) async -> [FaceGateReport] {
+        await analyzeFaces(in: cg, isCloud: isCloud).analyses.map(\.report)
     }
 
     /// 精度計測ハーネス用: レポート＋採用顔の埋め込み（fp32・正規化済み）を返す。
     /// 経路は本番（detect）と完全に同一（マルチクロップ平均含む）。
-    public func debugAnalyzeWithEmbeddings(_ cg: CGImage, isCloud: Bool = false)
+    public func debugAnalyzeWithEmbeddings(_ cg: CGImage, isCloud: Bool = false) async
         -> [(report: FaceGateReport, embedding: [Float]?, quality: Float?)] {
-        analyzeFaces(in: cg, isCloud: isCloud).analyses.map { analysis in
+        await analyzeFaces(in: cg, isCloud: isCloud).analyses.map { analysis in
             let vec = analysis.signal.flatMap { ClipMath.decodeHalf($0.embedding) }
             return (analysis.report, vec, analysis.signal?.quality)
         }
@@ -136,8 +140,12 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// 1 枚分の顔解析（品質ゲート＋マルチクロップ埋め込み）。
     /// 候補B: **全顔の全クロップ（アライメント/反転/bbox）を平坦配列に集めて 1 回でバッチ推論**する。
     /// クロップ内容・平均は従来どおり＝精度不変。顔ごと・クロップごとの単発推論オーバーヘッドを償却する。
-    private func analyzeFaces(in cg: CGImage, isCloud: Bool) -> (analyses: [FaceAnalysis], error: String?) {
-        let (faces, error) = faceObservations(in: cg)   // 正規化(原点左下)の矩形＋品質＋向き＋属性
+    ///
+    /// ANE 直列化ゲートは**この関数の内側で段ごと**に取る（顔観測／クロップ再検証／埋め込み）。
+    /// 1 枚まるごとを 1 回のゲートで包むと、顔の多い写真で数秒間ゲートを占有して他の解析が飢える。
+    /// 段の切れ目でゲートを手放しても、ANE を同時に使わないという不変条件は保たれる。
+    private func analyzeFaces(in cg: CGImage, isCloud: Bool) async -> (analyses: [FaceAnalysis], error: String?) {
+        let (faces, error) = await faceObservations(in: cg)   // 正規化(原点左下)の矩形＋品質＋向き＋属性
 
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
         // 小さすぎる顔は埋め込み精度が低いので除外（クラウドは低解像度サムネのため大きい顔のみ）。
@@ -188,7 +196,7 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 let bboxCrop = cropFace(cg, normalizedBox: face.box, width: width, height: height)
                 let crop = aligned ?? bboxCrop
                 if let crop {
-                    if !verifyFaceInCrop(crop) {
+                    if !(await verifyFaceInCrop(crop)) {
                         row.reason = "not-a-face"   // ADR-53: 二段検出
                     } else {
                         let metrics = Self.faceMetrics(crop)
@@ -213,8 +221,8 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             rows.append(row)
         }
 
-        // Pass 2: 全クロップを 1 回でバッチ推論（顔・クロップを跨いで償却）。
-        let vectors = FaceModelRuntime.shared.embed(flatCrops)
+        // Pass 2: 全クロップを 1 回でバッチ推論（顔・クロップを跨いで償却）。ゲートは runtime の内側。
+        let vectors = await FaceModelRuntime.shared.embed(flatCrops)
 
         // Pass 3: 顔ごとに自分のクロップの埋め込みを平均→再正規化して signal を組む。
         var out: [FaceAnalysis] = []
@@ -269,19 +277,26 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// 実際に顔があるか確認する（模様・物体の誤検出はここで落ちる）。クロップは顔中心なので
     /// 検出顔がクロップ幅の一定割合以上を占めることを要求する。Vision が使えない環境
     ///（シミュレータの一部）では判定不能＝棄却しない。
-    private func verifyFaceInCrop(_ crop: CGImage) -> Bool {
-        let request = VNDetectFaceRectanglesRequest()
-        let handler = VNImageRequestHandler(cgImage: crop, options: [:])
-        guard (try? handler.perform([request])) != nil else { return true }
-        guard let results = request.results, !results.isEmpty else { return false }
-        return results.contains { $0.boundingBox.width >= FaceQualityGate.cropVerifyMinSide }
+    private func verifyFaceInCrop(_ crop: CGImage) async -> Bool {
+        await MLInferenceGate.shared.run {
+            let request = VNDetectFaceRectanglesRequest()
+            let handler = VNImageRequestHandler(cgImage: crop, options: [:])
+            guard (try? handler.perform([request])) != nil else { return true }
+            guard let results = request.results, !results.isEmpty else { return false }
+            return results.contains { $0.boundingBox.width >= FaceQualityGate.cropVerifyMinSide }
+        }
     }
 
     /// 顔観測（Vision 正規化・原点左下）を返す。**1 回の perform** で品質＋ランドマークを取得し、
     /// 失敗（シミュレータの "Could not create inference context" 等）なら顔矩形のみ→CIDetector に
     /// フォールバック（品質は 1＝中立。実機はほぼ常に品質つきで取れる）。
     /// 笑顔は CIDetector（CIDetectorSmile）を 1 パス追加して bbox で照合する。
-    private func faceObservations(in cg: CGImage) -> (faces: [FaceObservation], error: String?) {
+    private func faceObservations(in cg: CGImage) async -> (faces: [FaceObservation], error: String?) {
+        await MLInferenceGate.shared.run { self.unsafeFaceObservations(in: cg) }
+    }
+
+    /// ゲート保持済み前提の本体（入れ子で `run` を呼ばないこと）。
+    private func unsafeFaceObservations(in cg: CGImage) -> (faces: [FaceObservation], error: String?) {
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         let qualityRequest = VNDetectFaceCaptureQualityRequest()
         let landmarksRequest = VNDetectFaceLandmarksRequest()
@@ -400,13 +415,21 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         return left < 0.15 && right < 0.15
     }
 
+    /// 笑顔検出用の CIDetector（**使い回す**）。
+    /// ⚠️ 以前は写真ごとに `CIDetector(ofType:context: nil, options:)` を生成していた。`context: nil` は
+    /// 呼び出しごとに `CIContext` を作るため、顔のある写真すべてでコンテキスト構築コストを払っていた。
+    /// CIDetector は生成後 immutable でスレッドセーフ（かつ本経路は ANE ゲートで直列化済み）。
+    private static let smileDetector: CIDetector? = CIDetector(
+        ofType: CIDetectorTypeFace, context: CIContext(options: nil),
+        options: [CIDetectorAccuracy: CIDetectorAccuracyHigh])
+
     /// CIDetector（笑顔つき）による顔検出。返り値は Vision と同じ正規化・原点左下の矩形。
     /// `CIFaceFeature.bounds` は画像座標・原点左下なので W/H で割る。
+    /// 笑顔は `FaceStore` の代表顔スコア（`quality + hasSmile*0.3 + …`）に効くので、Vision で顔が
+    /// 取れている写真に対してのみ、この 2 本目のパスを走らせる（呼び出し側で顔ゼロは弾いている）。
     private func ciSmileBoxes(in cg: CGImage) -> [(box: CGRect, hasSmile: Bool)] {
         let ci = CIImage(cgImage: cg)
-        let detector = CIDetector(ofType: CIDetectorTypeFace, context: nil,
-                                  options: [CIDetectorAccuracy: CIDetectorAccuracyHigh])
-        let features = detector?.features(in: ci, options: [CIDetectorSmile: true]) ?? []
+        let features = Self.smileDetector?.features(in: ci, options: [CIDetectorSmile: true]) ?? []
         let width = CGFloat(cg.width), height = CGFloat(cg.height)
         guard width > 0, height > 0 else { return [] }
         return features.compactMap { $0 as? CIFaceFeature }.map {

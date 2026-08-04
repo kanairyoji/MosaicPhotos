@@ -13,13 +13,15 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     private static let log = Logger(subsystem: "com.mosaicphotos.AutoAlbum", category: "labeler")
     private let lock = NSLock()
     private var conceptEmbeddings: [(tag: String, vector: [Float])]?
+    /// 構築中の Task（後続の呼び出しはこれに合流する＝約300回の text encode を二重に走らせない）。
+    private var buildTask: Task<[(tag: String, vector: [Float])]?, Never>?
     private let maxTags = 6
     private let margin: Float = 0.04   // 最上位類似度からこの差以内のものを採用
 
     /// 概念埋め込み（約300語の text encode）を事前構築する（夜間パイプラインの先頭で呼ばれる）。
     /// これにより初回に写真を開いた瞬間の数秒の構築コストがフォアグラウンドから消える。
     public nonisolated func prewarm() async {
-        _ = ensureEmbeddings()
+        _ = await ensureEmbeddings()
     }
 
     /// 概念埋め込みが構築済みか（構築を発生させない即時判定）。未構築のとき insight は CLIP ラベルを
@@ -32,7 +34,7 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     /// ⚠️ nonisolated：概念埋め込みの一括構築（~300 text encode）をメインスレッドで走らせない。
     public nonisolated func labels(forEmbedding clipVector: Data) async -> [String] {
         guard let image = ClipMath.decode(clipVector), !image.isEmpty,
-              let embeddings = ensureEmbeddings(), !embeddings.isEmpty else { return [] }
+              let embeddings = await ensureEmbeddings(), !embeddings.isEmpty else { return [] }
         var scored = embeddings.map { (tag: $0.tag, score: ClipMath.cosine(image, $0.vector)) }
         scored.sort { $0.score > $1.score }
         guard let top = scored.first?.score else { return [] }
@@ -45,22 +47,42 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     }
 
     /// 概念テキスト埋め込みを遅延構築（セッション内キャッシュ）。
-    nonisolated private func ensureEmbeddings() -> [(tag: String, vector: [Float])]? {
-        lock.lock(); defer { lock.unlock() }
-        if let conceptEmbeddings { return conceptEmbeddings }
+    /// 約300回の `encodeText` はそれぞれ ANE 直列化ゲートを取り**1 語ずつ**譲る。まとめてゲートを
+    /// 握り続けると、その数秒〜十数秒のあいだ顔スキャン・タグ付けが完全に止まるため。
+    /// ロックは状態の読み書きだけに使い、await を跨いで保持しない（構築中は `buildTask` に合流させる）。
+    nonisolated private func ensureEmbeddings() async -> [(tag: String, vector: [Float])]? {
+        let task: Task<[(tag: String, vector: [Float])]?, Never>
+        lock.lock()
+        if let conceptEmbeddings { lock.unlock(); return conceptEmbeddings }
+        if let buildTask {
+            task = buildTask
+        } else {
+            task = Task { await Self.buildEmbeddings() }
+            buildTask = task
+        }
+        lock.unlock()
+
+        let built = await task.value
+        lock.lock()
+        if let built { conceptEmbeddings = built }
+        buildTask = nil
+        lock.unlock()
+        return built
+    }
+
+    private static func buildEmbeddings() async -> [(tag: String, vector: [Float])]? {
         guard MobileCLIPRuntime.shared.isAvailable, let tokenizer = CLIPTokenizer.shared else { return nil }
         let started = Date()
         var built: [(tag: String, vector: [Float])] = []
-        built.reserveCapacity(Self.concepts.count)
-        for concept in Self.concepts {
+        built.reserveCapacity(concepts.count)
+        for concept in concepts {
             let tokens = tokenizer.encode("a photo of \(concept)")
-            if let vector = MobileCLIPRuntime.shared.encodeText(tokens), !vector.isEmpty {
+            if let vector = await MobileCLIPRuntime.shared.encodeText(tokens), !vector.isEmpty {
                 built.append((tag: concept, vector: vector))
             }
         }
         let secs = String(format: "%.1f", Date().timeIntervalSince(started))
-        Self.log.notice("CLIPDisplayLabeler: built \(built.count, privacy: .public) concept embeddings in \(secs, privacy: .public)s")
-        conceptEmbeddings = built
+        log.notice("CLIPDisplayLabeler: built \(built.count, privacy: .public) concept embeddings in \(secs, privacy: .public)s")
         return built
     }
 

@@ -18,26 +18,60 @@ import Foundation
 public enum HeavyImageLane {
 
     /// 同時実行スロットと待機列を管理する actor（counter のみ・重い body は載せない）。
+    ///
+    /// キャンセル: 待機中にキャンセルされた要求は**列の先頭へ繰り上げる**（ADR-75）。`acquire` が必ず
+    /// 成功する契約（`release` と 1:1）を保ったまま、待ち時間だけを最短化する。スクロールで破棄された
+    /// 先読みデコードが、キャンセル済みなのに行列の最後尾で待ち続けるのを防ぐ。
     private actor Gate {
+        private struct Waiter {
+            let id: Int
+            let continuation: CheckedContinuation<Void, Never>
+        }
+
         let maxConcurrent: Int
         private var active = 0
-        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var waiters: [Waiter] = []
+        private var nextWaiterID = 0
+        /// enqueue より先にキャンセルが届いた待機者の ID。
+        private var earlyCancels: Set<Int> = []
 
         init(maxConcurrent: Int) { self.maxConcurrent = max(1, maxConcurrent) }
 
         func acquire() async {
             if active < maxConcurrent { active += 1; return }
-            await withCheckedContinuation { waiters.append($0) }
+            let id = nextWaiterID
+            nextWaiterID &+= 1
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                    enqueue(Waiter(id: id, continuation: cont))
+                }
+            } onCancel: {
+                Task { await self.promote(id) }
+            }
             // resume 時点でスロットは release から引き継がれている（active は据え置き）。
         }
 
         func release() {
-            if let next = waiters.first {
-                waiters.removeFirst()
-                next.resume()   // active はそのまま次の待機者へ引き継ぐ
-            } else {
+            if waiters.isEmpty {
                 active = max(0, active - 1)
+            } else {
+                waiters.removeFirst().continuation.resume()   // active はそのまま次の待機者へ引き継ぐ
             }
+        }
+
+        private func enqueue(_ waiter: Waiter) {
+            if earlyCancels.remove(waiter.id) != nil { waiters.insert(waiter, at: 0) }
+            else { waiters.append(waiter) }
+        }
+
+        private func promote(_ id: Int) {
+            guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+                earlyCancels.insert(id)
+                return
+            }
+            guard index > 0 else { return }
+            let waiter = waiters.remove(at: index)
+            waiters.insert(waiter, at: 0)
         }
     }
 

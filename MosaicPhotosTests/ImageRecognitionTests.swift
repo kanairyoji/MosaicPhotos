@@ -49,44 +49,48 @@ final class ImageRecognitionTests: XCTestCase {
 
     /// CLIP 埋め込みが有限値（NaN/Inf でない）であることを検証する回帰テスト。
     /// テキストタワーは常時、画像タワー（fp16）は実機でのみ検証する。
-    func testCLIPEmbeddingsAreFinite() throws {
+    func testCLIPEmbeddingsAreFinite() async throws {
         try XCTSkipUnless(MobileCLIPRuntime.shared.isAvailable, "MobileCLIP models not bundled — skipping")
         // テキストエンコーダ（fp16）はシミュレータでも有限。常に検証する。
         let tokens = try XCTUnwrap(CLIPTokenizer.shared).encode("a photo of a cat")
-        let text = try XCTUnwrap(MobileCLIPRuntime.shared.encodeText(tokens), "text embedding is nil")
+        let textVector = await MobileCLIPRuntime.shared.encodeText(tokens)
+        let text = try XCTUnwrap(textVector, "text embedding is nil")
         XCTAssertEqual(text.count, 512)
         XCTAssertTrue(text.allSatisfy { $0.isFinite }, "text embedding contains NaN/Inf")
         // 画像エンコーダ（fp16）は実機のみ。非 nil かつ有限であること。
         try skipImageTowerOnSimulator()
-        let image = try XCTUnwrap(MobileCLIPRuntime.shared.encodeImage(image(emoji: "🐱")),
-                                  "image embedding is nil on device")
+        let imageVector = await MobileCLIPRuntime.shared.encodeImage(image(emoji: "🐱"))
+        let image = try XCTUnwrap(imageVector, "image embedding is nil on device")
         XCTAssertEqual(image.count, 512)
         XCTAssertTrue(image.allSatisfy { $0.isFinite }, "image embedding contains NaN/Inf")
     }
 
     /// 画像どうしの類似度で画像タワー単独の健全性を確認する（同種＞異種・実機のみ）。
-    func testImageEmbeddingsDiscriminate() throws {
+    func testImageEmbeddingsDiscriminate() async throws {
         try XCTSkipUnless(MobileCLIPRuntime.shared.isAvailable, "models not bundled")
         try skipImageTowerOnSimulator()
-        func emb(_ e: String) throws -> [Float] {
-            try XCTUnwrap(MobileCLIPRuntime.shared.encodeImage(image(emoji: e)))
+        func emb(_ e: String) async throws -> [Float] {
+            let v = await MobileCLIPRuntime.shared.encodeImage(image(emoji: e))
+            return try XCTUnwrap(v)
         }
-        let cat1 = try emb("🐱"), cat2 = try emb("🐈"), dog = try emb("🐶"), pizza = try emb("🍕")
+        let cat1 = try await emb("🐱"), cat2 = try await emb("🐈")
+        let dog = try await emb("🐶"), pizza = try await emb("🍕")
         XCTAssertGreaterThan(cosine(cat1, cat2), cosine(cat1, dog))
         XCTAssertGreaterThan(cosine(cat1, cat2), cosine(cat1, pizza))
     }
 
     /// トークナイザ出力とテキストどうしの意味的近さ。
-    func testTokenizerAndTextDiscrimination() throws {
+    func testTokenizerAndTextDiscrimination() async throws {
         try XCTSkipUnless(MobileCLIPRuntime.shared.isAvailable, "models not bundled")
         let tokenizer = try XCTUnwrap(CLIPTokenizer.shared)
         let tokens = tokenizer.encode("a photo of a cat")
-        func text(_ s: String) throws -> [Float] {
-            try XCTUnwrap(MobileCLIPRuntime.shared.encodeText(tokenizer.encode(s)))
+        func text(_ s: String) async throws -> [Float] {
+            let v = await MobileCLIPRuntime.shared.encodeText(tokenizer.encode(s))
+            return try XCTUnwrap(v)
         }
-        let cat = try text("a photo of a cat")
-        let kitten = try text("a photo of a kitten")
-        let car = try text("a photo of a car")
+        let cat = try await text("a photo of a cat")
+        let kitten = try await text("a photo of a kitten")
+        let car = try await text("a photo of a car")
         XCTAssertEqual(Array(tokens.prefix(7)), [49406, 320, 1125, 539, 320, 2368, 49407])
         XCTAssertEqual(tokens.count, 77)
         XCTAssertGreaterThan(cosine(cat, kitten), cosine(cat, car))
@@ -96,16 +100,18 @@ final class ImageRecognitionTests: XCTestCase {
 
     /// 候補リストを使わず、任意の自然文クエリが正しい画像に近づくことを検証する。
     /// 「走っている犬」のような表現でも、語彙制約なしに画像とマッチする（本機能の核）。
-    func testOpenVocabularyNaturalLanguageMatch() throws {
+    func testOpenVocabularyNaturalLanguageMatch() async throws {
         try XCTSkipUnless(MobileCLIPRuntime.shared.isAvailable, "models not bundled")
         try skipImageTowerOnSimulator()
         let tokenizer = try XCTUnwrap(CLIPTokenizer.shared)
-        func textEmb(_ s: String) throws -> [Float] {
-            try XCTUnwrap(MobileCLIPRuntime.shared.encodeText(tokenizer.encode(s)))
+        func textEmb(_ s: String) async throws -> [Float] {
+            let v = await MobileCLIPRuntime.shared.encodeText(tokenizer.encode(s))
+            return try XCTUnwrap(v)
         }
-        let dog = try XCTUnwrap(MobileCLIPRuntime.shared.encodeImage(image(emoji: "🐶")))
-        let runningDog = try textEmb("a photo of a running dog")
-        let cityStreet = try textEmb("a photo of a city street at night")
+        let dogVector = await MobileCLIPRuntime.shared.encodeImage(image(emoji: "🐶"))
+        let dog = try XCTUnwrap(dogVector)
+        let runningDog = try await textEmb("a photo of a running dog")
+        let cityStreet = try await textEmb("a photo of a city street at night")
         // 自由な自然文（語彙に無い表現）でも、内容に合うクエリの方が近い。
         XCTAssertGreaterThan(cosine(dog, runningDog), cosine(dog, cityStreet))
     }
@@ -125,7 +131,8 @@ final class ImageRecognitionTests: XCTestCase {
         try skipImageTowerOnSimulator()
         let labeler = CLIPDisplayLabeler()
         for (emoji, expected) in [("🐶", "dog"), ("🍕", "pizza"), ("🚗", "car")] {
-            let embedding = try XCTUnwrap(MobileCLIPRuntime.shared.encodeImage(image(emoji: emoji)))
+            let vector = await MobileCLIPRuntime.shared.encodeImage(image(emoji: emoji))
+            let embedding = try XCTUnwrap(vector)
             let data = ClipMath.encode(embedding)
             let tags = await labeler.labels(forEmbedding: data)
             XCTAssertTrue(tags.contains(expected), "\(emoji) expected '\(expected)' but got \(tags)")

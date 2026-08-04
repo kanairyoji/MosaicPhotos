@@ -52,12 +52,23 @@ public final class DiagnosticsLog: @unchecked Sendable {
     /// 共有用のファイル URL。
     public var url: URL { fileURL }
 
-    private static let formatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
-        return f
-    }()
-    private static func timestamp() -> String { formatter.string(from: Date()) }
+    /// タイムスタンプ整形。`ISO8601DateFormatter` は非 Sendable なので、共有 static のままだと
+    /// `-strict-concurrency=complete` で警告（Swift 6 ではエラー）になる。ロック内に閉じ込めて
+    /// 参照を外へ出さない（毎回生成すると 1 行ごとにフォーマッタ構築コストを払うため使い回す）。
+    private final class TimestampFormatter: @unchecked Sendable {
+        private let lock = NSLock()
+        private let formatter: ISO8601DateFormatter = {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+            return f
+        }()
+        func string(from date: Date) -> String {
+            lock.lock(); defer { lock.unlock() }
+            return formatter.string(from: date)
+        }
+    }
+    private static let timestampFormatter = TimestampFormatter()
+    private static func timestamp() -> String { timestampFormatter.string(from: Date()) }
 }
 
 /// メモリ圧迫の段階。`DispatchSource` の warning / critical に対応する。
@@ -207,7 +218,21 @@ public func currentMemoryFootprintMB() -> Double? {
 /// 起動時に一度だけ呼び、未捕捉例外とメモリ圧迫を診断ログへ記録する。
 public enum Diagnostics {
     private static let log = Logger(subsystem: "com.mosaicphotos.Diagnostics", category: "diagnostics")
-    private static var memorySource: DispatchSourceMemoryPressure?
+    /// メモリ圧迫ソースの保持箱。`install()` は起動時 1 回だけだが、`static var` のままだと
+    /// 保護なしのグローバル可変状態（`-strict-concurrency=complete` で警告・Swift 6 でエラー）。
+    /// ロック内に閉じ込める（保持が目的で、外から読む必要はない）。
+    private final class MemorySourceBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var source: DispatchSourceMemoryPressure?
+        /// 未設定なら保持する（二重 install の取りこぼしを防ぐ）。既に保持済みなら false。
+        func storeIfEmpty(_ newSource: DispatchSourceMemoryPressure) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard source == nil else { return false }
+            source = newSource
+            return true
+        }
+    }
+    private static let memorySource = MemorySourceBox()
 
     /// 起動・主要フェーズの計測マーク。現在のメモリ使用量つきで診断ログへ 1 行追記する。
     /// 起動チューニングの Before/After を実機の診断ログで確認するために使う（低頻度・軽量）。
@@ -240,7 +265,7 @@ public enum Diagnostics {
             // 画像キャッシュは登録ハンドラ経由で warning=縮小 / critical=全消去される（jetsam 回避）。
             MemoryPressureMonitor.shared.handle(level)
         }
+        guard memorySource.storeIfEmpty(source) else { return }   // 二重 install なら破棄
         source.resume()
-        memorySource = source
     }
 }

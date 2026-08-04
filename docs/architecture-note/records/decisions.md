@@ -127,6 +127,100 @@
   後ろ倒し（夜間の別窓で回る）。
 - 関連: `AutoAlbumEngine.generate`(photoCount)/`pendingEmbedCount`・`HeavyWorkScheduler.runHeavyWork`。
 
+## ADR-73 ANE 直列化ゲートを「呼び出し側」から「ANE に触れる場所」へ移す
+- 状態: 採用（[[ADR-70]] で導入した `MLInferenceGate` の掛け位置を変更。ゲート自体は継続）
+- 文脈: [[ADR-70]] は diagnostics-19（Vision `perform` と Core ML 推論が ANE を同時使用 → Vision が永久に
+  返らない）対策として `MLInferenceGate` を導入したが、**掛ける場所を呼び出し側（夜間タガー）**にしていた
+  （`FaceTagger` / `TagTagger` / `PhotoTagger` が provider 呼び出し全体を包む）。この方式には構造的な穴が
+  あった:
+  - **漏れる**: ゲートは「包んだ経路」しか守らない。**前景の CLIP テキスト塔**（`QueryEmbedder` →
+    `TextEmbedder.embed`、および `AIAlbumService` の `prewarm`）は誰も包んでおらず素通りしていた。
+    AI アルバム作成・検索は**ユーザーが起きている時間帯**に走るため、夜間の顔スキャンと重なれば
+    diagnostics-19 と同じ「Vision × Core ML 同時」が成立する状態が残っていた。
+  - **内側で不変条件を破れる**: `TagTagger` はゲートを取った内側で `VisionTagAdapter.senseInfo` を呼び、
+    その中で `boundedConcurrentResults(maxConcurrent: 3)` が **3 本の `VNImageRequestHandler.perform` を
+    同時実行**していた。「ANE は同時に 1 つ」をゲートの内側で自ら破っていた。
+  - **占有時間が伸びる**: provider 呼び出し全体を包むと、画像ロード（PHImageManager デコード／Dropbox
+    サムネ取得＝**ANE を使わない I/O**）までゲート内に入り、その間ほかの推論が全部止まる。
+- 決定: ゲートは **ANE に実際に触れる場所＝`MobileCLIPKit` の各ランタイム/アダプタの内側**でのみ取る。
+  呼び出し側（タガー・検索）は一切包まない。
+  - `MobileCLIPRuntime.encodeText/encodeImage/encodeImages`・`FaceModelRuntime.embed`・
+    `VLMRuntime.caption`・`VisionTagAdapter.sense`・`FacePerceptionAdapter` の Vision 2 箇所
+    （顔観測／クロップ再検証）が各自ゲートを取る。内部実装は `unsafe*`（保持済み前提）に分ける。
+  - **入れ子禁止**。`MLInferenceGate` は非再入なので、`run` の中で `run` を呼ぶと固まる。保険として
+    `@TaskLocal isHeld` で同一タスクの再入を検出し素通し＋`assertionFailure`（`Task.detached` には
+    伝播しないので、ゲート内で detached を作らないこと）。
+  - 粒度は**段ごと**にする。顔 1 枚を 1 回のゲートで包まず「顔観測／各クロップ再検証／埋め込みバッチ」で
+    分ける。表示ラベラの概念埋め込み（約300語）も **1 語ずつ**ゲートを取り直す（まとめて握ると
+    その数秒〜十数秒、顔スキャンとタグ付けが完全に止まる）。
+- 結果: ゲートを通らない ANE 経路が消え、ロードは並列のまま推論だけ直列になった（`senseInfo` の 3 並列は
+  **ロードの並列**として意味を保ち、推論はゲートで 1 つずつ）。トレードオフ: 前景の検索が夜間処理 1 単位
+  ぶん待つ可能性がある（単位を小さく保つことで緩和）。ゲートの掛け忘れは今後も起こり得るので、
+  「ANE に触れるコードを足したら、その場でゲートを取る」を規約として `CLAUDE.md` にも書いた。
+- 関連: `PerceptionCore/MLInferenceGate.swift`・`MobileCLIPKit/{MobileCLIPRuntime,FaceModelRuntime,
+  VLMRuntime,VisionTagAdapter,FacePerceptionAdapter,AIPerceptionAdapters,CLIPDisplayLabeler}.swift`・
+  `FaceCore/FaceTagger.swift`・`AutoAlbumCore/{TagTagger,PhotoTagger,AutoAlbumEngine+Recognition}.swift`。
+  [[ADR-70]]・事例「ANE 直列化ゲートに穴があった」。
+
+## ADR-74 Core ML モデルロードの async 化とメモリ圧迫時の解放（CLIP/facenet）
+- 状態: 採用（[[ADR-70]] の常駐制御を補強）
+- 文脈: `LoadOnce` は **NSLock を握ったまま同期 `MLModel(contentsOf:)`** を実行していた。CLIP 画像塔は
+  実機 16〜35 秒かかるため、その間 Swift 並行の協調スレッドを 1 本まるごとブロックしていた。
+  また圧迫時にモデルを手放すのは VLM だけで、CLIP 画像塔と facenet は一度ロードすると常駐し続けていた
+  （`MemoryPressureMonitor.register` の仕組みは既にあるのに未登録）。
+- 決定:
+  - `LoadOnce` を **actor ＋ async ロード**（`MLModel.load(contentsOf:configuration:)`）にする。actor は
+    再入するので、実行中の `Task` を保持して後続の `get` を**合流**させ二重ロードを防ぐ。ロード中に
+    `reset()` が割り込んだ場合は世代カウンタで検出し、その結果を確定させない。
+  - `MobileCLIPRuntime` / `FaceModelRuntime` も `MemoryPressureMonitor.register` する。ただし
+    **critical のみ**解放する（warning で手放すと再ロード 16〜35 秒を頻繁に払う。VLM は 877MB と桁が
+    違うので従来どおり全レベルで解放）。実行中の推論は自分のハンドルを強参照しているので途中で消えない。
+  - 遅延ロードはゲートの内側で起きるため、ロード中に他の ANE 処理は走らない（[[ADR-73]] の性質を維持）。
+- 結果: 長時間のロードが協調スレッドを占有しなくなり、圧迫時に CLIP/facenet も解放されるようになった。
+  トレードオフ: 推論 API（`encodeText`/`embed`/`debugAnalyze` 等）が軒並み async になり、顔精度計測ハーネス
+  （`FaceAccuracyEvalTests`）も async 化が必要になった（`autoreleasepool` は await を跨げないため、
+  画像デコードだけを包む形へ変更）。
+- 関連: `MobileCLIPKit/CoreMLModelSupport.swift`（`LoadOnce` actor 化・`loadBundledModel` async）・
+  各ランタイム・`MosaicPhotosTests/FaceAccuracyEvalTests.swift`。[[ADR-70]]・[[ADR-73]]。
+
+## ADR-75 ANE ゲートの優先度分離とキャンセル時の繰り上げ／グローバル可変状態の排除
+- 状態: 採用（[[ADR-73]] の副作用への対処＋Swift 並行処理レビューの反映）
+- 文脈: [[ADR-73]] でゲートを ANE 接触点へ移した結果、**前景（検索・AI アルバム作成）の CLIP テキスト
+  埋め込みもゲートを通るようになった**。安全にはなったが、厳密 FIFO のため夜間バッチの待ち行列
+  （`senseInfo` は同時 3 件が並ぶ）の後ろに前景が並び、体感が悪化し得る状態になっていた。
+  併せて `swift-concurrency` スキルによるレビューで、待機列がキャンセルに応答しないこと、
+  `MosaicSupport` に保護なしのグローバル可変状態が残っていることが分かった。
+- 決定:
+  - **優先度付きゲート**: `MLInferencePriority`（`.interactive` / `.background`）を導入し、待機列を
+    2 本に分けて解放時は interactive を先に起こす。`encodeText(_:priority:)` の既定は `.background`
+    で、`MobileCLIPTextEmbedder.embed`（＝ユーザーが待っている検索）だけが `.interactive` を渡す。
+    interactive は低頻度なので background の飢餓は実際上起きない。
+  - **キャンセル時は列の先頭へ繰り上げ**: `MLInferenceGate` / `AsyncSemaphore` / `HeavyImageLane.Gate`
+    の 3 つが同じ形で `withCheckedContinuation` を使いながらキャンセルを無視していた。
+    `withTaskCancellationHandler` を足し、キャンセルされた待機者を**自分の優先度クラスの先頭へ繰り上げる**。
+    「待たずに抜けさせる」は採らない——`acquire`/`release` の 1:1 対応（`run` の戻り値も非 Optional）を
+    壊さないため。enqueue より先にキャンセルが届く競合は `earlyCancels` で吸収する。
+  - **BGTask ハンドラの MainActor 越境を解消**: `HeavyWorkScheduler.taskID` を `nonisolated let` に、
+    `getPendingTaskRequests` 完了ハンドラ（任意スレッド）からの `submit()` は `Task { @MainActor in }` 経由に。
+  - **グローバル可変状態をロック箱へ**: `PerfTrace`（`isEnabled`/`counters`/`flushTimer`/`pendingScreens`）・
+    `Diagnostics`（`formatter`/`memorySource`）・`MemoryBudget.override` を、それぞれ NSLock を内包する
+    `@unchecked Sendable` の小さなクラスに閉じ込めた（`nonisolated(unsafe)` は使わない）。
+- 結果: `-strict-concurrency=complete` の警告が `MosaicSupport`/`PerceptionCore` で **0 件**、アプリ自作
+  コードで 8 件 → 3 件（残りはカバー画像ローダの非 Sendable クロージャ＝別途）。自動生成の Core ML
+  ラッパー（未使用・20 件）は対象外。
+  **残る最悪ケース**: 優先度は待機列の順序を変えるだけで**実行中の保持者は横取りできない**。モデル
+  ロード（CLIP 画像塔は実機 16〜35 秒）がゲート内で走るため、その最中の前景要求はロード完了まで待つ。
+  ロードをゲート外へ出せば解消するが、「ロードと推論の同時実行が ANE で安全か」は**実機未検証**
+  （確認済みなのは*ロード同士*の並列が安全なことだけ＝`CoreMLModelSupport` の記述）。危険側に倒れると
+  再び永久ハングなので、実機計測するまではロードもゲート内に置く。
+- 関連: `PerceptionCore/MLInferenceGate.swift`・`ImageCacheKit/AsyncSemaphore.swift`・
+  `MosaicSupport/{HeavyImageLane,PerfTrace,Diagnostics,MemoryBudget}.swift`・`HeavyWorkScheduler.swift`・
+  `MobileCLIPKit/{MobileCLIPRuntime,AIPerceptionAdapters}.swift`。[[ADR-73]]・[[ADR-74]]。
+- 残課題: `SWIFT_VERSION = 5.0` のまま（`SWIFT_APPROACHABLE_CONCURRENCY`・`SWIFT_DEFAULT_ACTOR_ISOLATION`
+  は有効なのに言語モードは Swift 5）＝**コンパイラはデータ競合を検査していない**。各 `Package.swift` にも
+  `swiftSettings` が無くアプリと既定分離が非対称。まず `SWIFT_STRICT_CONCURRENCY=complete` を警告のまま
+  常設し、自動生成ラッパーの扱いを決めてから Swift 6 言語モードへ、が安全な順序。
+
 ## ADR-67 Dropbox 写真のお気に入り（アプリ側）＋解析の処理順をお気に入り優先に
 - 状態: 採用
 - 文脈: (1) お気に入りはローカル（`PHAsset.isFavorite`）専用で、Dropbox 写真にはハートも出せなかった

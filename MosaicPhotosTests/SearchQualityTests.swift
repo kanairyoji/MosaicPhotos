@@ -84,7 +84,7 @@ final class SearchQualityTests: XCTestCase {
         vectors.sort { $0.refKey < $1.refKey }
 
         // Vision シーンタグ（本番と同じ classify・初回のみ計算してキャッシュ）
-        let tags = try loadOrComputeTags(fixture: fixture, root: root)
+        let tags = try await loadOrComputeTags(fixture: fixture, root: root)
         let taggedCount = tags.values.filter { !$0.isEmpty }.count
         emit("EVAL tags: \(taggedCount)/\(fixture.photos.count) photos have tags")
 
@@ -159,7 +159,7 @@ final class SearchQualityTests: XCTestCase {
 
     // MARK: - Vision tags (cached)
 
-    private func loadOrComputeTags(fixture: Fixture, root: URL) throws -> [String: [String]] {
+    private func loadOrComputeTags(fixture: Fixture, root: URL) async throws -> [String: [String]] {
         let cacheURL = root.appendingPathComponent(".mobileclip_build/eval/tags.json")
         if let data = try? Data(contentsOf: cacheURL),
            let cached = try? JSONDecoder().decode([String: [String]].self, from: data),
@@ -170,7 +170,7 @@ final class SearchQualityTests: XCTestCase {
         for p in fixture.photos {
             let path = root.appendingPathComponent(p.file).path
             guard let cg = UIImage(contentsOfFile: path)?.cgImage else { tags[p.refKey] = []; continue }
-            tags[p.refKey] = VisionTagAdapter.sense(cg).tags   // 本番と同一の足切り（precision 0.75・ADR-50）
+            tags[p.refKey] = await VisionTagAdapter.sense(cg).tags   // 本番と同一の足切り（precision 0.75・ADR-50）
         }
         try JSONEncoder().encode(tags).write(to: cacheURL)
         return tags
