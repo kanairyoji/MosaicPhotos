@@ -172,8 +172,11 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
         func printRow(_ label: String, _ s: FaceEvalMetrics.ClusteringScore?) {
             guard let s else { return }
-            print(String(format: "FACEEVAL[%@]:  %@  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d",
-                         name, label, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1, s.pairF1, s.clusterCount))
+            // 分裂率（1人あたりクラスタ数）を一級指標として常に出す（ADR-67）。
+            // これが「ピープル画面に何人並ぶか」に直結する。
+            print(String(format: "FACEEVAL[%@]:  %@  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d | 分裂=%.1f/人（最悪%d）",
+                         name, label, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1, s.pairF1,
+                         s.clusterCount, s.clustersPerIdentity, s.maxClustersForOneIdentity))
         }
 
         // 大規模データセット（LFW 等）は貪欲クラスタリングが O(顔数×クラスタ数×次元) で
@@ -236,6 +239,34 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 assignMargin: 0.05, sizeAdaptiveMarginMax: sizeMax)
             printRow(String(format: "sizeAdapt thr=%.2f m0.05 smax=%.2f", thr, sizeMax),
                      score(clusters: clusters))
+        }
+
+        // F) 曖昧な顔の扱い（ADR-67）: マージンゲートで弾いた顔を新クラスタにせず未割当にする。
+        // 重心は汚さないので純度は理屈上不変のまま、クラスタ数（＝分裂）だけが減るはず。
+        print("FACEEVAL[\(name)]: === F 曖昧な顔を新クラスタにしない（ADR-67） ===")
+        printRow("prod（曖昧→新クラスタ）", score(clusters: FaceClustering.clusterAll(
+            faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+            assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10)))
+        printRow("B1 曖昧→未割当", score(clusters: FaceClustering.clusterAll(
+            faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+            assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+            ambiguousPolicy: .leaveUnassigned)))
+        printRow("B2 曖昧→未割当＋第2パス", score(clusters: FaceClustering.clusterAll(
+            faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+            assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+            ambiguousPolicy: .leaveUnassigned, secondPassMembership: true)))
+        // 免除バーの掃引（threshold + alike）。緩いと別人まで免除して純度が落ちる。
+        for alike in [Float(0), 0.10, 0.15, 0.20] {
+            printRow(String(format: "B3 競合を見る alike=+%.2f", alike), score(clusters:
+                FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+                    rivalAwareMargin: true, rivalAlikeMargin: alike)))
+            printRow(String(format: "B3＋第2パス alike=+%.2f", alike), score(clusters:
+                FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+                    secondPassMembership: true, rivalAwareMargin: true, rivalAlikeMargin: alike)))
         }
 
         // E) 純度の事後検査（外れ値除去・ADR-59）: 現行本番構成（thr0.50/margin0.05/size0.10）の
@@ -310,7 +341,76 @@ final class FaceAccuracyEvalTests: XCTestCase {
             evaluatePersonGrouping(samples: samples, name: name, temporal: true)   // 時系列分割（成長差を跨ぐ）
         }
 
+        // === F 家族シナリオ（少数 ID × 大量写真・ADR-67） ===
+        evaluateFamilyScenario(samples: samples, name: name)
+
         print("FACEEVAL[\(name)]: 完了")
+    }
+
+    // MARK: - F 家族シナリオ（少数 ID × 大量写真・ADR-67）
+
+    /// **実ライブラリの形**を再現する評価。既存の計測は「82人/1,002枚」「901人/4,862枚」＝
+    /// *多数の人物を少しずつ*であり、家族アルバムの「**数人を何万枚も**」という分布を
+    /// 一度も測っていなかった。この穴が「3人 → ピープル 2000人超」を出荷まで見逃した原因。
+    ///
+    /// 写真数上位 K 人だけを取り出してクラスタリングし、**1人あたりクラスタ数**を見る。
+    /// 枚数は FG-NET の規模しか無いが、知りたいのは絶対数ではなく「同じ人が何個に割れるか」。
+    private func evaluateFamilyScenario(samples: [Sample], name: String) {
+        var byPerson: [String: [Sample]] = [:]
+        for sm in samples { byPerson[sm.person, default: []].append(sm) }
+        let ranked = byPerson.sorted { ($0.value.count, $0.key) > ($1.value.count, $1.key) }
+        guard ranked.count >= 3 else { return }
+
+        for k in [3, 5] where ranked.count >= k {
+            let picked = Array(ranked.prefix(k))
+            let subset = picked.flatMap(\.value).sorted { $0.quality > $1.quality }
+            guard subset.count >= 20 else { continue }
+            let faces = subset.map { (faceID: $0.file, embedding: $0.embedding) }
+            let qualities = Dictionary(uniqueKeysWithValues: subset.map { ($0.file, $0.quality) })
+            let truth = Dictionary(uniqueKeysWithValues: subset.map { ($0.file, $0.person) })
+
+            func report(_ label: String, _ clusters: [FaceClustering.Cluster]) {
+                var assignments: [String: Int] = [:]
+                var singleton = -1
+                for sm in subset { assignments[sm.file] = singleton; singleton -= 1 }
+                for c in clusters {
+                    for fid in c.faceIDs { assignments[fid] = c.id }
+                }
+                guard let s = FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth) else { return }
+                print(String(format: "FACEEVAL[%@]:  F%d %@  分裂=%.1f/人（最悪%d）| clusters=%d | B3 P=%.3f R=%.3f F1=%.3f",
+                             name, k, label, s.clustersPerIdentity, s.maxClustersForOneIdentity,
+                             s.clusterCount, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1))
+            }
+
+            print("FACEEVAL[\(name)]: === F 家族シナリオ・上位\(k)人（顔 \(subset.count) 個） ===")
+            // 現行本番構成（曖昧な顔は新クラスタ）。
+            report("prod（曖昧→新クラスタ）", FaceClustering.clusterAll(
+                faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10))
+            // B1: 曖昧な顔を未割当にする（クラスタを増やさない）。
+            report("B1（曖昧→未割当）", FaceClustering.clusterAll(
+                faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+                ambiguousPolicy: .leaveUnassigned))
+            // B2: B1 ＋ 第2パス（未割当を重心を汚さず最寄りへ＝表示回収・ADR-66 と同じ）。
+            report("B2（曖昧→未割当＋第2パス）", FaceClustering.clusterAll(
+                faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+                ambiguousPolicy: .leaveUnassigned, secondPassMembership: true))
+            // B3: 競合どうしが似ていればゲートを免除（＝同一人物の別クラスタなら合流させる）。
+            for alike in [Float(0), 0.10, 0.15, 0.20] {
+                report(String(format: "B3＋第2パス alike=+%.2f", alike), FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
+                    secondPassMembership: true, rivalAwareMargin: true, rivalAlikeMargin: alike))
+            }
+            // 参考: サイズ適応なし / マージンなし（どちらが分裂の主因かの切り分け）。
+            report("参考 サイズ適応なし", FaceClustering.clusterAll(
+                faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05))
+            report("参考 マージンなし", FaceClustering.clusterAll(
+                faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities))
+        }
     }
 
     // MARK: - 2 階層 vs 融合の識別精度（ADR-61）

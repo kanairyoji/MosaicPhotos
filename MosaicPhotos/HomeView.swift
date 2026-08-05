@@ -25,6 +25,8 @@ struct HomeView: View {
     let assetIndex: LocalAssetIndex
     /// 人物レビュー（「同じ人物？」確認カード・ADR-46）のシート表示。
     @State var showingFaceReview = false
+    @State var showingAllPeople = false
+    @State var showingBatchReview = false
     /// 場所（市区町村）スキャナー。ローカル＋Dropbox の位置情報をまとめてグルーピングする。
     @State var placeScanner: PlaceScanner
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
@@ -151,6 +153,20 @@ struct HomeView: View {
         .peopleActions(for: $personActions, engine: peopleEngine)
         .sheet(isPresented: $showingFaceReview) {
             FaceReviewView(peopleEngine: peopleEngine)
+        }
+        // 人物が多すぎてカルーセルに収まらないときの全一覧（ADR-67）。
+        .sheet(isPresented: $showingAllPeople) {
+            AllPeopleView(people: peopleEngine.people,
+                          onSelect: { destination = .person($0) },
+                          onLongPress: { personActions = $0 },
+                          onBatchReview: {
+                              showingAllPeople = false
+                              showingBatchReview = true
+                          })
+        }
+        // まとめて確認（1 画面で多数のクラスタを畳む・ADR-67）。
+        .sheet(isPresented: $showingBatchReview) {
+            FaceBatchReviewView(peopleEngine: peopleEngine)
         }
         // Developer Options が ON のとき、ホーム最上部にも Dropbox 通信アクティビティを重ねる。
         .dropboxActivityBar()

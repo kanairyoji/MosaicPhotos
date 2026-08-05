@@ -132,4 +132,84 @@ extension FaceStore {
         return items
     }
 
+    // MARK: - 一括レビュー（ADR-67）
+
+    /// 「この人と同じ人を、まとめて選ぶ」1 画面ぶんを作る。
+    ///
+    /// 基準（アンカー）は `anchorClusterID` 指定がなければ **命名済みで最大**、無ければ最大の
+    /// クラスタ。候補は A1 と同じ帯（重心類似 ≥ しきい値−0.10）から、別人記録・共起 notSame を
+    /// 除いて類似度降順に採る。1 回答で `limit` 件まで畳めるので、A1（1 回答＝1 統合）に対して
+    /// 桁で効率が上がる。
+    func batchReviewItem(minFaces: Int, anchorClusterID: Int? = nil,
+                         limit: Int = 24) -> FaceBatchReviewItem? {
+        let thr = calibratedThreshold()
+        let clusters = allClusters().filter { $0.count >= minFaces }
+        guard clusters.count >= 2 else { return nil }
+
+        var centroid: [Int: [Float]] = [:]
+        var cover: [Int: PersonInfo.Face] = [:]
+        var photoSets: [Int: Set<String>] = [:]
+        for c in clusters {
+            guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
+            centroid[c.clusterID] = FaceClustering.normalized(sum)
+            let members = faces(inCluster: c.clusterID)
+            photoSets[c.clusterID] = Set(members.map(\.refKey))
+            let pick = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
+                ?? Self.bestCoverFace(members)
+            if let f = pick {
+                cover[c.clusterID] = PersonInfo.Face(
+                    faceID: f.faceID, refKey: f.refKey,
+                    boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh))
+            }
+        }
+
+        // アンカー: 指定 → 命名済みで最大 → 最大。
+        let anchor: PersonCluster? = {
+            if let id = anchorClusterID { return clusters.first { $0.clusterID == id } }
+            let named = clusters.filter { $0.name?.isEmpty == false }
+            return (named.isEmpty ? clusters : named).max { $0.count < $1.count }
+        }()
+        guard let anchor, let anchorCentroid = centroid[anchor.clusterID],
+              let anchorFace = cover[anchor.clusterID] else { return nil }
+
+        // 「別人」記録（A1 と同じ・重心埋め込みで照合）。
+        let notSameRows = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
+            predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
+            row -> ([Float], [Float])? in
+            guard let wrong = row.wrongEmbedding,
+                  let a = ClipMath.decodeHalf(row.faceEmbedding),
+                  let b = ClipMath.decodeHalf(wrong) else { return nil }
+            return (FaceClustering.normalized(a), FaceClustering.normalized(b))
+        }
+        func isMarkedNotSame(_ a: [Float], _ b: [Float]) -> Bool {
+            for (ra, rb) in notSameRows {
+                if (FaceClustering.dot(a, ra) >= 0.9 && FaceClustering.dot(b, rb) >= 0.9)
+                    || (FaceClustering.dot(a, rb) >= 0.9 && FaceClustering.dot(b, ra) >= 0.9) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        let anchorPhotos = photoSets[anchor.clusterID] ?? []
+        var candidates: [FaceBatchReviewItem.Candidate] = []
+        for c in clusters where c.clusterID != anchor.clusterID {
+            guard let cen = centroid[c.clusterID], let face = cover[c.clusterID] else { continue }
+            let sim = FaceClustering.dot(anchorCentroid, cen)
+            guard sim >= thr - 0.10, !isMarkedNotSame(anchorCentroid, cen) else { continue }
+            // 共起（同じ写真に何度も一緒に写る）＝別人。兄弟の一括誤統合を防ぐ最後の砦。
+            guard anchorPhotos.intersection(photoSets[c.clusterID] ?? []).count < Self.coOccurrenceNotSame
+            else { continue }
+            candidates.append(.init(clusterID: c.clusterID, face: face,
+                                    count: c.count, similarity: sim))
+        }
+        guard !candidates.isEmpty else { return nil }
+        candidates.sort { $0.similarity > $1.similarity }
+
+        return FaceBatchReviewItem(
+            anchorClusterID: anchor.clusterID,
+            anchorName: (anchor.name?.isEmpty == false) ? (anchor.name ?? "") : "",
+            anchorFace: anchorFace, anchorCount: anchor.count,
+            candidates: Array(candidates.prefix(limit)))
+    }
 }

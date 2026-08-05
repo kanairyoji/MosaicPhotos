@@ -127,11 +127,21 @@ struct PeopleCarousel: View {
     let people: [PersonInfo]
     let onSelect: (PersonInfo) -> Void
     let onLongPress: (PersonInfo) -> Void
+    /// 「すべて表示」タップ（省略された人物がいるときだけ末尾にカードを出す）。
+    var onSeeAll: (() -> Void)?
+
+    /// カルーセルに出す上限。成長期の子供がいるライブラリではクラスタが数千に分裂し得るため、
+    /// 横スクロールに全部並べると事実上スクロールし切れない（実フィードバック・ADR-67）。
+    /// 枚数上位だけを出し、残りは「すべて表示」から一覧で扱う。
+    static let carouselLimit = 30
+
+    private var shown: [PersonInfo] { Array(people.prefix(Self.carouselLimit)) }
+    private var hiddenCount: Int { max(0, people.count - shown.count) }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 14) {
-                ForEach(people) { person in
+                ForEach(shown) { person in
                     // Button＋contextMenu は「横スクロール×List 行」でヒット領域が行全体に化ける
                     // （バー全体がハイライトされ、常に先頭カードのメニューを拾う）ため、各カードに
                     // 直接タップ／長押しジェスチャを付けて確実にそのカードを対象にする。
@@ -153,11 +163,39 @@ struct PeopleCarousel: View {
                             .offset(x: -8)
                         }
                 }
+                if hiddenCount > 0, let onSeeAll {
+                    SeeAllPeopleCard(hiddenCount: hiddenCount)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onSeeAll() }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 4)
         }
         .listRowInsets(EdgeInsets())
+    }
+}
+
+/// カルーセル末尾の「ほかに N 人」カード。
+private struct SeeAllPeopleCard: View {
+    let hiddenCount: Int
+    private static let side: CGFloat = 84
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemBackground))
+                VStack(spacing: 2) {
+                    Image(systemName: "person.2.fill").font(.title3)
+                    Text(verbatim: "+\(hiddenCount)").font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(.secondary)
+            }
+            .frame(width: Self.side, height: Self.side)
+            Text(L("See all")).font(.footnote).lineLimit(1)
+        }
+        .frame(width: Self.side + 12)
     }
 }
 

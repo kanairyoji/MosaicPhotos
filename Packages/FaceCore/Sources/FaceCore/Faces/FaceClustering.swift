@@ -92,6 +92,39 @@ public struct FaceClustering {
     public var sizeAdaptiveMarginMax: Float = 0
     public var sizeAdaptiveMatureCount: Int = 11
 
+    /// マージンゲートで弾いた顔（＝1 位と 2 位が紛らわしい顔）の扱い（ADR-67）。
+    public enum AmbiguousPolicy: Sendable, Equatable {
+        /// 新しいクラスタを作る（v4 までの挙動）。
+        /// ⚠️ 家族ライブラリのように「ほぼ全写真が同じ数人」の分布では、*同じ人の別時期の
+        /// クラスタ同士*が恒常的に紛らわしいため、曖昧な顔が来るたびに新クラスタが生まれ、
+        /// クラスタ数が写真枚数に比例して膨張する（実ライブラリで 3 人 → 2000 人超）。
+        case newCluster
+        /// どこにも入れない（未割当）。重心を汚さない点は newCluster と同じだが、
+        /// **クラスタ数を増やさない**。表示は第2パス（membership のみ）で回収する。
+        case leaveUnassigned
+    }
+    /// 既定は従来挙動（計測で採否を決めるため・ADR-67）。
+    public var ambiguousPolicy: AmbiguousPolicy = .newCluster
+
+    /// **競合相手を見るマージン**（ADR-67）。
+    ///
+    /// マージンゲート（ADR-57）とサイズ適応マージン（ADR-58）は「兄弟のように似た**別人**の
+    /// クラスタが近くにあるとき、紛らわしい顔を取り込まない」ための仕掛けだった。しかし
+    /// 家族アルバムのように人物が数人しかいないライブラリでは、近くにあるのはたいてい
+    /// **同じ人の別時期のクラスタ**であり、そこでゲートが働くと*正しい合流*を止めて
+    /// 分裂を量産する（FG-NET 上位3人で分裂 5.3/人・ゲート無効なら 2.3/人）。
+    ///
+    /// そこで「競合しているクラスタどうしが**互いに似ているか**」を見る:
+    /// - 互いに似ている（≥ しきい値）→ 同一人物の別クラスタ同士＝紛らわしくても実害なし → 免除
+    /// - 似ていない → 本当に別人が近い＝危険 → 従来どおりゲートを適用
+    ///
+    /// ライブラリの人数に依存しない判定なので、少人数でも多人数でも同じ規則で動く。
+    public var rivalAwareMargin: Bool = false
+    /// 「競合どうしが似ている」と判定するバーの上乗せ（実効バー ＝ `threshold + rivalAlikeMargin`）。
+    /// 0 だと素のしきい値で判定するが、それでは**別人どうし**も似ていると見なされて誤統合が増える
+    /// （FG-NET 82人で純度 0.879→0.656）。免除は「明らかに同一人物」のときだけ効かせる。
+    public var rivalAlikeMargin: Float = 0
+
     /// クラスタサイズに応じた上乗せマージン（純・線形減衰。count>=mature で 0）。
     func sizeMargin(forCount count: Int) -> Float {
         guard sizeAdaptiveMarginMax > 0, count < sizeAdaptiveMatureCount else { return 0 }
@@ -144,7 +177,11 @@ public struct FaceClustering {
         // 紛らわしさも「別人と紛らわしい」証拠として扱う）。
         if assignMargin > 0, scored.count >= 2,
            scored[0].sim >= threshold, scored[1].sim >= threshold,
-           scored[0].sim - scored[1].sim < assignMargin {
+           scored[0].sim - scored[1].sim < assignMargin,
+           // 競合どうしが似ている＝同一人物の別クラスタなら、紛らわしくても取り込んでよい。
+           !(rivalAwareMargin && clustersAlike(scored[0].index, scored[1].index)) {
+            // 曖昧な顔で新クラスタを増やさない方針（ADR-67）。
+            if ambiguousPolicy == .leaveUnassigned { return FaceClustering.unassigned }
             let id = nextID
             nextID += 1
             let w = max(quality, 0.01)
@@ -156,7 +193,10 @@ public struct FaceClustering {
             guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
             if excludedClusterIDs.contains(clusters[cand.index].id) { continue }   // cannot-link
             // サイズ適応マージン（ADR-58）: 小/新クラスタは実効しきい値を上げて合流を厳しくする。
-            if cand.sim < threshold + sizeMargin(forCount: clusters[cand.index].count) { continue }
+            // rivalAware: 「別人が近くにいる」ときだけ課す。競合が無い（or 競合が同一人物らしい）
+            // なら、小クラスタを育てない理由がないので素のしきい値で合流させる。
+            if cand.sim < threshold + sizeMargin(forCount: clusters[cand.index].count),
+               !(rivalAwareMargin && !hasDistinctRival(of: cand.index, in: scored)) { continue }
             if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
                 continue
             }
@@ -201,6 +241,25 @@ public struct FaceClustering {
             return clusters[cand.index].id
         }
         return FaceClustering.unassigned
+    }
+
+    /// 2 クラスタが互いに似ているか（＝同一人物の別クラスタらしいか）。代表群どうしの最大類似で見る。
+    private func clustersAlike(_ i: Int, _ j: Int) -> Bool {
+        var best = FaceClustering.similarity(clusters[i].centroid, to: clusters[j])
+        for p in clusters[i].prototypes {
+            best = max(best, FaceClustering.similarity(p, to: clusters[j]))
+        }
+        return best >= threshold + rivalAlikeMargin
+    }
+
+    /// 候補クラスタの近くに「**別人らしい**競合」がいるか。
+    /// しきい値以上の他クラスタのうち、候補と似ていない（＝別人）ものが 1 つでもあれば true。
+    private func hasDistinctRival(of index: Int, in scored: [(index: Int, sim: Float)]) -> Bool {
+        for other in scored where other.index != index {
+            guard other.sim >= threshold else { break }   // scored は降順
+            if !clustersAlike(index, other.index) { return true }
+        }
+        return false
     }
 
     /// オンラインの自動プロトタイプ維持: 合流した顔が既存代表のどれとも似ていなければ
@@ -285,17 +344,35 @@ public struct FaceClustering {
                                   qualities: [String: Float] = [:],
                                   autoPrototypeLimit: Int = 0,
                                   assignMargin: Float = 0,
-                                  sizeAdaptiveMarginMax: Float = 0) -> [Cluster] {
+                                  sizeAdaptiveMarginMax: Float = 0,
+                                  ambiguousPolicy: AmbiguousPolicy = .newCluster,
+                                  secondPassMembership: Bool = false,
+                                  rivalAwareMargin: Bool = false,
+                                  rivalAlikeMargin: Float = 0) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
         clustering.assignMargin = assignMargin
         clustering.sizeAdaptiveMarginMax = sizeAdaptiveMarginMax
+        clustering.ambiguousPolicy = ambiguousPolicy
+        clustering.rivalAwareMargin = rivalAwareMargin
+        clustering.rivalAlikeMargin = rivalAlikeMargin
+        var unassigned: [(faceID: String, embedding: [Float])] = []
         for f in faces {
-            clustering.assign(faceID: f.faceID, embedding: f.embedding,
-                              quality: qualities[f.faceID] ?? 1)
+            let cid = clustering.assign(faceID: f.faceID, embedding: f.embedding,
+                                        quality: qualities[f.faceID] ?? 1)
+            if cid == unassignedID { unassigned.append(f) }
+        }
+        // 第2パス（本番 rebuildClusters と同じ・ADR-66）: 未割当を重心を汚さず最寄りへ。
+        if secondPassMembership {
+            for f in unassigned {
+                _ = clustering.assignMembershipOnly(faceID: f.faceID, embedding: f.embedding)
+            }
         }
         return clustering.clusters
     }
+
+    /// `unassigned` の別名（`clusterAll` 内でシャドーイングを避けるため）。
+    private static let unassignedID = unassigned
 
     /// 複数クロップの埋め込みを要素平均→再正規化する（マルチクロップ埋め込み・純関数）。
     /// アライメント済み・水平反転・bbox 切り抜きの 3 埋め込みを平均すると、切り抜きの

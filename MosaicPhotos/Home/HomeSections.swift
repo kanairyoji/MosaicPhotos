@@ -166,7 +166,8 @@ extension HomeView {
                     PeopleCarousel(
                         people: peopleEngine.people,
                         onSelect: { destination = .person($0) },
-                        onLongPress: { personActions = $0 })
+                        onLongPress: { personActions = $0 },
+                        onSeeAll: { showingAllPeople = true })
                 }
             } header: {
                 // レビュー（「同じ人物？」確認カード）: 答えるほど認識が良くなる（ADR-46）。
@@ -182,6 +183,21 @@ extension HomeView {
                     Spacer()
                     if peopleEngine.isScanning {
                         ProgressView().controlSize(.mini)
+                    }
+                    // 分裂が多いライブラリでは 1 対 1 の確認では追いつかないので、
+                    // 「まとめて確認」を先に出す（ADR-67）。
+                    if peopleEngine.people.count >= PeopleCarousel.carouselLimit {
+                        Button {
+                            showingBatchReview = true
+                        } label: {
+                            Label(L("Merge"), systemImage: "person.2.badge.plus")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
                     }
                     if peopleEngine.people.count >= 1 {
                         Button {

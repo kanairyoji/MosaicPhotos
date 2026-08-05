@@ -191,4 +191,57 @@ struct FacePhase1Tests {
         let items = await store.reviewItems(minFaces: 3, limit: 30)
         #expect(items.contains { if case .samePerson = $0 { return true }; return false })
     }
+
+    // MARK: - 競合を見るマージン（ADR-67）
+
+    @Test("競合を見るマージン: 競合が同一人物らしければ免除し、別人らしければ従来どおり弾く")
+    func rivalAwareMarginGate() {
+        // 同一人物の別時期を模した 2 クラスタ（互いに cos≈0.87）。逐次割当だとこの 2 つは
+        // 合流してしまうので、**すでに分かれている状態**を種クラスタで直接作る
+        //（実ライブラリでは cannot-link や割当順で普通に起きる状態）。
+        func seed(_ id: Int, _ v: [Float]) -> FaceClustering.Cluster {
+            let n = FaceClustering.normalized(v)
+            return .init(id: id, centroid: n, sum: n, count: 5, faceIDs: [])
+        }
+        func makeClustering(rivalAware: Bool, seeds: [FaceClustering.Cluster]) -> FaceClustering {
+            var c = FaceClustering(threshold: 0.5, qualityFloor: 0, seedClusters: seeds)
+            c.assignMargin = 0.05
+            c.rivalAwareMargin = rivalAware
+            return c
+        }
+        let alike = [seed(1, [1, 0, 0]), seed(2, [0.87, 0.5, 0])]   // 互いに cos≈0.87
+        let between = FaceClustering.normalized([0.98, 0.2, 0])     // 1位と2位の差 0.03 < margin
+
+        var off = makeClustering(rivalAware: false, seeds: alike)
+        let offID = off.assign(faceID: "mid", embedding: between)
+        // 従来: どちらにも入れず新クラスタ（＝分裂の発生源）。
+        #expect(off.clusters.count == 3)
+        #expect(offID != 1 && offID != 2)
+
+        var on = makeClustering(rivalAware: true, seeds: alike)
+        let onID = on.assign(faceID: "mid", embedding: between)
+        // 免除: 競合どうしが似ている（同一人物）ので、素直に 1 位へ合流する。
+        #expect(on.clusters.count == 2)
+        #expect(onID == 1)
+
+        // 対照: 競合が**別人らしい**（互いに似ていない）ときは免除しない。
+        let distinctSeeds = [seed(1, [1, 0, 0]), seed(2, [0, 1, 0])]   // cos=0 ＝別人
+        var distinct = makeClustering(rivalAware: true, seeds: distinctSeeds)
+        let mid2 = FaceClustering.normalized([1, 1, 0])   // 両方に cos≈0.707・差 0 ＝紛らわしい
+        let distinctID = distinct.assign(faceID: "mid", embedding: mid2)
+        #expect(distinct.clusters.count == 3)             // 従来どおり弾く（兄弟の取り違え防止）
+        #expect(distinctID != 1 && distinctID != 2)
+    }
+
+    @Test("曖昧な顔の扱い: leaveUnassigned はクラスタを増やさない")
+    func ambiguousPolicyLeavesUnassigned() {
+        var c = FaceClustering(threshold: 0.5, qualityFloor: 0)
+        c.assignMargin = 0.05
+        c.ambiguousPolicy = .leaveUnassigned
+        c.assign(faceID: "x", embedding: FaceClustering.normalized([1, 0, 0]))
+        c.assign(faceID: "y", embedding: FaceClustering.normalized([0, 1, 0]))
+        let id = c.assign(faceID: "mid", embedding: FaceClustering.normalized([1, 1, 0]))
+        #expect(id == FaceClustering.unassigned)
+        #expect(c.clusters.count == 2)   // 新クラスタを作らない
+    }
 }

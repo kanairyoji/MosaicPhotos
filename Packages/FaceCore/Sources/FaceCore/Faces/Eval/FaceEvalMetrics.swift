@@ -20,6 +20,17 @@ public enum FaceEvalMetrics {
         public let pairRecall: Double
         public let pairF1: Double
         public let clusterCount: Int
+        /// 正解人物の数（分裂率の分母）。
+        public let identityCount: Int
+        /// **分裂率**＝1 人あたり何個のクラスタに割れたか（人物ごとの「その人の顔が入っている
+        /// 相異なるクラスタ数」の平均）。1.0 が理想。
+        ///
+        /// ⚠️ B-Cubed 再現率も分裂に反応するが、`0.435` のような値は「ピープル画面に人物が
+        /// 何人並ぶか」を教えてくれない。実ライブラリの破綻（3 人 → 2000 人）は**この指標**で
+        /// しか見えないため一級指標として持つ（ADR-67・少数 ID×大量写真の計測穴）。
+        public let clustersPerIdentity: Double
+        /// 最も分裂した人物のクラスタ数（最悪値。平均だけだと外れ値が埋もれる）。
+        public let maxClustersForOneIdentity: Int
     }
 
     /// - Parameters:
@@ -66,9 +77,19 @@ public enum FaceEvalMetrics {
         let pp = truePositive + falsePositive > 0 ? truePositive / (truePositive + falsePositive) : 1
         let pr = truePositive + falseNegative > 0 ? truePositive / (truePositive + falseNegative) : 1
         let pf = (pp + pr) > 0 ? 2 * pp * pr / (pp + pr) : 0
+        // 分裂率: 人物ごとに「その人の顔が入っている相異なるクラスタ数」を数えて平均する。
+        var clustersOf: [String: Set<Int>] = [:]
+        for item in items { clustersOf[truth[item]!, default: []].insert(assignments[item]!) }
+        let perIdentity = clustersOf.values.map(\.count)
+        let fragmentation = perIdentity.isEmpty ? 0
+            : Double(perIdentity.reduce(0, +)) / Double(perIdentity.count)
+
         return ClusteringScore(bcubedPrecision: bp, bcubedRecall: br, bcubedF1: bf,
                                pairPrecision: pp, pairRecall: pr, pairF1: pf,
-                               clusterCount: Set(assignments.values).count)
+                               clusterCount: Set(assignments.values).count,
+                               identityCount: classMembers.count,
+                               clustersPerIdentity: fragmentation,
+                               maxClustersForOneIdentity: perIdentity.max() ?? 0)
     }
 
     // MARK: - 検証（同一人物/別人ペアの類似度）

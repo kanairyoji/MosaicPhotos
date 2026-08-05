@@ -395,6 +395,31 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    // MARK: - 一括レビュー（ADR-67）
+
+    /// 「この人と同じ人をまとめて選ぶ」1 画面ぶんを取得する。
+    /// `anchorClusterID` を渡すと、その人物を基準にする（人物一覧から特定の人を畳むとき）。
+    public func batchReviewItem(anchorClusterID: Int? = nil, limit: Int = 24) async
+        -> FaceBatchReviewItem? {
+        await store.batchReviewItem(minFaces: minFaces, anchorClusterID: anchorClusterID,
+                                    limit: limit)
+    }
+
+    /// 一括レビューの回答。選ばれたクラスタをアンカーへ統合し、外されたものは「別人」として記録する。
+    ///
+    /// 統合後にアンカーの重心が育つため、同じアンカーで再取得すると**さらに遠い時期の
+    /// クラスタが候補に入る**（＝人間の確認を種にした連鎖）。自動連鎖（ADR-56 で不採用）と違い、
+    /// 各段でユーザーの確認を挟むので雪崩式の誤統合が起きない。
+    public func answerBatch(anchorClusterID: Int, same: [Int], notSame: [Int]) async {
+        for id in same where id != anchorClusterID {
+            await store.mergeClusters(from: id, into: anchorClusterID)
+        }
+        for id in notSame where id != anchorClusterID {
+            await store.markNotSamePerson(clusterA: anchorClusterID, clusterB: id)
+        }
+        await loadPeople()
+    }
+
     /// 「この写真は「◯◯」さんですか？」への回答（A2）。
     /// はい → 確認済み（アンカー＋正例）。いいえ → 分離（負例として学習）。
     public func answerIsThisPerson(faceID: String, yes: Bool) async {
