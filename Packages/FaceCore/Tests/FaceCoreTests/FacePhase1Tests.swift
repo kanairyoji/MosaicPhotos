@@ -270,6 +270,25 @@ struct FacePhase1Tests {
         #expect(assign(maturePeople: 12, maxPeople: 0) == 0)
     }
 
+    @Test("品質レポート: 統合で同一写真違反が生まれたら検出する")
+    func qualityReportDetectsSamePhotoViolation() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // 1 枚に同じ埋め込みの顔が 2 つ → cannot-link で別クラスタになる（違反なし）。
+        await store.recordScan(refKey: "L-a", faces: [signal([1, 0, 0]), signal([1, 0, 0])])
+        // 各クラスタを 3 顔以上にして「人物」に載せる（別写真なので合流しない）。
+        await store.recordScan(refKey: "L-b", faces: [signal([1, 0, 0])])
+        await store.recordScan(refKey: "L-c", faces: [signal([1, 0, 0])])
+        let before = await store.qualityReport(minFaces: 1)
+        #expect(before.samePhotoViolations == 0)
+
+        // ユーザーがこの 2 クラスタを統合すると、1 枚の写真に同じ人物が 2 回になる。
+        // 割り当て時の cannot-link は統合を検査しないので、事後に検出できることが重要。
+        await store.mergeClusters(from: 1, into: 0)
+        let after = await store.qualityReport(minFaces: 1)
+        #expect(after.samePhotoViolations == 1)
+        #expect(after.samePhotoViolationPhotos == 1)
+    }
+
     @Test("曖昧な顔の扱い: leaveUnassigned はクラスタを増やさない")
     func ambiguousPolicyLeavesUnassigned() {
         var c = FaceClustering(threshold: 0.5, qualityFloor: 0)

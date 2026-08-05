@@ -132,6 +132,67 @@ extension FaceStore {
         return items
     }
 
+    // MARK: - 品質スナップショット（ADR-68）
+
+    /// 実機ライブラリの品質を**正解ラベル無しで**測る（`FaceQualityReport` 参照）。
+    /// Developer Options と診断ログから使う。O(クラスタ数²) の項があるので上限を設ける。
+    func qualityReport(minFaces: Int, maxClustersForPairScan: Int = 1_500) -> FaceQualityReport {
+        let allFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        let clusters = allClusters()
+        var report = FaceQualityReport()
+        report.scannedPhotos = scannedCount()
+        report.faces = allFaces.count
+        report.unassignedFaces = allFaces.filter { $0.clusterID < 0 }.count
+        report.clusters = clusters.count
+        report.people = clusters.filter { $0.count >= minFaces }.count
+        report.singletons = clusters.filter { $0.count == 1 }.count
+        report.maturePeople = clusters.filter { $0.count >= FaceClustering.matureCountDefault }.count
+        report.namedPeople = clusters.filter { $0.name?.isEmpty == false }.count
+        report.largestCluster = clusters.map(\.count).max() ?? 0
+        report.threshold = calibratedThreshold()
+        report.sizeExemptionActive = Self.rivalAwareSizeMargin
+            && report.maturePeople < Self.rivalAwareSizeMarginMaxPeople
+        report.corrections = (try? modelContext.fetchCount(FetchDescriptor<FaceCorrection>())) ?? 0
+
+        // 同一写真違反: (写真, クラスタ) ごとの顔数が 2 以上。割り当ては cannot-link で防ぐが、
+        // 統合（レビュー・手動）は検査していないので事後に検出する。
+        var perPhotoCluster: [String: Int] = [:]
+        for f in allFaces where f.clusterID >= 0 {
+            perPhotoCluster["\(f.refKey)|\(f.clusterID)", default: 0] += 1
+        }
+        var violationPhotos = Set<String>()
+        for (key, n) in perPhotoCluster where n >= 2 {
+            report.samePhotoViolations += 1
+            if let refKey = key.split(separator: "|").first { violationPhotos.insert(String(refKey)) }
+        }
+        report.samePhotoViolationPhotos = violationPhotos.count
+
+        // 統合候補ペア（＝まだ畳めていない分裂）。レビューと同じ帯域・同じ抑制条件で数える。
+        let targets = clusters.filter { $0.count >= minFaces }
+        guard targets.count <= maxClustersForPairScan else {
+            report.mergeCandidateTruncated = true
+            return report
+        }
+        var centroid: [Int: [Float]] = [:]
+        var photoSets: [Int: Set<String>] = [:]
+        for c in targets {
+            guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
+            centroid[c.clusterID] = FaceClustering.normalized(sum)
+            photoSets[c.clusterID] = Set(faces(inCluster: c.clusterID).map(\.refKey))
+        }
+        let ids = targets.map(\.clusterID)
+        for i in ids.indices {
+            for j in (i + 1)..<ids.count {
+                guard let a = centroid[ids[i]], let b = centroid[ids[j]] else { continue }
+                guard FaceClustering.dot(a, b) >= report.threshold - 0.10 else { continue }
+                let co = (photoSets[ids[i]] ?? []).intersection(photoSets[ids[j]] ?? []).count
+                guard co < Self.coOccurrenceNotSame else { continue }
+                report.mergeCandidatePairs += 1
+            }
+        }
+        return report
+    }
+
     // MARK: - 一括レビュー（ADR-68）
 
     /// 「この人と同じ人を、まとめて選ぶ」1 画面ぶんを作る。

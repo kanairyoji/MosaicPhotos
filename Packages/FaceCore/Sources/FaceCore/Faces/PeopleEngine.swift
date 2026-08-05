@@ -395,6 +395,22 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    // MARK: - 品質スナップショット（ADR-68）
+
+    /// 実機ライブラリの認識品質を測る（正解ラベル無しで測れる代理指標）。
+    /// Developer Options の表示と、診断ログへの記録に使う。
+    public func qualityReport() async -> FaceQualityReport {
+        await store.qualityReport(minFaces: minFaces)
+    }
+
+    /// 品質スナップショットを診断ログへ 1 行記録する（実機で Mac 無しに追える）。
+    @discardableResult
+    public func logQualityReport() async -> FaceQualityReport {
+        let report = await qualityReport()
+        Diagnostics.mark(report.logLine)
+        return report
+    }
+
     // MARK: - 一括レビュー（ADR-68）
 
     /// 「この人と同じ人をまとめて選ぶ」1 画面ぶんを取得する。
@@ -472,6 +488,9 @@ public final class PeopleEngine {
         defaults.set(Self.clusterRuleVersion, forKey: ruleKey)
         Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) "
                          + "(corrections \(lastRebuilt)→\(current), scans \(lastScanned)→\(scanned), stale=\(stale))")
+        // 再クラスタ後の品質を診断ログへ残す（分裂がどれだけ畳めたか・不変条件が破れていないかを
+        // 実機で追えるようにする・ADR-68）。
+        await logQualityReport()
         await loadPeople()
     }
 

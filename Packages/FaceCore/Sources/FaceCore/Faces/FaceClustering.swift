@@ -90,7 +90,9 @@ public struct FaceClustering {
     /// count=1 で最大 `sizeAdaptiveMarginMax`、`sizeAdaptiveMatureCount` 以上で 0（成熟クラスタは素の
     /// しきい値）。成長期に分岐した小クラスタが兄弟を吸い込むのを防ぎ、確立した本人には寛容にする。
     public var sizeAdaptiveMarginMax: Float = 0
-    public var sizeAdaptiveMatureCount: Int = 11
+    /// 「成熟クラスタ」とみなすメンバー数の既定（人数判定・診断でも使う）。
+    public static let matureCountDefault = 11
+    public var sizeAdaptiveMatureCount: Int = matureCountDefault
 
     /// マージンゲートで弾いた顔（＝1 位と 2 位が紛らわしい顔）の扱い（ADR-68）。
     public enum AmbiguousPolicy: Sendable, Equatable {

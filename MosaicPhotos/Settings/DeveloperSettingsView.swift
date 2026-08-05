@@ -39,6 +39,9 @@ struct DeveloperSettingsView: View {
     @State private var cachedPlaceCount = 0
     @State private var isWorking = false
     @State private var placeRefineStatus = ""
+    /// 顔認識の品質スナップショット（ADR-68・押したときだけ計測する）。
+    @State private var faceQuality: FaceQualityReport?
+    @State private var isMeasuringFaceQuality = false
 
     private let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
 
@@ -222,12 +225,48 @@ struct DeveloperSettingsView: View {
             Button("クラスタを今すぐ再構築（制約付き）") {
                 Task { await peopleEngine.debugRebuildClustersNow() }
             }
+            faceQualityRows
         } header: {
             Text("AI 解析：ピープル（顔）")
         } footer: {
             Text("顔クラスタ（人物）の再スキャン・再構築を行います。「修正内容は保持」は、あなたが直した"
                  + "名前や誤りの学習（負例）を残したまま顔を検出し直します。「学習を破棄」はそれらも消します。"
                  + "※ シミュレータの顔スキャンは既定で無効です（CPU のみで遅いため）。上のトグルで有効にできます。")
+        }
+    }
+
+    // MARK: - 認識品質（ADR-68）
+
+    /// 実機ライブラリの認識品質。正解ラベルが無いので「純度」等は出せないが、
+    /// **分裂の量**（統合候補ペア）と**不変条件の破れ**（同一写真に同じ人が2回）は測れる。
+    @ViewBuilder
+    private var faceQualityRows: some View {
+        Button(isMeasuringFaceQuality ? "計測中…" : "認識品質を計測（診断ログにも記録）") {
+            Task {
+                isMeasuringFaceQuality = true
+                faceQuality = await peopleEngine.logQualityReport()
+                isMeasuringFaceQuality = false
+            }
+        }
+        .disabled(isMeasuringFaceQuality)
+
+        if let q = faceQuality {
+            LabeledContent("スキャン済み写真", value: "\(q.scannedPhotos)")
+            LabeledContent("顔（未割当）", value: "\(q.faces)（\(q.unassignedFaces)）")
+            LabeledContent("人物 / クラスタ", value: "\(q.people) / \(q.clusters)")
+            LabeledContent("命名済み", value: "\(q.namedPeople)")
+            LabeledContent("単発クラスタ", value: "\(q.singletons)")
+            LabeledContent("成熟クラスタ（11顔以上）", value: "\(q.maturePeople)")
+            LabeledContent("最大クラスタ", value: "\(q.largestCluster) 顔")
+            LabeledContent("しきい値", value: String(format: "%.2f", q.threshold))
+            LabeledContent("サイズ免除", value: q.sizeExemptionActive ? "有効（少人数）" : "無効")
+            LabeledContent("統合候補ペア",
+                           value: q.mergeCandidateTruncated ? "計測省略（人物が多すぎ）"
+                                                            : "\(q.mergeCandidatePairs)")
+            LabeledContent("同一写真違反",
+                           value: q.samePhotoViolations == 0 ? "0（正常）"
+                               : "\(q.samePhotoViolations)（写真 \(q.samePhotoViolationPhotos) 枚）")
+            LabeledContent("学習した修正", value: "\(q.corrections)")
         }
     }
 
