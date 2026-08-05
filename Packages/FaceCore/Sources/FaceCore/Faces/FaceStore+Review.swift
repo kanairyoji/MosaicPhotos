@@ -144,11 +144,20 @@ extension FaceStore {
         report.faces = allFaces.count
         report.unassignedFaces = allFaces.filter { $0.clusterID < 0 }.count
         report.clusters = clusters.count
-        report.people = clusters.filter { $0.count >= minFaces }.count
-        report.singletons = clusters.filter { $0.count == 1 }.count
-        report.maturePeople = clusters.filter { $0.count >= FaceClustering.matureCountDefault }.count
+        // ⚠️ `PersonCluster.count` は**重心に寄与した顔数**で、第2パス（ADR-66・membership のみ）で
+        // 付いた低品質の顔を含まない。UI の人物数は実際の顔/写真で数えるため、両者は一致しない
+        // （実機で UI 393 人 vs レポート 34 人という食い違いが出た）。表示は**実顔数**で数え、
+        // アルゴリズムが見ている `count`（＝サイズ適応マージンや成熟判定の入力）は別に出す。
+        var facesPerCluster: [Int: Int] = [:]
+        for f in allFaces where f.clusterID >= 0 { facesPerCluster[f.clusterID, default: 0] += 1 }
+        report.people = facesPerCluster.values.filter { $0 >= minFaces }.count
+        report.singletons = facesPerCluster.values.filter { $0 == 1 }.count
+        report.largestCluster = facesPerCluster.values.max() ?? 0
         report.namedPeople = clusters.filter { $0.name?.isEmpty == false }.count
-        report.largestCluster = clusters.map(\.count).max() ?? 0
+        // 成熟判定はアルゴリズムと同じ土俵（重心寄与カウント）で数える。
+        report.maturePeople = clusters.filter { $0.count >= FaceClustering.matureCountDefault }.count
+        report.secondPassFaces = facesPerCluster.values.reduce(0, +)
+            - clusters.reduce(0) { $0 + min($1.count, facesPerCluster[$1.clusterID] ?? 0) }
         report.threshold = calibratedThreshold()
         report.sizeExemptionActive = Self.rivalAwareSizeMargin
             && report.maturePeople < Self.rivalAwareSizeMarginMaxPeople

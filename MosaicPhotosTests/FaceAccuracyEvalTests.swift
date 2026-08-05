@@ -281,6 +281,23 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
                     secondPassMembership: true, rivalAwareMargin: true, rivalAlikeMargin: alike)))
         }
+        // G: **実機の条件**（校正でしきい値が 0.60 まで上がっていた）を再現し、
+        // 「校正の上限を下げる」「実効しきい値を頭打ちにする」の効果を測る（ADR-68 追補）。
+        print("FACEEVAL[\(name)]: === G 実機条件（校正 thr=0.60）と対策 ===")
+        func prodLike(thr: Float, cap: Float = 0) -> [FaceClustering.Cluster] {
+            FaceClustering.clusterAll(
+                faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                rivalAwareSizeMargin: true, rivalAwareSizeMarginMaxPeople: 10,
+                rivalAlikeMargin: 0.20, effectiveThresholdCap: cap)
+        }
+        printRow("G 実機相当 thr=0.60（上限0.70まで加算）", score(clusters: prodLike(thr: 0.60)))
+        printRow("G thr=0.60＋実効上限0.60", score(clusters: prodLike(thr: 0.60, cap: 0.60)))
+        printRow("G thr=0.60＋実効上限0.65", score(clusters: prodLike(thr: 0.60, cap: 0.65)))
+        printRow("G 校正上限0.55（thr=0.55）", score(clusters: prodLike(thr: 0.55)))
+        printRow("G 校正上限0.55＋実効上限0.55", score(clusters: prodLike(thr: 0.55, cap: 0.55)))
+        printRow("G 参考 thr=0.50（調整値）", score(clusters: prodLike(thr: 0.50)))
+
         // B4: サイズ免除を**少人数ライブラリ限定**にする（人数で逆転する事実への対処）。
         // 上限は「成熟クラスタ数」で測る。FG-NET(82人)で効き、LFW(901人)で効かない点を探す。
         for maxPeople in [10, 20, 50, 100] {
@@ -438,6 +455,17 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
                     assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
                     secondPassMembership: true, rivalAwareMargin: true, rivalAlikeMargin: alike))
+            }
+            // G: 実機条件（校正 thr=0.60）と対策を家族シナリオでも見る。
+            for (label, thr, cap) in [("G thr0.60（実機相当）", Float(0.60), Float(0)),
+                                      ("G thr0.60＋上限0.60", Float(0.60), Float(0.60)),
+                                      ("G thr0.55", Float(0.55), Float(0)),
+                                      ("G thr0.55＋上限0.55", Float(0.55), Float(0.55))] {
+                report(label, FaceClustering.clusterAll(
+                    faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareSizeMargin: true, rivalAwareSizeMarginMaxPeople: 10,
+                    rivalAlikeMargin: 0.20, effectiveThresholdCap: cap))
             }
             for maxPeople in [10, 20, 50] {
                 report(String(format: "B4 サイズ免除(人数<%d)", maxPeople), FaceClustering.clusterAll(

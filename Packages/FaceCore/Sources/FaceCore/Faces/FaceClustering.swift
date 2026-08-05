@@ -150,6 +150,14 @@ public struct FaceClustering {
     /// （FG-NET 82人で純度 0.879→0.656）。免除は「明らかに同一人物」のときだけ効かせる。
     public var rivalAlikeMargin: Float = 0
 
+    /// **実効しきい値の上限**（0 = 無制限）。`threshold + sizeMargin` がこれを超えないようにする。
+    ///
+    /// しきい値はユーザー修正から自動校正され（ADR-46）、上限まで上がり得る。実機で
+    /// 校正値 0.60 ＋ サイズ加算 0.10 ＝ **実効 0.70** になっていた。0.70 は FG-NET で
+    /// 純度 0.907／再現率 0.342＝「混ざらないが全く集まらない」領域で、単発クラスタ 1,170 個・
+    /// 最大クラスタ 15 顔という実測はこれで説明がつく。加算の積み上がりを止める（ADR-68 追補）。
+    public var effectiveThresholdCap: Float = 0
+
     /// クラスタサイズに応じた上乗せマージン（純・線形減衰。count>=mature で 0）。
     func sizeMargin(forCount count: Int) -> Float {
         guard sizeAdaptiveMarginMax > 0, count < sizeAdaptiveMatureCount else { return 0 }
@@ -220,7 +228,9 @@ public struct FaceClustering {
             // サイズ適応マージン（ADR-58）: 小/新クラスタは実効しきい値を上げて合流を厳しくする。
             // rivalAware: 「別人が近くにいる」ときだけ課す。競合が無い（or 競合が同一人物らしい）
             // なら、小クラスタを育てない理由がないので素のしきい値で合流させる。
-            if cand.sim < threshold + sizeMargin(forCount: clusters[cand.index].count),
+            var required = threshold + sizeMargin(forCount: clusters[cand.index].count)
+            if effectiveThresholdCap > 0 { required = min(required, effectiveThresholdCap) }
+            if cand.sim < required,
                !(sizeMarginExemptionActive && !hasDistinctRival(of: cand.index, in: scored)) { continue }
             if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
                 continue
@@ -390,7 +400,8 @@ public struct FaceClustering {
                                   rivalAwareMarginGate: Bool? = nil,
                                   rivalAwareSizeMargin: Bool? = nil,
                                   rivalAwareSizeMarginMaxPeople: Int = 0,
-                                  rivalAlikeMargin: Float = 0) -> [Cluster] {
+                                  rivalAlikeMargin: Float = 0,
+                                  effectiveThresholdCap: Float = 0) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
         clustering.assignMargin = assignMargin
@@ -400,6 +411,7 @@ public struct FaceClustering {
         clustering.rivalAwareSizeMargin = rivalAwareSizeMargin ?? rivalAwareMargin
         clustering.rivalAwareSizeMarginMaxPeople = rivalAwareSizeMarginMaxPeople
         clustering.rivalAlikeMargin = rivalAlikeMargin
+        clustering.effectiveThresholdCap = effectiveThresholdCap
         var unassigned: [(faceID: String, embedding: [Float])] = []
         for f in faces {
             let cid = clustering.assign(faceID: f.faceID, embedding: f.embedding,

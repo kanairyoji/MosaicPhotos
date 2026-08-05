@@ -19,7 +19,12 @@ public struct FaceQualityReport: Sendable, Equatable {
     /// 1 顔だけのクラスタ（分裂の主な残骸）。
     public var singletons: Int
     /// 成熟クラスタ（サイズ免除の人数判定に使う母数）。
+    /// ⚠️ これだけは**重心に寄与した顔数**（`PersonCluster.count`）で数える。サイズ適応マージンと
+    /// 免除判定がその値を見ているため、同じ土俵で出さないと挙動を説明できない。
     public var maturePeople: Int
+    /// 第2パス（ADR-66）で membership だけ付いた顔の数＝重心に寄与していない顔。
+    /// これが多いと「小さなクラスタに低品質の顔がぶら下がって人物として現れる」状態になる。
+    public var secondPassFaces: Int = 0
     public var namedPeople: Int
     public var largestCluster: Int
 
@@ -44,7 +49,8 @@ public struct FaceQualityReport: Sendable, Equatable {
 
     public init(scannedPhotos: Int = 0, faces: Int = 0, unassignedFaces: Int = 0,
                 clusters: Int = 0, people: Int = 0, singletons: Int = 0,
-                maturePeople: Int = 0, namedPeople: Int = 0, largestCluster: Int = 0,
+                maturePeople: Int = 0, secondPassFaces: Int = 0,
+                namedPeople: Int = 0, largestCluster: Int = 0,
                 threshold: Float = 0, sizeExemptionActive: Bool = false,
                 mergeCandidatePairs: Int = 0, mergeCandidateTruncated: Bool = false,
                 samePhotoViolations: Int = 0, samePhotoViolationPhotos: Int = 0,
@@ -56,6 +62,7 @@ public struct FaceQualityReport: Sendable, Equatable {
         self.people = people
         self.singletons = singletons
         self.maturePeople = maturePeople
+        self.secondPassFaces = secondPassFaces
         self.namedPeople = namedPeople
         self.largestCluster = largestCluster
         self.threshold = threshold
@@ -71,7 +78,7 @@ public struct FaceQualityReport: Sendable, Equatable {
     public var logLine: String {
         var s = "faces/quality: photos=\(scannedPhotos) faces=\(faces) unassigned=\(unassignedFaces) "
             + "clusters=\(clusters) people=\(people) named=\(namedPeople) singletons=\(singletons) "
-            + "mature=\(maturePeople) largest=\(largestCluster) "
+            + "mature=\(maturePeople) largest=\(largestCluster) secondPass=\(secondPassFaces) "
             + String(format: "thr=%.2f ", threshold)
             + "exempt=\(sizeExemptionActive ? "on" : "off") "
             + "mergeCandidates=\(mergeCandidatePairs)\(mergeCandidateTruncated ? "+" : "") "
