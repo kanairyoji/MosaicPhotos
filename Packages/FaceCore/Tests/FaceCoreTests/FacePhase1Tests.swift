@@ -270,6 +270,52 @@ struct FacePhase1Tests {
         #expect(assign(maturePeople: 12, maxPeople: 0) == 0)
     }
 
+    @Test("実効しきい値の頭打ち: 少人数では加算せず、大人数では従来どおり加算する")
+    func effectiveThresholdCapIsPeopleGated() {
+        func onehot(_ i: Int, dim: Int = 16) -> [Float] {
+            var v = [Float](repeating: 0, count: dim); v[i] = 1; return v
+        }
+        /// 小クラスタ（count=2・onehot(0)）＋成熟クラスタ n 個（互いに無関係）。
+        func seeds(maturePeople n: Int) -> [FaceClustering.Cluster] {
+            var out: [FaceClustering.Cluster] = [
+                .init(id: 0, centroid: onehot(0), sum: onehot(0), count: 2, faceIDs: []),
+            ]
+            for i in 1...n {
+                out.append(.init(id: i, centroid: onehot(i), sum: onehot(i), count: 11, faceIDs: []))
+            }
+            return out
+        }
+        // 小クラスタと cos≈0.6: 素のしきい値 0.55 は超えるが、サイズ加算後（+0.10 相当）には届かない。
+        var v = [Float](repeating: 0, count: 16)
+        v[0] = 0.6; v[15] = 0.8
+        let borderline = FaceClustering.normalized(v)   // onehot(0) と cos = 0.6
+
+        func assign(maturePeople: Int, cap: Float) -> Int {
+            var c = FaceClustering(threshold: 0.55, qualityFloor: 0,
+                                   seedClusters: seeds(maturePeople: maturePeople))
+            c.sizeAdaptiveMarginMax = 0.10
+            c.effectiveThresholdCap = cap
+            c.effectiveThresholdCapMaxPeople = 10
+            return c.assign(faceID: "x", embedding: borderline)
+        }
+        // 上限なし: 実効 0.55+0.10=0.65 に届かず新クラスタ（＝実機で起きていた分裂）。
+        #expect(assign(maturePeople: 3, cap: 0) != 0)
+        // 上限 0.55（＝加算しない）＋少人数: 素のしきい値で判定され合流する。
+        #expect(assign(maturePeople: 3, cap: 0.55) == 0)
+        // 大人数（成熟 12 人 ≥ 上限 10）: 上限は効かず従来どおり加算＝合流しない。
+        #expect(assign(maturePeople: 12, cap: 0.55) != 0)
+    }
+
+    @Test("校正しきい値は 0.55 を超えない（分裂側へ振り切らせない）")
+    func calibrationIsClampedTo055() {
+        // 「高いしきい値が正しい」と示すサンプル（正例も負例も高類似）。
+        let positive = [Float](repeating: 0.72, count: 10)
+        let negative = [Float](repeating: 0.68, count: 10)
+        let t = FaceCalibration.calibratedThreshold(positive: positive, negative: negative)
+        #expect(t <= 0.55)
+        #expect(FaceCalibration.clampRange.upperBound == 0.55)
+    }
+
     @Test("品質レポート: 統合で同一写真違反が生まれたら検出する")
     func qualityReportDetectsSamePhotoViolation() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

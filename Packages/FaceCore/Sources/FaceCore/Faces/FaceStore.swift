@@ -50,6 +50,14 @@ actor FaceStore {
     /// 「競合が似ている＝同一人物」と判定するバーの上乗せ（実効 0.50+0.20=0.70）。
     /// 緩いと別人まで似ている扱いになり純度が落ちる（掃引で決定・face-accuracy.md 2026-08-05）。
     static let rivalAlikeMargin: Float = 0.20
+    /// **サイズ加算の積み上がりを止める**（ADR-68 追補）。しきい値は校正で上がり得るので、
+    /// そこへサイズ適応マージンが乗ると実効しきい値が跳ね上がる（実機で 0.60+0.10=0.70）。
+    /// 少人数ライブラリでは加算しない＝実効しきい値を素のしきい値で頭打ちにする。
+    /// FG-NET 家族5人で分裂 3.6→2.4・純度 0.911→0.884・F1 0.718→0.750。
+    static let capEffectiveThresholdWhenFewPeople = true
+    /// 上限を効かせる上限人数（サイズ免除と同じ母数・同じ理由で少人数限定）。
+    /// 無制限にすると LFW（901人）で F1 0.906→0.873 と退行する。
+    static let effectiveThresholdCapMaxPeople = 10
     /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
     /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
     /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。
@@ -240,6 +248,12 @@ actor FaceStore {
         clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
         clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
         clustering.rivalAlikeMargin = Self.rivalAlikeMargin
+        // 実効しきい値の頭打ち（ADR-68 追補・少人数ライブラリ限定）。しきい値は校正で
+        // 上がり得るので、そこへサイズ加算が乗って跳ね上がるのを止める。
+        if Self.capEffectiveThresholdWhenFewPeople {
+            clustering.effectiveThresholdCap = clustering.threshold
+            clustering.effectiveThresholdCapMaxPeople = Self.effectiveThresholdCapMaxPeople
+        }
         return clustering
     }
 

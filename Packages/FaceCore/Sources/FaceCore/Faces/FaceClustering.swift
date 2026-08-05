@@ -157,6 +157,10 @@ public struct FaceClustering {
     /// 純度 0.907／再現率 0.342＝「混ざらないが全く集まらない」領域で、単発クラスタ 1,170 個・
     /// 最大クラスタ 15 顔という実測はこれで説明がつく。加算の積み上がりを止める（ADR-68 追補）。
     public var effectiveThresholdCap: Float = 0
+    /// 上限を効かせる上限人数（0 = 人数に関係なく効かせる）。サイズ免除と同じ理由で
+    /// **少人数ライブラリ限定**にする: 大人数（LFW 901人）では上限を課すとサイズ加算が
+    /// 無効化されて別人が混ざる（F1 0.906→0.873）。少人数では逆に分裂が減る。
+    public var effectiveThresholdCapMaxPeople: Int = 0
 
     /// クラスタサイズに応じた上乗せマージン（純・線形減衰。count>=mature で 0）。
     func sizeMargin(forCount count: Int) -> Float {
@@ -229,7 +233,9 @@ public struct FaceClustering {
             // rivalAware: 「別人が近くにいる」ときだけ課す。競合が無い（or 競合が同一人物らしい）
             // なら、小クラスタを育てない理由がないので素のしきい値で合流させる。
             var required = threshold + sizeMargin(forCount: clusters[cand.index].count)
-            if effectiveThresholdCap > 0 { required = min(required, effectiveThresholdCap) }
+            if effectiveThresholdCap > 0, peopleGateOpen(max: effectiveThresholdCapMaxPeople) {
+                required = min(required, effectiveThresholdCap)
+            }
             if cand.sim < required,
                !(sizeMarginExemptionActive && !hasDistinctRival(of: cand.index, in: scored)) { continue }
             if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
@@ -282,12 +288,18 @@ public struct FaceClustering {
     /// 「確立した人物」＝成熟サイズ以上のクラスタ数で判定する（1〜2 枚しか写っていない
     /// 断片やノイズを人数に数えないため）。
     private var sizeMarginExemptionActive: Bool {
-        guard rivalAwareSizeMargin else { return false }
-        guard rivalAwareSizeMarginMaxPeople > 0 else { return true }
+        rivalAwareSizeMargin && peopleGateOpen(max: rivalAwareSizeMarginMaxPeople)
+    }
+
+    /// 「確立した人物（成熟クラスタ）が `max` 人未満か」＝少人数ライブラリか。
+    /// `max == 0` は人数を問わない（＝常に true）。1〜2 枚しか写っていない断片を
+    /// 人数に数えないよう、成熟サイズ以上のクラスタだけを母数にする。
+    private func peopleGateOpen(max: Int) -> Bool {
+        guard max > 0 else { return true }
         var mature = 0
         for c in clusters where c.count >= sizeAdaptiveMatureCount {
             mature += 1
-            if mature >= rivalAwareSizeMarginMaxPeople { return false }
+            if mature >= max { return false }
         }
         return true
     }
@@ -401,7 +413,8 @@ public struct FaceClustering {
                                   rivalAwareSizeMargin: Bool? = nil,
                                   rivalAwareSizeMarginMaxPeople: Int = 0,
                                   rivalAlikeMargin: Float = 0,
-                                  effectiveThresholdCap: Float = 0) -> [Cluster] {
+                                  effectiveThresholdCap: Float = 0,
+                                  effectiveThresholdCapMaxPeople: Int = 0) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
         clustering.assignMargin = assignMargin
@@ -412,6 +425,7 @@ public struct FaceClustering {
         clustering.rivalAwareSizeMarginMaxPeople = rivalAwareSizeMarginMaxPeople
         clustering.rivalAlikeMargin = rivalAlikeMargin
         clustering.effectiveThresholdCap = effectiveThresholdCap
+        clustering.effectiveThresholdCapMaxPeople = effectiveThresholdCapMaxPeople
         var unassigned: [(faceID: String, embedding: [Float])] = []
         for f in faces {
             let cid = clustering.assign(faceID: f.faceID, embedding: f.embedding,

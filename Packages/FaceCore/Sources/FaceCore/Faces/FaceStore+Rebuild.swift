@@ -66,6 +66,12 @@ extension FaceStore {
         clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
         clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
         clustering.rivalAlikeMargin = Self.rivalAlikeMargin
+        // 実効しきい値の頭打ち（ADR-68 追補・少人数ライブラリ限定）。しきい値は校正で
+        // 上がり得るので、そこへサイズ加算が乗って跳ね上がるのを止める。
+        if Self.capEffectiveThresholdWhenFewPeople {
+            clustering.effectiveThresholdCap = clustering.threshold
+            clustering.effectiveThresholdCapMaxPeople = Self.effectiveThresholdCapMaxPeople
+        }
         let pending = allFaces.filter { !confirmedFaceIDs.contains($0.faceID) }
             .sorted { $0.quality > $1.quality }
         // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。

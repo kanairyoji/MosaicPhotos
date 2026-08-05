@@ -289,7 +289,8 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
                 assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
                 rivalAwareSizeMargin: true, rivalAwareSizeMarginMaxPeople: 10,
-                rivalAlikeMargin: 0.20, effectiveThresholdCap: cap)
+                rivalAlikeMargin: 0.20, effectiveThresholdCap: cap,
+                effectiveThresholdCapMaxPeople: 10)
         }
         printRow("G 実機相当 thr=0.60（上限0.70まで加算）", score(clusters: prodLike(thr: 0.60)))
         printRow("G thr=0.60＋実効上限0.60", score(clusters: prodLike(thr: 0.60, cap: 0.60)))
@@ -465,7 +466,8 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
                     assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
                     rivalAwareSizeMargin: true, rivalAwareSizeMarginMaxPeople: 10,
-                    rivalAlikeMargin: 0.20, effectiveThresholdCap: cap))
+                    rivalAlikeMargin: 0.20, effectiveThresholdCap: cap,
+                effectiveThresholdCapMaxPeople: 10))
             }
             for maxPeople in [10, 20, 50] {
                 report(String(format: "B4 サイズ免除(人数<%d)", maxPeople), FaceClustering.clusterAll(

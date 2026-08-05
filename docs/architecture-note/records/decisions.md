@@ -293,7 +293,20 @@
   分裂率が下がってもゼロにはならない（家族3人でも 2.0）ので、残りは一括レビューで畳む前提の設計。
   既存ユーザーへは `PeopleEngine.clusterRuleVersion` を上げることで次の夜間処理で
   自動的に畳み直される（顔の再スキャンは不要＝既存の埋め込みを再利用）。
-- 関連: `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/ambiguousPolicy`、
+- 追補（2026-08-05・実機検証後）: **校正の暴走のほうが支配的だった**。実機ログ（9,446 枚・修正 130 件）で
+  しきい値が校正により **0.60**（可動域上限 0.70）まで上がり、サイズ適応マージン（+0.10）と積み上がって
+  **実効 0.70** で動いていた。単発クラスタ 1,170 個・最大クラスタ 15 顔という実測はこれで説明がつく。
+  - **校正の可動域上限を 0.70 → 0.55**（`FaceCalibration.clampRange`）。校正自体は維持する
+    （ユーザー修正は反映され続ける）が分裂側へ振り切らせない。家族3人で分裂 5.0→2.3・F1 0.503→0.791、
+    LFW は 0.904→0.906 で中立。
+  - **実効しきい値の頭打ち**（`FaceStore.capEffectiveThresholdWhenFewPeople`）。しきい値は校正で動くため、
+    そこへサイズ加算が乗ると跳ね上がる。少人数ライブラリでは加算しない（家族5人で分裂 3.6→2.4）。
+    ⚠️ 人数ゲート必須: 無制限だと LFW で F1 0.906→0.873 と退行する（サイズ免除と同じ反転）。
+  - 教訓: **可動域は「動ける範囲」ではなく「壊れない範囲」で決める**。上限 0.70 は
+    「ユーザーが望むなら高くできる」つもりだったが、実際には校正が容易に到達し、
+    そこはデータセット上「ほぼ何も集まらない」領域だった。
+- 関連: `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
+  effectiveThresholdCap/ambiguousPolicy`、`FaceCalibration.clampRange`、
   `PeopleEngine.clusterRuleVersion`、
   `FaceEvalMetrics.clustersPerIdentity`、`FaceStore.batchReviewItem`、`PeopleEngine.answerBatch`、
   `FaceBatchReviewView` / `AllPeopleView`。ADR-46（レビュー）/ ADR-56（自動連鎖の不採用）/
