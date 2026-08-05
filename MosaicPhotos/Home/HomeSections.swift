@@ -185,7 +185,7 @@ extension HomeView {
                         ProgressView().controlSize(.mini)
                     }
                     // 分裂が多いライブラリでは 1 対 1 の確認では追いつかないので、
-                    // 「まとめて確認」を先に出す（ADR-67）。
+                    // 「まとめて確認」を先に出す（ADR-68）。
                     if peopleEngine.people.count >= PeopleCarousel.carouselLimit {
                         Button {
                             showingBatchReview = true

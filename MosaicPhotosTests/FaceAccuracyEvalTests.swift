@@ -172,7 +172,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
         func printRow(_ label: String, _ s: FaceEvalMetrics.ClusteringScore?) {
             guard let s else { return }
-            // 分裂率（1人あたりクラスタ数）を一級指標として常に出す（ADR-67）。
+            // 分裂率（1人あたりクラスタ数）を一級指標として常に出す（ADR-68）。
             // これが「ピープル画面に何人並ぶか」に直結する。
             print(String(format: "FACEEVAL[%@]:  %@  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d | 分裂=%.1f/人（最悪%d）",
                          name, label, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1, s.pairF1,
@@ -241,12 +241,16 @@ final class FaceAccuracyEvalTests: XCTestCase {
                      score(clusters: clusters))
         }
 
-        // F) 曖昧な顔の扱い（ADR-67）: マージンゲートで弾いた顔を新クラスタにせず未割当にする。
+        // F) 曖昧な顔の扱い（ADR-68）: マージンゲートで弾いた顔を新クラスタにせず未割当にする。
         // 重心は汚さないので純度は理屈上不変のまま、クラスタ数（＝分裂）だけが減るはず。
-        print("FACEEVAL[\(name)]: === F 曖昧な顔を新クラスタにしない（ADR-67） ===")
+        print("FACEEVAL[\(name)]: === F 曖昧な顔を新クラスタにしない（ADR-68） ===")
         printRow("prod（曖昧→新クラスタ）", score(clusters: FaceClustering.clusterAll(
             faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
             assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10)))
+        // ⚠️ 本番の rebuildClusters は第2パス（ADR-66）を持つので、公平な基準はこちら。
+        printRow("prod＋第2パス（現行本番相当）", score(clusters: FaceClustering.clusterAll(
+            faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+            assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true)))
         printRow("B1 曖昧→未割当", score(clusters: FaceClustering.clusterAll(
             faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
             assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
@@ -256,17 +260,36 @@ final class FaceAccuracyEvalTests: XCTestCase {
             assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
             ambiguousPolicy: .leaveUnassigned, secondPassMembership: true)))
         // 免除バーの掃引（threshold + alike）。緩いと別人まで免除して純度が落ちる。
-        for alike in [Float(0), 0.10, 0.15, 0.20] {
-            printRow(String(format: "B3 競合を見る alike=+%.2f", alike), score(clusters:
+        // ⚠️ 免除は 2 種類（a: マージンゲート / b: サイズ適応マージン）。効き方が違うので
+        // **必ず分離して測る**。すべて第2パス込み（＝本番相当）で比較する。
+        for alike in (reducedGrid ? [Float(0.20)] : [Float(0.10), 0.20]) {
+            printRow(String(format: "B3a ゲート免除のみ alike=+%.2f", alike), score(clusters:
                 FaceClustering.clusterAll(
                     faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
-                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
-                    rivalAwareMargin: true, rivalAlikeMargin: alike)))
-            printRow(String(format: "B3＋第2パス alike=+%.2f", alike), score(clusters:
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: true, rivalAwareSizeMargin: false,
+                    rivalAlikeMargin: alike)))
+            printRow(String(format: "B3b サイズ免除のみ alike=+%.2f", alike), score(clusters:
+                FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: false, rivalAwareSizeMargin: true,
+                    rivalAlikeMargin: alike)))
+            printRow(String(format: "B3ab 両方 alike=+%.2f", alike), score(clusters:
                 FaceClustering.clusterAll(
                     faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
                     assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
                     secondPassMembership: true, rivalAwareMargin: true, rivalAlikeMargin: alike)))
+        }
+        // B4: サイズ免除を**少人数ライブラリ限定**にする（人数で逆転する事実への対処）。
+        // 上限は「成熟クラスタ数」で測る。FG-NET(82人)で効き、LFW(901人)で効かない点を探す。
+        for maxPeople in [10, 20, 50, 100] {
+            printRow(String(format: "B4 サイズ免除(人数<%d) alike=+0.20", maxPeople), score(clusters:
+                FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: false, rivalAwareSizeMargin: true,
+                    rivalAwareSizeMarginMaxPeople: maxPeople, rivalAlikeMargin: 0.20)))
         }
 
         // E) 純度の事後検査（外れ値除去・ADR-59）: 現行本番構成（thr0.50/margin0.05/size0.10）の
@@ -341,13 +364,13 @@ final class FaceAccuracyEvalTests: XCTestCase {
             evaluatePersonGrouping(samples: samples, name: name, temporal: true)   // 時系列分割（成長差を跨ぐ）
         }
 
-        // === F 家族シナリオ（少数 ID × 大量写真・ADR-67） ===
+        // === F 家族シナリオ（少数 ID × 大量写真・ADR-68） ===
         evaluateFamilyScenario(samples: samples, name: name)
 
         print("FACEEVAL[\(name)]: 完了")
     }
 
-    // MARK: - F 家族シナリオ（少数 ID × 大量写真・ADR-67）
+    // MARK: - F 家族シナリオ（少数 ID × 大量写真・ADR-68）
 
     /// **実ライブラリの形**を再現する評価。既存の計測は「82人/1,002枚」「901人/4,862枚」＝
     /// *多数の人物を少しずつ*であり、家族アルバムの「**数人を何万枚も**」という分布を
@@ -387,6 +410,9 @@ final class FaceAccuracyEvalTests: XCTestCase {
             report("prod（曖昧→新クラスタ）", FaceClustering.clusterAll(
                 faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
                 assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10))
+            report("prod＋第2パス（現行本番相当）", FaceClustering.clusterAll(
+                faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true))
             // B1: 曖昧な顔を未割当にする（クラスタを増やさない）。
             report("B1（曖昧→未割当）", FaceClustering.clusterAll(
                 faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
@@ -398,11 +424,27 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
                 ambiguousPolicy: .leaveUnassigned, secondPassMembership: true))
             // B3: 競合どうしが似ていればゲートを免除（＝同一人物の別クラスタなら合流させる）。
-            for alike in [Float(0), 0.10, 0.15, 0.20] {
-                report(String(format: "B3＋第2パス alike=+%.2f", alike), FaceClustering.clusterAll(
+            // ここは上位 K 人だけの小さな部分集合なので、分離した 3 通りを全部測っても軽い。
+            for alike in [Float(0.10), 0.20] {
+                report(String(format: "B3a ゲート免除のみ alike=+%.2f", alike), FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: true, rivalAwareSizeMargin: false, rivalAlikeMargin: alike))
+                report(String(format: "B3b サイズ免除のみ alike=+%.2f", alike), FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: false, rivalAwareSizeMargin: true, rivalAlikeMargin: alike))
+                report(String(format: "B3ab 両方 alike=+%.2f", alike), FaceClustering.clusterAll(
                     faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
                     assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
                     secondPassMembership: true, rivalAwareMargin: true, rivalAlikeMargin: alike))
+            }
+            for maxPeople in [10, 20, 50] {
+                report(String(format: "B4 サイズ免除(人数<%d)", maxPeople), FaceClustering.clusterAll(
+                    faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: false, rivalAwareSizeMargin: true,
+                    rivalAwareSizeMarginMaxPeople: maxPeople, rivalAlikeMargin: 0.20))
             }
             // 参考: サイズ適応なし / マージンなし（どちらが分裂の主因かの切り分け）。
             report("参考 サイズ適応なし", FaceClustering.clusterAll(

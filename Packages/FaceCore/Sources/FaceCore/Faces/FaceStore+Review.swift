@@ -132,7 +132,7 @@ extension FaceStore {
         return items
     }
 
-    // MARK: - 一括レビュー（ADR-67）
+    // MARK: - 一括レビュー（ADR-68）
 
     /// 「この人と同じ人を、まとめて選ぶ」1 画面ぶんを作る。
     ///

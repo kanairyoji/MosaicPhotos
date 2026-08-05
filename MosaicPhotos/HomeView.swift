@@ -154,7 +154,7 @@ struct HomeView: View {
         .sheet(isPresented: $showingFaceReview) {
             FaceReviewView(peopleEngine: peopleEngine)
         }
-        // 人物が多すぎてカルーセルに収まらないときの全一覧（ADR-67）。
+        // 人物が多すぎてカルーセルに収まらないときの全一覧（ADR-68）。
         .sheet(isPresented: $showingAllPeople) {
             AllPeopleView(people: peopleEngine.people,
                           onSelect: { destination = .person($0) },
@@ -164,7 +164,7 @@ struct HomeView: View {
                               showingBatchReview = true
                           })
         }
-        // まとめて確認（1 画面で多数のクラスタを畳む・ADR-67）。
+        // まとめて確認（1 画面で多数のクラスタを畳む・ADR-68）。
         .sheet(isPresented: $showingBatchReview) {
             FaceBatchReviewView(peopleEngine: peopleEngine)
         }

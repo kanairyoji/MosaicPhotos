@@ -1,7 +1,7 @@
 import AutoAlbumCore
 import SwiftUI
 
-/// 一括レビュー（ADR-67）。「この人と同じ人を、まとめて選ぶ」。
+/// 一括レビュー（ADR-68）。「この人と同じ人を、まとめて選ぶ」。
 ///
 /// 1 対 1 の確認カード（`FaceReviewView`）は **1 回答＝1 統合**なので、成長期の子供で
 /// 数百〜数千に分裂したライブラリでは追いつかない。この画面は基準の人物に似たクラスタを
@@ -15,14 +15,18 @@ struct FaceBatchReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var item: FaceBatchReviewItem?
     @State private var isLoading = true
-    @State private var rejected: Set<Int> = []
+    /// ⚠️ 既定は**未選択**。既定で全選択にすると、誤タップひとつで最大 24 クラスタが
+    /// 統合されてしまう（統合は取り消しが効かない）。「すべて選ぶ」を 1 タップ用意して
+    /// 効率は保ちつつ、破壊的操作は必ずユーザーの明示で起きるようにする。
+    @State private var selected: Set<Int> = []
     @State private var mergedTotal = 0
     @State private var isApplying = false
 
     private static let columns = [GridItem(.adaptive(minimum: 84), spacing: 12)]
 
-    private var selectedIDs: [Int] {
-        (item?.candidates ?? []).map(\.clusterID).filter { !rejected.contains($0) }
+    private var allSelected: Bool {
+        guard let item, !item.candidates.isEmpty else { return false }
+        return selected.count == item.candidates.count
     }
 
     var body: some View {
@@ -59,10 +63,10 @@ struct FaceBatchReviewView: View {
                         candidateCell(candidate)
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                if rejected.contains(candidate.clusterID) {
-                                    rejected.remove(candidate.clusterID)
+                                if selected.contains(candidate.clusterID) {
+                                    selected.remove(candidate.clusterID)
                                 } else {
-                                    rejected.insert(candidate.clusterID)
+                                    selected.insert(candidate.clusterID)
                                 }
                             }
                     }
@@ -86,7 +90,7 @@ struct FaceBatchReviewView: View {
                 Text(L("Which of these are “\(item.anchorName)”?"))
                     .font(.headline)
             }
-            Text(L("Tap the ones that are someone else to remove them."))
+            Text(L("Tap the ones that are the same person."))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -97,19 +101,24 @@ struct FaceBatchReviewView: View {
     }
 
     private func candidateCell(_ candidate: FaceBatchReviewItem.Candidate) -> some View {
-        let isRejected = rejected.contains(candidate.clusterID)
+        let isSelected = selected.contains(candidate.clusterID)
         return VStack(spacing: 4) {
             FaceAvatarImage(refKey: candidate.face.refKey, box: candidate.face.boundingBox,
                             maxPixel: 400)
                 .frame(width: 84, height: 84)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .opacity(isRejected ? 0.35 : 1)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 3)
+                }
                 .overlay(alignment: .topTrailing) {
-                    Image(systemName: isRejected ? "xmark.circle.fill" : "checkmark.circle.fill")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, isRejected ? Color.red : Color.green)
-                        .font(.title3)
-                        .padding(3)
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, Color.accentColor)
+                            .font(.title3)
+                            .padding(3)
+                    }
                 }
             Text(verbatim: "\(candidate.count)")
                 .font(.caption2)
@@ -119,19 +128,20 @@ struct FaceBatchReviewView: View {
 
     private func footer(_ item: FaceBatchReviewItem) -> some View {
         VStack(spacing: 8) {
-            Text(L("\(selectedIDs.count) will be merged, \(rejected.count) marked as someone else."))
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            Button(allSelected ? L("Clear all") : L("Select all")) {
+                selected = allSelected ? [] : Set(item.candidates.map(\.clusterID))
+            }
+            .font(.subheadline)
             Button {
                 Task { await apply(item) }
             } label: {
-                Label(L("Merge"), systemImage: "person.2.badge.plus")
+                Label(L("Merge \(selected.count)"), systemImage: "person.2.badge.plus")
                     .font(.body.weight(.medium))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(isApplying || (selectedIDs.isEmpty && rejected.isEmpty))
+            .disabled(isApplying || selected.isEmpty)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 20)
@@ -160,7 +170,7 @@ struct FaceBatchReviewView: View {
 
     private func load(anchor: Int?) async {
         isLoading = true
-        rejected = []
+        selected = []
         item = await peopleEngine.batchReviewItem(anchorClusterID: anchor)
         isLoading = false
     }
@@ -169,9 +179,12 @@ struct FaceBatchReviewView: View {
     /// 統合でアンカーの重心が育つので、さっきは届かなかった時期のクラスタが入ってくる。
     private func apply(_ item: FaceBatchReviewItem) async {
         isApplying = true
-        let same = selectedIDs
+        let same = Array(selected)
+        // 負例（別人記録）はここでは作らない。未選択は「別人と答えた」ではなく
+        // 「選ばなかった」だけなので、修正ジャーナルに混ぜると学習が濁る。
+        // 明示的な「いいえ」は 1 対 1 のレビュー（FaceReviewView）で受ける。
         await peopleEngine.answerBatch(anchorClusterID: item.anchorClusterID,
-                                       same: same, notSame: Array(rejected))
+                                       same: same, notSame: [])
         mergedTotal += same.count
         isApplying = false
         await load(anchor: item.anchorClusterID)

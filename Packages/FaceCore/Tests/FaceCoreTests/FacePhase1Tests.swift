@@ -192,7 +192,7 @@ struct FacePhase1Tests {
         #expect(items.contains { if case .samePerson = $0 { return true }; return false })
     }
 
-    // MARK: - 競合を見るマージン（ADR-67）
+    // MARK: - 競合を見るマージン（ADR-68）
 
     @Test("競合を見るマージン: 競合が同一人物らしければ免除し、別人らしければ従来どおり弾く")
     func rivalAwareMarginGate() {
@@ -231,6 +231,43 @@ struct FacePhase1Tests {
         let distinctID = distinct.assign(faceID: "mid", embedding: mid2)
         #expect(distinct.clusters.count == 3)             // 従来どおり弾く（兄弟の取り違え防止）
         #expect(distinctID != 1 && distinctID != 2)
+    }
+
+    @Test("サイズ免除は少人数ライブラリ限定（人数が増えたら従来どおり弾く）")
+    func sizeMarginExemptionOnlyForSmallLibraries() {
+        // 16 次元の one-hot で「互いに無関係な人物」を作れるようにする。
+        func onehot(_ i: Int, dim: Int = 16) -> [Float] {
+            var v = [Float](repeating: 0, count: dim); v[i] = 1; return v
+        }
+        /// 成熟クラスタ（count=11）を n 個＋小クラスタ 1 個（count=2・方向は onehot(0)）。
+        func seeds(maturePeople n: Int) -> [FaceClustering.Cluster] {
+            var out: [FaceClustering.Cluster] = [
+                .init(id: 0, centroid: onehot(0), sum: onehot(0), count: 2, faceIDs: []),
+            ]
+            for i in 1...n {
+                out.append(.init(id: i, centroid: onehot(i), sum: onehot(i), count: 11, faceIDs: []))
+            }
+            return out
+        }
+        // 小クラスタと cos≈0.6（しきい値 0.5 は超えるが、count=2 の上乗せ 0.25 には届かない顔）。
+        var v = [Float](repeating: 0, count: 16)
+        v[0] = 0.6; v[15] = 0.8
+        let borderline = FaceClustering.normalized(v)
+
+        func assign(maturePeople: Int, maxPeople: Int) -> Int {
+            var c = FaceClustering(threshold: 0.5, qualityFloor: 0,
+                                   seedClusters: seeds(maturePeople: maturePeople))
+            c.sizeAdaptiveMarginMax = 0.25
+            c.rivalAwareSizeMargin = true
+            c.rivalAwareSizeMarginMaxPeople = maxPeople
+            return c.assign(faceID: "x", embedding: borderline)
+        }
+        // 人物が 3 人（少人数）→ 免除が効き、小クラスタが育つ。
+        #expect(assign(maturePeople: 3, maxPeople: 10) == 0)
+        // 人物が 12 人（上限 10 以上）→ 免除しない＝従来どおり新クラスタ。
+        #expect(assign(maturePeople: 12, maxPeople: 10) != 0)
+        // 上限 0（無制限）なら人数に関係なく免除する（＝計測用の構成）。
+        #expect(assign(maturePeople: 12, maxPeople: 0) == 0)
     }
 
     @Test("曖昧な顔の扱い: leaveUnassigned はクラスタを増やさない")

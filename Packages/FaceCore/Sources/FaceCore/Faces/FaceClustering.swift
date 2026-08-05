@@ -92,7 +92,7 @@ public struct FaceClustering {
     public var sizeAdaptiveMarginMax: Float = 0
     public var sizeAdaptiveMatureCount: Int = 11
 
-    /// マージンゲートで弾いた顔（＝1 位と 2 位が紛らわしい顔）の扱い（ADR-67）。
+    /// マージンゲートで弾いた顔（＝1 位と 2 位が紛らわしい顔）の扱い（ADR-68）。
     public enum AmbiguousPolicy: Sendable, Equatable {
         /// 新しいクラスタを作る（v4 までの挙動）。
         /// ⚠️ 家族ライブラリのように「ほぼ全写真が同じ数人」の分布では、*同じ人の別時期の
@@ -103,10 +103,10 @@ public struct FaceClustering {
         /// **クラスタ数を増やさない**。表示は第2パス（membership のみ）で回収する。
         case leaveUnassigned
     }
-    /// 既定は従来挙動（計測で採否を決めるため・ADR-67）。
+    /// 既定は従来挙動（計測で採否を決めるため・ADR-68）。
     public var ambiguousPolicy: AmbiguousPolicy = .newCluster
 
-    /// **競合相手を見るマージン**（ADR-67）。
+    /// **競合相手を見るマージン**（ADR-68）。
     ///
     /// マージンゲート（ADR-57）とサイズ適応マージン（ADR-58）は「兄弟のように似た**別人**の
     /// クラスタが近くにあるとき、紛らわしい顔を取り込まない」ための仕掛けだった。しかし
@@ -119,7 +119,30 @@ public struct FaceClustering {
     /// - 似ていない → 本当に別人が近い＝危険 → 従来どおりゲートを適用
     ///
     /// ライブラリの人数に依存しない判定なので、少人数でも多人数でも同じ規則で動く。
-    public var rivalAwareMargin: Bool = false
+    /// (a) **マージンゲートの免除**: 1位/2位が紛らわしいとき、その 2 つが互いに似ていれば
+    /// 同一人物の別クラスタとみなして 1 位へ合流させる。
+    public var rivalAwareMarginGate: Bool = false
+    /// (b) **サイズ適応マージンの免除**: 近くに「別人らしい競合」がいないなら、小クラスタにも
+    /// 上乗せを課さない（育てない理由がないため）。
+    /// ⚠️ (a) と (b) は効き方が違うので**必ず分離して計測する**（束ねると採否を誤る）。
+    public var rivalAwareSizeMargin: Bool = false
+    /// (b) を効かせる上限人数（0 = 無制限）。**確立した人物（成熟クラスタ）がこの数未満のときだけ**
+    /// サイズ免除を適用する。
+    ///
+    /// サイズ適応マージン（ADR-58）は「小クラスタが兄弟を吸い込むのを防ぐ」ためのもので、
+    /// その緩和が正しいかは**ライブラリに何人いるかで逆転する**（計測事実・ADR-68）:
+    /// - 家族アルバム（数人）: 小クラスタの大半は*同じ人の断片*→ 緩和が正しい
+    ///   （FG-NET 上位3人で分裂 4.7→2.0・純度 0.862→0.970）
+    /// - 大人数ライブラリ（数百人）: 小クラスタの大半は*本当に別人*→ 緩和すると混ざる
+    ///   （LFW 901人で F1 0.895→0.843・純度 0.887→0.793）
+    /// 人数で切り替えるのは恣意的な調整ではなく、この逆転を直接扱う唯一の signal。
+    public var rivalAwareSizeMarginMaxPeople: Int = 0
+
+    /// 両方まとめて設定する糖衣。
+    public var rivalAwareMargin: Bool {
+        get { rivalAwareMarginGate && rivalAwareSizeMargin }
+        set { rivalAwareMarginGate = newValue; rivalAwareSizeMargin = newValue }
+    }
     /// 「競合どうしが似ている」と判定するバーの上乗せ（実効バー ＝ `threshold + rivalAlikeMargin`）。
     /// 0 だと素のしきい値で判定するが、それでは**別人どうし**も似ていると見なされて誤統合が増える
     /// （FG-NET 82人で純度 0.879→0.656）。免除は「明らかに同一人物」のときだけ効かせる。
@@ -179,8 +202,8 @@ public struct FaceClustering {
            scored[0].sim >= threshold, scored[1].sim >= threshold,
            scored[0].sim - scored[1].sim < assignMargin,
            // 競合どうしが似ている＝同一人物の別クラスタなら、紛らわしくても取り込んでよい。
-           !(rivalAwareMargin && clustersAlike(scored[0].index, scored[1].index)) {
-            // 曖昧な顔で新クラスタを増やさない方針（ADR-67）。
+           !(rivalAwareMarginGate && clustersAlike(scored[0].index, scored[1].index)) {
+            // 曖昧な顔で新クラスタを増やさない方針（ADR-68）。
             if ambiguousPolicy == .leaveUnassigned { return FaceClustering.unassigned }
             let id = nextID
             nextID += 1
@@ -196,7 +219,7 @@ public struct FaceClustering {
             // rivalAware: 「別人が近くにいる」ときだけ課す。競合が無い（or 競合が同一人物らしい）
             // なら、小クラスタを育てない理由がないので素のしきい値で合流させる。
             if cand.sim < threshold + sizeMargin(forCount: clusters[cand.index].count),
-               !(rivalAwareMargin && !hasDistinctRival(of: cand.index, in: scored)) { continue }
+               !(sizeMarginExemptionActive && !hasDistinctRival(of: cand.index, in: scored)) { continue }
             if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
                 continue
             }
@@ -241,6 +264,20 @@ public struct FaceClustering {
             return clusters[cand.index].id
         }
         return FaceClustering.unassigned
+    }
+
+    /// いまサイズ免除を効かせてよいか（少人数ライブラリのときだけ true）。
+    /// 「確立した人物」＝成熟サイズ以上のクラスタ数で判定する（1〜2 枚しか写っていない
+    /// 断片やノイズを人数に数えないため）。
+    private var sizeMarginExemptionActive: Bool {
+        guard rivalAwareSizeMargin else { return false }
+        guard rivalAwareSizeMarginMaxPeople > 0 else { return true }
+        var mature = 0
+        for c in clusters where c.count >= sizeAdaptiveMatureCount {
+            mature += 1
+            if mature >= rivalAwareSizeMarginMaxPeople { return false }
+        }
+        return true
     }
 
     /// 2 クラスタが互いに似ているか（＝同一人物の別クラスタらしいか）。代表群どうしの最大類似で見る。
@@ -348,13 +385,18 @@ public struct FaceClustering {
                                   ambiguousPolicy: AmbiguousPolicy = .newCluster,
                                   secondPassMembership: Bool = false,
                                   rivalAwareMargin: Bool = false,
+                                  rivalAwareMarginGate: Bool? = nil,
+                                  rivalAwareSizeMargin: Bool? = nil,
+                                  rivalAwareSizeMarginMaxPeople: Int = 0,
                                   rivalAlikeMargin: Float = 0) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
         clustering.assignMargin = assignMargin
         clustering.sizeAdaptiveMarginMax = sizeAdaptiveMarginMax
         clustering.ambiguousPolicy = ambiguousPolicy
-        clustering.rivalAwareMargin = rivalAwareMargin
+        clustering.rivalAwareMarginGate = rivalAwareMarginGate ?? rivalAwareMargin
+        clustering.rivalAwareSizeMargin = rivalAwareSizeMargin ?? rivalAwareMargin
+        clustering.rivalAwareSizeMarginMaxPeople = rivalAwareSizeMarginMaxPeople
         clustering.rivalAlikeMargin = rivalAlikeMargin
         var unassigned: [(faceID: String, embedding: [Float])] = []
         for f in faces {

@@ -395,7 +395,7 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
-    // MARK: - 一括レビュー（ADR-67）
+    // MARK: - 一括レビュー（ADR-68）
 
     /// 「この人と同じ人をまとめて選ぶ」1 画面ぶんを取得する。
     /// `anchorClusterID` を渡すと、その人物を基準にする（人物一覧から特定の人を畳むとき）。
@@ -433,6 +433,11 @@ public final class PeopleEngine {
 
     // MARK: - 制約付き再クラスタリング（B2・ADR-46）
 
+    /// クラスタ割り当て**規則**の版。しきい値以外のゲート規則を変えたら上げる（ADR-68）。
+    /// 上げると次の夜間処理で全体が割り当て直される（顔の再スキャンは不要）。
+    /// 1: ADR-57/58（マージンゲート＋サイズ適応）/ 2: ADR-68（競合を見る免除）
+    public static let clusterRuleVersion = 2
+
     /// 修正が増えていたら全体を割り当て直す（夜間スキャン完了後に呼ばれる）。
     /// 命名済み/確認済みクラスタは ID・名前を保持し、確認顔は must-link として固定。
     public func rebuildClustersIfNeeded() async {
@@ -453,12 +458,18 @@ public final class PeopleEngine {
         // 既定しきい値の変更（ADR-56 の 0.45→0.60 等）も再クラスタ対象（版上げ不要の調整を反映）。
         let thresholdKey = "faceRebuildBaseThreshold"
         let thresholdChanged = Float(defaults.double(forKey: thresholdKey)) != FaceStore.clusterThreshold
-        guard correctionsGrew || scansGrew || stale || thresholdChanged else { return }
+        // **割り当て規則**の変更も再クラスタ対象（ADR-68）。しきい値は同じでもゲートの規則が
+        // 変われば結果は変わるので、規則に版を振って発火させる。版を上げれば既存ユーザーの
+        // 分裂したクラスタが次の夜間処理で畳み直される（再スキャンは不要＝埋め込みは再利用）。
+        let ruleKey = "faceRebuildRuleVersion"
+        let ruleChanged = defaults.integer(forKey: ruleKey) != Self.clusterRuleVersion
+        guard correctionsGrew || scansGrew || stale || thresholdChanged || ruleChanged else { return }
         let result = await store.rebuildClusters()
         defaults.set(current, forKey: markerKey)
         defaults.set(scanned, forKey: scanMarkerKey)
         defaults.set(Date(), forKey: dateMarkerKey)
         defaults.set(Double(FaceStore.clusterThreshold), forKey: thresholdKey)
+        defaults.set(Self.clusterRuleVersion, forKey: ruleKey)
         Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) "
                          + "(corrections \(lastRebuilt)→\(current), scans \(lastScanned)→\(scanned), stale=\(stale))")
         await loadPeople()

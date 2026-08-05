@@ -35,6 +35,21 @@ actor FaceStore {
     static let assignMargin: Float = 0.05
     /// サイズ適応マージンの最大上乗せ（ADR-58・小/新クラスタの合流を厳しくする）。
     static let sizeAdaptiveMarginMax: Float = 0.10
+    /// **サイズ適応マージンの免除**（ADR-68）。サイズ適応マージン（ADR-58）は「小クラスタが
+    /// 兄弟を吸い込むのを防ぐ」ためだが、家族アルバムでは小クラスタの大半が*同じ人の断片*なので
+    /// 合流を止めて分裂を量産していた（実ライブラリで 3 人 → 2,000 人超）。近くに「別人らしい
+    /// 競合」がいないときだけ上乗せを免除する。
+    /// ⚠️ マージンゲート側の免除は**不採用**（サイズ免除だけで利得が出揃い、FG-NET 全体では
+    /// わずかに悪化したため）。
+    static let rivalAwareSizeMargin = true
+    /// 免除を効かせる上限人数（成熟クラスタ数）。**少人数ライブラリ限定**にする。
+    /// 免除の正否はライブラリの人数で反転する（計測事実）: 無制限だと LFW（901人）で
+    /// F1 0.895→0.843 と退行するが、10 人未満に限れば 0.889（−0.006）に収まり、
+    /// 家族シナリオの利得（分裂 4.7→2.0・純度 0.862→0.970）は全て保たれる。
+    static let rivalAwareSizeMarginMaxPeople = 10
+    /// 「競合が似ている＝同一人物」と判定するバーの上乗せ（実効 0.50+0.20=0.70）。
+    /// 緩いと別人まで似ている扱いになり純度が落ちる（掃引で決定・face-accuracy.md 2026-08-05）。
+    static let rivalAlikeMargin: Float = 0.20
     /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
     /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
     /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。
@@ -221,6 +236,10 @@ actor FaceStore {
                                         seedClusters: seed)
         clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
         clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
+        // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
+        clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
+        clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
+        clustering.rivalAlikeMargin = Self.rivalAlikeMargin
         return clustering
     }
 

@@ -27,7 +27,7 @@ public enum FaceEvalMetrics {
         ///
         /// ⚠️ B-Cubed 再現率も分裂に反応するが、`0.435` のような値は「ピープル画面に人物が
         /// 何人並ぶか」を教えてくれない。実ライブラリの破綻（3 人 → 2000 人）は**この指標**で
-        /// しか見えないため一級指標として持つ（ADR-67・少数 ID×大量写真の計測穴）。
+        /// しか見えないため一級指標として持つ（ADR-68・少数 ID×大量写真の計測穴）。
         public let clustersPerIdentity: Double
         /// 最も分裂した人物のクラスタ数（最悪値。平均だけだと外れ値が埋もれる）。
         public let maxClustersForOneIdentity: Int

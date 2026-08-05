@@ -62,6 +62,10 @@ extension FaceStore {
                                         seedClusters: seeds, minimumNextID: maxExistingID + 1)
         clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
         clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
+        // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
+        clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
+        clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
+        clustering.rivalAlikeMargin = Self.rivalAlikeMargin
         let pending = allFaces.filter { !confirmedFaceIDs.contains($0.faceID) }
             .sorted { $0.quality > $1.quality }
         // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。
