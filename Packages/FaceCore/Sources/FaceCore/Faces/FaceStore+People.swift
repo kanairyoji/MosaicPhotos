@@ -46,7 +46,11 @@ extension FaceStore {
                 coverRefKey: cover?.refKey, coverBoundingBox: box, memberRefKeys: members,
                 isGrouped: clustersInGroup.count > 1))
         }
-        return result.sorted { $0.count > $1.count }
+        // 通し番号は**並べ替え後**に振る（写真の多い順に Person 1, 2, 3…）。
+        // 内部のクラスタ ID は再クラスタで大きくなり続けるので表示には使わない（ADR-68）。
+        var ordered = result.sorted { $0.count > $1.count }
+        for i in ordered.indices { ordered[i].displayIndex = i + 1 }
+        return ordered
     }
 
     // MARK: - 2 階層の人物束ね（ADR-61）
