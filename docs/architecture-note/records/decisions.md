@@ -305,8 +305,23 @@
   - 教訓: **可動域は「動ける範囲」ではなく「壊れない範囲」で決める**。上限 0.70 は
     「ユーザーが望むなら高くできる」つもりだったが、実際には校正が容易に到達し、
     そこはデータセット上「ほぼ何も集まらない」領域だった。
+- 追補2（2026-08-05・2 回目の実機検証後）: **統合候補の帯域が狭すぎた**。対策後も人物 368 のまま
+  （大半が同一家族の別の顔）で `mergeCandidates` は 264→14 に枯れていたが、これは「統合し尽くした」
+  のではなく**候補帯域の外に出ていた**ため。帯域は「しきい値 − 0.10」＝ 0.45 だったが、台帳の実測では
+  **同一人物でも年齢差 11-20 年の平均類似度は 0.440・21 年+ は 0.400**＝成長期の子供こそ候補に出ない。
+  - **統合候補の下限を 0.35 に**（`FaceStore.mergeCandidateFloor`）。21 年差の平均 0.400 を拾い、
+    別人（両者 12 歳以下＝兄弟の代理）の平均 0.294 は下回らない。統合は必ずユーザー確認を経るので
+    自動誤統合は起きない（候補は類似度降順・誤りは「いいえ」で負例として学習）。
+  - **検出の取りこぼしは計測を先に入れた**（`FaceDetectionStats`）。9,566 枚から顔 3,078 個
+    （0.32 個/枚）・`secondPass=1494`（全顔の 48% が品質フロア未満）と怪しいが、棄却理由は
+    `debugAnalyze`（1 枚ずつの検証用）でしか見えなかった。**本番経路のまま理由別に数える**
+    仕組みを入れ、Developer Options と診断ログ（`faces/detect:` 行）に出す。しきい値は測ってから触る。
+  - 教訓: **「候補が尽きた」は「もう無い」ではない**。`mergeCandidates` が 264→14 に減ったのを
+    最初は成果と読んだが、実際は帯域の外に出ただけだった。指標が良くなった理由を、
+    その指標の定義に立ち返って確認する。
 - 関連: `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
   effectiveThresholdCap/ambiguousPolicy`、`FaceCalibration.clampRange`、
+  `FaceStore.mergeCandidateFloor`、`FaceDetectionStats`、
   `PeopleEngine.clusterRuleVersion`、
   `FaceEvalMetrics.clustersPerIdentity`、`FaceStore.batchReviewItem`、`PeopleEngine.answerBatch`、
   `FaceBatchReviewView` / `AllPeopleView`。ADR-46（レビュー）/ ADR-56（自動連鎖の不採用）/

@@ -108,6 +108,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// 品質を `FaceQualityGate` で一元調整する（横顔はフロア未満＝クラスタへ入れない）。
     private func detect(in cg: CGImage, isCloud: Bool) async -> (raw: Int, signals: [DetectedFaceSignal], error: String?) {
         let (analyses, error) = await analyzeFaces(in: cg, isCloud: isCloud)
+        // 棄却の内訳を本番経路のまま数える（ADR-68 追補2）。しきい値を触る前に、
+        // 「どのゲートがどれだけ落としているか」を実機で確かめられるようにする。
+        for a in analyses {
+            FaceDetectionStats.record(
+                reason: a.report.rejectReason,
+                // 品質フロア（クラスタ不参加＝第2パス送り）は FaceStore 側の定数と同値。
+                belowQualityFloor: a.signal != nil && a.report.adjustedQuality < 0.40)
+        }
         return (analyses.count, analyses.compactMap(\.signal), error)
     }
 

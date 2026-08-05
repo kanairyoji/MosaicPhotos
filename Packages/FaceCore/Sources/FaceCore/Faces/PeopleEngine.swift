@@ -408,7 +408,16 @@ public final class PeopleEngine {
     public func logQualityReport() async -> FaceQualityReport {
         let report = await qualityReport()
         Diagnostics.mark(report.logLine)
+        // 検出ゲートの棄却内訳も併記する（「顔が取りこぼされている」の切り分け用・ADR-68 追補2）。
+        // 起動後のスキャン分のみの集計（プロセス内カウンタ）。
+        let detect = FaceDetectionStats.snapshot()
+        if detect.candidates > 0 { Diagnostics.mark(detect.logLine) }
         return report
+    }
+
+    /// 検出ゲートの棄却内訳（Developer Options 表示用）。
+    public nonisolated func detectionStats() -> FaceDetectionStats.Snapshot {
+        FaceDetectionStats.snapshot()
     }
 
     // MARK: - 一括レビュー（ADR-68）

@@ -29,7 +29,8 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | サイズ適応マージンの免除 | 有効（別人らしい競合が近くに無いとき・ADR-68） | `FaceStore.rivalAwareSizeMargin` |
 | 免除を効かせる上限人数 | 10（成熟クラスタ数。少人数ライブラリ限定） | `FaceStore.rivalAwareSizeMarginMaxPeople` |
 | 免除の「似ている」バー上乗せ | 0.20（実効 0.70） | `FaceStore.rivalAlikeMargin` |
-| 割り当て規則の版 | 2（上げると夜間に全体再クラスタ） | `PeopleEngine.clusterRuleVersion` |
+| 割り当て規則の版 | 3（上げると夜間に全体再クラスタ） | `PeopleEngine.clusterRuleVersion` |
+| 統合候補の下限 | 0.35（レビュー/一括レビュー/候補数の共通帯域・ADR-68 追補2） | `FaceStore.mergeCandidateFloor` |
 | しきい値校正の可動域 | 0.35〜**0.55**（ADR-68 追補・旧 0.70 は分裂を悪化させた） | `FaceCalibration.clampRange` |
 | 実効しきい値の頭打ち | 有効（少人数のみ・サイズ加算を積み上げない） | `FaceStore.capEffectiveThresholdWhenFewPeople` |
 | 校正の最小サンプル数 | 正負各 8 | `FaceCalibration.minSamples` |
@@ -369,6 +370,40 @@ FG-NET で純度 0.907／再現率 0.342＝「混ざらないが全く集まら�
 **計測レポートの不具合（同時に修正）**: 実機ログで UI 393 人 vs レポート 34 人と食い違った。
 レポートが `PersonCluster.count`（＝**重心に寄与した顔だけ**）で数えており、第2パス（ADR-66）で
 付いた顔を含んでいなかった。実顔数で数えるよう修正し、`secondPass=`（重心に寄与していない顔数）も出す。
+
+### 2026-08-05 — 2 回目の実機検証: 統合帯域が狭すぎた（ADR-68 追補2）
+
+対策後の実機（同一ライブラリ・修正 216 件）:
+
+```
+photos=9566 faces=3078 clusters=1306 people=368 singletons=586 mature=3 largest=104
+secondPass=1494 thr=0.55 exempt=on mergeCandidates=14 samePhotoViolations=0
+```
+
+**効いたこと**: `thr` は 0.60→**0.55**（校正の可動域が効いた）。`exempt=on`（少人数ゲートは開いている）。
+`mergeCandidates` は **264→14** ＝ 統合できるペアがほぼ尽きた。`samePhotoViolations=0`。
+
+**効かなかったこと**: クラスタ 1317→1306、人物 393→368 とほぼ動かない。
+ユーザー確認の結果、**368 人の大半は同一家族の別の顔**＝まだ分裂している。
+
+⚠️ **比較上の注意**: `singletons` と `largest` は本追補で集計方法を直したため
+（旧: 重心寄与カウント／新: 実顔数）、前回値（1170 / 15）とは**比較できない**。
+
+**原因**: 統合候補の帯域が「しきい値 − 0.10」＝ **0.45** だったが、台帳の実測では
+**同一人物でも年齢差 11-20 年の平均類似度は 0.440・21 年+ は 0.400**。つまり
+**成長期の子供こそ統合したいのに、候補にすら出ていなかった**。`mergeCandidates` が
+14 まで枯れたのは「統合し尽くした」のではなく「帯域の外に出ていた」ため。
+
+**決定: 統合候補の下限を 0.35 に下げる**（`FaceStore.mergeCandidateFloor`）。
+21 年差の平均 0.400 を拾い、別人（両者 12 歳以下＝兄弟の代理）の平均 0.294 は下回らない。
+**統合は必ずユーザー確認を経る**ので自動誤統合は起きない（候補は類似度降順・誤りは
+「いいえ」で負例として学習）。レビュー・一括レビュー・`mergeCandidates` の共通帯域。
+
+**検出の取りこぼし（未解決・計測を追加）**: 9,566 枚から顔 3,078 個（0.32 個/枚）は
+家族アルバムとしては少なく、`secondPass=1494`（全顔の 48%）が品質フロア未満だった。
+どのゲートが落としているかは `debugAnalyze`（1 枚ずつの検証用）でしか見えなかったため、
+**本番経路のまま理由別に数える** `FaceDetectionStats` を追加した（Developer Options と
+診断ログに `faces/detect:` 行）。**しきい値を触る前に内訳を測る**方針。
 
 ## 運用ルール
 

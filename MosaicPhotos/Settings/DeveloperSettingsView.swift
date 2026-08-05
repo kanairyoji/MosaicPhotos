@@ -42,6 +42,7 @@ struct DeveloperSettingsView: View {
     /// 顔認識の品質スナップショット（ADR-68・押したときだけ計測する）。
     @State private var faceQuality: FaceQualityReport?
     @State private var isMeasuringFaceQuality = false
+    @State private var faceDetect: FaceDetectionStats.Snapshot?
 
     private let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
 
@@ -245,6 +246,7 @@ struct DeveloperSettingsView: View {
             Task {
                 isMeasuringFaceQuality = true
                 faceQuality = await peopleEngine.logQualityReport()
+                faceDetect = peopleEngine.detectionStats()
                 isMeasuringFaceQuality = false
             }
         }
@@ -267,6 +269,14 @@ struct DeveloperSettingsView: View {
                            value: q.samePhotoViolations == 0 ? "0（正常）"
                                : "\(q.samePhotoViolations)（写真 \(q.samePhotoViolationPhotos) 枚）")
             LabeledContent("学習した修正", value: "\(q.corrections)")
+        }
+        if let d = faceDetect, d.candidates > 0 {
+            LabeledContent("検出候補（起動後）", value: "\(d.candidates)")
+            LabeledContent("採用（うちフロア未満）",
+                           value: "\(d.accepted)（\(d.belowQualityFloor)）")
+            ForEach(d.rejectedByReason.sorted { ($0.value, $1.key) > ($1.value, $0.key) }, id: \.key) { r in
+                LabeledContent("棄却: \(r.key)", value: "\(r.value)")
+            }
         }
     }
 

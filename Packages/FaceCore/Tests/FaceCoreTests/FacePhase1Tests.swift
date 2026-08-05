@@ -316,6 +316,37 @@ struct FacePhase1Tests {
         #expect(FaceCalibration.clampRange.upperBound == 0.55)
     }
 
+    @Test("統合候補の下限は 0.35 まで下がる（成長で離れた同一人物を候補に出す）")
+    func mergeBandFloorReachesGrowthGap() {
+        // 台帳（face-accuracy.md）: 同一人物でも年齢差 11-20 年は平均 0.440、21 年+ は 0.400。
+        // しきい値 0.55 のとき従来の下限は 0.45 で、これらは候補にすら出なかった。
+        #expect(FaceStore.mergeBandFloor(threshold: 0.55) == 0.35)
+        #expect(FaceStore.mergeBandFloor(threshold: 0.50) == 0.35)
+        // しきい値が下限側に寄っているときは従来どおり追従する（帯域が逆転しない）。
+        #expect(FaceStore.mergeBandFloor(threshold: 0.40) < 0.35)
+        // 別人（両者 12 歳以下＝兄弟の代理）の平均 0.294 は下回らない。
+        #expect(FaceStore.mergeBandFloor(threshold: 0.55) > 0.294)
+    }
+
+    @Test("検出統計: 理由別に数え、通過とフロア未満を区別する")
+    func detectionStatsTally() {
+        FaceDetectionStats.reset()
+        FaceDetectionStats.record(reason: nil)                            // 通過
+        FaceDetectionStats.record(reason: nil, belowQualityFloor: true)   // 通過だがフロア未満
+        FaceDetectionStats.record(reason: "low-confidence")
+        FaceDetectionStats.record(reason: "low-confidence")
+        FaceDetectionStats.record(reason: "size-pixels")
+        let s = FaceDetectionStats.snapshot()
+        #expect(s.candidates == 5)
+        #expect(s.accepted == 2)
+        #expect(s.belowQualityFloor == 1)
+        #expect(s.rejectedByReason["low-confidence"] == 2)
+        #expect(s.rejectedByReason["size-pixels"] == 1)
+        #expect(s.logLine.contains("low-confidence=2"))
+        FaceDetectionStats.reset()
+        #expect(FaceDetectionStats.snapshot().candidates == 0)
+    }
+
     @Test("品質レポート: 統合で同一写真違反が生まれたら検出する")
     func qualityReportDetectsSamePhotoViolation() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

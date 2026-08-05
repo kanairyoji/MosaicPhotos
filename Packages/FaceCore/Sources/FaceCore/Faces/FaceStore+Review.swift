@@ -74,7 +74,7 @@ extension FaceStore {
             for j in (i + 1)..<ids.count {
                 guard let ca = centroid[ids[i]], let cb = centroid[ids[j]] else { continue }
                 let sim = FaceClustering.dot(ca, cb)
-                guard sim >= thr - 0.10, !isMarkedNotSame(ca, cb) else { continue }
+                guard sim >= Self.mergeBandFloor(threshold: thr), !isMarkedNotSame(ca, cb) else { continue }
                 let coOccurrence = (photoSets[ids[i]] ?? []).intersection(photoSets[ids[j]] ?? []).count
                 guard coOccurrence < Self.coOccurrenceNotSame else { continue }
                 mergeCandidates.append((ids[i], ids[j], sim))
@@ -193,7 +193,7 @@ extension FaceStore {
         for i in ids.indices {
             for j in (i + 1)..<ids.count {
                 guard let a = centroid[ids[i]], let b = centroid[ids[j]] else { continue }
-                guard FaceClustering.dot(a, b) >= report.threshold - 0.10 else { continue }
+                guard FaceClustering.dot(a, b) >= Self.mergeBandFloor(threshold: report.threshold) else { continue }
                 let co = (photoSets[ids[i]] ?? []).intersection(photoSets[ids[j]] ?? []).count
                 guard co < Self.coOccurrenceNotSame else { continue }
                 report.mergeCandidatePairs += 1
@@ -266,7 +266,7 @@ extension FaceStore {
         for c in clusters where c.clusterID != anchor.clusterID {
             guard let cen = centroid[c.clusterID], let face = cover[c.clusterID] else { continue }
             let sim = FaceClustering.dot(anchorCentroid, cen)
-            guard sim >= thr - 0.10, !isMarkedNotSame(anchorCentroid, cen) else { continue }
+            guard sim >= Self.mergeBandFloor(threshold: thr), !isMarkedNotSame(anchorCentroid, cen) else { continue }
             // 共起（同じ写真に何度も一緒に写る）＝別人。兄弟の一括誤統合を防ぐ最後の砦。
             guard anchorPhotos.intersection(photoSets[c.clusterID] ?? []).count < Self.coOccurrenceNotSame
             else { continue }
