@@ -254,6 +254,10 @@ struct DeveloperSettingsView: View {
 
         if let q = faceQuality {
             LabeledContent("スキャン済み写真", value: "\(q.scannedPhotos)")
+            LabeledContent("うち顔が見つからなかった写真",
+                           value: q.scannedPhotos > 0
+                               ? "\(q.photosWithNoFace)（\(q.photosWithNoFace * 100 / q.scannedPhotos)%）"
+                               : "—")
             LabeledContent("顔（未割当）", value: "\(q.faces)（\(q.unassignedFaces)）")
             LabeledContent("人物 / クラスタ", value: "\(q.people) / \(q.clusters)")
             LabeledContent("命名済み", value: "\(q.namedPeople)")

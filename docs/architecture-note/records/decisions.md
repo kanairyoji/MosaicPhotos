@@ -319,7 +319,20 @@
   - 教訓: **「候補が尽きた」は「もう無い」ではない**。`mergeCandidates` が 264→14 に減ったのを
     最初は成果と読んだが、実際は帯域の外に出ただけだった。指標が良くなった理由を、
     その指標の定義に立ち返って確認する。
-- 関連: `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
+- 追補3（2026-08-06・3 回目の実機検証後）: **レビューの母数が UI の人物と違っていた**（本丸）。
+  UI は「実際の写真枚数 ≥ 3」で 370 人を出す一方、レビュー・一括レビュー・統合候補数は
+  `PersonCluster.count`（＝**重心に寄与した顔数**）≥ 3 で母数を取っていた。実機は全顔の 48% が
+  品質フロア未満＝第2パス（ADR-66）で membership だけ付くため、「UI には人物として出るが
+  count は 1〜2」が大多数になり、**370 人の大半が統合候補として検討すらされていなかった**。
+  帯域を 0.45→0.35 に広げても候補が増えなかった（14→55 止まり）のはこのため。
+  - **判定を `FaceStore.peopleEligibleClusters(minFaces:)` に一本化**し、UI とレビューが
+    必ず同じ土俵（実際の写真枚数）を使うようにした。
+  - `FaceDetectionStats` はプロセス内カウンタでスキャン完了後の端末では常に空だったため、
+    保存済みデータから出せる `photosWithNoFace` を品質レポートに追加。
+  - 教訓: **同じ言葉（「人物」）が層ごとに違う定義になっていないか**を疑う。UI・レビュー・
+    診断で 3 通りの「人物」があり、数字が噛み合わない原因を 2 回続けて見落とした。
+- 関連: `FaceStore.peopleEligibleClusters`、`FaceQualityReport.photosWithNoFace`、
+  `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
   effectiveThresholdCap/ambiguousPolicy`、`FaceCalibration.clampRange`、
   `FaceStore.mergeCandidateFloor`、`FaceDetectionStats`、
   `PeopleEngine.clusterRuleVersion`、

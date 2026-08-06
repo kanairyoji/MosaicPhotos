@@ -45,6 +45,12 @@ public struct FaceQualityReport: Sendable, Equatable {
     /// 違反に関わる写真の数。
     public var samePhotoViolationPhotos: Int
 
+    /// スキャン済みなのに**顔が 1 つも見つからなかった写真**の数（`ScannedPhoto.faceCount == 0`）。
+    /// 家族アルバムでこれが大半を占めるなら、分裂ではなく**検出の取りこぼし**を疑う。
+    /// 検出ゲートの棄却内訳（`FaceDetectionStats`）はプロセス内カウンタでスキャン中しか貯まらないが、
+    /// この値は保存済みデータから常に出せる（ADR-68 追補3）。
+    public var photosWithNoFace: Int = 0
+
     public var corrections: Int
 
     public init(scannedPhotos: Int = 0, faces: Int = 0, unassignedFaces: Int = 0,
@@ -54,7 +60,7 @@ public struct FaceQualityReport: Sendable, Equatable {
                 threshold: Float = 0, sizeExemptionActive: Bool = false,
                 mergeCandidatePairs: Int = 0, mergeCandidateTruncated: Bool = false,
                 samePhotoViolations: Int = 0, samePhotoViolationPhotos: Int = 0,
-                corrections: Int = 0) {
+                photosWithNoFace: Int = 0, corrections: Int = 0) {
         self.scannedPhotos = scannedPhotos
         self.faces = faces
         self.unassignedFaces = unassignedFaces
@@ -71,12 +77,14 @@ public struct FaceQualityReport: Sendable, Equatable {
         self.mergeCandidateTruncated = mergeCandidateTruncated
         self.samePhotoViolations = samePhotoViolations
         self.samePhotoViolationPhotos = samePhotoViolationPhotos
+        self.photosWithNoFace = photosWithNoFace
         self.corrections = corrections
     }
 
     /// 診断ログ 1 行（実機で Mac 無しに追える形）。
     public var logLine: String {
-        var s = "faces/quality: photos=\(scannedPhotos) faces=\(faces) unassigned=\(unassignedFaces) "
+        var s = "faces/quality: photos=\(scannedPhotos)(noFace=\(photosWithNoFace)) "
+            + "faces=\(faces) unassigned=\(unassignedFaces) "
             + "clusters=\(clusters) people=\(people) named=\(namedPeople) singletons=\(singletons) "
             + "mature=\(maturePeople) largest=\(largestCluster) secondPass=\(secondPassFaces) "
             + String(format: "thr=%.2f ", threshold)

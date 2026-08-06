@@ -31,6 +31,7 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | 免除の「似ている」バー上乗せ | 0.20（実効 0.70） | `FaceStore.rivalAlikeMargin` |
 | 割り当て規則の版 | 3（上げると夜間に全体再クラスタ） | `PeopleEngine.clusterRuleVersion` |
 | 統合候補の下限 | 0.35（レビュー/一括レビュー/候補数の共通帯域・ADR-68 追補2） | `FaceStore.mergeCandidateFloor` |
+| 「人物」の判定 | 実際の写真枚数 ≥ 3（UI とレビューで共通・ADR-68 追補3） | `FaceStore.peopleEligibleClusters` |
 | しきい値校正の可動域 | 0.35〜**0.55**（ADR-68 追補・旧 0.70 は分裂を悪化させた） | `FaceCalibration.clampRange` |
 | 実効しきい値の頭打ち | 有効（少人数のみ・サイズ加算を積み上げない） | `FaceStore.capEffectiveThresholdWhenFewPeople` |
 | 校正の最小サンプル数 | 正負各 8 | `FaceCalibration.minSamples` |
@@ -404,6 +405,33 @@ secondPass=1494 thr=0.55 exempt=on mergeCandidates=14 samePhotoViolations=0
 どのゲートが落としているかは `debugAnalyze`（1 枚ずつの検証用）でしか見えなかったため、
 **本番経路のまま理由別に数える** `FaceDetectionStats` を追加した（Developer Options と
 診断ログに `faces/detect:` 行）。**しきい値を触る前に内訳を測る**方針。
+
+### 2026-08-06 — 3 回目の実機検証: レビューの母数が UI と違っていた（ADR-68 追補3）
+
+```
+photos=10078 faces=3091 clusters=1297 people=370 singletons=577 mature=3 largest=95
+secondPass=1506 thr=0.55 exempt=on mergeCandidates=55 samePhotoViolations=0 corrections=266
+```
+
+帯域を 0.35 へ広げて `mergeCandidates` は 14→**55** に増えたが、人物は 368→370 で動かない。
+
+**原因（本丸）**: **レビューの母数が UI の人物と違っていた**。
+- UI（`peopleClusters`）: **実際の写真枚数** ≥ 3 → 370 人
+- レビュー（`reviewItems` / `batchReviewItem` / `mergeCandidates`）: **`PersonCluster.count`
+  （＝重心に寄与した顔数）** ≥ 3 → `mature=3` の実機では**ごく少数**
+
+実機は全顔の **48%**（1,506/3,091）が品質フロア未満＝第2パス（ADR-66）で membership だけ
+付く顔なので、「UI には人物として出るが `count` は 1〜2」というクラスタが大多数になる。
+つまり **370 人のうち大半が統合候補として検討すらされていなかった**。帯域を広げても
+候補が増えなかったのはこのため。
+
+**決定: 判定を `FaceStore.peopleEligibleClusters(minFaces:)` に一本化**し、UI・レビュー・
+一括レビュー・`mergeCandidates` がすべて**実際の写真枚数**で母数を取る。
+
+**検出の取りこぼし（計測を追加）**: `FaceDetectionStats` はプロセス内カウンタのため、
+スキャンが終わっている端末では常に空で `faces/detect:` 行が出なかった（実機で確認）。
+保存済みデータから常に出せる **`photosWithNoFace`**（`ScannedPhoto.faceCount == 0` の数）を
+品質レポートに追加した。家族アルバムでこれが大半なら、分裂ではなく検出側を疑う。
 
 ## 運用ルール
 

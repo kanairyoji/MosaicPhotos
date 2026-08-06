@@ -18,7 +18,8 @@ extension FaceStore {
     func reviewItems(minFaces: Int, limit: Int = 30,
                      excluding: Set<String> = []) -> [FaceReviewItem] {
         let thr = calibratedThreshold()
-        let clusters = allClusters().filter { $0.count >= minFaces }
+        // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
+        let clusters = peopleEligibleClusters(minFaces: minFaces)
         guard clusters.count >= 1 else { return [] }
 
         // 重心（正規化）と表示用の代表顔・メンバー写真集合（共起判定用）を用意。
@@ -162,6 +163,9 @@ extension FaceStore {
         report.sizeExemptionActive = Self.rivalAwareSizeMargin
             && report.maturePeople < Self.rivalAwareSizeMarginMaxPeople
         report.corrections = (try? modelContext.fetchCount(FetchDescriptor<FaceCorrection>())) ?? 0
+        // 顔が 1 つも見つからなかった写真（検出の取りこぼしの手がかり・保存済みデータから算出）。
+        report.photosWithNoFace = ((try? modelContext.fetch(FetchDescriptor<ScannedPhoto>())) ?? [])
+            .filter { $0.faceCount == 0 }.count
 
         // 同一写真違反: (写真, クラスタ) ごとの顔数が 2 以上。割り当ては cannot-link で防ぐが、
         // 統合（レビュー・手動）は検査していないので事後に検出する。
@@ -177,7 +181,7 @@ extension FaceStore {
         report.samePhotoViolationPhotos = violationPhotos.count
 
         // 統合候補ペア（＝まだ畳めていない分裂）。レビューと同じ帯域・同じ抑制条件で数える。
-        let targets = clusters.filter { $0.count >= minFaces }
+        let targets = peopleEligibleClusters(minFaces: minFaces)
         guard targets.count <= maxClustersForPairScan else {
             report.mergeCandidateTruncated = true
             return report
@@ -213,7 +217,8 @@ extension FaceStore {
     func batchReviewItem(minFaces: Int, anchorClusterID: Int? = nil,
                          limit: Int = 24) -> FaceBatchReviewItem? {
         let thr = calibratedThreshold()
-        let clusters = allClusters().filter { $0.count >= minFaces }
+        // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
+        let clusters = peopleEligibleClusters(minFaces: minFaces)
         guard clusters.count >= 2 else { return nil }
 
         var centroid: [Int: [Float]] = [:]

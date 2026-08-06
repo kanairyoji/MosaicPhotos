@@ -347,6 +347,39 @@ struct FacePhase1Tests {
         #expect(FaceDetectionStats.snapshot().candidates == 0)
     }
 
+    @Test("レビュー母数は UI の人物と一致する（第2パスの顔しかないクラスタも候補になる）")
+    func reviewUsesSameEligibilityAsUI() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // 実機の典型: **高品質の顔は 1 枚だけ**で、残りは品質フロア未満（横顔・ぶれ・小さい）。
+        // 後者は第2パス（ADR-66）で membership だけ付くので `PersonCluster.count` は伸びないが、
+        // 写真としては 3 枚あるので UI には人物として出る。実機では全顔の約 48% がこの状態。
+        await store.recordScan(refKey: "L-a0", faces: [signal([1, 0, 0], quality: 0.9)])
+        for i in 1..<3 {
+            await store.recordScan(refKey: "L-a\(i)",
+                                   faces: [signal(FaceClustering.normalized([0.99, 0.1, 0]),
+                                                  quality: 0.2)])
+        }
+        let people = await store.peopleClusters(minFaces: 3)
+        #expect(people.count == 1)                    // UI では 1 人
+        #expect(people.first?.count == 3)             // 写真は 3 枚
+
+        let eligible = await store.peopleEligibleClusters(minFaces: 3)
+        #expect(eligible.count == people.count)       // レビュー母数も 1 人（旧実装は 0 だった）
+        // 旧実装の判定（重心寄与カウント）では母数から漏れることを明示しておく。
+        #expect(eligible.first!.count < 3)
+    }
+
+    @Test("品質レポート: 顔が見つからなかった写真を数える")
+    func qualityReportCountsPhotosWithNoFace() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await store.recordScan(refKey: "L-face", faces: [signal([1, 0, 0])])
+        await store.recordScan(refKey: "L-empty1", faces: [])
+        await store.recordScan(refKey: "L-empty2", faces: [])
+        let report = await store.qualityReport(minFaces: 1)
+        #expect(report.scannedPhotos == 3)
+        #expect(report.photosWithNoFace == 2)
+    }
+
     @Test("品質レポート: 統合で同一写真違反が生まれたら検出する")
     func qualityReportDetectsSamePhotoViolation() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

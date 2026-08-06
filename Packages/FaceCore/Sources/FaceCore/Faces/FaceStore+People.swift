@@ -6,6 +6,24 @@ import SwiftData
 
 /// `FaceStore` の 取り出し・2 階層束ね・名前解決 関連（extension 分割・ADR）。
 extension FaceStore {
+    // MARK: - 「人物」の判定（UI とレビューで必ず同じ土俵を使う）
+
+    /// ピープルに出る人物とみなすクラスタ（**実際の写真枚数**が `minFaces` 以上）。
+    ///
+    /// ⚠️ `PersonCluster.count` は**重心に寄与した顔数**で、第2パス（ADR-66・membership のみ）で
+    /// 付いた顔を含まない。実機では全顔の約 48% が品質フロア未満＝第2パス扱いのため、
+    /// 「UI には人物として出るが `count` は 1〜2」というクラスタが大多数になる。
+    /// レビュー側が `count` で母数を絞っていたため、**UI の 370 人のうち大半が統合候補に
+    /// 上がらない**という実障害になっていた（ADR-68 追補3）。判定はここに一本化する。
+    func peopleEligibleClusters(minFaces: Int) -> [PersonCluster] {
+        var photosPerCluster: [Int: Set<String>] = [:]
+        for f in (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        where f.clusterID >= 0 {
+            photosPerCluster[f.clusterID, default: []].insert(f.refKey)
+        }
+        return allClusters().filter { (photosPerCluster[$0.clusterID]?.count ?? 0) >= minFaces }
+    }
+
     // MARK: - 取り出し（表示用）
 
     /// 「人物」とみなすクラスタ（メンバー数 `minFaces` 以上）を多い順に返す。
