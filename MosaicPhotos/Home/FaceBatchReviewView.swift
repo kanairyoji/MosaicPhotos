@@ -21,6 +21,11 @@ struct FaceBatchReviewView: View {
     @State private var selected: Set<Int> = []
     @State private var mergedTotal = 0
     @State private var isApplying = false
+    /// 「次の人へ」で送った基準。これを除いて次の人物を選ぶ（ADR-68 追補4）。
+    /// 基準が固定されたままだと、真の一致を出し切った後は候補が全部別人になり機能が死ぬ。
+    @State private var visitedAnchors: Set<Int> = []
+    /// 基準ごとの「出したが選ばれなかった候補」。除外しないと同じ顔が延々と出続ける。
+    @State private var shownCandidates: [Int: Set<Int>] = [:]
 
     private static let columns = [GridItem(.adaptive(minimum: 84), spacing: 12)]
 
@@ -128,8 +133,14 @@ struct FaceBatchReviewView: View {
 
     private func footer(_ item: FaceBatchReviewItem) -> some View {
         VStack(spacing: 8) {
-            Button(allSelected ? L("Clear all") : L("Select all")) {
-                selected = allSelected ? [] : Set(item.candidates.map(\.clusterID))
+            HStack {
+                Button(allSelected ? L("Clear all") : L("Select all")) {
+                    selected = allSelected ? [] : Set(item.candidates.map(\.clusterID))
+                }
+                Spacer()
+                // 候補が全部別人のときの出口。この基準を終えて別の人物へ移る。
+                Button(L("Next person")) { Task { await skipAnchor(item) } }
+                    .disabled(isApplying)
             }
             .font(.subheadline)
             Button {
@@ -160,9 +171,16 @@ struct FaceBatchReviewView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
-            Button(L("Find more")) { Task { await load(anchor: nil) } }
-                .buttonStyle(.bordered)
-                .padding(.top, 8)
+            Button(L("Find more")) {
+                Task {
+                    // 出し切ったら最初から見直せるようにする（統合で顔ぶれが変わっているため）。
+                    visitedAnchors = []
+                    shownCandidates = [:]
+                    await load(anchor: nil)
+                }
+            }
+            .buttonStyle(.bordered)
+            .padding(.top, 8)
         }
     }
 
@@ -171,7 +189,10 @@ struct FaceBatchReviewView: View {
     private func load(anchor: Int?) async {
         isLoading = true
         selected = []
-        item = await peopleEngine.batchReviewItem(anchorClusterID: anchor)
+        item = await peopleEngine.batchReviewItem(
+            anchorClusterID: anchor,
+            excludingAnchors: visitedAnchors,
+            excludingCandidates: anchor.flatMap { shownCandidates[$0] } ?? [])
         isLoading = false
     }
 
@@ -183,10 +204,25 @@ struct FaceBatchReviewView: View {
         // 負例（別人記録）はここでは作らない。未選択は「別人と答えた」ではなく
         // 「選ばなかった」だけなので、修正ジャーナルに混ぜると学習が濁る。
         // 明示的な「いいえ」は 1 対 1 のレビュー（FaceReviewView）で受ける。
+        // ただし**同じ候補を出し続けない**よう、出題済みとして覚えておく。
+        noteShown(item, keeping: selected)
         await peopleEngine.answerBatch(anchorClusterID: item.anchorClusterID,
                                        same: same, notSame: [])
         mergedTotal += same.count
         isApplying = false
         await load(anchor: item.anchorClusterID)
+    }
+
+    /// この基準は終わりにして別の人物へ移る（候補が全部別人のときの出口）。
+    private func skipAnchor(_ item: FaceBatchReviewItem) async {
+        noteShown(item, keeping: [])
+        visitedAnchors.insert(item.anchorClusterID)
+        await load(anchor: nil)
+    }
+
+    /// 出題済みの候補を記録する（統合した分は消えるので覚えなくてよい）。
+    private func noteShown(_ item: FaceBatchReviewItem, keeping merged: Set<Int>) {
+        let ids = item.candidates.map(\.clusterID).filter { !merged.contains($0) }
+        shownCandidates[item.anchorClusterID, default: []].formUnion(ids)
     }
 }

@@ -3454,6 +3454,16 @@
           }
         }
       }
+    },
+    "Next person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の人へ"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

@@ -424,9 +424,13 @@ public final class PeopleEngine {
 
     /// 「この人と同じ人をまとめて選ぶ」1 画面ぶんを取得する。
     /// `anchorClusterID` を渡すと、その人物を基準にする（人物一覧から特定の人を畳むとき）。
-    public func batchReviewItem(anchorClusterID: Int? = nil, limit: Int = 24) async
-        -> FaceBatchReviewItem? {
+    public func batchReviewItem(anchorClusterID: Int? = nil,
+                                excludingAnchors: Set<Int> = [],
+                                excludingCandidates: Set<Int> = [],
+                                limit: Int = 24) async -> FaceBatchReviewItem? {
         await store.batchReviewItem(minFaces: minFaces, anchorClusterID: anchorClusterID,
+                                    excludingAnchors: excludingAnchors,
+                                    excludingCandidates: excludingCandidates,
                                     limit: limit)
     }
 

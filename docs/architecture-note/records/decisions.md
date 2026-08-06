@@ -331,6 +331,15 @@
     保存済みデータから出せる `photosWithNoFace` を品質レポートに追加。
   - 教訓: **同じ言葉（「人物」）が層ごとに違う定義になっていないか**を疑う。UI・レビュー・
     診断で 3 通りの「人物」があり、数字が噛み合わない原因を 2 回続けて見落とした。
+- 追補4（2026-08-06・4 回目の実機検証後）: 追補3 で統合が実際に動き出した
+  （`mergeCandidates` 55→37,457・人物 370→290・最大クラスタ 95→299）。実運用で 2 点が判明:
+  - **一括レビューの基準が固定される**: 統合のたびに同じ基準で次を探すため、その人の一致を
+    出し切ると**候補が全部別人になり機能が死ぬ**。未選択候補も覚えないので同じ顔が出続ける。
+    → 「次の人へ」（基準を送る）＋出題済み候補の除外を追加。
+  - **一括統合で同一写真違反が発生**（実測 2 件）: 候補の共起判定が「3 回以上で別人」
+    （統合サジェストの基準）だったため、共起 1〜2 回の対を統合できてしまった。
+    → **候補は共起が 1 回でもあれば出さない**。`coOccurrenceNotSame=3` は「別人として学習する」
+    基準として別に維持する（同じ数字を 2 つの目的に使い回していたのが誤り）。
 - 関連: `FaceStore.peopleEligibleClusters`、`FaceQualityReport.photosWithNoFace`、
   `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
   effectiveThresholdCap/ambiguousPolicy`、`FaceCalibration.clampRange`、

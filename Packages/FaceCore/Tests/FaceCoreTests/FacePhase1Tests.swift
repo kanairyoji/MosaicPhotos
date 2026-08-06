@@ -369,6 +369,40 @@ struct FacePhase1Tests {
         #expect(eligible.first!.count < 3)
     }
 
+    @Test("一括レビュー: 共起する対は候補にしない・基準と候補を除外できる")
+    func batchReviewExclusions() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let a = FaceClustering.normalized([1, 0, 0])
+        let b = FaceClustering.normalized([0.40, 0.917, 0])   // a と cos≈0.40（帯域内だが自動合流はしない）
+        // A: 3 枚。B: 3 枚（別写真）→ 候補になる。
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal(a, quality: 0.9)]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal(b, quality: 0.9)]) }
+        let item = await store.batchReviewItem(minFaces: 3)
+        #expect(item != nil)
+        #expect(item?.candidates.contains { $0.clusterID != item?.anchorClusterID } == true)
+
+        // 候補を除外すると出てこない（同じ顔を出し続けない）。
+        if let item {
+            let excluded = await store.batchReviewItem(
+                minFaces: 3, anchorClusterID: item.anchorClusterID,
+                excludingCandidates: Set(item.candidates.map(\.clusterID)))
+            #expect(excluded == nil)
+            // 基準を除外すると別の人物が基準になる（「次の人へ」）。
+            let next = await store.batchReviewItem(
+                minFaces: 3, excludingAnchors: [item.anchorClusterID])
+            #expect(next?.anchorClusterID != item.anchorClusterID)
+        }
+
+        // 共起（同じ写真に一緒に写る）が 1 回でもあれば候補にしない＝統合しても
+        // 「1 枚に同じ人物が 2 回」にならない（ADR-68 追補4）。
+        let store2 = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 {
+            await store2.recordScan(refKey: "L-both\(i)",
+                                    faces: [signal(a, quality: 0.9), signal(b, quality: 0.9)])
+        }
+        #expect(await store2.batchReviewItem(minFaces: 3) == nil)
+    }
+
     @Test("品質レポート: 顔が見つからなかった写真を数える")
     func qualityReportCountsPhotosWithNoFace() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

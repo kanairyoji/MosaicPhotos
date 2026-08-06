@@ -214,7 +214,13 @@ extension FaceStore {
     /// クラスタ。候補は A1 と同じ帯（重心類似 ≥ しきい値−0.10）から、別人記録・共起 notSame を
     /// 除いて類似度降順に採る。1 回答で `limit` 件まで畳めるので、A1（1 回答＝1 統合）に対して
     /// 桁で効率が上がる。
+    /// - Parameters:
+    ///   - excludingAnchors: 基準として使い終えた人物（「次の人へ」で送った分）。
+    ///   - excludingCandidates: この基準について**出したが選ばれなかった**候補。
+    ///     除外しないと同じ顔が延々と出続け、「候補が全部別人になる」＝機能が死ぬ（実フィードバック）。
     func batchReviewItem(minFaces: Int, anchorClusterID: Int? = nil,
+                         excludingAnchors: Set<Int> = [],
+                         excludingCandidates: Set<Int> = [],
                          limit: Int = 24) -> FaceBatchReviewItem? {
         let thr = calibratedThreshold()
         // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
@@ -238,11 +244,15 @@ extension FaceStore {
             }
         }
 
-        // アンカー: 指定 → 命名済みで最大 → 最大。
+        // アンカー: 指定 → （使い終えた人物を除いて）命名済みで最大 → 最大。
+        // 「次の人へ」で送った人物を除くことで、**基準を切り替えながら**畳めるようにする
+        // （同じ基準に固定されると、真の一致を出し切った後は候補が全部別人になり機能が死ぬ）。
         let anchor: PersonCluster? = {
             if let id = anchorClusterID { return clusters.first { $0.clusterID == id } }
-            let named = clusters.filter { $0.name?.isEmpty == false }
-            return (named.isEmpty ? clusters : named).max { $0.count < $1.count }
+            let pool = clusters.filter { !excludingAnchors.contains($0.clusterID) }
+            guard !pool.isEmpty else { return nil }
+            let named = pool.filter { $0.name?.isEmpty == false }
+            return (named.isEmpty ? pool : named).max { $0.count < $1.count }
         }()
         guard let anchor, let anchorCentroid = centroid[anchor.clusterID],
               let anchorFace = cover[anchor.clusterID] else { return nil }
@@ -269,12 +279,15 @@ extension FaceStore {
         let anchorPhotos = photoSets[anchor.clusterID] ?? []
         var candidates: [FaceBatchReviewItem.Candidate] = []
         for c in clusters where c.clusterID != anchor.clusterID {
+            guard !excludingCandidates.contains(c.clusterID) else { continue }   // 出題済み
             guard let cen = centroid[c.clusterID], let face = cover[c.clusterID] else { continue }
             let sim = FaceClustering.dot(anchorCentroid, cen)
             guard sim >= Self.mergeBandFloor(threshold: thr), !isMarkedNotSame(anchorCentroid, cen) else { continue }
-            // 共起（同じ写真に何度も一緒に写る）＝別人。兄弟の一括誤統合を防ぐ最後の砦。
-            guard anchorPhotos.intersection(photoSets[c.clusterID] ?? []).count < Self.coOccurrenceNotSame
-            else { continue }
+            // ⚠️ 共起は **1 回でも**あれば候補にしない（統合サジェストの 3 回とは別基準）。
+            // 統合すると「1 枚の写真に同じ人物が 2 回」という不変条件が破れるため。
+            // 実機で一括統合により違反が 2 件発生したのを受けて厳格化（ADR-68 追補4）。
+            // 同一人物は 1 枚に 1 回しか写れないので、共起があれば別人か重複検出のどちらか。
+            guard anchorPhotos.isDisjoint(with: photoSets[c.clusterID] ?? []) else { continue }
             candidates.append(.init(clusterID: c.clusterID, face: face,
                                     count: c.count, similarity: sim))
         }
