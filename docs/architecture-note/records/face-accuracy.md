@@ -32,7 +32,7 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | 割り当て規則の版 | 3（上げると夜間に全体再クラスタ） | `PeopleEngine.clusterRuleVersion` |
 | 統合候補の下限 | 0.35（レビュー/一括レビュー/候補数の共通帯域・ADR-68 追補2） | `FaceStore.mergeCandidateFloor` |
 | 「人物」の判定 | 実際の写真枚数 ≥ 3（UI とレビューで共通・ADR-68 追補3） | `FaceStore.peopleEligibleClusters` |
-| ホームの列に出す最小枚数 | 5（断片は「すべて表示」へ・ADR-68 追補5） | `PeopleEngine.minFacesForCarousel` |
+| ホームの列に出す最小枚数 | **6**（5 枚以内は「すべて表示」へ・ADR-68 追補5） | `PeopleEngine.minFacesForCarousel` |
 | しきい値校正の可動域 | 0.35〜**0.55**（ADR-68 追補・旧 0.70 は分裂を悪化させた） | `FaceCalibration.clampRange` |
 | 実効しきい値の頭打ち | 有効（少人数のみ・サイズ加算を積み上げない） | `FaceStore.capEffectiveThresholdWhenFewPeople` |
 | 校正の最小サンプル数 | 正負各 8（**確度の重み合計**で判定・ADR-68 追補6） | `FaceCalibration.minSamples` |
@@ -485,7 +485,7 @@ mergeCandidates=630 samePhotoViolations=9 corrections=611
 - 候補側（レビュー／一括レビュー／`mergeCandidates`）でも別名どうしを除外。
 - 既存の違反を直す `repairSamePhotoViolations()`（最良の 1 顔だけ残し、外した顔は負例として記録）。
   Developer Options から実行できる。
-- **ホームのピープル列は 5 枚以上の人だけ**（`minFacesForCarousel`）。数枚の断片はトップに並べる
+- **ホームのピープル列は 6 枚以上の人だけ**（`minFacesForCarousel`）。数枚の断片はトップに並べる
   価値が薄く列を埋めるため、「すべて表示」側へ回す（レビュー母数の 3 枚は据え置き＝統合対象には残す）。
 
 ### 2026-08-06 — 回答の確度を学習に反映（ADR-68 追補6）

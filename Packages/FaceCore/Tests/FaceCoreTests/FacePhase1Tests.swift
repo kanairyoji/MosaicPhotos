@@ -521,6 +521,22 @@ struct FacePhase1Tests {
         #expect(await store.correctionCount() > before)   // 再発防止の負例
     }
 
+    @Test("ホームの列は 6 枚以上の人だけ（5 枚以内は「すべて表示」へ回す）")
+    func carouselThreshold() {
+        // 境界: 5 枚は出さない・6 枚は出す（「5 枚以内は重要人物ではない」＝実フィードバック）。
+        #expect(PeopleEngine.minFacesForCarousel == 6)
+        func person(_ id: Int, count: Int) -> PersonInfo {
+            PersonInfo(clusterID: id, name: nil, count: count, coverRefKey: nil,
+                       coverBoundingBox: nil, memberRefKeys: [])
+        }
+        let all = [person(1, count: 20), person(2, count: 6),
+                   person(3, count: 5), person(4, count: 3)]
+        let prominent = all.filter { $0.count >= PeopleEngine.minFacesForCarousel }
+        #expect(prominent.map(\.clusterID) == [1, 2])
+        // 残りは「すべて表示」に回る（レビュー母数の 3 枚以上は維持）。
+        #expect(all.count - prominent.count == 2)
+    }
+
     @Test("品質レポート: 顔が見つからなかった写真を数える")
     func qualityReportCountsPhotosWithNoFace() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

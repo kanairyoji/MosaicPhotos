@@ -30,9 +30,10 @@ public final class PeopleEngine {
     /// 少ない断片も統合の対象にはしたいので、ここは低めに保つ。
     private let minFaces = 3
     /// **ホームのピープル列に出す**最小枚数（ADR-68 追補5）。
+    /// 「5 枚以内の人は重要人物ではない」＝ **6 枚以上**をトップに出す（実フィードバック）。
     /// 数枚しか写っていない人はトップに並べる価値が薄く、成長期の断片も混ざって列が埋まる。
-    /// 「すべて表示」では `minFaces` の全員を出すので、埋もれて見えなくなることはない。
-    public static let minFacesForCarousel = 5
+    /// 「すべて表示」では `minFaces`（3 枚以上）の全員を出すので、埋もれて見えなくなることはない。
+    public static let minFacesForCarousel = 6
 
     /// ホームのピープル列に出す人物（枚数の多い順）。
     public var prominentPeople: [PersonInfo] {
