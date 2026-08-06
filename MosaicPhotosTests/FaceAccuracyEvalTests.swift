@@ -182,6 +182,9 @@ final class FaceAccuracyEvalTests: XCTestCase {
         // 大規模データセット（LFW 等）は貪欲クラスタリングが O(顔数×クラスタ数×次元) で
         // 重い（デバッグビルド）ため、確認に必要な構成へグリッドを縮小する。
         let reducedGrid = samples.count > 2000
+        // 決着済みバリアント（ADR-56〜60 の掃引）は FACE_EVAL_LEGACY=1 のときだけ回す。
+        // ResNet100 級のモデルで全バリアントを回すと 1 回のテスト実行に収まらない（実測タイムアウト）。
+        let legacy = ProcessInfo.processInfo.environment["FACE_EVAL_LEGACY"] == "1"
         print("FACEEVAL[\(name)]: === ベースライン（重心のみ） vs P2 自動プロトタイプ（K=5） ===")
         let baseThresholds: [Float] = reducedGrid ? [0.55, 0.60] : [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
         for threshold in baseThresholds {
@@ -195,6 +198,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
             }
         }
 
+        if legacy {
         print("FACEEVAL[\(name)]: === 系統1 バリアント（ADR-57・推移性なしで再現率回復を狙う） ===")
         // A) マージンゲート付き貪欲。
         for thr in [Float(0.55), 0.60] {
@@ -381,6 +385,26 @@ final class FaceAccuracyEvalTests: XCTestCase {
         if samples.contains(where: { $0.age != nil }) {
             evaluatePersonGrouping(samples: samples, name: name, temporal: true)   // 時系列分割（成長差を跨ぐ）
         }
+        }   // legacy
+
+        // === I モデル換装スイープ（ADR-70）: 類似度スケールが変わったモデル用に
+        // 本番相当の構成（第2パス・サイズ免除・実効上限つき）を低いしきい値で掃引する。
+        // 第2パス閾値は thr+0.05（facenet: 0.50→0.55 と同じ相対位置）。
+        print("FACEEVAL[\(name)]: === I 本番相当の低しきい値スイープ（モデル換装用） ===")
+        for thr in [Float(0.30), 0.35, 0.40, 0.45] {
+            for (mLabel, margin, sizeMax) in [("m0.05/s0.10", Float(0.05), Float(0.10)),
+                                              ("m0.04/s0.08", Float(0.04), Float(0.08))] {
+                printRow(String(format: "I thr=%.2f %@", thr, mLabel), score(clusters:
+                    FaceClustering.clusterAll(
+                        faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
+                        assignMargin: margin, sizeAdaptiveMarginMax: sizeMax,
+                        secondPassMembership: true,
+                        rivalAwareMarginGate: false, rivalAwareSizeMargin: true,
+                        rivalAwareSizeMarginMaxPeople: 10, rivalAlikeMargin: 0.20,
+                        effectiveThresholdCap: thr, effectiveThresholdCapMaxPeople: 10,
+                        secondPassThreshold: thr + 0.05)))
+            }
+        }
 
         // === H クラスタ事後監査（ADR-69）: 誤統合を後から見つけられるか ===
         evaluateClusterAudit(samples: samples, name: name)
@@ -527,6 +551,15 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     rivalAwareSizeMargin: true, rivalAwareSizeMarginMaxPeople: 10,
                     rivalAlikeMargin: 0.20, effectiveThresholdCap: cap,
                 effectiveThresholdCapMaxPeople: 10))
+            }
+            for thr in [Float(0.35), 0.40, 0.45] {
+                report(String(format: "I thr=%.2f（本番相当）", thr), FaceClustering.clusterAll(
+                    faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    rivalAwareMarginGate: false, rivalAwareSizeMargin: true,
+                    rivalAwareSizeMarginMaxPeople: 10, rivalAlikeMargin: 0.20,
+                    effectiveThresholdCap: thr, effectiveThresholdCapMaxPeople: 10,
+                    secondPassThreshold: thr + 0.05))
             }
             for maxPeople in [10, 20, 50] {
                 report(String(format: "B4 サイズ免除(人数<%d)", maxPeople), FaceClustering.clusterAll(

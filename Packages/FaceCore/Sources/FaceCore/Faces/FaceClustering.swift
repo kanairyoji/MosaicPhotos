@@ -414,7 +414,8 @@ public struct FaceClustering {
                                   rivalAwareSizeMarginMaxPeople: Int = 0,
                                   rivalAlikeMargin: Float = 0,
                                   effectiveThresholdCap: Float = 0,
-                                  effectiveThresholdCapMaxPeople: Int = 0) -> [Cluster] {
+                                  effectiveThresholdCapMaxPeople: Int = 0,
+                                  secondPassThreshold: Float = FaceClustering.secondPassThreshold) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
         clustering.assignMargin = assignMargin
@@ -435,7 +436,8 @@ public struct FaceClustering {
         // 第2パス（本番 rebuildClusters と同じ・ADR-66）: 未割当を重心を汚さず最寄りへ。
         if secondPassMembership {
             for f in unassigned {
-                _ = clustering.assignMembershipOnly(faceID: f.faceID, embedding: f.embedding)
+                _ = clustering.assignMembershipOnly(faceID: f.faceID, embedding: f.embedding,
+                                                    threshold: secondPassThreshold)
             }
         }
         return clustering.clusters
