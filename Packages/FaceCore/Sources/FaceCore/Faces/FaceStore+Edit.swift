@@ -150,6 +150,55 @@ extension FaceStore {
         return a != b
     }
 
+    // MARK: - クラスタの分割（ADR-69）
+
+    /// クラスタから指定の顔を抜き出して**新しい人物**にする（事後監査の「別人だった」回答）。
+    /// 抜いた側は負例として記録し、再クラスタで元に戻らないようにする。
+    /// 戻り値: 新しいクラスタ ID（分割できなければ nil）。
+    @discardableResult
+    func splitCluster(clusterID: Int, faceIDs: [String]) -> Int? {
+        let moving = faces(inCluster: clusterID).filter { faceIDs.contains($0.faceID) }
+        guard !moving.isEmpty, let src = cluster(clusterID),
+              let srcSum = ClipMath.decodeHalf(src.sum) else { return nil }
+        let newID = nextClusterID()
+        for f in moving {
+            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
+            // 「この顔はこのクラスタではない」＝負例（1 対 1 の確認なので確度は高い）。
+            let sim = FaceClustering.dot(FaceClustering.normalized(vec),
+                                         FaceClustering.normalized(srcSum))
+            recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
+                             wrongEmbedding: ClipMath.encodeHalf(srcSum), similarity: sim,
+                             confidence: .high)
+            removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
+                              faceID: f.faceID)
+            addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID)
+            f.clusterID = newID
+        }
+        try? modelContext.save()
+        clusteringCache = nil
+        Self.log.info("faces: split cluster \(clusterID) → \(newID) (faces=\(moving.count))")
+        return newID
+    }
+
+    /// 事後監査に「同じ人です」と答えられたら記録し、二度と尋ねない（ADR-69）。
+    /// 正例としてしきい値校正にも効く。
+    func confirmSameGroup(clusterID: Int, groupBFaceIDs: [String]) {
+        let members = faces(inCluster: clusterID)
+        let bSet = Set(groupBFaceIDs)
+        let vecs = members.compactMap { f -> (v: [Float], isB: Bool)? in
+            guard let v = ClipMath.decodeHalf(f.embedding) else { return nil }
+            return (FaceClustering.normalized(v), bSet.contains(f.faceID))
+        }
+        let a = FaceClusterAudit.centroid(vecs.filter { !$0.isB }.map(\.v))
+        let b = FaceClusterAudit.centroid(vecs.filter { $0.isB }.map(\.v))
+        guard !a.isEmpty, !b.isEmpty else { return }
+        let sim = FaceClustering.dot(a, b)
+        recordCorrection(kind: "sameGroup", faceEmbedding: ClipMath.encodeHalf(a),
+                         wrongEmbedding: ClipMath.encodeHalf(b), similarity: sim,
+                         confidence: .high)
+        try? modelContext.save()
+    }
+
     // MARK: - 同一写真違反の修復（ADR-68 追補5）
 
     /// 「1 枚の写真に同じ人物が 2 回」を解消する。誤統合の痕跡なので、

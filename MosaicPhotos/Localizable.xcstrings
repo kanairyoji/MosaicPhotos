@@ -3474,6 +3474,16 @@
           }
         }
       }
+    },
+    "Are both of these “%@”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どちらも「%@」さんですか？"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

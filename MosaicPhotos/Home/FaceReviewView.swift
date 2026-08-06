@@ -92,6 +92,21 @@ struct FaceReviewView: View {
                 Text(L("Are these the same person?"))
                     .font(.title3.weight(.semibold))
 
+            case .splitCluster(_, let name, let faceA, let faceB, _, _):
+                // 事後監査（ADR-69）: 1 人物の中に 2 つの塊が見つかった。
+                // 見た目は samePerson と同じ「2 枚を並べて尋ねる」カードにする。
+                HStack(spacing: 24) {
+                    personColumn(face: faceA, name: "")
+                    personColumn(face: faceB, name: "")
+                }
+                if let name {
+                    Text(L("Are both of these “\(name)”?"))
+                        .font(.title3.weight(.semibold))
+                } else {
+                    Text(L("Are these the same person?"))
+                        .font(.title3.weight(.semibold))
+                }
+
             case .isThisPerson(let face, _, let name, let coverFace, _):
                 if let name {
                     // 命名済み: 名前で尋ねられる（誰のことか分かる）。
@@ -143,6 +158,9 @@ struct FaceReviewView: View {
         case .samePerson(_, _, let aFace, _, _, let bFace, _):
             return [(aFace.refKey, aFace.boundingBox, Self.columnPixel),
                     (bFace.refKey, bFace.boundingBox, Self.columnPixel)]
+        case .splitCluster(_, _, let faceA, let faceB, _, _):
+            return [(faceA.refKey, faceA.boundingBox, Self.columnPixel),
+                    (faceB.refKey, faceB.boundingBox, Self.columnPixel)]
         case .isThisPerson(let face, _, let name, let coverFace, _):
             if name != nil {
                 return [(face.refKey, face.boundingBox, Self.singlePixel)]
@@ -228,6 +246,9 @@ struct FaceReviewView: View {
                 await peopleEngine.answerSamePerson(aClusterID: a, bClusterID: b, same: yes)
             case .isThisPerson(let face, _, _, _, _):
                 await peopleEngine.answerIsThisPerson(faceID: face.faceID, yes: yes)
+            case .splitCluster(let clusterID, _, _, _, let groupB, _):
+                await peopleEngine.answerSplitCluster(clusterID: clusterID,
+                                                      groupBFaceIDs: groupB, same: yes)
             }
         }
         advance()

@@ -479,6 +479,18 @@ public final class PeopleEngine {
         return n
     }
 
+    /// 事後監査「この人物、実は 2 人では？」への回答（A3・ADR-69）。
+    /// いいえ（別人）→ **クラスタを 2 つに分割**し、負例として学習する。
+    /// はい（同じ人）→ 記録して二度と尋ねない（正例としてしきい値校正にも効く）。
+    public func answerSplitCluster(clusterID: Int, groupBFaceIDs: [String], same: Bool) async {
+        if same {
+            await store.confirmSameGroup(clusterID: clusterID, groupBFaceIDs: groupBFaceIDs)
+        } else {
+            await store.splitCluster(clusterID: clusterID, faceIDs: groupBFaceIDs)
+        }
+        await loadPeople()
+    }
+
     /// 「この写真は「◯◯」さんですか？」への回答（A2）。
     /// はい → 確認済み（アンカー＋正例）。いいえ → 分離（負例として学習）。
     public func answerIsThisPerson(faceID: String, yes: Bool) async {

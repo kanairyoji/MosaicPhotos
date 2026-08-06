@@ -107,7 +107,7 @@ actor FaceStore {
             guard let sim = r.similarity else { continue }
             let w = r.confidence ?? 1.0
             switch r.kind {
-            case "merge", "confirm":     positive.append((Float(sim), w))
+            case "merge", "confirm", "sameGroup":  positive.append((Float(sim), w))
             case "reassign", "notSame":  negative.append((Float(sim), w))
             default: break
             }

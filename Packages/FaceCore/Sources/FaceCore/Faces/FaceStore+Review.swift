@@ -62,7 +62,10 @@ extension FaceStore {
             return false
         }
 
-        var items: [FaceReviewItem] = []
+        // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
+        // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。
+        var items: [FaceReviewItem] = auditSplitItems(minFaces: minFaces, limit: 5)
+            .filter { !excluding.contains($0.id) }
 
         // A1: 統合サジェスト（類似度の高い対から）。上限は設けない（帯域 [thr−0.10, 1.0]）:
         // 制約付き再クラスタは命名クラスタを別々の種として保持するため、しきい値**以上**の
@@ -131,6 +134,75 @@ extension FaceStore {
                 items.append(item)
                 perCluster += 1
             }
+        }
+        return items
+    }
+
+    // MARK: - クラスタ事後監査（ADR-69）
+
+    /// 監査の採用設定（データセット計測で決定・face-accuracy.md 2026-08-06）。
+    /// margin 0.25 / separation 0.35: FG-NET 誤検出 8%・検出 67%／LFW 誤検出 0%・検出 99%。
+    /// **検出したものは全件正しく 2 分割できた**（26/26・107/107）。
+    static let auditConfig = FaceClusterAudit.Config(minMembers: 8, minGroupSize: 3,
+                                                     minMargin: 0.25, maxSeparation: 0.35)
+
+    /// 「この人物、実は 2 人では？」を尋ねるカードを作る。
+    /// 統合はユーザー確認を経ているが、**確認した時点では材料が足りない**ことがある
+    /// （兄弟は数枚では区別できない）。写真が増えて分布が見えてきたら機械側から拾い直す。
+    /// ⚠️ **自動分割はしない**（成長データでは誤検出 8% が残るため）。必ずユーザーに尋ねる。
+    func auditSplitItems(minFaces: Int, limit: Int = 10) -> [FaceReviewItem] {
+        // 「同じ人だ」と答え済みの対は二度と尋ねない。
+        let confirmedSame = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
+            predicate: #Predicate { $0.kind == "sameGroup" }))) ?? []).compactMap {
+            row -> ([Float], [Float])? in
+            guard let wrong = row.wrongEmbedding,
+                  let a = ClipMath.decodeHalf(row.faceEmbedding),
+                  let b = ClipMath.decodeHalf(wrong) else { return nil }
+            return (FaceClustering.normalized(a), FaceClustering.normalized(b))
+        }
+        func alreadyAnsweredSame(_ a: [Float], _ b: [Float]) -> Bool {
+            for (ra, rb) in confirmedSame {
+                if (FaceClustering.dot(a, ra) >= 0.9 && FaceClustering.dot(b, rb) >= 0.9)
+                    || (FaceClustering.dot(a, rb) >= 0.9 && FaceClustering.dot(b, ra) >= 0.9) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        var items: [FaceReviewItem] = []
+        // 大きいクラスタから見る（混入の影響が大きい）。
+        let targets = peopleEligibleClusters(minFaces: minFaces)
+            .sorted { $0.count > $1.count }
+        for c in targets {
+            guard items.count < limit else { break }
+            let members = faces(inCluster: c.clusterID)
+            guard members.count >= Self.auditConfig.minMembers else { continue }
+            var vectors: [[Float]] = []
+            var keys: [String] = []
+            var kept: [DetectedFace] = []
+            for f in members {
+                guard let v = ClipMath.decodeHalf(f.embedding) else { continue }
+                vectors.append(v); keys.append(f.refKey); kept.append(f)
+            }
+            guard let s = FaceClusterAudit.auditForSplit(embeddings: vectors, photoKeys: keys,
+                                                         config: Self.auditConfig) else { continue }
+            let centroidA = FaceClusterAudit.centroid(s.groupA.map { FaceClustering.normalized(vectors[$0]) })
+            let centroidB = FaceClusterAudit.centroid(s.groupB.map { FaceClustering.normalized(vectors[$0]) })
+            guard !alreadyAnsweredSame(centroidA, centroidB) else { continue }
+
+            // 各群の代表顔（品質＋笑顔＋大きさ）。
+            guard let fa = Self.bestCoverFace(s.groupA.map { kept[$0] }),
+                  let fb = Self.bestCoverFace(s.groupB.map { kept[$0] }) else { continue }
+            items.append(.splitCluster(
+                clusterID: c.clusterID,
+                name: (c.name?.isEmpty == false) ? c.name : nil,
+                faceA: PersonInfo.Face(faceID: fa.faceID, refKey: fa.refKey,
+                                       boundingBox: CGRect(x: fa.bx, y: fa.by, width: fa.bw, height: fa.bh)),
+                faceB: PersonInfo.Face(faceID: fb.faceID, refKey: fb.refKey,
+                                       boundingBox: CGRect(x: fb.bx, y: fb.by, width: fb.bw, height: fb.bh)),
+                groupBFaceIDs: s.groupB.map { kept[$0].faceID },
+                margin: s.margin))
         }
         return items
     }

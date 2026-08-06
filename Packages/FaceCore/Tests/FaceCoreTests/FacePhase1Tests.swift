@@ -456,6 +456,71 @@ struct FacePhase1Tests {
         #expect(await store.correctionCount() > before)   // 再発防止の負例が入る
     }
 
+    // MARK: - クラスタ事後監査（ADR-69）
+
+    @Test("事後監査: 2 人が混ざったクラスタを検出し、成長の広がりは検出しない")
+    func clusterAuditDetectsMixture() {
+        func spread(_ base: [Float], steps: Int, drift: Float) -> [[Float]] {
+            // 少しずつ変わる「連続した帯」＝成長。
+            (0..<steps).map { i -> [Float] in
+                var v = base
+                v[1] += drift * Float(i)
+                return FaceClustering.normalized(v)
+            }
+        }
+        let cfg = FaceStore.auditConfig
+        // (1) 同一人物の成長: 端から端まで離れていても**連続している**ので分割しない。
+        let growth = spread([1, 0, 0], steps: 12, drift: 0.12)
+        #expect(FaceClusterAudit.auditForSplit(embeddings: growth, config: cfg) == nil)
+
+        // (2) 別人 2 人の混在: 2 つの離れた塊 → 検出する。
+        let personA = spread([1, 0, 0], steps: 6, drift: 0.02)
+        let personB = spread([0, 1, 0], steps: 6, drift: 0.02)
+        let mixed = personA + personB
+        let s = FaceClusterAudit.auditForSplit(embeddings: mixed, config: cfg)
+        #expect(s != nil)
+        // 正しく 2 分割できている（前半と後半が別の群）。
+        if let s {
+            let aIsFirstHalf = s.groupA.allSatisfy { $0 < 6 } || s.groupA.allSatisfy { $0 >= 6 }
+            #expect(aIsFirstHalf)
+            #expect(s.margin >= cfg.minMargin)
+        }
+    }
+
+    @Test("事後監査: 同じ写真に両群の顔があれば分離度が甘くても検出する")
+    func clusterAuditUsesHardEvidence() {
+        // 分離が弱い（＝通常なら見送る）が、同じ写真に両群の顔が居る＝別人の決定的証拠。
+        var vectors: [[Float]] = []
+        for i in 0..<10 {
+            var v: [Float] = [1, 0, 0]
+            v[1] += 0.05 * Float(i)
+            vectors.append(FaceClustering.normalized(v))
+        }
+        let keys = ["P1", "P1"] + (2..<10).map { "P\($0)" }   // 先頭 2 顔が同じ写真
+        let cfg = FaceClusterAudit.Config(minMembers: 8, minGroupSize: 2,
+                                          minMargin: 0.9, maxSeparation: 0.1)  // 通常判定は通らない
+        let s = FaceClusterAudit.auditForSplit(embeddings: vectors, photoKeys: keys, config: cfg)
+        // 決定的証拠があるときだけ提案される（無ければ nil）。
+        let noEvidence = FaceClusterAudit.auditForSplit(embeddings: vectors, config: cfg)
+        #expect(noEvidence == nil)
+        if let s { #expect(s.hasHardEvidence) }
+    }
+
+    @Test("分割: 指定した顔が新しい人物に移り、負例として学習する")
+    func splitClusterMovesFaces() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<4 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        let members = await store.faces(inCluster: 0)
+        #expect(members.count == 4)
+        let moving = members.suffix(2).map(\.faceID)
+        let before = await store.correctionCount()
+        let newID = await store.splitCluster(clusterID: 0, faceIDs: moving)
+        #expect(newID != nil)
+        #expect(await store.faces(inCluster: 0).count == 2)
+        #expect(await store.faces(inCluster: newID!).count == 2)
+        #expect(await store.correctionCount() > before)   // 再発防止の負例
+    }
+
     @Test("品質レポート: 顔が見つからなかった写真を数える")
     func qualityReportCountsPhotosWithNoFace() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

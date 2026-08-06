@@ -382,10 +382,69 @@ final class FaceAccuracyEvalTests: XCTestCase {
             evaluatePersonGrouping(samples: samples, name: name, temporal: true)   // 時系列分割（成長差を跨ぐ）
         }
 
+        // === H クラスタ事後監査（ADR-69）: 誤統合を後から見つけられるか ===
+        evaluateClusterAudit(samples: samples, name: name)
+
         // === F 家族シナリオ（少数 ID × 大量写真・ADR-68） ===
         evaluateFamilyScenario(samples: samples, name: name)
 
         print("FACEEVAL[\(name)]: 完了")
+    }
+
+    // MARK: - H クラスタ事後監査（ADR-69）
+
+    /// 「まとめた後に、実は別人だったと気づけるか」を測る。
+    ///
+    /// - **検出率**: 2 人ぶんの顔を 1 クラスタに混ぜて監査 → 分割を提案できた割合。
+    ///   兄弟の誤統合を後から見つけられるか（本命の用途）。
+    /// - **誤検出率**: 1 人ぶんの顔（FG-NET は成長を跨ぐ）を監査 → 誤って「2 人だ」と言った割合。
+    ///   **成長による広がりを別人と誤認しないか**が肝。ADR-59（外れ値除去）はここで失敗した。
+    private func evaluateClusterAudit(samples: [Sample], name: String) {
+        var byPerson: [String: [Sample]] = [:]
+        for sm in samples { byPerson[sm.person, default: []].append(sm) }
+        let persons = byPerson.filter { $0.value.count >= 8 }.sorted { $0.key < $1.key }
+        guard persons.count >= 4 else {
+            print("FACEEVAL[\(name)]: 監査評価スキップ（対象人物 \(persons.count) 人）")
+            return
+        }
+        print("FACEEVAL[\(name)]: === H クラスタ事後監査（対象 \(persons.count) 人） ===")
+
+        for cfg in [FaceClusterAudit.Config(minMargin: 0.20, maxSeparation: 0.40),
+                    FaceClusterAudit.Config(minMargin: 0.25, maxSeparation: 0.35),
+                    FaceClusterAudit.Config(minMargin: 0.30, maxSeparation: 0.30),
+                    FaceClusterAudit.Config(minMargin: 0.35, maxSeparation: 0.25),
+                    FaceClusterAudit.Config(minMargin: 0.40, maxSeparation: 0.20)] {
+            // (1) 誤検出: 単一人物のクラスタを監査する。
+            var singleFlagged = 0
+            for (_, group) in persons {
+                if FaceClusterAudit.auditForSplit(embeddings: group.map(\.embedding),
+                                                  photoKeys: group.map(\.file),
+                                                  config: cfg) != nil { singleFlagged += 1 }
+            }
+            // (2) 検出率: 2 人を混ぜたクラスタを監査する（隣接ペアで代表）。
+            var mixed = 0, mixedDetected = 0, correctlySplit = 0
+            for i in stride(from: 0, to: persons.count - 1, by: 2) {
+                let merged = persons[i].value + persons[i + 1].value
+                mixed += 1
+                guard let s = FaceClusterAudit.auditForSplit(embeddings: merged.map(\.embedding),
+                                                             photoKeys: merged.map(\.file),
+                                                             config: cfg) else { continue }
+                mixedDetected += 1
+                func major(_ idx: [Int]) -> String {
+                    var counts: [String: Int] = [:]
+                    for i in idx { counts[merged[i].person, default: 0] += 1 }
+                    return counts.max { $0.value < $1.value }?.key ?? ""
+                }
+                if major(s.groupA) != major(s.groupB) { correctlySplit += 1 }
+            }
+            print(String(format: "FACEEVAL[%@]:  audit margin=%.2f sep=%.2f — 誤検出 %d/%d（%.0f%%）| 検出 %d/%d（%.0f%%）| 正しく2分割 %d",
+                         name, cfg.minMargin, cfg.maxSeparation,
+                         singleFlagged, persons.count,
+                         Double(singleFlagged) / Double(persons.count) * 100,
+                         mixedDetected, mixed,
+                         mixed > 0 ? Double(mixedDetected) / Double(mixed) * 100 : 0,
+                         correctlySplit))
+        }
     }
 
     // MARK: - F 家族シナリオ（少数 ID × 大量写真・ADR-68）

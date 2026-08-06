@@ -18,10 +18,18 @@ public enum FaceReviewItem: Sendable, Identifiable, Equatable {
     case isThisPerson(face: PersonInfo.Face, clusterID: Int, name: String?,
                       coverFace: PersonInfo.Face, similarity: Float)
 
+    /// **1 人物の中に 2 つの塊がある**（A3・ADR-69）。統合した後に写真が増えて、
+    /// 「実は兄弟が混ざっていた」と分かるケースを拾う事後監査。
+    /// はい（同じ人）→ 以後この対は尋ねない。いいえ（別人）→ **クラスタを 2 つに分割**。
+    case splitCluster(clusterID: Int, name: String?,
+                      faceA: PersonInfo.Face, faceB: PersonInfo.Face,
+                      groupBFaceIDs: [String], margin: Float)
+
     public var id: String {
         switch self {
         case .samePerson(let a, _, _, let b, _, _, _): return "same|\(a)|\(b)"
         case .isThisPerson(let face, let c, _, _, _):   return "confirm|\(face.faceID)|\(c)"
+        case .splitCluster(let c, _, let a, let b, _, _): return "split|\(c)|\(a.faceID)|\(b.faceID)"
         }
     }
 }
