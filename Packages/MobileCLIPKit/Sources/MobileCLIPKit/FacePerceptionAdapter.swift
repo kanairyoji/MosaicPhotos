@@ -109,6 +109,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// パイプライン版（face_config.json が宣言・無ければ facenet 世代の 4）。
     public var pipelineVersion: Int { FaceModelConfig.bundled?.pipelineVersion ?? 4 }
 
+    /// 類似度スケール依存の定数一式（face_config.json の tuning が宣言・ADR-70）。
+    public var tuning: FaceTuning { FaceTuning.named(FaceModelConfig.bundled?.tuning) }
+
     /// 戻り値 `.raw` は検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
     /// `.error` は Vision が使えず CIDetector にフォールバックした場合のメッセージ（切り分け用）。
     /// face-info-expansion: 顔向き（yaw/roll）・目閉じ・笑顔を追加取得し、

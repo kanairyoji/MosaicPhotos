@@ -101,10 +101,14 @@ public protocol FacePerceptionProvider: Sendable {
     /// 定数でなく設定駆動にするのは、**モデルを再生成せずにアプリだけ更新した**場合に
     /// 誤って旧モデルのまま全再スキャンが走るのを防ぐため（版はモデルと一緒に届く）。
     var pipelineVersion: Int { get }
+    /// 類似度スケール依存の定数一式（ADR-70）。同梱モデルの宣言（face_config.json の tuning）。
+    var tuning: FaceTuning { get }
     func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]]
 }
 
 public extension FacePerceptionProvider {
     /// 既定は v4（facenet 世代・ADR-54 まで）。
     var pipelineVersion: Int { 4 }
+    /// 既定は facenet プロファイル（後方互換）。
+    var tuning: FaceTuning { .facenet }
 }

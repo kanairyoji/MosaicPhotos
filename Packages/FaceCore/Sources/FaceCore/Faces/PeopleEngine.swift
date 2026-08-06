@@ -72,6 +72,7 @@ public final class PeopleEngine {
     /// 永続済みのクラスタからピープル一覧を読み込む。
     /// 代表写真はユーザー選択（保存済み）→ お気に入り写真 → 認識した写真の先頭、の順で決まる。
     public func loadPeople() async {
+        await store.apply(tuning: tuning)   // 冪等（変更が無ければ何もしない・ADR-70）
         let favorites = await favoriteRefKeysProvider?() ?? []
         people = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites)
         isLoaded = true
@@ -107,6 +108,7 @@ public final class PeopleEngine {
             guard let self else { return }
             self.isScanning = true
             BackgroundActivityMonitor.shared.isScanningFaces = true
+            await self.store.apply(tuning: self.tuning)   // スキャン前に必ず適用（ADR-70）
             // 版上げ（埋め込みパイプライン変更＝ADR-51）なら全再スキャンへ移行する
             //（命名は写真の重なりで持ち越し・修正ジャーナルは残す）。
             await self.migrateScanVersionIfNeeded()
@@ -155,6 +157,9 @@ public final class PeopleEngine {
     /// 実効パイプライン版。**同梱モデル（provider）が宣言**した版を優先する（ADR-70）。
     /// モデルを差し替えたら face_config.json の pipelineVersion が上がり、全再スキャンが走る。
     public var effectiveScanVersion: Int { faceProvider?.pipelineVersion ?? Self.faceScanVersion }
+
+    /// 類似度スケール依存の定数一式（ADR-70・provider＝同梱モデルが宣言）。
+    var tuning: FaceTuning { faceProvider?.tuning ?? .facenet }
 
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
     /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
@@ -535,7 +540,7 @@ public final class PeopleEngine {
         let stale = lastDate.map { Date().timeIntervalSince($0) > 30 * 86_400 } ?? (scanned > 0)
         // 既定しきい値の変更（ADR-56 の 0.45→0.60 等）も再クラスタ対象（版上げ不要の調整を反映）。
         let thresholdKey = "faceRebuildBaseThreshold"
-        let thresholdChanged = Float(defaults.double(forKey: thresholdKey)) != FaceStore.clusterThreshold
+        let thresholdChanged = Float(defaults.double(forKey: thresholdKey)) != tuning.clusterThreshold
         // **割り当て規則**の変更も再クラスタ対象（ADR-68）。しきい値は同じでもゲートの規則が
         // 変われば結果は変わるので、規則に版を振って発火させる。版を上げれば既存ユーザーの
         // 分裂したクラスタが次の夜間処理で畳み直される（再スキャンは不要＝埋め込みは再利用）。
@@ -546,7 +551,7 @@ public final class PeopleEngine {
         defaults.set(current, forKey: markerKey)
         defaults.set(scanned, forKey: scanMarkerKey)
         defaults.set(Date(), forKey: dateMarkerKey)
-        defaults.set(Double(FaceStore.clusterThreshold), forKey: thresholdKey)
+        defaults.set(Double(tuning.clusterThreshold), forKey: thresholdKey)
         defaults.set(Self.clusterRuleVersion, forKey: ruleKey)
         Diagnostics.mark("faces: rebuild done — clusters=\(result.clusters) moved=\(result.moved) "
                          + "(corrections \(lastRebuilt)→\(current), scans \(lastScanned)→\(scanned), stale=\(stale))")

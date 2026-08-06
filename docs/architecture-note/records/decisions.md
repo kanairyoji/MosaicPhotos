@@ -241,6 +241,35 @@
     非連続は従来経路へフォールバック）、`CoreMLModelHandle` の `.keys.first` 非決定性（名前ソート＋
     複数入出力なら診断ログ）、バッチ結果の範囲外アクセス（`min(out.count, indexMap.count)`）。
 
+## ADR-70 顔モデル換装: facenet → AuraFace-v1（5点整列・チューニングプロファイル）
+- 状態: 採用
+- 文脈: 識別の主弱点は年齢不変性（FG-NET TAR@FAR1% 48.1% vs LFW 98.6%）で、ADR-56〜69 で
+  クラスタリング側は絞り切った＝モデルが天井。P5（ADR-56）は「ArcFace 級で許諾的ライセンスの
+  学習済み重みは存在しない」として換装を保留していたが、**AuraFace-v1**（Apache 2.0・
+  **学習データも商用可**・ArcFace 系 ResNet100・AGEDB 96.10）の公開で前提が変わった。
+- 決定:
+  - **換装**: `scripts/build_auraface.sh`（HF から ONNX → onnx2torch → Core ML fp16・
+    onnxruntime との照合検証つき）。ファイル名は FaceEmbedder.mlpackage 据え置き。45MB→125MB。
+  - **5 点整列**: ArcFace 系は目2＋鼻＋口角2 を 112×112 テンプレートへ相似変換した入力で
+    学習されている。相似変換は複素数回帰の閉形式（最小二乗・決定的・SVD 不要）で実装し、
+    退化・過大回転は従来の両目整列へフォールバック。
+  - **チューニングプロファイル（FaceTuning）**: 計測で、しきい値・第2パス・統合候補帯域・監査・
+    校正可動域の**全定数がモデルの類似度分布に張り付いている**ことが判明（AuraFace は同一人物
+    平均が 0.550→0.434 と約 0.1 低く、facenet 定数のままだと F1 0.557 と*悪化して見えた*）。
+    散らばった static を FaceTuning に集約し、**同梱モデルの宣言**（face_config.json の
+    tuning/alignment/pipelineVersion）で選ぶ。モデルと定数・整列・版数がずれる事故を構造的に防ぐ。
+  - **v5 プロファイル**（掃引で決定）: thr 0.35・margin 0.04・sizeMax 0.08・第2パス 0.40・
+    候補下限 0.25・校正 0.25〜0.40・負例同一 0.45・監査 0.20/0.40。
+- 結果: FG-NET TAR@FAR1% 48.1→**62.0%**・クラスタ F1 0.664→**0.790**・分裂 3.7→**2.8**。
+  LFW も退行なしどころか改善（TAR@FAR0.1% 94.0→97.3%・家族シナリオ F1 **1.000**・分裂 1.0）。
+  数値は `records/face-accuracy.md`（2026-08-06）。移行は pipelineVersion 5 の全再スキャン
+  （命名持ち越し・修正ジャーナル保持）。トレードオフ: モデル +80MB・推論は R100 で重め
+  （夜間処理なので許容・実機 ANE で要確認）。facenet へ戻すには build_facenet.sh（プロファイルも
+  自動で戻る）。
+- 関連: `FaceTuning`・`FaceAlignment.arcFaceTransform/similarityTransform`・`FaceModelConfig`・
+  `FacePerceptionProvider.pipelineVersion/tuning`・`scripts/build_auraface.sh`／`convert_auraface.py`。
+  ADR-56（P5 保留）/ ADR-51（アライメント）/ ADR-68・69（定数の由来）。
+
 ## ADR-69 クラスタ事後監査（統合後に「実は別人」を見つける）
 - 状態: 採用
 - 文脈: ユーザーの着想 —「写真が増えると精度が上がる。今まで気づけなかったが実は兄弟で微妙に似ていて

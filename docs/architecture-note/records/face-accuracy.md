@@ -29,21 +29,22 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 
 | パラメーター | 現行値 | 定義場所 |
 |---|---|---|
-| クラスタリングしきい値（既定） | 0.50（ADR-58・サイズ適応併用） | `FaceStore.clusterThreshold` |
-| マージンゲート幅 | 0.05（1位と2位の差がこれ未満なら合流しない） | `FaceStore.assignMargin` |
-| サイズ適応マージン最大 | 0.10（小/新クラスタの合流を厳しく・成熟11で0） | `FaceStore.sizeAdaptiveMarginMax` |
+| チューニングプロファイル | arcface（v5・AuraFace。定数一式は `FaceTuning` を参照） | `FaceTuning.current` ≒ `face_config.json` の tuning |
+| クラスタリングしきい値（既定） | **0.35**（v5・ADR-70。facenet プロファイルは 0.50） | `FaceTuning.arcFace.clusterThreshold` |
+| マージンゲート幅 | 0.04（v5。facenet は 0.05） | `FaceTuning.arcFace.assignMargin` |
+| サイズ適応マージン最大 | 0.08（v5。facenet は 0.10・成熟11で0） | `FaceTuning.arcFace.sizeAdaptiveMarginMax` |
 | サイズ適応マージンの免除 | 有効（別人らしい競合が近くに無いとき・ADR-68） | `FaceStore.rivalAwareSizeMargin` |
 | 免除を効かせる上限人数 | 10（成熟クラスタ数。少人数ライブラリ限定） | `FaceStore.rivalAwareSizeMarginMaxPeople` |
 | 免除の「似ている」バー上乗せ | 0.20（実効 0.70） | `FaceStore.rivalAlikeMargin` |
 | 割り当て規則の版 | 3（上げると夜間に全体再クラスタ） | `PeopleEngine.clusterRuleVersion` |
-| 統合候補の下限 | 0.35（レビュー/一括レビュー/候補数の共通帯域・ADR-68 追補2） | `FaceStore.mergeCandidateFloor` |
+| 統合候補の下限 | 0.25（v5。facenet は 0.35・ADR-68 追補2） | `FaceTuning.arcFace.mergeCandidateFloor` |
 | 「人物」の判定 | 実際の写真枚数 ≥ 3（UI とレビューで共通・ADR-68 追補3） | `FaceStore.peopleEligibleClusters` |
 | ホームの列に出す最小枚数 | **6**（5 枚以内は「すべて表示」へ・ADR-68 追補5） | `PeopleEngine.minFacesForCarousel` |
-| しきい値校正の可動域 | 0.35〜**0.55**（ADR-68 追補・旧 0.70 は分裂を悪化させた） | `FaceCalibration.clampRange` |
+| しきい値校正の可動域 | 0.25〜0.40（v5。facenet は 0.35〜0.55・ADR-68 追補） | `FaceTuning.arcFace.calibrationRange` |
 | 実効しきい値の頭打ち | 有効（少人数のみ・サイズ加算を積み上げない） | `FaceStore.capEffectiveThresholdWhenFewPeople` |
 | 校正の最小サンプル数 | 正負各 8（**確度の重み合計**で判定・ADR-68 追補6） | `FaceCalibration.minSamples` |
 | 回答の確度（学習の重み） | 1対1の確認/手動=1.0 ／ まとめて確認=0.4 | `FaceStore.AnswerConfidence` |
-| 事後監査の分離しきい値 | margin 0.25 / separation 0.35（ADR-69） | `FaceStore.auditConfig` |
+| 事後監査の分離しきい値 | margin 0.20 / separation 0.40（v5。facenet は 0.25/0.35・ADR-69） | `FaceTuning.arcFace.audit*` |
 | 品質フロア（未満はクラスタ不参加） | 0.40 | `FaceStore.qualityFloor` |
 | 検出信頼度の下限 | 0.80 | `FaceQualityGate.minDetectionConfidence` |
 | 最小顔サイズ（正規化比率） | ローカル 0.05 / クラウド 0.15 | `FaceQualityGate.minFaceSide` |
@@ -54,10 +55,10 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | ぼけ（ラプラシアン分散・64px 基準） | <25 キャップ / <60 ×0.7 | `FaceQualityGate.blurHardFloor/blurSoftFloor` |
 | 露出（平均輝度） | <20 or >235 キャップ / <40 or >215 ×0.6 | `FaceQualityGate.luma*` |
 | クロップ再検証の最小占有 | 幅 25% | `FaceQualityGate.cropVerifyMinSide` |
-| 埋め込み | facenet InceptionResnetV1/VGGFace2・512 次元・アライメント＋マルチクロップ 3 平均 | `FacePerceptionAdapter` |
+| 埋め込み | **AuraFace-v1（ArcFace 系 R100・Apache 2.0）**・512 次元・**5 点整列**＋マルチクロップ 3 平均 | `FacePerceptionAdapter` |
 | 処理解像度 | ローカル 1024px / クラウドはキャッシュサムネ | 同上 |
 | 共起 notSame | 同一写真 3 回以上で別人扱い | `FaceStore.coOccurrenceNotSame` |
-| パイプライン版数 | v4 | `PeopleEngine.faceScanVersion` |
+| パイプライン版数 | **v5**（face_config.json が宣言・ADR-70） | `FacePerceptionProvider.pipelineVersion` |
 
 ## 計測ログ
 
@@ -546,6 +547,47 @@ LFW（大人）は誤検出 0%・検出 99%。**検出したものは全件正�
 （「どちらも◯◯さんですか？」）。いいえ → クラスタを 2 分割＋負例として学習。
 はい → `sameGroup` として記録し二度と尋ねない（正例として校正にも効く）。
 混入は分裂より害が大きい（他人のアルバムに顔が混ざる）ので、レビューでは**最優先**に出す。
+
+### 2026-08-06 — モデル換装: facenet → AuraFace-v1（ADR-70・採用）
+
+**背景**: 識別の主弱点は年齢不変性（FG-NET TAR@FAR1% 48.1% vs LFW 98.6%）で、クラスタリング側は
+ADR-56〜69 で絞り切った＝**モデルが天井**だった。P5（ADR-56）は「ArcFace 級で許諾的ライセンスの
+重みは存在しない」として保留していたが、**AuraFace-v1（Apache 2.0・学習データも商用可・
+ArcFace 系 ResNet100）**の公開で前提が変わった。
+
+**検証（しきい値非依存＝モデルの力）**
+
+| 指標 | facenet | **AuraFace** |
+|---|---|---|
+| FG-NET TAR@FAR1% | 48.1% | **62.0%** |
+| FG-NET TAR@FAR0.1% | 24.3% | **43.9%** |
+| LFW TAR@FAR1% | 98.6% | **98.9%** |
+| LFW TAR@FAR0.1% | 94.0% | **97.3%** |
+
+**⚠️ 類似度スケールが約 0.1 低い**（同一人物平均 0.550→0.434・最良F1しきい値 0.64→0.45/0.46）。
+facenet 用の本番定数のまま動かすと F1 0.557 と*悪化して見える*。しきい値・第2パス・統合候補帯域・
+監査・校正可動域の**全定数がモデルの類似度分布に張り付いている**ため、`FaceTuning`（プロファイル）
+に集約し、同梱モデルの宣言（face_config.json の tuning）で選ぶ構造にした。
+
+**クラスタリング（v5 プロファイル: thr0.35・margin0.04・sizeMax0.08・第2パス0.40）**
+
+| 指標 | facenet 最良 | **AuraFace 採用構成** |
+|---|---|---|
+| FG-NET 全体 F1 / 分裂 | 0.664 / 3.7 | **0.790 / 2.8** |
+| FG-NET 全体 再現率 | 0.551 | **0.710** |
+| LFW 全体 F1 / 分裂 | 0.906 / 1.3 | **0.892〜0.943 / 1.2** |
+| LFW 家族3人/5人 | F1 0.800 / 0.889 | **F1 1.000 / 1.000（分裂 1.0）** |
+
+事後監査（ADR-69）は v5 スケールで margin 0.20 / separation 0.40 を採用
+（FG-NET 誤検出 9%・検出 64%／LFW 誤検出 0%・検出 100%＝facenet の採用点と同水準）。
+
+**移行**: pipelineVersion 5（face_config.json が宣言）→ 初回起動で全再スキャン
+（命名は写真の重なりで持ち越し・修正ジャーナル保持）。モデル 45MB→125MB（fp16）。
+戻すには `scripts/build_facenet.sh`（プロファイルも facenet に自動で戻る）。
+
+**計測基盤の教訓**: `FACE_EVAL_ONLY` は `TEST_RUNNER_` 接頭辞なしでは届いておらず、
+「絞り込み実行」は毎回全データセットを回していた。ResNet100 では全バリアントが 1 回の
+テスト実行に収まらないため、決着済み掃引（ADR-56〜60）を `FACE_EVAL_LEGACY=1` ゲートへ移した。
 
 ## 運用ルール
 

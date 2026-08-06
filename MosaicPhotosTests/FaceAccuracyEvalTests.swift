@@ -558,7 +558,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
             for thr in [Float(0.35), 0.40, 0.45] {
                 report(String(format: "I thr=%.2f（本番相当）", thr), FaceClustering.clusterAll(
                     faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
-                    assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10, secondPassMembership: true,
+                    assignMargin: 0.04, sizeAdaptiveMarginMax: 0.08, secondPassMembership: true,
                     rivalAwareMarginGate: false, rivalAwareSizeMargin: true,
                     rivalAwareSizeMarginMaxPeople: 10, rivalAlikeMargin: 0.20,
                     effectiveThresholdCap: thr, effectiveThresholdCapMaxPeople: 10,

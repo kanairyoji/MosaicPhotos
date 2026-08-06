@@ -42,7 +42,8 @@ public enum FaceCalibration {
     ///   - positive/negative: (類似度, 重み) の並び。重みは `FaceCorrection.confidence`。
     public static func calibratedThreshold(positive: [(Float, Double)],
                                            negative: [(Float, Double)],
-                                           fallback: Float = defaultThreshold) -> Float {
+                                           fallback: Float = defaultThreshold,
+                                           clamp: ClosedRange<Float> = clampRange) -> Float {
         // サンプル数の足切りは**重み合計**で見る（低確度ばかりで校正を動かさない）。
         let posWeight = positive.reduce(0.0) { $0 + $1.1 }
         let negWeight = negative.reduce(0.0) { $0 + $1.1 }
@@ -59,6 +60,6 @@ public enum FaceCalibration {
                 bestScore = score
             }
         }
-        return min(max(best, clampRange.lowerBound), clampRange.upperBound)
+        return min(max(best, clamp.lowerBound), clamp.upperBound)
     }
 }

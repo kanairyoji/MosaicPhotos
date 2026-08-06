@@ -78,7 +78,7 @@ extension FaceStore {
             for j in (i + 1)..<ids.count {
                 guard let ca = centroid[ids[i]], let cb = centroid[ids[j]] else { continue }
                 let sim = FaceClustering.dot(ca, cb)
-                guard sim >= Self.mergeBandFloor(threshold: thr), !isMarkedNotSame(ca, cb) else { continue }
+                guard sim >= tuning.mergeBandFloor(threshold: thr), !isMarkedNotSame(ca, cb) else { continue }
                 // 共起は 1 回でもあれば出さない（統合すると同一写真違反になる・ADR-68 追補4）。
                 guard (photoSets[ids[i]] ?? []).isDisjoint(with: photoSets[ids[j]] ?? []) else { continue }
                 // 別々の名前が付いた人物どうしは出さない（ユーザーが既に別人と表明済み・追補5）。
@@ -140,12 +140,6 @@ extension FaceStore {
 
     // MARK: - クラスタ事後監査（ADR-69）
 
-    /// 監査の採用設定（データセット計測で決定・face-accuracy.md 2026-08-06）。
-    /// margin 0.25 / separation 0.35: FG-NET 誤検出 8%・検出 67%／LFW 誤検出 0%・検出 99%。
-    /// **検出したものは全件正しく 2 分割できた**（26/26・107/107）。
-    static let auditConfig = FaceClusterAudit.Config(minMembers: 8, minGroupSize: 3,
-                                                     minMargin: 0.25, maxSeparation: 0.35)
-
     /// 「この人物、実は 2 人では？」を尋ねるカードを作る。
     /// 統合はユーザー確認を経ているが、**確認した時点では材料が足りない**ことがある
     /// （兄弟は数枚では区別できない）。写真が増えて分布が見えてきたら機械側から拾い直す。
@@ -177,7 +171,7 @@ extension FaceStore {
         for c in targets {
             guard items.count < limit else { break }
             let members = faces(inCluster: c.clusterID)
-            guard members.count >= Self.auditConfig.minMembers else { continue }
+            guard members.count >= tuning.auditConfig.minMembers else { continue }
             var vectors: [[Float]] = []
             var keys: [String] = []
             var kept: [DetectedFace] = []
@@ -186,7 +180,7 @@ extension FaceStore {
                 vectors.append(v); keys.append(f.refKey); kept.append(f)
             }
             guard let s = FaceClusterAudit.auditForSplit(embeddings: vectors, photoKeys: keys,
-                                                         config: Self.auditConfig) else { continue }
+                                                         config: tuning.auditConfig) else { continue }
             let centroidA = FaceClusterAudit.centroid(s.groupA.map { FaceClustering.normalized(vectors[$0]) })
             let centroidB = FaceClusterAudit.centroid(s.groupB.map { FaceClustering.normalized(vectors[$0]) })
             guard !alreadyAnsweredSame(centroidA, centroidB) else { continue }
@@ -273,7 +267,7 @@ extension FaceStore {
         for i in ids.indices {
             for j in (i + 1)..<ids.count {
                 guard let a = centroid[ids[i]], let b = centroid[ids[j]] else { continue }
-                guard FaceClustering.dot(a, b) >= Self.mergeBandFloor(threshold: report.threshold) else { continue }
+                guard FaceClustering.dot(a, b) >= tuning.mergeBandFloor(threshold: report.threshold) else { continue }
                 guard (photoSets[ids[i]] ?? []).isDisjoint(with: photoSets[ids[j]] ?? []) else { continue }
                 guard !Self.namesConflict(nameByID[ids[i]], nameByID[ids[j]]) else { continue }
                 report.mergeCandidatePairs += 1
@@ -358,7 +352,7 @@ extension FaceStore {
             guard !excludingCandidates.contains(c.clusterID) else { continue }   // 出題済み
             guard let cen = centroid[c.clusterID], let face = cover[c.clusterID] else { continue }
             let sim = FaceClustering.dot(anchorCentroid, cen)
-            guard sim >= Self.mergeBandFloor(threshold: thr), !isMarkedNotSame(anchorCentroid, cen) else { continue }
+            guard sim >= tuning.mergeBandFloor(threshold: thr), !isMarkedNotSame(anchorCentroid, cen) else { continue }
             // ⚠️ 共起は **1 回でも**あれば候補にしない（統合サジェストの 3 回とは別基準）。
             // 統合すると「1 枚の写真に同じ人物が 2 回」という不変条件が破れるため。
             // 実機で一括統合により違反が 2 件発生したのを受けて厳格化（ADR-68 追補4）。

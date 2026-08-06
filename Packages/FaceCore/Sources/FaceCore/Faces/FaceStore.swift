@@ -26,58 +26,26 @@ actor FaceStore {
         self.init(modelContainer: Self.makeContainer(isStoredInMemoryOnly: isStoredInMemoryOnly))
     }
 
-    /// 同一クラスタとみなすコサイン下限（facenet 正規化埋め込みの目安）。
-    /// クラスタリング既定しきい値。サイズ適応マージン併用時の FG-NET 実測（ADR-58）で
-    /// F1 最大となった 0.50（thr0.50＋margin0.05＋sizeMax0.10 で F1 0.589・純度 0.879）。
-    /// 校正（FaceCalibration）が上書きし得る。
-    static let clusterThreshold: Float = 0.50
-    /// マージンゲート幅（ADR-57・1 位/2 位の差がこれ未満なら合流しない）。
-    static let assignMargin: Float = 0.05
-    /// サイズ適応マージンの最大上乗せ（ADR-58・小/新クラスタの合流を厳しくする）。
-    static let sizeAdaptiveMarginMax: Float = 0.10
-    /// **サイズ適応マージンの免除**（ADR-68）。サイズ適応マージン（ADR-58）は「小クラスタが
-    /// 兄弟を吸い込むのを防ぐ」ためだが、家族アルバムでは小クラスタの大半が*同じ人の断片*なので
-    /// 合流を止めて分裂を量産していた（実ライブラリで 3 人 → 2,000 人超）。近くに「別人らしい
-    /// 競合」がいないときだけ上乗せを免除する。
-    /// ⚠️ マージンゲート側の免除は**不採用**（サイズ免除だけで利得が出揃い、FG-NET 全体では
-    /// わずかに悪化したため）。
-    static let rivalAwareSizeMargin = true
-    /// 免除を効かせる上限人数（成熟クラスタ数）。**少人数ライブラリ限定**にする。
-    /// 免除の正否はライブラリの人数で反転する（計測事実）: 無制限だと LFW（901人）で
-    /// F1 0.895→0.843 と退行するが、10 人未満に限れば 0.889（−0.006）に収まり、
-    /// 家族シナリオの利得（分裂 4.7→2.0・純度 0.862→0.970）は全て保たれる。
-    static let rivalAwareSizeMarginMaxPeople = 10
-    /// 「競合が似ている＝同一人物」と判定するバーの上乗せ（実効 0.50+0.20=0.70）。
-    /// 緩いと別人まで似ている扱いになり純度が落ちる（掃引で決定・face-accuracy.md 2026-08-05）。
-    static let rivalAlikeMargin: Float = 0.20
-    /// **サイズ加算の積み上がりを止める**（ADR-68 追補）。しきい値は校正で上がり得るので、
-    /// そこへサイズ適応マージンが乗ると実効しきい値が跳ね上がる（実機で 0.60+0.10=0.70）。
-    /// 少人数ライブラリでは加算しない＝実効しきい値を素のしきい値で頭打ちにする。
-    /// FG-NET 家族5人で分裂 3.6→2.4・純度 0.911→0.884・F1 0.718→0.750。
-    static let capEffectiveThresholdWhenFewPeople = true
-    /// 上限を効かせる上限人数（サイズ免除と同じ母数・同じ理由で少人数限定）。
-    /// 無制限にすると LFW（901人）で F1 0.906→0.873 と退行する。
-    static let effectiveThresholdCapMaxPeople = 10
-    /// この品質未満の顔はクラスタへ割り当てない（ぼけ顔・横顔が重心を汚さない・ADR-45）。
-    /// 品質フロア（face-info-expansion 優先度 2: 0.15 → 0.40）。ぼけ顔・横顔（品質キャップ済み）を
-    /// クラスタへ入れず重心汚染を防ぐ。フロア未満も DetectedFace としては記録される（顔数・枠表示用）。
-    static let qualityFloor: Float = 0.40
-    /// **統合候補の下限**（レビュー・一括レビュー・統合候補ペア数の共通帯域・ADR-68 追補2）。
-    ///
-    /// 従来は「しきい値 − 0.10」だったが、しきい値が 0.55 だと下限 0.45 になり、
-    /// **同一人物でも年齢差 10 年超は平均 0.440**（face-accuracy.md）なので**候補にすら出なかった**。
-    /// 成長期の子供こそ統合したい対象なのに、レビューに提示されないという実障害
-    /// （実機で統合候補が 14 ペアまで枯れる一方、人物 368 の大半が同一家族だった）。
-    ///
-    /// 下限 0.35 の根拠: 同一人物 21 年差の平均 0.400 を拾い、別人（両者 12 歳以下＝兄弟の代理）の
-    /// 平均 0.294 は下回らない。**統合は必ずユーザー確認を経る**ので、帯域を広げても自動誤統合は
-    /// 起きない（候補は類似度降順で提示され、誤りは「いいえ」で負例として学習される）。
-    static let mergeCandidateFloor: Float = 0.35
+    /// 類似度スケール依存の定数一式（ADR-70）。**同梱モデルの宣言で選ばれる**
+    /// （PeopleEngine が provider.tuning を apply する）。既定は facenet（後方互換）。
+    var tuning: FaceTuning = .facenet
 
-    /// 実際に使う統合候補の下限（しきい値が低いときは従来どおりそれに追従する）。
-    static func mergeBandFloor(threshold: Float) -> Float {
-        min(threshold - 0.10, mergeCandidateFloor)
+    func apply(tuning: FaceTuning) {
+        guard self.tuning != tuning else { return }
+        self.tuning = tuning
+        clusteringCache = nil
+        thresholdCache = nil
     }
+
+    /// この品質未満の顔はクラスタへ割り当てない（ADR-45/53）。Vision の
+    /// faceCaptureQuality スケール＝**顔モデル非依存**なのでプロファイル外。
+    static let qualityFloor: Float = 0.40
+
+    /// スケール非依存の構造定数（プロファイル共通）。
+    static let rivalAwareSizeMargin = true
+    static let rivalAwareSizeMarginMaxPeople = 10
+    static let capEffectiveThresholdWhenFewPeople = true
+    static let effectiveThresholdCapMaxPeople = 10
 
     /// 共起 notSame: 2 クラスタが同じ写真にこれ以上の回数一緒に写っていたら「別人」とみなし
     /// 統合サジェストを出さない（同一人物は 1 枚の写真に 1 回しか写れない・偶発の誤検出は許容）。
@@ -113,9 +81,10 @@ actor FaceStore {
             }
         }
         let t = FaceCalibration.calibratedThreshold(positive: positive, negative: negative,
-                                                    fallback: Self.clusterThreshold)
+                                                    fallback: tuning.clusterThreshold,
+                                                    clamp: tuning.calibrationRange)
         thresholdCache = t
-        if t != Self.clusterThreshold {
+        if t != tuning.clusterThreshold {
             Self.log.info("faces: calibrated threshold \(t) (pos=\(positive.count) neg=\(negative.count))")
         }
         return t
@@ -261,12 +230,13 @@ actor FaceStore {
         }
         var clustering = FaceClustering(threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor,
                                         seedClusters: seed)
-        clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
-        clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
+        clustering.assignMargin = tuning.assignMargin   // マージンゲート（ADR-57）
+        clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
+        clustering.negativeSameThreshold = tuning.negativeSameThreshold
         // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
         clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
         clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
-        clustering.rivalAlikeMargin = Self.rivalAlikeMargin
+        clustering.rivalAlikeMargin = tuning.rivalAlikeMargin
         // 実効しきい値の頭打ち（ADR-68 追補・少人数ライブラリ限定）。しきい値は校正で
         // 上がり得るので、そこへサイズ加算が乗って跳ね上がるのを止める。
         if Self.capEffectiveThresholdWhenFewPeople {

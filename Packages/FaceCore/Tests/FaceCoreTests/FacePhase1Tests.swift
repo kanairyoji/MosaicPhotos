@@ -306,26 +306,39 @@ struct FacePhase1Tests {
         #expect(assign(maturePeople: 12, cap: 0.55) != 0)
     }
 
-    @Test("校正しきい値は 0.55 を超えない（分裂側へ振り切らせない）")
-    func calibrationIsClampedTo055() {
+    @Test("校正しきい値はプロファイルの上限を超えない（分裂側へ振り切らせない）")
+    func calibrationIsClampedByProfile() {
         // 「高いしきい値が正しい」と示すサンプル（正例も負例も高類似）。
-        let positive = [Float](repeating: 0.72, count: 10)
-        let negative = [Float](repeating: 0.68, count: 10)
-        let t = FaceCalibration.calibratedThreshold(positive: positive, negative: negative)
-        #expect(t <= 0.55)
-        #expect(FaceCalibration.clampRange.upperBound == 0.55)
+        let positive = [Float](repeating: 0.72, count: 10).map { ($0, 1.0) }
+        let negative = [Float](repeating: 0.68, count: 10).map { ($0, 1.0) }
+        let f = FaceCalibration.calibratedThreshold(
+            positive: positive, negative: negative,
+            fallback: FaceTuning.facenet.clusterThreshold,
+            clamp: FaceTuning.facenet.calibrationRange)
+        #expect(f <= FaceTuning.facenet.calibrationRange.upperBound)
+        let a = FaceCalibration.calibratedThreshold(
+            positive: positive, negative: negative,
+            fallback: FaceTuning.arcFace.clusterThreshold,
+            clamp: FaceTuning.arcFace.calibrationRange)
+        #expect(a <= 0.40)   // ArcFace スケールの上限
+        #expect(FaceTuning.facenet.calibrationRange.upperBound == 0.55)
     }
 
     @Test("統合候補の下限は 0.35 まで下がる（成長で離れた同一人物を候補に出す）")
     func mergeBandFloorReachesGrowthGap() {
-        // 台帳（face-accuracy.md）: 同一人物でも年齢差 11-20 年は平均 0.440、21 年+ は 0.400。
-        // しきい値 0.55 のとき従来の下限は 0.45 で、これらは候補にすら出なかった。
-        #expect(FaceStore.mergeBandFloor(threshold: 0.55) == 0.35)
-        #expect(FaceStore.mergeBandFloor(threshold: 0.50) == 0.35)
+        // 台帳（face-accuracy.md）: facenet は同一人物でも年齢差 11-20 年で平均 0.440。
+        // しきい値 0.55 のとき従来の下限 0.45 では候補にすら出なかった（ADR-68 追補2）。
+        let facenet = FaceTuning.facenet
+        #expect(facenet.mergeBandFloor(threshold: 0.55) == 0.35)
+        #expect(facenet.mergeBandFloor(threshold: 0.50) == 0.35)
         // しきい値が下限側に寄っているときは従来どおり追従する（帯域が逆転しない）。
-        #expect(FaceStore.mergeBandFloor(threshold: 0.40) < 0.35)
+        #expect(facenet.mergeBandFloor(threshold: 0.40) < 0.35)
         // 別人（両者 12 歳以下＝兄弟の代理）の平均 0.294 は下回らない。
-        #expect(FaceStore.mergeBandFloor(threshold: 0.55) > 0.294)
+        #expect(facenet.mergeBandFloor(threshold: 0.55) > 0.294)
+        // ArcFace プロファイル: スケールが低い（21 年差平均 0.298・兄弟 0.188）ので下限 0.25。
+        let arc = FaceTuning.arcFace
+        #expect(arc.mergeBandFloor(threshold: 0.35) == 0.25)
+        #expect(arc.mergeBandFloor(threshold: 0.35) > 0.188)
     }
 
     @Test("検出統計: 理由別に数え、通過とフロア未満を区別する")
@@ -468,7 +481,7 @@ struct FacePhase1Tests {
                 return FaceClustering.normalized(v)
             }
         }
-        let cfg = FaceStore.auditConfig
+        let cfg = FaceTuning.facenet.auditConfig
         // (1) 同一人物の成長: 端から端まで離れていても**連続している**ので分割しない。
         let growth = spread([1, 0, 0], steps: 12, drift: 0.12)
         #expect(FaceClusterAudit.auditForSplit(embeddings: growth, config: cfg) == nil)

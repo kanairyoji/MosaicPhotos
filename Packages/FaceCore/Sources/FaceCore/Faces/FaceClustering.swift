@@ -34,8 +34,11 @@ public struct FaceClustering {
 
     /// 負例判定のしきい値。`faceCentroid` と入力顔の類似がこれ以上（＝ほぼ同じ人）かつ、
     /// `wrongCentroid` と候補クラスタ重心の類似がこれ以上（＝同じ誤りクラスタ）なら拒否。
-    public static let negativeSameThreshold: Float = 0.55
+    /// ⚠️ 「ほぼ同じ人」はモデルの類似度スケール依存（FaceTuning が上書きする・ADR-70）。
+    /// 「同じ誤りクラスタ」はほぼ同一ベクトルの照合なのでスケール非依存。
+    public static let negativeSameThreshold: Float = 0.55   // facenet 既定
     public static let negativeWrongThreshold: Float = 0.88
+    public var negativeSameThreshold: Float = FaceClustering.negativeSameThreshold
 
     public struct Cluster: Sendable, Equatable {
         public var id: Int
@@ -238,7 +241,8 @@ public struct FaceClustering {
             }
             if cand.sim < required,
                !(sizeMarginExemptionActive && !hasDistinctRival(of: cand.index, in: scored)) { continue }
-            if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives) {
+            if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives,
+                                              sameThreshold: negativeSameThreshold) {
                 continue
             }
             let w = max(quality, 0.01)
@@ -386,9 +390,10 @@ public struct FaceClustering {
     }
 
     /// 入力顔 `v`（正規化済み）が候補クラスタ重心 `centroid` へ入ることを、負例が拒否するか。
-    static func negativeRejects(_ v: [Float], centroid: [Float], negatives: [NegativePair]) -> Bool {
+    static func negativeRejects(_ v: [Float], centroid: [Float], negatives: [NegativePair],
+                                sameThreshold: Float = FaceClustering.negativeSameThreshold) -> Bool {
         for n in negatives {
-            if dot(v, n.faceCentroid) >= negativeSameThreshold,
+            if dot(v, n.faceCentroid) >= sameThreshold,
                dot(centroid, n.wrongCentroid) >= negativeWrongThreshold {
                 return true
             }

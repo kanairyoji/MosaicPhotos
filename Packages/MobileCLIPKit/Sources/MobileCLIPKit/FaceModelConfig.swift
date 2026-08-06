@@ -13,6 +13,8 @@ struct FaceModelConfig: Decodable, Sendable {
     var model: String
     var alignment: String?
     var pipelineVersion: Int?
+    /// 類似度スケールのプロファイル名（"arcface" 等・FaceTuning.named が解決）。
+    var tuning: String?
 
     var usesArcFaceAlignment: Bool { alignment == "arcface5" }
 

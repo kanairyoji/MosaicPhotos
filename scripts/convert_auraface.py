@@ -86,5 +86,6 @@ with open(os.path.join(OUT, "face_config.json"), "w") as f:
     json.dump({"inputSize": INPUT_SIZE, "embedDim": EMBED_DIM,
                "model": "auraface-v1-r100",
                "alignment": "arcface5",
+               "tuning": "arcface",
                "pipelineVersion": PIPELINE_VERSION}, f, indent=2)
 print("wrote face_config.json (alignment=arcface5, pipelineVersion=%d)" % PIPELINE_VERSION)

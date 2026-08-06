@@ -60,12 +60,13 @@ extension FaceStore {
         // 2) 残りの顔を品質降順に割り当て（新規クラスタ ID は既存の最大より先から）。
         var clustering = FaceClustering(threshold: thr, qualityFloor: Self.qualityFloor,
                                         seedClusters: seeds, minimumNextID: maxExistingID + 1)
-        clustering.assignMargin = Self.assignMargin   // マージンゲート（ADR-57）
-        clustering.sizeAdaptiveMarginMax = Self.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
+        clustering.assignMargin = tuning.assignMargin   // マージンゲート（ADR-57）
+        clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
+        clustering.negativeSameThreshold = tuning.negativeSameThreshold
         // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
         clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
         clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
-        clustering.rivalAlikeMargin = Self.rivalAlikeMargin
+        clustering.rivalAlikeMargin = tuning.rivalAlikeMargin
         // 実効しきい値の頭打ち（ADR-68 追補・少人数ライブラリ限定）。しきい値は校正で
         // 上がり得るので、そこへサイズ加算が乗って跳ね上がるのを止める。
         if Self.capEffectiveThresholdWhenFewPeople {
@@ -99,7 +100,8 @@ extension FaceStore {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
             let cid = clustering.assignMembershipOnly(
                 faceID: f.faceID, embedding: vec,
-                excludedClusterIDs: usedByPhoto[f.refKey] ?? [])
+                excludedClusterIDs: usedByPhoto[f.refKey] ?? [],
+                threshold: tuning.secondPassThreshold)
             if cid >= 0 {
                 newAssignment[f.faceID] = cid
                 usedByPhoto[f.refKey, default: []].insert(cid)
