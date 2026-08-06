@@ -59,3 +59,4 @@ MosaicPhotos/VLM/
 
 # SmolVLM-500M conversion work dir (models). Regenerate with build_smolvlm.sh.
 .smolvlm500/
+.auraface_build/

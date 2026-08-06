@@ -152,21 +152,26 @@ public final class PeopleEngine {
     public static let faceScanVersion = 4
     private static let faceScanVersionKey = "faceScanVersion"
 
+    /// 実効パイプライン版。**同梱モデル（provider）が宣言**した版を優先する（ADR-70）。
+    /// モデルを差し替えたら face_config.json の pipelineVersion が上がり、全再スキャンが走る。
+    public var effectiveScanVersion: Int { faceProvider?.pipelineVersion ?? Self.faceScanVersion }
+
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
     /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
     private func migrateScanVersionIfNeeded() async {
         let stored = UserDefaults.standard.integer(forKey: Self.faceScanVersionKey)
-        guard stored < Self.faceScanVersion else { return }
+        let current = effectiveScanVersion
+        guard stored < current else { return }
         if await store.scannedCount() > 0 {
             let snapshot = await store.namedClusterEntries()
             if !snapshot.isEmpty { saveCarryover(NameCarryover(savedAt: Date(), entries:
                 snapshot.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) })) }
             await store.reset()
-            Diagnostics.mark("faces: scan pipeline v\(stored == 0 ? 1 : stored)→v\(Self.faceScanVersion) "
+            Diagnostics.mark("faces: scan pipeline v\(stored == 0 ? 1 : stored)→v\(current) "
                              + "— full rescan (carrying \(snapshot.count) names)")
             await loadPeople()
         }
-        UserDefaults.standard.set(Self.faceScanVersion, forKey: Self.faceScanVersionKey)
+        UserDefaults.standard.set(current, forKey: Self.faceScanVersionKey)
     }
 
     /// 持ち越し名の再適用（スキャンセッションの末尾で呼ぶ）。全件消化したらファイルを消す。

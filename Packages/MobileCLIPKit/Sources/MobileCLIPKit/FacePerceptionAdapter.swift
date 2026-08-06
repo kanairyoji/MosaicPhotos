@@ -100,7 +100,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         /// 両目の中心（ピクセル・原点左下）。アライメント切り抜き（ADR-51）に使う。
         var eyeLeft: CGPoint?
         var eyeRight: CGPoint?
+        /// 鼻先・口角（ピクセル・原点左下）。ArcFace 5 点整列（ADR-70）に使う。
+        var nose: CGPoint?
+        var mouthLeft: CGPoint?
+        var mouthRight: CGPoint?
     }
+
+    /// パイプライン版（face_config.json が宣言・無ければ facenet 世代の 4）。
+    public var pipelineVersion: Int { FaceModelConfig.bundled?.pipelineVersion ?? 4 }
 
     /// 戻り値 `.raw` は検出した顔数（フィルタ前）、`.signals` は埋め込みまで成功した顔、
     /// `.error` は Vision が使えず CIDetector にフォールバックした場合のメッセージ（切り分け用）。
@@ -206,8 +213,19 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             } else if face.confidence < FaceQualityGate.minDetectionConfidence {
                 row.reason = "low-confidence"
             } else {
+                // ADR-70: ArcFace 系モデル（face_config.json が arcface5 を宣言）は 5 点整列を最優先。
+                // 5 点が揃わない・退化しているときは従来の両目整列 → bbox へ段階フォールバック。
+                let arcAligned: CGImage? = {
+                    guard FaceModelConfig.bundled?.usesArcFaceAlignment == true,
+                          let l = face.eyeLeft, let r = face.eyeRight, let n = face.nose,
+                          let ml = face.mouthLeft, let mr = face.mouthRight,
+                          let transform = FaceAlignment.arcFaceTransform(points: .init(
+                              leftEye: l, rightEye: r, nose: n, mouthLeft: ml, mouthRight: mr))
+                    else { return nil }
+                    return arcFaceCrop(cg, transform: transform)
+                }()
                 // ADR-51: 両目ランドマークがあればアライメント切り抜き（無ければ bbox へフォールバック）。
-                let aligned: CGImage? = {
+                let aligned: CGImage? = arcAligned ?? {
                     guard let l = face.eyeLeft, let r = face.eyeRight,
                           let plan = FaceAlignment.plan(leftEye: l, rightEye: r, pixelBox: pixelBox)
                     else { return nil }
@@ -342,7 +360,10 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                                        yaw: yaw, roll: roll,
                                        eyesClosed: eyesClosed, hasSmile: smile,
                                        eyeLeft: Self.regionCenter(lm?.landmarks?.leftEye, imageSize: imageSize),
-                                       eyeRight: Self.regionCenter(lm?.landmarks?.rightEye, imageSize: imageSize))
+                                       eyeRight: Self.regionCenter(lm?.landmarks?.rightEye, imageSize: imageSize),
+                                       nose: Self.regionCenter(lm?.landmarks?.nose, imageSize: imageSize),
+                                       mouthLeft: Self.lipCorner(lm?.landmarks?.outerLips, imageSize: imageSize, left: true),
+                                       mouthRight: Self.lipCorner(lm?.landmarks?.outerLips, imageSize: imageSize, left: false))
             }
             return (faces, nil)
         } catch {
@@ -400,6 +421,27 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         guard let points = region?.pointsInImage(imageSize: imageSize), !points.isEmpty else { return nil }
         let sum = points.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
         return CGPoint(x: sum.x / CGFloat(points.count), y: sum.y / CGFloat(points.count))
+    }
+
+    /// 口角（外唇の x 最小/最大の点・ピクセル座標）。ArcFace 5 点整列（ADR-70）用。
+    private static func lipCorner(_ region: VNFaceLandmarkRegion2D?, imageSize: CGSize,
+                                  left: Bool) -> CGPoint? {
+        guard let points = region?.pointsInImage(imageSize: imageSize), !points.isEmpty else { return nil }
+        return left ? points.min { $0.x < $1.x } : points.max { $0.x < $1.x }
+    }
+
+    /// ArcFace 5 点整列の切り抜き（ADR-70）。相似変換（画像ピクセル→112×112 出力・
+    /// どちらも原点左下）を CGContext に連結して描くだけ。テンプレート位置に目・鼻・口が揃う。
+    private func arcFaceCrop(_ cg: CGImage, transform: CGAffineTransform) -> CGImage? {
+        let side = FaceAlignment.arcFaceOutputSide
+        guard let ctx = CGContext(data: nil, width: side, height: side,
+                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.concatenate(transform)
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: CGFloat(cg.width), height: CGFloat(cg.height)))
+        return ctx.makeImage()
     }
 
     /// アライメント切り抜き（ADR-51）。計画（回転角・出力辺・目標位置）どおりに

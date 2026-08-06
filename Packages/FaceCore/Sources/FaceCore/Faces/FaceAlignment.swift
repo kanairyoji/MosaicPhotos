@@ -79,4 +79,88 @@ public enum FaceAlignment {
         let target = CGPoint(x: side * 0.5, y: side * (1 - eyeVerticalFromTop))
         return FaceAlignmentPlan(angle: angle, side: side, eyeMid: eyeMid, target: target)
     }
+
+    // MARK: - ArcFace 5 点アライメント（ADR-70）
+
+    /// 顔の 5 ランドマーク（ピクセル・原点左下）。ArcFace 系モデルの標準テンプレートへ写像する。
+    public struct FivePoints: Sendable, Equatable {
+        public var leftEye: CGPoint     // 画像内で x が小さい側の目
+        public var rightEye: CGPoint
+        public var nose: CGPoint
+        public var mouthLeft: CGPoint
+        public var mouthRight: CGPoint
+        public init(leftEye: CGPoint, rightEye: CGPoint, nose: CGPoint,
+                    mouthLeft: CGPoint, mouthRight: CGPoint) {
+            self.leftEye = leftEye
+            self.rightEye = rightEye
+            self.nose = nose
+            self.mouthLeft = mouthLeft
+            self.mouthRight = mouthRight
+        }
+        var asArray: [CGPoint] { [leftEye, rightEye, nose, mouthLeft, mouthRight] }
+    }
+
+    /// ArcFace 標準テンプレート（112×112・**原点左上の慣習を y 上向きに変換済み**）。
+    /// insightface の全 ArcFace 系モデル（AuraFace 含む）はこの 5 点整列で学習されている。
+    /// 2 点（両目）だけの整列では口・鼻の位置が揃わず、学習時と分布がずれる。
+    public static let arcFaceTemplate112: [CGPoint] = [
+        CGPoint(x: 38.2946, y: 112 - 51.6963),   // left eye
+        CGPoint(x: 73.5318, y: 112 - 51.5014),   // right eye
+        CGPoint(x: 56.0252, y: 112 - 71.7366),   // nose
+        CGPoint(x: 41.5493, y: 112 - 92.3655),   // mouth left
+        CGPoint(x: 70.7299, y: 112 - 92.2041),   // mouth right
+    ]
+
+    /// 5 点 → テンプレートの**相似変換**（回転＋等方スケール＋平行移動）を最小二乗で求める。
+    ///
+    /// 2D の相似変換は複素数の線形回帰に還元できる（Horn の閉形式・反転なし）:
+    /// 各点を複素数とみなし、重心を除いた上で a = Σ(conj(s')·d') / Σ|s'|² を解けば
+    /// a = scale·e^{iθ}。SVD 不要で決定的・依存なし。
+    ///
+    /// - Returns: 画像ピクセル座標（原点左下）→ 出力座標（原点左下・outputSize 四方）の
+    ///   アフィン変換。点が退化している（ほぼ同一点・スケール異常）場合は nil。
+    public static func similarityTransform(from source: [CGPoint], to destination: [CGPoint])
+        -> CGAffineTransform? {
+        guard source.count == destination.count, source.count >= 2 else { return nil }
+        let n = CGFloat(source.count)
+        let sMean = source.reduce(.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
+        let dMean = destination.reduce(.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
+        let sc = CGPoint(x: sMean.x / n, y: sMean.y / n)
+        let dc = CGPoint(x: dMean.x / n, y: dMean.y / n)
+        // a = Σ conj(s')·d' / Σ|s'|²（複素数積: (sx−i·sy)(dx+i·dy)）
+        var numRe: CGFloat = 0, numIm: CGFloat = 0, den: CGFloat = 0
+        for (s, d) in zip(source, destination) {
+            let sx = s.x - sc.x, sy = s.y - sc.y
+            let dx = d.x - dc.x, dy = d.y - dc.y
+            numRe += sx * dx + sy * dy
+            numIm += sx * dy - sy * dx
+            den += sx * sx + sy * sy
+        }
+        guard den > 1e-6 else { return nil }
+        let a = numRe / den, b = numIm / den   // a+bi = scale·e^{iθ}
+        let scale = (a * a + b * b).squareRoot()
+        guard scale > 1e-4, scale < 1e4 else { return nil }
+        // p → (a+bi)(p − sc) + dc を CGAffineTransform に展開する。
+        // (x,y) → (a·x − b·y, b·x + a·y) が複素数積の実表現。
+        let tx = dc.x - (a * sc.x - b * sc.y)
+        let ty = dc.y - (b * sc.x + a * sc.y)
+        return CGAffineTransform(a: a, b: b, c: -b, d: a, tx: tx, ty: ty)
+    }
+
+    /// ArcFace 整列: 検出 5 点 → 112×112 テンプレートへの変換を返す。
+    /// 傾き・スケールの妥当性チェック込み（異常なら nil ＝ 呼び出し側が 2 点整列へフォールバック）。
+    public static func arcFaceTransform(points: FivePoints) -> CGAffineTransform? {
+        guard let t = similarityTransform(from: points.asArray, to: arcFaceTemplate112) else {
+            return nil
+        }
+        // スケール＝√(a²+b²)。極端な拡大（顔が小さすぎ）は品質が出ないので弾く。
+        let scale = (t.a * t.a + t.b * t.b).squareRoot()
+        guard scale <= 8 else { return nil }   // 14px 幅の顔を 112 に伸ばすような場合
+        // 回転が 45° を超えるならランドマーク誤検出の可能性が高い（2 点整列と同じ基準）。
+        guard abs(atan2(t.b, t.a)) <= maxAngle else { return nil }
+        return t
+    }
+
+    /// ArcFace 整列の出力辺（テンプレートの定義サイズ）。
+    public static let arcFaceOutputSide = 112
 }

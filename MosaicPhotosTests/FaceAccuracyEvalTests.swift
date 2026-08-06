@@ -672,7 +672,9 @@ final class FaceAccuracyEvalTests: XCTestCase {
     private func extractEmbeddings(datasetDir: String,
                                    labels: [(file: String, person: String, age: Int?)])
         async throws -> (samples: [Sample], rejected: Int) {
-        let cacheURL = URL(fileURLWithPath: "\(datasetDir)/embeddings-v\(PeopleEngine.faceScanVersion).json")
+        // キャッシュはパイプライン版でキー付け（ADR-70: 版は同梱モデルの face_config.json が宣言）。
+        // モデルを差し替えると版が上がり、自動で再抽出になる。
+        let cacheURL = URL(fileURLWithPath: "\(datasetDir)/embeddings-v\(FacePerceptionAdapter().pipelineVersion).json")
         var cache: [String: [Float]] = [:]
         var qualityCache: [String: Float] = [:]
         if let data = try? Data(contentsOf: cacheURL),

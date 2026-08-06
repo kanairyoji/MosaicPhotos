@@ -97,4 +97,74 @@ struct FaceAlignmentTests {
         let remaining2 = await store.reapplyNames(remaining)
         #expect(remaining2.isEmpty)
     }
+
+    // MARK: - ArcFace 5 点整列（ADR-70）
+
+    @Test("相似変換: テンプレート自身へは恒等、回転・拡大した点群からは元の変換を復元する")
+    func similarityRecovers() {
+        let template = FaceAlignment.arcFaceTemplate112
+        // 恒等: 同じ点群 → ほぼ単位行列。
+        let identity = FaceAlignment.similarityTransform(from: template, to: template)
+        #expect(identity != nil)
+        if let t = identity {
+            #expect(abs(t.a - 1) < 1e-6 && abs(t.b) < 1e-6 && abs(t.tx) < 1e-4 && abs(t.ty) < 1e-4)
+        }
+        // 既知の相似変換（30° 回転・2 倍・平行移動）を適用した点群から復元できる。
+        let known = CGAffineTransform(translationX: 40, y: -25)
+            .rotated(by: .pi / 6).scaledBy(x: 2, y: 2)
+        let moved = template.map { $0.applying(known) }
+        guard let recovered = FaceAlignment.similarityTransform(from: moved, to: template) else {
+            Issue.record("recovered == nil"); return
+        }
+        for p in moved {
+            let q = p.applying(recovered)
+            // moved を戻すと template に一致する。
+            let idx = moved.firstIndex(of: p)!
+            #expect(abs(q.x - template[idx].x) < 1e-3)
+            #expect(abs(q.y - template[idx].y) < 1e-3)
+        }
+    }
+
+    @Test("相似変換: 最小二乗＝ノイズがあってもテンプレート近傍へ写す")
+    func similarityLeastSquares() {
+        let template = FaceAlignment.arcFaceTemplate112
+        // 各点に ±1px のノイズを加えた点群（誤差つき検出の模擬・決定的な擬似ノイズ）。
+        let noisy = template.enumerated().map { i, p in
+            CGPoint(x: p.x + (i % 2 == 0 ? 1.0 : -1.0), y: p.y + (i % 3 == 0 ? -1.0 : 1.0))
+        }
+        guard let t = FaceAlignment.similarityTransform(from: noisy, to: template) else {
+            Issue.record("t == nil"); return
+        }
+        for (p, target) in zip(noisy, template) {
+            let q = p.applying(t)
+            #expect(abs(q.x - target.x) < 2)   // 最小二乗なので誤差は残るが暴れない
+            #expect(abs(q.y - target.y) < 2)
+        }
+    }
+
+    @Test("arcFaceTransform: 退化した点群・過大な回転は nil（bbox へフォールバック）")
+    func arcFaceRejectsDegenerate() {
+        // 全点ほぼ同一（誤検出）。
+        let degenerate = FaceAlignment.FivePoints(
+            leftEye: CGPoint(x: 10, y: 10), rightEye: CGPoint(x: 10.001, y: 10),
+            nose: CGPoint(x: 10, y: 10.001), mouthLeft: CGPoint(x: 10, y: 10),
+            mouthRight: CGPoint(x: 10.001, y: 10.001))
+        #expect(FaceAlignment.arcFaceTransform(points: degenerate) == nil)
+
+        // 90° 回転（横倒しの誤ランドマーク）→ 拒否。
+        let quarter = CGAffineTransform(rotationAngle: .pi / 2)
+        let rotated = FaceAlignment.arcFaceTemplate112.map { $0.applying(quarter) }
+        let points = FaceAlignment.FivePoints(
+            leftEye: rotated[0], rightEye: rotated[1], nose: rotated[2],
+            mouthLeft: rotated[3], mouthRight: rotated[4])
+        #expect(FaceAlignment.arcFaceTransform(points: points) == nil)
+
+        // 正常（テンプレートの 1.5 倍・10° 回転）→ 変換が返る。
+        let ok = CGAffineTransform(rotationAngle: .pi / 18).scaledBy(x: 1.5, y: 1.5)
+        let normal = FaceAlignment.arcFaceTemplate112.map { $0.applying(ok) }
+        let okPoints = FaceAlignment.FivePoints(
+            leftEye: normal[0], rightEye: normal[1], nose: normal[2],
+            mouthLeft: normal[3], mouthRight: normal[4])
+        #expect(FaceAlignment.arcFaceTransform(points: okPoints) != nil)
+    }
 }

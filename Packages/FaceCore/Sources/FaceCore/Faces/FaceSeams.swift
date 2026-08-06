@@ -96,5 +96,15 @@ public struct DetectedFaceSignal: Sendable, Equatable {
 /// `refKeys` は PhotoRef エンコード済みキー（"L-…"/"C-…"）。
 public protocol FacePerceptionProvider: Sendable {
     var isAvailable: Bool { get }
+    /// 埋め込みパイプラインの版（ADR-70）。**同梱モデル側（face_config.json）が宣言**する。
+    /// 版が上がると全再スキャン（埋め込みの作り方が変わると新旧のコサイン類似度が壊れるため）。
+    /// 定数でなく設定駆動にするのは、**モデルを再生成せずにアプリだけ更新した**場合に
+    /// 誤って旧モデルのまま全再スキャンが走るのを防ぐため（版はモデルと一緒に届く）。
+    var pipelineVersion: Int { get }
     func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]]
+}
+
+public extension FacePerceptionProvider {
+    /// 既定は v4（facenet 世代・ADR-54 まで）。
+    var pipelineVersion: Int { 4 }
 }
