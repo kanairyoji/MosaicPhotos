@@ -131,8 +131,94 @@ extension FaceStore {
     /// 人物クラスタ src を dst に統合する（同一人物が 2 クラスタに割れたときの修正）。
     /// src の顔を全て dst へ付け替え、重心（sum/count）を合流し、src のクラスタ行を削除する。
     /// 名前・代表顔は dst を優先し、dst が未設定のときだけ src から引き継ぐ。
-    func mergeClusters(from srcID: Int, into dstID: Int) {
-        guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return }
+    /// 別々の名前が付いているか（どちらも命名済みで名前が違う）。
+    /// ユーザーが「この 2 人は別人」と既に表明している状態なので、統合も提案もしない。
+    static func namesConflict(_ a: String?, _ b: String?) -> Bool {
+        guard let a, !a.isEmpty, let b, !b.isEmpty else { return false }
+        return a != b
+    }
+
+    // MARK: - 同一写真違反の修復（ADR-68 追補5）
+
+    /// 「1 枚の写真に同じ人物が 2 回」を解消する。誤統合の痕跡なので、
+    /// **最良の 1 顔だけ残して他を人物から外し、外した顔は負例として学習させる**
+    /// （同じ誤りが再クラスタで再発しないようにする）。
+    /// 戻り値: 修復した顔の数。
+    @discardableResult
+    func repairSamePhotoViolations() -> Int {
+        var byPhotoCluster: [String: [DetectedFace]] = [:]
+        for f in (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        where f.clusterID >= 0 {
+            byPhotoCluster["\(f.refKey)|\(f.clusterID)", default: []].append(f)
+        }
+        var repaired = 0
+        for (_, group) in byPhotoCluster where group.count >= 2 {
+            // 残すのは代表選択と同じ基準（品質＋笑顔＋大きさ）で最良の 1 顔。
+            guard let keep = Self.bestCoverFace(group) else { continue }
+            let clusterSum = cluster(group[0].clusterID).flatMap { ClipMath.decodeHalf($0.sum) }
+            for f in group where f.faceID != keep.faceID {
+                // 「この顔はこのクラスタではない」を負例として記録（ADR-45）。
+                if let vec = ClipMath.decodeHalf(f.embedding), let cSum = clusterSum {
+                    let sim = FaceClustering.dot(FaceClustering.normalized(vec),
+                                                 FaceClustering.normalized(cSum))
+                    recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
+                                     wrongEmbedding: ClipMath.encodeHalf(cSum), similarity: sim)
+                    _ = vec
+                }
+                f.clusterID = FaceClustering.unassigned
+                repaired += 1
+            }
+        }
+        if repaired > 0 {
+            try? modelContext.save()
+            clusteringCache = nil
+            Self.log.info("faces: repaired same-photo violations — faces=\(repaired)")
+        }
+        return repaired
+    }
+
+    /// 統合を拒否した理由（ADR-68 追補5）。統合は取り消せないので、**間違いの可能性が高い形**は
+    /// 実行地点で止める。候補から外すだけでは手動統合（人物画面の「統合」）を防げない。
+    enum MergeRejection: String, Sendable {
+        /// 別々の名前が付いた人物どうし。ユーザーが「別人」と宣言済みなので統合は誤りの可能性が高い。
+        case differentNames
+        /// 同じ写真に一緒に写っている＝統合すると「1 枚に同じ人物が 2 回」になる。
+        /// 同一人物は 1 枚に 1 回しか写れないので、この対は別人（または重複検出）。
+        case samePhotoConflict
+    }
+
+    /// 2 クラスタを統合する。**間違いの可能性が高い場合は拒否**して理由を返す（nil = 成功）。
+    @discardableResult
+    func mergeClusters(from srcID: Int, into dstID: Int) -> MergeRejection? {
+        guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return nil }
+
+        // ガード1: 別々の名前が付いている＝ユーザーが既に「別人」と表明している。
+        if let sn = src.name, !sn.isEmpty, let dn = dst.name, !dn.isEmpty, sn != dn {
+            Self.log.info("faces: merge rejected — different names (\(sn) / \(dn))")
+            return .differentNames
+        }
+
+        // ガード2: 同じ写真に一緒に写っているなら統合しない。**別人として学習する**
+        //（この対は今後、候補にも自動合流にも出さない）。
+        let srcPhotos = Set(faces(inCluster: srcID).map(\.refKey))
+        let dstPhotos = Set(faces(inCluster: dstID).map(\.refKey))
+        if !srcPhotos.isDisjoint(with: dstPhotos) {
+            Self.log.info("faces: merge rejected — same-photo conflict (\(srcID) / \(dstID))")
+            markNotSamePerson(clusterA: srcID, clusterB: dstID)
+            return .samePhotoConflict
+        }
+        mergeClustersUnchecked(src: src, dst: dst)
+        return nil
+    }
+
+    /// テスト用: ガードを迂回して統合する（旧ビルドで生じた違反状態の再現に使う）。
+    func forceMergeForTesting(from srcID: Int, into dstID: Int) {
+        guard let src = cluster(srcID), let dst = cluster(dstID) else { return }
+        mergeClustersUnchecked(src: src, dst: dst)
+    }
+
+    private func mergeClustersUnchecked(src: PersonCluster, dst: PersonCluster) {
+        let srcID = src.clusterID, dstID = dst.clusterID
         // ADR-45/46: 統合（＝同一人物）を正例として記録。類似度は**統合前**の重心同士で測る
         //（統合後の dst.sum には src が混ざり、値が不当に高くなるため）。
         if let sSum = ClipMath.decodeHalf(src.sum), let dSumBefore = ClipMath.decodeHalf(dst.sum) {

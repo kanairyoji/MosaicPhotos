@@ -124,7 +124,10 @@ struct AutoAlbumCard: View {
 /// ピープル（顔クラスタ）を円形アバターの横スクロールで表示する（Time & Place 直下）。
 /// タップで写真一覧へ。長押しで名前を付け直せる（`onRename`）。
 struct PeopleCarousel: View {
+    /// 列に出す人物（ホームは「よく写っている人」だけを渡す）。
     let people: [PersonInfo]
+    /// 「すべて表示」に載る総数（列に出さなかった人も含む）。
+    var totalPeople: Int?
     let onSelect: (PersonInfo) -> Void
     let onLongPress: (PersonInfo) -> Void
     /// 「すべて表示」タップ（省略された人物がいるときだけ末尾にカードを出す）。
@@ -136,7 +139,8 @@ struct PeopleCarousel: View {
     static let carouselLimit = 30
 
     private var shown: [PersonInfo] { Array(people.prefix(Self.carouselLimit)) }
-    private var hiddenCount: Int { max(0, people.count - shown.count) }
+    /// 「すべて表示」に回る人数（列の上限を超えた分＋枚数が少なくて列に出さない人）。
+    private var hiddenCount: Int { max(0, (totalPeople ?? people.count) - shown.count) }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {

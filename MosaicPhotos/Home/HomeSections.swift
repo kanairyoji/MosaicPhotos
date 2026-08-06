@@ -154,7 +154,7 @@ extension HomeView {
     var peopleSection: some View {
         if peopleEngine.isFaceModelAvailable {
             Section {
-                if peopleEngine.people.isEmpty {
+                if peopleEngine.prominentPeople.isEmpty && peopleEngine.people.isEmpty {
                     if peopleEngine.isScanning {
                         LoadingRow("Finding people…")
                     } else {
@@ -163,8 +163,10 @@ extension HomeView {
                             .foregroundStyle(.secondary)
                     }
                 } else {
+                    // トップの列は「よく写っている人」だけ（5枚以上）。断片は「すべて表示」へ。
                     PeopleCarousel(
-                        people: peopleEngine.people,
+                        people: peopleEngine.prominentPeople,
+                        totalPeople: peopleEngine.people.count,
                         onSelect: { destination = .person($0) },
                         onLongPress: { personActions = $0 },
                         onSeeAll: { showingAllPeople = true })

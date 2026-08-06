@@ -340,7 +340,22 @@
     （統合サジェストの基準）だったため、共起 1〜2 回の対を統合できてしまった。
     → **候補は共起が 1 回でもあれば出さない**。`coOccurrenceNotSame=3` は「別人として学習する」
     基準として別に維持する（同じ数字を 2 つの目的に使い回していたのが誤り）。
+- 追補5（2026-08-06・5 回目の実機検証後）: **2,000 人超 → 47 人**（最大クラスタ 611 枚）に到達。
+  一方で誤統合が 2 種類あることが実運用で判明（ユーザー指摘）:
+  - **別々の名前が付いた人物どうしの統合**は誤りの可能性が高い（ユーザーは名前を付けた時点で
+    「別人」と表明している）。実際その操作をしていないのに `named` が 8→7 に減っていた。
+  - **同一写真違反が 2→9 に増加**。候補フィルタ（追補4）だけでは手動統合を防げない。
+    違反が生じる統合は**その統合自体が誤り**なので、拒否したうえで別人として学習すべき。
+  - → `mergeClusters` に**実行地点のガード**を 2 つ入れ、拒否理由（`MergeRejection`）を返す。
+    同一写真の共起で拒否したときは `notSame` を記録して再クラスタに反映する。
+    候補側でも別名どうしを除外。既存の違反は `repairSamePhotoViolations()` で修復
+    （最良の 1 顔だけ残し、外した顔は負例として記録＝再発しない）。
+  - **ホームのピープル列は 5 枚以上の人だけ**にする（`PeopleEngine.minFacesForCarousel`）。
+    数枚の断片はトップに並べる価値が薄く列を埋める。レビュー母数の 3 枚は据え置き（統合対象には残す）。
+  - 教訓: **候補を絞るのと実行を止めるのは別**。不変条件は「提案しない」ではなく
+    「実行させない」で守る。手動操作の経路が常に残っている。
 - 関連: `FaceStore.peopleEligibleClusters`、`FaceQualityReport.photosWithNoFace`、
+  `FaceStore.MergeRejection`/`repairSamePhotoViolations`、`PeopleEngine.minFacesForCarousel`、
   `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
   effectiveThresholdCap/ambiguousPolicy`、`FaceCalibration.clampRange`、
   `FaceStore.mergeCandidateFloor`、`FaceDetectionStats`、

@@ -32,6 +32,7 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | 割り当て規則の版 | 3（上げると夜間に全体再クラスタ） | `PeopleEngine.clusterRuleVersion` |
 | 統合候補の下限 | 0.35（レビュー/一括レビュー/候補数の共通帯域・ADR-68 追補2） | `FaceStore.mergeCandidateFloor` |
 | 「人物」の判定 | 実際の写真枚数 ≥ 3（UI とレビューで共通・ADR-68 追補3） | `FaceStore.peopleEligibleClusters` |
+| ホームの列に出す最小枚数 | 5（断片は「すべて表示」へ・ADR-68 追補5） | `PeopleEngine.minFacesForCarousel` |
 | しきい値校正の可動域 | 0.35〜**0.55**（ADR-68 追補・旧 0.70 は分裂を悪化させた） | `FaceCalibration.clampRange` |
 | 実効しきい値の頭打ち | 有効（少人数のみ・サイズ加算を積み上げない） | `FaceStore.capEffectiveThresholdWhenFewPeople` |
 | 校正の最小サンプル数 | 正負各 8 | `FaceCalibration.minSamples` |
@@ -457,6 +458,33 @@ samePhotoViolations=2(photos=2) corrections=346
 **検出の取りこぼし（未着手・数値は出た）**: `noFace=7777 / photos=10270 = **76%**`。
 家族アルバムでこの比率は高く、検出側を疑う根拠になった。ただし内訳（どのゲートで落ちたか）は
 スキャン中しか貯まらないため、**再スキャン時に `faces/detect:` を取得してから**判断する。
+
+### 2026-08-06 — 5 回目の実機検証: 47 人まで到達／誤統合の防止（ADR-68 追補5）
+
+```
+photos=10270(noFace=7777) faces=3092 clusters=983 people=47 named=7 largest=611
+mergeCandidates=630 samePhotoViolations=9 corrections=611
+```
+
+**2,000 人超 → 47 人**（最大クラスタ 611 枚）。ユーザーが一括レビューで 265 回統合した成果。
+
+**判明した誤り（実フィードバック）**:
+1. **別々の名前が付いた人物どうしの統合は誤りの可能性が高い**（ユーザーはその操作をしていないのに
+   `named` が 8→7 に減っていた）。ユーザーが名前を付けた時点で「別人」と表明しているので、
+   統合も提案もしてはいけない。
+2. **同一写真違反が 2→9 に増加**。統合の**実行地点**にガードが無く、候補フィルタ（追補4）だけでは
+   手動統合を防げなかった。違反が生じる統合は**その統合自体が誤り**なので、拒否したうえで
+   **別人として学習**すべき（ユーザー指摘）。
+
+**決定**:
+- `mergeClusters` に**ガードを 2 つ**入れ、拒否理由を返す（`MergeRejection`）:
+  別名どうし → `differentNames`／同一写真で共起 → `samePhotoConflict`（＋`notSame` を記録して再学習）。
+  **実行地点に置く**ことで、候補・1対1レビュー・一括レビュー・手動統合のすべてを一箇所で守る。
+- 候補側（レビュー／一括レビュー／`mergeCandidates`）でも別名どうしを除外。
+- 既存の違反を直す `repairSamePhotoViolations()`（最良の 1 顔だけ残し、外した顔は負例として記録）。
+  Developer Options から実行できる。
+- **ホームのピープル列は 5 枚以上の人だけ**（`minFacesForCarousel`）。数枚の断片はトップに並べる
+  価値が薄く列を埋めるため、「すべて表示」側へ回す（レビュー母数の 3 枚は据え置き＝統合対象には残す）。
 
 ## 運用ルール
 

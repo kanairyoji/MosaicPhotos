@@ -3464,6 +3464,16 @@
           }
         }
       }
+    },
+    "%lld were kept separate because they have different names or appear together in the same photo.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件は統合しませんでした（別の名前が付いている、または同じ写真に一緒に写っているため）。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

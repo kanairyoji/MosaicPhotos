@@ -26,8 +26,18 @@ public final class PeopleEngine {
     @ObservationIgnored private var lastCandidates: [String] = []
     @ObservationIgnored private var lastAllowSimulator = false
 
-    /// 「人物」とみなす最小顔数。
+    /// 「人物」として扱う最小の写真枚数（レビュー・検索・名前解決の母数）。
+    /// 少ない断片も統合の対象にはしたいので、ここは低めに保つ。
     private let minFaces = 3
+    /// **ホームのピープル列に出す**最小枚数（ADR-68 追補5）。
+    /// 数枚しか写っていない人はトップに並べる価値が薄く、成長期の断片も混ざって列が埋まる。
+    /// 「すべて表示」では `minFaces` の全員を出すので、埋もれて見えなくなることはない。
+    public static let minFacesForCarousel = 5
+
+    /// ホームのピープル列に出す人物（枚数の多い順）。
+    public var prominentPeople: [PersonInfo] {
+        people.filter { $0.count >= Self.minFacesForCarousel }
+    }
 
     /// FaceStore は internal のため注入はこの init（internal）経由。外部（アプリ）は
     /// `makeWithOffMainStore` を使う。
@@ -439,14 +449,27 @@ public final class PeopleEngine {
     /// 統合後にアンカーの重心が育つため、同じアンカーで再取得すると**さらに遠い時期の
     /// クラスタが候補に入る**（＝人間の確認を種にした連鎖）。自動連鎖（ADR-56 で不採用）と違い、
     /// 各段でユーザーの確認を挟むので雪崩式の誤統合が起きない。
-    public func answerBatch(anchorClusterID: Int, same: [Int], notSame: [Int]) async {
+    /// 戻り値: 統合できなかった件数（別名どうし・同一写真で共起）。UI が結果を伝えるのに使う。
+    @discardableResult
+    public func answerBatch(anchorClusterID: Int, same: [Int], notSame: [Int]) async -> Int {
+        var rejected = 0
         for id in same where id != anchorClusterID {
-            await store.mergeClusters(from: id, into: anchorClusterID)
+            if await store.mergeClusters(from: id, into: anchorClusterID) != nil { rejected += 1 }
         }
         for id in notSame where id != anchorClusterID {
             await store.markNotSamePerson(clusterA: anchorClusterID, clusterB: id)
         }
         await loadPeople()
+        return rejected
+    }
+
+    /// 「1 枚の写真に同じ人物が 2 回」を修復する（誤統合の痕跡・ADR-68 追補5）。
+    /// 最良の 1 顔だけ残し、外した顔は負例として学習させる（再クラスタで再発しない）。
+    @discardableResult
+    public func repairSamePhotoViolations() async -> Int {
+        let n = await store.repairSamePhotoViolations()
+        if n > 0 { await loadPeople() }
+        return n
     }
 
     /// 「この写真は「◯◯」さんですか？」への回答（A2）。

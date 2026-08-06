@@ -226,6 +226,14 @@ struct DeveloperSettingsView: View {
             Button("クラスタを今すぐ再構築（制約付き）") {
                 Task { await peopleEngine.debugRebuildClustersNow() }
             }
+            Button("同一写真違反を修復（重複した顔を外す）") {
+                Task {
+                    let n = await peopleEngine.repairSamePhotoViolations()
+                    faceQuality = await peopleEngine.logQualityReport()
+                    faceDetect = peopleEngine.detectionStats()
+                    placeRefineStatus = "修復した顔: \(n)"
+                }
+            }
             faceQualityRows
         } header: {
             Text("AI 解析：ピープル（顔）")

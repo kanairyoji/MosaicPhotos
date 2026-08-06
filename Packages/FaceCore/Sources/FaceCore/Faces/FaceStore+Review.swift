@@ -76,8 +76,10 @@ extension FaceStore {
                 guard let ca = centroid[ids[i]], let cb = centroid[ids[j]] else { continue }
                 let sim = FaceClustering.dot(ca, cb)
                 guard sim >= Self.mergeBandFloor(threshold: thr), !isMarkedNotSame(ca, cb) else { continue }
-                let coOccurrence = (photoSets[ids[i]] ?? []).intersection(photoSets[ids[j]] ?? []).count
-                guard coOccurrence < Self.coOccurrenceNotSame else { continue }
+                // 共起は 1 回でもあれば出さない（統合すると同一写真違反になる・ADR-68 追補4）。
+                guard (photoSets[ids[i]] ?? []).isDisjoint(with: photoSets[ids[j]] ?? []) else { continue }
+                // 別々の名前が付いた人物どうしは出さない（ユーザーが既に別人と表明済み・追補5）。
+                guard !Self.namesConflict(name[ids[i]], name[ids[j]]) else { continue }
                 mergeCandidates.append((ids[i], ids[j], sim))
             }
         }
@@ -188,7 +190,9 @@ extension FaceStore {
         }
         var centroid: [Int: [Float]] = [:]
         var photoSets: [Int: Set<String>] = [:]
+        var nameByID: [Int: String] = [:]
         for c in targets {
+            nameByID[c.clusterID] = c.name ?? ""
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
             photoSets[c.clusterID] = Set(faces(inCluster: c.clusterID).map(\.refKey))
@@ -198,8 +202,8 @@ extension FaceStore {
             for j in (i + 1)..<ids.count {
                 guard let a = centroid[ids[i]], let b = centroid[ids[j]] else { continue }
                 guard FaceClustering.dot(a, b) >= Self.mergeBandFloor(threshold: report.threshold) else { continue }
-                let co = (photoSets[ids[i]] ?? []).intersection(photoSets[ids[j]] ?? []).count
-                guard co < Self.coOccurrenceNotSame else { continue }
+                guard (photoSets[ids[i]] ?? []).isDisjoint(with: photoSets[ids[j]] ?? []) else { continue }
+                guard !Self.namesConflict(nameByID[ids[i]], nameByID[ids[j]]) else { continue }
                 report.mergeCandidatePairs += 1
             }
         }
@@ -288,6 +292,8 @@ extension FaceStore {
             // 実機で一括統合により違反が 2 件発生したのを受けて厳格化（ADR-68 追補4）。
             // 同一人物は 1 枚に 1 回しか写れないので、共起があれば別人か重複検出のどちらか。
             guard anchorPhotos.isDisjoint(with: photoSets[c.clusterID] ?? []) else { continue }
+            // 別々の名前が付いた対は出さない（追補5）。
+            guard !Self.namesConflict(anchor.name, c.name) else { continue }
             candidates.append(.init(clusterID: c.clusterID, face: face,
                                     count: c.count, similarity: sim))
         }

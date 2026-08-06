@@ -20,6 +20,9 @@ struct FaceBatchReviewView: View {
     /// 効率は保ちつつ、破壊的操作は必ずユーザーの明示で起きるようにする。
     @State private var selected: Set<Int> = []
     @State private var mergedTotal = 0
+    /// 統合を拒否された件数（別名どうし・同一写真で共起）。理由を伝えないと
+    /// 「選んだのに減らない」に見えるため表示する。
+    @State private var rejectedTotal = 0
     @State private var isApplying = false
     /// 「次の人へ」で送った基準。これを除いて次の人物を選ぶ（ADR-68 追補4）。
     /// 基準が固定されたままだと、真の一致を出し切った後は候補が全部別人になり機能が死ぬ。
@@ -166,6 +169,13 @@ struct FaceBatchReviewView: View {
             Text(mergedTotal > 0 ? L("Merged \(mergedTotal) entries.")
                                  : L("Nothing left to merge right now."))
                 .font(.headline)
+            if rejectedTotal > 0 {
+                Text(L("\(rejectedTotal) were kept separate because they have different names or appear together in the same photo."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
             Text(L("Answers are applied right away, and the next overnight analysis uses them too."))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -206,9 +216,10 @@ struct FaceBatchReviewView: View {
         // 明示的な「いいえ」は 1 対 1 のレビュー（FaceReviewView）で受ける。
         // ただし**同じ候補を出し続けない**よう、出題済みとして覚えておく。
         noteShown(item, keeping: selected)
-        await peopleEngine.answerBatch(anchorClusterID: item.anchorClusterID,
-                                       same: same, notSame: [])
-        mergedTotal += same.count
+        let rejected = await peopleEngine.answerBatch(anchorClusterID: item.anchorClusterID,
+                                                      same: same, notSame: [])
+        mergedTotal += same.count - rejected
+        rejectedTotal += rejected
         isApplying = false
         await load(anchor: item.anchorClusterID)
     }

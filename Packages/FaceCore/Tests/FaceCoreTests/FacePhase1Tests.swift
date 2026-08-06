@@ -403,6 +403,59 @@ struct FacePhase1Tests {
         #expect(await store2.batchReviewItem(minFaces: 3) == nil)
     }
 
+    @Test("統合ガード: 別名どうしと同一写真の共起は拒否し、共起は別人として学習する")
+    func mergeGuards() async {
+        // (1) 別々の名前 → 拒否（名前もクラスタも保たれる）。
+        let s1 = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await s1.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await s1.recordScan(refKey: "L-b\(i)",
+                                             faces: [signal(FaceClustering.normalized([0, 1, 0]))]) }
+        await s1.rename(clusterID: 0, name: "太郎")
+        await s1.rename(clusterID: 1, name: "花子")
+        let r1 = await s1.mergeClusters(from: 1, into: 0)
+        #expect(r1 == .differentNames)
+        #expect(await s1.allClusters().count == 2)          // 統合されていない
+        #expect(await s1.cluster(1)?.name == "花子")         // 名前も消えていない
+
+        // (2) 同じ写真に一緒に写る → 拒否し、**別人として学習**する。
+        let s2 = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 {
+            await s2.recordScan(refKey: "L-both\(i)",
+                                faces: [signal([1, 0, 0]), signal(FaceClustering.normalized([0, 1, 0]))])
+        }
+        let before = await s2.correctionCount()
+        let r2 = await s2.mergeClusters(from: 1, into: 0)
+        #expect(r2 == .samePhotoConflict)
+        #expect(await s2.allClusters().count == 2)
+        #expect(await s2.correctionCount() > before)         // notSame が記録された
+
+        // (3) 問題ない対は従来どおり統合できる。
+        let s3 = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await s3.recordScan(refKey: "L-x\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await s3.recordScan(refKey: "L-y\(i)",
+                                             faces: [signal(FaceClustering.normalized([0, 1, 0]))]) }
+        #expect(await s3.mergeClusters(from: 1, into: 0) == nil)
+        #expect(await s3.allClusters().count == 1)
+    }
+
+    @Test("同一写真違反の修復: 最良の1顔を残し、外した顔を負例として学習する")
+    func repairViolations() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // 1 枚に同じ埋め込みの顔 2 つ（cannot-link で別クラスタ）＋別写真で各クラスタを育てる。
+        await store.recordScan(refKey: "L-dup", faces: [signal([1, 0, 0], quality: 0.9),
+                                                        signal([1, 0, 0], quality: 0.5)])
+        for i in 0..<2 { await store.recordScan(refKey: "L-p\(i)", faces: [signal([1, 0, 0])]) }
+        // 統合ガードを迂回して違反状態を作る（旧ビルドで起きた状態の再現）。
+        await store.forceMergeForTesting(from: 1, into: 0)
+        #expect(await store.qualityReport(minFaces: 1).samePhotoViolations == 1)
+
+        let before = await store.correctionCount()
+        let repaired = await store.repairSamePhotoViolations()
+        #expect(repaired == 1)
+        #expect(await store.qualityReport(minFaces: 1).samePhotoViolations == 0)
+        #expect(await store.correctionCount() > before)   // 再発防止の負例が入る
+    }
+
     @Test("品質レポート: 顔が見つからなかった写真を数える")
     func qualityReportCountsPhotosWithNoFace() async {
         let store = FaceStore(isStoredInMemoryOnly: true)
@@ -425,9 +478,10 @@ struct FacePhase1Tests {
         let before = await store.qualityReport(minFaces: 1)
         #expect(before.samePhotoViolations == 0)
 
-        // ユーザーがこの 2 クラスタを統合すると、1 枚の写真に同じ人物が 2 回になる。
-        // 割り当て時の cannot-link は統合を検査しないので、事後に検出できることが重要。
-        await store.mergeClusters(from: 1, into: 0)
+        // ⚠️ 現在は統合ガード（ADR-68 追補5）が同一写真の共起を拒否するので、
+        // ここでは**旧ビルドで生じた違反状態**をガード迂回で再現し、検出できることを確かめる。
+        #expect(await store.mergeClusters(from: 1, into: 0) == .samePhotoConflict)
+        await store.forceMergeForTesting(from: 1, into: 0)
         let after = await store.qualityReport(minFaces: 1)
         #expect(after.samePhotoViolations == 1)
         #expect(after.samePhotoViolationPhotos == 1)
