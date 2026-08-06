@@ -224,7 +224,10 @@ extension FaceStore {
                                                  FaceClustering.normalized(cSum))
                     recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
                                      wrongEmbedding: ClipMath.encodeHalf(cSum), similarity: sim)
-                    _ = vec
+                    // ⚠️ 重心からも寄与を除く。外すだけだと sum/count に抜いた顔が残り、
+                    // 夜間の再クラスタまで重心が汚れたままになる（reassignFace と同じ規則）。
+                    removeFromCluster(clusterID: f.clusterID, vec: vec,
+                                      quality: Float(f.quality), faceID: f.faceID)
                 }
                 f.clusterID = FaceClustering.unassigned
                 repaired += 1
