@@ -51,7 +51,10 @@ final class FaceAccuracyEvalTests: XCTestCase {
             .sorted()
         try XCTSkipUnless(!datasets.isEmpty, "images/ + labels.csv を持つデータセットがない: \(root)")
 
-        // FACE_EVAL_ONLY=lfw のように対象データセットを絞れる（長時間実行の分割用）。
+        // 対象データセットを絞る（長時間実行の分割用）。⚠️ xcodebuild からは
+        // **TEST_RUNNER_FACE_EVAL_ONLY=lfw** のように TEST_RUNNER_ 接頭辞で渡すこと。
+        // 素の環境変数はテストプロセスへ転送されない（従来の「絞り込み実行」は実は
+        // 毎回全データセットを回していた・ADR-70 で発覚）。
         let only = ProcessInfo.processInfo.environment["FACE_EVAL_ONLY"]?
             .split(separator: ",").map(String.init)
         for dataset in datasets where only == nil || only!.contains(dataset) {

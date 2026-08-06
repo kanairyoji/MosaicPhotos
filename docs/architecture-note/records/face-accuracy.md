@@ -17,6 +17,12 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
   -only-testing:MosaicPhotosTests/FaceAccuracyEvalTests
 ```
 
+- データセットを絞る: `TEST_RUNNER_FACE_EVAL_ONLY=fgnet`（⚠️ **TEST_RUNNER_ 接頭辞必須**。
+  素の env はテストプロセスへ届かない）。検証ペアの省略: `TEST_RUNNER_FACE_EVAL_SKIP_VERIFY=1`。
+- 決着済みバリアント（ADR-56〜60 の掃引）は `TEST_RUNNER_FACE_EVAL_LEGACY=1` のときだけ実行
+  （ResNet100 級だと全部は 1 回のテスト実行に収まらない）。
+- 抽出は 100 枚ごとにキャッシュ保存されるので、**タイムアウトしても再実行で続きから**進む。
+
 出力は `FACEEVAL:` 行。指標の定義は `FaceEvalMetrics.swift`（B-Cubed / ペア一致 / TAR@FAR）。
 
 ## 現行パラメーター（v4 パイプライン）
