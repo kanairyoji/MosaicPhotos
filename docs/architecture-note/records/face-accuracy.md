@@ -35,7 +35,8 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | ホームの列に出す最小枚数 | 5（断片は「すべて表示」へ・ADR-68 追補5） | `PeopleEngine.minFacesForCarousel` |
 | しきい値校正の可動域 | 0.35〜**0.55**（ADR-68 追補・旧 0.70 は分裂を悪化させた） | `FaceCalibration.clampRange` |
 | 実効しきい値の頭打ち | 有効（少人数のみ・サイズ加算を積み上げない） | `FaceStore.capEffectiveThresholdWhenFewPeople` |
-| 校正の最小サンプル数 | 正負各 8 | `FaceCalibration.minSamples` |
+| 校正の最小サンプル数 | 正負各 8（**確度の重み合計**で判定・ADR-68 追補6） | `FaceCalibration.minSamples` |
+| 回答の確度（学習の重み） | 1対1の確認/手動=1.0 ／ まとめて確認=0.4 | `FaceStore.AnswerConfidence` |
 | 品質フロア（未満はクラスタ不参加） | 0.40 | `FaceStore.qualityFloor` |
 | 検出信頼度の下限 | 0.80 | `FaceQualityGate.minDetectionConfidence` |
 | 最小顔サイズ（正規化比率） | ローカル 0.05 / クラウド 0.15 | `FaceQualityGate.minFaceSide` |
@@ -485,6 +486,29 @@ mergeCandidates=630 samePhotoViolations=9 corrections=611
   Developer Options から実行できる。
 - **ホームのピープル列は 5 枚以上の人だけ**（`minFacesForCarousel`）。数枚の断片はトップに並べる
   価値が薄く列を埋めるため、「すべて表示」側へ回す（レビュー母数の 3 枚は据え置き＝統合対象には残す）。
+
+### 2026-08-06 — 回答の確度を学習に反映（ADR-68 追補6）
+
+**指摘（ユーザー）**: 「2 枚を並べて同じ人か尋ねる」機能は人が両方を見て判断するので確度が高い。
+一方「まとめて確認」は**候補として選ばれた小さなアバターだけ**を見て判断するので確度が低い。
+それが学習に反映されているか。
+
+**回答: されていなかった。** `FaceCorrection` は kind（merge/confirm/reassign/notSame）しか持たず、
+しきい値校正は全サンプルを**等重み**で数えていた。実機では修正 216→611 件の増分の大半が
+一括レビュー由来で、**校正が低確度の回答一色に染まる**構造だった（1 セッションで数百件入る）。
+
+**決定**: `FaceCorrection.confidence` を追加（既存行は nil ＝ 1.0）。
+`FaceCalibration.calibratedThreshold` を**重み付き**にし、件数ではなく**重みの合計**で
+最適境界を選ぶ。最小サンプル数の足切りも重み合計で見る（低確度ばかりでは校正を動かさない）。
+
+| 回答の種類 | 重み | 理由 |
+|---|---|---|
+| 1 対 1 の確認（2 枚を並べて尋ねる） | 1.0 | 両方を見て判断＝材料が揃っている |
+| 手動の付け替え・統合 | 1.0 | ユーザーが対象を明示的に選んでいる |
+| **まとめて確認** | **0.4** | 小さなアバターを一覧から選ぶ＝取り違えが起きやすく、件数も多い |
+
+**あわせて**: 同一写真違反の修復は Developer Options の手動ボタンではなく、
+**一括レビューの回答時に自動実行**する（ユーザーに毎回選ばせる操作ではない・実フィードバック）。
 
 ## 運用ルール
 

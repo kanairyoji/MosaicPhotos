@@ -354,7 +354,20 @@
     数枚の断片はトップに並べる価値が薄く列を埋める。レビュー母数の 3 枚は据え置き（統合対象には残す）。
   - 教訓: **候補を絞るのと実行を止めるのは別**。不変条件は「提案しない」ではなく
     「実行させない」で守る。手動操作の経路が常に残っている。
+- 追補6（2026-08-06・確度の重み付け）: **回答の確度が学習に反映されていなかった**（ユーザー指摘）。
+  1 対 1 の確認（2 枚を並べて尋ねる）は両方を見て判断するので確度が高いが、まとめて確認は
+  候補の小さなアバターだけを見るので確度が低い。にもかかわらず `FaceCorrection` は kind しか持たず、
+  しきい値校正は全サンプルを等重みで数えていた。実機では修正 216→611 件の増分の大半が一括レビュー
+  由来で、**校正が低確度の回答一色に染まる**構造だった。
+  - `FaceCorrection.confidence` を追加（既存行は nil ＝ 1.0 の加算的マイグレーション）。
+    `FaceCalibration.calibratedThreshold` を重み付きにし、件数ではなく**重みの合計**で境界を選ぶ。
+    最小サンプル数の足切りも重み合計で見る。重み: 1 対 1 の確認・手動 = 1.0／まとめて確認 = 0.4。
+  - 同一写真違反の修復は手動ボタンをやめ、**一括レビューの回答時に自動実行**する
+    （ユーザーに毎回選ばせる操作ではない・実フィードバック）。
+  - 教訓: **ユーザーの回答は「同じ重みの真実」ではない**。UI の作りが確度を決めるので、
+    入力経路ごとに重みを持たせる。件数で殴られる指標（校正・多数決）は特に危険。
 - 関連: `FaceStore.peopleEligibleClusters`、`FaceQualityReport.photosWithNoFace`、
+  `FaceStore.AnswerConfidence`、`FaceCorrection.confidence`、
   `FaceStore.MergeRejection`/`repairSamePhotoViolations`、`PeopleEngine.minFacesForCarousel`、
   `FaceClustering.rivalAwareSizeMargin/rivalAwareSizeMarginMaxPeople/rivalAlikeMargin/
   effectiveThresholdCap/ambiguousPolicy`、`FaceCalibration.clampRange`、

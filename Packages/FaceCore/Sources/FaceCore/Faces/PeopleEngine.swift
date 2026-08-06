@@ -454,11 +454,18 @@ public final class PeopleEngine {
     public func answerBatch(anchorClusterID: Int, same: [Int], notSame: [Int]) async -> Int {
         var rejected = 0
         for id in same where id != anchorClusterID {
-            if await store.mergeClusters(from: id, into: anchorClusterID) != nil { rejected += 1 }
+            // 一括レビューは小さなアバターを一覧から選ぶ＝1 対 1 の確認より確度が低く、件数も多い。
+            // 学習には低い重みで入れる（ADR-68 追補6）。
+            if await store.mergeClusters(from: id, into: anchorClusterID,
+                                         confidence: .batch) != nil { rejected += 1 }
         }
         for id in notSame where id != anchorClusterID {
-            await store.markNotSamePerson(clusterA: anchorClusterID, clusterB: id)
+            await store.markNotSamePerson(clusterA: anchorClusterID, clusterB: id,
+                                          confidence: .batch)
         }
+        // 誤統合の痕跡（1 枚に同じ人物が 2 回）はその場で自動修復する。
+        // ユーザーに毎回選ばせる操作ではない（実フィードバック・ADR-68 追補6）。
+        await store.repairSamePhotoViolations()
         await loadPeople()
         return rejected
     }

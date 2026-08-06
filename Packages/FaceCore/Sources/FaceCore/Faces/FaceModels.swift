@@ -86,15 +86,23 @@ final class FaceCorrection {
     /// kind により意味が変わる: reassign=顔×誤り重心（負例）/ merge=重心×重心（正例）/
     /// confirm=顔×所属重心（正例）/ notSame=重心×重心（負例）。
     var similarity: Double?
+    /// **回答の確度**（ADR-68 追補6）。同じ「はい」でも、判断材料の量で信頼度は変わる:
+    /// - 1.0 **1 対 1 の確認**（2 枚を並べて「同じ人ですか？」）＝ 材料が揃った判断。
+    /// - 1.0 **手動の付け替え/統合**＝ ユーザーが対象を明示的に選んでいる。
+    /// - 0.4 **まとめて確認**＝ 小さなアバターを一覧から選ぶので取り違えが起こりやすく、
+    ///   1 セッションで数百件入るため、等重みだと校正がこれ一色に染まる。
+    /// 既存行（列追加前）は nil ＝ 1.0 として扱う。
+    var confidence: Double?
     var createdAt: Date
 
     init(id: String, kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
-         similarity: Double? = nil, createdAt: Date) {
+         similarity: Double? = nil, confidence: Double? = nil, createdAt: Date) {
         self.id = id
         self.kind = kind
         self.faceEmbedding = faceEmbedding
         self.wrongEmbedding = wrongEmbedding
         self.similarity = similarity
+        self.confidence = confidence
         self.createdAt = createdAt
     }
 }

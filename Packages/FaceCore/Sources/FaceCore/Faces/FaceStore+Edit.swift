@@ -62,23 +62,35 @@ extension FaceStore {
 
     /// 「同じ人物？」に **いいえ**（A1・ADR-46）。2 クラスタを「別人」として記録する。
     /// 以後この対は (1) 統合サジェストに出さない、(2) 双方向の負例として合流を拒否する。
-    func markNotSamePerson(clusterA: Int, clusterB: Int) {
+    func markNotSamePerson(clusterA: Int, clusterB: Int,
+                           confidence: AnswerConfidence = .high) {
         guard let a = cluster(clusterA), let b = cluster(clusterB),
               let aSum = ClipMath.decodeHalf(a.sum), let bSum = ClipMath.decodeHalf(b.sum) else { return }
         let sim = FaceClustering.dot(FaceClustering.normalized(aSum),
                                      FaceClustering.normalized(bSum))
         recordCorrection(kind: "notSame", faceEmbedding: ClipMath.encodeHalf(aSum),
-                         wrongEmbedding: ClipMath.encodeHalf(bSum), similarity: sim)
+                         wrongEmbedding: ClipMath.encodeHalf(bSum), similarity: sim,
+                         confidence: confidence)
         try? modelContext.save()
+    }
+
+    /// 回答の確度（ADR-68 追補6）。`FaceCorrection.confidence` に記録し、学習で重み付けする。
+    enum AnswerConfidence: Double, Sendable {
+        /// 1 対 1 の確認・手動操作＝判断材料が揃っている。
+        case high = 1.0
+        /// まとめて確認＝小さなアバターを一覧から選ぶ。取り違えが起こりやすく件数も多い。
+        case batch = 0.4
     }
 
     /// 修正ジャーナルへ 1 件追記（ADR-45/46）。負例・校正キャッシュを無効化する。
     func recordCorrection(kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
-                                  similarity: Float? = nil) {
+                          similarity: Float? = nil,
+                          confidence: AnswerConfidence = .high) {
         modelContext.insert(FaceCorrection(
             id: UUID().uuidString, kind: kind,
             faceEmbedding: faceEmbedding, wrongEmbedding: wrongEmbedding,
-            similarity: similarity.map(Double.init), createdAt: Date()))
+            similarity: similarity.map(Double.init), confidence: confidence.rawValue,
+            createdAt: Date()))
         negativesCache = nil
         thresholdCache = nil
         clusteringCache = nil   // しきい値が変わり得るため次スキャンで再構築
@@ -189,7 +201,8 @@ extension FaceStore {
 
     /// 2 クラスタを統合する。**間違いの可能性が高い場合は拒否**して理由を返す（nil = 成功）。
     @discardableResult
-    func mergeClusters(from srcID: Int, into dstID: Int) -> MergeRejection? {
+    func mergeClusters(from srcID: Int, into dstID: Int,
+                      confidence: AnswerConfidence = .high) -> MergeRejection? {
         guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return nil }
 
         // ガード1: 別々の名前が付いている＝ユーザーが既に「別人」と表明している。
@@ -207,7 +220,7 @@ extension FaceStore {
             markNotSamePerson(clusterA: srcID, clusterB: dstID)
             return .samePhotoConflict
         }
-        mergeClustersUnchecked(src: src, dst: dst)
+        mergeClustersUnchecked(src: src, dst: dst, confidence: confidence)
         return nil
     }
 
@@ -217,7 +230,8 @@ extension FaceStore {
         mergeClustersUnchecked(src: src, dst: dst)
     }
 
-    private func mergeClustersUnchecked(src: PersonCluster, dst: PersonCluster) {
+    private func mergeClustersUnchecked(src: PersonCluster, dst: PersonCluster,
+                                        confidence: AnswerConfidence = .high) {
         let srcID = src.clusterID, dstID = dst.clusterID
         // ADR-45/46: 統合（＝同一人物）を正例として記録。類似度は**統合前**の重心同士で測る
         //（統合後の dst.sum には src が混ざり、値が不当に高くなるため）。
@@ -225,7 +239,7 @@ extension FaceStore {
             let sim = FaceClustering.dot(FaceClustering.normalized(sSum),
                                          FaceClustering.normalized(dSumBefore))
             recordCorrection(kind: "merge", faceEmbedding: ClipMath.encodeHalf(sSum),
-                             wrongEmbedding: nil, similarity: sim)
+                             wrongEmbedding: nil, similarity: sim, confidence: confidence)
         }
         // 顔を一括付け替え（DetectedFace.clusterID）。
         for f in faces(inCluster: srcID) { f.clusterID = dstID }

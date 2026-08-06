@@ -100,13 +100,15 @@ actor FaceStore {
     func calibratedThreshold() -> Float {
         if let cached = thresholdCache { return cached }
         let rows = (try? modelContext.fetch(FetchDescriptor<FaceCorrection>())) ?? []
-        var positive: [Float] = []
-        var negative: [Float] = []
+        // 確度で重み付けする（ADR-68 追補6）。列追加前の行は nil ＝ 1.0 として扱う。
+        var positive: [(Float, Double)] = []
+        var negative: [(Float, Double)] = []
         for r in rows {
             guard let sim = r.similarity else { continue }
+            let w = r.confidence ?? 1.0
             switch r.kind {
-            case "merge", "confirm":     positive.append(Float(sim))
-            case "reassign", "notSame":  negative.append(Float(sim))
+            case "merge", "confirm":     positive.append((Float(sim), w))
+            case "reassign", "notSame":  negative.append((Float(sim), w))
             default: break
             }
         }

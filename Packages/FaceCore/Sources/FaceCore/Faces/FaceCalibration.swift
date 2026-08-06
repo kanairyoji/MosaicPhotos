@@ -27,12 +27,32 @@ public enum FaceCalibration {
     /// 分類精度（正例 ≥ t かつ 負例 < t の数）を最大化する境界を選び、同点なら既定値に近い方。
     public static func calibratedThreshold(positive: [Float], negative: [Float],
                                            fallback: Float = defaultThreshold) -> Float {
-        guard positive.count >= minSamples, negative.count >= minSamples else { return fallback }
+        calibratedThreshold(positive: positive.map { ($0, 1) },
+                            negative: negative.map { ($0, 1) }, fallback: fallback)
+    }
+
+    /// **確度で重み付けした**校正（ADR-68 追補6）。
+    ///
+    /// 同じ「はい」でも判断材料の量で信頼度は違う。1 対 1 の確認（2 枚を並べて尋ねる）は
+    /// 材料が揃っているが、まとめて確認（小さなアバターを一覧から選ぶ）は取り違えが起こりやすく、
+    /// **1 セッションで数百件入る**ため、等重みだと校正がそれ一色に染まる（実機で修正 216→611 件の
+    /// 大半が一括レビュー由来だった）。件数ではなく**重みの合計**で最適境界を選ぶ。
+    ///
+    /// - Parameters:
+    ///   - positive/negative: (類似度, 重み) の並び。重みは `FaceCorrection.confidence`。
+    public static func calibratedThreshold(positive: [(Float, Double)],
+                                           negative: [(Float, Double)],
+                                           fallback: Float = defaultThreshold) -> Float {
+        // サンプル数の足切りは**重み合計**で見る（低確度ばかりで校正を動かさない）。
+        let posWeight = positive.reduce(0.0) { $0 + $1.1 }
+        let negWeight = negative.reduce(0.0) { $0 + $1.1 }
+        guard posWeight >= Double(minSamples), negWeight >= Double(minSamples) else { return fallback }
         var best = fallback
-        var bestScore = -1
+        var bestScore = -Double.greatestFiniteMagnitude
         // 候補境界＝観測された全類似度（それ以外の値は分類結果が変わらない）。
-        for t in Set(positive).union(negative) {
-            let score = positive.filter { $0 >= t }.count + negative.filter { $0 < t }.count
+        for t in Set(positive.map(\.0)).union(negative.map(\.0)) {
+            let score = positive.filter { $0.0 >= t }.reduce(0.0) { $0 + $1.1 }
+                + negative.filter { $0.0 < t }.reduce(0.0) { $0 + $1.1 }
             if score > bestScore
                 || (score == bestScore && abs(t - fallback) < abs(best - fallback)) {
                 best = t

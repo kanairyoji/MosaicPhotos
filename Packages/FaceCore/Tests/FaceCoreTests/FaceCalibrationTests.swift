@@ -44,4 +44,33 @@ struct FaceCalibrationTests {
         let errors = positive.filter { $0 < t }.count + negative.filter { $0 >= t }.count
         #expect(errors <= 2)
     }
+
+    @Test("確度で重み付けする: 低確度の回答が多数でも高確度の少数を押し流さない")
+    func weightedCalibration() {
+        // 高確度（1 対 1 の確認）: 同一人物 0.52 / 別人 0.48 → 境界は 0.52 付近が正しい。
+        let highPos = Array(repeating: (Float(0.52), 1.0), count: 10)
+        let highNeg = Array(repeating: (Float(0.48), 1.0), count: 10)
+        // 低確度（まとめて確認）: 取り違えを含み「同じ人」と答えた類似度が低めに偏る。
+        // 件数は多い（1 セッションで数百件入る実態）が、重みは 0.4。
+        let batchPos = Array(repeating: (Float(0.36), 0.4), count: 20)
+
+        let weighted = FaceCalibration.calibratedThreshold(
+            positive: highPos + batchPos, negative: highNeg, fallback: 0.50)
+        let unweighted = FaceCalibration.calibratedThreshold(
+            positive: (highPos + batchPos).map { ($0.0, 1.0) },
+            negative: highNeg.map { ($0.0, 1.0) }, fallback: 0.50)
+        // 等重みだと件数の多い低確度サンプルに引きずられ、境界が 0.36 まで落ちる。
+        #expect(abs(unweighted - 0.36) < 1e-5)
+        // 重み付けなら高確度側の境界（0.52）が残る。
+        #expect(abs(weighted - 0.52) < 1e-5)
+    }
+
+    @Test("重み合計が最小サンプル数に満たなければ校正しない")
+    func weightedMinimumSamples() {
+        // 低確度（0.4）×10 件 = 重み 4.0 < minSamples(8) → 既定値のまま。
+        let pos = Array(repeating: (Float(0.6), 0.4), count: 10)
+        let neg = Array(repeating: (Float(0.2), 0.4), count: 10)
+        #expect(FaceCalibration.calibratedThreshold(positive: pos, negative: neg,
+                                                    fallback: 0.50) == 0.50)
+    }
 }
