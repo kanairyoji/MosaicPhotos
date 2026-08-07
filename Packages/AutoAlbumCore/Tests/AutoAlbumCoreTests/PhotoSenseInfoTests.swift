@@ -30,17 +30,31 @@ struct PhotoSenseInfoTests {
         #expect(tagged.contains("L-a"))
     }
 
-    @Test("refKeys(aestheticAtLeast:) はしきい値以上のみ返す（未付与は含めない）")
-    func aestheticThresholdFetch() async {
+    @Test("allAesthetics はスコア付きだけ返す（未付与は含めない）")
+    func allAestheticsFetch() async {
         let store = TagStore(isStoredInMemoryOnly: true)
         await store.recordTags([
             (refKey: "L-high", info: PhotoSenseInfo(tags: [], aesthetic: 0.8)),
-            (refKey: "L-edge", info: PhotoSenseInfo(tags: [], aesthetic: 0.5)),
             (refKey: "L-low", info: PhotoSenseInfo(tags: [], aesthetic: 0.1)),
             (refKey: "L-none", info: PhotoSenseInfo(tags: ["untagged-score"])),   // aesthetic nil
         ])
-        let keys = await store.refKeys(aestheticAtLeast: 0.5)
-        #expect(keys == ["L-high", "L-edge"])
+        let all = await store.allAesthetics()
+        #expect(all == ["L-high": 0.8, "L-low": 0.1])
+    }
+
+    @Test("適応しきい値: 上位20%を [floor, ceiling] にクランプ")
+    func adaptiveThreshold() {
+        // 低スコア寄りの分布（日常写真）: 上位20% 境界 0.12 → floor 0.2 へ引き上げ。
+        let low = [Double](repeating: -0.1, count: 80) + [Double](repeating: 0.12, count: 20)
+        #expect(PhotoQuality.adaptiveThreshold(scores: low) == PhotoQuality.thresholdFloor)
+        // 標準的な分布: 上位20% 境界 0.4 がそのまま使われる。
+        let mid = [Double](repeating: 0.0, count: 80) + [Double](repeating: 0.4, count: 20)
+        #expect(PhotoQuality.adaptiveThreshold(scores: mid) == 0.4)
+        // 粒ぞろい（全部高スコア）: ceiling 0.6 で頭打ち＝20% より多く通す。
+        let high = [Double](repeating: 0.9, count: 100)
+        #expect(PhotoQuality.adaptiveThreshold(scores: high) == PhotoQuality.thresholdCeiling)
+        // 空は ceiling（何も通さない側）。
+        #expect(PhotoQuality.adaptiveThreshold(scores: []) == PhotoQuality.thresholdCeiling)
     }
 
     @Test("再タグ（recordTags 上書き）でキャプションは消えない")

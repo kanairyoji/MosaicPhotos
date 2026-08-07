@@ -231,12 +231,16 @@ actor TagStore {
         return out
     }
 
-    /// 美的スコアがしきい値以上の refKey 集合（「ベストショット」フィルタ用）。
-    /// スコア未付与（nil＝未解析）は含めない。
-    func refKeys(aestheticAtLeast threshold: Double) -> Set<String> {
-        let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>(
-            predicate: #Predicate { ($0.aesthetic ?? -1) >= threshold }))) ?? []
-        return Set(records.map(\.refKey))
+    /// 美的スコアの全台帳（refKey → スコア・「ベストショット」フィルタ用）。
+    /// スコア未付与（nil＝未解析）は含めない。分布適応しきい値の算出に全件が要る。
+    func allAesthetics() -> [String: Double] {
+        var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.aesthetic != nil })
+        d.propertiesToFetch = [\.refKey, \.aesthetic]
+        let records = (try? modelContext.fetch(d)) ?? []
+        var out: [String: Double] = [:]
+        out.reserveCapacity(records.count)
+        for r in records { if let a = r.aesthetic { out[r.refKey] = a } }
+        return out
     }
 
     /// 指定 refKey 群のキャプション（LLM Verify の入力用）。

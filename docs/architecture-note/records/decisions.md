@@ -37,8 +37,13 @@
     固まって見せない）。プロバイダ未注入ならフィルタ欄自体を出さない（レイヤー分離維持）。
   - しきい値の校正・技術シグナル合成（ブレ/目つぶり等）・isUtility 除外・LAION 第二スコアは
     将来の拡張（お気に入りを正解データにした AUC 校正で判断）。
+- **追記（同日）: 固定しきい値 0.5 は実機で全滅**（「ベストショットはまだありません」）。Vision の
+  overallScore は日常写真だと 0 前後に集まり 0.5 超えは稀（実障害）。**分布適応**へ変更:
+  しきい値＝「そのライブラリのスコア上位 `topFraction`(20%) の境界」を [floor 0.2, ceiling 0.6] に
+  クランプ（`PhotoQuality.adaptiveThreshold`・純・テスト付き）。`beautifulPhotoKeys` は実測ログ
+  （scored/p50/p90/max/thr/best 件数）を diagnostics に残し、以後の校正の判断材料にする。
 - 結果: 追加の解析コストゼロ（記録済みスコアの fetch 1 回）で全ソースのグリッドに
-  「ベストショットのみ」フィルタが付く。トレードオフ: しきい値 0.5 は未校正の初期値。
+  「ベストショットのみ」フィルタが付く。しきい値はライブラリの分布に自動で追従する。
 - 関連: `PhotoQuality` / `TagStore.refKeys(aestheticAtLeast:)` / `AutoAlbumStore.screenshotRefKeys` /
   `AutoAlbumEngine.beautifulPhotoKeys` / `PhotoFilter` / `photoQualityProvider`。[[ADR-24]]（タグ台帳）。
 

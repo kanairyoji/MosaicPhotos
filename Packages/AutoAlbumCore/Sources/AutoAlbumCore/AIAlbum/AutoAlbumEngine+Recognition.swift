@@ -82,13 +82,27 @@ extension AutoAlbumEngine {
 
     /// 「ベストショット」とみなす写真の refKey 集合（サムネイルグリッドのフィルタ用）。
     /// 判定＝ Vision 美的スコア（`VNCalculateImageAestheticsScoresRequest`・-1〜1・夜間タグ付けで
-    /// 全写真に付与）が `PhotoQuality.beautifulThreshold` 以上、かつスクリーンショットでない。
+    /// 全写真に付与）が**分布適応しきい値**（`PhotoQuality.adaptiveThreshold`＝上位 20% を
+    /// [0.2, 0.6] にクランプ）以上、かつスクリーンショットでない。
     /// スコア未付与（解析待ち）の写真は含めない＝解析が進むほど対象が増える。
     public func beautifulPhotoKeys() async -> Set<String> {
-        let good = await tagStore.refKeys(aestheticAtLeast: PhotoQuality.beautifulThreshold)
-        guard !good.isEmpty else { return [] }
+        let all = await tagStore.allAesthetics()
+        guard !all.isEmpty else {
+            Diagnostics.mark("quality: no aesthetic scores yet (tagging pending)")
+            return []
+        }
+        let threshold = PhotoQuality.adaptiveThreshold(scores: Array(all.values))
+        let good = Set(all.filter { $0.value >= threshold }.keys)
         let screenshots = await store.screenshotRefKeys()
-        return good.subtracting(screenshots)
+        let result = good.subtracting(screenshots)
+        // 実測ログ: 分布（中央値/上位10%/最大）としきい値・件数。しきい値校正の判断材料に残す。
+        let sorted = all.values.sorted(by: >)
+        let p50 = sorted[sorted.count / 2]
+        let p90 = sorted[min(sorted.count - 1, sorted.count / 10)]
+        Diagnostics.mark(String(format: "quality: scored=%d p50=%.2f p90=%.2f max=%.2f thr=%.2f best=%d (screenshots excluded=%d)",
+                                all.count, p50, p90, sorted.first ?? 0, threshold,
+                                result.count, good.count - result.count))
+        return result
     }
 
     /// id（生 localIdentifier / 生 path / 既に refKey）→ 試す refKey 候補。
