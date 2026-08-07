@@ -5,12 +5,16 @@ import SwiftUI
 
 /// `PhotoPageView` の 1 ページ分。縦スクロールで写真が上にスライドし、下部に情報パネル（EXIF＋地図）が現れる。
 /// 横ページング（TabView）と縦スクロールは軸が直交するため競合しない。
+/// 写真はピンチ/ダブルタップで拡大できる（`ZoomableImageView`）。**拡大中は縦スクロール・
+/// 下引っ張り閉じを止め**、縦横ドラッグを画像のパンに割り当てる（1x に戻すと従来どおり）。
 struct FullPhotoView<Store: PhotoStore>: View {
     let store: Store
     let item: Store.Item
     /// 顔ハイライトの表示指示（PhotoPageView の左上トグル）。ページ送りしても状態を保つよう
     /// 親が持つ。**既定 OFF**・ON のときだけ矩形を取得して枠を描く。
     var showFaceHighlights: Bool = false
+    /// 写真のシングルタップ（PhotoPageView が没入モード切替に使う）。
+    var onTap: (() -> Void)? = nil
     @State private var image: UIImage?
     /// D: フル画像が来るまでの間に見せる手元サムネ（黒画面待ちを減らす）。
     @State private var thumb: UIImage?
@@ -26,6 +30,10 @@ struct FullPhotoView<Store: PhotoStore>: View {
     /// N1: 最上部で下に引っ張った量（pt）。閾値超えで閉じる。
     @State private var pullDown: CGFloat = 0
     @State private var isDismissing = false
+    /// ズーム中か（1x 超）。縦スクロール（情報パネル）と下引っ張り閉じを止める。
+    @State private var isZoomed = false
+    /// インクリメントするとズームを 1x へ戻す（ページが画面外へ出たとき）。
+    @State private var zoomResetToken = 0
     @Environment(\.photoInsight) private var photoInsight
     @Environment(\.faceHighlightProvider) private var faceHighlightProvider
     @Environment(\.dismiss) private var dismiss
@@ -42,7 +50,7 @@ struct FullPhotoView<Store: PhotoStore>: View {
                 // LazyVStack：情報パネルは画面下（オフスクリーン）にあり、スクロールで可視化されるまで
                 // 構築・onAppear が走らない。ページ送りを画像ロードだけに絞って軽くする（F/E）。
                 LazyVStack(spacing: 0) {
-                    photo
+                    photo(containerSize: geo.size)
                         .frame(width: geo.size.width, height: geo.size.height)
                         // N1: 引っ張りに応じて軽く縮小＋退色させ「閉じる」フィードバックを出す。
                         // 型は明示（CGFloat/Double を混ぜると割り算演算子が多義になりビルドが落ちる）。
@@ -60,6 +68,9 @@ struct FullPhotoView<Store: PhotoStore>: View {
                 }
             }
             .scrollIndicators(.hidden)
+            // 拡大中は縦ドラッグを画像のパンに割り当てる（情報パネルへのスクロールと
+            // 下引っ張り閉じを止める。1x へ戻すと再び有効）。
+            .scrollDisabled(isZoomed)
             .background(Color.black)
             // N1: 最上部で下に引っ張ったら閉じる。iOS 18+ の onScrollGeometryChange で実 contentOffset を見る
             //（情報パネルへの上スクロール＝contentOffset 正 では発火しない）。
@@ -114,36 +125,52 @@ struct FullPhotoView<Store: PhotoStore>: View {
     }
 
     @ViewBuilder
-    private var photo: some View {
+    private func photo(containerSize: CGSize) -> some View {
         if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                // 人物アルバムから開いたとき、認識した顔（その人物のもの）を枠で示す。
-                // scaledToFit の Image はビュー枠＝画像そのもの（レターボックスなし）なので、
-                // Vision 正規化座標（原点左下）を y 反転して重ねるだけでよい。
-                .overlay {
-                    if showFaceHighlights, !faceHighlights.isEmpty {
-                        GeometryReader { geo in
-                            ForEach(Array(faceHighlights.enumerated()), id: \.offset) { _, box in
-                                RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(.yellow, lineWidth: 2)
-                                    .frame(width: box.width * geo.size.width,
-                                           height: box.height * geo.size.height)
-                                    .position(x: (box.midX) * geo.size.width,
-                                              y: (1 - box.midY) * geo.size.height)
+            // ピンチ/ダブルタップ拡大（UIScrollView ベース）。1x のときはパンを消費しないので、
+            // ページ送り・縦スクロール・下引っ張り閉じは従来どおり動く。ズーム状態は isZoomed へ。
+            ZoomableImageView(
+                containerSize: containerSize,
+                imagePixelSize: CGSize(width: image.size.width * image.scale,
+                                       height: image.size.height * image.scale),
+                resetToken: zoomResetToken,
+                onZoomChanged: { isZoomed = $0 },
+                onSingleTap: { onTap?() }
+            ) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    // 人物アルバムから開いたとき、認識した顔（その人物のもの）を枠で示す。
+                    // ズームコンテンツのビュー枠＝画像そのもの（レターボックスなし）なので、
+                    // Vision 正規化座標（原点左下）を y 反転して重ねるだけでよく、拡大にも追従する。
+                    .overlay {
+                        if showFaceHighlights, !faceHighlights.isEmpty {
+                            GeometryReader { geo in
+                                ForEach(Array(faceHighlights.enumerated()), id: \.offset) { _, box in
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .strokeBorder(.yellow, lineWidth: 2)
+                                        .frame(width: box.width * geo.size.width,
+                                               height: box.height * geo.size.height)
+                                        .position(x: (box.midX) * geo.size.width,
+                                                  y: (1 - box.midY) * geo.size.height)
+                                }
                             }
+                            .allowsHitTesting(false)
                         }
-                        .allowsHitTesting(false)
                     }
-                }
-                // ON になったら初回だけ矩形を取得する（OFF のままなら一切コストなし）。
-                .task(id: showFaceHighlights) {
-                    guard showFaceHighlights, !faceHighlightsFetched,
-                          let provider = faceHighlightProvider else { return }
-                    faceHighlights = await provider("\(item.id)")
-                    faceHighlightsFetched = true
-                }
+            }
+            // ON になったら初回だけ矩形を取得する（OFF のままなら一切コストなし）。
+            .task(id: showFaceHighlights) {
+                guard showFaceHighlights, !faceHighlightsFetched,
+                      let provider = faceHighlightProvider else { return }
+                faceHighlights = await provider("\(item.id)")
+                faceHighlightsFetched = true
+            }
+            // ページが画面外へ出たら次に見るとき 1x から（Apple 写真と同じ）。
+            .onDisappear {
+                zoomResetToken += 1
+                isZoomed = false
+            }
         } else if failed {
             // T1: 失敗は "not found" 風ではなく、再試行できる控えめな表現にする。
             VStack(spacing: 12) {

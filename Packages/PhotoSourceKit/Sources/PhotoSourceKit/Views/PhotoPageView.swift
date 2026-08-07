@@ -29,6 +29,9 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     @Environment(\.photoUsageEvent) private var photoUsageEvent
     /// 顔ハイライト（人物アルバムのみ）。ページ送りしても維持する画面単位のトグル。
     @State private var showFaceHighlights = false
+    /// 没入モード（写真のシングルタップで切替）。上下のバー＋ステータスバーを隠して写真だけにする。
+    /// ページ送りしても維持する（写真を次々見るモードのため）。画面を閉じればリセット。
+    @State private var isImmersive = false
     /// 共有シートに渡すフル画像（ロード完了で表示）。
     @State private var shareItem: ShareImageItem?
     @State private var isPreparingShare = false
@@ -94,7 +97,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         ZStack {
             TabView(selection: $currentID) {
                 ForEach(windowItems) { item in
-                    FullPhotoView(store: store, item: item, showFaceHighlights: showFaceHighlights)
+                    FullPhotoView(store: store, item: item, showFaceHighlights: showFaceHighlights,
+                                  onTap: { isImmersive.toggle() })
                         .tag(item.id)
                 }
             }
@@ -104,12 +108,17 @@ public struct PhotoPageView<Store: PhotoStore>: View {
 
             // 上部＝ナビ（戻る）＋写真情報のみ、下部＝操作（お気に入り/共有/顔）。
             // 他画面（グリッド）が下部操作なので、フル画面もアクションは下部に統一する。
+            // 没入モード中はフェードで隠す（タップも透過させ、写真だけの表示にする）。
             VStack(spacing: 0) {
                 topControls
                 Spacer()
                 bottomControls
             }
+            .opacity(isImmersive ? 0 : 1)
+            .allowsHitTesting(!isImmersive)
+            .animation(.easeInOut(duration: 0.2), value: isImmersive)
         }
+        .statusBarHidden(isImmersive)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $shareItem) { item in
             ActivityShareSheet(image: item.image) { completed in
