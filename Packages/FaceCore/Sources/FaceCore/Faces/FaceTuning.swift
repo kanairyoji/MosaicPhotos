@@ -8,6 +8,8 @@ import Foundation
 /// 散らばった static を 1 つの値型に集約し、**同梱モデルの宣言（face_config.json の tuning）**で
 /// プロファイルを選ぶ。モデルと定数がずれる事故（モデルだけ差し替え・アプリだけ更新）を防ぐ。
 public struct FaceTuning: Sendable, Equatable {
+    /// プロファイル名（修正ジャーナルのスケールタグにも使う・ADR-70 追補）。
+    public var name: String
     /// クラスタリング既定しきい値（校正の fallback でもある）。
     public var clusterThreshold: Float
     /// マージンゲート幅（ADR-57）。
@@ -31,6 +33,7 @@ public struct FaceTuning: Sendable, Equatable {
     /// facenet（InceptionResnetV1/VGGFace2・v4 パイプライン）。
     /// 計測: face-accuracy.md 2026-08-01〜06（同一人物平均 0.550・FG-NET F1 0.664）。
     public static let facenet = FaceTuning(
+        name: "facenet",
         clusterThreshold: 0.50, assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
         secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.35,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
@@ -40,6 +43,7 @@ public struct FaceTuning: Sendable, Equatable {
     /// （同一人物平均 0.434・別人 0.120・兄弟の代理 0.188）。
     /// 計測: face-accuracy.md 2026-08-06（FG-NET F1 0.790・LFW F1 0.892・家族 F1 1.000）。
     public static let arcFace = FaceTuning(
+        name: "arcface",
         clusterThreshold: 0.35, assignMargin: 0.04, sizeAdaptiveMarginMax: 0.08,
         secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.25,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,

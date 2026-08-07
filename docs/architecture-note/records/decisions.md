@@ -266,6 +266,14 @@
   （命名持ち越し・修正ジャーナル保持）。トレードオフ: モデル +80MB・推論は R100 で重め
   （夜間処理なので許容・実機 ANE で要確認）。facenet へ戻すには build_facenet.sh（プロファイルも
   自動で戻る）。
+- 追補（2026-08-07・初回実機ログ）: **修正ジャーナルのスケール汚染**を発見・修正。
+  `FaceCorrection` の類似度・埋め込みは記録時のモデル空間に張り付いているのに世代タグが無く、
+  facenet 世代の正例（0.5-0.7）が AuraFace の校正を可動域上限 0.40 まで押し上げていた
+  （実機 thr=0.40・最適は 0.35）。負例エグゼンプラも旧空間の埋め込みで照合不能だった。
+  → `FaceCorrection.profile`（FaceTuning.name・既存行 nil＝facenet）を追加し、校正・負例・
+  notSame/sameGroup 照合を**現行プロファイルの行に限定**（モデルを戻せば旧行が再び有効）。
+  ADR-51 の「修正ジャーナルはモデル不変のため再スキャンを跨いで有効」は**同一モデルの
+  再スキャン**にのみ成り立つ前提だったことを明確化。
 - 関連: `FaceTuning`・`FaceAlignment.arcFaceTransform/similarityTransform`・`FaceModelConfig`・
   `FacePerceptionProvider.pipelineVersion/tuning`・`scripts/build_auraface.sh`／`convert_auraface.py`。
   ADR-56（P5 保留）/ ADR-51（アライメント）/ ADR-68・69（定数の由来）。

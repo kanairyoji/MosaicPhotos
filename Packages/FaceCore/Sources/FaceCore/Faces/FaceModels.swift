@@ -93,16 +93,23 @@ final class FaceCorrection {
     ///   1 セッションで数百件入るため、等重みだと校正がこれ一色に染まる。
     /// 既存行（列追加前）は nil ＝ 1.0 として扱う。
     var confidence: Double?
+    /// **どのモデルスケールで記録されたか**（FaceTuning.name・ADR-70 追補）。
+    /// 埋め込み・類似度はモデルの空間に張り付いており、**別モデルの行は再利用できない**
+    /// （facenet の類似度 0.5-0.7 が AuraFace の校正を上限まで押し上げた実障害）。
+    /// 既存行（列追加前）は nil ＝ "facenet"（v4 世代）として扱う。
+    var profile: String?
     var createdAt: Date
 
     init(id: String, kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
-         similarity: Double? = nil, confidence: Double? = nil, createdAt: Date) {
+         similarity: Double? = nil, confidence: Double? = nil, profile: String? = nil,
+         createdAt: Date) {
         self.id = id
         self.kind = kind
         self.faceEmbedding = faceEmbedding
         self.wrongEmbedding = wrongEmbedding
         self.similarity = similarity
         self.confidence = confidence
+        self.profile = profile
         self.createdAt = createdAt
     }
 }

@@ -90,7 +90,7 @@ extension FaceStore {
             id: UUID().uuidString, kind: kind,
             faceEmbedding: faceEmbedding, wrongEmbedding: wrongEmbedding,
             similarity: similarity.map(Double.init), confidence: confidence.rawValue,
-            createdAt: Date()))
+            profile: tuning.name, createdAt: Date()))
         negativesCache = nil
         thresholdCache = nil
         clusteringCache = nil   // しきい値が変わり得るため次スキャンで再構築

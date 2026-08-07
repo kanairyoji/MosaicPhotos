@@ -72,6 +72,9 @@ actor FaceStore {
         var positive: [(Float, Double)] = []
         var negative: [(Float, Double)] = []
         for r in rows {
+            // ⚠️ 類似度はモデルの空間に張り付いている（ADR-70 追補）。別モデル世代の行を混ぜると
+            // 校正が壊れる（facenet の 0.5-0.7 が AuraFace の校正を上限 0.40 まで押し上げた実障害）。
+            guard (r.profile ?? "facenet") == tuning.name else { continue }
             guard let sim = r.similarity else { continue }
             let w = r.confidence ?? 1.0
             switch r.kind {
@@ -272,6 +275,8 @@ actor FaceStore {
         let rows = (try? modelContext.fetch(d)) ?? []
         var pairs: [FaceClustering.NegativePair] = []
         for r in rows {
+            // 別モデル世代の埋め込みは別空間＝照合不能（ADR-70 追補）。
+            guard (r.profile ?? "facenet") == tuning.name else { continue }
             guard let wrong = r.wrongEmbedding,
                   let fe = ClipMath.decodeHalf(r.faceEmbedding),
                   let we = ClipMath.decodeHalf(wrong) else { continue }

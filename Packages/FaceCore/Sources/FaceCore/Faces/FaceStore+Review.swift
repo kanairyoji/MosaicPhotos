@@ -47,6 +47,7 @@ extension FaceStore {
         let notSameRows = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
             row -> ([Float], [Float])? in
+            guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
             guard let wrong = row.wrongEmbedding,
                   let a = ClipMath.decodeHalf(row.faceEmbedding),
                   let b = ClipMath.decodeHalf(wrong) else { return nil }
@@ -149,6 +150,7 @@ extension FaceStore {
         let confirmedSame = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "sameGroup" }))) ?? []).compactMap {
             row -> ([Float], [Float])? in
+            guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
             guard let wrong = row.wrongEmbedding,
                   let a = ClipMath.decodeHalf(row.faceEmbedding),
                   let b = ClipMath.decodeHalf(wrong) else { return nil }
@@ -331,6 +333,7 @@ extension FaceStore {
         let notSameRows = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
             row -> ([Float], [Float])? in
+            guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
             guard let wrong = row.wrongEmbedding,
                   let a = ClipMath.decodeHalf(row.faceEmbedding),
                   let b = ClipMath.decodeHalf(wrong) else { return nil }

@@ -196,4 +196,44 @@ struct FaceStoreLearningTests {
         #expect(taro?.clusterID == aID)
         #expect((taro?.count ?? 0) >= 3)
     }
+
+    @Test("モデル世代を跨いだ修正は校正・負例に混ぜない（ADR-70 追補）")
+    func correctionsAreProfileScoped() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // facenet 世代（既定プロファイル）で「高い類似度の正例/負例」を大量に記録する。
+        // facenet スケール（同一人物平均 0.55）では正常な値。
+        for _ in 0..<10 {
+            await store.recordCorrection(kind: "merge",
+                faceEmbedding: ClipMath.encodeHalf([1, 0, 0]), wrongEmbedding: nil,
+                similarity: 0.62)
+            await store.recordCorrection(kind: "notSame",
+                faceEmbedding: ClipMath.encodeHalf([1, 0, 0]),
+                wrongEmbedding: ClipMath.encodeHalf([0, 1, 0]), similarity: 0.58)
+        }
+        // facenet プロファイルでは校正が動く（境界 0.62 は可動域 0.35...0.55 に clamp）。
+        let facenetThr = await store.calibratedThreshold()
+        #expect(facenetThr == 0.55)   // 上限に clamp（実機で見た挙動そのもの）
+
+        // ArcFace プロファイルへ切り替えると、**旧世代の行は無視**され既定値のまま。
+        // 実機では facenet の 0.5-0.7 の類似度が AuraFace の校正を上限 0.40 まで
+        // 押し上げていた（diagnostics-27: thr=0.40 pos=534）。この汚染を止める。
+        await store.apply(tuning: .arcFace)
+        let arcThr = await store.calibratedThreshold()
+        #expect(arcThr == FaceTuning.arcFace.clusterThreshold)   // サンプル 0 扱い → fallback 0.35
+        // 負例も同様（別空間の埋め込みは照合不能）。
+        #expect(await store.loadNegatives().isEmpty)
+
+        // ArcFace 世代で記録し直せば、その行は使われる。
+        for _ in 0..<10 {
+            await store.recordCorrection(kind: "merge",
+                faceEmbedding: ClipMath.encodeHalf([1, 0, 0]), wrongEmbedding: nil,
+                similarity: 0.42)
+            await store.recordCorrection(kind: "notSame",
+                faceEmbedding: ClipMath.encodeHalf([1, 0, 0]),
+                wrongEmbedding: ClipMath.encodeHalf([0, 1, 0]), similarity: 0.30)
+        }
+        let arcThr2 = await store.calibratedThreshold()
+        #expect(arcThr2 >= 0.30 && arcThr2 <= 0.40)   // 新世代のサンプルで校正が動く
+        #expect(!(await store.loadNegatives()).isEmpty)
+    }
 }
