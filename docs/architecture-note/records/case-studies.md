@@ -21,6 +21,20 @@
 
 ---
 
+## クラウドお気に入りのハートがグリッドに出ない（構成不変の更新で items が差し替わらない）
+- 症状: Dropbox ビューでお気に入りを付けても、サムネイルグリッドにハートが出ない
+  （ローカルは出るように見える）。ストア側（`DropboxPhotoStore+Favorites`）は items へ即刻印している。
+- 原因: `PhotoCollectionView.update()` は「枚数・グルーピング・先頭/末尾 ID」のシグネチャが同じなら
+  snapshot 再構築を丸ごとスキップする（68k の再構築を避ける perf 対策）。お気に入りの付け外しは
+  **ID 列が不変で isFavorite だけ変わる**ためスキップに落ち、`self.items` も差し替わらず
+  可視セルも再構成されない＝新しい値がどこにも届かない。ローカルは `LocalPhotoItem.isFavorite` が
+  PHAsset を直接読む（生きた参照）ため偶然表示されていた。
+- 対処: シグネチャ一致時も items の参照は差し替え（COW・O(1)）、**可視セルのお気に入り差分が
+  あるときだけ** `reconfigureItems` する（`refreshVisibleFavoritesIfChanged`）。snapshot 再構築はしない。
+- 関連: `PhotoCollectionView.update/refreshVisibleFavoritesIfChanged` / `DropboxPhotoStore+Favorites`。
+- 教訓: 差分スキップの「シグネチャ」に含めていない属性は、変わっても画面に届かない。
+  スキップ経路にも「軽い内容更新」の枝を用意する。
+
 ## Apple の地名補正が既存写真に届かなかった（台帳の placeName は enrich 時に固定される）
 - 症状: 「時間と場所」の地名がいつまでもオフライン都市 DB の粗い名前のまま（隣の大都市名に丸まる）。
   夜間の CLGeocoder 補正（ADR-68）は実装済み・成功しているのに、トリップ名も訪問地も変わらない。

@@ -258,10 +258,30 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             if signature != appliedSignature {
                 appliedSignature = signature
                 applySnapshot(items: items, grouping: grouping, coalesce: coalesce)
-            } else if !didInitialScroll {
-                // 構成は変わらないがレイアウトが整った可能性。末尾スクロールを再試行する。
-                DispatchQueue.main.async { [weak self] in self?.scrollToBottomIfNeeded() }
+            } else {
+                // 構成（枚数・並び）が同じでも中身は変わり得る（例: クラウドお気に入りの付け外し＝
+                // ID 不変で isFavorite だけ変わる）。68k の snapshot は作り直さず、参照だけ差し替えて
+                // 可視セルにお気に入り差分があれば再構成する（ハートの即時反映）。
+                refreshVisibleFavoritesIfChanged(items)
+                if !didInitialScroll {
+                    // 構成は変わらないがレイアウトが整った可能性。末尾スクロールを再試行する。
+                    DispatchQueue.main.async { [weak self] in self?.scrollToBottomIfNeeded() }
+                }
             }
+        }
+
+        /// 構成不変の更新（同じ ID 列）で items を差し替え、可視セルのお気に入りが変わっていれば
+        /// 再構成する。配列の差し替えは COW の参照交換＝O(1)、比較は可視セル数のみ＝軽い。
+        private func refreshVisibleFavoritesIfChanged(_ newItems: [Store.Item]) {
+            let old = items
+            items = newItems   // 以後にリサイクルされるセルは新しい内容で構成される
+            guard collectionView != nil else { return }
+            let visibleChanged = collectionView.indexPathsForVisibleItems.contains { indexPath in
+                guard let id = dataSource.itemIdentifier(for: indexPath), let idx = idToIndex[id],
+                      idx < old.count, idx < newItems.count else { return false }
+                return old[idx].isFavorite != newItems[idx].isFavorite
+            }
+            if visibleChanged { reconfigureVisibleItems() }
         }
 
         private func applySnapshot(items: [Store.Item], grouping: PhotoGridGrouping?, coalesce: Int) {
