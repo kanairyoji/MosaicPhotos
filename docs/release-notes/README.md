@@ -24,6 +24,15 @@
 - 新バージョンを作った直後は前バージョンの文言・スクリーンショットが引き継がれる。
   **whatsNew だけは空**で引き継がれるので、**全ロケール必ず入れる**。
 
+## 配信地域（2026-08-07 から日本のみ）
+
+- **日本限定**で配信する（availableInNewTerritories=false・JPN のみ available）。
+  アプリ単位の設定なので全バージョンに適用される。
+- ⚠️ **API からは変更できない**（v2 appAvailabilities は CREATE のみ許可なのに、既存設定が
+  あると 409「already exists」で拒否・territoryAvailabilities は読み取り専用・v1 は廃止済み）。
+  変更は App Store Connect の Web UI（価格および配信状況 → 配信可能状況）で行う。
+- 補足: EU 圏は DSA のトレーダー情報未提出により以前から CANNOT_SELL だった（日本限定化で対応不要に）。
+
 ## 手順
 
 ### 0. 事前確認
