@@ -50,6 +50,12 @@ struct SourceHostView<Content: View>: View {
                 }
                 return insight
             }
+            // ベストショット（きれいな写真）フィルタ: 台帳の美的スコアから判定集合を読み込み、
+            // PhotoItem.id（生 localIdentifier / パス / "L-…"/"C-…"）を正規 refKey に直して判定する。
+            .environment(\.photoQualityProvider) { [autoAlbumEngine] in
+                let keys = await autoAlbumEngine.beautifulPhotoKeys()
+                return { id in keys.contains(AutoAlbumEngine.canonicalRefKey(for: id)) }
+            }
             // スクラブ等の操作中は背景 CLIP 埋め込みを譲る（G）。操作はアイドル判定にも記録する。
             .environment(\.photoInteraction) { [autoAlbumEngine] interacting in
                 autoAlbumEngine.setInteracting(interacting)

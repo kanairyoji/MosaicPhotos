@@ -45,18 +45,23 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     /// タップで開く写真（item.id）。`navigationDestination(item:)` で詳細へ push する。
     @State private var selectedID: Store.Item.ID?
 
+    /// ベストショット判定（`filter.beautifulOnly` のときだけ使う）。nil＝読み込み中は素通し。
+    let isBeautiful: ((Store.Item) -> Bool)?
+
     /// 顔ハイライト provider（人物アルバムのトグル中のみ非 nil・セルに黄枠を重ねる）。
     let faceHighlight: (@Sendable (String) async -> [CGRect])?
 
     public init(store: Store, filter: PhotoFilter = PhotoFilter(),
+                isBeautiful: ((Store.Item) -> Bool)? = nil,
                 faceHighlight: (@Sendable (String) async -> [CGRect])? = nil) {
         self.store = store
         self.filter = filter
+        self.isBeautiful = isBeautiful
         self.faceHighlight = faceHighlight
     }
 
     /// フィルタ適用後の表示アイテム（未フィルタなら store.items をそのまま）。
-    private var visibleItems: [Store.Item] { filter.apply(store.items) }
+    private var visibleItems: [Store.Item] { filter.apply(store.items, isBeautiful: isBeautiful) }
 
     private var level: ZoomLevel {
         zoomLevels[min(max(0, zoomLevel), zoomLevels.count - 1)]
@@ -75,7 +80,11 @@ public struct PhotoGridView<Store: PhotoStore>: View {
             if filter.isActive && visibleItems.isEmpty {
                 // フィルタで 0 件。空グリッドだと故障に見えるため明示する（お気に入り条件のみのときは
                 // ハートの付け方の案内、ソース条件を含むときは汎用メッセージ）。
-                if filter.favoritesOnly && filter.source == .all {
+                if filter.beautifulOnly && !filter.favoritesOnly && filter.source == .all {
+                    // ベストショット 0 件＝多くは「まだ解析（夜間タグ付け）が進んでいない」。
+                    ContentUnavailableView(L("No best shots yet"), systemImage: "sparkles",
+                                           description: Text(L("Photos are scored during nightly analysis. Check back later.")))
+                } else if filter.favoritesOnly && filter.source == .all {
                     ContentUnavailableView(L("No favorites"), systemImage: "heart",
                                            description: Text(L("Mark photos with a heart to see them here.")))
                 } else {

@@ -120,6 +120,16 @@
         }
       }
     },
+    "Best shots only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベストショットのみ"
+          }
+        }
+      }
+    },
     "Camera": {
       "localizations": {
         "ja": {
@@ -320,6 +330,16 @@
         }
       }
     },
+    "No best shots yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベストショットはまだありません"
+          }
+        }
+      }
+    },
     "No faces": {
       "localizations": {
         "ja": {
@@ -415,6 +435,16 @@
         }
       }
     },
+    "Photos are scored during nightly analysis. Check back later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スコアは夜間の解析で付きます。解析が進んでから、もう一度確認してください。"
+          }
+        }
+      }
+    },
     "Retry": {
       "localizations": {
         "ja": {
@@ -471,6 +501,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "お気に入りに設定した写真だけを表示します。クラウド写真にはお気に入りが無いため表示されません。"
+          }
+        }
+      }
+    },
+    "Show only well-shot photos with a high aesthetic score. Photos are scored automatically during nightly analysis.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "美的スコアが高い、よく撮れた写真だけを表示します。スコアは夜間の解析で自動的に付きます。"
           }
         }
       }

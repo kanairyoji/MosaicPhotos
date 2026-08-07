@@ -46,6 +46,38 @@ struct PhotoFilterTests {
         #expect(filter.apply(items).map(\.id) == ["cloud1", "cloud2"])
     }
 
+    @Test("ベストショットのみ: 判定クロージャで残す（順序維持）")
+    func beautifulOnlyFilters() {
+        let items = [StubItem(id: "a", isFavorite: false),
+                     StubItem(id: "b", isFavorite: false),
+                     StubItem(id: "c", isFavorite: true)]
+        var filter = PhotoFilter()
+        filter.beautifulOnly = true
+        #expect(filter.isActive)
+        let beautiful: Set<String> = ["a", "c"]
+        #expect(filter.apply(items, isBeautiful: { beautiful.contains($0.id) }).map(\.id) == ["a", "c"])
+    }
+
+    @Test("ベストショット: 判定未提供（読み込み中）は素通し")
+    func beautifulWithoutMembershipPassesThrough() {
+        let items = [StubItem(id: "a", isFavorite: false), StubItem(id: "b", isFavorite: true)]
+        var filter = PhotoFilter()
+        filter.beautifulOnly = true
+        #expect(filter.apply(items).map(\.id) == ["a", "b"])
+    }
+
+    @Test("複合: ベストショット×お気に入りは AND で効く")
+    func combinedBeautifulAndFavorite() {
+        let items = [StubItem(id: "goodFav", isFavorite: true),
+                     StubItem(id: "good", isFavorite: false),
+                     StubItem(id: "fav", isFavorite: true)]
+        var filter = PhotoFilter()
+        filter.beautifulOnly = true
+        filter.favoritesOnly = true
+        let beautiful: Set<String> = ["goodFav", "good"]
+        #expect(filter.apply(items, isBeautiful: { beautiful.contains($0.id) }).map(\.id) == ["goodFav"])
+    }
+
     @Test("複合: お気に入り×ソースは AND で効く")
     func combinedFavoriteAndSource() {
         let items = [StubItem(id: "local1", isFavorite: false),

@@ -72,9 +72,23 @@ extension AutoAlbumEngine {
 
     /// 生 id → 正規 refKey。既に "L-…"/"C-…" ならそのまま、Dropbox パス（"/" 始まり）は
     /// cloud、それ以外（PHAsset の localIdentifier）は local としてエンコードする。
-    nonisolated static func canonicalRefKey(for id: String) -> String {
+    /// （public: アプリ側のベストショット判定＝photoQualityProvider でも使う）
+    public nonisolated static func canonicalRefKey(for id: String) -> String {
         if PhotoRef.decode(id) != nil { return id }
         return id.hasPrefix("/") ? PhotoRef.cloud(id).encoded : PhotoRef.local(id).encoded
+    }
+
+    // MARK: - ベストショット（きれいな写真）判定
+
+    /// 「ベストショット」とみなす写真の refKey 集合（サムネイルグリッドのフィルタ用）。
+    /// 判定＝ Vision 美的スコア（`VNCalculateImageAestheticsScoresRequest`・-1〜1・夜間タグ付けで
+    /// 全写真に付与）が `PhotoQuality.beautifulThreshold` 以上、かつスクリーンショットでない。
+    /// スコア未付与（解析待ち）の写真は含めない＝解析が進むほど対象が増える。
+    public func beautifulPhotoKeys() async -> Set<String> {
+        let good = await tagStore.refKeys(aestheticAtLeast: PhotoQuality.beautifulThreshold)
+        guard !good.isEmpty else { return [] }
+        let screenshots = await store.screenshotRefKeys()
+        return good.subtracting(screenshots)
     }
 
     /// id（生 localIdentifier / 生 path / 既に refKey）→ 試す refKey 候補。

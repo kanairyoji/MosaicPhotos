@@ -21,6 +21,27 @@
 
 ---
 
+## ADR-78 ベストショット（きれいな写真）フィルタ＝Vision 美的スコアのしきい値判定
+- 状態: 採用
+- 文脈: 「よく撮れている写真だけ見たい」。候補は NIMA 等の外部モデル・LAION 線形ヘッド
+  （CLIP 埋め込みの内積）・OS 内蔵の Vision 美的スコア。本アプリは夜間タグ付けで
+  **`VNCalculateImageAestheticsScoresRequest`（-1〜1）を全写真の台帳（TagsV1）に永続化済み**
+  （従来はカバー選定の加点のみに使用）。
+- 決定: **既存の Vision スコアをしきい値判定**して「ベストショット」集合を作る（外部モデル追加なし）。
+  - 判定＝`aesthetic >= PhotoQuality.beautifulThreshold`（0.5・一元管理）**かつ**スクショでない
+    （台帳の isScreenshot）。スコア未付与（解析待ち）は含めない＝夜間解析が進むほど増える。
+  - 供給経路: `AutoAlbumEngine.beautifulPhotoKeys()`（refKey 集合）→ アプリの
+    `photoQualityProvider` 環境クロージャ（**集合をキャプチャした同期判定クロージャ**を返す・
+    id は `canonicalRefKey` で正規化）→ PhotoSourceKit の `PhotoFilter.beautifulOnly`。
+    フィルタ ON のときだけ台帳を読む。判定 nil（読み込み中/未注入）は**素通し**（空表示で
+    固まって見せない）。プロバイダ未注入ならフィルタ欄自体を出さない（レイヤー分離維持）。
+  - しきい値の校正・技術シグナル合成（ブレ/目つぶり等）・isUtility 除外・LAION 第二スコアは
+    将来の拡張（お気に入りを正解データにした AUC 校正で判断）。
+- 結果: 追加の解析コストゼロ（記録済みスコアの fetch 1 回）で全ソースのグリッドに
+  「ベストショットのみ」フィルタが付く。トレードオフ: しきい値 0.5 は未校正の初期値。
+- 関連: `PhotoQuality` / `TagStore.refKeys(aestheticAtLeast:)` / `AutoAlbumStore.screenshotRefKeys` /
+  `AutoAlbumEngine.beautifulPhotoKeys` / `PhotoFilter` / `photoQualityProvider`。[[ADR-24]]（タグ台帳）。
+
 ## ADR-77 フル画面写真のピンチ拡大（UIScrollView ベース・1x でのジェスチャー透過）
 - 状態: 採用
 - 文脈: フル画面ビューに Apple 写真アプリ同等のピンチ拡大が欲しい。ただしフル画面には既に

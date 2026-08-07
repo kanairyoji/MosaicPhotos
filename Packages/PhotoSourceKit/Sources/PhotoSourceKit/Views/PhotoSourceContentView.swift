@@ -23,6 +23,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     @Environment(\.faceHighlightGridProvider) private var faceHighlightGrid
     @Environment(\.sourceMenuContent) private var sourceMenuContent
     @State private var showFaceBoxes = false
+    /// ベストショット判定（フィルタ ON のとき台帳から読み込む・OFF で破棄）。
+    @Environment(\.photoQualityProvider) private var photoQualityProvider
+    @State private var beautifulMembership: (@Sendable (String) -> Bool)?
 
     public init(store: Store, title: String, @ViewBuilder header: () -> Header = { EmptyView() }) {
         self.store = store
@@ -42,6 +45,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
                         setupView(message: message, detail: detail, systemImage: systemImage, action: action)
                     case .loaded:
                         PhotoGridView(store: store, filter: filter,
+                                      isBeautiful: beautifulMembership.map { member in
+                                          { item in member("\(item.id)") }
+                                      },
                                       faceHighlight: showFaceBoxes ? faceHighlightGrid : nil)
                     case .empty:
                         emptyView
@@ -67,6 +73,14 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             .safeAreaInset(edge: .bottom) { bottomBar }
         }
         .task { await store.start() }
+        // ベストショット判定集合の読み込み（フィルタ ON のときだけ・OFF で解放）。
+        .task(id: filter.beautifulOnly) {
+            guard filter.beautifulOnly, let photoQualityProvider else {
+                beautifulMembership = nil
+                return
+            }
+            beautifulMembership = await photoQualityProvider()
+        }
         // 計測: ソース画面が出てから最初のコンテンツ（loaded/empty）が確定するまでの所要。
         // 「画面遷移後にグリッドが見えるまで」が重いケースを掴むため。
         .onAppear { PerfTrace.beginScreen("grid.\(title)") }
@@ -126,7 +140,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
         .background(.bar)
         .sheet(isPresented: $showFilterSheet) {
             // ソース欄は混在ソースのビューのみ（単一ソースでは意味がないため出さない）。
-            PhotoFilterSheet(filter: $filter, showsSourceOptions: store.isMixedSource)
+            // ベストショット欄は判定プロバイダが注入されているときのみ（AI 台帳が背後に必要）。
+            PhotoFilterSheet(filter: $filter, showsSourceOptions: store.isMixedSource,
+                             showsQualityOption: photoQualityProvider != nil)
         }
     }
 

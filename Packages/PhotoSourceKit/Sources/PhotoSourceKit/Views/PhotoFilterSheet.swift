@@ -8,6 +8,8 @@ struct PhotoFilterSheet: View {
     /// ソース（端末/クラウド）の絞り込み欄を出すか。混在ソースのビュー（MergedPhotoStore）のみ true。
     /// 単一ソース（写真タブ・クラウドタブ等）では意味がないため欄ごと出さない。
     let showsSourceOptions: Bool
+    /// ベストショット欄を出すか。判定プロバイダ（AI 台帳）が注入されているビューのみ true。
+    var showsQualityOption: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -23,6 +25,19 @@ struct PhotoFilterSheet: View {
                     }
                 } footer: {
                     Text(L("Show only photos marked as favorites. Cloud photos have no favorites and will be hidden."))
+                }
+                if showsQualityOption {
+                    Section {
+                        Toggle(isOn: $filter.beautifulOnly) {
+                            Label {
+                                Text(L("Best shots only"))
+                            } icon: {
+                                Image(systemName: "sparkles").foregroundStyle(.yellow)
+                            }
+                        }
+                    } footer: {
+                        Text(L("Show only well-shot photos with a high aesthetic score. Photos are scored automatically during nightly analysis."))
+                    }
                 }
                 if showsSourceOptions {
                     Section {

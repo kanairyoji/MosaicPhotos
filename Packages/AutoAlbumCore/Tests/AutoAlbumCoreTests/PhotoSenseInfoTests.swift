@@ -30,6 +30,19 @@ struct PhotoSenseInfoTests {
         #expect(tagged.contains("L-a"))
     }
 
+    @Test("refKeys(aestheticAtLeast:) はしきい値以上のみ返す（未付与は含めない）")
+    func aestheticThresholdFetch() async {
+        let store = TagStore(isStoredInMemoryOnly: true)
+        await store.recordTags([
+            (refKey: "L-high", info: PhotoSenseInfo(tags: [], aesthetic: 0.8)),
+            (refKey: "L-edge", info: PhotoSenseInfo(tags: [], aesthetic: 0.5)),
+            (refKey: "L-low", info: PhotoSenseInfo(tags: [], aesthetic: 0.1)),
+            (refKey: "L-none", info: PhotoSenseInfo(tags: ["untagged-score"])),   // aesthetic nil
+        ])
+        let keys = await store.refKeys(aestheticAtLeast: 0.5)
+        #expect(keys == ["L-high", "L-edge"])
+    }
+
     @Test("再タグ（recordTags 上書き）でキャプションは消えない")
     func retagKeepsCaption() async {
         let store = TagStore(isStoredInMemoryOnly: true)

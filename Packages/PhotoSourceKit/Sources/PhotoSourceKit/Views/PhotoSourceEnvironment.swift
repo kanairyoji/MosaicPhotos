@@ -62,6 +62,20 @@ extension EnvironmentValues {
     }
 }
 
+/// 「ベストショット」フィルタのメンバーシップを返すプロバイダ。台帳から判定集合を読み込み、
+/// `PhotoItem.id`（文字列化）を受ける同期判定クロージャを返す（集合はクロージャがキャプチャ）。
+/// nil（既定）ならフィルタシートに欄自体を出さない（レイヤー分離：判定はアプリ側＝AutoAlbumCore）。
+private enum PhotoQualityProviderKey: EnvironmentKey {
+    static let defaultValue: (@Sendable () async -> (@Sendable (String) -> Bool))? = nil
+}
+
+extension EnvironmentValues {
+    public var photoQualityProvider: (@Sendable () async -> (@Sendable (String) -> Bool))? {
+        get { self[PhotoQualityProviderKey.self] }
+        set { self[PhotoQualityProviderKey.self] = newValue }
+    }
+}
+
 private enum FaceHighlightGridKey: EnvironmentKey {
     static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
 }

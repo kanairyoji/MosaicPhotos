@@ -98,6 +98,15 @@ actor AutoAlbumStore {
         if changed { try? modelContext.save() }
     }
 
+    /// スクリーンショットの refKey 集合（「ベストショット」フィルタの除外用）。
+    /// isScreenshot はローカル写真のみ判定できる（クラウドは常に false＝除外されない）。
+    func screenshotRefKeys() -> Set<String> {
+        var descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.isScreenshot })
+        descriptor.propertiesToFetch = [\.refKey]
+        let records = (try? modelContext.fetch(descriptor)) ?? []
+        return Set(records.map(\.refKey))
+    }
+
     /// 地名の高精度化（Apple 補正・PlaceRefinement）で変わった placeName/country を台帳へ反映する。
     /// 大量更新でも常駐が増えないよう `writeChunk` 件ごとに使い捨て context で save する。
     func updatePlaces(_ changes: [PlaceUpdate]) {
