@@ -98,6 +98,26 @@ actor AutoAlbumStore {
         if changed { try? modelContext.save() }
     }
 
+    /// 地名の高精度化（Apple 補正・PlaceRefinement）で変わった placeName/country を台帳へ反映する。
+    /// 大量更新でも常駐が増えないよう `writeChunk` 件ごとに使い捨て context で save する。
+    func updatePlaces(_ changes: [PlaceUpdate]) {
+        guard !changes.isEmpty else { return }
+        var index = 0
+        while index < changes.count {
+            let end = min(index + Self.writeChunk, changes.count)
+            let ctx = ModelContext(modelContainer)
+            for change in changes[index..<end] {
+                let key = change.refKey
+                let descriptor = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == key })
+                guard let record = try? ctx.fetch(descriptor).first else { continue }
+                record.placeName = change.placeName
+                record.country = change.country
+            }
+            try? ctx.save()
+            index = end
+        }
+    }
+
     /// 現存しない（削除/退避された）写真の付加情報を削除する。対応する埋め込み（PhotoEmbedding）も
     /// 孤児にならないよう同時に削除する。
     func prune(keeping refKeys: Set<String>) {

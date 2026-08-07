@@ -33,6 +33,19 @@ public final class OfflinePlaceDB: @unchecked Sendable {
     /// 最近傍がこの距離より遠ければ「地名なし」（海上・極地など）とみなす。
     private static let maxMeters: Double = 500_000
 
+    /// 都市名を採用してよい最大距離。DB は「人口1.5万以上の都市の中心点」なので、これより遠い最近傍は
+    /// **隣の大都市の名前が誤って付く**リスクが高い（郊外・小さな町の症状）。都市名を捨てて県名へ格下げする。
+    static let cityMaxMeters: Double = 25_000
+    /// 都道府県/州名を採用してよい最大距離。これより遠いと県境をまたぐ可能性が高く、国名のみにする。
+    static let adminMaxMeters: Double = 150_000
+
+    /// 距離に応じて地名の粒度を落とす（純・テスト対象）。近い＝そのまま、遠いほど粗く正しい名前だけ残す。
+    static func demoted(_ place: Place, distanceMeters d: Double) -> Place {
+        if d <= cityMaxMeters { return place }
+        if d <= adminMaxMeters { return Place(city: nil, admin: place.admin, country: place.country) }
+        return Place(city: nil, admin: nil, country: place.country)
+    }
+
     private init() {
         guard let url = Bundle.module.url(forResource: "cities15000", withExtension: "bin"),
               let data = try? Data(contentsOf: url),
@@ -71,9 +84,9 @@ public final class OfflinePlaceDB: @unchecked Sendable {
                 }
             }
         }
-        guard best >= 0,
-              haversine(latitude, longitude, Double(lat[best]), Double(lon[best])) <= Self.maxMeters
-        else { return nil }
+        guard best >= 0 else { return nil }
+        let distance = haversine(latitude, longitude, Double(lat[best]), Double(lon[best]))
+        guard distance <= Self.maxMeters else { return nil }
 
         func choose(_ ja: String, _ en: String) -> String? {
             let s = (japanese && !ja.isEmpty) ? ja : en
@@ -85,7 +98,8 @@ public final class OfflinePlaceDB: @unchecked Sendable {
                            adminEnPool[safe: Int(adminEnIdx[best])] ?? "")
         let country = choose(countryJaPool[safe: Int(countryJaIdx[best])] ?? "",
                              countryEnPool[safe: Int(countryEnIdx[best])] ?? "")
-        return Place(city: city, admin: admin, country: country)
+        // 遠い最近傍は粒度を落とす（誤った市名より、粗いが正しい県名/国名を出す）。
+        return Self.demoted(Place(city: city, admin: admin, country: country), distanceMeters: distance)
     }
 
     // MARK: - Parsing

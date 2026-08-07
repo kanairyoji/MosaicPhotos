@@ -21,8 +21,38 @@
 
 ---
 
-## ADR-68 地名の高精度化: オフライン先行＋Apple(CLGeocoder)で背景補正（トリップ）
+## ADR-76 地名補正を「写真のあるセル」へ拡張し台帳へ伝播（＋オフライン距離格下げ）
 - 状態: 採用
+- 文脈: ADR-68 の Apple 補正は実装後も体感精度が上がらなかった。調査で 2 つの構造欠陥が判明
+  （事例「Apple の地名補正が既存写真に届かなかった」参照）: (1) 補正対象がトリップ代表座標＝
+  メンバー座標の**単純平均**で、複数都市の旅行では無意味な地点になり写真の属するセルに届かない。
+  (2) `EnrichedPhoto.placeName` はエンリッチ時に台帳へ固定され、補正後の `generate()` も古い名前で
+  組み立てるため**補正が既存写真に伝播しない**。また一次バックエンドのオフライン都市 DB
+  （cities15000 最近傍）は、遠い最近傍にも自信満々に**隣の大都市名**を付けていた。
+- 決定: 3 点セット。
+  1. **補正対象＝実際に写真があるグリッドセル**（`PlaceRefinement.cellCentroids`）。台帳の座標付き
+     写真をセル集約し、**枚数の多い順**に重心座標を CLGeocoder へ渡す（1 晩 300 件・1.2s 間隔は
+     ADR-68 のまま）。数千セルでも数晩で収束し、以後は refined スキップ＝無コスト。
+     トリップ代表座標の補正は撤去。
+  2. **台帳伝播**（`PlaceRefinement.ledgerChanges` → `AutoAlbumStore.updatePlaces`）。補正後、resolver
+     キャッシュの現在値と台帳を突き合わせて placeName/country の差分だけ更新し、trips を再生成。
+     伝播は**毎晩必ず**行う（差分計算は安価）＝過去の中断があっても自己修復。地名選択規則は
+     `cityName` と同一（locality→admin→country）。未解決セルは触らない（nil 上書きしない）。
+     場所アルバム（Places）は `PlaceNameResolver.refinementGeneration`（補正世代）を
+     `PlaceScanner.refreshIfNeeded` が見て再スキャン（起動をまたぐ分は毎起動の初回スキャンが拾う）。
+  3. **オフラインの距離格下げ**（`OfflinePlaceDB.demoted`）: 最近傍都市が **25km 超なら市名を捨てて
+     県名**、**150km 超なら国名のみ**（500km 超 nil は従来どおり）。「誤った市名」を「粗いが正しい
+     名前」に変える。格下げ導入で意味が変わるため、オフライン由来（refined でない）キャッシュだけ
+     版管理（`offlineLogicVersion`）で破棄し再解決させる（Apple 解決済みは維持）。
+- 結果: 補正が写真の実在セルに当たり、既存写真・トリップ名・訪問地・AI 検索（LexicalSearch は台帳の
+  placeName を見る）のすべてに反映される。オフラインのみの期間も誤市名が減る。トレードオフ:
+  収束まで数晩かかる（枚数の多いセル優先で体感は早い）／夜間の通信は ADR-68 と同量のまま。
+- 関連: `PlaceRefinement` / `AutoAlbumEngine.refinePlaceNames` / `AutoAlbumStore.updatePlaces` /
+  `OfflinePlaceDB.demoted` / `PlaceNameResolver.refinementGeneration`。[[ADR-68]]（土台）。
+
+## ADR-68 地名の高精度化: オフライン先行＋Apple(CLGeocoder)で背景補正（トリップ）
+- 状態: 採用 → **ADR-76 で拡張**（対象をトリップ代表座標→写真のあるセルへ・台帳伝播を追加。
+  「成功のみキャッシュ・失敗はリトライ・1.2s スロットル」の核心は不変）
 - 文脈: 時間と場所アルバムの地名がずれる。原因はオフライン都市 DB（`OfflinePlaceDB`・人口1.5万以上へ
   **最寄りスナップ**）の粗さ（小さな町・郊外は最寄り大都市名に丸まる／区・町名 subLocality を出せない）。
   一方、旧 `CLGeocoder`（オンライン）は**レート制限**と**失敗の恒久キャッシュ**で「Trip」固定になり撤去

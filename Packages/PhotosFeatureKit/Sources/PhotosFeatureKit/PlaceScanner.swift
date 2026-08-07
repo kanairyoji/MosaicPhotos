@@ -31,6 +31,10 @@ public final class PlaceScanner {
     /// 最後にスキャンした「座標付き Dropbox アイテム集合」の署名。
     private var lastScanSignature: Int = 0
 
+    /// 最後にスキャンした時点の地名補正世代（`PlaceNameResolver.refinementGeneration`）。
+    /// 夜間の Apple 補正で地名が変わったら、写真集合が同じでも再スキャンして表示名を追随させる。
+    private var lastRefinementGeneration = 0
+
     /// ローカル写真ライブラリに変化があったか（PHPhotoLibraryChangeObserver が立てる）。
     private var localLibraryDirty = false
     private var libraryObserver: PhotoLibraryObserver?
@@ -82,8 +86,11 @@ public final class PlaceScanner {
         guard isLoaded, !isScanning else { return }
         // 署名計算（67k のハッシュ XOR）も毎ティック・メインで回さずオフメインで。
         let signature = await Task.detached(priority: .utility) { placeScanSignature(dropboxItems) }.value
-        guard signature != lastScanSignature || localLibraryDirty else { return }
+        let refinement = await PlaceNameResolver.shared.refinementGeneration
+        guard signature != lastScanSignature || localLibraryDirty
+                || refinement != lastRefinementGeneration else { return }
         localLibraryDirty = false
+        lastRefinementGeneration = refinement
         await scan(dropboxItems: dropboxItems)
     }
 

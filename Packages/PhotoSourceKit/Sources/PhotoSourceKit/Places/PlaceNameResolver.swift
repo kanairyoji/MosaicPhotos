@@ -37,9 +37,31 @@ public actor PlaceNameResolver {
     private var cache: [String: PlaceComponents]
     private let store = JSONFileStore<[String: PlaceComponents]>(filename: "PhotoSourceKit/placeNames.json")
 
+    /// オフライン解決ロジックの版。上げると **refined でない**キャッシュだけ破棄して再解決させる
+    /// （Apple 解決済みは維持）。v2: 距離格下げ（遠い最近傍は市名を捨てる）導入。
+    private static let offlineLogicVersion = 2
+    private static let offlineLogicVersionKey = "PhotoSourceKit.offlineResolveVersion"
+
+    /// Apple 補正でキャッシュが更新されるたびに増える世代。場所スキャナ等が
+    /// 「地名が変わったので作り直すべきか」の判定に使う（永続不要＝起動直後の初回スキャンが拾う）。
+    public private(set) var refinementGeneration = 0
+
     public init() {
-        cache = store.load() ?? [:]
+        var loaded = store.load() ?? [:]
+        // オフライン解決ロジックが変わったら、オフライン由来（refined でない）の項だけ捨てて再解決させる。
+        let stored = UserDefaults.standard.integer(forKey: Self.offlineLogicVersionKey)
+        if stored < Self.offlineLogicVersion, !loaded.isEmpty {
+            loaded = loaded.filter { $0.value.isRefined }
+        }
+        UserDefaults.standard.set(Self.offlineLogicVersion, forKey: Self.offlineLogicVersionKey)
+        cache = loaded
     }
+
+    /// 現在の表示言語のキャッシュキー接頭辞（"ja:"/"en:"）。台帳伝播の純ロジックと共有する。
+    public static var keyPrefix: String { AppLocale.isJapanese ? "ja:" : "en:" }
+
+    /// キャッシュ全体のスナップショット（台帳伝播の差分計算用・読み取り専用）。
+    public func cachedComponentsSnapshot() -> [String: PlaceComponents] { cache }
 
     /// 詳細表示向け：市区町村, 州/県, 国 を連結した文字列。
     public func placeName(for coordinate: CLLocationCoordinate2D) async -> String? {
@@ -82,7 +104,8 @@ public actor PlaceNameResolver {
     /// オフライン都市 DB は「最寄りの大都市へスナップ」で粗いため、区・町名（subLocality）や正確な
     /// 市区町村を Apple から取り込む。旧実装の失敗（レート制限・失敗の恒久固着）を避けるため:
     /// - **成功だけキャッシュを上書き**し（`refined=true`）、**失敗はキャッシュしない**（次回リトライ）。
-    /// - 1 件ずつ `minInterval` 間隔で（レート制限回避）。対象は代表座標（トリップ等・少数）に限定。
+    /// - 1 件ずつ `minInterval` 間隔で（レート制限回避）。呼び出し側は枚数の多いセル順に渡し、
+    ///   1 回あたり `maxRequests` 件で打ち切る（数晩で全セルに収束し、以後はスキップ＝無コスト）。
     /// - 既に `refined` 済みのグリッドセルは飛ばす。`shouldContinue` が false で中断。
     /// 戻り値＝新たに高精度化できた地点数。0 なら表示更新は不要。
     public func refineWithAppleGeocoder(coordinates: [CLLocationCoordinate2D],
@@ -115,7 +138,10 @@ public actor PlaceNameResolver {
             // 失敗（ネット/レート制限/圏外）はキャッシュしない＝次回リトライ（旧「Trip 固定」を避ける）。
             try? await Task.sleep(nanoseconds: UInt64(minInterval * 1_000_000_000))
         }
-        if refinedCount > 0 { store.save(cache) }
+        if refinedCount > 0 {
+            store.save(cache)
+            refinementGeneration += 1
+        }
         return refinedCount
     }
 

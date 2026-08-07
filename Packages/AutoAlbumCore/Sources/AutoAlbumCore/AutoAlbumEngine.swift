@@ -294,8 +294,8 @@ public final class AutoAlbumEngine {
             aiAlbums = refreshed
         }
 
-        // 地名の高精度化（Apple・背景）: 生成済みトリップの代表座標を CLGeocoder で高精度化し、
-        // 名前が変わったら trips を作り直す。成功のみ永続・失敗はリトライ・既補正はスキップ＝収束後は無コスト。
+        // 地名の高精度化（Apple・背景）: 写真のあるグリッドセルを枚数の多い順に CLGeocoder で高精度化し、
+        // 変わった地名を台帳へ伝播して trips を作り直す。成功のみ永続・失敗はリトライ・既補正はスキップ＝収束後は無コスト。
         await refinePlaceNames(shouldContinue: { await MainActor.run { BackgroundYield.heavyWorkAllowed } })
 
         guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
@@ -305,36 +305,51 @@ public final class AutoAlbumEngine {
         await generate()
     }
 
-    /// トリップ代表座標。
-    private var tripCoordinates: [CLLocationCoordinate2D] {
-        albums.compactMap { a in
-            guard let lat = a.latitude, let lon = a.longitude else { return nil }
-            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        }
+    /// 台帳の座標付き写真から「使用中グリッドセル」の重心座標を枚数の多い順に返す（Apple 補正の対象）。
+    /// 旧実装のトリップ代表座標（メンバー平均）は複数都市の旅行で無意味な地点になるため廃止した。
+    private func placeRefinementTargets() async -> (photos: [EnrichedPhoto], cells: [CLLocationCoordinate2D]) {
+        let photos = await store.allEnrichedPhotosLite()
+        let cells = await Task.detached(priority: .utility) {
+            PlaceRefinement.cellCentroids(photos: photos)
+        }.value
+        return (photos, cells)
     }
 
-    /// 生成済みトリップの代表座標を Apple（CLGeocoder）で高精度化し、名前が変わったら trips を作り直す。
-    /// オフライン都市 DB の「最寄り大都市スナップ」を、正確な市区町村・区名（subLocality）へ置き換える。
-    /// 対象はトリップ代表座標（少数）に限定＝レート制限に当たらない。既に高精度化済みなら 0 件で即帰る。
+    /// 写真のあるグリッドセルを Apple（CLGeocoder）で高精度化し、**変わった地名を台帳へ伝播**して
+    /// trips を作り直す。オフライン都市 DB の「最寄り大都市スナップ」を正確な市区町村へ置き換える。
+    /// - セルは枚数の多い順・1 晩 300 件まで（数晩で全セルに収束。以後は refined スキップ＝無コスト）。
+    /// - 伝播は毎回行う（補正済みキャッシュと台帳の差分を取るだけ＝安価）。過去の補正が中断などで
+    ///   台帳へ届いていなくても自己修復する。台帳の placeName は trips・AI 検索（LexicalSearch）の出典。
     /// 戻り値＝新たに高精度化した地点数。`shouldContinue` は heavy ゲート（背景）や `{ true }`（手動）。
     @discardableResult
     private func refinePlaceNames(shouldContinue: @escaping @Sendable () async -> Bool) async -> Int {
-        let coords = tripCoordinates
-        guard !coords.isEmpty else { return 0 }
+        let (photos, cells) = await placeRefinementTargets()
+        guard !cells.isEmpty else { return 0 }
+        // オフライン解決ロジックの版上げでキャッシュが破棄されたセルを先に埋め直す（即時・通信不要）。
+        for cell in cells { _ = await PlaceNameResolver.shared.cityName(for: cell) }
         let refined = await PlaceNameResolver.shared.refineWithAppleGeocoder(
-            coordinates: coords, shouldContinue: shouldContinue)
-        if refined > 0 {
-            Self.log.info("place refine: \(refined) coords upgraded via CLGeocoder — regenerating trips")
+            coordinates: cells, shouldContinue: shouldContinue)
+        // 伝播: resolver キャッシュの現在値で台帳の placeName/country を引き直す（差分のみ更新）。
+        let cache = await PlaceNameResolver.shared.cachedComponentsSnapshot()
+        let prefix = PlaceNameResolver.keyPrefix
+        let changes = await Task.detached(priority: .utility) {
+            PlaceRefinement.ledgerChanges(photos: photos, cache: cache, keyPrefix: prefix)
+        }.value
+        if !changes.isEmpty {
+            await store.updatePlaces(changes)
+            await PlaceNameResolver.shared.persist()
+            Self.log.info("place refine: \(refined) cells upgraded via CLGeocoder, \(changes.count) photos renamed — regenerating trips")
             await generate()
         }
         return refined
     }
 
     /// デバッグ: Apple(CLGeocoder)の地名補正を**今すぐ**実行する（heavy ゲート無視）。動作確認用に、
-    /// 代表トリップ 1 点の直接ジオコーディング結果（サンプル）と高精度化した地点数を人間可読で返す。
+    /// 最多枚数セル 1 点の直接ジオコーディング結果（サンプル）と高精度化した地点数を人間可読で返す。
     public func refinePlaceNamesNow() async -> String {
-        guard let first = tripCoordinates.first else {
-            return "トリップがありません（先に『時間と場所』を生成してください）"
+        let (_, cells) = await placeRefinementTargets()
+        guard let first = cells.first else {
+            return "位置情報つきの写真がありません"
         }
         let sample = await PlaceNameResolver.shared.debugGeocode(first) ?? "（取得できず＝通信不可／圏外）"
         let refined = await refinePlaceNames(shouldContinue: { true })

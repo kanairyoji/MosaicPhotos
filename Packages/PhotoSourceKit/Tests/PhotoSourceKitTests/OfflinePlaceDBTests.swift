@@ -42,4 +42,39 @@ struct OfflinePlaceDBTests {
     func nonFiniteIsNil() {
         #expect(OfflinePlaceDB.shared.nearest(latitude: .nan, longitude: 0, japanese: false) == nil)
     }
+
+    // MARK: - 距離格下げ（遠い最近傍に誤った市名を付けない）
+
+    @Test("近い最近傍はそのまま（市名を保持）")
+    func demotionNearKeepsCity() {
+        let place = OfflinePlaceDB.Place(city: "京都市", admin: "京都府", country: "日本")
+        let demoted = OfflinePlaceDB.demoted(place, distanceMeters: 10_000)
+        #expect(demoted.city == "京都市")
+        #expect(demoted.admin == "京都府")
+    }
+
+    @Test("市名の採用限界を超えたら県名へ格下げ")
+    func demotionMidDropsCity() {
+        let place = OfflinePlaceDB.Place(city: "京都市", admin: "京都府", country: "日本")
+        let demoted = OfflinePlaceDB.demoted(place, distanceMeters: OfflinePlaceDB.cityMaxMeters + 1)
+        #expect(demoted.city == nil)
+        #expect(demoted.admin == "京都府")
+        #expect(demoted.country == "日本")
+    }
+
+    @Test("県名の採用限界を超えたら国名のみ")
+    func demotionFarCountryOnly() {
+        let place = OfflinePlaceDB.Place(city: "京都市", admin: "京都府", country: "日本")
+        let demoted = OfflinePlaceDB.demoted(place, distanceMeters: OfflinePlaceDB.adminMaxMeters + 1)
+        #expect(demoted.city == nil)
+        #expect(demoted.admin == nil)
+        #expect(demoted.country == "日本")
+    }
+
+    @Test("都市中心の直近の座標は格下げされず市名が付く（結合）")
+    func nearestWithinCityRangeKeepsCity() {
+        // 京都市街の座標 → 最近傍まで数 km なので市名が残る。
+        let kyoto = OfflinePlaceDB.shared.nearest(latitude: 35.01, longitude: 135.77, japanese: true)
+        #expect(kyoto?.city?.contains("京都") == true)
+    }
 }
