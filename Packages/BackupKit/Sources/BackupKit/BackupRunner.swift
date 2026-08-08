@@ -133,17 +133,42 @@ final class BackupRunner {
         addLog("Token OK")
 
         // 6. 1 枚ずつアップロード（検証つき・電源/回線ポーズ・キャンセル対応）
+        //
+        // ⚠️ **次の 1 枚の読み込みを、現在の 1 枚のアップロード中に走らせる**（ADR-84）。
+        // 読み込み（PHAssetResource のディスク読み）とアップロード（HTTP）は別資源なので、
+        // 直列にすると読み込み時間がまるごと待ち時間になる。先読みは**ちょうど 1 枚**に限定し、
+        // メモリ増を写真 1 枚分に抑える（夜間 BGTask は jetsam 上限が厳しい＝ADR-72）。
+        // 検証・記録（ADR-40 の hash 照合と「済み」記録）の順序は一切変えない。
         var tally = UploadTally(trackedIDs: doneIDs)
+        var readAhead: Task<FetchDataResult, Never>?
         for (i, asset) in pending.enumerated() {
-            guard !Task.isCancelled else { setPhase(.cancelled); return false }
-            guard await waitUntilUploadAllowed() else { setPhase(.cancelled); return false }
-            switch await uploadOne(asset: asset, index: i, total: pending.count,
+            guard !Task.isCancelled else { readAhead = nil; setPhase(.cancelled); return false }
+            guard await waitUntilUploadAllowed() else { readAhead = nil; setPhase(.cancelled); return false }
+
+            // 現在の 1 枚: 先読み済みならそれを使い、無ければ（初回・中断後）ここで読む。
+            let fetched: FetchDataResult
+            if let readAhead {
+                fetched = await readAhead.value
+            } else {
+                fetched = await Self.readAsset(asset)
+            }
+            readAhead = nil
+
+            // 次の 1 枚の読み込みを開始（このあとのアップロードと重なる）。
+            // ゲートが閉じている間に読み込んで抱え続けないよう、開いているときだけ先読みする。
+            if i + 1 < pending.count, !Task.isCancelled, backgroundUploadAllowed {
+                let next = pending[i + 1]
+                readAhead = Task { await Self.readAsset(next) }
+            }
+
+            switch await uploadOne(asset: asset, fetched: fetched, index: i, total: pending.count,
                                    folder: folder, token: token,
                                    indexes: indexes, captions: captionsByID, tally: &tally) {
             case .done, .skipped: continue
-            case .fatal: return false
+            case .fatal: readAhead = nil; return false
             }
         }
+        readAhead = nil
         progressStore.saveUploadedIDs(tally.trackedIDs)
 
         // 7. メタデータ v2（触った撮影月シャード＋カタログ）
@@ -235,16 +260,25 @@ final class BackupRunner {
         return true
     }
 
-    /// 1 枚のアップロード（読み込み → 検証つきアップロード → 409 の hash 照合 → 記録）。
-    private func uploadOne(asset: PHAsset, index i: Int, total: Int,
+    /// 写真本体を読む（先読みと本流の共通経路・ADR-84）。所要は `backup.read` に計測する。
+    /// フォールバック名は localIdentifier 由来の安定名（旧: 実行内インデックス名は
+    /// 実行ごとに 1 から振り直され、別の写真が同名になって 409 を誘発する設計バグだった）。
+    private static func readAsset(_ asset: PHAsset) async -> FetchDataResult {
+        let stableFallback = "photo_" + asset.localIdentifier.prefix(8)
+            .replacingOccurrences(of: "/", with: "-") + ".jpg"
+        let t0 = PerfTrace.nowNs()
+        let result = await BackupAssetReader.read(asset: asset, fallback: stableFallback)
+        PerfTrace.count("backup.readMs", value: PerfTrace.msSince(t0))
+        return result
+    }
+
+    /// 1 枚のアップロード（検証つきアップロード → 409 の hash 照合 → 記録）。
+    /// 読み込みは呼び出し側が先読みして渡す（ADR-84）＝アップロードと重ねるため。
+    private func uploadOne(asset: PHAsset, fetched fetchResult: FetchDataResult,
+                           index i: Int, total: Int,
                            folder: String, token: String,
                            indexes: Indexes, captions: [String: String],
                            tally: inout UploadTally) async -> ItemOutcome {
-        // フォールバック名は localIdentifier 由来の安定名（旧: 実行内インデックス名は
-        // 実行ごとに 1 から振り直され、別の写真が同名になって 409 を誘発する設計バグだった）。
-        let stableFallback = "photo_" + asset.localIdentifier.prefix(8)
-            .replacingOccurrences(of: "/", with: "-") + ".jpg"
-        let fetchResult = await BackupAssetReader.read(asset: asset, fallback: stableFallback)
         guard case .success(let data, let filename) = fetchResult else {
             if case .skipped(let filename, let reason) = fetchResult {
                 addLog("[\(i+1)/\(total)] SKIP \(filename): \(reason)")
@@ -261,8 +295,11 @@ final class BackupRunner {
 
         // ADR-40: ローカルで content_hash を計算し、応答の hash と一致して初めて「済み」にする。
         let localHash = DropboxContentHash.hash(of: data)
+        let tUpload = PerfTrace.nowNs()
         var result = await uploader.upload(data: data, to: dropboxPath, token: token,
                                            expectedHash: localHash)
+        // 計測: 読み込み（backup.readMs）と対にして、どちらが支配的かを実測で判断できるようにする。
+        PerfTrace.count("backup.uploadMs", value: PerfTrace.msSince(tUpload))
         if result == .alreadyExists {
             // 409（同パスに既存）: 同一内容か **hash で確認**する。旧実装は無確認で「済み」
             // 扱いにしており、同名の別写真が「バックアップ済み」と誤記録される＝オフロードで
