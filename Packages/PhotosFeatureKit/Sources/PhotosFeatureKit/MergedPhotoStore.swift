@@ -271,9 +271,17 @@ extension MergedPhotoStore: PhotoStore {
     }
 
     public func setFavorite(_ item: MergedPhotoItem, _ isFavorite: Bool) async -> Bool {
-        // Dropbox はお気に入り非対応＝常に false。
-        await forward(item, local: { await localStore.setFavorite($0, isFavorite) },
-                            cloud: { _ in false })
+        // クラウドのお気に入りはアプリ側で永続する（ADR-67）。以前は常に false を返しており、
+        // 統合ビューではクラウド写真をお気に入りにできなかった。
+        let ok = await forward(item, local: { await localStore.setFavorite($0, isFavorite) },
+                                     cloud: { await dropboxStore.setFavorite($0, isFavorite) })
+        // 統合リスト側の該当 1 件だけ刻印し直す（グリッドのハートを即時更新）。
+        // ⚠️ `rebuildItems()` は 68k 件の再ソートなので、1 件のトグルでは呼ばない。
+        if ok, case .cloud(let cloud) = item,
+           let idx = items.firstIndex(where: { $0.id == item.id }) {
+            items[idx] = .cloud(cloud.withFavorite(isFavorite))
+        }
+        return ok
     }
 
     public func metadata(for item: MergedPhotoItem) async -> PhotoExifInfo? {

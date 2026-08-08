@@ -43,19 +43,23 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
-    /// お気に入りはローカル写真のみ（Dropbox にはお気に入りの概念がない）。
+    /// お気に入り。ローカルは PHAsset、クラウドは**アプリ側で管理**する（ADR-67）。
+    /// ⚠️ 以前は「Dropbox にお気に入りの概念がない」として cloud を常に false にしていたが、
+    /// ADR-67 で `DropboxPhotoStore` がアプリ側お気に入り（cloudFavoritePaths）を持つように
+    /// なった。ここを更新し忘れていたため、統合ビュー（All Photos）だけクラウド写真の
+    /// ハートが出ず、付け外しもできなかった。
     public var isFavorite: Bool {
         switch self {
         case .local(let item): return item.isFavorite
-        case .cloud:           return false
+        case .cloud(let item): return item.isFavorite
         }
     }
 
-    /// お気に入りの付け外しはローカル写真のみ対応。
+    /// お気に入りの付け外しはローカル・クラウドとも対応（クラウドはアプリ側で永続）。
     public var supportsFavorite: Bool {
         switch self {
         case .local(let item): return item.supportsFavorite
-        case .cloud:           return false
+        case .cloud(let item): return item.supportsFavorite
         }
     }
 

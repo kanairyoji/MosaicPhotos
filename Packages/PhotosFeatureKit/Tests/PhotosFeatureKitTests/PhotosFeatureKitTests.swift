@@ -123,6 +123,19 @@ struct MergedPhotoItemTests {
         #expect(bogus.captureDate == nil)
     }
 
+    /// 回帰: クラウド写真のお気に入り（ADR-67 でアプリ側管理になった）を統合ビューでも扱えること。
+    /// 以前は `isFavorite`/`supportsFavorite` が cloud を常に false にしており、All Photos だけ
+    /// ハートが出ず付け外しもできなかった（`DropboxPhotoStore` 側は対応済みだったのに未追随）。
+    @Test("クラウド写真のお気に入りを委譲する（常に false にしない）")
+    func cloudFavoriteIsDelegated() {
+        let plain = DropboxFileItem(path: "/a.jpg", name: "a.jpg")
+        #expect(MergedPhotoItem.cloud(plain).isFavorite == false)
+        #expect(MergedPhotoItem.cloud(plain).supportsFavorite)      // 付け外しは可能
+
+        let faved = plain.withFavorite(true)
+        #expect(MergedPhotoItem.cloud(faved).isFavorite)            // 刻印済みなら true
+    }
+
     @Test("等価性・ハッシュは id 基準")
     func equalityByID() {
         #expect(cloud("/a.jpg") == cloud("/a.jpg"))
