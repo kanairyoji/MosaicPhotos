@@ -93,6 +93,11 @@ final class PhotoTagger {
                 }
                 let refKeys = Array(keyQueue.prefix(batchSize))
                 keyQueue.removeFirst(refKeys.count)
+                // 次バッチの素材も今から取り始める（ADR-83 追記）＝現バッチの推論と重ねる。
+                // キューは 512 件先読みしてあるので、次バッチ分はほぼ常に手元にある。
+                if !keyQueue.isEmpty {
+                    perception.warmUp(refKeys: Array(keyQueue.prefix(batchSize)))
+                }
                 guard !refKeys.isEmpty else {
                     // ローカルが尽きた。回線NGで残り（クラウド分）があれば「保留」、無ければ「完了」。
                     // どちらも終了し、回線/電源の復帰時にアプリ側が再起動する（isTagging を抱え続けない）。

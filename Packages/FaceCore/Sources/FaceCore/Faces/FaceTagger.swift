@@ -81,6 +81,11 @@ final class FaceTagger {
             nextBatch: { _ in
                 let end = min(index + batchSize, todo.count)
                 defer { index = end }
+                // ⚠️ **次のバッチ**の素材も今から取り始める（ADR-83 追記）。推論は ANE ゲートで
+                // 直列＝1 バッチ約 1.6 秒かかるので、その裏で次バッチのダウンロード（約 0.8 秒）を
+                // 完全に隠せる。これが無いとバッチの先頭で毎回ダウンロード待ちが露出する。
+                let aheadEnd = min(end + batchSize, todo.count)
+                if end < aheadEnd { provider.warmUp(refKeys: Array(todo[end..<aheadEnd])) }
                 return Array(todo[index..<end])
             },
             processUnit: { refKey in

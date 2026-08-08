@@ -100,6 +100,9 @@ final class TagTagger {
             nextBatch: { _ in
                 let end = min(index + batchSize, todo.count)
                 defer { index = end }
+                // 次バッチの素材も今から取り始める（ADR-83 追記）＝現バッチの推論と重ねる。
+                let aheadEnd = min(end + batchSize, todo.count)
+                if end < aheadEnd { provider.warmUp(refKeys: Array(todo[end..<aheadEnd])) }
                 let batch = Array(todo[index..<end])
                 return stride(from: 0, to: batch.count, by: miniBatchSize).map {
                     Array(batch[$0..<min($0 + miniBatchSize, batch.count)])
