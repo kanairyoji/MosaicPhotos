@@ -73,3 +73,17 @@ nonisolated func loadRefImages(_ refKeys: [String], maxPixel: CGFloat,
         return out
     }
 }
+
+/// refKey 群からクラウド path を抜き出し、**一括の先行取得**を依頼する（ADR-83）。
+///
+/// クラウド写真は 1 枚ずつサムネを取ると 1 枚 600〜800ms の往復が推論と直列に並び、
+/// AI 処理時間の 85〜90% をダウンロード待ちが占めていた（実測 diagnostics-31/32）。
+/// バッチ単位でまとめて要求すると Dropbox のバッチ API（25 枚/リクエスト・並列）に相乗りでき、
+/// 2 枚目以降は取得済みから始まる。ローカル（"L-…"）は何もしない（PHImageManager は十分速い）。
+/// `warm` は**即座に返る**実装であること（実際の取得は非同期）。
+nonisolated func warmCloudPaths(_ refKeys: [String], using warm: (@Sendable ([String]) -> Void)?) {
+    guard let warm else { return }
+    let paths = refKeys.compactMap { PhotoRef.decode($0)?.cloudPath }
+    guard !paths.isEmpty else { return }
+    warm(paths)
+}

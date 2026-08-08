@@ -16,6 +16,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         let image = await dropboxStore.thumbnail(for: dropboxFileItem(path: path))
         return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
+    let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
     // ⚠️ @ModelActor は「init したスレッド」で実行される（SwiftData の罠）。MainActor で
     // 生成すると全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走り
     // 実測 14.5s ハングの真因になったため、オフメイン生成ファクトリを使う。
@@ -23,11 +24,11 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         cloudProvider: DropboxCloudPhotoProvider(store: dropboxStore),
         backupLink: BackupLinkAdapter(engine: backupEngine),
         peopleProvider: FacePeopleProvider(engine: peopleEngine),
-        perception: CLIPEmbeddingProvider(cloudImage: cloudImage),
+        perception: CLIPEmbeddingProvider(cloudImage: cloudImage, warmCloud: warmCloud),
         textEmbedder: MobileCLIPTextEmbedder(),
         translator: AppQueryTranslator(),
         labelProvider: CLIPDisplayLabeler(),
-        tagProvider: VisionTagAdapter(cloudImage: cloudImage))
+        tagProvider: VisionTagAdapter(cloudImage: cloudImage, warmCloud: warmCloud))
     // 顔スキャンの実測を AI アルバム評価に結線（「人が写っていない」等の除外を確実にする）。
     engine.setFaceCountsProvider { await peopleEngine.scannedFaceCounts() }
     // 名前付き人物の一覧を AI アルバムの人物名検索に結線（「太郎と花子」→ 木村太郎/木村花子 等）。
@@ -69,9 +70,10 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
         let image = await dropboxStore.thumbnail(for: dropboxFileItem(path: path))
         return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
+    let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
     // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
     return await PeopleEngine.makeWithOffMainStore(
-        faceProvider: FacePerceptionAdapter(cloudImage: cloudImage),
+        faceProvider: FacePerceptionAdapter(cloudImage: cloudImage, warmCloud: warmCloud),
         favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) })
 }
 
@@ -124,5 +126,20 @@ struct FacePeopleProvider: PeopleProvider {
             if let localId = PhotoRef.decode(refKey)?.localIdentifier { out[localId] = names }
         }
         return out
+    }
+}
+
+/// クラウドサムネの**一括先行取得**クロージャを作る（ADR-83）。
+///
+/// 解析（顔・タグ・CLIP）はバッチ単位でこれを呼び、次に処理する写真のサムネをまとめて
+/// 要求する。取得自体は `DropboxThumbnailBatcher` の低優先プール（25 枚/リクエスト・並列）で
+/// 進むため、1 枚ずつ `thumbnail(for:)` を待つより往復が大幅に減る。
+/// 回線ポリシーは `prefetch` 側（`speculativeFetchAllowed`＝ADR-81）が守る。
+@MainActor
+func makeCloudThumbnailWarmer(dropboxStore: DropboxPhotoStore) -> @Sendable ([String]) -> Void {
+    { paths in
+        Task { @MainActor in
+            dropboxStore.prefetch(paths.map { dropboxFileItem(path: $0) }, targetSize: .zero)
+        }
     }
 }

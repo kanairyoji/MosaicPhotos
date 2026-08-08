@@ -76,6 +76,8 @@ final class FaceTagger {
             shouldPause: shouldPause,
             pausePerfLabel: "face.pauseWait",   // センサー: 譲り待ちの発生数
             unitPerfLabel: "face.photoMs",
+            // クラウド分のサムネをバッチごとに一括先行取得する（ADR-83）。
+            warmBatch: { [provider] batch in provider.warmUp(refKeys: batch) },
             nextBatch: { _ in
                 let end = min(index + batchSize, todo.count)
                 defer { index = end }

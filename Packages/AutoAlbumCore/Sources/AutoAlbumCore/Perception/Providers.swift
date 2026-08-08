@@ -53,6 +53,12 @@ public struct PhotoPerception: Sendable, Equatable {
 public protocol PhotoPerceptionProvider: Sendable {
     /// 取り込み対象のうち、まだ埋め込みが無い refKey の埋め込みを計算して返す（キーは refKey）。
     func perceive(refKeys: [String]) async -> [String: PhotoPerception]
+    /// これから処理する refKey 群の素材を**先に取りに行く**ヒント（ADR-83）。**即座に返る**こと。
+    func warmUp(refKeys: [String])
+}
+
+public extension PhotoPerceptionProvider {
+    func warmUp(refKeys: [String]) {}
 }
 
 /// 検索文を CLIP テキスト埋め込みに変換する（英訳→テキストエンコーダ）。実体はアプリ側。

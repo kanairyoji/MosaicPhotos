@@ -38,10 +38,13 @@ public protocol TagPerceptionProvider: Sendable {
     /// キャプション用の重いモデル（VLM≈877MB）がロード済みなら解放する（1-d）。
     /// キャプションフェーズ完了後に呼び、CLIP 画像塔・facenet と同時常駐しないようにする。既定は無処理。
     func releaseCaptionModelIfLoaded()
+    /// これから処理する refKey 群の素材を**先に取りに行く**ヒント（ADR-83）。**即座に返る**こと。
+    func warmUp(refKeys: [String])
 }
 
 public extension TagPerceptionProvider {
     func releaseCaptionModelIfLoaded() {}
+    func warmUp(refKeys: [String]) {}
 }
 
 /// タグ・キャプションの夜間トリクル付与（FaceTagger と同パターン）。
@@ -92,6 +95,8 @@ final class TagTagger {
             shouldPause: shouldPause,
             unitPerfLabel: "tags.photoMs",
             unitPerfDivisor: { (chunk: [String]) in Double(max(1, chunk.count)) },   // 1 枚あたり ms
+            // クラウド分のサムネをバッチごとに一括先行取得する（ADR-83）。
+            warmBatch: { [provider] chunks in provider.warmUp(refKeys: chunks.flatMap { $0 }) },
             nextBatch: { _ in
                 let end = min(index + batchSize, todo.count)
                 defer { index = end }

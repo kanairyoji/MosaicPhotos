@@ -14,9 +14,17 @@ import Vision
 public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// クラウド path → CGImage（Dropbox のキャッシュ済み 128px サムネ）。nil なら端末写真のみ対象。
     let cloudImage: (@Sendable (String) async -> CGImage?)?
+    /// クラウド path 群のサムネを**一括で先行取得**するヒント（ADR-83・即座に返る）。
+    let warmCloud: (@Sendable ([String]) -> Void)?
 
-    public init(cloudImage: (@Sendable (String) async -> CGImage?)? = nil) {
+    public init(cloudImage: (@Sendable (String) async -> CGImage?)? = nil,
+                warmCloud: (@Sendable ([String]) -> Void)? = nil) {
         self.cloudImage = cloudImage
+        self.warmCloud = warmCloud
+    }
+
+    public func warmUp(refKeys: [String]) {
+        warmCloudPaths(refKeys, using: warmCloud)
     }
 
     /// 同梱判定のみ（**ロードを起こさない**・1-a）。実ロードは初回 `detectFaces`→`embed` まで遅延。

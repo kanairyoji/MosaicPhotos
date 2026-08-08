@@ -36,6 +36,49 @@ struct BackgroundTrickleTests {
         #expect(c.pauseBegins == 0)
     }
 
+    /// ADR-83: バッチの素材（クラウドサムネ）をまとめて先行取得するフック。
+    /// 1 枚ずつ取ると往復が推論と直列に並び、AI 処理時間の 85〜90% を占めていた。
+    @Test("run: warmBatch はバッチ取得直後に、そのバッチ全体で 1 回呼ばれる")
+    func warmBatchCalledOncePerBatch() async {
+        let c = Counter()
+        var warmed: [[Int]] = []
+        var order: [String] = []
+        await BackgroundTrickle.run(
+            maxBatches: 2,
+            betweenBatchNs: 0,
+            shouldPause: { false },
+            unitPerfLabel: "test.unitMs",
+            warmBatch: { batch in
+                warmed.append(batch)
+                order.append("warm")
+            },
+            nextBatch: { index in index == 0 ? [1, 2, 3] : [] },
+            processUnit: { unit in
+                order.append("process")
+                c.processed.append(unit)
+                return unit
+            },
+            commitBatch: { _, _, _ in .stop })
+
+        #expect(warmed == [[1, 2, 3]])                       // バッチ丸ごと 1 回だけ
+        #expect(order.first == "warm")                       // 推論より**先**に呼ばれる
+        #expect(c.processed == [1, 2, 3])
+    }
+
+    @Test("run: warmBatch 未指定でも従来どおり動く（既定 nil）")
+    func warmBatchIsOptional() async {
+        let c = Counter()
+        await BackgroundTrickle.run(
+            maxBatches: 1,
+            betweenBatchNs: 0,
+            shouldPause: { false },
+            unitPerfLabel: "test.unitMs",
+            nextBatch: { index in index == 0 ? [7] : [] },
+            processUnit: { unit in c.processed.append(unit); return unit },
+            commitBatch: { _, _, _ in .stop })
+        #expect(c.processed == [7])
+    }
+
     @Test("run: 譲りは 1 単位ごとに確認され、フックは譲りのたびに 1 回立つ")
     func runFiresPauseHookPerPause() async {
         let c = Counter()

@@ -71,6 +71,8 @@ final class PhotoTagger {
             pausePerfLabel: "clip.pauseWait",   // センサー: 譲り待ちの発生数
             unitPerfLabel: "clip.embedMs",
             unitPerfDivisor: { (chunk: [String]) in Double(chunk.count) },   // 1 枚あたり ms に換算
+            // クラウド分のサムネをバッチごとに一括先行取得する（ADR-83）。
+            warmBatch: { [perception] chunks in perception.warmUp(refKeys: chunks.flatMap { $0 }) },
             nextBatch: { batch in
                 // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
                 await BackgroundTrickle.waitWhilePaused(shouldPause)

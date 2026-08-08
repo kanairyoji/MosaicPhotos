@@ -49,6 +49,7 @@ public enum BackgroundTrickle {
         onPauseBegin: (@MainActor () -> Void)? = nil,
         unitPerfLabel: String,
         unitPerfDivisor: (Unit) -> Double = { _ in 1 },
+        warmBatch: (@MainActor ([Unit]) -> Void)? = nil,
         nextBatch: @MainActor (_ batchIndex: Int) async -> [Unit],
         processUnit: @MainActor (Unit) async -> UnitResult,
         commitBatch: @MainActor (_ batchIndex: Int, _ batch: [Unit], _ results: [UnitResult]) async -> BatchOutcome
@@ -57,6 +58,12 @@ public enum BackgroundTrickle {
         while batchIndex < maxBatches, !Task.isCancelled {
             let batch = await nextBatch(batchIndex)
             guard !batch.isEmpty else { break }
+            // ⚠️ バッチの素材を**まとめて先に取りに行く**（ADR-83）。クラウド写真は 1 枚ずつ
+            // サムネを取ると 1 枚 600〜800ms の往復が推論と直列に並び、AI 処理時間の 85〜90% を
+            // ダウンロード待ちが占めていた（実測 diagnostics-31/32）。ここで**非同期に**一括要求
+            // しておくと、Dropbox のバッチ API（25 枚/リクエスト・並列）に相乗りでき、
+            // 2 枚目以降は取得済みから始まる。await しない＝1 枚目の処理と重ねる。
+            warmBatch?(batch)
 
             var results: [UnitResult] = []
             for unit in batch {

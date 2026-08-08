@@ -10,9 +10,17 @@ public struct CLIPEmbeddingProvider: PhotoPerceptionProvider {
 
     /// クラウド path → CGImage（Dropbox サムネイル）を返すローダ。アプリが DropboxPhotoStore を背後に注入。
     let cloudImage: @Sendable (String) async -> CGImage?
+    /// クラウド path 群のサムネを**一括で先行取得**するヒント（ADR-83・即座に返る）。
+    let warmCloud: (@Sendable ([String]) -> Void)?
 
-    public init(cloudImage: @escaping @Sendable (String) async -> CGImage?) {
+    public init(cloudImage: @escaping @Sendable (String) async -> CGImage?,
+                warmCloud: (@Sendable ([String]) -> Void)? = nil) {
         self.cloudImage = cloudImage
+        self.warmCloud = warmCloud
+    }
+
+    public func warmUp(refKeys: [String]) {
+        warmCloudPaths(refKeys, using: warmCloud)
     }
 
     nonisolated static let log = Logger(subsystem: "com.mosaicphotos.AutoAlbum", category: "embed")

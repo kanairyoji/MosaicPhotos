@@ -104,6 +104,11 @@ public protocol FacePerceptionProvider: Sendable {
     /// 類似度スケール依存の定数一式（ADR-70）。同梱モデルの宣言（face_config.json の tuning）。
     var tuning: FaceTuning { get }
     func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]]
+    /// これから処理する refKey 群の素材を**先に取りに行く**ヒント（ADR-83）。
+    /// クラウド写真はサムネの往復（1 枚 600〜800ms）が推論と直列になり支配的だったため、
+    /// バッチ単位でまとめて要求してダウンロードを並列化・先行させる。
+    /// **即座に返る**こと（実際の取得は非同期）。ローカルのみの実装は何もしなくてよい。
+    func warmUp(refKeys: [String])
 }
 
 public extension FacePerceptionProvider {
@@ -111,4 +116,6 @@ public extension FacePerceptionProvider {
     var pipelineVersion: Int { 4 }
     /// 既定は facenet プロファイル（後方互換）。
     var tuning: FaceTuning { .facenet }
+    /// 既定は無処理（先読みの必要がないローカル専用実装向け）。
+    func warmUp(refKeys: [String]) {}
 }
