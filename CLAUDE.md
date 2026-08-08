@@ -329,7 +329,7 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
 
 Apple フレームワークの一般リファレンス（Claude Code スキル `coreml` / `vision-framework` /
 `apple-on-device-ai` ほか。導入手順は `CONTRIBUTING.md`）を併用する。導入は任意で、
-リポジトリ外（`~/.claude/skills/`）にあるためコードからは見えない。
+プロジェクト直下の `.claude/skills/`（`.gitignore` 対象）にあるためコードからは見えない。
 
 **スキルは一般論、本ファイルと `docs/architecture-note/records/*.md` は実測に基づく決定**。
 矛盾したら後者が勝つ。特に以下はスキルの推奨と意図的に異なるので、「直す」対象ではない：

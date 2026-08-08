@@ -30,8 +30,10 @@
 ### Claude Code スキル（任意・AI 支援開発を行う場合）
 
 本リポジトリは AI コーディング支援（Claude Code）を併用して開発しています。スキルは
-`~/.claude/skills/` に置かれ**リポジトリ外**（`.claude/` は `.gitignore` 対象）なので、
-再現するには各自で導入が必要です。必須ではありません。
+**プロジェクト直下の `.claude/skills/`**（プロジェクト個別・`.claude/` は `.gitignore` 対象）に
+置くため、リポジトリには入らず、再現するには各自で導入が必要です。必須ではありません。
+（iOS 開発以外のプロジェクトに影響させないため、グローバル `~/.claude/skills/` ではなく
+プロジェクト個別にしています。）
 
 導入しているのは [dpearson2699/swift-ios-skills](https://github.com/dpearson2699/swift-ios-skills)
 の 4 スキルです（設定 → Licenses → Special Thanks にも記載）。**別々のバンドル**に入っている
@@ -63,8 +65,9 @@ AI/ML の 3 スキルはバンドル単位で入ります（`natural-language` �
 
 ```bash
 src=~/.claude/plugins/marketplaces/swift-ios-skills/skills
+mkdir -p .claude/skills   # リポジトリ直下で実行
 for s in apple-on-device-ai coreml vision-framework swift-concurrency; do
-  cp -R "$src/$s" ~/.claude/skills/"$s"
+  cp -R "$src/$s" .claude/skills/"$s"
 done
 ```
 
