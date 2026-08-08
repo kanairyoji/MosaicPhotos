@@ -55,6 +55,9 @@ public final class AutoAlbumEngine {
     @ObservationIgnored let tagger: PhotoTagger
     @ObservationIgnored private var observer: PhotoLibraryObserver?
     @ObservationIgnored private var libraryDirty = false
+    /// 背景タグ付け/埋め込み/キャプションのタスク（`scheduleBackgroundFill`）。
+    /// フォアグラウンド復帰で明示キャンセルするために保持する（ADR-79）。
+    @ObservationIgnored var backgroundFillTask: Task<Void, Never>?
     /// 前回 generate 時のクラウド署名。**UserDefaults に永続**する（Fix A）。
     /// 以前はプロセス起動ごとに 0 に戻るため、jetsam 再起動のたびに「署名が変わった」と誤判定して
     /// 86k 件の重い generate（実測 ~800MB）を再実行 → また jetsam、という悪循環になっていた。
@@ -394,27 +397,38 @@ public final class AutoAlbumEngine {
             currentRefKeys.formUnion(cloudResult.current)
         }
 
+        // ADR-79: ステップ境界で中断を確認する。generate は 18 秒超・ピーク 550〜880MB の
+        // 一枚岩で、フォアグラウンド復帰後も完走して固まりの原因になっていた。ここまでの
+        // upsert は台帳へ確定済み・処理は差分ベースなので、途中で降りても次回続きから進む。
+        if Task.isCancelled { Diagnostics.mark("generate: cancelled (after enrich)"); return }
+
         // 3. 現存しない写真の付加情報を削除。既存ローカルの linkKey をバックアップ最新で更新。
         Diagnostics.mark("generate.step3: prune…")
         await store.prune(keeping: currentRefKeys)
         await store.refreshLocalLinkKeys(backupMap)
+        if Task.isCancelled { Diagnostics.mark("generate: cancelled (after prune)"); return }
 
         // 4〜6. 重複排除・旅行抽出・フォルダ名アルバムは 85k 件規模の純計算。
         //    まとめて Task.detached（オフメイン）で行い、メインは結果の代入だけにする
         //    （従来はエンジン＝@MainActor 上で実行され、実測で main を最大 12 秒塞いでいた）。
         //    生成は意味検索を伴わないため clipVector を載せない軽量版を使う（実機メモリ削減）。
-        Diagnostics.mark("generate.step4: fetch lite…")
-        let allEnriched = await store.allEnrichedPhotosLite()
-        Diagnostics.mark("generate.step4: lite=\(allEnriched.count) → detached compute…")
+        Diagnostics.mark("generate.step4: detached fetch+compute…")
         let excludeAlbumed = UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.excludeAlbumed)
         let albumed = excludeAlbumed ? await PhotoEnricher.userAlbumedIdentifiers() : []
         let params = AlbumGenParams.current
         let strategies = self.strategies
+        let store = self.store
 
         // 3-a: 以前は `photos`（86k の EnrichedPhoto 配列）を**メインへ返して .count だけ**に使い、
         // 86k×文字列複数の配列をメイン側に握り続けていた。返すのは件数だけにして常駐ピークを下げる。
+        // ADR-79: 台帳の**取得もこの detached 内**で行う。以前は `allEnrichedPhotosLite()` の結果を
+        // 一旦 @MainActor のここで受けており、86k 件の受け渡しでメインが実測 ~10 秒止まっていた
+        // （diagnostics-30 の `hang main=10342ms` が generate.step4 と一致）。メインは件数と
+        // 生成済みアルバム（数百件）だけを受け取る。
         let (photoCount, infos, pathInfos) = await Task.detached(priority: .utility)
         { () -> (Int, [AutoAlbumInfo], [AutoAlbumInfo]) in
+            let allEnriched = await store.allEnrichedPhotosLite()
+            Diagnostics.mark("generate.step4: lite=\(allEnriched.count) → compute…")
             var photos = dedupByLinkKey(allEnriched)
             if excludeAlbumed {
                 photos = photos.filter { ref in
@@ -446,6 +460,8 @@ public final class AutoAlbumEngine {
         }.value
 
         Diagnostics.mark("generate.step5: compute done → save…")
+        // 計算結果の保存直前でも中断を確認する（保存は albums 置換＝一括なので途中止めはしない）。
+        if Task.isCancelled { Diagnostics.mark("generate: cancelled (before save)"); return }
         await PlaceNameResolver.shared.persist()
         await store.replaceAlbums(forStrategy: TimePlaceStrategy.strategyID, with: infos)
         await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: pathInfos)

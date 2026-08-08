@@ -65,16 +65,22 @@ enum HeavyWorkScheduler {
         }
     }
 
+    /// 実行中の重い処理タスク（BGTask 本体）。フォアグラウンド復帰で止めるために保持する（ADR-79）。
+    private static var currentWork: Task<Void, Never>?
+
     private static func handle(_ task: BGProcessingTask) {
         Diagnostics.mark("bgtask: begin")
         let started = Date()
         let work = Task { @MainActor in
             await runHeavyWork()
-            Diagnostics.mark("bgtask: end (completed)")
-            recordLastRun(started: started, outcome: "completed")
-            task.setTaskCompleted(success: true)
+            let cancelled = Task.isCancelled
+            currentWork = nil
+            Diagnostics.mark("bgtask: end (\(cancelled ? "cancelled" : "completed"))")
+            recordLastRun(started: started, outcome: cancelled ? "cancelled" : "completed")
+            task.setTaskCompleted(success: !cancelled)
             submit()   // 次回分を再予約（残作業はまた次のロック中に進む）
         }
+        currentWork = work
         task.expirationHandler = {
             // OS の持ち時間切れ。各ループは Task.isCancelled で速やかに止まる。
             Diagnostics.mark("bgtask: expired — cancelling")
@@ -85,6 +91,45 @@ enum HeavyWorkScheduler {
                 submit()
             }
         }
+    }
+
+    // MARK: - フォアグラウンド復帰（ADR-79）
+
+    /// アプリがアクティブになったときに呼ぶ。夜間処理（BGTask ルーチン・顔スキャン・タグ付け/
+    /// 埋め込み/キャプション）を**明示的に止める**。
+    ///
+    /// 従来はゲート（`BackgroundYield`）が閉じるだけで、各トリクルは `waitWhilePaused` で
+    /// 眠って待機していた。この方式には復帰時のカクつきが 2 つ残る:
+    /// 1. 実行中の 1 単位は最後まで走る（VLM キャプションは 1 枚数十秒＝ANE/CPU 飽和）。
+    /// 2. 眠っている間もモデル（VLM≈877MB）を抱え続け、メモリ圧迫の連鎖を招く。
+    /// 明示キャンセルなら実行中の単位が終わり次第すぐ降り、モデルも解放される。
+    /// 各処理は差分ベースなので、次の夜間窓で続きから再開する（取りこぼしなし）。
+    static func stopForForeground() {
+        let hadWork = currentWork != nil
+        currentWork?.cancel()
+        currentWork = nil
+        // BGTask のルーチンが起こした fire-and-forget のタスク群は、上の cancel では止まらない
+        // （構造化されていないため）。エンジンへ個別に停止を伝える。
+        if let stores {
+            stores.peopleEngine.stopScan()
+            stores.autoAlbumEngine.stopBackgroundWork()
+        }
+        if hadWork { Diagnostics.mark("bgtask: stopped for foreground") }
+    }
+
+    /// D: 前面/背面の遷移を実測ログに残す（復帰時のカクつき調査用）。
+    /// 「復帰の瞬間に何が走っていたか」をログ 1 行で特定できるようにする。
+    static func noteScenePhase(_ label: String) {
+        let monitor = BackgroundActivityMonitor.shared
+        let running = [
+            monitor.isEmbedding ? "embedding" : nil,
+            monitor.isScanningFaces ? "faces" : nil,
+            stores?.autoAlbumEngine.isGenerating == true ? "generating" : nil,
+            stores?.backupEngine.isRunning == true ? "backup" : nil,
+            currentWork != nil ? "bgtask" : nil,
+        ].compactMap { $0 }
+        Diagnostics.mark("scene: \(label) — running=[\(running.joined(separator: ","))] "
+                         + "embedRemaining=\(monitor.embedRemaining) faceRemaining=\(monitor.faceScanRemaining)")
     }
 
     // MARK: - 検証用（Developer Options・デバッガ不要）

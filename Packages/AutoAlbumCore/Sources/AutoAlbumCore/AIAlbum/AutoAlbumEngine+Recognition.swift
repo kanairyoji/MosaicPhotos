@@ -202,6 +202,17 @@ extension AutoAlbumEngine {
 
     // MARK: - Recognition (Vision/CLIP タグ付け)
 
+    /// 背景の重い処理（タグ付け・埋め込み・キャプション）を**明示的に止める**（ADR-79）。
+    /// フォアグラウンド復帰で呼ぶ。トリクル各段は `Task.isCancelled` を 1 単位ごとに見るため、
+    /// 実行中の 1 枚が終わり次第すぐ抜ける。作業は差分ベースなので次の夜間窓で続きから再開する。
+    /// 完了は待たない（復帰時にメインを塞がないため）。
+    public func stopBackgroundWork() {
+        backgroundFillTask?.cancel()
+        backgroundFillTask = nil
+        // キャプションの VLM（≈877MB）は抱えたままにしない（復帰直後のメモリ圧迫連鎖を断つ）。
+        tagTagger.releaseCaptionModel()
+    }
+
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
     /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
     /// 未タグ写真の Vision タグ付け＋CLIP 埋め込み＋VLM キャプションをバックグラウンドで進める。
@@ -220,8 +231,8 @@ extension AutoAlbumEngine {
         }
         isTagging = true
         let preset = Self.currentBackgroundPreset()
-        Task(priority: .background) {
-            defer { isTagging = false }
+        backgroundFillTask = Task(priority: .background) {
+            defer { isTagging = false; backgroundFillTask = nil }
             Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
             // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。

@@ -21,6 +21,41 @@
 
 ---
 
+## ADR-79 フォアグラウンド復帰で夜間処理を「譲る」から「止める」へ
+- 状態: 採用
+- 文脈: 他アプリから戻ると数秒〜数十秒固まることがある（ユーザー報告）。原因はモデルの
+  ロードそのものではなく、**復帰しても夜間処理（BGTask ルーチン）が生き続ける**こと。
+  従来の設計は「ゲート（`BackgroundYield`）が閉じる → 各トリクルが `waitWhilePaused` で眠る」
+  だけで、以下が残っていた:
+  1. **実行中の 1 単位は完走する**。停止判定は単位ごと・推論の前なので、復帰の瞬間に走っていた
+     単位は最後まで走る。VLM キャプションは 1 枚数十秒級で、その間 ANE/CPU が飽和する。
+  2. **眠っている間もモデルを抱える**。VLM（≈877MB）が常駐したままで、復帰直後の高メモリ →
+     圧迫 → サムネキャッシュ縮小 → ディスク再デコードの連鎖を招く。
+  3. **`generate` は単位分割が無く途中で譲らない**（18 秒超・ピーク 550〜880MB の一枚岩）。
+  「充電中にアプリを切り替えたときだけ BG 窓が開く」ため、症状が出たり出なかったりする。
+- 決定: 復帰時は**譲る（pause）ではなく止める（cancel）**。
+  - `HeavyWorkScheduler.stopForForeground()` を `scenePhase == .active` で呼ぶ。BGTask 本体の
+    Task を cancel し、加えて**fire-and-forget で起こしたエンジン側のタスク**（`PeopleEngine.stopScan`
+    / `AutoAlbumEngine.stopBackgroundWork`）にも停止を伝える（構造化されていないため cancel が
+    伝播しない）。完了は待たない（復帰時にメインを塞がないため）。
+  - トリクルは 1 単位ごとに `Task.isCancelled` を見るので、実行中の 1 枚が終わり次第すぐ降りる。
+    各処理は**差分ベース**なので次の夜間窓で続きから再開する（取りこぼしなし）。
+  - `BackgroundTrickle.waitWhilePaused` に **`onPauseBegin`**（譲り開始時に 1 回だけ）を追加し、
+    キャプションは譲りに入った瞬間に VLM を解放する。
+  - `generate` はステップ境界（enrich 後 / prune 後 / 保存前）で `Task.isCancelled` を確認して降りる。
+    あわせて **86k 件の台帳取得を detached の中へ移す**（従来は @MainActor でいったん受けており、
+    実測でメインが ~10 秒止まっていた＝diagnostics-30 の `hang main=10342ms` が step4 と一致）。
+  - `PeopleEngine` はスキャン**世代**（`scanGeneration`）を導入。停止直後に始まった新スキャンの
+    ハンドル/進捗フラグを、遅れて終わる旧タスクの末尾処理が踏まないようにする（二重起動の防止）。
+  - D: `scenePhase` 遷移ごとに実行中の作業を診断ログへ 1 行残す（`scene: active — running=[…]`）。
+    「復帰の瞬間に何が走っていたか」をログだけで特定できるようにする。
+- 結果: 復帰後に残るのは実行中 1 単位ぶんだけになり、モデルは即解放される。トレードオフ:
+  夜間処理の進みは（復帰のたびに中断されるぶん）わずかに遅くなるが、差分再開なので総量は変わらない。
+- 関連: `HeavyWorkScheduler.stopForForeground/noteScenePhase` / `MosaicPhotosApp` /
+  `AutoAlbumEngine.stopBackgroundWork/generate` / `PeopleEngine.stopScan` /
+  `BackgroundTrickle.onPauseBegin` / `TagTagger.captionUnprocessed`。[[ADR-25]]（実行方針）・
+  [[ADR-71]]（UI を軽く保つ）・[[ADR-74]]（モデル解放）。
+
 ## ADR-78 ベストショット（きれいな写真）フィルタ＝Vision 美的スコアのしきい値判定
 - 状態: 採用
 - 文脈: 「よく撮れている写真だけ見たい」。候補は NIMA 等の外部モデル・LAION 線形ヘッド

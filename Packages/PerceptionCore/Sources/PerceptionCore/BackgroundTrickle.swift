@@ -20,9 +20,15 @@ public enum BackgroundTrickle {
 
     /// `shouldPause` が立っている間 0.3s ずつ眠って譲る（キャンセルで抜ける）。
     /// `pausePerfLabel` を渡すと譲り待ちの発生数を PerfTrace に数える（センサー用途）。
+    /// `onPauseBegin` は**譲りに入った瞬間に 1 回だけ**呼ぶ（ADR-79）。重いモデル（VLM≈877MB）を
+    /// 抱えたまま眠ると、復帰直後のメモリ圧迫→サムネキャッシュ縮小→再デコード連鎖を招くため、
+    /// ここで解放させる。推論の**前**に呼ばれるので、実行中の推論を壊すことはない。
     public static func waitWhilePaused(_ shouldPause: @MainActor () -> Bool,
-                                pausePerfLabel: String? = nil) async {
+                                pausePerfLabel: String? = nil,
+                                onPauseBegin: (@MainActor () -> Void)? = nil) async {
+        var notified = false
         while shouldPause() && !Task.isCancelled {
+            if !notified { notified = true; onPauseBegin?() }
             if let pausePerfLabel { PerfTrace.count(pausePerfLabel) }
             try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s
         }
@@ -40,6 +46,7 @@ public enum BackgroundTrickle {
         betweenBatchNs: UInt64,
         shouldPause: @MainActor () -> Bool,
         pausePerfLabel: String? = nil,
+        onPauseBegin: (@MainActor () -> Void)? = nil,
         unitPerfLabel: String,
         unitPerfDivisor: (Unit) -> Double = { _ in 1 },
         nextBatch: @MainActor (_ batchIndex: Int) async -> [Unit],
@@ -54,7 +61,8 @@ public enum BackgroundTrickle {
             var results: [UnitResult] = []
             for unit in batch {
                 // ⚠️ 停止判定は 1 単位ごと：各推論の前に譲る（上記の不変条件）。
-                await waitWhilePaused(shouldPause, pausePerfLabel: pausePerfLabel)
+                await waitWhilePaused(shouldPause, pausePerfLabel: pausePerfLabel,
+                                      onPauseBegin: onPauseBegin)
                 if Task.isCancelled { break }
                 let tUnit = PerfTrace.nowNs()
                 let epoch = ProcessSuspension.epoch

@@ -22,6 +22,9 @@ public final class PeopleEngine {
     /// 代表写真の自動選択で「お気に入りの写真を優先」するために使う。nil なら優先なし。
     @ObservationIgnored private let favoriteRefKeysProvider: (() async -> Set<String>)?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
+    /// スキャンの世代。`stopScan` / `startScan` で進み、末尾処理は「自分の世代のときだけ」
+    /// ハンドルと進捗フラグを片付ける（止めた直後に始まった新スキャンを踏まないため）。
+    @ObservationIgnored private var scanGeneration = 0
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
     @ObservationIgnored private var lastCandidates: [String] = []
     @ObservationIgnored private var lastAllowSimulator = false
@@ -85,6 +88,24 @@ public final class PeopleEngine {
     ///   false になれば）**自分で再開**するので、force のような再生成は行わない（旧実装の await 詰まり
     ///   を撤去）。生成フラグ滞留の安全弁は `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）と
     ///   デバッグ全開時の相互排他バイパスが担う。
+    /// 進行中の顔スキャンを**明示的に止める**（ADR-79）。フォアグラウンド復帰で呼ぶ。
+    /// `FaceTagger` のトリクルは 1 枚ごとに `Task.isCancelled` を見るため、実行中の 1 枚が
+    /// 終わり次第すぐ抜ける。スキャンは差分（未処理 refKey）ベースなので次窓で続きから再開する。
+    /// `reset(includingCorrections:)` と違い**完了を待たない**（復帰時にメインを塞がないため）。
+    public func stopScan() {
+        guard scanTask != nil else { return }
+        scanTask?.cancel()
+        scanTask = nil
+        // 世代を進める＝止めた側のタスクが遅れて末尾処理に来ても、後続スキャンの
+        // ハンドル/フラグを踏まないようにする（二重起動の防止）。
+        // 進捗フラグは**ここで**畳む（世代ガードにより旧タスクの末尾処理は素通りするため）。
+        scanGeneration &+= 1
+        isScanning = false
+        BackgroundActivityMonitor.shared.isScanningFaces = false
+        BackgroundActivityMonitor.shared.faceScanRemaining = 0
+        Diagnostics.mark("faces: stopScan (foreground return)")
+    }
+
     public func startScan(candidateRefKeys: [String], allowSimulator: Bool = false) {
         // 診断: startScan がなぜ走らない/走るのかを可視化する（実機で faces:start が一切出ない事例の切り分け）。
         guard isFaceModelAvailable else {
@@ -104,6 +125,8 @@ public final class PeopleEngine {
             return
         }
         Diagnostics.mark("faces: startScan → begin (candidates=\(candidateRefKeys.count) allowSim=\(allowSimulator))")
+        scanGeneration &+= 1
+        let generation = scanGeneration
         scanTask = Task(priority: .background) { [weak self] in
             guard let self else { return }
             self.isScanning = true
@@ -137,6 +160,8 @@ public final class PeopleEngine {
             if !BackgroundYield.heavyShouldPause() {
                 await self.rebuildClustersIfNeeded()
             }
+            // 自分の世代のときだけ片付ける（stopScan 後に始まった新スキャンを踏まない）。
+            guard self.scanGeneration == generation else { return }
             self.isScanning = false
             BackgroundActivityMonitor.shared.isScanningFaces = false
             BackgroundActivityMonitor.shared.faceScanRemaining = 0

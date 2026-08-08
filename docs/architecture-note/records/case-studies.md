@@ -21,6 +21,21 @@
 
 ---
 
+## 他アプリから戻ると固まる（夜間処理は「譲る」だけで止まっていなかった）
+- 症状: 他アプリを使って戻ってくると、数秒〜数十秒アプリが固まることがある（毎回ではない）。
+- 原因: 復帰時に夜間処理（BGTask ルーチン）が**生きたまま**だった。ゲート（`BackgroundYield`）は
+  閉じるが、それは各トリクルを `waitWhilePaused` で眠らせるだけで、(1) 実行中の 1 単位は完走する
+  （VLM キャプションは 1 枚数十秒＝ANE/CPU 飽和）、(2) 眠っている間も VLM≈877MB を抱え続けて
+  メモリ圧迫の連鎖を招く、(3) `generate` は単位分割が無く 18 秒超・最大 880MB を走り切る。
+  アプリ切替時に `HeavyWorkScheduler.submit()` で予約されるため、**充電中に切り替えたときだけ**
+  BG 窓が開いて症状が出る＝再現が不安定に見えた。
+- 対処: ADR-79（復帰時は cancel・譲り開始で VLM 解放・generate に中断点・86k 取得を off-main・
+  scenePhase 実測ログ）。
+- 関連: `HeavyWorkScheduler` / `MosaicPhotosApp` / `AutoAlbumEngine` / `PeopleEngine` / `BackgroundTrickle`。
+- 残課題: 実行中 1 単位ぶんの遅延（VLM 1 枚）は残る。気になるなら VLM のバッチ単位をさらに割る。
+- 教訓: 「重い処理を止める」設計で **fire-and-forget の Task は cancel が伝播しない**。
+  起こした側が停止 API を持つこと。また「ゲートで譲る」は CPU は返せてもメモリは返せない。
+
 ## クラウドお気に入りのハートがグリッドに出ない（構成不変の更新で items が差し替わらない）
 - 症状: Dropbox ビューでお気に入りを付けても、サムネイルグリッドにハートが出ない
   （ローカルは出るように見える）。ストア側（`DropboxPhotoStore+Favorites`）は items へ即刻印している。

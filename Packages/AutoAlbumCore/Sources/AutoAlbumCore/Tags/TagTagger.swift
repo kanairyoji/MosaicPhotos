@@ -150,6 +150,13 @@ final class TagTagger {
             maxBatches: maxBatches,
             betweenBatchNs: betweenBatchNs,
             shouldPause: shouldPause,
+            // ADR-79: 譲りに入った瞬間に VLM（≈877MB）を解放する。抱えたまま眠ると、復帰直後の
+            // メモリ圧迫→サムネキャッシュ縮小→ディスク再デコードの連鎖でカクつきが続く。
+            // 次の窓で再ロード（≈10秒）するが、夜間なので実害はない。
+            onPauseBegin: {
+                provider.releaseCaptionModelIfLoaded()
+                Diagnostics.mark("captions: paused — VLM released")
+            },
             unitPerfLabel: "caption.photoMs",
             nextBatch: { _ in
                 let batch = Array(queue.prefix(batchSize))

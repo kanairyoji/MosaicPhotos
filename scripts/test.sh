@@ -21,7 +21,7 @@ SIM="${SIM:-platform=iOS Simulator,name=iPhone 17 Pro}"
 # macOS で `swift test` を実行する高速パッケージ（純ロジック）。
 # LocalPhotoCore はロジック層（旧 LocalPhotoKit のテストを含む）。UI 層 LocalPhotoKit は
 # アプリビルド / PhotosFeatureKit 経由でコンパイル検証される。
-FAST_PACKAGES=(MosaicSupport PhotoSourceKit ImageCacheKit BackupKit DropboxKit LocalPhotoCore AutoAlbumCore)
+FAST_PACKAGES=(MosaicSupport PhotoSourceKit ImageCacheKit BackupKit DropboxKit LocalPhotoCore PerceptionCore AutoAlbumCore)
 
 # iOS シミュレータでしか走らない（UIKit/SwiftData/Photos 依存テストを含む）パッケージ。
 # PhotosFeatureKit は MergedPhotoStore / MergedPhotoItem / PlaceScanner の検証を含む。
