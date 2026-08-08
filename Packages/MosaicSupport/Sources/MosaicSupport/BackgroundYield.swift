@@ -29,7 +29,12 @@ public enum BackgroundYield {
     /// アプリがフォアグラウンドでアクティブか（`MosaicPhotosApp` が scenePhase から更新する）。
     /// 方針: **ユーザーが操作している間（＝アクティブ）は重い処理を一切動かさない**。
     /// 画面ロック・アプリ切替で非アクティブになったときだけ動かす（実行の主役は夜間 BGTask）。
-    public static var isAppActive = true
+    /// ⚠️ `didSet` でウォッチドッグへ伝える。背面の「ハング」は OS の throttle であって体感とは
+    /// 無関係なので、計測から外す必要がある（ADR-82）。呼び出し側が別途伝える方式だと必ず
+    /// 忘れるため、唯一の出典であるこの変数から自動で同期する。
+    public static var isAppActive = true {
+        didSet { MainThreadWatchdog.shared.setAppActive(isAppActive) }
+    }
 
     /// デバッグ（Developer Options）: 重い処理のゲート（電源・低電力・アイドル・UIビジー）を
     /// **全面的に無効化**する。バックグラウンドでしか動かない処理（アルバム生成・CLIP 埋め込み・

@@ -53,7 +53,9 @@ public struct BackupSettingsView: View {
                 if let store = dropboxStore {
                     Task {
                         let root = backupNormalizedPath(dropboxFolder)
-                        await store.loadBackupMetadata(from: [root, BackupEngine.deviceBackupRoot(for: root)])
+                        // 明示操作（バックアップ画面を開く）なので不在記録を無視して確認する（ADR-82）。
+                        await store.loadBackupMetadata(
+                            from: [root, BackupEngine.deviceBackupRoot(for: root)], force: true)
                     }
                 }
             }

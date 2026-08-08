@@ -10,8 +10,8 @@ extension DropboxPhotoStore {
     /// v1（凍結された `.mosaic/metadata.json`）をベースに、v2（`.mosaic/catalog.json`＋
     /// 月別シャード）を**上書きマージ**する（ADR-38）。どちらも無ければ nil のまま。
     /// バックアップ完了後、または起動時に呼び出す。
-    public func loadBackupMetadata(from folderPath: String) async {
-        await loadBackupMetadata(from: [folderPath])
+    public func loadBackupMetadata(from folderPath: String, force: Bool = false) async {
+        await loadBackupMetadata(from: [folderPath], force: force)
     }
 
     /// 複数ルート版（ADR-41）。端末フォルダ導入後は「バックアップルート（旧・フラット時代の
@@ -23,14 +23,16 @@ extension DropboxPhotoStore {
     ///     ローカルキャッシュ（Caches/DropboxKit/backup-metadata/）を使う（本文 DL なし）
     /// (2) 変わった分だけダウンロード（v1・シャードは**並列**）
     /// (3) デコード・マージは **Task.detached（オフメイン）** で行い、完成値だけをメインへ
-    public func loadBackupMetadata(from folderPaths: [String]) async {
+    /// - Parameter force: 「メタデータ不在」の記録を無視して必ず問い合わせる（ADR-82）。
+    ///   ユーザーがバックアップ画面を開いたときなど、最新を確実に取りたい場面で true にする。
+    public func loadBackupMetadata(from folderPaths: [String], force: Bool = false) async {
         // 対象 JSON のパス一覧（各ルートの v1 ＋ カタログ経由のシャード）。
         // カタログ自体は小さいので fetchCachedJSON で取得しつつシャード一覧を得る。
         var jsonPaths: [String] = []
         for folderPath in folderPaths {
             jsonPaths.append(folderPath + DropboxInternalConstants.backupMetadataSuffix)
             let catalogPath = folderPath + BackupMetadataV2.catalogSuffix
-            if let catalog: BackupCatalog = await fetchCachedJSON(path: catalogPath) {
+            if let catalog: BackupCatalog = await fetchCachedJSON(path: catalogPath, force: force) {
                 jsonPaths.append(contentsOf: catalog.shards.map {
                     folderPath + BackupMetadataV2.shardSuffix($0)
                 })
@@ -42,7 +44,7 @@ extension DropboxPhotoStore {
         ) { group in
             for path in jsonPaths {
                 group.addTask { [weak self] in
-                    await self?.fetchCachedJSON(path: path)
+                    await self?.fetchCachedJSON(path: path, force: force)
                 }
             }
             var out: [DropboxBackupMetadata] = []
@@ -76,12 +78,15 @@ extension DropboxPhotoStore {
     private struct MetaRevResponse: Decodable { let rev: String? }
     private struct MetaDownloadArg: Encodable { let path: String }
 
-    private func fetchCachedJSON<T: Decodable & Sendable>(path: String) async -> T? {
+    private func fetchCachedJSON<T: Decodable & Sendable>(path: String, force: Bool = false) async -> T? {
         let cacheDir = Self.metadataCacheDirectory
         let cacheFile = cacheDir.appendingPathComponent(
             path.lowercased().data(using: .utf8)!.base64EncodedString()
                 .replacingOccurrences(of: "/", with: "_") + ".json")
         let revKey = "backupMetaRev:" + path.lowercased()
+
+        // 0) 「無い」ことが分かっている間は探しに行かない（ADR-82・`BackupMetadataAbsence`）。
+        if !force, BackupMetadataAbsence.isAbsent(path: path) { return nil }
 
         // 1) リモートの rev を確認（取得できない＝ファイル自体が無い/通信不可）。
         var remoteRev: String?
@@ -90,7 +95,11 @@ extension DropboxPhotoStore {
            let meta = try? JSONDecoder().decode(MetaRevResponse.self, from: data) {
             remoteRev = meta.rev
         }
-        guard let remoteRev else { return nil }
+        guard let remoteRev else {
+            BackupMetadataAbsence.markAbsent(path: path)   // 次回以降の往復を省く
+            return nil
+        }
+        BackupMetadataAbsence.markPresent(path: path)      // 見つかった＝記録を消す
 
         // 2) rev 一致ならキャッシュから（オフメインでデコード）。
         if UserDefaults.standard.string(forKey: revKey) == remoteRev,

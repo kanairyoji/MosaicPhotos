@@ -21,6 +21,15 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     private var over83 = 0
     private var over250 = 0
     private var maxMs: Double = 0
+    /// 背面で観測した停止の回数（ユーザーには見えないので本体の集計には混ぜない）。
+    private var backgroundStalls = 0
+    /// アプリが前面でアクティブか（`BackgroundYield.isAppActive` が同期する）。
+    /// ⚠️ **背面の「ハング」は計測ノイズ**（ADR-82）。iOS はアプリが背面にいる間メインランループを
+    /// 絞り、必要なら中断する。`ProcessSuspension` は**正式な中断**しか捉えられないため、
+    /// 単なる throttle は「メインが 28 秒ブロック」として記録され、実機ログを読み誤らせていた
+    /// （実測 diagnostics-32: 39 件のうち 31 件が背面＝ユーザーには一切見えない）。
+    /// 体感に効くのは前面の停止だけなので、そちらだけを数値として残す。
+    private var appActive = true
 
     /// 未返答の ping の送信時刻（ns・0=なし）。queue 上でのみ触る。
     private var outstandingSinceNs: UInt64 = 0
@@ -37,6 +46,18 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     public var hangBeginSuspectMs: Double = 1000
 
     private init() {}
+
+    /// 前面/背面を伝える（`BackgroundYield.isAppActive` から自動で同期される）。
+    /// `nonisolated`：ウォッチドッグは MainActor 外（専用 queue・main.async クロージャ）から
+    /// この値を読むため、ロック保護の素の状態として持つ。
+    public func setAppActive(_ active: Bool) {
+        lock.lock(); appActive = active; lock.unlock()
+    }
+
+    private var isAppActiveLocked: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return appActive
+    }
 
     public func start(interval: TimeInterval = 0.2) {
         queue.async { [self] in
@@ -62,6 +83,8 @@ public final class MainThreadWatchdog: @unchecked Sendable {
         if outstandingSinceNs != 0 {
             // 中断を跨いだ待ちは「ブロック」ではないので報告しない（誤報の主因だった）。
             if ProcessSuspension.didSuspend(since: outstandingEpoch) { return }
+            // 背面の停止は OS による throttle＝体感に無関係なので「開始」も報告しない。
+            guard isAppActiveLocked else { return }
             let age = Double(DispatchTime.now().uptimeNanoseconds &- outstandingSinceNs) / 1_000_000
             if age > hangBeginSuspectMs, !hangBeginReported {
                 hangBeginReported = true
@@ -86,8 +109,16 @@ public final class MainThreadWatchdog: @unchecked Sendable {
         }
     }
 
-    private func record(_ ms: Double) {
+    /// `internal`：テストから直接サンプルを流し込んで前面/背面の分類を検証するため。
+    func record(_ ms: Double) {
         lock.lock()
+        // 背面のサンプルは本体の集計に混ぜない（max が OS の throttle で汚染され、
+        // 前面の実力＝体感が読めなくなる）。件数だけ別に数えて記録は残す。
+        guard appActive else {
+            if ms > hangImmediateMs { backgroundStalls += 1 }
+            lock.unlock()
+            return
+        }
         pings += 1
         if ms > 83 { over83 += 1 }
         if ms > 250 { over250 += 1 }
@@ -95,16 +126,19 @@ public final class MainThreadWatchdog: @unchecked Sendable {
         lock.unlock()
         if ms > hangImmediateMs {
             // 呼び出しスタックは取れないが、直前の PERF/mark 行と突き合わせて犯人を絞る。
-            DiagnosticsLog.shared.append(String(format: "PERF hang main=%.0fms", ms))
+            DiagnosticsLog.shared.append(String(format: "PERF hang main=%.0fms (foreground)", ms))
         }
     }
 
     /// 集計サマリを返してリセットする（何も起きていなければ nil）。定期フラッシュから呼ぶ。
+    /// 背面の停止は `bgStalls=N`（参考値）として別枠で出す。
     public func flushSummary() -> String? {
         lock.lock()
-        defer { pings = 0; over83 = 0; over250 = 0; maxMs = 0; lock.unlock() }
-        guard pings > 0 else { return nil }
+        defer { pings = 0; over83 = 0; over250 = 0; maxMs = 0; backgroundStalls = 0; lock.unlock() }
+        guard pings > 0 || backgroundStalls > 0 else { return nil }
+        let bg = backgroundStalls > 0 ? " bgStalls=\(backgroundStalls)" : ""
+        guard pings > 0 else { return "main: (background)\(bg)" }
         return String(format: "main: pings=%d >83ms=%d >250ms=%d max=%.0fms",
-                      pings, over83, over250, maxMs)
+                      pings, over83, over250, maxMs) + bg
     }
 }

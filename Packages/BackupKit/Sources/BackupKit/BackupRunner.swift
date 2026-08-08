@@ -367,6 +367,9 @@ final class BackupRunner {
             deviceName: BackupDeviceIdentity.currentDisplayName())
         let catResult = await uploader.uploadJSON(catalog, to: catalogPath, token: token)
         addLog("  catalog.json (shards=\(catalog.shards.count)): \(catResult)")
+        // メタデータを書いた＝「不在」の記録は無効。これを消さないと、初回バックアップ後も
+        // 最大 TTL のあいだ起動時の読み込みが不在記録で素通りしてしまう（ADR-82）。
+        BackupMetadataAbsence.invalidateAll()
     }
 
     // MARK: - Helpers

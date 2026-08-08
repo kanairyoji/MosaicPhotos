@@ -10,28 +10,31 @@ import UIKit
 /// 同期済みクラウド写真の refKey 一覧（"C-<path>"）。ピープルの顔スキャン候補（クラウド分）に使う。
 /// クラウドはキャッシュ済みサムネ（thumbnailAPISize）で顔検出する（追加DL無し・大きい顔中心）。
 /// **撮影日降順**（新しい順・日付なしは最後）＝新しい写真から先に解析する。
-@MainActor
-func cloudImageRefKeys(dropboxStore: DropboxPhotoStore) -> [String] {
-    dropboxStore.items
+///
+/// ⚠️ `nonisolated`：6.8 万件のソート＋map をメインで回さない（ADR-82）。呼び出し側が
+/// `dropboxStore.items` のスナップショット（COW＝取得は安価）を渡し、この関数は off-main で走る。
+nonisolated func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] {
+    items
         .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
         .map { PhotoRef.cloud($0.path).encoded }
 }
 
-/// ローカル＋クラウドの画像 refKey（顔スキャン候補の全体）。クラウド同期が未完なら cloud 分は
-/// 空になり得るが、夜間 BGTask/再起動の次回スキャンで拾われる（スキャンは未処理分のみの増分）。
-@MainActor
-func allImageRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
-    let cloud = cloudImageRefKeys(dropboxStore: dropboxStore)
-    return await localImageRefKeys() + cloud
-}
-
 /// 解析（顔スキャン等）の**処理順**に並べた候補: お気に入り（ローカル→クラウド）→ その他
 /// （ローカル→クラウド）、各群は新→古（`AnalysisOrder`）。お気に入りから先に People へ反映される。
+///
+/// ⚠️ 並べ替えは**すべて off-main**（ADR-82）。以前は `cloudImageRefKeys`（6.8 万件のソート）と
+/// `AnalysisOrder.ordered`（8.6 万件のソート・比較ごとに接頭辞判定と Set 参照）を @MainActor で
+/// 実行しており、**起動のたびにメインが 2.7〜3.2 秒止まっていた**（実機ログ diagnostics-32）。
+/// 夜間 BGTask でも同じ経路を通るため、背面での長い停止の一因でもあった。
 @MainActor
 func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
-    let all = await allImageRefKeys(dropboxStore: dropboxStore)     // ローカル(新→古)＋クラウド(新→古)
+    let cloudItems = dropboxStore.items                             // MainActor 上のスナップショット（安価）
+    let local = await localImageRefKeys()                           // 既に detached
     let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)
-    return AnalysisOrder.ordered(all, favorites: favorites)
+    return await Task.detached(priority: .utility) {
+        let cloud = cloudImageRefKeys(items: cloudItems)            // ローカル(新→古)＋クラウド(新→古)
+        return AnalysisOrder.ordered(local + cloud, favorites: favorites)
+    }.value
 }
 
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。
