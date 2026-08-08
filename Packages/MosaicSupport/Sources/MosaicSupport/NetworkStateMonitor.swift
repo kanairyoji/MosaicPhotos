@@ -66,6 +66,21 @@ public final class NetworkStateMonitor {
         BackgroundDataPolicy(rawValue: UserDefaults.standard.integer(forKey: Self.policyKey)) ?? .wifiOnly
     }
 
+    /// いま**投機的な先読み**（クラウドサムネ/フル画像の prefetch）を行ってよいか（ADR-81）。
+    ///
+    /// 先読みは「まだ見ていない写真」を推測で落とすので、**ユーザーが今見ている画像の取得とは
+    /// 性質が違う**。`BackgroundDataPolicy.off` の定義（「閲覧時の手動取得のみ」）どおり、
+    /// 自動通信として回線ポリシーの対象にする。加えて**低電力モード中は行わない**
+    /// （iOS の慣習＝明示的な省電力要求のときは投機的な処理を止める）。
+    ///
+    /// ⚠️ 電源ポリシー（充電中のみ）は**課さない**。先読みはユーザーがスクロールしている
+    /// 最中にだけ起きる前景動作で、これを電源条件で止めると「バッテリー駆動では常にサムネが
+    /// 出遅れる」＝通常利用が壊れる。電源ポリシーが守るのは背面での消耗であり、画面を見ている
+    /// 間の消費はディスプレイが支配的なため、ここで絞る利得が小さい。
+    public func speculativeFetchAllowed() -> Bool {
+        networkAllowed() && !PowerStateMonitor.shared.isLowPowerMode
+    }
+
     /// いま背景の通信を行ってよいか（ポリシー × 回線状態）。
     public func networkAllowed() -> Bool {
         switch policy {

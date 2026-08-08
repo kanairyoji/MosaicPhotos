@@ -20,7 +20,13 @@ extension DropboxPhotoStore {
     /// スクロール先サムネイルの先読み。バッチャの**低優先・LIFO・上限つき**プールへ積む。
     /// キャッシュ済み（メモリ/ディスク）は `thumbnailExists` で除外しネットワークを使わない。
     /// 可視セル要求（`thumbnail(for:)`）が常に優先されるため、先読みが表示を遅らせない。
+    ///
+    /// ⚠️ 先読みは**投機的な自動通信**なので回線ポリシーに従う（ADR-81）。従わないと
+    /// 「Wi-Fi のみ」設定でもスクロールしただけでモバイル通信を使ってしまう。
+    /// 見えているセルの取得（`thumbnail(for:)`）は前景要求なのでゲートしない
+    /// ＝先読みが止まっても表示は続く（オンデマンド取得に degrade するだけ）。
     public func prefetch(_ items: [DropboxFileItem], targetSize: CGSize) {
+        guard NetworkStateMonitor.shared.speculativeFetchAllowed() else { return }
         thumbnailBatcher.prefetch(items)
     }
 
@@ -34,6 +40,9 @@ extension DropboxPhotoStore {
     /// 低優先で、すでにバイトがあれば何もしない。`beginFullImage` は立てない（背景埋め込みを
     /// 過度に止めないため）。表示時の `fullImage` がこのキャッシュを即ヒットして体感が軽くなる。
     public func prefetchFullImage(for item: DropboxFileItem) {
+        // サムネ先読みと同じ理由で回線ポリシーに従う（ADR-81）。フル画像は 1 枚が重いので
+        // モバイル通信での取りこぼしは特に効く。表示中の写真の取得（`fullImage`）はゲートしない。
+        guard NetworkStateMonitor.shared.speculativeFetchAllowed() else { return }
         Task(priority: .utility) { [weak self] in
             guard let self else { return }
             if await self.cache.fullImageData(for: item.path) != nil { return }
