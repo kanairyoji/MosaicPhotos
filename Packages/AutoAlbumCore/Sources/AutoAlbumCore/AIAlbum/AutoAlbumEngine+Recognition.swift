@@ -209,6 +209,9 @@ extension AutoAlbumEngine {
     public func stopBackgroundWork() {
         backgroundFillTask?.cancel()
         backgroundFillTask = nil
+        // 実行中の generate（前面の定期ループから起動されたものを含む）にも降りるよう伝える。
+        // generate は呼び出し側のタスク上で走るため cancel では止められない（ADR-79 追記）。
+        requestAbortHeavyWork()
         // キャプションの VLM（≈877MB）は抱えたままにしない（復帰直後のメモリ圧迫連鎖を断つ）。
         tagTagger.releaseCaptionModel()
     }

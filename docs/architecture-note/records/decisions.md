@@ -51,6 +51,20 @@
     「復帰の瞬間に何が走っていたか」をログだけで特定できるようにする。
 - 結果: 復帰後に残るのは実行中 1 単位ぶんだけになり、モデルは即解放される。トレードオフ:
   夜間処理の進みは（復帰のたびに中断されるぶん）わずかに遅くなるが、差分再開なので総量は変わらない。
+- **追記（実機ログ diagnostics-31 で判明・上記だけでは不十分だった）**: 復帰時のカクつきは
+  BGTask ではなく**前面の定期ループ**が主因だった。3 点を追加で修正:
+  1. **復帰そのものを「操作」として記録する**（`noteUserInteraction()` を `.active` で呼ぶ）。
+     `idleSeconds` は離席前の最終タッチからの経過なので、戻った瞬間は「20 秒以上アイドル」と
+     判定され、`HomeView` の定期ループ →`refreshIfNeeded` がその場で `generate` を起動していた
+     （実測: 復帰と同時に generate が 22.8 秒・メインが 2.4s/1.7s/5.9s/3.9s ブロック）。
+     ※ `nightly` 設定なら前面実行は元から禁止だが、それ以外の段階では起き得る。
+  2. **generate を世代（`workEpoch`）で中断可能に**。generate は**呼び出し側のタスク上で走る**
+     （前面ループから呼ばれる）ため `Task.isCancelled` では止められない。`stopBackgroundWork()`
+     が世代を進め、実行中の generate はステップ境界で自ら降りる。
+  3. **地名補正（ADR-76）の空振りを弾く**。`refinePlaceNames` は台帳 86k 件を丸ごと読むのに
+     定期ティックのたびに実行され、**単独で 10.5 秒のメインハング**を起こしていた
+     （diagnostics-31 の `hang main=10581ms`）。「写真件数＋補正世代」の署名が前回と同じなら
+     読まずに帰る（デバッグボタンは `force: true` で従来どおり実行）。
 - 関連: `HeavyWorkScheduler.stopForForeground/noteScenePhase` / `MosaicPhotosApp` /
   `AutoAlbumEngine.stopBackgroundWork/generate` / `PeopleEngine.stopScan` /
   `BackgroundTrickle.onPauseBegin` / `TagTagger.captionUnprocessed`。[[ADR-25]]（実行方針）・

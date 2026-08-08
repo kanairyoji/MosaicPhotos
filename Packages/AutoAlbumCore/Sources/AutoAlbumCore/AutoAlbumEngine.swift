@@ -58,6 +58,26 @@ public final class AutoAlbumEngine {
     /// 背景タグ付け/埋め込み/キャプションのタスク（`scheduleBackgroundFill`）。
     /// フォアグラウンド復帰で明示キャンセルするために保持する（ADR-79）。
     @ObservationIgnored var backgroundFillTask: Task<Void, Never>?
+    /// 重い保守処理（generate）の世代。`stopBackgroundWork()` で進み、実行中の generate は
+    /// ステップ境界で世代のズレを見て自ら降りる（ADR-79 追記）。
+    ///
+    /// `generate` は**呼び出し側のタスク上で実行される**（前面の定期ループ＝HomeView からも呼ばれる）。
+    /// そのため `Task.isCancelled` だけでは止められない（そのループ自体を殺すわけにいかない）。
+    /// 世代番号なら「誰が起動した generate でも、停止要求より前のものは降りる」を一様に表現できる。
+    @ObservationIgnored private var workEpoch = 0
+
+    /// 現在の世代を採番して返す（重い処理の開始時に捕まえる）。
+    func beginWorkEpoch() -> Int { workEpoch }
+
+    /// 停止要求が出たか（`epoch` は開始時に `beginWorkEpoch()` で得た値）。
+    func isAborted(_ epoch: Int) -> Bool { Task.isCancelled || workEpoch != epoch }
+
+    /// 実行中の重い保守処理に「降りろ」と伝える（次のステップ境界で降りる）。
+    func requestAbortHeavyWork() { workEpoch &+= 1 }
+
+    /// 地名補正を最後に実行したときの署名（写真件数＋Apple 補正の世代）。
+    /// 変化が無ければ 86k 件の読み出しごとスキップする（ADR-79 追記）。
+    @ObservationIgnored private var lastPlaceRefineSignature = ""
     /// 前回 generate 時のクラウド署名。**UserDefaults に永続**する（Fix A）。
     /// 以前はプロセス起動ごとに 0 に戻るため、jetsam 再起動のたびに「署名が変わった」と誤判定して
     /// 86k 件の重い generate（実測 ~800MB）を再実行 → また jetsam、という悪循環になっていた。
@@ -325,9 +345,17 @@ public final class AutoAlbumEngine {
     ///   台帳へ届いていなくても自己修復する。台帳の placeName は trips・AI 検索（LexicalSearch）の出典。
     /// 戻り値＝新たに高精度化した地点数。`shouldContinue` は heavy ゲート（背景）や `{ true }`（手動）。
     @discardableResult
-    private func refinePlaceNames(shouldContinue: @escaping @Sendable () async -> Bool) async -> Int {
+    private func refinePlaceNames(force: Bool = false,
+                                  shouldContinue: @escaping @Sendable () async -> Bool) async -> Int {
+        // ⚠️ 空振りの早期リターン（ADR-79 追記）。この関数は台帳 86k 件を丸ごと読む（セル抽出と
+        // 伝播の差分計算に全件が要る）。定期ティックのたびに実行すると**毎回 10 秒級のスパイク**に
+        // なる（実機ログ diagnostics-31: 復帰直前に `hang main=10581ms`）。
+        // 「写真の件数」と「Apple 補正の世代」が前回から変わっていなければ、結果は必ず同じなので読まない。
+        let signature = "\(await store.enrichmentCount())-\(await PlaceNameResolver.shared.refinementGeneration)"
+        if !force, signature == lastPlaceRefineSignature { return 0 }
+
         let (photos, cells) = await placeRefinementTargets()
-        guard !cells.isEmpty else { return 0 }
+        guard !cells.isEmpty else { lastPlaceRefineSignature = signature; return 0 }
         // オフライン解決ロジックの版上げでキャッシュが破棄されたセルを先に埋め直す（即時・通信不要）。
         for cell in cells { _ = await PlaceNameResolver.shared.cityName(for: cell) }
         let refined = await PlaceNameResolver.shared.refineWithAppleGeocoder(
@@ -344,6 +372,9 @@ public final class AutoAlbumEngine {
             Self.log.info("place refine: \(refined) cells upgraded via CLGeocoder, \(changes.count) photos renamed — regenerating trips")
             await generate()
         }
+        // 補正で世代が進んだ場合に備え、**実行後の**署名を記録する（次ティックは空振りで即帰る）。
+        lastPlaceRefineSignature =
+            "\(await store.enrichmentCount())-\(await PlaceNameResolver.shared.refinementGeneration)"
         return refined
     }
 
@@ -355,7 +386,8 @@ public final class AutoAlbumEngine {
             return "位置情報つきの写真がありません"
         }
         let sample = await PlaceNameResolver.shared.debugGeocode(first) ?? "（取得できず＝通信不可／圏外）"
-        let refined = await refinePlaceNames(shouldContinue: { true })
+        // デバッグ操作は空振り早期リターンを無視して必ず実行する（動作確認が目的のため）。
+        let refined = await refinePlaceNames(force: true, shouldContinue: { true })
         return "Apple の地名 取得成功 — 例: \(sample) ／ 高精度化 \(refined) 地点"
     }
 
@@ -366,6 +398,7 @@ public final class AutoAlbumEngine {
 
         Self.log.info("generate: begin")
         let t0 = Date()
+        let epoch = beginWorkEpoch()
         _ = await ensurePhotoAuthorization()
         let existing = await store.enrichedRefKeys()
         let backupMap = await backupLink?.localToCloudPath() ?? [:]
@@ -400,13 +433,13 @@ public final class AutoAlbumEngine {
         // ADR-79: ステップ境界で中断を確認する。generate は 18 秒超・ピーク 550〜880MB の
         // 一枚岩で、フォアグラウンド復帰後も完走して固まりの原因になっていた。ここまでの
         // upsert は台帳へ確定済み・処理は差分ベースなので、途中で降りても次回続きから進む。
-        if Task.isCancelled { Diagnostics.mark("generate: cancelled (after enrich)"); return }
+        if isAborted(epoch) { Diagnostics.mark("generate: aborted (after enrich)"); return }
 
         // 3. 現存しない写真の付加情報を削除。既存ローカルの linkKey をバックアップ最新で更新。
         Diagnostics.mark("generate.step3: prune…")
         await store.prune(keeping: currentRefKeys)
         await store.refreshLocalLinkKeys(backupMap)
-        if Task.isCancelled { Diagnostics.mark("generate: cancelled (after prune)"); return }
+        if isAborted(epoch) { Diagnostics.mark("generate: aborted (after prune)"); return }
 
         // 4〜6. 重複排除・旅行抽出・フォルダ名アルバムは 85k 件規模の純計算。
         //    まとめて Task.detached（オフメイン）で行い、メインは結果の代入だけにする
@@ -461,7 +494,7 @@ public final class AutoAlbumEngine {
 
         Diagnostics.mark("generate.step5: compute done → save…")
         // 計算結果の保存直前でも中断を確認する（保存は albums 置換＝一括なので途中止めはしない）。
-        if Task.isCancelled { Diagnostics.mark("generate: cancelled (before save)"); return }
+        if isAborted(epoch) { Diagnostics.mark("generate: aborted (before save)"); return }
         await PlaceNameResolver.shared.persist()
         await store.replaceAlbums(forStrategy: TimePlaceStrategy.strategyID, with: infos)
         await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: pathInfos)

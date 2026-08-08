@@ -105,6 +105,13 @@ enum HeavyWorkScheduler {
     /// 明示キャンセルなら実行中の単位が終わり次第すぐ降り、モデルも解放される。
     /// 各処理は差分ベースなので、次の夜間窓で続きから再開する（取りこぼしなし）。
     static func stopForForeground() {
+        // ⚠️ 最重要（ADR-79 追記）: **復帰そのものを「操作」として記録**する。
+        // これが無いと `idleSeconds` は離席前の最終タッチからの経過のままなので、戻った瞬間に
+        // 「20 秒以上アイドル」と判定され、前面の定期ループ（HomeView → refreshIfNeeded）が
+        // その場で generate を起動していた（実機ログ diagnostics-31: 復帰と同時に generate が
+        // 22.8 秒走り、メインが 2.4s/1.7s/5.9s/3.9s ブロック＝体感のカクつきの正体）。
+        BackgroundActivityMonitor.shared.noteUserInteraction()
+
         let hadWork = currentWork != nil
         currentWork?.cancel()
         currentWork = nil
