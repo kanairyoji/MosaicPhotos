@@ -26,7 +26,8 @@ public final class PowerStateMonitor {
     public static let shared = PowerStateMonitor()
 
     /// 背景処理ポリシーの永続キー（設定 UI と共有）。
-    public static let policyKey = "background.powerPolicy"
+    /// ⚠️ nonisolated: 不変の `let` で、MainActor 外（設定移行の純ロジック等）からも読むため。
+    public nonisolated static let policyKey = "background.powerPolicy"
 
     /// 電源に接続中か（charging / full）。UIKit 非対応環境（macOS テスト）では true 扱い。
     public private(set) var isOnPower: Bool = true

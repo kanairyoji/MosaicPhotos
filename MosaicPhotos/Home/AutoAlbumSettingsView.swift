@@ -22,45 +22,52 @@ struct AutoAlbumSettingsView: View {
     @AppStorage(AutoAlbumSettingsKeys.backgroundProcessingLevel)
     private var backgroundLevel = BackgroundProcessing.defaultIndex
     @AppStorage(HeavyWorkTiming.defaultsKey)
-    private var heavyWorkTiming = HeavyWorkTiming.nightly.rawValue
+    private var heavyWorkTiming = HeavyWorkTiming.enabled.rawValue
+    @AppStorage(HeavyWorkTiming.conservativeKey)
+    private var conservativeAnalysis = true
 
     private var selectedPreset: BackgroundProcessingPreset {
         BackgroundProcessing.preset(at: backgroundLevel)
     }
 
-    private var timingFooter: String {
-        switch HeavyWorkTiming(rawValue: heavyWorkTiming) ?? .nightly {
-        case .paused:
-            return L("Nothing runs automatically. Use “Process Now” to index manually.")
-        case .nightly:
-            return L("Runs only while your iPhone is charging, on Wi-Fi, and not in use (locked or in another app) — typically overnight. Zero impact while you use the app.")
-        case .chargeActive:
-            return L("Additionally runs between your interactions while the app is open (charging + Wi-Fi). Stops the instant you touch the screen; slight warmth possible.")
-        case .battery:
-            return L("Additionally runs on battery (Wi-Fi, above 20% charge, Low Power Mode off). Uses battery.")
-        case .unlimited:
-            return L("Runs whenever possible, including on mobile data. Uses battery and may use significant cellular data.")
-        }
+    /// 自動処理がオンか（ピッカーではなくトグルで表す）。
+    private var automaticEnabled: Bool {
+        (HeavyWorkTiming(rawValue: heavyWorkTiming) ?? .enabled) != .paused
+    }
+
+    /// 「控えめに動かす」の説明（ON/OFF で意味が変わるので文言も切り替える）。
+    private var conservativeFooter: String {
+        conservativeAnalysis
+            ? L("Analysis never runs while you are using the app — only when you switch away or your iPhone is locked. Recommended: no slowdowns while browsing.")
+            : L("Analysis also runs while the app is open, once you have not touched the screen for 20 seconds. It stops as soon as you interact again — indexing finishes sooner, but you may notice brief slowdowns.")
     }
 
     var body: some View {
         Group {
-            // AI 処理を「いつ動かすか」（5段階・既定=夜間のみ）。「どれくらい強く動かすか」
-            // （下の Background speed）とは別軸。判定本体は HeavyWorkTiming.allows（テスト済み）。
+            // AI 処理を「いつ動かすか」は 4 軸の独立設定（ADR-80）。ここでは (1) 自動処理の有無と
+            // (2) 前面で動かすか（控えめ）を扱う。(3) 電源と (4) 回線は General → Background & Battery
+            // に一本化した（以前はこの段階ピッカーと二重で、片方を緩めても動かない原因になっていた）。
+            // 判定本体は HeavyWorkTiming.allows（テスト済み）。
             Section {
-                Picker("When to process", selection: $heavyWorkTiming) {
-                    Text(L("Paused — manual only")).tag(HeavyWorkTiming.paused.rawValue)
-                    Text(L("Automatic — while not in use (recommended)")).tag(HeavyWorkTiming.nightly.rawValue)
-                    Text(L("Also while using the app (charging)")).tag(HeavyWorkTiming.chargeActive.rawValue)
-                    Text(L("Also on battery (Wi-Fi)")).tag(HeavyWorkTiming.battery.rawValue)
-                    Text(L("No limits (mobile data too)")).tag(HeavyWorkTiming.unlimited.rawValue)
+                Toggle(isOn: Binding(
+                    get: { automaticEnabled },
+                    set: { heavyWorkTiming = ($0 ? HeavyWorkTiming.enabled : .paused).rawValue }
+                )) {
+                    Text(L("Automatic analysis"))
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
             } header: {
                 Text("Processing Timing")
             } footer: {
-                Text(timingFooter)
+                Text(L("Indexes your photos in the background so AI albums and search stay up to date. Power and network conditions are set in Settings → Background & Battery."))
+            }
+
+            Section {
+                Toggle(isOn: $conservativeAnalysis) {
+                    Text(L("Run image analysis conservatively"))
+                }
+                .disabled(!automaticEnabled)
+            } footer: {
+                Text(conservativeFooter)
             }
 
             Section {

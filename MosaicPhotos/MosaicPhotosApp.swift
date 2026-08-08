@@ -10,6 +10,8 @@ struct MosaicPhotosApp: App {
         Diagnostics.install()
         // アプリ内の言語設定（System/日本語/English）を起動時に反映する。
         AppLocale.loadFromDefaults()
+        // 旧 5 段階の処理タイミング設定を 4 軸（自動処理/控えめ/電源/回線）へ移行する（ADR-80・1 度だけ）。
+        HeavyWorkTiming.migrateLegacySettingsIfNeeded()
         // パフォーマンス計測の永続トグル（Developer Options）を起動時に反映する。既定 OFF。
         PerfTrace.isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.perfTracing)
         // センサー: 起動（App.init）→ ホーム初回表示までの所要（endScreen は HomeView 側）。

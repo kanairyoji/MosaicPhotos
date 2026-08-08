@@ -58,6 +58,8 @@ public final class AutoAlbumEngine {
     /// 背景タグ付け/埋め込み/キャプションのタスク（`scheduleBackgroundFill`）。
     /// フォアグラウンド復帰で明示キャンセルするために保持する（ADR-79）。
     @ObservationIgnored var backgroundFillTask: Task<Void, Never>?
+    /// 表示ラベラの事前ウォーム（CLIP テキストタワー＋約300語）。復帰時に止める（ADR-80）。
+    @ObservationIgnored var prewarmTask: Task<Void, Never>?
     /// 重い保守処理（generate）の世代。`stopBackgroundWork()` で進み、実行中の generate は
     /// ステップ境界で世代のズレを見て自ら降りる（ADR-79 追記）。
     ///

@@ -52,10 +52,12 @@ enum CoreMLModelLoader {
         }
         Diagnostics.mark("model loading… \(subject)")
         let started = Date()
+        let epoch = ProcessSuspension.epoch
         let model = try? await MLModel.load(contentsOf: url, configuration: configuration)
         if model != nil {
-            log.info("\(subject) \(loadStamp(since: started))")
-            Diagnostics.mark("model loaded \(subject) \(loadStamp(since: started))")
+            let stamp = loadStamp(since: started, epoch: epoch)
+            log.info("\(subject) \(stamp)")
+            Diagnostics.mark("model loaded \(subject) \(stamp)")
         } else {
             log.error("\(subject) bundled but failed to load")
             Diagnostics.mark("model FAILED \(subject)")
@@ -65,9 +67,17 @@ enum CoreMLModelLoader {
 
     /// ロード診断の共通サフィックス「loaded in \(ms)ms (footprint=\(mb))」。
     /// 複数リソースをまとめてロードするランタイム（VLM）はこれだけ共用する。
-    static func loadStamp(since started: Date) -> String {
-        let ms = Int(Date().timeIntervalSince(started) * 1000)
+    ///
+    /// `epoch`（`ProcessSuspension.epoch`）を渡すと、**ロード中にプロセス中断があったサンプルは
+    /// 数値を出さない**（ADR-80）。所要は壁時計 `Date()` 差分なので、アプリが背面へ落ちて中断された
+    /// 時間まで含んでしまう。実際に「23,438ms」がバックグラウンド遷移をまたいで記録され、ロードが
+    /// 遅いのか中断されただけなのか判別できなかった（過去にも同じ罠で 29 分のハングと誤読した事例あり）。
+    static func loadStamp(since started: Date, epoch: Int? = nil) -> String {
         let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
+        if let epoch, ProcessSuspension.didSuspend(since: epoch) {
+            return "loaded (spans suspend — duration unreliable) (footprint=\(mb))"
+        }
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
         return "loaded in \(ms)ms (footprint=\(mb))"
     }
 

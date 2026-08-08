@@ -3484,6 +3484,56 @@
           }
         }
       }
+    },
+    "Automatic analysis": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動で解析する"
+          }
+        }
+      }
+    },
+    "Indexes your photos in the background so AI albums and search stay up to date. Power and network conditions are set in Settings → Background & Battery.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI アルバムと検索を最新に保つため、写真をバックグラウンドで解析します。電源と回線の条件は「設定 → バックグラウンドとバッテリー」で指定します。"
+          }
+        }
+      }
+    },
+    "Run image analysis conservatively": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像分析を控えめに動かす"
+          }
+        }
+      }
+    },
+    "Analysis never runs while you are using the app — only when you switch away or your iPhone is locked. Recommended: no slowdowns while browsing.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを使っている間は解析しません（他のアプリに切り替えたときや、iPhone をロックしている間だけ動きます）。閲覧中に遅くならない推奨設定です。"
+          }
+        }
+      }
+    },
+    "Analysis also runs while the app is open, once you have not touched the screen for 20 seconds. It stops as soon as you interact again — indexing finishes sooner, but you may notice brief slowdowns.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを開いたままでも、20 秒操作がなければ解析します。画面に触れるとすぐ止まります。解析は早く終わりますが、短い引っかかりを感じることがあります。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

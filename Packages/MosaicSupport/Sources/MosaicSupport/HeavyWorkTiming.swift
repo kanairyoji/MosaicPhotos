@@ -1,79 +1,117 @@
 import Foundation
 
-/// 重い処理（AI 索引・顔認識・アルバム生成）を**いつ動かすか**のユーザー設定（5 段階）。
-/// 「いつ動くか」（本設定）と「動くときの強さ」（`BackgroundProcessing` の速度段階）は別軸。
+/// 重い処理（AI 索引・顔認識・アルバム生成）を**いつ動かすか**の判定（ADR-80）。
 ///
-/// 段階は単調に条件を緩める（上げるほどユーザーへの影響が出る）:
-///   paused        自動処理なし（「今すぐ処理」だけ可）
-///   nightly       電源＋Wi-Fi＋アプリ非使用時のみ（既定・体感ゼロ＝ADR-25）
-///   chargeActive  ＋アプリ使用中も操作の合間に（電源＋Wi-Fi・タッチで即停止）
-///   battery       ＋バッテリーでも（Wi-Fi・残量に配慮）
-///   unlimited     ＋モバイル回線でも（制限なし）
+/// ## 4 つの軸を独立させる
+/// 旧実装は 5 段階の梯子（paused / nightly / chargeActive / battery / unlimited）で、
+/// 「前面でも動かすか」「バッテリーでも動かすか」「モバイル回線でも動かすか」を**一本に混ぜて**いた。
+/// そのため (1)「電源は必須のままモバイル回線だけ許す」が表現できず、(2) 電源・回線は
+/// `PowerStateMonitor` / `NetworkStateMonitor` の設定と**二重**になっていた（どちらか厳しい方が効く＝
+/// 片方を緩めても動かない、という分かりにくさ）。今は 4 軸を独立した設定として扱う:
 ///
-/// どの段階でも**安全弁は常時有効**: 低電力モード・メモリ圧迫・（バッテリー時）残量 20% 未満では動かない。
+/// | 軸 | 設定 | 既定 |
+/// |---|---|---|
+/// | 自動処理する/しない | `HeavyWorkTiming`（enabled / paused） | enabled |
+/// | **前面でも動かすか** | `conservativeKey`（控えめに動かす） | **ON＝前面では動かさない** |
+/// | 電源 | `PowerStateMonitor.policy` | 充電中のみ |
+/// | 回線 | `NetworkStateMonitor.policy` | Wi-Fi のみ |
+///
+/// 本型は 1 つ目の軸（自動処理の有無）と、判定の**純ロジック**（`allows`）だけを持つ。
+/// 電源・回線の状態は呼び出し側（`BackgroundYield`）が各モニタから渡す。
 public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
+    /// 自動処理なし（「今すぐ処理」とデバッグ実行だけ可）。
     case paused = 0
-    case nightly = 1        // 既定
-    case chargeActive = 2
-    case battery = 3
-    case unlimited = 4
+    /// 自動処理あり（実際に動く条件は前面/電源/回線の各設定が決める）。
+    case enabled = 1
 
-    /// UserDefaults キー（設定 UI と BackgroundYield が共用）。
+    /// UserDefaults キー（設定 UI と `BackgroundYield` が共用）。
     public static let defaultsKey = "heavywork.timing"
 
-    /// 保存値から読む（未設定・範囲外は既定 nightly）。
+    /// 「画像分析を控えめに動かす」（ON＝アプリ使用中は動かさない）の永続キー。**既定 ON**。
+    /// OFF にすると、アプリを開いたままでも `foregroundIdleSeconds` 放置で動くようになる。
+    public static let conservativeKey = "heavywork.conservative"
+
+    /// 旧 5 段階からの移行を一度だけ行うためのフラグキー。
+    static let migrationKey = "heavywork.axesMigrated"
+
+    /// 保存値から読む（未設定・範囲外は既定 enabled）。
+    /// 旧値（2=chargeActive / 3=battery / 4=unlimited）は移行で 1 に畳まれる。
     public static var current: HeavyWorkTiming {
-        HeavyWorkTiming(rawValue: UserDefaults.standard.integer(forKey: defaultsKey)) ?? .nightly
+        let raw = UserDefaults.standard.object(forKey: defaultsKey) as? Int
+        guard let raw else { return .enabled }
+        return raw == paused.rawValue ? .paused : .enabled
+    }
+
+    /// 「控えめに動かす」設定（既定 ON＝前面では動かさない）。
+    public static var isConservative: Bool {
+        UserDefaults.standard.object(forKey: conservativeKey) as? Bool ?? true
     }
 
     /// アプリ使用中（フォアグラウンド）に「操作の合間」とみなすアイドル秒数。
     /// 全タッチを UIWindow レベルで捕捉した上での値なので短くても誤発火しない。
     public static let foregroundIdleSeconds: TimeInterval = 20
 
-    /// バッテリー実行時に要求する最低残量（充電中は不問）。
-    public static let minimumBatteryLevel: Float = 0.20
+    // MARK: - 移行（旧 5 段階 → 4 軸）
+
+    /// 旧 5 段階の保存値を各軸へ写す（アプリ起動時に 1 度だけ呼ぶ）。
+    /// 既存ユーザーの「意思」を壊さないため、段階から読み取れる意図をそのまま各設定へ移す。
+    public static func migrateLegacySettingsIfNeeded(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: migrationKey) else { return }
+        defer { defaults.set(true, forKey: migrationKey) }
+        // 旧値が無い（新規インストール）なら既定のままでよい。
+        guard let legacy = defaults.object(forKey: defaultsKey) as? Int else { return }
+        let plan = migrationPlan(legacyRawValue: legacy)
+        defaults.set(plan.timing.rawValue, forKey: defaultsKey)
+        defaults.set(plan.conservative, forKey: conservativeKey)
+        // 電源・回線は既存の独立設定へ写す。**緩める方向にだけ**書く（nil＝触らない）＝
+        // ユーザーが既に電源/回線を個別に絞っていた場合、その設定を上書きしない。
+        if let power = plan.power { defaults.set(power.rawValue, forKey: PowerStateMonitor.policyKey) }
+        if let data = plan.data { defaults.set(data.rawValue, forKey: NetworkStateMonitor.policyKey) }
+    }
+
+    /// 移行の内容（純ロジック・テスト対象）。旧 rawValue → 各軸の設定値。
+    /// - 旧 0 (paused)       → 自動処理オフ。他は既定のまま。
+    /// - 旧 1 (nightly)      → 既定のまま（控えめ ON・電源=充電中・回線=Wi-Fi）。
+    /// - 旧 2 (chargeActive) → 控えめ OFF（前面でも動かしたい意思）。
+    /// - 旧 3 (battery)      → 控えめ OFF ＋ 電源=常に。
+    /// - 旧 4 (unlimited)    → 控えめ OFF ＋ 電源=常に ＋ 回線=セルラーも。
+    public static func migrationPlan(legacyRawValue: Int)
+        -> (timing: HeavyWorkTiming, conservative: Bool,
+            power: BackgroundPowerPolicy?, data: BackgroundDataPolicy?) {
+        switch legacyRawValue {
+        case 0:  return (.paused, true, nil, nil)
+        case 2:  return (.enabled, false, nil, nil)
+        case 3:  return (.enabled, false, .always, nil)
+        case 4:  return (.enabled, false, .always, .unrestricted)
+        default: return (.enabled, true, nil, nil)   // 1（nightly）と未知の値
+        }
+    }
 
     // MARK: - 判定（純ロジック・テスト対象）
 
-    /// この段階・状況で重い処理を動かしてよいか。
+    /// この設定・状況で重い処理を動かしてよいか。
     /// - Parameters:
-    ///   - isOnPower: 電源接続中か
-    ///   - isLowPowerMode: 低電力モードか（常時ブロック）
-    ///   - isOnWiFi: Wi-Fi 接続中か
-    ///   - isReachable: 何らかの回線があるか（unlimited 用）
+    ///   - isConservative: 「控えめに動かす」設定（true＝アプリ使用中は動かさない）
     ///   - isAppActive: アプリがフォアグラウンドでアクティブか
     ///   - foregroundIdle: アプリ使用中だが最後のタッチから `foregroundIdleSeconds` 以上経過したか
-    ///   - batteryLevel: 残量（0...1。取得不可は 1 を渡す）
+    ///   - powerAllowed: 電源ポリシー（`PowerStateMonitor.backgroundAllowed()`）を満たすか
+    ///   - networkAllowed: 回線ポリシー（`NetworkStateMonitor.networkAllowed()`）を満たすか
     ///   - requiresNetwork: この作業が回線を必要とするか。**端末内写真の顔スキャン・CLIP 埋め込みは
-    ///     通信不要なので false**（電源＋非使用だけで走る・ADR）。クラウド分（サムネDL）を含む作業は
-    ///     true＝Wi-Fi（unlimited のみモバイル可）を要求する。false なら回線条件を課さない。
-    public func allows(isOnPower: Bool, isLowPowerMode: Bool,
-                       isOnWiFi: Bool, isReachable: Bool,
+    ///     通信不要なので false**（電源＋非使用だけで走る）。false なら回線条件を課さない。
+    public func allows(isConservative: Bool,
                        isAppActive: Bool, foregroundIdle: Bool,
-                       batteryLevel: Float,
+                       powerAllowed: Bool, networkAllowed: Bool,
                        requiresNetwork: Bool = true) -> Bool {
-        guard self != .paused, !isLowPowerMode else { return false }
+        guard self != .paused else { return false }
 
-        // 前面で操作中（タッチから間もない）はどの段階でも動かさない。
-        let usageOK = !isAppActive || foregroundIdle
-        // ただし nightly は前面では一切動かさない（合間も不可）。
-        if self == .nightly && isAppActive { return false }
-        guard usageOK else { return false }
+        // 前面での実行は「控えめ」設定だけが決める（段階には埋め込まない）。
+        if isAppActive {
+            guard !isConservative else { return false }   // 控えめ ON＝アプリ使用中は動かさない
+            guard foregroundIdle else { return false }    // 最終タッチから 20 秒未満は動かさない
+        }
 
-        // 電源/残量。バッテリー実行を許す段階でも残量が少なければ動かさない。
-        let powerOK = isOnPower
-            || (self >= .battery && batteryLevel >= Self.minimumBatteryLevel)
-        guard powerOK else { return false }
-
-        // 回線。回線を要する作業のみ課す。unlimited だけモバイル回線も許す。
-        // ローカル処理（requiresNetwork=false）は回線条件を課さない＝Wi-Fi が無い/未検出でも
-        // 端末内写真の解析が進む（クラウド分の Wi-Fi 従属は各処理側が networkAllowed で重ねて守る）。
-        guard requiresNetwork else { return true }
-        let networkOK = self >= .unlimited ? isReachable : isOnWiFi
-        return networkOK
+        guard powerAllowed else { return false }
+        // 回線を要する作業のみ課す。ローカル処理（端末内写真）は回線条件なしで走る。
+        return requiresNetwork ? networkAllowed : true
     }
-}
-
-extension HeavyWorkTiming: Comparable {
-    public static func < (a: HeavyWorkTiming, b: HeavyWorkTiming) -> Bool { a.rawValue < b.rawValue }
 }

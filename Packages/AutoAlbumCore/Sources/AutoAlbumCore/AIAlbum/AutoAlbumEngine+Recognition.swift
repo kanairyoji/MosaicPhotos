@@ -209,6 +209,9 @@ extension AutoAlbumEngine {
     public func stopBackgroundWork() {
         backgroundFillTask?.cancel()
         backgroundFillTask = nil
+        // 表示ラベラの事前ウォーム（約300語の text encode）も止める（ADR-80）。
+        prewarmTask?.cancel()
+        prewarmTask = nil
         // 実行中の generate（前面の定期ループから起動されたものを含む）にも降りるよう伝える。
         // generate は呼び出し側のタスク上で走るため cancel では止められない（ADR-79 追記）。
         requestAbortHeavyWork()
@@ -241,9 +244,17 @@ extension AutoAlbumEngine {
             // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。
             // ANE 直列化ゲートは encodeText の内側で**1 語ずつ**取る（ADR-73）。ここでまとめて包むと
             // 約300語ぶんゲートを握り続け、その間の顔スキャン・タグ付けが完全に止まる。
-            Task(priority: .background) { [weak self] in
-                guard let self, let labeler = self.labelProvider else { return }
-                await labeler.prewarm()
+            //
+            // ⚠️ ゲートが閉じているときは**起動しない**（ADR-80）。以前はゲート判定の外にあったため、
+            // 起動直後（pause=true）でも CLIP テキストタワーのロード（新規インストール直後は
+            // 実測 23 秒）＋約300語の encode が走り、起動を重くしていた。未ウォームでも実害はない
+            // ——`isReady` が false のとき insight は CLIP ラベルを飛ばし Vision タグだけで即返す。
+            if !BackgroundYield.heavyShouldPause() {
+                prewarmTask = Task(priority: .background) { [weak self] in
+                    guard let self, let labeler = self.labelProvider else { return }
+                    await labeler.prewarm()
+                    self.prewarmTask = nil
+                }
             }
             // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
             await refreshFavoritesCache()

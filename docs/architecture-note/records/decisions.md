@@ -21,6 +21,56 @@
 
 ---
 
+## ADR-80 重い処理の実行条件を「5 段階の梯子」から「4 軸の独立設定」へ
+- 状態: 採用
+- 文脈: ADR-25 で入れた `HeavyWorkTiming` の 5 段階（paused / nightly / chargeActive / battery /
+  unlimited）は、**3 つの異なる軸を 1 本の梯子に混ぜて**いた: (1) 前面アイドル時に動かすか、
+  (2) バッテリーでも動かすか、(3) モバイル回線でも動かすか。実害が 2 つ出た:
+  - **組み合わせが選べない**: 「電源接続は必須のままモバイル回線だけ許す」が表現できない
+    （`unlimited` にすると同時にバッテリー実行も解禁される）。
+  - **電源・回線が二重設定**: 既存の `PowerStateMonitor.policy` / `NetworkStateMonitor.policy`
+    （設定 → Background & Battery）と条件が重複し、どちらか厳しい方が効く＝**片方を緩めても
+    動かない**という分かりにくさ。どの条件で動いた/動かなかったのか追跡も困難だった。
+  - さらに ADR-79 追記のとおり、`nightly` 以外を選ぶと**復帰直後に前面で generate が走る**
+    事故につながっていた（アイドル判定が復帰を無視していたため）。
+- 決定: 梯子を解体し、**4 軸を独立した設定**にする。
+  | 軸 | 設定 | 既定 |
+  |---|---|---|
+  | 自動処理する/しない | `HeavyWorkTiming`（enabled / paused） | enabled |
+  | **前面でも動かすか** | **`conservativeKey`「画像分析を控えめに動かす」（新設）** | **ON＝前面では動かさない** |
+  | 電源 | `PowerStateMonitor.policy`（充電中のみ / 常に / オフ） | 充電中のみ |
+  | 回線 | `NetworkStateMonitor.policy`（Wi-Fi のみ / セルラーも / …） | Wi-Fi のみ |
+  - `HeavyWorkTiming.allows` は電源・回線の**状態判定を持たず**、呼び出し側（`BackgroundYield`）が
+    各モニタの `backgroundAllowed()` / `networkAllowed()` の結果を渡す純関数になる。
+    これで判定が一意になり、二重設定が消える。
+  - 「控えめ」ON は旧 `nightly` と同じ厳しさ（前面では一切動かさない）。OFF のときだけ
+    `foregroundIdleSeconds`(20 秒) 放置で前面でも動く。**既定 ON**＝アプリの趣旨（閲覧を邪魔しない）。
+  - 低電力モードは全設定で常時ブロック（安全弁）。電源ポリシーが `always` でも尊重する。
+  - デバッグ経路（`debugForceHeavyWork` / 「今すぐ処理」の `manualBoostUntil`）は
+    `heavyWorkAllowed` の冒頭で早期 return するため、控えめ設定の影響を受けない
+    （＝Developer Options から学習・画像分析をその場で呼べる）。
+  - BGTask の `requiresExternalPower` も電源ポリシーに従う（旧: 段階 < battery）。
+  - **移行は 1 度だけ**（`migrationKey`）。旧段階から意思を読み取って各軸へ写す（純関数
+    `migrationPlan`・テスト済み）: paused→自動処理オフ / nightly→既定のまま /
+    chargeActive→控えめ OFF / battery→＋電源「常に」 / unlimited→＋回線「セルラーも」。
+    電源・回線は**緩める方向にだけ**書く（ユーザーが個別に絞っていた設定を上書きしない）。
+- 併せて CLIP の起動コストを 2 点修正:
+  - **表示ラベラの事前ウォームをゲート内へ**。約300語の text encode と CLIP テキストタワーの
+    ロードが、`scheduleBackgroundFill` の中で**ゲート判定の外**に置かれており、起動直後
+    （pause=true）でも走っていた（新規インストール直後は実測 23 秒）。ゲートが閉じていれば
+    起動しない・復帰時は `stopBackgroundWork` でキャンセルする。未ウォームでも実害はない
+    （`isReady` が false なら insight は CLIP ラベルを飛ばし Vision タグだけで即返す）。
+  - **ロード計測の中断汚染を除去**。`loadStamp` は壁時計 `Date()` 差分なので、バックグラウンド
+    遷移をまたぐと背面にいた時間まで含む（23,438ms がまさにこれ）。`ProcessSuspension.epoch` を
+    控え、中断をまたいだサンプルは数値を出さず "spans suspend — duration unreliable" と記す。
+- 結果: 設定の意味が一意になり、「どの条件で動くのか」が説明可能になった（下表）。既定では
+  アプリ使用中に重い処理が一切走らない。トレードオフ: 旧 5 段階に慣れたユーザーには UI が変わる
+  （移行で挙動は保たれる）。
+- 関連: `HeavyWorkTiming` / `BackgroundYield` / `PowerStateMonitor` / `NetworkStateMonitor` /
+  `AutoAlbumSettingsView` / `CoreMLModelSupport.loadStamp`。
+  [[ADR-25]]（実行方針の原典）・[[ADR-79]]（復帰時の停止）。
+  **動作の早見表は `docs/architecture-note/records/background-behavior.md`**（正本）。
+
 ## ADR-79 フォアグラウンド復帰で夜間処理を「譲る」から「止める」へ
 - 状態: 採用
 - 文脈: 他アプリから戻ると数秒〜数十秒固まることがある（ユーザー報告）。原因はモデルの

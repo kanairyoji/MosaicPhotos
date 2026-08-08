@@ -53,8 +53,9 @@ enum HeavyWorkScheduler {
     /// バックグラウンド遷移時に次回実行を予約する。電源接続が条件（OS が満たされるまで起動しない）。
     static func submit() {
         let request = BGProcessingTaskRequest(identifier: taskID)
-        // battery/unlimited 段階では電源なしでも夜間実行を許す（ユーザーの明示選択）。
-        request.requiresExternalPower = HeavyWorkTiming.current < .battery       // 電源接続時のみ（ユーザー方針）
+        // 電源条件はユーザーの電源ポリシー（Background & Battery）に従う（ADR-80）。
+        // 「常に」を選んでいれば電源なしでも OS に起こしてもらう。既定（充電中のみ）は従来どおり。
+        request.requiresExternalPower = PowerStateMonitor.shared.policy == .whileCharging
         request.requiresNetworkConnectivity = false // ローカル写真の処理は回線不要（クラウド分は回線ポリシーが弾く）
         do {
             try BGTaskScheduler.shared.submit(request)

@@ -319,7 +319,7 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
 - **開発者向けドキュメント**: コメント・コミットメッセージは日本語で構わない
 
 - **設計判断・事例の記録（必須・マスターは Markdown）**: 設計上の判断、埋め込んだバグ、原因が非自明だった不具合、性能/メモリ/起動などの大きめの課題対応を行ったら、**必ず** Markdown のマスターに 1 項追記して網羅する。これらの記録はチャット履歴に頼らず、リポジトリ内に確実に残す。
-  - マスター（正本）: `docs/architecture-note/records/decisions.md`（設計判断＝ADR）/ `docs/architecture-note/records/case-studies.md`（事例・バグ・課題対応）。各ファイル冒頭の「運用ルール」と「テンプレート」に従う（ADR は `## ADR-N` 連番＋文脈/決定/結果、事例は症状/原因/対処/関連/残課題）。
+  - マスター（正本）: `docs/architecture-note/records/decisions.md`（設計判断＝ADR）/ `docs/architecture-note/records/case-studies.md`（事例・バグ・課題対応）/ `docs/architecture-note/records/background-behavior.md`（**どの設定だと何が動くかの早見表**＝ゲートを足す/変えるたびに更新）。各ファイル冒頭の「運用ルール」と「テンプレート」に従う（ADR は `## ADR-N` 連番＋文脈/決定/結果、事例は症状/原因/対処/関連/残課題）。
   - HTML（`docs/architecture-note/design-decisions/adr.html` / `case-studies/*.html`）は MD からの**派生物**で、**指示に応じて取捨選択**して記載する（全件転記しない）。HTML 目次の定義は `docs/architecture-note/assets/nav.js` の `NAV` 配列が唯一の出典。
   - 順序: まず MD に追記（網羅）→ 必要なら HTML 化（選択）。撤回・変更時は MD の項を消さず状態を追記して経緯を残す。
 

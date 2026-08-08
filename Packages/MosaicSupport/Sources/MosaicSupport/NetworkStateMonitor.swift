@@ -27,7 +27,8 @@ public final class NetworkStateMonitor {
     public static let shared = NetworkStateMonitor()
 
     /// 背景通信ポリシーの永続キー（設定 UI と共有）。
-    public static let policyKey = "background.dataPolicy"
+    /// ⚠️ nonisolated: 不変の `let` で、MainActor 外（設定移行の純ロジック等）からも読むため。
+    public nonisolated static let policyKey = "background.dataPolicy"
 
     /// 到達可能（オンライン）か。
     public private(set) var isReachable = false
