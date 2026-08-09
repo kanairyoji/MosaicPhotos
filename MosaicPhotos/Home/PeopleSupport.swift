@@ -28,6 +28,11 @@ nonisolated func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] {
 /// 夜間 BGTask でも同じ経路を通るため、背面での長い停止の一因でもあった。
 @MainActor
 func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
+    // ⚠️ items は All Photos / Cloud を開くまで読み込まれない（ADR-85）。起動直後はこの関数の方が
+    // 早く、空のまま候補を作ると**クラウド写真が丸ごと解析対象から漏れる**。実機ログ diag-33 で
+    // candidates=6699（ローカルのみ）になり、2 秒後に 68,200 件がロードされていた。
+    // `DropboxCloudPhotoProvider.cloudPhotos()` は同じ理由で既にこのガードを持っている＝揃える。
+    if dropboxStore.items.isEmpty { await dropboxStore.loadItems() }
     let cloudItems = dropboxStore.items                             // MainActor 上のスナップショット（安価）
     let local = await localImageRefKeys()                           // 既に detached
     let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)

@@ -91,17 +91,27 @@ extension AutoAlbumEngine {
             Diagnostics.mark("quality: no aesthetic scores yet (tagging pending)")
             return []
         }
-        let threshold = PhotoQuality.adaptiveThreshold(scores: Array(all.values))
-        let good = Set(all.filter { $0.value >= threshold }.keys)
         let screenshots = await store.screenshotRefKeys()
-        let result = good.subtracting(screenshots)
-        // 実測ログ: 分布（中央値/上位10%/最大）としきい値・件数。しきい値校正の判断材料に残す。
-        let sorted = all.values.sorted(by: >)
-        let p50 = sorted[sorted.count / 2]
-        let p90 = sorted[min(sorted.count - 1, sorted.count / 10)]
-        Diagnostics.mark(String(format: "quality: scored=%d p50=%.2f p90=%.2f max=%.2f thr=%.2f best=%d (screenshots excluded=%d)",
-                                all.count, p50, p90, sorted.first ?? 0, threshold,
-                                result.count, good.count - result.count))
+        // ⚠️ しきい値の算出・6 万件の filter・集合演算・分位点のソートは**オフメイン**で行う
+        // （ADR-85）。以前は @MainActor のここで 62,330 件を回しており、フィルタを ON にするたび
+        // メインが 1.4 秒止まっていた（実機ログ diag-33 の唯一の前面ハング）。
+        // CLAUDE.md の性能原則「巨大コレクションを MainActor に通さない」の違反だった。
+        let (result, summary) = await Task.detached(priority: .userInitiated) {
+            () -> (Set<String>, String) in
+            let threshold = PhotoQuality.adaptiveThreshold(scores: Array(all.values))
+            let good = Set(all.filter { $0.value >= threshold }.keys)
+            let result = good.subtracting(screenshots)
+            // 実測ログ: 分布（中央値/上位10%/最大）としきい値・件数。しきい値校正の判断材料に残す。
+            let sorted = all.values.sorted(by: >)
+            let p50 = sorted[sorted.count / 2]
+            let p90 = sorted[min(sorted.count - 1, sorted.count / 10)]
+            let summary = String(
+                format: "quality: scored=%d p50=%.2f p90=%.2f max=%.2f thr=%.2f best=%d (screenshots excluded=%d)",
+                all.count, p50, p90, sorted.first ?? 0, threshold,
+                result.count, good.count - result.count)
+            return (result, summary)
+        }.value
+        Diagnostics.mark(summary)
         return result
     }
 
@@ -202,6 +212,12 @@ extension AutoAlbumEngine {
 
     // MARK: - Recognition (Vision/CLIP タグ付け)
 
+    /// 1 回の背景実行でシーンタグに割り当てるバッチ数の上限（ADR-85）。
+    /// 8 枚/バッチなので 40 バッチ ≒ 320 枚。これを超えたら打ち切って CLIP 埋め込み・
+    /// キャプションへ順番を回す（タグが窓を独占して埋め込みが飢餓するのを防ぐ）。
+    /// 次の実行で続きから進むので、総量は変わらず「どれも少しずつ進む」状態になる。
+    static var tagBatchesPerRun: Int { 40 }
+
     /// 背景の重い処理（タグ付け・埋め込み・キャプション）を**明示的に止める**（ADR-79）。
     /// フォアグラウンド復帰で呼ぶ。トリクル各段は `Task.isCancelled` を 1 単位ごとに見るため、
     /// 実行中の 1 枚が終わり次第すぐ抜ける。作業は差分ベースなので次の夜間窓で続きから再開する。
@@ -259,16 +275,24 @@ extension AutoAlbumEngine {
             // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
             await refreshFavoritesCache()
             let favorites = favoritesCache
-            // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を全量に行き渡らせる。
+            // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を進める。
             // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
             // 候補は **お気に入り(ローカル→クラウド)→その他(ローカル→クラウド)・各新→古**（AnalysisOrder）。
             // クラウド写真のタグ付けはサムネDLを要するため、回線NG（Wi-Fi 待ち等）なら今回はローカルのみ
             // （Wi-Fi 復帰後の次回にクラウド分を拾う）。ローカルは通信不要なので常に進む（Fix B）。
+            //
+            // ⚠️ **1 回の実行あたりの上限を設ける**（ADR-85）。上限なしだとタグが全量終わるまで
+            //    下の埋め込みループに到達せず、CLIP 埋め込みが**永久に飢餓**する。実測（実機ログ
+            //    diag-28〜33）でタグは 33,662→24,505 と進む一方、未埋め込みは 43,611→43,626 と
+            //    まったく減らず、`embed: batch` が数週間 1 度も出ていなかった。夜間の窓は数分〜
+            //    数十分で、その間ずっとタグが窓を使い切っていたため。ADR-72 の「バックアップが
+            //    埋め込みに飢餓する」と同じ構造で、対処も同じ＝**順番を必ず回す**。
             let tagNetOK = NetworkStateMonitor.shared.networkAllowed()
             let tagPool = await store.enrichedRefKeysNewestFirst()
             let candidates = AnalysisOrder.ordered(tagNetOK ? tagPool : tagPool.filter { $0.hasPrefix("L-") },
                                                    favorites: favorites)
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
+                                           maxBatches: Self.tagBatchesPerRun,
                                            shouldPause: { BackgroundYield.heavyShouldPause() })
             // P2/P3: CLIP 埋め込みと VLM キャプションを**インターリーブ**で進める。
             // ⚠️ 逐次（埋め込み全量→キャプション）だと、埋め込みが 85k 枚すべて終わるまで

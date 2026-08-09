@@ -69,9 +69,12 @@ final class TagTagger {
 
     /// 未タグ写真にシーンタグを付ける（バッチ 8・save はバッチ 1 回）。
     /// Vision 分類は CPU/ANE で軽い（数十 ms/枚）ため CLIP 埋め込みより速く全量に行き渡る。
+    /// - Parameter maxBatches: 1 回の呼び出しで処理するバッチ数の上限（ADR-85）。
+    ///   既定は無制限だが、背景実行では上限を設けて CLIP 埋め込み・キャプションへ順番を回す。
     func tagUnprocessed(candidateRefKeys: [String],
                         batchSize: Int = 8,
                         betweenBatchNs: UInt64 = 500_000_000,
+                        maxBatches: Int = .max,
                         shouldPause: @MainActor () -> Bool = { false },
                         onProgress: @MainActor (Int) -> Void = { _ in }) async {
         guard let provider, provider.isTaggingAvailable else { return }
@@ -91,6 +94,7 @@ final class TagTagger {
         // 保存はバッチ 1 回。
         let miniBatchSize = 4
         await BackgroundTrickle.run(
+            maxBatches: maxBatches,
             betweenBatchNs: betweenBatchNs,
             shouldPause: shouldPause,
             unitPerfLabel: "tags.photoMs",
@@ -128,7 +132,8 @@ final class TagTagger {
                 }
                 return .proceed
             })
-        Diagnostics.mark("tags: finished — \(processed) tagged")
+        // 残数も出す（上限で打ち切ったのか、本当に終わったのかをログだけで区別するため・ADR-85）。
+        Diagnostics.mark("tags: finished — \(processed) tagged (remaining=\(max(0, todo.count - processed)))")
     }
 
     /// タグ済み・キャプション未生成の写真に VLM キャプションを付ける（1 枚 1〜2 秒・数晩がかり）。
