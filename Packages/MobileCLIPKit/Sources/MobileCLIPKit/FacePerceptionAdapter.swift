@@ -344,6 +344,20 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         await MLInferenceGate.shared.run { self.unsafeFaceObservations(in: cg) }
     }
 
+    /// **計測用**: 品質ゲートを通さない生の検出結果を返す（ADR-89）。
+    /// 歩留まり計測は「どのゲートで何が落ちているか」を知るのが目的なので、
+    /// 本番と**同じ Vision 設定**で検出だけ行い、採否は呼び出し側（`FaceYieldMeasurement`）が
+    /// サイズ別に算術で判定する。埋め込みは作らない（速い）。
+    public func observeFacesForMeasurement(in cg: CGImage) async -> [FaceYieldMeasurement.FaceObservation] {
+        let (faces, _) = await faceObservations(in: cg)
+        return faces.map {
+            FaceYieldMeasurement.FaceObservation(
+                normalizedShortSide: min($0.box.width, $0.box.height),
+                confidence: $0.confidence,
+                quality: $0.quality)
+        }
+    }
+
     /// ゲート保持済み前提の本体（入れ子で `run` を呼ばないこと）。
     private func unsafeFaceObservations(in cg: CGImage) -> (faces: [FaceObservation], error: String?) {
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])

@@ -27,6 +27,34 @@ extension DropboxPhotoStore {
         await cache.thumbnail(for: item.path)
     }
 
+    /// **計測用**: 任意サイズのサムネイルを 1 枚だけ取得する（ADR-89）。
+    ///
+    /// 本番の取得経路（`DropboxThumbnailBatcher`）はサイズが固定（`thumbnailAPISize`）で、
+    /// キャッシュ・LRU・バッチ集約と結びついている。歩留まり計測は「別サイズを一度だけ見たい」
+    /// だけなので、そこへ手を入れず**独立した単発取得**にする。キャッシュにも保存しない。
+    /// - Parameter apiSize: Dropbox のサイズ指定（"w256h256" / "w640h480" / "w1024h768" 等）。
+    /// - Returns: JPEG バイト列（取得不可は nil）。
+    public func measurementThumbnailData(path: String, apiSize: String) async -> Data? {
+        struct Arg: Encodable {
+            let resource: Resource
+            let format = DropboxInternalConstants.thumbnailFormat
+            let size: String
+            struct Resource: Encodable {
+                let tag = ".tag"
+                let path: String
+                enum CodingKeys: String, CodingKey { case tag = ".tag"; case path }
+                func encode(to encoder: Encoder) throws {
+                    var c = encoder.container(keyedBy: CodingKeys.self)
+                    try c.encode("path", forKey: .tag)
+                    try c.encode(path, forKey: .path)
+                }
+            }
+        }
+        guard let arg = encodeDropboxAPIArg(Arg(resource: .init(path: path), size: apiSize)) else { return nil }
+        return try? await apiClient.contentDownload(
+            url: DropboxInternalConstants.getThumbnailV2URL, apiArg: arg)
+    }
+
     /// スクロール先サムネイルの先読み。バッチャの**低優先・LIFO・上限つき**プールへ積む。
     /// キャッシュ済み（メモリ/ディスク）は `thumbnailExists` で除外しネットワークを使わない。
     /// 可視セル要求（`thumbnail(for:)`）が常に優先されるため、先読みが表示を遅らせない。

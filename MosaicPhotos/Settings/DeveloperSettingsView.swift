@@ -43,6 +43,9 @@ struct DeveloperSettingsView: View {
     @State private var faceQuality: FaceQualityReport?
     @State private var isMeasuringFaceQuality = false
     @State private var faceDetect: FaceDetectionStats.Snapshot?
+    /// クラウド顔スキャンの歩留まり計測（ADR-89）。
+    @State private var yieldRunner = FaceYieldMeasurementRunner()
+    @State private var yieldSampleSize = 5_000
 
     private let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
 
@@ -55,6 +58,7 @@ struct DeveloperSettingsView: View {
             backgroundTaskDebugSection
             peopleDebugSection
             albumsDebugSection
+            faceYieldSection
             placesDebugSection
             MemoryDebugSection()
             LocalPhotoDebugSection()
@@ -300,6 +304,44 @@ struct DeveloperSettingsView: View {
         } footer: {
             Text("生成済みアルバムと写真の解析データ（タグ／埋め込み等）を消去します。次回の夜間処理で"
                  + "作り直されます。")
+        }
+    }
+
+    // MARK: - 計測：クラウド顔スキャンの歩留まり（ADR-89）
+
+    /// 「クラウドの埋め込み到達率が低いのはサムネが小さいから」という推定を実データで検証する。
+    /// 撮影日で層化抽出した実写真を 1024px で取得し、顔の正規化サイズから
+    /// 「サイズ × 顔ピクセル下限」の歩留まり表を出す（サイズごとの再取得は不要）。
+    private var faceYieldSection: some View {
+        Section {
+            Picker("Sample size", selection: $yieldSampleSize) {
+                Text("1,000").tag(1_000)
+                Text("5,000").tag(5_000)
+                Text("10,000").tag(10_000)
+                Text("20,000").tag(20_000)
+            }
+            Button {
+                yieldRunner.run(dropboxStore: store, sampleSize: yieldSampleSize)
+            } label: {
+                BusyLabel("クラウド顔スキャンの歩留まりを計測",
+                          busy: "計測中… \(yieldRunner.status)", isBusy: yieldRunner.isRunning)
+            }
+            .disabled(yieldRunner.isRunning)
+            if yieldRunner.isRunning {
+                Button("中止") { yieldRunner.cancel() }
+            }
+            if !yieldRunner.summary.isEmpty {
+                Text(yieldRunner.summary)
+                    .font(.system(.caption2, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        } header: {
+            Text("Face Yield Measurement")
+        } footer: {
+            Text("撮影日で層化抽出した実写真を \(FaceYieldMeasurementRunner.measurementAPISize) で取得し、"
+                 + "サムネサイズ × 顔ピクセル下限ごとの歩留まりを測ります。"
+                 + "通信量の目安は 1 枚 130KB 程度（10,000 枚で約 1.3GB）。Wi-Fi 推奨。"
+                 + "結果は診断ログと Caches/face-yield-report.txt に残ります。")
         }
     }
 

@@ -29,6 +29,8 @@ enum DropboxInternalConstants {
     static let listFolderLatestCursorURL = "https://api.dropboxapi.com/2/files/list_folder/get_latest_cursor"
     static let listFolderLongpollURL = "https://notify.dropboxapi.com/2/files/list_folder/longpoll"
     static let getThumbnailBatchURL = "https://content.dropboxapi.com/2/files/get_thumbnail_batch"
+    /// 単発サムネイル取得（任意サイズ）。歩留まり計測（ADR-89）でのみ使う。
+    static let getThumbnailV2URL = "https://content.dropboxapi.com/2/files/get_thumbnail_v2"
     static let downloadFileURL = "https://content.dropboxapi.com/2/files/download"
 
     // MARK: - Token management
