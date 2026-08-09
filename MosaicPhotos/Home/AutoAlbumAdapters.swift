@@ -73,7 +73,12 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
     let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
     // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
     return await PeopleEngine.makeWithOffMainStore(
-        faceProvider: FacePerceptionAdapter(cloudImage: cloudImage, warmCloud: warmCloud),
+        faceProvider: FacePerceptionAdapter(
+            cloudImage: cloudImage, warmCloud: warmCloud,
+            // 顔解析だけ 1024px をバッチ取得する（ADR-90）。ディスクには保存しない。
+            cloudAnalysisImages: { [weak dropboxStore] paths in
+                await dropboxStore?.faceAnalysisThumbnails(paths: paths) ?? [:]
+            }),
         favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) })
 }
 

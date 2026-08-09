@@ -188,6 +188,28 @@ extension FaceStore {
         negativesCache = nil   // 次スキャンで DB から読み直す（ジャーナルは残存）
     }
 
+    /// **クラウド分だけ**スキャン結果を捨てる（ADR-90）。
+    ///
+    /// 顔解析の取得解像度を 256px → 1024px に上げ、顔ピクセル下限を 48 → 80 に変えたので、
+    /// クラウド写真は測り直す必要がある。一方**ローカルは元から 1024px で処理済み**なので
+    /// 捨てる理由がない。全再スキャン（`reset()`）だと 17,953 枚のローカルまで無駄になるため、
+    /// refKey の接頭辞（"C-"）で選択的に消す。クラスタは残し、再スキャンで合流させる
+    /// （命名も残るので持ち越し処理が不要）。
+    /// - Returns: 破棄したスキャン済みマーカーの件数。
+    func resetCloudScans() -> Int {
+        let cloudFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
+            predicate: #Predicate { $0.refKey.starts(with: "C-") }))) ?? []
+        for face in cloudFaces { modelContext.delete(face) }
+        let cloudMarkers = (try? modelContext.fetch(FetchDescriptor<ScannedPhoto>(
+            predicate: #Predicate { $0.refKey.starts(with: "C-") }))) ?? []
+        for marker in cloudMarkers { modelContext.delete(marker) }
+        try? modelContext.save()
+        // 重心はクラウド顔ぶんがずれるので、キャッシュを捨てて次スキャンで組み直す。
+        clusteringCache = nil
+        negativesCache = nil
+        return cloudMarkers.count
+    }
+
     /// 修正ジャーナルも含めた完全消去（Developer Options の「学習もリセット」用）。
     func resetIncludingCorrections() {
         try? modelContext.delete(model: FaceCorrection.self)

@@ -11,7 +11,8 @@ enum DropboxThumbnailBatchRequest {
     struct Entry: Encodable {
         let path: String
         let format: String = DropboxInternalConstants.thumbnailFormat
-        let size: String = DropboxInternalConstants.thumbnailAPISize
+        /// 取得サイズ。表示用は `thumbnailAPISize`(256px)、**顔解析用は 1024px**（ADR-90）。
+        var size: String = DropboxInternalConstants.thumbnailAPISize
     }
     struct BatchArg: Encodable { let entries: [Entry] }
     struct ResultEntry: Decodable {
@@ -24,8 +25,10 @@ enum DropboxThumbnailBatchRequest {
     // MARK: - Encode / Decode
 
     /// 取得対象パス一覧からリクエストボディ（JSON）を組み立てる。
-    static func encodeBody(paths: [String]) -> Data? {
-        try? JSONEncoder().encode(BatchArg(entries: paths.map { Entry(path: $0) }))
+    /// `size` 省略時は表示用（256px）。顔解析は 1024px を渡す（ADR-90）。
+    static func encodeBody(paths: [String],
+                           size: String = DropboxInternalConstants.thumbnailAPISize) -> Data? {
+        try? JSONEncoder().encode(BatchArg(entries: paths.map { Entry(path: $0, size: size) }))
     }
 
     /// レスポンス JSON を解析し、path ごとの結果（成功=base64 復号済み Data / 失敗=nil）を

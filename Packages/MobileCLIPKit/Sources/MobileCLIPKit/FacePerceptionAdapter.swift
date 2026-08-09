@@ -1,5 +1,8 @@
 import AutoAlbumCore
 import CoreGraphics
+#if canImport(UIKit)
+import UIKit
+#endif
 import CoreImage
 import Foundation
 import MosaicSupport
@@ -16,15 +19,39 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     let cloudImage: (@Sendable (String) async -> CGImage?)?
     /// クラウド path 群のサムネを**一括で先行取得**するヒント（ADR-83・即座に返る）。
     let warmCloud: (@Sendable ([String]) -> Void)?
+    /// **顔解析用 1024px** のバッチ取得（ADR-90）。表示用 256px では顔が小さすぎるため、
+    /// 顔スキャンだけはこちらを使う。取得結果はディスクに残さず `analysisCache` で使い捨てる。
+    let cloudAnalysisImages: (@Sendable ([String]) async -> [String: Data])?
+    /// 1 バッチぶんの 1024px 画像置き場（使ったら破棄）。
+    private let analysisCache = CloudAnalysisImageCache()
 
     public init(cloudImage: (@Sendable (String) async -> CGImage?)? = nil,
-                warmCloud: (@Sendable ([String]) -> Void)? = nil) {
+                warmCloud: (@Sendable ([String]) -> Void)? = nil,
+                cloudAnalysisImages: (@Sendable ([String]) async -> [String: Data])? = nil) {
         self.cloudImage = cloudImage
         self.warmCloud = warmCloud
+        self.cloudAnalysisImages = cloudAnalysisImages
     }
 
+    /// バッチの素材を先に取りに行く（ADR-83）。顔解析は **1024px をバッチ取得**して
+    /// `analysisCache` に積む（ADR-90）。1 枚ずつ取ると 1 枚 0.9 秒＝62,744 枚で 17 時間になるため、
+    /// 表示用と同じ 25 枚/リクエストのバッチに相乗りする。
     public func warmUp(refKeys: [String]) {
-        warmCloudPaths(refKeys, using: warmCloud)
+        guard let cloudAnalysisImages else {
+            warmCloudPaths(refKeys, using: warmCloud)   // 解析取得が無い構成では従来どおり
+            return
+        }
+        let paths = refKeys.compactMap { PhotoRef.decode($0)?.cloudPath }
+        guard !paths.isEmpty else { return }
+        let cache = analysisCache
+        Task(priority: .utility) {
+            let fetched = await cloudAnalysisImages(paths)
+            for (path, data) in fetched {
+                guard let image = UIImage(data: data),
+                      let cg = orientationNormalizedCGImage(image) else { continue }
+                await cache.store(cg, for: path)
+            }
+        }
     }
 
     /// 同梱判定のみ（**ロードを起こさない**・1-a）。実ロードは初回 `detectFaces`→`embed` まで遅延。
@@ -51,9 +78,23 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 // 足る解像度を確保する。メモリ増（約2.6倍/枚）は夜間・1枚ずつ処理＋
                 // メモリ圧迫ゲート（shouldPause）で吸収する。
                 source = await loadLocalCGImage(localID, maxPixel: 1024)
-            } else if let path = ref.cloudPath, let cloudImage {
-                // クラウド: キャッシュ済み 128px サムネを再利用（追加ダウンロード無し・低解像度）。
-                source = await cloudImage(path)
+            } else if let path = ref.cloudPath {
+                // クラウド: 顔解析は **1024px**（ADR-90）。表示用 256px では顔が小さすぎて
+                // 埋め込みに使えなかった（実測 diag-35: 到達率 3.8% → 1024px で 29.7%）。
+                // `warmUp` がバッチ取得した分をここで 1 枚ずつ受け取り、取り出したら破棄する。
+                // 取りこぼし（先読み前・バッチ失敗）は単発取得へフォールバックし、
+                // それも無ければ従来の表示用サムネで代替する（何も出ないよりはよい）。
+                if let warmed = await analysisCache.take(path) {
+                    source = warmed
+                } else if let cloudAnalysisImages,
+                          let data = await cloudAnalysisImages([path])[path],
+                          let image = UIImage(data: data) {
+                    source = orientationNormalizedCGImage(image)
+                } else if let cloudImage {
+                    source = await cloudImage(path)
+                } else {
+                    source = nil
+                }
             } else {
                 source = nil
             }

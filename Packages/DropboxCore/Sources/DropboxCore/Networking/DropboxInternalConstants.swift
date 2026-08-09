@@ -50,6 +50,9 @@ enum DropboxInternalConstants {
     /// 再利用しているため解析品質も上がる。⚠️ 変更時は `DropboxCacheStore` のサイズ変更マーカーが
     /// 旧キャッシュを一度だけ全消去する（ファイル名にサイズが入らないため放置すると旧画像が残る）。
     static let thumbnailAPISize = "w256h256"
+    /// **顔解析用**のサムネサイズ（ADR-90）。表示用（256px）では顔が小さすぎて埋め込みに使えない
+    /// （実測 diag-35: 到達率 3.8% → 1024px で 29.7%）。取得のみで**ディスクには保存しない**。
+    static let faceAnalysisAPISize = "w1024h768"
 
     // MARK: - Sync / list_folder
 

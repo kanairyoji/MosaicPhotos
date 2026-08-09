@@ -16,8 +16,11 @@ public enum FaceQualityGate {
     public static let profileCap: Float = 0.2
     /// 目閉じの品質係数。
     public static let eyesClosedFactor: Float = 0.6
-    /// 顔矩形の最小辺（正規化）。クラウドは低解像度サムネのため大きい顔のみ採る。
-    public static func minFaceSide(isCloud: Bool) -> CGFloat { isCloud ? 0.15 : 0.05 }
+    /// 顔矩形の最小辺（正規化）。
+    /// ⚠️ クラウドの 0.15 は「サムネが 256px しかない」ことの代理指標だった（ADR-90）。
+    /// 解析用に 1024px を取るようになったので、比率ゲートはローカルと同じでよい
+    /// （絶対ピクセル下限 `minFacePixels` が本来の品質条件を担う）。
+    public static func minFaceSide(isCloud: Bool) -> CGFloat { 0.05 }
     /// 顔検出の最低信頼度（VNFaceObservation.confidence）。これ未満は「顔でない」誤検出と
     /// みなして埋め込み自体を行わない（模様・ぼけた物体などの偽陽性対策）。
     public static let minDetectionConfidence: Float = 0.8
@@ -27,8 +30,14 @@ public enum FaceQualityGate {
 
     /// 顔矩形の最小辺（**絶対ピクセル**）。比率を満たしても実ピクセルが小さすぎる顔は
     /// 埋め込みが機能しないため除外する（比率ゲートと二段構え）。
-    /// 顔モデル（facenet）は 160px 入力を期待するため、48px 未満は拡大しても品質が出ない。
-    public static let minFacePixels: CGFloat = 48
+    ///
+    /// **80px の根拠（ADR-90・実測 diag-35）**: 顔モデル（AuraFace）の入力は 112×112 なので、
+    /// 80px なら拡大は 1.4 倍に収まり、埋め込み品質を保てる。旧値 48px は 2.3 倍の拡大になり、
+    /// 「通ったけれど品質が低い」顔を量産していた（クラウドの歩留まりが低い一因）。
+    /// 実写真 571 枚の歩留まり実測（1024px 取得時）:
+    ///   下限 48px → 49.3% ／ **80px → 29.7%** ／ 112px → 18.0%
+    /// 拾える量（29.7%＝現行 3.8% の 8 倍）と品質のつり合いで 80px を採る。
+    public static let minFacePixels: CGFloat = 80
 
     // ぼけゲート（顔クロップを 64px 正方に縮小した輝度のラプラシアン分散・0〜255 スケール）。
     /// これ未満は強いぼけ → 品質をフロア未満へキャップ（クラスタに入れない）。

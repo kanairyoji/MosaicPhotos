@@ -27,6 +27,36 @@ extension DropboxPhotoStore {
         await cache.thumbnail(for: item.path)
     }
 
+    /// **顔解析用**: 1024px のサムネを**バッチで**取得する（ADR-90）。
+    ///
+    /// 表示用（256px）では顔が小さすぎて埋め込みに使えない（実測 diag-35: 到達率 3.8%）。
+    /// 解析には 1024px が要るが、**ディスクには保存しない**（68,200 枚 × 約 91KB＝5.9GB になる）。
+    /// 呼び出し側がメモリ上で使い捨てる。表示用キャッシュ（256px）は従来どおり別経路で埋まる。
+    ///
+    /// ⚠️ 1 枚ずつ取ると 1 枚あたり約 0.9 秒＝62,744 枚で実働 17 時間になる（計測値）。
+    /// 表示用と同じ `get_thumbnail_batch`（25 枚/リクエスト）に相乗りして往復を潰す。
+    public func faceAnalysisThumbnails(paths: [String]) async -> [String: Data] {
+        guard !paths.isEmpty else { return [:] }
+        var out: [String: Data] = [:]
+        for chunk in stride(from: 0, to: paths.count, by: 25).map({
+            Array(paths[$0..<min($0 + 25, paths.count)])
+        }) {
+            guard let body = DropboxThumbnailBatchRequest.encodeBody(
+                    paths: chunk, size: DropboxInternalConstants.faceAnalysisAPISize),
+                  let data = try? await apiClient.rpc(
+                    url: DropboxInternalConstants.getThumbnailBatchURL, jsonBody: body),
+                  let results = DropboxThumbnailBatchRequest.decodeResults(from: data, paths: chunk)
+            else {
+                DropboxLogger.error("faceAnalysisThumbnails() batch failed (\(chunk.count) items)")
+                continue
+            }
+            for (path, imageData) in results {
+                if let imageData { out[path] = imageData }
+            }
+        }
+        return out
+    }
+
     /// **計測用**: 任意サイズのサムネイルを 1 枚だけ取得する（ADR-89）。
     ///
     /// 本番の取得経路（`DropboxThumbnailBatcher`）はサイズが固定（`thumbnailAPISize`）で、

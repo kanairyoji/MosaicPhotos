@@ -32,9 +32,10 @@ struct FaceInfoExpansionTests {
 
     @Test("顔サイズ閾値はクラウドの方が大きい（低解像度サムネ対策）")
     func minFaceSide() {
-        #expect(FaceQualityGate.minFaceSide(isCloud: true) > FaceQualityGate.minFaceSide(isCloud: false))
+        // ADR-90: 顔解析は 1024px を取るようになったので、クラウドの比率ゲートを
+        // 特別扱いしない（品質条件は絶対ピクセル下限 minFacePixels が担う）。
+        #expect(FaceQualityGate.minFaceSide(isCloud: true) == FaceQualityGate.minFaceSide(isCloud: false))
         #expect(FaceQualityGate.minFaceSide(isCloud: false) == 0.05)
-        #expect(FaceQualityGate.minFaceSide(isCloud: true) == 0.15)
     }
 
     // MARK: - ぼけ・露出ゲート（ADR-52）
@@ -93,7 +94,8 @@ struct FaceInfoExpansionTests {
 
     @Test("絶対ピクセルの最小顔サイズが定義されている")
     func minFacePixels() {
-        #expect(FaceQualityGate.minFacePixels == 48)
+        // ADR-90: モデル入力 112px に対して拡大 1.4 倍までに収める（実測 diag-35 で 80px を採用）。
+        #expect(FaceQualityGate.minFacePixels == 80)
     }
 
     // MARK: - 品質フロア 0.40（FaceStore 経由）

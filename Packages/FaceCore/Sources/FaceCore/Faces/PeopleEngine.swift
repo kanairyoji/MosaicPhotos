@@ -135,6 +135,8 @@ public final class PeopleEngine {
             // 版上げ（埋め込みパイプライン変更＝ADR-51）なら全再スキャンへ移行する
             //（命名は写真の重なりで持ち越し・修正ジャーナルは残す）。
             await self.migrateScanVersionIfNeeded()
+            // クラウドの取得解像度・下限を変えた場合はクラウド分だけ測り直す（ADR-90）。
+            await self.migrateCloudAnalysisIfNeeded()
             await self.tagger.scan(
                 candidateRefKeys: candidateRefKeys,
                 allowSimulator: allowSimulator,
@@ -202,6 +204,25 @@ public final class PeopleEngine {
             await loadPeople()
         }
         UserDefaults.standard.set(current, forKey: Self.faceScanVersionKey)
+    }
+
+    /// クラウド顔解析の版（ADR-90）。取得解像度・顔ピクセル下限を変えたら上げる。
+    /// **ローカルには影響させない**（元から 1024px で処理済み＝測り直す理由がない）。
+    static let cloudAnalysisVersion = 1
+    private static let cloudAnalysisVersionKey = "faceCloudAnalysisVersion"
+
+    /// 版が上がっていたらクラウド分のスキャン結果だけ捨てて測り直す。
+    /// クラスタと命名は残るので、再スキャンした顔は既存の人物へ合流する。
+    private func migrateCloudAnalysisIfNeeded() async {
+        let stored = UserDefaults.standard.integer(forKey: Self.cloudAnalysisVersionKey)
+        guard stored < Self.cloudAnalysisVersion else { return }
+        let discarded = await store.resetCloudScans()
+        if discarded > 0 {
+            Diagnostics.mark("faces: cloud analysis v\(stored)→v\(Self.cloudAnalysisVersion) "
+                             + "— discarded \(discarded) cloud scans (local kept)")
+            await loadPeople()
+        }
+        UserDefaults.standard.set(Self.cloudAnalysisVersion, forKey: Self.cloudAnalysisVersionKey)
     }
 
     /// 持ち越し名の再適用（スキャンセッションの末尾で呼ぶ）。全件消化したらファイルを消す。
