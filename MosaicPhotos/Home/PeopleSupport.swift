@@ -122,9 +122,20 @@ func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600)
     if let localID = ref.localIdentifier {
         source = await requestAspectCGImage(localID, maxPixel: maxPixel)
     } else if let path = ref.cloudPath {
-        // クラウド顔: Dropbox のキャッシュ済み 128px サムネから切り抜く（低解像度アバター・追加DL無し）。
-        source = await HeavyWorkScheduler.stores?.dropboxStore.thumbnail(for: dropboxFileItem(path: path))
-            .flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（検出座標と同じ向きに）
+        // クラウド顔: Dropbox の**キャッシュ済み**サムネから切り抜く（追加DL無し・ADR-88）。
+        // ⚠️ 以前は `thumbnail(for:)` を呼んでおり、コメントの「追加DL無し」に反して未キャッシュなら
+        //    ダウンロードを待っていた。グリッド（86k 枚）のサムネ要求で行列が飽和すると 1 件 10 秒級に
+        //    なり、ピープルのアバターが延々出ない・レビュー画面が固まる原因になっていた（実測 diag-34）。
+        //    アバターは「出なければ出ないでよい」情報なので、キャッシュに無ければ即諦める。
+        let item = dropboxFileItem(path: path)
+        let store = HeavyWorkScheduler.stores?.dropboxStore
+        if let cached = await store?.cachedThumbnail(for: item) {
+            source = orientationNormalizedCGImage(cached)   // EXIF 回転を正規化（検出座標と同じ向きに）
+        } else {
+            // 次回の表示に間に合うよう温めておく（低優先・回線ポリシー内＝ADR-81）。
+            store?.prefetch([item], targetSize: .zero)
+            source = nil
+        }
     } else {
         source = nil
     }

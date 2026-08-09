@@ -129,6 +129,29 @@ actor FaceStore {
             FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
     }
 
+    /// クラスタのメンバー写真（refKey）だけを取る**射影クエリ**（ADR-88）。
+    /// 共起判定に必要なのは refKey の集合だけなのに、`faces(inCluster:)` で全カラムを
+    /// materialize すると、レビュー候補の生成（全クラスタを走査）で数万件の @Model が
+    /// 立ち上がり、実測 1.2〜1.4 秒のフリーズとメモリ跳ね上がりの原因になっていた。
+    func memberRefKeys(inCluster clusterID: Int) -> Set<String> {
+        let cid = clusterID
+        var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid })
+        d.propertiesToFetch = [\.refKey]
+        return Set(((try? modelContext.fetch(d)) ?? []).map(\.refKey))
+    }
+
+    /// クラスタの代表顔を取る（ADR-88）。`coverFaceID` があればその 1 件だけを引き、
+    /// 無ければ品質上位の少数から選ぶ。全メンバーの materialize を避けるための軽量版。
+    func bestCoverFace(inCluster clusterID: Int, coverFaceID: String?) -> DetectedFace? {
+        if let coverFaceID, let f = face(byID: coverFaceID) { return f }
+        let cid = clusterID
+        var d = FetchDescriptor<DetectedFace>(
+            predicate: #Predicate { $0.clusterID == cid },
+            sortBy: [SortDescriptor(\.quality, order: .reverse)])
+        d.fetchLimit = 16   // 品質上位だけ見れば代表は決まる（笑顔・大きさの微調整のみ）
+        return Self.bestCoverFace((try? modelContext.fetch(d)) ?? [])
+    }
+
     func faces(inPhoto refKey: String) -> [DetectedFace] {
         let key = refKey
         return (try? modelContext.fetch(

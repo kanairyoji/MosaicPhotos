@@ -32,11 +32,11 @@ extension FaceStore {
             centroid[c.clusterID] = FaceClustering.normalized(sum)
             // 未命名は空（UI は名前ラベルを出さない。"Person N" は誰か分からず判断の助けにならない）。
             name[c.clusterID] = (c.name?.isEmpty == false) ? (c.name ?? "") : ""
-            let members = faces(inCluster: c.clusterID)
-            photoSets[c.clusterID] = Set(members.map(\.refKey))
-            let cover = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
-                ?? Self.bestCoverFace(members)
-            if let f = cover {
+            // ADR-88: 以前はクラスタごとに全メンバーを materialize していた（`faces(inCluster:)`）。
+            // 母数が数万件に育つと 1 回の候補生成で 1.2〜1.4 秒フリーズし、メモリも跳ねていた。
+            // 必要なのは「refKey の集合」と「代表顔 1 件」だけなので、それぞれ軽量クエリで取る。
+            photoSets[c.clusterID] = memberRefKeys(inCluster: c.clusterID)
+            if let f = bestCoverFace(inCluster: c.clusterID, coverFaceID: c.coverFaceID) {
                 coverFace[c.clusterID] = PersonInfo.Face(
                     faceID: f.faceID, refKey: f.refKey,
                     boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh))

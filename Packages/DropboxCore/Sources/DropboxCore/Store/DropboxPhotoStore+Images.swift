@@ -17,6 +17,16 @@ extension DropboxPhotoStore {
         await thumbnailBatcher.thumbnail(for: item)
     }
 
+    /// **キャッシュ済み（メモリ/ディスク）のサムネだけ**を返す。ネットワークは一切使わない（ADR-88）。
+    ///
+    /// `thumbnail(for:)` はバッチャ経由で**未キャッシュならダウンロードを待つ**。行列が混んでいると
+    /// 1 件 10 秒級になり（実測 diag-34: `thumb.missWaitMs` 平均 10.3 秒）、顔アバターのような
+    /// 「出なくてもよいが待たされては困る」用途には使えない。そちらはこの API を使い、
+    /// 無ければ即 nil で諦める（必要なら `prefetch` で温める）。
+    public func cachedThumbnail(for item: DropboxFileItem) async -> UIImage? {
+        await cache.thumbnail(for: item.path)
+    }
+
     /// スクロール先サムネイルの先読み。バッチャの**低優先・LIFO・上限つき**プールへ積む。
     /// キャッシュ済み（メモリ/ディスク）は `thumbnailExists` で除外しネットワークを使わない。
     /// 可視セル要求（`thumbnail(for:)`）が常に優先されるため、先読みが表示を遅らせない。

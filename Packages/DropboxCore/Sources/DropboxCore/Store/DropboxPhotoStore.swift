@@ -121,12 +121,17 @@ public final class DropboxPhotoStore {
     private func reflectCachedItems(accountId: String) async -> Int {
         let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
         let favPaths = cloudFavoritePaths
-        let sig = await Task.detached(priority: .utility) {
-            Self.itemsSignature(raw, favoritePaths: favPaths)
+        // ⚠️ 署名計算**と刻印（68,200 件の map）を同じ detached でまとめて**行う（ADR-88）。
+        // 以前は署名だけオフメインで、`stampFavorites(raw)` は @MainActor のここで実行しており、
+        // 起動のたびにメインが 2.5〜3.4 秒止まっていた（実測 diag-34・`cache.fetchItems` 直後）。
+        // メインは完成した配列を代入するだけにする。
+        let (sig, stamped) = await Task.detached(priority: .utility) {
+            (Self.itemsSignature(raw, favoritePaths: favPaths),
+             favPaths.isEmpty ? raw : raw.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
         }.value
         if sig != lastItemsSignature {
             lastItemsSignature = sig
-            items = stampFavorites(raw)
+            items = stamped
         }
         updateLoadStatus()
         updateDebugInfo()
