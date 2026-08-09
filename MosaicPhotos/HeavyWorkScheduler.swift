@@ -192,6 +192,36 @@ enum HeavyWorkScheduler {
         }
     }
 
+    /// 「残作業があるのに長期間動いていない」解析パスを診断ログへ出す（ADR-87）。
+    /// 飢餓バグ（ADR-72/85/86）は**沈黙として現れる**ため、こちらから沈黙を検出しにいく。
+    /// 判定は `AnalysisStallCheck`（純ロジック・テスト済み）。健全なら何も出さない。
+    private static func logStalledPasses(stores: HomeStores) async {
+        let progress = await stores.autoAlbumEngine.analysisProgress()
+        let states: [AnalysisStallCheck.PassState] = [
+            .init(pass: .sceneTags, pending: max(0, progress.total - progress.sceneTagged),
+                  lastActivity: AnalysisActivity.lastActivity(.sceneTags)),
+            .init(pass: .embeddings, pending: max(0, progress.total - progress.embedded),
+                  lastActivity: AnalysisActivity.lastActivity(.embeddings)),
+            .init(pass: .captions, pending: max(0, progress.captionableTotal - progress.captioned),
+                  lastActivity: AnalysisActivity.lastActivity(.captions)),
+            .init(pass: .faces, pending: stores.peopleEngine.remaining,
+                  lastActivity: AnalysisActivity.lastActivity(.faces)),
+        ]
+        // 一度も動いていないパスは「この端末で解析が始まり得た時刻」からの経過で判定する。
+        // 初回起動時刻が無ければ今を記録しておく（新規インストール直後の誤検知を防ぐ）。
+        let key = AppSettingsKeys.firstLaunchAt
+        let installedAt: Date
+        if let stored = UserDefaults.standard.object(forKey: key) as? Double {
+            installedAt = Date(timeIntervalSinceReferenceDate: stored)
+        } else {
+            installedAt = Date()
+            UserDefaults.standard.set(installedAt.timeIntervalSinceReferenceDate, forKey: key)
+        }
+        if let line = AnalysisStallCheck.logLine(states, now: Date(), installedAt: installedAt) {
+            Diagnostics.mark(line)
+        }
+    }
+
     /// D: 最終実行の記録（Developer Options で表示）。ログを開かずに夜間実行の有無を確認できる。
     private static func recordLastRun(started: Date, outcome: String) {
         let f = DateFormatter()
@@ -229,21 +259,28 @@ enum HeavyWorkScheduler {
         // あるので、放置するとキャプションが**永久に飢餓**する（ADR-86）。実測: VLM を同梱して
         // いるのに `captions:` が全ログで 0 件だった。N 窓に 1 回は「キャプション窓」にして
         // 顔スキャンを起こさない（バックアップの順番回し＝ADR-72 と同じ考え方）。
+        // 判定は `TurnTaking`（純ロジック・テスト済み＝ADR-87）に集約する。
+        // 「連続 maxDeferrals 回譲ったら必ず取る」不変条件がテストで固定されている。
         let pendingCaptions = await stores.autoAlbumEngine.pendingCaptionCount()
-        let captionDeferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.captionDeferralStreak)
-        if pendingCaptions > 0, captionDeferrals >= Self.maxCaptionDeferrals {
-            UserDefaults.standard.set(0, forKey: AppSettingsKeys.captionDeferralStreak)
+        let captionTurn = TurnTaking.nextTurn(
+            hasWork: pendingCaptions > 0,
+            blockedByOther: true,          // 顔スキャンは毎窓走るので常にブロック側とみなす
+            streak: UserDefaults.standard.integer(forKey: AppSettingsKeys.captionDeferralStreak),
+            maxDeferrals: Self.maxCaptionDeferrals)
+        UserDefaults.standard.set(captionTurn.streak, forKey: AppSettingsKeys.captionDeferralStreak)
+        if captionTurn.take {
             Diagnostics.mark("bgtask: caption window (face scan skipped, pending=\(pendingCaptions))")
         } else {
-            if pendingCaptions > 0 {
-                UserDefaults.standard.set(captionDeferrals + 1, forKey: AppSettingsKeys.captionDeferralStreak)
-            }
             // 一時停止で滞留した既存タスクはゲートが開けば内部で自動再開する（真因の画像ロードハングは修正済み）。
             stores.peopleEngine.startScan(
                 candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
                 allowSimulator: allowSim)
         }
         stores.autoAlbumEngine.scheduleBackgroundFill()
+
+        // 「動くべきなのに動いていない」パスを毎窓チェックして診断ログへ（ADR-87）。
+        // 飢餓バグは沈黙として現れるため、こちらから沈黙を検出しにいく。
+        await logStalledPasses(stores: stores)
 
         // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
         // 3-b: **AI（CLIP 埋め込み）の残作業が無い窓でだけ**開始する。両方ともメモリ/IO が重く、

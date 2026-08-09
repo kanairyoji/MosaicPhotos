@@ -19,4 +19,6 @@ enum AppSettingsKeys {
     static let backupDeferralStreak = "backup.deferralStreak"
     /// キャプションが顔スキャンに譲り続けた回数（ADR-86・上限で「キャプション窓」にする）。
     static let captionDeferralStreak = "caption.deferralStreak"
+    /// この端末で解析が始まり得た時刻（ADR-87・停滞検出の基準。未実行パスの誤検知を防ぐ）。
+    static let firstLaunchAt = "analysis.firstLaunchAt"
 }
