@@ -27,6 +27,10 @@ enum HeavyWorkScheduler {
     /// 埋め込みが残っていてもバックアップの窓を 1 回明け渡す（飢餓の防止・上記 1.5 を参照）。
     private static let maxBackupDeferrals = 3
 
+    /// キャプションが顔スキャンに譲れる連続回数の上限（ADR-86）。これを超えたら
+    /// その窓は顔スキャンを起こさず、キャプションに順番を回す（顔スキャンは差分なので次窓で続く）。
+    private static let maxCaptionDeferrals = 3
+
     /// フォアグラウンドで構築済みのストア群（RootView が設定）。アプリがメモリに残ったまま
     /// BG 起動された場合はこれを再利用し、プロセス再起動時のみ作り直す。
     static var stores: HomeStores?
@@ -219,10 +223,26 @@ enum HeavyWorkScheduler {
         // Simulator」トグル ON 時）。これが無いと Run BG routine を押しても People が増えなかった。
         let allowSim = BackgroundYield.debugForceHeavyWork
             || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
-        // 一時停止で滞留した既存タスクはゲートが開けば内部で自動再開する（真因の画像ロードハングは修正済み）。
-        stores.peopleEngine.startScan(
-            candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
-            allowSimulator: allowSim)
+
+        // ⚠️ 顔スキャンとキャプションは **VLM(≈877MB)＋顔モデルの同時常駐を避けるため排他**
+        // （bgfill 側が `isScanningFaces` 中はキャプションを見送る）。顔スキャンの母数は数万枚
+        // あるので、放置するとキャプションが**永久に飢餓**する（ADR-86）。実測: VLM を同梱して
+        // いるのに `captions:` が全ログで 0 件だった。N 窓に 1 回は「キャプション窓」にして
+        // 顔スキャンを起こさない（バックアップの順番回し＝ADR-72 と同じ考え方）。
+        let pendingCaptions = await stores.autoAlbumEngine.pendingCaptionCount()
+        let captionDeferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.captionDeferralStreak)
+        if pendingCaptions > 0, captionDeferrals >= Self.maxCaptionDeferrals {
+            UserDefaults.standard.set(0, forKey: AppSettingsKeys.captionDeferralStreak)
+            Diagnostics.mark("bgtask: caption window (face scan skipped, pending=\(pendingCaptions))")
+        } else {
+            if pendingCaptions > 0 {
+                UserDefaults.standard.set(captionDeferrals + 1, forKey: AppSettingsKeys.captionDeferralStreak)
+            }
+            // 一時停止で滞留した既存タスクはゲートが開けば内部で自動再開する（真因の画像ロードハングは修正済み）。
+            stores.peopleEngine.startScan(
+                candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
+                allowSimulator: allowSim)
+        }
         stores.autoAlbumEngine.scheduleBackgroundFill()
 
         // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。

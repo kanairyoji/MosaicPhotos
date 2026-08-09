@@ -186,6 +186,13 @@ public final class AutoAlbumEngine {
     /// 未 CLIP 埋め込みの写真数（3-b: バックアップを AI 残作業と同一窓で走らせないための判定用）。
     public func pendingEmbedCount() async -> Int { await store.unembeddedCount() }
 
+    /// キャプション未生成のお気に入り枚数（VLM 未同梱なら 0）。夜間の窓配分に使う（ADR-86）。
+    public func pendingCaptionCount() async -> Int {
+        guard tagTagger.isCaptioningAvailable else { return 0 }
+        await refreshFavoritesCache()
+        return await tagStore.captionPendingCount(favorites: favoritesCache)
+    }
+
     /// 顔スキャンの実測（refKey → 顔数）を AI アルバム評価に結線する（「人が写っていない」等の
     /// 除外判定に使う）。FaceStore は別コンテナ（PeopleEngine 側）のため、init 連鎖ではなく
     /// Composition Root（アプリの AutoAlbumAdapters）から注入する。

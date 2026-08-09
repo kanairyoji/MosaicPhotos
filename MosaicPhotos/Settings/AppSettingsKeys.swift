@@ -17,4 +17,6 @@ enum AppSettingsKeys {
     /// CLIP 埋め込みの残作業を理由にバックアップを**連続で見送った回数**。
     /// 上限に達したら埋め込みが残っていてもバックアップへ窓を明け渡す（`HeavyWorkScheduler`・飢餓防止）。
     static let backupDeferralStreak = "backup.deferralStreak"
+    /// キャプションが顔スキャンに譲り続けた回数（ADR-86・上限で「キャプション窓」にする）。
+    static let captionDeferralStreak = "caption.deferralStreak"
 }

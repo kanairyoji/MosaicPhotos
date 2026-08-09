@@ -178,6 +178,8 @@ final class BackupRunner {
         let totalSkipped = alreadySkipped + tally.skippedRead
             + (pending.count - tally.uploaded - tally.skippedRead)
         addLog("Done — uploaded: \(tally.uploaded), skipped: \(totalSkipped)")
+        // 完了は診断ログにも残す（ADR-86・addLog はアプリ内バッファのみ＝実行有無が追えなかった）。
+        Diagnostics.mark("backup: done — uploaded=\(tally.uploaded) skipped=\(totalSkipped)")
         setPhase(.completed(uploaded: tally.uploaded, skipped: totalSkipped))
         // バックアップ完了後のアルバム一覧更新（loadAlbums）は engine 側で行う（戻り値 true で通知）。
         return true

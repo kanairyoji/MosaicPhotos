@@ -231,10 +231,20 @@ public final class BackupEngine {
     /// 宛先が Dropbox に設定されているときだけ、手動と同じ経路（上限設定・電源/回線ポーズ込み）で
     /// 実行する。実行中なら何もしない。
     public func startNightlyIfEnabled() {
-        guard !isRunning else { return }
+        // ⚠️ 診断ログへ**結果を必ず残す**（ADR-86）。`addLog` はアプリ内のバッファ（Developer
+        // Options 表示用）にしか入らないため、`bgtask: backup turn` が出ていても実際に走ったのか
+        // 設定で無効なのか、診断ログからは区別できなかった（実機ログの検証で判明）。
+        guard !isRunning else {
+            Diagnostics.mark("backup: skip — already running")
+            return
+        }
         let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
             .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
-        guard destination == .dropbox else { return }
+        guard destination == .dropbox else {
+            Diagnostics.mark("backup: skip — destination is \(destination.rawValue) (not Dropbox)")
+            return
+        }
+        Diagnostics.mark("backup: nightly start")
         let folder = backupNormalizedPath(
             UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                 ?? BackupSettingsKeys.defaultDropboxFolder)
