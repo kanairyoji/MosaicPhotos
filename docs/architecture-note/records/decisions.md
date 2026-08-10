@@ -80,6 +80,17 @@
   で離す。原則: **取り返しのつく操作と、つきにくい操作を隣に置かない**。統合はやり直しに
   顔の移動と修正ジャーナルの巻き戻しが要るので、「押すつもりが無いのに押せる」状態を作らない。
   ※ 1 対 1 のレビュー（`FaceReviewView`）の No/Skip/Yes は既に 50pt 相当あり、変更不要だった。
+- 追記2（起動直後・実フィードバック「起動直後であっても固まるのはまずい」）: 起動区間は
+  ストア構築・68,200 件の読み込み・`pathAlbum.fast`（68,200 件の計算）・顔スキャン開始・
+  サムネのバッチ取得が重なり、メインが 1 秒級で止まる（diagnostics-43 の `hang main=1340ms`）。
+  ホーム画面には既に読み込み表示があったが、いずれも SwiftUI の `ProgressView`＝**メインが
+  止まると一緒に止まる**ため「固まった」ように見えていた（レビュー画面と同じ構図）。
+  → **アプリ側のユーザー向け `ProgressView` を全廃**し `BusySpinner` に統一する:
+  起動画面（`RootView`「Now loading…」）／セクションヘッダの実行中表示／`LoadingRow`／
+  ピープルのスキャン中表示／実行ボタン共通の `BusyLabel`／代表写真ピッカー。
+  この置き換えは起動区間で特に効く——**スピナーはブロック前に画面へ出ている**ので、
+  以後メインが止まっても回り続けるという条件を自然に満たす。
+  ※ Developer Options / 設定の一部は対象外（英語のまま・デバッグ用途）。
 - 関連: `PhotoSourceKit/Views/BusySpinner.swift` / `FaceCore/Faces/FaceStore+People.swift` /
   `MosaicPhotos/Home/FaceReviewView.swift` / `FaceBatchReviewView.swift` / `PersonAlbumView.swift`。
   [[ADR-88]]（射影クエリの初出）・[[ADR-95]]（計測を入れて原因を確定させた経緯）。

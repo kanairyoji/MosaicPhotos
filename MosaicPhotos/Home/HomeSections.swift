@@ -184,7 +184,7 @@ extension HomeView {
                     Text("People")
                     Spacer()
                     if peopleEngine.isScanning {
-                        ProgressView().controlSize(.mini)
+                        BusySpinner().scaleEffect(0.7)   // ADR-96
                     }
                     // 分裂が多いライブラリでは 1 対 1 の確認では追いつかないので、
                     // 「まとめて確認」を先に出す（ADR-68）。
@@ -314,7 +314,11 @@ private func sectionHeader(_ title: LocalizedStringKey, isBusy: Bool,
         Text(title)
         Spacer()
         if isBusy {
-            ProgressView().controlSize(.mini)
+            // ⚠️ 標準の `ProgressView` ではなく `BusySpinner`（ADR-96）。起動直後は
+            //    アルバム生成・場所走査・顔スキャン開始・68,200 件の読み込みが重なり、
+            //    メインが 1 秒級で止まることがある。フレーム駆動のスピナーだと一緒に止まり
+            //    「固まった」ように見えるが、CAAnimation ならその間も回り続ける。
+            BusySpinner().scaleEffect(0.7)
         } else if let onAction {
             Button(action: onAction) {
                 Image(systemName: actionIcon).font(.caption)
@@ -333,7 +337,7 @@ private struct LoadingRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
+            BusySpinner().scaleEffect(0.85)   // メインが止まっても回り続ける（ADR-96）
             Text(text)
                 .font(.callout)
                 .foregroundStyle(.secondary)

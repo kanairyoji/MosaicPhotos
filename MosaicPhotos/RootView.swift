@@ -2,6 +2,7 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
+import PhotoSourceKit
 import MosaicSupport
 import PhotosFeatureKit
 import SwiftUI
@@ -153,7 +154,10 @@ private struct LaunchView: View {
 
                 if showLoadingIndicator {
                     VStack(spacing: 10) {
-                        ProgressView()
+                        // ⚠️ 起動画面こそフレーム駆動では困る（ADR-96）。ストア構築・68,200 件の
+                        //    読み込み・アルバム生成が重なる区間なので、メインが止まっても
+                        //    回り続ける `BusySpinner`（CAAnimation）にする。
+                        BusySpinner(style: .large)
                         Text("Now loading…")
                             .font(.callout)
                             .foregroundStyle(.secondary)

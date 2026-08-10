@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import PhotoSourceKit
 import SwiftUI
 
 /// ピープル（顔クラスタ）の代表写真＝トップに出す顔を選ぶピッカー。
@@ -17,7 +18,8 @@ struct PersonCoverPickerView: View {
         NavigationStack {
             Group {
                 if !loaded {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // 顔の一覧取得中。メインが止まっても回り続ける表示にする（ADR-96）。
+                    Color.clear.busyOverlay(true, text: L("Loading faces…"))
                 } else if candidates.isEmpty {
                     Text(L("No photos for this person."))
                         .foregroundStyle(.secondary)

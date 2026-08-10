@@ -1,3 +1,4 @@
+import PhotoSourceKit
 import SwiftUI
 
 // MARK: - Busy label（実行ボタン共通のスピナー付きラベル）
@@ -29,7 +30,9 @@ struct BusyLabel: View {
 
     var body: some View {
         if isBusy {
-            HStack { ProgressView().controlSize(.small); busy }
+            // 実行ボタンは押した直後にメインが止まりがち（再解析・生成・クリア）。
+            // メインが止まっても回り続けるスピナーにする（ADR-96）。
+            HStack { BusySpinner().scaleEffect(0.85); busy }
         } else {
             idle
         }
