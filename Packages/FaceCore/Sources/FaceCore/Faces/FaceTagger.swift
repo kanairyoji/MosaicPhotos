@@ -88,17 +88,25 @@ final class FaceTagger {
                 if end < aheadEnd { provider.warmUp(refKeys: Array(todo[end..<aheadEnd])) }
                 return Array(todo[index..<end])
             },
-            processUnit: { refKey in
+            processUnit: { refKey -> (refKey: String, faces: [DetectedFaceSignal])? in
                 // ANE 直列化ゲート（diagnostics-19）は **provider 側（FacePerceptionAdapter）の内側**で
                 // 取る。ここで包むと画像ロードまでゲートに入り、その間ほかの解析が全部止まるため
                 // （ADR-73）。ここでは包まないこと＝包むと入れ子になる。
                 let one = await provider.detectFaces(refKeys: [refKey])
-                // 顔ゼロ（dict に無い）も走査済み（空配列）＝再スキャンしない。
-                return (refKey: refKey, faces: one[refKey] ?? [])
+                // ⚠️ dict に**キーが無い**＝画像を取得できず解析していない（ADR-92）。
+                // これを「顔ゼロで走査済み」として記録すると、版を上げるまで二度と見直されない。
+                // 閲覧中の譲り・回線・バッチ失敗はいずれも一時的なので、記録せず次の窓へ回す。
+                // 解析できた場合は顔ゼロ（空配列）でも記録する＝再スキャンしない。
+                guard let faces = one[refKey] else { return nil }
+                return (refKey: refKey, faces: faces)
             },
-            commitBatch: { batchIndex, batch, records in
-                // records は実際に推論まで到達した写真のみ（キャンセル時の途中まで）。
-                guard !records.isEmpty else { return .stop }
+            commitBatch: { batchIndex, batch, results in
+                // 解析できた写真だけを記録する（nil＝画像が取れず未解析なので記録しない）。
+                let records = results.compactMap { $0 }
+                guard !records.isEmpty else {
+                    // 全件が未解析（例: 閲覧中でずっと譲った）。バッチ自体は進めて次へ。
+                    return batch.isEmpty ? .stop : .proceed
+                }
                 facesFound += records.reduce(0) { $0 + $1.faces.count }
                 await store.recordScans(records)   // T3: save はバッチ 1 回
                 processed += batch.count

@@ -90,8 +90,14 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                           let data = await cloudAnalysisImages([path])[path],
                           let image = UIImage(data: data) {
                     source = orientationNormalizedCGImage(image)
+                } else if cloudAnalysisImages != nil {
+                    // ⚠️ 1024px が取れないときは **256px へ落とさない**（ADR-92）。
+                    // 落とすと「顔が採れないまま**スキャン済みとして記録**」され、版を上げるまで
+                    // 二度と見直されない。取得できない理由は一時的（閲覧中で譲った・回線・
+                    // バッチ失敗）なことが多いので、**この写真は今回見送る**（下流が未記録にする）。
+                    source = nil
                 } else if let cloudImage {
-                    source = await cloudImage(path)
+                    source = await cloudImage(path)   // 解析取得を注入しない構成（テスト等）
                 } else {
                     source = nil
                 }

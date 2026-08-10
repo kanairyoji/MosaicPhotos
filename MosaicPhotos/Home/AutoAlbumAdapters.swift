@@ -4,6 +4,7 @@ import CoreGraphics
 import DropboxKit
 import Foundation
 import MobileCLIPKit
+import MosaicSupport
 import UIKit
 
 /// アプリのアダプタ（Dropbox / バックアップ / 人物 / Vision / CLIP）を結線して `AutoAlbumEngine` を
@@ -76,8 +77,20 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
         faceProvider: FacePerceptionAdapter(
             cloudImage: cloudImage, warmCloud: warmCloud,
             // 顔解析だけ 1024px をバッチ取得する（ADR-90）。ディスクには保存しない。
+            //
+            // ⚠️ **閲覧中は取りに行かない**（ADR-92）。この取得は表示用サムネと同じ回線を使うが、
+            // 表示用バッチャ（可視セル優先・先読みは低優先）の**優先度制御を通らない**ため、
+            // 素通しだと閲覧中のサムネを押しのける。実測 diag-36 で `thumb.missWaitMs` が
+            // 1 件 8.6 秒に達し、前面ハングが 2 件→19 件（最大 10.3 秒）に悪化した。
+            // 判定は既存の `BackgroundYield.uiBusy`（写真ビュー表示中・フル画像取得中・
+            // 表示サムネ取得中・メモリ圧迫）に一元化する。譲った回は空を返すだけで、
+            // 顔スキャンは次のバッチで拾い直す（差分処理なので取りこぼさない）。
             cloudAnalysisImages: { [weak dropboxStore] paths in
-                await dropboxStore?.faceAnalysisThumbnails(paths: paths) ?? [:]
+                guard await !MainActor.run(body: { BackgroundYield.uiBusy }) else {
+                    PerfTrace.count("faceAnalysis.yield")
+                    return [:]
+                }
+                return await dropboxStore?.faceAnalysisThumbnails(paths: paths) ?? [:]
             }),
         favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) })
 }
