@@ -139,28 +139,53 @@ struct FaceBatchReviewView: View {
         }
     }
 
+    /// 下部の操作領域。
+    ///
+    /// ⚠️ 配置の意図（実フィードバック）: 以前は「全て選択」「次の人物へ」が文字だけのボタンで、
+    /// タップ領域が文字の高さしかなく（HIG の最小 44pt を大きく下回る）、しかも確定操作である
+    /// 「N 件をまとめる」との間隔が 8pt しか無かった。補助操作を押したつもりで**統合してしまう**
+    /// 配置だったので、(1) 補助操作を 44pt の枠付きボタンにし、(2) 区切り線と余白で確定操作から
+    /// はっきり離す。統合はやり直しが面倒（顔の移動＋修正ジャーナルへの記録）なので、
+    /// 「押すつもりが無いのに押せてしまう」状態を作らない。
     private func footer(_ item: FaceBatchReviewItem) -> some View {
-        VStack(spacing: 8) {
-            HStack {
-                Button(allSelected ? L("Clear all") : L("Select all")) {
+        VStack(spacing: 0) {
+            // 補助操作: 押し間違えても取り返しがつく（選択の切替／この人物を飛ばす）。
+            HStack(spacing: 12) {
+                Button {
                     selected = allSelected ? [] : Set(item.candidates.map(\.clusterID))
+                } label: {
+                    Text(allSelected ? L("Clear all") : L("Select all"))
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                Spacer()
+                .buttonStyle(.bordered)
+                .disabled(isApplying)
+
                 // 候補が全部別人のときの出口。この基準を終えて別の人物へ移る。
-                Button(L("Next person")) { Task { await skipAnchor(item) } }
-                    .disabled(isApplying)
+                Button {
+                    Task { await skipAnchor(item) }
+                } label: {
+                    Text(L("Next person"))
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isApplying)
             }
-            .font(.subheadline)
+
+            Divider().padding(.top, 18)
+
+            // 確定操作。補助操作から区切り線＋上下 18pt ぶん離す。
             Button {
                 Task { await apply(item) }
             } label: {
                 Label(L("Merge \(selected.count)"), systemImage: "person.2.badge.plus")
-                    .font(.body.weight(.medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 50)
             }
             .buttonStyle(.borderedProminent)
             .disabled(isApplying || selected.isEmpty)
+            .padding(.top, 18)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 20)

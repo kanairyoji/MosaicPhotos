@@ -52,6 +52,13 @@
   約 33ms の遅延を足す（体感より「無反応に見えない」ことを優先）。(b) 射影から漏れたプロパティに
   触れると SwiftData がフォールトで個別ロードするため、`peopleClusters` が使う項目を増やすときは
   `propertiesToFetch` の更新を忘れないこと（漏れても正しく動くが遅くなる）。
+- 追記（一括レビューのボタン配置・実フィードバック）: 「全て選択／次の人物へが小さすぎる。
+  配置的に『N 件をまとめる』を間違えて押しそう」。原因は 2 つで、(1) 補助操作が文字だけのボタンで
+  タップ領域が文字の高さしかなかった（HIG の最小 44pt を大きく下回る）、(2) 確定操作との間隔が
+  8pt しか無かった。→ 補助操作を **44pt の枠付きボタン**にし、確定操作とは**区切り線＋上下 18pt**
+  で離す。原則: **取り返しのつく操作と、つきにくい操作を隣に置かない**。統合はやり直しに
+  顔の移動と修正ジャーナルの巻き戻しが要るので、「押すつもりが無いのに押せる」状態を作らない。
+  ※ 1 対 1 のレビュー（`FaceReviewView`）の No/Skip/Yes は既に 50pt 相当あり、変更不要だった。
 - 関連: `PhotoSourceKit/Views/BusySpinner.swift` / `FaceCore/Faces/FaceStore+People.swift` /
   `MosaicPhotos/Home/FaceReviewView.swift` / `FaceBatchReviewView.swift` / `PersonAlbumView.swift`。
   [[ADR-88]]（射影クエリの初出）・[[ADR-95]]（計測を入れて原因を確定させた経緯）。
