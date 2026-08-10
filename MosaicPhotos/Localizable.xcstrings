@@ -1724,7 +1724,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "統合する"
+            "value": "統合"
           }
         }
       }
@@ -2529,7 +2529,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "人物を確認"
+            "value": "確認"
           }
         }
       }

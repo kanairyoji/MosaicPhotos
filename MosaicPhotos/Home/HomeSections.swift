@@ -194,6 +194,10 @@ extension HomeView {
                         } label: {
                             Label(L("Merge"), systemImage: "person.2.badge.plus")
                                 .font(.caption.weight(.semibold))
+                                // ⚠️ 言語によらず 1 行に保つ。翻訳が長いとカプセルが 2 行に割れて
+                                // 見出しの高さが跳ね、見栄えが崩れる（実フィードバック）。
+                                .lineLimit(1)
+                                .fixedSize()
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(Color.accentColor.opacity(0.15), in: Capsule())
@@ -207,6 +211,8 @@ extension HomeView {
                         } label: {
                             Label(L("Review"), systemImage: "checkmark.seal.fill")
                                 .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                                .fixedSize()
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(Color.accentColor.opacity(0.15), in: Capsule())
