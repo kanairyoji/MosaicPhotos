@@ -29,13 +29,17 @@ public struct PhotoInsight: Sendable, Equatable {
     public var isScreenshot: Bool
     /// Dropbox へバックアップ済みか。nil = 対象外（クラウド写真）または判定不能。
     public var isBackedUp: Bool?
+    /// この写真の保存場所（端末 / Dropbox）。同じ写真でも入手経路が違うと挙動（解析解像度・
+    /// バックアップ対象か）が変わるため、ユーザーが区別できるように出す。
+    public enum Source: Sendable { case local, cloud }
+    public var source: Source?
     public var status: Status
 
     public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
                 captionPending: Bool = false, ocrText: String? = nil,
                 viewCount: Int? = nil, playCount: Int? = nil, shareCount: Int? = nil,
                 faceCount: Int? = nil, isScreenshot: Bool = false,
-                isBackedUp: Bool? = nil,
+                isBackedUp: Bool? = nil, source: Source? = nil,
                 status: Status = .ready) {
         self.tags = tags
         self.people = people
@@ -48,6 +52,7 @@ public struct PhotoInsight: Sendable, Equatable {
         self.faceCount = faceCount
         self.isScreenshot = isScreenshot
         self.isBackedUp = isBackedUp
+        self.source = source
         self.status = status
     }
 

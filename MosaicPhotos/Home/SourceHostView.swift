@@ -47,6 +47,9 @@ struct SourceHostView<Content: View>: View {
                 // キャッシュのウォーム前は nil（バッジ非表示）＝誤って「未バックアップ」を出さない。
                 if let localID = Self.localIdentifier(fromItemID: id) {
                     insight.isBackedUp = await backupEngine.isBackedUp(localIdentifier: localID)
+                    insight.source = .local
+                } else {
+                    insight.source = .cloud   // "C-…" / 生の Dropbox パス
                 }
                 return insight
             }

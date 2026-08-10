@@ -116,8 +116,10 @@ func cloudPaths(from refKeys: [String]) -> [String] {
 // MARK: - Face avatar
 
 /// 代表顔の写真からアバター（顔の切り抜き）を作る。`box` は Vision の正規化矩形（原点左下）。
+/// **`box` が nil なら切り抜かず写真全体**を返す（ADR-91・レビュー画面の「写真全体」表示）。
+/// 顔だけでは同一人物か判断できない場面（後ろ姿・小さい顔・似た兄弟）で、状況ごと見て判断できる。
 func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600) async -> UIImage? {
-    guard let coverRefKey, let box, let ref = PhotoRef.decode(coverRefKey) else { return nil }
+    guard let coverRefKey, let ref = PhotoRef.decode(coverRefKey) else { return nil }
     let source: CGImage?
     if let localID = ref.localIdentifier {
         source = await requestAspectCGImage(localID, maxPixel: maxPixel)
@@ -140,6 +142,8 @@ func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600)
         source = nil
     }
     guard let cg = source else { return nil }
+    // box なし＝写真全体をそのまま返す（切り抜きの計算をしない）。
+    guard let box else { return UIImage(cgImage: cg) }
     let width = CGFloat(cg.width), height = CGFloat(cg.height)
     let margin: CGFloat = 0.35
     var b = box.insetBy(dx: -box.width * margin, dy: -box.height * margin)

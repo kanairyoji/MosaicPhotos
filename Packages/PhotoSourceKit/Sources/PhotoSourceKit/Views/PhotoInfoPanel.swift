@@ -57,7 +57,8 @@ struct PhotoInfoPanel: View {
     private var insightSection: some View {
         if let insight {
             VStack(alignment: .leading, spacing: 12) {
-                // 状態は常に表示（未処理／解析中／完了が分かるように）。
+                // 保存場所（端末 / Dropbox）→ 解析状態、の順に出す。
+                if let source = insight.source { sourceRow(source) }
                 statusRow(insight.status, hasSignals: insight.hasSignals)
 
                 if insight.isScreenshot {
@@ -157,6 +158,11 @@ struct PhotoInfoPanel: View {
         }
     }
 
+    /// 解析状態の行。**意味のあるときだけ**出す（ADR-91）。
+    /// 以前は解析済みで結果もあるとき「AI analysis」という見出しだけの行が出ていたが、
+    /// 直下にタグ・人物・説明の各セクションが独自の見出しで並ぶため、情報がゼロだった
+    /// （「横にも下にも何も出ていない」＝実フィードバック）。
+    /// 残すのは「まだ解析していない／解析中／解析したが何も見つからなかった」の 3 つ。
     @ViewBuilder
     private func statusRow(_ status: PhotoInsight.Status, hasSignals: Bool) -> some View {
         switch status {
@@ -167,10 +173,23 @@ struct PhotoInfoPanel: View {
             Label(L("AI analysis: in progress…"), systemImage: "hourglass.circle")
                 .font(.caption).foregroundStyle(.secondary)
         case .ready where !hasSignals:
-            Label(L("AI analysis: done"), systemImage: "sparkles")
+            // 「終わったが何も検出されなかった」＝未解析と区別が付くようにはっきり書く。
+            Label(L("AI analysis: nothing detected"), systemImage: "sparkles")
                 .font(.caption).foregroundStyle(.secondary)
         case .ready:
-            Label(L("AI analysis"), systemImage: "sparkles")
+            EmptyView()   // 結果は下の各セクションが語るので、見出しだけの行は出さない
+        }
+    }
+
+    /// 保存場所（端末 / Dropbox）。同じ一覧に混在するので、どちらの写真かを明示する。
+    @ViewBuilder
+    private func sourceRow(_ source: PhotoInsight.Source) -> some View {
+        switch source {
+        case .local:
+            Label(L("On this iPhone"), systemImage: "iphone")
+                .font(.caption).foregroundStyle(.secondary)
+        case .cloud:
+            Label(L("In Dropbox"), systemImage: "cloud")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

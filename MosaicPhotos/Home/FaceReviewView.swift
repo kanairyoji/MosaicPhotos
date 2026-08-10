@@ -16,6 +16,10 @@ struct FaceReviewView: View {
     /// このカードの顔画像が揃ったか。揃うまではカードを出さず、回答もさせない
     /// （前の質問の顔を見たまま答えてしまうのを防ぐ）。次カードは先読みするので通常は一瞬。
     @State private var cardReady = false
+    /// 顔だけでは判断が付かないとき、写真全体に切り替える（ADR-91）。
+    /// 後ろ姿・小さい顔・似た兄弟は、周りの状況（服・場所・一緒に写っている人）が決め手になる。
+    /// カードをまたいで維持する（毎回押し直さなくてよい）。
+    @State private var showsWholePhoto = false
 
     /// 顔アバターの読み込みサイズ。**先読みとキャッシュキーを一致させるため**ここで一元管理する
     /// （表示側と数値がずれると先読みが効かず、毎回プレースホルダから始まる）。
@@ -110,10 +114,12 @@ struct FaceReviewView: View {
             case .isThisPerson(let face, _, let name, let coverFace, _):
                 if let name {
                     // 命名済み: 名前で尋ねられる（誰のことか分かる）。
-                    FaceAvatarImage(refKey: face.refKey, box: face.boundingBox,
+                    FaceAvatarImage(refKey: face.refKey,
+                                    box: showsWholePhoto ? nil : face.boundingBox,
                                     maxPixel: Self.singlePixel)
                         .frame(width: 160, height: 160)
-                        .clipShape(Circle())
+                        .clipShape(RoundedRectangle(cornerRadius: showsWholePhoto ? 14 : 80,
+                                                    style: .continuous))
                     Text(L("Is this “\(name)”?"))
                         .font(.title3.weight(.semibold))
                 } else {
@@ -127,6 +133,8 @@ struct FaceReviewView: View {
                         .font(.title3.weight(.semibold))
                 }
             }
+
+            wholePhotoToggle
 
             Text(L("Your answers teach the app — recognition improves as you review."))
                 .font(.footnote)
@@ -156,17 +164,17 @@ struct FaceReviewView: View {
     private func avatarSpecs(of item: FaceReviewItem) -> [(refKey: String?, box: CGRect?, pixel: CGFloat)] {
         switch item {
         case .samePerson(_, _, let aFace, _, _, let bFace, _):
-            return [(aFace.refKey, aFace.boundingBox, Self.columnPixel),
-                    (bFace.refKey, bFace.boundingBox, Self.columnPixel)]
+            return [(aFace.refKey, avatarBox(aFace), Self.columnPixel),
+                    (bFace.refKey, avatarBox(bFace), Self.columnPixel)]
         case .splitCluster(_, _, let faceA, let faceB, _, _):
-            return [(faceA.refKey, faceA.boundingBox, Self.columnPixel),
-                    (faceB.refKey, faceB.boundingBox, Self.columnPixel)]
+            return [(faceA.refKey, avatarBox(faceA), Self.columnPixel),
+                    (faceB.refKey, avatarBox(faceB), Self.columnPixel)]
         case .isThisPerson(let face, _, let name, let coverFace, _):
             if name != nil {
-                return [(face.refKey, face.boundingBox, Self.singlePixel)]
+                return [(face.refKey, avatarBox(face), Self.singlePixel)]
             }
-            return [(coverFace.refKey, coverFace.boundingBox, Self.columnPixel),
-                    (face.refKey, face.boundingBox, Self.columnPixel)]
+            return [(coverFace.refKey, avatarBox(coverFace), Self.columnPixel),
+                    (face.refKey, avatarBox(face), Self.columnPixel)]
         }
     }
 
@@ -186,15 +194,37 @@ struct FaceReviewView: View {
         }
     }
 
+    /// 表示モードに応じた切り抜き矩形（全体表示は nil＝切り抜かない）。
+    /// **先読みと表示で同じ値**を使う（キャッシュキーに box が入るため、ずれると先読みが無駄になる）。
+    private func avatarBox(_ face: PersonInfo.Face) -> CGRect? {
+        showsWholePhoto ? nil : face.boundingBox
+    }
+
     private func personColumn(face: PersonInfo.Face, name: String) -> some View {
         VStack(spacing: 8) {
-            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: Self.columnPixel)
+            // 写真全体モードでは box を渡さない（loadFaceAvatar が切り抜かず全体を返す）。
+            // 全体は横長のことが多いので、丸ではなく角丸の枠で見せる。
+            FaceAvatarImage(refKey: face.refKey,
+                            box: showsWholePhoto ? nil : face.boundingBox,
+                            maxPixel: Self.columnPixel)
                 .frame(width: 120, height: 120)
-                .clipShape(Circle())
+                .clipShape(RoundedRectangle(cornerRadius: showsWholePhoto ? 12 : 60, style: .continuous))
             if !name.isEmpty {
                 Text(name).font(.subheadline)
             }
         }
+    }
+
+    /// 顔 ⇄ 写真全体の切り替えボタン。
+    private var wholePhotoToggle: some View {
+        Button {
+            showsWholePhoto.toggle()
+        } label: {
+            Label(showsWholePhoto ? L("Show face only") : L("Show whole photo"),
+                  systemImage: showsWholePhoto ? "person.crop.square" : "photo")
+                .font(.footnote)
+        }
+        .buttonStyle(.bordered)
     }
 
     private func answerButton(_ title: String, systemImage: String, tint: Color,

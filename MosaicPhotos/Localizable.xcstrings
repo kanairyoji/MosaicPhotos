@@ -3534,6 +3534,56 @@
           }
         }
       }
+    },
+    "AI analysis: nothing detected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 解析：検出なし"
+          }
+        }
+      }
+    },
+    "On this iPhone": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この iPhone 内"
+          }
+        }
+      }
+    },
+    "In Dropbox": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox 内"
+          }
+        }
+      }
+    },
+    "Show whole photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真全体を表示"
+          }
+        }
+      }
+    },
+    "Show face only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔だけ表示"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
