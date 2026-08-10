@@ -46,7 +46,15 @@
   変わっていなければ fetch しない。
 - 関連: `BackgroundTrickle` / `AutoAlbumEngine+Recognition` / `PeopleEngine` / `FaceStore+People`
   / `DropboxCacheStore` / `DropboxPhotoStore` / `HeavyWorkScheduler` / `PersonAlbumView`。
+- 検証（diagnostics-39・修正後ビルド）: ハング 105 → 9 回、人物リスト発行 101 → 2 回、
+  `cachedItems()` 起動 3 秒で 2 回 → 17 分で 2 回。`bgfill: cancelled after tag phase` が
+  正しく出るようになり、嘘のログは消えた。残り 9 回は (1) ゲート閉のまま準備だけ走る
+  （`bgfill: begin (pause=true)` → 5〜8 秒後に `tags: start` → `0 tagged`）と
+  (2) 起動直後の `loadItems()` 多重実行（`items.isEmpty` ガードを全員がすり抜ける
+  check-then-act の競合）で、いずれも同一コミットで修正。
 - 残課題: キャプションが実際に生成されるか（次の実機ログで `bgfill: captions N done` を確認）。
+  diagnostics-39 は 17 分の前面セッションで `bgtask: begin` が一度も無く（充電＋ロックが必要）、
+  キャプション窓は評価できていない。
   クラウド顔埋め込みの歩留まりは本ログでも 59 枚しか走っておらず（30/87=34.5%）、
   [[ADR-90]]（1024px + 80px）の評価には依然サンプル不足。
 - 教訓: **待つ側が資源を握らない**。「ゲートが開けば自分で再開する」設計は、待っている間に

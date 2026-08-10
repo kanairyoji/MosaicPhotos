@@ -15,6 +15,8 @@ public final class DropboxPhotoStore {
     /// 最後に `items` へ反映したキャッシュの変更リビジョン（`DropboxCacheStore.itemsRevision`）。
     /// 一致していれば全件 fetch を丸ごと省く（ADR-95）。
     @ObservationIgnored private var lastReflectedRevision: Int?
+    /// 実行中の `loadItems()`。起動直後に複数の呼び手が同時に来ても fetch は 1 回に集約する。
+    @ObservationIgnored private var loadTask: Task<Int, Never>?
     public private(set) var loadStatus: LoadStatus = .idle
     public private(set) var debugInfo: String = ""
     /// バックグラウンド同期エンジンの現在状態。SettingsView などで表示に使用する。
@@ -112,7 +114,19 @@ public final class DropboxPhotoStore {
             return
         }
 
-        let count = await reflectCachedItems(accountId: accountId)
+        // ⚠️ 同時呼び出しでも fetch は 1 回だけ（ADR-95 追記）。呼び手（MergedPhotoStore /
+        //    顔スキャンの候補作り / AutoAlbumAdapters）はいずれも `items.isEmpty` で守っているが、
+        //    起動直後は**まだ空**の状態で同時に走るため全員がガードを通り抜け、68,200 行の fetch と
+        //    値型生成が多重に走っていた（実機 diagnostics-39: 起動 3 秒の間に 2 回・各 915ms/1062ms）。
+        //    リビジョンの札も反映前は更新されないので、札だけでは防げない（check-then-act の競合）。
+        if let inFlight = loadTask {
+            _ = await inFlight.value
+            return
+        }
+        let task = Task { await reflectCachedItems(accountId: accountId) }
+        loadTask = task
+        let count = await task.value
+        loadTask = nil
         DropboxLogger.info("loadItems() — \(count) items from cache")
     }
 

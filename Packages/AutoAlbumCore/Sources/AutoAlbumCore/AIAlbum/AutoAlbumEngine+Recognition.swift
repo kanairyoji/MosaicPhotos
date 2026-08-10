@@ -287,6 +287,18 @@ extension AutoAlbumEngine {
             }
             Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
+            // ⚠️ **準備の前にゲートを待つ**（ADR-95 追記）。この下の準備——お気に入り再取得・
+            //    全解析対象キーの取得（約 86k）・`AnalysisOrder.ordered` の並べ替え——は数秒かかる。
+            //    以前はゲート判定より先に走っており、`bgfill: begin (pause=true)` から
+            //    `tags: start` まで実機で 5〜8 秒、その間にメインが 2.0〜3.2 秒ブロックしていた
+            //    （diagnostics-39・起動時と前面復帰時の残ハングの正体）。しかも直後に
+            //    `tags: finished — 0 tagged` で捨てられる＝**やる気が無いときに準備だけしていた**。
+            //    待ちは 60 秒で打ち切られ、フラグを解放して抜ける（居座らない）。
+            if await BackgroundTrickle.waitWhilePaused({ BackgroundYield.heavyShouldPause() }) {
+                Diagnostics.mark("bgfill: gate stayed closed — standing down")
+                return
+            }
+            guard !Task.isCancelled else { return }
             // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。
             // ANE 直列化ゲートは encodeText の内側で**1 語ずつ**取る（ADR-73）。ここでまとめて包むと
             // 約300語ぶんゲートを握り続け、その間の顔スキャン・タグ付けが完全に止まる。
@@ -319,8 +331,13 @@ extension AutoAlbumEngine {
             //    埋め込みに飢餓する」と同じ構造で、対処も同じ＝**順番を必ず回す**。
             let tagNetOK = NetworkStateMonitor.shared.networkAllowed()
             let tagPool = await store.enrichedRefKeysNewestFirst()
-            let candidates = AnalysisOrder.ordered(tagNetOK ? tagPool : tagPool.filter { $0.hasPrefix("L-") },
-                                                   favorites: favorites)
+            // ⚠️ 絞り込みと並べ替えは**メインから降ろす**（ADR-95 追記）。`AnalysisOrder.ordered` は
+            //    約 86k 件の安定ソート（比較ごとに Set 参照）で、MainActor で回すと数百ms〜秒級に
+            //    なる（CLAUDE.md 性能原則 4）。純ロジックなので detached で計算し、結果だけ受け取る。
+            let candidates = await Task.detached(priority: .background) {
+                AnalysisOrder.ordered(tagNetOK ? tagPool : tagPool.filter { $0.hasPrefix("L-") },
+                                      favorites: favorites)
+            }.value
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                            maxBatches: Self.tagBatchesPerRun,
                                            shouldPause: { BackgroundYield.heavyShouldPause() })

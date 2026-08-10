@@ -68,6 +68,17 @@
   （窓の再入トリガはシーン遷移・BGTask・アイドルタイマーがあるので実害は小さい）。
   (b) 人物一覧の反映が最大 700ms 遅れる（スキャン進捗・レビュー結果の表示のみ）。
   (c) BGTask 窓の明け渡しで、前面由来の実行が進行中でも中断される（バッチ単位で保存済み）。
+- 追記（diagnostics-39 で検証）: ハングは **105 回 → 9 回**、人物リストの発行は **101 回 → 2 回**、
+  `cachedItems()` は起動 3 秒で 2 回 → 17 分で 2 回になった。残った 9 回を追うと**共通の形**が出た。
+  - **やる気が無いのに準備だけしていた**: `bgfill: begin (pause=true)` から `tags: start` まで
+    5〜8 秒あり、その間にメインが 2.0〜3.2 秒ブロックし、直後に `tags: finished — 0 tagged` で
+    捨てられていた。ゲート判定より**先に**準備（お気に入り再取得・約 86k キーの取得・
+    `AnalysisOrder.ordered` の安定ソート）が走っていたため。→ **準備の前にゲートを待つ**
+    （60 秒で打ち切り）。並べ替えは `Task.detached` へ降ろす（性能原則 4）。
+  - **check-then-act の競合**: `loadItems()` の呼び手はいずれも `items.isEmpty` で守っているが、
+    起動直後はまだ空なので全員がガードを通り抜け、68,200 行の fetch が多重に走っていた
+    （915ms + 1062ms）。リビジョンの札も反映前は更新されないので札だけでは防げない。
+    → `loadItems()` を単一フライト化し、実行中なら同じタスクを待つ。
 - 関連: `PerceptionCore/BackgroundTrickle.swift` / `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift`
   / `AutoAlbumCore/AutoAlbumEngine.swift` / `AutoAlbumCore/Perception/PhotoTagger.swift`
   / `FaceCore/Faces/FaceStore+People.swift` / `FaceCore/Faces/PeopleEngine.swift`
