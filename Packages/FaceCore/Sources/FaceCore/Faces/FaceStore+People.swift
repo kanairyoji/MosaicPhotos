@@ -49,9 +49,16 @@ extension FaceStore {
             var members: [String] = []
             for f in allFaces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
             guard members.count >= minFaces else { continue }
-            // 主クラスタ: 名前つき優先 → メンバー最多。表示 ID・名前・代表はここが持つ。
-            let primary = clustersInGroup.first { $0.name?.isEmpty == false }
-                ?? clustersInGroup.max { $0.count < $1.count } ?? clustersInGroup[0]
+            // 主クラスタ: **名前つきを最優先**し、同条件ならメンバー最多 → clusterID 昇順。
+            // ⚠️ 以前は `first { 名前つき }` だったが、`allClusters()` の取得順は不定なので
+            //    名前つきが複数あると**毎回違う名前が表示され**、ユーザーには「付けた名前が消えた」
+            //    ように見えた（実フィードバック・ADR-94）。決定的な順序で選ぶ。
+            let primary = clustersInGroup.sorted { a, b in
+                let an = a.name?.isEmpty == false, bn = b.name?.isEmpty == false
+                if an != bn { return an }                    // 名前つきが先
+                if a.count != b.count { return a.count > b.count }   // 次に写真の多い方
+                return a.clusterID < b.clusterID             // 最後は ID で決定的に
+            }[0]
             let primaryFaces = faces(inCluster: primary.clusterID)
             // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先（face-info-expansion 優先度 5）。
             let cover = primary.coverFaceID.flatMap { fid in allFaces.first { $0.faceID == fid } }
@@ -76,6 +83,30 @@ extension FaceStore {
     /// 複数クラスタを 1 人物に束ねる（**融合しない**＝各クラスタの純度を保ったまま personGroupID を
     /// 揃える）。ユーザーが「同じ子（成長で分裂）」と指定したときに呼ぶ。既存の束ねグループも巻き込む
     /// （推移的）。名前・代表は主クラスタが持つ（peopleClusters が解決）。
+    /// 束ねようとしている集合に**別々の名前**が付いているか（ADR-94）。
+    /// 付いていれば UI がどちらを残すかユーザーに尋ねる（＋「やめる」を選べる）。
+    /// - Returns: 重複を除いた名前の一覧（0〜1 件なら確認不要）。
+    func conflictingNames(in clusterIDs: [Int]) -> [String] {
+        var names: [String] = []
+        for id in clusterIDs {
+            // 既存グループの他メンバーも巻き込まれるので、その名前も見る。
+            for linked in linkedClusterIDs(primary: id) {
+                if let n = cluster(linked)?.name, !n.isEmpty, !names.contains(n) { names.append(n) }
+            }
+        }
+        return names
+    }
+
+    /// 束ねた全クラスタの名前を `name` に揃える（ADR-94）。
+    /// ユーザーが「どちらの名前を残すか」を選んだ後に呼ぶ。揃えておかないと、主クラスタの
+    /// 選び方が変わったときに表示名が入れ替わって見える。
+    func unifyName(_ name: String, in clusterIDs: [Int]) {
+        var targets = Set<Int>()
+        for id in clusterIDs { targets.formUnion(linkedClusterIDs(primary: id)) }
+        for c in allClusters() where targets.contains(c.clusterID) { c.name = name }
+        try? modelContext.save()
+    }
+
     func linkClusters(_ clusterIDs: [Int]) {
         let picked = clusterIDs.compactMap { cluster($0) }
         guard picked.count >= 2 else { return }

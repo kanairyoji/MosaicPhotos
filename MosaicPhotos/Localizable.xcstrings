@@ -3584,6 +3584,46 @@
           }
         }
       }
+    },
+    "These people have different names": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別々の名前が付いています"
+          }
+        }
+      }
+    },
+    "Keep “%@”": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」を残す"
+          }
+        }
+      }
+    },
+    "Don’t group — these are different people": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねない（別人でした）"
+          }
+        }
+      }
+    },
+    "Both already have names (%@). Grouping keeps one name for all their photos. If they are different people, stop here.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どちらにも名前が付いています（%@）。束ねると全部の写真が 1 つの名前になります。別人なら、ここでやめてください。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

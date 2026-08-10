@@ -160,6 +160,16 @@ struct PersonMergePickerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var pendingTarget: PersonInfo?
+    /// 両方に名前が付いていたときの確認（ADR-94）。どちらの名前を残すか選ばせ、
+    /// 「やめる」も出す（そもそも別人を束ねようとしている可能性が高いため）。
+    @State private var nameChoice: NameChoice?
+
+    /// 名前が衝突したときの確認内容。
+    private struct NameChoice: Identifiable {
+        let id = UUID()
+        let clusterIDs: [Int]
+        let names: [String]
+    }
 
     var body: some View {
         NavigationStack {
@@ -207,12 +217,42 @@ struct PersonMergePickerView: View {
                 Button(L("Group")) {
                     let src = source.clusterID, dst = target.clusterID
                     Task {
-                        await peopleEngine.linkPeople([src, dst])
-                        dismiss()
+                        // 両方に名前があるなら、どちらを残すか尋ねてから束ねる（ADR-94）。
+                        let names = await peopleEngine.conflictingNames([src, dst])
+                        if names.count >= 2 {
+                            nameChoice = NameChoice(clusterIDs: [src, dst], names: names)
+                        } else {
+                            await peopleEngine.linkPeople([src, dst])
+                            dismiss()
+                        }
                     }
                 }
             } message: { target in
                 Text(L("“\(source.displayName)” and “\(target.displayName)” will be shown as the same person. You can separate them later."))
+            }
+            // 別々の名前が付いている＝**別人を束ねようとしている可能性が高い**。
+            // どちらの名前を残すか選ばせつつ、「やめる」を目立つ位置（destructive）に出す。
+            .confirmationDialog(L("These people have different names"),
+                                isPresented: Binding(get: { nameChoice != nil },
+                                                     set: { if !$0 { nameChoice = nil } }),
+                                titleVisibility: .visible,
+                                presenting: nameChoice) { choice in
+                ForEach(choice.names, id: \.self) { name in
+                    Button(L("Keep “\(name)”")) {
+                        Task {
+                            await peopleEngine.linkPeople(choice.clusterIDs, keepingName: name)
+                            nameChoice = nil
+                            dismiss()
+                        }
+                    }
+                }
+                Button(L("Don’t group — these are different people"), role: .destructive) {
+                    nameChoice = nil
+                    pendingTarget = nil
+                }
+                Button(L("Cancel"), role: .cancel) { nameChoice = nil }
+            } message: { choice in
+                Text(L("Both already have names (\(choice.names.joined(separator: " / "))). Grouping keeps one name for all their photos. If they are different people, stop here."))
             }
         }
     }

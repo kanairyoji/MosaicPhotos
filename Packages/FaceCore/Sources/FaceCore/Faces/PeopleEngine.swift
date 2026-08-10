@@ -289,6 +289,20 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
+    /// 束ねる前に、**別々の名前**が付いていないか調べる（ADR-94）。
+    /// 2 件以上返ったら UI が「どちらの名前を残すか（＋やめる）」を尋ねる。
+    public func conflictingNames(_ clusterIDs: [Int]) async -> [String] {
+        await store.conflictingNames(in: clusterIDs)
+    }
+
+    /// 名前を選んでから束ねる（ADR-94）。選んだ名前で全クラスタを揃えてから束ねるので、
+    /// 主クラスタの選び方に関わらず表示名が安定する。
+    public func linkPeople(_ clusterIDs: [Int], keepingName name: String) async {
+        await store.unifyName(name, in: clusterIDs)
+        await store.linkClusters(clusterIDs)
+        await loadPeople()
+    }
+
     /// 束ねから 1 クラスタを外す（別人だった等）。
     public func unlinkPerson(clusterID: Int) async {
         await store.unlinkCluster(clusterID)

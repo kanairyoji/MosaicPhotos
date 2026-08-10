@@ -304,7 +304,12 @@ extension FaceStore {
         } else {
             dst.count += src.count
         }
-        if (dst.name?.isEmpty ?? true), let n = src.name, !n.isEmpty { dst.name = n }
+        // **名前がある側を残す**（ADR-94）。統合先が未命名なら統合元の名前を引き継ぐ。
+        // 代表写真も**名前と一緒に**引き継ぐ（名前だけ移って顔が別人のまま、を避ける）。
+        if (dst.name?.isEmpty ?? true), let n = src.name, !n.isEmpty {
+            dst.name = n
+            if let srcCover = src.coverFaceID { dst.coverFaceID = srcCover }
+        }
         if dst.coverFaceID == nil { dst.coverFaceID = src.coverFaceID }
         modelContext.delete(src)
         try? modelContext.save()
