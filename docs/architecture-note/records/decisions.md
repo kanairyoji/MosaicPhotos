@@ -96,6 +96,15 @@
   ※ メインが 11.6 秒止まった機序そのものは本ログからは断定できていない（モデルロードは
   `MLModel.load` の async でメイン外、`LoadOnce` は await 前にロックを手放している）。
   上記の計測を入れた次のログで切り分ける。
+- 追記3（diagnostics-41）: 「止めた直後に一番高価なことを始める」が**顔モデルでも**起きた
+  （`faces: stopScan` の 1 秒後に `face model loaded in 10883ms`・メイン 10.5 秒ブロック）。
+  `BackgroundTrickle` は単位の**前**にしかキャンセルを見ないので、`processUnit` に入った後に
+  始まる遅延ロードは止められない。→ 重いモデルの遅延ロード入口（顔／CLIP テキスト塔／CLIP 画像塔）で
+  **「キャンセル済みかつ未ロードなら始めない」**を共通判定にする（`LoadOnce` の外で判定＝
+  中で nil を返すと恒久的な失敗としてキャッシュされ機能が死ぬ）。中断した 1 枚は結果に載せない。
+  未解決: レビュー連続回答で 1 回あたり 540〜645ms のハングが残る。`loadPeople` の各段は全て
+  off-main のはずで機序が読めないため、**推測で直さず段ごとの計測**（`people.load.tuning` /
+  `.favorites` / `.clusters`）を入れた。次のログで内訳を見る（性能原則 5）。
 - 関連: `PerceptionCore/BackgroundTrickle.swift` / `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift`
   / `AutoAlbumCore/AutoAlbumEngine.swift` / `AutoAlbumCore/Perception/PhotoTagger.swift`
   / `FaceCore/Faces/FaceStore+People.swift` / `FaceCore/Faces/PeopleEngine.swift`

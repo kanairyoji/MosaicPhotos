@@ -37,6 +37,23 @@ enum CoreMLModelLoader {
     /// なる事例が出たため（ADR-70 導入後に発生。導入前＝並列ロードは正常に動いていた）。ロード時の
     /// 一時メモリ増よりも、確実にロード完了することを優先する（＝並列ロードに戻す）。
 
+    /// 「キャンセル済みなら重いモデルのロードを**始めない**」判定（ADR-95 追記）。
+    ///
+    /// 同梱モデルのロードは実機で 10〜35 秒かかり、いったん始めると中断できない。前面復帰で
+    /// スキャンを止めた**直後に**始まると、その 10 秒ぶんがまるごと復帰の邪魔になる
+    /// （実機 diagnostics-41: `faces: stopScan (foreground return)` の 1 秒後に
+    /// `face model loaded in 10883ms`、同時刻にメインが 10.5 秒ブロック）。止めた意思を
+    /// 「これから始める最も高価な操作」にも効かせる。
+    ///
+    /// ⚠️ 判定は **`LoadOnce` の外**で行う。中で nil を返すと `.some(nil)`＝「ロード失敗・再試行しない」
+    /// として恒久的にキャッシュされ、その機能が二度と有効にならない。
+    /// - Parameter isLoaded: 既にロード済みか。済みなら中断中でも使ってよい（ロードは発生しない）。
+    static func skipLoadWhenCancelled(isLoaded: Bool, subject: String) -> Bool {
+        guard !isLoaded, Task.isCancelled else { return false }
+        Diagnostics.mark("model load skipped (cancelled) — \(subject)")
+        return true
+    }
+
     /// 同梱モデルをロードし、結果を診断ログへ残す（実機で Mac なしに追えるように）。
     /// `subject` はログの主語（例 "CLIP image tower"）。開始時にも `loading…` を残し、ロードが詰まって
     /// いる場合に「開始したが完了しない」と分かるようにする（診断）。

@@ -62,7 +62,11 @@ final class MobileCLIPRuntime: @unchecked Sendable {
 
     /// テキスト塔（軽い方）。検索・AI アルバム再評価・表示タグの概念埋め込みが使う。
     private func textModel() async -> CoreMLModelHandle? {
-        await textBox.get { [config] in
+        // 止めた直後に 10 秒級のロードを始めない（ADR-95 追記）。
+        if CoreMLModelLoader.skipLoadWhenCancelled(isLoaded: textBox.isLoaded, subject: "CLIP text tower") {
+            return nil
+        }
+        return await textBox.get { [config] in
             await CoreMLModelLoader.loadBundledModel(named: "MobileCLIPTextS2", configuration: config,
                                                      log: Self.log, subject: "CLIP text tower")
                 .map(CoreMLModelHandle.init)
@@ -71,7 +75,11 @@ final class MobileCLIPRuntime: @unchecked Sendable {
 
     /// 画像塔（重い方）。背景の CLIP 埋め込み（heavy ゲート内）だけが使う。
     private func imageModel() async -> CoreMLModelHandle? {
-        await imageBox.get { [config] in
+        // 止めた直後に 10〜35 秒級のロードを始めない（ADR-95 追記）。
+        if CoreMLModelLoader.skipLoadWhenCancelled(isLoaded: imageBox.isLoaded, subject: "CLIP image tower") {
+            return nil
+        }
+        return await imageBox.get { [config] in
             await CoreMLModelLoader.loadBundledModel(named: "MobileCLIPImageS2", configuration: config,
                                                      log: Self.log, subject: "CLIP image tower")
                 .map(CoreMLModelHandle.init)

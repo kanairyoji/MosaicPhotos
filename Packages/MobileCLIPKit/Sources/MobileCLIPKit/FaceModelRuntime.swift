@@ -44,7 +44,11 @@ final class FaceModelRuntime: @unchecked Sendable {
 
     /// 初回利用まで遅延ロードする（`LoadOnce`・二重ロード防止＋失敗は再試行しない）。
     private func handle() async -> CoreMLModelHandle? {
-        await box.get { [config] in
+        // 止めた直後に 10 秒級のロードを始めない（ADR-95 追記）。
+        if CoreMLModelLoader.skipLoadWhenCancelled(isLoaded: box.isLoaded, subject: "face model") {
+            return nil
+        }
+        return await box.get { [config] in
             await CoreMLModelLoader.loadBundledModel(named: "FaceEmbedder", configuration: config,
                                                      log: Self.log, subject: "face model")
                 .map(CoreMLModelHandle.init)

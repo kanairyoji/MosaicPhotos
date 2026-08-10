@@ -80,10 +80,23 @@ public final class PeopleEngine {
     /// ⚠️ メンバーキーは積まない（`includeMembers: false`）。人物アルバムだけが必要とするので
     /// `memberRefKeys(forPerson:)` で開いた画面が取りに来る（ADR-95）。
     public func loadPeople() async {
+        // ⚠️ 内訳を測る（ADR-95 追記）。実機 diagnostics-41 でも、レビュー連続回答の 1 回ごとに
+        //    メインが 540〜645ms 止まり、そのハングが `faces: people=` の直前で終わっていた。
+        //    ここの各段は全て off-main（`FaceStore` は @ModelActor をオフメインで生成）のはずで、
+        //    どこが体感を作っているのか**ログから断定できていない**。推測で直す前に段ごとに測る
+        //    （CLAUDE.md 性能原則 5）。次のログで `people.load.*` の内訳が出る。
+        let t0 = PerfTrace.nowNs()
         await store.apply(tuning: tuning)   // 冪等（変更が無ければ何もしない・ADR-70）
+        PerfTrace.logSpan("people.load.tuning", ms: PerfTrace.msSince(t0))
+
+        let t1 = PerfTrace.nowNs()
         let favorites = await favoriteRefKeysProvider?() ?? []
+        PerfTrace.logSpan("people.load.favorites", ms: PerfTrace.msSince(t1))
+
+        let t2 = PerfTrace.nowNs()
         let fresh = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites,
                                                includeMembers: false)
+        PerfTrace.logSpan("people.load.clusters", ms: PerfTrace.msSince(t2))
         isLoaded = true
         // ⚠️ 中身が同じなら**代入しない**。`@Observable` は代入だけで購読ビューを無効化するので、
         //    スキャン中や連続レビューでは「変化なしの再描画」が積み上がっていた（ADR-95）。

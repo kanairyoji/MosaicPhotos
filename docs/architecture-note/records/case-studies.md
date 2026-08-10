@@ -73,8 +73,17 @@
 - 関連: `AutoAlbumCore/Perception/Providers.swift` / `MobileCLIPKit/CLIPDisplayLabeler.swift`
   / `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift` / `PerceptionCore/MLInferenceGate.swift`。
   テスト: `LabelProviderPrewarmTests`。
-- 残課題: メインが 11.6 秒止まった機序そのものは未確定（モデルロードは `MLModel.load` の async で
-  メイン外、`LoadOnce` は await 前にロックを手放している）。入れた計測で次のログから切り分ける。
+- 続き（diagnostics-41 で同型を再確認・より明確な証拠）: 今度は**顔モデル**で同じ形が出た。
+  `09:51:09 faces: stopScan (foreground return)` の**1 秒後**に `09:51:10 model loading… face model`、
+  そして `face model loaded in 10883ms`／`faces.detect: ... infer=11667ms`、同時刻にメインが
+  10.5 秒ブロック。**止めた直後に、最も高価な操作（10 秒級のモデルロード）を始めていた**。
+  原因は `BackgroundTrickle` が単位の**前**にしかキャンセルを見ないこと＝いったん `processUnit` に
+  入ると、その中で始まる遅延ロードは止まらない。
+  対処: `CoreMLModelLoader.skipLoadWhenCancelled(isLoaded:subject:)` を新設し、4 つの重いモデル
+  （顔・CLIP テキスト塔・CLIP 画像塔）の遅延ロード入口で「キャンセル済みかつ未ロードなら**始めない**」。
+  ⚠️ 判定は `LoadOnce` の**外**で行う——中で nil を返すと `.some(nil)`＝「失敗・再試行しない」として
+  恒久キャッシュされ、その機能が二度と有効にならない。併せて、中断された 1 枚は結果に載せない
+  （[[ADR-92]] と同じ理由＝「走査済み」として記録されると次の窓で拾われなくなる）。
 - 教訓: **「cancel を呼んだ」は「止まった」ではない**。`await someTask.value` で合流する設計では
   cancel は伝播しない。止める意思は**合流先まで届く経路**（seam のメソッド・中断点）で表現する。
   [[ADR-95]] の「待つ側が資源を握らない」と対で、「止めた側の意思が実際に効いているか」を

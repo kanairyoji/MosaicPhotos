@@ -131,6 +131,11 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             if let error { visionErr += 1; lastError = error }
             rawFaces += raw
             embedded += signals.count
+            // ⚠️ 中断された 1 枚は**結果に載せない**（ADR-92 と同じ理由・ADR-95 追記）。
+            //    載せると FaceTagger が「走査済み」として記録してしまい、埋め込みが取れていない
+            //    写真が次の窓で二度と拾われなくなる（版を上げるまで顔が失われる）。中断時は
+            //    モデルのロードを見送るので `signals` が空になり得る＝まさにその状態になる。
+            if Task.isCancelled { break }
             result[refKey] = signals
         }
         // 切り分け用: 画像ロード成否・Vision 生検出数・埋め込み成功数・Vision エラー＋所要内訳(ms)。
