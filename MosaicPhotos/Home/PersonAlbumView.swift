@@ -40,7 +40,8 @@ struct PersonAlbumView: View {
             if let store {
                 content(store: store)
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                // メンバー取得中（写真の多い人物ほど待つ）。メインが止まっても回り続ける表示にする。
+                Color.clear.busyOverlay(true, text: L("Loading photos…"))
             }
         }
         .task {

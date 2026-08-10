@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import PhotoSourceKit
 import SwiftUI
 
 /// 一括レビュー（ADR-68）。「この人と同じ人を、まとめて選ぶ」。
@@ -41,7 +42,7 @@ struct FaceBatchReviewView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    ProgressView(L("Looking for people to merge…"))
+                    Color.clear.busyOverlay(true, text: L("Looking for people to merge…"))
                 } else if let item {
                     content(item)
                 } else {
@@ -49,6 +50,10 @@ struct FaceBatchReviewView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 一括統合は N 人ぶんのクラスタ移動＋同一写真違反の修復＋一覧再構築を伴い、
+            // 実機で数百ms メインが止まる（diagnostics-40）。止まっている間こそ見せたいので、
+            // レンダーサーバ駆動のスピナーを重ねる（ADR-96）。
+            .busyOverlay(isApplying, text: L("Merging…"))
             .navigationTitle(L("Confirm together"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

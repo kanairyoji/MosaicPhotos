@@ -21,6 +21,41 @@
 
 ---
 
+## ADR-96 待たせるなら「考え中」を見せる／人物一覧の N+1 クエリを畳む
+- 状態: 採用
+- 文脈: ユーザー要望「UI が固まるのでもいいが、その場合は考え中のクルクルを出してほしい。
+  固まっているから出せないのか？」。これは**半分正しい**——切り分けが要る。
+  - メインスレッドが実際にブロックされている間、SwiftUI は 1 フレームも描けない。
+    フラグを立てた直後に重い処理へ入ると「何も出ないまま固まる」になる。
+  - 一方、`UIActivityIndicatorView` の回転は `CAAnimation` で、いったんレンダーサーバへ
+    コミットされれば**別プロセス側で進む**。つまり**ブロックが始まる前に画面へ出ていれば、
+    メインが止まっている間も回り続ける**。SwiftUI の `ProgressView` はフレーム駆動になり得るため、
+    「止まっている間こそ見せたい」用途では保証にならない。
+  - 実際、レビュー画面には既に `ProgressView` があったのに「固まる」と報告された＝
+    出していなかったのではなく、**描画されていなかった**。
+  併せて、計測（ADR-95 追記3 で入れた `people.load.*`）が原因を確定させた。実機 diagnostics-42 で
+  `people.load.clusters` が 725〜3585ms、**同じ長さのフォアグラウンドハングと 1 対 1 に対応**
+  （671/725・896/997・2028/2188）。`peopleClusters` はクラスタごとに `faces(inCluster:)` を
+  呼んでおり、936 クラスタなら **936 回の fetch**＋全 `DetectedFace` の materialize。
+  表示に一切使わない `embedding`（512 次元・約1KB/顔）まで毎回読み出していた。
+- 決定:
+  - **見せる**: `PhotoSourceKit` に `BusySpinner`（`UIActivityIndicatorView` の
+    `UIViewRepresentable`）と `busyOverlay(_:text:)` を新設し、待ちのある画面に付ける
+    （レビューの候補抽出・カード準備、一括統合の適用中、人物アルバムのメンバー取得）。
+    重い処理の**前**に出す場合は `runShowingBusy(_:settleFrames:)` で 1〜2 フレーム譲って
+    表示を確定させてから始める（これを飛ばすと何も出ないまま固まる）。
+  - **待たせない**: `peopleClusters` を**1 回の射影クエリ**（`propertiesToFetch` で
+    `embedding` を除外）＋メモリ上のクラスタ ID 束ねに変える。`peopleEligibleClusters` も同様。
+    ADR-88 が `memberRefKeys(inCluster:)` に入れた射影を、人物一覧の本体へ横展開する。
+- 結果: 待ちが残る場面でも「処理中」だと伝わる。人物一覧の再読込は 936 回のクエリが 1 回になり、
+  読み出すデータ量も顔あたり約1KB 減る。トレードオフ: (a) `runShowingBusy` は表示確定のため
+  約 33ms の遅延を足す（体感より「無反応に見えない」ことを優先）。(b) 射影から漏れたプロパティに
+  触れると SwiftData がフォールトで個別ロードするため、`peopleClusters` が使う項目を増やすときは
+  `propertiesToFetch` の更新を忘れないこと（漏れても正しく動くが遅くなる）。
+- 関連: `PhotoSourceKit/Views/BusySpinner.swift` / `FaceCore/Faces/FaceStore+People.swift` /
+  `MosaicPhotos/Home/FaceReviewView.swift` / `FaceBatchReviewView.swift` / `PersonAlbumView.swift`。
+  [[ADR-88]]（射影クエリの初出）・[[ADR-95]]（計測を入れて原因を確定させた経緯）。
+
 ## ADR-95 「待つ側が資源を握らない」— 眠るならフラグを手放す／変わっていないものを取り直さない／一覧発行はまとめる
 - 状態: 採用
 - 文脈: 実機ログ diagnostics-38 で 5 つの症状が出た。掘ると**3 つの原則違反**に集約された。

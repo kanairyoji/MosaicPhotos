@@ -57,6 +57,23 @@
   先に回った。レビュー連続回答 19 回でハング 0。
 - 残課題: **止めたつもりが止まっていなかった**（別記）。クラウド顔埋め込みの歩留まりは依然サンプル不足。
 
+## 人物一覧の再読込が 936 回のクエリだった — 計測を入れて初めて分かった（diagnostics-42）
+- 症状: レビューを連続回答している間、1 回答ごとにフォアグラウンドが 540〜645ms 固まる。
+  ADR-95 で「発行回数」も「メンバーキーの持ち回り」も削った後も残っていた。
+- 原因: 3 度の実機ログで機序を推測しては外していたため、**推測をやめて段ごとの計測**
+  （`people.load.tuning` / `.favorites` / `.clusters`）を入れた。次のログ（diagnostics-42）で即決着:
+  `people.load.clusters` が 725〜3585ms で、**同じ長さのハングと 1 対 1 に対応**していた
+  （671/725・896/997・2028/2188）。`peopleClusters` はクラスタごとに `faces(inCluster:)` を
+  呼ぶ N+1 クエリで、936 クラスタなら 936 回の fetch。しかも表示に一切使わない
+  `DetectedFace.embedding`（512 次元・約1KB/顔）まで毎回 materialize していた。
+- 対処: 全顔を **1 回の射影クエリ**（`propertiesToFetch` で `embedding` を除外）で取り、
+  クラスタ ID でメモリ上に束ねる。`peopleEligibleClusters` も同様に射影する。[[ADR-96]]。
+- 関連: `FaceCore/Faces/FaceStore+People.swift`。[[ADR-88]]（同じ射影を別メソッドに入れた先例）。
+- 教訓: **同じ罠を別メソッドに残していた**。ADR-88 で「全カラム materialize が 1.2〜1.4 秒の
+  フリーズを生む」と特定して `memberRefKeys(inCluster:)` を射影化したのに、**人物一覧の本体**は
+  素のままだった。1 か所直したら、同じ形が他にないか横に探す。
+  もう一つ: 3 回外したら推測をやめて計測を入れる。入れた次のログで一発で決まった。
+
 ## 「止めた」が伝わらない — 事前ウォームの cancel が共有 Task に届いていなかった（diagnostics-40）
 - 症状: フォアグラウンド復帰の直後にメインが 11.6 秒ブロック。同時刻に
   `model loading… CLIP text tower` → `CLIP text tower loaded in 15456ms`、footprint 526MB。

@@ -17,8 +17,10 @@ extension FaceStore {
     /// 上がらない**という実障害になっていた（ADR-68 追補3）。判定はここに一本化する。
     func peopleEligibleClusters(minFaces: Int) -> [PersonCluster] {
         var photosPerCluster: [Int: Set<String>] = [:]
-        for f in (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-        where f.clusterID >= 0 {
+        // 必要なのは clusterID と refKey だけ。射影して `embedding`（約1KB/顔）を読まない（ADR-96）。
+        var query = FetchDescriptor<DetectedFace>()
+        query.propertiesToFetch = [\.clusterID, \.refKey]
+        for f in (try? modelContext.fetch(query)) ?? [] where f.clusterID >= 0 {
             photosPerCluster[f.clusterID, default: []].insert(f.refKey)
         }
         return allClusters().filter { (photosPerCluster[$0.clusterID]?.count ?? 0) >= minFaces }
@@ -40,6 +42,20 @@ extension FaceStore {
     ///   必要なときだけ取りに来る。
     func peopleClusters(minFaces: Int = 3, favoriteRefKeys: Set<String> = [],
                         includeMembers: Bool = true) -> [PersonInfo] {
+        // ⚠️ 全顔を**1 回の射影クエリ**で取り、クラスタ ID でメモリ上に束ねる（ADR-96）。
+        //    以前はクラスタごとに `faces(inCluster:)` を呼んでいた＝936 クラスタなら 936 回の
+        //    fetch ＋ 全 @Model の materialize。`DetectedFace.embedding` は 1 顔あたり約 1KB
+        //    （512 次元）で、表示には**一切使わない**のに毎回読み出していた。
+        //    実機 diagnostics-42 では `people.load.clusters` が 725〜3585ms かかり、
+        //    同じ長さのフォアグラウンドハングと 1 対 1 に対応していた（671/725・2028/2188・896/997）。
+        //    ADR-88 が `memberRefKeys(inCluster:)` に入れた射影を、人物一覧の本体にも適用する。
+        var facesByCluster: [Int: [DetectedFace]] = [:]
+        var faceQuery = FetchDescriptor<DetectedFace>()
+        faceQuery.propertiesToFetch = [\.faceID, \.refKey, \.clusterID,
+                                       \.bx, \.by, \.bw, \.bh, \.quality, \.hasSmile]
+        for f in (try? modelContext.fetch(faceQuery)) ?? [] where f.clusterID >= 0 {
+            facesByCluster[f.clusterID, default: []].append(f)
+        }
         // 2 階層（ADR-61）: personGroupID が同じクラスタを 1 人物に束ねる（子供の時期クラスタ）。
         // nil のクラスタは従来どおり単独（1 クラスタ=1 人物）＝全 nil なら旧挙動と一致。
         var groups: [String: [PersonCluster]] = [:]
@@ -54,7 +70,7 @@ extension FaceStore {
             let clustersInGroup = groups[key]!
             // 束ね内の全クラスタの顔を集約し、写真キーを重複排除。
             var allFaces: [DetectedFace] = []
-            for c in clustersInGroup { allFaces += faces(inCluster: c.clusterID) }
+            for c in clustersInGroup { allFaces += facesByCluster[c.clusterID] ?? [] }
             var seen = Set<String>()
             var members: [String] = []
             for f in allFaces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
@@ -69,7 +85,7 @@ extension FaceStore {
                 if a.count != b.count { return a.count > b.count }   // 次に写真の多い方
                 return a.clusterID < b.clusterID             // 最後は ID で決定的に
             }[0]
-            let primaryFaces = faces(inCluster: primary.clusterID)
+            let primaryFaces = facesByCluster[primary.clusterID] ?? []
             // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先（face-info-expansion 優先度 5）。
             let cover = primary.coverFaceID.flatMap { fid in allFaces.first { $0.faceID == fid } }
                 ?? Self.bestCoverFace(allFaces.filter { favoriteRefKeys.contains($0.refKey) })

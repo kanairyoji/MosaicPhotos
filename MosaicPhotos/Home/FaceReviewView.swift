@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import PhotoSourceKit
 import SwiftUI
 
 /// 人物レビュー（ADR-46・A1/A2/A3）。iPhone の写真アプリの「この人は◯◯さんですか？」に相当。
@@ -30,7 +31,8 @@ struct FaceReviewView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    ProgressView(L("Finding faces to review…"))
+                    // 候補の抽出は実機で 1.4 秒前後かかる（`people.reviewItems`）。
+                    Color.clear.busyOverlay(true, text: L("Finding faces to review…"))
                 } else if index < items.count {
                     let item = items[index]
                     // カードごとに identity を分ける＝回答して次へ進んだら**作り直す**
@@ -155,7 +157,11 @@ struct FaceReviewView: View {
         // 顔が出るまではカードを見せず、回答も受け付けない（レイアウトは保つので跳ねない）。
         .opacity(cardReady ? 1 : 0)
         .disabled(!cardReady)
-        .overlay { if !cardReady { ProgressView() } }
+        // ⚠️ 標準の `ProgressView` ではなく `busyOverlay`（`UIActivityIndicatorView`）を使う。
+        //    回答直後は人物一覧の再読込などでメインが数百ms止まることがあり、フレーム駆動の
+        //    スピナーだと一緒に止まって「アプリが固まった」ように見える。CAAnimation なら
+        //    レンダーサーバ側で回り続けるので「処理中」だと伝わる（ADR-96）。
+        .busyOverlay(!cardReady)
     }
 
     // MARK: - Avatar preload
