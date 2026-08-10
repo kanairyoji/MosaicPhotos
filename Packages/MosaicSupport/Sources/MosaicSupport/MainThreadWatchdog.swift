@@ -51,12 +51,31 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     /// `nonisolated`：ウォッチドッグは MainActor 外（専用 queue・main.async クロージャ）から
     /// この値を読むため、ロック保護の素の状態として持つ。
     public func setAppActive(_ active: Bool) {
-        lock.lock(); appActive = active; lock.unlock()
+        lock.lock()
+        if active, !appActive { lastBecameActiveNs = DispatchTime.now().uptimeNanoseconds }
+        appActive = active
+        lock.unlock()
     }
+
+    /// 直近に**前面へ復帰した**時刻（ns）。これより前に送った ping は前面のハングとして数えない。
+    ///
+    /// ⚠️ 「返答時に前面かどうか」だけでは足りない（ADR-97）。背面で送った ping が復帰の瞬間に
+    /// 返ると、中断/throttle の待ち時間がまるごと「前面のハング」として記録される。実機
+    /// diagnostics-43 では、重い処理が**一つも走っていない**復帰
+    ///（`prewarm cancelled at 0/314`・`model load skipped` ×4・`infer=0ms`）で
+    /// `hang main=11041ms` が出ていた。`ProcessSuspension` は**正式な中断**しか捉えられず、
+    /// 復帰前後の throttle はすり抜けるため、前面区間に完全に収まる ping だけを採用する。
+    private var lastBecameActiveNs: UInt64 = 0
 
     private var isAppActiveLocked: Bool {
         lock.lock(); defer { lock.unlock() }
         return appActive
+    }
+
+    /// この ping は前面へ復帰する**前**に送られたか（＝前面区間に収まっていない）。
+    private func startedBeforeBecomingActive(_ startedNs: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return startedNs != 0 && startedNs < lastBecameActiveNs
     }
 
     public func start(interval: TimeInterval = 0.2) {
@@ -85,6 +104,8 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             if ProcessSuspension.didSuspend(since: outstandingEpoch) { return }
             // 背面の停止は OS による throttle＝体感に無関係なので「開始」も報告しない。
             guard isAppActiveLocked else { return }
+            // 復帰をまたいだ ping も同様に報告しない（`record` と同じ判定・ADR-97）。
+            guard !startedBeforeBecomingActive(outstandingSinceNs) else { return }
             let age = Double(DispatchTime.now().uptimeNanoseconds &- outstandingSinceNs) / 1_000_000
             if age > hangBeginSuspectMs, !hangBeginReported {
                 hangBeginReported = true
@@ -101,7 +122,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             guard let self else { return }
             let ms = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1_000_000
             // 送信〜返答の間に中断があったサンプルは、待ち時間の実体が suspend なので捨てる。
-            if !ProcessSuspension.didSuspend(since: epoch) { self.record(ms) }
+            if !ProcessSuspension.didSuspend(since: epoch) { self.record(ms, startedNs: t0) }
             self.queue.async {
                 self.outstandingSinceNs = 0
                 self.hangBeginReported = false
@@ -110,11 +131,21 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     }
 
     /// `internal`：テストから直接サンプルを流し込んで前面/背面の分類を検証するため。
-    func record(_ ms: Double) {
+    /// - Parameter startedNs: ping の送信時刻。`0` なら判定に使わない（テストの簡便のため）。
+    func record(_ ms: Double, startedNs: UInt64 = 0) {
         lock.lock()
         // 背面のサンプルは本体の集計に混ぜない（max が OS の throttle で汚染され、
         // 前面の実力＝体感が読めなくなる）。件数だけ別に数えて記録は残す。
         guard appActive else {
+            if ms > hangImmediateMs { backgroundStalls += 1 }
+            lock.unlock()
+            return
+        }
+        // ⚠️ 前面区間に**完全に収まる** ping だけを採用する（ADR-97）。背面で送った ping が
+        //    復帰の瞬間に返ると「返答時は前面」なので上のガードを通ってしまい、中断/throttle の
+        //    待ちが 10 秒級の「前面ハング」として記録される（実機 diagnostics-40〜43 の大物は
+        //    ほぼこれで、実際には重い処理が一つも走っていなかった）。
+        if startedNs != 0, startedNs < lastBecameActiveNs {
             if ms > hangImmediateMs { backgroundStalls += 1 }
             lock.unlock()
             return

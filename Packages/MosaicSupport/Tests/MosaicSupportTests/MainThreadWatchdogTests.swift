@@ -67,4 +67,38 @@ struct MainThreadWatchdogTests {
         #expect(summary?.contains("pings=2") == true)
         #expect(summary?.contains("bgStalls=1") == true)
     }
+
+    // MARK: - 復帰をまたいだ ping（ADR-97）
+
+    /// 実機 diagnostics-40〜43 の回帰: 重い処理が**一つも走っていない**復帰
+    ///（`prewarm cancelled at 0/314`・`model load skipped` ×4・`infer=0ms`）で
+    /// `hang main=11041ms` が記録されていた。背面で送った ping が復帰の瞬間に返ると
+    /// 「返答時は前面」なので前面ハングとして数えられ、中断/throttle の待ちが体感の数字を汚す。
+    @Test("背面で送って復帰後に返った ping は前面ハングに数えない")
+    func pingSpanningResumeIsNotForegroundHang() {
+        reset()
+        let w = MainThreadWatchdog.shared
+        w.setAppActive(false)
+        let sentWhileBackground = DispatchTime.now().uptimeNanoseconds
+        w.setAppActive(true)      // ここで復帰＝この時刻より前の ping は対象外
+        w.record(11_041, startedNs: sentWhileBackground)
+
+        let summary = w.flushSummary()
+        #expect(summary?.contains("max=11041") != true, "中断待ちが前面の max を汚している")
+        #expect(summary?.contains("bgStalls=1") == true, "背面側の参考値としては残すこと")
+    }
+
+    @Test("復帰後に送った ping は通常どおり前面ハングとして数える")
+    func pingAfterResumeStillCounted() {
+        reset()
+        let w = MainThreadWatchdog.shared
+        w.setAppActive(false)
+        w.setAppActive(true)
+        let sentWhileForeground = DispatchTime.now().uptimeNanoseconds
+        w.record(700, startedNs: sentWhileForeground)
+
+        let summary = w.flushSummary()
+        #expect(summary?.contains("max=700") == true, "前面で完結した停止まで捨ててはいけない")
+        #expect(summary?.contains("pings=1") == true)
+    }
 }
