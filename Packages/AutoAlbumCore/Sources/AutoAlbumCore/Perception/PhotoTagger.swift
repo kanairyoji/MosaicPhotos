@@ -123,7 +123,11 @@ final class PhotoTagger {
                 let signals = await perception.perceive(refKeys: chunk)
                 var perceived: [String: PhotoPerception] = [:]
                 for key in chunk {
-                    // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ。
+                    // ⚠️ 中断されて**手を付けなかった**分は「処理済み」にしない（ADR-98）。
+                    //    記録すると埋め込みの無いまま完了扱いになり、次の窓で二度と拾われない。
+                    if Task.isCancelled, signals[key] == nil { continue }
+                    // perceive が返さなかった refKey も「処理済み」にして無限ループを防ぐ
+                    //（取得不可・CLIP 未同梱など。中断以外の挙動は従来どおり）。
                     perceived[key] = signals[key] ?? PhotoPerception()
                 }
                 return perceived

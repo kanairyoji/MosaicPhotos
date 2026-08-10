@@ -117,7 +117,12 @@ final class TagTagger {
                 // 取る（ADR-73）。ここで包むと (a) 画像ロードまでゲートに入り、(b) senseInfo 内部の
                 // 3 並列がゲートの内側で走って「同時に 1 つ」を自ら破る。ここでは包まないこと。
                 let dict = await provider.senseInfo(refKeys: chunk)
-                return chunk.map { (refKey: $0, info: dict[$0] ?? PhotoSenseInfo()) }
+                // ⚠️ 辞書に**無い** refKey は「中断されて手を付けなかった」写真なので記録しない
+                //    （ADR-98）。以前は `?? PhotoSenseInfo()` で空を埋めており、中断した写真まで
+                //    「タグ付け済み」として保存され、次の窓で二度と拾われなくなっていた（ADR-92 の罠）。
+                //    取得**不能**な写真は provider が空 info を辞書に載せて返すので、ここで残る
+                //    ＝無限リトライにはならない。
+                return chunk.compactMap { key in dict[key].map { (refKey: key, info: $0) } }
             },
             commitBatch: { _, _, results in
                 let flat = results.flatMap { $0 }

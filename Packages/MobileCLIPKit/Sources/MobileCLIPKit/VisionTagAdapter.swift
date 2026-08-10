@@ -44,6 +44,15 @@ public struct VisionTagAdapter: TagPerceptionProvider {
         //    「ANE は同時に 1 つ」という不変条件をゲートの内側で破っていた（diagnostics-19 の再発条件）。
         // 取得不可の写真も空 info を返して「処理済み」にし無限ループを防ぐ。
         return await boundedConcurrentResults(refKeys, maxConcurrent: 3) { refKey in
+            // ⚠️ **1 枚ごとに中断を見る**（ADR-98）。`BackgroundTrickle` の停止判定は「1 単位ごと」
+            //    だが、ここでの 1 単位はミニバッチ 4 枚で、クラウド写真だと 1 枚あたり
+            //    サムネ DL 約 0.8〜1.0 秒＋Vision で実測 2.7 秒＝**1 単位が 11 秒**になる。
+            //    前面復帰でキャンセルしても、この 11 秒が丸ごと走り切って体感の固まりになっていた
+            //    （実機 diagnostics-44: 復帰の瞬間に `tags: start` → 11 秒後に `tags: finished — 4 tagged`）。
+            //    ⚠️ 中断時は **nil を返す**こと。`PhotoSenseInfo()`（空）を返すと辞書に載って
+            //    「タグ付け済み」として記録され、その写真は二度と拾われない（ADR-92 と同じ罠）。
+            //    取得**不能**な写真は従来どおり空 info を返す＝無限リトライを避けるため。
+            if Task.isCancelled { return nil }
             guard let ref = PhotoRef.decode(refKey) else { return PhotoSenseInfo() }
             if let localId = ref.localIdentifier {
                 // 候補C: PHAsset は **1 回だけ**フェッチして画像取得と種別タグで共用（再フェッチ削減）。

@@ -54,6 +54,11 @@ public struct CLIPEmbeddingProvider: PhotoPerceptionProvider {
             }
         }
 
+        // ⚠️ 画像ロードの後・推論の前に中断を見る（ADR-98）。ここまでで数百ms〜数秒（クラウドは
+        //    サムネ DL）かかっており、前面復帰でキャンセルされているなら推論には入らない。
+        //    未着手の refKey は辞書に載らない＝呼び手が「処理済み」にしないので次の窓で拾い直す。
+        guard !Task.isCancelled else { return byKey }
+
         // 2) バッチ推論（P1: 1 枚ずつより 2〜4 倍のスループット。失敗時は runtime 内で単発へ救済）。
         //    ANE 直列化ゲートは encodeImages の内側。上の画像ロードはゲート外＝他の推論を止めない。
         let vectors = await clip.encodeImages(images)
