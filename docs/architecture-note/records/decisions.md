@@ -79,6 +79,23 @@
     起動直後はまだ空なので全員がガードを通り抜け、68,200 行の fetch が多重に走っていた
     （915ms + 1062ms）。リビジョンの札も反映前は更新されないので札だけでは防げない。
     → `loadItems()` を単一フライト化し、実行中なら同じタスクを待つ。
+- 追記2（diagnostics-40 で検証）: **キャプションが初めて生成された**（`bgfill: captions 12 done
+  (pending 796→784)`）。BGTask 窓は 4 分 45 秒で `bgtask: end (completed)`＝期限切れせず完走し、
+  窓の中でキャプションが埋め込みより先に回った（`captionsFirst` が効いた）。人物リストの発行は
+  レビュー連続回答の 19 回でハング 0（footprint 約 160MB）＝発行あたりのコストも解消。
+  一方で**新しい違反**が 1 つ見つかった: **止めたつもりが止まっていなかった**。
+  復帰時の `stopBackgroundWork()` は `prewarmTask` を cancel するが、表示ラベラは二重構築を防ぐため
+  **共有 Task に合流**する作りで、外側の cancel はそこへ伝播しない。しかも約300語のループに
+  中断点が無かったため、`CLIP text tower loaded in 15456ms` が復帰後も走り切り、その間
+  ANE ゲートを占有していた（同時刻にメインが 11.6 秒ブロック）。
+  → seam に `LabelProvider.cancelPrewarm()`（既定は no-op）を足し、共有 Task を直接 cancel する。
+  ループは 1 語ごとに `Task.isCancelled` を見て、途中結果は**確定させない**（`isReady` は false の
+  ままなので insight は Vision タグだけで即返る＝表示は壊れない）。
+  併せて **ANE ゲートの 1 秒以上の待ちを記録**する（`ANE gate: waited Nms`）。占有側と待たされた側は
+  無関係な経路のことがあり、待たされた側のログだけでは犯人が分からないため（性能原則 5）。
+  ※ メインが 11.6 秒止まった機序そのものは本ログからは断定できていない（モデルロードは
+  `MLModel.load` の async でメイン外、`LoadOnce` は await 前にロックを手放している）。
+  上記の計測を入れた次のログで切り分ける。
 - 関連: `PerceptionCore/BackgroundTrickle.swift` / `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift`
   / `AutoAlbumCore/AutoAlbumEngine.swift` / `AutoAlbumCore/Perception/PhotoTagger.swift`
   / `FaceCore/Faces/FaceStore+People.swift` / `FaceCore/Faces/PeopleEngine.swift`

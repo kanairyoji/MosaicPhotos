@@ -1,5 +1,6 @@
 import AutoAlbumCore
 import Foundation
+import MosaicSupport
 import os
 
 /// フル画像ビューの**表示専用**タグを、保存済み CLIP 画像埋め込みに対する CLIP ゼロショットで作る。
@@ -22,6 +23,20 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     /// これにより初回に写真を開いた瞬間の数秒の構築コストがフォアグラウンドから消える。
     public nonisolated func prewarm() async {
         _ = await ensureEmbeddings()
+    }
+
+    /// 進行中の構築を中断する（フォアグラウンド復帰・ADR-95 追記）。
+    ///
+    /// ⚠️ `ensureEmbeddings()` は二重構築を防ぐため**共有の `buildTask` に合流**する作りなので、
+    /// 呼び出し元（`prewarmTask`）を cancel しても構築本体には伝わらない。ここで共有 Task を
+    /// 直接 cancel する。中断すると `conceptEmbeddings` は nil のままなので `isReady` は false、
+    /// フル画像 insight は CLIP ラベルを飛ばして Vision タグだけで即返る（表示は壊れない）。
+    public nonisolated func cancelPrewarm() {
+        lock.lock()
+        let task = buildTask
+        buildTask = nil
+        lock.unlock()
+        task?.cancel()
     }
 
     /// 概念埋め込みが構築済みか（構築を発生させない即時判定）。未構築のとき insight は CLIP ラベルを
@@ -76,12 +91,22 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
         var built: [(tag: String, vector: [Float])] = []
         built.reserveCapacity(concepts.count)
         for concept in concepts {
+            // ⚠️ 1 語ごとに中断を見る（ADR-95 追記）。以前は中断点が無く、いったん始まると
+            //    約300語の encode ＋ CLIP テキストタワーのロード（実機で 15.5 秒）が走り切り、
+            //    その間 ANE ゲートを占有していた。前面復帰時に手放せることが重要。
+            //    途中結果は**確定させない**（nil を返す）＝ isReady は false のまま次の機会に作り直す。
+            if Task.isCancelled {
+                Diagnostics.mark("labeler: prewarm cancelled at \(built.count)/\(concepts.count)")
+                return nil
+            }
             let tokens = tokenizer.encode("a photo of \(concept)")
             if let vector = await MobileCLIPRuntime.shared.encodeText(tokens), !vector.isEmpty {
                 built.append((tag: concept, vector: vector))
             }
         }
-        let secs = String(format: "%.1f", Date().timeIntervalSince(started))
+        let ms = Date().timeIntervalSince(started) * 1000
+        PerfTrace.logSpan("labeler.prewarm", ms: ms)
+        let secs = String(format: "%.1f", ms / 1000)
         log.notice("CLIPDisplayLabeler: built \(built.count, privacy: .public) concept embeddings in \(secs, privacy: .public)s")
         return built
     }

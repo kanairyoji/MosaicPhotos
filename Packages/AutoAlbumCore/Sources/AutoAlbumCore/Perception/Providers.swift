@@ -93,10 +93,19 @@ public protocol LabelProvider: Sendable {
     /// CLIP テキストタワーのロード（〜数十秒）＋約300語の構築が同期で走り得るので、フル画像 insight は
     /// これが true のときだけ CLIP ラベルを合成する（Vision タグは常に即表示）。既定 true。
     var isReady: Bool { get }
+    /// 進行中の `prewarm()` を**中断**する（フォアグラウンド復帰で呼ぶ・既定は何もしない）。
+    ///
+    /// ⚠️ `prewarm()` を起こした `Task` を cancel するだけでは足りない。実装は内部で
+    /// 「二重構築防止のための共有 Task」に合流する作りになりがちで、外側の cancel はそこへ
+    /// 伝播しないため、約300語の text encode と CLIP テキストタワーのロードが走り切ってしまう。
+    /// 実機 diagnostics-40 では復帰直後に `CLIP text tower loaded in 15456ms` が記録され、
+    /// その間 ANE ゲートが占有されていた。中断の意思は seam で明示的に伝える（ADR-95 追記）。
+    func cancelPrewarm()
 }
 
 public extension LabelProvider {
     var isReady: Bool { true }
+    func cancelPrewarm() {}
 }
 
 

@@ -226,8 +226,13 @@ extension AutoAlbumEngine {
         backgroundFillTask?.cancel()
         backgroundFillTask = nil
         // 表示ラベラの事前ウォーム（約300語の text encode）も止める（ADR-80）。
+        // ⚠️ 外側の Task を cancel するだけでは**止まらない**（ADR-95 追記）。ラベラは二重構築を
+        //    防ぐため共有 Task に合流する作りで、そこへは伝播しないため、約300語の encode と
+        //    CLIP テキストタワーのロード（実機 diagnostics-40 で 15456ms）が走り切って ANE ゲートを
+        //    占有し続けていた。中断の意思を seam で明示的に伝える。
         prewarmTask?.cancel()
         prewarmTask = nil
+        labelProvider?.cancelPrewarm()
         // 実行中の generate（前面の定期ループから起動されたものを含む）にも降りるよう伝える。
         // generate は呼び出し側のタスク上で走るため cancel では止められない（ADR-79 追記）。
         requestAbortHeavyWork()

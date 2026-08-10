@@ -52,9 +52,33 @@
   （`bgfill: begin (pause=true)` → 5〜8 秒後に `tags: start` → `0 tagged`）と
   (2) 起動直後の `loadItems()` 多重実行（`items.isEmpty` ガードを全員がすり抜ける
   check-then-act の競合）で、いずれも同一コミットで修正。
-- 残課題: キャプションが実際に生成されるか（次の実機ログで `bgfill: captions N done` を確認）。
-  diagnostics-39 は 17 分の前面セッションで `bgtask: begin` が一度も無く（充電＋ロックが必要）、
-  キャプション窓は評価できていない。
+- 検証2（diagnostics-40）: **キャプション生成を確認**（`bgfill: captions 12 done (pending 796→784)`）。
+  BGTask 窓は 4 分 45 秒で完走（`bgtask: end (completed)`）、窓の中でキャプションが埋め込みより
+  先に回った。レビュー連続回答 19 回でハング 0。
+- 残課題: **止めたつもりが止まっていなかった**（別記）。クラウド顔埋め込みの歩留まりは依然サンプル不足。
+
+## 「止めた」が伝わらない — 事前ウォームの cancel が共有 Task に届いていなかった（diagnostics-40）
+- 症状: フォアグラウンド復帰の直後にメインが 11.6 秒ブロック。同時刻に
+  `model loading… CLIP text tower` → `CLIP text tower loaded in 15456ms`、footprint 526MB。
+  復帰時には `stopBackgroundWork()` が走っており、設計上は事前ウォームを止めているはずだった。
+- 原因: `stopBackgroundWork()` は `prewarmTask?.cancel()` を呼ぶが、表示ラベラ
+  （`CLIPDisplayLabeler`）の `ensureEmbeddings()` は**二重構築を防ぐため共有の `buildTask` に
+  合流**する作りで、`await task.value` しているだけ。**別の unstructured Task へは cancel が
+  伝播しない**。加えて約300語のループに `Task.isCancelled` の確認が無く、いったん始まると
+  CLIP テキストタワーのロード（15.5 秒）ごと走り切って ANE ゲートを占有し続けていた。
+- 対処: seam に `LabelProvider.cancelPrewarm()`（既定 no-op）を新設し、共有 Task を直接 cancel する。
+  ループは 1 語ごとに中断を見て、途中結果は確定させない（`isReady` は false のまま＝
+  フル画像 insight は Vision タグだけで即返るので表示は壊れない）。
+  併せて ANE ゲートの 1 秒以上の待ちを `ANE gate: waited Nms` として記録する。
+- 関連: `AutoAlbumCore/Perception/Providers.swift` / `MobileCLIPKit/CLIPDisplayLabeler.swift`
+  / `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift` / `PerceptionCore/MLInferenceGate.swift`。
+  テスト: `LabelProviderPrewarmTests`。
+- 残課題: メインが 11.6 秒止まった機序そのものは未確定（モデルロードは `MLModel.load` の async で
+  メイン外、`LoadOnce` は await 前にロックを手放している）。入れた計測で次のログから切り分ける。
+- 教訓: **「cancel を呼んだ」は「止まった」ではない**。`await someTask.value` で合流する設計では
+  cancel は伝播しない。止める意思は**合流先まで届く経路**（seam のメソッド・中断点）で表現する。
+  [[ADR-95]] の「待つ側が資源を握らない」と対で、「止めた側の意思が実際に効いているか」を
+  ログで確認できるようにしておく。
   クラウド顔埋め込みの歩留まりは本ログでも 59 枚しか走っておらず（30/87=34.5%）、
   [[ADR-90]]（1024px + 80px）の評価には依然サンプル不足。
 - 教訓: **待つ側が資源を握らない**。「ゲートが開けば自分で再開する」設計は、待っている間に

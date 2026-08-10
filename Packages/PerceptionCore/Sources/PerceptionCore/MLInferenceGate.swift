@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 
 /// ANE 系の重い処理の優先度。前景（ユーザーが待っている）と背景（夜間バッチ）を区別する。
 public enum MLInferencePriority: Sendable {
@@ -160,7 +161,18 @@ public actor MLInferenceGate {
             assertionFailure("MLInferenceGate.run が入れ子で呼ばれた（設計上は 1 段のみ）")
             return await body()
         }
+        // ⚠️ ゲート待ちは「別の推論が長く占有している」ときにだけ長くなる。占有側は無関係な経路
+        //    （例: 表示ラベラの事前ウォーム＝CLIP テキストタワーのロード 15.5 秒・実機 diagnostics-40）
+        //    のことがあり、待たされた側のログだけを見ても犯人が分からない。**長い待ちは記録する**
+        //    ＝次のログで「誰が待たされたか」を突き合わせられるようにする（ADR-95 追記）。
+        let waitStart = PerfTrace.nowNs()
+        let epoch = ProcessSuspension.epoch
         await acquire(priority)
+        let waitedMs = PerfTrace.msSince(waitStart)
+        if waitedMs >= 1000, !ProcessSuspension.didSuspend(since: epoch) {
+            Diagnostics.mark(String(format: "ANE gate: waited %.0fms (priority=%@)",
+                                    waitedMs, String(describing: priority)))
+        }
         let result = await Self.$isHeld.withValue(true) { await body() }
         release()
         return result
