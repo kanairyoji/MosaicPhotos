@@ -241,7 +241,28 @@ extension AutoAlbumEngine {
     /// ※ 一時停止で滞留したタスクは、ゲートが開けば（`heavyShouldPause` が false になれば）内部の
     ///   `waitWhilePaused` で**自分で再開**する。生成フラグ滞留の安全弁は
     ///   `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）とデバッグ全開バイパスが担う。
-    public func scheduleBackgroundFill() {
+    /// 実行中の背景処理を**明け渡させてから**開始し直す。夜間 BGTask 窓の先頭でだけ使う（ADR-95）。
+    ///
+    /// BGTask 窓は重い処理のための特権時間で、実測では 77 秒しか無いこともある。そこへ
+    /// 「前面起動時に始まってゲート閉で眠っている bgfill」が実行中フラグを握ったままだと、
+    /// 窓は `bgfill: skip — already tagging/embedding` だけを残して丸ごと空転する
+    ///（実機 diagnostics-38: 窓 77 秒のうち有効な処理は 0）。滞留側を降ろして窓を使い切る。
+    /// 各処理は差分ベースかつバッチごとに保存しているので、割り込んでも取りこぼさない。
+    public func restartBackgroundFill(captionsFirst: Bool = false) {
+        if isTagging {
+            Diagnostics.mark("bgfill: preempting the in-flight run for the background window")
+            fillGeneration &+= 1        // 旧タスクの末尾処理を無効化（世代ガード）
+            backgroundFillTask?.cancel()
+            backgroundFillTask = nil
+            isTagging = false
+        }
+        scheduleBackgroundFill(captionsFirst: captionsFirst)
+    }
+
+    /// - Parameter captionsFirst: キャプション窓（ADR-86/93）から呼ぶときに true。
+    ///   その回だけ VLM キャプションを埋め込みより先に回す。窓は短い（実機で 77 秒だった例あり）ので、
+    ///   順番が後ろだと窓が尽きて一度も到達しない（ADR-95）。
+    public func scheduleBackgroundFill(captionsFirst: Bool = false) {
         // D: 二重起動の抑止。前景の起動タスクと夜間 BGTask が同じエンジンに対して同時に呼び得るため、
         //    実行中フラグを**同期的に**立ててから Task を起こす（Task 内で立てると 2 本すり抜ける）。
         // 一時停止で滞留したタスクはゲートが開けば内部の waitWhilePaused で自分で再開する（force 撤去）。
@@ -252,9 +273,18 @@ extension AutoAlbumEngine {
             return
         }
         isTagging = true
+        fillGeneration &+= 1
+        let generation = fillGeneration
         let preset = Self.currentBackgroundPreset()
         backgroundFillTask = Task(priority: .background) {
-            defer { isTagging = false; backgroundFillTask = nil }
+            // 世代ガード: `restartBackgroundFill` で明け渡した旧タスクが遅れて末尾に来ても、
+            // 後続タスクの実行中フラグ／ハンドルを踏まない（ADR-95）。
+            defer {
+                if fillGeneration == generation {
+                    isTagging = false
+                    backgroundFillTask = nil
+                }
+            }
             Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
             // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。
@@ -294,6 +324,15 @@ extension AutoAlbumEngine {
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                            maxBatches: Self.tagBatchesPerRun,
                                            shouldPause: { BackgroundYield.heavyShouldPause() })
+            // ⚠️ フェーズの切れ目で**キャンセルを見る**（ADR-95）。フォアグラウンド復帰の
+            //    `stopForForeground()` はこのタスクを cancel するが、以前は次フェーズへそのまま進み、
+            //    「embed loop entry (unembedded=40181)」→「embed: finished — 0 photos in 0.0s」という
+            //    実態と食い違うログだけを残していた（実機 diagnostics-38）。トリクル本体が先頭で
+            //    キャンセルを見て即 return するため、作業はゼロなのに着手したように見えていた。
+            guard !Task.isCancelled else {
+                Diagnostics.mark("bgfill: cancelled after tag phase")
+                return
+            }
             // P2/P3: CLIP 埋め込みと VLM キャプションを**インターリーブ**で進める。
             // ⚠️ 逐次（埋め込み全量→キャプション）だと、埋め込みが 85k 枚すべて終わるまで
             //    キャプションが 1 枚も始まらない（実測 21% で滞留＝キャプション永遠に未着手）。
@@ -310,39 +349,77 @@ extension AutoAlbumEngine {
             Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums) "
                              + "unembedded=\(await store.unembeddedCount()))")
-            while !BackgroundYield.heavyShouldPause() {
-                let embedBefore = await store.unembeddedCount()
-                await tagger.embedUnprocessed(batchSize: preset.batchSize,
-                                              betweenBatchNs: preset.betweenBatchNs,
-                                              maxBatches: 12,
-                                              favorites: favorites,
-                                              shouldPause: embedPause,
-                                              networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
-                                              onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
-                    [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
-                }
-                let embedAfter = await store.unembeddedCount()
-                if BackgroundYield.heavyShouldPause() { break }
-                // 1-b: VLM(≈877MB) は**顔スキャンが動いていない間だけ**回す（facenet と同時常駐させない）。
-                // 顔スキャン中はキャプションを見送り、埋め込みだけ進める（お気に入りキャプションは最優先で
-                // ないので次の窓で拾う）。これでモデル同時常駐のピークを抑える。
-                var capBefore = 0, capAfter = 0
-                if !BackgroundActivityMonitor.shared.isScanningFaces {
-                    capBefore = await tagStore.captionPendingCount(favorites: favorites)
-                    await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: favoritesOrdered,
-                                                       shouldPause: captionPause)
-                    capAfter = await tagStore.captionPendingCount(favorites: favorites)
-                    // 1-d: キャプションフェーズが一巡したら VLM を解放（CLIP 画像塔と同時常駐しない）。
-                    tagTagger.releaseCaptionModel()
+            // ⚠️ キャプション窓（ADR-86/93）では**キャプションを先に**回す（ADR-95）。
+            //    以前は必ず埋め込みが先で、埋め込みが窓を使い切るとキャプションに一度も到達しなかった。
+            //    実機 diagnostics-38 では窓が 77 秒しか無く（`bgtask: expired` まで）、pending=796 の
+            //    キャプションは 1 枚も生成されないまま窓が終わっていた。
+            var captionsFirstThisRun = captionsFirst
+            while !BackgroundYield.heavyShouldPause(), !Task.isCancelled {
+                var embed = (before: 0, after: 0)
+                var caption = (before: 0, after: 0)
+                if captionsFirstThisRun {
+                    captionsFirstThisRun = false
+                    caption = await runCaptionPhase(favorites: favorites,
+                                                    favoritesOrdered: favoritesOrdered,
+                                                    shouldPause: captionPause)
+                    if BackgroundYield.heavyShouldPause() || Task.isCancelled { break }
+                    embed = await runEmbedPhase(preset: preset, favorites: favorites,
+                                                shouldPause: embedPause)
+                } else {
+                    embed = await runEmbedPhase(preset: preset, favorites: favorites,
+                                                shouldPause: embedPause)
+                    if BackgroundYield.heavyShouldPause() || Task.isCancelled { break }
+                    caption = await runCaptionPhase(favorites: favorites,
+                                                    favoritesOrdered: favoritesOrdered,
+                                                    shouldPause: captionPause)
                 }
                 // どちらも 1 枚も進まなかった＝残作業なし（お気に入り分のキャプション完了含む）→ 終了。
-                let progressed = (embedAfter < embedBefore) || (capAfter < capBefore)
+                let progressed = (embed.after < embed.before) || (caption.after < caption.before)
                 if !progressed { break }
             }
             // ループを抜けたら VLM は必ず解放しておく（顔スキャン中でキャプション未実行だった場合も）。
             tagTagger.releaseCaptionModel()
             // isTagging は先頭の defer で必ず戻す（二重起動抑止と対）。
         }
+    }
+
+    /// CLIP 埋め込みフェーズ。戻り値は実行前後の未埋め込み件数（進捗判定用）。
+    private func runEmbedPhase(preset: BackgroundProcessingPreset,
+                               favorites: Set<String>,
+                               shouldPause: @escaping @MainActor () -> Bool) async -> (before: Int, after: Int) {
+        let before = await store.unembeddedCount()
+        await tagger.embedUnprocessed(batchSize: preset.batchSize,
+                                      betweenBatchNs: preset.betweenBatchNs,
+                                      maxBatches: 12,
+                                      favorites: favorites,
+                                      shouldPause: shouldPause,
+                                      networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
+                                      onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
+            [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
+        }
+        return (before, await store.unembeddedCount())
+    }
+
+    /// VLM キャプションフェーズ。戻り値は実行前後の未キャプション件数（進捗判定用）。
+    ///
+    /// 1-b: VLM(≈877MB) は**顔スキャンが動いていない間だけ**回す（facenet と同時常駐させない）。
+    /// 顔スキャン中は見送る＝この場合 (0, 0) を返し「進捗なし」として扱う。キャプション窓では
+    /// 呼び出し側（`HeavyWorkScheduler`）が先に `stopScan()` して道を空ける（ADR-95）。
+    private func runCaptionPhase(favorites: Set<String>,
+                                 favoritesOrdered: [String],
+                                 shouldPause: @escaping @MainActor () -> Bool) async -> (before: Int, after: Int) {
+        guard !BackgroundActivityMonitor.shared.isScanningFaces else {
+            Diagnostics.mark("bgfill: captions skipped — face scan running")
+            return (0, 0)
+        }
+        let before = await tagStore.captionPendingCount(favorites: favorites)
+        await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: favoritesOrdered,
+                                           shouldPause: shouldPause)
+        let after = await tagStore.captionPendingCount(favorites: favorites)
+        // 1-d: キャプションフェーズが一巡したら VLM を解放（CLIP 画像塔と同時常駐しない）。
+        tagTagger.releaseCaptionModel()
+        Diagnostics.mark("bgfill: captions \(before - after) done (pending \(before)→\(after))")
+        return (before, after)
     }
 
     /// 設定（重さ段階）から現在のバックグラウンド埋め込みプリセットを読む。

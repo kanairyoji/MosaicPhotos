@@ -72,6 +72,43 @@ struct PersonNamePriorityTests {
         #expect(people.first?.name == "太郎")
     }
 
+    // MARK: - 一覧はメンバーキーを積まない（ADR-95）
+
+    /// 実機 diagnostics-38 の回帰: 人物リストを発行するたびに全人物の全メンバーキーが
+    /// MainActor へ渡り、`PersonAlbumView.init`（SwiftUI は再評価のたびに呼ぶ）が
+    /// その全件を decode し直していた。1 分に 30 回発行され、その回数ぶんだけ
+    /// フォアグラウンドが 600〜1000ms 固まっていた。
+    @Test("一覧は memberRefKeys を積まない（count は正しいまま）")
+    func listOmitsMemberKeys() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let (a, _) = await seedTwoClusters(store)
+
+        let list = await store.peopleClusters(minFaces: 3, includeMembers: false)
+        #expect(list.allSatisfy { $0.memberRefKeys.isEmpty }, "一覧にメンバーキーが載っている")
+        #expect(list.map(\.count) == [3, 3], "件数は積まなくても正しくなければならない")
+
+        // 人物アルバムを開いたときだけ取りに来る経路が、従来と同じ集合を返すこと。
+        let onDemand = await store.memberRefKeys(forPerson: a)
+        let full = await store.peopleClusters(minFaces: 3, includeMembers: true)
+        let expected = full.first { $0.clusterID == a }?.memberRefKeys ?? []
+        #expect(onDemand == expected, "遅延取得のメンバーが一覧版と一致しない")
+        #expect(onDemand.count == 3)
+    }
+
+    @Test("束ねた人物は全クラスタぶんのメンバーを遅延取得できる")
+    func onDemandMembersCoverWholeGroup() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let (a, b) = await seedTwoClusters(store)
+        await store.linkClusters([a, b])
+
+        let people = await store.peopleClusters(minFaces: 1, includeMembers: false)
+        #expect(people.count == 1)
+        let primary = people[0].clusterID
+        let members = await store.memberRefKeys(forPerson: primary)
+        #expect(Set(members) == Set((0..<3).map { "L-a\($0)" } + (0..<3).map { "L-b\($0)" }),
+                "束ねた全時期のメンバーが揃っていない")
+    }
+
     @Test("人物一覧は写真の多い順に並ぶ")
     func peopleSortedByPhotoCount() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

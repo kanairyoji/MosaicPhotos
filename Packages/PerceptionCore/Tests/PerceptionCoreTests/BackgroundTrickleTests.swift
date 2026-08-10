@@ -105,4 +105,47 @@ struct BackgroundTrickleTests {
         // 1 単位目は譲らず、2・3 単位目の前で 1 回ずつ譲る。
         #expect(c.pauseBegins == 2)
     }
+
+    // MARK: - 譲り待ちの上限（ADR-95）
+
+    /// 実機 diagnostics-38 の回帰: ゲートが閉じたまま眠り続けた bgfill が実行中フラグを
+    /// 14 分間握り、その間に開いた夜間 BGTask 窓（77 秒）もキャプション窓も
+    /// 「already tagging/embedding」で捨てられていた。眠るなら**フラグを手放して**眠る。
+    @Test("譲りが上限を超えたら諦めて true を返す（実行中フラグを解放するため）")
+    func waitGivesUpAfterMaxPause() async {
+        let c = Counter()
+        let gaveUp = await BackgroundTrickle.waitWhilePaused({
+            c.pauseChecks += 1
+            return true              // 永遠に譲れ＝ゲートが開かない
+        }, maxPauseNs: 900_000_000)  // 0.3s × 3 回ぶん
+        #expect(gaveUp, "上限を超えても諦めずに待ち続けている")
+        #expect(c.pauseChecks <= 6, "上限を大きく超えて待っている: \(c.pauseChecks)")
+    }
+
+    @Test("ゲートが開けば諦めない（false を返して通常どおり続行）")
+    func waitDoesNotGiveUpWhenGateOpens() async {
+        let c = Counter()
+        let gaveUp = await BackgroundTrickle.waitWhilePaused({
+            c.pauseChecks += 1
+            return c.pauseChecks <= 2
+        }, maxPauseNs: 60_000_000_000)
+        #expect(!gaveUp)
+    }
+
+    @Test("run: 譲り待ちが上限を超えたらループを畳む（バッチを回し続けない）")
+    func runStopsWhenPauseExceedsLimit() async {
+        let c = Counter()
+        var committed = 0
+        await BackgroundTrickle.run(
+            betweenBatchNs: 0,
+            shouldPause: { true },              // ずっと閉じたまま
+            unitPerfLabel: "test.unit",
+            maxPauseNs: 600_000_000,            // 0.6s で諦める
+            nextBatch: { batch in batch < 5 ? [batch] : [] },
+            processUnit: { c.processed.append($0) },
+            commitBatch: { _, _, _ in committed += 1; return .proceed })
+        #expect(c.processed.isEmpty, "譲り中なのに推論が走っている")
+        // 諦めた 1 バッチぶんだけ commit（部分結果の保存）が呼ばれてループが終わる。
+        #expect(committed == 1, "ループを畳まずバッチを回し続けている（commit=\(committed)）")
+    }
 }

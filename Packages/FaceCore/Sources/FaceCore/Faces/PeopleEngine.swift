@@ -28,6 +28,8 @@ public final class PeopleEngine {
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
     @ObservationIgnored private var lastCandidates: [String] = []
     @ObservationIgnored private var lastAllowSimulator = false
+    /// `setNeedsPeopleReload()` のデバウンス用。連続要求は最後の 1 回だけ生き残る（ADR-95）。
+    @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
     /// 「人物」として扱う最小の写真枚数（レビュー・検索・名前解決の母数）。
     /// 少ない断片も統合の対象にはしたいので、ここは低めに保つ。
@@ -74,12 +76,39 @@ public final class PeopleEngine {
 
     /// 永続済みのクラスタからピープル一覧を読み込む。
     /// 代表写真はユーザー選択（保存済み）→ お気に入り写真 → 認識した写真の先頭、の順で決まる。
+    ///
+    /// ⚠️ メンバーキーは積まない（`includeMembers: false`）。人物アルバムだけが必要とするので
+    /// `memberRefKeys(forPerson:)` で開いた画面が取りに来る（ADR-95）。
     public func loadPeople() async {
         await store.apply(tuning: tuning)   // 冪等（変更が無ければ何もしない・ADR-70）
         let favorites = await favoriteRefKeysProvider?() ?? []
-        people = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites)
+        let fresh = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites,
+                                               includeMembers: false)
         isLoaded = true
+        // ⚠️ 中身が同じなら**代入しない**。`@Observable` は代入だけで購読ビューを無効化するので、
+        //    スキャン中や連続レビューでは「変化なしの再描画」が積み上がっていた（ADR-95）。
+        guard fresh != people else { return }
+        people = fresh
         Diagnostics.mark("faces: people=\(people.count) (>= \(minFaces) faces, favs=\(favorites.count))")
+    }
+
+    /// 連続する変更（顔スキャンのバッチ完了・レビューの連続回答）を**1 回の再読込にまとめる**。
+    ///
+    /// 実機（diagnostics-38）では 1 分間に 30 回 `loadPeople()` が走り、その 1 回ごとに
+    /// フォアグラウンドが 600〜1000ms 固まっていた（1 分あたりのハング数＝発行回数と完全一致）。
+    /// 一覧は「最終的に正しければよい」表示なので、静止するまで待って 1 回だけ出す（ADR-95）。
+    public func setNeedsPeopleReload(quietMs: UInt64 = 700) {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: quietMs * 1_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.loadPeople()
+        }
+    }
+
+    /// 1 人物のメンバー写真キー（束ねていれば全時期ぶん）。人物アルバムを開くときだけ呼ぶ。
+    public func memberRefKeys(forPerson clusterID: Int) async -> [String] {
+        await store.memberRefKeys(forPerson: clusterID)
     }
 
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
@@ -154,7 +183,10 @@ public final class PeopleEngine {
                     self.remaining = $0
                     BackgroundActivityMonitor.shared.faceScanRemaining = $0
                 },
-                onBatch: { [weak self] in await self?.loadPeople() })
+                // ⚠️ バッチごとに `loadPeople()` を直に呼ぶと、スキャン中ずっと 2 秒に 1 回
+                //    人物リストを再発行し続けることになる（実機で 600〜1000ms のハングが
+                //    その回数ぶん出ていた・ADR-95）。スキャン進捗の反映は急がないのでまとめる。
+                onBatch: { [weak self] in self?.setNeedsPeopleReload() })
             // B2: スキャン完了後、修正が増えていれば制約付き再クラスタリングで全体を最適化
             //（夜間ウィンドウ内・数秒・順序依存の誤りを解消する）。
             // 版上げ再スキャン中なら、進んだ分だけ名前を段階的に戻す（数晩に分かれても可）。
@@ -473,7 +505,10 @@ public final class PeopleEngine {
         } else {
             await store.markNotSamePerson(clusterA: aClusterID, clusterB: bClusterID)
         }
-        await loadPeople()
+        // レビューは連続回答する画面で、下の人物一覧は隠れている。回答ごとに全件を再発行すると
+        // 1 回答につき 1 回フォアグラウンドが固まる（実機 diagnostics-38・ADR-95）ので、
+        // 静止してから 1 回だけ反映する。カードの供給元は `reviewItems` で `people` ではない。
+        setNeedsPeopleReload()
     }
 
     // MARK: - 品質スナップショット（ADR-68）
@@ -559,7 +594,7 @@ public final class PeopleEngine {
         } else {
             await store.splitCluster(clusterID: clusterID, faceIDs: groupBFaceIDs)
         }
-        await loadPeople()
+        setNeedsPeopleReload()   // 連続回答をまとめる（ADR-95）
     }
 
     /// 「この写真は「◯◯」さんですか？」への回答（A2）。
@@ -570,7 +605,7 @@ public final class PeopleEngine {
         } else {
             await store.reassignFace(faceID: faceID, toClusterID: nil)
         }
-        await loadPeople()
+        setNeedsPeopleReload()   // 連続回答をまとめる（ADR-95）
     }
 
     // MARK: - 制約付き再クラスタリング（B2・ADR-46）

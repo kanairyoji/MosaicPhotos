@@ -29,7 +29,17 @@ extension FaceStore {
     /// 「人物」とみなすクラスタ（メンバー数 `minFaces` 以上）を多い順に返す。
     /// 代表写真（cover）の優先順位: ユーザーが選んだ顔（`coverFaceID`・現存するもの）
     /// → **お気に入りマークの写真**の顔（`favoriteRefKeys`）→ 認識した写真の先頭。
-    func peopleClusters(minFaces: Int = 3, favoriteRefKeys: Set<String> = []) -> [PersonInfo] {
+    ///
+    /// - Parameter includeMembers: `PersonInfo.memberRefKeys` を積むか（既定 true）。
+    ///   **一覧表示（`PeopleEngine.people`）は false で呼ぶ**。`count` は常に正しく、違いは
+    ///   メンバーキー配列を持ち歩くかどうかだけ。数百人×各数十〜数千キーを MainActor へ載せると、
+    ///   (1) 発行のたびに万単位の String が往復し、(2) `PersonAlbumView.init` が再評価のたびに
+    ///   全キーを `PhotoRef.decode` し直す（SwiftUI は init を何度でも呼ぶ）ため、実機で
+    ///   フォアグラウンド 600〜1000ms のハングが人物リスト発行 1 回につき 1 回出ていた
+    ///   （diagnostics-38 で 105 回・ADR-95）。メンバーが要る画面は `memberRefKeys(forPerson:)` で
+    ///   必要なときだけ取りに来る。
+    func peopleClusters(minFaces: Int = 3, favoriteRefKeys: Set<String> = [],
+                        includeMembers: Bool = true) -> [PersonInfo] {
         // 2 階層（ADR-61）: personGroupID が同じクラスタを 1 人物に束ねる（子供の時期クラスタ）。
         // nil のクラスタは従来どおり単独（1 クラスタ=1 人物）＝全 nil なら旧挙動と一致。
         var groups: [String: [PersonCluster]] = [:]
@@ -68,7 +78,8 @@ extension FaceStore {
             let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
             result.append(PersonInfo(
                 clusterID: primary.clusterID, name: primary.name, count: members.count,
-                coverRefKey: cover?.refKey, coverBoundingBox: box, memberRefKeys: members,
+                coverRefKey: cover?.refKey, coverBoundingBox: box,
+                memberRefKeys: includeMembers ? members : [],
                 isGrouped: clustersInGroup.count > 1))
         }
         // 通し番号は**並べ替え後**に振る（写真の多い順に Person 1, 2, 3…）。
@@ -136,6 +147,20 @@ extension FaceStore {
         guard let c = cluster(clusterID) else { return [clusterID] }
         guard let gid = c.personGroupID else { return [clusterID] }
         return allClusters().filter { $0.personGroupID == gid }.map(\.clusterID)
+    }
+
+    /// 1 人物（束ねていれば全時期クラスタ）のメンバー写真キー。順序・重複排除は
+    /// `peopleClusters(includeMembers: true)` と一致させる（人物アルバムの並びが変わらないように）。
+    /// 一覧発行から切り離して**開いた画面だけが**取りに来るための入口（ADR-95）。
+    func memberRefKeys(forPerson clusterID: Int) -> [String] {
+        var seen = Set<String>()
+        var members: [String] = []
+        for id in linkedClusterIDs(primary: clusterID) {
+            for f in faces(inCluster: id) where seen.insert(f.refKey).inserted {
+                members.append(f.refKey)
+            }
+        }
+        return members
     }
 
     /// この写真に写っている**指定クラスタの**顔矩形（Vision 正規化・原点左下）。

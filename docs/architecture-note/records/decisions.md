@@ -21,6 +21,61 @@
 
 ---
 
+## ADR-95 「待つ側が資源を握らない」— 眠るならフラグを手放す／変わっていないものを取り直さない／一覧発行はまとめる
+- 状態: 採用
+- 文脈: 実機ログ diagnostics-38 で 5 つの症状が出た。掘ると**3 つの原則違反**に集約された。
+  1. フォアグラウンドのハングが **105 回**（最大 3490ms）。分あたりのハング数が
+     `faces: people=` の発行回数と**完全に一致**（05:03 は 30 回対 31 回、05:11 は 27 対 27、
+     05:07 は 14 対 14）。人物リストの再発行 1 回につきメインが 600〜1000ms 止まっていた。
+     発行元は顔スキャンの `onBatch`（バッチごと）とレビューの回答ごとで、2 秒に 1 回走っていた。
+     さらに `PersonInfo` が `memberRefKeys`（そのクラスタの全写真キー）を積んでおり、
+     数百人ぶんが毎回 MainActor を通り、`PersonAlbumView.init`（SwiftUI は再評価のたびに呼ぶ）が
+     その全件を `PhotoRef.decode` し直していた。
+  2. キャプションが**ゼロ**。`caption window (face scan skipped, pending=796)` は初めて出たのに、
+     次の行が `bgfill: skip — already tagging/embedding`。04:47 に前面で始まった bgfill が
+     ゲート閉（控えめ設定＋前面）のまま `waitWhilePaused` で眠り、**実行中フラグを 14 分間**
+     握っていた（14 分で 208 枚しかタグ付けしていない＝ほぼ眠っていた）。窓 77 秒は丸ごと空転。
+     加えて窓は「新しい顔スキャンを起こさない」だけで実行中のスキャンは止めないため、
+     `isScanningFaces` が立ったままでキャプションは見送られる。キャプションは埋め込みの**後ろ**
+     にしか置かれておらず、短い窓では順番が回ってこない。
+  3. 埋め込みが 40181 件滞留したまま 0 枚。`bgfill: embed loop entry (unembedded=40181)` →
+     `embed: finished — 0 photos in 0.0s`。タスクは既にキャンセル済み（前面復帰）だったが、
+     **フェーズの切れ目でキャンセルを見ていない**ため、死んだタスクのまま次フェーズへ進み、
+     実態と食い違うログだけを残していた。
+  4. 起動直後の最大ハング 2 件（3490ms / 2791ms）は `cachedItems() → 68200 items` の直後。
+     変化のない同期ポーリングでも毎回 68,200 行を fetch し、値型 68,200 個を作って署名を比べ、
+     大半を捨てていた（`cache.fetchItems` 993ms / 1165ms が 3 秒間に 2 回）。
+- 決定: 症状ごとの対症ではなく、3 つの原則として直す。
+  - **眠るならフラグを手放す**: `BackgroundTrickle.waitWhilePaused` に上限（既定 60 秒）を設け、
+    超えたら `true` を返して `run` がループを畳む（部分結果は commit してから）。呼び手の
+    「実行中」フラグが解放され、次の窓が入れる。各処理は差分ベースなので取りこぼさない。
+    さらに BGTask 窓の先頭では `restartBackgroundFill` で滞留した実行を**明け渡させる**
+    （世代ガード `fillGeneration` で旧タスクの末尾処理が新タスクを踏まないようにする）。
+    キャプション窓では実行中の顔スキャンも `stopScan()` で止め、その回だけ
+    `captionsFirst` でキャプションを埋め込みより先に回す。フェーズの切れ目で `Task.isCancelled` を見る。
+  - **変わっていないものを取り直さない**: `DropboxCacheStore` に変更リビジョン `itemsRevision`
+    を持たせ（実際に増減・更新があったときだけ進む）、`reflectCachedItems` は札が同じなら
+    **fetch すらしない**。CLAUDE.md 性能原則 3（無いものを繰り返し探さない）の同型。
+  - **一覧の発行はまとめる／重い荷物を積まない**: `peopleClusters(includeMembers:)` を足し、
+    一覧は `false`（`count` は正しいまま・メンバーは `memberRefKeys(forPerson:)` で
+    開いた画面だけが取りに来る）。`loadPeople` は結果が同じなら**代入しない**
+    （`@Observable` は代入だけで購読ビューを無効化する）。連続する変更は
+    `setNeedsPeopleReload()` で 700ms 静止まで待って 1 回だけ発行する。
+    `PersonAlbumView` はメンバーを `.task` で 1 回だけ取る（`init` から decode を外す）。
+- 結果: ハングの原因（発行回数 × 1 回あたりのコスト）を両側から削った。キャプションは短い窓でも
+  必ず順番が回る。BGTask 窓が居座りで空転しない。起動時の 68,200 件フェッチが変化時のみになる。
+  トレードオフ: (a) 譲り待ち 60 秒で畳むため、ゲートが 61 秒後に開く場合は次の呼び出しまで待つ
+  （窓の再入トリガはシーン遷移・BGTask・アイドルタイマーがあるので実害は小さい）。
+  (b) 人物一覧の反映が最大 700ms 遅れる（スキャン進捗・レビュー結果の表示のみ）。
+  (c) BGTask 窓の明け渡しで、前面由来の実行が進行中でも中断される（バッチ単位で保存済み）。
+- 関連: `PerceptionCore/BackgroundTrickle.swift` / `AutoAlbumCore/AIAlbum/AutoAlbumEngine+Recognition.swift`
+  / `AutoAlbumCore/AutoAlbumEngine.swift` / `AutoAlbumCore/Perception/PhotoTagger.swift`
+  / `FaceCore/Faces/FaceStore+People.swift` / `FaceCore/Faces/PeopleEngine.swift`
+  / `DropboxCore/Cache/DropboxCacheStore.swift` / `DropboxCore/Store/DropboxPhotoStore.swift`
+  / `MosaicPhotos/HeavyWorkScheduler.swift` / `MosaicPhotos/Home/PersonAlbumView.swift`。
+  テスト: `BackgroundTrickleTests`（譲り上限）/ `PersonNamePriorityTests`（一覧はメンバー非搭載・
+  遅延取得の一致）/ `DropboxCacheStoreMetadataTests`（リビジョン）。ADR-79/80/85/86/87/93 の続き。
+
 ## ADR-94 人物の名前は「付けた側」を必ず残す（束ね・統合とも）／衝突は必ず尋ねる
 - 状態: 採用
 - 文脈: 実フィードバック「複数のグループを束ねたら、折角つけた名前が消えることがある」。

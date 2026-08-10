@@ -13,6 +13,32 @@ struct DropboxCacheStoreMetadataTests {
         #expect(await store.cachedItems(accountId: "acc1").isEmpty)
     }
 
+    // MARK: - 変更リビジョン（ADR-95）
+
+    /// 実機 diagnostics-38 の回帰: 変化のない同期ポーリングでも毎回 68,200 行を fetch し、
+    /// 値型 68,200 個を作って署名を比べ、大半を捨てていた（`cache.fetchItems` 993ms / 1165ms →
+    /// 直後にメインが 2.8s / 3.5s ブロック）。変わっていないものを取り直さないための札。
+    @Test("itemsRevision: 実際に変わったときだけ進む")
+    func revisionAdvancesOnlyOnRealChange() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let start = await store.currentItemsRevision()
+
+        // 空デルタ（＝変更なしのポーリング）ではカーソルだけ進み、札は据え置き。
+        await store.applyDelta(accountId: "acc1", added: [], removed: [], newCursor: "c1")
+        #expect(await store.currentItemsRevision() == start, "変化なしのポーリングで札が進んでいる")
+
+        let item = DropboxFileItem(path: "/a.jpg", name: "a.jpg", contentHash: "hash1")
+        await store.applyDelta(accountId: "acc1", added: [item], removed: [], newCursor: "c2")
+        let afterInsert = await store.currentItemsRevision()
+        #expect(afterInsert != start, "挿入で札が進んでいない")
+
+        await store.applyDelta(accountId: "acc1", added: [], removed: [], newCursor: "c3")
+        #expect(await store.currentItemsRevision() == afterInsert, "空デルタで札が進んでいる")
+
+        await store.applyDelta(accountId: "acc1", added: [], removed: ["/a.jpg"], newCursor: "c4")
+        #expect(await store.currentItemsRevision() != afterInsert, "削除で札が進んでいない")
+    }
+
     @Test("applyDelta は新規アイテムを挿入する")
     func applyDeltaInserts() async {
         let store = DropboxCacheStore(isStoredInMemoryOnly: true)

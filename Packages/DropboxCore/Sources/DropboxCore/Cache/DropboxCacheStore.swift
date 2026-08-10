@@ -131,6 +131,19 @@ actor DropboxCacheStore {
         (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>())) ?? 0
     }
 
+    /// アイテム集合の変更リビジョン。`applyDelta` / `updateLocation` のたびに進む。
+    ///
+    /// 表示側（`DropboxPhotoStore.reflectCachedItems`）が「前回反映してから変わったか」を
+    /// **68,200 行を fetch せずに**判定するための札（ADR-95）。以前は同期ポーリングのたびに
+    /// 全件 fetch → 値型 68,200 個生成 → 署名計算 → 大半は「変化なし」で捨てる、を繰り返しており、
+    /// 起動直後の 3 秒間だけで 2 回走って `cache.fetchItems` が 993ms / 1165ms かかっていた
+    /// （実機 diagnostics-38・その直後にメインが 2.8s / 3.5s ブロック）。
+    /// 変わっていないものを取り直さない（CLAUDE.md 性能原則 3 の同型）。
+    private(set) var itemsRevision: Int = 0
+
+    /// 変更リビジョンを読む（表示側の早期リターン用・fetch を伴わない）。
+    func currentItemsRevision() -> Int { itemsRevision }
+
     /// 同期状態の Sendable スナップショット（`@Model` を actor 外へ漏らさない）。
     struct SyncStateInfo: Sendable, Equatable {
         let cursor: String?
@@ -148,6 +161,7 @@ actor DropboxCacheStore {
         existing.latitude = latitude
         existing.longitude = longitude
         try? modelContext.save()
+        itemsRevision &+= 1
     }
 
     /// Applies a delta from `list_folder` / `list_folder/continue` to the cache:
@@ -202,6 +216,9 @@ actor DropboxCacheStore {
         state.lastSyncedAt = Date()
 
         try? modelContext.save()
+        // アイテム集合が実際に変わったときだけ札を進める（変化なしのポーリングでは進めない＝
+        // 表示側が 68,200 件の再取得を丸ごと省ける・ADR-95）。
+        if insertCount > 0 || updateCount > 0 || !removed.isEmpty { itemsRevision &+= 1 }
         DropboxLogger.verbose("applyDelta() saved — inserted=\(insertCount), updated=\(updateCount), removed=\(removed.count)")
     }
 

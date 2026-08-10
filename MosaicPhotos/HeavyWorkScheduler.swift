@@ -276,6 +276,12 @@ enum HeavyWorkScheduler {
         UserDefaults.standard.set(captionTurn.streak, forKey: AppSettingsKeys.captionDeferralStreak)
         if captionTurn.take {
             Diagnostics.mark("bgtask: caption window (face scan skipped, pending=\(pendingCaptions))")
+            // ⚠️ 新しいスキャンを**起こさない**だけでは足りない（ADR-95）。前の窓や前面で始まった
+            //    スキャンが走り続けていると `isScanningFaces` が立ったままで、bgfill のキャプション
+            //    フェーズは「顔スキャン中」として見送られる＝窓を取った意味が無い。
+            //    実機 diagnostics-38 では窓の直後も `faces.detect` が出続け、キャプションは 0 枚だった。
+            //    スキャンは差分ベースなので、止めても次の窓で続きから再開する。
+            stores.peopleEngine.stopScan()
         } else {
             // ⚠️ **取らなかった理由も必ず残す**（ADR-93）。以前は take のときしか記録せず、
             // 「キャプションが動かない」ときに *残作業ゼロなのか順番待ちなのか*
@@ -287,7 +293,10 @@ enum HeavyWorkScheduler {
                 candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
                 allowSimulator: allowSim)
         }
-        stores.autoAlbumEngine.scheduleBackgroundFill()
+        // 夜間窓は重い処理のための特権時間。前面で始まって眠っている実行が居座っていると窓を
+        // 丸ごと空転させるので、明け渡させてから始め直す（ADR-95）。
+        // キャプション窓ならこの回だけキャプションを先頭に回す（窓が短くても必ず到達する）。
+        stores.autoAlbumEngine.restartBackgroundFill(captionsFirst: captionTurn.take)
 
         // 「動くべきなのに動いていない」パスを毎窓チェックして診断ログへ（ADR-87）。
         // 飢餓バグは沈黙として現れるため、こちらから沈黙を検出しにいく。

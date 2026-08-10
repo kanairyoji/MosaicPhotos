@@ -12,6 +12,9 @@ public final class DropboxPhotoStore {
     public private(set) var items: [DropboxFileItem] = []
     /// 2-b: 直近反映した items の内容署名（off-main 計算・メインの全比較を避ける）。
     @ObservationIgnored private var lastItemsSignature: Int?
+    /// 最後に `items` へ反映したキャッシュの変更リビジョン（`DropboxCacheStore.itemsRevision`）。
+    /// 一致していれば全件 fetch を丸ごと省く（ADR-95）。
+    @ObservationIgnored private var lastReflectedRevision: Int?
     public private(set) var loadStatus: LoadStatus = .idle
     public private(set) var debugInfo: String = ""
     /// バックグラウンド同期エンジンの現在状態。SettingsView などで表示に使用する。
@@ -119,6 +122,15 @@ public final class DropboxPhotoStore {
     /// stampFavorites の map＋代入を行う。同一なら @Observable 通知も発火しない（セル churn 防止）。
     @discardableResult
     private func reflectCachedItems(accountId: String) async -> Int {
+        // ⚠️ **変わっていなければ fetch すらしない**（ADR-95）。署名比較は「取ってから捨てる」ので、
+        //    無変更でも 68,200 行の fetch＋値型生成＋刻印コピーの代金を毎回払っていた。
+        //    実機 diagnostics-38 では起動直後の 3 秒間にこれが 2 回走り、`cache.fetchItems` が
+        //    993ms / 1165ms、直後にメインが 2.8s / 3.5s ブロックしていた。
+        let revision = await cache.currentItemsRevision()
+        if revision == lastReflectedRevision, !items.isEmpty {
+            updateLoadStatus()
+            return items.count
+        }
         let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
         let favPaths = cloudFavoritePaths
         // ⚠️ 署名計算**と刻印（68,200 件の map）を同じ detached でまとめて**行う（ADR-88）。
@@ -129,6 +141,7 @@ public final class DropboxPhotoStore {
             (Self.itemsSignature(raw, favoritePaths: favPaths),
              favPaths.isEmpty ? raw : raw.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
         }.value
+        lastReflectedRevision = revision
         if sig != lastItemsSignature {
             lastItemsSignature = sig
             items = stamped

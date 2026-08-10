@@ -75,7 +75,8 @@ final class PhotoTagger {
             warmBatch: { [perception] chunks in perception.warmUp(refKeys: chunks.flatMap { $0 }) },
             nextBatch: { batch in
                 // ★ ユーザー操作中（スクラブ等）は重い知覚（サムネDL＋CLIP）を譲り、落ち着くまで待つ（G）。
-                await BackgroundTrickle.waitWhilePaused(shouldPause)
+                // 譲り待ちが長すぎたら空を返して実行を畳む（`isTagging` を解放する・ADR-95）。
+                if await BackgroundTrickle.waitWhilePaused(shouldPause) { return [] }
                 if Task.isCancelled { return [] }
                 // 回線NG（例: Wi-Fi 待ち）のときはクラウド写真（サムネDL）をスキップし、
                 // ローカル写真だけ進める（スマート方針 b）。Wi-Fi 復帰でクラウド分が再開される。
