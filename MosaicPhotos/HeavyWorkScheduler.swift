@@ -29,7 +29,13 @@ enum HeavyWorkScheduler {
 
     /// キャプションが顔スキャンに譲れる連続回数の上限（ADR-86）。これを超えたら
     /// その窓は顔スキャンを起こさず、キャプションに順番を回す（顔スキャンは差分なので次窓で続く）。
-    private static let maxCaptionDeferrals = 3
+    ///
+    /// **1 にした理由（ADR-93）**: キャプションの母数は**有界**（お気に入り約 1,600 枚で打ち止め・
+    /// 終われば `hasWork=false` になり以後この判定自体が無効化される）。一方、顔スキャンの母数は
+    /// クラウド 68,200 枚で**事実上終わらない**。有界な作業を無限の作業の後ろに並べる意味は薄いので、
+    /// 1 窓おきにキャプションへ回して先に終わらせる。3 だと夜間窓が数分×4 回に 1 回しか来ず、
+    /// 実機で 9 日間 1 枚も生成されなかった（diag-35 の `captions(pending=612 idle=9d)`）。
+    private static let maxCaptionDeferrals = 1
 
     /// フォアグラウンドで構築済みのストア群（RootView が設定）。アプリがメモリに残ったまま
     /// BG 起動された場合はこれを再利用し、プロセス再起動時のみ作り直す。
@@ -271,6 +277,11 @@ enum HeavyWorkScheduler {
         if captionTurn.take {
             Diagnostics.mark("bgtask: caption window (face scan skipped, pending=\(pendingCaptions))")
         } else {
+            // ⚠️ **取らなかった理由も必ず残す**（ADR-93）。以前は take のときしか記録せず、
+            // 「キャプションが動かない」ときに *残作業ゼロなのか順番待ちなのか*
+            // ログから区別できなかった（実機 diag-37 で判別不能だった）。
+            Diagnostics.mark("bgtask: caption deferred \(captionTurn.streak)/\(Self.maxCaptionDeferrals) "
+                             + "(pending=\(pendingCaptions))")
             // 一時停止で滞留した既存タスクはゲートが開けば内部で自動再開する（真因の画像ロードハングは修正済み）。
             stores.peopleEngine.startScan(
                 candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
