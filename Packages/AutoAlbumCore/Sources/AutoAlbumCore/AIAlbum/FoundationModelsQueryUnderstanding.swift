@@ -18,8 +18,10 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
     func interpret(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> AIAlbumQuery {
         // ⚠️ LLM のセッション生成＋推論は Task.detached で確実にオフメイン化する
         //（呼び出し元は @MainActor のサービス。実測でメインを数秒塞いだ）。
+        // 優先度は .utility（diagnostics-48: userInitiated だと LLM 推論が P コアを占有し、
+        // メインが 10 秒級にスケジュールされない＝体感フリーズ。推論は待てる処理）。
         let instructions = Self.instructions(catalog: catalog, now: now)
-        let generated: GeneratedAlbumQuery? = await Task.detached(priority: .userInitiated) {
+        let generated: GeneratedAlbumQuery? = await Task.detached(priority: .utility) {
             let session = LanguageModelSession(instructions: instructions)
             return try? await session.respond(to: text, generating: GeneratedAlbumQuery.self).content
         }.value
@@ -35,7 +37,7 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
     func interpretSpec(_ text: String, catalog: AIAlbumCatalog, now: Date) async -> QuerySpec {
         // ⚠️ LLM のセッション生成＋推論は Task.detached で確実にオフメイン化する（上記と同様）。
         let instructions = Self.specInstructions(catalog: catalog, now: now)
-        let generated: GeneratedSpec? = await Task.detached(priority: .userInitiated) {
+        let generated: GeneratedSpec? = await Task.detached(priority: .utility) {
             let session = LanguageModelSession(instructions: instructions)
             return try? await session.respond(to: text, generating: GeneratedSpec.self).content
         }.value
@@ -55,7 +57,7 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
         search words for the same visual intent: synonyms, broader and narrower visual concepts. \
         Single words or 2-word phrases only.
         """
-        let generated: GeneratedProbes? = await Task.detached(priority: .userInitiated) {
+        let generated: GeneratedProbes? = await Task.detached(priority: .utility) {
             let session = LanguageModelSession(instructions: instructions)
             return try? await session.respond(to: text, generating: GeneratedProbes.self).content
         }.value

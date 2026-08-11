@@ -22,7 +22,7 @@ public struct AppQueryTranslator: QueryTranslator {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability {
             // ⚠️ LLM のセッション生成＋推論は Task.detached で確実にオフメイン化する。
-            let out: String? = await Task.detached(priority: .userInitiated) {
+            let out: String? = await Task.detached(priority: .utility) {
                 let session = LanguageModelSession(
                     instructions: "Translate the user's text into natural English for an image search query. "
                         + "Reply with ONLY the English translation — no quotes, no explanation.")

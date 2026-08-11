@@ -121,12 +121,15 @@ final class AIAlbumService {
         var out = albums
         let all = await store.allEnrichedPhotosLite()
         let embedCount = await store.embeddedCount()
+        // カタログはループ外で 1 回だけ構築（refresh と同じ・diagnostics-48）。
+        let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
         for id in pendingIDs {
             if BackgroundYield.heavyShouldPause() { break }   // ロック解除等 → 残りは次回夜間へ
             guard let index = out.firstIndex(where: { $0.id == id }),
                   let criteria = out[index].criteria, !criteria.isEmpty else { continue }
             // interpretation() は pending の解釈をキャッシュ扱いしない＝ここで FM 解釈が走る。
-            var saved = await interpreter.interpretation(id: id, criteria: criteria, now: now)
+            var saved = await interpreter.interpretation(id: id, criteria: criteria, now: now,
+                                                         baseLite: all, prebuiltCatalog: catalog)
             var (members, pool) = await rankedSearch(all, saved: saved, now: now)
             members = await verification.evidenceGatedIfExcluding(members, spec: saved.spec)
             members = await verification.verified(members, criteria: criteria)
@@ -223,11 +226,25 @@ final class AIAlbumService {
         let now = Date()
         let all = await store.allEnrichedPhotosLite()
         let embedCount = await store.embeddedCount()
+        // 再解釈（版更新）に備えてカタログを **1 回だけ**構築して全アルバムで共有する
+        // （diagnostics-48: v7 移行の全再解釈がアルバムごとに 86k フェッチ＋カタログ構築を
+        //  繰り返し、約 10 秒 × 5 本の負荷で前面のメインを飢餓させた）。
+        let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
 
         var updated: [AutoAlbumInfo] = []
         for album in current {
+            // 前面復帰したら次のアルバムへ進まない（一枚岩の途中放棄・ADR-107 の考え方）。
+            // 背面で始まった refresh がユーザー復帰後も数分続き、体感フリーズになっていた
+            // （diagnostics-48）。残りは現状のまま返し、次の夜間窓（stale 判定）が続きをやる。
+            if BackgroundYield.isAppActive && !BackgroundYield.debugForceHeavyWork
+                && Date() >= BackgroundYield.manualBoostUntil {
+                Diagnostics.mark("aialbum.refresh: aborted for foreground (\(updated.count)/\(current.count))")
+                updated.append(contentsOf: current[updated.count...])
+                break
+            }
             guard let criteria = album.criteria, !criteria.isEmpty else { updated.append(album); continue }
-            var saved = await interpreter.interpretation(id: album.id, criteria: criteria, now: now)
+            var saved = await interpreter.interpretation(id: album.id, criteria: criteria, now: now,
+                                                         baseLite: all, prebuiltCatalog: catalog)
             var (members, pool) = await rankedSearch(all, saved: saved, now: now)
             members = await verification.evidenceGatedIfExcluding(members, spec: saved.spec)
             members = await verification.verified(members, criteria: criteria)

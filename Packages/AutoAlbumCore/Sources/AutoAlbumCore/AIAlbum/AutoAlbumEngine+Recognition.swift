@@ -133,9 +133,17 @@ extension AutoAlbumEngine {
     /// 検索文が空なら何もしない（コンポーザー側でもボタンを無効化しているが二重に防ぐ）。
     public func beginMakeAIAlbum(id: String?, title: String, criteria: String) {
         guard !criteria.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // 二重実行の抑止（diagnostics-48: 同一 criteria の make が 2 本並走し、86k フェッチが
+        // 直列化されて fetch 20.7 秒 ×2 ＝メイン飢餓 20.5 秒の主因になった）。
+        guard !isMakingAIAlbum else {
+            Diagnostics.mark("aialbum.make: skip — already making")
+            return
+        }
         isMakingAIAlbum = true
-        // ユーザーが結果を待っている操作なので userInitiated（既定優先度だと背景タグ付けと同格になる）。
-        Task(priority: .userInitiated) {
+        // ⚠️ utility にする（diagnostics-48）。userInitiated だと 86k フェッチ・採点の協調タスクが
+        // P コアを占有し、メインスレッドが数十秒スケジュールされない（飢餓＝体感は完全なフリーズ）。
+        // ユーザーはスピナーで進行を見られるので、応答性を優先する。
+        Task(priority: .utility) {
             defer { isMakingAIAlbum = false }
             if let id {
                 _ = await updateAIAlbum(id: id, title: title, criteria: criteria)

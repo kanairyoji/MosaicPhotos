@@ -111,7 +111,14 @@ public final class AIAlbumInterpreter {
 
     /// 保存済み解釈を返す。無い・検索文が変わったときだけ LLM で解釈＋翻訳して保存する。
     /// カタログ（地名/人物の語彙）は LLM の表記寄せヒントとして**このときだけ**構築する。
-    func interpretation(id: String, criteria: String, now: Date) async -> SavedInterpretation {
+    /// - Parameters:
+    ///   - baseLite / prebuiltCatalog: 呼び出し側（refresh/finalize の一括ループ）が既に持つ
+    ///     全メタ・カタログ。渡すと**アルバムごとの 86k フェッチ＋カタログ構築を省く**
+    ///     （diagnostics-48: v7 移行の全再解釈で 1 アルバムあたり約 10 秒 × 5 本の再取得が
+    ///     走り、前面のメイン飢餓を悪化させた）。nil なら従来どおり自前で取得。
+    func interpretation(id: String, criteria: String, now: Date,
+                        baseLite: [EnrichedPhoto]? = nil,
+                        prebuiltCatalog: AIAlbumCatalog? = nil) async -> SavedInterpretation {
         // 検索文が同じでも、解釈器の版が古ければ作り直す（プロンプト改善を既存アルバムに波及させる）。
         if var saved = interpretations.get(id), saved.criteria == criteria,
            saved.version == SavedInterpretation.currentVersion,
@@ -127,8 +134,10 @@ public final class AIAlbumInterpreter {
             }
             return saved
         }
-        let all = await store.allEnrichedPhotosLite()
-        var catalog = await Self.buildCatalogOffMain(all)
+        let all: [EnrichedPhoto]
+        if let baseLite { all = baseLite } else { all = await store.allEnrichedPhotosLite() }
+        var catalog: AIAlbumCatalog
+        if let prebuiltCatalog { catalog = prebuiltCatalog } else { catalog = await Self.buildCatalogOffMain(all) }
         // S5（ADR-102）: 内容語の接地先＝実在タグ語彙をカタログへ載せ、FM に「この中から選べ」と
         // 制約する（場所・人物で実績のある規律の横展開）。語彙が無い段階では従来どおり自由語。
         catalog.contentTags = Array((await tagVocabularyProvider?() ?? []).prefix(60))
