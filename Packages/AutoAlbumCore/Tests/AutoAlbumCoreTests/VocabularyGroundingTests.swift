@@ -52,6 +52,38 @@ struct VocabularyGroundingTests {
         #expect(!g.isGrounded)
     }
 
+    // MARK: - 高原規則（S6・ADR-102）
+
+    /// animal 型: 該当語彙が多すぎて突出しない（z<3）が、上位候補どうしは互いに近い。
+    /// 40 語中 10 語が高原（z≈1.7）になる合成分布。
+    private var plateauSimilarity: (String) -> [Double] {
+        { _ in self.vocabulary.indices.map { $0 < 10 ? 0.90 - Double($0) * 0.001 : 0.30 } }
+    }
+
+    @Test("凝集した高原は接地される（animal 型・上限は broadMaxExpansion）")
+    func coherentPlateauGrounds() {
+        let g = VocabularyGrounding.ground(terms: ["animal"], vocabulary: vocabulary,
+                                           similarity: plateauSimilarity,
+                                           coherenceZ: { _ in 3.0 })[0]
+        #expect(g.isGrounded, "凝集した高原が接地されない")
+        #expect(g.expanded.count == 10, "高原のメンバー全員を採るべき: \(g.expanded.count)")
+    }
+
+    @Test("凝集していない高原（雑音）は接地されない")
+    func incoherentPlateauStaysUngrounded() {
+        let g = VocabularyGrounding.ground(terms: ["nostalgia"], vocabulary: vocabulary,
+                                           similarity: plateauSimilarity,
+                                           coherenceZ: { _ in 0.5 })[0]
+        #expect(!g.isGrounded, "雑音の高原が接地された: \(g.expanded)")
+    }
+
+    @Test("凝集度が測れない環境では高原を接地しない（従来動作の維持）")
+    func plateauNeedsCoherence() {
+        let g = VocabularyGrounding.ground(terms: ["animal"], vocabulary: vocabulary,
+                                           similarity: plateauSimilarity)[0]   // coherenceZ なし
+        #expect(!g.isGrounded)
+    }
+
     // MARK: - 畳み方（肯定と否定で扱いを変える）
 
     @Test("肯定は接地できなくても残す（CLIP のソフト採点が受け持つ）")

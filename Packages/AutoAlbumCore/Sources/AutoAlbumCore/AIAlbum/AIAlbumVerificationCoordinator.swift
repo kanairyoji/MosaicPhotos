@@ -97,9 +97,21 @@ final class AIAlbumVerificationCoordinator {
                                        excludeTerms: spec.allContentTerms.exclude)
         if gated.count != members.count {
             Diagnostics.mark("aialbum.evidenceGate: \(members.count) → \(gated.count) (deferred until indexed)")
+            // S7（ADR-102）: 証拠不足で保留になった写真を覚えておき、夜間キャプションの
+            // **優先対象**にする（キャプションが付けば証拠になり、次の評価でアルバムに入れる）。
+            // プロセス内のみ（次の評価で再計算される）。上限つき＝夜間 1〜2 窓ぶんで十分。
+            let gatedIDs = Set(gated.map(\.id))
+            let starved = members.map(\.id).filter { !gatedIDs.contains($0) }
+            var merged = evidenceStarvedRefKeys.filter { !starved.contains($0) }
+            merged.append(contentsOf: starved)
+            evidenceStarvedRefKeys = Array(merged.suffix(Self.maxStarvedTracked))
         }
         return gated
     }
+
+    /// S7: 証拠不足で保留になった写真（新しい保留ほど後ろ＝優先度は同列でよい）。
+    private(set) var evidenceStarvedRefKeys: [String] = []
+    static let maxStarvedTracked = 400
 
     /// 候補（上位 60 件）の証拠行（日付・場所・顔数・タグ・キャプション）を LLM が読み、
     /// 不適合を落とす。unsure は最大 2 回再判定して**多数決**（同数は keep＝安全側）。

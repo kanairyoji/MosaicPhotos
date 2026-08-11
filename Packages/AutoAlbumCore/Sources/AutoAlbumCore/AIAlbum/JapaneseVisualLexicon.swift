@@ -111,16 +111,65 @@ public enum JapaneseVisualLexicon {
         return false
     }
 
+    /// 語彙エントリの一致（どの日本語語が・どのエントリで・否定文脈か）。
+    private struct Match {
+        let entryIndex: Int
+        let jp: String
+        let negated: Bool
+    }
+
+    /// 原文と語彙の一致を**長い語優先・占有制**で取る（S5・ADR-102）。
+    ///
+    /// ⚠️ 素朴な `contains` だと部分文字列が二重に当たる。実障害: 「**電車**の写真」が
+    /// 電車→train に加えて **車→car にも当たり**、include=["car","train"] になって
+    /// 車の写真 502 枚が混入していた（COCO 計測: train P=0.214 の正体。タグ照合は無実だった）。
+    /// 長い語から先に一致させ、一致した範囲を**占有**して短い語の重複一致を禁じる
+    /// （形態素解析は持ち込まない＝決定的レキシコンの範囲で最長一致だけ行う）。
+    private static func matches(in criteria: String) -> [Match] {
+        let lower = criteria.lowercased()
+        // (語, entryIndex) を語長の降順で。同長は entry 順（安定）。
+        var words: [(jp: String, entry: Int)] = []
+        for (i, entry) in visualWords.enumerated() {
+            for jp in entry.jp { words.append((jp: jp, entry: i)) }
+        }
+        words.sort { a, b in
+            if a.jp.count != b.jp.count { return a.jp.count > b.jp.count }
+            return a.entry < b.entry
+        }
+        var claimed: [Range<String.Index>] = []
+        var out: [Match] = []
+        var matchedEntries = Set<Int>()
+        for (jp, entryIndex) in words {
+            guard !matchedEntries.contains(entryIndex) else { continue }
+            // 原文（かな漢字）と小文字化の両方で探す（英字混じり対応・従来と同じ）。
+            for haystack in [criteria, lower] {
+                var searchStart = haystack.startIndex
+                var found = false
+                while let range = haystack.range(of: jp, range: searchStart..<haystack.endIndex) {
+                    searchStart = range.upperBound
+                    // 既に長い語が占有した範囲の内側なら数えない（電車の「車」）。
+                    if claimed.contains(where: { $0.overlaps(range) }) { continue }
+                    claimed.append(range)
+                    out.append(Match(entryIndex: entryIndex, jp: jp,
+                                     negated: isNegated(jp, in: criteria)))
+                    matchedEntries.insert(entryIndex)
+                    found = true
+                    break
+                }
+                if found { break }
+            }
+        }
+        // 出力はエントリ定義順（従来の並びを保つ＝テスト・表示の互換）。
+        return out.sorted { $0.entryIndex < $1.entryIndex }
+    }
+
     /// 原文から視覚語（英語）を決定的に抽出する。見つからなければ空。
     /// ⚠️ **否定されている語は含めない**（「犬が写っていない」で dog を肯定に立てない）。
     static func includeTerms(in criteria: String) -> [String] {
-        let lower = criteria.lowercased()
         var out: [String] = []
         var seen = Set<String>()
-        for entry in visualWords {
-            guard let matched = entry.jp.first(where: { criteria.contains($0) || lower.contains($0) }),
-                  !isNegated(matched, in: criteria) else { continue }
-            for en in entry.en where seen.insert(en).inserted { out.append(en) }
+        for match in matches(in: criteria) where !match.negated {
+            for en in visualWords[match.entryIndex].en where seen.insert(en).inserted { out.append(en) }
         }
         return out
     }
@@ -130,11 +179,8 @@ public enum JapaneseVisualLexicon {
     public static func excludeTerms(in criteria: String) -> [String] {
         var out: [String] = []
         var seen = Set<String>()
-        let lower = criteria.lowercased()
-        for entry in visualWords {
-            guard let matched = entry.jp.first(where: { criteria.contains($0) || lower.contains($0) }),
-                  isNegated(matched, in: criteria) else { continue }
-            for en in entry.en where seen.insert(en).inserted { out.append(en) }
+        for match in matches(in: criteria) where match.negated {
+            for en in visualWords[match.entryIndex].en where seen.insert(en).inserted { out.append(en) }
         }
         // 「人が写っていない」等は語彙に「人」を置かず専用パターンで受ける（誤爆を避けるため）。
         if hasPeopleNegation(criteria) {
@@ -146,14 +192,9 @@ public enum JapaneseVisualLexicon {
     /// 入力に含まれる視覚語の（日本語, 英語代表）対。コンポーザーの**接地プレビュー**
     /// （「海 → sea」のような色付きチップ）に使う。抽出規則は `includeTerms` と同一。
     public static func groundedPairs(in criteria: String) -> [(japanese: String, english: String)] {
-        let lower = criteria.lowercased()
-        var out: [(japanese: String, english: String)] = []
-        for entry in visualWords {
-            guard let jp = entry.jp.first(where: { criteria.contains($0) || lower.contains($0) }),
-                  let en = entry.en.first else { continue }
-            out.append((japanese: jp, english: en))
+        matches(in: criteria).compactMap { match in
+            visualWords[match.entryIndex].en.first.map { (japanese: match.jp, english: $0) }
         }
-        return out
     }
 
     /// 英語タグ（Vision 識別子等）→ 日本語代表語。頻出タグをサジェストチップとして

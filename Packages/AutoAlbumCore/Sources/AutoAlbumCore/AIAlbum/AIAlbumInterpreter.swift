@@ -54,13 +54,15 @@ public final class AIAlbumInterpreter {
         guard matrix.count == terms.count else { return spec }
         var byTerm: [String: [Double]] = [:]
         for (i, t) in terms.enumerated() { byTerm[t.lowercased()] = matrix[i] }
+        // 高原（広い語）判定用の凝集度（S6・ADR-102）。無ければ突出規則のみで動く。
+        let coherence = await expander.coherenceContext(vocabulary: vocabulary)
 
         let groundedInclude = VocabularyGrounding.ground(
             terms: include, vocabulary: vocabulary,
-            similarity: { byTerm[$0.lowercased()] ?? [] })
+            similarity: { byTerm[$0.lowercased()] ?? [] }, coherenceZ: coherence)
         let groundedExclude = VocabularyGrounding.ground(
             terms: exclude, vocabulary: vocabulary,
-            similarity: { byTerm[$0.lowercased()] ?? [] })
+            similarity: { byTerm[$0.lowercased()] ?? [] }, coherenceZ: coherence)
 
         let newInclude = VocabularyGrounding.flatten(groundedInclude, keepUngrounded: true)
         let newExclude = VocabularyGrounding.flatten(groundedExclude, keepUngrounded: false)
@@ -114,7 +116,10 @@ public final class AIAlbumInterpreter {
             return saved
         }
         let all = await store.allEnrichedPhotosLite()
-        let catalog = await Self.buildCatalogOffMain(all)
+        var catalog = await Self.buildCatalogOffMain(all)
+        // S5（ADR-102）: 内容語の接地先＝実在タグ語彙をカタログへ載せ、FM に「この中から選べ」と
+        // 制約する（場所・人物で実績のある規律の横展開）。語彙が無い段階では従来どおり自由語。
+        catalog.contentTags = Array((await tagVocabularyProvider?() ?? []).prefix(60))
         // LLM 出力は必ずサニタイズする（プレースホルダ語・カタログ丸写し・include/exclude 衝突）。
         // P0: さらに接地する＝日付は決定的パーサに置換・place/people はカタログ/原文出現のみ
         // （小型オンデバイス LLM の構造化出力は信用しない＝実障害3件・sanitizer 参照）。

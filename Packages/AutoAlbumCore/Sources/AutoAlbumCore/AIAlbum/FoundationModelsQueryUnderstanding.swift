@@ -70,6 +70,8 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
     private static func specInstructions(catalog: AIAlbumCatalog, now: Date) -> String {
         let places = catalog.places.prefix(40).joined(separator: ", ")
         let people = catalog.people.prefix(40).joined(separator: ", ")
+        // S5（ADR-102）: 内容語も「実在する語彙から選ばせる」（場所・人物と同じ規律）。
+        let tags = catalog.contentTags.prefix(60).joined(separator: ", ")
         let today = DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .none)
         return """
         Convert the user's request (any language) into a photo filter expressed as OR of groups (clauses).
@@ -82,11 +84,13 @@ struct FoundationModelsQueryUnderstanding: QueryUnderstanding {
         dateKind is one of: none, year, lastYears, lastMonths, lastDays. dateValue is the 4-digit year for "year", or N for "lastX", else 0.
         source is one of: any, local, cloud. orientation is one of: any, portrait, landscape, square.
         favoritesOnly is true only for favorites.
-        contentInclude: the visual subjects the user wants to SEE, translated to English single words \
-        (a request about "風景" -> ["landscape"]). General subjects like "children" go here — NOT as a \
-        person filter. Use ONLY words derived from the user's request; NEVER invent or copy sample words. Empty if none.
+        contentInclude: the visual subjects the user wants to SEE, in English. PREFER words from this \
+        list of tags that actually exist in this library: [\(tags)]. If none of them fits the subject, \
+        translate it to a common English single word instead. General subjects like "children" go \
+        here — NOT as a person filter. Use ONLY words for subjects the user asked for; NEVER invent \
+        or copy unrelated tags. Empty if none.
         contentExclude: visual content the user wants to AVOID, in English ("人が写っていない" / \
-        "without people" -> ["people"]). Empty if none.
+        "without people" -> ["people"]). PREFER matching tags from the same list. Empty if none.
         Provide a concise title in the user's language.
         """
     }

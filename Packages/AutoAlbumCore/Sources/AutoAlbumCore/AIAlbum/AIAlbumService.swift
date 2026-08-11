@@ -40,6 +40,9 @@ final class AIAlbumService {
         set { verification.faceCountsProvider = newValue }
     }
 
+    /// S7（ADR-102）: 証拠不足で保留になった写真（夜間キャプションの優先対象）。
+    var evidenceStarvedRefKeys: [String] { verification.evidenceStarvedRefKeys }
+
     /// Phase 2（ADR-35）: 候補上位へのオンデマンドキャプション生成（審査の証拠を濃くする）。
     /// エンジンが TagPerceptionProvider＋TagStore で結線する。
     var captionOnDemand: (@Sendable ([String]) async -> [String: String])? {

@@ -32,6 +32,20 @@ public enum VocabularyGrounding {
     public static let maxExpansion = 6
     /// 採用する幅（最上位から標準偏差の何倍まで）。分布で決めるので尺度に依存しない。
     public static let relativeMargin = 1.0
+
+    // MARK: 高原（広い語）の採用規則（S6・ADR-102）
+
+    /// 「凝集した高原」と認める下限 z。animal は 1.80（Caltech 実測）なのでこれより下に置く。
+    public static let broadMinZScore = 1.5
+    /// 高原の**凝集度** z の下限。上位候補どうしが画像空間で互いに近いか（背景の全ペア平均に
+    /// 対する突出）。実測: animal 2.24 / insect 2.44 に対し、雑音語は nostalgia 0.17 /
+    /// happiness 0.27 / software 0.19 / freedom 1.11 / delicious 0.95——2.0 で完全に分離する。
+    /// ⚠️ 分布の形（z・MAD）だけでは「一貫した高原」と「雑音の高原」は区別できない
+    /// （animal の MAD-z は 1.51 と通常 z より低い）。意味情報＝候補どうしの距離が要る。
+    public static let plateauCoherenceZ = 2.0
+    /// 高原時の採用上限。高原は定義上メンバーが多い（animal は top−1.0sd に 25 件・全部正解）。
+    /// 1.5sd まで広げると雑音（minaret）が混入し始めるので、幅は通常と同じ 1.0sd のまま上限だけ広げる。
+    public static let broadMaxExpansion = 24
     /// 最上位が「分布から突出している」と認める z スコア。これ未満は接地失敗とする。
     ///
     /// ⚠️ 絶対しきい値を使わない理由（実測・ADR-101）: 類似度の絶対値はモデルと語彙に依存する。
@@ -47,9 +61,13 @@ public enum VocabularyGrounding {
     ///   - vocabulary: 索引に**実在する**語（台帳のタグ）。
     ///   - similarity: 語 × 語彙 の意味的近さ（0〜1）。本番は CLIP テキスト塔。
     ///     語彙と同数の配列を返すこと。
+    /// - Parameter coherenceZ: 語彙インデックス集合の**凝集度 z**（候補どうしの平均相互類似が、
+    ///   語彙全体の背景平均からどれだけ突出しているか）。本番は重心どうしのコサイン
+    ///   （`CLIPConceptExpander`）。nil なら高原規則は使わない（従来＝突出のみ）。
     public static func ground(terms: [String],
                               vocabulary: [String],
-                              similarity: (String) -> [Double]) -> [Grounded] {
+                              similarity: (String) -> [Double],
+                              coherenceZ: (([Int]) -> Double)? = nil) -> [Grounded] {
         let lowerVocab = vocabulary.map { $0.lowercased() }
         return terms.map { term in
             let t = term.lowercased()
@@ -65,19 +83,36 @@ public enum VocabularyGrounding {
             guard scores.count == vocabulary.count else {
                 return Grounded(term: term, expanded: [], isExact: false)
             }
-            // 分布から見て突出しているかで判定する（尺度非依存）。
             let mean = scores.reduce(0, +) / Double(scores.count)
             let variance = scores.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(scores.count)
             let sd = variance.squareRoot()
-            let ranked = zip(lowerVocab, scores).sorted { $0.1 > $1.1 }
-            guard let top = ranked.first?.1, sd > 0, (top - mean) / sd >= minTopZScore else {
+            guard sd > 0 else { return Grounded(term: term, expanded: [], isExact: false) }
+            let rankedIndices = scores.indices.sorted { scores[$0] > scores[$1] }
+            let top = scores[rankedIndices[0]]
+            let z = (top - mean) / sd
+
+            // 採用上限を判定する。
+            // (a) 突出（z≥3）: pizza 6.9 / dog 4.3 など＝狭い概念が語彙に相当物を持つ形。
+            // (b) 凝集した高原（1.5≤z<3 かつ凝集度 z≥2）: animal など＝該当語彙が多すぎて
+            //     突出しない形。上位候補どうしが画像空間で互いに近ければ「一貫した群」と
+            //     判定できる（雑音の高原は候補どうしがバラバラ＝実測で完全分離・S6）。
+            let cap: Int
+            if z >= minTopZScore {
+                cap = maxExpansion
+            } else if z >= broadMinZScore, let coherenceZ {
+                let probe = Array(rankedIndices.prefix(maxExpansion))
+                guard coherenceZ(probe) >= plateauCoherenceZ else {
+                    return Grounded(term: term, expanded: [], isExact: false)
+                }
+                cap = broadMaxExpansion
+            } else {
                 // 語彙に相当するものが無い＝接地できない。CLIP のソフト採点に委ねる（否定には使わない）。
                 return Grounded(term: term, expanded: [], isExact: false)
             }
-            // 採用幅も分布で決める（上位から sd 幅ぶん）。
-            let picked = ranked.prefix(maxExpansion)
-                .filter { $0.1 >= top - sd * relativeMargin }
-                .map(\.0)
+            // 採用幅は分布で決める（上位から sd 幅ぶん）。
+            let picked = rankedIndices.prefix(cap)
+                .filter { scores[$0] >= top - sd * relativeMargin }
+                .map { lowerVocab[$0] }
             return Grounded(term: term, expanded: picked, isExact: false)
         }
     }
@@ -106,4 +141,12 @@ public protocol ConceptExpander: Sendable {
     /// `terms` の各語について、`vocabulary` の各語との近さ（0〜1）を返す。
     /// 戻り値は `terms` と同じ順・各要素は `vocabulary` と同じ長さ。
     func similarities(terms: [String], vocabulary: [String]) async -> [[Double]]
+    /// 高原判定用の凝集度 z を返す同期クロージャ（S6・ADR-102）。語彙インデックス集合を受け取り、
+    /// 候補どうしの平均相互類似が背景（全ペア平均）からどれだけ突出しているかを返す。
+    /// 背景統計は実装側で前計算・キャッシュする。nil なら高原規則は使われない。
+    func coherenceContext(vocabulary: [String]) async -> (@Sendable ([Int]) -> Double)?
+}
+
+public extension ConceptExpander {
+    func coherenceContext(vocabulary: [String]) async -> (@Sendable ([Int]) -> Double)? { nil }
 }

@@ -60,6 +60,51 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
         return out
     }
 
+    /// 高原判定用の凝集度 z（S6・ADR-102）。候補（語彙インデックス集合）の重心どうしの平均
+    /// コサインが、語彙全体の背景（サンプリングした全ペア平均）からどれだけ突出しているかを返す。
+    /// 「animal のような広い語＝候補が互いに近い」と「雑音の高原＝候補がバラバラ」を分離する
+    /// （Caltech 実測: animal 2.24 / insect 2.44 vs 雑音語 0.17〜1.11）。
+    public func coherenceContext(vocabulary: [String]) async -> (@Sendable ([Int]) -> Double)? {
+        let centroids = await centroids(for: vocabulary)
+        let vecs: [[Float]?] = vocabulary.map { centroids[$0] }
+        let present = vecs.indices.filter { vecs[$0] != nil }
+        guard present.count >= 8 else { return nil }
+
+        // 背景統計。全ペアは 600 語で 18 万組になるため、決定的な間引きで最大 2 万組に抑える。
+        let totalPairs = present.count * (present.count - 1) / 2
+        let step = max(1, totalPairs / 20_000)
+        var background: [Double] = []
+        var pairIndex = 0
+        for a in 0..<present.count {
+            for b in (a + 1)..<present.count {
+                if pairIndex % step == 0,
+                   let va = vecs[present[a]], let vb = vecs[present[b]] {
+                    background.append(Double(ClipMath.cosine(va, vb)))
+                }
+                pairIndex += 1
+            }
+        }
+        guard background.count >= 8 else { return nil }
+        let mean = background.reduce(0, +) / Double(background.count)
+        let variance = background.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(background.count)
+        let sd = variance.squareRoot()
+        guard sd > 0 else { return nil }
+
+        return { indices in
+            let valid = indices.compactMap { $0 >= 0 && $0 < vecs.count ? vecs[$0] : nil }
+            guard valid.count >= 2 else { return 0 }
+            var total = 0.0
+            var count = 0
+            for i in 0..<valid.count {
+                for j in (i + 1)..<valid.count {
+                    total += Double(ClipMath.cosine(valid[i], valid[j]))
+                    count += 1
+                }
+            }
+            return (total / Double(count) - mean) / sd
+        }
+    }
+
     // MARK: - Private
 
     private func encodeText(_ text: String) async -> [Float]? {

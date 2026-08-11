@@ -100,13 +100,19 @@ public struct AIAlbumCatalog: Sendable, Equatable {
     public var people: [String]
     public var earliest: Date?
     public var latest: Date?
+    /// このライブラリに**実在する**シーンタグの上位（S5・ADR-102）。内容語の接地先。
+    /// 場所・人物では既にやっている「カタログから選ばせる」規律を内容語にも適用する
+    /// （LLM が `food` を創作しても索引は pizza/cake で持っており当たらない、を防ぐ）。
+    public var contentTags: [String]
 
-    public init(places: [String], countries: [String], people: [String], earliest: Date?, latest: Date?) {
+    public init(places: [String], countries: [String], people: [String], earliest: Date?, latest: Date?,
+                contentTags: [String] = []) {
         self.places = places
         self.countries = countries
         self.people = people
         self.earliest = earliest
         self.latest = latest
+        self.contentTags = contentTags
     }
 
     /// 付加情報から語彙を構築する（頻度上位 maxTerms に丸める）。

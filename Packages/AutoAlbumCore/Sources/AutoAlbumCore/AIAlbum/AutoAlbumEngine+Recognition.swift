@@ -434,10 +434,18 @@ extension AutoAlbumEngine {
             Diagnostics.mark("bgfill: captions skipped — face scan running")
             return (0, 0)
         }
-        let before = await tagStore.captionPendingCount(favorites: favorites)
-        await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: favoritesOrdered,
+        // S7（ADR-102）: 証拠不足で保留になった除外つきアルバムの写真を、お気に入りより**先に**
+        // キャプションする。キャプションが付けば証拠になり、次の評価でアルバムに入れる
+        // （網羅 1% のキャプションを「いま証拠を必要としている写真」へ狙って配る）。
+        // 進捗判定（before/after）も優先分を含めて数える＝優先分だけ進んだ窓を「進捗なし」と誤読しない。
+        let starved = aiService.evidenceStarvedRefKeys
+        let targets = favorites.union(starved)
+        let starvedSet = Set(starved)
+        let queue = starved + favoritesOrdered.filter { !starvedSet.contains($0) }
+        let before = await tagStore.captionPendingCount(favorites: targets)
+        await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: queue,
                                            shouldPause: shouldPause)
-        let after = await tagStore.captionPendingCount(favorites: favorites)
+        let after = await tagStore.captionPendingCount(favorites: targets)
         // 1-d: キャプションフェーズが一巡したら VLM を解放（CLIP 画像塔と同時常駐しない）。
         tagTagger.releaseCaptionModel()
         Diagnostics.mark("bgfill: captions \(before - after) done (pending \(before)→\(after))")

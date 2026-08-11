@@ -20,14 +20,33 @@ public struct AIAlbumSearcher {
     /// 絶対しきい値（旧 0.22）はモデルの圧縮された分布と合わず「全写真の 97% を落とす」実障害に
     /// なったため廃止（ADR-24: 閾値レス）。除外の精度はタグ・顔実測・キャプション＝証拠ゲートが担う。
 
-    /// タグとクエリ語の一致数（純・テスト対象）。部分一致（tag ⊂ term / term ⊂ tag・ci）。
+    /// タグとクエリ語の一致数（純・テスト対象）。**単語境界**で照合する（S5・ADR-102）。
+    /// 旧実装の双方向 `contains` は「train ⊂ training」級の過剰一致を生んでいた。
+    /// 同義・上位語の吸収は文字列いじりではなく語彙接地（`VocabularyGrounding`・重心）が受け持つ。
     static func tagHits(_ tags: [String], terms: [String]) -> Int {
         guard !tags.isEmpty, !terms.isEmpty else { return 0 }
-        let lowerTags = tags.map { $0.lowercased() }
+        // 単純な英語複数形だけ吸収する（dogs↔dog・glasses↔glass）。語幹処理はしない。
+        func variants(_ token: Substring) -> Set<Substring> {
+            var out: Set<Substring> = [token]
+            if token.count > 3, token.hasSuffix("es") { out.insert(token.dropLast(2)) }
+            if token.count > 2, token.hasSuffix("s") { out.insert(token.dropLast()) }
+            return out
+        }
+        let tagTokens: [Set<Substring>] = tags.map {
+            Set($0.lowercased().split { !$0.isLetter && !$0.isNumber }.flatMap(variants))
+        }
         var hits = 0
         for term in terms {
             let t = term.lowercased()
-            if lowerTags.contains(where: { $0 == t || $0.contains(t) || t.contains($0) }) { hits += 1 }
+            let termTokens = t.split { !$0.isLetter && !$0.isNumber }.map(variants)
+            guard !termTokens.isEmpty else { continue }
+            // 単語一致（"train" は "train station" に当たるが "training" には当たらない）。
+            // 多語 term は全トークンが同一タグに含まれること（"cherry blossom"）。
+            if tagTokens.contains(where: { tokens in
+                termTokens.allSatisfy { !$0.isDisjoint(with: tokens) }
+            }) {
+                hits += 1
+            }
         }
         return hits
     }

@@ -36,6 +36,9 @@ TERMS = [
     "insect", "bird", "furniture", "landscape", "face",
     # 語彙にそのまま在る語（完全一致が効くかの対照）
     "pizza", "laptop", "umbrella",
+    # 雑音語（S6・ADR-102）: 視覚概念として語彙に相当物が無い語。凝集度規則が
+    # これらを**接地しない**ことを確認するための負例。
+    "nostalgia", "happiness", "software", "freedom", "delicious",
 ]
 
 
@@ -114,6 +117,8 @@ def main():
     json.dump({
         "_readme": "Caltech-101 の語彙。textText=クラス名との類似度 / textImage=クラス重心との類似度（ADR-101）",
         "vocabulary": vocabulary,
+        # 重心どうしの相互類似（S6 の凝集度規則用・小数4桁に丸め）。
+        "centroidMutual": [[round(float(x), 4) for x in (centroid_matrix @ c)] for c in centroid_matrix],
         "imagesPerClass": counts,
         "textText": text_text,
         "textImage": text_image,
