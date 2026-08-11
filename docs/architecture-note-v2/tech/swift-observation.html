@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Swift Observation | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-observation";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / Swift Observation</nav>
+      <h1>Swift Observation（@Observable）</h1>
+      <p class="lead">iOS 17 で導入された状態観測の仕組み。<code>@Observable</code> を付けた型のプロパティを SwiftUI が自動追跡し、参照したプロパティが変わったときだけ再描画する。</p>
+
+      <h2>基本</h2>
+      <pre><code>@Observable
+final class LocalPhotoStore {
+    var assets: [PHAsset] = []   // 参照しているビューだけが再描画される
+    var state: PhotoLoadState = .idle
+}</code></pre>
+      <p>ビュー側は <code>@State</code> で保持するか、関数引数で受け取るだけ。<code>@Published</code> も <code>ObservableObject</code> も不要。</p>
+
+      <h2>@ObservableObject との違い</h2>
+      <table>
+        <tr><th>観点</th><th>ObservableObject(Combine)</th><th>Observation</th></tr>
+        <tr><td>追跡の粒度</td><td>オブジェクト単位（<code>objectWillChange</code>）</td><td>プロパティ単位（参照したものだけ）</td></tr>
+        <tr><td>宣言</td><td><code>@Published</code> を各プロパティに</td><td><code>@Observable</code> を型に 1 つ</td></tr>
+        <tr><td>再描画</td><td>過剰になりやすい</td><td>必要最小限</td></tr>
+      </table>
+
+      <div class="box why">
+        <span class="box-h">このアプリでの方針</span>
+        本アプリは <code>@Observable</code> に統一し、<code>ObservableObject</code>/<code>Combine</code> は使わない（iOS 26 SDK では <code>import Combine</code> が明示的に必要になるなどの摩擦を避ける）。<code>@ObservationIgnored</code> を使えば、観測対象から外したい内部依存（ロガー・キャッシュ・seam）を保持できる。
+      </div>
+
+      <h2>このアプリでの使われ方</h2>
+      <ul>
+        <li><code>LocalPhotoStore</code> / <code>DropboxPhotoStore</code> / <code>MergedPhotoStore</code> — 一覧と状態を <code>@Observable</code> で公開。</li>
+        <li><code>AutoAlbumEngine</code> / <code>BackupEngine</code> / <code>PlaceScanner</code> — <code>@MainActor @Observable</code> のファサード。</li>
+      </ul>
+
+      <p>関連: <a href="../architecture/concurrency.html">並行性とアクター分離</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

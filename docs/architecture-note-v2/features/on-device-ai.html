@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>オンデバイス AI | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-on-device-ai";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / オンデバイス AI</nav>
+      <h1>オンデバイス AI</h1>
+      <p class="lead">固定の語彙リストに縛られず、任意言語の自然文で AI アルバム／意味検索を行う。実装は<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）：シーンタグと CLIP 埋め込みを夜間に全写真へ付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句の RRF 融合＋証拠ゲート＋LLM 審査で決める。通信なし・API キー不要。<strong>モデルの採用も廃止も、検索品質も、すべてデータセット計測で決める</strong>（ADR-104・<a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a>）。</p>
+
+      <h2>索引（夜間パイプライン）と検索</h2>
+      <p>索引は<strong>夜間バッチ</strong>（電源＋Wi-Fi＋アプリ非使用の <code>BGProcessingTask</code>・<a href="background.html">実行タイミング参照</a>）で、<strong>新しい写真から先に</strong>（撮影日降順・ADR-36）次の順に付与する。</p>
+      <ol>
+        <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）— 全写真。同じ 1 パスで <strong>OCR・人数（humanCount）・美的スコア・アセット種別</strong>も取得する（ADR-47）</li>
+        <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・<strong>INT8 量子化</strong>・意味検索の索引）— 全写真</li>
+      </ol>
+      <div class="box note">
+        <span class="box-h">VLM キャプションは廃止した（ADR-108・1.15）</span>
+        SmolVLM-500M による写真説明文は数バージョン同梱したが、<strong>網羅率アブレーション</strong>
+        （0% / 実機 1% / 理想 100% で全クエリを計測）で <strong>検索寄与ゼロ（ΔF1=0.0001）</strong>と判明し、
+        機能ごと廃止した。最重量パス（1 枚数十秒）とモデル 877MB が消え、夜間窓とメモリは全量
+        タグ・埋め込み・顔スキャンに回る。証拠の役割は humanCount（網羅率 86%・タグ付けパスで無償）が
+        既に代替していた。<strong>「機能の廃止も計測で決める」の実例</strong>。
+      </div>
+      <div class="mermaid">
+graph TD
+  Q["自然文クエリ（任意言語）"] --> INT["解釈（作成時1回・永続化）<br/>FoundationModels + Sanitizer + レキシコン約170語<br/>＋言い換えプローブ生成（最大4）"]
+  INT --> GND["語彙接地（VocabularyGrounding）<br/>広い語→実在タグへ展開（タグ重心 text↔image）"]
+  GND --> HARD["ハード条件（決定的）<br/>日付=RelativeDateParser・場所カタログ接地・<br/>人物=顔クラスタへライブ接地・属性（笑顔/美的/人数）"]
+  INT --> TE["CLIP テキスト埋め込み<br/>（内容語＋プローブ＝max-over-probes）"]
+  subgraph IDX["夜間索引（新しい写真から先に）"]
+    TAGS[(Vision シーンタグ<br/>+OCR/人数/美的)]
+    EMB[(PhotoEmbedding fp16)]
+  end
+  HARD --> FUSE["RRF 融合（AIAlbumSearcher）"]
+  TE --> FUSE
+  TAGS -->|タグ一致 離散| FUSE
+  EMB -->|CLIP 対比| FUSE
+  LX["字句検索<br/>地名・人物・OCR"] --> FUSE
+  FUSE --> GATE["証拠ゲート<br/>除外つきはタグ/顔実測/人数実測の証拠必須"]
+  GATE --> VERIFY["LLM 審査（AlbumVerifier）<br/>keep/drop/unsure・多数決"]
+  VERIFY --> RES["検索結果 / AI アルバム"]
+      </div>
+      <div class="box why">
+        <span class="box-h">なぜ「閾値レス」へ再設計したか（ADR-24）</span>
+        以前は生 CLIP コサイン＋絶対閾値だったが、ユーザーのライブラリ分布が事前に不明で閾値を調整できず「除外が 97% を落とす」「意味採用 0 件」が起きた。そこで<strong>タグ一致（離散・閾値レス）</strong>を第 3 のランキングに加え、除外は<strong>肯定/否定ベクトルの相対判定</strong>（絶対閾値なし）にし、最終判断を<strong>LLM 審査</strong>（言語判定）に委ねた。判定根拠がタグで可視化されデバッグ可能になる。
+      </div>
+      <div class="box note">
+        <span class="box-h">作成は 2 段階＝即時プレビュー → その場で本番化（ADR-110）</span>
+        作成/編集すると (1) <strong>決定的プレビュー</strong>（レキシコン＋日付＋タグ照合・LLM なし・1〜2 秒）が
+        すぐ表示され、(2) そのまま<strong>その場で本番化</strong>（FM 解釈＋フル評価＋証拠ゲート＋LLM 審査・
+        十数秒・utility 優先度）される。「バレエ」のようなレキシコン外の語もこの時点で条件化される。
+        <strong>語彙接地（重心）だけはキャッシュ済みのときのみ</strong>行い、コールドなら
+        <code>pendingFinalization</code> を残して夜間が接地込みで仕上げる（重心構築は実測 約2 分だが
+        作成フローでは待たない）。解釈は<strong>作成時に 1 回だけ</strong>実行して
+        <code>AIAlbumInterpretationStore</code>（JSONFileStore・版管理）へ永続化する（ADR-23）——
+        起動時・写真追加時に LLM は走らない。再評価は増分（新規埋め込み分だけ採点）＋
+        ドリフト検知・<strong>解釈器の版が古いだけでも発火する</strong>フル再評価（規則変更の波及）。
+      </div>
+
+      <h2>語彙接地（VocabularyGrounding・ADR-101/102/105）</h2>
+      <p>「風景」「動物」のような広い語は索引側のタグに相当物が無く、そのままではタグ照合が空振りする。個別対応表は語彙の数だけ破綻するので、<strong>語彙の側から決める</strong>：クエリ語と実在タグの近さを測り上位を採る。近さは<strong>タグ重心</strong>（そのタグが付いた写真の CLIP 画像埋め込みの平均）との text↔image 比較——語同士（text↔text）は CLIP の訓練目標に無く実測 F1 0.300 で不十分、重心版は 0.86（Caltech-101）。採用規則は分布で決める：<strong>突出（z≥3）</strong>／<strong>凝集した高原</strong>（広い語＝候補どうしが画像空間で互いに近い）／<strong>凝集精錬</strong>（一貫したグループだけ混入を刈り裾を伸ばす）。否定語は接地できなければ捨てる（<strong>索引に無い概念の不在は検証できない</strong>＝ADR-100）。</p>
+
+      <h2>採用モデル（すべて実測で選定・詳細は model-evaluations.md）</h2>
+      <table>
+        <tr><th>役割</th><th>採用</th><th>サイズ</th><th>選定の根拠（実測）</th></tr>
+        <tr><td>意味検索の埋め込み</td><td><strong>OpenCLIP ViT-B-32 / DataComp・INT8 量子化</strong>（ADR-31）</td><td>289→<strong>145MB</strong></td><td>Core ML ベンチで INT8 は精度不変（75.0→76.0%）。TinyCLIP-40M は −14pt で不採用</td></tr>
+        <tr><td>シーンタグ</td><td>Vision 分類（OS 内蔵）</td><td>0MB</td><td>約1,300クラス・精度校正 API・追加コストなし＝価値/コスト比最良</td></tr>
+        <tr><td>写真説明文</td><td><strong>廃止</strong>（旧 SmolVLM-500M・ADR-108）</td><td>−877MB</td><td>網羅率アブレーションで検索寄与ゼロ（ΔF1=0.0001）を計測して削除。歴史的経緯（Florence-2 の実機 fp16 破綻→撤回、量子化の非対称性）は ADR-32/34 と model-evaluations.md に残る</td></tr>
+        <tr><td>顔（ピープル）</td><td>facenet InceptionResnetV1（VGGFace2・MIT）</td><td>45MB</td><td>512 次元 identity 埋め込み＋逐次クラスタリング。精度・アルゴリズムは<strong>データセット計測で選定</strong>（FG-NET/LFW・<code>face-accuracy.md</code>）。同年代の識別は強く、弱点は年齢変化＝許諾ライセンスの上位モデルが無く据え置き</td></tr>
+      </table>
+      <div class="box note">
+        <span class="box-h">量子化の非対称性（学び・ADR-31/34）</span>
+        <strong>出力が連続ベクトルの部品（CLIP 画像/テキスト塔）は INT8 に強い</strong>（fp16 と cos≈0.999）。
+        一方 <strong>LLM デコーダは弱い</strong>（次単語 argmax が反転）。また <strong>Core ML の正しさは
+        Mac だけでは検証できない</strong>——Florence-2 は Mac の全 compute unit で正常でも実機 fp16 で
+        破綻した。新モデルは実機ログで確認してから採用する。
+      </div>
+
+      <h2>検索の融合（RRF）と証拠ゲート・審査</h2>
+      <p>検索は 4 層。決定的なハード条件で絞り、複数のランキングを <strong>Reciprocal Rank Fusion</strong> で束ね、除外つきは証拠を要求し、最後に LLM が言語で判定する。</p>
+      <ul>
+        <li><strong>P0 接地</strong>: 日付は <code>RelativeDateParser</code>（日英）を唯一の出典・場所はカタログ/原文出現に接地・<strong>人物名は顔クラスタへ接地</strong>（<code>PersonNameGrounder</code>＝「太郎」→山田太郎・姓名の部分指定対応）。人物条件の評価は焼き込みでなく<strong>現在のクラスタ名でライブ照合</strong>。属性語（「笑っている」「綺麗な」「2人の」）は<strong>実測シグナルへのハード条件</strong>として立てる（笑顔=顔スキャンの hasSmile・美的=分布適応しきい値・人数=Vision 上半身検出。証拠が無い写真は通さない fail-closed・ADR-103）。<code>QuerySpecSanitizer</code> がプレースホルダ除去・include/exclude 衝突解消。</li>
+        <li><strong>実効内容語（ADR-109）</strong>: ハード条件（人物・場所）に接地済みの語は<strong>内容語から除いて</strong>評価する。LLM が「バレエの太郎」で content にも人物名を重複させると、字句チャネル（人物名一致）が RRF 和集合経由で本人の全写真を通し <strong>AND が実質 OR 化</strong>する実障害があった。内容の意図が実効的に残らないクエリ（「太郎の写真」）はハード絞り込みの結果をそのまま返す。</li>
+        <li><strong>P1 融合</strong>: Vision シーンタグ一致（離散・閾値レス・単一語 term はタグ全体一致のみ＝"dog" が "hot dog" に当たらない）＋CLIP 対比（max-over-probes・除外は相対判定のみ）＋<code>LexicalSearch</code>（地名/人物/OCR）を <code>AIAlbumSearcher</code> が RRF 融合。除外語はタグの離散一致でもハード除外。</li>
+        <li><strong>P2 証拠ゲート＋審査</strong>: 除外つきは<strong>条件に答えられる証拠</strong>を必須にする——人物除外なら人数実測（humanCount・86%）か顔実測（一般タグでは人の有無を語れない・ADR-100）。その後 <code>AlbumVerifier</code>（Foundation Models）が証拠行（日付・場所・顔数・タグ）から keep/drop/unsure 判定。unsure は最大 2 回の再判定で多数決。空振り時はプローブ語を生成して 1 回だけ再検索（Refine）。</li>
+      </ul>
+      <div class="box note">
+        <span class="box-h">検索品質はデータセット計測で決める（ADR-104）</span>
+        正解ラベルから機械的に採点できる常設ハーネスを持つ：<strong>COCO val2017（4,952 枚・123 クエリ・
+        10 カテゴリ＝被写体/除外/複合/日付/属性/人物×内容ほか）</strong>と <strong>Caltech-101（語彙接地の
+        end-to-end）</strong>。現状マクロ P=1.000 / R=0.837 / F1=0.899。カテゴリ別 F1 の<strong>回帰フロア</strong>
+        （現状値−0.03）と全体 precision≥0.97 をテストで固定し、検索まわりの変更が性能を黙って壊すと
+        CI が落ちる。計測の台帳は <a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a>（S0〜S15 の段階別寄与を記録）。
+      </div>
+
+      <h2>作成 UI の入力支援（ADR-37）</h2>
+      <p>コンポーザーは<strong>本番検索と同じ決定的レイヤー</strong>で入力を支援する（＝プレビューが実際とズレない）。(1) <strong>サジェストチップ</strong>＝ライブラリから観測された語（命名済み人物・カタログ実在の地名・頻出タグ∩レキシコンの日本語・日付定型）をタップで挿入——<strong>確実にヒットする語だけ</strong>を出す。(2) <strong>接地プレビュー</strong>＝入力がどう解釈されたか（人物/場所/視覚語/日付）を色付きチップで表示。(3) <strong>ハード条件のヒット件数</strong>をライブ表示（属性条件も本番と同じシグナルで数える）。基盤はライブラリスナップショット（件数変化で失効判定）＋350ms debounce。</p>
+
+      <h2>知覚 seam（プロトコルと実装の分離）</h2>
+      <p><code>AutoAlbumCore</code> / <code>FaceCore</code> はプロトコルだけを定義し、Core ML / Vision / Foundation Models 依存の実体は <code>MobileCLIPKit</code> が実装する。アプリの <code>AutoAlbumAdapters</code> が結線する。</p>
+      <table>
+        <tr><th>プロトコル</th><th>実装（MobileCLIPKit）</th></tr>
+        <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → CLIP 埋め込み）</td></tr>
+        <tr><td><code>TextEmbedder</code></td><td><code>MobileCLIPTextEmbedder</code></td></tr>
+        <tr><td><code>TagPerceptionProvider</code></td><td><code>VisionTagAdapter</code>（シーンタグ＋OCR＋人数＋美的の 1 パス）</td></tr>
+        <tr><td><code>ConceptExpander</code></td><td><code>CLIPConceptExpander</code>（語彙接地＝タグ重心との類似・凝集度・キャッシュ＋in-flight 合流）</td></tr>
+        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み・端末 1024px／クラウドはキャッシュ済みサムネ）</td></tr>
+        <tr><td><code>QueryTranslator</code></td><td><code>AppQueryTranslator</code>（Foundation Models）</td></tr>
+        <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ・準備済みのときだけ合成＝初回ロードで UI を塞がない）</td></tr>
+      </table>
+
+      <h2>ピープル（顔クラスタ）</h2>
+      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない。代わりに <strong>Vision 顔検出＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは独立パッケージ <code>FaceCore</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード）。CLIP と共有する下層（ベクトル演算・写真キー・背景トリクル・ANE ゲート）は <code>PerceptionCore</code> にある。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 1024px、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>。一覧は<strong>名前つきが先頭</strong>（次いで写真数降順・順序は完全に決定的＝非安定ソートで並びが揺れる実障害の修正）。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/統合が即反映）。顔モデル未同梱ならセクション非表示。</p>
+      <p><strong>精度は「候補→データセット計測→採否」の反復で作った</strong>（<code>FaceAccuracyEvalTests</code>・台帳 <code>face-accuracy.md</code>・FG-NET/LFW）。効いた変更だけを採用し、直感に反して悪化した案（外れ値除去など）は計測で棄却した。</p>
+      <ul>
+        <li><strong>不確かな顔を弾く多段ゲート</strong>（ADR-48/52/53）: 検出信頼度・クロップ再検証（二段検出）・ぼけ・露出・サイズ・顔向き・目閉じで品質を減衰し、フロア 0.40 未満はクラスタに入れない。偽陽性は顔なし画像で <strong>0%</strong>。</li>
+        <li><strong>埋め込みの安定化</strong>（ADR-51/54）: 両目ランドマークで<strong>アライメント</strong>＋<strong>マルチクロップ平均</strong>＋EXIF 回転の正規化。</li>
+        <li><strong>クラスタリング</strong>（ADR-56〜58）: 既定しきい値 0.50（校正 0.35〜0.70）＋<strong>マージンゲート</strong>＋<strong>サイズ適応マージン</strong>＋同一写真 cannot-link＋共起 notSame。<strong>混入率は初期 58%→12%</strong>（FG-NET）。</li>
+        <li><strong>ユーザー修正から学習</strong>（ADR-45/46）: 品質重み・負例エグゼンプラ（再スキャン跨ぎで永続）・確認済み顔アンカー・しきい値校正。「同じ人物ですか？」<strong>レビュー</strong>は判断が割れるケースだけ尋ね、事後監査の <strong>2 分割提案</strong>（「実は 2 人では？」・同一写真の共起は決定的証拠）も同じカードに出る（ADR-69）。</li>
+        <li><strong>2 階層の人物束ね</strong>（ADR-61）: 成長で複数クラスタに分かれた子供を <strong>1 人物として束ねる</strong>（<code>personGroupID</code>・融合せず純度を保つ・後で解除可）。</li>
+        <li><strong>「この人物を整理」＝混入の一括分離</strong>（ADR-111）: 複数の別人が混ざった人物は、束ね内クラスタ＋<strong>監査の再帰 2 分割</strong>（<code>recursiveSplit</code>）で中身を自動サブグループ化し、「別人」にチェック→<strong>1 タップで一括分離</strong>（負例学習つき）。レビューカード用の校正値では<strong>クラスタリングが混ぜたものを構造的に分割できない</strong>ため、この画面専用の緩和プロファイルを使う（ユーザーが「混ざっている」と自ら開く文脈＝候補を出さないことこそが失敗）。</li>
+        <li><strong>顔ハイライト</strong>: 人物アルバムの「顔を表示」トグルで、認識した顔（束ねた全時期）をサムネ／全画面に黄枠表示。</li>
+      </ul>
+
+      <div class="box why">
+        <span class="box-h">顔と CLIP は Neural Engine を奪い合う（ADR-70/73）</span>
+        Vision の顔検出（<code>perform</code>）と Core ML の CLIP 推論・モデルロードが<strong>同時に ANE を使うと実機でデッドロック</strong>し、顔スキャンが最初の 1 枚で固まる障害があった。現在は <code>MLInferenceGate</code> で<strong>同時に 1 つだけ</strong>に直列化し、ゲートは「ANE に触れる場所」の内側で取る。詳細は <a href="../deep-dive/concurrency-internals.html">並行・バックグラウンド処理</a>。
+      </div>
+
+      <h2>表示タグは検索と同じ台帳</h2>
+      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。シーンタグは <strong>1 回の Vision 一括パス</strong>で <strong>OCR（写真内テキスト）・動物種別・人数・美的スコア・アセット種別</strong>も同時取得し（ADR-47）、OCR は字句検索の一チャネル・美的スコアは「綺麗な写真」条件とカバー選択・人数は人数条件と人物除外の証拠に使う。フル画像の情報パネルには「写真内のテキスト」欄・<strong>利用カウンタ（閲覧/共有回数）</strong>・顔の数・スクリーンショット判定・解析状態も出る（ADR-49）。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析）で可視化する。</p>
+
+      <h2>背景処理のスロットリングと応答性（ADR-107）</h2>
+      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行し、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。これに対し<strong>一枚岩の重い保守</strong>（本番化・ドリフト再評価・アルバム生成＝始まると譲れない）は<strong>非アクティブ（ロック・アプリ切替）限定</strong>の厳格ゲートに分離した——前面アイドルで始めるとユーザーが戻ってきた後も数分〜数十分 ANE/CPU を占有し「いちいち固まる」実障害になった。あわせて AI 推論・作成処理は <strong>utility 優先度</strong>に統一（userInitiated だと協調タスクが P コアを占有し、メインスレッドが実行されないのに固まる<strong>「飢餓」</strong>が起きる——スパン計測値はメイン復帰待ちで膨らむため、ハングの帰属は機序で判定する）。<strong>シミュレータでは背景推論を実行しない</strong>。モデルはメモリ圧迫（critical）で解放し、次回利用時に再ロードする。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード・記録</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・審査・接地・解釈永続化・作成支援</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags">AutoAlbumCore/Tags/</a> — TagStore / TagTagger</li>
+          <li><a class="srclink" data-path="Packages/FaceCore/Sources/FaceCore/Faces">FaceCore/Faces/</a> — 顔クラスタ・PeopleEngine・整理（PersonCleanup）</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳/顔/接地の実体</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> — 検索品質の計測台帳（S0〜S15）</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a> — モデル比較の実測記録</li>
+        </ul>
+      </div>
+
+      <p>背景: <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a> / <a href="../tech/coreml-foundationmodels.html">Core ML / Foundation Models</a> / <a href="../ai/06-quantization.html">量子化と精度</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

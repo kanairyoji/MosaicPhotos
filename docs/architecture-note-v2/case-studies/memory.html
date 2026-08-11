@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: メモリ枯渇の解消 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-memory";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: メモリ枯渇と圧縮</nav>
+      <h1>事例: 写真枚数に比例したメモリ枯渇の解消と、その後の常駐圧縮</h1>
+      <p class="lead">「写真ゼロの端末では起動するが、写真が多い端末では起動前に落ちる」。原因はメモリで、SwiftData の格納方法に潜んでいた。さらにその後、サムネ／フル画像キャッシュの常駐も圧縮した。学習材料として顛末を残す。</p>
+
+      <h2>症状と切り分け</h2>
+      <ul>
+        <li>写真ゼロの端末 → 起動する。</li>
+        <li>写真が多い端末 → 起動できない。</li>
+      </ul>
+      <p>「写真枚数に比例して何かが増える」と仮説。起動経路のうち、枚数に比例する処理を疑った。</p>
+
+      <h2>真因</h2>
+      <p>CLIP 埋め込み <code>clipVector</code>（512×Float32 ≈ <strong>2KB/枚</strong>）を <code>PhotoEnrichment</code> の <strong>inline 属性</strong>として持っていた。SwiftData は <code>fetch(FetchDescriptor&lt;PhotoEnrichment&gt;())</code> で<strong>行を丸ごと展開</strong>する。プロパティを読まなくても blob ごとロードされる。</p>
+      <div class="box why">
+        <span class="box-h">致命的だった点</span>
+        「軽量版」を謳う <code>allEnrichedPhotosLite()</code> も内部は全件 fetch → <code>map</code>。結果の構造体から vector を外しても、<strong>fetch の時点で 67k × 2KB ≈ 138MB を確保</strong>していた。生成・重複排除・prune など複数経路が同じ全件 fetch を行うため、起動直後にこれが重なり jetsam に至っていた。写真ゼロなら行ゼロ＝展開なし＝起動する、という観測と一致。
+      </div>
+
+      <h2>対策（採用したフルセット）</h2>
+      <table>
+        <tr><th>施策</th><th>内容</th><th>効果</th></tr>
+        <tr><td>別テーブル化</td><td><code>clipVector</code> を <code>PhotoEmbedding</code> 別 <code>@Model</code> へ分離。メタデータ fetch が blob に一切触れない。</td><td>根本対処</td></tr>
+        <tr><td>Float16 化</td><td>埋め込みを半精度で保存（2KB→1KB）。<code>ClipMath.encodeHalf/decodeHalf</code>。読み出し時に fp32 復元。</td><td>DB・常駐を半減</td></tr>
+        <tr><td>ページング</td><td>検索は <code>enrichmentVectorPage(offset:limit:)</code> でページ単位に読む。</td><td>常駐をページ 1 枚分に</td></tr>
+        <tr><td>バッチ解放</td><td>大量 upsert は <code>writeChunk</code> 件ごとに使い捨て <code>ModelContext</code> で save→解放。</td><td>書き込み時の常駐を有界化</td></tr>
+        <tr><td>圧迫時停止</td><td>メモリ圧迫中は背景タグ付けを一時停止（<code>MemoryPressureMonitor</code>）。</td><td>jetsam 回避</td></tr>
+      </table>
+
+      <h2>変更の形</h2>
+      <div class="mermaid">
+graph LR
+  subgraph 変更前
+    PE1["PhotoEnrichment<br/>メタ + clipVector(2KB inline)"]
+  end
+  subgraph 変更後
+    PE2["PhotoEnrichment<br/>メタのみ（軽量）"]
+    EM["PhotoEmbedding<br/>refKey + vector(fp16)"]
+  end
+  PE1 -->|分離| PE2
+  PE1 -->|分離| EM
+      </div>
+
+      <h2>学び</h2>
+      <ul>
+        <li><strong>SwiftData の fetch は属性を丸ごと読む</strong>。大きな blob は別テーブルに逃がすか、読まない設計にする。</li>
+        <li>「軽量版」と名付けても、<strong>fetch のコストは消えない</strong>。命名でなく実測（経路）で確かめる。</li>
+        <li>スキーマ変更は <code>ModelConfiguration</code> 名を採番して旧ストアを破棄（<code>AutoAlbumV10</code>）。埋め込みは背景で再生成され、精度は徐々に回復する。</li>
+        <li>検証は実機スクショではなく、ビルド・ユニットテスト・診断ログのフットプリントで行う。</li>
+      </ul>
+
+      <h2>続編: 常駐の圧縮（埋め込み別テーブル化の“その後”）</h2>
+      <p>構造的な枯渇（上記）を解消した後も、写真が多いと常駐が高めだった。精査すると<strong>複数の隠れ消費</strong>が見つかった。</p>
+      <table>
+        <tr><th>原因</th><th>内容</th><th>対処</th></tr>
+        <tr><td>NSCache のコスト計上ズレ<br>（最大要因）</td><td>サムネのメモリ層に<strong>デコード済み画像</strong>を入れるのにコストを <strong>JPEG バイト</strong>（約20KB）で計上。<code>totalCostLimit=100MB</code> が JPEG 換算のため、実デコード（0.3〜2.4MB/枚）では<strong>約10倍以上＝〜1GB 相当</strong>まで保持し得た。</td><td><code>insertDecoded</code>/<code>decodedCost</code>（幅px×高px×4）で<strong>実コスト計上</strong>。Dropbox 側は <code>totalCostLimit=48MB</code> 併設。</td></tr>
+        <tr><td>サムネがフル解像度</td><td>グリッドのセルを端末スケール（×3）で生成。ピンチの列数差で僅差サイズの<strong>重複デコード</strong>も増加。</td><td>×2 上限＋64px <strong>bucket 量子化</strong>（1アセット1サイズ）。</td></tr>
+        <tr><td>フル画像がフル解像度</td><td>ビューア（ズーム無し・<code>scaledToFit</code>）なのに 1 枚 40MB 超をデコード。ページャの前後保持でピーク増。</td><td><code>ImageDownsampling</code>（ImageIO・最大辺 1600）で表示時にダウンサンプル（保存は原バイト＝EXIF 保持）。</td></tr>
+        <tr><td>表示配列の常駐</td><td>表示用 <code>DropboxFileItem</code> に <code>contentHash</code>（64桁hex）を 67k 件分常駐。表示には不要。</td><td><code>cachedItems()</code> で <strong>contentHash を渡さない</strong>（変更検知は別テーブル＋delta parser）。</td></tr>
+        <tr><td>上限が固定・圧迫対応が雑</td><td>メモリ上限が固定値、メモリ警告時は全消去のみ。</td><td>上限を<strong>端末 RAM 連動の Auto</strong>（約1.5%・40〜120MB）に。メモリ警告時は全消去でなく<strong>段階縮小→復帰</strong>で直近サムネを温存。</td></tr>
+      </table>
+      <div class="box why">
+        <span class="box-h">この続編の学び</span>
+        <strong>NSCache のコストは実バックストア（デコード後バイト）で計上する。</strong> JPEG バイトで計上すると上限が桁で狂う。ズーム無しビューアはフル解像度をデコードしない（ImageIO ダウンサンプルでピーク削減）。長寿命の大規模配列に「表示に使わない文字列」を載せない。
+      </div>
+
+      <h2>続編2: メモリ圧迫対応を中枢へ集約（解放＋ログ＋履歴）</h2>
+      <p>常駐を圧縮しても、低メモリ端末では起動直後に落ちることがあった。圧迫検知（<code>DispatchSource</code>）は「フラグ＋ログ」止まりで、画像キャッシュの解放は別系統の UIKit 通知頼みだったため、<strong>critical イベントが解放に直結していなかった</strong>（warning でも“上限半減”止まり）。これを <code>MemoryPressureMonitor</code> に一本化した。</p>
+      <ul>
+        <li><strong>解放ハンドラ登録</strong>: <code>register(_:)</code> でキャッシュ等が「圧迫時に呼ばれる解放処理」を登録。<code>handle(level:)</code> が圧迫フラグ設定・履歴記録・<strong>全ハンドラ呼び出し</strong>・診断ログ追記（レベル/footprint/端末RAM）を一括実行する。<code>Diagnostics</code> の <code>DispatchSource</code> は <code>handle(.warning/.critical)</code> を流すだけ。</li>
+        <li><strong>段階的解放</strong>: <code>MemoryImageCache</code> がハンドラを登録し、<strong>warning＝上限半減（LRU 縮小）／critical＝即時全消去</strong>で素早くメモリを返す。背景 CLIP 埋め込みは従来どおり <code>isUnderPressure</code> で一時停止。</li>
+        <li><strong>可視化</strong>: 直近の圧迫イベント（時刻・レベル・footprint）と累計回数を Developer Options（<code>MemoryDebugSection</code>）に表示し、実機での前兆を切り分け可能にした。</li>
+      </ul>
+      <div class="box why">
+        <span class="box-h">設計判断（ADR-20）</span>
+        圧迫イベントを<strong>単一経路で「ログ→解放」に直結</strong>させる。critical で全消去するとサムネ再デコードが一時的に増えるが（30秒で上限復帰）、jetsam を避けることを優先した。CLIP モデルのアンロードや footprint 常時監視は再ロード遅延・常駐コストを理由に今回スコープ外。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/Diagnostics.swift">Diagnostics.swift</a> — MemoryPressureMonitor（解放ハンドラ・履歴）</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models/PhotoEmbedding.swift">PhotoEmbedding.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/ClipMath.swift">ClipMath.swift</a> — encodeHalf/decodeHalf</li>
+          <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit/MemoryImageCache.swift">MemoryImageCache.swift</a> — insertDecoded・段階縮小</li>
+          <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit/ImageDownsampling.swift">ImageDownsampling.swift</a> — ImageIO ダウンサンプル</li>
+          <li><a class="srclink" data-path="Packages/LocalPhotoCore/Sources/LocalPhotoCore/ThumbnailMemoryBudget.swift">ThumbnailMemoryBudget.swift</a> — Auto 予算</li>
+        </ul>
+      </div>
+      <p>背景: <a href="../tech/swiftdata.html">SwiftData</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

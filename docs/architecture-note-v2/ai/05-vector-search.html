@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 5. ベクトル検索と近傍探索 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-vector";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 5. ベクトル検索と近傍探索</nav>
+      <h1>5. ベクトル検索と近傍探索</h1>
+      <p class="lead">クエリの埋め込みに「近い」ベクトルを大量の候補から見つけるのがベクトル検索。小規模なら全件計算、大規模なら近似（ANN）を使う。</p>
+
+      <h2>距離・類似度</h2>
+      <table>
+        <tr><th>指標</th><th>式の直感</th><th>用途</th></tr>
+        <tr><td>コサイン類似</td><td>向きの一致（-1〜1）</td><td>埋め込み比較の定番</td></tr>
+        <tr><td>内積 (dot)</td><td>向き＋長さ</td><td>正規化済みならコサインと一致</td></tr>
+        <tr><td>ユークリッド距離 (L2)</td><td>直線距離</td><td>距離ベースの索引</td></tr>
+      </table>
+      <h3>正規化が効く</h3>
+      <p>各ベクトルを長さ 1 に正規化（L2 正規化）しておくと、コサイン類似＝内積になり計算が単純化する。多くの埋め込みは正規化前提で扱う。</p>
+      <pre><code>cos(a, b) = (a・b) / (|a|×|b|)   // |a|=|b|=1 なら a・b に一致</code></pre>
+
+      <h2>全件探索（brute force）</h2>
+      <p>クエリと全候補のコサインを計算して上位 K を取る。実装は単純で<strong>厳密</strong>。N が数万程度なら現実的（とくに次元数が数百なら）。難点は N に比例する計算量。</p>
+      <div class="mermaid">
+graph LR
+  Q[クエリ埋め込み] --> SC[全 N 件とコサイン]
+  SC --> TOP[上位 K を選ぶ]
+      </div>
+
+      <h2>近似最近傍（ANN）</h2>
+      <p>数百万〜規模では全件は重い。<strong>多少の取りこぼしを許す代わりに高速</strong>な索引を使う。</p>
+      <table>
+        <tr><th>手法</th><th>考え方</th></tr>
+        <tr><td>HNSW</td><td>近いもの同士を結んだ多層グラフを辿る。高速・高精度で人気。</td></tr>
+        <tr><td>IVF</td><td>空間をクラスタに分け、近いクラスタだけ調べる。</td></tr>
+        <tr><td>PQ（直積量子化）</td><td>ベクトルを圧縮して距離計算を高速化（→ <a href="06-quantization.html">第6章</a>）。</td></tr>
+      </table>
+
+      <h2>メモリと I/O の現実</h2>
+      <div class="box note">
+        <span class="box-h">設計上の勘所</span>
+        ベクトルは「1 件 × 次元 × バイト数」でメモリを食う。例: 512 次元 × 4 バイト（fp32）= 2KB/件 → 6.7 万件で約 134MB。端末では全件常駐が危険なので、<strong>ページング</strong>（少しずつ読む）や<strong>量子化</strong>（fp16/int8）で常駐を抑えるのが定石。
+      </div>
+
+      <h2>厳密 vs 近似の選び方</h2>
+      <ul>
+        <li>件数が数万・次元が数百 → <strong>全件探索で十分</strong>（実装も単純で取りこぼしなし）。</li>
+        <li>数百万以上・低レイテンシ必須 → <strong>ANN</strong>。</li>
+        <li>メモリが厳しい → <strong>量子化 + ページング</strong>を併用。</li>
+      </ul>
+
+      <p>次へ: <a href="06-quantization.html">6. 量子化と精度</a></p>
+      <p>本アプリでの応用: <a href="../case-studies/memory.html">事例: メモリ枯渇</a>（全件常駐を避けページングへ）</p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

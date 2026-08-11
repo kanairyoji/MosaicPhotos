@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 1. 全体像と章立て | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-overview";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 1. 全体像と章立て</nav>
+      <h1>AI 基礎知識 — 1. 全体像と章立て</h1>
+      <p class="lead">この章群は<strong>本アプリに依存しない汎用の AI 解説</strong>です。画像×言語の検索（CLIP）とオンデバイス推論を理解するために必要な基礎を、順を追って積み上げます。</p>
+
+      <div class="box note">
+        <span class="box-h">読者像</span>
+        プログラミングは分かるが機械学習は初学、という人を想定。数式は最小限にし、「何のための仕組みか」を優先します。各章末に、参考として<strong>本アプリでの位置づけ</strong>へのリンクを置きます。
+      </div>
+
+      <h2>この分野を貫く 1 つの考え方</h2>
+      <p>現代の AI 検索は、<strong>「あらゆるもの（画像・文・音）を意味のベクトルに変換し、ベクトル同士の近さで比べる」</strong>という一点に集約できます。本章群はこの考えを軸に進みます。</p>
+      <div class="mermaid">
+graph LR
+  X1[画像] --> V[意味ベクトル]
+  X2[文] --> V
+  V --> CMP[近さを測る]
+  CMP --> USE[検索 / 分類 / 推薦]
+      </div>
+
+      <h2>章立て</h2>
+      <table>
+        <tr><th>章</th><th>内容</th><th>得られる理解</th></tr>
+        <tr><td><a href="02-neural-embeddings.html">2. ニューラルネットと埋め込み</a></td><td>NN の超概要・ベクトル表現・類似度</td><td>「埋め込み」とは何か</td></tr>
+        <tr><td><a href="03-transformers.html">3. Transformer と注意機構</a></td><td>トークン化・self-attention・ViT</td><td>今の画像/言語モデルの心臓部</td></tr>
+        <tr><td><a href="04-clip-contrastive.html">4. CLIP と対照学習</a></td><td>画像とテキストを同じ空間へ</td><td>言語で画像を検索できる理由</td></tr>
+        <tr><td><a href="05-vector-search.html">5. ベクトル検索と近傍探索</a></td><td>距離・正規化・kNN・ANN</td><td>大量ベクトルから速く探す方法</td></tr>
+        <tr><td><a href="06-quantization.html">6. 量子化と精度</a></td><td>fp32/fp16/int8・量子化手法</td><td>サイズと精度のトレードオフ</td></tr>
+        <tr><td><a href="07-llm-ondevice.html">7. LLM とオンデバイス推論</a></td><td>言語モデル・端末で動かす制約</td><td>端末 AI の現実的な扱い方</td></tr>
+        <tr><td><a href="08-ranking-fusion.html">8. ランキングと融合</a></td><td>順位づけ・RRF・ゼロショット</td><td>複数の手がかりを束ねる</td></tr>
+      </table>
+
+      <h2>用語の最短定義</h2>
+      <ul>
+        <li><strong>モデル</strong>: 入力→出力の変換を学習したもの（巨大な関数）。</li>
+        <li><strong>推論 (inference)</strong>: 学習済みモデルに入力を通して結果を得ること。</li>
+        <li><strong>埋め込み (embedding)</strong>: 意味を表す固定長の数値ベクトル。</li>
+        <li><strong>ゼロショット</strong>: そのタスク用に追加学習せずに解くこと。</li>
+      </ul>
+
+      <p>次へ進む: <a href="02-neural-embeddings.html">2. ニューラルネットと埋め込み</a></p>
+      <p>本アプリでの応用: <a href="../features/on-device-ai.html">オンデバイス AI</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

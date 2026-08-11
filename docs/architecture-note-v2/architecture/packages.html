@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>パッケージと依存関係 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "arch-packages";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / アーキテクチャ / パッケージと依存関係</nav>
+      <h1>パッケージと依存関係</h1>
+      <p class="lead">機能はローカル SPM パッケージ 13 個に分かれる。基盤 → ロジック → UI → 統合 → アプリ、と一方向に依存する。</p>
+
+      <h2>依存グラフ</h2>
+      <div class="mermaid">
+graph TD
+  subgraph 基盤
+    MS[MosaicSupport]
+    PSK[PhotoSourceKit]
+    ICK[ImageCacheKit]
+    PC[PerceptionCore]
+  end
+  subgraph ロジック層
+    LPC[LocalPhotoCore]
+    DBC[DropboxCore]
+    BK[BackupKit]
+    FC[FaceCore]
+    AAC[AutoAlbumCore]
+  end
+  subgraph UI層
+    LPK[LocalPhotoKit]
+    DBK[DropboxKit]
+    MCK[MobileCLIPKit]
+  end
+  PFK[PhotosFeatureKit]
+  APP[MosaicPhotos アプリ]
+
+  LPC --> PSK
+  LPC --> ICK
+  DBC --> ICK
+  DBC --> MS
+  BK --> DBC
+  BK --> MS
+  PC --> MS
+  FC --> MS
+  FC --> PC
+  AAC --> MS
+  AAC --> PSK
+  AAC --> PC
+  AAC --> FC
+  LPK --> LPC
+  LPK --> PSK
+  DBK --> DBC
+  DBK --> PSK
+  MCK --> AAC
+  MCK --> MS
+  PFK --> LPK
+  PFK --> DBK
+  PFK --> PSK
+  APP --> PFK
+  APP --> AAC
+  APP --> MCK
+  APP --> BK
+      </div>
+
+      <h2>各パッケージの責務</h2>
+      <table>
+        <tr><th>パッケージ</th><th>層</th><th>責務</th></tr>
+        <tr><td><code>MosaicSupport</code></td><td>基盤</td><td>横断ユーティリティ。共通ロガー <code>LogChannel</code>、端末診断 <code>Diagnostics</code>、メモリ圧迫監視、自己修復 <code>makeResilientModelContainer</code>、電源/回線/重い処理ゲート。依存なし。</td></tr>
+        <tr><td><code>PhotoSourceKit</code></td><td>基盤</td><td>写真ソース共通基盤。<code>PhotoStore</code>/<code>PhotoItem</code>/<code>PhotoLoadState</code> と共通ビュー（グリッド・全画面）。逆ジオコーディング・EXIF などの純ロジック。</td></tr>
+        <tr><td><code>ImageCacheKit</code></td><td>基盤</td><td>メモリ（<code>MemoryImageCache</code>）+ ディスク I/O（<code>DiskImageStore</code>）の画像キャッシュプリミティブ。破棄ポリシーは利用側が持つ。同時実行数を絞る <code>AsyncSemaphore</code> もここ。</td></tr>
+        <tr><td><code>PerceptionCore</code></td><td>基盤</td><td>CLIP と顔が共有する下層。ベクトル演算 <code>ClipMath</code>、ローカル/クラウド統一キー <code>PhotoRef</code>、背景トリクル骨格 <code>BackgroundTrickle</code>、そして <strong>ANE 直列化ゲート <code>MLInferenceGate</code></strong>（下記）。</td></tr>
+        <tr><td><code>LocalPhotoCore</code></td><td>ロジック</td><td>端末写真ロジック。<code>LocalPhotoStore</code>、アルバム走査、サムネキャッシュ。SwiftUI 非依存。</td></tr>
+        <tr><td><code>DropboxCore</code></td><td>ロジック</td><td>Dropbox の認証（OAuth PKCE）・API・差分同期・キャッシュ（SwiftData + ImageCacheKit）。SwiftUI 非依存。</td></tr>
+        <tr><td><code>BackupKit</code></td><td>ロジック</td><td>端末写真 → Dropbox バックアップのオーケストレーション、アップロード、People/Album インデックス。</td></tr>
+        <tr><td><code>FaceCore</code></td><td>ロジック</td><td>ピープル（顔クラスタ）。顔の逐次クラスタリング <code>FaceClustering</code>、永続化 <code>FaceStore</code>（別コンテナ <code>FacesV1</code>）、背景スキャン <code>FaceTagger</code>、ファサード <code>PeopleEngine</code>、レビュー（アクティブラーニング）。<code>AutoAlbumCore</code> から分割した。</td></tr>
+        <tr><td><code>AutoAlbumCore</code></td><td>ロジック</td><td>自動アルバム生成・知覚・意味検索（タグ台帳＋LLM 審査）・シーンタグ台帳（<code>TagStore</code>）のロジック。SwiftUI 非依存・純ロジック中心でテストしやすい。<code>PerceptionCore</code> / <code>FaceCore</code> を <code>@_exported import</code> するので、利用側は <code>import AutoAlbumCore</code> のままでよい。</td></tr>
+        <tr><td><code>LocalPhotoKit</code></td><td>UI</td><td>端末写真の UI。<code>LocalPhotoCore</code> を <code>@_exported import</code>。</td></tr>
+        <tr><td><code>DropboxKit</code></td><td>UI</td><td>Dropbox の UI。<code>DropboxCore</code> を <code>@_exported import</code>。</td></tr>
+        <tr><td><code>MobileCLIPKit</code></td><td>UI/実装</td><td>CLIP/翻訳/顔モデルのランタイムと <code>AutoAlbumCore</code> の seam 実装（知覚・タグ・顔アダプタ・語彙接地・表示ラベラ）。Core ML / Vision / Foundation Models を扱う。Core ML ロードと BPE の共通足場（<code>CoreMLModelSupport</code>・<code>BPESupport</code>）を持つ。</td></tr>
+        <tr><td><code>PhotosFeatureKit</code></td><td>統合</td><td>ローカル + Dropbox を統合する <code>MergedPhotoStore</code> / <code>MergedPhotoItem</code>、場所グルーピングの <code>PlaceScanner</code>。</td></tr>
+      </table>
+
+      <h2>依存の向きに関する約束</h2>
+      <ul>
+        <li><strong>ロジック層はアプリを import しない</strong>。<code>DropboxCore</code> の依存は Foundation / AuthenticationServices / CryptoKit / Security / SwiftData / UIKit / ImageCacheKit / MosaicSupport のみ。</li>
+        <li><strong>UI は Core を再エクスポート</strong>（<code>@_exported import</code>）。アプリは <code>import DropboxKit</code> だけで両層の公開型を参照できる。</li>
+        <li><strong>知覚 seam はプロトコル + MobileCLIPKit 実装</strong>。<code>AutoAlbumCore</code> / <code>FaceCore</code> はプロトコルだけを定義し、Core ML 依存の実体は <code>MobileCLIPKit</code> が持つ。アプリが結線する。</li>
+        <li><strong>共有される下層は PerceptionCore へ</strong>。CLIP と顔の両方が使うもの（ベクトル演算・写真キー・背景トリクル・ANE ゲート）は、どちらか一方のパッケージに置かず基盤へ降ろす。</li>
+      </ul>
+
+      <div class="box why">
+        <span class="box-h">設計判断</span>
+        Core/UI を分けると、SwiftUI を持たない純ロジックを macOS の <code>swift test</code> で高速に検証できる。AI の重い依存（Core ML）を <code>MobileCLIPKit</code> に隔離することで、<code>AutoAlbumCore</code> 本体はモデルなしでもテスト可能になる。詳細は <a href="../tech/spm-modularization.html">SPM モジュール分割</a>。
+      </div>
+
+      <div class="box note">
+        <span class="box-h">顔認識の分割と共有下層の抽出（ADR-62 前後）</span>
+        ピープルは当初 <code>AutoAlbumCore/Faces</code> にあったが、クラスタリング・学習・レビューまで育って
+        <code>AutoAlbumCore</code> が肥大した。そこで <strong><code>FaceCore</code></strong> として切り出し、
+        CLIP と顔が共通で使う下層（<code>ClipMath</code> / <code>PhotoRef</code> / <code>BackgroundTrickle</code>）を
+        <strong><code>PerceptionCore</code></strong> へ降ろした。<code>AutoAlbumCore</code> が両者を
+        <code>@_exported import</code> するため、呼び出し側の import は変えずに済む。
+      </div>
+
+      <div class="box why">
+        <span class="box-h">ANE 直列化ゲートを基盤に置く理由（ADR-70/73）</span>
+        Vision の顔検出と Core ML の CLIP 推論が<strong>同時に Neural Engine を使うと実機でデッドロック</strong>し、
+        Vision の <code>perform</code> が永久に返らない障害があった。対策の
+        <code>MLInferenceGate</code>（同時に 1 つだけ実行）は、顔と CLIP の<strong>両方から</strong>使うため
+        <code>PerceptionCore</code> に置く。ゲートを取るのは「ANE に触れる場所」＝<code>MobileCLIPKit</code> の
+        各ランタイム/アダプタの内側で、呼び出し側の夜間タガーでは包まない（包む方式は漏れが生まれる）。
+        詳細は <a href="../deep-dive/concurrency-internals.html">並行・バックグラウンド処理</a>。
+      </div>
+
+      <div class="box note">
+        <span class="box-h">共通足場の抽出と責務分割（ADR-26）</span>
+        機能追加でコピーが蓄積した骨格を<strong>挙動不変</strong>で共通化した：背景トリクル（<code>BackgroundTrickle</code>）・自己修復コンテナ（<code>makeResilientModelContainer</code>）・Core ML ロード/BPE（<code>CoreMLModelSupport</code>/<code>BPESupport</code>）・UI 小物（<code>BusyLabel</code>/<code>LoadingRow</code>/<code>sectionHeader</code>/<code>loadCover</code>）。あわせて肥大した型を分割した（<code>AIAlbumService</code>→<code>AIAlbumInterpreter</code>/<code>AIAlbumVerificationCoordinator</code>/<code>QueryEmbedder</code>、<code>BackupEngine</code>→<code>BackupRunner</code>/<code>BackupProgressStore</code>、<code>DropboxThumbnailBatcher</code>→<code>DropboxThumbnailBatchRequest</code>/<code>DropboxThumbnailChunkFetcher</code>）。
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages">Packages/</a> — 全パッケージのソース</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Package.swift">MobileCLIPKit/Package.swift</a> — 依存宣言の例</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

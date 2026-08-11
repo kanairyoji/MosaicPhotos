@@ -1,0 +1,1 @@
+records は正本（architecture-note/records）を参照。v2 には複製しない。

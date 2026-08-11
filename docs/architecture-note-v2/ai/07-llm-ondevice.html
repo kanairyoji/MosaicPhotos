@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 7. LLM とオンデバイス推論 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-llm";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 7. LLM とオンデバイス推論</nav>
+      <h1>7. LLM とオンデバイス推論</h1>
+      <p class="lead">LLM は「次のトークンを予測する」訓練を大規模に行った Transformer。端末で動かすには量子化・小型化と、推論の制約への配慮が要る。</p>
+
+      <h2>LLM の基本動作</h2>
+      <p>入力（プロンプト）をトークン列にし、モデルが<strong>次のトークンの確率分布</strong>を出す。1 つ選び、それを末尾に足してまた予測——を繰り返して文を生成する（自己回帰）。</p>
+      <div class="mermaid">
+graph LR
+  P[プロンプト] --> TK[トークン列]
+  TK --> M[Transformer]
+  M --> NX[次トークンの確率]
+  NX --> PICK[1つ選ぶ]
+  PICK --> TK
+      </div>
+
+      <h2>用途は生成だけではない</h2>
+      <ul>
+        <li><strong>翻訳・要約・整形</strong> — 入出力変換として使える。</li>
+        <li><strong>分類・抽出</strong> — 「この文の意図は？」「日付を取り出して」。</li>
+        <li><strong>埋め込み生成</strong> — 中間表現を文ベクトルとして使うモデルもある。</li>
+      </ul>
+
+      <h2>オンデバイスで動かす意味</h2>
+      <table>
+        <tr><th>観点</th><th>クラウド</th><th>オンデバイス</th></tr>
+        <tr><td>プライバシー</td><td>データが外部へ</td><td><strong>端末内で完結</strong></td></tr>
+        <tr><td>通信</td><td>必須・遅延あり</td><td>不要・オフライン可</td></tr>
+        <tr><td>コスト</td><td>API 課金</td><td>無料（端末資源のみ）</td></tr>
+        <tr><td>モデル規模</td><td>巨大</td><td>小型に制限</td></tr>
+      </table>
+
+      <h2>端末で動かす技術</h2>
+      <ul>
+        <li><strong>量子化</strong> — 重みを int8/int4 などへ（→ <a href="06-quantization.html">第6章</a>）。サイズと速度を確保。</li>
+        <li><strong>専用ハード</strong> — モバイルの NPU/ANE で行列演算を高速化。</li>
+        <li><strong>OS 提供モデル</strong> — OS 内蔵の基盤モデルを API 経由で使う（アプリが巨大モデルを同梱しなくてよい）。</li>
+      </ul>
+
+      <h2>制約と付き合う</h2>
+      <ul>
+        <li>メモリと発熱の上限がある。長い生成・大きな文脈は重い。</li>
+        <li>モデルが小さいぶん、難しい推論は不得手。<strong>小さく明確なタスク</strong>に絞ると安定する（例: 「クエリを英語に直す」）。</li>
+        <li>結果は確率的。決定的な処理（検索条件の抽出など）はルールベースと併用すると堅牢。</li>
+      </ul>
+
+      <div class="box note">
+        <span class="box-h">実務の指針</span>
+        端末 LLM は「巨大な万能 AI」ではなく「<strong>通信不要で軽い変換器</strong>」として使うのが現実的。検索の前処理（言語正規化・意図抽出）のような<strong>小さく定義された仕事</strong>に向く。
+      </div>
+
+      <p>次へ: <a href="08-ranking-fusion.html">8. ランキングと融合</a></p>
+      <p>本アプリでの応用: <a href="../tech/coreml-foundationmodels.html">Core ML / Foundation Models</a>（クエリ英訳に使用）</p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

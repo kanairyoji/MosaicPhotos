@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 8. ランキングと融合 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-ranking";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 8. ランキングと融合</nav>
+      <h1>8. ランキングと融合</h1>
+      <p class="lead">良い検索は単一の手がかりに頼らない。意味（ベクトル）・字句（語の一致）・条件（日付/場所）を別々に並べ、<strong>順位を融合</strong>して最終結果にする。</p>
+
+      <h2>複数の手がかり</h2>
+      <table>
+        <tr><th>シグナル</th><th>得意</th><th>苦手</th></tr>
+        <tr><td>意味検索（ベクトル）</td><td>言い換え・抽象的な内容</td><td>固有名詞の厳密一致</td></tr>
+        <tr><td>字句検索（キーワード）</td><td>固有名詞・正確な語</td><td>言い換え・概念</td></tr>
+        <tr><td>構造化条件</td><td>日付・場所・人物の絞り込み</td><td>内容の意味</td></tr>
+      </table>
+      <p>これらは互いの弱点を補う。だから<strong>併用して融合</strong>すると精度が上がる。</p>
+
+      <h2>スコア融合の難しさ</h2>
+      <p>各シグナルのスコアは尺度がバラバラ（コサインは -1〜1、BM25 は青天井）。素朴に足すと尺度の大きい方に支配される。これを避けるのが<strong>順位ベースの融合</strong>。</p>
+
+      <h2>Reciprocal Rank Fusion（RRF）</h2>
+      <p>各リストでの<strong>順位</strong>だけを使う。あるドキュメントのスコアを、各リストの順位 r の逆数で合計する。</p>
+      <pre><code>RRF(d) = Σ  1 / (k + rank_i(d))      // k は定数（例 60）
+         i（各リスト）</code></pre>
+      <p>上位ほど寄与が大きく、複数リストで上位に出るものが勝つ。スコアの尺度差に影響されず、実装も単純で頑健。</p>
+      <div class="mermaid">
+graph TD
+  A["意味検索の順位"] --> RRF[RRF 合算]
+  B["字句検索の順位"] --> RRF
+  C["条件フィルタの順位"] --> RRF
+  RRF --> FINAL[最終ランキング]
+      </div>
+
+      <h2>再ランク（reranking）</h2>
+      <p>「速いが粗い検索で候補を絞り、上位だけを重いモデルで精密に並べ替える」二段構え。大規模検索の定番。粗いふるい（ANN / 量子化）と相性が良い。</p>
+
+      <h2>ゼロショット分類（再掲）</h2>
+      <p>候補ラベルを文として埋め込み、対象ベクトルと最も近いものを選ぶ（<a href="04-clip-contrastive.html">第4章</a>）。「検索」と同じ仕組みを「分類/タグ付け」に使う応用。</p>
+
+      <h2>評価の目安</h2>
+      <ul>
+        <li><strong>Recall@K</strong> — 上位 K に正解が含まれる割合。</li>
+        <li><strong>Precision@K</strong> — 上位 K のうち正解の割合。</li>
+        <li>検索 UX では「上位数件の質」が体感を左右する。</li>
+      </ul>
+
+      <div class="box note">
+        <span class="box-h">章群のまとめ</span>
+        埋め込み（2章）→ Transformer（3章）→ CLIP（4章）で「意味のベクトル化」を、ベクトル検索（5章）・量子化（6章）で「速く軽く探す」を、LLM（7章）・融合（8章）で「前処理と手がかりの統合」を見た。これらの組合せが、語彙に縛られないオンデバイス写真検索を成立させている。
+      </div>
+
+      <p>本アプリでの応用: <a href="../features/on-device-ai.html">オンデバイス AI</a>（意味 + 構造化 + 字句を RRF 融合）</p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

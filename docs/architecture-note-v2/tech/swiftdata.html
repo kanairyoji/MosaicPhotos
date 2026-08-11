@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SwiftData | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "tech-swiftdata";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 技術プライマー / SwiftData</nav>
+      <h1>SwiftData</h1>
+      <p class="lead">Core Data を Swift らしく包んだ永続化フレームワーク。クラスに <code>@Model</code> を付けるとスキーマになり、<code>ModelContext</code> で fetch / insert / delete / save する。</p>
+
+      <h2>基本要素</h2>
+      <table>
+        <tr><th>要素</th><th>役割</th></tr>
+        <tr><td><code>@Model</code></td><td>永続化対象のクラス。プロパティが列になる。<code>@Attribute(.unique)</code> で一意制約。</td></tr>
+        <tr><td><code>ModelContainer</code></td><td>スキーマとストア（ファイル/インメモリ）の入れ物。</td></tr>
+        <tr><td><code>ModelContext</code></td><td>変更の作業領域。<strong>スレッド安全でない</strong>。</td></tr>
+        <tr><td><code>FetchDescriptor</code></td><td>取得条件（<code>#Predicate</code>・並び・<code>fetchLimit</code>/<code>fetchOffset</code>）。</td></tr>
+        <tr><td><code>@ModelActor</code></td><td>コンテキストを専用アクタに束縛し、安全に並行アクセスする。</td></tr>
+      </table>
+
+      <h2>このアプリでの落とし穴と対策</h2>
+      <div class="box why">
+        <span class="box-h">1. @Model を漏らさない</span>
+        <code>@Model</code> は参照型でアクタ非分離。アクタ外へ渡すと競合する。本アプリは <code>@ModelActor</code> の外へ <code>@Model</code> を出さず、Sendable な値型（<code>EnrichedPhoto</code> 等）に変換して返す。
+      </div>
+      <div class="box why">
+        <span class="box-h">2. fetch は属性を丸ごと展開する</span>
+        大きな <code>Data</code> を <code>@Model</code> に inline で持つと、全件 fetch のたびに blob も展開してメモリを食う。本アプリは CLIP 埋め込みを <code>PhotoEmbedding</code> 別テーブルに分け、メタデータ fetch が blob に触れないようにした（→ <a href="../case-studies/memory.html">事例</a>）。
+      </div>
+      <div class="box why">
+        <span class="box-h">3. 起動時 trap を避ける</span>
+        破損・スキーマ不整合で <code>ModelContainer</code> 初期化が trap する。本アプリは <code>makeResilientContainer</code> で「削除→再試行→インメモリ」とフォールバックする（→ <a href="../features/diagnostics.html">診断と堅牢性</a>）。スキーマ変更時は <code>ModelConfiguration</code> 名（例 <code>"AutoAlbumV10"</code>）を採番して旧ストアを破棄する。
+      </div>
+
+      <h2>メモリを有界に保つ書き込み</h2>
+      <p>大量 upsert は <code>writeChunk</code> 件ごとに<strong>使い捨ての <code>ModelContext</code></strong> を作って save し、チャンク完了でその context を解放することで登録オブジェクトを溜めない。</p>
+
+      <p>関連: <a href="../features/diagnostics.html">診断と堅牢性</a> / <a href="../case-studies/memory.html">事例: メモリ枯渇の解消</a></p>
+
+      <div class="box refs">
+        <span class="box-h">関連コード</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a></li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models">AutoAlbumCore/Models/</a> — @Model 定義</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>
