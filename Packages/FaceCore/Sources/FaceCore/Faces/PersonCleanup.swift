@@ -65,8 +65,10 @@ extension FaceStore {
                 guard let v = ClipMath.decodeHalf(f.embedding) else { continue }
                 vectors.append(v); kept.append(f); keys.append(f.refKey)
             }
+            // 整理画面はレビューカードより踏み込んだ緩和プロファイルで分割候補を出す
+            // （レビュー用の校正値ではクラスタリングが混ぜたものを構造的に分割できない）。
             let parts = FaceClusterAudit.recursiveSplit(embeddings: vectors, photoKeys: keys,
-                                                        config: tuning.auditConfig)
+                                                        config: .cleanup)
             func face(_ f: DetectedFace?) -> PersonInfo.Face? {
                 f.map { PersonInfo.Face(faceID: $0.faceID, refKey: $0.refKey,
                                         boundingBox: CGRect(x: $0.bx, y: $0.by,

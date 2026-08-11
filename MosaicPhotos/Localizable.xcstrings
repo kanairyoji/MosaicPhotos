@@ -1,3830 +1,3818 @@
 {
-  "sourceLanguage" : "en",
-  "strings" : {
-    "“%@” and “%@” will be shown as the same person. You can separate them later." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「%@」と「%@」は同じ人物として表示されます。後で解除できます。"
+  "sourceLanguage": "en",
+  "strings": {
+    "%.1fs pause": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.1f秒休止"
           }
         }
       }
     },
-    "“%@” will be merged into “%@”. This can’t be undone automatically." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「%1$@」を「%2$@」に統合します。自動では元に戻せません。"
+    "%@ — %lld/batch · %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$lld枚/回 · %3$@"
           }
         }
       }
     },
-    "“Analyze Now” starts immediately for 30 minutes — your iPhone must be charging. Otherwise analysis runs automatically based on Processing Timing (by default while charging, on Wi-Fi, and not in use)." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「今すぐ解析」を押すと 30 分間すぐに実行します（iPhone の充電が必要です）。それ以外は「処理のタイミング」の設定に従って自動で進みます（既定では、充電中・Wi-Fi・未使用のとき）。"
+    "%@%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "%1$@%2$@"
           }
         }
       }
     },
-    "%.1fs pause" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%.1f秒休止"
+    "%lld left": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "残り %lld 枚"
           }
         }
       }
     },
-    "%@ — %lld/batch · %@" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ — %2$lld枚/回 · %3$@"
+    "%lld of %lld photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$lld 枚中 %1$lld 枚"
           }
         }
       }
     },
-    "%@%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@%2$@"
-          }
-        }
-      }
-    },
-    "%lld left" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "残り %lld 枚"
-          }
-        }
-      }
-    },
-    "%lld of %lld photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%2$lld 枚中 %1$lld 枚"
-          }
-        }
-      }
-    },
-    "%lld photos" : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld photo"
+    "%lld photos": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld photo"
                 }
               },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld photos"
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld photos"
                 }
               }
             }
           }
         },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld枚"
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 枚"
           }
         }
       }
     },
-    "%lld were kept separate because they have different names or appear together in the same photo." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld件は統合しませんでした（別の名前が付いている、または同じ写真に一緒に写っているため）。"
+    "%lld were kept separate because they have different names or appear together in the same photo.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件は統合しませんでした（別の名前が付いている、または同じ写真に一緒に写っているため）。"
           }
         }
       }
     },
-    "%llds pause" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld秒休止"
+    "%llds pause": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld秒休止"
           }
         }
       }
     },
-    "~1 km" : {
-
-    },
-    "~2 km" : {
-
-    },
-    "~5 km" : {
-
-    },
-    "~10 km" : {
-
-    },
-    "1,000" : {
-
-    },
-    "5 s" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "5秒"
+    "1,000": {},
+    "10 km": {},
+    "10 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "10秒"
           }
         }
       }
-    },
-    "5,000" : {
-
-    },
-    "10 km" : {
-
     },
-    "10 s" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "10秒"
+    "10,000": {},
+    "100 km": {},
+    "20,000": {},
+    "25 km": {},
+    "30 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30秒"
           }
         }
       }
     },
-    "10,000" : {
-
-    },
-    "20,000" : {
-
-    },
-    "25 km" : {
-
-    },
-    "30 s" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "30秒"
+    "5 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5秒"
           }
         }
       }
-    },
-    "50 km" : {
-
     },
-    "60 s" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "60秒"
+    "5,000": {},
+    "50 km": {},
+    "60 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "60秒"
           }
         }
       }
     },
-    "100 km" : {
-
-    },
-    "A one-sentence description generated on device, for your favorite photos only (it's the heaviest pass). Mark photos as favorites to have them described." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末内で生成する一文の説明です。もっとも重い処理のため、お気に入りの写真だけに付けます。説明が欲しい写真はお気に入りにしてください。"
+    "A one-sentence description generated on device, for your favorite photos only (it's the heaviest pass). Mark photos as favorites to have them described.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末内で生成する一文の説明です。もっとも重い処理のため、お気に入りの写真だけに付けます。説明が欲しい写真はお気に入りにしてください。"
           }
         }
       }
     },
-    "Add Rule" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ルールを追加"
+    "AI Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIアルバム"
           }
         }
       }
     },
-    "Additionally runs between your interactions while the app is open (charging + Wi-Fi). Stops the instant you touch the screen; slight warmth possible." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "加えて、アプリを開いている間も操作の合間に実行します（充電＋Wi-Fi 時）。画面に触れた瞬間に停止します。端末が少し温かくなることがあります。"
+    "AI Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIアルバム"
           }
         }
       }
     },
-    "Additionally runs on battery (Wi-Fi, above 20% charge, Low Power Mode off). Uses battery." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "加えて、バッテリー駆動でも実行します（Wi-Fi・残量20%以上・低電力モードOFF時）。バッテリーを消費します。"
+    "AI Analysis": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 解析の状況"
           }
         }
       }
     },
-    "Advanced" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "詳細"
+    "AI Descriptions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI による説明"
           }
         }
       }
     },
-    "AI Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AIアルバム"
+    "AI analysis: nothing detected": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 解析：検出なし"
           }
         }
       }
+    },
+    "AI アルバムをフル再評価": {},
+    "AI 解析：アルバム": {
+      "comment": "A section for debugging the album AI analysis.",
+      "isCommentAutoGenerated": true
+    },
+    "AI 解析：ピープル（顔）": {
+      "comment": "A section for the AI analysis of people (faces).",
+      "isCommentAutoGenerated": true
+    },
+    "AI 解析：場所（Places）": {},
+    "AI 解析：夜間タスク": {},
+    "AI 解析：状況": {
+      "comment": "A section that shows the current state of the AI analysis features.",
+      "isCommentAutoGenerated": true
     },
-    "AI Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AIアルバム"
+    "AI 解析：重い処理をその場で実行": {
+      "comment": "A section title.",
+      "isCommentAutoGenerated": true
+    },
+    "Add Rule": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールを追加"
           }
         }
       }
     },
-    "AI Analysis" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AI 解析の状況"
+    "Additionally runs between your interactions while the app is open (charging + Wi-Fi). Stops the instant you touch the screen; slight warmth possible.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加えて、アプリを開いている間も操作の合間に実行します（充電＋Wi-Fi 時）。画面に触れた瞬間に停止します。端末が少し温かくなることがあります。"
           }
         }
       }
     },
-    "AI analysis: nothing detected" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AI 解析：検出なし"
+    "Additionally runs on battery (Wi-Fi, above 20% charge, Low Power Mode off). Uses battery.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加えて、バッテリー駆動でも実行します（Wi-Fi・残量20%以上・低電力モードOFF時）。バッテリーを消費します。"
           }
         }
       }
     },
-    "AI Descriptions" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AI による説明"
+    "Advanced": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "詳細"
           }
         }
       }
-    },
-    "AI アルバムをフル再評価" : {
-
-    },
-    "AI 解析：アルバム" : {
-      "comment" : "A section for debugging the album AI analysis.",
-      "isCommentAutoGenerated" : true
-    },
-    "AI 解析：ピープル（顔）" : {
-      "comment" : "A section for the AI analysis of people (faces).",
-      "isCommentAutoGenerated" : true
-    },
-    "AI 解析：場所（Places）" : {
-
-    },
-    "AI 解析：夜間タスク" : {
-
-    },
-    "AI 解析：状況" : {
-      "comment" : "A section that shows the current state of the AI analysis features.",
-      "isCommentAutoGenerated" : true
     },
-    "AI 解析：重い処理をその場で実行" : {
-      "comment" : "A section title.",
-      "isCommentAutoGenerated" : true
-    },
-    "Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバム"
+    "Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム"
           }
         }
       }
     },
-    "Album name (optional)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバム名（任意）"
+    "Album name (optional)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム名（任意）"
           }
         }
       }
     },
-    "Album options" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムの操作"
+    "Album options": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムの操作"
           }
         }
       }
     },
-    "Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバム"
+    "Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム"
           }
         }
       }
     },
-    "Albums & Search" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムと検索"
+    "Albums & Search": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムと検索"
           }
         }
       }
     },
-    "Albums appear in the “Albums” section on the home screen. They are built from Dropbox photos only, so connect Dropbox and load Cloud first. Runs in the background — regenerate after changing rules." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムはホーム画面の「アルバム」セクションに表示されます。Dropbox の写真のみから作成されるため、先に Dropbox に接続してクラウドを読み込んでください。バックグラウンドで実行されます。ルール変更後は再生成してください。"
+    "Albums appear in the “Albums” section on the home screen. They are built from Dropbox photos only, so connect Dropbox and load Cloud first. Runs in the background — regenerate after changing rules.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムはホーム画面の「アルバム」セクションに表示されます。Dropbox の写真のみから作成されるため、先に Dropbox に接続してクラウドを読み込んでください。バックグラウンドで実行されます。ルール変更後は再生成してください。"
           }
         }
       }
     },
-    "All Photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべての写真"
+    "All Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべての写真"
           }
         }
       }
     },
-    "Also on battery (Wi-Fi)" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バッテリーでも（Wi-Fi）"
+    "Also on battery (Wi-Fi)": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バッテリーでも（Wi-Fi）"
           }
         }
       }
     },
-    "Also while using the app (charging)" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリ使用中も（充電時）"
+    "Also while using the app (charging)": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリ使用中も（充電時）"
           }
         }
       }
     },
-    "Always" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "常に"
+    "Always": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常に"
           }
         }
       }
     },
-    "an optional part that isn't captured" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "任意の部分（キャプチャしない）"
+    "Analysis also runs while the app is open, once you have not touched the screen for 20 seconds. It stops as soon as you interact again — indexing finishes sooner, but you may notice brief slowdowns.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを開いたままでも、20 秒操作がなければ解析します。画面に触れるとすぐ止まります。解析は早く終わりますが、短い引っかかりを感じることがあります。"
           }
         }
       }
     },
-    "Analysis also runs while the app is open, once you have not touched the screen for 20 seconds. It stops as soon as you interact again — indexing finishes sooner, but you may notice brief slowdowns." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリを開いたままでも、20 秒操作がなければ解析します。画面に触れるとすぐ止まります。解析は早く終わりますが、短い引っかかりを感じることがあります。"
+    "Analysis is not running right now. It resumes automatically under the conditions you set in Processing Timing, or tap “Analyze Now” below.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在は解析していません。「処理のタイミング」で設定した条件になると自動で再開します。下の「今すぐ解析」ですぐ始めることもできます。"
           }
         }
       }
     },
-    "Analysis is not running right now. It resumes automatically under the conditions you set in Processing Timing, or tap “Analyze Now” below." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "現在は解析していません。「処理のタイミング」で設定した条件になると自動で再開します。下の「今すぐ解析」ですぐ始めることもできます。"
+    "Analysis never runs while you are using the app — only when you switch away or your iPhone is locked. Recommended: no slowdowns while browsing.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを使っている間は解析しません（他のアプリに切り替えたときや、iPhone をロックしている間だけ動きます）。閲覧中に遅くならない推奨設定です。"
           }
         }
       }
     },
-    "Analysis never runs while you are using the app — only when you switch away or your iPhone is locked. Recommended: no slowdowns while browsing." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリを使っている間は解析しません（他のアプリに切り替えたときや、iPhone をロックしている間だけ動きます）。閲覧中に遅くならない推奨設定です。"
+    "Analyze Now (while charging)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ解析（充電中）"
           }
         }
       }
     },
-    "Analyze Now (while charging)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "今すぐ解析（充電中）"
+    "Analyzing faces…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔を分析中…"
           }
         }
       }
     },
-    "Analyzing now" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "解析中"
+    "Analyzing now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析中"
           }
         }
       }
     },
-    "Analyzing…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "解析中…"
+    "Analyzing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析中…"
           }
         }
       }
     },
-    "Answers are applied right away, and the next overnight analysis uses them too." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "回答はすぐに反映され、次回の夜間解析にも使われます。"
+    "Answers are applied right away, and the next overnight analysis uses them too.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答はすぐに反映され、次回の夜間解析にも使われます。"
           }
         }
       }
     },
-    "Apple" : {
-      "comment" : "Title for Apple-related licenses.",
-      "isCommentAutoGenerated" : true
+    "Apple": {
+      "comment": "Title for Apple-related licenses.",
+      "isCommentAutoGenerated": true
     },
-    "Apple の地名を今すぐ取得（CLGeocoder）" : {
-      "comment" : "Button label for the action of getting place names from Apple's CLGeocoder.",
-      "isCommentAutoGenerated" : true
+    "Apple の地名を今すぐ取得（CLGeocoder）": {
+      "comment": "Button label for the action of getting place names from Apple's CLGeocoder.",
+      "isCommentAutoGenerated": true
     },
-    "Applies across the whole app: AI indexing, automatic albums, place scanning, Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode is off — saves battery. “Always” ignores power state; “Off” pauses all background work. Default: While charging." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリ全体に適用されます：AI 取り込み・自動アルバム・場所スキャン・Dropbox 同期・バックアップ。「充電中のみ」は電源接続中かつ低電力モードがオフのときだけ実行し、電池を節約します。「常に」は電源状態を無視、「オフ」はすべてのバックグラウンド処理を停止します。既定：充電中のみ。"
+    "Applies across the whole app: AI indexing, automatic albums, place scanning, Dropbox sync and backup. “While charging” runs only when plugged in and Low Power Mode is off — saves battery. “Always” ignores power state; “Off” pauses all background work. Default: While charging.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリ全体に適用されます：AI 取り込み・自動アルバム・場所スキャン・Dropbox 同期・バックアップ。「充電中のみ」は電源接続中かつ低電力モードがオフのときだけ実行し、電池を節約します。「常に」は電源状態を無視、「オフ」はすべてのバックグラウンド処理を停止します。既定：充電中のみ。"
           }
         }
       }
     },
-    "Are both of these “%@”?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "どちらも「%@」さんですか？"
+    "Are both of these “%@”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どちらも「%@」さんですか？"
           }
         }
       }
     },
-    "Are these the same person?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "同じ人物ですか？"
+    "Are these the same person?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物ですか？"
           }
         }
       }
     },
-    "Auto Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動アルバム"
+    "Auto Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動アルバム"
           }
         }
       }
     },
-    "Auto-generate in background" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "背景で自動生成"
+    "Auto-generate in background": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景で自動生成"
           }
         }
       }
     },
-    "Automatic — while not in use (recommended)" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "おまかせ — 使っていない間だけ（推奨）"
+    "Automatic analysis": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動で解析する"
           }
         }
       }
     },
-    "Automatic analysis" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動で解析する"
+    "Automatic — while not in use (recommended)": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "おまかせ — 使っていない間だけ（推奨）"
           }
         }
       }
     },
-    "Away-from-home distance" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自宅から離れた距離"
+    "Away-from-home distance": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自宅から離れた距離"
           }
         }
       }
     },
-    "Back" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "戻る"
+    "BPE tokenizer algorithm, ported to Swift": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "BPE トークナイザのアルゴリズム（Swift へ移植）"
           }
         }
       }
     },
-    "Back up photos to Dropbox" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真を Dropbox にバックアップ"
+    "Back": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "戻る"
           }
         }
       }
     },
-    "Background & Battery" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バックグラウンドとバッテリー"
+    "Back up photos to Dropbox": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を Dropbox にバックアップ"
           }
         }
       }
     },
-    "Background Data" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バックグラウンド通信"
+    "Background & Battery": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドとバッテリー"
           }
         }
       }
     },
-    "Background Processing" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "背景処理"
+    "Background Data": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド通信"
           }
         }
       }
     },
-    "Background speed" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "背景処理の速度"
+    "Background Processing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景処理"
           }
         }
       }
     },
-    "Background Work" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バックグラウンド処理"
+    "Background Work": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド処理"
           }
         }
       }
     },
-    "Backup" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バックアップ"
+    "Background speed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景処理の速度"
           }
         }
       }
     },
-    "Balanced" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バランス"
+    "Backup": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップ"
           }
         }
       }
     },
-    "Batch size" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バッチサイズ"
+    "Balanced": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バランス"
           }
         }
       }
     },
-    "Both already have names (%@). Grouping keeps one name for all their photos. If they are different people, stop here." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "どちらにも名前が付いています（%@）。束ねると全部の写真が 1 つの名前になります。別人なら、ここでやめてください。"
+    "Batch size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バッチサイズ"
           }
         }
       }
     },
-    "BPE tokenizer algorithm, ported to Swift" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "BPE トークナイザのアルゴリズム（Swift へ移植）"
+    "Both already have names (%@). Grouping keeps one name for all their photos. If they are different people, stop here.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どちらにも名前が付いています（%@）。束ねると全部の写真が 1 つの名前になります。別人なら、ここでやめてください。"
           }
         }
       }
     },
-    "Build tools" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ビルドツール"
+    "Build tools": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ビルドツール"
           }
         }
       }
     },
-    "Bundled in the app" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリに同梱"
+    "Bundled in the app": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリに同梱"
           }
         }
       }
+    },
+    "CLIP モデル": {},
+    "CLIP 埋め込みを今すぐ開始": {
+      "comment": "A button that starts CLIP embedding immediately.",
+      "isCommentAutoGenerated": true
     },
-    "Cancel" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "キャンセル"
+    "Cancel": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャンセル"
           }
         }
       }
     },
-    "capture group — its text fills ${name}" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "キャプチャグループ — その文字が ${name} に入ります"
+    "Cellular allowed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モバイル通信も許可"
           }
         }
       }
     },
-    "Cellular allowed" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "モバイル通信も許可"
+    "Changes apply on the next generation.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更は次回の生成から反映されます。"
           }
         }
       }
     },
-    "Changes apply on the next generation." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "変更は次回の生成から反映されます。"
+    "Check the groups that are NOT this person, then tap Separate. The largest group stays as this person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物**ではない**グループにチェックを付けて「分離」をタップしてください。最大のグループはこの人物として残ります。"
           }
         }
       }
     },
-    "Children change a lot as they grow, so one child can end up as many entries. Confirm them together to merge them quickly." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "子どもは成長で顔が大きく変わるため、1人が多数に分かれることがあります。「まとめて確認」で一度にまとめられます。"
+    "Children change a lot as they grow, so one child can end up as many entries. Confirm them together to merge them quickly.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "子どもは成長で顔が大きく変わるため、1人が多数に分かれることがあります。「まとめて確認」で一度にまとめられます。"
           }
         }
       }
     },
-    "Choose Cover" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "代表写真を選ぶ"
+    "Choose Cover": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代表写真を選ぶ"
           }
         }
       }
     },
-    "Choose Cover Photo" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "代表写真を変更"
+    "Choose Cover Photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代表写真を変更"
           }
         }
       }
     },
-    "Choose the correct person" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正しい人物を選ぶ"
+    "Choose the correct person": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正しい人物を選ぶ"
           }
         }
       }
     },
-    "Choose the person to group “%@” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「%@」と同じ人物（例: 成長した子供）として束ねる相手を選びます。写真はまとめて表示され、後で解除できます。"
+    "Choose the person to group “%@” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」と同じ人物（例: 成長した子供）として束ねる相手を選びます。写真はまとめて表示され、後で解除できます。"
           }
         }
       }
     },
-    "Choose the person to merge “%@” into. All their photos will move to that person." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「%@」の統合先の人物を選びます。この人物の写真はすべて統合先へ移ります。"
+    "Choose the person to merge “%@” into. All their photos will move to that person.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」の統合先の人物を選びます。この人物の写真はすべて統合先へ移ります。"
           }
         }
       }
     },
-    "Clear all" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選択を解除"
+    "Clean Up This Person…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物を整理…"
           }
         }
       }
     },
-    "Clear All" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべて消去"
+    "Clear All": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて消去"
           }
         }
       }
     },
-    "Clear All Caches" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべてのキャッシュを消去"
+    "Clear All Caches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのキャッシュを消去"
           }
         }
       }
     },
-    "Clear all caches?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべてのキャッシュを消去しますか？"
+    "Clear all": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択を解除"
           }
         }
       }
     },
-    "Clearing…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "消去中…"
+    "Clear all caches?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのキャッシュを消去しますか？"
           }
         }
       }
     },
-    "Clears all recognition tags (objects, scenes, text, CLIP) and re-analyzes every local photo with the latest model. Metadata (date, place, people) is kept. Runs in the background and may take a while." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "認識タグ（物体・シーン・文字・CLIP）をすべて消去し、最新モデルで端末のすべての写真を再解析します。メタデータ（日付・場所・人物）は保持されます。背景で実行され、時間がかかる場合があります。"
+    "Clearing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "消去中…"
           }
         }
       }
-    },
-    "CLIP モデル" : {
-
-    },
-    "CLIP 埋め込みを今すぐ開始" : {
-      "comment" : "A button that starts CLIP embedding immediately.",
-      "isCommentAutoGenerated" : true
     },
-    "Close" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "閉じる"
+    "Clears all recognition tags (objects, scenes, text, CLIP) and re-analyzes every local photo with the latest model. Metadata (date, place, people) is kept. Runs in the background and may take a while.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "認識タグ（物体・シーン・文字・CLIP）をすべて消去し、最新モデルで端末のすべての写真を再解析します。メタデータ（日付・場所・人物）は保持されます。背景で実行され、時間がかかる場合があります。"
           }
         }
       }
     },
-    "Cloud" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "クラウド"
+    "Close": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "閉じる"
           }
         }
       }
     },
-    "Cloud Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "クラウドアルバム"
+    "Cloud": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド"
           }
         }
       }
     },
-    "Coarse (~5 km)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "粗い（約5km）"
+    "Cloud Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウドアルバム"
           }
         }
       }
     },
-    "Coarse (5 rows)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "粗い（5行）"
+    "Coarse (5 rows)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粗い（5行）"
           }
         }
       }
     },
-    "Common pieces" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "よく使う要素"
+    "Coarse (~5 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粗い（約5km）"
           }
         }
       }
     },
-    "Complete" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完了"
+    "Common pieces": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "よく使う要素"
           }
         }
       }
     },
-    "Confirm together" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "まとめて確認"
+    "Complete": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
           }
         }
       }
     },
-    "Connected" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "接続済み"
+    "Confirm together": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめて確認"
           }
         }
       }
     },
-    "Connecting…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "接続中…"
+    "Connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続済み"
           }
         }
       }
     },
-    "Consecutive days away from home are merged into one trip (a multi-day trip is not split per day). A larger merge gap tolerates more blank days within a trip; a stay at home starts a new trip." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自宅から離れた連続する日を1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。まとめる間隔が大きいほど旅行中の空白日を許容し、自宅滞在で新しい旅行が始まります。"
+    "Connecting…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続中…"
           }
         }
       }
     },
-    "Core ML & Vision reference that shaped the on-device AI rework" : {
-
+    "Consecutive days away from home are merged into one trip (a multi-day trip is not split per day). A larger merge gap tolerates more blank days within a trip; a stay at home starts a new trip.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自宅から離れた連続する日を1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。まとめる間隔が大きいほど旅行中の空白日を許容し、自宅滞在で新しい旅行が始まります。"
+          }
+        }
+      }
     },
-    "Core ML model conversion" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Core ML モデルの変換"
+    "Core ML & Vision reference that shaped the on-device AI rework": {},
+    "Core ML model conversion": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Core ML モデルの変換"
           }
         }
       }
     },
-    "Create Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを作成"
+    "Create Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを作成"
           }
         }
       }
     },
-    "Date unknown" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "日時不明"
+    "Date unknown": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日時不明"
           }
         }
       }
     },
-    "Default (~2 km)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "標準（約2km）"
+    "Default (~2 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "標準（約2km）"
           }
         }
       }
     },
-    "Delete Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを削除"
+    "Delete Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを削除"
           }
         }
       }
     },
-    "Describe an album — e.g. “Okinawa trips in recent years”." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを言葉で指定 — 例：「ここ数年の沖縄旅行」。"
+    "Describe an album — e.g. “Okinawa trips in recent years”.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを言葉で指定 — 例：「ここ数年の沖縄旅行」。"
           }
         }
       }
     },
-    "Descriptions are generated on device while charging. Check back later." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "説明は充電中に端末上で生成されます。しばらくしてから確認してください。"
+    "Descriptions are generated on device while charging. Check back later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "説明は充電中に端末上で生成されます。しばらくしてから確認してください。"
           }
         }
       }
     },
-    "Developer Options" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開発者オプション"
+    "Developer Options": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開発者オプション"
           }
         }
       }
     },
-    "Device + Dropbox combined" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末 + Dropbox を統合"
+    "Device + Dropbox combined": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末 + Dropbox を統合"
           }
         }
       }
     },
-    "Device Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末のアルバム"
+    "Device Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末のアルバム"
           }
         }
       }
     },
-    "Diagrams in the architecture note" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設計資料の図"
+    "Diagrams in the architecture note": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設計資料の図"
           }
         }
       }
     },
-    "Documentation" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ドキュメント"
+    "Documentation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ドキュメント"
           }
         }
       }
     },
-    "Don’t group — these are different people" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "束ねない（別人でした）"
+    "Done": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
           }
         }
       }
     },
-    "Done" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完了"
+    "Don’t group — these are different people": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねない（別人でした）"
           }
         }
       }
     },
-    "Dropbox" : {
-      "comment" : "A label for the Dropbox settings hub.",
-      "isCommentAutoGenerated" : true
+    "Dropbox": {
+      "comment": "A label for the Dropbox settings hub.",
+      "isCommentAutoGenerated": true
     },
-    "Dropbox · Connected" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox · 接続済み"
+    "Dropbox · Connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · 接続済み"
           }
         }
       }
     },
-    "Dropbox · Connecting..." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox · 接続中..."
+    "Dropbox · Connecting...": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · 接続中..."
           }
         }
       }
     },
-    "Dropbox · Error" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox · エラー"
+    "Dropbox · Error": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · エラー"
           }
         }
       }
     },
-    "Dropbox · Not connected" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox · 未接続"
+    "Dropbox · Not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox · 未接続"
           }
         }
       }
     },
-    "Dropbox のサムネ（メモリ）" : {
-      "comment" : "A label for Dropbox thumbnail memory usage.",
-      "isCommentAutoGenerated" : true
+    "Dropbox のサムネ（メモリ）": {
+      "comment": "A label for Dropbox thumbnail memory usage.",
+      "isCommentAutoGenerated": true
     },
-    "Dropbox のディスク上限（サムネ/フル）既定" : {
-      "comment" : "A description of the default Dropbox disk limits for thumbnails and full images.",
-      "isCommentAutoGenerated" : true
+    "Dropbox のディスク上限（サムネ/フル）既定": {
+      "comment": "A description of the default Dropbox disk limits for thumbnails and full images.",
+      "isCommentAutoGenerated": true
     },
-    "e.g. Okinawa trips in recent years / favorites with Mom" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "例：ここ数年の沖縄旅行 / 母とのお気に入り"
+    "Each photo (device and Dropbox) gets a compact “fingerprint” so you can search by natural language and build AI albums. This is the main index.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末と Dropbox の各写真に小さな「特徴データ」を付けます。これにより自然文での検索や AI アルバムの作成ができます。中心となる索引です。"
           }
         }
       }
     },
-    "Each photo (device and Dropbox) gets a compact “fingerprint” so you can search by natural language and build AI albums. This is the main index." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末と Dropbox の各写真に小さな「特徴データ」を付けます。これにより自然文での検索や AI アルバムの作成ができます。中心となる索引です。"
+    "Each rule is a regular expression tested against a photo's full Dropbox path. Capture the album name with a named group (?<name>…); the template builds the title, where ${name} inserts what that group captured. Rules are tried top to bottom and the first match wins — paths matching no rule are ignored. Tap “Insert Examples” to start, then test any path in Preview below.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "各ルールは、写真の Dropbox フルパスに対して評価される正規表現です。名前付きグループ (?<name>…) でアルバム名を取り出し、テンプレートでタイトルを作ります（${name} はそのグループが取り込んだ文字に置き換わります）。ルールは上から順に試され、最初に一致したものを採用します（どれにも一致しないパスは無視）。まず「例を挿入」を押し、下のプレビューで任意のパスを試してください。"
           }
         }
       }
     },
-    "Each rule is a regular expression tested against a photo's full Dropbox path. Capture the album name with a named group (?<name>…); the template builds the title, where ${name} inserts what that group captured. Rules are tried top to bottom and the first match wins — paths matching no rule are ignored. Tap “Insert Examples” to start, then test any path in Preview below." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "各ルールは、写真の Dropbox フルパスに対して評価される正規表現です。名前付きグループ (?<name>…) でアルバム名を取り出し、テンプレートでタイトルを作ります（${name} はそのグループが取り込んだ文字に置き換わります）。ルールは上から順に試され、最初に一致したものを採用します（どれにも一致しないパスは無視）。まず「例を挿入」を押し、下のプレビューで任意のパスを試してください。"
+    "Edit AI Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIアルバムを編集"
           }
         }
       }
     },
-    "Edit AI Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AIアルバムを編集"
+    "Edit Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを編集"
           }
         }
       }
     },
-    "Edit Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを編集"
+    "Enable folder-name albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー名アルバムを有効化"
           }
         }
       }
     },
-    "Enable folder-name albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダー名アルバムを有効化"
+    "Enter a path to test your rules.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールを試すパスを入力してください。"
           }
         }
       }
     },
-    "Enter a path to test your rules." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ルールを試すパスを入力してください。"
+    "Error": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エラー"
           }
         }
       }
     },
-    "Error" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "エラー"
+    "Exclude photos already in an album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すでにアルバムにある写真を除外"
           }
         }
       }
     },
-    "exactly 4 digits (e.g. a year)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ちょうど4桁の数字（例：年）"
+    "Face Yield Measurement": {},
+    "Faces are detected in your device photos and grouped into people, entirely on device. Cloud photos are not scanned for faces.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末内の写真から顔を検出し、人物ごとにまとめます。すべて端末内で処理します。クラウドの写真は顔スキャンの対象外です。"
           }
         }
       }
     },
-    "Exclude photos already in an album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すでにアルバムにある写真を除外"
+    "Faces detected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検出した顔"
           }
         }
       }
-    },
-    "Face Yield Measurement" : {
-
     },
-    "Faces are detected in your device photos and grouped into people, entirely on device. Cloud photos are not scanned for faces." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末内の写真から顔を検出し、人物ごとにまとめます。すべて端末内で処理します。クラウドの写真は顔スキャンの対象外です。"
+    "Fast": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高速"
           }
         }
       }
     },
-    "Faces detected" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "検出した顔"
+    "Find more": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次を探す"
           }
         }
       }
     },
-    "Fast" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "高速"
+    "Finding faces to review…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認する顔を探しています…"
           }
         }
       }
     },
-    "Find more" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "次を探す"
+    "Finding people…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を探しています…"
           }
         }
       }
     },
-    "Finding faces to review…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "確認する顔を探しています…"
+    "Fine (1 row)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "細かい（1行）"
           }
         }
       }
     },
-    "Finding people…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物を探しています…"
+    "Fine (~1 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "細かい（約1km）"
           }
         }
       }
     },
-    "Fine (~1 km)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "細かい（約1km）"
+    "Folder Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダーアルバム"
           }
         }
       }
     },
-    "Fine (1 row)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "細かい（1行）"
+    "Folder albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダアルバム"
           }
         }
       }
     },
-    "finishing…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "仕上げ中…"
+    "Folder-name Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダ名アルバム"
           }
         }
       }
     },
-    "Folder albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダアルバム"
+    "Found %lld groups": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のグループが見つかりました"
           }
         }
       }
     },
-    "Folder Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダーアルバム"
+    "Frees disk space. Cached images are re-fetched on demand, so the app stays fully functional.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ディスク容量を解放します。キャッシュ画像は必要に応じて再取得されるため、アプリは問題なく動作します。"
           }
         }
       }
     },
-    "Folder-name Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダ名アルバム"
+    "From Dropbox folders": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox のフォルダから"
           }
         }
       }
     },
-    "Frees disk space. Cached images are re-fetched on demand, so the app stays fully functional." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ディスク容量を解放します。キャッシュ画像は必要に応じて再取得されるため、アプリは問題なく動作します。"
+    "General": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一般"
           }
         }
       }
     },
-    "From Dropbox folders" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox のフォルダから"
+    "Generate Now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ生成"
           }
         }
       }
     },
-    "General" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "一般"
+    "Generating…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成中…"
           }
         }
       }
     },
-    "Generate Now" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "今すぐ生成"
+    "Gentle": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "控えめ"
           }
         }
       }
     },
-    "Generating…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "生成中…"
+    "Granularity changes take effect on the next rescan.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粒度の変更は次回の再スキャンから反映されます。"
           }
         }
       }
     },
-    "Gentle" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "控えめ"
+    "Grid granularity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粒度"
           }
         }
       }
     },
-    "Granularity changes take effect on the next rescan." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "粒度の変更は次回の再スキャンから反映されます。"
+    "Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねる"
           }
         }
       }
     },
-    "Grid granularity" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "粒度"
+    "Group as Same Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねる"
           }
         }
       }
     },
-    "Group" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "束ねる"
+    "Group as same person?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねますか？"
           }
         }
       }
     },
-    "Group as Same Person" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "同じ人物として束ねる"
+    "Group with": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねる"
           }
         }
       }
     },
-    "Group as same person?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "同じ人物として束ねますか？"
+    "Group with Another Person…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人物と束ねる…"
           }
         }
       }
     },
-    "Group with" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "同じ人物として束ねる"
+    "Grouping": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループ化"
           }
         }
       }
     },
-    "Group with Another Person…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "別の人物と束ねる…"
+    "Help": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ヘルプ"
           }
         }
       }
     },
-    "Grouping" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "グループ化"
+    "How hard the app works in the background to add CLIP embeddings (used for search). Lower is gentler on battery, network and scrolling but slower to finish; higher is faster but heavier. Takes effect on the next batch.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索用の CLIP 埋め込みを背景でどれだけ積極的に付けるか。低いほど電池・通信・スクロールに優しいが完了は遅く、高いほど速いが重くなります。次のバッチから反映されます。"
           }
         }
       }
     },
-    "Help" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ヘルプ"
+    "How rules work": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールの仕組み"
           }
         }
       }
     },
-    "How hard the app works in the background to add CLIP embeddings (used for search). Lower is gentler on battery, network and scrolling but slower to finish; higher is faster but heavier. Takes effect on the next batch." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "検索用の CLIP 埋め込みを背景でどれだけ積極的に付けるか。低いほど電池・通信・スクロールに優しいが完了は遅く、高いほど速いが重くなります。次のバッチから反映されます。"
+    "Idle": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中"
           }
         }
       }
     },
-    "How rules work" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ルールの仕組み"
+    "Ignore case": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "大文字小文字を無視"
           }
         }
       }
     },
-    "Idle" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "待機中"
+    "Image Recognition (AI tags)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像認識（AIタグ）"
           }
         }
       }
     },
-    "Ignore case" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "大文字小文字を無視"
+    "Image loading for evaluation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "評価用の画像読み込み"
           }
         }
       }
     },
-    "Image loading for evaluation" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "評価用の画像読み込み"
+    "In Dropbox": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox 内"
           }
         }
       }
     },
-    "Image Recognition (AI tags)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "画像認識（AIタグ）"
+    "In month view, photos are packed densely and a date header appears each time this many rows fill up. Larger values show fewer headers and wider date ranges.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月表示では写真を密に詰め、この行数ぶん埋まるたびに日付の見出しを表示します。値を大きくすると見出しが減り、日付の範囲が広くなります。"
           }
         }
       }
     },
-    "In Dropbox" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox 内"
+    "Include Dropbox photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox の写真を含める"
           }
         }
       }
     },
-    "In month view, photos are packed densely and a date header appears each time this many rows fill up. Larger values show fewer headers and wider date ranges." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "月表示では写真を密に詰め、この行数ぶん埋まるたびに日付の見出しを表示します。値を大きくすると見出しが減り、日付の範囲が広くなります。"
+    "Indexes your photos in the background so AI albums and search stay up to date. Power and network conditions are set in Settings → Background & Battery.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI アルバムと検索を最新に保つため、写真をバックグラウンドで解析します。電源と回線の条件は「設定 → バックグラウンドとバッテリー」で指定します。"
           }
         }
       }
     },
-    "Include Dropbox photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox の写真を含める"
+    "Indexing for search": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索用の索引付け"
           }
         }
       }
     },
-    "Indexes your photos in the background so AI albums and search stay up to date. Power and network conditions are set in Settings → Background & Battery." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AI アルバムと検索を最新に保つため、写真をバックグラウンドで解析します。電源と回線の条件は「設定 → バックグラウンドとバッテリー」で指定します。"
+    "Indexing runs automatically while the device is charging and idle (or locked). “Process Now” starts immediately for 30 minutes — charging is still required.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引付けは、充電中で操作していないとき（またはロック中）に自動で進みます。「今すぐ処理」で 30 分間すぐに開始できます（充電中である必要があります）。"
           }
         }
       }
     },
-    "Indexing for search" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "検索用の索引付け"
+    "Infer a separate set of albums from Dropbox folder names via regex rules. Shown in the “Albums” section on the home screen.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox のフォルダ名から正規表現ルールで別のアルバム群を推定します。ホームの「アルバム」セクションに表示されます。"
           }
         }
       }
     },
-    "Indexing runs automatically while the device is charging and idle (or locked). “Process Now” starts immediately for 30 minutes — charging is still required." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "索引付けは、充電中で操作していないとき（またはロック中）に自動で進みます。「今すぐ処理」で 30 分間すぐに開始できます（充電中である必要があります）。"
+    "Infer album names from the Dropbox folder each photo lives in, using the rules below. Paths that match no rule are ignored, so junk folders (e.g. Camera Uploads) are skipped. Off by default.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下のルールを使い、各写真がある Dropbox フォルダーからアルバム名を推測します。どのルールにも一致しないパスは無視されるため、不要なフォルダー（例：Camera Uploads）はスキップされます。既定はオフです。"
           }
         }
       }
     },
-    "Infer a separate set of albums from Dropbox folder names via regex rules. Shown in the “Albums” section on the home screen." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox のフォルダ名から正規表現ルールで別のアルバム群を推定します。ホームの「アルバム」セクションに表示されます。"
+    "Insert Examples": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例を挿入"
           }
         }
       }
     },
-    "Infer album names from the Dropbox folder each photo lives in, using the rules below. Paths that match no rule are ignored, so junk folders (e.g. Camera Uploads) are skipped. Off by default." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下のルールを使い、各写真がある Dropbox フォルダーからアルバム名を推測します。どのルールにも一致しないパスは無視されるため、不要なフォルダー（例：Camera Uploads）はスキップされます。既定はオフです。"
+    "Interpreted:": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解釈:"
           }
         }
       }
     },
-    "Insert Examples" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "例を挿入"
+    "Invalid regular expression": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正規表現が不正です"
           }
         }
       }
     },
-    "Interpreted:" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "解釈:"
+    "Is this “%@”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この写真は「%@」さんですか？"
           }
         }
       }
     },
-    "Invalid regular expression" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正規表現が不正です"
+    "Keep “%@”": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」を残す"
           }
         }
       }
     },
-    "Is this “%@”?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この写真は「%@」さんですか？"
+    "Kept as this person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物として残す"
           }
         }
       }
     },
-    "Keep “%@”" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「%@」を残す"
+    "Language": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "言語"
           }
         }
       }
     },
-    "Language" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "言語"
+    "Last analyzed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最後に解析した時間"
           }
         }
       }
     },
-    "Last analyzed" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最後に解析した時間"
+    "Last run": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回の実行"
           }
         }
       }
     },
-    "Last run" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "前回の実行"
+    "Licenses": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ライセンス"
           }
         }
       }
     },
-    "Licenses" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ライセンス"
+    "Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドの通信（Dropbox 同期・バックアップのアップロード・クラウド写真の取り込み・逆ジオコーディング）を制限します。「Wi-Fi のみ」はモバイル通信を避け、「Wi-Fi（低データモードは除く）」は低データモード時も停止します。閲覧・オープン中の写真は常に取得し、自動の背景通信だけを制限します。既定：Wi-Fi のみ。"
           }
         }
       }
     },
-    "Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バックグラウンドの通信（Dropbox 同期・バックアップのアップロード・クラウド写真の取り込み・逆ジオコーディング）を制限します。「Wi-Fi のみ」はモバイル通信を避け、「Wi-Fi（低データモードは除く）」は低データモード時も停止します。閲覧・オープン中の写真は常に取得し、自動の背景通信だけを制限します。既定：Wi-Fi のみ。"
+    "Loading albums…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを読み込み中…"
           }
         }
       }
     },
-    "Loading albums…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを読み込み中…"
+    "Loading faces…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔を読み込んでいます…"
           }
         }
       }
     },
-    "Loading people…" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ピープルを読み込み中…"
+    "Loading people…": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープルを読み込み中…"
           }
         }
       }
     },
-    "Loading places…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "場所を読み込み中…"
+    "Loading photos…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を読み込んでいます…"
           }
         }
       }
     },
-    "Located photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "位置情報のある写真"
+    "Loading places…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所を読み込み中…"
           }
         }
       }
     },
-    "Location granularity" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "位置の粒度"
+    "Located photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置情報のある写真"
           }
         }
       }
     },
-    "Looking for people to merge…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "まとめられる人物を探しています…"
+    "Location granularity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置の粒度"
           }
         }
       }
     },
-    "Make albums from folder names" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダー名からアルバムを作成"
+    "Looking for people to merge…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめられる人物を探しています…"
           }
         }
       }
     },
-    "Manage Faces" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "顔の管理"
+    "Make albums from folder names": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー名からアルバムを作成"
           }
         }
       }
     },
-    "Matches filters: %lld photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "条件に合致: %lld 枚"
+    "Manage Faces": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔の管理"
           }
         }
       }
     },
-    "Medium (3 rows)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ふつう（3行）"
+    "Matches filters: %lld photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "条件に合致: %lld 枚"
           }
         }
       }
     },
-    "Merge" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "統合"
+    "Medium (3 rows)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ふつう（3行）"
           }
         }
       }
     },
-    "Merge %lld" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld件をまとめる"
+    "Merge": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "統合"
           }
         }
       }
     },
-    "Merge gap (days)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "まとめる間隔（日）"
+    "Merge %lld": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件をまとめる"
           }
         }
       }
     },
-    "Merge into" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "統合先"
+    "Merge Person": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を統合"
           }
         }
       }
     },
-    "Merge into Another Person…" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "別の人物へ統合…"
+    "Merge gap (days)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめる間隔（日）"
           }
         }
       }
     },
-    "Merge people?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物を統合しますか？"
+    "Merge into": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "統合先"
           }
         }
       }
     },
-    "Merge Person" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物を統合"
+    "Merge into Another Person…": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人物へ統合…"
           }
         }
       }
     },
-    "Merged %lld entries." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld件をまとめました。"
+    "Merge people?": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を統合しますか？"
           }
         }
       }
     },
-    "Min photos per trip" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "旅行の最小枚数"
+    "Merged %lld entries.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件をまとめました。"
           }
         }
       }
     },
-    "Model conversion package" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "モデル変換パッケージ"
+    "Merging…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめています…"
           }
         }
       }
     },
-    "Model export" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "モデルのエクスポート"
+    "Min photos per trip": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旅行の最小枚数"
           }
         }
       }
     },
-    "Month grouping density" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "月グループの密度"
+    "Model conversion package": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル変換パッケージ"
           }
         }
       }
     },
-    "MosaicPhotos" : {
-      "comment" : "The name of the app.",
-      "isCommentAutoGenerated" : true
-    },
-    "MosaicPhotos is free software under the GNU AGPL v3." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "MosaicPhotos は GNU AGPL v3 のもとで配布されるフリーソフトウェアです。"
+    "Model export": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルのエクスポート"
           }
         }
       }
     },
-    "Name" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名前"
+    "Month grouping density": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月グループの密度"
           }
         }
       }
     },
-    "Name template (e.g. ${name})" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名前テンプレート（例：${name}）"
+    "MosaicPhotos": {
+      "comment": "The name of the app.",
+      "isCommentAutoGenerated": true
+    },
+    "MosaicPhotos is free software under the GNU AGPL v3.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MosaicPhotos は GNU AGPL v3 のもとで配布されるフリーソフトウェアです。"
           }
         }
       }
     },
-    "Network" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通信"
+    "Name": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前"
           }
         }
       }
     },
-    "New person" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "新しい人物"
+    "Name template (e.g. ${name})": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前テンプレート（例：${name}）"
           }
         }
       }
     },
-    "Next person" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "次の人へ"
+    "Network": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通信"
           }
         }
       }
     },
-    "No" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "いいえ"
+    "New person": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しい人物"
           }
         }
       }
     },
-    "No descriptions yet" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "説明はまだありません"
+    "Next person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の人へ"
           }
         }
       }
     },
-    "No folder albums yet. Add rules in Settings → Albums → Folder Albums, then regenerate." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダーアルバムはまだありません。設定 → アルバム → フォルダーアルバム でルールを追加して再生成してください。"
+    "No": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いいえ"
           }
         }
       }
     },
-    "No limits (mobile data too)" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "制限なし（モバイル通信も）"
+    "No descriptions yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "説明はまだありません"
           }
         }
       }
     },
-    "No match — this path would be ignored." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "一致なし — このパスは無視されます。"
+    "No folder albums yet. Add rules in Settings → Albums → Folder Albums, then regenerate.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダーアルバムはまだありません。設定 → アルバム → フォルダーアルバム でルールを追加して再生成してください。"
           }
         }
       }
     },
-    "No matches" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "該当なし"
+    "No limits (mobile data too)": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "制限なし（モバイル通信も）"
           }
         }
       }
     },
-    "No named people found." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名前を付けた人が見つかりません。"
+    "No match — this path would be ignored.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一致なし — このパスは無視されます。"
           }
         }
       }
     },
-    "No people found yet." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "まだ人物が見つかりません。"
+    "No matches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該当なし"
           }
         }
       }
     },
-    "No photos for this person." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この人物の写真がありません。"
+    "No named people found.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前を付けた人が見つかりません。"
           }
         }
       }
     },
-    "No photos with location found." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "位置情報付きの写真が見つかりません"
+    "No people found yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだ人物が見つかりません。"
           }
         }
       }
     },
-    "No rules yet." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ルールがまだありません"
+    "No photos for this person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物の写真がありません。"
           }
         }
       }
     },
-    "No trip albums yet." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "旅行アルバムはまだありません"
+    "No photos with location found.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置情報付きの写真が見つかりません"
           }
         }
       }
-    },
-    "No user-created albums found." : {
-      "comment" : "A message that indicates there are no user-created albums.",
-      "isCommentAutoGenerated" : true
     },
-    "Not connected" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未接続"
+    "No rules yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルールがまだありません"
           }
         }
       }
     },
-    "Not included in the app or its source. Listed here with thanks to their author." : {
-
-    },
-    "Not this person" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "別の人"
+    "No split candidates": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分割候補は見つかりませんでした"
           }
         }
       }
     },
-    "Not this person (don’t pick anyone)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この人ではない（相手を選ばない）"
+    "No trip albums yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旅行アルバムはまだありません"
           }
         }
       }
+    },
+    "No user-created albums found.": {
+      "comment": "A message that indicates there are no user-created albums.",
+      "isCommentAutoGenerated": true
     },
-    "Not yet" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "まだ実行していません"
+    "Not connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未接続"
           }
         }
       }
     },
-    "Nothing left to merge right now." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "いまはまとめられるものはありません。"
+    "Not included in the app or its source. Listed here with thanks to their author.": {},
+    "Not this person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人"
           }
         }
       }
     },
-    "Nothing runs automatically. Use “Process Now” to index manually." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動では何も実行しません。「今すぐ処理」で手動実行できます。"
+    "Not this person (don’t pick anyone)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人ではない（相手を選ばない）"
           }
         }
       }
     },
-    "Nothing to review right now." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "いま確認するものはありません。"
+    "Not yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだ実行していません"
           }
         }
       }
     },
-    "Now loading…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "読み込み中…"
+    "Nothing left to merge right now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いまはまとめられるものはありません。"
           }
         }
       }
     },
-    "Numerical arrays for evaluation" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "評価用の数値配列"
+    "Nothing runs automatically. Use “Process Now” to index manually.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動では何も実行しません。「今すぐ処理」で手動実行できます。"
           }
         }
       }
     },
-    "Off" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "オフ"
+    "Nothing to review right now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いま確認するものはありません。"
           }
         }
       }
     },
-    "Offline reverse geocoding (album place names & Places)" : {
-      "comment" : "Description of a license item for the GeoNames dataset used for offline reverse geocoding.",
-      "isCommentAutoGenerated" : true
-    },
-    "On" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "オン"
+    "Now loading…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み込み中…"
           }
         }
       }
     },
-    "On this iPhone" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この iPhone 内"
+    "Numerical arrays for evaluation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "評価用の数値配列"
           }
         }
       }
     },
-    "On-device" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末内"
+    "Off": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフ"
           }
         }
       }
     },
-    "On-device photo captions for AI albums (Core ML model)" : {
-      "comment" : "Description of a license item for the \"SmolVLM-256M-Instruct\" model used for photo caption generation.",
-      "isCommentAutoGenerated" : true
+    "Offline reverse geocoding (album place names & Places)": {
+      "comment": "Description of a license item for the GeoNames dataset used for offline reverse geocoding.",
+      "isCommentAutoGenerated": true
     },
-    "On-Device Photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末の写真"
+    "On": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オン"
           }
         }
       }
     },
-    "On-device semantic search & display tags (Core ML model)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "オンデバイスの意味検索と表示タグ（Core ML モデル）"
+    "On this iPhone": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この iPhone 内"
           }
         }
       }
     },
-    "one folder level (any chars except “/”)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "フォルダー1階層分（「/」以外の任意の文字）"
+    "On-Device Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末の写真"
           }
         }
       }
     },
-    "Or choose the correct person" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "または正しい人物を選ぶ"
+    "On-device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末内"
           }
         }
       }
+    },
+    "On-device photo captions for AI albums (Core ML model)": {
+      "comment": "Description of a license item for the \"SmolVLM-256M-Instruct\" model used for photo caption generation.",
+      "isCommentAutoGenerated": true
     },
-    "Paste a sample path…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "サンプルパスを貼り付け…"
+    "On-device semantic search & display tags (Core ML model)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オンデバイスの意味検索と表示タグ（Core ML モデル）"
           }
         }
       }
     },
-    "Path" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "パス"
+    "Or choose the correct person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "または正しい人物を選ぶ"
           }
         }
       }
     },
-    "Pattern" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "パターン"
+    "Paste a sample path…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サンプルパスを貼り付け…"
           }
         }
       }
     },
-    "Pause between batches" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バッチ間の休止"
+    "Path": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パス"
           }
         }
       }
     },
-    "Paused — manual only" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "一時停止 — 手動のみ"
+    "Pattern": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パターン"
           }
         }
       }
     },
-    "Pending" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未処理"
+    "Pause between batches": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バッチ間の休止"
           }
         }
       }
     },
-    "People" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ピープル"
+    "Paused — manual only": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時停止 — 手動のみ"
           }
         }
       }
     },
-    "People found" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "見つかった人物"
+    "Pending": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未処理"
           }
         }
       }
     },
-    "Person options" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物の操作"
+    "People": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープル"
           }
         }
       }
     },
-    "Photo Grid" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真グリッド"
+    "People found": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "見つかった人物"
           }
         }
       }
     },
-    "Photo Sources" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真ソース"
+    "Person options": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物の操作"
           }
         }
       }
     },
-    "Photo thumbnail cache" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真サムネイルのキャッシュ"
+    "Photo Grid": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真グリッド"
           }
         }
       }
     },
-    "Photo thumbnails, Dropbox cache, and place index will all be deleted and rebuilt as you browse." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真のサムネイル・Dropbox キャッシュ・場所インデックスはすべて削除され、閲覧時に再構築されます。"
+    "Photo Sources": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真ソース"
           }
         }
       }
     },
-    "Photos stored on this device" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この端末に保存された写真"
+    "Photo thumbnail cache": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真サムネイルのキャッシュ"
           }
         }
       }
     },
-    "Photos to include" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "含める写真"
+    "Photo thumbnails, Dropbox cache, and place index will all be deleted and rebuilt as you browse.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真のサムネイル・Dropbox キャッシュ・場所インデックスはすべて削除され、閲覧時に再構築されます。"
           }
         }
       }
     },
-    "Place albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "場所アルバム"
+    "Photos stored on this device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この端末に保存された写真"
           }
         }
       }
     },
-    "Places" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "場所"
+    "Photos to include": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "含める写真"
           }
         }
       }
     },
-    "Please describe which photos to include." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "どの写真を含めるか説明してください。"
+    "Place albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所アルバム"
           }
         }
       }
     },
-    "Power" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "電源"
+    "Places": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所"
           }
         }
       }
     },
-    "Preview" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プレビュー"
+    "Please describe which photos to include.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どの写真を含めるか説明してください。"
           }
         }
       }
     },
-    "Process Now (while charging)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "今すぐ処理（充電中のみ）"
+    "Power": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電源"
           }
         }
       }
     },
-    "Processing Timing" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "処理のタイミング"
+    "Preview": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プレビュー"
           }
         }
       }
     },
-    "Processing Timing & Speed" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "処理のタイミングと速度"
+    "Process Now (while charging)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ処理（充電中のみ）"
           }
         }
       }
     },
-    "Provided under Apple's license terms (not open-source dependencies)." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Apple のライセンス条件で提供（オープンソース依存ではありません）。"
+    "Processing Timing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "処理のタイミング"
           }
         }
       }
     },
-    "Re-analyze All Photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべての写真を再解析"
+    "Processing Timing & Speed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "処理のタイミングと速度"
           }
         }
       }
     },
-    "Recognized subjects (e.g. beach, food, dog) shown on each photo and used to rank search results." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真に写っている内容（海、料理、犬など）を認識したタグです。各写真に表示され、検索結果の順位付けにも使われます。"
+    "Provided under Apple's license terms (not open-source dependencies).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple のライセンス条件で提供（オープンソース依存ではありません）。"
           }
         }
       }
     },
-    "Reference model & tokenizer" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "参照モデルとトークナイザ"
+    "Re-analyze All Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべての写真を再解析"
           }
         }
       }
     },
-    "Refresh" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更新"
+    "Recognized subjects (e.g. beach, food, dog) shown on each photo and used to rank search results.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真に写っている内容（海、料理、犬など）を認識したタグです。各写真に表示され、検索結果の順位付けにも使われます。"
           }
         }
       }
     },
-    "Regenerate Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを再生成"
+    "Reference model & tokenizer": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参照モデルとトークナイザ"
           }
         }
       }
     },
-    "Regenerating…" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "再生成中…"
+    "Refresh": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
           }
         }
       }
     },
-    "Regex pattern" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正規表現パターン"
+    "Regenerate Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを再生成"
           }
         }
       }
     },
-    "Regular place ≥ days" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "常用地とみなす日数"
+    "Regenerating…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再生成中…"
           }
         }
       }
     },
-    "Removes this face from the person. It becomes its own new person; the app learns from this so the mistake isn’t repeated." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この顔を人物から外します。新しい人物になり、以後は同じ誤りを繰り返さないよう学習します。"
+    "Regex pattern": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正規表現パターン"
           }
         }
       }
     },
-    "Rename" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名前を変更"
+    "Regular place ≥ days": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常用地とみなす日数"
           }
         }
       }
     },
-    "Rename Person" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "名前を変更"
+    "Removes this face from the person. It becomes its own new person; the app learns from this so the mistake isn’t repeated.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この顔を人物から外します。新しい人物になり、以後は同じ誤りを繰り返さないよう学習します。"
           }
         }
       }
     },
-    "Rescan interval" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "再スキャン間隔"
+    "Rename": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前を変更"
           }
         }
       }
     },
-    "Review" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "確認"
+    "Rename Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前を変更"
           }
         }
       }
     },
-    "Review descriptions" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "説明を確認"
+    "Rescan interval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再スキャン間隔"
           }
         }
       }
     },
-    "Review People" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物を確認"
+    "Review": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認"
           }
         }
       }
     },
-    "Rule #%lld → “%@”" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ルール #%1$lld → 「%2$@」"
+    "Review People": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を確認"
           }
         }
       }
     },
-    "Rules (first match wins)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ルール（最初に一致したものを採用）"
+    "Review descriptions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "説明を確認"
           }
         }
       }
     },
-    "Run image analysis conservatively" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "画像分析を控えめに動かす"
+    "Rule #%lld → “%@”": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルール #%1$lld → 「%2$@」"
           }
         }
       }
     },
-    "Runs only while your iPhone is charging, on Wi-Fi, and not in use (locked or in another app) — typically overnight. Zero impact while you use the app." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iPhone が充電中・Wi-Fi 接続中で、使われていないとき（ロック中や他のアプリの使用中）だけ実行します（主に夜間）。アプリの操作には一切影響しません。"
+    "Rules (first match wins)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルール（最初に一致したものを採用）"
           }
         }
       }
     },
-    "Runs whenever possible, including on mobile data. Uses battery and may use significant cellular data." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可能なかぎり常に実行します（モバイル通信も使用）。バッテリーを消費し、通信量が大きくなる場合があります。"
+    "Run image analysis conservatively": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像分析を控えめに動かす"
           }
         }
       }
     },
-    "Sample size" : {
-
-    },
-    "Save" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存"
+    "Runs only while your iPhone is charging, on Wi-Fi, and not in use (locked or in another app) — typically overnight. Zero impact while you use the app.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone が充電中・Wi-Fi 接続中で、使われていないとき（ロック中や他のアプリの使用中）だけ実行します（主に夜間）。アプリの操作には一切影響しません。"
           }
         }
       }
     },
-    "Scanning faces" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "顔をスキャン中"
+    "Runs whenever possible, including on mobile data. Uses battery and may use significant cellular data.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能なかぎり常に実行します（モバイル通信も使用）。バッテリーを消費し、通信量が大きくなる場合があります。"
           }
         }
       }
     },
-    "Scene Tags" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "シーンタグ"
+    "Sample size": {},
+    "Save": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存"
           }
         }
       }
     },
-    "Search people" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "人物を検索"
+    "Scanning faces": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔をスキャン中"
           }
         }
       }
     },
-    "Searches your photos on-device by place, date, people and favorites. No network used." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "場所・日付・人物・お気に入りで端末内の写真を検索します。通信は使いません。"
+    "Scene Tags": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "シーンタグ"
           }
         }
       }
     },
-    "Searching…" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "検索中…"
+    "Search people": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を検索"
           }
         }
       }
     },
-    "See all" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべて表示"
+    "Searches your photos on-device by place, date, people and favorites. No network used.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "場所・日付・人物・お気に入りで端末内の写真を検索します。通信は使いません。"
           }
         }
       }
     },
-    "Select all" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべて選ぶ"
+    "Searching…": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索中…"
           }
         }
       }
     },
-    "Semantic Search" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "意味検索"
+    "See all": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて表示"
           }
         }
       }
     },
-    "Separate Grouped Person" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "束ねを解除"
+    "Select all": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて選ぶ"
           }
         }
       }
     },
-    "Set up backup and folder-name albums here right after connecting." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "接続後すぐに、ここでバックアップとフォルダー名アルバムを設定できます。"
+    "Selected groups become separate people. The app also learns from this so they stay apart.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択したグループは別の人物になります。この操作から学習し、再び混ざらないようにします。"
           }
         }
       }
     },
-    "Settings" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設定"
+    "Semantic Search": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "意味検索"
           }
         }
       }
     },
-    "Show face" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "顔を表示"
+    "Separate": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分離"
           }
         }
       }
     },
-    "Show face only" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "顔だけ表示"
+    "Separate %lld groups": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のグループを分離"
           }
         }
       }
     },
-    "Show whole photo" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真全体を表示"
+    "Separate %lld groups into new people?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のグループを別の人物に分離しますか？"
           }
         }
       }
     },
-    "Showing %lld photos with an AI description." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "AI 説明が付いた写真を %lld 枚表示しています。"
+    "Separate Grouped Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねを解除"
           }
         }
       }
     },
-    "Skip" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スキップ"
+    "Set up backup and folder-name albums here right after connecting.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続後すぐに、ここでバックアップとフォルダー名アルバムを設定できます。"
           }
         }
       }
     },
-    "Sources" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ソース"
+    "Settings": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定"
           }
         }
       }
-    },
-    "Special Thanks" : {
-
     },
-    "start of path  •  folder separator" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "パスの先頭  •  フォルダー区切り"
+    "Show face": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔を表示"
           }
         }
       }
     },
-    "Status" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "状態"
+    "Show face only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔だけ表示"
           }
         }
       }
     },
-    "Still scanning photos — more will appear as it progresses." : {
-
-    },
-    "Storage" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ストレージ"
+    "Show whole photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真全体を表示"
           }
         }
       }
-    },
-    "Swift concurrency reference that shaped the inference gate review" : {
-
     },
-    "System" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "システム"
+    "Showing %lld photos with an AI description.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 説明が付いた写真を %lld 枚表示しています。"
           }
         }
       }
     },
-    "System frameworks and symbols" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "システムフレームワークとシンボル"
+    "Skip": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スキップ"
           }
         }
       }
     },
-    "Tagged photos" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "解析済み"
+    "Sources": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ソース"
           }
         }
       }
     },
-    "Tap a face that isn’t this person to move it to the correct person." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この人物ではない顔をタップして、正しい人物へ移動できます。"
+    "Special Thanks": {},
+    "Status": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "状態"
           }
         }
       }
     },
-    "Tap a face that isn’t this person. Choose “Not this person” to just remove it, or pick the correct person." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この人ではない顔をタップしてください。「この人ではない」を選ぶと相手を選ばず外せます。正しい人物を選んでもかまいません。"
+    "Still scanning photos — more will appear as it progresses.": {},
+    "Storage": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ストレージ"
           }
         }
       }
     },
-    "Tap the ones that are the same person." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "同じ人物の写真をタップして選んでください。"
+    "Swift concurrency reference that shaped the inference gate review": {},
+    "System": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム"
           }
         }
       }
     },
-    "Tap to add — from your library" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "タップで追加 — あなたのライブラリから"
+    "System frameworks and symbols": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システムフレームワークとシンボル"
           }
         }
       }
     },
-    "Template" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "テンプレート"
+    "Tagged photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析済み"
           }
         }
       }
     },
-    "Text tokenizer vocabulary (bpe_simple_vocab_16e6.txt)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "テキストトークナイザの語彙（bpe_simple_vocab_16e6.txt）"
+    "Tap a face that isn’t this person to move it to the correct person.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物ではない顔をタップして、正しい人物へ移動できます。"
           }
         }
       }
     },
-    "Thanks! %lld answers recorded." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ありがとうございます。%lld 件の回答を記録しました。"
+    "Tap a face that isn’t this person. Choose “Not this person” to just remove it, or pick the correct person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人ではない顔をタップしてください。「この人ではない」を選ぶと相手を選ばず外せます。正しい人物を選んでもかまいません。"
           }
         }
       }
     },
-    "The app applies what it learned during the next overnight analysis." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "学習した内容は次の夜間解析で反映されます。"
+    "Tap the ones that are the same person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物の写真をタップして選んでください。"
           }
         }
       }
     },
-    "The app is analyzing your photos in the background right now." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "いまバックグラウンドで写真を解析しています。"
+    "Tap to add — from your library": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タップで追加 — あなたのライブラリから"
           }
         }
       }
     },
-    "The same person may be split into several entries." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "同じ人物が複数に分かれていることがあります。"
+    "Template": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テンプレート"
           }
         }
       }
     },
-    "These people have different names" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "別々の名前が付いています"
+    "Text tokenizer vocabulary (bpe_simple_vocab_16e6.txt)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テキストトークナイザの語彙（bpe_simple_vocab_16e6.txt）"
           }
         }
       }
     },
-    "Third-party assets distributed with the app." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリに同梱される第三者の資産。"
+    "Thanks! %lld answers recorded.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ありがとうございます。%lld 件の回答を記録しました。"
           }
         }
       }
     },
-    "This app" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本アプリ"
+    "The app applies what it learned during the next overnight analysis.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "学習した内容は次の夜間解析で反映されます。"
           }
         }
       }
     },
-    "This application" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本アプリケーション"
+    "The app is analyzing your photos in the background right now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いまバックグラウンドで写真を解析しています。"
           }
         }
       }
     },
-    "Time & Place" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "時間と場所"
+    "The same person may be split into several entries.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物が複数に分かれていることがあります。"
           }
         }
       }
     },
-    "Time & Place Albums" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "時間と場所のアルバム"
+    "These people have different names": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別々の名前が付いています"
           }
         }
       }
     },
-    "Title" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "タイトル"
+    "Third-party assets distributed with the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリに同梱される第三者の資産。"
           }
         }
       }
     },
-    "Trip Detection" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "旅行の検出"
+    "This app": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本アプリ"
           }
         }
       }
     },
-    "Update Album" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アルバムを更新"
+    "This application": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本アプリケーション"
           }
         }
       }
     },
-    "Usage" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用量"
+    "This person looks consistent. To remove individual photos, use Manage Faces.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物は一貫しているように見えます。個別の写真を外すには「顔の管理」を使ってください。"
           }
         }
       }
     },
-    "Use Dropbox for" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dropbox の用途"
+    "Time & Place": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間と場所"
           }
         }
       }
     },
-    "Used only by the design-note site, not in the app." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設計資料サイトでのみ使用（アプリには非同梱）。"
+    "Time & Place Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間と場所のアルバム"
           }
         }
       }
     },
-    "Used only to build/convert the model. Not distributed in the app." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "モデルのビルド/変換にのみ使用。アプリには同梱されません。"
+    "Title": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タイトル"
           }
         }
       }
     },
-    "Version" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "バージョン"
+    "Trip Detection": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旅行の検出"
           }
         }
       }
     },
-    "Very coarse (~10 km)" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "とても粗い（約10km）"
+    "Update Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを更新"
           }
         }
       }
     },
-    "Very Gentle" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "とても控えめ"
+    "Usage": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用量"
           }
         }
       }
     },
-    "VLM（写真の説明文）" : {
-
-    },
-    "When to process" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "いつ処理するか"
+    "Use Dropbox for": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dropbox の用途"
           }
         }
       }
     },
-    "Which of these are “%@”?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「%@」はどれですか？"
+    "Used only by the design-note site, not in the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設計資料サイトでのみ使用（アプリには非同梱）。"
           }
         }
       }
     },
-    "Which of these are the same person as above?" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上の人物と同じ人はどれですか？"
+    "Used only to build/convert the model. Not distributed in the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルのビルド/変換にのみ使用。アプリには同梱されません。"
           }
         }
       }
     },
-    "While charging" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "充電中のみ"
+    "VLM（写真の説明文）": {},
+    "Version": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョン"
           }
         }
       }
     },
-    "Wi-Fi only" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wi-Fi のみ"
+    "Very Gentle": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "とても控えめ"
           }
         }
       }
     },
-    "Wi-Fi, skip Low Data" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wi-Fi（低データモードは除く）"
+    "Very coarse (~10 km)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "とても粗い（約10km）"
           }
         }
       }
     },
-    "Worked example" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "具体例"
+    "When to process": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いつ処理するか"
           }
         }
       }
     },
-    "Yes" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "はい"
+    "Which of these are the same person as above?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上の人物と同じ人はどれですか？"
           }
         }
       }
     },
-    "You'll see a quick preview right away. The album is then fully analyzed and refined while your iPhone is locked, charging, and connected to Wi-Fi (typically overnight) — results improve automatically as photos are indexed." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "作成するとすぐに簡易プレビューが表示されます。その後、iPhone がロックされ、電源と Wi-Fi に接続されている間（主に夜間）に AI が本格的な解析を行い、写真のインデックスが進むにつれて自動で精度が上がっていきます。"
+    "Which of these are “%@”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」はどれですか？"
           }
         }
       }
     },
-    "Your answers teach the app — recognition improves as you review." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "回答はアプリの学習に使われます。確認するほど認識が良くなります。"
+    "While charging": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充電中のみ"
           }
         }
       }
-    },
-    "アイドル秒数" : {
-      "comment" : "A label for the amount of time the device has been idle.",
-      "isCommentAutoGenerated" : true
-    },
-    "アプリ情報" : {
-
-    },
-    "アルバムと解析データを消去" : {
-      "comment" : "A destructive button that deletes the generated albums and their analysis data.",
-      "isCommentAutoGenerated" : true
-    },
-    "アルバムを今すぐ生成" : {
-
-    },
-    "いま重い処理を実行してよいか" : {
-
-    },
-    "うち顔が見つからなかった写真" : {
-
-    },
-    "クラウド顔スキャンの歩留まりを計測" : {
-
-    },
-    "クラスタを今すぐ再構築（制約付き）" : {
-      "comment" : "A button that rebuilds clusters of people immediately.",
-      "isCommentAutoGenerated" : true
-    },
-    "このビルドと実行中の端末の基本情報です。" : {
-
-    },
-    "サイズ免除" : {
-
-    },
-    "しきい値" : {
-
-    },
-    "スキャン済み写真" : {
-
-    },
-    "パフォーマンス計測" : {
-      "comment" : "A toggle to enable or disable performance measurement.",
-      "isCommentAutoGenerated" : true
-    },
-    "バンドル ID" : {
-      "comment" : "The bundle identifier of the app.",
-      "isCommentAutoGenerated" : true
-    },
-    "ピープルと修正内容をリセット（学習を破棄）" : {
-
-    },
-    "ピープルを再スキャン（修正内容は保持）" : {
-      "comment" : "A destructive button that resets the people recognition engine, without erasing any corrections.",
-      "isCommentAutoGenerated" : true
-    },
-    "ビルド番号" : {
-      "comment" : "A label for the build number of the app.",
-      "isCommentAutoGenerated" : true
-    },
-    "フル画像の最大ピクセル" : {
-      "comment" : "A label for the maximum pixel size of a full image.",
-      "isCommentAutoGenerated" : true
-    },
-    "メモリ：キャッシュ" : {
-      "comment" : "A section header for memory and cache settings.",
-      "isCommentAutoGenerated" : true
     },
-    "メモリ：圧迫の履歴" : {
-      "comment" : "A section title for the memory pressure history.",
-      "isCommentAutoGenerated" : true
-    },
-    "メモリ：端末と実行状態" : {
-      "comment" : "A section header for the memory section that shows both the device and the current state.",
-      "isCommentAutoGenerated" : true
-    },
-    "メモリ：背景処理" : {
-
-    },
-    "メモリ使用量" : {
-      "comment" : "A label for the amount of memory used by the app.",
-      "isCommentAutoGenerated" : true
-    },
-    "メモリ圧迫イベントは記録されていません。" : {
-
+    "Wi-Fi only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wi-Fi のみ"
+          }
+        }
+      }
     },
-    "メモリ圧迫中" : {
-
+    "Wi-Fi, skip Low Data": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wi-Fi（低データモードは除く）"
+          }
+        }
+      }
     },
-    "ローカルのサムネ（ディスク上限）" : {
-      "comment" : "A label for the maximum size of the local thumbnail cache on disk.",
-      "isCommentAutoGenerated" : true
+    "Worked example": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "具体例"
+          }
+        }
+      }
     },
-    "ローカルのサムネ（ディスク使用量）" : {
-      "comment" : "A label for the amount of disk space taken up by local thumbnails.",
-      "isCommentAutoGenerated" : true
+    "Yes": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "はい"
+          }
+        }
+      }
     },
-    "ローカルのサムネ（メモリ上限）" : {
-      "comment" : "A label for the memory limit of the local thumbnail cache.",
-      "isCommentAutoGenerated" : true
+    "You'll see a quick preview right away. The album is then fully analyzed and refined while your iPhone is locked, charging, and connected to Wi-Fi (typically overnight) — results improve automatically as photos are indexed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作成するとすぐに簡易プレビューが表示されます。その後、iPhone がロックされ、電源と Wi-Fi に接続されている間（主に夜間）に AI が本格的な解析を行い、写真のインデックスが進むにつれて自動で精度が上がっていきます。"
+          }
+        }
+      }
     },
-    "中止" : {
-
+    "Your answers teach the app — recognition improves as you review.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答はアプリの学習に使われます。確認するほど認識が良くなります。"
+          }
+        }
+      }
     },
-    "人物 / クラスタ" : {
-
+    "an optional part that isn't captured": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任意の部分（キャプチャしない）"
+          }
+        }
+      }
     },
-    "低電力モード" : {
-      "comment" : "A label for the low power mode state.",
-      "isCommentAutoGenerated" : true
+    "capture group — its text fills ${name}": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャプチャグループ — その文字が ${name} に入ります"
+          }
+        }
+      }
     },
-    "最大クラスタ" : {
-
+    "e.g. Okinawa trips in recent years / favorites with Mom": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例：ここ数年の沖縄旅行 / 母とのお気に入り"
+          }
+        }
+      }
     },
-    "最小 iOS バージョン" : {
-      "comment" : "The minimum iOS version required to run this app.",
-      "isCommentAutoGenerated" : true
+    "exactly 4 digits (e.g. a year)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ちょうど4桁の数字（例：年）"
+          }
+        }
+      }
     },
-    "最後の夜間実行" : {
-
+    "finishing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仕上げ中…"
+          }
+        }
+      }
     },
-    "処理中…" : {
-      "comment" : "Button label for rescanning places.",
-      "isCommentAutoGenerated" : true
+    "one folder level (any chars except “/”)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダー1階層分（「/」以外の任意の文字）"
+          }
+        }
+      }
     },
-    "単発クラスタ" : {
-
+    "start of path  •  folder separator": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パスの先頭  •  フォルダー区切り"
+          }
+        }
+      }
     },
-    "取得中…" : {
-
+    "~1 km": {},
+    "~10 km": {},
+    "~2 km": {},
+    "~5 km": {},
+    "“%@” and “%@” will be shown as the same person. You can separate them later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」と「%@」は同じ人物として表示されます。後で解除できます。"
+          }
+        }
+      }
     },
-    "同一写真違反" : {
-
+    "“%@” will be merged into “%@”. This can’t be undone automatically.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%1$@」を「%2$@」に統合します。自動では元に戻せません。"
+          }
+        }
+      }
     },
-    "命名済み" : {
-
+    "“Analyze Now” starts immediately for 30 minutes — your iPhone must be charging. Otherwise analysis runs automatically based on Processing Timing (by default while charging, on Wi-Fi, and not in use).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「今すぐ解析」を押すと 30 分間すぐに実行します（iPhone の充電が必要です）。それ以外は「処理のタイミング」の設定に従って自動で進みます（既定では、充電中・Wi-Fi・未使用のとき）。"
+          }
+        }
+      }
     },
-    "回線" : {
-      "comment" : "A label for the network state.",
-      "isCommentAutoGenerated" : true
+    "いま重い処理を実行してよいか": {},
+    "うち顔が見つからなかった写真": {},
+    "このビルドと実行中の端末の基本情報です。": {},
+    "しきい値": {},
+    "アイドル秒数": {
+      "comment": "A label for the amount of time the device has been idle.",
+      "isCommentAutoGenerated": true
     },
-    "圧迫イベント（累計）" : {
-      "comment" : "A label for the total number of memory pressure events.",
-      "isCommentAutoGenerated" : true
+    "アプリ情報": {},
+    "アルバムと解析データを消去": {
+      "comment": "A destructive button that deletes the generated albums and their analysis data.",
+      "isCommentAutoGenerated": true
     },
-    "圧迫時の縮小" : {
-      "comment" : "A label for the memory pressure settings.",
-      "isCommentAutoGenerated" : true
+    "アルバムを今すぐ生成": {},
+    "クラウド顔スキャンの歩留まりを計測": {},
+    "クラスタを今すぐ再構築（制約付き）": {
+      "comment": "A button that rebuilds clusters of people immediately.",
+      "isCommentAutoGenerated": true
     },
-    "地名キャッシュを消去して再スキャン" : {
-      "comment" : "Button label for clearing and rescanning places.",
-      "isCommentAutoGenerated" : true
+    "サイズ免除": {},
+    "スキャン済み写真": {},
+    "バンドル ID": {
+      "comment": "The bundle identifier of the app.",
+      "isCommentAutoGenerated": true
     },
-    "地名解決した地点" : {
-      "comment" : "A place that has been resolved by a place name.",
-      "isCommentAutoGenerated" : true
+    "パフォーマンス計測": {
+      "comment": "A toggle to enable or disable performance measurement.",
+      "isCommentAutoGenerated": true
     },
-    "埋め込みの保存形式" : {
-
+    "ビルド番号": {
+      "comment": "A label for the build number of the app.",
+      "isCommentAutoGenerated": true
     },
-    "埋め込みの速度プリセット" : {
-      "comment" : "A label for the speed preset of background processing.",
-      "isCommentAutoGenerated" : true
+    "ピープルと修正内容をリセット（学習を破棄）": {},
+    "ピープルを再スキャン（修正内容は保持）": {
+      "comment": "A destructive button that resets the people recognition engine, without erasing any corrections.",
+      "isCommentAutoGenerated": true
     },
-    "埋め込み実行中" : {
-      "comment" : "A label that displays whether the background process is currently running.",
-      "isCommentAutoGenerated" : true
+    "フル画像の最大ピクセル": {
+      "comment": "A label for the maximum pixel size of a full image.",
+      "isCommentAutoGenerated": true
     },
-    "埋め込み残り" : {
-
+    "メモリ使用量": {
+      "comment": "A label for the amount of memory used by the app.",
+      "isCommentAutoGenerated": true
     },
-    "場所を再スキャン" : {
-
+    "メモリ圧迫イベントは記録されていません。": {},
+    "メモリ圧迫中": {},
+    "メモリ：キャッシュ": {
+      "comment": "A section header for memory and cache settings.",
+      "isCommentAutoGenerated": true
     },
-    "夜間タスクを予約し直す" : {
-      "comment" : "A button that reschedules the background task and updates the pending status.",
-      "isCommentAutoGenerated" : true
+    "メモリ：圧迫の履歴": {
+      "comment": "A section title for the memory pressure history.",
+      "isCommentAutoGenerated": true
     },
-    "夜間ルーチンを今すぐ実行" : {
-      "comment" : "Button label for running the background task immediately.",
-      "isCommentAutoGenerated" : true
+    "メモリ：端末と実行状態": {
+      "comment": "A section header for the memory section that shows both the device and the current state.",
+      "isCommentAutoGenerated": true
     },
-    "学習した修正" : {
-
+    "メモリ：背景処理": {},
+    "ローカルのサムネ（ディスク上限）": {
+      "comment": "A label for the maximum size of the local thumbnail cache on disk.",
+      "isCommentAutoGenerated": true
     },
-    "実行中…（最大 3 分）" : {
-
+    "ローカルのサムネ（ディスク使用量）": {
+      "comment": "A label for the amount of disk space taken up by local thumbnails.",
+      "isCommentAutoGenerated": true
     },
-    "成熟クラスタ（11顔以上）" : {
-
+    "ローカルのサムネ（メモリ上限）": {
+      "comment": "A label for the memory limit of the local thumbnail cache.",
+      "isCommentAutoGenerated": true
     },
-    "採用（うちフロア未満）" : {
-
+    "中止": {},
+    "人物 / クラスタ": {},
+    "低電力モード": {
+      "comment": "A label for the low power mode state.",
+      "isCommentAutoGenerated": true
     },
-    "更新" : {
-      "comment" : "A button that refreshes the diagnostics log.",
-      "isCommentAutoGenerated" : true
+    "処理中…": {
+      "comment": "Button label for rescanning places.",
+      "isCommentAutoGenerated": true
     },
-    "書き込みチャンク（upsert）" : {
-      "comment" : "A label for the number of items to write in each chunk when upserting.",
-      "isCommentAutoGenerated" : true
+    "単発クラスタ": {},
+    "取得中…": {},
+    "同一写真違反": {},
+    "命名済み": {},
+    "回線": {
+      "comment": "A label for the network state.",
+      "isCommentAutoGenerated": true
     },
-    "棄却: %@" : {
-
+    "圧迫イベント（累計）": {
+      "comment": "A label for the total number of memory pressure events.",
+      "isCommentAutoGenerated": true
     },
-    "検出候補（起動後）" : {
-
+    "圧迫時の縮小": {
+      "comment": "A label for the memory pressure settings.",
+      "isCommentAutoGenerated": true
     },
-    "検索のページサイズ" : {
-      "comment" : "The number of items to fetch in each page of a search.",
-      "isCommentAutoGenerated" : true
+    "地名キャッシュを消去して再スキャン": {
+      "comment": "Button label for clearing and rescanning places.",
+      "isCommentAutoGenerated": true
     },
-    "次回の予約" : {
-
+    "地名解決した地点": {
+      "comment": "A place that has been resolved by a place name.",
+      "isCommentAutoGenerated": true
     },
-    "消去" : {
-      "comment" : "A button that clears the diagnostics log.",
-      "isCommentAutoGenerated" : true
+    "埋め込みの保存形式": {},
+    "埋め込みの速度プリセット": {
+      "comment": "A label for the speed preset of background processing.",
+      "isCommentAutoGenerated": true
     },
-    "端末" : {
-      "comment" : "A label for the device model.",
-      "isCommentAutoGenerated" : true
+    "埋め込み実行中": {
+      "comment": "A label that displays whether the background process is currently running.",
+      "isCommentAutoGenerated": true
     },
-    "端末の RAM" : {
-      "comment" : "The label for the RAM of the device.",
-      "isCommentAutoGenerated" : true
+    "埋め込み残り": {},
+    "場所を再スキャン": {},
+    "夜間タスクを予約し直す": {
+      "comment": "A button that reschedules the background task and updates the pending status.",
+      "isCommentAutoGenerated": true
     },
-    "統合候補ペア" : {
-
+    "夜間ルーチンを今すぐ実行": {
+      "comment": "Button label for running the background task immediately.",
+      "isCommentAutoGenerated": true
     },
-    "背景処理を許可（電源）" : {
-      "comment" : "A label for the background processing policy.",
-      "isCommentAutoGenerated" : true
+    "学習した修正": {},
+    "実行中…（最大 3 分）": {},
+    "成熟クラスタ（11顔以上）": {},
+    "採用（うちフロア未満）": {},
+    "更新": {
+      "comment": "A button that refreshes the diagnostics log.",
+      "isCommentAutoGenerated": true
     },
-    "背景通信を許可（回線）" : {
-      "comment" : "A label for whether the app is allowed to perform background network tasks.",
-      "isCommentAutoGenerated" : true
+    "書き込みチャンク（upsert）": {
+      "comment": "A label for the number of items to write in each chunk when upserting.",
+      "isCommentAutoGenerated": true
     },
-    "解析済み写真" : {
-      "comment" : "A number of photos that have been analyzed by the app.",
-      "isCommentAutoGenerated" : true
+    "最大クラスタ": {},
+    "最小 iOS バージョン": {
+      "comment": "The minimum iOS version required to run this app.",
+      "isCommentAutoGenerated": true
     },
-    "計測中…" : {
-
+    "最後の夜間実行": {},
+    "棄却: %@": {},
+    "検出候補（起動後）": {},
+    "検索のページサイズ": {
+      "comment": "The number of items to fetch in each page of a search.",
+      "isCommentAutoGenerated": true
     },
-    "計測中… %@" : {
-
+    "次回の予約": {},
+    "消去": {
+      "comment": "A button that clears the diagnostics log.",
+      "isCommentAutoGenerated": true
     },
-    "記録（ログ・計測）" : {
-      "comment" : "A section that shows logs and performance metrics.",
-      "isCommentAutoGenerated" : true
+    "端末": {
+      "comment": "A label for the device model.",
+      "isCommentAutoGenerated": true
     },
-    "診断ログ" : {
-      "comment" : "A title for the diagnostics log view.",
-      "isCommentAutoGenerated" : true
+    "端末の RAM": {
+      "comment": "The label for the RAM of the device.",
+      "isCommentAutoGenerated": true
     },
-    "診断ログを見る" : {
-
+    "統合候補ペア": {},
+    "背景処理を許可（電源）": {
+      "comment": "A label for the background processing policy.",
+      "isCommentAutoGenerated": true
     },
-    "詳細ログを記録" : {
-      "comment" : "A toggle to enable recording detailed logs.",
-      "isCommentAutoGenerated" : true
+    "背景通信を許可（回線）": {
+      "comment": "A label for whether the app is allowed to perform background network tasks.",
+      "isCommentAutoGenerated": true
     },
-    "認識品質を計測（診断ログにも記録）" : {
-
+    "解析済み写真": {
+      "comment": "A number of photos that have been analyzed by the app.",
+      "isCommentAutoGenerated": true
     },
-    "通信ポリシー" : {
-      "comment" : "A label for the network policy.",
-      "isCommentAutoGenerated" : true
+    "計測中…": {},
+    "計測中… %@": {},
+    "記録（ログ・計測）": {
+      "comment": "A section that shows logs and performance metrics.",
+      "isCommentAutoGenerated": true
     },
-    "重い処理のゲートを常に開く" : {
-      "comment" : "A toggle that opens a gate to run heavy work unconditionally.",
-      "isCommentAutoGenerated" : true
+    "診断ログ": {
+      "comment": "A title for the diagnostics log view.",
+      "isCommentAutoGenerated": true
     },
-    "開発者オプション" : {
-      "comment" : "The title of the developer settings view.",
-      "isCommentAutoGenerated" : true
+    "診断ログを見る": {},
+    "詳細ログを記録": {
+      "comment": "A toggle to enable recording detailed logs.",
+      "isCommentAutoGenerated": true
     },
-    "電源ポリシー" : {
-      "comment" : "A label for the power policy.",
-      "isCommentAutoGenerated" : true
+    "認識品質を計測（診断ログにも記録）": {},
+    "通信ポリシー": {
+      "comment": "A label for the network policy.",
+      "isCommentAutoGenerated": true
     },
-    "電源接続中" : {
-      "comment" : "Whether the device is connected to power.",
-      "isCommentAutoGenerated" : true
+    "重い処理のゲートを常に開く": {
+      "comment": "A toggle that opens a gate to run heavy work unconditionally.",
+      "isCommentAutoGenerated": true
     },
-    "顔（未割当）" : {
-
+    "開発者オプション": {
+      "comment": "The title of the developer settings view.",
+      "isCommentAutoGenerated": true
     },
-    "顔モデル" : {
-      "comment" : "A label that describes whether the face recognition model is bundled with the app.",
-      "isCommentAutoGenerated" : true
+    "電源ポリシー": {
+      "comment": "A label for the power policy.",
+      "isCommentAutoGenerated": true
     },
-    "Loading faces…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "顔を読み込んでいます…"
-          }
-        }
-      }
+    "電源接続中": {
+      "comment": "Whether the device is connected to power.",
+      "isCommentAutoGenerated": true
     },
-    "Loading photos…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写真を読み込んでいます…"
-          }
-        }
-      }
+    "顔モデル": {
+      "comment": "A label that describes whether the face recognition model is bundled with the app.",
+      "isCommentAutoGenerated": true
     },
-    "Merging…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "まとめています…"
-          }
-        }
-      }
-    }
+    "顔（未割当）": {}
   },
-  "version" : "1.1"
+  "version": "1.1"
 }

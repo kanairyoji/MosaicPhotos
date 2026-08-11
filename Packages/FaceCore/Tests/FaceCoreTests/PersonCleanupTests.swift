@@ -45,6 +45,24 @@ struct PersonCleanupTests {
         #expect(parts.count == 1)
     }
 
+    /// 実フィードバック: クラスタリングが混ぜた 2 人（類似度 ≈ しきい値 0.4〜0.5）は、
+    /// レビュー用の校正値（maxSeparation 0.35）では**構造的に**分割できない。
+    /// 整理画面の緩和プロファイル（.cleanup）なら分割候補が出ること。
+    @Test("しきい値レベルで混ざった 2 人: レビュー設定では出ないが cleanup 設定では分かれる")
+    func cleanupConfigSplitsThresholdLevelMixture() {
+        // 群間コサイン ≈ 0.5（クラスタリングが統合し得る近さ）の 2 つの塊。
+        var embeddings: [[Float]] = []
+        for i in 0..<6 { embeddings.append(jittered([1, 0, 0, 0], i)) }
+        for i in 0..<6 { embeddings.append(jittered([0.5, 0.866, 0, 0], i)) }
+        let review = FaceClusterAudit.recursiveSplit(
+            embeddings: embeddings,
+            config: FaceClusterAudit.Config(minMembers: 8, minGroupSize: 3,
+                                            minMargin: 0.25, maxSeparation: 0.35))
+        #expect(review.count == 1, "前提: レビュー設定では分割されない（これが実障害の機序）")
+        let cleanup = FaceClusterAudit.recursiveSplit(embeddings: embeddings, config: .cleanup)
+        #expect(cleanup.count == 2, "cleanup 設定で分割候補が出ない: \(cleanup.map(\.count))")
+    }
+
     // MARK: - ストア連携（混入クラスタ → サブグループ → 一括分離）
 
     /// 2 人ぶんの顔を別クラスタとして育ててから統合（誤統合を再現）→ 整理でサブグループ 2 つ

@@ -54,6 +54,18 @@ public enum FaceClusterAudit {
             self.minMargin = minMargin
             self.maxSeparation = maxSeparation
         }
+
+        /// 「この人物を整理」用の緩和プロファイル（ADR-111 追記・実フィードバック）。
+        ///
+        /// レビューカード（受動提示）用の校正値（facenet: margin 0.25 / separation 0.35）は
+        /// **クラスタリングが混ぜたものを構造的に分割できない**: 2 人が 1 クラスタに入るのは
+        /// 類似度がしきい値（0.40〜0.55）以上だからで、その群間類似は常に 0.35 を超える。
+        /// 整理画面はユーザーが「混ざっている」と自ら開いた文脈＝候補を出さないことこそが失敗
+        /// なので、群間上限をしきい値の上（0.65）まで緩め、マージン下限をほぼ外して
+        /// 「候補を見せて人間が判断する」に寄せる（誤提案の防波堤は UI 側の最大グループ保護と
+        /// ユーザーのチェック操作）。
+        public static let cleanup = Config(minMembers: 6, minGroupSize: 2,
+                                           minMargin: 0.03, maxSeparation: 0.65)
     }
 
     /// クラスタを 2 分割して「別人が混ざっている」かを判定する。
