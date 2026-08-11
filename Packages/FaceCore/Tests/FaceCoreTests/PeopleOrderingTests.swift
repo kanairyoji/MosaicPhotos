@@ -4,9 +4,9 @@ import Foundation
 import Testing
 @testable import FaceCore
 
-/// 人物一覧（ピープル）の並び順: **写真数降順**、同数は名前つき優先 → clusterID 昇順で決定的。
-/// Swift の sort は非安定なので、同数クラスタだらけのライブラリではタイブレークが無いと
-/// リロードのたびに一覧が入れ替わって見える（実フィードバック）。
+/// 人物一覧（ピープル）の並び順: **名前つきが先**（実フィードバック）→ 写真数降順 →
+/// clusterID 昇順で決定的。Swift の sort は非安定なので、同数クラスタだらけのライブラリでは
+/// タイブレークが無いとリロードのたびに一覧が入れ替わって見える（実フィードバック）。
 @Suite("People ordering (写真数順)")
 struct PeopleOrderingTests {
 
@@ -31,6 +31,19 @@ struct PeopleOrderingTests {
         let people = await store.peopleClusters(minFaces: 3)
         #expect(people.map(\.count) == [8, 5, 3], "写真数降順でない: \(people.map(\.count))")
         #expect(people.map(\.displayIndex) == [1, 2, 3], "通し番号は並べ替え後に振る")
+    }
+
+    @Test("名前つきは写真数が少なくても未命名より先に来る")
+    func namedComesBeforeUnnamed() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await seed(store, prefix: "big", vec: [1, 0, 0, 0], photos: 9)      // 未命名・多い
+        await seed(store, prefix: "named", vec: [0, 1, 0, 0], photos: 3)    // 命名・少ない
+        var people = await store.peopleClusters(minFaces: 3)
+        let namedID = people.first { $0.count == 3 }!.clusterID
+        await store.rename(clusterID: namedID, name: "花子")
+        people = await store.peopleClusters(minFaces: 3)
+        #expect(people.first?.name == "花子", "名前つきが先頭でない: \(people.map { $0.name ?? "-" })")
+        #expect(people.map(\.count) == [3, 9])
     }
 
     @Test("同数なら名前つきが先・その次は clusterID で決定的")

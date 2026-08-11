@@ -98,16 +98,16 @@ extension FaceStore {
                 memberRefKeys: includeMembers ? members : [],
                 isGrouped: clustersInGroup.count > 1))
         }
-        // 通し番号は**並べ替え後**に振る（写真の多い順に Person 1, 2, 3…）。
-        // 内部のクラスタ ID は再クラスタで大きくなり続けるので表示には使わない（ADR-68）。
-        // ⚠️ 並びは**完全に決定的**にする: 写真数降順 → 同数は名前つき優先 → clusterID 昇順。
-        //    Swift の sort は非安定で、同数クラスタ（3 枚組が数百件）だけの比較だと実行ごとに
-        //    順序が揺れ、リロードのたびに一覧が入れ替わって「数順に並んでいない」ように見える。
+        // 通し番号は**並べ替え後**に振る（ADR-68）。
+        // 並び（実フィードバック）: **名前つきが先**（ユーザーが関心を示した人）→ それぞれの中は
+        // 写真数降順 → 同数は clusterID 昇順。
+        // ⚠️ 完全に決定的にする: Swift の sort は非安定で、同数クラスタ（3 枚組が数百件）だけの
+        //    比較だと実行ごとに順序が揺れ、リロードのたびに一覧が入れ替わって見える。
         var ordered = result.sorted { a, b in
-            if a.count != b.count { return a.count > b.count }
             let an = a.name?.isEmpty == false, bn = b.name?.isEmpty == false
-            if an != bn { return an }
-            return a.clusterID < b.clusterID
+            if an != bn { return an }                            // 名前つきが先
+            if a.count != b.count { return a.count > b.count }   // 次に写真の多い方
+            return a.clusterID < b.clusterID                     // 最後は ID で決定的に
         }
         for i in ordered.indices { ordered[i].displayIndex = i + 1 }
         return ordered
