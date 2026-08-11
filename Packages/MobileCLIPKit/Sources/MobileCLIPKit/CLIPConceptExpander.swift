@@ -36,6 +36,11 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
     private let lock = NSLock()
     private var cachedVocabulary: [String] = []
     private var cachedCentroids: [String: [Float]] = [:]
+    /// 実行中の重心構築（後続は合流する）。
+    /// ⚠️ これが無いと**並走した呼び出しが全部フル構築**する。実機 diagnostics-46 では
+    /// 夜間の finalize 2 本が同時に重心構築へ入り、51k 件の埋め込み走査が 2 本並走した
+    /// （`aialbum.centroids` スパン 2 本・どちらも約 30 分の壁時計）。
+    private var inFlight: Task<[String: [Float]], Never>?
 
     public var isAvailable: Bool { MobileCLIP.modelsBundled }
 
@@ -130,18 +135,34 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
             lock.unlock()
             return cached
         }
+        if let running = inFlight {
+            lock.unlock()
+            return await running.value   // 構築中なら合流（二重のフル構築をしない）
+        }
+        let source = centroidSource
+        let task = Task { [vocabulary] () -> [String: [Float]] in
+            let started = Date()
+            let epoch = ProcessSuspension.epoch
+            let computed = await source(vocabulary)
+            let ms = Date().timeIntervalSince(started) * 1000
+            // 中断を跨いだスパンは壁時計汚染なので記録しない（diagnostics-46 で「29 分」と誤読した）。
+            if !ProcessSuspension.didSuspend(since: epoch) {
+                PerfTrace.logSpan("aialbum.centroids", ms: ms)
+            }
+            Self.log.info("tag centroids: \(computed.count)/\(vocabulary.count) tags in \(Int(ms))ms"
+                          + (ProcessSuspension.didSuspend(since: epoch) ? " (spans suspend)" : ""))
+            return computed
+        }
+        inFlight = task
         lock.unlock()
 
-        let started = Date()
-        let computed = await centroidSource(vocabulary)
-        let ms = Date().timeIntervalSince(started) * 1000
-        PerfTrace.logSpan("aialbum.centroids", ms: ms)
-        Self.log.info("tag centroids: \(computed.count)/\(vocabulary.count) tags in \(Int(ms))ms")
-        guard !computed.isEmpty else { return [:] }
-
+        let computed = await task.value
         lock.lock()
-        cachedVocabulary = vocabulary
-        cachedCentroids = computed
+        inFlight = nil
+        if !computed.isEmpty {
+            cachedVocabulary = vocabulary
+            cachedCentroids = computed
+        }
         lock.unlock()
         return computed
     }

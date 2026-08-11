@@ -265,6 +265,12 @@ public enum Diagnostics {
         // 「メインが 29 分ブロック」「画像ロードに 29 分」といった偽の値がログを埋める。
         ProcessSuspension.install()
 
+        // OS 採取のハング診断（MetricKit・ADR-106）。自前ウォッチドッグは「いつ・何秒」までしか
+        // 分からないが、こちらは**ハング時のメインスレッド呼び出し木**が取れる（届くのは後日）。
+        #if canImport(MetricKit) && os(iOS)
+        HangDiagnostics.shared.install()
+        #endif
+
         // ObjC 未捕捉例外（unrecognized selector / KVO / CoreData など）を記録してから落ちる。
         // ※ Swift の fatalError / precondition / SwiftData の trap はこのハンドラを通らない
         //   （それらは Xcode/Organizer の標準クラッシュログに出る）。
