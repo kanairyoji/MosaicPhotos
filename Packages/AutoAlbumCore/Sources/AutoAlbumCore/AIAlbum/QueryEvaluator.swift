@@ -4,6 +4,26 @@ import Foundation
 /// `QuerySpec` のハード条件（日付/場所/人物/ソース/フラグ/向き/位置）を `EnrichedPhoto` 配列へ
 /// 適用する純ロジック（テスト対象）。内容(content)条件はソフト＝採点側（`AIAlbumSearcher`）で扱うため
 /// ここでは無視する。OR（節）はいずれかの節のハード条件をすべて満たせば通過。
+/// 属性条件（笑顔・美的）の評価に使う索引シグナル（S10・ADR-103）。
+/// **「データが無い」は「条件を満たさない」**として扱う（証拠主義・ADR-100 と同じ原則）。
+/// 顔スキャン・美的スコアの網羅が進むほどアルバムが自然に埋まる。
+public struct QuerySignals: Sendable {
+    /// refKey → 笑顔の顔数（顔スキャン済みの写真のみキーが存在する）。
+    public var smileCounts: [String: Int]?
+    /// refKey → 美的スコア（VNCalculateImageAestheticsScores・-1〜1・計測済みのみ）。
+    public var aesthetics: [String: Double]?
+    /// 「綺麗」の分布適応しきい値（`PhotoQuality.adaptiveThreshold`＝ADR-78 と同じ定義）。
+    public var aestheticFloor: Double = 0
+
+    public init(smileCounts: [String: Int]? = nil,
+                aesthetics: [String: Double]? = nil,
+                aestheticFloor: Double = 0) {
+        self.smileCounts = smileCounts
+        self.aesthetics = aesthetics
+        self.aestheticFloor = aestheticFloor
+    }
+}
+
 public enum QueryEvaluator {
 
     /// 縦横判定のしきい値（aspect = 幅/高さ）。
@@ -16,7 +36,8 @@ public enum QueryEvaluator {
     ///   「山田太郎」が焼き込みに反映されず「太郎と花子」が 0 件）。nil／未収載は焼き込みへフォールバック。
     public static func hardFilter(_ photos: [EnrichedPhoto], spec: QuerySpec,
                                   now: Date, calendar: Calendar = .current,
-                                  peopleByRefKey: [String: [String]]? = nil) -> [EnrichedPhoto] {
+                                  peopleByRefKey: [String: [String]]? = nil,
+                                  signals: QuerySignals = QuerySignals()) -> [EnrichedPhoto] {
         var result = photos
         if spec.excludeScreenshots {
             result = result.filter { !$0.isScreenshot }
@@ -24,7 +45,8 @@ public enum QueryEvaluator {
         guard spec.hasHardConstraints else { return result }
         return result.filter { photo in
             spec.clauses.contains {
-                clausePasses($0, photo, now: now, calendar: calendar, peopleByRefKey: peopleByRefKey)
+                clausePasses($0, photo, now: now, calendar: calendar,
+                             peopleByRefKey: peopleByRefKey, signals: signals)
             }
         }
     }
@@ -32,10 +54,11 @@ public enum QueryEvaluator {
     /// 1 節のハード条件をすべて満たすか（ソフト条件はスキップ）。ハード条件が無い節は通過。
     static func clausePasses(_ clause: QueryClause, _ photo: EnrichedPhoto,
                              now: Date, calendar: Calendar,
-                             peopleByRefKey: [String: [String]]? = nil) -> Bool {
+                             peopleByRefKey: [String: [String]]? = nil,
+                             signals: QuerySignals = QuerySignals()) -> Bool {
         for cond in clause.conditions {
             if let pass = hardPasses(cond, photo, now: now, calendar: calendar,
-                                     peopleByRefKey: peopleByRefKey), !pass {
+                                     peopleByRefKey: peopleByRefKey, signals: signals), !pass {
                 return false
             }
         }
@@ -50,13 +73,14 @@ public enum QueryEvaluator {
     /// 条件の真偽。ソフト（content / not(content)）は nil（＝ハード評価では無視）。
     static func hardPasses(_ cond: Condition, _ p: EnrichedPhoto,
                            now: Date, calendar: Calendar,
-                           peopleByRefKey: [String: [String]]? = nil) -> Bool? {
+                           peopleByRefKey: [String: [String]]? = nil,
+                           signals: QuerySignals = QuerySignals()) -> Bool? {
         switch cond {
         case .content:
             return nil
         case .not(let inner):
             guard let v = hardPasses(inner, p, now: now, calendar: calendar,
-                                     peopleByRefKey: peopleByRefKey) else { return nil }
+                                     peopleByRefKey: peopleByRefKey, signals: signals) else { return nil }
             return !v
         case .date(let range):
             let (start, end) = range.resolved(now: now, calendar: calendar)
@@ -84,6 +108,15 @@ public enum QueryEvaluator {
             return p.isScreenshot
         case .hasLocation:
             return p.latitude != nil && p.longitude != nil
+        case .smiling:
+            // 笑顔の実測（顔スキャン）。未スキャン＝笑顔と確認できない＝通さない（証拠主義）。
+            // 網羅率は顔スキャンに従う（実機 約11%・スキャンの進行とともに増える）。
+            guard let counts = signals.smileCounts else { return false }
+            return (counts[p.id] ?? 0) > 0
+        case .beautiful:
+            // 美的スコア（ADR-78 のベストショットと同じ分布適応しきい値）。未計測は通さない。
+            guard let scores = signals.aesthetics, let score = scores[p.id] else { return false }
+            return score >= signals.aestheticFloor
         case .orientation(let o):
             guard let a = p.aspect else { return false }
             switch o {

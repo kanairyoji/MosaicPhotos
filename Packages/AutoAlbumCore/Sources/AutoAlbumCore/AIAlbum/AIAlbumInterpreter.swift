@@ -136,6 +136,14 @@ public final class AIAlbumInterpreter {
         if !lexExcludes.isEmpty {
             spec = QuerySpecSanitizer.addingExclusion(spec, terms: lexExcludes)
         }
+        // 属性条件（S10・ADR-103）: 「笑っている」「綺麗な」は索引済みシグナル
+        // （顔スキャンの hasSmile・美的スコア）へのハード条件として決定的に立てる。
+        if JapaneseVisualLexicon.hasSmileRequest(visualText) {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .smiling)
+        }
+        if JapaneseVisualLexicon.hasBeautifulRequest(visualText) {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .beautiful)
+        }
         // ⚠️ **語彙接地**（ADR-101）: ここまでで立った内容語は「landscape」「food」のような
         //    人間向けの語で、索引側の語彙に実在するとは限らない。実在する語（台帳のタグ）へ
         //    落としてから保存する。個別の対応表は書かず、CLIP の意味的な近さで語彙の側から決める。
@@ -188,6 +196,14 @@ public final class AIAlbumInterpreter {
         let lexExcludes = JapaneseVisualLexicon.excludeTerms(in: visualText)
         if !lexExcludes.isEmpty {
             spec = QuerySpecSanitizer.addingExclusion(spec, terms: lexExcludes)
+        }
+        // 属性条件（S10・ADR-103）: 「笑っている」「綺麗な」は索引済みシグナル
+        // （顔スキャンの hasSmile・美的スコア）へのハード条件として決定的に立てる。
+        if JapaneseVisualLexicon.hasSmileRequest(visualText) {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .smiling)
+        }
+        if JapaneseVisualLexicon.hasBeautifulRequest(visualText) {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .beautiful)
         }
         if let date = RelativeDateParser.parse(criteria, now: now) {
             if spec.clauses.isEmpty {

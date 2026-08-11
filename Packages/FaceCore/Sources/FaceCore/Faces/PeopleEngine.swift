@@ -119,6 +119,11 @@ public final class PeopleEngine {
         }
     }
 
+    /// 笑顔の実測（refKey → 笑顔の顔数・スキャン済みのみ）。AI アルバムの `.smiling` 条件用（S10）。
+    public func smilingFaceCounts() async -> [String: Int] {
+        await store.smilingFaceCounts()
+    }
+
     /// 1 人物のメンバー写真キー（束ねていれば全時期ぶん）。人物アルバムを開くときだけ呼ぶ。
     public func memberRefKeys(forPerson clusterID: Int) async -> [String] {
         await store.memberRefKeys(forPerson: clusterID)

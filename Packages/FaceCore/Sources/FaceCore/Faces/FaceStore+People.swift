@@ -165,6 +165,23 @@ extension FaceStore {
         return allClusters().filter { $0.personGroupID == gid }.map(\.clusterID)
     }
 
+    /// 笑顔の実測（refKey → 笑顔の顔数・スキャン済みの写真のみ）。
+    /// AI アルバムの「笑っている写真」条件（`.smiling`・S10・ADR-103）に使う。
+    /// クラスタ未割り当ての顔も数える（笑顔かどうかに人物の同定は要らない）。
+    func smilingFaceCounts() -> [String: Int] {
+        var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.hasSmile == true })
+        d.propertiesToFetch = [\.refKey]
+        var out: [String: Int] = [:]
+        for f in (try? modelContext.fetch(d)) ?? [] { out[f.refKey, default: 0] += 1 }
+        // 「スキャン済みだが笑顔ゼロ」も 0 として載せる（証拠主義: キーの有無＝スキャン済みか）。
+        var scanned = FetchDescriptor<ScannedPhoto>()
+        scanned.propertiesToFetch = [\.refKey]
+        for m in (try? modelContext.fetch(scanned)) ?? [] where out[m.refKey] == nil {
+            out[m.refKey] = 0
+        }
+        return out
+    }
+
     /// 1 人物（束ねていれば全時期クラスタ）のメンバー写真キー。順序・重複排除は
     /// `peopleClusters(includeMembers: true)` と一致させる（人物アルバムの並びが変わらないように）。
     /// 一覧発行から切り離して**開いた画面だけが**取りに来るための入口（ADR-95）。

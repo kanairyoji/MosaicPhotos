@@ -55,7 +55,35 @@ public enum JapaneseVisualLexicon {
         (["果物", "フルーツ"], ["fruit"]),
         (["ピザ"], ["pizza"]),
         (["家具"], ["furniture"]),
+        // --- 動物の具体語（S10）。COCO/Vision 語彙に対応する頻出語 ---
+        (["馬"], ["horse"]),
+        (["牛"], ["cow"]),
+        (["羊"], ["sheep"]),
+        (["象", "ゾウ"], ["elephant"]),
+        (["キリン"], ["giraffe"]),
+        (["シマウマ"], ["zebra"]),
+        (["クマ", "熊"], ["bear"]),
     ]
+
+    // MARK: - 属性語（S10・ADR-103）
+
+    /// 「笑っている」系（→ `.smiling` 条件＝顔スキャンの hasSmile 実測）。
+    private static let smileWords = ["笑顔", "笑って", "笑い", "スマイル", "smiling", "smile"]
+    /// 「綺麗な」系（→ `.beautiful` 条件＝美的スコアの分布適応しきい値・ADR-78）。
+    private static let beautifulWords = ["綺麗", "きれい", "キレイ", "美しい", "ベストショット",
+                                         "beautiful", "best shot"]
+
+    /// 原文が笑顔条件を含むか。
+    public static func hasSmileRequest(_ criteria: String) -> Bool {
+        let lower = criteria.lowercased()
+        return smileWords.contains { criteria.contains($0) || lower.contains($0) }
+    }
+
+    /// 原文が「綺麗な写真」条件を含むか。
+    public static func hasBeautifulRequest(_ criteria: String) -> Bool {
+        let lower = criteria.lowercased()
+        return beautifulWords.contains { criteria.contains($0) || lower.contains($0) }
+    }
 
     /// 人物の否定（「人が写っていない」等）のパターン。
     private static let peopleNegations = [

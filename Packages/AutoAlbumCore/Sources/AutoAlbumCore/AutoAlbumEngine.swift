@@ -216,6 +216,11 @@ public final class AutoAlbumEngine {
         aiService.conceptExpander = expander
     }
 
+    /// 笑顔の実測（refKey → 笑顔の顔数）を AI アルバムの `.smiling` 条件へ結線する（S10・ADR-103）。
+    public func setSmileCountsProvider(_ provider: @escaping @Sendable () async -> [String: Int]) {
+        aiService.smileCountsProvider = provider
+    }
+
     /// タグ重心の供給（`CLIPConceptExpander` の材料）。タグ台帳と埋め込みは本エンジンが持つので、
     /// Composition Root は「重心を使う実装」を作るだけでよい。
     /// 新規の推論は無く、保存済み `PhotoEmbedding` を 1 回舐めて平均するだけ（ADR-101）。

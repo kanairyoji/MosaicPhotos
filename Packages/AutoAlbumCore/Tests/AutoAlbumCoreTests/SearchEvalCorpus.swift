@@ -54,8 +54,17 @@ enum SearchEvalCorpus {
         var faceCounts: [String: Int]
         /// VLM キャプション。未生成は存在しない。
         var captions: [String: String]
+        /// 笑顔の実測（refKey → 笑顔の顔数）。**顔スキャンと同じ網羅率**（同じ写真だけキーが在る）。
+        var smileCounts: [String: Int]
+        /// 美的スコア台帳（タグ付けと同じ網羅率＝Vision 一括パスで同時計測されるため）。
+        var aesthetics: [String: Double]
         /// 正解（refKey → 実際に写っているクラス→個数）。評価専用でパイプラインには渡さない。
         var truth: [String: [String: Int]]
+        /// 属性の正解（評価専用）。
+        var truthSmiling: Set<String>
+        var truthChild: Set<String>
+        /// 美的スコアの真値（全写真・網羅率の影響を受けない正解定義用）。
+        var truthAesthetics: [String: Double]
     }
 
     /// 決定的な疑似乱数（0..<1）。refKey から作るのでシャッフル不要・再実行で同じ結果になる。
@@ -76,7 +85,12 @@ enum SearchEvalCorpus {
         var humanCounts: [String: Int] = [:]
         var faceCounts: [String: Int] = [:]
         var captions: [String: String] = [:]
+        var smileCounts: [String: Int] = [:]
+        var aesthetics: [String: Double] = [:]
         var truth: [String: [String: Int]] = [:]
+        var truthSmiling = Set<String>()
+        var truthChild = Set<String>()
+        var truthAesthetics: [String: Double] = [:]
         photos.reserveCapacity(labels.images.count)
 
         // 撮影日は決定的に散らす（日付条件つきクエリのため）。基準日 2024-01-01。
@@ -93,7 +107,17 @@ enum SearchEvalCorpus {
                 captureDate: base.addingTimeInterval(TimeInterval(dayOffset) * 86_400),
                 latitude: nil, longitude: nil, placeName: nil))
 
-            // --- シーンタグ台帳（+ humanCount）。網羅率ぶんだけ索引済みにする ---
+            // --- 属性の真値（S10・ADR-103）。人物写真の一部が「笑顔」「子供」を持ち、
+            //     美的スコアは全写真に真値がある（索引の網羅率とは独立に定義する）。
+            let personCount = counts["person"] ?? 0
+            let isSmiling = personCount > 0 && deterministicUnit(refKey, salt: 6) < 0.4
+            let isChild = personCount > 0 && deterministicUnit(refKey, salt: 7) < 0.3
+            let aestheticScore = deterministicUnit(refKey, salt: 8) * 1.1 - 0.2   // -0.2〜0.9
+            if isSmiling { truthSmiling.insert(refKey) }
+            if isChild { truthChild.insert(refKey) }
+            truthAesthetics[refKey] = aestheticScore
+
+            // --- シーンタグ台帳（+ humanCount + 美的スコア）。網羅率ぶんだけ索引済みにする ---
             if deterministicUnit(refKey, salt: 2) < coverage.tags {
                 // ⚠️ 実機のシーンタグは**物体検出ではなく場面分類**なので、写っている人を
                 //    タグとして出さないことが多い。ここでは正解クラスをタグ化しつつ、
@@ -103,13 +127,18 @@ enum SearchEvalCorpus {
                 if counts["person"] != nil, deterministicUnit(refKey, salt: 3) < 0.3 {
                     t.append("person")
                 }
+                // 子供が写っている写真は（タグ付け済みなら）child タグが付く想定。
+                if isChild { t.append("child") }
                 tags[refKey] = t
                 humanCounts[refKey] = counts["person"] ?? 0
+                // 美的スコアは Vision 一括パス（タグ付け）で同時計測される＝同じ網羅率。
+                aesthetics[refKey] = aestheticScore
             }
 
-            // --- 顔スキャン（網羅率が低い） ---
+            // --- 顔スキャン（網羅率が低い）。笑顔はこのパスの実測 ---
             if deterministicUnit(refKey, salt: 4) < coverage.faces {
                 faceCounts[refKey] = counts["person"] ?? 0
+                smileCounts[refKey] = isSmiling ? max(1, personCount / 2) : 0
             }
 
             // --- VLM キャプション（ごく一部） ---
@@ -120,6 +149,9 @@ enum SearchEvalCorpus {
         }
 
         return Corpus(photos: photos, tags: tags, humanCounts: humanCounts,
-                      faceCounts: faceCounts, captions: captions, truth: truth)
+                      faceCounts: faceCounts, captions: captions,
+                      smileCounts: smileCounts, aesthetics: aesthetics, truth: truth,
+                      truthSmiling: truthSmiling, truthChild: truthChild,
+                      truthAesthetics: truthAesthetics)
     }
 }

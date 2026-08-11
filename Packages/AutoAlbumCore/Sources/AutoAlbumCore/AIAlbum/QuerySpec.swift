@@ -17,6 +17,9 @@ public indirect enum Condition: Sendable, Codable, Equatable {
     case hasLocation            // 位置情報を持つ
     case content([String])      // 内容語（CLIP・語の OR）＝ソフト（採点）
     case not(Condition)         // 否定
+    // --- 索引済み属性（S10・ADR-103）。索引しているのにクエリ言語から届かなかった信号を昇格 ---
+    case smiling                // 笑顔の顔が写っている（顔スキャンの hasSmile 実測）
+    case beautiful              // 美的スコアが分布適応しきい値以上（ADR-78 と同じ定義）
 
     /// ハード条件か（content / not(content...) はソフト＝採点側で扱う）。
     public var isHard: Bool {
@@ -77,6 +80,15 @@ public struct QuerySpec: Sendable, Codable, Equatable {
     }
     public var hasContent: Bool {
         let t = allContentTerms; return !t.include.isEmpty || !t.exclude.isEmpty
+    }
+
+    /// 属性条件（笑顔／美的）を含むか。含むときだけ各シグナル（顔スキャンの笑顔・美的台帳）を
+    /// 取得する（無関係なアルバムでは 86k 件の台帳を引かない）。
+    public var needsSmileSignal: Bool {
+        clauses.contains { $0.conditions.contains { if case .smiling = $0 { return true }; return false } }
+    }
+    public var needsAestheticSignal: Bool {
+        clauses.contains { $0.conditions.contains { if case .beautiful = $0 { return true }; return false } }
     }
 
     /// 人物条件（.people / .peopleAtLeast・.not 内含む）を含むか。

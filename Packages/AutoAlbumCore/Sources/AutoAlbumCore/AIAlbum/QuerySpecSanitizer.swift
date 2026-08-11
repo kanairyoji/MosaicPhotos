@@ -98,6 +98,20 @@ enum QuerySpecSanitizer {
         return out
     }
 
+    /// ハード条件を各節に AND で加える（節が無ければ 1 節作る・重複させない）。
+    /// 属性条件（.smiling / .beautiful）の決定的付与に使う（S10・ADR-103）。
+    static func addingCondition(_ spec: QuerySpec, condition: Condition) -> QuerySpec {
+        var out = spec
+        if out.clauses.isEmpty {
+            out.clauses = [QueryClause([condition])]
+            return out
+        }
+        out.clauses = out.clauses.map { clause in
+            clause.conditions.contains(condition) ? clause : QueryClause(clause.conditions + [condition])
+        }
+        return out
+    }
+
     /// 既存の除外内容語を**丸ごと置き換える**（語彙接地の結果を反映する・ADR-101）。
     /// `terms` が空なら除外条件そのものを取り除く——接地できなかった除外を残すと、
     /// 「検証できない不在」で写真を落とすことになる（ADR-100 で直した誤りの再来）。

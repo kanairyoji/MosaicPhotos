@@ -40,6 +40,25 @@ final class AIAlbumService {
         set { verification.faceCountsProvider = newValue }
     }
 
+    /// 笑顔の実測（refKey → 笑顔の顔数・顔スキャン済みのみ）を返す seam（S10・ADR-103）。
+    /// 「笑っている写真」条件の評価に使う。Composition Root から結線。
+    var smileCountsProvider: (@Sendable () async -> [String: Int])?
+
+    /// 属性条件（笑顔・美的）のシグナルを、必要なときだけ取得する（S10・ADR-103）。
+    /// 「綺麗」のしきい値はベストショットフィルタ（ADR-78）と同じ分布適応＝定義を 1 つに保つ。
+    private func querySignalsIfNeeded(for spec: QuerySpec) async -> QuerySignals {
+        var signals = QuerySignals()
+        if spec.needsSmileSignal {
+            signals.smileCounts = await smileCountsProvider?() ?? [:]
+        }
+        if spec.needsAestheticSignal, let tagStore {
+            let scores = await tagStore.allAesthetics()
+            signals.aesthetics = scores
+            signals.aestheticFloor = PhotoQuality.adaptiveThreshold(scores: Array(scores.values))
+        }
+        return signals
+    }
+
     /// S7（ADR-102）: 証拠不足で保留になった写真（夜間キャプションの優先対象）。
     var evidenceStarvedRefKeys: [String] { verification.evidenceStarvedRefKeys }
 
@@ -255,6 +274,8 @@ final class AIAlbumService {
             // 人物証拠は humanCount（網羅率 約86%）を主軸に、顔スキャンを補助にする（ADR-100）。
             // ⚠️ フル評価と**同一の規則**にすること（食い違うと増分と全体で結果が変わる）。
             let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
+            // 属性条件のシグナルも増分評価で同一規則（S10）。
+            let querySignals = await querySignalsIfNeeded(for: spec)
             saved.evaluatedEmbedCount += newRefKeys.count
             // 意味採点のクエリ埋め込み（キャッシュ）。埋め込み不可なら評価枚数だけ進める。
             guard let q = await queryVectors(for: saved) else {
@@ -265,7 +286,7 @@ final class AIAlbumService {
                 () -> ([EnrichedPhoto], [String: Float]) in
                 // ハード条件（相対日付は now で解決）を新規分に適用。
                 var base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
-                                                     peopleByRefKey: peopleMap)
+                                                     peopleByRefKey: peopleMap, signals: querySignals)
                 // 人系の除外があれば実測の人数でハード除外（フル評価と同じ規則・ADR-100）。
                 // 証拠が無い写真は通さない（「無い＝いない」と読まない）。
                 if faceCounts != nil {
@@ -410,6 +431,8 @@ final class AIAlbumService {
         let tHuman = PerfTrace.nowNs()
         let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
         PerfTrace.logSpan("aialbum.humanCounts", ms: PerfTrace.msSince(tHuman))
+        // 属性条件（笑顔・美的）のシグナル（S10・ADR-103・条件があるときだけ取得）。
+        let querySignals = await querySignalsIfNeeded(for: spec)
         let tScore = PerfTrace.nowNs()
         defer { PerfTrace.logSpan("aialbum.score", ms: PerfTrace.msSince(tScore)) }
         return await Task.detached(priority: .utility) {
@@ -417,7 +440,7 @@ final class AIAlbumService {
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
                 probes: probes, faceCounts: faceCounts, humanCounts: humanCounts,
                 photoTags: tags, ocrTexts: ocr,
-                peopleByRefKey: peopleMap,
+                peopleByRefKey: peopleMap, signals: querySignals,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)
                 })

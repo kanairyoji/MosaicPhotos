@@ -90,12 +90,14 @@ public struct AIAlbumSearcher {
                 photoTags: [String: [String]] = [:],
                 ocrTexts: [String: String] = [:],
                 peopleByRefKey: [String: [String]]? = nil,
+                signals: QuerySignals = QuerySignals(),
                 loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
                              probes: probes, pageSize: pageSize, faceCounts: faceCounts,
                              humanCounts: humanCounts,
                              photoTags: photoTags, ocrTexts: ocrTexts, peopleByRefKey: peopleByRefKey,
+                             signals: signals,
                              loadPage: loadPage).members
     }
 
@@ -119,9 +121,11 @@ public struct AIAlbumSearcher {
                                photoTags: [String: [String]] = [:],
                                ocrTexts: [String: String] = [:],
                                peopleByRefKey: [String: [String]]? = nil,
+                               signals: QuerySignals = QuerySignals(),
                                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
-        var base = QueryEvaluator.hardFilter(all, spec: spec, now: now, peopleByRefKey: peopleByRefKey)
+        var base = QueryEvaluator.hardFilter(all, spec: spec, now: now,
+                                             peopleByRefKey: peopleByRefKey, signals: signals)
         let includeTerms = spec.allContentTerms.include
         let excludeTerms = spec.allContentTerms.exclude
 

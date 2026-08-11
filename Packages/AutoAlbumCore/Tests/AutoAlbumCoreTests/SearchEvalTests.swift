@@ -31,6 +31,11 @@ struct SearchEvalTests {
         // CLIP は使わない（この層の評価ではないため）。textEmbedder なし＝タグ＋字句で解く。
         let searcher = AIAlbumSearcher(textEmbedder: nil)
         let needsFaces = AIAlbumSearcher.hasPeopleExclusion(saved.spec)
+        // 属性シグナル（S10）: 本番 AIAlbumService.querySignalsIfNeeded と同じ組み立て。
+        let signals = QuerySignals(
+            smileCounts: corpus.smileCounts,
+            aesthetics: corpus.aesthetics,
+            aestheticFloor: PhotoQuality.adaptiveThreshold(scores: Array(corpus.aesthetics.values)))
         let (members, _) = await searcher.searchWithPool(
             baseLite: corpus.photos, spec: saved.spec, now: now,
             semanticText: query.englishText,
@@ -39,6 +44,7 @@ struct SearchEvalTests {
             photoTags: corpus.tags,
             ocrTexts: [:],
             peopleByRefKey: nil,
+            signals: signals,
             loadPage: { _, _ in [] })
 
         // 除外つきなら証拠ゲート（本番と同じ判定を純関数で）。
@@ -72,7 +78,7 @@ struct SearchEvalTests {
         })
         for query in SearchEvalQueries.all {
             let retrieved = await run(query, corpus: corpus)
-            let relevant = query.groundTruth(corpus.truth, dates: dates)
+            let relevant = query.groundTruth(corpus: corpus, dates: dates)
             let score = SearchEvalQueries.score(queryID: query.id, hasExclusion: query.hasExclusion,
                                                 retrieved: retrieved, relevant: relevant)
             if query.knownLimitation == nil { scores.append(score) }
@@ -98,5 +104,25 @@ struct SearchEvalTests {
         // ⚠️ ここでは閾値で失敗させない（数字を台帳へ残すのが目的）。回帰の固定は
         //    `SearchEvalRegressionTests` が担当する。
         #expect(!scores.isEmpty)
+    }
+
+    /// 属性クエリの**網羅率天井**: 索引が全件済んだ場合の性能（配線の正しさと網羅率の限界を分離）。
+    /// 実機の数字（measure・顔 11%）が低いのは配線の欠陥でなく索引の進行度であることを示す。
+    @Test("属性クエリの天井（索引 100% 時）")
+    func attributeCeiling() async throws {
+        guard SearchEvalCorpus.isAvailable else { return }
+        let corpus = try SearchEvalCorpus.load(coverage: .complete)
+        let dates = Dictionary(uniqueKeysWithValues: corpus.photos.compactMap { p in
+            p.captureDate.map { (p.id, $0) }
+        })
+        for query in SearchEvalQueries.all
+        where query.requireSmiling || query.requireBeautiful || query.requireChild {
+            let retrieved = await run(query, corpus: corpus)
+            let relevant = query.groundTruth(corpus: corpus, dates: dates)
+            let score = SearchEvalQueries.score(queryID: query.id, hasExclusion: query.hasExclusion,
+                                                retrieved: retrieved, relevant: relevant)
+            print(String(format: "SEARCHEVAL-CEIL: %-15@ P=%.3f R=%.3f F1=%.3f (索引100%%時)",
+                         query.id as NSString, score.precision, score.recall, score.f1))
+        }
     }
 }

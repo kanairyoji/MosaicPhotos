@@ -22,6 +22,12 @@ enum SearchEvalQueries {
         let exclude: [String]
         /// 正解: 撮影年（日付複合クエリ用。nil なら日付条件なし）。
         var year: Int?
+        /// 正解: 属性の要求（S10・ADR-103）。
+        var requireSmiling = false
+        var requireChild = false
+        var requireBeautiful = false
+        /// 正解: 子供が**写っていない**（大人は可）。人物除外の粗さの定量化用。
+        var requireNoChild = false
         /// 現状の既知の限界を**定量化**するためのクエリ（マクロ平均から除外して別枠で出す）。
         /// 例: レキシコン外の語＝作成時プレビューでは立たない（夜間 FM が受け持つ）。
         var knownLimitation: String?
@@ -29,18 +35,25 @@ enum SearchEvalQueries {
         var hasExclusion: Bool { !exclude.isEmpty }
 
         /// 正解集合（コーパスの truth から機械的に導く）。
-        func groundTruth(_ truth: [String: [String: Int]],
+        func groundTruth(corpus: SearchEvalCorpus.Corpus,
                          dates: [String: Date] = [:]) -> Set<String> {
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = TimeZone(identifier: "UTC")!
+            // 「綺麗」の正解 = 真値スコアの上位 20%（ADR-78 のベストショット定義と同じ）。
+            let beautifulFloor = requireBeautiful
+                ? PhotoQuality.adaptiveThreshold(scores: Array(corpus.truthAesthetics.values)) : 0
             var out = Set<String>()
-            for (refKey, counts) in truth {
+            for (refKey, counts) in corpus.truth {
                 if !include.isEmpty && !include.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
                 if exclude.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
                 if let year {
                     guard let date = dates[refKey],
                           calendar.component(.year, from: date) == year else { continue }
                 }
+                if requireSmiling, !corpus.truthSmiling.contains(refKey) { continue }
+                if requireChild, !corpus.truthChild.contains(refKey) { continue }
+                if requireNoChild, corpus.truthChild.contains(refKey) { continue }
+                if requireBeautiful, (corpus.truthAesthetics[refKey] ?? -1) < beautifulFloor { continue }
                 out.insert(refKey)
             }
             return out
@@ -85,6 +98,31 @@ enum SearchEvalQueries {
         // --- S9 でレキシコンへ追補した語（以前は 0 件＝既知の限界だった） ---
         Query(id: "bus", text: "バスの写真", englishText: "bus", include: ["bus"], exclude: []),
         Query(id: "no-bus", text: "バスが写っていない写真", englishText: "", include: [], exclude: ["bus"]),
+        // --- 動物の具体語（S10 レキシコン追補分） ---
+        Query(id: "horse", text: "馬の写真", englishText: "horse", include: ["horse"], exclude: []),
+        Query(id: "elephant", text: "象の写真", englishText: "elephant", include: ["elephant"], exclude: []),
+        Query(id: "giraffe", text: "キリンの写真", englishText: "giraffe", include: ["giraffe"], exclude: []),
+        Query(id: "zebra", text: "シマウマの写真", englishText: "zebra", include: ["zebra"], exclude: []),
+        Query(id: "dog-or-cat", text: "犬と猫の写真", englishText: "dog and cat",
+              include: ["dog", "cat"], exclude: []),
+        // --- 属性条件（S10・ADR-103: 笑顔＝顔スキャン実測・綺麗＝美的スコア） ---
+        Query(id: "child", text: "子供の写真", englishText: "child",
+              include: [], exclude: [], requireChild: true),
+        Query(id: "smiling", text: "笑っている写真", englishText: "",
+              include: [], exclude: [], requireSmiling: true),
+        Query(id: "smiling-child", text: "笑っている子供の写真", englishText: "child",
+              include: [], exclude: [], requireSmiling: true, requireChild: true),
+        Query(id: "beautiful", text: "綺麗な写真", englishText: "",
+              include: [], exclude: [], requireBeautiful: true),
+        Query(id: "beautiful-cat", text: "綺麗な猫の写真", englishText: "cat",
+              include: ["cat"], exclude: [], requireBeautiful: true),
+        Query(id: "beautiful-2024", text: "2024年の綺麗な写真", englishText: "",
+              include: [], exclude: [], year: 2024, requireBeautiful: true),
+        // 人物除外の粗さの定量化: 「子供がいない」は現状「人がいない」へ丸められる
+        //（年齢の証拠が無く『大人だけ』を検証できないため・保守側）。
+        Query(id: "no-child", text: "子供が写っていない写真", englishText: "",
+              include: [], exclude: [], requireNoChild: true,
+              knownLimitation: "子供除外は人物除外へ丸められる（年齢証拠なし・R が構造的に低い）"),
     ]
 
     // MARK: - 指標
