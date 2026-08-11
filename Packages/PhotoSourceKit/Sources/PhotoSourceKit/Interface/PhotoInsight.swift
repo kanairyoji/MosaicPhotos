@@ -13,10 +13,6 @@ public struct PhotoInsight: Sendable, Equatable {
     /// 表示タグ（Vision シーンタグ＋CLIP ゼロショットの補完）。検索のタグ台帳と同一ソース。
     public var tags: [String]
     public var people: [String]
-    /// VLM キャプション（英語・夜間バッチで後から埋まる）。未生成は nil。
-    public var caption: String?
-    /// キャプションがこれから生成される見込みか（VLM 同梱かつ未生成）。true のとき「生成中」を出す。
-    public var captionPending: Bool
     /// 写真内テキスト（OCR・photo-info-expansion）。未検出は nil。
     public var ocrText: String?
     /// 利用カウンタ（フル画面の閲覧/再生/共有・記録なしは nil＝0 扱いで表示）。
@@ -35,16 +31,13 @@ public struct PhotoInsight: Sendable, Equatable {
     public var source: Source?
     public var status: Status
 
-    public init(tags: [String] = [], people: [String] = [], caption: String? = nil,
-                captionPending: Bool = false, ocrText: String? = nil,
+    public init(tags: [String] = [], people: [String] = [], ocrText: String? = nil,
                 viewCount: Int? = nil, playCount: Int? = nil, shareCount: Int? = nil,
                 faceCount: Int? = nil, isScreenshot: Bool = false,
                 isBackedUp: Bool? = nil, source: Source? = nil,
                 status: Status = .ready) {
         self.tags = tags
         self.people = people
-        self.caption = caption
-        self.captionPending = captionPending
         self.ocrText = ocrText
         self.viewCount = viewCount
         self.playCount = playCount
@@ -57,6 +50,6 @@ public struct PhotoInsight: Sendable, Equatable {
     }
 
     public var hasSignals: Bool {
-        !tags.isEmpty || !people.isEmpty || (faceCount ?? 0) > 0 || caption != nil || ocrText != nil
+        !tags.isEmpty || !people.isEmpty || (faceCount ?? 0) > 0 || ocrText != nil
     }
 }

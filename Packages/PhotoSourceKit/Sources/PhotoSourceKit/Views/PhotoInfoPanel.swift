@@ -102,25 +102,6 @@ struct PhotoInfoPanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                if let caption = insight.caption {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label(L("AI description"), systemImage: "text.below.photo")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text(caption)
-                            .font(.subheadline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else if insight.captionPending {
-                    // VLM 同梱で未生成＝これから付く。空欄に見せず「生成中」を出す（タグ欄と同じ考え方）。
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label(L("AI description"), systemImage: "text.below.photo")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text(L("Generating while charging…"))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
                 // 利用カウンタ（閲覧/共有/再生）。insight が取れた写真は常時表示（0 でも出す＝
                 // 「数えている」ことが分かる）。再生は動画対応まで常に 0 なので >0 のときだけ。
                 if let views = insight.viewCount {

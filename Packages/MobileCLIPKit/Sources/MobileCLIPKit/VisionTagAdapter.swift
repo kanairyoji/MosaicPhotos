@@ -15,7 +15,7 @@ import Vision
 ///   - 人物数: `VNDetectHumanRectanglesRequest`（上半身）。
 ///   - 美的スコア: `VNCalculateImageAestheticsScoresRequest`（iOS 18+・-1〜1）。
 ///   さらにローカル写真は PHAsset の種別（スクショ/パノラマ/Live Photo 等）をタグに合流する。
-/// - キャプション: SmolVLM（同梱時のみ・`VLMRuntime`）。
+/// ※ VLM キャプション（SmolVLM）は廃止（ADR-108・検索寄与ゼロの実測＝台帳 S13）。
 public struct VisionTagAdapter: TagPerceptionProvider {
     /// クラウド path → CGImage（Dropbox サムネイル）。CLIPEmbeddingProvider と同じ seam。
     let cloudImage: @Sendable (String) async -> CGImage?
@@ -168,32 +168,4 @@ public struct VisionTagAdapter: TagPerceptionProvider {
         return out
     }
 
-    // MARK: - キャプション（SmolVLM・P3）
-
-    public var isCaptioningAvailable: Bool { VLMRuntime.shared.isAvailable }
-
-    /// キャプション後に VLM(≈877MB) を解放し、CLIP 画像塔・facenet と同時常駐させない（1-d）。
-    public func releaseCaptionModelIfLoaded() { VLMRuntime.shared.release() }
-
-    public func captions(refKeys: [String]) async -> [String: String] {
-        guard VLMRuntime.shared.isAvailable else { return [:] }
-        var out: [String: String] = [:]
-        for refKey in refKeys {
-            await Task.yield()
-            guard let ref = PhotoRef.decode(refKey) else { continue }
-            let cg: CGImage?
-            if let localId = ref.localIdentifier {
-                cg = await loadLocalCGImage(localId, maxPixel: 512)
-            } else if let path = ref.cloudPath {
-                cg = await cloudImage(path)
-            } else {
-                cg = nil
-            }
-            guard let cg else { continue }
-            if let caption = await VLMRuntime.shared.caption(for: cg) {
-                out[refKey] = caption
-            }
-        }
-        return out
-    }
 }

@@ -12,7 +12,8 @@ final class PhotoTagRecord {
     @Attribute(.unique) var refKey: String
     /// Vision 分類の識別子（英語・precision フィルタ済み・最大 ~10 個）。
     var tags: [String]
-    /// VLM の短文キャプション（英語）。未生成は nil（タグより後から埋まる）。
+    /// 旧 VLM キャプション（英語）。機能は廃止（ADR-108）だが、**プロパティを消すと TagsV1
+    /// コンテナのスキーマ不整合で全シーンタグ（数万件・数週間分）を失う**ため、フィールドだけ残す。
     var caption: String?
     /// タグ付けロジックの版（分類器・しきい値変更時に採番して再タグ）。
     var version: Int
@@ -84,24 +85,7 @@ actor TagStore {
         return counts.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }
 
-    func captionedCount() -> Int {
-        (try? modelContext.fetchCount(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil }))) ?? 0
-    }
-
-    /// キャプション済みの (refKey, caption) を先頭から最大 limit 件返す（確認 UI 用）。
-    func captionedSamples(limit: Int) -> [(refKey: String, caption: String)] {
-        var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil },
-                                                sortBy: [SortDescriptor(\.refKey)])
-        d.fetchLimit = limit
-        return ((try? modelContext.fetch(d)) ?? []).compactMap { r in
-            guard let c = r.caption, !c.isEmpty else { return nil }
-            return (refKey: r.refKey, caption: c)
-        }
-    }
-
     /// バッチ記録（save は 1 回）。既存レコードは更新（版を上げて再タグした場合も上書き）。
-    /// キャプションは触らない（v1 → v2 の再タグで生成済みキャプションを消さない）。
     func recordTags(_ batch: [(refKey: String, info: PhotoSenseInfo)]) {
         for entry in batch {
             let key = entry.refKey
@@ -119,60 +103,6 @@ actor TagStore {
                                                    ocrText: entry.info.ocrText,
                                                    humanCount: entry.info.humanCount,
                                                    aesthetic: entry.info.aesthetic))
-            }
-        }
-        try? modelContext.save()
-    }
-
-    // MARK: - キャプション（VLM・タグより後から埋まる）
-
-    /// 既存キャプションを全消去する（VLM モデル差し替え時＝`captionModelVersion` 変更で 1 回）。
-    /// caption を nil に戻すと `captionPending` が再び対象にし、新モデルで付け直される。
-    func resetCaptions() -> Int {
-        guard let records = try? modelContext.fetch(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption != nil })) else { return 0 }
-        for r in records { r.caption = nil }
-        try? modelContext.save()
-        return records.count
-    }
-
-    /// キャプション未生成（caption == nil）の件数。インターリーブの進捗判定に使う。
-    /// `favorites` 指定時はその集合内のみ数える（キャプションはお気に入り限定のため）。
-    func captionPendingCount(favorites: Set<String>? = nil) -> Int {
-        if let favorites {
-            guard !favorites.isEmpty else { return 0 }
-            return (try? modelContext.fetchCount(FetchDescriptor<PhotoTagRecord>(
-                predicate: #Predicate { favorites.contains($0.refKey) && $0.caption == nil }))) ?? 0
-        }
-        return (try? modelContext.fetchCount(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil }))) ?? 0
-    }
-
-    /// キャプション未生成（タグ付けは済み＝レコードあり）の refKey **集合**を返す。
-    /// `favorites` 指定時はその集合内のみ（キャプションはお気に入り限定のため）。
-    /// 処理順（新しい順）は呼び出し側が撮影日で並べる（本ストアは日付を持たない）。
-    func captionPendingSet(favorites: Set<String>? = nil) -> Set<String> {
-        let d: FetchDescriptor<PhotoTagRecord>
-        if let favorites {
-            guard !favorites.isEmpty else { return [] }
-            d = FetchDescriptor<PhotoTagRecord>(
-                predicate: #Predicate { favorites.contains($0.refKey) && $0.caption == nil })
-        } else {
-            d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.caption == nil })
-        }
-        return Set(((try? modelContext.fetch(d)) ?? []).map(\.refKey))
-    }
-
-    func recordCaptions(_ batch: [(refKey: String, caption: String)]) {
-        for entry in batch {
-            let key = entry.refKey
-            var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.refKey == key })
-            d.fetchLimit = 1
-            if let existing = try? modelContext.fetch(d).first {
-                existing.caption = entry.caption
-            } else {
-                modelContext.insert(PhotoTagRecord(refKey: key, tags: [],
-                                                   caption: entry.caption, version: 0))
             }
         }
         try? modelContext.save()
@@ -289,17 +219,6 @@ actor TagStore {
         var out: [String: Double] = [:]
         out.reserveCapacity(records.count)
         for r in records { if let a = r.aesthetic { out[r.refKey] = a } }
-        return out
-    }
-
-    /// 指定 refKey 群のキャプション（LLM Verify の入力用）。
-    func captions(forRefKeys keys: [String]) -> [String: String] {
-        guard !keys.isEmpty else { return [:] }
-        let set = keys
-        let records = (try? modelContext.fetch(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { set.contains($0.refKey) }))) ?? []
-        var out: [String: String] = [:]
-        for r in records { if let c = r.caption { out[r.refKey] = c } }
         return out
     }
 

@@ -47,8 +47,7 @@ MosaicPhotos/MobileCLIP/
 .facenet_build/
 MosaicPhotos/FaceModel/
 
-# VLM (photo captions for AI albums): build venv/checkpoint (~2GB) and generated models (~450MB).
-# Regenerate locally with scripts/build_smolvlm.sh（現行・視覚のみINT8）/ build_florence.sh（撤回・参考）.
+# VLM（廃止＝ADR-108）: 旧ビルド作業ディレクトリが残っていても無視する。
 .smolvlm_build/
 .vlmbench_flor/
 MosaicPhotos/VLM/

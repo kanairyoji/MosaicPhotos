@@ -41,16 +41,14 @@ struct AnalysisActivityTests {
         #expect(AnalysisActivity.lastActivity(.faces) != nil)
         #expect(AnalysisActivity.lastActivity(.embeddings) == nil)
         #expect(AnalysisActivity.lastActivity(.sceneTags) == nil)
-        #expect(AnalysisActivity.lastActivity(.captions) == nil)
         clear()
     }
 
     @Test("AnalysisProgress は値を保持する")
     func progressHoldsValues() {
-        let p = AnalysisProgress(total: 100, embedded: 40, sceneTagged: 70, captioned: 10)
+        let p = AnalysisProgress(total: 100, embedded: 40, sceneTagged: 70)
         #expect(p.total == 100)
         #expect(p.embedded == 40)
         #expect(p.sceneTagged == 70)
-        #expect(p.captioned == 10)
     }
 }

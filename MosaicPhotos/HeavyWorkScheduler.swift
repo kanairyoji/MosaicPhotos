@@ -27,16 +27,6 @@ enum HeavyWorkScheduler {
     /// 埋め込みが残っていてもバックアップの窓を 1 回明け渡す（飢餓の防止・上記 1.5 を参照）。
     private static let maxBackupDeferrals = 3
 
-    /// キャプションが顔スキャンに譲れる連続回数の上限（ADR-86）。これを超えたら
-    /// その窓は顔スキャンを起こさず、キャプションに順番を回す（顔スキャンは差分なので次窓で続く）。
-    ///
-    /// **1 にした理由（ADR-93）**: キャプションの母数は**有界**（お気に入り約 1,600 枚で打ち止め・
-    /// 終われば `hasWork=false` になり以後この判定自体が無効化される）。一方、顔スキャンの母数は
-    /// クラウド 68,200 枚で**事実上終わらない**。有界な作業を無限の作業の後ろに並べる意味は薄いので、
-    /// 1 窓おきにキャプションへ回して先に終わらせる。3 だと夜間窓が数分×4 回に 1 回しか来ず、
-    /// 実機で 9 日間 1 枚も生成されなかった（diag-35 の `captions(pending=612 idle=9d)`）。
-    private static let maxCaptionDeferrals = 1
-
     /// フォアグラウンドで構築済みのストア群（RootView が設定）。アプリがメモリに残ったまま
     /// BG 起動された場合はこれを再利用し、プロセス再起動時のみ作り直す。
     static var stores: HomeStores?
@@ -107,12 +97,10 @@ enum HeavyWorkScheduler {
     // MARK: - フォアグラウンド復帰（ADR-79）
 
     /// アプリがアクティブになったときに呼ぶ。夜間処理（BGTask ルーチン・顔スキャン・タグ付け/
-    /// 埋め込み/キャプション）を**明示的に止める**。
+    /// 埋め込み）を**明示的に止める**。
     ///
     /// 従来はゲート（`BackgroundYield`）が閉じるだけで、各トリクルは `waitWhilePaused` で
-    /// 眠って待機していた。この方式には復帰時のカクつきが 2 つ残る:
-    /// 1. 実行中の 1 単位は最後まで走る（VLM キャプションは 1 枚数十秒＝ANE/CPU 飽和）。
-    /// 2. 眠っている間もモデル（VLM≈877MB）を抱え続け、メモリ圧迫の連鎖を招く。
+    /// 眠って待機していた。この方式では実行中の 1 単位が最後まで走り、モデルを抱えたまま眠る。
     /// 明示キャンセルなら実行中の単位が終わり次第すぐ降り、モデルも解放される。
     /// 各処理は差分ベースなので、次の夜間窓で続きから再開する（取りこぼしなし）。
     static func stopForForeground() {
@@ -208,8 +196,6 @@ enum HeavyWorkScheduler {
                   lastActivity: AnalysisActivity.lastActivity(.sceneTags)),
             .init(pass: .embeddings, pending: max(0, progress.total - progress.embedded),
                   lastActivity: AnalysisActivity.lastActivity(.embeddings)),
-            .init(pass: .captions, pending: max(0, progress.captionableTotal - progress.captioned),
-                  lastActivity: AnalysisActivity.lastActivity(.captions)),
             .init(pass: .faces, pending: stores.peopleEngine.remaining,
                   lastActivity: AnalysisActivity.lastActivity(.faces)),
         ]
@@ -260,43 +246,14 @@ enum HeavyWorkScheduler {
         let allowSim = BackgroundYield.debugForceHeavyWork
             || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
 
-        // ⚠️ 顔スキャンとキャプションは **VLM(≈877MB)＋顔モデルの同時常駐を避けるため排他**
-        // （bgfill 側が `isScanningFaces` 中はキャプションを見送る）。顔スキャンの母数は数万枚
-        // あるので、放置するとキャプションが**永久に飢餓**する（ADR-86）。実測: VLM を同梱して
-        // いるのに `captions:` が全ログで 0 件だった。N 窓に 1 回は「キャプション窓」にして
-        // 顔スキャンを起こさない（バックアップの順番回し＝ADR-72 と同じ考え方）。
-        // 判定は `TurnTaking`（純ロジック・テスト済み＝ADR-87）に集約する。
-        // 「連続 maxDeferrals 回譲ったら必ず取る」不変条件がテストで固定されている。
-        let pendingCaptions = await stores.autoAlbumEngine.pendingCaptionCount()
-        let captionTurn = TurnTaking.nextTurn(
-            hasWork: pendingCaptions > 0,
-            blockedByOther: true,          // 顔スキャンは毎窓走るので常にブロック側とみなす
-            streak: UserDefaults.standard.integer(forKey: AppSettingsKeys.captionDeferralStreak),
-            maxDeferrals: Self.maxCaptionDeferrals)
-        UserDefaults.standard.set(captionTurn.streak, forKey: AppSettingsKeys.captionDeferralStreak)
-        if captionTurn.take {
-            Diagnostics.mark("bgtask: caption window (face scan skipped, pending=\(pendingCaptions))")
-            // ⚠️ 新しいスキャンを**起こさない**だけでは足りない（ADR-95）。前の窓や前面で始まった
-            //    スキャンが走り続けていると `isScanningFaces` が立ったままで、bgfill のキャプション
-            //    フェーズは「顔スキャン中」として見送られる＝窓を取った意味が無い。
-            //    実機 diagnostics-38 では窓の直後も `faces.detect` が出続け、キャプションは 0 枚だった。
-            //    スキャンは差分ベースなので、止めても次の窓で続きから再開する。
-            stores.peopleEngine.stopScan()
-        } else {
-            // ⚠️ **取らなかった理由も必ず残す**（ADR-93）。以前は take のときしか記録せず、
-            // 「キャプションが動かない」ときに *残作業ゼロなのか順番待ちなのか*
-            // ログから区別できなかった（実機 diag-37 で判別不能だった）。
-            Diagnostics.mark("bgtask: caption deferred \(captionTurn.streak)/\(Self.maxCaptionDeferrals) "
-                             + "(pending=\(pendingCaptions))")
-            // 一時停止で滞留した既存タスクはゲートが開けば内部で自動再開する（真因の画像ロードハングは修正済み）。
-            stores.peopleEngine.startScan(
-                candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
-                allowSimulator: allowSim)
-        }
+        // 顔スキャンを起こす（差分ベース・毎窓）。旧キャプション窓の順番回し（ADR-86/93）は
+        // VLM 廃止（ADR-108）で不要になった＝窓はタグ・埋め込み・顔スキャンで使い切る。
+        stores.peopleEngine.startScan(
+            candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
+            allowSimulator: allowSim)
         // 夜間窓は重い処理のための特権時間。前面で始まって眠っている実行が居座っていると窓を
         // 丸ごと空転させるので、明け渡させてから始め直す（ADR-95）。
-        // キャプション窓ならこの回だけキャプションを先頭に回す（窓が短くても必ず到達する）。
-        stores.autoAlbumEngine.restartBackgroundFill(captionsFirst: captionTurn.take)
+        stores.autoAlbumEngine.restartBackgroundFill()
 
         // 「動くべきなのに動いていない」パスを毎窓チェックして診断ログへ（ADR-87）。
         // 飢餓バグは沈黙として現れるため、こちらから沈黙を検出しにいく。

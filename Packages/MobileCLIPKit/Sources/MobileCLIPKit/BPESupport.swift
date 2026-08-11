@@ -1,13 +1,7 @@
 import Foundation
 
-/// CLIPTokenizer / GPT2Tokenizer が共有する byte-level BPE の足場。
+/// CLIPTokenizer が使う byte-level BPE の足場（旧 GPT2Tokenizer=VLM 用と共有していた）。
 /// bytes_to_unicode 写像・merges → ランク辞書の構築・最小ランクペア探索を一元化する。
-///
-/// `bpe()` 本体は共通化しない（アルゴリズムが実際に異なるため）:
-/// - CLIP: 最小ランクペアを**最左の 1 箇所ずつ**マージし、語末に `</w>` マーカーを付ける。
-/// - GPT2: 最小ランクペアの**全出現を一括**マージし、マーカー無し（空白は "Ġ" 前置）。
-/// マージで新たに生まれた隣接ペアの方が低ランクの場合に両者の順序が食い違い得るため、
-/// 統一するとトークン化結果が変わるリスクがある。
 enum BPESupport {
 
     /// BPE の隣接ペア（マージ規則のキー）。

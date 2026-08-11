@@ -164,37 +164,12 @@ public final class AutoAlbumEngine {
         }
         self.pathGenerator = PathAlbumGenerator(store: store, cloudProvider: cloudProvider)
         self.tagger = PhotoTagger(store: store, perception: perception)
-        // Phase 2（ADR-35）: AI アルバム候補の上位に**オンデマンドでキャプション**を付けて
-        // LLM 審査の証拠を濃くする（通常はお気に入り限定＝ADR-34 の例外・予算つき・夜間の審査時のみ）。
-        // 生成分は TagStore に永続化するので、次回以降は再生成しない。
-        if let tagProvider, tagProvider.isCaptioningAvailable {
-            aiService.captionOnDemand = { [tagStore] refKeys in
-                #if targetEnvironment(simulator)
-                return [:]   // VLM は cpuOnly で 1 枚十数秒＝シミュレータでは生成しない
-                #else
-                let generated = await tagProvider.captions(refKeys: refKeys)
-                let nonEmpty = generated.filter { !$0.value.isEmpty }
-                if !nonEmpty.isEmpty {
-                    await tagStore.recordCaptions(nonEmpty.map { (refKey: $0.key, caption: $0.value) })
-                    AnalysisActivity.recordActivity(.captions)
-                }
-                return nonEmpty
-                #endif
-            }
-        }
     }
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }
 
     /// 未 CLIP 埋め込みの写真数（3-b: バックアップを AI 残作業と同一窓で走らせないための判定用）。
     public func pendingEmbedCount() async -> Int { await store.unembeddedCount() }
-
-    /// キャプション未生成のお気に入り枚数（VLM 未同梱なら 0）。夜間の窓配分に使う（ADR-86）。
-    public func pendingCaptionCount() async -> Int {
-        guard tagTagger.isCaptioningAvailable else { return 0 }
-        await refreshFavoritesCache()
-        return await tagStore.captionPendingCount(favorites: favoritesCache)
-    }
 
     /// 顔スキャンの実測（refKey → 顔数）を AI アルバム評価に結線する（「人が写っていない」等の
     /// 除外判定に使う）。FaceStore は別コンテナ（PeopleEngine 側）のため、init 連鎖ではなく
@@ -240,12 +215,11 @@ public final class AutoAlbumEngine {
         aiService.peopleByRefKeyProvider = provider
     }
 
-    /// お気に入り（Favorite）写真の refKey 集合を供給する seam。VLM キャプション（重い文章生成）は
-    /// **お気に入りのみ**に付与するため、キャプション対象の絞り込みとフル画像の「生成中」表示に使う。
-    /// Composition Root（アプリ）が PHAsset の favorite==YES を注入する。
+    /// お気に入り（Favorite）写真の refKey 集合を供給する seam。解析順の優先付け
+    /// （お気に入りを先に埋め込む）に使う。Composition Root（アプリ）が PHAsset の
+    /// favorite==YES を注入する。
     @ObservationIgnored var favoriteRefKeysProvider: (@Sendable () async -> Set<String>)?
-    /// お気に入り集合のキャッシュ（insight の captionPending 判定・キャプション進捗分母に使う・
-    /// scheduleBackgroundFill と analysisProgress で更新）。
+    /// お気に入り集合のキャッシュ（解析順の優先付けに使う・scheduleBackgroundFill で更新）。
     @ObservationIgnored var favoritesCache: Set<String> = []
 
     public func setFavoriteRefKeysProvider(_ provider: @escaping @Sendable () async -> Set<String>) {
@@ -282,7 +256,6 @@ public final class AutoAlbumEngine {
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
     private static let perceptionVersion = 8   // v8: CLIP を INT8 量子化（重み半減・精度ほぼ不変）→全再埋め込み（ADR-31）
-    private static let captionModelVersion = 6 // v6: SmolVLM-256M→500M を検証（高品質だが 877MB・実機メモリ要確認）→全キャプション付け直し
 
     public func loadOrGenerate() async {
         ensureObserver()
@@ -311,13 +284,6 @@ public final class AutoAlbumEngine {
             let reset = await store.resetSceneTagged()
             UserDefaults.standard.set(Self.perceptionVersion, forKey: AutoAlbumSettingsKeys.perceptionVersion)
             Self.log.info("loadOrGenerate: perception v\(storedPerception)→\(Self.perceptionVersion), reset \(reset) photos for re-tagging")
-        }
-        // VLM モデルを差し替えたら、既存キャプションを 1 回だけクリアして新モデルで付け直す。
-        let storedCaption = UserDefaults.standard.integer(forKey: AutoAlbumSettingsKeys.captionModelVersion)
-        if storedCaption != Self.captionModelVersion {
-            let reset = await tagStore.resetCaptions()
-            UserDefaults.standard.set(Self.captionModelVersion, forKey: AutoAlbumSettingsKeys.captionModelVersion)
-            Self.log.info("loadOrGenerate: caption model v\(storedCaption)→\(Self.captionModelVersion), cleared \(reset) captions for re-captioning")
         }
         // 起動時の AI アルバム再評価は行わない（保存済みメンバーをそのまま表示）。
         // 解釈は永続化済みで、追いつきはドリフト検知（refreshIfNeeded・アイドル時）と

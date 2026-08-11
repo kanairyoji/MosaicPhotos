@@ -63,19 +63,18 @@ struct AIAlbumExclusionTests {
         #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["clean", "faintPerson"])
     }
 
-    /// 証拠ゲート: タグ・顔実測・キャプションのいずれも無い写真は除外つきアルバムに入れない。
+    /// 証拠ゲート: タグ・顔実測・人数実測のいずれも無い写真は除外つきアルバムに入れない。
     @Test("evidenceGated: 証拠ゼロの写真は落ち、いずれかがあれば残る")
     func evidenceGateRules() {
-        let a = photo("tagged"), b = photo("faced"), c = photo("captioned"), d = photo("nothing")
+        let a = photo("tagged"), b = photo("faced"), c = photo("counted"), d = photo("nothing")
         let gated = AIAlbumVerificationCoordinator.evidenceGated(
             [a, b, c, d],
             tags: [a.id: ["landscape"]],
             faceCounts: [b.id: 0],
-            captions: [c.id: "A beach."])
+            humanCounts: [c.id: 2])
         #expect(Set(gated.map(\.id)) == Set([a.id, b.id, c.id]))
-        // 空キャプション・空タグは証拠にならない。
-        let gated2 = AIAlbumVerificationCoordinator.evidenceGated([d], tags: [d.id: []], faceCounts: [:],
-                                                   captions: [d.id: ""])
+        // 空タグは証拠にならない。
+        let gated2 = AIAlbumVerificationCoordinator.evidenceGated([d], tags: [d.id: []], faceCounts: [:])
         #expect(gated2.isEmpty)
     }
 

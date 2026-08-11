@@ -20,13 +20,12 @@ struct AIAnalysisStatusView: View {
     let mergedStore: MergedPhotoStore
     let dropboxStore: DropboxPhotoStore
 
-    @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0, captioned: 0)
+    @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
     @State private var faceScanned = 0
     @State private var facesDetected = 0
     @State private var localPhotoTotal = 0
 
     private var monitor: BackgroundActivityMonitor { .shared }
-    private var captionsAvailable: Bool { VLM.modelsBundled }
     private var facesAvailable: Bool { people.isFaceModelAvailable }
 
     /// 全パスが解析中でないか（＝いま何かが動いているか）。
@@ -39,7 +38,6 @@ struct AIAnalysisStatusView: View {
             statusSection
             semanticSearchSection
             sceneTagsSection
-            if captionsAvailable { captionsSection }
             if facesAvailable { peopleSection }
             actionSection
         }
@@ -104,27 +102,6 @@ struct AIAnalysisStatusView: View {
             Text("Scene Tags")
         } footer: {
             Text("Recognized subjects (e.g. beach, food, dog) shown on each photo and used to rank search results.")
-        }
-    }
-
-    // MARK: - キャプション（AI による説明）
-
-    private var captionsSection: some View {
-        Section {
-            progressRow(done: progress.captioned, total: progress.captionableTotal, running: engine.isTagging)
-            lastRunRow(.captions)
-            // 生成された説明文を実際に一覧で確認する（動いているかを目視で確かめる）。
-            if progress.captioned > 0 {
-                NavigationLink {
-                    CaptionedPhotosView(engine: engine, mergedStore: mergedStore)
-                } label: {
-                    Label(L("Review descriptions"), systemImage: "text.magnifyingglass")
-                }
-            }
-        } header: {
-            Text("AI Descriptions")
-        } footer: {
-            Text("A one-sentence description generated on device, for your favorite photos only (it's the heaviest pass). Mark photos as favorites to have them described.")
         }
     }
 

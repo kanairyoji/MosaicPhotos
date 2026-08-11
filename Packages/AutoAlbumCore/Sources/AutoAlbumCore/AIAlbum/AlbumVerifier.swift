@@ -10,11 +10,11 @@ public enum CandidateVerdict: Sendable, Equatable {
     case keep, drop, unsure
 }
 
-/// 候補写真の「証拠行」（タグ・キャプション・メタ）を読んで原文クエリとの適合を判定する審査員。
-/// 写真そのものは見られないため、Vision タグ＋VLM キャプション＝疑似キャプションを目として使う。
+/// 候補写真の「証拠行」（タグ・メタ）を読んで原文クエリとの適合を判定する審査員。
+/// 写真そのものは見られないため、Vision タグを目として使う。
 public protocol AlbumCandidateVerifier: Sendable {
     var isAvailable: Bool { get }
-    /// `lines[i]` は "i) 日付 | 場所 | faces=N | tags: … | caption: …" 形式。
+    /// `lines[i]` は "i) 日付 | 場所 | faces=N | tags: …" 形式。
     /// 返り値: 行番号 → 判定（返ってこなかった行は keep 扱い）。
     func verify(criteria: String, lines: [String]) async -> [Int: CandidateVerdict]
 }
@@ -62,7 +62,7 @@ struct FoundationModelsVerifier: AlbumCandidateVerifier {
         guard !lines.isEmpty else { return [:] }
         let instructions = """
         You review photo candidates for the user's album request. Each line describes one photo \
-        (date, place, detected face count, scene tags, and an optional caption). Judge ONLY from \
+        (date, place, detected face count, and scene tags). Judge ONLY from \
         the given evidence — do not guess beyond it. List the line numbers that clearly do NOT \
         match the request, and separately the ones you cannot judge. Lines you do not list are kept.
         """

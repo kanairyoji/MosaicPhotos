@@ -46,7 +46,7 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     }))
     // 人物条件の評価は焼き込みでなく**現在の**顔クラスタ名で live 照合（命名/統合を即反映）。
     engine.setPeopleByRefKeyProvider { await peopleEngine.peopleNamesByRefKey() }
-    // VLM キャプション（重い文章生成）をお気に入り限定にするため、お気に入り集合（PHAsset）を結線。
+    // 解析順の優先付け（お気に入りを先に解析）のため、お気に入り集合（PHAsset）を結線。
     engine.setFavoriteRefKeysProvider { await favoriteImageRefKeys(dropboxStore: dropboxStore) }
 
     // バックアップ metadata v2（ADR-38）: 端末を削除すると再生成できない情報の保全を結線する。
@@ -57,16 +57,6 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         var out: [String: [String]] = [:]
         for (key, names) in byRefKey {
             if let id = PhotoRef.decode(key)?.localIdentifier { out[id] = names }
-        }
-        return out
-    }
-    // VLM キャプション（生成済みのテキストのみ・再生成はしない）。
-    backupEngine.captionsProvider = { [weak engine] ids in
-        guard let engine else { return [:] }
-        let byRefKey = await engine.captions(forRefKeys: ids.map { PhotoRef.local($0).encoded })
-        var out: [String: String] = [:]
-        for (key, caption) in byRefKey {
-            if let id = PhotoRef.decode(key)?.localIdentifier { out[id] = caption }
         }
         return out
     }

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-**MosaicPhotos** は iOS (iPhone) 向けの写真ビューワーアプリ。端末内の写真と Dropbox 上の写真を、ソース別（All / Photos / Cloud）・端末アルバム別・場所（市区町村）別に閲覧できる。外部 SDK・ライブラリは不使用（コードはすべて標準フレームワーク）。AI はオープンソースの学習済みモデル（OpenCLIP / SmolVLM / facenet）を同梱し、OS 内蔵の Core ML・Vision・Foundation Models で実行する。
+**MosaicPhotos** は iOS (iPhone) 向けの写真ビューワーアプリ。端末内の写真と Dropbox 上の写真を、ソース別（All / Photos / Cloud）・端末アルバム別・場所（市区町村）別に閲覧できる。外部 SDK・ライブラリは不使用（コードはすべて標準フレームワーク）。AI はオープンソースの学習済みモデル（OpenCLIP / facenet）を同梱し、OS 内蔵の Core ML・Vision・Foundation Models で実行する。
 
-加えて **オンデバイス AI** を持つ：自然文（任意言語）の **AI アルバム / 意味検索**を「タグ台帳＋LLM審査」の多層構成（ADR-23/24）で実現する。索引は夜間バッチ（電源＋アイドル/ロック中 BGTask）で **Vision シーンタグ（約1,300クラス・精度校正済み）→ CLIP 埋め込み（OpenCLIP ViT-B-32・INT8量子化・Core ML・ADR-31）→ VLM キャプション（SmolVLM-500M・**お気に入り中心**・任意同梱）** の順に付与（タグ/埋め込みは全写真・キャプションはお気に入り＋AI アルバム審査の有力候補へのオンデマンド生成＝いずれも台帳に永続化）。検索は「決定的ハード条件（日付=RelativeDateParser・場所/人物接地・レキシコン）→ タグ一致＋CLIP 対比＋字句の RRF 融合 → 証拠ゲート → FM LLM 審査（多数決）」。解釈（LLM）はアルバム作成時に 1 回だけ実行して永続化する。通信なし・API キー不要。
+加えて **オンデバイス AI** を持つ：自然文（任意言語）の **AI アルバム / 意味検索**を「タグ台帳＋LLM審査」の多層構成（ADR-23/24）で実現する。索引は夜間バッチ（電源＋アイドル/ロック中 BGTask）で **Vision シーンタグ（約1,300クラス・精度校正済み）→ CLIP 埋め込み（OpenCLIP ViT-B-32・INT8量子化・Core ML・ADR-31）** の順に付与（タグ/埋め込みとも全写真・台帳に永続化。※ VLM キャプションは検索寄与ゼロの実測により廃止＝ADR-108）。検索は「決定的ハード条件（日付=RelativeDateParser・場所/人物接地・レキシコン）→ タグ一致＋CLIP 対比＋字句の RRF 融合 → 証拠ゲート → FM LLM 審査（多数決）」。解釈（LLM）はアルバム作成時に 1 回だけ実行して永続化する。通信なし・API キー不要。
 
 
 ### 技術スタック
@@ -21,7 +21,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 | トークン保存 | `Security`（Keychain Services） |
 | Dropbox API | `URLSession` async/await（外部 SDK 不使用） |
 | Dropbox キャッシュ | SwiftData（メタデータ）+ `ImageCacheKit`（バイナリ。`DropboxCacheStore`（actor）が `MemoryImageCache`/`DiskImageStore` を利用） |
-| オンデバイス AI | 多層構成（ADR-24）: **Vision 画像分類**（OS 内蔵・約1,300クラス・`hasMinimumRecall(forPrecision:)` の校正済み足切り）＋ **OpenCLIP ViT-B-32（DataComp・MIT・INT8量子化＝容量半減/精度ほぼ不変・ADR-31）**（Core ML・画像/テキスト埋め込み。ファイル名 `MobileCLIP*` は互換のため据え置き）＋ **SmolVLM-500M-Instruct（Apache-2.0・任意同梱・お気に入り写真限定）**（写真キャプション・`scripts/build_smolvlm.sh` で生成。**視覚エンコーダのみ INT8 量子化**＝出力ベクトルは量子化に強く cos≈0.999／言語デコーダは次単語 argmax が敏感で fp16 のまま。合計 877MB。重い文章生成なので**お気に入り（PHAsset favorite）のみに付与**＝ADR-34。※ 256M より高品質だがメモリ大／FastVLM は apple-amlr で不採用／Florence は ANE 破綻で撤回＝ADR-32）。クエリ解釈・翻訳・候補審査は Apple Foundation Models（`FoundationModels`）で、解釈は**作成時 1 回・永続化**（ADR-23）＋防御的サニタイズ＋決定的レキシコン。ロジックは `AutoAlbumCore`、各ランタイム/seam 実装は `MobileCLIPKit` に集約 |
+| オンデバイス AI | 多層構成（ADR-24）: **Vision 画像分類**（OS 内蔵・約1,300クラス・`hasMinimumRecall(forPrecision:)` の校正済み足切り）＋ **OpenCLIP ViT-B-32（DataComp・MIT・INT8量子化＝容量半減/精度ほぼ不変・ADR-31）**（Core ML・画像/テキスト埋め込み。ファイル名 `MobileCLIP*` は互換のため据え置き）（※ VLM キャプション＝SmolVLM は廃止。検索寄与ゼロの実測＝台帳 S13・ADR-108）。クエリ解釈・翻訳・候補審査は Apple Foundation Models（`FoundationModels`）で、解釈は**作成時 1 回・永続化**（ADR-23）＋防御的サニタイズ＋決定的レキシコン。ロジックは `AutoAlbumCore`、各ランタイム/seam 実装は `MobileCLIPKit` に集約 |
 | 端末診断 | `MosaicSupport` の `Diagnostics`：未捕捉例外（`NSSetUncaughtExceptionHandler`）・メモリ圧迫（`DispatchSource`）・各ログを `Caches/diagnostics.log` に追記し、Developer Options で閲覧/共有（実機で Mac/Console なしに原因追跡） |
 | 最小 iOS | iOS 26.0（アプリターゲットの `IPHONEOS_DEPLOYMENT_TARGET`。各 SPM パッケージは `.iOS(.v17)` 宣言＋`@available` ゲートで macOS テストも維持） |
 | パッケージ管理 | Swift Package Manager（ローカルパッケージ 13 個。基盤: `MosaicSupport` / `PhotoSourceKit` / `ImageCacheKit` / **`PerceptionCore`**（ClipMath・PhotoRef・BackgroundTrickle・AnalysisActivity＝CLIP と顔の共通下層）、ローカル写真: `LocalPhotoCore`(ロジック) / `LocalPhotoKit`(UI)、Dropbox: `DropboxCore`(ロジック) / `DropboxKit`(UI)、`BackupKit`、写真機能統合: `PhotosFeatureKit`、**顔認識/ピープル: `FaceCore`**（依存 PerceptionCore・顔クラスタ一式）、自動アルバム/AI: `AutoAlbumCore`（`@_exported import` で PerceptionCore/FaceCore を再エクスポート＝consumer は import AutoAlbumCore のまま）、CLIP ランタイム/AI seam 実装: `MobileCLIPKit`） |
@@ -101,8 +101,7 @@ MosaicPhotos/                      ← メインアプリターゲット（合�
   ※ 顔認識ロジックは Packages/FaceCore/（旧 AutoAlbumCore/Faces）へ分離・共通プリミティブは Packages/PerceptionCore/
   MobileCLIP/                      CLIP の Core ML モデル＋語彙（.gitignore 対象・scripts/build_mobileclip.sh で生成）
   FaceModel/                       顔認識モデル（.gitignore 対象・scripts/build_facenet.sh で生成）
-  VLM/                             SmolVLM（キャプション・.gitignore 対象・scripts/build_smolvlm.sh で生成）
-  HeavyWorkScheduler.swift         BGProcessingTask（ロック中の夜間処理＝タグ/埋め込み/キャプション/生成）
+  HeavyWorkScheduler.swift         BGProcessingTask（ロック中の夜間処理＝タグ/埋め込み/顔スキャン/生成）
 
 Packages/MosaicSupport/            ← 最下層 SPM パッケージ（横断ユーティリティ・依存なし）
   Sources/MosaicSupport/
@@ -227,7 +226,7 @@ Packages/AutoAlbumCore/            ← 自動アルバム＋オンデバイス A
                                    JapaneseVisualLexicon(決定的視覚語/人物否定) / ClipMath(vDSP コサイン) /
                                    LexicalSearch(地名/人物) / RelativeDateParser(日英・日付の唯一の出典) /
                                    QueryUnderstanding(RuleBased) / FoundationModelsQueryUnderstanding(iOS26)
-    Tags/                          TagStore(@ModelActor・TagsV1 別コンテナ・シーンタグ+キャプション) /
+    Tags/                          TagStore(@ModelActor・TagsV1 別コンテナ・シーンタグ) /
                                    TagTagger(夜間トリクル付与)
     Strategies/                    TimePlaceStrategy(旅行抽出) / PathAlbumStrategy(フォルダ名) / CoverSelection 他
   Tests/AutoAlbumCoreTests/        search/lexical/clipmath/strategy/path/background のテスト（macOS）
@@ -240,9 +239,7 @@ Packages/MobileCLIPKit/            ← CLIP/翻訳ランタイム＋AutoAlbumCor
     AIPerceptionAdapters.swift     PhotoPerceptionProvider（refKey→ローカル/クラウド画像→CLIP 埋め込み）/ MobileCLIPTextEmbedder
     AILanguageAdapters.swift       AppQueryTranslator（FM 英訳）/ loadLocalCGImage（共通画像ローダ）
     CLIPDisplayLabeler.swift       表示タグ補完：約300語に対する CLIP ゼロショット（保存済み clipVector を使用）
-    VisionTagAdapter.swift         シーンタグ（OS 内蔵 VNClassifyImageRequest・精度校正済み足切り）＋VLM キャプション seam
-    VLMRuntime.swift               SmolVLM 実行系（視覚埋め込み→固定長全系列デコード・遅延ロード）
-    GPT2Tokenizer.swift            SmolLM2 用 byte-level BPE（vlm_vocab/merges から構築）
+    VisionTagAdapter.swift         シーンタグ（OS 内蔵 VNClassifyImageRequest・精度校正済み足切り）
   ※ アプリの AutoAlbumAdapters がこれらを AutoAlbumEngine の seam に注入する
 ```
 
@@ -289,9 +286,9 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
 - **AI/自動アルバムは AutoAlbumCore に集約（SwiftUI 非依存）**: 旅行/フォルダ/AI アルバム生成・知覚・検索は `AutoAlbumCore`。`@Model` は `@ModelActor`（`AutoAlbumStore`）の外へ漏らさず Sendable 値（`EnrichedPhoto` 等）に変換して返す。ファサードは `@MainActor @Observable` の `AutoAlbumEngine`。スキーマ変更時は `ModelConfiguration` 名（現行 `"AutoAlbumV10"`）を採番して旧ストアを破棄→再構築する
 - **ModelContainer は自己修復で構築**: SwiftData の `ModelContainer` 初期化は、ストア破損・スキーマ不整合のとき起動時に trap して実機で原因不明のクラッシュになりやすい。`AutoAlbumStore` / `DropboxCacheStore` / `BackupEngine` は `makeResilientContainer(...)` で「失敗→ストアファイル（.store/-wal/-shm）削除して再試行→なお失敗ならインメモリ」とフォールバックし、起動を止めない（失敗は診断ログへ）
 - **CLIP 埋め込みは別テーブル＋Float16＋ページング**: 埋め込みを `PhotoEnrichment` に inline 格納すると、SwiftData は全件 fetch（生成・重複排除・戦略・prune）のたびに巨大 blob も展開し、67k×2KB≈138MB を確保 → **写真枚数に比例した実機起動クラッシュ**になっていた。そのため埋め込みは **`PhotoEmbedding` 別テーブルに Float16（約1KB/枚）** で分離し、メタデータ fetch が blob に一切触れないようにする。意味検索は `enrichmentVectorPage(offset:limit:)`（`PhotoEmbedding` を refKey 昇順でページング・fp32 へ復元して返す）を `AIAlbumSearcher.search(baseLite:...loadPage:)` にストリームする。`allEnrichedPhotosLite()` はメタのみ（埋め込みなし）。純関数版 `search(_ all:)` と選定ロジックは一致させる。大量 upsert は `writeChunk` 件ごとに使い捨て `ModelContext` で save→解放して常駐を有界に保つ
-- **AI アルバム検索は「タグ台帳＋LLM審査」の多層構成（ADR-23/24）**: 解釈（LLM・`FoundationModelsQueryUnderstanding`）は**作成/編集時に 1 回だけ**実行し `AIAlbumInterpretationStore`（JSONFileStore・版管理）へ永続化する（起動時・写真追加時に LLM は走らない）。小型 LLM の構造化出力は信用せず、`QuerySpecSanitizer`（プレースホルダ除去・カタログ丸写し検出・include/exclude 衝突解消）＋**決定的レイヤー**（日付=`RelativeDateParser` が唯一の出典・place/people はカタログ/原文接地・`JapaneseVisualLexicon` で頻出視覚語と人物否定を抽出）で必ず接地する。検索は「ハード条件（`QueryEvaluator`）→ **Vision シーンタグ一致（離散・閾値レス）**＋ CLIP 対比（除外は肯定/否定ベクトルの相対判定のみ・絶対閾値なし）＋字句（`LexicalSearch`）の RRF 融合（`HybridFusion`）→ **証拠ゲート**（除外つきはタグ/顔実測/キャプションの証拠必須）→ **FM LLM 審査**（`AlbumVerifier`・keep/drop/unsure・unsure は最大2回再判定の多数決）→ 空振り時はプローブ拡張で 1 回だけ再検索」。再評価は増分（新規埋め込み分のみ採点しスコアプールへマージ）＋ドリフト検知のフル再評価。旧フラット `AIAlbumQuery` は解釈フォールバック（RuleBased/FM flat）用に残る（検索 API は撤去済み）。**検索の精度はクエリ集ハーネスのデータセット計測で決める**（ADR-104・`docs/architecture-note/records/search-quality.md`＝台帳・COCO/Caltech・`SearchEvalTests`/`SearchEvalCaltechTests`。解釈・照合・接地・証拠まわりを変えたら両ハーネスを回して差分を台帳へ記す。体感・個別事例では決めない）
+- **AI アルバム検索は「タグ台帳＋LLM審査」の多層構成（ADR-23/24）**: 解釈（LLM・`FoundationModelsQueryUnderstanding`）は**作成/編集時に 1 回だけ**実行し `AIAlbumInterpretationStore`（JSONFileStore・版管理）へ永続化する（起動時・写真追加時に LLM は走らない）。小型 LLM の構造化出力は信用せず、`QuerySpecSanitizer`（プレースホルダ除去・カタログ丸写し検出・include/exclude 衝突解消）＋**決定的レイヤー**（日付=`RelativeDateParser` が唯一の出典・place/people はカタログ/原文接地・`JapaneseVisualLexicon` で頻出視覚語と人物否定を抽出）で必ず接地する。検索は「ハード条件（`QueryEvaluator`）→ **Vision シーンタグ一致（離散・閾値レス）**＋ CLIP 対比（除外は肯定/否定ベクトルの相対判定のみ・絶対閾値なし）＋字句（`LexicalSearch`）の RRF 融合（`HybridFusion`）→ **証拠ゲート**（除外つきはタグ/顔実測/人数実測の証拠必須）→ **FM LLM 審査**（`AlbumVerifier`・keep/drop/unsure・unsure は最大2回再判定の多数決）→ 空振り時はプローブ拡張で 1 回だけ再検索」。再評価は増分（新規埋め込み分のみ採点しスコアプールへマージ）＋ドリフト検知のフル再評価。旧フラット `AIAlbumQuery` は解釈フォールバック（RuleBased/FM flat）用に残る（検索 API は撤去済み）。**検索の精度はクエリ集ハーネスのデータセット計測で決める**（ADR-104・`docs/architecture-note/records/search-quality.md`＝台帳・COCO/Caltech・`SearchEvalTests`/`SearchEvalCaltechTests`。解釈・照合・接地・証拠まわりを変えたら両ハーネスを回して差分を台帳へ記す。体感・個別事例では決めない）
 - **知覚 seam はプロトコル＋`MobileCLIPKit` 実装**: `PhotoPerceptionProvider`(refKey→CLIP 埋め込み・ローカル/クラウド両対応) / `TextEmbedder` / `QueryTranslator`(Foundation Models) / `LabelProvider`(表示タグ) は `AutoAlbumCore` のプロトコルで、実体は `MobileCLIPKit`（`AIPerceptionAdapters` / `AILanguageAdapters` / `CLIPDisplayLabeler`）が `MobileCLIPRuntime`・`FoundationModels` で実装する。アプリの `AutoAlbumAdapters`（Composition Root）が `AutoAlbumEngine` の seam に注入する。`PhotoSourceKit` は `AutoAlbumCore` に依存せず、フル画像の付加情報は `photoInsight` 環境クロージャ経由で受け取る（レイヤー分離）
-- **表示タグ＝検索と同一の台帳**: フル画像のタグ欄（常時表示）は **Vision シーンタグ（`TagStore`・検索の一次ランキングと同一ソース）を第一**に、`CLIPDisplayLabeler`（約300語ゼロショット）で補完する。VLM キャプションも「AI description」欄に表示（生成済みのみ）。タグ/キャプションは **TagsV1 別コンテナ**（`PhotoTagRecord`）で、夜間バッチ（`TagTagger`）が Vision タグ → CLIP 埋め込み → VLM キャプションの順に付与する
+- **表示タグ＝検索と同一の台帳**: フル画像のタグ欄（常時表示）は **Vision シーンタグ（`TagStore`・検索の一次ランキングと同一ソース）を第一**に、`CLIPDisplayLabeler`（約300語ゼロショット）で補完する。タグは **TagsV1 別コンテナ**（`PhotoTagRecord`）で、夜間バッチ（`TagTagger`）が Vision タグ → CLIP 埋め込みの順に付与する。※ VLM キャプション（AI description）は廃止（ADR-108・`PhotoTagRecord.caption` フィールドはスキーマ互換のため残置）
 - **性能設計の既定原則（重い処理を書く/直すときは必ず通す）**: 遅さの相談を受けたら、**まず 1 単位あたりの内訳を実測**（I/O・通信・推論・DB のどれが支配的か）してから手を入れる。そのうえで以下を**言われる前に**適用する。
   1. **I/O と計算は重ねる**（最重要）。通信・ディスク読み・デコードと、推論・計算が交互に来る逐次ループは、待ち時間がまるごと無駄になる。**次の単位の取得を、現在の単位の処理中に始める**（1 バッチ先読み）。ANE ゲートは推論だけを直列化し通信は縛らないので、通信は推論の裏に完全に隠せる（ADR-83 の実例＝クラウド解析の 85〜90% が DL 待ちだった）。
   2. **往復はまとめる**。1 件ずつの API 呼び出しはバッチ API の利点を消す（Dropbox サムネは 25 枚/リクエスト・並列）。ループの中で単発リクエストを見たら疑う。

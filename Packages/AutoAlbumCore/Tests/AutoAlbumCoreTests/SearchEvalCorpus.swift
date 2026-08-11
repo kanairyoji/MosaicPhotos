@@ -35,12 +35,9 @@ enum SearchEvalCorpus {
         var tags: Double = 0.86
         /// 顔スキャン（facenet パイプライン）。実機は約 11%。
         var faces: Double = 0.11
-        /// VLM キャプション（お気に入り限定）。実機は 1% 未満。
-        var captions: Double = 0.01
-
         static let device = Coverage()
         /// 全件索引済み（上限性能を見る用）。
-        static let complete = Coverage(tags: 1, faces: 1, captions: 1)
+        static let complete = Coverage(tags: 1, faces: 1)
     }
 
     /// 合成したコーパス一式。
@@ -52,8 +49,6 @@ enum SearchEvalCorpus {
         var humanCounts: [String: Int]
         /// 顔スキャンの実測（refKey → 顔数）。未スキャンは存在しない。
         var faceCounts: [String: Int]
-        /// VLM キャプション。未生成は存在しない。
-        var captions: [String: String]
         /// 笑顔の実測（refKey → 笑顔の顔数）。**顔スキャンと同じ網羅率**（同じ写真だけキーが在る）。
         var smileCounts: [String: Int]
         /// 美的スコア台帳（タグ付けと同じ網羅率＝Vision 一括パスで同時計測されるため）。
@@ -84,7 +79,6 @@ enum SearchEvalCorpus {
         var tags: [String: [String]] = [:]
         var humanCounts: [String: Int] = [:]
         var faceCounts: [String: Int] = [:]
-        var captions: [String: String] = [:]
         var smileCounts: [String: Int] = [:]
         var aesthetics: [String: Double] = [:]
         var truth: [String: [String: Int]] = [:]
@@ -140,16 +134,10 @@ enum SearchEvalCorpus {
                 faceCounts[refKey] = counts["person"] ?? 0
                 smileCounts[refKey] = isSmiling ? max(1, personCount / 2) : 0
             }
-
-            // --- VLM キャプション（ごく一部） ---
-            if deterministicUnit(refKey, salt: 5) < coverage.captions {
-                let subjects = counts.keys.sorted().prefix(4).joined(separator: ", ")
-                captions[refKey] = subjects.isEmpty ? "a photo" : "a photo of \(subjects)"
-            }
         }
 
         return Corpus(photos: photos, tags: tags, humanCounts: humanCounts,
-                      faceCounts: faceCounts, captions: captions,
+                      faceCounts: faceCounts,
                       smileCounts: smileCounts, aesthetics: aesthetics, truth: truth,
                       truthSmiling: truthSmiling, truthChild: truthChild,
                       truthAesthetics: truthAesthetics)

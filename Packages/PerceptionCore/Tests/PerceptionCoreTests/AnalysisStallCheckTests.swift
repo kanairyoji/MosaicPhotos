@@ -44,26 +44,26 @@ struct AnalysisStallCheckTests {
         #expect(AnalysisStallCheck.stalled(states, now: now) == [.embeddings])
     }
 
-    /// ADR-86 の実バグ: VLM 同梱済みなのにキャプションが一度も生成されなかった状況。
-    /// 「一度も動いていない」は `installedAt` からの経過で判定する。
-    @Test("実バグ再現(ADR-86): 一度も動いていないキャプションを導入時刻から検出する")
-    func historicalCaptionStarvation() {
+    /// ADR-86 の実バグと同型（当時は VLM キャプション＝現在は廃止）: あるパスが一度も
+    /// 生成されない状況。「一度も動いていない」は `installedAt` からの経過で判定する。
+    @Test("実バグ再現(ADR-86): 一度も動いていないパスを導入時刻から検出する")
+    func historicalStarvation() {
         let states = [
-            state(.captions, pending: 1_383, lastDaysAgo: nil),      // 一度も動いていない
+            state(.embeddings, pending: 1_383, lastDaysAgo: nil),    // 一度も動いていない
             state(.faces, pending: 67_377, lastDaysAgo: 0.2),
         ]
-        #expect(AnalysisStallCheck.stalled(states, now: now, installedAt: daysAgo(14)) == [.captions])
+        #expect(AnalysisStallCheck.stalled(states, now: now, installedAt: daysAgo(14)) == [.embeddings])
     }
 
     @Test("新規インストール直後は、一度も動いていなくても停滞としない")
     func freshInstallIsNotStalled() {
-        let states = [state(.captions, pending: 1_383, lastDaysAgo: nil)]
+        let states = [state(.embeddings, pending: 1_383, lastDaysAgo: nil)]
         #expect(AnalysisStallCheck.stalled(states, now: now, installedAt: daysAgo(0.5)).isEmpty)
     }
 
     @Test("導入時刻が不明かつ未実行なら判定しない（誤検知させない）")
     func unknownBaselineIsNotStalled() {
-        let states = [state(.captions, pending: 100, lastDaysAgo: nil)]
+        let states = [state(.embeddings, pending: 100, lastDaysAgo: nil)]
         #expect(AnalysisStallCheck.stalled(states, now: now, installedAt: nil).isEmpty)
     }
 

@@ -18,10 +18,9 @@ extension AutoAlbumEngine {
         for refKey in keys {
             guard let rec = await store.insightRecord(refKey: refKey) else { continue }
             let status: PhotoInsight.Status = rec.tagged ? .ready : .analyzing
-            // A4 パフォーマンス: タグ・キャプションの照会を**並列**で発行する（旧: 直列 await ×3
+            // A4 パフォーマンス: タグ等の照会を**並列**で発行する（旧: 直列 await
             // ＝スワイプ連打時のパネル表示遅延）。CLIP 表示ラベルも rec を得た時点で並行に走らせる。
             async let tagsTask = tagStore.tags(forRefKeys: [refKey])
-            async let captionTask = tagStore.captions(forRefKeys: [refKey])
             async let ocrTask = tagStore.ocrTexts(forRefKeys: [refKey])
             async let usageTask = usageStore.counts(forRefKeys: [refKey])
             // CLIP 表示ラベルは**準備できているときだけ**合成する。未構築だと labels() が CLIP テキスト
@@ -41,16 +40,9 @@ extension AutoAlbumEngine {
                 let seen = Set(tags.map { $0.lowercased() })
                 tags += clipLabels.filter { !seen.contains($0.lowercased()) }
             }
-            let caption = (await captionTask)[refKey]
-            let hasCaption = caption?.isEmpty == false
-            // キャプションは**お気に入り限定**なので、「生成中」は VLM 同梱かつ未生成かつ**お気に入り**のときだけ出す
-            // （非お気に入りは今後も付かないので空欄でよい・誤って「生成中」を出さない）。
-            let captionPending = !hasCaption && tagTagger.isCaptioningAvailable && favoritesCache.contains(refKey)
             let ocrText = (await ocrTask)[refKey]
             let usage = (await usageTask)[refKey]
             return PhotoInsight(tags: Array(tags.prefix(10)), people: rec.photo.people,
-                                caption: hasCaption ? caption : nil,
-                                captionPending: captionPending,
                                 ocrText: ocrText,
                                 viewCount: usage?.viewCount,
                                 playCount: usage?.playCount,
@@ -236,13 +228,11 @@ extension AutoAlbumEngine {
         // 実行中の generate（前面の定期ループから起動されたものを含む）にも降りるよう伝える。
         // generate は呼び出し側のタスク上で走るため cancel では止められない（ADR-79 追記）。
         requestAbortHeavyWork()
-        // キャプションの VLM（≈877MB）は抱えたままにしない（復帰直後のメモリ圧迫連鎖を断つ）。
-        tagTagger.releaseCaptionModel()
     }
 
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
     /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
-    /// 未タグ写真の Vision タグ付け＋CLIP 埋め込み＋VLM キャプションをバックグラウンドで進める。
+    /// 未タグ写真の Vision タグ付け＋CLIP 埋め込みをバックグラウンドで進める。
     /// ※ 一時停止で滞留したタスクは、ゲートが開けば（`heavyShouldPause` が false になれば）内部の
     ///   `waitWhilePaused` で**自分で再開**する。生成フラグ滞留の安全弁は
     ///   `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）とデバッグ全開バイパスが担う。
@@ -253,7 +243,7 @@ extension AutoAlbumEngine {
     /// 窓は `bgfill: skip — already tagging/embedding` だけを残して丸ごと空転する
     ///（実機 diagnostics-38: 窓 77 秒のうち有効な処理は 0）。滞留側を降ろして窓を使い切る。
     /// 各処理は差分ベースかつバッチごとに保存しているので、割り込んでも取りこぼさない。
-    public func restartBackgroundFill(captionsFirst: Bool = false) {
+    public func restartBackgroundFill() {
         if isTagging {
             Diagnostics.mark("bgfill: preempting the in-flight run for the background window")
             fillGeneration &+= 1        // 旧タスクの末尾処理を無効化（世代ガード）
@@ -261,13 +251,10 @@ extension AutoAlbumEngine {
             backgroundFillTask = nil
             isTagging = false
         }
-        scheduleBackgroundFill(captionsFirst: captionsFirst)
+        scheduleBackgroundFill()
     }
 
-    /// - Parameter captionsFirst: キャプション窓（ADR-86/93）から呼ぶときに true。
-    ///   その回だけ VLM キャプションを埋め込みより先に回す。窓は短い（実機で 77 秒だった例あり）ので、
-    ///   順番が後ろだと窓が尽きて一度も到達しない（ADR-95）。
-    public func scheduleBackgroundFill(captionsFirst: Bool = false) {
+    public func scheduleBackgroundFill() {
         // D: 二重起動の抑止。前景の起動タスクと夜間 BGTask が同じエンジンに対して同時に呼び得るため、
         //    実行中フラグを**同期的に**立ててから Task を起こす（Task 内で立てると 2 本すり抜ける）。
         // 一時停止で滞留したタスクはゲートが開けば内部の waitWhilePaused で自分で再開する（force 撤去）。
@@ -355,52 +342,22 @@ extension AutoAlbumEngine {
                 Diagnostics.mark("bgfill: cancelled after tag phase")
                 return
             }
-            // P2/P3: CLIP 埋め込みと VLM キャプションを**インターリーブ**で進める。
-            // ⚠️ 逐次（埋め込み全量→キャプション）だと、埋め込みが 85k 枚すべて終わるまで
-            //    キャプションが 1 枚も始まらない（実測 21% で滞留＝キャプション永遠に未着手）。
-            //    そこで両者を少量ずつ交互に回し、どちらも進捗しなくなったら終了する。
+            // P2: CLIP 埋め込みを進捗しなくなるまで回す（VLM キャプションのインターリーブは
+            // 廃止＝ADR-108。窓はすべて埋め込み・タグ・顔スキャンに使う）。
             let embedPause: @MainActor () -> Bool = { [weak self] in
                 // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との相互排他）は
                 // BackgroundYield.heavyShouldPause に一元化。埋め込みは操作中も譲る。
                 (self?.isInteracting ?? false) || BackgroundYield.heavyShouldPause()
             }
-            let captionPause: @MainActor () -> Bool = { BackgroundYield.heavyShouldPause() }
-            // VLM キャプション（重い文章生成）は**お気に入り限定**（favorites は上で取り込み済み）。
-            // 処理順は**撮影日降順**（新しい写真から先に説明が付く）。
-            let favoritesOrdered = await store.newestFirst(refKeys: favorites)
             Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums) "
                              + "unembedded=\(await store.unembeddedCount()))")
-            // ⚠️ キャプション窓（ADR-86/93）では**キャプションを先に**回す（ADR-95）。
-            //    以前は必ず埋め込みが先で、埋め込みが窓を使い切るとキャプションに一度も到達しなかった。
-            //    実機 diagnostics-38 では窓が 77 秒しか無く（`bgtask: expired` まで）、pending=796 の
-            //    キャプションは 1 枚も生成されないまま窓が終わっていた。
-            var captionsFirstThisRun = captionsFirst
             while !BackgroundYield.heavyShouldPause(), !Task.isCancelled {
-                var embed = (before: 0, after: 0)
-                var caption = (before: 0, after: 0)
-                if captionsFirstThisRun {
-                    captionsFirstThisRun = false
-                    caption = await runCaptionPhase(favorites: favorites,
-                                                    favoritesOrdered: favoritesOrdered,
-                                                    shouldPause: captionPause)
-                    if BackgroundYield.heavyShouldPause() || Task.isCancelled { break }
-                    embed = await runEmbedPhase(preset: preset, favorites: favorites,
+                let embed = await runEmbedPhase(preset: preset, favorites: favorites,
                                                 shouldPause: embedPause)
-                } else {
-                    embed = await runEmbedPhase(preset: preset, favorites: favorites,
-                                                shouldPause: embedPause)
-                    if BackgroundYield.heavyShouldPause() || Task.isCancelled { break }
-                    caption = await runCaptionPhase(favorites: favorites,
-                                                    favoritesOrdered: favoritesOrdered,
-                                                    shouldPause: captionPause)
-                }
-                // どちらも 1 枚も進まなかった＝残作業なし（お気に入り分のキャプション完了含む）→ 終了。
-                let progressed = (embed.after < embed.before) || (caption.after < caption.before)
-                if !progressed { break }
+                // 1 枚も進まなかった＝残作業なし → 終了。
+                if embed.after >= embed.before { break }
             }
-            // ループを抜けたら VLM は必ず解放しておく（顔スキャン中でキャプション未実行だった場合も）。
-            tagTagger.releaseCaptionModel()
             // isTagging は先頭の defer で必ず戻す（二重起動抑止と対）。
         }
     }
@@ -422,52 +379,11 @@ extension AutoAlbumEngine {
         return (before, await store.unembeddedCount())
     }
 
-    /// VLM キャプションフェーズ。戻り値は実行前後の未キャプション件数（進捗判定用）。
-    ///
-    /// 1-b: VLM(≈877MB) は**顔スキャンが動いていない間だけ**回す（facenet と同時常駐させない）。
-    /// 顔スキャン中は見送る＝この場合 (0, 0) を返し「進捗なし」として扱う。キャプション窓では
-    /// 呼び出し側（`HeavyWorkScheduler`）が先に `stopScan()` して道を空ける（ADR-95）。
-    private func runCaptionPhase(favorites: Set<String>,
-                                 favoritesOrdered: [String],
-                                 shouldPause: @escaping @MainActor () -> Bool) async -> (before: Int, after: Int) {
-        guard !BackgroundActivityMonitor.shared.isScanningFaces else {
-            Diagnostics.mark("bgfill: captions skipped — face scan running")
-            return (0, 0)
-        }
-        // S7（ADR-102）: 証拠不足で保留になった除外つきアルバムの写真を、お気に入りより**先に**
-        // キャプションする。キャプションが付けば証拠になり、次の評価でアルバムに入れる
-        // （網羅 1% のキャプションを「いま証拠を必要としている写真」へ狙って配る）。
-        // 進捗判定（before/after）も優先分を含めて数える＝優先分だけ進んだ窓を「進捗なし」と誤読しない。
-        let starved = aiService.evidenceStarvedRefKeys
-        let targets = favorites.union(starved)
-        let starvedSet = Set(starved)
-        let queue = starved + favoritesOrdered.filter { !starvedSet.contains($0) }
-        let before = await tagStore.captionPendingCount(favorites: targets)
-        await tagTagger.captionUnprocessed(maxBatches: 3, favoritesNewestFirst: queue,
-                                           shouldPause: shouldPause)
-        let after = await tagStore.captionPendingCount(favorites: targets)
-        // 1-d: キャプションフェーズが一巡したら VLM を解放（CLIP 画像塔と同時常駐しない）。
-        tagTagger.releaseCaptionModel()
-        Diagnostics.mark("bgfill: captions \(before - after) done (pending \(before)→\(after))")
-        return (before, after)
-    }
-
     /// 設定（重さ段階）から現在のバックグラウンド埋め込みプリセットを読む。
     static func currentBackgroundPreset() -> BackgroundProcessingPreset {
         let index = UserDefaults.standard.object(forKey: AutoAlbumSettingsKeys.backgroundProcessingLevel) as? Int
             ?? BackgroundProcessing.defaultIndex
         return BackgroundProcessing.preset(at: index)
-    }
-
-    /// refKey → 生成済み VLM キャプション。バックアップの metadata 保全（ADR-38）などアプリ側から使う。
-    public func captions(forRefKeys keys: [String]) async -> [String: String] {
-        await tagStore.captions(forRefKeys: keys)
-    }
-
-    /// キャプション済みの写真サンプル（refKey・説明文）。設定「AIによる説明」の確認 UI 用。
-    /// VLM キャプションが実際に付いているかを、生成された説明文で目視確認できるようにする。
-    public func captionedSamples(limit: Int = 200) async -> [(refKey: String, caption: String)] {
-        await tagStore.captionedSamples(limit: limit)
     }
 
     /// 埋め込み済み／未処理の写真数（設定画面の進捗表示用）。
@@ -481,17 +397,11 @@ extension AutoAlbumEngine {
     /// `total`（取り込み済み写真数＝分母）と、各パスの完了数を 1 回で取得する。
     /// 完了時刻は `AnalysisActivity.lastActivity(_:)` で別途読む（UserDefaults・同期）。
     public func analysisProgress() async -> AnalysisProgress {
-        await refreshFavoritesCache()
-        let favorites = favoritesCache
         async let total = store.enrichmentCount()
         async let embedded = store.embeddedCount()
         async let tagged = tagStore.taggedCount()
-        // キャプションはお気に入り限定なので、済み枚数もお気に入り分（=お気に入り総数−未生成）で数える。
-        async let capPending = tagStore.captionPendingCount(favorites: favorites)
-        let captionedFav = max(0, favorites.count - (await capPending))
         return AnalysisProgress(total: await total, embedded: await embedded,
-                                sceneTagged: await tagged, captioned: captionedFav,
-                                captionableTotal: favorites.count)
+                                sceneTagged: await tagged)
     }
 
     /// 全写真の認識結果（CLIP 埋め込み・キャプション）を消去し、最新ロジックで一から付け直す。

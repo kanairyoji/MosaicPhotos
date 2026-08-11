@@ -26,7 +26,8 @@ public struct DropboxBackupMetadata: Codable, Sendable {
         public var longitude: Double?
         /// PHAsset.mediaSubtypes のスクリーンショット判定（クラウド側では再判定不能）。
         public var isScreenshot: Bool?
-        /// アプリ生成の VLM キャプション（テキストで小さいため保全。VLM 未同梱端末への引き継ぎにもなる）。
+        /// 旧 VLM キャプション（機能廃止＝ADR-108）。**アップロード済み metadata JSON の
+        /// デコード互換のためフィールドだけ残す**（新規アップロードでは常に nil）。
         public var caption: String?
         /// オフロード前検証（contentHash 照合）に成功した日時（ISO 8601）。将来のオフロード機能用。
         public var verifiedAt: String?

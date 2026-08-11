@@ -115,7 +115,6 @@ struct DeveloperSettingsView: View {
                            value: currentMemoryFootprintMB().map { String(format: "%.0f MB", $0) } ?? "—")
             LabeledContent("CLIP モデル", value: MobileCLIP.modelsBundled ? "同梱あり" : "同梱なし")
             LabeledContent("顔モデル", value: FaceModel.modelBundled ? "同梱あり" : "同梱なし")
-            LabeledContent("VLM（写真の説明文）", value: VLM.modelsBundled ? "同梱あり" : "同梱なし")
             LabeledContent("解析済み写真", value: "\(enrichmentCount)")
             LabeledContent("地名解決した地点", value: "\(cachedPlaceCount)")
         } header: {

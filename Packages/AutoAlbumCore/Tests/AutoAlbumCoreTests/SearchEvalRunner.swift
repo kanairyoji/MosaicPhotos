@@ -35,7 +35,7 @@ enum SearchEvalRunner {
         let gated = saved.spec.allContentTerms.exclude.isEmpty
             ? members
             : AIAlbumVerificationCoordinator.evidenceGated(
-                members, tags: corpus.tags, faceCounts: corpus.faceCounts, captions: corpus.captions,
+                members, tags: corpus.tags, faceCounts: corpus.faceCounts,
                 humanCounts: corpus.humanCounts,
                 excludeTerms: saved.spec.allContentTerms.exclude)
         return Set(gated.map(\.id))

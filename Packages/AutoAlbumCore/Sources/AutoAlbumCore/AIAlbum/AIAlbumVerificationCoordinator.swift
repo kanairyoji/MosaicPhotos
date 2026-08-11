@@ -6,19 +6,12 @@ import MosaicSupport
 /// 多数決の集計をここに集約する（`AIAlbumService` から分離）。
 @MainActor
 final class AIAlbumVerificationCoordinator {
-    /// シーンタグ・キャプションのストア（証拠行の材料＝検索の一次ランキングと同一の台帳）。
+    /// シーンタグのストア（証拠行の材料＝検索の一次ランキングと同一の台帳）。
     private let tagStore: TagStore?
     /// P2: LLM 審査員（FM 無し端末では nil＝審査スキップ）。
     private let verifier: AlbumCandidateVerifier?
     /// 顔スキャンの実測（refKey → 顔数）を返す seam（`AIAlbumService` 経由で Composition Root から結線）。
     var faceCountsProvider: (@Sendable () async -> [String: Int])?
-    /// Phase 2（ADR-35）: 候補写真への**オンデマンドキャプション生成**（refKeys → 生成 caption）。
-    /// キャプションは通常お気に入り限定（ADR-34）だが、AI アルバムの**候補上位だけ**は審査の証拠を
-    /// 濃くするため予算つきで生成する（「候補だけに重い VLM を注ぐ」）。実体はエンジンが結線
-    /// （TagPerceptionProvider.captions ＋ TagStore へ永続化・シミュレータ/VLM 未同梱では nil）。
-    var captionOnDemand: (@Sendable ([String]) async -> [String: String])?
-    /// 1 回の審査でオンデマンド生成するキャプションの上限（500M VLM ~4秒/枚 × 40 ≈ 3分弱・夜間）。
-    static let captionBudget = 40
 
     init(tagStore: TagStore?, verifier: AlbumCandidateVerifier? = makeDefaultVerifier()) {
         self.tagStore = tagStore
@@ -28,13 +21,13 @@ final class AIAlbumVerificationCoordinator {
     // MARK: - 純ロジック（テスト対象）
 
     /// 証拠ゲート（純・テスト対象）: 除外条件つきアルバムでは、**検証可能な証拠**
-    /// （シーンタグ / 顔実測 / キャプション）を 1 つも持たない写真をメンバーにしない。
+    /// （シーンタグ / 顔実測 / 人数実測）を 1 つも持たない写真をメンバーにしない。
     /// 「人が写っていない」と主張できない写真を弱い CLIP 対比だけで通すと漏れる（実障害）。
     /// 証拠は夜間バッチで増えるため、アルバムは索引の進行とともに自然に埋まっていく。
+    /// ※ キャプション証拠は廃止（ADR-108・網羅率 1% で寄与ゼロ＝台帳 S13。humanCount が代替済み）。
     nonisolated static func evidenceGated(_ members: [EnrichedPhoto],
                                           tags: [String: [String]],
                                           faceCounts: [String: Int],
-                                          captions: [String: String],
                                           humanCounts: [String: Int] = [:],
                                           excludeTerms: [String] = []) -> [EnrichedPhoto] {
         // 除外語が「人」系を含むなら、**人について語れる証拠**を要求する（ADR-100）。
@@ -45,12 +38,10 @@ final class AIAlbumVerificationCoordinator {
             if needsPeopleEvidence {
                 return humanCounts[photo.id] != nil
                     || faceCounts[photo.id] != nil
-                    || (captions[photo.id]?.isEmpty == false)
             }
             return !(tags[photo.id] ?? []).isEmpty
                 || faceCounts[photo.id] != nil
                 || humanCounts[photo.id] != nil
-                || (captions[photo.id]?.isEmpty == false)
         }
     }
 
@@ -68,7 +59,7 @@ final class AIAlbumVerificationCoordinator {
 
     /// LLM 審査（P2）用の証拠行（純・テスト対象）。写真を見られない審査員に渡す 1 行サマリ。
     nonisolated static func evidenceLine(index: Int, photo: EnrichedPhoto,
-                                         tags: [String], caption: String?, faceCount: Int?) -> String {
+                                         tags: [String], faceCount: Int?) -> String {
         var parts: [String] = ["\(index))"]
         if let date = photo.captureDate {
             let f = DateFormatter()
@@ -79,44 +70,30 @@ final class AIAlbumVerificationCoordinator {
         if let place = photo.placeName, !place.isEmpty { parts.append(place) }
         if let faceCount { parts.append("faces=\(faceCount)") }
         if !tags.isEmpty { parts.append("tags: " + tags.prefix(8).joined(separator: ", ")) }
-        if let caption, !caption.isEmpty { parts.append("caption: " + caption) }
         return parts.joined(separator: " | ")
     }
 
     // MARK: - 証拠ゲート / LLM 審査
 
-    /// 除外条件つきアルバムの**証拠ゲート**: タグ/顔実測/キャプションを 1 つも持たない写真は
+    /// 除外条件つきアルバムの**証拠ゲート**: タグ/顔実測/人数実測を 1 つも持たない写真は
     /// メンバーにしない（「〜が写っていない」を検証できないため）。除外なしのアルバムは素通し。
     func evidenceGatedIfExcluding(_ members: [EnrichedPhoto],
                                   spec: QuerySpec) async -> [EnrichedPhoto] {
         guard !spec.allContentTerms.exclude.isEmpty, !members.isEmpty else { return members }
         let keys = members.map(\.id)
         let tags = await tagStore?.tags(forRefKeys: keys) ?? [:]
-        let captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
         let faces = await faceCountsProvider?() ?? [:]
         let humans = await tagStore?.humanCounts(forRefKeys: keys) ?? [:]
-        let gated = Self.evidenceGated(members, tags: tags, faceCounts: faces, captions: captions,
+        let gated = Self.evidenceGated(members, tags: tags, faceCounts: faces,
                                        humanCounts: humans,
                                        excludeTerms: spec.allContentTerms.exclude)
         if gated.count != members.count {
             Diagnostics.mark("aialbum.evidenceGate: \(members.count) → \(gated.count) (deferred until indexed)")
-            // S7（ADR-102）: 証拠不足で保留になった写真を覚えておき、夜間キャプションの
-            // **優先対象**にする（キャプションが付けば証拠になり、次の評価でアルバムに入れる）。
-            // プロセス内のみ（次の評価で再計算される）。上限つき＝夜間 1〜2 窓ぶんで十分。
-            let gatedIDs = Set(gated.map(\.id))
-            let starved = members.map(\.id).filter { !gatedIDs.contains($0) }
-            var merged = evidenceStarvedRefKeys.filter { !starved.contains($0) }
-            merged.append(contentsOf: starved)
-            evidenceStarvedRefKeys = Array(merged.suffix(Self.maxStarvedTracked))
         }
         return gated
     }
 
-    /// S7: 証拠不足で保留になった写真（新しい保留ほど後ろ＝優先度は同列でよい）。
-    private(set) var evidenceStarvedRefKeys: [String] = []
-    static let maxStarvedTracked = 400
-
-    /// 候補（上位 60 件）の証拠行（日付・場所・顔数・タグ・キャプション）を LLM が読み、
+    /// 候補（上位 60 件）の証拠行（日付・場所・顔数・タグ）を LLM が読み、
     /// 不適合を落とす。unsure は最大 2 回再判定して**多数決**（同数は keep＝安全側）。
     /// FM 無し・候補ゼロ・証拠皆無のときは素通し。
     func verified(_ members: [EnrichedPhoto], criteria: String) async -> [EnrichedPhoto] {
@@ -124,27 +101,13 @@ final class AIAlbumVerificationCoordinator {
         let top = Array(members.prefix(60))
         let keys = top.map(\.id)
         let tags = await tagStore?.tags(forRefKeys: keys) ?? [:]
-        var captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
-        // Phase 2（ADR-35）: キャプション未生成の候補上位に**その場で生成**して証拠を濃くする
-        // （通常はお気に入り限定＝ADR-34 だが、候補上位だけは予算つきで例外・keys は融合スコア順）。
-        if let captionOnDemand {
-            let missing = keys.filter { captions[$0]?.isEmpty != false }.prefix(Self.captionBudget)
-            if !missing.isEmpty {
-                let generated = await captionOnDemand(Array(missing))
-                if !generated.isEmpty {
-                    captions.merge(generated) { _, new in new }
-                    Diagnostics.mark("aialbum.verify: on-demand captions +\(generated.count)/\(missing.count)")
-                }
-            }
-        }
-        // 証拠（タグ/キャプション）が全く無いなら審査しても意味がない（全部 unsure になるだけ）。
-        guard !tags.isEmpty || !captions.isEmpty else { return members }
+        // 証拠（タグ）が全く無いなら審査しても意味がない（全部 unsure になるだけ）。
+        guard !tags.isEmpty else { return members }
         let faces = await faceCountsProvider?() ?? [:]
 
         func line(_ index: Int, _ photo: EnrichedPhoto) -> String {
             Self.evidenceLine(index: index, photo: photo,
                               tags: tags[photo.id] ?? [],
-                              caption: captions[photo.id],
                               faceCount: faces[photo.id])
         }
 

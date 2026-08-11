@@ -17,25 +17,23 @@ struct AlbumVerifierTests {
         #expect(majorityVerdict([]) == .unsure)
     }
 
-    @Test("証拠行: 日付・場所・顔数・タグ・キャプションを 1 行に")
+    @Test("証拠行: 日付・場所・顔数・タグを 1 行に")
     func evidenceLineFormat() {
         let photo = EnrichedPhoto(id: "L-x", captureDate: Date(timeIntervalSince1970: 1_700_000_000),
                                   latitude: nil, longitude: nil, placeName: "沖縄県")
         let line = AIAlbumVerificationCoordinator.evidenceLine(index: 3, photo: photo,
                                                 tags: ["beach", "outdoor"],
-                                                caption: "A sandy beach at sunset.",
                                                 faceCount: 0)
         #expect(line.hasPrefix("3) | 2023-11-1"))   // TZ により 14/15 日どちらか
         #expect(line.contains("沖縄県"))
         #expect(line.contains("faces=0"))
         #expect(line.contains("tags: beach, outdoor"))
-        #expect(line.contains("caption: A sandy beach at sunset."))
     }
 
     @Test("証拠行: 欠けている情報は出さない")
     func evidenceLineOmitsMissing() {
         let photo = EnrichedPhoto(id: "L-y", captureDate: nil, latitude: nil, longitude: nil, placeName: nil)
-        let line = AIAlbumVerificationCoordinator.evidenceLine(index: 0, photo: photo, tags: [], caption: nil, faceCount: nil)
+        let line = AIAlbumVerificationCoordinator.evidenceLine(index: 0, photo: photo, tags: [], faceCount: nil)
         #expect(line == "0)")
     }
 

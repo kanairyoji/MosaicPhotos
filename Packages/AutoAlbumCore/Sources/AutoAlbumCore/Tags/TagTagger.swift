@@ -24,30 +24,23 @@ public struct PhotoSenseInfo: Sendable, Equatable {
     }
 }
 
-/// シーンタグ等（Vision 一括パス）とキャプション（VLM）の知覚 seam。実体はアプリ側（MobileCLIPKit）。
+/// シーンタグ等（Vision 一括パス）の知覚 seam。実体はアプリ側（MobileCLIPKit）。
+/// ※ VLM キャプション seam は廃止（ADR-108・検索寄与ゼロの実測＝台帳 S13）。
 public protocol TagPerceptionProvider: Sendable {
     /// Vision 分類が使えるか（分類は OS 内蔵なので通常 true）。
     var isTaggingAvailable: Bool { get }
     /// refKey 群 → 付帯情報（タグ・OCR・人数・美的スコアを 1 回の Vision パスで）。
     /// 取得不可の写真は空 info（「処理済み」として記録し無限ループを防ぐ）。
     func senseInfo(refKeys: [String]) async -> [String: PhotoSenseInfo]
-    /// VLM キャプションが使えるか（モデル同梱時のみ true）。
-    var isCaptioningAvailable: Bool { get }
-    /// refKey 群 → 短文キャプション（英語）。取得不可の写真は結果に含めない。
-    func captions(refKeys: [String]) async -> [String: String]
-    /// キャプション用の重いモデル（VLM≈877MB）がロード済みなら解放する（1-d）。
-    /// キャプションフェーズ完了後に呼び、CLIP 画像塔・facenet と同時常駐しないようにする。既定は無処理。
-    func releaseCaptionModelIfLoaded()
     /// これから処理する refKey 群の素材を**先に取りに行く**ヒント（ADR-83）。**即座に返る**こと。
     func warmUp(refKeys: [String])
 }
 
 public extension TagPerceptionProvider {
-    func releaseCaptionModelIfLoaded() {}
     func warmUp(refKeys: [String]) {}
 }
 
-/// タグ・キャプションの夜間トリクル付与（FaceTagger と同パターン）。
+/// シーンタグの夜間トリクル付与（FaceTagger と同パターン）。
 /// 重い処理の共通方針（電源＋アイドル・BackgroundYield）はバッチごとに確認する。
 @MainActor
 final class TagTagger {
@@ -60,12 +53,6 @@ final class TagTagger {
         self.store = store
         self.provider = provider
     }
-
-    /// VLM キャプションが利用可能か（モデル同梱時のみ true）。フル画像の「生成中」表示に使う。
-    var isCaptioningAvailable: Bool { provider?.isCaptioningAvailable ?? false }
-
-    /// キャプションモデル（VLM）を解放する（1-d・キャプションフェーズ完了後に呼ぶ）。
-    func releaseCaptionModel() { provider?.releaseCaptionModelIfLoaded() }
 
     /// 未タグ写真にシーンタグを付ける（バッチ 8・save はバッチ 1 回）。
     /// Vision 分類は CPU/ANE で軽い（数十 ms/枚）ため CLIP 埋め込みより速く全量に行き渡る。
@@ -141,61 +128,4 @@ final class TagTagger {
         Diagnostics.mark("tags: finished — \(processed) tagged (remaining=\(max(0, todo.count - processed)))")
     }
 
-    /// タグ済み・キャプション未生成の写真に VLM キャプションを付ける（1 枚 1〜2 秒・数晩がかり）。
-    /// `favoritesNewestFirst` はお気に入り（キャプション対象）を**撮影日降順**に並べた列で、
-    /// この順に処理する＝新しい写真から先に説明が付く（全解析パス共通の方針）。
-    func captionUnprocessed(batchSize: Int = 4,
-                            betweenBatchNs: UInt64 = 1_000_000_000,
-                            maxBatches: Int = .max,
-                            favoritesNewestFirst: [String]? = nil,
-                            shouldPause: @MainActor () -> Bool = { false }) async {
-        guard let provider, provider.isCaptioningAvailable else { return }
-        // お気に入り限定でその集合が空なら、付ける対象が無いので即終了（毎回の空クエリを避ける）。
-        if let favoritesNewestFirst, favoritesNewestFirst.isEmpty { return }
-        #if targetEnvironment(simulator)
-        // VLM は cpuOnly で 1 枚十数秒かかり検証の妨げになるため、シミュレータでは実行しない。
-        Diagnostics.mark("captions: skipped on simulator (VLM runs cpuOnly here)")
-        return
-        #endif
-        // 未生成（タグ済みレコードのみ）を新しい順の静的キューにする。実行中の新規写真は次回巡回で拾う。
-        let pending = await store.captionPendingSet(favorites: favoritesNewestFirst.map(Set.init))
-        var queue: [String] = favoritesNewestFirst.map { $0.filter(pending.contains) }
-            ?? pending.sorted()
-        guard !queue.isEmpty else { return }
-        var processed = 0
-        // 停止判定は 1 枚単位（VLM は 1 枚 1〜2 秒＝バッチ一括だと譲りが数秒遅れる）。
-        await BackgroundTrickle.run(
-            maxBatches: maxBatches,
-            betweenBatchNs: betweenBatchNs,
-            shouldPause: shouldPause,
-            // ADR-79: 譲りに入った瞬間に VLM（≈877MB）を解放する。抱えたまま眠ると、復帰直後の
-            // メモリ圧迫→サムネキャッシュ縮小→ディスク再デコードの連鎖でカクつきが続く。
-            // 次の窓で再ロード（≈10秒）するが、夜間なので実害はない。
-            onPauseBegin: {
-                provider.releaseCaptionModelIfLoaded()
-                Diagnostics.mark("captions: paused — VLM released")
-            },
-            unitPerfLabel: "caption.photoMs",
-            nextBatch: { _ in
-                let batch = Array(queue.prefix(batchSize))
-                queue.removeFirst(batch.count)
-                return batch
-            },
-            processUnit: { refKey in
-                // ANE 直列化ゲート（diagnostics-19）は **VLMRuntime.caption の内側**で取る（ADR-73）。
-                // ここでは包まないこと＝包むと入れ子になる。
-                let one = await provider.captions(refKeys: [refKey])
-                // 取得できなかった写真も空で記録して無限ループを防ぐ。
-                return (refKey: refKey, caption: one[refKey] ?? "")
-            },
-            commitBatch: { _, _, results in
-                guard !results.isEmpty else { return .stop }
-                await store.recordCaptions(results)
-                processed += results.count
-                AnalysisActivity.recordActivity(.captions)
-                if processed % 64 == 0 { Diagnostics.mark("captions: \(processed) done") }
-                return .proceed
-            })
-        if processed > 0 { Diagnostics.mark("captions: finished — \(processed)") }
-    }
 }

@@ -15,9 +15,7 @@ public enum AutoAlbumSettingsKeys {
     /// 1回だけ全ローカル写真の sceneTagged をリセットし、改善した知覚ロジックで付け直す。
     public static let perceptionVersion = "autoAlbumPerceptionVersion"
     /// 最後にキャプション付けした VLM モデルのバージョン。現行版と異なれば起動時に 1 回だけ
-    /// 既存キャプションをクリアし、新モデル（Florence-2 等）で付け直す（`captionPending` は
-    /// `caption==nil` のみ対象なので、モデル差し替え時はクリアしないと旧キャプションが残る）。
-    public static let captionModelVersion = "autoAlbumCaptionModelVersion"
+    // ※ 旧 `captionModelVersion`（"autoAlbumCaptionModelVersion"）は VLM 廃止で撤去（ADR-108）。
     /// バックグラウンド埋め込みの重さ段階（`BackgroundProcessing.presets` のインデックス）。
     public static let backgroundProcessingLevel = "autoAlbumBackgroundLevel"
     /// フォルダ名アルバム（Dropbox パスから推測）を有効にするか。**既定 false**。

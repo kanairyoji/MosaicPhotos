@@ -9,10 +9,10 @@ import Foundation
 public enum AnalysisActivity {
 
     /// 解析のパス（種類）。`rawValue` が UserDefaults キーの一部になる。
+    /// ※ 旧 `captions`（VLM）は廃止（ADR-108）。UserDefaults に残る旧キーは無害。
     public enum Pass: String, CaseIterable, Sendable {
         case embeddings   // CLIP 埋め込み（意味検索の索引）
         case sceneTags    // Vision シーンタグ
-        case captions     // VLM キャプション（AI による説明）
         case faces        // 顔スキャン（ピープル）
     }
 
@@ -31,7 +31,7 @@ public enum AnalysisActivity {
 }
 
 /// 画像解析の進捗（各パスの完了数と分母）。`AutoAlbumEngine.analysisProgress()` が返す。
-/// CLIP・シーンタグ・キャプションは同じ写真母数（取り込み済み＝`total`）を分母に進む。
+/// CLIP・シーンタグは同じ写真母数（取り込み済み＝`total`）を分母に進む。
 public struct AnalysisProgress: Sendable {
     /// 取り込み済み写真数（＝各パスの分母）。端末＋Dropbox（includeCloud 時）。
     public var total: Int
@@ -39,16 +39,10 @@ public struct AnalysisProgress: Sendable {
     public var embedded: Int
     /// Vision シーンタグ付与済みの枚数。
     public var sceneTagged: Int
-    /// VLM キャプション生成済みの枚数（モデル未同梱なら常に 0）。
-    public var captioned: Int
-    /// キャプション対象の総数＝**お気に入り写真数**（キャプションはお気に入り限定のため分母はこれ）。
-    public var captionableTotal: Int
 
-    public init(total: Int, embedded: Int, sceneTagged: Int, captioned: Int, captionableTotal: Int = 0) {
+    public init(total: Int, embedded: Int, sceneTagged: Int) {
         self.total = total
         self.embedded = embedded
         self.sceneTagged = sceneTagged
-        self.captioned = captioned
-        self.captionableTotal = captionableTotal
     }
 }

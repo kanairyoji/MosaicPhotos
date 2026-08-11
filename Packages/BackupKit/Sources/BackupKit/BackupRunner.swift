@@ -46,17 +46,13 @@ final class BackupRunner {
     /// 人物名（localIdentifier → 命名済み顔クラスタのフルネーム）。アプリが PeopleEngine を結線する。
     /// ユーザー入力（命名）は端末を削除すると再生成できないため metadata に保全する（ADR-38）。
     private let peopleNamesProvider: (@Sendable () async -> [String: [String]])?
-    /// VLM キャプション（localIdentifier → 説明文）。アプリが TagStore を結線する。
-    private let captionsProvider: (@Sendable ([String]) async -> [String: String])?
-
     init(
         tokenProvider: AccessTokenProvider,
         uploader: DropboxBackupUploader,
         progressStore: BackupProgressStore,
         uploadLimit: @escaping () -> Int,
         delegate: BackupRunnerDelegate,
-        peopleNamesProvider: (@Sendable () async -> [String: [String]])? = nil,
-        captionsProvider: (@Sendable ([String]) async -> [String: String])? = nil
+        peopleNamesProvider: (@Sendable () async -> [String: [String]])? = nil
     ) {
         self.tokenProvider = tokenProvider
         self.uploader = uploader
@@ -64,7 +60,6 @@ final class BackupRunner {
         self.uploadLimit = uploadLimit
         self.delegate = delegate
         self.peopleNamesProvider = peopleNamesProvider
-        self.captionsProvider = captionsProvider
     }
 
     /// 背景アップロードを行ってよいか（電源＋回線ポリシー）。アップロードループの一時停止判定に使う。
@@ -120,10 +115,6 @@ final class BackupRunner {
             return false
         }
 
-        // 4.5 アップロード対象のキャプションを一括取得（アプリ生成・小さいテキストのみ）。
-        let captionsByID: [String: String] =
-            await captionsProvider?(pending.map(\.localIdentifier)) ?? [:]
-
         // 5. Dropbox 認証
         addLog("Fetching Dropbox access token…")
         guard let token = try? await tokenProvider.freshAccessToken() else {
@@ -163,7 +154,7 @@ final class BackupRunner {
 
             switch await uploadOne(asset: asset, fetched: fetched, index: i, total: pending.count,
                                    folder: folder, token: token,
-                                   indexes: indexes, captions: captionsByID, tally: &tally) {
+                                   indexes: indexes, tally: &tally) {
             case .done, .skipped: continue
             case .fatal: readAhead = nil; return false
             }
@@ -279,7 +270,7 @@ final class BackupRunner {
     private func uploadOne(asset: PHAsset, fetched fetchResult: FetchDataResult,
                            index i: Int, total: Int,
                            folder: String, token: String,
-                           indexes: Indexes, captions: [String: String],
+                           indexes: Indexes,
                            tally: inout UploadTally) async -> ItemOutcome {
         guard case .success(let data, let filename) = fetchResult else {
             if case .skipped(let filename, let reason) = fetchResult {
@@ -339,8 +330,7 @@ final class BackupRunner {
                     localIdentifier: asset.localIdentifier,
                     latitude: asset.location?.coordinate.latitude,
                     longitude: asset.location?.coordinate.longitude,
-                    isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot),
-                    caption: captions[asset.localIdentifier]
+                    isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot)
                 )))
             delegate.runnerSaveRecord(
                 dropboxPath: savedPath, asset: asset, filename: filename,

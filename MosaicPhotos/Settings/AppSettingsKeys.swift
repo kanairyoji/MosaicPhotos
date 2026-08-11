@@ -18,7 +18,7 @@ enum AppSettingsKeys {
     /// 上限に達したら埋め込みが残っていてもバックアップへ窓を明け渡す（`HeavyWorkScheduler`・飢餓防止）。
     static let backupDeferralStreak = "backup.deferralStreak"
     /// キャプションが顔スキャンに譲り続けた回数（ADR-86・上限で「キャプション窓」にする）。
-    static let captionDeferralStreak = "caption.deferralStreak"
+    // ※ 旧 `captionDeferralStreak`（"caption.deferralStreak"）は VLM 廃止で撤去（ADR-108）。
     /// この端末で解析が始まり得た時刻（ADR-87・停滞検出の基準。未実行パスの誤検知を防ぐ）。
     static let firstLaunchAt = "analysis.firstLaunchAt"
 }

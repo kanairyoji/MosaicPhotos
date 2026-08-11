@@ -57,16 +57,15 @@ struct PhotoSenseInfoTests {
         #expect(PhotoQuality.adaptiveThreshold(scores: []) == PhotoQuality.thresholdCeiling)
     }
 
-    @Test("再タグ（recordTags 上書き）でキャプションは消えない")
-    func retagKeepsCaption() async {
+    @Test("再タグ（recordTags 上書き）でタグと OCR が更新される")
+    func retagUpdatesRecord() async {
         let store = TagStore(isStoredInMemoryOnly: true)
         await store.recordTags([(refKey: "L-a", info: PhotoSenseInfo(tags: ["old"]))])
-        await store.recordCaptions([(refKey: "L-a", caption: "a dog on the beach")])
         await store.recordTags([(refKey: "L-a", info: PhotoSenseInfo(tags: ["new"], ocrText: "hello"))])
-        let captions = await store.captions(forRefKeys: ["L-a"])
-        #expect(captions["L-a"] == "a dog on the beach")
         let tags = await store.tags(forRefKeys: ["L-a"])
         #expect(tags["L-a"] == ["new"])
+        let ocr = await store.ocrTexts(forRefKeys: ["L-a"])
+        #expect(ocr["L-a"] == "hello")
     }
 
     @Test("pickCoverRef は美的スコアで加点する（お気に入りは超えない）")

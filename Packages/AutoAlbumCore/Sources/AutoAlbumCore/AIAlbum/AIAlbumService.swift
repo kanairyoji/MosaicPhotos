@@ -65,16 +65,6 @@ final class AIAlbumService {
         return signals
     }
 
-    /// S7（ADR-102）: 証拠不足で保留になった写真（夜間キャプションの優先対象）。
-    var evidenceStarvedRefKeys: [String] { verification.evidenceStarvedRefKeys }
-
-    /// Phase 2（ADR-35）: 候補上位へのオンデマンドキャプション生成（審査の証拠を濃くする）。
-    /// エンジンが TagPerceptionProvider＋TagStore で結線する。
-    var captionOnDemand: (@Sendable ([String]) async -> [String: String])? {
-        get { verification.captionOnDemand }
-        set { verification.captionOnDemand = newValue }
-    }
-
     /// 顔クラスタの**現在の**人物名（refKey → 名前）を返す seam。人物条件（.people 等）は
     /// `EnrichedPhoto.people`（初回焼き込み・更新されない）でなく **live 照合**する（実障害:
     /// 後から命名した人物が検索に反映されない）。Composition Root から結線。

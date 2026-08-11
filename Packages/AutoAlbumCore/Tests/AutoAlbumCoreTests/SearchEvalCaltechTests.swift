@@ -126,7 +126,7 @@ struct SearchEvalCaltechTests {
             let gated = grounded.allContentTerms.exclude.isEmpty
                 ? members
                 : AIAlbumVerificationCoordinator.evidenceGated(
-                    members, tags: tags, faceCounts: [:], captions: [:],
+                    members, tags: tags, faceCounts: [:],
                     excludeTerms: grounded.allContentTerms.exclude)
 
             let retrieved = Set(gated.map(\.id))

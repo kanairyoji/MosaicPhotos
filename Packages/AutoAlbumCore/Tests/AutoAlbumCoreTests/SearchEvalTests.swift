@@ -36,7 +36,7 @@ struct SearchEvalTests {
         var byCategory: [String: [SearchEvalQueries.Score]] = [:]
         print("SEARCHEVAL: --- corpus photos=\(corpus.photos.count) "
               + "tagged=\(corpus.tags.count) faceScanned=\(corpus.faceCounts.count) "
-              + "captioned=\(corpus.captions.count) ---")
+              + "---")
 
         let dates = Dictionary(uniqueKeysWithValues: corpus.photos.compactMap { p in
             p.captureDate.map { (p.id, $0) }

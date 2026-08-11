@@ -3,11 +3,11 @@ import CoreML
 import Foundation
 import MosaicSupport
 
-/// 3 つの Core ML ランタイム（MobileCLIP / VLM / FaceModel）が共有するプリミティブ。
+/// Core ML ランタイム（MobileCLIP / FaceModel）が共有するプリミティブ。
 /// - 設定（シミュレータ CPU 固定）・バンドル探索・ロード時間/フットプリントの診断ログ
 /// - 単一入出力モデルの入出力名・画像制約の抽出と画像推論（`CoreMLModelHandle`）
 /// - NSLock ＋失敗センチネルの遅延ロード（`LoadOnce`）
-/// 各ランタイム固有の部分（CLIP のバッチ/テキスト塔・VLM の固定長デコード等）は共通化しない。
+/// 各ランタイム固有の部分（CLIP のバッチ/テキスト塔等）は共通化しない。
 enum CoreMLModelLoader {
 
     /// ランタイム共通の MLModelConfiguration。
@@ -83,7 +83,6 @@ enum CoreMLModelLoader {
     }
 
     /// ロード診断の共通サフィックス「loaded in \(ms)ms (footprint=\(mb))」。
-    /// 複数リソースをまとめてロードするランタイム（VLM）はこれだけ共用する。
     ///
     /// `epoch`（`ProcessSuspension.epoch`）を渡すと、**ロード中にプロセス中断があったサンプルは
     /// 数値を出さない**（ADR-80）。所要は壁時計 `Date()` 差分なので、アプリが背面へ落ちて中断された
@@ -156,7 +155,7 @@ struct CoreMLModelHandle: @unchecked Sendable {
     }
 
     /// 画像 → 入力 FeatureProvider（リサイズ/画素変換はモデルの画像制約に従い自動）。
-    /// バッチ推論（CLIP）や async 推論（VLM）はこれで組んだ provider を各自で流す。
+    /// バッチ推論（CLIP）はこれで組んだ provider を各自で流す。
     func imageProvider(for cgImage: CGImage) -> MLFeatureProvider? {
         guard let imageConstraint,
               let fv = try? MLFeatureValue(cgImage: cgImage, constraint: imageConstraint, options: nil)
@@ -188,7 +187,7 @@ struct CoreMLModelHandle: @unchecked Sendable {
 /// 一方で **`reset()` / `isLoaded` は同期でなければならない**。メモリ圧迫ハンドラ
 /// （`MemoryPressureMonitor.handle` はハンドラを同期的に呼ぶ）から呼ばれるため、actor にすると
 /// `Task { await box.reset() }` となり「critical 圧迫を受けたのに解放は後回し」になる。
-/// VLM は 877MB あり、jetsam との競争で不利になる。
+/// 大きいモデルほど jetsam との競争で不利になる。
 /// そこで **状態は NSLock、ロードは Task で await** のハイブリッドにする。
 ///
 /// `@unchecked Sendable` の根拠（不変条件）: 可変状態はすべて private・アクセスは必ず `lock` 経由・
@@ -232,7 +231,7 @@ final class LoadOnce<Value: Sendable>: @unchecked Sendable {
         return value
     }
 
-    /// ロード済みモデルを解放する（1-d・メモリ圧迫時や重い VLM の使用後）。次回 `get` で再ロードされる。
+    /// ロード済みモデルを解放する（1-d・メモリ圧迫時）。次回 `get` で再ロードされる。
     /// 失敗センチネルも消すので、以前失敗していても再試行する。
     /// **同期**であることが重要（メモリ圧迫ハンドラから即時に効かせるため）。
     func reset() {

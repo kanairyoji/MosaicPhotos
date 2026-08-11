@@ -34,8 +34,8 @@ struct MosaicPhotosApp: App {
             // D: 遷移の実測（復帰時に何が走っていたか）を診断ログへ 1 行残す。
             HeavyWorkScheduler.noteScenePhase("\(phase)")
             // ADR-79: 復帰したら夜間処理を**明示的に止める**。ゲートを閉じるだけでは、実行中の
-            // 1 単位（VLM キャプションは 1 枚数十秒）が走り切るまで ANE/CPU が塞がり、
-            // 眠っている間もモデル（≈877MB）を抱え続けてカクつきの原因になっていた。
+            // 1 単位が走り切るまで ANE/CPU が塞がり、眠っている間もモデルを抱え続けて
+            // カクつきの原因になっていた。
             if phase == .active { HeavyWorkScheduler.stopForForeground() }
             // バックグラウンド遷移（ロック含む）で次回の重い処理を予約する。
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
