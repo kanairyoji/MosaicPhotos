@@ -887,3 +887,19 @@
   - 生成フラグ滞留の安全弁（`BackgroundActivityMonitor.isGeneratingAlbums` の時間失効）＋デバッグ全開時の相互排他バイパス。
 - 関連: `PerceptionCore/MLInferenceGate.swift`（新規）・`FaceTagger`/`PhotoTagger`/`TagTagger`/`AutoAlbumEngine+Recognition`・`PHAssetImageLoader`・`CoreMLModelSupport`・`BackgroundActivityMonitor`/`BackgroundYield`。[[ADR-69]]。
 - 教訓: **ANE は単一資源**。Vision と Core ML を別スレッドから同時に叩くとデッドロックし得る。オンデバイスで複数の ANE 系推論を並行させず直列化する。`withCheckedContinuation` × コールバックは「特定条件でしか resume しない」実装だと、その条件が来ないケースで永久ハングするので必ずタイムアウト等の必ず resume する経路を用意する。
+
+## drift フル再評価の並走と接地の空振り（diagnostics-50・ADR-110 の追い込み）
+- 症状: (a) drift フル再評価が 10 秒間に 2 本並走し、make の採点が 79.6 秒
+  （通常 0.4〜1.6 秒）に劣化。(b)「ballet dancer」が語彙の「ballet_dancer」と完全一致扱いに
+  ならず、接地が「重心コールド」で deferred された。(c) 起動後最初の AI アルバム操作で
+  9.4/10.2 秒のメイン飢餓（CLIP テキスト塔ロード 5.0 秒＋FM 初期化の CPU ストーム）。
+- 原因: (a) refresh/finalize に in-flight ガードが無く、定期ティックと BG ルーチンが同時発火。
+  (b) Vision 識別子は下線形・レキシコンは空白形で、exact 判定が区切りを正規化していなかった。
+  (c) Core ML/ANE のモデルロードはシステム側スレッドで走り、呼び出し優先度では抑えられない。
+- 対処: (a) `isEvaluating` ガード（refresh/finalizePending 共通・スキップをログ）。
+  (b) exact 判定の区切り正規化（展開結果は語彙側の原形＝タグ照合に正しい形）。
+  (c) プロセスあたり 1 回・十数秒の事象なので受容（発生時刻は作成操作直後に限定される。
+  MetricKit の採取が届けばスタックで確定できる）。
+- 実測の収穫: 重心構築は **118 秒**で完走（scanned 53,019）。過去の「約 30 分」は
+  プロセス中断を跨いだ壁時計の誤読だった。夜間窓 1 回で余裕で収まる。
+- 関連: diagnostics-50 / `AIAlbumService.swift` / `VocabularyGrounding.swift`。ADR-110。

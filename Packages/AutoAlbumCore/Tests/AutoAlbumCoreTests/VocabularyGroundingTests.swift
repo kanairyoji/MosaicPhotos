@@ -36,6 +36,17 @@ struct VocabularyGroundingTests {
         #expect(g.expanded == ["dog"])
     }
 
+    @Test("区切り違い（空白 vs 下線）も完全一致・展開結果は語彙側の原形")
+    func exactMatchNormalizesSeparators() {
+        // Vision 識別子は下線形（ballet_dancer）、レキシコンは空白形（ADR-110 追記）。
+        // diagnostics-50: 正規化が無く「ballet dancer」が exact にならず接地が deferred された。
+        let vocab = (0..<38).map { "filler\($0)" } + ["ballet", "ballet_dancer"]
+        let g = VocabularyGrounding.ground(terms: ["ballet dancer"], vocabulary: vocab,
+                                           similarity: { _ in [] })[0]
+        #expect(g.isExact)
+        #expect(g.expanded == ["ballet_dancer"], "タグ照合は語彙の原形で行うため下線形を返す")
+    }
+
     @Test("どれも遠い語は接地しない（いちばんマシな遠い語を拾わない）")
     func doesNotGroundWhenAllFar() {
         // 実測の「landscape → car/bird/train…」に相当する形: どれも僅差で突出が無い。

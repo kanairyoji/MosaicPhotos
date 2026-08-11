@@ -58,8 +58,10 @@ public final class AIAlbumInterpreter {
         let terms = include + exclude
         // 全語が語彙に完全一致するなら、類似計算（＝重心）は不要（ADR-110）。
         // 「ballet」のような Vision 実在語はコールドでも即時に接地が完結する。
-        let vocabSet = Set(vocabulary.map { $0.lowercased() })
-        let allExact = terms.allSatisfy { vocabSet.contains($0.lowercased()) }
+        let vocabSet = Set(vocabulary.map { $0.lowercased().replacingOccurrences(of: "_", with: " ") })
+        let allExact = terms.allSatisfy {
+            vocabSet.contains($0.lowercased().replacingOccurrences(of: "_", with: " "))
+        }
         if allExact {
             let out = VocabularyGrounding.apply(spec: spec, vocabulary: vocabulary,
                                                 similarity: { _ in [] }, coherence: nil)

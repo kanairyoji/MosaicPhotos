@@ -85,10 +85,14 @@ public enum VocabularyGrounding {
                               similarity: (String) -> [Double],
                               coherence: CoherenceContext? = nil) -> [Grounded] {
         let lowerVocab = vocabulary.map { $0.lowercased() }
+        // 区切りの正規化（ADR-110 追記）: Vision 識別子は下線形（ballet_dancer）、レキシコンは
+        // 空白形（ballet dancer）。完全一致の判定は区切りを揃えて行い、**展開結果は語彙側の
+        // 原形**を返す（タグ照合は語彙の形で行われるため）。
+        func norm(_ s: String) -> String { s.replacingOccurrences(of: "_", with: " ") }
         return terms.map { term in
             let t = term.lowercased()
-            // 1) 語彙にそのまま在る（または語彙側が完全に含む）なら、それが最良の接地。
-            if let exact = lowerVocab.first(where: { $0 == t }) {
+            // 1) 語彙にそのまま在る（区切り違いを含む）なら、それが最良の接地。
+            if let exact = lowerVocab.first(where: { $0 == t || norm($0) == norm(t) }) {
                 return Grounded(term: term, expanded: [exact], isExact: true)
             }
             // 2) 意味的に近い語を上位から採る。

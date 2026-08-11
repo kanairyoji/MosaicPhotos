@@ -117,6 +117,12 @@ final class AIAlbumService {
     func finalizePending(_ albums: [AutoAlbumInfo], now: Date = Date()) async -> [AutoAlbumInfo] {
         let pendingIDs = albums.filter { interpreter.saved(for: $0.id)?.pendingFinalization == true }.map(\.id)
         guard !pendingIDs.isEmpty else { return albums }
+        guard !isEvaluating else {
+            Diagnostics.mark("aialbum.finalize: skip — already evaluating")
+            return albums
+        }
+        isEvaluating = true
+        defer { isEvaluating = false }
         Diagnostics.mark("aialbum.finalize: \(pendingIDs.count) pending")
         var out = albums
         let all = await store.allEnrichedPhotosLite()
@@ -250,7 +256,19 @@ final class AIAlbumService {
 
     /// フル再評価：保存済み解釈で全写真を採点し直す（プール・評価済み枚数も更新）。
     /// LLM は走らない（解釈未保存のアルバムだけ初回に 1 回解釈して保存＝旧データの移行）。
+    /// フル評価（refresh/finalize）の in-flight ガード。diagnostics-50 では drift フル再評価が
+    /// 10 秒間に 2 本並走し（定期ティックと BG ルーチンが同時発火・評価済み枚数 0 の直後）、
+    /// make の採点と競合して score が 79 秒（通常 0.4〜1.6 秒）に劣化した。同時実行は常に無駄
+    /// （同じ結果を二度計算）なので 1 本に絞る。
+    private var isEvaluating = false
+
     func refresh(_ current: [AutoAlbumInfo]) async -> [AutoAlbumInfo] {
+        guard !isEvaluating else {
+            Diagnostics.mark("aialbum.refresh: skip — already evaluating")
+            return current
+        }
+        isEvaluating = true
+        defer { isEvaluating = false }
         Diagnostics.mark("aialbum.refresh: aiAlbums=\(current.count)")
         guard !current.isEmpty else { return current }
         let now = Date()
