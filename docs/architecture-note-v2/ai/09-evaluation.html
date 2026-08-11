@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI基礎 9. 評価指標と実験設計 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "ai-evaluation";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / AI 基礎知識 / 9. 評価指標と実験設計</nav>
+      <h1>AI 基礎知識 — 9. 評価指標と実験設計</h1>
+      <p class="lead">検索や分類の「良さ」を数値で測るための基礎。指標の定義そのものは単純だが、<strong>何を正解とみなすか（ground truth）と、どう実験を組むか（実験設計）</strong>が結果の信頼性を決める。本章も汎用の解説で、本アプリ固有の話は<a href="../testing/datasets.html">テストと評価</a>の章にある。</p>
+
+      <h2>正解集合（ground truth）が出発点</h2>
+      <p>評価には「このクエリの正解はこの写真たち」という<strong>正解集合</strong>が要る。人手で毎回判断すると再現できず、感覚に引きずられる。そこで<strong>ラベル付きデータセット</strong>（画像に何が写っているかの注釈が付いたコレクション）を使い、正解集合を<strong>ラベルから機械的に導出</strong>する——同じ入力なら誰がいつ実行しても同じ数字になることが、指標のいちばん大事な性質。</p>
+
+      <h2>Precision / Recall / F1</h2>
+      <p>検索結果（システムが返した集合）と正解集合を突き合わせると、4 つの領域ができる：</p>
+      <table>
+        <tr><th></th><th>実際に正解</th><th>実際に不正解</th></tr>
+        <tr><td><strong>返した</strong></td><td>真陽性 TP</td><td>偽陽性 FP（混入）</td></tr>
+        <tr><td><strong>返さなかった</strong></td><td>偽陰性 FN（取りこぼし）</td><td>真陰性 TN</td></tr>
+      </table>
+      <ul>
+        <li><strong>Precision（適合率）＝ TP / (TP + FP)</strong> — 返したもののうち正解の割合。「<strong>混ざらない</strong>」の指標。</li>
+        <li><strong>Recall（再現率）＝ TP / (TP + FN)</strong> — 正解のうち返せた割合。「<strong>取りこぼさない</strong>」の指標。</li>
+        <li><strong>F1 ＝ 2PR / (P + R)</strong> — 両者の調和平均。どちらかが 0 に近いと F1 も低くなる（算術平均と違い、片方だけ良くてもごまかせない）。</li>
+      </ul>
+      <div class="box why">
+        <span class="box-h">P と R はトレードオフ</span>
+        たくさん返せば Recall は上がるが Precision は下がる（逆も然り）。だから<strong>片方だけを見て改善を主張してはいけない</strong>。
+        どちらを優先するかはプロダクトの約束で決める——写真アルバムでは「関係ない写真が混ざる」方が
+        「1 枚取りこぼす」より目立つので、<strong>Precision を第一の約束</strong>にするのが普通。
+      </div>
+      <div class="box note">
+        <span class="box-h">Precision の落とし穴：何も返さなければ 1.0</span>
+        「接地できない語は検索しない」という設計は Precision 1.0 を保つが、それは「間違えない」だけで
+        「解けている」わけではない。<strong>諦めを検出するには F1 か Recall を併記</strong>する
+        （本アプリでも「クラス名比較は接地 3/10 で Precision 1.0」という数字に一度だまされかけ、
+        F1 で比較し直して重心方式を採用した）。逆に「正解が 0 件のクエリ」（存在しない被写体）では
+        <strong>0 件を返すことが正解</strong>＝このとき P=R=1 とする採点規則を明示しておく。
+      </div>
+
+      <h2>マクロ平均とカテゴリ別集計</h2>
+      <p>クエリが 100 本あるとき、全クエリの TP/FP/FN を合算してから指標を出す（<strong>マイクロ平均</strong>）と、正解数の多い簡単なクエリが支配してしまう。<strong>クエリごとに P/R/F1 を出して単純平均</strong>する（<strong>マクロ平均</strong>）と、難しい少数派クエリの失敗が数字に現れる。さらに<strong>カテゴリ別</strong>（被写体／除外／複合…）に分けて集計すると、「どの種類のクエリが弱いか」が特定でき、改善の優先順位が数字で決まる。</p>
+
+      <h2>Recall@K（上位 K 評価）</h2>
+      <p>結果を全部見ることが前提でない UI（検索上位だけ見る）では、<strong>上位 K 件に正解が含まれる割合（Recall@K）</strong>で測る。K は UI の現実（1 画面に見える枚数など）から決める。ランキングの質を測る指標としては他に MRR・nDCG などがあるが、まず Recall@K で十分なことが多い。</p>
+
+      <h2>アブレーション（切除実験）</h2>
+      <p>「この部品は効いているのか？」に答える実験。<strong>部品を外した（または量を振った）系を作り、同じデータセット・同じ指標で比較</strong>する。効果が Δ で数値化されるので、「重いのに効いていない部品」を発見できる——機能の<strong>追加だけでなく廃止も</strong>この方法で決められる（本アプリでは VLM キャプションの網羅率を 0%/1%/100% に振り、ΔF1=0.0001 を確認して機能ごと廃止した）。</p>
+
+      <h2>回帰フロア（性能の下限をテストに焼く）</h2>
+      <p>計測は「一度良くなった」ことしか保証しない。改善を維持するには、<strong>現状値から少し余裕を引いた下限（フロア）を自動テストにする</strong>——性能を黙って壊す変更が入ると CI が落ちる。意図的なトレードオフでフロアを割るときは、理由を記録してからフロアを更新する（数字の変更に説明責任を付ける）。</p>
+
+      <h2>パラメータ掃引と分布ベースの判定</h2>
+      <p>しきい値を 1 点だけ試して決めると、その値がデータセット固有の偶然かもしれない。<strong>候補値の格子を掃引</strong>して感度を見て、性能が安定な領域から選ぶ。また生のスコアに絶対しきい値を置くとモデルやデータが変わるたびに壊れるので、<strong>分布からの突出（z スコア＝平均から標準偏差いくつ分か）</strong>のような<strong>相対判定</strong>にすると尺度に依存しなくなる。</p>
+
+      <h2>実験設計の落とし穴</h2>
+      <ul>
+        <li><strong>実装がテスト専用の近道を通る</strong> — 評価は必ず<strong>本番と同じコード経路</strong>で走らせる。別実装の評価は本番の劣化を検出できない。</li>
+        <li><strong>正解の分布がずれている</strong> — 索引の網羅率（全写真のうちタグ済みが 86% 等）を評価環境でも再現しないと、「未索引を『無い』と読む」型のバグを見逃す。</li>
+        <li><strong>乱数で結果が揺れる</strong> — サンプリングは決定的に（キーからのハッシュ等）。再実行で同じ数字にならない評価は議論の土台にならない。</li>
+        <li><strong>1 例で判断する</strong> — 個別の成功/失敗例は仮説の入口であって結論ではない。データセット全体の Δ で判断する。</li>
+      </ul>
+
+      <p>本アプリでの応用: <a href="../testing/datasets.html">データセット評価と意思決定</a> / <a href="../features/on-device-ai.html">オンデバイス AI</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

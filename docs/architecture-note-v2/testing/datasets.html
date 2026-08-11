@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>データセット評価と意思決定 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "test-datasets";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / テストと評価 / データセット評価と意思決定</nav>
+      <h1>データセット評価と意思決定</h1>
+      <p class="lead">検出性能（AI アルバム検索・顔クラスタリング）に関わる変更は、<strong>体感や個別事例では決めず、正解ラベル付きデータセットの計測で決める</strong>（ADR-104）。この章は「どのデータセットを何のために使い、どの判断がどの計測で決まったか」をまとめる。指標（Precision / Recall / F1 / マクロ平均…）の一般的な定義は <a href="../ai/09-evaluation.html">AI 基礎 9. 評価指標と実験設計</a> を参照。</p>
+
+      <div class="box why">
+        <span class="box-h">なぜ「体感で決めない」を規律にしたか</span>
+        検索の不具合報告は常に個別事例で届く（「この検索に変な写真が混ざる」）。個別に直すと
+        <strong>点対応が積み上がり、別のクエリを黙って壊す</strong>。逆にデータセットがあれば、
+        (1) 弱点が<strong>カテゴリ単位で数値特定</strong>でき、(2) 対策の効果が Δ で出て、
+        (3) 副作用（他カテゴリの劣化）が同時に見える。実際、この方式に変えてから
+        「偽陽性の内訳を数えたら真犯人はレキシコンの最長一致だった」（タグ照合は無実）のような
+        <strong>誤った仮説の棄却</strong>が何度も起きている。
+      </div>
+
+      <h2>使用データセット一覧</h2>
+      <table>
+        <tr><th>データセット</th><th>規模</th><th>何を測るか</th><th>選んだ理由</th></tr>
+        <tr><td><strong>COCO val2017</strong></td><td>4,952 枚・80 クラスの物体ラベル</td><td>検索パイプライン全体の precision / recall / F1（<code>SearchEvalTests</code>・123 クエリ・10 カテゴリ）</td><td>「写真に何が写っているか」の人手ラベルが正確で、<strong>除外クエリ（〜が写っていない）の正解集合を機械導出できる</strong>。家庭写真に近い被写体分布（人・犬・食べ物・乗り物）</td></tr>
+        <tr><td><strong>Caltech-101</strong></td><td>101 クラス・約 9k 枚</td><td>語彙接地の end-to-end（<code>SearchEvalCaltechTests</code> / <code>CentroidGroundingEvalTests</code>）：「食べ物」「動物」等の広い語が正しい下位クラスへ展開されるか</td><td>クラスが<strong>上位概念でまとめやすい</strong>（楽器・乗り物・昆虫…）ため、「広い語 → 下位概念」の正解を保守的に人手定義できる。重心フィクスチャは同梱と同じ Core ML モデルで生成</td></tr>
+        <tr><td><strong>FG-NET</strong></td><td>82 人・年齢横断の顔</td><td>顔クラスタリングの混入率・分割度（<code>FaceAccuracyEvalTests</code>）</td><td><strong>同一人物の年齢変化</strong>を含む数少ない公開セット＝家庭ライブラリ最大の難所（子供の成長）を直接測れる</td></tr>
+        <tr><td><strong>LFW</strong></td><td>5,749 人・13k 枚</td><td>顔識別の一般精度・しきい値校正の妥当性</td><td>顔認識の標準ベンチ。人数が多く「別人を混ぜない」側の統計が取れる</td></tr>
+        <tr><td>Imagenette（歴史）</td><td>10 クラス・200 枚抽出</td><td>初代検索ハーネス（28 クエリ・Recall@k）</td><td>最初の弱点特定（言い換えの取りこぼし）に使用。COCO ハーネスへ発展的に置き換え</td></tr>
+      </table>
+      <p>データセットは <code>scripts/fetch_search_eval_datasets.sh</code> で取得し、<code>.search_eval/</code>（gitignore 対象）に置く。<strong>無い環境では評価テストは安全にスキップ</strong>される（CI を壊さない）。</p>
+
+      <h2>評価環境の要件（結果を信用できる条件）</h2>
+      <ul>
+        <li><strong>本番と同じコード経路</strong> — ハーネスは <code>previewInterpretation → searchWithPool → 証拠ゲート</code> という実装そのものを呼ぶ（テスト専用の近道を作らない）。</li>
+        <li><strong>実機の索引網羅率を再現</strong> — 合成コーパスはタグ 86%・顔 11% という<strong>実機の網羅率の偏り</strong>を決定的乱数で再現する。これが無いと「未索引を『無い』と読む」型のバグ（除外の最大の敵）を見逃す。シーンタグは<strong>場面分類であって物体検出ではない</strong>現実（人が写っていても person タグが出ない）も再現する。</li>
+        <li><strong>決定的</strong> — サンプリングは refKey からのハッシュで決め、再実行で同じ数字になる。</li>
+        <li><strong>正解 0 件のクエリを含む</strong> — 存在しない被写体（恐竜・ユニコーン）は 0 件を返すのが正解（P=R=1 の採点規則）。「無いものに答えたふりをしない」を計測で保証する。</li>
+      </ul>
+
+      <h2>クエリ集（COCO・123 本・10 カテゴリ）</h2>
+      <table>
+        <tr><th>カテゴリ</th><th>本数</th><th>例</th><th>見ているもの</th></tr>
+        <tr><td>subject（被写体）</td><td>50</td><td>「犬の写真」</td><td>基本の当たり</td></tr>
+        <tr><td>exclusion（除外）</td><td>14</td><td>「人が写っていない写真」</td><td>証拠主義・混入ゼロ（実障害の主戦場）</td></tr>
+        <tr><td>conjunction（複合）</td><td>12</td><td>「犬が写っていない猫の写真」</td><td>肯定×否定の組み合わせ</td></tr>
+        <tr><td>compound（人物×内容）</td><td>7</td><td>「太郎の犬の写真」「太郎の写真」</td><td><strong>AND の構造保証</strong>（人物名の二重計上で OR 化した実障害の再発防止）。コーパスに命名済み人物を決定的合成</td></tr>
+        <tr><td>date / count / attribute</td><td>8+4+8</td><td>「2024年の犬」「2人の写真」「笑っている写真」</td><td>日付・人数・属性（実測シグナル）の複合</td></tr>
+        <tr><td>phrase / en / robust</td><td>7+6+4</td><td>「犬の写真を探して」"photos without dogs"</td><td>言い回しの揺れ・英語直入力に不変であること</td></tr>
+        <tr><td>specificity（特異性）</td><td>3</td><td>「恐竜の写真」</td><td>存在しない被写体に 0 件を返す</td></tr>
+      </table>
+      <p>現状値（2026-08）：<strong>マクロ P=1.000 / R=0.837 / F1=0.899</strong>。カテゴリ別 F1 の<strong>回帰フロア</strong>（現状値 −0.03）と全体 precision ≥ 0.97 を <code>SearchEvalRegressionTests</code> が固定する。</p>
+
+      <h2>この計測で決めた判断（実例）</h2>
+      <table>
+        <tr><th>判断</th><th>計測</th><th>結果</th></tr>
+        <tr><td><strong>語彙接地は「語同士」でなく「タグ重心」</strong>（ADR-101）</td><td>Caltech-101 で両方式の F1 比較</td><td>text↔text は接地 3/10・F1 0.300（Precision 1.0 に見えるのは諦めているだけ）。重心（text↔image）は 10/10・F1 0.86 → 採用。<strong>回帰の固定</strong>として「重心版が語彙版に負けたら落ちる」テストを常設</td></tr>
+        <tr><td><strong>広い語の採用規則＝凝集した高原</strong>（ADR-102）</td><td>パラメータ掃引（peak×plateau の 9 組）＋雑音語の負例</td><td>animal 型（該当語彙が多く突出しない）は凝集度 z≥2.0 で雑音語と完全分離。F1 0.746→0.902</td></tr>
+        <tr><td><strong>凝集精錬はゲートつきでだけ適用</strong>（ADR-105）</td><td>COCO/Caltech 両ハーネス</td><td>無条件適用は不均質な正解群（乗り物）を壊す（F1 0.4→0.25）。グループ凝集 z≥1.0 のときだけ適用で bird 0.833→0.909・food 0.667→0.800</td></tr>
+        <tr><td><strong>VLM キャプションの廃止</strong>（ADR-108）</td><td>網羅率アブレーション（0% / 実機 1% / 理想 100%）</td><td>Δ(1%−0%) F1 = <strong>0.0001</strong>＝寄与ゼロ。100% でも +0.008（到達に夜間窓 30 日分）→ 機能ごと廃止（−877MB）。廃止後の再計測で F1 不変を確認</td></tr>
+        <tr><td><strong>人物×内容の AND 保証</strong>（ADR-109）</td><td>compound カテゴリ新設（命名済み人物を合成）</td><td>実効内容語の導入で P=1.000（混入ゼロ）。フロア 0.91 を常設</td></tr>
+        <tr><td><strong>除外の証拠は humanCount を主軸に</strong>（ADR-100）</td><td>COCO 除外クエリ</td><td>「未計測 ?? 0」を禁止し実測必須に：「人が写っていない」P 0.490（誤混入 2,062 枚）→ <strong>1.000</strong></td></tr>
+        <tr><td><strong>レキシコンの最長一致・単語境界</strong>（S5）</td><td>COCO・偽陽性の内訳分析</td><td>「電車」が車にも当たり 502 枚混入（train P 0.214）→ 最長一致＋占有で <strong>1.000</strong>。"dog"⊂"hot dog" も単一語＝タグ全体一致で解消</td></tr>
+        <tr><td><strong>顔クラスタの各ゲート・しきい値</strong>（ADR-48〜58）</td><td>FG-NET / LFW（<code>FaceEvalMetrics</code>）</td><td>マージンゲート・サイズ適応・アライメント等を 1 つずつ計測して採否。混入率 <strong>58%→12%</strong>。直感に良さそうな案（重心からの外れ値除去）は<strong>成長データで悪化</strong>し棄却</td></tr>
+        <tr><td><strong>言い換えプローブ（max-over-probes）</strong>（ADR-35）</td><td>初代 Imagenette ハーネスの A/B</td><td>言い換え再現率 +17〜18pt を確認して採用（除外クエリではプローブ無効＝副作用も同時に計測）</td></tr>
+      </table>
+
+      <h2>運用（台帳と更新ルール）</h2>
+      <ul>
+        <li><strong>台帳が正本</strong> — 検索は <a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a>（S0〜S15 の段階別寄与）、顔は <a class="srclink" data-path="docs/architecture-note/records/face-accuracy.md">records/face-accuracy.md</a>、モデル比較は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>。<strong>解釈・照合・接地・証拠まわりを変えたらハーネスを回して差分を台帳へ記す</strong>。</li>
+        <li><strong>フロアの変更には理由を書く</strong> — 意図的なトレードオフでフロアを割る場合は、台帳に理由を記してからフロアを更新する。</li>
+        <li><strong>ハーネス自体も進化させる</strong> — 実障害が起きたらまず「その型のクエリ」をカテゴリとして追加し（例：compound）、修正がフロアで恒久化されるようにする。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">関連コード・記録</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Tests/AutoAlbumCoreTests/SearchEvalQueries.swift">SearchEvalQueries.swift</a> — クエリ集と採点規則</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Tests/AutoAlbumCoreTests/SearchEvalCorpus.swift">SearchEvalCorpus.swift</a> — 網羅率を再現する合成コーパス</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Tests/AutoAlbumCoreTests/SearchEvalRegressionTests.swift">SearchEvalRegressionTests.swift</a> — 回帰フロア</li>
+          <li><a class="srclink" data-path="Packages/FaceCore/Tests/FaceCoreTests">FaceCoreTests/</a> — 顔の評価（FaceAccuracyEval ほか）</li>
+          <li><a class="srclink" data-path="scripts/fetch_search_eval_datasets.sh">fetch_search_eval_datasets.sh</a> — データセット取得</li>
+        </ul>
+      </div>
+
+      <p>背景: <a href="../ai/09-evaluation.html">AI 基礎 9. 評価指標と実験設計</a> / <a href="strategy.html">テスト戦略の全体像</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

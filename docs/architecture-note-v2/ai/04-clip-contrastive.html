@@ -61,6 +61,13 @@ graph LR
       </div>
 
       <p>次へ: <a href="05-vector-search.html">5. ベクトル検索と近傍探索</a></p>
+      <div class="box note">
+        <span class="box-h">応用の型：テキスト同士は比べない</span>
+        CLIP が学習しているのは「画像と説明文が近くなる」ことだけで、<strong>テキスト同士の距離は訓練目標に入っていない</strong>
+        （テキスト埋め込みは異方性が強く、どの語も互いに高い類似で並ぶ）。語と語の近さが欲しいときは、
+        片側を<strong>画像埋め込みの平均（重心）</strong>に置き換えて text↔image で比べるのが定石
+        （本アプリの語彙接地はこの型。実測で F1 0.300 → 0.86）。
+      </div>
       <p>本アプリでの応用: <a href="../features/on-device-ai.html">オンデバイス AI</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a></p>
     </article>
     <div id="pager"></div>

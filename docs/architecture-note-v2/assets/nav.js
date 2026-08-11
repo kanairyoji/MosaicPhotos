@@ -37,6 +37,10 @@
       { id: "dd-data-model",  href: "deep-dive/data-model.html",            label: "データ構造詳細" },
       { id: "dd-ai-album",    href: "deep-dive/ai-album-internals.html",    label: "AI アルバム実装詳細" },
     ]},
+    { title: "テストと評価", items: [
+      { id: "test-strategy", href: "testing/strategy.html", label: "テスト戦略の全体像" },
+      { id: "test-datasets", href: "testing/datasets.html", label: "データセット評価と意思決定" },
+    ]},
     { title: "技術プライマー", items: [
       { id: "tech-observation",   href: "tech/swift-observation.html",        label: "Swift Observation" },
       { id: "tech-swiftdata",     href: "tech/swiftdata.html",                label: "SwiftData" },
@@ -55,6 +59,7 @@
       { id: "ai-quant",     href: "ai/06-quantization.html",      label: "6. 量子化と精度" },
       { id: "ai-llm",       href: "ai/07-llm-ondevice.html",      label: "7. LLM とオンデバイス推論" },
       { id: "ai-ranking",   href: "ai/08-ranking-fusion.html",    label: "8. ランキングと融合" },
+      { id: "ai-evaluation",href: "ai/09-evaluation.html",        label: "9. 評価指標と実験設計" },
     ]},
     { title: "設計判断・事例", items: [
       { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト（重要トップ10）" },

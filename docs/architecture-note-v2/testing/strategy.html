@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>テスト戦略の全体像 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "test-strategy";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / テストと評価 / テスト戦略の全体像</nav>
+      <h1>テスト戦略の全体像</h1>
+      <p class="lead">テストは 3 層で考える：<strong>(1) 純ロジックの単体テスト</strong>（macOS で秒速・大多数）、<strong>(2) OS 依存の統合テスト</strong>（iOS シミュレータ）、<strong>(3) データセット評価</strong>（検出性能を数値で判定・<a href="datasets.html">次ページ</a>）。この 3 層が成立するのは、アーキテクチャ側で「ロジックを純関数と seam に寄せる」設計を貫いているからで、テスト戦略と<a href="../architecture/packages.html">パッケージ構成</a>は表裏一体である。</p>
+
+      <h2>2 系統の実行環境（scripts/test.sh）</h2>
+      <table>
+        <tr><th>系統</th><th>対象</th><th>実行</th><th>速度</th></tr>
+        <tr><td><strong>FAST</strong></td><td>Foundation のみの純ロジック（<code>AutoAlbumCore</code> / <code>FaceCore</code> / <code>PhotoSourceKit</code> / <code>MosaicSupport</code> / <code>BackupKit</code> / <code>ImageCacheKit</code> / <code>PerceptionCore</code> ほか）</td><td>macOS の <code>swift test</code></td><td>各パッケージ数秒〜十数秒</td></tr>
+        <tr><td><strong>IOS</strong></td><td>UIKit / SwiftData / Photos に依存するもの（<code>DropboxCore</code> / <code>PhotosFeatureKit</code>）と UI テスト</td><td>iOS シミュレータの <code>xcodebuild test</code></td><td>分オーダー</td></tr>
+      </table>
+      <p><code>scripts/test.sh all</code> が両系統を一括で回す。各 SPM パッケージは <code>.iOS(.v17)</code> 宣言＋<code>@available</code> ゲートで <strong>macOS でもビルド可能</strong>に保っており、これが FAST 系統の前提になっている（アプリ本体の最小 iOS は 26.0）。</p>
+
+      <h2>テストを可能にしている設計</h2>
+      <ul>
+        <li><strong>純ロジックへの分離</strong> — 検索の融合（<code>AIAlbumSearcher</code>）・語彙接地（<code>VocabularyGrounding</code>）・顔クラスタリング（<code>FaceClustering</code>）・日付解釈（<code>RelativeDateParser</code>）などは Foundation だけで動く純関数/値型。モデルも DB もネットワークも無しでテストできる。</li>
+        <li><strong>seam（プロトコル注入）</strong> — 外部依存はプロトコルで抽象化しデフォルト引数で本番実装を注入する。<code>HTTPClient</code>（URLSession）/ <code>DateProvider</code> / <code>AccessTokenProvider</code> / 知覚系（<code>TextEmbedder</code> / <code>ConceptExpander</code> / <code>FacePerceptionProvider</code>…）。テストはスタブを渡す。CLIP の「近さ」も seam なので、<strong>接地の規則は固定ベクトルで完全にテストできる</strong>。</li>
+        <li><strong>@ModelActor はインメモリで</strong> — SwiftData のストア（<code>TagStore</code> / <code>FaceStore</code> 等）は <code>isStoredInMemoryOnly: true</code> で生成してストア連携までテストする。</li>
+      </ul>
+
+      <h2>何をテストしているか（代表マップ）</h2>
+      <table>
+        <tr><th>領域</th><th>代表テスト</th><th>守っているもの</th></tr>
+        <tr><td>検索の解釈・接地</td><td><code>VocabularyGroundingTests</code> / <code>QuerySpecSanitizerTests</code> / <code>RelativeDateParserTests</code></td><td>広い語の展開規則・LLM 出力の防御的接地・日付解釈（唯一の出典）</td></tr>
+        <tr><td>検索の評価規則</td><td><code>AIAlbumSearcherTests</code> / <code>HardGroundedContentTests</code> / <code>AttributeConditionTests</code></td><td>RRF 融合・「人物×内容は AND」・属性条件の fail-closed・空を返すポリシー</td></tr>
+        <tr><td>検出性能（データセット）</td><td><code>SearchEvalTests</code> / <code>SearchEvalRegressionTests</code> / <code>SearchEvalCaltechTests</code></td><td>COCO 123 クエリの計測＋<strong>カテゴリ別 F1 回帰フロア</strong>・語彙接地の end-to-end（<a href="datasets.html">次ページ</a>）</td></tr>
+        <tr><td>顔クラスタリング</td><td><code>FaceClusteringTests</code> / <code>FacePersonGroupingTests</code> / <code>PersonCleanupTests</code> / <code>PeopleOrderingTests</code></td><td>逐次クラスタの規則・束ね・混入の一括分離・一覧の決定的順序</td></tr>
+        <tr><td>顔の検出性能</td><td><code>FaceAccuracyEvalTests</code>（FG-NET / LFW）</td><td>しきい値・ゲート・アルゴリズム変更の採否判定（<a href="datasets.html">次ページ</a>）</td></tr>
+        <tr><td>Dropbox</td><td><code>DropboxCoreTests</code>（APIClient / AuthService / PKCE / SyncEngine / Batcher…）</td><td>認証・差分同期・サムネバッチング（HTTP はスタブ）</td></tr>
+        <tr><td>バックアップ</td><td><code>BackupPlanningTests</code> / <code>DropboxBackupUploaderTests</code></td><td>差分算出・メタデータ v2 の分割/マージ・検証つきアップロード</td></tr>
+        <tr><td>背景処理の骨格</td><td><code>BackgroundTrickleTests</code> / <code>TurnTakingTests</code> / <code>AnalysisStallCheckTests</code></td><td>譲り・キャンセル規則・飢餓の検出（「沈黙として現れるバグ」をこちらから検出する）</td></tr>
+        <tr><td>アプリターゲット</td><td><code>ImageRecognitionTests</code>（モデル同梱時のみ・未同梱はスキップ）</td><td>CLIP の有限性（fp16 NaN 回帰）・画像/テキスト識別・翻訳素通し</td></tr>
+      </table>
+
+      <h2>実機ログも「テスト」の一部</h2>
+      <p>シミュレータ・macOS では再現しない問題（ANE デッドロック・メモリ飢餓・OS スロットル・Core ML の fp16 破綻）があるため、<strong>実機の診断ログ（<code>Diagnostics</code>・<code>PerfTrace</code>・MetricKit）を継続的に読む運用</strong>を検証の最終段に置いている。「Mac で正常＝実機で正常」ではない、が繰り返し得られた教訓（詳細は<a href="../features/diagnostics.html">診断と堅牢性</a>）。</p>
+
+      <h2>回帰の守り方</h2>
+      <ul>
+        <li><strong>実障害はテストで固定してから直す</strong> — 「バレエの太郎に無関係な写真が混ざる」→ <code>HardGroundedContentTests</code>、「まとめて確認で混ざった 2 人を分割できない」→ <code>PersonCleanupTests</code> のように、機序を再現する最小テストを残す。</li>
+        <li><strong>検出性能は回帰フロア</strong> — カテゴリ別 F1 の下限（現状値 −0.03）と全体 precision ≥ 0.97 をテストとして固定。フロアを意図的に割るトレードオフは台帳に理由を書いてから更新する。</li>
+        <li><strong>CI</strong> — GitHub Actions が push ごとに <code>scripts/test.sh fast</code> をゲートに回す（iOS シミュレータはベストエフォート）。データセットが無い環境では評価系テストは安全にスキップされる。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="scripts/test.sh">scripts/test.sh</a> — 2 系統の一括実行</li>
+          <li><a href="datasets.html">データセット評価と意思決定</a> — 検出性能の測り方と、それで決めた判断</li>
+          <li><a href="../appendix/conventions.html">規約とテスト方針</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>
