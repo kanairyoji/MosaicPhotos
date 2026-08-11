@@ -143,12 +143,22 @@ extension AutoAlbumEngine {
         // ⚠️ utility にする（diagnostics-48）。userInitiated だと 86k フェッチ・採点の協調タスクが
         // P コアを占有し、メインスレッドが数十秒スケジュールされない（飢餓＝体感は完全なフリーズ）。
         // ユーザーはスピナーで進行を見られるので、応答性を優先する。
+        let albumID = id ?? "\(AIAlbumStrategy.strategyID):\(UUID().uuidString)"
         Task(priority: .utility) {
             defer { isMakingAIAlbum = false }
-            if let id {
-                _ = await updateAIAlbum(id: id, title: title, criteria: criteria)
-            } else {
-                _ = await createAIAlbum(title: title, criteria: criteria)
+            // 第 1 段: 決定的プレビュー（1〜2 秒でアルバムが現れる・従来どおり）。
+            _ = await updateAIAlbum(id: albumID, title: title, criteria: criteria)
+            // 第 2 段（ADR-110）: FM 解釈つきの即時本番化。「バレエ」のようなレキシコン外の語も
+            // 作成から十数秒で条件化される（従来は夜間まで「人物の全写真」のままだった＝
+            // diagnostics-49 の実障害）。ユーザーの明示操作なので夜間ゲートの対象外。
+            // 語彙接地だけは重心キャッシュ済みのときのみ（コールドなら夜間が接地込みで再仕上げ）。
+            let lite: [EnrichedPhoto]? = {
+                guard let snap = suggestionSnapshot,
+                      Date().timeIntervalSince(snap.builtAt) < 1800 else { return nil }
+                return snap.lite
+            }()
+            if let refreshed = await aiService.finalizeNow(id: albumID, baseLite: lite) {
+                aiAlbums = refreshed
             }
         }
     }

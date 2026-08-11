@@ -42,16 +42,37 @@ public final class AIAlbumInterpreter {
     /// - 肯定: 接地できた語は実在タグへ展開、できなかった語は**そのまま残す**（CLIP が受け持つ）。
     /// - 否定: 接地できた語だけを残す。**索引に無い概念の不在は検証できない**ので、
     ///   除外条件にすると「証拠が無いのに除外した気になる」＝ADR-100 で直した誤りの再来になる。
-    private func groundContentTerms(_ spec: QuerySpec) async -> QuerySpec {
+    /// - Parameter cachedOnly: true なら CLIP 類似（重心）はキャッシュ済みのときだけ使う（ADR-110）。
+    /// - Returns: `complete=false` は「接地を見送った」（重心コールドで語が語彙に完全一致しない）＝
+    ///   呼び出し側は pendingFinalization を維持し、夜間の本番化が接地込みでやり直す。
+    private func groundContentTerms(_ spec: QuerySpec,
+                                    cachedOnly: Bool = false) async -> (spec: QuerySpec, complete: Bool) {
         let include = spec.allContentTerms.include
         let exclude = spec.allContentTerms.exclude
-        guard !include.isEmpty || !exclude.isEmpty else { return spec }
+        guard !include.isEmpty || !exclude.isEmpty else { return (spec, true) }
         guard let expander = conceptExpander, expander.isAvailable,
-              let vocabulary = await tagVocabularyProvider?(), !vocabulary.isEmpty else { return spec }
+              let vocabulary = await tagVocabularyProvider?(), !vocabulary.isEmpty else {
+            return (spec, true)   // 接地機構なし＝これ以上やることが無い（従来どおり素通し）
+        }
 
         let terms = include + exclude
+        // 全語が語彙に完全一致するなら、類似計算（＝重心）は不要（ADR-110）。
+        // 「ballet」のような Vision 実在語はコールドでも即時に接地が完結する。
+        let vocabSet = Set(vocabulary.map { $0.lowercased() })
+        let allExact = terms.allSatisfy { vocabSet.contains($0.lowercased()) }
+        if allExact {
+            let out = VocabularyGrounding.apply(spec: spec, vocabulary: vocabulary,
+                                                similarity: { _ in [] }, coherence: nil)
+            Diagnostics.mark("aialbum.ground: exact \(terms) (vocab=\(vocabulary.count))")
+            return (out, true)
+        }
+        // 重心がコールド（未構築）のときは、即時本番化では接地を見送る（構築は数十分＝夜間の仕事）。
+        if cachedOnly && !expander.hasCachedCentroids {
+            Diagnostics.mark("aialbum.ground: deferred — centroids cold (terms=\(terms))")
+            return (spec, false)
+        }
         let matrix = await expander.similarities(terms: terms, vocabulary: vocabulary)
-        guard matrix.count == terms.count else { return spec }
+        guard matrix.count == terms.count else { return (spec, true) }
         var byTerm: [String: [Double]] = [:]
         for (i, t) in terms.enumerated() { byTerm[t.lowercased()] = matrix[i] }
         // 高原（広い語）判定用の凝集度（S6・ADR-102）。無ければ突出規則のみで動く。
@@ -61,7 +82,7 @@ public final class AIAlbumInterpreter {
                                             coherence: coherence)
         Diagnostics.mark("aialbum.ground: include \(include) → \(out.allContentTerms.include) / "
                          + "exclude \(exclude) → \(out.allContentTerms.exclude) (vocab=\(vocabulary.count))")
-        return out
+        return (out, true)
     }
 
     // MARK: - 保存済み解釈への窓口（永続化はすべてここを経由する）
@@ -116,9 +137,13 @@ public final class AIAlbumInterpreter {
     ///     全メタ・カタログ。渡すと**アルバムごとの 86k フェッチ＋カタログ構築を省く**
     ///     （diagnostics-48: v7 移行の全再解釈で 1 アルバムあたり約 10 秒 × 5 本の再取得が
     ///     走り、前面のメイン飢餓を悪化させた）。nil なら従来どおり自前で取得。
+    /// - Parameter groundingCachedOnly: true なら語彙接地は**重心キャッシュ済みのときだけ**行う
+    ///   （ADR-110・作成直後の即時本番化用。コールド構築＝数十分を作成フローで待たない）。
+    ///   接地を見送った場合は `pendingFinalization` を立てて返す＝夜間の本番化が接地込みでやり直す。
     func interpretation(id: String, criteria: String, now: Date,
                         baseLite: [EnrichedPhoto]? = nil,
-                        prebuiltCatalog: AIAlbumCatalog? = nil) async -> SavedInterpretation {
+                        prebuiltCatalog: AIAlbumCatalog? = nil,
+                        groundingCachedOnly: Bool = false) async -> SavedInterpretation {
         // 検索文が同じでも、解釈器の版が古ければ作り直す（プロンプト改善を既存アルバムに波及させる）。
         if var saved = interpretations.get(id), saved.criteria == criteria,
            saved.version == SavedInterpretation.currentVersion,
@@ -194,7 +219,8 @@ public final class AIAlbumInterpreter {
         //    人間向けの語で、索引側の語彙に実在するとは限らない。実在する語（台帳のタグ）へ
         //    落としてから保存する。個別の対応表は書かず、CLIP の意味的な近さで語彙の側から決める。
         //    解釈は作成時 1 回だけなので（ADR-23）、ここで確定して永続化する。
-        spec = await groundContentTerms(spec)
+        let grounding = await groundContentTerms(spec, cachedOnly: groundingCachedOnly)
+        spec = grounding.spec
         // P0: 翻訳失敗（日本語のまま等）は semanticText を空にして保存し、次回に再試行する。
         // 失敗を静かにキャッシュすると CLIP に非英語が渡り採点が全ノイズ化する（実障害2件）。
         let english = (await translator?.toEnglish(criteria)) ?? criteria
@@ -202,7 +228,8 @@ public final class AIAlbumInterpreter {
         var saved = SavedInterpretation(criteria: criteria, spec: spec,
                                         semanticText: failed ? "" : english)
         saved.translationPending = failed
-        saved.pendingFinalization = false   // full 解釈済み
+        // 接地を見送った（重心コールド）場合は pending のまま＝夜間の本番化が接地込みでやり直す。
+        saved.pendingFinalization = !grounding.complete
         // マルチプローブ（ADR-35）: FM に言い換え（同義語・上位/下位概念）を生成させて永続化する。
         // 単語リスト生成は小型 LLM が壊れにくい形（expandProbes は空振り Refine と同じ実装）。
         // 採点は主フレーズ＋プローブの max-over-probes＝言い換えの取りこぼしを回収する。

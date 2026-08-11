@@ -160,6 +160,36 @@ final class AIAlbumService {
         return out
     }
 
+    /// 作成/編集直後の**即時本番化**（ADR-110）: FM 解釈＋フル評価＋証拠ゲート＋LLM 審査を
+    /// その場で行う。ユーザーの明示操作（作成/更新ボタン）なので夜間ゲートの対象外・utility 優先度。
+    /// 「バレエ」のようなレキシコン外の語が翌朝まで条件化されない問題（diagnostics-49）を解消する。
+    /// 語彙接地だけは**重心キャッシュ済みのときのみ**（コールド構築は数十分＝夜間の仕事）。
+    /// 接地を見送った場合は pendingFinalization が残り、夜間の finalize が接地込みで仕上げる。
+    func finalizeNow(id: String, baseLite: [EnrichedPhoto]? = nil) async -> [AutoAlbumInfo]? {
+        guard let album = (await loadAll()).first(where: { $0.id == id }),
+              let criteria = album.criteria, !criteria.isEmpty else { return nil }
+        let now = Date()
+        let all: [EnrichedPhoto]
+        if let baseLite { all = baseLite } else { all = await store.allEnrichedPhotosLite() }
+        var saved = await interpreter.interpretation(id: id, criteria: criteria, now: now,
+                                                     baseLite: all, groundingCachedOnly: true)
+        var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+        members = await verification.evidenceGatedIfExcluding(members, spec: saved.spec)
+        members = await verification.verified(members, criteria: criteria)
+        saved.scoredPool = pool
+        saved.evaluatedEmbedCount = await store.embeddedCount()
+        interpreter.save(saved, for: id)
+        let info = AIAlbumSearcher.buildInfo(id: id, title: album.title,
+                                             interpretedTitle: saved.spec.title,
+                                             criteria: criteria, members: members,
+                                             aesthetics: await coverAesthetics(members),
+                                             usage: await coverUsage(members))
+        await store.upsert(albumInfo: info)
+        Diagnostics.mark("aialbum.finalizeNow: '\(criteria)' → members=\(members.count) "
+                         + "pendingGrounding=\(saved.pendingFinalization == true)")
+        return await loadAll()
+    }
+
     // MARK: - 作成 / 再設定 / 削除
 
     /// 作成/再設定（共通）。**0 件でも保存**する。戻り値: (結果, 更新後の AI アルバム一覧 or nil)。

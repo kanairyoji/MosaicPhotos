@@ -212,8 +212,12 @@ public protocol ConceptExpander: Sendable {
     func similarities(terms: [String], vocabulary: [String]) async -> [[Double]]
     /// 凝集の計算（高原判定・精錬）。nil なら高原規則・精錬は使われない。
     func coherenceContext(vocabulary: [String]) async -> CoherenceContext?
+    /// 重心が**キャッシュ済み**か（ADR-110）。false のとき `similarities` を呼ぶと
+    /// コールド構築（数十分）が走り得る＝作成直後の即時本番化ではキャッシュ済みのときだけ接地する。
+    var hasCachedCentroids: Bool { get }
 }
 
 public extension ConceptExpander {
     func coherenceContext(vocabulary: [String]) async -> CoherenceContext? { nil }
+    var hasCachedCentroids: Bool { true }
 }

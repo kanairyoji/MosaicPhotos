@@ -44,6 +44,12 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
 
     public var isAvailable: Bool { MobileCLIP.modelsBundled }
 
+    /// 重心キャッシュ済みか（ADR-110・作成直後の即時本番化はこれが true のときだけ接地する）。
+    public var hasCachedCentroids: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !cachedCentroids.isEmpty
+    }
+
     public func similarities(terms: [String], vocabulary: [String]) async -> [[Double]] {
         guard !terms.isEmpty, !vocabulary.isEmpty, isAvailable else { return [] }
         let centroids = await centroids(for: vocabulary)
