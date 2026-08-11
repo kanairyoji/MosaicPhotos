@@ -38,6 +38,8 @@ MosaicPhotos/DropboxSecrets.swift
 # MobileCLIP: build venv/checkpoint (1.3GB) and generated on-device models (193MB).
 # Regenerate locally with scripts/build_mobileclip.sh (not committed; license + size).
 .mobileclip_build/
+# 検索品質評価のデータセット（COCO ラベル・scripts/fetch_search_eval_datasets.sh が取得）
+.search_eval/
 MosaicPhotos/MobileCLIP/
 
 # Face model (people clustering): build venv and generated Core ML model.

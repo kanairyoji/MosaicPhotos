@@ -93,8 +93,12 @@ public final class AIAlbumInterpreter {
             let lex = JapaneseVisualLexicon.includeTerms(in: visualText)
             if !lex.isEmpty { spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: lex) }
         }
-        if JapaneseVisualLexicon.hasPeopleNegation(criteria) {
-            spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])
+        // ⚠️ 否定は**語ごとに汎用で**取る（ADR-100）。以前は「人」だけを固定文字列で見ており、
+        //    「犬が写っていない写真」は否定が無視されて犬の写真がそのまま返っていた
+        //    （COCO 計測: precision 0.213）。人物否定もこの中に集約されている。
+        let lexExcludes = JapaneseVisualLexicon.excludeTerms(in: visualText)
+        if !lexExcludes.isEmpty {
+            spec = QuerySpecSanitizer.addingExclusion(spec, terms: lexExcludes)
         }
         // P0: 翻訳失敗（日本語のまま等）は semanticText を空にして保存し、次回に再試行する。
         // 失敗を静かにキャッシュすると CLIP に非英語が渡り採点が全ノイズ化する（実障害2件）。
@@ -137,8 +141,12 @@ public final class AIAlbumInterpreter {
         if !grounded.isEmpty {
             spec = QuerySpecSanitizer.addingPeople(spec, names: grounded)
         }
-        if JapaneseVisualLexicon.hasPeopleNegation(criteria) {
-            spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])
+        // ⚠️ 否定は**語ごとに汎用で**取る（ADR-100）。以前は「人」だけを固定文字列で見ており、
+        //    「犬が写っていない写真」は否定が無視されて犬の写真がそのまま返っていた
+        //    （COCO 計測: precision 0.213）。人物否定もこの中に集約されている。
+        let lexExcludes = JapaneseVisualLexicon.excludeTerms(in: visualText)
+        if !lexExcludes.isEmpty {
+            spec = QuerySpecSanitizer.addingExclusion(spec, terms: lexExcludes)
         }
         if let date = RelativeDateParser.parse(criteria, now: now) {
             if spec.clauses.isEmpty {

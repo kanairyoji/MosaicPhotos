@@ -57,6 +57,7 @@ public struct AIAlbumSearcher {
                 probes: [String] = [],
                 pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                 faceCounts: [String: Int]? = nil,
+                humanCounts: [String: Int] = [:],
                 photoTags: [String: [String]] = [:],
                 ocrTexts: [String: String] = [:],
                 peopleByRefKey: [String: [String]]? = nil,
@@ -64,6 +65,7 @@ public struct AIAlbumSearcher {
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
                              probes: probes, pageSize: pageSize, faceCounts: faceCounts,
+                             humanCounts: humanCounts,
                              photoTags: photoTags, ocrTexts: ocrTexts, peopleByRefKey: peopleByRefKey,
                              loadPage: loadPage).members
     }
@@ -84,6 +86,7 @@ public struct AIAlbumSearcher {
                                probes: [String] = [],
                                pageSize: Int = AutoAlbumTuning.semanticSearchPageSize,
                                faceCounts: [String: Int]? = nil,
+                               humanCounts: [String: Int] = [:],
                                photoTags: [String: [String]] = [:],
                                ocrTexts: [String: String] = [:],
                                peopleByRefKey: [String: [String]]? = nil,
@@ -93,9 +96,20 @@ public struct AIAlbumSearcher {
         let includeTerms = spec.allContentTerms.include
         let excludeTerms = spec.allContentTerms.exclude
 
-        // 対策2: 顔の実測で「人が写っている」写真を除外（faceCounts が渡された＝人系の除外あり）。
+        // 人物除外は**実測の人数**で判定する（faceCounts が渡された＝人系の除外あり）。
+        //
+        // ⚠️ 証拠の優先順位と「無い＝いない」の禁止（ADR-100）:
+        //    (1) `humanCount`（Vision 上半身検出・夜間タグ付けで全写真に付く・網羅率 約86%）
+        //    (2) `faceCounts`（顔スキャン・網羅率 約11%）
+        //    どちらにも記録が無い写真は「人がいないと確認できていない」＝**通さない**。
+        //    旧実装は `(faceCounts[id] ?? 0) == 0` で、未スキャンの 89% を「人なし」と読んでいた。
+        //    COCO 計測では precision 0.490（誤混入 2062 枚）＝アルバムの半分が人物写真だった。
         if let faceCounts {
-            base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
+            base = base.filter { photo in
+                if let human = humanCounts[photo.id] { return human == 0 }
+                if let faces = faceCounts[photo.id] { return faces == 0 }
+                return false   // 証拠なし＝主張できないので入れない（索引が進めば入る）
+            }
         }
         // P1: 除外語にタグが一致する写真をハード除外（離散・閾値レス。例:「人が写っていない」×
         // タグ people/person）。タグ未付与の写真は対象外（CLIP 対比が受け持つ）。
@@ -127,11 +141,20 @@ public struct AIAlbumSearcher {
         var embedderAvailable = false
 
         guard hasPhrase, !base.isEmpty else {
-            Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(!hasPhrase)")
-            // フレーズ無し（翻訳保留等）: ハード条件（日付/場所等）があればその絞り込み結果、
-            // 無ければ**空**を返す。旧: 無条件で base を返し、全滅解釈＋翻訳失敗の組で
-            // 「全 68,512 枚のアルバム」が生成される実障害になった。
-            return (spec.hasHardConstraints ? base : [], [:])
+            Diagnostics.mark("aialbum: early base=\(base.count)/\(all.count) clauses=\(spec.clauses.count) hard=\(spec.hasHardConstraints) phraseEmpty=\(!hasPhrase) excl=\(excludeTerms.count)")
+            // フレーズ無し（翻訳保留等）: ハード条件（日付/場所等）があればその絞り込み結果。
+            // 旧: 無条件で base を返し、全滅解釈＋翻訳失敗の組で「全 68,512 枚のアルバム」が
+            // 生成される実障害になったため、既定は**空**。
+            if spec.hasHardConstraints { return (base, [:]) }
+            // ⚠️ ただし**除外だけのクエリ**（「犬が写っていない写真」）は、肯定語が無くても
+            //    それ自体が有効な選択である（ADR-100）。ここまでで離散のタグ除外・人物実測に
+            //    よる絞り込みは済んでいるので base をそのまま返す。以前は空を返しており、
+            //    否定を汎用化した直後は「正しく除外はするが 1 枚も出ない」状態だった
+            //    （COCO 計測: no-dog / no-car が recall 0）。
+            //    「証拠の無い写真まで通す」ことは呼び手の証拠ゲートが防ぐ＝ここでは通してよい。
+            //    除外語は決定的レキシコンで接地済み（LLM の失敗では立たない）＝旧障害は再発しない。
+            if !excludeTerms.isEmpty { return (base, [:]) }
+            return ([], [:])
         }
 
         // 字句検索は地名/人物に加えて OCR 台帳（写真内テキスト）も引く（photo-info-expansion）。

@@ -34,11 +34,32 @@ final class AIAlbumVerificationCoordinator {
     nonisolated static func evidenceGated(_ members: [EnrichedPhoto],
                                           tags: [String: [String]],
                                           faceCounts: [String: Int],
-                                          captions: [String: String]) -> [EnrichedPhoto] {
-        members.filter { photo in
-            !(tags[photo.id] ?? []).isEmpty
+                                          captions: [String: String],
+                                          humanCounts: [String: Int] = [:],
+                                          excludeTerms: [String] = []) -> [EnrichedPhoto] {
+        // 除外語が「人」系を含むなら、**人について語れる証拠**を要求する（ADR-100）。
+        // ⚠️ 一般の証拠（任意のタグがある）では不十分。風景タグ（beach, sky…）は人の有無について
+        //    何も語らないのに、旧実装はそれで通していた。条件に答えられるチャネルを要求する。
+        let needsPeopleEvidence = !excludeTerms.isEmpty && hasPeopleTerm(excludeTerms)
+        return members.filter { photo in
+            if needsPeopleEvidence {
+                return humanCounts[photo.id] != nil
+                    || faceCounts[photo.id] != nil
+                    || (captions[photo.id]?.isEmpty == false)
+            }
+            return !(tags[photo.id] ?? []).isEmpty
                 || faceCounts[photo.id] != nil
+                || humanCounts[photo.id] != nil
                 || (captions[photo.id]?.isEmpty == false)
+        }
+    }
+
+    /// 除外語に人物概念が含まれるか（`AIAlbumSearcher.hasPeopleExclusion` と語彙を揃える）。
+    nonisolated static func hasPeopleTerm(_ terms: [String]) -> Bool {
+        let peopleWords = ["people", "person", "human", "man", "woman", "child", "children", "face"]
+        return terms.contains { term in
+            let t = term.lowercased()
+            return peopleWords.contains { t == $0 || t.contains($0) }
         }
     }
 
@@ -70,7 +91,10 @@ final class AIAlbumVerificationCoordinator {
         let tags = await tagStore?.tags(forRefKeys: keys) ?? [:]
         let captions = await tagStore?.captions(forRefKeys: keys) ?? [:]
         let faces = await faceCountsProvider?() ?? [:]
-        let gated = Self.evidenceGated(members, tags: tags, faceCounts: faces, captions: captions)
+        let humans = await tagStore?.humanCounts(forRefKeys: keys) ?? [:]
+        let gated = Self.evidenceGated(members, tags: tags, faceCounts: faces, captions: captions,
+                                       humanCounts: humans,
+                                       excludeTerms: spec.allContentTerms.exclude)
         if gated.count != members.count {
             Diagnostics.mark("aialbum.evidenceGate: \(members.count) → \(gated.count) (deferred until indexed)")
         }

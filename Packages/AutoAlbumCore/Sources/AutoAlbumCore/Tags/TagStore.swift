@@ -191,12 +191,43 @@ actor TagStore {
         return out
     }
 
+    /// 指定 refKey の humanCount（証拠ゲート用・未計測はキーごと含めない・ADR-100）。
+    func humanCounts(forRefKeys keys: [String]) -> [String: Int] {
+        guard !keys.isEmpty else { return [:] }
+        let set = keys
+        let records = (try? modelContext.fetch(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+        var out: [String: Int] = [:]
+        for r in records {
+            if let count = r.humanCount { out[r.refKey] = count }
+        }
+        return out
+    }
+
     /// 全タグ台帳（refKey → tags）。検索の一次ランキングで使う（数万件・値は小さい）。
     func allTags() -> [String: [String]] {
         let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
         var out: [String: [String]] = [:]
         out.reserveCapacity(records.count)
         for r in records where !r.tags.isEmpty { out[r.refKey] = r.tags }
+        return out
+    }
+
+    /// 全 humanCount 台帳（refKey → 上半身検出の人数）。**未計測の写真はキーごと含めない**。
+    ///
+    /// ⚠️ 「人が写っていない」の判定はこれを主軸にする（ADR-100）。顔スキャン（`FaceStore`）は
+    /// 実機で網羅率 11% しかなく、`?? 0` で未スキャンを「人なし」と読んでいたため、
+    /// 除外つきアルバムの半分が人物写真になっていた（COCO 計測: precision 0.490・誤混入 2062 枚）。
+    /// `humanCount` は夜間タグ付けパスで既に計算・保存済みで網羅率は約 86%、しかも上半身検出なので
+    /// 後ろ姿や小さい顔も拾える＝「人がいない」の担保に適する。新たな計算は不要。
+    func allHumanCounts() -> [String: Int] {
+        let records = (try? modelContext.fetch(
+            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.humanCount != nil }))) ?? []
+        var out: [String: Int] = [:]
+        out.reserveCapacity(records.count)
+        for r in records {
+            if let count = r.humanCount { out[r.refKey] = count }
+        }
         return out
     }
 

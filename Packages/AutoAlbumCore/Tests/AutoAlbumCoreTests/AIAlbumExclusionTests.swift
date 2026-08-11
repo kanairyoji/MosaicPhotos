@@ -79,8 +79,13 @@ struct AIAlbumExclusionTests {
         #expect(gated2.isEmpty)
     }
 
-    /// 顔スキャンの実測（faceCounts）: 顔がある写真はハード除外、未スキャンは CLIP に任せて残す。
-    @Test("faceCounts: 顔実測>0 は除外・0 は残す・未スキャンは通す")
+    /// 人物の実測: 顔がある写真はハード除外、0 なら残す、**未計測は通さない**（ADR-100）。
+    ///
+    /// ⚠️ 旧仕様は「未スキャンは CLIP に任せて通す」だった。しかし顔スキャンの網羅率は実機で
+    /// 約 11% しかなく、`?? 0` により 89% の写真が「人なし」と判定されて素通りしていた。
+    /// COCO 計測では除外つきアルバムの precision が 0.490（誤混入 2062 枚）＝半分が人物写真。
+    /// 「証拠が無い」を「写っていない」と読まないのが正しい不変条件。索引が進めば入ってくる。
+    @Test("人物実測: >0 は除外・0 は残す・未計測は通さない")
     func faceCountsHardFilter() async {
         let embedder = MappingEmbedder(map: [
             "landscape": [1, 0],
@@ -96,7 +101,18 @@ struct AIAlbumExclusionTests {
         let result = await searcher.search(baseLite: photos, spec: spec, now: now,
                                            semanticText: "", faceCounts: faceCounts,
                                            loadPage: pagedLoader(photos))
-        #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["noFace", "unscanned"])
+        #expect(Set(result.compactMap { PhotoRef.decode($0.id)?.localIdentifier }) == ["noFace"],
+                "未計測の写真を『人が写っていない』として通している")
+
+        // humanCount（網羅率の高い上半身検出）があれば、顔未スキャンでも判定できる。
+        let humanCounts = [PhotoRef.local("unscanned").encoded: 0]
+        let withHuman = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                              semanticText: "", faceCounts: faceCounts,
+                                              humanCounts: humanCounts,
+                                              loadPage: pagedLoader(photos))
+        #expect(Set(withHuman.compactMap { PhotoRef.decode($0.id)?.localIdentifier })
+                == ["noFace", "unscanned"],
+                "humanCount=0 の証拠があるのに除外されている")
     }
 
     /// 除外があるとき、肯定側の埋め込みは全文（否定入り）でなく include 語だけを使う。

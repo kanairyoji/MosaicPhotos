@@ -49,13 +49,69 @@ public enum JapaneseVisualLexicon {
         "without people", "no people", "nobody", "without any people",
     ]
 
+    /// 語に**後置**される否定（日本語）。「犬が写っていない」＝ 犬 ＋ が写っていない。
+    private static let negationSuffixes = [
+        "が写っていない", "が写ってない", "が映っていない", "が映ってない",
+        "がいない", "が無い", "がない", "の無い", "のない",
+        "なし", "無し", "抜き", "以外", "を除く", "を除いた", "は除く",
+    ]
+    /// 語に**前置**される否定（英語）。"without dogs" / "no people"。
+    private static let negationPrefixes = ["without", "no ", "not ", "excluding", "except"]
+
+    /// 語が否定されているか（原文中の位置を見て前後の否定表現を判定する）。
+    ///
+    /// ⚠️ ここが汎用化の要（ADR-100）。以前は「人」の否定だけを固定文字列で見ており、
+    /// 「犬が写っていない写真」は**否定が丸ごと無視されて `dog` が include に立ち**、
+    /// 犬の写真がそのまま返っていた（COCO 計測で precision 0.213）。語ごとに文脈を見る。
+    private static func isNegated(_ word: String, in criteria: String) -> Bool {
+        let lower = criteria.lowercased()
+        let haystacks = [criteria, lower]
+        for haystack in haystacks {
+            var searchStart = haystack.startIndex
+            while let range = haystack.range(of: word, range: searchStart..<haystack.endIndex) {
+                // 後置（日本語）: 語の直後 12 文字以内に否定表現が始まるか。
+                let after = haystack[range.upperBound...].prefix(12)
+                if negationSuffixes.contains(where: { after.hasPrefix($0) }) { return true }
+                // 前置（英語）: 語の直前 12 文字以内に without/no などがあるか。
+                let beforeStart = haystack.index(range.lowerBound,
+                                                 offsetBy: -12,
+                                                 limitedBy: haystack.startIndex) ?? haystack.startIndex
+                let before = haystack[beforeStart..<range.lowerBound].lowercased()
+                if negationPrefixes.contains(where: { before.contains($0) }) { return true }
+                searchStart = range.upperBound
+            }
+        }
+        return false
+    }
+
     /// 原文から視覚語（英語）を決定的に抽出する。見つからなければ空。
+    /// ⚠️ **否定されている語は含めない**（「犬が写っていない」で dog を肯定に立てない）。
     static func includeTerms(in criteria: String) -> [String] {
         let lower = criteria.lowercased()
         var out: [String] = []
         var seen = Set<String>()
-        for entry in visualWords where entry.jp.contains(where: { criteria.contains($0) || lower.contains($0) }) {
+        for entry in visualWords {
+            guard let matched = entry.jp.first(where: { criteria.contains($0) || lower.contains($0) }),
+                  !isNegated(matched, in: criteria) else { continue }
             for en in entry.en where seen.insert(en).inserted { out.append(en) }
+        }
+        return out
+    }
+
+    /// 原文から**否定された**視覚語（英語）を決定的に抽出する（ADR-100）。
+    /// 「人が写っていない」も語彙経由でここに集約されるので、呼び手は人物を特別扱いしなくてよい。
+    public static func excludeTerms(in criteria: String) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        let lower = criteria.lowercased()
+        for entry in visualWords {
+            guard let matched = entry.jp.first(where: { criteria.contains($0) || lower.contains($0) }),
+                  isNegated(matched, in: criteria) else { continue }
+            for en in entry.en where seen.insert(en).inserted { out.append(en) }
+        }
+        // 「人が写っていない」等は語彙に「人」を置かず専用パターンで受ける（誤爆を避けるため）。
+        if hasPeopleNegation(criteria) {
+            for en in ["people"] where seen.insert(en).inserted { out.append(en) }
         }
         return out
     }

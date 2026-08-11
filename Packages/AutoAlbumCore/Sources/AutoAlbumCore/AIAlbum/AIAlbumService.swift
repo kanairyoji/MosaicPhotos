@@ -237,6 +237,9 @@ final class AIAlbumService {
             let spec = saved.spec
             let peopleMap = await peopleMapIfNeeded(for: spec)
             let faceCounts = await faceCountsIfNeeded(for: spec)
+            // 人物証拠は humanCount（網羅率 約86%）を主軸に、顔スキャンを補助にする（ADR-100）。
+            // ⚠️ フル評価と**同一の規則**にすること（食い違うと増分と全体で結果が変わる）。
+            let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
             saved.evaluatedEmbedCount += newRefKeys.count
             // 意味採点のクエリ埋め込み（キャッシュ）。埋め込み不可なら評価枚数だけ進める。
             guard let q = await queryVectors(for: saved) else {
@@ -248,9 +251,14 @@ final class AIAlbumService {
                 // ハード条件（相対日付は now で解決）を新規分に適用。
                 var base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
                                                      peopleByRefKey: peopleMap)
-                // 対策2: 人系の除外があれば顔の実測（faceCount>0）をハード除外（フル評価と同じ規則）。
-                if let faceCounts {
-                    base = base.filter { (faceCounts[$0.id] ?? 0) == 0 }
+                // 人系の除外があれば実測の人数でハード除外（フル評価と同じ規則・ADR-100）。
+                // 証拠が無い写真は通さない（「無い＝いない」と読まない）。
+                if faceCounts != nil {
+                    base = base.filter { photo in
+                        if let human = humanCounts[photo.id] { return human == 0 }
+                        if let faces = faceCounts?[photo.id] { return faces == 0 }
+                        return false
+                    }
                 }
                 var added: [String: Float] = [:]
                 for photo in base {
@@ -383,12 +391,17 @@ final class AIAlbumService {
         let tOcr = PerfTrace.nowNs()
         let ocr = await tagStore?.allOcrTexts() ?? [:]
         PerfTrace.logSpan("aialbum.ocrLedger", ms: PerfTrace.msSince(tOcr))
+        // 人物証拠（humanCount）は人系の除外があるときだけ読む（86k 件の台帳なので無駄に引かない）。
+        let tHuman = PerfTrace.nowNs()
+        let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
+        PerfTrace.logSpan("aialbum.humanCounts", ms: PerfTrace.msSince(tHuman))
         let tScore = PerfTrace.nowNs()
         defer { PerfTrace.logSpan("aialbum.score", ms: PerfTrace.msSince(tScore)) }
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
-                probes: probes, faceCounts: faceCounts, photoTags: tags, ocrTexts: ocr,
+                probes: probes, faceCounts: faceCounts, humanCounts: humanCounts,
+                photoTags: tags, ocrTexts: ocr,
                 peopleByRefKey: peopleMap,
                 loadPage: { offset, limit in
                     await store.enrichmentVectorPage(offset: offset, limit: limit)
