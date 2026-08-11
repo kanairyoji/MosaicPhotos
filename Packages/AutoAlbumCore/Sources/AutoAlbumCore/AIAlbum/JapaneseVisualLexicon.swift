@@ -63,14 +63,41 @@ public enum JapaneseVisualLexicon {
     /// ⚠️ ここが汎用化の要（ADR-100）。以前は「人」の否定だけを固定文字列で見ており、
     /// 「犬が写っていない写真」は**否定が丸ごと無視されて `dog` が include に立ち**、
     /// 犬の写真がそのまま返っていた（COCO 計測で precision 0.213）。語ごとに文脈を見る。
+    /// 連言（と・や・、）で語をつなぐときの区切り。「犬**と**猫が写っていない」の 犬 にも
+    /// 否定を届かせるために使う（ADR-100 追記）。
+    private static let conjunctions = ["と", "や", "、", "・"]
+    /// 連言でスキップしてよい名詞（語彙の全日本語語＋人物語）。
+    private static let skippableNouns: [String] =
+        visualWords.flatMap(\.jp) + ["人", "人物", "誰か"]
+
+    /// `text` の先頭から「連言＋名詞」の並びを読み飛ばした残りを返す。
+    /// 「と猫が写っていない」→「が写っていない」。連言でなければそのまま返す。
+    private static func skippingConjoinedNouns(_ text: Substring) -> Substring {
+        var rest = text
+        // 語彙は高々数十語・連言も 2〜3 個なので素朴なループで十分。
+        outer: for _ in 0..<4 {
+            for conj in conjunctions where rest.hasPrefix(conj) {
+                let afterConj = rest.dropFirst(conj.count)
+                for noun in skippableNouns where afterConj.hasPrefix(noun) {
+                    rest = afterConj.dropFirst(noun.count)
+                    continue outer
+                }
+            }
+            break
+        }
+        return rest
+    }
+
     private static func isNegated(_ word: String, in criteria: String) -> Bool {
         let lower = criteria.lowercased()
         let haystacks = [criteria, lower]
         for haystack in haystacks {
             var searchStart = haystack.startIndex
             while let range = haystack.range(of: word, range: searchStart..<haystack.endIndex) {
-                // 後置（日本語）: 語の直後 12 文字以内に否定表現が始まるか。
-                let after = haystack[range.upperBound...].prefix(12)
+                // 後置（日本語）: 語の直後（連言で続く名詞は読み飛ばして）に否定表現が始まるか。
+                // ⚠️ 連言対応が無いと「犬**と猫**が写っていない」の 犬 に否定が届かず、
+                //    dog が**肯定**に立って犬の写真を返す（実測で確認・ADR-100 追記）。
+                let after = skippingConjoinedNouns(haystack[range.upperBound...]).prefix(12)
                 if negationSuffixes.contains(where: { after.hasPrefix($0) }) { return true }
                 // 前置（英語）: 語の直前 12 文字以内に without/no などがあるか。
                 let beforeStart = haystack.index(range.lowerBound,

@@ -122,6 +122,23 @@ struct QuerySpecSanitizerTests {
         #expect(!JapaneseVisualLexicon.hasPeopleNegation("子供の写真"))
     }
 
+    /// 連言否定（ADR-100 追記）: 「犬**と猫**が写っていない」の 犬 にも否定が届くこと。
+    /// 修正前は dog が**肯定**に立ち、犬の写真を返していた（プローブで実測）。
+    @Test("レキシコン: 連言（と・や）でつないだ語にも否定が届く")
+    func conjunctionNegation() {
+        #expect(JapaneseVisualLexicon.excludeTerms(in: "犬と猫が写っていない写真") == ["dog", "cat"])
+        #expect(JapaneseVisualLexicon.includeTerms(in: "犬と猫が写っていない写真").isEmpty)
+        #expect(JapaneseVisualLexicon.excludeTerms(in: "犬や猫が写っていない海") == ["dog", "cat"])
+        #expect(JapaneseVisualLexicon.includeTerms(in: "犬や猫が写っていない海")
+                == ["beach", "sea", "ocean"])
+        // 連言があっても否定が無ければ従来どおり肯定。
+        #expect(JapaneseVisualLexicon.includeTerms(in: "犬と猫の写真") == ["dog", "cat"])
+        #expect(JapaneseVisualLexicon.excludeTerms(in: "犬と猫の写真").isEmpty)
+        // 人物語も連言でスキップできる（「山と人が写っていない」の 山 に届く）。
+        #expect(JapaneseVisualLexicon.excludeTerms(in: "山と人が写っていない風景")
+                == ["mountain", "people"])
+    }
+
     @Test("addingExclusion: 全節へ追加・節が無ければ立てる・重複しない")
     func addExclusion() {
         let empty = QuerySpecSanitizer.addingExclusion(QuerySpec(), terms: ["people"])
