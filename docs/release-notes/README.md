@@ -54,11 +54,22 @@ git tag v<version> && git push origin v<version>
 
 ### 2. ビルドをアップロードする
 
-Xcode の Archive → Distribute App、または Transporter を使う。
-**バイナリのアップロードは MCP では行わない**（App Store Connect API はビルドの
-アップロード自体を提供していないため）。
+**CLI で完結できる**（1.15 で確認・GUI 不要）:
 
-アップロード後、App Store Connect 側の処理が終わってビルドが選択可能になるまで待つ。
+```bash
+xcodebuild -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
+  -destination 'generic/platform=iOS' archive -archivePath <path>.xcarchive \
+  -allowProvisioningUpdates
+xcodebuild -exportArchive -archivePath <path>.xcarchive \
+  -exportOptionsPlist ExportOptions.plist -exportPath <dir> -allowProvisioningUpdates
+# ExportOptions.plist: method=app-store-connect / destination=upload /
+#   signingStyle=automatic / manageAppVersionAndBuildNumber=false
+```
+
+アップロード後、処理完了（`builds_list` で processingState=VALID）まで数分待つ。
+⚠️ CLI アップロードでは**暗号化申告が未設定**になる（Xcode GUI の質問が出ないため）。
+`builds_update_encryption`（uses_non_exempt_encryption=false）を提出前に必ず実行する。
+これを忘れると提出が ENTITY_STATE_INVALID で落ちる。
 
 ### 3. バージョンとリリースノートを投入する（asc-mcp）
 
