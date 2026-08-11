@@ -137,6 +137,34 @@ struct QuerySpecSanitizerTests {
         // 人物語も連言でスキップできる（「山と人が写っていない」の 山 に届く）。
         #expect(JapaneseVisualLexicon.excludeTerms(in: "山と人が写っていない風景")
                 == ["mountain", "people"])
+        // 人物否定が**連言の先頭**でも届く（S11: 固定パターンだけだと落ち、人が 1,989 枚混入した）。
+        #expect(JapaneseVisualLexicon.excludeTerms(in: "人と車と自転車が写っていない写真")
+                == ["car", "bicycle", "people"])
+    }
+
+    /// 単漢字は漢字に隣接していたら一致させない（S11）。
+    /// 「印象的な写真」の 象→elephant（実測 F1 0.040）・「熊本」の 熊→bear を防ぐ。
+    @Test("レキシコン: 単漢字の複合語誤爆を防ぐ（印象≠象・熊本≠熊）")
+    func singleKanjiBoundary() {
+        #expect(JapaneseVisualLexicon.includeTerms(in: "印象的な写真").isEmpty)
+        #expect(JapaneseVisualLexicon.includeTerms(in: "熊本の写真").isEmpty)
+        #expect(JapaneseVisualLexicon.includeTerms(in: "空港の写真").isEmpty)
+        // 境界が漢字でなければ従来どおり当たる。
+        #expect(JapaneseVisualLexicon.includeTerms(in: "象の写真") == ["elephant"])
+        #expect(JapaneseVisualLexicon.includeTerms(in: "白い象") == ["elephant"])
+        #expect(JapaneseVisualLexicon.includeTerms(in: "クマの写真") == ["bear"])
+    }
+
+    /// ASCII 直入力の否定と一般語（S11）。"photos without dogs" が犬の**肯定**に化けない。
+    @Test("ASCII 直入力: 否定・属性・一般語を分解する")
+    func asciiParsing() {
+        let negated = AIAlbumInterpreter.parsedAsciiContent("photos without dogs")
+        #expect(negated.content.isEmpty)
+        #expect(negated.excludes == ["dogs"])
+        let attributeOnly = AIAlbumInterpreter.parsedAsciiContent("beautiful photos")
+        #expect(attributeOnly.content.isEmpty && attributeOnly.excludes.isEmpty)
+        let plain = AIAlbumInterpreter.parsedAsciiContent("dog photos")
+        #expect(plain.content == "dog")
     }
 
     @Test("addingExclusion: 全節へ追加・節が無ければ立てる・重複しない")

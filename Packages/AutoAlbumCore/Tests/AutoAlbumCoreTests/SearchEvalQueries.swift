@@ -12,6 +12,8 @@ enum SearchEvalQueries {
     /// パイプラインへ渡す語ではない。パイプラインには `text`（自然文）を渡す。
     struct Query {
         let id: String
+        /// 分析用カテゴリ（subject / exclusion / conjunction / date / attribute / phrase / en / limitation）。
+        var category: String = "subject"
         /// ユーザーが入力する自然文（日本語）。
         let text: String
         /// 夜間 FM 翻訳の代替（英語の意味文）。空なら決定的チャンネルのみで解く。
@@ -22,6 +24,8 @@ enum SearchEvalQueries {
         let exclude: [String]
         /// 正解: 撮影年（日付複合クエリ用。nil なら日付条件なし）。
         var year: Int?
+        /// 正解: クラスの最少個数（「犬が2匹」等）。nil なら 1 以上。
+        var minCount: [String: Int]?
         /// 正解: 属性の要求（S10・ADR-103）。
         var requireSmiling = false
         var requireChild = false
@@ -46,6 +50,7 @@ enum SearchEvalQueries {
             for (refKey, counts) in corpus.truth {
                 if !include.isEmpty && !include.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
                 if exclude.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
+                if let minCount, minCount.contains(where: { (counts[$0.key] ?? 0) < $0.value }) { continue }
                 if let year {
                     guard let date = dates[refKey],
                           calendar.component(.year, from: date) == year else { continue }
@@ -63,67 +68,184 @@ enum SearchEvalQueries {
     /// 評価クエリ集。実障害（人物除外）を中心に、汎用性を確かめるため
     /// **人物以外の除外**（犬・車・食べ物）と肯定のみのクエリも入れる。
     /// 汎用化が効いていれば人物以外でも同じだけ改善するはず＝点対応との区別がつく。
-    static let all: [Query] = [
-        // --- 実障害そのもの ---
-        // 純粋形（肯定語なし）。人物証拠の網羅率がそのまま precision に出る＝実障害の核心。
-        Query(id: "no-people-only", text: "人が写っていない写真",
-              englishText: "", include: [], exclude: ["person"]),
-        Query(id: "no-people", text: "人が写っていない風景",
-              englishText: "landscape", include: [], exclude: ["person"],
-              knownLimitation: "「風景」の展開は語彙接地が必要＝Caltech ハーネスで計測（COCO は画像が無く重心を作れない）"),
-        Query(id: "no-people-food", text: "人が写っていない食べ物の写真",
-              englishText: "food", include: ["pizza", "cake", "sandwich", "donut", "hot dog"],
-              exclude: ["person"],
-              knownLimitation: "「食べ物」の展開は語彙接地が必要＝Caltech ハーネスで計測（同上）"),
-        // --- 人物以外の除外（汎用性の確認） ---
-        Query(id: "no-dog", text: "犬が写っていない写真",
-              englishText: "", include: [], exclude: ["dog"]),
-        Query(id: "no-car", text: "車が写っていない写真",
-              englishText: "", include: [], exclude: ["car"]),
-        Query(id: "cat-no-dog", text: "犬が写っていない猫の写真",
-              englishText: "cat", include: ["cat"], exclude: ["dog"]),
-        // --- 肯定のみ（除外の変更で肯定側を壊していないかの対照） ---
-        Query(id: "dog", text: "犬の写真", englishText: "dog", include: ["dog"], exclude: []),
-        Query(id: "train", text: "電車の写真", englishText: "train", include: ["train"], exclude: []),
-        Query(id: "pizza", text: "ピザの写真", englishText: "pizza", include: ["pizza"], exclude: []),
-        Query(id: "cat", text: "猫の写真", englishText: "cat", include: ["cat"], exclude: []),
-        // --- 連言（S5d の効果確認） ---
-        Query(id: "no-dog-and-cat", text: "犬と猫が写っていない写真",
-              englishText: "", include: [], exclude: ["dog", "cat"]),
-        // --- 日付複合（ハード条件×内容語） ---
-        Query(id: "dog-2024", text: "2024年の犬の写真", englishText: "dog",
-              include: ["dog"], exclude: [], year: 2024),
-        Query(id: "no-people-2025", text: "2025年の人が写っていない写真", englishText: "",
-              include: [], exclude: ["person"], year: 2025),
-        // --- S9 でレキシコンへ追補した語（以前は 0 件＝既知の限界だった） ---
-        Query(id: "bus", text: "バスの写真", englishText: "bus", include: ["bus"], exclude: []),
-        Query(id: "no-bus", text: "バスが写っていない写真", englishText: "", include: [], exclude: ["bus"]),
-        // --- 動物の具体語（S10 レキシコン追補分） ---
-        Query(id: "horse", text: "馬の写真", englishText: "horse", include: ["horse"], exclude: []),
-        Query(id: "elephant", text: "象の写真", englishText: "elephant", include: ["elephant"], exclude: []),
-        Query(id: "giraffe", text: "キリンの写真", englishText: "giraffe", include: ["giraffe"], exclude: []),
-        Query(id: "zebra", text: "シマウマの写真", englishText: "zebra", include: ["zebra"], exclude: []),
-        Query(id: "dog-or-cat", text: "犬と猫の写真", englishText: "dog and cat",
-              include: ["dog", "cat"], exclude: []),
-        // --- 属性条件（S10・ADR-103: 笑顔＝顔スキャン実測・綺麗＝美的スコア） ---
-        Query(id: "child", text: "子供の写真", englishText: "child",
-              include: [], exclude: [], requireChild: true),
-        Query(id: "smiling", text: "笑っている写真", englishText: "",
-              include: [], exclude: [], requireSmiling: true),
-        Query(id: "smiling-child", text: "笑っている子供の写真", englishText: "child",
-              include: [], exclude: [], requireSmiling: true, requireChild: true),
-        Query(id: "beautiful", text: "綺麗な写真", englishText: "",
-              include: [], exclude: [], requireBeautiful: true),
-        Query(id: "beautiful-cat", text: "綺麗な猫の写真", englishText: "cat",
-              include: ["cat"], exclude: [], requireBeautiful: true),
-        Query(id: "beautiful-2024", text: "2024年の綺麗な写真", englishText: "",
-              include: [], exclude: [], year: 2024, requireBeautiful: true),
-        // 人物除外の粗さの定量化: 「子供がいない」は現状「人がいない」へ丸められる
-        //（年齢の証拠が無く『大人だけ』を検証できないため・保守側）。
-        Query(id: "no-child", text: "子供が写っていない写真", englishText: "",
-              include: [], exclude: [], requireNoChild: true,
-              knownLimitation: "子供除外は人物除外へ丸められる（年齢証拠なし・R が構造的に低い）"),
+    /// 主要被写体（日本語 → COCO クラス）。肯定・否定・複合クエリの素材。
+    /// レキシコンに対応語があることが前提（無い語は limitation 枠で測る）。
+    private static let subjects: [(ja: String, en: String, cls: String)] = [
+        ("犬", "dog", "dog"), ("猫", "cat", "cat"), ("馬", "horse", "horse"),
+        ("象", "elephant", "elephant"), ("キリン", "giraffe", "giraffe"),
+        ("シマウマ", "zebra", "zebra"), ("クマ", "bear", "bear"), ("牛", "cow", "cow"),
+        ("羊", "sheep", "sheep"), ("鳥", "bird", "bird"),
+        ("車", "car", "car"), ("電車", "train", "train"), ("バス", "bus", "bus"),
+        ("トラック", "truck", "truck"), ("自転車", "bicycle", "bicycle"),
+        ("バイク", "motorcycle", "motorcycle"), ("飛行機", "airplane", "airplane"),
+        ("ボート", "boat", "boat"),
+        ("ピザ", "pizza", "pizza"), ("ケーキ", "cake", "cake"), ("バナナ", "banana", "banana"),
+        ("リンゴ", "apple", "apple"), ("サンドイッチ", "sandwich", "sandwich"),
+        ("オレンジ", "orange", "orange"), ("ブロッコリー", "broccoli", "broccoli"),
+        ("ニンジン", "carrot", "carrot"), ("ホットドッグ", "hot dog", "hot dog"),
+        ("ドーナツ", "donut", "donut"),
+        ("椅子", "chair", "chair"), ("ソファ", "couch", "couch"), ("ベッド", "bed", "bed"),
+        ("テレビ", "tv", "tv"), ("ノートパソコン", "laptop", "laptop"),
+        ("キーボード", "keyboard", "keyboard"), ("スマホ", "cell phone", "cell phone"),
+        ("冷蔵庫", "refrigerator", "refrigerator"), ("時計", "clock", "clock"),
+        ("花瓶", "vase", "vase"), ("ハサミ", "scissors", "scissors"),
+        ("ぬいぐるみ", "teddy bear", "teddy bear"), ("傘", "umbrella", "umbrella"),
+        ("ネクタイ", "tie", "tie"), ("スーツケース", "suitcase", "suitcase"),
+        ("ベンチ", "bench", "bench"), ("信号", "traffic light", "traffic light"),
+        ("スプーン", "spoon", "spoon"), ("ボウル", "bowl", "bowl"),
+        ("サーフボード", "surfboard", "surfboard"), ("スケートボード", "skateboard", "skateboard"),
+        ("凧", "kite", "kite"),
     ]
+
+    /// 否定クエリにする被写体（頻度と多様性で選ぶ）。
+    private static let exclusionSubjects: [(ja: String, cls: String)] = [
+        ("犬", "dog"), ("猫", "cat"), ("車", "car"), ("バス", "bus"), ("自転車", "bicycle"),
+        ("椅子", "chair"), ("スマホ", "cell phone"), ("テレビ", "tv"), ("傘", "umbrella"),
+        ("ボトル", "bottle"), ("時計", "clock"), ("鳥", "bird"),
+    ]
+
+    static let all: [Query] = {
+        var out: [Query] = []
+        // --- subject: 「Xの写真」（50 本） ---
+        for s in subjects {
+            out.append(Query(id: "s-\(s.cls)", category: "subject",
+                             text: "\(s.ja)の写真", englishText: s.en,
+                             include: [s.cls], exclude: []))
+        }
+        // --- exclusion: 「Xが写っていない写真」（12 本＋人物系 3 本） ---
+        for e in exclusionSubjects {
+            out.append(Query(id: "x-\(e.cls)", category: "exclusion",
+                             text: "\(e.ja)が写っていない写真", englishText: "",
+                             include: [], exclude: [e.cls]))
+        }
+        out += [
+            Query(id: "x-people", category: "exclusion", text: "人が写っていない写真",
+                  englishText: "", include: [], exclude: ["person"]),
+            Query(id: "x-people-en", category: "en", text: "photos without people",
+                  englishText: "", include: [], exclude: ["person"]),
+            Query(id: "x-nobody", category: "exclusion", text: "誰もいない写真",
+                  englishText: "", include: [], exclude: ["person"]),
+        ]
+        // --- conjunction / 複合（10 本） ---
+        out += [
+            Query(id: "c-dog-cat", category: "conjunction", text: "犬と猫の写真",
+                  englishText: "dog and cat", include: ["dog", "cat"], exclude: []),
+            Query(id: "c-no-dog-cat", category: "conjunction", text: "犬と猫が写っていない写真",
+                  englishText: "", include: [], exclude: ["dog", "cat"]),
+            Query(id: "c-no-car-bus", category: "conjunction", text: "車やバスが写っていない写真",
+                  englishText: "", include: [], exclude: ["car", "bus"]),
+            Query(id: "c-cat-no-dog", category: "conjunction", text: "犬が写っていない猫の写真",
+                  englishText: "cat", include: ["cat"], exclude: ["dog"]),
+            Query(id: "c-dog-no-person", category: "conjunction", text: "人が写っていない犬の写真",
+                  englishText: "dog", include: ["dog"], exclude: ["person"]),
+            Query(id: "c-food3", category: "conjunction", text: "ピザとケーキとドーナツの写真",
+                  englishText: "pizza cake donut", include: ["pizza", "cake", "donut"], exclude: []),
+            Query(id: "c-no-p-c-b", category: "conjunction", text: "人と車と自転車が写っていない写真",
+                  englishText: "", include: [], exclude: ["person", "car", "bicycle"]),
+            Query(id: "c-bird-no-person", category: "conjunction", text: "人が写っていない鳥の写真",
+                  englishText: "bird", include: ["bird"], exclude: ["person"]),
+            Query(id: "c-horse-no-car", category: "conjunction", text: "車が写っていない馬の写真",
+                  englishText: "horse", include: ["horse"], exclude: ["car"]),
+            Query(id: "c-written", category: "conjunction", text: "犬が写っている写真",
+                  englishText: "dog", include: ["dog"], exclude: []),   // 肯定の言い回し（〜が写っている）
+        ]
+        // --- date 複合（8 本） ---
+        out += [
+            Query(id: "d-dog-2024", category: "date", text: "2024年の犬の写真",
+                  englishText: "dog", include: ["dog"], exclude: [], year: 2024),
+            Query(id: "d-cat-2025", category: "date", text: "2025年の猫の写真",
+                  englishText: "cat", include: ["cat"], exclude: [], year: 2025),
+            Query(id: "d-pizza-2024", category: "date", text: "2024年のピザの写真",
+                  englishText: "pizza", include: ["pizza"], exclude: [], year: 2024),
+            Query(id: "d-train-2025", category: "date", text: "2025年の電車の写真",
+                  englishText: "train", include: ["train"], exclude: [], year: 2025),
+            Query(id: "d-nop-2025", category: "date", text: "2025年の人が写っていない写真",
+                  englishText: "", include: [], exclude: ["person"], year: 2025),
+            Query(id: "d-nodog-2024", category: "date", text: "2024年の犬が写っていない写真",
+                  englishText: "", include: [], exclude: ["dog"], year: 2024),
+            Query(id: "d-bird-2024", category: "date", text: "2024年の鳥の写真",
+                  englishText: "bird", include: ["bird"], exclude: [], year: 2024),
+            Query(id: "d-umb-2025", category: "date", text: "2025年の傘の写真",
+                  englishText: "umbrella", include: ["umbrella"], exclude: [], year: 2025),
+        ]
+        // --- attribute（属性・8 本） ---
+        out += [
+            Query(id: "a-child", category: "attribute", text: "子供の写真",
+                  englishText: "child", include: [], exclude: [], requireChild: true),
+            Query(id: "a-smiling", category: "attribute", text: "笑っている写真",
+                  englishText: "", include: [], exclude: [], requireSmiling: true),
+            Query(id: "a-smile-child", category: "attribute", text: "笑っている子供の写真",
+                  englishText: "child", include: [], exclude: [], requireSmiling: true, requireChild: true),
+            Query(id: "a-beautiful", category: "attribute", text: "綺麗な写真",
+                  englishText: "", include: [], exclude: [], requireBeautiful: true),
+            Query(id: "a-beauty-cat", category: "attribute", text: "綺麗な猫の写真",
+                  englishText: "cat", include: ["cat"], exclude: [], requireBeautiful: true),
+            Query(id: "a-beauty-2024", category: "attribute", text: "2024年の綺麗な写真",
+                  englishText: "", include: [], exclude: [], year: 2024, requireBeautiful: true),
+            Query(id: "a-smile-2025", category: "attribute", text: "2025年の笑っている写真",
+                  englishText: "", include: [], exclude: [], year: 2025, requireSmiling: true),
+            Query(id: "a-beauty-nop", category: "attribute", text: "人が写っていない綺麗な写真",
+                  englishText: "", include: [], exclude: ["person"], requireBeautiful: true),
+        ]
+        // --- phrase（言い回し・8 本）: 「良い写真」等は美的スコア条件へ寄せる設計（S11） ---
+        out += [
+            Query(id: "p-good", category: "phrase", text: "良い写真",
+                  englishText: "", include: [], exclude: [], requireBeautiful: true),
+            Query(id: "p-ii", category: "phrase", text: "いい写真だけ集めて",
+                  englishText: "", include: [], exclude: [], requireBeautiful: true),
+            Query(id: "p-impressive", category: "phrase", text: "印象的な写真",
+                  englishText: "", include: [], exclude: [], requireBeautiful: true),
+            Query(id: "p-suteki", category: "phrase", text: "素敵な写真を見たい",
+                  englishText: "", include: [], exclude: [], requireBeautiful: true),
+            Query(id: "p-best", category: "phrase", text: "最高の一枚",
+                  englishText: "", include: [], exclude: [], requireBeautiful: true),
+            Query(id: "p-insta", category: "phrase", text: "映えする食べ物の写真",
+                  englishText: "food", include: ["pizza", "cake", "sandwich", "donut", "hot dog",
+                                                 "banana", "apple", "orange", "broccoli", "carrot"],
+                  exclude: [], requireBeautiful: true,
+                  knownLimitation: "「食べ物」の展開は接地が必要（Caltech 側）＝COCO ではタグ具体語のみ"),
+            Query(id: "p-nice-dog", category: "phrase", text: "良い感じの犬の写真",
+                  englishText: "dog", include: ["dog"], exclude: [], requireBeautiful: true),
+            Query(id: "p-smile-phrase", category: "phrase", text: "ニコニコしている写真",
+                  englishText: "", include: [], exclude: [], requireSmiling: true),
+        ]
+        // --- en（英語直入力・5 本） ---
+        out += [
+            Query(id: "e-dog", category: "en", text: "dog", englishText: "dog",
+                  include: ["dog"], exclude: []),
+            Query(id: "e-beautiful", category: "en", text: "beautiful photos", englishText: "",
+                  include: [], exclude: [], requireBeautiful: true),
+            Query(id: "e-no-dogs", category: "en", text: "photos without dogs", englishText: "",
+                  include: [], exclude: ["dog"]),
+            Query(id: "e-smiling", category: "en", text: "smiling photos", englishText: "",
+                  include: [], exclude: [], requireSmiling: true),
+            Query(id: "e-pizza", category: "en", text: "pizza", englishText: "pizza",
+                  include: ["pizza"], exclude: []),
+        ]
+        // --- limitation（未対応の言い回しの定量化・5 本） ---
+        out += [
+            Query(id: "l-no-child", category: "limitation", text: "子供が写っていない写真",
+                  englishText: "", include: [], exclude: [], requireNoChild: true,
+                  knownLimitation: "子供除外は人物除外へ丸められる（年齢証拠なし）"),
+            Query(id: "l-dog-only", category: "limitation", text: "犬だけの写真",
+                  englishText: "dog", include: ["dog"], exclude: ["person"],
+                  knownLimitation: "「だけ」＝他被写体の不在は未対応（犬の肯定として解釈される）"),
+            Query(id: "l-two-dogs", category: "limitation", text: "犬が2匹いる写真",
+                  englishText: "dog", include: ["dog"], exclude: [], minCount: ["dog": 2],
+                  knownLimitation: "頭数条件は未対応（1 匹でも当たる）"),
+            Query(id: "l-food-broad", category: "limitation", text: "食べ物の写真",
+                  englishText: "food",
+                  include: ["pizza", "cake", "sandwich", "donut", "hot dog",
+                            "banana", "apple", "orange", "broccoli", "carrot"], exclude: [],
+                  knownLimitation: "広い語の展開は接地が必要（COCO では測れない・Caltech 側で計測）"),
+            Query(id: "l-vehicle-broad", category: "limitation", text: "乗り物の写真",
+                  englishText: "vehicle",
+                  include: ["car", "bus", "train", "truck", "bicycle", "motorcycle",
+                            "airplane", "boat"], exclude: [],
+                  knownLimitation: "同上（vehicle の接地は Caltech 側）"),
+        ]
+        return out
+    }()
 
     // MARK: - 指標
 

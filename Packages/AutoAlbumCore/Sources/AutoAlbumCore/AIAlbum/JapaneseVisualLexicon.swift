@@ -63,15 +63,76 @@ public enum JapaneseVisualLexicon {
         (["キリン"], ["giraffe"]),
         (["シマウマ"], ["zebra"]),
         (["クマ", "熊"], ["bear"]),
+        // --- 日常物・食べ物・乗り物の具体語（S11・100 本クエリ評価で網羅拡充）。
+        //     ⚠️ 誤爆しやすい単漢字（本→book 等・「日本」に当たる）は入れない。
+        (["ボート"], ["boat"]),
+        (["信号"], ["traffic light"]),
+        (["ベンチ"], ["bench"]),
+        (["傘", "かさ"], ["umbrella"]),
+        (["ネクタイ"], ["tie"]),
+        (["スーツケース"], ["suitcase"]),
+        (["リュック"], ["backpack"]),
+        (["ハンドバッグ", "バッグ"], ["handbag"]),
+        (["フリスビー"], ["frisbee"]),
+        (["スキー"], ["skis"]),
+        (["スノーボード"], ["snowboard"]),
+        (["ボール"], ["sports ball"]),
+        (["凧", "カイト"], ["kite"]),
+        (["スケートボード", "スケボー"], ["skateboard"]),
+        (["サーフボード"], ["surfboard"]),
+        (["テニスラケット", "ラケット"], ["tennis racket"]),
+        (["ボトル", "ペットボトル"], ["bottle"]),
+        (["ワイングラス", "ワイン"], ["wine glass"]),
+        (["コップ", "カップ"], ["cup"]),
+        (["フォーク"], ["fork"]),
+        (["ナイフ"], ["knife"]),
+        (["スプーン"], ["spoon"]),
+        (["ボウル", "お椀"], ["bowl"]),
+        (["バナナ"], ["banana"]),
+        (["リンゴ", "りんご", "林檎"], ["apple"]),
+        (["サンドイッチ", "サンドウィッチ"], ["sandwich"]),
+        (["オレンジ", "みかん", "ミカン"], ["orange"]),
+        (["ブロッコリー"], ["broccoli"]),
+        (["ニンジン", "にんじん", "人参"], ["carrot"]),
+        (["ホットドッグ"], ["hot dog"]),
+        (["ドーナツ", "ドーナッツ"], ["donut"]),
+        (["椅子", "イス", "いす"], ["chair"]),
+        (["ソファ", "ソファー"], ["couch"]),
+        (["ベッド"], ["bed"]),
+        (["トイレ"], ["toilet"]),
+        (["ダイニングテーブル", "食卓"], ["dining table"]),
+        (["観葉植物", "鉢植え"], ["potted plant"]),
+        (["テレビ"], ["tv"]),
+        (["ノートパソコン", "パソコン"], ["laptop"]),
+        (["マウス"], ["mouse"]),
+        (["リモコン"], ["remote"]),
+        (["キーボード"], ["keyboard"]),
+        (["携帯電話", "携帯", "スマホ", "スマートフォン"], ["cell phone"]),
+        (["電子レンジ", "レンジ"], ["microwave"]),
+        (["オーブン"], ["oven"]),
+        (["トースター"], ["toaster"]),
+        (["冷蔵庫"], ["refrigerator"]),
+        (["時計"], ["clock"]),
+        (["花瓶"], ["vase"]),
+        (["ハサミ", "はさみ"], ["scissors"]),
+        (["ぬいぐるみ", "テディベア"], ["teddy bear"]),
+        (["歯ブラシ"], ["toothbrush"]),
+        (["ドライヤー"], ["hair drier"]),
     ]
 
     // MARK: - 属性語（S10・ADR-103）
 
     /// 「笑っている」系（→ `.smiling` 条件＝顔スキャンの hasSmile 実測）。
-    private static let smileWords = ["笑顔", "笑って", "笑い", "スマイル", "smiling", "smile"]
+    private static let smileWords = ["笑顔", "笑って", "笑い", "スマイル", "ニコニコ", "微笑",
+                                     "smiling", "smile", "laughing"]
     /// 「綺麗な」系（→ `.beautiful` 条件＝美的スコアの分布適応しきい値・ADR-78）。
+    /// ⚠️ 「良い写真」「印象的な写真」のような**言い回し**もここへ寄せる（S11・実フィードバック）。
+    ///    ユーザーが写真の良さを尋ねる言葉は多様だが、応えられる索引は美的スコア 1 本＝
+    ///    どの言い回しでも同じ条件に落とすのが正直な設計（無いものに答えたふりをしない）。
     private static let beautifulWords = ["綺麗", "きれい", "キレイ", "美しい", "ベストショット",
-                                         "beautiful", "best shot"]
+                                         "良い写真", "いい写真", "素敵", "印象的", "最高の一枚",
+                                         "映え", "フォトジェニック",
+                                         "beautiful", "best shot", "stunning", "impressive"]
 
     /// 原文が笑顔条件を含むか。
     public static func hasSmileRequest(_ criteria: String) -> Bool {
@@ -153,6 +214,12 @@ public enum JapaneseVisualLexicon {
         return false
     }
 
+    /// CJK 統合漢字か（単漢字の複合語誤爆判定用）。
+    private static func isKanji(_ scalar: Unicode.Scalar?) -> Bool {
+        guard let scalar else { return false }
+        return (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value)
+    }
+
     /// 語彙エントリの一致（どの日本語語が・どのエントリで・否定文脈か）。
     private struct Match {
         let entryIndex: Int
@@ -191,6 +258,19 @@ public enum JapaneseVisualLexicon {
                     searchStart = range.upperBound
                     // 既に長い語が占有した範囲の内側なら数えない（電車の「車」）。
                     if claimed.contains(where: { $0.overlaps(range) }) { continue }
+                    // ⚠️ **単漢字は漢字に隣接していたら一致させない**（S11）。「印象的な写真」の
+                    //    象→elephant、「熊本」の 熊→bear、「空港」の 空→sky のような複合語の
+                    //    誤爆を防ぐ。「象の写真」（前=先頭）「白い象」（前=かな）は従来どおり当たる。
+                    if jp.count == 1, isKanji(jp.unicodeScalars.first) {
+                        if range.lowerBound > haystack.startIndex {
+                            let before = haystack[haystack.index(before: range.lowerBound)]
+                            if isKanji(before.unicodeScalars.first) { continue }
+                        }
+                        if range.upperBound < haystack.endIndex {
+                            let after = haystack[range.upperBound]
+                            if isKanji(after.unicodeScalars.first) { continue }
+                        }
+                    }
                     claimed.append(range)
                     out.append(Match(entryIndex: entryIndex, jp: jp,
                                      negated: isNegated(jp, in: criteria)))
@@ -224,8 +304,13 @@ public enum JapaneseVisualLexicon {
         for match in matches(in: criteria) where match.negated {
             for en in visualWords[match.entryIndex].en where seen.insert(en).inserted { out.append(en) }
         }
-        // 「人が写っていない」等は語彙に「人」を置かず専用パターンで受ける（誤爆を避けるため）。
-        if hasPeopleNegation(criteria) {
+        // 「人が写っていない」等は語彙に「人」を置かず専用パターン＋否定文脈判定で受ける。
+        // ⚠️ 固定パターンだけだと**連言を跨げない**（S11）: 「人と車と自転車が写っていない」は
+        //    「人が写っていない」を含まないため人物否定が落ち、人が写った写真が 1,989 枚
+        //    混入していた（COCO 実測 P=0.477）。isNegated（連言スキップ内蔵）でも判定する。
+        //    恋人・友人など複合語の「人」も否定文脈なら people 除外として妥当なので境界は見ない。
+        if hasPeopleNegation(criteria) || isNegated("人", in: criteria)
+            || isNegated("人物", in: criteria) {
             for en in ["people"] where seen.insert(en).inserted { out.append(en) }
         }
         return out

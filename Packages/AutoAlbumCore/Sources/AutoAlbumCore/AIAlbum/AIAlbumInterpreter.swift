@@ -82,6 +82,31 @@ public final class AIAlbumInterpreter {
         await understanding.expandProbes(criteria)
     }
 
+    /// ASCII 直入力の分解（S11）: 内容語と**英語否定**（"without X" / "no X"）を分ける。
+    /// "beautiful photos" → (content: "", excludes: []) / "photos without dogs" → ("", ["dogs"])。
+    /// ⚠️ 否定対象を取り出さずに "without" だけ剥がすと **"dogs" が肯定に化ける**
+    ///（実測: "photos without dogs" が犬の写真を返した）。
+    nonisolated static func parsedAsciiContent(_ criteria: String) -> (content: String, excludes: [String]) {
+        var text = criteria.lowercased()
+        for phrase in ["beautiful", "stunning", "impressive", "best shot",
+                       "smiling", "smile", "laughing"] {
+            text = text.replacingOccurrences(of: phrase, with: " ")
+        }
+        let stopwords: Set<String> = ["photo", "photos", "picture", "pictures", "image", "images",
+                                      "of", "the", "a", "an", "with", "in", "on", "and", "my", "any"]
+        let negationHeads: Set<String> = ["without", "no", "except", "excluding"]
+        let words = text.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        var content: [String] = []
+        var excludes: [String] = []
+        var negating = false
+        for word in words {
+            if negationHeads.contains(word) { negating = true; continue }
+            if stopwords.contains(word) { continue }
+            if negating { excludes.append(word) } else { content.append(word) }
+        }
+        return (content.joined(separator: " "), excludes)
+    }
+
     // MARK: - 解釈（作成/編集時に 1 回だけ・永続化）
 
     /// 保存済み解釈を返す。無い・検索文が変わったときだけ LLM で解釈＋翻訳して保存する。
@@ -182,8 +207,17 @@ public final class AIAlbumInterpreter {
         let includes = JapaneseVisualLexicon.includeTerms(in: visualText)
         // 英語入力なら原文の語をそのまま include に使える（ASCII のみのとき）。
         // ただし人物名に接地できたときは、原文丸ごとの content 化はしない（人物条件を主にする）。
+        // ⚠️ 全文をそのまま内容語にしない（S11）。"beautiful photos" は属性条件が本体で、
+        //    "photos" は一般語＝内容語にすると（タグに無いので）タグ照合が全滅する。
+        //    属性・否定・一般語（photo/photos/picture…）を取り除いた残りだけを内容語にする。
         if grounded.isEmpty && includes.isEmpty && criteria.allSatisfy(\.isASCII) {
-            spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: [criteria.lowercased()])
+            let parsed = Self.parsedAsciiContent(criteria)
+            if !parsed.content.isEmpty {
+                spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: [parsed.content])
+            }
+            if !parsed.excludes.isEmpty {
+                spec = QuerySpecSanitizer.addingExclusion(spec, terms: parsed.excludes)
+            }
         } else if !includes.isEmpty {
             spec = QuerySpecSanitizer.withIncludeTerms(spec, terms: includes)
         }

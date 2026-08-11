@@ -69,6 +69,7 @@ struct SearchEvalTests {
         let corpus = try SearchEvalCorpus.load(coverage: .device)
 
         var scores: [SearchEvalQueries.Score] = []
+        var byCategory: [String: [SearchEvalQueries.Score]] = [:]
         print("SEARCHEVAL: --- corpus photos=\(corpus.photos.count) "
               + "tagged=\(corpus.tags.count) faceScanned=\(corpus.faceCounts.count) "
               + "captioned=\(corpus.captions.count) ---")
@@ -81,7 +82,10 @@ struct SearchEvalTests {
             let relevant = query.groundTruth(corpus: corpus, dates: dates)
             let score = SearchEvalQueries.score(queryID: query.id, hasExclusion: query.hasExclusion,
                                                 retrieved: retrieved, relevant: relevant)
-            if query.knownLimitation == nil { scores.append(score) }
+            if query.knownLimitation == nil {
+                scores.append(score)
+                byCategory[query.category, default: []].append(score)
+            }
             let limitation = query.knownLimitation.map { "  [既知の限界: \($0)]" } ?? ""
             print(String(format: "SEARCHEVAL: %-15@ excl=%@ P=%.3f R=%.3f F1=%.3f  "
                          + "retrieved=%d relevant=%d falsePositives=%d%@",
@@ -92,14 +96,16 @@ struct SearchEvalTests {
         }
 
         let overall = SearchEvalQueries.macro(scores)
-        let exclusion = SearchEvalQueries.macro(scores.filter(\.hasExclusion))
-        let positive = SearchEvalQueries.macro(scores.filter { !$0.hasExclusion })
-        print(String(format: "SEARCHEVAL: MACRO all       P=%.3f R=%.3f F1=%.3f",
-                     overall.precision, overall.recall, overall.f1))
-        print(String(format: "SEARCHEVAL: MACRO exclusion P=%.3f R=%.3f F1=%.3f  ← 実障害の指標",
-                     exclusion.precision, exclusion.recall, exclusion.f1))
-        print(String(format: "SEARCHEVAL: MACRO positive  P=%.3f R=%.3f F1=%.3f  ← 対照（壊していないか）",
-                     positive.precision, positive.recall, positive.f1))
+        print(String(format: "SEARCHEVAL: MACRO all (%d queries)  P=%.3f R=%.3f F1=%.3f",
+                     scores.count, overall.precision, overall.recall, overall.f1))
+        // カテゴリ別（S11: 100 本規模の分析はカテゴリ単位で読む）。
+        for (category, catScores) in byCategory.sorted(by: { $0.key < $1.key }) {
+            let m = SearchEvalQueries.macro(catScores)
+            let worst = catScores.min { $0.f1 < $1.f1 }
+            print(String(format: "SEARCHEVAL: MACRO %-11@ (%2d) P=%.3f R=%.3f F1=%.3f  worst=%@ (%.3f)",
+                         category as NSString, catScores.count, m.precision, m.recall, m.f1,
+                         (worst?.queryID ?? "-") as NSString, worst?.f1 ?? 0))
+        }
 
         // ⚠️ ここでは閾値で失敗させない（数字を台帳へ残すのが目的）。回帰の固定は
         //    `SearchEvalRegressionTests` が担当する。

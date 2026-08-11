@@ -46,6 +46,15 @@
 - 関連: `QuerySpec` / `QueryEvaluator`（`QuerySignals`） / `JapaneseVisualLexicon` /
   `AIAlbumInterpreter` / `AIAlbumService` / `FaceStore+People.smilingFaceCounts`。
   テスト: `AttributeConditionTests`。[[ADR-78]] [[ADR-100]] [[ADR-102]]。
+- 追記（S11・103 本クエリのカテゴリ別評価）: クエリを 113 本へ拡張し、レキシコンを COCO 名詞へ
+  一括拡充（約 50 エントリ）。評価がさらに 3 件の欠陥を発見して修正:
+  (1) 「印**象**的な写真」の 象→elephant（単漢字は漢字隣接で不一致の一般規則へ。熊本・空港も同時解決）、
+  (2) 「**人**と車と自転車が写っていない」の人物否定が連言を跨げず 1,989 枚混入
+  （否定文脈判定へ一般化・P 0.477→0.997）、
+  (3) "photos without dogs" が犬の肯定に化ける（英語否定の分解を実装・en F1 0.309→0.805）。
+  「良い写真」「印象的な写真」等の言い回しは美的スコア条件へ寄せる設計
+  （応えられる索引は 1 本＝答えたふりをしない）。最終: COCO 96 本マクロ P=0.993 / F1=0.886。
+  カテゴリ別数表と limitation 枠は `records/search-quality.md`。
 
 ## ADR-102 検出性能の汎用底上げ（S5〜S8）— 全施策を計測とセットで実施
 - 状態: 採用（S5/S6/S7）・不採用（S8=多言語テキスト塔・計測により棄却）
