@@ -38,9 +38,25 @@ public final class DiagnosticsLog: @unchecked Sendable {
         }
     }
 
-    /// 直近のログ全文（Developer Options 表示用）。
-    public func recentText() -> String {
-        queue.sync { (try? String(contentsOf: fileURL, encoding: .utf8)) ?? "" }
+    /// 直近のログを**行単位**で返す（Developer Options 表示用）。
+    ///
+    /// ⚠️ `async` かつ行分割済みで返すのが要点（ADR-99）。旧 `recentText()` は
+    /// (1) `queue.sync` で最大 512KB の読み込みを**メインスレッドで**行い、
+    /// (2) 全文を 1 つの `Text` として返していたため、閲覧画面を開くとメインが数秒止まっていた
+    /// （実フィードバック「デバッグログを見るところで固まる」）。SwiftUI は 1 つの `Text` の
+    /// レイアウトを分割できないので、巨大文字列はそれだけで致命的になる。
+    /// 全文が必要なときは共有（`url`）を使う。
+    /// - Parameter maxLines: 返す末尾行数の上限（表示用。ファイル自体は 512KB で切り詰め済み）。
+    public func recentLines(maxLines: Int = 3000) async -> [String] {
+        await withCheckedContinuation { continuation in
+            queue.async { [fileURL] in
+                let text = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+                var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+                if lines.last?.isEmpty == true { lines.removeLast() }
+                if lines.count > maxLines { lines = Array(lines.suffix(maxLines)) }
+                continuation.resume(returning: lines)
+            }
+        }
     }
 
     public func clear() {

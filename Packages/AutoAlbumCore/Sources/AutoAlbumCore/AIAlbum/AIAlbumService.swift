@@ -364,13 +364,27 @@ final class AIAlbumService {
         let spec = saved.spec
         let semanticText = saved.semanticText
         let probes = saved.probes ?? []
+        // ⚠️ 段ごとに測る（ADR-99）。実機 diagnostics-45 では前面で AI アルバム評価が走り、
+        //    メインが 9.9 秒／10.6 秒ブロックした。採点自体は下の `Task.detached` でオフメインだが、
+        //    その**手前**で 86k 件規模の台帳（タグ・OCR・顔数・人物名）を集めており、どこが
+        //    支配的かログから読めない。推測で直さず内訳を出す（CLAUDE.md 性能原則 5）。
+        let tFace = PerfTrace.nowNs()
         let faceCounts = await faceCountsIfNeeded(for: spec)
+        PerfTrace.logSpan("aialbum.faceCounts", ms: PerfTrace.msSince(tFace))
         // 人物条件は焼き込みでなく live 人物名（PeopleEngine）で照合する（命名/統合の追従）。
+        let tPeople = PerfTrace.nowNs()
         let peopleMap = await peopleMapIfNeeded(for: spec)
+        PerfTrace.logSpan("aialbum.peopleMap", ms: PerfTrace.msSince(tPeople))
         // P1: タグ台帳（refKey → シーンタグ）。一次ランキングと離散除外に使う。
+        let tTags = PerfTrace.nowNs()
         let tags = await tagStore?.allTags() ?? [:]
+        PerfTrace.logSpan("aialbum.tagsLedger", ms: PerfTrace.msSince(tTags))
         // OCR 台帳（refKey → 写真内テキスト）。字句検索チャネルへ（photo-info-expansion）。
+        let tOcr = PerfTrace.nowNs()
         let ocr = await tagStore?.allOcrTexts() ?? [:]
+        PerfTrace.logSpan("aialbum.ocrLedger", ms: PerfTrace.msSince(tOcr))
+        let tScore = PerfTrace.nowNs()
+        defer { PerfTrace.logSpan("aialbum.score", ms: PerfTrace.msSince(tScore)) }
         return await Task.detached(priority: .utility) {
             let (members, pool) = await searcher.searchWithPool(
                 baseLite: allLite, spec: spec, now: now, semanticText: semanticText,
