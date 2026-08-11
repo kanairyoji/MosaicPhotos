@@ -100,7 +100,7 @@ graph TD
       </ul>
 
       <h2>段階起動（スパイク回避）</h2>
-      <p>起動直後に重い処理が同時に走らないよう時差で開始する（<code>HomeLifecycleTasks</code>）。詳細は <a href="../case-studies/launch-performance.html">起動の高速化</a>。</p>
+      <p>起動直後に重い処理が同時に走らないよう時差で開始する（<code>HomeLifecycleTasks</code>）。（メモリ/CPU スパイクの同時発生が jetsam・watchdog を誘発するため）。</p>
 
       <div class="box why">
         <span class="box-h">設計の勘所</span>

@@ -48,7 +48,7 @@ actor AutoAlbumStore {
 
       <div class="box why">
         <span class="box-h">設計判断</span>
-        起動直後に「グリッド初期表示・Dropbox キャッシュ読み込み・AI 再評価」が<strong>同時に</strong>走るとメモリ/CPU スパイクが jetsam・watchdog を誘発する。そこで <code>Task.sleep</code> による<strong>段階起動</strong>（place scan を +1.5s、backup を +5s、重い AI を +3s）でピークをずらす。詳細は <a href="../case-studies/launch-performance.html">起動の高速化</a>。
+        起動直後に「グリッド初期表示・Dropbox キャッシュ読み込み・AI 再評価」が<strong>同時に</strong>走るとメモリ/CPU スパイクが jetsam・watchdog を誘発する。そこで <code>Task.sleep</code> による<strong>段階起動</strong>（place scan を +1.5s、backup を +5s、重い AI を +3s）でピークをずらす。
       </div>
 
       <h2>Neural Engine の直列化（ANE ゲート）</h2>

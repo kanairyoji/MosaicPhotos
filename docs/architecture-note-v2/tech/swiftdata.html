@@ -32,7 +32,7 @@
       </div>
       <div class="box why">
         <span class="box-h">2. fetch は属性を丸ごと展開する</span>
-        大きな <code>Data</code> を <code>@Model</code> に inline で持つと、全件 fetch のたびに blob も展開してメモリを食う。本アプリは CLIP 埋め込みを <code>PhotoEmbedding</code> 別テーブルに分け、メタデータ fetch が blob に触れないようにした（→ <a href="../case-studies/memory.html">事例</a>）。
+        大きな <code>Data</code> を <code>@Model</code> に inline で持つと、全件 fetch のたびに blob も展開してメモリを食う。本アプリは CLIP 埋め込みを <code>PhotoEmbedding</code> 別テーブルに分け、メタデータ fetch が blob に触れないようにした（<a href="../deep-dive/data-model.html">データ構造詳細</a>）。
       </div>
       <div class="box why">
         <span class="box-h">3. 起動時 trap を避ける</span>
@@ -42,7 +42,7 @@
       <h2>メモリを有界に保つ書き込み</h2>
       <p>大量 upsert は <code>writeChunk</code> 件ごとに<strong>使い捨ての <code>ModelContext</code></strong> を作って save し、チャンク完了でその context を解放することで登録オブジェクトを溜めない。</p>
 
-      <p>関連: <a href="../features/diagnostics.html">診断と堅牢性</a> / <a href="../case-studies/memory.html">事例: メモリ枯渇の解消</a></p>
+      <p>関連: <a href="../features/diagnostics.html">診断と堅牢性</a> / <a href="../deep-dive/data-model.html">データ構造詳細</a></p>
 
       <div class="box refs">
         <span class="box-h">関連コード</span>

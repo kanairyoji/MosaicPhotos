@@ -63,8 +63,10 @@
     ]},
     { title: "設計判断・事例", items: [
       { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト（重要トップ10）" },
-      { id: "case-memory",    href: "case-studies/memory.html",             label: "事例: メモリ枯渇と圧縮" },
-      { id: "case-launch",    href: "case-studies/launch-performance.html", label: "事例: 起動の高速化" },
+      { id: "case-starvation",   href: "case-studies/main-thread-starvation.html", label: "事例: メインスレッド「飢餓」の追跡" },
+      { id: "case-grounding",    href: "case-studies/vocabulary-grounding.html",   label: "事例: 語彙接地アルゴリズムの誕生" },
+      { id: "case-ane",          href: "case-studies/ane-deadlock.html",           label: "事例: ANE デッドロック" },
+      { id: "case-face-accuracy",href: "case-studies/face-accuracy.html",          label: "事例: 顔クラスタ精度の反復作り込み" },
     ]},
     { title: "付録", items: [
       { id: "appx-glossary",    href: "appendix/glossary.html",    label: "用語集" },

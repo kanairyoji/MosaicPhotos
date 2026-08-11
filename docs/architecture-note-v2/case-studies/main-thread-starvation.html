@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: メインスレッド「飢餓」の追跡 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-starvation";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: メインスレッド「飢餓」の追跡</nav>
+      <h1>事例: メインスレッド「飢餓」の追跡</h1>
+      <p class="lead">「AI アルバムを操作するとアプリが数十秒固まる」——実測でメインスレッドが最長 <strong>20.5 秒</strong>応答しない障害を、5 本の実機ログ（diagnostics-45〜50）にわたって追跡した記録。<strong>有力仮説を検証テストで棄却し、計測値そのものの罠を突破して、真因が「占有」ではなく「飢餓」だった</strong>ことを突き止めるまでの診断サーガ。教訓は一般化できる：<em>メインが止まる機序は 2 つあり、対策がまったく違う。</em></p>
+
+      <h2>症状</h2>
+      <p>AI アルバムの作成・編集の直後、あらゆる操作が固まる。ウォッチドッグの記録は前面ハング 9.4 秒・10.2 秒・20.5 秒・10 秒級 ×6 連続。ユーザー表現は「いちいち固まる」「使い物にならない」。</p>
+
+      <h2>迷走と突破（時系列）</h2>
+      <table>
+        <tr><th>段階</th><th>やったこと</th><th>分かったこと</th></tr>
+        <tr><td>1. 状況証拠</td><td>ハング時刻とログ行の突き合わせ</td><td>ハングが AI 評価の各スパン（<code>aialbum.peopleMap</code> 928ms・<code>tagsLedger</code> 2.3s…）と <strong>1:1 で一致</strong>。「ModelActor の仕事がメインで走っている」仮説が最有力に</td></tr>
+        <tr><td>2. 仮説の検証</td><td><strong>仮説を直接試すテストを書く</strong>：ModelActor をメイン/オフメインで生成し、ジョブの実行スレッドを実測</td><td><strong>棄却</strong>。どちらの生成でもジョブはメインで走らない。有力仮説が消えた</td></tr>
+        <tr><td>3. 計測の罠</td><td>スパン値の意味を再考</td><td>スパン（await の壁時計）は<strong>メインが忙しいと「復帰待ち」で膨らむ</strong>。つまりスパンは犯人ではなく<strong>被害者</strong>だった。「suspect the previous log line」型の帰属はここで壊れる</td></tr>
+        <tr><td>4. 真因</td><td>ログ全体を機序で読み直す</td><td>メインは何も実行していない。<strong>userInitiated の協調タスク（86k 件フェッチ・FM LLM 推論）と Core ML モデルロードのコンパイルストームが P コアを占有し、メインスレッドがスケジュールされない＝「飢餓」</strong>。ウォッチドッグの ping は 10 秒間に 1 回しか届いていなかった</td></tr>
+        <tr><td>5. 増幅要因</td><td>個々のログを精査</td><td>(a) 作成ボタンに二重実行ガードが無く、フリーズ中の再タップで同一処理が 2 本並走（86k フェッチが直列化され 20.7 秒 ×2）。(b) 解釈器の版更新に伴う全アルバム再解釈が<strong>アルバムごとに</strong> 86k フェッチ＋カタログ構築を繰り返していた（約 10 秒 × 5 本）。(c) 背面で始まった一枚岩の再評価が、前面復帰後も譲れずに数分続いていた</td></tr>
+      </table>
+
+      <h2>対策（機序に対応させる）</h2>
+      <ul>
+        <li><strong>飢餓に対して</strong>：AI 推論・作成処理の優先度を <strong>utility に統一</strong>（userInitiated は UI と同格＝P コアを奪う）。スピナーで進行を見せて応答性を優先。</li>
+        <li><strong>一枚岩に対して</strong>：本番化・全再評価・自動生成（始まると譲れない処理）は<strong>非アクティブ（ロック・アプリ切替）限定</strong>の厳格ゲートへ分離（ADR-107）。トリクル系（1 枚ごとに譲れる）は従来どおり。フル再評価は<strong>前面復帰でアルバム間中断</strong>。</li>
+        <li><strong>増幅要因に対して</strong>：二重実行ガード・再評価の in-flight ガード・「全メタ＋カタログはループ外で 1 回だけ構築して共有」。</li>
+        <li><strong>ユーザー体験に対して</strong>：ユーザーの明示操作（作成/更新）は逆に<strong>待たせない</strong>——即時プレビュー→その場で本番化（ADR-110）。</li>
+        <li><strong>観測に対して</strong>：MetricKit の <code>MXHangDiagnostic</code> を購読し、OS 採取のメインスレッド呼び出し木を診断ログへ（ADR-106）。自前ウォッチドッグで帰属できないケースの最終兵器。</li>
+      </ul>
+
+      <h2>結果</h2>
+      <p>修正後の実機ログでは、同じ操作系列でハングは最大 1.0 秒 × 1 回まで縮小。残るのはプロセスあたり 1 回の Core ML テキスト塔ロード（約 5 秒・システム側スレッドのため優先度で抑えられない）に伴う短時間の飢餓のみで、受容とした。</p>
+
+      <div class="box why">
+        <span class="box-h">一般化できる教訓</span>
+        <ol>
+          <li><strong>「占有」と「飢餓」を区別せよ</strong>——メインで重い処理が走っている（占有）なら移せばよいが、CPU を奪われている（飢餓）なら優先度と同時実行量の問題。対策がまったく違う。</li>
+          <li><strong>スパン計測値は「メイン復帰待ち」で膨らむ</strong>——await の壁時計をボトルネックと読んではいけない。被害者が犯人に見える。</li>
+          <li><strong>有力仮説ほどテストで直接検証する</strong>——ModelActor 仮説は 10 分のテストで棄却でき、数時間の誤った修正を防いだ。</li>
+          <li><strong>フリーズは自己増幅する</strong>——固まると再タップされ、二重実行がさらに固める。ガードは UX 対策でもある。</li>
+        </ol>
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="docs/architecture-note/records/case-studies.md">records/case-studies.md</a> — 正本（diagnostics-48/50 の項）</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a> — ADR-106/107/110</li>
+          <li><a href="../features/background.html">バックグラウンドと省電力</a> / <a href="../features/diagnostics.html">診断と堅牢性</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

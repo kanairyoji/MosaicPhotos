@@ -21,7 +21,7 @@
         <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>（ADR 全 37 件）と
         <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">records/case-studies.md</a>（事例 全件）。
         本 HTML はそこから<strong>重要なものを取捨選択</strong>した派生物で、全件は転記しない。新しい判断・事例はまずマスターへ追記する。
-        詳しい顛末は <a href="../case-studies/memory.html">事例: メモリ</a> / <a href="../case-studies/launch-performance.html">事例: 起動</a> の深掘りページも参照。
+        詳しい顛末は <a href="../case-studies/main-thread-starvation.html">事例: メイン飢餓</a> ほか事例ページも参照。
       </div>
 
       <h2><span class="tag">設計</span> 1. 検索の再設計＝「タグ台帳＋LLM 審査」（閾値レス） <span class="muted">(ADR-24・ADR-23・ADR-1)</span></h2>
@@ -42,7 +42,7 @@
       <h2><span class="tag">設計</span> 4. CLIP 埋め込みを別テーブル + Float16 <span class="muted">(ADR-6)</span></h2>
       <p><strong>文脈:</strong> 埋め込みを <code>PhotoEnrichment</code> に inline 格納し、全件 fetch のたび 138MB 級 blob を展開 → 写真の多い実機で起動クラッシュ。<br>
       <strong>決定:</strong> <code>PhotoEmbedding</code> 別テーブルへ分離し Float16 保存。メタデータ fetch は blob に触れない。<br>
-      <strong>結果:</strong> 常駐が「ページ 1 枚分」に。スキーマ再構築（<code>AutoAlbumV10</code>）が必要。→ <a href="../case-studies/memory.html">事例</a>。</p>
+      <strong>結果:</strong> 常駐が「ページ 1 枚分」に。スキーマ再構築（<code>AutoAlbumV10</code>）が必要。詳細は <a href="../deep-dive/data-model.html">データ構造詳細</a>。</p>
 
       <h2><span class="tag">設計</span> 5. AI 検索を合成可能な QuerySpec（OR/NOT/多ファセット）へ <span class="muted">(ADR-12)</span></h2>
       <p><strong>文脈:</strong> 「ここ2年の子供」「京都か奈良の家族のお気に入り、スクショ除く」等、複雑条件・OR・NOT を柔軟に組みたい。<br>
@@ -93,7 +93,7 @@
         <span class="box-h">もっと読む</span>
         <ul>
           <li>正本（全件）: <a class="srclink" data-path="docs/architecture-note/records/decisions.md">decisions.md</a> / <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">case-studies.md</a></li>
-          <li>深掘り: <a href="../case-studies/memory.html">事例: メモリ</a> / <a href="../case-studies/launch-performance.html">事例: 起動の高速化</a></li>
+          <li>深掘り: <a href="../case-studies/main-thread-starvation.html">事例: メイン飢餓</a> / <a href="../case-studies/vocabulary-grounding.html">事例: 語彙接地</a></li>
           <li><a href="../architecture/overview.html">全体アーキテクチャ</a></li>
         </ul>
       </div>

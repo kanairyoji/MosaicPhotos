@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: 顔クラスタ精度の反復作り込み | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-face-accuracy";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: 顔クラスタ精度の反復作り込み</nav>
+      <h1>事例: 顔クラスタ精度の反復作り込み</h1>
+      <p class="lead">ピープル（顔クラスタ）の混入率を <strong>58% → 12%</strong> に下げた過程は、単一のブレイクスルーではなく、<strong>「候補 → データセット計測 → 採否」を十数回まわした反復</strong>だった（ADR-48〜61・台帳 <a class="srclink" data-path="docs/architecture-note/records/face-accuracy.md">face-accuracy.md</a>）。直感に良さそうな案が数字で棄却された例を含めて、計測駆動のアルゴリズム工学の記録として残す。</p>
+
+      <h2>出発点と測り方</h2>
+      <p>初期実装（Vision 顔検出＋facenet 埋め込み＋固定しきい値の逐次クラスタリング）は、家庭ライブラリで「別人が同じ人物に混ざる」が頻発した。まず<strong>測れるようにする</strong>：FG-NET（82 人・<strong>同一人物の年齢横断</strong>＝子供の成長という最大の難所を直接含む）と LFW（5,749 人＝「別人を混ぜない」側の統計）で、混入率・分割度・F1 を出すハーネス（<code>FaceAccuracyEvalTests</code> / <code>FaceEvalMetrics</code>）を常設した。以後の変更はすべてこのハーネスの Δ で採否を決めた。</p>
+
+      <h2>採用された積み木（それぞれ計測で確認）</h2>
+      <table>
+        <tr><th>積み木</th><th>内容</th><th>効き方</th></tr>
+        <tr><td>多段品質ゲート（ADR-48/52/53）</td><td>検出信頼度・<strong>クロップ再検証</strong>（顔中心を切り抜いて再検出できないものを棄却）・ぼけ（ラプラシアン分散）・露出・サイズ・顔向き・目閉じで品質を減衰し、フロア未満はクラスタに入れない</td><td>顔でないもの・不確かな顔が種にならない。偽陽性（顔なし画像）0%</td></tr>
+        <tr><td>アライメント＋マルチクロップ（ADR-51/54）</td><td>両目ランドマークで目線を水平・標準位置へ正規化（facenet の学習形式に合わせる）＋アライメント/反転/bbox の 3 埋め込み平均＋EXIF 回転の正規化</td><td>埋め込みが安定し、同一人物の分散が縮む</td></tr>
+        <tr><td>マージンゲート（ADR-57）</td><td>1 位クラスタと 2 位クラスタの類似差が 0.05 未満の「紛らわしい顔」は<strong>どこにも入れない</strong></td><td>混入の主要因（僅差の誤割り当て）を根元で断つ</td></tr>
+        <tr><td>サイズ適応マージン（ADR-58）</td><td>小さい・新しいクラスタほど合流条件を厳しく</td><td>できたばかりの誤クラスタが「核」に育つのを防ぐ</td></tr>
+        <tr><td>構造制約</td><td>同一写真 cannot-link（同じ人物は 1 枚に 1 回しか写れない）・共起 notSame</td><td>埋め込みに依らない<strong>決定的な</strong>反証を活用</td></tr>
+        <tr><td>ユーザー修正からの学習（ADR-45/46）</td><td>負例エグゼンプラ（埋め込みで永続＝再スキャン・モデル更新を跨いで再発防止）・確認済み顔のアンカー・しきい値のユーザー校正（0.35〜0.70）</td><td>レビュー（判断が割れるケースだけ尋ねる）で答えるほど良くなる</td></tr>
+        <tr><td>2 階層の人物束ね（ADR-61）</td><td>成長で分かれた子供のクラスタを<strong>融合せず</strong> 1 人物として束ねる（各クラスタの純度を保つ・後で解除可）</td><td>子供の年齢跨ぎ識別 +3.8pt・大人の融合維持 99.1%。「束ねる＝子供」なので年齢推定モデルが不要になった</td></tr>
+      </table>
+
+      <h2>数字が止めた「良さそうな案」</h2>
+      <div class="box why">
+        <span class="box-h">外れ値除去の棄却（ADR-59）</span>
+        「重心から遠い顔＝混入だから除去する」——誰もが最初に思いつく案は、FG-NET の<strong>成長データで悪化</strong>した。
+        重心から遠い顔の正体は混入ではなく<strong>同一人物の別年齢</strong>だったからだ。総合 F1 が下がる計測結果を見て棄却。
+        代替として採用した事後監査（ADR-69）は、個々の顔ではなく<strong>クラスタ全体の形</strong>を見る：
+        成長は「連続した 1 つの帯」・別人の混入は「離れた 2 つの塊」になり、2 分割の分離度で区別できる。
+        さらに<strong>同じ写真に両群の顔が居れば別人の決定的証拠</strong>（同一人物は 1 枚に 1 回）という構造制約が判定を補強する。
+        <br><br>
+        後日談：この監査のしきい値（レビューカード用に保守的に校正）は、
+        <strong>クラスタリング自身が混ぜたもの（類似≥しきい値）を構造的に分割できない</strong>ことが実フィードバックで判明し、
+        ユーザーが明示的に開く「この人物を整理」画面には<strong>緩和プロファイル</strong>を別に用意した（ADR-111）。
+        同じアルゴリズムでも<strong>提示の文脈（受動提示 vs 明示操作）でパラメータの正解が変わる</strong>好例。
+      </div>
+
+      <h2>反復の運び方</h2>
+      <ol>
+        <li>実機で症状を観察（「この 2 人が混ざる」）→ 症状を再現する<strong>データセット上の指標</strong>を確認。</li>
+        <li>候補を 1 つ実装し、FG-NET/LFW で混入率・分割度・F1 の Δ を取る。<strong>1 回に 1 変更</strong>（束ねると帰属できない）。</li>
+        <li>効けば採用して台帳に記録、悪化すれば棄却して<strong>棄却理由も記録</strong>（同じ案を再発明しないため）。</li>
+        <li>パイプラインの版（<code>faceScanVersion</code>）を上げて全再スキャン。<strong>命名は写真の重なりで持ち越す</strong>（ユーザーの入力を失わない）。</li>
+      </ol>
+
+      <div class="box why">
+        <span class="box-h">一般化できる教訓</span>
+        <ol>
+          <li><strong>精度は「積み木の合計」で作る</strong>——決定打は無く、+2〜5pt の積み木を計測で選別して積む。</li>
+          <li><strong>ドメインの構造制約は埋め込みより強い</strong>——「同一人物は 1 枚に 1 回」のような決定的事実は、類似度がいくら高くても覆せる反証になる。</li>
+          <li><strong>難所（年齢変化）を含むデータセットを選ぶ</strong>——LFW だけで測っていたら、外れ値除去を誤採用していた。評価データの難所選定が判断の質を決める。</li>
+          <li><strong>棄却も記録する</strong>——「良さそうで悪化した案」の記録が、将来の再発明と再退行を防ぐ。</li>
+        </ol>
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="docs/architecture-note/records/face-accuracy.md">records/face-accuracy.md</a> — 計測台帳（正本）</li>
+          <li><a class="srclink" data-path="Packages/FaceCore/Sources/FaceCore/Faces/FaceClustering.swift">FaceClustering.swift</a> — 逐次クラスタリング（純）</li>
+          <li><a class="srclink" data-path="Packages/FaceCore/Sources/FaceCore/Faces/FaceClusterAudit.swift">FaceClusterAudit.swift</a> — 事後監査（2 分割・共起証拠）</li>
+          <li><a href="../features/on-device-ai.html">オンデバイス AI</a>（ピープル節） / <a href="../testing/datasets.html">データセット評価と意思決定</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

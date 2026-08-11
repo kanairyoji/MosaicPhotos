@@ -54,7 +54,7 @@
       </div>
 
       <h2>埋め込み: PhotoEmbedding（別テーブル・fp16）</h2>
-      <p>メタデータ取得が巨大 blob に触れないよう分離。<code>refKey</code>(unique) + <code>vector: Data</code>（Float16 パック・約1KB）。読み出し時に fp32 へ復元する。理由は <a href="../case-studies/memory.html">事例: メモリ枯渇</a>。</p>
+      <p>メタデータ取得が巨大 blob に触れないよう分離。<code>refKey</code>(unique) + <code>vector: Data</code>（Float16 パック・約1KB）。読み出し時に fp32 へ復元する。理由：inline 格納だと全件 fetch のたびに blob も展開され、67k×2KB≈138MB を確保して写真枚数比例の起動クラッシュになった（実障害・正本は records/case-studies.md）。</p>
 
       <h2>生成アルバム: GeneratedAlbum / AutoAlbumInfo</h2>
       <p>旅行・フォルダ・AI アルバムの永続レコード。Photos.app は変更しない<strong>仮想アルバム</strong>。</p>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: 語彙接地アルゴリズムの誕生 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-grounding";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: 語彙接地アルゴリズムの誕生</nav>
+      <h1>事例: 語彙接地アルゴリズムの誕生</h1>
+      <p class="lead">「風景」「動物」のような<strong>広い言葉</strong>を検索可能にする——素直な実装が計測で全滅し、そこから<strong>タグ重心 → 凝集した高原 → ゲートつき精錬</strong>と、計測に導かれて段階的にアルゴリズムが形になった記録（ADR-101/102/105）。「個別の対応表を書かない」という制約が、結果的に汎用で美しい機構を生んだ。</p>
+
+      <h2>問題</h2>
+      <p>索引側のシーンタグは Vision の約 1,300 クラス（mountain・beach・sushi…）。ユーザーの言葉は「風景」「食べ物」「動物」。両者は<strong>語彙が合わない</strong>ので、タグ照合は「広すぎるタグ（outdoor）だけ拾い、狭くて確実なタグ（mountain）を取りこぼす」最悪の当たり方をしていた。「風景→山・海・夕日」と対応表を書けば直るが、<strong>語彙の数だけ表が要る＝破綻する</strong>。ユーザーからの要求も明確だった：「個別対応ではなく汎用的な機能に」。</p>
+
+      <h2>第 1 案の全滅：語同士（text↔text）の類似</h2>
+      <p>クエリ語と各タグ名を CLIP テキスト塔に通し、テキスト埋め込み同士のコサインで近いタグへ展開する——一見正しい設計は、Caltech-101 の計測で全滅した：<strong>接地できた語 3/10・F1 0.300</strong>。</p>
+      <div class="box why">
+        <span class="box-h">なぜ壊れたか（原理）</span>
+        CLIP が学習しているのは「画像と説明文が近くなる」ことだけで、<strong>テキスト同士の距離は訓練目標に入っていない</strong>。実測すると、テキスト埋め込みは異方性が強く、どの語も語彙全体と 0.67〜0.83 の高い類似で横並びになり、<code>camera</code> のような「ハブ語」がほぼ全クエリの上位に出た。しかも接地を諦めた語は「間違えない」ので <strong>Precision は 1.0 に見える</strong>——F1 で見なければ、この失敗は成功に化けていた。
+      </div>
+
+      <h2>転回：タグ重心（text↔image）</h2>
+      <p>問いを変えた。「<em>風景</em> は <code>mountain</code> という<strong>語</strong>に近いか」ではなく、「<em>風景</em> は <strong><code>mountain</code> タグが付いた写真たち</strong>に近いか」。各タグについて、そのタグが付いた写真の CLIP <strong>画像</strong>埋め込みの平均（＝重心）を作り、クエリ語のテキスト埋め込みと text↔image で比べる——これは CLIP の訓練目標そのものの使い方である。</p>
+      <ul>
+        <li>結果：<strong>接地 10/10・F1 0.86</strong>（対 0.300）。</li>
+        <li>コスト：画像埋め込みは全写真ぶん既に索引にあるので<strong>新規推論ゼロ</strong>——51k 件を 1 回舐めて平均するだけ（実測 約 2 分・結果はキャッシュ）。</li>
+        <li>副産物：タグの意味が<strong>そのユーザーのライブラリの写真</strong>で定義される（雪山ばかりの人の mountain はそういう意味になる）。</li>
+      </ul>
+      <p>採用規則は絶対閾値を使わない：類似分布からの<strong>突出（z ≥ 3）</strong>で判定し、上位から標準偏差幅のバンドで採る。実測の z は pizza 6.07 / dog 4.31（正しい接地）に対し landscape 1.68（語彙に相当物なし）——きれいに分離する。</p>
+
+      <h2>第 2 の壁：「animal 型」の広い語</h2>
+      <p>ところが「動物」は接地できない。該当するタグが<strong>多すぎて</strong>（数十クラス）、どれも突出しない——山が無い「高原」の分布になる。z しきい値を下げると今度は雑音語（nostalgia・happiness）の高原まで通ってしまう。分布の<strong>形</strong>だけでは「一貫した高原」と「雑音の高原」を区別できない（MAD などのロバスト統計も試したが animal のスコアはむしろ下がった）。</p>
+      <p>突破口は<strong>意味情報の追加</strong>：上位候補たちが<strong>画像空間で互いに近いか</strong>（凝集度）を測る。animal の上位候補（emu・flamingo・kangaroo…）は互いに近く、雑音語の上位候補はバラバラ——重心どうしの平均コサインを背景分布（全ペアのサンプル）に対する z スコアにすると、<strong>animal 2.24 / insect 2.44 vs 雑音語 0.17〜1.11 で完全分離</strong>した。こうして「<strong>凝集した高原</strong>は接地する」規則が生まれ、animal の F1 は 0.746→0.902。しきい値とバンド幅は 9 組のパラメータ掃引で決め、雑音語の門が開かないことを負例テストで固定した。</p>
+
+      <h2>仕上げ：ゲートつき凝集精錬</h2>
+      <p>バンド選択には端の混入（bird のバンドに紛れた minaret）と裾の取りこぼし（food の strawberry・crab）が残る。そこで選択集合との<strong>限界凝集</strong>（候補 1 件と集合の平均類似の z）で「混入を刈り・裾を伸ばす」精錬を足した——が、<strong>無条件に適用すると乗り物が壊れた</strong>（F1 0.40→0.25）。車・飛行機・船は正解どうしが視覚的に似ていない（凝集 z 0.15）ので、凝集を頼る精錬とは相性が最悪なのだ。結論：<strong>グループ自体が視覚的に一貫しているとき（z ≥ 1.0）だけ精錬する</strong>ゲートを付ける。bird 0.833→0.909・food 0.667→0.800、乗り物は無傷。</p>
+
+      <h2>完成形（3 段の規則）</h2>
+      <div class="mermaid">
+graph TD
+  T["クエリ語（例: 動物）"] --> E{語彙に完全一致?}
+  E -->|はい| X["そのタグに接地（重心不要）"]
+  E -->|いいえ| Z{"突出 z ≥ 3?"}
+  Z -->|はい| BAND["上位バンドへ展開（最大6）"]
+  Z -->|いいえ| P{"高原 z ≥ 1.5 かつ<br/>凝集度 z ≥ 2.0?"}
+  P -->|はい| PLATEAU["高原全体へ展開（最大40）"]
+  P -->|いいえ| N["接地しない<br/>（肯定は CLIP 採点へ・否定は捨てる）"]
+  BAND --> R{"グループ凝集 z ≥ 1.0?"}
+  PLATEAU --> R
+  R -->|はい| REFINE["凝集精錬：混入を刈り・裾を伸ばす"]
+  R -->|いいえ| DONE["そのまま採用"]
+  REFINE --> DONE
+      </div>
+      <p>否定語（「〜が写っていない」）は<strong>接地できなければ捨てる</strong>——索引に無い概念の「不在」は検証できないため（ADR-100 の証拠主義）。この全規則は seam（<code>ConceptExpander</code>）越しの純ロジックなので、固定ベクトルで完全にテストできる。</p>
+
+      <div class="box why">
+        <span class="box-h">一般化できる教訓</span>
+        <ol>
+          <li><strong>埋め込みは「訓練目標どおり」に使う</strong>——CLIP のテキスト同士を比べるのは目的外使用で、異方性に殺される。片側を画像重心に置き換えるだけで別物になる。</li>
+          <li><strong>Precision 1.0 は「解けている」ことを意味しない</strong>——諦めの多い方式ほど混ざらない。F1 で比較しなければ誤採用していた。</li>
+          <li><strong>分布の形で足りなければ意味を足す</strong>——z スコア（形）で分離できない高原は、候補どうしの距離（意味）が分ける。</li>
+          <li><strong>強い規則ほどゲートを付けて出す</strong>——精錬は前提（視覚的一貫性）が成り立つ集合にだけ効く。前提を検査してから適用する。</li>
+        </ol>
+      </div>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/VocabularyGrounding.swift">VocabularyGrounding.swift</a> — 3 段規則の実装（純）</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit/CLIPConceptExpander.swift">CLIPConceptExpander.swift</a> — 重心・凝集度の実体</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> — S6/S12 の計測記録（正本）</li>
+          <li><a href="../testing/datasets.html">データセット評価と意思決定</a> / <a href="../ai/04-clip-contrastive.html">CLIP と対照学習</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

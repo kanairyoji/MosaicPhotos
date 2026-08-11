@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>事例: ANE デッドロック | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "case-ane";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / 事例: ANE デッドロック</nav>
+      <h1>事例: ANE デッドロック</h1>
+      <p class="lead">顔スキャンが<strong>最初の 1 枚で永久に固まる</strong>——Vision の顔検出と Core ML の CLIP 推論が<strong>同時に Neural Engine (ANE) を使うと実機でだけデッドロックする</strong>という、ドキュメントのどこにも書かれていない共有ハード資源の衝突（diagnostics-19・ADR-70/73）。シミュレータでも Mac でも絶対に再現せず、しかも「以前は偶然起きない構造だった」ことが調査を難航させた。</p>
+
+      <h2>症状</h2>
+      <p>実機の夜間処理で、顔スキャンのログが <code>faces: start — N photos</code> の直後から一切進まない。クラッシュしない・エラーも出ない・CPU も張り付かない。Vision の <code>VNImageRequestHandler.perform</code> が<strong>返ってこない</strong>だけ。プロセスを再起動しても、同じ 1 枚目で再び止まる。</p>
+
+      <h2>調査を難航させた 2 つの性質</h2>
+      <ul>
+        <li><strong>実機でしか起きない</strong> — シミュレータの Vision/Core ML は CPU 実行（ANE が存在しない）ため、同じコードが問題なく完走する。Mac の単体検証も同様。「コードは正しいのに実機で止まる」ログだけが手がかりだった。</li>
+        <li><strong>以前は偶然マスクされていた</strong> — 顔スキャン導入当初、CLIP 埋め込みは回線ゲート（Wi-Fi 必須）で止まっている時間帯が多く、顔検出が ANE を独占できていた。ゲート整理で両者が同じ夜間窓に走るようになった途端に顕在化した。<strong>「昔から動いていたコード」が新しい並走相手を得て初めて壊れる</strong>型で、直近の変更を疑う定石が通用しない。</li>
+      </ul>
+
+      <h2>特定</h2>
+      <p>診断ログのタイムライン突き合わせで、停止時刻に必ず<strong>もう一方の ANE 利用者</strong>（CLIP 推論またはモデルロード）が走っていることを確認。仮説「ANE の同時利用で下位層がデッドロックする」を、片方を止める実験で検証——CLIP を完全停止させると顔スキャンは完走し、再開すると再び止まった。OS の下位層（Espresso/ANE スケジューラ）内部の問題であり、アプリ側から解けるのは「同時に使わない」ことだけ、と結論。</p>
+
+      <h2>対策：MLInferenceGate（ANE の直列化）</h2>
+      <ul>
+        <li><strong>ANE を使う重い処理は同時に 1 つ</strong> — 非同期セマフォ <code>MLInferenceGate</code> で、Vision の <code>perform</code>・Core ML 推論・モデルロードを直列化する。顔と CLIP の両方が使うため、共有下層パッケージ <code>PerceptionCore</code> に置く。</li>
+        <li><strong>ゲートは「ANE に触れる場所」の内側で取る</strong> — 呼び出し側（夜間タガー）で包む設計は、新しい呼び出し経路が増えるたびに漏れる（実際、前景の検索経路が素通りしていた）。ランタイム/アダプタの内側で取れば、経路がいくつ増えても守られる。逆に外側で包むと<strong>画像ロード（ANE を使わない I/O）までゲートに入り</strong>、占有時間が無駄に伸びる。</li>
+        <li><strong>優先度つき</strong> — ユーザー操作由来の推論（検索クエリの埋め込み等）は interactive、夜間トリクルは background として、待ち行列で前者を先に通す。待ち時間は診断ログに出し（<code>ANE gate: waited …ms</code>）、ゲートが体感に影響していないかを実機で監視し続ける。</li>
+      </ul>
+
+      <div class="box why">
+        <span class="box-h">一般化できる教訓</span>
+        <ol>
+          <li><strong>共有ハード資源はコードに見えない</strong> — ANE・GPU・メモリ帯域は API 上に「排他」が現れないが、実体は共有資源。プロファイラにも「待ち」としてしか出ない。</li>
+          <li><strong>「実機でだけ壊れる」を検証計画に織り込む</strong> — シミュレータは ANE が無い＝この種の問題を構造的に検出できない。実機の診断ログを常設する理由がここにある。</li>
+          <li><strong>排他は資源に触れる場所の内側で</strong> — 呼び出し側の規律に頼る排他は、経路の増加とともに必ず漏れる。</li>
+          <li><strong>「偶然動いていた」構造を疑う</strong> — 並走相手が増えた・ゲートが変わった、は「昔からのコード」を壊す立派なトリガー。</li>
+        </ol>
+      </div>
+
+      <h2>その後</h2>
+      <p>このゲートは現在、顔・CLIP・Vision タグ・表示ラベラ・モデルロードのすべてを守っている。後日の性能調査（ADR-83）では「ゲートは推論だけを直列化し<strong>通信は縛らない</strong>ので、クラウド写真のダウンロードは推論の裏に完全に隠せる」ことが確認され、スループット最適化の土台にもなった。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/PerceptionCore/Sources/PerceptionCore/MLInferenceGate.swift">MLInferenceGate.swift</a> — 直列化ゲートの実装</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/case-studies.md">records/case-studies.md</a> — 正本（diagnostics-19 の項）</li>
+          <li><a href="../deep-dive/concurrency-internals.html">並行・バックグラウンド処理</a> / <a href="../architecture/packages.html">パッケージと依存関係</a>（ゲートを基盤に置く理由）</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>
