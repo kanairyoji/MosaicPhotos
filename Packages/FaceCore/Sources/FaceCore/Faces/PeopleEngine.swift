@@ -15,7 +15,7 @@ public final class PeopleEngine {
     /// 未スキャン残り枚数（おおよそ）。
     public private(set) var remaining = 0
 
-    @ObservationIgnored private let store: FaceStore
+    @ObservationIgnored let store: FaceStore   // internal: 同モジュールの機能別 extension（PersonCleanup 等）が使う
     @ObservationIgnored private let tagger: FaceTagger
     @ObservationIgnored private let faceProvider: FacePerceptionProvider?
     /// お気に入り写真の refKey 集合（"L-…"）を返す seam（アプリ側＝PhotoKit が実装）。

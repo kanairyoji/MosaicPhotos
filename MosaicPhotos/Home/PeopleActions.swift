@@ -20,6 +20,8 @@ struct PeopleActionsModifier: ViewModifier {
     @State private var manageFacesPerson: PersonInfo?
     /// 別の人物へ統合する対象（統合元）。
     @State private var mergeSourcePerson: PersonInfo?
+    /// 「この人物を整理」（混入グループの一括分離・ADR-111）の対象。
+    @State private var cleanupPerson: PersonInfo?
 
     func body(content: Content) -> some View {
         content
@@ -32,6 +34,8 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Choose Cover Photo")) { coverPickerPerson = person }
                 Button(L("Manage Faces")) { manageFacesPerson = person }
                 Button(L("Group with Another Person…")) { mergeSourcePerson = person }
+                // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
+                Button(L("Clean Up This Person…")) { cleanupPerson = person }
                 if person.isGrouped {
                     Button(L("Separate Grouped Person"), role: .destructive) {
                         let id = person.clusterID
@@ -51,6 +55,10 @@ struct PeopleActionsModifier: ViewModifier {
             // 別の人物へ統合（同一人物が 2 つに割れたときの修正）。
             .sheet(item: $mergeSourcePerson) { person in
                 PersonMergePickerView(source: person, peopleEngine: peopleEngine)
+            }
+            // この人物を整理（混入グループの一括分離・ADR-111）。
+            .sheet(item: $cleanupPerson) { person in
+                PersonCleanupView(person: person, peopleEngine: peopleEngine)
             }
             // 名前変更（入力アラート）。空欄で保存すると "Person N" に戻る。
             .alert(L("Rename Person"),
