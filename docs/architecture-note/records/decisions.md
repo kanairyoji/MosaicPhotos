@@ -56,6 +56,11 @@
   `AIAlbumCatalog.contentTags` / `VocabularyGrounding`（高原規則） / `CLIPConceptExpander.coherenceContext` /
   `AIAlbumVerificationCoordinator.evidenceStarvedRefKeys` / `AutoAlbumEngine+Recognition.runCaptionPhase`。
   計測: `records/search-quality.md`（S5/S6/S8 の数表）。[[ADR-100]] [[ADR-101]]。
+- 追記（S9・クエリ集による総合評価）: クエリを 25 本へ拡充して測定→修正→再測定を回した。
+  評価が 4 件の欠陥を発見（hot dog⊃dog の複合タグ誤一致・cougar face の人物語誤判定・
+  レキシコンの入口不足・展開幅の保守性）。修正後: COCO マクロ F1 **0.927**、
+  Caltech（接地込み広い語）F1 **0.840**。数表と残課題は `records/search-quality.md` の
+  「クエリ集による総合評価」。展開幅は掃引で peak 2.0σ / plateau 1.5σ を採用。
 - 教訓: (1) **犯人を測ってから直す**——train の過剰ヒットはタグ照合を疑ったが、偽陽性の内訳を
   測ったらレキシコンの部分一致だった。(2) **仮説も計測で棄却する**——ギャップ検定は実装前に
   データで死んだ。(3) ミニ AI の採否は**ベンチを書いてから**——0.14 という数字が

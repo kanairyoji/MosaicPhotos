@@ -56,24 +56,11 @@ public final class AIAlbumInterpreter {
         for (i, t) in terms.enumerated() { byTerm[t.lowercased()] = matrix[i] }
         // 高原（広い語）判定用の凝集度（S6・ADR-102）。無ければ突出規則のみで動く。
         let coherence = await expander.coherenceContext(vocabulary: vocabulary)
-
-        let groundedInclude = VocabularyGrounding.ground(
-            terms: include, vocabulary: vocabulary,
-            similarity: { byTerm[$0.lowercased()] ?? [] }, coherenceZ: coherence)
-        let groundedExclude = VocabularyGrounding.ground(
-            terms: exclude, vocabulary: vocabulary,
-            similarity: { byTerm[$0.lowercased()] ?? [] }, coherenceZ: coherence)
-
-        let newInclude = VocabularyGrounding.flatten(groundedInclude, keepUngrounded: true)
-        let newExclude = VocabularyGrounding.flatten(groundedExclude, keepUngrounded: false)
-        Diagnostics.mark("aialbum.ground: include \(include) → \(newInclude) / "
-                         + "exclude \(exclude) → \(newExclude) (vocab=\(vocabulary.count))")
-
-        var out = spec
-        if newInclude != include { out = QuerySpecSanitizer.withIncludeTerms(out, terms: newInclude) }
-        if newExclude != exclude {
-            out = QuerySpecSanitizer.replacingExclusions(out, terms: newExclude)
-        }
+        let out = VocabularyGrounding.apply(spec: spec, vocabulary: vocabulary,
+                                            similarity: { byTerm[$0.lowercased()] ?? [] },
+                                            coherenceZ: coherence)
+        Diagnostics.mark("aialbum.ground: include \(include) → \(out.allContentTerms.include) / "
+                         + "exclude \(exclude) → \(out.allContentTerms.exclude) (vocab=\(vocabulary.count))")
         return out
     }
 

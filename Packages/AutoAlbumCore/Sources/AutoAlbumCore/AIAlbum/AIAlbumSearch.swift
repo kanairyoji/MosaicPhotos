@@ -35,18 +35,28 @@ public struct AIAlbumSearcher {
         let tagTokens: [Set<Substring>] = tags.map {
             Set($0.lowercased().split { !$0.isLetter && !$0.isNumber }.flatMap(variants))
         }
+        let wholeTagVariants: [Set<Substring>] = tags.map { tag in
+            variants(Substring(tag.lowercased()))
+        }
         var hits = 0
         for term in terms {
             let t = term.lowercased()
             let termTokens = t.split { !$0.isLetter && !$0.isNumber }.map(variants)
             guard !termTokens.isEmpty else { continue }
-            // 単語一致（"train" は "train station" に当たるが "training" には当たらない）。
-            // 多語 term は全トークンが同一タグに含まれること（"cherry blossom"）。
-            if tagTokens.contains(where: { tokens in
-                termTokens.allSatisfy { !$0.isDisjoint(with: tokens) }
-            }) {
-                hits += 1
+            let matched: Bool
+            if termTokens.count == 1 {
+                // ⚠️ 単一語 term は**タグ全体との一致のみ**（複数形の吸収だけ許す）。
+                //    トークン内一致にすると "dog" が複合タグ "hot dog" に当たり、犬クエリに
+                //    ホットドッグの写真が混ざる（COCO 実測: dog の偽陽性 40 件は全部 hot dog）。
+                //    "dog park" のような**関連**タグの吸収は文字列でなく接地（重心）の責務。
+                matched = wholeTagVariants.contains { !$0.isDisjoint(with: termTokens[0]) }
+            } else {
+                // 多語 term は全トークンが同一タグに含まれること（"cherry blossom"）。
+                matched = tagTokens.contains { tokens in
+                    termTokens.allSatisfy { !$0.isDisjoint(with: tokens) }
+                }
             }
+            if matched { hits += 1 }
         }
         return hits
     }

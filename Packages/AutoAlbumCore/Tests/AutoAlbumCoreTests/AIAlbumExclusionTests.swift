@@ -159,11 +159,17 @@ struct AIAlbumExclusionTests {
     }
 
     /// P1: シーンタグ（Vision 分類）とクエリ語の一致。
-    @Test("tagHits: 完全/部分一致（ci）を数える")
+    @Test("tagHits: 単語境界一致（複合タグ内の語一致はしない）")
     func tagHitCounting() {
         #expect(AIAlbumSearcher.tagHits(["beach", "sunset", "outdoor"], terms: ["beach"]) == 1)
         #expect(AIAlbumSearcher.tagHits(["beach", "sunset"], terms: ["Beach", "sunset"]) == 2)
-        #expect(AIAlbumSearcher.tagHits(["sandy_beach"], terms: ["beach"]) == 1)      // タグ ⊃ 語
+        // ⚠️ 複合タグ内の語一致は**しない**（S5・ADR-102）。"sandy beach" は beach だが
+        //    "hot dog" は dog ではない——構文では区別できない（英語の主要部規則の反例）ため、
+        //    文字列は完全一致のみとし、関連タグの吸収は接地（重心）が受け持つ。
+        //    COCO 実測: 語一致を許すと犬クエリにホットドッグ 40 枚が混入していた。
+        #expect(AIAlbumSearcher.tagHits(["sandy_beach"], terms: ["beach"]) == 0)
+        #expect(AIAlbumSearcher.tagHits(["hot dog"], terms: ["dog"]) == 0)
+        #expect(AIAlbumSearcher.tagHits(["cherry blossom"], terms: ["cherry blossom"]) == 1)  // 多語は語順一致
         #expect(AIAlbumSearcher.tagHits(["dog"], terms: ["dogs"]) == 1)               // 語 ⊃ タグ
         #expect(AIAlbumSearcher.tagHits(["indoor"], terms: ["beach"]) == 0)
         #expect(AIAlbumSearcher.tagHits([], terms: ["beach"]) == 0)

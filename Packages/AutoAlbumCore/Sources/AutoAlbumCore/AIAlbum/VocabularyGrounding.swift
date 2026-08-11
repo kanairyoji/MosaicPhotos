@@ -30,8 +30,11 @@ public enum VocabularyGrounding {
 
     /// 採用する上位件数の上限。増やすほど recall は上がるが、遠い語まで拾って precision が落ちる。
     public static let maxExpansion = 6
-    /// 採用する幅（最上位から標準偏差の何倍まで）。分布で決めるので尺度に依存しない。
-    public static let relativeMargin = 1.0
+    /// 採用する幅（突出型・最上位から標準偏差の何倍まで）。分布で決めるので尺度に依存しない。
+    /// ⚠️ 1.0 は保守的すぎた（Caltech 実測: food が pizza 1 件で R=0.21、lobster/strawberry を
+    /// 取りこぼす）。パラメータ掃引（peak×plateau の 9 組・雑音語の門が開かないことを確認済み）で
+    /// 2.0 を採用＝広い語マクロ F1 0.669 → 0.810。
+    public static let relativeMargin = 2.0
 
     // MARK: 高原（広い語）の採用規則（S6・ADR-102）
 
@@ -43,9 +46,10 @@ public enum VocabularyGrounding {
     /// ⚠️ 分布の形（z・MAD）だけでは「一貫した高原」と「雑音の高原」は区別できない
     /// （animal の MAD-z は 1.51 と通常 z より低い）。意味情報＝候補どうしの距離が要る。
     public static let plateauCoherenceZ = 2.0
-    /// 高原時の採用上限。高原は定義上メンバーが多い（animal は top−1.0sd に 25 件・全部正解）。
-    /// 1.5sd まで広げると雑音（minaret）が混入し始めるので、幅は通常と同じ 1.0sd のまま上限だけ広げる。
-    public static let broadMaxExpansion = 24
+    /// 高原時の採用幅と上限。掃引の結果 1.5sd を採用（animal F1 0.746 → 0.902。minaret 等
+    /// 2 件の混入と引き換えに 16 クラスの動物を回収＝F1 で明確に得）。
+    public static let plateauMargin = 1.5
+    public static let broadMaxExpansion = 40
     /// 最上位が「分布から突出している」と認める z スコア。これ未満は接地失敗とする。
     ///
     /// ⚠️ 絶対しきい値を使わない理由（実測・ADR-101）: 類似度の絶対値はモデルと語彙に依存する。
@@ -97,24 +101,50 @@ public enum VocabularyGrounding {
             //     突出しない形。上位候補どうしが画像空間で互いに近ければ「一貫した群」と
             //     判定できる（雑音の高原は候補どうしがバラバラ＝実測で完全分離・S6）。
             let cap: Int
+            let margin: Double
             if z >= minTopZScore {
                 cap = maxExpansion
+                margin = relativeMargin
             } else if z >= broadMinZScore, let coherenceZ {
                 let probe = Array(rankedIndices.prefix(maxExpansion))
                 guard coherenceZ(probe) >= plateauCoherenceZ else {
                     return Grounded(term: term, expanded: [], isExact: false)
                 }
                 cap = broadMaxExpansion
+                margin = plateauMargin
             } else {
                 // 語彙に相当するものが無い＝接地できない。CLIP のソフト採点に委ねる（否定には使わない）。
                 return Grounded(term: term, expanded: [], isExact: false)
             }
             // 採用幅は分布で決める（上位から sd 幅ぶん）。
             let picked = rankedIndices.prefix(cap)
-                .filter { scores[$0] >= top - sd * relativeMargin }
+                .filter { scores[$0] >= top - sd * margin }
                 .map { lowerVocab[$0] }
             return Grounded(term: term, expanded: picked, isExact: false)
         }
+    }
+
+    /// QuerySpec の内容語（include/exclude）を接地して置き換える（本番＝`AIAlbumInterpreter` と
+    /// 評価ハーネスが**同一実装**を通るための入口・ADR-102）。
+    /// - 肯定: 接地できた語は展開、できなかった語はそのまま残す（CLIP のソフト採点が受け持つ）。
+    /// - 否定: 接地できた語だけ残す（索引に無い概念の不在は検証できない・ADR-100）。
+    public static func apply(spec: QuerySpec,
+                             vocabulary: [String],
+                             similarity: (String) -> [Double],
+                             coherenceZ: (([Int]) -> Double)? = nil) -> QuerySpec {
+        let include = spec.allContentTerms.include
+        let exclude = spec.allContentTerms.exclude
+        guard !include.isEmpty || !exclude.isEmpty, !vocabulary.isEmpty else { return spec }
+        let groundedInclude = ground(terms: include, vocabulary: vocabulary,
+                                     similarity: similarity, coherenceZ: coherenceZ)
+        let groundedExclude = ground(terms: exclude, vocabulary: vocabulary,
+                                     similarity: similarity, coherenceZ: coherenceZ)
+        let newInclude = flatten(groundedInclude, keepUngrounded: true)
+        let newExclude = flatten(groundedExclude, keepUngrounded: false)
+        var out = spec
+        if newInclude != include { out = QuerySpecSanitizer.withIncludeTerms(out, terms: newInclude) }
+        if newExclude != exclude { out = QuerySpecSanitizer.replacingExclusions(out, terms: newExclude) }
+        return out
     }
 
     /// 接地結果を検索語へ畳む。

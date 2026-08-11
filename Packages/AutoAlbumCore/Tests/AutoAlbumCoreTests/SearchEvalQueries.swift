@@ -20,15 +20,27 @@ enum SearchEvalQueries {
         let include: [String]
         /// 正解: これらのクラスが 1 つも写っていない。
         let exclude: [String]
+        /// 正解: 撮影年（日付複合クエリ用。nil なら日付条件なし）。
+        var year: Int?
+        /// 現状の既知の限界を**定量化**するためのクエリ（マクロ平均から除外して別枠で出す）。
+        /// 例: レキシコン外の語＝作成時プレビューでは立たない（夜間 FM が受け持つ）。
+        var knownLimitation: String?
         /// 除外条件を含むか（証拠ゲートの対象になる＝評価の主眼）。
         var hasExclusion: Bool { !exclude.isEmpty }
 
         /// 正解集合（コーパスの truth から機械的に導く）。
-        func groundTruth(_ truth: [String: [String: Int]]) -> Set<String> {
+        func groundTruth(_ truth: [String: [String: Int]],
+                         dates: [String: Date] = [:]) -> Set<String> {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: "UTC")!
             var out = Set<String>()
             for (refKey, counts) in truth {
                 if !include.isEmpty && !include.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
                 if exclude.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
+                if let year {
+                    guard let date = dates[refKey],
+                          calendar.component(.year, from: date) == year else { continue }
+                }
                 out.insert(refKey)
             }
             return out
@@ -44,10 +56,12 @@ enum SearchEvalQueries {
         Query(id: "no-people-only", text: "人が写っていない写真",
               englishText: "", include: [], exclude: ["person"]),
         Query(id: "no-people", text: "人が写っていない風景",
-              englishText: "landscape", include: [], exclude: ["person"]),
+              englishText: "landscape", include: [], exclude: ["person"],
+              knownLimitation: "「風景」の展開は語彙接地が必要＝Caltech ハーネスで計測（COCO は画像が無く重心を作れない）"),
         Query(id: "no-people-food", text: "人が写っていない食べ物の写真",
               englishText: "food", include: ["pizza", "cake", "sandwich", "donut", "hot dog"],
-              exclude: ["person"]),
+              exclude: ["person"],
+              knownLimitation: "「食べ物」の展開は語彙接地が必要＝Caltech ハーネスで計測（同上）"),
         // --- 人物以外の除外（汎用性の確認） ---
         Query(id: "no-dog", text: "犬が写っていない写真",
               englishText: "", include: [], exclude: ["dog"]),
@@ -59,6 +73,18 @@ enum SearchEvalQueries {
         Query(id: "dog", text: "犬の写真", englishText: "dog", include: ["dog"], exclude: []),
         Query(id: "train", text: "電車の写真", englishText: "train", include: ["train"], exclude: []),
         Query(id: "pizza", text: "ピザの写真", englishText: "pizza", include: ["pizza"], exclude: []),
+        Query(id: "cat", text: "猫の写真", englishText: "cat", include: ["cat"], exclude: []),
+        // --- 連言（S5d の効果確認） ---
+        Query(id: "no-dog-and-cat", text: "犬と猫が写っていない写真",
+              englishText: "", include: [], exclude: ["dog", "cat"]),
+        // --- 日付複合（ハード条件×内容語） ---
+        Query(id: "dog-2024", text: "2024年の犬の写真", englishText: "dog",
+              include: ["dog"], exclude: [], year: 2024),
+        Query(id: "no-people-2025", text: "2025年の人が写っていない写真", englishText: "",
+              include: [], exclude: ["person"], year: 2025),
+        // --- S9 でレキシコンへ追補した語（以前は 0 件＝既知の限界だった） ---
+        Query(id: "bus", text: "バスの写真", englishText: "bus", include: ["bus"], exclude: []),
+        Query(id: "no-bus", text: "バスが写っていない写真", englishText: "", include: [], exclude: ["bus"]),
     ]
 
     // MARK: - 指標

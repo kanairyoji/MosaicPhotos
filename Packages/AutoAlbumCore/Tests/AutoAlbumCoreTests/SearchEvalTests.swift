@@ -67,17 +67,22 @@ struct SearchEvalTests {
               + "tagged=\(corpus.tags.count) faceScanned=\(corpus.faceCounts.count) "
               + "captioned=\(corpus.captions.count) ---")
 
+        let dates = Dictionary(uniqueKeysWithValues: corpus.photos.compactMap { p in
+            p.captureDate.map { (p.id, $0) }
+        })
         for query in SearchEvalQueries.all {
             let retrieved = await run(query, corpus: corpus)
-            let relevant = query.groundTruth(corpus.truth)
+            let relevant = query.groundTruth(corpus.truth, dates: dates)
             let score = SearchEvalQueries.score(queryID: query.id, hasExclusion: query.hasExclusion,
                                                 retrieved: retrieved, relevant: relevant)
-            scores.append(score)
-            print(String(format: "SEARCHEVAL: %-14@ excl=%@ P=%.3f R=%.3f F1=%.3f  "
-                         + "retrieved=%d relevant=%d falsePositives=%d",
+            if query.knownLimitation == nil { scores.append(score) }
+            let limitation = query.knownLimitation.map { "  [既知の限界: \($0)]" } ?? ""
+            print(String(format: "SEARCHEVAL: %-15@ excl=%@ P=%.3f R=%.3f F1=%.3f  "
+                         + "retrieved=%d relevant=%d falsePositives=%d%@",
                          query.id as NSString, query.hasExclusion ? "yes" : "no ",
                          score.precision, score.recall, score.f1,
-                         score.retrieved, score.relevant, score.falsePositives))
+                         score.retrieved, score.relevant, score.falsePositives,
+                         limitation as NSString))
         }
 
         let overall = SearchEvalQueries.macro(scores)

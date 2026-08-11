@@ -55,12 +55,15 @@ final class AIAlbumVerificationCoordinator {
     }
 
     /// 除外語に人物概念が含まれるか（`AIAlbumSearcher.hasPeopleExclusion` と語彙を揃える）。
+    /// ⚠️ **完全一致のみ**（部分一致禁止・ADR-102）。接地は除外語をタグへ展開する
+    /// （「動物が写っていない」→ cougar face 等 24 語）ため、部分一致だと `cougar face` の
+    /// face が人物語に誤判定され、人物証拠（humanCount）を要求して**全滅**していた
+    /// （Caltech 実測: no-animal が retrieved=0）。動物クエリに人物証拠は要らない。
     nonisolated static func hasPeopleTerm(_ terms: [String]) -> Bool {
-        let peopleWords = ["people", "person", "human", "man", "woman", "child", "children", "face"]
-        return terms.contains { term in
-            let t = term.lowercased()
-            return peopleWords.contains { t == $0 || t.contains($0) }
-        }
+        let peopleWords: Set<String> = ["people", "person", "persons", "human", "humans",
+                                        "man", "men", "woman", "women", "child", "children",
+                                        "kid", "kids", "face", "faces", "crowd", "portrait"]
+        return terms.contains { peopleWords.contains($0.lowercased()) }
     }
 
     /// LLM 審査（P2）用の証拠行（純・テスト対象）。写真を見られない審査員に渡す 1 行サマリ。

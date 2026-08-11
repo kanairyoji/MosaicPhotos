@@ -41,6 +41,20 @@ public enum JapaneseVisualLexicon {
         (["誕生日"], ["birthday"]),
         (["プール"], ["pool", "swimming"]),
         (["富士山"], ["mount fuji", "mountain"]),
+        // --- 広い語（S9・ADR-102）。レキシコンは**日→英の翻訳だけ**を受け持ち、
+        //     実在タグへの展開は語彙接地（VocabularyGrounding・重心）が行う。
+        //     Caltech 計測: 「楽器の写真」がレキシコン外で 0 件だった（接地は F1 0.77 で
+        //     展開できるのに、入口の翻訳が無くて届かなかった）。
+        (["楽器"], ["musical instrument"]),
+        (["昆虫", "虫"], ["insect"]),
+        (["乗り物"], ["vehicle"]),
+        (["バス"], ["bus"]),
+        (["トラック"], ["truck"]),
+        (["自転車"], ["bicycle"]),
+        (["バイク", "オートバイ"], ["motorcycle"]),
+        (["果物", "フルーツ"], ["fruit"]),
+        (["ピザ"], ["pizza"]),
+        (["家具"], ["furniture"]),
     ]
 
     /// 人物の否定（「人が写っていない」等）のパターン。
