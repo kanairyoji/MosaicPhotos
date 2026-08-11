@@ -1,5 +1,6 @@
 import FaceCore
 import Foundation
+import MosaicSupport
 
 /// 解釈（検索文 → QuerySpec・英訳）のライフサイクル。LLM 解釈＋翻訳＋防御的サニタイズ＋
 /// 決定的レキシコンによる接地をここに集約し、結果を `AIAlbumInterpretationStore` へ永続化する。
@@ -29,6 +30,49 @@ public final class AIAlbumInterpreter {
     /// 現在の名前付き人物一覧（プロバイダ未設定なら空）。
     private func currentNamedPeople() async -> [String] {
         await namedPeopleProvider?() ?? []
+    }
+
+    /// 索引に実在するタグ語彙を返す seam（`TagStore.tagVocabulary`）。Composition Root が結線する。
+    var tagVocabularyProvider: (@Sendable () async -> [String])?
+    /// 語 × 語彙の意味的な近さ（CLIP テキスト塔）。未結線／未同梱なら接地せず素通しする。
+    var conceptExpander: ConceptExpander?
+
+    /// 内容語（include / exclude）を索引の語彙へ接地する（ADR-101）。
+    ///
+    /// - 肯定: 接地できた語は実在タグへ展開、できなかった語は**そのまま残す**（CLIP が受け持つ）。
+    /// - 否定: 接地できた語だけを残す。**索引に無い概念の不在は検証できない**ので、
+    ///   除外条件にすると「証拠が無いのに除外した気になる」＝ADR-100 で直した誤りの再来になる。
+    private func groundContentTerms(_ spec: QuerySpec) async -> QuerySpec {
+        let include = spec.allContentTerms.include
+        let exclude = spec.allContentTerms.exclude
+        guard !include.isEmpty || !exclude.isEmpty else { return spec }
+        guard let expander = conceptExpander, expander.isAvailable,
+              let vocabulary = await tagVocabularyProvider?(), !vocabulary.isEmpty else { return spec }
+
+        let terms = include + exclude
+        let matrix = await expander.similarities(terms: terms, vocabulary: vocabulary)
+        guard matrix.count == terms.count else { return spec }
+        var byTerm: [String: [Double]] = [:]
+        for (i, t) in terms.enumerated() { byTerm[t.lowercased()] = matrix[i] }
+
+        let groundedInclude = VocabularyGrounding.ground(
+            terms: include, vocabulary: vocabulary,
+            similarity: { byTerm[$0.lowercased()] ?? [] })
+        let groundedExclude = VocabularyGrounding.ground(
+            terms: exclude, vocabulary: vocabulary,
+            similarity: { byTerm[$0.lowercased()] ?? [] })
+
+        let newInclude = VocabularyGrounding.flatten(groundedInclude, keepUngrounded: true)
+        let newExclude = VocabularyGrounding.flatten(groundedExclude, keepUngrounded: false)
+        Diagnostics.mark("aialbum.ground: include \(include) → \(newInclude) / "
+                         + "exclude \(exclude) → \(newExclude) (vocab=\(vocabulary.count))")
+
+        var out = spec
+        if newInclude != include { out = QuerySpecSanitizer.withIncludeTerms(out, terms: newInclude) }
+        if newExclude != exclude {
+            out = QuerySpecSanitizer.replacingExclusions(out, terms: newExclude)
+        }
+        return out
     }
 
     // MARK: - 保存済み解釈への窓口（永続化はすべてここを経由する）
@@ -100,6 +144,11 @@ public final class AIAlbumInterpreter {
         if !lexExcludes.isEmpty {
             spec = QuerySpecSanitizer.addingExclusion(spec, terms: lexExcludes)
         }
+        // ⚠️ **語彙接地**（ADR-101）: ここまでで立った内容語は「landscape」「food」のような
+        //    人間向けの語で、索引側の語彙に実在するとは限らない。実在する語（台帳のタグ）へ
+        //    落としてから保存する。個別の対応表は書かず、CLIP の意味的な近さで語彙の側から決める。
+        //    解釈は作成時 1 回だけなので（ADR-23）、ここで確定して永続化する。
+        spec = await groundContentTerms(spec)
         // P0: 翻訳失敗（日本語のまま等）は semanticText を空にして保存し、次回に再試行する。
         // 失敗を静かにキャッシュすると CLIP に非英語が渡り採点が全ノイズ化する（実障害2件）。
         let english = (await translator?.toEnglish(criteria)) ?? criteria

@@ -209,6 +209,13 @@ public final class AutoAlbumEngine {
         aiService.namedPeopleProvider = provider
     }
 
+    /// 語×語彙の意味的な近さ（CLIP テキスト塔）を結線する（ADR-101）。
+    /// これにより「風景」のような索引に実在しない語が、台帳のタグ（mountain / beach …）へ
+    /// **語彙の側から**展開される。個別の対応表は持たない。未注入なら接地は行わない。
+    public func setConceptExpander(_ expander: ConceptExpander) {
+        aiService.conceptExpander = expander
+    }
+
     /// 顔クラスタの**現在の**人物名（refKey → 名前）を AI アルバムの人物条件評価へ結線する。
     /// 人物名はリネーム/統合/クラスタ成長で変わるため、焼き込み（EnrichedPhoto.people）でなく
     /// **検索時に live 照合**する（実障害: 後から命名した人物が検索に反映されない）。

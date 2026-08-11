@@ -191,6 +191,24 @@ actor TagStore {
         return out
     }
 
+    /// **このライブラリに実在する**シーンタグの語彙（出現頻度の多い順）。
+    ///
+    /// クエリ語の接地先（ADR-101）。理論上の Vision 約1,300クラスではなく、実際に台帳へ出た語を使う
+    /// ——ユーザーの写真に無い概念へ展開しても当たらないし、語彙が小さいほど接地も速い。
+    /// - Parameter minCount: これ未満しか出現しないタグは語彙に入れない（誤タグの裾を切る）。
+    /// - Parameter limit: 上限（接地は語彙数ぶんのコサインなので有界にする）。
+    func tagVocabulary(minCount: Int = 3, limit: Int = 600) -> [String] {
+        let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
+        var freq: [String: Int] = [:]
+        for r in records {
+            for tag in r.tags { freq[tag.lowercased(), default: 0] += 1 }
+        }
+        return freq.filter { $0.value >= minCount }
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(limit)
+            .map(\.key)
+    }
+
     /// 指定 refKey の humanCount（証拠ゲート用・未計測はキーごと含めない・ADR-100）。
     func humanCounts(forRefKeys keys: [String]) -> [String: Int] {
         guard !keys.isEmpty else { return [:] }

@@ -98,6 +98,24 @@ enum QuerySpecSanitizer {
         return out
     }
 
+    /// 既存の除外内容語を**丸ごと置き換える**（語彙接地の結果を反映する・ADR-101）。
+    /// `terms` が空なら除外条件そのものを取り除く——接地できなかった除外を残すと、
+    /// 「検証できない不在」で写真を落とすことになる（ADR-100 で直した誤りの再来）。
+    static func replacingExclusions(_ spec: QuerySpec, terms: [String]) -> QuerySpec {
+        var out = spec
+        out.clauses = out.clauses.map { clause in
+            var conditions = clause.conditions.filter { condition in
+                if case .not(.content) = condition { return false }
+                return true
+            }
+            if !terms.isEmpty { conditions.append(.not(.content(terms))) }
+            return QueryClause(conditions)
+        }
+        // 全条件が消えた節は落とす（空の節は「全件一致」になってしまう）。
+        out.clauses = out.clauses.filter { !$0.conditions.isEmpty }
+        return out
+    }
+
     /// 人物名条件（`.people`・部分一致 OR）を各節に AND で加える（節が無ければ 1 節作る）。
     /// 既に同じ語群の `.people` があれば重複させない。接地済みフルネームを載せる用途。
     static func addingPeople(_ spec: QuerySpec, names: [String]) -> QuerySpec {

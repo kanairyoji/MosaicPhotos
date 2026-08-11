@@ -65,6 +65,13 @@ final class AIAlbumService {
         set { interpreter.namedPeopleProvider = newValue }
     }
 
+    /// 語彙接地（ADR-101）: 索引に実在するタグ語彙と、語×語彙の意味的な近さ（CLIP）。
+    /// 未結線・CLIP 未同梱なら接地は行わず、従来どおりの語のまま検索する。
+    var conceptExpander: ConceptExpander? {
+        get { interpreter.conceptExpander }
+        set { interpreter.conceptExpander = newValue }
+    }
+
     /// シーンタグ・キャプションのストア（検索の一次ランキングと LLM 審査の入力）。
     private let tagStore: TagStore?
 
@@ -76,6 +83,11 @@ final class AIAlbumService {
         self.interpreter = AIAlbumInterpreter(store: store, understanding: understanding,
                                               translator: translator)
         self.verification = AIAlbumVerificationCoordinator(tagStore: tagStore)
+        // 語彙は自前の TagStore から取れるのでここで結線する（Composition Root は
+        // 近さの計算（CLIP）だけを注入すればよい・ADR-101）。
+        self.interpreter.tagVocabularyProvider = { [weak tagStore] in
+            await tagStore?.tagVocabulary() ?? []
+        }
         self.embedder = QueryEmbedder(textEmbedder: textEmbedder)
         self.searcher = AIAlbumSearcher(textEmbedder: textEmbedder)
     }
