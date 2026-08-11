@@ -9,7 +9,8 @@ enum SearchEvalRunner {
                      corpus: SearchEvalCorpus.Corpus) async -> Set<String> {
         let now = Date(timeIntervalSince1970: 1_767_225_600)   // 2026-01-01（コーパスより後）
         // 解釈は決定的プレビュー（FM はテスト環境で使えない＝`SearchQualityTests` と同じ方針）。
-        let saved = AIAlbumInterpreter.previewInterpretation(criteria: query.text, now: now)
+        let saved = AIAlbumInterpreter.previewInterpretation(criteria: query.text, now: now,
+                                                             namedPeople: corpus.namedPeople)
 
         // CLIP は使わない（この層の評価ではないため）。textEmbedder なし＝タグ＋字句で解く。
         let searcher = AIAlbumSearcher(textEmbedder: nil)

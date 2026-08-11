@@ -277,7 +277,7 @@ final class AIAlbumService {
             // フル評価（searchWithPool）と同じく**ハード通過分をそのまま追加**する（ADR-109）。
             // 英訳文で意味採点すると「太郎」だけのアルバムに新規の太郎写真が入らないことがある。
             let effective = spec.effectiveContentTerms
-            if spec.hasContent && effective.include.isEmpty && effective.exclude.isEmpty
+            if effective.include.isEmpty && effective.exclude.isEmpty
                 && spec.hasHardConstraints {
                 interpreter.save(saved, for: album.id)
                 let base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,

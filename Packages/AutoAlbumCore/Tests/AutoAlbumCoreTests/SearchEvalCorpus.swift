@@ -51,6 +51,10 @@ enum SearchEvalCorpus {
         var faceCounts: [String: Int]
         /// 笑顔の実測（refKey → 笑顔の顔数）。**顔スキャンと同じ網羅率**（同じ写真だけキーが在る）。
         var smileCounts: [String: Int]
+        /// 命名済み人物（「X の Y」複合クエリ用・S15）。previewInterpretation の namedPeople に渡す。
+        var namedPeople: [String]
+        /// 正解: 人物名 → その人が写っている refKey 集合（決定的に合成・EnrichedPhoto.people にも焼く）。
+        var truthPerson: [String: Set<String>]
         /// 美的スコア台帳（タグ付けと同じ網羅率＝Vision 一括パスで同時計測されるため）。
         var aesthetics: [String: Double]
         /// 正解（refKey → 実際に写っているクラス→個数）。評価専用でパイプラインには渡さない。
@@ -82,6 +86,7 @@ enum SearchEvalCorpus {
         var smileCounts: [String: Int] = [:]
         var aesthetics: [String: Double] = [:]
         var truth: [String: [String: Int]] = [:]
+        var truthPerson: [String: Set<String>] = ["山田太郎": [], "鈴木花子": []]
         var truthSmiling = Set<String>()
         var truthChild = Set<String>()
         var truthAesthetics: [String: Double] = [:]
@@ -96,10 +101,18 @@ enum SearchEvalCorpus {
             truth[refKey] = counts
 
             let dayOffset = Int(deterministicUnit(refKey, salt: 1) * 730)   // 2 年ぶん
+            // 命名済み人物（S15・「X の Y」複合クエリ用）: 人物写真の一部へ決定的に割り当てる。
+            // 実機の「命名済み顔クラスタ」に相当（EnrichedPhoto.people に焼き込み＝検索の照合先）。
+            var names: [String] = []
+            if (counts["person"] ?? 0) > 0 {
+                if deterministicUnit(refKey, salt: 9) < 0.25 { names.append("山田太郎") }
+                if deterministicUnit(refKey, salt: 10) < 0.20 { names.append("鈴木花子") }
+            }
+            for n in names { truthPerson[n, default: []].insert(refKey) }
             photos.append(EnrichedPhoto(
                 id: refKey,
                 captureDate: base.addingTimeInterval(TimeInterval(dayOffset) * 86_400),
-                latitude: nil, longitude: nil, placeName: nil))
+                latitude: nil, longitude: nil, placeName: nil, people: names))
 
             // --- 属性の真値（S10・ADR-103）。人物写真の一部が「笑顔」「子供」を持ち、
             //     美的スコアは全写真に真値がある（索引の網羅率とは独立に定義する）。
@@ -138,7 +151,9 @@ enum SearchEvalCorpus {
 
         return Corpus(photos: photos, tags: tags, humanCounts: humanCounts,
                       faceCounts: faceCounts,
-                      smileCounts: smileCounts, aesthetics: aesthetics, truth: truth,
+                      smileCounts: smileCounts,
+                      namedPeople: ["山田太郎", "鈴木花子"], truthPerson: truthPerson,
+                      aesthetics: aesthetics, truth: truth,
                       truthSmiling: truthSmiling, truthChild: truthChild,
                       truthAesthetics: truthAesthetics)
     }

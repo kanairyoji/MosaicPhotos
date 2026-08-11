@@ -20,6 +20,8 @@ struct SearchEvalRegressionTests {
         "subject": 0.89, "exclusion": 0.90, "conjunction": 0.89, "date": 0.90,
         "attribute": 0.62, "phrase": 0.78, "en": 0.77, "count": 0.89,
         "robust": 0.89, "specificity": 0.97,
+        // S15（ADR-109）:「X の Y」＝命名済み人物×内容/日付/除外の AND。現状 0.948。
+        "compound": 0.91,
     ]
 
     @Test("COCO: カテゴリ別マクロ F1 がフロアを割らない")

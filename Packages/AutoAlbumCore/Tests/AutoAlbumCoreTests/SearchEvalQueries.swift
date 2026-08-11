@@ -35,6 +35,8 @@ enum SearchEvalQueries {
         var requireBeautiful = false
         /// 正解: 子供が**写っていない**（大人は可）。人物除外の粗さの定量化用。
         var requireNoChild = false
+        /// 正解: この命名済み人物が写っている（「X の Y」複合クエリ用・S15）。
+        var requirePerson: String?
         /// 現状の既知の限界を**定量化**するためのクエリ（マクロ平均から除外して別枠で出す）。
         /// 例: レキシコン外の語＝作成時プレビューでは立たない（夜間 FM が受け持つ）。
         var knownLimitation: String?
@@ -60,6 +62,8 @@ enum SearchEvalQueries {
                     guard let date = dates[refKey],
                           calendar.component(.year, from: date) == year else { continue }
                 }
+                if let requirePerson,
+                   corpus.truthPerson[requirePerson]?.contains(refKey) != true { continue }
                 if requireSmiling, !corpus.truthSmiling.contains(refKey) { continue }
                 if requireChild, !corpus.truthChild.contains(refKey) { continue }
                 if requireNoChild, corpus.truthChild.contains(refKey) { continue }
@@ -281,6 +285,37 @@ enum SearchEvalQueries {
                   include: ["car", "bus", "train", "truck", "bicycle", "motorcycle",
                             "airplane", "boat"], exclude: [],
                   knownLimitation: "同上（vehicle の接地は Caltech 側）"),
+        ]
+        // --- compound: 「X の Y」＝命名済み人物 × 内容/日付の AND（S15・ADR-109）---
+        // 実障害「バレエの<人名>にバレエ以外が混ざる」の再発防止。FM が content に人物名を
+        // 重複させても、字句チャネル（人物名一致）経由で本人の全写真が混ざらないこと。
+        // englishText は FM 翻訳を模して**わざと人物名入り**にする（実運用と同じ形で解けること）。
+        out += [
+            Query(id: "p-taro-dog", category: "compound", text: "太郎の犬の写真",
+                  englishText: "dog photos of Taro Yamada",
+                  include: ["dog"], exclude: [], requirePerson: "山田太郎"),
+            Query(id: "p-taro-cake", category: "compound", text: "山田太郎のケーキの写真",
+                  englishText: "cake photos of Taro Yamada",
+                  include: ["cake"], exclude: [], requirePerson: "山田太郎"),
+            Query(id: "p-hanako-bicycle", category: "compound", text: "花子の自転車の写真",
+                  englishText: "bicycle photos of Hanako Suzuki",
+                  include: ["bicycle"], exclude: [], requirePerson: "鈴木花子"),
+            Query(id: "p-hanako-cat", category: "compound", text: "花子と猫の写真",
+                  englishText: "photos of Hanako with a cat",
+                  include: ["cat"], exclude: [], requirePerson: "鈴木花子"),
+            // 人物のみ（内容語なし）: ハード絞り込み結果＝本人の全写真が返ること
+            // （英訳文の CLIP band で欠けない＝ADR-109 の base 返し）。
+            Query(id: "p-taro-only", category: "compound", text: "太郎の写真",
+                  englishText: "photos of Taro Yamada",
+                  include: [], exclude: [], requirePerson: "山田太郎"),
+            // 人物 × 日付（ハード×ハードの複合）。
+            Query(id: "p-hanako-2024", category: "compound", text: "2024年の花子の写真",
+                  englishText: "photos of Hanako Suzuki from 2024",
+                  include: [], exclude: [], year: 2024, requirePerson: "鈴木花子"),
+            // 人物 × 除外（「太郎の、犬が写っていない写真」）＝ AND ＋証拠ゲートの複合。
+            Query(id: "p-taro-no-dog", category: "compound", text: "犬が写っていない太郎の写真",
+                  englishText: "",
+                  include: [], exclude: ["dog"], requirePerson: "山田太郎"),
         ]
         return out
     }()

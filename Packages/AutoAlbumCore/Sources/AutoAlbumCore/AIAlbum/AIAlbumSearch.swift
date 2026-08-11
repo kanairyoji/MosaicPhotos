@@ -156,11 +156,11 @@ public struct AIAlbumSearcher {
             }
         }
 
-        // 内容の意図が実効的に無い（内容語はあったが全部ハード接地語だった・除外も無い）なら、
-        // ハード絞り込みの結果が答え（ADR-109）。英訳文で CLIP band すると「太郎」だけの
-        // アルバムが恣意的な帯で欠ける。内容語がもともと無いクエリは従来経路（下の guard）。
-        if spec.hasContent && includeTerms.isEmpty && excludeTerms.isEmpty && spec.hasHardConstraints {
-            Diagnostics.mark("aialbum: content=hard-grounded only → base \(base.count)")
+        // 内容の意図が実効的に無い（内容語なし・または全部ハード接地語・除外も無い）なら、
+        // ハード絞り込みの結果が答え（ADR-109）。英訳文（"Photos of Taro"）で CLIP band すると
+        // 「太郎」だけのアルバムが恣意的な帯で欠ける＝構造化条件が全部ならその答えを信じる。
+        if spec.hasHardConstraints && includeTerms.isEmpty && excludeTerms.isEmpty {
+            Diagnostics.mark("aialbum: no effective content → base \(base.count)")
             return (base, [:])
         }
 
