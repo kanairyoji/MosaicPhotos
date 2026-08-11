@@ -33,23 +33,6 @@ struct SearchEvalCaltechTests {
         return url.appendingPathComponent(".search_eval/centroids.json")
     }
 
-    private static func coherenceClosure(_ m: [[Double]]?) -> (([Int]) -> Double)? {
-        guard let m, !m.isEmpty else { return nil }
-        var background: [Double] = []
-        for a in 0..<m.count { for b in (a + 1)..<m.count { background.append(m[a][b]) } }
-        let mean = background.reduce(0, +) / Double(background.count)
-        let sd = (background.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(background.count)).squareRoot()
-        guard sd > 0 else { return nil }
-        return { indices in
-            guard indices.count >= 2 else { return 0 }
-            var total = 0.0; var count = 0
-            for i in 0..<indices.count {
-                for j in (i + 1)..<indices.count { total += m[indices[i]][indices[j]]; count += 1 }
-            }
-            return (total / Double(count) - mean) / sd
-        }
-    }
-
     // MARK: - 正解（人手・保守的。実装側には対応表を持たせない）
 
     private static let animals: Set<String> = [
@@ -103,7 +86,7 @@ struct SearchEvalCaltechTests {
             return
         }
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: Self.fixtureURL))
-        let coherence = Self.coherenceClosure(fixture.centroidMutual)
+        let coherence = CoherenceFixtureSupport.coherenceContext(fixture.centroidMutual)
         // クラスごとの枚数（キーを語彙表記に正規化）。
         let countByClass = Dictionary(uniqueKeysWithValues: fixture.imagesPerClass.map {
             ($0.key.replacingOccurrences(of: "_", with: " ").lowercased(), $0.value)
@@ -135,7 +118,7 @@ struct SearchEvalCaltechTests {
             let grounded = VocabularyGrounding.apply(
                 spec: saved.spec, vocabulary: fixture.vocabulary,
                 similarity: { fixture.textImage[$0.lowercased()] ?? [] },
-                coherenceZ: coherence)
+                coherence: coherence)
             let searcher = AIAlbumSearcher(textEmbedder: nil)
             let (members, _) = await searcher.searchWithPool(
                 baseLite: photos, spec: grounded, now: now, semanticText: "",

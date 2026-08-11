@@ -50,6 +50,19 @@ public enum VocabularyGrounding {
     /// 2 件の混入と引き換えに 16 クラスの動物を回収＝F1 で明確に得）。
     public static let plateauMargin = 1.5
     public static let broadMaxExpansion = 40
+
+    // MARK: 凝集精錬（S12）: band 選択の混入を刈り、裾を伸ばす
+
+    /// 精錬を**適用してよい**グループ凝集 z の下限。乗り物のような**視覚的に不均質**な正解群
+    /// （車・飛行機・船は互いに似ていない＝coh_z 0.15）に精錬を掛けると壊れる（実測 F1 0.4→0.25）。
+    /// グループ自体が画像空間で一貫しているときだけ精錬する。
+    public static let refineGate = 1.0
+    /// 刈り込み: 選択集合の他メンバーとの限界凝集 z がこれ未満の混入を除く（最類似の 1 件は常に残す）。
+    /// bird の band に混入した minaret（鳥たちと似ていない）を落とす（実測 F1 0.833→0.909）。
+    public static let pruneBar = 0.75
+    /// 成長: band の続き（類似度順）を、グループとの限界凝集 z がこれ以上の間だけ足す。
+    /// food の裾（strawberry・crab）を band の外から回収する（実測 F1 0.667→0.800）。
+    public static let growBar = 1.25
     /// 最上位が「分布から突出している」と認める z スコア。これ未満は接地失敗とする。
     ///
     /// ⚠️ 絶対しきい値を使わない理由（実測・ADR-101）: 類似度の絶対値はモデルと語彙に依存する。
@@ -65,13 +78,12 @@ public enum VocabularyGrounding {
     ///   - vocabulary: 索引に**実在する**語（台帳のタグ）。
     ///   - similarity: 語 × 語彙 の意味的近さ（0〜1）。本番は CLIP テキスト塔。
     ///     語彙と同数の配列を返すこと。
-    /// - Parameter coherenceZ: 語彙インデックス集合の**凝集度 z**（候補どうしの平均相互類似が、
-    ///   語彙全体の背景平均からどれだけ突出しているか）。本番は重心どうしのコサイン
-    ///   （`CLIPConceptExpander`）。nil なら高原規則は使わない（従来＝突出のみ）。
+    /// - Parameter coherence: 凝集の計算（集合 z＋限界 z）。本番は重心どうしのコサイン
+    ///   （`CLIPConceptExpander`）。nil なら高原規則・精錬は使わない（従来＝突出のみ）。
     public static func ground(terms: [String],
                               vocabulary: [String],
                               similarity: (String) -> [Double],
-                              coherenceZ: (([Int]) -> Double)? = nil) -> [Grounded] {
+                              coherence: CoherenceContext? = nil) -> [Grounded] {
         let lowerVocab = vocabulary.map { $0.lowercased() }
         return terms.map { term in
             let t = term.lowercased()
@@ -105,9 +117,9 @@ public enum VocabularyGrounding {
             if z >= minTopZScore {
                 cap = maxExpansion
                 margin = relativeMargin
-            } else if z >= broadMinZScore, let coherenceZ {
+            } else if z >= broadMinZScore, let coherence {
                 let probe = Array(rankedIndices.prefix(maxExpansion))
-                guard coherenceZ(probe) >= plateauCoherenceZ else {
+                guard coherence.setZ(probe) >= plateauCoherenceZ else {
                     return Grounded(term: term, expanded: [], isExact: false)
                 }
                 cap = broadMaxExpansion
@@ -117,10 +129,23 @@ public enum VocabularyGrounding {
                 return Grounded(term: term, expanded: [], isExact: false)
             }
             // 採用幅は分布で決める（上位から sd 幅ぶん）。
-            let picked = rankedIndices.prefix(cap)
-                .filter { scores[$0] >= top - sd * margin }
-                .map { lowerVocab[$0] }
-            return Grounded(term: term, expanded: picked, isExact: false)
+            var selected = rankedIndices.prefix(cap).filter { scores[$0] >= top - sd * margin }
+            // 凝集精錬（S12）: グループ自体が視覚的に一貫しているときだけ、
+            // (a) 低凝集の混入を刈り（bird の minaret）、(b) band の裾を伸ばす（food の strawberry）。
+            // ⚠️ 不均質な正解群（vehicle＝車・飛行機・船）に掛けると壊れるので gate で守る。
+            if let coherence, selected.count >= 2, coherence.setZ(selected) >= refineGate {
+                if selected.count > 2 {
+                    selected = selected.enumerated().filter { k, c in
+                        k == 0 || coherence.marginalZ(c, selected.filter { $0 != c }) >= pruneBar
+                    }.map(\.1)
+                }
+                for candidate in rankedIndices where !selected.contains(candidate) {
+                    if selected.count >= broadMaxExpansion { break }
+                    guard coherence.marginalZ(candidate, selected) >= growBar else { break }
+                    selected.append(candidate)
+                }
+            }
+            return Grounded(term: term, expanded: selected.map { lowerVocab[$0] }, isExact: false)
         }
     }
 
@@ -131,14 +156,14 @@ public enum VocabularyGrounding {
     public static func apply(spec: QuerySpec,
                              vocabulary: [String],
                              similarity: (String) -> [Double],
-                             coherenceZ: (([Int]) -> Double)? = nil) -> QuerySpec {
+                             coherence: CoherenceContext? = nil) -> QuerySpec {
         let include = spec.allContentTerms.include
         let exclude = spec.allContentTerms.exclude
         guard !include.isEmpty || !exclude.isEmpty, !vocabulary.isEmpty else { return spec }
         let groundedInclude = ground(terms: include, vocabulary: vocabulary,
-                                     similarity: similarity, coherenceZ: coherenceZ)
+                                     similarity: similarity, coherence: coherence)
         let groundedExclude = ground(terms: exclude, vocabulary: vocabulary,
-                                     similarity: similarity, coherenceZ: coherenceZ)
+                                     similarity: similarity, coherence: coherence)
         let newInclude = flatten(groundedInclude, keepUngrounded: true)
         let newExclude = flatten(groundedExclude, keepUngrounded: false)
         var out = spec
@@ -163,6 +188,20 @@ public enum VocabularyGrounding {
     }
 }
 
+/// 凝集の計算（S6/S12）。背景統計（全ペア平均・sd）は実装側で前計算しクロージャに閉じる。
+public struct CoherenceContext: Sendable {
+    /// 集合の凝集 z: 集合内の平均相互類似が背景からどれだけ突出しているか（高原判定・精錬 gate）。
+    public let setZ: @Sendable ([Int]) -> Double
+    /// 限界凝集 z: 候補 1 件と集合の平均類似の突出（刈り込み・成長の判定）。
+    public let marginalZ: @Sendable (Int, [Int]) -> Double
+
+    public init(setZ: @escaping @Sendable ([Int]) -> Double,
+                marginalZ: @escaping @Sendable (Int, [Int]) -> Double) {
+        self.setZ = setZ
+        self.marginalZ = marginalZ
+    }
+}
+
 /// クエリ語と語彙の意味的な近さを返す seam。本番は CLIP テキスト塔（`MobileCLIPKit`）。
 /// ⚠️ 語彙側の埋め込みは使い回す前提（毎回 300〜1500 語をエンコードしない）。
 public protocol ConceptExpander: Sendable {
@@ -171,12 +210,10 @@ public protocol ConceptExpander: Sendable {
     /// `terms` の各語について、`vocabulary` の各語との近さ（0〜1）を返す。
     /// 戻り値は `terms` と同じ順・各要素は `vocabulary` と同じ長さ。
     func similarities(terms: [String], vocabulary: [String]) async -> [[Double]]
-    /// 高原判定用の凝集度 z を返す同期クロージャ（S6・ADR-102）。語彙インデックス集合を受け取り、
-    /// 候補どうしの平均相互類似が背景（全ペア平均）からどれだけ突出しているかを返す。
-    /// 背景統計は実装側で前計算・キャッシュする。nil なら高原規則は使われない。
-    func coherenceContext(vocabulary: [String]) async -> (@Sendable ([Int]) -> Double)?
+    /// 凝集の計算（高原判定・精錬）。nil なら高原規則・精錬は使われない。
+    func coherenceContext(vocabulary: [String]) async -> CoherenceContext?
 }
 
 public extension ConceptExpander {
-    func coherenceContext(vocabulary: [String]) async -> (@Sendable ([Int]) -> Double)? { nil }
+    func coherenceContext(vocabulary: [String]) async -> CoherenceContext? { nil }
 }

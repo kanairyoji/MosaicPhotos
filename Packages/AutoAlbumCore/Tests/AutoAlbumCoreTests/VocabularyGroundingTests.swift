@@ -60,20 +60,26 @@ struct VocabularyGroundingTests {
         { _ in self.vocabulary.indices.map { $0 < 10 ? 0.90 - Double($0) * 0.001 : 0.30 } }
     }
 
-    @Test("凝集した高原は接地される（animal 型・上限は broadMaxExpansion）")
+    @Test("凝集した高原は接地される（animal 型・成長は凝集が切れた所で止まる）")
     func coherentPlateauGrounds() {
+        // 高原メンバー（index<10）どうしは凝集・埋め草とは非凝集、という現実的なスタブ。
+        let coherence = CoherenceContext(
+            setZ: { indices in indices.allSatisfy { $0 < 10 } ? 3.0 : 0.5 },
+            marginalZ: { candidate, _ in candidate < 10 ? 3.0 : 0.0 })
         let g = VocabularyGrounding.ground(terms: ["animal"], vocabulary: vocabulary,
                                            similarity: plateauSimilarity,
-                                           coherenceZ: { _ in 3.0 })[0]
+                                           coherence: coherence)[0]
         #expect(g.isGrounded, "凝集した高原が接地されない")
-        #expect(g.expanded.count == 10, "高原のメンバー全員を採るべき: \(g.expanded.count)")
+        #expect(g.expanded.count == 10,
+                "高原のメンバー全員を採り、非凝集の埋め草で止まるべき: \(g.expanded.count)")
     }
 
     @Test("凝集していない高原（雑音）は接地されない")
     func incoherentPlateauStaysUngrounded() {
         let g = VocabularyGrounding.ground(terms: ["nostalgia"], vocabulary: vocabulary,
                                            similarity: plateauSimilarity,
-                                           coherenceZ: { _ in 0.5 })[0]
+                                           coherence: CoherenceContext(setZ: { _ in 0.5 },
+                                                                        marginalZ: { _, _ in 0.5 }))[0]
         #expect(!g.isGrounded, "雑音の高原が接地された: \(g.expanded)")
     }
 

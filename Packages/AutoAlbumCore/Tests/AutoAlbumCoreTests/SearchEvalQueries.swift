@@ -26,6 +26,9 @@ enum SearchEvalQueries {
         var year: Int?
         /// 正解: クラスの最少個数（「犬が2匹」等）。nil なら 1 以上。
         var minCount: [String: Int]?
+        /// 正解: 写っている人数（COCO の person 個数）。
+        var personExactly: Int?
+        var personAtLeast: Int?
         /// 正解: 属性の要求（S10・ADR-103）。
         var requireSmiling = false
         var requireChild = false
@@ -51,6 +54,8 @@ enum SearchEvalQueries {
                 if !include.isEmpty && !include.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
                 if exclude.contains(where: { (counts[$0] ?? 0) > 0 }) { continue }
                 if let minCount, minCount.contains(where: { (counts[$0.key] ?? 0) < $0.value }) { continue }
+                if let personExactly, (counts["person"] ?? 0) != personExactly { continue }
+                if let personAtLeast, (counts["person"] ?? 0) < personAtLeast { continue }
                 if let year {
                     guard let date = dates[refKey],
                           calendar.component(.year, from: date) == year else { continue }
@@ -222,14 +227,47 @@ enum SearchEvalQueries {
             Query(id: "e-pizza", category: "en", text: "pizza", englishText: "pizza",
                   include: ["pizza"], exclude: []),
         ]
-        // --- limitation（未対応の言い回しの定量化・5 本） ---
+        // --- 人数条件（S12・humanCount 実測） ---
+        out += [
+            Query(id: "n-two", category: "count", text: "2人の写真",
+                  englishText: "", include: [], exclude: [], personExactly: 2),
+            Query(id: "n-group", category: "count", text: "集合写真",
+                  englishText: "", include: [], exclude: [], personAtLeast: 5),
+            Query(id: "n-solo", category: "count", text: "一人で写っている写真",
+                  englishText: "", include: [], exclude: [], personExactly: 1),
+            Query(id: "n-three-up", category: "count", text: "3人以上の写真",
+                  englishText: "", include: [], exclude: [], personAtLeast: 3),
+        ]
+        // --- 頑健性（言い回しの揺れ・正解は同じ） ---
+        out += [
+            Query(id: "r-sagashite", category: "robust", text: "犬の写真を探して",
+                  englishText: "dog", include: ["dog"], exclude: []),
+            Query(id: "r-space", category: "robust", text: "犬 写真",
+                  englishText: "dog", include: ["dog"], exclude: []),
+            Query(id: "r-kudasai", category: "robust", text: "猫の写真をください",
+                  englishText: "cat", include: ["cat"], exclude: []),
+            Query(id: "r-mitai", category: "robust", text: "電車の写真が見たい",
+                  englishText: "train", include: ["train"], exclude: []),
+        ]
+        // --- 特異性（存在しない被写体は 0 件を返すべき） ---
+        out += [
+            Query(id: "z-dino", category: "specificity", text: "恐竜の写真",
+                  englishText: "dinosaur", include: ["__none__"], exclude: []),
+            Query(id: "z-unicorn", category: "specificity", text: "ユニコーンの写真",
+                  englishText: "unicorn", include: ["__none__"], exclude: []),
+            Query(id: "z-penguin", category: "specificity", text: "ペンギンの写真",
+                  englishText: "penguin", include: ["__none__"], exclude: []),
+        ]
+        // --- limitation（未対応の言い回しの定量化・4 本） ---
         out += [
             Query(id: "l-no-child", category: "limitation", text: "子供が写っていない写真",
                   englishText: "", include: [], exclude: [], requireNoChild: true,
                   knownLimitation: "子供除外は人物除外へ丸められる（年齢証拠なし）"),
-            Query(id: "l-dog-only", category: "limitation", text: "犬だけの写真",
-                  englishText: "dog", include: ["dog"], exclude: ["person"],
-                  knownLimitation: "「だけ」＝他被写体の不在は未対応（犬の肯定として解釈される）"),
+            // S12 で「だけ」対応（人物除外として解釈）→ limitation から昇格。
+            Query(id: "solo-dog", category: "conjunction", text: "犬だけの写真",
+                  englishText: "dog", include: ["dog"], exclude: ["person"]),
+            Query(id: "solo-cat", category: "conjunction", text: "猫だけの写真",
+                  englishText: "cat", include: ["cat"], exclude: ["person"]),
             Query(id: "l-two-dogs", category: "limitation", text: "犬が2匹いる写真",
                   englishText: "dog", include: ["dog"], exclude: [], minCount: ["dog": 2],
                   knownLimitation: "頭数条件は未対応（1 匹でも当たる）"),
@@ -256,8 +294,15 @@ enum SearchEvalQueries {
         let retrieved: Int
         let relevant: Int
 
-        var precision: Double { retrieved == 0 ? 0 : Double(truePositives) / Double(retrieved) }
-        var recall: Double { relevant == 0 ? 0 : Double(truePositives) / Double(relevant) }
+        /// ⚠️ 正解が 0 件のクエリ（存在しない被写体＝特異性の検査）は「0 件を返す」のが正解。
+        var precision: Double {
+            if relevant == 0 { return retrieved == 0 ? 1 : 0 }
+            return retrieved == 0 ? 0 : Double(truePositives) / Double(retrieved)
+        }
+        var recall: Double {
+            if relevant == 0 { return retrieved == 0 ? 1 : 0 }
+            return Double(truePositives) / Double(relevant)
+        }
         var f1: Double {
             let (p, r) = (precision, recall)
             return (p + r) == 0 ? 0 : 2 * p * r / (p + r)

@@ -56,6 +56,10 @@ final class AIAlbumService {
             signals.aesthetics = scores
             signals.aestheticFloor = PhotoQuality.adaptiveThreshold(scores: Array(scores.values))
         }
+        // 人数条件（S12）: humanCount 実測（タグ付けパスで全写真に付く・網羅率 約86%）。
+        if spec.needsPeopleCountSignal, let tagStore {
+            signals.humanCounts = await tagStore.allHumanCounts()
+        }
         return signals
     }
 

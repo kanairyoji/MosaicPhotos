@@ -64,7 +64,7 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
     /// コサインが、語彙全体の背景（サンプリングした全ペア平均）からどれだけ突出しているかを返す。
     /// 「animal のような広い語＝候補が互いに近い」と「雑音の高原＝候補がバラバラ」を分離する
     /// （Caltech 実測: animal 2.24 / insect 2.44 vs 雑音語 0.17〜1.11）。
-    public func coherenceContext(vocabulary: [String]) async -> (@Sendable ([Int]) -> Double)? {
+    public func coherenceContext(vocabulary: [String]) async -> CoherenceContext? {
         let centroids = await centroids(for: vocabulary)
         let vecs: [[Float]?] = vocabulary.map { centroids[$0] }
         let present = vecs.indices.filter { vecs[$0] != nil }
@@ -90,7 +90,7 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
         let sd = variance.squareRoot()
         guard sd > 0 else { return nil }
 
-        return { indices in
+        let setZ: @Sendable ([Int]) -> Double = { indices in
             let valid = indices.compactMap { $0 >= 0 && $0 < vecs.count ? vecs[$0] : nil }
             guard valid.count >= 2 else { return 0 }
             var total = 0.0
@@ -103,6 +103,15 @@ public final class CLIPConceptExpander: ConceptExpander, @unchecked Sendable {
             }
             return (total / Double(count) - mean) / sd
         }
+        // 限界凝集（S12・精錬用）: 候補 1 件と集合の平均類似の突出。
+        let marginalZ: @Sendable (Int, [Int]) -> Double = { candidate, group in
+            guard candidate >= 0, candidate < vecs.count, let cv = vecs[candidate] else { return 0 }
+            let others = group.compactMap { $0 >= 0 && $0 < vecs.count ? vecs[$0] : nil }
+            guard !others.isEmpty else { return 0 }
+            let total = others.reduce(0.0) { $0 + Double(ClipMath.cosine(cv, $1)) }
+            return (total / Double(others.count) - mean) / sd
+        }
+        return CoherenceContext(setZ: setZ, marginalZ: marginalZ)
     }
 
     // MARK: - Private

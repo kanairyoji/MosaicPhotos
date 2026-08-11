@@ -21,42 +21,6 @@ import Testing
 @Suite("SearchEval (COCO・除外条件の precision)")
 struct SearchEvalTests {
 
-    /// 検索 1 回ぶんを本番と同じ順序で回す（ハード条件 → タグ/CLIP/字句 → 証拠ゲート）。
-    private func run(_ query: SearchEvalQueries.Query,
-                     corpus: SearchEvalCorpus.Corpus) async -> Set<String> {
-        let now = Date(timeIntervalSince1970: 1_767_225_600)   // 2026-01-01（コーパスより後）
-        // 解釈は決定的プレビュー（FM はテスト環境で使えない＝`SearchQualityTests` と同じ方針）。
-        let saved = AIAlbumInterpreter.previewInterpretation(criteria: query.text, now: now)
-
-        // CLIP は使わない（この層の評価ではないため）。textEmbedder なし＝タグ＋字句で解く。
-        let searcher = AIAlbumSearcher(textEmbedder: nil)
-        let needsFaces = AIAlbumSearcher.hasPeopleExclusion(saved.spec)
-        // 属性シグナル（S10）: 本番 AIAlbumService.querySignalsIfNeeded と同じ組み立て。
-        let signals = QuerySignals(
-            smileCounts: corpus.smileCounts,
-            aesthetics: corpus.aesthetics,
-            aestheticFloor: PhotoQuality.adaptiveThreshold(scores: Array(corpus.aesthetics.values)))
-        let (members, _) = await searcher.searchWithPool(
-            baseLite: corpus.photos, spec: saved.spec, now: now,
-            semanticText: query.englishText,
-            faceCounts: needsFaces ? corpus.faceCounts : nil,
-            humanCounts: corpus.humanCounts,
-            photoTags: corpus.tags,
-            ocrTexts: [:],
-            peopleByRefKey: nil,
-            signals: signals,
-            loadPage: { _, _ in [] })
-
-        // 除外つきなら証拠ゲート（本番と同じ判定を純関数で）。
-        let gated = saved.spec.allContentTerms.exclude.isEmpty
-            ? members
-            : AIAlbumVerificationCoordinator.evidenceGated(
-                members, tags: corpus.tags, faceCounts: corpus.faceCounts, captions: corpus.captions,
-                humanCounts: corpus.humanCounts,
-                excludeTerms: saved.spec.allContentTerms.exclude)
-        return Set(gated.map(\.id))
-    }
-
     @Test("COCO で除外条件つき検索の precision/recall を測る")
     func measure() async throws {
         // データセットが無い環境（CI・他の開発機）では**失敗させずに抜ける**。
@@ -78,7 +42,7 @@ struct SearchEvalTests {
             p.captureDate.map { (p.id, $0) }
         })
         for query in SearchEvalQueries.all {
-            let retrieved = await run(query, corpus: corpus)
+            let retrieved = await SearchEvalRunner.run(query, corpus: corpus)
             let relevant = query.groundTruth(corpus: corpus, dates: dates)
             let score = SearchEvalQueries.score(queryID: query.id, hasExclusion: query.hasExclusion,
                                                 retrieved: retrieved, relevant: relevant)
@@ -123,7 +87,7 @@ struct SearchEvalTests {
         })
         for query in SearchEvalQueries.all
         where query.requireSmiling || query.requireBeautiful || query.requireChild {
-            let retrieved = await run(query, corpus: corpus)
+            let retrieved = await SearchEvalRunner.run(query, corpus: corpus)
             let relevant = query.groundTruth(corpus: corpus, dates: dates)
             let score = SearchEvalQueries.score(queryID: query.id, hasExclusion: query.hasExclusion,
                                                 retrieved: retrieved, relevant: relevant)

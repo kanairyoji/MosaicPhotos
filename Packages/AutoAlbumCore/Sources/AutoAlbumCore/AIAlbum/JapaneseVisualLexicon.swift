@@ -135,6 +135,38 @@ public enum JapaneseVisualLexicon {
                                          "映え", "フォトジェニック",
                                          "beautiful", "best shot", "stunning", "impressive"]
 
+    /// 「X**だけ**の写真」＝X 以外（特に人）が写っていない意図（S12）。
+    /// 語彙語の直後に だけ/のみ が続くとき true。「犬だけの写真」→ 犬＋人物除外。
+    public static func hasSoloRequest(_ criteria: String) -> Bool {
+        for match in matches(in: criteria) where !match.negated {
+            let jp = match.jp
+            if let range = criteria.range(of: jp) {
+                let after = criteria[range.upperBound...]
+                if after.hasPrefix("だけ") || after.hasPrefix("のみ") { return true }
+            }
+        }
+        return false
+    }
+
+    /// 人数条件（S12）: 「2人の写真」「一人で」「集合写真」「大人数」→ (exactly, atLeast)。
+    /// 実測（humanCount・上半身検出）で評価できるものだけ拾う。無ければ (nil, nil)。
+    public static func peopleCountRequest(_ criteria: String) -> (exactly: Int?, atLeast: Int?) {
+        // 集合写真・大人数 → 5 人以上（明確な下限は無いので慣用値）。
+        if criteria.contains("集合写真") || criteria.contains("大人数") { return (nil, 5) }
+        // 「N人」（半角/全角数字・一〜九）。「N人以上」は atLeast。
+        let digits: [Character: Int] = ["1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,
+                                        "１":1,"２":2,"３":3,"４":4,"５":5,"６":6,"７":7,"８":8,"９":9,
+                                        "一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9]
+        let chars = Array(criteria)
+        for (i, ch) in chars.enumerated() {
+            guard let n = digits[ch], i + 1 < chars.count, chars[i + 1] == "人" else { continue }
+            let rest = String(chars[(i + 2)...])
+            return rest.hasPrefix("以上") ? (nil, n) : (n, nil)
+        }
+        if criteria.contains("ひとりで") || criteria.contains("一人で") { return (1, nil) }
+        return (nil, nil)
+    }
+
     /// 原文が笑顔条件を含むか。
     public static func hasSmileRequest(_ criteria: String) -> Bool {
         let lower = criteria.lowercased()

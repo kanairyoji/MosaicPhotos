@@ -20,6 +20,7 @@ public indirect enum Condition: Sendable, Codable, Equatable {
     // --- 索引済み属性（S10・ADR-103）。索引しているのにクエリ言語から届かなかった信号を昇格 ---
     case smiling                // 笑顔の顔が写っている（顔スキャンの hasSmile 実測）
     case beautiful              // 美的スコアが分布適応しきい値以上（ADR-78 と同じ定義）
+    case peopleExactly(Int)     // 写っている人数 == N（humanCount 実測・S12）
 
     /// ハード条件か（content / not(content...) はソフト＝採点側で扱う）。
     public var isHard: Bool {
@@ -84,6 +85,14 @@ public struct QuerySpec: Sendable, Codable, Equatable {
 
     /// 属性条件（笑顔／美的）を含むか。含むときだけ各シグナル（顔スキャンの笑顔・美的台帳）を
     /// 取得する（無関係なアルバムでは 86k 件の台帳を引かない）。
+    public var needsPeopleCountSignal: Bool {
+        clauses.contains { $0.conditions.contains { cond in
+            switch cond {
+            case .peopleAtLeast, .peopleExactly: return true
+            default: return false
+            }
+        } }
+    }
     public var needsSmileSignal: Bool {
         clauses.contains { $0.conditions.contains { if case .smiling = $0 { return true }; return false } }
     }

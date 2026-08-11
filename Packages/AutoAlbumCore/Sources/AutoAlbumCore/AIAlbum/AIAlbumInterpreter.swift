@@ -58,7 +58,7 @@ public final class AIAlbumInterpreter {
         let coherence = await expander.coherenceContext(vocabulary: vocabulary)
         let out = VocabularyGrounding.apply(spec: spec, vocabulary: vocabulary,
                                             similarity: { byTerm[$0.lowercased()] ?? [] },
-                                            coherenceZ: coherence)
+                                            coherence: coherence)
         Diagnostics.mark("aialbum.ground: include \(include) → \(out.allContentTerms.include) / "
                          + "exclude \(exclude) → \(out.allContentTerms.exclude) (vocab=\(vocabulary.count))")
         return out
@@ -169,6 +169,18 @@ public final class AIAlbumInterpreter {
         if JapaneseVisualLexicon.hasBeautifulRequest(visualText) {
             spec = QuerySpecSanitizer.addingCondition(spec, condition: .beautiful)
         }
+        // S12: 「Xだけの写真」＝X 以外（特に人）が写っていない意図 → 人物除外を足す。
+        if JapaneseVisualLexicon.hasSoloRequest(visualText) {
+            spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])
+        }
+        // S12: 人数条件（「2人の写真」「集合写真」）＝ humanCount 実測へのハード条件。
+        let peopleCount = JapaneseVisualLexicon.peopleCountRequest(visualText)
+        if let exactly = peopleCount.exactly {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .peopleExactly(exactly))
+        }
+        if let atLeast = peopleCount.atLeast {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .peopleAtLeast(atLeast))
+        }
         // ⚠️ **語彙接地**（ADR-101）: ここまでで立った内容語は「landscape」「food」のような
         //    人間向けの語で、索引側の語彙に実在するとは限らない。実在する語（台帳のタグ）へ
         //    落としてから保存する。個別の対応表は書かず、CLIP の意味的な近さで語彙の側から決める。
@@ -238,6 +250,18 @@ public final class AIAlbumInterpreter {
         }
         if JapaneseVisualLexicon.hasBeautifulRequest(visualText) {
             spec = QuerySpecSanitizer.addingCondition(spec, condition: .beautiful)
+        }
+        // S12: 「Xだけの写真」＝X 以外（特に人）が写っていない意図 → 人物除外を足す。
+        if JapaneseVisualLexicon.hasSoloRequest(visualText) {
+            spec = QuerySpecSanitizer.addingExclusion(spec, terms: ["people"])
+        }
+        // S12: 人数条件（「2人の写真」「集合写真」）＝ humanCount 実測へのハード条件。
+        let peopleCount = JapaneseVisualLexicon.peopleCountRequest(visualText)
+        if let exactly = peopleCount.exactly {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .peopleExactly(exactly))
+        }
+        if let atLeast = peopleCount.atLeast {
+            spec = QuerySpecSanitizer.addingCondition(spec, condition: .peopleAtLeast(atLeast))
         }
         if let date = RelativeDateParser.parse(criteria, now: now) {
             if spec.clauses.isEmpty {

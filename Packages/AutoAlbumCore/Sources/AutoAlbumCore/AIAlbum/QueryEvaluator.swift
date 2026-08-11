@@ -10,15 +10,19 @@ import Foundation
 public struct QuerySignals: Sendable {
     /// refKey → 笑顔の顔数（顔スキャン済みの写真のみキーが存在する）。
     public var smileCounts: [String: Int]?
+    /// refKey → 写っている人数（Vision 上半身検出・タグ付け済みのみ）。人数条件の評価に使う（S12）。
+    public var humanCounts: [String: Int]?
     /// refKey → 美的スコア（VNCalculateImageAestheticsScores・-1〜1・計測済みのみ）。
     public var aesthetics: [String: Double]?
     /// 「綺麗」の分布適応しきい値（`PhotoQuality.adaptiveThreshold`＝ADR-78 と同じ定義）。
     public var aestheticFloor: Double = 0
 
     public init(smileCounts: [String: Int]? = nil,
+                humanCounts: [String: Int]? = nil,
                 aesthetics: [String: Double]? = nil,
                 aestheticFloor: Double = 0) {
         self.smileCounts = smileCounts
+        self.humanCounts = humanCounts
         self.aesthetics = aesthetics
         self.aestheticFloor = aestheticFloor
     }
@@ -95,7 +99,16 @@ public enum QueryEvaluator {
             let t = terms.map { $0.lowercased() }
             return t.contains { term in names.contains { $0.contains(term) } }
         case .peopleAtLeast(let n):
+            // 人数は実測（humanCount）を優先する（S12）。上半身検出は名前の有無に依らず数えられる
+            // ＝「集合写真」を名前付き人物ゼロのライブラリでも判定できる。未計測は通さない（証拠主義）。
+            if let counts = signals.humanCounts {
+                guard let humans = counts[p.id] else { return false }
+                return humans >= n
+            }
             return peopleNames(p, peopleByRefKey: peopleByRefKey).count >= n
+        case .peopleExactly(let n):
+            guard let counts = signals.humanCounts, let humans = counts[p.id] else { return false }
+            return humans == n
         case .source(let src):
             switch src {
             case .local: return p.isLocal

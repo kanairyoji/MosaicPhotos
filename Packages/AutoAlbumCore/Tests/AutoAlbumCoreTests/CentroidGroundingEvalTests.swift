@@ -29,30 +29,6 @@ struct CentroidGroundingEvalTests {
         let centroidMutual: [[Double]]?
     }
 
-    /// フィクスチャの相互類似行列から凝集度 z クロージャを作る（本番 `CLIPConceptExpander` と同じ規則）。
-    private static func coherenceClosure(_ fixture: Fixture) -> (([Int]) -> Double)? {
-        guard let m = fixture.centroidMutual, !m.isEmpty else { return nil }
-        var background: [Double] = []
-        for a in 0..<m.count {
-            for b in (a + 1)..<m.count { background.append(m[a][b]) }
-        }
-        let mean = background.reduce(0, +) / Double(background.count)
-        let sd = (background.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(background.count)).squareRoot()
-        guard sd > 0 else { return nil }
-        return { indices in
-            guard indices.count >= 2 else { return 0 }
-            var total = 0.0
-            var count = 0
-            for i in 0..<indices.count {
-                for j in (i + 1)..<indices.count {
-                    total += m[indices[i]][indices[j]]
-                    count += 1
-                }
-            }
-            return (total / Double(count) - mean) / sd
-        }
-    }
-
     private static var fixtureURL: URL {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { url.deleteLastPathComponent() }
@@ -96,14 +72,14 @@ struct CentroidGroundingEvalTests {
         ///    1.0 になる（クラス名版は完全一致の 3 語しか接地せず precision 1.0 だった）。
         ///    正解集合に対する **F1**（接地しなければ 0）で見る。
         func evaluate(_ table: [String: [Double]], label: String,
-                      coherence: (([Int]) -> Double)? = nil) -> (f1: Double, grounded: Int) {
+                      coherence: CoherenceContext? = nil) -> (f1: Double, grounded: Int) {
             var f1s: [Double] = []
             var groundedCount = 0
             for (term, expected) in Self.truth.sorted(by: { $0.key < $1.key }) {
                 guard let row = table[term] else { continue }
                 let g = VocabularyGrounding.ground(terms: [term], vocabulary: fixture.vocabulary,
                                                    similarity: { _ in row },
-                                                   coherenceZ: coherence)[0]
+                                                   coherence: coherence)[0]
                 guard g.isGrounded else {
                     f1s.append(0)
                     print("CENTROIDEVAL: \(label) \(term): 接地せず（F1=0）")
@@ -125,7 +101,7 @@ struct CentroidGroundingEvalTests {
 
         let tt = evaluate(fixture.textText, label: "textText")
         let ti = evaluate(fixture.textImage, label: "centroid",
-                          coherence: Self.coherenceClosure(fixture))
+                          coherence: CoherenceFixtureSupport.coherenceContext(fixture.centroidMutual))
         print(String(format: "CENTROIDEVAL: MACRO textText F1=%.3f (接地 %d/%d)",
                      tt.f1, tt.grounded, Self.truth.count))
         print(String(format: "CENTROIDEVAL: MACRO centroid F1=%.3f (接地 %d/%d)  ← 採用",
@@ -142,11 +118,11 @@ struct CentroidGroundingEvalTests {
     func noiseTermsStayUngrounded() throws {
         guard FileManager.default.fileExists(atPath: Self.fixtureURL.path) else { return }
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: Self.fixtureURL))
-        let coherence = Self.coherenceClosure(fixture)
+        let coherence = CoherenceFixtureSupport.coherenceContext(fixture.centroidMutual)
         for term in ["nostalgia", "happiness", "freedom"] {
             guard let row = fixture.textImage[term] else { continue }
             let g = VocabularyGrounding.ground(terms: [term], vocabulary: fixture.vocabulary,
-                                               similarity: { _ in row }, coherenceZ: coherence)[0]
+                                               similarity: { _ in row }, coherence: coherence)[0]
             #expect(!g.isGrounded, "雑音語 \(term) が接地された: \(g.expanded)")
         }
     }
