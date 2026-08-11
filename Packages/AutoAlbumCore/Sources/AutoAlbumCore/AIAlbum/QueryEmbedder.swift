@@ -50,11 +50,18 @@ struct QueryEmbedder: Sendable {
 
     /// CLIP に渡す肯定側フレーズの選定規則（フル/増分共通）：
     /// - 除外あり: include 語だけ（無ければ否定節を落とした英訳文）＝肯定側に否定語を残さない
-    /// - 除外なし: 英訳文（空なら include 語の結合）
-    static func phrase(include: [String], exclude: [String], semanticText: String) -> String {
+    /// - 人物/場所のハード接地あり（`preferIncludeTerms`・ADR-109）: include 語を優先。
+    ///   英訳文には人物名・地名が残り（"Ballet of Taro"）、CLIP が理解しない固有名詞が
+    ///   内容の採点を薄める。人物/場所はハード条件が既に受け持つので内容語だけで採点する。
+    /// - それ以外: 英訳文（空なら include 語の結合）
+    static func phrase(include: [String], exclude: [String], semanticText: String,
+                       preferIncludeTerms: Bool = false) -> String {
         let trimmed = semanticText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !exclude.isEmpty {
             return positivePhrase(include: include, semanticText: trimmed)
+        }
+        if preferIncludeTerms && !include.isEmpty {
+            return include.joined(separator: ", ")
         }
         return trimmed.isEmpty ? include.joined(separator: ", ") : trimmed
     }

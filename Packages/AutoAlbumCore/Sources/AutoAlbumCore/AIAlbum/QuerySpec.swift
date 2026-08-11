@@ -83,6 +83,37 @@ public struct QuerySpec: Sendable, Codable, Equatable {
         let t = allContentTerms; return !t.include.isEmpty || !t.exclude.isEmpty
     }
 
+    /// ハード条件（人物・場所）に接地済みの語（`.not` 内含む）。
+    public var hardGroundedTerms: [String] {
+        func collect(_ cond: Condition, into out: inout [String]) {
+            switch cond {
+            case .people(let t), .place(let t): out += t
+            case .not(let inner): collect(inner, into: &out)
+            default: break
+            }
+        }
+        var out: [String] = []
+        for cl in clauses { for c in cl.conditions { collect(c, into: &out) } }
+        return out
+    }
+    public var hasGroundedHardTerms: Bool { !hardGroundedTerms.isEmpty }
+
+    /// **実効**内容語（ADR-109）: ハード条件（人物・場所）に接地済みの語を include から除いたもの。
+    /// FM は「バレエの太郎」で content にも "太郎" を入れがちで、そのまま字句/タグ照合へ流すと
+    /// 人物名チャネルが RRF 和集合経由で**バレエ証拠ゼロの太郎の全写真**を通してしまう
+    /// （ハードで絞り済みの条件を内容語として二重計上する構造誤り＝実障害）。
+    /// 照合は大小無視の包含（「太郎」⊂「山田太郎」も除く）。除外語は対象外（人物否定は別機構）。
+    public var effectiveContentTerms: (include: [String], exclude: [String]) {
+        let all = allContentTerms
+        let hard = hardGroundedTerms.map { $0.lowercased() }.filter { !$0.isEmpty }
+        guard !hard.isEmpty, !all.include.isEmpty else { return all }
+        let include = all.include.filter { term in
+            let t = term.lowercased()
+            return !hard.contains { $0 == t || $0.contains(t) || t.contains($0) }
+        }
+        return (include, all.exclude)
+    }
+
     /// 属性条件（笑顔／美的）を含むか。含むときだけ各シグナル（顔スキャンの笑顔・美的台帳）を
     /// 取得する（無関係なアルバムでは 86k 件の台帳を引かない）。
     public var needsPeopleCountSignal: Bool {

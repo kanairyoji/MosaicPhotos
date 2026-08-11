@@ -22,7 +22,7 @@ struct AIAlbumSearchTests {
 
     // 旧 flat API（AIAlbumQuery 直接検索）は撤去済み。以下は spec 経路での等価テスト。
 
-    @Test("semanticText が指定されれば、include 語ではなくそれを CLIP に埋め込む")
+    @Test("ハード接地なしなら semanticText（英訳文）を CLIP に埋め込む")
     func usesSemanticTextForEmbedding() async {
         final class RecordingEmbedder: TextEmbedder, @unchecked Sendable {
             var lastText: String?
@@ -32,10 +32,28 @@ struct AIAlbumSearchTests {
         let embedder = RecordingEmbedder()
         let searcher = AIAlbumSearcher(textEmbedder: embedder)
         let photos = [photo("near", place: "Tokyo", clip: [1, 0])]
-        let spec = QuerySpec(clauses: [QueryClause([.place(["tokyo"]), .content(["dog"])])])
+        let spec = QuerySpec(clauses: [QueryClause([.content(["dog"])])])
         _ = await searcher.search(baseLite: photos, spec: spec, now: now,
                                   semanticText: "a running child", loadPage: pagedLoader(photos))
         #expect(embedder.lastText == "a running child")   // include("dog") ではなく英訳文を使う
+    }
+
+    @Test("人物/場所のハード接地があるときは include 語を CLIP に埋め込む（ADR-109）")
+    func prefersIncludeTermsWhenHardGrounded() async {
+        final class RecordingEmbedder: TextEmbedder, @unchecked Sendable {
+            var lastText: String?
+            var isAvailable: Bool { true }
+            func embed(_ text: String) async -> [Float]? { lastText = text; return [1, 0] }
+        }
+        let embedder = RecordingEmbedder()
+        let searcher = AIAlbumSearcher(textEmbedder: embedder)
+        let photos = [photo("near", place: "Tokyo", clip: [1, 0])]
+        // 英訳文には地名/人名が残る（"dogs in Tokyo"）＝CLIP が理解しない固有名詞が採点を薄める。
+        // 場所/人物はハード条件が受け持つので、内容語だけで埋め込む。
+        let spec = QuerySpec(clauses: [QueryClause([.place(["tokyo"]), .content(["dog"])])])
+        _ = await searcher.search(baseLite: photos, spec: spec, now: now,
+                                  semanticText: "dogs in Tokyo", loadPage: pagedLoader(photos))
+        #expect(embedder.lastText == "dog")
     }
 
     @Test("内容の意図があるのに当たらなければ空（タグなし写真の混入・全件化を防ぐ）")

@@ -273,6 +273,31 @@ final class AIAlbumService {
             // 属性条件のシグナルも増分評価で同一規則（S10）。
             let querySignals = await querySignalsIfNeeded(for: spec)
             saved.evaluatedEmbedCount += newRefKeys.count
+            // 内容の意図が実効的に無い（内容語が全部ハード接地語・除外も無し）アルバムは、
+            // フル評価（searchWithPool）と同じく**ハード通過分をそのまま追加**する（ADR-109）。
+            // 英訳文で意味採点すると「太郎」だけのアルバムに新規の太郎写真が入らないことがある。
+            let effective = spec.effectiveContentTerms
+            if spec.hasContent && effective.include.isEmpty && effective.exclude.isEmpty
+                && spec.hasHardConstraints {
+                interpreter.save(saved, for: album.id)
+                let base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
+                                                     peopleByRefKey: peopleMap, signals: querySignals)
+                let existing = Set(album.memberRefs)
+                let newlyIn = base.filter { !existing.contains($0.id) }
+                guard !newlyIn.isEmpty else { continue }
+                let existingPhotos = await store.enrichedPhotos(forRefKeys: album.memberRefs)
+                let members = (existingPhotos + newlyIn)
+                    .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+                let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title,
+                                                     interpretedTitle: saved.spec.title,
+                                                     criteria: criteria, members: members,
+                                                     aesthetics: await coverAesthetics(members),
+                                                     usage: await coverUsage(members))
+                await store.upsert(albumInfo: info)
+                updated[index] = info
+                touched += 1
+                continue
+            }
             // 意味採点のクエリ埋め込み（キャッシュ）。埋め込み不可なら評価枚数だけ進める。
             guard let q = await queryVectors(for: saved) else {
                 interpreter.save(saved, for: album.id)
@@ -339,10 +364,16 @@ final class AIAlbumService {
     /// 解釈未保存のアルバム（旧データ）は evaluated=0 扱いになるため、ここで初回移行も担う。
     func refreshIfDrifted(_ current: [AutoAlbumInfo], threshold: Int = 500) async -> [AutoAlbumInfo]? {
         guard !current.isEmpty else { return nil }
+        // 解釈器の版が古いアルバムがあれば、埋め込みの進行に関係なくフル再評価する
+        // （評価**規則**の変更＝v7 実効内容語のような修正を、既存アルバムへ確実に波及させる）。
+        let stale = current.contains { album in
+            guard let saved = interpreter.saved(for: album.id) else { return false }
+            return saved.version != SavedInterpretation.currentVersion
+        }
         let embedCount = await store.embeddedCount()
         let evaluated = interpreter.minEvaluatedEmbedCount(for: current.map(\.id))
-        guard embedCount - evaluated > threshold else { return nil }
-        Diagnostics.mark("aialbum.drift: embedded=\(embedCount) evaluated=\(evaluated) → full refresh")
+        guard stale || embedCount - evaluated > threshold else { return nil }
+        Diagnostics.mark("aialbum.drift: embedded=\(embedCount) evaluated=\(evaluated) stale=\(stale) → full refresh")
         return await refresh(current)
     }
 
@@ -362,10 +393,12 @@ final class AIAlbumService {
     /// 増分評価用のクエリ埋め込み（肯定＋除外群）。フレーズ選定・埋め込みの規則は
     /// `QueryEmbedder` に集約（フル評価＝searchWithPool と**同一実装**）で、ここはキャッシュだけ持つ。
     private func queryVectors(for saved: SavedInterpretation) async -> QueryEmbedder.QueryVectors? {
-        let include = saved.spec.allContentTerms.include
+        // 実効内容語（ADR-109・フル評価＝searchWithPool と同一規則）。
+        let include = saved.spec.effectiveContentTerms.include
         let exclude = saved.spec.allContentTerms.exclude
         let phrase = QueryEmbedder.phrase(include: include, exclude: exclude,
-                                          semanticText: saved.semanticText)
+                                          semanticText: saved.semanticText,
+                                          preferIncludeTerms: saved.spec.hasGroundedHardTerms)
         guard !phrase.isEmpty else { return nil }
         let probes = saved.probes ?? []
         let cacheKey = "\(phrase)|\(probes.joined(separator: ","))|\(exclude.joined(separator: ","))"

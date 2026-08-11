@@ -100,7 +100,15 @@ extension FaceStore {
         }
         // 通し番号は**並べ替え後**に振る（写真の多い順に Person 1, 2, 3…）。
         // 内部のクラスタ ID は再クラスタで大きくなり続けるので表示には使わない（ADR-68）。
-        var ordered = result.sorted { $0.count > $1.count }
+        // ⚠️ 並びは**完全に決定的**にする: 写真数降順 → 同数は名前つき優先 → clusterID 昇順。
+        //    Swift の sort は非安定で、同数クラスタ（3 枚組が数百件）だけの比較だと実行ごとに
+        //    順序が揺れ、リロードのたびに一覧が入れ替わって「数順に並んでいない」ように見える。
+        var ordered = result.sorted { a, b in
+            if a.count != b.count { return a.count > b.count }
+            let an = a.name?.isEmpty == false, bn = b.name?.isEmpty == false
+            if an != bn { return an }
+            return a.clusterID < b.clusterID
+        }
         for i in ordered.indices { ordered[i].displayIndex = i + 1 }
         return ordered
     }

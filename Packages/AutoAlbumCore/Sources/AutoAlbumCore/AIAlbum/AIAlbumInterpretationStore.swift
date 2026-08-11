@@ -19,7 +19,10 @@ public struct SavedInterpretation: Codable, Sendable {
     /// v5: 決定的レキシコン（日本語視覚語＋人物否定）を解釈に注入（2026-07）。
     /// v6: マルチプローブ＝FM の言い換えプローブを解釈時に生成・永続化し、意味採点を
     ///     max-over-probes に（言い換えの取りこぼし回収・ADR-35・2026-07）。
-    public static let currentVersion = 6
+    /// v7: 実効内容語＝ハード接地語（人物/場所）を内容語から除外（ADR-109・「バレエの太郎」で
+    ///     人物名チャネルが AND を OR 化していた実障害）。評価規則の変更なので、既存アルバムを
+    ///     夜間に全再解釈・全再評価してメンバーを正す（2026-08）。
+    public static let currentVersion = 7
     public var version: Int?
     /// 解釈時の検索文（これが変わったときだけ再解釈する）。
     public var criteria: String

@@ -126,7 +126,10 @@ public struct AIAlbumSearcher {
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now,
                                              peopleByRefKey: peopleByRefKey, signals: signals)
-        let includeTerms = spec.allContentTerms.include
+        // **実効**内容語（ADR-109）: ハード条件（人物・場所）に接地済みの語は内容語から除く。
+        // FM は「バレエの太郎」で content にも "太郎" を入れがちで、そのまま字句照合へ流すと
+        // 人物名チャネルが RRF 和集合経由で**バレエ証拠ゼロの太郎の全写真**を通す（AND が OR 化）。
+        let includeTerms = spec.effectiveContentTerms.include
         let excludeTerms = spec.allContentTerms.exclude
 
         // 人物除外は**実測の人数**で判定する（faceCounts が渡された＝人系の除外あり）。
@@ -153,11 +156,20 @@ public struct AIAlbumSearcher {
             }
         }
 
+        // 内容の意図が実効的に無い（内容語はあったが全部ハード接地語だった・除外も無い）なら、
+        // ハード絞り込みの結果が答え（ADR-109）。英訳文で CLIP band すると「太郎」だけの
+        // アルバムが恣意的な帯で欠ける。内容語がもともと無いクエリは従来経路（下の guard）。
+        if spec.hasContent && includeTerms.isEmpty && excludeTerms.isEmpty && spec.hasHardConstraints {
+            Diagnostics.mark("aialbum: content=hard-grounded only → base \(base.count)")
+            return (base, [:])
+        }
+
         // 対策1: 除外があるときの肯定側は include 語（無ければ否定節を落とした英訳文）を使う。
         // 全文には "without people" 等の否定が含まれ、CLIP は否定を理解せず逆に引っ張られる。
         // 選定規則は `QueryEmbedder` に集約（増分評価＝AIAlbumService.queryVectors と同一実装）。
         let phrase = QueryEmbedder.phrase(include: includeTerms, exclude: excludeTerms,
-                                          semanticText: semanticText)
+                                          semanticText: semanticText,
+                                          preferIncludeTerms: spec.hasGroundedHardTerms)
         let hasPhrase = !phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         // 安全網: ハード条件で全滅したが意味検索の意図(phrase)がある場合、内容のみへ緩和して
