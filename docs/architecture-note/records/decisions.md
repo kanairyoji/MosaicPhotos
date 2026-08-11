@@ -21,6 +21,29 @@
 
 ---
 
+## ADR-107 一枚岩の重い処理は「非アクティブ限定」の厳格ゲートに分離する
+- 状態: 採用
+- 文脈: ユーザー報告「AI アルバムの機能は、いちいち画面が固まる。処理がバックエンドで動いていない」。
+  diagnostics-46 で機序を特定: `heavyWorkAllowed` は控えめ OFF＋前面 20 秒アイドルで通るため、
+  **AI アルバムの本番化（finalize）が 06:10:57 にフォアグラウンドで起動**していた。
+  トリクル系（埋め込み・顔・タグ）は 1 単位ごとに `heavyShouldPause()` で譲れるので前面実行でも
+  安全だが、finalize/ドリフト再評価/自動生成は**一枚岩**（FM 解釈＋フル検索 28s＋重心構築
+  数分〜数十分＋85k 件 SwiftData）で、**始まるとユーザーが戻ってきても途中で譲れない**。
+  以後の全操作が ANE ゲート待ち（実測 7.9s）・ModelActor 競合・CPU 競合で引っかかる＝
+  「いちいち固まる」の正体。
+- 決定: `BackgroundYield.monolithicHeavyWorkAllowed` を新設＝`heavyWorkAllowed` に加えて
+  **非アクティブ（画面ロック・アプリ切替）限定**。手動ブースト（「今すぐ処理」）と
+  デバッグ全開は明示操作なので従来どおり前面でも動く。`AutoAlbumEngine.refreshIfNeeded` の
+  finalize / ドリフト再評価 / 自動生成をこのゲートへ移す。トリクル系と地名補正
+  （セル単位で譲れる）は従来の `heavyWorkAllowed` のまま。
+- 結果: 前面アイドルで一枚岩が始まらなくなり、「使用中に固まる」の主経路を断つ。
+  トレードオフ: 控えめ OFF でも finalize は夜間 BGTask（またはロック中）まで遅れる＝
+  AI アルバムの本番化が半日遅れることがある（プレビューは即時のまま）。急ぐ場合は
+  「今すぐ処理」で前面実行できる。
+- 関連: `MosaicSupport/BackgroundYield.swift` / `AutoAlbumCore/AutoAlbumEngine.swift`
+  （refreshIfNeeded）。[[ADR-80]]（4 軸ゲート）[[ADR-106]]（diagnostics-46 の観測）。
+  ※ 復帰直後の 9〜12s ハング自体は別件として MetricKit（ADR-106）の採取待ち。
+
 ## ADR-106 ハングの真因は OS 採取のスタック（MetricKit）で特定する
 - 状態: 採用
 - 文脈: 実機で「復帰直後・AI アルバム作成時にメインが 9〜12 秒止まる」が 3 セッション連続で

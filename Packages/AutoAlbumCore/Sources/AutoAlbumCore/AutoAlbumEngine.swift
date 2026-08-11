@@ -343,14 +343,20 @@ public final class AutoAlbumEngine {
         // （人が使っている気配がある間は背景でも動かさない・次のティックで再判定）。
         guard BackgroundYield.heavyWorkAllowed else { return }
 
-        // プレビューのままの AI アルバムを本番化（FM 解釈＋LLM 審査つきフル評価）。
-        // 作成時は決定的プレビューだけ出す方針のため、本番化はこのゲート内（夜間）で行う。
-        aiAlbums = await aiService.finalizePending(aiAlbums)
+        // 本番化・ドリフト再評価は**一枚岩**（FM 解釈＋フル検索＋重心構築＝始まると譲れない）
+        // なので、非アクティブ限定の厳格ゲートを通す。前面アイドル（控えめ OFF＋20 秒放置）で
+        // 動かすと、ユーザーが戻ってきた後も数分〜数十分 ANE/CPU を占有して操作が毎回固まる
+        // （diagnostics-46・ADR-107）。トリクル系（埋め込み等）は従来どおり前面アイドルでも動く。
+        if BackgroundYield.monolithicHeavyWorkAllowed {
+            // プレビューのままの AI アルバムを本番化（FM 解釈＋LLM 審査つきフル評価）。
+            // 作成時は決定的プレビューだけ出す方針のため、本番化はこのゲート内（夜間）で行う。
+            aiAlbums = await aiService.finalizePending(aiAlbums)
 
-        // AI アルバムのドリフト検知（自動生成トグルとは独立）：埋め込みの進行に対して
-        // 評価済み時点が大きく遅れていたらフル再評価で整合を回復する（LLM は走らない）。
-        if let refreshed = await aiService.refreshIfDrifted(aiAlbums) {
-            aiAlbums = refreshed
+            // AI アルバムのドリフト検知（自動生成トグルとは独立）：埋め込みの進行に対して
+            // 評価済み時点が大きく遅れていたらフル再評価で整合を回復する（LLM は走らない）。
+            if let refreshed = await aiService.refreshIfDrifted(aiAlbums) {
+                aiAlbums = refreshed
+            }
         }
 
         // 地名の高精度化（Apple・背景）: 写真のあるグリッドセルを枚数の多い順に CLGeocoder で高精度化し、
@@ -358,6 +364,9 @@ public final class AutoAlbumEngine {
         await refinePlaceNames(shouldContinue: { await MainActor.run { BackgroundYield.heavyWorkAllowed } })
 
         guard UserDefaults.standard.bool(forKey: AutoAlbumSettingsKeys.backgroundEnabled) else { return }
+        // 自動生成も一枚岩（85k 件の SwiftData 処理・isGeneratingAlbums で他を全部止める）＝
+        // 前面では動かさない（ADR-107）。
+        guard BackgroundYield.monolithicHeavyWorkAllowed else { return }
         let cloudChanged = await cloudSignatureChanged()
         guard libraryDirty || cloudChanged else { return }
         libraryDirty = false

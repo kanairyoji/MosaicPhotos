@@ -21,6 +21,22 @@
 
 ---
 
+## コンポーザの件数プレビューが「綺麗な写真→0 枚」になっていた（fail-closed の取りこぼし）
+- 症状: AI アルバム作成画面で「綺麗な写真」「笑っている写真」「2人の写真」等を入力すると、
+  ヒット件数プレビューが常に 0 枚と表示される（アルバム自体は正しく作られる）。
+- 原因: S10/S12 で足した属性条件（`.beautiful` / `.smiling` / `.peopleExactly`）は
+  **実測シグナル（美的スコア・笑顔・人数）が無いと fail-closed**（証拠が無ければ落とす＝
+  ADR-103 の設計どおり）。本番検索（rankedSearch）は `querySignalsIfNeeded` でシグナルを
+  引いてから評価するが、コンポーザの件数プレビュー（`groundingPreview`）は**シグナル無しの
+  `hardFilter`** を呼んでいた。条件を足したとき、同じ評価器を使う**別の呼び出し元**への
+  伝播を見落とした形。
+- 対処: `querySignalsIfNeeded` を internal に開き、プレビューでも本番と同じシグナルを
+  取得して渡す（取得は ModelActor 上・件数計算は detached＝メインは塞がない）。
+- 関連: `AutoAlbumEngine+Suggestions.swift`（groundingPreview）/ `AIAlbumService.swift`。
+  ADR-103（fail-closed の原則）。
+- 残課題: シグナル辞書（86k 件）をキー入力（デバウンス後）ごとに引き直している。体感で
+  問題が出たらコンポーザ表示中のキャッシュを検討。
+
 ## 眠っているタスクが「実行中」フラグを握り、夜間の窓を丸ごと空転させていた（diagnostics-38）
 - 症状: 実機ログで 5 つの症状が同時に出た。(a) フォアグラウンドのハング **105 回**（最大 3490ms）、
   (b) VLM キャプションが**ゼロ**（`caption window ... pending=796` は出たのに 1 枚も生成されない）、

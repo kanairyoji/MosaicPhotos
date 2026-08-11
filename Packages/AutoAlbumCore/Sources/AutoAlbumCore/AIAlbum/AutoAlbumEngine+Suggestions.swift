@@ -132,9 +132,14 @@ extension AutoAlbumEngine {
         if spec.hasHardConstraints {
             let peopleMap: [String: [String]]? = spec.hasPeopleConditions
                 ? await aiService.peopleByRefKeyProvider?() : nil
+            // 属性条件（笑顔・綺麗・人数）は実測シグナルが無いと fail-closed（ADR-103）＝
+            // シグナル無しで数えると「綺麗な写真」と打った瞬間 0 枚と表示される。
+            // 本番（rankedSearch）と同じシグナルを引いて同じ土俵で数える（取得は ModelActor 上）。
+            let signals = await aiService.querySignalsIfNeeded(for: spec)
             let lite = data.lite
             preview.hardHitCount = await Task.detached(priority: .userInitiated) {
-                QueryEvaluator.hardFilter(lite, spec: spec, now: now, peopleByRefKey: peopleMap).count
+                QueryEvaluator.hardFilter(lite, spec: spec, now: now,
+                                          peopleByRefKey: peopleMap, signals: signals).count
             }.value
         }
         return preview

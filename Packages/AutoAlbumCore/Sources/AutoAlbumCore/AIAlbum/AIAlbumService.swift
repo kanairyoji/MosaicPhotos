@@ -46,7 +46,9 @@ final class AIAlbumService {
 
     /// 属性条件（笑顔・美的）のシグナルを、必要なときだけ取得する（S10・ADR-103）。
     /// 「綺麗」のしきい値はベストショットフィルタ（ADR-78）と同じ分布適応＝定義を 1 つに保つ。
-    private func querySignalsIfNeeded(for spec: QuerySpec) async -> QuerySignals {
+    /// internal: コンポーザの件数プレビュー（`AutoAlbumEngine.groundingPreview`）も同じシグナルで
+    /// 数える（シグナル無しの hardFilter は属性条件が fail-closed になり「綺麗な写真→0 枚」と出る）。
+    func querySignalsIfNeeded(for spec: QuerySpec) async -> QuerySignals {
         var signals = QuerySignals()
         if spec.needsSmileSignal {
             signals.smileCounts = await smileCountsProvider?() ?? [:]

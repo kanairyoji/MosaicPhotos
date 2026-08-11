@@ -82,6 +82,21 @@ public enum BackgroundYield {
             requiresNetwork: requiresNetwork)
     }
 
+    /// **中断できない一枚岩の重い処理**の許可判定（AI アルバムの本番化＝FM 解釈＋フル検索＋
+    /// 重心構築、ドリフト再評価、アルバム自動生成）。
+    ///
+    /// トリクル系（埋め込み・顔・タグ）は 1 単位ごとに `heavyShouldPause()` で譲れるので
+    /// 前面アイドル（控えめ OFF＋20 秒放置）でも安全だが、一枚岩はいったん始まると
+    /// 数十秒〜数十分 ANE・CPU・ModelActor を占有し、**ユーザーが戻ってきても途中で譲れない**
+    /// （diagnostics-46: 前面 finalize 中の操作が毎回引っかかる＝「いちいち固まる」の正体）。
+    /// よって前面アイドルでは動かさず、**非アクティブ（画面ロック・アプリ切替＝主役は夜間 BGTask）
+    /// に限定**する。手動ブースト/デバッグ全開は明示操作なので免除（従来どおり前面でも動く）。
+    public static var monolithicHeavyWorkAllowed: Bool {
+        guard heavyWorkAllowed else { return false }
+        if debugForceHeavyWork || Date() < manualBoostUntil { return true }
+        return !isAppActive
+    }
+
     /// 重い処理（CLIP 埋め込み・顔スキャン・Vision タグ）の譲り判定：**ローカル許可**を満たさない、
     /// またはアルバム生成中（相互排他）なら譲る。ローカル処理は回線条件を課さない（Wi-Fi 不要）。
     /// クラウド分（サムネDL）は各処理側が `NetworkStateMonitor.networkAllowed()` で別途ゲートする。
