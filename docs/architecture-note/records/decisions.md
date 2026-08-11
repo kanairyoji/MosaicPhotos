@@ -22,7 +22,7 @@
 ---
 
 ## ADR-101 クエリ語は「索引に実在する語彙」へ接地する（個別の対応表を書かない）
-- 状態: 採用（機構）／**保留**（近さの計算方法＝下記の実測により差し替えが必要）
+- 状態: 採用（機構・重心版の近さ計算とも。当初の text↔text 実装は計測により差し替え）
 - 文脈: [[ADR-100]] で否定は汎用化したが、肯定側の語は接地されていなかった。
   ユーザーの問い「風景の検索条件はどうなっている？ 街中の写真は入らないはずだが」を
   実測して確かめたところ、`風景` は `landscape / scenery / outdoor` に展開され、タグ照合は
@@ -52,12 +52,13 @@
   | landscape / scenery | 1.7 | car, bird | ❌ |
   **まさに必要だった `food → pizza` が判別できない**ため、この実装は production に結線していない
   （`CLIPConceptExpander` はコードとしては残すが Composition Root でコメントアウト）。
-- 次段階: 近さは **text↔image** で測る（CLIP の学習目的そのもの）。各タグを「そのタグが付いた
-  写真の CLIP **画像**埋め込みの重心」で表し、クエリ文と比べる。画像埋め込みは全写真ぶん
-  既に持っている（`PhotoEmbedding`）ので新規の推論は要らない。
-  ⚠️ COCO 評価ハーネスはラベルのみ取得しており画像埋め込みが無いため、この方式は
-  現ハーネスでは測れない。実機の `aialbum.ground:` 診断行（「風景」が何に展開されたか）で
-  検証するのが現実的。
+- 差し替え（採用）: 近さは **text↔image** で測る。各タグを「そのタグが付いた写真の CLIP **画像**
+  埋め込みの重心」で表し、クエリ文と比べる（`TagCentroids` / `CLIPConceptExpander`）。
+  画像埋め込みは全写真ぶん既にある（`PhotoEmbedding`）ので**新規の推論はゼロ**。
+  **Caltech-101（101 クラス）で計測**（COCO は物体中心で上位語の階層が作れないため別途取得）:
+  接地できた語 3/10 → **10/10**、正解集合に対する F1 **0.300 → 0.761**。
+  副産物として、タグの意味が**このライブラリの写真**で定義される（雪山ばかりのライブラリなら
+  `mountain` はそういう意味になる）。詳細と語ごとの結果は `records/search-quality.md`。
 - 関連: `AIAlbum/VocabularyGrounding.swift`（機構・純）/ `QuerySpecSanitizer.replacingExclusions`
   / `AIAlbumInterpreter.groundContentTerms` / `Tags/TagStore.tagVocabulary`
   / `MobileCLIPKit/CLIPConceptExpander.swift`（保留）/ `scripts/gen_grounding_fixture.py`（計測）。

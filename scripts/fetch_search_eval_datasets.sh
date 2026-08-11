@@ -93,4 +93,16 @@ print(f"  画像={len(images)}  person あり={withp}  person なし={len(images
 print(f"  出力: {out_path}")
 PY
 
+# --- Caltech-101（語彙接地の評価用・約126MB） ---
+# 上位概念→下位概念（食べ物→ピザ、楽器→サックス）の階層を正解として書けるデータセット。
+# COCO は物体中心で上位語が薄く、この評価には向かない。
+if [ ! -d "$WORK/101_ObjectCategories" ]; then
+  echo "▶ Caltech-101 を取得（約126MB）…"
+  curl -L --fail --max-time 900 -o "$WORK/caltech_101.tgz" \
+    "https://s3.amazonaws.com/fast-ai-imageclas/caltech_101.tgz"
+  tar xzf "$WORK/caltech_101.tgz" -C "$WORK"
+  rm -f "$WORK/caltech_101.tgz"
+fi
+echo "  Caltech-101: $(ls "$WORK/101_ObjectCategories" | wc -l | tr -d ' ') クラス"
+
 echo "✅ 完了。評価の実行方法は docs/architecture-note/records/search-quality.md を参照。"

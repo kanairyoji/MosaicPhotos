@@ -86,3 +86,52 @@ COCO val2017 の 4,952 枚に対し、**実機の網羅率に合わせて**台�
 - **`train` の precision 0.214**: タグ一致が部分一致（`tagHits`）なので過剰にヒットする。
 - **索引していないのにクエリ言語で表現できない情報**: OCR・美的スコア・閲覧回数は
   台帳にあるが `QuerySpec.Condition` に無い。
+
+## 語彙接地の「近さの計算方法」比較（ADR-101）
+
+「風景」のような索引に実在しない語を、台帳のタグへ展開する機構の**中身の関数**を比較した。
+
+```bash
+scripts/fetch_search_eval_datasets.sh                     # Caltech-101（126MB）も取得
+source .mobileclip_build/venv/bin/activate && python scripts/gen_centroid_fixture.py
+cd Packages/AutoAlbumCore && swift test --filter CentroidGroundingEval
+```
+
+データセット: **Caltech-101**（101 クラス）。上位概念→下位概念（食べ物→ピザ、楽器→サックス、
+花→蓮…）の階層を正解として書けるため選んだ（COCO 80 クラスは物体中心で上位語が薄い）。
+正解は保守的に明白な下位概念だけを人手で列挙し、**実装側には対応表を一切持たせない**。
+
+| 方式 | 接地できた語 | 正解集合に対する F1 |
+|---|---|---|
+| 語同士（text↔text・当初実装） | **3/10**（完全一致のみ） | **0.300** |
+| **重心（text↔image・採用）** | **10/10** | **0.761** |
+
+⚠️ precision だけで比べてはいけない。接地を諦めた語は間違えないので precision は 1.0 になり、
+実際 text↔text は完全一致の 3 語しか接地せず precision 1.000 だった。F1（接地しなければ 0）で見る。
+
+### 語ごとの結果（重心版）
+
+| 語 | 展開結果 | P | R |
+|---|---|---|---|
+| food | pizza | 1.00 | 0.25 |
+| flower | lotus, water lilly, sunflower | 1.00 | 1.00 |
+| insect | mayfly, ant, dragonfly, butterfly | 1.00 | 0.80 |
+| bird | ibis, pigeon, flamingo head, flamingo | 1.00 | 0.67 |
+| musical instrument | mandolin, electric guitar, saxophone, accordion, euphonium, metronome | 0.83 | 0.71 |
+| furniture | chair | 1.00 | 0.33 |
+| vehicle | car side | 1.00 | 0.14 |
+| pizza / laptop / umbrella（完全一致の対照） | 自分自身 | 1.00 | 1.00 |
+
+**なぜ text↔text が駄目だったか**: CLIP が学習しているのは画像↔説明文の一致だけで、テキスト同士の
+距離は訓練目標に入っていない。実際テキスト塔の埋め込みは異方性が強く、どの語も語彙全体と
+0.67〜0.83 で並び、`camera` というハブ語がほぼ全クエリの上位に出ていた（重心版では消える）。
+
+### 既知の限界
+
+- **recall は `maxExpansion`（6）と採用幅で頭打ち**。vehicle が 0.14 なのは、正解 7 件に対し
+  1 件しか採らなかったため。広げれば recall は上がるが precision と引き換え。
+- **語彙の多くに当てはまる広い語は接地できない**。`animal` は上位 4 件が全て正しい動物なのに
+  z=1.8 で不採用になる（多数が該当すると分布が広がり突出しなくなる）。肯定なら CLIP の
+  ソフト採点へ落ちるだけなので実害は小さいが、否定では捨てられる（保守側に倒れる）。
+- z スコア判定は**標本数に依存する**（n が小さいと最大 z が (n-1)/√n までしか出ない）。
+  本番の語彙は約 600 語、この評価は 101 語。

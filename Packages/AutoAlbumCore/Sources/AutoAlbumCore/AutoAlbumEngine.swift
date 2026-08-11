@@ -209,11 +209,23 @@ public final class AutoAlbumEngine {
         aiService.namedPeopleProvider = provider
     }
 
-    /// 語×語彙の意味的な近さ（CLIP テキスト塔）を結線する（ADR-101）。
-    /// これにより「風景」のような索引に実在しない語が、台帳のタグ（mountain / beach …）へ
-    /// **語彙の側から**展開される。個別の対応表は持たない。未注入なら接地は行わない。
+    /// 語×語彙の意味的な近さを結線する（ADR-101）。これにより「風景」のような索引に実在しない語が、
+    /// 台帳のタグ（mountain / beach …）へ**語彙の側から**展開される。個別の対応表は持たない。
+    /// 未注入なら接地は行わない（従来どおりの語のまま検索する）。
     public func setConceptExpander(_ expander: ConceptExpander) {
         aiService.conceptExpander = expander
+    }
+
+    /// タグ重心の供給（`CLIPConceptExpander` の材料）。タグ台帳と埋め込みは本エンジンが持つので、
+    /// Composition Root は「重心を使う実装」を作るだけでよい。
+    /// 新規の推論は無く、保存済み `PhotoEmbedding` を 1 回舐めて平均するだけ（ADR-101）。
+    public func tagCentroids(for vocabulary: [String]) async -> [String: [Float]] {
+        let tags = await tagStore.allTags()
+        let store = self.store
+        return await TagCentroids.build(vocabulary: vocabulary, tagsByRefKey: tags,
+                                        loadPage: { offset, limit in
+            await store.enrichmentVectorPage(offset: offset, limit: limit)
+        })
     }
 
     /// 顔クラスタの**現在の**人物名（refKey → 名前）を AI アルバムの人物条件評価へ結線する。

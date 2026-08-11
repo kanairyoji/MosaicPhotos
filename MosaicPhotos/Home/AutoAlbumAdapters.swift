@@ -34,14 +34,14 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
     engine.setFaceCountsProvider { await peopleEngine.scannedFaceCounts() }
     // 名前付き人物の一覧を AI アルバムの人物名検索に結線（「太郎と花子」→ 木村太郎/木村花子 等）。
     engine.setNamedPeopleProvider { await peopleEngine.namedClusterNames() }
-    // ⚠️ 語彙接地（ADR-101）は**まだ結線しない**。機構（VocabularyGrounding）と seam は入っているが、
-    //    近さの計算を CLIP の**テキスト同士**の類似度で行う実装（CLIPConceptExpander）は
-    //    実測で不十分だった: CLIP テキスト塔は異方性が強く、どの語も語彙全体と 0.67〜0.83 で並ぶ。
-    //    z スコアで見ると pizza 6.07 / dog 4.31 は接地できる一方、**必要だった food → pizza が
-    //    z=1.64 で判別できず**、逆に outdoor → cup が z=2.62 で誤接地する。
-    //    正しい近さは text↔image（CLIP の学習目的そのもの）＝各タグを「そのタグが付いた写真の
-    //    CLIP 画像埋め込みの重心」で表し、クエリ文と比べる。実装は次段階。
-    // engine.setConceptExpander(CLIPConceptExpander())
+    // 語彙接地（ADR-101）: 「風景」のような索引に実在しない語を、台帳のタグ（mountain / beach …）へ
+    // 展開する。近さは**タグ重心**（そのタグが付いた写真の CLIP 画像埋め込みの平均）との比較で測る
+    // ＝CLIP の学習目的どおりの text↔image。個別の対応表は持たないので新しい語彙が増えても効く。
+    // ⚠️ 語同士（text↔text）の比較は実測で不十分だった（Caltech-101: 接地 3/10・F1 0.300 に対し、
+    //    重心版は 10/10・F1 0.761）。詳細は ADR-101 と records/search-quality.md。
+    engine.setConceptExpander(CLIPConceptExpander(centroidSource: { [weak engine] vocabulary in
+        await engine?.tagCentroids(for: vocabulary) ?? [:]
+    }))
     // 人物条件の評価は焼き込みでなく**現在の**顔クラスタ名で live 照合（命名/統合を即反映）。
     engine.setPeopleByRefKeyProvider { await peopleEngine.peopleNamesByRefKey() }
     // VLM キャプション（重い文章生成）をお気に入り限定にするため、お気に入り集合（PHAsset）を結線。
