@@ -71,6 +71,45 @@
         <tr><td><strong>言い換えプローブ（max-over-probes）</strong>（ADR-35）</td><td>初代 Imagenette ハーネスの A/B</td><td>言い換え再現率 +17〜18pt を確認して採用（除外クエリではプローブ無効＝副作用も同時に計測）</td></tr>
       </table>
 
+      <h2>実例詳報：VLM キャプション廃止の計測データ（ADR-108）</h2>
+      <p>「検出への貢献」と「処理の重さ」を突き合わせて機能を<strong>落とした</strong>実例。判断に使った 2 つの表をそのまま載せる（正本は <a class="srclink" data-path="docs/architecture-note/records/search-quality.md">search-quality.md</a> §S13・2026-08）。</p>
+
+      <h3>1. AI 系機能の「重さ × 検出への貢献」棚卸し</h3>
+      <table>
+        <tr><th>機能</th><th>処理の重さ（実測）</th><th>検出への貢献</th><th>根拠</th></tr>
+        <tr><td>Vision シーンタグ</td><td>軽い（数百 ms/枚・OS 内蔵）</td><td><strong>大きい</strong></td><td>検索の一次ランキングそのもの</td></tr>
+        <tr><td>humanCount（人数実測）</td><td>軽い（タグ付けと同一パスで無償）</td><td><strong>大きい</strong></td><td>「人の写っていない」除外 P 0.490 → <strong>1.000</strong></td></tr>
+        <tr><td>CLIP 埋め込み</td><td>中（推論 10〜30ms・壁時計 1.6s/枚）</td><td><strong>大きい</strong></td><td>意味検索の対比＋語彙接地の重心の原料（接地 F1 0.86 の土台）</td></tr>
+        <tr><td>美的スコア</td><td>軽い（タグ付けと同一パス）</td><td>中</td><td>「綺麗な写真」条件・カバー選択</td></tr>
+        <tr><td>顔スキャン</td><td>重い（約 0.8s/枚・うち 0.7s は画像ロード）</td><td>中</td><td>笑顔・人物名条件＋ピープル機能の本体（検索以外の価値大）</td></tr>
+        <tr><td>FM 解釈・審査</td><td>作成時 1 回のみ（数秒〜十数秒）</td><td>中</td><td>自然文→条件の入口。常時コストなし</td></tr>
+        <tr><td><strong>VLM キャプション</strong></td><td><strong>最重量</strong>（1 枚数十秒・モデル 877MB）</td><td><strong>ほぼない</strong></td><td>下のアブレーションで定量化 → 廃止</td></tr>
+      </table>
+      <p>構図：<strong>貢献の大きい 3 つはすべて軽く、最も重い 1 つだけが貢献ほぼゼロ</strong>——重さと貢献が逆転しているのはキャプションだけだった。前提の確認として、キャプションは検索の順位付け（タグ一致・CLIP・字句・RRF）に元々<strong>不参加</strong>で、役割は「証拠ゲートの存在 1 票」「LLM 審査の文脈」「情報パネル表示」の 3 つのみ。</p>
+
+      <h3>2. 網羅率アブレーション（COCO 116 クエリ・当時）</h3>
+      <p>キャプション網羅率を 0%（廃止相当）／1%（実機の実測値）／100%（理想上限）に振り、他の条件（タグ 86%・顔 11%）を固定して全クエリを再計測した：</p>
+      <table>
+        <tr><th>キャプション網羅率</th><th>全体 P</th><th>全体 R</th><th>全体 F1</th><th>除外つき P</th><th>除外つき R</th></tr>
+        <tr><td>0%（廃止相当）</td><td>1.000</td><td>0.833</td><td>0.896</td><td>0.999</td><td>0.870</td></tr>
+        <tr><td><strong>1%（実機の現状）</strong></td><td>1.000</td><td>0.833</td><td><strong>0.896</strong></td><td>0.999</td><td>0.871</td></tr>
+        <tr><td>100%（理想上限）</td><td>0.999</td><td>0.850</td><td>0.904</td><td>0.995</td><td>0.941</td></tr>
+      </table>
+      <ul>
+        <li><strong>Δ(1% − 0%) F1 = 0.0001</strong> ＝ 実機の網羅率では検出性能への寄与は事実上ゼロ（廃止しても数字が動かない）。</li>
+        <li>100% なら除外 R +0.071 だが、86k 枚 × 数十秒 ≈ <strong>夜間窓 30 日分以上</strong>＝到達不能。同じ証拠役は humanCount（86%・無償）が既に果たしていた。</li>
+        <li>実機ログの裏付け：全セッションで <code>caption.photoMs</code> のサンプルが<strong>ゼロ</strong>（顔スキャンに夜間窓を奪われ、キャプションは構造的に一度も回っていなかった）。「最重量なのに動いてすらいない」が現状だった。</li>
+        <li>廃止後の全ハーネス再計測で COCO マクロ P=1.000 / R=0.833 / F1=0.896 ＝<strong>廃止前と同値・回帰フロア全通過</strong>を確認してから削除した（アプリ −877MB）。</li>
+      </ul>
+      <div class="box why">
+        <span class="box-h">この計測の設計ポイント</span>
+        「使われている場所が少ない」ではなく「<strong>外したら数字がどう動くか</strong>」で判断した点。
+        機能の存在理由（証拠 1 票）はコード上は正当に見えたが、アブレーションは
+        「その 1 票が実際の判定を変えた回数」を暗黙に集計してくれる。逆に 100% の列は
+        「もし全力投入したら」の上限を示し、<strong>回収可能な伸びしろと必要コストの比</strong>まで
+        1 枚の表で判断できる。
+      </div>
+
       <h2>運用（台帳と更新ルール）</h2>
       <ul>
         <li><strong>台帳が正本</strong> — 検索は <a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a>（S0〜S15 の段階別寄与）、顔は <a class="srclink" data-path="docs/architecture-note/records/face-accuracy.md">records/face-accuracy.md</a>、モデル比較は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>。<strong>解釈・照合・接地・証拠まわりを変えたらハーネスを回して差分を台帳へ記す</strong>。</li>
