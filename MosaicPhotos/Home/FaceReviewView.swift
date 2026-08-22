@@ -63,7 +63,12 @@ struct FaceReviewView: View {
                     }
                 }
             }
-            .task { await load() }
+            .task {
+                // レビュー表示中は人物一覧の再発行を保留（回答ごとの 2〜4 秒ハング対策・diagnostics-51）。
+                peopleEngine.beginPeopleReloadHold()
+                await load()
+            }
+            .onDisappear { peopleEngine.endPeopleReloadHold() }
             // 表示したカードを記録する（3 回見せても答えられなかった質問は以後出さず、
             // 次点の候補に切り替える＝「毎回同じ写真を聞かれる」の対策）。
             .task(id: index) {

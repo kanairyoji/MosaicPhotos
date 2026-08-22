@@ -115,3 +115,45 @@ struct PersonCleanupTests {
         #expect(after.allSatisfy { !$0.isGrouped })
     }
 }
+
+/// 大規模クラスタの監査性能（diagnostics-51）: 847 顔クラスタで全ペア類似が
+/// 13.9 秒かかりレビューを開くたびメインが飢餓した。統計はサンプルに頭打ちし、
+/// **分割の割り当ては全員**に行うことを固定する。
+@Suite("FaceClusterAudit sampling (大規模クラスタ)")
+struct FaceClusterAuditSamplingTests {
+
+    private func jittered(_ base: [Float], _ i: Int) -> [Float] {
+        var v = base
+        v[(i % v.count)] += 0.02 * Float((i % 5) + 1)
+        return v
+    }
+
+    @Test("900 顔の混入クラスタ: 高速に分割でき、割り当ては全員に及ぶ")
+    func largeMixedClusterSplitsFastAndFully() {
+        var embeddings: [[Float]] = []
+        var keys: [String] = []
+        for i in 0..<500 { embeddings.append(jittered([1, 0, 0, 0], i)); keys.append("A\(i)") }
+        for i in 0..<400 { embeddings.append(jittered([0, 1, 0, 0], i)); keys.append("B\(i)") }
+        let start = Date()
+        let s = FaceClusterAudit.auditForSplit(embeddings: embeddings, photoKeys: keys)
+        let elapsed = Date().timeIntervalSince(start)
+        #expect(s != nil, "明確な 2 塊が分割されない")
+        guard let s else { return }
+        // 割り当てはサンプルでなく**全 900 件**。
+        #expect(s.groupA.count + s.groupB.count == 900)
+        #expect(min(s.groupA.count, s.groupB.count) >= 395,
+                "塊の割り当てが崩れた: \(s.groupA.count)/\(s.groupB.count)")
+        // 全ペア（〜40万組）なら数秒級。サンプリング後は十分速いこと（余裕を見て 2 秒）。
+        #expect(elapsed < 2.0, "監査が遅すぎる: \(elapsed)s")
+    }
+
+    @Test("小さいクラスタ（サンプル上限以下）は従来どおり全件で統計を取る")
+    func smallClusterUnchanged() {
+        var embeddings: [[Float]] = []
+        for i in 0..<8 { embeddings.append(jittered([1, 0, 0, 0], i)) }
+        for i in 0..<8 { embeddings.append(jittered([0, 1, 0, 0], i)) }
+        let s = FaceClusterAudit.auditForSplit(embeddings: embeddings)
+        #expect(s != nil)
+        #expect((s?.groupA.count ?? 0) + (s?.groupB.count ?? 0) == 16)
+    }
+}

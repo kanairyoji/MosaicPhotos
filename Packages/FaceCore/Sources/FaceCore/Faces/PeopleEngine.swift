@@ -111,12 +111,34 @@ public final class PeopleEngine {
     /// フォアグラウンドが 600〜1000ms 固まっていた（1 分あたりのハング数＝発行回数と完全一致）。
     /// 一覧は「最終的に正しければよい」表示なので、静止するまで待って 1 回だけ出す（ADR-95）。
     public func setNeedsPeopleReload(quietMs: UInt64 = 700) {
+        // レビュー UI 表示中は再発行を**保留**する（diagnostics-51）。人物が 900 級に育つと
+        // 一覧の配り直し＝SwiftUI 再描画が 1 回 2〜4 秒のメインハングになり、回答のたびに
+        // 引っかかっていた。レビュー中のカード進行は一覧に依存しないので、閉じるときに
+        // 1 回だけ反映すれば十分。
+        if reloadHoldCount > 0 {
+            reloadPendingWhileHeld = true
+            return
+        }
         reloadTask?.cancel()
         reloadTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: quietMs * 1_000_000)
             guard !Task.isCancelled, let self else { return }
             await self.loadPeople()
         }
+    }
+
+    /// レビュー UI（1対1レビュー・まとめて確認・整理）の表示中、人物一覧の再発行を保留する。
+    /// ネスト可（複数画面が重なっても最後の 1 つが閉じるまで保留）。
+    @ObservationIgnored private var reloadHoldCount = 0
+    @ObservationIgnored private var reloadPendingWhileHeld = false
+
+    public func beginPeopleReloadHold() { reloadHoldCount += 1 }
+
+    public func endPeopleReloadHold() {
+        reloadHoldCount = max(0, reloadHoldCount - 1)
+        guard reloadHoldCount == 0, reloadPendingWhileHeld else { return }
+        reloadPendingWhileHeld = false
+        Task { [weak self] in await self?.loadPeople() }
     }
 
     /// 笑顔の実測（refKey → 笑顔の顔数・スキャン済みのみ）。AI アルバムの `.smiling` 条件用（S10）。

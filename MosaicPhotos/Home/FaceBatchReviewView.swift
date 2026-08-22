@@ -61,7 +61,12 @@ struct FaceBatchReviewView: View {
                     Button(L("Close")) { dismiss() }
                 }
             }
-            .task { await load(anchor: anchorClusterID) }
+            .task {
+                // まとめて確認中は人物一覧の再発行を保留（回答ごとの 2〜4 秒ハング対策・diagnostics-51）。
+                peopleEngine.beginPeopleReloadHold()
+                await load(anchor: anchorClusterID)
+            }
+            .onDisappear { peopleEngine.endPeopleReloadHold() }
         }
     }
 

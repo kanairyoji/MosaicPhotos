@@ -74,25 +74,59 @@ public enum FaceClusterAudit {
     ///   - photoKeys: 各メンバーが写っている写真キー（`embeddings` と同じ並び）。
     ///     同じ写真に両群の顔が居れば決定的証拠になる。空なら証拠なしとして扱う。
     /// - Returns: 疑わしければ提案、問題なければ nil。
+    /// 統計計算に使うメンバー数の上限（diagnostics-51）。凝集/分離は全ペア類似 O(n²·d) で、
+    /// 847 顔のクラスタでは約 72 万ペア × 512 次元＝レビューを開くたびメインが 13.9 秒飢餓した。
+    /// 「2 つの塊か」という判定はサンプルで統計的に十分なので、等間隔サンプル（決定的）で
+    /// 統計を取り、**分割の割り当てだけは全員**を最近傍重心で行う（分割操作の対象を欠かさない）。
+    public static let maxStatisticsSample = 120
+
     public static func auditForSplit(embeddings: [[Float]], photoKeys: [String] = [],
                                      config: Config = Config()) -> SplitSuggestion? {
         guard embeddings.count >= config.minMembers else { return nil }
         let vectors = embeddings.map { FaceClustering.normalized($0) }
-        guard let split = twoMeans(vectors) else { return nil }
-        guard split.a.count >= config.minGroupSize, split.b.count >= config.minGroupSize else {
+
+        // 決定的な等間隔サンプル（乱数なし＝再実行で同じ結果）。
+        let sampleIndices: [Int]
+        if vectors.count > maxStatisticsSample {
+            let step = Double(vectors.count) / Double(maxStatisticsSample)
+            sampleIndices = (0..<maxStatisticsSample).map { min(vectors.count - 1, Int(Double($0) * step)) }
+        } else {
+            sampleIndices = Array(vectors.indices)
+        }
+        let sampleVectors = sampleIndices.map { vectors[$0] }
+
+        guard let sampleSplit = twoMeans(sampleVectors) else { return nil }
+
+        // サンプル上の 2 群から重心を作り、**全員**を最近傍重心へ割り当てる。
+        let centroidA = centroid(sampleSplit.a.map { sampleVectors[$0] })
+        let centroidB = centroid(sampleSplit.b.map { sampleVectors[$0] })
+        guard !centroidA.isEmpty, !centroidB.isEmpty else { return nil }
+        var groupA: [Int] = []
+        var groupB: [Int] = []
+        for i in vectors.indices {
+            if FaceClustering.dot(vectors[i], centroidA) >= FaceClustering.dot(vectors[i], centroidB) {
+                groupA.append(i)
+            } else {
+                groupB.append(i)
+            }
+        }
+        guard groupA.count >= config.minGroupSize, groupB.count >= config.minGroupSize else {
             return nil
         }
 
-        let cohesionA = meanPairwise(split.a.map { vectors[$0] })
-        let cohesionB = meanPairwise(split.b.map { vectors[$0] })
-        let separation = meanCross(split.a.map { vectors[$0] }, split.b.map { vectors[$0] })
+        // 凝集/分離の統計はサンプル側で計算する（O(sample²) に頭打ち）。
+        let sampleA = sampleSplit.a.map { sampleVectors[$0] }
+        let sampleB = sampleSplit.b.map { sampleVectors[$0] }
+        let cohesionA = meanPairwise(sampleA)
+        let cohesionB = meanPairwise(sampleB)
+        let separation = meanCross(sampleA, sampleB)
         let margin = min(cohesionA, cohesionB) - separation
 
-        // 同じ写真に両群の顔が居るか（別人の決定的証拠）。
+        // 同じ写真に両群の顔が居るか（別人の決定的証拠）。全員の割り当てで判定する。
         var coOccurring = 0
         if photoKeys.count == embeddings.count {
-            let photosA = Set(split.a.map { photoKeys[$0] })
-            let photosB = Set(split.b.map { photoKeys[$0] })
+            let photosA = Set(groupA.map { photoKeys[$0] })
+            let photosB = Set(groupB.map { photoKeys[$0] })
             coOccurring = photosA.intersection(photosB).count
         }
 
@@ -100,7 +134,7 @@ public enum FaceClusterAudit {
         let separated = margin >= config.minMargin && separation <= config.maxSeparation
         guard separated || coOccurring > 0 else { return nil }
 
-        return SplitSuggestion(groupA: split.a, groupB: split.b,
+        return SplitSuggestion(groupA: groupA, groupB: groupB,
                                cohesionA: cohesionA, cohesionB: cohesionB,
                                separation: separation, margin: margin,
                                coOccurringPhotos: coOccurring)
