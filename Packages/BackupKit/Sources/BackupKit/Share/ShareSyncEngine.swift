@@ -417,6 +417,9 @@ public final class ShareSyncEngine {
     private func migrateFolderIfNeeded(set: ShareSetLite, shareRoot: String,
                                        store: BackupStore, copier: DropboxShareCopier,
                                        token: String) async -> ShareSetLite {
+        // ⚠️ 検査済みの印があれば何もしない。無いと**毎回の反映で旧配置を探し続ける**
+        // （存在しないパスへの move が 1 セットにつき 1 往復・規約: 無いものを繰り返し探さない）。
+        guard set.layoutVersion != ShareSet.currentLayoutVersion else { return set }
         let kind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
         let allNames = await store.allShareSets().map(\.folderName)
         // 種類が分からない（作成元不明の旧セット）なら名前は据え置き、置き場所だけ直す。
@@ -427,6 +430,15 @@ public final class ShareSyncEngine {
         guard let desired = SharePlanning.setFolderPath(shareRoot: shareRoot,
                                                         folderName: newName,
                                                         deviceFolder: device) else { return set }
+
+        /// 検査が済んだ印（移行不要だった場合も含む）。以後この探索は走らない。
+        func markChecked() async -> ShareSetLite {
+            await store.markShareSetLayoutCurrent(setID: set.id)
+            return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
+                                createdAt: set.createdAt, sidecarChecksum: set.sidecarChecksum,
+                                sourceKey: set.sourceKey,
+                                layoutVersion: ShareSet.currentLayoutVersion)
+        }
 
         // 旧レイアウトの候補（上から順に試す）。端末フォルダ以前は共有ルート直下だった。
         var candidates: [String] = []
@@ -443,14 +455,15 @@ public final class ShareSyncEngine {
             else { continue }
             candidates.append(path)
         }
-        guard !candidates.isEmpty else { return set }
+        guard !candidates.isEmpty else { return await markChecked() }
 
         func adopt(movedFrom old: String) async -> ShareSetLite {
             await store.renameShareSet(setID: set.id, folderName: newName,
                                        oldPathPrefix: old, newPathPrefix: desired)
             return ShareSetLite(id: set.id, name: set.name, folderName: newName,
                                 createdAt: set.createdAt, sidecarChecksum: nil,
-                                sourceKey: set.sourceKey)
+                                sourceKey: set.sourceKey,
+                                layoutVersion: ShareSet.currentLayoutVersion)
         }
 
         for old in candidates {
@@ -468,7 +481,7 @@ public final class ShareSyncEngine {
         }
 
         // どの候補も実在しない＝まだ 1 度も反映していない。記録だけ現在のレイアウトへ。
-        guard newName != set.folderName else { return set }
+        guard newName != set.folderName else { return await markChecked() }
         BackupLogger.info("Share: renamed '\(set.folderName)' → '\(newName)' (not yet on Dropbox)")
         return await adopt(movedFrom: candidates[0])
     }

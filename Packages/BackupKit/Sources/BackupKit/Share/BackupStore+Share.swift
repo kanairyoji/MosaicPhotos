@@ -14,7 +14,21 @@ extension BackupStore {
         modelContext.insert(set)
         try? modelContext.save()
         return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
-                            createdAt: set.createdAt, sidecarChecksum: nil, sourceKey: sourceKey)
+                            createdAt: set.createdAt, sidecarChecksum: nil, sourceKey: sourceKey,
+                            layoutVersion: set.layoutVersion)
+    }
+
+    /// テスト専用: 旧配置（フォルダ配置の印が無い）のセットを作る。
+    /// 移行経路を検証するために、印が付く前のデータをそのまま再現する。
+    func createLegacyShareSetForTesting(name: String, folderName: String,
+                                        sourceKey: String? = nil) -> ShareSetLite {
+        let set = ShareSet(name: name, folderName: folderName, sourceKey: sourceKey,
+                           layoutVersion: nil)
+        modelContext.insert(set)
+        try? modelContext.save()
+        return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
+                            createdAt: set.createdAt, sidecarChecksum: nil, sourceKey: sourceKey,
+                            layoutVersion: nil)
     }
 
     public func allShareSets() -> [ShareSetLite] {
@@ -23,7 +37,7 @@ extension BackupStore {
         return sets.map {
             ShareSetLite(id: $0.id, name: $0.name, folderName: $0.folderName,
                          createdAt: $0.createdAt, sidecarChecksum: $0.sidecarChecksum,
-                         sourceKey: $0.sourceKey)
+                         sourceKey: $0.sourceKey, layoutVersion: $0.layoutVersion)
         }
     }
 
@@ -82,6 +96,7 @@ extension BackupStore {
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
             predicate: #Predicate { $0.id == id })).first else { return }
         set.folderName = folderName
+        set.layoutVersion = ShareSet.currentLayoutVersion
         // サイドカーは新フォルダで作り直す（チェックサム一致で更新を飛ばさないよう捨てる）。
         set.sidecarChecksum = nil
         let oldLower = oldPathPrefix.lowercased()
@@ -92,6 +107,17 @@ extension BackupStore {
             guard let path = item.sharedPath?.lowercased(), path.hasPrefix(oldLower) else { continue }
             item.sharedPath = newLower + String(path.dropFirst(oldLower.count))
         }
+        try? modelContext.save()
+    }
+
+    /// フォルダ配置の検査が済んだ印を付ける（移行不要だった場合も含む）。
+    /// これが無いと、旧配置の候補パスを**毎回の反映で探し続ける**（往復の無駄）。
+    public func markShareSetLayoutCurrent(setID: UUID) {
+        let id = setID
+        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
+            predicate: #Predicate { $0.id == id })).first else { return }
+        guard set.layoutVersion != ShareSet.currentLayoutVersion else { return }
+        set.layoutVersion = ShareSet.currentLayoutVersion
         try? modelContext.save()
     }
 

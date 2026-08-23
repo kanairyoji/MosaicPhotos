@@ -68,16 +68,25 @@ public final class ShareSet {
     /// 作成元（"pgroup-<uuid>" / "person-<clusterID>" / "album-<id>"）。
     /// 元のカードに「クラウド共有中」バッジを出すための参照。手動作成は nil。
     public var sourceKey: String?
+    /// このセットが**どのフォルダ配置で作られたか**（`ShareSet.currentLayoutVersion`）。
+    /// 旧配置（端末フォルダ無し・種類接頭辞なし）の探索を**一度きり**にするための印。
+    /// nil＝印が付く前のセット＝移行の検査対象（規約: 無いものを繰り返し探さない）。
+    public var layoutVersion: Int?
+
+    /// 現在のフォルダ配置の版。`<root>/<端末フォルダ>/<種類接頭辞+名前>/`。
+    public static let currentLayoutVersion = 1
 
     public init(id: UUID = UUID(), name: String, folderName: String,
                 createdAt: Date = Date(), sidecarChecksum: String? = nil,
-                sourceKey: String? = nil) {
+                sourceKey: String? = nil,
+                layoutVersion: Int? = ShareSet.currentLayoutVersion) {
         self.id = id
         self.name = name
         self.folderName = folderName
         self.createdAt = createdAt
         self.sidecarChecksum = sidecarChecksum
         self.sourceKey = sourceKey
+        self.layoutVersion = layoutVersion
     }
 }
 
@@ -128,15 +137,19 @@ public struct ShareSetLite: Sendable, Identifiable, Equatable {
     public let createdAt: Date
     public let sidecarChecksum: String?
     public let sourceKey: String?
+    /// フォルダ配置の版（nil＝旧配置の可能性あり＝移行の検査対象）。
+    public let layoutVersion: Int?
 
     public init(id: UUID, name: String, folderName: String, createdAt: Date,
-                sidecarChecksum: String?, sourceKey: String? = nil) {
+                sidecarChecksum: String?, sourceKey: String? = nil,
+                layoutVersion: Int? = nil) {
         self.id = id
         self.name = name
         self.folderName = folderName
         self.createdAt = createdAt
         self.sidecarChecksum = sidecarChecksum
         self.sourceKey = sourceKey
+        self.layoutVersion = layoutVersion
     }
 }
 

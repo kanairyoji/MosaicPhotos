@@ -98,8 +98,8 @@ struct ShareScenarioTests {
         let sourceKey = ShareSourceKey.group(UUID()).encoded
 
         // 接頭辞が付く前の状態を再現（フォルダ名 = 素のセット名）。
-        let set = await store.createShareSet(name: "Group", folderName: "Group",
-                                             sourceKey: sourceKey)
+        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
+                                                             sourceKey: sourceKey)
         _ = await store.addShareItems(setID: set.id, refKeys: ["L-a", "L-b"])
         await engine.syncNow()
 
@@ -113,10 +113,16 @@ struct ShareScenarioTests {
                 "新フォルダへ移動していない: \(files)")
         #expect(!files.contains { $0.hasPrefix(old + "/") }, "旧フォルダが残っている: \(files)")
 
+        // ⚠️ 旧配置の探索は**一度きり**（規約: 無いものを繰り返し探さない）。
+        let movesAfterFirst = await server.requestLog.filter { $0.contains("move_v2") }.count
+
         // 記録も張り替わっているので、次の反映で再コピーが起きない。
         await engine.syncNow()
         #expect(await sharedFiles(server) == files, "改名後の反映でファイルが変わった")
         #expect(await store.allShareSets().first?.folderName == "People-Group")
+        let movesAfterSecond = await server.requestLog.filter { $0.contains("move_v2") }.count
+        #expect(movesAfterSecond == movesAfterFirst,
+                "反映のたびに旧配置を探している（往復の無駄）: \(movesAfterFirst) → \(movesAfterSecond)")
     }
 
     /// ⚠️ これが「Dropbox 上のパスが直らない」の正体（実フィードバック）。端末フォルダが
@@ -133,8 +139,8 @@ struct ShareScenarioTests {
                                                  folderName: "Group")!.lowercased()
         await server.seed(legacy, hash: "", isFolder: true)
         await server.seed("\(legacy)/a.jpg", hash: "hA")
-        let set = await store.createShareSet(name: "Group", folderName: "Group",
-                                             sourceKey: sourceKey)
+        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
+                                                             sourceKey: sourceKey)
         _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
         await store.updateShareItems(setID: set.id, updates: [
             (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
@@ -159,8 +165,8 @@ struct ShareScenarioTests {
         let (engine, store, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/a.jpg", "hA")])
         let sourceKey = ShareSourceKey.group(UUID()).encoded
-        let set = await store.createShareSet(name: "Group", folderName: "Group",
-                                             sourceKey: sourceKey)
+        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
+                                                             sourceKey: sourceKey)
         _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
 
         // 旧フォルダは反映済み、移動先も既にある状態（move は to/conflict で失敗する）。

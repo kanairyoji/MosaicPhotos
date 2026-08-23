@@ -56,12 +56,55 @@ public enum BackupDeviceIdentity {
     }
 
     /// この端末の短 ID（Keychain 永続・初回生成）。catalog.json の deviceID にも記録する。
+    ///
+    /// ⚠️ **同じプロセス内では必ず同じ値を返す**こと。ID はバックアップ／共有の
+    /// **フォルダ名そのもの**なので、呼ぶたびに変わると保存先が毎回変わり、ファイルが
+    /// 端末フォルダの数だけ散らばる（＝どのフォルダが自分のものか分からなくなる）。
+    /// Keychain が使えない環境（CI・サンドボックス・保存に失敗した端末）では
+    /// 毎回新規生成になっていた——実際に CI のテストが「呼ぶたび別 ID」で落ちた。
+    /// そこで (1) プロセス内メモ化、(2) Keychain が駄目なら UserDefaults へ退避、で二重に守る。
+    /// （短 ID は端末の識別子でありクレデンシャルではないので UserDefaults 保存は問題ない。）
     public static func currentID() -> String {
-        if let stored = readKeychain(), !stored.isEmpty { return stored }
-        let id = generateID()
-        writeKeychain(id)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cachedID, !cachedID.isEmpty { return cachedID }
+        let id = resolveID(
+            readKeychain: { readKeychain() },
+            writeKeychain: { writeKeychain($0) },
+            readFallback: { UserDefaults.standard.string(forKey: fallbackDefaultsKey) },
+            writeFallback: { UserDefaults.standard.set($0, forKey: fallbackDefaultsKey) },
+            generate: { generateID() })
+        cachedID = id
         return id
     }
+
+    /// ID 解決の純ロジック（保存先を引数化・テスト対象）。
+    /// Keychain → 退避（UserDefaults）→ 新規生成、の順に解決し、**解決できた値は
+    /// 両方へ書き戻す**。これが無いと Keychain が使えない環境で毎回新規生成になる。
+    static func resolveID(readKeychain: () -> String?,
+                          writeKeychain: (String) -> Void,
+                          readFallback: () -> String?,
+                          writeFallback: (String) -> Void,
+                          generate: () -> String) -> String {
+        if let stored = readKeychain(), !stored.isEmpty {
+            writeFallback(stored)   // Keychain が後で使えなくなっても同じ ID を保てるように
+            return stored
+        }
+        if let stored = readFallback(), !stored.isEmpty {
+            writeKeychain(stored)   // 使えるようになっていれば書き戻す
+            return stored
+        }
+        let id = generate()
+        writeKeychain(id)
+        writeFallback(id)
+        return id
+    }
+
+    /// プロセス内メモ（`currentID` の安定性を担保する）。
+    nonisolated(unsafe) private static var cachedID: String?
+    private static let cacheLock = NSLock()
+    /// Keychain が使えないときの退避先。
+    private static let fallbackDefaultsKey = "backupDeviceIDFallback"
 
     /// 表示名（"iPhone"/"iPad"）。catalog.json の deviceName にも記録する。
     public static func currentDisplayName() -> String {

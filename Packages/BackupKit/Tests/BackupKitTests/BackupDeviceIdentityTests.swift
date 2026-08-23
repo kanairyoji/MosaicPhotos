@@ -41,3 +41,64 @@ struct BackupDeviceIdentityTests {
         #expect(id.allSatisfy { $0.isHexDigit })
     }
 }
+
+/// ⚠️ 実障害（CI が赤くなった）: Keychain が使えない環境では `currentID()` が
+/// **呼ぶたびに新しい ID** を返していた。ID はバックアップ／共有のフォルダ名そのものなので、
+/// 保存先が毎回変わり、ファイルが端末フォルダの数だけ散らばる。
+@Suite("端末 ID の安定性（Keychain が使えない環境）")
+struct BackupDeviceIDStabilityTests {
+
+    /// Keychain が読めも書けもしない環境（CI・サンドボックス）を模す。
+    private final class FallbackBox { var value: String? }
+
+    @Test("Keychain が使えなくても 2 回目以降は同じ ID を返す")
+    func idIsStableWithoutKeychain() {
+        let box = FallbackBox()
+        var generated = 0
+        func resolve() -> String {
+            BackupDeviceIdentity.resolveID(
+                readKeychain: { nil },                  // 読めない
+                writeKeychain: { _ in },                // 書けない（失敗を握り潰す本番と同じ）
+                readFallback: { box.value },
+                writeFallback: { box.value = $0 },
+                generate: { generated += 1; return "ID\(generated)" })
+        }
+        let first = resolve()
+        let second = resolve()
+        #expect(first == second, "呼ぶたびに ID が変わる（保存先が毎回変わる）: \(first) / \(second)")
+        #expect(generated == 1, "退避が効かず毎回生成している")
+    }
+
+    @Test("Keychain に値があればそれを使い、退避にも控える")
+    func keychainValueWins() {
+        let box = FallbackBox()
+        var written: String?
+        let id = BackupDeviceIdentity.resolveID(
+            readKeychain: { "KEEP" }, writeKeychain: { written = $0 },
+            readFallback: { box.value }, writeFallback: { box.value = $0 },
+            generate: { "NEW" })
+        #expect(id == "KEEP")
+        #expect(box.value == "KEEP", "Keychain が後で使えなくなると ID を失う")
+        #expect(written == nil, "不要な書き戻しをしている")
+    }
+
+    @Test("Keychain が復活したら退避の値を書き戻す")
+    func fallbackIsRestoredToKeychain() {
+        let box = FallbackBox()
+        box.value = "OLD"
+        var written: String?
+        let id = BackupDeviceIdentity.resolveID(
+            readKeychain: { nil }, writeKeychain: { written = $0 },
+            readFallback: { box.value }, writeFallback: { box.value = $0 },
+            generate: { "NEW" })
+        #expect(id == "OLD", "退避があるのに新規生成した")
+        #expect(written == "OLD", "Keychain へ書き戻していない")
+    }
+
+    /// 実装（メモ化）側の確認。Keychain の有無に関わらず、同一プロセスでは一定であること。
+    @Test("同じプロセス内で端末フォルダ名は変わらない")
+    func folderNameIsStableInProcess() {
+        #expect(BackupDeviceIdentity.currentFolderName()
+            == BackupDeviceIdentity.currentFolderName())
+    }
+}
