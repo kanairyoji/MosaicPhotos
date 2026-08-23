@@ -31,6 +31,16 @@
         }
       }
     },
+    "%d photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 枚"
+          }
+        }
+      }
+    },
     "%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so receiving devices don't re-analyze them.": {
       "localizations": {
         "ja": {

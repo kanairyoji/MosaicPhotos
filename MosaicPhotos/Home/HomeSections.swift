@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import BackupKit
 import DropboxKit
 import LocalPhotoKit
 import PhotosFeatureKit
@@ -244,6 +245,26 @@ extension HomeView {
         }
     }
 
+    // MARK: Cloud shared section (受け取った共有アルバム・ADR-112)
+
+    /// クラウド共有で受け取ったアルバム（家族フォルダ配下の共有セット）。
+    /// 受け取りが 1 つも無ければセクションごと非表示。
+    @ViewBuilder
+    var cloudSharedSection: some View {
+        if !sharedAlbums.isEmpty {
+            Section {
+                SharedAlbumsCarousel(albums: sharedAlbums, dropboxStore: dropboxStore,
+                                     onSelect: { destination = .sharedAlbum($0) })
+            } header: {
+                HStack {
+                    Label(L("Cloud Sharing"), systemImage: "icloud.and.arrow.down")
+                        .labelStyle(.titleAndIcon)
+                    Spacer()
+                }
+            }
+        }
+    }
+
     // MARK: AI albums section (自然文・オンデバイス)
 
     /// 自然文で作る AI アルバム。ヘッダーの「＋」でコンポーザーを開く。
@@ -383,6 +404,7 @@ enum HomeDestination: Identifiable {
     case localAlbum(LocalAlbumInfo)
     case person(PersonInfo)
     case peopleGroup(PeopleGroupInfo)
+    case sharedAlbum(SharedAlbumDiscovery.Album)
     case place(PlaceAlbumInfo)
     case autoAlbum(AutoAlbumInfo)
 
@@ -392,6 +414,7 @@ enum HomeDestination: Identifiable {
         case .localAlbum(let album): return "album-\(album.id)"
         case .person(let person): return "person-\(person.id)"
         case .peopleGroup(let group): return "pgroup-\(group.id)"
+        case .sharedAlbum(let album): return "shared-\(album.id)"
         case .place(let place): return "place-\(place.id)"
         case .autoAlbum(let album): return "auto-\(album.id)"
         }

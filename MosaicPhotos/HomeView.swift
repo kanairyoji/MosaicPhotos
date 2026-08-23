@@ -46,6 +46,8 @@ struct HomeView: View {
     /// ピープルグループの長押しメニュー対象と作成シート（Home/PeopleGroupViews.swift）。
     @State var peopleGroupActions: PeopleGroupInfo?
     @State var showingGroupCreation = false
+    /// クラウド共有で受け取ったアルバム（家族フォルダ配下の共有セット・ある場合のみセクション表示）。
+    @State var sharedAlbums: [SharedAlbumDiscovery.Album] = []
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// アクティビティバー表示時は、その分だけ上部に余白を確保してタイトルと重ならないようにする。
@@ -77,6 +79,7 @@ struct HomeView: View {
                 sourceSection
                 autoAlbumsSection
                 peopleSection
+                cloudSharedSection
                 aiAlbumsSection
                 pathAlbumsSection
                 albumsSection
@@ -129,6 +132,10 @@ struct HomeView: View {
                     // グループ（複数人の束）の合成アルバム。
                     PeopleGroupAlbumView(group: group, dropboxStore: dropboxStore,
                                          assetIndex: assetIndex, peopleEngine: peopleEngine)
+                case .sharedAlbum(let album):
+                    // クラウド共有で受け取ったアルバム（家族フォルダ配下の 1 フォルダ）。
+                    SharedAlbumPhotosView(album: album, dropboxStore: dropboxStore,
+                                          assetIndex: assetIndex)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 case .autoAlbum(let album):
@@ -164,6 +171,20 @@ struct HomeView: View {
         .peopleGroupActions(for: $peopleGroupActions, engine: peopleEngine)
         .sheet(isPresented: $showingGroupCreation) {
             PeopleGroupEditorSheet(peopleEngine: peopleEngine)
+        }
+        // 受信共有アルバムの発見。同期の進行（items の増減）と家族フォルダ設定に追従する。
+        // 68k 件の走査なのでオフメインで行い、メインへは結果だけ返す。
+        .task(id: dropboxStore.items.count) {
+            let items = dropboxStore.items
+            let roots = ShareSettingsKeys.currentFamilyFolders()
+            guard !roots.isEmpty else {
+                if !sharedAlbums.isEmpty { sharedAlbums = [] }
+                return
+            }
+            let albums = await Task.detached(priority: .utility) {
+                SharedAlbumDiscovery.albums(itemPaths: items.map(\.path), familyRoots: roots)
+            }.value
+            if albums != sharedAlbums { sharedAlbums = albums }
         }
         .sheet(isPresented: $showingFaceReview) {
             FaceReviewView(peopleEngine: peopleEngine)

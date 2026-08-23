@@ -31,6 +31,12 @@ struct SettingsView: View {
     private var autoAlbumEngine: AutoAlbumEngine { stores.autoAlbumEngine }
     private var peopleEngine: PeopleEngine { stores.peopleEngine }
 
+    /// 家族フォルダの変更を同期ルート・表示除外へ反映する（ADR-112・DropboxHubView と同じ）。
+    private func shareFamilyFoldersChanged() {
+        ShareVisibility.apply(to: store)
+        if dropboxAuth.connectionStatus == .connected { store.startSync() }
+    }
+
     var body: some View {
         // NavigationStack is provided by HomeView / SourceHostView; do not nest one here.
         List {
@@ -79,6 +85,15 @@ struct SettingsView: View {
                     detail(L("Places")) { PlacesSettingsView(scanner: placeScanner) }
                 } label: {
                     row(L("Places"), systemImage: "mappin.and.ellipse")
+                }
+                // クラウド共有（送信セット管理＋受信フォルダ設定）。Dropbox ハブ内と同じ画面
+                // （ADR-112・アルバム機能の一つとしてここからも辿れるようにする）。
+                NavigationLink {
+                    ShareHubView(engine: stores.shareEngine,
+                                 onFamilyFoldersChanged: { shareFamilyFoldersChanged() },
+                                 onImportNow: { await stores.shareImporter.runIfNeeded() })
+                } label: {
+                    row(L("Cloud Sharing"), systemImage: "icloud.and.arrow.up")
                 }
             }
 

@@ -83,6 +83,12 @@
   DropboxShareCopier / ShareSidecarFetch / ShareHubView）、`AutoAlbumEngine+Share` /
   `PeopleEngine+Share` / `PhotoTagger`（採用スキップ）、アプリ `ShareSupport.swift`。
   テスト: `SharePureLogicTests` / `ShareCopierTests`（macOS）。
+- 追記（UI 導線・実フィードバック「どこに何があるか分かりにくい」）: (1) 名称は「共有」でなく
+  **「クラウド共有」**（OS の共有シートと紛れるため）。(2) **受け取った共有アルバムはホームの
+  独立セクション**（受信がある場合のみ表示・他のアルバムと同じカルーセル）に出す。発見は
+  `SharedAlbumDiscovery`（純・家族フォルダ配下を第一階層フォルダ単位にグルーピング・
+  ルート直下写真はフォルダ自身をアルバム扱い）。(3) 入り口は **Dropbox ハブと
+  設定「Albums & Search」の両方**に置く（アルバム機能の一つとして辿れるように）。
 
 ## ADR-110 レキシコン外の語を「作成直後」に解決する（即時本番化＋活動語彙の一括拡充）
 - 状態: 採用

@@ -253,3 +253,46 @@ struct ShareImportPlanningTests {
         #expect(batch.faces.isEmpty)
     }
 }
+
+// MARK: - SharedAlbumDiscovery
+
+@Suite("SharedAlbumDiscovery (受信アルバムの発見)")
+struct SharedAlbumDiscoveryTests {
+
+    @Test("家族フォルダ直下のサブフォルダ単位にグルーピングされる")
+    func groupsBySubfolder() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/MosaicShare/Trip/a.jpg", "/MosaicShare/Trip/b.jpg",
+                        "/MosaicShare/Kids/c.jpg", "/Other/x.jpg"],
+            familyRoots: ["/mosaicshare"])
+        #expect(albums.map(\.name) == ["Kids", "Trip"])
+        #expect(albums.first { $0.name == "Trip" }?.photoCount == 2)
+        #expect(albums.first { $0.name == "Trip" }?.folderPath == "/MosaicShare/Trip")
+        #expect(albums.first { $0.name == "Trip" }?.coverPath == "/MosaicShare/Trip/a.jpg")
+    }
+
+    @Test("ルート直下の写真はフォルダ自身のアルバムになる（セットを直接共有された構成）")
+    func rootItselfAsAlbum() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/SharedSet/a.jpg", "/SharedSet/b.jpg"],
+            familyRoots: ["/SharedSet"])
+        #expect(albums.count == 1)
+        #expect(albums.first?.name == "SharedSet")
+        #expect(albums.first?.photoCount == 2)
+    }
+
+    @Test("複数ルート・大文字小文字の違いを吸収し、深い階層もセット単位に畳む")
+    func multiRootAndCase() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/mosaicshare/Trip/sub/deep.jpg", "/Family2/Kids/a.jpg"],
+            familyRoots: ["/MosaicShare", "/family2"])
+        #expect(albums.map(\.name).sorted() == ["Kids", "Trip"])
+        #expect(albums.first { $0.name == "Trip" }?.photoCount == 1)
+    }
+
+    @Test("ルート未設定・該当なしは空")
+    func emptyCases() {
+        #expect(SharedAlbumDiscovery.albums(itemPaths: ["/a.jpg"], familyRoots: []).isEmpty)
+        #expect(SharedAlbumDiscovery.albums(itemPaths: [], familyRoots: ["/x"]).isEmpty)
+    }
+}
