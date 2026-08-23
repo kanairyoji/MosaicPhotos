@@ -21,35 +21,39 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
         -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry]) {
         let analysis = await autoAlbumEngine.analysisExport(forRefKeys: refKeys)
         let faces = await peopleEngine.exportFaceSignals(forRefKeys: refKeys)
+        let versions = ShareSidecar.Versions(tag: AutoAlbumEngine.shareTagVersion,
+                                             perception: AutoAlbumEngine.sharePerceptionVersion,
+                                             face: peopleEngine.effectiveScanVersion)
 
-        var entries: [String: ShareSidecar.Entry] = [:]
-        for key in refKeys {
-            var entry = ShareSidecar.Entry()
-            if let a = analysis[key] {
-                entry.tags = a.tags.isEmpty ? nil : a.tags
-                entry.ocr = a.ocrText
-                entry.human = a.humanCount
-                entry.aes = a.aesthetic
-                entry.clip = a.clipHalf?.base64EncodedString()
-            }
-            if let f = faces[key], !f.isEmpty {
-                entry.faces = f.map { signal in
-                    ShareSidecar.Face(x: signal.boundingBox.origin.x,
-                                      y: signal.boundingBox.origin.y,
-                                      w: signal.boundingBox.width,
-                                      h: signal.boundingBox.height,
-                                      e: signal.embedding.base64EncodedString(),
-                                      q: signal.quality,
-                                      s: signal.hasSmile,
-                                      d: signal.captureDate?.timeIntervalSince1970)
+        // base64 変換・辞書構築は数千枚規模になり得るのでオフメインで組み立てる。
+        let entries = await Task.detached(priority: .utility) { () -> [String: ShareSidecar.Entry] in
+            var entries: [String: ShareSidecar.Entry] = [:]
+            for key in refKeys {
+                var entry = ShareSidecar.Entry()
+                if let a = analysis[key] {
+                    entry.tags = a.tags.isEmpty ? nil : a.tags
+                    entry.ocr = a.ocrText
+                    entry.human = a.humanCount
+                    entry.aes = a.aesthetic
+                    entry.clip = a.clipHalf?.base64EncodedString()
                 }
+                if let f = faces[key], !f.isEmpty {
+                    entry.faces = f.map { signal in
+                        ShareSidecar.Face(x: signal.boundingBox.origin.x,
+                                          y: signal.boundingBox.origin.y,
+                                          w: signal.boundingBox.width,
+                                          h: signal.boundingBox.height,
+                                          e: signal.embedding.base64EncodedString(),
+                                          q: signal.quality,
+                                          s: signal.hasSmile,
+                                          d: signal.captureDate?.timeIntervalSince1970)
+                    }
+                }
+                if entry != ShareSidecar.Entry() { entries[key] = entry }
             }
-            if entry != ShareSidecar.Entry() { entries[key] = entry }
-        }
-        return (ShareSidecar.Versions(tag: AutoAlbumEngine.shareTagVersion,
-                                      perception: AutoAlbumEngine.sharePerceptionVersion,
-                                      face: peopleEngine.effectiveScanVersion),
-                entries)
+            return entries
+        }.value
+        return (versions, entries)
     }
 }
 

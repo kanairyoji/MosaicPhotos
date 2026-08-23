@@ -85,8 +85,15 @@ public final class ShareSyncEngine {
         _ = await store.addShareItems(setID: set.id, refKeys: refKeys)
         BackupLogger.info("Share: created set '\(folderName)' with \(refKeys.count) items")
         await refresh()
-        await syncNow()
+        // 反映（ネットワーク往復・コピー・サイドカー生成）はバックグラウンドで行う。
+        // ここで待つと作成シートが反映完了まで閉じられず UI が固まって見える（実フィードバック）。
+        scheduleSync()
         return set.id
+    }
+
+    /// 反映をバックグラウンドで開始する（進捗はハブの isSyncing / セット状態で見える）。
+    private func scheduleSync() {
+        Task { await syncNow() }
     }
 
     /// 既存セットへ写真を追加して反映する。追加できた件数を返す。
@@ -96,7 +103,7 @@ public final class ShareSyncEngine {
         let added = await store.addShareItems(setID: setID, refKeys: refKeys)
         if added > 0 {
             await refresh()
-            await syncNow()
+            scheduleSync()
         }
         return added
     }
@@ -133,7 +140,7 @@ public final class ShareSyncEngine {
         }
         await store.removeShareItems(setID: setID, refKeys: refKeys)
         await refresh()
-        await syncNow()   // サイドカーから外した分を反映
+        scheduleSync()   // サイドカーから外した分を反映
     }
 
     /// ビュー（セット詳細）からのアイテム読み出し用アクセサ。
@@ -252,8 +259,10 @@ public final class ShareSyncEngine {
         guard !entriesByHash.isEmpty else { return }
 
         let file = ShareSidecar.File(versions: payload.versions, entries: entriesByHash)
-        guard let data = ShareSidecar.encode(file) else { return }
-        let checksum = ShareSidecar.checksum(data)
+        // JSON エンコード（sortedKeys）とチェックサムは数 MB 規模になり得るのでオフメインで。
+        guard let (data, checksum) = await Task.detached(priority: .utility, operation: {
+            ShareSidecar.encode(file).map { ($0, ShareSidecar.checksum($0)) }
+        }).value else { return }
         guard checksum != set.sidecarChecksum else { return }   // 変化なし → 再アップロード不要
 
         let sidecarFolder = "\(setFolder)/\(ShareSidecar.subfolderName)"
