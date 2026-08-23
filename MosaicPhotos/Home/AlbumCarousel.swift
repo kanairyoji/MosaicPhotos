@@ -157,10 +157,10 @@ struct LibraryCard: View {
             .frame(width: Self.side, height: Self.side)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            // タイトルはピープルのカード（.footnote）と同じフォントで最大 2 行
-            // （実フィードバック: subheadline だと 96pt 幅で切れやすい）。
+            // タイトルはピープルと同じ大きさ（footnote）の太字・最大 2 行
+            // （実フィードバック: subheadline だと 96pt 幅で切れやすい／名前は太字が良い）。
             Text(title)
-                .font(.footnote)
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
             Text(subtitle)
