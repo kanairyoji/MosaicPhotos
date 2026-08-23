@@ -21,6 +21,37 @@
 
 ---
 
+## ADR-114 ドキュメント用スクリーンショットは「専用シミュレータ＋フリー素材」で自動生成する
+- 状態: 採用
+- 文脈: ヘルプ・設計資料・ストア用のスクリーンショットが必要。しかし運用ルールで
+  **シミュレータのアプリ画面スクショは禁止**（個人写真が写り得るため）。はめ込み合成は
+  実物と乖離して陳腐化するし、UI 変更のたびに作り直しになる。
+- 決定: **使い捨ての専用シミュレータ「MosaicShots」を作り、フリーライセンス素材だけを
+  入れて本物の画面を撮る**。個人写真が 1 枚も入らないので禁止事項に抵触しない。
+  1. 素材: Lorem Picsum（Unsplash License・商用可・出典表記不要）をシード指定で決定的に取得
+     （`scripts/fetch_screenshot_photos.sh`）。
+  2. **EXIF 注入**（`scripts/inject_screenshot_exif.swift`・ImageIO のみ・外部依存なし）:
+     ファイル名の都市キーから GPS と撮影日を決定的に割り当てる。これで**旅行アルバム・
+     場所アルバム・日付グリッドが実データで埋まる**（実際に「那覇市 & 豊見城」「京都市 12 枚」
+     等が生成されることを確認）。
+  3. 環境構築（`scripts/make_screenshot_sim.sh`）: `simctl create`（既存機に触れない）→
+     `addmedia` → install → launch。
+  4. 撮影（`MosaicPhotosUITests/ScreenshotCaptureTests`）＋取り出し
+     （`scripts/export_screenshots.py`・xcresult の添付を名前つき PNG へ）。
+- 結果: UI 変更のたびに 1 コマンドで撮り直せる。日英・端末サイズの横展開も同じ仕組みで可能。
+  制約: **ピープル（顔）だけは撮れない**（素材に顔が無い・実在人物の顔を公開資料に載せる
+  判断は別途必要）。AI アルバム・端末アルバム・Dropbox 連携は操作/接続が要るため未取得。
+- 落とし穴（実際に踏んだもの・再発防止）:
+  - `simctl privacy grant photos` は iOS 26 ランタイムで**効かないどころか「決定済み(拒否)」
+    を作りダイアログすら出なくなる**。権限は UITest でダイアログをタップして許可する。
+  - `xcodebuild test` は既定で**デバイスをクローンして並列実行**する。クローンには
+    `addmedia` した写真も権限も無く「Photo library access denied」になる。
+    `-parallel-testing-enabled NO` が必須。
+  - `PhotoCollectionView` のセルは accessibility 要素として `cells` に現れず、クエリは
+    ホームのリスト行を拾う。撮影用途では**相対座標タップ**の方が確実。
+- 関連: `scripts/{fetch_screenshot_photos.sh,inject_screenshot_exif.swift,make_screenshot_sim.sh,export_screenshots.py}`・
+  `MosaicPhotosUITests/ScreenshotCaptureTests.swift`。素材と出力は `.screenshot_assets/`（.gitignore 対象）。
+
 ## ADR-113 ピープルグループ（複数人物の名前付き束）
 - 状態: 採用
 - 文脈: クラウド共有（ADR-112）の共有単位を毎回選ぶのは面倒。家族・チーム・組織のような
