@@ -89,7 +89,7 @@
 - **All Photos** — Your device and Dropbox photos merged into one chronological timeline.
 - **Filters everywhere** — Every grid (sources, albums, People, Places, AI albums) has a filter button in the bottom bar: show **favorites only**, and on mixed views restrict to **device-only or cloud-only** photos. Full-screen swiping follows the filtered set.
 - **People** — Faces are detected and clustered **entirely on device**: Vision face detection plus a bundled face model (**AuraFace-v1**, Apache 2.0, ArcFace-family ResNet100, 512-dim identity embeddings, 5-point alignment) groups faces into people — iOS exposes no public “People” API, so the clusters are the app's own, built with no network access. Covers **both device and Dropbox photos** (cloud faces are detected from cached thumbnails — no extra downloads). Accuracy is tuned against labelled datasets (`docs/architecture-note/records/face-accuracy.md`): multi-stage gates reject blurry, profile, dark, too-small and non-face crops; eye-alignment and multi-crop averaging stabilize embeddings; margin control avoids pulling in ambiguous faces — sharply lowering how often different people mix. Home shows a circular-avatar carousel: tap a person to browse their photos (device + cloud), long-press to rename, choose a cover, fix mis-assigned faces, or **group people together**. A **face-highlight** toggle in the person album's bottom bar draws a yellow box around the recognized faces (in thumbnails and full screen) so you can tell which face is which in group shots. When the same person gets split into several groups — common for a **growing child** — you can **group them into one person** (each group keeps its purity; periods are separated by capture date so no age estimation is needed; reversible later). Named people ground people conditions in AI albums — “Taro and Hanako” finds 山田太郎 and 山田花子, evaluated live so renames and grouping apply immediately. The section is hidden when the face model isn't bundled. You can also bundle several people into a **people group** such as “the Kimuras” — a display-level grouping of *different* people (it never changes the face clustering itself), shown as a 2×2 face collage card at the head of the carousel; tap for everyone's photos, long-press to edit or cloud-share.
-- **Time & Place** — Trips are detected automatically from capture time and location (multi-day, multi-city trips become a single album), with smart titles and covers.
+- **Trips** — Trips are detected automatically from capture time and location (multi-day, multi-city trips become a single album), with smart titles and covers.
 - **AI Albums & semantic search** — Describe an album in natural language, in **any language** (e.g. “走っている子供” / “a running child”, or “Kyoto or Nara family favorites, no screenshots”). The composer helps you write queries that hit: **suggestion chips** built from your library (named people, frequent places, frequently-seen subjects, date phrases — all guaranteed to match), a **live interpretation preview** (colored chips showing how your words ground to people / places / visual words / dates), and a **live count** of photos matching the hard conditions. Creation is **two-stage**: a deterministic **preview** appears within a second or two (lexicon + date + tag matching, no LLM), then the album is **finalized in the next background window** (typically overnight) — the request is interpreted **once** by the on-device LLM (Apple Foundation Models, persisted; deterministic parsers ground dates, places, people names and common visual words), expanded with **paraphrase probes** (max-over-probes scoring recovers rephrasings the main query would miss), and matched by a **layered, threshold-free pipeline**: calibrated **scene tags** + **CLIP contrast** + lexical match fused with Reciprocal Rank Fusion, an **evidence gate**, **on-demand captions** for top candidates, and a final **LLM review** with majority voting. Exclusions like “without people” combine real **face detection counts** with tag and CLIP evidence. Works across **both device and Dropbox** photos. Search quality is tracked with a **Recall@k regression harness** (see `docs/architecture-note/records/model-evaluations.md`).
 - **On-device image understanding** — Photos are indexed in the background, **newest photos first**, in two passes: **scene tags** (built-in Vision classifier, ~1,300 classes, precision-calibrated) and **CLIP embeddings** (OpenCLIP ViT-B-32, INT8-quantized — half the size at equal accuracy) for **all** photos. (VLM captions were removed in 1.15 after an ablation measured **zero contribution** to retrieval — the heaviest pass and 877 MB of model weight bought nothing; see ADR-108.) Progress is visible in **Settings → AI Analysis Status** (per-pass progress, last-run times, and an *Analyze Now* button). By default, heavy work runs **only while the phone is charging, on Wi-Fi, and not in use** — including while locked (BGProcessingTask); the conditions are user-configurable (see below). No third-party vision API, no network (OCR uses the built-in Vision framework).
 - **Photos** — Browse your on-device library via PhotosKit, with fast thumbnail caching and a pinch-to-resize grid.
@@ -115,16 +115,19 @@ MosaicPhotos (app)
 ├── MosaicSupport     cross-cutting utilities (logging, diagnostics, memory budget), no dependencies
 ├── PhotoSourceKit    shared photo-source interface (PhotoStore / PhotoItem / PhotoFilter) + grid & paging views
 ├── ImageCacheKit     image cache primitives (memory + disk I/O), SwiftUI-free
+├── PerceptionCore    shared perception primitives (ClipMath, PhotoRef, ANE inference gate)
 ├── LocalPhotoCore    device-photo logic (PHAsset store, albums, thumbnail cache)
 ├── LocalPhotoKit     device-photo UI (depends on LocalPhotoCore)
 ├── DropboxCore       Dropbox logic — OAuth/PKCE, HTTP API client, sync engine, cache (SwiftUI-free)
 ├── DropboxKit        Dropbox UI layer (depends on DropboxCore)
 ├── BackupKit         device → Dropbox backup: verified uploads (content hash), nightly
-│                     auto-run, per-device folders, offload ledger + preview
+│                     auto-run, per-device folders, offload ledger + preview;
+│                     cloud sharing (shared sets, server-side copy, analysis sidecar)
 ├── PhotosFeatureKit  merges local + Dropbox (MergedPhotoStore) and place grouping
-├── AutoAlbumCore     auto albums + on-device AI logic (SwiftUI-free): Time & Place trips,
-│                     folder-name albums, composable query model (OR/NOT), search & fusion,
-│                     face clustering, composer suggestions & grounding preview
+├── FaceCore          face recognition & People (detection gates, clustering, people groups)
+├── AutoAlbumCore     auto albums + on-device AI logic (SwiftUI-free): trips, folder-name
+│                     albums, composable query model (OR/NOT), search & fusion, vocabulary
+│                     grounding, composer suggestions & grounding preview
 └── MobileCLIPKit     AI runtimes + AutoAlbumCore seam implementations (CLIP, Vision scene
                       tags, face model, display labeler)
 ```
@@ -164,7 +167,7 @@ An in-depth internal **architecture note** — design rationale (ADR), deep-dive
 | Caching | SwiftData (metadata) + custom binary cache with LRU eviction |
 | On-device AI | Vision image classification (built-in, ~1,300 classes) · OpenCLIP ViT-B-32 (DataComp/MIT, INT8) embeddings · AuraFace-v1 face embeddings for People clustering (Apache 2.0, optional) — all Core ML · Apple Foundation Models for interpretation, translation, probe expansion & candidate review |
 | Minimum OS | iOS 26 |
-| Packaging | Swift Package Manager (11 local packages) |
+| Packaging | Swift Package Manager (13 local packages) |
 
 ## Privacy & Security
 

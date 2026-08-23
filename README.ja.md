@@ -115,15 +115,18 @@ MosaicPhotos (app)
 ├── MosaicSupport     横断ユーティリティ（ロギング・診断・メモリ予算）・依存なし
 ├── PhotoSourceKit    写真ソース共通インターフェイス（PhotoStore / PhotoItem / PhotoFilter）＋グリッド/ページングビュー
 ├── ImageCacheKit     画像キャッシュのプリミティブ（メモリ＋ディスク I/O）・SwiftUI 非依存
+├── PerceptionCore    知覚の共通プリミティブ（ClipMath・PhotoRef・ANE 推論ゲート）
 ├── LocalPhotoCore    端末写真のロジック（PHAsset ストア・アルバム・サムネイルキャッシュ）
 ├── LocalPhotoKit     端末写真の UI（LocalPhotoCore に依存）
 ├── DropboxCore       Dropbox ロジック — OAuth/PKCE・HTTP API・同期エンジン・キャッシュ（SwiftUI 非依存）
 ├── DropboxKit        Dropbox の UI 層（DropboxCore に依存）
 ├── BackupKit         端末→Dropbox バックアップ：検証つきアップロード（content hash）・夜間自動・
-│                     端末別フォルダ・オフロード台帳＋プレビュー
+│                     端末別フォルダ・オフロード台帳＋プレビュー／
+│                     クラウド共有（共有セット・サーバーサイドコピー・解析サイドカー）
 ├── PhotosFeatureKit  ローカル＋Dropbox の統合（MergedPhotoStore）と場所グルーピング
+├── FaceCore          顔認識・ピープル（検出ゲート・クラスタリング・ピープルグループ）
 ├── AutoAlbumCore     自動アルバム＋オンデバイス AI ロジック（SwiftUI 非依存）：旅行・フォルダ名アルバム・
-│                     合成可能なクエリモデル（OR/NOT）・検索と融合・顔クラスタ・作成支援（サジェスト/接地プレビュー）
+│                     合成可能なクエリモデル（OR/NOT）・検索と融合・語彙接地・作成支援（サジェスト/接地プレビュー）
 └── MobileCLIPKit     AI ランタイム＋AutoAlbumCore の seam 実装（CLIP・Vision シーンタグ・
                       顔モデル・表示ラベラ）
 ```
@@ -163,7 +166,7 @@ AI はすべて **`AutoAlbumCore`**（SwiftUI 非依存）にあり、アプリ�
 | キャッシュ | SwiftData（メタデータ）＋独自バイナリキャッシュ（LRU 破棄） |
 | オンデバイス AI | Vision 画像分類（OS 内蔵・約 1,300 クラス）· OpenCLIP ViT-B-32（DataComp/MIT・INT8）埋め込み · AuraFace-v1 顔埋め込み＝ピープル（Apache 2.0・任意）— すべて Core ML · 解釈/翻訳/プローブ生成/審査は Apple Foundation Models |
 | 最小 OS | iOS 26 |
-| パッケージ | Swift Package Manager（ローカル 11 パッケージ） |
+| パッケージ | Swift Package Manager（ローカル 13 パッケージ） |
 
 ## プライバシーとセキュリティ
 
