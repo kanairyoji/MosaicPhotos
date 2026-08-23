@@ -92,9 +92,23 @@ struct DropboxShareCopier {
 
     // MARK: - 一括削除
 
+    /// `delete_batch` の 1 リクエスト上限（API 仕様は 1,000。余裕を見て 500 で切る）。
+    /// 暴走時の重複掃除では数百〜数千件を渡し得るので、必ずチャンクへ分ける（diagnostics-53）。
+    private static let deleteChunkSize = 500
+
     /// パス群を一括削除する。全体の成否のみ返す（存在しないパスの失敗は許容する用途）。
+    /// 上限を超える件数はチャンクに分けて順に実行する。
     func deleteBatch(paths: [String], token: String) async -> Bool {
         guard !paths.isEmpty else { return true }
+        guard paths.count <= Self.deleteChunkSize else {
+            var allOK = true
+            for chunk in stride(from: 0, to: paths.count, by: Self.deleteChunkSize).map({
+                Array(paths[$0..<min($0 + Self.deleteChunkSize, paths.count)])
+            }) {
+                if await !deleteBatch(paths: chunk, token: token) { allOK = false }
+            }
+            return allOK
+        }
         struct DeleteArg: Encodable { let path: String }
         struct Body: Encodable { let entries: [DeleteArg] }
         var req = Self.rpcRequest(url: Self.deleteBatchURL, token: token)

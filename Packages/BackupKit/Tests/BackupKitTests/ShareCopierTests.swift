@@ -137,3 +137,39 @@ struct DropboxShareCopierTests {
         #expect(await makeCopier(stub).deleteBatch(paths: ["/s/a.jpg"], token: "t"))
     }
 }
+
+@Suite("DropboxShareCopier chunking (大量削除)")
+struct DropboxShareCopierChunkingTests {
+
+    /// 500 件超の削除は複数リクエストに分割される（delete_batch の API 上限対策・diagnostics-53）。
+    @Test("600 件の削除は 2 リクエストに分かれる")
+    func deleteBatchSplitsOverLimit() async {
+        let complete = #"{".tag": "complete", "entries": []}"#
+        let stub = SequencedHTTPClient(Array(repeating: (200, complete), count: 4))
+        var copier = DropboxShareCopier(httpClient: stub)
+        copier.pollIntervalNs = 1_000_000
+        let paths = (0..<600).map { "/s/t/f\($0).jpg" }
+        _ = await copier.deleteBatch(paths: paths, token: "t")
+
+        let requests = await stub.recordedRequests()
+        #expect(requests.count == 2, "分割されていない: \(requests.count) リクエスト")
+        // 各リクエストの entries 件数（500 + 100）。
+        func entryCount(_ req: URLRequest) -> Int {
+            struct Entry: Decodable { let path: String }
+            struct Body: Decodable { let entries: [Entry] }
+            return (try? JSONDecoder().decode(Body.self, from: req.httpBody ?? Data()))?.entries.count ?? -1
+        }
+        #expect(entryCount(requests[0]) == 500)
+        #expect(entryCount(requests[1]) == 100)
+    }
+
+    @Test("上限以下なら 1 リクエストのまま")
+    func deleteBatchKeepsSingleRequest() async {
+        let complete = #"{".tag": "complete", "entries": []}"#
+        let stub = SequencedHTTPClient([(200, complete)])
+        var copier = DropboxShareCopier(httpClient: stub)
+        copier.pollIntervalNs = 1_000_000
+        _ = await copier.deleteBatch(paths: (0..<10).map { "/s/t/f\($0).jpg" }, token: "t")
+        #expect(await stub.recordedRequests().count == 1)
+    }
+}
