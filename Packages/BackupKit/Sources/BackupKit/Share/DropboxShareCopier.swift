@@ -16,9 +16,11 @@ struct DropboxShareCopier {
     private static let listFolderURL = "https://api.dropboxapi.com/2/files/list_folder"
     private static let listFolderContinueURL = "https://api.dropboxapi.com/2/files/list_folder/continue"
 
-    /// 非同期ジョブのポーリング設定（サーバーサイドコピーは通常数秒で完了する）。
+    /// 非同期ジョブのポーリング設定。通常は数秒で完了するが、アカウント負荷が高いと
+    /// 100 件バッチが 1 分を超えることがある（diagnostics-52）。タイムアウト＝失敗扱いは
+    /// 「ジョブはサーバー側で走り続ける」ため再コピー重複の温床になる——上限は長めに取る。
     var pollIntervalNs: UInt64 = 500_000_000
-    var maxPollAttempts = 120
+    var maxPollAttempts = 480   // 0.5s × 480 = 4 分
 
     // MARK: - 結果型
 
@@ -60,9 +62,10 @@ struct DropboxShareCopier {
 
     // MARK: - 一括コピー（サーバーサイド）
 
-    /// (from, to) のペアを一括コピーする。autorename 有効（衝突時は Dropbox が改名し、
-    /// 結果の実パスを返す）。結果は入力順に対応する（失敗エントリは nil）。
-    /// リクエスト自体の失敗は nil。
+    /// (from, to) のペアを一括コピーする。**autorename は使わない**（diagnostics-52:
+    /// タイムアウト→再コピーで "IMG (1).jpg" が量産された。宛先名は計画側が決定し、
+    /// 衝突＝失敗エントリとして返す→次回の反映が実在一覧から**採用**して収束する）。
+    /// 結果は入力順に対応する（失敗エントリは nil）。リクエスト自体の失敗は nil。
     func copyBatch(entries: [(from: String, to: String)], token: String) async -> CopyResult? {
         guard !entries.isEmpty else { return CopyResult(entries: []) }
         struct RelocationPath: Encodable {
@@ -71,7 +74,7 @@ struct DropboxShareCopier {
         }
         struct Body: Encodable {
             let entries: [RelocationPath]
-            let autorename = true
+            let autorename = false
         }
         var req = Self.rpcRequest(url: Self.copyBatchURL, token: token)
         guard let body = try? JSONEncoder().encode(

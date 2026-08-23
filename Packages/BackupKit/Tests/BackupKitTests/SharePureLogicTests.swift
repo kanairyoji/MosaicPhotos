@@ -44,65 +44,128 @@ struct SharePlanningTests {
                       sharedContentHash: sharedHash, state: state, addedAt: Date())
     }
 
+    private func plan(items: [ShareItemLite],
+                      backup: [String: SharePlanning.BackupRef] = [:],
+                      remote: [SharePlanning.RemoteFile]? = nil) -> SharePlanning.Plan {
+        SharePlanning.plan(items: items, backupByLocalID: backup,
+                           shareRoot: "/MosaicShare", folderName: "Trip", remoteFiles: remote)
+    }
+
     @Test("クラウド写真は原本パスから・ローカル写真はバックアップ記録からコピーする")
     func resolvesSources() {
-        let plan = SharePlanning.plan(
+        let result = plan(
             items: [item("C-/Photos/a.jpg"), item("L-local1")],
-            backupByLocalID: ["local1": .init(dropboxPath: "/mosaicphotos/b.jpg", contentHash: "h1")])
-        #expect(plan.copies.count == 2)
-        #expect(plan.copies.contains(.init(refKey: "C-/Photos/a.jpg", fromPath: "/Photos/a.jpg")))
-        #expect(plan.copies.contains(.init(refKey: "L-local1", fromPath: "/mosaicphotos/b.jpg")))
-        #expect(plan.waitingBackup.isEmpty)
+            backup: ["local1": .init(dropboxPath: "/mosaicphotos/b.jpg", contentHash: "h1")],
+            remote: [])
+        #expect(result.copies.count == 2)
+        #expect(result.copies.contains(.init(refKey: "C-/Photos/a.jpg", fromPath: "/Photos/a.jpg",
+                                             toPath: "/MosaicShare/Trip/a.jpg")))
+        #expect(result.copies.contains(.init(refKey: "L-local1", fromPath: "/mosaicphotos/b.jpg",
+                                             toPath: "/MosaicShare/Trip/b.jpg")))
+        #expect(result.waitingBackup.isEmpty)
     }
 
     @Test("バックアップ記録が無いローカル写真は waitingBackup")
     func unbackedLocalWaits() {
-        let plan = SharePlanning.plan(items: [item("L-none")], backupByLocalID: [:])
-        #expect(plan.copies.isEmpty)
-        #expect(plan.waitingBackup == ["L-none"])
+        let result = plan(items: [item("L-none")])
+        #expect(result.copies.isEmpty)
+        #expect(result.waitingBackup == ["L-none"])
+    }
+
+    @Test("同名ソースには衝突しない宛先を決定的に割り当てる（autorename 不使用）")
+    func assignsUniqueDestinations() {
+        let result = plan(
+            items: [item("C-/A/IMG.jpg"), item("C-/B/IMG.jpg"), item("C-/C/IMG.jpg")],
+            remote: [])
+        #expect(result.copies.map(\.toPath) ==
+                ["/MosaicShare/Trip/IMG.jpg", "/MosaicShare/Trip/IMG 2.jpg", "/MosaicShare/Trip/IMG 3.jpg"])
+    }
+
+    @Test("宛先が既に実在するなら採用（コピーしない）＝タイムアウト後のリトライが冪等")
+    func adoptsExistingDestination() {
+        let result = plan(
+            items: [item("L-a", state: .failed)],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
+            remote: [.init(pathLower: "/mosaicshare/trip/a.jpg", contentHash: "h1")])
+        #expect(result.copies.isEmpty, "実在する宛先へ再コピーした（重複の温床）")
+        #expect(result.adoptions == [.init(refKey: "L-a",
+                                           sharedPathLower: "/mosaicshare/trip/a.jpg",
+                                           contentHash: "h1")])
+    }
+
+    @Test("宛先実在でも中身が違えば採用せず別名コピー")
+    func differentContentGetsAlternateName() {
+        let result = plan(
+            items: [item("L-a", state: .pending)],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "NEW")],
+            remote: [.init(pathLower: "/mosaicshare/trip/a.jpg", contentHash: "OLD")])
+        #expect(result.adoptions.isEmpty)
+        #expect(result.copies == [.init(refKey: "L-a", fromPath: "/mosaicphotos/a.jpg",
+                                        toPath: "/MosaicShare/Trip/a 2.jpg")])
     }
 
     @Test("コピー済みは再コピーしない（実在・ハッシュ一致）")
     func copiedItemsAreSkipped() {
-        let plan = SharePlanning.plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/set/a.jpg", sharedHash: "h1")],
-            backupByLocalID: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remotePresentLower: ["/mosaicshare/set/a.jpg"])
-        #expect(plan.copies.isEmpty)
+        let result = plan(
+            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/a.jpg", sharedHash: "h1")],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
+            remote: [.init(pathLower: "/mosaicshare/trip/a.jpg", contentHash: "h1")])
+        #expect(result.copies.isEmpty)
+        #expect(result.adoptions.isEmpty)
     }
 
     @Test("共有側から消えたコピー済みは再コピー（自己修復）")
     func missingRemoteIsRecopied() {
-        let plan = SharePlanning.plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/set/a.jpg", sharedHash: "h1")],
-            backupByLocalID: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remotePresentLower: [])
-        #expect(plan.copies == [.init(refKey: "L-a", fromPath: "/mosaicphotos/a.jpg")])
-    }
-
-    @Test("元のハッシュが変わったコピー済みは再コピー（ドリフト）")
-    func driftedHashIsRecopied() {
-        let plan = SharePlanning.plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/set/a.jpg", sharedHash: "old")],
-            backupByLocalID: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "new")],
-            remotePresentLower: ["/mosaicshare/set/a.jpg"])
-        #expect(plan.copies == [.init(refKey: "L-a", fromPath: "/mosaicphotos/a.jpg")])
+        let result = plan(
+            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/a.jpg", sharedHash: "h1")],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
+            remote: [])
+        #expect(result.copies.count == 1)
     }
 
     @Test("未照合（remote 一覧なし）ではコピー済みの実在チェックをしない")
     func noRemoteListingSkipsPresenceCheck() {
-        let plan = SharePlanning.plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/set/a.jpg", sharedHash: "h1")],
-            backupByLocalID: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remotePresentLower: nil)
-        #expect(plan.copies.isEmpty)
+        let result = plan(
+            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/a.jpg", sharedHash: "h1")],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
+            remote: nil)
+        #expect(result.copies.isEmpty)
     }
 
-    @Test("コピー先はセットフォルダ＋元ファイル名")
-    func destinationPathLayout() {
-        #expect(SharePlanning.destinationPath(shareRoot: "/MosaicShare", folderName: "Trip",
-                                              fromPath: "/MosaicPhotos/IMG_1.jpg")
-                == "/MosaicShare/Trip/IMG_1.jpg")
+    @Test("autorename 暴走の残骸（name (N).ext・記録に属さず元名が実在）だけ掃除対象になる")
+    func duplicateCleanupTargets() {
+        let result = plan(
+            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/img.jpg", sharedHash: "h1")],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/img.jpg", contentHash: "h1")],
+            remote: [
+                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "h1"),
+                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "h1"),
+                .init(pathLower: "/mosaicshare/trip/img (12).jpg", contentHash: "h1"),
+                .init(pathLower: "/mosaicshare/trip/other (1).jpg", contentHash: "hx"),  // 元名なし → 残す
+                .init(pathLower: "/mosaicshare/trip/party (2024).jpg", contentHash: "hy"),  // 数字だが元名なし → 残す
+            ])
+        #expect(result.duplicatesToDelete ==
+                ["/mosaicshare/trip/img (1).jpg", "/mosaicshare/trip/img (12).jpg"])
+    }
+
+    @Test("記録に属する (N) 形式のファイルは掃除しない")
+    func ownedAutorenameFilesAreKept() {
+        let result = plan(
+            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/img (1).jpg", sharedHash: "h1")],
+            backup: ["a": .init(dropboxPath: "/mosaicphotos/img.jpg", contentHash: "h1")],
+            remote: [
+                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "h2"),
+                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "h1"),
+            ])
+        #expect(result.duplicatesToDelete.isEmpty)
+    }
+
+    @Test("autorenameBase の解析")
+    func autorenameBaseParsing() {
+        #expect(SharePlanning.autorenameBase(of: "/s/t/img (3).jpg") == "/s/t/img.jpg")
+        #expect(SharePlanning.autorenameBase(of: "/s/t/img.jpg") == nil)
+        #expect(SharePlanning.autorenameBase(of: "/s/t/(1).jpg") == nil)
+        #expect(SharePlanning.autorenameBase(of: "/s/t/img (a).jpg") == nil)
     }
 }
 

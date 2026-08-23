@@ -197,18 +197,21 @@ public final class ShareSyncEngine {
             BackupLogger.error("Share sync: list_folder failed — \(setFolder)")
             return
         }
-        let presentLower = Set(listing.filter { !$0.isFolder }.map(\.pathLower))
+        let remoteFiles = listing.filter { !$0.isFolder }
+            .map { SharePlanning.RemoteFile(pathLower: $0.pathLower, contentHash: $0.contentHash) }
 
-        // 計画（純ロジック）: コピーすべきもの・バックアップ待ちを算出。
+        // 計画（純ロジック）: コピー / 採用 / 掃除 / バックアップ待ちを算出。
         let localIDs = items.filter { $0.refKey.hasPrefix("L-") }
             .map { String($0.refKey.dropFirst(2)) }
         let backupRefs = await store.backupRefs(forLocalIdentifiers: localIDs)
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
-                                      remotePresentLower: presentLower)
+                                      shareRoot: shareRoot, folderName: set.folderName,
+                                      remoteFiles: remoteFiles)
 
         BackupLogger.info("Share sync: '\(set.folderName)' items=\(items.count) "
-            + "copy=\(plan.copies.count) waitingBackup=\(plan.waitingBackup.count) "
-            + "present=\(presentLower.count)")
+            + "copy=\(plan.copies.count) adopt=\(plan.adoptions.count) "
+            + "waitingBackup=\(plan.waitingBackup.count) present=\(remoteFiles.count) "
+            + "dupes=\(plan.duplicatesToDelete.count)")
         if !plan.waitingBackup.isEmpty {
             await store.updateShareItems(setID: set.id, updates: plan.waitingBackup.map {
                 (refKey: $0, state: .waitingBackup, sourcePath: nil,
@@ -216,17 +219,28 @@ public final class ShareSyncEngine {
             })
         }
 
+        // 採用: 宛先が既に実在するもの（タイムアウト後に完了していたジョブの成果など）は
+        // コピーせず記録だけ更新する＝リトライが冪等になる（diagnostics-52）。
+        if !plan.adoptions.isEmpty {
+            await store.updateShareItems(setID: set.id, updates: plan.adoptions.map {
+                (refKey: $0.refKey, state: .copied, sourcePath: nil,
+                 sharedPath: $0.sharedPathLower, sharedContentHash: $0.contentHash)
+            })
+        }
+
+        // 掃除: 過去の autorename 暴走で生まれた重複（"name (N).ext"・どの記録にも
+        // 属さず元名が実在するもの）を削除する。
+        if !plan.duplicatesToDelete.isEmpty {
+            BackupLogger.info("Share sync: '\(set.folderName)' deleting \(plan.duplicatesToDelete.count) duplicate file(s)")
+            _ = await copier.deleteBatch(paths: plan.duplicatesToDelete, token: token)
+        }
+
         // サーバーサイドコピー（チャンク実行・結果を逐次記録）。
         var copiedCount = 0
         for chunk in stride(from: 0, to: plan.copies.count, by: Self.copyChunkSize).map({
             Array(plan.copies[$0..<min($0 + Self.copyChunkSize, plan.copies.count)])
         }) {
-            let entries = chunk.map { copy in
-                (from: copy.fromPath,
-                 to: SharePlanning.destinationPath(shareRoot: shareRoot,
-                                                   folderName: set.folderName,
-                                                   fromPath: copy.fromPath))
-            }
+            let entries = chunk.map { (from: $0.fromPath, to: $0.toPath) }
             let result = await copier.copyBatch(entries: entries, token: token)
             var updates: [(refKey: String, state: ShareItemState, sourcePath: String?,
                            sharedPath: String?, sharedContentHash: String?)] = []

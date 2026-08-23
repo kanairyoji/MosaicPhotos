@@ -40,7 +40,7 @@ struct DropboxSyncEngineMappingTests {
                                          tokenProvider: StubTokenProvider())
         let engine = DropboxSyncEngine(
             apiClient: apiClient, cache: cache,
-            onCacheUpdated: {}, onStateChanged: { recorder.states.append($0) })
+            onCacheUpdated: { _ in }, onStateChanged: { recorder.states.append($0) })
         engine.start(accountId: "acc")
         await waitUntil { recorder.states.contains(.polling) }
         engine.stop()

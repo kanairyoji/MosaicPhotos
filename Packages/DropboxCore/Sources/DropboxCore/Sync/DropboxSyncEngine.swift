@@ -23,7 +23,9 @@ final class DropboxSyncEngine {
     private let apiClient: DropboxAPIClient
     private let cache: DropboxCacheStore
     /// キャッシュ更新後に MainActor 上で呼ばれるコールバック。
-    private let onCacheUpdated: () -> Void
+    /// キャッシュ更新の通知。引数は**この更新で追加/削除されたパス（小文字）**。
+    /// 空配列は「全体が変わり得る」（初期同期の確定・stale 削除など）＝必ず反映すること。
+    private let onCacheUpdated: (_ changedPathsLower: [String]) -> Void
     /// 同期状態変化時に MainActor 上で呼ばれるコールバック。
     private let onStateChanged: (DropboxPhotoStore.SyncState) -> Void
 
@@ -34,7 +36,7 @@ final class DropboxSyncEngine {
     init(
         apiClient: DropboxAPIClient,
         cache: DropboxCacheStore,
-        onCacheUpdated: @escaping () -> Void,
+        onCacheUpdated: @escaping (_ changedPathsLower: [String]) -> Void,
         onStateChanged: @escaping (DropboxPhotoStore.SyncState) -> Void
     ) {
         self.apiClient = apiClient
@@ -149,7 +151,7 @@ final class DropboxSyncEngine {
                     await cache.applyDelta(accountId: scopeKey,
                                      added: allImages, removed: [],
                                      newCursor: baselineCursor)
-                    onCacheUpdated()
+                    onCacheUpdated(allImages.map { $0.path.lowercased() })
                 }
                 scanFolders = topFolders
             } else {
@@ -173,7 +175,7 @@ final class DropboxSyncEngine {
                                          added: pg.added, removed: [],
                                          newCursor: baselineCursor)
                         reportState(.initialSync(fetched: allImages.count), isPrimary: isPrimary)
-                        onCacheUpdated()
+                        onCacheUpdated(pg.added.map { $0.path.lowercased() })
                     }
                     cur = pg.cursor
                     more = pg.hasMore
@@ -195,8 +197,8 @@ final class DropboxSyncEngine {
                              added: [], removed: stalePaths,
                              newCursor: baselineCursor)
             // 空 Dropbox・ stale 削除・画像なしの場合も必ず onCacheUpdated を呼び
-            // .polling 移行前に state を確定させる。
-            onCacheUpdated()
+            // .polling 移行前に state を確定させる（空配列＝全体反映）。
+            onCacheUpdated([])
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
             await pollLoop(scopeKey: scopeKey, startCursor: baselineCursor, isPrimary: isPrimary)
@@ -238,7 +240,8 @@ final class DropboxSyncEngine {
                                          added: page.added, removed: page.removed,
                                          newCursor: page.cursor)
                         if !page.added.isEmpty || !page.removed.isEmpty {
-                            onCacheUpdated()
+                            onCacheUpdated(page.added.map { $0.path.lowercased() }
+                                + page.removed.map { $0.lowercased() })
                             DropboxLogger.info("SyncEngine: delta — +\(page.added.count), -\(page.removed.count)")
                         } else {
                             DropboxLogger.verbose("SyncEngine: delta — no image changes, cursor advanced")

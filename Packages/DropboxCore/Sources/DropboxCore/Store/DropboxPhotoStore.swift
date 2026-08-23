@@ -245,10 +245,23 @@ public final class DropboxPhotoStore {
             syncEngine = DropboxSyncEngine(
                 apiClient: apiClient,
                 cache: cache,
-                onCacheUpdated: { [weak self] in
+                onCacheUpdated: { [weak self] changedLower in
+                    guard let self else { return }
+                    // 変更が**除外パス配下だけ**なら items 反映をスキップする（ADR-112 追記・
+                    // diagnostics-52: 自分の共有コピーが 1 秒ごとに longpoll 変更を発火し、
+                    // そのたび 69k 件の全件フェッチ（1.2s）が走り続けてメインを飢餓させた。
+                    // 除外パスは表示に現れないので反映する意味がない）。
+                    if !changedLower.isEmpty, !self.excludedPathPrefixes.isEmpty,
+                       changedLower.allSatisfy({ path in
+                           self.excludedPathPrefixes.contains {
+                               path == $0 || path.hasPrefix($0 + "/")
+                           }
+                       }) {
+                        return
+                    }
                     // 初回同期はページごとに頻発するため、16k 件の再フェッチ/再代入を
                     // スロットリング（先頭即時＋以降は ~0.4s 間引き）してメイン負荷を抑える。
-                    self?.scheduleCacheRefresh()
+                    self.scheduleCacheRefresh()
                 },
                 onStateChanged: { [weak self] newState in
                     guard let self else { return }

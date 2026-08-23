@@ -39,7 +39,7 @@ struct DropboxSyncEngineTests {
         return DropboxSyncEngine(
             apiClient: apiClient,
             cache: cache,
-            onCacheUpdated: {},
+            onCacheUpdated: { _ in },
             onStateChanged: { recorder.states.append($0) }
         )
     }
