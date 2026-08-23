@@ -100,6 +100,8 @@ func loadCover(for ref: PhotoRef?, dropboxStore: DropboxPhotoStore, maxPixel: CG
 struct AutoAlbumCard: View {
     let album: AutoAlbumInfo
     let dropboxStore: DropboxPhotoStore
+    /// このアルバムをクラウド共有しているか（バッジ表示）。
+    var isCloudShared = false
 
     var body: some View {
         LibraryCard(
@@ -111,7 +113,8 @@ struct AutoAlbumCard: View {
                 ? L("No matches")
                 : (DisplayDate.meaningful(album.startDate).map(DisplayDate.ymd) ?? L("Date unknown")),
             placeholderSystemImage: "airplane",
-            coverKey: album.id
+            coverKey: album.id,
+            isCloudShared: isCloudShared
         ) {
             await loadCover(for: album.coverPhotoRef, dropboxStore: dropboxStore,
                             maxPixel: LibraryCard.side * 2)
@@ -134,6 +137,8 @@ struct PeopleCarousel: View {
     let onLongPress: (PersonInfo) -> Void
     /// クラウド共有中のグループ ID（カードにバッジを出す）。
     var cloudSharedGroupIDs: Set<UUID> = []
+    /// クラウド共有中の人物 clusterID。
+    var cloudSharedPersonIDs: Set<Int> = []
     var onSelectGroup: ((PeopleGroupInfo) -> Void)?
     var onLongPressGroup: ((PeopleGroupInfo) -> Void)?
     /// 「すべて表示」タップ（省略された人物がいるときだけ末尾にカードを出す）。
@@ -176,7 +181,8 @@ struct PeopleCarousel: View {
                     // （バー全体がハイライトされ、常に先頭カードのメニューを拾う）ため、各カードに
                     // 直接タップ／長押しジェスチャを付けて確実にそのカードを対象にする。
                     // タップ＝写真一覧、長押し＝メニュー（名前変更／代表写真の変更）。
-                    PersonCard(person: person)
+                    PersonCard(person: person,
+                               isCloudShared: cloudSharedPersonIDs.contains(person.clusterID))
                         .contentShape(Rectangle())
                         .onTapGesture { onSelect(person) }
                         .onLongPressGesture(minimumDuration: 0.4) { onLongPress(person) }
@@ -232,13 +238,18 @@ private struct SeeAllPeopleCard: View {
 /// 代表顔の切り抜き（他のアルバムカバーと同じ角丸四角）＋名前（未設定は "Person N"）＋枚数。
 private struct PersonCard: View {
     let person: PersonInfo
+    /// この人物の写真をクラウド共有しているか（バッジ表示）。
+    var isCloudShared = false
     private static let side: CGFloat = 84
 
     var body: some View {
         VStack(spacing: 6) {
-            FaceAvatarImage(refKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 480)
-                .frame(width: Self.side, height: Self.side)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            ZStack(alignment: .bottomTrailing) {
+                FaceAvatarImage(refKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 480)
+                    .frame(width: Self.side, height: Self.side)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                if isCloudShared { CloudSharedBadge() }
+            }
 
             Text(person.displayName)
                 .font(.footnote)

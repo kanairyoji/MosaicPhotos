@@ -137,9 +137,9 @@ extension HomeView {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                AlbumCarousel(albums: autoAlbumEngine.albums, dropboxStore: dropboxStore) {
-                    destination = .autoAlbum($0)
-                }
+                AlbumCarousel(albums: autoAlbumEngine.albums, dropboxStore: dropboxStore,
+                              onSelect: { destination = .autoAlbum($0) },
+                              cloudSharedAlbumIDs: cloudSharedAlbumIDs)
             }
         } header: {
             sectionHeader("Trips", isBusy: autoAlbumEngine.isGenerating,
@@ -172,6 +172,7 @@ extension HomeView {
                         onSelect: { destination = .person($0) },
                         onLongPress: { personActions = $0 },
                         cloudSharedGroupIDs: cloudSharedGroupIDs,
+                        cloudSharedPersonIDs: cloudSharedPersonIDs,
                         onSelectGroup: { destination = .peopleGroup($0) },
                         onLongPressGroup: { peopleGroupActions = $0 },
                         onSeeAll: { showingAllPeople = true })
@@ -234,13 +235,58 @@ extension HomeView {
         }
     }
 
-    /// クラウド共有中のグループ ID（共有セットの sourceKey "pgroup-<uuid>" から逆引き）。
+    /// 共有セットの作成元キー（"pgroup-…" / "person-…" / "album-…"）から逆引きした、
+    /// クラウド共有中のカード ID。
+    ///
+    /// ⚠️ `sourceKey` は後から追加した項目なので、**それ以前に作られたセットは nil**。
+    /// 実機ではその状態で「共有しているのにバッジが出ない」となったため（実フィードバック）、
+    /// 旧セットは**名前の一致**でフォールバック判定する。
     private var cloudSharedGroupIDs: Set<UUID> {
-        Set(stores.shareEngine.sets.compactMap { set in
+        var ids = Set(stores.shareEngine.sets.compactMap { set in
             set.sourceKey.flatMap { key in
                 key.hasPrefix("pgroup-") ? UUID(uuidString: String(key.dropFirst(7))) : nil
             }
         })
+        let legacyNames = Set(stores.shareEngine.sets.filter { $0.sourceKey == nil }.map(\.name))
+        if !legacyNames.isEmpty {
+            for group in peopleEngine.peopleGroups where legacyNames.contains(group.name) {
+                ids.insert(group.id)
+            }
+        }
+        return ids
+    }
+
+    /// クラウド共有中の人物 clusterID（旧セットは表示名の一致でフォールバック）。
+    private var cloudSharedPersonIDs: Set<Int> {
+        var ids = Set(stores.shareEngine.sets.compactMap { set in
+            set.sourceKey.flatMap { key in
+                key.hasPrefix("person-") ? Int(key.dropFirst(7)) : nil
+            }
+        })
+        let legacyNames = Set(stores.shareEngine.sets.filter { $0.sourceKey == nil }.map(\.name))
+        if !legacyNames.isEmpty {
+            for person in peopleEngine.people where legacyNames.contains(person.displayName) {
+                ids.insert(person.clusterID)
+            }
+        }
+        return ids
+    }
+
+    /// クラウド共有中のアルバム ID（旧セットはアルバム名の一致でフォールバック）。
+    var cloudSharedAlbumIDs: Set<String> {
+        var ids = Set(stores.shareEngine.sets.compactMap { set in
+            set.sourceKey.flatMap { key in
+                key.hasPrefix("album-") ? String(key.dropFirst(6)) : nil
+            }
+        })
+        let legacyNames = Set(stores.shareEngine.sets.filter { $0.sourceKey == nil }.map(\.name))
+        if !legacyNames.isEmpty {
+            for album in autoAlbumEngine.albums + autoAlbumEngine.aiAlbums
+            where legacyNames.contains(album.placesLabel) {
+                ids.insert(album.id)
+            }
+        }
+        return ids
     }
 
     // MARK: Cloud shared section (受け取った共有アルバム・ADR-112)
@@ -282,7 +328,8 @@ extension HomeView {
                     albums: autoAlbumEngine.aiAlbums, dropboxStore: dropboxStore,
                     onSelect: { destination = .autoAlbum($0) },
                     onEdit: { aiComposer = .edit($0) },
-                    onDelete: { album in Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) } })
+                    onDelete: { album in Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) } },
+                    cloudSharedAlbumIDs: cloudSharedAlbumIDs)
             }
         } header: {
             sectionHeader("AI Albums", isBusy: autoAlbumEngine.isMakingAIAlbum, actionIcon: "plus",

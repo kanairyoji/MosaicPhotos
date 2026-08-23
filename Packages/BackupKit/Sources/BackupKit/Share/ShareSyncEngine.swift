@@ -45,6 +45,11 @@ public final class ShareSyncEngine {
 
     /// 1 回の copy_batch に載せる最大エントリ数。
     private static let copyChunkSize = 100
+    /// 1 回の反映で投げるコピー / 削除の上限（diagnostics-55）。暴走の後始末は数千件に
+    /// なり得るが、一度に流すと API レート制限を誘発し、失敗→再試行でさらに負荷が増える。
+    /// 残りは次回の反映で続きから片付ける（計画は毎回実在照合するので取りこぼさない）。
+    private static let maxCopiesPerRun = 500
+    private static let maxDeletesPerRun = 500
 
     public init(tokenProvider: AccessTokenProvider,
                 storeProvider: @escaping @MainActor () async -> BackupStore,
@@ -228,20 +233,24 @@ public final class ShareSyncEngine {
             })
         }
 
-        // 掃除: 過去の autorename 暴走で生まれた重複（"name (N).ext"・どの記録にも
-        // 属さず元名が実在するもの）を削除する。
-        if !plan.duplicatesToDelete.isEmpty {
-            BackupLogger.info("Share sync: '\(set.folderName)' deleting \(plan.duplicatesToDelete.count) duplicate file(s)")
-            _ = await copier.deleteBatch(paths: plan.duplicatesToDelete, token: token)
-        }
-
-        // サーバーサイドコピー（チャンク実行・結果を逐次記録）。
+        // ⚠️ 掃除より**先に**コピーする（diagnostics-55）。逆順だと、コピーが失敗し続けている
+        // 状態でも掃除だけが毎回走り、「削除 → 変更通知 → 反映 → また削除」の空回りになる
+        // （実機で 2,226 → 1,710 件と削除し続けても収束しなかった）。掃除は**コピーが
+        // 健全に終わったときだけ**行う。
         var copiedCount = 0
-        for chunk in stride(from: 0, to: plan.copies.count, by: Self.copyChunkSize).map({
-            Array(plan.copies[$0..<min($0 + Self.copyChunkSize, plan.copies.count)])
+        var copyFailed = false
+        // 1 回の反映で投げるコピーの上限。暴走の後始末は数千件になり得るが、一度に
+        // 流すと API レート制限を誘発し、失敗 → 再試行 → さらに負荷、の悪循環になる。
+        let copyBudget = min(plan.copies.count, Self.maxCopiesPerRun)
+        if plan.copies.count > copyBudget {
+            BackupLogger.info("Share sync: '\(set.folderName)' copying \(copyBudget) of \(plan.copies.count) this run (rest continues next run)")
+        }
+        for chunk in stride(from: 0, to: copyBudget, by: Self.copyChunkSize).map({
+            Array(plan.copies[$0..<min($0 + Self.copyChunkSize, copyBudget)])
         }) {
             let entries = chunk.map { (from: $0.fromPath, to: $0.toPath) }
             let result = await copier.copyBatch(entries: entries, token: token)
+            if result == nil { copyFailed = true }
             var updates: [(refKey: String, state: ShareItemState, sourcePath: String?,
                            sharedPath: String?, sharedContentHash: String?)] = []
             for (i, copy) in chunk.enumerated() {
@@ -261,6 +270,20 @@ public final class ShareSyncEngine {
         }
         if copiedCount > 0 {
             BackupLogger.info("Share: '\(set.folderName)' copied \(copiedCount)/\(plan.copies.count)")
+        }
+
+        // 掃除: 過去の autorename 暴走で生まれた重複（"name (N).ext"・どの記録にも属さず
+        // 元名が実在するもの）を削除する。**コピーが失敗した回は掃除しない**——正規ファイルを
+        // 作れていない状態で消すと、次回また同じものをコピーし直す空回りになる（diagnostics-55）。
+        if copyFailed {
+            if !plan.duplicatesToDelete.isEmpty {
+                BackupLogger.info("Share sync: '\(set.folderName)' skipping cleanup of \(plan.duplicatesToDelete.count) duplicate(s) — copy failed this run")
+            }
+        } else if !plan.duplicatesToDelete.isEmpty {
+            let budget = min(plan.duplicatesToDelete.count, Self.maxDeletesPerRun)
+            BackupLogger.info("Share sync: '\(set.folderName)' deleting \(budget) of \(plan.duplicatesToDelete.count) duplicate file(s)")
+            _ = await copier.deleteBatch(paths: Array(plan.duplicatesToDelete.prefix(budget)),
+                                         token: token)
         }
 
         await updateSidecar(set: set, setFolder: setFolder, store: store,

@@ -81,9 +81,7 @@ struct DropboxShareCopier {
             Body(entries: entries.map { RelocationPath(from_path: $0.from, to_path: $0.to) }))
         else { return nil }
         req.httpBody = body
-        guard let (data, resp) = try? await httpClient.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            BackupLogger.error("ShareCopier: copy_batch request failed (\(entries.count) entries)")
+        guard let data = await sendWithRetry(req, label: "copy_batch (\(entries.count) entries)") else {
             return nil
         }
         return await resolveBatchResult(initial: data, checkURL: Self.copyBatchCheckURL,
@@ -115,9 +113,7 @@ struct DropboxShareCopier {
         guard let body = try? JSONEncoder().encode(Body(entries: paths.map(DeleteArg.init)))
         else { return false }
         req.httpBody = body
-        guard let (data, resp) = try? await httpClient.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            BackupLogger.error("ShareCopier: delete_batch request failed (\(paths.count) paths)")
+        guard let data = await sendWithRetry(req, label: "delete_batch (\(paths.count) paths)") else {
             return false
         }
         let result = await resolveBatchResult(initial: data, checkURL: Self.deleteBatchCheckURL,
@@ -254,8 +250,7 @@ struct DropboxShareCopier {
             guard let body = try? JSONEncoder().encode(CheckBody(async_job_id: jobID))
             else { return nil }
             req.httpBody = body
-            guard let (data, resp) = try? await httpClient.data(for: req),
-                  (resp as? HTTPURLResponse)?.statusCode == 200,
+            guard let data = await sendWithRetry(req, label: "batch check"),
                   let next = try? JSONDecoder().decode(BatchLaunch.self, from: data)
             else { return nil }
             launch = next
@@ -277,6 +272,37 @@ struct DropboxShareCopier {
     }
 
     // MARK: - 共通
+
+    /// レート制限（429）と一時障害（5xx）だけを、`Retry-After` を尊重して再試行する。
+    /// diagnostics-54: プロセス中断からの復帰直後に copy_batch が 32 回連続で失敗し、
+    /// **ステータスコードをログに残していなかったため原因を特定できなかった**。
+    /// 失敗時は必ず status とレスポンス本文の先頭を残す。
+    private func sendWithRetry(_ req: URLRequest, label: String,
+                               maxAttempts: Int = 4) async -> Data? {
+        var attempt = 0
+        while attempt < maxAttempts {
+            attempt += 1
+            guard let (data, resp) = try? await httpClient.data(for: req),
+                  let http = resp as? HTTPURLResponse else {
+                BackupLogger.error("ShareCopier: \(label) transport error (attempt \(attempt))")
+                return nil
+            }
+            if http.statusCode == 200 { return data }
+
+            let retryable = http.statusCode == 429 || (500...599).contains(http.statusCode)
+            let body = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+            guard retryable, attempt < maxAttempts else {
+                BackupLogger.error("ShareCopier: \(label) failed — HTTP \(http.statusCode) \(body)")
+                return nil
+            }
+            // Retry-After（秒）を尊重。無ければ指数バックオフ（2/4/8 秒）。
+            let hinted = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(Double.init)
+            let delay = hinted ?? pow(2.0, Double(attempt))
+            BackupLogger.info("ShareCopier: \(label) HTTP \(http.statusCode) — retrying in \(Int(delay))s (attempt \(attempt)/\(maxAttempts))")
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+        return nil
+    }
 
     private static func rpcRequest(url: String, token: String) -> URLRequest {
         var req = URLRequest(url: URL(string: url)!)

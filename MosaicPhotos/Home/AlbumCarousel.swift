@@ -10,16 +10,20 @@ struct AlbumCarousel: View {
     let onSelect: (AutoAlbumInfo) -> Void
     var onEdit: ((AutoAlbumInfo) -> Void)?
     var onDelete: ((AutoAlbumInfo) -> Void)?
+    /// クラウド共有中のアルバム ID（カードにバッジを出す）。
+    var cloudSharedAlbumIDs: Set<String> = []
 
     init(albums: [AutoAlbumInfo], dropboxStore: DropboxPhotoStore,
          onSelect: @escaping (AutoAlbumInfo) -> Void,
          onEdit: ((AutoAlbumInfo) -> Void)? = nil,
-         onDelete: ((AutoAlbumInfo) -> Void)? = nil) {
+         onDelete: ((AutoAlbumInfo) -> Void)? = nil,
+         cloudSharedAlbumIDs: Set<String> = []) {
         self.albums = albums
         self.dropboxStore = dropboxStore
         self.onSelect = onSelect
         self.onEdit = onEdit
         self.onDelete = onDelete
+        self.cloudSharedAlbumIDs = cloudSharedAlbumIDs
     }
 
     private var hasMenu: Bool { onEdit != nil || onDelete != nil }
@@ -32,7 +36,8 @@ struct AlbumCarousel: View {
                     // List の行に入った横スクロール carousel では contextMenu（長押し）が
                     // 行全体に効いて個々のカードに束縛できないため、明示的な per-card Menu を使う。
                     Button { onSelect(album) } label: {
-                        AutoAlbumCard(album: album, dropboxStore: dropboxStore)
+                        AutoAlbumCard(album: album, dropboxStore: dropboxStore,
+                                      isCloudShared: cloudSharedAlbumIDs.contains(album.id))
                     }
                     .buttonStyle(.plain)
                     .overlay(alignment: .topTrailing) {
@@ -120,6 +125,8 @@ struct LibraryCard: View {
     let subtitle: String
     let placeholderSystemImage: String
     let coverKey: String
+    /// このアルバムの写真をクラウド共有しているか（バッジ表示）。
+    var isCloudShared: Bool = false
     let loadCover: () async -> UIImage?
 
     @State private var cover: UIImage?
@@ -131,11 +138,13 @@ struct LibraryCard: View {
     // `@State` が private のため memberwise init も private になる。別ファイル（AutoAlbumCard）
     // から使えるよう明示 init を持つ。
     init(title: String, subtitle: String, placeholderSystemImage: String,
-         coverKey: String, loadCover: @escaping () async -> UIImage?) {
+         coverKey: String, isCloudShared: Bool = false,
+         loadCover: @escaping () async -> UIImage?) {
         self.title = title
         self.subtitle = subtitle
         self.placeholderSystemImage = placeholderSystemImage
         self.coverKey = coverKey
+        self.isCloudShared = isCloudShared
         self.loadCover = loadCover
     }
 
@@ -156,6 +165,9 @@ struct LibraryCard: View {
             }
             .frame(width: Self.side, height: Self.side)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                if isCloudShared { CloudSharedBadge() }
+            }
 
             // タイトルはピープルと同じ大きさ（footnote）の太字・最大 2 行
             // （実フィードバック: subheadline だと 96pt 幅で切れやすい／名前は太字が良い）。

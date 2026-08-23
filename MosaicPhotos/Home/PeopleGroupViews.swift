@@ -6,6 +6,22 @@ import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
 
+// MARK: - クラウド共有中バッジ（人物・グループ・アルバムのカード共通）
+
+/// 「このカードの写真をクラウド共有している」ことを示すバッジ。
+/// アイコンは共有導線（メニュー・設定）と同じ `icloud.and.arrow.up` に統一する。
+struct CloudSharedBadge: View {
+    var body: some View {
+        Image(systemName: "icloud.and.arrow.up")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(4)
+            .background(Color.accentColor, in: Circle())
+            .offset(x: 5, y: 5)
+            .accessibilityLabel(L("Cloud Sharing"))
+    }
+}
+
 // MARK: - グループカード（カルーセル用）
 
 /// ピープルグループのカード。単人のカード（1 枚の顔アバター）と見分けがつくよう、
@@ -27,16 +43,8 @@ struct PeopleGroupCard: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 1.5))
-                // クラウド共有中バッジ。アイコンは共有導線（メニュー/設定）と同じものに統一する。
-                if isCloudShared {
-                    Image(systemName: "icloud.and.arrow.up")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(4)
-                        .background(Color.accentColor, in: Circle())
-                        .offset(x: 5, y: 5)
-                        .accessibilityLabel(L("Cloud Sharing"))
-                }
+                // クラウド共有中バッジ（共通ビュー）。
+                if isCloudShared { CloudSharedBadge() }
             }
             Text(group.name)
                 .font(.footnote.weight(.medium))
