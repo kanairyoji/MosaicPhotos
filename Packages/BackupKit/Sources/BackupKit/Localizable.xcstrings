@@ -11,6 +11,16 @@
         }
       }
     },
+    "%d folders": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d フォルダ"
+          }
+        }
+      }
+    },
     "%d photos": {
       "localizations": {
         "ja": {
@@ -27,6 +37,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "残り %d 枚 — 夜間（充電＋Wi-Fi 時）に自動で進みます"
+          }
+        }
+      }
+    },
+    "%d sets": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d セット"
           }
         }
       }
@@ -245,6 +265,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "クラウド共有"
+          }
+        }
+      }
+    },
+    "Copy selected photos into a shared folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選んだ写真を共有フォルダへコピーする"
           }
         }
       }
@@ -533,6 +563,16 @@
         }
       }
     },
+    "Off": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフ"
+          }
+        }
+      }
+    },
     "Offload": {
       "localizations": {
         "ja": {
@@ -559,6 +599,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "オフロードは、同一の内容（content hash 一致）が Dropbox に実在することを検証してから、この端末の写真を削除します。削除した写真は 30 日間「最近削除した項目」に残ります。"
+          }
+        }
+      }
+    },
+    "On": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オン"
           }
         }
       }
@@ -849,6 +899,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "検証中…"
+          }
+        }
+      }
+    },
+    "View albums others shared with you": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有されたアルバムを見る"
           }
         }
       }

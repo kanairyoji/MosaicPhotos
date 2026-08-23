@@ -14,13 +14,7 @@ public struct ShareHubView: View {
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
-    @AppStorage(ShareSettingsKeys.shareRootFolder)
-    private var shareRoot = ShareSettingsKeys.defaultShareRootFolder
-    @AppStorage(BackupSettingsKeys.destination)
-    private var backupDestination: BackupDestination = .disabled
     @State private var familyFolders: [String] = ShareSettingsKeys.currentFamilyFolders()
-    @State private var newFamilyFolder = ""
-    @State private var isImporting = false
 
     public init(engine: ShareSyncEngine,
                 onFamilyFoldersChanged: @escaping @MainActor () -> Void = {},
@@ -31,14 +25,36 @@ public struct ShareHubView: View {
     }
 
     public var body: some View {
+        // 「受け取る」と「提供する」は**別の機能**。トップは 2 つの入り口だけにし、
+        // それぞれ専用画面へ分ける（実フィードバック: 同一リスト内のセクション分けでは
+        // 別機能だと伝わらない）。
         List {
-            receiveToggleSection
-            if receiveEnabled { familySection }
-            provideToggleSection
-            if provideEnabled {
-                setsSection
-                syncSection
-                shareRootSection
+            Section {
+                NavigationLink {
+                    ShareReceiveView(familyFolders: $familyFolders,
+                                     onFamilyFoldersChanged: onFamilyFoldersChanged,
+                                     onImportNow: onImportNow)
+                } label: {
+                    featureRow(icon: "icloud.and.arrow.down", tint: .green,
+                               title: L("Receive Shared Albums"),
+                               subtitle: L("View albums others shared with you"),
+                               status: receiveStatus)
+                }
+            } footer: {
+                Text(L("Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed."))
+            }
+
+            Section {
+                NavigationLink {
+                    ShareProvideView(engine: engine)
+                } label: {
+                    featureRow(icon: "icloud.and.arrow.up", tint: .blue,
+                               title: L("Share Your Photos"),
+                               subtitle: L("Copy selected photos into a shared folder"),
+                               status: provideStatus)
+                }
+            } footer: {
+                Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
             }
         }
         .navigationTitle(L("Cloud Sharing"))
@@ -46,27 +62,76 @@ public struct ShareHubView: View {
         .task { await engine.refresh() }
     }
 
-    // MARK: - 受ける / 提供する のトグル（独立機能・ADR-112 追記）
+    // MARK: - 入り口の行（機能アイコン＋状態）
 
-    private var receiveToggleSection: some View {
-        Section {
-            Toggle(L("Receive Shared Albums"), isOn: $receiveEnabled)
-                .onChange(of: receiveEnabled) { _, _ in onFamilyFoldersChanged() }
-        } header: {
-            Text(L("Receive"))
-        } footer: {
-            Text(L("Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed."))
-        }
+    private var receiveStatus: String {
+        guard receiveEnabled else { return L("Off") }
+        let count = familyFolders.count
+        return count > 0 ? String(format: L("%d folders"), count) : L("On")
     }
 
-    private var provideToggleSection: some View {
-        Section {
-            Toggle(L("Share Your Photos"), isOn: $provideEnabled)
-        } header: {
-            Text(L("Provide"))
-        } footer: {
-            Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
+    private var provideStatus: String {
+        guard provideEnabled else { return L("Off") }
+        let count = engine.sets.count
+        return count > 0 ? String(format: L("%d sets"), count) : L("On")
+    }
+
+    private func featureRow(icon: String, tint: Color, title: String,
+                            subtitle: String, status: String) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(tint.gradient)
+                    .frame(width: 38, height: 38)
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(status)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
+        .padding(.vertical, 2)
+    }
+
+}
+
+
+/// 提供専用画面（トグル＋共有セット＋反映＋共有ルート）。独立機能（ADR-112 追記）。
+struct ShareProvideView: View {
+    let engine: ShareSyncEngine
+
+    @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
+    @AppStorage(ShareSettingsKeys.shareRootFolder)
+    private var shareRoot = ShareSettingsKeys.defaultShareRootFolder
+    @AppStorage(BackupSettingsKeys.destination)
+    private var backupDestination: BackupDestination = .disabled
+
+    var body: some View {
+        List {
+            Section {
+                Toggle(L("Share Your Photos"), isOn: $provideEnabled)
+            } footer: {
+                Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
+            }
+            if provideEnabled {
+                setsSection
+                syncSection
+                shareRootSection
+            }
+        }
+        .navigationTitle(L("Share Your Photos"))
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await engine.refresh() }
     }
 
     // MARK: - 共有セット
@@ -169,59 +234,80 @@ public struct ShareHubView: View {
             Text(L("Share this folder with others in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it."))
         }
     }
+}
 
-    // MARK: - 家族フォルダ（受信側）
+/// 受け取り専用画面（トグル＋共有されたフォルダ＋取り込み）。独立機能（ADR-112 追記）。
+struct ShareReceiveView: View {
+    @Binding var familyFolders: [String]
+    let onFamilyFoldersChanged: @MainActor () -> Void
+    let onImportNow: (@MainActor () async -> Void)?
 
-    private var familySection: some View {
-        Section {
-            ForEach(familyFolders, id: \.self) { folder in
-                Text(folder)
+    @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
+    @State private var newFamilyFolder = ""
+    @State private var isImporting = false
+
+    var body: some View {
+        List {
+            Section {
+                Toggle(L("Receive Shared Albums"), isOn: $receiveEnabled)
+                    .onChange(of: receiveEnabled) { _, _ in onFamilyFoldersChanged() }
+            } footer: {
+                Text(L("Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed."))
             }
-            .onDelete { offsets in
-                familyFolders.remove(atOffsets: offsets)
-                ShareSettingsKeys.setFamilyFolders(familyFolders)
-                onFamilyFoldersChanged()
-            }
-            HStack {
-                TextField(L("Add folder path (e.g. /MosaicShare)"), text: $newFamilyFolder)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                Button(L("Add")) {
-                    let path = newFamilyFolder.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !path.isEmpty else { return }
-                    familyFolders.append(path.hasPrefix("/") ? path : "/" + path)
-                    ShareSettingsKeys.setFamilyFolders(familyFolders)
-                    familyFolders = ShareSettingsKeys.currentFamilyFolders()
-                    newFamilyFolder = ""
-                    onFamilyFoldersChanged()
-                }
-                .disabled(newFamilyFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if onImportNow != nil, !familyFolders.isEmpty {
-                Button {
-                    guard let onImportNow else { return }
-                    isImporting = true
-                    Task {
-                        await onImportNow()
-                        isImporting = false
+            if receiveEnabled {
+                Section {
+                    ForEach(familyFolders, id: \.self) { folder in
+                        Text(folder)
                     }
-                } label: {
-                    if isImporting {
-                        HStack {
-                            ProgressView()
-                            Text(L("Importing…"))
+                    .onDelete { offsets in
+                        familyFolders.remove(atOffsets: offsets)
+                        ShareSettingsKeys.setFamilyFolders(familyFolders)
+                        onFamilyFoldersChanged()
+                    }
+                    HStack {
+                        TextField(L("Add folder path (e.g. /MosaicShare)"), text: $newFamilyFolder)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        Button(L("Add")) {
+                            let path = newFamilyFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !path.isEmpty else { return }
+                            familyFolders.append(path.hasPrefix("/") ? path : "/" + path)
+                            ShareSettingsKeys.setFamilyFolders(familyFolders)
+                            familyFolders = ShareSettingsKeys.currentFamilyFolders()
+                            newFamilyFolder = ""
+                            onFamilyFoldersChanged()
                         }
-                    } else {
-                        Text(L("Import Shared Analysis Now"))
+                        .disabled(newFamilyFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                    if onImportNow != nil, !familyFolders.isEmpty {
+                        Button {
+                            guard let onImportNow else { return }
+                            isImporting = true
+                            Task {
+                                await onImportNow()
+                                isImporting = false
+                            }
+                        } label: {
+                            if isImporting {
+                                HStack {
+                                    ProgressView()
+                                    Text(L("Importing…"))
+                                }
+                            } else {
+                                Text(L("Import Shared Analysis Now"))
+                            }
+                        }
+                        .disabled(isImporting)
+                    }
+                } header: {
+                    Text(L("Folders Shared with You"))
+                } footer: {
+                    Text(L("Folders others shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them."))
                 }
-                .disabled(isImporting)
             }
-        } header: {
-            Text(L("Folders Shared with You"))
-        } footer: {
-            Text(L("Folders others shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them."))
         }
+        .navigationTitle(L("Receive Shared Albums"))
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
