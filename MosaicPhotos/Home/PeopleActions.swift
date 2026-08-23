@@ -25,6 +25,7 @@ struct PeopleActionsModifier: ViewModifier {
     @State private var cleanupPerson: PersonInfo?
     /// クラウド共有（共有セット作成・ADR-112）の対象。エンジン未注入なら項目を出さない。
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
+    @AppStorage(ShareSettingsKeys.provideEnabled) private var shareProvideEnabled = true
     @State private var sharePerson: SharePersonPayload?
 
     /// 共有シートの素材。写真キーは開く前に解決する
@@ -48,7 +49,7 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Group with Another Person…")) { mergeSourcePerson = person }
                 // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
                 Button(L("Clean Up This Person…")) { cleanupPerson = person }
-                if shareEngine != nil {
+                if shareEngine != nil, shareProvideEnabled {
                     Button(L("Cloud Share…")) {
                         Task {
                             let refKeys = await peopleEngine.memberRefKeys(forPerson: person.clusterID)

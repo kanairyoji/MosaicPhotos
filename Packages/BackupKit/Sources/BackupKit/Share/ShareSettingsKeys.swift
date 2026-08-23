@@ -1,7 +1,24 @@
 import Foundation
 
-/// 家族共有（共有セット）の永続設定キー。
+/// クラウド共有の永続設定キー。
+/// 「受ける」「提供する」「バックアップ」は独立した機能として別々に設定できる（ADR-112 追記）。
 public enum ShareSettingsKeys {
+    /// クラウド共有を**受ける**機能の有効フラグ（既定 ON）。
+    /// バックアップ・提供とは無関係に動く（必要なのは Dropbox 接続のみ）。
+    public static let receiveEnabled = "shareReceiveEnabled"
+    /// クラウド共有を**提供する**機能の有効フラグ（既定 ON）。
+    /// OFF にすると共有メニューが消え、既存セットの反映も止まる。
+    public static let provideEnabled = "shareProvideEnabled"
+
+    public static func isReceiveEnabled() -> Bool {
+        UserDefaults.standard.object(forKey: receiveEnabled) == nil
+            ? true : UserDefaults.standard.bool(forKey: receiveEnabled)
+    }
+    public static func isProvideEnabled() -> Bool {
+        UserDefaults.standard.object(forKey: provideEnabled) == nil
+            ? true : UserDefaults.standard.bool(forKey: provideEnabled)
+    }
+
     /// 自分が共有を書き出すルートフォルダ（既定 `/MosaicShare`）。
     /// ユーザーはこのフォルダを Dropbox 側で家族に共有する（閲覧のみ招待を推奨）。
     public static let shareRootFolder = "shareRootFolder"

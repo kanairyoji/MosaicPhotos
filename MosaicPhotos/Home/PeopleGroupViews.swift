@@ -166,6 +166,7 @@ struct PeopleGroupActionsModifier: ViewModifier {
     let peopleEngine: PeopleEngine
 
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
+    @AppStorage(ShareSettingsKeys.provideEnabled) private var shareProvideEnabled = true
     @State private var editingGroup: PeopleGroupInfo?
     @State private var sharingGroup: SharePayload?
     @State private var deletingGroup: PeopleGroupInfo?
@@ -185,7 +186,7 @@ struct PeopleGroupActionsModifier: ViewModifier {
                                                      set: { if !$0 { target = nil } }),
                                 presenting: target) { group in
                 Button(L("Edit Group…")) { editingGroup = group }
-                if shareEngine != nil {
+                if shareEngine != nil, shareProvideEnabled {
                     Button(L("Cloud Share…")) {
                         Task {
                             let refKeys = await peopleEngine.memberRefKeys(forGroup: group.id)

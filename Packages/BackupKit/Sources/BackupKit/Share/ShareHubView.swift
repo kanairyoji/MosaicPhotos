@@ -1,9 +1,10 @@
 #if canImport(UIKit)
 import SwiftUI
 
-/// 家族共有のハブ画面（共有セット一覧・反映・共有ルート・家族フォルダ）。
-/// `DropboxHubView`（アプリ）から遷移する。セット作成はアルバム画面の
-/// 「Share with Family…」から行う（ここは管理と受信設定）。
+/// クラウド共有のハブ画面。**「受ける」と「提供する」は独立した機能**として
+/// 別々のトグルで設定する（バックアップとも独立・ADR-112 追記）:
+/// - 受ける: 共有されたフォルダの閲覧＋解析取り込み。Dropbox 接続だけで動く。
+/// - 提供する: 共有セットの作成・反映。端末写真の共有のみバックアップが前提。
 public struct ShareHubView: View {
     private let engine: ShareSyncEngine
     /// 家族フォルダ（受信側）の変更通知。アプリが同期ルート・取り込みへ反映する。
@@ -11,6 +12,8 @@ public struct ShareHubView: View {
     /// 「今すぐ取り込み」（受信側・サイドカー取り込み）。未設定なら非表示。
     private let onImportNow: (@MainActor () async -> Void)?
 
+    @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
+    @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
     @AppStorage(ShareSettingsKeys.shareRootFolder)
     private var shareRoot = ShareSettingsKeys.defaultShareRootFolder
     @AppStorage(BackupSettingsKeys.destination)
@@ -29,14 +32,41 @@ public struct ShareHubView: View {
 
     public var body: some View {
         List {
-            setsSection
-            syncSection
-            shareRootSection
-            familySection
+            receiveToggleSection
+            if receiveEnabled { familySection }
+            provideToggleSection
+            if provideEnabled {
+                setsSection
+                syncSection
+                shareRootSection
+            }
         }
         .navigationTitle(L("Cloud Sharing"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await engine.refresh() }
+    }
+
+    // MARK: - 受ける / 提供する のトグル（独立機能・ADR-112 追記）
+
+    private var receiveToggleSection: some View {
+        Section {
+            Toggle(L("Receive Shared Albums"), isOn: $receiveEnabled)
+                .onChange(of: receiveEnabled) { _, _ in onFamilyFoldersChanged() }
+        } header: {
+            Text(L("Receive"))
+        } footer: {
+            Text(L("Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed."))
+        }
+    }
+
+    private var provideToggleSection: some View {
+        Section {
+            Toggle(L("Share Your Photos"), isOn: $provideEnabled)
+        } header: {
+            Text(L("Provide"))
+        } footer: {
+            Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
+        }
     }
 
     // MARK: - 共有セット

@@ -79,6 +79,8 @@ final class SharedAnalysisImporter {
     /// 家族フォルダが設定されていれば、更新されたサイドカーを取得して取り込む。
     func runIfNeeded() async {
         guard !isRunning else { return }
+        // 「受ける」が OFF なら何もしない（提供・バックアップとは独立・ADR-112 追記）。
+        guard ShareSettingsKeys.isReceiveEnabled() else { return }
         let roots = ShareSettingsKeys.currentFamilyFolders()
         guard !roots.isEmpty else { return }
         guard case .connected = dropboxStore.auth.connectionStatus,

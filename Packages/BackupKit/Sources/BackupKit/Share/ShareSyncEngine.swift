@@ -155,6 +155,8 @@ public final class ShareSyncEngine {
     /// バックアップ完走後・手動「今すぐ反映」・夜間枠から呼ばれる。
     public func syncNow() async {
         guard !isSyncing else { return }
+        // 「提供する」が OFF なら反映しない（受信・バックアップとは独立・ADR-112 追記）。
+        guard ShareSettingsKeys.isProvideEnabled() else { return }
         guard let token = try? await tokenProvider.freshAccessToken() else {
             lastError = "Not connected"
             BackupLogger.info("Share sync: skipped (no token)")

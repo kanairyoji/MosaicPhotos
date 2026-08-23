@@ -249,6 +249,16 @@
         }
       }
     },
+    "Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバム・人物・グループから共有セットを作成します。端末写真の共有にはバックアップが必要です（クラウド写真は不要）。このスイッチは「受け取る」機能には影響しません。"
+          }
+        }
+      }
+    },
     "Delete %d photo(s) from this device": {
       "localizations": {
         "ja": {
@@ -593,6 +603,16 @@
         }
       }
     },
+    "Provide": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供する"
+          }
+        }
+      }
+    },
     "Reading albums and people…": {
       "localizations": {
         "ja": {
@@ -609,6 +629,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "オフロード可能（検証済み）"
+          }
+        }
+      }
+    },
+    "Receive": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "受ける"
+          }
+        }
+      }
+    },
+    "Receive Shared Albums": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有アルバムを受け取る"
           }
         }
       }
@@ -649,6 +689,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "セットはバックアップ完了後にも自動で反映されます。コピーは Dropbox サーバー上で行われるため、写真データの再アップロードは発生しません。"
+          }
+        }
+      }
+    },
+    "Share Your Photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自分の写真を共有する"
           }
         }
       }
@@ -829,6 +879,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "端末の空き容量が選んだ値を下回ったら、検証済みの古い写真から自動的にオフロードします。"
+          }
+        }
+      }
+    },
+    "Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この機能は単独で動きます。バックアップや自分の写真の共有は不要で、必要なのは Dropbox 接続だけです。"
           }
         }
       }

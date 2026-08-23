@@ -178,7 +178,8 @@ struct HomeView: View {
         // 68k 件の走査なのでオフメインで行い、メインへは結果だけ返す。
         .task(id: dropboxStore.items.count) {
             let items = dropboxStore.items
-            let roots = ShareSettingsKeys.currentFamilyFolders()
+            let roots = ShareSettingsKeys.isReceiveEnabled()
+                ? ShareSettingsKeys.currentFamilyFolders() : []
             guard !roots.isEmpty else {
                 if !sharedAlbums.isEmpty { sharedAlbums = [] }
                 return

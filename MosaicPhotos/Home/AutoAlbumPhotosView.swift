@@ -17,6 +17,7 @@ struct AutoAlbumPhotosView: View {
     private let onDelete: (() -> Void)?
     /// 家族共有（ADR-112）。未注入（nil）なら共有メニューを出さない。
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
+    @AppStorage(ShareSettingsKeys.provideEnabled) private var shareProvideEnabled = true
     @State private var showingShareSheet = false
 
     init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
@@ -45,7 +46,7 @@ struct AutoAlbumPhotosView: View {
     }
 
     private var menuContent: (@MainActor () -> AnyView)? {
-        let canShare = shareEngine != nil
+        let canShare = shareEngine != nil && shareProvideEnabled
         guard onDelete != nil || canShare else { return nil }
         return { AnyView(
             Menu {

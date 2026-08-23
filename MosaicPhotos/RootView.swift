@@ -84,9 +84,10 @@ final class HomeStores {
             let backupRoot = backupNormalizedPath(
                 UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                     ?? BackupSettingsKeys.defaultDropboxFolder)
-            // 家族の共有フォルダ（ADR-112・受信側）も同期対象に含める。
-            return [DropboxSourceSettings.currentSourceFolder(), backupRoot]
-                + ShareSettingsKeys.currentFamilyFolders()
+            // 家族の共有フォルダ（ADR-112・受信側）も同期対象に含める（受信 ON のときだけ）。
+            let familyRoots = ShareSettingsKeys.isReceiveEnabled()
+                ? ShareSettingsKeys.currentFamilyFolders() : []
+            return [DropboxSourceSettings.currentSourceFolder(), backupRoot] + familyRoots
         }
         // 送信側: 自分の共有ルートを表示から除外（原本と共有コピーの重複表示を防ぐ）。
         ShareVisibility.apply(to: dropboxStore)
