@@ -24,6 +24,8 @@ protocol BackupRunnerDelegate: AnyObject {
     /// 記録から差分判定を自己修復し**二重アップロードを防ぐ**（実障害: 台帳クリア＋
     /// 端末フォルダ移行の組み合わせで同一写真がルートと端末フォルダに重複した）。
     func runnerRecordedLocalIdentifiers() async -> Set<String>
+    /// バックアップを優先すべき localIdentifier（クラウド共有で待たれている写真・ADR-112）。
+    func runnerPriorityLocalIdentifiers() async -> Set<String>
 }
 
 // MARK: - Runner
@@ -234,7 +236,17 @@ final class BackupRunner {
             limit: limit
         )
         let pendingSet = Set(plan.pending)
-        let pending = assets.filter { pendingSet.contains($0.localIdentifier) }
+        var pending = assets.filter { pendingSet.contains($0.localIdentifier) }
+        // クラウド共有で待たれている写真を先頭へ（安定・相対順は維持）。共有セットの
+        // 「バックアップ待ち」が夜間バックアップの進行を何日も待たされるのを防ぐ（ADR-112）。
+        let priority = await delegate.runnerPriorityLocalIdentifiers()
+        if !priority.isEmpty {
+            let first = pending.filter { priority.contains($0.localIdentifier) }
+            if !first.isEmpty {
+                pending = first + pending.filter { !priority.contains($0.localIdentifier) }
+                addLog("Prioritizing \(first.count) photo(s) awaited by Cloud Sharing")
+            }
+        }
         addLog("Pending: \(pending.count) (already backed up: \(plan.skipped)\(limit > 0 ? ", limit \(limit)" : ""))")
         return (pending, plan.skipped, doneIDs)
     }

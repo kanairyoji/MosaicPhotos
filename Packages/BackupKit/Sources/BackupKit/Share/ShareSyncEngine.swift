@@ -157,6 +157,7 @@ public final class ShareSyncEngine {
         guard !isSyncing else { return }
         guard let token = try? await tokenProvider.freshAccessToken() else {
             lastError = "Not connected"
+            BackupLogger.info("Share sync: skipped (no token)")
             return
         }
         isSyncing = true
@@ -186,10 +187,12 @@ public final class ShareSyncEngine {
         // このセットをスキップする（実在不明のまま再コピーすると autorename で重複を作る）。
         guard await copier.createFolder(path: setFolder, token: token) else {
             lastError = "Could not prepare the shared folder"
+            BackupLogger.error("Share sync: create_folder failed — \(setFolder)")
             return
         }
         guard let listing = await copier.listFolder(path: setFolder, token: token) else {
             lastError = "Could not check the shared folder"
+            BackupLogger.error("Share sync: list_folder failed — \(setFolder)")
             return
         }
         let presentLower = Set(listing.filter { !$0.isFolder }.map(\.pathLower))
@@ -201,6 +204,9 @@ public final class ShareSyncEngine {
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
                                       remotePresentLower: presentLower)
 
+        BackupLogger.info("Share sync: '\(set.folderName)' items=\(items.count) "
+            + "copy=\(plan.copies.count) waitingBackup=\(plan.waitingBackup.count) "
+            + "present=\(presentLower.count)")
         if !plan.waitingBackup.isEmpty {
             await store.updateShareItems(setID: set.id, updates: plan.waitingBackup.map {
                 (refKey: $0, state: .waitingBackup, sourcePath: nil,

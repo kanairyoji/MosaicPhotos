@@ -390,6 +390,10 @@ extension BackupEngine: BackupRunnerDelegate {
         invalidateStatus()
     }
 
+    func runnerPriorityLocalIdentifiers() async -> Set<String> {
+        await store().shareWaitingLocalIdentifiers()
+    }
+
     func runnerRecordedLocalIdentifiers() async -> Set<String> {
         await store().recordedLocalIdentifiers()
     }

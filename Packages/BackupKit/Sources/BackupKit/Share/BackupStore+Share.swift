@@ -110,6 +110,20 @@ extension BackupStore {
         try? modelContext.save()
     }
 
+    /// 共有待ち（waitingBackup / pending）の端末写真 localIdentifier。
+    /// バックアップ隊列の優先対象（ADR-112 追記: 共有に選ばれた写真から先にバックアップする）。
+    public func shareWaitingLocalIdentifiers() -> Set<String> {
+        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>())) ?? []
+        var out: Set<String> = []
+        for item in items where item.refKey.hasPrefix("L-") {
+            let state = ShareItemState(rawValue: item.stateRaw) ?? .pending
+            if state == .waitingBackup || state == .pending {
+                out.insert(String(item.refKey.dropFirst(2)))
+            }
+        }
+        return out
+    }
+
     // MARK: - バックアップ記録の参照（"L-" 写真の実体解決）
 
     /// localIdentifier → バックアップ記録（パス・ハッシュ）。共有計画の入力。

@@ -723,6 +723,16 @@
         }
       }
     },
+    "Some photos are not backed up yet. They are prioritized in the next backup and will be shared right after.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだバックアップされていない写真があります。次回のバックアップで優先的に処理され、完了しだい共有されます。"
+          }
+        }
+      }
+    },
     "Swipe to remove a photo from this set (the copy in the shared folder is deleted; the original is kept).": {
       "localizations": {
         "ja": {

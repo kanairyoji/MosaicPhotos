@@ -106,14 +106,20 @@ public struct ShareHubView: View {
                     .foregroundStyle(.orange)
                     .font(.footnote)
             }
-            // 端末写真の共有はバックアップ実体からのコピーなので、バックアップ無効だと
-            // 「バックアップ待ち」のまま進まない。原因をその場で案内する（実フィードバック）。
-            if backupDestination == .disabled,
-               engine.sets.contains(where: { $0.waitingBackup > 0 }) {
-                Label(L("Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup)."),
-                      systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .font(.footnote)
+            // 端末写真の共有はバックアップ実体からのコピーなので、バックアップ前は進まない。
+            // 原因をその場で案内する（実フィードバック: 案内が無いと「動かない」ように見える）。
+            if engine.sets.contains(where: { $0.waitingBackup > 0 }) {
+                if backupDestination == .disabled {
+                    Label(L("Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup)."),
+                          systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.footnote)
+                } else {
+                    Label(L("Some photos are not backed up yet. They are prioritized in the next backup and will be shared right after."),
+                          systemImage: "clock")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
             }
         } footer: {
             Text(L("Sets also sync automatically after each backup. Copies are made on the Dropbox server, so no photo data is re-uploaded."))
