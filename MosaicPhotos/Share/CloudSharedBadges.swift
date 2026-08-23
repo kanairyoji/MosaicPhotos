@@ -23,15 +23,29 @@ struct CloudSharedBadges: Equatable {
         var badges = CloudSharedBadges()
         var legacyNames: Set<String> = []
 
+        // 現存する ID の集合（解決できたかの判定に使う）。
+        let liveGroupIDs = Set(peopleGroups.map(\.id))
+        let livePersonIDs = Set(people.map(\.clusterID))
+        let liveAlbumIDs = Set(albums.map(\.id))
+
         for set in sets {
             guard let key = set.sourceKey.flatMap(ShareSourceKey.init) else {
-                legacyNames.insert(set.name)
+                legacyNames.insert(set.name)   // 旧セット（sourceKey 追加前）
                 continue
             }
+            // ⚠️ 作成元が**現存しない**セットも名前一致にフォールバックする。
+            // 例: ピープルグループを解除して同じ名前で作り直すと UUID が変わるため、
+            // ID 照合だけではバッジが出ない（実フィードバック）。
             switch key {
-            case .group(let id):   badges.groups.insert(id)
-            case .person(let id):  badges.persons.insert(id)
-            case .album(let id):   badges.albums.insert(id)
+            case .group(let id):
+                if liveGroupIDs.contains(id) { badges.groups.insert(id) }
+                else { legacyNames.insert(set.name) }
+            case .person(let id):
+                if livePersonIDs.contains(id) { badges.persons.insert(id) }
+                else { legacyNames.insert(set.name) }
+            case .album(let id):
+                if liveAlbumIDs.contains(id) { badges.albums.insert(id) }
+                else { legacyNames.insert(set.name) }
             }
         }
         guard !legacyNames.isEmpty else { return badges }

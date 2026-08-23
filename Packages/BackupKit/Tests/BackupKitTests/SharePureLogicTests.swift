@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BackupKit
+import DropboxCore
 
 // MARK: - ShareNaming
 
@@ -494,5 +495,70 @@ struct ShareSidecarDateTests {
         }
         let decoded = ShareSidecar.decodeValidated(data)
         #expect(decoded?.entries[hash]?.faces?.first?.d == nil)
+    }
+}
+
+@Suite("共有セットのライフサイクル（実ユースケース）")
+@MainActor
+struct ShareSetLifecycleTests {
+
+    /// 反映を伴わない（ネットワークを触らない）エンジンを作る。
+    private func makeEngine() -> (ShareSyncEngine, BackupStore) {
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        // provide を OFF にしておくと syncNow は即 return するのでネットワークを触らない。
+        UserDefaults.standard.set(false, forKey: ShareSettingsKeys.provideEnabled)
+        let engine = ShareSyncEngine(tokenProvider: NeverTokenProvider(),
+                                     storeProvider: { store },
+                                     httpClient: NeverHTTPClient())
+        return (engine, store)
+    }
+
+    /// ⚠️ 実フィードバック: グループを解除して**同じ名前で作り直す**と ID が変わる。
+    /// このとき別セットを作ると Dropbox 上に「名前 2」ができ、同じ写真がもう一組
+    /// コピーされる（容量が倍）。既存セットを再利用して更新すること。
+    @Test("同じ名前で作り直しても新しいセットを増やさず、既存セットを更新する")
+    func recreatingGroupReusesExistingSet() async {
+        let (engine, store) = makeEngine()
+        let firstID = UUID(), secondID = UUID()
+
+        _ = await engine.createSet(name: "Group A", refKeys: ["L-a", "L-b"],
+                                   sourceKey: ShareSourceKey.group(firstID).encoded)
+        #expect(await store.allShareSets().count == 1)
+
+        // 解除 → 同名・同メンバーで作り直し（新しい UUID）。
+        _ = await engine.createSet(name: "Group A", refKeys: ["L-a", "L-b"],
+                                   sourceKey: ShareSourceKey.group(secondID).encoded)
+        let sets = await store.allShareSets()
+        #expect(sets.count == 1, "セットが増えた（Dropbox 上に重複フォルダができる）: \(sets.count)")
+        #expect(sets.first?.sourceKey == ShareSourceKey.group(secondID).encoded,
+                "作成元キーが新しい ID に更新されていない")
+        #expect(await store.shareItems(setID: sets[0].id).count == 2)
+    }
+
+    @Test("同じ作成元をもう一度共有すると、メンバーが今の内容へ入れ替わる")
+    func resharingUpdatesMembers() async {
+        let (engine, store) = makeEngine()
+        let groupID = UUID()
+        let key = ShareSourceKey.group(groupID).encoded
+
+        _ = await engine.createSet(name: "G", refKeys: ["L-a", "L-b"], sourceKey: key)
+        // メンバーが変わった状態で再共有（b が抜けて c が入る）。
+        _ = await engine.createSet(name: "G", refKeys: ["L-a", "L-c"], sourceKey: key)
+
+        let sets = await store.allShareSets()
+        #expect(sets.count == 1)
+        let keys = Set(await store.shareItems(setID: sets[0].id).map(\.refKey))
+        #expect(keys == ["L-a", "L-c"], "現在の内容に追従していない: \(keys)")
+    }
+}
+
+/// テスト用: トークンを返さない（ネットワーク経路へ進ませない）。
+private final class NeverTokenProvider: AccessTokenProvider, @unchecked Sendable {
+    func freshAccessToken() async throws -> String { throw URLError(.userAuthenticationRequired) }
+}
+
+private struct NeverHTTPClient: HTTPClient, Sendable {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        throw URLError(.notConnectedToInternet)
     }
 }

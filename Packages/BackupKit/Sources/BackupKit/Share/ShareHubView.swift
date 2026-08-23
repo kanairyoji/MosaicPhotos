@@ -335,6 +335,8 @@ struct ShareSetDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var items: [ShareItemLite] = []
     @State private var confirmingDelete = false
+    @State private var canRefresh = false
+    @State private var isRefreshing = false
 
     private var summary: ShareSyncEngine.SetSummary? {
         engine.sets.first { $0.id == setID }
@@ -368,6 +370,32 @@ struct ShareSetDetailView: View {
             }
 
             Section {
+                if canRefresh {
+                    Button {
+                        isRefreshing = true
+                        Task {
+                            await engine.refreshFromSource(setID: setID)
+                            await reload()
+                            isRefreshing = false
+                        }
+                    } label: {
+                        if isRefreshing {
+                            HStack { ProgressView(); Text(L("Updating…")) }
+                        } else {
+                            Text(L("Update to Current Contents"))
+                        }
+                    }
+                    .disabled(isRefreshing)
+                }
+            } footer: {
+                if canRefresh {
+                    Text(L("A shared set keeps the photos it had when you created it. Use this to match it to the album or person as it is now (photos removed from the source are also removed from the shared folder)."))
+                } else {
+                    Text(L("The album or person this set came from no longer exists, so it can't be updated automatically. The shared photos stay until you delete the set."))
+                }
+            }
+
+            Section {
                 Button(role: .destructive) {
                     confirmingDelete = true
                 } label: {
@@ -393,6 +421,7 @@ struct ShareSetDetailView: View {
     private func reload() async {
         let store = await engine.storeForViews()
         items = await store.shareItems(setID: setID)
+        if let summary { canRefresh = await engine.canRefreshFromSource(summary) }
     }
 
     private func displayName(for item: ShareItemLite) -> String {

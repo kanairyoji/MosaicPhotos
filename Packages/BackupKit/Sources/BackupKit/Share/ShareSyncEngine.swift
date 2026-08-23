@@ -10,6 +10,14 @@ public protocol ShareAnalysisSource: AnyObject {
         -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry])
 }
 
+/// 共有セットの**作成元**（人物・グループ・アルバム）の現在のメンバーを解決する seam。
+/// 実体はアプリ（Composition Root）が `PeopleEngine` / `AutoAlbumEngine` を見て実装する。
+/// 共有セットは作成時のスナップショットなので、これを使って「今の内容に更新」できる。
+public protocol ShareSourceResolver: AnyObject {
+    /// 作成元の現在の写真キー。作成元が既に無ければ nil（＝孤児セット）。
+    @MainActor func currentMembers(for key: ShareSourceKey) async -> [String]?
+}
+
 /// 家族共有（共有セット）のオーケストレーション（ADR-112）。
 ///
 /// 「共有はバックアップの射影」——選択した写真をサーバーサイドコピーで共有フォルダへ投影し、
@@ -59,6 +67,8 @@ public final class ShareSyncEngine {
     @ObservationIgnored private let storeProvider: @MainActor () async -> BackupStore
     /// 解析サイドカーの供給元（未設定なら写真のみ共有）。
     @ObservationIgnored public weak var analysisSource: ShareAnalysisSource?
+    /// 作成元の現在メンバー解決（未設定なら「今の内容に更新」を出さない）。
+    @ObservationIgnored public weak var sourceResolver: ShareSourceResolver?
 
     /// 1 回の copy_batch に載せる最大エントリ数。
     private static let copyChunkSize = 100
@@ -108,13 +118,32 @@ public final class ShareSyncEngine {
         await storeProvider().shareSetCount() > 0
     }
 
-    /// セットを作成して写真を登録し、即時反映を試みる。作成したセット ID を返す。
+    /// セットを作成（または**同じ対象／同名の既存セットを更新**）して即時反映を試みる。
+    ///
+    /// ⚠️ 同じ対象を 2 度共有したときに**別セットを作らない**。作ると Dropbox 上に
+    /// 「名前 2」フォルダができ、**同じ写真がもう一組コピーされる**（容量が倍になる）。
+    /// ピープルグループを解除して同じ名前で作り直すと ID が変わるため、ID だけでなく
+    /// **表示名でも既存セットを探す**（実フィードバック）。
     @discardableResult
     public func createSet(name: String, refKeys: [String], sourceKey: String? = nil) async -> UUID? {
         let store = await storeProvider()
-        let existing = await store.allShareSets().map(\.folderName)
-        let folderName = ShareNaming.sanitize(name, existing: existing)
         let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allSets = await store.allShareSets()
+
+        // 既存セットの再利用: 同じ作成元 → 同じ表示名、の順で探す。
+        let existingSet = allSets.first { $0.sourceKey != nil && $0.sourceKey == sourceKey }
+            ?? allSets.first { $0.name == displayName && !displayName.isEmpty }
+        if let existingSet {
+            let updated = await updateSetMembers(setID: existingSet.id, refKeys: refKeys,
+                                                 sourceKey: sourceKey, store: store)
+            BackupLogger.info("Share: reusing set '\(existingSet.folderName)' "
+                + "(+\(updated.added) / -\(updated.removed) items)")
+            await refresh()
+            scheduleSync()
+            return existingSet.id
+        }
+
+        let folderName = ShareNaming.sanitize(name, existing: allSets.map(\.folderName))
         let set = await store.createShareSet(
             name: displayName.isEmpty ? folderName : displayName, folderName: folderName,
             sourceKey: sourceKey)
@@ -125,6 +154,32 @@ public final class ShareSyncEngine {
         // ここで待つと作成シートが反映完了まで閉じられず UI が固まって見える（実フィードバック）。
         scheduleSync()
         return set.id
+    }
+
+    /// 既存セットのメンバーを **今の内容へ合わせる**（追加＋除外）。共有側の実ファイル削除は
+    /// 除外分だけ行い、残りは次の反映が面倒を見る。作成元キーも最新に更新する。
+    @discardableResult
+    public func updateSetMembers(setID: UUID, refKeys: [String], sourceKey: String? = nil,
+                                 store: BackupStore? = nil) async -> (added: Int, removed: Int) {
+        let resolvedStore: BackupStore
+        if let store { resolvedStore = store } else { resolvedStore = await storeProvider() }
+        let store = resolvedStore
+        let wanted = Set(refKeys)
+        let current = await store.shareItems(setID: setID)
+        let obsolete = current.filter { !wanted.contains($0.refKey) }
+
+        if !obsolete.isEmpty {
+            // 共有フォルダ側の実ファイルも消す（記録だけ消すと孤児ファイルが残る）。
+            let paths = obsolete.compactMap(\.sharedPath)
+            if !paths.isEmpty, let token = try? await tokenProvider.freshAccessToken() {
+                _ = await DropboxShareCopier(httpClient: httpClient)
+                    .deleteBatch(paths: paths, token: token)
+            }
+            await store.removeShareItems(setID: setID, refKeys: obsolete.map(\.refKey))
+        }
+        let added = await store.addShareItems(setID: setID, refKeys: refKeys)
+        if let sourceKey { await store.setShareSourceKey(setID: setID, sourceKey: sourceKey) }
+        return (added, obsolete.count)
     }
 
     /// 反映をバックグラウンドで開始する（進捗はハブの isSyncing / セット状態で見える）。
@@ -201,6 +256,29 @@ public final class ShareSyncEngine {
             try? await Task.sleep(nanoseconds: 100_000_000)
             waited += 100
         }
+    }
+
+    /// 作成元の**現在の内容**にセットを合わせ直す（追加＋除外＋反映）。
+    /// 戻り値は (追加, 除外)。作成元が解決できない（孤児セット）なら nil。
+    @discardableResult
+    public func refreshFromSource(setID: UUID) async -> (added: Int, removed: Int)? {
+        guard let resolver = sourceResolver else { return nil }
+        let store = await storeProvider()
+        guard let set = await store.allShareSets().first(where: { $0.id == setID }),
+              let key = set.sourceKey.flatMap(ShareSourceKey.init),
+              let members = await resolver.currentMembers(for: key) else { return nil }
+        let result = await updateSetMembers(setID: setID, refKeys: members, store: store)
+        BackupLogger.info("Share: refreshed '\(set.folderName)' from source (+\(result.added) / -\(result.removed))")
+        await refresh()
+        scheduleSync()
+        return result
+    }
+
+    /// このセットの作成元が現存するか（孤児セットの判定・UI 表示用）。
+    public func canRefreshFromSource(_ set: SetSummary) async -> Bool {
+        guard let resolver = sourceResolver,
+              let key = set.sourceKey.flatMap(ShareSourceKey.init) else { return false }
+        return await resolver.currentMembers(for: key) != nil
     }
 
     /// ビュー（セット詳細）からのアイテム読み出し用アクセサ。

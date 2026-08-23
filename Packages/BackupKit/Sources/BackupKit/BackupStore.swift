@@ -32,6 +32,15 @@ public actor BackupStore {
         }.value
     }
 
+    /// テスト用のインメモリコンテナ（本番コンテナと同じスキーマ・ディスクに触れない）。
+    public static func inMemoryContainerForTesting() -> ModelContainer {
+        let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
+                             ShareSet.self, ShareItem.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        // テスト専用なので失敗は致命的（本番の自己修復とは別扱い）。
+        return try! ModelContainer(for: schema, configurations: [config])
+    }
+
     /// 名前付き永続コンテナ（自己修復）。壊れた/非互換ストアは削除して再構築し、
     /// それでも駄目ならインメモリ（起動を止めない・記録は 409→hash 照合で自然復元）。
     private static func makeContainer() -> ModelContainer {

@@ -26,6 +26,8 @@ final class HomeStores {
     let shareEngine: ShareSyncEngine
     /// 共有サイドカーの解析供給アダプタ（shareEngine.analysisSource は weak のためここで保持）。
     let shareAnalysisAdapter: ShareAnalysisAdapter
+    /// 作成元メンバーの解決役（sourceResolver は weak のためここで保持）。
+    let shareSourceResolver: ShareSourceMemberResolver
     /// 家族フォルダのサイドカー取り込み（受信側）。
     let shareImporter: SharedAnalysisImporter
     /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
@@ -36,6 +38,7 @@ final class HomeStores {
                  peopleEngine: PeopleEngine,
                  placeScanner: PlaceScanner, autoAlbumEngine: AutoAlbumEngine,
                  shareEngine: ShareSyncEngine, shareAnalysisAdapter: ShareAnalysisAdapter,
+                 shareSourceResolver: ShareSourceMemberResolver,
                  shareImporter: SharedAnalysisImporter) {
         self.dropboxStore = dropboxStore
         self.mergedStore = mergedStore
@@ -46,6 +49,7 @@ final class HomeStores {
         self.autoAlbumEngine = autoAlbumEngine
         self.shareEngine = shareEngine
         self.shareAnalysisAdapter = shareAnalysisAdapter
+        self.shareSourceResolver = shareSourceResolver
         self.shareImporter = shareImporter
     }
 
@@ -109,6 +113,9 @@ final class HomeStores {
         let shareAnalysisAdapter = ShareAnalysisAdapter(autoAlbumEngine: autoAlbumEngine,
                                                         peopleEngine: peopleEngine)
         shareEngine.analysisSource = shareAnalysisAdapter
+        let shareSourceResolver = ShareSourceMemberResolver(peopleEngine: peopleEngine,
+                                                           autoAlbumEngine: autoAlbumEngine)
+        shareEngine.sourceResolver = shareSourceResolver
         let shareImporter = SharedAnalysisImporter(dropboxStore: dropboxStore,
                                                    autoAlbumEngine: autoAlbumEngine,
                                                    peopleEngine: peopleEngine)
@@ -118,6 +125,7 @@ final class HomeStores {
                           peopleEngine: peopleEngine,
                           placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
                           shareEngine: shareEngine, shareAnalysisAdapter: shareAnalysisAdapter,
+                          shareSourceResolver: shareSourceResolver,
                           shareImporter: shareImporter)
     }
 }

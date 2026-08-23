@@ -57,6 +57,36 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
     }
 }
 
+// MARK: - 送信側: 作成元（人物・グループ・アルバム）の現在メンバー解決
+
+/// 共有セットを「今の内容」に合わせ直すための解決役（ADR-112）。
+/// BackupKit は人物・アルバムを知らないので、アプリ側がこの seam を埋める。
+final class ShareSourceMemberResolver: ShareSourceResolver {
+    private let peopleEngine: PeopleEngine
+    private let autoAlbumEngine: AutoAlbumEngine
+
+    init(peopleEngine: PeopleEngine, autoAlbumEngine: AutoAlbumEngine) {
+        self.peopleEngine = peopleEngine
+        self.autoAlbumEngine = autoAlbumEngine
+    }
+
+    func currentMembers(for key: ShareSourceKey) async -> [String]? {
+        switch key {
+        case .group(let id):
+            // 現存するグループだけ解決する（解除済みなら nil＝孤児セット）。
+            guard peopleEngine.peopleGroups.contains(where: { $0.id == id }) else { return nil }
+            return await peopleEngine.memberRefKeys(forGroup: id)
+        case .person(let clusterID):
+            guard peopleEngine.people.contains(where: { $0.clusterID == clusterID }) else { return nil }
+            return await peopleEngine.memberRefKeys(forPerson: clusterID)
+        case .album(let id):
+            let all = autoAlbumEngine.albums + autoAlbumEngine.aiAlbums + autoAlbumEngine.pathAlbums
+            guard let album = all.first(where: { $0.id == id }) else { return nil }
+            return album.memberRefs
+        }
+    }
+}
+
 // MARK: - 受信側: サイドカーの取り込み
 
 /// 家族の共有フォルダから解析サイドカーを取得し、受信側の各ストア
