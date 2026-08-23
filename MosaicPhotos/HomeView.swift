@@ -27,6 +27,8 @@ struct HomeView: View {
     @State var showingFaceReview = false
     @State var showingAllPeople = false
     @State var showingBatchReview = false
+    /// 確認ボタンの方式選択（一人ずつ / まとめて）。
+    @State var showingReviewChooser = false
     /// 場所（市区町村）スキャナー。ローカル＋Dropbox の位置情報をまとめてグルーピングする。
     @State var placeScanner: PlaceScanner
     /// 時間＋場所の自動アルバム生成エンジン（独立モジュール AutoAlbumCore）。
@@ -185,6 +187,13 @@ struct HomeView: View {
                 SharedAlbumDiscovery.albums(itemPaths: items.map(\.path), familyRoots: roots)
             }.value
             if albums != sharedAlbums { sharedAlbums = albums }
+        }
+        // 確認方式の選択（一人ずつ＝1対1カード / まとめて＝類似クラスタの一括確認）。
+        .confirmationDialog(L("Review People"), isPresented: $showingReviewChooser,
+                            titleVisibility: .visible) {
+            Button(L("One by one")) { showingFaceReview = true }
+            Button(L("All at once")) { showingBatchReview = true }
+            Button(L("Cancel"), role: .cancel) {}
         }
         .sheet(isPresented: $showingFaceReview) {
             FaceReviewView(peopleEngine: peopleEngine)

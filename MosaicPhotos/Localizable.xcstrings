@@ -359,6 +359,16 @@
         }
       }
     },
+    "All at once": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめて確認"
+          }
+        }
+      }
+    },
     "Also on battery (Wi-Fi)": {
       "extractionState": "stale",
       "localizations": {
@@ -1614,6 +1624,16 @@
         }
       }
     },
+    "Groups": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループ"
+          }
+        }
+      }
+    },
     "Groups collect several people into one album (a family, a team, an organization). Select at least 2 people.": {
       "localizations": {
         "ja": {
@@ -2522,6 +2542,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "オンデバイスの意味検索と表示タグ（Core ML モデル）"
+          }
+        }
+      }
+    },
+    "One by one": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一人ずつ確認"
           }
         }
       }

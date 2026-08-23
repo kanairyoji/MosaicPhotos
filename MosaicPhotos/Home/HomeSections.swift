@@ -193,26 +193,11 @@ extension HomeView {
                     if peopleEngine.isScanning {
                         BusySpinner().scaleEffect(0.7)   // ADR-96
                     }
-                    // 分裂が多いライブラリでは 1 対 1 の確認では追いつかないので、
-                    // 「まとめて確認」を先に出す（ADR-68）。文言つきカプセルは「確認」だけに絞り、
-                    // こちらはアイコンのみ（3 つ並ぶとヘッダー幅が尽きてタイトルが潰れる・実フィードバック）。
-                    if peopleEngine.people.count >= PeopleCarousel.carouselLimit {
-                        Button {
-                            showingBatchReview = true
-                        } label: {
-                            Image(systemName: "person.2.badge.plus")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Color.accentColor.opacity(0.15), in: Capsule())
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        .accessibilityLabel(L("Merge"))
-                        .buttonStyle(.plain)
-                    }
+                    // 確認は 1 ボタンに統合し、押した先で「一人ずつ / まとめて」を選ぶ
+                    // （実フィードバック: ボタン 2 種は分かりにくい・ヘッダー幅も苦しい）。
                     if peopleEngine.people.count >= 1 {
                         Button {
-                            showingFaceReview = true
+                            showingReviewChooser = true
                         } label: {
                             Label(L("Review"), systemImage: "checkmark.seal.fill")
                                 .font(.caption.weight(.semibold))
@@ -226,20 +211,21 @@ extension HomeView {
                         .buttonStyle(.plain)
                     }
                     // ピープルグループ（家族・組織など複数人の束）を作る。2 人以上いるときだけ。
-                    // アイコンのみ（幅対策・上と同じ）。※ L("Group") は束ね機能の訳「束ねる」と
-                    // 衝突するため使わない。
+                    // アイコンのみだと機能が伝わらない（実フィードバック: クラウド共有と誤認）ため
+                    // 文字を併記する。※ L("Group") は束ね機能の訳「束ねる」と衝突するため別キー。
                     if peopleEngine.people.count >= 2 {
                         Button {
                             showingGroupCreation = true
                         } label: {
-                            Image(systemName: "person.3")
+                            Label(L("Groups"), systemImage: "person.3")
                                 .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 8)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(Color.accentColor.opacity(0.15), in: Capsule())
                                 .foregroundStyle(Color.accentColor)
                         }
-                        .accessibilityLabel(L("New People Group"))
                         .buttonStyle(.plain)
                     }
                 }
