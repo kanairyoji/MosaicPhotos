@@ -73,6 +73,28 @@ extension BackupStore {
         try? modelContext.save()
     }
 
+    /// フォルダ名を変更し、配下アイテムの `sharedPath` も新しいパスへ張り替える。
+    /// Dropbox 側の move は呼び出し側の責務（成功したときだけここへ来る）。
+    /// パス接頭辞の置換なので、実体の再コピーは発生しない。
+    public func renameShareSet(setID: UUID, folderName: String,
+                               oldPathPrefix: String, newPathPrefix: String) {
+        let id = setID
+        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
+            predicate: #Predicate { $0.id == id })).first else { return }
+        set.folderName = folderName
+        // サイドカーは新フォルダで作り直す（チェックサム一致で更新を飛ばさないよう捨てる）。
+        set.sidecarChecksum = nil
+        let oldLower = oldPathPrefix.lowercased()
+        let newLower = newPathPrefix.lowercased()
+        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
+            predicate: #Predicate { $0.setID == id }))) ?? []
+        for item in items {
+            guard let path = item.sharedPath?.lowercased(), path.hasPrefix(oldLower) else { continue }
+            item.sharedPath = newLower + String(path.dropFirst(oldLower.count))
+        }
+        try? modelContext.save()
+    }
+
     public func setShareSidecarChecksum(setID: UUID, checksum: String?) {
         let id = setID
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(

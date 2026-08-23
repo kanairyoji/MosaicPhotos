@@ -11,6 +11,7 @@ struct DropboxShareCopier {
     private static let createFolderURL = "https://api.dropboxapi.com/2/files/create_folder_v2"
     private static let copyBatchURL = "https://api.dropboxapi.com/2/files/copy_batch_v2"
     private static let copyBatchCheckURL = "https://api.dropboxapi.com/2/files/copy_batch/check_v2"
+    private static let moveURL = "https://api.dropboxapi.com/2/files/move_v2"
     private static let deleteBatchURL = "https://api.dropboxapi.com/2/files/delete_batch"
     private static let deleteBatchCheckURL = "https://api.dropboxapi.com/2/files/delete_batch/check"
     private static let listFolderURL = "https://api.dropboxapi.com/2/files/list_folder"
@@ -39,6 +40,38 @@ struct DropboxShareCopier {
         let rev: String?
         let contentHash: String?
         let isFolder: Bool
+    }
+
+    // MARK: - フォルダの移動（改名）
+
+    enum MoveOutcome: Equatable {
+        /// 移動できた。
+        case moved
+        /// 移動元が無い（まだ 1 度も反映していない等）＝記録だけ直せばよい。
+        case sourceMissing
+        /// 通信断・移動先が既にある等。次回に持ち越す。
+        case failed
+    }
+
+    /// フォルダを改名する（サーバーサイド move。実体の転送は起きない）。
+    /// `autorename` は使わない——連番フォルダができると「どちらが正か」が分からなくなる。
+    func moveFolder(from: String, to: String, token: String) async -> MoveOutcome {
+        struct Body: Encodable {
+            let from_path: String
+            let to_path: String
+            let autorename = false
+        }
+        var req = Self.rpcRequest(url: Self.moveURL, token: token)
+        guard let body = try? JSONEncoder().encode(Body(from_path: from, to_path: to))
+        else { return .failed }
+        req.httpBody = body
+        guard let (data, resp) = try? await httpClient.data(for: req),
+              let status = (resp as? HTTPURLResponse)?.statusCode else { return .failed }
+        if status == 200 { return .moved }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        if status == 409, text.contains("from_lookup/not_found") { return .sourceMissing }
+        BackupLogger.error("ShareCopier: move failed (\(status)) — \(from) → \(to)")
+        return .failed
     }
 
     // MARK: - フォルダ作成

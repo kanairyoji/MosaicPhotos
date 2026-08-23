@@ -10,13 +10,16 @@ public enum ShareSettingsKeys {
     /// OFF にすると共有メニューが消え、既存セットの反映も止まる。
     public static let provideEnabled = "shareProvideEnabled"
 
-    public static func isReceiveEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: receiveEnabled) == nil
-            ? true : UserDefaults.standard.bool(forKey: receiveEnabled)
+    /// ⚠️ 読み出しは `defaults` を引数に取る（既定 `.standard`）。テストが**自分専用の
+    /// UserDefaults スイート**を渡せるようにするため——共有の設定はプロセス全体で 1 つなので、
+    /// 並列実行するテストが互いのフラグを踏んで落ちる（実際に踏んだ）。
+    public static func isReceiveEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: receiveEnabled) == nil
+            ? true : defaults.bool(forKey: receiveEnabled)
     }
-    public static func isProvideEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: provideEnabled) == nil
-            ? true : UserDefaults.standard.bool(forKey: provideEnabled)
+    public static func isProvideEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: provideEnabled) == nil
+            ? true : defaults.bool(forKey: provideEnabled)
     }
 
     /// 自分が共有を書き出すルートフォルダ（既定 `/MosaicShare`）。
@@ -32,8 +35,8 @@ public enum ShareSettingsKeys {
     public static let importedSidecarRevs = "shareImportedSidecarRevs"
 
     /// 現在の共有ルート（正規化済み）。
-    public static func currentShareRoot() -> String {
-        let raw = UserDefaults.standard.string(forKey: shareRootFolder) ?? defaultShareRootFolder
+    public static func currentShareRoot(_ defaults: UserDefaults = .standard) -> String {
+        let raw = defaults.string(forKey: shareRootFolder) ?? defaultShareRootFolder
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != "/" else { return defaultShareRootFolder }
         var s = trimmed.hasPrefix("/") ? trimmed : "/" + trimmed

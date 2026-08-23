@@ -511,10 +511,12 @@ struct ShareSetLifecycleTests {
     private func makeEngine() -> (ShareSyncEngine, BackupStore) {
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         // provide を OFF にしておくと syncNow は即 return するのでネットワークを触らない。
-        UserDefaults.standard.set(false, forKey: ShareSettingsKeys.provideEnabled)
+        // ⚠️ `.standard` ではなく専用スイート——並列に走る反映テストの provide を消してしまう。
+        let defaults = UserDefaults(suiteName: "share-lifecycle-\(UUID().uuidString)") ?? .standard
+        defaults.set(false, forKey: ShareSettingsKeys.provideEnabled)
         let engine = ShareSyncEngine(tokenProvider: NeverTokenProvider(),
                                      storeProvider: { store },
-                                     httpClient: NeverHTTPClient())
+                                     httpClient: NeverHTTPClient(), defaults: defaults)
         return (engine, store)
     }
 

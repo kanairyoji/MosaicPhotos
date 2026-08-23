@@ -65,6 +65,8 @@ public final class ShareSyncEngine {
     @ObservationIgnored private let tokenProvider: AccessTokenProvider
     @ObservationIgnored private let httpClient: HTTPClient
     @ObservationIgnored private let storeProvider: @MainActor () async -> BackupStore
+    /// 設定の読み出し先。既定は `.standard`、テストは専用スイートを渡して独立させる。
+    @ObservationIgnored private let defaults: UserDefaults
     /// 解析サイドカーの供給元（未設定なら写真のみ共有）。
     @ObservationIgnored public weak var analysisSource: ShareAnalysisSource?
     /// 作成元の現在メンバー解決（未設定なら「今の内容に更新」を出さない）。
@@ -91,10 +93,12 @@ public final class ShareSyncEngine {
 
     public init(tokenProvider: AccessTokenProvider,
                 storeProvider: @escaping @MainActor () async -> BackupStore,
-                httpClient: HTTPClient = URLSessionHTTPClient()) {
+                httpClient: HTTPClient = URLSessionHTTPClient(),
+                defaults: UserDefaults = .standard) {
         self.tokenProvider = tokenProvider
         self.storeProvider = storeProvider
         self.httpClient = httpClient
+        self.defaults = defaults
     }
 
     // MARK: - セット操作（UI から呼ぶ）
@@ -236,7 +240,7 @@ public final class ShareSyncEngine {
         // ⚠️ 不正なフォルダ名（空・区切り・親参照）では**絶対に削除しない**。
         // 空名を許すと共有ルートごと消える。記録だけ消して手動対応に委ねる。
         guard let folder = SharePlanning.setFolderPath(
-                shareRoot: ShareSettingsKeys.currentShareRoot(), folderName: set.folderName,
+                shareRoot: ShareSettingsKeys.currentShareRoot(defaults), folderName: set.folderName,
                 deviceFolder: BackupDeviceIdentity.currentFolderName()) else {
             BackupLogger.error("Share: refusing to delete set with invalid folder name")
             lastError = .invalidFolderName
@@ -314,7 +318,7 @@ public final class ShareSyncEngine {
     /// バックアップ完走後・手動「今すぐ反映」・夜間枠から呼ばれる。
     public func syncNow() async {
         // 「提供する」が OFF なら反映しない（受信・バックアップとは独立・ADR-112 追記）。
-        guard ShareSettingsKeys.isProvideEnabled() else { return }
+        guard ShareSettingsKeys.isProvideEnabled(defaults) else { return }
         // ⚠️ フラグは**最初の await より前**に立てる。`@MainActor` でも await で実行が移るため、
         // トークン取得を挟んでからだと 2 本が同時にガードを通過する（TOCTOU・レビュー指摘）。
         // 走行中に来た要求は捨てずに 1 回だけ再走させる（捨てると「共有したのに反映されない」）。
@@ -339,7 +343,7 @@ public final class ShareSyncEngine {
 
         let store = await storeProvider()
         let copier = makeCopier()
-        let shareRoot = ShareSettingsKeys.currentShareRoot()
+        let shareRoot = ShareSettingsKeys.currentShareRoot(defaults)
 
         for set in await store.allShareSets() {
             // 途中でユーザーが削除操作を始めたら、そこで止める（続きは次回の反映で拾う）。
@@ -347,7 +351,12 @@ public final class ShareSyncEngine {
                 needsAnotherPass = true
                 break
             }
-            await sync(set: set, shareRoot: shareRoot, store: store,
+            // 接頭辞（Album-/Person-/People-）が付く前に作ったセットは、ここで**改名**して
+            // 追いつかせる（作り直させるとクラウド上の写真をコピーし直すことになる）。
+            let current = await migrateFolderNameIfNeeded(set: set, shareRoot: shareRoot,
+                                                          store: store, copier: copier,
+                                                          token: token)
+            await sync(set: current, shareRoot: shareRoot, store: store,
                        copier: copier, token: token)
             await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映（変化なしなら無通知）
         }
@@ -359,6 +368,45 @@ public final class ShareSyncEngine {
             needsAnotherPass = false
             isSyncing = false
             await syncNow()
+        }
+    }
+
+    /// 種類接頭辞が付いていない既存セットを、Dropbox 側の**フォルダ改名**で移行する。
+    ///
+    /// サーバーサイド move なので実体の転送は起きない（配下の写真もそのまま付いてくる）。
+    /// 失敗（通信断・移動先が既にある）は次回の反映に持ち越し、記録は元のままにする——
+    /// 記録だけ先に進めると、クラウド上の実体を見失って全部コピーし直す事故になる。
+    ///
+    /// - Returns: 移行後（または元のまま）のセット。
+    private func migrateFolderNameIfNeeded(set: ShareSetLite, shareRoot: String,
+                                           store: BackupStore, copier: DropboxShareCopier,
+                                           token: String) async -> ShareSetLite {
+        let kind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
+        let allNames = await store.allShareSets().map(\.folderName)
+        guard let newName = ShareNaming.migratedFolderName(current: set.folderName,
+                                                           name: set.name, kind: kind,
+                                                           existing: allNames),
+              let oldPath = SharePlanning.setFolderPath(
+                shareRoot: shareRoot, folderName: set.folderName,
+                deviceFolder: BackupDeviceIdentity.currentFolderName()),
+              let newPath = SharePlanning.setFolderPath(
+                shareRoot: shareRoot, folderName: newName,
+                deviceFolder: BackupDeviceIdentity.currentFolderName())
+        else { return set }
+
+        let outcome = await copier.moveFolder(from: oldPath, to: newPath, token: token)
+        switch outcome {
+        case .failed:
+            BackupLogger.error("Share: rename '\(set.folderName)' → '\(newName)' failed — retrying next run")
+            return set
+        case .moved, .sourceMissing:
+            await store.renameShareSet(setID: set.id, folderName: newName,
+                                       oldPathPrefix: oldPath, newPathPrefix: newPath)
+            BackupLogger.info("Share: renamed '\(set.folderName)' → '\(newName)'"
+                + (outcome == .sourceMissing ? " (remote folder not created yet)" : ""))
+            return ShareSetLite(id: set.id, name: set.name, folderName: newName,
+                                createdAt: set.createdAt, sidecarChecksum: nil,
+                                sourceKey: set.sourceKey)
         }
     }
 

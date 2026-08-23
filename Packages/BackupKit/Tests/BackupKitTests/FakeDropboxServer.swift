@@ -78,6 +78,7 @@ actor FakeDropboxServer: HTTPClient {
         if url.contains("copy_batch/check_v2") || url.contains("delete_batch/check") {
             return handleCheck(body, resp)
         }
+        if url.contains("files/move_v2")  { return handleMove(body, resp) }
         if url.contains("copy_batch_v2") { return handleCopyBatch(body, resp) }
         if url.contains("delete_batch")  { return handleDeleteBatch(body, resp) }
         if url.contains("list_folder")   { return handleListFolder(body, resp) }
@@ -99,6 +100,28 @@ actor FakeDropboxServer: HTTPClient {
         if files[key] != nil { return resp(409, #"{"error_summary":"path/conflict/folder/"}"#) }
         files[key] = Entry(contentHash: "", isFolder: true, rev: "d\(files.count)")
         return resp(200, "{}")
+    }
+
+    /// `files/move_v2`。フォルダ移動は配下ごと動く（本番と同じ）。
+    private func handleMove(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
+        -> (Data, URLResponse) {
+        struct Body: Decodable { let from_path: String; let to_path: String }
+        guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
+            return resp(400, "{}")
+        }
+        let from = parsed.from_path.lowercased()
+        let to = parsed.to_path.lowercased()
+        guard files[from] != nil else {
+            return resp(409, #"{"error_summary":"from_lookup/not_found/"}"#)
+        }
+        guard files[to] == nil else {
+            return resp(409, #"{"error_summary":"to/conflict/folder/"}"#)
+        }
+        for (path, entry) in files where path == from || path.hasPrefix(from + "/") {
+            files.removeValue(forKey: path)
+            files[to + String(path.dropFirst(from.count))] = entry
+        }
+        return resp(200, #"{"metadata":{"path_lower":"\#(to)"}}"#)
     }
 
     private func handleCopyBatch(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))

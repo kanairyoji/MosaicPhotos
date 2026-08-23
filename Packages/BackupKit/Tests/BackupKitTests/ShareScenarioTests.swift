@@ -3,6 +3,13 @@ import Testing
 @testable import BackupKit
 import DropboxCore
 
+/// テストごとに独立した設定スイート（`.standard` を共有しない）。
+/// クラウド共有の設定はプロセスに 1 つなので、並列に走る他テストが provide を OFF にすると
+/// 反映が丸ごと空振りする（実際に踏んだ・原因が分かりにくい落ち方をする）。
+func isolatedShareDefaults() -> UserDefaults {
+    UserDefaults(suiteName: "share-tests-\(UUID().uuidString)") ?? .standard
+}
+
 /// クラウド共有の**シナリオテスト**（状態を持つ偽 Dropbox に対するエンドツーエンド検証）。
 ///
 /// 純ロジックのテスト（`SharePureLogicTests`）が「1 回の計画が正しいか」を見るのに対し、
@@ -14,11 +21,15 @@ struct ShareScenarioTests {
 
     private static let shareRoot = "/MosaicShare"
 
+
     /// 反映エンジン一式を組む。バックアップ済み写真を `backup` に与える。
     private func makeStack(backup: [(id: String, path: String, hash: String)])
         async -> (engine: ShareSyncEngine, store: BackupStore, server: FakeDropboxServer) {
-        UserDefaults.standard.set(true, forKey: ShareSettingsKeys.provideEnabled)
-        UserDefaults.standard.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        // ⚠️ `.standard` は使わない。共有の設定はプロセスに 1 つなので、並列に走る他テストが
+        // provide を OFF にすると反映が丸ごと空振りする（実際に踏んだ・原因が分かりにくい）。
+        let defaults = isolatedShareDefaults()
+        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
+        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
 
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
@@ -30,7 +41,8 @@ struct ShareScenarioTests {
                                      people: [], albums: [], isFavorite: false)
         }
         let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
-                                     storeProvider: { store }, httpClient: server)
+                                     storeProvider: { store }, httpClient: server,
+                                     defaults: defaults)
         // ジョブのポーリングはテストでは即座に打ち切る（本番は 0.5s × 480＝4 分）。
         engine.pollIntervalNs = 1_000_000     // 1ms
         engine.maxPollAttempts = 3
@@ -75,6 +87,62 @@ struct ShareScenarioTests {
         await engine.syncNow()
         let afterMore = await sharedFiles(server)
         #expect(afterMore == afterFirst, "反映のたびにファイルが増減する: \(afterMore)")
+    }
+
+    /// 接頭辞を入れる前に作った共有セットは、フォルダ名が `Trip` のまま残る。
+    /// **作り直させずに**改名で追いつかせる（写真の再コピーは起きてはならない）。
+    @Test("接頭辞なしの既存セットは反映時に改名される（写真は再コピーしない）")
+    func legacySetIsRenamedInPlace() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
+        let sourceKey = ShareSourceKey.group(UUID()).encoded
+
+        // 接頭辞が付く前の状態を再現（フォルダ名 = 素のセット名）。
+        let set = await store.createShareSet(name: "Group", folderName: "Group",
+                                             sourceKey: sourceKey)
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a", "L-b"])
+        await engine.syncNow()
+
+        let old = SharePlanning.setFolderPath(
+            shareRoot: Self.shareRoot, folderName: "Group",
+            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+        let new = setFolder("Group", kind: .group)
+        let files = await sharedFiles(server)
+        #expect(files.count == 2, "改名で写真が増減した: \(files)")
+        #expect(files.allSatisfy { $0.hasPrefix(new + "/") },
+                "新フォルダへ移動していない: \(files)")
+        #expect(!files.contains { $0.hasPrefix(old + "/") }, "旧フォルダが残っている: \(files)")
+
+        // 記録も張り替わっているので、次の反映で再コピーが起きない。
+        await engine.syncNow()
+        #expect(await sharedFiles(server) == files, "改名後の反映でファイルが変わった")
+        #expect(await store.allShareSets().first?.folderName == "People-Group")
+    }
+
+    /// 改名できない回（通信断・移動先が既にある）に記録だけ進めると、クラウド上の実体を
+    /// 見失って全部コピーし直す。**失敗したら元のフォルダのまま使い続ける**こと。
+    @Test("改名に失敗した回は元のフォルダ名のまま反映を続ける")
+    func failedRenameKeepsOldFolder() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA")])
+        let sourceKey = ShareSourceKey.group(UUID()).encoded
+        let set = await store.createShareSet(name: "Group", folderName: "Group",
+                                             sourceKey: sourceKey)
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
+
+        // 旧フォルダは反映済み、移動先も既にある状態（move は to/conflict で失敗する）。
+        let oldFolder = SharePlanning.setFolderPath(
+            shareRoot: Self.shareRoot, folderName: "Group",
+            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+        await server.seed(oldFolder, hash: "", isFolder: true)
+        await server.seed(setFolder("Group", kind: .group), hash: "", isFolder: true)
+        await engine.syncNow()
+
+        #expect(await store.allShareSets().first?.folderName == "Group",
+                "改名に失敗したのに記録だけ進んだ")
+        let files = await sharedFiles(server)
+        #expect(!files.isEmpty && files.allSatisfy { $0.hasPrefix(oldFolder + "/") },
+                "旧フォルダ配下に反映されていない: \(files)")
     }
 
     // MARK: - 実障害の再現
@@ -332,11 +400,12 @@ struct ShareMultiUserTests {
     /// AI アルバムとピープルグループに同じ名前が付いていても、別セットとして扱う。
     @Test("同名でも種類が違えば別セットになる（AI アルバム vs ピープルグループ）")
     func sameNameDifferentKindsAreSeparateSets() async {
-        UserDefaults.standard.set(false, forKey: ShareSettingsKeys.provideEnabled)
+        let defaults = isolatedShareDefaults()
+        defaults.set(false, forKey: ShareSettingsKeys.provideEnabled)
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
                                      storeProvider: { store },
-                                     httpClient: FakeDropboxServer())
+                                     httpClient: FakeDropboxServer(), defaults: defaults)
 
         _ = await engine.createSet(name: "Okinawa", refKeys: ["L-a"],
                                    sourceKey: ShareSourceKey.album("album-1").encoded)
@@ -351,11 +420,12 @@ struct ShareMultiUserTests {
 
     @Test("同じ種類・同じ名前なら再利用する（作り直しの継続）")
     func sameKindSameNameIsReused() async {
-        UserDefaults.standard.set(false, forKey: ShareSettingsKeys.provideEnabled)
+        let defaults = isolatedShareDefaults()
+        defaults.set(false, forKey: ShareSettingsKeys.provideEnabled)
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
                                      storeProvider: { store },
-                                     httpClient: FakeDropboxServer())
+                                     httpClient: FakeDropboxServer(), defaults: defaults)
 
         _ = await engine.createSet(name: "Family", refKeys: ["L-a"],
                                    sourceKey: ShareSourceKey.group(UUID()).encoded)

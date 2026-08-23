@@ -29,6 +29,28 @@ public enum ShareNaming {
         return sanitize(prefixed, existing: existing)
     }
 
+    /// 既存セットの**接頭辞なしフォルダ名**を、種類つきの名前へ移行する（純ロジック）。
+    ///
+    /// 接頭辞は作成時にしか付かないので、この機能より前に作った共有セットは
+    /// `沖縄旅行` のままになる。作り直しを強いるとクラウド上の写真をコピーし直すことに
+    /// なるため、**フォルダ名の変更（サーバーサイド move）で移行する**。
+    ///
+    /// - Returns: 移行後のフォルダ名。移行不要（すでに接頭辞つき・種類不明・名前が空）は nil。
+    public static func migratedFolderName(current: String, name: String,
+                                          kind: ShareSourceKey.Kind?,
+                                          existing: [String]) -> String? {
+        guard let kind else { return nil }
+        let currentTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentTrimmed.isEmpty else { return nil }
+        // すでに何らかの種類接頭辞が付いていれば触らない（ユーザーが手で付けた場合も含む）。
+        let known = [ShareSourceKey.Kind.album, .person, .group].map { prefix(for: $0).lowercased() }
+        guard !known.contains(where: { currentTrimmed.lowercased().hasPrefix($0) }) else { return nil }
+        // 自分自身は衝突候補から外す（自分と衝突して連番が付くのを防ぐ）。
+        let others = existing.filter { $0.lowercased() != currentTrimmed.lowercased() }
+        let proposed = folderName(name, kind: kind, existing: others)
+        return proposed == currentTrimmed ? nil : proposed
+    }
+
     /// セット名 → フォルダ名。空になった場合は "Shared" にフォールバック。
     /// `existing`（小文字比較）と衝突したら " 2", " 3", … を付ける。
     public static func sanitize(_ name: String, existing: [String] = []) -> String {
