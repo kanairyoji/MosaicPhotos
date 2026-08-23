@@ -24,6 +24,17 @@ public enum ShareSourceKey: Equatable, Sendable {
         }
     }
 
+    /// 種類（album / person / group）。**同名でも種類が違えば別物**として扱うために使う。
+    public enum Kind: String, Sendable { case album, person, group }
+
+    public var kind: Kind {
+        switch self {
+        case .album:  return .album
+        case .person: return .person
+        case .group:  return .group
+        }
+    }
+
     public init?(_ raw: String) {
         if raw.hasPrefix(Self.groupPrefix) {
             guard let uuid = UUID(uuidString: String(raw.dropFirst(Self.groupPrefix.count))) else { return nil }

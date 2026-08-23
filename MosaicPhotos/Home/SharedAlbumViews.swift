@@ -22,7 +22,10 @@ struct SharedAlbumsCarousel: View {
                     Button { onSelect(album) } label: {
                         LibraryCard(
                             title: album.name,
-                            subtitle: String(format: L("%d photos"), album.photoCount),
+                            // 同じ共有フォルダを複数人が使うと同名セットが並ぶので、
+                            // 提供者（端末フォルダ名）が分かるときは枚数と一緒に出す。
+                            subtitle: album.providerName.map { "\($0) · \(album.photoCount)" }
+                                ?? String(format: L("%d photos"), album.photoCount),
                             placeholderSystemImage: "icloud.and.arrow.down",
                             coverKey: album.id
                         ) {

@@ -411,13 +411,18 @@ struct SharedAlbumDiscoveryTests {
         #expect(albums.first?.photoCount == 2)
     }
 
-    @Test("複数ルート・大文字小文字の違いを吸収し、深い階層もセット単位に畳む")
+    /// アルバムの単位は「**写真が直接入っているフォルダ**」（階層の深さに依存しない）。
+    /// 提供側は `<root>/<端末フォルダ>/<セット名>/` に置くため、決め打ちの階層数では拾えない。
+    @Test("複数ルート・大文字小文字を吸収し、写真の親フォルダをアルバムにする")
     func multiRootAndCase() {
         let albums = SharedAlbumDiscovery.albums(
-            itemPaths: ["/mosaicshare/Trip/sub/deep.jpg", "/Family2/Kids/a.jpg"],
+            itemPaths: ["/mosaicshare/iPhone-AAAA/Trip/a.jpg", "/Family2/Kids/a.jpg"],
             familyRoots: ["/MosaicShare", "/family2"])
         #expect(albums.map(\.name).sorted() == ["Kids", "Trip"])
         #expect(albums.first { $0.name == "Trip" }?.photoCount == 1)
+        // 端末フォルダを挟んだ構成では、提供者が分かる。
+        #expect(albums.first { $0.name == "Trip" }?.providerName == "iPhone-AAAA")
+        #expect(albums.first { $0.name == "Kids" }?.providerName == nil)
     }
 
     @Test("ルート未設定・該当なしは空")

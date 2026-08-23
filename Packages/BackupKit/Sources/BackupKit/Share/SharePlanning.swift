@@ -200,16 +200,31 @@ public enum SharePlanning {
 
     /// セットフォルダの絶対パスを組み立てる。**不正なフォルダ名は nil**（呼び出し側は中断する）。
     ///
-    /// ⚠️ 削除系（セット削除は `<root>/<folderName>` をフォルダごと消す）で使うため、
-    /// 空文字・パス区切り・親参照を含む名前は必ず弾く。空名を許すと
-    /// `"\(root)/" ` になり **共有ルート全体を削除**してしまう（レビュー指摘）。
-    public static func setFolderPath(shareRoot: String, folderName: String) -> String? {
+    /// レイアウトは `<root>/<端末フォルダ>/<セット名>`。**端末フォルダを挟むのが要点**で、
+    /// 家族が同じ共有フォルダを使い、たまたま同じセット名（例「◯◯家」）を付けても
+    /// **互いのファイルを上書きしない**（バックアップの ADR-41 と同じ考え方・同じ短 ID を使う）。
+    ///
+    /// ⚠️ 削除系（セット削除はこのパスをフォルダごと消す）で使うため、空文字・パス区切り・
+    /// 親参照を含む名前は必ず弾く。空名を許すと `"\(root)/"` になり
+    /// **共有ルート全体を削除**してしまう（レビュー指摘）。
+    public static func setFolderPath(shareRoot: String, folderName: String,
+                                     deviceFolder: String? = nil) -> String? {
         let name = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.contains("/"), !name.contains("\\"),
-              name != ".", name != ".." else { return nil }
-        let root = shareRoot.hasSuffix("/") ? String(shareRoot.dropLast()) : shareRoot
+        guard isSafeFolderComponent(name) else { return nil }
+        var root = shareRoot.hasSuffix("/") ? String(shareRoot.dropLast()) : shareRoot
         guard !root.isEmpty, root != "/" else { return nil }
+        if let deviceFolder {
+            let device = deviceFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isSafeFolderComponent(device) else { return nil }
+            root += "/\(device)"
+        }
         return "\(root)/\(name)"
+    }
+
+    /// フォルダ名 1 要素として安全か（空・パス区切り・親参照を弾く）。
+    static func isSafeFolderComponent(_ name: String) -> Bool {
+        !name.isEmpty && !name.contains("/") && !name.contains("\\")
+            && name != "." && name != ".."
     }
 
     /// "…/name (3).jpg" → "…/name.jpg"（autorename 形式でなければ nil）。

@@ -141,9 +141,19 @@ public final class ShareSyncEngine {
         let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let allSets = await store.allShareSets()
 
-        // 既存セットの再利用: 同じ作成元 → 同じ表示名、の順で探す。
+        // 既存セットの再利用: (1) 作成元が完全一致 → (2) **同じ種類**かつ同じ表示名、の順。
+        //
+        // ⚠️ (2) で種類を見るのが要点。AI アルバム「◯◯」とピープルグループ「◯◯」のように
+        // **別物に同じ名前**を付けることは普通にあり、名前だけで再利用すると
+        // 片方を共有したつもりがもう片方の共有を書き換えてしまう（実フィードバック）。
+        let requestedKind = sourceKey.flatMap(ShareSourceKey.init)?.kind
         let existingSet = allSets.first { $0.sourceKey != nil && $0.sourceKey == sourceKey }
-            ?? allSets.first { $0.name == displayName && !displayName.isEmpty }
+            ?? allSets.first { set in
+                guard !displayName.isEmpty, set.name == displayName else { return false }
+                let existingKind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
+                // 旧セット（種類不明）は、種類の判別ができないので名前一致で再利用してよい。
+                return existingKind == nil || existingKind == requestedKind
+            }
         if let existingSet {
             let updated = await updateSetMembers(setID: existingSet.id, refKeys: refKeys,
                                                  sourceKey: sourceKey, store: store)
@@ -223,7 +233,8 @@ public final class ShareSyncEngine {
         // ⚠️ 不正なフォルダ名（空・区切り・親参照）では**絶対に削除しない**。
         // 空名を許すと共有ルートごと消える。記録だけ消して手動対応に委ねる。
         guard let folder = SharePlanning.setFolderPath(
-                shareRoot: ShareSettingsKeys.currentShareRoot(), folderName: set.folderName) else {
+                shareRoot: ShareSettingsKeys.currentShareRoot(), folderName: set.folderName,
+                deviceFolder: BackupDeviceIdentity.currentFolderName()) else {
             BackupLogger.error("Share: refusing to delete set with invalid folder name")
             lastError = .invalidFolderName
             return false
@@ -352,8 +363,9 @@ public final class ShareSyncEngine {
                       copier: DropboxShareCopier, token: String) async {
         let items = await store.shareItems(setID: set.id)
         guard !items.isEmpty else { return }
-        guard let setFolder = SharePlanning.setFolderPath(shareRoot: shareRoot,
-                                                          folderName: set.folderName) else {
+        guard let setFolder = SharePlanning.setFolderPath(
+                shareRoot: shareRoot, folderName: set.folderName,
+                deviceFolder: BackupDeviceIdentity.currentFolderName()) else {
             BackupLogger.error("Share sync: invalid folder name — skipping set")
             return
         }
@@ -377,8 +389,10 @@ public final class ShareSyncEngine {
         let localIDs = items.filter { $0.refKey.hasPrefix("L-") }
             .map { String($0.refKey.dropFirst(2)) }
         let backupRefs = await store.backupRefs(forLocalIdentifiers: localIDs)
+        // 計画の宛先組み立ても端末フォルダ込みのルートで行う（setFolder と一致させる）。
+        let deviceRoot = (setFolder as NSString).deletingLastPathComponent
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
-                                      shareRoot: shareRoot, folderName: set.folderName,
+                                      shareRoot: deviceRoot, folderName: set.folderName,
                                       remoteFiles: remoteFiles)
 
         BackupLogger.info("Share sync: '\(set.folderName)' items=\(items.count) "

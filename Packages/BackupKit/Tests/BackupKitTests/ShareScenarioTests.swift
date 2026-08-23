@@ -42,6 +42,21 @@ struct ShareScenarioTests {
         await server.filePaths().filter { $0.hasPrefix(Self.shareRoot.lowercased() + "/") }
     }
 
+    /// セットフォルダの実パス（`<root>/<端末フォルダ>/<セット名>`・小文字）。
+    /// 端末フォルダは Keychain 由来で環境ごとに変わるため、決め打ちせず組み立てる。
+    private func setFolder(_ name: String) -> String {
+        SharePlanning.setFolderPath(shareRoot: Self.shareRoot, folderName: name,
+                                    deviceFolder: BackupDeviceIdentity.currentFolderName())!
+            .lowercased()
+    }
+
+    /// セットフォルダ配下に既存ファイルを置く（前提条件づくり）。
+    private func seedInSet(_ server: FakeDropboxServer, set: String,
+                           file: String, hash: String) async {
+        await server.seed(setFolder(set), hash: "", isFolder: true)
+        await server.seed("\(setFolder(set))/\(file)", hash: hash)
+    }
+
     // MARK: - 基本
 
     @Test("作成 → 反映で全部コピーされ、2 回目以降は増えない（冪等）")
@@ -93,17 +108,16 @@ struct ShareScenarioTests {
         let (engine, _, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/img.jpg", "hSAME")])
         // 過去の暴走で生まれた重複を置いておく（元名と同じ内容＝掃除対象）。
-        await server.seed("/mosaicshare/trip", hash: "", isFolder: true)
-        await server.seed("/mosaicshare/trip/img.jpg", hash: "hSAME")
-        await server.seed("/mosaicshare/trip/img (1).jpg", hash: "hSAME")
+        await seedInSet(server, set: "Trip", file: "img.jpg", hash: "hSAME")
+        await seedInSet(server, set: "Trip", file: "img (1).jpg", hash: "hSAME")
 
         // 未コピーのアイテムを 1 つ作り、そのコピーを必ず失敗させる。
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "C-/other/x.jpg"])
-        await server.setFailCopyPaths(["/mosaicshare/trip/x.jpg"])
+        await server.setFailCopyPaths(["\(setFolder("Trip"))/x.jpg"])
 
         await engine.syncNow()
         let files = await sharedFiles(server)
-        #expect(files.contains("/mosaicshare/trip/img (1).jpg"),
+        #expect(files.contains("\(setFolder("Trip"))/img (1).jpg"),
                 "コピー失敗の回に掃除が走った（空回りループの入口）: \(files)")
     }
 
@@ -111,16 +125,15 @@ struct ShareScenarioTests {
     func cleansDuplicatesOnSuccessfulRun() async {
         let (engine, _, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/img.jpg", "hSAME")])
-        await server.seed("/mosaicshare/trip", hash: "", isFolder: true)
-        await server.seed("/mosaicshare/trip/img.jpg", hash: "hSAME")
-        await server.seed("/mosaicshare/trip/img (1).jpg", hash: "hSAME")
+        await seedInSet(server, set: "Trip", file: "img.jpg", hash: "hSAME")
+        await seedInSet(server, set: "Trip", file: "img (1).jpg", hash: "hSAME")
 
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(!files.contains("/mosaicshare/trip/img (1).jpg"), "重複が掃除されない: \(files)")
-        #expect(files.contains("/mosaicshare/trip/img.jpg"), "正規ファイルまで消えた: \(files)")
+        #expect(!files.contains("\(setFolder("Trip"))/img (1).jpg"), "重複が掃除されない: \(files)")
+        #expect(files.contains("\(setFolder("Trip"))/img.jpg"), "正規ファイルまで消えた: \(files)")
     }
 
     /// 中身の違う「(1)」付きファイルは消してはいけない（ユーザーの写真）。
@@ -128,15 +141,14 @@ struct ShareScenarioTests {
     func keepsDistinctFileNamedLikeDuplicate() async {
         let (engine, _, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/img.jpg", "hA")])
-        await server.seed("/mosaicshare/trip", hash: "", isFolder: true)
-        await server.seed("/mosaicshare/trip/img.jpg", hash: "hA")
-        await server.seed("/mosaicshare/trip/img (1).jpg", hash: "hDIFFERENT")
+        await seedInSet(server, set: "Trip", file: "img.jpg", hash: "hA")
+        await seedInSet(server, set: "Trip", file: "img (1).jpg", hash: "hDIFFERENT")
 
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(files.contains("/mosaicshare/trip/img (1).jpg"),
+        #expect(files.contains("\(setFolder("Trip"))/img (1).jpg"),
                 "中身の違う写真を削除した: \(files)")
     }
 
@@ -150,8 +162,7 @@ struct ShareScenarioTests {
         #expect(await sharedFiles(server).count == 1)
 
         // 相手が共有フォルダから削除した状況。
-        await server.seed("/mosaicshare/trip/a.jpg", hash: "hA")   // 念のため存在確認
-        _ = try? await server.data(for: deleteRequest(path: "/mosaicshare/trip/a.jpg"))
+        _ = try? await server.data(for: deleteRequest(path: "\(setFolder("Trip"))/a.jpg"))
         #expect(await sharedFiles(server).isEmpty)
 
         await engine.syncNow()
@@ -190,7 +201,7 @@ struct ShareScenarioTests {
         let setID = await store.allShareSets()[0].id
         await engine.removeItems(setID: setID, refKeys: ["L-a"])
         let files = await sharedFiles(server)
-        #expect(files == ["/mosaicshare/trip/b.jpg"], "解除の結果が想定と違う: \(files)")
+        #expect(files == ["\(setFolder("Trip"))/b.jpg"], "解除の結果が想定と違う: \(files)")
     }
 
     /// グループを作り直して再共有しても、Dropbox 上にフォルダが 2 つできない。
@@ -210,7 +221,8 @@ struct ShareScenarioTests {
 
         let files = await sharedFiles(server)
         #expect(files.count == 2, "写真が二重にコピーされた: \(files)")
-        #expect(!files.contains { $0.contains("group 2/") }, "フォルダが 2 つできた: \(files)")
+        #expect(Set(files.map { ($0 as NSString).deletingLastPathComponent }).count == 1,
+                "フォルダが 2 つできた: \(files)")
     }
 
     @Test("メンバーが減ったセットを更新すると、外れた写真は共有からも消える")
@@ -226,7 +238,7 @@ struct ShareScenarioTests {
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(files == ["/mosaicshare/trip/a.jpg"], "外れた写真が残っている: \(files)")
+        #expect(files == ["\(setFolder("Trip"))/a.jpg"], "外れた写真が残っている: \(files)")
     }
 
     // MARK: - 障害耐性
@@ -254,10 +266,101 @@ struct ShareScenarioTests {
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(files == ["/mosaicshare/trip/a.jpg"])
+        #expect(files == ["\(setFolder("Trip"))/a.jpg"])
         let setID = await store.allShareSets()[0].id
         let items = await store.shareItems(setID: setID)
         #expect(items.first { $0.refKey == "L-missing" }?.state == .waitingBackup,
                 "未バックアップが waitingBackup になっていない")
+    }
+}
+
+@Suite("複数ユーザー共有と同名セット")
+@MainActor
+struct ShareMultiUserTests {
+
+    /// 家族が同じ共有フォルダを使い、**同じセット名**を付けても互いを上書きしない。
+    /// 提供側は `<root>/<端末フォルダ>/<セット名>/` に置く（ADR-41 と同じ分離）。
+    @Test("同名セットでも端末フォルダで分離される")
+    func setsAreIsolatedPerDevice() {
+        let deviceA = SharePlanning.setFolderPath(shareRoot: "/MosaicShare",
+                                                  folderName: "Family",
+                                                  deviceFolder: "iPhone-AAAA")
+        let deviceB = SharePlanning.setFolderPath(shareRoot: "/MosaicShare",
+                                                  folderName: "Family",
+                                                  deviceFolder: "iPad-BBBB")
+        #expect(deviceA == "/MosaicShare/iPhone-AAAA/Family")
+        #expect(deviceB == "/MosaicShare/iPad-BBBB/Family")
+        #expect(deviceA != deviceB, "同名セットが同じパスになる（上書きが起きる）")
+    }
+
+    @Test("端末フォルダ名が不正なら nil（削除の暴発を防ぐ）")
+    func rejectsUnsafeDeviceFolder() {
+        for bad in ["", "  ", "..", "a/b"] {
+            #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare", folderName: "Set",
+                                                deviceFolder: bad) == nil,
+                    "危険な端末フォルダ名を通した: \(bad)")
+        }
+    }
+
+    /// 受信側は階層の深さに依存せずセットを見つけ、提供者を区別できる。
+    @Test("受信側は端末フォルダ配下のセットを提供者つきで発見する")
+    func discoversNestedSetsWithProvider() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/MosaicShare/iPhone-AAAA/Family/a.jpg",
+                        "/MosaicShare/iPhone-AAAA/Family/b.jpg",
+                        "/MosaicShare/iPad-BBBB/Family/c.jpg"],
+            familyRoots: ["/MosaicShare"])
+        #expect(albums.count == 2, "同名セットが 1 つに潰れた: \(albums.map(\.folderPath))")
+        #expect(albums.allSatisfy { $0.name == "Family" })
+        #expect(Set(albums.compactMap(\.providerName)) == ["iPhone-AAAA", "iPad-BBBB"],
+                "提供者を区別できない: \(albums.compactMap(\.providerName))")
+    }
+
+    @Test("従来の 1 階層構成（提供者なし）も引き続き発見できる")
+    func stillDiscoversFlatLayout() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/MosaicShare/Trip/a.jpg", "/MosaicShare/Trip/b.jpg"],
+            familyRoots: ["/MosaicShare"])
+        #expect(albums.count == 1)
+        #expect(albums.first?.name == "Trip")
+        #expect(albums.first?.providerName == nil)
+    }
+
+    /// AI アルバムとピープルグループに同じ名前が付いていても、別セットとして扱う。
+    @Test("同名でも種類が違えば別セットになる（AI アルバム vs ピープルグループ）")
+    func sameNameDifferentKindsAreSeparateSets() async {
+        UserDefaults.standard.set(false, forKey: ShareSettingsKeys.provideEnabled)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
+                                     storeProvider: { store },
+                                     httpClient: FakeDropboxServer())
+
+        _ = await engine.createSet(name: "Okinawa", refKeys: ["L-a"],
+                                   sourceKey: ShareSourceKey.album("album-1").encoded)
+        _ = await engine.createSet(name: "Okinawa", refKeys: ["L-b"],
+                                   sourceKey: ShareSourceKey.group(UUID()).encoded)
+
+        let sets = await store.allShareSets()
+        #expect(sets.count == 2, "同名の別種が 1 セットに統合された（片方の共有を書き換える）")
+        // フォルダ名は衝突回避で別になる。
+        #expect(Set(sets.map(\.folderName)).count == 2, "フォルダ名が衝突している")
+    }
+
+    @Test("同じ種類・同じ名前なら再利用する（作り直しの継続）")
+    func sameKindSameNameIsReused() async {
+        UserDefaults.standard.set(false, forKey: ShareSettingsKeys.provideEnabled)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
+                                     storeProvider: { store },
+                                     httpClient: FakeDropboxServer())
+
+        _ = await engine.createSet(name: "Family", refKeys: ["L-a"],
+                                   sourceKey: ShareSourceKey.group(UUID()).encoded)
+        _ = await engine.createSet(name: "Family", refKeys: ["L-a", "L-b"],
+                                   sourceKey: ShareSourceKey.group(UUID()).encoded)
+
+        let sets = await store.allShareSets()
+        #expect(sets.count == 1, "同種・同名なのにセットが増えた")
+        #expect(await store.shareItems(setID: sets[0].id).count == 2, "内容が更新されていない")
     }
 }
