@@ -164,7 +164,10 @@ public final class ShareSyncEngine {
             return existingSet.id
         }
 
-        let folderName = ShareNaming.sanitize(name, existing: allSets.map(\.folderName))
+        // フォルダ名には種類の接頭辞を付ける（`People-◯◯` / `Album-◯◯`）。
+        // Dropbox 上で何のアルバムか分かり、種類違いの同名でも衝突しない。
+        let folderName = ShareNaming.folderName(name, kind: requestedKind,
+                                                existing: allSets.map(\.folderName))
         let set = await store.createShareSet(
             name: displayName.isEmpty ? folderName : displayName, folderName: folderName,
             sourceKey: sourceKey)

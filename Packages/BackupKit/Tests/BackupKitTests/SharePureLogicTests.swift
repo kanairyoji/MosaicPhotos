@@ -567,3 +567,33 @@ private struct NeverHTTPClient: HTTPClient, Sendable {
         throw URLError(.notConnectedToInternet)
     }
 }
+
+@Suite("フォルダ名の種類接頭辞")
+struct ShareFolderPrefixTests {
+
+    /// Dropbox 上で何のアルバムか分かり、種類違いの同名でも衝突しない（実フィードバック）。
+    @Test("種類ごとに接頭辞が付く")
+    func prefixesByKind() {
+        #expect(ShareNaming.folderName("木村家", kind: .group) == "People-木村家")
+        #expect(ShareNaming.folderName("沖縄旅行", kind: .album) == "Album-沖縄旅行")
+        #expect(ShareNaming.folderName("ハナコ", kind: .person) == "Person-ハナコ")
+    }
+
+    @Test("同名でも種類が違えばフォルダが衝突しない（連番が出ない）")
+    func noCollisionAcrossKinds() {
+        let group = ShareNaming.folderName("沖縄", kind: .group)
+        let album = ShareNaming.folderName("沖縄", kind: .album, existing: [group])
+        #expect(group == "People-沖縄")
+        #expect(album == "Album-沖縄", "種類違いなのに連番が付いた: \(album)")
+    }
+
+    @Test("作成元が不明なら接頭辞なし（手動作成・旧セット）")
+    func noPrefixWithoutKind() {
+        #expect(ShareNaming.folderName("Trip", kind: nil) == "Trip")
+    }
+
+    @Test("使えない文字は接頭辞の後ろで置換される")
+    func sanitizesAfterPrefix() {
+        #expect(ShareNaming.folderName("Kids/Trip:2025", kind: .album) == "Album-Kids_Trip_2025")
+    }
+}

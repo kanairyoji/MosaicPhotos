@@ -17,6 +17,11 @@ struct AIAlbumComposerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var title: String
+
+    /// 同じ名前の AI アルバムが既にあるか（自分の編集は除く）。
+    private var titleIsTaken: Bool {
+        engine.aiAlbumTitleExists(title, excluding: editing?.id)
+    }
     @State private var criteria: String
     @State private var suggestions = AIAlbumSuggestions()
     @State private var preview = AIAlbumGroundingPreview()
@@ -39,6 +44,13 @@ struct AIAlbumComposerView: View {
                 Section("Title") {
                     TextField("Album name (optional)", text: $title)
                         .autocorrectionDisabled()
+                    if titleIsTaken {
+                        // 共有フォルダ名がアルバム名から決まるので、同名は作らせない。
+                        Label(L("An AI album with this name already exists."),
+                              systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Section {
@@ -75,7 +87,7 @@ struct AIAlbumComposerView: View {
                     } label: {
                         Text(isEditing ? L("Update Album") : L("Create Album"))
                     }
-                    .disabled(criteria.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(criteria.trimmingCharacters(in: .whitespaces).isEmpty || titleIsTaken)
                 }
             }
             .navigationTitle(isEditing ? L("Edit AI Album") : L("AI Album"))

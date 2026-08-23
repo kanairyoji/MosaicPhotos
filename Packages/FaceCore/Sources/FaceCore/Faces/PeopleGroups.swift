@@ -119,11 +119,23 @@ extension PeopleEngine {
         }
     }
 
-    /// グループを作成する（メンバー 2 人以上・名前必須）。作成できたら ID を返す。
+    /// 同じ名前のグループが既にあるか（大小・前後空白を無視。`excluding` は自分自身の編集用）。
+    /// クラウド共有のフォルダ名がグループ名から決まるため、**同名は作らせない**
+    /// （連番フォルダ `◯◯ 2` ができて分かりにくくなる・実フィードバック）。
+    public func peopleGroupNameExists(_ name: String, excluding id: UUID? = nil) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return peopleGroups.contains {
+            $0.id != id && $0.name.compare(trimmed, options: [.caseInsensitive]) == .orderedSame
+        }
+    }
+
+    /// グループを作成する（メンバー 2 人以上・名前必須・**同名不可**）。作成できたら ID を返す。
     @discardableResult
     public func createPeopleGroup(name: String, memberClusterIDs: [Int]) async -> UUID? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, memberClusterIDs.count >= 2 else { return nil }
+        guard !peopleGroupNameExists(trimmed) else { return nil }
         let id = await store.createPeopleGroup(name: trimmed, memberClusterIDs: memberClusterIDs)
         await reloadPeopleGroups()
         return id
@@ -140,6 +152,8 @@ extension PeopleEngine {
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let members = memberClusterIDs, members.count < 2 { return }
         if let trimmed, trimmed.isEmpty { return }
+        // 改名でも同名は作らせない（自分自身は除く）。
+        if let trimmed, peopleGroupNameExists(trimmed, excluding: id) { return }
         await store.updatePeopleGroup(id: id, name: trimmed, memberClusterIDs: memberClusterIDs)
         await reloadPeopleGroups()
     }

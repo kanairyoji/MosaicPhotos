@@ -42,10 +42,11 @@ struct ShareScenarioTests {
         await server.filePaths().filter { $0.hasPrefix(Self.shareRoot.lowercased() + "/") }
     }
 
-    /// セットフォルダの実パス（`<root>/<端末フォルダ>/<セット名>`・小文字）。
-    /// 端末フォルダは Keychain 由来で環境ごとに変わるため、決め打ちせず組み立てる。
-    private func setFolder(_ name: String) -> String {
-        SharePlanning.setFolderPath(shareRoot: Self.shareRoot, folderName: name,
+    /// セットフォルダの実パス（`<root>/<端末フォルダ>/<接頭辞-セット名>`・小文字）。
+    /// 端末フォルダは Keychain 由来、接頭辞は種類由来なので、いずれも決め打ちせず組み立てる。
+    private func setFolder(_ name: String, kind: ShareSourceKey.Kind? = nil) -> String {
+        SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
+                                    folderName: ShareNaming.folderName(name, kind: kind),
                                     deviceFolder: BackupDeviceIdentity.currentFolderName())!
             .lowercased()
     }
@@ -221,6 +222,8 @@ struct ShareScenarioTests {
 
         let files = await sharedFiles(server)
         #expect(files.count == 2, "写真が二重にコピーされた: \(files)")
+        #expect(files.allSatisfy { $0.hasPrefix(setFolder("Group", kind: .group) + "/") },
+                "期待するセットフォルダに入っていない: \(files)")
         #expect(Set(files.map { ($0 as NSString).deletingLastPathComponent }).count == 1,
                 "フォルダが 2 つできた: \(files)")
     }

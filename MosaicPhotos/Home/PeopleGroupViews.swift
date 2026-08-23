@@ -91,13 +91,25 @@ struct PeopleGroupEditorSheet: View {
     @State private var selected: Set<Int> = []
     @State private var isSaving = false
 
+    /// 同じ名前のグループが既にあるか（自分自身の編集は除く）。
+    private var nameIsTaken: Bool {
+        peopleEngine.peopleGroupNameExists(name, excluding: editing?.id)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField(L("Group name (e.g. family, team)"), text: $name)
                 } footer: {
-                    Text(L("Groups collect several people into one album (a family, a team, an organization). Select at least 2 people."))
+                    if nameIsTaken {
+                        // 共有フォルダ名がグループ名から決まるので、同名は作らせない。
+                        Label(L("A group with this name already exists."),
+                              systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(L("Groups collect several people into one album (a family, a team, an organization). Select at least 2 people."))
+                    }
                 }
                 Section(L("Members")) {
                     ForEach(peopleEngine.people) { person in
@@ -153,7 +165,7 @@ struct PeopleGroupEditorSheet: View {
                             }
                         }
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || selected.count < 2)
+                                  || selected.count < 2 || nameIsTaken)
                     }
                 }
             }

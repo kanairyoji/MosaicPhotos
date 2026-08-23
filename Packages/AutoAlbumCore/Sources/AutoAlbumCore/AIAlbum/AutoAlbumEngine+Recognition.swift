@@ -118,6 +118,17 @@ extension AutoAlbumEngine {
 
     // MARK: - AI albums
 
+    /// 同じ名前の AI アルバムが既にあるか（大小・前後空白を無視。`excluding` は編集中の自分）。
+    /// クラウド共有のフォルダ名がアルバム名から決まるため、**同名は作らせない**
+    /// （連番フォルダ `◯◯ 2` ができて分かりにくくなる・実フィードバック）。
+    public func aiAlbumTitleExists(_ title: String, excluding id: String? = nil) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return aiAlbums.contains {
+            $0.id != id && $0.placesLabel.compare(trimmed, options: [.caseInsensitive]) == .orderedSame
+        }
+    }
+
     public func createAIAlbum(title: String, criteria: String) async -> AIAlbumResult {
         await makeAIAlbum(id: "\(AIAlbumStrategy.strategyID):\(UUID().uuidString)", title: title, criteria: criteria)
     }

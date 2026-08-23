@@ -167,6 +167,16 @@
         }
       }
     },
+    "A group with this name already exists.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ名前のグループが既にあります。"
+          }
+        }
+      }
+    },
     "A one-sentence description generated on device, for your favorite photos only (it's the heaviest pass). Mark photos as favorites to have them described.": {
       "localizations": {
         "ja": {
@@ -407,6 +417,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "常に"
+          }
+        }
+      }
+    },
+    "An AI album with this name already exists.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ名前の AI アルバムが既にあります。"
           }
         }
       }
