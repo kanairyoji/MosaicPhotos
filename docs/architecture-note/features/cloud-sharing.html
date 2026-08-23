@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>クラウド共有 | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "feat-cloud-sharing";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / クラウド共有</nav>
+      <h1>クラウド共有</h1>
+      <p class="lead">選んだ写真を、バックアップとは別の共有フォルダへ <strong>Dropbox サーバー内のコピー</strong>で投影し、家族や友人に見せる機能（ADR-112）。写真だけでなく<strong>オンデバイス AI の解析結果（タグ・CLIP 埋め込み・顔）も同梱</strong>するため、受け取った側の端末は同じ写真を解析し直さない。</p>
+
+      <h2>設計の中心：共有はバックアップの「射影」</h2>
+      <p>この機能の出発点は「全部バックアップしたいが、家族に見せたいのは一部だけ」という要求だった。素直に考えると 3 つの案がある。</p>
+      <table>
+        <tr><th>案</th><th>容量</th><th>不採用の理由</th></tr>
+        <tr><td>共有分を共有フォルダへ<strong>移動</strong>（実体 1 つ）</td><td>増えない</td><td>共有フォルダの中身がバックアップの一部になる。家族の誰かが消せばバックアップが欠ける——「バックアップは append-only の正本」という保証が失われる</td></tr>
+        <tr><td>共有リンク（URL）</td><td>増えない</td><td>散在する写真の集合に 1 本のリンクは張れない。相手の閲覧体験がリンク集になる</td></tr>
+        <tr><td>外部の無制限サービス（Amazon Photos 等）</td><td>増えない</td><td><strong>公開 API が無い</strong>。無制限を掲げるサービスはほぼ例外なく自社アプリに閉じており、自動連携できない</td></tr>
+      </table>
+      <p>採用したのは<strong>サーバーサイドコピーによる射影</strong>。共有分の容量が二重に計上される代わりに、<strong>正本（バックアップ・原本）には一切触れない</strong>。共有側で何が起きても——家族が消しても、フォルダを整理しても——バックアップは無傷で、共有側は次回の反映で自己修復する。</p>
+      <div class="box why">
+        <span class="box-h">なぜコピーが軽いのか</span>
+        <code>files/copy_batch_v2</code> は <strong>Dropbox サーバー内でファイルを複製する</strong>ため、端末は「この 100 枚をあそこへコピーして」という 1 リクエストを送るだけで済む。写真データの再アップロードは発生しない。従量回線でも実用的に動く理由がここにある。
+      </div>
+
+      <h2>3 つの独立した機能</h2>
+      <p>「受け取る」「提供する」「バックアップ」は<strong>別々に設定できる独立機能</strong>で、依存は一方向にひとつだけある。</p>
+      <table>
+        <tr><th>機能</th><th>必要なもの</th><th>備考</th></tr>
+        <tr><td>共有を<strong>受け取る</strong></td><td>Dropbox 接続のみ</td><td>バックアップも、自分の写真の提供も不要</td></tr>
+        <tr><td>クラウド写真を<strong>提供する</strong></td><td>Dropbox 接続のみ</td><td>原本が既に Dropbox にあるため直接コピーできる</td></tr>
+        <tr><td><strong>端末写真</strong>を提供する</td><td><strong>バックアップ</strong></td><td>共有はバックアップ実体からのコピーなので、未バックアップの写真は「バックアップ待ち」になる</td></tr>
+      </table>
+      <p>この依存関係は設計上避けられないが、<strong>体験としては隠す</strong>。共有セットに入っている未バックアップ写真は、次回バックアップの<strong>先頭へ並べ替えられる</strong>（<code>BackupRunner</code> の優先 ID）。数万枚の順番待ちの最後尾に置かれて何日も反映されない、という事態を防ぐためである。</p>
+
+      <h2>レイアウト</h2>
+      <pre><code>/MosaicPhotos/                    ← バックアップ（全量・非共有・正本）
+  IMG_0001.jpg …
+  .mosaic/                        ← 台帳（catalog＋撮影月シャード）
+
+/MosaicShare/                     ← 共有ルート（ユーザーが Dropbox 側で家族に共有）
+  2025-08 沖縄旅行/               ← 共有セット＝サブフォルダ
+    IMG_0123.jpg …
+    .mosaic-share/analysis-v1.json  ← 解析サイドカー（このセットの写真の分だけ）
+</code></pre>
+      <p>セットがフォルダとして見えるので、<strong>相手が MosaicPhotos を使っていなくても Dropbox 公式アプリでそのまま閲覧できる</strong>。使っている場合は、共有フォルダを同期ルートに追加するだけで（既存の複数ルート機構）ホームにアルバムとして現れる。</p>
+      <div class="box warn">
+        <span class="box-h">共有フォルダに置かないもの</span>
+        バックアップの台帳（全写真のメタデータ・位置情報を含む）は<strong>共有フォルダへ置かない</strong>。置くのは写真そのものと、<strong>その写真の解析結果だけ</strong>。共有していない写真の情報が漏れる経路を作らない。
+      </div>
+
+      <h2>解析サイドカー：refKey ではなく content_hash で結ぶ</h2>
+      <p>受け取った側で再解析させないために、解析結果を JSON で同梱する。ここで問題になるのが<strong>「同じ写真」をどう指すか</strong>である。</p>
+      <p>アプリ内の写真キー <code>refKey</code>（<code>"L-&lt;localIdentifier&gt;"</code> / <code>"C-&lt;Dropbox パス&gt;"</code>）は<strong>送信者と受信者で必ず違う</strong>。送信者の端末内 ID は相手の端末では無意味だし、パスも共有フォルダ側では変わる。そこで結合キーには <strong>Dropbox の <code>content_hash</code></strong> を使う。</p>
+      <table>
+        <tr><th>セクション</th><th>内容</th><th>版</th></tr>
+        <tr><td><code>tags</code></td><td>Vision シーンタグ・OCR テキスト・人数・美的スコア</td><td>タグ版</td></tr>
+        <tr><td><code>clip</code></td><td>CLIP 画像埋め込み（Float16 512 次元・base64・約 1KB）</td><td>知覚版（モデル ID 込み）</td></tr>
+        <tr><td><code>faces</code></td><td>顔ごとの bbox・埋め込み・品質・撮影日</td><td>顔スキャン版</td></tr>
+      </table>
+      <p><strong>人物名は載せない</strong>。名前はユーザーがその端末で付けたラベルであって、写真の属性ではない。受け取った側は自分のクラスタに自分で名前を付ける。</p>
+      <div class="box why">
+        <span class="box-h">content_hash が効く理由</span>
+        受信側の同期エンジンは <code>list_folder</code> の応答に <code>content_hash</code> を含めて受け取っている。<strong>追加のダウンロードなしで</strong>手元の写真とサイドカーのエントリを突合できる。パスにも refKey にも依存しないので、フォルダ整理や同名衝突の改名にも影響されない。
+      </div>
+
+      <h3>受信側の取り込み</h3>
+      <p>取り込みは「版が一致するセクションだけ・既存レコードのある写真はスキップ」という保守的な規則で行う。受信側の自前解析が常に優先で、サイドカーは<strong>穴を埋めるだけ</strong>である。</p>
+      <ul>
+        <li><strong>タグ・CLIP</strong>: 台帳へ登録し、夜間タガーはその写真を「処理済み」として推論をスキップする（<code>adoptImportedEmbeddings</code>）。クラウド写真の解析で最も重いのはサムネイルのダウンロードなので、通信・電池・時間がまるごと節約される。</li>
+        <li><strong>顔</strong>: 既存の逐次クラスタリングへ流し込む。同じ顔モデルの埋め込みなので、<strong>受信側で命名済みの人物へ自然に合流する</strong>——「共有された子供の写真が、自分の端末の『ハナコ』のアルバムに自動で入る」という体験になる。</li>
+      </ul>
+      <div class="box warn">
+        <span class="box-h">サイドカーは外部入力である</span>
+        別のデバイスが書いた JSON をそのまま信じない。ファイルサイズ・エントリ数・タグ長・<strong>ベクトルの次元と有限性</strong>（NaN/Inf を弾く）を検査し、壊れたエントリは<strong>黙って捨てて</strong>自前解析に任せる。クエリ解釈で LLM の出力を接地する <code>QuerySpecSanitizer</code> と同じ思想である。
+      </div>
+
+      <h2>冪等性：リモートの非同期ジョブは「タイムアウト＝失敗」ではない</h2>
+      <p>実装当初、実機で<strong>共有フォルダに約 1,300 件の重複</strong>（<code>IMG (1).jpg</code> 形式）が生成され、1 時間にわたる高負荷を招いた（diagnostics-52）。3 つの因子の掛け算だった。</p>
+      <ol>
+        <li>コピー完了のポーリングが 60 秒でタイムアウトし「失敗」と記録。しかし <strong>Dropbox 側のジョブは走り続ける</strong>。</li>
+        <li>次の反映が失敗分を <code>autorename</code> つきで再コピー。前のジョブの成果と衝突しないので<strong>別名で増える</strong>。リトライのたびに倍々。</li>
+        <li>増えた自分のコピーが 1 秒ごとに差分通知を発火させ、そのたびに 7 万件の全件フェッチ（1.2 秒）が走って CPU を飽和させた。</li>
+      </ol>
+      <p>対策は「リトライを冪等にする」ことに尽きる。</p>
+      <table>
+        <tr><th>対策</th><th>内容</th></tr>
+        <tr><td><strong>autorename 全廃</strong></td><td>宛先名は計画（<code>SharePlanning</code>）が決定的に割り当てる。同名は <code>" 2"</code> の連番。衝突は失敗エントリとして返る</td></tr>
+        <tr><td><strong>採用（adoption）</strong></td><td>宛先が既に実在し中身が一致するなら<strong>コピーせず記録だけ更新</strong>。タイムアウト後に完了したジョブの成果を回収する</td></tr>
+        <tr><td>ポーリング上限</td><td>60 秒 → 4 分</td></tr>
+        <tr><td>重複の掃除</td><td><code>name (N).ext</code> 形式で、どの記録にも属さず<strong>元名が実在する</strong>ものだけ削除（安全側の条件）</td></tr>
+        <tr><td>自己同期の抑制</td><td>差分通知に変更パスを載せ、<strong>表示除外パス配下だけの変更なら全件フェッチをスキップ</strong></td></tr>
+      </table>
+      <div class="box why">
+        <span class="box-h">一般化できる教訓</span>
+        <strong>リモートの非同期ジョブは、クライアントが待つのをやめても走り続ける。</strong>「タイムアウト＝失敗」と決めつけたリトライは二重実行になる。冪等にする唯一の方法は<strong>実行前に実在を確認して採用する</strong>ことで、<code>autorename</code> のように「衝突を黙って回避する」機構はリトライと組み合わせると増殖装置になる。
+      </div>
+
+      <h2>自己修復と反映のタイミング</h2>
+      <p>反映のたびに共有フォルダを実在照合し、次を自動で直す。</p>
+      <ul>
+        <li><strong>外部削除</strong>（家族が消した・整理した）→ 再コピー。</li>
+        <li><strong>元写真の更新</strong>（編集して <code>content_hash</code> が変わった）→ 再コピー。</li>
+        <li><strong>一覧が取れない</strong>（通信断）→ そのセットは<strong>スキップ</strong>する。実在不明のまま再コピーすると重複を作るため。</li>
+      </ul>
+      <p>実行は「起動から少し遅らせて」「バックアップ完走後」「ハブの『今すぐ反映』」の 3 経路。自動実行は回線ポリシーに従う（<a href="background.html">バックグラウンドと省電力</a>の依存ゲート表を参照）。</p>
+
+      <h2>構成</h2>
+      <table>
+        <tr><th>型</th><th>役割</th></tr>
+        <tr><td><code>ShareSyncEngine</code></td><td><code>@MainActor @Observable</code>。反映のオーケストレーション（コピー・採用・掃除・サイドカー更新）</td></tr>
+        <tr><td><code>SharePlanning</code></td><td><strong>純ロジック</strong>。コピー / 採用 / 掃除 / バックアップ待ちを決定的に算出（テスト対象）</td></tr>
+        <tr><td><code>ShareSidecar</code></td><td>サイドカーの DTO・決定的エンコード・<strong>防御的検証</strong>（純ロジック）</td></tr>
+        <tr><td><code>DropboxShareCopier</code></td><td><code>copy_batch_v2</code> / <code>delete_batch</code> / <code>list_folder</code>。非同期ジョブのポーリング追従。HTTP のみに依存</td></tr>
+        <tr><td><code>ShareSidecarFetch</code></td><td>受信側。rev が変わったサイドカーだけ取得・検証</td></tr>
+        <tr><td><code>ShareImportPlanning</code></td><td><strong>純ロジック</strong>。content_hash の突合と版ゲート</td></tr>
+        <tr><td><code>SharedAlbumDiscovery</code></td><td><strong>純ロジック</strong>。同期済みパスから受信アルバム（セット）を発見</td></tr>
+      </table>
+      <p>写真の本体には触れず、解析の輸出入は <code>AutoAlbumEngine+Share</code> / <code>PeopleEngine+Share</code> / <code>FaceStore+ShareExport</code> の薄い層が担う。アプリ（Composition Root）の <code>ShareAnalysisAdapter</code> が両者を橋渡しする——<code>BackupKit</code> が <code>AutoAlbumCore</code> / <code>FaceCore</code> に依存しないための seam である。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a> — ADR-112（正本）</li>
+          <li><a class="srclink" data-path="Packages/BackupKit/Sources/BackupKit/Share">BackupKit/Share/</a> — 実装一式</li>
+          <li><a class="srclink" data-path="Packages/BackupKit/Tests/BackupKitTests/SharePureLogicTests.swift">SharePureLogicTests.swift</a> — 計画・サイドカー・突合のテスト</li>
+          <li><a href="backup.html">バックアップ</a>（正本の側） / <a href="on-device-ai.html">オンデバイス AI</a>（解析の中身）</li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

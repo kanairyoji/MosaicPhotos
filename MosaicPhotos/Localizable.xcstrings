@@ -1362,12 +1362,12 @@
       }
     },
     "Face Yield Measurement": {},
-    "Faces are detected in your device photos and grouped into people, entirely on device. Cloud photos are not scanned for faces.": {
+    "Faces are detected and grouped into people entirely on device, for both device and Dropbox photos (cloud faces use already-cached thumbnails, so no extra downloads).": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "端末内の写真から顔を検出し、人物ごとにまとめます。すべて端末内で処理します。クラウドの写真は顔スキャンの対象外です。"
+            "value": "顔の検出と人物へのグループ化は、端末と Dropbox の両方の写真に対して完全に端末内で行われます（クラウドの顔はキャッシュ済みサムネイルを使うため追加のダウンロードはありません）。"
           }
         }
       }

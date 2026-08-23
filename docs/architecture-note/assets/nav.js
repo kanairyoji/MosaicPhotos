@@ -26,6 +26,7 @@
       { id: "feat-dropbox",       href: "features/dropbox.html",       label: "Dropbox 連携" },
       { id: "feat-on-device-ai",  href: "features/on-device-ai.html",  label: "オンデバイス AI" },
       { id: "feat-backup",        href: "features/backup.html",        label: "バックアップ" },
+      { id: "feat-cloud-sharing", href: "features/cloud-sharing.html",  label: "クラウド共有" },
       { id: "feat-places",        href: "features/places.html",        label: "場所アルバム" },
       { id: "feat-caching",       href: "features/caching.html",       label: "キャッシュ戦略" },
       { id: "feat-background",    href: "features/background.html",    label: "バックグラウンドと省電力" },
@@ -57,7 +58,7 @@
       { id: "ai-ranking",   href: "ai/08-ranking-fusion.html",    label: "8. ランキングと融合" },
     ]},
     { title: "設計判断・事例", items: [
-      { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト（重要トップ10）" },
+      { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト（重要トップ13）" },
       { id: "case-memory",    href: "case-studies/memory.html",             label: "事例: メモリ枯渇と圧縮" },
       { id: "case-launch",    href: "case-studies/launch-performance.html", label: "事例: 起動の高速化" },
     ]},

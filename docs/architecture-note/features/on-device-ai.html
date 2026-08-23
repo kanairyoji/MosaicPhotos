@@ -13,14 +13,14 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / オンデバイス AI</nav>
       <h1>オンデバイス AI</h1>
-      <p class="lead">固定の語彙リストや OCR を持たず、任意言語の自然文で AI アルバム／意味検索を行う。実装は<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）：シーンタグ・CLIP 埋め込み・VLM キャプションを夜間に付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句の RRF 融合＋証拠ゲート＋LLM 審査で決める。通信なし・API キー不要。<strong>モデルと検索品質はすべて実測で決める</strong>（<a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>）。</p>
+      <p class="lead">固定の語彙リストや OCR を持たず、任意言語の自然文で AI アルバム／意味検索を行う。実装は<strong>「タグ台帳＋LLM 審査」の多層構成</strong>（ADR-23/24）：シーンタグ・CLIP 埋め込みを夜間に付与し、検索は決定的ハード条件＋タグ一致＋CLIP 対比＋字句の RRF 融合＋証拠ゲート＋LLM 審査で決める。通信なし・API キー不要。<strong>モデルと検索品質はすべて実測で決める</strong>（<a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>）。</p>
 
       <h2>索引（夜間パイプライン）と検索</h2>
       <p>索引は<strong>夜間バッチ</strong>（電源＋Wi-Fi＋アプリ非使用の <code>BGProcessingTask</code>・<a href="background.html">実行タイミング参照</a>）で、<strong>新しい写真から先に</strong>（撮影日降順・ADR-36）次の順に付与する。</p>
       <ol>
         <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）— 全写真</li>
         <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・<strong>INT8 量子化</strong>・意味検索の索引）— 全写真</li>
-        <li><strong>VLM キャプション</strong>（SmolVLM-500M・英語一文・LLM 審査の「目」）— <strong>お気に入りを中心とした重要写真</strong>（最重量パスの集中投下・ADR-34。AI アルバム審査時は候補上位にもオンデマンド生成し、生成分は台帳へ永続化＝ADR-35）</li>
+        <li class="muted">※ 旧・第 3 段の <strong>VLM キャプション</strong>（SmolVLM-500M）は<strong>機能ごと廃止</strong>（ADR-108）。網羅率アブレーションで検索寄与ゼロ（Δ F1 = 0.0001）と計測され、モデル 877MB を削除した。</li>
       </ol>
       <div class="mermaid">
 graph TD
@@ -30,22 +30,19 @@ graph TD
   subgraph IDX["夜間索引（新しい写真から先に）"]
     TAGS[(Vision シーンタグ)]
     EMB[(PhotoEmbedding fp16)]
-    CAP[(VLM キャプション<br/>お気に入り中心)]
   end
   HARD --> FUSE["RRF 融合（AIAlbumSearcher）"]
   TE --> FUSE
   TAGS -->|タグ一致 離散| FUSE
   EMB -->|CLIP 対比| FUSE
   LX["字句検索<br/>地名・人物"] --> FUSE
-  FUSE --> GATE["証拠ゲート<br/>除外つきはタグ/顔/キャプションの証拠必須"]
-  GATE --> OD["オンデマンドキャプション<br/>候補上位の未生成分に生成（予算つき）"]
-  OD --> VERIFY["LLM 審査（AlbumVerifier）<br/>keep/drop/unsure・多数決"]
-  CAP --> VERIFY
+  FUSE --> GATE["証拠ゲート<br/>除外つきはタグ/顔実測/人数実測の証拠必須"]
+  GATE --> VERIFY["LLM 審査（AlbumVerifier）<br/>keep/drop/unsure・多数決"]
   VERIFY --> RES["検索結果 / AI アルバム"]
       </div>
       <div class="box why">
         <span class="box-h">なぜ「閾値レス」へ再設計したか（ADR-24）</span>
-        以前は生 CLIP コサイン＋絶対閾値だったが、ユーザーのライブラリ分布が事前に不明で閾値を調整できず「除外が 97% を落とす」「意味採用 0 件」が起きた。そこで<strong>タグ一致（離散・閾値レス）</strong>を第 3 のランキングに加え、除外は<strong>肯定/否定ベクトルの相対判定</strong>（絶対閾値なし）にし、最終判断を<strong>LLM 審査</strong>（言語判定）に委ねた。判定根拠がタグ/キャプションで可視化されデバッグ可能になる。
+        以前は生 CLIP コサイン＋絶対閾値だったが、ユーザーのライブラリ分布が事前に不明で閾値を調整できず「除外が 97% を落とす」「意味採用 0 件」が起きた。そこで<strong>タグ一致（離散・閾値レス）</strong>を第 3 のランキングに加え、除外は<strong>肯定/否定ベクトルの相対判定</strong>（絶対閾値なし）にし、最終判断を<strong>LLM 審査</strong>（言語判定）に委ねた。判定根拠がタグで可視化されデバッグ可能になる。
       </div>
       <div class="box note">
         <span class="box-h">解釈は「作成時に 1 回だけ」＋言い換えプローブ（ADR-23・ADR-35）</span>
@@ -57,12 +54,11 @@ graph TD
         <tr><th>役割</th><th>採用</th><th>サイズ</th><th>選定の根拠（実測）</th></tr>
         <tr><td>意味検索の埋め込み</td><td><strong>OpenCLIP ViT-B-32 / DataComp・INT8 量子化</strong>（ADR-31）</td><td>289→<strong>145MB</strong></td><td>Core ML ベンチで INT8 は精度不変（75.0→76.0%）。TinyCLIP-40M は −14pt で不採用</td></tr>
         <tr><td>シーンタグ</td><td>Vision 分類（OS 内蔵）</td><td>0MB</td><td>約1,300クラス・精度校正 API・追加コストなし＝価値/コスト比最良</td></tr>
-        <tr><td>キャプション</td><td><strong>SmolVLM-500M</strong>・視覚のみ INT8（ADR-34）</td><td>877MB</td><td>256M より明確に高品質（看板の文字も読む）。<strong>Florence-2 は一度採用後、実機 ANE/GPU の fp16 で cross-attention が破綻し撤回</strong>（ADR-32）。FastVLM は apple-amlr（研究限定）で不採用。decoder-only＝ANE 安全が必須条件</td></tr>
-        <tr><td>顔（ピープル）</td><td>facenet InceptionResnetV1（VGGFace2・MIT）</td><td>45MB</td><td>512 次元 identity 埋め込み＋逐次クラスタリング。精度・アルゴリズムは<strong>データセット計測で選定</strong>（FG-NET/LFW・<code>face-accuracy.md</code>）。同年代の識別は強く、弱点は年齢変化＝許諾ライセンスの上位モデルが無く据え置き（ArcFace 系は学習済み重みが非商用）</td></tr>
+        <tr><td>顔（ピープル）</td><td><strong>AuraFace-v1</strong>（ArcFace 系 R100・Apache 2.0）（ADR-70）</td><td>125MB</td><td>512 次元 identity 埋め込み＋逐次クラスタリング。精度・アルゴリズムは<strong>データセット計測で選定</strong>（FG-NET/LFW・<code>face-accuracy.md</code>）。旧 facenet の弱点だった<strong>年齢不変性</strong>を改善（FG-NET TAR@FAR1% 48.1%→<strong>62.0%</strong>・クラスタ F1 0.664→<strong>0.790</strong>・分裂 3.7→<strong>2.8</strong>）。許諾ライセンスの ArcFace 系重みが公開されて前提が変わったための換装</td></tr>
       </table>
       <div class="box note">
         <span class="box-h">量子化の非対称性（学び）</span>
-        <strong>出力が連続ベクトルの部品（CLIP・VLM 視覚エンコーダ）は INT8 に強い</strong>（fp16 と cos≈0.999）。一方 <strong>LLM デコーダは弱い</strong>（次単語 argmax が反転・fp16 と一致 26%）。よって CLIP は全体 INT8、SmolVLM は視覚のみ INT8・デコーダ fp16 とした。また <strong>Core ML の正しさは Mac だけでは検証できない</strong>——Florence は Mac の全 compute unit で正常でも実機 fp16 で破綻した。新モデルは実機ログ（生成 ID・有限性）で確認してから採用する。
+        <strong>出力が連続ベクトルの部品（CLIP や VLM の視覚エンコーダ）は INT8 に強い</strong>（fp16 と cos≈0.999）。一方 <strong>LLM デコーダは弱い</strong>（次単語 argmax が反転・fp16 と一致 26%）。よって CLIP は全体を INT8 にしている（当時同梱していた VLM は視覚のみ INT8・デコーダ fp16 とした。<strong>VLM 自体は ADR-108 で廃止</strong>）。また <strong>Core ML の正しさは Mac だけでは検証できない</strong>——Florence は Mac の全 compute unit で正常でも実機 fp16 で破綻した。新モデルは実機ログ（生成 ID・有限性）で確認してから採用する。
       </div>
 
       <h2>検索の融合（RRF）と証拠ゲート・審査</h2>
@@ -70,11 +66,11 @@ graph TD
       <ul>
         <li><strong>P0 接地</strong>: 日付は <code>RelativeDateParser</code>（日英）を唯一の出典・場所はカタログ/原文出現に接地・<strong>人物名は顔クラスタへ接地</strong>（<code>PersonNameGrounder</code>＝「太郎」→山田太郎・姓名の部分指定対応）。人物条件の評価は焼き込みでなく<strong>現在のクラスタ名でライブ照合</strong>（改名/統合が即反映）。<code>QuerySpecSanitizer</code> がプレースホルダ除去・include/exclude 衝突解消。</li>
         <li><strong>P1 融合</strong>: Vision シーンタグ一致（離散・閾値レス）＋CLIP 対比（max-over-probes・除外は相対判定のみ）＋<code>LexicalSearch</code>（地名/人物）を <code>AIAlbumSearcher</code> が RRF 融合。除外語はタグの離散一致でもハード除外。</li>
-        <li><strong>P2 証拠ゲート＋審査</strong>: 除外つきはタグ/顔実測/キャプションの証拠を必須にし、<strong>キャプションの無い候補上位にはその場で生成</strong>（予算 40 枚/審査・ADR-35）してから <code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure 判定。unsure は最大 2 回の再判定で多数決。空振り時はプローブ語を生成して 1 回だけ再検索（Refine）。</li>
+        <li><strong>P2 証拠ゲート＋審査</strong>: 除外つきは<strong>条件に答えられるチャネルの証拠</strong>を必須にする（タグ／顔実測／人数実測。人物除外なら人物について語れる証拠を要求＝ADR-100）。そのうえで <code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure 判定。unsure は最大 2 回の再判定で多数決。空振り時はプローブ語を生成して 1 回だけ再検索（Refine）。</li>
       </ul>
       <div class="box note">
-        <span class="box-h">検索品質は回帰ハーネスで数値管理</span>
-        <code>SearchQualityTests</code>（Imagenette 200 枚＋正解ラベル付き 28 クエリ・実パイプライン実行）で Recall@20 / 精度 / 再現率を計測する。ベースライン（精度 0.99・再現率 0.76）で「言い換えの取りこぼし」が弱点と数値で特定し、マルチプローブ導入の A/B（再現率 0.76→0.86）も同ハーネスで検証した。実行手順は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">model-evaluations.md</a> §4。
+        <span class="box-h">検索品質はクエリ集ハーネスで数値管理（ADR-104）</span>
+        判断は<strong>データセット計測</strong>で行う（体感・個別事例では決めない）。正本の台帳は <a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a>。ハーネスは 2 本——<code>SearchEvalTests</code>（COCO val2017 ラベル・macOS・解釈→接地→照合→証拠ゲートの層）と <code>SearchEvalCaltechTests</code>（Caltech-101・広い語の<strong>接地</strong>込み）。現行値は <strong>COCO 116 本マクロ P=1.000 / R=0.833 / F1=0.896</strong>、<strong>Caltech（接地込み）F1=0.860</strong>。カテゴリ別 F1 の下限（現状値−0.03）と全体 precision≥0.97 を <code>SearchEvalRegressionTests</code> の<strong>回帰フロア</strong>として常設し、黙った劣化が入ったら落ちるようにしている。認識力込みの評価は <code>SearchQualityTests</code>（Imagenette 200 枚＋28 クエリ・実パイプライン）が担う。
       </div>
 
       <h2>作成 UI の入力支援（ADR-37）</h2>
@@ -86,21 +82,21 @@ graph TD
         <tr><th>プロトコル（AutoAlbumCore）</th><th>実装（MobileCLIPKit）</th></tr>
         <tr><td><code>PhotoPerceptionProvider</code></td><td><code>CLIPEmbeddingProvider</code>（refKey → 画像 → CLIP 埋め込み）</td></tr>
         <tr><td><code>TextEmbedder</code></td><td><code>MobileCLIPTextEmbedder</code></td></tr>
-        <tr><td><code>TagPerceptionProvider</code></td><td><code>VisionTagAdapter</code>（シーンタグ＋VLM キャプション）</td></tr>
-        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋facenet 埋め込み・端末 1024px／クラウドはキャッシュ済みサムネ）</td></tr>
+        <tr><td><code>TagPerceptionProvider</code></td><td><code>VisionTagAdapter</code>（シーンタグ＋OCR・人数・美的スコア）</td></tr>
+        <tr><td><code>FacePerceptionProvider</code></td><td><code>FacePerceptionAdapter</code>（顔検出＋AuraFace 埋め込み・端末 1024px／クラウドはキャッシュ済みサムネ）</td></tr>
         <tr><td><code>QueryTranslator</code></td><td><code>AppQueryTranslator</code>（Foundation Models）</td></tr>
         <tr><td><code>LabelProvider</code></td><td><code>CLIPDisplayLabeler</code>（表示専用タグ・準備済みのときだけ合成＝初回ロードで UI を塞がない）</td></tr>
       </table>
 
       <h2>ピープル（顔クラスタ）</h2>
-      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出＋同梱顔モデル（facenet・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは独立パッケージ <code>FaceCore</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード・純ロジック各種）。CLIP と共有する下層（ベクトル演算・写真キー・背景トリクル・ANE ゲート）は <code>PerceptionCore</code> にある。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 1024px（旧 640px）、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>。長押しメニューから改名・代表写真・顔の付け替え・<strong>別の人物と束ねる</strong>。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/束ねが即反映）。顔モデル未同梱ならセクション非表示。</p>
+      <p>写真アプリの「ピープル」は公開 PhotoKit API でアクセスできない（旧 subtype-1000 方式は常に空だったため撤去）。代わりに <strong>Vision 顔検出＋同梱顔モデル（AuraFace-v1・512 次元 L2 正規化）で identity 埋め込み→逐次クラスタリング</strong>で自前の「人物」を作る。ロジックは独立パッケージ <code>FaceCore</code>（<code>FaceClustering</code> 純・<code>FaceStore</code> は<strong>別コンテナ "FacesV1"</strong>・<code>PeopleEngine</code> ファサード・純ロジック各種）。CLIP と共有する下層（ベクトル演算・写真キー・背景トリクル・ANE ゲート）は <code>PerceptionCore</code> にある。対象は<strong>端末＋クラウド（Dropbox）両方</strong>（ADR-33）：端末は 1024px（旧 640px）、クラウドは<strong>キャッシュ済みサムネイル（追加DL なし）</strong>。長押しメニューから改名・代表写真・顔の付け替え・<strong>別の人物と束ねる</strong>。命名した人物は AI アルバムの人物条件に接地し、照合は<strong>ライブ</strong>（改名/束ねが即反映）。顔モデル未同梱ならセクション非表示。</p>
       <p><strong>精度は「候補→データセット計測→採否」の反復で作った</strong>（<code>FaceAccuracyEvalTests</code>／<code>FaceEvalMetrics</code>・台帳 <code>face-accuracy.md</code>・FG-NET/LFW）。効いた変更だけを採用し、直感に反して悪化した案（外れ値除去・年齢分類・自動細分割の 2 階層）は計測で棄却した。</p>
       <ul>
         <li><strong>不確かな顔を弾く多段ゲート</strong>（ADR-48/52/53）: 検出信頼度・クロップ再検証（二段検出）・ぼけ（ラプラシアン分散）・露出（平均輝度）・絶対 48px／正規化サイズ比・顔向き（yaw/roll）・目閉じで品質を減衰し、フロア 0.40 未満はクラスタに入れない。偽陽性は顔なし画像で <strong>0%</strong>。</li>
         <li><strong>埋め込みの安定化</strong>（ADR-51/54）: 両目ランドマークで<strong>アライメント</strong>＋<strong>マルチクロップ平均</strong>＋EXIF 回転の正規化。</li>
-        <li><strong>クラスタリング</strong>（ADR-56〜58）: 既定しきい値 0.50（校正 0.35〜0.70）＋<strong>マージンゲート</strong>（1 位/2 位の差 &lt;0.05 の紛らわしい顔は入れない）＋<strong>サイズ適応マージン</strong>（小/新クラスタほど厳しく）＋同一写真 cannot-link＋共起 notSame。<strong>混入率は初期 58%→12%</strong>（FG-NET）。</li>
+        <li><strong>クラスタリング</strong>（ADR-56〜58・ADR-68/70）: しきい値・マージン等の定数は<strong>モデルの類似度分布に張り付く</strong>ため <code>FaceTuning</code> のプロファイルに集約し、同梱モデルの宣言で選ぶ。現行 v5（AuraFace）は既定しきい値 <strong>0.35</strong>（校正の可動域 0.25〜0.40）＋<strong>マージンゲート</strong> 0.04（1 位/2 位の差が小さい紛らわしい顔は入れない）＋<strong>サイズ適応マージン</strong>（最大 0.08・小/新クラスタほど厳しく）＋同一写真 cannot-link＋共起 notSame。FG-NET 全体で <strong>B-Cubed F1 0.790 / 分裂 2.8</strong>（facenet 最良は 0.664 / 3.7）、家族シナリオ（LFW 3〜5 人）は <strong>F1 1.000・分裂 1.0</strong>。</li>
         <li><strong>ユーザー修正から学習</strong>（ADR-45/46）: 品質重み・負例エグゼンプラ（埋め込みキーで再スキャン跨ぎ）・確認済み顔アンカー・しきい値校正。「同じ人物ですか？」<strong>レビュー</strong>で判断が割れるケースだけ尋ねる。パイプライン版を上げると全再スキャンし、<strong>命名は写真の重なりで持ち越す</strong>（ADR-51）。</li>
-        <li><strong>2 階層の人物束ね</strong>（ADR-61）: 成長で複数クラスタに分かれた子供を <strong>1 人物として束ねる</strong>（<code>personGroupID</code>・融合せず純度を保つ・後で解除可）。子供は撮影日（≒年齢）で時期グループ・大人は融合。「束ねる＝子供」なので年齢推定 API・VLM 判定は不要。表示・検索・名前・顔ハイライトは束ねを反映。純ロジックは <code>FacePersonGrouping</code>。子供の成長を跨ぐ識別が計測で +3.8pt、大人は融合維持で 99.1%。</li>
+        <li><strong>2 階層の人物束ね</strong>（ADR-61）: 成長で複数クラスタに分かれた子供を <strong>1 人物として束ねる</strong>（<code>personGroupID</code>・融合せず純度を保つ・後で解除可）。子供は撮影日（≒年齢）で時期グループ・大人は融合。「束ねる＝子供」なので年齢推定 API も追加の判定モデルも要らない。表示・検索・名前・顔ハイライトは束ねを反映。純ロジックは <code>FacePersonGrouping</code>。子供の成長を跨ぐ識別が計測で +3.8pt、大人は融合維持で 99.1%。</li>
         <li><strong>顔ハイライト</strong>: 人物アルバムの「顔を表示」トグルで、認識した顔（束ねた全時期）をサムネ／全画面に黄枠表示（<code>faceHighlightProvider</code>／<code>FaceBoxMapping</code>・PhotoSourceKit は AutoAlbumCore 非依存を維持）。</li>
       </ul>
 
@@ -109,20 +105,22 @@ graph TD
         Vision の顔検出（<code>perform</code>）と Core ML の CLIP 推論・モデルロードが<strong>同時に ANE を使うと実機でデッドロック</strong>し、顔スキャンが最初の 1 枚で固まる障害があった。以前は CLIP 埋め込みが回線ゲートで止まっていて顔スキャンが ANE を独占できていたため顕在化していなかった。現在は <code>MLInferenceGate</code> で<strong>同時に 1 つだけ</strong>に直列化し、ゲートは「ANE に触れる場所」の内側で取る。詳細は <a href="../deep-dive/concurrency-internals.html">並行・バックグラウンド処理</a>。
       </div>
 
-      <h2>表示タグ・説明文は検索と同じ台帳</h2>
-      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。シーンタグは <strong>1 回の Vision 一括パス</strong>で <strong>OCR（写真内テキスト）・動物種別・人数・美的スコア・アセット種別（スクショ/パノラマ/Live Photo 等）</strong>も同時取得し（ADR-47）、OCR は字句検索の一チャネル・美的スコアはカバー選択・種別はタグ検索に使う。フル画像の情報パネルには「写真内のテキスト」欄・<strong>利用カウンタ（閲覧/共有回数）</strong>も出る（ADR-49）。VLM キャプションは「AI description」欄に表示（お気に入り＝生成対象で未生成なら「充電中に生成されます…」を表示）。顔の数・スクリーンショット判定・解析状態も同パネルに出す。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析・説明文の確認画面）で可視化する。</p>
+      <h2>表示タグは検索と同じ台帳</h2>
+      <p>フル画像に出すキーワードタグは <strong>Vision シーンタグ（<code>TagStore</code>・検索の一次ランキングと同一ソース）を第一</strong>に、<code>CLIPDisplayLabeler</code>（約 300 語ゼロショット・保存済み埋め込み使用）で補完する。シーンタグは <strong>1 回の Vision 一括パス</strong>で <strong>OCR（写真内テキスト）・動物種別・人数・美的スコア・アセット種別（スクショ/パノラマ/Live Photo 等）</strong>も同時取得し（ADR-47）、OCR は字句検索の一チャネル・美的スコアはカバー選択・種別はタグ検索に使う。フル画像の情報パネルには「写真内のテキスト」欄・<strong>利用カウンタ（閲覧/共有回数）</strong>も出る（ADR-49）。顔の数・スクリーンショット判定・解析状態も同パネルに出す。※ 旧「AI description」欄（VLM キャプション）は ADR-108 で廃止した（<code>PhotoTagRecord.caption</code> フィールドは TagsV1 のスキーマ互換のため残置・新規は常に nil）。進捗はユーザー向けの<strong>「AI 解析の状況」</strong>（パス別進捗・最終実行時刻・今すぐ解析）で可視化する。</p>
 
       <h2>背景処理のスロットリング</h2>
-      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。CLIP 埋め込みと VLM キャプションは<strong>インターリーブ</strong>（ADR-30・逐次だとキャプションが永遠に未着手になる実障害の修正）。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>。モデルは <strong>critical のメモリ圧迫で解放</strong>し（VLM は全レベル）、次回利用時に再ロードする。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
+      <p>シーンタグ・CLIP 埋め込み・顔スキャンは <code>BackgroundTrickle</code> の骨格で小バッチ＋バッチ間スリープ＋<code>.background</code> QoS で trickle 実行する。重さは設定（段階）で調整でき、<strong>停止判定は 1 枚単位</strong>（ADR-25）。ユーザー操作中・メモリ圧迫中・クラウド取得中は処理を譲る。<strong>シミュレータでは背景推論を実行しない</strong>。モデルは <strong>critical のメモリ圧迫で解放</strong>し、次回利用時に再ロードする。詳細は <a href="background.html">バックグラウンドと省電力</a>。</p>
 
       <div class="box refs">
         <span class="box-h">関連コード・記録</span>
         <ul>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum">AutoAlbumCore/AIAlbum/</a> — 検索・融合・審査・解釈永続化・作成支援</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags">AutoAlbumCore/Tags/</a> — TagStore / TagTagger</li>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Faces">AutoAlbumCore/Faces/</a> — 顔クラスタ・PeopleEngine</li>
-          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳/VLM/顔の実体</li>
-          <li><a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a> — モデル比較・検索品質ベースラインの実測記録</li>
+          <li><a class="srclink" data-path="Packages/FaceCore/Sources/FaceCore/Faces">FaceCore/Faces/</a> — 顔クラスタ・PeopleEngine</li>
+          <li><a class="srclink" data-path="Packages/MobileCLIPKit/Sources/MobileCLIPKit">MobileCLIPKit/</a> — CLIP/翻訳/顔の実体</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a> — モデル比較の実測記録</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> — 検索品質の台帳（正本）</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/face-accuracy.md">records/face-accuracy.md</a> — 顔認識の精度台帳（正本）</li>
         </ul>
       </div>
 

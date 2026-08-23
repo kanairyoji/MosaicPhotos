@@ -29,17 +29,21 @@ graph TD
   APP["アプリ層 (MosaicPhotos)<br/>HomeView・合成・ルーティング"]
   FEAT["統合層 (PhotosFeatureKit)<br/>MergedPhotoStore / PlaceScanner"]
   AI["AI層 (AutoAlbumCore + MobileCLIPKit)<br/>生成・知覚・検索"]
+  FACE["顔認識層 (FaceCore)<br/>クラスタリング・学習・PeopleEngine"]
   UI["UI層 (LocalPhotoKit / DropboxKit)"]
   CORE["ロジック層 (LocalPhotoCore / DropboxCore / BackupKit)"]
-  BASE["基盤 (PhotoSourceKit / ImageCacheKit / MosaicSupport)"]
+  BASE["基盤 (PhotoSourceKit / ImageCacheKit / MosaicSupport / PerceptionCore)"]
   APP --> FEAT
   APP --> AI
+  AI --> FACE
   FEAT --> UI
   UI --> CORE
   CORE --> BASE
   AI --> BASE
+  FACE --> BASE
   FEAT --> BASE
       </div>
+      <p><strong><code>PerceptionCore</code></strong> は CLIP と顔が共有する下層（ベクトル演算 <code>ClipMath</code>・統一キー <code>PhotoRef</code>・背景トリクル・<strong>ANE 直列化ゲート <code>MLInferenceGate</code></strong>）で、どちらか一方のパッケージに置かず基盤へ降ろしてある。<strong><code>FaceCore</code></strong> は肥大した <code>AutoAlbumCore</code> から切り出したピープル（顔クラスタ）で、<code>AutoAlbumCore</code> が両者を <code>@_exported import</code> するため呼び出し側の import は <code>import AutoAlbumCore</code> のままでよい。詳細は <a href="packages.html">パッケージと依存関係</a>。</p>
 
       <h2>画面とストアの対応</h2>
       <p><code>HomeView</code> が各ストアを保持し、ソースごとに対応する画面へ全画面遷移する。表示は共通の <code>PhotoSourceContentView</code> に集約されている。</p>

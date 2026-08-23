@@ -12,13 +12,13 @@
   <main>
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / ハイライト</nav>
-      <h1>設計判断ハイライト（重要トップ 10）</h1>
-      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）から、特に重要な <strong>10 個</strong>を抜粋して紹介する。各項は要点のみ。個別のバグ・性能対応の顛末（事例）は正本の case-studies.md と深掘りページへ。<strong>全件は Markdown のマスター</strong>を参照。</p>
+      <h1>設計判断ハイライト（重要トップ 13）</h1>
+      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）から、特に重要な <strong>13 個</strong>を抜粋して紹介する。各項は要点のみ。個別のバグ・性能対応の顛末（事例）は正本の case-studies.md と深掘りページへ。<strong>全件は Markdown のマスター</strong>を参照。</p>
 
       <div class="box note">
         <span class="box-h">このページは“抜粋”、正本は Markdown</span>
         設計判断・事例の<strong>正本（マスター）</strong>はリポジトリ内の Markdown：
-        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>（ADR 全 37 件）と
+        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>（ADR・現行 ADR-114 まで）と
         <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">records/case-studies.md</a>（事例 全件）。
         本 HTML はそこから<strong>重要なものを取捨選択</strong>した派生物で、全件は転記しない。新しい判断・事例はまずマスターへ追記する。
         詳しい顛末は <a href="../case-studies/memory.html">事例: メモリ</a> / <a href="../case-studies/launch-performance.html">事例: 起動</a> の深掘りページも参照。
@@ -27,15 +27,15 @@
       <h2><span class="tag">設計</span> 1. 検索の再設計＝「タグ台帳＋LLM 審査」（閾値レス） <span class="muted">(ADR-24・ADR-23・ADR-1)</span></h2>
       <p><strong>文脈:</strong> 当初は固定タグを捨て語彙ゼロの CLIP コサイン＋絶対閾値に一本化した（ADR-1）が、ライブラリ分布が不明で閾値が調整できず「除外が 97% を落とす／意味採用 0 件」が発生。小型 LLM の構造化出力も壊れた。<br>
       <strong>決定:</strong> (a) 解釈（検索文→<code>QuerySpec</code>・英訳）は<strong>作成時に 1 回だけ</strong>実行し永続化（ADR-23。旧・毎起動再解釈の 9.4s ハングを根治）。(b) 検索を <strong>Vision シーンタグ一致（離散・閾値レス）＋CLIP 対比＋字句の RRF 融合 → 証拠ゲート → LLM 審査（多数決）</strong>へ（ADR-24）。表示タグはシーンタグ＋ゼロショットで別途。<br>
-      <strong>結果:</strong> 閾値依存がほぼ消滅し、判定根拠がタグ/キャプションで可視化。全写真へシーンタグ・CLIP 埋め込み・VLM キャプションを夜間に付与する索引が必要。</p>
+      <strong>結果:</strong> 閾値依存がほぼ消滅し、判定根拠がタグで可視化。全写真へシーンタグ・CLIP 埋め込みを夜間に付与する索引が必要。</p>
 
       <h2><span class="tag">設計</span> 2. ロジック層 / UI 層の分離（Core/UI） <span class="muted">(ADR-3)</span></h2>
       <p><strong>文脈:</strong> 副作用（PhotosKit/URLSession/SwiftData）を UI から切り離してテストしたい。<br>
       <strong>決定:</strong> <code>*Core</code>（SwiftUI 非依存）と <code>*Kit</code>（UI・<code>@_exported import</code>）に分割。<br>
-      <strong>結果:</strong> 純ロジックを macOS で高速テスト。import は 1 つで済む。パッケージ数は増える（現在 11 個）。</p>
+      <strong>結果:</strong> 純ロジックを macOS で高速テスト。import は 1 つで済む。パッケージ数は増える（現在 13 個）。</p>
 
       <h2><span class="tag">設計</span> 3. グリッドを UICollectionView に置換 <span class="muted">(ADR-4)</span></h2>
-      <p><strong>文脈:</strong> 6 万件超で <code>LazyVGrid</code> + <code>scrollTo</code> のスクラバーが不安定。<br>
+      <p><strong>文脈:</strong> 8 万件超（実機 86,172 枚）で <code>LazyVGrid</code> + <code>scrollTo</code> のスクラバーが不安定。<br>
       <strong>決定:</strong> <code>UIViewRepresentable</code> で UICollectionView（diffable・プリフェッチ・contentOffset スクラバー）を採用。<br>
       <strong>結果:</strong> 大ジャンプが安定。UIKit のボイラープレートは増える。</p>
 
@@ -54,9 +54,9 @@
       <strong>決定:</strong> <code>makeResilientContainer</code> で「削除→再試行→インメモリ」とフォールバック。<br>
       <strong>結果:</strong> 起動を止めない。最悪データは失うが回復する（埋め込みは背景で再生成）。</p>
 
-      <h2><span class="tag">設計</span> 7. 重い処理は「使っていない時だけ」＋5 段階タイミング <span class="muted">(ADR-25)</span></h2>
+      <h2><span class="tag">設計</span> 7. 重い処理は「使っていない時だけ」＋4 軸の独立設定 <span class="muted">(ADR-25・ADR-80・ADR-107)</span></h2>
       <p><strong>文脈:</strong> 旧ゲート「電源＋アイドル 60 秒」は、充電閲覧中に触らないと重い処理が走り出し、操作再開時にバッチ途中（最大約 27 秒）が譲れず固まった。<br>
-      <strong>決定:</strong> アイドル判定を廃止し「電源＋低電力OFF＋<strong>アプリ非アクティブ＋Wi-Fi</strong>」へ。停止判定は全処理 1 枚単位。AI アルバム作成は<strong>即時プレビュー（決定的）→夜間本番化（LLM）</strong>の 2 段階。のちに実行タイミングを<strong>5 段階のユーザー設定</strong>（<code>HeavyWorkTiming</code>・純関数で判定）へ発展。<br>
+      <strong>決定:</strong> アイドル判定を廃止し「電源＋低電力OFF＋<strong>アプリ非アクティブ＋Wi-Fi</strong>」へ。停止判定は全処理 1 枚単位。AI アルバム作成は<strong>即時プレビュー（決定的）→夜間本番化（LLM）</strong>の 2 段階。その後、一度は 5 段階の梯子（<code>HeavyWorkTiming</code>）にしたが、3 つの軸を 1 本に混ぜていて「電源は必須のままモバイル回線だけ許す」が表現できず、電源・回線が既存ポリシーと二重になっていたため<strong>解体</strong>し、<strong>4 軸の独立設定</strong>（自動処理オン/オフ・控えめ＝前面で動かすか・電源・回線）へ整理した（ADR-80。<code>HeavyWorkTiming</code> は <code>paused</code>/<code>enabled</code> の 2 値と純関数 <code>allows</code> だけを持つ）。さらに、途中で譲れない<strong>一枚岩の処理</strong>（AI アルバムの本番化・ドリフト再評価・自動生成）は <code>monolithicHeavyWorkAllowed</code> で<strong>非アクティブ限定</strong>に分けた（ADR-107）。<br>
       <strong>結果:</strong> フォアグラウンドで重い処理がゼロになり操作が軽い。初回全量索引は「充電＋Wi-Fi＋ロック」時間帯に限定され日数を要する（エスケープハッチ＝今すぐ処理）。→ <a href="../features/background.html">バックグラウンド</a>。</p>
 
       <h2><span class="tag">設計</span> 8. 共有ハード資源（ANE）は「触れる場所」で直列化する <span class="muted">(ADR-70・ADR-73・ADR-75)</span></h2>
@@ -64,15 +64,15 @@
       <strong>決定:</strong> ANE を使う処理を <code>MLInferenceGate</code> に通し<strong>同時に 1 つだけ</strong>実行する。ゲートを取るのは<strong>ANE に実際に触れる場所</strong>（各ランタイム/アダプタ）の内側で、呼び出し側の夜間タガーでは包まない。待機列は前景/背景の 2 本に分け、キャンセルされた待機者は列の先頭へ繰り上げる。<br>
       <strong>結果:</strong> 学びが 2 つ。(a) <strong>横断的な不変条件を呼び出し側に守らせる設計は必ず漏れる</strong>——実際、呼び出し側で包む方式では前景の検索経路だけが素通りし、さらにゲートの<strong>内側</strong>で 3 並列の Vision が走って不変条件を自ら破っていた。(b) <strong>漏れは「新しい経路」ではなく「既にある別経路」で起きる</strong>。ゲート本体は <code>PerceptionCore</code>（顔と CLIP の共有下層）に置き、テストで優先度・キャンセル・後始末を検証している。</p>
 
-      <h2><span class="tag">設計</span> 9. モデル選定は「実測＋実機確認」で決める <span class="muted">(ADR-31・ADR-32・ADR-34)</span></h2>
+      <h2><span class="tag">設計</span> 9. モデル選定は「実測＋実機確認」で決める <span class="muted">(ADR-31・ADR-32・ADR-34・ADR-70)</span></h2>
       <p><strong>文脈:</strong> 画像認識が重く、CLIP / VLM の軽量化・置き換え候補を比較したい。カタログスペックでは判断できない。<br>
-      <strong>決定:</strong> 共通ベンチ（Imagenette 実写＋Core ML 実行）で<strong>メモリ・速度・精度を実測</strong>して選ぶ。CLIP は INT8 量子化を採用（289→145MB・精度不変）。VLM は Florence-2-base を一度採用したが、<strong>実機 ANE/GPU の fp16 で cross-attention が破綻</strong>（全写真で無関係な文）し撤回、SmolVLM（decoder-only＝ANE 安全）へ回帰。のち SmolVLM-500M＋視覚のみ INT8 に更新し、最重量のキャプション生成は<strong>お気に入りのみ</strong>に限定。<br>
+      <strong>決定:</strong> 共通ベンチ（Imagenette 実写＋Core ML 実行）で<strong>メモリ・速度・精度を実測</strong>して選ぶ。CLIP は INT8 量子化を採用（289→145MB・精度不変）。顔モデルは FG-NET/LFW の計測で <strong>facenet → AuraFace-v1</strong> へ換装した（ADR-70。年齢不変性 TAR@FAR1% 48.1%→<strong>62.0%</strong>）。<strong>【過去の経緯】</strong> VLM（キャプション）も同じ手順で選定していた——Florence-2-base を一度採用したが<strong>実機 ANE/GPU の fp16 で cross-attention が破綻</strong>（全写真で無関係な文）し撤回、SmolVLM（decoder-only＝ANE 安全）へ回帰、のち SmolVLM-500M＋視覚のみ INT8 に更新してキャプション生成をお気に入りのみに限定していた。<strong>→ ADR-108 で VLM は機能ごと撤回</strong>（下記 12。検索寄与ゼロの実測）。<br>
       <strong>結果:</strong> 学びが 2 つ。(a) <strong>量子化耐性は部品で非対称</strong>——連続ベクトル出力（視覚エンコーダ）は INT8 に強く、LLM デコーダは argmax が反転して壊れる。(b) <strong>Core ML の正しさは Mac だけでは検証できない</strong>——Mac の全 compute unit で正常でも実機 fp16 で壊れた。実測記録は <a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a>。</p>
 
-      <h2><span class="tag">設計</span> 10. 検索品質は回帰ハーネスで数値検証してから直す <span class="muted">(ADR-35)</span></h2>
+      <h2><span class="tag">設計</span> 10. 検索品質は回帰ハーネスで数値検証してから直す <span class="muted">(ADR-35・ADR-104)</span></h2>
       <p><strong>文脈:</strong> 「自然文アルバムをもっと良く」——だが何が弱いか感覚では特定できず、直した“つもり”の劣化も検知できない。<br>
-      <strong>決定:</strong> 正解ラベル付き評価セット（Imagenette 200 枚＋28 クエリ）で実パイプラインを走らせる <code>SearchQualityTests</code> を常設。ベースライン計測で「言い換えの取りこぼし」が弱点と数値で特定し、対策（LLM 言い換えプローブの max-over-probes ＋審査時オンデマンドキャプション）を同ハーネスの A/B で検証してから採用。<br>
-      <strong>結果:</strong> 言い換え再現率 +17〜18pt を数値で確認。以後の検索変更は同ハーネスの回帰チェックを通す。実運用で見つかった穴（人物名 0 件・除外×プローブの相互作用）も事例として正本に記録。</p>
+      <strong>決定:</strong> まず正解ラベル付き評価セット（Imagenette 200 枚＋28 クエリ）で実パイプラインを走らせる <code>SearchQualityTests</code> を常設し、「言い換えの取りこぼし」が弱点と数値で特定して対策（LLM 言い換えプローブの max-over-probes）を A/B で検証してから採用した。その後 ADR-104 で計測を<strong>クエリ集ハーネス 2 本</strong>（<code>SearchEvalTests</code>＝COCO val2017 ラベル・<code>SearchEvalCaltechTests</code>＝Caltech-101 の広い語の接地）へ発展させ、正本の台帳 <a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> に段階ごとの差分を積む運用にした。<br>
+      <strong>結果:</strong> 現行値は <strong>COCO 116 本マクロ P=1.000 / R=0.833 / F1=0.896</strong>、<strong>Caltech（接地込み）F1=0.860</strong>。カテゴリ別 F1 の下限（現状値−0.03）と全体 precision≥0.97 を <code>SearchEvalRegressionTests</code> の<strong>回帰フロア</strong>として常設し、検索まわりの変更が性能を黙って壊すと落ちるようにした。解釈・照合・接地・証拠を触ったら両ハーネスを回して差分を台帳へ記す（体感・個別事例では決めない）。</p>
 
       <h2><span class="tag">設計</span> 11. 応答性の設計＝「一枚岩は非アクティブ限定・作成は即時本番化」 <span class="muted">(ADR-107・ADR-110)</span></h2>
       <p><strong>文脈:</strong> AI アルバムの操作でアプリが数十秒固まる実障害が続いた。実測で 2 つの機序を特定——(a) 途中で譲れない一枚岩の重い保守（本番化・全再評価・生成）が前面アイドルでも起動していた。(b) 高優先度の協調タスク（LLM 推論・86k 件フェッチ）が P コアを占有し、メインスレッドが<strong>実行されないのに固まる「飢餓」</strong>が起きていた。<br>

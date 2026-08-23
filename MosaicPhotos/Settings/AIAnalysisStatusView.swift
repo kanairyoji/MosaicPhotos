@@ -116,7 +116,7 @@ struct AIAnalysisStatusView: View {
         } header: {
             Text("People")
         } footer: {
-            Text("Faces are detected in your device photos and grouped into people, entirely on device. Cloud photos are not scanned for faces.")
+            Text("Faces are detected and grouped into people entirely on device, for both device and Dropbox photos (cloud faces use already-cached thumbnails, so no extra downloads).")
         }
     }
 

@@ -81,7 +81,7 @@ graph TD
         <tr><td><code>AutoAlbumCore</code></td><td>ロジック</td><td>自動アルバム生成・知覚・意味検索（タグ台帳＋LLM 審査）・シーンタグ台帳（<code>TagStore</code>）のロジック。SwiftUI 非依存・純ロジック中心でテストしやすい。<code>PerceptionCore</code> / <code>FaceCore</code> を <code>@_exported import</code> するので、利用側は <code>import AutoAlbumCore</code> のままでよい。</td></tr>
         <tr><td><code>LocalPhotoKit</code></td><td>UI</td><td>端末写真の UI。<code>LocalPhotoCore</code> を <code>@_exported import</code>。</td></tr>
         <tr><td><code>DropboxKit</code></td><td>UI</td><td>Dropbox の UI。<code>DropboxCore</code> を <code>@_exported import</code>。</td></tr>
-        <tr><td><code>MobileCLIPKit</code></td><td>UI/実装</td><td>CLIP/翻訳/VLM キャプション/顔モデルのランタイムと <code>AutoAlbumCore</code> の seam 実装（知覚・タグ・顔アダプタ・表示ラベラ）。Core ML / Vision / Foundation Models を扱う。Core ML ロードと BPE の共通足場（<code>CoreMLModelSupport</code>・<code>BPESupport</code>）を持つ。</td></tr>
+        <tr><td><code>MobileCLIPKit</code></td><td>UI/実装</td><td>CLIP/翻訳/顔モデルのランタイムと <code>AutoAlbumCore</code> の seam 実装（知覚・タグ・顔アダプタ・表示ラベラ）。Core ML / Vision / Foundation Models を扱う。Core ML ロードと BPE の共通足場（<code>CoreMLModelSupport</code>・<code>BPESupport</code>）を持つ。</td></tr>
         <tr><td><code>PhotosFeatureKit</code></td><td>統合</td><td>ローカル + Dropbox を統合する <code>MergedPhotoStore</code> / <code>MergedPhotoItem</code>、場所グルーピングの <code>PlaceScanner</code>。</td></tr>
       </table>
 

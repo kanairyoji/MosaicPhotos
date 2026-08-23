@@ -58,12 +58,12 @@ graph TD
       </div>
 
       <h2>AI の付加情報フロー</h2>
-      <p>写真のメタデータ（<code>PhotoEnrichment</code>）・CLIP 埋め込み（<code>PhotoEmbedding</code>・別テーブル fp16）・シーンタグ/キャプション（<code>TagStore</code>・TagsV1 別コンテナ）に分けて永続化する。検索は埋め込みを<strong>ページング</strong>で読み、メモリを有界に保つ。</p>
+      <p>写真のメタデータ（<code>PhotoEnrichment</code>）・CLIP 埋め込み（<code>PhotoEmbedding</code>・別テーブル fp16）・シーンタグ（<code>TagStore</code>・TagsV1 別コンテナ。OCR・人数・美的スコアも同居）に分けて永続化する。検索は埋め込みを<strong>ページング</strong>で読み、メモリを有界に保つ。</p>
       <div class="mermaid">
 graph LR
   ENR[PhotoEnricher<br/>日付・場所] --> SDM[(PhotoEnrichment)]
-  TG[TagTagger<br/>Vision タグ→CLIP→VLM] --> SDE[(PhotoEmbedding fp16)]
-  TG --> SDT[(TagStore<br/>タグ・キャプション)]
+  TG[TagTagger<br/>Vision タグ→CLIP 埋め込み] --> SDE[(PhotoEmbedding fp16)]
+  TG --> SDT[(TagStore<br/>シーンタグ)]
   Q[クエリ] --> TR[翻訳・解釈 FM<br/>作成時1回・永続化]
   TR --> SRch[AIAlbumSearcher<br/>RRF 融合]
   SDE -->|CLIP 対比| SRch

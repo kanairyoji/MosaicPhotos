@@ -50,7 +50,7 @@
       </table>
       <div class="box note">
         <span class="box-h">別コンテナに分けるもの</span>
-        シーンタグ／VLM キャプションは <code>TagStore</code>（<strong>TagsV1</strong>）、顔クラスタは <code>FaceStore</code>（<strong>FacesV1</strong>）と、AI アルバム本体（<code>AutoAlbumV10</code>）とは別の <code>ModelConfiguration</code> に分離する。スキーマ変更や破棄採番が互いのデータを壊さないため。
+        シーンタグ（＋OCR・人数・美的スコア）は <code>TagStore</code>（<strong>TagsV1</strong>）、顔クラスタは <code>FaceStore</code>（<strong>FacesV1</strong>）と、AI アルバム本体（<code>AutoAlbumV10</code>）とは別の <code>ModelConfiguration</code> に分離する。スキーマ変更や破棄採番が互いのデータを壊さないため。
       </div>
 
       <h2>埋め込み: PhotoEmbedding（別テーブル・fp16）</h2>
@@ -91,7 +91,7 @@ graph LR
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/PhotoRef.swift">PhotoRef.swift</a></li>
+          <li><a class="srclink" data-path="Packages/PerceptionCore/Sources/PerceptionCore/PhotoRef.swift">PhotoRef.swift</a></li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Models">AutoAlbumCore/Models/</a> — PhotoEnrichment / PhotoEmbedding / GeneratedAlbum</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AutoAlbumInfo.swift">AutoAlbumInfo.swift</a></li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/EnrichedPhoto.swift">EnrichedPhoto.swift</a></li>

@@ -16,7 +16,7 @@
       <p class="lead">自然文（任意言語）からアルバムを作る経路を、コードの登場人物と処理順で追う。設計の全体像は<a href="../features/on-device-ai.html">オンデバイス AI</a>を先に。ここでは <code>AIAlbumService</code> を起点に「解釈 → 検索 → 審査 → 増分評価」の各フェーズを実装レベルで説明する。すべて <code>AutoAlbumCore</code>（SwiftUI 非依存・macOS でテスト可能）にある。</p>
 
       <h2>まず例で追う</h2>
-      <p>ライブラリ 60,000 枚・ピープルに「山田太郎」「山田花子」が命名済みという前提で、検索文<strong>「去年の沖縄で太郎が海で遊んでいる写真」</strong>からアルバムを作る流れを追う。</p>
+      <p>ライブラリ 86,172 枚（実機の現行値）・ピープルに「山田太郎」「山田花子」が命名済みという前提で、検索文<strong>「去年の沖縄で太郎が海で遊んでいる写真」</strong>からアルバムを作る流れを追う。</p>
 
       <h3>ステップ 1: 「作成」タップの瞬間（1〜2 秒・LLM なし）</h3>
       <p>まず LLM を使わない<strong>即時プレビュー</strong>が走る。決定的な辞書とパーサだけで検索文を分解する：</p>
@@ -29,7 +29,7 @@
       </table>
       <p>検索は 3 段階で絞る：</p>
       <ol>
-        <li><strong>ハードフィルタ</strong>: 60,000 枚 →「去年」で 8,000 枚 →「山田太郎の顔がある」で 900 枚。足切りのみで順位は付けない。</li>
+        <li><strong>ハードフィルタ</strong>: 86,172 枚 →「去年」で 8,000 枚 →「山田太郎の顔がある」で 900 枚。足切りのみで順位は付けない。</li>
         <li><strong>3 本のランキング</strong>: 残り 900 枚を独立に順位付け。<strong>タグ</strong>＝シーンタグに <code>beach</code> を持つ写真（例: 120 枚・一致数順）／<strong>CLIP</strong>＝<code>beach</code> のテキスト埋め込みと各写真の画像埋め込みのコサイン（上位バンドのみ採用）／<strong>字句</strong>＝地名・人物メタデータへの文字一致。</li>
         <li><strong>RRF 融合</strong>: 3 つの順位表を「順位の逆数の和」で 1 本に統合。タグでも CLIP でも上位に来る写真（＝複数の証拠がある写真）が勝つ。単一スコアの閾値調整を捨てて「複数の目の合議」にしたのが要点。</li>
       </ol>
@@ -38,14 +38,12 @@
       <h3>ステップ 2: 夜間の本番化（充電＋ロック中・LLM が動く）</h3>
       <p><strong>LLM 解釈（1 回だけ・永続化）</strong>: Foundation Models が検索文を構造化し、即時版で拾えなかったものを補う——「沖縄」を地名カタログに実在確認して<strong>場所のハード条件</strong>に、英訳 <code>"Taro playing at the beach in Okinawa"</code> を CLIP 用に、<strong>言い換えプローブ</strong> <code>["swimming in the sea", "child playing in ocean waves", …]</code> を生成（採点は主フレーズとプローブの最大類似＝max-over-probes）。再検索で候補が例えば 60 枚になる。</p>
       <p><strong>LLM 審査</strong>: 候補ごとに「証拠行」を組み立てて keep / drop / unsure を判定させる：</p>
-      <pre>#12 tags=[beach, child, water] faces=2 caption="A boy playing in the waves"
-    date=2025-08-14 place=沖縄県恩納村   → keep
-#31 tags=[aquarium, fish, indoor] faces=1 caption=なし
-    date=2025-08-15 place=沖縄県那覇市   → drop（水族館は「海で遊ぶ」ではない）</pre>
-      <p>キャプション未生成の候補上位には<strong>その場で VLM が生成</strong>する（1 審査 40 枚まで・生成分は台帳に永続化＝捨てない）。unsure は 2 回まで再判定して多数決。0 件ならプローブ語で 1 回だけ再検索する。</p>
+      <pre>#12 2025-08-14 | 沖縄県恩納村 | faces=2 | tags: beach, child, water   → keep
+#31 2025-08-15 | 沖縄県那覇市 | faces=1 | tags: aquarium, fish, indoor → drop（水族館は「海で遊ぶ」ではない）</pre>
+      <p>unsure は 2 回まで再判定して多数決。0 件ならプローブ語で 1 回だけ再検索する。</p>
 
       <h3>ステップ 3: 以後、写真が増えたら（自動追従）</h3>
-      <p>新しい写真 30 枚が夜間に索引されると、<strong>その 30 枚だけ</strong>を保存済みクエリベクトルで採点し、永続化された<strong>スコアプール</strong>（上位 300 件の refKey→類似スコア表）へマージしてメンバーを引き直す。60,000 枚の再走査も LLM も走らない。ズレが蓄積したら（埋め込み 500 枚以上の差）フル再評価で整合を取り直す。</p>
+      <p>新しい写真 30 枚が夜間に索引されると、<strong>その 30 枚だけ</strong>を保存済みクエリベクトルで採点し、永続化された<strong>スコアプール</strong>（上位 300 件の refKey→類似スコア表）へマージしてメンバーを引き直す。86,172 枚の再走査も LLM も走らない。ズレが蓄積したら（埋め込み 500 枚以上の差）フル再評価で整合を取り直す。</p>
 
       <div class="box why">
         <span class="box-h">この複雑さは実障害の積み上げ（シンプル化検討の材料）</span>
@@ -57,7 +55,7 @@
           <tr><td>証拠ゲート＋LLM 審査</td><td>CLIP スコアだけの「もっともらしい誤検出」</td></tr>
           <tr><td>即時プレビュー→夜間本番の 2 段階</td><td>作成タップで画面フリーズ</td></tr>
           <tr><td>スコアプール＋増分評価</td><td>写真追加のたびに全件再走査</td></tr>
-          <tr><td>空なら空を返すポリシー</td><td>「全 68,512 枚のアルバム」等の巨大アルバム誤生成</td></tr>
+          <tr><td>空なら空を返すポリシー</td><td>「全 86,172 枚のアルバム」等の巨大アルバム誤生成</td></tr>
         </table>
       </div>
 
@@ -75,13 +73,13 @@
         <tr><td><code>AIAlbumSearcher</code></td><td>検索の本体 <code>searchWithPool</code>。ハード → タグ/意味/字句 → RRF 融合。増分評価用のスコアプールも返す</td></tr>
         <tr><td><code>LexicalSearch</code> / <code>HybridFusion</code></td><td>字句ランキング（地名/人物）と Reciprocal Rank Fusion（k=60）</td></tr>
         <tr><td><code>ClipMath</code></td><td>vDSP コサイン・Float16 エンコード/デコード（純関数）</td></tr>
-        <tr><td rowspan="2">審査</td><td><code>AIAlbumVerificationCoordinator</code></td><td>証拠ゲート・証拠行の組み立て・オンデマンドキャプション（予算 40 枚/審査）・審査の呼び出し</td></tr>
+        <tr><td rowspan="2">審査</td><td><code>AIAlbumVerificationCoordinator</code></td><td>証拠ゲート・証拠行の組み立て・審査の呼び出し</td></tr>
         <tr><td><code>AlbumVerifier</code>（<code>AlbumCandidateVerifier</code>）</td><td>FM LLM による keep/drop/unsure 判定。<code>majorityVerdict</code>（純関数）で多数決集計</td></tr>
         <tr><td rowspan="3">永続化</td><td><code>AutoAlbumStore</code>（@ModelActor）</td><td><code>PhotoEnrichment</code>（メタ）/ <code>PhotoEmbedding</code>（CLIP・別テーブル）/ <code>GeneratedAlbum</code></td></tr>
-        <tr><td><code>TagStore</code>（@ModelActor・TagsV1）</td><td>Vision シーンタグ＋VLM キャプションの台帳</td></tr>
+        <tr><td><code>TagStore</code>（@ModelActor・TagsV1）</td><td>Vision シーンタグの台帳（＋OCR・人数・美的スコア）。<code>caption</code> フィールドはスキーマ互換のため残置・新規は常に nil（ADR-108）</td></tr>
         <tr><td><code>FaceStore</code>（@ModelActor・FacesV1）</td><td>顔クラスタ（人物名・顔数の実測）</td></tr>
       </table>
-      <p>これらを統括するファサードが <code>AutoAlbumEngine</code>（@MainActor @Observable）で、アプリの <code>AutoAlbumAdapters</code>（Composition Root）が seam（<code>TextEmbedder</code> / <code>QueryTranslator</code> / タグ・顔・キャプションの各 provider）を注入する。</p>
+      <p>これらを統括するファサードが <code>AutoAlbumEngine</code>（@MainActor @Observable）で、アプリの <code>AutoAlbumAdapters</code>（Composition Root）が seam（<code>TextEmbedder</code> / <code>QueryTranslator</code> / タグ・顔の各 provider）を注入する。</p>
 
       <h2>ライフサイクル：即時プレビュー → 夜間本番化</h2>
       <p>作成/編集（<code>AIAlbumService.make</code>）は<strong>LLM を一切呼ばない</strong>。決定的レイヤーだけの「プレビュー解釈」（<code>AIAlbumInterpreter.previewInterpretation</code>：レキシコン・日付パーサ・人物接地）で 1〜2 秒で結果を出し、<code>pendingFinalization</code> フラグ付きで保存する。FM 解釈と LLM 審査を含む本番化は夜間（<code>finalizePending</code>・電源＋Wi-Fi＋ロック中）に行う。UI を固めず、重い推論を夜間ゲートに寄せるための 2 段構えである（ADR-25/28）。</p>
@@ -131,15 +129,14 @@ graph TD
       </ol>
       <div class="box why">
         <span class="box-h">「空を返す」判断は実障害から決めた</span>
-        (a) フレーズ無し（翻訳保留等）でハード条件も無いときは<strong>空</strong>を返す——旧実装は無条件で base を返し「全 68,512 枚のアルバム」が生成された。(b) フレーズがあるのにタグ/意味/字句のどれにも当たらないときも<strong>空</strong>——旧実装は日付窓の全 7,508 枚へフォールバックし「子供」の意図が消えた。証拠主義（ADR-24）：索引が進めば自然に埋まる方を選ぶ。
+        (a) フレーズ無し（翻訳保留等）でハード条件も無いときは<strong>空</strong>を返す——旧実装は無条件で base を返し「全 86,172 枚のアルバム」が生成された。(b) フレーズがあるのにタグ/意味/字句のどれにも当たらないときも<strong>空</strong>——旧実装は日付窓の全 7,508 枚へフォールバックし「子供」の意図が消えた。証拠主義（ADR-24）：索引が進めば自然に埋まる方を選ぶ。
       </div>
 
       <h2>フェーズ 3：証拠ゲートと LLM 審査</h2>
       <p><code>AIAlbumVerificationCoordinator</code> が担う。</p>
       <ul>
-        <li><strong>証拠ゲート</strong>（<code>evidenceGated</code>・除外つきクエリのみ）：シーンタグ・顔実測・キャプションのいずれの証拠も無い候補を落とす。CLIP スコアだけの「もっともらしい誤検出」を審査に上げない。</li>
-        <li><strong>オンデマンドキャプション</strong>（ADR-35）：審査対象のうちキャプション未生成の候補上位に、その場で VLM キャプションを生成する。予算は <code>captionBudget = 40</code> 枚/審査（500M VLM ≈ 4 秒/枚 × 40 ≈ 3 分弱・夜間実行）。生成分は台帳（TagsV1）へ保存され次回から再利用される。</li>
-        <li><strong>審査</strong>（<code>verified</code>）：候補ごとに証拠行（<code>evidenceLine</code>＝タグ・顔数・キャプション・日付/場所）を組み立て、<code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure を返す。unsure は最大 2 回再判定し <code>majorityVerdict</code>（純関数）で多数決。LLM が使えない環境では審査をスキップして融合結果をそのまま使う（劣化はするが空にはならない）。</li>
+        <li><strong>証拠ゲート</strong>（<code>evidenceGated</code>・除外つきクエリのみ）：シーンタグ・顔実測・人数実測（<code>humanCount</code>）のいずれの証拠も無い候補を落とす。CLIP スコアだけの「もっともらしい誤検出」を審査に上げない。さらに除外語が<strong>人物</strong>系なら「人について語れる証拠」（<code>humanCount</code> か顔実測）を要求する——風景タグは人の有無について何も語らないため（ADR-100）。判定は完全一致のみ（部分一致だと動物クエリに人物証拠を要求して全滅した実障害・ADR-102）。</li>
+        <li><strong>審査</strong>（<code>verified</code>）：候補（上位 60 件）ごとに証拠行（<code>evidenceLine</code>＝日付・場所・顔数・タグ）を組み立て、<code>AlbumVerifier</code>（Foundation Models）が keep/drop/unsure を返す。unsure は最大 2 回再判定し <code>majorityVerdict</code>（純関数）で多数決。LLM が使えない環境では審査をスキップして融合結果をそのまま使う（劣化はするが空にはならない）。</li>
       </ul>
 
       <h2>フェーズ 4：再評価（増分＋ドリフト検知）</h2>
@@ -156,7 +153,8 @@ graph TD
       <table>
         <tr><th>対象</th><th>テスト</th><th>実行環境</th></tr>
         <tr><td>検索・融合・増分・プローブ</td><td><code>AutoAlbumCoreTests</code>（<code>AIAlbumSearcherTests</code> / <code>MultiProbeTests</code> / <code>LexicalSearchTests</code> ほか）</td><td>macOS <code>swift test</code>（FAST）</td></tr>
-        <tr><td>検索品質（Recall@k・実パイプライン）</td><td><code>SearchQualityTests</code>（Imagenette 200 枚＋28 クエリ・要モデル同梱）</td><td>アプリテストターゲット（実機/シミュレータ）</td></tr>
+        <tr><td>検索品質（解釈→接地→照合→証拠ゲート）</td><td><code>SearchEvalTests</code>（COCO val2017 ラベル・116 本）／<code>SearchEvalCaltechTests</code>（Caltech-101・広い語の接地）／<code>SearchEvalRegressionTests</code>（<strong>回帰フロア</strong>＝カテゴリ別 F1 の下限と全体 precision≥0.97）</td><td>macOS <code>swift test --filter SearchEval</code>（FAST）</td></tr>
+        <tr><td>検索品質（認識力込み・Recall@k）</td><td><code>SearchQualityTests</code>（Imagenette 200 枚＋28 クエリ・要モデル同梱）</td><td>アプリテストターゲット（実機/シミュレータ）</td></tr>
         <tr><td>CLIP の有限性・自然文一致</td><td><code>ImageRecognitionTests</code></td><td>アプリテストターゲット（モデル未同梱はスキップ）</td></tr>
       </table>
 
@@ -166,9 +164,9 @@ graph TD
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumService.swift">AIAlbumService.swift</a> — make / finalizePending / refresh*</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumSearch.swift">AIAlbumSearch.swift</a> — searchWithPool・増分の純ロジック</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/QueryEmbedder.swift">QueryEmbedder.swift</a> — フレーズ選定・semanticScore</li>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumVerificationCoordinator.swift">AIAlbumVerificationCoordinator.swift</a> — 証拠ゲート・オンデマンドキャプション・審査</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumVerificationCoordinator.swift">AIAlbumVerificationCoordinator.swift</a> — 証拠ゲート・審査</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumInterpreter.swift">AIAlbumInterpreter.swift</a> — 解釈・接地・プローブ</li>
-          <li><a class="srclink" data-path="docs/architecture-note/records/model-evaluations.md">records/model-evaluations.md</a> — 検索品質ベースライン・A/B の実測</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> — 検索品質の台帳（正本）。現行 COCO 116 本マクロ P=1.000 / R=0.833 / F1=0.896・Caltech（接地込み）F1=0.860</li>
         </ul>
       </div>
 

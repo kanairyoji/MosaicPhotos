@@ -101,15 +101,28 @@ final class ScreenshotCaptureTests: XCTestCase {
             sleep(2)
         }
 
-        // 5. すべての写真（グリッド）
+        // 5. AI アルバム作成シート（ヘッダーの「+」）。作成はせずキャンセルで閉じる。
+        if tapFirst(["アルバムを言葉で指定 — 例：「ここ数年の沖縄旅行」。",
+                     "Describe an album — e.g. “Okinawa trips in recent years”."], timeout: 5) {
+            sleep(4)
+            capture("06-ai-compose")
+            tapFirst(["閉じる", "キャンセル", "Close", "Cancel"], timeout: 3)
+            sleep(2)
+        }
+
+        // 6. すべての写真（グリッド）
         if tapFirst(["すべての写真", "All Photos"], timeout: 5) {
             sleep(5)
-            capture("06-grid")
+            capture("07-grid")
 
-            // 6. 写真 1 枚（フル画面）— ここで終わりにするので戻らない。
+            // 7. 写真 1 枚（フル画面）→ 下へスクロールして情報パネル（タグ・EXIF・地図）。
+            //    ここで終わりにするので戻り操作は不要。
             tapFirstThumbnail()
             sleep(6)
-            capture("07-photo")
+            capture("08-photo")
+            app.swipeUp()       // 情報パネルは写真の下にあり、スクロールで現れる
+            sleep(4)
+            capture("09-photo-info")
         }
     }
 }

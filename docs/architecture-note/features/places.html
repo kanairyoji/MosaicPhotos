@@ -32,7 +32,7 @@ graph TD
       </div>
 
       <h2>オフメインと段階表示</h2>
-      <p>67k 件規模の <code>compactMap</code>・グリッド集約・署名計算は <code>Task.detached(priority: .utility)</code> でオフメイン実行する（メインで回すと起動・定期スキャンでカクつく）。初回は地名解決の都度 publish して<strong>段階表示</strong>し、再スキャンは無瞬断のため最後に一括反映する。</p>
+      <p>86,172 枚規模（実機の現行値）の <code>compactMap</code>・グリッド集約・署名計算は <code>Task.detached(priority: .utility)</code> でオフメイン実行する（メインで回すと起動・定期スキャンでカクつく）。初回は地名解決の都度 publish して<strong>段階表示</strong>し、再スキャンは無瞬断のため最後に一括反映する。</p>
 
       <h2>差分での再スキャン</h2>
       <p>Dropbox の座標集合の<strong>署名</strong>（並び順非依存の XOR ハッシュ）と、<code>PHPhotoLibraryChangeObserver</code> による端末変更フラグで、変化があるときだけ再スキャンする。バックグラウンド同期で座標が補完されると Places アルバムが動的に増える。</p>

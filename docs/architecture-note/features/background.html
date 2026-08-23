@@ -13,29 +13,44 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 主要機能 / バックグラウンドと省電力</nav>
       <h1>バックグラウンドと省電力・通信制御</h1>
-      <p class="lead">シーンタグ付け・CLIP 埋め込み・VLM キャプション・顔スキャン・自動アルバム生成といった<strong>重い処理</strong>は、原則として<strong>アプリを使っていない時間帯（画面ロック中の <code>BGProcessingTask</code>）</strong>にだけ動かし、フォアグラウンドでは一切走らせない（ADR-25）。実行タイミングはユーザーが 5 段階で選べる。状況は最上部の<strong>アクティビティバー</strong>で可視化する。</p>
+      <p class="lead">シーンタグ付け・CLIP 埋め込み・顔スキャン・自動アルバム生成といった<strong>重い処理</strong>は、原則として<strong>アプリを使っていない時間帯（画面ロック中の <code>BGProcessingTask</code>）</strong>にだけ動かし、フォアグラウンドでは一切走らせない（ADR-25）。実行条件はユーザーが<strong>4 つの独立した軸</strong>で決める（ADR-80）。状況は最上部の<strong>アクティビティバー</strong>で可視化する。どの設定で何が動くかの<strong>正本</strong>は <a class="srclink" data-path="docs/architecture-note/records/background-behavior.md">records/background-behavior.md</a>。</p>
 
       <div class="box why">
         <span class="box-h">なぜ「使っていない時だけ」なのか（ADR-25）</span>
         旧ゲートは「電源＋低電力OFF＋<strong>アイドル 60 秒</strong>」だった。充電しながら閲覧中に 60 秒触らないと重い処理が走り出し、操作を再開してもクラウド写真のタグ付け（1 バッチ最大約 27 秒）が譲れず操作が固まった。そこで<strong>アイドル判定を廃止</strong>し、「電源＋低電力OFF＋<strong>アプリ非アクティブ（scenePhase）</strong>＋<strong>Wi-Fi</strong>」に変更。フォアグラウンドでは重い処理をゼロにした。停止判定も全処理<strong>1 枚単位</strong>に統一し、操作・遷移が来たら即譲る。
       </div>
 
-      <h2>重い処理の実行タイミング（5 段階設定 / HeavyWorkTiming）</h2>
-      <p>固定ゲートをやめ、<strong>実行タイミングをユーザーが 5 段階で選択</strong>できる（<code>HeavyWorkTiming</code>・純関数 <code>allows(...)</code> で判定）。段階は単調に条件を緩める。<strong>低電力モード・メモリ圧迫はどの段階でも常にブロック</strong>する安全弁。</p>
+      <h2>重い処理の実行条件（4 軸の独立設定 / ADR-80）</h2>
+      <p>当初は 5 段階の梯子（<code>HeavyWorkTiming</code>: paused / nightly / chargeActive / battery / unlimited）だったが、<strong>3 つの異なる軸を 1 本に混ぜて</strong>いたため「電源接続は必須のままモバイル回線だけ許す」が表現できず、電源・回線が既存の <code>PowerStateMonitor</code> / <code>NetworkStateMonitor</code> の設定と<strong>二重</strong>になっていた（どちらか厳しい方が効く＝片方を緩めても動かない）。そこで梯子を解体し、<strong>4 つの独立した設定</strong>にした。<strong>すべての条件を満たしたときだけ</strong>重い処理が動く。</p>
       <table>
-        <tr><th>段階</th><th>いつ重い処理を動かすか</th></tr>
-        <tr><td>一時停止 (paused)</td><td>手動「今すぐ処理」以外は動かさない</td></tr>
-        <tr><td><strong>おまかせ (nightly・既定)</strong></td><td>電源＋Wi-Fi＋アプリ非使用（画面ロック/切替中）。実質は夜間の <code>BGProcessingTask</code></td></tr>
-        <tr><td>充電中は合間も (chargeActive)</td><td>上記に加え、<strong>充電中はアプリ使用中の合間も</strong>（全タッチを <code>TouchActivityTracker</code> で捕捉し 20 秒アイドルで開始・タッチで即停止）</td></tr>
-        <tr><td>バッテリーでも (battery)</td><td>電源につないでいなくても残量 20% 以上なら実行（BGTask の <code>requiresExternalPower</code> も外す）</td></tr>
-        <tr><td>制限なし (unlimited)</td><td>モバイル回線も含めいつでも</td></tr>
+        <tr><th>#</th><th>軸</th><th>設定場所</th><th>選択肢</th><th>既定</th></tr>
+        <tr><td>1</td><td>自動処理</td><td>設定 → アルバム → 処理のタイミング</td><td>自動で解析する（オン / オフ）</td><td>オン</td></tr>
+        <tr><td>2</td><td>前面でも動かすか</td><td>同上</td><td>画像分析を控えめに動かす（ON / OFF）</td><td><strong>ON</strong></td></tr>
+        <tr><td>3</td><td>電源</td><td>設定 → バックグラウンドとバッテリー</td><td>充電中のみ / 常に / オフ</td><td>充電中のみ</td></tr>
+        <tr><td>4</td><td>回線</td><td>同上</td><td>Wi-Fi のみ / セルラーも / Wi-Fi かつ低データ以外 / オフ</td><td>Wi-Fi のみ</td></tr>
       </table>
-      <p>中央ゲートは <code>BackgroundYield.heavyWorkAllowed</code>。BGTask 起動時は scenePhase 変化が来ないため <code>runHeavyWork</code> 冒頭で非アクティブを明示する（初期値のままゲートが開かない罠への対処）。設定 UI は Albums の Auto Albums 側「処理のタイミング」に置き、各段の条件と影響を footer に明記する。</p>
+      <p>軸 1（<code>HeavyWorkTiming</code>）は <code>paused</code> / <code>enabled</code> の 2 値だけを持ち、判定の純関数 <code>allows(...)</code> は<strong>電源・回線の状態を自分では持たない</strong>——呼び出し側の <code>BackgroundYield</code> が各モニタの <code>backgroundAllowed()</code> / <code>networkAllowed()</code> の結果を渡す。これで判定が一意になり二重設定が消える。旧 5 段階の保存値は起動時 1 回だけ <code>migrationPlan</code>（純関数・テスト済み）で各軸へ写す。</p>
+      <p>軸 2「控えめ」の意味:</p>
+      <table>
+        <tr><th>設定</th><th>アプリ使用中</th><th>他アプリ使用中・ロック中</th></tr>
+        <tr><td>控えめ <strong>ON</strong>（既定）</td><td>✗ 動かさない</td><td>○ 動く</td></tr>
+        <tr><td>控えめ <strong>OFF</strong></td><td>△ 20 秒操作がなければ動く（触ると即停止）※一枚岩は除く</td><td>○ 動く</td></tr>
+      </table>
+      <div class="box why">
+        <span class="box-h">一枚岩の処理は「非アクティブ限定」に分ける（ADR-107）</span>
+        トリクル系（CLIP 埋め込み・顔スキャン・シーンタグ）は 1 単位ごとに <code>heavyShouldPause()</code> で譲れるので、控えめ OFF の前面アイドルでも安全。しかし <strong>AI アルバムの本番化（finalize）・ドリフト再評価・アルバム自動生成</strong>は<strong>一枚岩</strong>（FM 解釈＋フル検索＋重心構築＋数万件の SwiftData）で、いったん始まると数十秒〜数十分 ANE・CPU・ModelActor を占有し<strong>ユーザーが戻ってきても途中で譲れない</strong>——これが「AI アルバムを触るといちいち固まる」の正体だった（diagnostics-46）。そこで <code>BackgroundYield.monolithicHeavyWorkAllowed</code> を新設し、<code>heavyWorkAllowed</code> に加えて<strong>非アクティブ（画面ロック・アプリ切替）限定</strong>にした。手動ブースト（「今すぐ処理」）とデバッグ全開は明示操作なので従来どおり前面でも動く。トレードオフ: 控えめ OFF でも本番化は夜間 BGTask まで遅れることがある（プレビューは即時のまま）。
+      </div>
+      <p>中央ゲートは <code>BackgroundYield.heavyWorkAllowed</code>（通信を要する処理）と <code>heavyWorkAllowedLocal</code>（端末内写真＝<strong>回線条件を課さない</strong>）。BGTask 起動時は scenePhase 変化が来ないため <code>runHeavyWork</code> 冒頭で非アクティブを明示する（初期値のままゲートが開かない罠への対処）。設定 UI は Albums の Auto Albums 側「処理のタイミング」（軸 1・2）と General → Background &amp; Battery（軸 3・4）に分かれる。</p>
+      <div class="box note">
+        <span class="box-h">設定で外せない安全弁</span>
+        どの設定でも、<strong>低電力モード</strong>・<strong>メモリ圧迫</strong>・<strong>写真ビュー表示中</strong>・<strong>フル画像/クラウドサムネ取得中</strong>・<strong>アルバム生成中</strong>・<strong>フォアグラウンド復帰直後 20 秒</strong>の間は重い処理を動かさない。また譲り待ちには上限があり、<strong>連続 60 秒開かなければその実行を畳む</strong>（ADR-95。眠ったまま「実行中」フラグを握ると夜間 BGTask 窓が丸ごと空転するため。各処理は差分ベースなので次の窓が続きから再開する）。
+      </div>
 
       <h2>バックグラウンド処理の一覧</h2>
       <table>
         <tr><th>処理</th><th>通信</th><th>電池</th><th>ゲート</th></tr>
-        <tr><td><strong>重い処理</strong>（シーンタグ・CLIP 埋め込み・VLM キャプション・顔スキャン・AI 再評価・自動アルバム生成）</td><td>クラウド埋め込み分のみ</td><td>最高</td><td><strong>HeavyWorkTiming</strong>（既定＝電源＋Wi-Fi＋非使用）＋低電力OFF＋メモリ非圧迫。1 枚単位で譲る</td></tr>
+        <tr><td><strong>重い処理（トリクル系）</strong>（シーンタグ・CLIP 埋め込み・顔スキャン）</td><td>クラウド分のみ</td><td>最高</td><td><strong>4 軸</strong>（既定＝自動処理オン＋控えめ ON＋電源＋Wi-Fi）＋低電力OFF＋メモリ非圧迫。1 枚単位で譲る。端末内写真は回線条件なし</td></tr>
+        <tr><td><strong>重い処理（一枚岩）</strong>（AI アルバムの本番化・ドリフト再評価・自動アルバム生成）</td><td>あり</td><td>最高</td><td>上記に加え<strong>非アクティブ限定</strong>（<code>monolithicHeavyWorkAllowed</code>・ADR-107）。途中で譲れないため</td></tr>
         <tr><td>Dropbox 差分同期（longpoll/delta）</td><td>あり</td><td>中</td><td>接続中＋回線</td></tr>
         <tr><td>端末→Dropbox バックアップ（手動起動）</td><td>あり</td><td>高</td><td>電源＋回線（ファイル間で一時停止）</td></tr>
         <tr><td>場所スキャン（オフライン逆ジオコーディング）</td><td>なし</td><td>中</td><td>backgroundAllowed（電源ポリシー）</td></tr>
@@ -83,7 +98,9 @@ graph TD
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/BackgroundProcessing.swift">BackgroundProcessing.swift</a> — HeavyWorkTiming（5 段階）</li>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/HeavyWorkTiming.swift">HeavyWorkTiming.swift</a> — 4 軸判定の純ロジック（allows / migrationPlan）</li>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/BackgroundYield.swift">BackgroundYield.swift</a> — heavyWorkAllowed / heavyWorkAllowedLocal / monolithicHeavyWorkAllowed</li>
+          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/BackgroundProcessing.swift">BackgroundProcessing.swift</a> — 背景処理の重さプリセット</li>
           <li><a class="srclink" data-path="MosaicPhotos/HeavyWorkScheduler.swift">HeavyWorkScheduler.swift</a> — BGProcessingTask（夜間）</li>
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/PowerStateMonitor.swift">PowerStateMonitor.swift</a></li>
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/NetworkStateMonitor.swift">NetworkStateMonitor.swift</a></li>
@@ -91,7 +108,7 @@ graph TD
           <li><a class="srclink" data-path="Packages/DropboxKit/Sources/DropboxKit/DropboxActivityBar.swift">DropboxActivityBar.swift</a></li>
         </ul>
       </div>
-      <p>設計判断: <a href="../design-decisions/adr.html">ハイライト</a>（<strong>ADR-25 重い処理は使っていない時だけ</strong> / ADR-14 バー / ADR-15 電源 / ADR-16 回線。全件は <code>records/decisions.md</code>）。背景の重さ段階は <a href="on-device-ai.html">オンデバイス AI</a> も参照。</p>
+      <p>設計判断: <a href="../design-decisions/adr.html">ハイライト</a>（<strong>ADR-25 重い処理は使っていない時だけ</strong> / <strong>ADR-80 4 軸の独立設定</strong> / <strong>ADR-107 一枚岩は非アクティブ限定</strong> / ADR-14 バー / ADR-15 電源 / ADR-16 回線。全件は <code>records/decisions.md</code>、動作早見表は <code>records/background-behavior.md</code>）。背景の重さ段階は <a href="on-device-ai.html">オンデバイス AI</a> も参照。</p>
     </article>
     <div id="pager"></div>
   </main>
