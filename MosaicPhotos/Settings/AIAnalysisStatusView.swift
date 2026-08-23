@@ -136,7 +136,7 @@ struct AIAnalysisStatusView: View {
             .disabled(isAnalyzing)
             NavigationLink {
                 Form { AutoAlbumSettingsView(engine: engine) }
-                    .navigationTitle(L("Auto Albums"))
+                    .navigationTitle(L("Album Automation"))
                     .navigationBarTitleDisplayMode(.inline)
             } label: {
                 Label(L("Processing Timing & Speed"), systemImage: "slider.horizontal.3")

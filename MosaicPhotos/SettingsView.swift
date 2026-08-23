@@ -72,9 +72,9 @@ struct SettingsView: View {
                     row(L("AI Analysis"), systemImage: "wand.and.stars", value: analysisStatusText)
                 }
                 NavigationLink {
-                    detail(L("Auto Albums")) { AutoAlbumSettingsView(engine: autoAlbumEngine) }
+                    detail(L("Album Automation")) { AutoAlbumSettingsView(engine: autoAlbumEngine) }
                 } label: {
-                    row(L("Auto Albums"), systemImage: "sparkles")
+                    row(L("Album Automation"), systemImage: "sparkles")
                 }
                 NavigationLink {
                     PathAlbumSettingsView(engine: autoAlbumEngine)
@@ -82,9 +82,9 @@ struct SettingsView: View {
                     row(L("Folder Albums"), systemImage: "folder", value: pathAlbumsEnabled ? L("On") : L("Off"))
                 }
                 NavigationLink {
-                    detail(L("Places")) { PlacesSettingsView(scanner: placeScanner) }
+                    detail(L("Place Albums")) { PlacesSettingsView(scanner: placeScanner) }
                 } label: {
-                    row(L("Places"), systemImage: "mappin.and.ellipse")
+                    row(L("Place Albums"), systemImage: "mappin.and.ellipse")
                 }
                 // クラウド共有（送信セット管理＋受信フォルダ設定）。Dropbox ハブ内と同じ画面
                 // （ADR-112・アルバム機能の一つとしてここからも辿れるようにする）。

@@ -142,7 +142,7 @@ extension HomeView {
                 }
             }
         } header: {
-            sectionHeader("Time & Place", isBusy: autoAlbumEngine.isGenerating,
+            sectionHeader("Trips", isBusy: autoAlbumEngine.isGenerating,
                           onAction: autoAlbumEngine.isLoaded ? { Task { await autoAlbumEngine.generate() } } : nil)
         }
     }
@@ -314,7 +314,7 @@ extension HomeView {
             } header: {
                 // フォルダ名アルバムだけの軽量再生成（地名解決なし・バックグラウンド）。
             // 実体は Dropbox のパス（フォルダ名）から作るため「クラウドアルバム」と表示する。
-                sectionHeader("Cloud Albums", isBusy: autoAlbumEngine.isGeneratingPath,
+                sectionHeader("Folder Albums", isBusy: autoAlbumEngine.isGeneratingPath,
                               onAction: { Task { await autoAlbumEngine.generatePathAlbums() } })
             }
         }
