@@ -69,6 +69,17 @@ public final class ShareSyncEngine {
     @ObservationIgnored public weak var analysisSource: ShareAnalysisSource?
     /// 作成元の現在メンバー解決（未設定なら「今の内容に更新」を出さない）。
     @ObservationIgnored public weak var sourceResolver: ShareSourceResolver?
+    /// 非同期ジョブのポーリング設定（テストで短縮する。本番は既定値）。
+    @ObservationIgnored var pollIntervalNs: UInt64?
+    @ObservationIgnored var maxPollAttempts: Int?
+
+    /// 生成した copier に、テスト用のポーリング設定を反映する。
+    private func makeCopier() -> DropboxShareCopier {
+        var copier = DropboxShareCopier(httpClient: httpClient)
+        if let pollIntervalNs { copier.pollIntervalNs = pollIntervalNs }
+        if let maxPollAttempts { copier.maxPollAttempts = maxPollAttempts }
+        return copier
+    }
 
     /// 1 回の copy_batch に載せる最大エントリ数。
     private static let copyChunkSize = 100
@@ -172,8 +183,7 @@ public final class ShareSyncEngine {
             // 共有フォルダ側の実ファイルも消す（記録だけ消すと孤児ファイルが残る）。
             let paths = obsolete.compactMap(\.sharedPath)
             if !paths.isEmpty, let token = try? await tokenProvider.freshAccessToken() {
-                _ = await DropboxShareCopier(httpClient: httpClient)
-                    .deleteBatch(paths: paths, token: token)
+                _ = await makeCopier().deleteBatch(paths: paths, token: token)
             }
             await store.removeShareItems(setID: setID, refKeys: obsolete.map(\.refKey))
         }
@@ -218,7 +228,7 @@ public final class ShareSyncEngine {
             lastError = .invalidFolderName
             return false
         }
-        let copier = DropboxShareCopier(httpClient: httpClient)
+        let copier = makeCopier()
         guard await copier.deleteBatch(paths: [folder], token: token) else {
             lastError = .folderRemoveFailed
             return false
@@ -239,7 +249,7 @@ public final class ShareSyncEngine {
         let targets = items.filter { refKeys.contains($0.refKey) }
         let remotePaths = targets.compactMap(\.sharedPath)
         if !remotePaths.isEmpty, let token = try? await tokenProvider.freshAccessToken() {
-            let copier = DropboxShareCopier(httpClient: httpClient)
+            let copier = makeCopier()
             _ = await copier.deleteBatch(paths: remotePaths, token: token)
         }
         await store.removeShareItems(setID: setID, refKeys: refKeys)
@@ -314,7 +324,7 @@ public final class ShareSyncEngine {
         lastError = nil
 
         let store = await storeProvider()
-        let copier = DropboxShareCopier(httpClient: httpClient)
+        let copier = makeCopier()
         let shareRoot = ShareSettingsKeys.currentShareRoot()
 
         for set in await store.allShareSets() {
