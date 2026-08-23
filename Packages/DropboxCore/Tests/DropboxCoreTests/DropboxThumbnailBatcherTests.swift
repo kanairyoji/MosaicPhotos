@@ -138,5 +138,74 @@ struct DropboxThumbnailBatcherTests {
         #expect(reqs.count == 1)
         #expect(Set(paths(in: reqs[0])) == ["/a.jpg", "/b.jpg"])
     }
+
+    // MARK: - 取り残しレース（機内モード相当）
+
+    /// 混在バッチ（失敗エントリ＋大きい成功エントリ）で、失敗分の nil 配送後・inFlight 解除前の
+    /// suspension 窓（成功分のデコード/キャッシュ書き込み中）に同一パスの再要求が来ると、
+    /// 待機者が配送済みチャンクを待ち続けて永久スピナーになるレースの回帰テスト。
+    /// 修正（チャンク完了時に取り残し待機者を掃き出す）が無いとタイムアウトで失敗する。
+    @Test("配送後・inFlight解除前に来た再要求が取り残されない")
+    func lateWaiterDuringInFlightWindowResolves() async {
+        // 成功側は大きめの画像にして、デコード＋保存の suspension 窓を再要求より確実に長くする。
+        let bigBase64 = Self.largePNGBase64
+        let stub = StubHTTPClient(responder: { request in
+            struct Entry: Decodable { let path: String }
+            struct Arg: Decodable { let entries: [Entry] }
+            let reqPaths = (try? JSONDecoder().decode(Arg.self, from: request.httpBody ?? Data()))?
+                .entries.map(\.path) ?? []
+            let entriesJSON = reqPaths.map { p in
+                p.contains("fail") ? "{\".tag\":\"failure\"}"
+                                   : "{\".tag\":\"success\",\"thumbnail\":\"\(bigBase64)\"}"
+            }.joined(separator: ",")
+            let resp = HTTPURLResponse(url: request.url!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+            return (Data("{\"entries\":[\(entriesJSON)]}".utf8), resp)
+        })
+        let batcher = makeBatcher(stub)
+
+        async let failing: UIImage? = batcher.thumbnail(for: item("/x/fail.jpg"))
+        async let big: UIImage? = batcher.thumbnail(for: item("/x/big.jpg"))
+        // 失敗分は成功分のデコードより先に nil 配送される。
+        let first = await failing
+        #expect(first == nil)
+
+        // この時点でチャンクは成功分のデコード/保存中＝ /x/fail.jpg は inFlight のまま。
+        // ここで来る再要求（セルの再構成・リトライ相当）が取り残されず解決されること。
+        let resolved = await resolvesWithinTimeout(ms: 3000) {
+            _ = await batcher.thumbnail(for: self.item("/x/fail.jpg"))
+        }
+        #expect(resolved, "inFlight 窓中の再要求が配送されず取り残された")
+        _ = await big
+    }
+
+    /// `op` が指定時間内に完了すれば true。タイムアウト時は op の Task をキャンセルして false。
+    private func resolvesWithinTimeout(ms: Int, _ op: @escaping @MainActor () async -> Void) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask { @MainActor in await op(); return true }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// デコードに数十 ms かかる程度の PNG（1800×1800・縞模様）。suspension 窓を広げるための素材。
+    private static let largePNGBase64: String = {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let side: CGFloat = 1800
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+        let image = renderer.image { ctx in
+            for i in 0..<18 {
+                UIColor(hue: CGFloat(i) / 18, saturation: 0.8, brightness: 0.9, alpha: 1).setFill()
+                ctx.fill(CGRect(x: 0, y: CGFloat(i) * 100, width: side, height: 100))
+            }
+        }
+        return image.pngData()!.base64EncodedString()
+    }()
 }
 #endif

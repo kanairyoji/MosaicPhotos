@@ -265,9 +265,19 @@ final class DropboxThumbnailBatcher {
     /// 1 チャンク分の取得。ネットワーク・デコード・キャッシュ書き込みは fetcher（I/O ユニット）に
     /// 委譲し、結果を待機者へ配送する。キュー状態（inFlight）の管理はここに残す。
     private func fetchThumbnailChunk(_ items: [DropboxFileItem]) async {
-        defer { for item in items { inFlight.remove(item.path) } }
         await fetcher.fetch(items) { image, path in
             deliver(image, forPath: path)
+        }
+        // fetch 内の配送（deliver）とここでの inFlight 除去の間には suspension がある
+        // （他エントリのデコード Task.detached・キャッシュ書き込み）。その間に同一パスの
+        // 新規要求が来ると「inFlight 中＝待機者登録のみ」で配送済みチャンクを待ち続け、
+        // セルがセル再利用まで永久スピナーになる（オフラインでは失敗がキャッシュされず
+        // 同一パスの再要求が頻発するため踏みやすい）。inFlight を外すと同時に、
+        // 取り残された待機者をメモリキャッシュの結果（成功分）または nil で解放する。
+        // 配送済みの待機者は既に除去されているため二重配送にはならない。
+        for item in items {
+            inFlight.remove(item.path)
+            deliver(cache.cachedThumbnail(for: item.path), forPath: item.path)
         }
     }
 }
