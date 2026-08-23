@@ -10,6 +10,8 @@ import Observation
 @Observable
 public final class PeopleEngine {
     public private(set) var people: [PersonInfo] = []
+    /// ピープルグループ（複数人物の名前付き束・例「木村家」）。人物一覧と同時に再解決する。
+    public internal(set) var peopleGroups: [PeopleGroupInfo] = []
     public private(set) var isLoaded = false
     public private(set) var isScanning = false
     /// 未スキャン残り枚数（おおよそ）。
@@ -103,6 +105,8 @@ public final class PeopleEngine {
         guard fresh != people else { return }
         people = fresh
         Diagnostics.mark("faces: people=\(people.count) (>= \(minFaces) faces, favs=\(favorites.count))")
+        // グループは人物一覧に対する解決なので、一覧が変わったときだけ作り直せば足りる。
+        await reloadPeopleGroups()
     }
 
     /// 連続する変更（顔スキャンのバッチ完了・レビューの連続回答）を**1 回の再読込にまとめる**。

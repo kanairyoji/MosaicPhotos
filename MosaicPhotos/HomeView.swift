@@ -43,6 +43,9 @@ struct HomeView: View {
     /// ピープルの長押しメニュー対象。配下の UI（名前変更／代表写真／顔の管理）は
     /// `PeopleActionsModifier`（Home/PeopleActions.swift）に分離している。
     @State var personActions: PersonInfo?
+    /// ピープルグループの長押しメニュー対象と作成シート（Home/PeopleGroupViews.swift）。
+    @State var peopleGroupActions: PeopleGroupInfo?
+    @State var showingGroupCreation = false
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// アクティビティバー表示時は、その分だけ上部に余白を確保してタイトルと重ならないようにする。
@@ -122,6 +125,10 @@ struct HomeView: View {
                     // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
                     PersonAlbumView(person: person, dropboxStore: dropboxStore, assetIndex: assetIndex,
                                     peopleEngine: peopleEngine)
+                case .peopleGroup(let group):
+                    // グループ（複数人の束）の合成アルバム。
+                    PeopleGroupAlbumView(group: group, dropboxStore: dropboxStore,
+                                         assetIndex: assetIndex, peopleEngine: peopleEngine)
                 case .place(let place):
                     PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
                 case .autoAlbum(let album):
@@ -153,6 +160,11 @@ struct HomeView: View {
             shareImporter: stores.shareImporter))
         // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
         .peopleActions(for: $personActions, engine: peopleEngine)
+        // ピープルグループの長押しメニュー（編集/クラウド共有/削除）と作成シート。
+        .peopleGroupActions(for: $peopleGroupActions, engine: peopleEngine)
+        .sheet(isPresented: $showingGroupCreation) {
+            PeopleGroupEditorSheet(peopleEngine: peopleEngine)
+        }
         .sheet(isPresented: $showingFaceReview) {
             FaceReviewView(peopleEngine: peopleEngine)
         }

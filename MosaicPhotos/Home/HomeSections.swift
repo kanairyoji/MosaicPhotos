@@ -166,9 +166,12 @@ extension HomeView {
                     // トップの列は「よく写っている人」だけ（5枚以上）。断片は「すべて表示」へ。
                     PeopleCarousel(
                         people: peopleEngine.prominentPeople,
+                        groups: peopleEngine.peopleGroups,
                         totalPeople: peopleEngine.people.count,
                         onSelect: { destination = .person($0) },
                         onLongPress: { personActions = $0 },
+                        onSelectGroup: { destination = .peopleGroup($0) },
+                        onLongPressGroup: { peopleGroupActions = $0 },
                         onSeeAll: { showingAllPeople = true })
                 }
             } header: {
@@ -210,6 +213,22 @@ extension HomeView {
                             showingFaceReview = true
                         } label: {
                             Label(L("Review"), systemImage: "checkmark.seal.fill")
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    // ピープルグループ（家族・組織など複数人の束）を作る。2 人以上いるときだけ。
+                    if peopleEngine.people.count >= 2 {
+                        Button {
+                            showingGroupCreation = true
+                        } label: {
+                            Label(L("Group"), systemImage: "person.3")
                                 .font(.caption.weight(.semibold))
                                 .lineLimit(1)
                                 .fixedSize()
@@ -363,6 +382,7 @@ enum HomeDestination: Identifiable {
     case source(ActiveSource)
     case localAlbum(LocalAlbumInfo)
     case person(PersonInfo)
+    case peopleGroup(PeopleGroupInfo)
     case place(PlaceAlbumInfo)
     case autoAlbum(AutoAlbumInfo)
 
@@ -371,6 +391,7 @@ enum HomeDestination: Identifiable {
         case .source(let source): return "source-\(source.id)"
         case .localAlbum(let album): return "album-\(album.id)"
         case .person(let person): return "person-\(person.id)"
+        case .peopleGroup(let group): return "pgroup-\(group.id)"
         case .place(let place): return "place-\(place.id)"
         case .autoAlbum(let album): return "auto-\(album.id)"
         }

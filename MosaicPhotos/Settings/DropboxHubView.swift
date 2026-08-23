@@ -51,7 +51,7 @@ struct DropboxHubView: View {
                                              { await importer.runIfNeeded() }
                                          })
                         } label: {
-                            Label("Share photos", systemImage: "person.2")
+                            Label("Cloud Sharing", systemImage: "icloud.and.arrow.up")
                         }
                     }
                 } header: {

@@ -239,6 +239,16 @@
         }
       }
     },
+    "Cloud Sharing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有"
+          }
+        }
+      }
+    },
     "Delete %d photo(s) from this device": {
       "localizations": {
         "ja": {
@@ -483,12 +493,12 @@
         }
       }
     },
-    "No shared sets yet. Open an album and choose “Share…” to create one.": {
+    "No shared sets yet. Open an album and choose “Cloud Share…” to create one.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "共有セットはまだありません。アルバムを開いて「共有…」から作成してください。"
+            "value": "共有セットはまだありません。アルバムを開いて「クラウド共有…」から作成してください。"
           }
         }
       }
@@ -689,16 +699,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "共有フォルダ"
-          }
-        }
-      }
-    },
-    "Sharing": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有"
           }
         }
       }

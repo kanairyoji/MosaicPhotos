@@ -14,7 +14,8 @@ actor FaceStore {
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         // FaceCorrection は追加テーブル（ADR-45）＝加算的マイグレーション（既存の顔データは保持）。
-        let schema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self, FaceCorrection.self])
+        let schema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self,
+                             FaceCorrection.self, PeopleGroupRecord.self])
         if isStoredInMemoryOnly {
             let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))

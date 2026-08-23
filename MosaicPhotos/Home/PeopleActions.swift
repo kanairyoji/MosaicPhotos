@@ -23,9 +23,17 @@ struct PeopleActionsModifier: ViewModifier {
     @State private var mergeSourcePerson: PersonInfo?
     /// 「この人物を整理」（混入グループの一括分離・ADR-111）の対象。
     @State private var cleanupPerson: PersonInfo?
-    /// 家族と共有（共有セット作成・ADR-112）の対象。エンジン未注入なら項目を出さない。
+    /// クラウド共有（共有セット作成・ADR-112）の対象。エンジン未注入なら項目を出さない。
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
-    @State private var sharePerson: PersonInfo?
+    @State private var sharePerson: SharePersonPayload?
+
+    /// 共有シートの素材。写真キーは開く前に解決する
+    /// （一覧の `PersonInfo.memberRefKeys` は遅延取得で空のため・ADR-95）。
+    private struct SharePersonPayload: Identifiable {
+        let person: PersonInfo
+        let refKeys: [String]
+        var id: Int { person.clusterID }
+    }
 
     func body(content: Content) -> some View {
         content
@@ -41,7 +49,12 @@ struct PeopleActionsModifier: ViewModifier {
                 // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
                 Button(L("Clean Up This Person…")) { cleanupPerson = person }
                 if shareEngine != nil {
-                    Button(L("Share…")) { sharePerson = person }
+                    Button(L("Cloud Share…")) {
+                        Task {
+                            let refKeys = await peopleEngine.memberRefKeys(forPerson: person.clusterID)
+                            sharePerson = SharePersonPayload(person: person, refKeys: refKeys)
+                        }
+                    }
                 }
                 if person.isGrouped {
                     Button(L("Separate Grouped Person"), role: .destructive) {
@@ -67,11 +80,11 @@ struct PeopleActionsModifier: ViewModifier {
             .sheet(item: $cleanupPerson) { person in
                 PersonCleanupView(person: person, peopleEngine: peopleEngine)
             }
-            // 家族と共有（この人物の写真で共有セットを作る・ADR-112）。
-            .sheet(item: $sharePerson) { person in
+            // クラウド共有（この人物の写真で共有セットを作る・ADR-112）。
+            .sheet(item: $sharePerson) { payload in
                 if let shareEngine {
-                    ShareSetCreationSheet(suggestedName: person.displayName,
-                                          refKeys: person.memberRefKeys,
+                    ShareSetCreationSheet(suggestedName: payload.person.displayName,
+                                          refKeys: payload.refKeys,
                                           shareEngine: shareEngine)
                 }
             }

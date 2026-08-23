@@ -32,7 +32,7 @@ public struct ShareHubView: View {
             shareRootSection
             familySection
         }
-        .navigationTitle(L("Sharing"))
+        .navigationTitle(L("Cloud Sharing"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await engine.refresh() }
     }
@@ -42,7 +42,7 @@ public struct ShareHubView: View {
     private var setsSection: some View {
         Section {
             if engine.sets.isEmpty {
-                Text(L("No shared sets yet. Open an album and choose “Share…” to create one."))
+                Text(L("No shared sets yet. Open an album and choose “Cloud Share…” to create one."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

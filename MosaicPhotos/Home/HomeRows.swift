@@ -126,10 +126,14 @@ struct AutoAlbumCard: View {
 struct PeopleCarousel: View {
     /// 列に出す人物（ホームは「よく写っている人」だけを渡す）。
     let people: [PersonInfo]
+    /// ピープルグループ（複数人の名前付き束・列の先頭に出す）。
+    var groups: [PeopleGroupInfo] = []
     /// 「すべて表示」に載る総数（列に出さなかった人も含む）。
     var totalPeople: Int?
     let onSelect: (PersonInfo) -> Void
     let onLongPress: (PersonInfo) -> Void
+    var onSelectGroup: ((PeopleGroupInfo) -> Void)?
+    var onLongPressGroup: ((PeopleGroupInfo) -> Void)?
     /// 「すべて表示」タップ（省略された人物がいるときだけ末尾にカードを出す）。
     var onSeeAll: (() -> Void)?
 
@@ -145,6 +149,24 @@ struct PeopleCarousel: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 14) {
+                // グループ（家族・組織など）は列の先頭。コラージュ＋バッジで単人と見分ける。
+                ForEach(groups) { group in
+                    PeopleGroupCard(group: group)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onSelectGroup?(group) }
+                        .onLongPressGesture(minimumDuration: 0.4) { onLongPressGroup?(group) }
+                        .overlay(alignment: .topTrailing) {
+                            Button { onLongPressGroup?(group) } label: {
+                                Image(systemName: "ellipsis.circle.fill")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .black.opacity(0.45))
+                                    .padding(4)
+                            }
+                            .accessibilityLabel("Group options")
+                            .offset(x: -8)
+                        }
+                }
                 ForEach(shown) { person in
                     // Button＋contextMenu は「横スクロール×List 行」でヒット領域が行全体に化ける
                     // （バー全体がハイライトされ、常に先頭カードのメニューを拾う）ため、各カードに

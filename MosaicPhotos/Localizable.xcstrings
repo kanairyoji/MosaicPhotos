@@ -898,6 +898,36 @@
         }
       }
     },
+    "Cloud Share": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有"
+          }
+        }
+      }
+    },
+    "Cloud Share…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有…"
+          }
+        }
+      }
+    },
+    "Cloud Sharing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有"
+          }
+        }
+      }
+    },
     "Coarse (5 rows)": {
       "localizations": {
         "ja": {
@@ -989,6 +1019,16 @@
         }
       }
     },
+    "Create": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作成"
+          }
+        }
+      }
+    },
     "Create Album": {
       "localizations": {
         "ja": {
@@ -1025,6 +1065,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "アルバムを削除"
+          }
+        }
+      }
+    },
+    "Delete Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループを削除"
+          }
+        }
+      }
+    },
+    "Delete this group? People and their photos are not affected.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このグループを削除しますか？人物と写真には影響しません。"
           }
         }
       }
@@ -1207,6 +1267,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "アルバムを編集"
+          }
+        }
+      }
+    },
+    "Edit Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループを編集"
+          }
+        }
+      }
+    },
+    "Edit Group…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループを編集…"
           }
         }
       }
@@ -1484,6 +1564,16 @@
         }
       }
     },
+    "Group name (e.g. family, team)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループ名（例: 家族、チーム）"
+          }
+        }
+      }
+    },
     "Group with": {
       "localizations": {
         "ja": {
@@ -1510,6 +1600,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "グループ化"
+          }
+        }
+      }
+    },
+    "Groups collect several people into one album (a family, a team, an organization). Select at least 2 people.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複数の人物を 1 つのアルバムにまとめます（家族・チーム・組織など）。2 人以上選択してください。"
           }
         }
       }
@@ -1898,6 +1998,16 @@
         }
       }
     },
+    "Members": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メンバー"
+          }
+        }
+      }
+    },
     "Merge": {
       "localizations": {
         "ja": {
@@ -2074,6 +2184,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "通信"
+          }
+        }
+      }
+    },
+    "New People Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいピープルグループ"
           }
         }
       }
@@ -3029,36 +3149,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "共有"
-          }
-        }
-      }
-    },
-    "Share Photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真を共有"
-          }
-        }
-      }
-    },
-    "Share photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真を共有"
-          }
-        }
-      }
-    },
-    "Share…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有…"
           }
         }
       }
