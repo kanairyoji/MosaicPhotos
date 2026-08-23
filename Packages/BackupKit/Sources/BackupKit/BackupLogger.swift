@@ -8,4 +8,5 @@ enum BackupLogger {
         subsystem: "com.mosaicphotos.BackupKit", label: "BackupKit")
 
     static func error(_ message: @autoclosure () -> String) { channel.error(message()) }
+    static func info(_ message: @autoclosure () -> String) { channel.info(message()) }
 }

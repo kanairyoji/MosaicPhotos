@@ -11,6 +11,16 @@ struct DropboxHubView: View {
     let store: DropboxPhotoStore?
     let backupEngine: BackupEngine
     let autoAlbumEngine: AutoAlbumEngine?
+    /// 家族共有（ADR-112）。SettingsView（stores 経由）から渡す。nil なら導線を出さない。
+    var shareEngine: ShareSyncEngine?
+    var shareImporter: SharedAnalysisImporter?
+
+    /// 家族フォルダの変更を同期ルート・表示除外へ反映する（ADR-112）。
+    private func familyFoldersChanged() {
+        guard let store else { return }
+        ShareVisibility.apply(to: store)
+        if dropboxAuth.connectionStatus == .connected { store.startSync() }
+    }
 
     var body: some View {
         Form {
@@ -32,6 +42,17 @@ struct DropboxHubView: View {
                         PathAlbumSettingsView(engine: autoAlbumEngine)
                     } label: {
                         Label("Make albums from folder names", systemImage: "folder")
+                    }
+                    if let shareEngine {
+                        NavigationLink {
+                            ShareHubView(engine: shareEngine,
+                                         onFamilyFoldersChanged: { familyFoldersChanged() },
+                                         onImportNow: shareImporter.map { importer in
+                                             { await importer.runIfNeeded() }
+                                         })
+                        } label: {
+                            Label("Share photos with family", systemImage: "person.2")
+                        }
                     }
                 } header: {
                     Text("Use Dropbox for")

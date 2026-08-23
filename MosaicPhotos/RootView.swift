@@ -22,13 +22,21 @@ final class HomeStores {
     let peopleEngine: PeopleEngine
     let placeScanner: PlaceScanner
     let autoAlbumEngine: AutoAlbumEngine
+    /// 家族共有（共有セット・ADR-112）。
+    let shareEngine: ShareSyncEngine
+    /// 共有サイドカーの解析供給アダプタ（shareEngine.analysisSource は weak のためここで保持）。
+    let shareAnalysisAdapter: ShareAnalysisAdapter
+    /// 家族フォルダのサイドカー取り込み（受信側）。
+    let shareImporter: SharedAnalysisImporter
     /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
     let assetIndex = LocalAssetIndex()
 
     private init(dropboxStore: DropboxPhotoStore, mergedStore: MergedPhotoStore,
                  backupEngine: BackupEngine, albumScanner: LocalAlbumScanner,
                  peopleEngine: PeopleEngine,
-                 placeScanner: PlaceScanner, autoAlbumEngine: AutoAlbumEngine) {
+                 placeScanner: PlaceScanner, autoAlbumEngine: AutoAlbumEngine,
+                 shareEngine: ShareSyncEngine, shareAnalysisAdapter: ShareAnalysisAdapter,
+                 shareImporter: SharedAnalysisImporter) {
         self.dropboxStore = dropboxStore
         self.mergedStore = mergedStore
         self.backupEngine = backupEngine
@@ -36,6 +44,9 @@ final class HomeStores {
         self.peopleEngine = peopleEngine
         self.placeScanner = placeScanner
         self.autoAlbumEngine = autoAlbumEngine
+        self.shareEngine = shareEngine
+        self.shareAnalysisAdapter = shareAnalysisAdapter
+        self.shareImporter = shareImporter
     }
 
     /// プロセス内で唯一の共有インスタンス（構築済み）。前景（RootView）と夜間 BGTask
@@ -73,8 +84,12 @@ final class HomeStores {
             let backupRoot = backupNormalizedPath(
                 UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                     ?? BackupSettingsKeys.defaultDropboxFolder)
+            // 家族の共有フォルダ（ADR-112・受信側）も同期対象に含める。
             return [DropboxSourceSettings.currentSourceFolder(), backupRoot]
+                + ShareSettingsKeys.currentFamilyFolders()
         }
+        // 送信側: 自分の共有ルートを表示から除外（原本と共有コピーの重複表示を防ぐ）。
+        ShareVisibility.apply(to: dropboxStore)
         await Task.yield()
         let mergedStore = MergedPhotoStore(dropboxStore: dropboxStore)
         await Task.yield()
@@ -86,11 +101,23 @@ final class HomeStores {
         await Task.yield()
         let autoAlbumEngine = await makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine,
                                                         peopleEngine: peopleEngine)
+        await Task.yield()
+        // 家族共有（ADR-112）: エンジン＋解析サイドカーの供給＋受信側の取り込み。
+        let shareEngine = ShareSyncEngine(tokenProvider: auth,
+                                          storeProvider: { await backupEngine.sharedBackupStore() })
+        let shareAnalysisAdapter = ShareAnalysisAdapter(autoAlbumEngine: autoAlbumEngine,
+                                                        peopleEngine: peopleEngine)
+        shareEngine.analysisSource = shareAnalysisAdapter
+        let shareImporter = SharedAnalysisImporter(dropboxStore: dropboxStore,
+                                                   autoAlbumEngine: autoAlbumEngine,
+                                                   peopleEngine: peopleEngine)
         Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,
                           backupEngine: backupEngine, albumScanner: albumScanner,
                           peopleEngine: peopleEngine,
-                          placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine)
+                          placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
+                          shareEngine: shareEngine, shareAnalysisAdapter: shareAnalysisAdapter,
+                          shareImporter: shareImporter)
     }
 }
 
@@ -109,6 +136,8 @@ struct RootView: View {
         Group {
             if let stores {
                 HomeView(stores: stores)
+                    // アルバム/人物の「家族と共有…」が参照する（ADR-112）。
+                    .environment(stores.shareEngine)
             } else {
                 LaunchView(showLoadingIndicator: showLoadingIndicator)
             }

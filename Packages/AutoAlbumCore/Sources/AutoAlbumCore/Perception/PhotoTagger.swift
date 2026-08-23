@@ -89,7 +89,14 @@ final class PhotoTagger {
                     // 撮影日降順のページを、お気に入り(ローカル→クラウド)→その他 の順に並べ替える
                     // （AnalysisOrder）。ページ単位の並べ替え＝各撮影日窓の中でお気に入りを先に処理する
                     // （全 85k をメモリに載せない paging と両立するための近似）。
-                    let page = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
+                    var page = await store.unembeddedRefKeys(limit: max(batchSize, 512), localOnly: !netOK)
+                    // 家族共有（ADR-112）で取り込み済みの埋め込みがある写真は「処理済み」に採用し、
+                    // 推論（サムネ DL＋CLIP）をスキップする。
+                    let adopted = await store.adoptImportedEmbeddings(refKeys: page)
+                    if !adopted.isEmpty {
+                        Self.log.info("embed: adopted \(adopted.count) imported embeddings")
+                        page.removeAll { adopted.contains($0) }
+                    }
                     keyQueue = AnalysisOrder.ordered(page, favorites: favorites)
                 }
                 let refKeys = Array(keyQueue.prefix(batchSize))

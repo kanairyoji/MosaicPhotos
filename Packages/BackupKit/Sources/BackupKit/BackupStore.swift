@@ -35,7 +35,8 @@ public actor BackupStore {
     /// 名前付き永続コンテナ（自己修復）。壊れた/非互換ストアは削除して再構築し、
     /// それでも駄目ならインメモリ（起動を止めない・記録は 409→hash 照合で自然復元）。
     private static func makeContainer() -> ModelContainer {
-        let schema = Schema([BackupAssetRecord.self, OffloadRecord.self])
+        let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
+                             ShareSet.self, ShareItem.self])
         return makeResilientModelContainer(
             name: "BackupKit", schema: schema,
             openFailedMessage: "BackupStore: 'BackupKit' store open failed; deleting and rebuilding.",

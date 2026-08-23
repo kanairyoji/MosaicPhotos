@@ -15,6 +15,9 @@ public final class DropboxPhotoStore {
     /// 最後に `items` へ反映したキャッシュの変更リビジョン（`DropboxCacheStore.itemsRevision`）。
     /// 一致していれば全件 fetch を丸ごと省く（ADR-95）。
     @ObservationIgnored private var lastReflectedRevision: Int?
+    /// 表示から除外するパス接頭辞（小文字・ADR-112）。同期・キャッシュはそのままに、
+    /// items への反映だけをフィルタする（送信側で自分の共有コピーが原本と重複表示されるのを防ぐ）。
+    @ObservationIgnored private var excludedPathPrefixes: [String] = []
     /// 実行中の `loadItems()`。起動直後に複数の呼び手が同時に来ても fetch は 1 回に集約する。
     @ObservationIgnored private var loadTask: Task<Int, Never>?
     public private(set) var loadStatus: LoadStatus = .idle
@@ -147,13 +150,19 @@ public final class DropboxPhotoStore {
         }
         let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
         let favPaths = cloudFavoritePaths
+        let excluded = excludedPathPrefixes
         // ⚠️ 署名計算**と刻印（68,200 件の map）を同じ detached でまとめて**行う（ADR-88）。
         // 以前は署名だけオフメインで、`stampFavorites(raw)` は @MainActor のここで実行しており、
         // 起動のたびにメインが 2.5〜3.4 秒止まっていた（実測 diag-34・`cache.fetchItems` 直後）。
         // メインは完成した配列を代入するだけにする。
         let (sig, stamped) = await Task.detached(priority: .utility) {
-            (Self.itemsSignature(raw, favoritePaths: favPaths),
-             favPaths.isEmpty ? raw : raw.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
+            // 除外フィルタ（ADR-112）も 68k 件の走査なのでオフメインでまとめて行う。
+            let visible = excluded.isEmpty ? raw : raw.filter { item in
+                let path = item.path.lowercased()
+                return !excluded.contains { path == $0 || path.hasPrefix($0 + "/") }
+            }
+            return (Self.itemsSignature(visible, favoritePaths: favPaths),
+                    favPaths.isEmpty ? visible : visible.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
         }.value
         lastReflectedRevision = revision
         if sig != lastItemsSignature {
@@ -300,6 +309,19 @@ public final class DropboxPhotoStore {
     private func refreshItemsFromCache() async {
         guard let accountId = auth.credential?.accountId else { return }
         await reflectCachedItems(accountId: accountId)
+    }
+
+    /// 表示から除外するパス接頭辞を設定する（ADR-112・送信側の自分の共有ルート等）。
+    /// 変更時は次回反映で必ず再計算されるようにし、即時の反映も予約する。
+    public func setExcludedPathPrefixes(_ prefixes: [String]) {
+        let normalized = prefixes
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && $0 != "/" }
+        guard normalized != excludedPathPrefixes else { return }
+        excludedPathPrefixes = normalized
+        lastReflectedRevision = nil
+        lastItemsSignature = nil
+        forceCacheRefreshSoon()
     }
 
     /// バックグラウンド同期ループを停止する。

@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import BackupKit
 import SwiftUI
 
 // MARK: - People actions (長押しメニューと配下のシート/アラート一式)
@@ -22,6 +23,9 @@ struct PeopleActionsModifier: ViewModifier {
     @State private var mergeSourcePerson: PersonInfo?
     /// 「この人物を整理」（混入グループの一括分離・ADR-111）の対象。
     @State private var cleanupPerson: PersonInfo?
+    /// 家族と共有（共有セット作成・ADR-112）の対象。エンジン未注入なら項目を出さない。
+    @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
+    @State private var sharePerson: PersonInfo?
 
     func body(content: Content) -> some View {
         content
@@ -36,6 +40,9 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Group with Another Person…")) { mergeSourcePerson = person }
                 // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
                 Button(L("Clean Up This Person…")) { cleanupPerson = person }
+                if shareEngine != nil {
+                    Button(L("Share with Family…")) { sharePerson = person }
+                }
                 if person.isGrouped {
                     Button(L("Separate Grouped Person"), role: .destructive) {
                         let id = person.clusterID
@@ -59,6 +66,14 @@ struct PeopleActionsModifier: ViewModifier {
             // この人物を整理（混入グループの一括分離・ADR-111）。
             .sheet(item: $cleanupPerson) { person in
                 PersonCleanupView(person: person, peopleEngine: peopleEngine)
+            }
+            // 家族と共有（この人物の写真で共有セットを作る・ADR-112）。
+            .sheet(item: $sharePerson) { person in
+                if let shareEngine {
+                    ShareSetCreationSheet(suggestedName: person.displayName,
+                                          refKeys: person.memberRefKeys,
+                                          shareEngine: shareEngine)
+                }
             }
             // 名前変更（入力アラート）。空欄で保存すると "Person N" に戻る。
             .alert(L("Rename Person"),

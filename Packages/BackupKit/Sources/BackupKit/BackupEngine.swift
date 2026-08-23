@@ -54,6 +54,10 @@ public final class BackupEngine {
     /// SwiftData ストアへのアクセサ（生成完了を待つ）。
     func store() async -> BackupStore { await storeTask.value }
 
+    /// 共有セット（ShareSyncEngine）が同じコンテナを使うための公開アクセサ（ADR-112）。
+    /// 別インスタンスの BackupStore を作ると同一 SQLite への二重アクセスになるため必ずこれを使う。
+    public func sharedBackupStore() async -> BackupStore { await store() }
+
     // MARK: - Phase
 
     public enum Phase: Equatable {

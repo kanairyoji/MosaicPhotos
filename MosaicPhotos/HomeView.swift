@@ -148,7 +148,9 @@ struct HomeView: View {
             albumScanner: albumScanner,
             peopleEngine: peopleEngine,
             autoAlbumEngine: autoAlbumEngine,
-            assetIndex: assetIndex))
+            assetIndex: assetIndex,
+            shareEngine: stores.shareEngine,
+            shareImporter: stores.shareImporter))
         // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
         .peopleActions(for: $personActions, engine: peopleEngine)
         .sheet(isPresented: $showingFaceReview) {
@@ -236,6 +238,8 @@ private struct HomeLifecycleTasks: ViewModifier {
     let peopleEngine: PeopleEngine
     let autoAlbumEngine: AutoAlbumEngine
     let assetIndex: LocalAssetIndex
+    let shareEngine: ShareSyncEngine
+    let shareImporter: SharedAnalysisImporter
 
     private var rescanIntervalSeconds: Int {
         let secs = UserDefaults.standard.integer(forKey: PlacesSettingsKeys.rescanIntervalSeconds)
@@ -290,6 +294,22 @@ private struct HomeLifecycleTasks: ViewModifier {
                 try? await Task.sleep(for: .seconds(3))
                 assetIndex.buildIfNeeded()
             }
+            // 家族共有（ADR-112）: 起動から少し遅らせて (1) 家族サイドカーの取り込み、
+            // (2) 共有セットの反映（保留分・自己修復）を行う。自動通信なので回線ポリシーに従う。
+            .task {
+                try? await Task.sleep(for: .seconds(25))
+                guard NetworkStateMonitor.shared.networkAllowed() else { return }
+                await shareImporter.runIfNeeded()
+                if await hasShareSets() { await shareEngine.syncNow() }
+            }
+            // バックアップ完走後: waitingBackup だった共有アイテムを反映する。
+            .onChange(of: backupEngine.isRunning) { wasRunning, running in
+                guard wasRunning, !running else { return }
+                Task {
+                    guard NetworkStateMonitor.shared.networkAllowed() else { return }
+                    if await hasShareSets() { await shareEngine.syncNow() }
+                }
+            }
             .onChange(of: dropboxStore.auth.connectionStatus) { _, newStatus in
                 switch newStatus {
                 case .connected:
@@ -328,6 +348,12 @@ private struct HomeLifecycleTasks: ViewModifier {
 
     /// 電源・回線ポリシーに応じて Dropbox 差分同期を起動/停止する。接続中のみ対象。
     /// 「電源OK かつ 回線OK」なら同期を開始、そうでなければ停止して通信・電池を抑える。
+    /// 共有セットが 1 つでもあるか（無ければ反映のネットワーク往復を丸ごと省く）。
+    private func hasShareSets() async -> Bool {
+        await shareEngine.refresh()
+        return !shareEngine.sets.isEmpty
+    }
+
     private func evaluateSync() {
         guard case .connected = dropboxStore.auth.connectionStatus else { return }
         if PowerStateMonitor.shared.backgroundAllowed() && NetworkStateMonitor.shared.networkAllowed() {

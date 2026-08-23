@@ -42,7 +42,8 @@ struct SettingsView: View {
                 }
                 NavigationLink {
                     DropboxHubView(dropboxAuth: dropboxAuth, store: store,
-                                   backupEngine: backupEngine, autoAlbumEngine: autoAlbumEngine)
+                                   backupEngine: backupEngine, autoAlbumEngine: autoAlbumEngine,
+                                   shareEngine: stores.shareEngine, shareImporter: stores.shareImporter)
                 } label: {
                     row("Dropbox", systemImage: "cloud", value: dropboxStatusText)   // ブランド名は非翻訳
                 }

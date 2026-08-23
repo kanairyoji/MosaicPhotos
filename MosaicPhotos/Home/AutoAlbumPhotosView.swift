@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import BackupKit
 import DropboxKit
 import LocalPhotoKit
 import MapKit
@@ -14,6 +15,9 @@ struct AutoAlbumPhotosView: View {
     private let album: AutoAlbumInfo
     /// 画面内「…」メニューの削除アクション（AI アルバムのみ・nil なら「…」を出さない）。
     private let onDelete: (() -> Void)?
+    /// 家族共有（ADR-112）。未注入（nil）なら共有メニューを出さない。
+    @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
+    @State private var showingShareSheet = false
 
     init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
          onDelete: (() -> Void)? = nil) {
@@ -30,14 +34,29 @@ struct AutoAlbumPhotosView: View {
         }
         // アルバム画面内の「…」メニュー（ホームカードの「…」/長押しと同じ操作を画面内でも）。
         .environment(\.sourceMenuContent, menuContent)
+        .sheet(isPresented: $showingShareSheet) {
+            if let shareEngine {
+                ShareSetCreationSheet(suggestedName: album.placesLabel,
+                                      refKeys: album.memberRefs,
+                                      shareEngine: shareEngine)
+            }
+        }
     }
 
     private var menuContent: (@MainActor () -> AnyView)? {
-        guard let onDelete else { return nil }
+        let canShare = shareEngine != nil
+        guard onDelete != nil || canShare else { return nil }
         return { AnyView(
             Menu {
-                Button(role: .destructive) { onDelete() } label: {
-                    Label("Delete Album", systemImage: "trash")
+                if canShare {
+                    Button { showingShareSheet = true } label: {
+                        Label("Share with Family…", systemImage: "person.2")
+                    }
+                }
+                if let onDelete {
+                    Button(role: .destructive) { onDelete() } label: {
+                        Label("Delete Album", systemImage: "trash")
+                    }
                 }
             } label: { Image(systemName: "ellipsis.circle") }
                 .accessibilityLabel(Text("Album options"))
