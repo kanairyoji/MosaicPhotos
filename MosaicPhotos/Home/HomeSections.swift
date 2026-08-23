@@ -185,28 +185,29 @@ extension HomeView {
                 // クルクルばかり」に見えていた（実フィードバック）。レビューは台帳を読むだけで
                 // スキャンと競合しないので、いつでも開けてよい。進行中の表示は併記する。
                 HStack(spacing: 8) {
+                    // ⚠️ ボタンが増えた分、タイトルが幅圧縮で縦書き状に潰れないよう 1 行固定。
                     Text("People")
+                        .lineLimit(1)
+                        .fixedSize()
                     Spacer()
                     if peopleEngine.isScanning {
                         BusySpinner().scaleEffect(0.7)   // ADR-96
                     }
                     // 分裂が多いライブラリでは 1 対 1 の確認では追いつかないので、
-                    // 「まとめて確認」を先に出す（ADR-68）。
+                    // 「まとめて確認」を先に出す（ADR-68）。文言つきカプセルは「確認」だけに絞り、
+                    // こちらはアイコンのみ（3 つ並ぶとヘッダー幅が尽きてタイトルが潰れる・実フィードバック）。
                     if peopleEngine.people.count >= PeopleCarousel.carouselLimit {
                         Button {
                             showingBatchReview = true
                         } label: {
-                            Label(L("Merge"), systemImage: "person.2.badge.plus")
+                            Image(systemName: "person.2.badge.plus")
                                 .font(.caption.weight(.semibold))
-                                // ⚠️ 言語によらず 1 行に保つ。翻訳が長いとカプセルが 2 行に割れて
-                                // 見出しの高さが跳ね、見栄えが崩れる（実フィードバック）。
-                                .lineLimit(1)
-                                .fixedSize()
-                                .padding(.horizontal, 10)
+                                .padding(.horizontal, 8)
                                 .padding(.vertical, 5)
                                 .background(Color.accentColor.opacity(0.15), in: Capsule())
                                 .foregroundStyle(Color.accentColor)
                         }
+                        .accessibilityLabel(L("Merge"))
                         .buttonStyle(.plain)
                     }
                     if peopleEngine.people.count >= 1 {
@@ -225,19 +226,20 @@ extension HomeView {
                         .buttonStyle(.plain)
                     }
                     // ピープルグループ（家族・組織など複数人の束）を作る。2 人以上いるときだけ。
+                    // アイコンのみ（幅対策・上と同じ）。※ L("Group") は束ね機能の訳「束ねる」と
+                    // 衝突するため使わない。
                     if peopleEngine.people.count >= 2 {
                         Button {
                             showingGroupCreation = true
                         } label: {
-                            Label(L("Group"), systemImage: "person.3")
+                            Image(systemName: "person.3")
                                 .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                                .fixedSize()
-                                .padding(.horizontal, 10)
+                                .padding(.horizontal, 8)
                                 .padding(.vertical, 5)
                                 .background(Color.accentColor.opacity(0.15), in: Capsule())
                                 .foregroundStyle(Color.accentColor)
                         }
+                        .accessibilityLabel(L("New People Group"))
                         .buttonStyle(.plain)
                     }
                 }
