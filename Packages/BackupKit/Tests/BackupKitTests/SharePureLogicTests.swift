@@ -162,6 +162,36 @@ struct SharePlanningTests {
 
     /// ⚠️ 検証: 元のファイル名自体が "name (1).ext" の**別写真**が、たまたま同じフォルダに
     /// "name.ext" があるだけで「重複」と誤判定されないか（コピー記録がまだ無い状態）。
+    /// ⚠️ 重複大量生成の再発防止（レビュー指摘）。バックアップ照合で記録が消えると
+    /// アイテムは `waitingBackup` へ戻るが **sharedPath は残る**。このとき自分の既存コピー名を
+    /// 再利用できないと、セット全体が " 2" 付きで複製される（過去 2 回の暴走と同種）。
+    @Test("sharedPath を保持したまま再コピーに回っても、同じ宛先を再利用する")
+    func reusesOwnDestinationOnRecopy() {
+        for state in [ShareItemState.waitingBackup, .failed, .pending] {
+            let result = plan(
+                items: [item("L-a", state: state, sharedPath: "/mosaicshare/trip/a.jpg")],
+                backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
+                remote: [])   // 共有側には無い＝コピーが必要
+            #expect(result.copies.map(\.toPath) == ["/mosaicshare/trip/a.jpg"],
+                    "\(state) で自分のコピー先を再利用せず複製した: \(result.copies.map(\.toPath))")
+        }
+    }
+
+    /// 「今回の計画が使う予定のパス」は掃除しない（採用直後に消す経路の防止）。
+    @Test("同じ回に採用したファイルを掃除対象にしない")
+    func doesNotDeleteWhatItJustAdopted() {
+        let result = plan(
+            items: [item("C-/src/img.jpg"), item("C-/src/img (1).jpg")],
+            remote: [
+                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "hSAME"),
+                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "hSAME"),
+            ])
+        let adopted = Set(result.adoptions.map(\.sharedPathLower))
+        for path in result.duplicatesToDelete {
+            #expect(!adopted.contains(path), "採用したファイルを削除しようとしている: \(path)")
+        }
+    }
+
     @Test("元名が (N) 形式の別写真は掃除対象にしない（中身が違えば残す）")
     func doesNotDeleteDistinctPhotoNamedLikeDuplicate() {
         let result = plan(
@@ -393,5 +423,76 @@ struct SharedAlbumDiscoveryTests {
     func emptyCases() {
         #expect(SharedAlbumDiscovery.albums(itemPaths: ["/a.jpg"], familyRoots: []).isEmpty)
         #expect(SharedAlbumDiscovery.albums(itemPaths: [], familyRoots: ["/x"]).isEmpty)
+    }
+}
+
+// MARK: - ShareSourceKey
+
+@Suite("ShareSourceKey (作成元キーの符号化)")
+struct ShareSourceKeyTests {
+
+    @Test("符号化 → 復号で往復する")
+    func roundTrip() {
+        let uuid = UUID()
+        let cases: [ShareSourceKey] = [.album("trip-2025"), .person(42), .group(uuid)]
+        for key in cases {
+            #expect(ShareSourceKey(key.encoded) == key, "往復しない: \(key.encoded)")
+        }
+    }
+
+    @Test("不正な文字列は nil（旧セットの sourceKey=nil と区別できる）")
+    func rejectsInvalid() {
+        for raw in ["", "unknown-1", "person-abc", "pgroup-not-a-uuid", "album-"] {
+            #expect(ShareSourceKey(raw) == nil, "不正な値を通した: \(raw)")
+        }
+    }
+
+    @Test("接頭辞が他と衝突しない")
+    func prefixesAreDistinct() {
+        #expect(ShareSourceKey.album("x").encoded.hasPrefix("album-"))
+        #expect(ShareSourceKey.person(1).encoded.hasPrefix("person-"))
+        #expect(ShareSourceKey.group(UUID()).encoded.hasPrefix("pgroup-"))
+    }
+}
+
+@Suite("ShareSidecar 日付検証（外部入力）")
+struct ShareSidecarDateTests {
+
+    private var hash: String { String(repeating: "cd", count: 32) }
+    private var embedding: String {
+        Data(repeating: 0x11, count: ShareSidecar.embeddingByteCount).base64EncodedString()
+    }
+
+    /// NaN/巨大値の撮影日をそのまま Date にすると、人物の時期分割で日付ソートの
+    /// strict weak ordering が壊れる。範囲外は「日付なし」に落とす。
+    ///
+    /// ⚠️ NaN は JSON で表現できない（エンコード時点で弾かれる）ので、JSON を経由せず
+    /// `validate` を直接叩いて検証する。巨大値は JSON で表現できるため実際に届き得る。
+    @Test("非有限・非現実的な撮影日は nil に落とす（顔自体は残す）")
+    func dropsImplausibleCaptureDates() {
+        func face(_ d: Double?) -> ShareSidecar.Face {
+            .init(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, s: nil, d: d)
+        }
+        let entry = ShareSidecar.Entry(faces: [face(.nan), face(1e300), face(-1e300),
+                                               face(1_750_000_000)])
+        let cleaned = ShareSidecar.validate(entry)
+        let faces = cleaned?.faces
+        #expect(faces?.count == 4, "顔そのものは残すべき")
+        #expect(faces?.prefix(3).allSatisfy { $0.d == nil } == true, "不正な日付が残った")
+        #expect(faces?.last?.d == 1_750_000_000, "正常な日付まで落とした")
+    }
+
+    /// 巨大値は JSON 経由でも実際に届く（NaN と違ってエンコードできる）。
+    @Test("JSON 経由でも範囲外の撮影日は落ちる")
+    func dropsImplausibleDatesThroughJSON() {
+        let entry = ShareSidecar.Entry(faces: [
+            .init(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, s: nil, d: 1e300)])
+        let file = ShareSidecar.File(versions: .init(tag: 3, perception: 8, face: 4),
+                                     entries: [hash: entry])
+        guard let data = ShareSidecar.encode(file) else {
+            Issue.record("エンコードできなかった"); return
+        }
+        let decoded = ShareSidecar.decodeValidated(data)
+        #expect(decoded?.entries[hash]?.faces?.first?.d == nil)
     }
 }

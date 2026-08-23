@@ -34,8 +34,25 @@ public final class ShareSyncEngine {
 
     public private(set) var sets: [SetSummary] = []
     public private(set) var isSyncing = false
+    /// 走行中に来た反映要求（終わったら 1 回だけ再走する）。
+    @ObservationIgnored private var needsAnotherPass = false
+    /// 削除系（セット削除・単枚解除）の実行中フラグ。反映と**相互排他**にする。
+    ///
+    /// ⚠️ 排他しないと「削除 → 走行中の反映が続きのチャンクをコピー」で、消したはずの
+    /// 共有フォルダが写真つきで復活し、記録が無いので二度と掃除されない（レビュー指摘）。
+    @ObservationIgnored private var isMutating = false
     public private(set) var lastSyncAt: Date?
-    public private(set) var lastError: String?
+    public private(set) var lastError: SyncError?
+
+    /// 反映の失敗種別。**表示側で翻訳する**ため文言をここに持たない
+    /// （規約: 動的 String は verbatim＝未翻訳になる）。
+    public enum SyncError: Equatable, Sendable {
+        case notConnected
+        case folderPrepareFailed
+        case folderCheckFailed
+        case folderRemoveFailed
+        case invalidFolderName
+    }
 
     @ObservationIgnored private let tokenProvider: AccessTokenProvider
     @ObservationIgnored private let httpClient: HTTPClient
@@ -62,22 +79,33 @@ public final class ShareSyncEngine {
     // MARK: - セット操作（UI から呼ぶ）
 
     /// セット概要を読み直す（ハブ表示用）。
+    /// ⚠️ 集計は **1 回の fetch**（`shareItemCounts`）で行う。以前はセットごとに
+    /// 全アイテムを引いており、セット N 個 × 数千アイテムの N+1 クエリになっていた。
+    /// また **内容が同じなら代入しない**（`@Observable` は代入だけで購読ビューを
+    /// 無効化するので、ホーム全体の再評価が無駄に走る・ADR-95 と同じ理由）。
     public func refresh() async {
         let store = await storeProvider()
         let all = await store.allShareSets()
-        var summaries: [SetSummary] = []
-        for set in all {
-            let items = await store.shareItems(setID: set.id)
+        let counts = await store.shareItemCounts()
+        let summaries: [SetSummary] = all.map { set in
             var summary = SetSummary(id: set.id, name: set.name,
                                      folderName: set.folderName, createdAt: set.createdAt)
             summary.sourceKey = set.sourceKey
-            summary.total = items.count
-            summary.copied = items.filter { $0.state == .copied }.count
-            summary.waitingBackup = items.filter { $0.state == .waitingBackup }.count
-            summary.failed = items.filter { $0.state == .failed }.count
-            summaries.append(summary)
+            if let c = counts[set.id] {
+                summary.total = c.total
+                summary.copied = c.copied
+                summary.waitingBackup = c.waitingBackup
+                summary.failed = c.failed
+            }
+            return summary
         }
+        guard summaries != sets else { return }
         sets = summaries
+    }
+
+    /// 共有セットが 1 つでもあるか（存在判定のためだけに全件を引かない）。
+    public func hasAnySet() async -> Bool {
+        await storeProvider().shareSetCount() > 0
     }
 
     /// セットを作成して写真を登録し、即時反映を試みる。作成したセット ID を返す。
@@ -118,8 +146,11 @@ public final class ShareSyncEngine {
 
     /// セットを削除する（共有フォルダごと）。リモート削除に失敗したら記録は残す（再試行可能）。
     public func deleteSet(id: UUID) async -> Bool {
+        isMutating = true
+        defer { isMutating = false }
+        await waitForSyncToPause()
         guard let token = try? await tokenProvider.freshAccessToken() else {
-            lastError = "Not connected"
+            lastError = .notConnected
             return false
         }
         let store = await storeProvider()
@@ -129,12 +160,12 @@ public final class ShareSyncEngine {
         guard let folder = SharePlanning.setFolderPath(
                 shareRoot: ShareSettingsKeys.currentShareRoot(), folderName: set.folderName) else {
             BackupLogger.error("Share: refusing to delete set with invalid folder name")
-            lastError = "Invalid shared folder name"
+            lastError = .invalidFolderName
             return false
         }
         let copier = DropboxShareCopier(httpClient: httpClient)
         guard await copier.deleteBatch(paths: [folder], token: token) else {
-            lastError = "Failed to remove the shared folder"
+            lastError = .folderRemoveFailed
             return false
         }
         await store.deleteShareSet(id: id)
@@ -145,6 +176,9 @@ public final class ShareSyncEngine {
 
     /// 写真をセットから外す（コピー済みなら共有側ファイルも削除）。
     public func removeItems(setID: UUID, refKeys: [String]) async {
+        isMutating = true
+        defer { isMutating = false }
+        await waitForSyncToPause()
         let store = await storeProvider()
         let items = await store.shareItems(setID: setID)
         let targets = items.filter { refKeys.contains($0.refKey) }
@@ -158,6 +192,17 @@ public final class ShareSyncEngine {
         scheduleSync()   // サイドカーから外した分を反映
     }
 
+    /// 反映が走っていれば、区切り（次のセットの境目）まで待つ。
+    /// `isMutating` を見て反映側が自発的に止まるので、ここは短時間で抜ける。
+    /// 保険として上限を設け、待ち続けて UI を固めない。
+    private func waitForSyncToPause(timeoutMs: Int = 3000) async {
+        var waited = 0
+        while isSyncing, waited < timeoutMs {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            waited += 100
+        }
+    }
+
     /// ビュー（セット詳細）からのアイテム読み出し用アクセサ。
     public func storeForViews() async -> BackupStore { await storeProvider() }
 
@@ -166,16 +211,28 @@ public final class ShareSyncEngine {
     /// 全セットを反映する（コピー・自己修復・サイドカー更新）。
     /// バックアップ完走後・手動「今すぐ反映」・夜間枠から呼ばれる。
     public func syncNow() async {
-        guard !isSyncing else { return }
         // 「提供する」が OFF なら反映しない（受信・バックアップとは独立・ADR-112 追記）。
         guard ShareSettingsKeys.isProvideEnabled() else { return }
-        guard let token = try? await tokenProvider.freshAccessToken() else {
-            lastError = "Not connected"
-            BackupLogger.info("Share sync: skipped (no token)")
+        // ⚠️ フラグは**最初の await より前**に立てる。`@MainActor` でも await で実行が移るため、
+        // トークン取得を挟んでからだと 2 本が同時にガードを通過する（TOCTOU・レビュー指摘）。
+        // 走行中に来た要求は捨てずに 1 回だけ再走させる（捨てると「共有したのに反映されない」）。
+        guard !isSyncing else {
+            needsAnotherPass = true
+            return
+        }
+        // 削除系が走っている間は反映しない（消した先へコピーし直さないため）。
+        guard !isMutating else {
+            needsAnotherPass = true
             return
         }
         isSyncing = true
         defer { isSyncing = false }
+
+        guard let token = try? await tokenProvider.freshAccessToken() else {
+            lastError = .notConnected
+            BackupLogger.info("Share sync: skipped (no token)")
+            return
+        }
         lastError = nil
 
         let store = await storeProvider()
@@ -183,12 +240,24 @@ public final class ShareSyncEngine {
         let shareRoot = ShareSettingsKeys.currentShareRoot()
 
         for set in await store.allShareSets() {
+            // 途中でユーザーが削除操作を始めたら、そこで止める（続きは次回の反映で拾う）。
+            if isMutating {
+                needsAnotherPass = true
+                break
+            }
             await sync(set: set, shareRoot: shareRoot, store: store,
                        copier: copier, token: token)
-            await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映
+            await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映（変化なしなら無通知）
         }
         lastSyncAt = Date()
         await refresh()
+
+        // 走行中に来た要求をここで 1 回だけ消化する（無限再帰にならないようフラグを先に落とす）。
+        if needsAnotherPass {
+            needsAnotherPass = false
+            isSyncing = false
+            await syncNow()
+        }
     }
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,
@@ -204,12 +273,12 @@ public final class ShareSyncEngine {
         // フォルダを確保してから実在一覧を取る。一覧が取れない（通信断）ときは
         // このセットをスキップする（実在不明のまま再コピーすると autorename で重複を作る）。
         guard await copier.createFolder(path: setFolder, token: token) else {
-            lastError = "Could not prepare the shared folder"
+            lastError = .folderPrepareFailed
             BackupLogger.error("Share sync: create_folder failed — \(setFolder)")
             return
         }
         guard let listing = await copier.listFolder(path: setFolder, token: token) else {
-            lastError = "Could not check the shared folder"
+            lastError = .folderCheckFailed
             BackupLogger.error("Share sync: list_folder failed — \(setFolder)")
             return
         }
@@ -255,13 +324,19 @@ public final class ShareSyncEngine {
         let copyBudget = min(plan.copies.count, Self.maxCopiesPerRun)
         if plan.copies.count > copyBudget {
             BackupLogger.info("Share sync: '\(set.folderName)' copying \(copyBudget) of \(plan.copies.count) this run (rest continues next run)")
+            // 未コピーを大量に残したまま掃除しない（残りは次回に回す）。
+            copyFailed = true
         }
         for chunk in stride(from: 0, to: copyBudget, by: Self.copyChunkSize).map({
             Array(plan.copies[$0..<min($0 + Self.copyChunkSize, copyBudget)])
         }) {
             let entries = chunk.map { (from: $0.fromPath, to: $0.toPath) }
             let result = await copier.copyBatch(entries: entries, token: token)
-            if result == nil { copyFailed = true }
+            // ⚠️ 「本処理が完全に成功した回だけ後始末する」が不変条件（diagnostics-55）。
+            // リクエスト全体の失敗だけでなく、**エントリ単位の失敗**も失敗として扱う。
+            if result == nil || result?.entries.contains(where: { $0 == nil }) == true {
+                copyFailed = true
+            }
             var updates: [(refKey: String, state: ShareItemState, sourcePath: String?,
                            sharedPath: String?, sharedContentHash: String?)] = []
             for (i, copy) in chunk.enumerated() {

@@ -46,7 +46,7 @@ public struct ShareHubView: View {
 
             Section {
                 NavigationLink {
-                    ShareProvideView(engine: engine)
+                    ShareProvideView(engine: engine, onShareRootChanged: onFamilyFoldersChanged)
                 } label: {
                     featureRow(icon: "icloud.and.arrow.up", tint: .blue,
                                title: L("Share Your Photos"),
@@ -109,6 +109,8 @@ public struct ShareHubView: View {
 /// 提供専用画面（トグル＋共有セット＋反映＋共有ルート）。独立機能（ADR-112 追記）。
 struct ShareProvideView: View {
     let engine: ShareSyncEngine
+    /// 共有ルートを変えたときに、表示の除外パスを更新してもらうための通知。
+    var onShareRootChanged: @MainActor () -> Void = {}
 
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
     @AppStorage(ShareSettingsKeys.shareRootFolder)
@@ -197,7 +199,7 @@ struct ShareProvideView: View {
                 LabeledContent(L("Last synced"), value: at.formatted(date: .abbreviated, time: .shortened))
             }
             if let error = engine.lastError {
-                Label(error, systemImage: "exclamationmark.triangle")
+                Label(Self.message(for: error), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                     .font(.footnote)
             }
@@ -223,11 +225,25 @@ struct ShareProvideView: View {
 
     // MARK: - 共有ルート（送信側）
 
+    /// 失敗種別 → 表示文言（翻訳対象）。
+    static func message(for error: ShareSyncEngine.SyncError) -> String {
+        switch error {
+        case .notConnected:        return L("Not connected to Dropbox.")
+        case .folderPrepareFailed: return L("Could not prepare the shared folder.")
+        case .folderCheckFailed:   return L("Could not check the shared folder.")
+        case .folderRemoveFailed:  return L("Could not remove the shared folder.")
+        case .invalidFolderName:   return L("This set has an invalid folder name.")
+        }
+    }
+
     private var shareRootSection: some View {
         Section {
             TextField(L("Shared folder"), text: $shareRoot)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+                // ルートを変えたら表示の除外パスも更新する（変えないと旧ルートが隠れたまま・
+                // 新ルートが Cloud/All に二重表示される）。家族フォルダ変更と同じ経路を叩く。
+                .onChange(of: shareRoot) { _, _ in onShareRootChanged() }
         } header: {
             Text(L("Shared Folder (yours)"))
         } footer: {

@@ -213,7 +213,7 @@ struct PeopleGroupActionsModifier: ViewModifier {
                     ShareSetCreationSheet(suggestedName: payload.group.name,
                                           refKeys: payload.refKeys,
                                           shareEngine: shareEngine,
-                                          sourceKey: "pgroup-\(payload.group.id)")
+                                          sourceKey: ShareSourceKey.group(payload.group.id).encoded)
                 }
             }
             .confirmationDialog(

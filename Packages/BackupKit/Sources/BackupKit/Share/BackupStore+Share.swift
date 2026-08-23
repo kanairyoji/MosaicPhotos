@@ -27,6 +27,30 @@ extension BackupStore {
         }
     }
 
+    /// 全セットの概要を **1 回の fetch** で集計する（セットごとの N+1 クエリを避ける）。
+    /// 返すのは setID → (総数, コピー済み, バックアップ待ち, 失敗)。
+    public func shareItemCounts() -> [UUID: (total: Int, copied: Int, waitingBackup: Int, failed: Int)] {
+        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>())) ?? []
+        var out: [UUID: (total: Int, copied: Int, waitingBackup: Int, failed: Int)] = [:]
+        for item in items {
+            var c = out[item.setID] ?? (0, 0, 0, 0)
+            c.total += 1
+            switch ShareItemState(rawValue: item.stateRaw) ?? .pending {
+            case .copied:        c.copied += 1
+            case .waitingBackup: c.waitingBackup += 1
+            case .failed:        c.failed += 1
+            case .pending:       break
+            }
+            out[item.setID] = c
+        }
+        return out
+    }
+
+    /// 共有セットの件数（存在判定用・全件マテリアライズを避ける）。
+    public func shareSetCount() -> Int {
+        (try? modelContext.fetchCount(FetchDescriptor<ShareSet>())) ?? 0
+    }
+
     /// セットと配下アイテムの記録を削除する（Dropbox 側の削除は呼び出し側の責務）。
     public func deleteShareSet(id: UUID) {
         let setID = id
@@ -132,7 +156,10 @@ extension BackupStore {
         let wanted = Set(ids)
         // localIdentifier は #Predicate の contains(Set) が組めないため全件から絞る
         // （バックアップ記録は数万件・メタのみで軽い。BackupStore actor 上なのでメインは塞がない）。
-        let records = (try? modelContext.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
+        // メタ 3 列だけ取り出す（@Model 全体のマテリアライズは数万行でメモリを食う）。
+        var descriptor = FetchDescriptor<BackupAssetRecord>()
+        descriptor.propertiesToFetch = [\.localIdentifier, \.dropboxPath, \.contentHash]
+        let records = (try? modelContext.fetch(descriptor)) ?? []
         var out: [String: SharePlanning.BackupRef] = [:]
         for record in records {
             guard let localID = record.localIdentifier, wanted.contains(localID) else { continue }

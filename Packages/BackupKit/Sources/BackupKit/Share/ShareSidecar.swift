@@ -93,6 +93,8 @@ public enum ShareSidecar {
     public static let maxFacesPerEntry = 32
     /// CLIP / 顔埋め込みの Float16 バイト長（512 次元 × 2 バイト）。
     public static let embeddingByteCount = 1_024
+    /// 撮影日として現実的な epoch 秒の範囲（1900-01-01 〜 2100-01-01）。
+    static let plausibleEpochRange: ClosedRange<Double> = -2_208_988_800 ... 4_102_444_800
 
     // MARK: - Encode / Decode
 
@@ -138,10 +140,19 @@ public enum ShareSidecar {
         if let aes = entry.aes, aes.isFinite, (-1.0...1.0).contains(aes) { out.aes = aes }
         if let clip = entry.clip, validEmbedding(clip) { out.clip = clip }
         if let faces = entry.faces {
-            let valid = faces.prefix(maxFacesPerEntry).filter { face in
-                validEmbedding(face.e)
-                    && [face.x, face.y, face.w, face.h].allSatisfy { $0.isFinite && (-1.0...2.0).contains($0) }
-                    && face.q.isFinite && (0...1).contains(face.q)
+            let valid = faces.prefix(maxFacesPerEntry).compactMap { face -> Face? in
+                guard validEmbedding(face.e),
+                      [face.x, face.y, face.w, face.h].allSatisfy({ $0.isFinite && (-1.0...2.0).contains($0) }),
+                      face.q.isFinite, (0...1).contains(face.q)
+                else { return nil }
+                // ⚠️ 撮影日も検証する。NaN/巨大値をそのまま Date にすると、人物の時期分割で
+                // 日付ソートの strict weak ordering が壊れる（Swift の sort が未定義動作・
+                // デバッグ版では precondition 失敗）。範囲外は「日付なし」に落とす。
+                var cleaned = face
+                if let d = face.d, !(d.isFinite && Self.plausibleEpochRange.contains(d)) {
+                    cleaned.d = nil
+                }
+                return cleaned
             }
             if !valid.isEmpty { out.faces = Array(valid) }
         }

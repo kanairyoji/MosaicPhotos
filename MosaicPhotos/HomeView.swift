@@ -50,6 +50,8 @@ struct HomeView: View {
     @State var showingGroupCreation = false
     /// クラウド共有で受け取ったアルバム（家族フォルダ配下の共有セット・ある場合のみセクション表示）。
     @State var sharedAlbums: [SharedAlbumDiscovery.Album] = []
+    /// 共有中バッジの対象 ID。共有セットが変わったときだけ作り直す（body で計算しない）。
+    @State var cloudSharedBadges = CloudSharedBadges()
     /// フォルダ名アルバム機能の有効フラグ（ON のときだけ「Albums」セクションを出す）。
     @AppStorage(AutoAlbumSettingsKeys.pathAlbumsEnabled) var pathAlbumsEnabled = false
     /// アクティビティバー表示時は、その分だけ上部に余白を確保してタイトルと重ならないようにする。
@@ -59,6 +61,17 @@ struct HomeView: View {
 
     /// ストア一式（SettingsView / SourceHostView へ一括で渡す）。個別 @State は既存参照の互換用。
     let stores: HomeStores
+
+    /// 共有中バッジの対象 ID を作り直す（呼ばれるのは共有セット/グループの変更時だけ）。
+    /// body の計算プロパティにすると再描画のたびに数千人物・数百アルバムを走査してしまう。
+    func updateCloudSharedBadges() {
+        let fresh = CloudSharedBadges.resolve(
+            sets: stores.shareEngine.sets,
+            people: peopleEngine.people,
+            groups: peopleEngine.peopleGroups,
+            albums: autoAlbumEngine.albums + autoAlbumEngine.aiAlbums)
+        if fresh != cloudSharedBadges { cloudSharedBadges = fresh }
+    }
 
     /// ストアは `HomeStores` で事前構築する（各ストアの `ModelContainer` 生成が同期的で重く、
     /// `HomeView.init` で作ると最初の描画＝起動をブロックするため）。`RootView` が起動直後に
@@ -167,6 +180,10 @@ struct HomeView: View {
             assetIndex: assetIndex,
             shareEngine: stores.shareEngine,
             shareImporter: stores.shareImporter))
+        // バッジ対象 ID は**共有セット/グループが変わったときだけ**作り直す（body で計算しない）。
+        .task { updateCloudSharedBadges() }
+        .onChange(of: stores.shareEngine.sets) { _, _ in updateCloudSharedBadges() }
+        .onChange(of: peopleEngine.peopleGroups) { _, _ in updateCloudSharedBadges() }
         // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
         .peopleActions(for: $personActions, engine: peopleEngine)
         // ピープルグループの長押しメニュー（編集/クラウド共有/削除）と作成シート。
@@ -337,9 +354,9 @@ private struct HomeLifecycleTasks: ViewModifier {
                 try? await Task.sleep(for: .seconds(3))
                 assetIndex.buildIfNeeded()
             }
-            // 共有セット概要の初期ロード（グループカードの「クラウド共有中」バッジの材料。
-            // DB 読みだけで軽い・ネットワークは使わない）。
+            // 共有セット概要の初期ロード（バッジの材料。DB 読みだけで軽い・通信なし）。
             .task { await shareEngine.refresh() }
+
             // 家族共有（ADR-112）: 起動から少し遅らせて (1) 家族サイドカーの取り込み、
             // (2) 共有セットの反映（保留分・自己修復）を行う。自動通信なので回線ポリシーに従う。
             .task {
@@ -395,9 +412,9 @@ private struct HomeLifecycleTasks: ViewModifier {
     /// 電源・回線ポリシーに応じて Dropbox 差分同期を起動/停止する。接続中のみ対象。
     /// 「電源OK かつ 回線OK」なら同期を開始、そうでなければ停止して通信・電池を抑える。
     /// 共有セットが 1 つでもあるか（無ければ反映のネットワーク往復を丸ごと省く）。
+    /// ⚠️ 判定のためだけに `refresh()`（全セット集計）を呼ばない——件数だけ数える。
     private func hasShareSets() async -> Bool {
-        await shareEngine.refresh()
-        return !shareEngine.sets.isEmpty
+        await shareEngine.hasAnySet()
     }
 
     private func evaluateSync() {

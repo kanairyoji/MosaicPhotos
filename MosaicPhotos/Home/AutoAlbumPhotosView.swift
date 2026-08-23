@@ -40,7 +40,7 @@ struct AutoAlbumPhotosView: View {
                 ShareSetCreationSheet(suggestedName: album.placesLabel,
                                       refKeys: album.memberRefs,
                                       shareEngine: shareEngine,
-                                      sourceKey: "album-\(album.id)")
+                                      sourceKey: ShareSourceKey.album(album.id).encoded)
             }
         }
     }

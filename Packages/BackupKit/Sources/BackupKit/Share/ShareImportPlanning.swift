@@ -43,11 +43,24 @@ public enum ShareImportPlanning {
     public static func plan(sidecar: ShareSidecar.File,
                             localItems: [LocalItem],
                             versions: ReceiverVersions) -> Batch {
+        plan(sidecar: sidecar, index: index(of: localItems), versions: versions)
+    }
+
+    /// content_hash → refKey 群の索引。**サイドカーごとに作り直さない**ために切り出す
+    /// （受信側は 6.8 万件規模を扱うので、サイドカー数ぶんの再構築は無視できない）。
+    public static func index(of localItems: [LocalItem]) -> [String: [String]] {
         var byHash: [String: [String]] = [:]
+        byHash.reserveCapacity(localItems.count)
         for item in localItems {
             byHash[item.contentHash.lowercased(), default: []].append(item.refKey)
         }
+        return byHash
+    }
 
+    /// 索引を使い回す版（複数サイドカーを処理するときはこちらを使う）。
+    public static func plan(sidecar: ShareSidecar.File,
+                            index byHash: [String: [String]],
+                            versions: ReceiverVersions) -> Batch {
         let tagOK = sidecar.versions.tag == versions.tag
         let clipOK = sidecar.versions.perception == versions.perception
         let faceOK = sidecar.versions.face == versions.face

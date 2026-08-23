@@ -123,7 +123,12 @@ public enum SharePlanning {
             }
 
             func copyOrAdopt() {
-                let dest = assignDestination(fromPath: source.dropboxPath)
+                // ⚠️ **自分の記録済みコピー先があれば、それをそのまま再利用する**。
+                // 以前は常に新規採番していたため、再コピーに回ったアイテムが自分の既存コピー名を
+                // 使えず必ず " 2" で複製されていた（バックアップ照合で記録が消えて waitingBackup へ
+                // 戻ると、セット全体が複製される経路だった・レビュー指摘）。
+                // 予約表には既に自分の分が入っているので、衝突判定は通さず直接使う。
+                let dest = item.sharedPath ?? assignDestination(fromPath: source.dropboxPath)
                 // 宛先が既に実在するなら採用する（タイムアウト後に完了していたジョブの成果や
                 // 前回の残置）。ソースのハッシュが分かっていて一致しない場合だけコピーへ回す
                 // （同名別写真の可能性）——その場合も autorename に頼らず別名を割り当てる。
@@ -171,7 +176,11 @@ public enum SharePlanning {
         // だけでユーザーの写真が削除され、しかも次回の反映で再コピー → また削除の
         // 空回りループになる（レビューでテストにより再現）。中身が同じものだけを消す。
         if let remoteFiles {
-            let owned = Set(items.compactMap { $0.sharedPath?.lowercased() })
+            // ⚠️ 「今回の計画が使う予定のパス」は絶対に消さない（採用した直後に削除して
+            // しまう経路があった・レビュー指摘）。記録済み＋採用＋コピー先をすべて除外する。
+            var owned = Set(items.compactMap { $0.sharedPath?.lowercased() })
+            owned.formUnion(plan.adoptions.map { $0.sharedPathLower })
+            owned.formUnion(plan.copies.map { $0.toPath.lowercased() })
             let byPath = Dictionary(remoteFiles.map { ($0.pathLower, $0) },
                                     uniquingKeysWith: { first, _ in first })
             for file in remoteFiles {
@@ -212,7 +221,7 @@ public enum SharePlanning {
         guard let open = stem.lastIndex(of: "("), stem.hasSuffix(")"),
               open > stem.startIndex else { return nil }
         let digits = stem[stem.index(after: open)..<stem.index(before: stem.endIndex)]
-        guard !digits.isEmpty, digits.allSatisfy(\.isNumber) else { return nil }
+        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
         let baseStem = String(stem[..<open]).trimmingCharacters(in: .whitespaces)
         guard !baseStem.isEmpty else { return nil }
         let baseName = ext.isEmpty ? baseStem : "\(baseStem).\(ext)"

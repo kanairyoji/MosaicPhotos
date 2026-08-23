@@ -91,56 +91,80 @@ final class SharedAnalysisImporter {
         let fetched = await ShareSidecarFetch().fetchUpdated(roots: roots, token: token)
         guard !fetched.isEmpty else { return }
 
-        // 受信側の同期済みアイテム（家族フォルダ配下・content_hash 付き）。
-        let rootsLower = roots.map { $0.lowercased() }
-        let localItems: [ShareImportPlanning.LocalItem] = dropboxStore.items.compactMap { item in
-            guard let hash = item.contentHash else { return nil }
-            let lower = item.path.lowercased()
-            guard rootsLower.contains(where: { lower == $0 || lower.hasPrefix($0 + "/") })
-            else { return nil }
-            return ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(item.path).encoded,
-                                                 contentHash: hash)
-        }
-        let hashSet = Set(localItems.map { $0.contentHash.lowercased() })
-
         let versions = ShareImportPlanning.ReceiverVersions(
             tag: AutoAlbumEngine.shareTagVersion,
             perception: AutoAlbumEngine.sharePerceptionVersion,
             face: peopleEngine.effectiveScanVersion)
 
-        for sidecar in fetched {
-            let batch = ShareImportPlanning.plan(sidecar: sidecar.file,
-                                                localItems: localItems, versions: versions)
-            let tagBatch = batch.tags.map {
-                (refKey: $0.refKey,
-                 info: PhotoSenseInfo(tags: $0.entry.tags ?? [], ocrText: $0.entry.ocr,
-                                      humanCount: $0.entry.human, aesthetic: $0.entry.aes))
+        // ⚠️ ここから先は **すべてオフメイン**（規約: 巨大コレクションを MainActor に通さない）。
+        // 受信側の突合は 6.8 万件規模の走査＋文字列生成、さらにサイドカーごとの base64 デコード
+        // （数千顔ぶん）を伴う。メインで回すとホーム描画・スクロールを直撃する。
+        // メインへ戻すのは各ストアへ渡す Sendable なバッチだけにする。
+        let itemsSnapshot = dropboxStore.items.map { (path: $0.path, hash: $0.contentHash) }
+        let rootsLower = roots.map { $0.lowercased() }
+        let prepared = await Task.detached(priority: .utility) { () -> [PreparedImport] in
+            // 家族フォルダ配下 かつ content_hash があるものだけを突合対象にする。
+            let localItems: [ShareImportPlanning.LocalItem] = itemsSnapshot.compactMap { item in
+                guard let hash = item.hash else { return nil }
+                let lower = item.path.lowercased()
+                guard rootsLower.contains(where: { lower == $0 || lower.hasPrefix($0 + "/") })
+                else { return nil }
+                return ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(item.path).encoded,
+                                                     contentHash: hash)
             }
-            let counts = await autoAlbumEngine.importSharedAnalysis(
-                tags: tagBatch, embeddings: batch.embeddings)
-            var faceBatch: [(refKey: String, faces: [DetectedFaceSignal])] = []
-            for (refKey, faces) in batch.faces {
-                let signals = faces.compactMap { face -> DetectedFaceSignal? in
-                    guard let embedding = Data(base64Encoded: face.e) else { return nil }
-                    return DetectedFaceSignal(
-                        boundingBox: CGRect(x: face.x, y: face.y, width: face.w, height: face.h),
-                        embedding: embedding, quality: face.q, hasSmile: face.s,
-                        captureDate: face.d.map { Date(timeIntervalSince1970: $0) })
-                }
-                if !signals.isEmpty { faceBatch.append((refKey, signals)) }
-            }
-            let importedFaces = await peopleEngine.importFaceScans(faceBatch)
-            Diagnostics.mark("share import: \(sidecar.setFolderPathLower) — "
-                + "tags \(counts.tags), embeddings \(counts.embeddings), faces \(importedFaces) photos")
+            // 索引は 1 回だけ作ってサイドカー間で使い回す。
+            let index = ShareImportPlanning.index(of: localItems)
+            let hashSet = Set(index.keys)
 
-            // まだ同期されていない写真が残っているサイドカーは rev を記録しない
-            // （次回の実行で残りを取り込む。取り込みは既存レコードをスキップするので冪等）。
-            let matched = sidecar.file.entries.keys.filter { hashSet.contains($0) }.count
-            if matched == sidecar.file.entries.count {
-                ShareSidecarFetch.markImported(sidecar)
+            return fetched.map { sidecar in
+                let batch = ShareImportPlanning.plan(sidecar: sidecar.file, index: index,
+                                                     versions: versions)
+                let tags = batch.tags.map {
+                    (refKey: $0.refKey,
+                     info: PhotoSenseInfo(tags: $0.entry.tags ?? [], ocrText: $0.entry.ocr,
+                                          humanCount: $0.entry.human, aesthetic: $0.entry.aes))
+                }
+                var faces: [(refKey: String, faces: [DetectedFaceSignal])] = []
+                for (refKey, rawFaces) in batch.faces {
+                    let signals = rawFaces.compactMap { face -> DetectedFaceSignal? in
+                        guard let embedding = Data(base64Encoded: face.e) else { return nil }
+                        return DetectedFaceSignal(
+                            boundingBox: CGRect(x: face.x, y: face.y, width: face.w, height: face.h),
+                            embedding: embedding, quality: face.q, hasSmile: face.s,
+                            captureDate: face.d.map { Date(timeIntervalSince1970: $0) })
+                    }
+                    if !signals.isEmpty { faces.append((refKey, signals)) }
+                }
+                // まだ同期されていない写真が残っているサイドカーは rev を記録しない
+                // （次回の実行で残りを取り込む。取り込みは既存レコードをスキップするので冪等）。
+                let fullyMatched = sidecar.file.entries.keys.allSatisfy { hashSet.contains($0) }
+                return PreparedImport(sidecar: sidecar, tags: tags,
+                                      embeddings: batch.embeddings, faces: faces,
+                                      fullyMatched: fullyMatched)
+            }
+        }.value
+
+        for prepared in prepared {
+            let counts = await autoAlbumEngine.importSharedAnalysis(
+                tags: prepared.tags, embeddings: prepared.embeddings)
+            let importedFaces = await peopleEngine.importFaceScans(prepared.faces)
+            Diagnostics.mark("share import: \(prepared.sidecar.setFolderPathLower) — "
+                + "tags \(counts.tags), embeddings \(counts.embeddings), faces \(importedFaces) photos")
+            if prepared.fullyMatched {
+                ShareSidecarFetch.markImported(prepared.sidecar)
             }
         }
     }
+}
+
+/// オフメインで組み立てた取り込み材料（メインへはこれだけ返す）。
+private struct PreparedImport: Sendable {
+    let sidecar: ShareSidecarFetch.Fetched
+    let tags: [(refKey: String, info: PhotoSenseInfo)]
+    let embeddings: [(refKey: String, vectorHalf: Data)]
+    let faces: [(refKey: String, faces: [DetectedFaceSignal])]
+    /// サイドカーの全エントリが手元の写真に突合できたか（rev 記録の可否）。
+    let fullyMatched: Bool
 }
 
 // MARK: - 共有の表示ポリシー（送信側の二重表示対策）

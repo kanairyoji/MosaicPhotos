@@ -1,6 +1,46 @@
 import Foundation
 import SwiftData
 
+/// 共有セットの**作成元**（どのカードから作られたか）。
+///
+/// 文字列プロトコル（`"album-…"` 等）の符号化/復号を 1 か所に閉じる。以前は生成側 3 ファイル・
+/// 復号側 1 ファイルに素のリテラルと `dropFirst(7)` が散らばっており、画面ルーティング用の
+/// `HomeDestination.id` が**同じ接頭辞を別の意味で**使っていて紛らわしかった（規約: 文字列
+/// リテラルを読み手・書き手に重複させない）。
+public enum ShareSourceKey: Equatable, Sendable {
+    case album(String)
+    case person(Int)
+    case group(UUID)
+
+    private static let albumPrefix = "album-"
+    private static let personPrefix = "person-"
+    private static let groupPrefix = "pgroup-"
+
+    public var encoded: String {
+        switch self {
+        case .album(let id):  return Self.albumPrefix + id
+        case .person(let id): return Self.personPrefix + String(id)
+        case .group(let id):  return Self.groupPrefix + id.uuidString
+        }
+    }
+
+    public init?(_ raw: String) {
+        if raw.hasPrefix(Self.groupPrefix) {
+            guard let uuid = UUID(uuidString: String(raw.dropFirst(Self.groupPrefix.count))) else { return nil }
+            self = .group(uuid)
+        } else if raw.hasPrefix(Self.personPrefix) {
+            guard let id = Int(raw.dropFirst(Self.personPrefix.count)) else { return nil }
+            self = .person(id)
+        } else if raw.hasPrefix(Self.albumPrefix) {
+            let id = String(raw.dropFirst(Self.albumPrefix.count))
+            guard !id.isEmpty else { return nil }
+            self = .album(id)
+        } else {
+            return nil
+        }
+    }
+}
+
 /// 共有セット（＝共有フォルダ内のサブフォルダ 1 つ）。
 /// 「共有はバックアップの射影」——実体はバックアップ（またはクラウド原本）からの
 /// サーバーサイドコピーで、セット削除は共有側のフォルダ削除のみ（正本は無傷）。
