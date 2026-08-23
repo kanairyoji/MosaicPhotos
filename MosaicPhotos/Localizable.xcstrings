@@ -3306,6 +3306,36 @@
       }
     },
     "Still scanning photos — more will appear as it progresses.": {},
+    "Stop Cloud Sharing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有を停止…"
+          }
+        }
+      }
+    },
+    "Stop Sharing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有を停止"
+          }
+        }
+      }
+    },
+    "Stop cloud sharing? The folder is removed from your shared area, so people you share with will no longer see these photos. Copies they already saved can't be removed. The album or person, your photos, and your backup are all kept.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有を停止しますか？ 共有フォルダから削除されるので、共有相手にはこれらの写真が見えなくなります。相手が既に保存したコピーは取り消せません。アルバムや人物、端末の写真、バックアップはそのまま残ります。"
+          }
+        }
+      }
+    },
     "Storage": {
       "localizations": {
         "ja": {

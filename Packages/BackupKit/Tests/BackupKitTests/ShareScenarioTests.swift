@@ -119,6 +119,39 @@ struct ShareScenarioTests {
         #expect(await store.allShareSets().first?.folderName == "People-Group")
     }
 
+    /// ⚠️ これが「Dropbox 上のパスが直らない」の正体（実フィードバック）。端末フォルダが
+    /// 入る前のセットは共有ルート直下にあり、計画は `sharedPath` をそのまま再利用するので、
+    /// **フォルダを作る先だけ新レイアウトになり写真は旧パスに書かれ続ける**。
+    @Test("端末フォルダ以前の共有ルート直下セットも新レイアウトへ移動する")
+    func legacyRootLevelSetIsMovedUnderDeviceFolder() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA")])
+        let sourceKey = ShareSourceKey.group(UUID()).encoded
+
+        // 旧レイアウト（`<root>/<セット名>`・端末フォルダ無し）を再現する。
+        let legacy = SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
+                                                 folderName: "Group")!.lowercased()
+        await server.seed(legacy, hash: "", isFolder: true)
+        await server.seed("\(legacy)/a.jpg", hash: "hA")
+        let set = await store.createShareSet(name: "Group", folderName: "Group",
+                                             sourceKey: sourceKey)
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
+        await store.updateShareItems(setID: set.id, updates: [
+            (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
+             sharedPath: "\(legacy)/a.jpg", sharedContentHash: "hA")])
+
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files == ["\(setFolder("Group", kind: .group))/a.jpg"],
+                "新レイアウトへ移動していない: \(files)")
+        #expect(await store.allShareSets().first?.folderName == "People-Group")
+
+        // 記録も張り替わっているので、次の反映で再コピー（＝重複）が起きない。
+        await engine.syncNow()
+        #expect(await sharedFiles(server) == files, "移動後の反映でファイルが増減した")
+    }
+
     /// 改名できない回（通信断・移動先が既にある）に記録だけ進めると、クラウド上の実体を
     /// 見失って全部コピーし直す。**失敗したら元のフォルダのまま使い続ける**こと。
     @Test("改名に失敗した回は元のフォルダ名のまま反映を続ける")
@@ -143,6 +176,47 @@ struct ShareScenarioTests {
         let files = await sharedFiles(server)
         #expect(!files.isEmpty && files.allSatisfy { $0.hasPrefix(oldFolder + "/") },
                 "旧フォルダ配下に反映されていない: \(files)")
+    }
+
+    // MARK: - 共有の停止（共有元から）
+
+    /// 共有元（人物/グループ/アルバム）のメニューから「クラウド共有を停止」できること。
+    /// 停止＝共有フォルダごと削除。バックアップ（正本）には触れない。
+    @Test("共有元から停止すると共有フォルダだけ消える（バックアップは残る）")
+    func stopSharingRemovesOnlyTheSharedCopies() async {
+        let (engine, _, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
+        let groupID = UUID()
+        let sourceKey = ShareSourceKey.group(groupID).encoded
+
+        _ = await engine.createSet(name: "Family", refKeys: ["L-a", "L-b"], sourceKey: sourceKey)
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 2)
+
+        let setID = engine.sharedSetID(sourceKey: sourceKey, name: "Family")
+        #expect(setID != nil, "共有中なのに停止対象が引けない（メニューが出ない）")
+        #expect(await engine.stopSharing(setID: setID!))
+
+        #expect(await sharedFiles(server).isEmpty, "共有フォルダのファイルが残っている")
+        #expect(engine.sharedSetID(sourceKey: sourceKey, name: "Family") == nil,
+                "停止後も共有中に見える")
+        // 正本（バックアップ）は無傷。
+        #expect(await server.filePaths().contains("/mosaicphotos/a.jpg"))
+        #expect(await server.filePaths().contains("/mosaicphotos/b.jpg"))
+    }
+
+    /// AI アルバムとピープルグループに同じ名前が付いていても、停止対象を取り違えない。
+    @Test("同名でも種類が違えば停止対象を取り違えない")
+    func sharedSetLookupIsKindAware() async {
+        let (engine, _, _) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
+        let groupKey = ShareSourceKey.group(UUID()).encoded
+        let albumKey = ShareSourceKey.album("album-1").encoded
+
+        _ = await engine.createSet(name: "Okinawa", refKeys: ["L-a"], sourceKey: groupKey)
+
+        #expect(engine.sharedSetID(sourceKey: groupKey, name: "Okinawa") != nil)
+        #expect(engine.sharedSetID(sourceKey: albumKey, name: "Okinawa") == nil,
+                "共有していない AI アルバムに停止メニューが出る")
     }
 
     // MARK: - 実障害の再現

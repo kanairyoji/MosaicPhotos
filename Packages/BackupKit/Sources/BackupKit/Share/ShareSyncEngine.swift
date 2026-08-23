@@ -226,6 +226,35 @@ public final class ShareSyncEngine {
         return added
     }
 
+    /// この作成元（人物 / グループ / アルバム）を今クラウド共有しているか——していれば
+    /// そのセット ID。共有を**停止**するメニューを出すかの判定に使う。
+    ///
+    /// 照合の規則は `createSet` の再利用と揃える: 作成元キーの完全一致 → **同じ種類**かつ同名。
+    /// （グループを解除して同じ名前で作り直すと ID が変わるため名前でも拾う。ただし
+    /// AI アルバムとピープルグループの同名を取り違えないよう種類で絞る。）
+    /// `sets` は数個〜数十個なのでビューから同期的に呼んでよい。
+    public func sharedSetID(sourceKey: String, name: String) -> UUID? {
+        if let match = sets.first(where: { $0.sourceKey != nil && $0.sourceKey == sourceKey }) {
+            return match.id
+        }
+        let requestedKind = ShareSourceKey(sourceKey)?.kind
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return sets.first { set in
+            guard set.name == trimmed else { return false }
+            let kind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
+            return kind == nil || kind == requestedKind
+        }?.id
+    }
+
+    /// クラウド共有を停止する（＝共有フォルダごと削除する）。`deleteSet` の別名で、
+    /// 呼び出し側の意図（設定画面の「セット削除」ではなく、共有元からの「停止」）を残す。
+    /// 正本（端末写真・バックアップ）には触れない。
+    @discardableResult
+    public func stopSharing(setID: UUID) async -> Bool {
+        await deleteSet(id: setID)
+    }
+
     /// セットを削除する（共有フォルダごと）。リモート削除に失敗したら記録は残す（再試行可能）。
     public func deleteSet(id: UUID) async -> Bool {
         isMutating = true
@@ -351,11 +380,10 @@ public final class ShareSyncEngine {
                 needsAnotherPass = true
                 break
             }
-            // 接頭辞（Album-/Person-/People-）が付く前に作ったセットは、ここで**改名**して
+            // 端末フォルダ・種類接頭辞が入る前に作ったセットは、ここで**フォルダごと移動**して
             // 追いつかせる（作り直させるとクラウド上の写真をコピーし直すことになる）。
-            let current = await migrateFolderNameIfNeeded(set: set, shareRoot: shareRoot,
-                                                          store: store, copier: copier,
-                                                          token: token)
+            let current = await migrateFolderIfNeeded(set: set, shareRoot: shareRoot,
+                                                      store: store, copier: copier, token: token)
             await sync(set: current, shareRoot: shareRoot, store: store,
                        copier: copier, token: token)
             await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映（変化なしなら無通知）
@@ -371,43 +399,78 @@ public final class ShareSyncEngine {
         }
     }
 
-    /// 種類接頭辞が付いていない既存セットを、Dropbox 側の**フォルダ改名**で移行する。
+    /// 既存セットのフォルダを**現在のレイアウトへ移行**する（Dropbox 側は改名＝サーバーサイド move）。
     ///
-    /// サーバーサイド move なので実体の転送は起きない（配下の写真もそのまま付いてくる）。
-    /// 失敗（通信断・移動先が既にある）は次回の反映に持ち越し、記録は元のままにする——
-    /// 記録だけ先に進めると、クラウド上の実体を見失って全部コピーし直す事故になる。
+    /// 移行は 2 つある。どちらも作成時にしか適用されないので、既存セットは古いままになる:
+    /// - **端末フォルダ**（`<root>/<端末名-短ID>/…`）: 複数人が同じ共有フォルダを使うため。
+    /// - **種類接頭辞**（`Album-` / `Person-` / `People-`）: 何のアルバムか分かるようにするため。
+    ///
+    /// ⚠️ 端末フォルダ以前のセットが**そのままでは直らない**のが厄介な点だった。計画は
+    /// `item.sharedPath`（記録済みのコピー先）をそのまま再利用するので、フォルダを作る先だけ
+    /// 新レイアウトになり、**写真は旧パスに書かれ続ける**。フォルダごと動かして記録も
+    /// 張り替えないと追いつかない。
+    ///
+    /// 実体の転送は起きない（配下ごと移動）。失敗した回は記録を進めない——記録だけ進めると
+    /// クラウド上の実体を見失って全部コピーし直す事故になる（次回の反映で再試行）。
     ///
     /// - Returns: 移行後（または元のまま）のセット。
-    private func migrateFolderNameIfNeeded(set: ShareSetLite, shareRoot: String,
-                                           store: BackupStore, copier: DropboxShareCopier,
-                                           token: String) async -> ShareSetLite {
+    private func migrateFolderIfNeeded(set: ShareSetLite, shareRoot: String,
+                                       store: BackupStore, copier: DropboxShareCopier,
+                                       token: String) async -> ShareSetLite {
         let kind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
         let allNames = await store.allShareSets().map(\.folderName)
-        guard let newName = ShareNaming.migratedFolderName(current: set.folderName,
-                                                           name: set.name, kind: kind,
-                                                           existing: allNames),
-              let oldPath = SharePlanning.setFolderPath(
-                shareRoot: shareRoot, folderName: set.folderName,
-                deviceFolder: BackupDeviceIdentity.currentFolderName()),
-              let newPath = SharePlanning.setFolderPath(
-                shareRoot: shareRoot, folderName: newName,
-                deviceFolder: BackupDeviceIdentity.currentFolderName())
-        else { return set }
+        // 種類が分からない（作成元不明の旧セット）なら名前は据え置き、置き場所だけ直す。
+        let newName = ShareNaming.migratedFolderName(current: set.folderName, name: set.name,
+                                                     kind: kind, existing: allNames)
+            ?? set.folderName
+        let device = BackupDeviceIdentity.currentFolderName()
+        guard let desired = SharePlanning.setFolderPath(shareRoot: shareRoot,
+                                                        folderName: newName,
+                                                        deviceFolder: device) else { return set }
 
-        let outcome = await copier.moveFolder(from: oldPath, to: newPath, token: token)
-        switch outcome {
-        case .failed:
-            BackupLogger.error("Share: rename '\(set.folderName)' → '\(newName)' failed — retrying next run")
-            return set
-        case .moved, .sourceMissing:
+        // 旧レイアウトの候補（上から順に試す）。端末フォルダ以前は共有ルート直下だった。
+        var candidates: [String] = []
+        for path in [
+            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: set.folderName,
+                                        deviceFolder: device),
+            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: set.folderName,
+                                        deviceFolder: nil),
+            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: newName,
+                                        deviceFolder: nil),
+        ] {
+            guard let path, path.lowercased() != desired.lowercased(),
+                  !candidates.contains(where: { $0.lowercased() == path.lowercased() })
+            else { continue }
+            candidates.append(path)
+        }
+        guard !candidates.isEmpty else { return set }
+
+        func adopt(movedFrom old: String) async -> ShareSetLite {
             await store.renameShareSet(setID: set.id, folderName: newName,
-                                       oldPathPrefix: oldPath, newPathPrefix: newPath)
-            BackupLogger.info("Share: renamed '\(set.folderName)' → '\(newName)'"
-                + (outcome == .sourceMissing ? " (remote folder not created yet)" : ""))
+                                       oldPathPrefix: old, newPathPrefix: desired)
             return ShareSetLite(id: set.id, name: set.name, folderName: newName,
                                 createdAt: set.createdAt, sidecarChecksum: nil,
                                 sourceKey: set.sourceKey)
         }
+
+        for old in candidates {
+            switch await copier.moveFolder(from: old, to: desired, token: token) {
+            case .moved:
+                BackupLogger.info("Share: moved '\(old)' → '\(desired)'")
+                return await adopt(movedFrom: old)
+            case .failed:
+                // 移動先が既にある / 通信断。次回に持ち越す（他の候補も同じ理由で失敗する）。
+                BackupLogger.error("Share: move '\(old)' → '\(desired)' failed — retrying next run")
+                return set
+            case .sourceMissing:
+                continue   // その候補は存在しない。次の候補へ。
+            }
+        }
+
+        // どの候補も実在しない＝まだ 1 度も反映していない。記録だけ現在のレイアウトへ。
+        guard newName != set.folderName else { return set }
+        BackupLogger.info("Share: renamed '\(set.folderName)' → '\(newName)' (not yet on Dropbox)")
+        return await adopt(movedFrom: candidates[0])
     }
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,

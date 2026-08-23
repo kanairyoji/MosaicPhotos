@@ -27,6 +27,8 @@ struct PeopleActionsModifier: ViewModifier {
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
     @AppStorage(ShareSettingsKeys.provideEnabled) private var shareProvideEnabled = true
     @State private var sharePerson: SharePersonPayload?
+    /// クラウド共有の停止対象（共有中のときだけメニューに出す）。
+    @State private var stoppingShare: StopSharingTarget?
 
     /// 共有シートの素材。写真キーは開く前に解決する
     /// （一覧の `PersonInfo.memberRefKeys` は遅延取得で空のため・ADR-95）。
@@ -49,11 +51,21 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Group with Another Person…")) { mergeSourcePerson = person }
                 // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
                 Button(L("Clean Up This Person…")) { cleanupPerson = person }
-                if shareEngine != nil, shareProvideEnabled {
-                    Button(L("Cloud Share…")) {
-                        Task {
-                            let refKeys = await peopleEngine.memberRefKeys(forPerson: person.clusterID)
-                            sharePerson = SharePersonPayload(person: person, refKeys: refKeys)
+                // 共有中なら「停止」、していなければ「共有…」——同じ場所で対になるようにする。
+                if let shareEngine, shareProvideEnabled {
+                    if let setID = shareEngine.sharedSetID(
+                        sourceKey: ShareSourceKey.person(person.clusterID).encoded,
+                        name: person.displayName) {
+                        Button(L("Stop Cloud Sharing…"), role: .destructive) {
+                            stoppingShare = StopSharingTarget(setID: setID,
+                                                              name: person.displayName)
+                        }
+                    } else {
+                        Button(L("Cloud Share…")) {
+                            Task {
+                                let refKeys = await peopleEngine.memberRefKeys(forPerson: person.clusterID)
+                                sharePerson = SharePersonPayload(person: person, refKeys: refKeys)
+                            }
                         }
                     }
                 }
@@ -90,6 +102,7 @@ struct PeopleActionsModifier: ViewModifier {
                                           sourceKey: ShareSourceKey.person(payload.person.clusterID).encoded)
                 }
             }
+            .stopSharingConfirmation($stoppingShare, shareEngine: shareEngine)
             // 名前変更（入力アラート）。空欄で保存すると "Person N" に戻る。
             .alert(L("Rename Person"),
                    isPresented: Binding(get: { renamingPerson != nil },

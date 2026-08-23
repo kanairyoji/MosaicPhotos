@@ -190,6 +190,8 @@ struct PeopleGroupActionsModifier: ViewModifier {
     @State private var editingGroup: PeopleGroupInfo?
     @State private var sharingGroup: SharePayload?
     @State private var deletingGroup: PeopleGroupInfo?
+    /// クラウド共有の停止対象（共有中のときだけメニューに出す）。
+    @State private var stoppingShare: StopSharingTarget?
 
     /// クラウド共有シートの素材。グループの写真キーは開く前に解決する
     /// （一覧の PersonInfo.memberRefKeys は遅延取得で空のため・ADR-95）。
@@ -206,11 +208,19 @@ struct PeopleGroupActionsModifier: ViewModifier {
                                                      set: { if !$0 { target = nil } }),
                                 presenting: target) { group in
                 Button(L("Edit Group…")) { editingGroup = group }
-                if shareEngine != nil, shareProvideEnabled {
-                    Button(L("Cloud Share…")) {
-                        Task {
-                            let refKeys = await peopleEngine.memberRefKeys(forGroup: group.id)
-                            sharingGroup = SharePayload(group: group, refKeys: refKeys)
+                // 共有中なら「停止」、していなければ「共有…」——同じ場所で対になるようにする。
+                if let shareEngine, shareProvideEnabled {
+                    if let setID = shareEngine.sharedSetID(
+                        sourceKey: ShareSourceKey.group(group.id).encoded, name: group.name) {
+                        Button(L("Stop Cloud Sharing…"), role: .destructive) {
+                            stoppingShare = StopSharingTarget(setID: setID, name: group.name)
+                        }
+                    } else {
+                        Button(L("Cloud Share…")) {
+                            Task {
+                                let refKeys = await peopleEngine.memberRefKeys(forGroup: group.id)
+                                sharingGroup = SharePayload(group: group, refKeys: refKeys)
+                            }
                         }
                     }
                 }
@@ -228,6 +238,7 @@ struct PeopleGroupActionsModifier: ViewModifier {
                                           sourceKey: ShareSourceKey.group(payload.group.id).encoded)
                 }
             }
+            .stopSharingConfirmation($stoppingShare, shareEngine: shareEngine)
             .confirmationDialog(
                 L("Delete this group? People and their photos are not affected."),
                 isPresented: Binding(get: { deletingGroup != nil },

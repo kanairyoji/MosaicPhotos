@@ -19,6 +19,8 @@ struct AutoAlbumPhotosView: View {
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
     @AppStorage(ShareSettingsKeys.provideEnabled) private var shareProvideEnabled = true
     @State private var showingShareSheet = false
+    /// クラウド共有の停止対象（共有中のときだけメニューに出す）。
+    @State private var stoppingShare: StopSharingTarget?
 
     init(album: AutoAlbumInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
          onDelete: (() -> Void)? = nil) {
@@ -43,6 +45,13 @@ struct AutoAlbumPhotosView: View {
                                       sourceKey: ShareSourceKey.album(album.id).encoded)
             }
         }
+        .stopSharingConfirmation($stoppingShare, shareEngine: shareEngine)
+    }
+
+    /// 共有中ならそのセット ID（メニューを「共有…」から「停止」へ入れ替える）。
+    private var sharedSetID: UUID? {
+        shareEngine?.sharedSetID(sourceKey: ShareSourceKey.album(album.id).encoded,
+                                 name: album.placesLabel)
     }
 
     private var menuContent: (@MainActor () -> AnyView)? {
@@ -50,9 +59,19 @@ struct AutoAlbumPhotosView: View {
         guard onDelete != nil || canShare else { return nil }
         return { AnyView(
             Menu {
+                // 共有中なら「停止」、していなければ「共有…」——同じ場所で対になるようにする。
                 if canShare {
-                    Button { showingShareSheet = true } label: {
-                        Label("Cloud Share…", systemImage: "icloud.and.arrow.up")
+                    if let setID = sharedSetID {
+                        Button(role: .destructive) {
+                            stoppingShare = StopSharingTarget(setID: setID,
+                                                              name: album.placesLabel)
+                        } label: {
+                            Label("Stop Cloud Sharing…", systemImage: "icloud.slash")
+                        }
+                    } else {
+                        Button { showingShareSheet = true } label: {
+                            Label("Cloud Share…", systemImage: "icloud.and.arrow.up")
+                        }
                     }
                 }
                 if let onDelete {
