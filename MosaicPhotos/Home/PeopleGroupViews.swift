@@ -12,33 +12,36 @@ import SwiftUI
 /// メンバー顔の 2×2 コラージュ＋グループバッジ＋アクセント枠で表示する。
 struct PeopleGroupCard: View {
     let group: PeopleGroupInfo
+    /// このグループがクラウド共有中か（共有セットの sourceKey で判定）。
+    var isCloudShared = false
     private static let side: CGFloat = 84
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
+                // グループであることは 2×2 コラージュ自体で伝わるので、追加のグループ印は
+                // 置かない（実フィードバック: バッジ・名前横アイコンは意味が重複して混乱の元）。
                 collage
                     .frame(width: Self.side, height: Self.side)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 1.5))
-                // グループバッジ（単人カードとの見分けの決め手）。
-                Image(systemName: "person.2.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(4)
-                    .background(Color.accentColor, in: Circle())
-                    .offset(x: 5, y: 5)
+                // クラウド共有中バッジ。アイコンは共有導線（メニュー/設定）と同じものに統一する。
+                if isCloudShared {
+                    Image(systemName: "icloud.and.arrow.up")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(Color.accentColor, in: Circle())
+                        .offset(x: 5, y: 5)
+                        .accessibilityLabel(L("Cloud Sharing"))
+                }
             }
-            Label {
-                Text(group.name).lineLimit(1)
-            } icon: {
-                Image(systemName: "person.2").font(.caption2)
-            }
-            .font(.footnote.weight(.medium))
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(.primary)
+            Text(group.name)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
         }
         .frame(width: Self.side + 6)   // PersonCard と同じ詰め幅
     }
@@ -200,7 +203,8 @@ struct PeopleGroupActionsModifier: ViewModifier {
                 if let shareEngine {
                     ShareSetCreationSheet(suggestedName: payload.group.name,
                                           refKeys: payload.refKeys,
-                                          shareEngine: shareEngine)
+                                          shareEngine: shareEngine,
+                                          sourceKey: "pgroup-\(payload.group.id)")
                 }
             }
             .confirmationDialog(

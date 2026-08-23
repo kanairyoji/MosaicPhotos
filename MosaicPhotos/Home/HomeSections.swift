@@ -171,6 +171,7 @@ extension HomeView {
                         totalPeople: peopleEngine.people.count,
                         onSelect: { destination = .person($0) },
                         onLongPress: { personActions = $0 },
+                        cloudSharedGroupIDs: cloudSharedGroupIDs,
                         onSelectGroup: { destination = .peopleGroup($0) },
                         onLongPressGroup: { peopleGroupActions = $0 },
                         onSeeAll: { showingAllPeople = true })
@@ -231,6 +232,15 @@ extension HomeView {
                 }
             }
         }
+    }
+
+    /// クラウド共有中のグループ ID（共有セットの sourceKey "pgroup-<uuid>" から逆引き）。
+    private var cloudSharedGroupIDs: Set<UUID> {
+        Set(stores.shareEngine.sets.compactMap { set in
+            set.sourceKey.flatMap { key in
+                key.hasPrefix("pgroup-") ? UUID(uuidString: String(key.dropFirst(7))) : nil
+            }
+        })
     }
 
     // MARK: Cloud shared section (受け取った共有アルバム・ADR-112)

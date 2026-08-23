@@ -85,7 +85,8 @@ struct PeopleActionsModifier: ViewModifier {
                 if let shareEngine {
                     ShareSetCreationSheet(suggestedName: payload.person.displayName,
                                           refKeys: payload.refKeys,
-                                          shareEngine: shareEngine)
+                                          shareEngine: shareEngine,
+                                          sourceKey: "person-\(payload.person.clusterID)")
                 }
             }
             // 名前変更（入力アラート）。空欄で保存すると "Person N" に戻る。

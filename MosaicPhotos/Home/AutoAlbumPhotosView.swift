@@ -38,7 +38,8 @@ struct AutoAlbumPhotosView: View {
             if let shareEngine {
                 ShareSetCreationSheet(suggestedName: album.placesLabel,
                                       refKeys: album.memberRefs,
-                                      shareEngine: shareEngine)
+                                      shareEngine: shareEngine,
+                                      sourceKey: "album-\(album.id)")
             }
         }
     }

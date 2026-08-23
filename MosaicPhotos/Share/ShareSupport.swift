@@ -160,6 +160,8 @@ struct ShareSetCreationSheet: View {
     let suggestedName: String
     let refKeys: [String]
     let shareEngine: ShareSyncEngine
+    /// 作成元（グループ/人物/アルバム）。元カードの「クラウド共有中」バッジ表示に使う。
+    var sourceKey: String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -187,7 +189,8 @@ struct ShareSetCreationSheet: View {
                         Button(L("Share")) {
                             isCreating = true
                             Task {
-                                await shareEngine.createSet(name: name, refKeys: refKeys)
+                                await shareEngine.createSet(name: name, refKeys: refKeys,
+                                                            sourceKey: sourceKey)
                                 dismiss()
                             }
                         }

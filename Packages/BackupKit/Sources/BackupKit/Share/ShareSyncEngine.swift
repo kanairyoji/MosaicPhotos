@@ -25,6 +25,7 @@ public final class ShareSyncEngine {
         public let name: String
         public let folderName: String
         public let createdAt: Date
+        public var sourceKey: String?
         public var total = 0
         public var copied = 0
         public var waitingBackup = 0
@@ -64,6 +65,7 @@ public final class ShareSyncEngine {
             let items = await store.shareItems(setID: set.id)
             var summary = SetSummary(id: set.id, name: set.name,
                                      folderName: set.folderName, createdAt: set.createdAt)
+            summary.sourceKey = set.sourceKey
             summary.total = items.count
             summary.copied = items.filter { $0.state == .copied }.count
             summary.waitingBackup = items.filter { $0.state == .waitingBackup }.count
@@ -75,13 +77,14 @@ public final class ShareSyncEngine {
 
     /// セットを作成して写真を登録し、即時反映を試みる。作成したセット ID を返す。
     @discardableResult
-    public func createSet(name: String, refKeys: [String]) async -> UUID? {
+    public func createSet(name: String, refKeys: [String], sourceKey: String? = nil) async -> UUID? {
         let store = await storeProvider()
         let existing = await store.allShareSets().map(\.folderName)
         let folderName = ShareNaming.sanitize(name, existing: existing)
         let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let set = await store.createShareSet(
-            name: displayName.isEmpty ? folderName : displayName, folderName: folderName)
+            name: displayName.isEmpty ? folderName : displayName, folderName: folderName,
+            sourceKey: sourceKey)
         _ = await store.addShareItems(setID: set.id, refKeys: refKeys)
         BackupLogger.info("Share: created set '\(folderName)' with \(refKeys.count) items")
         await refresh()

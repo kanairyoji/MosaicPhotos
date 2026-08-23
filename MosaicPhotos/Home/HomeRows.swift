@@ -132,6 +132,8 @@ struct PeopleCarousel: View {
     var totalPeople: Int?
     let onSelect: (PersonInfo) -> Void
     let onLongPress: (PersonInfo) -> Void
+    /// クラウド共有中のグループ ID（カードにバッジを出す）。
+    var cloudSharedGroupIDs: Set<UUID> = []
     var onSelectGroup: ((PeopleGroupInfo) -> Void)?
     var onLongPressGroup: ((PeopleGroupInfo) -> Void)?
     /// 「すべて表示」タップ（省略された人物がいるときだけ末尾にカードを出す）。
@@ -152,7 +154,8 @@ struct PeopleCarousel: View {
             LazyHStack(alignment: .top, spacing: 7) {
                 // グループ（家族・組織など）は列の先頭。コラージュ＋バッジで単人と見分ける。
                 ForEach(groups) { group in
-                    PeopleGroupCard(group: group)
+                    PeopleGroupCard(group: group,
+                                    isCloudShared: cloudSharedGroupIDs.contains(group.id))
                         .contentShape(Rectangle())
                         .onTapGesture { onSelectGroup?(group) }
                         .onLongPressGesture(minimumDuration: 0.4) { onLongPressGroup?(group) }

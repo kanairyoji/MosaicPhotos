@@ -336,6 +336,9 @@ private struct HomeLifecycleTasks: ViewModifier {
                 try? await Task.sleep(for: .seconds(3))
                 assetIndex.buildIfNeeded()
             }
+            // 共有セット概要の初期ロード（グループカードの「クラウド共有中」バッジの材料。
+            // DB 読みだけで軽い・ネットワークは使わない）。
+            .task { await shareEngine.refresh() }
             // 家族共有（ADR-112）: 起動から少し遅らせて (1) 家族サイドカーの取り込み、
             // (2) 共有セットの反映（保留分・自己修復）を行う。自動通信なので回線ポリシーに従う。
             .task {

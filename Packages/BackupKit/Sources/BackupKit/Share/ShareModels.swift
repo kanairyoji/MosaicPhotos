@@ -14,14 +14,19 @@ public final class ShareSet {
     public var createdAt: Date
     /// 最後にアップロードしたサイドカーのチェックサム（変化がなければ再アップロードを省く）。
     public var sidecarChecksum: String?
+    /// 作成元（"pgroup-<uuid>" / "person-<clusterID>" / "album-<id>"）。
+    /// 元のカードに「クラウド共有中」バッジを出すための参照。手動作成は nil。
+    public var sourceKey: String?
 
     public init(id: UUID = UUID(), name: String, folderName: String,
-                createdAt: Date = Date(), sidecarChecksum: String? = nil) {
+                createdAt: Date = Date(), sidecarChecksum: String? = nil,
+                sourceKey: String? = nil) {
         self.id = id
         self.name = name
         self.folderName = folderName
         self.createdAt = createdAt
         self.sidecarChecksum = sidecarChecksum
+        self.sourceKey = sourceKey
     }
 }
 
@@ -71,14 +76,16 @@ public struct ShareSetLite: Sendable, Identifiable, Equatable {
     public let folderName: String
     public let createdAt: Date
     public let sidecarChecksum: String?
+    public let sourceKey: String?
 
     public init(id: UUID, name: String, folderName: String, createdAt: Date,
-                sidecarChecksum: String?) {
+                sidecarChecksum: String?, sourceKey: String? = nil) {
         self.id = id
         self.name = name
         self.folderName = folderName
         self.createdAt = createdAt
         self.sidecarChecksum = sidecarChecksum
+        self.sourceKey = sourceKey
     }
 }
 

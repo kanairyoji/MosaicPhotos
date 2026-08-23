@@ -8,12 +8,13 @@ extension BackupStore {
     // MARK: - セット
 
     /// セットを作成する。フォルダ名は既存セットと衝突しないようサニタイズ済みを渡す。
-    public func createShareSet(name: String, folderName: String) -> ShareSetLite {
-        let set = ShareSet(name: name, folderName: folderName)
+    public func createShareSet(name: String, folderName: String,
+                               sourceKey: String? = nil) -> ShareSetLite {
+        let set = ShareSet(name: name, folderName: folderName, sourceKey: sourceKey)
         modelContext.insert(set)
         try? modelContext.save()
         return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
-                            createdAt: set.createdAt, sidecarChecksum: nil)
+                            createdAt: set.createdAt, sidecarChecksum: nil, sourceKey: sourceKey)
     }
 
     public func allShareSets() -> [ShareSetLite] {
@@ -21,7 +22,8 @@ extension BackupStore {
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]))) ?? []
         return sets.map {
             ShareSetLite(id: $0.id, name: $0.name, folderName: $0.folderName,
-                         createdAt: $0.createdAt, sidecarChecksum: $0.sidecarChecksum)
+                         createdAt: $0.createdAt, sidecarChecksum: $0.sidecarChecksum,
+                         sourceKey: $0.sourceKey)
         }
     }
 
