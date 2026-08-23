@@ -124,7 +124,14 @@ public final class ShareSyncEngine {
         }
         let store = await storeProvider()
         guard let set = await store.allShareSets().first(where: { $0.id == id }) else { return true }
-        let folder = "\(ShareSettingsKeys.currentShareRoot())/\(set.folderName)"
+        // ⚠️ 不正なフォルダ名（空・区切り・親参照）では**絶対に削除しない**。
+        // 空名を許すと共有ルートごと消える。記録だけ消して手動対応に委ねる。
+        guard let folder = SharePlanning.setFolderPath(
+                shareRoot: ShareSettingsKeys.currentShareRoot(), folderName: set.folderName) else {
+            BackupLogger.error("Share: refusing to delete set with invalid folder name")
+            lastError = "Invalid shared folder name"
+            return false
+        }
         let copier = DropboxShareCopier(httpClient: httpClient)
         guard await copier.deleteBatch(paths: [folder], token: token) else {
             lastError = "Failed to remove the shared folder"
@@ -188,7 +195,11 @@ public final class ShareSyncEngine {
                       copier: DropboxShareCopier, token: String) async {
         let items = await store.shareItems(setID: set.id)
         guard !items.isEmpty else { return }
-        let setFolder = "\(shareRoot)/\(set.folderName)"
+        guard let setFolder = SharePlanning.setFolderPath(shareRoot: shareRoot,
+                                                          folderName: set.folderName) else {
+            BackupLogger.error("Share sync: invalid folder name — skipping set")
+            return
+        }
 
         // フォルダを確保してから実在一覧を取る。一覧が取れない（通信断）ときは
         // このセットをスキップする（実在不明のまま再コピーすると autorename で重複を作る）。

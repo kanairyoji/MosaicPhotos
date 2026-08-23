@@ -160,6 +160,42 @@ struct SharePlanningTests {
         #expect(result.duplicatesToDelete.isEmpty)
     }
 
+    /// ⚠️ 検証: 元のファイル名自体が "name (1).ext" の**別写真**が、たまたま同じフォルダに
+    /// "name.ext" があるだけで「重複」と誤判定されないか（コピー記録がまだ無い状態）。
+    @Test("元名が (N) 形式の別写真は掃除対象にしない（中身が違えば残す）")
+    func doesNotDeleteDistinctPhotoNamedLikeDuplicate() {
+        let result = plan(
+            items: [item("C-/src/img.jpg", state: .copied,
+                         sharedPath: "/mosaicshare/trip/img.jpg", sharedHash: "hA"),
+                    // まだコピー記録が無い（pending）別写真。元ファイル名が "img (1).jpg"。
+                    item("C-/src/img (1).jpg", state: .pending)],
+            remote: [
+                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "hA"),
+                // 中身は hB＝img.jpg とは別写真。
+                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "hB"),
+            ])
+        #expect(!result.duplicatesToDelete.contains("/mosaicshare/trip/img (1).jpg"),
+                "中身の違う別写真を重複として削除しようとしている")
+    }
+
+    /// 削除は不可逆なので、フォルダ名の異常は**必ず nil**（呼び出し側が中断する）。
+    @Test("不正なフォルダ名は setFolderPath が拒否する（共有ルート全消しの防止）")
+    func setFolderPathRejectsUnsafeNames() {
+        #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare", folderName: "Trip")
+                == "/MosaicShare/Trip")
+        // 末尾スラッシュのルートも正規化される。
+        #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare/", folderName: "Trip")
+                == "/MosaicShare/Trip")
+        // 危険な名前はすべて拒否。
+        for bad in ["", "   ", "..", ".", "a/b", "a\\b"] {
+            #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare", folderName: bad) == nil,
+                    "危険なフォルダ名を通した: \(bad)")
+        }
+        // ルート側が壊れている場合も拒否（ルート直下を消しに行かない）。
+        #expect(SharePlanning.setFolderPath(shareRoot: "", folderName: "Trip") == nil)
+        #expect(SharePlanning.setFolderPath(shareRoot: "/", folderName: "Trip") == nil)
+    }
+
     @Test("autorenameBase の解析")
     func autorenameBaseParsing() {
         #expect(SharePlanning.autorenameBase(of: "/s/t/img (3).jpg") == "/s/t/img.jpg")

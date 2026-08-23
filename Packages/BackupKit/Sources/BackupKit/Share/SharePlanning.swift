@@ -162,20 +162,45 @@ public enum SharePlanning {
             }
         }
 
-        // 掃除: 過去の autorename 暴走で生まれた "name (N).ext" のうち、どのアイテムにも
-        // 記録されておらず、元名のファイルが実在するものだけを対象にする（安全側）。
+        // 掃除: 過去の autorename 暴走で生まれた "name (N).ext" を消す。条件は 3 つとも必要:
+        // (1) どのアイテムにも記録されていない、(2) 元名のファイルが実在する、
+        // (3) **元名のファイルと中身（content_hash）が一致する**。
+        //
+        // ⚠️ (3) が要る理由: 元のファイル名自体が "IMG (1).jpg" の**別写真**は珍しくない
+        // （ダウンロード由来など）。名前の形だけで消すと、たまたま "IMG.jpg" が同居している
+        // だけでユーザーの写真が削除され、しかも次回の反映で再コピー → また削除の
+        // 空回りループになる（レビューでテストにより再現）。中身が同じものだけを消す。
         if let remoteFiles {
             let owned = Set(items.compactMap { $0.sharedPath?.lowercased() })
-            let presentSet = Set(remoteFiles.map(\.pathLower))
+            let byPath = Dictionary(remoteFiles.map { ($0.pathLower, $0) },
+                                    uniquingKeysWith: { first, _ in first })
             for file in remoteFiles {
-                guard !owned.contains(file.pathLower) else { continue }
-                if let base = autorenameBase(of: file.pathLower), presentSet.contains(base) {
-                    plan.duplicatesToDelete.append(file.pathLower)
-                }
+                guard !owned.contains(file.pathLower),
+                      let basePath = autorenameBase(of: file.pathLower),
+                      let baseFile = byPath[basePath],
+                      // ハッシュ不明（片方でも nil）なら消さない＝安全側に倒す。
+                      let hash = file.contentHash, let baseHash = baseFile.contentHash,
+                      hash == baseHash
+                else { continue }
+                plan.duplicatesToDelete.append(file.pathLower)
             }
             plan.duplicatesToDelete.sort()
         }
         return plan
+    }
+
+    /// セットフォルダの絶対パスを組み立てる。**不正なフォルダ名は nil**（呼び出し側は中断する）。
+    ///
+    /// ⚠️ 削除系（セット削除は `<root>/<folderName>` をフォルダごと消す）で使うため、
+    /// 空文字・パス区切り・親参照を含む名前は必ず弾く。空名を許すと
+    /// `"\(root)/" ` になり **共有ルート全体を削除**してしまう（レビュー指摘）。
+    public static func setFolderPath(shareRoot: String, folderName: String) -> String? {
+        let name = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/"), !name.contains("\\"),
+              name != ".", name != ".." else { return nil }
+        let root = shareRoot.hasSuffix("/") ? String(shareRoot.dropLast()) : shareRoot
+        guard !root.isEmpty, root != "/" else { return nil }
+        return "\(root)/\(name)"
     }
 
     /// "…/name (3).jpg" → "…/name.jpg"（autorename 形式でなければ nil）。
