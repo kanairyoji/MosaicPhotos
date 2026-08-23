@@ -339,6 +339,16 @@
         }
       }
     },
+    "Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末の写真はバックアップ済みのものだけ共有できます。共有するには設定でバックアップを有効にしてください（クラウド写真はバックアップ不要で共有されます）。"
+          }
+        }
+      }
+    },
     "Don't offload": {
       "localizations": {
         "ja": {

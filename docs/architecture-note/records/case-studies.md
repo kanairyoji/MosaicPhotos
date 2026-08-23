@@ -942,3 +942,19 @@
 - 教訓: actor の「取得中フラグ＋待機者」パターンは、**配送とフラグ解除が同一 actor ターンで
   atomic に見えても、間に await があれば別の要求が挟まる**。完了時に取り残しを掃き出す出口を
   必ず用意する（待機者の解決を配送側の「網羅性」に依存させない）。
+
+## クラウド共有の「反映中」が終わらない（per-key クエリの全表走査）
+- 症状: 共有セット作成後、ハブの「反映中…」が終わらない（実フィードバック）。
+- 原因: サイドカー生成の顔シグナル取得 `FaceStore.faceSignals(forRefKeys:)` が
+  **写真 1 枚ごとに predicate 検索**していた。`DetectedFace.refKey` は非インデックス
+  （unique は faceID のみ）なので 1 キーごとに全表走査＝数千キー × 数万行で実質終わらない。
+  TagStore の同種 API は `set.contains` の単一クエリ、BackupStore の backupRefs は
+  「全件 1 回 fetch → メモリで絞る」を既に採っており、新設 API だけ手筋を外していた。
+- 対処: 少数キー（≤50）は per-key、多数キーは全件 1 回 fetch → メモリで絞る方式に変更。
+  あわせて (1) セットごとに一覧を更新して進捗（共有済み N/M）を見えるように、
+  (2) バックアップ無効で「バックアップ待ち」が残る場合はハブに原因と対処
+  （設定でバックアップを有効に・クラウド写真は不要）を明示する案内を追加。
+- 関連: FaceStore+ShareExport / ShareSyncEngine / ShareHubView（ADR-112）。
+- 教訓: refKey で引く新 API を足すときは**そのテーブルのインデックス有無を必ず確認**する。
+  非インデックス列への per-key predicate は SwiftData では気付きにくい全表走査になる
+  （既存の backupRefs / tags(forRefKeys:) が正しい手筋の見本）。

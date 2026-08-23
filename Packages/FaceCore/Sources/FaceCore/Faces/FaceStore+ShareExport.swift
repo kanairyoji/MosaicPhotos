@@ -11,23 +11,34 @@ import SwiftData
 extension FaceStore {
 
     /// refKey → 検出顔シグナル。スキャン済みで顔がある写真だけ返す。
+    ///
+    /// ⚠️ `DetectedFace.refKey` は非インデックスなので、**per-key の predicate 検索は
+    /// 1 キーごとに全表走査**になる（数千キー × 数万行で「反映中が終わらない」実障害）。
+    /// 少数キーは per-key、多数キーは全件 1 回 fetch → メモリで絞る（`backupRefs` と同じ手筋）。
     func faceSignals(forRefKeys keys: [String]) -> [String: [DetectedFaceSignal]] {
         guard !keys.isEmpty else { return [:] }
+        let wanted = Set(keys)
         var out: [String: [DetectedFaceSignal]] = [:]
-        for key in Set(keys) {
-            let refKey = key
-            let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
-                predicate: #Predicate { $0.refKey == refKey }))) ?? []
-            guard !faces.isEmpty else { continue }
-            out[key] = faces.map { face in
-                DetectedFaceSignal(
-                    boundingBox: CGRect(x: face.bx, y: face.by,
-                                        width: face.bw, height: face.bh),
-                    embedding: face.embedding,
-                    quality: Float(face.quality),
-                    hasSmile: face.hasSmile,
-                    captureDate: face.captureDate)
+
+        func append(_ face: DetectedFace) {
+            out[face.refKey, default: []].append(DetectedFaceSignal(
+                boundingBox: CGRect(x: face.bx, y: face.by, width: face.bw, height: face.bh),
+                embedding: face.embedding,
+                quality: Float(face.quality),
+                hasSmile: face.hasSmile,
+                captureDate: face.captureDate))
+        }
+
+        if wanted.count <= 50 {
+            for key in wanted {
+                let refKey = key
+                let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
+                    predicate: #Predicate { $0.refKey == refKey }))) ?? []
+                faces.forEach(append)
             }
+        } else {
+            let all = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+            for face in all where wanted.contains(face.refKey) { append(face) }
         }
         return out
     }

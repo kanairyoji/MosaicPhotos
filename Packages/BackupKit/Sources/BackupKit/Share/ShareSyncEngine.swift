@@ -170,6 +170,7 @@ public final class ShareSyncEngine {
         for set in await store.allShareSets() {
             await sync(set: set, shareRoot: shareRoot, store: store,
                        copier: copier, token: token)
+            await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映
         }
         lastSyncAt = Date()
         await refresh()

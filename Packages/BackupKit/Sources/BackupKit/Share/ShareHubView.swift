@@ -13,6 +13,8 @@ public struct ShareHubView: View {
 
     @AppStorage(ShareSettingsKeys.shareRootFolder)
     private var shareRoot = ShareSettingsKeys.defaultShareRootFolder
+    @AppStorage(BackupSettingsKeys.destination)
+    private var backupDestination: BackupDestination = .disabled
     @State private var familyFolders: [String] = ShareSettingsKeys.currentFamilyFolders()
     @State private var newFamilyFolder = ""
     @State private var isImporting = false
@@ -101,6 +103,15 @@ public struct ShareHubView: View {
             }
             if let error = engine.lastError {
                 Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .font(.footnote)
+            }
+            // 端末写真の共有はバックアップ実体からのコピーなので、バックアップ無効だと
+            // 「バックアップ待ち」のまま進まない。原因をその場で案内する（実フィードバック）。
+            if backupDestination == .disabled,
+               engine.sets.contains(where: { $0.waitingBackup > 0 }) {
+                Label(L("Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup)."),
+                      systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                     .font(.footnote)
             }
