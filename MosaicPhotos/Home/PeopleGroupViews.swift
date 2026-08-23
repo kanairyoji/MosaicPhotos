@@ -40,7 +40,7 @@ struct PeopleGroupCard: View {
             .labelStyle(.titleAndIcon)
             .foregroundStyle(.primary)
         }
-        .frame(width: Self.side + 12)
+        .frame(width: Self.side + 6)   // PersonCard と同じ詰め幅
     }
 
     /// メンバー先頭 4 人の顔コラージュ（1 人でも欠けたら残りはプレースホルダ）。

@@ -148,7 +148,8 @@ struct PeopleCarousel: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(alignment: .top, spacing: 14) {
+            // 間隔はアルバム系カルーセルより詰める（実フィードバック: 14 は広すぎ→半分に）。
+            LazyHStack(alignment: .top, spacing: 7) {
                 // グループ（家族・組織など）は列の先頭。コラージュ＋バッジで単人と見分ける。
                 ForEach(groups) { group in
                     PeopleGroupCard(group: group)
@@ -241,6 +242,7 @@ private struct PersonCard: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
-        .frame(width: Self.side + 12)
+        // 枠の左右余白も詰める（見た目の間隔＝余白+spacing+余白 を従来の約半分の 13pt に）。
+        .frame(width: Self.side + 6)
     }
 }

@@ -123,8 +123,9 @@ struct LibraryCard: View {
     let loadCover: () async -> UIImage?
 
     @State private var cover: UIImage?
-    /// 正方カバーの一辺＝カード幅（全アルバム共通）。
-    static let side: CGFloat = 150
+    /// 正方カバーの一辺＝カード幅（全アルバム共通）。ピープルのカード（84）と同サイズに
+    /// 統一する（実フィードバック: セクションごとに大きさが違う理由はなく、小さい方に揃える）。
+    static let side: CGFloat = 84
 
     // `@State` が private のため memberwise init も private になる。別ファイル（AutoAlbumCard）
     // から使えるよう明示 init を持つ。
