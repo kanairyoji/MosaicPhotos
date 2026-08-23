@@ -66,11 +66,11 @@ struct PeopleGroupsTests {
         let people = engine.people
         #expect(people.count == 2, "前提: 2 人物")
 
-        let id = await engine.createPeopleGroup(name: " 木村家 ",
+        let id = await engine.createPeopleGroup(name: " Group A ",
                                                 memberClusterIDs: people.map(\.clusterID))
         #expect(id != nil)
         #expect(engine.peopleGroups.count == 1)
-        #expect(engine.peopleGroups.first?.name == "木村家", "名前が trim されない")
+        #expect(engine.peopleGroups.first?.name == "Group A", "名前が trim されない")
         #expect(engine.peopleGroups.first?.members.count == 2)
 
         // グループの写真キー（アルバム表示・共有用）。一覧の PersonInfo.memberRefKeys は
@@ -79,9 +79,9 @@ struct PeopleGroupsTests {
         #expect(refKeys.count == 10)
 
         // 名前とメンバーの更新。
-        await engine.updatePeopleGroup(id: id!, name: "Kimura",
+        await engine.updatePeopleGroup(id: id!, name: "Group B",
                                        memberClusterIDs: people.map(\.clusterID))
-        #expect(engine.peopleGroups.first?.name == "Kimura")
+        #expect(engine.peopleGroups.first?.name == "Group B")
 
         await engine.deletePeopleGroup(id: id!)
         #expect(engine.peopleGroups.isEmpty)

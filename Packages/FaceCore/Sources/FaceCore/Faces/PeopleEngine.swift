@@ -10,7 +10,7 @@ import Observation
 @Observable
 public final class PeopleEngine {
     public private(set) var people: [PersonInfo] = []
-    /// ピープルグループ（複数人物の名前付き束・例「木村家」）。人物一覧と同時に再解決する。
+    /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
     public private(set) var isLoaded = false
     public private(set) var isScanning = false
