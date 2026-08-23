@@ -32,7 +32,7 @@ public struct ShareHubView: View {
             shareRootSection
             familySection
         }
-        .navigationTitle(L("Family Sharing"))
+        .navigationTitle(L("Sharing"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await engine.refresh() }
     }
@@ -42,7 +42,7 @@ public struct ShareHubView: View {
     private var setsSection: some View {
         Section {
             if engine.sets.isEmpty {
-                Text(L("No shared sets yet. Open an album and choose “Share with Family…” to create one."))
+                Text(L("No shared sets yet. Open an album and choose “Share…” to create one."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -119,7 +119,7 @@ public struct ShareHubView: View {
         } header: {
             Text(L("Shared Folder (yours)"))
         } footer: {
-            Text(L("Share this folder with your family in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it."))
+            Text(L("Share this folder with others in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it."))
         }
     }
 
@@ -171,9 +171,9 @@ public struct ShareHubView: View {
                 .disabled(isImporting)
             }
         } header: {
-            Text(L("Family Folders (shared with you)"))
+            Text(L("Folders Shared with You"))
         } footer: {
-            Text(L("Folders your family shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them."))
+            Text(L("Folders others shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them."))
         }
     }
 }
@@ -230,7 +230,7 @@ struct ShareSetDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
         .confirmationDialog(
-            L("Delete this shared set? The folder is removed from the shared area, so your family will no longer see these photos. Copies they already saved cannot be removed. Originals and backups are kept."),
+            L("Delete this shared set? The folder is removed from the shared area, so people you share with will no longer see these photos. Copies they already saved cannot be removed. Originals and backups are kept."),
             isPresented: $confirmingDelete, titleVisibility: .visible
         ) {
             Button(L("Delete Set"), role: .destructive) {

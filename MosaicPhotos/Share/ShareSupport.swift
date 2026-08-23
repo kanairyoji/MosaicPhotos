@@ -167,10 +167,10 @@ struct ShareSetCreationSheet: View {
                 Section {
                     TextField(L("Set name"), text: $name)
                 } footer: {
-                    Text(String(format: L("%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so family devices don't re-analyze them."), refKeys.count))
+                    Text(String(format: L("%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so receiving devices don't re-analyze them."), refKeys.count))
                 }
             }
-            .navigationTitle(L("Share with Family"))
+            .navigationTitle(L("Share Photos"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

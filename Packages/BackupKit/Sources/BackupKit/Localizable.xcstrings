@@ -269,12 +269,12 @@
         }
       }
     },
-    "Delete this shared set? The folder is removed from the shared area, so your family will no longer see these photos. Copies they already saved cannot be removed. Originals and backups are kept.": {
+    "Delete this shared set? The folder is removed from the shared area, so people you share with will no longer see these photos. Copies they already saved cannot be removed. Originals and backups are kept.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "この共有セットを削除しますか？共有エリアからフォルダが削除され、家族はこれらの写真を見られなくなります。相手が既に保存したコピーは削除できません。原本とバックアップは残ります。"
+            "value": "この共有セットを削除しますか？共有エリアからフォルダが削除され、共有相手はこれらの写真を見られなくなります。相手が既に保存したコピーは削除できません。原本とバックアップは残ります。"
           }
         }
       }
@@ -373,26 +373,6 @@
         }
       }
     },
-    "Family Folders (shared with you)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "家族のフォルダ（共有された側）"
-          }
-        }
-      }
-    },
-    "Family Sharing": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "家族共有"
-          }
-        }
-      }
-    },
     "Folder": {
       "localizations": {
         "ja": {
@@ -403,12 +383,22 @@
         }
       }
     },
-    "Folders your family shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them.": {
+    "Folders Shared with You": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "家族から共有されたフォルダです。写真はクラウド/すべての写真に表示され、共有された AI 解析（タグ・検索・顔）は自動で取り込まれるため、この端末での再解析は不要です。"
+            "value": "共有されたフォルダ（受け取り側）"
+          }
+        }
+      }
+    },
+    "Folders others shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有されたフォルダです。写真はクラウド/すべての写真に表示され、共有された AI 解析（タグ・検索・顔）は自動で取り込まれるため、この端末での再解析は不要です。"
           }
         }
       }
@@ -493,12 +483,12 @@
         }
       }
     },
-    "No shared sets yet. Open an album and choose “Share with Family…” to create one.": {
+    "No shared sets yet. Open an album and choose “Share…” to create one.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "共有セットはまだありません。アルバムを開いて「家族と共有…」から作成してください。"
+            "value": "共有セットはまだありません。アルバムを開いて「共有…」から作成してください。"
           }
         }
       }
@@ -643,12 +633,12 @@
         }
       }
     },
-    "Share this folder with your family in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it.": {
+    "Share this folder with others in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このフォルダを Dropbox アプリで家族に共有してください（閲覧のみでの招待を推奨）。セットはこの中に作成されます。"
+            "value": "このフォルダを Dropbox アプリで共有相手に共有してください（閲覧のみでの招待を推奨）。セットはこの中に作成されます。"
           }
         }
       }
@@ -699,6 +689,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "共有フォルダ"
+          }
+        }
+      }
+    },
+    "Sharing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有"
           }
         }
       }

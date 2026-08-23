@@ -50,7 +50,7 @@ struct AutoAlbumPhotosView: View {
             Menu {
                 if canShare {
                     Button { showingShareSheet = true } label: {
-                        Label("Share with Family…", systemImage: "person.2")
+                        Label("Share…", systemImage: "person.2")
                     }
                 }
                 if let onDelete {

@@ -51,7 +51,7 @@ struct DropboxHubView: View {
                                              { await importer.runIfNeeded() }
                                          })
                         } label: {
-                            Label("Share photos with family", systemImage: "person.2")
+                            Label("Share photos", systemImage: "person.2")
                         }
                     }
                 } header: {

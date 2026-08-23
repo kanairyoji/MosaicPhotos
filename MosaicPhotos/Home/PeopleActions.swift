@@ -41,7 +41,7 @@ struct PeopleActionsModifier: ViewModifier {
                 // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
                 Button(L("Clean Up This Person…")) { cleanupPerson = person }
                 if shareEngine != nil {
-                    Button(L("Share with Family…")) { sharePerson = person }
+                    Button(L("Share…")) { sharePerson = person }
                 }
                 if person.isGrouped {
                     Button(L("Separate Grouped Person"), role: .destructive) {

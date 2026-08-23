@@ -31,12 +31,12 @@
         }
       }
     },
-    "%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so family devices don't re-analyze them.": {
+    "%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so receiving devices don't re-analyze them.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "%d 枚の写真が、共有フォルダ内のこの名前のフォルダへコピーされます。原本とバックアップは移動しません。AI 解析（タグ・検索索引・顔）も同梱されるため、家族の端末で再解析は不要です。"
+            "value": "%d 枚の写真が、共有フォルダ内のこの名前のフォルダへコピーされます。原本とバックアップは移動しません。AI 解析（タグ・検索索引・顔）も同梱されるため、受け取った端末で再解析は不要です。"
           }
         }
       }
@@ -3033,32 +3033,32 @@
         }
       }
     },
-    "Share photos with family": {
+    "Share Photos": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "家族と写真を共有"
+            "value": "写真を共有"
           }
         }
       }
     },
-    "Share with Family": {
+    "Share photos": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "家族と共有"
+            "value": "写真を共有"
           }
         }
       }
     },
-    "Share with Family…": {
+    "Share…": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "家族と共有…"
+            "value": "共有…"
           }
         }
       }
