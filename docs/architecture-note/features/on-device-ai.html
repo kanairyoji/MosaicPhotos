@@ -20,8 +20,8 @@
       <ol>
         <li><strong>Vision シーンタグ</strong>（OS 内蔵 <code>VNClassifyImageRequest</code>・約 1,300 クラス・<code>hasMinimumRecall(forPrecision:)</code> の校正済み足切り＝自前閾値が消える）— 全写真</li>
         <li><strong>CLIP 埋め込み</strong>（OpenCLIP ViT-B-32・<strong>INT8 量子化</strong>・意味検索の索引）— 全写真</li>
-        <li class="muted">※ 旧・第 3 段の <strong>VLM キャプション</strong>（SmolVLM-500M）は<strong>機能ごと廃止</strong>（ADR-108）。網羅率アブレーションで検索寄与ゼロ（Δ F1 = 0.0001）と計測され、モデル 877MB を削除した。</li>
       </ol>
+      <p class="muted">※ かつては第 3 段に <strong>VLM キャプション</strong>（SmolVLM-500M）があったが、<strong>機能ごと廃止</strong>した（ADR-108）。網羅率アブレーション（0% / 実機 1% / 100%）で <strong>Δ(1%−0%) F1 = 0.0001＝検索寄与ゼロ</strong>と計測され、モデル実体 877MB ごと削除した。証拠役は <code>humanCount</code>（網羅率 86%・タグ付けパスで無償）が既に代替している。</p>
       <div class="mermaid">
 graph TD
   Q["自然文クエリ（任意言語）"] --> INT["解釈（作成時1回・永続化）<br/>FoundationModels + Sanitizer + レキシコン<br/>＋言い換えプローブ生成（最大4）"]
