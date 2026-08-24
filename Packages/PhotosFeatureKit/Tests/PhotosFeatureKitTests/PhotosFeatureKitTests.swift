@@ -149,8 +149,9 @@ struct MergedPhotoItemTests {
 
 @Suite("placeScanSignature")
 struct PlaceScanSignatureTests {
-    private func located(_ path: String) -> DropboxFileItem {
-        DropboxFileItem(path: path, name: "n", latitude: 35.0, longitude: 139.0)
+    private func located(_ path: String, lat: Double = 35.0,
+                         lon: Double = 139.0) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: "n", latitude: lat, longitude: lon)
     }
     private func unlocated(_ path: String) -> DropboxFileItem {
         DropboxFileItem(path: path, name: "n")
@@ -174,6 +175,23 @@ struct PlaceScanSignatureTests {
         let withLoc = placeScanSignature([located("/a.jpg")])
         let without = placeScanSignature([unlocated("/a.jpg")])
         #expect(withLoc != without)
+    }
+
+    /// ⚠️ 同じパスのまま座標が変わる（写真の差し替え・位置情報の修正）ケース。
+    /// 署名が変わらないと再スキャンが走らず、**古い市区町村に表示され続ける**（レビュー指摘）。
+    @Test("同じパスでも座標が変われば署名が変わる")
+    func movingCoordinateChangesSignature() {
+        let tokyo = placeScanSignature([located("/a.jpg", lat: 35.68, lon: 139.76)])
+        let osaka = placeScanSignature([located("/a.jpg", lat: 34.69, lon: 135.50)])
+        #expect(tokyo != osaka, "同じパスで座標だけ変わった差分を取りこぼす")
+    }
+
+    /// 逆に、浮動小数の下位桁のゆらぎで再スキャンしない（約 1m に丸めて比較する）。
+    @Test("1m 未満の誤差では署名が変わらない")
+    func negligibleJitterKeepsSignature() {
+        let a = placeScanSignature([located("/a.jpg", lat: 35.680000, lon: 139.760000)])
+        let b = placeScanSignature([located("/a.jpg", lat: 35.6800000001, lon: 139.7600000001)])
+        #expect(a == b, "誤差レベルの差で毎回再スキャンしてしまう")
     }
 
     @Test("並び順には依存しない（XOR）")

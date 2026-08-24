@@ -14,6 +14,28 @@ public protocol PhotoDeleter: Sendable {
 
 /// オフロード候補（バックアップ済み写真）の現在の実体。アプリが PHAsset から組み立てて渡す
 ///（BackupKit のロジックを PhotoKit から切り離し、macOS でテスト可能に保つ）。
+/// マーカー書き込みに必要な最小情報。**削除済みの写真にも作れる**ことが要点
+/// （`OffloadableAsset` は PHAsset 由来なので、消えた写真からは作れない）。
+public struct OffloadMarkerTarget: Sendable {
+    public let localIdentifier: String
+    public let dropboxPath: String
+    public let albums: [String]
+    public let captureDate: Date?
+
+    public init(localIdentifier: String, dropboxPath: String, albums: [String],
+                captureDate: Date?) {
+        self.localIdentifier = localIdentifier
+        self.dropboxPath = dropboxPath
+        self.albums = albums
+        self.captureDate = captureDate
+    }
+
+    init(_ asset: OffloadableAsset) {
+        self.init(localIdentifier: asset.localIdentifier, dropboxPath: asset.dropboxPath,
+                  albums: asset.albums, captureDate: asset.captureDate)
+    }
+}
+
 public struct OffloadableAsset: Sendable {
     public let localIdentifier: String
     public let dropboxPath: String          // 記録上のバックアップ先（小文字正規化済み）
@@ -158,12 +180,15 @@ public final class OffloadService {
     /// 実削除：**直前にもう一度検証**し、台帳へ記録してから削除する。
     /// 戻り値: (削除した localIdentifier, スキップ理由一覧)。
     /// - `recordLedger`: 台帳書き込み（BackupEngine.recordOffloads）。削除より先に呼ぶ。
+    ///   **永続化できたかを返すこと**——false なら削除しない（記録の無い削除を作らない）。
     /// - `rollbackLedger`: 削除キャンセル/失敗時の台帳ロールバック（removeOffloads）。
     public func execute(assets: [OffloadableAsset], limit: Int,
                         recordLedger: ([(localIdentifier: String, dropboxPath: String,
                                         albums: [String], captureDate: Date?,
-                                        contentHash: String?)]) async -> Void,
-                        rollbackLedger: ([String]) async -> Void) async -> (deleted: [String], skipped: [(String, String)]) {
+                                        contentHash: String?)]) async -> Bool,
+                        rollbackLedger: ([String]) async -> Void,
+                        markMarkersUploaded: ([String]) async -> Void = { _ in }) async
+                        -> (deleted: [String], skipped: [(String, String)]) {
         guard let token = try? await tokenProvider.freshAccessToken() else {
             log("offload.execute: authentication failed")
             return ([], [])
@@ -193,7 +218,15 @@ public final class OffloadService {
              albums: v.asset.albums, captureDate: v.asset.captureDate,
              contentHash: Optional(v.hash))
         }
-        await recordLedger(ledgerItems)   // 記録の完了を待ってから削除する（不変条件）
+        // 記録の**永続化を確認**してから削除する（不変条件）。容量不足・SwiftData 障害で
+        // 保存に失敗したまま消すと、クラウドにしか無い写真が台帳から漏れて追跡不能になる。
+        guard await recordLedger(ledgerItems) else {
+            log("offload.execute: ledger write failed — aborting deletion (\(ledgerItems.count))")
+            // 部分的に書けている可能性があるので、この回の分は台帳から戻す。
+            await rollbackLedger(ledgerItems.map(\.localIdentifier))
+            let reason = "ledger write failed"
+            return ([], skipped + verified.map { ($0.asset.filename, reason) })
+        }
 
         // 3. 削除（PhotoKit＝OS 確認ダイアログ・「最近削除した項目」へ）。
         let ids = verified.map(\.asset.localIdentifier)
@@ -206,14 +239,22 @@ public final class OffloadService {
         log("offload.execute: deleted \(ids.count) photo(s), verified hashes, ledger recorded")
 
         // 4. metadata v2 へ offloadedAt / verifiedAt マーカーを書く（再インストール時の台帳再構築用）。
-        //    失敗しても台帳（端末）が正なので致命的ではない。次回実行で再試行される。
-        await uploadOffloadMarkers(for: verified.map(\.asset), token: token)
+        //    書けた分だけ台帳に印を付ける。書けなかった分は「未送信」として残り、
+        //    `retryPendingMarkers` が後から再送する（写真はもう PHAsset には現れないため、
+        //    次回のオフロード実行任せにはできない・レビュー指摘）。
+        let written = await uploadOffloadMarkers(
+            for: verified.map { OffloadMarkerTarget($0.asset) }, token: token)
+        await markMarkersUploaded(written)
         return (ids, skipped)
     }
 
     /// 触った撮影月シャードに offloadedAt / verifiedAt を書き込む
     /// （download→merge→upload は `MetadataShardWriter` に集約＝B3）。
-    private func uploadOffloadMarkers(for assets: [OffloadableAsset], token: String) async {
+    /// - Returns: **書き込めた** localIdentifier（呼び出し側が台帳へ印を付ける）。
+    ///   書けなかった分は台帳に「未送信」として残り、後から再送される。
+    @discardableResult
+    public func uploadOffloadMarkers(for targets: [OffloadMarkerTarget],
+                                     token: String) async -> [String] {
         let folderByPath: (String) -> String? = { path in
             // "/Folder/name.jpg" → "/Folder"（バックアップフォルダ直下前提）
             guard let idx = path.lastIndex(of: "/") else { return nil }
@@ -221,24 +262,28 @@ public final class OffloadService {
         }
         let now = ISO8601DateFormatter().string(from: Date())
         let writer = MetadataShardWriter(uploader: uploader, token: token)
-        var byShard: [String: [OffloadableAsset]] = [:]
-        for asset in assets {
-            byShard[BackupMetadataV2.shardName(for: asset.captureDate), default: []].append(asset)
+        var byShard: [String: [OffloadMarkerTarget]] = [:]
+        for target in targets {
+            byShard[BackupMetadataV2.shardName(for: target.captureDate), default: []].append(target)
         }
-        for (shard, shardAssets) in byShard {
-            guard let folder = folderByPath(shardAssets[0].dropboxPath) else { continue }
-            let assetByPath = Dictionary(uniqueKeysWithValues: shardAssets.map { ($0.dropboxPath, $0) })
-            await writer.updateEntries(
-                paths: shardAssets.map(\.dropboxPath), folder: folder, shardName: shard,
+        var written: [String] = []
+        for (shard, shardTargets) in byShard {
+            guard let folder = folderByPath(shardTargets[0].dropboxPath) else { continue }
+            let byPath = Dictionary(shardTargets.map { ($0.dropboxPath, $0) },
+                                    uniquingKeysWith: { first, _ in first })
+            let ok = await writer.updateEntries(
+                paths: shardTargets.map(\.dropboxPath), folder: folder, shardName: shard,
                 mutate: { entry in
                     entry.offloadedAt = now
                     entry.verifiedAt = now
                 },
                 makeDefault: { path in
-                    DropboxBackupMetadata.Entry(people: [], albums: assetByPath[path]?.albums ?? [],
-                                                localIdentifier: assetByPath[path]?.localIdentifier)
+                    DropboxBackupMetadata.Entry(people: [], albums: byPath[path]?.albums ?? [],
+                                                localIdentifier: byPath[path]?.localIdentifier)
                 },
                 log: { line in self.log(line) })
+            if ok { written.append(contentsOf: shardTargets.map(\.localIdentifier)) }
         }
+        return written
     }
 }

@@ -156,8 +156,12 @@ public actor BackupStore {
     // MARK: - Offload ledger
 
     /// オフロード実行の記録（upsert）。
+    /// - Returns: **永続化できたか**。オフロードは「台帳に記録してから写真を消す」が不変条件で、
+    ///   保存失敗（容量不足・SwiftData 障害）を握り潰すと**記録の無い削除**になる（レビュー指摘）。
+    @discardableResult
     public func upsertOffloads(_ items: [(localIdentifier: String, dropboxPath: String,
-                                          albums: [String], captureDate: Date?, contentHash: String?)]) {
+                                          albums: [String], captureDate: Date?,
+                                          contentHash: String?)]) -> Bool {
         for item in items {
             let id = item.localIdentifier
             let descriptor = FetchDescriptor<OffloadRecord>(
@@ -170,6 +174,35 @@ public actor BackupStore {
                                               albums: item.albums,
                                               captureDate: item.captureDate,
                                               contentHash: item.contentHash))
+        }
+        do {
+            try modelContext.save()
+            return true
+        } catch {
+            BackupLogger.error("upsertOffloads: save failed — \(error)")
+            modelContext.rollback()
+            return false
+        }
+    }
+
+    /// マーカー未送信の台帳エントリ（再送対象）。件数は少ない前提で全件から絞る。
+    public func offloadsPendingMarker(limit: Int = 200)
+        -> [(localIdentifier: String, dropboxPath: String, albums: [String], captureDate: Date?)] {
+        let records = (try? modelContext.fetch(FetchDescriptor<OffloadRecord>(
+            predicate: #Predicate { $0.markerUploadedAt == nil },
+            sortBy: [SortDescriptor(\.offloadedAt, order: .forward)]))) ?? []
+        return records.prefix(limit).map {
+            ($0.localIdentifier, $0.dropboxPath, $0.albums, $0.captureDate)
+        }
+    }
+
+    /// マーカーを書けたエントリに印を付ける（以後の再送対象から外す）。
+    public func markOffloadMarkersUploaded(localIdentifiers: [String], at date: Date = Date()) {
+        let ids = Set(localIdentifiers)
+        guard !ids.isEmpty else { return }
+        let all = (try? modelContext.fetch(FetchDescriptor<OffloadRecord>())) ?? []
+        for record in all where ids.contains(record.localIdentifier) {
+            record.markerUploadedAt = date
         }
         try? modelContext.save()
     }

@@ -27,10 +27,12 @@ struct MetadataShardWriter {
 
     /// 既存エントリへの**部分更新**（オフロードマーカー等）: エントリが無ければ最小形で作る。
     /// `mutate` で各エントリを書き換えてからシャードを書き戻す。
+    /// - Returns: シャードを**書けたか**。呼び出し側は失敗を記録して再試行できる。
+    @discardableResult
     func updateEntries(paths: [String], folder: String, shardName: String,
                        mutate: (inout DropboxBackupMetadata.Entry) -> Void,
                        makeDefault: (String) -> DropboxBackupMetadata.Entry,
-                       log: (String) async -> Void) async {
+                       log: (String) async -> Void) async -> Bool {
         let shardPath = folder + BackupMetadataV2.shardSuffix(shardName)
         let existing = await uploader.download(path: shardPath, token: token)
         var metadata = existing.flatMap { try? JSONDecoder().decode(DropboxBackupMetadata.self, from: $0) }
@@ -40,7 +42,8 @@ struct MetadataShardWriter {
             mutate(&entry)
             metadata.entries[path] = entry
         }
-        let result = await uploader.uploadJSON(metadata, to: shardPath, token: token)
-        await log("offload.marker: meta/\(shardName).json (\(paths.count) update(s)): \(result)")
+        let result = await uploader.uploadJSONResult(metadata, to: shardPath, token: token)
+        await log("offload.marker: meta/\(shardName).json (\(paths.count) update(s)): \(result.detail)")
+        return result.ok
     }
 }

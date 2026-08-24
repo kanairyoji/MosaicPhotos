@@ -78,15 +78,46 @@ extension BackupEngine {
     /// （OS 確認ダイアログ）→ metadata マーカー。キャンセル時は台帳をロールバック。
     /// 呼び出し側（UI）は Developer Options のゲートを確認してから呼ぶこと。
     public func executeOffload(limit: Int) async -> (deleted: [String], skipped: [(String, String)]) {
+        // 前回書けなかったマーカーを先に片付ける（対象の写真はもう端末に無いので、
+        // 候補走査には現れない＝ここで面倒を見ないと永久に未送信のまま）。
+        await retryPendingOffloadMarkers()
+
         let service = makeOffloadService()
         let result = await service.execute(
             assets: await offloadCandidateAssets(), limit: limit,
-            recordLedger: { [weak self] items in await self?.recordOffloads(items) },
-            rollbackLedger: { [weak self] ids in await self?.removeOffloads(localIdentifiers: ids) })
+            // self が消えていたら記録できていない＝削除させない（false）。
+            recordLedger: { [weak self] items in await self?.recordOffloads(items) ?? false },
+            rollbackLedger: { [weak self] ids in await self?.removeOffloads(localIdentifiers: ids) },
+            markMarkersUploaded: { [weak self] ids in
+                await self?.store().markOffloadMarkersUploaded(localIdentifiers: ids)
+            })
         if !result.deleted.isEmpty {
             addLog("Offload: deleted \(result.deleted.count) photo(s) (verified, ledger recorded)")
         }
         return result
+    }
+
+    /// 未送信の offloadedAt マーカーを再送する。
+    ///
+    /// マーカーは**再インストール後に台帳を建て直す唯一の手掛かり**。書けないまま放置すると、
+    /// その写真はクラウドにあるのに「オフロードした写真」として復元できなくなる。
+    /// 対象の写真は既に端末から消えていて候補走査に現れないため、台帳を出典に再送する。
+    /// バックアップ完走時とオフロード実行前に呼ぶ（通信できる文脈）。
+    @discardableResult
+    public func retryPendingOffloadMarkers() async -> Int {
+        let pending = await store().offloadsPendingMarker()
+        guard !pending.isEmpty else { return 0 }
+        guard let token = try? await tokenProvider.freshAccessToken() else { return 0 }
+        let targets = pending.map {
+            OffloadMarkerTarget(localIdentifier: $0.localIdentifier, dropboxPath: $0.dropboxPath,
+                                albums: $0.albums, captureDate: $0.captureDate)
+        }
+        let written = await makeOffloadService().uploadOffloadMarkers(for: targets, token: token)
+        await store().markOffloadMarkersUploaded(localIdentifiers: written)
+        if !written.isEmpty {
+            addLog("Offload: re-sent \(written.count) pending marker(s)")
+        }
+        return written.count
     }
 
     private func makeOffloadService(deleter: PhotoDeleter = PhotoKitDeleter()) -> OffloadService {

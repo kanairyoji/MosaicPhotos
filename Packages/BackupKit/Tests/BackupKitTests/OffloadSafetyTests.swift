@@ -29,8 +29,16 @@ private actor FakeDropbox: HTTPClient {
         if url.contains("download") {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)   // シャード無し＝新規
         }
-        return resp(200, "{}")   // uploadJSON（マーカー書き込み）は成功扱い
+        if url.contains("upload") {
+            // マーカー書き込み。失敗を注入できるようにする（再送の検証に使う）。
+            return failMarkerUpload ? resp(500, "{}") : resp(200, "{}")
+        }
+        return resp(200, "{}")
     }
+
+    /// metadata シャードのアップロードを失敗させる。
+    var failMarkerUpload = false
+    func setFailMarkerUpload(_ value: Bool) { failMarkerUpload = value }
 }
 
 /// 削除要求を記録するだけのモック（実削除しない）。
@@ -84,7 +92,7 @@ struct OffloadSafetyTests {
         var ledger: [String] = []
         let result = await service.execute(
             assets: [asset(data: photoData)], limit: 10,
-            recordLedger: { items in ledger = items.map(\.localIdentifier) },
+            recordLedger: { items in ledger = items.map(\.localIdentifier); return true },
             rollbackLedger: { _ in Issue.record("rollback should not happen") })
         #expect(result.deleted == ["ID-1"])
         #expect(deleter.deletedIDs == [["ID-1"]])
@@ -98,7 +106,7 @@ struct OffloadSafetyTests {
         let deleter = MockDeleter()
         let service = makeService(files: [:], deleter: deleter)   // Dropbox は空
         let result = await service.execute(assets: [asset(data: photoData)], limit: 10,
-                                           recordLedger: { _ in Issue.record("must not record") },
+                                           recordLedger: { _ in Issue.record("must not record"); return true },
                                            rollbackLedger: { _ in })
         #expect(result.deleted.isEmpty)
         #expect(deleter.deletedIDs.isEmpty)
@@ -112,7 +120,7 @@ struct OffloadSafetyTests {
             files: ["/backup/img_0001.jpg": (hash: "different-hash", size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(data: photoData)], limit: 10,
-                                           recordLedger: { _ in Issue.record("must not record") },
+                                           recordLedger: { _ in Issue.record("must not record"); return true },
                                            rollbackLedger: { _ in })
         #expect(deleter.deletedIDs.isEmpty)
         #expect(result.skipped.first?.1.contains("hash mismatch") == true)
@@ -125,7 +133,7 @@ struct OffloadSafetyTests {
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count + 999)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(data: photoData)], limit: 10,
-                                           recordLedger: { _ in }, rollbackLedger: { _ in })
+                                           recordLedger: { _ in true }, rollbackLedger: { _ in })
         #expect(deleter.deletedIDs.isEmpty)
         #expect(result.skipped.first?.1.contains("size mismatch") == true)
     }
@@ -137,7 +145,7 @@ struct OffloadSafetyTests {
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(data: nil)], limit: 10,
-                                           recordLedger: { _ in }, rollbackLedger: { _ in })
+                                           recordLedger: { _ in true }, rollbackLedger: { _ in })
         #expect(deleter.deletedIDs.isEmpty)
         #expect(result.skipped.first?.1.contains("could not read") == true)
     }
@@ -152,7 +160,7 @@ struct OffloadSafetyTests {
         let edited = backedUp.addingTimeInterval(3600)
         let result = await service.execute(
             assets: [asset(modified: edited, backedUpAt: backedUp, data: photoData)], limit: 10,
-            recordLedger: { _ in }, rollbackLedger: { _ in })
+            recordLedger: { _ in true }, rollbackLedger: { _ in })
         #expect(deleter.deletedIDs.isEmpty)
         #expect(result.skipped.first?.1.contains("edited") == true)
     }
@@ -164,7 +172,7 @@ struct OffloadSafetyTests {
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(live: true, data: photoData)], limit: 10,
-                                           recordLedger: { _ in }, rollbackLedger: { _ in })
+                                           recordLedger: { _ in true }, rollbackLedger: { _ in })
         #expect(deleter.deletedIDs.isEmpty)
         #expect(result.skipped.first?.1.contains("Live Photo") == true)
     }
@@ -180,7 +188,7 @@ struct OffloadSafetyTests {
         var rolledBack: [String] = []
         let result = await service.execute(
             assets: [asset(data: photoData)], limit: 10,
-            recordLedger: { items in recorded = items.map(\.localIdentifier) },
+            recordLedger: { items in recorded = items.map(\.localIdentifier); return true },
             rollbackLedger: { ids in rolledBack = ids })
         #expect(result.deleted.isEmpty)
         #expect(recorded == ["ID-1"])     // 記録は先に行われ…
@@ -198,7 +206,7 @@ struct OffloadSafetyTests {
             asset(id: "ID-\($0)", path: "/backup/img_000\($0).jpg", data: photoData)
         }
         let result = await service.execute(assets: assets, limit: 2,
-                                           recordLedger: { _ in }, rollbackLedger: { _ in })
+                                           recordLedger: { _ in true }, rollbackLedger: { _ in })
         #expect(result.deleted.count == 2)
         #expect(deleter.deletedIDs.flatMap(\.self).count == 2)
     }
@@ -212,5 +220,88 @@ struct OffloadSafetyTests {
         let plan = await service.plan(assets: [asset(data: photoData)], limit: 10)
         #expect(plan.eligible.count == 1)
         #expect(deleter.deletedIDs.isEmpty)   // eligible でも削除は起きない
+    }
+}
+
+// MARK: - 台帳の永続化失敗・マーカー再送（レビュー指摘）
+
+/// ⚠️ 「記録が先」は**記録できたこと**まで確認して初めて成り立つ。
+/// 保存失敗（容量不足・SwiftData 障害）を握り潰して消すと、クラウドにしか無い写真が
+/// 台帳から漏れて追跡不能になる。
+@Suite("Offload ledger durability")
+@MainActor
+struct OffloadLedgerDurabilityTests {
+
+    private let photoData = Data("photo-bytes".utf8)
+
+    private func asset(_ id: String) -> OffloadableAsset {
+        let data = photoData
+        return OffloadableAsset(
+            localIdentifier: id, dropboxPath: "/backup/\(id).jpg", filename: "\(id).jpg",
+            albums: ["Trip"], captureDate: Date(timeIntervalSince1970: 1_700_000_000),
+            modificationDate: nil, backedUpAt: Date(timeIntervalSince1970: 1_700_000_100),
+            isLivePhoto: false, loadData: { data })
+    }
+
+    @Test("台帳の保存に失敗したら削除しない")
+    func ledgerWriteFailureAbortsDeletion() async {
+        let hash = DropboxContentHash.hash(of: photoData)
+        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, photoData.count)])
+        let deleter = MockDeleter()
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: deleter, log: { _ in })
+        var rolledBack: [String] = []
+
+        let result = await service.execute(
+            assets: [asset("a")], limit: 10,
+            recordLedger: { _ in false },                 // 保存できなかった
+            rollbackLedger: { ids in rolledBack = ids })
+
+        #expect(deleter.deletedIDs.isEmpty, "台帳に記録できていないのに写真を消した")
+        #expect(result.deleted.isEmpty)
+        #expect(rolledBack == ["a"], "書けたかもしれない分を戻していない")
+        #expect(result.skipped.contains { $0.1.contains("ledger") }, "理由が伝わらない")
+    }
+
+    /// ⚠️ マーカーを書けなかった写真は**もう端末に無い**ので、候補走査（PHAsset）には
+    /// 現れない＝次回のオフロード実行では再試行されない。台帳を出典に再送すること。
+    @Test("マーカー送信に失敗しても、台帳から再送できる")
+    func pendingMarkersAreRetriedFromLedger() async {
+        let hash = DropboxContentHash.hash(of: photoData)
+        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, photoData.count)])
+        await server.setFailMarkerUpload(true)
+        let deleter = MockDeleter()
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: deleter, log: { _ in })
+        var markedUploaded: [String] = []
+
+        let result = await service.execute(
+            assets: [asset("a")], limit: 10,
+            recordLedger: { _ in true }, rollbackLedger: { _ in },
+            markMarkersUploaded: { ids in markedUploaded = ids })
+
+        // 削除は済んでいる（台帳は書けている）が、マーカーは未送信のまま。
+        #expect(result.deleted == ["a"])
+        #expect(markedUploaded.isEmpty, "書けていないのに送信済みとして印を付けた")
+
+        // 通信が回復したら、台帳の情報だけで再送できる（写真はもう端末に無い）。
+        await server.setFailMarkerUpload(false)
+        let target = OffloadMarkerTarget(localIdentifier: "a", dropboxPath: "/backup/a.jpg",
+                                         albums: ["Trip"], captureDate: nil)
+        let written = await service.uploadOffloadMarkers(for: [target], token: "t")
+        #expect(written == ["a"], "再送できていない（再インストール後に復元不能になる）")
+    }
+
+    @Test("マーカーを書けた分だけ送信済みとして記録する")
+    func successfulMarkersAreRecorded() async {
+        let hash = DropboxContentHash.hash(of: photoData)
+        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, photoData.count)])
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: MockDeleter(), log: { _ in })
+        var markedUploaded: [String] = []
+        _ = await service.execute(assets: [asset("a")], limit: 10,
+                                  recordLedger: { _ in true }, rollbackLedger: { _ in },
+                                  markMarkersUploaded: { ids in markedUploaded = ids })
+        #expect(markedUploaded == ["a"])
     }
 }

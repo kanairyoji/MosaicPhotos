@@ -170,6 +170,9 @@ public final class BackupEngine {
             // 完走時のみアルバム一覧を更新する（runner の戻り値で通知される）。
             if await runner.run(folder: deviceRoot) {
                 await self.loadAlbums()
+                // 通信できている今のうちに、未送信のオフロードマーカーを片付ける
+                // （対象の写真は端末に無く、オフロードの候補走査には現れないため）。
+                await self.retryPendingOffloadMarkers()
             }
             self.backupTask = nil
         }
@@ -311,11 +314,15 @@ public final class BackupEngine {
     public var offloadRecordCount: Int { offloadCount }
 
     /// オフロード実行の記録（オフロード機能が**削除の直前**に呼ぶ）。upsert・完了まで await。
+    /// - Returns: 永続化できたか。**false なら削除してはいけない**（記録の無い削除になる）。
+    @discardableResult
     public func recordOffloads(_ items: [(localIdentifier: String, dropboxPath: String,
-                                          albums: [String], captureDate: Date?, contentHash: String?)]) async {
-        await store().upsertOffloads(items)
+                                          albums: [String], captureDate: Date?,
+                                          contentHash: String?)]) async -> Bool {
+        let saved = await store().upsertOffloads(items)
         await reloadOffloadLedger()
         invalidateStatus()
+        return saved
     }
 
     /// 台帳からの削除（復元＝端末へ再取り込みしたとき・削除キャンセルのロールバック）。

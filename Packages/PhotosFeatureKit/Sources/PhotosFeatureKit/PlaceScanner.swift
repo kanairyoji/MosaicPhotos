@@ -213,11 +213,21 @@ private final class PhotoLibraryObserver: NSObject, PHPhotoLibraryChangeObserver
 
 // MARK: - Pure signature (top-level・テスト対象)
 
-/// 座標付き Dropbox アイテムのパス集合の署名。並び順に依存しない（XOR）。
+/// 座標付き Dropbox アイテムの署名。並び順に依存しない（XOR）。
+///
+/// ⚠️ **座標そのものを含める**こと。以前はパスだけを混ぜていたため、同じパスの写真が
+/// 差し替わったり位置情報が修正されても署名が変わらず、再スキャンが走らないまま
+/// **古い市区町村に表示され続けた**（レビュー指摘）。
+/// 座標は小数 5 桁（約 1m）に丸めて混ぜる——表現誤差のゆらぎで無用な再スキャンをしないため。
 func placeScanSignature(_ items: [DropboxFileItem]) -> Int {
     var signature = 0
-    for item in items where item.coordinate != nil {
-        signature ^= item.path.hashValue
+    for item in items {
+        guard let coordinate = item.coordinate else { continue }
+        var hasher = Hasher()
+        hasher.combine(item.path)
+        hasher.combine((coordinate.latitude * 100_000).rounded())
+        hasher.combine((coordinate.longitude * 100_000).rounded())
+        signature ^= hasher.finalize()
     }
     return signature
 }

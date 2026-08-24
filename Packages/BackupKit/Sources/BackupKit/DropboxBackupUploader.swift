@@ -196,25 +196,33 @@ struct DropboxBackupUploader {
 
     /// 任意の Encodable を JSON で overwrite アップロードする（v2 カタログ/シャード用）。
     /// 戻り値は表示用の結果文字列。
+    /// JSON を上書きアップロードして**結果文字列**（ログ用）を返す。
+    /// 成否が要る呼び出しは `uploadJSONResult` を使う（文字列の中身で判定しない）。
     func uploadJSON<T: Encodable>(_ value: T, to path: String, token: String) async -> String {
+        await uploadJSONResult(value, to: path, token: token).detail
+    }
+
+    /// アップロードの成否と詳細。マーカー書き込みのように**再試行の判断**に使う。
+    func uploadJSONResult<T: Encodable>(_ value: T, to path: String,
+                                        token: String) async -> (ok: Bool, detail: String) {
         guard let jsonData = try? JSONEncoder().encode(value) else {
-            return "failed (JSON encode error)"
+            return (false, "failed (JSON encode error)")
         }
         guard let argStr = encodeDropboxAPIArg(OverwriteArg(path: path)) else {
-            return "failed (arg encode error)"
+            return (false, "failed (arg encode error)")
         }
         let req = Self.makeRequest(argStr: argStr, body: jsonData, token: token, timeout: 60)
         do {
             let (respData, resp) = try await httpClient.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
             if code == 200 {
-                return "OK (\(jsonData.count) bytes)"
+                return (true, "OK (\(jsonData.count) bytes)")
             } else {
                 let body = String(data: respData, encoding: .utf8) ?? ""
-                return "HTTP \(code): \(BackupPlanning.dropboxErrorSummary(from: body))"
+                return (false, "HTTP \(code): \(BackupPlanning.dropboxErrorSummary(from: body))")
             }
         } catch {
-            return "network error: \(error.localizedDescription)"
+            return (false, "network error: \(error.localizedDescription)")
         }
     }
 

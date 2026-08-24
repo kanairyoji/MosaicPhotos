@@ -24,14 +24,23 @@ public final class OffloadRecord {
     /// 削除前検証に使った Dropbox content_hash。
     public var contentHash: String?
     public var offloadedAt: Date
+    /// metadata v2 へ offloadedAt マーカーを書けた時刻。**nil＝未送信**。
+    ///
+    /// ⚠️ マーカーは再インストール後の台帳再構築の唯一の手掛かり。書き込みに失敗しても、
+    /// その写真は既に端末から消えているので `offloadCandidateAssets()`（PHAsset 走査）には
+    /// 二度と現れない＝**次回のオフロード実行では再試行されない**（レビュー指摘）。
+    /// 台帳側に未送信として残し、独立して再送する。
+    public var markerUploadedAt: Date?
 
     public init(localIdentifier: String, dropboxPath: String, albums: [String],
-                captureDate: Date?, contentHash: String?, offloadedAt: Date = Date()) {
+                captureDate: Date?, contentHash: String?, offloadedAt: Date = Date(),
+                markerUploadedAt: Date? = nil) {
         self.localIdentifier = localIdentifier
         self.dropboxPath = dropboxPath
         self.albums = albums
         self.captureDate = captureDate
         self.contentHash = contentHash
         self.offloadedAt = offloadedAt
+        self.markerUploadedAt = markerUploadedAt
     }
 }
