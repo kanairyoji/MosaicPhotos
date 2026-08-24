@@ -69,17 +69,31 @@ enum HeavyWorkScheduler {
     /// 実行中の重い処理タスク（BGTask 本体）。フォアグラウンド復帰で止めるために保持する（ADR-79）。
     private static var currentWork: Task<Void, Never>?
 
+    /// この BGTask の完了通知ラッチ。**`setTaskCompleted` は 1 回だけ**呼べる
+    /// （二重に呼ぶと BGTaskScheduler が例外を投げる）。期限切れハンドラと本体の終了処理が
+    /// どちらも呼び得るので、ここで 1 回に絞る（レビュー指摘・`CompletionLatch` はテスト済み）。
+    private static let completionLatch = CompletionLatch()
+
     private static func handle(_ task: BGProcessingTask) {
         Diagnostics.mark("bgtask: begin")
         let started = Date()
+        completionLatch.reset()
+
+        /// 完了通知＋再予約を**一度だけ**行う。
+        @MainActor func completeOnce(outcome: String, success: Bool) {
+            completionLatch.completeOnce {
+                Diagnostics.mark("bgtask: end (\(outcome))")
+                recordLastRun(started: started, outcome: outcome)
+                task.setTaskCompleted(success: success)
+                submit()   // 次回分を再予約（残作業はまた次のロック中に進む）
+            }
+        }
+
         let work = Task { @MainActor in
             await runHeavyWork()
             let cancelled = Task.isCancelled
             currentWork = nil
-            Diagnostics.mark("bgtask: end (\(cancelled ? "cancelled" : "completed"))")
-            recordLastRun(started: started, outcome: cancelled ? "cancelled" : "completed")
-            task.setTaskCompleted(success: !cancelled)
-            submit()   // 次回分を再予約（残作業はまた次のロック中に進む）
+            completeOnce(outcome: cancelled ? "cancelled" : "completed", success: !cancelled)
         }
         currentWork = work
         task.expirationHandler = {
@@ -87,11 +101,31 @@ enum HeavyWorkScheduler {
             Diagnostics.mark("bgtask: expired — cancelling")
             work.cancel()
             Task { @MainActor in
-                recordLastRun(started: started, outcome: "expired")
-                task.setTaskCompleted(success: false)
-                submit()
+                // ⚠️ 期限切れ側は**止めるところまで**面倒を見る。BGTask 本体（`work`）を
+                // cancel しても、そこから起こした顔スキャン・背景処理は別 Task なので
+                // 止まらない。OS へ完了を通知した後も走り続ける（レビュー指摘）。
+                stopBackgroundProcessing(cancelBackup: true)
+                completeOnce(outcome: "expired", success: false)
             }
         }
+    }
+
+    /// BGTask から起こした**別 Task の処理**を止める。
+    ///
+    /// `runHeavyWork` は顔スキャン（`startScan`）と背景埋め込み/タグ（`restartBackgroundFill`）を
+    /// **起動するだけ**で、その完了を待っていない（窓を食い潰さないための設計）。
+    /// そのため `work.cancel()` だけでは止まらない。期限切れ・フォアグラウンド復帰では
+    /// これらも明示的に止める（各処理は差分ベースなので次の窓で続きから再開する）。
+    /// - Parameter cancelBackup: 夜間バックアップも止めるか。
+    ///   期限切れは true（プロセスが吊るされる前に明示キャンセルする方が安全）。
+    ///   フォアグラウンド復帰は false——**ユーザーが自分で始めたバックアップ**と区別できないため、
+    ///   復帰しただけで止めてはいけない（従来の挙動を維持する）。
+    @MainActor
+    private static func stopBackgroundProcessing(cancelBackup: Bool) {
+        guard let stores else { return }
+        stores.peopleEngine.stopScan()
+        stores.autoAlbumEngine.stopBackgroundWork()
+        if cancelBackup, stores.backupEngine.isRunning { stores.backupEngine.cancel() }
     }
 
     // MARK: - フォアグラウンド復帰（ADR-79）
@@ -116,10 +150,7 @@ enum HeavyWorkScheduler {
         currentWork = nil
         // BGTask のルーチンが起こした fire-and-forget のタスク群は、上の cancel では止まらない
         // （構造化されていないため）。エンジンへ個別に停止を伝える。
-        if let stores {
-            stores.peopleEngine.stopScan()
-            stores.autoAlbumEngine.stopBackgroundWork()
-        }
+        stopBackgroundProcessing(cancelBackup: false)
         if hadWork { Diagnostics.mark("bgtask: stopped for foreground") }
     }
 
@@ -165,7 +196,8 @@ enum HeavyWorkScheduler {
         BackgroundYield.debugForceHeavyWork = true
 
         let work = Task { @MainActor in
-            await runHeavyWork()
+            // 前面から叩くデバッグ実行。終わったら「非アクティブ扱い」を元へ戻す。
+            await runHeavyWork(restoreAppActive: true)
             finish(outcome: "manual-completed")
         }
         // 時間制限（実 BG の期限切れを模擬）。
@@ -173,6 +205,8 @@ enum HeavyWorkScheduler {
             try? await Task.sleep(for: .seconds(timeLimit))
             if isDebugRunning {
                 work.cancel()
+                // 実 BG の期限切れと同じく、起こした処理も止める（cancel だけでは止まらない）。
+                stopBackgroundProcessing(cancelBackup: true)
                 finish(outcome: "manual-expired")
             }
         }
@@ -226,10 +260,16 @@ enum HeavyWorkScheduler {
 
     /// 重い処理を一通り進める。フォアグラウンドと同じゲート（heavyShouldPause）を通るが、
     /// BG 中は操作が発生しないためアイドル条件は自然に満たされる。
-    private static func runHeavyWork() async {
+    /// - Parameter restoreAppActive: 終了時に `BackgroundYield.isAppActive` を元へ戻すか。
+    ///   フォアグラウンドから叩くデバッグ実行（`debugRunNow`）は true——戻さないと、
+    ///   次の scenePhase 変化まで「非アクティブ扱い」が残り、**ユーザー操作中でも重い処理が
+    ///   走り続ける**（レビュー指摘）。実際の BGTask は false（非アクティブが正しい状態）。
+    private static func runHeavyWork(restoreAppActive: Bool = false) async {
         // BGTask 実行中＝アプリは非アクティブ確定。バックグラウンド起動では scenePhase の
         // 変化が来ないことがあり、初期値（true）のままだと中央ゲートが開かない。
+        let previousActive = BackgroundYield.isAppActive
         BackgroundYield.isAppActive = false
+        defer { if restoreAppActive { BackgroundYield.isAppActive = previousActive } }
         // ストア群：プロセス内で唯一の共有インスタンス（前景 RootView と同じ）。別々に build すると
         // PeopleEngine/AutoAlbumEngine が二重化し顔/タグが二重起動するため必ず shared() を使う。
         let stores = await HomeStores.shared()
