@@ -28,6 +28,51 @@ protocol BackupRunnerDelegate: AnyObject {
     func runnerPriorityLocalIdentifiers() async -> Set<String>
 }
 
+/// 世代が一致するときだけ本体へ通す委譲プロキシ。
+///
+/// ⚠️ `cancel()` は旧タスクの終了を待たずに次の実行を始められる。旧タスクは自分が
+/// 現行だと思ったまま `phase` を更新し続けるので、**新しい実行の進捗を古い実行が
+/// 上書きする**（レビュー指摘）。実行ごとに世代を採番し、ここで食い止める。
+final class GenerationScopedRunnerDelegate: BackupRunnerDelegate {
+    private weak var base: BackupEngine?
+    private let generation: Int
+
+    init(base: BackupEngine, generation: Int) {
+        self.base = base
+        self.generation = generation
+    }
+
+    @MainActor private var isCurrent: Bool { base?.isCurrentRun(generation) ?? false }
+
+    @MainActor func runnerSetPhase(_ phase: BackupEngine.Phase) {
+        guard isCurrent else { return }
+        base?.runnerSetPhase(phase)
+    }
+
+    @MainActor func runnerLog(_ message: String) {
+        guard isCurrent else { return }
+        base?.runnerLog(message)
+    }
+
+    @MainActor func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
+                                     people: [String], albums: [String], isFavorite: Bool,
+                                     contentHash: String?) {
+        // ⚠️ 記録は世代に関わらず残す。アップロード自体は完了しているので、
+        // ここで捨てると**実体はあるのに記録が無い**（次回また上げてしまう）。
+        base?.runnerSaveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
+                               people: people, albums: albums, isFavorite: isFavorite,
+                               contentHash: contentHash)
+    }
+
+    func runnerRecordedLocalIdentifiers() async -> Set<String> {
+        await base?.runnerRecordedLocalIdentifiers() ?? []
+    }
+
+    func runnerPriorityLocalIdentifiers() async -> Set<String> {
+        await base?.runnerPriorityLocalIdentifiers() ?? []
+    }
+}
+
 // MARK: - Runner
 
 /// バックアップ 1 回分の実行ユニット。`run(folder:)` はフェーズごとのメソッドを順に呼ぶ
@@ -389,28 +434,70 @@ final class BackupRunner {
     /// シャードの download→merge→upload は `MetadataShardWriter` に集約（B3）。
     private func writeMetadata(newEntries: [BackupMetadataPlanning.NewEntry],
                                indexes: Indexes, folder: String, token: String) async {
-        guard !newEntries.isEmpty else { return }
+        // ⚠️ 前回送れなかった分を**先に取り込む**。写真の実体は既にアップロード済みで、
+        // その ID は二度と pending に入らないため、ここで送り直さないとメタデータの
+        // 欠落が永久化する（レビュー指摘）。
+        let pendingStore = PendingMetadataStore()
+        let carried = pendingStore.load()
+        let byShard = PendingMetadataStore.merged(
+            pending: carried, adding: BackupMetadataPlanning.groupedByShard(newEntries))
+        guard !byShard.isEmpty else { return }
         setPhase(.uploadingMetadata)
-        let byShard = BackupMetadataPlanning.groupedByShard(newEntries)
-        addLog("Uploading metadata v2 (\(newEntries.count) entries → \(byShard.count) shard(s))…")
+        if !carried.isEmpty {
+            addLog("Re-sending \(PendingMetadataStore.entryCount(carried)) metadata entry(s) from a previous run…")
+        }
+        addLog("Uploading metadata v2 (\(PendingMetadataStore.entryCount(byShard)) entries → \(byShard.count) shard(s))…")
         let writer = MetadataShardWriter(uploader: uploader, token: token)
-        let touched = await writer.applyEntries(byShard: byShard, folder: folder) { line in
+        let applied = await writer.applyEntries(byShard: byShard, folder: folder) { line in
             self.addLog(line)
         }
+
         let catalogPath = folder + BackupMetadataV2.catalogSuffix
-        let existingCatalog = await uploader.download(path: catalogPath, token: token)
-        let albumNames = Array(Set(indexes.albums.values.flatMap { $0 })).sorted()
-        let peopleNames = Array(Set(indexes.people.values.flatMap { $0 })).sorted()
-        let catalog = BackupMetadataPlanning.updatedCatalog(
-            existing: existingCatalog, touchedShards: touched,
-            albums: albumNames, people: peopleNames, albumIDs: indexes.albumIDs,
-            deviceID: BackupDeviceIdentity.currentID(),
-            deviceName: BackupDeviceIdentity.currentDisplayName())
-        let catResult = await uploader.uploadJSON(catalog, to: catalogPath, token: token)
-        addLog("  catalog.json (shards=\(catalog.shards.count)): \(catResult)")
+        // カタログも取得失敗と不在を区別する（失敗時は既存を壊さないよう書かない）。
+        var catalogWritten = false
+        switch await uploader.downloadResult(path: catalogPath, token: token) {
+        case .found(let data):
+            catalogWritten = await uploadCatalog(existing: data, touched: applied.written,
+                                                 indexes: indexes, path: catalogPath, token: token)
+        case .notFound:
+            catalogWritten = await uploadCatalog(existing: nil, touched: applied.written,
+                                                 indexes: indexes, path: catalogPath, token: token)
+        case .failure(let reason):
+            addLog("  catalog.json: skipped — could not read existing (\(reason))")
+        }
+
+        // 失敗分を保存（成功したら記録を消す）。カタログだけ失敗した場合も、次回の実行で
+        // シャードを書き直す＝カタログも作り直されるように、書けたシャードを残しておく。
+        var stillPending = applied.failed
+        if !catalogWritten, !applied.written.isEmpty {
+            for shard in applied.written where stillPending[shard] == nil {
+                stillPending[shard] = byShard[shard] ?? [:]
+            }
+        }
+        pendingStore.save(stillPending)
+        if !stillPending.isEmpty {
+            let count = PendingMetadataStore.entryCount(stillPending)
+            addLog("  ⚠️ \(count) metadata entry(s) could not be written — will retry next run")
+            Diagnostics.mark("backup: metadata pending=\(count) shards=\(stillPending.count)")
+        }
         // メタデータを書いた＝「不在」の記録は無効。これを消さないと、初回バックアップ後も
         // 最大 TTL のあいだ起動時の読み込みが不在記録で素通りしてしまう（ADR-82）。
         BackupMetadataAbsence.invalidateAll()
+    }
+
+    /// カタログを書く。書けたか返す。
+    private func uploadCatalog(existing: Data?, touched: [String], indexes: Indexes,
+                               path: String, token: String) async -> Bool {
+        let albumNames = Array(Set(indexes.albums.values.flatMap { $0 })).sorted()
+        let peopleNames = Array(Set(indexes.people.values.flatMap { $0 })).sorted()
+        let catalog = BackupMetadataPlanning.updatedCatalog(
+            existing: existing, touchedShards: touched,
+            albums: albumNames, people: peopleNames, albumIDs: indexes.albumIDs,
+            deviceID: BackupDeviceIdentity.currentID(),
+            deviceName: BackupDeviceIdentity.currentDisplayName())
+        let result = await uploader.uploadJSONResult(catalog, to: path, token: token)
+        addLog("  catalog.json (shards=\(catalog.shards.count)): \(result.detail)")
+        return result.ok
     }
 
     // MARK: - Helpers

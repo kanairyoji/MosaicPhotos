@@ -72,13 +72,47 @@ struct DropboxBackupUploader {
     /// パスのファイルをダウンロードする（メタデータ v2 のシャード/カタログ読み込み用）。
     /// 存在しない・エラー時は nil（呼び出し側は「初回＝空から作る」として扱う）。
     func download(path: String, token: String) async -> Data? {
+        if case .found(let data) = await downloadResult(path: path, token: token) { return data }
+        return nil
+    }
+
+    /// ダウンロードの結果。**「無い」と「取れなかった」を必ず区別する**。
+    ///
+    /// ⚠️ 両方を nil にまとめると、呼び出し側が通信障害を「ファイルが無い」と読み違える。
+    /// メタデータのマージでは、それが**既存のシャードを空で上書きする**（人物名・アルバム・
+    /// 位置情報が丸ごと消える）事故になる（レビュー指摘）。
+    enum DownloadOutcome: Sendable {
+        case found(Data)
+        /// サーバーが「そのパスは無い」と答えた（新規シャード＝空から作ってよい）。
+        case notFound
+        /// 認証切れ・タイムアウト・5xx など。**中身は不明**なので上書きしてはいけない。
+        case failure(String)
+    }
+
+    func downloadResult(path: String, token: String) async -> DownloadOutcome {
         struct Arg: Encodable { let path: String }
-        guard let argStr = encodeDropboxAPIArg(Arg(path: path)) else { return nil }
+        guard let argStr = encodeDropboxAPIArg(Arg(path: path)) else {
+            return .failure("arg encode error")
+        }
         let req = Self.contentRequest(url: Self.downloadURL, argStr: argStr, body: nil,
                                       token: token, timeout: 60)
         guard let (data, resp) = try? await httpClient.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return data
+              let http = resp as? HTTPURLResponse else {
+            return .failure("network error")
+        }
+        switch http.statusCode {
+        case 200:
+            return .found(data)
+        case 409:
+            // 409 は「パス関連のエラー」。not_found のときだけ「無い」と読む
+            // （409 には conflict / restricted_content など別の意味もある）。
+            let body = String(data: data, encoding: .utf8) ?? ""
+            return body.contains("not_found") ? .notFound
+                : .failure("HTTP 409: \(BackupPlanning.dropboxErrorSummary(from: body))")
+        default:
+            let body = String(data: data, encoding: .utf8) ?? ""
+            return .failure("HTTP \(http.statusCode): \(BackupPlanning.dropboxErrorSummary(from: body))")
+        }
     }
 
     /// パスの JSON ファイルをダウンロードしてデコードする（B4）。

@@ -149,6 +149,9 @@ public final class BackupEngine {
         rootFolder + "/" + BackupDeviceIdentity.currentFolderName()
     }
 
+    /// 実行世代（キャンセル・再実行のたびに進む）。旧タスクの更新を弾くために使う。
+    @ObservationIgnored private var runGeneration = 0
+
     public func start(folder: String) {
         guard !isRunning else { return }
         log.removeAll()
@@ -157,6 +160,10 @@ public final class BackupEngine {
         //（既存のフラットな旧ファイルは移動しない＝記録はフルパス基準なのでそのまま整合）。
         let deviceRoot = Self.deviceBackupRoot(for: folder)
         addLog("Device folder: \(BackupDeviceIdentity.currentFolderName())")
+        // 実行世代を採番する。キャンセル直後に再実行しても、旧タスクの後始末や進捗更新が
+        // 新しい実行を壊さないようにするため（レビュー指摘）。
+        runGeneration &+= 1
+        let generation = runGeneration
         backupTask = Task { [weak self] in
             guard let self else { return }
             let runner = BackupRunner(
@@ -164,11 +171,15 @@ public final class BackupEngine {
                 uploader: self.uploader,
                 progressStore: self.progressStore,
                 uploadLimit: { self.effectiveUploadLimit },
-                delegate: self,
+                delegate: GenerationScopedRunnerDelegate(base: self, generation: generation),
                 peopleNamesProvider: self.peopleNamesProvider
             )
             // 完走時のみアルバム一覧を更新する（runner の戻り値で通知される）。
-            if await runner.run(folder: deviceRoot) {
+            let completed = await runner.run(folder: deviceRoot)
+            // 自分が現行世代のときだけ後始末する。旧タスクがここで nil を書くと、
+            // **新しい実行のハンドルまで消えて**キャンセルできなくなる。
+            guard self.isCurrentRun(generation) else { return }
+            if completed {
                 await self.loadAlbums()
                 // 通信できている今のうちに、未送信のオフロードマーカーを片付ける
                 // （対象の写真は端末に無く、オフロードの候補走査には現れないため）。
@@ -178,7 +189,18 @@ public final class BackupEngine {
         }
     }
 
+    /// この世代が現行の実行か（旧タスクの更新・後始末を弾く）。
+    func isCurrentRun(_ generation: Int) -> Bool { generation == runGeneration }
+
+    /// テスト用: 実行世代だけを進める（実際の通信は行わない）。
+    func beginRunGenerationForTesting() -> Int {
+        runGeneration &+= 1
+        return runGeneration
+    }
+
     public func cancel() {
+        // 世代を進めて、旧タスクからの更新・後始末を以後すべて無効にする。
+        runGeneration &+= 1
         backupTask?.cancel()
         backupTask = nil
         if isRunning {
