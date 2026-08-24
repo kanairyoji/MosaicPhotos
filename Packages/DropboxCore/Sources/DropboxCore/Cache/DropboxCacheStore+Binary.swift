@@ -64,16 +64,46 @@ extension DropboxCacheStore {
 
     func storeThumbnail(_ image: UIImage, for path: String) {
         thumbnailMemory.insertDecoded(image, forKey: path)
-        let name = DropboxCacheNaming.fileName(kind: .thumbnail, path: path)
-        let store = thumbnailStore
         let sendable = SendableUIImage(image)
-        // JPEG エンコードとディスク書込みは actor 外（並列）で行い、使用量記録だけ actor に戻す。
+        // ⚠️ 重い JPEG エンコードだけを actor 外で行い、**書き込みと記録は actor 内で
+        // トークンを照合してから**行う。エンコード中に無効化（Dropbox 側の更新・
+        // アカウント切替）が入ると、古い画像が復活してしまうため（レビュー指摘）。
+        let token = writeToken(for: path)
         Task.detached(priority: .utility) { [weak self] in
-            guard let data = sendable.image.jpegData(compressionQuality: DropboxInternalConstants.thumbnailJPEGQuality) else { return }
-            store.write(data, name: name)
-            await self?.recordStored(kind: .thumbnail, path: path, byteSize: data.count)
+            guard let data = sendable.image.jpegData(
+                compressionQuality: DropboxInternalConstants.thumbnailJPEGQuality) else { return }
+            await self?.commitBinary(kind: .thumbnail, data: data, path: path, token: token)
         }
     }
+
+    /// ディスク書き込みは **actor の外**で行い（数 MB の I/O で actor を止めない）、
+    /// その前後でトークンを照合する。
+    /// - 書く前: 既に無効化されていれば何もしない（無駄な I/O を避ける）。
+    /// - 書いた後: 書いている最中に無効化されていたら**書いたファイルを消す**
+    ///   （記録もしない）。一瞬ファイルが存在するが、必ず収束する。
+    nonisolated func commitBinary(kind: CacheUsageEntry.CacheKind, data: Data, path: String,
+                                  token: WriteToken) async {
+        guard await isWriteValid(token, for: path) else {
+            DropboxLogger.verbose("cache: dropped stale \(kind) write for \(path)")
+            return
+        }
+        let name = DropboxCacheNaming.fileName(kind: kind, path: path)
+        await store(for: kind).write(data, name: name)
+        await finalizeWrite(kind: kind, path: path, byteSize: data.count, token: token)
+    }
+
+    /// 書き込み後の確定（actor 内）。無効化されていたら書いた分を取り消す。
+    private func finalizeWrite(kind: CacheUsageEntry.CacheKind, path: String,
+                               byteSize: Int, token: WriteToken) {
+        guard isWriteValid(token, for: path) else {
+            DropboxLogger.verbose("cache: rolled back stale \(kind) write for \(path)")
+            removeBinary(kind: kind, path: path)
+            if kind == .thumbnail { thumbnailMemory.removeImage(forKey: path) }
+            return
+        }
+        recordStored(kind: kind, path: path, byteSize: byteSize)
+    }
+
 
     // MARK: - Full image cache (disk only)
 
@@ -102,11 +132,10 @@ extension DropboxCacheStore {
     /// フル画像を**元バイト列のまま**保存する。再エンコードしないため EXIF が保持される
     /// （EXIF 抽出はこのキャッシュ済みファイルを読む）。
     func storeFullImageData(_ data: Data, for path: String) {
-        let name = DropboxCacheNaming.fileName(kind: .fullImage, path: path)
-        let store = fullImageStore
+        // フル画像も同じ規則で書く（取得中に無効化された分は捨てる）。書き込みは actor 外。
+        let token = writeToken(for: path)
         Task.detached(priority: .utility) { [weak self] in
-            store.write(data, name: name)
-            await self?.recordStored(kind: .fullImage, path: path, byteSize: data.count)
+            await self?.commitBinary(kind: .fullImage, data: data, path: path, token: token)
         }
     }
 }

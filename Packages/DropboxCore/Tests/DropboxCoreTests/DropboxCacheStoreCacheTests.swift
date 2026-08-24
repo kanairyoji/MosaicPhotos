@@ -18,6 +18,54 @@ struct DropboxCacheStoreCacheTests {
         }
     }
 
+    // MARK: - 遅延書き込みと無効化の競合（レビュー指摘）
+
+    /// ⚠️ 画像の保存はエンコードとディスク I/O を actor の外で行うため、
+    /// **取得 → 保存開始 → 無効化 → 保存完了**の順になり得る。トークンを照合しないと、
+    /// 無効化したはずの古い画像と使用量記録が復活する。
+    @Test("保存の途中で無効化されたら、その書き込みは捨てられる")
+    func staleWriteAfterInvalidateIsDropped() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let path = "/stale-\(UUID().uuidString).jpg"
+        let data = makeImage().jpegData(compressionQuality: 0.8)!
+
+        // 保存開始（この時点のトークンを取る）→ 途中で無効化 → 遅れて書き込みが着地。
+        let token = await store.writeToken(for: path)
+        await store.invalidate(path: path)
+        await store.commitBinary(kind: .thumbnail, data: data, path: path, token: token)
+
+        #expect(await store.thumbnailExists(for: path) == false,
+                "無効化したのに古い画像が復活した")
+    }
+
+    /// アカウント切替（clearAll）でも同じ。前アカウントの画像が戻ってはいけない。
+    @Test("clearAll の後に着地した書き込みも捨てられる")
+    func staleWriteAfterClearAllIsDropped() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let path = "/switch-\(UUID().uuidString).jpg"
+        let data = makeImage().jpegData(compressionQuality: 0.8)!
+
+        let token = await store.writeToken(for: path)
+        await store.clearAll(accountId: "acc-old")
+        await store.commitBinary(kind: .fullImage, data: data, path: path, token: token)
+
+        #expect(await store.fullImageData(for: path) == nil,
+                "アカウント切替後に前アカウントの画像が戻った")
+    }
+
+    @Test("無効化されていなければ通常どおり保存される")
+    func validWriteIsStored() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let path = "/valid-\(UUID().uuidString).jpg"
+        let data = makeImage().jpegData(compressionQuality: 0.8)!
+
+        let token = await store.writeToken(for: path)
+        await store.commitBinary(kind: .thumbnail, data: data, path: path, token: token)
+
+        #expect(await store.thumbnailExists(for: path))
+        await store.invalidate(path: path)   // 後片付け
+    }
+
     // MARK: - Invalidation
 
     @Test("invalidate でサムネイルがメモリ・ディスクから消える")

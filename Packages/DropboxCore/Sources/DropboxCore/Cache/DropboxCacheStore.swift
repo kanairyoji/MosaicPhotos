@@ -41,6 +41,13 @@ actor DropboxCacheStore {
     var thumbnailByteLimit: Int
     var fullImageByteLimit: Int
 
+    /// キャッシュ全体の世代（`clearAll` で進む）。進行中の保存を無効にするために使う。
+    var cacheEpoch = 0
+    /// パス単位の無効化回数（`invalidate(path:)` で進む）。
+    var invalidationCounts: [String: Int] = [:]
+    /// 無効化記録の上限。超えたら記録を捨てて全体世代を進める（安全側）。
+    static let maxTrackedInvalidations = 5_000
+
     init(
         thumbnailByteLimit: Int = DropboxInternalConstants.defaultThumbnailByteLimit,
         fullImageByteLimit: Int = DropboxInternalConstants.defaultFullImageByteLimit,

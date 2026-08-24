@@ -254,7 +254,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 pendingUpdate = (items, columns, grouping, monthSectionRows)
                 return
             }
-            let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|\(items.first.map { "\($0.id)" } ?? "")|\(items.last.map { "\($0.id)" } ?? "")"
+            // ⚠️ **ID 列全体**を混ぜること。件数と両端だけでは、件数が同じまま中間が
+            // 入れ替わった（1 枚消えて 1 枚増えた・並びが変わった）変化を取りこぼす。
+            // 取りこぼすと `items` だけ差し替わり、`idToIndex` と dataSource は古いまま——
+            // **別の写真が表示され、タップ時の ID も食い違う**（レビュー指摘）。
+            // 68k 件でも数 ms。作り直しを避けるための比較なので、ここは正確さを優先する。
+            let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|h\(gridIdentitySignature(items.lazy.map(\.id)))"
             if signature != appliedSignature {
                 appliedSignature = signature
                 applySnapshot(items: items, grouping: grouping, coalesce: coalesce)

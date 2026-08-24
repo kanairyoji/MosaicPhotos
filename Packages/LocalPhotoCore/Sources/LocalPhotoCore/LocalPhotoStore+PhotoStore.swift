@@ -112,32 +112,25 @@ extension LocalPhotoStore: PhotoStore {
                 if Task.isCancelled { return }
 
                 // 3) PHImageManager: degraded → 高品質の順に yield（opportunistic は複数回呼ばれる）
-                final class RequestBox: @unchecked Sendable {
-                    var id: PHImageRequestID = PHInvalidImageRequestID
-                    var finished = false
-                    /// degraded を最初に見せた時刻（ns・0=未表示）。firstMs 計測用。
-                    var degradedShownNs: UInt64 = 0
-                }
-                let box = RequestBox()
+                let box = PHImageRequestBox()
                 // ⚠️ 小さい targetSize だと PHImageManager が一部写真で向きの狂った埋め込みサムネを返す
                 //    （縦横写真がグリッドで 90° 倒れる／フル画面＝大サイズは正立）。最低 640px で取得し、
                 //    表示・キャッシュはセルサイズへ縮小する（保存容量は不変・実測 640 で解消）。
                 let reqSize = PHAssetImageLoader.orientationSafeSize(targetSize)
                 let final: UIImage? = await withTaskCancellationHandler {
                     await withCheckedContinuation { (cont: CheckedContinuation<UIImage?, Never>) in
-                        box.id = manager.requestImage(
+                        let requestID = manager.requestImage(
                             for: asset, targetSize: reqSize,
                             contentMode: .aspectFill, options: options
                         ) { img, info in
-                            guard !box.finished else { return }
                             let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
                             if isCancelled {
-                                box.finished = true
-                                cont.resume(returning: nil)
+                                if box.markFinished() { cont.resume(returning: nil) }
                                 return
                             }
                             let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                             if isDegraded {
+                                guard !box.finished else { return }
                                 if let img {
                                     PerfTrace.count("thumb.degradedFirst")
                                     if box.degradedShownNs == 0 { box.degradedShownNs = PerfTrace.nowNs() }
@@ -145,12 +138,13 @@ extension LocalPhotoStore: PhotoStore {
                                 }
                                 return
                             }
-                            box.finished = true
-                            cont.resume(returning: img)
+                            if box.markFinished() { cont.resume(returning: img) }
                         }
+                        // 登録より先にキャンセルが来ていたら、ここで取り消す（取りこぼし防止）。
+                        if box.register(requestID) { manager.cancelImageRequest(requestID) }
                     }
                 } onCancel: {
-                    manager.cancelImageRequest(box.id)
+                    if let id = box.cancel() { manager.cancelImageRequest(id) }
                 }
 
                 if let final, !Task.isCancelled {

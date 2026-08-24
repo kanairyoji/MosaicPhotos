@@ -44,9 +44,41 @@ extension DropboxCacheStore {
     /// `applyDelta` instead, so the entry doesn't disappear from the list while
     /// its image is being re-fetched.
     func invalidate(path: String) {
+        bumpInvalidation(path: path)
         removeBinary(kind: .thumbnail, path: path)
         removeBinary(kind: .fullImage, path: path)
         thumbnailMemory.removeImage(forKey: path)
+    }
+
+    // MARK: - 書き込みトークン（無効化との競合を防ぐ）
+
+    /// 保存要求の有効性トークン。取得時点の「全体世代」と「パス単位の無効化回数」を持つ。
+    ///
+    /// ⚠️ 画像の保存はエンコードを actor 外で行うため、**取得 → 保存開始 → 無効化 → 保存完了**
+    /// の順になり得る。トークンを照合しないと、無効化したはずの古い画像と使用量記録が
+    /// **復活する**（アカウント切替後に前アカウントの画像が戻ることもある・レビュー指摘）。
+    struct WriteToken: Sendable, Equatable {
+        let epoch: Int
+        let pathInvalidations: Int
+    }
+
+    /// 保存開始時に取る。
+    func writeToken(for path: String) -> WriteToken {
+        WriteToken(epoch: cacheEpoch, pathInvalidations: invalidationCounts[path] ?? 0)
+    }
+
+    /// 保存直前・記録直前に照合する。
+    func isWriteValid(_ token: WriteToken, for path: String) -> Bool {
+        token.epoch == cacheEpoch && token.pathInvalidations == (invalidationCounts[path] ?? 0)
+    }
+
+    private func bumpInvalidation(path: String) {
+        // 記録が肥大したら全体世代を進めて捨てる（進行中の保存は安全側に倒れる＝保存を諦める）。
+        if invalidationCounts.count >= Self.maxTrackedInvalidations {
+            invalidationCounts.removeAll(keepingCapacity: true)
+            cacheEpoch &+= 1
+        }
+        invalidationCounts[path, default: 0] += 1
     }
 
     /// Wipes all cached metadata and binaries. Used on account switches and from
@@ -57,6 +89,9 @@ extension DropboxCacheStore {
     /// removes the full metadata set; `accountId` selects which `DropboxSyncState`
     /// row is removed.
     func clearAll(accountId: String) {
+        // 進行中の保存をすべて無効にする（アカウント切替で前の画像が戻らないように）。
+        cacheEpoch &+= 1
+        invalidationCounts.removeAll()
         DropboxLogger.info("clearAll() — wiping all metadata and binaries for accountId=\(accountId)")
         if let items = try? modelContext.fetch(FetchDescriptor<CachedDropboxItem>()) {
             for item in items { modelContext.delete(item) }
@@ -134,7 +169,7 @@ extension DropboxCacheStore {
         try? modelContext.save()
     }
 
-    private func removeBinary(kind: CacheUsageEntry.CacheKind, path: String) {
+    func removeBinary(kind: CacheUsageEntry.CacheKind, path: String) {
         store(for: kind).remove(name: DropboxCacheNaming.fileName(kind: kind, path: path))
         removeUsageEntry(kind: kind, path: path)
     }
