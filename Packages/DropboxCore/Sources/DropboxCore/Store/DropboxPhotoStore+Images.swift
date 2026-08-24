@@ -174,6 +174,25 @@ extension DropboxPhotoStore {
         return image
     }
 
+    // MARK: - 共有用の原本
+
+    /// 共有に渡す**原本**（フル解像度・EXIF・元のファイル名）。
+    /// 表示用の `fullImage(for:)` は約 2048px へ縮小した UIImage なので、共有には使わない
+    /// （解像度・EXIF・元の形式が失われる・レビュー指摘）。
+    public func originalData(for item: DropboxFileItem) async -> (data: Data, filename: String)? {
+        if let cached = await cache.fullImageData(for: item.path) {
+            return (cached, item.name)
+        }
+        struct Arg: Encodable { let path: String }
+        guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return nil }
+        DropboxActivityMonitor.shared.beginFullImage()
+        defer { DropboxActivityMonitor.shared.endFullImage() }
+        guard let data = try? await apiClient.contentDownload(
+            url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else { return nil }
+        await cache.storeFullImageData(data, for: item.path)   // 原バイト保存（EXIF 保持）
+        return (data, item.name)
+    }
+
     // MARK: - Album cover
 
     /// アルバムのカバー（タイトル写真）用の画像を返す。**128px サムネの拡大ではなく、フル画像から**

@@ -276,6 +276,12 @@ extension MergedPhotoStore: PhotoStore {
                             cloud: { await dropboxStore.fullImage(for: $0) })
     }
 
+    /// 共有用の原本は、それぞれのストアの実装へ委譲する。
+    public func originalForSharing(_ item: MergedPhotoItem) async -> SharedOriginal? {
+        await forward(item, local: { await localStore.originalForSharing($0) },
+                            cloud: { await dropboxStore.originalForSharing($0) })
+    }
+
     public func location(for item: MergedPhotoItem) async -> CLLocationCoordinate2D? {
         await forward(item, local: { await localStore.location(for: $0) },
                             cloud: { await dropboxStore.location(for: $0) })

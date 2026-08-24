@@ -76,10 +76,14 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     private func toggleFavorite() {
         guard let item = currentItem, item.supportsFavorite else { return }
         let newValue = !currentIsFavorite
-        favOverride[currentID] = newValue
+        // ⚠️ 書き込み中にページを送れる。楽観反映も巻き戻しも**開始時の写真**へ適用すること。
+        // 完了時の `currentID` を使うと、失敗時に**別ページのハートを勝手に書き換える**
+        // （レビュー指摘）。
+        let pageID = PageBoundResult.rollbackTarget(startedOn: item.id)
+        favOverride[pageID] = newValue
         Task {
             let ok = await store.setFavorite(item, newValue)
-            if !ok { favOverride[currentID] = !newValue }
+            if !ok { favOverride[pageID] = !newValue }
         }
     }
 
@@ -121,9 +125,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .statusBarHidden(isImmersive)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $shareItem) { item in
-            ActivityShareSheet(image: item.image) { completed in
+            ActivityShareSheet(activityItems: item.activityItems) { completed in
                 guard completed, let photoUsageEvent else { return }
-                let id = "\(currentID)"
+                // 利用記録も**共有した写真**に付ける（閉じるまでにページを送られ得るため）。
+                let id = item.id
                 Task { await photoUsageEvent(.share, id) }
             }
         }
@@ -256,15 +261,30 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .background(.bar)
     }
 
-    /// 共有の準備: フル画像をロードして共有シートを開く（キャッシュ済みなら即時）。
+    /// 共有の準備: 原本（無ければ表示用画像）を用意して共有シートを開く。
+    ///
+    /// ⚠️ 取得の待ち時間中も横ページ送りができる。**開始時のページと今のページが一致する
+    /// ときだけ**シートを出すこと。一致を見ないと、A で共有を押して B へ移動したあとに
+    /// A のシートが開き、**見ている写真と違う写真を外部へ送る**（レビュー指摘）。
     private func prepareShare() {
         guard !isPreparingShare, let item = currentItem else { return }
+        let pageID = item.id
         isPreparingShare = true
         Task {
             defer { isPreparingShare = false }
-            if let image = await store.fullImage(for: item) {
-                shareItem = ShareImageItem(image: image)
+            // 共有は原本（フル解像度・EXIF・元のファイル名）を優先する。
+            if let original = await store.originalForSharing(item) {
+                // 別ページへ移っていたら出さない（取り違え防止）。
+                guard PageBoundResult.shouldPresent(startedOn: pageID, current: currentID) else { return }
+                if let url = ShareTempFile.write(original) {
+                    shareItem = ShareImageItem(id: "\(pageID)", url: url, image: nil)
+                    return
+                }
             }
+            // 原本が取れない（クラウド未取得・非対応）ときは表示用画像で共有する。
+            guard let image = await store.fullImage(for: item),
+                  PageBoundResult.shouldPresent(startedOn: pageID, current: currentID) else { return }
+            shareItem = ShareImageItem(id: "\(pageID)", url: nil, image: image)
         }
     }
 
@@ -281,20 +301,31 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     }
 }
 
-/// 共有シートに渡す 1 画像（sheet(item:) 用の Identifiable ラッパー）。
+/// 共有シートに渡す 1 件（sheet(item:) 用の Identifiable ラッパー）。
+/// `id` は**写真の ID**（開始時のページ）を文字列化したもの。取り違えの検証と利用記録に使う。
 private struct ShareImageItem: Identifiable {
-    let id = UUID()
-    let image: UIImage
+    let id: String
+    /// 原本を書き出した一時ファイル（あればこちらを共有する）。
+    let url: URL?
+    /// 原本が取れなかったときの表示用画像。
+    let image: UIImage?
+
+    var activityItems: [Any] {
+        if let url { return [url] }
+        if let image { return [image] }
+        return []
+    }
 }
 
 /// UIActivityViewController の SwiftUI ラッパー。完了ハンドラで「実際に共有したか」を返す
 /// （キャンセルはカウントしない）。
 private struct ActivityShareSheet: UIViewControllerRepresentable {
-    let image: UIImage
+    let activityItems: [Any]
     let onFinish: (Bool) -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: activityItems,
+                                                  applicationActivities: nil)
         controller.completionWithItemsHandler = { _, completed, _, _ in onFinish(completed) }
         return controller
     }

@@ -73,6 +73,19 @@ public protocol PhotoMetadataProviding: AnyObject {
     func metadata(for item: Item) async -> PhotoExifInfo?
 }
 
+/// 共有用の**原本**取得。
+///
+/// ⚠️ ビューア表示用の `fullImage(for:)` は約 2048px へ縮小した `UIImage` を返す（表示・
+/// メモリのため）。それを共有すると、解像度・元のファイル名・EXIF・元の形式が失われる
+/// （レビュー指摘）。共有には原バイト列をそのまま渡す。
+@MainActor
+public protocol PhotoOriginalProviding: AnyObject {
+    associatedtype Item: PhotoItem
+    /// 共有に渡す原本（バイト列＋ファイル名）。取得できない・非対応なら nil
+    /// （呼び出し側は表示用画像へフォールバックする）。既定は nil。
+    func originalForSharing(_ item: Item) async -> SharedOriginal?
+}
+
 /// お気に入りの書き込み（端末写真のみ対応）。
 @MainActor
 public protocol PhotoFavoriting: AnyObject {
@@ -87,7 +100,8 @@ public protocol PhotoFavoriting: AnyObject {
 /// からローディング関心を分離し、責務を明確にするためのプロトコル群。
 @MainActor
 public protocol PhotoLoading: PhotoThumbnailing, PhotoFullImaging, PhotoLocating,
-                              PhotoMetadataProviding, PhotoFavoriting {}
+                              PhotoMetadataProviding, PhotoFavoriting,
+                              PhotoOriginalProviding {}
 
 // MARK: - Defaults
 
@@ -114,6 +128,10 @@ public extension PhotoThumbnailing {
 public extension PhotoFullImaging {
     /// 既定: フル画像の先読みは何もしない（ローカルは PHImageManager が高速なため不要）。
     func prefetchFullImage(for item: Item) {}
+}
+
+public extension PhotoOriginalProviding {
+    func originalForSharing(_ item: Item) async -> SharedOriginal? { nil }
 }
 
 public extension PhotoLocating {

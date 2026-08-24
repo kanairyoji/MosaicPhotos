@@ -205,6 +205,36 @@ extension LocalPhotoStore: PhotoStore {
         }
     }
 
+    /// 共有用の**原本**。`PHAssetResource` から元のバイト列とファイル名を取り出す。
+    ///
+    /// ⚠️ 表示用の `fullImage(for:)` は約 2048px へ縮小した UIImage（ビューアはズーム無しで
+    /// 十分・メモリ削減のため）。それを共有すると解像度・EXIF・元の形式・元のファイル名が
+    /// 失われる（レビュー指摘）。編集済みなら編集後（fullSizePhoto）を優先する。
+    /// ※ Live Photo の動画部分は含めない（静止画のみ共有する）。
+    nonisolated public func originalForSharing(_ item: LocalPhotoItem) async -> SharedOriginal? {
+        let resources = PHAssetResource.assetResources(for: item.asset)
+        // 編集済み（fullSizePhoto）→ 原本（photo）の順に選ぶ。どちらも無ければ諦める。
+        let resource = resources.first { $0.type == .fullSizePhoto }
+            ?? resources.first { $0.type == .photo }
+        guard let resource else { return nil }
+
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true   // iCloud 上の原本も取りに行く
+        var buffer = Data()
+        let ok: Bool = await withCheckedContinuation { continuation in
+            var resumed = false
+            PHAssetResourceManager.default().requestData(for: resource, options: options) { chunk in
+                buffer.append(chunk)
+            } completionHandler: { error in
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: error == nil)
+            }
+        }
+        guard ok, !buffer.isEmpty else { return nil }
+        return SharedOriginal(data: buffer, filename: resource.originalFilename)
+    }
+
     nonisolated public func fullImage(for item: LocalPhotoItem) async -> UIImage? {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
