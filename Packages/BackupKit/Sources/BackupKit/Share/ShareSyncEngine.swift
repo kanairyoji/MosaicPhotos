@@ -60,6 +60,8 @@ public final class ShareSyncEngine {
         case folderCheckFailed
         case folderRemoveFailed
         case invalidFolderName
+        /// 反映を止められず、変更操作を安全に行えなかった（再試行で解消する）。
+        case syncBusy
     }
 
     @ObservationIgnored private let tokenProvider: AccessTokenProvider
@@ -196,23 +198,41 @@ public final class ShareSyncEngine {
         let current = await store.shareItems(setID: setID)
         let obsolete = current.filter { !wanted.contains($0.refKey) }
 
+        var removed = 0
         if !obsolete.isEmpty {
             // 共有フォルダ側の実ファイルも消す（記録だけ消すと孤児ファイルが残る）。
+            // ⚠️ **消せたときだけ記録を消す**。失敗しても記録を消すと、以後その写真を
+            // 自分の持ち物として認識できず孤児が永久に残る（レビュー指摘）。
             let paths = obsolete.compactMap(\.sharedPath)
-            if !paths.isEmpty, let token = try? await tokenProvider.freshAccessToken() {
-                _ = await makeCopier().deleteBatch(paths: paths, token: token)
+            var ok = true
+            if !paths.isEmpty {
+                if let token = try? await tokenProvider.freshAccessToken() {
+                    ok = await makeCopier().deleteBatch(paths: paths, token: token)
+                    if !ok { lastError = .folderRemoveFailed }
+                } else {
+                    ok = false
+                    lastError = .notConnected
+                }
             }
-            await store.removeShareItems(setID: setID, refKeys: obsolete.map(\.refKey))
+            // まだコピーされていない分は共有側に何も無いので、失敗時もそのまま外してよい。
+            let dropped = ok ? obsolete : obsolete.filter { $0.sharedPath == nil }
+            if !dropped.isEmpty {
+                await store.removeShareItems(setID: setID, refKeys: dropped.map(\.refKey))
+            }
+            removed = dropped.count
         }
         let added = await store.addShareItems(setID: setID, refKeys: refKeys)
         if let sourceKey { await store.setShareSourceKey(setID: setID, sourceKey: sourceKey) }
-        return (added, obsolete.count)
+        return (added, removed)
     }
 
     /// 反映をバックグラウンドで開始する（進捗はハブの isSyncing / セット状態で見える）。
     private func scheduleSync() {
         Task { await syncNow() }
     }
+
+    /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
+    @ObservationIgnored private var syncTask: Task<Void, Never>?
 
     /// 既存セットへ写真を追加して反映する。追加できた件数を返す。
     @discardableResult
@@ -259,7 +279,12 @@ public final class ShareSyncEngine {
     public func deleteSet(id: UUID) async -> Bool {
         isMutating = true
         defer { isMutating = false }
-        await waitForSyncToPause()
+        // 反映を止められないまま消すと、進行中のコピーがフォルダを復活させて
+        // 「記録は消えたのにクラウドには残る」になる。止まらないなら何もしない。
+        guard await waitForSyncToPause() else {
+            lastError = .syncBusy
+            return false
+        }
         guard let token = try? await tokenProvider.freshAccessToken() else {
             lastError = .notConnected
             return false
@@ -281,38 +306,72 @@ public final class ShareSyncEngine {
             return false
         }
         await store.deleteShareSet(id: id)
+        // 墓標を残す。進行中だったコピーが後から完走してフォルダを復活させても、
+        // 次以降の反映が消し直せるようにする（クライアント側のキャンセルでは止まらない）。
+        var tombstones = ShareSettingsKeys.deletedFolderTombstones(defaults)
+        tombstones[folder] = Date()
+        ShareSettingsKeys.setDeletedFolderTombstones(tombstones, defaults)
         BackupLogger.info("Share: deleted set '\(set.folderName)'")
         await refresh()
         return true
     }
 
     /// 写真をセットから外す（コピー済みなら共有側ファイルも削除）。
-    public func removeItems(setID: UUID, refKeys: [String]) async {
+    ///
+    /// ⚠️ **共有側を消せたときだけ記録を消す**。以前は削除の成否を無視して記録を消していたため、
+    /// 失敗すると以後その写真を自分の持ち物として認識できず、共有先に孤児ファイルが
+    /// 永久に残っていた（レビュー指摘）。失敗時は記録を残して再試行できる状態に保つ。
+    @discardableResult
+    public func removeItems(setID: UUID, refKeys: [String]) async -> Bool {
         isMutating = true
         defer { isMutating = false }
-        await waitForSyncToPause()
+        guard await waitForSyncToPause() else {
+            lastError = .syncBusy
+            return false
+        }
         let store = await storeProvider()
         let items = await store.shareItems(setID: setID)
         let targets = items.filter { refKeys.contains($0.refKey) }
+        // まだコピーされていない分は共有側に何も無いので、そのまま記録を消してよい。
+        let removable = Set(targets.filter { $0.sharedPath == nil }.map(\.refKey))
         let remotePaths = targets.compactMap(\.sharedPath)
-        if !remotePaths.isEmpty, let token = try? await tokenProvider.freshAccessToken() {
-            let copier = makeCopier()
-            _ = await copier.deleteBatch(paths: remotePaths, token: token)
+        var ok = true
+        if !remotePaths.isEmpty {
+            if let token = try? await tokenProvider.freshAccessToken() {
+                ok = await makeCopier().deleteBatch(paths: remotePaths, token: token)
+                if !ok { lastError = .folderRemoveFailed }
+            } else {
+                ok = false
+                lastError = .notConnected
+            }
         }
-        await store.removeShareItems(setID: setID, refKeys: refKeys)
+        let toRemove = ok ? refKeys : refKeys.filter { removable.contains($0) }
+        if !toRemove.isEmpty { await store.removeShareItems(setID: setID, refKeys: toRemove) }
         await refresh()
         scheduleSync()   // サイドカーから外した分を反映
+        return ok
     }
 
-    /// 反映が走っていれば、区切り（次のセットの境目）まで待つ。
-    /// `isMutating` を見て反映側が自発的に止まるので、ここは短時間で抜ける。
-    /// 保険として上限を設け、待ち続けて UI を固めない。
-    private func waitForSyncToPause(timeoutMs: Int = 3000) async {
+    /// 反映を止めてから変更操作へ進む。**止まったかどうかを返す**。
+    ///
+    /// ⚠️ 以前は 3 秒待って*無条件に*先へ進んでいた。しかしコピーのポーリングは最長 4 分あり、
+    /// `sync(set:)` は途中で `isMutating` を見直さない。結果、セット削除の後に進行中のコピーが
+    /// 完走して**共有フォルダだけ復活し、ローカル記録は消えている**状態になり得た（レビュー指摘）。
+    /// → (1) 反映 Task を**キャンセル**して終了を待つ、(2) それでも止まらなければ
+    /// **変更操作を中止**する（記録とクラウドの食い違いを作るくらいなら、やらない方がよい）。
+    private func waitForSyncToPause(timeoutMs: Int = 8000) async -> Bool {
+        guard isSyncing else { return true }
+        syncTask?.cancel()
         var waited = 0
         while isSyncing, waited < timeoutMs {
             try? await Task.sleep(nanoseconds: 100_000_000)
             waited += 100
         }
+        if isSyncing {
+            BackupLogger.error("Share: sync did not stop in time — aborting the mutation")
+            return false
+        }
+        return true
     }
 
     /// 作成元の**現在の内容**にセットを合わせ直す（追加＋除外＋反映）。
@@ -361,6 +420,16 @@ public final class ShareSyncEngine {
             return
         }
         isSyncing = true
+        // 変更操作（削除・メンバー更新）が待てるよう、実体は**キャンセル可能な Task** で回す。
+        // 直接 await すると呼び出し元の Task しか持てず、`waitForSyncToPause` が止められない。
+        // ⚠️ ガードを**通った時だけ** `syncTask` を張り替える。畳まれた呼び出しで上書きすると、
+        // キャンセルが「既に終わった Task」に飛んで実行中の反映が止まらない（自テストで検出）。
+        let task = Task { await performSync() }
+        syncTask = task
+        await task.value
+    }
+
+    private func performSync() async {
         defer { isSyncing = false }
 
         guard let token = try? await tokenProvider.freshAccessToken() else {
@@ -374,9 +443,11 @@ public final class ShareSyncEngine {
         let copier = makeCopier()
         let shareRoot = ShareSettingsKeys.currentShareRoot(defaults)
 
+        await sweepDeletedFolders(copier: copier, token: token)
+
         for set in await store.allShareSets() {
             // 途中でユーザーが削除操作を始めたら、そこで止める（続きは次回の反映で拾う）。
-            if isMutating {
+            if isMutating || Task.isCancelled {
                 needsAnotherPass = true
                 break
             }
@@ -484,6 +555,27 @@ public final class ShareSyncEngine {
         guard newName != set.folderName else { return await markChecked() }
         BackupLogger.info("Share: renamed '\(set.folderName)' → '\(newName)' (not yet on Dropbox)")
         return await adopt(movedFrom: candidates[0])
+    }
+
+    /// 削除済みフォルダの後始末。**復活していたら消し直す**。
+    ///
+    /// 削除の直前まで走っていたコピージョブは、こちらがポーリングをやめてもサーバー側で
+    /// 完走する（Dropbox にジョブ取り消しの API は無い）。完走すると消したフォルダが
+    /// 戻ってくるが、記録は既に無いので誰の持ち物でもない孤児になる。猶予時間の間だけ
+    /// 覚えておいて掃除し、期限切れの墓標は捨てる（無いものを探し続けない）。
+    private func sweepDeletedFolders(copier: DropboxShareCopier, token: String) async {
+        var tombstones = ShareSettingsKeys.deletedFolderTombstones(defaults)
+        guard !tombstones.isEmpty else { return }
+        let now = Date()
+        for (path, deletedAt) in tombstones {
+            // 消し直す。既に無ければ not_found＝成功として扱われる。
+            let ok = await copier.deleteBatch(paths: [path], token: token)
+            if !ok { continue }   // 消せなかった（権限等）→ 墓標を残して次回再試行
+            if now.timeIntervalSince(deletedAt) >= ShareSettingsKeys.deletedFolderGraceSeconds {
+                tombstones.removeValue(forKey: path)
+            }
+        }
+        ShareSettingsKeys.setDeletedFolderTombstones(tombstones, defaults)
     }
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,

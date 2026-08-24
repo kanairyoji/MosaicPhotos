@@ -233,6 +233,7 @@ struct ShareProvideView: View {
         case .folderCheckFailed:   return L("Could not check the shared folder.")
         case .folderRemoveFailed:  return L("Could not remove the shared folder.")
         case .invalidFolderName:   return L("This set has an invalid folder name.")
+        case .syncBusy:            return L("Syncing is still running. Try again in a moment.")
         }
     }
 

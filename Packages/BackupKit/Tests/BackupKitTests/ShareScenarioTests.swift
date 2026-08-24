@@ -184,6 +184,122 @@ struct ShareScenarioTests {
                 "旧フォルダ配下に反映されていない: \(files)")
     }
 
+    // MARK: - 削除の失敗を成功と誤認しない（レビュー指摘）
+
+    /// ⚠️ バッチ自体が完了しても、エントリ単位で失敗する（権限不足など）。
+    /// 全体成否だけ見て成功と誤認すると、記録を消してクラウドに管理不能なフォルダが残る。
+    @Test("削除がエントリ単位で失敗したらセット記録を消さない")
+    func failedDeleteKeepsSetRecord() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA")])
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+
+        // セット削除はフォルダ 1 件の削除。これを「消せない」失敗にする。
+        await server.setFailDeletePaths([setFolder("Trip")])
+        let setID = await store.allShareSets().first!.id
+        #expect(await engine.deleteSet(id: setID) == false, "削除できていないのに成功を返した")
+        #expect(await store.allShareSets().count == 1, "リモートに残っているのに記録を消した")
+        #expect(await sharedFiles(server).count == 1)
+
+        // 権限が戻れば、同じ操作で消える（再試行できる状態が保たれている）。
+        await server.setFailDeletePaths([])
+        #expect(await engine.deleteSet(id: setID))
+        #expect(await store.allShareSets().isEmpty)
+        #expect(await sharedFiles(server).isEmpty)
+    }
+
+    /// 「元から無い」失敗は目的達成なので成功に数える（掃除が永久に終わらなくなるのを防ぐ）。
+    @Test("既に無いファイルの削除は成功として扱う")
+    func deletingMissingFileCountsAsSuccess() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA")])
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+
+        // 共有側のファイルを外部から消しておく（＝削除要求は not_found になる）。
+        let setID = await store.allShareSets().first!.id
+        await server.remove("\(setFolder("Trip"))/a.jpg")
+        #expect(await engine.removeItems(setID: setID, refKeys: ["L-a"]),
+                "既に無いだけなのに失敗扱いになった")
+        #expect(await store.shareItems(setID: setID).isEmpty, "記録が残ってしまった")
+    }
+
+    /// 単枚解除も同じ。消せなかった写真の記録を消すと、以後それを自分の持ち物として
+    /// 認識できず、共有先に孤児ファイルが永久に残る。
+    @Test("単枚解除で削除に失敗したら記録を残す（再試行できる）")
+    func failedItemDeleteKeepsRecord() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
+        await engine.syncNow()
+        let setID = await store.allShareSets().first!.id
+
+        await server.setFailDeletePaths(["\(setFolder("Trip"))/a.jpg"])
+        #expect(await engine.removeItems(setID: setID, refKeys: ["L-a"]) == false)
+        let refs = await store.shareItems(setID: setID).map(\.refKey)
+        #expect(refs.sorted() == ["L-a", "L-b"], "消せていないのに記録を落とした: \(refs)")
+        #expect(await sharedFiles(server).count == 2)
+    }
+
+    /// ⚠️ **クライアントがポーリングをやめても、サーバー側のコピージョブは止まらない**
+    /// （Dropbox にジョブ取り消しの API は無い）。削除直後にジョブが完走すると、消した
+    /// フォルダが復活し、記録は既に無いので誰も掃除できない孤児になる。
+    @Test("削除後に復活した共有フォルダは次の反映で消し直される")
+    func resurrectedFolderIsSweptOnNextSync() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA")])
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+        let setID = await store.allShareSets().first!.id
+        #expect(await engine.deleteSet(id: setID))
+        #expect(await sharedFiles(server).isEmpty)
+
+        // 遅れて完走したコピージョブがフォルダを作り直した状況を模す。
+        await server.seed(setFolder("Trip"), hash: "", isFolder: true)
+        await server.seed("\(setFolder("Trip"))/a.jpg", hash: "hA")
+
+        // 別セットがあっても無くても、反映は墓標を掃除する。
+        await engine.syncNow()
+        let files = await sharedFiles(server)
+        #expect(files.isEmpty, "復活したフォルダが残っている（誰の持ち物でもない孤児）: \(files)")
+    }
+
+    /// 反映中に削除しても、記録とクラウドが食い違わないこと。
+    /// （反映がどこまで進んでいるかに依存するため、この 1 本だけでは回帰を捕まえきれない。
+    /// 決定的な検証は上の「復活したフォルダの掃除」が担う。ここは**不変条件**
+    /// ——「記録だけ消えてクラウドに残る」状態を作らない——を押さえる。）
+    @Test("反映の実行中に削除しても、記録とクラウドが食い違わない")
+    func deleteDuringSyncStaysConsistent() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
+        // 「サーバーでは完了するのにクライアントには終わらない」ジョブ＝長引く反映を作る。
+        await server.setJobsTimeOutButComplete(true)
+        engine.maxPollAttempts = 100_000        // 実質、止めない限り終わらない
+        engine.pollIntervalNs = 1_000_000
+
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
+        let syncing = Task { await engine.syncNow() }
+        // 反映がポーリングに入るまで待つ。
+        while !engine.isSyncing { await Task.yield() }
+        // 削除自身は普通に完了させる（コピーの待ちだけが残っている状況を作る）。
+        await server.setJobsTimeOutButComplete(false)
+
+        let setID = await store.allShareSets().first!.id
+        let deleted = await engine.deleteSet(id: setID)
+        _ = await syncing.value
+
+        // 「消せた」なら記録もクラウドも空。「消せなかった」なら記録は残る。
+        // どちらでもよいが、**記録だけ消えてクラウドに残る**のは駄目。
+        let files = await sharedFiles(server)
+        let sets = await store.allShareSets()
+        #expect(deleted, "反映を止められず削除できなかった（キャンセルが効いていない）")
+        #expect(sets.isEmpty == deleted, "削除の成否と記録の有無が食い違う")
+        if sets.isEmpty {
+            #expect(files.isEmpty, "記録を消したのに共有フォルダが残っている: \(files)")
+        }
+    }
+
     // MARK: - 共有の停止（共有元から）
 
     /// 共有元（人物/グループ/アルバム）のメニューから「クラウド共有を停止」できること。

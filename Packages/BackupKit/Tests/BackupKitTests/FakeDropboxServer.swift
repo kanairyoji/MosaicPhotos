@@ -41,6 +41,8 @@ actor FakeDropboxServer: HTTPClient {
     var rateLimitEveryNthRequest = 0
     /// この接頭辞に一致するコピー先は失敗させる。
     var failCopyPaths: Set<String> = []
+    /// このパスの削除を失敗させる（no_permission 相当＝「無い」ではない本物の失敗）。
+    var failDeletePaths: Set<String> = []
 
     init(files: [String: Entry] = [:]) { self.files = files }
 
@@ -48,6 +50,9 @@ actor FakeDropboxServer: HTTPClient {
     func seed(_ path: String, hash: String, isFolder: Bool = false) {
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder, rev: "r\(files.count)")
     }
+
+    /// 外部（他端末・Dropbox の Web UI）からの削除を模す。
+    func remove(_ path: String) { files.removeValue(forKey: path.lowercased()) }
 
     /// 現在のファイル一覧（フォルダを除く・パス昇順）。
     func filePaths() -> [String] {
@@ -57,6 +62,7 @@ actor FakeDropboxServer: HTTPClient {
     func setJobsTimeOutButComplete(_ value: Bool) { jobsTimeOutButComplete = value }
     func setRateLimit(everyNth: Int) { rateLimitEveryNthRequest = everyNth }
     func setFailCopyPaths(_ paths: Set<String>) { failCopyPaths = paths }
+    func setFailDeletePaths(_ paths: Set<String>) { failDeletePaths = paths }
 
     // MARK: - HTTPClient
 
@@ -169,8 +175,13 @@ actor FakeDropboxServer: HTTPClient {
         var results: [String] = []
         for entry in parsed.entries {
             let key = entry.path.lowercased()
+            if failDeletePaths.contains(key) {
+                // 権限不足など「消せなかった」失敗。**not_found とは意味が違う**。
+                results.append(#"{".tag":"failure","failure":{".tag":"path_write","path_write":{".tag":"no_write_permission"}}}"#)
+                continue
+            }
             if files[key] == nil {
-                results.append(#"{".tag":"failure","failure":{".tag":"path_lookup/not_found/"}}"#)
+                results.append(#"{".tag":"failure","failure":{".tag":"path_lookup","path_lookup":{".tag":"not_found"}}}"#)
                 continue
             }
             // フォルダ削除は配下ごと消える（本番と同じ）。

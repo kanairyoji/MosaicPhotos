@@ -903,6 +903,16 @@
         }
       }
     },
+    "Syncing is still running. Try again in a moment.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "反映が実行中です。少し待ってからもう一度お試しください。"
+          }
+        }
+      }
+    },
     "Syncing…": {
       "localizations": {
         "ja": {

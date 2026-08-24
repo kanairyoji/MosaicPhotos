@@ -63,4 +63,27 @@ public enum ShareSettingsKeys {
         let data = (try? JSONEncoder().encode(folders)) ?? Data()
         UserDefaults.standard.set(data, forKey: familyFolders)
     }
+
+    // MARK: - 削除した共有フォルダの墓標（[パス: 削除時刻]）
+
+    /// ⚠️ **クライアントがポーリングをやめても、Dropbox 側のコピージョブは走り続ける**。
+    /// セットを削除した直後にジョブが完走すると、消したはずのフォルダが**復活**し、
+    /// 記録は消えているので誰も掃除できない孤児になる。削除したフォルダを一定時間だけ
+    /// 覚えておき、以後の反映で「まだ在るなら消し直す」ために使う。
+    public static let deletedFolders = "shareDeletedFolders"
+
+    /// 墓標を覚えておく時間。非同期ジョブの上限（約 4 分）に余裕を見た値。
+    public static let deletedFolderGraceSeconds: TimeInterval = 15 * 60
+
+    public static func deletedFolderTombstones(_ defaults: UserDefaults = .standard)
+        -> [String: Date] {
+        guard let raw = defaults.dictionary(forKey: deletedFolders) as? [String: Double]
+        else { return [:] }
+        return raw.mapValues { Date(timeIntervalSince1970: $0) }
+    }
+
+    public static func setDeletedFolderTombstones(_ value: [String: Date],
+                                                  _ defaults: UserDefaults = .standard) {
+        defaults.set(value.mapValues { $0.timeIntervalSince1970 }, forKey: deletedFolders)
+    }
 }

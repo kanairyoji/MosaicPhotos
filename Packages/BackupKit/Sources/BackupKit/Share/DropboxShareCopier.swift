@@ -117,8 +117,10 @@ struct DropboxShareCopier {
         guard let data = await sendWithRetry(req, label: "copy_batch (\(entries.count) entries)") else {
             return nil
         }
-        return await resolveBatchResult(initial: data, checkURL: Self.copyBatchCheckURL,
-                                        expectedCount: entries.count, token: token)
+        guard let result = await resolveBatchResult(initial: data, checkURL: Self.copyBatchCheckURL,
+                                                    expectedCount: entries.count, token: token)
+        else { return nil }
+        return Self.copyResult(from: result)
     }
 
     // MARK: - 一括削除
@@ -149,9 +151,21 @@ struct DropboxShareCopier {
         guard let data = await sendWithRetry(req, label: "delete_batch (\(paths.count) paths)") else {
             return false
         }
-        let result = await resolveBatchResult(initial: data, checkURL: Self.deleteBatchCheckURL,
-                                              expectedCount: paths.count, token: token)
-        return result != nil
+        guard let entries = await resolveBatchResult(initial: data,
+                                                     checkURL: Self.deleteBatchCheckURL,
+                                                     expectedCount: paths.count, token: token)
+        else { return false }
+        // ⚠️ **エントリ単位の失敗を必ず見る**。バッチ自体が完了しても、no_permission や
+        // path_write で個別に失敗し得る。全体成否だけ見ていたため「削除できていないのに
+        // 成功」となり、呼び出し側が記録を消してクラウドに管理不能なフォルダを残していた
+        // （レビュー指摘）。「元から無い」だけは目的達成として成功に数える。
+        let failed = entries.filter { !$0.isSuccess && !$0.isNotFound }
+        guard failed.isEmpty else {
+            BackupLogger.error("ShareCopier: delete_batch — \(failed.count)/\(entries.count) "
+                + "entries failed (\(failed.compactMap { $0.failure?.tag }.joined(separator: ",")))")
+            return false
+        }
+        return true
     }
 
     // MARK: - 一覧
@@ -252,7 +266,29 @@ struct DropboxShareCopier {
     private struct BatchEntry: Decodable {
         let tag: String
         let success: SuccessMeta?
-        enum CodingKeys: String, CodingKey { case tag = ".tag", success }
+        let failure: FailureInfo?
+        enum CodingKeys: String, CodingKey { case tag = ".tag", success, failure }
+
+        var isSuccess: Bool { tag == "success" }
+
+        /// 「元から無い」失敗か。削除では成功と同じ意味になる（消したい物が無い＝目的達成）。
+        /// Dropbox の DeleteError は `{".tag":"path_lookup","path_lookup":{".tag":"not_found"}}`
+        /// の入れ子。表記ゆれに耐えるよう、どちらの階層でも not_found を拾う。
+        var isNotFound: Bool {
+            (failure?.tag ?? "").contains("not_found")
+                || (failure?.path_lookup?.tag ?? "").contains("not_found")
+        }
+
+        struct FailureInfo: Decodable {
+            let tag: String
+            let path_lookup: Nested?
+            enum CodingKeys: String, CodingKey { case tag = ".tag", path_lookup }
+            struct Nested: Decodable {
+                let tag: String
+                enum CodingKeys: String, CodingKey { case tag = ".tag" }
+            }
+        }
+
         struct SuccessMeta: Decodable {
             let path_lower: String?
             let content_hash: String?
@@ -263,7 +299,7 @@ struct DropboxShareCopier {
     }
 
     private func resolveBatchResult(initial: Data, checkURL: String,
-                                    expectedCount: Int, token: String) async -> CopyResult? {
+                                    expectedCount: Int, token: String) async -> [BatchEntry]? {
         guard var launch = try? JSONDecoder().decode(BatchLaunch.self, from: initial) else {
             return nil
         }
@@ -277,6 +313,11 @@ struct DropboxShareCopier {
             }
             knownJobID = jobID
             attempts += 1
+            // 削除などの変更操作が待っているときは、ここで速やかに降りる（ADR-112 追記6）。
+            if Task.isCancelled {
+                BackupLogger.info("ShareCopier: batch job polling cancelled")
+                return nil
+            }
             try? await Task.sleep(nanoseconds: pollIntervalNs)
             struct CheckBody: Encodable { let async_job_id: String }
             var req = Self.rpcRequest(url: checkURL, token: token)
@@ -295,8 +336,13 @@ struct DropboxShareCopier {
             }
             return nil
         }
-        return CopyResult(entries: entries.map { entry in
-            guard entry.tag == "success", let meta = entry.success else { return nil }
+        return entries
+    }
+
+    /// バッチ結果 → コピー結果（失敗エントリは nil）。
+    private static func copyResult(from entries: [BatchEntry]) -> CopyResult {
+        CopyResult(entries: entries.map { entry in
+            guard entry.isSuccess, let meta = entry.success else { return nil }
             let pathLower = meta.path_lower ?? meta.metadata?.path_lower
             let hash = meta.content_hash ?? meta.metadata?.content_hash
             guard let pathLower else { return nil }
