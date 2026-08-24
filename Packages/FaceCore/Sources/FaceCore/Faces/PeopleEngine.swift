@@ -264,6 +264,14 @@ public final class PeopleEngine {
     /// 類似度スケール依存の定数一式（ADR-70・provider＝同梱モデルが宣言）。
     var tuning: FaceTuning { faceProvider?.tuning ?? .facenet }
 
+    /// 顔の**全消去**が起きたときに呼ばれる（clusterID は 0 から振り直されるため）。
+    ///
+    /// ⚠️ `clusterID` は永続 ID ではない。全消去のあと再スキャンすると番号が再利用され、
+    /// **別コンテナに残っている人物参照（クラウド共有の `sourceKey` 等）が別人を指す**。
+    /// 共有では「次の反映で別人の写真を家族フォルダへ追加する」事故になる（レビュー指摘）。
+    /// アプリ（Composition Root）がここで参照を無効化する。
+    @ObservationIgnored public var onPersonIdentitiesInvalidated: (@MainActor () async -> Void)?
+
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
     /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
     private func migrateScanVersionIfNeeded() async {
@@ -275,6 +283,8 @@ public final class PeopleEngine {
             if !snapshot.isEmpty { saveCarryover(NameCarryover(savedAt: Date(), entries:
                 snapshot.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) })) }
             await store.reset()
+            // clusterID が振り直される＝外部が持つ人物参照は当てにならない。
+            await onPersonIdentitiesInvalidated?()
             Diagnostics.mark("faces: scan pipeline v\(stored == 0 ? 1 : stored)→v\(current) "
                              + "— full rescan (carrying \(snapshot.count) names)")
             await loadPeople()
@@ -498,6 +508,8 @@ public final class PeopleEngine {
         } else {
             await store.reset()
         }
+        // clusterID は 0 から振り直される。人物を指す外部参照を無効化させる。
+        await onPersonIdentitiesInvalidated?()
         await loadPeople()
         Diagnostics.mark("faces: reset(corrections=\(includingCorrections)) — rescanning \(lastCandidates.count) candidates")
         if !lastCandidates.isEmpty {

@@ -28,10 +28,18 @@ final class DetectedFace {
     var hasSmile: Bool?
     /// 撮影日（時期グループ分割用・ADR-61）。子供は撮影日≒年齢で成長段階の代理。未取得は nil。
     var captureDate: Date?
+    /// この顔が**クラスタ重心（sum/count）に寄与しているか**。
+    ///
+    /// ⚠️ 品質フロア未満の顔は「membership だけ」割り当てる（重心を汚さない・ADR-66）。
+    /// 付け替え時にその顔まで `removing` で減算すると、寄与していない分を引くことになり
+    /// **重心が壊れる**。count==1 のクラスタでは「最後の 1 顔」と誤認してクラスタごと消え、
+    /// 残った顔が存在しないクラスタ ID を指す（レビュー指摘）。
+    /// nil＝この列より前に作られた行（品質フロアで推定する）。
+    var contributesToCentroid: Bool?
 
     init(faceID: String, refKey: String, bx: Double, by: Double, bw: Double, bh: Double,
          embedding: Data, quality: Double, clusterID: Int, hasSmile: Bool? = nil,
-         captureDate: Date? = nil) {
+         captureDate: Date? = nil, contributesToCentroid: Bool? = nil) {
         self.faceID = faceID
         self.refKey = refKey
         self.bx = bx; self.by = by; self.bw = bw; self.bh = bh
@@ -40,6 +48,7 @@ final class DetectedFace {
         self.clusterID = clusterID
         self.hasSmile = hasSmile
         self.captureDate = captureDate
+        self.contributesToCentroid = contributesToCentroid
     }
 }
 

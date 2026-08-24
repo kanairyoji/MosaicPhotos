@@ -9,7 +9,7 @@ import SwiftData
 /// `@Model` は actor 外へ漏らさず、必ず Sendable 値（`EnrichedPhoto` / `AutoAlbumInfo`）に変換して返す。
 @ModelActor
 actor AutoAlbumStore {
-    private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "AutoAlbum")
+    static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "AutoAlbum")
 
     /// 名前付き設定でコンテナを作る（他コンテナとの衝突回避・"AutoAlbumV9" は破棄採番＝
     /// OCR/固定語彙タグ列を撤去し CLIP 埋め込み中心へ移行したスキーマ変更に伴う再構築）。失敗時はインメモリ。

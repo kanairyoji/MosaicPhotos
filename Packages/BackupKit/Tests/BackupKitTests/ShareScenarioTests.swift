@@ -184,6 +184,47 @@ struct ShareScenarioTests {
                 "旧フォルダ配下に反映されていない: \(files)")
     }
 
+    // MARK: - 人物 ID の振り直し（レビュー指摘）
+
+    /// ⚠️ `person-<clusterID>` の clusterID は**永続 ID ではない**。顔を全消去して再スキャンすると
+    /// 0 から振り直されるため、別コンテナに残った共有セットの参照が**別人**を指し得る。
+    /// そのまま反映すると、別人の写真を家族フォルダへ追加してしまう。
+    @Test("顔の全消去後は人物由来の作成元キーを外す（別人の写真を共有しない）")
+    func personSourcesAreDetachedWhenClusterIDsReset() async {
+        let (engine, store, _) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
+        _ = await engine.createSet(name: "太郎", refKeys: ["L-a"],
+                                   sourceKey: ShareSourceKey.person(3).encoded)
+        _ = await engine.createSet(name: "家族", refKeys: ["L-a"],
+                                   sourceKey: ShareSourceKey.group(UUID()).encoded)
+
+        let detached = await engine.detachPersonSources()
+
+        #expect(detached == 1, "人物セットの参照を外していない")
+        let sets = await store.allShareSets()
+        let person = sets.first { $0.name == "太郎" }
+        let group = sets.first { $0.name == "家族" }
+        #expect(person?.sourceKey == nil, "clusterID が再利用されると別人を指す")
+        #expect(person != nil, "セット自体は残す（共有済みの写真はそのまま）")
+        #expect(group?.sourceKey != nil, "グループ（UUID・永続）まで外している")
+    }
+
+    /// 外した後でも、同じ名前で共有し直せば同じセットに再び結び付く（写真は二重にならない）。
+    @Test("参照を外した後、同じ名前の共有で再び結び付く")
+    func detachedSetRelinksByName() async {
+        let (engine, store, _) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
+        _ = await engine.createSet(name: "太郎", refKeys: ["L-a"],
+                                   sourceKey: ShareSourceKey.person(3).encoded)
+        _ = await engine.detachPersonSources()
+
+        // 再スキャン後、同じ人物（番号は違う）を共有し直す。
+        _ = await engine.createSet(name: "太郎", refKeys: ["L-a"],
+                                   sourceKey: ShareSourceKey.person(11).encoded)
+
+        let sets = await store.allShareSets()
+        #expect(sets.count == 1, "セットが二重にできた（同じ写真がもう一組コピーされる）")
+        #expect(sets.first?.sourceKey == ShareSourceKey.person(11).encoded)
+    }
+
     // MARK: - 削除の失敗を成功と誤認しない（レビュー指摘）
 
     /// ⚠️ バッチ自体が完了しても、エントリ単位で失敗する（権限不足など）。

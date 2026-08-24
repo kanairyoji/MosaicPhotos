@@ -57,23 +57,29 @@ extension AutoAlbumEngine {
     public func importSharedAnalysis(
         tags tagBatch: [(refKey: String, info: PhotoSenseInfo)],
         embeddings embeddingBatch: [(refKey: String, vectorHalf: Data)]
-    ) async -> (tags: Int, embeddings: Int) {
+    ) async -> (tags: Int, embeddings: Int, saved: Bool) {
+        var saved = true
         var tagsAdded = 0
         if !tagBatch.isEmpty {
             let existing = await tagStore.tags(forRefKeys: tagBatch.map(\.refKey))
             let fresh = tagBatch.filter { existing[$0.refKey] == nil }
             if !fresh.isEmpty {
-                await tagStore.recordTags(fresh)
-                tagsAdded = fresh.count
+                if await tagStore.recordTags(fresh) {
+                    tagsAdded = fresh.count
+                } else {
+                    saved = false
+                }
             }
         }
         var embeddingsAdded = 0
         if !embeddingBatch.isEmpty {
-            embeddingsAdded = await store.upsertImportedEmbeddings(embeddingBatch)
+            let result = await store.upsertImportedEmbeddings(embeddingBatch)
+            embeddingsAdded = result.added
+            if !result.saved { saved = false }
         }
         if tagsAdded > 0 || embeddingsAdded > 0 {
             Self.log.info("share import: +\(tagsAdded) tags, +\(embeddingsAdded) embeddings")
         }
-        return (tagsAdded, embeddingsAdded)
+        return (tagsAdded, embeddingsAdded, saved)
     }
 }

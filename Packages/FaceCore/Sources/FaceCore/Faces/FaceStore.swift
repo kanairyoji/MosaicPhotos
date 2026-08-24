@@ -42,6 +42,12 @@ actor FaceStore {
     /// faceCaptureQuality スケール＝**顔モデル非依存**なのでプロファイル外。
     static let qualityFloor: Float = 0.40
 
+    /// この顔が重心（sum/count）に寄与しているか。
+    /// 列が無い旧行（nil）は品質フロアで推定する——フロア未満は membership だけだった。
+    static func contributesToCentroid(_ face: DetectedFace) -> Bool {
+        face.contributesToCentroid ?? (Float(face.quality) >= qualityFloor)
+    }
+
     /// スケール非依存の構造定数（プロファイル共通）。
     static let rivalAwareSizeMargin = true
     static let rivalAwareSizeMarginMaxPeople = 10
@@ -197,11 +203,21 @@ actor FaceStore {
 
     /// 複数写真分の検出結果をまとめて記録する（T3: save をバッチ 1 回に）。
     /// 従来は写真ごとに save しており、13k 枚のスキャンで 13k 回の SQLite save が発生していた。
-    func recordScans(_ batch: [(refKey: String, faces: [DetectedFaceSignal])]) {
+    /// - Returns: **永続化できたか**。取り込み側は成功したときだけ「取り込み済み」を記録する。
+    @discardableResult
+    func recordScans(_ batch: [(refKey: String, faces: [DetectedFaceSignal])]) -> Bool {
         for entry in batch {
             recordScan(refKey: entry.refKey, faces: entry.faces, deferSave: true)
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+            return true
+        } catch {
+            Self.log.error("recordScans: save failed — \(error)")
+            modelContext.rollback()
+            clusteringCache = nil   // 途中まで進んだ状態を捨てる
+            return false
+        }
     }
 
     /// 1 写真分の検出結果を記録する（顔行＋マーカー）。各顔を既存クラスタへ逐次割り当てる。
@@ -227,11 +243,15 @@ actor FaceStore {
                 var cid = clustering.assign(faceID: faceID, embedding: vec,
                                             quality: face.quality, negatives: negatives,
                                             excludedClusterIDs: usedClusters)
+                // 重心に寄与したか（＝本割り当てで入ったか）を**行に残す**。付け替え時に
+                // 「引いてよい顔か」を後から確実に判定するため（レビュー指摘）。
+                var contributes = cid >= 0
                 // 第2パス（ADR-66・recall 回復）: フロア未満で未割当なら、重心を汚さず最寄り人物へ
                 // membership だけ割り当てる（クラスタ形成前なら未割当のまま＝夜間 rebuild が拾う）。
                 if cid < 0 && face.quality < Self.qualityFloor {
                     cid = clustering.assignMembershipOnly(faceID: faceID, embedding: vec,
                                                           excludedClusterIDs: usedClusters)
+                    contributes = false
                 }
                 if cid >= 0 { usedClusters.insert(cid) }
                 modelContext.insert(DetectedFace(
@@ -239,7 +259,8 @@ actor FaceStore {
                     bx: face.boundingBox.origin.x, by: face.boundingBox.origin.y,
                     bw: face.boundingBox.size.width, bh: face.boundingBox.size.height,
                     embedding: face.embedding, quality: Double(face.quality), clusterID: cid,
-                    hasSmile: face.hasSmile, captureDate: face.captureDate))
+                    hasSmile: face.hasSmile, captureDate: face.captureDate,
+                    contributesToCentroid: contributes))
             }
             persist(clustering)
             clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）

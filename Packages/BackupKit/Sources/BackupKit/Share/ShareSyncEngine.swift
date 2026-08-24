@@ -267,6 +267,29 @@ public final class ShareSyncEngine {
         }?.id
     }
 
+    /// **人物由来**の共有セットから作成元キーを外す。
+    ///
+    /// ⚠️ `person-<clusterID>` の clusterID は顔の全消去で振り直される（永続 ID ではない）。
+    /// 参照を残したままだと、同じ番号が**別人**に割り当たったとき、次の反映でその人の写真を
+    /// 家族フォルダへ追加してしまう（レビュー指摘）。番号が当てにならなくなった時点で外す。
+    /// セットと共有済みの写真はそのまま残る（同じ名前で共有し直せば再び結び付く）。
+    /// - Returns: 外したセット数。
+    @discardableResult
+    public func detachPersonSources() async -> Int {
+        let store = await storeProvider()
+        var detached = 0
+        for set in await store.allShareSets() {
+            guard let key = set.sourceKey, ShareSourceKey(key)?.kind == .person else { continue }
+            await store.clearShareSourceKey(setID: set.id)
+            detached += 1
+        }
+        if detached > 0 {
+            BackupLogger.info("Share: detached \(detached) person set(s) — cluster IDs were reset")
+            await refresh()
+        }
+        return detached
+    }
+
     /// クラウド共有を停止する（＝共有フォルダごと削除する）。`deleteSet` の別名で、
     /// 呼び出し側の意図（設定画面の「セット削除」ではなく、共有元からの「停止」）を残す。
     /// 正本（端末写真・バックアップ）には触れない。

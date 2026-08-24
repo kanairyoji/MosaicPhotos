@@ -118,6 +118,10 @@ extension FaceStore {
                 : (newAssignment[f.faceID] ?? FaceClustering.unassigned)
             if f.clusterID != newID { moved += 1 }
             f.clusterID = newID
+            // 重心に寄与したかを更新する。第2パスで入れた顔（品質フロア未満）は
+            // membership だけなので false（付け替え時に引いてはいけない）。
+            f.contributesToCentroid = newID >= 0
+                && (confirmedFaceIDs.contains(f.faceID) || Float(f.quality) >= Self.qualityFloor)
         }
         for c in existing where !seedIDs.contains(c.clusterID) {
             modelContext.delete(c)

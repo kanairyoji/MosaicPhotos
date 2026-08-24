@@ -24,7 +24,9 @@ extension AutoAlbumStore {
 
     /// 取り込み: 埋め込みが無い refKey にだけ登録する。登録できた件数を返す。
     /// enrichment 行が既にあれば sceneTagged を立て、夜間タガーの対象から外す。
-    func upsertImportedEmbeddings(_ batch: [(refKey: String, vectorHalf: Data)]) -> Int {
+    /// - Returns: 追加件数と**永続化できたか**（保存失敗を握り潰すと、取り込み済みとして
+    ///   記録された後に中身が無い＝二度と取りに行かない状態になる・レビュー指摘）。
+    func upsertImportedEmbeddings(_ batch: [(refKey: String, vectorHalf: Data)]) -> (added: Int, saved: Bool) {
         var added = 0
         for entry in batch {
             let key = entry.refKey
@@ -39,8 +41,15 @@ extension AutoAlbumStore {
                 enrichment.sceneTagged = true
             }
         }
-        if added > 0 { try? modelContext.save() }
-        return added
+        guard added > 0 else { return (0, true) }
+        do {
+            try modelContext.save()
+            return (added, true)
+        } catch {
+            Self.log.error("upsertImportedEmbeddings: save failed — \(error)")
+            modelContext.rollback()
+            return (0, false)
+        }
     }
 
     /// 夜間タガーの採用パス: 未埋め込み扱いの refKey のうち、取り込み済み埋め込みが既に

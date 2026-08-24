@@ -37,10 +37,17 @@ extension FaceStore {
             face.confirmedAt = Date()
         }
 
-        removeFromCluster(clusterID: oldCID, vec: vec, quality: quality, faceID: faceID)
+        // 寄与していた顔だけ重心から引く（membership だけの顔を引くと重心が壊れる）。
+        let contributed = FaceStore.contributesToCentroid(face)
+        removeFromCluster(clusterID: oldCID, vec: vec, quality: quality, faceID: faceID,
+                          contributes: contributed)
         let targetCID = toClusterID ?? nextClusterID()
-        addToCluster(clusterID: targetCID, vec: vec, quality: quality, faceID: faceID)
+        // ユーザーが選んだ付け替え先には、寄与できる品質のときだけ重心を更新して入れる。
+        let contributesNow = quality >= FaceStore.qualityFloor
+        addToCluster(clusterID: targetCID, vec: vec, quality: quality, faceID: faceID,
+                     contributes: contributesNow)
         face.clusterID = targetCID
+        face.contributesToCentroid = contributesNow
         try? modelContext.save()
         clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次回に再構築）
     }
@@ -100,8 +107,20 @@ extension FaceStore {
         (allClusters().map(\.clusterID).max() ?? -1) + 1
     }
 
-    func removeFromCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String) {
+    /// クラスタからこの顔を外す。
+    ///
+    /// ⚠️ `contributes` が false の顔（品質フロア未満＝membership だけの割り当て・ADR-66）は
+    /// **sum/count から引かない**。寄与していない分を引くと重心が壊れ、count==1 の
+    /// クラスタでは「最後の 1 顔」と誤認してクラスタごと消える（残った顔が存在しない
+    /// クラスタ ID を指す・レビュー指摘）。
+    func removeFromCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String,
+                           contributes: Bool = true) {
         guard let c = cluster(clusterID) else { return }
+        guard contributes else {
+            // membership だけの顔。重心は触らず、代表顔の付け替えだけ面倒を見る。
+            if c.coverFaceID == faceID { c.coverFaceID = nil }
+            return
+        }
         guard let sum = ClipMath.decodeHalf(c.sum),
               let updated = FaceClustering.removing(vec, fromSum: sum, count: c.count, quality: quality) else {
             // 最後の 1 顔（または sum 破損）＝クラスタごと削除。
@@ -116,7 +135,15 @@ extension FaceStore {
         }
     }
 
-    func addToCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String) {
+    /// クラスタへこの顔を入れる。
+    /// `contributes` が false なら membership だけ（重心は変えない・ADR-66 と同じ規則）。
+    func addToCluster(clusterID: Int, vec: [Float], quality: Float, faceID: String,
+                      contributes: Bool = true) {
+        guard contributes else {
+            // 品質フロア未満の顔は重心を汚さない。クラスタが無ければ作らない
+            //（membership だけの顔から新しい人物は作れない）。
+            return
+        }
         if let c = cluster(clusterID) {
             if let sum = ClipMath.decodeHalf(c.sum) {
                 let updated = FaceClustering.adding(vec, toSum: sum, count: c.count, quality: quality)
@@ -169,10 +196,14 @@ extension FaceStore {
             recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
                              wrongEmbedding: ClipMath.encodeHalf(srcSum), similarity: sim,
                              confidence: .high)
+            let contributed = FaceStore.contributesToCentroid(f)
             removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
-                              faceID: f.faceID)
-            addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID)
+                              faceID: f.faceID, contributes: contributed)
+            let contributesNow = Float(f.quality) >= FaceStore.qualityFloor
+            addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID,
+                         contributes: contributesNow)
             f.clusterID = newID
+            f.contributesToCentroid = contributesNow
         }
         try? modelContext.save()
         clusteringCache = nil
@@ -227,9 +258,11 @@ extension FaceStore {
                     // ⚠️ 重心からも寄与を除く。外すだけだと sum/count に抜いた顔が残り、
                     // 夜間の再クラスタまで重心が汚れたままになる（reassignFace と同じ規則）。
                     removeFromCluster(clusterID: f.clusterID, vec: vec,
-                                      quality: Float(f.quality), faceID: f.faceID)
+                                      quality: Float(f.quality), faceID: f.faceID,
+                                      contributes: FaceStore.contributesToCentroid(f))
                 }
                 f.clusterID = FaceClustering.unassigned
+                f.contributesToCentroid = false
                 repaired += 1
             }
         }

@@ -177,11 +177,19 @@ final class SharedAnalysisImporter {
         for prepared in prepared {
             let counts = await autoAlbumEngine.importSharedAnalysis(
                 tags: prepared.tags, embeddings: prepared.embeddings)
-            let importedFaces = await peopleEngine.importFaceScans(prepared.faces)
+            let faces = await peopleEngine.importFaceScans(prepared.faces)
             Diagnostics.mark("share import: \(prepared.sidecar.setFolderPathLower) — "
-                + "tags \(counts.tags), embeddings \(counts.embeddings), faces \(importedFaces) photos")
-            if prepared.fullyMatched {
+                + "tags \(counts.tags), embeddings \(counts.embeddings), faces \(faces.photos) photos")
+            // ⚠️ 「取り込み済み」を記録するのは、**全部コミットできたとき**だけ。
+            // 保存に失敗した回に記録すると、同じサイドカーは以後ダウンロードされず、
+            // 欠けた解析結果を再取得できない（レビュー指摘）。
+            // 未同期の写真が残っている場合（fullyMatched=false）も同様に記録しない。
+            let committed = counts.saved && faces.saved
+            if prepared.fullyMatched && committed {
                 ShareSidecarFetch.markImported(prepared.sidecar)
+            } else if !committed {
+                Diagnostics.mark("share import: \(prepared.sidecar.setFolderPathLower) — "
+                    + "not marked imported (persistence failed); will retry")
             }
         }
     }

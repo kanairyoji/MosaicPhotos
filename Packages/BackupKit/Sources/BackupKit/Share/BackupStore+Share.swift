@@ -121,6 +121,15 @@ extension BackupStore {
         try? modelContext.save()
     }
 
+    /// 作成元キーを外す（人物 ID が振り直されたときなど、参照が当てにならなくなった場合）。
+    public func clearShareSourceKey(setID: UUID) {
+        let id = setID
+        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
+            predicate: #Predicate { $0.id == id })).first else { return }
+        set.sourceKey = nil
+        try? modelContext.save()
+    }
+
     public func setShareSidecarChecksum(setID: UUID, checksum: String?) {
         let id = setID
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(

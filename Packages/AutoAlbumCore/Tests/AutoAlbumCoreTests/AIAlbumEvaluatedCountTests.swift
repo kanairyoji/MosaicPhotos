@@ -82,3 +82,43 @@ struct AIAlbumEvaluatedCountTests {
         #expect(after?.evaluatedEmbedCount == 101, "採点したのに評価済み件数が進んでいない")
     }
 }
+
+// MARK: - 共有解析の取り込み（レビュー指摘）
+
+/// ⚠️ 「取り込み済み（rev）」を記録すると、同じサイドカーは以後ダウンロードされない。
+/// 保存に失敗した回に記録すると、欠けた解析結果を**二度と取り直せない**。
+@Suite("Shared analysis import — persistence")
+@MainActor
+struct SharedAnalysisImportTests {
+
+    private func vectorHalf(_ v: [Float]) -> Data { ClipMath.encodeHalf(v) }
+
+    @Test("保存できたら saved=true（呼び出し側が取り込み済みを記録してよい）")
+    func reportsSuccess() async {
+        let store = AutoAlbumStore(isStoredInMemoryOnly: true)
+        let result = await store.upsertImportedEmbeddings([
+            (refKey: "C-/x/a.jpg", vectorHalf: vectorHalf([1, 0, 0]))])
+        #expect(result.added == 1)
+        #expect(result.saved, "保存できたのに失敗として報告している")
+    }
+
+    @Test("重複（既に取り込み済み）は追加 0・保存成功として扱う")
+    func duplicateIsSuccessWithZeroAdded() async {
+        let store = AutoAlbumStore(isStoredInMemoryOnly: true)
+        let batch = [(refKey: "C-/x/a.jpg", vectorHalf: vectorHalf([1, 0, 0]))]
+        _ = await store.upsertImportedEmbeddings(batch)
+
+        let again = await store.upsertImportedEmbeddings(batch)
+        #expect(again.added == 0)
+        #expect(again.saved, "重複を失敗扱いにすると、取り込み済みを永久に記録できない")
+    }
+
+    @Test("タグの取り込みも保存の成否を返す")
+    func tagStoreReportsSuccess() async {
+        let store = TagStore(isStoredInMemoryOnly: true)
+        let saved = await store.recordTags([
+            (refKey: "C-/x/a.jpg", info: PhotoSenseInfo(tags: ["sea"], ocrText: nil,
+                                                        humanCount: 0, aesthetic: nil))])
+        #expect(saved)
+    }
+}

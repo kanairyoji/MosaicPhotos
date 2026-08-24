@@ -297,3 +297,59 @@ struct FaceStoreCloudResetTests {
         #expect(total == 7, "重心・件数が二重化している: \(total)")
     }
 }
+
+// MARK: - 低品質顔の付け替え（レビュー指摘）
+
+/// ⚠️ 品質フロア未満の顔は「membership だけ」割り当てられ、重心（sum/count）には寄与しない
+/// （ADR-66）。付け替え時にその顔まで減算すると重心が壊れ、count==1 のクラスタでは
+/// 「最後の 1 顔」と誤認して**クラスタごと消える**（残った顔が存在しない ID を指す）。
+@Suite("FaceStore low-quality reassign")
+struct FaceStoreLowQualityReassignTests {
+
+    private func signal(_ v: [Float], quality: Float) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(v), quality: quality)
+    }
+
+    /// 高品質 1 枚（＝count 1）＋ 低品質 1 枚（membership だけ）のクラスタを作る。
+    private func makeStore() async -> FaceStore {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await store.recordScan(refKey: "L-a", faces: [signal([1, 0, 0], quality: 0.9)])
+        await store.recordScan(refKey: "L-b", faces: [signal([1, 0.02, 0], quality: 0.2)])
+        return store
+    }
+
+    @Test("低品質顔は重心に寄与しない（count は高品質分だけ）")
+    func lowQualityFaceDoesNotContribute() async {
+        let store = await makeStore()
+        let counts = await store.clusterCountsForTesting()
+        #expect(counts.values.reduce(0, +) == 1, "membership だけの顔が count に入っている")
+    }
+
+    @Test("低品質顔を外してもクラスタは消えない")
+    func removingLowQualityFaceKeepsCluster() async {
+        let store = await makeStore()
+        let before = await store.clusterCountsForTesting()
+        #expect(before.count == 1)
+
+        // 低品質顔（L-b#0）を別人へ付け替える。
+        _ = await store.reassignFace(faceID: "L-b#0", toClusterID: nil)
+
+        let after = await store.clusterCountsForTesting()
+        #expect(after[before.first!.key] != nil,
+                "寄与していない顔を外しただけでクラスタが消えた（残った顔が迷子になる）")
+        #expect(after[before.first!.key] == 1, "寄与していない顔の分まで count を減らした")
+    }
+
+    @Test("高品質顔の付け替えでは従来どおり重心から引く")
+    func removingContributingFaceUpdatesCentroid() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await store.recordScan(refKey: "L-a", faces: [signal([1, 0, 0], quality: 0.9)])
+        await store.recordScan(refKey: "L-b", faces: [signal([1, 0.01, 0], quality: 0.9)])
+        let cid = await store.clusterCountsForTesting().first!.key
+        #expect(await store.clusterCountsForTesting()[cid] == 2)
+
+        _ = await store.reassignFace(faceID: "L-b#0", toClusterID: nil)
+        #expect(await store.clusterCountsForTesting()[cid] == 1, "寄与分を引いていない")
+    }
+}

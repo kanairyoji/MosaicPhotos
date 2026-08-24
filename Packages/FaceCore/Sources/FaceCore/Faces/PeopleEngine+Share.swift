@@ -11,15 +11,18 @@ extension PeopleEngine {
 
     /// 家族のサイドカー由来の顔シグナルを取り込む。**未スキャンの写真だけ**記録し
     /// （スキャン済みは受信側の自前解析が優先・`recordScan` のマーカーでも二重防止）、
-    /// 逐次クラスタリングで既存の人物へ割り当てる。取り込んだ写真数を返す。
+    /// 逐次クラスタリングで既存の人物へ割り当てる。
+    /// - Returns: 取り込んだ写真数と**永続化できたか**。呼び出し側は保存できたときだけ
+    ///   サイドカーを「取り込み済み」として記録する（レビュー指摘）。
     @discardableResult
-    public func importFaceScans(_ batch: [(refKey: String, faces: [DetectedFaceSignal])]) async -> Int {
-        guard !batch.isEmpty else { return 0 }
+    public func importFaceScans(_ batch: [(refKey: String, faces: [DetectedFaceSignal])]) async
+        -> (photos: Int, saved: Bool) {
+        guard !batch.isEmpty else { return (0, true) }
         let unscanned = Set(await store.unscannedRefKeys(from: batch.map(\.refKey)))
         let fresh = batch.filter { unscanned.contains($0.refKey) }
-        guard !fresh.isEmpty else { return 0 }
-        await store.recordScans(fresh)
+        guard !fresh.isEmpty else { return (0, true) }
+        let saved = await store.recordScans(fresh)
         setNeedsPeopleReload()
-        return fresh.count
+        return (saved ? fresh.count : 0, saved)
     }
 }
