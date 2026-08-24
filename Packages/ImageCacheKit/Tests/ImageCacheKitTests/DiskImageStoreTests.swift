@@ -125,3 +125,35 @@ struct DiskImageStoreTests {
         #expect(remaining == ["f3.bin", "f4.bin"])
     }
 }
+
+/// ⚠️ 書き込み失敗を握り潰して使用量へ加算すると、実ファイルが無いのに使用量だけ増える。
+/// その架空の値を基準に LRU が**正常なキャッシュを削り続け**、管理値が回復しない（レビュー指摘）。
+@Suite("DiskImageStore write result")
+struct DiskImageStoreWriteResultTests {
+
+    @Test("書けたら true を返す")
+    func reportsSuccess() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("diskwrite-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = DiskImageStore(directory: dir)
+
+        #expect(store.write(Data("x".utf8), name: "a.jpg"))
+        #expect(store.fileExists(forName: "a.jpg"))
+        #expect(store.fileSize(forName: "a.jpg") == 1)
+    }
+
+    /// 書けない場所（既存ファイルの配下をディレクトリ扱い）を指すと失敗する。
+    @Test("書けなかったら false を返す（使用量に加算させない）")
+    func reportsFailure() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("diskwrite-\(UUID().uuidString)")
+        try Data("blocker".utf8).write(to: base)   // ファイルを作る
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        // そのファイルの「配下」をディレクトリとして使おうとする → 作成も書き込みも失敗する。
+        let store = DiskImageStore(directory: base.appendingPathComponent("sub", isDirectory: true))
+        #expect(!store.write(Data("x".utf8), name: "a.jpg"),
+                "失敗したのに成功を返している（架空の使用量が積み上がる）")
+    }
+}

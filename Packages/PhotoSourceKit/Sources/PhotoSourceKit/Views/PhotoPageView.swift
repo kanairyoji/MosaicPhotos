@@ -272,14 +272,14 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         isPreparingShare = true
         Task {
             defer { isPreparingShare = false }
+            ShareTempFile.clear()   // 前回の共有ファイルを残さない（原本は大きい）
             // 共有は原本（フル解像度・EXIF・元のファイル名）を優先する。
+            // ⚠️ 原本は**ストア側が一時ファイルへ逐次書き込み**する（メモリに溜めない）。
             if let original = await store.originalForSharing(item) {
-                // 別ページへ移っていたら出さない（取り違え防止）。
+                // 別ページへ移っていたら出さない（取り違え防止）。書いたファイルは次回の準備時に片付く。
                 guard PageBoundResult.shouldPresent(startedOn: pageID, current: currentID) else { return }
-                if let url = ShareTempFile.write(original) {
-                    shareItem = ShareImageItem(id: "\(pageID)", url: url, image: nil)
-                    return
-                }
+                shareItem = ShareImageItem(id: "\(pageID)", url: original.fileURL, image: nil)
+                return
             }
             // 原本が取れない（クラウド未取得・非対応）ときは表示用画像で共有する。
             guard let image = await store.fullImage(for: item),

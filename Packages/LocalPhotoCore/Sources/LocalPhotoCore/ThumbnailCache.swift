@@ -128,7 +128,9 @@ public actor ThumbnailCache {
 
         let name = fileName(for: key)
         let oldSize = disk.fileSize(forName: name)
-        disk.write(data, name: name)
+        // 書けたときだけ使用量を更新する（失敗しても加算すると、実体の無い使用量で
+        // LRU が正常なキャッシュを削り始める・レビュー指摘）。
+        guard disk.write(data, name: name) else { return }
         diskUsage = diskUsage - oldSize + data.count
 
         if diskUsage > maxDiskBytes { evictDisk() }

@@ -8,8 +8,10 @@ extension DropboxPhotoStore: PhotoStore {
     /// 共有には**原本**（フル解像度・EXIF・元のファイル名）を渡す。
     /// 表示用の `fullImage` は約 2048px へ縮小した UIImage なので共有には使わない。
     public func originalForSharing(_ item: DropboxFileItem) async -> SharedOriginal? {
-        guard let original = await originalData(for: item) else { return nil }
-        return SharedOriginal(data: original.data, filename: original.filename)
+        guard let original = await originalData(for: item),
+              let url = ShareTempFile.write(original.data, filename: original.filename)
+        else { return nil }
+        return SharedOriginal(fileURL: url)
     }
 
     public var state: PhotoLoadState {

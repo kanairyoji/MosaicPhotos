@@ -2,6 +2,8 @@ import Foundation
 import Photos
 
 /// PhotoKit の要求 ID とキャンセル要求を**ロックで対に**扱う箱。
+/// 画像取得（`PHImageRequestID`）と原本取得（`PHAssetResourceDataRequestID`）の両方で使う
+/// （どちらも `Int32`・キャンセルの取りこぼし方も同じ）。
 ///
 /// ⚠️ `requestImage` が ID を返す前にキャンセルハンドラが走ると、ID はまだ無効値のままで
 /// `cancelImageRequest` は何も取り消せない。その後に要求が登録されるため、

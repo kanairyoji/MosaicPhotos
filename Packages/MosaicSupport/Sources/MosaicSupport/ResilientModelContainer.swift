@@ -18,9 +18,10 @@ import SwiftData
 /// 便利版: name からメッセージを自動生成する `makeResilientModelContainer`。
 /// 各パッケージの @ModelActor ストア（AutoAlbum/Tags/Faces/Usage）が別コンテナ生成に共用する。
 public func resilientModelContainer(name: String, schema: Schema,
+                                    policy: StoreRecoveryPolicy = .rebuildable,
                                     log: @escaping (String) -> Void = { _ in }) -> ModelContainer {
     makeResilientModelContainer(
-        name: name, schema: schema,
+        name: name, schema: schema, policy: policy,
         openFailedMessage: "ModelContainer '\(name)' open failed; deleting store and rebuilding (data reset).",
         memoryFallbackMessage: "ModelContainer '\(name)' still failing; using in-memory store.",
         log: log)
@@ -29,18 +30,77 @@ public func resilientModelContainer(name: String, schema: Schema,
 public func makeResilientModelContainer(
     name: String,
     schema: Schema,
+    policy: StoreRecoveryPolicy = .rebuildable,
     openFailedMessage: String,
     memoryFallbackMessage: String,
     log: (String) -> Void
 ) -> ModelContainer {
     let config = ModelConfiguration(name, schema: schema)
-    if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-    log(openFailedMessage)
-    for suffix in ["", "-wal", "-shm"] {
-        try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
+    do {
+        return try ModelContainer(for: schema, configurations: [config])
+    } catch {
+        log(openFailedMessage + " — \(error)")
+        // ⚠️ **失敗の理由を見てから**手を決める。理由を見ずに削除すると、容量不足や
+        // ファイル保護（端末ロック中）のような一時的な失敗でも台帳を失う（レビュー指摘）。
+        switch StoreRecovery.action(for: error, policy: policy) {
+        case .keepFilesUseMemory:
+            log("ModelContainer '\(name)': transient failure — keeping files, using in-memory this launch.")
+            Diagnostics.mark("store: '\(name)' transient open failure — files kept, in-memory")
+        case .deleteAndRebuild:
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: config.url.path + suffix))
+            }
+            Diagnostics.mark("store: '\(name)' deleted and rebuilt (rebuildable cache)")
+        case .quarantineAndRebuild:
+            // 台帳は消さない。退避して残す（二重アップロード・共有の齟齬を避けるため、
+            // 後から回収・調査できる状態にしておく）。
+            quarantine(storeURL: config.url, name: name, log: log)
+        }
+        if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
+        log(memoryFallbackMessage)
+        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
     }
-    if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
-    log(memoryFallbackMessage)
-    let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-    return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
+}
+
+/// 壊れた台帳を退避する（削除しない）。3 世代を超えたら古いものから捨てる。
+private func quarantine(storeURL: URL, name: String, log: (String) -> Void) {
+    let fm = FileManager.default
+    let exists: (URL) -> Bool = { fm.fileExists(atPath: $0.path) }
+    var moved = false
+    for suffix in ["", "-wal", "-shm"] {
+        let source = URL(fileURLWithPath: storeURL.path + suffix)
+        guard exists(source) else { continue }
+        let destination = StoreRecovery.quarantineURL(for: source, existing: exists)
+        do {
+            try fm.moveItem(at: source, to: destination)
+            moved = true
+        } catch {
+            // 退避できないなら**消さない**（そのまま残してインメモリで起動する）。
+            log("ModelContainer '\(name)': quarantine failed — \(error)")
+        }
+    }
+    if moved {
+        log("ModelContainer '\(name)': ledger quarantined (files kept for recovery).")
+        Diagnostics.mark("store: '\(name)' quarantined (ledger corrupt)")
+    }
+    pruneQuarantines(of: storeURL, keep: 3)
+}
+
+/// 退避ファイルの世代を絞る（無制限に溜めない）。
+private func pruneQuarantines(of storeURL: URL, keep: Int) {
+    let fm = FileManager.default
+    let directory = storeURL.deletingLastPathComponent()
+    let prefix = storeURL.lastPathComponent + ".corrupt"
+    guard let entries = try? fm.contentsOfDirectory(at: directory,
+                                                    includingPropertiesForKeys: [.creationDateKey])
+    else { return }
+    let quarantined = entries
+        .filter { $0.lastPathComponent.hasPrefix(prefix) }
+        .sorted { lhs, rhs in
+            let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return l > r
+        }
+    for stale in quarantined.dropFirst(keep) { try? fm.removeItem(at: stale) }
 }

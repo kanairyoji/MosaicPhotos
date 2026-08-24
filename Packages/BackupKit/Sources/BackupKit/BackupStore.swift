@@ -46,9 +46,10 @@ public actor BackupStore {
     private static func makeContainer() -> ModelContainer {
         let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
                              ShareSet.self, ShareItem.self])
+        // 台帳（バックアップ記録・オフロード・共有状態）。壊れても**消さずに退避**する。
         return makeResilientModelContainer(
-            name: "BackupKit", schema: schema,
-            openFailedMessage: "BackupStore: 'BackupKit' store open failed; deleting and rebuilding.",
+            name: "BackupKit", schema: schema, policy: .ledger,
+            openFailedMessage: "BackupStore: 'BackupKit' store open failed; quarantining and rebuilding.",
             memoryFallbackMessage: "BackupStore: 'BackupKit' store still failing; using in-memory store.",
             log: { BackupLogger.error($0) })
     }

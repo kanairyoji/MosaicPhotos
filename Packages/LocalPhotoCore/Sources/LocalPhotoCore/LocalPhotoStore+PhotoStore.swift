@@ -205,34 +205,57 @@ extension LocalPhotoStore: PhotoStore {
         }
     }
 
-    /// 共有用の**原本**。`PHAssetResource` から元のバイト列とファイル名を取り出す。
+    /// 共有用の**原本**。`PHAssetResource` を**一時ファイルへ逐次書き込み**する。
     ///
     /// ⚠️ 表示用の `fullImage(for:)` は約 2048px へ縮小した UIImage（ビューアはズーム無しで
     /// 十分・メモリ削減のため）。それを共有すると解像度・EXIF・元の形式・元のファイル名が
-    /// 失われる（レビュー指摘）。編集済みなら編集後（fullSizePhoto）を優先する。
+    /// 失われる。編集済みなら編集後（fullSizePhoto）を優先する。
+    ///
+    /// ⚠️ 全チャンクを `Data` に連結してから書き出すと、RAW / ProRAW / 高解像度で
+    /// **原本サイズ以上のメモリピーク**になる。届いたチャンクをその場でファイルへ書き、
+    /// メモリには溜めない。タスクがキャンセルされたら PhotoKit の取得も取り消す
+    /// （ページ移動やビュー破棄のあとも iCloud 取得が走り続けないように・レビュー指摘）。
     /// ※ Live Photo の動画部分は含めない（静止画のみ共有する）。
     nonisolated public func originalForSharing(_ item: LocalPhotoItem) async -> SharedOriginal? {
         let resources = PHAssetResource.assetResources(for: item.asset)
         // 編集済み（fullSizePhoto）→ 原本（photo）の順に選ぶ。どちらも無ければ諦める。
-        let resource = resources.first { $0.type == .fullSizePhoto }
-            ?? resources.first { $0.type == .photo }
-        guard let resource else { return nil }
+        guard let resource = resources.first(where: { $0.type == .fullSizePhoto })
+            ?? resources.first(where: { $0.type == .photo }),
+            let destination = ShareTempFile.destination(filename: resource.originalFilename),
+            FileManager.default.createFile(atPath: destination.path, contents: nil),
+            let handle = try? FileHandle(forWritingTo: destination)
+        else { return nil }
 
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = true   // iCloud 上の原本も取りに行く
-        var buffer = Data()
-        let ok: Bool = await withCheckedContinuation { continuation in
-            var resumed = false
-            PHAssetResourceManager.default().requestData(for: resource, options: options) { chunk in
-                buffer.append(chunk)
-            } completionHandler: { error in
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(returning: error == nil)
+
+        let box = PHImageRequestBox()   // 要求 ID とキャンセルを対で扱う（登録前キャンセル対策）
+        let manager = PHAssetResourceManager.default()
+        let ok: Bool = await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                var writeFailed = false
+                let requestID = manager.requestData(for: resource, options: options) { chunk in
+                    // 届いた分をその場で書く（メモリに溜めない）。
+                    guard !writeFailed else { return }
+                    do { try handle.write(contentsOf: chunk) } catch { writeFailed = true }
+                } completionHandler: { error in
+                    guard box.markFinished() else { return }
+                    continuation.resume(returning: error == nil && !writeFailed)
+                }
+                if box.register(requestID) { manager.cancelDataRequest(requestID) }
             }
+        } onCancel: {
+            if let id = box.cancel() { manager.cancelDataRequest(id) }
         }
-        guard ok, !buffer.isEmpty else { return nil }
-        return SharedOriginal(data: buffer, filename: resource.originalFilename)
+
+        try? handle.close()
+        guard ok, !Task.isCancelled,
+              (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map({ $0 > 0 }) == true
+        else {
+            try? FileManager.default.removeItem(at: destination)
+            return nil
+        }
+        return SharedOriginal(fileURL: destination)
     }
 
     nonisolated public func fullImage(for item: LocalPhotoItem) async -> UIImage? {

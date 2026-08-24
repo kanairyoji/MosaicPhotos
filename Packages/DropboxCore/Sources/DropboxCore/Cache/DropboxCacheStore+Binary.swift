@@ -88,7 +88,11 @@ extension DropboxCacheStore {
             return
         }
         let name = DropboxCacheNaming.fileName(kind: kind, path: path)
-        await store(for: kind).write(data, name: name)
+        // 書けなかったら使用量も記録しない（架空の使用量で LRU が暴れるのを防ぐ）。
+        guard await store(for: kind).write(data, name: name) else {
+            DropboxLogger.error("cache: \(kind) write failed — \(path)")
+            return
+        }
         await finalizeWrite(kind: kind, path: path, byteSize: data.count, token: token)
     }
 

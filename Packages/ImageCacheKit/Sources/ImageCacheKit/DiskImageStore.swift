@@ -48,9 +48,19 @@ public final class DiskImageStore: @unchecked Sendable {
     // MARK: - Write / delete
 
     /// データをアトミックに書き込む（ディレクトリは必要に応じて作成）。
-    public func write(_ data: Data, name: String) {
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: fileURL(forName: name), options: .atomic)
+    ///
+    /// - Returns: **書けたか**。呼び出し側は成功したときだけ使用量へ加算すること。
+    ///   失敗を握り潰して加算すると、実ファイルが無いのに使用量だけ増え、その架空の値を
+    ///   基準に LRU が**正常なキャッシュを削り続ける**（容量不足時に回復しない・レビュー指摘）。
+    @discardableResult
+    public func write(_ data: Data, name: String) -> Bool {
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: fileURL(forName: name), options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 
     public func remove(name: String) {
