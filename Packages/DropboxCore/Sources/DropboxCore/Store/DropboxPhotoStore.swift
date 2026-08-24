@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import CoreLocation
+import CryptoKit
 import Foundation
 import ImageCacheKit
 import MosaicSupport
@@ -35,7 +36,39 @@ public final class DropboxPhotoStore {
     @ObservationIgnored let cache = DropboxCacheStore()
     @ObservationIgnored let apiClient: DropboxAPIClient
     @ObservationIgnored let thumbnailBatcher: DropboxThumbnailBatcher
-    @ObservationIgnored private var lastKnownAccountId: String?
+    /// キャッシュの持ち主（accountId の指紋）。**永続**させる——アプリを再起動して
+    /// 別アカウントへ繋ぎ替えるケースを、メモリ上の変数では検出できないため（レビュー指摘）。
+    /// ⚠️ 生の accountId は保存しない。等値比較しかしないので指紋（ハッシュ）で足りる。
+    @ObservationIgnored private static let cacheOwnerKey = "dropboxCacheOwnerFingerprint"
+
+    /// キャッシュの持ち主が変わったかの判定（純ロジック・テスト対象）。
+    enum CacheOwnerDecision: Equatable {
+        /// 未接続など、判断材料が無い（何もしない）。
+        case unknown
+        /// 持ち主が同じ（キャッシュを温存する）。
+        case keep
+        /// 記録が無い（初回・旧バージョンからの移行）。指紋を記録するだけ。
+        case adopt(String)
+        /// 持ち主が違う。**キャッシュを捨ててから**新しい指紋を記録する。
+        case clearThenAdopt(String)
+    }
+
+    /// - Parameters:
+    ///   - stored: 保存されているキャッシュ所有者の指紋（未記録なら nil）。
+    ///   - current: 現在接続中のアカウントの指紋（未接続なら nil）。
+    static func cacheOwnerDecision(stored: String?, current: String?) -> CacheOwnerDecision {
+        // ⚠️ 未接続では**記録を消さない**。消すと次の接続が「初回」に見え、
+        // 「切断 → 別アカウントで接続」の切替を検出できなくなる（レビュー指摘）。
+        guard let current else { return .unknown }
+        guard let stored else { return .adopt(current) }
+        return stored == current ? .keep : .clearThenAdopt(current)
+    }
+
+    /// accountId → 指紋（保存・比較用）。
+    static func accountFingerprint(_ accountId: String) -> String {
+        let digest = SHA256.hash(data: Data(accountId.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined().prefix(16).description
+    }
     /// 同期対象ルートの供給 seam（ADR-44）。アプリ（Composition Root）が
     /// 「選択ソースフォルダ＋バックアップフォルダ」を返すよう結線する。既定は全体。
     @ObservationIgnored public var syncRootsProvider: () -> [String] = { [""] }
@@ -356,6 +389,8 @@ public final class DropboxPhotoStore {
     /// actor キャッシュ経由で消去するため、別コンテナとの不整合や「消去後に再同期されず空のまま」を防ぐ。
     public func clearCache() async {
         stopSync()  // syncState=.idle、保留中のリフレッシュも解除
+        loadTask?.cancel()
+        loadTask = nil
         if let accountId = auth.credential?.accountId {
             await cache.clearAll(accountId: accountId)  // cursor 含むメタ＋バイナリを消去
         }
@@ -364,11 +399,16 @@ public final class DropboxPhotoStore {
     }
 
     func resetLoad() {
+        // ⚠️ 進行中の読み込みを**必ず止める**。止めないと、リセット後に古いスナップショットが
+        // items へ再代入され、切断したはずの一覧が戻る（レビュー指摘）。
+        loadTask?.cancel()
+        loadTask = nil
         loadStatus = .idle
         items = []; lastItemsSignature = nil
         debugInfo = ""
-        lastKnownAccountId = nil
         backupMetadata = nil
+        // ⚠️ キャッシュの持ち主（永続の指紋）は消さない。消すと次に別アカウントで接続したとき
+        // 「初めて」に見えてしまい、旧アカウントのキャッシュを新アカウントの写真として読む。
         DropboxLogger.info("resetLoad() — state cleared")
     }
 
@@ -418,12 +458,34 @@ public final class DropboxPhotoStore {
 
     // MARK: - Private helpers
 
+    /// キャッシュの持ち主が変わっていないかを確かめ、変わっていたら**キャッシュを捨てる**。
+    ///
+    /// ⚠️ 以前はメモリ上の `lastKnownAccountId` で判定し、切断時にそれを nil へ戻していた。
+    /// そのため「切断 → 別アカウントで接続」でも「再起動を挟む切替」でも前回値が nil になり、
+    /// **旧アカウントのキャッシュを新アカウントの写真として表示**し得た（レビュー指摘）。
+    /// 判定は永続化した指紋で行う。同じアカウントへ繋ぎ直したときはキャッシュを温存する。
     private func handleAccountSwitchIfNeeded(currentAccountId: String?) async {
-        defer { lastKnownAccountId = currentAccountId }
-        guard let previous = lastKnownAccountId, previous != currentAccountId else { return }
-        DropboxLogger.info("account switched \(previous) → \(currentAccountId ?? "nil") — clearing cache")
-        await cache.clearAll(accountId: previous)
-        items = []; lastItemsSignature = nil
+        // 未接続（accountId なし）では何も判断しない。持ち主の記録も消さない
+        // ——消すと次の接続で「初めて」に見え、切替を検出できなくなる。
+        let defaults = UserDefaults.standard
+        let decision = Self.cacheOwnerDecision(
+            stored: defaults.string(forKey: Self.cacheOwnerKey),
+            current: currentAccountId.map(Self.accountFingerprint))
+        switch decision {
+        case .unknown, .keep:
+            return
+        case .adopt(let fingerprint):
+            defaults.set(fingerprint, forKey: Self.cacheOwnerKey)
+        case .clearThenAdopt(let fingerprint):
+            DropboxLogger.info("account switched (cache owner differs) — clearing cache")
+            // 進行中の読み込みを止めてから消す。止めないと、消した後に**旧一覧が再代入**され得る。
+            loadTask?.cancel()
+            loadTask = nil
+            if let currentAccountId { await cache.clearAll(accountId: currentAccountId) }
+            items = []; lastItemsSignature = nil
+            backupMetadata = nil
+            defaults.set(fingerprint, forKey: Self.cacheOwnerKey)
+        }
     }
 
     private func updateLoadStatus() {

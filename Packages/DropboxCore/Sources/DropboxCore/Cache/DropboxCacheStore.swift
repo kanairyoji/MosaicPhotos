@@ -148,11 +148,28 @@ actor DropboxCacheStore {
     struct SyncStateInfo: Sendable, Equatable {
         let cursor: String?
         let lastSyncedAt: Date?
+        /// 初回スキャンを完走した時刻（nil＝未完了）。起動時に poll へ直行してよいかの判断に使う。
+        var initialSyncCompletedAt: Date?
+
+        var isInitialSyncCompleted: Bool { initialSyncCompletedAt != nil }
     }
 
     func syncStateInfo(accountId: String) -> SyncStateInfo? {
         guard let state = fetchSyncState(accountId: accountId) else { return nil }
-        return SyncStateInfo(cursor: state.cursor, lastSyncedAt: state.lastSyncedAt)
+        return SyncStateInfo(cursor: state.cursor, lastSyncedAt: state.lastSyncedAt,
+                             initialSyncCompletedAt: state.initialSyncCompletedAt)
+    }
+
+    /// 初回スキャンの完走を記録する（完走時のみ呼ぶ）。
+    func markInitialSyncCompleted(accountId: String, at date: Date = Date()) {
+        let state = fetchSyncState(accountId: accountId)
+            ?? {
+                let created = DropboxSyncState(accountId: accountId)
+                modelContext.insert(created)
+                return created
+            }()
+        state.initialSyncCompletedAt = date
+        try? modelContext.save()
     }
 
     /// 単発取得（get_metadata）で得た位置情報を該当アイテムへ保存する。

@@ -37,3 +37,47 @@ struct DropboxSourceSettingsTests {
         #expect(DropboxSourceSettings.normalizedRoots(["/Photo", "/Photos"]).count == 2)
     }
 }
+
+// MARK: - キャッシュの持ち主（アカウント切替の検出・レビュー指摘）
+
+/// ⚠️ 以前はメモリ上の変数で「前回のアカウント」を覚え、切断時に nil へ戻していた。
+/// そのため「切断 → 別アカウントで接続」でも「再起動を挟む切替」でも切替を検出できず、
+/// **旧アカウントのキャッシュを新アカウントの写真として表示**し得た。
+#if canImport(UIKit)
+@Suite("Dropbox cache owner (account switch)")
+@MainActor
+struct DropboxCacheOwnerTests {
+
+    private let a = DropboxPhotoStore.accountFingerprint("dbid:AAA")
+    private let b = DropboxPhotoStore.accountFingerprint("dbid:BBB")
+
+    @Test("同じアカウントならキャッシュを温存する")
+    func sameAccountKeepsCache() {
+        #expect(DropboxPhotoStore.cacheOwnerDecision(stored: a, current: a) == .keep)
+    }
+
+    @Test("別アカウントならキャッシュを捨ててから持ち主を更新する")
+    func differentAccountClearsCache() {
+        #expect(DropboxPhotoStore.cacheOwnerDecision(stored: a, current: b) == .clearThenAdopt(b))
+    }
+
+    @Test("記録が無ければ持ち主として記録するだけ（初回・旧バージョンからの移行）")
+    func firstRunAdopts() {
+        #expect(DropboxPhotoStore.cacheOwnerDecision(stored: nil, current: a) == .adopt(a))
+    }
+
+    /// 切断（accountId なし）で記録を消すと、次の接続が「初回」に見えて切替を取りこぼす。
+    @Test("未接続では持ち主の記録を変えない")
+    func disconnectedKeepsOwnerRecord() {
+        #expect(DropboxPhotoStore.cacheOwnerDecision(stored: a, current: nil) == .unknown)
+        #expect(DropboxPhotoStore.cacheOwnerDecision(stored: nil, current: nil) == .unknown)
+    }
+
+    @Test("指紋は生の accountId を含まない（等値比較にだけ使う）")
+    func fingerprintDoesNotLeakAccountId() {
+        #expect(!a.contains("dbid"))
+        #expect(a == DropboxPhotoStore.accountFingerprint("dbid:AAA"))
+        #expect(a != b)
+    }
+}
+#endif

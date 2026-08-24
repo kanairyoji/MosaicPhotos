@@ -32,6 +32,8 @@ public final class MergedPhotoStore {
     /// merge + sort はメインアクタ外（Task.detached）で行い、完成品をここへ代入する。
     public private(set) var items: [MergedPhotoItem] = []
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
+    /// 再構築の世代。代入時に照合し、追い越された古い結果を捨てる。
+    @ObservationIgnored private var rebuildGeneration = 0
     /// 2-a: 再構築のデバウンス用タイマー。Dropbox 初回同期は 0.4 秒ごとに `items` を差し替えるため、
     /// 変化のたびに 68k 件の merge+sort を走らせると（off-main でも .userInitiated で）UI と競合する。
     /// 連続する変化をまとめて 1 回に集約する。
@@ -91,6 +93,11 @@ public final class MergedPhotoStore {
         let cloudSnapshot = dropboxStore.items                // [DropboxFileItem]（Sendable）
         let filter = cloudPathFilter
         rebuildTask?.cancel()
+        // ⚠️ **世代**を採番する。`Task.isCancelled` の確認と代入の間にキャンセルされる競合は
+        // 防げないため、確認だけでは新しい結果を古いスナップショットが上書きし得る
+        // （レビュー指摘）。代入側でも世代を照合して、最新の再構築だけを通す。
+        rebuildGeneration &+= 1
+        let generation = rebuildGeneration
         rebuildTask = Task.detached(priority: .userInitiated) { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
             let local = localSnapshot.map(MergedPhotoItem.local)
@@ -101,11 +108,25 @@ public final class MergedPhotoStore {
             if Task.isCancelled { return }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) total=\(merged.count) sort=\(Int(ms))ms")
-            await self?.setItems(merged)
+            await self?.setItems(merged, generation: generation)
         }
     }
 
-    private func setItems(_ newItems: [MergedPhotoItem]) {
+    /// 現在の再構築世代（テストから照合するため internal）。
+    var currentRebuildGeneration: Int { rebuildGeneration }
+
+    /// 次の再構築世代を採番する（テスト用。本番は `rebuildItems` が採番する）。
+    func nextRebuildGenerationForTesting() -> Int {
+        rebuildGeneration &+= 1
+        return rebuildGeneration
+    }
+
+    /// 最新世代の結果だけを反映する（遅れて届いた古い一覧を捨てる）。
+    func setItems(_ newItems: [MergedPhotoItem], generation: Int) {
+        guard generation == rebuildGeneration else {
+            Diagnostics.mark("merged.rebuild: dropped stale result (gen \(generation) < \(rebuildGeneration))")
+            return
+        }
         items = newItems
     }
 }

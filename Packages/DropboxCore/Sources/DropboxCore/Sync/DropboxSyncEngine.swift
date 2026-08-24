@@ -97,15 +97,24 @@ final class DropboxSyncEngine {
 
     private func syncLoop(accountId: String, root: String, isPrimary: Bool) async {
         let scopeKey = Self.scopeKey(accountId: accountId, root: root)
-        let cursor = (await cache.syncStateInfo(accountId: scopeKey))?.cursor
+        let state = await cache.syncStateInfo(accountId: scopeKey)
+        let cursor = state?.cursor
         let itemCount = await cache.cachedItemCount(accountId: accountId)
-        // カーソルがあっても **アイテムが 0** ならキャッシュ不整合（取りこぼし・空のまま固定）とみなし、
-        // ポーリングではなく初回スキャンをやり直して自己修復する（「接続済みなのに No photos」の解消）。
-        if let cursor, itemCount > 0 {
+        // poll へ直行してよいのは、次の 3 つが揃ったときだけ。
+        // - カーソルがある
+        // - アイテムがある（0 ならキャッシュ不整合＝「接続済みなのに No photos」の自己修復）
+        // - **初回スキャンを完走している**
+        //   ⚠️ カーソルはスキャン中にも書かれるため、「カーソルがある＝走査済み」ではない。
+        //   途中で終了すると「一部の写真＋カーソル」が残り、次回起動が poll へ直行して
+        //   **未走査フォルダの既存写真が永久に取得されない**（レビュー指摘）。
+        if let cursor, itemCount > 0, state?.isInitialSyncCompleted == true {
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
             await pollLoop(scopeKey: scopeKey, startCursor: cursor, isPrimary: isPrimary)
         } else {
-            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(cursor == nil ? "no cursor" : "cursor present but 0 items") — starting initial sync")
+            let reason = cursor == nil ? "no cursor"
+                : itemCount == 0 ? "cursor present but 0 items"
+                : "initial sync never completed (interrupted or pre-upgrade)"
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(reason) — starting initial sync")
             await initialSync(accountId: accountId, root: root, scopeKey: scopeKey, isPrimary: isPrimary)
         }
     }
@@ -199,6 +208,8 @@ final class DropboxSyncEngine {
             // 空 Dropbox・ stale 削除・画像なしの場合も必ず onCacheUpdated を呼び
             // .polling 移行前に state を確定させる（空配列＝全体反映）。
             onCacheUpdated([])
+            // ここまで来て初めて「走査済み」。以後の起動は poll へ直行してよい。
+            await cache.markInitialSyncCompleted(accountId: scopeKey)
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
             await pollLoop(scopeKey: scopeKey, startCursor: baselineCursor, isPrimary: isPrimary)

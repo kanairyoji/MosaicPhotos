@@ -147,6 +147,44 @@ struct MergedPhotoItemTests {
 
 // MARK: - PlaceScanner signature
 
+/// ⚠️ 再構築は `Task.detached` で走るため、**逆順で完了し得る**。`Task.isCancelled` の確認と
+/// 代入の間にキャンセルされる競合は確認だけでは防げず、新しい結果を古いスナップショットが
+/// 上書きし得る（レビュー指摘）。世代を照合して最新だけを通すこと。
+@Suite("MergedPhotoStore rebuild generation")
+@MainActor
+struct MergedPhotoStoreGenerationTests {
+
+    private func makeStore() -> MergedPhotoStore {
+        MergedPhotoStore(dropboxStore: DropboxPhotoStore(
+            auth: DropboxAuthService(appKey: "k", redirectURI: "app://cb")))
+    }
+
+    private func item(_ path: String) -> MergedPhotoItem {
+        .cloud(DropboxFileItem(path: path, name: (path as NSString).lastPathComponent))
+    }
+
+    @Test("遅れて届いた古い世代の結果は捨てる")
+    func staleGenerationIsDropped() {
+        let store = makeStore()
+        let old = store.nextRebuildGenerationForTesting()
+        let new = store.nextRebuildGenerationForTesting()
+
+        store.setItems([item("/new.jpg")], generation: new)     // 新しい再構築が先に着いた
+        store.setItems([item("/old.jpg")], generation: old)     // 古い再構築が遅れて到着
+
+        #expect(store.items.map(\.id) == [item("/new.jpg").id],
+                "追い越された古い一覧で上書きされた")
+    }
+
+    @Test("最新世代の結果は反映される")
+    func currentGenerationIsApplied() {
+        let store = makeStore()
+        let generation = store.nextRebuildGenerationForTesting()
+        store.setItems([item("/a.jpg")], generation: generation)
+        #expect(store.items.count == 1)
+    }
+}
+
 @Suite("placeScanSignature")
 struct PlaceScanSignatureTests {
     private func located(_ path: String, lat: Double = 35.0,

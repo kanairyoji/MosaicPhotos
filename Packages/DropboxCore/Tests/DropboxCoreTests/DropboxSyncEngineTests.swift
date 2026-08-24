@@ -64,6 +64,7 @@ struct DropboxSyncEngineTests {
         // 既存カーソル＋アイテム → syncLoop は pollLoop を選ぶ。
         let item = DropboxFileItem(path: "/a.jpg", name: "a.jpg")
         await cache.applyDelta(accountId: "acc", added: [item], removed: [], newCursor: "existing-cursor")
+        await cache.markInitialSyncCompleted(accountId: "acc")   // 前回の初回同期は完走している
         let recorder = StateRecorder()
         let engine = makeEngine(cache: cache, stub: routingStub(), recorder: recorder)
 
@@ -91,10 +92,44 @@ struct DropboxSyncEngineTests {
         #expect(recorder.states.contains(.polling))
     }
 
+    /// ⚠️ 初回スキャンの**途中**で終了すると「一部の写真＋カーソル」が残る。カーソルの有無だけで
+    /// 分岐すると次回起動が poll へ直行し、**未走査フォルダの既存写真が永久に取得されない**
+    /// （レビュー指摘）。完走の印が無ければスキャンをやり直すこと。
+    @Test("一部キャッシュ＋未完了カーソルなら initialSync をやり直す")
+    func partialCacheWithoutCompletionRescans() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        // 走査途中で終了した状態: 写真は入っている・カーソルも書かれている・完走の印は無い。
+        let item = DropboxFileItem(path: "/scanned/a.jpg", name: "a.jpg")
+        await cache.applyDelta(accountId: "acc", added: [item], removed: [], newCursor: "baseline")
+        #expect(await cache.syncStateInfo(accountId: "acc")?.isInitialSyncCompleted == false)
+
+        let recorder = StateRecorder()
+        let engine = makeEngine(cache: cache, stub: routingStub(), recorder: recorder)
+        engine.start(accountId: "acc")
+        await waitUntil { recorder.states.contains(.polling) }
+        engine.stop()
+
+        #expect(recorder.sawInitialSync, "未走査のフォルダが永久に取得されないままになる")
+    }
+
+    @Test("初回スキャンを完走すると印が付き、次回は poll へ直行できる")
+    func completionIsRecorded() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let recorder = StateRecorder()
+        let engine = makeEngine(cache: cache, stub: routingStub(), recorder: recorder)
+
+        engine.start(accountId: "acc")
+        await waitUntil { recorder.states.contains(.polling) }
+        engine.stop()
+
+        #expect(await cache.syncStateInfo(accountId: "acc")?.isInitialSyncCompleted == true)
+    }
+
     @Test("stop() で poll ループが終了する")
     func stopEndsPolling() async {
         let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
         await cache.applyDelta(accountId: "acc", added: [], removed: [], newCursor: "existing-cursor")
+        await cache.markInitialSyncCompleted(accountId: "acc")
         let recorder = StateRecorder()
         let engine = makeEngine(cache: cache, stub: routingStub(), recorder: recorder)
 
