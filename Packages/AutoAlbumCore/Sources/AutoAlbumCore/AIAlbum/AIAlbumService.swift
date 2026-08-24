@@ -110,6 +110,16 @@ final class AIAlbumService {
         self.searcher = AIAlbumSearcher(textEmbedder: textEmbedder)
     }
 
+    // MARK: - テスト用アクセサ（解釈の保存状態を検査する）
+
+    func saveInterpretationForTesting(_ value: SavedInterpretation, for id: String) {
+        interpreter.save(value, for: id)
+    }
+
+    func savedInterpretationForTesting(_ id: String) -> SavedInterpretation? {
+        interpreter.saved(for: id)
+    }
+
     // MARK: - 夜間の本番化（FM 解釈＋LLM 審査つきフル評価）
 
     /// 夜間の本番化: プレビューのまま（pendingFinalization）のアルバムだけ FM 解釈＋フル評価
@@ -337,13 +347,18 @@ final class AIAlbumService {
             let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
             // 属性条件のシグナルも増分評価で同一規則（S10）。
             let querySignals = await querySignalsIfNeeded(for: spec)
-            saved.evaluatedEmbedCount += newRefKeys.count
+            // ⚠️ 評価済み件数は「採点できた」ときにだけ進める。先に進めてしまうと、
+            // クエリ埋め込みが取れなかった回（モデルのロード失敗・キャンセル）の写真が
+            // **採点されていないのに評価済み**となり、ドリフト検知も差分ゼロと判断して
+            // 二度と再評価されない（レビュー指摘）。
             // 内容の意図が実効的に無い（内容語が全部ハード接地語・除外も無し）アルバムは、
             // フル評価（searchWithPool）と同じく**ハード通過分をそのまま追加**する（ADR-109）。
             // 英訳文で意味採点すると「太郎」だけのアルバムに新規の太郎写真が入らないことがある。
             let effective = spec.effectiveContentTerms
             if effective.include.isEmpty && effective.exclude.isEmpty
                 && spec.hasHardConstraints {
+                // この経路はハード条件だけで判定が完結する＝今回の新規分は評価済み。
+                saved.evaluatedEmbedCount += newRefKeys.count
                 interpreter.save(saved, for: album.id)
                 let base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
                                                      peopleByRefKey: peopleMap, signals: querySignals)
@@ -363,11 +378,15 @@ final class AIAlbumService {
                 touched += 1
                 continue
             }
-            // 意味採点のクエリ埋め込み（キャッシュ）。埋め込み不可なら評価枚数だけ進める。
+            // 意味採点のクエリ埋め込み（キャッシュ）。取れないなら**何も進めずに**次回へ回す
+            // （評価済みにしてしまうと、この写真たちは二度と採点されない）。
             guard let q = await queryVectors(for: saved) else {
-                interpreter.save(saved, for: album.id)
+                Diagnostics.mark("aialbum.incremental: query embedding unavailable — "
+                    + "deferring \(newRefKeys.count) photo(s) for album \(album.id)")
                 continue
             }
+            // ここから先は採点できる。今回の新規分を評価済みに数える。
+            saved.evaluatedEmbedCount += newRefKeys.count
             let (base, added) = await Task.detached(priority: .utility) {
                 () -> ([EnrichedPhoto], [String: Float]) in
                 // ハード条件（相対日付は now で解決）を新規分に適用。

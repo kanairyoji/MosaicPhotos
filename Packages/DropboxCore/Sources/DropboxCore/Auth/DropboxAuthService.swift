@@ -40,6 +40,15 @@ public final class DropboxAuthService {
     @ObservationIgnored private var authSession: ASWebAuthenticationSession?
     @ObservationIgnored private var contextProvider: ContextProvider?
     @ObservationIgnored var refreshTask: Task<String, Error>?
+    /// 認証の世代。**切断・認証キャンセルのたびに進む**。
+    ///
+    /// ⚠️ ネットワーク往復の**開始時**と**保存直前**で世代を照合すること。照合が無いと、
+    /// トークン更新の最中にユーザーが切断したとき、後から完了した更新が Keychain へ
+    /// 新しい資格情報を書き戻して**セッションが勝手に復活する**（レビュー指摘）。
+    @ObservationIgnored private(set) var authGeneration = 0
+
+    /// 世代を進める（＝進行中の認証・更新の結果を無効にする）。
+    func invalidateAuthGeneration() { authGeneration &+= 1 }
 
     public init(
         appKey: String,
@@ -74,12 +83,22 @@ public final class DropboxAuthService {
             return
         }
 
+        let generation = authGeneration
         do {
             let callbackURL = try await runWebSession(authURL: authURL, anchor: presentationAnchor)
             guard let code = extractCode(from: callbackURL) else {
                 throw AuthError.noAuthCode
             }
             let newCredential = try await exchangeToken(code: code, codeVerifier: codeVerifier)
+            // 往復の間に切断・キャンセルが挟まっていたら、結果は捨てる（保存もしない）。
+            guard generation == authGeneration else {
+                #if canImport(UIKit)
+                DropboxLogger.info("authenticate() — superseded by disconnect/cancel; discarding result")
+                #endif
+                authSession = nil
+                contextProvider = nil
+                return
+            }
             try keychainStore.save(newCredential)
             credential = newCredential
             connectionStatus = .connected
@@ -94,6 +113,7 @@ public final class DropboxAuthService {
     }
 
     public func cancelAuthentication() {
+        invalidateAuthGeneration()   // 進行中の往復の結果を無効にする
         authSession?.cancel()
         authSession = nil
         contextProvider = nil
@@ -101,6 +121,11 @@ public final class DropboxAuthService {
     }
 
     public func disconnect() {
+        // ⚠️ 進行中のトークン更新を**必ず止めて世代を進める**。放置すると、更新が後から完了して
+        // Keychain へ書き戻し、ユーザーの操作に反してセッションが復活する（レビュー指摘）。
+        invalidateAuthGeneration()
+        refreshTask?.cancel()
+        refreshTask = nil
         authSession?.cancel()
         authSession = nil
         contextProvider = nil

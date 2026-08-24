@@ -103,6 +103,11 @@ actor FaceStore {
         return try? modelContext.fetch(d).first
     }
 
+    /// テスト用: クラスタ ID → 件数（重心の二重計上を検査する）。
+    func clusterCountsForTesting() -> [Int: Int] {
+        Dictionary(uniqueKeysWithValues: allClusters().map { ($0.clusterID, $0.count) })
+    }
+
     func allClusters() -> [PersonCluster] {
         (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
     }

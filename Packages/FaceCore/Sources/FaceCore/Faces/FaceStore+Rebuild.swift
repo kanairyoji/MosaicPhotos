@@ -17,7 +17,10 @@ extension FaceStore {
     /// 戻り値: (クラスタ数, 割り当てが変わった顔数)。
     func rebuildClusters() -> (clusters: Int, moved: Int) {
         let allFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-        guard !allFaces.isEmpty else { return (0, 0) }
+        // ⚠️ 顔が 0 件でも**素通りしない**。クラスタ行だけが残ると、その sum/count は
+        // 既に消えた顔の寄与を抱えたままで、次のスキャンで二重計上される。
+        // 顔もクラスタも無いときだけ何もしない。
+        if allFaces.isEmpty && allClusters().isEmpty { return (0, 0) }
         let thr = calibratedThreshold()
         let negatives = loadNegatives()
         let existing = allClusters()
@@ -204,8 +207,15 @@ extension FaceStore {
             predicate: #Predicate { $0.refKey.starts(with: "C-") }))) ?? []
         for marker in cloudMarkers { modelContext.delete(marker) }
         try? modelContext.save()
-        // 重心はクラウド顔ぶんがずれるので、キャッシュを捨てて次スキャンで組み直す。
-        clusteringCache = nil
+        // ⚠️ **クラスタを組み直す**。顔を消しただけでは `PersonCluster.sum/count` に
+        // 消した顔の寄与が残り、次スキャンでその古い重心へクラウド顔が再加算されて
+        // **重心と件数が二重化**する。キャッシュを捨てるだけでは足りない——次回は
+        // 残った PersonCluster 行から復元されるため（レビュー指摘）。
+        // 残存する顔だけから作り直す（命名・確認顔は種として保持されるので持ち越しは不変）。
+        // 併せて、メンバーが居なくなったクラウド専用クラスタ（幽霊）もここで消える。
+        let rebuilt = rebuildClusters()
+        Self.log.info("faces: resetCloudScans — dropped \(cloudFaces.count) cloud face(s), "
+            + "rebuilt \(rebuilt.clusters) cluster(s)")
         negativesCache = nil
         return cloudMarkers.count
     }

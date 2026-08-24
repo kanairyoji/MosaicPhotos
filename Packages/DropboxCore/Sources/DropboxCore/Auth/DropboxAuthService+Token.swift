@@ -10,8 +10,11 @@ extension DropboxAuthService {
     public func setDirectToken(_ accessToken: String) async {
         guard connectionStatus != .authenticating else { return }
         connectionStatus = .authenticating
+        let generation = authGeneration
         do {
             let accountId = try await validateToken(accessToken)
+            // 検証の往復中に切断・キャンセルされていたら、結果を捨てる（保存もしない）。
+            guard generation == authGeneration else { return }
             let newCredential = DropboxCredential(
                 accessToken: accessToken,
                 refreshToken: nil,
@@ -61,6 +64,9 @@ extension DropboxAuthService {
     }
 
     private func performRefresh(refreshToken: String, existing: DropboxCredential) async throws -> String {
+        // ⚠️ 世代を**開始時に控え、保存直前にもう一度照合する**。往復の間にユーザーが切断すると、
+        // 後から完了した更新が Keychain へ書き戻してセッションを復活させてしまう（レビュー指摘）。
+        let generation = authGeneration
         var request = URLRequest(url: URL(string: DropboxInternalConstants.oauthTokenURL)!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -79,6 +85,10 @@ extension DropboxAuthService {
             throw TokenError.refreshFailed(body)
         }
         let decoded = try JSONDecoder().decode(RefreshResponse.self, from: data)
+        guard generation == authGeneration else {
+            // 切断済み。取得したトークンは**保存も適用もしない**。
+            throw TokenError.notConnected
+        }
         let newCred = DropboxCredential(
             accessToken: decoded.access_token,
             refreshToken: existing.refreshToken,

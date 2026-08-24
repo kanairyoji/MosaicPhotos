@@ -237,3 +237,63 @@ struct FaceStoreLearningTests {
         #expect(!(await store.loadNegatives()).isEmpty)
     }
 }
+
+// MARK: - クラウド分だけのリセット（レビュー指摘）
+
+/// ⚠️ `resetCloudScans()` はクラウドの顔行を消すが、以前は `PersonCluster.sum/count` に
+/// 消した顔の寄与が残っていた。キャッシュを捨てても次回はその古いクラスタ行から復元されるため、
+/// 再スキャンしたクラウド顔がさらに加算され、**重心と件数が二重化**する。
+@Suite("FaceStore.resetCloudScans")
+struct FaceStoreCloudResetTests {
+
+    private func signal(_ v: [Float], quality: Float = 1) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(v), quality: quality)
+    }
+
+    @Test("クラウド顔を捨てたら、残った顔だけの件数・重心になる")
+    func clusterCountsMatchRemainingFaces() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<4 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, Float(i) * 0.01, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "C-a\(i)", faces: [signal([1, Float(i) * 0.01, 0])]) }
+
+        let before = await store.clusterCountsForTesting().values.reduce(0, +)
+        #expect(before == 7)
+
+        _ = await store.resetCloudScans()
+
+        let counts = await store.clusterCountsForTesting()
+        let total = counts.values.reduce(0, +)
+        #expect(total == 4, "消したクラウド顔の寄与がクラスタに残っている: \(total)")
+    }
+
+    @Test("クラウドだけのクラスタは幽霊として残らない")
+    func cloudOnlyClustersAreRemoved() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        // 別方向＝別クラスタになるクラウド顔だけの人物。
+        for i in 0..<3 { await store.recordScan(refKey: "C-b\(i)", faces: [signal([0, 1, 0])]) }
+        #expect(await store.clusterCountsForTesting().count == 2)
+
+        _ = await store.resetCloudScans()
+
+        let counts = await store.clusterCountsForTesting()
+        #expect(counts.count == 1, "メンバーの居ないクラスタが残っている: \(counts)")
+        #expect(counts.values.reduce(0, +) == 3)
+    }
+
+    /// 再スキャンで同じクラウド顔が戻っても、件数は「実在する顔の数」に一致すること
+    /// （二重計上していると 7 ではなく 10 になる）。
+    @Test("リセット後に再スキャンしても件数が二重化しない")
+    func rescanDoesNotDoubleCount() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<4 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, Float(i) * 0.01, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "C-a\(i)", faces: [signal([1, Float(i) * 0.01, 0])]) }
+        _ = await store.resetCloudScans()
+
+        for i in 0..<3 { await store.recordScan(refKey: "C-a\(i)", faces: [signal([1, Float(i) * 0.01, 0])]) }
+
+        let total = await store.clusterCountsForTesting().values.reduce(0, +)
+        #expect(total == 7, "重心・件数が二重化している: \(total)")
+    }
+}
