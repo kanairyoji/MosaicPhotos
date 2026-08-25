@@ -137,6 +137,9 @@ final class AIAlbumService {
         var out = albums
         let all = await store.allEnrichedPhotosLite()
         let embedCount = await store.embeddedCount()
+        // 開始時の世代を控える（この後の長い await 中に削除・編集され得る）。
+        let startedGenerations = Dictionary(uniqueKeysWithValues:
+            albums.map { ($0.id, generation(of: $0.id)) })
         // カタログはループ外で 1 回だけ構築（refresh と同じ・diagnostics-48）。
         let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
         for id in pendingIDs {
@@ -163,6 +166,12 @@ final class AIAlbumService {
             }
             saved.scoredPool = pool
             saved.evaluatedEmbedCount = embedCount
+            saved.lastEvaluatedAt = now
+            // ⚠️ LLM 審査を挟むので待ち時間が長い。消された／編集されたアルバムは書き戻さない。
+            guard await canCommit(id: id, criteria: criteria, generation: startedGenerations[id] ?? 0) else {
+                Diagnostics.mark("aialbum.finalize: '\(criteria)' discarded (album deleted or edited)")
+                continue
+            }
             interpreter.save(saved, for: id)
             let info = AIAlbumSearcher.buildInfo(id: id, title: out[index].title,
                                                  interpretedTitle: saved.spec.title,
@@ -184,6 +193,7 @@ final class AIAlbumService {
     func finalizeNow(id: String, baseLite: [EnrichedPhoto]? = nil) async -> [AutoAlbumInfo]? {
         guard let album = (await loadAll()).first(where: { $0.id == id }),
               let criteria = album.criteria, !criteria.isEmpty else { return nil }
+        let startedGeneration = generation(of: id)
         let now = Date()
         let all: [EnrichedPhoto]
         if let baseLite { all = baseLite } else { all = await store.allEnrichedPhotosLite() }
@@ -194,6 +204,12 @@ final class AIAlbumService {
         members = await verification.verified(members, criteria: criteria)
         saved.scoredPool = pool
         saved.evaluatedEmbedCount = await store.embeddedCount()
+        saved.lastEvaluatedAt = now
+        // ⚠️ 長い await の後。消された／編集されたアルバムを書き戻さない。
+        guard await canCommit(id: id, criteria: criteria, generation: startedGeneration) else {
+            Diagnostics.mark("aialbum.finalizeNow: '\(criteria)' discarded (album deleted or edited)")
+            return await loadAll()
+        }
         interpreter.save(saved, for: id)
         let info = AIAlbumSearcher.buildInfo(id: id, title: album.title,
                                              interpretedTitle: saved.spec.title,
@@ -204,6 +220,36 @@ final class AIAlbumService {
         Diagnostics.mark("aialbum.finalizeNow: '\(criteria)' → members=\(members.count) "
                          + "pendingGrounding=\(saved.pendingFinalization == true)")
         return await loadAll()
+    }
+
+    // MARK: - 世代（削除・編集との競合を防ぐ）
+
+    /// アルバムごとの世代。**削除・作成/再設定のたびに進む**。
+    ///
+    /// ⚠️ 本番化（`finalizeNow` / `finalizePending`）やフル再評価は、開始時にアルバムを取得した後、
+    /// 解釈・検索・LLM 審査で**長く await する**。その間にユーザーが削除すると、最後の upsert が
+    /// **消したはずのアルバムを復活**させる。編集された場合は、古い条件の結果が新しい内容を
+    /// 上書きする（レビュー指摘）。保存の直前に「まだ存在し、条件と世代が開始時のまま」かを確かめる。
+    private var albumGeneration: [String: Int] = [:]
+
+    private func generation(of id: String) -> Int { albumGeneration[id] ?? 0 }
+
+    /// 世代を進める（進行中の評価結果を無効にする）。
+    private func bumpGeneration(of id: String) {
+        albumGeneration[id] = generation(of: id) &+ 1
+    }
+
+    /// 評価結果を保存してよいか。開始時の世代と条件が今も一致し、アルバムが現存すること。
+    private func canCommit(id: String, criteria: String, generation started: Int) async -> Bool {
+        guard generation(of: id) == started else { return false }
+        guard let current = (await loadAll()).first(where: { $0.id == id }) else { return false }
+        return current.criteria == criteria
+    }
+
+    // テスト用アクセサ（世代と保存可否の検査）。
+    func generationForTesting(_ id: String) -> Int { generation(of: id) }
+    func canCommitForTesting(id: String, criteria: String, generation started: Int) async -> Bool {
+        await canCommit(id: id, criteria: criteria, generation: started)
     }
 
     // MARK: - 作成 / 再設定 / 削除
@@ -220,6 +266,7 @@ final class AIAlbumService {
 
         let now = Date()
         let t0 = CFAbsoluteTimeGetCurrent()
+        bumpGeneration(of: id)       // 進行中の本番化・再評価の結果を無効にする
         interpreter.remove(id: id)   // 再設定（検索文変更）は解釈からやり直す
         // 作成/編集は**即時プレビュー**（決定的レイヤーのみ・LLM なし＝1〜2 秒）。
         // FM 解釈＋LLM 審査つきの本番化は夜間（finalizePending・電源＋Wi-Fi＋ロック中）に行う。
@@ -257,6 +304,7 @@ final class AIAlbumService {
     }
 
     func delete(id: String) async -> [AutoAlbumInfo] {
+        bumpGeneration(of: id)   // 進行中の評価が後から復活させないように
         await store.deleteAlbum(id: id)
         interpreter.remove(id: id)
         return await loadAll()
@@ -284,6 +332,9 @@ final class AIAlbumService {
         let now = Date()
         let all = await store.allEnrichedPhotosLite()
         let embedCount = await store.embeddedCount()
+        // 開始時の世代を控える（この後の長い await 中に削除・編集され得る）。
+        let startedGenerations = Dictionary(uniqueKeysWithValues:
+            current.map { ($0.id, generation(of: $0.id)) })
         // 再解釈（版更新）に備えてカタログを **1 回だけ**構築して全アルバムで共有する
         // （diagnostics-48: v7 移行の全再解釈がアルバムごとに 86k フェッチ＋カタログ構築を
         //  繰り返し、約 10 秒 × 5 本の負荷で前面のメインを飢餓させた）。
@@ -308,6 +359,12 @@ final class AIAlbumService {
             members = await verification.verified(members, criteria: criteria)
             saved.scoredPool = pool
             saved.evaluatedEmbedCount = embedCount
+            saved.lastEvaluatedAt = now
+            guard await canCommit(id: album.id, criteria: criteria,
+                                  generation: startedGenerations[album.id] ?? 0) else {
+                Diagnostics.mark("aialbum.refresh: '\(criteria)' discarded (album deleted or edited)")
+                continue
+            }
             interpreter.save(saved, for: album.id)
             let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
                                                  criteria: criteria, members: members,
@@ -322,15 +379,31 @@ final class AIAlbumService {
     /// 増分再評価（Phase 2）：**新規に埋め込まれた refKey 群だけ**を採点してプールへマージし、
     /// 閾値を超えた写真をメンバーへ追加する。全ベクトルのページ走査・LLM は一切行わない。
     /// 解釈やプールが未保存のアルバムは触らない（ドリフト検知のフル再評価に任せる）。
-    func refreshIncremental(newRefKeys: [String], current: [AutoAlbumInfo]) async -> [AutoAlbumInfo] {
-        guard !current.isEmpty, !newRefKeys.isEmpty else { return current }
+    /// 増分再評価の結果。**採点できなかった分**（クエリ埋め込みが取れなかった等）を
+    /// 呼び出し側へ返し、待機列へ戻せるようにする。
+    ///
+    /// ⚠️ 戻さないと、その refKey は評価済みにもならず待機列にも残らないため、
+    /// 追加枚数がドリフト閾値を超えるまで**アルバムへ入らないまま**になる（レビュー指摘）。
+    struct IncrementalResult: Sendable {
+        var albums: [AutoAlbumInfo]
+        var deferredRefKeys: [String] = []
+    }
+
+    func refreshIncremental(newRefKeys: [String],
+                            current: [AutoAlbumInfo]) async -> IncrementalResult {
+        guard !current.isEmpty, !newRefKeys.isEmpty else { return IncrementalResult(albums: current) }
         let now = Date()
         let newPhotos = await store.enrichedPhotos(forRefKeys: newRefKeys)
         let newVectors = await store.vectors(forRefKeys: newRefKeys)
-        guard !newPhotos.isEmpty else { return current }
+        guard !newPhotos.isEmpty else { return IncrementalResult(albums: current) }
 
         var updated = current
         var touched = 0
+        /// 1 つでも採点できなかったアルバムがあれば、この分は待機列へ戻す。
+        var deferred = false
+        // 評価済み件数は現実（埋め込み総数）を超えないよう頭打ちにする。待機列へ戻した分を
+        // 再処理すると、既に数えたアルバムで二重加算になり得るため。
+        let embeddedNow = await store.embeddedCount()
         for (index, album) in current.enumerated() {
             guard let criteria = album.criteria, !criteria.isEmpty,
                   var saved = interpreter.saved(for: album.id), saved.criteria == criteria,
@@ -358,7 +431,8 @@ final class AIAlbumService {
             if effective.include.isEmpty && effective.exclude.isEmpty
                 && spec.hasHardConstraints {
                 // この経路はハード条件だけで判定が完結する＝今回の新規分は評価済み。
-                saved.evaluatedEmbedCount += newRefKeys.count
+                saved.evaluatedEmbedCount = min(saved.evaluatedEmbedCount + newRefKeys.count,
+                                                max(saved.evaluatedEmbedCount, embeddedNow))
                 interpreter.save(saved, for: album.id)
                 let base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
                                                      peopleByRefKey: peopleMap, signals: querySignals)
@@ -383,10 +457,13 @@ final class AIAlbumService {
             guard let q = await queryVectors(for: saved) else {
                 Diagnostics.mark("aialbum.incremental: query embedding unavailable — "
                     + "deferring \(newRefKeys.count) photo(s) for album \(album.id)")
+                deferred = true
                 continue
             }
-            // ここから先は採点できる。今回の新規分を評価済みに数える。
-            saved.evaluatedEmbedCount += newRefKeys.count
+            // ここから先は採点できる。今回の新規分を評価済みに数える
+            // （待機列へ戻した分の再処理で二重加算しないよう、現実の埋め込み総数で頭打ち）。
+            saved.evaluatedEmbedCount = min(saved.evaluatedEmbedCount + newRefKeys.count,
+                                            max(saved.evaluatedEmbedCount, embeddedNow))
             let (base, added) = await Task.detached(priority: .utility) {
                 () -> ([EnrichedPhoto], [String: Float]) in
                 // ハード条件（相対日付は now で解決）を新規分に適用。
@@ -440,7 +517,8 @@ final class AIAlbumService {
         if touched > 0 {
             Diagnostics.mark("aialbum.incremental: new=\(newRefKeys.count) touched=\(touched)/\(current.count)")
         }
-        return updated.sorted { $0.representativeDate > $1.representativeDate }
+        return IncrementalResult(albums: updated.sorted { $0.representativeDate > $1.representativeDate },
+                                 deferredRefKeys: deferred ? newRefKeys : [])
     }
 
     /// ドリフト検知：保存済みの評価時点と現在の埋め込み枚数の差が `threshold` を超えていたら
@@ -454,10 +532,20 @@ final class AIAlbumService {
             guard let saved = interpreter.saved(for: album.id) else { return false }
             return saved.version != SavedInterpretation.currentVersion
         }
+        // 「直近 30 日」等は**時間が経つだけで範囲が動く**。写真が増えなくても、日付が変わったら
+        // 再評価する（増分は既存メンバーを維持するので、期間外の写真が残り続ける・レビュー指摘）。
+        let now = Date()
+        let dateMoved = current.contains { album in
+            guard let saved = interpreter.saved(for: album.id) else { return false }
+            return RelativeDateStaleness.needsRefresh(spec: saved.spec,
+                                                      lastEvaluatedAt: saved.lastEvaluatedAt,
+                                                      now: now)
+        }
         let embedCount = await store.embeddedCount()
         let evaluated = interpreter.minEvaluatedEmbedCount(for: current.map(\.id))
-        guard stale || embedCount - evaluated > threshold else { return nil }
-        Diagnostics.mark("aialbum.drift: embedded=\(embedCount) evaluated=\(evaluated) stale=\(stale) → full refresh")
+        guard stale || dateMoved || embedCount - evaluated > threshold else { return nil }
+        Diagnostics.mark("aialbum.drift: embedded=\(embedCount) evaluated=\(evaluated) "
+                         + "stale=\(stale) dateMoved=\(dateMoved) → full refresh")
         return await refresh(current)
     }
 

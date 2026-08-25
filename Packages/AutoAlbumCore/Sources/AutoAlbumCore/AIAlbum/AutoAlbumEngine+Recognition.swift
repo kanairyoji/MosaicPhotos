@@ -228,7 +228,14 @@ extension AutoAlbumEngine {
         let pending = pendingNewEmbeds
         pendingNewEmbeds = []
         guard !pending.isEmpty else { return }
-        aiAlbums = await aiService.refreshIncremental(newRefKeys: pending, current: aiAlbums)
+        let result = await aiService.refreshIncremental(newRefKeys: pending, current: aiAlbums)
+        aiAlbums = result.albums
+        // ⚠️ 採点できなかった分は**待機列へ戻す**。戻さないと評価済みにもならず待機列にも
+        // 残らないため、追加枚数がドリフト閾値を超えるまでアルバムへ入らない（レビュー指摘）。
+        if !result.deferredRefKeys.isEmpty {
+            pendingNewEmbeds.append(contentsOf: result.deferredRefKeys)
+            Diagnostics.mark("aialbum.incremental: re-queued \(result.deferredRefKeys.count) deferred photo(s)")
+        }
     }
 
     // MARK: - Recognition (Vision/CLIP タグ付け)

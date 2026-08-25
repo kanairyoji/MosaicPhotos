@@ -40,6 +40,12 @@ public struct SavedInterpretation: Codable, Sendable {
     public var scoredPool: [String: Float]
     /// 増分評価: 前回フル評価時点の埋め込み済み枚数（ドリフト検知＝差が開いたらフル再評価）。
     public var evaluatedEmbedCount: Int
+    /// **フル評価**を最後に行った時刻（増分評価では更新しない）。
+    ///
+    /// ⚠️ 「直近 30 日」のような相対日付は、**時間が経つだけで範囲が動く**。写真の追加が無ければ
+    /// ドリフト検知（埋め込み枚数の差）は発火せず、増分評価は既存メンバーを維持するので、
+    /// 期間外になった写真が残り続ける（レビュー指摘）。日付境界を越えたかの判定に使う。
+    public var lastEvaluatedAt: Date?
     /// FM 生成の言い換えプローブ（英語・最大4・解釈時に 1 回生成して永続化）。意味採点は
     /// 主フレーズ＋プローブの max-over-probes（旧 JSON は nil＝プローブ無し）。
     public var probes: [String]?
