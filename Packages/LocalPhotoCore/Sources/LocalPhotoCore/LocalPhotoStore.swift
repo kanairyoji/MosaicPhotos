@@ -69,6 +69,68 @@ public final class LocalPhotoStore {
     }
     @ObservationIgnored private let source: Source
 
+    // MARK: - 写真ライブラリの変更追従（ADR: 表示中の撮影・削除・限定アクセス変更）
+
+    /// ⚠️ 起動時に一度 fetch するだけでは、**表示中の撮影・取り込み・削除・限定アクセスの
+    /// 範囲変更**が一覧へ反映されない（`MergedPhotoStore` の監視も発火しない・レビュー指摘）。
+    /// `PHPhotoLibraryChangeObserver` を張り、変化をまとめて（デバウンス）取り込む。
+    @ObservationIgnored private var libraryObserver: PhotoLibraryChangeObserver?
+    @ObservationIgnored private var reloadTask: Task<Void, Never>?
+    /// 再読み込みの世代。遅れて届いた古い結果で新しい一覧を上書きしないために使う。
+    @ObservationIgnored private var loadGeneration = 0
+    /// 連続する変更通知をまとめる待ち時間（バースト＝一括取り込み・共有シートからの追加）。
+    @ObservationIgnored private static let changeDebounce: Duration = .milliseconds(400)
+
+    /// ライブラリ変更の監視を始める（多重登録しない）。`start()` から呼ぶ。
+    func observeLibraryChanges() {
+        guard libraryObserver == nil else { return }
+        let observer = PhotoLibraryChangeObserver { [weak self] in
+            Task { @MainActor in self?.scheduleReloadForLibraryChange() }
+        }
+        PHPhotoLibrary.shared().register(observer)
+        libraryObserver = observer
+    }
+
+    private func scheduleReloadForLibraryChange() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.changeDebounce)
+            guard !Task.isCancelled, let self else { return }
+            await self.reloadForLibraryChange()
+        }
+    }
+
+    /// 変更後の再読み込み。全件フェッチのソースは取り直し、
+    /// **固定リスト（preloaded / identifiers）は削除された写真を落とす**
+    /// （メンバー画面に空セルが残らないように）。
+    private func reloadForLibraryChange() async {
+        switch source {
+        case .all, .identifiers:
+            await loadAssets()
+        case .preloaded:
+            let current = assets
+            let ids = current.map(\.localIdentifier)
+            guard !ids.isEmpty else { return }
+            loadGeneration &+= 1
+            let generation = loadGeneration
+            let (sorted, mapped) = await Task.detached(priority: .userInitiated) {
+                () -> ([PHAsset], [LocalPhotoItem]) in
+                // 現存するものだけ残す（削除済みは fetch に現れない）。
+                let alive = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+                var live: [PHAsset] = []
+                live.reserveCapacity(alive.count)
+                alive.enumerateObjects { asset, _, _ in live.append(asset) }
+                let s = live.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+                return (s, s.map { LocalPhotoItem(asset: $0) })
+            }.value
+            guard generation == loadGeneration else { return }   // 追い越された結果は捨てる
+            if sorted.count != current.count {
+                Diagnostics.mark("localPhotos: library change — \(current.count) → \(sorted.count) (preloaded)")
+            }
+            setLoaded(assets: sorted, items: mapped)
+        }
+    }
+
     /// ライブラリ全体を対象にするイニシャライザ。
     public init() {
         source = .all

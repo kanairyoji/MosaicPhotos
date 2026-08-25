@@ -31,6 +31,8 @@ extension LocalPhotoStore: PhotoStore {
 
     public func start() async {
         await requestAccess()
+        // 表示中の撮影・取り込み・削除・限定アクセスの範囲変更に追従する（レビュー指摘）。
+        observeLibraryChanges()
     }
 
     public func retry() async {
@@ -40,8 +42,8 @@ extension LocalPhotoStore: PhotoStore {
     }
 
     /// お気に入りを PhotoKit へ書き込む（端末写真）。成功で true。
-    /// 注: グリッドの即時反映は意図的に行わない（変更監視を入れていないため、全件再ソートを誘発する
-    /// ストア更新は避ける）。フル画面側で楽観表示し、グリッドは次回ロードで追従する。
+    /// 注: グリッドの即時反映はフル画面側の楽観表示に任せる。書き込み後はライブラリ変更通知が
+    /// 届くので、一覧はデバウンス後の再読み込みで追従する。
     /// 書き込み権限が無い（読み取り専用許可）場合は false を返す。
     public func setFavorite(_ item: LocalPhotoItem, _ isFavorite: Bool) async -> Bool {
         let asset = item.asset

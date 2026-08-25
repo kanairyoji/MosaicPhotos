@@ -1,4 +1,5 @@
 import Foundation
+import LocalPhotoKit   // PhotoLibraryChangeObserver（LocalPhotoCore を再エクスポート）
 import MosaicSupport
 import Photos
 
@@ -17,10 +18,28 @@ final class LocalAssetIndex {
     private var byID: [String: PHAsset]?
     private var buildTask: Task<Void, Never>?
 
+    /// ⚠️ 索引は**ライブラリ変更で古くなる**。無効化しないと、削除済み写真の ID を要求されたときに
+    /// 古い `PHAsset` を返し続け、メンバー画面に空セルが残る（通常の fetch なら除外される）。
+    /// 追いフェッチした新規アセットを索引へ入れないと毎回フェッチし直すことにもなる（レビュー指摘）。
+    private var libraryObserver: PhotoLibraryChangeObserver?
+    /// 索引作り直しの世代（追い越された結果を捨てる）。
+    private var buildGeneration = 0
+    /// 変更後は「削除済みかもしれない」と見なし、要求時に現存を確かめる（全再構築は次の機会に）。
+    private var needsRevalidation = false
+
     /// 全ライブラリの索引を（未構築なら）バックグラウンドで構築する。utility 優先度＝
     /// 画面遷移・スクロールと CPU を奪い合わない。
     func buildIfNeeded() {
+        observeLibraryChanges()
         guard byID == nil, buildTask == nil else { return }
+        rebuild()
+    }
+
+    /// 索引を作り直す。**世代**で追い越しを判定し、古い結果で新しい索引を壊さない。
+    private func rebuild() {
+        buildGeneration &+= 1
+        let generation = buildGeneration
+        buildTask?.cancel()
         buildTask = Task { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
             let built = await Task.detached(priority: .utility) { () -> [String: PHAsset] in
@@ -30,17 +49,43 @@ final class LocalAssetIndex {
                 result.enumerateObjects { asset, _, _ in dict[asset.localIdentifier] = asset }
                 return dict
             }.value
-            self?.byID = built
-            self?.buildTask = nil
+            guard let self, generation == self.buildGeneration else { return }
+            self.byID = built
+            self.buildTask = nil
+            self.needsRevalidation = false   // 作り直した＝現存だけが入っている
             Diagnostics.mark("assetIndex: built \(built.count) in \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000))ms")
         }
     }
 
+    /// ライブラリ変更を監視して索引を無効化する（多重登録しない）。
+    private func observeLibraryChanges() {
+        guard libraryObserver == nil else { return }
+        let observer = PhotoLibraryChangeObserver { [weak self] in
+            Task { @MainActor in self?.invalidate() }
+        }
+        PHPhotoLibrary.shared().register(observer)
+        libraryObserver = observer
+    }
+
+    /// 変更を受けたら「古いかもしれない」と印を付け、裏で作り直す。
+    ///
+    /// ⚠️ ここで `byID` を捨てない。捨てると作り直しが終わるまで索引が無い状態になり、
+    /// アルバムを開くたびに従来の全フェッチへ落ちる（体感が戻る）。印がある間は
+    /// 要求のたびに現存を確かめるので、削除済みを返すことはない。
+    private func invalidate() {
+        needsRevalidation = true
+        Diagnostics.mark("assetIndex: invalidated by library change")
+        rebuild()
+    }
+
     /// 単一 ID の PHAsset（索引にあれば辞書引き・無ければ単発フェッチ）。
+    /// 変更直後は索引を信用せず、現存を確かめてから返す。
     func asset(for id: String) -> PHAsset? {
         buildIfNeeded()
-        if let asset = byID?[id] { return asset }
-        return PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+        if !needsRevalidation, let asset = byID?[id] { return asset }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+        if let fetched { byID?[id] = fetched } else { byID?.removeValue(forKey: id) }
+        return fetched
     }
 
     /// メンバー ID 群に対応する PHAsset。索引未構築なら nil
@@ -49,17 +94,33 @@ final class LocalAssetIndex {
     /// off-main で行う）。ここは辞書引き＋不足分の追いフェッチだけ＝メインでの sort を避ける。
     func assets(for ids: [String]) -> [PHAsset]? {
         buildIfNeeded()
-        guard let byID else { return nil }
+        guard let index = byID else { return nil }
+        // ⚠️ ライブラリ変更の直後は索引を信用しない。**現存する写真だけ**を返す
+        // （削除済みを返すとメンバー画面に空セルが残る）。
+        if needsRevalidation {
+            let fetched = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+            var live: [PHAsset] = []
+            live.reserveCapacity(fetched.count)
+            fetched.enumerateObjects { asset, _, _ in live.append(asset) }
+            for asset in live { byID?[asset.localIdentifier] = asset }
+            let removed = ids.count - live.count
+            if removed > 0 { Diagnostics.mark("assetIndex: dropped \(removed) deleted photo(s)") }
+            return live
+        }
         var found: [PHAsset] = []
         found.reserveCapacity(ids.count)
         var missing: [String] = []
         for id in ids {
-            if let asset = byID[id] { found.append(asset) } else { missing.append(id) }
+            if let asset = index[id] { found.append(asset) } else { missing.append(id) }
         }
         // 索引構築後に追加された写真だけ小さく追いフェッチ（通常ゼロ〜数枚・ms 級）。
+        // ⚠️ 取れた分は**索引へ入れる**（入れないと開くたびに同じフェッチを繰り返す）。
         if !missing.isEmpty {
             let fetched = PHAsset.fetchAssets(withLocalIdentifiers: missing, options: nil)
-            fetched.enumerateObjects { asset, _, _ in found.append(asset) }
+            fetched.enumerateObjects { asset, _, _ in
+                found.append(asset)
+                self.byID?[asset.localIdentifier] = asset
+            }
             Diagnostics.mark("assetIndex: top-up fetch \(missing.count) missing → \(fetched.count)")
         }
         return found
