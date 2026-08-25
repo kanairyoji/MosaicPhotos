@@ -1,3 +1,4 @@
+import CoreData   // NSSQLiteErrorDomain（SwiftData の裏側は Core Data）
 import Foundation
 
 /// 永続ストアが開けなかったときの扱い（純ロジック・テスト対象）。
@@ -46,23 +47,41 @@ public enum StoreRecovery {
         switch domain {
         case NSCocoaErrorDomain:
             // 640: 容量不足 / 642: 読み取り専用ボリューム / 257,513: 権限（保護中を含む）
-            return [640, 642, 257, 513].contains(code)
+            // 255: NSFileLockingError（他プロセス・他コンテナがロック中）
+            return [640, 642, 257, 513, 255].contains(code)
         case NSPOSIXErrorDomain:
             // ENOSPC(28) EDQUOT(69) EPERM(1) EACCES(13) EBUSY(16) EIO(5) EAGAIN(35)
             return [28, 69, 1, 13, 16, 5, 35].contains(code)
+        case NSSQLiteErrorDomain:
+            // ⚠️ SQLITE_BUSY(5) / SQLITE_LOCKED(6) は**ロック競合**であって破損ではない。
+            // 別の ModelContainer やプロセスが一瞬ストアを掴んでいるだけで、待てば開ける。
+            // これを破損として扱うと、再構築可能なキャッシュを消し、台帳まで退避して
+            // 空の台帳で起動する＝バックアップ済み判定を失い二重アップロードになる（レビュー指摘）。
+            return [5, 6].contains(code)
         default:
             return false
         }
     }
 
     /// 退避先の名前（衝突しないよう連番）。呼び出し側が `moveItem` に使う。
+    ///
+    /// ⚠️ **必ず存在しない名前を返す**こと。既存の名前を返すと `moveItem` が失敗し、
+    /// 壊れたストアがその場に残る。すると次の起動でも開けず、**毎回インメモリに落ちる**
+    /// （＝データが増えないまま動き続ける）状態が固定化する（レビュー指摘）。
+    /// 連番は上限を設けず、それでも埋まっていれば UUID で必ず空きを作る。
     public static func quarantineURL(for url: URL, existing: (URL) -> Bool) -> URL {
         let base = url.appendingPathExtension("corrupt")
         if !existing(base) { return base }
-        for n in 2...99 {
+        var n = 2
+        while n < 10_000 {
             let candidate = url.appendingPathExtension("corrupt\(n)")
             if !existing(candidate) { return candidate }
+            n += 1
         }
-        return url.appendingPathExtension("corrupt-last")
+        // ここまで埋まるのは異常だが、**既存名は絶対に返さない**（衝突すると退避自体が失敗する）。
+        while true {
+            let unique = url.appendingPathExtension("corrupt-\(UUID().uuidString.prefix(8))")
+            if !existing(unique) { return unique }
+        }
     }
 }

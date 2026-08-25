@@ -69,19 +69,22 @@ enum HeavyWorkScheduler {
     /// 実行中の重い処理タスク（BGTask 本体）。フォアグラウンド復帰で止めるために保持する（ADR-79）。
     private static var currentWork: Task<Void, Never>?
 
-    /// この BGTask の完了通知ラッチ。**`setTaskCompleted` は 1 回だけ**呼べる
-    /// （二重に呼ぶと BGTaskScheduler が例外を投げる）。期限切れハンドラと本体の終了処理が
-    /// どちらも呼び得るので、ここで 1 回に絞る（レビュー指摘・`CompletionLatch` はテスト済み）。
+    /// BGTask の完了通知ラッチ。**`setTaskCompleted` は 1 回だけ**呼べる（二重に呼ぶと
+    /// BGTaskScheduler が例外を投げる）。期限切れハンドラと本体の終了処理がどちらも呼び得るので、
+    /// ここで 1 回に絞る。世代トークンで**前の実行から遅れて来た通知**も弾く
+    /// （`CompletionLatch` はテスト済み）。
     private static let completionLatch = CompletionLatch()
 
     private static func handle(_ task: BGProcessingTask) {
         Diagnostics.mark("bgtask: begin")
         let started = Date()
-        completionLatch.reset()
+        // この実行の世代。以後の完了通知はこのトークンを添えて行う
+        // （前の実行の遅れた通知がこの枠を奪わないように）。
+        let token = completionLatch.begin()
 
         /// 完了通知＋再予約を**一度だけ**行う。
         @MainActor func completeOnce(outcome: String, success: Bool) {
-            completionLatch.completeOnce {
+            completionLatch.completeOnce(token) {
                 Diagnostics.mark("bgtask: end (\(outcome))")
                 recordLastRun(started: started, outcome: outcome)
                 task.setTaskCompleted(success: success)
