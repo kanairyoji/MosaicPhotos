@@ -44,6 +44,9 @@ public final class BackupEngine {
 
     // internal: BackupEngine+Offload（同モジュール extension）からも使う。
     @ObservationIgnored let tokenProvider: AccessTokenProvider
+    /// 現在のアカウント ID を取り出す seam（保留メタデータのキュー分離に使う）。
+    /// `DropboxAuthService` を直接持たず、必要な 1 点だけ受け取る。
+    @ObservationIgnored var accountIdProvider: @MainActor () -> String?
     @ObservationIgnored let uploader: DropboxBackupUploader
     @ObservationIgnored private let progressStore = BackupProgressStore()
     @ObservationIgnored private var backupTask: Task<Void, Never>?
@@ -129,6 +132,7 @@ public final class BackupEngine {
 
     public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
         self.tokenProvider = auth
+        self.accountIdProvider = { [weak auth] in auth?.credential?.accountId }
         self.uploader = DropboxBackupUploader(httpClient: httpClient)
         // SwiftData は BackupStore（@ModelActor）へ分離し**オフメイン生成**する。
         // 旧実装は init で全記録 fetch×2 がメインで走り、記録が増えると起動ハングの構図だった。
@@ -446,6 +450,11 @@ extension BackupEngine: BackupRunnerDelegate {
 
     func runnerPriorityLocalIdentifiers() async -> Set<String> {
         await store().shareWaitingLocalIdentifiers()
+    }
+
+    /// 現在のアカウントの指紋（生の accountId は保存しない）。
+    func runnerAccountFingerprint() async -> String? {
+        accountIdProvider().map(BackupDeviceIdentity.fingerprint)
     }
 
     func runnerRecordedLocalIdentifiers() async -> Set<String> {

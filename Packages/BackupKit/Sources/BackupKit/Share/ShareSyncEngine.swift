@@ -69,6 +69,11 @@ public final class ShareSyncEngine {
     @ObservationIgnored private let storeProvider: @MainActor () async -> BackupStore
     /// 設定の読み出し先。既定は `.standard`、テストは専用スイートを渡して独立させる。
     @ObservationIgnored private let defaults: UserDefaults
+
+    /// 現在の Dropbox アカウントの指紋。墓標をアカウントごとに分けるために使う
+    /// （⚠️ 猶予時間内にアカウントを切り替えると、**別アカウントの同名フォルダ**を
+    /// 消しに行く・レビュー指摘）。未注入なら nil＝「持ち主不明」として分離される。
+    @ObservationIgnored public var accountFingerprint: @MainActor () -> String? = { nil }
     /// 解析サイドカーの供給元（未設定なら写真のみ共有）。
     @ObservationIgnored public weak var analysisSource: ShareAnalysisSource?
     /// 作成元の現在メンバー解決（未設定なら「今の内容に更新」を出さない）。
@@ -188,9 +193,25 @@ public final class ShareSyncEngine {
 
     /// 既存セットのメンバーを **今の内容へ合わせる**（追加＋除外）。共有側の実ファイル削除は
     /// 除外分だけ行い、残りは次の反映が面倒を見る。作成元キーも最新に更新する。
+    ///
+    /// ⚠️ 削除系（`deleteSet` / `removeItems`）と**同じ排他区間**に入れること。反映は先に読んだ
+    /// 計画でコピーするため、排他なしで除外すると「記録を消した後に旧計画がコピー」して
+    /// 孤児ファイルが残る（レビュー指摘）。
     @discardableResult
     public func updateSetMembers(setID: UUID, refKeys: [String], sourceKey: String? = nil,
                                  store: BackupStore? = nil) async -> (added: Int, removed: Int) {
+        // 呼び出し元（createSet の再利用経路）が既に排他を取っている場合は二重に取らない。
+        let ownsExclusion = !isMutating
+        if ownsExclusion {
+            isMutating = true
+            guard await waitForSyncToPause() else {
+                isMutating = false
+                lastError = .syncBusy
+                return (0, 0)
+            }
+        }
+        defer { if ownsExclusion { isMutating = false } }
+
         let resolvedStore: BackupStore
         if let store { resolvedStore = store } else { resolvedStore = await storeProvider() }
         let store = resolvedStore
@@ -214,6 +235,9 @@ public final class ShareSyncEngine {
                     lastError = .notConnected
                 }
             }
+            // 未コピー分も、発行済みのサーバー側ジョブで後から現れ得る（上と同じ理由）。
+            await addFileTombstones(for: obsolete.filter { $0.sharedPath == nil }, setID: setID,
+                                    store: store)
             // まだコピーされていない分は共有側に何も無いので、失敗時もそのまま外してよい。
             let dropped = ok ? obsolete : obsolete.filter { $0.sharedPath == nil }
             if !dropped.isEmpty {
@@ -331,9 +355,10 @@ public final class ShareSyncEngine {
         await store.deleteShareSet(id: id)
         // 墓標を残す。進行中だったコピーが後から完走してフォルダを復活させても、
         // 次以降の反映が消し直せるようにする（クライアント側のキャンセルでは止まらない）。
-        var tombstones = ShareSettingsKeys.deletedFolderTombstones(defaults)
+        let account = accountFingerprint()
+        var tombstones = ShareSettingsKeys.deletedFolderTombstones(account: account, defaults)
         tombstones[folder] = Date()
-        ShareSettingsKeys.setDeletedFolderTombstones(tombstones, defaults)
+        ShareSettingsKeys.setDeletedFolderTombstones(tombstones, account: account, defaults)
         BackupLogger.info("Share: deleted set '\(set.folderName)'")
         await refresh()
         return true
@@ -355,7 +380,12 @@ public final class ShareSyncEngine {
         let store = await storeProvider()
         let items = await store.shareItems(setID: setID)
         let targets = items.filter { refKeys.contains($0.refKey) }
-        // まだコピーされていない分は共有側に何も無いので、そのまま記録を消してよい。
+        // ⚠️ 「まだコピーされていない」は**この瞬間の記録**でしかない。反映を止めても
+        // Dropbox 側で発行済みの copy_batch は完走するため、記録を消した後にファイルが
+        // 現れ得る（レビュー指摘）。予定されていたコピー先に**ファイル墓標**を置いて、
+        // 後から現れたら次の反映で消す。
+        await addFileTombstones(for: targets.filter { $0.sharedPath == nil }, setID: setID,
+                                store: store)
         let removable = Set(targets.filter { $0.sharedPath == nil }.map(\.refKey))
         let remotePaths = targets.compactMap(\.sharedPath)
         var ok = true
@@ -580,6 +610,11 @@ public final class ShareSyncEngine {
         return await adopt(movedFrom: candidates[0])
     }
 
+    /// テスト用: 現在のファイル墓標。
+    func fileTombstonesForTesting() -> [String: Date] {
+        ShareSettingsKeys.deletedFileTombstones(account: accountFingerprint(), defaults)
+    }
+
     /// 削除済みフォルダの後始末。**復活していたら消し直す**。
     ///
     /// 削除の直前まで走っていたコピージョブは、こちらがポーリングをやめてもサーバー側で
@@ -587,18 +622,68 @@ public final class ShareSyncEngine {
     /// 戻ってくるが、記録は既に無いので誰の持ち物でもない孤児になる。猶予時間の間だけ
     /// 覚えておいて掃除し、期限切れの墓標は捨てる（無いものを探し続けない）。
     private func sweepDeletedFolders(copier: DropboxShareCopier, token: String) async {
-        var tombstones = ShareSettingsKeys.deletedFolderTombstones(defaults)
-        guard !tombstones.isEmpty else { return }
+        let account = accountFingerprint()
         let now = Date()
-        for (path, deletedAt) in tombstones {
-            // 消し直す。既に無ければ not_found＝成功として扱われる。
-            let ok = await copier.deleteBatch(paths: [path], token: token)
-            if !ok { continue }   // 消せなかった（権限等）→ 墓標を残して次回再試行
-            if now.timeIntervalSince(deletedAt) >= ShareSettingsKeys.deletedFolderGraceSeconds {
-                tombstones.removeValue(forKey: path)
+
+        var folders = ShareSettingsKeys.deletedFolderTombstones(account: account, defaults)
+        if !folders.isEmpty {
+            for (path, deletedAt) in folders {
+                // 消し直す。既に無ければ not_found＝成功として扱われる。
+                guard await copier.deleteBatch(paths: [path], token: token) else { continue }
+                if now.timeIntervalSince(deletedAt) >= ShareSettingsKeys.deletedFolderGraceSeconds {
+                    folders.removeValue(forKey: path)
+                }
+            }
+            ShareSettingsKeys.setDeletedFolderTombstones(folders, account: account, defaults)
+        }
+
+        // 単枚の墓標（メンバーから外した写真の予定コピー先）も同じ規則で掃除する。
+        var files = ShareSettingsKeys.deletedFileTombstones(account: account, defaults)
+        guard !files.isEmpty else { return }
+        let paths = Array(files.keys)
+        for chunk in stride(from: 0, to: paths.count, by: 100).map({
+            Array(paths[$0..<min($0 + 100, paths.count)])
+        }) {
+            guard await copier.deleteBatch(paths: chunk, token: token) else { continue }
+            for path in chunk where now.timeIntervalSince(files[path] ?? now)
+                >= ShareSettingsKeys.deletedFolderGraceSeconds {
+                files.removeValue(forKey: path)
             }
         }
-        ShareSettingsKeys.setDeletedFolderTombstones(tombstones, defaults)
+        ShareSettingsKeys.setDeletedFileTombstones(files, account: account, defaults)
+    }
+
+    /// 外した写真の**予定コピー先**に墓標を置く（まだコピーされていない分）。
+    ///
+    /// 予定先は `SharePlanning` と同じ規則（セットフォルダ直下・元のファイル名）で求める。
+    /// 連番（"name 2.jpg"）まで再現はできないが、素の名前を押さえておけば
+    /// 発行済みジョブが作る典型的なファイルは掃除できる。
+    private func addFileTombstones(for items: [ShareItemLite], setID: UUID,
+                                   store: BackupStore) async {
+        guard !items.isEmpty else { return }
+        guard let set = await store.allShareSets().first(where: { $0.id == setID }),
+              let folder = SharePlanning.setFolderPath(
+                shareRoot: ShareSettingsKeys.currentShareRoot(defaults),
+                folderName: set.folderName,
+                deviceFolder: BackupDeviceIdentity.currentFolderName()) else { return }
+
+        let localIDs = items.filter { $0.refKey.hasPrefix("L-") }.map { String($0.refKey.dropFirst(2)) }
+        let backupRefs = await store.backupRefs(forLocalIdentifiers: localIDs)
+        let account = accountFingerprint()
+        var files = ShareSettingsKeys.deletedFileTombstones(account: account, defaults)
+        let now = Date()
+        for item in items {
+            let source: String?
+            if item.refKey.hasPrefix("C-") {
+                source = String(item.refKey.dropFirst(2))
+            } else {
+                source = backupRefs[String(item.refKey.dropFirst(2))]?.dropboxPath
+            }
+            guard let source else { continue }
+            let name = (source as NSString).lastPathComponent
+            files["\(folder)/\(name)".lowercased()] = now
+        }
+        ShareSettingsKeys.setDeletedFileTombstones(files, account: account, defaults)
     }
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,

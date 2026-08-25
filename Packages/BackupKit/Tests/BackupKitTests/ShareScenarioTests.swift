@@ -674,3 +674,118 @@ struct ShareMultiUserTests {
         #expect(await store.shareItems(setID: sets[0].id).count == 2, "内容が更新されていない")
     }
 }
+
+// MARK: - 墓標のアカウント分離・排他（再レビュー指摘）
+
+/// ⚠️ 墓標をパスだけで持つと、猶予時間（15 分）の内に Dropbox アカウントを切り替えたとき、
+/// **新しいアカウントの同名フォルダ**を消しに行く。共有ルートは既定値が同じなので普通に衝突する。
+@Suite("共有の墓標（アカウント分離）")
+struct ShareTombstoneAccountTests {
+
+    private func defaults() -> UserDefaults {
+        UserDefaults(suiteName: "tombstone-\(UUID().uuidString)") ?? .standard
+    }
+
+    @Test("別アカウントの墓標は見えない")
+    func tombstonesAreScopedByAccount() {
+        let d = defaults()
+        let path = "/MosaicShare/iPhone-AAA/People-家族"
+        ShareSettingsKeys.setDeletedFolderTombstones([path: Date()], account: "acct-a", d)
+
+        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-a", d)[path] != nil)
+        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-b", d).isEmpty,
+                "別アカウントの同名フォルダを消しに行く")
+    }
+
+    @Test("片方のアカウントを更新しても、もう片方は消えない")
+    func updatingOneAccountKeepsTheOther() {
+        let d = defaults()
+        ShareSettingsKeys.setDeletedFolderTombstones(["/a": Date()], account: "acct-a", d)
+        ShareSettingsKeys.setDeletedFolderTombstones(["/b": Date()], account: "acct-b", d)
+        ShareSettingsKeys.setDeletedFolderTombstones([:], account: "acct-a", d)   // a を掃除
+
+        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-a", d).isEmpty)
+        #expect(ShareSettingsKeys.deletedFileTombstones(account: "acct-b", d).isEmpty)
+        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-b", d)["/b"] != nil,
+                "他アカウントの墓標まで消している")
+    }
+
+    @Test("ファイル墓標もアカウントで分かれる")
+    func fileTombstonesAreScoped() {
+        let d = defaults()
+        ShareSettingsKeys.setDeletedFileTombstones(["/x/a.jpg": Date()], account: "acct-a", d)
+        #expect(ShareSettingsKeys.deletedFileTombstones(account: "acct-a", d).count == 1)
+        #expect(ShareSettingsKeys.deletedFileTombstones(account: "acct-b", d).isEmpty)
+    }
+}
+
+/// ⚠️ `updateSetMembers` だけが削除系の排他区間の外にあった。反映は先に読んだ計画でコピーするため、
+/// 排他なしで除外すると「記録を消した後に旧計画がコピー」して孤児ファイルが残る。
+@Suite("メンバー更新の排他", .serialized)
+@MainActor
+struct ShareMemberUpdateExclusionTests {
+
+    private static let shareRoot = "/MosaicShare"
+
+    private func makeStack() async -> (ShareSyncEngine, BackupStore, FakeDropboxServer) {
+        let defaults = isolatedShareDefaults()
+        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
+        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let server = FakeDropboxServer()
+        for (id, path, hash) in [("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")] {
+            await server.seed(path, hash: hash)
+            await store.upsertRecord(dropboxPath: path, localIdentifier: id, filename: "\(id).jpg",
+                                     creationDate: nil, contentHash: hash,
+                                     people: [], albums: [], isFavorite: false)
+        }
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(), storeProvider: { store },
+                                     httpClient: server, defaults: defaults)
+        engine.pollIntervalNs = 1_000_000
+        engine.maxPollAttempts = 3
+        return (engine, store, server)
+    }
+
+    /// 反映（コピー）が走っている最中にメンバーを外すと、**記録を消した後に旧計画がコピー**して
+    /// 孤児ファイルが残る。除外は削除系と同じ排他区間で行い、走行中の反映を止めてから進める。
+    @Test("反映中のメンバー更新は、反映を止めてから進む")
+    func memberUpdateStopsRunningSync() async {
+        let (engine, store, server) = await makeStack()
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
+        await server.setJobsTimeOutButComplete(true)   // ジョブが終わらない＝反映が続く
+        engine.maxPollAttempts = 100_000
+
+        let syncing = Task { await engine.syncNow() }
+        while !engine.isSyncing { await Task.yield() }
+
+        let setID = await store.allShareSets().first!.id
+        let result = await engine.updateSetMembers(setID: setID, refKeys: ["L-a"])
+
+        // 除外が成立したなら、その時点で反映は止まっている（走らせたまま記録を消していない）。
+        if result.removed > 0 {
+            #expect(!engine.isSyncing,
+                    "反映を走らせたままメンバーを外した（旧計画のコピーが孤児として残る）")
+            let refs = await store.shareItems(setID: setID).map(\.refKey)
+            #expect(refs == ["L-a"])
+        } else {
+            #expect(engine.lastError == .syncBusy, "諦めたのに理由が伝わらない")
+        }
+
+        await server.setJobsTimeOutButComplete(false)
+        _ = await syncing.value
+    }
+
+    /// 未コピーの写真を外したときは、予定コピー先に墓標を置く（サーバー側ジョブ対策）。
+    @Test("未コピー分を外すと、予定コピー先に墓標が残る")
+    func removingUncopiedLeavesFileTombstone() async {
+        let (engine, store, _) = await makeStack()
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])   // まだ反映していない
+        let setID = await store.allShareSets().first!.id
+
+        _ = await engine.removeItems(setID: setID, refKeys: ["L-b"])
+
+        let tombstones = engine.fileTombstonesForTesting()
+        #expect(tombstones.keys.contains { $0.hasSuffix("/b.jpg") },
+                "発行済みジョブが後から作るファイルを掃除できない: \(tombstones.keys)")
+    }
+}

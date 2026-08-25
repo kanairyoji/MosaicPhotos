@@ -42,8 +42,13 @@ extension FaceStore {
         removeFromCluster(clusterID: oldCID, vec: vec, quality: quality, faceID: faceID,
                           contributes: contributed)
         let targetCID = toClusterID ?? nextClusterID()
-        // ユーザーが選んだ付け替え先には、寄与できる品質のときだけ重心を更新して入れる。
-        let contributesNow = quality >= FaceStore.qualityFloor
+        // ⚠️ **新しいクラスタを作る場合は、品質に関わらず種にする**。
+        // 低品質顔は通常 membership だけ（重心を汚さない）だが、それを新規クラスタへ入れると
+        // `addToCluster` はクラスタを作らずに返り、顔だけが**存在しないクラスタ ID** を指す
+        // （人物一覧に出ない・迷子になる・レビュー指摘）。ユーザーが明示的に分離した顔なので、
+        // 種にするだけの根拠もある。
+        let isNewCluster = toClusterID == nil || cluster(targetCID) == nil
+        let contributesNow = isNewCluster || quality >= FaceStore.qualityFloor
         addToCluster(clusterID: targetCID, vec: vec, quality: quality, faceID: faceID,
                      contributes: contributesNow)
         face.clusterID = targetCID
@@ -188,6 +193,8 @@ extension FaceStore {
         guard !moving.isEmpty, let src = cluster(clusterID),
               let srcSum = ClipMath.decodeHalf(src.sum) else { return nil }
         let newID = nextClusterID()
+        // 分離先クラスタの種になる 1 枚目（全員が低品質でも必ず種を作る・上と同じ理由）。
+        var seeded = false
         for f in moving {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
             // 「この顔はこのクラスタではない」＝負例（1 対 1 の確認なので確度は高い）。
@@ -199,9 +206,10 @@ extension FaceStore {
             let contributed = FaceStore.contributesToCentroid(f)
             removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
                               faceID: f.faceID, contributes: contributed)
-            let contributesNow = Float(f.quality) >= FaceStore.qualityFloor
+            let contributesNow = !seeded || Float(f.quality) >= FaceStore.qualityFloor
             addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID,
                          contributes: contributesNow)
+            seeded = true
             f.clusterID = newID
             f.contributesToCentroid = contributesNow
         }

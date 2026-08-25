@@ -75,15 +75,59 @@ public enum ShareSettingsKeys {
     /// 墓標を覚えておく時間。非同期ジョブの上限（約 4 分）に余裕を見た値。
     public static let deletedFolderGraceSeconds: TimeInterval = 15 * 60
 
-    public static func deletedFolderTombstones(_ defaults: UserDefaults = .standard)
-        -> [String: Date] {
-        guard let raw = defaults.dictionary(forKey: deletedFolders) as? [String: Double]
-        else { return [:] }
-        return raw.mapValues { Date(timeIntervalSince1970: $0) }
+    /// **単枚**の墓標（メンバーから外した写真の予定コピー先）。フォルダ墓標と同じ理由で要る——
+    /// 反映を止めても、発行済みの copy_batch はサーバー側で完走するため、記録を消した後に
+    /// ファイルだけが現れる（レビュー指摘）。
+    public static let deletedFiles = "shareDeletedFiles"
+
+    public static func deletedFileTombstones(account: String?,
+                                             _ defaults: UserDefaults = .standard) -> [String: Date] {
+        tombstones(key: deletedFiles, account: account, defaults)
     }
 
-    public static func setDeletedFolderTombstones(_ value: [String: Date],
+    public static func setDeletedFileTombstones(_ value: [String: Date], account: String?,
+                                                _ defaults: UserDefaults = .standard) {
+        setTombstones(value, key: deletedFiles, account: account, defaults)
+    }
+
+    private static func tombstones(key: String, account: String?,
+                                   _ defaults: UserDefaults) -> [String: Date] {
+        guard let raw = defaults.dictionary(forKey: key) as? [String: Double] else { return [:] }
+        let prefix = "\(account ?? "-")|"
+        var out: [String: Date] = [:]
+        for (k, time) in raw where k.hasPrefix(prefix) {
+            out[String(k.dropFirst(prefix.count))] = Date(timeIntervalSince1970: time)
+        }
+        return out
+    }
+
+    private static func setTombstones(_ value: [String: Date], key: String, account: String?,
+                                      _ defaults: UserDefaults) {
+        var raw = (defaults.dictionary(forKey: key) as? [String: Double]) ?? [:]
+        let prefix = "\(account ?? "-")|"
+        for k in raw.keys where k.hasPrefix(prefix) { raw.removeValue(forKey: k) }
+        for (path, date) in value { raw["\(prefix)\(path)"] = date.timeIntervalSince1970 }
+        defaults.set(raw, forKey: key)
+    }
+
+    /// 墓標のキー。**アカウントを含める**こと。
+    ///
+    /// ⚠️ パスだけを鍵にすると、削除から猶予時間（15 分）の内に Dropbox アカウントを切り替えたとき、
+    /// **新しいアカウントの同じパスのフォルダを消しに行く**（レビュー指摘）。共有ルートは既定値が
+    /// 同じなので、別アカウントでも同名パスは普通に存在する。
+    static func tombstoneKey(account: String?, path: String) -> String {
+        "\(account ?? "-")|\(path)"
+    }
+
+    /// 指定アカウントぶんの墓標（キーはパス）。account が nil のときは「持ち主不明」の分だけ返す。
+    public static func deletedFolderTombstones(account: String?,
+                                               _ defaults: UserDefaults = .standard) -> [String: Date] {
+        tombstones(key: deletedFolders, account: account, defaults)
+    }
+
+    /// 指定アカウントぶんの墓標を置き換える（他アカウントの分は触らない）。
+    public static func setDeletedFolderTombstones(_ value: [String: Date], account: String?,
                                                   _ defaults: UserDefaults = .standard) {
-        defaults.set(value.mapValues { $0.timeIntervalSince1970 }, forKey: deletedFolders)
+        setTombstones(value, key: deletedFolders, account: account, defaults)
     }
 }

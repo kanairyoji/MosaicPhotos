@@ -1,5 +1,6 @@
 import DropboxCore
 import Foundation
+import Photos
 import Testing
 @testable import BackupKit
 
@@ -322,5 +323,163 @@ struct BackupRecordCommitTests {
         let records = await store.allRecordsLite()
         #expect(records.count == 1)
         #expect(records.first?.contentHash == "h2")
+    }
+}
+
+// MARK: - アカウント・保存先ごとの分離（レビュー指摘）
+
+/// ⚠️ 再送キューが全アカウント・全保存先で共通だと、切り替えたときに
+/// **前の保存先向けのメタデータ（人物名・位置・アルバム）を現在の保存先へ送る**。
+@Suite("PendingMetadataStore namespacing")
+struct PendingMetadataNamespaceTests {
+
+    private func entry(_ people: [String]) -> DropboxBackupMetadata.Entry {
+        DropboxBackupMetadata.Entry(people: people, albums: [], localIdentifier: "id")
+    }
+
+    @Test("アカウントが違えばキューは混ざらない")
+    func differentAccountsAreIsolated() {
+        let folder = "/MosaicPhotos/iPhone-3F2A8C"
+        let a = PendingMetadataStore(account: "acc-a", folder: folder)
+        let b = PendingMetadataStore(account: "acc-b", folder: folder)
+        defer { _ = a.save([:]); _ = b.save([:]) }
+
+        _ = a.save(["2025-08": ["/x/a.jpg": entry(["太郎"])]])
+        #expect(b.load().isEmpty, "別アカウントのキューを読んでいる（前の保存先へ送ってしまう）")
+        #expect(a.load()["2025-08"]?.count == 1)
+    }
+
+    @Test("保存先が違えばキューは混ざらない")
+    func differentFoldersAreIsolated() {
+        let a = PendingMetadataStore(account: "acc", folder: "/MosaicPhotos/iPhone-3F2A8C")
+        let b = PendingMetadataStore(account: "acc", folder: "/Backup2/iPhone-3F2A8C")
+        defer { _ = a.save([:]); _ = b.save([:]) }
+
+        _ = a.save(["2025-08": ["/x/a.jpg": entry(["太郎"])]])
+        #expect(b.load().isEmpty, "別の保存先のキューを読んでいる")
+    }
+
+    @Test("同じアカウント・同じ保存先なら同じキューを見る")
+    func sameNamespaceShares() {
+        let folder = "/MosaicPhotos/iPhone-3F2A8C"
+        let writer = PendingMetadataStore(account: "acc", folder: folder)
+        let reader = PendingMetadataStore(account: "acc", folder: folder)
+        defer { _ = writer.save([:]) }
+
+        _ = writer.save(["2025-08": ["/x/a.jpg": entry(["太郎"])]])
+        #expect(reader.load()["2025-08"]?["/x/a.jpg"]?.people == ["太郎"])
+    }
+}
+
+// MARK: - アップロード対象が無い回の再送（レビュー指摘）
+
+/// アップロード先パス・本文を記録するだけのクライアント（シャードは常に「新規」）。
+private actor MarkerRecorder: HTTPClient {
+    private(set) var uploaded: [String] = []
+    var failUploads = false
+    func setFailUploads(_ value: Bool) { failUploads = value }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = request.url!.absoluteString
+        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
+            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
+                                              httpVersion: nil, headerFields: nil)!)
+        }
+        if url.contains("download") || url.contains("get_metadata") {
+            return resp(409, #"{"error_summary":"path/not_found/"}"#)
+        }
+        if url.contains("upload") {
+            struct Arg: Decodable { let path: String }
+            let raw = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? "{}"
+            uploaded.append((try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? "?")
+            return failUploads ? resp(500, "{}") : resp(200, "{}")
+        }
+        return resp(200, "{}")
+    }
+}
+
+private final class DrainToken: AccessTokenProvider {
+    func freshAccessToken() async throws -> String { "t" }
+}
+
+/// runner の通知先。ドレイン経路は写真に触らないので、記録だけの最小実装で足りる。
+@MainActor
+private final class StubRunnerDelegate: BackupRunnerDelegate {
+    var phases: [BackupEngine.Phase] = []
+    func runnerSetPhase(_ phase: BackupEngine.Phase) { phases.append(phase) }
+    func runnerLog(_ message: String) {}
+    func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
+                          people: [String], albums: [String], isFavorite: Bool,
+                          contentHash: String?) async -> Bool { true }
+    func runnerRecordedLocalIdentifiers() async -> Set<String> { [] }
+    func runnerPriorityLocalIdentifiers() async -> Set<String> { [] }
+    func runnerAccountFingerprint() async -> String? { "acct" }
+}
+
+/// ⚠️ 「上げる写真が無い」で早期 return すると、前回送れなかったメタデータが
+/// **新しい写真が増えるまで永久に滞留**する（人物名・位置・アルバムが欠けたまま）。
+@Suite("保留メタデータの再送")
+@MainActor
+struct PendingMetadataDrainTests {
+
+    private func makeRunner(_ delegate: StubRunnerDelegate,
+                            _ server: MarkerRecorder) -> BackupRunner {
+        BackupRunner(tokenProvider: DrainToken(),
+                     uploader: DropboxBackupUploader(httpClient: server),
+                     progressStore: BackupProgressStore(),
+                     uploadLimit: { 0 }, delegate: delegate)
+    }
+
+    private func queue(_ payload: PendingMetadataStore.Payload) -> PendingMetadataStore {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let store = PendingMetadataStore(directory: dir, filename: "pending.json")
+        _ = store.save(payload)
+        return store
+    }
+
+    private var payload: PendingMetadataStore.Payload {
+        ["2023-11": ["/backup/a.jpg": DropboxBackupMetadata.Entry(people: ["名前"], albums: ["Trip"],
+                                                                 localIdentifier: "a")]]
+    }
+
+    @Test("新規アップロードが 1 枚も無くても、保留分は送り直してキューが空になる")
+    func drainsQueueWithoutNewUploads() async {
+        let server = MarkerRecorder()
+        let delegate = StubRunnerDelegate()
+        let store = queue(payload)
+
+        await makeRunner(delegate, server).drainPendingMetadata(folder: "/backup", pendingStore: store)
+
+        let uploaded = await server.uploaded
+        #expect(uploaded.contains { $0.contains("2023-11") }, "保留分を送っていない: \(uploaded)")
+        #expect(store.load().isEmpty, "送れたのにキューに残っている（次回また送る）")
+    }
+
+    /// このパスは albums/people の索引を作っていない。カタログを書くと**既存の名前が消える**。
+    @Test("再送ではカタログを書かない")
+    func drainDoesNotTouchCatalog() async {
+        let server = MarkerRecorder()
+        let store = queue(payload)
+
+        await makeRunner(StubRunnerDelegate(), server).drainPendingMetadata(folder: "/backup",
+                                                                            pendingStore: store)
+
+        let uploaded = await server.uploaded
+        #expect(!uploaded.contains { $0.hasSuffix("catalog.json") },
+                "空の索引でカタログを上書きした: \(uploaded)")
+    }
+
+    @Test("送れなかった分はキューに残る")
+    func failedEntriesStayQueued() async {
+        let server = MarkerRecorder()
+        await server.setFailUploads(true)
+        let store = queue(payload)
+
+        await makeRunner(StubRunnerDelegate(), server).drainPendingMetadata(folder: "/backup",
+                                                                            pendingStore: store)
+
+        #expect(!store.load().isEmpty, "送信に失敗したのにキューから消えた（欠落が永久化する）")
     }
 }

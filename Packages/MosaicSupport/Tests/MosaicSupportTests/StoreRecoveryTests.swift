@@ -102,3 +102,85 @@ struct StoreRecoveryTests {
         #expect(url.lastPathComponent.hasPrefix("BackupKit.store.corrupt-"))
     }
 }
+
+/// ⚠️ 退避名は本体（`<store>.corrupt`）だけでなく `<store>-wal.corrupt` / `<store>-shm.corrupt`
+/// も作られる。本体だけを見て「新しい順に N 件残す」と、WAL/SHM が対象から外れて溜まり続け、
+/// しかも件数を**ファイル単位**で数えるため現役世代の WAL/SHM まで消えてしまう。
+/// 刈り取りは**世代単位**で行う。
+@Suite("退避ファイルの世代刈り")
+struct QuarantinePruneTests {
+
+    /// `<dir>/<base>` の退避を世代ぶん作る。世代ごとに本体・WAL・SHM の 3 ファイル。
+    private func makeQuarantines(generations: [String], base: String, in dir: URL) throws {
+        for (index, gen) in generations.enumerated() {
+            for part in ["", "-wal", "-shm"] {
+                let url = dir.appendingPathComponent("\(base)\(part).\(gen)")
+                try Data("x".utf8).write(to: url)
+                // 世代の新しさを作成日時で表す（先に並べたものほど古い）。
+                let date = Date(timeIntervalSince1970: 1_700_000_000 + Double(index) * 60)
+                try FileManager.default.setAttributes([.creationDate: date], ofItemAtPath: url.path)
+            }
+        }
+    }
+
+    private func tempDirectory() throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @Test("世代単位で刈る（現役世代の WAL/SHM を巻き添えにしない）")
+    func prunesByGeneration() throws {
+        let dir = try tempDirectory()
+        let base = "BackupKit.store"
+        let store = dir.appendingPathComponent(base)
+        try Data("live".utf8).write(to: store)                    // 現役のストア
+        try makeQuarantines(generations: ["corrupt", "corrupt2", "corrupt3", "corrupt4"],
+                            base: base, in: dir)
+
+        pruneQuarantines(of: store, keep: 3)
+
+        let names = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
+        #expect(names.contains(base), "現役のストアを消してはいけない")
+        for gen in ["corrupt2", "corrupt3", "corrupt4"] {
+            for part in ["", "-wal", "-shm"] {
+                #expect(names.contains("\(base)\(part).\(gen)"),
+                        "残すべき世代のファイル \(base)\(part).\(gen) が消えた")
+            }
+        }
+        for part in ["", "-wal", "-shm"] {
+            #expect(!names.contains("\(base)\(part).corrupt"),
+                    "最古世代の \(base)\(part).corrupt が残った（WAL/SHM が溜まり続ける）")
+        }
+    }
+
+    @Test("上限内なら何も消さない")
+    func keepsEverythingWithinLimit() throws {
+        let dir = try tempDirectory()
+        let base = "BackupKit.store"
+        let store = dir.appendingPathComponent(base)
+        try makeQuarantines(generations: ["corrupt", "corrupt2"], base: base, in: dir)
+
+        pruneQuarantines(of: store, keep: 3)
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(names.count == 6)
+    }
+
+    @Test("別ストアの退避には触らない")
+    func unrelatedStoresAreUntouched() throws {
+        let dir = try tempDirectory()
+        let base = "BackupKit.store"
+        let store = dir.appendingPathComponent(base)
+        try makeQuarantines(generations: ["corrupt", "corrupt2", "corrupt3", "corrupt4"],
+                            base: base, in: dir)
+        try makeQuarantines(generations: ["corrupt"], base: "AutoAlbumV10.store", in: dir)
+
+        pruneQuarantines(of: store, keep: 3)
+
+        let names = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path))
+        #expect(names.contains("AutoAlbumV10.store.corrupt"), "別ストアの退避を消した")
+        #expect(names.contains("AutoAlbumV10.store-wal.corrupt"))
+    }
+}

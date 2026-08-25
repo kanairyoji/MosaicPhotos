@@ -26,4 +26,20 @@ public enum LibraryChangeFollowUp {
         guard let lastChangeAt else { return false }
         return lastChangeAt > indexBuiltAt
     }
+
+    /// 変更通知・スキャン完了のときに何をするか。
+    ///
+    /// ⚠️ 走行中に来た変更を「印を立てるだけ」で済ませると、**そのスキャンが終わった時点で
+    /// 誰も印を見ない**。表示中のアルバムは次の `loadOrScan()`（＝画面を開き直すか TTL 切れ）
+    /// まで古いままになる（レビュー指摘）。走行中の変更は完了時に拾い直す。
+    public enum ScanAction: Equatable, Sendable {
+        case scan            // いま走らせる
+        case waitForRunning  // 走行中のスキャンの完了時に拾い直す
+        case none            // やることなし
+    }
+
+    public static func scanAction(isDirty: Bool, isScanning: Bool) -> ScanAction {
+        guard isDirty else { return .none }
+        return isScanning ? .waitForRunning : .scan
+    }
 }

@@ -109,6 +109,11 @@ actor FaceStore {
         return try? modelContext.fetch(d).first
     }
 
+    /// テスト用: クラスタ内の faceID 一覧。
+    func facesForTesting(inCluster clusterID: Int) -> [String] {
+        faces(inCluster: clusterID).map(\.faceID)
+    }
+
     /// テスト用: クラスタ ID → 件数（重心の二重計上を検査する）。
     func clusterCountsForTesting() -> [Int: Int] {
         Dictionary(uniqueKeysWithValues: allClusters().map { ($0.clusterID, $0.count) })

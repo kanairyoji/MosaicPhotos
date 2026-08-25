@@ -18,6 +18,18 @@ struct PendingMetadataStore {
 
     private let fileURL: URL
 
+    /// アカウントと保存先ごとに**別のキュー**にする。
+    ///
+    /// ⚠️ 共通のファイル 1 つだと、アカウントや保存先を切り替えたときに、
+    /// **前の保存先向けのメタデータ（人物名・位置・アルバム）を現在の保存先へ送る**
+    /// （レビュー指摘）。名前空間は「アカウント指紋＋バックアップルート」から作る。
+    init(account: String?, folder: String) {
+        let seed = "\(account ?? "-")|\(folder.lowercased())"
+        var hash: UInt64 = 5381
+        for byte in Array(seed.utf8) { hash = hash &* 33 &+ UInt64(byte) }
+        self.init(filename: String(format: "BackupPendingMetadata-%016llx.json", hash))
+    }
+
     init(filename: String = "BackupPendingMetadata.json") {
         let base = (try? FileManager.default.url(for: .applicationSupportDirectory,
                                                  in: .userDomainMask, appropriateFor: nil,

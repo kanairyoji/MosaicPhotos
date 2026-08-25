@@ -88,19 +88,39 @@ private func quarantine(storeURL: URL, name: String, log: (String) -> Void) {
 }
 
 /// 退避ファイルの世代を絞る（無制限に溜めない）。
-private func pruneQuarantines(of storeURL: URL, keep: Int) {
+///
+/// ⚠️ 退避名は本体だけでなく `<store>-wal.corrupt` / `<store>-shm.corrupt` も作られる。
+/// 本体の名前（`<store>.corrupt`）だけを見て消すと、**WAL/SHM の退避が消えずに溜まり続ける**
+/// （レビュー指摘）。`<store>` で始まり `.corrupt` を含むものを対象にし、
+/// **世代（.corrupt / .corrupt2 …）単位**で古いものから消す。
+func pruneQuarantines(of storeURL: URL, keep: Int) {
     let fm = FileManager.default
     let directory = storeURL.deletingLastPathComponent()
-    let prefix = storeURL.lastPathComponent + ".corrupt"
+    let base = storeURL.lastPathComponent           // 例: "BackupKit.store"
     guard let entries = try? fm.contentsOfDirectory(at: directory,
                                                     includingPropertiesForKeys: [.creationDateKey])
     else { return }
-    let quarantined = entries
-        .filter { $0.lastPathComponent.hasPrefix(prefix) }
-        .sorted { lhs, rhs in
-            let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            return l > r
-        }
-    for stale in quarantined.dropFirst(keep) { try? fm.removeItem(at: stale) }
+
+    /// ファイル名から世代の印（"corrupt" / "corrupt2" / "corrupt-ab12cd34"）を取り出す。
+    func generation(of name: String) -> String? {
+        guard name.hasPrefix(base) else { return nil }
+        guard let range = name.range(of: ".corrupt") else { return nil }
+        return String(name[range.lowerBound...].dropFirst())   // 先頭の "." を落とす
+    }
+
+    var byGeneration: [String: [URL]] = [:]
+    for entry in entries {
+        guard let gen = generation(of: entry.lastPathComponent) else { continue }
+        byGeneration[gen, default: []].append(entry)
+    }
+    guard byGeneration.count > keep else { return }
+
+    func newest(_ urls: [URL]) -> Date {
+        urls.compactMap { (try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) }
+            .max() ?? .distantPast
+    }
+    let ordered = byGeneration.sorted { newest($0.value) > newest($1.value) }
+    for (_, urls) in ordered.dropFirst(keep) {
+        for url in urls { try? fm.removeItem(at: url) }
+    }
 }

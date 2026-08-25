@@ -42,6 +42,16 @@ public enum BackupDeviceIdentity {
         return "\(name)-\(id)"
     }
 
+    /// 文字列の指紋（等値比較専用・生の値を保存しないため）。
+    /// アカウント ID のように「同じかどうかだけ知りたい」ものに使う。
+    public static func fingerprint(_ value: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in Array(value.utf8) {
+            hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
+    }
+
     /// 短 ID（UUID 先頭 6 hex・大文字）。フォルダ名の一意性を担う。
     static func generateID() -> String {
         String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))

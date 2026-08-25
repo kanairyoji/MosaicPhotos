@@ -74,6 +74,37 @@ public enum OffloadVerdict: Equatable, Sendable {
 
 enum OffloadPlanning {
 
+    /// 台帳の走査結果（候補一覧・適格数・構造的に不適格だった数）。
+    struct CandidateScan {
+        var candidates: [OffloadableAsset] = []
+        var usable = 0
+        var skippedStructural = 0
+    }
+
+    /// 台帳（撮影日昇順）から候補を選ぶ。
+    ///
+    /// ⚠️ 上限（`scanLimit`）は**構造的に不適格なものを除いた数**で数え、走査自体は
+    /// 台帳の最後まで進む。出力の件数で打ち切ると、古い順の先頭が Live Photo・編集済みで
+    /// 埋まっている場合に**その先へ永久に到達できない**（＝何度実行してもオフロードされない）。
+    /// 不適格分は一覧表示のために `maxIneligibleShown` 件だけ持つ（メモリの保険）。
+    static func scanCandidates<Record>(records: [Record], scanLimit: Int,
+                                       maxIneligibleShown: Int = 50,
+                                       makeCandidate: (Record) -> OffloadableAsset?) -> CandidateScan {
+        var scan = CandidateScan()
+        for record in records {
+            if scan.usable >= scanLimit { break }
+            guard let candidate = makeCandidate(record) else { continue }
+            if isStructurallyIneligible(candidate) {
+                scan.skippedStructural += 1
+                if scan.skippedStructural <= maxIneligibleShown { scan.candidates.append(candidate) }
+                continue
+            }
+            scan.usable += 1
+            scan.candidates.append(candidate)
+        }
+        return scan
+    }
+
     /// 削除してよいかの**決定的判定**（ADR-40「削除は証明の後」）。
     /// すべての条件はここに集約する（サービス側に条件分岐を散らさない）。
     /// - Parameters:
@@ -273,13 +304,22 @@ public final class OffloadService {
         }
         let now = ISO8601DateFormatter().string(from: Date())
         let writer = MetadataShardWriter(uploader: uploader, token: token)
-        var byShard: [String: [OffloadMarkerTarget]] = [:]
+        // ⚠️ **フォルダとシャードの組**で束ねる。撮影月だけで束ねて先頭要素の親フォルダへ
+        // まとめて書くと、旧レイアウトと端末フォルダ、あるいは保存先変更の前後の写真が
+        // 同じ月に混ざったとき、**別フォルダのエントリまで最初のシャードへ書かれ**、
+        // しかも全件を送信済み扱いにしてしまう（レビュー指摘）。
+        var byFolderShard: [String: (folder: String, shard: String, targets: [OffloadMarkerTarget])] = [:]
         for target in targets {
-            byShard[BackupMetadataV2.shardName(for: target.captureDate), default: []].append(target)
+            guard let folder = folderByPath(target.dropboxPath) else { continue }
+            let shard = BackupMetadataV2.shardName(for: target.captureDate)
+            let key = "\(folder.lowercased())|\(shard)"
+            byFolderShard[key, default: (folder, shard, [])].targets.append(target)
         }
         var written: [String] = []
-        for (shard, shardTargets) in byShard {
-            guard let folder = folderByPath(shardTargets[0].dropboxPath) else { continue }
+        for (_, group) in byFolderShard {
+            let folder = group.folder
+            let shard = group.shard
+            let shardTargets = group.targets
             let byPath = Dictionary(shardTargets.map { ($0.dropboxPath, $0) },
                                     uniquingKeysWith: { first, _ in first })
             let ok = await writer.updateEntries(

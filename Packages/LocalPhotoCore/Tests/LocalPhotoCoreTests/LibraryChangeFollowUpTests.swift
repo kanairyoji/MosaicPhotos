@@ -50,3 +50,27 @@ struct LibraryChangeFollowUpTests {
                 "索引が無いなら確かめるしかない")
     }
 }
+
+/// ⚠️ 走行中に来た変更を「印を立てるだけ」で済ませると、そのスキャンの完了時に誰も印を見ない。
+/// 表示中のアルバムは次に画面を開き直すか TTL が切れるまで古いままになる。
+@Suite("スキャン中に来た変更の拾い直し")
+struct ScanFollowUpTests {
+
+    @Test("走行中の変更通知では新しいスキャンを始めない")
+    func changeDuringScanDoesNotStartSecondScan() {
+        #expect(LibraryChangeFollowUp.scanAction(isDirty: true, isScanning: true) == .waitForRunning)
+    }
+
+    @Test("走行中に変更があれば、完了時に走り直す")
+    func dirtyAtCompletionTriggersRescan() {
+        // 完了時＝isScanning は false に戻っている。
+        #expect(LibraryChangeFollowUp.scanAction(isDirty: true, isScanning: false) == .scan,
+                "走行中に来た変更が取りこぼされ、表示が古いまま残る")
+    }
+
+    @Test("変更が無ければ走り直さない")
+    func cleanCompletionDoesNothing() {
+        #expect(LibraryChangeFollowUp.scanAction(isDirty: false, isScanning: false) == .none)
+        #expect(LibraryChangeFollowUp.scanAction(isDirty: false, isScanning: true) == .none)
+    }
+}

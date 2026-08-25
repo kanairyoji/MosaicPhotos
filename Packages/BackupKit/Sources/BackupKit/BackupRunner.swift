@@ -29,6 +29,9 @@ protocol BackupRunnerDelegate: AnyObject {
     func runnerRecordedLocalIdentifiers() async -> Set<String>
     /// バックアップを優先すべき localIdentifier（クラウド共有で待たれている写真・ADR-112）。
     func runnerPriorityLocalIdentifiers() async -> Set<String>
+    /// 現在の Dropbox アカウントの指紋（保留メタデータのキューをアカウントごとに分けるため）。
+    /// 生の accountId は扱わない（等値比較にしか使わないので指紋で足りる）。
+    func runnerAccountFingerprint() async -> String?
 }
 
 /// 世代が一致するときだけ本体へ通す委譲プロキシ。
@@ -73,6 +76,10 @@ final class GenerationScopedRunnerDelegate: BackupRunnerDelegate {
 
     func runnerPriorityLocalIdentifiers() async -> Set<String> {
         await base?.runnerPriorityLocalIdentifiers() ?? []
+    }
+
+    func runnerAccountFingerprint() async -> String? {
+        await base?.runnerAccountFingerprint()
     }
 }
 
@@ -160,6 +167,10 @@ final class BackupRunner {
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
         let (pending, alreadySkipped, doneIDs) = await computePending(assets: assets)
         guard !pending.isEmpty else {
+            // ⚠️ 写真が全部バックアップ済みでも、**前回送れなかったメタデータ**が残っていれば
+            // ここで送り直す。早期 return してしまうと、新しい写真が増えるまでキューが
+            // 永久に滞留する（人物名・位置・アルバムが欠けたまま・レビュー指摘）。
+            await drainPendingMetadataIfNeeded(folder: folder)
             addLog("Nothing to upload.")
             setPhase(.completed(uploaded: 0, skipped: alreadySkipped))
             return false
@@ -459,7 +470,8 @@ final class BackupRunner {
         // ⚠️ 前回送れなかった分を**先に取り込む**。写真の実体は既にアップロード済みで、
         // その ID は二度と pending に入らないため、ここで送り直さないとメタデータの
         // 欠落が永久化する（レビュー指摘）。
-        let pendingStore = PendingMetadataStore()
+        let pendingStore = PendingMetadataStore(
+            account: await delegate.runnerAccountFingerprint(), folder: folder)
         let carried = pendingStore.load()
         let byShard = PendingMetadataStore.merged(
             pending: carried, adding: BackupMetadataPlanning.groupedByShard(newEntries))
@@ -513,6 +525,37 @@ final class BackupRunner {
         // メタデータを書いた＝「不在」の記録は無効。これを消さないと、初回バックアップ後も
         // 最大 TTL のあいだ起動時の読み込みが不在記録で素通りしてしまう（ADR-82）。
         BackupMetadataAbsence.invalidateAll()
+    }
+
+    /// アップロード対象が無い回に、保留メタデータだけを送り直す。
+    /// カタログは触らない（このパスでは albums/people の索引を作っていないため、
+    /// 空の索引で上書きすると**既存のカタログから名前が消える**）。
+    private func drainPendingMetadataIfNeeded(folder: String) async {
+        let account = await delegate.runnerAccountFingerprint()
+        await drainPendingMetadata(folder: folder,
+                                   pendingStore: PendingMetadataStore(account: account, folder: folder))
+    }
+
+    /// 保留キューを指定して送り直す（キューの置き場所を差し替えられるようにした本体）。
+    func drainPendingMetadata(folder: String, pendingStore: PendingMetadataStore) async {
+        let carried = pendingStore.load()
+        guard !carried.isEmpty else { return }
+
+        guard let token = try? await tokenProvider.freshAccessToken() else {
+            addLog("Pending metadata: not connected — will retry next run")
+            return
+        }
+        setPhase(.uploadingMetadata)
+        addLog("Re-sending \(PendingMetadataStore.entryCount(carried)) metadata entry(s) from a previous run…")
+        let writer = MetadataShardWriter(uploader: uploader, token: token)
+        let applied = await writer.applyEntries(byShard: carried, folder: folder) { line in
+            self.addLog(line)
+        }
+        if !pendingStore.save(applied.failed) {
+            metadataLost = PendingMetadataStore.entryCount(applied.failed)
+            addLog("  ✗ \(metadataLost) metadata entry(s) lost — could not send or queue for retry")
+        }
+        if !applied.written.isEmpty { BackupMetadataAbsence.invalidateAll() }
     }
 
     /// カタログを書く。書けたか返す。

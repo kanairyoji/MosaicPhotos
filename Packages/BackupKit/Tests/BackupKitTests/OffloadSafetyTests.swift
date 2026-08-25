@@ -354,3 +354,125 @@ struct OffloadCandidateScanTests {
         #expect(scanned.contains { $0.localIdentifier == "ok2" })
     }
 }
+
+// MARK: - マーカーの束ね方（レビュー指摘）
+
+/// アップロード先パスと本文を記録するだけのクライアント（シャードは常に「新規」）。
+private actor RecordingDropbox: HTTPClient {
+    private(set) var uploads: [(path: String, body: Data)] = []
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = request.url!.absoluteString
+        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
+            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
+                                              httpVersion: nil, headerFields: nil)!)
+        }
+        if url.contains("download") || url.contains("get_metadata") {
+            return resp(409, #"{"error_summary":"path/not_found/"}"#)
+        }
+        if url.contains("upload") {
+            struct Arg: Decodable { let path: String }
+            let raw = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? "{}"
+            let path = (try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? "?"
+            uploads.append((path, request.httpBody ?? Data()))
+            return resp(200, "{}")
+        }
+        return resp(200, "{}")
+    }
+}
+
+/// ⚠️ マーカーを**撮影月だけ**で束ねると、同じ月に別フォルダ（旧レイアウト・端末フォルダ・
+/// 保存先変更の前後）の写真が混ざったとき、全部が先頭要素の親フォルダのシャードへ書かれ、
+/// しかも全件を「送信済み」にしてしまう＝本来のフォルダのマーカーが永久に欠落する。
+@Suite("Offload markers are grouped by folder and shard")
+@MainActor
+struct OffloadMarkerGroupingTests {
+
+    private func target(_ id: String, folder: String) -> OffloadMarkerTarget {
+        OffloadMarkerTarget(localIdentifier: id, dropboxPath: "\(folder)/\(id).jpg",
+                            albums: [], captureDate: Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    @Test("同じ撮影月でもフォルダが違えば別々のシャードへ書く")
+    func sameMonthDifferentFoldersWriteSeparateShards() async {
+        let server = RecordingDropbox()
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: MockDeleter(), log: { _ in })
+
+        let written = await service.uploadOffloadMarkers(
+            for: [target("a", folder: "/backup"), target("b", folder: "/backup/iPhone")],
+            token: "t")
+
+        let uploads = await server.uploads
+        let folders = Set(uploads.map { String($0.path.prefix(upTo: $0.path.range(of: "/", options: .backwards)!.lowerBound)) })
+        #expect(folders.count == 2, "別フォルダの写真が同じシャードにまとめられた: \(uploads.map(\.path))")
+        #expect(Set(written) == ["a", "b"])
+
+        // 各シャードには**自分のフォルダの写真だけ**が入っていること。
+        for upload in uploads {
+            // JSON は "/" を "\/" と書き出すので戻してから確かめる。
+            let text = String(decoding: upload.body, as: UTF8.self)
+                .replacingOccurrences(of: "\\/", with: "/")
+            if upload.path.hasPrefix("/backup/iPhone/") {
+                #expect(text.contains("/backup/iPhone/b.jpg"))
+                #expect(!text.contains("/backup/a.jpg"), "他フォルダのエントリが混入した")
+            } else {
+                #expect(text.contains("/backup/a.jpg"))
+                #expect(!text.contains("/backup/iPhone/b.jpg"), "他フォルダのエントリが混入した")
+            }
+        }
+    }
+}
+
+// MARK: - 台帳走査の到達性（レビュー指摘）
+
+/// ⚠️ 出力の件数で走査を打ち切ると、古い順の先頭が Live Photo・編集済みで埋まっている台帳では
+/// **その先の適格な写真へ永久に到達できない**（何度実行してもオフロードされない）。
+@Suite("Offload ledger scan reaches the whole ledger")
+struct OffloadLedgerScanTests {
+
+    private struct Rec { let id: String; let live: Bool }
+
+    private func asset(_ rec: Rec) -> OffloadableAsset {
+        let backedUp = Date(timeIntervalSince1970: 1_700_000_000)
+        return OffloadableAsset(
+            localIdentifier: rec.id, dropboxPath: "/b/\(rec.id).jpg", filename: "\(rec.id).jpg",
+            albums: [], captureDate: backedUp, modificationDate: backedUp,
+            backedUpAt: backedUp, isLivePhoto: rec.live, loadData: { nil })
+    }
+
+    @Test("先頭が不適格で埋まっていても、その奥の適格な写真に届く")
+    func reachesEligiblePhotosBeyondIneligiblePrefix() {
+        // 一覧の保持上限（50）も、出力件数での打ち切り（上限×10）も超える規模の不適格が
+        // 先頭に並ぶ台帳。
+        let records = (0..<500).map { Rec(id: "live-\($0)", live: true) }
+            + (0..<3).map { Rec(id: "ok-\($0)", live: false) }
+
+        let scan = OffloadPlanning.scanCandidates(records: records, scanLimit: 20,
+                                                  makeCandidate: asset)
+
+        let eligible = scan.candidates.filter { !OffloadPlanning.isStructurallyIneligible($0) }
+        #expect(eligible.map(\.localIdentifier) == ["ok-0", "ok-1", "ok-2"],
+                "不適格の先で打ち切られ、適格な写真に到達できていない")
+        #expect(scan.usable == 3)
+        #expect(scan.skippedStructural == 500)
+    }
+
+    @Test("一覧に載せる不適格は上限までに抑える（走査は続ける）")
+    func ineligibleListIsCapped() {
+        let records = (0..<500).map { Rec(id: "live-\($0)", live: true) }
+        let scan = OffloadPlanning.scanCandidates(records: records, scanLimit: 20,
+                                                  maxIneligibleShown: 50, makeCandidate: asset)
+        #expect(scan.candidates.count == 50, "一覧が台帳全件に膨らんでいる")
+        #expect(scan.skippedStructural == 500, "走査を途中で止めている")
+    }
+
+    @Test("適格が上限に達したらそこで止める")
+    func stopsAtScanLimitOfUsable() {
+        let records = (0..<10).map { Rec(id: "ok-\($0)", live: false) }
+        let scan = OffloadPlanning.scanCandidates(records: records, scanLimit: 4,
+                                                  makeCandidate: asset)
+        #expect(scan.usable == 4)
+        #expect(scan.candidates.count == 4)
+    }
+}

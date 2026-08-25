@@ -67,7 +67,9 @@ enum HeavyWorkScheduler {
     }
 
     /// 実行中の重い処理タスク（BGTask 本体）。フォアグラウンド復帰で止めるために保持する（ADR-79）。
-    private static var currentWork: Task<Void, Never>?
+    /// 世代つきで持つ（⚠️ A をキャンセル後に B が始まり、その後 A が終了したときに、
+    /// A が **B のハンドルを消す**のを防ぐ＝`GenerationHandle`・レビュー指摘）。
+    private static let currentWork = GenerationHandle<Task<Void, Never>>()
 
     /// BGTask の完了通知ラッチ。**`setTaskCompleted` は 1 回だけ**呼べる（二重に呼ぶと
     /// BGTaskScheduler が例外を投げる）。期限切れハンドラと本体の終了処理がどちらも呼び得るので、
@@ -95,10 +97,10 @@ enum HeavyWorkScheduler {
         let work = Task { @MainActor in
             await runHeavyWork()
             let cancelled = Task.isCancelled
-            currentWork = nil
+            currentWork.clearIfCurrent(token: token)   // 自分が現行のときだけ手放す
             completeOnce(outcome: cancelled ? "cancelled" : "completed", success: !cancelled)
         }
-        currentWork = work
+        currentWork.set(work, token: token)
         task.expirationHandler = {
             // OS の持ち時間切れ。各ループは Task.isCancelled で速やかに止まる。
             Diagnostics.mark("bgtask: expired — cancelling")
@@ -148,9 +150,9 @@ enum HeavyWorkScheduler {
         // 22.8 秒走り、メインが 2.4s/1.7s/5.9s/3.9s ブロック＝体感のカクつきの正体）。
         BackgroundActivityMonitor.shared.noteUserInteraction()
 
-        let hadWork = currentWork != nil
-        currentWork?.cancel()
-        currentWork = nil
+        let hadWork = currentWork.current != nil
+        currentWork.current?.cancel()
+        currentWork.clear()
         // BGTask のルーチンが起こした fire-and-forget のタスク群は、上の cancel では止まらない
         // （構造化されていないため）。エンジンへ個別に停止を伝える。
         stopBackgroundProcessing(cancelBackup: false)
@@ -166,7 +168,7 @@ enum HeavyWorkScheduler {
             monitor.isScanningFaces ? "faces" : nil,
             stores?.autoAlbumEngine.isGenerating == true ? "generating" : nil,
             stores?.backupEngine.isRunning == true ? "backup" : nil,
-            currentWork != nil ? "bgtask" : nil,
+            currentWork.current != nil ? "bgtask" : nil,
         ].compactMap { $0 }
         Diagnostics.mark("scene: \(label) — running=[\(running.joined(separator: ","))] "
                          + "embedRemaining=\(monitor.embedRemaining) faceRemaining=\(monitor.faceScanRemaining)")

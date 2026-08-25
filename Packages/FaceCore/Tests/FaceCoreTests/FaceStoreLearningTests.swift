@@ -353,3 +353,52 @@ struct FaceStoreLowQualityReassignTests {
         #expect(await store.clusterCountsForTesting()[cid] == 1, "寄与分を引いていない")
     }
 }
+
+// MARK: - 低品質顔だけで新クラスタを作る（レビュー指摘）
+
+/// ⚠️ 低品質顔は通常 membership だけ（重心を汚さない）。それを**新しい人物**へ移すと、
+/// `addToCluster` がクラスタを作らずに返り、顔だけが存在しないクラスタ ID を指す
+/// （人物一覧に出ず、迷子になる）。ユーザーが明示的に分けた顔なので種にしてよい。
+@Suite("FaceStore 低品質顔の分離")
+struct FaceStoreLowQualitySplitTests {
+
+    private func signal(_ v: [Float], quality: Float) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(v), quality: quality)
+    }
+
+    @Test("低品質顔を新しい人物へ分けても、クラスタが必ず作られる")
+    func lowQualityFaceGetsItsOwnCluster() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await store.recordScan(refKey: "L-a", faces: [signal([1, 0, 0], quality: 0.9)])
+        await store.recordScan(refKey: "L-b", faces: [signal([1, 0.02, 0], quality: 0.2)])
+
+        let before = Set(await store.clusterCountsForTesting().keys)
+        await store.reassignFace(faceID: "L-b#0", toClusterID: nil)
+
+        let counts = await store.clusterCountsForTesting()
+        let newIDs = Set(counts.keys).subtracting(before)
+        #expect(newIDs.count == 1,
+                "顔が存在しないクラスタ ID を指している（人物一覧から消える）: \(counts)")
+        #expect(counts[newIDs.first ?? -1] == 1)
+    }
+
+    @Test("全員が低品質でも、分離先のクラスタは作られる")
+    func splitWithOnlyLowQualityFacesCreatesCluster() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await store.recordScan(refKey: "L-a", faces: [signal([1, 0, 0], quality: 0.9)])
+        for i in 0..<2 {
+            await store.recordScan(refKey: "L-low\(i)", faces: [signal([1, 0.02, 0], quality: 0.2)])
+        }
+        let cid = await store.clusterCountsForTesting().first!.key
+        let faceIDs = await store.facesForTesting(inCluster: cid).filter { $0.hasPrefix("L-low") }
+        guard !faceIDs.isEmpty else { return }   // 低品質顔が別クラスタなら対象外
+
+        let newID = await store.splitCluster(clusterID: cid, faceIDs: faceIDs)
+        #expect(newID != nil)
+        if let newID {
+            #expect(await store.clusterCountsForTesting()[newID] != nil,
+                    "分離先のクラスタが作られていない")
+        }
+    }
+}

@@ -46,15 +46,14 @@ extension BackupEngine {
         var assetByID: [String: PHAsset] = [:]
         fetched.enumerateObjects { asset, _, _ in assetByID[asset.localIdentifier] = asset }
 
-        var out: [OffloadableAsset] = []
-        var usable = 0            // 構造的に不適格でない候補の数（上限はこちらで数える）
-        var skippedStructural = 0
-        // 台帳全体が不適格なときに無限に積まないための保険（打ち切りはログに残す）。
-        let maxScanned = scanLimit * 10
-        for record in records {
-            if usable >= scanLimit || out.count >= maxScanned { break }
-            guard let id = record.localIdentifier, let asset = assetByID[id] else { continue }
-            let candidate = OffloadableAsset(
+        // 走査そのものは純ロジック（`OffloadPlanning.scanCandidates`）に委ねる。
+        // ここは PHAsset から候補を組み立てるだけ。
+        let maxIneligibleShown = 50
+        let scan = OffloadPlanning.scanCandidates(
+            records: records, scanLimit: scanLimit, maxIneligibleShown: maxIneligibleShown
+        ) { record -> OffloadableAsset? in
+            guard let id = record.localIdentifier, let asset = assetByID[id] else { return nil }
+            return OffloadableAsset(
                 localIdentifier: id,
                 dropboxPath: record.dropboxPath,
                 filename: record.filename,
@@ -73,25 +72,16 @@ extension BackupEngine {
                     }
                     return nil
                 })
-            // ⚠️ 構造的に不適格（Live Photo・編集済み）なものは**上限に数えない**。
-            // 数えると、古い順の先頭がそれで埋まったときに奥へ進めなくなる。
-            // 一覧（ドライラン）にはスキップ理由を出したいので、候補自体は含める。
-            if OffloadPlanning.isStructurallyIneligible(candidate) {
-                skippedStructural += 1
-                out.append(candidate)   // 一覧にはスキップ理由つきで出す
-                continue
-            }
-            usable += 1
-            out.append(candidate)
         }
-        if skippedStructural > 0 {
-            addLog("Offload: scanned past \(skippedStructural) structurally ineligible photo(s) "
-                   + "(usable=\(usable))")
+        if scan.skippedStructural > 0 {
+            addLog("Offload: scanned past \(scan.skippedStructural) structurally ineligible photo(s) "
+                   + "(usable=\(scan.usable))")
         }
-        if out.count >= maxScanned {
-            addLog("Offload: stopped scanning at \(maxScanned) record(s) — usable=\(usable)")
+        if scan.skippedStructural > maxIneligibleShown {
+            addLog("Offload: \(scan.skippedStructural - maxIneligibleShown) more ineligible photo(s) "
+                   + "omitted from the list (scanning continued)")
         }
-        return out
+        return scan.candidates
     }
 
     /// オフロードのドライラン：候補を検証して削除可否と理由の一覧を返す。**何も削除しない**。

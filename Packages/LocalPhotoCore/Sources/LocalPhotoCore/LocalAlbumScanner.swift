@@ -44,15 +44,25 @@ public final class LocalAlbumScanner {
         libraryObserver = observer
     }
 
+    /// 少し待ってから（まだ必要なら）スキャンする。連続する変更をまとめる。
+    private func scheduleScan(after delay: Duration) {
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self else { return }
+            guard LibraryChangeFollowUp.scanAction(isDirty: self.isDirty,
+                                                   isScanning: self.isScanning) == .scan else { return }
+            await self.scan()
+        }
+    }
+
     private func markDirty() {
         guard !isDirty else { return }
         isDirty = true
         // 表示中なら追従したい。連続する変更をまとめるため少し待ってから走らせる。
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard let self, self.isDirty, !self.isScanning else { return }
-            await self.scan()
-        }
+        // ⚠️ この時点でスキャン中なら、ここでは走らせない。**走行中のスキャンが終わったときに
+        // 印を見て走り直す**（`scan()` の末尾）。見ないと、表示中のアルバムは次回の
+        // `loadOrScan()` まで古いままになる（レビュー指摘）。
+        scheduleScan(after: .milliseconds(500))
     }
 
     // MARK: - Public API
@@ -80,9 +90,15 @@ public final class LocalAlbumScanner {
     public func scan() async {
         guard !isScanning else { return }
         isScanning = true
-        // 走らせる時点の変更は取り込まれる。走行中に来た変更は印が立ち直り、次回に拾う。
+        // 走らせる時点の変更は取り込まれる。走行中に来た変更は印が立ち直る。
         isDirty = false
-        defer { isScanning = false }
+        defer {
+            isScanning = false
+            // 走行中に変更通知が来ていたら、ここで拾い直す（取りこぼし防止・レビュー指摘）。
+            if LibraryChangeFollowUp.scanAction(isDirty: isDirty, isScanning: isScanning) == .scan {
+                scheduleScan(after: .milliseconds(200))
+            }
+        }
 
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         guard status == .authorized || status == .limited else {
