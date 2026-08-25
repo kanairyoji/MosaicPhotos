@@ -29,21 +29,26 @@ struct MetadataShardWriter {
         var result = ApplyResult()
         for (shard, entries) in byShard.sorted(by: { $0.key < $1.key }) {
             let shardPath = folder + BackupMetadataV2.shardSuffix(shard)
-            let existing: Data?
-            switch await uploader.downloadResult(path: shardPath, token: token) {
-            case .found(let data):
-                existing = data
-            case .notFound:
-                existing = nil          // 新規シャード＝空から作ってよい
-            case .failure(let reason):
-                await log("  meta/\(shard).json: skipped — could not read existing (\(reason))")
-                result.failed[shard] = entries
-                continue
+            // ⚠️ download→merge→upload は**シャード単位で直列化**する。オフロードマーカーの
+            // 書き込みと並行すると、同じ旧シャードを読んだ後着が先着の変更を消す（レビュー指摘）。
+            let written = await MetadataShardLock.withLock(shardPath.lowercased()) {
+                () async -> Bool in
+                let existing: Data?
+                switch await uploader.downloadResult(path: shardPath, token: token) {
+                case .found(let data):
+                    existing = data
+                case .notFound:
+                    existing = nil      // 新規シャード＝空から作ってよい
+                case .failure(let reason):
+                    await log("  meta/\(shard).json: skipped — could not read existing (\(reason))")
+                    return false
+                }
+                let merged = BackupMetadataPlanning.mergedShard(existing: existing, adding: entries)
+                let upload = await uploader.uploadJSONResult(merged, to: shardPath, token: token)
+                await log("  meta/\(shard).json (+\(entries.count) → \(merged.entries.count)): \(upload.detail)")
+                return upload.ok
             }
-            let merged = BackupMetadataPlanning.mergedShard(existing: existing, adding: entries)
-            let upload = await uploader.uploadJSONResult(merged, to: shardPath, token: token)
-            await log("  meta/\(shard).json (+\(entries.count) → \(merged.entries.count)): \(upload.detail)")
-            if upload.ok {
+            if written {
                 result.written.append(shard)
             } else {
                 result.failed[shard] = entries
@@ -61,25 +66,29 @@ struct MetadataShardWriter {
                        makeDefault: (String) -> DropboxBackupMetadata.Entry,
                        log: (String) async -> Void) async -> Bool {
         let shardPath = folder + BackupMetadataV2.shardSuffix(shardName)
-        // ⚠️ 取得できなかった回は**書かない**（空で上書きすると既存の記録が消える）。
-        var metadata: DropboxBackupMetadata
-        switch await uploader.downloadResult(path: shardPath, token: token) {
-        case .found(let data):
-            metadata = (try? JSONDecoder().decode(DropboxBackupMetadata.self, from: data))
-                ?? DropboxBackupMetadata()
-        case .notFound:
-            metadata = DropboxBackupMetadata()
-        case .failure(let reason):
-            await log("offload.marker: meta/\(shardName).json skipped — could not read existing (\(reason))")
-            return false   // 未送信のまま残し、次回再送する
+        // ⚠️ バックアップのエントリ追記と同じシャードを触るので、download→upload を直列化する
+        //（並行すると後着がマーカーを消し、台帳は送信済みなので再送もされない・レビュー指摘）。
+        return await MetadataShardLock.withLock(shardPath.lowercased()) { () async -> Bool in
+            // ⚠️ 取得できなかった回は**書かない**（空で上書きすると既存の記録が消える）。
+            var metadata: DropboxBackupMetadata
+            switch await uploader.downloadResult(path: shardPath, token: token) {
+            case .found(let data):
+                metadata = (try? JSONDecoder().decode(DropboxBackupMetadata.self, from: data))
+                    ?? DropboxBackupMetadata()
+            case .notFound:
+                metadata = DropboxBackupMetadata()
+            case .failure(let reason):
+                await log("offload.marker: meta/\(shardName).json skipped — could not read existing (\(reason))")
+                return false   // 未送信のまま残し、次回再送する
+            }
+            for path in paths {
+                var entry = metadata.entries[path] ?? makeDefault(path)
+                mutate(&entry)
+                metadata.entries[path] = entry
+            }
+            let result = await uploader.uploadJSONResult(metadata, to: shardPath, token: token)
+            await log("offload.marker: meta/\(shardName).json (\(paths.count) update(s)): \(result.detail)")
+            return result.ok
         }
-        for path in paths {
-            var entry = metadata.entries[path] ?? makeDefault(path)
-            mutate(&entry)
-            metadata.entries[path] = entry
-        }
-        let result = await uploader.uploadJSONResult(metadata, to: shardPath, token: token)
-        await log("offload.marker: meta/\(shardName).json (\(paths.count) update(s)): \(result.detail)")
-        return result.ok
     }
 }

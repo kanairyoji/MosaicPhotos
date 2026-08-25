@@ -96,6 +96,96 @@ struct MetadataDurabilityTests {
         #expect(result.failed["2025-08"]?.count == 1)
     }
 
+    @Test("送信に失敗した部分更新（マーカー）は false を返す（送信済みにしない）")
+    func failedMarkerUpdateIsReported() async {
+        let server = Fake(uploadStatus: 500)
+        let writer = MetadataShardWriter(uploader: DropboxBackupUploader(httpClient: server),
+                                         token: "t")
+
+        let ok = await writer.updateEntries(
+            paths: ["/b/a.jpg"], folder: "/b", shardName: "2025-08",
+            mutate: { $0.offloadedAt = "2026-08-26T00:00:00Z" },
+            makeDefault: { _ in DropboxBackupMetadata.Entry(people: [], albums: [],
+                                                            localIdentifier: "off-1") },
+            log: { _ in })
+
+        #expect(!ok, "書けていないのに成功を返すと、台帳に送信済みの印が付いて再送されない")
+    }
+
+    // MARK: - 並行するシャード更新（レビュー指摘）
+
+    /// **状態を持つ**偽 Dropbox。アップロードされた JSON を保持し、以後の download がそれを返す。
+    /// download に人工的な遅延を入れ、read-modify-write の競合を確実に作る。
+    private actor StatefulShardServer: HTTPClient {
+        private var stored: [String: String] = [:]
+        private let uploadStatus: Int
+        private let downloadDelayNs: UInt64
+
+        init(uploadStatus: Int = 200, downloadDelayNs: UInt64 = 30_000_000) {
+            self.uploadStatus = uploadStatus
+            self.downloadDelayNs = downloadDelayNs
+        }
+
+        func body(at path: String) -> String? { stored[path] }
+
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            let url = request.url!.absoluteString
+            func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
+                (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
+                                                  httpVersion: nil, headerFields: nil)!)
+            }
+            struct Arg: Decodable { let path: String }
+            let path = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
+                .flatMap { try? JSONDecoder().decode(Arg.self, from: Data($0.utf8)) }?.path ?? ""
+
+            if url.contains("files/download") {
+                // 遅い download（actor の再入で、直列化されていなければ両者が同じ旧内容を読む）。
+                try? await Task.sleep(nanoseconds: downloadDelayNs)
+                guard let body = stored[path] else {
+                    return resp(409, #"{"error_summary":"path/not_found/."}"#)
+                }
+                return resp(200, body)
+            }
+            if url.contains("files/upload") {
+                guard uploadStatus == 200 else { return resp(uploadStatus, "{}") }
+                stored[path] = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+                return resp(200, "{}")
+            }
+            return resp(200, "{}")
+        }
+    }
+
+    @Test("同じシャードへのバックアップ追記とオフロードマーカー更新が並行しても、両方が残る")
+    func concurrentShardUpdatesKeepBothChanges() async {
+        // ⚠️ 直列化していないと、後着の overwrite が先着の変更を消す。消えたのがマーカーだと
+        // 台帳は「送信済み」なので再送されず、再インストール後に台帳を再構築できない。
+        let folder = "/concurrent"
+        let shardPath = folder + BackupMetadataV2.shardSuffix("2025-08")
+        let server = StatefulShardServer()
+        let writer = MetadataShardWriter(uploader: DropboxBackupUploader(httpClient: server),
+                                         token: "t")
+
+        async let backup = writer.applyEntries(
+            byShard: ["2025-08": ["\(folder)/new.jpg": entry(["太郎"])]], folder: folder) { _ in }
+        async let marker = writer.updateEntries(
+            paths: ["\(folder)/offloaded.jpg"], folder: folder, shardName: "2025-08",
+            mutate: { $0.offloadedAt = "2026-08-26T00:00:00Z" },
+            makeDefault: { _ in DropboxBackupMetadata.Entry(people: [], albums: [],
+                                                            localIdentifier: "off-1") },
+            log: { _ in })
+        let applied = await backup
+        let markerOK = await marker
+
+        #expect(applied.written == ["2025-08"])
+        #expect(markerOK)
+        let final = await server.body(at: shardPath) ?? ""
+        let decoded = try? JSONDecoder().decode(DropboxBackupMetadata.self, from: Data(final.utf8))
+        #expect(decoded?.entries["\(folder)/new.jpg"]?.people == ["太郎"],
+                "バックアップの追記が並行するマーカー更新に消された")
+        #expect(decoded?.entries["\(folder)/offloaded.jpg"]?.offloadedAt != nil,
+                "オフロードマーカーが並行するバックアップ追記に消された（再送もされない）")
+    }
+
     // MARK: - 再送キュー
 
     @Test("保留分と今回分は統合され、同じパスは新しい値が勝つ")

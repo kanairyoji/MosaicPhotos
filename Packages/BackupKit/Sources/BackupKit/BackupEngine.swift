@@ -88,6 +88,14 @@ public final class BackupEngine {
         }
     }
 
+    /// Dropbox との照合（`reconcileWithDropbox`）を実行中か。
+    /// ⚠️ 照合は `phase` を触らない（`isRunning` は idle のまま）ので、これを見ないと
+    /// 照合中に別画面や夜間バッチからバックアップが始まってしまう（レビュー指摘）。
+    public private(set) var isReconciling = false
+
+    /// バックアップまたは照合を実行中か。UI のボタン・自動起動はこれで塞ぐ。
+    public var isBusy: Bool { isRunning || isReconciling }
+
     // MARK: - Init
 
     /// アップロード上限の既定（テスト・フォールバック用）。0 にすると全件。
@@ -153,7 +161,8 @@ public final class BackupEngine {
     @ObservationIgnored private var runGeneration = 0
 
     public func start(folder: String) {
-        guard !isRunning else { return }
+        // 照合中も塞ぐ（照合は phase を触らないので isRunning だけでは素通りする）。
+        guard !isBusy else { return }
         log.removeAll()
         phase = .requestingPermission
         // ADR-41: アップロード・メタデータはすべて端末フォルダ配下に保存する
@@ -192,6 +201,9 @@ public final class BackupEngine {
     /// この世代が現行の実行か（旧タスクの更新・後始末を弾く）。
     func isCurrentRun(_ generation: Int) -> Bool { generation == runGeneration }
 
+    /// テスト用: 照合中フラグだけを立てる（実際の通信・SwiftData 更新は行わない）。
+    func setReconcilingForTesting(_ value: Bool) { isReconciling = value }
+
     /// テスト用: 実行世代だけを進める（実際の通信は行わない）。
     func beginRunGenerationForTesting() -> Int {
         runGeneration &+= 1
@@ -218,6 +230,14 @@ public final class BackupEngine {
     ///   （409 誤記録時代の「記録なし済み ID」もここで一掃される）
     /// 戻り値: (照合に合格した件数, 削除した記録数, リモートの実ファイル数)。認証/通信失敗は nil。
     public func reconcileWithDropbox() async -> (verified: Int, removed: Int, remoteFiles: Int)? {
+        // バックアップ実行中は照合しない（走行中のアップロードと一覧が食い違う）。
+        guard !isBusy else {
+            addLog("Reconcile: skipped — backup is running")
+            Diagnostics.mark("reconcile: skip — backup is running")
+            return nil
+        }
+        isReconciling = true
+        defer { isReconciling = false }
         guard let token = try? await tokenProvider.freshAccessToken() else {
             addLog("Reconcile: authentication failed")
             return nil
@@ -225,11 +245,14 @@ public final class BackupEngine {
         let root = backupNormalizedPath(
             UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                 ?? BackupSettingsKeys.defaultDropboxFolder)
+        // ⚠️ 一覧取得の**直前**に時刻を採る。これより後に上がった記録は、この一覧では
+        // 判定できない（削除してはいけない）。
+        let listedAt = Date()
         guard let remote = await uploader.listFolder(root: root, token: token) else {
             addLog("Reconcile: could not list \(root)")
             return nil
         }
-        let (verifiedIDs, removed) = await store().reconcile(remote: remote)
+        let (verifiedIDs, removed) = await store().reconcile(remote: remote, listedAt: listedAt)
         progressStore.saveUploadedIDs(verifiedIDs)
         invalidateStatus()
         await reloadBackedUpIDs()
@@ -259,8 +282,8 @@ public final class BackupEngine {
         // ⚠️ 診断ログへ**結果を必ず残す**（ADR-86）。`addLog` はアプリ内のバッファ（Developer
         // Options 表示用）にしか入らないため、`bgtask: backup turn` が出ていても実際に走ったのか
         // 設定で無効なのか、診断ログからは区別できなかった（実機ログの検証で判明）。
-        guard !isRunning else {
-            Diagnostics.mark("backup: skip — already running")
+        guard !isBusy else {
+            Diagnostics.mark("backup: skip — already running (reconciling: \(isReconciling))")
             return
         }
         let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)

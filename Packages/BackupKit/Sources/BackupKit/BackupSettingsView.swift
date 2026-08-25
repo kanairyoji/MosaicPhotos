@@ -121,7 +121,8 @@ public struct BackupSettingsView: View {
                 Button(L("Back Up Now")) {
                     engine.start(folder: backupNormalizedPath(dropboxFolder))
                 }
-                .disabled(dropboxAuth.connectionStatus != .connected)
+                // 照合中は開始させない（照合は phase を触らないので isRunning では塞げない）。
+                .disabled(dropboxAuth.connectionStatus != .connected || engine.isBusy)
             }
 
             backupPhaseView

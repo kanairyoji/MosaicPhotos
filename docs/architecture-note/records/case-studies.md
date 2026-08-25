@@ -1650,3 +1650,51 @@
 レビューさせた 142 秒の 1 回）で見つかった。いずれも直前のレビュー対応で**私が書いたばかりの
 コード**であり、書いた本人とは別のモデルに読ませる価値がそのまま出た形になる。
 ツールは別リポジトリ（`~/DEV/review-loop`）で管理している。
+
+## 並行するシャード更新が互いのメタデータを消す（オフロードマーカーの消失）
+
+- 症状（潜在・自動レビューで指摘）: バックアップ情報またはオフロード済みマーカーが Dropbox から
+  消える。後者が消えると、再インストール後にオフロード写真の台帳を再構築できない
+  （マーカーの有無が「アプリが消した」と「ユーザーが消した」の唯一の区別なので、復元不能になる）。
+- 原因: `MetadataShardWriter` の 2 つの入口——バックアップの追記（`applyEntries`）とオフロード
+  マーカーの部分更新（`updateEntries`）——が、同じ `<deviceRoot>/.mosaic/meta/<YYYY-MM>.json` に対して
+  **download → merge → upload(overwrite)** を行う。どちらも `@MainActor` だが、`await` をまたいで
+  割り込むので MainActor でも実際にインターリーブする。`BackupEngine.start` と `executeOffload` の
+  間に排他は無く、UI（バックアップ設定とオフロード設定）も互いを禁止せず、夜間バックアップは
+  `isRunning` しか見ない。両者が同じ旧シャードを読むと**後着の overwrite が先着の変更を消す**。
+  しかもオフロード側は `markOffloadMarkersUploaded` を済ませているため、消えたマーカーは再送されない。
+- 対処: `MetadataShardLock`（actor・シャードパス単位の FIFO ハンドオフ）を追加し、
+  download の直前に取り upload の応答後に解放する形で `applyEntries`（シャードごと）と
+  `updateEntries`（関数全体）を包んだ。片方の read-modify-write が完了してからもう片方が
+  読み直すので、両方の変更が最終内容に残る。失敗時の扱いは変えていない
+  （バックアップ側は `PendingMetadataStore` へ、オフロード側は false を返して台帳に未送信で残す）。
+- 関連: `Packages/BackupKit/Sources/BackupKit/MetadataShardLock.swift`（新規）/
+  `MetadataShardWriter.swift` / テスト `MetadataDurabilityTests`「同じシャードへのバックアップ追記と
+  オフロードマーカー更新が並行しても、両方が残る」（**状態を持つ**偽 Dropbox ＋ download 遅延で
+  競合を再現。ロック無しでは落ちることを確認済み）。
+- 教訓: **`@MainActor` は排他ではない**。`await` を含む read-modify-write は、同じアクター上でも
+  インターリーブする。「最後に上書きする側が勝つ」通信手順（download→merge→upload）は、
+  資源（ここではシャードのパス）単位のロックとセットでなければ成立しない。
+- 残課題: ロックはプロセス内のみ。同一アカウントを複数端末で使う場合は端末フォルダで分離されて
+  いるため衝突しないが、将来フォルダを共有するなら `rev` ベースの楽観ロックが要る。
+
+## 古い一覧による照合が、照合中に上がった新しいバックアップ記録を消す
+
+- 症状（潜在・自動レビューで指摘）: 実ファイルもアップロード済み ID も存在するのに SwiftData
+  記録だけが消え、その写真を共有・オフロード・バックアップアルバムから辿れなくなる。
+- 原因: `reconcileWithDropbox` は `listFolder`（再帰ページング＝実写真数によっては数秒〜数十秒）で
+  リモート一覧を**固定**してから `reconcile` を実行する。その間にバックアップが 1 枚上げて
+  `upsertRecord` すると、そのパスは古い一覧に無いので `reconcile` が記録を削除する。その後 runner が
+  当該 ID を進捗台帳へ保存すると「台帳には済み ID があるが記録が無い」状態になり、`computePending` が
+  済み判定で除外するため**自己修復しない**。加えて照合は `phase` を触らないので、照合中も
+  `isRunning` は false のまま——別画面の「今すぐバックアップ」も夜間の自動起動も素通りする。
+- 対処: 二層。(1) `BackupStore.reconcile(remote:listedAt:)` に一覧取得**直前**の時刻を渡し、
+  `backedUpAt > listedAt` の記録は「この一覧が知り得なかった記録」として削除せず verified に入れる
+  （アップロード時に hash 検証済みなので台帳からも落とさない）。(2) `BackupEngine` に
+  `isReconciling` / `isBusy` を足し、`start` / `startNightlyIfEnabled` / 各ボタンを `isBusy` で塞ぐ。
+- 関連: `BackupStore.swift` / `BackupEngine.swift` / `BackupDebugSection.swift` /
+  `BackupSettingsView.swift` / テスト `ReconcileSafetyTests`（削除しない・従来どおり削除する
+  2 ケースの回帰・排他）。
+- 教訓: **スナップショットには「いつ撮ったか」を添える**。撮影後に生まれたものを「無い」と
+  読むと、照合が修復ではなく破壊になる。UI のガードを `isRunning` のような**特定フェーズの
+  述語**に頼ると、フェーズを持たない長時間処理（照合）がそのまま抜け道になる。

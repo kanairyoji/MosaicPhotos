@@ -82,7 +82,7 @@ public struct BackupDebugSection: View {
                     Text("Dropbox と照合（記録を検証）")
                 }
             }
-            .disabled(isReconciling || engine.isRunning)
+            .disabled(isReconciling || engine.isBusy)
             if let reconcileResult {
                 Text(reconcileResult).font(.caption).foregroundStyle(.secondary)
             }
@@ -92,7 +92,7 @@ public struct BackupDebugSection: View {
                 Task { await engine.clearAllBackupRecords() }
                 reconcileResult = nil
             }
-            .disabled(engine.isRunning)
+            .disabled(engine.isBusy)
         } header: {
             Text("バックアップ：進捗")
         } footer: {

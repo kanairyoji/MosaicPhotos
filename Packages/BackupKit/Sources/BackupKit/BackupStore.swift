@@ -118,8 +118,18 @@ public actor BackupStore {
 
     /// 照合（reconcile）: Dropbox の実ファイル一覧（path_lower → content_hash）に合わせて
     /// 記録を修復する。実在しない/hash が矛盾する記録は削除。
+    /// - Parameter listedAt: リモート一覧を**取得し始めた**時刻。これより後に作られた記録は
+    ///   この一覧が知り得ないので削除しない（下記）。
     /// 戻り値: (照合に合格した localIdentifier 集合, 削除した記録数)。
-    public func reconcile(remote: [String: String]) -> (verified: Set<String>, removed: Int) {
+    ///
+    /// ⚠️ 一覧の取得（list_folder・再帰ページング）には数秒〜数十秒かかる。その間に
+    /// バックアップが 1 枚上げて `upsertRecord` すると、そのパスは**古い一覧に無い**ので
+    /// 従来実装は削除していた。その後 runner が当該 ID を進捗台帳へ保存すると、次回は
+    /// 済み判定で除外され記録が自己修復しない＝共有・オフロード・アルバム集計から
+    /// 永久に脱落する（レビュー指摘）。一覧より新しい記録はアップロード時に hash 検証済み
+    /// なので、削除せず verified 側に入れる。
+    public func reconcile(remote: [String: String],
+                          listedAt: Date) -> (verified: Set<String>, removed: Int) {
         let records = (try? modelContext.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
         var removed = 0
         var verifiedIDs: Set<String> = []
@@ -127,6 +137,9 @@ public actor BackupStore {
             let path = record.dropboxPath.lowercased()
             if let remoteHash = remote[path],
                record.contentHash == nil || record.contentHash == remoteHash {
+                if let id = record.localIdentifier { verifiedIDs.insert(id) }
+            } else if record.backedUpAt > listedAt {
+                // 一覧の取得後に上がった記録＝この一覧では判定できない。次回の照合に委ねる。
                 if let id = record.localIdentifier { verifiedIDs.insert(id) }
             } else {
                 modelContext.delete(record)
