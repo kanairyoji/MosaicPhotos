@@ -403,20 +403,22 @@ extension BackupEngine: BackupRunnerDelegate {
         addLog(message)
     }
 
+    /// - Returns: 永続化できたか。呼び出し側（runner）はこれが true のときだけ進捗台帳へ入れる。
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
                           people: [String], albums: [String], isFavorite: Bool,
-                          contentHash: String?) {
-        // 永続化はオフメイン（store actor）。バッジ判定キャッシュだけ即時更新する。
+                          contentHash: String?) async -> Bool {
+        // 永続化はオフメイン（store actor）だが、**完了を待つ**（fire-and-forget にすると
+        // アプリ終了・BGTask 終了で保存が消え、台帳とだけ食い違う）。
         let localIdentifier = asset.localIdentifier
         let creationDate = asset.creationDate
-        Task {
-            await store().upsertRecord(dropboxPath: dropboxPath, localIdentifier: localIdentifier,
-                                       filename: filename, creationDate: creationDate,
-                                       contentHash: contentHash,
-                                       people: people, albums: albums, isFavorite: isFavorite)
-        }
+        let saved = await store().upsertRecord(
+            dropboxPath: dropboxPath, localIdentifier: localIdentifier,
+            filename: filename, creationDate: creationDate, contentHash: contentHash,
+            people: people, albums: albums, isFavorite: isFavorite)
+        guard saved else { return false }
         backedUpIDs.insert(localIdentifier)
         invalidateStatus()
+        return true
     }
 
     func runnerPriorityLocalIdentifiers() async -> Set<String> {

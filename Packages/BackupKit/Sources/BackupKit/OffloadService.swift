@@ -79,6 +79,17 @@ enum OffloadPlanning {
     /// - Parameters:
     ///   - localHash: 端末の現データから**今**計算した content_hash（nil = データ取得不可）
     ///   - remote: Dropbox の get_metadata で**今**取得した実体情報（nil = クラウドに存在しない）
+    /// 通信もデータ読み込みも要らない**構造的な**不適格判定（候補列挙のふるいに使う）。
+    ///
+    /// ⚠️ 候補列挙を上限で打ち切る前にこれを通す。通さないと、古い順の先頭が Live Photo や
+    /// 編集済みで埋まっている場合、**その先の適格な写真が永久に検査されない**（レビュー指摘）。
+    static func isStructurallyIneligible(_ asset: OffloadableAsset) -> Bool {
+        if asset.isLivePhoto { return true }
+        if let modified = asset.modificationDate, let backedUp = asset.backedUpAt,
+           modified > backedUp { return true }
+        return false
+    }
+
     static func verdict(asset: OffloadableAsset, localHash: String?, localSize: Int?,
                         remote: RemoteFileInfo?) -> OffloadVerdict {
         if asset.isLivePhoto {

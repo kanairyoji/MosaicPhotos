@@ -16,9 +16,12 @@ protocol BackupRunnerDelegate: AnyObject {
     func runnerLog(_ message: String)
     /// アップロード成功 1 件の SwiftData レコード保存（BackupEngine+Store）。
     /// `contentHash` は検証済みの Dropbox content_hash（オフロード前検証の照合キー）。
+    /// - Returns: **永続化できたか**。false なら進捗台帳へ入れない
+    ///   （入れると次回は再アップロードされないのに記録が無い＝オフロード・アルバム・共有が
+    ///   参照できない写真になる・レビュー指摘）。
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
                           people: [String], albums: [String], isFavorite: Bool,
-                          contentHash: String?)
+                          contentHash: String?) async -> Bool
     /// SwiftData 記録にある「実際にアップロード済み」の localIdentifier 集合。
     /// UserDefaults の台帳が消えても（Clear upload progress・再インストール等）、
     /// 記録から差分判定を自己修復し**二重アップロードを防ぐ**（実障害: 台帳クリア＋
@@ -56,12 +59,12 @@ final class GenerationScopedRunnerDelegate: BackupRunnerDelegate {
 
     @MainActor func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
                                      people: [String], albums: [String], isFavorite: Bool,
-                                     contentHash: String?) {
+                                     contentHash: String?) async -> Bool {
         // ⚠️ 記録は世代に関わらず残す。アップロード自体は完了しているので、
         // ここで捨てると**実体はあるのに記録が無い**（次回また上げてしまう）。
-        base?.runnerSaveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
-                               people: people, albums: albums, isFavorite: isFavorite,
-                               contentHash: contentHash)
+        await base?.runnerSaveRecord(dropboxPath: dropboxPath, asset: asset, filename: filename,
+                                     people: people, albums: albums, isFavorite: isFavorite,
+                                     contentHash: contentHash) ?? false
     }
 
     func runnerRecordedLocalIdentifiers() async -> Set<String> {
@@ -215,7 +218,13 @@ final class BackupRunner {
 
         let totalSkipped = alreadySkipped + tally.skippedRead
             + (pending.count - tally.uploaded - tally.skippedRead)
-        addLog("Done — uploaded: \(tally.uploaded), skipped: \(totalSkipped)")
+        if metadataLost > 0 {
+            // メタデータを失った回は「完了」と言い切らない（写真本体は上がっている）。
+            addLog("Done with warnings — uploaded: \(tally.uploaded), skipped: \(totalSkipped), "
+                   + "metadata lost: \(metadataLost)")
+        } else {
+            addLog("Done — uploaded: \(tally.uploaded), skipped: \(totalSkipped)")
+        }
         // 完了は診断ログにも残す（ADR-86・addLog はアプリ内バッファのみ＝実行有無が追えなかった）。
         Diagnostics.mark("backup: done — uploaded=\(tally.uploaded) skipped=\(totalSkipped)")
         setPhase(.completed(uploaded: tally.uploaded, skipped: totalSkipped))
@@ -368,7 +377,6 @@ final class BackupRunner {
         switch result {
         case .uploaded(let savedPath, let hash):
             tally.uploaded += 1
-            tally.trackedIDs.insert(asset.localIdentifier)
             addLog("  ✓ uploaded (hash verified)\(savedPath == dropboxPath.lowercased() ? "" : " as \(savedPath)")")
             let people     = indexes.people[asset.localIdentifier] ?? []
             let albums     = indexes.albums[asset.localIdentifier] ?? []
@@ -389,11 +397,22 @@ final class BackupRunner {
                     longitude: asset.location?.coordinate.longitude,
                     isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot)
                 )))
-            delegate.runnerSaveRecord(
+            // ⚠️ 記録の**永続化を待ってから**進捗台帳へ入れる。fire-and-forget だと、
+            // 大量アップロード後や BGTask 終了時に保存タスクが残ったままアプリが止まり、
+            // 「次回は再アップロードされないのに SwiftData 記録が無い」写真ができる
+            // （オフロード・アルバム・共有がその写真を辿れなくなる・レビュー指摘）。
+            let recorded = await delegate.runnerSaveRecord(
                 dropboxPath: savedPath, asset: asset, filename: filename,
                 people: people, albums: albums, isFavorite: isFavorite,
                 contentHash: hash
             )
+            if recorded {
+                tally.trackedIDs.insert(asset.localIdentifier)
+            } else {
+                // 記録できていない＝次回また上げ直す（実体は Dropbox にあるので
+                // 409/hash 照合でスキップされ、記録だけが作られる）。
+                addLog("  ⚠️ record not saved — will re-check next run")
+            }
             if tally.uploaded % 5 == 0 { progressStore.saveUploadedIDs(tally.trackedIDs) }
             return .done
 
@@ -432,6 +451,9 @@ final class BackupRunner {
     /// 触った撮影月シャードだけをマージ更新し、カタログを書く（ADR-38）。
     /// v1 metadata.json は凍結（読み込み側が v1 ベース＋v2 上書きで統合する）。
     /// シャードの download→merge→upload は `MetadataShardWriter` に集約（B3）。
+    /// 送信も再送キューへの保存も失敗した件数（0 なら健全）。完了メッセージに反映する。
+    private var metadataLost = 0
+
     private func writeMetadata(newEntries: [BackupMetadataPlanning.NewEntry],
                                indexes: Indexes, folder: String, token: String) async {
         // ⚠️ 前回送れなかった分を**先に取り込む**。写真の実体は既にアップロード済みで、
@@ -474,11 +496,19 @@ final class BackupRunner {
                 stillPending[shard] = byShard[shard] ?? [:]
             }
         }
-        pendingStore.save(stillPending)
+        let queued = pendingStore.save(stillPending)
         if !stillPending.isEmpty {
             let count = PendingMetadataStore.entryCount(stillPending)
-            addLog("  ⚠️ \(count) metadata entry(s) could not be written — will retry next run")
-            Diagnostics.mark("backup: metadata pending=\(count) shards=\(stillPending.count)")
+            if queued {
+                addLog("  ⚠️ \(count) metadata entry(s) could not be written — will retry next run")
+                Diagnostics.mark("backup: metadata pending=\(count) shards=\(stillPending.count)")
+            } else {
+                // ⚠️ 送信も再送キューへの保存も失敗＝**この分は失われる**。写真本体は進捗台帳に
+                // 載って次回の対象から外れるので、黙って完了にしない（レビュー指摘）。
+                metadataLost = count
+                addLog("  ✗ \(count) metadata entry(s) lost — could not send or queue for retry")
+                Diagnostics.mark("backup: metadata LOST=\(count) (send and queue both failed)")
+            }
         }
         // メタデータを書いた＝「不在」の記録は無効。これを消さないと、初回バックアップ後も
         // 最大 TTL のあいだ起動時の読み込みが不在記録で素通りしてしまう（ADR-82）。

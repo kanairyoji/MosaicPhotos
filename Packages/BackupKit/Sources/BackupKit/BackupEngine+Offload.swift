@@ -32,6 +32,11 @@ extension BackupEngine {
     /// 記録は store actor（オフメイン）から取得し、PHAsset は **1 回の一括フェッチ**で解決する
     /// （旧: 記録ごとに fetchAssets を呼びメインを塞いでいた）。
     /// 実データ読み込みは遅延（`loadData` クロージャ・hash 再計算時のみ）。
+    ///
+    /// ⚠️ 上限（`scanLimit`）は**構造的に不適格なものを除いた数**で数える。単純に先頭 N 件で
+    /// 打ち切ると、古い順の先頭が Live Photo・編集済みで埋まっている場合に、その先の適格な
+    /// 写真が plan/execute のどちらにも渡らず、**何度実行してもオフロードされない**
+    /// （レビュー指摘）。台帳は撮影日昇順なので、そのまま奥へ走査すればよい。
     public func offloadCandidateAssets(scanLimit: Int = 200) async -> [OffloadableAsset] {
         let records = await store().allRecordsLite()
         let ids = records.compactMap(\.localIdentifier)
@@ -42,10 +47,14 @@ extension BackupEngine {
         fetched.enumerateObjects { asset, _, _ in assetByID[asset.localIdentifier] = asset }
 
         var out: [OffloadableAsset] = []
+        var usable = 0            // 構造的に不適格でない候補の数（上限はこちらで数える）
+        var skippedStructural = 0
+        // 台帳全体が不適格なときに無限に積まないための保険（打ち切りはログに残す）。
+        let maxScanned = scanLimit * 10
         for record in records {
-            if out.count >= scanLimit { break }
+            if usable >= scanLimit || out.count >= maxScanned { break }
             guard let id = record.localIdentifier, let asset = assetByID[id] else { continue }
-            out.append(OffloadableAsset(
+            let candidate = OffloadableAsset(
                 localIdentifier: id,
                 dropboxPath: record.dropboxPath,
                 filename: record.filename,
@@ -63,7 +72,24 @@ extension BackupEngine {
                         return data
                     }
                     return nil
-                }))
+                })
+            // ⚠️ 構造的に不適格（Live Photo・編集済み）なものは**上限に数えない**。
+            // 数えると、古い順の先頭がそれで埋まったときに奥へ進めなくなる。
+            // 一覧（ドライラン）にはスキップ理由を出したいので、候補自体は含める。
+            if OffloadPlanning.isStructurallyIneligible(candidate) {
+                skippedStructural += 1
+                out.append(candidate)   // 一覧にはスキップ理由つきで出す
+                continue
+            }
+            usable += 1
+            out.append(candidate)
+        }
+        if skippedStructural > 0 {
+            addLog("Offload: scanned past \(skippedStructural) structurally ineligible photo(s) "
+                   + "(usable=\(usable))")
+        }
+        if out.count >= maxScanned {
+            addLog("Offload: stopped scanning at \(maxScanned) record(s) — usable=\(usable)")
         }
         return out
     }

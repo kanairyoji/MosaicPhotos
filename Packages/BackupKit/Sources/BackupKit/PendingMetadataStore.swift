@@ -26,19 +26,42 @@ struct PendingMetadataStore {
         fileURL = base.appendingPathComponent(filename)
     }
 
+    /// テスト用（書けない場所での挙動を確かめる）。
+    init(directory: URL, filename: String) {
+        fileURL = directory.appendingPathComponent(filename)
+    }
+
     func load() -> Payload {
         guard let data = try? Data(contentsOf: fileURL),
               let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return [:] }
         return payload
     }
 
-    func save(_ payload: Payload) {
+    /// - Returns: **保存できたか**。false のときはバックアップを正常完了扱いにしてはいけない
+    ///   （写真本体は進捗台帳に載って次回の対象から外れるため、送信失敗＋保存失敗が重なると
+    ///   人物・アルバム・位置情報が永久に欠落する・レビュー指摘）。
+    @discardableResult
+    func save(_ payload: Payload) -> Bool {
         guard !payload.isEmpty else {
-            try? FileManager.default.removeItem(at: fileURL)
-            return
+            // 空＝保留なし。ファイルが無い場合も成功として扱う。
+            do {
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    try FileManager.default.removeItem(at: fileURL)
+                }
+                return true
+            } catch {
+                BackupLogger.error("PendingMetadataStore: could not clear queue — \(error)")
+                return false
+            }
         }
-        guard let data = try? JSONEncoder().encode(payload) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(payload)
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            BackupLogger.error("PendingMetadataStore: save failed — \(error)")
+            return false
+        }
     }
 
     /// 保留分を取り込み、今回の分と統合する（同じパスは今回の値を優先）。

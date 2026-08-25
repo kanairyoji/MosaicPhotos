@@ -158,3 +158,79 @@ struct BackupRunGenerationTests {
         #expect(engine.isCurrentRun(second))
     }
 }
+
+// MARK: - 再送キューの保存失敗（レビュー指摘）
+
+/// ⚠️ 写真本体は進捗台帳に載って次回の対象から外れる。送信に失敗し、さらに再送キューへの
+/// 保存にも失敗すると、人物・アルバム・位置情報は**永久に欠落**する。黙って成功にしない。
+@Suite("PendingMetadataStore durability")
+struct PendingMetadataDurabilityTests {
+
+    private func entry(_ people: [String]) -> DropboxBackupMetadata.Entry {
+        DropboxBackupMetadata.Entry(people: people, albums: [], localIdentifier: "id")
+    }
+
+    @Test("保存できたら true")
+    func reportsSuccess() {
+        let name = "PendingMetaTest-\(UUID().uuidString).json"
+        let store = PendingMetadataStore(filename: name)
+        defer { _ = store.save([:]) }
+        #expect(store.save(["2025-08": ["/b/a.jpg": entry(["太郎"])]]))
+    }
+
+    @Test("空保存（キュー解消）も成功として返る")
+    func clearingEmptyQueueSucceeds() {
+        let name = "PendingMetaTest-\(UUID().uuidString).json"
+        let store = PendingMetadataStore(filename: name)
+        #expect(store.save([:]), "まだファイルが無いだけで失敗にしない")
+        _ = store.save(["2025-08": ["/b/a.jpg": entry(["太郎"])]])
+        #expect(store.save([:]))
+        #expect(store.load().isEmpty)
+    }
+
+    @Test("書けない場所なら false を返す（黙って成功にしない）")
+    func reportsFailure() {
+        // ディレクトリとして使えない名前（既存ファイルの配下）を指す。
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingmeta-\(UUID().uuidString)")
+        try? Data("blocker".utf8).write(to: base)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let store = PendingMetadataStore(directory: base.appendingPathComponent("sub", isDirectory: true),
+                                         filename: "queue.json")
+        #expect(!store.save(["2025-08": ["/b/a.jpg": entry(["太郎"])]]),
+                "保存できていないのに成功を返すと、欠落が黙って確定する")
+    }
+}
+
+// MARK: - アップロード記録の確定（レビュー指摘）
+
+/// ⚠️ 記録の保存を fire-and-forget にすると、大量アップロード後や BGTask 終了時に保存タスクが
+/// 残ったままアプリが止まり、**進捗台帳には載っているのに SwiftData 記録が無い**写真ができる。
+/// その写真はオフロード・アルバム・共有のどれからも辿れない。
+@Suite("Backup record commit")
+struct BackupRecordCommitTests {
+
+    @Test("保存できたら true（進捗台帳へ入れてよい）")
+    func reportsSuccess() async {
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let saved = await store.upsertRecord(
+            dropboxPath: "/b/a.jpg", localIdentifier: "id-a", filename: "a.jpg",
+            creationDate: nil, contentHash: "hA", people: [], albums: [], isFavorite: false)
+        #expect(saved)
+        #expect(await store.allRecordsLite().count == 1)
+    }
+
+    @Test("同じパスの再アップロードは上書きで 1 件のまま")
+    func upsertIsIdempotent() async {
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        for hash in ["h1", "h2"] {
+            _ = await store.upsertRecord(
+                dropboxPath: "/b/a.jpg", localIdentifier: "id-a", filename: "a.jpg",
+                creationDate: nil, contentHash: hash, people: [], albums: [], isFavorite: false)
+        }
+        let records = await store.allRecordsLite()
+        #expect(records.count == 1)
+        #expect(records.first?.contentHash == "h2")
+    }
+}

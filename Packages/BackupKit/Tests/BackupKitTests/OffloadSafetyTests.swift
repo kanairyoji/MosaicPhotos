@@ -305,3 +305,52 @@ struct OffloadLedgerDurabilityTests {
         #expect(markedUploaded == ["a"])
     }
 }
+
+// MARK: - 候補の走査範囲・記録の確定（レビュー指摘）
+
+/// ⚠️ 候補列挙を「先頭 N 件」で打ち切ると、古い順の先頭が Live Photo・編集済みで埋まっている
+/// 場合に、その先の適格な写真が plan/execute のどちらにも渡らず、何度実行してもオフロード
+/// されない。上限は**構造的に不適格なものを除いた数**で数える。
+@Suite("Offload candidate scanning")
+struct OffloadCandidateScanTests {
+
+    private func asset(_ id: String, live: Bool = false, edited: Bool = false) -> OffloadableAsset {
+        let backedUp = Date(timeIntervalSince1970: 1_700_000_000)
+        return OffloadableAsset(
+            localIdentifier: id, dropboxPath: "/b/\(id).jpg", filename: "\(id).jpg",
+            albums: [], captureDate: backedUp,
+            modificationDate: edited ? backedUp.addingTimeInterval(60) : backedUp,
+            backedUpAt: backedUp, isLivePhoto: live, loadData: { nil })
+    }
+
+    @Test("Live Photo は構造的に不適格（通信なしで判定できる）")
+    func livePhotoIsStructurallyIneligible() {
+        #expect(OffloadPlanning.isStructurallyIneligible(asset("a", live: true)))
+    }
+
+    @Test("バックアップ後に編集された写真も構造的に不適格")
+    func editedIsStructurallyIneligible() {
+        #expect(OffloadPlanning.isStructurallyIneligible(asset("b", edited: true)))
+    }
+
+    @Test("通常の写真は構造的な不適格ではない（実検証へ回す）")
+    func normalPhotoPassesStructuralFilter() {
+        #expect(!OffloadPlanning.isStructurallyIneligible(asset("c")))
+    }
+
+    /// 構造的な不適格を上限に数えないので、その先の適格写真まで到達できる。
+    @Test("先頭が不適格でも、上限は適格候補の数で数える")
+    func limitCountsUsableCandidatesOnly() {
+        let records = (0..<10).map { asset("live\($0)", live: true) } + [asset("ok1"), asset("ok2")]
+        var usable = 0
+        var scanned: [OffloadableAsset] = []
+        for record in records {
+            if usable >= 2 { break }
+            scanned.append(record)
+            if OffloadPlanning.isStructurallyIneligible(record) { continue }
+            usable += 1
+        }
+        #expect(usable == 2, "先頭の不適格で打ち切ると、その先の写真が永久に検査されない")
+        #expect(scanned.contains { $0.localIdentifier == "ok2" })
+    }
+}

@@ -57,9 +57,12 @@ public actor BackupStore {
     // MARK: - Backup records
 
     /// アップロード成功 1 件の upsert（パスがキー・再アップロードは最新情報で上書き）。
+    /// - Returns: **永続化できたか**。false のときは進捗台帳へ入れてはいけない
+    ///   （台帳にだけ載ると「再アップロードされないのに記録が無い」写真になる・レビュー指摘）。
+    @discardableResult
     public func upsertRecord(dropboxPath: String, localIdentifier: String?, filename: String,
                              creationDate: Date?, contentHash: String?,
-                             people: [String], albums: [String], isFavorite: Bool) {
+                             people: [String], albums: [String], isFavorite: Bool) -> Bool {
         let path = dropboxPath.lowercased()
         let descriptor = FetchDescriptor<BackupAssetRecord>(
             predicate: #Predicate { $0.dropboxPath == path })
@@ -75,7 +78,14 @@ public actor BackupStore {
                 filename: filename, creationDate: creationDate,
                 contentHash: contentHash, people: people, albums: albums, isFavorite: isFavorite))
         }
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+            return true
+        } catch {
+            BackupLogger.error("upsertRecord: save failed — \(error)")
+            modelContext.rollback()
+            return false
+        }
     }
 
     /// 全記録（Sendable 値・撮影日昇順）。
