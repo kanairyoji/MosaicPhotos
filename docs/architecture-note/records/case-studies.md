@@ -1871,3 +1871,56 @@
   `Task.isCancelled` は、1 単位ずつ呼ばれる実装では飾りにしかならない。
 - 残課題: 進行中のクラウド往復そのものは中断できない（`cloudAnalysisImages` がキャンセルを
   受け取らない）。譲りの遅れは最大 1 往復ぶん残る。
+
+## 取得完了順のマージで、凍結された v1 メタデータが新しい v2 を上書きする
+
+- 症状: 移行済みバックアップで、人物名・アルバム・お気に入り・オフロード情報（`offloadedAt`）
+  などが新しい v2 の値ではなく**古い v1 の値**として表示されることがある。毎回ではなく、
+  通信の揺らぎで再現したりしなかったりする。
+- 原因: `DropboxPhotoStore+BackupMetadata.loadBackupMetadata` は対象 JSON を
+  「各ルートの v1 `.mosaic/metadata.json` → そのルートのシャード群」の順で `jsonPaths` に積むが、
+  取得は `withTaskGroup` の**並列**で、結果を `for await part in group { out.append(part) }` と
+  **完了順**に配列へ入れていた。その配列を後勝ちで `merging` するため、v1 のダウンロードが
+  遅れて完了すると v1 が v2 を上書きする。v1 は ADR-38 で**凍結**され、以後の更新は v2 シャードに
+  だけ書かれる（`BackupRunner`）ので、同一パスの v1/v2 エントリは実際に値が異なる。
+  ファイル冒頭にあった「重複キーは同一エントリなのでマージ順序に意味はない」というコメントは、
+  v1 凍結・v2 追記という現在の仕様と矛盾しており、**前提そのものが誤り**だった。
+- 対処: 取得結果を完了順ではなく `jsonPaths` の並び順で確定させる。タスクグループの要素を
+  `(index, DropboxBackupMetadata?)` にし、`[DropboxBackupMetadata?](repeating: nil, count:)` の
+  該当スロットへ代入する。マージ本体は純関数 `BackupMetadataMerging.merge(ordered:)` へ切り出し
+  （nil を飛ばして先頭から順に `merging`）、オフメイン（`Task.detached`）で呼ぶ性能特性は維持。
+  誤ったコメントは「順序に意味がある＝後ろほど新しい」へ書き換えた。
+- 関連: `DropboxCore/Store/DropboxPhotoStore+BackupMetadata.swift` /
+  `DropboxCore/Models/BackupMetadataMerging.swift` /
+  `DropboxCoreTests/DropboxBackupMetadataTests.swift`（完了順を入れ替えても結果が同一であること・
+  v1 のみ/v2 のみ/複数ルートで全エントリが残ることを検証）。ADR-38。
+- 教訓: **並列取得の結果を「届いた順」に積んだ時点で、順序の意味は失われる**。マージが
+  後勝ちなら、順序は index で復元してからでないと正しくない。「重複キーは同じ値だから順序は
+  どうでもいい」という前提は、片方のファイルが凍結された瞬間に崩れる——前提を書いた
+  コメントは、仕様が変わったら一緒に検算する。
+
+## キャンセルしたはずのキャッシュ読み込みが、切断後の一覧を復活させる
+
+- 症状: Dropbox を切断して一覧が消えた後、旧アカウントのクラウド写真が再び一覧へ現れる。
+  アカウントを切り替えた場合は、新しい一覧を旧一覧が上書きし得る。
+- 原因: `resetLoad()` / `clearCache()` / アカウント切替は `loadTask?.cancel()` してから
+  `items = []` するが、**`cancel()` では `reflectCachedItems` の待機点を止められない**。
+  `cache.currentItemsRevision()` / `cache.cachedItems()` は actor 呼び出しでキャンセルを見ず、
+  署名計算＋刻印の `Task.detached` は親のキャンセルを継承しない。したがって全件変換中に
+  切断・切替が入ると、リセット後に `lastReflectedRevision` / `items` / `loadStatus` /
+  `debugInfo` の代入が着地する。加えて `loadItems()` の後始末が無条件の `loadTask = nil` で、
+  リセット後に始まった**新しい**読み込みの登録まで消していた（合流の取りこぼし）。
+- 対処: 読み込みの**世代**（`loadGeneration`）を導入し、リセット・キャッシュ消去・アカウント切替で
+  **items をクリアしたり cache を消したりする前に**インクリメントする。`reflectCachedItems` は
+  冒頭で `(世代, accountId)` の札を捕まえ、**各 await の直後**に純ロジック
+  `DropboxPhotoStore.shouldApplyLoad(captured:currentGeneration:currentAccountId:isCancelled:)`
+  で適用可否を判定し、false なら**何も代入せずに**早期 return する。あわせて `loadItems()` の
+  後始末を `if loadTask == task { loadTask = nil }` に変え、古い呼び手が新しい登録を消さないようにした。
+- 関連: `DropboxCore/Store/DropboxPhotoStore.swift` /
+  `DropboxCoreTests/DropboxPhotoStoreLoadGuardTests.swift`。
+- 教訓: **`Task.cancel()` は「止まる」保証ではない**。actor への await も detached タスクも
+  キャンセルを見ないので、止めたい対象が「代入」なら、代入の直前に**世代／所有者の照合**を
+  置くしかない。cancel は速く終わらせるための最適化、照合が正しさの担保。
+- 残課題: 同一アカウントの同時 `loadItems()` が 1 読み込みへ合流し一度だけ反映されることは
+  `loadTask` の合流と同一タスク判定で担保しているが、`DropboxPhotoStore` は cache/認証を
+  注入できず実インスタンスを組めないため自動テストが無い（コードレビューでの確認に留める）。

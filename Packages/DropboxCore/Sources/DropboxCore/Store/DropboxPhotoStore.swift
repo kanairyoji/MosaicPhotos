@@ -21,6 +21,12 @@ public final class DropboxPhotoStore {
     @ObservationIgnored private var excludedPathPrefixes: [String] = []
     /// 実行中の `loadItems()`。起動直後に複数の呼び手が同時に来ても fetch は 1 回に集約する。
     @ObservationIgnored private var loadTask: Task<Int, Never>?
+    /// 読み込みの世代。リセット（切断/キャッシュ消去/アカウント切替）のたびに進める。
+    /// ⚠️ `loadTask?.cancel()` だけでは進行中の読み込みを止められない——`cache` は actor 呼び出しで
+    /// キャンセルを見ず、変換の `Task.detached` は親のキャンセルを継承しないため、
+    /// リセット後に**古いスナップショットが items へ着地**し得る（切断したはずの一覧が戻る）。
+    /// 世代とアカウントの札を捕まえておき、代入直前に一致を確かめて古い読み込みを捨てる。
+    @ObservationIgnored private var loadGeneration = 0
     public private(set) var loadStatus: LoadStatus = .idle
     public private(set) var debugInfo: String = ""
     /// バックグラウンド同期エンジンの現在状態。SettingsView などで表示に使用する。
@@ -62,6 +68,25 @@ public final class DropboxPhotoStore {
         guard let current else { return .unknown }
         guard let stored else { return .adopt(current) }
         return stored == current ? .keep : .clearThenAdopt(current)
+    }
+
+    /// 読み込み開始時に捕まえる札（世代＋対象アカウント）。
+    struct LoadStamp: Equatable, Sendable {
+        let generation: Int
+        let accountId: String
+    }
+
+    /// 途中まで進んだ読み込みの結果を `items` へ反映してよいかの判定（純ロジック・テスト対象）。
+    /// - 世代が進んでいる（リセット・キャッシュ消去・アカウント切替が挟まった）
+    /// - 現在のアカウントが読み込み開始時と違う
+    /// - タスクがキャンセルされた
+    /// のいずれかなら反映しない（**何も代入せずに捨てる**）。
+    static func shouldApplyLoad(
+        captured: LoadStamp, currentGeneration: Int, currentAccountId: String?, isCancelled: Bool
+    ) -> Bool {
+        if isCancelled { return false }
+        guard captured.generation == currentGeneration else { return false }
+        return captured.accountId == currentAccountId
     }
 
     /// accountId → 指紋（保存・比較用）。
@@ -162,7 +187,9 @@ public final class DropboxPhotoStore {
         let task = Task { await reflectCachedItems(accountId: accountId) }
         loadTask = task
         let count = await task.value
-        loadTask = nil
+        // ⚠️ 無条件に nil へ戻さない。待っている間にリセットが入り、**新しい読み込みが
+        //    すでに登録されている**ことがある。それを消すと後続の呼び手が合流先を失う。
+        if loadTask == task { loadTask = nil }   // Task は Hashable（同一タスク判定）
         DropboxLogger.info("loadItems() — \(count) items from cache")
     }
 
@@ -176,12 +203,17 @@ public final class DropboxPhotoStore {
         //    無変更でも 68,200 行の fetch＋値型生成＋刻印コピーの代金を毎回払っていた。
         //    実機 diagnostics-38 では起動直後の 3 秒間にこれが 2 回走り、`cache.fetchItems` が
         //    993ms / 1165ms、直後にメインが 2.8s / 3.5s ブロックしていた。
+        // ⚠️ 各待機点の後で「この結果をまだ反映してよいか」を確かめる（`shouldApplyLoad`）。
+        //    リセット・アカウント切替が挟まったら**何も代入せずに**捨てる。
+        let stamp = LoadStamp(generation: loadGeneration, accountId: accountId)
         let revision = await cache.currentItemsRevision()
+        guard isCurrentLoad(stamp) else { return items.count }
         if revision == lastReflectedRevision, !items.isEmpty {
             updateLoadStatus()
             return items.count
         }
         let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
+        guard isCurrentLoad(stamp) else { return items.count }
         let favPaths = cloudFavoritePaths
         let excluded = excludedPathPrefixes
         // ⚠️ 署名計算**と刻印（68,200 件の map）を同じ detached でまとめて**行う（ADR-88）。
@@ -197,6 +229,7 @@ public final class DropboxPhotoStore {
             return (Self.itemsSignature(visible, favoritePaths: favPaths),
                     favPaths.isEmpty ? visible : visible.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
         }.value
+        guard isCurrentLoad(stamp) else { return items.count }
         lastReflectedRevision = revision
         if sig != lastItemsSignature {
             lastItemsSignature = sig
@@ -205,6 +238,13 @@ public final class DropboxPhotoStore {
         updateLoadStatus()
         updateDebugInfo()
         return raw.count
+    }
+
+    /// 捕まえた札が今も有効か（`shouldApplyLoad` へ現在値を渡すだけの薄い橋渡し）。
+    private func isCurrentLoad(_ stamp: LoadStamp) -> Bool {
+        Self.shouldApplyLoad(
+            captured: stamp, currentGeneration: loadGeneration,
+            currentAccountId: auth.credential?.accountId, isCancelled: Task.isCancelled)
     }
 
     /// items の内容署名（count＋各アイテムの Hashable＋お気に入り membership）。off-main で計算する。
@@ -389,6 +429,9 @@ public final class DropboxPhotoStore {
     /// actor キャッシュ経由で消去するため、別コンテナとの不整合や「消去後に再同期されず空のまま」を防ぐ。
     public func clearCache() async {
         stopSync()  // syncState=.idle、保留中のリフレッシュも解除
+        // ⚠️ 世代を進めるのは**キャッシュを消す前**。進行中の読み込みが消去前のスナップショットを
+        //    持っていても、代入直前の照合で捨てられる。
+        loadGeneration &+= 1
         loadTask?.cancel()
         loadTask = nil
         if let accountId = auth.credential?.accountId {
@@ -401,6 +444,9 @@ public final class DropboxPhotoStore {
     func resetLoad() {
         // ⚠️ 進行中の読み込みを**必ず止める**。止めないと、リセット後に古いスナップショットが
         // items へ再代入され、切断したはずの一覧が戻る（レビュー指摘）。
+        // cancel() だけでは actor 呼び出し/detached の待機点を止められないので、
+        // items をクリアする**前に**世代を進めて古い読み込みの着地を無効化する。
+        loadGeneration &+= 1
         loadTask?.cancel()
         loadTask = nil
         loadStatus = .idle
@@ -479,6 +525,8 @@ public final class DropboxPhotoStore {
         case .clearThenAdopt(let fingerprint):
             DropboxLogger.info("account switched (cache owner differs) — clearing cache")
             // 進行中の読み込みを止めてから消す。止めないと、消した後に**旧一覧が再代入**され得る。
+            // cancel() は待機点を止めきれないため、消去より先に世代を進めて着地を無効化する。
+            loadGeneration &+= 1
             loadTask?.cancel()
             loadTask = nil
             if let currentAccountId { await cache.clearAll(accountId: currentAccountId) }

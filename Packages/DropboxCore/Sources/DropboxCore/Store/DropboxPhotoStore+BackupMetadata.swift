@@ -39,34 +39,33 @@ extension DropboxPhotoStore {
             }
         }
         // v1・シャードを並列取得（rev 一致ならキャッシュ＝通信は get_metadata 1 往復のみ）。
-        let parts: [DropboxBackupMetadata] = await withTaskGroup(
-            of: DropboxBackupMetadata?.self, returning: [DropboxBackupMetadata].self
+        // ⚠️ 結果は**完了順ではなく `jsonPaths` の並び順**（各ルートの v1 → そのルートのシャード群）
+        //    でスロットへ収める。v1 は凍結され更新は v2 シャードにだけ入るので、完了順に積むと
+        //    v1 の取得が遅れたときに古い v1 が新しい v2 を上書きしてしまう（diagnostics: ADR-38 読み込み側）。
+        let slots: [DropboxBackupMetadata?] = await withTaskGroup(
+            of: (Int, DropboxBackupMetadata?).self, returning: [DropboxBackupMetadata?].self
         ) { group in
-            for path in jsonPaths {
+            for (index, path) in jsonPaths.enumerated() {
                 group.addTask { [weak self] in
-                    await self?.fetchCachedJSON(path: path, force: force)
+                    (index, await self?.fetchCachedJSON(path: path, force: force))
                 }
             }
-            var out: [DropboxBackupMetadata] = []
-            for await part in group {
-                if let part { out.append(part) }
-            }
+            var out = [DropboxBackupMetadata?](repeating: nil, count: jsonPaths.count)
+            for await (index, part) in group { out[index] = part }
             return out
         }
-        guard !parts.isEmpty else {
+        let fetchedCount = slots.compactMap { $0 }.count
+        guard fetchedCount > 0 else {
             DropboxLogger.info("loadBackupMetadata() — no metadata found (\(folderPaths.joined(separator: ", ")))")
             return
         }
         // マージはオフメインで（数万エントリの辞書結合をメインに載せない）。
-        // エントリのキーは「実際に保存されたパス」なので、ファイル間で重複するキーは
-        // 同一写真の同一エントリ＝マージ順序に意味はない。
+        // 順序に意味がある＝後ろほど新しい（`BackupMetadataMerging` のコメント参照）。
         let merged = await Task.detached(priority: .userInitiated) {
-            var out = DropboxBackupMetadata()
-            for part in parts { out = out.merging(part.entries) }
-            return out
+            BackupMetadataMerging.merge(ordered: slots)
         }.value
         backupMetadata = merged
-        DropboxLogger.info("loadBackupMetadata() — loaded \(merged.entries.count) entries (\(parts.count) file(s), rev-cached)")
+        DropboxLogger.info("loadBackupMetadata() — loaded \(merged.entries.count) entries (\(fetchedCount) file(s), rev-cached)")
     }
 
     /// rev ベースのローカルキャッシュつき JSON 取得（A2）。
