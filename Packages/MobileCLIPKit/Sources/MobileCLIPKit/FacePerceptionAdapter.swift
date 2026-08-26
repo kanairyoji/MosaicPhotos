@@ -69,6 +69,12 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         // load 合計 1,868,367ms のうち 1,769,333ms が単一の外れ値だった。中央値は 81ms）。
         var loadMs = 0.0, inferMs = 0.0, discarded = 0
         for refKey in refKeys {
+            // ⚠️ **画像を取りに行く前に**降りる（実機 diagnostics-56）。以前はキャンセル判定が
+            // ループの末尾（ロード＋推論の後）にしか無く、1 キー呼び出しでは事実上機能しなかった。
+            // 前面復帰で `stopScan` した 22:06:01 のスキャンが実際に終わったのは 22:06:14＝**13 秒後**で、
+            // その間ずっとクラウド 1024px のダウンロード（実測 7.5 秒）と ANE 推論を握り続けていた。
+            // 「操作が来たら即譲る」（CLAUDE.md 背景処理の不変条件）を満たすには、重い段の**前**で見る。
+            if Task.isCancelled { break }
             guard let ref = PhotoRef.decode(refKey) else { continue }
             let source: CGImage?
             let suspensionEpoch = ProcessSuspension.epoch
@@ -106,6 +112,10 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             }
             let loadElapsed = (CFAbsoluteTimeGetCurrent() - tLoad) * 1000
             guard let cg = source else { nilImage += 1; continue }
+            // ロードは待たされ得る（クラウドは往復・実測 7.5 秒）。取れた直後にもう一度見て、
+            // **推論へ入らない**（ANE ゲートを掴むと他の解析も道連れになる）。
+            // ここで抜けた写真は結果に載らない＝下流は「未解析」として次の窓に回す（ADR-92）。
+            if Task.isCancelled { break }
             loaded += 1
             // ⚠️ ANE 直列化ゲートは `detect` の内側（Vision perform／facenet 推論の各段）で取る。
             // 上の画像ロードはゲート外＝ロード中に他の推論（CLIP 埋め込み・Vision タグ）を止めない。

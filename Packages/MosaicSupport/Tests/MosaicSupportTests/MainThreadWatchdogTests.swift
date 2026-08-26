@@ -102,3 +102,47 @@ struct MainThreadWatchdogTests {
         #expect(summary?.contains("pings=1") == true)
     }
 }
+
+/// ⚠️ ハング中のスタック採取は「止まっている最中」にしか意味が無い（終わってからでは犯人が居ない）。
+/// 一方でメインを一瞬 suspend するので、短い引っかかりでは採らず、長い停止では**採り直す**。
+@Suite("ハング時スタック採取の判定")
+struct HangStackCaptureDecisionTests {
+
+    private let threshold: Double = 2000
+    private let interval: UInt64 = 15_000_000_000   // 15 秒
+
+    private func decide(ageMs: Double, lastCaptureNs: UInt64, nowNs: UInt64) -> Bool {
+        MainThreadWatchdog.shouldCaptureStack(ageMs: ageMs, threshold: threshold,
+                                              lastCaptureNs: lastCaptureNs, nowNs: nowNs,
+                                              intervalNs: interval)
+    }
+
+    @Test("短い引っかかりでは採らない")
+    func shortStallIsNotCaptured() {
+        #expect(!decide(ageMs: 1500, lastCaptureNs: 0, nowNs: 1_000_000_000))
+    }
+
+    @Test("しきい値を超えた停止は、その場で 1 枚目を採る")
+    func firstCaptureHappensImmediately() {
+        #expect(decide(ageMs: 2500, lastCaptureNs: 0, nowNs: 1_000_000_000))
+    }
+
+    @Test("採った直後は採り直さない（ログを埋めない）")
+    func doesNotRecaptureImmediately() {
+        let now: UInt64 = 100_000_000_000
+        #expect(!decide(ageMs: 6000, lastCaptureNs: now &- 3_000_000_000, nowNs: now))
+    }
+
+    /// 78 秒級の停止では「同じ場所か／別処理の数珠つなぎか」を 2 枚目以降でしか区別できない。
+    @Test("停止が続けば間隔をおいて採り直す")
+    func recapturesAfterInterval() {
+        let now: UInt64 = 100_000_000_000
+        #expect(decide(ageMs: 20000, lastCaptureNs: now &- 20_000_000_000, nowNs: now),
+                "長い停止で 1 枚しか採れないと、犯人が変わったかどうか読めない")
+    }
+
+    @Test("時刻が巻き戻っても採らない（異常値で暴発させない）")
+    func clockGoingBackwardsIsSafe() {
+        #expect(!decide(ageMs: 9000, lastCaptureNs: 200_000_000_000, nowNs: 100_000_000_000))
+    }
+}

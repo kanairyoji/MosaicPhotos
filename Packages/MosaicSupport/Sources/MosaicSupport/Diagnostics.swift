@@ -271,6 +271,11 @@ public enum Diagnostics {
         HangDiagnostics.shared.install()
         #endif
 
+        // 自前のハング時スタック採取（実機 arm64・ADR-117）。MetricKit は **1 日 1 回まで**しか
+        // 届かず、前面ハング 9 件を含む 5.5 時間のログに 1 行も出なかった（diagnostics-56）。
+        // ここで**メインスレッドの送信権**を押さえておく（この install はメインで走る）。
+        MainThreadStack.install()
+
         // ObjC 未捕捉例外（unrecognized selector / KVO / CoreData など）を記録してから落ちる。
         // ※ Swift の fatalError / precondition / SwiftData の trap はこのハンドラを通らない
         //   （それらは Xcode/Organizer の標準クラッシュログに出る）。

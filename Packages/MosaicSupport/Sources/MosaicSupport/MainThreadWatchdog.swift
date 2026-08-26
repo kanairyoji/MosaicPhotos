@@ -44,6 +44,14 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     /// ハング「開始」を疑って即時記録するしきい値（ms）。解消を待たずに時刻を残すことで、
     /// 「どのログ行の直後にメインが止まったか」をログの時系列で特定できるようにする。
     public var hangBeginSuspectMs: Double = 1000
+    /// メインスレッドのスタックを採取するしきい値（ms）。**止まっている最中に**採る
+    /// （終わってからでは犯人が居ない）。長いハングだけに絞ってオーバーヘッドを避ける。
+    public var stackCaptureMs: Double = 2000
+    /// スタック採取の間隔（ns）。長い停止が続く間も一定間隔で採り直し、「同じ場所で止まり続けて
+    /// いるのか、別の処理が数珠つなぎなのか」を読めるようにする。
+    public var stackCaptureIntervalNs: UInt64 = 15_000_000_000
+    /// 直近に採取した時刻（ns・0=未採取）。queue 上でのみ触る。
+    private var lastStackCaptureNs: UInt64 = 0
 
     private init() {}
 
@@ -106,10 +114,20 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             guard isAppActiveLocked else { return }
             // 復帰をまたいだ ping も同様に報告しない（`record` と同じ判定・ADR-97）。
             guard !startedBeforeBecomingActive(outstandingSinceNs) else { return }
-            let age = Double(DispatchTime.now().uptimeNanoseconds &- outstandingSinceNs) / 1_000_000
+            let now = DispatchTime.now().uptimeNanoseconds
+            let age = Double(now &- outstandingSinceNs) / 1_000_000
             if age > hangBeginSuspectMs, !hangBeginReported {
                 hangBeginReported = true
                 DiagnosticsLog.shared.append(String(format: "PERF hang.begin main blocked ≥%.0fms — suspect the processing at the previous log line", age))
+            }
+            // ⚠️ 犯人はここでしか捕まえられない。ハング中はメインが止まっている＝ログも
+            // 進捗も出ないので、「止まっている今」スタックを採る（実機 diagnostics-56 では
+            // 78 秒の停止中、hang 行以外に手がかりが 1 行も無かった）。
+            if Self.shouldCaptureStack(ageMs: age, threshold: stackCaptureMs,
+                                       lastCaptureNs: lastStackCaptureNs, nowNs: now,
+                                       intervalNs: stackCaptureIntervalNs) {
+                lastStackCaptureNs = now
+                captureMainStack(ageMs: age)
             }
             return
         }
@@ -126,6 +144,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             self.queue.async {
                 self.outstandingSinceNs = 0
                 self.hangBeginReported = false
+                self.lastStackCaptureNs = 0   // 解消した＝次のハングは 1 枚目からすぐ採る
             }
         }
     }
@@ -159,6 +178,33 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             // 呼び出しスタックは取れないが、直前の PERF/mark 行と突き合わせて犯人を絞る。
             DiagnosticsLog.shared.append(String(format: "PERF hang main=%.0fms (foreground)", ms))
         }
+    }
+
+    /// スタックを採るか（純ロジック・テスト対象）。
+    ///
+    /// - 短い引っかかりでは採らない（`threshold`）。採取はメインを一瞬 suspend するので、
+    ///   体感に出る長さの停止だけに絞る。
+    /// - 停止が続く間は `intervalNs` ごとに採り直す。**1 回で終わらせない**のが要点で、
+    ///   「同じ場所で止まり続けている」のか「別の重い処理が数珠つなぎ」なのかは、
+    ///   時間をおいた 2 枚目以降を見ないと区別できない（実機 diagnostics-56 の 78 秒停止は
+    ///   約 6 秒のハングが 5 回続いた形だった）。
+    /// - `lastCaptureNs == 0`＝この停止ではまだ未採取なので、しきい値を超えたら即採る。
+    static func shouldCaptureStack(ageMs: Double, threshold: Double,
+                                   lastCaptureNs: UInt64, nowNs: UInt64,
+                                   intervalNs: UInt64) -> Bool {
+        guard ageMs > threshold else { return false }
+        guard lastCaptureNs != 0 else { return true }
+        guard nowNs > lastCaptureNs else { return false }
+        return nowNs &- lastCaptureNs > intervalNs
+    }
+
+    /// 止まっているメインスレッドのスタックを診断ログへ落とす（`queue` 上から呼ぶ）。
+    /// 採れない環境（シミュレータ・macOS）では `MainThreadStack` が空を返して何も出ない。
+    private func captureMainStack(ageMs: Double) {
+        let frames = MainThreadStack.capture(limit: 16)
+        guard !frames.isEmpty else { return }
+        DiagnosticsLog.shared.append(String(format: "PERF hang.stack main blocked ≥%.0fms — 呼び出しスタック（新しい順）", ageMs))
+        for frame in frames { DiagnosticsLog.shared.append("PERF hang.stack   \(frame)") }
     }
 
     /// 集計サマリを返してリセットする（何も起きていなければ nil）。定期フラッシュから呼ぶ。
