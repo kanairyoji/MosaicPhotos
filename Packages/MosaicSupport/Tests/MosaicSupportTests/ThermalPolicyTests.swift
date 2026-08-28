@@ -94,4 +94,20 @@ struct ThermalGateTests {
         ThermalGate(defaults: defaults).isEnabled = false
         #expect(!ThermalGate(defaults: defaults).isEnabled)
     }
+
+    /// ⚠️ 実機 diagnostics-62 では、起動のたびに「resuming（state=normal）」が記録され、
+    /// **止まってもいないのに熱ゲートが働いたように読めた**（6 件すべてが初回の記録）。
+    /// 記録したいのは状態が変わったときだけ。
+    @Test("初回は記録しない（止まっていないのに resuming と出さない）")
+    func firstCallIsNotLogged() {
+        let gate = makeGate()
+        var lines: [String] = []
+        gate.onTransition = { lines.append($0) }
+
+        #expect(!gate.shouldPause(state: .nominal))
+        #expect(lines.isEmpty, "起動しただけで熱ゲートが働いたように見える")
+
+        #expect(gate.shouldPause(state: .serious))
+        #expect(lines.count == 1, "本当に止まったときは記録する")
+    }
 }

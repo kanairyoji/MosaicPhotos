@@ -178,23 +178,63 @@ struct InterestingFramesTests {
         #expect(Array(picked.prefix(4)) == Array(systemNoise.prefix(4)))
     }
 
+    /// 中間のシステムフレームは落とす（先頭でも末尾でもない位置＝読み手の役に立たない）。
     @Test("中間のシステムフレームは落とす")
     func middleSystemFramesAreDropped() {
-        let picked = MainThreadWatchdog.interestingFrames(systemNoise + [appFrame],
-                                                          topSystemFrames: 4)
-        #expect(!picked.contains(" 6 libswiftCore.dylib something +12"))
-        #expect(!picked.contains(" 7 Foundation <redacted> +40"))
+        // 先頭 4 と末尾 6 のどちらにも入らない位置に置く（両端は意図的に残すため）。
+        let middle = (4..<40).map { " \($0) CoreData <redacted> +\($0)" }
+        let stack = Array(systemNoise.prefix(4)) + middle
+            + (40..<46).map { " \($0) libswiftCore.dylib tail +\($0)" }
+
+        let picked = MainThreadWatchdog.interestingFrames(stack, topSystemFrames: 4)
+        #expect(!picked.contains(" 20 CoreData <redacted> +20"))
+        #expect(picked.count < stack.count, "全部出したら選別の意味がない")
     }
 
+    /// アプリのフレームも出し過ぎない（上限＋末尾のぶんに収まる）。
     @Test("アプリのフレームも出し過ぎない")
     func appFramesAreCapped() {
         let many = (0..<50).map { " \($0) MosaicPhotos.debug.dylib f\($0) +1" }
-        let picked = MainThreadWatchdog.interestingFrames(many, topSystemFrames: 2, maxAppFrames: 5)
-        #expect(picked.count == 2 + 5)
+        let picked = MainThreadWatchdog.interestingFrames(many, topSystemFrames: 2,
+                                                          maxAppFrames: 5, tailFrames: 6)
+        #expect(picked.count <= 2 + 5 + 6, "50 フレーム全部を出している（\(picked.count) 行）")
+        #expect(picked.count >= 2 + 5)
     }
 
     @Test("空でも壊れない")
     func emptyIsSafe() {
         #expect(MainThreadWatchdog.interestingFrames([]).isEmpty)
+    }
+
+    /// ⚠️ 2 度目の失敗（実機 diagnostics-62）。除外リストに `SwiftData` を入れ忘れており、
+    /// アプリ枠 14 個を SwiftData のフレームが食い尽くして**呼び出し元に 1 つも届かなかった**。
+    /// 除外リストは「知っている名前しか弾けない」ので、それだけに頼らない。
+    @Test("永続化のフレームで枠を食い尽くさない")
+    func swiftDataFramesDoNotStarveAppFrames() {
+        let stack = [" 0 libsystem_platform.dylib _platform_memmove +180",
+                     " 1 libsqlite3.dylib sqlite3_rekey +117032"]
+            + (2..<50).map { " \($0) SwiftData <redacted> +\($0 * 100)" }
+            + [" 50 MosaicPhotos.debug.dylib FaceCore.PeopleEngine.loadPeople +100"]
+
+        let picked = MainThreadWatchdog.interestingFrames(stack)
+        #expect(picked.contains(" 50 MosaicPhotos.debug.dylib FaceCore.PeopleEngine.loadPeople +100"),
+                "呼び出し元に届いていない＝誰が呼んだか分からない")
+    }
+
+    /// 除外リストに無いイメージ名でも、**末尾**は必ず残す（呼び出し元はスタックの底にいる）。
+    @Test("知らないイメージ名で埋まっても末尾は残す")
+    func tailIsAlwaysKept() {
+        let stack = (0..<60).map { " \($0) UnknownFramework <redacted> +\($0)" }
+            + [" 60 MosaicPhotos.debug.dylib caller +1"]
+        let picked = MainThreadWatchdog.interestingFrames(stack, maxAppFrames: 3)
+        #expect(picked.contains(" 60 MosaicPhotos.debug.dylib caller +1"),
+                "除外リストの漏れで診断が止まらないようにする")
+    }
+
+    @Test("末尾を足しても重複しない")
+    func tailDoesNotDuplicate() {
+        let stack = [" 0 libsystem_kernel.dylib pread +8", " 1 MosaicPhotos.debug.dylib f +1"]
+        let picked = MainThreadWatchdog.interestingFrames(stack)
+        #expect(picked.count == Set(picked).count)
     }
 }

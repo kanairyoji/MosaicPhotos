@@ -216,7 +216,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     ///   - **自アプリのフレーム**（誰が呼んだか）
     /// だけを残す。system 側の中間フレームは読み手の役に立たない。
     static func interestingFrames(_ frames: [String], topSystemFrames: Int = 4,
-                                  maxAppFrames: Int = 14) -> [String] {
+                                  maxAppFrames: Int = 14, tailFrames: Int = 6) -> [String] {
         guard !frames.isEmpty else { return [] }
         var out = Array(frames.prefix(topSystemFrames))
         var appFrames = 0
@@ -224,6 +224,13 @@ public final class MainThreadWatchdog: @unchecked Sendable {
             guard appFrames < maxAppFrames else { break }
             out.append(frame)
             appFrames += 1
+        }
+        // ⚠️ **末尾も必ず入れる**（実機 diagnostics-62 で 2 度目の失敗）。除外リストは
+        // 知っているイメージ名しか弾けず、漏れる（今回は `SwiftData` を入れ忘れて、
+        // 14 枠を SwiftData のフレームで使い切りアプリに 1 つも届かなかった）。
+        // 呼び出し元は**スタックの底**にいるので、末尾を無条件に残せば名前を知らなくても届く。
+        for frame in frames.suffix(tailFrames) where !out.contains(frame) {
+            out.append(frame)
         }
         return out
     }
@@ -239,7 +246,9 @@ public final class MainThreadWatchdog: @unchecked Sendable {
 
     private static let systemImagePrefixes = [
         "libsystem", "libsqlite3", "libobjc", "libdispatch", "libswift", "libc++", "libRPAC",
-        "CoreData", "CoreFoundation", "Foundation", "SwiftUI", "UIKitCore", "UIKit",
+        // ⚠️ SwiftData を入れ忘れて 1 度失敗している（diagnostics-62）。永続化まわりは
+        // フレームが深く積まれるので、抜けると枠を丸ごと食われる。
+        "SwiftData", "CoreData", "CoreFoundation", "Foundation", "SwiftUI", "UIKitCore", "UIKit",
         "QuartzCore", "CoreGraphics", "CoreImage", "Photos", "PhotosUI",
         "PhotoLibraryServices", "CoreML", "Vision", "Espresso", "Metal", "GraphicsServices",
     ]

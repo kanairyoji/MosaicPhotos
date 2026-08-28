@@ -88,6 +88,8 @@ public final class ThermalGate {
     private var paused = false
     /// 状態が変わったときだけ診断ログに残す（毎回書くとログが埋まる）。
     private var lastLoggedPaused: Bool?
+    /// 状態が変わったときの通知（テストから記録を観測するための seam）。
+    public var onTransition: ((String) -> Void)?
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
@@ -96,10 +98,16 @@ public final class ThermalGate {
                             = ProcessInfo.processInfo.thermalState) -> Bool {
         let next = ThermalPolicy.shouldPause(state: state, wasPaused: paused, isEnabled: isEnabled)
         paused = next
+        // ⚠️ **初回は記録しない**（実機 diagnostics-62）。起動のたびに
+        // 「resuming（state=normal）」が出て、止まってもいないのに熱ゲートが働いたように読める。
+        // 記録したいのは**状態が変わったとき**だけ。
+        if lastLoggedPaused == nil { lastLoggedPaused = next }
         if lastLoggedPaused != next {
             lastLoggedPaused = next
-            Diagnostics.mark("thermal: \(next ? "pausing" : "resuming") heavy work "
-                             + "(state=\(ThermalPolicy.label(state)))")
+            let line = "thermal: \(next ? "pausing" : "resuming") heavy work "
+                + "(state=\(ThermalPolicy.label(state)))"
+            Diagnostics.mark(line)
+            onTransition?(line)
         }
         return next
     }
