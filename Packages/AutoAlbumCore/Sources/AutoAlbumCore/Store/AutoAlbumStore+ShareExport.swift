@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import SwiftData
 
 /// 家族共有（ADR-112）向けの埋め込み輸出入。
@@ -6,6 +7,15 @@ import SwiftData
 /// - 取り込み: 家族のサイドカー由来の埋め込みを登録し、夜間の自前解析（サムネ DL＋推論）を
 ///   省く。既存の埋め込みは上書きしない（受信側の自前解析が常に優先）。
 extension AutoAlbumStore {
+
+    /// 共有の輸出入で使う fetch はここを通す（**発行回数を数える**＝規模退行テストの土台・ADR-119）。
+    ///
+    /// ⚠️ 件数だけを検証するテストは、1 枚ずつ引く実装に戻しても通ってしまう
+    /// （レビュー指摘）。**回数**を数えられて初めて規模比例の回帰を止められる。
+    func countedFetch<T: PersistentModel>(_ descriptor: FetchDescriptor<T>) -> [T] {
+        PerfTrace.count("autoAlbumStore.fetch")
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
 
     /// refKey → CLIP 埋め込み（Float16 パック済み）。存在するものだけ返す。
     ///
@@ -19,8 +29,8 @@ extension AutoAlbumStore {
         var out: [String: Data] = [:]
         for chunk in Self.refKeyChunks(keys) {
             let set = Set(chunk)
-            let records = (try? modelContext.fetch(FetchDescriptor<PhotoEmbedding>(
-                predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+            let records = countedFetch(FetchDescriptor<PhotoEmbedding>(
+                predicate: #Predicate { set.contains($0.refKey) }))
             for record in records { out[record.refKey] = record.vector }
         }
         return out
@@ -77,11 +87,11 @@ extension AutoAlbumStore {
         var adopted: Set<String> = []
         for chunk in Self.refKeyChunks(refKeys) {
             let set = Set(chunk)
-            let embedded = Set(((try? modelContext.fetch(FetchDescriptor<PhotoEmbedding>(
-                predicate: #Predicate { set.contains($0.refKey) }))) ?? []).map(\.refKey))
+            let embedded = Set(countedFetch(FetchDescriptor<PhotoEmbedding>(
+                predicate: #Predicate { set.contains($0.refKey) })).map(\.refKey))
             guard !embedded.isEmpty else { continue }
-            let enrichments = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>(
-                predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+            let enrichments = countedFetch(FetchDescriptor<PhotoEnrichment>(
+                predicate: #Predicate { set.contains($0.refKey) }))
             for enrichment in enrichments where embedded.contains(enrichment.refKey) {
                 enrichment.sceneTagged = true
                 adopted.insert(enrichment.refKey)
@@ -89,5 +99,11 @@ extension AutoAlbumStore {
         }
         if !adopted.isEmpty { try? modelContext.save() }
         return adopted
+    }
+
+    /// テスト用: `sceneTagged` が立っている refKey（採用の副作用を確かめる）。
+    func sceneTaggedRefKeysForTesting() -> Set<String> {
+        Set(((try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>())) ?? [])
+            .filter(\.sceneTagged).map(\.refKey))
     }
 }
