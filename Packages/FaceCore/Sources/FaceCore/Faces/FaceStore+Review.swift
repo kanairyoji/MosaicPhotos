@@ -58,15 +58,9 @@ extension FaceStore {
                   let b = ClipMath.decodeHalf(wrong) else { return nil }
             return (FaceClustering.normalized(a), FaceClustering.normalized(b))
         }
-        func isMarkedNotSame(_ a: [Float], _ b: [Float]) -> Bool {
-            for (ra, rb) in notSameRows {
-                if (FaceClustering.dot(a, ra) >= 0.9 && FaceClustering.dot(b, rb) >= 0.9)
-                    || (FaceClustering.dot(a, rb) >= 0.9 && FaceClustering.dot(b, ra) >= 0.9) {
-                    return true
-                }
-            }
-            return false
-        }
+        // ⚠️ 対ごとに全記録を走査しない（実機 diagnostics-61: 27.8 秒のハングの犯人）。
+        // クラスタごとに「どの記録のどちら側へ一致するか」を先に求めておく（`NotSameIndex`）。
+        let notSameIndex = NotSameIndex(rows: notSameRows, centroids: centroid)
 
         // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
         // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。
@@ -84,7 +78,8 @@ extension FaceStore {
             for j in (i + 1)..<ids.count {
                 guard let ca = centroid[ids[i]], let cb = centroid[ids[j]] else { continue }
                 let sim = FaceClustering.dot(ca, cb)
-                guard sim >= tuning.mergeBandFloor(threshold: thr), !isMarkedNotSame(ca, cb) else { continue }
+                guard sim >= tuning.mergeBandFloor(threshold: thr),
+                      !notSameIndex.isMarkedNotSame(ids[i], ids[j]) else { continue }
                 // 共起は 1 回でもあれば出さない（統合すると同一写真違反になる・ADR-68 追補4）。
                 guard (photoSets[ids[i]] ?? []).isDisjoint(with: photoSets[ids[j]] ?? []) else { continue }
                 // 別々の名前が付いた人物どうしは出さない（ユーザーが既に別人と表明済み・追補5）。
@@ -351,15 +346,9 @@ extension FaceStore {
                   let b = ClipMath.decodeHalf(wrong) else { return nil }
             return (FaceClustering.normalized(a), FaceClustering.normalized(b))
         }
-        func isMarkedNotSame(_ a: [Float], _ b: [Float]) -> Bool {
-            for (ra, rb) in notSameRows {
-                if (FaceClustering.dot(a, ra) >= 0.9 && FaceClustering.dot(b, rb) >= 0.9)
-                    || (FaceClustering.dot(a, rb) >= 0.9 && FaceClustering.dot(b, ra) >= 0.9) {
-                    return true
-                }
-            }
-            return false
-        }
+        // ⚠️ 対ごとに全記録を走査しない（実機 diagnostics-61: 27.8 秒のハングの犯人）。
+        // クラスタごとに「どの記録のどちら側へ一致するか」を先に求めておく（`NotSameIndex`）。
+        let notSameIndex = NotSameIndex(rows: notSameRows, centroids: centroid)
 
         let anchorPhotos = photoSets[anchor.clusterID] ?? []
         var candidates: [FaceBatchReviewItem.Candidate] = []
@@ -367,7 +356,8 @@ extension FaceStore {
             guard !excludingCandidates.contains(c.clusterID) else { continue }   // 出題済み
             guard let cen = centroid[c.clusterID], let face = cover[c.clusterID] else { continue }
             let sim = FaceClustering.dot(anchorCentroid, cen)
-            guard sim >= tuning.mergeBandFloor(threshold: thr), !isMarkedNotSame(anchorCentroid, cen) else { continue }
+            guard sim >= tuning.mergeBandFloor(threshold: thr),
+                  !notSameIndex.isMarkedNotSame(anchor.clusterID, c.clusterID) else { continue }
             // ⚠️ 共起は **1 回でも**あれば候補にしない（統合サジェストの 3 回とは別基準）。
             // 統合すると「1 枚の写真に同じ人物が 2 回」という不変条件が破れるため。
             // 実機で一括統合により違反が 2 件発生したのを受けて厳格化（ADR-68 追補4）。
