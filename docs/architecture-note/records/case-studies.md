@@ -2028,3 +2028,39 @@
   と判定される）。一覧には旧パスと新パスが並び、「古い写真が急に増えた」ように見える——
   今回の症状と一致するので、確定していなくても塞ぐ価値がある。
 - 関連: `BackupEngine.deviceBackupRoot` / テスト `DeviceBackupRootTests`。
+
+## サムネイルの密表示が重い（ID 指紋をメインで取り直していた）
+
+- 症状（実機 diagnostics-59）: サムネイルを密に表示するモードでロードが重い。
+  前面のハングが 38 回、最大 **19.6 秒**。
+- 原因: 採取したメインスタックがグリッドを名指しした。
+
+      PhotoCollectionView.updateUIView
+        → Coordinator.update(items:…)
+          → gridIdentitySignature
+            → MergedPhotoItem.id.getter : Swift.String
+              → LocalPhotoItem.id.getter : Swift.String   （PHAsset.localIdentifier を読む）
+
+  指紋を ID 列全体から作るのは正しい（件数と両端だけでは入れ替わりを取りこぼす）。
+  問題は**取り直す頻度**だった。
+  1. **ズームで列数を変えるだけでも `updateUIView` は走る。** 中身が 1 つも変わっていないのに、
+     86,262 件ぶんの文字列生成と `PHAsset.localIdentifier` の読み出しをやり直していた。
+     密表示は列数変更で入るので、まさにこの操作で最も重くなる。
+  2. **同期中は 0.4 秒ごとに統合一覧が再構築される。** 内容は変わらないことがほとんどだが、
+     `items` へ代入するたびに配列の実体が変わり、グリッドは「変わったかもしれない」として
+     指紋を取り直していた。
+- 対処:
+  - グリッド側: **同一実体（COW の同一バッファ）なら指紋を再計算しない**（`sharesStorage`）。
+    同一バッファなら中身は必ず等しい。違っても中身が同じことはあり得るので、「同じ」と
+    言えたときだけ省く＝偽陰性は安全側（ただ計算するだけ）。⚠️ 比較側は前回の配列を
+    **保持し続ける**こと（手放すとバッファが解放され、別配列が同じアドレスに載り得る）。
+  - 統合ストア側: 指紋を**オフメインで**取り、同じなら `items` に代入しない。
+    メインで取ると id の文字列生成がそのまま画面の停止時間になる。
+- 実測（このログ）: `grid.layout 81ms cols=15` / `grid.snapshot build=1188ms items=86262`。
+  スナップショットの作り直し自体は内容が変わったときだけなので残す。
+- 関連: `PhotoSourceKit/Support/GridSignature.swift`（`sharesStorage`）/ `PhotoCollectionView` /
+  `PhotosFeatureKit/MergedPhotoStore`（`setItems(_:generation:signature:)`）/
+  テスト `SharesStorageTests` / `MergedSignatureTests`。
+- 教訓: 前項（フル画面の線形走査）と**同じ形**。合成 id は等値比較・ハッシュのたびに確保が走る。
+  「正しい指紋を作る」ことと「毎回作り直す」ことは別問題で、後者は呼ばれる頻度で決まる。
+- 残課題: 実測でメモリが **1032MB** に達している（jetsam 圏内）。今回は落ちていないが未調査。

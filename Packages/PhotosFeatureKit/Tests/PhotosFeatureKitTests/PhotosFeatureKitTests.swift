@@ -169,8 +169,8 @@ struct MergedPhotoStoreGenerationTests {
         let old = store.nextRebuildGenerationForTesting()
         let new = store.nextRebuildGenerationForTesting()
 
-        store.setItems([item("/new.jpg")], generation: new)     // 新しい再構築が先に着いた
-        store.setItems([item("/old.jpg")], generation: old)     // 古い再構築が遅れて到着
+        store.setItems([item("/new.jpg")], generation: new, signature: 1)  // 新しい再構築が先に着いた
+        store.setItems([item("/old.jpg")], generation: old, signature: 2)  // 古い再構築が遅れて到着
 
         #expect(store.items.map(\.id) == [item("/new.jpg").id],
                 "追い越された古い一覧で上書きされた")
@@ -180,8 +180,31 @@ struct MergedPhotoStoreGenerationTests {
     func currentGenerationIsApplied() {
         let store = makeStore()
         let generation = store.nextRebuildGenerationForTesting()
-        store.setItems([item("/a.jpg")], generation: generation)
+        store.setItems([item("/a.jpg")], generation: generation, signature: 1)
         #expect(store.items.count == 1)
+    }
+
+    /// ⚠️ 同期中は 0.4 秒ごとに再構築が走るが内容は変わらないことがほとんど。代入すると
+    /// 配列の実体が変わり、グリッドが 86,000 件ぶんの ID 指紋をメインで取り直す。
+    @Test("同じ指紋なら差し替えない")
+    func sameSignatureKeepsArray() {
+        let store = makeStore()
+        store.setItems([item("/a.jpg")], generation: store.nextRebuildGenerationForTesting(),
+                       signature: 42)
+        let before = store.items
+        store.setItems([item("/b.jpg")], generation: store.nextRebuildGenerationForTesting(),
+                       signature: 42)
+        #expect(store.items.map(\.id) == before.map(\.id), "同じ指紋なのに差し替えた")
+    }
+
+    @Test("指紋が変われば差し替える")
+    func changedSignatureApplies() {
+        let store = makeStore()
+        store.setItems([item("/a.jpg")], generation: store.nextRebuildGenerationForTesting(),
+                       signature: 1)
+        store.setItems([item("/b.jpg")], generation: store.nextRebuildGenerationForTesting(),
+                       signature: 2)
+        #expect(store.items.map(\.id) == [item("/b.jpg").id], "変化を取りこぼした")
     }
 }
 

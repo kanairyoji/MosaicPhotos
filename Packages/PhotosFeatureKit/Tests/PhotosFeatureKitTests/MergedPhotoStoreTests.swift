@@ -45,3 +45,41 @@ struct BackupCopyHidingTests {
         #expect(hidden.count == 2)
     }
 }
+
+// MARK: - 同じ内容なら差し替えない（実機 diagnostics-59）
+
+/// ⚠️ 同期中は 0.4 秒ごとに再構築が走るが、内容は変わらないことがほとんど。
+/// それでも代入すると配列の実体が変わり、グリッドは「変わったかもしれない」として
+/// 86,000 件ぶんの ID 指紋を**メインで**取り直す（id は文字列を作り、その中で
+/// PHAsset.localIdentifier まで読む）。指紋で素通しさせる。
+@Suite("統合一覧の指紋")
+struct MergedSignatureTests {
+
+    private func signature(_ ids: [String]) -> Int {
+        var hasher = Hasher()
+        for id in ids { hasher.combine(id) }
+        hasher.combine(ids.count)
+        return hasher.finalize()
+    }
+
+    @Test("同じ並びなら同じ指紋")
+    func sameOrderSameSignature() {
+        #expect(signature(["L-1", "C-2"]) == signature(["L-1", "C-2"]))
+    }
+
+    @Test("並びが変われば違う指紋")
+    func orderMatters() {
+        #expect(signature(["L-1", "C-2"]) != signature(["C-2", "L-1"]),
+                "並び替えを取りこぼすと別の写真が表示される")
+    }
+
+    @Test("件数が同じでも中身が入れ替われば違う指紋")
+    func swappedMemberDetected() {
+        #expect(signature(["L-1", "C-2"]) != signature(["L-1", "C-3"]))
+    }
+
+    @Test("長さも混ぜる（前方一致を取り違えない）")
+    func lengthIsMixedIn() {
+        #expect(signature(["L-1"]) != signature(["L-1", "L-2"]))
+    }
+}

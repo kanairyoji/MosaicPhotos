@@ -67,6 +67,9 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         /// 現在の一覧（COW で store の配列とバッファ共有＝追加コピーは軽い）と、id→index の対応。
         /// 以前は id→Item の dict（67k 件の構造体コピー＝約10MB）だったが、index 参照に変えてメモリ削減。
         private var items: [Store.Item] = []
+        /// ID 列の指紋の控え。**配列を一緒に保持する**（手放すとバッファが解放され、
+        /// 別の配列が同じアドレスに載って「同じ」と誤判定し得るため）。
+        private var cachedIDsHash: (items: [Store.Item], hash: Int)?
         private var idToIndex: [Store.Item.ID: Int] = [:]
         /// 現在適用済みの構成シグネチャ（再適用の要否判定）。
         private var appliedSignature = ""
@@ -259,7 +262,21 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             // 取りこぼすと `items` だけ差し替わり、`idToIndex` と dataSource は古いまま——
             // **別の写真が表示され、タップ時の ID も食い違う**（レビュー指摘）。
             // 68k 件でも数 ms。作り直しを避けるための比較なので、ここは正確さを優先する。
-            let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|h\(gridIdentitySignature(items.lazy.map(\.id)))"
+            // ⚠️ **中身が変わっていないなら計算し直さない**（実機 diagnostics-59）。
+            // ズームで列数を変えるだけでも updateUIView は走るので、同じ配列に対して
+            // 86,000 件ぶんの文字列生成と PHAsset.localIdentifier の読み出しを繰り返していた。
+            // 同一バッファなら中身は必ず等しい＝指紋も等しい。
+            let idsHash: Int
+            if let cached = cachedIDsHash, sharesStorage(cached.items, items) {
+                idsHash = cached.hash
+            } else {
+                let tHash = PerfTrace.nowNs()
+                idsHash = gridIdentitySignature(items.lazy.map(\.id))
+                PerfTrace.logSpan("grid.signature", ms: PerfTrace.msSince(tHash),
+                                  detail: "items=\(items.count)")
+                cachedIDsHash = (items, idsHash)
+            }
+            let signature = "\(items.count)|\(String(describing: grouping))|c\(coalesce)|h\(idsHash)"
             if signature != appliedSignature {
                 appliedSignature = signature
                 applySnapshot(items: items, grouping: grouping, coalesce: coalesce)

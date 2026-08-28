@@ -33,6 +33,8 @@ public final class MergedPhotoStore {
     @ObservationIgnored public var backupCopyIndexProvider: (@Sendable () async -> [String: String])?
     /// 直近に解決したバックアップ対応表（再構築のたびに台帳を引き直さないための控え）。
     @ObservationIgnored private var backupCopyIndex: [String: String] = [:]
+    /// 直近に代入した一覧の指紋（オフメインで計算）。同じなら代入しない。
+    @ObservationIgnored private var lastMergedSignature: Int?
 
     /// 表示用の確定済み配列（描画パスは O(1) でこれを読むだけ）。
     /// merge + sort はメインアクタ外（Task.detached）で行い、完成品をここへ代入する。
@@ -132,10 +134,16 @@ public final class MergedPhotoStore {
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
             let merged = (local + cloud).sortedByCaptureDateAscending()
             if Task.isCancelled { return }
+            // 指紋は**ここ（オフメイン）で**取る。メインで取ると id の文字列生成が
+            // そのまま画面の停止時間になる。
+            var hasher = Hasher()
+            for item in merged { hasher.combine(item.id) }
+            hasher.combine(merged.count)
+            let signature = hasher.finalize()
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) "
                              + "hiddenBackupCopies=\(hidden.count) total=\(merged.count) sort=\(Int(ms))ms")
-            await self?.setItems(merged, generation: generation)
+            await self?.setItems(merged, generation: generation, signature: signature)
         }
     }
 
@@ -149,11 +157,18 @@ public final class MergedPhotoStore {
     }
 
     /// 最新世代の結果だけを反映する（遅れて届いた古い一覧を捨てる）。
-    func setItems(_ newItems: [MergedPhotoItem], generation: Int) {
+    func setItems(_ newItems: [MergedPhotoItem], generation: Int, signature: Int) {
         guard generation == rebuildGeneration else {
             Diagnostics.mark("merged.rebuild: dropped stale result (gen \(generation) < \(rebuildGeneration))")
             return
         }
+        // ⚠️ **中身が同じなら代入しない**（実機 diagnostics-59）。同期中は 0.4 秒ごとに
+        // 再構築が走るが、内容は変わらないことがほとんど。代入すると配列の実体が変わり、
+        // グリッドは「変わったかもしれない」として 86,000 件ぶんの ID 指紋を**メインで**
+        // 取り直す（id は文字列を作り、その中で PHAsset.localIdentifier まで読む）。
+        // 指紋は既にオフメインで計算済みなので、ここで突き合わせて素通しする。
+        guard signature != lastMergedSignature else { return }
+        lastMergedSignature = signature
         items = newItems
     }
 }

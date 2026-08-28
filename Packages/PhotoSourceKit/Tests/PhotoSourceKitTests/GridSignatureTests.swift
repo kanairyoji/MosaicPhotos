@@ -42,3 +42,56 @@ struct GridSignatureTests {
         #expect(gridIdentitySignature([String]()) != gridIdentitySignature(["a"]))
     }
 }
+
+// MARK: - 同一実体の判定（指紋の再計算を省く）
+
+/// ⚠️ サムネイルの密表示が重いという報告で、採取したメインスタックが
+/// `Coordinator.update` → `gridIdentitySignature` → `MergedPhotoItem.id.getter` を
+/// 名指ししていた（実機 diagnostics-59）。ズームで列数を変えるだけでも updateUIView は
+/// 走るため、中身が 1 つも変わっていないのに 86,000 件ぶんの文字列生成をやり直していた。
+@Suite("配列の同一実体判定")
+struct SharesStorageTests {
+
+    @Test("同じ配列は同じ実体")
+    func sameArrayShares() {
+        let items = Array(0..<1000)
+        let copy = items                       // COW＝バッファは共有
+        #expect(sharesStorage(items, copy))
+    }
+
+    @Test("作り直した配列は別実体")
+    func rebuiltArrayDiffers() {
+        let items = Array(0..<1000)
+        let rebuilt = Array(0..<1000)
+        #expect(!sharesStorage(items, rebuilt),
+                "別実体なら指紋を取り直す＝安全側（偽陰性はただ計算するだけ）")
+    }
+
+    @Test("書き換えた時点で別実体になる")
+    func mutationBreaksSharing() {
+        let items = Array(0..<1000)
+        var changed = items
+        changed[500] = -1                      // ここで COW のコピーが起きる
+        #expect(!sharesStorage(items, changed), "変化を取りこぼすと別の写真が表示される")
+    }
+
+    @Test("件数が違えば別実体")
+    func differentCount() {
+        let items = Array(0..<1000)
+        #expect(!sharesStorage(items, Array(items.dropLast())))
+    }
+
+    @Test("空同士は同じ扱い（どちらも中身なし）")
+    func emptyArrays() {
+        #expect(sharesStorage([Int](), [Int]()))
+    }
+
+    /// 同一実体と判定したときは、指紋も必ず一致していること（省いてよい根拠）。
+    @Test("同一実体なら指紋も一致する")
+    func sharedStorageImpliesSameSignature() {
+        let items = (0..<500).map { "L-\($0)" }
+        let copy = items
+        #expect(sharesStorage(items, copy))
+        #expect(gridIdentitySignature(items) == gridIdentitySignature(copy))
+    }
+}
