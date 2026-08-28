@@ -146,3 +146,55 @@ struct HangStackCaptureDecisionTests {
         #expect(!decide(ageMs: 9000, lastCaptureNs: 200_000_000_000, nowNs: 100_000_000_000))
     }
 }
+
+/// ⚠️ 実機 diagnostics-60 では `pread → sqlite3 → CoreData` の連なりで 16 フレームを使い切り、
+/// **アプリのフレームに 1 つも届かなかった**＝誰が呼んだのかが分からなかった。
+/// 深く採ったうえで「何で止まっているか」と「誰が呼んだか」だけを残す。
+@Suite("ハングスタックの選別")
+struct InterestingFramesTests {
+
+    private let systemNoise = [
+        " 0 libsystem_kernel.dylib pread +8",
+        " 1 libsqlite3.dylib sqlite3_step +47536",
+        " 2 CoreData <redacted> +124",
+        " 3 CoreData <redacted> +2848",
+        " 4 CoreData <redacted> +764",
+        " 5 CoreData <redacted> +96",
+        " 6 libswiftCore.dylib something +12",
+        " 7 Foundation <redacted> +40",
+    ]
+    private let appFrame = " 8 MosaicPhotos.debug.dylib LocalPhotoCore.LocalAssetIndex.asset +100"
+
+    @Test("システムの連なりに埋もれたアプリのフレームを拾う")
+    func appFrameSurvivesSystemNoise() {
+        let picked = MainThreadWatchdog.interestingFrames(systemNoise + [appFrame])
+        #expect(picked.contains(appFrame), "誰が呼んだのかが分からないと直しようがない")
+    }
+
+    @Test("先頭は残す（何で止まっているか）")
+    func topFramesAreKept() {
+        let picked = MainThreadWatchdog.interestingFrames(systemNoise + [appFrame],
+                                                          topSystemFrames: 4)
+        #expect(Array(picked.prefix(4)) == Array(systemNoise.prefix(4)))
+    }
+
+    @Test("中間のシステムフレームは落とす")
+    func middleSystemFramesAreDropped() {
+        let picked = MainThreadWatchdog.interestingFrames(systemNoise + [appFrame],
+                                                          topSystemFrames: 4)
+        #expect(!picked.contains(" 6 libswiftCore.dylib something +12"))
+        #expect(!picked.contains(" 7 Foundation <redacted> +40"))
+    }
+
+    @Test("アプリのフレームも出し過ぎない")
+    func appFramesAreCapped() {
+        let many = (0..<50).map { " \($0) MosaicPhotos.debug.dylib f\($0) +1" }
+        let picked = MainThreadWatchdog.interestingFrames(many, topSystemFrames: 2, maxAppFrames: 5)
+        #expect(picked.count == 2 + 5)
+    }
+
+    @Test("空でも壊れない")
+    func emptyIsSafe() {
+        #expect(MainThreadWatchdog.interestingFrames([]).isEmpty)
+    }
+}

@@ -201,11 +201,48 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     /// 止まっているメインスレッドのスタックを診断ログへ落とす（`queue` 上から呼ぶ）。
     /// 採れない環境（シミュレータ・macOS）では `MainThreadStack` が空を返して何も出ない。
     private func captureMainStack(ageMs: Double) {
-        let frames = MainThreadStack.capture(limit: 16)
+        let frames = Self.interestingFrames(MainThreadStack.capture())
         guard !frames.isEmpty else { return }
         DiagnosticsLog.shared.append(String(format: "PERF hang.stack main blocked ≥%.0fms — 呼び出しスタック（新しい順）", ageMs))
         for frame in frames { DiagnosticsLog.shared.append("PERF hang.stack   \(frame)") }
     }
+
+    /// ログに出すフレームを選ぶ（純ロジック・テスト対象）。
+    ///
+    /// ⚠️ 全部出すと長すぎ、浅く採るとアプリに届かない（実機 diagnostics-60 では
+    /// `pread → sqlite3 → CoreData` の連なりで 16 フレームを使い切り、**誰が呼んだのかが
+    /// 1 つも分からなかった**）。深く採ったうえで、
+    ///   - 先頭数フレーム（何で止まっているか＝システム側の待ち）
+    ///   - **自アプリのフレーム**（誰が呼んだか）
+    /// だけを残す。system 側の中間フレームは読み手の役に立たない。
+    static func interestingFrames(_ frames: [String], topSystemFrames: Int = 4,
+                                  maxAppFrames: Int = 14) -> [String] {
+        guard !frames.isEmpty else { return [] }
+        var out = Array(frames.prefix(topSystemFrames))
+        var appFrames = 0
+        for frame in frames.dropFirst(topSystemFrames) where !isSystemFrame(frame) {
+            guard appFrames < maxAppFrames else { break }
+            out.append(frame)
+            appFrames += 1
+        }
+        return out
+    }
+
+    /// OS/ランタイム由来のフレームか（＝誰が呼んだかの手がかりにならない）。
+    private static func isSystemFrame(_ frame: String) -> Bool {
+        // 出力形式: "<番号> <イメージ名> <シンボル> +<オフセット>"
+        let parts = frame.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 2 else { return false }
+        let image = String(parts[1])
+        return systemImagePrefixes.contains { image.hasPrefix($0) }
+    }
+
+    private static let systemImagePrefixes = [
+        "libsystem", "libsqlite3", "libobjc", "libdispatch", "libswift", "libc++", "libRPAC",
+        "CoreData", "CoreFoundation", "Foundation", "SwiftUI", "UIKitCore", "UIKit",
+        "QuartzCore", "CoreGraphics", "CoreImage", "Photos", "PhotosUI",
+        "PhotoLibraryServices", "CoreML", "Vision", "Espresso", "Metal", "GraphicsServices",
+    ]
 
     /// 集計サマリを返してリセットする（何も起きていなければ nil）。定期フラッシュから呼ぶ。
     /// 背面の停止は `bgStalls=N`（参考値）として別枠で出す。

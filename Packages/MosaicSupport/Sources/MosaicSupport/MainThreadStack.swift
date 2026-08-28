@@ -22,7 +22,11 @@ import Foundation
 public enum MainThreadStack {
 
     /// 採取するフレーム数の上限（バッファの確保サイズ）。
-    private static let capacity = 40
+    ///
+    /// ⚠️ 深く採る（実機 diagnostics-60）。16 フレームでは
+    /// `pread → sqlite3 → CoreData` のようなシステム側の連なりで枠を使い切り、
+    /// **アプリのフレームに 1 つも届かなかった**＝誰が呼んだのか分からなかった。
+    public static let capacity = 96
 
 #if os(iOS) && arch(arm64) && !targetEnvironment(simulator)
 
@@ -53,7 +57,7 @@ public enum MainThreadStack {
 
     /// いまメインスレッドが実行している位置のスタックを返す（新しい順・シンボル化済み）。
     /// 採取できないときは空。**メイン以外のスレッドから呼ぶこと**。
-    public static func capture(limit: Int = 16) -> [String] {
+    public static func capture(limit: Int = capacity) -> [String] {
         let port = mainThreadPort
         guard port != 0, !Thread.isMainThread else { return [] }
         guard lock.try() else { return [] }
@@ -149,7 +153,7 @@ public enum MainThreadStack {
 
     /// 実機 arm64 以外では何もしない（シミュレータ・macOS テスト）。
     public static func install() {}
-    public static func capture(limit: Int = 16) -> [String] { [] }
+    public static func capture(limit: Int = 96) -> [String] { [] }
 
 #endif
 }

@@ -2091,3 +2091,32 @@
   640px を確保していた。表示サイズと確保サイズが乖離している所は、同時数が効いてくる。
 - 残課題: Dropbox 側の `cachedItems()` が初回同期中に 72,935 件を数秒おきに丸ごと実体化して
   いる（`cache.fetchItems` 1〜2 秒）。ピークの底上げに効いているはずで、未対処。
+
+## 起動直後・設定画面で固まる（メインが SQLite で止まっている）
+
+- 症状（実機 diagnostics-60）: 起動直後のトップ画面と設定画面で固まる。前面のハングが 11 回、
+  **約 9〜10 秒が 5 回連続**（11:57:27 / :37 / :48 / :58 / 11:58:15）。ログはその途中で終わっている。
+- 分かったこと: **メインスレッドが SQLite で止まっている**。採取したスタックの先頭が
+
+      libsystem_kernel  pread
+      libsqlite3        sqlite3_step …
+      CoreData          <redacted> ×5
+
+  停止の直前は前面復帰（11:57:15 `scene: active` → `faces: stopScan`）。diagnostics-56 の
+  78 秒停止と**同じ形**で、あのとき「原因未特定」としたものに初めて手がかりが付いた。
+- **呼び出し元は特定できていない。** 採取が 16 フレームで、システム側の連なりだけで枠を使い切り、
+  アプリのフレームに 1 つも届いていなかった。
+- 調べて**外した**もの:
+  - SwiftData の `@ModelActor`（`BackupStore` / `FaceStore` / `AutoAlbumStore` / `TagStore`）は
+    すべてオフメイン生成。本番でメイン生成される経路は無い。
+  - `LocalAssetIndex` の主経路も外した。索引は 11:44:42 に構築済みで、以後 `invalidated` の記録が
+    0 件＝辞書引きで済んでおり、メインでの `fetchAssets` へは落ちていない。
+  - CoreData は SwiftData だけでなく**写真ライブラリ（PhotoKit）**も使う。どちら由来かも未確定。
+- 対処（観測手段の改善）: 採取を **96 フレーム**まで深くし、出力は
+  「先頭 4 フレーム（何で止まっているか）＋**自アプリのフレーム**（誰が呼んだか）」に絞る
+  （`MainThreadWatchdog.interestingFrames`）。中間のシステムフレームは読み手の役に立たず、
+  枠を食うだけだった。次のログで呼び出し元が名指しできる。
+- 関連: `MosaicSupport/MainThreadStack.swift`（capacity 96）/ `MainThreadWatchdog` /
+  テスト `InterestingFramesTests`。
+- 参考: 人物数がこの間に **276 → 1,316** に増えている（顔スキャンの進行）。トップ画面の
+  行数・カバー読み込みが増えているので、関係する可能性はあるが未確認。
