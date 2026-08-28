@@ -114,6 +114,15 @@ extension LocalPhotoStore: PhotoStore {
                 if Task.isCancelled { return }
 
                 // 3) PHImageManager: degraded → 高品質の順に yield（opportunistic は複数回呼ばれる）
+                //
+                // ⚠️ **同時実行数を絞る**（実機 diagnostics-59・落ちた）。取得は最低 640×640 なので
+                // 1 枚 1.6MB 級を抱える。密表示（15 列）では 10 秒に 1,000 件超のミスが出ており、
+                // 上限が無いとそのぶん同時に確保して 1GB を超えた。取得サイズは向きの都合で
+                // 下げられないため、**同時に持つ枚数**を絞る。
+                await PhotoRequest.limiter.acquire()
+                // 順番待ちの間に画面外へ去っていることが多い（密表示ほど顕著）。ここで降りれば
+                // 1 枚も確保せずに済む。
+                if Task.isCancelled { await PhotoRequest.limiter.release(); return }
                 let box = PHImageRequestBox()
                 // ⚠️ 小さい targetSize だと PHImageManager が一部写真で向きの狂った埋め込みサムネを返す
                 //    （縦横写真がグリッドで 90° 倒れる／フル画面＝大サイズは正立）。最低 640px で取得し、
@@ -148,6 +157,7 @@ extension LocalPhotoStore: PhotoStore {
                 } onCancel: {
                     if let id = box.cancel() { manager.cancelImageRequest(id) }
                 }
+                await PhotoRequest.limiter.release()
 
                 if let final, !Task.isCancelled {
                     // 体感（最初の画像）は degraded が先に出ていればその時刻で計上する。
@@ -283,9 +293,13 @@ extension LocalPhotoStore: PhotoStore {
     // MARK: - Private
 
     private func requestThumbnail(for asset: PHAsset, targetSize: CGSize) async -> UIImage? {
+        // ⚠️ こちらの経路も同時実行を絞る（`thumbnailStages` と同じ理由・1 枚 1.6MB 級）。
+        await PhotoRequest.limiter.acquire()
+        defer { Task { await PhotoRequest.limiter.release() } }
+        guard !Task.isCancelled else { return nil }
         // 向き安全サムネの契約（640 下限で取得→セルサイズへ縮小＋向き正規化）を共通関数に委譲する。
         // 実フェッチは PHImageManager（下 rawThumbnail）。契約は seam でテスト可能（Layer 2）。
-        await PHAssetImageLoader.orientationSafeThumbnail(cellSize: targetSize) { [weak self] reqSize in
+        return await PHAssetImageLoader.orientationSafeThumbnail(cellSize: targetSize) { [weak self] reqSize in
             await self?.rawThumbnail(for: asset, targetSize: reqSize)
         }
     }
