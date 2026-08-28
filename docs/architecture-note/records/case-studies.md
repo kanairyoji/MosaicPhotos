@@ -1956,3 +1956,32 @@
 出ていたのは `PhotoPageView.currentItem` → `MergedPhotoItem.id.getter` の連なりで、
 **ページビューが表示のたびに配列を線形走査して現在位置を求めている**（id は毎回
 `"L-…"`/`"C-…"` を文字列で組み立てる）。数万件の一覧では効く。未対処。
+
+## フル画面ビューが 18 秒固まる（合成 id の線形走査）
+
+- 症状（実機 diagnostics-58）: フル画面ビューが重すぎて使い物にならない。前面のハングが
+  28 回、最大 **18.0 秒**（18055 / 17989 / 17341 ms …）。
+- 原因: **採取したメインスレッドのスタックが犯人を名指しした**（ADR-117 の採取が実機で
+  初めて役に立った例）。
+
+      PhotoPageView.currentItem.getter
+        → closure #1 (A.Item) -> Bool
+          → MergedPhotoItem.id.getter : Swift.String
+
+  `currentItem` が `allItems.first { $0.id == currentID }` で**毎回全件を線形走査**していた。
+  しかも `MergedPhotoItem.id` は `"L-\(item.id)"` を**呼ばれるたびに組み立てる計算プロパティ**。
+  9 万件の一覧では 1 回の解決で 9 万個の String を作って捨てる。`currentItem` は上部ラベル・
+  下部バー・お気に入り判定から複数回呼ばれ、`init` / `recenterWindowIfNeeded` /
+  `schedulePrefetch` / 末尾判定も**それぞれ独立に**同じ走査をしていた。
+- 対処: 現在位置（`Int`）を `@State` で持ち回り、当たっていれば探索しない
+  （`PagingIndex.resolve(_:id:hint:)`）。一覧が入れ替わって当たりが外れたときだけ探し直すので
+  ズレても壊れない。位置の解決は `onChange(of: currentID)` で 1 回だけ行い、以降は使い回す。
+  隣へめくった直後は当たりの ±1 なので探索はほぼ起きない。
+- 実測（テスト）: 10,000 件で `id` の読み出し（＝文字列生成）が **7,001 回 → 1 回**。
+- 関連: `PhotoSourceKit/Support/PagingIndex.swift`（新規・純ロジック）/ `PhotoPageView` /
+  テスト `PagingIndexTests`（修正前のコードで落ちることを確認済み）。
+- 教訓: **「id が安い」という前提を疑う。** 合成 id（`"L-…"`/`"C-…"`）は等値比較のたびに
+  確保が走る。`first { $0.id == x }` は要素数だけでなく **id の値段**との積で効いてくる。
+- 残課題: グリッド側にも同型のスタックが出ている
+  （`PhotoCollectionView.Coordinator.update` → `gridIdentitySignature` が全件の id を
+  `LazyMapSequence` で舐める）。未対処。

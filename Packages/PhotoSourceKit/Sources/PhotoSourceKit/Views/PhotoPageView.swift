@@ -18,6 +18,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     private let pagingItems: [Store.Item]?
     /// 現在のページを **item.id** で保持する。
     @State private var currentID: Store.Item.ID
+    /// 現在位置の当たり（`currentID` の位置）。⚠️ **毎回の線形走査をやめるため**に持つ
+    /// （実機 diagnostics-58: 9 万件の走査＋合成 id の文字列生成で 18 秒級のハング）。
+    /// 一覧が入れ替わって外れたときは `PagingIndex` が探し直すので、ズレても壊れない。
+    @State private var currentIndex: Int
     /// 生成するウィンドウの開始 index（allItems に対する下限）。
     @State private var windowLowerBound: Int
     /// 現在ページの地名（位置情報があれば解決して日付の下に表示する）。
@@ -47,6 +51,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         self._currentID = State(initialValue: startID)
         let items = pagingItems ?? store.items
         let startIndex = items.firstIndex(where: { $0.id == startID }) ?? 0
+        _currentIndex = State(initialValue: startIndex)
         self._windowLowerBound = State(initialValue: max(0, startIndex - Self.windowRadius))
     }
 
@@ -62,8 +67,11 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         return items[lo..<hi]
     }
 
+    /// 現在ページのアイテム。**当たり（`currentIndex`）が合っていれば探索しない**。
+    /// body から複数回（上部ラベル・下部バー・お気に入り）呼ばれるので、ここが O(n) だと
+    /// フレームごとに全件走査が何度も走る。
     private var currentItem: Store.Item? {
-        allItems.first { $0.id == currentID }
+        PagingIndex.item(allItems, id: currentID, hint: currentIndex)
     }
 
     /// 現在ページのお気に入り状態（楽観反映があればそれを優先）。
@@ -149,12 +157,18 @@ public struct PhotoPageView<Store: PhotoStore>: View {
             }
         }
         .onChange(of: currentID) { _, newID in
-            recenterWindowIfNeeded(around: newID)   // ウィンドウを中央へ寄せ直す（端に近づいたら）
+            // ⚠️ 位置の解決は**ここで 1 回だけ**行い、以降は当たりとして使い回す
+            // （以前は currentItem / recenter / prefetch / 末尾判定がそれぞれ走査していた）。
+            // 隣へめくった直後は当たりの ±1 なので、探索はほぼ起きない。
+            let items = allItems
+            let index = PagingIndex.resolve(items, id: newID, hint: currentIndex + 1)
+                ?? PagingIndex.resolve(items, id: newID, hint: currentIndex - 1)
+            if let index { currentIndex = index }
+            recenterWindowIfNeeded(at: index)        // ウィンドウを中央へ寄せ直す（端に近づいたら）
             schedulePrefetch()                       // D: 次ページのフル画像先読み
             // ページング末尾近く（20枚以内）で追加ロード。hasMore は通常 false。
             // 固定リスト（フィルタ中）はスナップショットなので追加ロードしない。
-            guard pagingItems == nil, store.hasMore,
-                  let index = store.items.firstIndex(where: { $0.id == newID }) else { return }
+            guard pagingItems == nil, store.hasMore, let index else { return }
             if index >= store.items.count - 20 {
                 Task { await store.loadMore() }
             }
@@ -163,9 +177,9 @@ public struct PhotoPageView<Store: PhotoStore>: View {
 
     /// スワイプで現在 index が端へ近づいたら、ウィンドウを現在 index 中心に寄せ直す。
     /// 選択中の `currentID` は新ウィンドウ内に必ず含まれるので、表示中の写真は維持される。
-    private func recenterWindowIfNeeded(around id: Store.Item.ID) {
+    private func recenterWindowIfNeeded(at index: Int?) {
         let items = allItems
-        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        guard let idx = index else { return }
         let lo = windowLowerBound
         let hi = min(items.count, lo + Self.windowRadius * 2 + 1)
         if idx - lo < Self.recenterMargin || (hi - 1) - idx < Self.recenterMargin {
@@ -184,7 +198,7 @@ public struct PhotoPageView<Store: PhotoStore>: View {
             try? await Task.sleep(for: .seconds(1.2))
             let items = allItems
             guard pageID == currentID,
-                  let idx = items.firstIndex(where: { $0.id == currentID }),
+                  let idx = PagingIndex.resolve(items, id: currentID, hint: currentIndex),
                   items.indices.contains(idx + 1) else { return }
             store.prefetchFullImage(for: items[idx + 1])
         }
