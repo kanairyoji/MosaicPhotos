@@ -11,6 +11,30 @@ struct PhotoInfoPanel: View {
     let coordinate: CLLocationCoordinate2D?
     let exif: PhotoExifInfo?
     let insight: PhotoInsight?
+    /// 実体の所在（端末 / クラウド＋パス）。原因調査でまず要る情報なので常に出す。
+    let sourceLocation: PhotoSourceLocation?
+
+    /// 実体の所在。**「この写真はどこにあるのか」**を画面で答える。
+    ///
+    /// ⚠️ これが無いと「見覚えのない写真が一覧に出る」類の不具合を切り分けられない。
+    /// 端末かクラウドか、クラウドならどのフォルダの何というファイルかが分かれば、
+    /// 共有コピー・バックアップ・別フォルダのいずれ由来かがその場で判別できる。
+    @ViewBuilder
+    private var sourceSection: some View {
+        if let sourceLocation {
+            VStack(alignment: .leading, spacing: 6) {
+                header(systemImage: sourceLocation.kind == .cloud ? "cloud" : "iphone",
+                       title: sourceLocation.kind == .cloud ? L("Cloud") : L("On this device"),
+                       subtitle: sourceLocation.folder)
+                // パス/識別子は折り返して**全部**見せる（切ると肝心の所が読めない）。
+                Text(sourceLocation.identifier)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)   // 長押しでコピーして報告に貼れる
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -26,6 +50,8 @@ struct PhotoInfoPanel: View {
             }
 
             insightSection
+
+            sourceSection
 
             VStack(alignment: .leading, spacing: 8) {
                 detail(L("File"), exif?.fileName)

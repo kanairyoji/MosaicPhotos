@@ -61,7 +61,8 @@ struct FullPhotoView<Store: PhotoStore>: View {
                         placeName: placeName,
                         coordinate: coordinate,
                         exif: exif,
-                        insight: insight
+                        insight: insight,
+                        sourceLocation: item.sourceLocation
                     )
                     .frame(width: geo.size.width)
                     .onAppear { infoRequested = true }

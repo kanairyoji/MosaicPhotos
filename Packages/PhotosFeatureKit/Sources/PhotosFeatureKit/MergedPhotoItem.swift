@@ -43,6 +43,15 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// 実体の所在は**中身へ委譲**する（"L-"/"C-" を付けた合成 id ではなく、
+    /// 端末の localIdentifier / Dropbox の実パスをそのまま出す）。
+    public var sourceLocation: PhotoSourceLocation {
+        switch self {
+        case .local(let item): return item.sourceLocation
+        case .cloud(let item): return item.sourceLocation
+        }
+    }
+
     /// お気に入り。ローカルは PHAsset、クラウドは**アプリ側で管理**する（ADR-67）。
     /// ⚠️ 以前は「Dropbox にお気に入りの概念がない」として cloud を常に false にしていたが、
     /// ADR-67 で `DropboxPhotoStore` がアプリ側お気に入り（cloudFavoritePaths）を持つように

@@ -8,5 +8,9 @@ extension DropboxFileItem: PhotoItem {
     /// アプリ側お気に入りに対応（Dropbox に favorite は無いが cloudPath 単位でアプリが管理）。
     /// `isFavorite` は DropboxFileItem の stored プロパティ（DropboxPhotoStore が刻印）で満たす。
     public var supportsFavorite: Bool { true }
+    /// Dropbox 上の実パス（どのフォルダ由来かを画面で特定できるようにする）。
+    public var sourceLocation: PhotoSourceLocation {
+        PhotoSourceLocation(kind: .cloud, identifier: path)
+    }
 }
 #endif

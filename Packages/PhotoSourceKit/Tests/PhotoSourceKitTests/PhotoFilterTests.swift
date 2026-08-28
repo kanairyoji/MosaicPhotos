@@ -89,3 +89,49 @@ struct PhotoFilterTests {
         #expect(filter.apply(items).map(\.id) == ["localFav"])
     }
 }
+
+// MARK: - 実体の所在（PhotoSourceLocation）
+
+/// ⚠️ 「見覚えのない写真が一覧に出る」類の不具合は、**その写真がどこの実体か**が分からないと
+/// 切り分けられない（実測: 実機ログからは由来フォルダを特定できなかった）。
+/// フル画面に出す所在は、合成 id ではなく実体のパス／識別子であること。
+@Suite("写真の所在")
+struct PhotoSourceLocationTests {
+
+    @Test("クラウドは親フォルダを取り出せる")
+    func cloudFolderIsExtracted() {
+        let location = PhotoSourceLocation(kind: .cloud, identifier: "/MosaicShare/金居家/IMG_0001.JPG")
+        #expect(location.folder == "/MosaicShare/金居家",
+                "どのフォルダ由来かが一目で分からないと切り分けに使えない")
+    }
+
+    @Test("ルート直下のファイルでも壊れない")
+    func rootLevelFile() {
+        #expect(PhotoSourceLocation(kind: .cloud, identifier: "/IMG_0001.JPG").folder == "/")
+    }
+
+    @Test("端末写真はフォルダを持たない")
+    func localHasNoFolder() {
+        #expect(PhotoSourceLocation(kind: .local, identifier: "ABC-123/L0/001").folder == nil)
+    }
+
+    @Test("区切りが無ければフォルダは無し")
+    func noSeparator() {
+        #expect(PhotoSourceLocation(kind: .cloud, identifier: "IMG_0001.JPG").folder == nil)
+    }
+
+    /// パスを持たないソース向けの既定実装。
+    private struct PlainItem: PhotoItem {
+        let id: String
+        var captureDate: Date? { nil }
+        var isCloudSource: Bool
+    }
+
+    @Test("既定の実装はソース種別を引き継ぎ、id を所在として出す")
+    func defaultUsesCloudFlag() {
+        let cloud = PlainItem(id: "c", isCloudSource: true).sourceLocation
+        #expect(cloud.kind == .cloud)
+        #expect(cloud.identifier == "c")
+        #expect(PlainItem(id: "l", isCloudSource: false).sourceLocation.kind == .local)
+    }
+}
