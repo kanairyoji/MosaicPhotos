@@ -302,10 +302,23 @@ extension FaceStore {
         var centroid: [Int: [Float]] = [:]
         var cover: [Int: PersonInfo.Face] = [:]
         var photoSets: [Int: Set<String>] = [:]
+
+        // ⚠️ **顔は 1 回で取る**（実フィードバック: 「次の人へ」で数秒待たされる）。
+        // 以前はクラスタごとに `faces(inCluster:)` を呼んでおり、人物が 1,316 人まで育った
+        // ライブラリでは**この 1 画面で 1,316 回の fetch** が走っていた。件数に比例して
+        // 待ち時間が伸び、人物が増えるほど機能が使えなくなる。取得は 1 回にして、
+        // 束ねるのはメモリ上で行う（選ばれる候補・しきい値は一切変えない）。
+        let eligible = Set(clusters.map(\.clusterID))
+        var membersByCluster: [Int: [DetectedFace]] = [:]
+        membersByCluster.reserveCapacity(eligible.count)
+        for face in allFacesInClusters() where eligible.contains(face.clusterID ?? -1) {
+            membersByCluster[face.clusterID ?? -1, default: []].append(face)
+        }
+
         for c in clusters {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
-            let members = faces(inCluster: c.clusterID)
+            let members = membersByCluster[c.clusterID] ?? []
             photoSets[c.clusterID] = Set(members.map(\.refKey))
             let pick = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
                 ?? Self.bestCoverFace(members)

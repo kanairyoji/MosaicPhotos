@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import MosaicSupport
 import PhotoSourceKit
 import SwiftUI
 
@@ -42,7 +43,7 @@ struct FaceBatchReviewView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    Color.clear.busyOverlay(true, text: L("Looking for people to merge…"))
+                    Color.clear.busyOverlay(true, text: L("Finding similar people…"))
                 } else if let item {
                     content(item)
                 } else {
@@ -231,14 +232,28 @@ struct FaceBatchReviewView: View {
 
     // MARK: - Actions
 
+    /// 次の候補を読み込む。
+    ///
+    /// ⚠️ **先に画面を切り替えてから**探し始める（実フィードバック: 「次の人へ」を押しても
+    /// なかなか画面が変わらず固まって見える）。候補の生成は人物数に比例して重く、
+    /// 1,000 人規模では数秒かかる。フラグを立てた直後に処理へ入ると、SwiftUI が描画する前に
+    /// 待ちに入ってしまい「押したのに何も起きない」に見える。`runShowingBusy` が
+    /// 表示を確定させるまで数フレーム譲るので、以後は待っている間もスピナーが回る。
     private func load(anchor: Int?) async {
-        isLoading = true
+        // 直前の人物のグリッドを残さない（残ると「まだ切り替わっていない」に見える）。
+        item = nil
         selected = []
-        item = await peopleEngine.batchReviewItem(
-            anchorClusterID: anchor,
-            excludingAnchors: visitedAnchors,
-            excludingCandidates: anchor.flatMap { shownCandidates[$0] } ?? [])
-        isLoading = false
+        item = await runShowingBusy($isLoading) {
+            let t0 = PerfTrace.nowNs()
+            let found = await peopleEngine.batchReviewItem(
+                anchorClusterID: anchor,
+                excludingAnchors: visitedAnchors,
+                excludingCandidates: anchor.flatMap { shownCandidates[$0] } ?? [])
+            // センサー: 人物数に比例して伸びる。実機で何秒かかっているかを残す。
+            PerfTrace.logSpan("people.batchReview.load", ms: PerfTrace.msSince(t0),
+                              detail: "anchor=\(anchor.map(String.init) ?? "auto")")
+            return found
+        }
     }
 
     /// 回答を適用し、**同じアンカーで**次の候補を取りに行く（連鎖）。

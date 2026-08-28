@@ -157,3 +157,49 @@ struct FaceClusterAuditSamplingTests {
         #expect((s?.groupA.count ?? 0) + (s?.groupB.count ?? 0) == 16)
     }
 }
+
+// MARK: - 一括レビューの候補生成（取得を 1 回にまとめた回帰）
+
+/// ⚠️ 「次の人へ」で数秒待たされる（実フィードバック）。候補生成がクラスタごとに
+/// `faces(inCluster:)` を呼んでおり、人物が 1,316 人まで育ったライブラリでは
+/// **1 画面で 1,316 回の fetch** が走っていた。取得を 1 回にまとめたが、
+/// **選ばれる候補は一切変わらないこと**を押さえる（しきい値・順序は精度台帳の対象）。
+@Suite("一括レビューの候補生成")
+struct BatchReviewCandidateTests {
+
+    private func store() -> FaceStore { FaceStore(isStoredInMemoryOnly: true) }
+
+    private func signal(_ vector: [Float], quality: Float = 0.9) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.1, y: 0.1, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(vector), quality: quality)
+    }
+
+    @Test("まとめ取りでもクラスタごとの顔が正しく束ねられる")
+    func facesAreGroupedPerCluster() async {
+        let store = store()
+        // 別人 2 人（直交ベクトル）を、それぞれ 3 枚ずつ。
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([0, 1, 0])]) }
+
+        let all = await store.allFacesInClustersForTesting()
+        var grouped: [Int: Int] = [:]
+        for face in all { grouped[face.clusterID ?? -1, default: 0] += 1 }
+
+        #expect(all.count == 6, "1 回の取得で全クラスタの顔が揃わないと候補が欠ける")
+        #expect(grouped.values.sorted() == [3, 3], "束ね直しがクラスタごとに正しくない")
+        #expect(!grouped.keys.contains(-1), "未割り当ての顔が混ざっている")
+    }
+
+    @Test("クラスタ単位の取得と同じ結果になる")
+    func matchesPerClusterFetch() async {
+        let store = store()
+        for i in 0..<4 { await store.recordScan(refKey: "L-x\(i)", faces: [signal([1, 0, 0])]) }
+        let counts = await store.clusterCountsForTesting()
+        guard let cid = counts.keys.first else { return }
+
+        let viaAll = await store.allFacesInClustersForTesting()
+            .filter { $0.clusterID == cid }.map(\.faceID).sorted()
+        let viaCluster = await store.facesForTesting(inCluster: cid).sorted()
+        #expect(viaAll == viaCluster, "まとめ取りで取りこぼし・混入がある")
+    }
+}

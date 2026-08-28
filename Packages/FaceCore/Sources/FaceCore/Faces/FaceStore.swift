@@ -140,6 +140,23 @@ actor FaceStore {
         return try? modelContext.fetch(d).first
     }
 
+    /// クラスタに属する顔を**まとめて 1 回で**取る（未割り当ては除く）。
+    ///
+    /// ⚠️ クラスタごとに `faces(inCluster:)` を呼ぶ経路は、人物が増えるほど fetch 回数が
+    /// 増えて画面が待たされる（実測: 1,316 人で 1 画面あたり 1,316 回）。全クラスタを
+    /// 走査する処理はこちらを使い、束ねるのはメモリ上で行うこと。
+    func allFacesInClusters() -> [DetectedFace] {
+        // #Predicate の Optional 比較は取り回しが悪いので、全件取ってから絞る
+        // （どのみち全クラスタぶんを使うので、絞り込みで減る量は誤差）。
+        let all = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        return all.filter { $0.clusterID != nil }
+    }
+
+    /// テスト用: まとめ取りの結果（`allFacesInClusters` と同じもの）。
+    func allFacesInClustersForTesting() -> [(faceID: String, clusterID: Int?)] {
+        allFacesInClusters().map { ($0.faceID, $0.clusterID) }
+    }
+
     func faces(inCluster clusterID: Int) -> [DetectedFace] {
         let cid = clusterID
         return (try? modelContext.fetch(
