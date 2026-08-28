@@ -72,176 +72,36 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 
 ## Architecture
 
-### ファイル構成
+### どこに何があるか
 
-```
-MosaicPhotos/                      ← メインアプリターゲット（合成のみの薄い層）
-  MosaicPhotosApp.swift            エントリーポイント。WindowGroup に HomeView を配置。init() で Diagnostics.install()
-  HomeView.swift                   ルート画面。Sources（All/Photos/Cloud）+ Albums + Places。単一 HomeDestination enum + 1 fullScreenCover で遷移。起動後タスクは段階起動（place scan/backup/AI を時差で開始）
-  DropboxConfig.swift              アプリ固有の Dropbox OAuth 設定値（redirectURI 等）
-  DropboxSecrets.swift             appKey 等のシークレット（.gitignore 対象）
-  SettingsView.swift               「設定」シート。Settings.app 風のグルーピング List をルートに、各設定へ NavigationLink
-  Home/
-    SourceHostView.swift           各ソースのフルスクリーン共通ラッパー（dismissToHome / showSettings / photoInsight を環境注入）
-    HomeSections.swift             HomeView の各セクション（Sources / Albums / Places）を分割
-    HomeRows.swift                 SourceRow / LibraryRow / AlbumRow / PlaceRow ＋共通カバーローダ
-    AlbumCarousel.swift            アルバムの横スクロールカルーセル表示
-    PlacePhotosView.swift          場所アルバム表示（メンバー限定 MergedPhotoStore）
-    AutoAlbumPhotosView.swift      生成アルバム（旅行/フォルダ/AI）の写真表示
-    AutoAlbumAdapters.swift        Composition Root。AutoAlbumEngine に各 seam（Cloud/Backup/People/CLIP/翻訳/ラベラ）を結線
-    AutoAlbumSettingsView.swift    AI/旅行/フォルダ生成＋画像認識（再解析・背景処理速度段階）
-    AIAlbumComposerView.swift / PathAlbumSettingsView.swift / PlacesSettingsView.swift  各設定/作成ビュー
-  Settings/
-    SettingsView は上記。以下は設定の各画面・キー。
-    DropboxHubView.swift           Dropbox のハブ（接続設定＋バックアップ＋フォルダアルバムを集約）
-    StorageSettingsView.swift      ストレージ/キャッシュ説明・上限設定
-    DeveloperSettingsView.swift    Developer Options。各パッケージの Debug セクション（DropboxDebugSection 等）＋診断（メモリ/CLIP 同梱/ログ）を合成
-    DiagnosticsLogView.swift       端末上の診断ログ（diagnostics.log）の閲覧・共有・クリア
-    AppSettingsKeys.swift          アプリ層の @AppStorage キー集約
-  ※ 顔認識ロジックは Packages/FaceCore/（旧 AutoAlbumCore/Faces）へ分離・共通プリミティブは Packages/PerceptionCore/
-  MobileCLIP/                      CLIP の Core ML モデル＋語彙（.gitignore 対象・scripts/build_mobileclip.sh で生成）
-  FaceModel/                       顔認識モデル（.gitignore 対象・scripts/build_facenet.sh で生成）
-  HeavyWorkScheduler.swift         BGProcessingTask（ロック中の夜間処理＝タグ/埋め込み/顔スキャン/生成）
+新しいコードの置き場所を決めるための地図。**ファイル単位の詳細は各パッケージ直下の
+`CLAUDE.md`** にあり、そのディレクトリを触ったときに自動で読み込まれる
+（root に全部書くと、毎セッション全パッケージぶんを読むことになるため分けた）。
 
-Packages/MosaicSupport/            ← 最下層 SPM パッケージ（横断ユーティリティ・依存なし）
-  Sources/MosaicSupport/
-    LogChannel.swift               os.log + print + DEBUG ゲートを集約した共通ロガー（各レベルを DiagnosticsLog にも転記）
-    Diagnostics.swift              DiagnosticsLog（Caches/diagnostics.log へロールリング追記・閲覧/共有/クリア）/
-                                   currentMemoryFootprintMB() / Diagnostics.install()（未捕捉例外＋メモリ圧迫を記録）
-  ※ DropboxCore / BackupKit / MobileCLIPKit / アプリが依存。各パッケージのロガーは LogChannel に委譲する
+| 層 | パッケージ | 持ちもの |
+|---|---|---|
+| 基盤 | `MosaicSupport` | ログ・診断・PerfTrace・メモリ/熱・背景処理のゲート・SwiftData 自己修復 |
+| 基盤 | `PhotoSourceKit` | 写真ソースの共通インターフェイスと汎用ビュー（グリッド/フル画面/場所） |
+| 基盤 | `ImageCacheKit` | メモリ/ディスクの画像キャッシュ・プリミティブ |
+| 基盤 | `PerceptionCore` | ClipMath・PhotoRef・ANE ゲート・背景トリクル（CLIP と顔の共通下層） |
+| 端末写真 | `LocalPhotoCore` / `LocalPhotoKit` | ロジック / UI |
+| Dropbox | `DropboxCore` / `DropboxKit` | ロジック / UI |
+| Dropbox | `BackupKit` | 端末写真 → Dropbox のバックアップ・オフロード・家族共有 |
+| 統合 | `PhotosFeatureKit` | Local + Dropbox の統合（`MergedPhotoStore`）・場所グルーピング |
+| AI | `AutoAlbumCore` | 自動アルバム・AI 検索・タグ台帳（SwiftUI 非依存） |
+| AI | `FaceCore` | 顔検出・クラスタリング・ピープル |
+| AI | `MobileCLIPKit` | CLIP/顔モデルのランタイムと、上記 seam のアプリ側実装 |
+| アプリ | `MosaicPhotos/` | 合成のみ（`HomeView`・Composition Root・設定画面・BGTask） |
 
-Packages/PhotoSourceKit/           ← 写真ソース共通基盤（表示インターフェイス・純ロジック）
-  Sources/PhotoSourceKit/          ← 責務ごとにサブフォルダで整理（すべて同一モジュール）
-    Interface/                     PhotoItem / PhotoLoading（アイテム取得）/ PhotoStore(: PhotoLoading)/
-                                   PhotoLoadState（権限/通信/完了/失敗の状態 enum）/
-                                   PhotoInsight（フル画像の付加情報＝表示タグ・人物・解析状態。SwiftUI 非依存値型）
-    Views/                         PhotoSourceContentView（状態分岐＋全状態に下部 Home/Settings バー）/
-                                   PhotoGridView / PhotoCollectionView（UICollectionView グリッド・diffable・プリフェッチ・
-                                   contentOffset ベースのスクラバー）/ GridThumbnailCell / GridSectionHeaderView /
-                                   GridScrubberView / FullPhotoView / PhotoInfoPanel / PhotoPageView /
-                                   ZoomableImageView（ピンチ/ダブルタップ拡大＋ZoomMath 純計算・ADR-77）/
-                                   PhotoSourceEnvironment（dismissToHome / showSettings）/ GridSettingsKeys
-    Places/                        GeoGridKey(純)/ PlaceAlbumInfo / PlaceGrouping(純)/
-                                   PlaceNameResolver(actor・**オフライン**地名解決 + 地名キャッシュ)/
-                                   OfflinePlaceDB(同梱 cities15000.bin で最近傍逆ジオコーディング・ネット不要)
-    Support/                       PhotoGridGrouping(日付グルーピング純)/ PhotoItemSorting(純)/
-                                   PhotoExifInfo(EXIF 解析+parse 純)/ JSONFileStore<T>(JSON 永続化)
-  Tests/PhotoSourceKitTests/       grouping/sorting/exif/geo/jsonstore/place の単体テスト（macOS）
+**ファイルを探すときは `grep` / `find` を使う**（一覧を暗記しない）。
+アーキテクチャの背景は `docs/architecture-note/` にある。
 
-Packages/ImageCacheKit/            ← 画像キャッシュ共通プリミティブ・SwiftUI 非依存
-  Sources/ImageCacheKit/
-    MemoryImageCache.swift         NSCache ラッパー（メモリ層）
-    DiskImageStore.swift           ディレクトリ単位のディスク I/O + LRU 列挙（コアは Foundation のみ）
-  Tests/ImageCacheKitTests/        DiskImageStore の LRU/IO テスト（macOS）
-  ※ LocalPhotoCore（ThumbnailCache）と DropboxCore（DropboxCacheStore）が共用。破棄ポリシーは各利用側が持つ
-
-Packages/LocalPhotoCore/           ← 端末写真のロジック層（PhotoSourceKit / ImageCacheKit に依存）
-  Sources/LocalPhotoCore/
-    LocalPhotoStore.swift          @MainActor @Observable。PHAsset 一覧管理・権限処理
-    LocalPhotoStore+PhotoStore.swift  PhotoStore 適合（サムネイル/フル画像取得・#if canImport(UIKit)）
-    LocalAlbumScanner.swift        アルバム走査（バックアップと独立。JSONFileStore でキャッシュ）
-    （ピープル＝旧 subtype-1000 方式は撤去。PhotoKit に公開 People API が無いため、
-                                   Vision 顔検出＋同梱顔モデルの自前クラスタリングへ作り直した＝AutoAlbumCore/Faces）
-    LocalAlbumInfo.swift           アルバム情報値オブジェクト
-    LocalPhotoItem.swift           PHAsset を束ねる PhotoItem
-    ThumbnailCache.swift           actor。MemoryImageCache + DiskImageStore による LRU キャッシュ
-    MetadataCache.swift / MetadataPreloader.swift  PHAsset メタデータの先読み
-    CacheSettingsKeys.swift        サムネイルキャッシュの永続設定キー（public）
-  Tests/LocalPhotoCoreTests/       LocalPhotoStore の初期状態テスト（macOS）
-
-Packages/LocalPhotoKit/            ← 端末写真の UI 層（LocalPhotoCore / PhotoSourceKit に依存）
-  Sources/LocalPhotoKit/
-    LocalPhotoCore.swift           @_exported import LocalPhotoCore（再エクスポート）
-    LocalPhotoContentView.swift    「写真」タブルートビュー
-    LocalPhotoSettingsView.swift   端末写真ソース設定ビュー（キャッシュ上限）
-    LocalThumbnailView.swift       PHAsset サムネイルセル
-    LocalPhotoPageView.swift       PHAsset フルスクリーンページングビュー
-
-Packages/DropboxCore/              ← Dropbox のロジック層（ImageCacheKit / MosaicSupport に依存・SwiftUI 非依存）
-  Sources/DropboxCore/             ← 責務ごとにサブフォルダで整理（すべて同一モジュール）
-    Auth/                          DropboxAuthService（OAuth2 + PKCE）/ PKCEGenerator(純)/
-                                   DropboxCredential / CredentialStore / DropboxKeychainStore
-    Networking/                    HTTPClient(抽象)/ DropboxAPIClient(RPC・DL 集約)/
-                                   DropboxAPIArgEncoder / DropboxInternalConstants
-    Sync/                          DropboxSyncEngine(差分同期)/ DeltaPageParser(解析・純)/
-                                   DropboxSyncState(@Model カーソル)
-    Cache/                         DropboxCacheStore(actor・SwiftData+ImageCacheKit)/
-                                   DropboxCacheNaming(純)/ CachedDropboxItem / CacheUsageEntry(@Model)/
-                                   DropboxCacheDebugModel
-    Models/                        DropboxFileItem / DropboxMediaInfo / DropboxBackupMetadata
-    Store/                         DropboxPhotoStore(@Observable)/ DropboxThumbnailBatcher
-    Support/                       DateProvider / AccessTokenProvider / DropboxLogger(→LogChannel)
-  Tests/DropboxCoreTests/          APIClient/AuthService/PKCE/SyncEngine/DeltaParser/Batcher/Cache/Naming/MediaInfo/Metadata（iOS Sim）
-
-Packages/BackupKit/               ← 端末写真→Dropbox バックアップ（DropboxCore / MosaicSupport に依存）
-  Sources/BackupKit/
-    BackupEngine.swift             @MainActor @Observable。バックアップのオーケストレーション
-    DropboxBackupUploader.swift    写真/metadata の HTTP アップロード（認証・SwiftData から独立・テスト対象）
-    BackupAssetReader.swift        PHAsset 本体データの取得
-    BackupIndexing.swift           People/Album インデックス構築（top-level・Task.detached 用）
-    BackupPlanning.swift           アップロード差分算出・エラー要約の純ロジック（テスト対象）
-    BackupMetadataPlanning.swift   メタデータ v2（カタログ＋撮影月シャード・ADR-38）の分割/マージ純ロジック
-    BackupSettingsKeys.swift / BackupDestination.swift  設定キー / 値オブジェクト
-    BackupSettingsView.swift       バックアップ通常設定ビュー（#if canImport(UIKit)）
-    BackupDebugSection.swift       Developer Options 向け詳細診断セクション（進捗/フォルダ確認/統計/ログ・public）
-    BackupLogger.swift             内部ロガー（MosaicSupport の LogChannel に委譲）
-    BackupAlbumInfo.swift / BackupAssetRecord.swift  値オブジェクト / @Model
-  Tests/BackupKitTests/            BackupPlanning / DropboxBackupUploader のテスト（macOS）
-
-Packages/DropboxKit/               ← Dropbox の UI 層（DropboxCore / PhotoSourceKit に依存）
-  Sources/DropboxKit/
-    DropboxCore.swift              @_exported import DropboxCore（再エクスポート）
-    DropboxContentView.swift       「クラウド」タブルートビュー
-    DropboxSettingsView.swift      Dropbox 通常設定ビュー（接続・サムネ並列数・キャッシュ上限）
-    DropboxDebugSection.swift      Developer Options 向け詳細診断（トークン/キャッシュ状態/再同期/定数・public）
-    DropboxThumbnailView.swift     Dropbox ファイルサムネイルセル
-    DropboxPhotoPageView.swift     Dropbox フルスクリーンページングビュー
-    DropboxCacheListView.swift     キャッシュデバッグ一覧ビュー
-    DropboxCacheSettingsKeys.swift Dropbox キャッシュ上限の永続設定キー
-    DropboxPhotoStore+PhotoStore.swift  PhotoStore プロトコル適合
-    DropboxFileItem+PhotoItem.swift     PhotoItem プロトコル適合
-  Tests/DropboxKitTests/           DropboxAPIArgEncoder / DropboxFileItem のテスト（macOS）
-  TestApp/                         DropboxKit 単体動作確認用の iOS テストアプリ（独自 .xcodeproj）
-
-Packages/PhotosFeatureKit/         ← 写真機能の統合層（DropboxKit / LocalPhotoKit / PhotoSourceKit に依存）
-  Sources/PhotosFeatureKit/
-    MergedPhotoStore.swift         @MainActor @Observable。Local + Dropbox を統合する PhotoStore
-    MergedPhotoItem.swift          ローカル/クラウドを束ねる PhotoItem（enum・id プレフィックスで衝突回避）
-    PlaceScanner.swift             @MainActor @Observable。Local+Dropbox の位置情報を市区町村にグルーピング
-  Tests/PhotosFeatureKitTests/     filter/state/MergedPhotoItem/placeScanSignature のテスト（iOS Sim）
-
-Packages/AutoAlbumCore/            ← 自動アルバム＋オンデバイス AI のロジック層（SwiftUI 非依存・MosaicSupport に依存）
-  Sources/AutoAlbumCore/
-    AutoAlbumEngine.swift          @MainActor @Observable ファサード。生成/AI/フォルダ/タグ付けを協調
-    PhotoRef.swift                 "L-…"/"C-…" のエンコード（ローカル/クラウド統一キー・純）
-    EnrichedPhoto.swift / BackgroundProcessing.swift  付加情報の値型 / 背景処理の重さプリセット（純）
-    Models/                        PhotoEnrichment(@Model・メタデータのみ) / PhotoEmbedding(@Model・CLIP埋め込みを
-                                   Float16 で別テーブル化) / GeneratedAlbum(@Model)
-    Store/                         AutoAlbumStore(@ModelActor・SwiftData。埋め込み/アルバム永続化)
-    Perception/                    PhotoPerceptionProvider / TextEmbedder / QueryTranslator / LabelProvider
-                                   （seam・実体はアプリ側）/ PhotoTagger(背景 CLIP 埋め込み・スロットル) / PhotoEnricher
-    AIAlbum/                       AIAlbumService（解釈永続化・増分/フル再評価・証拠ゲート・審査）/
-                                   AIAlbumSearcher（タグ一致＋CLIP対比＋字句の RRF 融合）/ AlbumVerifier(FM審査) /
-                                   AIAlbumInterpretationStore(解釈の永続化・版管理) / QuerySpecSanitizer(防御的接地) /
-                                   JapaneseVisualLexicon(決定的視覚語/人物否定) / ClipMath(vDSP コサイン) /
-                                   LexicalSearch(地名/人物) / RelativeDateParser(日英・日付の唯一の出典) /
-                                   QueryUnderstanding(RuleBased) / FoundationModelsQueryUnderstanding(iOS26)
-    Tags/                          TagStore(@ModelActor・TagsV1 別コンテナ・シーンタグ) /
-                                   TagTagger(夜間トリクル付与)
-    Strategies/                    TimePlaceStrategy(旅行抽出) / PathAlbumStrategy(フォルダ名) / CoverSelection 他
-  Tests/AutoAlbumCoreTests/        search/lexical/clipmath/strategy/path/background のテスト（macOS）
-
-Packages/MobileCLIPKit/            ← CLIP/翻訳ランタイム＋AutoAlbumCore seam のアプリ側実装（AutoAlbumCore / MosaicSupport に依存）
-  Sources/MobileCLIPKit/
-    MobileCLIPRuntime.swift        MobileCLIP 画像/テキストエンコーダ（Core ML・遅延ロード static shared・ロード結果を診断ログへ）。
-                                   MobileCLIP.modelsBundled でロード不要の同梱判定
-    CLIPTokenizer.swift            BPE トークナイザ
-    AIPerceptionAdapters.swift     PhotoPerceptionProvider（refKey→ローカル/クラウド画像→CLIP 埋め込み）/ MobileCLIPTextEmbedder
-    AILanguageAdapters.swift       AppQueryTranslator（FM 英訳）/ loadLocalCGImage（共通画像ローダ）
-    CLIPDisplayLabeler.swift       表示タグ補完：約300語に対する CLIP ゼロショット（保存済み clipVector を使用）
-    VisionTagAdapter.swift         シーンタグ（OS 内蔵 VNClassifyImageRequest・精度校正済み足切り）
-  ※ アプリの AutoAlbumAdapters がこれらを AutoAlbumEngine の seam に注入する
-```
+> **規約を書き足すときの置き場所**
+> - **横断的**（レイヤー分離・並行性・記録・性能原則・i18n・テスト）→ この root ファイル。
+>   新しいコードを**どこに置くか決める時点**で要る知識は、そのディレクトリを触る前なので
+>   root に無いと効かない。
+> - **そのパッケージの中だけで完結する**（ファイルの役割・内部の作り）→ 各パッケージの
+>   `CLAUDE.md`。触ったときに読まれる。
 
 ### コンポーネント関係
 
