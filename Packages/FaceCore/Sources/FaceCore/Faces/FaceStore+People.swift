@@ -20,7 +20,7 @@ extension FaceStore {
         // 必要なのは clusterID と refKey だけ。射影して `embedding`（約1KB/顔）を読まない（ADR-96）。
         var query = FetchDescriptor<DetectedFace>()
         query.propertiesToFetch = [\.clusterID, \.refKey]
-        for f in (try? modelContext.fetch(query)) ?? [] where f.clusterID >= 0 {
+        for f in (countedFetchOptional(query)) ?? [] where f.clusterID >= 0 {
             photosPerCluster[f.clusterID, default: []].insert(f.refKey)
         }
         return allClusters().filter { (photosPerCluster[$0.clusterID]?.count ?? 0) >= minFaces }
@@ -53,7 +53,7 @@ extension FaceStore {
         var faceQuery = FetchDescriptor<DetectedFace>()
         faceQuery.propertiesToFetch = [\.faceID, \.refKey, \.clusterID,
                                        \.bx, \.by, \.bw, \.bh, \.quality, \.hasSmile]
-        for f in (try? modelContext.fetch(faceQuery)) ?? [] where f.clusterID >= 0 {
+        for f in (countedFetchOptional(faceQuery)) ?? [] where f.clusterID >= 0 {
             facesByCluster[f.clusterID, default: []].append(f)
         }
         // 2 階層（ADR-61）: personGroupID が同じクラスタを 1 人物に束ねる（子供の時期クラスタ）。
@@ -180,11 +180,11 @@ extension FaceStore {
         var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.hasSmile == true })
         d.propertiesToFetch = [\.refKey]
         var out: [String: Int] = [:]
-        for f in (try? modelContext.fetch(d)) ?? [] { out[f.refKey, default: 0] += 1 }
+        for f in (countedFetchOptional(d)) ?? [] { out[f.refKey, default: 0] += 1 }
         // 「スキャン済みだが笑顔ゼロ」も 0 として載せる（証拠主義: キーの有無＝スキャン済みか）。
         var scanned = FetchDescriptor<ScannedPhoto>()
         scanned.propertiesToFetch = [\.refKey]
-        for m in (try? modelContext.fetch(scanned)) ?? [] where out[m.refKey] == nil {
+        for m in (countedFetchOptional(scanned)) ?? [] where out[m.refKey] == nil {
             out[m.refKey] = 0
         }
         return out
@@ -273,7 +273,7 @@ extension FaceStore {
     func peopleNamesByRefKey(minFaces: Int) -> [String: [String]] {
         let nameByCluster = personNameByCluster(minFaces: minFaces)
         guard !nameByCluster.isEmpty else { return [:] }
-        let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        let faces = (countedFetchOptional(FetchDescriptor<DetectedFace>())) ?? []
         var out: [String: [String]] = [:]
         for f in faces {
             guard let name = nameByCluster[f.clusterID] else { continue }

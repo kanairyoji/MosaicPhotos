@@ -149,6 +149,21 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
 - **AI アルバム検索は「タグ台帳＋LLM審査」の多層構成（ADR-23/24）**: 解釈（LLM・`FoundationModelsQueryUnderstanding`）は**作成/編集時に 1 回だけ**実行し `AIAlbumInterpretationStore`（JSONFileStore・版管理）へ永続化する（起動時・写真追加時に LLM は走らない）。小型 LLM の構造化出力は信用せず、`QuerySpecSanitizer`（プレースホルダ除去・カタログ丸写し検出・include/exclude 衝突解消）＋**決定的レイヤー**（日付=`RelativeDateParser` が唯一の出典・place/people はカタログ/原文接地・`JapaneseVisualLexicon` で頻出視覚語と人物否定を抽出）で必ず接地する。検索は「ハード条件（`QueryEvaluator`）→ **Vision シーンタグ一致（離散・閾値レス）**＋ CLIP 対比（除外は肯定/否定ベクトルの相対判定のみ・絶対閾値なし）＋字句（`LexicalSearch`）の RRF 融合（`HybridFusion`）→ **証拠ゲート**（除外つきはタグ/顔実測/人数実測の証拠必須）→ **FM LLM 審査**（`AlbumVerifier`・keep/drop/unsure・unsure は最大2回再判定の多数決）→ 空振り時はプローブ拡張で 1 回だけ再検索」。再評価は増分（新規埋め込み分のみ採点しスコアプールへマージ）＋ドリフト検知のフル再評価。旧フラット `AIAlbumQuery` は解釈フォールバック（RuleBased/FM flat）用に残る（検索 API は撤去済み）。**検索の精度はクエリ集ハーネスのデータセット計測で決める**（ADR-104・`docs/architecture-note/records/search-quality.md`＝台帳・COCO/Caltech・`SearchEvalTests`/`SearchEvalCaltechTests`。解釈・照合・接地・証拠まわりを変えたら両ハーネスを回して差分を台帳へ記す。体感・個別事例では決めない）
 - **知覚 seam はプロトコル＋`MobileCLIPKit` 実装**: `PhotoPerceptionProvider`(refKey→CLIP 埋め込み・ローカル/クラウド両対応) / `TextEmbedder` / `QueryTranslator`(Foundation Models) / `LabelProvider`(表示タグ) は `AutoAlbumCore` のプロトコルで、実体は `MobileCLIPKit`（`AIPerceptionAdapters` / `AILanguageAdapters` / `CLIPDisplayLabeler`）が `MobileCLIPRuntime`・`FoundationModels` で実装する。アプリの `AutoAlbumAdapters`（Composition Root）が `AutoAlbumEngine` の seam に注入する。`PhotoSourceKit` は `AutoAlbumCore` に依存せず、フル画像の付加情報は `photoInsight` 環境クロージャ経由で受け取る（レイヤー分離）
 - **表示タグ＝検索と同一の台帳**: フル画像のタグ欄（常時表示）は **Vision シーンタグ（`TagStore`・検索の一次ランキングと同一ソース）を第一**に、`CLIPDisplayLabeler`（約300語ゼロショット）で補完する。タグは **TagsV1 別コンテナ**（`PhotoTagRecord`）で、夜間バッチ（`TagTagger`）が Vision タグ → CLIP 埋め込みの順に付与する。※ VLM キャプション（AI description）は廃止（ADR-108・`PhotoTagRecord.caption` フィールドはスキーマ互換のため残置）
+- **規模で壊れるコードを、規模のテストで止める（ADR-119）**: 実機で繰り返した性能バグ
+  （18 秒・27.8 秒のハング、1GB でのクラッシュ）は**すべて同じ形**だった——
+  **「1 回ぶんに見える呼び出し」が、実はライブラリ規模に比例していた**。
+  `items.first { $0.id == x }`（全走査＋毎回 String 生成）、クラスタごとの `fetch`（1,316 回）、
+  対ごとに全記録を舐める照合（52 万対 × 記録数）。どれも**書いた時点では正しく速く**、
+  ライブラリが育って初めて表に出る。「動くこと」のテストでは永久に捕まらない。
+  - **一覧・辞書・記録の全件を触る処理を書いたら、規模テストを 1 本足す**。
+    検証するのは**時間ではなく回数**（fetch 回数・id の読み出し回数）。時間は CI で揺れるが
+    回数は決定的。`PerfTrace.takeCounts()` で読める（`FaceStore.countedFetchOptional` が実例）。
+  - 形は「**規模を 4 倍にして、回数が比例して増えないこと**」。例:
+    `Packages/FaceCore/Tests/FaceCoreTests/ScaleRegressionTests.swift`。
+  - ⚠️ **fixture が本当にその規模になっているかを assert する**。最初に書いた版は埋め込みが
+    似すぎて全員が 1 クラスタに合流しており、N を増やしてもクラスタが増えず**素通ししていた**。
+  - ⚠️ 打ち切り上限を入れたなら、テストの規模は**その上限を跨ぐ**こと。下回る範囲だけで測ると
+    上限が効いているのか元から少ないのか区別できない。
 - **性能設計の既定原則（重い処理を書く/直すときは必ず通す）**: 遅さの相談を受けたら、**まず 1 単位あたりの内訳を実測**（I/O・通信・推論・DB のどれが支配的か）してから手を入れる。そのうえで以下を**言われる前に**適用する。
   1. **I/O と計算は重ねる**（最重要）。通信・ディスク読み・デコードと、推論・計算が交互に来る逐次ループは、待ち時間がまるごと無駄になる。**次の単位の取得を、現在の単位の処理中に始める**（1 バッチ先読み）。ANE ゲートは推論だけを直列化し通信は縛らないので、通信は推論の裏に完全に隠せる（ADR-83 の実例＝クラウド解析の 85〜90% が DL 待ちだった）。
   2. **往復はまとめる**。1 件ずつの API 呼び出しはバッチ API の利点を消す（Dropbox サムネは 25 枚/リクエスト・並列）。ループの中で単発リクエストを見たら疑う。

@@ -74,7 +74,7 @@ actor FaceStore {
     /// ユーザー修正から校正したしきい値（サンプル不足なら既定 0.45）。
     func calibratedThreshold() -> Float {
         if let cached = thresholdCache { return cached }
-        let rows = (try? modelContext.fetch(FetchDescriptor<FaceCorrection>())) ?? []
+        let rows = (countedFetchOptional(FetchDescriptor<FaceCorrection>())) ?? []
         // 確度で重み付けする（ADR-68 追補6）。列追加前の行は nil ＝ 1.0 として扱う。
         var positive: [(Float, Double)] = []
         var negative: [(Float, Double)] = []
@@ -106,7 +106,7 @@ actor FaceStore {
         let cid = clusterID
         var d = FetchDescriptor<PersonCluster>(predicate: #Predicate { $0.clusterID == cid })
         d.fetchLimit = 1
-        return try? modelContext.fetch(d).first
+        return countedFetchOptional(d)?.first
     }
 
     /// テスト用: クラスタ内の faceID 一覧。
@@ -120,11 +120,27 @@ actor FaceStore {
     }
 
     func allClusters() -> [PersonCluster] {
-        (try? modelContext.fetch(FetchDescriptor<PersonCluster>())) ?? []
+        (countedFetchOptional(FetchDescriptor<PersonCluster>())) ?? []
     }
 
     /// 代表顔の自動選択スコア: 品質を軸に、笑顔（+0.3）と顔の大きさ（bw・最大+0.2）で加点。
     /// ユーザーが代表を指定済み（coverFaceID）の場合は呼ばれない。
+    /// すべての fetch はここを通す（**発行回数を数える**＝規模退行テストの土台・ADR-119）。
+    ///
+    /// ⚠️ 実機で繰り返した性能バグは、どれも「1 回ぶんに見える呼び出しが、実はライブラリ規模に
+    /// 比例していた」形だった（クラスタごとに 1 本引く → 1,316 回、対ごとに全記録を舐める…）。
+    /// 回数が数えられれば、**規模を変えても増えないこと**をテストで固定できる。
+    /// 時間ではなく回数を見るので CI で揺れない。
+    /// 境界の顔を探すときに走査するクラスタ数の上限。
+    /// 並びは「命名済み優先 → 大きい順」なので、先頭から見れば質問の価値は保てる。
+    /// 上限が無いと、境界顔が出ないライブラリでは全クラスタを 1 件ずつ引くことになる。
+    static let boundaryScanLimit = 60
+
+    func countedFetchOptional<T: PersistentModel>(_ descriptor: FetchDescriptor<T>) -> [T]? {
+        PerfTrace.count("faceStore.fetch")
+        return try? modelContext.fetch(descriptor)
+    }
+
     static func bestCoverFace(_ faces: [DetectedFace]) -> DetectedFace? {
         faces.max { coverScore($0) < coverScore($1) }
     }
@@ -137,7 +153,7 @@ actor FaceStore {
         let fid = faceID
         var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.faceID == fid })
         d.fetchLimit = 1
-        return try? modelContext.fetch(d).first
+        return countedFetchOptional(d)?.first
     }
 
     /// レビュー候補の生成に要る列だけを持つ軽量な顔（@Model を持ち回らない）。
@@ -165,7 +181,7 @@ actor FaceStore {
         var d = FetchDescriptor<DetectedFace>()
         d.propertiesToFetch = [\.faceID, \.clusterID, \.refKey, \.bx, \.by, \.bw, \.bh,
                                \.quality, \.hasSmile]
-        let rows = (try? modelContext.fetch(d)) ?? []
+        let rows = (countedFetchOptional(d)) ?? []
         var out: [Int: [FaceDigest]] = [:]
         for row in rows where row.clusterID >= 0 {           // 未割り当て（-1）は対象外
             out[row.clusterID, default: []].append(FaceDigest(
@@ -183,7 +199,7 @@ actor FaceStore {
 
     func faces(inCluster clusterID: Int) -> [DetectedFace] {
         let cid = clusterID
-        return (try? modelContext.fetch(
+        return (countedFetchOptional(
             FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
     }
 
@@ -195,7 +211,7 @@ actor FaceStore {
         let cid = clusterID
         var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid })
         d.propertiesToFetch = [\.refKey]
-        return Set(((try? modelContext.fetch(d)) ?? []).map(\.refKey))
+        return Set(((countedFetchOptional(d)) ?? []).map(\.refKey))
     }
 
     /// クラスタの代表顔を取る（ADR-88）。`coverFaceID` があればその 1 件だけを引き、
@@ -207,12 +223,12 @@ actor FaceStore {
             predicate: #Predicate { $0.clusterID == cid },
             sortBy: [SortDescriptor(\.quality, order: .reverse)])
         d.fetchLimit = 16   // 品質上位だけ見れば代表は決まる（笑顔・大きさの微調整のみ）
-        return Self.bestCoverFace((try? modelContext.fetch(d)) ?? [])
+        return Self.bestCoverFace((countedFetchOptional(d)) ?? [])
     }
 
     func faces(inPhoto refKey: String) -> [DetectedFace] {
         let key = refKey
-        return (try? modelContext.fetch(
+        return (countedFetchOptional(
             FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.refKey == key }))) ?? []
     }
 
@@ -220,7 +236,7 @@ actor FaceStore {
 
     /// スキャン済みの refKey 集合（tagger が候補からメモリ差分を取るため一度だけ取得する）。
     func scannedRefKeys() -> Set<String> {
-        let markers = (try? modelContext.fetch(FetchDescriptor<ScannedPhoto>())) ?? []
+        let markers = (countedFetchOptional(FetchDescriptor<ScannedPhoto>())) ?? []
         return Set(markers.map(\.refKey))
     }
 
@@ -228,7 +244,7 @@ actor FaceStore {
 
     /// 全スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」判定に使う。
     func scannedFaceCounts() -> [String: Int] {
-        let markers = (try? modelContext.fetch(FetchDescriptor<ScannedPhoto>())) ?? []
+        let markers = (countedFetchOptional(FetchDescriptor<ScannedPhoto>())) ?? []
         var out: [String: Int] = [:]
         out.reserveCapacity(markers.count)
         for m in markers { out[m.refKey] = m.faceCount }
@@ -242,7 +258,7 @@ actor FaceStore {
         let key = refKey
         var d = FetchDescriptor<ScannedPhoto>(predicate: #Predicate { $0.refKey == key })
         d.fetchLimit = 1
-        return (try? modelContext.fetch(d))?.first?.faceCount
+        return (countedFetchOptional(d))?.first?.faceCount
     }
 
     // MARK: - 記録＋逐次クラスタリング
@@ -272,7 +288,7 @@ actor FaceStore {
         let key = refKey
         var marker = FetchDescriptor<ScannedPhoto>(predicate: #Predicate { $0.refKey == key })
         marker.fetchLimit = 1
-        if (try? modelContext.fetch(marker).first) != nil { return }
+        if (countedFetchOptional(marker)?.first) != nil { return }
 
         modelContext.insert(ScannedPhoto(refKey: refKey, faceCount: faces.count))
 
@@ -348,7 +364,7 @@ actor FaceStore {
     /// クラスタごとのアンカー（確認済みの顔の正規化済み埋め込み・新しい順に最大 5）。
     /// B3 マルチプロトタイプ: 割り当ては「重心 or アンカーとの最大類似」になる。
     func anchorsByCluster(limitPerCluster: Int = 5) -> [Int: [[Float]]] {
-        let confirmed = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
+        let confirmed = (countedFetchOptional(FetchDescriptor<DetectedFace>(
             predicate: #Predicate { $0.confirmedAt != nil },
             sortBy: [SortDescriptor(\.confirmedAt, order: .reverse)]))) ?? []
         var out: [Int: [[Float]]] = [:]
@@ -368,7 +384,7 @@ actor FaceStore {
             predicate: #Predicate { $0.wrongEmbedding != nil },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         d.fetchLimit = Self.maxNegatives
-        let rows = (try? modelContext.fetch(d)) ?? []
+        let rows = (countedFetchOptional(d)) ?? []
         var pairs: [FaceClustering.NegativePair] = []
         for r in rows {
             // 別モデル世代の埋め込みは別空間＝照合不能（ADR-70 追補）。

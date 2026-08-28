@@ -49,7 +49,7 @@ extension FaceStore {
         }
 
         // 「別人」と記録済みの対（重心埋め込みで照合＝ID の揺れに強い）。
-        let notSameRows = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
+        let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
             row -> ([Float], [Float])? in
             guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
@@ -64,7 +64,8 @@ extension FaceStore {
 
         // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
         // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。
-        var items: [FaceReviewItem] = auditSplitItems(minFaces: minFaces, limit: 5)
+        var items: [FaceReviewItem] = auditSplitItems(minFaces: minFaces, limit: 5,
+                                                     membersByCluster: membersByCluster)
             .filter { !excluding.contains($0.id) }
 
         // A1: 統合サジェスト（類似度の高い対から）。上限は設けない（帯域 [thr−0.10, 1.0]）:
@@ -102,7 +103,14 @@ extension FaceStore {
         let ordered = clusters.sorted {
             (($0.name?.isEmpty == false) ? 0 : 1, -$0.count) < (($1.name?.isEmpty == false) ? 0 : 1, -$1.count)
         }
-        for c in ordered {
+        // ⚠️ **走査するクラスタ数に上限を置く**（規模退行テストが検出）。
+        // この段は「残り枠を境界の顔で埋める」もので、埋まれば `items.count < limit` で止まる。
+        // ところが**埋まらないとき**（クラスタがどれも綺麗で境界顔が出ないとき）は
+        // 全クラスタを 1 件ずつ引き続ける——人物 1,316 人ならそのまま 1,316 回になる。
+        // 並びは「命名済み優先 → 大きい順」なので、先頭から一定数を見れば質問の価値は保てる。
+        // ⚠️ これは**出題される候補が変わる**変更。クラスタリングの精度そのものには影響しないが、
+        //    質問の選ばれ方は変わる（`face-accuracy.md` の対象は分類精度でありここではない）。
+        for c in ordered.prefix(Self.boundaryScanLimit) {
             guard items.count < limit, let cen = centroid[c.clusterID] else { continue }
             var boundary: [(face: DetectedFace, sim: Float)] = []
             // 品質フロア未満の顔は出題しない（ADR-53 追補）。境界レビューは「最も疑わしい顔」を
@@ -145,9 +153,15 @@ extension FaceStore {
     /// 統合はユーザー確認を経ているが、**確認した時点では材料が足りない**ことがある
     /// （兄弟は数枚では区別できない）。写真が増えて分布が見えてきたら機械側から拾い直す。
     /// ⚠️ **自動分割はしない**（成長データでは誤検出 8% が残るため）。必ずユーザーに尋ねる。
-    func auditSplitItems(minFaces: Int, limit: Int = 10) -> [FaceReviewItem] {
+    func auditSplitItems(minFaces: Int, limit: Int = 10,
+                         membersByCluster: [Int: [FaceDigest]]? = nil) -> [FaceReviewItem] {
+        // ⚠️ クラスタごとに実体を引かない（規模退行テストが検出）。件数の足切りは
+        // **1 回の射影**で得た束ねで済ませ、埋め込みが要る本体だけを引く（上限は `limit` 件）。
+        // 以前は足切りで捨てるクラスタまで実体を引いており、人物 4 倍で fetch が
+        // 31 → 103 回に増えていた（＝人物が増えるほどレビュー画面が遅くなる）。
+        let memberDigests = membersByCluster ?? faceDigestsByCluster()
         // 「同じ人だ」と答え済みの対は二度と尋ねない。
-        let confirmedSame = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
+        let confirmedSame = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "sameGroup" }))) ?? []).compactMap {
             row -> ([Float], [Float])? in
             guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
@@ -172,8 +186,10 @@ extension FaceStore {
             .sorted { $0.count > $1.count }
         for c in targets {
             guard items.count < limit else { break }
-            let members = faces(inCluster: c.clusterID)
-            guard members.count >= tuning.auditConfig.minMembers else { continue }
+            // 足切りは束ね（射影）で判定する＝ここでは引かない。
+            guard (memberDigests[c.clusterID]?.count ?? 0) >= tuning.auditConfig.minMembers
+            else { continue }
+            let members = faces(inCluster: c.clusterID)   // 埋め込みが要るのでここだけ実体
             var vectors: [[Float]] = []
             var keys: [String] = []
             var kept: [DetectedFace] = []
@@ -208,7 +224,7 @@ extension FaceStore {
     /// 実機ライブラリの品質を**正解ラベル無しで**測る（`FaceQualityReport` 参照）。
     /// Developer Options と診断ログから使う。O(クラスタ数²) の項があるので上限を設ける。
     func qualityReport(minFaces: Int, maxClustersForPairScan: Int = 1_500) -> FaceQualityReport {
-        let allFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
+        let allFaces = (countedFetchOptional(FetchDescriptor<DetectedFace>())) ?? []
         let clusters = allClusters()
         var report = FaceQualityReport()
         report.scannedPhotos = scannedCount()
@@ -234,7 +250,7 @@ extension FaceStore {
             && report.maturePeople < Self.rivalAwareSizeMarginMaxPeople
         report.corrections = (try? modelContext.fetchCount(FetchDescriptor<FaceCorrection>())) ?? 0
         // 顔が 1 つも見つからなかった写真（検出の取りこぼしの手がかり・保存済みデータから算出）。
-        report.photosWithNoFace = ((try? modelContext.fetch(FetchDescriptor<ScannedPhoto>())) ?? [])
+        report.photosWithNoFace = ((countedFetchOptional(FetchDescriptor<ScannedPhoto>())) ?? [])
             .filter { $0.faceCount == 0 }.count
 
         // 同一写真違反: (写真, クラスタ) ごとの顔数が 2 以上。割り当ては cannot-link で防ぐが、
@@ -337,7 +353,7 @@ extension FaceStore {
               let anchorFace = cover[anchor.clusterID] else { return nil }
 
         // 「別人」記録（A1 と同じ・重心埋め込みで照合）。
-        let notSameRows = ((try? modelContext.fetch(FetchDescriptor<FaceCorrection>(
+        let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
             row -> ([Float], [Float])? in
             guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）

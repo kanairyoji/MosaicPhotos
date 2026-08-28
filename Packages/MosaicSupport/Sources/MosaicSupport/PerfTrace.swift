@@ -201,6 +201,19 @@ public enum PerfTrace {
         state.addCount(key(), value: value)
     }
 
+    /// 集計済みカウンタを**取り出して**クリアする（テスト用）。
+    ///
+    /// ⚠️ これが規模退行テストの土台（ADR-119）。実機で繰り返した性能バグは、どれも
+    /// 「1 回ぶんに見える呼び出しが、実はライブラリ規模に比例していた」形だった。
+    /// **時間ではなく回数**を検証すれば、CI で揺れずに同じ形を捕まえられる——
+    /// 規模を 4 倍にしても発行回数が増えないこと、を assert する。
+    public static func takeCounts() -> [String: Int] {
+        state.drainCounters().mapValues(\.count)
+    }
+
+    /// 計測を有効/無効にする（テスト・Developer Options から）。
+    public static func setEnabledForTesting(_ value: Bool) { state.setEnabled(value) }
+
     /// 集計済みカウンタを 1 行にまとめてログし、クリアする。区切りの良い箇所（バッチ完了など）で呼ぶ。
     public static func flushCounters(_ context: String = "") {
         guard isEnabled else { return }
