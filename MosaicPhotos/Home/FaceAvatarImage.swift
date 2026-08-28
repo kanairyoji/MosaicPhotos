@@ -35,6 +35,19 @@ struct FaceAvatarImage: View {
         // 代表写真(cover)変更で box/refKey が変われば再読込される（キーに両方含む）。
         .task {
             image = await FaceAvatarCache.load(refKey: refKey, box: box, maxPixel: maxPixel)
+            guard image == nil else { return }
+            // ⚠️ **温めただけで終わりにしない**（実フィードバック）。クラウド写真のサムネが
+            // まだ手元に無いときは `loadFaceAvatar` が取得を予約して nil を返す。`.task` は
+            // 一度きりなので、そのままだと**人型アイコンのまま永久に変わらない**——セルが
+            // 作り直される（スクロールアウト→復帰）と出る、という報告はこれ。
+            // 取得を待つのではなく、**届いたか安く見に行く**（キャッシュ参照だけ）。
+            // 画面外になれば `.task` ごとキャンセルされるので、見えていないものは追わない。
+            for delay in FaceAvatarCache.retryDelays {
+                try? await Task.sleep(for: .seconds(delay))
+                if Task.isCancelled { return }
+                image = await FaceAvatarCache.load(refKey: refKey, box: box, maxPixel: maxPixel)
+                if image != nil { return }
+            }
         }
         // ⚠️ キーが変わったら **@State ごと作り直す**。`.task(id:)` だけだと SwiftUI は
         // 同じビューを再利用するため、次の読み込みが終わるまで `image` に**前の顔が残る**。
@@ -66,6 +79,14 @@ enum FaceAvatarCache {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
+
+    /// 未取得のときに見に行き直す間隔（秒）。
+    ///
+    /// クラウドのサムネは低優先で温めるため、届くまでに数秒かかる。**間隔を広げながら**
+    /// 数回だけ見に行く（合計約 20 秒）。取得を待つのではなくキャッシュを覗くだけなので安い。
+    /// 打ち切るのは、届かないものを無限に追うと画面外の分まで抱え続けるため
+    /// （届かない＝回線ポリシーで止まっている等。次に表示されたときに改めて取りに行く）。
+    static let retryDelays: [Double] = [0.4, 0.8, 1.5, 2.5, 4, 5, 6]
 
     static func key(refKey: String?, box: CGRect?, maxPixel: CGFloat) -> String {
         let b = box.map { String(format: "%.4f,%.4f,%.4f,%.4f", $0.minX, $0.minY, $0.width, $0.height) } ?? "-"
