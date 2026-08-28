@@ -2229,3 +2229,35 @@
 
 常駐経路の確保を減らす手当てとして、バックアップ重複判定の索引を射影クエリにした
 （`BackupStore.backupCopyIndex`）。起動時に必ず通る経路で全カラムを materialize していた。
+
+## 写真を開くたびに人物数ぶんの fetch（規模退行テストの初検出）
+
+- 症状（未報告・**テストが先に見つけた**）: フル画面で写真を 1 枚開くたびに、人物クラスタ数に
+  比例した SwiftData fetch が走る。実測で人物 40 人＝42 回 / 160 人＝162 回。
+  顔スキャンが進んで人物が増えるほど、写真を開くのが遅くなる。
+- 原因: `personNameByCluster`（情報パネルの「人物」表示＝`peopleNames(refKey:)` の下請け）が
+  `for c in cs { for f in faces(inCluster: c.clusterID) } }` でクラスタごとに引いていた。
+  必要なのは「グループごとの写真数（`minFaces` の足切り）」だけ。
+- 対処: 射影クエリ 1 回で clusterID → refKey を取り、束ねはメモリで行う
+  （`memberRefKeysByCluster()`）。
+- **見つかり方**: ADR-119 の規模退行テストを別経路に横展開したら落ちた。実機ログにも
+  ユーザー報告にも出ていない段階で捕まえられた——このテストの目的そのもの。
+- 関連: `FaceStore+People.personNameByCluster` / `FaceStore.memberRefKeysByCluster` /
+  テスト `ScaleRegressionTests`「写真の人物名の解決は人物数に比例して fetch しない」。
+
+### 全経路の棚卸し（ループ内 fetch）
+
+同じ形が他に無いか、`Packages/**/Sources` を機械的に走査した（`for` の本体で fetch 系を呼ぶ
+箇所＝17 件）。分類の基準は「**規模に比例するか**」と「**利用者が待つ経路か**」の 2 つ。
+
+| 状態 | 箇所 | 判断 |
+|---|---|---|
+| **修正済み** | `reviewItems` / `batchReviewItem` / `peopleClusters` / `personNameByCluster` / `auditSplitItems` | 人物数に比例していた。射影 1 回へ。規模テストで固定 |
+| **上限を追加** | `reviewItems` の A2 境界走査 | 候補が埋まらないと全クラスタを引き続けていた。先頭 60 に打ち切り |
+| 有界（バッチ） | `upsertImportedEmbeddings` / `recordTags` / `applyPerception` / `upsertOffloads` / `prune` | ループ長＝バッチ（8〜16 件・`removed` 差分）。往復はするが規模に比例しない |
+| 有界（1 人物） | `memberRefKeys` / `cleanupSubgroups` | ループ長＝束ねたクラスタ（数個） |
+| 規模に比例するが**背景** | `rebuildClusters` / `namedClusterEntries` / `reapplyNames` | 夜間の再クラスタのみ。利用者は待たない（ModelActor は占有する＝残課題） |
+| 規模に比例するが**共有時のみ** | `embeddingsHalf` / `adoptImportedEmbeddings` | 共有セット（実測 6,073 件）・ページ（512 件）に比例。背景処理・未対処 |
+
+⚠️ 「有界（バッチ）」は**バッチ長に比例して往復する**点は変わらない。バッチが大きくなる変更を
+入れるときは、ここが効いてくる（`unembeddedRefKeys(limit: 512)` は既に 512 件ぶん往復する）。

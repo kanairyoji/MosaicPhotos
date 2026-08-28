@@ -203,6 +203,20 @@ actor FaceStore {
             FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID == cid }))) ?? []
     }
 
+    /// **全クラスタ**のメンバー写真（refKey）を 1 回の射影クエリで取り、クラスタごとに束ねる。
+    ///
+    /// ⚠️ クラスタごとに `memberRefKeys(inCluster:)` を呼ぶ形は、人物が増えるほど往復が増える
+    /// （ADR-119 の規模退行テストが検出）。全クラスタを走査する処理はこちらを使う。
+    func memberRefKeysByCluster() -> [Int: Set<String>] {
+        var d = FetchDescriptor<DetectedFace>()
+        d.propertiesToFetch = [\.clusterID, \.refKey]
+        var out: [Int: Set<String>] = [:]
+        for row in countedFetchOptional(d) ?? [] where row.clusterID >= 0 {
+            out[row.clusterID, default: []].insert(row.refKey)
+        }
+        return out
+    }
+
     /// クラスタのメンバー写真（refKey）だけを取る**射影クエリ**（ADR-88）。
     /// 共起判定に必要なのは refKey の集合だけなのに、`faces(inCluster:)` で全カラムを
     /// materialize すると、レビュー候補の生成（全クラスタを走査）で数万件の @Model が

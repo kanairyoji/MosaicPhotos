@@ -255,10 +255,16 @@ extension FaceStore {
             let key = c.personGroupID.map { "g\($0)" } ?? "c\(c.clusterID)"
             groups[key, default: []].append(c)
         }
+        // ⚠️ クラスタごとに引かない（規模退行テストが検出）。ここは
+        // `peopleNames(refKey:)` から**写真を開くたび**に呼ばれるので、人物数に比例させると
+        // 「顔スキャンが進むほど写真が開かなくなる」——実測で 40 人 42 回 / 160 人 162 回だった。
+        // 必要なのは「グループごとの写真数（minFaces の足切り）」だけなので、
+        // 射影クエリ 1 回で clusterID → refKey を取り、束ねはメモリで行う。
+        let refKeysByCluster = memberRefKeysByCluster()
         var out: [Int: String] = [:]
         for (_, cs) in groups {
             var seen = Set<String>()
-            for c in cs { for f in faces(inCluster: c.clusterID) { seen.insert(f.refKey) } }
+            for c in cs { seen.formUnion(refKeysByCluster[c.clusterID] ?? []) }
             guard seen.count >= minFaces else { continue }
             let primary = cs.first { $0.name?.isEmpty == false }
                 ?? cs.max { $0.count < $1.count } ?? cs[0]

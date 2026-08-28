@@ -118,4 +118,28 @@ struct ScaleRegressionTests {
         #expect(largeCount <= smallCount * 2,
                 "人物 4 倍で fetch が \(smallCount) → \(largeCount) 回に増えた")
     }
+
+    /// フル画面で写真を**開くたび**に呼ばれる経路（情報パネルの「人物」表示）。
+    ///
+    /// ⚠️ ここが人物数に比例すると、**写真を 1 枚開くだけで**クラスタ数ぶんの fetch が走る。
+    /// 顔スキャンが進んで人物が増えるほど、写真を開くのが遅くなる。
+    @Test("写真の人物名の解決は人物数に比例して fetch しない")
+    func peopleNamesDoesNotScaleWithPeople() async {
+        let small = await makeStore(people: 40)
+        let large = await makeStore(people: 160)
+
+        let smallPeople = await clusterCount(small), largePeople = await clusterCount(large)
+        #expect(largePeople >= smallPeople * 3,
+                "fixture がクラスタに分かれていない（\(smallPeople) → \(largePeople)）")
+
+        let smallCount = await fetchCount { _ = await small.peopleNames(refKey: "L-p0-0", minFaces: 1) }
+        let largeCount = await fetchCount { _ = await large.peopleNames(refKey: "L-p0-0", minFaces: 1) }
+
+        #expect(smallCount > 0)
+        #expect(largeCount <= smallCount * 2,
+                """
+                人物 4 倍で fetch が \(smallCount) → \(largeCount) 回に増えた。
+                写真を 1 枚開くたびにこれが走る（情報パネルの人物表示）。
+                """)
+    }
 }
