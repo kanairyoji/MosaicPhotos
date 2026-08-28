@@ -142,4 +142,41 @@ struct ScaleRegressionTests {
                 写真を 1 枚開くたびにこれが走る（情報パネルの人物表示）。
                 """)
     }
+
+    /// 夜間の再クラスタ。**利用者は待たないが、単一の `@ModelActor` を占有する**——
+    /// 走っている間はピープル画面・写真の人物名がその完了まで待たされる。
+    /// 占有時間そのものは処理の性質上ゼロにできないが、**無駄な往復は消しておく**。
+    @Test("夜間の再クラスタは人物数に比例して fetch しない")
+    func rebuildDoesNotScaleWithPeople() async {
+        let small = await makeStore(people: 40)
+        let large = await makeStore(people: 160)
+
+        let smallPeople = await clusterCount(small), largePeople = await clusterCount(large)
+        #expect(largePeople >= smallPeople * 3,
+                "fixture がクラスタに分かれていない（\(smallPeople) → \(largePeople)）")
+
+        let smallCount = await fetchCount { _ = await small.rebuildClusters() }
+        let largeCount = await fetchCount { _ = await large.rebuildClusters() }
+
+        #expect(smallCount > 0)
+        #expect(largeCount <= smallCount * 2,
+                """
+                人物 4 倍で fetch が \(smallCount) → \(largeCount) 回に増えた。
+                全顔は既にメモリにあるので、クラスタごとに引き直さないこと。
+                """)
+    }
+
+    /// 命名の持ち越し（版上げ再スキャンの前に取るスナップショット）。
+    @Test("命名スナップショットは人物数に比例して fetch しない")
+    func namedEntriesDoNotScaleWithPeople() async {
+        let small = await makeStore(people: 40)
+        let large = await makeStore(people: 160)
+
+        let smallCount = await fetchCount { _ = await small.namedClusterEntries() }
+        let largeCount = await fetchCount { _ = await large.namedClusterEntries() }
+
+        #expect(smallCount > 0)
+        #expect(largeCount <= smallCount * 2,
+                "人物 4 倍で fetch が \(smallCount) → \(largeCount) 回に増えた")
+    }
 }

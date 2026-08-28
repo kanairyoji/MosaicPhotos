@@ -427,8 +427,13 @@ actor FaceStore {
     /// `coverFaceID` は**ユーザーが代表写真を選んだときだけ** `setCover` が書く。未設定（nil）の
     /// 代表は読み出し時（`peopleClusters`）に「お気に入り優先→先頭」で自動選択する。
     func persist(_ clustering: FaceClustering) {
+        // ⚠️ クラスタごとに引かない（ADR-119）。既存行は **1 回**取って辞書にする。
+        // ここは再クラスタの書き戻しで、クラスタ数ぶんの往復がそのまま
+        // `@ModelActor` の占有時間になる（占有中はピープル画面・写真の人物名が待たされる）。
+        var existingByID: [Int: PersonCluster] = [:]
+        for row in allClusters() { existingByID[row.clusterID] = row }
         for c in clustering.clusters {
-            if let existing = cluster(c.id) {
+            if let existing = existingByID[c.id] {
                 existing.sum = ClipMath.encodeHalf(c.sum)
                 existing.count = c.count
             } else {

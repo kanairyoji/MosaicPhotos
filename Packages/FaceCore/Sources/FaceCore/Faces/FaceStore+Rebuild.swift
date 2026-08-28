@@ -25,6 +25,14 @@ extension FaceStore {
         let negatives = loadNegatives()
         let existing = allClusters()
         let maxExistingID = existing.map(\.clusterID).max() ?? -1
+        // ⚠️ **既に上で全顔を読んでいる**（`allFaces`）。クラスタごとに引き直すと、
+        // 人物数ぶんの往復が丸ごと無駄になる（1,316 人なら 1,316 回）。しかも再クラスタは
+        // 単一の `@ModelActor` を占有するので、その間はピープル画面・写真の人物名が待たされる。
+        // 束ね直しはメモリで行う（挙動は変わらない・ADR-119）。
+        var facesByCluster: [Int: [DetectedFace]] = [:]
+        for f in allFaces where f.clusterID >= 0 {
+            facesByCluster[f.clusterID, default: []].append(f)
+        }
 
         // 1) 種クラスタ（命名済み or 確認顔あり）: アンカーだけから重心を作り直す。
         //    アンカーが無い（名前のみ）の種は現重心を 1 票として方向を維持する。
@@ -32,7 +40,7 @@ extension FaceStore {
         var seedIDs = Set<Int>()
         var confirmedFaceIDs = Set<String>()
         for c in existing {
-            let members = faces(inCluster: c.clusterID)
+            let members = facesByCluster[c.clusterID] ?? []
             let anchors = members.filter { $0.confirmedAt != nil }
             let isSeed = (c.name?.isEmpty == false) || !anchors.isEmpty
             guard isSeed else { continue }
@@ -142,13 +150,11 @@ extension FaceStore {
     /// メンバー refKey は照合に十分な数（既定 500）に丸める。
     func namedClusterEntries(maxMembers: Int = 500) -> [(name: String, memberRefKeys: [String])] {
         var out: [(name: String, memberRefKeys: [String])] = []
+        // ⚠️ クラスタごとに引かない（ADR-119）。必要なのは refKey だけなので射影 1 回で取る。
+        let refKeysByCluster = memberRefKeysByCluster()
         for c in allClusters() {
             guard let name = c.name, !name.isEmpty else { continue }
-            var seen = Set<String>()
-            var keys: [String] = []
-            for f in faces(inCluster: c.clusterID) where seen.insert(f.refKey).inserted {
-                keys.append(f.refKey)
-            }
+            let keys = Array(refKeysByCluster[c.clusterID] ?? [])
             out.append((name, Array(keys.prefix(maxMembers))))
         }
         return out

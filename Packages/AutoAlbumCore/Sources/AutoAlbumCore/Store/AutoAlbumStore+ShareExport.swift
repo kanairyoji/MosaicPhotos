@@ -8,18 +8,33 @@ import SwiftData
 extension AutoAlbumStore {
 
     /// refKey → CLIP 埋め込み（Float16 パック済み）。存在するものだけ返す。
+    ///
+    /// ⚠️ **1 回でまとめて引く**（ADR-119）。以前は refKey ごとに `fetchLimit = 1` で引いており、
+    /// 共有の反映 1 回（最大 500 枚）につき 500 往復していた。同じ引数で呼ばれる兄弟
+    /// （`TagStore` の `tags` / `ocrTexts` / `humanCounts` / `aesthetics`）は最初から
+    /// `set.contains` の 1 回なので、**ここだけが揃っていなかった**。
+    /// 変数上限の心当たりがあれば `fetchChunk` を小さくする（兄弟と同じリスク特性）。
     func embeddingsHalf(forRefKeys keys: [String]) -> [String: Data] {
         guard !keys.isEmpty else { return [:] }
-        let wanted = Set(keys)
         var out: [String: Data] = [:]
-        for key in wanted {
-            var d = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == key })
-            d.fetchLimit = 1
-            if let record = try? modelContext.fetch(d).first {
-                out[key] = record.vector
-            }
+        for chunk in Self.refKeyChunks(keys) {
+            let set = Set(chunk)
+            let records = (try? modelContext.fetch(FetchDescriptor<PhotoEmbedding>(
+                predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+            for record in records { out[record.refKey] = record.vector }
         }
         return out
+    }
+
+    /// まとめ引きの分割単位。1 クエリに渡す条件が多すぎると SQLite の変数上限に当たるため、
+    /// 一定数で切る（切っても往復は「件数 ÷ この値」で、件数に比例した往復にはならない）。
+    static let fetchChunk = 400
+
+    static func refKeyChunks(_ keys: [String]) -> [[String]] {
+        let unique = Array(Set(keys))
+        return stride(from: 0, to: unique.count, by: fetchChunk).map {
+            Array(unique[$0..<min($0 + fetchChunk, unique.count)])
+        }
     }
 
     /// 取り込み: 埋め込みが無い refKey にだけ登録する。登録できた件数を返す。
@@ -57,16 +72,19 @@ extension AutoAlbumStore {
     /// （タガーはこれを除外して推論をスキップする）。
     func adoptImportedEmbeddings(refKeys: [String]) -> Set<String> {
         guard !refKeys.isEmpty else { return [] }
+        // ⚠️ ここも 1 枚ずつ引かない（上と同じ理由）。夜間タガーは 512 件のページで呼ぶので、
+        // 1 枚ずつだと 1 ページあたり最大 1,024 往復（埋め込み＋enrichment）になっていた。
         var adopted: Set<String> = []
-        for key in refKeys {
-            var embDesc = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == key })
-            embDesc.fetchLimit = 1
-            guard (try? modelContext.fetch(embDesc).first) != nil else { continue }
-            var enrDesc = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == key })
-            enrDesc.fetchLimit = 1
-            if let enrichment = try? modelContext.fetch(enrDesc).first {
+        for chunk in Self.refKeyChunks(refKeys) {
+            let set = Set(chunk)
+            let embedded = Set(((try? modelContext.fetch(FetchDescriptor<PhotoEmbedding>(
+                predicate: #Predicate { set.contains($0.refKey) }))) ?? []).map(\.refKey))
+            guard !embedded.isEmpty else { continue }
+            let enrichments = (try? modelContext.fetch(FetchDescriptor<PhotoEnrichment>(
+                predicate: #Predicate { set.contains($0.refKey) }))) ?? []
+            for enrichment in enrichments where embedded.contains(enrichment.refKey) {
                 enrichment.sceneTagged = true
-                adopted.insert(key)
+                adopted.insert(enrichment.refKey)
             }
         }
         if !adopted.isEmpty { try? modelContext.save() }
