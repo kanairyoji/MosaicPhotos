@@ -124,6 +124,21 @@ final class HomeStores {
         let shareImporter = SharedAnalysisImporter(dropboxStore: dropboxStore,
                                                    autoAlbumEngine: autoAlbumEngine,
                                                    peopleEngine: peopleEngine)
+        // バックアップコピーの二重表示を防ぐ（実機 diagnostics-57/58）。バックアップフォルダは
+        // オフロード写真のクラウド代替のため同期対象に入れているが、**端末に原本が有る写真まで
+        // 二重に出ていた**。台帳（パス → localIdentifier）を渡し、原本が有るものは隠す。
+        mergedStore.backupCopyIndexProvider = { [weak backupEngine] in
+            guard let store = await backupEngine?.sharedBackupStore() else { return [:] }
+            let records = await store.allRecordsLite()
+            // localIdentifier が無い記録（旧形式・取り込み由来）は突合できないので入れない
+            // ＝隠さない（対応が分からないものを隠すと写真が消えたように見える）。
+            let pairs = records.compactMap { record -> (String, String)? in
+                guard let localID = record.localIdentifier else { return nil }
+                return (record.dropboxPath.lowercased(), localID)
+            }
+            return Dictionary(pairs, uniquingKeysWith: { first, _ in first })
+        }
+
         Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,
                           backupEngine: backupEngine, albumScanner: albumScanner,

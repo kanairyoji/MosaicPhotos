@@ -41,13 +41,6 @@ public struct PhotoSourceLocation: Equatable, Sendable {
         self.kind = kind
         self.identifier = identifier
     }
-
-    /// クラウドのとき、パスの親フォルダ（「どのフォルダ由来か」が一目で分かるように）。
-    public var folder: String? {
-        guard kind == .cloud, let slash = identifier.lastIndex(of: "/") else { return nil }
-        let parent = String(identifier[..<slash])
-        return parent.isEmpty ? "/" : parent
-    }
 }
 
 public extension PhotoItem {

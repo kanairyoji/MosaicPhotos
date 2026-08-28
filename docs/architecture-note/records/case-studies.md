@@ -1985,3 +1985,28 @@
 - 残課題: グリッド側にも同型のスタックが出ている
   （`PhotoCollectionView.Coordinator.update` → `gridIdentitySignature` が全件の id を
   `LazyMapSequence` で舐める）。未対処。
+
+## バックアップコピーが「すべての写真」に二重に出る
+
+- 症状（実機 diagnostics-57/58）: 「すべての写真」に古い写真が大量に出るようになった。
+  フル画面の所在表示（前項で追加）で確認したところ、実体のパスは `/MosaicPhotos/…`＝
+  **この端末のバックアップフォルダ**だった。
+- 原因: バックアップフォルダは**意図的に** Dropbox の同期ルートに入っている（`RootView`）。
+  オフロード（端末から消した）写真の「クラウド側の代替」を、ソースフォルダ設定に関わらず
+  表示できるようにするため（ADR-40）。ところが `MergedPhotoStore` に**重複排除が無く**、
+  端末にまだ有る写真まで「端末の 1 枚」＋「クラウドの 1 枚」で二重に出ていた。
+  バックアップが古い写真を上げ進めるほど、古い写真が次々に現れる見え方になる。
+- 対処: バックアップコピーは**端末に原本が無いときだけ**出す（`BackupCopyHiding`）。
+  台帳（Dropbox パス小文字 → localIdentifier）を seam で受け取り、その localIdentifier が
+  端末の一覧に有るコピーを隠す。オフロード済みの写真はクラウドのコピーが唯一の実体なので
+  そのまま出る＝ADR-40 の代替表示は保たれる。
+  ⚠️ **対応が分からないものは隠さない**（台帳が空・localIdentifier を持たない旧記録）。
+  重複するより、隠して「無い」と思わせる方が取り返しがつかない。
+- 関連: `PhotosFeatureKit/BackupCopyHiding.swift`（新規・純ロジック）/ `MergedPhotoStore`
+  （`backupCopyIndexProvider` seam・`refreshBackupCopyIndex()`）/ `RootView`（結線）/
+  テスト `BackupCopyHidingTests`。
+- 教訓: 「クラウドにも実体がある」ことと「クラウドの実体を**見せる**」ことは別。
+  代替表示のために同期範囲へ入れたものは、**原本が生きている間は出さない**と決めておかないと、
+  ライブラリ全体が二重になる。
+- 残課題: 隠す判定は台帳が育つ速度に依存する。バックアップ直後は台帳に載るまでの間だけ
+  二重に見えることがある（`refreshBackupCopyIndex()` は起動時に 1 回）。

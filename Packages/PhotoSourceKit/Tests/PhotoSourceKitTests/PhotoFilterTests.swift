@@ -98,26 +98,18 @@ struct PhotoFilterTests {
 @Suite("写真の所在")
 struct PhotoSourceLocationTests {
 
-    @Test("クラウドは親フォルダを取り出せる")
-    func cloudFolderIsExtracted() {
-        let location = PhotoSourceLocation(kind: .cloud, identifier: "/MosaicShare/金居家/IMG_0001.JPG")
-        #expect(location.folder == "/MosaicShare/金居家",
-                "どのフォルダ由来かが一目で分からないと切り分けに使えない")
+    @Test("クラウドはフルパスをそのまま持つ")
+    func cloudKeepsFullPath() {
+        let location = PhotoSourceLocation(kind: .cloud, identifier: "/MosaicPhotos/IMG_0001.JPG")
+        #expect(location.kind == .cloud)
+        #expect(location.identifier == "/MosaicPhotos/IMG_0001.JPG",
+                "切り詰めると肝心の場所が読めない")
     }
 
-    @Test("ルート直下のファイルでも壊れない")
-    func rootLevelFile() {
-        #expect(PhotoSourceLocation(kind: .cloud, identifier: "/IMG_0001.JPG").folder == "/")
-    }
-
-    @Test("端末写真はフォルダを持たない")
-    func localHasNoFolder() {
-        #expect(PhotoSourceLocation(kind: .local, identifier: "ABC-123/L0/001").folder == nil)
-    }
-
-    @Test("区切りが無ければフォルダは無し")
-    func noSeparator() {
-        #expect(PhotoSourceLocation(kind: .cloud, identifier: "IMG_0001.JPG").folder == nil)
+    @Test("端末は localIdentifier をそのまま持つ")
+    func localKeepsIdentifier() {
+        #expect(PhotoSourceLocation(kind: .local, identifier: "ABC-123/L0/001").identifier
+                == "ABC-123/L0/001")
     }
 
     /// パスを持たないソース向けの既定実装。

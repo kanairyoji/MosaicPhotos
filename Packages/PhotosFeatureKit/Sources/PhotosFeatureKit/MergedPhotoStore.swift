@@ -27,6 +27,12 @@ public final class MergedPhotoStore {
     /// 非 nil の場合、Dropbox はこのパス集合のものだけを対象にする（場所アルバム等のフィルタ用）。
     /// ローカル側は注入された `localStore`（必要なら localIdentifiers で絞り込み済み）に従う。
     @ObservationIgnored private let cloudPathFilter: Set<String>?
+    /// バックアップ台帳の対応（Dropbox パス小文字 → localIdentifier）を返す seam。
+    /// 実体は `BackupKit`（このパッケージは BackupKit に依存しない）。アプリが結線する。
+    /// 未設定なら何も隠さない＝従来どおりの表示（重複するが、消えるよりよい）。
+    @ObservationIgnored public var backupCopyIndexProvider: (@Sendable () async -> [String: String])?
+    /// 直近に解決したバックアップ対応表（再構築のたびに台帳を引き直さないための控え）。
+    @ObservationIgnored private var backupCopyIndex: [String: String] = [:]
 
     /// 表示用の確定済み配列（描画パスは O(1) でこれを読むだけ）。
     /// merge + sort はメインアクタ外（Task.detached）で行い、完成品をここへ代入する。
@@ -88,10 +94,22 @@ public final class MergedPhotoStore {
 
     /// 両ストアの配列をスナップショットし、メインアクタ外で filter + map + sort して
     /// 完成した配列をメインで代入する（68k 件規模のソートで描画を固めないため）。
+    /// バックアップ台帳の対応表を取り直してから再構築する。
+    /// ⚠️ 台帳の引き直しは**再構築のたびにやらない**（初回同期中は 0.4 秒ごとに再構築が走る）。
+    /// 端末写真・バックアップの増減は再構築の頻度に比べてずっと遅いので、ここで一度取れば足りる。
+    public func refreshBackupCopyIndex() async {
+        guard let provider = backupCopyIndexProvider else { return }
+        let index = await provider()
+        guard index != backupCopyIndex else { return }
+        backupCopyIndex = index
+        rebuildItems()
+    }
+
     func rebuildItems() {
         let localSnapshot = localStore.items                  // [LocalPhotoItem]（Sendable）
         let cloudSnapshot = dropboxStore.items                // [DropboxFileItem]（Sendable）
         let filter = cloudPathFilter
+        let backupIndex = backupCopyIndex
         rebuildTask?.cancel()
         // ⚠️ **世代**を採番する。`Task.isCancelled` の確認と代入の間にキャンセルされる競合は
         // 防げないため、確認だけでは新しい結果を古いスナップショットが上書きし得る
@@ -101,13 +119,22 @@ public final class MergedPhotoStore {
         rebuildTask = Task.detached(priority: .userInitiated) { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
             let local = localSnapshot.map(MergedPhotoItem.local)
-            let cloud = MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
-                .map(MergedPhotoItem.cloud)
+            // ⚠️ この端末のバックアップコピーは、**端末に原本が無いときだけ**出す
+            // （原本が有るのに出すと 1 枚の写真が二重に並ぶ・実機 diagnostics-57/58）。
+            let hidden = BackupCopyHiding.hiddenPaths(
+                backupPathToLocalID: backupIndex,
+                localIdentifiers: Set(localSnapshot.map(\.id)))
+            let visibleCloud = hidden.isEmpty
+                ? MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
+                : MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
+                    .filter { !hidden.contains($0.path.lowercased()) }
+            let cloud = visibleCloud.map(MergedPhotoItem.cloud)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
             let merged = (local + cloud).sortedByCaptureDateAscending()
             if Task.isCancelled { return }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) total=\(merged.count) sort=\(Int(ms))ms")
+            Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) "
+                             + "hiddenBackupCopies=\(hidden.count) total=\(merged.count) sort=\(Int(ms))ms")
             await self?.setItems(merged, generation: generation)
         }
     }
@@ -205,6 +232,9 @@ extension MergedPhotoStore: PhotoStore {
         if dropboxStore.items.isEmpty {
             await dropboxStore.loadItems()
         }
+        // バックアップ台帳の対応表を取ってから組み立てる（二重表示の抑止に要る）。
+        // 取れなくても表示は止めない＝従来どおり全部出す（重複するが、消えるよりよい）。
+        await refreshBackupCopyIndex()
         // 読み込み直後に一度ビルド（Observation が取りこぼしても確実に反映）。
         rebuildItems()
     }

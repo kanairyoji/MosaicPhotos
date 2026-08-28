@@ -23,9 +23,11 @@ struct PhotoInfoPanel: View {
     private var sourceSection: some View {
         if let sourceLocation {
             VStack(alignment: .leading, spacing: 6) {
+                // ⚠️ 副題にフォルダを出さない。下のフルパスに含まれており、
+                // **同じパスが 2 行に見える**（実装当初これをやって分かりにくかった）。
                 header(systemImage: sourceLocation.kind == .cloud ? "cloud" : "iphone",
                        title: sourceLocation.kind == .cloud ? L("Cloud") : L("On this device"),
-                       subtitle: sourceLocation.folder)
+                       subtitle: nil)
                 // パス/識別子は折り返して**全部**見せる（切ると肝心の所が読めない）。
                 Text(sourceLocation.identifier)
                     .font(.caption.monospaced())
