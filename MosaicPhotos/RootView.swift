@@ -129,14 +129,9 @@ final class HomeStores {
         // 二重に出ていた**。台帳（パス → localIdentifier）を渡し、原本が有るものは隠す。
         mergedStore.backupCopyIndexProvider = { [weak backupEngine] in
             guard let store = await backupEngine?.sharedBackupStore() else { return [:] }
-            let records = await store.allRecordsLite()
-            // localIdentifier が無い記録（旧形式・取り込み由来）は突合できないので入れない
-            // ＝隠さない（対応が分からないものを隠すと写真が消えたように見える）。
-            let pairs = records.compactMap { record -> (String, String)? in
-                guard let localID = record.localIdentifier else { return nil }
-                return (record.dropboxPath.lowercased(), localID)
-            }
-            return Dictionary(pairs, uniquingKeysWith: { first, _ in first })
+            // ⚠️ 全カラムを取らない（射影クエリ）。重複判定に要るのは 2 列だけで、
+            // 起動時に全記録を materialize するとメモリの山になる。
+            return await store.backupCopyIndex()
         }
 
         Diagnostics.mark("build: done")

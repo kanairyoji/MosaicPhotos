@@ -483,3 +483,53 @@ struct PendingMetadataDrainTests {
         #expect(!store.load().isEmpty, "送信に失敗したのにキューから消えた（欠落が永久化する）")
     }
 }
+
+// MARK: - 重複判定用の射影（常駐経路の確保を最小にする）
+
+/// ⚠️ 実機でメモリ 1GB 超のクラッシュを経験している。常駐経路（起動時に必ず通る）の確保は
+/// 最小にする。重複判定に要るのは 2 列だけなので、全カラムを materialize しない。
+@Suite("バックアップ重複判定の索引")
+@MainActor
+struct BackupCopyIndexTests {
+
+    private func store() -> BackupStore {
+        BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+    }
+
+    @Test("パス（小文字）から localIdentifier を引ける")
+    func mapsPathToLocalIdentifier() async {
+        let store = store()
+        await store.upsertRecord(dropboxPath: "/MosaicPhotos/IMG_1.jpg", localIdentifier: "L-1",
+                                 filename: "IMG_1.jpg", creationDate: nil, contentHash: "h1",
+                                 people: [], albums: [], isFavorite: false)
+        let index = await store.backupCopyIndex()
+        #expect(index["/mosaicphotos/img_1.jpg"] == "L-1", "パスの大小で引けないと重複を隠せない")
+    }
+
+    /// 対応が分からないものを隠すと、写真が消えたように見える（取り返しがつかない）。
+    @Test("localIdentifier が無い記録は入れない")
+    func skipsRecordsWithoutLocalIdentifier() async {
+        let store = store()
+        await store.upsertRecord(dropboxPath: "/MosaicPhotos/IMG_2.jpg", localIdentifier: nil,
+                                 filename: "IMG_2.jpg", creationDate: nil, contentHash: "h2",
+                                 people: [], albums: [], isFavorite: false)
+        #expect(await store.backupCopyIndex().isEmpty)
+    }
+
+    @Test("記録が無ければ空")
+    func emptyStore() async {
+        #expect(await store().backupCopyIndex().isEmpty)
+    }
+
+    @Test("全記録ぶん引ける")
+    func coversAllRecords() async {
+        let store = store()
+        for i in 0..<50 {
+            await store.upsertRecord(dropboxPath: "/MosaicPhotos/IMG_\(i).jpg",
+                                     localIdentifier: "L-\(i)", filename: "IMG_\(i).jpg",
+                                     creationDate: nil, contentHash: "h\(i)",
+                                     people: [], albums: [], isFavorite: false)
+        }
+        #expect(await store.backupCopyIndex().count == 50)
+    }
+}

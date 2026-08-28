@@ -88,6 +88,25 @@ public actor BackupStore {
         }
     }
 
+    /// 二重表示の判定に要る **2 列だけ**の射影（Dropbox パス小文字 → localIdentifier）。
+    ///
+    /// ⚠️ `allRecordsLite()` は全カラム（ファイル名・hash・アルバム・日付…）を materialize する。
+    /// 重複判定に要るのは 2 列だけなので、起動時にそれを全件立ち上げるのは無駄な山になる
+    /// （メモリの実測で 1GB 級のクラッシュを経験しているので、常駐経路の確保は最小にする）。
+    public func backupCopyIndex() -> [String: String] {
+        var d = FetchDescriptor<BackupAssetRecord>()
+        d.propertiesToFetch = [\.dropboxPath, \.localIdentifier]
+        let rows = (try? modelContext.fetch(d)) ?? []
+        var out: [String: String] = [:]
+        out.reserveCapacity(rows.count)
+        for row in rows {
+            // localIdentifier が無い記録（旧形式・取り込み由来）は突合できない＝隠さない。
+            guard let localID = row.localIdentifier else { continue }
+            out[row.dropboxPath.lowercased()] = localID
+        }
+        return out
+    }
+
     /// 全記録（Sendable 値・撮影日昇順）。
     public func allRecordsLite() -> [BackupRecordLite] {
         let records = (try? modelContext.fetch(FetchDescriptor<BackupAssetRecord>(
