@@ -158,7 +158,23 @@ public final class BackupEngine {
     /// バックアップの実保存先（端末フォルダ・ADR-41）: `<root>/<表示名>-<短ID>`。
     /// 家族で 1 アカウントを共有しても、ファイルも `.mosaic` メタデータも端末ごとに分離される。
     public static func deviceBackupRoot(for rootFolder: String) -> String {
-        rootFolder + "/" + BackupDeviceIdentity.currentFolderName()
+        deviceBackupRoot(for: rootFolder, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
+
+    /// 端末フォルダを 1 段だけ足す（純ロジック・テスト対象）。
+    ///
+    /// ⚠️ **冪等にする**。この関数の結果が設定へ書き戻ったり、既に端末フォルダ配下のパスを
+    /// 渡されたりすると `/Root/iPhone-XXXX/iPhone-XXXX/…` と二重になり、**同じ写真が
+    /// 別パスへ再アップロードされる**（台帳には無いパスなので「未バックアップ」と判定される）。
+    /// 実機で二重パスらしき報告があり、確定はできなかったが構造上あり得るので塞ぐ。
+    nonisolated static func deviceBackupRoot(for rootFolder: String,
+                                             deviceFolder: String) -> String {
+        let root = backupNormalizedPath(rootFolder)
+        guard !deviceFolder.isEmpty else { return root }
+        // 既に同じ端末フォルダで終わっているなら足さない（大小は Dropbox に合わせて無視）。
+        let suffix = "/" + deviceFolder
+        if root.lowercased().hasSuffix(suffix.lowercased()) { return root }
+        return root + suffix
     }
 
     /// 実行世代（キャンセル・再実行のたびに進む）。旧タスクの更新を弾くために使う。
@@ -173,6 +189,9 @@ public final class BackupEngine {
         //（既存のフラットな旧ファイルは移動しない＝記録はフルパス基準なのでそのまま整合）。
         let deviceRoot = Self.deviceBackupRoot(for: folder)
         addLog("Device folder: \(BackupDeviceIdentity.currentFolderName())")
+        // ⚠️ **保存先を診断ログに残す**。アプリ内ログにしか出していなかったため、
+        // 「どのパスへ上げているのか」を共有ログから確認できなかった（実機の二重パス報告）。
+        Diagnostics.mark("backup: root=\(deviceRoot) (setting=\(folder))")
         // 実行世代を採番する。キャンセル直後に再実行しても、旧タスクの後始末や進捗更新が
         // 新しい実行を壊さないようにするため（レビュー指摘）。
         runGeneration &+= 1

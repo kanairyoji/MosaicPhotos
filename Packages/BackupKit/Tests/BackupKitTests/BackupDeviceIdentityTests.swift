@@ -102,3 +102,51 @@ struct BackupDeviceIDStabilityTests {
             == BackupDeviceIdentity.currentFolderName())
     }
 }
+
+// MARK: - 端末フォルダの付け方（二重化の防止）
+
+/// ⚠️ 端末フォルダを二重に足すと `/Root/iPhone-XXXX/iPhone-XXXX/…` になり、
+/// **同じ写真が別パスへ再アップロードされる**（台帳に無いパスなので未バックアップ扱い）。
+/// 一覧には旧パスと新パスの両方が並び、「古い写真が急に増えた」ように見える。
+@Suite("端末フォルダの付与")
+struct DeviceBackupRootTests {
+
+    @Test("ルートに端末フォルダを 1 段足す")
+    func appendsOnce() {
+        #expect(BackupEngine.deviceBackupRoot(for: "/MosaicPhotos", deviceFolder: "iPhone-8D1681")
+                == "/MosaicPhotos/iPhone-8D1681")
+    }
+
+    @Test("既に端末フォルダ配下なら足さない（冪等）")
+    func idempotent() {
+        let once = BackupEngine.deviceBackupRoot(for: "/MosaicPhotos", deviceFolder: "iPhone-8D1681")
+        #expect(BackupEngine.deviceBackupRoot(for: once, deviceFolder: "iPhone-8D1681") == once,
+                "二重に足すと同じ写真が別パスへ再アップロードされる")
+    }
+
+    @Test("大小が違っても二重にしない")
+    func caseInsensitive() {
+        #expect(BackupEngine.deviceBackupRoot(for: "/mosaicphotos/iphone-8d1681",
+                                              deviceFolder: "iPhone-8D1681")
+                == "/mosaicphotos/iphone-8d1681")
+    }
+
+    @Test("末尾のスラッシュや前後の空白を正規化する")
+    func normalizesInput() {
+        #expect(BackupEngine.deviceBackupRoot(for: " /MosaicPhotos/ ", deviceFolder: "iPhone-1")
+                == "/MosaicPhotos/iPhone-1")
+    }
+
+    @Test("端末フォルダ名が空なら何も足さない")
+    func emptyDeviceFolder() {
+        #expect(BackupEngine.deviceBackupRoot(for: "/MosaicPhotos", deviceFolder: "")
+                == "/MosaicPhotos")
+    }
+
+    /// 似た名前のフォルダを誤って「同じ」と見なさないこと。
+    @Test("途中に同名があっても末尾でなければ足す")
+    func onlySuffixCounts() {
+        #expect(BackupEngine.deviceBackupRoot(for: "/iPhone-1/Photos", deviceFolder: "iPhone-1")
+                == "/iPhone-1/Photos/iPhone-1")
+    }
+}
