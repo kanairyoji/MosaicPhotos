@@ -8,6 +8,11 @@ struct BackgroundSettingsView: View {
     private var powerPolicyRaw = BackgroundPowerPolicy.whileCharging.rawValue
     @AppStorage(NetworkStateMonitor.policyKey)
     private var dataPolicyRaw = BackgroundDataPolicy.wifiOnly.rawValue
+    /// 発熱したら重い処理を止める（既定 ON）。⚠️ 既定を ON にする理由は
+    /// 「速さ」ではなく「充電が終わること」——発熱で充電が止まると翌晩も処理が進まない。
+    /// ⚠️ `ThermalGate` と**同じキー・同じ UserDefaults** を見るので橋渡しは書かない
+    /// （書くと同じ値を二重に保存するだけで、出典が 2 つあるように見えてしまう）。
+    @AppStorage(ThermalGate.policyKey) private var pauseWhenHot = true
 
     var body: some View {
         Form {
@@ -34,6 +39,11 @@ struct BackgroundSettingsView: View {
                 Text("Background Data")
             } footer: {
                 Text(L("Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only."))
+            }
+            Section {
+                Toggle("Pause when the device gets hot", isOn: $pauseWhenHot)
+            } footer: {
+                Text(L("Stops background analysis while the device is hot, and resumes once it has cooled down. Without this, overnight processing can keep the device warm enough that iOS pauses charging — so you wake up to a phone that is hot and not charged, and the next night makes no progress either. Default: On."))
             }
         }
         .navigationTitle("Background & Battery")

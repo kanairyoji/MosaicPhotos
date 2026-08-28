@@ -64,6 +64,10 @@ public enum BackgroundYield {
     public static var heavyWorkAllowedLocal: Bool { heavyWorkAllowed(requiresNetwork: false) }
 
     private static func heavyWorkAllowed(requiresNetwork: Bool) -> Bool {
+        // ⚠️ **熱はデバッグ全開・手動ブーストより優先**する。夜間の解析で端末が温まると
+        // iOS が「冷めてから充電します」に入り、朝に充電が終わっていない（実フィードバック）。
+        // 充電されなければ翌晩も進まないので、ここだけは明示操作でも免除しない。
+        if ThermalGate.shared.shouldPause() { return false }
         if debugForceHeavyWork { return true }
         if Date() < manualBoostUntil {
             return PowerStateMonitor.shared.isOnPower && !PowerStateMonitor.shared.isLowPowerMode
@@ -104,6 +108,8 @@ public enum BackgroundYield {
     /// ※ **デバッグ全開時（debugForceHeavyWork）は生成との相互排他も外す**。「夜間ルーチンを今すぐ実行」
     ///   で検証するとき、generate のフラグ滞留で顔/埋め込みが一切動かないのを避ける（メモリは検証者が承知）。
     public static func heavyShouldPause() -> Bool {
+        // 熱はデバッグ全開でも効かせる（上の注記と同じ理由）。
+        if ThermalGate.shared.shouldPause() { return true }
         if debugForceHeavyWork { return false }
         return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
