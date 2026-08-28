@@ -27,19 +27,24 @@ extension FaceStore {
         var coverFace: [Int: PersonInfo.Face] = [:]
         var name: [Int: String] = [:]
         var photoSets: [Int: Set<String>] = [:]
+        // ⚠️ ADR-88 では「全カラムを materialize しない」ために軽量クエリへ替えたが、
+        // **クラスタごとに 2 本（refKey 集合＋代表顔）引く**形が残っていた。人物が
+        // 1,316 人まで育つと 1 画面あたり 2,632 回の fetch になり、「確認する顔を探しています」
+        // が数秒〜十数秒かかる（実フィードバック）。射影クエリ **1 回**で取り、束ねはメモリで行う
+        // ——materialize を避ける ADR-88 の意図はそのまま保たれる。
+        let membersByCluster = faceDigestsByCluster()
         for c in clusters {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
             // 未命名は空（UI は名前ラベルを出さない。"Person N" は誰か分からず判断の助けにならない）。
             name[c.clusterID] = (c.name?.isEmpty == false) ? (c.name ?? "") : ""
-            // ADR-88: 以前はクラスタごとに全メンバーを materialize していた（`faces(inCluster:)`）。
-            // 母数が数万件に育つと 1 回の候補生成で 1.2〜1.4 秒フリーズし、メモリも跳ねていた。
-            // 必要なのは「refKey の集合」と「代表顔 1 件」だけなので、それぞれ軽量クエリで取る。
-            photoSets[c.clusterID] = memberRefKeys(inCluster: c.clusterID)
-            if let f = bestCoverFace(inCluster: c.clusterID, coverFaceID: c.coverFaceID) {
-                coverFace[c.clusterID] = PersonInfo.Face(
-                    faceID: f.faceID, refKey: f.refKey,
-                    boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh))
+            let members = membersByCluster[c.clusterID] ?? []
+            photoSets[c.clusterID] = Set(members.map(\.refKey))
+            let pick = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
+                ?? members.max { $0.coverScore < $1.coverScore }
+            if let f = pick {
+                coverFace[c.clusterID] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
+                                                         boundingBox: f.box)
             }
         }
 
@@ -308,12 +313,7 @@ extension FaceStore {
         // ライブラリでは**この 1 画面で 1,316 回の fetch** が走っていた。件数に比例して
         // 待ち時間が伸び、人物が増えるほど機能が使えなくなる。取得は 1 回にして、
         // 束ねるのはメモリ上で行う（選ばれる候補・しきい値は一切変えない）。
-        let eligible = Set(clusters.map(\.clusterID))
-        var membersByCluster: [Int: [DetectedFace]] = [:]
-        membersByCluster.reserveCapacity(eligible.count)
-        for face in allFacesInClusters() where eligible.contains(face.clusterID ?? -1) {
-            membersByCluster[face.clusterID ?? -1, default: []].append(face)
-        }
+        let membersByCluster = faceDigestsByCluster()
 
         for c in clusters {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
@@ -321,11 +321,10 @@ extension FaceStore {
             let members = membersByCluster[c.clusterID] ?? []
             photoSets[c.clusterID] = Set(members.map(\.refKey))
             let pick = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
-                ?? Self.bestCoverFace(members)
+                ?? members.max { $0.coverScore < $1.coverScore }
             if let f = pick {
-                cover[c.clusterID] = PersonInfo.Face(
-                    faceID: f.faceID, refKey: f.refKey,
-                    boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh))
+                cover[c.clusterID] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
+                                                     boundingBox: f.box)
             }
         }
 

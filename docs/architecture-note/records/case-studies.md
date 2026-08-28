@@ -2141,10 +2141,29 @@
   - 画面は**先に切り替える**。直前の人物のグリッドを消し（`item = nil`）、`runShowingBusy` で
     スピナーの表示を確定させてから探し始める。文言も「似た人を探しています…」にした。
   - `people.batchReview.load` を計測点として追加（人物数に対してどう伸びるかを実機で残す）。
-- 関連: `FaceStore.allFacesInClusters` / `FaceStore+Review.batchReviewItem` /
+- 関連: `FaceStore.faceDigestsByCluster` / `FaceStore+Review.batchReviewItem` /
   `FaceBatchReviewView.load` / テスト `BatchReviewCandidateTests`（束ね直しがクラスタ単位の
   取得と一致すること）。
 - 教訓: **「1 件ずつ引く」は件数が小さいうちは見えない。** 機能が育つ（人物が増える）と
   初めて表に出るので、全件を走査する処理は最初からまとめて取る。
   待ち時間を消せない場合でも、**待っていることを見せる手当ては別途要る**——
   仕組み（`runShowingBusy`）があっても、使われていなければ無いのと同じ。
+
+### 続き: 1 対 1 の確認ページも同じ形だった
+
+「確認する顔を探しています」が重い、という続報。`reviewItems` も**クラスタごとに 2 本**
+（`memberRefKeys` ＋ `bestCoverFace`）引いており、1,316 人では **1 画面あたり 2,632 回の fetch**
+になっていた。
+
+ここで一度**踏み外している**。前段の修正で `batchReviewItem` を「全件 1 回の fetch」に
+替えたが、それは ADR-88 が避けていた「全カラムの materialize」（埋め込み込みで数万件の
+@Model が立ち上がる）を復活させるものだった。fetch 回数とメモリのどちらかを選ぶ形になっていた。
+
+両立の答えは**射影クエリを 1 回**。`faceDigestsByCluster()` が `propertiesToFetch` で
+必要な列（faceID / clusterID / refKey / bbox / quality / hasSmile）だけを 1 回で取り、
+クラスタごとの束ねはメモリで行う。@Model は持ち回らない（`FaceDigest` という値型に落とす）。
+これで「fetch は 1 回」かつ「materialize は最小」を同時に満たす。両方の経路をこれに揃えた。
+
+- 教訓: **前の修正が守っていた性質を壊していないか**を確認する。ADR-88 のコメントが
+  その場に残っていたから気づけた（「なぜこう書いてあるか」を読まずに直すと、直したつもりで
+  別の退行を入れる）。

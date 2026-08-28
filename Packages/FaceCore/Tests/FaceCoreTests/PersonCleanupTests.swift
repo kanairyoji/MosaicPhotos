@@ -181,9 +181,9 @@ struct BatchReviewCandidateTests {
         for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
         for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([0, 1, 0])]) }
 
-        let all = await store.allFacesInClustersForTesting()
+        let all = await store.faceDigestsForTesting()
         var grouped: [Int: Int] = [:]
-        for face in all { grouped[face.clusterID ?? -1, default: 0] += 1 }
+        for face in all { grouped[face.clusterID, default: 0] += 1 }
 
         #expect(all.count == 6, "1 回の取得で全クラスタの顔が揃わないと候補が欠ける")
         #expect(grouped.values.sorted() == [3, 3], "束ね直しがクラスタごとに正しくない")
@@ -197,8 +197,8 @@ struct BatchReviewCandidateTests {
         let counts = await store.clusterCountsForTesting()
         guard let cid = counts.keys.first else { return }
 
-        let viaAll = await store.allFacesInClustersForTesting()
-            .filter { $0.clusterID == cid }.map(\.faceID).sorted()
+        let viaAll = await store.faceDigestsForTesting()
+            .filter { $0.clusterID == cid }.map { $0.faceID }.sorted()
         let viaCluster = await store.facesForTesting(inCluster: cid).sorted()
         #expect(viaAll == viaCluster, "まとめ取りで取りこぼし・混入がある")
     }

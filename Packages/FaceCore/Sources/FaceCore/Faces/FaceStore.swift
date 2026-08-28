@@ -140,21 +140,45 @@ actor FaceStore {
         return try? modelContext.fetch(d).first
     }
 
-    /// クラスタに属する顔を**まとめて 1 回で**取る（未割り当ては除く）。
-    ///
-    /// ⚠️ クラスタごとに `faces(inCluster:)` を呼ぶ経路は、人物が増えるほど fetch 回数が
-    /// 増えて画面が待たされる（実測: 1,316 人で 1 画面あたり 1,316 回）。全クラスタを
-    /// 走査する処理はこちらを使い、束ねるのはメモリ上で行うこと。
-    func allFacesInClusters() -> [DetectedFace] {
-        // #Predicate の Optional 比較は取り回しが悪いので、全件取ってから絞る
-        // （どのみち全クラスタぶんを使うので、絞り込みで減る量は誤差）。
-        let all = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-        return all.filter { $0.clusterID != nil }
+    /// レビュー候補の生成に要る列だけを持つ軽量な顔（@Model を持ち回らない）。
+    struct FaceDigest: Sendable {
+        let faceID: String
+        let clusterID: Int
+        let refKey: String
+        let box: CGRect
+        let quality: Double
+        let hasSmile: Bool?
+
+        /// 代表顔の score（`FaceStore.coverScore` と同じ式・ここでしか使わない）。
+        var coverScore: Double { quality + (hasSmile == true ? 0.3 : 0) + min(box.width, 1.0) * 0.2 }
     }
 
-    /// テスト用: まとめ取りの結果（`allFacesInClusters` と同じもの）。
-    func allFacesInClustersForTesting() -> [(faceID: String, clusterID: Int?)] {
-        allFacesInClusters().map { ($0.faceID, $0.clusterID) }
+    /// クラスタに属する顔を**1 回の射影クエリ**でまとめて取り、クラスタごとに束ねて返す。
+    ///
+    /// ⚠️ 2 つの罠を同時に避ける必要がある。
+    /// 1. **クラスタごとに引かない**（実測: 1,316 人で 1 画面あたり 1,316〜2,632 回の fetch。
+    ///    人物が増えるほど遅くなる＝機能が育つほど使えなくなる）。
+    /// 2. **全カラムを materialize しない**（ADR-88。埋め込み込みで数万件の @Model が立ち上がり、
+    ///    1.2〜1.4 秒のフリーズとメモリ跳ね上がりになる）。
+    /// 射影（`propertiesToFetch`）で必要な列だけを 1 回で取るのが両立の答え。
+    func faceDigestsByCluster() -> [Int: [FaceDigest]] {
+        var d = FetchDescriptor<DetectedFace>()
+        d.propertiesToFetch = [\.faceID, \.clusterID, \.refKey, \.bx, \.by, \.bw, \.bh,
+                               \.quality, \.hasSmile]
+        let rows = (try? modelContext.fetch(d)) ?? []
+        var out: [Int: [FaceDigest]] = [:]
+        for row in rows where row.clusterID >= 0 {           // 未割り当て（-1）は対象外
+            out[row.clusterID, default: []].append(FaceDigest(
+                faceID: row.faceID, clusterID: row.clusterID, refKey: row.refKey,
+                box: CGRect(x: row.bx, y: row.by, width: row.bw, height: row.bh),
+                quality: row.quality, hasSmile: row.hasSmile))
+        }
+        return out
+    }
+
+    /// テスト用: 束ね直しの結果（faceID とクラスタの対応）。
+    func faceDigestsForTesting() -> [(faceID: String, clusterID: Int)] {
+        faceDigestsByCluster().values.flatMap { $0 }.map { ($0.faceID, $0.clusterID) }
     }
 
     func faces(inCluster clusterID: Int) -> [DetectedFace] {
