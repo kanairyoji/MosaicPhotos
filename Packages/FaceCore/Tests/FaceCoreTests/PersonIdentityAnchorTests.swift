@@ -127,7 +127,11 @@ struct PersonIdentityAnchorTests {
             await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, Float(i) * 0.005, 0, 0])])
         }
         // 本人の少し外れた 1 枚（cos 0.62 で合流する）。
-        await store.recordScan(refKey: "L-a-edge", faces: [signal([0.62, 0, 0.785, 0])])
+        // ⚠️ 品質を下げておく: 命名でアンカーになるのは代表顔（品質最良）で、全員同じ品質だと
+        // **どれがアンカーになるか実行ごとに変わる**。この 1 枚がアンカーになると、
+        // 後から来る別人 B が「アンカーに似ている」で本人へ合流してしまい fixture が壊れる
+        // （実際に一括実行でだけ落ちた）。
+        await store.recordScan(refKey: "L-a-edge", faces: [signal([0.62, 0, 0.785, 0], quality: 0.6)])
         guard let aID = await clusterOfA(store) else {
             Issue.record("fixture: A のクラスタが作れていない"); return
         }

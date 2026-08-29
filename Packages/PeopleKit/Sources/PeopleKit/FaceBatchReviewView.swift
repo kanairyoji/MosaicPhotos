@@ -73,6 +73,15 @@ public struct FaceBatchReviewView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L("Close")) { dismiss() }
                 }
+                // まとめて確認は 1 回の「決定」で数十件が動く。取り違えに気づいたときの出口を出す。
+                if let undoLabel = peopleEngine.undoLabel {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { undoLast() } label: {
+                            Label(L("Undo"), systemImage: "arrow.uturn.backward")
+                        }
+                        .accessibilityHint(Text(verbatim: undoLabel))
+                    }
+                }
             }
             .task {
                 // まとめて確認中は人物一覧の再発行を保留（回答ごとの 2〜4 秒ハング対策・diagnostics-51）。
@@ -268,6 +277,17 @@ public struct FaceBatchReviewView: View {
         }
         // キャンセルされた回は何も反映しない（`nil`）。
         if let found { item = found }
+    }
+
+    /// 直前の「決定」を取り消し、同じ人物のグリッドを引き直す。
+    /// まとめて確認は 1 回で数十件が動くので、取り違えに気づいたときの出口を必ず出す。
+    private func undoLast() {
+        Task {
+            let anchor = item?.anchorClusterID
+            guard await peopleEngine.undoLastAnswer() != nil else { return }
+            mergedTotal = max(0, mergedTotal - 1)
+            await load(anchor: anchor)
+        }
     }
 
     /// 探索を中断して閉じる（待たされている側の出口）。

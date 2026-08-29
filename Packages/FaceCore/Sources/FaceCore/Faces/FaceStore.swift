@@ -99,6 +99,10 @@ actor FaceStore {
     /// 全クラスタを fetch → Float16 復元しており、人物が増えるほど背景スキャンが遅くなる
     /// 構造だった（O(クラスタ数)/枚）。recordScan 間で再利用し、重心を変える操作
     /// （reassign/reset）で無効化する。
+    /// 直前の判定を取り消すための控え（ADR-136）。**アプリの実行中だけ**保持する
+    /// ——目的は「たった今の 1 手を戻す」で、起動を跨いだ取り消しは戻す先が変わっていて危ない。
+    var undoStack: [FaceUndoRecord] = []
+
     var clusteringCache: FaceClustering?
     /// 負例エグゼンプラ（修正ジャーナル由来・ADR-45）のインメモリキャッシュ。
     /// clusteringCache と同じライフサイクルで再利用し、修正追加で無効化する。

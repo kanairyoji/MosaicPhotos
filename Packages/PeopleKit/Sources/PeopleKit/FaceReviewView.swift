@@ -17,6 +17,8 @@ public struct FaceReviewView: View {
     /// 実行中の候補探索。キャンセル（＝待たされている側の出口）に使う。
     @State private var loadTask: Task<[FaceReviewItem], Never>?
     @State private var answered = 0
+    /// 直前に回答したカードの位置（「戻す」でここへ戻る）。スキップは記録しない。
+    @State private var lastAnsweredIndex: Int?
     /// このカードの顔画像が揃ったか。揃うまではカードを出さず、回答もさせない
     /// （前の質問の顔を見たまま答えてしまうのを防ぐ）。次カードは先読みするので通常は一瞬。
     @State private var cardReady = false
@@ -72,6 +74,16 @@ public struct FaceReviewView: View {
                     ToolbarItem(placement: .primaryAction) {
                         Text(verbatim: "\(index + 1) / \(items.count)")
                             .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                // ⚠️ 実フィードバック「たまに、間違った！と思うことがある」。連続で答える画面では、
+                // 間違いに気づくのは**次のカードが出た直後**なので、その場で戻せる必要がある。
+                if let undoLabel = peopleEngine.undoLabel {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { undoLast() } label: {
+                            Label(L("Undo"), systemImage: "arrow.uturn.backward")
+                        }
+                        .accessibilityHint(Text(verbatim: undoLabel))
                     }
                 }
             }
@@ -300,6 +312,7 @@ public struct FaceReviewView: View {
 
     private func answer(_ item: FaceReviewItem, yes: Bool) {
         answered += 1
+        lastAnsweredIndex = index
         Task {
             switch item {
             case .samePerson(let a, _, _, let b, _, _, _):
@@ -312,6 +325,19 @@ public struct FaceReviewView: View {
             }
         }
         advance()
+    }
+
+    /// 直前の回答を取り消し、そのカードへ戻る（答え直せるようにする）。
+    private func undoLast() {
+        Task {
+            guard await peopleEngine.undoLastAnswer() != nil else { return }
+            if let back = lastAnsweredIndex {
+                index = back
+                lastAnsweredIndex = nil
+                answered = max(0, answered - 1)
+                cardReady = false
+            }
+        }
     }
 
     private func advance() {

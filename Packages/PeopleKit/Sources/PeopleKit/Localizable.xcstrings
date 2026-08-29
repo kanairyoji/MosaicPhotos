@@ -864,6 +864,16 @@
         }
       }
     },
+    "Undo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "戻す"
+          }
+        }
+      }
+    },
     "Which of these are the same person as above?": {
       "localizations": {
         "ja": {
