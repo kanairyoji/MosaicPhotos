@@ -18,6 +18,12 @@ let package = Package(
         .package(path: "../AutoAlbumCore"),      // FaceCore / PerceptionCore を再エクスポート
         .package(path: "../PhotosFeatureKit"),   // MergedPhotoStore / LocalAssetIndex
         .package(path: "../BackupKit"),          // 共有セット（人物の共有）
+        // ⚠️ **直接 import するものは直接宣言する**。推移依存（PhotosFeatureKit 経由）でも
+        // 今はビルドが通るが、依存グラフが変わった瞬間に
+        // 「unable to resolve module dependency」で落ちる（BackupKit で実際に踏んだ）。
+        .package(path: "../PhotoSourceKit"),     // グリッド/全画面の共通ビュー
+        .package(path: "../DropboxKit"),         // クラウド写真ストア（人物アルバム）
+        .package(path: "../LocalPhotoKit"),      // 端末写真ストア（人物アルバム）
         .package(path: "../MosaicSupport"),
     ],
     targets: [
@@ -27,6 +33,9 @@ let package = Package(
                 .product(name: "AutoAlbumCore", package: "AutoAlbumCore"),
                 .product(name: "PhotosFeatureKit", package: "PhotosFeatureKit"),
                 .product(name: "BackupKit", package: "BackupKit"),
+                .product(name: "PhotoSourceKit", package: "PhotoSourceKit"),
+                .product(name: "DropboxKit", package: "DropboxKit"),
+                .product(name: "LocalPhotoKit", package: "LocalPhotoKit"),
                 .product(name: "MosaicSupport", package: "MosaicSupport"),
             ],
             path: "Sources/PeopleKit",
