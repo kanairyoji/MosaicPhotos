@@ -43,7 +43,9 @@ jobs:
       - name: List available simulators
         run: xcrun simctl list devices available | sed -n '1,80p'
       - name: Run iOS simulator tests
-        env:
-          # 利用可能な端末名に合わせて調整可。OS=latest でその時点の最新 iOS を使う。
-          SIM: platform=iOS Simulator,name=iPhone 16 Pro,OS=latest
+        # ⚠️ **機種名を固定しない**。ランナーの Xcode が上がると古い機種のデバイスは作られなくなり
+        # （Xcode 26 には iPhone 16 Pro が無い）、`name=…` 固定だと
+        # 「Unable to find a device matching the provided destination specifier」で
+        # **テストが 1 つも走らないまま**ジョブが落ちる（実際にこれで落ちた）。
+        # SIM を渡さなければ `scripts/test.sh` がその場で使える iPhone を UDID で選ぶ。
         run: scripts/test.sh ios
