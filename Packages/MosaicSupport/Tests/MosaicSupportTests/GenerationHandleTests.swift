@@ -45,3 +45,25 @@ struct GenerationHandleTests {
         #expect(handle.current == nil)
     }
 }
+
+/// 世代ガード（最新の結果だけを反映する）。
+@Suite("GenerationGuard")
+@MainActor
+struct GenerationGuardTests {
+
+    @Test("採番した札は、次が採番されるまで現行")
+    func tokenStaysCurrentUntilNext() {
+        var guardValue = GenerationGuard()
+        let first = guardValue.next()
+        #expect(guardValue.isCurrent(first))
+        let second = guardValue.next()
+        #expect(guardValue.isCurrent(second))
+        #expect(!guardValue.isCurrent(first), "追い越された札を現行と答えた（古い結果で上書きする）")
+    }
+
+    @Test("採番していない札は現行ではない")
+    func unknownTokenIsNotCurrent() {
+        let guardValue = GenerationGuard()
+        #expect(!guardValue.isCurrent(1))
+    }
+}

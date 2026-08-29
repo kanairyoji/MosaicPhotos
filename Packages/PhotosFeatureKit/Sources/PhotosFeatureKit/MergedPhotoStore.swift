@@ -41,7 +41,8 @@ public final class MergedPhotoStore {
     public private(set) var items: [MergedPhotoItem] = []
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
     /// 再構築の世代。代入時に照合し、追い越された古い結果を捨てる。
-    @ObservationIgnored private var rebuildGeneration = 0
+    /// 再構築の世代（最新の結果だけを反映する・`GenerationGuard`）。
+    @ObservationIgnored private var rebuildGeneration = GenerationGuard()
     /// 2-a: 再構築のデバウンス用タイマー。Dropbox 初回同期は 0.4 秒ごとに `items` を差し替えるため、
     /// 変化のたびに 68k 件の merge+sort を走らせると（off-main でも .userInitiated で）UI と競合する。
     /// 連続する変化をまとめて 1 回に集約する。
@@ -116,8 +117,7 @@ public final class MergedPhotoStore {
         // ⚠️ **世代**を採番する。`Task.isCancelled` の確認と代入の間にキャンセルされる競合は
         // 防げないため、確認だけでは新しい結果を古いスナップショットが上書きし得る
         // （レビュー指摘）。代入側でも世代を照合して、最新の再構築だけを通す。
-        rebuildGeneration &+= 1
-        let generation = rebuildGeneration
+        let generation = rebuildGeneration.next()
         rebuildTask = Task.detached(priority: .userInitiated) { [weak self] in
             // ⚠️ 86k 件のマージ＋ソート＋指紋はメモリを積む。**札を立てて**背景の重いロードと
             // 重ならないようにする（`HeavyLoad`・diagnostics-66）。
@@ -151,19 +151,18 @@ public final class MergedPhotoStore {
         }
     }
 
-    /// 現在の再構築世代（テストから照合するため internal）。
-    var currentRebuildGeneration: Int { rebuildGeneration }
+    /// テスト用: その世代がまだ現行か（追い越されていないか）。
+    func isCurrentRebuildGenerationForTesting(_ token: Int) -> Bool {
+        rebuildGeneration.isCurrent(token)
+    }
 
     /// 次の再構築世代を採番する（テスト用。本番は `rebuildItems` が採番する）。
-    func nextRebuildGenerationForTesting() -> Int {
-        rebuildGeneration &+= 1
-        return rebuildGeneration
-    }
+    func nextRebuildGenerationForTesting() -> Int { rebuildGeneration.next() }
 
     /// 最新世代の結果だけを反映する（遅れて届いた古い一覧を捨てる）。
     func setItems(_ newItems: [MergedPhotoItem], generation: Int, signature: Int) {
-        guard generation == rebuildGeneration else {
-            Diagnostics.mark("merged.rebuild: dropped stale result (gen \(generation) < \(rebuildGeneration))")
+        guard rebuildGeneration.isCurrent(generation) else {
+            Diagnostics.mark("merged.rebuild: dropped stale result (gen \(generation) は追い越された)")
             return
         }
         // ⚠️ **中身が同じなら代入しない**（実機 diagnostics-59）。同期中は 0.4 秒ごとに

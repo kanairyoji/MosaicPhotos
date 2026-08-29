@@ -24,9 +24,8 @@ struct PhotoMapView: View {
     @State private var camera: MapCameraPosition = .region(Self.mapRegion(.world))
     @State private var isLoading = true
     @State private var loadTask: Task<[PlaceCandidate], Never>?
-    /// 集約の世代。領域変更が連続したとき、古い結果で新しい表示を壊さない
-    /// （`MergedPhotoStore.rebuildGeneration` と同型）。
-    @State private var clusterGeneration = 0
+    /// 集約の世代。領域変更が連続したとき、古い結果で新しい表示を壊さない（`GenerationGuard`）。
+    @State private var clusterGeneration = GenerationGuard()
     @State private var clusterTask: Task<Void, Never>?
     @State private var selected: PhotoMapPin?
     /// 代表写真のサムネ（この画面の間だけ持つ）。⚠️ 無いと、地図を動かすたびに同じ写真を
@@ -111,15 +110,14 @@ struct PhotoMapView: View {
     /// 表示範囲が変わったら畳み直す。**オフメインで集約**し、最新世代の結果だけを反映する。
     private func recluster(region: PhotoMapRegion) {
         guard !candidates.isEmpty else { return }
-        clusterGeneration &+= 1
-        let generation = clusterGeneration
+        let generation = clusterGeneration.next()
         clusterTask?.cancel()
         let snapshot = candidates
         clusterTask = Task {
             let fresh = await Task.detached(priority: .userInitiated) {
                 PhotoMapClustering.pins(candidates: snapshot, region: region)
             }.value
-            guard !Task.isCancelled, generation == clusterGeneration else { return }
+            guard !Task.isCancelled, clusterGeneration.isCurrent(generation) else { return }
             pins = fresh
         }
     }

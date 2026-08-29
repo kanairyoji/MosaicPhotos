@@ -23,7 +23,8 @@ final class LocalAssetIndex {
     /// 追いフェッチした新規アセットを索引へ入れないと毎回フェッチし直すことにもなる（レビュー指摘）。
     private var libraryObserver: PhotoLibraryChangeObserver?
     /// 索引作り直しの世代（追い越された結果を捨てる）。
-    private var buildGeneration = 0
+    /// 索引再構築の世代（古い結果で新しい索引を壊さない・`GenerationGuard`）。
+    private var buildGeneration = GenerationGuard()
     /// 変更後は「削除済みかもしれない」と見なし、要求時に現存を確かめる（全再構築は次の機会に）。
     private var needsRevalidation = false
 
@@ -37,8 +38,7 @@ final class LocalAssetIndex {
 
     /// 索引を作り直す。**世代**で追い越しを判定し、古い結果で新しい索引を壊さない。
     private func rebuild() {
-        buildGeneration &+= 1
-        let generation = buildGeneration
+        let generation = buildGeneration.next()
         buildTask?.cancel()
         buildTask = Task { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
@@ -52,7 +52,7 @@ final class LocalAssetIndex {
                 result.enumerateObjects { asset, _, _ in dict[asset.localIdentifier] = asset }
                 return dict
             }.value
-            guard let self, generation == self.buildGeneration else { return }
+            guard let self, self.buildGeneration.isCurrent(generation) else { return }
             self.byID = built
             self.buildTask = nil
             self.needsRevalidation = false   // 作り直した＝現存だけが入っている
