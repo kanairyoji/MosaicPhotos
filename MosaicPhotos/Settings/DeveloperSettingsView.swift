@@ -229,6 +229,10 @@ struct DeveloperSettingsView: View {
             Button("クラスタを今すぐ再構築（制約付き）") {
                 Task { await peopleEngine.debugRebuildClustersNow() }
             }
+            // しきい値・マージンの効き方を数字で見る（ADR-135・読み取り専用）。
+            NavigationLink("クラスタリングの内訳を見る") {
+                FaceClusterInspectorView(peopleEngine: peopleEngine)
+            }
             faceQualityRows
         } header: {
             Text("AI 解析：ピープル（顔）")

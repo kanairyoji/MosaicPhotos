@@ -576,6 +576,11 @@ public final class PeopleEngine {
         return 0
     }
 
+    /// 判定の内訳（Developer Options のチューニング用・ADR-135）。読み取り専用。
+    public func decisionReport(clusterID: Int, limit: Int = 12) async -> PersonDecisionReport? {
+        await store.decisionReport(clusterID: clusterID, limit: limit)
+    }
+
     /// この写真に**1 人だけ**写っているときのその人物（写真ビューの「この人は XX ではない」用）。
     /// 複数人・0 人なら nil（どの人を直すのかが決まらないため出さない）。
     public func solePerson(inItem itemID: String) async -> PersonInfo? {
