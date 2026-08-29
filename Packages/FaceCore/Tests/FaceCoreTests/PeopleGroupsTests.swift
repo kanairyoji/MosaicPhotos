@@ -63,7 +63,9 @@ struct PeopleGroupsTests {
     @MainActor
     func createUpdateDeleteFlow() async {
         let engine = await makeEngine()
-        let people = engine.people
+        // ⚠️ 表示フロア（`people`）ではなく**全件**を使う。グループは表示の線とは無関係
+        // （5 枚の人物でも束ねられる）。ここで `people` を使うと、フロアを変えただけで落ちる。
+        let people = engine.allPeople
         #expect(people.count == 2, "前提: 2 人物")
 
         let id = await engine.createPeopleGroup(name: " Group A ",
@@ -91,10 +93,10 @@ struct PeopleGroupsTests {
     @MainActor
     func rejectsInvalidCreation() async {
         let engine = await makeEngine()
-        let one = [engine.people[0].clusterID]
+        let one = [engine.allPeople[0].clusterID]
         #expect(await engine.createPeopleGroup(name: "X", memberClusterIDs: one) == nil)
         #expect(await engine.createPeopleGroup(name: "   ",
-                                               memberClusterIDs: engine.people.map(\.clusterID)) == nil)
+                                               memberClusterIDs: engine.allPeople.map(\.clusterID)) == nil)
         #expect(engine.peopleGroups.isEmpty)
     }
 
@@ -102,7 +104,7 @@ struct PeopleGroupsTests {
     @MainActor
     func groupsReloadWithPeople() async {
         let engine = await makeEngine()
-        _ = await engine.createPeopleGroup(name: "G", memberClusterIDs: engine.people.map(\.clusterID))
+        _ = await engine.createPeopleGroup(name: "G", memberClusterIDs: engine.allPeople.map(\.clusterID))
         #expect(engine.peopleGroups.count == 1)
         await engine.loadPeople()
         #expect(engine.peopleGroups.count == 1, "loadPeople 後にグループが消えた")

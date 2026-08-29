@@ -415,6 +415,9 @@ final class FaceAccuracyEvalTests: XCTestCase {
         // === F 家族シナリオ（少数 ID × 大量写真・ADR-68） ===
         evaluateFamilyScenario(samples: samples, name: name)
 
+        // === M 混在シナリオ（重い数人＋軽い長い尾・ADR-125） ===
+        evaluateMixedScenario(samples: samples, name: name)
+
         print("FACEEVAL[\(name)]: 完了")
     }
 
@@ -477,6 +480,82 @@ final class FaceAccuracyEvalTests: XCTestCase {
     // MARK: - F 家族シナリオ（少数 ID × 大量写真・ADR-68）
 
     /// **実ライブラリの形**を再現する評価。既存の計測は「82人/1,002枚」「901人/4,862枚」＝
+    /// **M 混在シナリオ**（ADR-125）: 「重い数人 ＋ 軽い長い尾」という実ライブラリの分布。
+    ///
+    /// ⚠️ また計測の穴があった。既存の 2 つは両極端で、実際の家族アルバムはその**混合**:
+    /// - FG-NET / LFW 全体 = 多数の人物を少しずつ（尾だけ）
+    /// - F 家族シナリオ = 上位数人だけ（頭だけ）
+    /// 実フィードバック: 「名前を付けた数名は数百〜1,000 枚。たまたま写り込んだ 5 枚の人が
+    /// 大量にいて、ピープルが 1,000 人超」。頭と尾が同居すると、尾の存在そのものが
+    /// （競合として、また「人数」の判定を通じて）頭の合流に影響する——それを直接測る。
+    ///
+    /// 見る数字は 3 つ:
+    /// - **上位 K 人の分裂**（＝名前を付けた人がいくつに割れているか。ユーザーの不満そのもの）
+    /// - **クラスタ総数**（＝「ピープルが 1,000 人超」の症状）
+    /// - **純度**（＝畳みすぎて他人が混ざっていないか）
+    private func evaluateMixedScenario(samples: [Sample], name: String) {
+        var byPerson: [String: [Sample]] = [:]
+        for sm in samples { byPerson[sm.person, default: []].append(sm) }
+        let ranked = byPerson.sorted { ($0.value.count, $0.key) > ($1.value.count, $1.key) }
+        guard ranked.count >= 20 else { return }          // 尾が無いと混在にならない
+        let heavyCount = 5
+        let heavy = Set(ranked.prefix(heavyCount).map(\.key))
+
+        // 全サンプル（頭＋尾）を 1 つのライブラリとして扱う。順序は本番と同じ品質降順。
+        let subset = samples.sorted { $0.quality > $1.quality }
+        let faces = subset.map { (faceID: $0.file, embedding: $0.embedding) }
+        let qualities = Dictionary(uniqueKeysWithValues: subset.map { ($0.file, $0.quality) })
+        let truth = Dictionary(uniqueKeysWithValues: subset.map { ($0.file, $0.person) })
+        let heavyPhotos = ranked.prefix(heavyCount).map(\.value.count)
+
+        func report(_ label: String, _ clusters: [FaceClustering.Cluster]) {
+            var assignments: [String: Int] = [:]
+            var singleton = -1
+            for sm in subset { assignments[sm.file] = singleton; singleton -= 1 }
+            for c in clusters { for fid in c.faceIDs { assignments[fid] = c.id } }
+            guard let s = FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth) else { return }
+            // 上位 K 人だけの分裂（本人がいくつのクラスタに散っているか）。
+            var clustersOfHeavy: [String: Set<Int>] = [:]
+            for sm in subset where heavy.contains(sm.person) {
+                clustersOfHeavy[sm.person, default: []].insert(assignments[sm.file] ?? -1)
+            }
+            let heavySplit = clustersOfHeavy.isEmpty ? 0
+                : Double(clustersOfHeavy.values.map(\.count).reduce(0, +)) / Double(clustersOfHeavy.count)
+            let heavyWorst = clustersOfHeavy.values.map(\.count).max() ?? 0
+            print(String(format: "FACEEVAL[%@]:  M %@  上位%d人の分裂=%.1f（最悪%d）| clusters=%d | 全体分裂=%.1f | P=%.3f R=%.3f F1=%.3f",
+                         name, label, heavyCount, heavySplit, heavyWorst, s.clusterCount,
+                         s.clustersPerIdentity, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1))
+        }
+
+        print("FACEEVAL[\(name)]: === M 混在シナリオ（上位\(heavyCount)人=\(heavyPhotos)枚 ＋ 尾 \(ranked.count - heavyCount) 人・顔 \(subset.count) 個） ===")
+        let t = FaceTuning.arcFace
+        // 実機は校正で可動域の上限（0.40）に張り付いていた（diagnostics-64: calibrated 0.4）。
+        // 既定値（0.35）と実機値（0.40）の両方で測る。
+        for thr in [t.clusterThreshold, Float(0.40)] {
+            let tag = String(format: "thr=%.2f", thr)
+            func common(_ label: String,
+                        ambiguous: FaceClustering.AmbiguousPolicy = .newCluster,
+                        gateExempt: Bool = false,
+                        sizeExemptMaxPeople: Int = 10) {
+                report("\(tag) \(label)", FaceClustering.clusterAll(
+                    faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
+                    assignMargin: t.assignMargin, sizeAdaptiveMarginMax: t.sizeAdaptiveMarginMax,
+                    ambiguousPolicy: ambiguous, secondPassMembership: true,
+                    rivalAwareMarginGate: gateExempt, rivalAwareSizeMargin: true,
+                    rivalAwareSizeMarginMaxPeople: sizeExemptMaxPeople,
+                    rivalAlikeMargin: t.rivalAlikeMargin,
+                    effectiveThresholdCap: thr, effectiveThresholdCapMaxPeople: 10,
+                    secondPassThreshold: thr + 0.05))
+            }
+            common("prod（現行本番相当）")
+            common("M1 曖昧→未割当", ambiguous: .leaveUnassigned)
+            common("M2 ゲート免除", gateExempt: true)
+            common("M3 ゲート免除＋曖昧→未割当", ambiguous: .leaveUnassigned, gateExempt: true)
+            common("M4 サイズ免除を人数無制限", sizeExemptMaxPeople: 0)
+            common("M5 ゲート免除＋サイズ免除無制限", gateExempt: true, sizeExemptMaxPeople: 0)
+        }
+    }
+
     /// *多数の人物を少しずつ*であり、家族アルバムの「**数人を何万枚も**」という分布を
     /// 一度も測っていなかった。この穴が「3人 → ピープル 2000人超」を出荷まで見逃した原因。
     ///

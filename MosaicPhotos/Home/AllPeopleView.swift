@@ -7,6 +7,8 @@ import SwiftUI
 /// 横スクロールカルーセルには枚数上位だけを出し、残りはここで扱う。枚数降順のグリッドに
 /// 名前検索と「まとめて確認」への導線を置き、分裂した人物を畳む作業をこの画面に集約する。
 struct AllPeopleView: View {
+    /// 表示のフロア（何枚以上をピープルに載せるか）を切り替えるため engine を受け取る。
+    let peopleEngine: PeopleEngine
     let people: [PersonInfo]
     let onSelect: (PersonInfo) -> Void
     let onLongPress: (PersonInfo) -> Void
@@ -57,6 +59,22 @@ struct AllPeopleView: View {
                 }
                 ToolbarItem(placement: .principal) {
                     Text(verbatim: "\(people.count)").font(.footnote).foregroundStyle(.secondary)
+                }
+                // ⚠️ 実フィードバック: 「2 枚とか 5 枚しか顔写真がない人はピープルに載せなくて良い」。
+                // 既定は 10 枚以上（＋名前を付けた人は必ず表示）。ここで変えられるようにしておく
+                // ——「少ない人も見たい」ときの出口が無いと、隠したことが不具合に見える。
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Picker(L("Show people with at least"), selection: Binding(
+                            get: { peopleEngine.minPhotosForList },
+                            set: { peopleEngine.minPhotosForList = $0 })) {
+                            ForEach(PeopleEngine.minPhotosChoices, id: \.self) { n in
+                                Text(L("\(n) photos")).tag(n)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
                 }
             }
         }
