@@ -8,6 +8,24 @@ import SwiftData
 extension FaceStore {
     // MARK: - 付け替え（「この人は別の人」）
 
+    /// **写真 1 枚**に写っているこの人物の顔を、まとめてその人物から外す（新規クラスタへ分離）。
+    ///
+    /// ⚠️ 実フィードバック: 「全体像や前後関係で違うと気づくことがある」。顔だけを並べた
+    /// 「顔の管理」では気づけない誤りを、**写真を見ている場所**（グリッド・全画面）から直せるようにする。
+    /// ADR-45 の負例として学習されるので、再スキャンや再クラスタでも同じ誤りは再発しない。
+    /// - Returns: 外した顔の数（0＝その写真にこの人物の顔が無かった）。
+    @discardableResult
+    func removePhoto(refKey: String, from clusterID: Int) -> Int {
+        let cid = clusterID, key = refKey
+        var d = FetchDescriptor<DetectedFace>(
+            predicate: #Predicate { $0.clusterID == cid && $0.refKey == key })
+        d.propertiesToFetch = [\.faceID]
+        let faceIDs = ((countedFetchOptional(d)) ?? []).map(\.faceID)
+        for faceID in faceIDs { reassignFace(faceID: faceID, toClusterID: nil) }
+        return faceIDs.count
+    }
+
+
     /// 顔を別の人物へ付け替える。`toClusterID` が nil なら新規人物を作る。
     /// 重心演算は `FaceClustering.adding/removing`（`assign` と同じ正規化規則）に委譲する。
     func reassignFace(faceID: String, toClusterID: Int?) {

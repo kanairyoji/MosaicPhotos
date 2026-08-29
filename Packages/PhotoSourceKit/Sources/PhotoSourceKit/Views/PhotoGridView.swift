@@ -42,6 +42,8 @@ public struct PhotoGridView<Store: PhotoStore>: View {
     /// 月グループの密度（1セクションを閉じるまでに貯める行数）。既定 1＝最大密度。
     @AppStorage(GridSettingsKeys.monthSectionRows) private var monthSectionRows = 1
     @Environment(\.photoInteraction) private var photoInteraction
+    /// 写真ごとの追加操作（長押しメニュー。人物アルバムの「この写真はこの人ではない」など）。
+    @Environment(\.photoContextActions) private var photoContextActions
     /// タップで開く写真（item.id）。`navigationDestination(item:)` で詳細へ push する。
     @State private var selectedID: Store.Item.ID?
 
@@ -107,7 +109,8 @@ public struct PhotoGridView<Store: PhotoStore>: View {
                         selectedID = $0
                     },
                     onScrubbingChange: { active in photoInteraction?(active) },   // G: 背景処理を譲る
-                    faceHighlight: faceHighlight
+                    faceHighlight: faceHighlight,
+                    contextActions: photoContextActions
                 )
                 .ignoresSafeArea(.container, edges: .horizontal)
             }

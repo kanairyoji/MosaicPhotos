@@ -534,6 +534,16 @@
         }
       }
     },
+    "Not “%@”": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この写真は「%@」ではない"
+          }
+        }
+      }
+    },
     "Nothing left to merge right now.": {
       "localizations": {
         "ja": {

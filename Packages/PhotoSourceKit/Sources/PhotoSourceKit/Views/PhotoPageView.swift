@@ -30,6 +30,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     @State private var favOverride: [Store.Item.ID: Bool] = [:]
     @Environment(\.dismiss) private var dismiss
     @Environment(\.faceHighlightProvider) private var faceHighlightProvider
+    /// 写真ごとの追加操作（人物アルバムの「この写真はこの人ではない」など）。
+    @Environment(\.photoContextActions) private var photoContextActions
     @Environment(\.photoUsageEvent) private var photoUsageEvent
     /// 顔ハイライト（人物アルバムのみ）。ページ送りしても維持する画面単位のトグル。
     @State private var showFaceHighlights = false
@@ -266,6 +268,22 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                             .foregroundStyle(showFaceHighlights ? Color.yellow : Color.primary)
                     }
                     .accessibilityLabel(L("Show recognized face"))
+                }
+                // 写真ごとの追加操作（人物アルバムの「この人ではない」など）。
+                // ⚠️ **全体像を見ている場所から直せる**ようにするのが目的（実フィードバック）。
+                if !photoContextActions.isEmpty, let id = currentItem?.id {
+                    Menu {
+                        ForEach(photoContextActions) { action in
+                            Button(role: action.isDestructive ? .destructive : nil) {
+                                Task { await action.perform("\(id)") }
+                            } label: {
+                                Label(action.title, systemImage: action.systemImage)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel(L("More"))
                 }
             }
             .imageScale(.large)
