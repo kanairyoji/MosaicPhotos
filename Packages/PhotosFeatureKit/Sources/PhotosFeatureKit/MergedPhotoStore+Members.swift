@@ -14,7 +14,7 @@ extension MergedPhotoStore {
     /// 落ちるので、古い写真が列の先頭（最新）に現れる＝並びが壊れて見える。
     /// Composition Root（アプリ）が起動時に設定する。未設定なら従来どおり全部出す。
     @MainActor
-    public static var defaultBackupCopyIndexProvider: (@Sendable () async -> [String: String])?
+    public static var defaultBackupCopyIndexProvider: (@Sendable () async -> [String: BackupCopyInfo])?
     /// メンバー限定ストアの共通生成。ローカル ID は索引（`LocalAssetIndex`）から即解決し、
     /// 未構築なら `localIdentifiers` で遅延取得にフォールバック。クラウドは path フィルタ。
     /// PersonAlbum / AutoAlbumPhotos / DeviceAlbumPhotos / PlacePhotos の 4 ビューが同型の定型を

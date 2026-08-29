@@ -43,6 +43,15 @@ public struct DropboxFileItem: Identifiable, Equatable, Hashable {
                         latitude: latitude, longitude: longitude, isFavorite: favorite)
     }
 
+    /// 撮影日を差し替えた複製。
+    /// ⚠️ Dropbox 側の撮影日は `time_taken ?? client_modified` で、EXIF から media_info が
+    /// 付かない写真では**アップロード時刻**になる。アプリの台帳（バックアップ記録）が元の
+    /// 撮影日を持っている場合は、そちらを正として表示側で差し替える（ADR-128 追補）。
+    public func withCaptureDate(_ date: Date?) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: name, contentHash: contentHash, captureDate: date,
+                        latitude: latitude, longitude: longitude, isFavorite: isFavorite)
+    }
+
     public var id: String { path }
 
     /// 緯度・経度が揃っていれば座標を返す。

@@ -35,9 +35,14 @@
   `forMembers` が自動で渡す。⚠️ 隠すのは**原本が同じアルバムに居るときだけ**——オフロード済み
   （端末に原本が無い）写真まで隠すと、アルバムから写真が消える。
   (2) アップロードの `Dropbox-API-Arg` に `client_modified`（撮影日・秒精度 UTC）を載せる。
-- 結果: アルバムの重複が消え、並びが撮影日どおりになる。⚠️ (2) は**これから上げる写真**に効く。
-  既にアップロード済みの副本の日付は Dropbox 側の記録なので変わらない——ただし (1) で
-  「原本がある写真の副本」は表示から消えるため、実害はオフロード済み写真だけに残る。
+- 追補（同日・**まだ直っていなかった**）: (1)(2) だけでは足りなかった。⚠️ **隠すだけでは直らない**——
+  顔がクラウド副本側だけで検出された写真は、原本がそのアルバムに居ないので隠れず、日付だけが
+  アップロード時刻のまま残る。(2) はこれから上げる写真にしか効かない。
+  → (3) **表示時に台帳の撮影日で上書きする**。アプリの台帳（`BackupAssetRecord.creationDate`）は
+  元の `PHAsset.creationDate` を持っているので、Dropbox 側の日付（`time_taken ?? client_modified`）
+  より信用できる。`MergedPhotoStore` が再構築時に差し替える＝**既にアップロード済みの写真も直る**。
+- 結果: アルバムの重複が消え、並びが撮影日どおりになる（既存分も含めて）。
+  ⚠️ 台帳に無い写真（アプリ以外で置いた Dropbox 写真）は従来どおり Dropbox の日付を使う。
 - 関連: `MergedPhotoStore+Members` / `DropboxBackupUploader.upload(clientModified:)` /
   `BackupRunner.uploadOne` / テスト `MemberStoreBackupHidingTests`・`UploadClientModifiedTests`。
 

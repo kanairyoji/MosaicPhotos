@@ -131,7 +131,12 @@ final class HomeStores {
             guard let store = await backupEngine?.sharedBackupStore() else { return [:] }
             // ⚠️ 全カラムを取らない（射影クエリ）。重複判定に要るのは 2 列だけで、
             // 起動時に全記録を materialize するとメモリの山になる。
-            return await store.backupCopyIndex()
+            // ⚠️ 撮影日も一緒に渡す。Dropbox 側の日付は EXIF が読めない写真だと
+            // **アップロード時刻**になるので、台帳の `creationDate` を正として上書きする
+            // （ADR-128 追補・実フィードバック「バックアップを新しい写真と認識している」）。
+            return await store.backupCopyRecords().mapValues {
+                BackupCopyInfo(localIdentifier: $0.localIdentifier, captureDate: $0.captureDate)
+            }
         }
         // 人物・グループ・場所・アルバムの**メンバー限定ストア**にも同じ索引を渡す
         // （渡していなかったので、それらの画面では副本が二重に出て並びも崩れていた）。
