@@ -71,9 +71,17 @@ public struct PhotoMapRegion: Sendable, Equatable {
 public enum PhotoMapClustering {
 
     /// 画面の横幅を何セルに割るか（大きいほど細かい）。
-    public static let defaultColumns: Double = 12
+    /// ⚠️ 12 は**密集しすぎた**（実フィードバック）。画面幅 390pt に 12 列＝1 セル 32pt で、
+    /// ピン（バッジ ~40pt）が確実に重なる。8 列＝約 49pt を出発点にし、最終的な間隔は
+    /// 下の「画面上の最小間隔」で保証する。
+    public static let defaultColumns: Double = 8
     /// 1 画面に置くピンの上限。超えたら件数の多い順に採る。
     public static let defaultPinLimit = 120
+    /// **画面上の最小間隔**（画面幅に対する比）。グリッドだけでは「隣のセルの写真が
+    /// セル境界の両側に寄っている」ときにピンが接触する。
+    /// 0.14 ＝ 画面幅の 14%（390pt なら約 55pt）＝ バッジ（約 40pt）どうしが確実に離れる。
+    /// この値で 1 画面のピンは最大でも約 50（1 / 0.14）² に収まる。
+    public static let defaultMinimumSeparation: Double = 0.14
 
     /// ズーム（経度方向の幅）からグリッド粒度を決める。
     /// ⚠️ `GeoGridKey` は文字列キーを小数 3 桁で作るので、**それより細かい step は意味を持たない**
@@ -90,6 +98,7 @@ public enum PhotoMapClustering {
     public static func pins(candidates: [PlaceCandidate], region: PhotoMapRegion,
                             columns: Double = defaultColumns,
                             pinLimit: Int = defaultPinLimit,
+                            minimumSeparation: Double = defaultMinimumSeparation,
                             margin: Double = 1.3) -> [PhotoMapPin] {
         guard !candidates.isEmpty else { return [] }
         let step = step(forLongitudeDelta: region.longitudeDelta, columns: columns)
@@ -111,18 +120,77 @@ public enum PhotoMapClustering {
             let lat = members.reduce(0.0) { $0 + $1.latitude } / Double(members.count)
             let lon = members.reduce(0.0) { $0 + $1.longitude } / Double(members.count)
             // 代表は**新しい写真**（旅行の最新カットが出るほうが手がかりになる）。
-            let representative = members.max { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+            // ⚠️ ただし**端末内の写真を優先**する。ピンのサムネはクラウド写真だと表示用サムネと
+            // 同じ回線を通るので、同じセルに端末写真があるならそちらを出すほうが速く、通信も減る
+            // （体感の差は「新しさ」より「出るか出ないか」のほうが大きい）。
+            let newest = { (a: PlaceCandidate, b: PlaceCandidate) in
+                (a.date ?? .distantPast) < (b.date ?? .distantPast)
+            }
+            let representative = members.filter(\.isLocal).max(by: newest)
+                ?? members.max(by: newest)
             guard let representative else { return nil }
             return PhotoMapPin(id: key, latitude: lat, longitude: lon, count: members.count,
                                representative: representative, members: members)
         }
-        // 上限を超えたら件数の多い順（同数なら新しい順）に採る。
-        guard pins.count > pinLimit else { return pins.sorted { $0.id < $1.id } }
+        // 件数の多い順（同数なら新しい順）。以降の「吸収」も上限も、この順で大きいほうを残す。
         pins.sort {
             ($0.count, $0.representative.date ?? .distantPast)
                 > ($1.count, $1.representative.date ?? .distantPast)
         }
-        return Array(pins.prefix(pinLimit)).sorted { $0.id < $1.id }
+        pins = separated(pins, region: region, minimumSeparation: minimumSeparation)
+        if pins.count > pinLimit { pins = Array(pins.prefix(pinLimit)) }
+        return pins.sorted { $0.id < $1.id }
+    }
+
+    /// 画面上で近すぎるピンを**大きいほうへ吸収**する（写真は 1 枚も落とさない）。
+    ///
+    /// ⚠️ グリッドだけでは足りない: 隣り合うセルの写真がそれぞれ境界側に寄っていると、
+    /// 重心どうしは 1 セルぶんも離れない。実際に「ピンが密集しすぎ」という結果になった。
+    /// 距離は**画面に正規化した座標**（画面幅=1・画面高=1）で測る——緯度が高いほど経度 1 度が
+    /// 詰まる問題も、画面比で測れば自動的に解ける。
+    static func separated(_ pins: [PhotoMapPin], region: PhotoMapRegion,
+                          minimumSeparation: Double) -> [PhotoMapPin] {
+        guard minimumSeparation > 0, pins.count > 1 else { return pins }
+        var kept: [PhotoMapPin] = []
+        for pin in pins {                      // 件数の多い順に入る＝大きいピンが残る
+            let x = (pin.longitude - region.centerLongitude) / region.longitudeDelta
+            let y = (pin.latitude - region.centerLatitude) / region.latitudeDelta
+            var nearest: (index: Int, distance: Double)?
+            for (i, k) in kept.enumerated() {
+                let kx = (k.longitude - region.centerLongitude) / region.longitudeDelta
+                let ky = (k.latitude - region.centerLatitude) / region.latitudeDelta
+                let d = ((x - kx) * (x - kx) + (y - ky) * (y - ky)).squareRoot()
+                if d < minimumSeparation, nearest == nil || d < nearest!.distance {
+                    nearest = (i, d)
+                }
+            }
+            if let nearest {
+                kept[nearest.index] = absorb(kept[nearest.index], pin)
+            } else {
+                kept.append(pin)
+            }
+        }
+        return kept
+    }
+
+    /// 近すぎたピンを吸収する（重心は件数で重み付け・代表は新しいほう）。
+    private static func absorb(_ host: PhotoMapPin, _ other: PhotoMapPin) -> PhotoMapPin {
+        let total = host.count + other.count
+        let lat = (host.latitude * Double(host.count) + other.latitude * Double(other.count))
+            / Double(total)
+        let lon = (host.longitude * Double(host.count) + other.longitude * Double(other.count))
+            / Double(total)
+        // 吸収後の代表も「端末内優先 → 新しい方」（上と同じ規則）。
+        let representative: PlaceCandidate
+        if host.representative.isLocal != other.representative.isLocal {
+            representative = host.representative.isLocal ? host.representative : other.representative
+        } else {
+            representative = (other.representative.date ?? .distantPast)
+                > (host.representative.date ?? .distantPast) ? other.representative : host.representative
+        }
+        return PhotoMapPin(id: host.id, latitude: lat, longitude: lon, count: total,
+                           representative: representative,
+                           members: host.members + other.members)
     }
 
     /// 写真全体が収まる範囲（初期表示のカメラ位置）。外れ値で世界地図にならないよう、
