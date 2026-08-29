@@ -139,14 +139,16 @@ struct PeopleDisplayFloorTests {
     }
 }
 
-/// マージンゲートの免除は「校正でしきい値が上がっているときだけ」効く（ADR-126）。
+/// マージンゲートの免除は**無効**（ADR-126 は撤回）。
 ///
-/// ⚠️ 条件を間違えると**測ったのと違う設定で動く**。既定値のままの端末で免除が効くと
-/// FG-NET 混在で F1 0.790→0.759 の退行になる（計測済み）。ここは設定の配線を固定する。
-@Suite("マージンゲート免除の条件", .serialized)
+/// ⚠️ 実機で人物アルバムが崩れた（小さいアルバムほど致命的）。データセット計測では
+/// 「ほぼ無料」に見えたが、手持ちのデータセットには「主役 1 人 1,000 枚 ＋ 数枚ずつの他人が
+/// 数百人」という分布が無かった。**免除は小さいクラスタが他人を吸い込む**。
+/// ここでは「どんな状態でも免除が効かない」ことを固定する——うっかり戻すと同じ被害が出る。
+@Suite("マージンゲート免除は無効（ADR-126 撤回）", .serialized)
 struct RivalAwareGateConditionTests {
 
-    @Test("校正値が既定と同じなら免除しない／上がっていれば免除する")
+    @Test("校正値が上がっていてもマージンゲートは免除しない")
     func exemptionOnlyWhenCalibratedAboveDefault() async {
         let store = FaceStore(isStoredInMemoryOnly: true)
         let defaultThreshold = FaceTuning.facenet.clusterThreshold      // 既定プロファイル
@@ -159,6 +161,7 @@ struct RivalAwareGateConditionTests {
         await store.setThresholdForTesting(defaultThreshold + 0.05)
         let raised = await store.loadClusteringForTesting()
         #expect(raised.threshold > defaultThreshold, "前提: しきい値が上がっている")
-        #expect(raised.rivalAwareMarginGate, "校正で上がったのに免除が効いていない")
+        #expect(raised.rivalAwareMarginGate == false,
+                "免除が復活している（小さい人物アルバムに他人が混ざる・ADR-126 撤回）")
     }
 }

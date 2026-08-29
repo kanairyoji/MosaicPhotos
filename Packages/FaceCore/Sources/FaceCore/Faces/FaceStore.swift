@@ -69,7 +69,16 @@ actor FaceStore {
     /// - 既定値 0.35 では FG-NET 混在が F1 0.790 → 0.759 と**悪化**する。
     /// 効くのは「校正が bar を上げた結果、同じ人の別クラスタどうしが恒常的に紛らわしくなった」
     /// 状態のときだけ——だから**上がっているときだけ**免除する（`makeClustering`）。
-    static let rivalAwareMarginGateWhenCalibratedUp = true
+    ///
+    /// ⚠️⚠️ **撤回した（false）**。実機で採用したところ、再クラスタ後に人物アルバムが崩れた
+    /// （実フィードバック: 「枚数の少ない人物のアルバムが決定的におかしい。多い人物でも数枚おかしい」）。
+    /// データセット計測では「ほぼ無料」（LFW 混在で純度 −0.001）だったのに、実ライブラリでは害が出た。
+    /// 理由は分布の違い: 手持ちのデータセットには**「1 人 1,000 枚の主役 ＋ 数枚ずつの他人が数百人」**が
+    /// 無い。ゲートを免除すると、紛らわしい顔が「1 位のクラスタ」へ入る——**小さいクラスタほど
+    /// 重心が不安定で 1 位になりやすく、他人を吸い込む**。純度の平均は動かなくても、
+    /// 小さいアルバムは 1〜2 枚の混入で「決定的におかしい」になる（平均は個々の体験を代表しない）。
+    /// 教訓は ADR-126 と face-accuracy.md に残す。値を戻すときは**小さいクラスタを除外する条件**とセットで。
+    static let rivalAwareMarginGateWhenCalibratedUp = false
     static let rivalAwareSizeMargin = true
     static let rivalAwareSizeMarginMaxPeople = 10
     static let capEffectiveThresholdWhenFewPeople = true
