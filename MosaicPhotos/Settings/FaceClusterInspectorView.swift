@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import PeopleKit
 import SwiftUI
 
 // MARK: - クラスタリング判定の内訳（Developer Options・ADR-135）
@@ -24,6 +25,7 @@ struct FaceClusterInspectorView: View {
                 settingsSection(report)
                 statusSection(report.focus)
                 neighborSection(report)
+                glossarySection
             } else if loading {
                 Section { Text("計算中…").foregroundStyle(.secondary) }
             }
@@ -44,8 +46,12 @@ struct FaceClusterInspectorView: View {
     }
 
     private func load(_ person: PersonInfo) async {
+        await load(clusterID: person.clusterID)
+    }
+
+    private func load(clusterID: Int) async {
         loading = true
-        report = await peopleEngine.decisionReport(clusterID: person.clusterID, limit: 15)
+        report = await peopleEngine.decisionReport(clusterID: clusterID, limit: 15)
         loading = false
     }
 
@@ -106,8 +112,17 @@ struct FaceClusterInspectorView: View {
     }
 
     private func neighborSection(_ report: PersonDecisionReport) -> some View {
-        Section("近傍（類似度の高い順）") {
+        Section {
             ForEach(report.neighbors) { row in
+                NavigationLink {
+                    FaceClusterMembersView(clusterID: row.clusterID,
+                                           title: row.name ?? "Person \(row.clusterID)",
+                                           peopleEngine: peopleEngine) { picked in
+                        // その人物を対象に切り替えて、こちらの内訳を作り直す。
+                        focus = peopleEngine.allPeople.first { $0.clusterID == picked }
+                        Task { await load(clusterID: picked) }
+                    }
+                } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(row.name ?? "Person \(row.clusterID)")
@@ -130,8 +145,49 @@ struct FaceClusterInspectorView: View {
                     }
                 }
                 .padding(.vertical, 2)
+                }
             }
+        } header: {
+            Text("近傍（類似度の高い順）")
+        } footer: {
+            Text("行をタップすると、その人物として認識している顔の一覧が出ます"
+                 + "（そこから対象を切り替えられます）。")
         }
+    }
+
+    /// 用語の注記。**画面の数字が何を意味するか**をここで完結させる
+    /// ——別ドキュメントを見に行かないと読めない表は、チューニングでは使われない。
+    private var glossarySection: some View {
+        Section("用語") {
+            glossary("重心", "その人物の顔ベクトルの平均（品質で重み付け）。人物の「中心」で、"
+                     + "新しい顔はこれとの近さ（cos 類似度）で判定される。"
+                     + "「重心に寄与」はその平均に入っている顔の数（品質フロア未満の顔は"
+                     + "表示だけの所属なので入らない）。")
+            glossary("アンカー（確認顔）", "ユーザーが「この人だ」と表明した顔"
+                     + "（1 対 1 の確認・代表写真の選択・名前付け・別の人への付け替え・統合）。"
+                     + "重心とは別に個別の「見本」として使われ、重心から外れた角度・年齢の顔も"
+                     + "拾える。再クラスタでは動かない錨になる（ADR-130/132）。")
+            glossary("種（再クラスタで残る側）", "名前・アンカー・束ねのどれかがある人物。"
+                     + "種はメンバーごと保たれ、無い人物は毎回ばらして割り当て直される。")
+            glossary("サイズ適応の上乗せ", "小さい人物ほど合流を厳しくする仕組み。"
+                     + "実効しきい値＝しきい値＋上乗せで、メンバー 1 人のとき最大、"
+                     + "成熟枚数以上で 0。育ち始めのクラスタが似た他人を吸い込むのを防ぐ。")
+            glossary("マージンゲート", "1 位と 2 位の人物がどちらも閾値を超え、"
+                     + "その差がゲート幅未満なら**どちらにも入れない**。"
+                     + "「両方にそこそこ似ている」顔（兄弟・親子）を取り違えないための保険。")
+            glossary("負例", "「この人ではない」と外した顔の記録。似た顔が同じ人物へ入ろうと"
+                     + "したときに拒否する。再スキャンやモデル更新を跨いで効く（ADR-45）。")
+            glossary("統合候補の帯", "「同じ人ですか？」のレビューに出す類似度の下限。"
+                     + "自動合流はしないが、人に尋ねる価値がある範囲。")
+        }
+    }
+
+    private func glossary(_ term: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(term).font(.subheadline.weight(.semibold))
+            Text(text).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - 表示ヘルパ
@@ -211,5 +267,47 @@ private struct InspectorPersonPicker: View {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
             }
         }
+    }
+}
+
+/// 近傍の人物として認識している顔の一覧（デバッグ・読み取り専用）。
+/// 「この人物は実際に誰の顔で出来ているのか」を確かめる用。
+private struct FaceClusterMembersView: View {
+    let clusterID: Int
+    let title: String
+    let peopleEngine: PeopleEngine
+    /// この人物を内訳の対象に切り替える。
+    let onFocus: (Int) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var faces: [PersonInfo.Face] = []
+
+    private let columns = [GridItem(.adaptive(minimum: 90), spacing: 3)]
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 3) {
+                ForEach(faces) { face in
+                    Color.clear
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320)
+                        }
+                        .clipped()
+                }
+            }
+            .padding(3)
+        }
+        .navigationTitle("\(title)（\(faces.count)）")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("この人物を対象にする") {
+                    onFocus(clusterID)
+                    dismiss()
+                }
+            }
+        }
+        .task { faces = await peopleEngine.coverCandidates(clusterID: clusterID) }
     }
 }
