@@ -312,11 +312,30 @@ struct ParseGPSCoordinateTests {
 @MainActor
 struct MemberStoreBackupHidingTests {
 
+    /// ⚠️ **隠すだけでは直らない**（実フィードバック「治ってない」）。顔がクラウド副本側だけで
+    /// 検出された写真は、原本がそのアルバムに居ないので隠れず、日付だけが「アップロード時刻」の
+    /// まま残る。だから**撮影日そのものを台帳で上書き**する。ここはその配線を固定する。
+    @Test("台帳の撮影日でクラウド写真の日付を上書きする")
+    func ledgerDateOverridesCloudDate() {
+        let uploadedAt = Date(timeIntervalSince1970: 1_800_000_000)   // 「今日」相当
+        let takenAt = Date(timeIntervalSince1970: 1_000_000_000)      // 実際の撮影日（ずっと昔）
+        let item = DropboxFileItem(path: "/backup/a.jpg", name: "a.jpg",
+                                   contentHash: "h", captureDate: uploadedAt)
+        let known = BackupCopyInfo(localIdentifier: "local-a", captureDate: takenAt)
+        let fixed = item.withCaptureDate(known.captureDate)
+        #expect(fixed.captureDate == takenAt,
+                "アップロード時刻のままだと、古い写真が一覧の先頭（最新）に出る")
+        #expect(fixed.path == item.path && fixed.contentHash == item.contentHash,
+                "日付以外を書き換えている")
+    }
+
     @Test("既定のプロバイダがメンバー限定ストアへ渡る")
     func defaultProviderIsWired() {
         let previous = MergedPhotoStore.defaultBackupCopyIndexProvider
         defer { MergedPhotoStore.defaultBackupCopyIndexProvider = previous }
-        MergedPhotoStore.defaultBackupCopyIndexProvider = { ["/backup/a.jpg": "local-a"] }
+        MergedPhotoStore.defaultBackupCopyIndexProvider = {
+            ["/backup/a.jpg": BackupCopyInfo(localIdentifier: "local-a", captureDate: nil)]
+        }
 
         let store = MergedPhotoStore.forMembers(
             localIDs: ["local-a"], cloudPaths: ["/backup/a.jpg"],

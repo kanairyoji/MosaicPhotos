@@ -99,6 +99,26 @@ public actor BackupStore {
         }
     }
 
+    /// 副本の判定と**撮影日の復元**に要る 3 列だけの射影（パス小文字 → 記録）。
+    ///
+    /// ⚠️ 撮影日が要る理由（ADR-128 追補・実フィードバック）: Dropbox 側の撮影日は
+    /// `time_taken ?? client_modified` で、**EXIF から media_info が付かない**（あるいは同期時に
+    /// pending だった）写真では**アップロード時刻**になる。すると「去年の写真」が一覧の先頭
+    /// （最新）に出る。アプリの台帳は元の `PHAsset.creationDate` を持っているので、
+    /// **こちらを正**として表示側で上書きする——既にアップロード済みの写真も直る点が肝。
+    public func backupCopyRecords() -> [String: BackupCopyRecord] {
+        var d = FetchDescriptor<BackupAssetRecord>()
+        d.propertiesToFetch = [\.dropboxPath, \.localIdentifier, \.creationDate]
+        let rows = (try? modelContext.fetch(d)) ?? []
+        var out: [String: BackupCopyRecord] = [:]
+        out.reserveCapacity(rows.count)
+        for row in rows {
+            out[row.dropboxPath.lowercased()] = BackupCopyRecord(
+                localIdentifier: row.localIdentifier, captureDate: row.creationDate)
+        }
+        return out
+    }
+
     /// 二重表示の判定に要る **2 列だけ**の射影（Dropbox パス小文字 → localIdentifier）。
     ///
     /// ⚠️ `allRecordsLite()` は全カラム（ファイル名・hash・アルバム・日付…）を materialize する。

@@ -30,9 +30,10 @@ public final class MergedPhotoStore {
     /// バックアップ台帳の対応（Dropbox パス小文字 → localIdentifier）を返す seam。
     /// 実体は `BackupKit`（このパッケージは BackupKit に依存しない）。アプリが結線する。
     /// 未設定なら何も隠さない＝従来どおりの表示（重複するが、消えるよりよい）。
-    @ObservationIgnored public var backupCopyIndexProvider: (@Sendable () async -> [String: String])?
+    /// バックアップ台帳の索引（Dropbox パス小文字 → 記録）。二重表示の抑止と**撮影日の復元**に使う。
+    @ObservationIgnored public var backupCopyIndexProvider: (@Sendable () async -> [String: BackupCopyInfo])?
     /// 直近に解決したバックアップ対応表（再構築のたびに台帳を引き直さないための控え）。
-    @ObservationIgnored private var backupCopyIndex: [String: String] = [:]
+    @ObservationIgnored private var backupCopyIndex: [String: BackupCopyInfo] = [:]
     /// 直近に代入した一覧の指紋（オフメインで計算）。同じなら代入しない。
     @ObservationIgnored private var lastMergedSignature: Int?
 
@@ -128,13 +129,22 @@ public final class MergedPhotoStore {
             // ⚠️ この端末のバックアップコピーは、**端末に原本が無いときだけ**出す
             // （原本が有るのに出すと 1 枚の写真が二重に並ぶ・実機 diagnostics-57/58）。
             let hidden = BackupCopyHiding.hiddenPaths(
-                backupPathToLocalID: backupIndex,
+                backupPathToLocalID: backupIndex.compactMapValues(\.localIdentifier),
                 localIdentifiers: Set(localSnapshot.map(\.id)))
             let visibleCloud = hidden.isEmpty
                 ? MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
                 : MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
                     .filter { !hidden.contains($0.path.lowercased()) }
-            let cloud = visibleCloud.map(MergedPhotoItem.cloud)
+            // ⚠️ **撮影日は台帳を正とする**（ADR-128 追補・実フィードバック「時系列にならない」）。
+            // Dropbox 側の日付は `time_taken ?? client_modified` で、EXIF から media_info が
+            // 付かない（または同期時に pending だった）写真では**アップロード時刻**になる。
+            // 隠すだけでは直らない——顔がクラウド副本側だけで検出された写真は、原本がその
+            // アルバムに居ないので隠れず、日付だけが「今日」のまま残る。
+            let dated = visibleCloud.map { item -> DropboxFileItem in
+                guard let known = backupIndex[item.path.lowercased()]?.captureDate else { return item }
+                return item.withCaptureDate(known)
+            }
+            let cloud = dated.map(MergedPhotoItem.cloud)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
             let merged = (local + cloud).sortedByCaptureDateAscending()
             if Task.isCancelled { return }
