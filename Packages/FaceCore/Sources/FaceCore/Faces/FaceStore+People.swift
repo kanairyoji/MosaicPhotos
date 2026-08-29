@@ -204,6 +204,22 @@ extension FaceStore {
         return members
     }
 
+    /// この写真に写っている「人物」がちょうど 1 人ならそのクラスタ ID を返す（束ねは 1 人として畳む）。
+    ///
+    /// ⚠️ 人物アルバム以外（AI アルバム・場所・全写真）で「この人は XX ではない」を出すための判定。
+    /// **1 人しか写っていない写真に限る**のは、複数人の写真では「どの人を直すのか」が
+    /// メニューの文言だけでは決まらないため（顔の管理／人物アルバム側でやる）。
+    func solePersonClusterID(refKey: String) -> Int? {
+        var clusterIDs = Set<Int>()
+        for f in faces(inPhoto: refKey) where f.clusterID >= 0 { clusterIDs.insert(f.clusterID) }
+        guard !clusterIDs.isEmpty else { return nil }
+        // 束ねられたクラスタ（成長で分かれた同一人物）は 1 人として数える。
+        var groups = Set<Int>()
+        for id in clusterIDs { groups.insert(linkedClusterIDs(primary: id).min() ?? id) }
+        guard groups.count == 1 else { return nil }
+        return clusterIDs.min()
+    }
+
     /// この写真に写っている**指定クラスタの**顔矩形（Vision 正規化・原点左下）。
     /// 人物アルバムで「どの顔をこの人物として認識したか」をチェックする用途なので、
     /// 同じ写真の複数の顔が同一クラスタに入っていても（混入の疑い）、

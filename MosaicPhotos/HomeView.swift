@@ -332,6 +332,11 @@ struct HomeView: View {
             dismissToHome: dismiss,
             content: content
         )
+        // ⚠️ **どの写真ビューでも人物を直せるようにする**（実フィードバック: 「AI アルバムで
+        // 家族の束を見ていて、家族じゃない写真があると気づいたときに直したい」）。
+        // 1 人だけ写っている写真の長押し／全画面メニューに「この人は XX ではない」「別の人…」が出る。
+        // 人物アルバムは自前の操作を持つので、そちら側で上書きしている。
+        .photoPersonActions(peopleEngine: stores.peopleEngine)
     }
 }
 

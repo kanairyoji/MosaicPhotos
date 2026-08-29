@@ -194,6 +194,14 @@ public final class PeopleEngine {
         await store.memberRefKeys(forPerson: clusterID)
     }
 
+    /// このクラスタを含む「表示上の人物」。束ねられていれば**束ね先（主クラスタ）**の
+    /// `PersonInfo` を返す（ADR-61 の 2 階層束ねでは、主クラスタが相手側に移ることがある）。
+    /// 開いている人物アルバムを、束ねたあとの人物として描き直すために使う。
+    public func person(containing clusterID: Int) async -> PersonInfo? {
+        let linked = Set(await store.linkedClusterIDs(primary: clusterID))
+        return allPeople.first { linked.contains($0.clusterID) }
+    }
+
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
     /// `allowSimulator` が true なら（Developer Options のデバッグトグル）シミュレータでも走らせる。
     /// ※ 一時停止で滞留した既存スキャンは、ゲートが開けば（`BackgroundYield.heavyShouldPause` が
@@ -552,6 +560,30 @@ public final class PeopleEngine {
             }
         }
         return 0
+    }
+
+    /// **この写真は別の人**（写真 1 枚ぶんの顔をまとめて指定の人物へ移す）。
+    /// 人物アルバムのサムネイル長押し・全画面メニューから呼ぶ。`to` が nil なら新しい人物。
+    /// 戻り値は移した顔の数（0 = この写真にこの人物の顔が無かった）。
+    public func movePhoto(itemID: String, from clusterID: Int, to toClusterID: Int?) async -> Int {
+        for key in Self.refKeyCandidates(for: itemID) {
+            let moved = await store.movePhoto(refKey: key, from: clusterID, to: toClusterID)
+            if moved > 0 {
+                await loadPeople()
+                return moved
+            }
+        }
+        return 0
+    }
+
+    /// この写真に**1 人だけ**写っているときのその人物（写真ビューの「この人は XX ではない」用）。
+    /// 複数人・0 人なら nil（どの人を直すのかが決まらないため出さない）。
+    public func solePerson(inItem itemID: String) async -> PersonInfo? {
+        for key in Self.refKeyCandidates(for: itemID) {
+            guard let clusterID = await store.solePersonClusterID(refKey: key) else { continue }
+            return await person(containing: clusterID)
+        }
+        return nil
     }
 
     /// 表示側の写真 ID から台帳の refKey 候補を作る（ローカル/クラウド/そのまま）。

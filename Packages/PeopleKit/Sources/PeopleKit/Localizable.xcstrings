@@ -111,6 +111,16 @@
         }
       }
     },
+    "Choose the correct person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正しい人物を選ぶ"
+          }
+        }
+      }
+    },
     "Choose the person to group “%@” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later.": {
       "localizations": {
         "ja": {
@@ -454,6 +464,16 @@
         }
       }
     },
+    "Moves this photo’s face to the person you choose. The app learns from this, so the same face goes to that person next time.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この写真の顔を、選んだ人物へ移します。この修正は学習され、次からは同じ顔がその人物に入ります。"
+          }
+        }
+      }
+    },
     "Name": {
       "localizations": {
         "ja": {
@@ -470,6 +490,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "新しいピープルグループ"
+          }
+        }
+      }
+    },
+    "New Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しい人物"
           }
         }
       }
@@ -730,6 +760,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "スキップ"
+          }
+        }
+      }
+    },
+    "Someone Else": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人を選ぶ"
+          }
+        }
+      }
+    },
+    "Someone Else…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人は別の人…"
           }
         }
       }

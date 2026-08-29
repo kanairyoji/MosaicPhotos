@@ -187,4 +187,50 @@ struct PersonIdentityAnchorTests {
         // 本人の顔は巻き込まれない。
         #expect(after.filter { $0.hasPrefix("L-a") }.count >= 9)
     }
+
+    @Test("「まとめて確認」で統合した内容は、再クラスタ後も保たれる")
+    func mergeSurvivesRebuild() async {
+        // 同じ人が 2 つに割れている状況（cos 0.45＝しきい値 0.50 未満なので自動では合流しない）。
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<4 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, Float(i) * 0.005, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([0.45, 0.893, Float(i) * 0.005])]) }
+        let before = await store.memberRefKeysByCluster()
+        guard let aID = before.first(where: { $0.value.contains("L-a0") })?.key,
+              let bID = before.first(where: { $0.value.contains("L-b0") })?.key, aID != bID else {
+            Issue.record("fixture: 2 クラスタに割れていない"); return
+        }
+
+        // ユーザーが「同じ人」と答える（まとめて確認・1 対 1 の確認の実体）。
+        #expect(await store.mergeClusters(from: bID, into: aID) == nil)
+        let merged = await store.memberRefKeysByCluster()[aID] ?? []
+        #expect(merged.contains("L-b0"), "前提: 統合できている")
+
+        _ = await store.rebuildClusters()
+
+        let after = await store.memberRefKeysByCluster()[aID] ?? []
+        // 統合はユーザーの表明。夜の再クラスタで「なかったこと」になってはいけない。
+        #expect(after.filter { $0.hasPrefix("L-b") }.count == 3, "統合が忘れられている")
+        #expect(after.filter { $0.hasPrefix("L-a") }.count == 4)
+    }
+
+    @Test("束ねた人物（同一人物の別クラスタ）は、再クラスタで消えない")
+    func groupingSurvivesRebuild() async {
+        let store = await makeStore()
+        let map = await store.memberRefKeysByCluster()
+        guard let aID = map.first(where: { $0.value.contains("L-a0") })?.key,
+              let bID = map.first(where: { $0.value.contains("L-b0") })?.key, aID != bID else {
+            Issue.record("fixture: 2 クラスタになっていない"); return
+        }
+        // 成長で分かれた同じ人として束ねる（ADR-61）。融合はせず、両クラスタを 1 人物として扱う。
+        await store.linkClusters([aID, bID])
+        let linked = await store.memberRefKeys(forPerson: aID)
+        #expect(linked.contains { $0.hasPrefix("L-b") }, "前提: 束ねが効いている")
+
+        _ = await store.rebuildClusters()
+
+        // 束ねの記録（personGroupID）はクラスタ行に載っている。行ごと消されると黙って忘れられる。
+        let after = await store.memberRefKeys(forPerson: aID)
+        #expect(after.contains { $0.hasPrefix("L-a") })
+        #expect(after.contains { $0.hasPrefix("L-b") }, "束ねが忘れられている")
+    }
 }

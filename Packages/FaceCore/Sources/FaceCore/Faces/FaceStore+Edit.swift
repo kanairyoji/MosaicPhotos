@@ -25,6 +25,22 @@ extension FaceStore {
         return faceIDs.count
     }
 
+    /// **この写真は別の人**（写真 1 枚ぶんの顔をまとめて指定の人物へ付け替える）。
+    /// 「この人ではない」（相手を選ばない）との違いは、付け替え先が決まっていること
+    /// ——`reassignFace` が付け替え先を確認顔（アンカー）として学習するので、次からは
+    /// その人物に入る（ADR-46）。`toClusterID` が nil なら新しい人物になる。
+    func movePhoto(refKey: String, from clusterID: Int, to toClusterID: Int?) -> Int {
+        let cid = clusterID, key = refKey
+        var d = FetchDescriptor<DetectedFace>(
+            predicate: #Predicate { $0.clusterID == cid && $0.refKey == key })
+        d.propertiesToFetch = [\.faceID]
+        let faceIDs = ((countedFetchOptional(d)) ?? []).map(\.faceID)
+        // この写真でこの人物として認識されている顔は、同一写真 cannot-link により本来 1 つ。
+        // 複数あるなら混入なので、まとめて付け替える（ユーザーから見れば「この写真の人」1 人ぶん）。
+        for faceID in faceIDs { reassignFace(faceID: faceID, toClusterID: toClusterID) }
+        return faceIDs.count
+    }
+
 
     /// 顔を別の人物へ付け替える。`toClusterID` が nil なら新規人物を作る。
     /// 重心演算は `FaceClustering.adding/removing`（`assign` と同じ正規化規則）に委譲する。
@@ -361,7 +377,18 @@ extension FaceStore {
                              wrongEmbedding: nil, similarity: sim, confidence: confidence)
         }
         // 顔を一括付け替え（DetectedFace.clusterID）。
-        for f in faces(inCluster: srcID) { f.clusterID = dstID }
+        let moving = faces(inCluster: srcID)
+        for f in moving { f.clusterID = dstID }
+        // ⚠️⚠️ **統合はユーザーの「同じ人」表明**なので、アンカー（確認顔）として残す（ADR-134）。
+        // 実フィードバック: 「まとめて確認や束ねで何度も調整しているのに、再クラスタが終わると
+        // 学習した内容を忘れる気がする」。原因はここ——統合は `FaceCorrection` に正例を 1 行
+        // 残すだけで、**顔には何の印も付かなかった**。印が無い人物は再クラスタの種にならず
+        //（名前もアンカーも無い＝機械が作った断片と同じ扱い）、メンバーは毎回ばらされる。
+        // 両側の代表 1 枚ずつをアンカーにすれば、その人物は種になり構成が保たれる（ADR-132）。
+        for face in [Self.bestCoverFace(moving), Self.bestCoverFace(faces(inCluster: dstID))] {
+            guard let face, face.confirmedAt == nil else { continue }
+            face.confirmedAt = Date()
+        }
         // 重心（生合計と件数）を合流。
         if let sSum = ClipMath.decodeHalf(src.sum), let dSum = ClipMath.decodeHalf(dst.sum) {
             let merged = FaceClustering.merging(sumA: dSum, countA: dst.count,

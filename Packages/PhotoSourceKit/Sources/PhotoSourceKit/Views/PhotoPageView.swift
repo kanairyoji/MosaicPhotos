@@ -32,6 +32,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
     @Environment(\.faceHighlightProvider) private var faceHighlightProvider
     /// 写真ごとの追加操作（人物アルバムの「この写真はこの人ではない」など）。
     @Environment(\.photoContextActions) private var photoContextActions
+    /// 写真の内容で決まる追加操作（1 人しか写っていない写真の「この人ではない」など）。
+    @Environment(\.photoContextActionProvider) private var photoContextActionProvider
+    /// 現在ページぶんの動的操作。ページが変わるたびに引き直す（`.task(id:)`）。
+    @State private var dynamicContextActions: [PhotoContextAction] = []
     @Environment(\.photoUsageEvent) private var photoUsageEvent
     /// 顔ハイライト（人物アルバムのみ）。ページ送りしても維持する画面単位のトグル。
     @State private var showFaceHighlights = false
@@ -151,6 +155,11 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .onDisappear { BackgroundActivityMonitor.shared.isViewingPhoto = false }
         // 現在ページの位置情報→地名を解決（オフライン DB なので即時）。ページ切替で更新。
         .task(id: currentID) { await resolveCurrentPlace() }
+        // 写真ごとの操作（1 人しか写っていない写真の人物修正など）はページ単位で引き直す。
+        .task(id: currentID) {
+            guard let provider = photoContextActionProvider else { dynamicContextActions = []; return }
+            dynamicContextActions = await provider("\(currentID)")
+        }
         // Pre-fetch the next page as soon as the page view opens, so photos are
         // ready before the user swipes near the end.
         .task {
@@ -271,9 +280,9 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 }
                 // 写真ごとの追加操作（人物アルバムの「この人ではない」など）。
                 // ⚠️ **全体像を見ている場所から直せる**ようにするのが目的（実フィードバック）。
-                if !photoContextActions.isEmpty, let id = currentItem?.id {
+                if !allContextActions.isEmpty, let id = currentItem?.id {
                     Menu {
-                        ForEach(photoContextActions) { action in
+                        ForEach(allContextActions) { action in
                             Button(role: action.isDestructive ? .destructive : nil) {
                                 Task { await action.perform("\(id)") }
                             } label: {
@@ -291,6 +300,11 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         }
         .frame(height: 49)
         .background(.bar)
+    }
+
+    /// メニューに出す操作（画面固定のもの＋この写真ぶん）。
+    private var allContextActions: [PhotoContextAction] {
+        photoContextActions + dynamicContextActions
     }
 
     /// 共有の準備: 原本（無ければ表示用画像）を用意して共有シートを開く。
