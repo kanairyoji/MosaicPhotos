@@ -87,6 +87,11 @@ extension EnvironmentValues {
     }
 }
 
+/// 写真ごとの追加操作（人物アルバムの「この写真はこの人ではない」など）。
+private enum PhotoContextActionsKey: EnvironmentKey {
+    static let defaultValue: [PhotoContextAction] = []
+}
+
 private enum FaceHighlightKey: EnvironmentKey {
     static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
 }
@@ -117,6 +122,17 @@ public extension EnvironmentValues {
     var faceHighlightProvider: (@Sendable (String) async -> [CGRect])? {
         get { self[FaceHighlightKey.self] }
         set { self[FaceHighlightKey.self] = newValue }
+    }
+
+    /// 写真 1 枚に対する**追加の操作**（人物アルバムの「この写真はこの人ではない」など）。
+    ///
+    /// ⚠️ `PhotoSourceKit` は顔の仕組みを知らない（`AutoAlbumCore`/`FaceCore` に依存しない）。
+    /// 呼び出し側（人物アルバム）が「表示名と実行」を渡し、こちらは**グリッドの長押し**と
+    /// **全画面のメニュー**に並べるだけ——`faceHighlightProvider` と同じ形の seam。
+    /// nil（既定）なら操作は出ない。
+    var photoContextActions: [PhotoContextAction] {
+        get { self[PhotoContextActionsKey.self] }
+        set { self[PhotoContextActionsKey.self] = newValue }
     }
 
     var photoInteraction: ((Bool) -> Void)? {

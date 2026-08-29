@@ -512,11 +512,7 @@ public final class PeopleEngine {
 
     /// 写真（`PhotoItem.id`：refKey か生 ID）に写る**この人物の**顔矩形（全画面のハイライト用）。
     public func faceHighlights(forItemID id: String, clusterID: Int) async -> [CGRect] {
-        var candidates: [String] = []
-        if PhotoRef.decode(id) != nil { candidates.append(id) }
-        candidates.append(PhotoRef.local(id).encoded)
-        candidates.append(PhotoRef.cloud(id).encoded)
-        for key in candidates {
+        for key in Self.refKeyCandidates(for: id) {
             let boxes = await store.faceBoxes(refKey: key, clusterID: clusterID)
             if !boxes.isEmpty { return boxes }
         }
@@ -538,6 +534,33 @@ public final class PeopleEngine {
     public func reassignFace(faceID: String, toClusterID: Int?) async {
         await store.reassignFace(faceID: faceID, toClusterID: toClusterID)
         await loadPeople()
+    }
+
+    /// **この写真はこの人ではない**（写真 1 枚ぶんの顔をまとめて外す）。
+    /// 人物アルバムのサムネイル長押し・全画面のメニューから呼ぶ。
+    /// - Returns: 外した顔の数（0 なら何もしなかった＝UI は「変化なし」を伝える）。
+    /// - Parameter itemID: 表示側の写真 ID（生の localIdentifier / Dropbox パス / refKey のいずれでも可。
+    ///   `faceHighlights(forItemID:)` と**同じ規則**で解決する——ここだけ別の解き方をすると、
+    ///   「黄枠は出るのに外せない」というちぐはぐが起きる）。
+    @discardableResult
+    public func removePhoto(itemID: String, from clusterID: Int) async -> Int {
+        for key in Self.refKeyCandidates(for: itemID) {
+            let removed = await store.removePhoto(refKey: key, from: clusterID)
+            if removed > 0 {
+                await loadPeople()
+                return removed
+            }
+        }
+        return 0
+    }
+
+    /// 表示側の写真 ID から台帳の refKey 候補を作る（ローカル/クラウド/そのまま）。
+    static func refKeyCandidates(for id: String) -> [String] {
+        var candidates: [String] = []
+        if PhotoRef.decode(id) != nil { candidates.append(id) }
+        candidates.append(PhotoRef.local(id).encoded)
+        candidates.append(PhotoRef.cloud(id).encoded)
+        return candidates
     }
 
     /// 全消去して再スキャンする（直近の候補があれば自動で再開）。

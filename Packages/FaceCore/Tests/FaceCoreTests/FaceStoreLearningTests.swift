@@ -402,3 +402,50 @@ struct FaceStoreLowQualitySplitTests {
         }
     }
 }
+
+/// 「この写真はこの人ではない」（写真 1 枚ぶんをまとめて外す・ADR-129）。
+///
+/// ⚠️ 実フィードバック: 「全体像や前後関係で違うと気づくことがある」。顔だけを並べた
+/// 「顔の管理」では気づけない誤りを、写真を見ている場所から直せるようにした。
+/// 1 枚に**同じ人物の顔が複数**あることもある（誤検出の重なり）ので、まとめて外す。
+@Suite("この写真はこの人ではない")
+struct RemovePhotoFromPersonTests {
+
+    private func signal(_ v: [Float]) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(v), quality: 0.9)
+    }
+
+    /// ⚠️ 同じ人物の顔は **1 枚の写真に 1 つ**しか入らない（同一写真 cannot-link・ADR-58）。
+    /// なので通常 `removed` は 1。実装がまとめて外す形なのは、旧データや第2パスで
+    /// 不変条件が破れている行を残さないため（そこだけ 1 件ずつ消し残すと直せなくなる）。
+    @Test("その写真の顔だけを外し、他の写真は残す")
+    func removesOnlyThatPhoto() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await store.recordScan(refKey: "L-keep\(i)", faces: [signal([1, 0, 0])]) }
+        await store.recordScan(refKey: "L-wrong", faces: [signal([1, 0, 0])])
+
+        let before = await store.clusterCountsForTesting()
+        guard let clusterID = before.max(by: { $0.value < $1.value })?.key else {
+            Issue.record("fixture が人物になっていない"); return
+        }
+        let members0 = await store.memberRefKeysByCluster()[clusterID] ?? []
+        #expect(members0.contains("L-wrong"), "前提: 外す写真がこの人物のメンバーになっている")
+
+        let removed = await store.removePhoto(refKey: "L-wrong", from: clusterID)
+        #expect(removed >= 1, "外せていない: \(removed)")
+
+        let members = await store.memberRefKeysByCluster()[clusterID] ?? []
+        #expect(!members.contains("L-wrong"), "外したはずの写真が残っている")
+        #expect(members.contains("L-keep0"), "他の写真まで外している")
+    }
+
+    @Test("その人物の顔が無い写真では何もしない")
+    func noOpWhenPhotoIsNotAMember() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await store.recordScan(refKey: "L-a", faces: [signal([1, 0, 0])])
+        let clusterID = await store.clusterCountsForTesting().keys.first ?? -1
+        let removed = await store.removePhoto(refKey: "L-not-a-member", from: clusterID)
+        #expect(removed == 0)
+    }
+}

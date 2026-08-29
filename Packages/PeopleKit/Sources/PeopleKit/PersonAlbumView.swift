@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import AutoAlbumCore
+import MosaicSupport
 import DropboxKit
 import LocalPhotoKit
 import Photos
@@ -66,6 +67,23 @@ public struct PersonAlbumView: View {
             .environment(\.faceHighlightGridProvider) { id in
                 await gridFaceRects(itemID: id)
             }
+            // ⚠️ サムネイル長押し・全画面メニューから「この写真はこの人ではない」を直接呼べる
+            // （実フィードバック: **全体像や前後関係で違うと気づく**ことがある。顔だけを並べた
+            // 「顔の管理」ではその気づき方ができない）。ADR-45 の負例として学習され、
+            // 再スキャン・再クラスタでも同じ誤りは再発しない。
+            .environment(\.photoContextActions, [
+                PhotoContextAction(
+                    id: "not-this-person",
+                    title: L("Not “\(person.displayName)”"),
+                    systemImage: "person.crop.circle.badge.xmark",
+                    isDestructive: true
+                ) { [peopleEngine, clusterID = person.clusterID] itemID in
+                    let removed = await peopleEngine.removePhoto(itemID: itemID, from: clusterID)
+                    // 外した結果はアルバムの中身に効く（次回開いたときに消える）。取り消しは
+                    // 「顔の管理」から別の人物へ付け替えることでできる。
+                    Diagnostics.mark("people: removed \(removed) face(s) from cluster \(clusterID)")
+                }
+            ])
             // 画面内「…」→ ホームカードの長押しと同じ人物メニュー（改名/代表/顔管理/束ね）。
             .peopleActions(for: $menuTarget, engine: peopleEngine)
             .environment(\.sourceMenuContent) { [person] in
