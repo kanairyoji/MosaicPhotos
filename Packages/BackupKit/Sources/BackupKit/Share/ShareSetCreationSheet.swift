@@ -1,5 +1,4 @@
 #if canImport(UIKit)
-import DropboxKit
 import SwiftUI
 
 // MARK: - 共有セット作成シート
