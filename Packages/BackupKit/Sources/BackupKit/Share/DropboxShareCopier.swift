@@ -70,8 +70,17 @@ struct DropboxShareCopier {
         if status == 200 { return .moved }
         let text = String(data: data, encoding: .utf8) ?? ""
         if status == 409, text.contains("from_lookup/not_found") { return .sourceMissing }
-        BackupLogger.error("ShareCopier: move failed (\(status)) — \(from) → \(to)")
+        // ⚠️ エラータグまで残す。status だけだと「移動先が既にある」のか「通信/権限」なのかが
+        // 実機ログから区別できず、毎回の反映で同じ失敗を繰り返しているのに手が出せない
+        // （diagnostics-64/65 で 409 が続いた）。本文は Dropbox のエラー JSON（機密は含まない）。
+        BackupLogger.error("ShareCopier: move failed (\(status)) — \(from) → \(to) — \(Self.errorSummary(text))")
         return .failed
+    }
+
+    /// Dropbox のエラー本文から要点だけを取り出す（長い JSON をログに流し込まない）。
+    static func errorSummary(_ text: String, limit: Int = 200) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return flat.count <= limit ? flat : String(flat.prefix(limit)) + "…"
     }
 
     // MARK: - フォルダ作成

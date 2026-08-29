@@ -21,6 +21,30 @@
 
 ---
 
+## ADR-121 SwiftData ストア（@ModelActor）は専用のシリアルキューで走らせる
+- 状態: 採用
+- 文脈: 実機で「重い SwiftData の読み出しがメインスレッドを塞ぐ」ハングを何度も踏んだ
+  （14.5s / 13.9s / 10.5s / 10.9s / 5.9s…）。原因は `@ModelActor` の既定 executor
+  （`DefaultSerialModelExecutor`）が **ジョブを「呼び出し元のスレッド」でそのまま実行する**こと。
+  MainActor から `await store.fetchAll()` と書くと、その fetch は**メインで走る**——`await` が
+  あるのでコード上はオフメインに見え、レビューでも気づけない。ハング中のメインスレッドの
+  スタック採取（ADR-106 の自前採取）で `AutoAlbumStore.allEnrichedPhotosLite` /
+  `FaceStore.faceDigestsByCluster` がメインに載っているのを直接観測して確定した。
+  **「init したスレッドに束縛される」という従来の理解は誤り**だった（生成スレッドは無関係）。
+  そのため `Task.detached { Store() }`（オフメイン生成）では一切防げていなかった。
+- 決定: 各ストアの `unownedExecutor` を**専用のシリアルキュー**（`ModelStoreExecutor.serialQueue`）に
+  差し替える。対象は `AutoAlbumStore` / `TagStore` / `UsageStore` / `FaceStore` / `BackupStore` の 5 つ。
+  キューに **QoS は付けない**（`.unspecified`）——固定すると UI 起点の読みまでその優先度に落ちる。
+  未指定なら enqueue 側の優先度を引き継ぎ、前面の読みは高く・夜間バッチは低く走る。
+  オフメイン生成は残す（コンテナを開く＝ストアファイルを触るディスク I/O をメインから外すため）。
+- 結果: ストアの処理がメインに載らなくなる（＝規模に比例する fetch がそのまま前面ハングになる形が
+  構造的に消える）。代償は毎呼び出しのスレッドホップ 1 回。actor の直列性はキューが保証するので
+  SwiftData の要件（ModelContext を同時に触らない）は満たしたまま。
+  回帰は**テストで固定**した（`ModelActorExecutorTests`・3 パッケージ）: MainActor から呼んで
+  `Thread.isMainThread == false` を検証する。`unownedExecutor` を外すと落ちることを確認済み。
+- 関連: `MosaicSupport/ModelStoreExecutor.swift`・各ストア・事例「SwiftData ストアがメインスレッドで
+  走っていた（ロック解除後の 10.9 秒フリーズ・diagnostics-64/65）」。ADR-106（ハング中のスタック採取）。
+
 ## ADR-120 永続化は「変化検出してから書く」を既定にする
 - 状態: 採用
 - 文脈: OS が `diskwrites_resource` の報告を出した（12 分で 1.07GB・制限の約 117 倍）。

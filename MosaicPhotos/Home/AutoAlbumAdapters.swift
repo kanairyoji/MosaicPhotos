@@ -18,9 +18,9 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
         return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
     let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
-    // ⚠️ @ModelActor は「init したスレッド」で実行される（SwiftData の罠）。MainActor で
-    // 生成すると全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走り
-    // 実測 14.5s ハングの真因になったため、オフメイン生成ファクトリを使う。
+    // オフメイン生成ファクトリを使う（コンテナを開くディスク I/O をメインから外す）。
+    // ⚠️ SwiftData 処理をメインから外しているのは各ストアの `unownedExecutor`（専用キュー）で、
+    // 生成スレッドではない（既定 executor は呼び出し元のスレッドで走る＝ADR-121）。
     let engine = await AutoAlbumEngine.makeWithOffMainStore(
         cloudProvider: DropboxCloudPhotoProvider(store: dropboxStore),
         backupLink: BackupLinkAdapter(engine: backupEngine),
@@ -72,7 +72,7 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
         return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
     let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
-    // FaceStore も同様にオフメイン生成（@ModelActor は init したスレッドで実行される）。
+    // FaceStore も同様にオフメイン生成（コンテナを開く I/O をメインから外す）。
     return await PeopleEngine.makeWithOffMainStore(
         faceProvider: FacePerceptionAdapter(
             cloudImage: cloudImage, warmCloud: warmCloud,

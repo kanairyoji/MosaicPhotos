@@ -108,9 +108,9 @@ public final class AutoAlbumEngine {
     @ObservationIgnored let usageStore: UsageStore
     @ObservationIgnored let tagTagger: TagTagger
 
-    /// ⚠️ 直 init は「呼び出しスレッドで AutoAlbumStore（@ModelActor）を作る」＝ MainActor から
-    /// 呼ぶと全 SwiftData 処理（85k fetch/prune/upsert）がメインスレッドで走る（実測 14.5s ハング）。
-    /// **本番は `makeWithOffMainStore` を使う**こと（直 init はテスト用）。
+    /// ⚠️ 直 init は呼び出しスレッドでコンテナを開く（ディスク I/O）。**本番は
+    /// `makeWithOffMainStore` を使う**こと（直 init はテスト用）。SwiftData 処理をメインから
+    /// 外しているのは `AutoAlbumStore.unownedExecutor`（専用キュー・ADR-121）。
     public convenience init(cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
                             peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,
                             perception: PhotoPerceptionProvider? = nil, textEmbedder: TextEmbedder? = nil,
@@ -120,7 +120,7 @@ public final class AutoAlbumEngine {
                   translator: translator, labelProvider: labelProvider, store: nil)
     }
 
-    /// 本番用ファクトリ。@ModelActor（AutoAlbumStore）を**オフメインで生成**してから組み立てる。
+    /// 本番用ファクトリ。コンテナを開く I/O をメインから外すため**オフメインで生成**してから組み立てる。
     public static func makeWithOffMainStore(
         cloudProvider: CloudPhotoProvider? = nil, backupLink: BackupLinkProvider? = nil,
         peopleProvider: PeopleProvider? = nil, queryUnderstanding: QueryUnderstanding? = nil,

@@ -4,11 +4,20 @@ import MosaicSupport
 import SwiftData
 
 /// 付加情報（PhotoEnrichment）と生成アルバム（GeneratedAlbum）の永続化を司る ModelActor。
-/// `@ModelActor` により ModelContext がアクタ専用 executor に束縛される（メイン生成→オフメイン使用の
-/// "Unbinding from the main queue" 警告と非 Sendable 競合を回避）。
+/// `@ModelActor` により ModelContext はアクタ専用 executor（下記の専用キュー）へ直列化される。
 /// `@Model` は actor 外へ漏らさず、必ず Sendable 値（`EnrichedPhoto` / `AutoAlbumInfo`）に変換して返す。
 @ModelActor
 actor AutoAlbumStore {
+    /// ⚠️ **専用のシリアルキューで走らせる**（`ModelStoreExecutor` に理由を詳述）。
+    /// SwiftData の既定 executor はジョブを**呼び出し元のスレッド**で実行するため、これが無いと
+    /// MainActor からの `await store.…` が**メインスレッドで**走る（実測の前面ハングの真因）。
+    private nonisolated let executorQueue = ModelStoreExecutor.serialQueue(label: "com.mosaicphotos.store.autoalbum")
+    nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
+
+    /// テスト用: このストアのジョブがメインスレッドで走っていないかを確かめる
+    /// （`unownedExecutor` の回帰検証。`ModelActorExecutorTests` から呼ぶ）。
+    func runsOnMainThreadForTesting() -> Bool { Thread.isMainThread }
+
     static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "AutoAlbum")
 
     /// 名前付き設定でコンテナを作る（他コンテナとの衝突回避・"AutoAlbumV9" は破棄採番＝

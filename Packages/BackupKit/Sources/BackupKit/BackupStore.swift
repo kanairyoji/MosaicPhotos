@@ -19,13 +19,24 @@ public struct BackupRecordLite: Sendable {
 /// 旧実装は `BackupEngine`（@MainActor）が plain な `ModelContext` を直接使っており、
 /// **起動時の全記録 fetch×2・バックアップ中の毎枚 save・照合の全件 fetch がメインスレッド**で
 /// 走っていた（AutoAlbumStore で実測 14.5s ハングを起こした「SwiftData をメインで」の同型）。
-/// `@ModelActor` は **init したスレッドに executor が束縛される**既知の挙動があるため、
-/// 生成は必ず `makeDetached()`（Task.detached 内で init）を使うこと。
+/// ⚠️ 実行スレッドは `unownedExecutor`（専用シリアルキュー）で断つ——`@ModelActor` の既定 executor は
+/// **呼び出し元のスレッド**でジョブを走らせるため、それが無いと MainActor からの呼び出しがメインで走る
+/// （`ModelStoreExecutor` に詳述）。生成も `makeDetached()` を使う（コンテナを開くディスク I/O をメインから外す）。
 @ModelActor
 public actor BackupStore {
+    /// ⚠️ **専用のシリアルキューで走らせる**（`ModelStoreExecutor` に理由を詳述）。
+    /// SwiftData の既定 executor はジョブを**呼び出し元のスレッド**で実行するため、これが無いと
+    /// MainActor からの `await store.…` が**メインスレッドで**走る（実測の前面ハングの真因）。
+    private nonisolated let executorQueue = ModelStoreExecutor.serialQueue(label: "com.mosaicphotos.store.backup")
+    public nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
 
-    /// オフメイン生成ファクトリ（唯一の正しい作り方）。
-    /// ⚠️ `BackupStore(modelContainer:)` を MainActor から直接呼ぶと全処理がメインに束縛される。
+    /// テスト用: このストアのジョブがメインスレッドで走っていないかを確かめる
+    /// （`unownedExecutor` の回帰検証。`ModelActorExecutorTests` から呼ぶ）。
+    func runsOnMainThreadForTesting() -> Bool { Thread.isMainThread }
+
+
+    /// オフメイン生成ファクトリ。コンテナを開く（＝ストアファイルを触る）ディスク I/O を
+    /// メインから外す。実行スレッドの分離は `unownedExecutor` の役目で、生成側では決まらない。
     public static func makeDetached() async -> BackupStore {
         await Task.detached(priority: .userInitiated) {
             BackupStore(modelContainer: makeContainer())
