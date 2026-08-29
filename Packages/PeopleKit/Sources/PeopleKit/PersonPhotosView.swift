@@ -57,7 +57,10 @@ public struct PersonPhotosView: View {
                 faces = await peopleEngine.coverCandidates(clusterID: person.clusterID)
             }
             .sheet(item: $reassignFace) { face in
-                ReassignPickerView(face: face, currentClusterID: person.clusterID, peopleEngine: peopleEngine) { targetClusterID in
+                FaceReassignPickerView(faceID: face.faceID, refKey: face.refKey,
+                                       boundingBox: face.boundingBox,
+                                       currentClusterID: person.clusterID,
+                                       peopleEngine: peopleEngine) { targetClusterID in
                     Task {
                         await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: targetClusterID)
                         faces = await peopleEngine.coverCandidates(clusterID: person.clusterID)
@@ -90,72 +93,6 @@ private struct FaceTile: View {
 }
 
 // MARK: - Reassign picker（正しい人物を選ばせる）
-
-/// 「この人は別の人」で正しい人物を選ぶ。上部に対象の顔を出し、既存の人物一覧＋「新しい人物」から選ぶ。
-private struct ReassignPickerView: View {
-    let face: PersonInfo.Face
-    let currentClusterID: Int
-    let peopleEngine: PeopleEngine
-    /// 選択されたクラスタ ID（nil＝新しい人物）。
-    let onPick: (Int?) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    HStack {
-                        Spacer()
-                        FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320)
-                            .frame(width: 96, height: 96)
-                            .clipShape(Circle())
-                        Spacer()
-                    }
-                    .listRowBackground(Color.clear)
-                }
-                Section {
-                    Button {
-                        onPick(nil); dismiss()
-                    } label: {
-                        Label(L("Not this person (don’t pick anyone)"),
-                              systemImage: "person.crop.circle.badge.xmark")
-                    }
-                } footer: {
-                    Text(L("Removes this face from the person. It becomes its own new person; the app learns from this so the mistake isn’t repeated."))
-                }
-                Section(L("Or choose the correct person")) {
-                    ForEach(peopleEngine.people.filter { $0.clusterID != currentClusterID }) { p in
-                        Button {
-                            onPick(p.clusterID); dismiss()
-                        } label: {
-                            HStack(spacing: 12) {
-                                ReassignAvatar(person: p)
-                                Text(p.displayName).foregroundStyle(.primary)
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle(L("Not this person"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L("Cancel")) { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-private struct ReassignAvatar: View {
-    let person: PersonInfo
-    var body: some View {
-        FaceAvatarImage(refKey: person.coverRefKey, box: person.coverBoundingBox, maxPixel: 200)
-            .frame(width: 40, height: 40)
-            .clipShape(Circle())
-    }
-}
 
 // MARK: - Merge people
 

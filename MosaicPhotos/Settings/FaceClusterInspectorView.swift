@@ -17,6 +17,8 @@ struct FaceClusterInspectorView: View {
     @State private var report: PersonDecisionReport?
     @State private var loading = false
     @State private var showingPicker = false
+    /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
+    @State private var reassignTarget: PersonOutlierFace?
 
     var body: some View {
         List {
@@ -25,6 +27,7 @@ struct FaceClusterInspectorView: View {
                 settingsSection(report)
                 statusSection(report.focus)
                 neighborSection(report)
+                outlierSection(report)
                 glossarySection
             } else if loading {
                 Section { Text("計算中…").foregroundStyle(.secondary) }
@@ -32,6 +35,17 @@ struct FaceClusterInspectorView: View {
         }
         .navigationTitle("クラスタリングの内訳")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $reassignTarget) { face in
+            FaceReassignPickerView(faceID: face.faceID, refKey: face.refKey,
+                                   boundingBox: face.boundingBox,
+                                   currentClusterID: focus?.clusterID ?? -1,
+                                   peopleEngine: peopleEngine) { target in
+                Task {
+                    await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: target)
+                    if let focus { await load(clusterID: focus.clusterID) }
+                }
+            }
+        }
         .sheet(isPresented: $showingPicker) {
             InspectorPersonPicker(people: peopleEngine.allPeople) { person in
                 focus = person
@@ -152,6 +166,46 @@ struct FaceClusterInspectorView: View {
         } footer: {
             Text("行をタップすると、その人物として認識している顔の一覧が出ます"
                  + "（そこから対象を切り替えられます）。")
+        }
+    }
+
+    /// この人物の中で重心から外れている顔＝**混入の候補**（ADR-137）。
+    /// 近傍（他人との距離）だけでは内側に紛れ込んだ顔は見つからないので、内側からも見る。
+    @ViewBuilder
+    private func outlierSection(_ report: PersonDecisionReport) -> some View {
+        if !report.outliers.isEmpty {
+            Section {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 6)], spacing: 6) {
+                    ForEach(report.outliers) { face in
+                        Button { reassignTarget = face } label: {
+                            VStack(spacing: 2) {
+                                Color.clear
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay {
+                                        FaceAvatarImage(refKey: face.refKey, box: face.boundingBox,
+                                                        maxPixel: 320)
+                                    }
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                Text(String(format: "%.3f", face.similarity))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(face.belowThreshold ? .orange : .secondary)
+                                if face.confirmed {
+                                    Text("確認済み").font(.caption2).foregroundStyle(.green)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("間違い候補（重心から遠い順）")
+            } footer: {
+                Text("この人物の顔のうち、重心から遠いものです。数字は重心との類似度で、"
+                     + "オレンジは**いまのしきい値なら合流しない**顔＝混入の可能性が高いもの。"
+                     + "タップすると別の人物へ移せます（確認済みはユーザーが本人と表明した顔）。")
+            }
         }
     }
 
@@ -281,6 +335,8 @@ private struct FaceClusterMembersView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var faces: [PersonInfo.Face] = []
+    /// 「別の人へ移す」対象（顔のタップ）。
+    @State private var reassignTarget: PersonInfo.Face?
 
     private let columns = [GridItem(.adaptive(minimum: 90), spacing: 3)]
 
@@ -288,12 +344,16 @@ private struct FaceClusterMembersView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 3) {
                 ForEach(faces) { face in
-                    Color.clear
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay {
-                            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320)
-                        }
-                        .clipped()
+                    // タップで正しい人物へ移せる（誤りに気づく場所は 1 つではない・ADR-137）。
+                    Button { reassignTarget = face } label: {
+                        Color.clear
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320)
+                            }
+                            .clipped()
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(3)
@@ -309,5 +369,16 @@ private struct FaceClusterMembersView: View {
             }
         }
         .task { faces = await peopleEngine.coverCandidates(clusterID: clusterID) }
+        .sheet(item: $reassignTarget) { face in
+            FaceReassignPickerView(faceID: face.faceID, refKey: face.refKey,
+                                   boundingBox: face.boundingBox,
+                                   currentClusterID: clusterID,
+                                   peopleEngine: peopleEngine) { target in
+                Task {
+                    await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: target)
+                    faces = await peopleEngine.coverCandidates(clusterID: clusterID)
+                }
+            }
+        }
     }
 }

@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import PerceptionCore
 import Testing
 @testable import FaceCore
 
@@ -95,5 +97,37 @@ struct FaceDecisionExplainTests {
         } else {
             Issue.record("fixture: 上乗せで弾かれる位置になっていない（sim=\(simSmall)）")
         }
+    }
+
+    /// 内訳レポートの「間違い候補」＝重心から遠い順のメンバー（ADR-137）。
+    /// 近傍（他人との距離）だけでは、**内側に紛れ込んだ顔**は見つからない。
+    @Test("重心から外れた顔が間違い候補の先頭に出る")
+    func outliersSurfaceContamination() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<10 {
+            await store.recordScan(refKey: "L-a\(i)",
+                                   faces: [DetectedFaceSignal(
+                                    boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                                    embedding: ClipMath.encodeHalf([1, Float(i) * 0.005, 0, 0]),
+                                    quality: 0.9)])
+        }
+        // 混入 1 枚（本人とは cos 0.52＝合流はするが明らかに外れている）。
+        await store.recordScan(refKey: "L-x", faces: [DetectedFaceSignal(
+            boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+            embedding: ClipMath.encodeHalf([0.52, 0, 0.854, 0]), quality: 0.9)])
+        let map = await store.memberRefKeysByCluster()
+        guard let aID = map.first(where: { $0.value.contains("L-a0") })?.key else {
+            Issue.record("fixture: 人物が作れていない"); return
+        }
+        // 前提: 混入が同じ人物に入っている（入っていないと何も検証していない）。
+        #expect(map[aID]?.contains("L-x") == true)
+
+        guard let report = await store.decisionReport(clusterID: aID) else {
+            Issue.record("レポートが作れていない"); return
+        }
+        #expect(report.outliers.first?.refKey == "L-x", "混入が先頭に出ていない")
+        // 本人の顔より明確に低い（＝並べ替えが効いている）。
+        let ownMin = report.outliers.filter { $0.refKey != "L-x" }.map(\.similarity).min() ?? 1
+        #expect((report.outliers.first?.similarity ?? 1) < ownMin)
     }
 }
