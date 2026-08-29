@@ -41,6 +41,9 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
     /// ⚠️ **サムネイルからも直せる**ようにするのが目的（実フィードバック）。空なら従来どおり
     /// メニューを出さない（長押しは何も起きない）。
     var contextActions: [PhotoContextAction] = []
+    /// 写真ごとに内容を見て決まる追加操作（1 人しか写っていない写真の人物修正など）。
+    /// 長押しの瞬間に非同期で解決する（`UIDeferredMenuElement`）。
+    var contextActionProvider: (@MainActor @Sendable (String) async -> [PhotoContextAction])?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(store: store, onPinch: onPinch, onSelect: onSelect, onScrubbingChange: onScrubbingChange)
@@ -52,6 +55,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.contextActions = contextActions
+        context.coordinator.contextActionProvider = contextActionProvider
         context.coordinator.update(items: items, columns: max(1, columnCount), grouping: grouping,
                                    monthSectionRows: max(1, monthSectionRows),
                                    faceHighlight: faceHighlight)
@@ -64,6 +68,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         private let onPinch: (CGFloat) -> Void
         private let onSelect: (Store.Item.ID) -> Void
         var contextActions: [PhotoContextAction] = []
+        var contextActionProvider: (@MainActor @Sendable (String) async -> [PhotoContextAction])?
         private let onScrubbingChange: (Bool) -> Void
 
         private var collectionView: UICollectionView!
@@ -421,19 +426,35 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         func collectionView(_ collectionView: UICollectionView,
                             contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
                             point: CGPoint) -> UIContextMenuConfiguration? {
-            guard !contextActions.isEmpty, let indexPath = indexPaths.first,
+            guard !contextActions.isEmpty || contextActionProvider != nil,
+                  let indexPath = indexPaths.first,
                   let id = dataSource.itemIdentifier(for: indexPath) else { return nil }
             let actions = contextActions
+            let provider = contextActionProvider
+            // ⚠️ ID の型はストア依存（`Store.Item.ID`）。seam は文字列で受けるので
+            // ここで文字列化する（人物アルバムは localIdentifier / Dropbox パス）。
+            let key = "\(id)"
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-                UIMenu(children: actions.map { action in
-                    UIAction(title: action.title,
-                             image: UIImage(systemName: action.systemImage),
-                             attributes: action.isDestructive ? .destructive : []) { _ in
-                        // ⚠️ ID の型はストア依存（`Store.Item.ID`）。seam は文字列で受けるので
-                        // ここで文字列化する（人物アルバムは localIdentifier / Dropbox パス）。
-                        Task { @MainActor in await action.perform("\(id)") }
-                    }
-                })
+                var children: [UIMenuElement] = actions.map { Self.menuAction($0, key: key) }
+                if let provider {
+                    // 写真の中身を見て決まる操作（誰が写っているか）は、長押しの瞬間に解決する。
+                    // 一覧の全セルぶんを先に引くと、規模に比例した無駄な問い合わせになる。
+                    children.append(UIDeferredMenuElement.uncached { completion in
+                        Task { @MainActor in
+                            completion(await provider(key).map { Self.menuAction($0, key: key) })
+                        }
+                    })
+                }
+                return UIMenu(children: children)
+            }
+        }
+
+        /// `PhotoContextAction` を UIKit のメニュー項目にする。
+        private static func menuAction(_ action: PhotoContextAction, key: String) -> UIAction {
+            UIAction(title: action.title,
+                     image: UIImage(systemName: action.systemImage),
+                     attributes: action.isDestructive ? .destructive : []) { _ in
+                Task { @MainActor in await action.perform(key) }
             }
         }
 

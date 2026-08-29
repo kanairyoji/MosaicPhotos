@@ -12,6 +12,10 @@ struct PeopleActionsModifier: ViewModifier {
     /// 長押しされた人物（HomeSections の PeopleCarousel が設定する）。nil で閉じる。
     @Binding var target: PersonInfo?
     let peopleEngine: PeopleEngine
+    /// 人物に変更が入り得る操作（改名・代表・顔の管理・束ね・整理）が終わったときの通知。
+    /// ⚠️ 実フィードバック: 人物アルバムを開いたまま束ねたり「この人ではない」を選んでも、
+    /// **アルバムが古いまま**だった。呼び出し側（人物アルバム）がここで描き直す。
+    var onChanged: (() -> Void)?
 
     /// 名前変更中の対象と入力テキスト。
     @State private var renamingPerson: PersonInfo?
@@ -79,19 +83,19 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Cancel"), role: .cancel) {}
             }
             // 代表写真ピッカー。
-            .sheet(item: $coverPickerPerson) { person in
+            .sheet(item: $coverPickerPerson, onDismiss: { onChanged?() }) { person in
                 PersonCoverPickerView(person: person, peopleEngine: peopleEngine)
             }
             // 顔の管理（認識した顔の確認・別の人へ付け替え）。
-            .sheet(item: $manageFacesPerson) { person in
+            .sheet(item: $manageFacesPerson, onDismiss: { onChanged?() }) { person in
                 PersonPhotosView(person: person, peopleEngine: peopleEngine)
             }
             // 別の人物へ統合（同一人物が 2 つに割れたときの修正）。
-            .sheet(item: $mergeSourcePerson) { person in
+            .sheet(item: $mergeSourcePerson, onDismiss: { onChanged?() }) { person in
                 PersonMergePickerView(source: person, peopleEngine: peopleEngine)
             }
             // この人物を整理（混入グループの一括分離・ADR-111）。
-            .sheet(item: $cleanupPerson) { person in
+            .sheet(item: $cleanupPerson, onDismiss: { onChanged?() }) { person in
                 PersonCleanupView(person: person, peopleEngine: peopleEngine)
             }
             // クラウド共有（この人物の写真で共有セットを作る・ADR-112）。
@@ -113,7 +117,10 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Cancel"), role: .cancel) { renamingPerson = nil }
                 Button(L("Save")) {
                     let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    Task { await peopleEngine.rename(clusterID: person.clusterID, name: trimmed.isEmpty ? nil : trimmed) }
+                    Task {
+                        await peopleEngine.rename(clusterID: person.clusterID, name: trimmed.isEmpty ? nil : trimmed)
+                        onChanged?()
+                    }
                     renamingPerson = nil
                 }
             }
@@ -122,8 +129,10 @@ struct PeopleActionsModifier: ViewModifier {
 
 extension View {
     /// ピープル長押しメニューと配下の UI 一式を付ける。`target` に人物を入れるとメニューが開く。
-    public func peopleActions(for target: Binding<PersonInfo?>, engine: PeopleEngine) -> some View {
-        modifier(PeopleActionsModifier(target: target, peopleEngine: engine))
+    /// `onChanged` は人物に変更が入り得る操作の完了時に呼ばれる（開いている画面の描き直し用）。
+    public func peopleActions(for target: Binding<PersonInfo?>, engine: PeopleEngine,
+                              onChanged: (() -> Void)? = nil) -> some View {
+        modifier(PeopleActionsModifier(target: target, peopleEngine: engine, onChanged: onChanged))
     }
 }
 #endif

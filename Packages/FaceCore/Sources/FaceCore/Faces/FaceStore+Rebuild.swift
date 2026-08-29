@@ -69,7 +69,10 @@ extension FaceStore {
             if let coverFace, !anchors.contains(where: { $0.faceID == coverFace.faceID }) {
                 anchors.append(coverFace)
             }
-            let isSeed = (c.name?.isEmpty == false) || !anchors.isEmpty
+            // ⚠️ **束ね（personGroupID）もユーザーの表明**（ADR-134）。種にしないと、この行は
+            // 再クラスタで削除され（下の「種以外は削除」）、**束ねが黙って消える**——
+            // 「何度も束ねているのに忘れる」の正体はこれ。
+            let isSeed = (c.name?.isEmpty == false) || !anchors.isEmpty || c.personGroupID != nil
             guard isSeed else { continue }
             // アンカーは**代表顔を先頭**に、確認の新しい順から上限まで（`prototypes` は 1 顔ごとに
             // 全候補と内積を取るので、増やしすぎると再クラスタが人数×アンカー数で重くなる）。

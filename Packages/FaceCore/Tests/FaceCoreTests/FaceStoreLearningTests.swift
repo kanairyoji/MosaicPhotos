@@ -448,4 +448,47 @@ struct RemovePhotoFromPersonTests {
         let removed = await store.removePhoto(refKey: "L-not-a-member", from: clusterID)
         #expect(removed == 0)
     }
+
+    /// 「この写真は**別の人**」＝相手を選んで移す（ADR-133）。外すだけの `removePhoto` と違い、
+    /// 移動先が決まるので、その顔は移動先の**確認顔（アンカー）**として学習される（ADR-46）。
+    @Test("選んだ人物へ移り、移動先の確認顔になる")
+    func movesPhotoToChosenPerson() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([0, 1, 0])]) }
+        let members = await store.memberRefKeysByCluster()
+        guard let aID = members.first(where: { $0.value.contains("L-a0") })?.key,
+              let bID = members.first(where: { $0.value.contains("L-b0") })?.key, aID != bID else {
+            Issue.record("fixture: 2 人になっていない"); return
+        }
+
+        let moved = await store.movePhoto(refKey: "L-a0", from: aID, to: bID)
+        #expect(moved >= 1)
+
+        let after = await store.memberRefKeysByCluster()
+        #expect(after[aID]?.contains("L-a0") != true, "移動元に残っている")
+        #expect(after[bID]?.contains("L-a0") == true, "移動先に入っていない")
+        // 移動先のアンカー（＝再クラスタでも動かない・ADR-130/132）になっている。
+        #expect(await store.anchorCount(clusterID: bID) >= 1)
+    }
+
+    /// 写真ビュー（人物アルバム以外）に人物修正を出す条件＝**1 人しか写っていない**（ADR-133）。
+    @Test("1 人だけ写っている写真ならその人物、2 人なら出さない")
+    func solePersonOnlyWhenOneFace() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([0, 1, 0])]) }
+        // 2 人が一緒に写っている写真。
+        await store.recordScan(refKey: "L-both", faces: [signal([1, 0, 0]), signal([0, 1, 0])])
+        let members = await store.memberRefKeysByCluster()
+        guard let aID = members.first(where: { $0.value.contains("L-a0") })?.key else {
+            Issue.record("fixture: 人物が作れていない"); return
+        }
+        // fixture の前提: 2 人写真は両方のクラスタに入っている。
+        #expect(members.filter { $0.value.contains("L-both") }.count == 2)
+
+        #expect(await store.solePersonClusterID(refKey: "L-a0") == aID)
+        #expect(await store.solePersonClusterID(refKey: "L-both") == nil, "2 人の写真では出さない")
+        #expect(await store.solePersonClusterID(refKey: "L-none") == nil)
+    }
 }

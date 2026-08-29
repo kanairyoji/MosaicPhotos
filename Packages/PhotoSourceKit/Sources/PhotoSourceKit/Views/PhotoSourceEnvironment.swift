@@ -92,6 +92,11 @@ private enum PhotoContextActionsKey: EnvironmentKey {
     static let defaultValue: [PhotoContextAction] = []
 }
 
+/// 写真ごとに**その場で決まる**追加操作（1 人しか写っていない写真の「この人ではない」など）。
+private enum PhotoContextActionProviderKey: EnvironmentKey {
+    static let defaultValue: (@MainActor @Sendable (String) async -> [PhotoContextAction])? = nil
+}
+
 private enum FaceHighlightKey: EnvironmentKey {
     static let defaultValue: (@Sendable (String) async -> [CGRect])? = nil
 }
@@ -133,6 +138,18 @@ public extension EnvironmentValues {
     var photoContextActions: [PhotoContextAction] {
         get { self[PhotoContextActionsKey.self] }
         set { self[PhotoContextActionsKey.self] = newValue }
+    }
+
+    /// 写真ごとに**内容を見て決まる**追加操作（`photoContextActions` の動的版）。
+    ///
+    /// ⚠️ 実フィードバック: 「ピープルアルバム以外の画面でも、人が 1 人しか写っていない写真なら
+    /// 『この人は XX ではない』『別の人』を出してほしい。AI アルバムで家族の束を見ていて、
+    /// **家族じゃない写真がある**と気づいたときに直したい」。どの人物かは写真ごとに違うので、
+    /// 静的な配列では表せない——ID を渡して**その写真ぶんの操作**を作ってもらう。
+    /// グリッドは長押しの瞬間に（`UIDeferredMenuElement`）、全画面はページが変わるたびに解決する。
+    var photoContextActionProvider: (@MainActor @Sendable (String) async -> [PhotoContextAction])? {
+        get { self[PhotoContextActionProviderKey.self] }
+        set { self[PhotoContextActionProviderKey.self] = newValue }
     }
 
     var photoInteraction: ((Bool) -> Void)? {
