@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import Foundation
 import LocalPhotoKit   // PhotoLibraryChangeObserver（LocalPhotoCore を再エクスポート）
 import MosaicSupport
@@ -14,7 +15,10 @@ import Photos
 /// - 索引構築**後**に撮影/取り込みされた写真は辞書に無いため、不足分だけ小さく
 ///   追いフェッチして取りこぼさない（正確性を犠牲にしない）。
 @MainActor
-final class LocalAssetIndex {
+public final class LocalAssetIndex {
+
+    public init() {}
+
     private var byID: [String: PHAsset]?
     private var buildTask: Task<Void, Never>?
 
@@ -22,15 +26,14 @@ final class LocalAssetIndex {
     /// 古い `PHAsset` を返し続け、メンバー画面に空セルが残る（通常の fetch なら除外される）。
     /// 追いフェッチした新規アセットを索引へ入れないと毎回フェッチし直すことにもなる（レビュー指摘）。
     private var libraryObserver: PhotoLibraryChangeObserver?
-    /// 索引作り直しの世代（追い越された結果を捨てる）。
-    /// 索引再構築の世代（古い結果で新しい索引を壊さない・`GenerationGuard`）。
+    /// 索引作り直しの世代（追い越された結果を捨てる・`GenerationGuard`）。
     private var buildGeneration = GenerationGuard()
     /// 変更後は「削除済みかもしれない」と見なし、要求時に現存を確かめる（全再構築は次の機会に）。
     private var needsRevalidation = false
 
     /// 全ライブラリの索引を（未構築なら）バックグラウンドで構築する。utility 優先度＝
     /// 画面遷移・スクロールと CPU を奪い合わない。
-    func buildIfNeeded() {
+    public func buildIfNeeded() {
         observeLibraryChanges()
         guard byID == nil, buildTask == nil else { return }
         rebuild()
@@ -83,7 +86,7 @@ final class LocalAssetIndex {
 
     /// 単一 ID の PHAsset（索引にあれば辞書引き・無ければ単発フェッチ）。
     /// 変更直後は索引を信用せず、現存を確かめてから返す。
-    func asset(for id: String) -> PHAsset? {
+    public func asset(for id: String) -> PHAsset? {
         buildIfNeeded()
         if !needsRevalidation, let asset = byID?[id] { return asset }
         let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
@@ -95,7 +98,7 @@ final class LocalAssetIndex {
     /// （呼び出し側は従来の `LocalPhotoStore(localIdentifiers:)` へフォールバック）。
     /// 2-d: **ソートはしない**（撮影日昇順への整列は `LocalPhotoStore(preloadedAssets:)` が
     /// off-main で行う）。ここは辞書引き＋不足分の追いフェッチだけ＝メインでの sort を避ける。
-    func assets(for ids: [String]) -> [PHAsset]? {
+    public func assets(for ids: [String]) -> [PHAsset]? {
         buildIfNeeded()
         guard let index = byID else { return nil }
         // ⚠️ ライブラリ変更の直後は索引を信用しない。**現存する写真だけ**を返す
@@ -129,3 +132,4 @@ final class LocalAssetIndex {
         return found
     }
 }
+#endif
