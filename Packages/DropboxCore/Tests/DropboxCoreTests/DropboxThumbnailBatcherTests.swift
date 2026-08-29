@@ -172,7 +172,10 @@ struct DropboxThumbnailBatcherTests {
 
         // この時点でチャンクは成功分のデコード/保存中＝ /x/fail.jpg は inFlight のまま。
         // ここで来る再要求（セルの再構成・リトライ相当）が取り残されず解決されること。
-        let resolved = await resolvesWithinTimeout(ms: 3000) {
+        // ⚠️ 上限は**大きく**取る。取り残しのバグは「永久に返らない」形なので、上限を伸ばしても
+        // 検出力は落ちない。一方で 1800×1800 のデコードは遅いマシンで数秒かかり、3 秒では
+        // CI が偽陽性で赤くなる（実測: GitHub Actions のシミュレータで失敗・ローカルは通る）。
+        let resolved = await resolvesWithinTimeout(ms: 20_000) {
             _ = await batcher.thumbnail(for: self.item("/x/fail.jpg"))
         }
         #expect(resolved, "inFlight 窓中の再要求が配送されず取り残された")

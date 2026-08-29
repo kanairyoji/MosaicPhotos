@@ -123,7 +123,18 @@ struct DropboxCacheStoreCacheTests {
             await store.storeThumbnail(makeImage(side: 16), for: p)
         }
         // 全 detached 書込み + recordUsage + enforceCapacity の収束を待つ。
-        try await Task.sleep(nanoseconds: 1_000_000_000)
+        // ⚠️ **固定の sleep で待たない**。書き込みは detached（JPEG エンコード込み）なので、
+        // 遅いマシンでは 1 秒に収まらず CI が赤くなる（実測: ローカル 1.39s = 1 秒の sleep に
+        // ほぼ余白なし、CI では取りこぼす）。破棄が観測できるまで**待ち、上限で諦める**形にする。
+        // 破棄が起きなければ結局 `surviving < 10` で落ちるので、検出力は変わらない。
+        // 存在確認は非デコード（`thumbnailExists`）で行い、LRU の使用記録を汚さない。
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            var alive = 0
+            for p in paths where await store.thumbnailExists(for: p) { alive += 1 }
+            if alive < 10 { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
 
         var surviving = 0
         for p in paths where await store.thumbnail(for: p) != nil { surviving += 1 }
