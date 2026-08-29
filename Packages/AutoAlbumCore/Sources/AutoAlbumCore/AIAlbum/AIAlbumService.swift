@@ -320,6 +320,15 @@ final class AIAlbumService {
     /// （同じ結果を二度計算）なので 1 本に絞る。
     private var isEvaluating = false
 
+    /// 前面に戻っていたら、この一枚岩の再評価は始めない/続けない（ADR-107）。
+    /// 手動ブースト中とデバッグ全開は明示操作なので免除する。
+    /// ⚠️ 判定は**重い段の前ごと**に見る。1 回だけ見る作りだと、判定と実処理の間に
+    /// ユーザーが戻ってきたときに代金だけ払って捨てることになる（diagnostics-67）。
+    private var shouldAbortForForeground: Bool {
+        BackgroundYield.isAppActive && !BackgroundYield.debugForceHeavyWork
+            && Date() >= BackgroundYield.manualBoostUntil
+    }
+
     func refresh(_ current: [AutoAlbumInfo]) async -> [AutoAlbumInfo] {
         guard !isEvaluating else {
             Diagnostics.mark("aialbum.refresh: skip — already evaluating")
@@ -329,6 +338,15 @@ final class AIAlbumService {
         defer { isEvaluating = false }
         Diagnostics.mark("aialbum.refresh: aiAlbums=\(current.count)")
         guard !current.isEmpty else { return current }
+        // ⚠️ 前面判定は**重い前準備の前に**置く（実機 diagnostics-67）。以前はアルバムのループに
+        // 入ってから初めて見ていたため、前面復帰していても台帳 86k 件の読み出し＋カタログ構築
+        // （実測 12〜13 秒・footprint が 279→490MB）を払い切ってから `aborted for foreground (0/5)`
+        // で捨てていた。**1 件も進まないのに毎ティック同じ代金を払う**形で、ドリフト条件
+        // （embedded−evaluated > 500）は満たされたままなので永久に繰り返す。
+        guard !shouldAbortForForeground else {
+            Diagnostics.mark("aialbum.refresh: skipped — foreground (before load)")
+            return current
+        }
         let now = Date()
         let all = await store.allEnrichedPhotosLite()
         let embedCount = await store.embeddedCount()
@@ -338,6 +356,11 @@ final class AIAlbumService {
         // 再解釈（版更新）に備えてカタログを **1 回だけ**構築して全アルバムで共有する
         // （diagnostics-48: v7 移行の全再解釈がアルバムごとに 86k フェッチ＋カタログ構築を
         //  繰り返し、約 10 秒 × 5 本の負荷で前面のメインを飢餓させた）。
+        // 読み出しの間に戻ってきていたら、カタログ構築（もう一度 86k 件を舐める）は始めない。
+        guard !shouldAbortForForeground else {
+            Diagnostics.mark("aialbum.refresh: skipped — foreground (after load)")
+            return current
+        }
         let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
 
         var updated: [AutoAlbumInfo] = []
@@ -345,8 +368,7 @@ final class AIAlbumService {
             // 前面復帰したら次のアルバムへ進まない（一枚岩の途中放棄・ADR-107 の考え方）。
             // 背面で始まった refresh がユーザー復帰後も数分続き、体感フリーズになっていた
             // （diagnostics-48）。残りは現状のまま返し、次の夜間窓（stale 判定）が続きをやる。
-            if BackgroundYield.isAppActive && !BackgroundYield.debugForceHeavyWork
-                && Date() >= BackgroundYield.manualBoostUntil {
+            if shouldAbortForForeground {
                 Diagnostics.mark("aialbum.refresh: aborted for foreground (\(updated.count)/\(current.count))")
                 updated.append(contentsOf: current[updated.count...])
                 break
