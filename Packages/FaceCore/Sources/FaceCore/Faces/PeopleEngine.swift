@@ -190,6 +190,35 @@ public final class PeopleEngine {
     }
 
     /// 1 人物のメンバー写真キー（束ねていれば全時期ぶん）。人物アルバムを開くときだけ呼ぶ。
+    // MARK: - 取り消し（ADR-136）
+
+    /// 直前の判定の説明（nil＝戻せるものが無い）。レビュー画面の「戻す」に出す。
+    ///
+    /// ⚠️ 実フィードバック: 「ピープルの確認をしていると、たまに、間違った！と思うことがある」。
+    /// 確認は連続で答える画面なので、**間違いに気づくのは次のカードが出た直後**。
+    /// そこで戻せないと、あとから顔の管理を開いて手で直すことになる。
+    public private(set) var undoLabel: String?
+
+    /// 直前の判定を取り消す。戻した内容の説明を返す（何も無ければ nil）。
+    @discardableResult
+    public func undoLastAnswer() async -> String? {
+        let undone = await store.undoLast()
+        await refreshUndoLabel()
+        await loadPeople()
+        return undone
+    }
+
+    /// 控えの状態を UI に反映する。
+    func refreshUndoLabel() async {
+        undoLabel = await store.lastUndoLabel()
+    }
+
+    /// 取り消しの控えを捨てる（再クラスタ・再スキャンの後は戻す先が変わっている）。
+    func clearUndoHistory() async {
+        await store.clearUndo()
+        undoLabel = nil
+    }
+
     public func memberRefKeys(forPerson clusterID: Int) async -> [String] {
         await store.memberRefKeys(forPerson: clusterID)
     }
@@ -552,9 +581,11 @@ public final class PeopleEngine {
     ///   「黄枠は出るのに外せない」というちぐはぐが起きる）。
     @discardableResult
     public func removePhoto(itemID: String, from clusterID: Int) async -> Int {
+        await store.beginUndo(label: "\(label(clusterID)) からこの写真を外す", clusterIDs: [clusterID])
         for key in Self.refKeyCandidates(for: itemID) {
             let removed = await store.removePhoto(refKey: key, from: clusterID)
             if removed > 0 {
+                await refreshUndoLabel()
                 await loadPeople()
                 return removed
             }
@@ -566,9 +597,14 @@ public final class PeopleEngine {
     /// 人物アルバムのサムネイル長押し・全画面メニューから呼ぶ。`to` が nil なら新しい人物。
     /// 戻り値は移した顔の数（0 = この写真にこの人物の顔が無かった）。
     public func movePhoto(itemID: String, from clusterID: Int, to toClusterID: Int?) async -> Int {
+        await store.beginUndo(
+            label: "この写真を \(label(clusterID)) から "
+                 + (toClusterID.map { label($0) } ?? "新しい人物") + " へ移す",
+            clusterIDs: [clusterID] + (toClusterID.map { [$0] } ?? []))
         for key in Self.refKeyCandidates(for: itemID) {
             let moved = await store.movePhoto(refKey: key, from: clusterID, to: toClusterID)
             if moved > 0 {
+                await refreshUndoLabel()
                 await loadPeople()
                 return moved
             }
@@ -589,6 +625,11 @@ public final class PeopleEngine {
             return await person(containing: clusterID)
         }
         return nil
+    }
+
+    /// 取り消しの説明に使う人物名（一覧に無ければ内部 ID で表す）。
+    func label(_ clusterID: Int) -> String {
+        allPeople.first { $0.clusterID == clusterID }?.displayName ?? "Person \(clusterID)"
     }
 
     /// 表示側の写真 ID から台帳の refKey 候補を作る（ローカル/クラウド/そのまま）。
@@ -615,6 +656,7 @@ public final class PeopleEngine {
         running?.cancel()
         scanTask = nil
         await running?.value
+        await clearUndoHistory()   // 消したあとの世界には戻す先が無い
         if includingCorrections {
             await store.resetIncludingCorrections()
         } else {
