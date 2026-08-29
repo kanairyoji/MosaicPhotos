@@ -301,3 +301,39 @@ struct ParseGPSCoordinateTests {
     }
 }
 #endif
+
+/// メンバー限定ストア（人物・グループ・場所・アルバム）でも**バックアップ副本を隠す**（ADR-128）。
+///
+/// ⚠️ 実フィードバック「グループアルバムが時系列で並んでいない／バックアップを新しい写真と
+/// 認識している？」の原因。ホームの一覧には索引を渡していたが、`forMembers` で作るストアには
+/// 渡していなかった。副本は端末の原本と**同じ写真**なので二重に並び、しかも副本の撮影日は
+/// Dropbox に `time_taken` が無いと**アップロード時刻**に落ちる＝古い写真が「最新」の位置に出る。
+@Suite("メンバー限定ストアの副本隠し")
+@MainActor
+struct MemberStoreBackupHidingTests {
+
+    @Test("既定のプロバイダがメンバー限定ストアへ渡る")
+    func defaultProviderIsWired() {
+        let previous = MergedPhotoStore.defaultBackupCopyIndexProvider
+        defer { MergedPhotoStore.defaultBackupCopyIndexProvider = previous }
+        MergedPhotoStore.defaultBackupCopyIndexProvider = { ["/backup/a.jpg": "local-a"] }
+
+        let store = MergedPhotoStore.forMembers(
+            localIDs: ["local-a"], cloudPaths: ["/backup/a.jpg"],
+            dropboxStore: DropboxPhotoStore(auth: DropboxAuthService(appKey: "k", redirectURI: "app://cb")),
+            assetIndex: LocalAssetIndex())
+        #expect(store.backupCopyIndexProvider != nil,
+                "索引が渡っていない（アルバム画面で副本が二重に出て並びが壊れる）")
+    }
+
+    /// 隠す条件そのもの（純ロジック）。原本が**このアルバムに居るときだけ**隠す——
+    /// オフロード済み（端末に原本が無い）写真まで隠すと、アルバムから写真が消える。
+    @Test("原本が同じアルバムに居る副本だけを隠す")
+    func hidesOnlyWhenOriginalIsPresent() {
+        let index = ["/backup/a.jpg": "local-a", "/backup/b.jpg": "local-b"]
+        let hidden = BackupCopyHiding.hiddenPaths(backupPathToLocalID: index,
+                                                  localIdentifiers: ["local-a"])
+        #expect(hidden == ["/backup/a.jpg"])
+        #expect(!hidden.contains("/backup/b.jpg"), "原本が無い写真まで隠すと、アルバムから消える")
+    }
+}

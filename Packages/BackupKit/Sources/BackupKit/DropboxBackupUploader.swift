@@ -177,17 +177,35 @@ struct DropboxBackupUploader {
 
     /// 写真本体をアップロードする（ADR-40: 検証つき）。
     /// - `expectedHash`: ローカルで計算した content_hash。応答の hash と**一致して初めて成功**。
+    /// Dropbox が受け付ける形式（**秒精度・UTC**）へ整形する。小数秒やローカル時刻は 400 になる。
+    static func dropboxTimestamp(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        return f.string(from: date)
+    }
+
     /// - `autorename`: 409（同パス既存）時に別名保存を許可するか。既定 false（初回試行）。
     ///   呼び出し側は 409 → `getMetadata` で同一性確認 → 不一致なら autorename=true で再試行する。
+    /// - `clientModified`: 写真の**撮影日**。⚠️ 省略すると Dropbox は「アップロードした時刻」を
+    ///   記録する。同期側の撮影日は `time_taken ?? client_modified` なので、EXIF が読めない
+    ///   （media_info が付かない）写真では**バックアップ副本が「今日撮った写真」になる**——
+    ///   実フィードバック「バックアップを新しい写真と認識しているのか、時系列になっていない」。
+    ///   秒精度の UTC（`yyyy-MM-ddTHH:mm:ssZ`）でしか受け付けないので必ずこの形式で送る。
     func upload(data: Data, to path: String, token: String,
-                expectedHash: String, autorename: Bool = false) async -> BackupUploadResult {
+                expectedHash: String, autorename: Bool = false,
+                clientModified: Date? = nil) async -> BackupUploadResult {
         struct Arg: Encodable {
             let path: String
             let mode = "add"
             let autorename: Bool
             let mute = true
+            let client_modified: String?
         }
-        guard let argStr = encodeDropboxAPIArg(Arg(path: path, autorename: autorename)) else {
+        guard let argStr = encodeDropboxAPIArg(
+            Arg(path: path, autorename: autorename,
+                client_modified: clientModified.map(Self.dropboxTimestamp))) else {
             return .error(-1, "Failed to encode Dropbox-API-Arg for path: \(path)")
         }
         let req = Self.makeRequest(argStr: argStr, body: data, token: token, timeout: 300)

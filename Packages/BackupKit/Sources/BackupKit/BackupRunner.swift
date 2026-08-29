@@ -366,8 +366,10 @@ final class BackupRunner {
         // ADR-40: ローカルで content_hash を計算し、応答の hash と一致して初めて「済み」にする。
         let localHash = DropboxContentHash.hash(of: data)
         let tUpload = PerfTrace.nowNs()
+        // 撮影日を送る（省略すると副本が「アップロードした日の写真」になる・下記 uploader の注記）。
         var result = await uploader.upload(data: data, to: dropboxPath, token: token,
-                                           expectedHash: localHash)
+                                           expectedHash: localHash,
+                                           clientModified: asset.creationDate)
         // 計測: 読み込み（backup.readMs）と対にして、どちらが支配的かを実測で判断できるようにする。
         PerfTrace.count("backup.uploadMs", value: PerfTrace.msSince(tUpload))
         if result == .alreadyExists {
@@ -381,7 +383,8 @@ final class BackupRunner {
             } else {
                 addLog("  → name collision with different content — retrying with autorename")
                 result = await uploader.upload(data: data, to: dropboxPath, token: token,
-                                               expectedHash: localHash, autorename: true)
+                                               expectedHash: localHash, autorename: true,
+                                               clientModified: asset.creationDate)
             }
         }
 
