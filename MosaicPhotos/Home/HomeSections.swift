@@ -118,10 +118,19 @@ extension HomeView {
                     onSelect: { destination = .place($0) })
             }
         } header: {
-            sectionHeader("Places", isBusy: placeScanner.isScanning,
-                          onAction: placeScanner.isLoaded
-                              ? { Task { await placeScanner.scan(dropboxItems: dropboxStore.items) } }
-                              : nil)
+            HStack(spacing: 12) {
+                sectionHeader("Places", isBusy: placeScanner.isScanning,
+                              onAction: placeScanner.isLoaded
+                                  ? { Task { await placeScanner.scan(dropboxItems: dropboxStore.items) } }
+                                  : nil)
+                // 地図表示（ADR-127）。撮影地にピンを立てて、拡大縮小で粒度が変わる。
+                Button { showingPhotoMap = true } label: {
+                    Image(systemName: "map").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(Text("Map"))
+            }
         }
     }
 

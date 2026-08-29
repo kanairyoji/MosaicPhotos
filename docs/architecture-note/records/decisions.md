@@ -21,6 +21,33 @@
 
 ---
 
+## ADR-127 写真の地図は「ズームで決まるグリッド」で畳む
+- 状態: 採用（Step 1 実装済み・サムネ表示は Step 2）
+- 文脈: 写真アプリのような地図ビューが欲しい（撮影地にピン・拡大縮小）。ライブラリは 86,000 枚規模で、
+  **1 枚 1 ピンは成立しない**（描画も操作も破綻する）。一方で「場所」の索引はすでにあり
+  （`PlaceScanner` が端末の EXIF/GPS と Dropbox メタから `PlaceCandidate` を作る）、作り直す必要はない。
+- 決定:
+  (1) **データ源は既存の `PlaceCandidate`**。地図を開いたときに索引を作り（`locatedCandidates`）、
+      閉じたら解放する（86k 件を常駐させない）。構築は `HeavyLoad` の札つき（ADR-122）。
+  (2) **集約はズームで決まるグリッド**（`PhotoMapClustering`・純ロジック）。step は画面の経度幅から
+      決め（既定 12 列）、可視範囲（+30% マージン）だけを 1 パスで畳む。ピン数の上限は 120。
+      ⚠️ 上限は安全弁で、**本体は粒度**——step が画面幅に追従するので、写真が何枚あってもセル数は
+      `列数²` 程度で頭打ちになる（テストで固定）。
+  (3) **SwiftUI の `Map` ＋ 自前アノテーション**。`MKMapView` の `MKClusterAnnotation` は使わない
+      （件数バッジ・代表写真を出しにくく、集約規則をテストできない）。
+  (4) 領域変更は `.onMapCameraChange(frequency: .onEnd)` → **オフメインで集約** → 世代照合で
+      最新だけ反映（`MergedPhotoStore.rebuildItems` と同型）。メインへ渡すのは数百ピンだけ。
+  (5) ピンのタップは `MergedPhotoStore.forMembers` で既存のグリッド/フル画面へ（`PlacePhotosView` と同型）。
+- 結果: 写真枚数に依らず描画対象が有界。純ロジックが `swift test`（macOS）で回るので、
+  「ズームで割れる」「上限を超えない」「範囲外を拾わない」を回帰として固定できる。
+  ⚠️ `PhotoMapPin` の `==`/`hash` は**セルのキーと件数だけ**で判定する（members 数千件を
+  SwiftUI の差分判定のたびに比較しない）。
+- 残課題: (a) 代表写真のサムネ表示（Step 2・クラウドは可視ピンぶんだけ低優先で取得し、
+  キャッシュ済みを代表に選ぶ）。(b) 日付での絞り込み。(c) 経度 180 度線をまたぐ範囲は未対応。
+  (d) 現在地表示は入れない（位置情報の許可を新たに求めないため）。
+- 関連: `PhotoSourceKit/Places/PhotoMapClustering.swift` / `PlaceScanner.locatedCandidates` /
+  `MosaicPhotos/Home/PhotoMapView.swift` / テスト `PhotoMapClusteringTests`。
+
 ## ADR-125 ピープルは「よく写っている人」だけ載せる（表示フロア）
 - 状態: 採用
 - 文脈: 実機でピープルが 1,000 人超。中身は「たまたま写り込んだ 5 枚の人」が大量で、

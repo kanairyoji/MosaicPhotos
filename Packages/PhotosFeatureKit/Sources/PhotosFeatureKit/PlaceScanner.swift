@@ -3,6 +3,7 @@ import CoreLocation
 import DropboxKit
 import Foundation
 import ImageIO
+import MosaicSupport
 import Photos
 import PhotoSourceKit
 
@@ -76,6 +77,33 @@ public final class PlaceScanner {
         isLoaded = true
         if places.isEmpty {
             await scan(dropboxItems: dropboxItems)
+        }
+    }
+
+    /// **座標付き写真の索引**（地図ビュー用・ADR-127）。端末写真は EXIF/PHAsset の GPS
+    /// （`Places/localGPS.json` のキャッシュを共用）、クラウドは Dropbox メタの座標から作る。
+    ///
+    /// ⚠️ 返すのは 86,000 枚規模になり得る配列なので、**常駐させない**（地図を開いたときに作り、
+    /// 閉じたら捨てる）。生成はオフメイン、メインへ渡すのは完成した値だけ（性能原則 4）。
+    /// 一括ロードとして札を立て、起動直後の山と重ならないようにする（ADR-122）。
+    public func locatedCandidates(dropboxItems: [DropboxFileItem]) async -> [PlaceCandidate] {
+        await HeavyLoad.span("map.index") {
+            let snapshot = localGPSCache
+            let local = await Task.detached(priority: .userInitiated) {
+                fetchLocalLocatedCandidates(exifCache: snapshot)
+            }.value
+            localGPSCache = local.cache
+            localGPSStore.save(local.cache)
+            let localCandidates = local.candidates
+            let cloud = await Task.detached(priority: .userInitiated) {
+                dropboxItems.compactMap { item -> PlaceCandidate? in
+                    guard let coordinate = item.coordinate else { return nil }
+                    return PlaceCandidate(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                          isLocal: false, identifier: item.path, date: item.captureDate)
+                }
+            }.value
+            Diagnostics.mark("map: located photos local=\(localCandidates.count) cloud=\(cloud.count)")
+            return localCandidates + cloud
         }
     }
 
