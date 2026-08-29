@@ -35,6 +35,12 @@ public final class PowerStateMonitor {
     public private(set) var isLowPowerMode: Bool = false
     /// バッテリー残量（0...1）。取得不可（macOS テスト・監視無効）は 1.0 扱い＝残量でブロックしない。
     public private(set) var batteryLevel: Float = 1.0
+    /// 残量が**実際に読めているか**。⚠️ `batteryLevel` は不明を 1.0（＝満充電）に倒すが、
+    /// 「満充電なら熱でも止めない」（ADR-118 追補）の判断では、不明を満充電と読むと
+    /// 守るべき充電があるのに止めなくなる。そちらは不明かどうかを区別して使う。
+    public private(set) var isBatteryLevelKnown = false
+    /// 分かっているときだけ残量を返す（不明は nil）。
+    public var batteryLevelIfKnown: Float? { isBatteryLevelKnown ? batteryLevel : nil }
 
     private init() {
         isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -68,6 +74,7 @@ public final class PowerStateMonitor {
         isOnPower = (UIDevice.current.batteryState != .unplugged)
         let level = UIDevice.current.batteryLevel
         batteryLevel = level >= 0 ? level : 1.0   // -1（不明）は残量でブロックしない
+        isBatteryLevelKnown = level >= 0
     }
     #endif
 

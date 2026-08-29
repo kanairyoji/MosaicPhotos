@@ -20,17 +20,31 @@ public enum ThermalPolicy {
     /// 再開してよい温度域。`.fair` までは戻さない（戻すとすぐ `.serious` へ跳ね返る）。
     public static let resumeState: ProcessInfo.ThermalState = .nominal
 
+    /// **これ以上充電できていれば、熱でも止めない**（実フィードバック）。
+    ///
+    /// ⚠️ この停止は「熱いから危ない」ではなく「熱いと iOS が充電を止めるから」だった
+    /// （ADR-118）。つまり守っているのは**充電**であって温度ではない。充電がほぼ終わっていれば
+    /// 守るものが無いので、止める理由も無い——朝までに充電が終わらない、という当初の問題も起きない。
+    /// 98%: 満充電付近では iOS 自身が充電速度を落とすうえ、表示も 100% と 99% を行き来する。
+    /// 「100% ちょうど」を条件にすると、ほとんどの晩で条件を満たさない。
+    public static let chargedEnoughLevel: Float = 0.98
+
     /// 熱による停止中か（純ロジック）。
     ///
     /// - Parameters:
     ///   - state: 現在の熱状態。
     ///   - wasPaused: 直前まで熱で止めていたか（ヒステリシスの状態）。
-    ///   - isEnabled: 設定「熱くなったら処理を止める」。OFF なら常に false。
+    ///   - isEnabled: 設定「充電をバックグラウンド処理より優先する」。OFF なら常に false。
+    ///   - batteryLevel: 充電残量（0...1）。**不明なら nil**——不明を「満充電」と読むと
+    ///     守るべき充電があるのに止めなくなるので、その場合は従来どおり熱で止める。
     /// - Returns: 止めるべきなら true。
     public static func shouldPause(state: ProcessInfo.ThermalState,
                                    wasPaused: Bool,
-                                   isEnabled: Bool) -> Bool {
+                                   isEnabled: Bool,
+                                   batteryLevel: Float? = nil) -> Bool {
         guard isEnabled else { return false }
+        // 充電がほぼ終わっているなら、熱を理由に止めない（守る対象が無い）。
+        if let batteryLevel, batteryLevel >= chargedEnoughLevel { return false }
         if wasPaused {
             // 止めている間は、**十分に冷えるまで**再開しない（境界での往復を防ぐ）。
             return severity(state) > severity(resumeState)
@@ -73,10 +87,11 @@ public final class ThermalGate {
     /// 設定キー（`@AppStorage` と共用する唯一の出典）。
     public static let policyKey = "background.pauseWhenHot"
 
-    /// 設定「熱くなったら処理を止める」。**既定 ON**。
+    /// 設定「充電をバックグラウンド処理より優先する」。**既定 ON**。
     ///
     /// ⚠️ 既定を ON にする理由: 発熱で充電が止まると翌晩も処理が進まない。
     /// OFF にすると「速いが充電されない」になり、結局トータルでは進まない。
+    /// ⚠️ 充電がほぼ終わっていれば（`chargedEnoughLevel`）、ON のままでも処理は進む。
     public var isEnabled: Bool {
         get { defaults.object(forKey: Self.policyKey) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Self.policyKey) }
@@ -94,9 +109,16 @@ public final class ThermalGate {
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     /// いま熱で止めるべきか。1 単位ごとに呼ばれる前提（安い）。
+    /// 充電残量は `PowerStateMonitor` から読む（満充電なら熱でも止めない・ADR-118 追補）。
     public func shouldPause(state: ProcessInfo.ThermalState
                             = ProcessInfo.processInfo.thermalState) -> Bool {
-        let next = ThermalPolicy.shouldPause(state: state, wasPaused: paused, isEnabled: isEnabled)
+        shouldPause(state: state, batteryLevel: PowerStateMonitor.shared.batteryLevelIfKnown)
+    }
+
+    /// 残量を明示する形（テスト・診断から使う）。
+    public func shouldPause(state: ProcessInfo.ThermalState, batteryLevel: Float?) -> Bool {
+        let next = ThermalPolicy.shouldPause(state: state, wasPaused: paused,
+                                             isEnabled: isEnabled, batteryLevel: batteryLevel)
         paused = next
         // ⚠️ **初回は記録しない**（実機 diagnostics-62）。起動のたびに
         // 「resuming（state=normal）」が出て、止まってもいないのに熱ゲートが働いたように読める。
@@ -104,8 +126,10 @@ public final class ThermalGate {
         if lastLoggedPaused == nil { lastLoggedPaused = next }
         if lastLoggedPaused != next {
             lastLoggedPaused = next
+            // 充電残量も残す（「熱いのに止まらない/止まる」の判断材料は温度だけでは足りない）。
+            let battery = batteryLevel.map { "\(Int(($0 * 100).rounded()))%" } ?? "unknown"
             let line = "thermal: \(next ? "pausing" : "resuming") heavy work "
-                + "(state=\(ThermalPolicy.label(state)))"
+                + "(state=\(ThermalPolicy.label(state)), battery=\(battery))"
             Diagnostics.mark(line)
             onTransition?(line)
         }

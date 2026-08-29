@@ -11,9 +11,17 @@ import Testing
 @Suite("DiagnosticsLog reading", .serialized)
 struct DiagnosticsLogReadTests {
 
+    /// ⚠️ `shared` は使わない。並列に走る他のテスト（熱ゲートの遷移記録など）が同じファイルへ
+    /// 書き込み、`clear()` の直後に行が増えて落ちる。テストごとに自分のファイルを持つ。
+    private func makeLog() -> DiagnosticsLog {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("diagnostics-test-\(UUID().uuidString).log")
+        return DiagnosticsLog(fileURL: url)
+    }
+
     @Test("行単位で返す（末尾の空行を含めない）")
     func returnsLines() async {
-        let log = DiagnosticsLog.shared
+        let log = makeLog()
         log.clear()
         log.append("alpha")
         log.append("beta")
@@ -27,7 +35,7 @@ struct DiagnosticsLogReadTests {
 
     @Test("上限件数を超えたら末尾だけ返す（先頭ではなく最新を残す）")
     func capsToTail() async {
-        let log = DiagnosticsLog.shared
+        let log = makeLog()
         log.clear()
         for i in 0..<50 { log.append("line-\(i)") }
 
@@ -39,7 +47,7 @@ struct DiagnosticsLogReadTests {
 
     @Test("空のログでは空配列（画面は「まだありません」を出せる）")
     func emptyLogReturnsEmpty() async {
-        let log = DiagnosticsLog.shared
+        let log = makeLog()
         log.clear()
         // clear() はバージョン行を 1 行だけ残す仕様。行が積み上がっていないことを見る。
         let lines = await log.recentLines()

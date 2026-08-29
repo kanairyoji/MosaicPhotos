@@ -2858,6 +2858,16 @@
         }
       }
     },
+    "Prioritize charging over background work": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "充電をバックグラウンド処理より優先"
+          }
+        }
+      }
+    },
     "Process Now (while charging)": {
       "localizations": {
         "ja": {
@@ -3736,6 +3746,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "とても粗い（約10km）"
+          }
+        }
+      }
+    },
+    "When the device gets hot, iOS pauses charging — so overnight processing can leave you with a phone that is hot and not charged, and the next night makes no progress either. With this on, background analysis stands down while the device is hot and resumes once it has cooled. Once the battery is charged (98% or more) there is nothing left to protect, so processing continues even when the device is warm. Default: On.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本体が熱くなると iOS は充電を止めます。そのため夜間処理を続けると「熱いのに充電できていない」状態で朝を迎え、翌晩も進みません。オンのあいだは、熱くなったら背景の解析を控え、冷めたら再開します。充電がほぼ終わっていれば（98% 以上）守るものが無いので、温かくてもそのまま処理を進めます。既定はオン。"
           }
         }
       }

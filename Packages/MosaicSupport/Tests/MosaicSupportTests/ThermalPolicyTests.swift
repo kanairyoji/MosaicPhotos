@@ -111,3 +111,42 @@ struct ThermalGateTests {
         #expect(lines.count == 1, "本当に止まったときは記録する")
     }
 }
+
+/// 「充電がほぼ終わっていれば、熱でも止めない」（ADR-118 追補）。
+///
+/// ⚠️ この停止は**温度を守るためではなく充電を守るため**にある。満充電なら守る対象が無いので、
+/// 止める理由も無い——ここを取り違えると「熱いから安全のため止めている」という別のルールに
+/// なってしまう（そう読める実装は、あとから条件を足すときに必ず食い違う）。
+@Suite("満充電なら熱でも止めない")
+struct ThermalPolicyChargedTests {
+
+    @Test("熱くても満充電付近なら止めない")
+    func fullBatteryKeepsWorking() {
+        #expect(!ThermalPolicy.shouldPause(state: .serious, wasPaused: false, isEnabled: true,
+                                           batteryLevel: 1.0))
+        #expect(!ThermalPolicy.shouldPause(state: .critical, wasPaused: true, isEnabled: true,
+                                           batteryLevel: ThermalPolicy.chargedEnoughLevel))
+    }
+
+    @Test("充電が残っているなら従来どおり熱で止める")
+    func chargingBatteryStillPauses() {
+        #expect(ThermalPolicy.shouldPause(state: .serious, wasPaused: false, isEnabled: true,
+                                          batteryLevel: 0.80))
+        // ヒステリシス（止めている間は十分冷えるまで再開しない）も残量に関わらず効く。
+        #expect(ThermalPolicy.shouldPause(state: .fair, wasPaused: true, isEnabled: true,
+                                          batteryLevel: 0.97))
+    }
+
+    /// ⚠️ 残量**不明**を満充電と読むと、守るべき充電があるのに止めなくなる。不明は従来どおり止める。
+    @Test("残量が分からないときは従来どおり止める")
+    func unknownBatteryPauses() {
+        #expect(ThermalPolicy.shouldPause(state: .serious, wasPaused: false, isEnabled: true,
+                                          batteryLevel: nil))
+    }
+
+    @Test("設定 OFF なら残量に関わらず止めない")
+    func disabledNeverPauses() {
+        #expect(!ThermalPolicy.shouldPause(state: .critical, wasPaused: true, isEnabled: false,
+                                           batteryLevel: 0.10))
+    }
+}
