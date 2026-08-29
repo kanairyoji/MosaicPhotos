@@ -82,7 +82,15 @@ public final class AutoAlbumEngine {
 
     /// 地名補正を最後に実行したときの署名（写真件数＋Apple 補正の世代）。
     /// 変化が無ければ 86k 件の読み出しごとスキップする（ADR-79 追記）。
-    @ObservationIgnored private var lastPlaceRefineSignature = ""
+    ///
+    /// ⚠️ **UserDefaults に永続する**（`lastCloudSignature` と同じ理由）。プロセス内変数だと
+    /// 再起動のたびに空＝「変わった」と誤判定し、復帰直後の最初のティックで台帳 86k 件を
+    /// 丸ごと読み直す。実機 diagnostics-65 では、背面で落ちた直後のロック解除でこれが走った。
+    @ObservationIgnored private var lastPlaceRefineSignature: String {
+        get { UserDefaults.standard.string(forKey: Self.lastPlaceRefineSignatureKey) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: Self.lastPlaceRefineSignatureKey) }
+    }
+    private static let lastPlaceRefineSignatureKey = "autoalbum.lastPlaceRefineSignature"
     /// 前回 generate 時のクラウド署名。**UserDefaults に永続**する（Fix A）。
     /// 以前はプロセス起動ごとに 0 に戻るため、jetsam 再起動のたびに「署名が変わった」と誤判定して
     /// 86k 件の重い generate（実測 ~800MB）を再実行 → また jetsam、という悪循環になっていた。
@@ -362,7 +370,9 @@ public final class AutoAlbumEngine {
         // 伝播の差分計算に全件が要る）。定期ティックのたびに実行すると**毎回 10 秒級のスパイク**に
         // なる（実機ログ diagnostics-31: 復帰直前に `hang main=10581ms`）。
         // 「写真の件数」と「Apple 補正の世代」が前回から変わっていなければ、結果は必ず同じなので読まない。
-        let signature = "\(await store.enrichmentCount())-\(await PlaceNameResolver.shared.refinementGeneration)"
+        // ⚠️ 世代（`refinementGeneration`）は起動ごとに 0 に戻るので署名に使わない。補正済み
+        // セル数は再起動を跨いで同じ値になり、補正が進んだときだけ変わる（ADR-79 追記2）。
+        let signature = "\(await store.enrichmentCount())-\(await PlaceNameResolver.shared.refinedCellCount)"
         if !force, signature == lastPlaceRefineSignature { return 0 }
 
         let (photos, cells) = await placeRefinementTargets()
@@ -385,7 +395,7 @@ public final class AutoAlbumEngine {
         }
         // 補正で世代が進んだ場合に備え、**実行後の**署名を記録する（次ティックは空振りで即帰る）。
         lastPlaceRefineSignature =
-            "\(await store.enrichmentCount())-\(await PlaceNameResolver.shared.refinementGeneration)"
+            "\(await store.enrichmentCount())-\(await PlaceNameResolver.shared.refinedCellCount)"
         return refined
     }
 

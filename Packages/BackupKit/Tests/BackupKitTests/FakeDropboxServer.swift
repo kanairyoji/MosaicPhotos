@@ -43,6 +43,8 @@ actor FakeDropboxServer: HTTPClient {
     var failCopyPaths: Set<String> = []
     /// このパスの削除を失敗させる（no_permission 相当＝「無い」ではない本物の失敗）。
     var failDeletePaths: Set<String> = []
+    /// move_v2 を通信エラー（500）にする。「通信断で改名できない回」を再現するため。
+    var failMove = false
 
     init(files: [String: Entry] = [:]) { self.files = files }
 
@@ -63,6 +65,7 @@ actor FakeDropboxServer: HTTPClient {
     func setRateLimit(everyNth: Int) { rateLimitEveryNthRequest = everyNth }
     func setFailCopyPaths(_ paths: Set<String>) { failCopyPaths = paths }
     func setFailDeletePaths(_ paths: Set<String>) { failDeletePaths = paths }
+    func setFailMove(_ value: Bool) { failMove = value }
 
     // MARK: - HTTPClient
 
@@ -115,6 +118,7 @@ actor FakeDropboxServer: HTTPClient {
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(400, "{}")
         }
+        if failMove { return resp(500, "{}") }
         let from = parsed.from_path.lowercased()
         let to = parsed.to_path.lowercased()
         guard files[from] != nil else {

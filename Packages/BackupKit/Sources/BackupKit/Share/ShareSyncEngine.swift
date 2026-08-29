@@ -595,8 +595,23 @@ public final class ShareSyncEngine {
             case .moved:
                 BackupLogger.info("Share: moved '\(old)' → '\(desired)'")
                 return await adopt(movedFrom: old)
+            case .destinationExists:
+                // 移動先が既にある（`to/conflict/folder`）。move では永久に解決しないので
+                // **移動先を正とする**——記録の接頭辞だけ付け替えて移行を終わらせる。
+                //
+                // ⚠️ これが無いと、反映のたびに 409 → 旧接頭辞のままの記録 → コピー先も旧フォルダ
+                // （既にファイルがある＝全件 conflict）→ 「コピー失敗」で重複掃除もスキップ、という
+                // 収束しない輪に入る（実機 diagnostics-64〜66 で copy=4297 が 3 ログとも同じ数字）。
+                // 付け替えたあとは、移動先に既に在るファイルは**採用**され（ハッシュ一致）、
+                // 足りないぶんだけサーバーサイドコピーで埋まる＝通常の収束経路に戻る。
+                //
+                // 旧フォルダは**消さない**（共有相手にも見えるユーザーのデータ。中身は次の反映で
+                // 移動先へ作り直される）。残骸の掃除は人の判断に委ねるため、場所をログに残す。
+                BackupLogger.info("Share: '\(desired)' already exists — adopting it as the set folder; "
+                    + "the old folder '\(old)' is left as-is (delete it manually if unneeded)")
+                return await adopt(movedFrom: old)
             case .failed:
-                // 移動先が既にある / 通信断。次回に持ち越す（他の候補も同じ理由で失敗する）。
+                // 通信断・権限など。次回に持ち越す（他の候補も同じ理由で失敗する）。
                 BackupLogger.error("Share: move '\(old)' → '\(desired)' failed — retrying next run")
                 return set
             case .sourceMissing:
