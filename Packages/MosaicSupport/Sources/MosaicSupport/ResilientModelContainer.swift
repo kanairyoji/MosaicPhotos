@@ -58,7 +58,9 @@ public func makeResilientModelContainer(
         }
         if let container = try? ModelContainer(for: schema, configurations: [config]) { return container }
         log(memoryFallbackMessage)
-        let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        // ⚠️ 名前を分ける。既定名のインメモリ構成はプロセス内で共有されるので、別々の台帳
+        // （FacesV1 / TagsV1 …）が同時にフォールバックすると 1 つの箱に混ざる。
+        let memory = ModelConfiguration("\(name)-memory", schema: schema, isStoredInMemoryOnly: true)
         return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
     }
 }

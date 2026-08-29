@@ -117,4 +117,74 @@ struct PersonIdentityAnchorTests {
         #expect(members.filter { $0.hasPrefix("L-a") }.count >= 5)
         #expect(members.filter { $0.hasPrefix("L-b") }.isEmpty)
     }
+
+    @Test("命名済み人物のメンバーは、機械の都合（別クラスタの成長）で外へ出ない")
+    func namedPersonKeepsMembersAcrossRebuild() async {
+        // ⚠️ 4 次元。「本人に入ったあとで、別クラスタの方が近くなった顔」を作る
+        // ——名前を付けたアルバムが、機械の都合（後から育った他人）で割られないことを見る。
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<10 {
+            await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, Float(i) * 0.005, 0, 0])])
+        }
+        // 本人の少し外れた 1 枚（cos 0.62 で合流する）。
+        await store.recordScan(refKey: "L-a-edge", faces: [signal([0.62, 0, 0.785, 0])])
+        guard let aID = await clusterOfA(store) else {
+            Issue.record("fixture: A のクラスタが作れていない"); return
+        }
+        await store.rename(clusterID: aID, name: "私")
+        // 後から別人 B（例: 娘）が育ち、こちらにも名前が付く。B の重心は「外れた 1 枚」に
+        // 本人より近い（cos 0.86 対 0.68）＝再割り当てすれば B に取られる位置。
+        for i in 0..<12 {
+            await store.recordScan(refKey: "L-b\(i)", faces: [signal([0.30, Float(i) * 0.004, 0.86, 0.41])])
+        }
+        let bID = await store.memberRefKeysByCluster()
+            .first { $0.key != aID && $0.value.contains("L-b0") }?.key ?? -1
+        #expect(bID >= 0)
+        await store.rename(clusterID: bID, name: "娘")
+        let before = await store.memberRefKeysByCluster()[aID] ?? []
+        // fixture の前提を assert する。
+        #expect(before.contains("L-a-edge"))
+        #expect(before.filter { $0.hasPrefix("L-b") }.isEmpty)
+
+        _ = await store.rebuildClusters()
+
+        let after = await store.memberRefKeysByCluster()[aID] ?? []
+        // 名前を付けた人物の構成は、ユーザーが何も言っていない限り変わらない。
+        #expect(after.contains("L-a-edge"))
+        #expect(after.filter { $0.hasPrefix("L-a") }.count == before.filter { $0.hasPrefix("L-a") }.count)
+    }
+
+    @Test("ユーザーが「この人ではない」と外した顔と同じ人物は、再クラスタで留めない")
+    func userCorrectionEjectsMatchingFaces() async {
+        // ⚠️ 4 次元で作る。3 次元だと「クラスタに入れるほど近い別人」を作ると、その別人が
+        // 本人とも負例しきい値（0.55）を超えて似てしまい、負例が本人まで巻き込む
+        // ＝ fixture の幾何が非現実的になる。次元を足して cos を独立に置く。
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<10 {
+            await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, Float(i) * 0.005, 0, 0])])
+        }
+        // 別人 X: 本人とは cos 0.52（合流はするが「同一人物」判定 0.55 は下回る）。
+        // X0 と X1 は互いに cos ≈ 0.99（＝同じ人の 2 枚）。
+        await store.recordScan(refKey: "L-x0", faces: [signal([0.52, 0, 0.854, 0])])
+        await store.recordScan(refKey: "L-x1", faces: [signal([0.52, 0, 0.841, 0.148])])
+        guard let aID = await clusterOfA(store) else {
+            Issue.record("fixture: A のクラスタが作れていない"); return
+        }
+        await store.rename(clusterID: aID, name: "私")
+        let members = await store.memberRefKeysByCluster()[aID] ?? []
+        // fixture の前提: 混入 2 枚とも「私」に入っている（ここが空だと何も検証していない）。
+        #expect(members.contains("L-x0"))
+        #expect(members.contains("L-x1"))
+
+        // ユーザーが 1 枚だけ「この人ではない」と指摘する（負例として学習される）。
+        _ = await store.removePhoto(refKey: "L-x0", from: aID)
+        _ = await store.rebuildClusters()
+
+        let after = await store.memberRefKeysByCluster()[aID] ?? []
+        #expect(!after.contains("L-x0"))
+        // 指摘は**同じ人物の別の顔**にも効く（1 枚ずつ全部指摘させない）。
+        #expect(!after.contains("L-x1"))
+        // 本人の顔は巻き込まれない。
+        #expect(after.filter { $0.hasPrefix("L-a") }.count >= 9)
+    }
 }

@@ -25,7 +25,10 @@ actor AutoAlbumStore {
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoEnrichment.self, GeneratedAlbum.self, PhotoEmbedding.self])
         if isStoredInMemoryOnly {
-            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
+            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
+            let memory = ModelConfiguration(UUID().uuidString, schema: schema,
+                                            isStoredInMemoryOnly: true)
             return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         }
         // "AutoAlbumV10" は破棄採番：CLIP 埋め込みを PhotoEnrichment から別テーブル PhotoEmbedding

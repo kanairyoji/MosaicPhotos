@@ -47,7 +47,10 @@ public actor BackupStore {
     public static func inMemoryContainerForTesting() -> ModelContainer {
         let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
                              ShareSet.self, ShareItem.self])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
+            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
+            let config = ModelConfiguration(UUID().uuidString, schema: schema,
+                                            isStoredInMemoryOnly: true)
         // テスト専用なので失敗は致命的（本番の自己修復とは別扱い）。
         return try! ModelContainer(for: schema, configurations: [config])
     }

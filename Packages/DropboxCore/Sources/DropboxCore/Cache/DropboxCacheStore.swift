@@ -59,7 +59,10 @@ actor DropboxCacheStore {
         // 名前なし ModelConfiguration は "default.store" になり、
         // BackupEngine の ModelContainer と衝突してスキーマエラーになる（過去に発生）。
         if isStoredInMemoryOnly {
-            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
+            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
+            let memory = ModelConfiguration(UUID().uuidString, schema: schema,
+                                            isStoredInMemoryOnly: true)
             modelContainer = (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         } else {
             // 壊れた/非互換ストアは削除して作り直し、それでも駄目ならインメモリへ
