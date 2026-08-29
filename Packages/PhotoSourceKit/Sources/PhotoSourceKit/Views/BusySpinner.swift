@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import Observation
 import SwiftUI
 import UIKit
 

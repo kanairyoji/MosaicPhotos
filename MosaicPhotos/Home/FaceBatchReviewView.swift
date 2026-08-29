@@ -248,8 +248,7 @@ struct FaceBatchReviewView: View {
         // 直前の人物のグリッドを残さない（残ると「まだ切り替わっていない」に見える）。
         item = nil
         selected = []
-        loadTask?.cancel()
-        let task = Task { () -> FaceBatchReviewItem? in
+        let found = await runCancellable(isBusy: $isLoading, task: $loadTask) { () -> FaceBatchReviewItem? in
             let t0 = PerfTrace.nowNs()
             let found = await peopleEngine.batchReviewItem(
                 anchorClusterID: anchor,
@@ -260,18 +259,13 @@ struct FaceBatchReviewView: View {
                               detail: "anchor=\(anchor.map(String.init) ?? "auto")")
             return found
         }
-        loadTask = task
-        let found = await runShowingBusy($isLoading) { await task.value }
-        loadTask = nil
-        guard !task.isCancelled else { return }
-        item = found
+        // キャンセルされた回は何も反映しない（`nil`）。
+        if let found { item = found }
     }
 
     /// 探索を中断して閉じる（待たされている側の出口）。
     private func cancelLoad() {
-        loadTask?.cancel()
-        loadTask = nil
-        isLoading = false
+        cancelRunning(isBusy: $isLoading, task: $loadTask)
         dismiss()
     }
 

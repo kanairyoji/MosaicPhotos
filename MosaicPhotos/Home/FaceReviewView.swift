@@ -87,14 +87,9 @@ struct FaceReviewView: View {
     /// レビュー候補を取り込む。完了画面の「Find more」からも呼べるようにしてある
     /// （スキャンの進行につれて候補は増えるので、シートを閉じ直さずに次を探せる）。
     private func load() async {
-        loadTask?.cancel()
-        // ⚠️ `runShowingBusy` を通す＝**表示を確定させてから**探し始める。フラグを立てた直後に
-        // 待ちへ入ると、SwiftUI が描く前に処理が始まり「何も出ないまま待たされる」になる。
-        let task = Task { await peopleEngine.reviewItems() }
-        loadTask = task
-        let found = await runShowingBusy($isLoading) { await task.value }
-        loadTask = nil
-        guard !task.isCancelled else { return }
+        // 表示の確定・Task の保持・キャンセル時に反映しないこと、はすべて `runCancellable` の担当。
+        guard let found = await runCancellable(isBusy: $isLoading, task: $loadTask,
+                                               { await peopleEngine.reviewItems() }) else { return }
         items = found
         index = 0
         if let first = items.first { peopleEngine.noteReviewShown(itemID: first.id) }
@@ -102,9 +97,7 @@ struct FaceReviewView: View {
 
     /// 探索を中断して閉じる。**中断は即座に効く**（候補生成は要所で `Task.isCancelled` を見る）。
     private func cancelLoad() {
-        loadTask?.cancel()
-        loadTask = nil
-        isLoading = false
+        cancelRunning(isBusy: $isLoading, task: $loadTask)
         dismiss()
     }
 
