@@ -10,6 +10,16 @@ import SwiftData
 /// 重心（sum/count）の演算は `FaceClustering` の純関数に寄せ、ここは fetch/persist に徹する。
 @ModelActor
 actor FaceStore {
+    /// ⚠️ **専用のシリアルキューで走らせる**（`ModelStoreExecutor` に理由を詳述）。
+    /// SwiftData の既定 executor はジョブを**呼び出し元のスレッド**で実行するため、これが無いと
+    /// MainActor からの `await store.…` が**メインスレッドで**走る（実測の前面ハングの真因）。
+    private nonisolated let executorQueue = ModelStoreExecutor.serialQueue(label: "com.mosaicphotos.store.faces")
+    nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
+
+    /// テスト用: このストアのジョブがメインスレッドで走っていないかを確かめる
+    /// （`unownedExecutor` の回帰検証。`ModelActorExecutorTests` から呼ぶ）。
+    func runsOnMainThreadForTesting() -> Bool { Thread.isMainThread }
+
     static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Faces")
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {

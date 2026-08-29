@@ -59,9 +59,9 @@ public final class PeopleEngine {
         self.tagger = FaceTagger(store: store, provider: faceProvider)
     }
 
-    /// 本番用ファクトリ。⚠️ @ModelActor（FaceStore）は「init したスレッド」で実行されるため、
-    /// **オフメインで生成**してから組み立てる（MainActor 直 init だと顔スキャンの SwiftData が
-    /// 全部メインスレッドで走る — AutoAlbumStore で実測 14.5s ハングになった同じ罠）。
+    /// 本番用ファクトリ。コンテナを開くディスク I/O をメインから外すため **オフメインで生成**する。
+    /// ⚠️ 実行スレッドの分離はこれではなく `FaceStore.unownedExecutor`（専用キュー）の役目
+    /// （既定 executor は**呼び出し元のスレッド**で走る＝`ModelStoreExecutor` に詳述）。
     public static func makeWithOffMainStore(
         faceProvider: FacePerceptionProvider?,
         favoriteRefKeysProvider: (() async -> Set<String>)? = nil
@@ -84,9 +84,8 @@ public final class PeopleEngine {
     public func loadPeople() async {
         // ⚠️ 内訳を測る（ADR-95 追記）。実機 diagnostics-41 でも、レビュー連続回答の 1 回ごとに
         //    メインが 540〜645ms 止まり、そのハングが `faces: people=` の直前で終わっていた。
-        //    ここの各段は全て off-main（`FaceStore` は @ModelActor をオフメインで生成）のはずで、
-        //    どこが体感を作っているのか**ログから断定できていない**。推測で直す前に段ごとに測る
-        //    （CLAUDE.md 性能原則 5）。次のログで `people.load.*` の内訳が出る。
+        //    答えは「**off-main ではなかった**」——既定の ModelActor executor は呼び出し元の
+        //    スレッドで走るため、ここの各段はメインで実行されていた（ADR-121 で専用キューへ）。
         let t0 = PerfTrace.nowNs()
         await store.apply(tuning: tuning)   // 冪等（変更が無ければ何もしない・ADR-70）
         PerfTrace.logSpan("people.load.tuning", ms: PerfTrace.msSince(t0))

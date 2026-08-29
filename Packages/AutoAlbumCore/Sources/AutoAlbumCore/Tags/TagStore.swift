@@ -36,10 +36,20 @@ final class PhotoTagRecord {
     }
 }
 
-/// タグ・キャプションの @ModelActor ストア。⚠️ 本番はオフメイン生成（@ModelActor は init した
+/// タグ・キャプションの @ModelActor ストア。⚠️ 本番はオフメイン生成（コンテナを開く I/O をメインから外す。@ModelActor は init した
 /// スレッドで実行される・事例参照）。
 @ModelActor
 actor TagStore {
+    /// ⚠️ **専用のシリアルキューで走らせる**（`ModelStoreExecutor` に理由を詳述）。
+    /// SwiftData の既定 executor はジョブを**呼び出し元のスレッド**で実行するため、これが無いと
+    /// MainActor からの `await store.…` が**メインスレッドで**走る（実測の前面ハングの真因）。
+    private nonisolated let executorQueue = ModelStoreExecutor.serialQueue(label: "com.mosaicphotos.store.tags")
+    nonisolated var unownedExecutor: UnownedSerialExecutor { executorQueue.asUnownedSerialExecutor() }
+
+    /// テスト用: このストアのジョブがメインスレッドで走っていないかを確かめる
+    /// （`unownedExecutor` の回帰検証。`ModelActorExecutorTests` から呼ぶ）。
+    func runsOnMainThreadForTesting() -> Bool { Thread.isMainThread }
+
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Tags")
 
     /// 現行のタグ付け版。v2: OCR・動物・人物数・美的スコア・アセット種別タグを追加。

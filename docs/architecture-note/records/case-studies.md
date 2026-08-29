@@ -21,6 +21,37 @@
 
 ---
 
+## SwiftData ストアが「メインスレッドで」走っていた（ロック解除後 10.9 秒フリーズ・diagnostics-64/65）
+- 症状: 画面ロックから復帰した直後にアプリが固まる。実測 `hang main=10899ms`（前面）。
+  同じログの少し前には人物レビューの生成で `people.reviewItems 5904ms` / `hang main=5854ms`。
+- 原因: **`@ModelActor` の既定 executor は「呼び出し元のスレッド」でジョブを実行する**。
+  つまり MainActor から `await store.…` と呼ぶと、SwiftData の fetch が**メインスレッドで**走る。
+  ハング中に採ったメインスレッドのスタックがそのまま証拠だった:
+  ```
+  0  CoreFoundation  _CFRuntimeSetInstanceTypeID
+  3  CoreData        <redacted>
+  56 AutoAlbumCore.AutoAlbumStore.allEnrichedPhotosLite()      ← 86k 件の読み出し
+  57 AutoAlbumCore.AutoAlbumEngine.placeRefinementTargets()
+  ```
+  diagnostics-64 では同じ形で `FaceStore.faceDigestsByCluster` がメインに載っていた。
+  ⚠️ **従来の理解「@ModelActor は init したスレッドに束縛される」は誤り**だった。生成スレッドは
+  無関係で、`Task.detached { Store() }` というオフメイン生成の対策は**一度も効いていなかった**。
+  過去の「14.5s ハング」「13.9s ハング」も同根で、体感の改善は別の変更（往復削減）によるもの。
+  macOS の最小再現で確定（生成: メイン/オフメイン × 呼び出し: メイン の 2×2）。
+- 引き金: 直前にバックグラウンドでプロセスが落ちて（背面 footprint 568MB→ 再起動）、復帰後の
+  最初のティックで `refinePlaceNames` の空振り早期リターン（インメモリの署名）が使えず、
+  台帳 86k 件のフル読み出しが走った。ロック解除の瞬間に重なったのはこのため。
+- 対処: 各ストア（`AutoAlbumStore` / `TagStore` / `UsageStore` / `FaceStore` / `BackupStore`）の
+  `unownedExecutor` を**専用シリアルキュー**へ差し替え（ADR-121）。回帰テストは
+  「MainActor から呼んで `Thread.isMainThread == false`」を 3 パッケージで固定
+  （`ModelActorExecutorTests`・修正前のコードで落ちることを確認）。
+- 関連: `MosaicSupport/ModelStoreExecutor.swift` / 各ストア / ADR-121 / ADR-106（ハング中のスタック採取）。
+- 教訓: **`await` はオフメインの証拠にならない**。actor だから別スレッド、という前提は
+  カスタム executor（SwiftData）の前では成り立たない。スレッドは**測って確かめる**——
+  そして測る手段（ハング中のメインスタック採取）が無ければ、この 1 行は永久に見つからなかった。
+- 残課題: 復帰直後に 86k 件を読む `refinePlaceNames` 自体は残る（メインは塞がなくなったが、
+  I/O とメモリは使う）。署名キャッシュを永続化して再起動後の空振りを効かせる案。
+
 ## AI アルバム編集後にアプリが数十秒固まる（メインスレッドの飢餓・diagnostics-48）
 - 症状: AI アルバムの編集（更新）後、および直後の操作全般で完全なフリーズ
   （実測: メイン 20.5 秒・9.4 秒・10 秒級 × 6 回連続）。「閉じる」でも固まって見える。
