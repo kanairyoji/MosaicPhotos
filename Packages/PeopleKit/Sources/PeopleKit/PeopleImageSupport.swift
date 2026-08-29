@@ -16,6 +16,15 @@ public enum PeopleImageSources {
     public static var cachedCloudThumbnail: ((String) async -> UIImage?)?
     /// 次の表示に間に合うよう温める（低優先・回線ポリシー内・ADR-81）。
     public static var warmCloudThumbnail: ((String) -> Void)?
+
+    /// ⚠️ 未配線は**黙って「顔が出ない」**になる（実際にパッケージ分離で落として、
+    /// 「まとめて確認のサムネが出ない」という形で表に出た）。気づけるよう 1 回だけ記録する。
+    private static var loggedMissingSource = false
+    static func noteMissingCloudSource() {
+        guard !loggedMissingSource else { return }
+        loggedMissingSource = true
+        Diagnostics.mark("people: cloud thumbnail source not wired — クラウド写真の顔は出ません")
+    }
 }
 
 // MARK: - Cluster members → local identifiers
@@ -47,6 +56,7 @@ public func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat
         //    なり、ピープルのアバターが延々出ない・レビュー画面が固まる原因になっていた（実測 diag-34）。
         //    アバターは「出なければ出ないでよい」情報なので、キャッシュに無ければ即諦める。
         let fetch = await MainActor.run { PeopleImageSources.cachedCloudThumbnail }
+        if fetch == nil { await MainActor.run { PeopleImageSources.noteMissingCloudSource() } }
         if let cached = await fetch?(path) {
             source = PHAssetImageLoader.normalizedUpCGImage(cached)   // EXIF 回転を正規化（検出座標と同じ向きに）
         } else {
