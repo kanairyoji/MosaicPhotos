@@ -91,11 +91,10 @@ struct PhotoMapView: View {
     /// 地図を閉じれば解放される——**押して戻るだけで捨ててはいけない**。
     private func load() async {
         guard candidates.isEmpty, loadTask == nil else { return }
-        let task = Task { await placeScanner.locatedCandidates(dropboxItems: dropboxStore.items) }
-        loadTask = task
-        let found = await runShowingBusy($isLoading) { await task.value }
-        loadTask = nil
-        guard !task.isCancelled else { return }
+        guard let found = await runCancellable(isBusy: $isLoading, task: $loadTask,
+                                               { await placeScanner.locatedCandidates(
+                                                   dropboxItems: dropboxStore.items) })
+        else { return }
         candidates = found
         // 初期表示は**写真がいちばん多い場所**（国や都市はコードに書かない・ADR-127 追補）。
         if let region = PhotoMapClustering.initialRegion(of: found) {
@@ -105,9 +104,7 @@ struct PhotoMapView: View {
     }
 
     private func cancelLoad() {
-        loadTask?.cancel()
-        loadTask = nil
-        isLoading = false
+        cancelRunning(isBusy: $isLoading, task: $loadTask)
         dismiss()
     }
 
