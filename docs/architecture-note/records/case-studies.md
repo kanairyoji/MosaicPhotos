@@ -2382,6 +2382,26 @@
 - 関連: `Packages/DropboxCore/Sources/DropboxCore/Cache/DropboxCacheStore.swift`、
   回帰テスト `DropboxCoreTests/DeltaWriteVolumeTests`（同じ差分の再適用で `updated == 0`。
   修正前の版で `updated → 50` となって落ちることを確認済み）。
-- 残課題: 初回同期の `cachedItems()` が 72,935 件を丸ごと実体化する点は未対応（別件）。
+- 残課題: 初回同期の `cachedItems()` が 72,935 件を丸ごと実体化する点は別項で対処済み
+  （「同期の掃除がパスだけのために全列を実体化していた」）。
   「無条件に上書きする更新経路」は他にもあり得るので、`@Model` の代入を書くときは
   **変化検出を先に置く**のを既定にする。
+
+## 同期の掃除がパスだけのために全列を実体化していた
+- 症状: 初回同期の終盤で、消えたファイルを取り除く処理（prune）が実行された瞬間にメモリが跳ねる。
+  ユーザー影響として観測されたのは「初回同期中のクラッシュしやすさ」で、それ自体は
+  他の対策で緩和していたため、この経路は残課題として残っていた。
+- 原因: prune が必要としているのは**キャッシュ済みパスの集合だけ**なのに、`cachedItems()` を
+  呼んでいた。この API は表示用で、`CachedDropboxItem` を全列で実体化し（64 桁の
+  `contentHash` を含む）、そこから `DropboxFileItem` を 72,935 個生成する。
+  作った直後に `.path` 以外を捨てており、山場のメモリをただ積んでいた。
+  「1 回に見える呼び出しが、実はライブラリ規模に比例していた」の同型（ADR-119）。
+- 対処: 射影（`propertiesToFetch = [\.path]`）の `cachedPaths(withPrefix:)` を足し、prune を
+  それに差し替えた。1 列だけを取るので値型の生成も無い。接頭辞での絞り込み（マルチルートで
+  他ルートを消さないための条件）も射影側に持たせた。
+- 関連: `DropboxCacheStore.cachedPaths` / `DropboxSyncEngine`（Step 4）、
+  回帰テスト `DropboxCoreTests/DropboxSyncPruneTests`（同期後に全列実体化が 0 回。
+  修正前の版では 1 回となって落ちることを確認済み）。掃除が効いていること・接頭辞で
+  他ルートを返さないことも同時に検証する（回数だけ見ると「引かなければ 0 回」で通るため）。
+- 残課題: 表示経路（`DropboxPhotoStore.reflectCachedItems`）の全件ロードは表示に要るので残す。
+  こちらは版番号での早期リターン（ADR-95）で「変わっていなければ引かない」形になっている。

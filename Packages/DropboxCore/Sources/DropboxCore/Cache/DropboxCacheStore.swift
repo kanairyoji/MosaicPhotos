@@ -117,6 +117,10 @@ actor DropboxCacheStore {
 
     func cachedItems(accountId: String) -> [DropboxFileItem] {
         // 計測: SwiftData の全件 fetch + 値型変換の所要（起動・全件表示の重さの一因になりうる）。
+        // ⚠️ **全列の実体化**を数える。表示以外の用途でここを呼ぶと 7 万行ぶんの
+        //    `@Model` と値型を作ることになるので、回帰テストで検出できるようにしておく。
+        PerfTrace.count("cache.itemsMaterialized")
+        materializeCallsForTesting += 1
         let t0 = PerfTrace.nowNs()
         defer { PerfTrace.logSpan("cache.fetchItems", ms: PerfTrace.msSince(t0)) }
         // 並べ替えは DB 側（SQLite）で行う。捕捉日時の昇順（nil は先頭＝最古扱い）。
@@ -134,6 +138,25 @@ actor DropboxCacheStore {
         return result
     }
 
+    /// キャッシュ済みの**パスだけ**を射影で取る（ADR-88）。
+    ///
+    /// ⚠️ 同期終盤の prune は「消えたファイルを見つける」ためにパスの集合しか要らないのに、
+    /// 以前は `cachedItems` を呼んで 72,935 行を全列で実体化し、`DropboxFileItem` を
+    /// 72,935 個作って、`.path` 以外を捨てていた。64 桁の contentHash を含む全列が
+    /// 一時的にメモリへ載るため、**初回同期の山場でさらにメモリを積む**形になっていた。
+    /// 射影なら 1 列だけで済む（`FaceStore` の各射影と同じ手）。
+    ///
+    /// - Parameter prefix: 小文字のパス接頭辞。空なら全件（マルチルートで他ルートを消さないため）。
+    func cachedPaths(withPrefix prefix: String = "") -> [String] {
+        let t0 = PerfTrace.nowNs()
+        defer { PerfTrace.logSpan("cache.fetchPaths", ms: PerfTrace.msSince(t0)) }
+        var descriptor = FetchDescriptor<CachedDropboxItem>()
+        descriptor.propertiesToFetch = [\.path]
+        guard let items = try? modelContext.fetch(descriptor) else { return [] }
+        guard !prefix.isEmpty else { return items.map(\.path) }
+        return items.map(\.path).filter { $0.lowercased().hasPrefix(prefix) }
+    }
+
     /// キャッシュ済みアイテム数（全件ロードせず件数だけ）。同期の自己修復判定に使う。
     func cachedItemCount(accountId: String) -> Int {
         (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>())) ?? 0
@@ -148,6 +171,8 @@ actor DropboxCacheStore {
     /// （実機 diagnostics-38・その直後にメインが 2.8s / 3.5s ブロック）。
     /// 変わっていないものを取り直さない（CLAUDE.md 性能原則 3 の同型）。
     private(set) var itemsRevision: Int = 0
+    /// テスト用: `cachedItems`（全列の実体化）を呼んだ回数。本番では読まれない。
+    private(set) var materializeCallsForTesting = 0
     /// テスト用の累計書き込み件数（本番では読まれない）。
     var insertedForTesting = 0
     var updatedForTesting = 0

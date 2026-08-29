@@ -197,8 +197,9 @@ final class DropboxSyncEngine {
             // ⚠️ prune は**このルートの配下だけ**を対象にする（マルチルートで他ルートの
             //    アイテムを消さない）。root == "" は正規化により単独なので全体が対象。
             let prefix = root.isEmpty ? "" : root.lowercased() + "/"
-            let cachedPaths = Set(await cache.cachedItems(accountId: accountId).map(\.path)
-                .filter { prefix.isEmpty || $0.lowercased().hasPrefix(prefix) })
+            // ⚠️ 要るのは**パスの集合だけ**。`cachedItems` は全列を実体化して値型を
+            //    7 万個作るので、ここでは射影（`cachedPaths`）を使う。
+            let cachedPaths = Set(await cache.cachedPaths(withPrefix: prefix))
             let fetchedPaths = Set(allImages.map(\.path))
             let stalePaths = Array(cachedPaths.subtracting(fetchedPaths))
 

@@ -112,4 +112,90 @@ struct DropboxSyncEngineMappingTests {
         #expect(items.first?.path == "/x/a.jpg")
     }
 }
+
+/// 同期終盤の prune（消えたファイルの掃除）が、**パスの射影だけ**で済んでいること。
+///
+/// ⚠️ 以前は `cachedItems` を呼んで 72,935 行を全列で実体化し、`DropboxFileItem` を
+/// 72,935 個作ってから `.path` 以外を捨てていた。初回同期の山場でさらにメモリを積む形で、
+/// 「1 回に見える呼び出しが実はライブラリ規模に比例していた」の同型（ADR-119）。
+@Suite("同期の prune（規模）")
+@MainActor
+struct DropboxSyncPruneTests {
+
+    @MainActor
+    final class StateRecorder { var states: [DropboxPhotoStore.SyncState] = [] }
+
+    private func stub(listFolderJSON: String) -> StubHTTPClient {
+        StubHTTPClient { req in
+            let url = req.url?.absoluteString ?? ""
+            let json: String
+            if url.contains("get_latest_cursor") { json = #"{"cursor":"baseline"}"# }
+            else if url.contains("longpoll") { json = #"{"changes":false}"# }
+            else if url.contains("list_folder/continue") { json = #"{"entries":[],"cursor":"c2","has_more":false}"# }
+            else { json = listFolderJSON }
+            return (Data(json.utf8),
+                    HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+    }
+
+    private func runInitialSync(cache: DropboxCacheStore, listFolderJSON: String) async {
+        let recorder = StateRecorder()
+        let engine = DropboxSyncEngine(
+            apiClient: DropboxAPIClient(httpClient: stub(listFolderJSON: listFolderJSON),
+                                        tokenProvider: StubTokenProvider()),
+            cache: cache, onCacheUpdated: { _ in },
+            onStateChanged: { recorder.states.append($0) })
+        engine.start(accountId: "acc")
+        await waitUntil { recorder.states.contains(.polling) }
+        engine.stop()
+    }
+
+    private var listing: String {
+        """
+        {"entries":[
+          {".tag":"file","name":"live.jpg","path_lower":"/live.jpg","content_hash":"h1",
+           "client_modified":"2020-01-01T00:00:00Z"}
+        ],"cursor":"c1","has_more":false}
+        """
+    }
+
+    private func item(_ path: String, hash: String) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: (path as NSString).lastPathComponent,
+                        contentHash: hash, captureDate: nil, latitude: nil, longitude: nil)
+    }
+
+    @Test("prune は全列を実体化しない")
+    func pruneDoesNotMaterializeAllColumns() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        await runInitialSync(cache: cache, listFolderJSON: listing)
+
+        #expect(await cache.materializeCallsForTesting == 0,
+                "同期が cachedItems を呼んでいる＝7 万件の全列と値型をメモリに載せている")
+    }
+
+    /// ⚠️ 射影に切り替えても**掃除が効いていること**（回数だけ見ると「引かなければ 0 回」で通る）。
+    @Test("prune は消えたファイルを取り除く")
+    func pruneRemovesStalePaths() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        await cache.applyDelta(accountId: "acc", added: [item("/gone.jpg", hash: "h0")],
+                               removed: [], newCursor: "c0")
+
+        await runInitialSync(cache: cache, listFolderJSON: listing)
+
+        let paths = Set(await cache.cachedItems(accountId: "acc").map(\.path))
+        #expect(paths == ["/live.jpg"], "掃除されていない、または生きているファイルまで消した")
+    }
+
+    @Test("接頭辞で絞ると他ルートのパスを返さない")
+    func projectionFiltersByPrefix() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        await cache.applyDelta(accountId: "acc",
+                               added: [item("/RootA/a.jpg", hash: "h1"), item("/RootB/b.jpg", hash: "h2")],
+                               removed: [], newCursor: "c0")
+
+        #expect(await cache.cachedPaths(withPrefix: "/roota/") == ["/RootA/a.jpg"])
+        #expect(await cache.cachedPaths().count == 2)
+        #expect(await cache.materializeCallsForTesting == 0, "射影が全列 fetch に戻っている")
+    }
+}
 #endif
