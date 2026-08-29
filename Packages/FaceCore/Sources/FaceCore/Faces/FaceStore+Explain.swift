@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PerceptionCore
 import SwiftData
@@ -37,10 +38,29 @@ public struct PersonDecisionRow: Sendable, Identifiable, Equatable {
     public var id: Int { clusterID }
 }
 
+/// 焦点人物の中で**重心から外れている顔**（＝混入の候補）。
+public struct PersonOutlierFace: Sendable, Identifiable, Equatable {
+    public let faceID: String
+    public let refKey: String
+    public let boundingBox: CGRect
+    /// この人物の重心との類似度。低いほど「この人ではない」可能性が高い。
+    public let similarity: Float
+    public let quality: Double
+    /// ユーザーが確認済み（アンカー）か。確認済みなら外れていても本人。
+    public let confirmed: Bool
+    /// 重心に寄与しているか（第2パスの所属だけの顔は false）。
+    public let contributes: Bool
+    /// いまの実効しきい値に届いていない＝**今このライブラリなら合流しない**顔。
+    public let belowThreshold: Bool
+    public var id: String { faceID }
+}
+
 public struct PersonDecisionReport: Sendable {
     public let focus: PersonDecisionFocus
     public let settings: FaceDecisionSettings
     public let neighbors: [PersonDecisionRow]
+    /// 重心から外れているメンバー（類似度の低い順）＝間違い候補。
+    public let outliers: [PersonOutlierFace]
     public let totalPeople: Int
     /// 学習済みの負例（「この人ではない」）の数。
     public let negativeCount: Int
@@ -109,6 +129,8 @@ extension FaceStore {
                 verdict: FaceDecisionExplain.verdict(input, settings: settings),
                 inMergeBand: entry.sim >= settings.mergeBandFloor))
         }
+        let outliers = outlierFaces(clusterID: clusterID, centroid: focusVec,
+                                    threshold: settings.threshold, limit: 24)
         return PersonDecisionReport(
             focus: PersonDecisionFocus(
                 clusterID: clusterID, name: focus.name, centroidCount: focus.count,
@@ -116,7 +138,39 @@ extension FaceStore {
                 anchorCount: (anchors[clusterID] ?? []).count,
                 hasCover: focus.coverFaceID != nil,
                 isGrouped: focus.personGroupID != nil),
-            settings: settings, neighbors: rows,
+            settings: settings, neighbors: rows, outliers: outliers,
             totalPeople: clusters.count, negativeCount: negatives.count)
+    }
+}
+
+extension FaceStore {
+
+    /// この人物の中で**重心から外れている顔**を、類似度の低い順に返す（間違い候補）。
+    ///
+    /// ⚠️ 近傍（他人との距離）だけでは「この人物の中に紛れ込んだ顔」は見つからない。
+    /// 混入は**内側**で起きるので、内側からも見る（実フィードバック）。
+    /// 確認済み（アンカー）の顔も外れることはある——ユーザーが本人と言っている以上、
+    /// 候補には出すが印を付けて区別する。
+    func outlierFaces(clusterID: Int, centroid: [Float], threshold: Float,
+                      limit: Int = 24, scanLimit: Int = 3000) -> [PersonOutlierFace] {
+        let members = faces(inCluster: clusterID)
+        guard members.count <= scanLimit else {
+            Self.log.info("faces: outliers skipped — too many members (\(members.count))")
+            return []
+        }
+        var scored: [PersonOutlierFace] = []
+        for f in members {
+            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
+            let sim = FaceClustering.dot(centroid, FaceClustering.normalized(vec))
+            scored.append(PersonOutlierFace(
+                faceID: f.faceID, refKey: f.refKey,
+                boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh),
+                similarity: sim, quality: f.quality,
+                confirmed: f.confirmedAt != nil,
+                contributes: FaceStore.contributesToCentroid(f),
+                belowThreshold: sim < threshold))
+        }
+        scored.sort { $0.similarity < $1.similarity }
+        return Array(scored.prefix(limit))
     }
 }

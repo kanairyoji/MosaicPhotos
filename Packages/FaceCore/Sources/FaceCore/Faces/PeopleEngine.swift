@@ -569,7 +569,11 @@ public final class PeopleEngine {
 
     /// 顔を別の人物へ付け替える（「この人は別の人」）。`toClusterID` が nil なら新規人物。
     public func reassignFace(faceID: String, toClusterID: Int?) async {
+        await store.beginUndo(
+            label: "この顔を " + (toClusterID.map { label($0) } ?? "新しい人物") + " へ移す",
+            clusterIDs: toClusterID.map { [$0] } ?? [], faceIDs: [faceID])
         await store.reassignFace(faceID: faceID, toClusterID: toClusterID)
+        await refreshUndoLabel()
         await loadPeople()
     }
 
