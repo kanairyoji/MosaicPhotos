@@ -6,6 +6,7 @@ import PhotoSourceKit
 import MosaicSupport
 import PhotosFeatureKit
 import SwiftUI
+import PeopleKit
 
 // MARK: - Home stores (起動時に非同期構築する重いストア群)
 
@@ -138,6 +139,17 @@ final class HomeStores {
                 BackupCopyInfo(localIdentifier: $0.localIdentifier, captureDate: $0.captureDate)
             }
         }
+        // ピープルの顔アバターが使うクラウド画像の取得先（PeopleKit の注入点）。
+        // ⚠️ これを設定し忘れると、**クラウド写真の顔サムネが 1 枚も出ない**（レビュー画面が
+        // 空のカードになる）。PeopleKit をパッケージへ出したとき実際に落として気づいた。
+        // 取得は**キャッシュ済みのみ**（追加 DL しない・ADR-88）、無ければ温めるだけ（ADR-81）。
+        PeopleImageSources.cachedCloudThumbnail = { [weak dropboxStore] path in
+            await dropboxStore?.cachedThumbnail(for: dropboxFileItem(path: path))
+        }
+        PeopleImageSources.warmCloudThumbnail = { [weak dropboxStore] path in
+            dropboxStore?.prefetch([dropboxFileItem(path: path)], targetSize: .zero)
+        }
+
         // 人物・グループ・場所・アルバムの**メンバー限定ストア**にも同じ索引を渡す
         // （渡していなかったので、それらの画面では副本が二重に出て並びも崩れていた）。
         MergedPhotoStore.defaultBackupCopyIndexProvider = mergedStore.backupCopyIndexProvider

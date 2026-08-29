@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%d photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 枚"
+          }
+        }
+      }
+    },
+    "%lld were kept separate because they have different names or appear together in the same photo.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件は統合しませんでした（別の名前が付いている、または同じ写真に一緒に写っているため）。"
+          }
+        }
+      }
+    },
     "A group with this name already exists.": {
       "localizations": {
         "ja": {
@@ -31,7 +51,7 @@
         }
       }
     },
-    "Are both of these “\\(name)”?": {
+    "Are both of these “%@”?": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -91,7 +111,7 @@
         }
       }
     },
-    "Choose the person to group “\\(source.displayName)” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later.": {
+    "Choose the person to group “%@” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later.": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -331,7 +351,7 @@
         }
       }
     },
-    "Is this “\\(name)”?": {
+    "Is this “%@”?": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -341,7 +361,7 @@
         }
       }
     },
-    "Keep “\\(name)”": {
+    "Keep “%@”": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -403,7 +423,7 @@
         }
       }
     },
-    "Merge \\(selected.count)": {
+    "Merge %lld": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -413,7 +433,7 @@
         }
       }
     },
-    "Merged \\(mergedTotal) entries.": {
+    "Merged %lld entries.": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -634,17 +654,7 @@
         }
       }
     },
-    "Separate Grouped Person": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "束ねを解除"
-          }
-        }
-      }
-    },
-    "Separate \\(selected.count) groups": {
+    "Separate %lld groups": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -654,12 +664,22 @@
         }
       }
     },
-    "Separate \\(selected.count) groups into new people?": {
+    "Separate %lld groups into new people?": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "%lld 個のグループを別の人物に分離しますか？"
+          }
+        }
+      }
+    },
+    "Separate Grouped Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねを解除"
           }
         }
       }
@@ -744,7 +764,7 @@
         }
       }
     },
-    "Thanks! \\(answered) answers recorded.": {
+    "Thanks! %lld answers recorded.": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -794,7 +814,7 @@
         }
       }
     },
-    "Which of these are “\\(item.anchorName)”?": {
+    "Which of these are “%@”?": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -824,47 +844,7 @@
         }
       }
     },
-    "\\(group.photoCount) photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚"
-          }
-        }
-      }
-    },
-    "\\(n) photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚"
-          }
-        }
-      }
-    },
-    "\\(p.count) photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚"
-          }
-        }
-      }
-    },
-    "\\(rejectedTotal) were kept separate because they have different names or appear together in the same photo.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld件は統合しませんでした（別の名前が付いている、または同じ写真に一緒に写っているため）。"
-          }
-        }
-      }
-    },
-    "“\\(source.displayName)” and “\\(target.displayName)” will be shown as the same person. You can separate them later.": {
+    "“%@” and “%@” will be shown as the same person. You can separate them later.": {
       "localizations": {
         "ja": {
           "stringUnit": {
