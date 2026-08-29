@@ -26,6 +26,8 @@ struct HomeView: View {
     /// 人物レビュー（「同じ人物？」確認カード・ADR-46）のシート表示。
     @State var showingFaceReview = false
     @State var showingAllPeople = false
+    /// 写真の地図（Places セクションのヘッダーから開く）。
+    @State var showingPhotoMap = false
     @State var showingBatchReview = false
     /// 確認ボタンの方式選択（一人ずつ / まとめて）。
     @State var showingReviewChooser = false
@@ -217,6 +219,10 @@ struct HomeView: View {
             FaceReviewView(peopleEngine: peopleEngine)
         }
         // 人物が多すぎてカルーセルに収まらないときの全一覧（ADR-68）。
+        // 写真の地図（Places セクションのヘッダーから開く・ADR-127）。
+        .fullScreenCover(isPresented: $showingPhotoMap) {
+            PhotoMapView(dropboxStore: dropboxStore, placeScanner: placeScanner, assetIndex: assetIndex)
+        }
         .sheet(isPresented: $showingAllPeople) {
             AllPeopleView(peopleEngine: peopleEngine, people: peopleEngine.people,
                           onSelect: { destination = .person($0) },

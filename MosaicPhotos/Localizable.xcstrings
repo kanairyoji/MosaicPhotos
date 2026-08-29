@@ -1443,6 +1443,16 @@
         }
       }
     },
+    "Finding photos with location…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "位置情報のある写真を探しています…"
+          }
+        }
+      }
+    },
     "Finding similar people…": {
       "localizations": {
         "ja": {
@@ -2044,6 +2054,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "顔の管理"
+          }
+        }
+      }
+    },
+    "Map": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "地図"
           }
         }
       }
