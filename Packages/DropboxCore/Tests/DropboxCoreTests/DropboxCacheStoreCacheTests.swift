@@ -134,3 +134,63 @@ struct DropboxCacheStoreCacheTests {
     }
 }
 #endif
+
+// MARK: - 変わっていない行は書かない（実機の disk writes 警告）
+
+/// ⚠️ OS が「12 分で 1.07GB 書き込み・制限の約 117 倍」として警告を出した。
+/// 原因は差分適用が**既存行を無条件に書き換えていた**こと——実測で
+/// `inserted=0 / updated=109,679`（1 件も新規が無いのに 11 万行を書き直し）。
+/// ディスク書き込みは発熱・電池・フラッシュ寿命に直結する。
+@Suite("差分適用の書き込み量")
+struct DeltaWriteVolumeTests {
+
+    private func item(_ path: String, hash: String, name: String? = nil) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: name ?? (path as NSString).lastPathComponent,
+                        contentHash: hash, captureDate: nil, latitude: nil, longitude: nil)
+    }
+
+    @Test("同じ内容を再適用しても更新しない")
+    func unchangedRowsAreNotRewritten() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let items = (0..<50).map { item("/p\($0).jpg", hash: "h\($0)") }
+
+        let first = await store.applyDeltaForTesting(added: items, removed: [], accountId: "a")
+        let second = await store.applyDeltaForTesting(added: items, removed: [], accountId: "a")
+
+        #expect(first.inserted == 50, "初回は登録される")
+        #expect(second.inserted == 0)
+        #expect(second.updated == 0,
+                "変わっていないのに \(second.updated) 行を書き直した＝毎回ディスクを汚す")
+    }
+
+    @Test("中身が変われば更新する")
+    func changedRowsAreWritten() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        _ = await store.applyDeltaForTesting(added: [item("/p.jpg", hash: "h1")],
+                                             removed: [], accountId: "a")
+        let result = await store.applyDeltaForTesting(added: [item("/p.jpg", hash: "h2")],
+                                                      removed: [], accountId: "a")
+        #expect(result.updated == 1, "変化を取りこぼすと表示が古いまま残る")
+    }
+
+    @Test("名前だけの変更も拾う")
+    func renameIsDetected() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        _ = await store.applyDeltaForTesting(added: [item("/p.jpg", hash: "h1", name: "old.jpg")],
+                                             removed: [], accountId: "a")
+        let result = await store.applyDeltaForTesting(
+            added: [item("/p.jpg", hash: "h1", name: "new.jpg")], removed: [], accountId: "a")
+        #expect(result.updated == 1)
+    }
+
+    /// 変化が無いなら表示側の札も進めない（進めると 68,200 件の再取得が走る・ADR-95）。
+    @Test("変化が無ければ表示の札も進めない")
+    func revisionDoesNotAdvanceWithoutChange() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let items = [item("/p.jpg", hash: "h1")]
+        _ = await store.applyDeltaForTesting(added: items, removed: [], accountId: "a")
+        let before = await store.currentItemsRevision()
+        _ = await store.applyDeltaForTesting(added: items, removed: [], accountId: "a")
+        #expect(await store.currentItemsRevision() == before)
+    }
+}

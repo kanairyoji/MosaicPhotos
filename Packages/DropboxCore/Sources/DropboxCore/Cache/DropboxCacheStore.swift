@@ -71,6 +71,7 @@ actor DropboxCacheStore {
                 log: { DropboxLogger.error($0) })
         }
         modelContext = ModelContext(modelContainer)
+        // テスト用の累計（本番では読まれない）。
 
         let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let baseURL = cachesURL.appendingPathComponent("DropboxKit", isDirectory: true)
@@ -147,6 +148,9 @@ actor DropboxCacheStore {
     /// （実機 diagnostics-38・その直後にメインが 2.8s / 3.5s ブロック）。
     /// 変わっていないものを取り直さない（CLAUDE.md 性能原則 3 の同型）。
     private(set) var itemsRevision: Int = 0
+    /// テスト用の累計書き込み件数（本番では読まれない）。
+    var insertedForTesting = 0
+    var updatedForTesting = 0
 
     /// 変更リビジョンを読む（表示側の早期リターン用・fetch を伴わない）。
     func currentItemsRevision() -> Int { itemsRevision }
@@ -192,6 +196,14 @@ actor DropboxCacheStore {
     /// removes deleted entries (and their cached binaries), upserts added/changed
     /// entries (invalidating binaries when `contentHash` changed), and stores the
     /// new sync cursor.
+    /// テスト用: 差分適用の書き込み件数を返す（「変わっていない行は書かない」の検証用）。
+    func applyDeltaForTesting(added: [DropboxFileItem], removed: [String],
+                              accountId: String) -> (inserted: Int, updated: Int) {
+        let before = (insertedForTesting, updatedForTesting)
+        applyDelta(accountId: accountId, added: added, removed: removed, newCursor: "c")
+        return (insertedForTesting - before.0, updatedForTesting - before.1)
+    }
+
     func applyDelta(accountId: String, added: [DropboxFileItem], removed: [String], newCursor: String) {
         DropboxLogger.info("applyDelta() — added=\(added.count), removed=\(removed.count), cursor=\(String(newCursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))")
 
@@ -206,6 +218,18 @@ actor DropboxCacheStore {
         var updateCount = 0
         for item in added {
             if let existing = fetchCachedItem(path: item.path) {
+                // ⚠️ **変わっていない行は書かない**（実機の disk writes 警告）。
+                // 以前は一致していても全項目を代入し、さらに `cachedAt = Date()` で必ず
+                // 別の値にしていたため、**毎回すべての行がダーティ**になっていた。
+                // 実測: 初回同期で `inserted=0 / updated=109,679`——1 件も新規が無いのに
+                // 11 万行を書き直しており、OS が 12 分で 1.07GB の書き込みを検出して警告した
+                // （制限の約 117 倍）。ディスク書き込みは発熱・電池・フラッシュ寿命に直結する。
+                let changed = existing.name != item.name
+                    || existing.contentHash != item.contentHash
+                    || existing.captureDate != item.captureDate
+                    || (item.latitude != nil && existing.latitude != item.latitude)
+                    || (item.longitude != nil && existing.longitude != item.longitude)
+                guard changed else { continue }   // 触らない＝ダーティにしない
                 if existing.contentHash != item.contentHash {
                     invalidate(path: item.path)
                 }
@@ -215,6 +239,8 @@ actor DropboxCacheStore {
                 // 位置情報は media_info が pending のとき nil で来るため、既存値を上書きで消さない。
                 if item.latitude != nil { existing.latitude = item.latitude }
                 if item.longitude != nil { existing.longitude = item.longitude }
+                // ⚠️ `cachedAt` は**中身が変わったときだけ**進める。無条件に更新すると
+                // それ自体が「必ず変わる値」になり、上の判定を無意味にする。
                 existing.cachedAt = Date()
                 updateCount += 1
             } else {
@@ -243,6 +269,8 @@ actor DropboxCacheStore {
         // アイテム集合が実際に変わったときだけ札を進める（変化なしのポーリングでは進めない＝
         // 表示側が 68,200 件の再取得を丸ごと省ける・ADR-95）。
         if insertCount > 0 || updateCount > 0 || !removed.isEmpty { itemsRevision &+= 1 }
+        insertedForTesting += insertCount
+        updatedForTesting += updateCount
         DropboxLogger.verbose("applyDelta() saved — inserted=\(insertCount), updated=\(updateCount), removed=\(removed.count)")
     }
 

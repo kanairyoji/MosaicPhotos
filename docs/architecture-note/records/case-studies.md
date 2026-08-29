@@ -2363,3 +2363,25 @@
 
 - 教訓: **除外リスト方式は必ず漏れる。** 「知らないものを弾く」設計は、知らないものが
   現れた瞬間に無力になる。位置（先頭・末尾）のような構造的な手がかりを併用する。
+
+## 変わっていない 11 万行を毎回書き直していた（OS のディスク書き込み警告・1.07GB/12 分）
+- 症状: OS が `diskwrites_resource` の報告を出した。
+  `Writes: 1073.75 MB of file backed memory dirtied over 738 seconds`
+  ＝**12 分で 1.07GB・毎秒 1.42MB**、制限（毎秒 12.43KB）の**約 117 倍**。
+  クラッシュではないが、OS が「このアプリは書き込みすぎ」と判定した状態。
+  重いスタック（91 サンプル中 76）は `SwiftUI → アプリ → SwiftData → CoreData`。
+- 原因: Dropbox の差分適用（`DropboxCacheStore.applyDelta`）が、**既存行を無条件に書き換えていた**。
+  同期のたびに全フィールドを代入し、さらに `existing.cachedAt = Date()` を必ず進めるので、
+  中身が同一でも SwiftData から見れば毎回ダーティになり、SQLite へ書き戻る。
+  診断ログの実測が決定的だった——`applyDelta 保存 78 回 / inserted 合計 0 / updated 合計 109,679`。
+  **1 件も新規が無いのに 11 万行を書いている**。ディスク書き込みは発熱・電池・フラッシュ寿命に直結し、
+  夜間処理の発熱問題（ADR-118）とも重なっていた。
+- 対処: 比較してから書く。`name` / `contentHash` / `captureDate` / 位置（新しい値がある場合のみ）を
+  突き合わせ、**変化が無ければ `continue` して一切触らない**。`cachedAt` も中身が変わったときだけ進める。
+  変化ゼロなら `itemsRevision` も据え置き（進めると表示側が全件を引き直す・ADR-95）。
+- 関連: `Packages/DropboxCore/Sources/DropboxCore/Cache/DropboxCacheStore.swift`、
+  回帰テスト `DropboxCoreTests/DeltaWriteVolumeTests`（同じ差分の再適用で `updated == 0`。
+  修正前の版で `updated → 50` となって落ちることを確認済み）。
+- 残課題: 初回同期の `cachedItems()` が 72,935 件を丸ごと実体化する点は未対応（別件）。
+  「無条件に上書きする更新経路」は他にもあり得るので、`@Model` の代入を書くときは
+  **変化検出を先に置く**のを既定にする。
