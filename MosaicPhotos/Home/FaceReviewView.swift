@@ -13,6 +13,8 @@ struct FaceReviewView: View {
     @State private var items: [FaceReviewItem] = []
     @State private var index = 0
     @State private var isLoading = true
+    /// 実行中の候補探索。キャンセル（＝待たされている側の出口）に使う。
+    @State private var loadTask: Task<[FaceReviewItem], Never>?
     @State private var answered = 0
     /// このカードの顔画像が揃ったか。揃うまではカードを出さず、回答もさせない
     /// （前の質問の顔を見たまま答えてしまうのを防ぐ）。次カードは先読みするので通常は一瞬。
@@ -31,8 +33,12 @@ struct FaceReviewView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    // 候補の抽出は実機で 1.4 秒前後かかる（`people.reviewItems`）。
-                    Color.clear.busyOverlay(true, text: L("Finding faces to review…"))
+                    // 候補の抽出は人物の数だけ時間がかかる（実機 `people.reviewItems`）。
+                    // ⚠️ **待っている間の出口を必ず出す**（実フィードバック: 探している間
+                    // 何も書かれておらずキャンセルできない）。中断は `loadTask` の cancel で、
+                    // 候補生成側（`FaceStore`）も要所で `Task.isCancelled` を見て降りる。
+                    Color.clear.busyOverlay(true, text: L("Finding faces to review…"),
+                                            cancel: (label: L("Cancel"), action: cancelLoad))
                 } else if index < items.count {
                     let item = items[index]
                     // カードごとに identity を分ける＝回答して次へ進んだら**作り直す**
@@ -81,11 +87,25 @@ struct FaceReviewView: View {
     /// レビュー候補を取り込む。完了画面の「Find more」からも呼べるようにしてある
     /// （スキャンの進行につれて候補は増えるので、シートを閉じ直さずに次を探せる）。
     private func load() async {
-        isLoading = true
-        items = await peopleEngine.reviewItems()
+        loadTask?.cancel()
+        // ⚠️ `runShowingBusy` を通す＝**表示を確定させてから**探し始める。フラグを立てた直後に
+        // 待ちへ入ると、SwiftUI が描く前に処理が始まり「何も出ないまま待たされる」になる。
+        let task = Task { await peopleEngine.reviewItems() }
+        loadTask = task
+        let found = await runShowingBusy($isLoading) { await task.value }
+        loadTask = nil
+        guard !task.isCancelled else { return }
+        items = found
         index = 0
-        isLoading = false
         if let first = items.first { peopleEngine.noteReviewShown(itemID: first.id) }
+    }
+
+    /// 探索を中断して閉じる。**中断は即座に効く**（候補生成は要所で `Task.isCancelled` を見る）。
+    private func cancelLoad() {
+        loadTask?.cancel()
+        loadTask = nil
+        isLoading = false
+        dismiss()
     }
 
     // MARK: - Card

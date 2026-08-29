@@ -42,7 +42,12 @@ public struct BusySpinner: UIViewRepresentable {
 public extension View {
     /// 「考え中」オーバーレイ。`isBusy` の間、レンダーサーバ駆動のスピナーを重ねる。
     /// 既に非同期で待っている箇所（読み込み中など）に付ける。
-    func busyOverlay(_ isBusy: Bool, text: String? = nil) -> some View {
+    ///
+    /// - Parameter cancel: 中断できる処理なら `(ラベル, 実行)` を渡す。**数秒かかり得る待ちには
+    ///   必ず付ける**（実フィードバック: 「探している間、何も操作できない」）。待たされている側に
+    ///   出口が無いのは、遅いこと自体より応える。
+    func busyOverlay(_ isBusy: Bool, text: String? = nil,
+                     cancel: (label: String, action: () -> Void)? = nil) -> some View {
         overlay {
             if isBusy {
                 VStack(spacing: 10) {
@@ -52,6 +57,11 @@ public extension View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
+                    }
+                    if let cancel {
+                        Button(cancel.label, action: cancel.action)
+                            .buttonStyle(.bordered)
+                            .padding(.top, 4)
                     }
                 }
                 .padding(20)
