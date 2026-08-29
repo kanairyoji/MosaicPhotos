@@ -6,6 +6,7 @@ import MosaicSupport
 import PhotosFeatureKit
 import PhotoSourceKit
 import SwiftUI
+import PeopleKit
 
 // MARK: - Root home view
 
@@ -91,6 +92,14 @@ struct HomeView: View {
     }
 
     var body: some View {
+        // ⚠️ **式を小さく保つ**。ここに 20 個以上の modifier を直につなぐと 1 つの巨大な型式になり、
+        // 型検査が現実的な時間で終わらない（ピープル UI をパッケージへ出して型の解決が増えた
+        // ときに実際に止まった）。土台と提示を分け、提示もさらに 2 つに割る。
+        peoplePresentations(basePresentations(homeStack))
+    }
+
+    /// ホームの土台（一覧そのもの）。
+    private var homeStack: some View {
         NavigationStack {
             List {
                 sourceSection
@@ -110,6 +119,52 @@ struct HomeView: View {
             .safeAreaInset(edge: .top, spacing: 0) { homeHeader }
             .toolbar(.hidden, for: .navigationBar)
         }
+    }
+
+
+    /// 遷移先の画面（`HomeDestination` → View）。
+    /// ⚠️ cover のクロージャに switch を直書きすると、型検査が現実的な時間で終わらない。
+    @ViewBuilder
+    private func destinationView(_ dest: HomeDestination) -> some View {
+        switch dest {
+        case .source(.all):
+            PhotoSourceContentView(store: mergedStore, title: L("All Photos"))
+        case .source(.local):
+            LocalPhotoContentView()
+        case .source(.cloud):
+            DropboxContentView(store: dropboxStore)
+        case .localAlbum(let album):
+            // 端末アルバム＝ローカル現存分＋オフロード済みクラウド代替の合成表示（ADR-39）。
+            // 台帳が空なら従来のローカルのみ表示と完全に同じ。
+            DeviceAlbumPhotosView(album: album, dropboxStore: dropboxStore,
+                                  backupEngine: backupEngine, assetIndex: assetIndex)
+        case .person(let person):
+            // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
+            PersonAlbumView(person: person, dropboxStore: dropboxStore, assetIndex: assetIndex,
+                            peopleEngine: peopleEngine)
+        case .peopleGroup(let group):
+            // グループ（複数人の束）の合成アルバム。
+            PeopleGroupAlbumView(group: group, dropboxStore: dropboxStore,
+                                 assetIndex: assetIndex, peopleEngine: peopleEngine)
+        case .sharedAlbum(let album):
+            // クラウド共有で受け取ったアルバム（家族フォルダ配下の 1 フォルダ）。
+            SharedAlbumPhotosView(album: album, dropboxStore: dropboxStore,
+                                  assetIndex: assetIndex)
+        case .place(let place):
+            PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
+        case .autoAlbum(let album):
+            // AI アルバムは画面内「…」からも削除できる（ホームカードの操作と統一）。
+            AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore, assetIndex: assetIndex,
+                onDelete: album.strategyID == AIAlbumStrategy.strategyID
+                    ? { Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) }; destination = nil }
+                    : nil)
+        }
+    }
+
+    /// 設定・AI コンポーザ（`@State` の Binding を使うのでメソッド）。
+    @ViewBuilder
+    private func basePresentations<V: View>(_ content: V) -> some View {
+        destinationPresentation(content
         // 画面遷移・設定シートはユーザー操作としてアイドル判定に記録する（重い処理の抑制）。
         .onChange(of: destination == nil) { _, _ in BackgroundActivityMonitor.shared.noteUserInteraction() }
         .onChange(of: showingSettings) { _, _ in BackgroundActivityMonitor.shared.noteUserInteraction() }
@@ -127,41 +182,16 @@ struct HomeView: View {
                 AIAlbumComposerView(engine: autoAlbumEngine, editing: album)
             }
         }
+        )
+    }
+
+    /// 各画面へのフルスクリーン遷移と、共有バッジの更新。
+    @ViewBuilder
+    private func destinationPresentation<V: View>(_ content: V) -> some View {
+        sharePresentations(content
         .fullScreenCover(item: $destination) { dest in
             sourceHost(dismiss: { destination = nil }) {
-                switch dest {
-                case .source(.all):
-                    PhotoSourceContentView(store: mergedStore, title: L("All Photos"))
-                case .source(.local):
-                    LocalPhotoContentView()
-                case .source(.cloud):
-                    DropboxContentView(store: dropboxStore)
-                case .localAlbum(let album):
-                    // 端末アルバム＝ローカル現存分＋オフロード済みクラウド代替の合成表示（ADR-39）。
-                    // 台帳が空なら従来のローカルのみ表示と完全に同じ。
-                    DeviceAlbumPhotosView(album: album, dropboxStore: dropboxStore,
-                                          backupEngine: backupEngine, assetIndex: assetIndex)
-                case .person(let person):
-                    // メンバー限定 MergedPhotoStore で端末＋クラウド両方のメンバーを表示（PlacePhotosView と同型）。
-                    PersonAlbumView(person: person, dropboxStore: dropboxStore, assetIndex: assetIndex,
-                                    peopleEngine: peopleEngine)
-                case .peopleGroup(let group):
-                    // グループ（複数人の束）の合成アルバム。
-                    PeopleGroupAlbumView(group: group, dropboxStore: dropboxStore,
-                                         assetIndex: assetIndex, peopleEngine: peopleEngine)
-                case .sharedAlbum(let album):
-                    // クラウド共有で受け取ったアルバム（家族フォルダ配下の 1 フォルダ）。
-                    SharedAlbumPhotosView(album: album, dropboxStore: dropboxStore,
-                                          assetIndex: assetIndex)
-                case .place(let place):
-                    PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
-                case .autoAlbum(let album):
-                    // AI アルバムは画面内「…」からも削除できる（ホームカードの操作と統一）。
-                    AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore, assetIndex: assetIndex,
-                        onDelete: album.strategyID == AIAlbumStrategy.strategyID
-                            ? { Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) }; destination = nil }
-                            : nil)
-                }
+                destinationView(dest)
             }
             .perfScreenEnd("home.present")   // 計測: ホーム→各画面のフルスクリーン表示の所要
         }
@@ -187,6 +217,13 @@ struct HomeView: View {
         .onChange(of: stores.shareEngine.sets) { _, _ in updateCloudSharedBadges() }
         .onChange(of: peopleEngine.peopleGroups) { _, _ in updateCloudSharedBadges() }
         // ピープル長押しメニュー（名前変更／代表写真の変更／顔の管理）と配下のシート/アラート一式。
+        )
+    }
+
+    /// 共有・ピープルのメニュー系（長押しメニュー・作成シート・受信共有の発見）。
+    @ViewBuilder
+    private func sharePresentations<V: View>(_ content: V) -> some View {
+        content
         .peopleActions(for: $personActions, engine: peopleEngine)
         // ピープルグループの長押しメニュー（編集/クラウド共有/削除）と作成シート。
         .peopleGroupActions(for: $peopleGroupActions, engine: peopleEngine)
@@ -208,6 +245,12 @@ struct HomeView: View {
             }.value
             if albums != sharedAlbums { sharedAlbums = albums }
         }
+    }
+
+    /// ピープル・地図・共有まわりの提示（続き）。
+    @ViewBuilder
+    private func peoplePresentations<V: View>(_ content: V) -> some View {
+        content
         // 確認方式の選択（一人ずつ＝1対1カード / まとめて＝類似クラスタの一括確認）。
         .confirmationDialog(L("Review People"), isPresented: $showingReviewChooser,
                             titleVisibility: .visible) {

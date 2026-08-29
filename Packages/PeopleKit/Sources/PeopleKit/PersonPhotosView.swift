@@ -1,12 +1,13 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import SwiftUI
 
 /// 顔の管理シート。この人物として認識した顔の切り抜きを並べ（複数人の写真でもどの顔か分かる）、
 /// タップで「この顔は別の人」→ 正しい人物へ付け替えできる。
 /// ※ 写真の閲覧（フル画面・EXIF/場所の上スワイプ）は通常ビューア（人物タップ）を使う。ここは管理専用。
-struct PersonPhotosView: View {
-    let person: PersonInfo
-    let peopleEngine: PeopleEngine
+public struct PersonPhotosView: View {
+    public let person: PersonInfo
+    public let peopleEngine: PeopleEngine
 
     @Environment(\.dismiss) private var dismiss
     @State private var faces: [PersonInfo.Face] = []
@@ -14,7 +15,13 @@ struct PersonPhotosView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 3)]
 
-    var body: some View {
+
+    public init(person: PersonInfo, peopleEngine: PeopleEngine) {
+        self.person = person
+        self.peopleEngine = peopleEngine
+    }
+
+    public var body: some View {
         NavigationStack {
             ScrollView {
                 Text(L("Tap a face that isn’t this person. Choose “Not this person” to just remove it, or pick the correct person."))
@@ -257,3 +264,4 @@ struct PersonMergePickerView: View {
         }
     }
 }
+#endif

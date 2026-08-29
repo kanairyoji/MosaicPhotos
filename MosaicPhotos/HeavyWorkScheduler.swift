@@ -3,6 +3,7 @@ import BackgroundTasks
 import BackupKit
 import MosaicSupport
 import SwiftUI
+import PhotosFeatureKit
 
 // MARK: - Heavy work in background (BGProcessingTask)
 

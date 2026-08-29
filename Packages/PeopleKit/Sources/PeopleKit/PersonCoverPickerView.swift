@@ -1,12 +1,13 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import PhotoSourceKit
 import SwiftUI
 
 /// ピープル（顔クラスタ）の代表写真＝トップに出す顔を選ぶピッカー。
 /// クラスタ内の顔候補（写真ごと）を円形の顔切り抜きで並べ、タップで cover に設定する。
-struct PersonCoverPickerView: View {
-    let person: PersonInfo
-    let peopleEngine: PeopleEngine
+public struct PersonCoverPickerView: View {
+    public let person: PersonInfo
+    public let peopleEngine: PeopleEngine
     @Environment(\.dismiss) private var dismiss
 
     @State private var candidates: [PersonInfo.Face] = []
@@ -14,7 +15,13 @@ struct PersonCoverPickerView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 84), spacing: 14)]
 
-    var body: some View {
+
+    public init(person: PersonInfo, peopleEngine: PeopleEngine) {
+        self.person = person
+        self.peopleEngine = peopleEngine
+    }
+
+    public var body: some View {
         NavigationStack {
             Group {
                 if !loaded {
@@ -76,3 +83,4 @@ private struct CoverCandidateAvatar: View {
             }
     }
 }
+#endif

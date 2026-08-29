@@ -12,6 +12,7 @@ let package = Package(
         .package(path: "../LocalPhotoKit"),
         .package(path: "../DropboxKit"),
         .package(path: "../MosaicSupport"),
+        .package(path: "../PerceptionCore"),   // PhotoRef / AnalysisOrder（解析候補の並び）
     ],
     targets: [
         .target(
@@ -21,6 +22,7 @@ let package = Package(
                 .product(name: "LocalPhotoKit", package: "LocalPhotoKit"),
                 .product(name: "DropboxKit", package: "DropboxKit"),
                 .product(name: "MosaicSupport", package: "MosaicSupport"),
+                .product(name: "PerceptionCore", package: "PerceptionCore"),
             ],
             path: "Sources/PhotosFeatureKit"
         ),

@@ -1,11 +1,15 @@
-import AutoAlbumCore
-import MobileCLIPKit
+#if canImport(UIKit)
 import DropboxKit
+import Foundation
 import MosaicSupport
+import PerceptionCore
 import Photos
-import UIKit
 
-// MARK: - Candidate refKeys
+// MARK: - 解析候補の refKey（顔スキャン・タグ付けの入力）
+//
+// ⚠️ もとはアプリターゲットに居たが、中身は**写真ソースの統合そのもの**（端末 + Dropbox を
+// 1 つの候補列にする）で、しかも 68,000 件のソートを含む＝性能規約（ADR-82/119）の対象。
+// アプリにはパッケージテストが無く、回帰を固定できていなかったのでここへ移した。
 
 /// 同期済みクラウド写真の refKey 一覧（"C-<path>"）。ピープルの顔スキャン候補（クラウド分）に使う。
 /// クラウドはキャッシュ済みサムネ（thumbnailAPISize）で顔検出する（追加DL無し・大きい顔中心）。
@@ -13,7 +17,7 @@ import UIKit
 ///
 /// ⚠️ `nonisolated`：6.8 万件のソート＋map をメインで回さない（ADR-82）。呼び出し側が
 /// `dropboxStore.items` のスナップショット（COW＝取得は安価）を渡し、この関数は off-main で走る。
-nonisolated func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] {
+nonisolated public func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] {
     items
         .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
         .map { PhotoRef.cloud($0.path).encoded }
@@ -27,7 +31,7 @@ nonisolated func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] {
 /// 実行しており、**起動のたびにメインが 2.7〜3.2 秒止まっていた**（実機ログ diagnostics-32）。
 /// 夜間 BGTask でも同じ経路を通るため、背面での長い停止の一因でもあった。
 @MainActor
-func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
+public func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
     // ⚠️ items は All Photos / Cloud を開くまで読み込まれない（ADR-85）。起動直後はこの関数の方が
     // 早く、空のまま候補を作ると**クラウド写真が丸ごと解析対象から漏れる**。実機ログ diag-33 で
     // candidates=6699（ローカルのみ）になり、2 秒後に 68,200 件がロードされていた。
@@ -45,7 +49,7 @@ func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。
 /// ⚠️ アプリ層の top-level 関数はデフォルト MainActor になるため、全件列挙（数万件）は
 /// `Task.detached` で**メインスレッド外**へ逃がす（起動直後のホーム描画を固めない）。
-func localImageRefKeys() async -> [String] {
+public func localImageRefKeys() async -> [String] {
     await Task.detached(priority: .utility) {
         let opts = PHFetchOptions()
         // 顔スキャンはスクリーンショットを対象外にする（(a)・顔がまず写らないのに 1 枚 ~1s かかり
@@ -69,7 +73,7 @@ func localImageRefKeys() async -> [String] {
 
 /// 端末写真（画像）の総数。顔スキャンの進捗の分母（AI 解析の状況画面）に使う。
 /// `fetchAssets(...).count` は遅延評価なので列挙より軽い。取得はメインスレッド外。
-func localImagePhotoCount() async -> Int {
+public func localImagePhotoCount() async -> Int {
     await Task.detached(priority: .utility) {
         let opts = PHFetchOptions()
         opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
@@ -78,7 +82,7 @@ func localImagePhotoCount() async -> Int {
 }
 
 /// お気に入りの端末写真（画像）の refKey 集合（"L-…"）。列挙はメインスレッド外。
-func localFavoriteImageRefKeys() async -> Set<String> {
+public func localFavoriteImageRefKeys() async -> Set<String> {
     await Task.detached(priority: .utility) {
         let opts = PHFetchOptions()
         opts.predicate = NSPredicate(format: "favorite == YES && mediaType == %d", PHAssetMediaType.image.rawValue)
@@ -95,81 +99,9 @@ func localFavoriteImageRefKeys() async -> Set<String> {
 /// ローカルは PHAsset.isFavorite、クラウドはアプリ側お気に入り（`DropboxPhotoStore.favoriteCloudPaths`）。
 /// 代表写真の自動選択・解析の処理順（お気に入り優先）に使う。
 @MainActor
-func favoriteImageRefKeys(dropboxStore: DropboxPhotoStore) async -> Set<String> {
+public func favoriteImageRefKeys(dropboxStore: DropboxPhotoStore) async -> Set<String> {
     var keys = await localFavoriteImageRefKeys()
     for path in dropboxStore.favoriteCloudPaths { keys.insert(PhotoRef.cloud(path).encoded) }
     return keys
 }
-
-// MARK: - Cluster members → local identifiers
-
-/// クラスタのメンバー refKey をローカル localIdentifier 配列へ。
-func localIdentifiers(from refKeys: [String]) -> [String] {
-    refKeys.compactMap { PhotoRef.decode($0)?.localIdentifier }
-}
-
-/// クラスタのメンバー refKey をクラウド（Dropbox）path 配列へ。人物アルバムのクラウドメンバー表示用。
-func cloudPaths(from refKeys: [String]) -> [String] {
-    refKeys.compactMap { PhotoRef.decode($0)?.cloudPath }
-}
-
-// MARK: - Face avatar
-
-/// 代表顔の写真からアバター（顔の切り抜き）を作る。`box` は Vision の正規化矩形（原点左下）。
-/// **`box` が nil なら切り抜かず写真全体**を返す（ADR-91・レビュー画面の「写真全体」表示）。
-/// 顔だけでは同一人物か判断できない場面（後ろ姿・小さい顔・似た兄弟）で、状況ごと見て判断できる。
-func loadFaceAvatar(coverRefKey: String?, box: CGRect?, maxPixel: CGFloat = 600) async -> UIImage? {
-    guard let coverRefKey, let ref = PhotoRef.decode(coverRefKey) else { return nil }
-    let source: CGImage?
-    if let localID = ref.localIdentifier {
-        source = await requestAspectCGImage(localID, maxPixel: maxPixel)
-    } else if let path = ref.cloudPath {
-        // クラウド顔: Dropbox の**キャッシュ済み**サムネから切り抜く（追加DL無し・ADR-88）。
-        // ⚠️ 以前は `thumbnail(for:)` を呼んでおり、コメントの「追加DL無し」に反して未キャッシュなら
-        //    ダウンロードを待っていた。グリッド（86k 枚）のサムネ要求で行列が飽和すると 1 件 10 秒級に
-        //    なり、ピープルのアバターが延々出ない・レビュー画面が固まる原因になっていた（実測 diag-34）。
-        //    アバターは「出なければ出ないでよい」情報なので、キャッシュに無ければ即諦める。
-        let item = dropboxFileItem(path: path)
-        let store = HeavyWorkScheduler.stores?.dropboxStore
-        if let cached = await store?.cachedThumbnail(for: item) {
-            source = orientationNormalizedCGImage(cached)   // EXIF 回転を正規化（検出座標と同じ向きに）
-        } else {
-            // 次回の表示に間に合うよう温めておく（低優先・回線ポリシー内＝ADR-81）。
-            store?.prefetch([item], targetSize: .zero)
-            source = nil
-        }
-    } else {
-        source = nil
-    }
-    guard let cg = source else { return nil }
-    // box なし＝写真全体をそのまま返す（切り抜きの計算をしない）。
-    guard let box else { return UIImage(cgImage: cg) }
-    let width = CGFloat(cg.width), height = CGFloat(cg.height)
-    let margin: CGFloat = 0.35
-    var b = box.insetBy(dx: -box.width * margin, dy: -box.height * margin)
-        .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-    if b.isNull { b = box }
-    let pixel = CGRect(
-        x: b.minX * width,
-        y: (1 - b.minY - b.height) * height,   // Vision(下原点) → CGImage(上原点)
-        width: b.width * width,
-        height: b.height * height)
-        .integral
-        .intersection(CGRect(x: 0, y: 0, width: width, height: height))
-    guard pixel.width >= 1, pixel.height >= 1, let cropped = cg.cropping(to: pixel) else { return nil }
-    return UIImage(cgImage: cropped)
-}
-
-/// アスペクトを保った端末画像を取得する（顔矩形を重ねて表示するため正方クロップしない）。refKey 版。
-func loadLocalAspectImage(refKey: String, maxPixel: CGFloat = 1000) async -> UIImage? {
-    guard let localID = PhotoRef.decode(refKey)?.localIdentifier,
-          let cg = await requestAspectCGImage(localID, maxPixel: maxPixel) else { return nil }
-    return UIImage(cgImage: cg)
-}
-
-/// アスペクトを保った**向き正規化済み** CGImage を取得する（顔矩形を正しくマッピングするため
-/// 正方クロップしない）。実体は共通ローダ `PHAssetImageLoader`（顔検出の入力と同一経路）。
-private func requestAspectCGImage(_ localIdentifier: String, maxPixel: CGFloat) async -> CGImage? {
-    await PHAssetImageLoader.cgImage(localIdentifier: localIdentifier, maxPixel: maxPixel,
-                                     contentMode: .aspectFit, allowsNetwork: true)
-}
+#endif

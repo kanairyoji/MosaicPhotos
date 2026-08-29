@@ -1,6 +1,7 @@
 import AutoAlbumCore
 import DropboxKit
 import SwiftUI
+import PeopleKit
 
 /// 自動アルバムの横スクロールカルーセル（Time & Place / AI / フォルダ で共通）。
 /// `onEdit` / `onDelete` を渡したときだけ長押しメニュー（AI アルバム用）を表示する。

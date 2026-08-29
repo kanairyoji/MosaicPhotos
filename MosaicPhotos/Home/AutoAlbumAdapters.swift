@@ -6,6 +6,7 @@ import Foundation
 import MobileCLIPKit
 import MosaicSupport
 import UIKit
+import PhotosFeatureKit
 
 /// アプリのアダプタ（Dropbox / バックアップ / 人物 / Vision / CLIP）を結線して `AutoAlbumEngine` を
 /// 生成する Composition Root。HomeView の init をスリムに保つ。

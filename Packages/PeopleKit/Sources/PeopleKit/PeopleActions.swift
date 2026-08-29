@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import BackupKit
 import SwiftUI
@@ -121,7 +122,8 @@ struct PeopleActionsModifier: ViewModifier {
 
 extension View {
     /// ピープル長押しメニューと配下の UI 一式を付ける。`target` に人物を入れるとメニューが開く。
-    func peopleActions(for target: Binding<PersonInfo?>, engine: PeopleEngine) -> some View {
+    public func peopleActions(for target: Binding<PersonInfo?>, engine: PeopleEngine) -> some View {
         modifier(PeopleActionsModifier(target: target, peopleEngine: engine))
     }
 }
+#endif

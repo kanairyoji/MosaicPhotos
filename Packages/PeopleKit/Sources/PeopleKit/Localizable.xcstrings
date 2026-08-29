@@ -1,0 +1,879 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "A group with this name already exists.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ名前のグループが既にあります。"
+          }
+        }
+      }
+    },
+    "Analyzing faces…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔を分析中…"
+          }
+        }
+      }
+    },
+    "Answers are applied right away, and the next overnight analysis uses them too.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答はすぐに反映され、次回の夜間解析にも使われます。"
+          }
+        }
+      }
+    },
+    "Are both of these “\\(name)”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "どちらも「%@」さんですか？"
+          }
+        }
+      }
+    },
+    "Are these the same person?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物ですか？"
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャンセル"
+          }
+        }
+      }
+    },
+    "Children change a lot as they grow, so one child can end up as many entries. Confirm them together to merge them quickly.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "子どもは成長で顔が大きく変わるため、1人が多数に分かれることがあります。「まとめて確認」で一度にまとめられます。"
+          }
+        }
+      }
+    },
+    "Choose Cover": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代表写真を選ぶ"
+          }
+        }
+      }
+    },
+    "Choose Cover Photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代表写真を変更"
+          }
+        }
+      }
+    },
+    "Choose the person to group “\\(source.displayName)” with as the same person (e.g. a child across ages). Their photos will appear together. You can separate them later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」と同じ人物（例: 成長した子供）として束ねる相手を選びます。写真はまとめて表示され、後で解除できます。"
+          }
+        }
+      }
+    },
+    "Clean Up This Person…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物を整理…"
+          }
+        }
+      }
+    },
+    "Clear all": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択を解除"
+          }
+        }
+      }
+    },
+    "Close": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "閉じる"
+          }
+        }
+      }
+    },
+    "Cloud Share…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有…"
+          }
+        }
+      }
+    },
+    "Cloud Sharing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有"
+          }
+        }
+      }
+    },
+    "Confirm together": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめて確認"
+          }
+        }
+      }
+    },
+    "Create": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作成"
+          }
+        }
+      }
+    },
+    "Delete Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループを削除"
+          }
+        }
+      }
+    },
+    "Delete this group? People and their photos are not affected.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このグループを削除しますか？人物と写真には影響しません。"
+          }
+        }
+      }
+    },
+    "Done": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了"
+          }
+        }
+      }
+    },
+    "Don’t group — these are different people": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねない（別人でした）"
+          }
+        }
+      }
+    },
+    "Edit Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループを編集"
+          }
+        }
+      }
+    },
+    "Edit Group…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループを編集…"
+          }
+        }
+      }
+    },
+    "Find more": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次を探す"
+          }
+        }
+      }
+    },
+    "Finding faces to review…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認する顔を探しています…"
+          }
+        }
+      }
+    },
+    "Finding similar people…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "似た人を探しています…"
+          }
+        }
+      }
+    },
+    "Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねる"
+          }
+        }
+      }
+    },
+    "Group as Same Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねる"
+          }
+        }
+      }
+    },
+    "Group as same person?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねますか？"
+          }
+        }
+      }
+    },
+    "Group name (e.g. family, team)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループ名（例: 家族、チーム）"
+          }
+        }
+      }
+    },
+    "Group with": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物として束ねる"
+          }
+        }
+      }
+    },
+    "Group with Another Person…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人物と束ねる…"
+          }
+        }
+      }
+    },
+    "Groups collect several people into one album (a family, a team, an organization). Select at least 2 people.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複数の人物を 1 つのアルバムにまとめます（家族・チーム・組織など）。2 人以上選択してください。"
+          }
+        }
+      }
+    },
+    "Is this “\\(name)”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この写真は「%@」さんですか？"
+          }
+        }
+      }
+    },
+    "Keep “\\(name)”": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」を残す"
+          }
+        }
+      }
+    },
+    "Kept as this person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物として残す"
+          }
+        }
+      }
+    },
+    "Loading faces…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔を読み込んでいます…"
+          }
+        }
+      }
+    },
+    "Loading photos…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を読み込んでいます…"
+          }
+        }
+      }
+    },
+    "Manage Faces": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔の管理"
+          }
+        }
+      }
+    },
+    "Members": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メンバー"
+          }
+        }
+      }
+    },
+    "Merge \\(selected.count)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件をまとめる"
+          }
+        }
+      }
+    },
+    "Merged \\(mergedTotal) entries.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件をまとめました。"
+          }
+        }
+      }
+    },
+    "Merging…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめています…"
+          }
+        }
+      }
+    },
+    "Name": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前"
+          }
+        }
+      }
+    },
+    "New People Group": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいピープルグループ"
+          }
+        }
+      }
+    },
+    "Next person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の人へ"
+          }
+        }
+      }
+    },
+    "No": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いいえ"
+          }
+        }
+      }
+    },
+    "No photos for this person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物の写真がありません。"
+          }
+        }
+      }
+    },
+    "No split candidates": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分割候補は見つかりませんでした"
+          }
+        }
+      }
+    },
+    "Not this person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の人"
+          }
+        }
+      }
+    },
+    "Not this person (don’t pick anyone)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人ではない（相手を選ばない）"
+          }
+        }
+      }
+    },
+    "Nothing left to merge right now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いまはまとめられるものはありません。"
+          }
+        }
+      }
+    },
+    "Nothing to review right now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いま確認するものはありません。"
+          }
+        }
+      }
+    },
+    "Or choose the correct person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "または正しい人物を選ぶ"
+          }
+        }
+      }
+    },
+    "People": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープル"
+          }
+        }
+      }
+    },
+    "Removes this face from the person. It becomes its own new person; the app learns from this so the mistake isn’t repeated.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この顔を人物から外します。新しい人物になり、以後は同じ誤りを繰り返さないよう学習します。"
+          }
+        }
+      }
+    },
+    "Rename": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前を変更"
+          }
+        }
+      }
+    },
+    "Rename Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前を変更"
+          }
+        }
+      }
+    },
+    "Review People": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を確認"
+          }
+        }
+      }
+    },
+    "Save": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存"
+          }
+        }
+      }
+    },
+    "Search people": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物を検索"
+          }
+        }
+      }
+    },
+    "Select all": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて選ぶ"
+          }
+        }
+      }
+    },
+    "Separate": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分離"
+          }
+        }
+      }
+    },
+    "Separate Grouped Person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "束ねを解除"
+          }
+        }
+      }
+    },
+    "Separate \\(selected.count) groups": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のグループを分離"
+          }
+        }
+      }
+    },
+    "Separate \\(selected.count) groups into new people?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のグループを別の人物に分離しますか？"
+          }
+        }
+      }
+    },
+    "Show face only": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔だけ表示"
+          }
+        }
+      }
+    },
+    "Show people with at least": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープルに載せる最小枚数"
+          }
+        }
+      }
+    },
+    "Show whole photo": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真全体を表示"
+          }
+        }
+      }
+    },
+    "Skip": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スキップ"
+          }
+        }
+      }
+    },
+    "Still scanning photos — more will appear as it progresses.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真をスキャン中です。進むにつれて増えていきます。"
+          }
+        }
+      }
+    },
+    "Stop Cloud Sharing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クラウド共有を停止…"
+          }
+        }
+      }
+    },
+    "Tap a face that isn’t this person. Choose “Not this person” to just remove it, or pick the correct person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人ではない顔をタップしてください。「この人ではない」を選ぶと相手を選ばず外せます。正しい人物を選んでもかまいません。"
+          }
+        }
+      }
+    },
+    "Tap the ones that are the same person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物の写真をタップして選んでください。"
+          }
+        }
+      }
+    },
+    "Thanks! \\(answered) answers recorded.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ありがとうございます。%lld 件の回答を記録しました。"
+          }
+        }
+      }
+    },
+    "The app applies what it learned during the next overnight analysis.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "学習した内容は次の夜間解析で反映されます。"
+          }
+        }
+      }
+    },
+    "The same person may be split into several entries.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人物が複数に分かれていることがあります。"
+          }
+        }
+      }
+    },
+    "These people have different names": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別々の名前が付いています"
+          }
+        }
+      }
+    },
+    "Which of these are the same person as above?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上の人物と同じ人はどれですか？"
+          }
+        }
+      }
+    },
+    "Which of these are “\\(item.anchorName)”?": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」はどれですか？"
+          }
+        }
+      }
+    },
+    "Yes": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "はい"
+          }
+        }
+      }
+    },
+    "Your answers teach the app — recognition improves as you review.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答はアプリの学習に使われます。確認するほど認識が良くなります。"
+          }
+        }
+      }
+    },
+    "\\(group.photoCount) photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 枚"
+          }
+        }
+      }
+    },
+    "\\(n) photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 枚"
+          }
+        }
+      }
+    },
+    "\\(p.count) photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 枚"
+          }
+        }
+      }
+    },
+    "\\(rejectedTotal) were kept separate because they have different names or appear together in the same photo.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld件は統合しませんでした（別の名前が付いている、または同じ写真に一緒に写っているため）。"
+          }
+        }
+      }
+    },
+    "“\\(source.displayName)” and “\\(target.displayName)” will be shown as the same person. You can separate them later.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」と「%@」は同じ人物として表示されます。後で解除できます。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

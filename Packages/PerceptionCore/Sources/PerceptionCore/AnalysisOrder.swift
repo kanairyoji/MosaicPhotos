@@ -2,6 +2,10 @@ import Foundation
 
 /// 解析（顔スキャン・CLIP 埋め込み・シーンタグ等）の**処理順**を決める純ロジック。
 ///
+/// ⚠️ 置き場所: 顔と CLIP の**共通下層**（`PerceptionCore`）。もとは AutoAlbumCore に居たが、
+/// 候補の組み立て（`PhotosFeatureKit.AnalysisCandidates`）からも使うため、両者の下へ降ろした。
+/// `AutoAlbumCore` は PerceptionCore を再エクスポートするので、既存の import は変わらない。
+///
 /// 方針（ユーザー要望）: **お気に入りを先に**（ローカル→Dropbox）→ **その他**（ローカル→Dropbox）、
 /// 各群の中は**新→古**（撮影日降順）。お気に入り＝ユーザーが大事にしている写真から先に反映される。
 ///
