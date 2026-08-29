@@ -337,11 +337,16 @@ struct PendingMetadataNamespaceTests {
         DropboxBackupMetadata.Entry(people: people, albums: [], localIdentifier: "id")
     }
 
+    /// ⚠️ アカウント名は**テストごとに一意**にする。キューの実体はプロセス共通の保存領域なので、
+    /// 同じ (account, folder) を使うテストが並列に走ると、片方の後始末（`save([:])`）が
+    /// もう片方の書き込みを消して**ランダムに落ちる**（CI で 1 度踏んだ）。
+    private func account(_ label: String = "acc") -> String { "\(label)-\(UUID().uuidString)" }
+
     @Test("アカウントが違えばキューは混ざらない")
     func differentAccountsAreIsolated() {
         let folder = "/MosaicPhotos/iPhone-3F2A8C"
-        let a = PendingMetadataStore(account: "acc-a", folder: folder)
-        let b = PendingMetadataStore(account: "acc-b", folder: folder)
+        let a = PendingMetadataStore(account: account("acc-a"), folder: folder)
+        let b = PendingMetadataStore(account: account("acc-b"), folder: folder)
         defer { _ = a.save([:]); _ = b.save([:]) }
 
         _ = a.save(["2025-08": ["/x/a.jpg": entry(["太郎"])]])
@@ -351,8 +356,9 @@ struct PendingMetadataNamespaceTests {
 
     @Test("保存先が違えばキューは混ざらない")
     func differentFoldersAreIsolated() {
-        let a = PendingMetadataStore(account: "acc", folder: "/MosaicPhotos/iPhone-3F2A8C")
-        let b = PendingMetadataStore(account: "acc", folder: "/Backup2/iPhone-3F2A8C")
+        let shared = account()
+        let a = PendingMetadataStore(account: shared, folder: "/MosaicPhotos/iPhone-3F2A8C")
+        let b = PendingMetadataStore(account: shared, folder: "/Backup2/iPhone-3F2A8C")
         defer { _ = a.save([:]); _ = b.save([:]) }
 
         _ = a.save(["2025-08": ["/x/a.jpg": entry(["太郎"])]])
@@ -362,8 +368,9 @@ struct PendingMetadataNamespaceTests {
     @Test("同じアカウント・同じ保存先なら同じキューを見る")
     func sameNamespaceShares() {
         let folder = "/MosaicPhotos/iPhone-3F2A8C"
-        let writer = PendingMetadataStore(account: "acc", folder: folder)
-        let reader = PendingMetadataStore(account: "acc", folder: folder)
+        let shared = account()
+        let writer = PendingMetadataStore(account: shared, folder: folder)
+        let reader = PendingMetadataStore(account: shared, folder: folder)
         defer { _ = writer.save([:]) }
 
         _ = writer.save(["2025-08": ["/x/a.jpg": entry(["太郎"])]])

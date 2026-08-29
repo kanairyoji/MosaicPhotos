@@ -46,6 +46,13 @@ public actor PlaceNameResolver {
     /// 「地名が変わったので作り直すべきか」の判定に使う（永続不要＝起動直後の初回スキャンが拾う）。
     public private(set) var refinementGeneration = 0
 
+    /// Apple 補正済みグリッドセルの数。**プロセスを跨いで同じ値**になるので、
+    /// 「前回の重い処理から補正が進んだか」を**再起動後も**判定できる（`refinementGeneration` は
+    /// 起動ごとに 0 に戻るため、それを署名に使うと再起動のたびに重い処理が 1 回走る）。
+    /// 補正は未補正セルにしか行わない（既 refined はスキップ）ので、この数は増える一方＝
+    /// 「変わっていない＝進んでいない」が成り立つ。
+    public var refinedCellCount: Int { cache.values.count(where: \.isRefined) }
+
     public init() {
         var loaded = store.load() ?? [:]
         // オフライン解決ロジックが変わったら、オフライン由来（refined でない）の項だけ捨てて再解決させる。

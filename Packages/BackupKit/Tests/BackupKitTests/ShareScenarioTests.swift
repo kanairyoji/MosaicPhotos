@@ -158,9 +158,9 @@ struct ShareScenarioTests {
         #expect(await sharedFiles(server) == files, "移動後の反映でファイルが増減した")
     }
 
-    /// 改名できない回（通信断・移動先が既にある）に記録だけ進めると、クラウド上の実体を
-    /// 見失って全部コピーし直す。**失敗したら元のフォルダのまま使い続ける**こと。
-    @Test("改名に失敗した回は元のフォルダ名のまま反映を続ける")
+    /// 改名できない回（**通信断**）に記録だけ進めると、クラウド上の実体を見失って全部
+    /// コピーし直す。通信の失敗は次回に持ち越し、**元のフォルダのまま使い続ける**こと。
+    @Test("改名が通信で失敗した回は元のフォルダ名のまま反映を続ける")
     func failedRenameKeepsOldFolder() async {
         let (engine, store, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/a.jpg", "hA")])
@@ -169,12 +169,12 @@ struct ShareScenarioTests {
                                                              sourceKey: sourceKey)
         _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
 
-        // 旧フォルダは反映済み、移動先も既にある状態（move は to/conflict で失敗する）。
+        // 旧フォルダは反映済み。move は通信エラーで落ちる。
         let oldFolder = SharePlanning.setFolderPath(
             shareRoot: Self.shareRoot, folderName: "Group",
             deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
         await server.seed(oldFolder, hash: "", isFolder: true)
-        await server.seed(setFolder("Group", kind: .group), hash: "", isFolder: true)
+        await server.setFailMove(true)
         await engine.syncNow()
 
         #expect(await store.allShareSets().first?.folderName == "Group",
@@ -182,6 +182,51 @@ struct ShareScenarioTests {
         let files = await sharedFiles(server)
         #expect(!files.isEmpty && files.allSatisfy { $0.hasPrefix(oldFolder + "/") },
                 "旧フォルダ配下に反映されていない: \(files)")
+    }
+
+    /// ⚠️ 実機で共有の移行が**永久に収束しなかった**形（diagnostics-64〜66）。移動先フォルダが
+    /// 既にあると move は毎回 `to/conflict/folder` で失敗する。旧実装は「失敗＝次回に持ち越し」
+    /// としていたので、記録は旧接頭辞のまま → コピー先も旧フォルダ（既にファイルがある＝全件
+    /// conflict）→ 「コピー失敗」で重複掃除もスキップ、という輪から出られなかった
+    /// （実機ログ 3 本すべてで copy=4297 / dupes=316 が同じ数字のまま）。
+    /// 移動先が既にあるなら**それを正として採用**し、移行を終わらせる。
+    @Test("移動先フォルダが既にあるときは、そちらを採用して移行を終える")
+    func existingDestinationFolderIsAdopted() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("a", "/mosaicphotos/a.jpg", "hA")])
+        let sourceKey = ShareSourceKey.group(UUID()).encoded
+
+        // 旧レイアウト（共有ルート直下）に反映済み＋新レイアウトのフォルダも既にある状態。
+        let legacy = SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
+                                                 folderName: "Group")!.lowercased()
+        await server.seed(legacy, hash: "", isFolder: true)
+        await server.seed("\(legacy)/a.jpg", hash: "hA")
+        await server.seed(setFolder("Group", kind: .group), hash: "", isFolder: true)
+        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
+                                                             sourceKey: sourceKey)
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
+        await store.updateShareItems(setID: set.id, updates: [
+            (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
+             sharedPath: "\(legacy)/a.jpg", sharedContentHash: "hA")])
+
+        await engine.syncNow()
+
+        let newFolder = setFolder("Group", kind: .group)
+        #expect(await store.allShareSets().first?.folderName == "People-Group",
+                "移動先を採用したのに記録が旧のまま＝次回また 409 になる")
+        var files = await sharedFiles(server)
+        #expect(files.contains("\(newFolder)/a.jpg"), "移動先に写真が揃っていない: \(files)")
+        // 旧フォルダは**消さない**（共有相手にも見えるユーザーのデータ）。
+        #expect(files.contains("\(legacy)/a.jpg"), "旧フォルダのファイルを消した: \(files)")
+
+        // ⚠️ ここが回帰の要: 2 回目以降に move を投げ直さない（＝輪から出ている）。
+        let movesAfterFirst = await server.requestLog.filter { $0.contains("move_v2") }.count
+        await engine.syncNow()
+        #expect(await server.requestLog.filter { $0.contains("move_v2") }.count == movesAfterFirst,
+                "反映のたびに同じ移動を試している（409 の輪から出ていない）")
+        files = await sharedFiles(server)
+        await engine.syncNow()
+        #expect(await sharedFiles(server) == files, "採用後の反映でファイルが増減した")
     }
 
     // MARK: - 人物 ID の振り直し（レビュー指摘）

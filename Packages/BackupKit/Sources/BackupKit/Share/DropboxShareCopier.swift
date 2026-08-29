@@ -49,7 +49,10 @@ struct DropboxShareCopier {
         case moved
         /// 移動元が無い（まだ 1 度も反映していない等）＝記録だけ直せばよい。
         case sourceMissing
-        /// 通信断・移動先が既にある等。次回に持ち越す。
+        /// **移動先が既にある**（`to/conflict/folder`）。移動では解決しないので、
+        /// 呼び出し側が「移動先を正とする」判断をする（リトライしても永久に同じ）。
+        case destinationExists
+        /// 通信断・権限など。次回に持ち越す。
         case failed
     }
 
@@ -70,6 +73,9 @@ struct DropboxShareCopier {
         if status == 200 { return .moved }
         let text = String(data: data, encoding: .utf8) ?? ""
         if status == 409, text.contains("from_lookup/not_found") { return .sourceMissing }
+        // ⚠️ 「移動先が既にある」は**リトライで解決しない**（実機 diagnostics-64〜66 で 409 が
+        // 反映のたびに出続け、共有の移行が収束しなかった）。失敗と区別して呼び出し側へ返す。
+        if status == 409, text.contains("to/conflict") { return .destinationExists }
         // ⚠️ エラータグまで残す。status だけだと「移動先が既にある」のか「通信/権限」なのかが
         // 実機ログから区別できず、毎回の反映で同じ失敗を繰り返しているのに手が出せない
         // （diagnostics-64/65 で 409 が続いた）。本文は Dropbox のエラー JSON（機密は含まない）。
