@@ -17,6 +17,8 @@ struct FaceBatchReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var item: FaceBatchReviewItem?
     @State private var isLoading = true
+    /// 実行中の候補探索。キャンセル（＝待たされている側の出口）に使う。
+    @State private var loadTask: Task<FaceBatchReviewItem?, Never>?
     /// ⚠️ 既定は**未選択**。既定で全選択にすると、誤タップひとつで最大 24 クラスタが
     /// 統合されてしまう（統合は取り消しが効かない）。「すべて選ぶ」を 1 タップ用意して
     /// 効率は保ちつつ、破壊的操作は必ずユーザーの明示で起きるようにする。
@@ -43,7 +45,10 @@ struct FaceBatchReviewView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    Color.clear.busyOverlay(true, text: L("Finding similar people…"))
+                    // ⚠️ 待っている間の出口を必ず出す（実フィードバック）。中断は
+                    // `loadTask` の cancel で、候補生成側も `Task.isCancelled` を見て降りる。
+                    Color.clear.busyOverlay(true, text: L("Finding similar people…"),
+                                            cancel: (label: L("Cancel"), action: cancelLoad))
                 } else if let item {
                     content(item)
                 } else {
@@ -243,7 +248,8 @@ struct FaceBatchReviewView: View {
         // 直前の人物のグリッドを残さない（残ると「まだ切り替わっていない」に見える）。
         item = nil
         selected = []
-        item = await runShowingBusy($isLoading) {
+        loadTask?.cancel()
+        let task = Task { () -> FaceBatchReviewItem? in
             let t0 = PerfTrace.nowNs()
             let found = await peopleEngine.batchReviewItem(
                 anchorClusterID: anchor,
@@ -254,6 +260,19 @@ struct FaceBatchReviewView: View {
                               detail: "anchor=\(anchor.map(String.init) ?? "auto")")
             return found
         }
+        loadTask = task
+        let found = await runShowingBusy($isLoading) { await task.value }
+        loadTask = nil
+        guard !task.isCancelled else { return }
+        item = found
+    }
+
+    /// 探索を中断して閉じる（待たされている側の出口）。
+    private func cancelLoad() {
+        loadTask?.cancel()
+        loadTask = nil
+        isLoading = false
+        dismiss()
     }
 
     /// 回答を適用し、**同じアンカーで**次の候補を取りに行く（連鎖）。

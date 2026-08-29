@@ -202,6 +202,41 @@ actor FaceStore {
         return out
     }
 
+    /// **指定したクラスタの顔だけ**を射影クエリで取り、クラスタごとに束ねて返す。
+    ///
+    /// ⚠️ レビューの候補生成は、以前ここで `faceDigestsByCluster()`（**全顔**）を呼んでいた。
+    /// 実際に要るのは「基準の人物と、その候補になった数十クラスタ」だけで、
+    /// 数枚しかない無名の人物の顔まで毎回読む必要はない（実フィードバック: 候補探しが遅い）。
+    /// SQLite の変数上限があるので ID は分割して問い合わせる（分割しても往復は
+    /// 「クラスタ数 ÷ chunk」で、ライブラリ全体の顔数には比例しない）。
+    func faceDigests(inClusters ids: Set<Int>) -> [Int: [FaceDigest]] {
+        guard !ids.isEmpty else { return [:] }
+        var out: [Int: [FaceDigest]] = [:]
+        for chunk in Self.idChunks(ids) {
+            var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { chunk.contains($0.clusterID) })
+            d.propertiesToFetch = [\.faceID, \.clusterID, \.refKey, \.bx, \.by, \.bw, \.bh,
+                                   \.quality, \.hasSmile]
+            for row in (countedFetchOptional(d)) ?? [] where row.clusterID >= 0 {
+                out[row.clusterID, default: []].append(FaceDigest(
+                    faceID: row.faceID, clusterID: row.clusterID, refKey: row.refKey,
+                    box: CGRect(x: row.bx, y: row.by, width: row.bw, height: row.bh),
+                    quality: row.quality, hasSmile: row.hasSmile))
+            }
+        }
+        return out
+    }
+
+    /// 1 回の `IN` に載せる ID 数（SQLite の変数上限に余裕を持たせる）。
+    static let idChunkSize = 400
+
+    /// ID を一定数で切る（切っても往復は「ID 数 ÷ この値」で、ライブラリ規模には比例しない）。
+    static func idChunks(_ ids: Set<Int>) -> [[Int]] {
+        let list = Array(ids)
+        return stride(from: 0, to: list.count, by: idChunkSize).map {
+            Array(list[$0..<min($0 + idChunkSize, list.count)])
+        }
+    }
+
     /// テスト用: 束ね直しの結果（faceID とクラスタの対応）。
     func faceDigestsForTesting() -> [(faceID: String, clusterID: Int)] {
         faceDigestsByCluster().values.flatMap { $0 }.map { ($0.faceID, $0.clusterID) }

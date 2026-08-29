@@ -87,6 +87,36 @@ struct ScaleRegressionTests {
                 """)
     }
 
+    /// ⚠️ **基準を絞った効果**（ADR-123）。名前を付けた数名だけを基準にするので、
+    /// 無名の人物が何人増えても候補探索の fetch は増えない。
+    /// ここが崩れると「人物が増えるほどレビューが遅くなる」が再発する（実フィードバック）。
+    @Test("無名の人物が増えても、レビュー候補の生成は fetch が増えない")
+    func reviewItemsDoesNotScaleWithUnnamedPeople() async {
+        func namedPlusUnnamed(_ unnamed: Int) async -> FaceStore {
+            let store = await makeStore(people: unnamed + 2)
+            // 先頭 2 人にだけ名前を付ける（＝注目人物は常に 2 人）。
+            for id in await store.clusterCountsForTesting().keys.sorted().prefix(2) {
+                await store.rename(clusterID: id, name: "P\(id)")
+            }
+            return store
+        }
+        let small = await namedPlusUnnamed(20)
+        let large = await namedPlusUnnamed(80)              // 4 倍
+
+        let smallPeople = await clusterCount(small), largePeople = await clusterCount(large)
+        #expect(largePeople >= smallPeople * 3,
+                "fixture の人物が増えていない（\(smallPeople) → \(largePeople)）")
+
+        let smallCount = await fetchCount { _ = await small.reviewItems(minFaces: 1, limit: 30) }
+        let largeCount = await fetchCount { _ = await large.reviewItems(minFaces: 1, limit: 30) }
+        #expect(smallCount > 0, "計測できていない（カウンタが動いていない）")
+        #expect(largeCount <= smallCount,
+                """
+                無名の人物 4 倍で fetch が \(smallCount) → \(largeCount) 回に増えた。
+                基準（命名済み）以外のクラスタを 1 件ずつ引いていないか。
+                """)
+    }
+
     /// 一括レビューの候補生成も同じ性質を持つこと。
     @Test("一括レビューの候補生成も人物数に比例して fetch しない")
     func batchReviewDoesNotScaleWithPeople() async {

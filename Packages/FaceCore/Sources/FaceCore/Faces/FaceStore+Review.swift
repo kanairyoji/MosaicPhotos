@@ -6,6 +6,29 @@ import SwiftData
 
 /// `FaceStore` の 人物レビュー（アクティブラーニング） 関連（extension 分割・ADR）。
 extension FaceStore {
+
+    // MARK: - 注目人物（レビューの基準・ADR-123）
+
+    /// 名前が 1 つも無いライブラリで、基準として使う人数の上限（大きい順）。
+    static let focusFallbackLimit = 8
+    /// A1 の候補対を絞る上限（顔の読み出しを有界にする）。出題は `limit` 件なので上位だけ見れば足りる。
+    static let mergePairScanLimit = 120
+    /// 一括レビューで顔を読む候補の倍率（共起で落ちる分の余裕）。
+    static let candidateOverscan = 3
+
+    /// レビューの**基準にする人物**（＝注目人物）。命名済みを大きい順に返し、
+    /// 名前が 1 つも無ければ大きい順に `focusFallbackLimit` 人で代用する。
+    ///
+    /// ⚠️ 実フィードバック（ADR-123）: 「100 枚単位で名前を付けている人物は数名。数枚しかない
+    /// 名前も付けていない人物を基準に検討する必要はない」。基準を絞ることで、候補探索は
+    /// 人物数² から「基準数 × 人物数」に、顔の読み出しは全顔から基準＋候補ぶんに落ちる。
+    /// 無名の断片は**候補側**には出るので、名前を付けた人へ畳んでいく道は塞がない。
+    static func focusClusters(_ clusters: [PersonCluster]) -> [PersonCluster] {
+        let named = clusters.filter { $0.name?.isEmpty == false }
+        guard named.isEmpty else { return named.sorted { $0.count > $1.count } }
+        return Array(clusters.sorted { $0.count > $1.count }.prefix(focusFallbackLimit))
+    }
+
     // MARK: - 人物レビュー（A1/A2・ADR-46）
 
     /// レビューカードの生成。**判断が割れるケースだけ**を選ぶ（アクティブラーニング）:
@@ -20,33 +43,24 @@ extension FaceStore {
         let thr = calibratedThreshold()
         // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
         let clusters = peopleEligibleClusters(minFaces: minFaces)
-        guard clusters.count >= 1 else { return [] }
+        guard clusters.count >= 1, !Task.isCancelled else { return [] }
 
-        // 重心（正規化）と表示用の代表顔・メンバー写真集合（共起判定用）を用意。
+        // 重心と名前は `PersonCluster` の列だけで作れる（**顔は 1 枚も引かない**）。
         var centroid: [Int: [Float]] = [:]
-        var coverFace: [Int: PersonInfo.Face] = [:]
         var name: [Int: String] = [:]
-        var photoSets: [Int: Set<String>] = [:]
-        // ⚠️ ADR-88 では「全カラムを materialize しない」ために軽量クエリへ替えたが、
-        // **クラスタごとに 2 本（refKey 集合＋代表顔）引く**形が残っていた。人物が
-        // 1,316 人まで育つと 1 画面あたり 2,632 回の fetch になり、「確認する顔を探しています」
-        // が数秒〜十数秒かかる（実フィードバック）。射影クエリ **1 回**で取り、束ねはメモリで行う
-        // ——materialize を避ける ADR-88 の意図はそのまま保たれる。
-        let membersByCluster = faceDigestsByCluster()
         for c in clusters {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
             // 未命名は空（UI は名前ラベルを出さない。"Person N" は誰か分からず判断の助けにならない）。
             name[c.clusterID] = (c.name?.isEmpty == false) ? (c.name ?? "") : ""
-            let members = membersByCluster[c.clusterID] ?? []
-            photoSets[c.clusterID] = Set(members.map(\.refKey))
-            let pick = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
-                ?? members.max { $0.coverScore < $1.coverScore }
-            if let f = pick {
-                coverFace[c.clusterID] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
-                                                         boundingBox: f.box)
-            }
         }
+
+        // ⚠️ **基準は「注目人物」に絞る**（実フィードバック・ADR-123）。
+        // 名前を付けた数名だけが実用上の関心で、数枚しかない無名の断片を基準に据えて
+        // 総当たりする価値はない。基準を絞ると候補探索は「人物数²」から「基準数 × 人物数」になり、
+        // 顔の読み出しも「全顔」から「基準＋候補の顔」だけになる。
+        let focus = Self.focusClusters(clusters)
+        let focusIDs = Set(focus.map(\.clusterID))
 
         // 「別人」と記録済みの対（重心埋め込みで照合＝ID の揺れに強い）。
         let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
@@ -61,35 +75,57 @@ extension FaceStore {
         // ⚠️ 対ごとに全記録を走査しない（実機 diagnostics-61: 27.8 秒のハングの犯人）。
         // クラスタごとに「どの記録のどちら側へ一致するか」を先に求めておく（`NotSameIndex`）。
         let notSameIndex = NotSameIndex(rows: notSameRows, centroids: centroid)
+        guard !Task.isCancelled else { return [] }
 
-        // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
-        // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。
-        var items: [FaceReviewItem] = auditSplitItems(minFaces: minFaces, limit: 5,
-                                                     membersByCluster: membersByCluster)
-            .filter { !excluding.contains($0.id) }
-
-        // A1: 統合サジェスト（類似度の高い対から）。上限は設けない（帯域 [thr−0.10, 1.0]）:
-        // 制約付き再クラスタは命名クラスタを別々の種として保持するため、しきい値**以上**の
-        // 高類似ペアも統合されずに残り得る（従来は出題対象外だった実ギャップ）。
-        // 共起抑制: 同じ写真に一緒に写った回数が一定以上のペアは**別人**（同一人物は
-        // 1 枚に 1 回しか写れない）ので提案しない（兄弟の誤統合防止・ユーザー操作ゼロ）。
-        let ids = clusters.map(\.clusterID)
+        // A1 の候補対（**片側は必ず基準**）。ここでは重心だけで絞り込む＝顔はまだ読まない。
+        // 共起（同一写真）の判定は写真集合が要るので、対を絞ってから読む。
         var mergeCandidates: [(a: Int, b: Int, sim: Float)] = []
-        for i in ids.indices {
-            for j in (i + 1)..<ids.count {
-                guard let ca = centroid[ids[i]], let cb = centroid[ids[j]] else { continue }
+        for f in focus {
+            guard let ca = centroid[f.clusterID] else { continue }
+            for c in clusters where c.clusterID != f.clusterID {
+                guard let cb = centroid[c.clusterID] else { continue }
                 let sim = FaceClustering.dot(ca, cb)
                 guard sim >= tuning.mergeBandFloor(threshold: thr),
-                      !notSameIndex.isMarkedNotSame(ids[i], ids[j]) else { continue }
-                // 共起は 1 回でもあれば出さない（統合すると同一写真違反になる・ADR-68 追補4）。
-                guard (photoSets[ids[i]] ?? []).isDisjoint(with: photoSets[ids[j]] ?? []) else { continue }
+                      !notSameIndex.isMarkedNotSame(f.clusterID, c.clusterID) else { continue }
                 // 別々の名前が付いた人物どうしは出さない（ユーザーが既に別人と表明済み・追補5）。
-                guard !Self.namesConflict(name[ids[i]], name[ids[j]]) else { continue }
-                mergeCandidates.append((ids[i], ids[j], sim))
+                guard !Self.namesConflict(name[f.clusterID], name[c.clusterID]) else { continue }
+                mergeCandidates.append((f.clusterID, c.clusterID, sim))
             }
         }
-        for cand in mergeCandidates.sorted(by: { $0.sim > $1.sim }) {
+        mergeCandidates.sort { $0.sim > $1.sim }
+        // 出題は `limit` 件までなので、候補も上位だけ見れば足りる（顔の読み出しを有界にする）。
+        mergeCandidates = Array(mergeCandidates.prefix(Self.mergePairScanLimit))
+        guard !Task.isCancelled else { return [] }
+
+        // ここで初めて顔を読む——**基準と、候補に挙がったクラスタだけ**。
+        var needed = focusIDs
+        for cand in mergeCandidates { needed.insert(cand.a); needed.insert(cand.b) }
+        let membersByCluster = faceDigests(inClusters: needed)
+
+        var coverFace: [Int: PersonInfo.Face] = [:]
+        var photoSets: [Int: Set<String>] = [:]
+        let coverByCluster = Dictionary(uniqueKeysWithValues: clusters.map { ($0.clusterID, $0.coverFaceID) })
+        for (id, members) in membersByCluster {
+            photoSets[id] = Set(members.map(\.refKey))
+            let pick = coverByCluster[id].flatMap { fid in members.first { $0.faceID == fid } }
+                ?? members.max { $0.coverScore < $1.coverScore }
+            if let f = pick {
+                coverFace[id] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
+                                                boundingBox: f.box)
+            }
+        }
+
+        // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
+        // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。基準の人物だけを見る。
+        var items: [FaceReviewItem] = auditSplitItems(targets: Array(focus.prefix(Self.boundaryScanLimit)),
+                                                      limit: 5, membersByCluster: membersByCluster)
+            .filter { !excluding.contains($0.id) }
+
+        // A1: 統合サジェスト（類似度の高い対から）。共起抑制: 同じ写真に一緒に写った対は
+        // **別人**（同一人物は 1 枚に 1 回しか写れない）ので提案しない。
+        for cand in mergeCandidates {
             guard items.count < limit else { break }
+            guard (photoSets[cand.a] ?? []).isDisjoint(with: photoSets[cand.b] ?? []) else { continue }
             guard let fa = coverFace[cand.a], let fb = coverFace[cand.b] else { continue }
             let item = FaceReviewItem.samePerson(
                 aClusterID: cand.a, aName: name[cand.a] ?? "", aFace: fa,
@@ -99,19 +135,13 @@ extension FaceStore {
             items.append(item)
         }
 
-        // A2: 境界の顔（クラスタごとに最大 2・類似が低い順）。命名済みクラスタを優先。
-        let ordered = clusters.sorted {
-            (($0.name?.isEmpty == false) ? 0 : 1, -$0.count) < (($1.name?.isEmpty == false) ? 0 : 1, -$1.count)
-        }
-        // ⚠️ **走査するクラスタ数に上限を置く**（規模退行テストが検出）。
-        // この段は「残り枠を境界の顔で埋める」もので、埋まれば `items.count < limit` で止まる。
-        // ところが**埋まらないとき**（クラスタがどれも綺麗で境界顔が出ないとき）は
-        // 全クラスタを 1 件ずつ引き続ける——人物 1,316 人ならそのまま 1,316 回になる。
-        // 並びは「命名済み優先 → 大きい順」なので、先頭から一定数を見れば質問の価値は保てる。
-        // ⚠️ これは**出題される候補が変わる**変更。クラスタリングの精度そのものには影響しないが、
-        //    質問の選ばれ方は変わる（`face-accuracy.md` の対象は分類精度でありここではない）。
-        for c in ordered.prefix(Self.boundaryScanLimit) {
-            guard items.count < limit, let cen = centroid[c.clusterID] else { continue }
+        // A2: 境界の顔（クラスタごとに最大 2・類似が低い順）。**基準の人物だけ**を見る。
+        // ⚠️ 以前は「命名済み優先で並べた先頭 60 クラスタ」を走査しており、無名の断片まで
+        // 実体（埋め込み込み）で引いていた。基準に絞れば読み出しは数クラスタで済む。
+        // ⚠️ 基準が多い人（何百人も名前を付けた場合）でも上限を跨がない。ここは 1 人につき
+        // 実体（埋め込み込み）を 1 回引くので、基準の数がそのまま fetch 回数になる。
+        for c in focus.prefix(Self.boundaryScanLimit) {
+            guard items.count < limit, !Task.isCancelled, let cen = centroid[c.clusterID] else { continue }
             var boundary: [(face: DetectedFace, sim: Float)] = []
             // 品質フロア未満の顔は出題しない（ADR-53 追補）。境界レビューは「最も疑わしい顔」を
             // 選ぶため、旧データに残る誤検出（模様等の偽陽性・低品質）がそのまま最優先で出て
@@ -153,13 +183,17 @@ extension FaceStore {
     /// 統合はユーザー確認を経ているが、**確認した時点では材料が足りない**ことがある
     /// （兄弟は数枚では区別できない）。写真が増えて分布が見えてきたら機械側から拾い直す。
     /// ⚠️ **自動分割はしない**（成長データでは誤検出 8% が残るため）。必ずユーザーに尋ねる。
-    func auditSplitItems(minFaces: Int, limit: Int = 10,
+    /// - Parameter targets: 監査する人物（**基準の人物だけ**を渡す・ADR-123）。
+    ///   無名の断片まで監査しても答えられる質問にならないうえ、実体（埋め込み込み）の
+    ///   読み出しが人物数に比例して増える。
+    func auditSplitItems(targets: [PersonCluster], limit: Int = 10,
                          membersByCluster: [Int: [FaceDigest]]? = nil) -> [FaceReviewItem] {
         // ⚠️ クラスタごとに実体を引かない（規模退行テストが検出）。件数の足切りは
-        // **1 回の射影**で得た束ねで済ませ、埋め込みが要る本体だけを引く（上限は `limit` 件）。
+        // **射影**で得た束ねで済ませ、埋め込みが要る本体だけを引く（上限は `limit` 件）。
         // 以前は足切りで捨てるクラスタまで実体を引いており、人物 4 倍で fetch が
         // 31 → 103 回に増えていた（＝人物が増えるほどレビュー画面が遅くなる）。
-        let memberDigests = membersByCluster ?? faceDigestsByCluster()
+        let memberDigests = membersByCluster
+            ?? faceDigests(inClusters: Set(targets.map(\.clusterID)))
         // 「同じ人だ」と答え済みの対は二度と尋ねない。
         let confirmedSame = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
             predicate: #Predicate { $0.kind == "sameGroup" }))) ?? []).compactMap {
@@ -182,10 +216,8 @@ extension FaceStore {
 
         var items: [FaceReviewItem] = []
         // 大きいクラスタから見る（混入の影響が大きい）。
-        let targets = peopleEligibleClusters(minFaces: minFaces)
-            .sorted { $0.count > $1.count }
-        for c in targets {
-            guard items.count < limit else { break }
+        for c in targets.sorted(by: { $0.count > $1.count }) {
+            guard items.count < limit, !Task.isCancelled else { break }
             // 足切りは束ね（射影）で判定する＝ここでは引かない。
             guard (memberDigests[c.clusterID]?.count ?? 0) >= tuning.auditConfig.minMembers
             else { continue }
@@ -313,44 +345,25 @@ extension FaceStore {
         let thr = calibratedThreshold()
         // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
         let clusters = peopleEligibleClusters(minFaces: minFaces)
-        guard clusters.count >= 2 else { return nil }
+        guard clusters.count >= 2, !Task.isCancelled else { return nil }
 
+        // 重心は `PersonCluster.sum` から作れる。**この段階では顔を 1 枚も読まない**
+        // （ADR-123: 以前は全顔を射影で読んでから絞り込んでいた＝候補探しが数秒）。
         var centroid: [Int: [Float]] = [:]
-        var cover: [Int: PersonInfo.Face] = [:]
-        var photoSets: [Int: Set<String>] = [:]
-
-        // ⚠️ **顔は 1 回で取る**（実フィードバック: 「次の人へ」で数秒待たされる）。
-        // 以前はクラスタごとに `faces(inCluster:)` を呼んでおり、人物が 1,316 人まで育った
-        // ライブラリでは**この 1 画面で 1,316 回の fetch** が走っていた。件数に比例して
-        // 待ち時間が伸び、人物が増えるほど機能が使えなくなる。取得は 1 回にして、
-        // 束ねるのはメモリ上で行う（選ばれる候補・しきい値は一切変えない）。
-        let membersByCluster = faceDigestsByCluster()
-
         for c in clusters {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
-            let members = membersByCluster[c.clusterID] ?? []
-            photoSets[c.clusterID] = Set(members.map(\.refKey))
-            let pick = c.coverFaceID.flatMap { fid in members.first { $0.faceID == fid } }
-                ?? members.max { $0.coverScore < $1.coverScore }
-            if let f = pick {
-                cover[c.clusterID] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
-                                                     boundingBox: f.box)
-            }
         }
 
-        // アンカー: 指定 → （使い終えた人物を除いて）命名済みで最大 → 最大。
+        // アンカー: 指定 → （使い終えた人物を除いて）**注目人物**の中で最大 → 最大。
         // 「次の人へ」で送った人物を除くことで、**基準を切り替えながら**畳めるようにする
         // （同じ基準に固定されると、真の一致を出し切った後は候補が全部別人になり機能が死ぬ）。
         let anchor: PersonCluster? = {
             if let id = anchorClusterID { return clusters.first { $0.clusterID == id } }
-            let pool = clusters.filter { !excludingAnchors.contains($0.clusterID) }
-            guard !pool.isEmpty else { return nil }
-            let named = pool.filter { $0.name?.isEmpty == false }
-            return (named.isEmpty ? pool : named).max { $0.count < $1.count }
+            let pool = Self.focusClusters(clusters).filter { !excludingAnchors.contains($0.clusterID) }
+            return pool.max { $0.count < $1.count }
         }()
-        guard let anchor, let anchorCentroid = centroid[anchor.clusterID],
-              let anchorFace = cover[anchor.clusterID] else { return nil }
+        guard let anchor, let anchorCentroid = centroid[anchor.clusterID] else { return nil }
 
         // 「別人」記録（A1 と同じ・重心埋め込みで照合）。
         let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
@@ -366,26 +379,54 @@ extension FaceStore {
         // クラスタごとに「どの記録のどちら側へ一致するか」を先に求めておく（`NotSameIndex`）。
         let notSameIndex = NotSameIndex(rows: notSameRows, centroids: centroid)
 
-        let anchorPhotos = photoSets[anchor.clusterID] ?? []
-        var candidates: [FaceBatchReviewItem.Candidate] = []
+        // まず**重心だけ**で候補を絞る（顔はまだ読まない）。
+        var shortlist: [(cluster: PersonCluster, sim: Float)] = []
         for c in clusters where c.clusterID != anchor.clusterID {
             guard !excludingCandidates.contains(c.clusterID) else { continue }   // 出題済み
-            guard let cen = centroid[c.clusterID], let face = cover[c.clusterID] else { continue }
+            guard let cen = centroid[c.clusterID] else { continue }
             let sim = FaceClustering.dot(anchorCentroid, cen)
             guard sim >= tuning.mergeBandFloor(threshold: thr),
                   !notSameIndex.isMarkedNotSame(anchor.clusterID, c.clusterID) else { continue }
+            // 別々の名前が付いた対は出さない（追補5）。
+            guard !Self.namesConflict(anchor.name, c.name) else { continue }
+            shortlist.append((c, sim))
+        }
+        guard !shortlist.isEmpty, !Task.isCancelled else { return nil }
+        shortlist.sort { $0.sim > $1.sim }
+        // 表示は `limit` 件。共起で落ちる分の余裕を見て、その数倍だけ顔を読む。
+        shortlist = Array(shortlist.prefix(limit * Self.candidateOverscan))
+
+        // ここで初めて顔を読む——**基準と、絞り込んだ候補だけ**。
+        var needed = Set(shortlist.map(\.cluster.clusterID))
+        needed.insert(anchor.clusterID)
+        let membersByCluster = faceDigests(inClusters: needed)
+        var cover: [Int: PersonInfo.Face] = [:]
+        var photoSets: [Int: Set<String>] = [:]
+        let coverByCluster = Dictionary(uniqueKeysWithValues: clusters.map { ($0.clusterID, $0.coverFaceID) })
+        for (id, members) in membersByCluster {
+            photoSets[id] = Set(members.map(\.refKey))
+            let pick = coverByCluster[id].flatMap { fid in members.first { $0.faceID == fid } }
+                ?? members.max { $0.coverScore < $1.coverScore }
+            if let f = pick {
+                cover[id] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey, boundingBox: f.box)
+            }
+        }
+        guard let anchorFace = cover[anchor.clusterID] else { return nil }
+
+        let anchorPhotos = photoSets[anchor.clusterID] ?? []
+        var candidates: [FaceBatchReviewItem.Candidate] = []
+        for entry in shortlist {
+            let c = entry.cluster
+            guard let face = cover[c.clusterID] else { continue }
             // ⚠️ 共起は **1 回でも**あれば候補にしない（統合サジェストの 3 回とは別基準）。
             // 統合すると「1 枚の写真に同じ人物が 2 回」という不変条件が破れるため。
             // 実機で一括統合により違反が 2 件発生したのを受けて厳格化（ADR-68 追補4）。
             // 同一人物は 1 枚に 1 回しか写れないので、共起があれば別人か重複検出のどちらか。
             guard anchorPhotos.isDisjoint(with: photoSets[c.clusterID] ?? []) else { continue }
-            // 別々の名前が付いた対は出さない（追補5）。
-            guard !Self.namesConflict(anchor.name, c.name) else { continue }
             candidates.append(.init(clusterID: c.clusterID, face: face,
-                                    count: c.count, similarity: sim))
+                                    count: c.count, similarity: entry.sim))
         }
         guard !candidates.isEmpty else { return nil }
-        candidates.sort { $0.similarity > $1.similarity }
 
         return FaceBatchReviewItem(
             anchorClusterID: anchor.clusterID,
