@@ -19,6 +19,10 @@ struct FaceClusterInspectorView: View {
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
     @State private var reassignTarget: PersonOutlierFace?
+    /// 統合の確認対象（近傍の行のメニュー）。
+    @State private var mergeCandidate: PersonDecisionRow?
+    /// 統合が拒否されたときの理由。
+    @State private var mergeRejection: String?
 
     var body: some View {
         List {
@@ -52,10 +56,49 @@ struct FaceClusterInspectorView: View {
                 Task { await load(person) }
             }
         }
+        .alert("「\(mergeCandidate?.name ?? "この人物")」を「\(focusName)」に統合しますか？",
+               isPresented: Binding(get: { mergeCandidate != nil },
+                                    set: { if !$0 { mergeCandidate = nil } }),
+               presenting: mergeCandidate) { row in
+            Button("キャンセル", role: .cancel) { mergeCandidate = nil }
+            Button("統合する") { merge(row) }
+        } message: { row in
+            Text("\(row.photoCount) 枚の写真が「\(focusName)」に入ります。"
+                 + "取り違えていた場合は、顔の管理から戻せます。")
+        }
+        .alert("統合できません", isPresented: Binding(get: { mergeRejection != nil },
+                                              set: { if !$0 { mergeRejection = nil } })) {
+            Button("OK") { mergeRejection = nil }
+        } message: {
+            Text(mergeRejection ?? "")
+        }
         .task {
             guard focus == nil, let first = peopleEngine.allPeople.first else { return }
             focus = first
             await load(first)
+        }
+    }
+
+    /// 調査対象の表示名（統合先の名前）。
+    private var focusName: String { focus?.displayName ?? "この人物" }
+
+    /// 近傍の人物を調査対象の人物へ統合する。拒否されたら理由を出す。
+    private func merge(_ row: PersonDecisionRow) {
+        let source = row.clusterID
+        guard let destination = focus?.clusterID else { return }
+        mergeCandidate = nil
+        Task {
+            switch await peopleEngine.mergePerson(from: source, into: destination) {
+            case .merged:
+                await load(clusterID: destination)
+            case .rejectedDifferentNames:
+                mergeRejection = "両方に別々の名前が付いています。"
+                    + "先にどちらかの名前を消すか、「同じ人として束ねる」を使ってください。"
+            case .rejectedSamePhoto:
+                mergeRejection = "同じ写真に一緒に写っています（同一人物ではあり得ません）。"
+                    + "別人として記録しました。"
+                await load(clusterID: destination)
+            }
         }
     }
 
@@ -75,17 +118,18 @@ struct FaceClusterInspectorView: View {
                 showingPicker = true
             } label: {
                 HStack {
-                    Text("対象の人物")
+                    Text("調査対象の人物")
                     Spacer()
                     Text(focus?.displayName ?? "選ぶ").foregroundStyle(.secondary)
                 }
             }
             if let focus {
-                Button("再計算") { Task { await load(focus) } }
+                Button("この人物を再解析") { Task { await load(focus) } }
             }
         } footer: {
-            Text("選んだ人物から見た近傍を、割り当て規則（しきい値・サイズ適応マージン・"
-                 + "マージンゲート・負例・同一写真）で判定して並べます。台帳は変更しません。")
+            Text("「調査対象の人物」から見た近傍と、その人物の中で重心から外れている顔を、"
+                 + "割り当て規則（しきい値・サイズ適応マージン・マージンゲート・負例・同一写真）で"
+                 + "判定して並べます。解析そのものは台帳を変更しません。")
         }
     }
 
@@ -160,12 +204,28 @@ struct FaceClusterInspectorView: View {
                 }
                 .padding(.vertical, 2)
                 }
+                // ⚠️ 実フィードバック: 「近傍に出てきた Person XXXX は、全部**統合すべき人**だった」。
+                // 近傍を眺めて終わりではなく、その場で畳めるようにする。
+                .contextMenu {
+                    Button {
+                        mergeCandidate = row
+                    } label: {
+                        Label("この人物を「\(focusName)」に統合する", systemImage: "person.2.slash")
+                    }
+                }
+                .swipeActions(edge: .trailing) {
+                    Button { mergeCandidate = row } label: {
+                        Label("統合", systemImage: "arrow.triangle.merge")
+                    }
+                    .tint(.accentColor)
+                }
             }
         } header: {
             Text("近傍（類似度の高い順）")
         } footer: {
             Text("行をタップすると、その人物として認識している顔の一覧が出ます"
-                 + "（そこから対象を切り替えられます）。")
+                 + "（そこから調査対象を切り替えられます）。左スワイプまたは長押しで、"
+                 + "その人物を調査対象の人物に統合できます。")
         }
     }
 
@@ -203,7 +263,7 @@ struct FaceClusterInspectorView: View {
                 Text("間違い候補（重心から遠い順）")
             } footer: {
                 Text("この人物の顔のうち、重心から遠いものです。数字は重心との類似度で、"
-                     + "オレンジは**いまのしきい値なら合流しない**顔＝混入の可能性が高いもの。"
+                     + "オレンジは「いまのしきい値なら合流しない」顔＝混入の可能性が高いもの。"
                      + "タップすると別の人物へ移せます（確認済みはユーザーが本人と表明した顔）。")
             }
         }
@@ -213,6 +273,16 @@ struct FaceClusterInspectorView: View {
     /// ——別ドキュメントを見に行かないと読めない表は、チューニングでは使われない。
     private var glossarySection: some View {
         Section("用語") {
+            glossary("cos（コサイン類似度）", "顔を数百次元のベクトルにしたときの「向きの近さ」。"
+                     + "1.00 が同じ向き、0.00 が無関係。距離ではなく向きで測るので、"
+                     + "明るさや顔の大きさの違いに強い。この画面の数字はすべてこの尺度。")
+            glossary("しきい値", "合流してよい cos の下限。ユーザーの修正から校正され、"
+                     + "プロファイルの可動域内で上下する（校正前の値が「既定」）。")
+            glossary("実効しきい値（表の「必要」）", "その相手に入るために実際に要る cos。"
+                     + "＝しきい値＋サイズ適応の上乗せ。表の「必要 0.398」がこれで、"
+                     + "cos がこれ未満なら合流しない。")
+            glossary("ゲート幅", "マージンゲートの幅。1 位と 2 位の cos の差がこれ未満なら、"
+                     + "紛らわしいのでどちらにも入れない。")
             glossary("重心", "その人物の顔ベクトルの平均（品質で重み付け）。人物の「中心」で、"
                      + "新しい顔はこれとの近さ（cos 類似度）で判定される。"
                      + "「重心に寄与」はその平均に入っている顔の数（品質フロア未満の顔は"
@@ -227,7 +297,7 @@ struct FaceClusterInspectorView: View {
                      + "実効しきい値＝しきい値＋上乗せで、メンバー 1 人のとき最大、"
                      + "成熟枚数以上で 0。育ち始めのクラスタが似た他人を吸い込むのを防ぐ。")
             glossary("マージンゲート", "1 位と 2 位の人物がどちらも閾値を超え、"
-                     + "その差がゲート幅未満なら**どちらにも入れない**。"
+                     + "その差がゲート幅未満なら「どちらにも入れない」。"
                      + "「両方にそこそこ似ている」顔（兄弟・親子）を取り違えないための保険。")
             glossary("負例", "「この人ではない」と外した顔の記録。似た顔が同じ人物へ入ろうと"
                      + "したときに拒否する。再スキャンやモデル更新を跨いで効く（ADR-45）。")
@@ -315,7 +385,7 @@ private struct InspectorPersonPicker: View {
                 }
             }
             .searchable(text: $query, prompt: "人物を検索")
-            .navigationTitle("対象の人物")
+            .navigationTitle("調査対象の人物")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
@@ -360,13 +430,25 @@ private struct FaceClusterMembersView: View {
         }
         .navigationTitle("\(title)（\(faces.count)）")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("この人物を対象にする") {
+        // ⚠️ 「対象にする」だけでは**何の対象か分からない**（実フィードバック）。
+        // 何が起きるかを書いた**フル幅のボタン**にする（ツールバーだと長い名前が入らない）。
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 4) {
+                Button {
                     onFocus(clusterID)
                     dismiss()
+                } label: {
+                    Label("この人物を調査対象にして再解析", systemImage: "scope")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
                 }
+                .buttonStyle(.borderedProminent)
+                Text("内訳の画面が、この人物から見た近傍・間違い候補に切り替わります。")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .background(.bar)
         }
         .task { faces = await peopleEngine.coverCandidates(clusterID: clusterID) }
         .sheet(item: $reassignTarget) { face in

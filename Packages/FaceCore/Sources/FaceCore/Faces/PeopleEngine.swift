@@ -492,9 +492,28 @@ public final class PeopleEngine {
         await loadPeople()
     }
 
-    public func mergePerson(from srcClusterID: Int, into dstClusterID: Int) async {
-        await store.mergeClusters(from: srcClusterID, into: dstClusterID)
+    /// 統合の結果。**拒否される**ことがある（ユーザーが既に別人と表明している／
+    /// 同じ写真に一緒に写っている）ので、呼び出し側は理由を出せるようにする。
+    public enum PersonMergeResult: Sendable, Equatable {
+        case merged
+        /// 別々の名前が付いている＝ユーザーが「別人」と表明済み。
+        case rejectedDifferentNames
+        /// 同じ写真に一緒に写っている＝同一人物ではあり得ない。
+        case rejectedSamePhoto
+    }
+
+    @discardableResult
+    public func mergePerson(from srcClusterID: Int, into dstClusterID: Int) async -> PersonMergeResult {
+        await store.beginUndo(label: "\(label(srcClusterID)) を \(label(dstClusterID)) に統合",
+                              clusterIDs: [srcClusterID, dstClusterID])
+        let rejection = await store.mergeClusters(from: srcClusterID, into: dstClusterID)
+        await refreshUndoLabel()
         await loadPeople()
+        switch rejection {
+        case .none: return .merged
+        case .differentNames: return .rejectedDifferentNames
+        case .samePhotoConflict: return .rejectedSamePhoto
+        }
     }
 
     /// 写真（`PhotoItem.id`：生 localIdentifier か "L-…" refKey）に写っている人物の表示名。
