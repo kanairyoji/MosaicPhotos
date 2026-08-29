@@ -1,3 +1,4 @@
+import MosaicSupport
 import PerceptionCore
 import CoreGraphics
 import Foundation
@@ -201,5 +202,45 @@ struct BatchReviewCandidateTests {
             .filter { $0.clusterID == cid }.map { $0.faceID }.sorted()
         let viaCluster = await store.facesForTesting(inCluster: cid).sorted()
         #expect(viaAll == viaCluster, "まとめ取りで取りこぼし・混入がある")
+    }
+}
+
+// MARK: - 前面では顔スキャンを起こさない（実機 diagnostics-62/63）
+
+/// ⚠️ 方針は「操作している間は重い処理を動かさない」。前面で始めても譲り判定で止まるが、
+/// **畳むまでに入口の準備は済ませてしまう**——`scannedRefKeys()` は ScannedPhoto を全件
+/// （実測 75,000 行超）読む。`FaceStore` は単一の `@ModelActor` なので、その間
+/// ピープル一覧・写真の人物名が後ろで待たされる。
+/// 実測ではロック解除直後に 32,582 枚を対象に開始し、譲り続けて **0 枚**で終了していた。
+@Suite("前面での顔スキャン抑止")
+@MainActor
+struct ForegroundScanSuppressionTests {
+
+    private func makeEngine() -> PeopleEngine {
+        PeopleEngine(faceProvider: nil, store: FaceStore(isStoredInMemoryOnly: true))
+    }
+
+    @Test("前面のときは開始しない")
+    func doesNotStartWhileActive() {
+        let wasActive = BackgroundYield.isAppActive
+        defer { BackgroundYield.isAppActive = wasActive }
+        BackgroundYield.isAppActive = true
+
+        let engine = makeEngine()
+        engine.startScan(candidateRefKeys: ["L-1", "L-2"])
+        #expect(!engine.isScanning, "前面で起こすと入口の準備コストだけ payer になる")
+    }
+
+    @Test("非アクティブ（ロック中・夜間）なら従来どおり")
+    func startsWhenInactive() {
+        let wasActive = BackgroundYield.isAppActive
+        defer { BackgroundYield.isAppActive = wasActive }
+        BackgroundYield.isAppActive = false
+
+        let engine = makeEngine()
+        engine.startScan(candidateRefKeys: ["L-1", "L-2"])
+        // 顔モデル未同梱の環境では model unavailable で降りる。どちらでも
+        // 「前面ガードでは止まっていない」ことが確認できればよい。
+        #expect(engine.isLoaded)
     }
 }
