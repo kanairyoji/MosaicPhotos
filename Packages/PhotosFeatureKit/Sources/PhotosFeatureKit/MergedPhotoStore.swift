@@ -119,6 +119,10 @@ public final class MergedPhotoStore {
         rebuildGeneration &+= 1
         let generation = rebuildGeneration
         rebuildTask = Task.detached(priority: .userInitiated) { [weak self] in
+            // ⚠️ 86k 件のマージ＋ソート＋指紋はメモリを積む。**札を立てて**背景の重いロードと
+            // 重ならないようにする（`HeavyLoad`・diagnostics-66）。
+            HeavyLoad.begin("merged.rebuild")
+            defer { HeavyLoad.end("merged.rebuild") }
             let t0 = CFAbsoluteTimeGetCurrent()
             let local = localSnapshot.map(MergedPhotoItem.local)
             // ⚠️ この端末のバックアップコピーは、**端末に原本が無いときだけ**出す

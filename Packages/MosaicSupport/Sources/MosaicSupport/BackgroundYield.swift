@@ -110,6 +110,11 @@ public enum BackgroundYield {
     public static func heavyShouldPause() -> Bool {
         // 熱はデバッグ全開でも効かせる（上の注記と同じ理由）。
         if ThermalGate.shared.shouldPause() { return true }
+        // ⚠️ 起動・復帰の一括ロード中も譲る（`HeavyLoad`）。単体では健全な処理でも、
+        // 73k 件の実体化・68k 件のパスアルバム・86k 件のマージ・モデルのロードが重なると
+        // footprint が 569MB まで伸びる（実機 diagnostics-66・背面 568MB で jetsam 実績あり）。
+        // 生成との相互排他と同じ**メモリ保護**なので、デバッグ全開でも外さない。
+        if HeavyLoad.isInFlight() { return true }
         if debugForceHeavyWork { return false }
         return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }

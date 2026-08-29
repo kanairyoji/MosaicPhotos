@@ -21,6 +21,25 @@
 
 ---
 
+## 起動時に footprint 569MB — 健全な処理が「重なっただけ」（diagnostics-65/66）
+- 症状: 起動・復帰の数秒で footprint が 569MB。背面では 568MB で jetsam に落とされ、
+  ロック解除がコールドリランチになっていた（体感は「解除したら固まった」）。
+- 原因: 単独犯がいない。73k 件のキャッシュ実体化・68k 件のパスアルバム計算・86k 件のマージ・
+  18k 件のアセット索引が同時に走り、そこへ背景の CLIP テキストタワーのロード（12.9 秒・約 120MB）が
+  重なった。**しかもそのモデルは直後に `cancelPrewarm` で捨てられていた**（ピークを作っただけ）。
+  加えて 73k 件の実体化は**同じ 1 秒間に 2 回**走っていた（`cache.fetchItems` 1109ms + 1012ms）——
+  `loadItems()` 側には合流の仕組みがあったが、定期の `refreshItemsFromCache()` が素通りしていた。
+- 対処: (1) 一括ロードの札（`HeavyLoad`・ADR-122）を 4 経路に立て、背景のトリクルとモデルロードは
+  札が下りるまで待つ。(2) `prewarm` は**ロード開始の直前**にもゲートを見る（Task の生成時点と
+  実行時点はプロセス中断を挟んでずれる）。(3) 反映の合流点を呼び出し口ではなく反映関数そのものへ移す。
+- 関連: `HeavyLoad` / `BackgroundYield.heavyShouldPause` / `CLIPDisplayLabeler.prewarm` /
+  `DropboxPhotoStore.reflectCachedItems`。テスト `HeavyLoadTests` /
+  `DropboxPhotoStoreReflectCoalesceTests`（合流が無い版で 2 回になることを確認済み）。
+- 教訓: **重い処理は「単体で速いか」ではなく「同時に何が走るか」で効く。** 個々の最適化を
+  積んでも、同時実行の設計が無ければピークは下がらない。
+  そして**合流は呼び出し口ではなく本体に置く**——入口が増えたときに漏れる（2 度踏んだ）。
+- 残課題: ピークの実測（次の実機ログの起動直後 footprint）で効果を確認する。
+
 ## 共有フォルダの移行が永久に収束しなかった（`to/conflict/folder` の輪・diagnostics-64〜66）
 - 症状: 反映のたびに `ShareCopier: move failed (409) — /MosaicShare/金居家 → /MosaicShare/iPhone-8D1681/金居家`。
   3 本の実機ログすべてで `copy=4297 / dupes=316 / adopt=0` が**同じ数字のまま**＝1 件も進んでいない。

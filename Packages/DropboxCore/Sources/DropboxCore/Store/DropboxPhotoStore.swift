@@ -21,6 +21,8 @@ public final class DropboxPhotoStore {
     @ObservationIgnored private var excludedPathPrefixes: [String] = []
     /// 実行中の `loadItems()`。起動直後に複数の呼び手が同時に来ても fetch は 1 回に集約する。
     @ObservationIgnored private var loadTask: Task<Int, Never>?
+    /// 実行中のキャッシュ反映（同じアカウントの呼び出しはここへ合流する）。
+    @ObservationIgnored private var reflectTask: (accountId: String, task: Task<Int, Never>)?
     /// 読み込みの世代。リセット（切断/キャッシュ消去/アカウント切替）のたびに進める。
     /// ⚠️ `loadTask?.cancel()` だけでは進行中の読み込みを止められない——`cache` は actor 呼び出しで
     /// キャンセルを見ず、変換の `Task.detached` は親のキャンセルを継承しないため、
@@ -39,7 +41,9 @@ public final class DropboxPhotoStore {
 
     @ObservationIgnored public let auth: DropboxAuthService
     // 画像/位置の実装は +Images / +Location に分割するため internal（同モジュール内の extension が参照）。
-    @ObservationIgnored let cache = DropboxCacheStore()
+    /// メタデータ/バイナリのキャッシュ。**テストから差し替えられる**ようにしている
+    /// （本番は永続ストア・テストはインメモリ）。
+    @ObservationIgnored let cache: DropboxCacheStore
     @ObservationIgnored let apiClient: DropboxAPIClient
     @ObservationIgnored let thumbnailBatcher: DropboxThumbnailBatcher
     /// キャッシュの持ち主（accountId の指紋）。**永続**させる——アプリを再起動して
@@ -150,8 +154,17 @@ public final class DropboxPhotoStore {
 
     // MARK: - Init
 
-    public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
+    public convenience init(auth: DropboxAuthService,
+                            httpClient: HTTPClient = URLSessionHTTPClient()) {
+        self.init(auth: auth, httpClient: httpClient, cache: DropboxCacheStore())
+    }
+
+    /// キャッシュを差し替えられる内部 init（テストはインメモリのストアを渡す）。
+    /// `DropboxCacheStore` は internal なので public API には出さない。
+    init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient(),
+         cache: DropboxCacheStore) {
         self.auth = auth
+        self.cache = cache
         // E: longpoll は専用セッションで送り、長時間保持の接続を他通信から隔離する。
         let apiClient = DropboxAPIClient(
             httpClient: httpClient, tokenProvider: auth,
@@ -197,8 +210,28 @@ public final class DropboxPhotoStore {
     /// 2-b: 以前は 67k 件の `cached != items` 全比較を **0.4 秒ごとにメインアクタ**で回していた
     /// （同期中ずっと UI 税）。**署名（Hasher）を off-main で計算**して変化検知し、変わったときだけ
     /// stampFavorites の map＋代入を行う。同一なら @Observable 通知も発火しない（セル churn 防止）。
+    /// 反映の**合流点**。同じアカウントの反映が走っていれば、そこへ合流して 2 度目の
+    /// fetch を起こさない。
+    ///
+    /// ⚠️ `loadItems()` 側には合流の仕組みがあったが、**定期の `refreshItemsFromCache()` は
+    /// ここを素通り**していた。起動直後は両方がほぼ同時に走るため、73,445 行の実体化が
+    /// 1 秒の間に 2 回起きていた（実機 diagnostics-65/66: `cache.fetchItems` 1109ms + 1012ms）。
+    /// 合流点は呼び出し口ではなく**この関数**に置く（呼び手が増えても漏れない）。
     @discardableResult
     private func reflectCachedItems(accountId: String) async -> Int {
+        if let inFlight = reflectTask, inFlight.accountId == accountId {
+            return await inFlight.task.value
+        }
+        let task = Task { await performReflectCachedItems(accountId: accountId) }
+        reflectTask = (accountId: accountId, task: task)
+        let count = await task.value
+        // 待っている間に別の反映が登録されていたら、それは消さない（合流先を失わせない）。
+        if reflectTask?.task == task { reflectTask = nil }
+        return count
+    }
+
+    @discardableResult
+    private func performReflectCachedItems(accountId: String) async -> Int {
         // ⚠️ **変わっていなければ fetch すらしない**（ADR-95）。署名比較は「取ってから捨てる」ので、
         //    無変更でも 68,200 行の fetch＋値型生成＋刻印コピーの代金を毎回払っていた。
         //    実機 diagnostics-38 では起動直後の 3 秒間にこれが 2 回走り、`cache.fetchItems` が
@@ -212,6 +245,10 @@ public final class DropboxPhotoStore {
             updateLoadStatus()
             return items.count
         }
+        // ⚠️ 73k 件の実体化＋刻印はメモリを大きく積む。**札を立てて**背景の重いロードと
+        // 重ならないようにする（`HeavyLoad`・diagnostics-66）。
+        HeavyLoad.begin("cache.items")
+        defer { HeavyLoad.end("cache.items") }
         let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
         guard isCurrentLoad(stamp) else { return items.count }
         let favPaths = cloudFavoritePaths
@@ -392,7 +429,8 @@ public final class DropboxPhotoStore {
     }
 
     /// キャッシュから items を取得して反映する（内容が変わったときのみ再代入・2-b の署名比較）。
-    private func refreshItemsFromCache() async {
+    /// `internal`：合流（同時呼び出しで実体化が 1 回になること）をテストから確かめるため。
+    func refreshItemsFromCache() async {
         guard let accountId = auth.credential?.accountId else { return }
         await reflectCachedItems(accountId: accountId)
     }
