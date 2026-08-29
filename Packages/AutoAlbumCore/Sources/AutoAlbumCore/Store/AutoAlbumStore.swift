@@ -152,9 +152,14 @@ actor AutoAlbumStore {
         try? modelContext.save()
     }
 
+    /// テスト用: 台帳の全件読み出しを呼んだ回数。**呼ばれないこと**を検証するために要る
+    /// （この読み出しは 86k 件・実測 12〜13 秒／数百 MB なので、前面では走らせない）。
+    private(set) var allEnrichedPhotosLiteCallsForTesting = 0
+
     /// 付加情報済みの全写真（戦略の入力）。埋め込みは別テーブルなので、この fetch は
     /// メタデータのみで軽量（巨大 blob を一切載せない）。
     func allEnrichedPhotosLite() -> [EnrichedPhoto] {
+        allEnrichedPhotosLiteCallsForTesting += 1
         // R4: 8.5万件の @Model を一括 materialize するとメモリがスパイクするため、**使い捨て
         // ModelContext でページ fetch→値型化→破棄**し、materialize を 1 ページに有界化する。
         // 蓄積するのは軽量な値型（EnrichedPhoto）だけ。直前の prune/更新を見るよう save 済みにする。
