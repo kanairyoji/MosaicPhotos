@@ -124,12 +124,7 @@ extension HomeView {
                                   ? { Task { await placeScanner.scan(dropboxItems: dropboxStore.items) } }
                                   : nil)
                 // 地図表示（ADR-127）。撮影地にピンを立てて、拡大縮小で粒度が変わる。
-                Button { showingPhotoMap = true } label: {
-                    Image(systemName: "map").font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(Text("Map"))
+                HeaderActionButton(systemImage: "map", label: "Map") { showingPhotoMap = true }
             }
         }
     }
@@ -288,6 +283,7 @@ extension HomeView {
             }
         } header: {
             sectionHeader("AI Albums", isBusy: autoAlbumEngine.isMakingAIAlbum, actionIcon: "plus",
+                          actionLabel: "Create AI Album",
                           onAction: { aiComposer = .create })
         }
     }
@@ -344,11 +340,37 @@ extension HomeView {
 
 // MARK: - Section building blocks（各セクション共通の部品）
 
+/// セクションヘッダーの操作ボタン（再読み込み・追加・地図…）。
+///
+/// ⚠️ 実フィードバック: 「アイコンが小さくて分かりにくい」。以前は `Image` に `.font(.caption)` を
+/// 当てただけの裸のアイコンで、**押せることも伝わらなかった**。ピープルの「確認 / グループ」と
+/// 同じピル（丸背景＋アクセント色）に揃える——同じ役割のものは同じ見た目にする。
+private struct HeaderActionButton: View {
+    let systemImage: String
+    let label: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.semibold))
+                .frame(width: 20, height: 20)          // 文字ピルと同じ高さに揃える
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                .foregroundStyle(Color.accentColor)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+    }
+}
+
 /// セクションヘッダ共通部品：タイトル＋右端に「実行中スピナー or アクションボタン」。
 /// `isBusy` 中は mini スピナー、そうでなければ `onAction`（省略可）のアイコンボタンを出す。
 @ViewBuilder
 private func sectionHeader(_ title: LocalizedStringKey, isBusy: Bool,
                            actionIcon: String = "arrow.clockwise",
+                           actionLabel: LocalizedStringKey = "Reload",
                            onAction: (() -> Void)? = nil) -> some View {
     HStack {
         Text(title)
@@ -360,11 +382,7 @@ private func sectionHeader(_ title: LocalizedStringKey, isBusy: Bool,
             //    「固まった」ように見えるが、CAAnimation ならその間も回り続ける。
             BusySpinner().scaleEffect(0.7)
         } else if let onAction {
-            Button(action: onAction) {
-                Image(systemName: actionIcon).font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            HeaderActionButton(systemImage: actionIcon, label: actionLabel, action: onAction)
         }
     }
 }

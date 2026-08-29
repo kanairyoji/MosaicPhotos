@@ -135,20 +135,36 @@ struct PhotoMapClusteringTests {
         #expect(cloudOnly.first?.representative.identifier == "/cloud/new.jpg")
     }
 
-    /// 外れ値 1 枚で世界地図まで引かないこと（初期表示が「点が 1 つの世界地図」だと使えない）。
-    @Test("初期表示の範囲は外れ値に引きずられない")
-    func boundingRegionIgnoresOutliers() {
-        var photos = (0..<40).map { candidate(35.0 + Double($0) * 0.001, 139.0) }
-        photos.append(candidate(-33.9, 151.2))       // 1 枚だけシドニー
-        let region = PhotoMapClustering.boundingRegion(of: photos)
+    /// ⚠️ 実フィードバック: 「全体が収まる範囲」だと開いた瞬間が日本全体になり、見たいものが無い。
+    /// **いちばん写真の多い場所**に寄せる。国や都市をコードに書かず、データだけで決めること。
+    @Test("初期位置は写真がいちばん多い場所（外れ値には引かれない）")
+    func initialRegionCentersOnTheDensestPlace() {
+        var photos: [PlaceCandidate] = []
+        // 東京近郊に 30 枚（密集）。
+        for i in 0..<30 { photos.append(candidate(35.68 + Double(i) * 0.0005, 139.76, day: i + 1)) }
+        // 札幌に 4 枚、シドニーに 1 枚（外れ値）。
+        for i in 0..<4 { photos.append(candidate(43.06, 141.35, day: i + 1)) }
+        photos.append(candidate(-33.9, 151.2, day: 99))
+
+        let region = PhotoMapClustering.initialRegion(of: photos)
         #expect(region != nil)
-        #expect((region?.latitudeDelta ?? 99) < 1, "外れ値で引きすぎ: \(region?.latitudeDelta ?? -1)")
-        #expect(abs((region?.centerLatitude ?? 0) - 35.02) < 0.1)
+        #expect(abs((region?.centerLatitude ?? 0) - 35.687) < 0.02,
+                "最多の場所に寄っていない: \(region?.centerLatitude ?? -1)")
+        #expect((region?.latitudeDelta ?? 99) < 0.2,
+                "引きすぎ（全体を収めようとしている）: \(region?.latitudeDelta ?? -1)")
+    }
+
+    /// 1 か所に 1 枚しか無いときでも、寄りすぎて破綻しないこと。
+    @Test("写真が 1 枚でも最小幅の範囲を返す")
+    func initialRegionForASinglePhoto() {
+        let region = PhotoMapClustering.initialRegion(of: [candidate(35.0, 139.0)])
+        #expect(region?.latitudeDelta ?? 0 >= 0.01)
+        #expect(abs((region?.centerLatitude ?? 0) - 35.0) < 0.0001)
     }
 
     @Test("写真が無ければピンも範囲も無い")
     func emptyInput() {
         #expect(PhotoMapClustering.pins(candidates: [], region: .world).isEmpty)
-        #expect(PhotoMapClustering.boundingRegion(of: []) == nil)
+        #expect(PhotoMapClustering.initialRegion(of: []) == nil)
     }
 }

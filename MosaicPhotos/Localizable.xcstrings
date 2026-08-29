@@ -1079,6 +1079,16 @@
         }
       }
     },
+    "Create AI Album": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI アルバムを作る"
+          }
+        }
+      }
+    },
     "Create Album": {
       "localizations": {
         "ja": {
@@ -2965,6 +2975,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "常用地とみなす日数"
+          }
+        }
+      }
+    },
+    "Reload": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再読み込み"
           }
         }
       }

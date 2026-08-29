@@ -193,22 +193,46 @@ public enum PhotoMapClustering {
                            members: host.members + other.members)
     }
 
-    /// 写真全体が収まる範囲（初期表示のカメラ位置）。外れ値で世界地図にならないよう、
-    /// **緯度経度の 5〜95 パーセンタイル**で囲う（1 枚の海外旅行で全体が引きに行かない）。
-    public static func boundingRegion(of candidates: [PlaceCandidate],
-                                      padding: Double = 1.4) -> PhotoMapRegion? {
+    /// **初期表示の範囲**＝「写真がいちばん多い場所」に寄せる（ADR-127 追補）。
+    ///
+    /// ⚠️ 実フィードバック: 全体が収まる範囲にすると「日本全体」のような引きになり、
+    /// 開いた瞬間に見たいものが無い。⚠️ かといって国や都市を**コードに書かない**——
+    /// どこに住んでいる人でも同じ規則で動く必要がある。データだけで決める:
+    /// 1. 既定粒度（約 2km）で畳んで**最も枚数の多いセル**を選ぶ
+    /// 2. そのセルの近傍（±`neighborhood` セル）にある写真の広がりを実際に測る
+    /// 3. その広がりに余白を付けた範囲を返す（1 枚しか無ければ最小幅まで寄る）
+    public static func initialRegion(of candidates: [PlaceCandidate],
+                                     step: Double = GeoGridKey.defaultStep,
+                                     neighborhood: Double = 3,
+                                     padding: Double = 1.6,
+                                     minimumSpan: Double = 0.01) -> PhotoMapRegion? {
         guard !candidates.isEmpty else { return nil }
-        let lats = candidates.map(\.latitude).sorted()
-        let lons = candidates.map(\.longitude).sorted()
-        func percentile(_ values: [Double], _ p: Double) -> Double {
-            let idx = Int((Double(values.count - 1) * p).rounded())
-            return values[min(max(idx, 0), values.count - 1)]
+        var cells: [String: [PlaceCandidate]] = [:]
+        for c in candidates {
+            cells[GeoGridKey.key(latitude: c.latitude, longitude: c.longitude, step: step),
+                  default: []].append(c)
         }
-        let minLat = percentile(lats, 0.05), maxLat = percentile(lats, 0.95)
-        let minLon = percentile(lons, 0.05), maxLon = percentile(lons, 0.95)
-        return PhotoMapRegion(centerLatitude: (minLat + maxLat) / 2,
-                              centerLongitude: (minLon + maxLon) / 2,
-                              latitudeDelta: max((maxLat - minLat) * padding, 0.01),
-                              longitudeDelta: max((maxLon - minLon) * padding, 0.01))
+        // 最多のセル（同数なら新しい写真があるほう）。
+        guard let densest = cells.values.max(by: { a, b in
+            let (ca, cb) = (a.count, b.count)
+            if ca != cb { return ca < cb }
+            let na = a.map { $0.date ?? .distantPast }.max() ?? .distantPast
+            let nb = b.map { $0.date ?? .distantPast }.max() ?? .distantPast
+            return na < nb
+        }) else { return nil }
+
+        let centerLat = densest.reduce(0.0) { $0 + $1.latitude } / Double(densest.count)
+        let centerLon = densest.reduce(0.0) { $0 + $1.longitude } / Double(densest.count)
+        // 近傍の写真まで含めて広がりを測る（同じ町がセル境界で切れていても、まとめて収める）。
+        let reach = step * neighborhood
+        let nearby = candidates.filter {
+            abs($0.latitude - centerLat) <= reach && abs($0.longitude - centerLon) <= reach
+        }
+        let lats = nearby.map(\.latitude), lons = nearby.map(\.longitude)
+        let latSpan = ((lats.max() ?? centerLat) - (lats.min() ?? centerLat)) * padding
+        let lonSpan = ((lons.max() ?? centerLon) - (lons.min() ?? centerLon)) * padding
+        return PhotoMapRegion(centerLatitude: centerLat, centerLongitude: centerLon,
+                              latitudeDelta: max(latSpan, minimumSpan),
+                              longitudeDelta: max(lonSpan, minimumSpan))
     }
 }
