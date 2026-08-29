@@ -29,13 +29,18 @@ struct PhotoMapView: View {
     @State private var clusterGeneration = 0
     @State private var clusterTask: Task<Void, Never>?
     @State private var selected: PhotoMapPin?
+    /// 代表写真のサムネ（この画面の間だけ持つ）。⚠️ 無いと、地図を動かすたびに同じ写真を
+    /// 取り直すことになる——クラウド写真は表示用サムネと同じ回線を使うので、閲覧中の取得を
+    /// 押しのけてしまう（ADR-92 と同じ轍）。
+    @State private var thumbnails = PhotoMapThumbnailCache()
 
     var body: some View {
         NavigationStack {
             Map(position: $camera) {
                 ForEach(pins) { pin in
                     Annotation("", coordinate: pin.coordinate, anchor: .bottom) {
-                        PhotoMapPinBadge(count: pin.count) { selected = pin }
+                        PhotoMapPinBadge(pin: pin, dropboxStore: dropboxStore,
+                                         cache: thumbnails) { selected = pin }
                     }
                     .annotationTitles(.hidden)
                 }
@@ -138,31 +143,97 @@ struct PhotoMapView: View {
     }
 }
 
-/// ピン（件数バッジ）。⚠️ 代表写真のサムネはまだ出さない（Step 2）——クラウドのサムネ取得は
-/// 閲覧中の取得と同じ回線を使うので、集約とキャンセルが効いていることを先に確かめる。
+/// ピン（代表写真＋件数）。
+///
+/// ⚠️ クラウド写真のサムネは**表示用サムネと同じ回線**を通る。地図を動かすたびに数十件を
+/// 投げると閲覧中の取得を押しのけるので、(1) 出すのは可視ピンぶんだけ（集約で数十に有界）、
+/// (2) 一度取ったらセッション内でキャッシュ、(3) ピンが画面から消えたら `task` の
+/// キャンセルで取得も止まる、の 3 点で抑える。
 private struct PhotoMapPinBadge: View {
-    let count: Int
+    let pin: PhotoMapPin
+    let dropboxStore: DropboxPhotoStore
+    let cache: PhotoMapThumbnailCache
     let action: () -> Void
+
+    @State private var image: UIImage?
+
+    private static let side: CGFloat = 52
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
-                Text(count > 999 ? "999+" : "\(count)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.accentColor, in: Capsule())
-                    .overlay(Capsule().stroke(.white, lineWidth: 1.5))
+                ZStack(alignment: .bottomTrailing) {
+                    thumbnail
+                        .frame(width: Self.side, height: Self.side)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(.white, lineWidth: 2))
+                    if pin.count > 1 {
+                        Text(pin.count > 999 ? "999+" : "\(pin.count)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor, in: Capsule())
+                            .overlay(Capsule().stroke(.white, lineWidth: 1))
+                            .offset(x: 6, y: 6)
+                    }
+                }
                 Image(systemName: "arrowtriangle.down.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(Color.accentColor)
-                    .offset(y: -2)
+                    .foregroundStyle(.white)
+                    .offset(y: -1)
             }
             .shadow(radius: 2, y: 1)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(L("\(count) photos")))
+        .accessibilityLabel(Text(L("\(pin.count) photos")))
+        // ⚠️ `id:` は代表写真。畳み直しで代表が変わったときだけ取り直す（同じ写真なら再取得しない）。
+        .task(id: pin.representative.identifier) {
+            let key = pin.representative.identifier
+            if let cached = await cache.image(for: key) { image = cached; return }
+            let loaded = await loadCover(
+                localID: pin.representative.isLocal ? key : nil,
+                cloudPath: pin.representative.isLocal ? nil : key,
+                dropboxStore: dropboxStore, maxPixel: Self.side * 3)
+            guard !Task.isCancelled, let loaded else { return }
+            await cache.store(loaded, for: key)
+            image = loaded
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let image {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else {
+            // 取得中も**位置と件数は分かる**ようにしておく（真っ白のカードを出さない）。
+            ZStack {
+                Rectangle().fill(.regularMaterial)
+                Image(systemName: "photo").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// 代表写真サムネのセッションキャッシュ（画面を閉じたら消える）。
+/// actor にして、複数ピンの同時取得から守る。
+actor PhotoMapThumbnailCache {
+    private var images: [String: UIImage] = [:]
+    /// ⚠️ 上限を置く。地図を動かし続けると代表写真は入れ替わり続けるので、
+    /// 際限なく持つと画面を開いている間ずっとメモリが増える。
+    private let limit = 200
+    private var order: [String] = []
+
+    func image(for key: String) -> UIImage? { images[key] }
+
+    func store(_ image: UIImage, for key: String) {
+        if images[key] == nil { order.append(key) }
+        images[key] = image
+        while order.count > limit, let oldest = order.first {
+            order.removeFirst()
+            images.removeValue(forKey: oldest)
+        }
     }
 }
 
