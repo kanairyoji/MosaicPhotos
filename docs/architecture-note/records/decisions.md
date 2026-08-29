@@ -253,6 +253,20 @@
 - 関連: `MosaicSupport/ThermalPolicy.swift`（新規）/ `BackgroundYield` /
   `BackgroundSettingsView` / `records/background-behavior.md`（5 軸目として追記）。
 
+### 追補（2026-08-29・実フィードバック）: 満充電なら止めない／名前を実態に合わせる
+- 文脈: 「バッテリー 100% なら止める必要がない」という指摘。そのとおりで、この停止が守っているのは
+  **充電**であって温度ではない（上の文脈のとおり）。満充電なら守る対象が無い。
+- 決定: 充電が **98% 以上**なら熱でも止めない（`ThermalPolicy.chargedEnoughLevel`）。
+  100% ちょうどにしないのは、満充電付近では表示が 99〜100% を行き来し、iOS 自身も充電を絞るため
+  ——「100%」条件ではほとんどの晩で成立しない。⚠️ 残量**不明**は満充電と読まない（従来どおり止める）。
+- 決定: 設定の表示を「熱くなったら停止」→「**充電をバックグラウンド処理より優先**」へ。
+  名前が実態と食い違うと「満充電でも止まるのはなぜ？」という当然の疑問に答えられない。
+- 結果: 充電が終わった後の夜間はそのまま処理が進む（朝までの時間を使い切れる）。
+  診断ログの遷移行に残量を併記（`thermal: pausing … battery=87%`）＝実機で条件を確かめられる。
+- 関連: `ThermalPolicy` / `PowerStateMonitor.batteryLevelIfKnown` / `BackgroundSettingsView` /
+  テスト `ThermalPolicyChargedTests`。
+
+
 ## ADR-117 ハングの犯人は「止まっている最中」に自分で採る（MetricKit だけに頼らない）
 - 状態: 採用（[[ADR-106]] を補完。置き換えではない）
 - 文脈: 実機 diagnostics-56 で、前面のメインが **78 秒間ほぼ完全に停止**した

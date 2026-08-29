@@ -41,9 +41,12 @@ struct BackgroundSettingsView: View {
                 Text(L("Limits background network use (Dropbox sync, backup uploads, cloud photo indexing, reverse geocoding). “Wi-Fi only” avoids cellular data; “Wi-Fi, skip Low Data” also pauses when Low Data Mode is on. Photos you open or browse are always fetched — only automatic background traffic is limited. Default: Wi-Fi only."))
             }
             Section {
-                Toggle("Pause when the device gets hot", isOn: $pauseWhenHot)
+                // ⚠️ 「熱くなったら停止」という表示をやめた（実フィードバック）。止めているのは
+                // 温度のためではなく**充電のため**で、名前が実態と食い違うと「満充電でも止まるのは
+                // なぜ？」という当然の疑問に答えられない。何を優先しているかをそのまま名前にする。
+                Toggle("Prioritize charging over background work", isOn: $pauseWhenHot)
             } footer: {
-                Text(L("Stops background analysis while the device is hot, and resumes once it has cooled down. Without this, overnight processing can keep the device warm enough that iOS pauses charging — so you wake up to a phone that is hot and not charged, and the next night makes no progress either. Default: On."))
+                Text(L("When the device gets hot, iOS pauses charging — so overnight processing can leave you with a phone that is hot and not charged, and the next night makes no progress either. With this on, background analysis stands down while the device is hot and resumes once it has cooled. Once the battery is charged (98% or more) there is nothing left to protect, so processing continues even when the device is warm. Default: On."))
             }
         }
         .navigationTitle("Background & Battery")

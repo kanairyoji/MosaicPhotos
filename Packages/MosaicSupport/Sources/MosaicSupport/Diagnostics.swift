@@ -18,6 +18,13 @@ public final class DiagnosticsLog: @unchecked Sendable {
         fileURL = dir.appendingPathComponent("diagnostics.log")
     }
 
+    /// テスト用: **自分専用のログファイル**を持つインスタンス。
+    ///
+    /// ⚠️ 読み出しのテストが `shared` を使うと、並列に走る他のテスト（熱ゲートの遷移記録など）が
+    /// 同じファイルへ書き込み、`clear()` の直後に行が増えて落ちる（実際に踏んだ）。
+    /// 共有状態に依存するテストは、共有をやめるのが正しい直し方。
+    init(fileURL: URL) { self.fileURL = fileURL }
+
     /// 1 行追記（タイムスタンプ付き）。複数スレッドから呼ばれるため直列キューで処理する。
     public func append(_ line: String) {
         queue.async { [fileURL, maxBytes] in
