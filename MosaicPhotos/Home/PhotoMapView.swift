@@ -64,11 +64,6 @@ struct PhotoMapView: View {
                 }
             }
             .task { await load() }
-            .onDisappear {
-                // 86k 件の索引を持ち帰らない（画面を閉じたら解放する）。
-                loadTask?.cancel(); clusterTask?.cancel()
-                candidates = []; pins = []
-            }
             .navigationDestination(item: $selected) { pin in
                 PhotoMapCellView(pin: pin, dropboxStore: dropboxStore, assetIndex: assetIndex)
             }
@@ -88,15 +83,22 @@ struct PhotoMapView: View {
 
     // MARK: - Loading
 
+    /// 索引を作る（**1 回だけ**）。
+    ///
+    /// ⚠️ 写真を開いて戻ってきたとき、ここが走り直すと初期位置へカメラが戻ってしまう
+    /// （実フィードバック: 「戻ると日本全体になる」）。`.task` は画面の再表示でも走り得るので、
+    /// 索引の有無で早期に帰る。索引は画面（`@State`）と寿命を共にするので、
+    /// 地図を閉じれば解放される——**押して戻るだけで捨ててはいけない**。
     private func load() async {
+        guard candidates.isEmpty, loadTask == nil else { return }
         let task = Task { await placeScanner.locatedCandidates(dropboxItems: dropboxStore.items) }
         loadTask = task
         let found = await runShowingBusy($isLoading) { await task.value }
         loadTask = nil
         guard !task.isCancelled else { return }
         candidates = found
-        // 初期表示は写真の分布に合わせる（外れ値 1 枚で世界地図にしない）。
-        if let region = PhotoMapClustering.boundingRegion(of: found) {
+        // 初期表示は**写真がいちばん多い場所**（国や都市はコードに書かない・ADR-127 追補）。
+        if let region = PhotoMapClustering.initialRegion(of: found) {
             camera = .region(Self.mapRegion(region))
             recluster(region: region)
         }
