@@ -133,6 +133,9 @@ final class HomeStores {
             // 起動時に全記録を materialize するとメモリの山になる。
             return await store.backupCopyIndex()
         }
+        // 人物・グループ・場所・アルバムの**メンバー限定ストア**にも同じ索引を渡す
+        // （渡していなかったので、それらの画面では副本が二重に出て並びも崩れていた）。
+        MergedPhotoStore.defaultBackupCopyIndexProvider = mergedStore.backupCopyIndexProvider
 
         Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,

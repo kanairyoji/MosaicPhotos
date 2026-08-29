@@ -21,6 +21,26 @@
 
 ---
 
+## ADR-128 バックアップ副本は「アルバムの中でも」隠し、撮影日を持たせる
+- 状態: 採用
+- 文脈: 実フィードバック「ピープルのグループアルバムが時系列で並んでいない。バックアップを
+  新しい写真と認識しているのか」。調べると**別々の 2 つの欠陥が重なっていた**:
+  (1) 副本を隠す索引（`backupCopyIndexProvider`）を、ホームの一覧には渡していたのに
+      **メンバー限定ストア（人物・グループ・場所・アルバム）には渡していなかった**
+      （diagnostics-57/58 の対処が一覧だけで止まっていた）。同じ写真が原本と副本の 2 枚で並ぶ。
+  (2) アップロード時に `client_modified` を送っておらず、Dropbox は**アップロード時刻**を記録する。
+      同期側の撮影日は `time_taken ?? client_modified` なので、EXIF から `media_info` が
+      付かない写真では副本が「今日撮った写真」になる＝古い写真が列の先頭に出る。
+- 決定: (1) `MergedPhotoStore.defaultBackupCopyIndexProvider`（Composition Root が設定）を
+  `forMembers` が自動で渡す。⚠️ 隠すのは**原本が同じアルバムに居るときだけ**——オフロード済み
+  （端末に原本が無い）写真まで隠すと、アルバムから写真が消える。
+  (2) アップロードの `Dropbox-API-Arg` に `client_modified`（撮影日・秒精度 UTC）を載せる。
+- 結果: アルバムの重複が消え、並びが撮影日どおりになる。⚠️ (2) は**これから上げる写真**に効く。
+  既にアップロード済みの副本の日付は Dropbox 側の記録なので変わらない——ただし (1) で
+  「原本がある写真の副本」は表示から消えるため、実害はオフロード済み写真だけに残る。
+- 関連: `MergedPhotoStore+Members` / `DropboxBackupUploader.upload(clientModified:)` /
+  `BackupRunner.uploadOne` / テスト `MemberStoreBackupHidingTests`・`UploadClientModifiedTests`。
+
 ## ADR-127 写真の地図は「ズームで決まるグリッド」で畳む
 - 状態: 採用（Step 1 実装済み・サムネ表示は Step 2）
 - 文脈: 写真アプリのような地図ビューが欲しい（撮影地にピン・拡大縮小）。ライブラリは 86,000 枚規模で、

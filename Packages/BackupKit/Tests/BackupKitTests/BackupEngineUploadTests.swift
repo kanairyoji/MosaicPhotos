@@ -161,3 +161,52 @@ struct DropboxBackupUploaderTests {
         #expect(arg?.contains("overwrite") == true)
     }
 }
+
+/// アップロード時に**撮影日**を送ること（ADR-128）。
+///
+/// ⚠️ 省略すると Dropbox は「アップロードした時刻」を記録する。同期側の撮影日は
+/// `time_taken ?? client_modified` なので、EXIF が読めない写真では**バックアップ副本が
+/// 「今日撮った写真」**になり、人物アルバム等の並びが壊れる（実フィードバック）。
+@Suite("アップロードは撮影日を送る")
+struct UploadClientModifiedTests {
+
+    @Test("Dropbox が受け付ける形式（秒精度・UTC）で整形する")
+    func timestampFormat() {
+        let date = Date(timeIntervalSince1970: 1_000_000_000.5)   // 小数秒つき
+        let s = DropboxBackupUploader.dropboxTimestamp(date)
+        #expect(s == "2001-09-09T01:46:40Z", "形式が違うと Dropbox は 400 を返す: \(s)")
+    }
+
+    @Test("Dropbox-API-Arg に client_modified が入る")
+    func argIncludesClientModified() async {
+        let recorder = ArgRecordingClient()
+        let uploader = DropboxBackupUploader(httpClient: recorder)
+        _ = await uploader.upload(data: Data([1, 2, 3]), to: "/b/a.jpg", token: "t",
+                                  expectedHash: "h",
+                                  clientModified: Date(timeIntervalSince1970: 0))
+        let arg = await recorder.lastArg ?? ""
+        #expect(arg.contains("client_modified"), "撮影日が送られていない: \(arg)")
+        #expect(arg.contains("1970-01-01T00:00:00Z"), "整形が違う: \(arg)")
+    }
+
+    @Test("撮影日が無ければ client_modified は送らない（Dropbox 側の既定に任せる）")
+    func omitsWhenUnknown() async {
+        let recorder = ArgRecordingClient()
+        let uploader = DropboxBackupUploader(httpClient: recorder)
+        _ = await uploader.upload(data: Data([1]), to: "/b/a.jpg", token: "t", expectedHash: "h")
+        let arg = await recorder.lastArg ?? ""
+        #expect(!arg.contains("client_modified"), "不明な日付を送っている: \(arg)")
+    }
+}
+
+/// Dropbox-API-Arg ヘッダを記録するだけのクライアント。
+private actor ArgRecordingClient: HTTPClient {
+    private(set) var lastArg: String?
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        lastArg = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 500,
+                                   httpVersion: nil, headerFields: nil)!
+        return (Data(), resp)
+    }
+}
