@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import SwiftUI
 
@@ -6,9 +7,9 @@ import SwiftUI
 /// 中身を自動でサブグループ化（束ね内クラスタ＋クラスタ内の再帰監査分割）して代表顔つきで
 /// 一覧し、「別人」のグループにチェック → 1 タップでまとめて分離する。1 対 1 レビューでは
 /// 追いつかない多人数混入（実フィードバック）のための画面。
-struct PersonCleanupView: View {
-    let person: PersonInfo
-    let peopleEngine: PeopleEngine
+public struct PersonCleanupView: View {
+    public let person: PersonInfo
+    public let peopleEngine: PeopleEngine
     @Environment(\.dismiss) private var dismiss
 
     @State private var subgroups: [PersonSubgroup] = []
@@ -17,7 +18,13 @@ struct PersonCleanupView: View {
     @State private var isSeparating = false
     @State private var confirmSeparate = false
 
-    var body: some View {
+
+    public init(person: PersonInfo, peopleEngine: PeopleEngine) {
+        self.person = person
+        self.peopleEngine = peopleEngine
+    }
+
+    public var body: some View {
         NavigationStack {
             Group {
                 if isLoading {
@@ -142,3 +149,4 @@ struct PersonCleanupView: View {
         }
     }
 }
+#endif

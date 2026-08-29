@@ -4,6 +4,7 @@ import MosaicSupport
 import Photos
 import PhotoSourceKit
 import SwiftUI
+import PeopleKit
 
 // MARK: - Source row
 

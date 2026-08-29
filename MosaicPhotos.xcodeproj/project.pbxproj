@@ -14,6 +14,7 @@
 		BEF041A02FD42D3900CD8FB2 /* AutoAlbumCore in Frameworks */ = {isa = PBXBuildFile; productRef = BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */; };
 		BEF051A02FD42D3900CD8FB2 /* MobileCLIPKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF052A02FD42D3900CD8FB2 /* MobileCLIPKit */; };
 		BEF061A02FD42D3900CD8FB2 /* MosaicSupport in Frameworks */ = {isa = PBXBuildFile; productRef = BEF062A02FD42D3900CD8FB2 /* MosaicSupport */; };
+		BEF071A02FD42D3900CD8FB2 /* PeopleKit in Frameworks */ = {isa = PBXBuildFile; productRef = BEF072A02FD42D3900CD8FB2 /* PeopleKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,6 +67,7 @@
 				BEF001A02FD42D3900CD8FB2 /* DropboxKit in Frameworks */,
 				BEF021A02FD42D3900CD8FB2 /* BackupKit in Frameworks */,
 				BEF031A02FD42D3900CD8FB2 /* PhotosFeatureKit in Frameworks */,
+				BEF071A02FD42D3900CD8FB2 /* PeopleKit in Frameworks */,
 				BEF041A02FD42D3900CD8FB2 /* AutoAlbumCore in Frameworks */,
 				BEF051A02FD42D3900CD8FB2 /* MobileCLIPKit in Frameworks */,
 				BEF061A02FD42D3900CD8FB2 /* MosaicSupport in Frameworks */,
@@ -141,6 +143,7 @@
 				BEF002A02FD42D3900CD8FB2 /* DropboxKit */,
 				BEF022A02FD42D3900CD8FB2 /* BackupKit */,
 				BEF032A02FD42D3900CD8FB2 /* PhotosFeatureKit */,
+				BEF072A02FD42D3900CD8FB2 /* PeopleKit */,
 				BEF042A02FD42D3900CD8FB2 /* AutoAlbumCore */,
 				BEF052A02FD42D3900CD8FB2 /* MobileCLIPKit */,
 				BEF062A02FD42D3900CD8FB2 /* MosaicSupport */,
@@ -233,6 +236,7 @@
 				BEF000A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/DropboxKit" */,
 				BEF020A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/BackupKit" */,
 				BEF030A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PhotosFeatureKit" */,
+				BEF070A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PeopleKit" */,
 				BEF040A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/AutoAlbumCore" */,
 				BEF050A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/MobileCLIPKit" */,
 				BEF060A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/MosaicSupport" */,
@@ -656,6 +660,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/MosaicSupport;
 		};
+		BEF070A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PeopleKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/PeopleKit;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -693,6 +701,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BEF060A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/MosaicSupport" */;
 			productName = MosaicSupport;
+		};
+		BEF072A02FD42D3900CD8FB2 /* PeopleKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEF070A02FD42D3900CD8FB2 /* XCLocalSwiftPackageReference "Packages/PeopleKit" */;
+			productName = PeopleKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

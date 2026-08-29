@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import BackupKit
 import DropboxKit
@@ -10,8 +11,10 @@ import SwiftUI
 
 /// 「このカードの写真をクラウド共有している」ことを示すバッジ。
 /// アイコンは共有導線（メニュー・設定）と同じ `icloud.and.arrow.up` に統一する。
-struct CloudSharedBadge: View {
-    var body: some View {
+public struct CloudSharedBadge: View {
+    public init() {}
+
+    public var body: some View {
         Image(systemName: "icloud.and.arrow.up")
             .font(.caption2.weight(.bold))
             .foregroundStyle(.white)
@@ -26,13 +29,18 @@ struct CloudSharedBadge: View {
 
 /// ピープルグループのカード。単人のカード（1 枚の顔アバター）と見分けがつくよう、
 /// メンバー顔の 2×2 コラージュ＋グループバッジ＋アクセント枠で表示する。
-struct PeopleGroupCard: View {
-    let group: PeopleGroupInfo
+public struct PeopleGroupCard: View {
+    public let group: PeopleGroupInfo
     /// このグループがクラウド共有中か（共有セットの sourceKey で判定）。
-    var isCloudShared = false
+    public var isCloudShared = false
     private static let side: CGFloat = 84
 
-    var body: some View {
+    public init(group: PeopleGroupInfo, isCloudShared: Bool = false) {
+        self.group = group
+        self.isCloudShared = isCloudShared
+    }
+
+    public var body: some View {
         VStack(spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
                 // グループであることは 2×2 コラージュ自体で伝わるので、追加のグループ印は
@@ -82,9 +90,9 @@ struct PeopleGroupCard: View {
 // MARK: - 作成・編集シート
 
 /// グループの作成/編集（名前＋メンバー複数選択）。`editing` が nil なら新規作成。
-struct PeopleGroupEditorSheet: View {
-    let peopleEngine: PeopleEngine
-    var editing: PeopleGroupInfo?
+public struct PeopleGroupEditorSheet: View {
+    public let peopleEngine: PeopleEngine
+    public var editing: PeopleGroupInfo?
 
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -96,7 +104,13 @@ struct PeopleGroupEditorSheet: View {
         peopleEngine.peopleGroupNameExists(name, excluding: editing?.id)
     }
 
-    var body: some View {
+
+    public init(peopleEngine: PeopleEngine, editing: PeopleGroupInfo? = nil) {
+        self.peopleEngine = peopleEngine
+        self.editing = editing
+    }
+
+    public var body: some View {
         NavigationStack {
             Form {
                 Section {
@@ -253,7 +267,7 @@ struct PeopleGroupActionsModifier: ViewModifier {
 }
 
 extension View {
-    func peopleGroupActions(for target: Binding<PeopleGroupInfo?>,
+    public func peopleGroupActions(for target: Binding<PeopleGroupInfo?>,
                             engine: PeopleEngine) -> some View {
         modifier(PeopleGroupActionsModifier(target: target, peopleEngine: engine))
     }
@@ -262,7 +276,7 @@ extension View {
 // MARK: - グループアルバム表示
 
 /// グループの写真アルバム（全メンバーの写真の合成・PersonAlbumView と同型）。
-struct PeopleGroupAlbumView: View {
+public struct PeopleGroupAlbumView: View {
     private let group: PeopleGroupInfo
     private let dropboxStore: DropboxPhotoStore
     private let peopleEngine: PeopleEngine
@@ -271,7 +285,7 @@ struct PeopleGroupAlbumView: View {
     @State private var store: MergedPhotoStore?
     @State private var menuTarget: PeopleGroupInfo?
 
-    init(group: PeopleGroupInfo, dropboxStore: DropboxPhotoStore,
+    public init(group: PeopleGroupInfo, dropboxStore: DropboxPhotoStore,
          assetIndex: LocalAssetIndex, peopleEngine: PeopleEngine) {
         self.group = group
         self.dropboxStore = dropboxStore
@@ -279,7 +293,7 @@ struct PeopleGroupAlbumView: View {
         self.assetIndex = assetIndex
     }
 
-    var body: some View {
+    public var body: some View {
         Group {
             if let store {
                 PhotoSourceContentView(store: store, title: group.name)
@@ -306,3 +320,4 @@ struct PeopleGroupAlbumView: View {
         }
     }
 }
+#endif

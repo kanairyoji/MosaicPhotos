@@ -1,5 +1,5 @@
 import Testing
-@testable import AutoAlbumCore
+@testable import PerceptionCore
 
 @Suite("AnalysisOrder (お気に入り優先の処理順)")
 struct AnalysisOrderTests {

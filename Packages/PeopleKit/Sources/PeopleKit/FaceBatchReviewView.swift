@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import MosaicSupport
 import PhotoSourceKit
@@ -9,10 +10,10 @@ import SwiftUI
 /// 数百〜数千に分裂したライブラリでは追いつかない。この画面は基準の人物に似たクラスタを
 /// 並べ、**違うものだけ外して一度に統合**する。統合するたびに基準が育ち、次の回では
 /// さらに遠い時期のクラスタが候補に入る（＝ユーザーの確認を種にした連鎖）。
-struct FaceBatchReviewView: View {
-    let peopleEngine: PeopleEngine
+public struct FaceBatchReviewView: View {
+    public let peopleEngine: PeopleEngine
     /// 特定の人物を基準にしたいとき（人物一覧から開いた場合）。
-    var anchorClusterID: Int?
+    public var anchorClusterID: Int?
 
     @Environment(\.dismiss) private var dismiss
     @State private var item: FaceBatchReviewItem?
@@ -41,7 +42,13 @@ struct FaceBatchReviewView: View {
         return selected.count == item.candidates.count
     }
 
-    var body: some View {
+
+    public init(peopleEngine: PeopleEngine, anchorClusterID: Int? = nil) {
+        self.peopleEngine = peopleEngine
+        self.anchorClusterID = anchorClusterID
+    }
+
+    public var body: some View {
         NavigationStack {
             Group {
                 if isLoading {
@@ -300,3 +307,4 @@ struct FaceBatchReviewView: View {
         shownCandidates[item.anchorClusterID, default: []].formUnion(ids)
     }
 }
+#endif

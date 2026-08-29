@@ -3385,7 +3385,16 @@
         }
       }
     },
-    "Still scanning photos — more will appear as it progresses.": {},
+    "Still scanning photos — more will appear as it progresses.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真をスキャン中です。進むにつれて増えていきます。"
+          }
+        }
+      }
+    },
     "Stop Cloud Sharing…": {
       "localizations": {
         "ja": {

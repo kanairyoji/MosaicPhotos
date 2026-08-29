@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import SwiftUI
 
@@ -6,14 +7,14 @@ import SwiftUI
 /// 成長期の子供がいるライブラリでは同一人物が多数のクラスタに分裂し得るため、ホームの
 /// 横スクロールカルーセルには枚数上位だけを出し、残りはここで扱う。枚数降順のグリッドに
 /// 名前検索と「まとめて確認」への導線を置き、分裂した人物を畳む作業をこの画面に集約する。
-struct AllPeopleView: View {
+public struct AllPeopleView: View {
     /// 表示のフロア（何枚以上をピープルに載せるか）を切り替えるため engine を受け取る。
-    let peopleEngine: PeopleEngine
-    let people: [PersonInfo]
-    let onSelect: (PersonInfo) -> Void
-    let onLongPress: (PersonInfo) -> Void
+    public let peopleEngine: PeopleEngine
+    public let people: [PersonInfo]
+    public let onSelect: (PersonInfo) -> Void
+    public let onLongPress: (PersonInfo) -> Void
     /// 「まとめて確認」（グリッド一括レビュー）。
-    var onBatchReview: (() -> Void)?
+    public var onBatchReview: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -31,7 +32,16 @@ struct AllPeopleView: View {
         people.filter { $0.name == nil && $0.count < 10 }.count
     }
 
-    var body: some View {
+
+    public init(peopleEngine: PeopleEngine, people: [PersonInfo], onSelect: @escaping (PersonInfo) -> Void, onLongPress: @escaping (PersonInfo) -> Void, onBatchReview: (() -> Void)?) {
+        self.peopleEngine = peopleEngine
+        self.people = people
+        self.onSelect = onSelect
+        self.onLongPress = onLongPress
+        self.onBatchReview = onBatchReview
+    }
+
+    public var body: some View {
         NavigationStack {
             ScrollView {
                 if unnamedSmallCount >= 50, let onBatchReview {
@@ -122,3 +132,4 @@ private struct PersonGridCell: View {
         }
     }
 }
+#endif

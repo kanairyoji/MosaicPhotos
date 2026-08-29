@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import PhotoSourceKit
 import SwiftUI
@@ -6,8 +7,8 @@ import SwiftUI
 /// 判断が割れる（＝学習価値が高い）ケースだけをカードで尋ね、回答が
 /// 統合・正例アンカー・負例・しきい値校正の材料になる＝**答えるほど認識精度が上がる**。
 /// 初回の一括確認（A3）もこの画面がそのまま担う（ピープルのヘッダーから開く）。
-struct FaceReviewView: View {
-    let peopleEngine: PeopleEngine
+public struct FaceReviewView: View {
+    public let peopleEngine: PeopleEngine
 
     @Environment(\.dismiss) private var dismiss
     @State private var items: [FaceReviewItem] = []
@@ -29,7 +30,12 @@ struct FaceReviewView: View {
     private static let columnPixel: CGFloat = 400
     private static let singlePixel: CGFloat = 480
 
-    var body: some View {
+
+    public init(peopleEngine: PeopleEngine) {
+        self.peopleEngine = peopleEngine
+    }
+
+    public var body: some View {
         NavigationStack {
             Group {
                 if isLoading {
@@ -314,3 +320,4 @@ struct FaceReviewView: View {
         index += 1
     }
 }
+#endif

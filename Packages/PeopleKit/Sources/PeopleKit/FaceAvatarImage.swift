@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import CoreGraphics
 import CryptoKit
 import MosaicSupport
@@ -12,16 +13,24 @@ import UIKit
 ///
 /// 表示のたびに PHImageManager からフル画像を取得→顔クロップし直すのはスクロールで体感が悪いため、
 /// 小さな `NSCache` を挟む（キー: refKey+box+maxPixel。メモリ圧迫時は NSCache が自動破棄）。
-struct FaceAvatarImage: View {
-    let refKey: String?
-    let box: CGRect?
-    var maxPixel: CGFloat = 400
+public struct FaceAvatarImage: View {
+    public let refKey: String?
+    public let box: CGRect?
+    public var maxPixel: CGFloat = 400
     /// 読込前・失敗時のプレースホルダ（既定: person アイコン）。
-    var placeholderIcon: String = "person.fill"
+    public var placeholderIcon: String = "person.fill"
 
     @State private var image: UIImage?
 
-    var body: some View {
+    public init(refKey: String?, box: CGRect?, maxPixel: CGFloat = 400,
+                placeholderIcon: String = "person.fill") {
+        self.refKey = refKey
+        self.box = box
+        self.maxPixel = maxPixel
+        self.placeholderIcon = placeholderIcon
+    }
+
+    public var body: some View {
         ZStack {
             Color(uiColor: .secondarySystemBackground)
             if let displayed {
@@ -142,3 +151,4 @@ enum FaceAvatarCache {
         return image
     }
 }
+#endif

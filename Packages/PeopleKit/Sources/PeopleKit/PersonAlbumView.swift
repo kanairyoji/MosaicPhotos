@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import AutoAlbumCore
 import DropboxKit
 import LocalPhotoKit
@@ -12,7 +13,7 @@ import UIKit
 /// 人物（顔クラスタ）の写真アルバム。メンバー限定の MergedPhotoStore（ローカル ID 絞り込み＋
 /// クラウド path 絞り込み）で、端末写真もクラウド写真も表示する（PlacePhotosView と同型）。
 /// ※ 顔検出はクラウドを 128px サムネで行うため、クラウドメンバーは大きく写った顔中心（ADR: option B）。
-struct PersonAlbumView: View {
+public struct PersonAlbumView: View {
     /// ⚠️ メンバーは**この画面が開いてから**取りに来る（`.task` で 1 回）。
     /// 以前は `person.memberRefKeys` を `init` で decode してストアを組み立てていたが、
     /// SwiftUI はビュー再評価のたびに `init` を呼ぶため、人物リストが再発行されるたびに
@@ -26,7 +27,7 @@ struct PersonAlbumView: View {
     /// 画面内「…」メニューの対象（設定すると人物メニュー＝改名/代表/顔管理/束ね が開く）。
     @State private var menuTarget: PersonInfo?
 
-    init(person: PersonInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
+    public init(person: PersonInfo, dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex,
          peopleEngine: PeopleEngine) {
         self.person = person
         self.dropboxStore = dropboxStore
@@ -35,7 +36,7 @@ struct PersonAlbumView: View {
         title = person.displayName
     }
 
-    var body: some View {
+    public var body: some View {
         Group {
             if let store {
                 content(store: store)
@@ -99,3 +100,4 @@ struct PersonAlbumView: View {
         return 1
     }
 }
+#endif
