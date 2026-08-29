@@ -23,11 +23,15 @@ final class PathAlbumGenerator {
             await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: [])
             return []
         }
-        let metas = await cloudProvider.cloudPhotos()
-        Diagnostics.mark("pathAlbum.fast: metas=\(metas.count) — computing…")
-        let infos = await Task.detached(priority: .utility) {
-            computePathAlbums(metas: metas, rules: rules)
-        }.value
+        // ⚠️ 68k 件のメタ取得＋計算はメモリを大きく積む。**札を立てて**背景の重いロード
+        // （モデルの読み込み等）と重ならないようにする（`HeavyLoad`・diagnostics-66）。
+        let infos = await HeavyLoad.span("pathAlbum.fast") {
+            let metas = await cloudProvider.cloudPhotos()
+            Diagnostics.mark("pathAlbum.fast: metas=\(metas.count) — computing…")
+            return await Task.detached(priority: .utility) {
+                computePathAlbums(metas: metas, rules: rules)
+            }.value
+        }
         Diagnostics.mark("pathAlbum.fast: done — albums=\(infos.count)")
         await store.replaceAlbums(forStrategy: PathAlbumStrategy.strategyID, with: infos)
         return infos

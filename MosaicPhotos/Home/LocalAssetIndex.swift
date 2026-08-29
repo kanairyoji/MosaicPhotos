@@ -42,6 +42,9 @@ final class LocalAssetIndex {
         buildTask?.cancel()
         buildTask = Task { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
+            // 18k 件の PHAsset 列挙も起動時の山に積み上がる（`HeavyLoad`・diagnostics-66）。
+            HeavyLoad.begin("assetIndex")
+            defer { HeavyLoad.end("assetIndex") }
             let built = await Task.detached(priority: .utility) { () -> [String: PHAsset] in
                 let result = PHAsset.fetchAssets(with: .image, options: nil)
                 var dict: [String: PHAsset] = [:]

@@ -21,6 +21,29 @@
 
 ---
 
+## ADR-122 起動の一括ロードは「札」を立て、中断できない背景ロードを重ねない
+- 状態: 採用
+- 文脈: 起動・復帰の数秒に、73k 件のキャッシュ実体化・68k 件のパスアルバム計算・86k 件のマージ・
+  18k 件のアセット索引が**同時に**走り、そこへ背景の CLIP テキストタワーのロード
+  （実測 12.9 秒・約 120MB）が重なって footprint が **569MB** に達した（実機 diagnostics-66）。
+  背面 568MB では実際に jetsam で落ち、復帰＝コールドリランチになっている（diagnostics-65）。
+  ⚠️ どれも単体では健全（0.3〜1.5 秒）で、**重なることだけが問題**。しかも重なった側の
+  モデルロードは直後に `cancelPrewarm` で捨てられており、ピークを作っただけで成果はゼロだった。
+- 決定: (1) `MosaicSupport.HeavyLoad` に「一括ロードが走っている」札を置く（ラベル別・多重可・
+  30 秒で自動失効＝背景処理を永久に止めない安全弁）。(2) 起動の 4 経路
+  （`cache.items` / `pathAlbum.fast` / `merged.rebuild` / `assetIndex`）が札を立てる。
+  (3) `BackgroundYield.heavyShouldPause()` が札を見る＝**背景のトリクルとモデルロードが順番を待つ**。
+  (4) `CLIPDisplayLabeler.prewarm()` は**ロードを始める直前**にもう一度ゲートを見て、閉じていれば降りる
+  （Task の生成時点と実行時点は、プロセス中断を挟んで大きくずれる）。以後は 8 語ごとにも見る。
+  ⚠️ **向きは一方通行**。背景ロードは起動処理を待つが、**起動処理が背景ロードを待つことはない**
+  （ユーザーが待っている処理を、誰も待っていない処理のために遅らせない）。
+- 結果: 起動時のピークが下がる。代償は「背景の準備が少し後ろへずれる」だけ（prewarm は
+  未完了でも実害なし＝insight は Vision タグで即返る）。札は失効するので、事故で立ちっぱなしに
+  なっても最大 30 秒で解ける。
+- 関連: `MosaicSupport/HeavyLoad.swift`・`BackgroundYield.heavyShouldPause`・
+  `CLIPDisplayLabeler.prewarm`・`DropboxPhotoStore.reflectCachedItems`・`PathAlbumGenerator.generateFast`・
+  `MergedPhotoStore.rebuildItems`・`LocalAssetIndex`。テスト `HeavyLoadTests`。ADR-121（同じログの前半）。
+
 ## ADR-121 SwiftData ストア（@ModelActor）は専用のシリアルキューで走らせる
 - 状態: 採用
 - 文脈: 実機で「重い SwiftData の読み出しがメインスレッドを塞ぐ」ハングを何度も踏んだ

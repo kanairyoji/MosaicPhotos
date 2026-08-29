@@ -17,11 +17,24 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     /// 構築中の Task（後続の呼び出しはこれに合流する＝約300回の text encode を二重に走らせない）。
     private var buildTask: Task<[(tag: String, vector: [Float])]?, Never>?
     private let maxTags = 6
+    /// ゲート確認の間隔（語数）。1 語ごとに MainActor へホップすると往復が 300 回になるので間引く。
+    private static let gateCheckStride = 8
     private let margin: Float = 0.04   // 最上位類似度からこの差以内のものを採用
 
     /// 概念埋め込み（約300語の text encode）を事前構築する（夜間パイプラインの先頭で呼ばれる）。
     /// これにより初回に写真を開いた瞬間の数秒の構築コストがフォアグラウンドから消える。
+    ///
+    /// ⚠️ **始める直前にもう一度ゲートを見る**（実機 diagnostics-65/66）。この Task が作られるのは
+    /// ゲートが開いた瞬間だが、実際に走り出すのは（プロセス中断を挟んで）ずっと後になり得る。
+    /// 最初の `encodeText` が CLIP テキストタワーのロード（実測 12.9 秒・約 120MB）を起こし、
+    /// **ロードは中断できない**ので、起動の一括ロードや前面復帰と重なると footprint が跳ねる
+    /// （569MB まで伸び、しかも直後に `cancelPrewarm` で捨てられていた＝完全な無駄）。
+    /// 判定は `heavyShouldPause()` に集約されている（`HeavyLoad` の札も含む）。
     public nonisolated func prewarm() async {
+        if await MainActor.run(body: { BackgroundYield.heavyShouldPause() }) {
+            Diagnostics.mark("labeler: prewarm deferred — heavy work paused before model load")
+            return
+        }
         _ = await ensureEmbeddings()
     }
 
@@ -97,6 +110,13 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
             //    途中結果は**確定させない**（nil を返す）＝ isReady は false のまま次の機会に作り直す。
             if Task.isCancelled {
                 Diagnostics.mark("labeler: prewarm cancelled at \(built.count)/\(concepts.count)")
+                return nil
+            }
+            // ⚠️ ゲートも 1 語ごとに見る（キャンセルだけでは足りない）。前面復帰や起動の一括ロードが
+            // 始まったら、`cancelPrewarm` が届かなくても自分から降りる。
+            if built.count % Self.gateCheckStride == 0,
+               await MainActor.run(body: { BackgroundYield.heavyShouldPause() }) {
+                Diagnostics.mark("labeler: prewarm yielded at \(built.count)/\(concepts.count)")
                 return nil
             }
             let tokens = tokenizer.encode("a photo of \(concept)")
