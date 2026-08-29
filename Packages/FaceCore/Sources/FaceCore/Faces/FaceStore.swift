@@ -415,6 +415,32 @@ actor FaceStore {
         clusteringCache = nil
     }
 
+    /// テスト用: 重心を差し替える（別人へ引きずられた状態＝ドリフトを作る）。
+    func setClusterSumForTesting(clusterID: Int, vector: [Float]) {
+        guard let c = cluster(clusterID) else { return }
+        c.sum = ClipMath.encodeHalf(vector)
+        clusteringCache = nil
+        try? modelContext.save()
+    }
+
+    /// テスト用: この人物のアンカーを外す（ADR-130 以前に作られた「名前だけの人物」を再現する）。
+    func clearAnchorsForTesting(clusterID: Int) {
+        for f in faces(inCluster: clusterID) { f.confirmedAt = nil }
+        cluster(clusterID)?.coverFaceID = nil
+        clusteringCache = nil
+        try? modelContext.save()
+    }
+
+    /// テスト用: クラスタ ID → 名前。
+    func namesByClusterForTesting() -> [Int: String] {
+        var out: [Int: String] = [:]
+        for c in allClusters() {
+            guard let n = c.name, !n.isEmpty else { continue }
+            out[c.clusterID] = n
+        }
+        return out
+    }
+
     /// テスト用: 現在の設定で組んだクラスタリング（免除の配線を検証する）。
     func loadClusteringForTesting() -> FaceClustering {
         clusteringCache = nil
@@ -457,6 +483,13 @@ actor FaceStore {
 
     /// クラスタごとのアンカー（確認済みの顔の正規化済み埋め込み・新しい順に最大 5）。
     /// B3 マルチプロトタイプ: 割り当ては「重心 or アンカーとの最大類似」になる。
+    /// この人物のアンカー（確認顔）の数。0 なら同一性の後ろ盾が無い＝再クラスタで乗っ取られ得る。
+    func anchorCount(clusterID: Int) -> Int {
+        let rows = countedFetchOptional(FetchDescriptor<DetectedFace>(
+            predicate: #Predicate { $0.clusterID == clusterID && $0.confirmedAt != nil })) ?? []
+        return rows.count
+    }
+
     func anchorsByCluster(limitPerCluster: Int = 5) -> [Int: [[Float]]] {
         let confirmed = (countedFetchOptional(FetchDescriptor<DetectedFace>(
             predicate: #Predicate { $0.confirmedAt != nil },

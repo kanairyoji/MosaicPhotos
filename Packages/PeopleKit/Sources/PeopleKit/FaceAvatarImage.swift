@@ -131,7 +131,8 @@ enum FaceAvatarCache {
         // （提案1/2/5）。ユーザーが待つ主写真ではないので UI に譲って構わない。
         let url = fileURL(for: keyString)
         let fromDisk = await Task.detached(priority: .utility) { () -> UIImage? in
-            await HeavyImageLane.run {
+            // ディスクの小さな JPEG を読むだけ＝ UI に譲る意味は無い（同時数のスロットだけ通す）。
+            await HeavyImageLane.run(yieldToUI: false) {
                 guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else { return nil }
                 return img.preparingForDisplay() ?? img
             }
@@ -141,7 +142,9 @@ enum FaceAvatarCache {
             return fromDisk
         }
 
-        guard let image = await HeavyImageLane.run(yieldToUI: true, {
+        // ⚠️ 譲るのは**短く**。ここはユーザーが今見ている画面の画像で、バルクの先読みではない
+        // （クラウドのサムネ取得中は UI ビジーが立ちっぱなしになり、無制限に譲ると 1 枚も出ない）。
+        guard let image = await HeavyImageLane.run(yieldToUI: true, maxYieldSeconds: 0.5, {
             await loadFaceAvatar(coverRefKey: refKey, box: box, maxPixel: maxPixel)
         }) else { return nil }
         cache.setObject(image, forKey: k)
