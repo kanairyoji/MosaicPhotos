@@ -37,3 +37,35 @@ public final class GenerationHandle<Value> {
         return true
     }
 }
+
+/// 「**最新の結果だけを反映する**」ための世代ガード（純ロジック・テスト対象）。
+///
+/// ⚠️ 何度も踏んだ形: 重い再構築をオフメインで走らせている最中に、次の再構築が始まる。
+/// `Task.isCancelled` の確認と代入の間にキャンセルされる競合は防げないので、確認だけでは
+/// **古いスナップショットが新しい結果を上書きし得る**（実機で「消したはずの一覧が戻る」
+/// 「畳んだ地図が古いピンに戻る」として出た）。採番した世代を結果に添え、代入の直前に照合する。
+///
+/// 使い方:
+/// ```swift
+/// let token = generation.next()
+/// let fresh = await Task.detached { heavy() }.value
+/// guard generation.isCurrent(token) else { return }   // 追い越されていたら捨てる
+/// items = fresh
+/// ```
+/// ⚠️ 「実行中の Task を安全に手放す」用途は `GenerationHandle`（上）。こちらは
+/// **結果を反映してよいか**だけを見る。混ぜない。
+@MainActor
+public struct GenerationGuard {
+    private var current = 0
+
+    public init() {}
+
+    /// 新しい世代を採番して返す（この実行の札）。
+    public mutating func next() -> Int {
+        current &+= 1
+        return current
+    }
+
+    /// その札がまだ現行か（＝追い越されていないか）。
+    public func isCurrent(_ token: Int) -> Bool { token == current }
+}
