@@ -304,10 +304,30 @@ extension FaceStore {
     }
 
     /// 代表写真（cover）を指定した顔に設定する。
+    ///
+    /// ⚠️ **代表写真を選ぶ＝「この人はこの顔」という表明**（ADR-130・ユーザー提案）。
+    /// 見た目の設定に留めず、確認顔（アンカー）として記録する——アンカーは再クラスタで
+    /// 動かない種になるので、この人物が別人に乗っ取られたり追い出されたりしなくなる。
     func setCover(clusterID: Int, faceID: String) {
         guard let c = cluster(clusterID) else { return }
         c.coverFaceID = faceID
+        confirmIdentity(faceID: faceID, clusterID: clusterID)
         try? modelContext.save()
+    }
+
+    /// この顔をこの人物の「確認済み」（アンカー）にする。既に確認済みなら何もしない。
+    /// 正例として `FaceCorrection` にも残す（ADR-46・再スキャンやモデル更新を跨いで効く）。
+    func confirmIdentity(faceID: String, clusterID: Int) {
+        guard let face = face(byID: faceID), face.confirmedAt == nil,
+              face.clusterID == clusterID else { return }
+        if let vec = ClipMath.decodeHalf(face.embedding),
+           let c = cluster(clusterID), let sum = ClipMath.decodeHalf(c.sum) {
+            let sim = FaceClustering.dot(FaceClustering.normalized(vec),
+                                         FaceClustering.normalized(sum))
+            recordCorrection(kind: "confirm", faceEmbedding: face.embedding,
+                             wrongEmbedding: nil, similarity: sim)
+        }
+        face.confirmedAt = Date()
     }
 
 }

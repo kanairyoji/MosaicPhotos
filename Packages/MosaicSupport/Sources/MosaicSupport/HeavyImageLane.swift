@@ -88,9 +88,21 @@ public enum HeavyImageLane {
 
     private static let gate = Gate(maxConcurrent: max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
 
-    /// UI がビジーな間は少しずつ眠って譲る（キャンセルで抜ける・最大待ちは呼び出し側の寿命に従う）。
-    public static func waitWhileUIBusy() async {
-        while BackgroundActivityMonitor.isUIBusySnapshot && !Task.isCancelled {
+    /// 譲る時間の既定の上限（秒）。
+    ///
+    /// ⚠️ **無制限に譲らない**（ADR-131）。`isUIBusySnapshot` には `cloudThumbnailBusy`
+    /// （Dropbox サムネのドレイン中）が入っており、数万枚のライブラリでは**分単位で立ちっぱなし**に
+    /// なる。無制限に待つと、その間に開いた画面の画像が**永久に出ない**——実害として
+    /// 「顔の管理」「代表写真を選ぶ」でサムネイルが 1 枚も出なかった。
+    /// 譲るのは「操作の瞬間を邪魔しない」ためであって、表示を諦めるためではない。
+    /// 同時実行数のスロット（下の Gate）は常に効いているので、上限を切っても burst にはならない。
+    public static let defaultMaxYieldSeconds: Double = 2
+
+    /// UI がビジーな間は少しずつ眠って譲る（キャンセルで抜ける・`maxSeconds` で打ち切る）。
+    public static func waitWhileUIBusy(maxSeconds: Double = defaultMaxYieldSeconds) async {
+        let deadline = Date().addingTimeInterval(maxSeconds)
+        while BackgroundActivityMonitor.isUIBusySnapshot && !Task.isCancelled
+                && Date() < deadline {
             try? await Task.sleep(nanoseconds: 200_000_000)   // 0.2s
         }
     }
@@ -99,8 +111,10 @@ public enum HeavyImageLane {
     /// body は**呼び出し側の実行コンテキスト**で in-place に走る（QoS は呼び出し側 Task の priority に従う・
     /// 結果は isolation 境界を跨がないので UIImage? など非 Sendable も返せる）。
     @discardableResult
-    public static func run<T>(yieldToUI: Bool = true, _ body: () async -> T) async -> T {
-        if yieldToUI { await waitWhileUIBusy() }
+    public static func run<T>(yieldToUI: Bool = true,
+                              maxYieldSeconds: Double = defaultMaxYieldSeconds,
+                              _ body: () async -> T) async -> T {
+        if yieldToUI { await waitWhileUIBusy(maxSeconds: maxYieldSeconds) }
         await gate.acquire()
         let result = await body()
         await gate.release()

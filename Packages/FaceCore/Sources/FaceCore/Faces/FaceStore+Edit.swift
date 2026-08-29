@@ -187,6 +187,14 @@ extension FaceStore {
     func rename(clusterID: Int, name: String?) {
         guard let c = cluster(clusterID) else { return }
         c.name = (name?.isEmpty == true) ? nil : name
+        // ⚠️ **名前を付ける＝人物の表明**（ADR-130）。アンカー（確認顔）が 1 つも無い人物は、
+        // 再クラスタのとき重心の向きしか手掛かりが無く、重心が別人へ寄っていると
+        // そのまま乗っ取られる（実害: 自分のアルバムが丸ごと娘のものになった）。
+        // 名前を付けた時点で見えていた顔＝代表顔をアンカーにして、同一性を固定する。
+        if c.name != nil, anchorCount(clusterID: clusterID) == 0,
+           let cover = bestCoverFace(inCluster: clusterID, coverFaceID: c.coverFaceID) {
+            confirmIdentity(faceID: cover.faceID, clusterID: clusterID)
+        }
         try? modelContext.save()
     }
 
