@@ -15,6 +15,10 @@ extension FaceStore {
     /// - 残りの顔を**品質降順**に割り当て（高品質の顔が先にクラスタの核を作る）。
     ///   しきい値は校正済み・負例も適用。
     /// 戻り値: (クラスタ数, 割り当てが変わった顔数)。
+    /// 種クラスタに載せる代表（プロトタイプ）の上限。1 顔ごとに全クラスタ×全代表と内積を取るので、
+    /// 上限が無いと確認を重ねた人物ほど再クラスタが重くなる（ADR-119）。
+    static let maxSeedPrototypes = 8
+
     func rebuildClusters() -> (clusters: Int, moved: Int) {
         let allFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
         // ⚠️ 顔が 0 件でも**素通りしない**。クラスタ行だけが残ると、その sum/count は
@@ -67,28 +71,69 @@ extension FaceStore {
             }
             let isSeed = (c.name?.isEmpty == false) || !anchors.isEmpty
             guard isSeed else { continue }
+            // アンカーは**代表顔を先頭**に、確認の新しい順から上限まで（`prototypes` は 1 顔ごとに
+            // 全候補と内積を取るので、増やしすぎると再クラスタが人数×アンカー数で重くなる）。
+            let orderedAnchors = ([coverFace].compactMap { $0 }
+                + anchors.filter { $0.faceID != coverFace?.faceID }
+                    .sorted { ($0.confirmedAt ?? .distantPast) > ($1.confirmedAt ?? .distantPast) })
+                .prefix(Self.maxSeedPrototypes)
             var sum: [Float] = []
             var count = 0
             var protos: [[Float]] = []
-            for a in anchors {
+            for a in orderedAnchors {
                 guard let vec = ClipMath.decodeHalf(a.embedding) else { continue }
                 if sum.isEmpty { sum = [Float](repeating: 0, count: vec.count) }
+                protos.append(FaceClustering.normalized(vec))
+            }
+            let anchorCentroid = protos.first.map { first -> [Float] in
+                var acc = first
+                for p in protos.dropFirst() {
+                    for i in acc.indices where i < p.count { acc[i] += p[i] }
+                }
+                return FaceClustering.normalized(acc)
+            }
+
+            // ⚠️⚠️ **ユーザーが表明した人物（名前 or 代表写真 or 確認顔）のメンバーは、
+            // 機械の都合で外に出さない**（ADR-132）。実フィードバック:
+            // 「すでに名前の付いているアルバムは、よほどのことが無い限り 2 つに分けたり、
+            //   構成するグループを切り分けたりは不要。そういうケースは一人ずつ確認する画面に
+            //   出して、ユーザーが『この人ではない』と指摘して初めて分割を検討すればよい」。
+            // 以前は**メンバー全員を毎晩プールへ戻して割り当て直していた**ので、しきい値・
+            // マージン・別クラスタの成長といった機械の都合だけで、名前を付けたアルバムの中身が
+            // 毎晩入れ替わり得た。今は既存メンバーはその人物に留め、外れるのは
+            // **ユーザーの指摘（負例）に一致した顔だけ**にする。
+            var pinnedMembers: [DetectedFace] = []
+            for m in members {
+                guard let vec = ClipMath.decodeHalf(m.embedding) else { continue }
+                // ユーザーが「この人ではない」と外した顔と同一人物なら、留めない
+                // （同じ誤りの再発を防ぐ・ADR-45 の負例エグゼンプラ）。
+                if let anchorCentroid,
+                   FaceClustering.negativeRejects(FaceClustering.normalized(vec),
+                                                  centroid: anchorCentroid, negatives: negatives,
+                                                  sameThreshold: tuning.negativeSameThreshold) {
+                    continue
+                }
+                pinnedMembers.append(m)
+                pinnedCluster[m.faceID] = c.clusterID
+                // 重心は**留めたメンバーの加重平均**（＝再クラスタ前と同じ向き）。アンカーは
+                // 上の `prototypes` として別に効くので、重心が薄まっても本人は引き当てられる。
+                guard FaceStore.contributesToCentroid(m) else { continue }
+                if sum.isEmpty || sum.allSatisfy({ $0 == 0 }) {
+                    sum = [Float](repeating: 0, count: vec.count)
+                    count = 0
+                }
                 let added = FaceClustering.adding(vec, toSum: sum, count: count,
-                                                  quality: Float(a.quality))
+                                                  quality: Float(m.quality))
                 sum = added.sum
                 count = added.count
-                protos.append(FaceClustering.normalized(vec))
-                pinnedCluster[a.faceID] = c.clusterID
             }
-            if sum.isEmpty {
-                guard let cur = ClipMath.decodeHalf(c.sum) else { continue }
-                sum = FaceClustering.normalized(cur)   // 現重心（方向のみ維持）
+            if sum.isEmpty || count == 0 {
+                // 留めるメンバーが 1 人も居ない（全員がユーザー指摘で外れた等）。
+                // 向きだけ現重心 or アンカーから維持する。
+                guard let fallback = anchorCentroid ?? ClipMath.decodeHalf(c.sum) else { continue }
+                sum = FaceClustering.normalized(fallback)
+                count = max(1, count)
             }
-            // ⚠️ **成熟度を引き継ぐ**。ここを票数（アンカー数）のままにすると、確立した人物が
-            // 作り直しの瞬間だけ「小さいクラスタ」になり、サイズ適応マージンで本人の顔が
-            // 入れなくなる（＝別人に乗っ取られる）。重心の向きはアンカーが決め、
-            // 大きさ（＝どれだけ動きにくいか）は以前の規模が決める。
-            count = max(count, members.filter { FaceStore.contributesToCentroid($0) }.count)
             seeds.append(FaceClustering.Cluster(
                 id: c.clusterID, centroid: FaceClustering.normalized(sum),
                 sum: sum, count: count, faceIDs: [], prototypes: protos))
@@ -97,7 +142,7 @@ extension FaceStore {
             // 顔が大きく入れ替わったときに名前を人の側へ持っていけるよう、旧メンバーを控える
             // （下の 3.5）。アンカーがある人物は種が動かないので対象外。
             if protos.isEmpty, let name = c.name, !name.isEmpty {
-                anchorlessNamed.append((c.clusterID, name, members.map(\.faceID)))
+                anchorlessNamed.append((c.clusterID, name, pinnedMembers.map(\.faceID)))
             }
         }
 

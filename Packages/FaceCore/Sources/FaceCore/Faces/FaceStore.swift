@@ -27,7 +27,12 @@ actor FaceStore {
         let schema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self,
                              FaceCorrection.self, PeopleGroupRecord.self])
         if isStoredInMemoryOnly {
-            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            // ⚠️ **名前を必ず変える**。同名（既定名）のインメモリ構成は、コンテナを作り直しても
+            // プロセス内で**同じストアを共有**する——テストが並列に走ると別スイートの顔が
+            // 流れ込み、しきい値ぎりぎりの検証が実行のたびに違う結果になる（実際に、単体では
+            // 通るのに一括実行では別のテストが落ちる、という形で表に出た）。
+            let memory = ModelConfiguration(UUID().uuidString, schema: schema,
+                                            isStoredInMemoryOnly: true)
             return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
         }
         return resilientModelContainer(name: "FacesV1", schema: schema) { Self.log.error($0) }
