@@ -75,6 +75,9 @@ extension FaceStore {
         clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
         clustering.negativeSameThreshold = tuning.negativeSameThreshold
         // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
+        // マージンゲートの免除（ADR-126・校正で bar が上がっているときだけ）。
+        clustering.rivalAwareMarginGate = Self.rivalAwareMarginGateWhenCalibratedUp
+            && clustering.threshold > tuning.clusterThreshold
         clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
         clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
         clustering.rivalAlikeMargin = tuning.rivalAlikeMargin

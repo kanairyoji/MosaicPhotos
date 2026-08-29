@@ -218,7 +218,7 @@ struct HomeView: View {
         }
         // 人物が多すぎてカルーセルに収まらないときの全一覧（ADR-68）。
         .sheet(isPresented: $showingAllPeople) {
-            AllPeopleView(people: peopleEngine.people,
+            AllPeopleView(peopleEngine: peopleEngine, people: peopleEngine.people,
                           onSelect: { destination = .person($0) },
                           onLongPress: { personActions = $0 },
                           onBatchReview: {

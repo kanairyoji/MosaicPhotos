@@ -93,3 +93,72 @@ struct FaceReviewFocusTests {
         #expect(!items.isEmpty, "注目人物についての質問が 1 つも出ない（絞りすぎ）")
     }
 }
+
+/// ピープルに載せる最小枚数（表示フロア・ADR-125）。
+///
+/// ⚠️ 実フィードバック: 「2 枚とか 5 枚しか顔写真がない人はピープルに載せなくて良い」。
+/// たまたま写り込んだ人が大量に並ぶと、本当に見たい人が埋もれる（実機で 1,000 人超）。
+/// ただし**名前を付けた人は枚数に関係なく残す**——名前はユーザーが関心を表明した唯一の印。
+@Suite("ピープルの表示フロア", .serialized)
+@MainActor
+struct PeopleDisplayFloorTests {
+
+    private func person(_ id: Int, count: Int, name: String?) -> PersonInfo {
+        PersonInfo(clusterID: id, name: name, count: count, coverRefKey: "L-\(id)",
+                   coverBoundingBox: .zero, memberRefKeys: [])
+    }
+
+    @Test("フロア未満の無名の人物は載せない／名前付きは枚数に関係なく載せる")
+    func filtersUnnamedBelowFloorButKeepsNamed() async {
+        let engine = PeopleEngine(faceProvider: nil)
+        let previous = engine.minPhotosForList
+        defer { engine.minPhotosForList = previous }
+        engine.minPhotosForList = 10
+        engine.setPeopleForTesting([
+            person(1, count: 300, name: "太郎"),     // 名前つき・大
+            person(2, count: 3, name: "花子"),       // 名前つき・小 → 残す
+            person(3, count: 40, name: nil),         // 無名・フロア以上 → 残す
+            person(4, count: 5, name: nil),          // 無名・フロア未満 → 消す
+            person(5, count: 2, name: nil)])         // 無名・フロア未満 → 消す
+
+        #expect(engine.people.map(\.clusterID) == [1, 2, 3])
+        #expect(engine.allPeople.count == 5, "全件は保持する（学習・内部処理の母数は変えない）")
+    }
+
+    @Test("フロアを下げると小さい人物も出てくる（隠したものを取り戻せる）")
+    func loweringTheFloorBringsThemBack() async {
+        let engine = PeopleEngine(faceProvider: nil)
+        let previous = engine.minPhotosForList
+        defer { engine.minPhotosForList = previous }
+        engine.setPeopleForTesting([person(1, count: 5, name: nil), person(2, count: 40, name: nil)])
+
+        engine.minPhotosForList = 10
+        #expect(engine.people.count == 1)
+        engine.minPhotosForList = 3
+        #expect(engine.people.count == 2, "フロアを下げても戻らないなら、隠したのではなく失っている")
+    }
+}
+
+/// マージンゲートの免除は「校正でしきい値が上がっているときだけ」効く（ADR-126）。
+///
+/// ⚠️ 条件を間違えると**測ったのと違う設定で動く**。既定値のままの端末で免除が効くと
+/// FG-NET 混在で F1 0.790→0.759 の退行になる（計測済み）。ここは設定の配線を固定する。
+@Suite("マージンゲート免除の条件", .serialized)
+struct RivalAwareGateConditionTests {
+
+    @Test("校正値が既定と同じなら免除しない／上がっていれば免除する")
+    func exemptionOnlyWhenCalibratedAboveDefault() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let defaultThreshold = FaceTuning.facenet.clusterThreshold      // 既定プロファイル
+        // 校正サンプルが無い＝既定値のまま → 免除しない。
+        let base = await store.loadClusteringForTesting()
+        #expect(base.threshold == defaultThreshold, "前提: 校正が効いていない状態")
+        #expect(base.rivalAwareMarginGate == false, "既定値のまま免除が効いている（計測と違う設定）")
+
+        // 校正で bar が上がった状態を作る → 免除する。
+        await store.setThresholdForTesting(defaultThreshold + 0.05)
+        let raised = await store.loadClusteringForTesting()
+        #expect(raised.threshold > defaultThreshold, "前提: しきい値が上がっている")
+        #expect(raised.rivalAwareMarginGate, "校正で上がったのに免除が効いていない")
+    }
+}

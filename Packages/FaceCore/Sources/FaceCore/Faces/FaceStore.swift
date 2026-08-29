@@ -59,6 +59,17 @@ actor FaceStore {
     }
 
     /// スケール非依存の構造定数（プロファイル共通）。
+    ///
+    /// **マージンゲートの免除（ADR-126）**: 校正でしきい値が既定より**上がっているときだけ**効かせる。
+    /// ⚠️ ADR-68 では「(a) ゲート免除は不採用」としたが、その計測は facenet の既定値（0.50）・
+    /// 全体集合のみだった。実フィードバック（名前を付けた数名が何十個にも割れる）を受けて
+    /// **混在シナリオ**（重い数人＋長い尾）で測り直したところ、判断が変わった:
+    /// - 実機の校正値 0.40 では LFW 混在の**上位5人の分裂 2.4 → 1.6（最悪 7 → 3）**、
+    ///   純度 0.927 → 0.926（−0.001）・F1 0.932 で**同値**＝ほぼ無料で分裂だけ減る。
+    /// - 既定値 0.35 では FG-NET 混在が F1 0.790 → 0.759 と**悪化**する。
+    /// 効くのは「校正が bar を上げた結果、同じ人の別クラスタどうしが恒常的に紛らわしくなった」
+    /// 状態のときだけ——だから**上がっているときだけ**免除する（`makeClustering`）。
+    static let rivalAwareMarginGateWhenCalibratedUp = true
     static let rivalAwareSizeMargin = true
     static let rivalAwareSizeMarginMaxPeople = 10
     static let capEffectiveThresholdWhenFewPeople = true
@@ -389,6 +400,18 @@ actor FaceStore {
         if !deferSave { try? modelContext.save() }
     }
 
+    /// テスト用: 校正済みしきい値を差し替える（校正サンプルを作らずに「bar が上がった状態」を作る）。
+    func setThresholdForTesting(_ value: Float) {
+        thresholdCache = value
+        clusteringCache = nil
+    }
+
+    /// テスト用: 現在の設定で組んだクラスタリング（免除の配線を検証する）。
+    func loadClusteringForTesting() -> FaceClustering {
+        clusteringCache = nil
+        return loadClustering()
+    }
+
     /// 永続化済みクラスタを `FaceClustering` に復元する（重心・件数・代表顔まで）。
     /// インメモリキャッシュがあればそれを使う（recordScan ごとの全復元を避ける）。
     func loadClustering() -> FaceClustering {
@@ -407,6 +430,9 @@ actor FaceStore {
         clustering.assignMargin = tuning.assignMargin   // マージンゲート（ADR-57）
         clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
         clustering.negativeSameThreshold = tuning.negativeSameThreshold
+        // マージンゲートの免除（ADR-126・校正で bar が上がっているときだけ）
+        clustering.rivalAwareMarginGate = Self.rivalAwareMarginGateWhenCalibratedUp
+            && clustering.threshold > tuning.clusterThreshold
         // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
         clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
         clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople

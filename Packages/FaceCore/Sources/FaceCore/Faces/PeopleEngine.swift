@@ -9,7 +9,19 @@ import Observation
 @MainActor
 @Observable
 public final class PeopleEngine {
-    public private(set) var people: [PersonInfo] = []
+    /// 認識できた人物の**全件**（写真 `minFaces` 枚以上）。表示は `people`（フロア適用後）を使う。
+    public private(set) var allPeople: [PersonInfo] = []
+
+    /// **ピープルに表示する**人物。枚数フロア（`minPhotosForList`）を下回る無名の人物は出さない。
+    ///
+    /// ⚠️ 実フィードバック: 「2 枚とか 5 枚しか顔写真がない人はピープルに載せなくて良い」。
+    /// たまたま写り込んだ人が大量に並ぶと、本当に見たい人が埋もれる（実機で 1,000 人超）。
+    /// **名前を付けた人は枚数に関係なく必ず出す**——名前はユーザーが関心を表明した唯一の印なので、
+    /// 枚数で消してはいけない（3 枚しかない親戚に名前を付けた、は普通に起きる）。
+    public var people: [PersonInfo] {
+        let floor = minPhotosForList
+        return allPeople.filter { $0.name != nil || $0.count >= floor }
+    }
     /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
     public private(set) var isLoaded = false
@@ -41,6 +53,33 @@ public final class PeopleEngine {
     /// 数枚しか写っていない人はトップに並べる価値が薄く、成長期の断片も混ざって列が埋まる。
     /// 「すべて表示」では `minFaces`（3 枚以上）の全員を出すので、埋もれて見えなくなることはない。
     public static let minFacesForCarousel = 6
+
+    // MARK: - ピープルに載せる最小枚数（実フィードバック）
+
+    /// 既定のフロア。「2 枚・5 枚しか写っていない人」を排し、「よく写っている人」は残す線。
+    /// ⚠️ ここは**表示だけ**の線で、学習（レビュー候補・名前解決・検索の接地）の母数は
+    /// `minFaces`（3 枚）のまま。表示から消すために学習材料まで捨てない。
+    public static let defaultMinPhotosForList = 10
+    public static let minPhotosForListKey = "peopleMinPhotosForList"
+    /// ユーザーが選べる段階（「すべて表示」のフィルタ）。
+    public static let minPhotosChoices = [3, 5, 10, 20]
+
+    /// ピープルに載せる最小枚数（永続・既定 `defaultMinPhotosForList`）。
+    public var minPhotosForList: Int {
+        get {
+            let stored = UserDefaults.standard.integer(forKey: Self.minPhotosForListKey)
+            return stored > 0 ? stored : Self.defaultMinPhotosForList
+        }
+        set {
+            guard newValue != minPhotosForList else { return }
+            UserDefaults.standard.set(newValue, forKey: Self.minPhotosForListKey)
+            // @Observable: `people` は `allPeople` から導出されるので、依存を触って再評価させる。
+            allPeople = allPeople
+        }
+    }
+
+    /// テスト用: 一覧を差し替える（表示フロアの検証用。ストアを立てずに済ませる）。
+    func setPeopleForTesting(_ list: [PersonInfo]) { allPeople = list }
 
     /// ホームのピープル列に出す人物（枚数の多い順）。
     public var prominentPeople: [PersonInfo] {
@@ -101,9 +140,10 @@ public final class PeopleEngine {
         isLoaded = true
         // ⚠️ 中身が同じなら**代入しない**。`@Observable` は代入だけで購読ビューを無効化するので、
         //    スキャン中や連続レビューでは「変化なしの再描画」が積み上がっていた（ADR-95）。
-        guard fresh != people else { return }
-        people = fresh
-        Diagnostics.mark("faces: people=\(people.count) (>= \(minFaces) faces, favs=\(favorites.count))")
+        guard fresh != allPeople else { return }
+        allPeople = fresh
+        Diagnostics.mark("faces: people=\(people.count)/\(allPeople.count) "
+                         + "(>= \(minPhotosForList) photos or named; scanned floor \(minFaces), favs=\(favorites.count))")
         // グループは人物一覧に対する解決なので、一覧が変わったときだけ作り直せば足りる。
         await reloadPeopleGroups()
     }
@@ -453,7 +493,7 @@ public final class PeopleEngine {
     /// 名前を付けた人物のフルネーム一覧（"Person N" の未命名は除く）。
     /// AI アルバムの人物名検索の接地カタログに使う。`people` は @Observable なので最新読み込み後に呼ぶ。
     public func namedClusterNames() -> [String] {
-        people.compactMap { $0.name }.filter { !$0.isEmpty }
+        allPeople.compactMap { $0.name }.filter { !$0.isEmpty }
     }
 
     /// スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」条件に使う
@@ -681,8 +721,9 @@ public final class PeopleEngine {
     /// クラスタ割り当て**規則**の版。しきい値以外のゲート規則を変えたら上げる（ADR-68）。
     /// 上げると次の夜間処理で全体が割り当て直される（顔の再スキャンは不要）。
     /// 1: ADR-57/58（マージンゲート＋サイズ適応）/ 2: ADR-68（競合を見る免除）/
-    /// 3: ADR-68 追補（校正上限 0.70→0.55・実効しきい値の頭打ち）
-    public static let clusterRuleVersion = 3
+    /// 3: ADR-68 追補（校正上限 0.70→0.55・実効しきい値の頭打ち）/
+    /// 4: ADR-126（校正で bar が上がっているときはマージンゲートを免除する）
+    public static let clusterRuleVersion = 4
 
     /// 修正が増えていたら全体を割り当て直す（夜間スキャン完了後に呼ばれる）。
     /// 命名済み/確認済みクラスタは ID・名前を保持し、確認顔は must-link として固定。

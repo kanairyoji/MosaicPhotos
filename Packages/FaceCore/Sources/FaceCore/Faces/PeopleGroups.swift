@@ -111,7 +111,9 @@ extension PeopleEngine {
     /// グループ一覧を読み直す（人物一覧の再構築後・グループ操作後に呼ぶ）。
     public func reloadPeopleGroups() async {
         let records = await store.allPeopleGroupRecords()
-        let current = people
+        // ⚠️ **全件**で解決する（表示フロアで隠した人物もグループの members には要る）。
+        // 表示フロアは「一覧に出すか」だけの線で、内部の解決の母数は変えない。
+        let current = allPeople
         peopleGroups = records.map {
             PeopleGroupInfo.resolve(id: $0.id, name: $0.name,
                                     memberClusterIDs: $0.memberClusterIDs,
