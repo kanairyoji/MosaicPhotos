@@ -175,6 +175,9 @@ public final class PeopleEngine {
     @ObservationIgnored private var reloadHoldCount = 0
     @ObservationIgnored private var reloadPendingWhileHeld = false
 
+    /// ピープル関連の画面を開いているか（＝顔スキャンは譲る）。
+    var isBrowsingPeople: Bool { reloadHoldCount > 0 }
+
     public func beginPeopleReloadHold() { reloadHoldCount += 1 }
 
     public func endPeopleReloadHold() {
@@ -302,11 +305,16 @@ public final class PeopleEngine {
             await self.tagger.scan(
                 candidateRefKeys: candidateRefKeys,
                 allowSimulator: allowSimulator,
-                shouldPause: {
+                shouldPause: { [weak self] in
                     // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との
                     // 相互排他）は BackgroundYield.heavyShouldPause に一元化。端末内写真の顔検出は
                     // 通信不要なので Wi-Fi は要求しない（ローカルゲート）。
-                    BackgroundYield.heavyShouldPause()
+                    if BackgroundYield.heavyShouldPause() { return true }
+                    // ⚠️ **ユーザーがピープルを触っている間は譲る**（ADR-142）。顔スキャンと
+                    // 人物一覧・レビューの候補探索は**同じ `@ModelActor` を奪い合う**ので、
+                    // スキャン中は一覧の読み込みが 0.4 秒 → 13 秒まで伸びていた（diagnostics-68）。
+                    // レビュー表示中の保留（ADR-95）と同じ合図をここでも使う。
+                    return self?.isBrowsingPeople ?? false
                 },
                 networkAllowed: {
                     // クラウド写真の顔検出はキャッシュ済みサムネDLを要するため回線ポリシーに従う。

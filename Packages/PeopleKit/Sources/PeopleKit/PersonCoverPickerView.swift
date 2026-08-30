@@ -52,6 +52,7 @@ public struct PersonCoverPickerView: View {
                 }
             }
             .navigationTitle(L("Choose Cover"))
+            .pausesFaceScan(peopleEngine)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

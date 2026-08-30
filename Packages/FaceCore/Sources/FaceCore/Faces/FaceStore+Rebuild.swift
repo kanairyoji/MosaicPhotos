@@ -323,6 +323,8 @@ extension FaceStore {
         try? modelContext.save()
         clusteringCache = nil
         negativesCache = nil   // 次スキャンで DB から読み直す（ジャーナルは残存）
+        calibrationSamplesCache = nil
+        thresholdCache = nil
     }
 
     /// **クラウド分だけ**スキャン結果を捨てる（ADR-90）。

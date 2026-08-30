@@ -73,4 +73,48 @@ struct FaceCalibrationTests {
         #expect(FaceCalibration.calibratedThreshold(positive: pos, negative: neg,
                                                     fallback: 0.50) == 0.50)
     }
+
+    /// ⚠️ **速くしたら結果が変わっていた**、を防ぐ（ADR-142）。候補ごとに全件を走査する
+    /// 素朴な実装（読みやすいが O(n²)）と、実装（並べ替えて 1 回舐める）を乱数で突き合わせる。
+    @Test("高速化しても結果は総当たりと同じ")
+    func sweepMatchesBruteForce() {
+        var rng = SystemRandomNumberGenerator()
+        for _ in 0..<20 {
+            var positive: [(Float, Double)] = []
+            var negative: [(Float, Double)] = []
+            for _ in 0..<Int.random(in: 10...60, using: &rng) {
+                positive.append((Float.random(in: 0.1...0.9, using: &rng),
+                                 Double.random(in: 0.2...1.0, using: &rng)))
+            }
+            for _ in 0..<Int.random(in: 10...60, using: &rng) {
+                negative.append((Float.random(in: 0.1...0.9, using: &rng),
+                                 Double.random(in: 0.2...1.0, using: &rng)))
+            }
+            let fast = FaceCalibration.calibratedThreshold(positive: positive, negative: negative)
+            let slow = bruteForceThreshold(positive: positive, negative: negative)
+            #expect(fast == slow, "総当たり \(slow) と実装 \(fast) が食い違う")
+        }
+    }
+
+    /// 素朴な総当たり（旧実装と同じ式）。テスト内にだけ置く。
+    private func bruteForceThreshold(positive: [(Float, Double)], negative: [(Float, Double)],
+                                     fallback: Float = FaceCalibration.defaultThreshold,
+                                     clamp: ClosedRange<Float> = FaceCalibration.clampRange) -> Float {
+        let posWeight = positive.reduce(0.0) { $0 + $1.1 }
+        let negWeight = negative.reduce(0.0) { $0 + $1.1 }
+        guard posWeight >= Double(FaceCalibration.minSamples),
+              negWeight >= Double(FaceCalibration.minSamples) else { return fallback }
+        var best = fallback
+        var bestScore = -Double.greatestFiniteMagnitude
+        for t in Set(positive.map(\.0)).union(negative.map(\.0)) {
+            let score = positive.filter { $0.0 >= t }.reduce(0.0) { $0 + $1.1 }
+                + negative.filter { $0.0 < t }.reduce(0.0) { $0 + $1.1 }
+            if score > bestScore
+                || (score == bestScore && abs(t - fallback) < abs(best - fallback)) {
+                best = t
+                bestScore = score
+            }
+        }
+        return min(max(best, clamp.lowerBound), clamp.upperBound)
+    }
 }

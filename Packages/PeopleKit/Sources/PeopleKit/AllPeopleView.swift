@@ -61,6 +61,7 @@ public struct AllPeopleView: View {
                 .padding(16)
             }
             .searchable(text: $query, prompt: L("Search people"))
+            .pausesFaceScan(peopleEngine)
             .navigationTitle(L("People"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

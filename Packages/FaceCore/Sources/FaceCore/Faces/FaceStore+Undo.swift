@@ -138,6 +138,7 @@ extension FaceStore {
         clusteringCache = nil
         negativesCache = nil
         thresholdCache = nil
+        calibrationSamplesCache = nil   // 記録を消したので材料も作り直す
         Self.log.info("faces: undo — \(record.label) (faces=\(record.faces.count) "
                       + "clusters=\(record.clusters.count) corrections=\(added.count))")
         return record.label

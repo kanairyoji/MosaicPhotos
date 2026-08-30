@@ -137,6 +137,12 @@ extension FaceStore {
             faceEmbedding: faceEmbedding, wrongEmbedding: wrongEmbedding,
             similarity: similarity.map(Double.init), confidence: confidence.rawValue,
             profile: tuning.name, createdAt: Date()))
+        // ⚠️ 校正の材料は**足すだけ**（全件を読み直さない・ADR-142）。
+        if var samples = calibrationSamplesCache, let sim = similarity {
+            FaceStore.appendCalibrationSample(kind: kind, similarity: sim,
+                                              weight: confidence.rawValue, to: &samples)
+            calibrationSamplesCache = samples
+        }
         negativesCache = nil
         thresholdCache = nil
         clusteringCache = nil   // しきい値が変わり得るため次スキャンで再構築
