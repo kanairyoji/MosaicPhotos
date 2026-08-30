@@ -24,6 +24,7 @@ public struct PersonInspectorView: View {
     @State private var report: PersonDecisionReport?
     /// いま調べているクラスタ ID。**読み込み中でも正しい名前を出す**ための単一の出典。
     @State private var focusClusterID: Int?
+    @State private var showingAnswerBasis = false
     @State private var loading = false
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
@@ -82,6 +83,16 @@ public struct PersonInspectorView: View {
                         await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: target)
                         if let focus { await load(clusterID: focus.clusterID) }
                     }
+                }
+            }
+            .sheet(isPresented: $showingAnswerBasis) {
+                NavigationStack {
+                    AnswerBasisView(peopleEngine: peopleEngine)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button(L("Close")) { showingAnswerBasis = false }
+                            }
+                        }
                 }
             }
             .sheet(isPresented: $showingPicker) {
@@ -195,6 +206,8 @@ public struct PersonInspectorView: View {
             Spacer()
             Menu {
                 Button(L("Choose Person…")) { showingPicker = true }
+                // 感覚ではなく自分の回答で基準を確かめる導線（ADR-148）。
+                Button(L("What your answers say…")) { showingAnswerBasis = true }
                 if let focus {
                     Button(L("Analyze Again")) { Task { await load(focus) } }
                 }

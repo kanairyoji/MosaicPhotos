@@ -21,12 +21,32 @@
         }
       }
     },
+    "%lld answers": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件"
+          }
+        }
+      }
+    },
     "%lld faces will move into “%@”. If it turns out to be wrong, you can fix it from Manage Faces.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "%1$lld 枚の顔が「%2$@」に入ります。違っていたら「顔の管理」から戻せます。"
+          }
+        }
+      }
+    },
+    "%lld missed ・ %lld wrongly included": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取りこぼし %1$lld ・ 取り違え %2$lld"
           }
         }
       }
@@ -77,6 +97,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "（なし）この人物にはまだ顔がありません。"
+          }
+        }
+      }
+    },
+    "(None) You haven’t answered any of these yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（なし）この種類の回答はまだありません。"
           }
         }
       }
@@ -171,6 +201,16 @@
         }
       }
     },
+    "Answer a few more to see the best split.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "もう少し回答が集まると、最適な境界が出せます。"
+          }
+        }
+      }
+    },
     "Answers are applied right away, and the next overnight analysis uses them too.": {
       "localizations": {
         "ja": {
@@ -197,6 +237,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "同じ人物ですか？"
+          }
+        }
+      }
+    },
+    "Asks you about pairs above": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この値以上は「同じ人ですか？」と尋ねる"
+          }
+        }
+      }
+    },
+    "Best split of your answers": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "あなたの回答を最もよく分ける境界"
           }
         }
       }
@@ -501,6 +561,16 @@
         }
       }
     },
+    "Different people": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別人と答えた"
+          }
+        }
+      }
+    },
     "Done": {
       "localizations": {
         "ja": {
@@ -541,6 +611,16 @@
         }
       }
     },
+    "Face to person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔と人物"
+          }
+        }
+      }
+    },
     "Faces you confirmed": {
       "localizations": {
         "ja": {
@@ -577,6 +657,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "似た人を探しています…"
+          }
+        }
+      }
+    },
+    "From “Are these the same person?” answers. The app never combines two people on its own — it only asks.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「同じ人ですか？」への回答から。アプリは人物どうしを自動では結合せず、尋ねるだけです。"
+          }
+        }
+      }
+    },
+    "From “Is this face this person?” answers. This is the scale used when a new face joins a person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「この顔はこの人ですか？」への回答から。新しい顔が人物に入るときの尺度はこちらです。"
           }
         }
       }
@@ -687,6 +787,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "2 つの顔がどれくらい似ているかを百分率で表したものです。100% は同じ顔です。"
+          }
+        }
+      }
+    },
+    "If your “same person” answers sit well above the value in use, matching is stricter than your own judgement. These numbers are measured, not guessed — use them when changing the rules.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「同じ人」と答えた分布が、いま効いている値よりかなり上に寄っているなら、判定はあなたの判断より厳しいということです。ここの数字は実測なので、規則を変えるときの根拠に使えます。"
+          }
+        }
+      }
+    },
+    "In use now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "いま効いている基準"
           }
         }
       }
@@ -1074,6 +1194,16 @@
         }
       }
     },
+    "Person to person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人物どうし"
+          }
+        }
+      }
+    },
     "Photos": {
       "localizations": {
         "ja": {
@@ -1160,6 +1290,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "同じ人"
+          }
+        }
+      }
+    },
+    "Same person": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ人と答えた"
           }
         }
       }
@@ -1494,6 +1634,26 @@
         }
       }
     },
+    "What your answers say": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "あなたの回答から見た基準"
+          }
+        }
+      }
+    },
+    "What your answers say…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "あなたの回答から見た基準…"
+          }
+        }
+      }
+    },
     "When you say “not this person”, the app remembers that face and keeps it out. Your corrections also decide how strict the matching is.": {
       "localizations": {
         "ja": {
@@ -1580,6 +1740,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "既定 %@"
+          }
+        }
+      }
+    },
+    "middle %@ ・ range %@–%@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中央値 %1$@ ・ 範囲 %2$@〜%3$@"
           }
         }
       }

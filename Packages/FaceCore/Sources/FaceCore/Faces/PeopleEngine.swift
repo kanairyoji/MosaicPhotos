@@ -645,6 +645,17 @@ public final class PeopleEngine {
         return 0
     }
 
+    /// いま効いている基準（比較のために画面へ出す）。
+    public func currentThresholds() async -> (calibrated: Float, base: Float, askBar: Float) {
+        await store.currentThresholds()
+    }
+
+    /// あなたの回答から見た「同じ人／別人」の分かれ方（ADR-148）。読み取り専用。
+    public func answerSimilarityProfile(kind: AnswerSimilarityProfile.Kind) async
+        -> AnswerSimilarityProfile {
+        await store.answerSimilarityProfile(kind: kind)
+    }
+
     /// 判定の内訳（Developer Options のチューニング用・ADR-135）。読み取り専用。
     public func decisionReport(clusterID: Int, limit: Int = 12) async -> PersonDecisionReport? {
         await store.decisionReport(clusterID: clusterID, limit: limit)
