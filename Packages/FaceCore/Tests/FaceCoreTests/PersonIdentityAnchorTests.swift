@@ -169,12 +169,21 @@ struct PersonIdentityAnchorTests {
         }
         // 別人 X: 本人とは cos 0.52（合流はするが「同一人物」判定 0.55 は下回る）。
         // X0 と X1 は互いに cos ≈ 0.99（＝同じ人の 2 枚）。
-        await store.recordScan(refKey: "L-x0", faces: [signal([0.52, 0, 0.854, 0])])
-        await store.recordScan(refKey: "L-x1", faces: [signal([0.52, 0, 0.841, 0.148])])
+        // ⚠️ 品質を下げる: 命名でアンカーになるのは代表顔（品質最良）で、混入した顔と本人の顔が
+        // **同点**だと、混入の方がアンカーになる回がある。そうなると (1) 混入は確認顔として
+        // 固定され (2) 負例の照合が本人の重心ではなく混入の向きで行われるため、
+        // 「指摘した顔と同一人物を留めない」が成立しない——実行のたびに落ちたり通ったりする
+        // （CI でだけ落ちた原因がこれ）。
+        await store.recordScan(refKey: "L-x0", faces: [signal([0.52, 0, 0.854, 0], quality: 0.7)])
+        await store.recordScan(refKey: "L-x1", faces: [signal([0.52, 0, 0.841, 0.148], quality: 0.7)])
         guard let aID = await clusterOfA(store) else {
             Issue.record("fixture: A のクラスタが作れていない"); return
         }
         await store.rename(clusterID: aID, name: "私")
+        // ユーザーは本人の顔を代表に選んでいる、という状態を**明示的に**作る（同点に頼らない）。
+        if let own = await store.facesForCluster(clusterID: aID).first(where: { $0.refKey == "L-a0" }) {
+            await store.setCover(clusterID: aID, faceID: own.faceID)
+        }
         let members = await store.memberRefKeysByCluster()[aID] ?? []
         // fixture の前提: 混入 2 枚とも「私」に入っている（ここが空だと何も検証していない）。
         #expect(members.contains("L-x0"))
