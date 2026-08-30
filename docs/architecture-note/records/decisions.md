@@ -21,6 +21,20 @@
 
 ---
 
+## ADR-158 一覧の ID は表示側でも一意化する（データの異常でアプリを落とさない）
+- 状態: 採用
+- 文脈: 人物・場所などの**メンバー限定アルバム**を開いた瞬間に `NSInternalInconsistencyException — supplied item identifiers are not unique` で落ちた（実機 diagnostics-69・547 枚のローカル写真のうち 65 枚が重複）。グリッドの土台 `UICollectionViewDiffableDataSource` は、スナップショットに同じ識別子が 2 つ入ると**例外を投げる**。メンバー一覧の出どころは 6 画面（人物 / 人物グループ / 場所 / 端末アルバム / 自動アルバム / 共有）あり、どこか 1 つが重複を作れば同じ結末になる。
+- 決定: 二段で塞ぐ。(1) **入口**＝`MergedPhotoStore.forMembers` で localID を先勝ちで一意化する（6 画面が必ず通る 1 箇所）。落とした件数は診断ログに出し、どの画面が重複を作っているかを次のログで特定できるようにする。(2) **出口**＝`PhotoCollectionView` のスナップショット構築で `uniquedByID` を通す。表示は読み取りにすぎないので、**データが壊れていても落とさず出せるところまで出す**（ADR-143 と同じ原則）。
+- 結果: 重複が残っていてもクラッシュしない。副作用として「同じ写真が 2 枚並ぶ」も消える。純関数（`uniquedByID` / `uniquedIdentifiers`）は macOS のテストで固定した（先勝ち・順序保存・セクション割り当て後も一意）。根本（誰が重複を作ったか）は診断ログで次に特定する。
+- 関連: `Packages/PhotoSourceKit/Sources/PhotoSourceKit/Support/UniqueByID.swift` / `Views/PhotoCollectionView.swift` / `Packages/PhotosFeatureKit/Sources/PhotosFeatureKit/MergedPhotoStore+Members.swift` / `UniqueByIDTests` / 事例「メンバーアルバムを開くと落ちる」・ADR-143。
+
+## ADR-157 「走って 0 件」と「走っていない」を必ず区別できるようにする（断片吸収の記録）
+- 状態: 採用
+- 文脈: 断片の自動吸収（ADR-154）は `absorbed > 0` のときだけ記録していた。実機ログ（diagnostics-69）には再クラスタが 2 回あるのに吸収の行が 1 行も無く、**「0 件だった」のか「早期 return で走らなかった」のかログから判定できなかった**。同じ形の困りごとは UI 側でも指摘されている（「候補が無いのかバグか分からない」）。
+- 決定: `FaceStore.absorbFragments` は**必ず** 1 行記録する。早期 return（クラスタ 2 未満・吸収先ゼロ）にもそれぞれ理由付きの記録を置き、通常終了では `absorbed / into / fragments / targets / skipped（bar・margin・blocked の内訳）/ tooBig / bar` を出す。呼び出し側（`PeopleEngine`）の重複記録は削除する。
+- 結果: 次の実機ログで「吸収が動いたか」「どの条件で見送ったか」「上限を上げれば何件が対象になるか（tooBig）」が 1 行で分かる。ADR-155 で保留した「断片の上限を 2 枚から上げるか」の判断材料が実測で得られる。
+- 関連: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Absorb.swift` / `PeopleEngine+Review.swift` / ADR-154 / ADR-155。
+
 ## ADR-156 一覧は「さらに表示」で伸ばす（ページ送りにしない）
 - 状態: 採用
 - 文脈: 「人物を調べるの似ている人・別の人かもしれない写真で、次の候補も見たい。

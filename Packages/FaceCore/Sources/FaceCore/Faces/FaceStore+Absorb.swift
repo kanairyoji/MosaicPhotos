@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import PerceptionCore
 import SwiftData
 
@@ -47,6 +48,7 @@ extension FaceStore {
         let photos = photoCountsByCluster()
         let clusters = allClusters()
         guard clusters.count >= 2 else {
+            Diagnostics.mark("faces: absorb — skipped (clusters=\(clusters.count))")
             return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0, skippedTooBig: 0)
         }
         let anchors = anchorsByCluster()
@@ -67,6 +69,10 @@ extension FaceStore {
         }
         let rivals = clusters.filter { (photos[$0.clusterID] ?? 0) >= 3 }
         guard !targets.isEmpty else {
+            // ⚠️ 黙って戻らない。**「走って 0 件」と「そもそも走っていない」は別**で、
+            // ログに何も出ないと実機で見分けられない（実機 diagnostics-69 で実際に詰まった）。
+            Diagnostics.mark("faces: absorb — 吸収先が無い（clusters=\(clusters.count) "
+                             + "min=\(Self.absorbTargetMinPhotos)枚かつ命名/確認済み）")
             return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0, skippedTooBig: 0)
         }
 
@@ -77,6 +83,8 @@ extension FaceStore {
                 && (anchors[c.clusterID] ?? []).isEmpty
         }
         var absorbed = 0, skipped = 0
+        // 見送りの内訳（どの条件で落ちたのかが分からないと、次にどこを緩めるか決められない）。
+        var belowBar = 0, marginal = 0, blockedCount = 0
         var into = Set<Int>()
         // 上限を上げれば対象になり得た数（無名・アンカーなしで、上限だけが理由の分）。
         let tooBig = clusters.filter { c in
@@ -102,9 +110,9 @@ extension FaceStore {
                     runnerUp = max(runnerUp, sim)
                 }
             }
-            guard let best, best.sim >= tuning.autoAbsorbBar else { skipped += 1; continue }
+            guard let best, best.sim >= tuning.autoAbsorbBar else { skipped += 1; belowBar += 1; continue }
             // 紛らわしい（2 位が近い）なら人に尋ねる。
-            guard best.sim - runnerUp >= Self.absorbMargin else { skipped += 1; continue }
+            guard best.sim - runnerUp >= Self.absorbMargin else { skipped += 1; marginal += 1; continue }
             // 同一写真・負例・「別人」記録があるものは触らない。
             let fragmentPhotos = refKeysByCluster[fragment.clusterID] ?? []
             guard fragmentPhotos.isDisjoint(with: refKeysByCluster[best.id] ?? []),
@@ -113,7 +121,7 @@ extension FaceStore {
                   !FaceClustering.negativeRejects(vector, centroid: targetCentroid,
                                                   negatives: negatives,
                                                   sameThreshold: tuning.negativeSameThreshold)
-            else { skipped += 1; continue }
+            else { skipped += 1; blockedCount += 1; continue }
 
             // ⚠️ **機械の判断はジャーナルにもアンカーにも残さない**（ADR-152）。
             if mergeClusters(from: fragment.clusterID, into: best.id,
@@ -125,8 +133,12 @@ extension FaceStore {
             }
         }
         if absorbed > 0 { try? modelContext.save(); clusteringCache = nil }
-        Self.log.info("faces: absorbed \(absorbed) fragments into \(into.count) people "
-                      + "(skipped=\(skipped) tooBig=\(tooBig) bar=\(tuning.autoAbsorbBar))")
+        // ⚠️ **0 件でも必ず記録する**（ADR-157）。上限（tooBig）と見送りの内訳は、
+        // 「断片は何枚まで自動で寄せてよいか」を実測で決めるための材料そのもの（ADR-155）。
+        Diagnostics.mark("faces: absorb — absorbed=\(absorbed) into=\(into.count) "
+                         + "fragments=\(fragments.count) targets=\(targets.count) "
+                         + "skipped=\(skipped)(bar=\(belowBar) margin=\(marginal) blocked=\(blockedCount)) "
+                         + "tooBig=\(tooBig) bar=\(tuning.autoAbsorbBar)")
         return FragmentAbsorbResult(absorbed: absorbed, people: into.count,
                                     skipped: skipped, skippedTooBig: tooBig)
     }

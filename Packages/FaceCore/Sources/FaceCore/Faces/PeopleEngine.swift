@@ -661,11 +661,9 @@ public final class PeopleEngine {
     /// 1〜2 枚の断片を、確立した人物へまとめる（ADR-154）。手動実行用。
     @discardableResult
     public func absorbFragments() async -> FragmentAbsorbResult {
+        // 結果（0 件も含む）の記録は `FaceStore.absorbFragments` が必ず行う（ADR-157）。
         let result = await store.absorbFragments()
         if result.absorbed > 0 {
-            Diagnostics.mark("faces: absorbed \(result.absorbed) fragments into "
-                             + "\(result.people) people (skipped=\(result.skipped) "
-                             + "tooBig=\(result.skippedTooBig))")
             await clearUndoHistory()   // 大量に動くので、戻す先が変わっている
             await loadPeople()
         }
