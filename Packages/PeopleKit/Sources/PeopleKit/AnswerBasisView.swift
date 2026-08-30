@@ -1,6 +1,8 @@
 #if canImport(UIKit)
 import AutoAlbumCore
+import MosaicSupport
 import SwiftUI
+import UIKit
 
 // MARK: - あなたの回答から見た基準（ADR-148）
 
@@ -20,6 +22,9 @@ public struct AnswerBasisView: View {
     @State private var calibrated: Float?
     @State private var base: Float?
     @State private var askBar: Float?
+    /// 書き出した CSV の一時ファイル（共有シートに渡す）。
+    @State private var exportFile: ExportFile?
+    @State private var exporting = false
 
     public var body: some View {
         List {
@@ -46,6 +51,25 @@ public struct AnswerBasisView: View {
         }
         .navigationTitle(L("What your answers say"))
         .navigationBarTitleDisplayMode(.inline)
+        // ⚠️ ヒストグラム（10% 刻み）では細かい判断ができない。**生の値**を外へ出せるようにする
+        // （写真も名前も含まない・種類と数字だけ）。要約は診断ログにも残るので、
+        // ログを送るだけでも読み取れる。
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { export() } label: {
+                    if exporting {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .disabled(exporting)
+                .accessibilityLabel(Text(L("Export numbers")))
+            }
+        }
+        .sheet(item: $exportFile) { file in
+            AnswerBasisShareSheet(url: file.url)
+        }
         .pausesFaceScan(peopleEngine)
         .task {
             pair = await peopleEngine.answerSimilarityProfile(kind: .personPair)
@@ -140,5 +164,36 @@ public struct AnswerBasisView: View {
     }
 
     private func percent(_ v: Float) -> String { "\(Int((v * 100).rounded()))%" }
+
+    /// 回答の生データを CSV で書き出して共有シートを開く。要約は診断ログへ。
+    private func export() {
+        exporting = true
+        Task {
+            let result = await peopleEngine.exportAnswerBasis()
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("face-answers.csv")
+            try? result.csv.write(to: url, atomically: true, encoding: .utf8)
+            exporting = false
+            exportFile = ExportFile(url: url)
+        }
+    }
+}
+
+/// `sheet(item:)` に URL を渡すためのラッパ。
+/// ⚠️ `URL: Identifiable` の後付け準拠（retroactive conformance）は**モジュール全体に効く**ので避ける。
+private struct ExportFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// 共有シート（CSV を書き出す）。
+private struct AnswerBasisShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 #endif

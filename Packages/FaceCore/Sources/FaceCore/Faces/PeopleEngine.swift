@@ -645,6 +645,14 @@ public final class PeopleEngine {
         return 0
     }
 
+    /// 回答の生データ（CSV）と要約。要約は診断ログにも残す（ADR-148）。
+    public func exportAnswerBasis() async -> (csv: String, summary: String) {
+        let csv = await store.answerSamplesCSV()
+        let summary = await store.answerBasisSummary()
+        Diagnostics.mark(summary)
+        return (csv, summary)
+    }
+
     /// いま効いている基準（比較のために画面へ出す）。
     public func currentThresholds() async -> (calibrated: Float, base: Float, askBar: Float) {
         await store.currentThresholds()

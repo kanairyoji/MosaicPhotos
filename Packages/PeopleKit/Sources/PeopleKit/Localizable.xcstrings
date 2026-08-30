@@ -611,6 +611,16 @@
         }
       }
     },
+    "Export numbers": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数字を書き出す"
+          }
+        }
+      }
+    },
     "Face to person": {
       "localizations": {
         "ja": {
