@@ -19,22 +19,27 @@ public struct FaceAvatarImage: View {
     public var maxPixel: CGFloat = 400
     /// 読込前・失敗時のプレースホルダ（既定: person アイコン）。
     public var placeholderIcon: String = "person.fill"
+    /// 収め方。⚠️ **写真全体を見たいときは `.fit`**（実フィードバック: 顔の拡大ではなく
+    /// 全体像を見たい）。`.fill` のままだと枠が正方形なので左右が切れて「全体」にならない。
+    public var contentMode: ContentMode = .fill
 
     @State private var image: UIImage?
 
     public init(refKey: String?, box: CGRect?, maxPixel: CGFloat = 400,
-                placeholderIcon: String = "person.fill") {
+                placeholderIcon: String = "person.fill",
+                contentMode: ContentMode = .fill) {
         self.refKey = refKey
         self.box = box
         self.maxPixel = maxPixel
         self.placeholderIcon = placeholderIcon
+        self.contentMode = contentMode
     }
 
     public var body: some View {
         ZStack {
             Color(uiColor: .secondarySystemBackground)
             if let displayed {
-                Image(uiImage: displayed).resizable().scaledToFill()
+                Image(uiImage: displayed).resizable().aspectRatio(contentMode: contentMode)
             } else {
                 Image(systemName: placeholderIcon)
                     .font(.system(size: 22))

@@ -1384,6 +1384,16 @@
         }
       }
     },
+    "Show face": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔だけ見る"
+          }
+        }
+      }
+    },
     "Show face only": {
       "localizations": {
         "ja": {
@@ -1409,7 +1419,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "写真全体を表示"
+            "value": "写真全体で見る"
           }
         }
       }

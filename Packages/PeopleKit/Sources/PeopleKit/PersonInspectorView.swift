@@ -25,6 +25,8 @@ public struct PersonInspectorView: View {
     /// いま調べているクラスタ ID。**読み込み中でも正しい名前を出す**ための単一の出典。
     @State private var focusClusterID: Int?
     @State private var showingAnswerBasis = false
+    /// 顔の切り抜きではなく**写真全体**で見る（実フィードバック: 全体像を見たい）。
+    @State private var showsWholePhoto = false
     @State private var loading = false
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
@@ -206,6 +208,7 @@ public struct PersonInspectorView: View {
             Spacer()
             Menu {
                 Button(L("Choose Person…")) { showingPicker = true }
+                Toggle(L("Show whole photo"), isOn: $showsWholePhoto)
                 // 感覚ではなく自分の回答で基準を確かめる導線（ADR-148）。
                 Button(L("What your answers say…")) { showingAnswerBasis = true }
                 if let focus {
@@ -270,6 +273,7 @@ public struct PersonInspectorView: View {
                                            focusClusterID: focus?.clusterID ?? -1,
                                            focusName: focusName,
                                            peopleEngine: peopleEngine,
+                                           showsWholePhoto: $showsWholePhoto,
                                            onFocus: { picked in
                         // その人物を対象に切り替えて、こちらの内訳を作り直す。
                         focus = peopleEngine.allPeople.first { $0.clusterID == picked }
@@ -350,8 +354,10 @@ public struct PersonInspectorView: View {
                                 Color.clear
                                     .aspectRatio(1, contentMode: .fit)
                                     .overlay {
-                                        FaceAvatarImage(refKey: face.refKey, box: face.boundingBox,
-                                                        maxPixel: 320)
+                                        FaceAvatarImage(refKey: face.refKey,
+                                                        box: showsWholePhoto ? nil : face.boundingBox,
+                                                        maxPixel: 320,
+                                                        contentMode: showsWholePhoto ? .fit : .fill)
                                     }
                                     .clipped()
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -500,6 +506,8 @@ private struct FaceClusterMembersView: View {
     /// 調査対象の表示名（「この人物は◯◯」の◯◯）。
     let focusName: String
     let peopleEngine: PeopleEngine
+    /// 顔の切り抜き／写真全体の切り替え（親と共有する）。
+    @Binding var showsWholePhoto: Bool
     /// この人物を内訳の対象に切り替える。
     let onFocus: (Int) -> Void
     /// この人物を調査対象の人物へ統合する。
@@ -525,7 +533,10 @@ private struct FaceClusterMembersView: View {
                         Color.clear
                             .aspectRatio(1, contentMode: .fit)
                             .overlay {
-                                FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 320)
+                                FaceAvatarImage(refKey: face.refKey,
+                                                box: showsWholePhoto ? nil : face.boundingBox,
+                                                maxPixel: 320,
+                                                contentMode: showsWholePhoto ? .fit : .fill)
                             }
                             .clipped()
                     }
@@ -536,6 +547,14 @@ private struct FaceClusterMembersView: View {
         }
         .navigationTitle("\(title)（\(faces.count)）")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showsWholePhoto.toggle() } label: {
+                    Image(systemName: showsWholePhoto ? "person.crop.square" : "photo")
+                }
+                .accessibilityLabel(Text(showsWholePhoto ? L("Show face") : L("Show whole photo")))
+            }
+        }
         // ⚠️ 「対象にする」だけでは**何の対象か分からない**（実フィードバック）。
         // 何が起きるかを書いた**フル幅のボタン**にする（ツールバーだと長い名前が入らない）。
         .safeAreaInset(edge: .bottom) {
@@ -635,7 +654,9 @@ private struct FaceClusterMembersView: View {
 
     private func conflictFace(_ face: PersonInfo.Face, caption: String) -> some View {
         VStack(spacing: 2) {
-            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 200)
+            FaceAvatarImage(refKey: face.refKey,
+                            box: showsWholePhoto ? nil : face.boundingBox, maxPixel: 200,
+                            contentMode: showsWholePhoto ? .fit : .fill)
                 .frame(width: 56, height: 56)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
