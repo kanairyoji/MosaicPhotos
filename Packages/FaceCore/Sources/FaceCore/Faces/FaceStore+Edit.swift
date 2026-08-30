@@ -342,8 +342,13 @@ extension FaceStore {
 
     /// 2 クラスタを統合する。**間違いの可能性が高い場合は拒否**して理由を返す（nil = 成功）。
     @discardableResult
+    /// - Parameter recordNotSameOnConflict: 同一写真で拒否したときに「別人」として学習するか。
+    ///   ⚠️ **ユーザーが自分で選んだ統合では false**（ADR-146）。ユーザーは「同じ人だ」と
+    ///   言っているのに、拒否のたびに反対の学習が積まれると、重なりを直しても二度と統合できない。
+    ///   自動サジェスト（レビュー）からの拒否は従来どおり記録する。
     func mergeClusters(from srcID: Int, into dstID: Int,
-                      confidence: AnswerConfidence = .high) -> MergeRejection? {
+                      confidence: AnswerConfidence = .high,
+                      recordNotSameOnConflict: Bool = true) -> MergeRejection? {
         guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return nil }
 
         // ガード1: 別々の名前が付いている＝ユーザーが既に「別人」と表明している。
@@ -358,7 +363,7 @@ extension FaceStore {
         let dstPhotos = Set(faces(inCluster: dstID).map(\.refKey))
         if !srcPhotos.isDisjoint(with: dstPhotos) {
             Self.log.info("faces: merge rejected — same-photo conflict (\(srcID) / \(dstID))")
-            markNotSamePerson(clusterA: srcID, clusterB: dstID)
+            if recordNotSameOnConflict { markNotSamePerson(clusterA: srcID, clusterB: dstID) }
             return .samePhotoConflict
         }
         mergeClustersUnchecked(src: src, dst: dst, confidence: confidence)

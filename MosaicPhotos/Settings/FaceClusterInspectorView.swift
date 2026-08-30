@@ -114,8 +114,11 @@ struct FaceClusterInspectorView: View {
                 mergeRejection = "両方に別々の名前が付いています。"
                     + "先にどちらかの名前を消すか、「同じ人として束ねる」を使ってください。"
             case .rejectedSamePhoto:
-                mergeRejection = "同じ写真に一緒に写っています（同一人物ではあり得ません）。"
-                    + "別人として記録しました。"
+                // ⚠️ 「別人として学習」はしない（ADR-146）。ユーザーは同じ人だと言っている。
+                // どの写真がぶつかっているかは、その人物の顔一覧に出る。
+                mergeRejection = "同じ写真に両方の顔があるため統合できません。"
+                    + "行をタップすると「重なっている写真」が出るので、"
+                    + "同じ顔を二重に拾っている場合は片方を外してください。"
                 await load(clusterID: destination)
             }
         }
@@ -205,6 +208,7 @@ struct FaceClusterInspectorView: View {
                 NavigationLink {
                     FaceClusterMembersView(clusterID: row.clusterID,
                                            title: row.name ?? "Person \(row.clusterID)",
+                                           focusClusterID: focus?.clusterID ?? -1,
                                            focusName: focusName,
                                            peopleEngine: peopleEngine,
                                            onFocus: { picked in
@@ -458,6 +462,8 @@ private struct InspectorPersonPicker: View {
 private struct FaceClusterMembersView: View {
     let clusterID: Int
     let title: String
+    /// 調査対象のクラスタ ID（重なりの照合に使う）。
+    let focusClusterID: Int
     /// 調査対象の表示名（「この人物は◯◯」の◯◯）。
     let focusName: String
     let peopleEngine: PeopleEngine
@@ -471,11 +477,14 @@ private struct FaceClusterMembersView: View {
     /// 「別の人へ移す」対象（顔のタップ）。
     @State private var reassignTarget: PersonInfo.Face?
     @State private var confirmingMerge = false
+    /// 同じ写真に一緒に写っている箇所（＝統合できない理由）。
+    @State private var conflicts: [(refKey: String, first: PersonInfo.Face, second: PersonInfo.Face)] = []
 
     private let columns = [GridItem(.adaptive(minimum: 90), spacing: 3)]
 
     var body: some View {
         ScrollView {
+            if !conflicts.isEmpty { conflictSection }
             LazyVGrid(columns: columns, spacing: 3) {
                 ForEach(faces) { face in
                     // タップで正しい人物へ移せる（誤りに気づく場所は 1 つではない・ADR-137）。
@@ -533,7 +542,10 @@ private struct FaceClusterMembersView: View {
             Text("\(faces.count) 枚の顔が「\(focusName)」に入ります。"
                  + "取り違えていた場合は、顔の管理から戻せます。")
         }
-        .task { faces = await peopleEngine.coverCandidates(clusterID: clusterID) }
+        .task {
+            faces = await peopleEngine.coverCandidates(clusterID: clusterID)
+            await reloadConflicts()
+        }
         .sheet(item: $reassignTarget) { face in
             FaceReassignPickerView(faceID: face.faceID, refKey: face.refKey,
                                    boundingBox: face.boundingBox,
@@ -546,4 +558,72 @@ private struct FaceClusterMembersView: View {
             }
         }
     }
+
+    /// 「同じ写真に一緒に写っている」ので統合できない箇所を出す（ADR-146）。
+    ///
+    /// ⚠️ 1 枚に同じ人は 1 回しか写れない——が、**重複検出・写真の中の写真・鏡**では破れる。
+    /// 破れているとユーザーは統合できず、しかも**どの写真が原因か分からない**（実フィードバック）。
+    /// 写真と両方の顔を並べ、その場で片方を外せるようにする。
+    private var conflictSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("重なっている写真（統合できない理由）")
+                .font(.subheadline.weight(.semibold))
+            Text("同じ写真に「\(focusName)」とこの人物の顔が両方あります。"
+                 + "同じ顔を二重に拾っている場合は、片方を外すと統合できます。")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(conflicts, id: \.refKey) { conflict in
+                conflictRow(conflict)
+            }
+        }
+        .padding(14)
+        .background(Color(uiColor: .secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+    }
+
+    private func conflictRow(
+        _ conflict: (refKey: String, first: PersonInfo.Face, second: PersonInfo.Face)
+    ) -> some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                // 写真全体（box なし）＝どの写真かが分かる。
+                FaceAvatarImage(refKey: conflict.refKey, box: nil, maxPixel: 300)
+                    .frame(width: 76, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                conflictFace(conflict.first, caption: focusName)
+                conflictFace(conflict.second, caption: title)
+            }
+            HStack(spacing: 8) {
+                Button("「\(focusName)」の顔を外す") { remove(conflict.first) }
+                    .buttonStyle(.bordered).font(.caption)
+                Button("「\(title)」の顔を外す") { remove(conflict.second) }
+                    .buttonStyle(.bordered).font(.caption)
+            }
+        }
+    }
+
+    private func conflictFace(_ face: PersonInfo.Face, caption: String) -> some View {
+        VStack(spacing: 2) {
+            FaceAvatarImage(refKey: face.refKey, box: face.boundingBox, maxPixel: 200)
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    /// 重なっている顔の片方を人物から外す（新しい人物になる）。外れれば統合できる。
+    private func remove(_ face: PersonInfo.Face) {
+        Task {
+            await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: nil)
+            faces = await peopleEngine.coverCandidates(clusterID: clusterID)
+            await reloadConflicts()
+        }
+    }
+
+    private func reloadConflicts() async {
+        guard focusClusterID >= 0, focusClusterID != clusterID else { conflicts = []; return }
+        conflicts = await peopleEngine.samePhotoConflicts(between: focusClusterID, and: clusterID)
+    }
+
 }

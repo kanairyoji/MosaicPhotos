@@ -492,3 +492,64 @@ struct RemovePhotoFromPersonTests {
         #expect(await store.solePersonClusterID(refKey: "L-none") == nil)
     }
 }
+
+/// 「同じ写真に一緒に写っている」で統合できないときの調整（ADR-146）。
+///
+/// ⚠️ 実フィードバック: 「近傍に同一人物を見つけて統合しようとしたら、同じ写真に写っていると
+/// 言われて統合できない。**どれが問題の写真か分からない**ので調整できない」。
+/// 1 枚に同じ人は 1 回しか写れない——が、重複検出・写真の中の写真・鏡では破れる。
+@Suite("同一写真の重なりを直す")
+struct SamePhotoConflictTests {
+
+    private func signal(_ v: [Float]) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(v), quality: 0.9)
+    }
+
+    /// 同じ写真に 2 つの顔（＝別クラスタに分かれる）＋それぞれ別の写真も持つ 2 人物。
+    private func makeStore() async -> (FaceStore, Int, Int) {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([1, 0, 0])]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([0, 1, 0])]) }
+        // 1 枚に両方の顔（同一写真 cannot-link で別クラスタになる）。
+        await store.recordScan(refKey: "L-both", faces: [signal([1, 0, 0]), signal([0, 1, 0])])
+        let map = await store.memberRefKeysByCluster()
+        let aID = map.first { $0.value.contains("L-a0") }?.key ?? -1
+        let bID = map.first { $0.value.contains("L-b0") }?.key ?? -1
+        return (store, aID, bID)
+    }
+
+    @Test("どの写真のどの顔がぶつかっているかを返す")
+    func conflictsAreVisible() async {
+        let (store, aID, bID) = await makeStore()
+        #expect(aID >= 0 && bID >= 0 && aID != bID, "fixture: 2 人物になっていない")
+
+        let conflicts = await store.samePhotoConflicts(between: aID, and: bID)
+        #expect(conflicts.count == 1, "重なりが 1 件出るはず: \(conflicts.count)")
+        #expect(conflicts.first?.refKey == "L-both")
+        #expect(conflicts.first?.first.faceID != conflicts.first?.second.faceID)
+    }
+
+    @Test("重なりを外せば統合できる。拒否では「別人」と学習しない")
+    func resolvingConflictAllowsMerge() async {
+        let (store, aID, bID) = await makeStore()
+        let before = await store.correctionCount()
+
+        // まずは拒否される。
+        #expect(await store.mergeClusters(from: bID, into: aID,
+                                          recordNotSameOnConflict: false) == .samePhotoConflict)
+        // ⚠️ ユーザーが選んだ統合なので「別人」を学習しない（学習すると二度と統合できない）。
+        #expect(await store.correctionCount() == before, "拒否で負例が積まれている")
+
+        // 重なっている片方を外す（重複検出だった、という判断）。
+        guard let conflict = await store.samePhotoConflicts(between: aID, and: bID).first else {
+            Issue.record("fixture: 重なりが無い"); return
+        }
+        await store.reassignFace(faceID: conflict.second.faceID, toClusterID: nil)
+
+        // これで統合できる。
+        #expect(await store.mergeClusters(from: bID, into: aID) == nil, "重なりを外しても統合できない")
+        let members = await store.memberRefKeysByCluster()[aID] ?? []
+        #expect(members.contains("L-b0"))
+    }
+}
