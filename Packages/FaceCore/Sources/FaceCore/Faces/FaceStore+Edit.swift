@@ -361,7 +361,8 @@ extension FaceStore {
     ///   自動サジェスト（レビュー）からの拒否は従来どおり記録する。
     func mergeClusters(from srcID: Int, into dstID: Int,
                       confidence: AnswerConfidence = .high,
-                      recordNotSameOnConflict: Bool = true) -> MergeRejection? {
+                      recordNotSameOnConflict: Bool = true,
+                      userInitiated: Bool = true) -> MergeRejection? {
         guard srcID != dstID, let src = cluster(srcID), let dst = cluster(dstID) else { return nil }
 
         // ガード1: 別々の名前が付いている＝ユーザーが既に「別人」と表明している。
@@ -384,22 +385,49 @@ extension FaceStore {
             if recordNotSameOnConflict { markSamePhotoBlock(clusterA: srcID, clusterB: dstID) }
             return .samePhotoConflict
         }
-        mergeClustersUnchecked(src: src, dst: dst, confidence: confidence)
+        mergeClustersUnchecked(src: src, dst: dst, confidence: confidence,
+                               userInitiated: userInitiated)
         return nil
     }
 
-    /// テスト用: ガードを迂回して統合する（旧ビルドで生じた違反状態の再現に使う）。
+    /// テスト用: **学習を残さずに**クラスタを割る（「割れている状態」を作るためだけの入口）。
+    /// ⚠️ 本番の `splitCluster` は負例を記録する（ADR-45）。fixture 作りでそれが入ると、
+    /// 直後の自動吸収が「ユーザーが外した顔」として正しく弾いてしまい、検証にならない。
+    func splitClusterForTesting(clusterID: Int, faceIDs: [String]) -> Int? {
+        let moving = faces(inCluster: clusterID).filter { faceIDs.contains($0.faceID) }
+        guard !moving.isEmpty else { return nil }
+        let newID = nextClusterID()
+        for f in moving {
+            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
+            let contributed = FaceStore.contributesToCentroid(f)
+            removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
+                              faceID: f.faceID, contributes: contributed)
+            addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID,
+                         contributes: true)
+            f.clusterID = newID
+            f.contributesToCentroid = true
+        }
+        try? modelContext.save()
+        clusteringCache = nil
+        return newID
+    }
+
+    /// テスト用: ガードを迂回して統合する（旧ビルドで生じた違反状態の再現に使う）。    /// テスト用: ガードを迂回して統合する（旧ビルドで生じた違反状態の再現に使う）。
     func forceMergeForTesting(from srcID: Int, into dstID: Int) {
         guard let src = cluster(srcID), let dst = cluster(dstID) else { return }
         mergeClustersUnchecked(src: src, dst: dst)
     }
 
+    /// - Parameter userInitiated: ユーザーの表明か。false（機械の自動吸収・ADR-154）なら
+    ///   **修正ジャーナルにもアンカーにも触れない**——機械の判断をユーザーの判断と混ぜない（ADR-152）。
     private func mergeClustersUnchecked(src: PersonCluster, dst: PersonCluster,
-                                        confidence: AnswerConfidence = .high) {
+                                        confidence: AnswerConfidence = .high,
+                                        userInitiated: Bool = true) {
         let srcID = src.clusterID, dstID = dst.clusterID
         // ADR-45/46: 統合（＝同一人物）を正例として記録。類似度は**統合前**の重心同士で測る
         //（統合後の dst.sum には src が混ざり、値が不当に高くなるため）。
-        if let sSum = ClipMath.decodeHalf(src.sum), let dSumBefore = ClipMath.decodeHalf(dst.sum) {
+        if userInitiated,
+           let sSum = ClipMath.decodeHalf(src.sum), let dSumBefore = ClipMath.decodeHalf(dst.sum) {
             let sim = FaceClustering.dot(FaceClustering.normalized(sSum),
                                          FaceClustering.normalized(dSumBefore))
             recordCorrection(kind: "merge", faceEmbedding: ClipMath.encodeHalf(sSum),
@@ -414,9 +442,11 @@ extension FaceStore {
         // 残すだけで、**顔には何の印も付かなかった**。印が無い人物は再クラスタの種にならず
         //（名前もアンカーも無い＝機械が作った断片と同じ扱い）、メンバーは毎回ばらされる。
         // 両側の代表 1 枚ずつをアンカーにすれば、その人物は種になり構成が保たれる（ADR-132）。
-        for face in [Self.bestCoverFace(moving), Self.bestCoverFace(faces(inCluster: dstID))] {
-            guard let face, face.confirmedAt == nil else { continue }
-            face.confirmedAt = Date()
+        if userInitiated {
+            for face in [Self.bestCoverFace(moving), Self.bestCoverFace(faces(inCluster: dstID))] {
+                guard let face, face.confirmedAt == nil else { continue }
+                face.confirmedAt = Date()
+            }
         }
         // 重心（生合計と件数）を合流。
         if let sSum = ClipMath.decodeHalf(src.sum), let dSum = ClipMath.decodeHalf(dst.sum) {

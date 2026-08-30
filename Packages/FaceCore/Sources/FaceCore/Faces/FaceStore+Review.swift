@@ -44,11 +44,16 @@ extension FaceStore {
         // どの段が重いのかログから分からなかった。段ごとに出す。
         let tCalib = PerfTrace.nowNs()
         let thr = calibratedThreshold()
-        PerfTrace.logSpan("people.batchReview.threshold", ms: PerfTrace.msSince(tCalib))
-        // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
+        PerfTrace.logSpan("people.review.threshold", ms: PerfTrace.msSince(tCalib))
+        // ⚠️ **候補は 1 枚のクラスタからも拾う**（ADR-154）。実フィードバック:
+        // 「1〜2 枚のグループがたくさんあって、4,000 枚の人物と同一人物なのに、確認画面に
+        // 出てこない」。母数を `minFaces`（3 枚）で切っていたため、**断片は候補にすら
+        // なっていなかった**。基準（アンカー）側は従来どおり確立した人物に絞る（ADR-123）。
         let tPool = PerfTrace.nowNs()
-        let clusters = peopleEligibleClusters(minFaces: minFaces)
-        PerfTrace.logSpan("people.batchReview.pool", ms: PerfTrace.msSince(tPool),
+        let photosPerCluster = photoCountsByCluster()
+        let clusters = allClusters().filter { (photosPerCluster[$0.clusterID] ?? 0) >= 1 }
+        let anchorPool = clusters.filter { (photosPerCluster[$0.clusterID] ?? 0) >= minFaces }
+        PerfTrace.logSpan("people.review.pool", ms: PerfTrace.msSince(tPool),
                           detail: "clusters=\(clusters.count)")
         guard clusters.count >= 1, !Task.isCancelled else { return [] }
 
@@ -354,10 +359,20 @@ extension FaceStore {
                          excludingAnchors: Set<Int> = [],
                          excludingCandidates: Set<Int> = [],
                          limit: Int = 24) -> FaceBatchReviewItem? {
+        let tCalib = PerfTrace.nowNs()
         let thr = calibratedThreshold()
-        // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
-        let clusters = peopleEligibleClusters(minFaces: minFaces)
-        guard clusters.count >= 2, !Task.isCancelled else { return nil }
+        PerfTrace.logSpan("people.batchReview.threshold", ms: PerfTrace.msSince(tCalib))
+        // ⚠️ **候補は 1 枚のクラスタからも拾う**（ADR-154）。実フィードバック:
+        // 「1〜2 枚のグループがたくさんあるのに確認画面に出てこない」。母数を `minFaces`（3 枚）で
+        // 切っていたため、**断片は候補にすらなっていなかった**。基準（アンカー）側は従来どおり
+        // 確立した人物に絞る（ADR-123）——断片を基準にすると畳む先が定まらない。
+        let tPool = PerfTrace.nowNs()
+        let photosPerCluster = photoCountsByCluster()
+        let clusters = allClusters().filter { (photosPerCluster[$0.clusterID] ?? 0) >= 1 }
+        let anchorPool = clusters.filter { (photosPerCluster[$0.clusterID] ?? 0) >= minFaces }
+        PerfTrace.logSpan("people.batchReview.pool", ms: PerfTrace.msSince(tPool),
+                          detail: "clusters=\(clusters.count) anchors=\(anchorPool.count)")
+        guard clusters.count >= 2, !anchorPool.isEmpty, !Task.isCancelled else { return nil }
 
         // 重心は `PersonCluster.sum` から作れる。**この段階では顔を 1 枚も読まない**
         // （ADR-123: 以前は全顔を射影で読んでから絞り込んでいた＝候補探しが数秒）。
@@ -372,7 +387,7 @@ extension FaceStore {
         // （同じ基準に固定されると、真の一致を出し切った後は候補が全部別人になり機能が死ぬ）。
         let anchor: PersonCluster? = {
             if let id = anchorClusterID { return clusters.first { $0.clusterID == id } }
-            let pool = Self.focusClusters(clusters).filter { !excludingAnchors.contains($0.clusterID) }
+            let pool = Self.focusClusters(anchorPool).filter { !excludingAnchors.contains($0.clusterID) }
             return pool.max { $0.count < $1.count }
         }()
         guard let anchor, let anchorCentroid = centroid[anchor.clusterID] else { return nil }

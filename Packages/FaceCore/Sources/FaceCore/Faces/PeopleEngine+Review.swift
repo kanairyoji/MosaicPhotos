@@ -214,6 +214,12 @@ extension PeopleEngine {
         let result = await store.rebuildClusters()
         // 再クラスタの後は**戻す先が変わっている**（クラスタ ID も構成も）。控えは捨てる。
         await clearUndoHistory()
+        // 1〜2 枚の断片を確立した人物へ寄せる（ADR-154）。人物どうしの結合は自動化しない。
+        let absorbed = await store.absorbFragments()
+        if absorbed.absorbed > 0 {
+            Diagnostics.mark("faces: absorbed \(absorbed.absorbed) fragments into "
+                             + "\(absorbed.people) people (skipped=\(absorbed.skipped))")
+        }
         defaults.set(current, forKey: markerKey)
         defaults.set(scanned, forKey: scanMarkerKey)
         defaults.set(Date(), forKey: dateMarkerKey)
@@ -232,6 +238,12 @@ extension PeopleEngine {
         let result = await store.rebuildClusters()
         // 再クラスタの後は**戻す先が変わっている**（クラスタ ID も構成も）。控えは捨てる。
         await clearUndoHistory()
+        // 1〜2 枚の断片を確立した人物へ寄せる（ADR-154）。人物どうしの結合は自動化しない。
+        let absorbed = await store.absorbFragments()
+        if absorbed.absorbed > 0 {
+            Diagnostics.mark("faces: absorbed \(absorbed.absorbed) fragments into "
+                             + "\(absorbed.people) people (skipped=\(absorbed.skipped))")
+        }
         Diagnostics.mark("faces: manual rebuild — clusters=\(result.clusters) moved=\(result.moved)")
         await loadPeople()
     }

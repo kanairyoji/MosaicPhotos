@@ -22,6 +22,12 @@ public struct FaceTuning: Sendable, Equatable {
     public var rivalAlikeMargin: Float
     /// 「同じ人ですか？」と**尋ねる**下限（ADR-150）。低すぎると当たらない対ばかり出す。
     public var mergeCandidateFloor: Float
+    /// **断片を自動で吸収する**バー（ADR-154）。1〜2 枚の無名クラスタを、確立した人物へ
+    /// 機械的に寄せてよい近さ。事前選択（`autoSuggestBar`）より低くできるのは、
+    /// **失敗の代償が小さい**から——断片 1〜2 枚が入っても大きな人物の重心は動かず、
+    /// 間違いは 1 枚外すだけで直る（人物どうしの結合は取り返しが付かないので自動化しない）。
+    public var autoAbsorbBar: Float
+
     /// **あらかじめ選んでおく**（まとめて確認）バー（ADR-153）。
     ///
     /// ⚠️ 自動で結合するのではなく、**チェックを付けた状態で見せる**ための値。実機 7,710 件の
@@ -44,7 +50,7 @@ public struct FaceTuning: Sendable, Equatable {
         name: "facenet",
         clusterThreshold: 0.50, assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
         secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.50,
-        autoSuggestBar: 0.90,
+        autoAbsorbBar: 0.80, autoSuggestBar: 0.90,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
         auditMinMargin: 0.25, auditMaxSeparation: 0.35)
 
@@ -55,7 +61,7 @@ public struct FaceTuning: Sendable, Equatable {
         name: "arcface",
         clusterThreshold: 0.35, assignMargin: 0.04, sizeAdaptiveMarginMax: 0.08,
         secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.40,
-        autoSuggestBar: 0.85,
+        autoAbsorbBar: 0.75, autoSuggestBar: 0.85,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
         auditMinMargin: 0.20, auditMaxSeparation: 0.40)
 

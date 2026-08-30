@@ -15,6 +15,17 @@ extension FaceStore {
     /// 「UI には人物として出るが `count` は 1〜2」というクラスタが大多数になる。
     /// レビュー側が `count` で母数を絞っていたため、**UI の 370 人のうち大半が統合候補に
     /// 上がらない**という実障害になっていた（ADR-68 追補3）。判定はここに一本化する。
+    /// クラスタ ID → 写真枚数（射影 1 回・ADR-119）。母数の判定に使う。
+    func photoCountsByCluster() -> [Int: Int] {
+        var photosPerCluster: [Int: Set<String>] = [:]
+        var query = FetchDescriptor<DetectedFace>()
+        query.propertiesToFetch = [\.clusterID, \.refKey]
+        for f in (countedFetchOptional(query)) ?? [] where f.clusterID >= 0 {
+            photosPerCluster[f.clusterID, default: []].insert(f.refKey)
+        }
+        return photosPerCluster.mapValues(\.count)
+    }
+
     func peopleEligibleClusters(minFaces: Int) -> [PersonCluster] {
         var photosPerCluster: [Int: Set<String>] = [:]
         // 必要なのは clusterID と refKey だけ。射影して `embedding`（約1KB/顔）を読まない（ADR-96）。

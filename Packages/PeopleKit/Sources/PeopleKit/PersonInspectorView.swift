@@ -27,6 +27,8 @@ public struct PersonInspectorView: View {
     @State private var showingAnswerBasis = false
     /// 顔の切り抜きではなく**写真全体**で見る（実フィードバック: 全体像を見たい）。
     @State private var showsWholePhoto = false
+    /// 断片をまとめた結果（件数を知らせる）。
+    @State private var absorbMessage: String?
     @State private var loading = false
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
@@ -112,6 +114,12 @@ public struct PersonInspectorView: View {
             } message: { row in
                 Text(L("\(row.photoCount) photos will move into “\(focusName)”. If it turns out to be wrong, you can fix it from Manage Faces."))
             }
+            .alert(L("Tidy up small groups"), isPresented: Binding(
+                get: { absorbMessage != nil }, set: { if !$0 { absorbMessage = nil } })) {
+                Button(L("OK")) { absorbMessage = nil }
+            } message: {
+                Text(absorbMessage ?? "")
+            }
             .alert(L("Can’t combine"), isPresented: Binding(get: { mergeRejection != nil },
                                                   set: { if !$0 { mergeRejection = nil } })) {
                 Button(L("OK")) { mergeRejection = nil }
@@ -172,6 +180,20 @@ public struct PersonInspectorView: View {
         }
     }
 
+    /// 1〜2 枚の断片を、確立した人物へまとめる（ADR-154）。
+    private func absorbFragments() {
+        Task {
+            let result = await peopleEngine.absorbFragments()
+            let absorbed = result.absorbed
+            let people = result.people
+            let skipped = result.skipped
+            absorbMessage = absorbed == 0
+                ? L("Nothing to tidy up. \(skipped) small groups were left alone because another person is just as close.")
+                : L("Moved \(absorbed) small groups into \(people) people. \(skipped) were left alone.")
+            if let focus { await load(clusterID: focus.clusterID) }
+        }
+    }
+
     private func load(_ person: PersonInfo) async {
         await load(clusterID: person.clusterID)
     }
@@ -211,6 +233,8 @@ public struct PersonInspectorView: View {
                 Toggle(L("Show whole photo"), isOn: $showsWholePhoto)
                 // 感覚ではなく自分の回答で基準を確かめる導線（ADR-148）。
                 Button(L("What your answers say…")) { showingAnswerBasis = true }
+                // 1〜2 枚の断片をまとめて寄せる（ADR-154）。人物どうしの結合は自動化しない。
+                Button(L("Tidy up small groups")) { absorbFragments() }
                 if let focus {
                     Button(L("Analyze Again")) { Task { await load(focus) } }
                 }

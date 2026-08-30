@@ -974,6 +974,16 @@
         }
       }
     },
+    "Moved %lld small groups into %lld people. %lld were left alone.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 個の小さなグループを %2$lld 人にまとめました（%3$lld 個は判断が付かないので残しています）。"
+          }
+        }
+      }
+    },
     "Moves this photo’s face to the person you choose. The app learns from this, so the same face goes to that person next time.": {
       "localizations": {
         "ja": {
@@ -1140,6 +1150,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "いま確認するものはありません。"
+          }
+        }
+      }
+    },
+    "Nothing to tidy up. %lld small groups were left alone because another person is just as close.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめられるものはありませんでした（%lld 個は、同じくらい近い別の人物がいるため残しています）。"
           }
         }
       }
@@ -1620,6 +1640,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "この人物には名前も確認済みの顔もないため、写真の並びがひとりでに変わることがあります。名前を付ける・代表写真を選ぶ・顔を確認する のどれかをすると、そのまま保たれます。"
+          }
+        }
+      }
+    },
+    "Tidy up small groups": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "小さなグループをまとめる"
           }
         }
       }
