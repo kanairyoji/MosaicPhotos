@@ -9,6 +9,9 @@ import SwiftData
 public struct PersonDecisionFocus: Sendable, Equatable {
     public let clusterID: Int
     public let name: String?
+    /// 代表顔（画面の固定ヘッダに出す）。
+    public var coverRefKey: String?
+    public var coverBoundingBox: CGRect?
     /// 重心に寄与しているメンバー数（サイズ適応マージンの入力）。
     public let centroidCount: Int
     /// 写真の数（表示上の「枚数」）。
@@ -25,6 +28,9 @@ public struct PersonDecisionFocus: Sendable, Equatable {
 public struct PersonDecisionRow: Sendable, Identifiable, Equatable {
     public let clusterID: Int
     public let name: String?
+    /// 代表顔（一覧に出す・「Person 1234」だけでは誰か分からないため）。
+    public var coverRefKey: String?
+    public var coverBoundingBox: CGRect?
     public let centroidCount: Int
     public let photoCount: Int
     public let anchorCount: Int
@@ -131,9 +137,30 @@ extension FaceStore {
         }
         let outliers = outlierFaces(clusterID: clusterID, centroid: focusVec,
                                     threshold: settings.threshold, limit: 24)
+
+        // 代表顔（焦点＋近傍）。**必要なクラスタの顔だけ**を射影で取る（ADR-119）。
+        var needed = Set(rows.map(\.clusterID))
+        needed.insert(clusterID)
+        let digests = faceDigests(inClusters: needed)
+        let coverIDs = Dictionary(clusters.map { ($0.clusterID, $0.coverFaceID) },
+                                  uniquingKeysWith: { first, _ in first })
+        func cover(_ id: Int) -> (String, CGRect)? {
+            guard let members = digests[id], !members.isEmpty else { return nil }
+            let pick = coverIDs[id].flatMap { fid in members.first { $0.faceID == fid } }
+                ?? members.max { $0.coverScore < $1.coverScore }
+            return pick.map { ($0.refKey, $0.box) }
+        }
+        rows = rows.map { row in
+            var row = row
+            if let c = cover(row.clusterID) { row.coverRefKey = c.0; row.coverBoundingBox = c.1 }
+            return row
+        }
+        let focusCover = cover(clusterID)
         return PersonDecisionReport(
             focus: PersonDecisionFocus(
-                clusterID: clusterID, name: focus.name, centroidCount: focus.count,
+                clusterID: clusterID, name: focus.name,
+                coverRefKey: focusCover?.0, coverBoundingBox: focusCover?.1,
+                centroidCount: focus.count,
                 photoCount: focusPhotos.count,
                 anchorCount: (anchors[clusterID] ?? []).count,
                 hasCover: focus.coverFaceID != nil,

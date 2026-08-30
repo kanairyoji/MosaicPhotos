@@ -25,7 +25,15 @@ struct FaceClusterInspectorView: View {
     @State private var mergeRejection: String?
 
     var body: some View {
-        presentations(listContent)
+        presentations(
+            VStack(spacing: 0) {
+                // ⚠️ スクロールしても**誰を調べているか**が消えないよう、List の外に出して固定する
+                //（実フィードバック: 「下へ送ると調査対象が分からなくなる」）。
+                focusHeader
+                Divider()
+                listContent
+            }
+        )
             .navigationTitle("クラスタリングの内訳")
             .navigationBarTitleDisplayMode(.inline)
             // 問い合わせが重いので、開いている間は顔スキャンに譲らせる（ADR-142）。
@@ -39,7 +47,6 @@ struct FaceClusterInspectorView: View {
 
     private var listContent: some View {
         List {
-            focusSection
             if let report {
                 settingsSection(report)
                 statusSection(report.focus)
@@ -124,25 +131,36 @@ struct FaceClusterInspectorView: View {
         loading = false
     }
 
-    private var focusSection: some View {
-        Section {
-            Button {
-                showingPicker = true
-            } label: {
-                HStack {
-                    Text("調査対象の人物")
-                    Spacer()
-                    Text(focus?.displayName ?? "選ぶ").foregroundStyle(.secondary)
+    /// 画面上部に固定する「調査対象の人物」。代表写真・枚数・状態を一目で出す。
+    private var focusHeader: some View {
+        HStack(spacing: 12) {
+            FaceAvatarImage(refKey: report?.focus.coverRefKey,
+                            box: report?.focus.coverBoundingBox, maxPixel: 240)
+                .frame(width: 52, height: 52)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text("調査対象").font(.caption2).foregroundStyle(.secondary)
+                Text(focusName).font(.headline).lineLimit(1)
+                if let report {
+                    Text("\(report.focus.photoCount) 枚 ・ アンカー \(report.focus.anchorCount)"
+                         + " ・ 種 " + (report.focus.isSeed ? "○" : "×"))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if let focus {
-                Button("この人物を再解析") { Task { await load(focus) } }
+            Spacer()
+            Menu {
+                Button("調査対象を選ぶ…") { showingPicker = true }
+                if let focus {
+                    Button("この人物を再解析") { Task { await load(focus) } }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").imageScale(.large)
             }
-        } footer: {
-            Text("「調査対象の人物」から見た近傍と、その人物の中で重心から外れている顔を、"
-                 + "割り当て規則（しきい値・サイズ適応マージン・マージンゲート・負例・同一写真）で"
-                 + "判定して並べます。解析そのものは台帳を変更しません。")
+            .accessibilityLabel(Text("調査対象の操作"))
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 
     private func settingsSection(_ report: PersonDecisionReport) -> some View {
@@ -187,12 +205,19 @@ struct FaceClusterInspectorView: View {
                 NavigationLink {
                     FaceClusterMembersView(clusterID: row.clusterID,
                                            title: row.name ?? "Person \(row.clusterID)",
-                                           peopleEngine: peopleEngine) { picked in
+                                           focusName: focusName,
+                                           peopleEngine: peopleEngine,
+                                           onFocus: { picked in
                         // その人物を対象に切り替えて、こちらの内訳を作り直す。
                         focus = peopleEngine.allPeople.first { $0.clusterID == picked }
                         Task { await load(clusterID: picked) }
-                    }
+                    }, onMerge: { merge(row) })
                 } label: {
+                HStack(spacing: 10) {
+                // 「Person 1234」だけでは誰か分からない。代表写真を添える（実フィードバック）。
+                FaceAvatarImage(refKey: row.coverRefKey, box: row.coverBoundingBox, maxPixel: 200)
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(row.name ?? "Person \(row.clusterID)")
@@ -214,6 +239,7 @@ struct FaceClusterInspectorView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
+                }
                 .padding(.vertical, 2)
                 }
                 // ⚠️ 実フィードバック: 「近傍に出てきた Person XXXX は、全部**統合すべき人**だった」。
@@ -222,12 +248,12 @@ struct FaceClusterInspectorView: View {
                     Button {
                         mergeCandidate = row
                     } label: {
-                        Label("この人物を「\(focusName)」に統合する", systemImage: "person.2.slash")
+                        Label("この人物は「\(focusName)」（統合する）", systemImage: "person.2.slash")
                     }
                 }
                 .swipeActions(edge: .trailing) {
                     Button { mergeCandidate = row } label: {
-                        Label("統合", systemImage: "arrow.triangle.merge")
+                        Label("本人", systemImage: "arrow.triangle.merge")
                     }
                     .tint(.accentColor)
                 }
@@ -411,14 +437,19 @@ private struct InspectorPersonPicker: View {
 private struct FaceClusterMembersView: View {
     let clusterID: Int
     let title: String
+    /// 調査対象の表示名（「この人物は◯◯」の◯◯）。
+    let focusName: String
     let peopleEngine: PeopleEngine
     /// この人物を内訳の対象に切り替える。
     let onFocus: (Int) -> Void
+    /// この人物を調査対象の人物へ統合する。
+    let onMerge: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var faces: [PersonInfo.Face] = []
     /// 「別の人へ移す」対象（顔のタップ）。
     @State private var reassignTarget: PersonInfo.Face?
+    @State private var confirmingMerge = false
 
     private let columns = [GridItem(.adaptive(minimum: 90), spacing: 3)]
 
@@ -445,22 +476,41 @@ private struct FaceClusterMembersView: View {
         // ⚠️ 「対象にする」だけでは**何の対象か分からない**（実フィードバック）。
         // 何が起きるかを書いた**フル幅のボタン**にする（ツールバーだと長い名前が入らない）。
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
+                // ⚠️ 顔を見て「これは調査対象の本人だった」と分かる場面が本題（実フィードバック）。
+                // その判断をこの場で確定できるようにする（一覧の左スワイプ・長押しと同じ操作）。
+                Button {
+                    confirmingMerge = true
+                } label: {
+                    Label("この人物は「\(focusName)」", systemImage: "person.2.slash")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
                 Button {
                     onFocus(clusterID)
                     dismiss()
                 } label: {
                     Label("この人物を調査対象にして再解析", systemImage: "scope")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
-                Text("内訳の画面が、この人物から見た近傍・間違い候補に切り替わります。")
+                .buttonStyle(.bordered)
+                Text("上: この人物を「\(focusName)」に統合します。"
+                     + "下: 内訳の画面をこの人物から見た内容に切り替えます。")
                     .font(.caption2).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
             .background(.bar)
+        }
+        .alert("「\(title)」を「\(focusName)」に統合しますか？", isPresented: $confirmingMerge) {
+            Button("キャンセル", role: .cancel) {}
+            Button("統合する") { onMerge(); dismiss() }
+        } message: {
+            Text("\(faces.count) 枚の顔が「\(focusName)」に入ります。"
+                 + "取り違えていた場合は、顔の管理から戻せます。")
         }
         .task { faces = await peopleEngine.coverCandidates(clusterID: clusterID) }
         .sheet(item: $reassignTarget) { face in
