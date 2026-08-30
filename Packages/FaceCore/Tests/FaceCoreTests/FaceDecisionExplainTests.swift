@@ -125,9 +125,47 @@ struct FaceDecisionExplainTests {
         guard let report = await store.decisionReport(clusterID: aID) else {
             Issue.record("レポートが作れていない"); return
         }
+        #expect(report.outlierStatus == .computed)
         #expect(report.outliers.first?.refKey == "L-x", "混入が先頭に出ていない")
         // 本人の顔より明確に低い（＝並べ替えが効いている）。
         let ownMin = report.outliers.filter { $0.refKey != "L-x" }.map(\.similarity).min() ?? 1
         #expect((report.outliers.first?.similarity ?? 1) < ownMin)
+    }
+
+
+    /// ⚠️ 空リストの理由を UI が言い分けられること（ADR-145）。
+    /// 「候補が無い」と「計算していない」を混ぜると、画面から消えた理由が分からない。
+    @Test("上限を超える人物では、候補が空でも「未計算」と分かる")
+    func outlierStatusExplainsEmptyList() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<6 {
+            await store.recordScan(refKey: "L-a\(i)",
+                                   faces: [DetectedFaceSignal(
+                                    boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                                    embedding: ClipMath.encodeHalf([1, Float(i) * 0.005, 0]),
+                                    quality: 0.9)])
+        }
+        let map = await store.memberRefKeysByCluster()
+        guard let aID = map.first(where: { $0.value.contains("L-a0") })?.key else {
+            Issue.record("fixture: 人物が作れていない"); return
+        }
+        // 前提: 6 枚の人物。
+        #expect(map[aID]?.count == 6)
+
+        // 上限 3 枚（＜メンバー数）なら「未計算」を返す。
+        let skipped = await store.outlierFaces(clusterID: aID, centroid: [1, 0, 0],
+                                               threshold: 0.5, limit: 24, scanLimit: 3)
+        #expect(skipped.faces.isEmpty)
+        #expect(skipped.status == .tooManyMembers(limit: 3, members: 6))
+
+        // 上限内なら計算済み（空でも「計算した」と分かる）。
+        let computed = await store.outlierFaces(clusterID: aID, centroid: [1, 0, 0],
+                                                threshold: 0.5, limit: 24)
+        #expect(computed.status == .computed)
+        #expect(!computed.faces.isEmpty)
+
+        // 顔が無い人物は「顔なし」。
+        let empty = await store.outlierFaces(clusterID: 9999, centroid: [1, 0, 0], threshold: 0.5)
+        #expect(empty.status == .noMembers)
     }
 }
