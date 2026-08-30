@@ -218,7 +218,8 @@ extension PeopleEngine {
         let absorbed = await store.absorbFragments()
         if absorbed.absorbed > 0 {
             Diagnostics.mark("faces: absorbed \(absorbed.absorbed) fragments into "
-                             + "\(absorbed.people) people (skipped=\(absorbed.skipped))")
+                             + "\(absorbed.people) people (skipped=\(absorbed.skipped) "
+                             + "tooBig=\(absorbed.skippedTooBig))")
         }
         defaults.set(current, forKey: markerKey)
         defaults.set(scanned, forKey: scanMarkerKey)
@@ -242,7 +243,8 @@ extension PeopleEngine {
         let absorbed = await store.absorbFragments()
         if absorbed.absorbed > 0 {
             Diagnostics.mark("faces: absorbed \(absorbed.absorbed) fragments into "
-                             + "\(absorbed.people) people (skipped=\(absorbed.skipped))")
+                             + "\(absorbed.people) people (skipped=\(absorbed.skipped) "
+                             + "tooBig=\(absorbed.skippedTooBig))")
         }
         Diagnostics.mark("faces: manual rebuild — clusters=\(result.clusters) moved=\(result.moved)")
         await loadPeople()

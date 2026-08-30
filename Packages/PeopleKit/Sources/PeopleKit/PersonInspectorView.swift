@@ -187,9 +187,10 @@ public struct PersonInspectorView: View {
             let absorbed = result.absorbed
             let people = result.people
             let skipped = result.skipped
+            let tooBig = result.skippedTooBig
             absorbMessage = absorbed == 0
-                ? L("Nothing to tidy up. \(skipped) small groups were left alone because another person is just as close.")
-                : L("Moved \(absorbed) small groups into \(people) people. \(skipped) were left alone.")
+                ? L("Nothing to tidy up. \(skipped) small groups were left alone because another person is just as close, and \(tooBig) are bigger than this tidy-up handles.")
+                : L("Moved \(absorbed) small groups into \(people) people. \(skipped) were left alone, and \(tooBig) are bigger than this tidy-up handles.")
             if let focus { await load(clusterID: focus.clusterID) }
         }
     }
