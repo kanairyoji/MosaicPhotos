@@ -32,10 +32,23 @@ public enum ProcessSuspension {
         private var epoch = 0
         private var timer: DispatchSourceTimer?
         private var lastFire: Date?
+        /// 直近の中断から復帰した時刻（uptime ns）。中断が無ければ nil。
+        private var lastResumeNs: UInt64?
 
         var currentEpoch: Int {
             lock.lock(); defer { lock.unlock() }
             return epoch
+        }
+
+        /// 「いま終わった `ms` ミリ秒の計測」が中断を跨いでいるか。
+        /// 計測の開始時刻（now - ms）より**後**に復帰していれば跨いでいる。
+        func spanned(lastMs ms: Double) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard let lastResumeNs, ms > 0 else { return false }
+            let now = DispatchTime.now().uptimeNanoseconds
+            let elapsed = UInt64(max(0, min(ms, 1e15)) * 1_000_000)
+            let start = now > elapsed ? now - elapsed : 0
+            return lastResumeNs >= start
         }
 
         /// タイマー発火。予定より大幅に遅れていたら中断とみなす。
@@ -48,7 +61,15 @@ public enum ProcessSuspension {
             let delta = now.timeIntervalSince(lastFire)
             guard delta > interval + tolerance else { return nil }
             epoch &+= 1
+            lastResumeNs = DispatchTime.now().uptimeNanoseconds
             return delta
+        }
+
+        /// テスト用: いま中断から復帰したことにする。
+        func markResumeForTesting() {
+            lock.lock(); defer { lock.unlock() }
+            epoch &+= 1
+            lastResumeNs = DispatchTime.now().uptimeNanoseconds
         }
 
         /// タイマー未設置なら設置する（二重 install を防ぐ）。
@@ -88,4 +109,15 @@ public enum ProcessSuspension {
 
     /// `epoch` を控えた時点から今までの間に中断があったか。true ならその計測値は壁時計汚染されている。
     public static func didSuspend(since epoch: Int) -> Bool { state.currentEpoch != epoch }
+
+    /// **開始時の epoch を控えていない計測**（`PerfTrace.logSpan(_:ms:)` のような後追い報告）向け。
+    /// 所要 `ms` から開始時刻を逆算し、その後に復帰していれば「中断を跨いだ」と判定する。
+    ///
+    /// ⚠️ これが無いと、`PROCESS SUSPENDED` の行を出しておきながら**スパンは素通し**になる。
+    /// 実機ログ（diagnostics-69）には `people.load.tuning 1612569.4ms`（27 分）が残り、
+    /// 解析のたびに「27 分のハング」と読み違えかけた。番人を置いた意味が無くなる。
+    public static func spanned(lastMs ms: Double) -> Bool { state.spanned(lastMs: ms) }
+
+    /// テスト用: 中断→復帰を再現する（実際の suspend はテストから起こせない）。
+    static func simulateSuspensionForTesting() { state.markResumeForTesting() }
 }

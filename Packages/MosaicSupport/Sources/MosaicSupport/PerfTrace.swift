@@ -150,7 +150,7 @@ public enum PerfTrace {
         defer {
             let ms = msSince(t0)
             os_signpost(.end, log: log, name: "span", signpostID: sid, "%{public}@ %.1fms", name, ms)
-            DiagnosticsLog.shared.append(String(format: "PERF %@ %.1fms", name, ms))
+            appendSpan(name, ms: ms, detail: "")
         }
         return try await body()
     }
@@ -159,6 +159,21 @@ public enum PerfTrace {
     public static func logSpan(_ label: String, ms: Double, detail: String = "") {
         guard isEnabled else { return }
         os_signpost(.event, log: log, name: "span", "%{public}@ %.1fms %{public}@", label, ms, detail)
+        appendSpan(label, ms: ms, detail: detail)
+    }
+
+    /// スパン 1 本を診断ログへ書く。**プロセス中断を跨いだ値は数字を出さない**。
+    ///
+    /// ⚠️ 中断中も時計は進むので、背景で走った処理の所要は壁時計で汚染される
+    /// （実機 diagnostics-69: `people.load.tuning 1612569.4ms` ＝ 27 分。実体は suspend）。
+    /// 数字を残すと「27 分のハング」と読み違える——実際に解析で二度踏んだ。
+    /// 行そのものは残す（処理が走ったことは事実で、消すと今度は「動いていない」と読める）。
+    private static func appendSpan(_ label: String, ms: Double, detail: String) {
+        if ProcessSuspension.spanned(lastMs: ms) {
+            DiagnosticsLog.shared.append(
+                String(format: "PERF %@ — 中断を跨いだため計測無効（壁時計 %.0fs） %@", label, ms / 1000, detail))
+            return
+        }
         DiagnosticsLog.shared.append(String(format: "PERF %@ %.1fms %@", label, ms, detail))
     }
 
@@ -189,7 +204,7 @@ public enum PerfTrace {
         guard let start else { mark("screen.\(n) appear"); return }
         let ms = msSince(start)
         os_signpost(.event, log: log, name: "screen", "%{public}@ %.1fms", n, ms)
-        DiagnosticsLog.shared.append(String(format: "PERF screen.%@ %.1fms", n, ms))
+        appendSpan("screen.\(n)", ms: ms, detail: "")
     }
 
     // MARK: - カウンタ集計（高頻度イベント向け）

@@ -52,7 +52,11 @@ extension FaceStore {
         let tPool = PerfTrace.nowNs()
         let photosPerCluster = photoCountsByCluster()
         let clusters = allClusters().filter { (photosPerCluster[$0.clusterID] ?? 0) >= 1 }
-        let anchorPool = clusters.filter { (photosPerCluster[$0.clusterID] ?? 0) >= minFaces }
+        // 基準（アンカー）側は確立した人物に絞る（ADR-123）。ただし**命名済みは枚数に関係なく基準**——
+        // 名前を付けた時点でユーザーの関心事であり、枚数で外すと質問の相手が居なくなる。
+        let anchorPool = clusters.filter {
+            ($0.name?.isEmpty == false) || (photosPerCluster[$0.clusterID] ?? 0) >= minFaces
+        }
         PerfTrace.logSpan("people.review.pool", ms: PerfTrace.msSince(tPool),
                           detail: "clusters=\(clusters.count)")
         guard clusters.count >= 1, !Task.isCancelled else { return [] }
@@ -71,7 +75,7 @@ extension FaceStore {
         // 名前を付けた数名だけが実用上の関心で、数枚しかない無名の断片を基準に据えて
         // 総当たりする価値はない。基準を絞ると候補探索は「人物数²」から「基準数 × 人物数」になり、
         // 顔の読み出しも「全顔」から「基準＋候補の顔」だけになる。
-        let focus = Self.focusClusters(clusters)
+        let focus = Self.focusClusters(anchorPool.isEmpty ? clusters : anchorPool)
         let focusIDs = Set(focus.map(\.clusterID))
 
         // 「別人」と記録済みの対（重心埋め込みで照合＝ID の揺れに強い）。
@@ -369,7 +373,11 @@ extension FaceStore {
         let tPool = PerfTrace.nowNs()
         let photosPerCluster = photoCountsByCluster()
         let clusters = allClusters().filter { (photosPerCluster[$0.clusterID] ?? 0) >= 1 }
-        let anchorPool = clusters.filter { (photosPerCluster[$0.clusterID] ?? 0) >= minFaces }
+        // 基準（アンカー）側は確立した人物に絞る（ADR-123）。ただし**命名済みは枚数に関係なく基準**——
+        // 名前を付けた時点でユーザーの関心事であり、枚数で外すと質問の相手が居なくなる。
+        let anchorPool = clusters.filter {
+            ($0.name?.isEmpty == false) || (photosPerCluster[$0.clusterID] ?? 0) >= minFaces
+        }
         PerfTrace.logSpan("people.batchReview.pool", ms: PerfTrace.msSince(tPool),
                           detail: "clusters=\(clusters.count) anchors=\(anchorPool.count)")
         guard clusters.count >= 2, !anchorPool.isEmpty, !Task.isCancelled else { return nil }
