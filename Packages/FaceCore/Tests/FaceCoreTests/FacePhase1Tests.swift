@@ -185,6 +185,8 @@ struct FacePhase1Tests {
         for i in 0..<3 {
             await store.recordScan(refKey: "L-p\(i)", faces: [signal([1, 0, 0.01 * Float(i)])])
         }
+        // ⚠️ 尋ねる下限は**しきい値以上**になった（ADR-150）。cos 0.50 は facenet の
+        // しきい値ちょうど＝「自動では合流しない（サイズ上乗せがある）が尋ねる価値はある」位置。
         for i in 0..<3 {
             await store.recordScan(refKey: "L-q\(i)", faces: [signal([0.5, 0.866, 0])])
         }
@@ -324,21 +326,21 @@ struct FacePhase1Tests {
         #expect(FaceTuning.facenet.calibrationRange.upperBound == 0.55)
     }
 
-    @Test("統合候補の下限は 0.35 まで下がる（成長で離れた同一人物を候補に出す）")
-    func mergeBandFloorReachesGrowthGap() {
-        // 台帳（face-accuracy.md）: facenet は同一人物でも年齢差 11-20 年で平均 0.440。
-        // しきい値 0.55 のとき従来の下限 0.45 では候補にすら出なかった（ADR-68 追補2）。
+    @Test("尋ねる下限はしきい値を下回らない（当たらない対を出さない）")
+    func mergeBandFloorStaysAboveThreshold() {
+        // ⚠️ 以前は「成長で離れた同一人物を拾う」ために**しきい値より下**へ降ろしていた
+        // （ADR-68 追補2）。FG-NET 実測（本番設定）でその帯の当たり率は **4.3%** しかなく、
+        // 96% は「まず yes にならない対」だった。実機のユーザー回答でも「同じ人」と答えた対は
+        // 下位 5% で 0.669＝引き上げても失う当たりはほぼ無い（ADR-150）。
+        // 成長で離れた同一人物は、2 階層の束ね（ADR-61）と一覧からの明示操作で拾う。
         let facenet = FaceTuning.facenet
-        #expect(facenet.mergeBandFloor(threshold: 0.55) == 0.35)
-        #expect(facenet.mergeBandFloor(threshold: 0.50) == 0.35)
-        // しきい値が下限側に寄っているときは従来どおり追従する（帯域が逆転しない）。
-        #expect(facenet.mergeBandFloor(threshold: 0.40) < 0.35)
-        // 別人（両者 12 歳以下＝兄弟の代理）の平均 0.294 は下回らない。
-        #expect(facenet.mergeBandFloor(threshold: 0.55) > 0.294)
-        // ArcFace プロファイル: スケールが低い（21 年差平均 0.298・兄弟 0.188）ので下限 0.25。
+        #expect(facenet.mergeBandFloor(threshold: 0.50) == 0.50)
+        // 校正でしきい値が上がったら、そちらに合わせる（帯が逆転しない）。
+        #expect(facenet.mergeBandFloor(threshold: 0.60) == 0.60)
+
         let arc = FaceTuning.arcFace
-        #expect(arc.mergeBandFloor(threshold: 0.35) == 0.25)
-        #expect(arc.mergeBandFloor(threshold: 0.35) > 0.188)
+        #expect(arc.mergeBandFloor(threshold: 0.35) == 0.40)
+        #expect(arc.mergeBandFloor(threshold: 0.45) == 0.45)
     }
 
     @Test("検出統計: 理由別に数え、通過とフロア未満を区別する")
@@ -386,10 +388,21 @@ struct FacePhase1Tests {
     func batchReviewExclusions() async {
         let store = FaceStore(isStoredInMemoryOnly: true)
         let a = FaceClustering.normalized([1, 0, 0])
-        let b = FaceClustering.normalized([0.40, 0.917, 0])   // a と cos≈0.40（帯域内だが自動合流はしない）
+        // ⚠️ 尋ねる下限がしきい値以上になった（ADR-150）。cos 0.52＝「自動では合流しない
+        // （実効 0.58）が尋ねる価値はある」位置に置く。
+        let b = FaceClustering.normalized([0.52, 0.854, 0])   // a と cos≈0.52
         // A: 3 枚。B: 3 枚（別写真）→ 候補になる。
         for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal(a, quality: 0.9)]) }
         for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal(b, quality: 0.9)]) }
+        // ⚠️ 尋ねる帯がしきい値以上になった（ADR-150）ので、少人数ライブラリではサイズ免除
+        //（ADR-68）が効いてこの 2 つはその場で合流する。この検証の主題は候補の出し分けなので、
+        // 割れている状態を明示的に作る。
+        if let mergedID = await store.memberRefKeysByCluster()
+            .first(where: { $0.value.contains("L-a0") && $0.value.contains("L-b0") })?.key {
+            let bIDs = await store.facesForCluster(clusterID: mergedID)
+                .filter { $0.refKey.hasPrefix("L-b") }.map(\.faceID)
+            _ = await store.splitCluster(clusterID: mergedID, faceIDs: bIDs)
+        }
         let item = await store.batchReviewItem(minFaces: 3)
         #expect(item != nil)
         #expect(item?.candidates.contains { $0.clusterID != item?.anchorClusterID } == true)

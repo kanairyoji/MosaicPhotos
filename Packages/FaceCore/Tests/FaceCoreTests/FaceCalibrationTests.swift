@@ -52,15 +52,20 @@ struct FaceCalibrationTests {
         let highNeg = Array(repeating: (Float(0.48), 1.0), count: 10)
         // 低確度（まとめて確認）: 取り違えを含み「同じ人」と答えた類似度が低めに偏る。
         // 件数は多い（1 セッションで数百件入る実態）が、重みは 0.4。
-        let batchPos = Array(repeating: (Float(0.36), 0.4), count: 20)
+        // ⚠️ 件数は**分離度チェック（ADR-149）を通る範囲**にする。低い正例を増やしすぎると
+        // 正例と負例が重なって「校正しない」が正解になり、このテストの主題（重み付け）が
+        // 確かめられなくなる。
+        let batchPos = Array(repeating: (Float(0.44), 0.4), count: 14)
 
         let weighted = FaceCalibration.calibratedThreshold(
             positive: highPos + batchPos, negative: highNeg, fallback: 0.50)
+        // ⚠️ 等重み側は分離度ゲートを外す。重みを外すと低確度サンプルが分離度まで下げてしまい、
+        // 「校正しない」で返ってきて**重み付けの効果が見えない**（それ自体は正しい挙動）。
         let unweighted = FaceCalibration.calibratedThreshold(
             positive: (highPos + batchPos).map { ($0.0, 1.0) },
-            negative: highNeg.map { ($0.0, 1.0) }, fallback: 0.50)
-        // 等重みだと件数の多い低確度サンプルに引きずられ、境界が 0.36 まで落ちる。
-        #expect(abs(unweighted - 0.36) < 1e-5)
+            negative: highNeg.map { ($0.0, 1.0) }, fallback: 0.50, minSeparability: 0)
+        // 等重みだと件数の多い低確度サンプルに引きずられ、境界が 0.44 まで落ちる。
+        #expect(abs(unweighted - 0.44) < 1e-5)
         // 重み付けなら高確度側の境界（0.52）が残る。
         #expect(abs(weighted - 0.52) < 1e-5)
     }
@@ -90,7 +95,10 @@ struct FaceCalibrationTests {
                 negative.append((Float.random(in: 0.1...0.9, using: &rng),
                                  Double.random(in: 0.2...1.0, using: &rng)))
             }
-            let fast = FaceCalibration.calibratedThreshold(positive: positive, negative: negative)
+            // ⚠️ 分離度ゲート（ADR-149）はここでは外す。比べたいのは**境界の選び方**で、
+            // 「校正してよいか」の判断ではない。
+            let fast = FaceCalibration.calibratedThreshold(positive: positive, negative: negative,
+                                                           minSeparability: 0)
             let slow = bruteForceThreshold(positive: positive, negative: negative)
             #expect(fast == slow, "総当たり \(slow) と実装 \(fast) が食い違う")
         }

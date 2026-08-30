@@ -1,5 +1,6 @@
+#if canImport(UIKit)
 import Testing
-@testable import MosaicPhotos
+@testable import PeopleKit
 
 /// ⚠️ 実フィードバック: まとめて確認画面で、Dropbox 上にあってまだ取得できていない写真が
 /// **白黒の人型アイコンのまま変わらない**。置いておいても変わらず、スクロールアウトして
@@ -34,3 +35,4 @@ struct AvatarRetryTests {
         #expect(total <= 60, "長すぎると届かない分を延々と追い続ける")
     }
 }
+#endif

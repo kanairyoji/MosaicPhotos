@@ -111,9 +111,13 @@ final class SearchQualityTests: XCTestCase {
                 baseLite: photos, spec: spec, now: now, semanticText: q.en,
                 probes: q.probes ?? [],
                 photoTags: tags,
-                loadPage: { offset, limit in
-                    guard offset < vectors.count else { return [] }
-                    return Array(vectors[offset..<min(offset + limit, vectors.count)])
+                // ⚠️ ページ送りは**カーソル**（refKey）方式（ADR-143）。`vectors` は refKey 昇順。
+                loadPage: { cursor, limit in
+                    let start = cursor.flatMap { c in
+                        vectors.firstIndex { $0.refKey > c }
+                    } ?? 0
+                    guard start < vectors.count else { return [] }
+                    return Array(vectors[start..<min(start + limit, vectors.count)])
                 })
 
             let expectedSet = Set(q.expected.flatMap { byWnid[$0] ?? [] }.map(\.refKey))

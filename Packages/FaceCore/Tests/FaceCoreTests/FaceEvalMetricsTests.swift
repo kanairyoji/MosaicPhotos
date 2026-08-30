@@ -100,4 +100,39 @@ struct FaceEvalMetricsTests {
         #expect(score.worstIdentityRecall == 0.5, "分裂が再現率に出ていない")
         #expect(score.maxClustersForOneIdentity == 2)
     }
+
+    /// 「尋ねる下限」を決める曲線（ADR-150）。当たり率と、取りこぼす分の裏返しを同時に見る。
+    @Test("候補帯: 下限を上げると当たり率は上がり、拾える分裂は減る")
+    func candidateBandCurveTradesPrecisionForCoverage() {
+        // 同一人物 A が 2 つに割れている（cos 0.95）。B は別人（A とは cos 0.30）。
+        let clusters: [(centroid: [Float], identity: String)] = [
+            (FaceClustering.normalized([1, 0, 0]), "A"),
+            (FaceClustering.normalized([0.95, 0.312, 0]), "A"),
+            (FaceClustering.normalized([0.30, 0.954, 0]), "B"),
+        ]
+        let curve = FaceEvalMetrics.candidateBandCurve(clusters: clusters, bars: [0.2, 0.5, 0.9])
+        #expect(curve.count == 3)
+        // 下限 0.2: 3 対すべてを尋ねる → 当たりは 1 対だけ。
+        #expect(curve[0].pairs == 3)
+        #expect(curve[0].samePerson == 1)
+        #expect(abs(curve[0].precision - 1.0 / 3.0) < 0.001)
+        #expect(curve[0].splitCoverage == 1.0)
+        // 下限 0.9: A の 2 つだけが残る＝当たり率 100%・分裂も拾えている。
+        #expect(curve[2].pairs == 1)
+        #expect(curve[2].precision == 1.0)
+        #expect(curve[2].splitCoverage == 1.0)
+    }
+
+    @Test("候補帯: 下限が高すぎると分裂を拾えなくなる")
+    func candidateBandCurveLosesSplits() {
+        // 同一人物 A が cos 0.6 で割れている（成長・角度差）。
+        let clusters: [(centroid: [Float], identity: String)] = [
+            (FaceClustering.normalized([1, 0, 0]), "A"),
+            (FaceClustering.normalized([0.6, 0.8, 0]), "A"),
+        ]
+        let curve = FaceEvalMetrics.candidateBandCurve(clusters: clusters, bars: [0.5, 0.8])
+        #expect(curve[0].splitCoverage == 1.0, "0.5 なら拾える")
+        #expect(curve[1].pairs == 0)
+        #expect(curve[1].splitCoverage == 0.0, "0.8 では取りこぼす")
+    }
 }
