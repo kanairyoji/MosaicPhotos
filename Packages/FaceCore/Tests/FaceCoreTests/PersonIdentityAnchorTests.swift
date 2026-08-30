@@ -276,4 +276,32 @@ struct PersonIdentityAnchorTests {
         // 残りは巻き込まれない（ここが激減の再現）。
         #expect(after.count == 5, "1 枚外しただけでアルバムが激減している: \(after.count)/6")
     }
+
+    @Test("名前付き人物が痩せたら診断ログに残る")
+    func namedShrinkIsReported() async {
+        // ⚠️ 「減っている気がする」を次回は数字で確かめられるようにする（ADR-144）。
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<8 {
+            let radians = Float(i) * 15 * .pi / 180
+            await store.recordScan(refKey: "L-a\(i)", faces: [signal([cos(radians), sin(radians), 0])])
+        }
+        guard let aID = await clusterOfA(store) else {
+            Issue.record("fixture: 人物が作れていない"); return
+        }
+        await store.rename(clusterID: aID, name: "私")
+        let before = await store.memberRefKeysByCluster()[aID]?.count ?? 0
+        #expect(before == 8, "fixture: 8 枚になっていない")
+
+        // 5 枚を別人へ移す（＝アルバムが痩せる）。
+        for i in 0..<5 {
+            _ = await store.removePhoto(refKey: "L-a\(i)", from: aID)
+        }
+        // 突き合わせの入力は「再クラスタ前の枚数」なので、ここでは突き合わせを直接呼ぶ。
+        let report = await store.namedShrinkReport(before: [aID: (name: "私", photos: before)])
+        #expect(report?.totalBefore == 8)
+        #expect(report?.totalAfter == 3)
+        #expect(report?.shrunk.first?.name == "私")
+        #expect(report?.shrunk.first?.from == 8)
+        #expect(report?.shrunk.first?.to == 3)
+    }
 }

@@ -61,6 +61,15 @@ extension FaceStore {
         // 確認顔（アンカー）は再割り当てせず**その人物に固定**する。値は固定先のクラスタ ID
         // ——代表写真の顔が既に別クラスタへ流れている場合は、ここで引き戻す。
         var pinnedCluster: [String: Int] = [:]
+        // ⚠️ **名前付き人物が痩せたら記録する**（ADR-144）。実フィードバック「ピープルアルバムの
+        // 写真の全数が減っている気がする」。感覚を裏取りできるよう、再クラスタの前後で
+        // 名前付き人物の枚数を突き合わせ、減った分だけ診断ログに出す。
+        var namedBefore: [Int: (name: String, photos: Int)] = [:]
+        for c in existing {
+            guard let name = c.name, !name.isEmpty else { continue }
+            let photos = Set((facesByCluster[c.clusterID] ?? []).map(\.refKey)).count
+            namedBefore[c.clusterID] = (name, photos)
+        }
         for c in existing {
             let members = facesByCluster[c.clusterID] ?? []
             // 代表写真の顔は、いま別クラスタへ流れていても**この人物のアンカー**として扱う
@@ -261,6 +270,7 @@ extension FaceStore {
 
         try? modelContext.save()
         clusteringCache = nil
+        reportNamedShrink(before: namedBefore)
         Self.log.info("faces: rebuild — clusters=\(clustering.clusters.count) moved=\(moved) thr=\(thr)")
         return (clustering.clusters.count, moved)
     }
@@ -360,5 +370,41 @@ extension FaceStore {
     func resetIncludingCorrections() {
         try? modelContext.delete(model: FaceCorrection.self)
         reset()
+    }
+}
+
+extension FaceStore {
+
+    /// 再クラスタで**名前付き人物が痩せていないか**を突き合わせる（ADR-144）。
+    ///
+    /// ⚠️ ユーザーが育てたアルバムが縮むのは、原因が何であれ**知らせるべき事象**。
+    /// 「気のせいかもしれない」を次回は数字で確かめられるようにする。台帳は変更しない。
+    /// 判定は純粋な突き合わせなので、結果を返してテストで確かめられるようにする。
+    func namedShrinkReport(before: [Int: (name: String, photos: Int)])
+        -> (totalBefore: Int, totalAfter: Int, shrunk: [(name: String, from: Int, to: Int)])? {
+        guard !before.isEmpty else { return nil }
+        let refKeysByCluster = memberRefKeysByCluster()
+        var shrunk: [(name: String, from: Int, to: Int)] = []
+        var totalBefore = 0, totalAfter = 0
+        for (clusterID, entry) in before {
+            let after = refKeysByCluster[clusterID]?.count ?? 0
+            totalBefore += entry.photos
+            totalAfter += after
+            // 5 枚以上・2 割以上減った人物だけ挙げる（端数の出入りは日常）。
+            if entry.photos >= 5, after < entry.photos * 4 / 5 {
+                shrunk.append((entry.name, entry.photos, after))
+            }
+        }
+        guard totalAfter != totalBefore || !shrunk.isEmpty else { return nil }
+        return (totalBefore, totalAfter, shrunk.sorted { ($0.from - $0.to) > ($1.from - $1.to) })
+    }
+
+    /// 上の突き合わせを診断ログへ出す。
+    func reportNamedShrink(before: [Int: (name: String, photos: Int)]) {
+        guard let report = namedShrinkReport(before: before) else { return }
+        let worst = report.shrunk.prefix(5)
+            .map { "\($0.name) \($0.from)→\($0.to)" }.joined(separator: ", ")
+        Diagnostics.mark("faces: named photos \(report.totalBefore)→\(report.totalAfter) "
+                         + "(shrunk=\(report.shrunk.count)\(worst.isEmpty ? "" : ": " + worst))")
     }
 }
