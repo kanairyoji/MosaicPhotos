@@ -56,6 +56,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.contextActions = contextActions
         context.coordinator.contextActionProvider = contextActionProvider
+        context.coordinator.adopt(store: store)
         context.coordinator.update(items: items, columns: max(1, columnCount), grouping: grouping,
                                    monthSectionRows: max(1, monthSectionRows),
                                    faceHighlight: faceHighlight)
@@ -64,7 +65,10 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
     // MARK: - Coordinator
 
     final class Coordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
-        private let store: Store
+        /// ⚠️ `var`: 表示中にストアが差し替わる画面がある（人物アルバムの束ね・ADR-138）。
+        /// `let` のままだと **Coordinator だけが古いストアを掴み続け**、新しい一覧の
+        /// サムネイル取得・先読みが噛み合わずセルが空のままになる。
+        private(set) var store: Store
         private let onPinch: (CGFloat) -> Void
         private let onSelect: (Store.Item.ID) -> Void
         var contextActions: [PhotoContextAction] = []
@@ -110,6 +114,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         }
 
         // MARK: Setup
+
+        /// ストアの差し替えを取り込む（同一なら何もしない）。
+        func adopt(store newStore: Store) {
+            guard store !== newStore else { return }
+            store = newStore
+        }
 
         func makeContainer(columns: Int, grouped: Bool) -> UIView {
             currentColumns = columns

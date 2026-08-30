@@ -21,6 +21,24 @@
 
 ---
 
+## ADR-138 表示中に写真ストアが差し替わったら、読み込みをやり直す
+- 状態: 採用
+- 文脈: 実フィードバック「人物アルバムで『他の人に束ねる』をすると、画面は束ねた先に変わるのに
+  **写真が表示されない**。似た状況で他の画面でも起きた」。原因は 2 つとも「**古いものを掴んだまま**」:
+  1. `PhotoSourceContentView` の `.task { await store.start() }` は**ビューの同一性が変わらない限り
+     1 回しか走らない**。ストアのインスタンスを差し替えても新しいストアは start されず、
+     `.idle` のまま＝空の画面になる。
+  2. `PhotoCollectionView`（UIViewRepresentable）の `Coordinator` は `makeCoordinator()` で
+     作られた **1 回きり**の存在で、`store` を `let` で抱えていた。差し替え後もサムネイル取得・
+     先読みは**古いストア**に行くので、一覧の件数は新しいのにセルが埋まらない。
+- 決定: (1) `.task(id: ObjectIdentifier(store))` にして、ストアが差し替わったら start をやり直す
+  （`PhotoStore` を `AnyObject` 制約にして同一性で見分ける）。(2) `Coordinator.store` を `var` にし、
+  `updateUIView` で `adopt(store:)` する。
+- 結果: 人物アルバムの束ね・メンバー変更のように「同じ画面のまま中身が入れ替わる」操作が
+  正しく描き直される。⚠️ この不具合は**ビルドもテストも通る**（SwiftUI のライフサイクルの話で、
+  ロジックのテストには現れない）。同型の seam を足すときは「差し替わったらどうなるか」を必ず見る。
+- 関連: `PhotoSourceContentView` / `PhotoCollectionView` / `PhotoStore` / `PersonAlbumView` / ADR-133。
+
 ## ADR-137 混入は「内側」からも探す ＋ 気づいた場所から直せる
 - 状態: 採用（ADR-135 の内訳画面に追加）
 - 文脈: 実フィードバック「近傍は良いのですが、**グループ内で重心から外れている、間違い候補の
