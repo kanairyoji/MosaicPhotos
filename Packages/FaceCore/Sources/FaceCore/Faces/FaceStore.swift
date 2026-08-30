@@ -479,6 +479,9 @@ actor FaceStore {
         }
         var clustering = FaceClustering(threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor,
                                         seedClusters: seed)
+        // 確立した人物は校正の引き上げ分を免除する（ADR-141）。
+        clustering.baseThreshold = tuning.clusterThreshold
+        clustering.anchoredClusterIDs = Set(anchors.keys)
         clustering.assignMargin = tuning.assignMargin   // マージンゲート（ADR-57）
         clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
         clustering.negativeSameThreshold = tuning.negativeSameThreshold

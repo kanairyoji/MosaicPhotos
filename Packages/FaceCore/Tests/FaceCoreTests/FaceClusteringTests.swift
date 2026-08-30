@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import FaceCore
 
@@ -263,5 +264,38 @@ struct FaceClusteringTests {
         let removed = FaceClustering.removing([1, 0], fromSum: [5, 0, 0], count: 3)
         #expect(removed?.sum == [5, 0, 0])
         #expect(removed?.count == 2)
+    }
+
+    /// 校正で bar が上がっても、**確立した人物**（アンカーあり・成熟）には本人の顔が入る（ADR-141）。
+    ///
+    /// ⚠️ 実機で校正が可動域の上限に張り付き、同一人物の分布の真ん中を切っていた。
+    /// ユーザーが修正するほど厳しくなり、育てたアルバムが育たなくなる向きに働いていた。
+    @Test("確立した人物には校正の引き上げ分を課さない")
+    func establishedPersonKeepsBaseThreshold() {
+        // 成熟した人物（12 顔）を作る。
+        var clustering = FaceClustering(threshold: 0.40, qualityFloor: 0)
+        for i in 0..<12 {
+            let radians = Float(i) * 2 * .pi / 180
+            clustering.assign(faceID: "m\(i)", embedding: [cos(radians), sin(radians), 0])
+        }
+        #expect(clustering.clusters.count == 1, "fixture: 1 人物になっていない")
+        #expect(clustering.clusters[0].count == 12, "fixture: 成熟サイズに達していない")
+        let personID = clustering.clusters[0].id
+
+        // 本人の少し離れた顔（重心との cos ≈ 0.37）。校正後 0.40 には届かないが、既定 0.35 は超える。
+        let radians = Float(79) * .pi / 180
+        let far: [Float] = [cos(radians), sin(radians), 0]
+        let sim = FaceClustering.dot(FaceClustering.normalized(far), clustering.clusters[0].centroid)
+        #expect(sim > 0.35 && sim < 0.40, "fixture: 0.35〜0.40 の間になっていない（\(sim)）")
+
+        // 校正の引き上げ分を課さない設定（アンカーあり・成熟）なら入る。
+        var lenient = clustering
+        lenient.baseThreshold = 0.35
+        lenient.anchoredClusterIDs = [personID]
+        #expect(lenient.assign(faceID: "far", embedding: far) == personID)
+
+        // 設定しなければ従来どおり弾かれる（＝この免除が効いていることの確認）。
+        var strict = clustering
+        #expect(strict.assign(faceID: "far", embedding: far) != personID)
     }
 }
