@@ -14,7 +14,9 @@ import UIKit
 /// アイテム単位の画像/メタ情報取得は `PhotoLoading` に分離されている。`PhotoStore` はそれを
 /// 精緻化するため、`Store: PhotoStore` の制約だけでローディング系メソッドも利用できる。
 @MainActor
-public protocol PhotoStore: PhotoLoading, Observable {
+/// ⚠️ `AnyObject`: ストアは**同一性で見分ける**必要がある（ADR-138）。人物アルバムのように
+/// 表示中にストアを差し替える画面があり、差し替わったことを検知して読み込みをやり直す。
+public protocol PhotoStore: PhotoLoading, Observable, AnyObject {
     var items: [Item] { get }
     var state: PhotoLoadState { get }
     /// True if there are more items available from the source that have not yet been fetched.

@@ -72,7 +72,10 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
             // 未接続・空・失敗の各状態でもホーム/設定へ遷移できるようにするため。
             .safeAreaInset(edge: .bottom) { bottomBar }
         }
-        .task { await store.start() }
+        // ⚠️ **ストアが差し替わったら読み込み直す**（ADR-138）。`.task {}` はビューの同一性が
+        // 変わらない限り 1 回しか走らないので、人物アルバムが「束ねた先」のストアへ差し替えた
+        // とき、新しいストアが**一度も start されず**画面が空のままになっていた。
+        .task(id: ObjectIdentifier(store)) { await store.start() }
         // ベストショット判定集合の読み込み（フィルタ ON のときだけ・OFF で解放）。
         .task(id: filter.beautifulOnly) {
             guard filter.beautifulOnly, let photoQualityProvider else {

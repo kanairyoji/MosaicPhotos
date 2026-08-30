@@ -36,6 +36,21 @@
   時点で共有状態を疑い、当たった。インメモリでも「名前」は共有キーになる。
 - 関連: `FaceStore.makeContainer` ほか / ADR-132 の作業中に発覚。
 
+## 束ねた先に切り替わったのに写真が出ない（`.task` は 1 回しか走らない）
+- 症状: 人物アルバムで「他の人に束ねる」をすると、タイトルは束ねた先に変わるのに**写真が出ない**。
+  他の画面でも似た状況で起きた。
+- 原因: ストア（`MergedPhotoStore`）のインスタンスを差し替えていたが、
+  (1) 読み込み開始は `.task { await store.start() }` で、**ビューの同一性が変わらない限り再実行されない**
+  ——新しいストアは一度も start されず `.idle` のまま。
+  (2) グリッドの `Coordinator`（UIViewRepresentable の永続オブジェクト）が `store` を `let` で
+  抱えており、差し替え後もサムネイル取得・先読みが**古いストア**へ行っていた。
+- 対処: `.task(id: ObjectIdentifier(store))` と `Coordinator.adopt(store:)`（ADR-138）。
+- 教訓: **「作り直す」と「差し替える」は別物。** SwiftUI は同じ位置・同じ型のビューを再利用するので、
+  中の参照だけ替えても `.task` / `onAppear` / Coordinator は初回のままになる。
+  ビルドもテストも通り、**画面を見て初めて分かる**種類の不具合なので、
+  状態を差し替える設計にしたら「差し替わったら誰が気づくか」を明示的に確かめる。
+- 関連: ADR-138 / `PhotoSourceContentView` / `PhotoCollectionView`。
+
 ## 宣言していない依存を import していて、ある日ビルドが落ちる
 - 症状: 手元では通っていたビルドが、あるタイミングから
   `error: unable to resolve module dependency: 'DropboxKit'`（`BackupKit/ShareSetCreationSheet.swift`）で
