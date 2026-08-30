@@ -180,8 +180,16 @@ actor FaceStore {
         return try? modelContext.fetch(descriptor)
     }
 
+    /// 代表顔を選ぶ。⚠️ **同点は faceID で決定的に決める**（ADR-139）。
+    /// 代表顔は見た目だけの話ではない——命名・代表選択でアンカー（確認顔）になり、再クラスタで
+    /// 動かない錨になる（ADR-130/132）。同点のときに fetch 順で決まると、
+    /// **同じデータでも実行ごとに違う顔が錨になり**、結果が揺れる（テストが CI でだけ落ちた）。
     static func bestCoverFace(_ faces: [DetectedFace]) -> DetectedFace? {
-        faces.max { coverScore($0) < coverScore($1) }
+        faces.max { a, b in
+            let sa = coverScore(a), sb = coverScore(b)
+            if sa != sb { return sa < sb }
+            return a.faceID > b.faceID   // 同点 → faceID の小さい方を採る
+        }
     }
 
     static func coverScore(_ f: DetectedFace) -> Double {
