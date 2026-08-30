@@ -18,6 +18,8 @@ public struct AllPeopleView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    /// 「人物を調べる」（似ている人・混入候補・ADR-147）。
+    @State private var showingInspector = false
 
     private static let columns = [GridItem(.adaptive(minimum: 92), spacing: 14)]
 
@@ -61,6 +63,16 @@ public struct AllPeopleView: View {
                 .padding(16)
             }
             .searchable(text: $query, prompt: L("Search people"))
+            .sheet(isPresented: $showingInspector) {
+                NavigationStack {
+                    PersonInspectorView(peopleEngine: peopleEngine)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button(L("Close")) { showingInspector = false }
+                            }
+                        }
+                }
+            }
             .pausesFaceScan(peopleEngine)
             .navigationTitle(L("People"))
             .navigationBarTitleDisplayMode(.inline)
@@ -74,6 +86,12 @@ public struct AllPeopleView: View {
                 // ⚠️ 実フィードバック: 「2 枚とか 5 枚しか顔写真がない人はピープルに載せなくて良い」。
                 // 既定は 10 枚以上（＋名前を付けた人は必ず表示）。ここで変えられるようにしておく
                 // ——「少ない人も見たい」ときの出口が無いと、隠したことが不具合に見える。
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingInspector = true } label: {
+                        Image(systemName: "person.crop.circle.badge.questionmark")
+                    }
+                    .accessibilityLabel(Text(L("Inspect Person")))
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Picker(L("Show people with at least"), selection: Binding(

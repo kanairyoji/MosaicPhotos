@@ -1,4 +1,5 @@
 import AutoAlbumCore
+import PeopleKit
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
@@ -229,9 +230,10 @@ struct DeveloperSettingsView: View {
             Button("クラスタを今すぐ再構築（制約付き）") {
                 Task { await peopleEngine.debugRebuildClustersNow() }
             }
-            // しきい値・マージンの効き方を数字で見る（ADR-135・読み取り専用）。
-            NavigationLink("クラスタリングの内訳を見る") {
-                FaceClusterInspectorView(peopleEngine: peopleEngine)
+            // しきい値・マージンの効き方を数字で見る（ADR-135）。ユーザー向けにも
+            // 「人物を調べる」として出している（ADR-147）ので、画面は PeopleKit 側。
+            NavigationLink("人物を調べる（内訳）") {
+                PersonInspectorView(peopleEngine: peopleEngine)
             }
             faceQualityRows
         } header: {
