@@ -1439,7 +1439,17 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "顔だけ表示"
+            "value": "顔だけ見る"
+          }
+        }
+      }
+    },
+    "Show more": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "さらに表示"
           }
         }
       }

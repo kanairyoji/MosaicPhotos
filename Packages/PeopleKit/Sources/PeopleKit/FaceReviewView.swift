@@ -154,7 +154,8 @@ public struct FaceReviewView: View {
                     // 命名済み: 名前で尋ねられる（誰のことか分かる）。
                     FaceAvatarImage(refKey: face.refKey,
                                     box: showsWholePhoto ? nil : face.boundingBox,
-                                    maxPixel: Self.singlePixel)
+                                    maxPixel: Self.singlePixel,
+                                    contentMode: showsWholePhoto ? .fit : .fill)
                         .frame(width: 160, height: 160)
                         .clipShape(RoundedRectangle(cornerRadius: showsWholePhoto ? 14 : 80,
                                                     style: .continuous))
@@ -248,7 +249,8 @@ public struct FaceReviewView: View {
             // 全体は横長のことが多いので、丸ではなく角丸の枠で見せる。
             FaceAvatarImage(refKey: face.refKey,
                             box: showsWholePhoto ? nil : face.boundingBox,
-                            maxPixel: Self.columnPixel)
+                            maxPixel: Self.columnPixel,
+                            contentMode: showsWholePhoto ? .fit : .fill)
                 .frame(width: 120, height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: showsWholePhoto ? 12 : 60, style: .continuous))
             if !name.isEmpty {

@@ -93,7 +93,13 @@ extension FaceStore {
     ///
     /// ⚠️ クラスタごとに引かない（ADR-119）。クラスタ行・アンカー・メンバー refKey を
     /// **それぞれ 1 回**取って組み立てる。人物が 1,000 人でも往復は 3 回。
-    func decisionReport(clusterID: Int, limit: Int = 12) -> PersonDecisionReport? {
+    /// - Parameters:
+    ///   - limit: 近傍を何人まで出すか。
+    ///   - outlierLimit: 間違い候補を何枚まで出すか。
+    ///     ⚠️ どちらも**呼び出し側が増やせる**（画面の「さらに表示」・ADR-156）。
+    ///     最初から全部出すと、写真の多い人物で読み込みが重くなる。
+    func decisionReport(clusterID: Int, limit: Int = 12,
+                        outlierLimit: Int = 24) -> PersonDecisionReport? {
         let clusters = allClusters()
         guard let focus = clusters.first(where: { $0.clusterID == clusterID }),
               let focusSum = ClipMath.decodeHalf(focus.sum) else { return nil }
@@ -151,7 +157,8 @@ extension FaceStore {
                 inMergeBand: entry.sim >= settings.mergeBandFloor))
         }
         let (outliers, outlierStatus) = outlierFaces(clusterID: clusterID, centroid: focusVec,
-                                                     threshold: settings.threshold, limit: 24)
+                                                     threshold: settings.threshold,
+                                                     limit: outlierLimit)
 
         // 代表顔（焦点＋近傍）。**必要なクラスタの顔だけ**を射影で取る（ADR-119）。
         var needed = Set(rows.map(\.clusterID))

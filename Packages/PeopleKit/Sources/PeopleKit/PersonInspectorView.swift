@@ -29,6 +29,14 @@ public struct PersonInspectorView: View {
     @State private var showsWholePhoto = false
     /// 断片をまとめた結果（件数を知らせる）。
     @State private var absorbMessage: String?
+    /// 表示件数。⚠️ **足りなければ増やせる**ようにする（実フィードバック: 次の候補も見たい）。
+    /// ページ送りではなく「さらに表示」にしたのは、比べながら見る画面で**前の並びが消えない**方が
+    /// 使いやすいから（戻る操作も要らない）。
+    @State private var neighborLimit = Self.neighborPageSize
+    @State private var outlierLimit = Self.outlierPageSize
+
+    static let neighborPageSize = 15
+    static let outlierPageSize = 24
     @State private var loading = false
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
@@ -199,17 +207,31 @@ public struct PersonInspectorView: View {
         await load(clusterID: person.clusterID)
     }
 
+    /// 表示件数だけを変えて読み直す（対象は同じなので、見出しや並びを消さない）。
+    private func reload(clusterID: Int) async {
+        loading = true
+        report = await peopleEngine.decisionReport(clusterID: clusterID, limit: neighborLimit,
+                                                   outlierLimit: outlierLimit)
+        loading = false
+    }
+
     private func load(clusterID: Int) async {
         // ⚠️ **切り替えた瞬間に見出しを差し替える**。読み込みは数百 ms かかるので、
         // ここで前の人物の名前・数字を残すと「切り替わっていない」ように見える。
-        if focusClusterID != clusterID { report = nil }
+        if focusClusterID != clusterID {
+            report = nil
+            // 別の人物へ切り替えたら表示件数は最初に戻す（前の人の「もっと見る」を持ち越さない）。
+            neighborLimit = Self.neighborPageSize
+            outlierLimit = Self.outlierPageSize
+        }
         focusClusterID = clusterID
         loading = true
         // 切り替え先が一覧に居れば `focus` も合わせる（居なくても名前は ID から出す）。
         if let person = peopleEngine.allPeople.first(where: { $0.clusterID == clusterID }) {
             focus = person
         }
-        report = await peopleEngine.decisionReport(clusterID: clusterID, limit: 15)
+        report = await peopleEngine.decisionReport(clusterID: clusterID, limit: neighborLimit,
+                                                   outlierLimit: outlierLimit)
         loading = false
     }
 
@@ -350,6 +372,12 @@ public struct PersonInspectorView: View {
                     .tint(.accentColor)
                 }
             }
+            if report.neighbors.count >= neighborLimit {
+                Button(L("Show more")) {
+                    neighborLimit += Self.neighborPageSize
+                    if let id = focusClusterID { Task { await reload(clusterID: id) } }
+                }
+            }
         } header: {
             Text(L("People who look alike"))
         } footer: {
@@ -398,6 +426,12 @@ public struct PersonInspectorView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                if report.outliers.count >= outlierLimit {
+                    Button(L("Show more")) {
+                        outlierLimit += Self.outlierPageSize
+                        if let id = focusClusterID { Task { await reload(clusterID: id) } }
+                    }
+                }
             } header: {
                 Text(L("Photos that may be someone else"))
             } footer: {
