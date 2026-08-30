@@ -109,6 +109,18 @@ public struct FaceClustering {
     public var sizeAdaptiveMarginMax: Float = 0
     /// 「成熟クラスタ」とみなすメンバー数の既定（人数判定・診断でも使う）。
     public static let matureCountDefault = 11
+
+    /// 校正前の既定しきい値（プロファイル値）。設定すると、**確立した人物**
+    /// （ユーザーのアンカーがあり成熟サイズ）には**校正で上がったぶんを課さない**（ADR-141）。
+    ///
+    /// ⚠️ 実機で校正が可動域の上限（arcface 0.40・既定 0.35）に張り付いていた。arcface は
+    /// 同一人物の平均類似度が 0.434 なので、0.40 の bar は**同一人物の分布の真ん中**を切る
+    /// ——ユーザーが修正するほど校正が厳しくなり、**育てたアルバムが育たなくなる**。
+    /// 名前を付け、確認し、育てた人物は「もう安定している」（実フィードバック）ので、
+    /// そこへ本人の顔が入ることを校正で妨げない。新しい人物の分離には校正値がそのまま効く。
+    public var baseThreshold: Float?
+    /// ユーザーのアンカー（確認顔・代表写真）を持つクラスタ ID。
+    public var anchoredClusterIDs: Set<Int> = []
     public var sizeAdaptiveMatureCount: Int = matureCountDefault
 
     /// マージンゲートで弾いた顔（＝1 位と 2 位が紛らわしい顔）の扱い（ADR-68）。
@@ -243,18 +255,30 @@ public struct FaceClustering {
             maintainAutoPrototype(v, quality: quality, at: clusters.count - 1)
             return id
         }
+        // 候補を見る下限。確立した人物には校正の引き上げ分を課さないので（ADR-141）、
+        // **打ち切りも緩い方に合わせる**——ここを calibrated のままにすると、免除が効く前に
+        // ループを抜けてしまう。個々の可否は下の `required` で判定する。
+        let scanFloor = min(threshold, baseThreshold ?? threshold)
         for cand in scored {
-            guard cand.sim >= threshold else { break }   // 以降はもっと低い＝すべて閾値未満
+            guard cand.sim >= scanFloor else { break }   // 以降はもっと低い＝すべて閾値未満
             if excludedClusterIDs.contains(clusters[cand.index].id) { continue }   // cannot-link
             // サイズ適応マージン（ADR-58）: 小/新クラスタは実効しきい値を上げて合流を厳しくする。
             // rivalAware: 「別人が近くにいる」ときだけ課す。競合が無い（or 競合が同一人物らしい）
             // なら、小クラスタを育てない理由がないので素のしきい値で合流させる。
             var required = threshold + sizeMargin(forCount: clusters[cand.index].count)
+            // 確立した人物（アンカーあり・成熟）には校正の引き上げ分を課さない（ADR-141）。
+            if let base = baseThreshold, base < threshold,
+               anchoredClusterIDs.contains(clusters[cand.index].id),
+               clusters[cand.index].count >= sizeAdaptiveMatureCount {
+                required = min(required, base + sizeMargin(forCount: clusters[cand.index].count))
+            }
             if effectiveThresholdCap > 0, peopleGateOpen(max: effectiveThresholdCapMaxPeople) {
                 required = min(required, effectiveThresholdCap)
             }
             if cand.sim < required,
                !(sizeMarginExemptionActive && !hasDistinctRival(of: cand.index, in: scored)) { continue }
+            // 校正値に届かない顔は、免除対象（確立した人物）以外へは入れない。
+            if cand.sim < threshold, required >= threshold { continue }
             // ⚠️ 負例は**相対で**効かせる（ADR-140）。この顔が「外された顔」の方に、
             // 候補クラスタ自身よりはっきり近いときだけ拒否する。絶対値だけで見ると、
             // ユーザーが本人の顔を 1 枚外しただけで、その人物の顔が以後どれも入らなくなる。
