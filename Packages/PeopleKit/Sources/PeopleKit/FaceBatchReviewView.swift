@@ -97,6 +97,13 @@ public struct FaceBatchReviewView: View {
     private func content(_ item: FaceBatchReviewItem) -> some View {
         VStack(spacing: 0) {
             header(item)
+            if item.candidates.contains(where: \.preselected) {
+                Text(L("The most alike ones are already selected — uncheck any that are wrong."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
+            }
             ScrollView {
                 LazyVGrid(columns: Self.columns, spacing: 12) {
                     ForEach(item.candidates) { candidate in
@@ -276,7 +283,13 @@ public struct FaceBatchReviewView: View {
             return found
         }
         // キャンセルされた回は何も反映しない（`nil`）。
-        if let found { item = found }
+        if let found {
+            item = found
+            // ⚠️ 似ている度が高い候補は**チェックを付けた状態**で出す（ADR-153）。
+            // 実機の回答では、この帯の 98% が「同じ人」だった。ただし家族には 0.88〜0.92 で
+            // 別人の対も実在するので、**自動では結合しない**——外せる形で見せる。
+            selected = Set((found?.candidates ?? []).filter(\.preselected).map(\.clusterID))
+        }
     }
 
     /// 直前の「決定」を取り消し、同じ人物のグリッドを引き直す。

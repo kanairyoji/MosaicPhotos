@@ -1524,6 +1524,16 @@
         }
       }
     },
+    "The most alike ones are already selected — uncheck any that are wrong.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "よく似ているものはあらかじめ選んでいます。違うものは外してください。"
+          }
+        }
+      }
+    },
     "The same person may be split into several entries.": {
       "localizations": {
         "ja": {

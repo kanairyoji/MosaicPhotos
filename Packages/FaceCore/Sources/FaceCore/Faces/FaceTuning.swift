@@ -22,6 +22,14 @@ public struct FaceTuning: Sendable, Equatable {
     public var rivalAlikeMargin: Float
     /// 「同じ人ですか？」と**尋ねる**下限（ADR-150）。低すぎると当たらない対ばかり出す。
     public var mergeCandidateFloor: Float
+    /// **あらかじめ選んでおく**（まとめて確認）バー（ADR-153）。
+    ///
+    /// ⚠️ 自動で結合するのではなく、**チェックを付けた状態で見せる**ための値。実機 7,710 件の
+    /// 「同じ人」回答のうち 18% がこの値以上で、その帯での正しさは 98%（ユーザー自身が
+    /// 「別人」と答えた対だけで見れば 99.9%）。ただし家族ライブラリでは 0.885/0.920 の対を
+    /// 「別人」と答えた実例もあるため、**黙って結合はしない**。
+    public var autoSuggestBar: Float
+
     /// しきい値校正の可動域（ADR-46/68 追補）。
     public var calibrationRange: ClosedRange<Float>
     /// 負例判定の「ほぼ同じ人」しきい値（ADR-45）。
@@ -36,6 +44,7 @@ public struct FaceTuning: Sendable, Equatable {
         name: "facenet",
         clusterThreshold: 0.50, assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
         secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.50,
+        autoSuggestBar: 0.90,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
         auditMinMargin: 0.25, auditMaxSeparation: 0.35)
 
@@ -46,6 +55,7 @@ public struct FaceTuning: Sendable, Equatable {
         name: "arcface",
         clusterThreshold: 0.35, assignMargin: 0.04, sizeAdaptiveMarginMax: 0.08,
         secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.40,
+        autoSuggestBar: 0.85,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
         auditMinMargin: 0.20, auditMaxSeparation: 0.40)
 
