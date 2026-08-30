@@ -21,6 +21,25 @@
 
 ---
 
+## メンバー限定アルバムを開いた瞬間にアプリが固まって落ちる（同じ ID が 2 つ）
+- 症状: アルバムを開いた直後に画面が固まり、デバッガが例外で停止。実機ログ
+  （diagnostics-69・14:00:26）に
+  `NSInternalInconsistencyException — Fatal: supplied item identifiers are not unique.`
+  と、重複した `L-…/L0/001`（端末写真の localIdentifier）が **65 件**。
+  直前は `merged.rebuild: local=547 cloud=1713 total=2260`。
+- 原因: `UICollectionViewDiffableDataSource` は、スナップショットに**同じ識別子が 2 つ**入ると
+  例外を投げて落ちる。メンバー限定ストア（`MergedPhotoStore.forMembers`）に渡した localID 列に
+  重複があり、`LocalAssetIndex.assets(for:)` は渡された ID 順にそのまま PHAsset を返すので、
+  同じ写真が 2 回一覧に入っていた。一覧の出どころは 6 画面あり、どれが重複を作っても同じ形で落ちる。
+- 対処: 入口（`forMembers` で localID を先勝ち一意化・落とした件数を診断ログへ）と
+  出口（`PhotoCollectionView` のスナップショット構築で `uniquedByID`）の二段（ADR-158）。
+  純関数は macOS のテストで固定（先勝ち・順序保存・月セクション割り当て後も一意）。
+- 教訓: **表示のための集計が trap してはいけない**（ADR-143 と同じ）。データの異常は起こる前提で、
+  表示側は落とさず出せるところまで出し、異常そのものはログで追う。
+- 関連: `Support/UniqueByID.swift` / `Views/PhotoCollectionView.swift` /
+  `MergedPhotoStore+Members.swift` / `UniqueByIDTests` / ADR-158。
+- 残課題: **どの画面が重複を作ったか**は未特定（診断ログの `forMembers: dropped …` で次回判明する）。
+
 ## インメモリ SwiftData を共有していて、テストが実行ごとに違う結果になった
 - 症状: 新しいテストが**単体では通るのに、パッケージ一括実行では落ちる**。しかも落ちるテストが
   実行のたびに変わる（顔が別クラスタに居る・作ったはずの人物が見つからない）。

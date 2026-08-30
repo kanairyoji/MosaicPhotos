@@ -335,15 +335,25 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             let t0 = CFAbsoluteTimeGetCurrent()
             Task.detached(priority: .userInitiated) { [weak self] in
                 // --- オフメイン構築（純データのみ） ---
+                // ⚠️ 同じ ID が 2 つ以上あると diffable data source は **例外で落ちる**
+                //（実機 diagnostics-69: "supplied item identifiers are not unique"・人物/場所などの
+                // メンバー限定アルバムで同じ写真が 2 回入っていた）。表示はデータの読み取りに
+                // すぎないので、**データの異常でアプリを落とさない**（ADR-143 と同じ原則）。
+                // 重複は先勝ちで落とし、原因追跡のため件数を記録する。
+                let unique = uniquedByID(items)
+                if unique.count != items.count {
+                    Diagnostics.mark("grid.snapshot: dropped \(items.count - unique.count) duplicate id(s) "
+                                     + "— 一覧に同じ写真が重複していた")
+                }
                 var index: [Store.Item.ID: Int] = [:]
-                index.reserveCapacity(items.count)
-                for (i, item) in items.enumerated() { index[item.id] = i }
+                index.reserveCapacity(unique.count)
+                for (i, item) in unique.enumerated() { index[item.id] = i }
 
                 var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
                 if let grouping {
                     // 月グループは「写真の少ない連続月（列数未満）」を範囲セクションへ束ねて行を密にする。
                     // coalesce は呼び出し側で算出した実列数（月以外は 0＝従来どおり束ねない）。
-                    let sections = photoGridSections(items: items, grouping: grouping,
+                    let sections = photoGridSections(items: unique, grouping: grouping,
                                                      colCount: 1, coalesceBelow: coalesce)
                     var order: [String] = []
                     var idsByTitle: [String: [Store.Item.ID]] = [:]
@@ -356,7 +366,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                     for title in order { snapshot.appendItems(idsByTitle[title] ?? [], toSection: title) }
                 } else {
                     snapshot.appendSections([""])   // dense：単一セクション（ヘッダなし）
-                    snapshot.appendItems(items.map { $0.id }, toSection: "")
+                    snapshot.appendItems(unique.map { $0.id }, toSection: "")
                 }
                 let buildMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                 let sectionCount = snapshot.numberOfSections
@@ -364,11 +374,11 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 // --- メインで反映（古い世代は破棄） ---
                 await MainActor.run { [weak self] in
                     guard let self, token == self.snapshotToken else { return }
-                    self.items = items
+                    self.items = unique
                     self.idToIndex = index
                     self.dataSource.applySnapshotUsingReloadData(snapshot) { [weak self] in
                         let totalMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-                        Diagnostics.mark("grid.snapshot(bg): items=\(items.count) sections=\(sectionCount) "
+                        Diagnostics.mark("grid.snapshot(bg): items=\(unique.count) sections=\(sectionCount) "
                             + "build=\(Int(buildMs))ms total=\(Int(totalMs))ms")
                         DispatchQueue.main.async { self?.scrollToBottomIfNeeded() }
                     }

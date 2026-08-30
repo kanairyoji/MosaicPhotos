@@ -1,6 +1,8 @@
 #if canImport(UIKit)
 import DropboxKit
 import LocalPhotoKit
+import MosaicSupport
+import PhotoSourceKit
 
 extension MergedPhotoStore {
 
@@ -22,8 +24,17 @@ extension MergedPhotoStore {
     @MainActor
     public static func forMembers(localIDs: [String], cloudPaths: [String],
                            dropboxStore: DropboxPhotoStore, assetIndex: LocalAssetIndex) -> MergedPhotoStore {
-        let localStore = assetIndex.assets(for: localIDs).map { LocalPhotoStore(preloadedAssets: $0) }
-            ?? LocalPhotoStore(localIdentifiers: localIDs)
+        // ⚠️ **ID を一意化してから**ストアを作る。同じ localIdentifier が 2 回入っていると
+        // 同じ写真が 2 枚並ぶだけでなく、グリッドの diffable data source が
+        // 「識別子が一意でない」で**例外を投げてアプリが落ちる**（実機 diagnostics-69・
+        // 547 枚中 65 枚が重複）。メンバー一覧の出どころは 6 画面あり、そのどれが重複を
+        // 作っても同じ結末になるので、**全画面が通るここ 1 箇所**で正規化する。
+        let uniqueLocalIDs = uniquedIdentifiers(localIDs)
+        if uniqueLocalIDs.count != localIDs.count {
+            Diagnostics.mark("forMembers: dropped \(localIDs.count - uniqueLocalIDs.count) duplicate local id(s)")
+        }
+        let localStore = assetIndex.assets(for: uniqueLocalIDs).map { LocalPhotoStore(preloadedAssets: $0) }
+            ?? LocalPhotoStore(localIdentifiers: uniqueLocalIDs)
         let store = MergedPhotoStore(dropboxStore: dropboxStore, localStore: localStore,
                                      cloudPathFilter: Set(cloudPaths))
         store.backupCopyIndexProvider = defaultBackupCopyIndexProvider
