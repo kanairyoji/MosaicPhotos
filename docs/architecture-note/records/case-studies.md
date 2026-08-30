@@ -21,6 +21,24 @@
 
 ---
 
+## 「中断を跨いだ計測は捨てる」と書いてあるのに、実は捨てていなかった
+- 症状: 実機ログ（diagnostics-69）に `PERF people.load.tuning 1612569.4ms`（27 分）や
+  `people.load.clusters 142971.7ms`（2 分半）が並ぶ。同じログには
+  `PROCESS SUSPENDED ~1538s — measurements spanning this gap are discarded` もある。
+- 原因: `ProcessSuspension` は中断を**検知して epoch を進める**だけで、実際に値を捨てるのは
+  開始時に epoch を控えている `MainThreadWatchdog` のサンプルだけだった。
+  `PerfTrace.logSpan(_:ms:)`（25 箇所）と `measureAsync` / `endScreen` は epoch を見ておらず、
+  **そのまま出力していた**。「discarded」と書いた行の隣に、捨てられていない値が並んでいた。
+- 対処: 開始時の epoch を控えていない後追い報告でも判定できるよう、`ProcessSuspension` に
+  **直近の復帰時刻**を持たせ、`spanned(lastMs:)` で「所要から逆算した開始時刻より後に復帰したか」で
+  判定する。`PerfTrace` のスパン出力を 1 箇所（`appendSpan`）に集約し、跨いだものは
+  `PERF <label> — 中断を跨いだため計測無効（壁時計 …s）` に置き換える（**行は残す**——
+  消すと今度は「処理が走っていない」と読める）。呼び出し 25 箇所は変更不要。
+- 教訓: 計測の汚染対策は、**汚染された値が出ていないこと**をテストで固定する。
+  今回は解析のたびに「27 分のハング」と読み違えかけ、実際に二度時間を溶かした。
+- 関連: `MosaicSupport/ProcessSuspension.swift` / `PerfTrace.swift` / `ProcessSuspensionTests`。
+- 残課題: カウンタ（`PerfTrace.count`）の Σ は同じ汚染を受け得る（外れ値 1 件で平均が壊れる）。
+
 ## メンバー限定アルバムを開いた瞬間にアプリが固まって落ちる（同じ ID が 2 つ）
 - 症状: アルバムを開いた直後に画面が固まり、デバッガが例外で停止。実機ログ
   （diagnostics-69・14:00:26）に
