@@ -658,6 +658,19 @@ public final class PeopleEngine {
         await store.currentThresholds()
     }
 
+    /// 1〜2 枚の断片を、確立した人物へまとめる（ADR-154）。手動実行用。
+    @discardableResult
+    public func absorbFragments() async -> FragmentAbsorbResult {
+        let result = await store.absorbFragments()
+        if result.absorbed > 0 {
+            Diagnostics.mark("faces: absorbed \(result.absorbed) fragments into "
+                             + "\(result.people) people (skipped=\(result.skipped))")
+            await clearUndoHistory()   // 大量に動くので、戻す先が変わっている
+            await loadPeople()
+        }
+        return result
+    }
+
     /// あなたの回答から見た「同じ人／別人」の分かれ方（ADR-148）。読み取り専用。
     public func answerSimilarityProfile(kind: AnswerSimilarityProfile.Kind) async
         -> AnswerSimilarityProfile {
