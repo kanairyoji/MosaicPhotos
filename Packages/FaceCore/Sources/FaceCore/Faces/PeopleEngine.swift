@@ -679,8 +679,9 @@ public final class PeopleEngine {
     }
 
     /// 判定の内訳（Developer Options のチューニング用・ADR-135）。読み取り専用。
-    public func decisionReport(clusterID: Int, limit: Int = 12) async -> PersonDecisionReport? {
-        await store.decisionReport(clusterID: clusterID, limit: limit)
+    public func decisionReport(clusterID: Int, limit: Int = 12,
+                               outlierLimit: Int = 24) async -> PersonDecisionReport? {
+        await store.decisionReport(clusterID: clusterID, limit: limit, outlierLimit: outlierLimit)
     }
 
     /// 2 人が同じ写真に一緒に写っている箇所（統合できない理由の提示用・ADR-146）。

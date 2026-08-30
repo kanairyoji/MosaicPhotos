@@ -24,6 +24,9 @@ public struct FaceBatchReviewView: View {
     /// 統合されてしまう（統合は取り消しが効かない）。「すべて選ぶ」を 1 タップ用意して
     /// 効率は保ちつつ、破壊的操作は必ずユーザーの明示で起きるようにする。
     @State private var selected: Set<Int> = []
+    /// 顔だけでは判断が付かないとき、写真全体に切り替える（ADR-91 と同じ理由）。
+    /// 兄弟・後ろ姿・小さい顔は、周りの状況（服・場所・一緒に写っている人）が決め手になる。
+    @State private var showsWholePhoto = false
     @State private var mergedTotal = 0
     /// 統合を拒否された件数（別名どうし・同一写真で共起）。理由を伝えないと
     /// 「選んだのに減らない」に見えるため表示する。
@@ -72,6 +75,13 @@ public struct FaceBatchReviewView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L("Close")) { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showsWholePhoto.toggle() } label: {
+                        Image(systemName: showsWholePhoto ? "person.crop.square" : "photo")
+                    }
+                    .accessibilityLabel(Text(showsWholePhoto ? L("Show face only")
+                                                             : L("Show whole photo")))
                 }
                 // まとめて確認は 1 回の「決定」で数十件が動く。取り違えに気づいたときの出口を出す。
                 if let undoLabel = peopleEngine.undoLabel {
@@ -126,10 +136,13 @@ public struct FaceBatchReviewView: View {
 
     private func header(_ item: FaceBatchReviewItem) -> some View {
         VStack(spacing: 10) {
-            FaceAvatarImage(refKey: item.anchorFace.refKey, box: item.anchorFace.boundingBox,
-                            maxPixel: 480)
+            FaceAvatarImage(refKey: item.anchorFace.refKey,
+                            box: showsWholePhoto ? nil : item.anchorFace.boundingBox,
+                            maxPixel: 480,
+                            contentMode: showsWholePhoto ? .fit : .fill)
                 .frame(width: 96, height: 96)
-                .clipShape(Circle())
+                .clipShape(RoundedRectangle(cornerRadius: showsWholePhoto ? 12 : 48,
+                                            style: .continuous))
             if item.anchorName.isEmpty {
                 Text(L("Which of these are the same person as above?"))
                     .font(.headline)
@@ -150,8 +163,10 @@ public struct FaceBatchReviewView: View {
     private func candidateCell(_ candidate: FaceBatchReviewItem.Candidate) -> some View {
         let isSelected = selected.contains(candidate.clusterID)
         return VStack(spacing: 4) {
-            FaceAvatarImage(refKey: candidate.face.refKey, box: candidate.face.boundingBox,
-                            maxPixel: 400)
+            FaceAvatarImage(refKey: candidate.face.refKey,
+                            box: showsWholePhoto ? nil : candidate.face.boundingBox,
+                            maxPixel: 400,
+                            contentMode: showsWholePhoto ? .fit : .fill)
                 .frame(width: 84, height: 84)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
