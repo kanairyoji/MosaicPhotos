@@ -235,6 +235,10 @@ struct DeveloperSettingsView: View {
             NavigationLink("人物を調べる（内訳）") {
                 PersonInspectorView(peopleEngine: peopleEngine)
             }
+            // 回答から見た基準（ADR-148・チューニングの材料）。
+            NavigationLink("あなたの回答から見た基準") {
+                AnswerBasisView(peopleEngine: peopleEngine)
+            }
             faceQualityRows
         } header: {
             Text("AI 解析：ピープル（顔）")

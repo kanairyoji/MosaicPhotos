@@ -31,6 +31,30 @@ public enum FaceEvalMetrics {
         public let clustersPerIdentity: Double
         /// 最も分裂した人物のクラスタ数（最悪値。平均だけだと外れ値が埋もれる）。
         public let maxClustersForOneIdentity: Int
+
+        // MARK: - 人物ごとの分布（ADR-148）
+        //
+        // ⚠️ **平均は小さいアルバムの被害を隠す**。ADR-126（マージンゲートの免除）は
+        // 平均純度がほとんど動かなかったので採用したが、実際には**枚数の少ない人物**の
+        // アルバムが崩れており、撤回する羽目になった。以後、平均と一緒に
+        // 「いちばん悪い人物」と「下位 25%」を必ず見る。
+        /// 人物ごとの純度（その人の顔のうち、同じクラスタに入った割合の平均）の最小値。
+        public let worstIdentityPrecision: Double
+        /// 同・下位 25 パーセンタイル。
+        public let p25IdentityPrecision: Double
+        /// 人物ごとの再現率（その人の顔がどれだけ 1 つに集まったか）の最小値。
+        public let worstIdentityRecall: Double
+        /// 同・下位 25 パーセンタイル。
+        public let p25IdentityRecall: Double
+        /// 純度が 0.8 未満の人物の数（＝混ざって見えるアルバムの数）。
+        public let identitiesBelow80Precision: Int
+    }
+
+    /// 昇順に並べた値の p 分位（0〜1・線形補間なしの単純な位置指定）。
+    static func percentile(_ sorted: [Double], _ p: Double) -> Double {
+        guard !sorted.isEmpty else { return 0 }
+        let index = Int((Double(sorted.count - 1) * p).rounded())
+        return sorted[max(0, min(sorted.count - 1, index))]
     }
 
     /// - Parameters:
@@ -84,12 +108,32 @@ public enum FaceEvalMetrics {
         let fragmentation = perIdentity.isEmpty ? 0
             : Double(perIdentity.reduce(0, +)) / Double(perIdentity.count)
 
+        // 人物ごとの純度・再現率（平均に埋もれる「崩れた 1 人」を見つけるため）。
+        var precisionByIdentity: [String: [Double]] = [:]
+        var recallByIdentity: [String: [Double]] = [:]
+        for item in items {
+            let cluster = clusterMembers[assignments[item]!]!
+            let cls = classMembers[truth[item]!]!
+            let overlap = Double(cluster.filter { truth[$0] == truth[item] }.count)
+            precisionByIdentity[truth[item]!, default: []].append(overlap / Double(cluster.count))
+            recallByIdentity[truth[item]!, default: []].append(overlap / Double(cls.count))
+        }
+        let identityPrecision = precisionByIdentity.values
+            .map { $0.reduce(0, +) / Double($0.count) }.sorted()
+        let identityRecall = recallByIdentity.values
+            .map { $0.reduce(0, +) / Double($0.count) }.sorted()
+
         return ClusteringScore(bcubedPrecision: bp, bcubedRecall: br, bcubedF1: bf,
                                pairPrecision: pp, pairRecall: pr, pairF1: pf,
                                clusterCount: Set(assignments.values).count,
                                identityCount: classMembers.count,
                                clustersPerIdentity: fragmentation,
-                               maxClustersForOneIdentity: perIdentity.max() ?? 0)
+                               maxClustersForOneIdentity: perIdentity.max() ?? 0,
+                               worstIdentityPrecision: identityPrecision.first ?? 0,
+                               p25IdentityPrecision: percentile(identityPrecision, 0.25),
+                               worstIdentityRecall: identityRecall.first ?? 0,
+                               p25IdentityRecall: percentile(identityRecall, 0.25),
+                               identitiesBelow80Precision: identityPrecision.filter { $0 < 0.8 }.count)
     }
 
     // MARK: - 検証（同一人物/別人ペアの類似度）

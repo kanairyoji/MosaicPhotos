@@ -53,4 +53,51 @@ struct FaceEvalMetricsTests {
         #expect(FaceEvalMetrics.verificationScore(sameSims: [], differentSims: [0.1]) == nil)
         #expect(FaceEvalMetrics.clusteringScore(assignments: [:], truth: [:]) == nil)
     }
+
+    /// ⚠️ **平均は小さいアルバムの被害を隠す**（ADR-126 の撤回で学んだ）。
+    /// 1 人だけ崩れている構成で、平均は高いまま・最悪値と下位 25% が落ちることを確かめる。
+    @Test("平均が高くても、崩れた 1 人は最悪値に出る")
+    func perIdentityDistributionExposesOneBadPerson() {
+        // A・B・C は綺麗に分かれ、D だけ 2 人分が 1 クラスタに混ざっている。
+        var assignments: [String: Int] = [:]
+        var truth: [String: String] = [:]
+        for (index, person) in ["A", "B", "C"].enumerated() {
+            for i in 0..<10 {
+                assignments["\(person)\(i)"] = index
+                truth["\(person)\(i)"] = person
+            }
+        }
+        // D（5 枚）と E（5 枚）が同じクラスタ 3 に入っている。
+        for i in 0..<5 {
+            assignments["D\(i)"] = 3; truth["D\(i)"] = "D"
+            assignments["E\(i)"] = 3; truth["E\(i)"] = "E"
+        }
+        guard let score = FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth) else {
+            Issue.record("スコアが出ていない"); return
+        }
+        // 平均（B-Cubed 純度）は高いまま——ここだけ見ていると気づけない。
+        #expect(score.bcubedPrecision > 0.8)
+        // 崩れた人物は最悪値・下位 25%・「純度 0.8 未満の人数」に出る。
+        #expect(score.worstIdentityPrecision == 0.5)
+        #expect(score.p25IdentityPrecision <= 0.5)
+        #expect(score.identitiesBelow80Precision == 2, "混ざった 2 人が数えられていない")
+        // 分裂は起きていないので再現率は落ちない。
+        #expect(score.worstIdentityRecall == 1.0)
+    }
+
+    @Test("分裂した人物は再現率の最悪値に出る")
+    func splitIdentityShowsInRecall() {
+        var assignments: [String: Int] = [:]
+        var truth: [String: String] = [:]
+        for i in 0..<10 { assignments["A\(i)"] = 0; truth["A\(i)"] = "A" }
+        // B は 2 つに割れている（5 枚ずつ）。
+        for i in 0..<5 { assignments["B\(i)"] = 1; truth["B\(i)"] = "B" }
+        for i in 5..<10 { assignments["B\(i)"] = 2; truth["B\(i)"] = "B" }
+        guard let score = FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth) else {
+            Issue.record("スコアが出ていない"); return
+        }
+        #expect(score.worstIdentityPrecision == 1.0, "混入は無いので純度は落ちない")
+        #expect(score.worstIdentityRecall == 0.5, "分裂が再現率に出ていない")
+        #expect(score.maxClustersForOneIdentity == 2)
+    }
 }
