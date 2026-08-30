@@ -19,6 +19,7 @@ extension FaceStore {
     /// 上限が無いと確認を重ねた人物ほど再クラスタが重くなる（ADR-119）。
     static let maxSeedPrototypes = 8
 
+
     func rebuildClusters() -> (clusters: Int, moved: Int) {
         let allFaces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
         // ⚠️ 顔が 0 件でも**素通りしない**。クラスタ行だけが残ると、その sum/count は
@@ -110,10 +111,23 @@ extension FaceStore {
                 guard let vec = ClipMath.decodeHalf(m.embedding) else { continue }
                 // ユーザーが「この人ではない」と外した顔と同一人物なら、留めない
                 // （同じ誤りの再発を防ぐ・ADR-45 の負例エグゼンプラ）。
-                if let anchorCentroid,
-                   FaceClustering.negativeRejects(FaceClustering.normalized(vec),
-                                                  centroid: anchorCentroid, negatives: negatives,
-                                                  sameThreshold: tuning.negativeSameThreshold) {
+                //
+                // ⚠️⚠️ **既にこの人物に入っている顔を、負例で一斉に外さない**（ADR-140）。
+                // 実フィードバック: 「診断画面で数枚を『この人ではない』にしたら、その人物の
+                // アルバムが激減した」。負例の「同一人物」線（arcface 0.45）は**本人の顔どうしの
+                // 類似度より低い**ので、外した 1 枚が本人に似ていると**アルバムのほぼ全員が
+                // その負例に一致**して一斉に外れる（実測 12 枚→3 枚）。
+                // ここで外すのは「外したその顔と実質同じ顔」（連写・重複検出）だけにする。
+                // 混入は**ユーザーが 1 枚ずつ外す**——そのための入口は増やした（ADR-133/137）。
+                // 新しく入ろうとする顔の拒否（`assign` 側）は相対判定で従来どおり効く。
+                let normalized = FaceClustering.normalized(vec)
+                let isAnchor = m.confirmedAt != nil || m.faceID == c.coverFaceID
+                if !isAnchor, let anchorCentroid,
+                   let matched = FaceClustering.firstNegativeMatch(
+                       normalized, centroid: anchorCentroid, negatives: negatives,
+                       sameThreshold: tuning.negativeSameThreshold),
+                   FaceClustering.dot(normalized, matched.faceCentroid)
+                       >= FaceClustering.negativeDuplicateThreshold {
                     continue
                 }
                 pinnedMembers.append(m)

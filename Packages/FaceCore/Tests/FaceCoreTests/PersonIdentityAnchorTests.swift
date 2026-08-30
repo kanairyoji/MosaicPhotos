@@ -246,4 +246,34 @@ struct PersonIdentityAnchorTests {
         #expect(after.contains { $0.hasPrefix("L-a") })
         #expect(after.contains { $0.hasPrefix("L-b") }, "束ねが忘れられている")
     }
+
+    @Test("本人の顔を 1 枚外しても、アルバムの他の顔は道連れにならない")
+    func removingOwnFaceDoesNotEmptyTheAlbum() async {
+        // 実フィードバック: 「診断画面で数枚を『この人ではない』にしたら、
+        // その人物のアルバムが激減した」。負例の「同一人物」線は**本人の顔どうしの類似度より
+        // 低い**ので、外した 1 枚が本人に似ていると全員がその負例に一致してしまう。
+        // ⚠️ 本人の顔は**そっくり同じではない**（角度・年齢で少しずつ違う）。15°刻みで散らす
+        // ——全部を同一ベクトルにすると「実質同じ写真」と区別が付かず、検証にならない。
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<6 {
+            let radians = Float(i) * 15 * .pi / 180
+            await store.recordScan(refKey: "L-a\(i)",
+                                   faces: [signal([cos(radians), sin(radians), 0])])
+        }
+        guard let aID = await clusterOfA(store) else {
+            Issue.record("fixture: 人物が作れていない"); return
+        }
+        await store.rename(clusterID: aID, name: "私")
+        let before = await store.memberRefKeysByCluster()[aID] ?? []
+        #expect(before.count == 6, "fixture: 6 枚の人物になっていない")
+
+        // ユーザーが 1 枚だけ「この人ではない」と外す（本人の顔なので、他の顔とよく似ている）。
+        #expect(await store.removePhoto(refKey: "L-a2", from: aID) >= 1)
+        _ = await store.rebuildClusters()
+
+        let after = await store.memberRefKeysByCluster()[aID] ?? []
+        #expect(!after.contains("L-a2"), "外した写真が残っている")
+        // 残りは巻き込まれない（ここが激減の再現）。
+        #expect(after.count == 5, "1 枚外しただけでアルバムが激減している: \(after.count)/6")
+    }
 }
