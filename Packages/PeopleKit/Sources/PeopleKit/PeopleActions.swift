@@ -28,6 +28,8 @@ struct PeopleActionsModifier: ViewModifier {
     @State private var mergeSourcePerson: PersonInfo?
     /// 「この人物を整理」（混入グループの一括分離・ADR-111）の対象。
     @State private var cleanupPerson: PersonInfo?
+    /// 「この人物を調べる」（似ている人・混入候補を見て直す・ADR-147）。
+    @State private var inspectPerson: PersonInfo?
     /// クラウド共有（共有セット作成・ADR-112）の対象。エンジン未注入なら項目を出さない。
     @Environment(ShareSyncEngine.self) private var shareEngine: ShareSyncEngine?
     @AppStorage(ShareSettingsKeys.provideEnabled) private var shareProvideEnabled = true
@@ -56,6 +58,9 @@ struct PeopleActionsModifier: ViewModifier {
                 Button(L("Group with Another Person…")) { mergeSourcePerson = person }
                 // 混入（複数の別人が同じ人物に入っている）をグループ単位で一括分離する（ADR-111）。
                 Button(L("Clean Up This Person…")) { cleanupPerson = person }
+                // ⚠️ 「整理」の隣に置く（ADR-147）。どちらも「この人物、何かおかしい」ときの入口で、
+                // 整理＝混入の一括分離、調べる＝**なぜそうなるかを見て直す**。
+                Button(L("Inspect This Person…")) { inspectPerson = person }
                 // 共有中なら「停止」、していなければ「共有…」——同じ場所で対になるようにする。
                 if let shareEngine, shareProvideEnabled {
                     if let setID = shareEngine.sharedSetID(
@@ -97,6 +102,16 @@ struct PeopleActionsModifier: ViewModifier {
             // この人物を整理（混入グループの一括分離・ADR-111）。
             .sheet(item: $cleanupPerson, onDismiss: { onChanged?() }) { person in
                 PersonCleanupView(person: person, peopleEngine: peopleEngine)
+            }
+            .sheet(item: $inspectPerson, onDismiss: { onChanged?() }) { person in
+                NavigationStack {
+                    PersonInspectorView(peopleEngine: peopleEngine, initialPerson: person)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button(L("Close")) { inspectPerson = nil }
+                            }
+                        }
+                }
             }
             // クラウド共有（この人物の写真で共有セットを作る・ADR-112）。
             .sheet(item: $sharePerson) { payload in

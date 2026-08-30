@@ -35,6 +35,31 @@ struct PeopleKitLocalizationTests {
         return keys
     }
 
+    /// `\(…)` を（入れ子の括弧ごと）`replacement` に置き換える。
+    static func replacingInterpolations(in key: String, with replacement: String) -> String {
+        var out = ""
+        var index = key.startIndex
+        while index < key.endIndex {
+            guard key[index] == "\\", key.index(after: index) < key.endIndex,
+                  key[key.index(after: index)] == "(" else {
+                out.append(key[index]); index = key.index(after: index); continue
+            }
+            var depth = 0
+            var cursor = key.index(after: index)   // "(" の位置
+            while cursor < key.endIndex {
+                if key[cursor] == "(" { depth += 1 }
+                if key[cursor] == ")" {
+                    depth -= 1
+                    if depth == 0 { cursor = key.index(after: cursor); break }
+                }
+                cursor = key.index(after: cursor)
+            }
+            out += replacement
+            index = cursor
+        }
+        return out
+    }
+
     private func catalog() throws -> [String: Any] {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -50,10 +75,10 @@ struct PeopleKitLocalizationTests {
     /// `…“%@”?` なので一致せず英語になっていた。「在る」ではなく「**引ける形で**在る」を見る。
     private func resolves(_ key: String, in catalog: [String: Any]) -> String? {
         guard key.contains("\\(") else { return catalog[key] != nil ? key : nil }
-        let placeholderPattern = try! NSRegularExpression(pattern: #"\\\(.*?\)"#)
-        // エスケープ後の "\(…)" を「書式指定子のどれか」に置き換えた正規表現で照合する。
-        let holePattern = placeholderPattern.stringByReplacingMatches(
-            in: key, range: NSRange(key.startIndex..., in: key), withTemplate: "\u{1}")
+        // ⚠️ 正規表現で `\(…)` を消さない。**入れ子の括弧**（`\(percent(x))`）があると
+        // 最初の `)` で切れて照合できず、「カタログに無い」と誤判定する（実際に踏んだ）。
+        // 括弧の深さを数えて 1 つの穴として飲み込む。
+        let holePattern = Self.replacingInterpolations(in: key, with: "\u{1}")
         var regexSource = NSRegularExpression.escapedPattern(for: holePattern)
         regexSource = regexSource.replacingOccurrences(of: "\u{1}", with: "(%lld|%@|%d)")
         guard let rx = try? NSRegularExpression(pattern: "^" + regexSource + "$") else { return nil }
