@@ -38,6 +38,20 @@ public struct FaceClustering {
     /// 「同じ誤りクラスタ」はほぼ同一ベクトルの照合なのでスケール非依存。
     public static let negativeSameThreshold: Float = 0.55   // facenet 既定
     public static let negativeWrongThreshold: Float = 0.88
+
+    /// 負例で「入れない・留めない」と判断するときに要求する差（ADR-140）。
+    ///
+    /// ⚠️ 負例の「同一人物」線（arcface 0.45）は**本人の顔どうしの類似度より低い**ので、
+    /// 絶対値だけで判定すると、本人の顔を 1 枚外しただけで**本人の他の顔も全部**その負例に
+    /// 一致してしまう（実測: 12 枚のアルバムが 3 枚に激減）。
+    /// 「外した顔の方が、その人物自身よりも**はっきり**近い」ときだけ拒否する。
+    /// 別人の混入は本人より 0.3〜0.5 は近いので、この幅で十分に拾える。
+    public static let negativeMargin: Float = 0.10
+
+    /// 「外した顔と**実質同じ顔**」とみなす線（連写・同一写真の重複検出など）。
+    /// ここを超える顔は、相対判定を待たずに必ず拒否する——ユーザーが外したその写真が
+    /// 戻ってきては意味がないため。
+    public static let negativeDuplicateThreshold: Float = 0.97
     public var negativeSameThreshold: Float = FaceClustering.negativeSameThreshold
 
     public struct Cluster: Sendable, Equatable {
@@ -241,9 +255,19 @@ public struct FaceClustering {
             }
             if cand.sim < required,
                !(sizeMarginExemptionActive && !hasDistinctRival(of: cand.index, in: scored)) { continue }
-            if FaceClustering.negativeRejects(v, centroid: clusters[cand.index].centroid, negatives: negatives,
-                                              sameThreshold: negativeSameThreshold) {
-                continue
+            // ⚠️ 負例は**相対で**効かせる（ADR-140）。この顔が「外された顔」の方に、
+            // 候補クラスタ自身よりはっきり近いときだけ拒否する。絶対値だけで見ると、
+            // ユーザーが本人の顔を 1 枚外しただけで、その人物の顔が以後どれも入らなくなる。
+            if let matched = FaceClustering.firstNegativeMatch(
+                v, centroid: clusters[cand.index].centroid, negatives: negatives,
+                sameThreshold: negativeSameThreshold) {
+                let simToRejected = FaceClustering.dot(v, matched.faceCentroid)
+                // 外したその顔（実質同じ顔）は必ず拒否。それ以外は、候補クラスタ自身より
+                // **はっきり**外した顔に近いときだけ拒否する。
+                if simToRejected >= FaceClustering.negativeDuplicateThreshold
+                    || simToRejected > cand.sim + FaceClustering.negativeMargin {
+                    continue
+                }
             }
             let w = max(quality, 0.01)
             for i in clusters[cand.index].sum.indices { clusters[cand.index].sum[i] += v[i] * w }
@@ -392,13 +416,23 @@ public struct FaceClustering {
     /// 入力顔 `v`（正規化済み）が候補クラスタ重心 `centroid` へ入ることを、負例が拒否するか。
     static func negativeRejects(_ v: [Float], centroid: [Float], negatives: [NegativePair],
                                 sameThreshold: Float = FaceClustering.negativeSameThreshold) -> Bool {
+        firstNegativeMatch(v, centroid: centroid, negatives: negatives,
+                           sameThreshold: sameThreshold) != nil
+    }
+
+    /// 拒否した負例そのものを返す（どれが効いたかを見たい呼び出し側のため）。
+    /// 再クラスタでは「その負例の顔と、この人物のアンカー、**どちらに近いか**」まで見て
+    /// 判断する（ADR-140）ので、一致した負例が必要になる。
+    static func firstNegativeMatch(_ v: [Float], centroid: [Float], negatives: [NegativePair],
+                                   sameThreshold: Float = FaceClustering.negativeSameThreshold)
+        -> NegativePair? {
         for n in negatives {
             if dot(v, n.faceCentroid) >= sameThreshold,
                dot(centroid, n.wrongCentroid) >= negativeWrongThreshold {
-                return true
+                return n
             }
         }
-        return false
+        return nil
     }
 
     /// 全顔をまとめてクラスタリングする（純関数。再クラスタ・テスト用）。
