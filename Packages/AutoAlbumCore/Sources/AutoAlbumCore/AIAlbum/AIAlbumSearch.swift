@@ -91,7 +91,7 @@ public struct AIAlbumSearcher {
                 ocrTexts: [String: String] = [:],
                 peopleByRefKey: [String: [String]]? = nil,
                 signals: QuerySignals = QuerySignals(),
-                loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+                loadPage: (_ after: String?, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [EnrichedPhoto] {
         await searchWithPool(baseLite: all, spec: spec, now: now, semanticText: semanticText,
                              probes: probes, pageSize: pageSize, faceCounts: faceCounts,
@@ -122,7 +122,7 @@ public struct AIAlbumSearcher {
                                ocrTexts: [String: String] = [:],
                                peopleByRefKey: [String: [String]]? = nil,
                                signals: QuerySignals = QuerySignals(),
-                               loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+                               loadPage: (_ after: String?, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
         var base = QueryEvaluator.hardFilter(all, spec: spec, now: now,
                                              peopleByRefKey: peopleByRefKey, signals: signals)
@@ -218,11 +218,15 @@ public struct AIAlbumSearcher {
             var scored: [(photo: EnrichedPhoto, score: Float)] = []
             scored.reserveCapacity(base.count)
             var excludedByNeg = 0
-            var offset = 0
+            // ⚠️ ページはカーソル（refKey）で送る。夜間の埋め込みが走査中に行を挿入するため、
+            // オフセットで送ると**同じ写真が 2 回**返る（ADR-143）。
+            var cursor: String?
+            var seen = Set<String>()
             while true {
-                let page = await loadPage(offset, pageSize)
+                let page = await loadPage(cursor, pageSize)
                 if page.isEmpty { break }
                 for entry in page {
+                    guard seen.insert(entry.refKey).inserted else { continue }   // 二重採点しない
                     guard let photo = baseByID[entry.refKey], let v = ClipMath.decode(entry.clipVector) else { continue }
                     guard let pos = QueryEmbedder.semanticScore(q, photoVector: v) else {
                         excludedByNeg += 1
@@ -230,8 +234,8 @@ public struct AIAlbumSearcher {
                     }
                     scored.append((photo, pos))
                 }
-                offset += pageSize
-                if page.count < pageSize { break }
+                cursor = page.last?.refKey
+                if page.count < pageSize || cursor == nil { break }
             }
             if !q.negatives.isEmpty {
                 Diagnostics.mark("aialbum: negFilter terms=\(excludeTerms.count) dropped=\(excludedByNeg)")
@@ -244,8 +248,9 @@ public struct AIAlbumSearcher {
                 semantic = scored.prefix(Self.maxResults).filter { $0.score >= cutoff }.map(\.photo)
             }
             // 増分評価の土台となるプール（上位のみ・小さく永続化）。
-            pool = Dictionary(uniqueKeysWithValues:
-                scored.prefix(Self.poolLimit).map { ($0.photo.id, $0.score) })
+            // ⚠️ 一意化して作る。ここで trap すると**アプリが落ちる**——実際に落ちた（ADR-143）。
+            pool = Dictionary(scored.prefix(Self.poolLimit).map { ($0.photo.id, $0.score) },
+                              uniquingKeysWith: { first, _ in first })
         }
 
         // P1: タグ一致（一致数降順）を第3のランキングとして融合する。
@@ -282,7 +287,7 @@ public struct AIAlbumSearcher {
         for (key, score) in new { merged[key] = score }
         guard merged.count > poolLimit else { return merged }
         let kept = merged.sorted { $0.value > $1.value }.prefix(poolLimit)
-        return Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
+        return Dictionary(kept.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// プールから「メンバーに入るべき refKey」を返す（純）。フル評価と同じ

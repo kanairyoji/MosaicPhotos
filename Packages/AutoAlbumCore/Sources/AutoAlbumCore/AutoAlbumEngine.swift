@@ -211,8 +211,8 @@ public final class AutoAlbumEngine {
         let tags = await tagStore.allTags()
         let store = self.store
         return await TagCentroids.build(vocabulary: vocabulary, tagsByRefKey: tags,
-                                        loadPage: { offset, limit in
-            await store.enrichmentVectorPage(offset: offset, limit: limit)
+                                        loadPage: { cursor, limit in
+            await store.enrichmentVectorPage(after: cursor, limit: limit)
         })
     }
 

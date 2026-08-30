@@ -16,9 +16,13 @@ struct AIAlbumExclusionTests {
                       placeName: "Tokyo", clipVector: clip.map { ClipMath.encode($0) })
     }
 
-    private func pagedLoader(_ photos: [EnrichedPhoto]) -> (Int, Int) async -> [(refKey: String, clipVector: Data)] {
+    /// カーソル（refKey）方式のページ供給（本番と同じ形・ADR-143）。
+    private func pagedLoader(_ photos: [EnrichedPhoto]) -> (String?, Int) async -> [(refKey: String, clipVector: Data)] {
         let embedded = photos.compactMap { ph in ph.clipVector.map { (ph.id, $0) } }.sorted { $0.0 < $1.0 }
-        return { offset, limit in embedded.dropFirst(offset).prefix(limit).map { (refKey: $0.0, clipVector: $0.1) } }
+        return { cursor, limit in
+            embedded.drop { pair in cursor.map { pair.0 <= $0 } ?? false }
+                .prefix(limit).map { (refKey: $0.0, clipVector: $0.1) }
+        }
     }
 
     /// テキストごとに異なるベクトルを返す埋め込みスタブ（肯定と除外を区別するため）。

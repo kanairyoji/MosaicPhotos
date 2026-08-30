@@ -88,9 +88,13 @@ struct AIAlbumSearchTests {
 
     // MARK: - QuerySpec 版（OR / ハード＋内容）
 
-    private func pagedLoader(_ photos: [EnrichedPhoto]) -> (Int, Int) async -> [(refKey: String, clipVector: Data)] {
+    /// カーソル（refKey）方式のページ供給（本番と同じ形・ADR-143）。
+    private func pagedLoader(_ photos: [EnrichedPhoto]) -> (String?, Int) async -> [(refKey: String, clipVector: Data)] {
         let embedded = photos.compactMap { ph in ph.clipVector.map { (ph.id, $0) } }.sorted { $0.0 < $1.0 }
-        return { offset, limit in embedded.dropFirst(offset).prefix(limit).map { (refKey: $0.0, clipVector: $0.1) } }
+        return { cursor, limit in
+            embedded.drop { pair in cursor.map { pair.0 <= $0 } ?? false }
+                .prefix(limit).map { (refKey: $0.0, clipVector: $0.1) }
+        }
     }
 
     @Test("QuerySpec: OR（京都 or 大阪）のハード絞り込み（内容語なし）")
