@@ -40,6 +40,7 @@ public struct PersonCleanupView: View {
                 }
             }
             .navigationTitle(person.displayName)
+            .pausesFaceScan(peopleEngine)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

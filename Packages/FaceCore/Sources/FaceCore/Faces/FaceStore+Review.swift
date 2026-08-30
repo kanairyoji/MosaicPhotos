@@ -40,9 +40,16 @@ extension FaceStore {
     ///   同じ質問を繰り返さず、次点の候補で埋める（実フィードバック対応）。
     func reviewItems(minFaces: Int, limit: Int = 30,
                      excluding: Set<String> = []) -> [FaceReviewItem] {
+        // ⚠️ 内訳を測る（ADR-142）。実機で 1 枚のカード生成に 7 秒かかっていたが、
+        // どの段が重いのかログから分からなかった。段ごとに出す。
+        let tCalib = PerfTrace.nowNs()
         let thr = calibratedThreshold()
+        PerfTrace.logSpan("people.batchReview.threshold", ms: PerfTrace.msSince(tCalib))
         // UI の人物と同じ土俵で母数を取る（ADR-68 追補3）。
+        let tPool = PerfTrace.nowNs()
         let clusters = peopleEligibleClusters(minFaces: minFaces)
+        PerfTrace.logSpan("people.batchReview.pool", ms: PerfTrace.msSince(tPool),
+                          detail: "clusters=\(clusters.count)")
         guard clusters.count >= 1, !Task.isCancelled else { return [] }
 
         // 重心と名前は `PersonCluster` の列だけで作れる（**顔は 1 枚も引かない**）。
@@ -100,7 +107,10 @@ extension FaceStore {
         // ここで初めて顔を読む——**基準と、候補に挙がったクラスタだけ**。
         var needed = focusIDs
         for cand in mergeCandidates { needed.insert(cand.a); needed.insert(cand.b) }
+        let tFaces = PerfTrace.nowNs()
         let membersByCluster = faceDigests(inClusters: needed)
+        PerfTrace.logSpan("people.batchReview.faces", ms: PerfTrace.msSince(tFaces),
+                          detail: "clusters=\(needed.count)")
 
         var coverFace: [Int: PersonInfo.Face] = [:]
         var photoSets: [Int: Set<String>] = [:]

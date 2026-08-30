@@ -51,6 +51,7 @@ actor FaceStore {
         self.tuning = tuning
         clusteringCache = nil
         thresholdCache = nil
+        calibrationSamplesCache = nil   // プロファイルが変われば材料も別空間（ADR-70）
     }
 
     /// この品質未満の顔はクラスタへ割り当てない（ADR-45/53）。Vision の
@@ -110,33 +111,63 @@ actor FaceStore {
     /// 校正済みしきい値のキャッシュ（B1・ADR-46）。修正追加で無効化。
     var thresholdCache: Float?
 
+    /// 校正の材料（修正ジャーナルから作った (類似度, 重み) の並び）。
+    ///
+    /// ⚠️ **修正のたびに全件を読み直さない**（ADR-142）。実機では修正が 8,868 件まで育っており、
+    /// 1 回答ごとにこの全件 fetch ＋ 校正計算が走っていた（`people.batchReview.load` が毎回 7 秒）。
+    /// 追加は 1 行ずつなので、キャッシュへ**足すだけ**にする。
+    struct CalibrationSamples: Sendable {
+        var positive: [(Float, Double)] = []
+        var negative: [(Float, Double)] = []
+    }
+    var calibrationSamplesCache: CalibrationSamples?
+
     /// ユーザー修正から校正したしきい値（サンプル不足なら既定 0.45）。
     func calibratedThreshold() -> Float {
         if let cached = thresholdCache { return cached }
+        let t0 = PerfTrace.nowNs()
+        let samples = calibrationSamples()
+        let t = FaceCalibration.calibratedThreshold(positive: samples.positive,
+                                                    negative: samples.negative,
+                                                    fallback: tuning.clusterThreshold,
+                                                    clamp: tuning.calibrationRange)
+        thresholdCache = t
+        PerfTrace.logSpan("faces.calibrate", ms: PerfTrace.msSince(t0),
+                          detail: "pos=\(samples.positive.count) neg=\(samples.negative.count)")
+        if t != tuning.clusterThreshold {
+            Self.log.info("faces: calibrated threshold \(t) "
+                          + "(pos=\(samples.positive.count) neg=\(samples.negative.count))")
+        }
+        return t
+    }
+
+    /// 修正 1 件を校正の材料へ振り分ける（読み出しと記録で同じ規則を使う）。
+    static func appendCalibrationSample(kind: String, similarity: Float, weight: Double,
+                                        to samples: inout CalibrationSamples) {
+        switch kind {
+        case "merge", "confirm", "sameGroup": samples.positive.append((similarity, weight))
+        case "reassign", "notSame": samples.negative.append((similarity, weight))
+        default: break
+        }
+    }
+
+    /// 校正の材料を作る（キャッシュがあればそれを使う）。
+    func calibrationSamples() -> CalibrationSamples {
+        if let cached = calibrationSamplesCache { return cached }
         let rows = (countedFetchOptional(FetchDescriptor<FaceCorrection>())) ?? []
         // 確度で重み付けする（ADR-68 追補6）。列追加前の行は nil ＝ 1.0 として扱う。
-        var positive: [(Float, Double)] = []
-        var negative: [(Float, Double)] = []
+        var samples = CalibrationSamples()
         for r in rows {
             // ⚠️ 類似度はモデルの空間に張り付いている（ADR-70 追補）。別モデル世代の行を混ぜると
             // 校正が壊れる（facenet の 0.5-0.7 が AuraFace の校正を上限 0.40 まで押し上げた実障害）。
             guard (r.profile ?? "facenet") == tuning.name else { continue }
             guard let sim = r.similarity else { continue }
             let w = r.confidence ?? 1.0
-            switch r.kind {
-            case "merge", "confirm", "sameGroup":  positive.append((Float(sim), w))
-            case "reassign", "notSame":  negative.append((Float(sim), w))
-            default: break
-            }
+            FaceStore.appendCalibrationSample(kind: r.kind, similarity: Float(sim), weight: w,
+                                              to: &samples)
         }
-        let t = FaceCalibration.calibratedThreshold(positive: positive, negative: negative,
-                                                    fallback: tuning.clusterThreshold,
-                                                    clamp: tuning.calibrationRange)
-        thresholdCache = t
-        if t != tuning.clusterThreshold {
-            Self.log.info("faces: calibrated threshold \(t) (pos=\(positive.count) neg=\(negative.count))")
-        }
-        return t
+        calibrationSamplesCache = samples
+        return samples
     }
 
     // MARK: - Fetch helpers（FetchDescriptor の反復をここに集約）

@@ -25,6 +25,19 @@ struct FaceClusterInspectorView: View {
     @State private var mergeRejection: String?
 
     var body: some View {
+        presentations(listContent)
+            .navigationTitle("クラスタリングの内訳")
+            .navigationBarTitleDisplayMode(.inline)
+            // 問い合わせが重いので、開いている間は顔スキャンに譲らせる（ADR-142）。
+            .pausesFaceScan(peopleEngine)
+            .task {
+                guard focus == nil, let first = peopleEngine.allPeople.first else { return }
+                focus = first
+                await load(first)
+            }
+    }
+
+    private var listContent: some View {
         List {
             focusSection
             if let report {
@@ -37,46 +50,45 @@ struct FaceClusterInspectorView: View {
                 Section { Text("計算中…").foregroundStyle(.secondary) }
             }
         }
-        .navigationTitle("クラスタリングの内訳")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $reassignTarget) { face in
-            FaceReassignPickerView(faceID: face.faceID, refKey: face.refKey,
-                                   boundingBox: face.boundingBox,
-                                   currentClusterID: focus?.clusterID ?? -1,
-                                   peopleEngine: peopleEngine) { target in
-                Task {
-                    await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: target)
-                    if let focus { await load(clusterID: focus.clusterID) }
+    }
+
+    /// ⚠️ シート・アラートを body に直に積むと型チェックが破裂する（この画面で実際に踏んだ）。
+    /// 提示だけを別の関数に切り出す。
+    private func presentations<V: View>(_ content: V) -> some View {
+        content
+            .sheet(item: $reassignTarget) { face in
+                FaceReassignPickerView(faceID: face.faceID, refKey: face.refKey,
+                                       boundingBox: face.boundingBox,
+                                       currentClusterID: focus?.clusterID ?? -1,
+                                       peopleEngine: peopleEngine) { target in
+                    Task {
+                        await peopleEngine.reassignFace(faceID: face.faceID, toClusterID: target)
+                        if let focus { await load(clusterID: focus.clusterID) }
+                    }
                 }
             }
-        }
-        .sheet(isPresented: $showingPicker) {
-            InspectorPersonPicker(people: peopleEngine.allPeople) { person in
-                focus = person
-                Task { await load(person) }
+            .sheet(isPresented: $showingPicker) {
+                InspectorPersonPicker(people: peopleEngine.allPeople) { person in
+                    focus = person
+                    Task { await load(person) }
+                }
             }
-        }
-        .alert("「\(mergeCandidate?.name ?? "この人物")」を「\(focusName)」に統合しますか？",
-               isPresented: Binding(get: { mergeCandidate != nil },
-                                    set: { if !$0 { mergeCandidate = nil } }),
-               presenting: mergeCandidate) { row in
-            Button("キャンセル", role: .cancel) { mergeCandidate = nil }
-            Button("統合する") { merge(row) }
-        } message: { row in
-            Text("\(row.photoCount) 枚の写真が「\(focusName)」に入ります。"
-                 + "取り違えていた場合は、顔の管理から戻せます。")
-        }
-        .alert("統合できません", isPresented: Binding(get: { mergeRejection != nil },
-                                              set: { if !$0 { mergeRejection = nil } })) {
-            Button("OK") { mergeRejection = nil }
-        } message: {
-            Text(mergeRejection ?? "")
-        }
-        .task {
-            guard focus == nil, let first = peopleEngine.allPeople.first else { return }
-            focus = first
-            await load(first)
-        }
+            .alert("「\(mergeCandidate?.name ?? "この人物")」を「\(focusName)」に統合しますか？",
+                   isPresented: Binding(get: { mergeCandidate != nil },
+                                        set: { if !$0 { mergeCandidate = nil } }),
+                   presenting: mergeCandidate) { row in
+                Button("キャンセル", role: .cancel) { mergeCandidate = nil }
+                Button("統合する") { merge(row) }
+            } message: { row in
+                Text("\(row.photoCount) 枚の写真が「\(focusName)」に入ります。"
+                     + "取り違えていた場合は、顔の管理から戻せます。")
+            }
+            .alert("統合できません", isPresented: Binding(get: { mergeRejection != nil },
+                                                  set: { if !$0 { mergeRejection = nil } })) {
+                Button("OK") { mergeRejection = nil }
+            } message: {
+                Text(mergeRejection ?? "")
+            }
     }
 
     /// 調査対象の表示名（統合先の名前）。

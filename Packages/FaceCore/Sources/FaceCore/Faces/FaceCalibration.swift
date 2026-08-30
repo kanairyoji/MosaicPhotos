@@ -48,12 +48,28 @@ public enum FaceCalibration {
         let posWeight = positive.reduce(0.0) { $0 + $1.1 }
         let negWeight = negative.reduce(0.0) { $0 + $1.1 }
         guard posWeight >= Double(minSamples), negWeight >= Double(minSamples) else { return fallback }
+
+        // ⚠️ **候補ごとに全サンプルを走査しない**（ADR-142）。以前は候補しきい値ごとに
+        // `positive.filter { … }` を作っていたため O(n²)＋毎回の配列確保で、修正が 8,868 件に
+        // 育った実機では 1 回の校正が秒単位になっていた（しかも修正のたびに再計算される）。
+        // 並べ替えて一度だけ舐める（結果は完全に同じ・`FaceCalibrationTests` で総当たりと突合）。
+        //
+        //   score(t) = Σ{正例: sim ≥ t} + Σ{負例: sim < t}
+        //
+        // 候補 t を昇順に見ると、正例側は「t 未満になった分」が減り、負例側は「t 未満に入った分」が
+        // 増える——どちらも単調なので、走査位置を進めながら累積で更新できる。
+        let pos = positive.sorted { $0.0 < $1.0 }
+        let neg = negative.sorted { $0.0 < $1.0 }
+        var candidates = Array(Set(positive.map(\.0)).union(neg.map(\.0)))
+        candidates.sort()
         var best = fallback
         var bestScore = -Double.greatestFiniteMagnitude
-        // 候補境界＝観測された全類似度（それ以外の値は分類結果が変わらない）。
-        for t in Set(positive.map(\.0)).union(negative.map(\.0)) {
-            let score = positive.filter { $0.0 >= t }.reduce(0.0) { $0 + $1.1 }
-                + negative.filter { $0.0 < t }.reduce(0.0) { $0 + $1.1 }
+        var posBelow = 0.0, negBelow = 0.0
+        var pi = 0, ni = 0
+        for t in candidates {
+            while pi < pos.count, pos[pi].0 < t { posBelow += pos[pi].1; pi += 1 }
+            while ni < neg.count, neg[ni].0 < t { negBelow += neg[ni].1; ni += 1 }
+            let score = (posWeight - posBelow) + negBelow
             if score > bestScore
                 || (score == bestScore && abs(t - fallback) < abs(best - fallback)) {
                 best = t

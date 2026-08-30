@@ -47,6 +47,7 @@ public struct PersonPhotosView: View {
                 .padding(3)
             }
             .navigationTitle(person.displayName)
+            .pausesFaceScan(peopleEngine)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
