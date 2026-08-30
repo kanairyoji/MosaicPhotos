@@ -71,7 +71,9 @@ extension FaceStore {
 
         // 「別人」と記録済みの対（重心埋め込みで照合＝ID の揺れに強い）。
         let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
-            predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
+            // 「別人と答えた」対に加え、同一写真で統合できない対も出題から外す（ADR-152）。
+            predicate: #Predicate { $0.kind == "notSame" || $0.kind == "samePhotoBlock" }))) ?? [])
+            .compactMap {
             row -> ([Float], [Float])? in
             guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
             guard let wrong = row.wrongEmbedding,
@@ -377,7 +379,9 @@ extension FaceStore {
 
         // 「別人」記録（A1 と同じ・重心埋め込みで照合）。
         let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
-            predicate: #Predicate { $0.kind == "notSame" }))) ?? []).compactMap {
+            // 「別人と答えた」対に加え、同一写真で統合できない対も出題から外す（ADR-152）。
+            predicate: #Predicate { $0.kind == "notSame" || $0.kind == "samePhotoBlock" }))) ?? [])
+            .compactMap {
             row -> ([Float], [Float])? in
             guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
             guard let wrong = row.wrongEmbedding,

@@ -97,7 +97,9 @@ public struct AnswerBasisView: View {
                     row(L("Best split of your answers"), percent(bar),
                         detail: L("\(missed) missed ・ \(wrong) wrongly included"))
                 } else {
-                    Text(L("Answer a few more to see the best split."))
+                    Text(profile.same.count < 8 || profile.different.count < 8
+                         ? L("Answer a few more to see the best split.")
+                         : L("Your “same” and “different” answers overlap too much to draw a line (separation \(separationText(profile))). The app keeps its default in that case."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -164,6 +166,11 @@ public struct AnswerBasisView: View {
     }
 
     private func percent(_ v: Float) -> String { "\(Int((v * 100).rounded()))%" }
+
+    /// 分離度（AUC）を読める形に。0.50 で「無関係」。
+    private func separationText(_ profile: AnswerSimilarityProfile) -> String {
+        String(format: "%.2f", profile.separability)
+    }
 
     /// 回答の生データを CSV で書き出して共有シートを開く。要約は診断ログへ。
     private func export() {

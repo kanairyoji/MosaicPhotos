@@ -1744,6 +1744,16 @@
         }
       }
     },
+    "Your “same” and “different” answers overlap too much to draw a line (separation %@). The app keeps its default in that case.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「同じ人」と「別人」の回答が重なりすぎていて、境界を引けません（分離度 %@）。この場合は既定値のまま使います。"
+          }
+        }
+      }
+    },
     "confirmed": {
       "localizations": {
         "ja": {

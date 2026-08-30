@@ -29,8 +29,10 @@ public struct AnswerSimilarityProfile: Sendable, Equatable {
     public let kind: Kind
     public let same: AnswerSimilaritySide
     public let different: AnswerSimilaritySide
-    /// 2 つを最もよく分ける境界（十分な回答数があるときだけ）。
+    /// 2 つを最もよく分ける境界（十分な回答数**と分離度**があるときだけ）。
     public let bestBar: Float?
+    /// 分離度（AUC）。0.5 で無関係、0.5 未満は逆転。境界を出せるかの判断に使う。
+    public let separability: Double
     /// その境界での取りこぼし（同じ人なのに境界未満）と取り違え（別人なのに境界以上）。
     public let sameBelowBar: Int
     public let differentAboveBar: Int
@@ -59,18 +61,23 @@ extension FaceStore {
             default: continue
             }
         }
-        let bar: Float? = (same.count >= Self.answerBasisMinSamples
-                           && different.count >= Self.answerBasisMinSamples)
+        // ⚠️ **分離していないなら境界を出さない**（ADR-149 と同じ規則）。以前は
+        // 既定値がそのまま返り、画面には「境界 0.350・取り違え 1,228」と、
+        // あたかも計算された境界のように出ていた——数字が嘘をつく状態だった。
+        let separability = FaceCalibration.separability(positive: same, negative: different)
+        let enough = same.count >= Self.answerBasisMinSamples
+            && different.count >= Self.answerBasisMinSamples
+        let bar: Float? = (enough && separability >= FaceCalibration.minSeparability)
             ? FaceCalibration.calibratedThreshold(positive: same.map { ($0, 1.0) },
                                                   negative: different.map { ($0, 1.0) },
                                                   fallback: tuning.clusterThreshold,
-                                                  clamp: 0...1)
+                                                  clamp: 0...1, minSeparability: 0)
             : nil
         return AnswerSimilarityProfile(
             kind: kind,
             same: FaceStore.summarize(same),
             different: FaceStore.summarize(different),
-            bestBar: bar,
+            bestBar: bar, separability: separability,
             sameBelowBar: bar.map { b in same.filter { $0 < b }.count } ?? 0,
             differentAboveBar: bar.map { b in different.filter { $0 >= b }.count } ?? 0)
     }
@@ -99,7 +106,8 @@ extension FaceStore {
         let thresholds = currentThresholds()
         func describe(_ profile: AnswerSimilarityProfile, _ label: String) -> String {
             let bar = profile.bestBar.map { String(format: "%.3f", $0) } ?? "-"
-            return "\(label): same=\(profile.same.count)(med "
+            return "\(label): sep=" + String(format: "%.2f", profile.separability)
+                + " same=\(profile.same.count)(med "
                 + String(format: "%.3f", profile.same.median) + ") "
                 + "diff=\(profile.different.count)(med "
                 + String(format: "%.3f", profile.different.median) + ") "
