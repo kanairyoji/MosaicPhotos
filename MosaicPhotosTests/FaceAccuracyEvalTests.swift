@@ -34,7 +34,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         let root = ProcessInfo.processInfo.environment["FACE_EVAL_DIR"]
             ?? "/Users/kanai/DEV/tmp/face-eval"
         var isDirectory: ObjCBool = false
-        print("FACEEVAL: root=\(root) exists=\(FileManager.default.fileExists(atPath: root)) "
+        Self.emit("FACEEVAL: root=\(root) exists=\(FileManager.default.fileExists(atPath: root)) "
               + "model=\(FaceModel.modelBundled)")
         try XCTSkipUnless(FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory)
                           && isDirectory.boolValue,
@@ -88,31 +88,49 @@ final class FaceAccuracyEvalTests: XCTestCase {
             if accepted > 0 {
                 imagesWithFalse += 1
                 falseAccepted += accepted
-                print("FACEEVAL[negatives]: 偽陽性 \(url.lastPathComponent) → \(accepted) 顔")
+                Self.emit("FACEEVAL[negatives]: 偽陽性 \(url.lastPathComponent) → \(accepted) 顔")
             }
         }
         guard images > 0 else { return }
-        print(String(format: "FACEEVAL[negatives]: 顔なし %d 枚中 誤採用あり %d 枚（%.1f%%）・誤採用顔 %d 個",
+        Self.emit(String(format: "FACEEVAL[negatives]: 顔なし %d 枚中 誤採用あり %d 枚（%.1f%%）・誤採用顔 %d 個",
                      images, imagesWithFalse, Double(imagesWithFalse) / Double(images) * 100, falseAccepted))
     }
 
     // MARK: - 1 データセットの評価
 
+    /// ⚠️ 標準出力だけに頼らない。xcresult のコンソールログは**途中が落ちる**ことがあり、
+    /// 実際にこの計測でも中盤のセクションだけが欠けた。環境変数 `FACE_EVAL_OUT`
+    /// （`TEST_RUNNER_FACE_EVAL_OUT=...`）を渡せば、同じ行をファイルへ追記する。
+    static let outputPath = ProcessInfo.processInfo.environment["FACE_EVAL_OUT"]
+
+    static func emit(_ line: String) {
+        print(line)
+        guard let path = outputPath else { return }
+        let data = Data((line + "\n").utf8)
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     private func evaluate(datasetDir: String, name: String) async throws {
         let labels = try Self.loadLabels(csvPath: "\(datasetDir)/labels.csv")
         guard !labels.isEmpty else {
-            print("FACEEVAL[\(name)]: labels.csv が空 — スキップ")
+            Self.emit("FACEEVAL[\(name)]: labels.csv が空 — スキップ")
             return
         }
-        print("FACEEVAL[\(name)]: ラベル \(labels.count) 枚 — 埋め込み抽出開始")
+        Self.emit("FACEEVAL[\(name)]: ラベル \(labels.count) 枚 — 埋め込み抽出開始")
 
         // 埋め込み（キャッシュあり）。パイプライン版数がキャッシュ名に入るので版上げで自動無効化。
         let (samples, rejected) = try await extractEmbeddings(datasetDir: datasetDir, labels: labels)
         let detectionRate = Double(samples.count) / Double(labels.count)
-        print(String(format: "FACEEVAL[%@]: 顔採用 %d/%d（%.1f%%）・棄却/未検出 %d",
+        Self.emit(String(format: "FACEEVAL[%@]: 顔採用 %d/%d（%.1f%%）・棄却/未検出 %d",
                      name, samples.count, labels.count, detectionRate * 100, rejected))
         guard samples.count >= 10 else {
-            print("FACEEVAL[\(name)]: 採用顔が少なすぎるため指標を出せない")
+            Self.emit("FACEEVAL[\(name)]: 採用顔が少なすぎるため指標を出せない")
             return
         }
         reportAcceptanceByAge(samples: samples, labels: labels, name: name)
@@ -140,19 +158,19 @@ final class FaceAccuracyEvalTests: XCTestCase {
             }
         }
         if let v = FaceEvalMetrics.verificationScore(sameSims: sameSims, differentSims: differentSims) {
-            print(String(format: "FACEEVAL[%@]: 検証 同一%d/別人%d 平均 同一=%.3f 別人=%.3f",
+            Self.emit(String(format: "FACEEVAL[%@]: 検証 同一%d/別人%d 平均 同一=%.3f 別人=%.3f",
                          name, v.samePairs, v.differentPairs, v.sameMean, v.differentMean))
-            print(String(format: "FACEEVAL[%@]: TAR@FAR1%%=%.1f%% TAR@FAR0.1%%=%.1f%% 最良F1しきい値=%.2f（F1=%.3f）",
+            Self.emit(String(format: "FACEEVAL[%@]: TAR@FAR1%%=%.1f%% TAR@FAR0.1%%=%.1f%% 最良F1しきい値=%.2f（F1=%.3f）",
                          name, v.tarAtFar01 * 100, v.tarAtFar001 * 100, v.bestF1Threshold, v.bestF1))
         }
         for (bucket, sims) in sameByAgeGap.sorted(by: { $0.key < $1.key }) {
             let mean = sims.reduce(0.0) { $0 + Double($1) } / Double(sims.count)
-            print(String(format: "FACEEVAL[%@]: 同一人物・年齢差%@ ペア%d 平均類似度=%.3f",
+            Self.emit(String(format: "FACEEVAL[%@]: 同一人物・年齢差%@ ペア%d 平均類似度=%.3f",
                          name, bucket, sims.count, mean))
         }
         if !childDifferentSims.isEmpty {
             let mean = childDifferentSims.reduce(0.0) { $0 + Double($1) } / Double(childDifferentSims.count)
-            print(String(format: "FACEEVAL[%@]: 別人・両者12歳以下（兄弟の代理）ペア%d 平均類似度=%.3f",
+            Self.emit(String(format: "FACEEVAL[%@]: 別人・両者12歳以下（兄弟の代理）ペア%d 平均類似度=%.3f",
                          name, childDifferentSims.count, mean))
         }
 
@@ -177,9 +195,15 @@ final class FaceAccuracyEvalTests: XCTestCase {
             guard let s else { return }
             // 分裂率（1人あたりクラスタ数）を一級指標として常に出す（ADR-68）。
             // これが「ピープル画面に何人並ぶか」に直結する。
-            print(String(format: "FACEEVAL[%@]:  %@  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d | 分裂=%.1f/人（最悪%d）",
+            // ⚠️ **平均だけを見ない**（ADR-148 Step 0）。ADR-126 は平均純度が動かなかったので
+            // 採用し、実際には枚数の少ない人物が崩れていて撤回した。最悪値と下位 25%、
+            // 「純度 0.8 未満の人数」を必ず並べる。
+            Self.emit(String(format: "FACEEVAL[%@]:  %@  B3 P=%.3f R=%.3f F1=%.3f | pair F1=%.3f | clusters=%d | 分裂=%.1f/人（最悪%d） | 人物別 純度 最悪=%.2f p25=%.2f・再現 最悪=%.2f p25=%.2f・純度<0.8=%d人",
                          name, label, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1, s.pairF1,
-                         s.clusterCount, s.clustersPerIdentity, s.maxClustersForOneIdentity))
+                         s.clusterCount, s.clustersPerIdentity, s.maxClustersForOneIdentity,
+                         s.worstIdentityPrecision, s.p25IdentityPrecision,
+                         s.worstIdentityRecall, s.p25IdentityRecall,
+                         s.identitiesBelow80Precision))
         }
 
         // 大規模データセット（LFW 等）は貪欲クラスタリングが O(顔数×クラスタ数×次元) で
@@ -188,7 +212,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         // 決着済みバリアント（ADR-56〜60 の掃引）は FACE_EVAL_LEGACY=1 のときだけ回す。
         // ResNet100 級のモデルで全バリアントを回すと 1 回のテスト実行に収まらない（実測タイムアウト）。
         let legacy = ProcessInfo.processInfo.environment["FACE_EVAL_LEGACY"] == "1"
-        print("FACEEVAL[\(name)]: === ベースライン（重心のみ） vs P2 自動プロトタイプ（K=5） ===")
+        Self.emit("FACEEVAL[\(name)]: === ベースライン（重心のみ） vs P2 自動プロトタイプ（K=5） ===")
         let baseThresholds: [Float] = reducedGrid ? [0.55, 0.60] : [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
         for threshold in baseThresholds {
             let base = FaceClustering.clusterAll(faces, threshold: threshold, qualityFloor: 0.40,
@@ -202,7 +226,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
 
         if legacy {
-        print("FACEEVAL[\(name)]: === 系統1 バリアント（ADR-57・推移性なしで再現率回復を狙う） ===")
+        Self.emit("FACEEVAL[\(name)]: === 系統1 バリアント（ADR-57・推移性なしで再現率回復を狙う） ===")
         // A) マージンゲート付き貪欲。
         for thr in [Float(0.55), 0.60] {
             for margin in (reducedGrid ? [Float(0.05)] : [Float(0.05), 0.10]) {
@@ -232,7 +256,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
 
         // D) サイズ適応マージン（ADR-58）: 現行採用（margin0.05・thr0.55）にサイズ適応を重ねる。
-        print("FACEEVAL[\(name)]: === D サイズ適応マージン（現行=margin0.05 に上乗せ） ===")
+        Self.emit("FACEEVAL[\(name)]: === D サイズ適応マージン（現行=margin0.05 に上乗せ） ===")
         // 参照: 現行本番構成（固定マージンのみ）。
         printRow("current margin0.05 thr0.55", score(clusters: FaceClustering.clusterAll(
             faces, threshold: 0.55, qualityFloor: 0.40, qualities: qualities, assignMargin: 0.05)))
@@ -250,7 +274,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
 
         // F) 曖昧な顔の扱い（ADR-68）: マージンゲートで弾いた顔を新クラスタにせず未割当にする。
         // 重心は汚さないので純度は理屈上不変のまま、クラスタ数（＝分裂）だけが減るはず。
-        print("FACEEVAL[\(name)]: === F 曖昧な顔を新クラスタにしない（ADR-68） ===")
+        Self.emit("FACEEVAL[\(name)]: === F 曖昧な顔を新クラスタにしない（ADR-68） ===")
         printRow("prod（曖昧→新クラスタ）", score(clusters: FaceClustering.clusterAll(
             faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
             assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10)))
@@ -290,7 +314,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
         // G: **実機の条件**（校正でしきい値が 0.60 まで上がっていた）を再現し、
         // 「校正の上限を下げる」「実効しきい値を頭打ちにする」の効果を測る（ADR-68 追補）。
-        print("FACEEVAL[\(name)]: === G 実機条件（校正 thr=0.60）と対策 ===")
+        Self.emit("FACEEVAL[\(name)]: === G 実機条件（校正 thr=0.60）と対策 ===")
         func prodLike(thr: Float, cap: Float = 0) -> [FaceClustering.Cluster] {
             FaceClustering.clusterAll(
                 faces, threshold: thr, qualityFloor: 0.40, qualities: qualities,
@@ -319,7 +343,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
 
         // E) 純度の事後検査（外れ値除去・ADR-59）: 現行本番構成（thr0.50/margin0.05/size0.10）の
         // 出力に外れ値除去を重ねる。混入を事後的に抜いて純度を上げられるか。
-        print("FACEEVAL[\(name)]: === E 外れ値除去（現行本番構成の後段） ===")
+        Self.emit("FACEEVAL[\(name)]: === E 外れ値除去（現行本番構成の後段） ===")
         let embByID = Dictionary(uniqueKeysWithValues: samples.map { ($0.file, $0.embedding) })
         let prod = FaceClustering.clusterAll(faces, threshold: 0.50, qualityFloor: 0.40,
                                              qualities: qualities, assignMargin: 0.05,
@@ -334,7 +358,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         // 年齢は「推定で得られる想定の入力」として使う（人物ラベルは評価にのみ使用＝cheat しない）。
         let ageByFile = Dictionary(uniqueKeysWithValues: samples.compactMap { sm in sm.age.map { (sm.file, $0) } })
         if ageByFile.count == samples.count, !reducedGrid {
-            print("FACEEVAL[\(name)]: === 年齢クラスタリング（年齢を完璧に知っていた場合の上限） ===")
+            Self.emit("FACEEVAL[\(name)]: === 年齢クラスタリング（年齢を完璧に知っていた場合の上限） ===")
             let prod = FaceClustering.clusterAll(faces, threshold: 0.50, qualityFloor: 0.40,
                                                  qualities: qualities, assignMargin: 0.05,
                                                  sizeAdaptiveMarginMax: 0.10)
@@ -390,10 +414,74 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
         }   // legacy
 
+        // F) 候補帯（レビューに出す下限・ADR-150）。「尋ねても yes にならない範囲」を切りたい。
+        //    実機ではユーザーが「同じ人」と答えた対の下位 5% が 0.669 だったのに、下限は 0.25。
+        Self.emit("FACEEVAL[\(name)]: === F 候補帯（尋ねる下限の当たり率と網羅率） ===")
+        // ⚠️ **本番の設定で測る**（ADR-70: 同梱モデルが宣言するプロファイル）。旧掃引の 0.50 は
+        // facenet 時代の値で、arcface のスケール（同一人物平均 0.434）では厳しすぎ、
+        // 過分裂した状態の帯を測ってしまう。
+        let tuning = FacePerceptionAdapter().tuning
+        let bandClusters = FaceClustering.clusterAll(
+            faces, threshold: tuning.clusterThreshold, qualityFloor: 0.40, qualities: qualities,
+            assignMargin: tuning.assignMargin,
+            sizeAdaptiveMarginMax: tuning.sizeAdaptiveMarginMax, secondPassMembership: true,
+            secondPassThreshold: tuning.secondPassThreshold)
+        Self.emit(String(format: "FACEEVAL[%@]:  （本番設定 thr=%.2f margin=%.2f size=%.2f）",
+                         name, tuning.clusterThreshold, tuning.assignMargin,
+                         tuning.sizeAdaptiveMarginMax))
+        // 各クラスタの正解ラベル＝そのクラスタで最も多い人物。
+        let labelled: [(centroid: [Float], identity: String)] = bandClusters.compactMap { c in
+            let labels = c.faceIDs.compactMap { truth[$0] }
+            guard let majority = Dictionary(grouping: labels, by: { $0 })
+                .max(by: { $0.value.count < $1.value.count })?.key else { return nil }
+            return (c.centroid, majority)
+        }
+        for point in FaceEvalMetrics.candidateBandCurve(
+            clusters: labelled,
+            bars: [0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]) {
+            Self.emit(String(format: "FACEEVAL[%@]:  bar=%.2f  尋ねる対=%5d  当たり=%5d (%.1f%%)  拾えた分裂=%.1f%%",
+                         name, point.bar, point.pairs, point.samePerson,
+                         point.precision * 100, point.splitCoverage * 100))
+        }
+
+        // G) アンカー模擬（ADR-148 Step 3）。ユーザーが k 枚「確認済み」にした状態を作り、
+        //    確立した人物にどれだけ効くかを見る。プロトタイプ（アンカー）として渡す。
+        Self.emit("FACEEVAL[\(name)]: === G アンカー模擬（確認済み k 枚） ===")
+        var byIdentity: [String: [Sample]] = [:]
+        for sample in samples {
+            guard let identity = truth[sample.file] else { continue }
+            byIdentity[identity, default: []].append(sample)
+        }
+        for k in [0, 1, 3, 5] {
+            // 人物ごとに品質上位 k 枚をアンカーにする（ユーザーは良く写った顔を確認しがち）。
+            var anchorIDs = Set<String>()
+            if k > 0 {
+                for (_, group) in byIdentity {
+                    for sample in group.sorted(by: { $0.quality > $1.quality }).prefix(k) {
+                        anchorIDs.insert(sample.file)
+                    }
+                }
+            }
+            // ⚠️ **順序の効果と見本（プロトタイプ）の効果を分けて測る**。アンカーを先に置くと
+            // 種の作られ方も変わるので、混ぜたままでは「見本を増やすと悪くなる」のか
+            // 「順序で変わった」のかが分からない。
+            for asPrototypes in (k == 0 ? [false] : [false, true]) {
+                let clusters = FaceClustering.clusterAll(
+                    faces, threshold: tuning.clusterThreshold, qualityFloor: 0.40,
+                    qualities: qualities, assignMargin: tuning.assignMargin,
+                    sizeAdaptiveMarginMax: tuning.sizeAdaptiveMarginMax, secondPassMembership: true,
+                    secondPassThreshold: tuning.secondPassThreshold,
+                    anchorFaceIDs: anchorIDs, anchorsAsPrototypes: asPrototypes)
+                printRow("anchors k=\(k) \(asPrototypes ? "見本にも使う" : "順序のみ")",
+                         score(clusters: clusters))
+            }
+        }
+
+
         // === I モデル換装スイープ（ADR-70）: 類似度スケールが変わったモデル用に
         // 本番相当の構成（第2パス・サイズ免除・実効上限つき）を低いしきい値で掃引する。
         // 第2パス閾値は thr+0.05（facenet: 0.50→0.55 と同じ相対位置）。
-        print("FACEEVAL[\(name)]: === I 本番相当の低しきい値スイープ（モデル換装用） ===")
+        Self.emit("FACEEVAL[\(name)]: === I 本番相当の低しきい値スイープ（モデル換装用） ===")
         for thr in [Float(0.30), 0.35, 0.40, 0.45] {
             for (mLabel, margin, sizeMax) in [("m0.05/s0.10", Float(0.05), Float(0.10)),
                                               ("m0.04/s0.08", Float(0.04), Float(0.08))] {
@@ -418,7 +506,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         // === M 混在シナリオ（重い数人＋軽い長い尾・ADR-125） ===
         evaluateMixedScenario(samples: samples, name: name)
 
-        print("FACEEVAL[\(name)]: 完了")
+        Self.emit("FACEEVAL[\(name)]: 完了")
     }
 
     // MARK: - H クラスタ事後監査（ADR-69）
@@ -434,10 +522,10 @@ final class FaceAccuracyEvalTests: XCTestCase {
         for sm in samples { byPerson[sm.person, default: []].append(sm) }
         let persons = byPerson.filter { $0.value.count >= 8 }.sorted { $0.key < $1.key }
         guard persons.count >= 4 else {
-            print("FACEEVAL[\(name)]: 監査評価スキップ（対象人物 \(persons.count) 人）")
+            Self.emit("FACEEVAL[\(name)]: 監査評価スキップ（対象人物 \(persons.count) 人）")
             return
         }
-        print("FACEEVAL[\(name)]: === H クラスタ事後監査（対象 \(persons.count) 人） ===")
+        Self.emit("FACEEVAL[\(name)]: === H クラスタ事後監査（対象 \(persons.count) 人） ===")
 
         for cfg in [FaceClusterAudit.Config(minMargin: 0.20, maxSeparation: 0.40),
                     FaceClusterAudit.Config(minMargin: 0.25, maxSeparation: 0.35),
@@ -467,7 +555,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
                 }
                 if major(s.groupA) != major(s.groupB) { correctlySplit += 1 }
             }
-            print(String(format: "FACEEVAL[%@]:  audit margin=%.2f sep=%.2f — 誤検出 %d/%d（%.0f%%）| 検出 %d/%d（%.0f%%）| 正しく2分割 %d",
+            Self.emit(String(format: "FACEEVAL[%@]:  audit margin=%.2f sep=%.2f — 誤検出 %d/%d（%.0f%%）| 検出 %d/%d（%.0f%%）| 正しく2分割 %d",
                          name, cfg.minMargin, cfg.maxSeparation,
                          singleFlagged, persons.count,
                          Double(singleFlagged) / Double(persons.count) * 100,
@@ -522,12 +610,12 @@ final class FaceAccuracyEvalTests: XCTestCase {
             let heavySplit = clustersOfHeavy.isEmpty ? 0
                 : Double(clustersOfHeavy.values.map(\.count).reduce(0, +)) / Double(clustersOfHeavy.count)
             let heavyWorst = clustersOfHeavy.values.map(\.count).max() ?? 0
-            print(String(format: "FACEEVAL[%@]:  M %@  上位%d人の分裂=%.1f（最悪%d）| clusters=%d | 全体分裂=%.1f | P=%.3f R=%.3f F1=%.3f",
+            Self.emit(String(format: "FACEEVAL[%@]:  M %@  上位%d人の分裂=%.1f（最悪%d）| clusters=%d | 全体分裂=%.1f | P=%.3f R=%.3f F1=%.3f",
                          name, label, heavyCount, heavySplit, heavyWorst, s.clusterCount,
                          s.clustersPerIdentity, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1))
         }
 
-        print("FACEEVAL[\(name)]: === M 混在シナリオ（上位\(heavyCount)人=\(heavyPhotos)枚 ＋ 尾 \(ranked.count - heavyCount) 人・顔 \(subset.count) 個） ===")
+        Self.emit("FACEEVAL[\(name)]: === M 混在シナリオ（上位\(heavyCount)人=\(heavyPhotos)枚 ＋ 尾 \(ranked.count - heavyCount) 人・顔 \(subset.count) 個） ===")
         let t = FaceTuning.arcFace
         // 実機は校正で可動域の上限（0.40）に張り付いていた（diagnostics-64: calibrated 0.4）。
         // 既定値（0.35）と実機値（0.40）の両方で測る。
@@ -583,12 +671,12 @@ final class FaceAccuracyEvalTests: XCTestCase {
                     for fid in c.faceIDs { assignments[fid] = c.id }
                 }
                 guard let s = FaceEvalMetrics.clusteringScore(assignments: assignments, truth: truth) else { return }
-                print(String(format: "FACEEVAL[%@]:  F%d %@  分裂=%.1f/人（最悪%d）| clusters=%d | B3 P=%.3f R=%.3f F1=%.3f",
+                Self.emit(String(format: "FACEEVAL[%@]:  F%d %@  分裂=%.1f/人（最悪%d）| clusters=%d | B3 P=%.3f R=%.3f F1=%.3f",
                              name, k, label, s.clustersPerIdentity, s.maxClustersForOneIdentity,
                              s.clusterCount, s.bcubedPrecision, s.bcubedRecall, s.bcubedF1))
             }
 
-            print("FACEEVAL[\(name)]: === F 家族シナリオ・上位\(k)人（顔 \(subset.count) 個） ===")
+            Self.emit("FACEEVAL[\(name)]: === F 家族シナリオ・上位\(k)人（顔 \(subset.count) 個） ===")
             // 現行本番構成（曖昧な顔は新クラスタ）。
             report("prod（曖昧→新クラスタ）", FaceClustering.clusterAll(
                 faces, threshold: 0.50, qualityFloor: 0.40, qualities: qualities,
@@ -741,7 +829,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
             for q in query { queries.append((q.embedding, personID, q.age)) }
         }
         guard queries.count >= 20 else {
-            print("FACEEVAL[\(name)]: 識別評価スキップ（クエリ \(queries.count) 件）")
+            Self.emit("FACEEVAL[\(name)]: 識別評価スキップ（クエリ \(queries.count) 件）")
             return
         }
 
@@ -766,18 +854,18 @@ final class FaceAccuracyEvalTests: XCTestCase {
         let fused = identifyRate(fusedPersons)
         let avgAuto = autoClusterCounts.isEmpty ? 0
             : Double(autoClusterCounts.reduce(0, +)) / Double(autoClusterCounts.count)
-        print("FACEEVAL[\(name)]: === 2 階層 vs 融合の人物識別精度・\(temporal ? "時系列分割(若→成長後)" : "年齢混在分割(実運用)")（クエリ \(queries.count) 件・\(multiPersons.count) 人） ===")
-        print(String(format: "FACEEVAL[%@]:  融合（人物=1重心）        識別率=%.1f%%", name, fused.all * 100))
-        print(String(format: "FACEEVAL[%@]:  2階層(自動・平均%.1fクラスタ) 識別率=%.1f%%", name, avgAuto, multi.all * 100))
+        Self.emit("FACEEVAL[\(name)]: === 2 階層 vs 融合の人物識別精度・\(temporal ? "時系列分割(若→成長後)" : "年齢混在分割(実運用)")（クエリ \(queries.count) 件・\(multiPersons.count) 人） ===")
+        Self.emit(String(format: "FACEEVAL[%@]:  融合（人物=1重心）        識別率=%.1f%%", name, fused.all * 100))
+        Self.emit(String(format: "FACEEVAL[%@]:  2階層(自動・平均%.1fクラスタ) 識別率=%.1f%%", name, avgAuto, multi.all * 100))
         for (idx, cfg) in bandConfigs.enumerated() where !bandedPersons[idx].isEmpty {
             let r = identifyRate(bandedPersons[idx])
             let avgBand = Double(bandedPersons[idx].map { $0.clusterReps.count }.reduce(0, +)) / Double(bandedPersons[idx].count)
-            print(String(format: "FACEEVAL[%@]:  2階層(%@ 平均%.1f) 識別率=%.1f%%",
+            Self.emit(String(format: "FACEEVAL[%@]:  2階層(%@ 平均%.1f) 識別率=%.1f%%",
                          name, cfg.label, avgBand, r.all * 100))
         }
         if !adaptivePersons.isEmpty {
             let r = identifyRate(adaptivePersons)
-            print(String(format: "FACEEVAL[%@]:  ★適応(子供%d人=帯3分割/大人%d人=融合) 識別率=%.1f%%",
+            Self.emit(String(format: "FACEEVAL[%@]:  ★適応(子供%d人=帯3分割/大人%d人=融合) 識別率=%.1f%%",
                          name, childCount, adultCount, r.all * 100))
         }
     }
@@ -837,7 +925,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
             cacheDirty = true
             processed += 1
             if processed % 100 == 0 {
-                print("FACEEVAL: … \(processed) 枚処理（採用 \(samples.count)）")
+                Self.emit("FACEEVAL: … \(processed) 枚処理（採用 \(samples.count)）")
                 saveCache(cacheURL, embeddings: cache, qualities: qualityCache)
                 cacheDirty = false
             }
@@ -872,7 +960,7 @@ final class FaceAccuracyEvalTests: XCTestCase {
         }
         for (bucket, count) in total.sorted(by: { $0.key < $1.key }) {
             let acceptedCount = accepted[bucket] ?? 0
-            print(String(format: "FACEEVAL[%@]: 年齢%@ 採用 %d/%d（%.0f%%）",
+            Self.emit(String(format: "FACEEVAL[%@]: 年齢%@ 採用 %d/%d（%.0f%%）",
                          name, bucket, acceptedCount, count,
                          Double(acceptedCount) / Double(count) * 100))
         }

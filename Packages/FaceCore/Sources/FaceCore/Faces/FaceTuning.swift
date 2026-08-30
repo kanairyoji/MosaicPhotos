@@ -20,7 +20,7 @@ public struct FaceTuning: Sendable, Equatable {
     public var secondPassThreshold: Float
     /// サイズ免除の「競合が似ている」バー上乗せ（ADR-68）。
     public var rivalAlikeMargin: Float
-    /// 統合候補の下限（ADR-68 追補2）。成長で離れた同一人物を拾い、兄弟平均は下回らない位置。
+    /// 「同じ人ですか？」と**尋ねる**下限（ADR-150）。低すぎると当たらない対ばかり出す。
     public var mergeCandidateFloor: Float
     /// しきい値校正の可動域（ADR-46/68 追補）。
     public var calibrationRange: ClosedRange<Float>
@@ -35,7 +35,7 @@ public struct FaceTuning: Sendable, Equatable {
     public static let facenet = FaceTuning(
         name: "facenet",
         clusterThreshold: 0.50, assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
-        secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.35,
+        secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.50,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
         auditMinMargin: 0.25, auditMaxSeparation: 0.35)
 
@@ -45,13 +45,19 @@ public struct FaceTuning: Sendable, Equatable {
     public static let arcFace = FaceTuning(
         name: "arcface",
         clusterThreshold: 0.35, assignMargin: 0.04, sizeAdaptiveMarginMax: 0.08,
-        secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.25,
+        secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.40,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
         auditMinMargin: 0.20, auditMaxSeparation: 0.40)
 
-    /// 実際に使う統合候補の下限（しきい値が低いときはそれに追従する・ADR-68 追補2）。
+    /// 実際に使う「尋ねる」下限。
+    ///
+    /// ⚠️ 以前は `min(threshold - 0.10, floor)` で**しきい値より下**へ降りていた（arcface で 0.25）。
+    /// FG-NET 実測（本番設定）では 0.25 の当たり率は **4.3%**——96% が「まず yes にならない対」で、
+    /// レビューの質も候補生成の速度も損ねていた（0.40 なら当たり率 14.3%・尋ねる数は 1/7）。
+    /// 実機のユーザー回答でも「同じ人」と答えた対は**下位 5% で 0.669**＝この引き上げで
+    /// 失う当たりはほぼ無い。しきい値が校正で上がったときは、そちらに合わせる（ADR-150）。
     public func mergeBandFloor(threshold: Float) -> Float {
-        min(threshold - 0.10, mergeCandidateFloor)
+        max(mergeCandidateFloor, threshold)
     }
 
     /// 事後監査の設定（ADR-69）。メンバー下限は構造的な値なのでプロファイル共通。

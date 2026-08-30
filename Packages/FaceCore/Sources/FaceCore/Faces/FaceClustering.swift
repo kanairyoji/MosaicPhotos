@@ -478,7 +478,9 @@ public struct FaceClustering {
                                   rivalAlikeMargin: Float = 0,
                                   effectiveThresholdCap: Float = 0,
                                   effectiveThresholdCapMaxPeople: Int = 0,
-                                  secondPassThreshold: Float = FaceClustering.secondPassThreshold) -> [Cluster] {
+                                  secondPassThreshold: Float = FaceClustering.secondPassThreshold,
+                                  anchorFaceIDs: Set<String> = [],
+                                  anchorsAsPrototypes: Bool = true) -> [Cluster] {
         var clustering = FaceClustering(threshold: threshold, qualityFloor: qualityFloor)
         clustering.autoPrototypeLimit = autoPrototypeLimit
         clustering.assignMargin = assignMargin
@@ -491,10 +493,19 @@ public struct FaceClustering {
         clustering.effectiveThresholdCap = effectiveThresholdCap
         clustering.effectiveThresholdCapMaxPeople = effectiveThresholdCapMaxPeople
         var unassigned: [(faceID: String, embedding: [Float])] = []
-        for f in faces {
+        // ⚠️ アンカー（ユーザーが「この人だ」と確認した顔）は**先に置く**（ADR-148 Step 3）。
+        // 本番の再クラスタも、アンカーから種を作ってから残りを配る（ADR-130/132）ので、
+        // 順序を合わせないと「確認済みが効くか」を測ったことにならない。
+        let ordered = anchorFaceIDs.isEmpty ? faces
+            : faces.filter { anchorFaceIDs.contains($0.faceID) }
+                + faces.filter { !anchorFaceIDs.contains($0.faceID) }
+        for f in ordered {
             let cid = clustering.assign(faceID: f.faceID, embedding: f.embedding,
                                         quality: qualities[f.faceID] ?? 1)
             if cid == unassignedID { unassigned.append(f) }
+            else if anchorsAsPrototypes, anchorFaceIDs.contains(f.faceID) {
+                clustering.addPrototype(normalized(f.embedding), toClusterID: cid)
+            }
         }
         // 第2パス（本番 rebuildClusters と同じ・ADR-66）: 未割当を重心を汚さず最寄りへ。
         if secondPassMembership {
@@ -506,7 +517,13 @@ public struct FaceClustering {
         return clustering.clusters
     }
 
-    /// `unassigned` の別名（`clusterAll` 内でシャドーイングを避けるため）。
+    /// 指定クラスタへ代表（プロトタイプ＝アンカー）を足す。重心とは別の「見本」として効く。
+    public mutating func addPrototype(_ vector: [Float], toClusterID id: Int) {
+        guard let index = clusters.firstIndex(where: { $0.id == id }) else { return }
+        clusters[index].prototypes.append(vector)
+    }
+
+    /// `unassigned` の別名（`clusterAll` 内でシャドーイングを避けるため）。    /// `unassigned` の別名（`clusterAll` 内でシャドーイングを避けるため）。
     private static let unassignedID = unassigned
 
     /// 複数クロップの埋め込みを要素平均→再正規化する（マルチクロップ埋め込み・純関数）。

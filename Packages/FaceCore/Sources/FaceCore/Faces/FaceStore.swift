@@ -144,10 +144,14 @@ actor FaceStore {
     /// 修正 1 件を校正の材料へ振り分ける（読み出しと記録で同じ規則を使う）。
     static func appendCalibrationSample(kind: String, similarity: Float, weight: Double,
                                         to samples: inout CalibrationSamples) {
+        // ⚠️⚠️ **尺度を混ぜない**（ADR-149）。校正しているのは「顔が人物に入る」しきい値で、
+        // その尺度は**顔 × 重心**。`merge`/`notSame` は**重心 × 重心**の類似度なので同じ物差しでは
+        // ない（実測でも中央値が 0.79 と 0.71 でずれる）。混ぜると人物ペアの分布が顔の基準を
+        // 押し上げる。人物ペアの数字は「あなたの回答から見た基準」（ADR-148）で別に見る。
         switch kind {
-        case "merge", "confirm", "sameGroup": samples.positive.append((similarity, weight))
-        case "reassign", "notSame": samples.negative.append((similarity, weight))
-        default: break
+        case "confirm", "sameGroup": samples.positive.append((similarity, weight))
+        case "reassign": samples.negative.append((similarity, weight))
+        default: break   // merge / notSame は人物ペアの尺度（ここでは使わない）
         }
     }
 
@@ -541,7 +545,8 @@ actor FaceStore {
         return rows.count
     }
 
-    func anchorsByCluster(limitPerCluster: Int = 5) -> [Int: [[Float]]] {
+    /// ⚠️ 既定は **1**（ADR-151）。見本を増やすほど純度が落ちる（FG-NET 実測）。
+    func anchorsByCluster(limitPerCluster: Int = 1) -> [Int: [[Float]]] {
         let confirmed = (countedFetchOptional(FetchDescriptor<DetectedFace>(
             predicate: #Predicate { $0.confirmedAt != nil },
             sortBy: [SortDescriptor(\.confirmedAt, order: .reverse)]))) ?? []

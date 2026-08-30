@@ -48,7 +48,9 @@ struct FaceReviewFocusTests {
     private func makeNamedAnchorStore() async -> (store: FaceStore, namedID: Int, fragmentID: Int) {
         let store = FaceStore(isStoredInMemoryOnly: true)
         let thr = await store.calibratedThreshold()
-        let near = nearVector(dot: thr - 0.05, dimensions: 4)   // 帯 [thr-0.10, thr) の中
+        // ⚠️ 尋ねる帯は**しきい値以上**になった（ADR-150）。しきい値ちょうど＋α に置く
+        //（サイズ上乗せがあるので自動では合流しない＝候補として残る）。
+        let near = nearVector(dot: thr + 0.02, dimensions: 4)
         func record(_ refKey: String, _ v: [Float]) async {
             await store.recordScan(refKey: refKey, faces: [DetectedFaceSignal(
                 boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
@@ -56,6 +58,16 @@ struct FaceReviewFocusTests {
         }
         for i in 0..<3 { await record("L-named\(i)", [1, 0, 0, 0]) }
         for i in 0..<3 { await record("L-frag\(i)", near) }
+        // ⚠️ 尋ねる帯がしきい値以上になった（ADR-150）ため、少人数のライブラリでは
+        // サイズ免除（ADR-68）が効いて**その場で合流してしまう**。この検証の主題は
+        // 「どちらが基準になるか」なので、割れている状態を明示的に作る。
+        let mergedByAssignment = await store.memberRefKeysByCluster()
+            .first { $0.value.contains("L-named0") && $0.value.contains("L-frag0") }?.key
+        if let mergedID = mergedByAssignment {
+            let fragIDs = await store.facesForCluster(clusterID: mergedID)
+                .filter { $0.refKey.hasPrefix("L-frag") }.map(\.faceID)
+            _ = await store.splitCluster(clusterID: mergedID, faceIDs: fragIDs)
+        }
         for i in 0..<12 { await record("L-big\(i)", [0, 0, 1, 0]) }   // 無名で最大
 
         // ⚠️ ID の振られ方に前提を置かず、**写真キー**からクラスタを引く。

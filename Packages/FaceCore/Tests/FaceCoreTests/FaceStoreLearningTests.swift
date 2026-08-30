@@ -202,11 +202,14 @@ struct FaceStoreLearningTests {
         let store = FaceStore(isStoredInMemoryOnly: true)
         // facenet 世代（既定プロファイル）で「高い類似度の正例/負例」を大量に記録する。
         // facenet スケール（同一人物平均 0.55）では正常な値。
+        // ⚠️ 顔レベルの回答（confirm / reassign）を使う。人物ペア（merge / notSame）は
+        // **尺度が違うので校正に入れない**（ADR-149）。ここで見たいのは世代スコープなので、
+        // 校正が動く種類で組む。
         for _ in 0..<10 {
-            await store.recordCorrection(kind: "merge",
+            await store.recordCorrection(kind: "confirm",
                 faceEmbedding: ClipMath.encodeHalf([1, 0, 0]), wrongEmbedding: nil,
                 similarity: 0.62)
-            await store.recordCorrection(kind: "notSame",
+            await store.recordCorrection(kind: "reassign",
                 faceEmbedding: ClipMath.encodeHalf([1, 0, 0]),
                 wrongEmbedding: ClipMath.encodeHalf([0, 1, 0]), similarity: 0.58)
         }

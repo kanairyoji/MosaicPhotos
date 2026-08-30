@@ -136,7 +136,52 @@ public enum FaceEvalMetrics {
                                identitiesBelow80Precision: identityPrecision.filter { $0 < 0.8 }.count)
     }
 
-    // MARK: - 検証（同一人物/別人ペアの類似度）
+    // MARK: - 候補帯（レビューに出す下限を決める・ADR-150）
+
+    /// 「この 2 人は同じ人ですか？」と尋ねる**下限**を決めるための曲線。
+    public struct CandidateBandPoint: Sendable, Equatable {
+        public let bar: Float
+        /// この値以上に近いクラスタ対の数（＝尋ねる候補の量）。
+        public let pairs: Int
+        /// そのうち本当に同一人物だった対の数。
+        public let samePerson: Int
+        /// 尋ねた対のうち当たりの割合（＝レビューの当たり率）。
+        public var precision: Double { pairs > 0 ? Double(samePerson) / Double(pairs) : 0 }
+        /// 「本来は 1 人なのに割れている対」のうち、この値以上で拾える割合
+        ///（＝下限を上げると取りこぼす分の裏返し）。
+        public var splitCoverage: Double
+    }
+
+    /// クラスタ対の重心類似度と正解ラベルを突き合わせ、バーごとの当たり率と網羅率を返す。
+    ///
+    /// ⚠️ **下限は「尋ねても yes にならない範囲」を切るために決める**。実機の実測では、
+    /// ユーザーが「同じ人」と答えた対の下位 5% が 0.669 だったのに、下限は 0.25 だった
+    /// ——大半が「まず yes にならない対」で、レビューの当たり率も候補生成の速度も損ねていた。
+    public static func candidateBandCurve(clusters: [(centroid: [Float], identity: String)],
+                                          bars: [Float]) -> [CandidateBandPoint] {
+        guard clusters.count >= 2 else { return [] }
+        var sims: [(sim: Float, same: Bool)] = []
+        sims.reserveCapacity(clusters.count * (clusters.count - 1) / 2)
+        for i in clusters.indices {
+            for j in (i + 1)..<clusters.count {
+                let a = clusters[i], b = clusters[j]
+                guard a.centroid.count == b.centroid.count else { continue }
+                var dot: Float = 0
+                for k in a.centroid.indices { dot += a.centroid[k] * b.centroid[k] }
+                sims.append((dot, a.identity == b.identity))
+            }
+        }
+        let totalSplits = sims.filter(\.same).count
+        return bars.map { bar in
+            let above = sims.filter { $0.sim >= bar }
+            let same = above.filter(\.same).count
+            return CandidateBandPoint(
+                bar: bar, pairs: above.count, samePerson: same,
+                splitCoverage: totalSplits > 0 ? Double(same) / Double(totalSplits) : 0)
+        }
+    }
+
+    // MARK: - 検証（同一人物/別人ペアの類似度）    // MARK: - 検証（同一人物/別人ペアの類似度）
 
     public struct VerificationScore: Sendable {
         public let samePairs: Int
