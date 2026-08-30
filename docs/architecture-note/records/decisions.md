@@ -21,6 +21,28 @@
 
 ---
 
+## ADR-143 台帳のページ送りはオフセットではなくカーソルで
+- 状態: 採用
+- 文脈: 実機で `Swift/NativeDictionary.swift:792: Fatal error: Duplicate values for key:
+  'C-/写真/…/dsc03019.jpg'` でアプリが停止（直前のログは `[Tagger] embed: batch 2 done`）。
+  AI アルバムの意味検索は埋め込みを**ページ送り**で読むが、`fetchOffset` を使っていた。
+  夜間の索引付け（`PhotoTagger`）は**走査中に行を挿入する**ので、カーソルより前に 1 行入ると
+  以降の全ページが 1 つずれ、**同じ写真が 2 回**返る。それを
+  `Dictionary(uniqueKeysWithValues:)` に流し込んで trap していた。
+- 決定:
+  1. ページ送りは**キーセット**にする（`refKey > 前ページの最後` を昇順で `limit` 件）。
+     挿入があってもずれない。`enrichmentVectorPage(after:limit:)` と
+     `allEnrichedPhotosLite()` の両方を直す。
+  2. 走査側にも重複ガード（`seen`）を置き、**同じ写真を二重に採点しない**。
+  3. 写真キーで作る辞書は `uniquingKeysWith:` にする——**ここで trap すると
+     アプリが落ちる**。表示のための集計が、データの一時的な重複でクラッシュしてはいけない。
+- 結果: 索引付けと検索が同時に走っても落ちない。⚠️ 一般則として、
+  **書き込みが続く表をオフセットで送らない**（SwiftData/SQL に共通）。
+  回帰テスト `EmbeddingPagingTests`＝1 ページ目のあとにカーソルより前へ挿入し、
+  2 ページ目に重複も取りこぼしも無いこと。
+- 関連: `AutoAlbumStore.enrichmentVectorPage` / `allEnrichedPhotosLite` / `AIAlbumSearcher` /
+  `TagCentroids` / ADR-119。
+
 ## ADR-142 ピープルの重い処理は「増えるほど遅くなる形」をやめる
 - 状態: 採用
 - 文脈: 実機ログ（diagnostics-68）で、**まとめて確認のカード生成が毎回 7 秒**

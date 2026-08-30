@@ -26,19 +26,22 @@ public enum TagCentroids {
     /// - Returns: タグ → L2 正規化した重心（枚数不足のタグは含めない）。
     public static func build(vocabulary: [String],
                              tagsByRefKey: [String: [String]],
-                             loadPage: (_ offset: Int, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
+                             loadPage: (_ after: String?, _ limit: Int) async -> [(refKey: String, clipVector: Data)]
     ) async -> [String: [Float]] {
         guard !vocabulary.isEmpty, !tagsByRefKey.isEmpty else { return [:] }
         let wanted = Set(vocabulary.map { $0.lowercased() })
         var sums: [String: [Float]] = [:]
         var counts: [String: Int] = [:]
 
-        var offset = 0
+        // カーソル（refKey）で送る。走査中の挿入でページがずれない（ADR-143）。
+        var cursor: String?
+        var seen = Set<String>()
         while true {
             if Task.isCancelled { return [:] }
-            let page = await loadPage(offset, pageSize)
+            let page = await loadPage(cursor, pageSize)
             if page.isEmpty { break }
             for entry in page {
+                guard seen.insert(entry.refKey).inserted else { continue }
                 guard let tags = tagsByRefKey[entry.refKey], !tags.isEmpty,
                       let vector = ClipMath.decode(entry.clipVector), !vector.isEmpty else { continue }
                 for raw in tags {
@@ -55,8 +58,8 @@ public enum TagCentroids {
                     counts[tag, default: 0] += 1
                 }
             }
-            offset += page.count
-            if page.count < pageSize { break }
+            cursor = page.last?.refKey
+            if page.count < pageSize || cursor == nil { break }
         }
 
         var out: [String: [Float]] = [:]
@@ -70,7 +73,7 @@ public enum TagCentroids {
             out[tag] = v
         }
         Diagnostics.mark("aialbum.centroids: \(out.count)/\(vocabulary.count) tags "
-                         + "(min \(minPhotosPerTag) photos, scanned \(offset))")
+                         + "(min \(minPhotosPerTag) photos, scanned \(seen.count))")
         return out
     }
 }

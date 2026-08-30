@@ -169,17 +169,25 @@ actor AutoAlbumStore {
         try? modelContext.save()
         let pageSize = 5000
         var result: [EnrichedPhoto] = []
-        var offset = 0
+        // ⚠️ **カーソル（refKey）で送る**（ADR-143）。オフセットだと、夜間の索引付けが
+        // 走査中に行を挿入したときに以降の全ページがずれ、**同じ写真が 2 回**入る。
+        var cursor: String?
         while true {
             let ctx = ModelContext(modelContainer)   // ページごとに破棄して materialize を解放
-            var descriptor = FetchDescriptor<PhotoEnrichment>(sortBy: [SortDescriptor(\.refKey)])
-            descriptor.fetchOffset = offset
+            var descriptor: FetchDescriptor<PhotoEnrichment>
+            if let cursor {
+                descriptor = FetchDescriptor<PhotoEnrichment>(
+                    predicate: #Predicate { $0.refKey > cursor },
+                    sortBy: [SortDescriptor(\.refKey)])
+            } else {
+                descriptor = FetchDescriptor<PhotoEnrichment>(sortBy: [SortDescriptor(\.refKey)])
+            }
             descriptor.fetchLimit = pageSize
             let records = (try? ctx.fetch(descriptor)) ?? []
             if records.isEmpty { break }
             result.append(contentsOf: records.map(\.asEnrichedPhoto))
-            offset += records.count
-            if records.count < pageSize { break }
+            cursor = records.last?.refKey
+            if records.count < pageSize || cursor == nil { break }
         }
         return result
     }
@@ -188,9 +196,21 @@ actor AutoAlbumStore {
     /// 取り出す。保存は Float16 だが、ここで fp32 LE（`ClipMath` が解釈する形式）へ復元して返すため
     /// 下流（`AIAlbumSearcher` / `ClipMath.decode`）は変更不要。`refKey` 昇順で安定ページング。
     /// 1ページ分（例 4,000 件）だけをメモリに置くために使う。
-    func enrichmentVectorPage(offset: Int, limit: Int) -> [(refKey: String, clipVector: Data)] {
-        var descriptor = FetchDescriptor<PhotoEmbedding>(sortBy: [SortDescriptor(\.refKey)])
-        descriptor.fetchOffset = offset
+    /// ⚠️ **オフセットで送らない**（ADR-143）。以前は `fetchOffset` で送っていたが、
+    /// 夜間の埋め込み（`PhotoTagger`）が**走査中に行を挿入する**ため、カーソルより前に
+    /// 1 行入るだけで以降の全ページが 1 つずれ、**同じ写真が 2 回返る**。
+    /// 実際に `Fatal error: Duplicate values for key: 'C-/写真/…jpg'` でクラッシュした。
+    /// refKey の昇順で「前回の最後より大きいもの」を取る（キーセット・ページング）＝
+    /// 挿入があってもズレない。
+    func enrichmentVectorPage(after cursor: String?, limit: Int) -> [(refKey: String, clipVector: Data)] {
+        var descriptor: FetchDescriptor<PhotoEmbedding>
+        if let cursor {
+            descriptor = FetchDescriptor<PhotoEmbedding>(
+                predicate: #Predicate { $0.refKey > cursor },
+                sortBy: [SortDescriptor(\.refKey)])
+        } else {
+            descriptor = FetchDescriptor<PhotoEmbedding>(sortBy: [SortDescriptor(\.refKey)])
+        }
         descriptor.fetchLimit = limit
         let records = (try? modelContext.fetch(descriptor)) ?? []
         return records.compactMap { rec in

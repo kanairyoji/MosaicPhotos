@@ -399,8 +399,8 @@ final class AIAlbumService {
                 probes: probes, faceCounts: faceCounts, humanCounts: humanCounts,
                 photoTags: tags, ocrTexts: ocr,
                 peopleByRefKey: peopleMap, signals: querySignals,
-                loadPage: { offset, limit in
-                    await store.enrichmentVectorPage(offset: offset, limit: limit)
+                loadPage: { cursor, limit in
+                    await store.enrichmentVectorPage(after: cursor, limit: limit)
                 })
             let sorted = members.sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
             return (sorted, pool)
