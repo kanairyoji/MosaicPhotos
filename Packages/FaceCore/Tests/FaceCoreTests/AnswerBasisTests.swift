@@ -65,4 +65,37 @@ struct AnswerBasisTests {
         #expect(face.different.count == 5)
         #expect(face.bestBar == nil)
     }
+
+    /// ⚠️ 分離していないのに境界を出すと、画面が嘘をつく（ADR-152）。
+    /// 実機では「境界 0.350・取り違え 1,228」と、既定値があたかも計算結果のように出ていた。
+    @Test("重なっている回答では境界を出さない（分離度も返す）")
+    func overlappingAnswersHaveNoBar() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<20 {
+            let value = 0.50 + Float(i % 10) * 0.01
+            await store.recordCorrectionForTesting(kind: "confirm", similarity: value)
+            await store.recordCorrectionForTesting(kind: "reassign", similarity: value)
+        }
+        let profile = await store.answerSimilarityProfile(kind: .faceToPerson)
+        #expect(profile.same.count == 20)
+        #expect(profile.different.count == 20)
+        #expect(abs(profile.separability - 0.5) < 0.05, "重なっているのに分離度が高い")
+        #expect(profile.bestBar == nil, "分離していないのに境界が出ている")
+    }
+
+    /// 同一写真で統合できなかった対は、ユーザーの「別人」判断とは別物（ADR-152）。
+    @Test("同一写真の重なりは「別人と答えた」に混ざらない")
+    func samePhotoBlockIsNotAUserJudgement() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<10 {
+            await store.recordCorrectionForTesting(kind: "merge", similarity: 0.80 + Float(i) * 0.001)
+            await store.recordCorrectionForTesting(kind: "notSame", similarity: 0.30 + Float(i) * 0.001)
+            // 統合拒否の自動記録（高い類似度で入る）。
+            await store.recordCorrectionForTesting(kind: "samePhotoBlock", similarity: 0.90)
+        }
+        let profile = await store.answerSimilarityProfile(kind: .personPair)
+        #expect(profile.same.count == 10)
+        #expect(profile.different.count == 10, "自動記録が「別人と答えた」に混ざっている")
+        #expect(profile.different.p90 < 0.5, "高い自動記録が分布を汚している")
+    }
 }

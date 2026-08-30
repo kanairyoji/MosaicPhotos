@@ -572,6 +572,8 @@ actor FaceStore {
         for r in rows {
             // 別モデル世代の埋め込みは別空間＝照合不能（ADR-70 追補）。
             guard (r.profile ?? "facenet") == tuning.name else { continue }
+            // 同一写真の重なりは**写真の事実**で、埋め込みの負例にはしない（ADR-152）。
+            guard r.kind != "samePhotoBlock" else { continue }
             guard let wrong = r.wrongEmbedding,
                   let fe = ClipMath.decodeHalf(r.faceEmbedding),
                   let we = ClipMath.decodeHalf(wrong) else { continue }

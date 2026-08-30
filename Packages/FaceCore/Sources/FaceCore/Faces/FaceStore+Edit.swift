@@ -106,7 +106,20 @@ extension FaceStore {
         try? modelContext.save()
     }
 
-    /// 「同じ人物？」に **いいえ**（A1・ADR-46）。2 クラスタを「別人」として記録する。
+    /// 同一写真で統合できなかった対を「もう尋ねない」ために記録する（ADR-152）。
+    /// `notSame` と違い、**負例（埋め込みの学習）にも校正にも使わない**——
+    /// これはユーザーの判断ではなく写真の事実だから。
+    func markSamePhotoBlock(clusterA: Int, clusterB: Int) {
+        guard let a = cluster(clusterA), let b = cluster(clusterB),
+              let aSum = ClipMath.decodeHalf(a.sum), let bSum = ClipMath.decodeHalf(b.sum) else { return }
+        let sim = FaceClustering.dot(FaceClustering.normalized(aSum),
+                                     FaceClustering.normalized(bSum))
+        recordCorrection(kind: "samePhotoBlock", faceEmbedding: ClipMath.encodeHalf(aSum),
+                         wrongEmbedding: ClipMath.encodeHalf(bSum), similarity: sim)
+        try? modelContext.save()
+    }
+
+    /// 「同じ人物？」に **いいえ**（A1・ADR-46）。2 クラスタを「別人」として記録する。    /// 「同じ人物？」に **いいえ**（A1・ADR-46）。2 クラスタを「別人」として記録する。
     /// 以後この対は (1) 統合サジェストに出さない、(2) 双方向の負例として合流を拒否する。
     func markNotSamePerson(clusterA: Int, clusterB: Int,
                            confidence: AnswerConfidence = .high) {
@@ -363,7 +376,12 @@ extension FaceStore {
         let dstPhotos = Set(faces(inCluster: dstID).map(\.refKey))
         if !srcPhotos.isDisjoint(with: dstPhotos) {
             Self.log.info("faces: merge rejected — same-photo conflict (\(srcID) / \(dstID))")
-            if recordNotSameOnConflict { markNotSamePerson(clusterA: srcID, clusterB: dstID) }
+            // ⚠️ **「別人」として学習しない**（ADR-152）。同一写真の重なりは*写真の事実*であって、
+            // ユーザーが「別人だ」と答えたわけではない。負例（埋め込み）や校正に混ぜると、
+            // ユーザーの判断でないものが基準を動かす——実測で notSame の高い側が
+            // この自動記録で埋まっていた。ただし**同じ対を何度も尋ねない**ための印は要るので、
+            // 別の種類で残す（レビューの除外だけに効く）。
+            if recordNotSameOnConflict { markSamePhotoBlock(clusterA: srcID, clusterB: dstID) }
             return .samePhotoConflict
         }
         mergeClustersUnchecked(src: src, dst: dst, confidence: confidence)
