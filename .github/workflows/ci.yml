@@ -24,6 +24,13 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      # ⚠️ **2 つのジョブで同じ Xcode を使う**。fast だけ既定 Xcode（イメージ依存）だったため、
+      # ios ジョブ（latest-stable）や手元と違うコンパイラで回っていた——手元と CI で結果が
+      # 食い違ったときに、原因がコードなのか toolchain なのか切り分けられない。
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - name: Show toolchain
         run: swift --version
       - name: Run fast tests (swift test)
