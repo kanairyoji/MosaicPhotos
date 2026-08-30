@@ -75,7 +75,45 @@ extension FaceStore {
             differentAboveBar: bar.map { b in different.filter { $0 >= b }.count } ?? 0)
     }
 
-    /// いま効いている基準（校正後・既定・尋ねる候補の下限）。
+    /// 回答の生データを CSV で書き出す（外に出して分析するため・ADR-148）。
+    ///
+    /// ⚠️ **写真も名前もパスも含めない**。列は「回答の種類・類似度・確度・モデル世代・日付」だけで、
+    /// 誰が誰かは分からない。境界を決めるのに要るのは分布であって個人ではない。
+    /// ヒストグラム（10% 刻み）では細かい判断ができないので、生の値を出せるようにする。
+    func answerSamplesCSV() -> String {
+        let rows = (countedFetchOptional(FetchDescriptor<FaceCorrection>(
+            sortBy: [SortDescriptor(\.createdAt)]))) ?? []
+        let formatter = ISO8601DateFormatter()
+        var out = "kind,similarity,confidence,profile,createdAt\n"
+        for row in rows {
+            guard let sim = row.similarity else { continue }
+            out += "\(row.kind),\(String(format: "%.4f", sim)),"
+                + "\(row.confidence.map { String(format: "%.2f", $0) } ?? ""),"
+                + "\(row.profile ?? "facenet"),\(formatter.string(from: row.createdAt))\n"
+        }
+        return out
+    }
+
+    /// 画面と同じ内容を 1 行にまとめた要約（診断ログへ出す用）。
+    func answerBasisSummary() -> String {
+        let thresholds = currentThresholds()
+        func describe(_ profile: AnswerSimilarityProfile, _ label: String) -> String {
+            let bar = profile.bestBar.map { String(format: "%.3f", $0) } ?? "-"
+            return "\(label): same=\(profile.same.count)(med "
+                + String(format: "%.3f", profile.same.median) + ") "
+                + "diff=\(profile.different.count)(med "
+                + String(format: "%.3f", profile.different.median) + ") "
+                + "bar=\(bar) missed=\(profile.sameBelowBar) wrong=\(profile.differentAboveBar)"
+        }
+        return "faces: answer basis — "
+            + describe(answerSimilarityProfile(kind: .personPair), "pair") + " | "
+            + describe(answerSimilarityProfile(kind: .faceToPerson), "face") + " | "
+            + "thr=" + String(format: "%.3f", thresholds.calibrated)
+            + " base=" + String(format: "%.3f", thresholds.base)
+            + " ask=" + String(format: "%.3f", thresholds.askBar)
+    }
+
+    /// いま効いている基準（校正後・既定・尋ねる候補の下限）。    /// いま効いている基準（校正後・既定・尋ねる候補の下限）。
     func currentThresholds() -> (calibrated: Float, base: Float, askBar: Float) {
         let calibrated = calibratedThreshold()
         return (calibrated, tuning.clusterThreshold, tuning.mergeBandFloor(threshold: calibrated))
