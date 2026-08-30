@@ -22,6 +22,8 @@ public struct PersonInspectorView: View {
 
     @State private var focus: PersonInfo?
     @State private var report: PersonDecisionReport?
+    /// いま調べているクラスタ ID。**読み込み中でも正しい名前を出す**ための単一の出典。
+    @State private var focusClusterID: Int?
     @State private var loading = false
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
@@ -88,7 +90,7 @@ public struct PersonInspectorView: View {
                     Task { await load(person) }
                 }
             }
-            .alert(L("Combine “\(mergeCandidate?.name ?? "")” into “\(focusName)”?"),
+            .alert(L("Combine “\(mergeCandidateName)” into “\(focusName)”?"),
                    isPresented: Binding(get: { mergeCandidate != nil },
                                         set: { if !$0 { mergeCandidate = nil } }),
                    presenting: mergeCandidate) { row in
@@ -106,7 +108,36 @@ public struct PersonInspectorView: View {
     }
 
     /// 調査対象の表示名（統合先の名前）。
-    private var focusName: String { focus?.displayName ?? L("this person") }
+    /// 調べている人物の表示名。
+    ///
+    /// ⚠️ **読み込んだレポートを正とする**（実フィードバック: 「似ている人へ切り替えたのに
+    /// 名前が変わらない」）。以前は `focus`（PersonInfo）だけを見ていたので、切り替え先が
+    /// 一覧（`allPeople`）に居ないと nil のままになり、**前の名前が残って見えた**。
+    /// 名前は「レポートの名前 → 一覧の表示名 → Person <ID>」の順に決める。
+    private var focusName: String {
+        guard let id = focusClusterID ?? report?.focus.clusterID else {
+            return focus?.displayName ?? L("this person")
+        }
+        // レポートが**その人物のもの**のときだけ、そこにある名前を使う
+        //（切り替え直後は前の人物のレポートが残っているため）。
+        if report?.focus.clusterID == id, let name = report?.focus.name, !name.isEmpty { return name }
+        return displayName(clusterID: id, name: nil)
+    }
+
+    /// 統合確認に出す相手の名前。
+    private var mergeCandidateName: String {
+        guard let row = mergeCandidate else { return L("this person") }
+        return displayName(clusterID: row.clusterID, name: row.name)
+    }
+
+    /// クラスタ ID の表示名（名前 → ピープル一覧の表示名 → Person <ID>）。
+    private func displayName(clusterID: Int, name: String?) -> String {
+        if let name, !name.isEmpty { return name }
+        if let person = peopleEngine.allPeople.first(where: { $0.clusterID == clusterID }) {
+            return person.displayName
+        }
+        return "Person \(clusterID)"
+    }
 
     /// 近傍の人物を調査対象の人物へ統合する。拒否されたら理由を出す。
     private func merge(_ row: PersonDecisionRow) {
@@ -133,7 +164,15 @@ public struct PersonInspectorView: View {
     }
 
     private func load(clusterID: Int) async {
+        // ⚠️ **切り替えた瞬間に見出しを差し替える**。読み込みは数百 ms かかるので、
+        // ここで前の人物の名前・数字を残すと「切り替わっていない」ように見える。
+        if focusClusterID != clusterID { report = nil }
+        focusClusterID = clusterID
         loading = true
+        // 切り替え先が一覧に居れば `focus` も合わせる（居なくても名前は ID から出す）。
+        if let person = peopleEngine.allPeople.first(where: { $0.clusterID == clusterID }) {
+            focus = person
+        }
         report = await peopleEngine.decisionReport(clusterID: clusterID, limit: 15)
         loading = false
     }
@@ -214,7 +253,7 @@ public struct PersonInspectorView: View {
                 let needed = percent(row.required)
                 NavigationLink {
                     FaceClusterMembersView(clusterID: row.clusterID,
-                                           title: row.name ?? "Person \(row.clusterID)",
+                                           title: displayName(clusterID: row.clusterID, name: row.name),
                                            focusClusterID: focus?.clusterID ?? -1,
                                            focusName: focusName,
                                            peopleEngine: peopleEngine,
@@ -231,7 +270,7 @@ public struct PersonInspectorView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(row.name ?? "Person \(row.clusterID)")
+                        Text(displayName(clusterID: row.clusterID, name: row.name))
                             .font(.subheadline.weight(.medium))
                         Spacer()
                         Text(L("\(alike) alike")).font(.subheadline.monospacedDigit())
