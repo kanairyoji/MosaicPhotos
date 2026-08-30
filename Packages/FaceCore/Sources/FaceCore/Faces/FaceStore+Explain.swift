@@ -61,12 +61,27 @@ public struct PersonOutlierFace: Sendable, Identifiable, Equatable {
     public var id: String { faceID }
 }
 
+/// 間違い候補が出せたか（**出ない理由**を UI で言い分けるため）。
+///
+/// ⚠️ 空リストには「候補が無い」と「計算していない」の 2 通りがあり、画面から消してしまうと
+/// **バグと区別が付かない**（実フィードバック: 「候補がないと出ないのか、バグか分からない」）。
+public enum PersonOutlierStatus: Sendable, Equatable {
+    /// 計算した（`outliers` がそのまま結果。空なら本当に対象が無い）。
+    case computed
+    /// この人物に顔が無い。
+    case noMembers
+    /// メンバーが多すぎるので省いた（デバッグ画面のために全埋め込みを読まない）。
+    case tooManyMembers(limit: Int, members: Int)
+}
+
 public struct PersonDecisionReport: Sendable {
     public let focus: PersonDecisionFocus
     public let settings: FaceDecisionSettings
     public let neighbors: [PersonDecisionRow]
     /// 重心から外れているメンバー（類似度の低い順）＝間違い候補。
     public let outliers: [PersonOutlierFace]
+    /// 間違い候補を出せたか（空リストの理由を言い分ける）。
+    public let outlierStatus: PersonOutlierStatus
     public let totalPeople: Int
     /// 学習済みの負例（「この人ではない」）の数。
     public let negativeCount: Int
@@ -135,8 +150,8 @@ extension FaceStore {
                 verdict: FaceDecisionExplain.verdict(input, settings: settings),
                 inMergeBand: entry.sim >= settings.mergeBandFloor))
         }
-        let outliers = outlierFaces(clusterID: clusterID, centroid: focusVec,
-                                    threshold: settings.threshold, limit: 24)
+        let (outliers, outlierStatus) = outlierFaces(clusterID: clusterID, centroid: focusVec,
+                                                     threshold: settings.threshold, limit: 24)
 
         // 代表顔（焦点＋近傍）。**必要なクラスタの顔だけ**を射影で取る（ADR-119）。
         var needed = Set(rows.map(\.clusterID))
@@ -165,7 +180,8 @@ extension FaceStore {
                 anchorCount: (anchors[clusterID] ?? []).count,
                 hasCover: focus.coverFaceID != nil,
                 isGrouped: focus.personGroupID != nil),
-            settings: settings, neighbors: rows, outliers: outliers,
+            settings: settings, neighbors: rows,
+            outliers: outliers, outlierStatus: outlierStatus,
             totalPeople: clusters.count, negativeCount: negatives.count)
     }
 }
@@ -179,11 +195,13 @@ extension FaceStore {
     /// 確認済み（アンカー）の顔も外れることはある——ユーザーが本人と言っている以上、
     /// 候補には出すが印を付けて区別する。
     func outlierFaces(clusterID: Int, centroid: [Float], threshold: Float,
-                      limit: Int = 24, scanLimit: Int = 3000) -> [PersonOutlierFace] {
+                      limit: Int = 24, scanLimit: Int = 8000)
+        -> (faces: [PersonOutlierFace], status: PersonOutlierStatus) {
         let members = faces(inCluster: clusterID)
+        guard !members.isEmpty else { return ([], .noMembers) }
         guard members.count <= scanLimit else {
             Self.log.info("faces: outliers skipped — too many members (\(members.count))")
-            return []
+            return ([], .tooManyMembers(limit: scanLimit, members: members.count))
         }
         var scored: [PersonOutlierFace] = []
         for f in members {
@@ -198,6 +216,6 @@ extension FaceStore {
                 belowThreshold: sim < threshold))
         }
         scored.sort { $0.similarity < $1.similarity }
-        return Array(scored.prefix(limit))
+        return (Array(scored.prefix(limit)), .computed)
     }
 }

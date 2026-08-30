@@ -271,7 +271,16 @@ struct FaceClusterInspectorView: View {
     /// 近傍（他人との距離）だけでは内側に紛れ込んだ顔は見つからないので、内側からも見る。
     @ViewBuilder
     private func outlierSection(_ report: PersonDecisionReport) -> some View {
-        if !report.outliers.isEmpty {
+        // ⚠️ **空でもセクションを出す**（実フィードバック: 「候補が無いのかバグか分からない」）。
+        // 消えている画面は「壊れている」と区別が付かない。理由まで書く。
+        if report.outliers.isEmpty {
+            Section {
+                Text(outlierEmptyText(report.outlierStatus))
+                    .font(.footnote).foregroundStyle(.secondary)
+            } header: {
+                Text("間違い候補（重心から遠い順）")
+            }
+        } else {
             Section {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 6)], spacing: 6) {
                     ForEach(report.outliers) { face in
@@ -304,6 +313,18 @@ struct FaceClusterInspectorView: View {
                      + "オレンジは「いまのしきい値なら合流しない」顔＝混入の可能性が高いもの。"
                      + "タップすると別の人物へ移せます（確認済みはユーザーが本人と表明した顔）。")
             }
+        }
+    }
+
+    /// 間違い候補が空のときの説明（＝出ない理由）。
+    private func outlierEmptyText(_ status: PersonOutlierStatus) -> String {
+        switch status {
+        case .computed:
+            return "（なし）この人物の顔を全部調べましたが、外れているものはありませんでした。"
+        case .noMembers:
+            return "（なし）この人物に顔がありません。"
+        case .tooManyMembers(let limit, let members):
+            return "（未計算）顔が \(members) 枚あり、上限 \(limit) 枚を超えるため省きました。"
         }
     }
 
