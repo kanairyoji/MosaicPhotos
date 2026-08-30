@@ -514,7 +514,9 @@ public final class PeopleEngine {
     public func mergePerson(from srcClusterID: Int, into dstClusterID: Int) async -> PersonMergeResult {
         await store.beginUndo(label: "\(label(srcClusterID)) を \(label(dstClusterID)) に統合",
                               clusterIDs: [srcClusterID, dstClusterID])
-        let rejection = await store.mergeClusters(from: srcClusterID, into: dstClusterID)
+        // ⚠️ ユーザーが選んだ統合なので、拒否されても「別人」とは学習しない（ADR-146）。
+        let rejection = await store.mergeClusters(from: srcClusterID, into: dstClusterID,
+                                                  recordNotSameOnConflict: false)
         await refreshUndoLabel()
         await loadPeople()
         switch rejection {
@@ -646,6 +648,12 @@ public final class PeopleEngine {
     /// 判定の内訳（Developer Options のチューニング用・ADR-135）。読み取り専用。
     public func decisionReport(clusterID: Int, limit: Int = 12) async -> PersonDecisionReport? {
         await store.decisionReport(clusterID: clusterID, limit: limit)
+    }
+
+    /// 2 人が同じ写真に一緒に写っている箇所（統合できない理由の提示用・ADR-146）。
+    public func samePhotoConflicts(between a: Int, and b: Int) async
+        -> [(refKey: String, first: PersonInfo.Face, second: PersonInfo.Face)] {
+        await store.samePhotoConflicts(between: a, and: b)
     }
 
     /// この写真に**1 人だけ**写っているときのその人物（写真ビューの「この人は XX ではない」用）。

@@ -204,6 +204,33 @@ extension FaceStore {
         return members
     }
 
+    /// 2 つの人物が**同じ写真に一緒に写っている**箇所を返す（統合できない理由の提示用・ADR-146）。
+    ///
+    /// ⚠️ 「同一写真 cannot-link」は物理的な制約（1 枚に同じ人は 1 回しか写れない）だが、
+    /// **重複検出・写真の中の写真・鏡**では破れる。破れているときにユーザーが直せるよう、
+    /// **どの写真のどの顔どうしがぶつかっているか**を見せる。
+    func samePhotoConflicts(between a: Int, and b: Int, limit: Int = 20)
+        -> [(refKey: String, first: PersonInfo.Face, second: PersonInfo.Face)] {
+        let aFaces = faces(inCluster: a)
+        guard !aFaces.isEmpty else { return [] }
+        let bFaces = faces(inCluster: b)
+        guard !bFaces.isEmpty else { return [] }
+        var bByRefKey: [String: DetectedFace] = [:]
+        for f in bFaces where bByRefKey[f.refKey] == nil { bByRefKey[f.refKey] = f }
+        var out: [(refKey: String, first: PersonInfo.Face, second: PersonInfo.Face)] = []
+        for f in aFaces {
+            guard let other = bByRefKey[f.refKey] else { continue }
+            out.append((f.refKey,
+                        PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
+                                        boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh)),
+                        PersonInfo.Face(faceID: other.faceID, refKey: other.refKey,
+                                        boundingBox: CGRect(x: other.bx, y: other.by,
+                                                            width: other.bw, height: other.bh))))
+            if out.count >= limit { break }
+        }
+        return out
+    }
+
     /// この写真に写っている「人物」がちょうど 1 人ならそのクラスタ ID を返す（束ねは 1 人として畳む）。
     ///
     /// ⚠️ 人物アルバム以外（AI アルバム・場所・全写真）で「この人は XX ではない」を出すための判定。
