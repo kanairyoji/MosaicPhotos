@@ -606,3 +606,44 @@ struct FacePhase1Tests {
         #expect(c.clusters.count == 2)   // 新クラスタを作らない
     }
 }
+
+/// 「あらかじめ選んでおく」（ADR-153）。自動結合はしないが、ほぼ確実な対は選んだ状態で見せる。
+@Suite("まとめて確認の事前選択")
+struct BatchPreselectionTests {
+
+    private func signal(_ v: [Float], quality: Float = 0.9) -> DetectedFaceSignal {
+        DetectedFaceSignal(boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                           embedding: ClipMath.encodeHalf(v), quality: quality)
+    }
+
+    @Test("よく似た候補は選択済み・そうでない候補は未選択で出る")
+    func highSimilarityCandidatesArePreselected() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let anchor = FaceClustering.normalized([1, 0, 0])
+        // 0.95（ほぼ確実に同じ人）と 0.60（尋ねる価値はあるが確信はない）。
+        let veryAlike = FaceClustering.normalized([0.95, 0.312, 0])
+        let somewhat = FaceClustering.normalized([0.60, 0.8, 0])
+        for i in 0..<3 { await store.recordScan(refKey: "L-a\(i)", faces: [signal(anchor)]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-b\(i)", faces: [signal(veryAlike)]) }
+        for i in 0..<3 { await store.recordScan(refKey: "L-c\(i)", faces: [signal(somewhat)]) }
+        // 少人数ではサイズ免除で合流してしまうので、割れている状態を明示的に作る。
+        let map = await store.memberRefKeysByCluster()
+        guard let anchorID = map.first(where: { $0.value.contains("L-a0") })?.key else {
+            Issue.record("fixture: 基準クラスタが無い"); return
+        }
+        for prefix in ["L-b", "L-c"] {
+            let ids = await store.facesForCluster(clusterID: anchorID)
+                .filter { $0.refKey.hasPrefix(prefix) }.map(\.faceID)
+            if !ids.isEmpty { _ = await store.splitCluster(clusterID: anchorID, faceIDs: ids) }
+        }
+        guard let item = await store.batchReviewItem(minFaces: 3, anchorClusterID: anchorID) else {
+            Issue.record("候補が出ていない"); return
+        }
+        // 前提: 2 つの候補が出ている。
+        #expect(item.candidates.count == 2, "候補数が想定と違う: \(item.candidates.count)")
+        let veryAlikeCandidate = item.candidates.max { $0.similarity < $1.similarity }
+        let somewhatCandidate = item.candidates.min { $0.similarity < $1.similarity }
+        #expect(veryAlikeCandidate?.preselected == true, "ほぼ確実な対が選ばれていない")
+        #expect(somewhatCandidate?.preselected == false, "確信の無い対まで選んでいる")
+    }
+}

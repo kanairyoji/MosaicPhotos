@@ -22,13 +22,18 @@ public struct FaceBatchReviewItem: Sendable, Equatable {
         public let face: PersonInfo.Face
         public let count: Int
         public let similarity: Float
+        /// **あらかじめ選んでおく**か（似ている度が高く、ほぼ確実に同じ人・ADR-153）。
+        /// 自動で結合はしない——ユーザーが外せる状態で見せる。
+        public var preselected: Bool = false
         public var id: Int { clusterID }
 
-        public init(clusterID: Int, face: PersonInfo.Face, count: Int, similarity: Float) {
+        public init(clusterID: Int, face: PersonInfo.Face, count: Int, similarity: Float,
+                    preselected: Bool = false) {
             self.clusterID = clusterID
             self.face = face
             self.count = count
             self.similarity = similarity
+            self.preselected = preselected
         }
     }
 

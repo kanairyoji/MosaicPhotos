@@ -437,8 +437,10 @@ extension FaceStore {
             // 実機で一括統合により違反が 2 件発生したのを受けて厳格化（ADR-68 追補4）。
             // 同一人物は 1 枚に 1 回しか写れないので、共起があれば別人か重複検出のどちらか。
             guard anchorPhotos.isDisjoint(with: photoSets[c.clusterID] ?? []) else { continue }
+            // 似ている度が高い対は**あらかじめ選んでおく**（ADR-153）。黙って結合はしない。
             candidates.append(.init(clusterID: c.clusterID, face: face,
-                                    count: c.count, similarity: entry.sim))
+                                    count: c.count, similarity: entry.sim,
+                                    preselected: entry.sim >= tuning.autoSuggestBar))
         }
         guard !candidates.isEmpty else { return nil }
 
