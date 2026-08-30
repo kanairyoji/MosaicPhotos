@@ -444,7 +444,64 @@ final class FaceAccuracyEvalTests: XCTestCase {
                          point.precision * 100, point.splitCoverage * 100))
         }
 
-        // G) アンカー模擬（ADR-148 Step 3）。ユーザーが k 枚「確認済み」にした状態を作り、
+        // H2) 断片の自動吸収（ADR-154）: **どの大きさまで機械に任せてよいか**を測る。
+        //     「2 枚以下」は当て推量だったので、K を振って「正しく寄る数」と
+        //     「間違って動く写真の枚数（＝代償）」の両方を出す。
+        Self.emit("FACEEVAL[\(name)]: === H2 断片の自動吸収（バーと K の掃引） ===")
+        do {
+            let base = bandClusters   // 本番設定のクラスタリング（上で作ったもの）
+            var truthOf: [Int: String] = [:]
+            var sizeOf: [Int: Int] = [:]
+            var centroidOf: [Int: [Float]] = [:]
+            for c in base {
+                let labels = c.faceIDs.compactMap { truth[$0] }
+                guard let majority = Dictionary(grouping: labels, by: { $0 })
+                    .max(by: { $0.value.count < $1.value.count })?.key else { continue }
+                truthOf[c.id] = majority
+                sizeOf[c.id] = c.faceIDs.count
+                centroidOf[c.id] = c.centroid
+            }
+            // 吸収先＝確立した人物。データセットには名前もアンカーも無いので**サイズで代用**する
+            //（本番は「名前かアンカーがあり 11 枚以上」＝より厳しい）。
+            let targets = base.filter { (sizeOf[$0.id] ?? 0) >= FaceClustering.matureCountDefault }
+            let rivals = base.filter { (sizeOf[$0.id] ?? 0) >= 3 }
+            // ⚠️ K だけを振っても何も起きない（実測: bar=0.75 では吸収 0 件）。**バーと K の
+            // 両方**を振って、「どこから発火し、どこから間違え始めるか」を見る。
+            for (bar, k) in [(Float(0.50), 2), (0.50, 5), (0.50, 10), (0.55, 2), (0.55, 5), (0.55, 10),
+                             (0.60, 2), (0.60, 5), (0.60, 10), (0.65, 2), (0.65, 5), (0.65, 10),
+                             (0.70, 5), (0.75, 5)] {
+                var plan: [Int: Int] = [:]
+                var correct = 0, wrong = 0, wrongPhotos = 0, skipped = 0
+                for fragment in base where (sizeOf[fragment.id] ?? 0) <= k {
+                    guard let vector = centroidOf[fragment.id] else { continue }
+                    var best: (id: Int, sim: Float)?
+                    var runnerUp: Float = -1
+                    for rival in rivals where rival.id != fragment.id {
+                        guard let other = centroidOf[rival.id] else { continue }
+                        let sim = FaceClustering.dot(vector, other)
+                        if targets.contains(where: { $0.id == rival.id }), sim > (best?.sim ?? -1) {
+                            if let previous = best { runnerUp = max(runnerUp, previous.sim) }
+                            best = (rival.id, sim)
+                        } else {
+                            runnerUp = max(runnerUp, sim)
+                        }
+                    }
+                    guard let best, best.sim >= bar,
+                          best.sim - runnerUp >= 0.05 else { skipped += 1; continue }
+                    plan[fragment.id] = best.id
+                    if truthOf[fragment.id] == truthOf[best.id] { correct += 1 }
+                    else { wrong += 1; wrongPhotos += sizeOf[fragment.id] ?? 0 }
+                }
+                let total = correct + wrong
+                let accuracy = total > 0 ? Double(correct) / Double(total) * 100 : 0
+                Self.emit(String(format: "FACEEVAL[%@]:  bar=%.2f K<=%2d  吸収=%4d（正解 %4d / 誤り %3d = 正答率 %5.1f%%）  誤って動いた写真=%4d枚  見送り=%4d",
+                                 name, bar, k, total, correct, wrong, accuracy, wrongPhotos, skipped))
+                printRow(String(format: "  bar=%.2f K<=%2d 適用後", bar, k),
+                         score(clusters: base, mergePlan: plan))
+            }
+        }
+
+        // G) アンカー模擬（ADR-148 Step 3）。        // G) アンカー模擬（ADR-148 Step 3）。ユーザーが k 枚「確認済み」にした状態を作り、
         //    確立した人物にどれだけ効くかを見る。プロトタイプ（アンカー）として渡す。
         Self.emit("FACEEVAL[\(name)]: === G アンカー模擬（確認済み k 枚） ===")
         var byIdentity: [String: [Sample]] = [:]

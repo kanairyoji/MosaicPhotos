@@ -12,6 +12,9 @@ public struct FragmentAbsorbResult: Sendable, Equatable {
     public let people: Int
     /// 条件に合わなかった断片の数（近すぎる別人がいる・負例など）。
     public let skipped: Int
+    /// **大きさの上限で見送った**クラスタの数（＝上限を上げれば対象になり得る分）。
+    /// 上限をどこに置くかを次に決めるための材料（ADR-155）。
+    public let skippedTooBig: Int
 }
 
 extension FaceStore {
@@ -43,7 +46,9 @@ extension FaceStore {
     func absorbFragments(limit: Int = FaceStore.absorbLimitPerRun) -> FragmentAbsorbResult {
         let photos = photoCountsByCluster()
         let clusters = allClusters()
-        guard clusters.count >= 2 else { return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0) }
+        guard clusters.count >= 2 else {
+            return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0, skippedTooBig: 0)
+        }
         let anchors = anchorsByCluster()
         let negatives = loadNegatives()
         let refKeysByCluster = memberRefKeysByCluster()
@@ -61,7 +66,9 @@ extension FaceStore {
                 && (($0.name?.isEmpty == false) || !(anchors[$0.clusterID] ?? []).isEmpty)
         }
         let rivals = clusters.filter { (photos[$0.clusterID] ?? 0) >= 3 }
-        guard !targets.isEmpty else { return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0) }
+        guard !targets.isEmpty else {
+            return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0, skippedTooBig: 0)
+        }
 
         let fragments = clusters.filter { c in
             let count = photos[c.clusterID] ?? 0
@@ -71,6 +78,13 @@ extension FaceStore {
         }
         var absorbed = 0, skipped = 0
         var into = Set<Int>()
+        // 上限を上げれば対象になり得た数（無名・アンカーなしで、上限だけが理由の分）。
+        let tooBig = clusters.filter { c in
+            let count = photos[c.clusterID] ?? 0
+            return count > Self.absorbMaxPhotos && count < Self.absorbTargetMinPhotos
+                && (c.name?.isEmpty ?? true) && c.personGroupID == nil
+                && (anchors[c.clusterID] ?? []).isEmpty
+        }.count
         for fragment in fragments {
             guard absorbed < limit else { break }
             guard let vector = centroid[fragment.clusterID] else { continue }
@@ -112,8 +126,9 @@ extension FaceStore {
         }
         if absorbed > 0 { try? modelContext.save(); clusteringCache = nil }
         Self.log.info("faces: absorbed \(absorbed) fragments into \(into.count) people "
-                      + "(skipped=\(skipped) bar=\(tuning.autoAbsorbBar))")
-        return FragmentAbsorbResult(absorbed: absorbed, people: into.count, skipped: skipped)
+                      + "(skipped=\(skipped) tooBig=\(tooBig) bar=\(tuning.autoAbsorbBar))")
+        return FragmentAbsorbResult(absorbed: absorbed, people: into.count,
+                                    skipped: skipped, skippedTooBig: tooBig)
     }
 
     /// 「別人」記録と同一写真の印がある対（どちらも吸収しない）。

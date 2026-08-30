@@ -974,6 +974,16 @@
         }
       }
     },
+    "Moved %lld small groups into %lld people. %lld were left alone, and %lld are bigger than this tidy-up handles.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 個の小さなグループを %2$lld 人にまとめました（%3$lld 個は判断が付かず、%4$lld 個はこの整理の対象より大きいので残しています）。"
+          }
+        }
+      }
+    },
     "Moved %lld small groups into %lld people. %lld were left alone.": {
       "localizations": {
         "ja": {
@@ -1150,6 +1160,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "いま確認するものはありません。"
+          }
+        }
+      }
+    },
+    "Nothing to tidy up. %lld small groups were left alone because another person is just as close, and %lld are bigger than this tidy-up handles.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まとめられるものはありませんでした（%1$lld 個は同じくらい近い別の人物がいるため、%2$lld 個はこの整理の対象より大きいので残しています）。"
           }
         }
       }

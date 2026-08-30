@@ -664,7 +664,8 @@ public final class PeopleEngine {
         let result = await store.absorbFragments()
         if result.absorbed > 0 {
             Diagnostics.mark("faces: absorbed \(result.absorbed) fragments into "
-                             + "\(result.people) people (skipped=\(result.skipped))")
+                             + "\(result.people) people (skipped=\(result.skipped) "
+                             + "tooBig=\(result.skippedTooBig))")
             await clearUndoHistory()   // 大量に動くので、戻す先が変わっている
             await loadPeople()
         }
