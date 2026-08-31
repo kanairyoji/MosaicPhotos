@@ -33,7 +33,16 @@ struct CloudSharedBadges: Equatable {
 
         for set in sets {
             guard let key = set.sourceKey.flatMap(ShareSourceKey.init) else {
-                unknownKindNames.insert(set.name)   // 旧セット（sourceKey 追加前）
+                // ⚠️ `sourceKey` が無くても、**フォルダ名の接頭辞が種類を知っている**
+                //（`Album-` / `Person-` / `People-`）。人物由来のセットは clusterID が
+                // 当てにならなくなると sourceKey を外すため、ここで諦めると
+                // **同名を付けただけの AI アルバムに「共有中」バッジが出る**
+                //（実フィードバック 8/31）。フォルダ名から種類を復元し、その種類にだけ効かせる。
+                if let kind = ShareNaming.kind(fromFolderName: set.folderName) {
+                    namesByKind[kind, default: []].insert(set.name)
+                } else {
+                    unknownKindNames.insert(set.name)   // 接頭辞も無い本当の旧セット
+                }
                 continue
             }
             // ⚠️ 作成元が**現存しない**セットは名前一致にフォールバックする。

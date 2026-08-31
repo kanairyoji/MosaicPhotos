@@ -36,6 +36,36 @@ struct ShareNamingTests {
 
 // MARK: - SharePlanning
 
+/// ⚠️ **同名でも種類が違えば別のアルバム**（実フィードバック 8/31: ピープルアルバムと同じ名前を
+/// AI アルバムに付けたら、AI アルバムまで勝手に共有された）。
+/// 人物由来の共有セットは clusterID が当てにならなくなると `sourceKey` を外すので、
+/// そこから先は**フォルダ名の接頭辞だけが種類を知っている**。
+@Suite("共有セットの種類（フォルダ名から復元）")
+struct ShareKindFromFolderTests {
+
+    @Test("接頭辞から種類を読み取る")
+    func readsKindFromPrefix() {
+        #expect(ShareNaming.kind(fromFolderName: "Album-沖縄旅行") == .album)
+        #expect(ShareNaming.kind(fromFolderName: "Person-太郎") == .person)
+        #expect(ShareNaming.kind(fromFolderName: "People-金居家") == .group)
+    }
+
+    @Test("接頭辞の無い旧セットは種類不明のまま")
+    func legacyFolderHasNoKind() {
+        #expect(ShareNaming.kind(fromFolderName: "沖縄旅行") == nil)
+        #expect(ShareNaming.kind(fromFolderName: "") == nil)
+    }
+
+    @Test("作成時に付けた接頭辞と読み取りが往復する")
+    func roundTrips() {
+        for kind in [ShareSourceKey.Kind.album, .person, .group] {
+            let folder = ShareNaming.folderName("家族", kind: kind)
+            #expect(ShareNaming.kind(fromFolderName: folder) == kind,
+                    "作成時の接頭辞を読み戻せない（種類の判別が効かない）")
+        }
+    }
+}
+
 @Suite("SharePlanning (反映計画)")
 struct SharePlanningTests {
 
