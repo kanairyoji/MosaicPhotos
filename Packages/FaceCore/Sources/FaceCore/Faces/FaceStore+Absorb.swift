@@ -85,6 +85,12 @@ extension FaceStore {
         var absorbed = 0, skipped = 0
         // 見送りの内訳（どの条件で落ちたのかが分からないと、次にどこを緩めるか決められない）。
         var belowBar = 0, marginal = 0, blockedCount = 0
+        // ⚠️ **バーを動かす判断は、この端末の分布で決める**（ADR-162）。データセット
+        // （FG-NET/LFW）は「1 人が多数の写真を持つ」形が違うので、バーの当てはめには弱い。
+        // 「バー以外の条件を全部通った断片」が、どの近さに何件あるかを数える。
+        // 次のログを見れば「バーを 0.65 にしたら何件寄るか」がそのまま読める。
+        let probeBars: [Float] = [0.55, 0.60, 0.65, 0.70, 0.75]
+        var wouldAbsorb = [Float: Int](uniqueKeysWithValues: probeBars.map { ($0, 0) })
         var into = Set<Int>()
         // 上限を上げれば対象になり得た数（無名・アンカーなしで、上限だけが理由の分）。
         let tooBig = clusters.filter { c in
@@ -110,18 +116,27 @@ extension FaceStore {
                     runnerUp = max(runnerUp, sim)
                 }
             }
-            guard let best, best.sim >= tuning.autoAbsorbBar else { skipped += 1; belowBar += 1; continue }
-            // 紛らわしい（2 位が近い）なら人に尋ねる。
-            guard best.sim - runnerUp >= Self.absorbMargin else { skipped += 1; marginal += 1; continue }
-            // 同一写真・負例・「別人」記録があるものは触らない。
+            guard let best else { skipped += 1; belowBar += 1; continue }
+            // ⚠️ 判定の順番は変えない（記録の内訳が意味を保つ）が、**バー以外の条件**は
+            // バーで落ちた断片についても評価する——「バーを下げたら何件寄るか」を数えるため。
+            let marginOK = best.sim - runnerUp >= Self.absorbMargin
             let fragmentPhotos = refKeysByCluster[fragment.clusterID] ?? []
-            guard fragmentPhotos.isDisjoint(with: refKeysByCluster[best.id] ?? []),
-                  !blocked.contains(Self.pairKey(fragment.clusterID, best.id)),
-                  let targetCentroid = centroid[best.id],
-                  !FaceClustering.negativeRejects(vector, centroid: targetCentroid,
-                                                  negatives: negatives,
-                                                  sameThreshold: tuning.negativeSameThreshold)
-            else { skipped += 1; blockedCount += 1; continue }
+            let targetCentroid = centroid[best.id]
+            let clean = marginOK
+                && fragmentPhotos.isDisjoint(with: refKeysByCluster[best.id] ?? [])
+                && !blocked.contains(Self.pairKey(fragment.clusterID, best.id))
+                && targetCentroid.map {
+                    !FaceClustering.negativeRejects(vector, centroid: $0, negatives: negatives,
+                                                    sameThreshold: tuning.negativeSameThreshold)
+                } ?? false
+            if clean {
+                for bar in probeBars where best.sim >= bar { wouldAbsorb[bar, default: 0] += 1 }
+            }
+            guard best.sim >= tuning.autoAbsorbBar else { skipped += 1; belowBar += 1; continue }
+            // 紛らわしい（2 位が近い）なら人に尋ねる。
+            guard marginOK else { skipped += 1; marginal += 1; continue }
+            // 同一写真・負例・「別人」記録があるものは触らない。
+            guard clean else { skipped += 1; blockedCount += 1; continue }
 
             // ⚠️ **機械の判断はジャーナルにもアンカーにも残さない**（ADR-152）。
             if mergeClusters(from: fragment.clusterID, into: best.id,
@@ -135,10 +150,12 @@ extension FaceStore {
         if absorbed > 0 { try? modelContext.save(); clusteringCache = nil }
         // ⚠️ **0 件でも必ず記録する**（ADR-157）。上限（tooBig）と見送りの内訳は、
         // 「断片は何枚まで自動で寄せてよいか」を実測で決めるための材料そのもの（ADR-155）。
+        let distribution = probeBars.map { String(format: "≥%.2f:%d", $0, wouldAbsorb[$0] ?? 0) }
+            .joined(separator: " ")
         Diagnostics.mark("faces: absorb — absorbed=\(absorbed) into=\(into.count) "
                          + "fragments=\(fragments.count) targets=\(targets.count) "
                          + "skipped=\(skipped)(bar=\(belowBar) margin=\(marginal) blocked=\(blockedCount)) "
-                         + "tooBig=\(tooBig) bar=\(tuning.autoAbsorbBar)")
+                         + "tooBig=\(tooBig) bar=\(tuning.autoAbsorbBar) | バー別に寄る数 \(distribution)")
         return FragmentAbsorbResult(absorbed: absorbed, people: into.count,
                                     skipped: skipped, skippedTooBig: tooBig)
     }
