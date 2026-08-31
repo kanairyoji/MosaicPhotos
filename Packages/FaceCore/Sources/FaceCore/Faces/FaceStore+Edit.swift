@@ -16,13 +16,24 @@ extension FaceStore {
     /// - Returns: 外した顔の数（0＝その写真にこの人物の顔が無かった）。
     @discardableResult
     func removePhoto(refKey: String, from clusterID: Int) -> Int {
-        let cid = clusterID, key = refKey
-        var d = FetchDescriptor<DetectedFace>(
-            predicate: #Predicate { $0.clusterID == cid && $0.refKey == key })
-        d.propertiesToFetch = [\.faceID]
-        let faceIDs = ((countedFetchOptional(d)) ?? []).map(\.faceID)
+        let faceIDs = photoFaceIDs(refKey: refKey, inPersonOf: clusterID)
         for faceID in faceIDs { reassignFace(faceID: faceID, toClusterID: nil) }
         return faceIDs.count
+    }
+
+    /// この写真の顔のうち、**画面に出ている人物のもの**（＝束ねた全クラスタ）。
+    ///
+    /// ⚠️ `clusterID == 主クラスタ` で引いてはいけない。2 階層の束ね（ADR-61）では、
+    /// 同じ人物の写真が**別のクラスタ（時期クラスタ）**に入っている。主クラスタだけを見ると
+    /// 一致が 0 件になり、長押しの「この人ではない／別の人」が**押しても何も起きない**
+    /// （実フィードバック 8/31）。顔ハイライト（`faceBoxes`）は最初から束ね全体を見ていたので、
+    /// 「黄枠は出るのに外せない」という食い違いになっていた——**同じ解き方に揃える**。
+    private func photoFaceIDs(refKey: String, inPersonOf clusterID: Int) -> [String] {
+        let ids = linkedClusterIDs(primary: clusterID), key = refKey
+        var d = FetchDescriptor<DetectedFace>(
+            predicate: #Predicate { ids.contains($0.clusterID) && $0.refKey == key })
+        d.propertiesToFetch = [\.faceID]
+        return ((countedFetchOptional(d)) ?? []).map(\.faceID)
     }
 
     /// **この写真は別の人**（写真 1 枚ぶんの顔をまとめて指定の人物へ付け替える）。
@@ -30,13 +41,10 @@ extension FaceStore {
     /// ——`reassignFace` が付け替え先を確認顔（アンカー）として学習するので、次からは
     /// その人物に入る（ADR-46）。`toClusterID` が nil なら新しい人物になる。
     func movePhoto(refKey: String, from clusterID: Int, to toClusterID: Int?) -> Int {
-        let cid = clusterID, key = refKey
-        var d = FetchDescriptor<DetectedFace>(
-            predicate: #Predicate { $0.clusterID == cid && $0.refKey == key })
-        d.propertiesToFetch = [\.faceID]
-        let faceIDs = ((countedFetchOptional(d)) ?? []).map(\.faceID)
         // この写真でこの人物として認識されている顔は、同一写真 cannot-link により本来 1 つ。
         // 複数あるなら混入なので、まとめて付け替える（ユーザーから見れば「この写真の人」1 人ぶん）。
+        // 対象は**束ねた全クラスタ**（`photoFaceIDs` の注意書きを参照）。
+        let faceIDs = photoFaceIDs(refKey: refKey, inPersonOf: clusterID)
         for faceID in faceIDs { reassignFace(faceID: faceID, toClusterID: toClusterID) }
         return faceIDs.count
     }

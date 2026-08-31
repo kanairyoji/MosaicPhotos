@@ -626,7 +626,10 @@ public final class PeopleEngine {
     @discardableResult
     public func removePhoto(itemID: String, from clusterID: Int) async -> Int {
         Diagnostics.breadcrumb("people.removePhoto cluster=\(clusterID)")
-        await store.beginUndo(label: "\(label(clusterID)) からこの写真を外す", clusterIDs: [clusterID])
+        // ⚠️ 控えは**束ねた全クラスタ**で取る。主クラスタだけだと、別の時期クラスタに居る顔を
+        // 外したときに戻す先が控えられておらず、取り消しが効かない（ADR-61 の束ね）。
+        let linked = await store.linkedClusterIDs(primary: clusterID)
+        await store.beginUndo(label: "\(label(clusterID)) からこの写真を外す", clusterIDs: linked)
         for key in Self.refKeyCandidates(for: itemID) {
             let removed = await store.removePhoto(refKey: key, from: clusterID)
             if removed > 0 {
@@ -635,6 +638,10 @@ public final class PeopleEngine {
                 return removed
             }
         }
+        // ⚠️ **何も起きなかったことを記録する**（実フィードバック「押しても変化がない」）。
+        // 0 件のときに無言だと、操作が届いていないのか対象が無いのかログから分からない。
+        Diagnostics.mark("people: removePhoto — 対象なし（cluster=\(clusterID) linked=\(linked.count) "
+                         + "item=\(itemID.prefix(24))）")
         return 0
     }
 
@@ -642,10 +649,13 @@ public final class PeopleEngine {
     /// 人物アルバムのサムネイル長押し・全画面メニューから呼ぶ。`to` が nil なら新しい人物。
     /// 戻り値は移した顔の数（0 = この写真にこの人物の顔が無かった）。
     public func movePhoto(itemID: String, from clusterID: Int, to toClusterID: Int?) async -> Int {
+        Diagnostics.breadcrumb("people.movePhoto \(clusterID)→\(toClusterID.map(String.init) ?? "new")")
+        // 控えは束ねた全クラスタ＋移動先（`removePhoto` と同じ理由）。
+        let linked = await store.linkedClusterIDs(primary: clusterID)
         await store.beginUndo(
             label: "この写真を \(label(clusterID)) から "
                  + (toClusterID.map { label($0) } ?? "新しい人物") + " へ移す",
-            clusterIDs: [clusterID] + (toClusterID.map { [$0] } ?? []))
+            clusterIDs: linked + (toClusterID.map { [$0] } ?? []))
         for key in Self.refKeyCandidates(for: itemID) {
             let moved = await store.movePhoto(refKey: key, from: clusterID, to: toClusterID)
             if moved > 0 {
@@ -654,6 +664,8 @@ public final class PeopleEngine {
                 return moved
             }
         }
+        Diagnostics.mark("people: movePhoto — 対象なし（cluster=\(clusterID) linked=\(linked.count) "
+                         + "item=\(itemID.prefix(24))）")
         return 0
     }
 
