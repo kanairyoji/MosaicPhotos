@@ -9,7 +9,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
     public static let shared = DiagnosticsLog()
 
     private let queue = DispatchQueue(label: "com.mosaicphotos.diagnostics")
-    private let fileURL: URL
+    let fileURL: URL
     /// この2倍を超えたら末尾 maxBytes に切り詰める（ログの肥大を防ぐ）。
     private let maxBytes = 256 * 1024
 
@@ -24,6 +24,23 @@ public final class DiagnosticsLog: @unchecked Sendable {
     /// 同じファイルへ書き込み、`clear()` の直後に行が増えて落ちる（実際に踏んだ）。
     /// 共有状態に依存するテストは、共有をやめるのが正しい直し方。
     init(fileURL: URL) { self.fileURL = fileURL }
+
+    /// **落ちる直前**の 1 行を、キューに載せず同期で書く。
+    ///
+    /// ⚠️ `append` は `queue.async` なので、書く前にプロセスが終われば**その行は消える**。
+    /// 実機 diagnostics（8/31 朝・4 回のクラッシュ）で `UNCAUGHT EXCEPTION` の行が
+    /// **1 本も残らなかった**のはこれ——落ちた記録こそ、非同期で書いてはいけない。
+    public func appendNow(_ line: String) {
+        let stamped = "\(Self.timestamp()) \(line)\n"
+        guard let data = stamped.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: fileURL) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: fileURL)
+        }
+    }
 
     /// 1 行追記（タイムスタンプ付き）。複数スレッドから呼ばれるため直列キューで処理する。
     public func append(_ line: String) {
@@ -259,6 +276,10 @@ public enum Diagnostics {
 
     /// 起動・主要フェーズの計測マーク。現在のメモリ使用量つきで診断ログへ 1 行追記する。
     /// 起動チューニングの Before/After を実機の診断ログで確認するために使う（低頻度・軽量）。
+    /// **直前の操作**を 1 つだけ覚える（クラッシュ時に一緒に書き出す）。
+    /// ログ行は増やさない（高頻度の操作でも書き込みコストがかからない）。
+    public static func breadcrumb(_ label: String) { CrashSignals.setBreadcrumb(label) }
+
     public static func mark(_ label: String) {
         let mb = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
         DiagnosticsLog.shared.append("MARK \(label) (footprint=\(mb))")
@@ -283,13 +304,18 @@ public enum Diagnostics {
         // ここで**メインスレッドの送信権**を押さえておく（この install はメインで走る）。
         MainThreadStack.install()
 
+        // Swift の fatalError / precondition / SwiftData trap は ObjC 例外ではないので、
+        // 下の `NSSetUncaughtExceptionHandler` を**通らない**。シグナルで最低限の痕跡を残す。
+        CrashSignals.install(fileURL: DiagnosticsLog.shared.fileURL)
+
         // ObjC 未捕捉例外（unrecognized selector / KVO / CoreData など）を記録してから落ちる。
         // ※ Swift の fatalError / precondition / SwiftData の trap はこのハンドラを通らない
         //   （それらは Xcode/Organizer の標準クラッシュログに出る）。
         NSSetUncaughtExceptionHandler { exception in
             let stack = exception.callStackSymbols.prefix(24).joined(separator: "\n")
             let line = "UNCAUGHT EXCEPTION: \(exception.name.rawValue) — \(exception.reason ?? "")\n\(stack)"
-            DiagnosticsLog.shared.append(line)
+            // ⚠️ **同期で書く**。非同期だとプロセスが先に終わり、肝心の 1 行が残らない。
+            DiagnosticsLog.shared.appendNow(line)
             Logger(subsystem: "com.mosaicphotos.Diagnostics", category: "crash").error("\(line, privacy: .public)")
         }
 

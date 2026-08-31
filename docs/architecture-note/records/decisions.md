@@ -21,6 +21,28 @@
 
 ---
 
+## ADR-159 落ちた痕跡を必ず端末ログに残す（Swift trap ＋ 同期書き込み ＋ 直前の操作）
+- 状態: 採用
+- 文脈: 「今朝、使ってみたら落ちまくり」の診断ログ（8/31）に、クラッシュの行が **1 本も無かった**。
+  35 分で 4 回の再起動があるのに、何が起きたか一切分からない。理由は二重だった:
+  (1) `NSSetUncaughtExceptionHandler` は **ObjC 例外しか通らない**（Swift の `fatalError` /
+  `precondition` / 配列外 / SwiftData trap は素通り）。(2) その例外ハンドラすら
+  `DiagnosticsLog.append`＝`queue.async` で書いていたため、**書く前にプロセスが終わっていた**
+  （前日 diagnostics-69 で例外行が残ったのは、たまたまキューが流れていただけ）。
+- 決定: 三点をセットで入れる。
+  (a) `DiagnosticsLog.appendNow`（同期書き込み）を作り、クラッシュ経路はこちらを使う。
+  (b) `CrashSignals`＝致命シグナル（SIGABRT/SIGILL/SIGTRAP/SIGSEGV/SIGBUS/SIGFPE）に
+  ハンドラを掛け、**async-signal-safe な `write(2)` だけ**で 1 行残してから既定ハンドラへ戻す
+  （標準クラッシュレポートは潰さない）。ハンドラ内でアロケートしないよう、fd と文言は
+  install 時に用意し、時刻は付けない。
+  (c) `Diagnostics.breadcrumb(_:)`＝**直前の操作**を固定長バッファに 1 つだけ覚え、
+  クラッシュ行と一緒に書き出す。ログ行は増やさないので高頻度の操作にも置ける。
+- 結果: 次に落ちたとき `CRASH SIGTRAP — …（直前の操作: people.mergePerson 123→456）` が残る。
+  **jetsam（SIGKILL）だけは捕まえられない**が、行が無いこと自体が「OOM か watchdog」を示す
+  情報になる（消去法が成立する）。
+- 関連: `MosaicSupport/CrashSignals.swift` / `Diagnostics.swift` / `CrashSignalsTests` /
+  事例「落ちまくったのに、ログにクラッシュの行が 1 本も無い」。
+
 ## ADR-158 一覧の ID は表示側でも一意化する（データの異常でアプリを落とさない）
 - 状態: 採用
 - 文脈: 人物・場所などの**メンバー限定アルバム**を開いた瞬間に `NSInternalInconsistencyException — supplied item identifiers are not unique` で落ちた（実機 diagnostics-69・547 枚のローカル写真のうち 65 枚が重複）。グリッドの土台 `UICollectionViewDiffableDataSource` は、スナップショットに同じ識別子が 2 つ入ると**例外を投げる**。メンバー一覧の出どころは 6 画面（人物 / 人物グループ / 場所 / 端末アルバム / 自動アルバム / 共有）あり、どこか 1 つが重複を作れば同じ結末になる。

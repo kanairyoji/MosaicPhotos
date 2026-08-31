@@ -29,6 +29,7 @@ extension MergedPhotoStore {
         // 「識別子が一意でない」で**例外を投げてアプリが落ちる**（実機 diagnostics-69・
         // 547 枚中 65 枚が重複）。メンバー一覧の出どころは 6 画面あり、そのどれが重複を
         // 作っても同じ結末になるので、**全画面が通るここ 1 箇所**で正規化する。
+        Diagnostics.breadcrumb("album.open local=\(localIDs.count) cloud=\(cloudPaths.count)")
         let uniqueLocalIDs = uniquedIdentifiers(localIDs)
         if uniqueLocalIDs.count != localIDs.count {
             Diagnostics.mark("forMembers: dropped \(localIDs.count - uniqueLocalIDs.count) duplicate local id(s)")

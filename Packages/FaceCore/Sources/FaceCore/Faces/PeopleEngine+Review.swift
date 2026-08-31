@@ -107,6 +107,7 @@ extension PeopleEngine {
     /// 戻り値: 統合できなかった件数（別名どうし・同一写真で共起）。UI が結果を伝えるのに使う。
     @discardableResult
     public func answerBatch(anchorClusterID: Int, same: [Int], notSame: [Int]) async -> Int {
+        Diagnostics.breadcrumb("people.answerBatch anchor=\(anchorClusterID) same=\(same.count) notSame=\(notSame.count)")
         await store.beginUndo(
             label: "まとめて確認: \(label(anchorClusterID)) に \(same.count) 件を統合",
             clusterIDs: [anchorClusterID] + same + notSame)
@@ -141,6 +142,7 @@ extension PeopleEngine {
     /// いいえ（別人）→ **クラスタを 2 つに分割**し、負例として学習する。
     /// はい（同じ人）→ 記録して二度と尋ねない（正例としてしきい値校正にも効く）。
     public func answerSplitCluster(clusterID: Int, groupBFaceIDs: [String], same: Bool) async {
+        Diagnostics.breadcrumb("people.answerSplit cluster=\(clusterID) faces=\(groupBFaceIDs.count) same=\(same)")
         await store.beginUndo(
             label: same ? "\(label(clusterID)) を同じ人として確認"
                         : "\(label(clusterID)) から \(groupBFaceIDs.count) 顔を分離",
@@ -211,6 +213,7 @@ extension PeopleEngine {
         let ruleKey = "faceRebuildRuleVersion"
         let ruleChanged = defaults.integer(forKey: ruleKey) != Self.clusterRuleVersion
         guard correctionsGrew || scansGrew || stale || thresholdChanged || ruleChanged else { return }
+        Diagnostics.breadcrumb("people.rebuildClusters")
         let result = await store.rebuildClusters()
         // 再クラスタの後は**戻す先が変わっている**（クラスタ ID も構成も）。控えは捨てる。
         await clearUndoHistory()
@@ -232,6 +235,7 @@ extension PeopleEngine {
 
     /// Developer Options 用: 即時再クラスタリング（動作検証）。
     public func debugRebuildClustersNow() async {
+        Diagnostics.breadcrumb("people.rebuildClusters")
         let result = await store.rebuildClusters()
         // 再クラスタの後は**戻す先が変わっている**（クラスタ ID も構成も）。控えは捨てる。
         await clearUndoHistory()
