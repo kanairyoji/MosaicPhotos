@@ -101,11 +101,17 @@ final class FaceAccuracyEvalTests: XCTestCase {
     /// ⚠️ 標準出力だけに頼らない。xcresult のコンソールログは**途中が落ちる**ことがあり、
     /// 実際にこの計測でも中盤のセクションだけが欠けた。環境変数 `FACE_EVAL_OUT`
     /// （`TEST_RUNNER_FACE_EVAL_OUT=...`）を渡せば、同じ行をファイルへ追記する。
+    /// ⚠️ **既定でもファイルに残す**。app-hosted テストの `print` は xcodebuild のログに
+    /// 出てこない（ホストアプリ側の stdout なので拾えない）ため、環境変数を渡し忘れると
+    /// 20 分回した結果が**どこにも残らない**（実際に 2 回無駄にした）。
+    /// 既定はデータセット直下（埋め込みキャッシュと同じ場所＝書けることが分かっている）。
     static let outputPath = ProcessInfo.processInfo.environment["FACE_EVAL_OUT"]
+        ?? ((ProcessInfo.processInfo.environment["FACE_EVAL_DIR"] ?? "/Users/kanai/DEV/tmp/face-eval")
+            + "/faceeval-latest.txt")
 
     static func emit(_ line: String) {
         print(line)
-        guard let path = outputPath else { return }
+        let path = outputPath
         let data = Data((line + "\n").utf8)
         if let handle = FileHandle(forWritingAtPath: path) {
             handle.seekToEndOfFile()
