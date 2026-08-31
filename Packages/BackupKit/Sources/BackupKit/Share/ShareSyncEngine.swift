@@ -163,8 +163,13 @@ public final class ShareSyncEngine {
         let existingSet = allSets.first { $0.sourceKey != nil && $0.sourceKey == sourceKey }
             ?? allSets.first { set in
                 guard !displayName.isEmpty, set.name == displayName else { return false }
+                // ⚠️ 種類は `sourceKey` が無くても**フォルダ名**が知っている（`Album-` / `Person-` /
+                // `People-`）。人物由来のセットは clusterID が当てにならなくなると sourceKey を
+                // 外すので、フォルダ名を見ないと「種類不明」に落ちて名前だけの照合になる
+                //（実フィードバック 8/31: 同名の AI アルバムが人物の共有に結び付いた）。
                 let existingKind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
-                // 旧セット（種類不明）は、種類の判別ができないので名前一致で再利用してよい。
+                    ?? ShareNaming.kind(fromFolderName: set.folderName)
+                // 本当に種類が分からないセット（接頭辞なしの旧セット）だけ名前一致で再利用する。
                 return existingKind == nil || existingKind == requestedKind
             }
         if let existingSet {
@@ -288,7 +293,9 @@ public final class ShareSyncEngine {
         guard !trimmed.isEmpty else { return nil }
         return sets.first { set in
             guard set.name == trimmed else { return false }
+            // 種類は sourceKey が無ければフォルダ名から復元する（`createSet` と同じ規則）。
             let kind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
+                ?? ShareNaming.kind(fromFolderName: set.folderName)
             return kind == nil || kind == requestedKind
         }?.id
     }

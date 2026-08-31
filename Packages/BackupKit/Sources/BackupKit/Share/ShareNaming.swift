@@ -19,6 +19,22 @@ public enum ShareNaming {
         }
     }
 
+    /// フォルダ名から種類を読み取る（接頭辞なし＝旧セットは nil）。
+    ///
+    /// ⚠️ **`sourceKey` が無いセットの種類は、フォルダ名だけが知っている。**
+    /// 人物由来のセットは clusterID が当てにならなくなった時点で `sourceKey` を外す
+    /// （`detachPersonSources`）ため、その後は「種類不明」になり、名前だけの照合に落ちる。
+    /// すると **AI アルバムに同じ名前を付けただけで、人物の共有に結び付いてしまう**
+    /// （実フィードバック 8/31: 同名の AI アルバムが勝手に共有された）。
+    /// フォルダ名の接頭辞は作成時と移行時に付くので、ここから種類を復元する。
+    public static func kind(fromFolderName folderName: String) -> ShareSourceKey.Kind? {
+        for kind in [ShareSourceKey.Kind.album, .person, .group]
+        where folderName.hasPrefix(prefix(for: kind)) {
+            return kind
+        }
+        return nil
+    }
+
     /// 種類つきのフォルダ名（例: `People-木村家` / `Album-沖縄旅行`）。
     /// 作成元が分からない場合（手動作成・旧セット）は接頭辞なし。
     public static func folderName(_ name: String, kind: ShareSourceKey.Kind?,
