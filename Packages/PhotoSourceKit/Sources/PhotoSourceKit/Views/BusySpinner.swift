@@ -24,12 +24,15 @@ public struct BusySpinner: UIViewRepresentable {
         self.tint = tint
     }
 
+    public func makeCoordinator() -> Coordinator { Coordinator() }
+
     public func makeUIView(context: Context) -> UIActivityIndicatorView {
         let view = UIActivityIndicatorView(style: style)
         view.tintColor = tint
         view.color = tint
         view.hidesWhenStopped = true
         view.startAnimating()
+        context.coordinator.observeForeground(view)
         return view
     }
 
@@ -37,6 +40,36 @@ public struct BusySpinner: UIViewRepresentable {
         view.color = tint
         // 再利用時に停止していたら回し直す（オーバーレイの出し入れで止まったままにしない）。
         if !view.isAnimating { view.startAnimating() }
+    }
+
+    /// 前面復帰でスピナーを**掛け直す**。
+    ///
+    /// ⚠️ バックグラウンドへ移ると UIKit は `CAAnimation` を層から外す。`UIActivityIndicatorView`
+    /// は復帰しても回転が戻らないことがあり、そのとき `isAnimating` は **true のまま**なので
+    /// `updateUIView` の再開判定も素通りする。`hidesWhenStopped` と相まって
+    /// **スピナーがただ消える**（実フィードバック 8/31「くるくるしていたアイコンが消えた」＝
+    /// 処理は続いているのに、進行中であることが画面から失われる）。
+    /// 復帰時に一度止めて掛け直せば必ず戻る。
+    @MainActor
+    public final class Coordinator {
+        private var token: (any NSObjectProtocol)?
+
+        func observeForeground(_ view: UIActivityIndicatorView) {
+            token = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil, queue: .main
+            ) { [weak view] _ in
+                MainActor.assumeIsolated {
+                    guard let view, view.superview != nil else { return }
+                    view.stopAnimating()
+                    view.startAnimating()
+                }
+            }
+        }
+
+        deinit {
+            if let token { NotificationCenter.default.removeObserver(token) }
+        }
     }
 }
 
