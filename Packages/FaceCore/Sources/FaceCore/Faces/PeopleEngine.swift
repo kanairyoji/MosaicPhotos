@@ -205,6 +205,7 @@ public final class PeopleEngine {
     /// 直前の判定を取り消す。戻した内容の説明を返す（何も無ければ nil）。
     @discardableResult
     public func undoLastAnswer() async -> String? {
+        Diagnostics.breadcrumb("people.undo")
         let undone = await store.undoLast()
         await refreshUndoLabel()
         await loadPeople()
@@ -458,6 +459,7 @@ public final class PeopleEngine {
 
     /// クラスタに名前を付ける／消す。
     public func rename(clusterID: Int, name: String?) async {
+        Diagnostics.breadcrumb("people.rename cluster=\(clusterID)")
         await store.rename(clusterID: clusterID, name: name)
         await loadPeople()
     }
@@ -494,6 +496,7 @@ public final class PeopleEngine {
 
     /// この人物の束ねを全解除する（束ねられた全クラスタを単独に戻す）。
     public func ungroupPerson(clusterID: Int) async {
+        Diagnostics.breadcrumb("people.ungroupPerson \(clusterID)")
         for id in await store.linkedClusterIDs(primary: clusterID) {
             await store.unlinkCluster(id)
         }
@@ -512,6 +515,7 @@ public final class PeopleEngine {
 
     @discardableResult
     public func mergePerson(from srcClusterID: Int, into dstClusterID: Int) async -> PersonMergeResult {
+        Diagnostics.breadcrumb("people.mergePerson \(srcClusterID)→\(dstClusterID)")
         await store.beginUndo(label: "\(label(srcClusterID)) を \(label(dstClusterID)) に統合",
                               clusterIDs: [srcClusterID, dstClusterID])
         // ⚠️ ユーザーが選んだ統合なので、拒否されても「別人」とは学習しない（ADR-146）。
@@ -598,6 +602,7 @@ public final class PeopleEngine {
 
     /// 顔を別の人物へ付け替える（「この人は別の人」）。`toClusterID` が nil なら新規人物。
     public func reassignFace(faceID: String, toClusterID: Int?) async {
+        Diagnostics.breadcrumb("people.reassignFace → \(toClusterID.map(String.init) ?? "new")")
         await store.beginUndo(
             label: "この顔を " + (toClusterID.map { label($0) } ?? "新しい人物") + " へ移す",
             clusterIDs: toClusterID.map { [$0] } ?? [], faceIDs: [faceID])
@@ -614,6 +619,7 @@ public final class PeopleEngine {
     ///   「黄枠は出るのに外せない」というちぐはぐが起きる）。
     @discardableResult
     public func removePhoto(itemID: String, from clusterID: Int) async -> Int {
+        Diagnostics.breadcrumb("people.removePhoto cluster=\(clusterID)")
         await store.beginUndo(label: "\(label(clusterID)) からこの写真を外す", clusterIDs: [clusterID])
         for key in Self.refKeyCandidates(for: itemID) {
             let removed = await store.removePhoto(refKey: key, from: clusterID)
@@ -661,6 +667,7 @@ public final class PeopleEngine {
     /// 1〜2 枚の断片を、確立した人物へまとめる（ADR-154）。手動実行用。
     @discardableResult
     public func absorbFragments() async -> FragmentAbsorbResult {
+        Diagnostics.breadcrumb("people.absorbFragments")
         // 結果（0 件も含む）の記録は `FaceStore.absorbFragments` が必ず行う（ADR-157）。
         let result = await store.absorbFragments()
         if result.absorbed > 0 {

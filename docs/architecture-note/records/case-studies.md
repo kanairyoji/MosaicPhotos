@@ -21,6 +21,24 @@
 
 ---
 
+## 落ちまくったのに、ログにクラッシュの行が 1 本も無い
+- 症状: 実機で「今朝、使ってみたら落ちまくり」（8/31 朝）。診断ログには 35 分で
+  `=== launch ===` が 4 本並ぶだけで、`UNCAUGHT EXCEPTION` も理由も**まったく残っていない**。
+- 原因: 二重。(1) Swift の `fatalError` / `precondition` / 配列外 / SwiftData trap は
+  ObjC 例外ではないので `NSSetUncaughtExceptionHandler` を通らない。
+  (2) その例外ハンドラも `append`（`queue.async`）で書いており、プロセスが先に終われば消える。
+  つまり**どちらの種類のクラッシュでも記録が残らない**状態だった。
+- 対処: 同期書き込み `appendNow`、致命シグナルの痕跡 `CrashSignals`、直前の操作を覚える
+  `Diagnostics.breadcrumb`（ADR-159）。breadcrumb は人物の統合・分割・再割り当て・再クラスタ・
+  断片吸収・アルバムを開く・グリッド反映に設置した。
+- 分かったこと（このログから読めた事実）: クラッシュは毎回 **回答（`faces.calibrate` の直後）から
+  8〜10 秒後**に起きている。前日修正した「同じ ID が 2 つ」（ADR-158）はこのビルドに入っていない。
+  また断片吸収は動いており `absorbed=14 skipped=917 tooBig=132`（上限を上げれば対象になり得る数）。
+- 関連: `CrashSignals.swift` / `Diagnostics.swift` / ADR-159 / ADR-158。
+- 残課題: 真因は未確定（次のログの `CRASH …（直前の操作: …）` か、端末の .ips で確定させる）。
+  `faces: undo skipped — too many faces (5017)` が頻発しており、**大きな人物では「戻る」が
+  黙って効かない**——スナップショットを差分（動いた顔だけ）にすれば直る。
+
 ## 「中断を跨いだ計測は捨てる」と書いてあるのに、実は捨てていなかった
 - 症状: 実機ログ（diagnostics-69）に `PERF people.load.tuning 1612569.4ms`（27 分）や
   `people.load.clusters 142971.7ms`（2 分半）が並ぶ。同じログには

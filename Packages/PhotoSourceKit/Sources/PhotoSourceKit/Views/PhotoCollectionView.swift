@@ -340,6 +340,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 // メンバー限定アルバムで同じ写真が 2 回入っていた）。表示はデータの読み取りに
                 // すぎないので、**データの異常でアプリを落とさない**（ADR-143 と同じ原則）。
                 // 重複は先勝ちで落とし、原因追跡のため件数を記録する。
+                Diagnostics.breadcrumb("grid.snapshot items=\(items.count)")
                 let unique = uniquedByID(items)
                 if unique.count != items.count {
                     Diagnostics.mark("grid.snapshot: dropped \(items.count - unique.count) duplicate id(s) "
