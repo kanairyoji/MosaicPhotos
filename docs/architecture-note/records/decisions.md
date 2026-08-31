@@ -21,6 +21,24 @@
 
 ---
 
+## ADR-160 AI アルバムの再評価は「遅れている本だけ」流す
+- 状態: 採用
+- 文脈: 実機からディスク書き込みの資源警告（`diskwrites_resource`）が 2 通届いた——
+  **33 分で 1,073.75MB**（限度は 24 時間で 1,073.74MB）。もっとも重いスタックは
+  `AIAlbumService.rankedSearch` → `AIAlbumSearcher.searchWithPool` →
+  `AutoAlbumStore.enrichmentVectorPage`＝**台帳の埋め込みページ送り**だった。
+  ドリフト検知は「保存済みの**最小** `evaluatedEmbedCount`」というアルバム横断の 1 判定で、
+  1 本でも遅れていれば `refresh` が全 5 本を作り直す。1 本の作り直しは埋め込み 85,090 件
+  （約 1KB/件）を頭から流すので、**追いついている本のぶんだけ丸ごう無駄**になっていた。
+- 決定: 起動条件（1 本でも遅れていれば動く）はそのままに、**作り直す対象をアルバム単位**で
+  選別する（`AIAlbumDrift.needsFullEvaluation`＝純ロジック）。判定は従来と同じ 3 条件
+  ——解釈器の版・相対日付の日跨ぎ・埋め込みの進み差が閾値超——をアルバムごとに見る。
+  `refresh(onlyDrifted:)` で skip した本数を診断ログに出す。
+- 結果: 追いついている本は 1 ページも流さない。実機の構成（5 本中 1 本だけ遅れ）なら
+  I/O は 1/5 になる。手動の再評価（`refresh(current)`）は従来どおり全本を作り直す。
+- 関連: `AIAlbum/AIAlbumDrift.swift` / `AIAlbumService+Refresh.swift` / `AIAlbumDriftTests` /
+  事例「33 分で 1GB のディスク書き込み警告」。
+
 ## ADR-159 落ちた痕跡を必ず端末ログに残す（Swift trap ＋ 同期書き込み ＋ 直前の操作）
 - 状態: 採用
 - 文脈: 「今朝、使ってみたら落ちまくり」の診断ログ（8/31）に、クラッシュの行が **1 本も無かった**。

@@ -21,6 +21,22 @@
 
 ---
 
+## 33 分で 1GB のディスク書き込み警告（AI アルバムの再評価が全本を流していた）
+- 症状: 実機から `MosaicPhotos.diskwrites_resource` が 2 通。1 通目は 8.5 時間、2 通目は
+  **33 分で 1,073.75MB**（`537.38 KB per second average, exceeding limit of 12.43 KB/s`）。
+- 原因: `atos` で記号化した最重量スタックは
+  `AIAlbumService.rankedSearch → AIAlbumSearcher.searchWithPool → AutoAlbumStore.enrichmentVectorPage`。
+  ドリフト検知が**アルバム横断の 1 判定**（最小 evaluatedEmbedCount）だったため、
+  1 本の遅れで 5 本すべてを作り直し、そのたびに埋め込み 85,090 件を頭から流していた。
+  ほかに Dropbox サムネのディスク書き込み・背景の埋め込み書き込みが乗る。
+- 対処: 作り直す対象をアルバム単位で選別（ADR-160）。
+- 補足（読み違えないための注意）: 同じログの `PERF aialbum.score 682002.1ms`（11 分）は
+  **プロセス中断を跨いだ壁時計**であって前面ハングではない（同時刻に `PROCESS SUSPENDED ~666s`）。
+  この読み違えを潰すために、中断を跨いだスパンは数字を出さないようにしてある。
+- 関連: `AIAlbumDrift.swift` / `AIAlbumService+Refresh.swift` / ADR-160 / ADR-159。
+- 残課題: それでも「遅れている本 1 つ = 全ページ 1 周」は残る。複数本が同時に遅れたときは
+  **ページを 1 周だけ回して全本を同時に採点する**形（ループの内外を入れ替える）が本筋。
+
 ## 落ちまくったのに、ログにクラッシュの行が 1 本も無い
 - 症状: 実機で「今朝、使ってみたら落ちまくり」（8/31 朝）。診断ログには 35 分で
   `=== launch ===` が 4 本並ぶだけで、`UNCAUGHT EXCEPTION` も理由も**まったく残っていない**。

@@ -23,7 +23,12 @@ extension AIAlbumService {
             && Date() >= BackgroundYield.manualBoostUntil
     }
 
-    func refresh(_ current: [AutoAlbumInfo]) async -> [AutoAlbumInfo] {
+    /// - Parameters:
+    ///   - onlyDrifted: true なら**遅れているアルバムだけ**を作り直す（ADR-160）。
+    ///     1 本の再評価が台帳の埋め込みを 1 周ぶん流すので、追いついている本まで巻き込むと
+    ///     そのぶん丸ごと無駄な読み書きになる（実機 33 分で 1.07GB のディスク書き込み警告）。
+    func refresh(_ current: [AutoAlbumInfo], onlyDrifted: Bool = false,
+                 driftThreshold: Int = 500) async -> [AutoAlbumInfo] {
         guard !isEvaluating else {
             Diagnostics.mark("aialbum.refresh: skip — already evaluating")
             return current
@@ -58,6 +63,7 @@ extension AIAlbumService {
         let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
 
         var updated: [AutoAlbumInfo] = []
+        var skipped = 0
         for album in current {
             // 前面復帰したら次のアルバムへ進まない（一枚岩の途中放棄・ADR-107 の考え方）。
             // 背面で始まった refresh がユーザー復帰後も数分続き、体感フリーズになっていた
@@ -68,6 +74,17 @@ extension AIAlbumService {
                 break
             }
             guard let criteria = album.criteria, !criteria.isEmpty else { updated.append(album); continue }
+            // 追いついているアルバムは触らない（触れば埋め込みを 1 周ぶん余計に流す）。
+            if onlyDrifted, let saved = interpreter.saved(for: album.id),
+               !AIAlbumDrift.needsFullEvaluation(version: saved.version, spec: saved.spec,
+                                                 lastEvaluatedAt: saved.lastEvaluatedAt,
+                                                 evaluatedEmbedCount: saved.evaluatedEmbedCount,
+                                                 embedCount: embedCount, threshold: driftThreshold,
+                                                 now: now) {
+                skipped += 1
+                updated.append(album)
+                continue
+            }
             var saved = await interpreter.interpretation(id: album.id, criteria: criteria, now: now,
                                                          baseLite: all, prebuiltCatalog: catalog)
             var (members, pool) = await rankedSearch(all, saved: saved, now: now)
@@ -89,6 +106,8 @@ extension AIAlbumService {
             await store.upsert(albumInfo: info)
             updated.append(info)
         }
+        Diagnostics.mark("aialbum.refresh: done — evaluated=\(current.count - skipped)/\(current.count) "
+                         + "skipped=\(skipped)（追いついている本は流さない）")
         return updated.sorted { $0.representativeDate > $1.representativeDate }
     }
 
@@ -260,9 +279,11 @@ extension AIAlbumService {
         let embedCount = await store.embeddedCount()
         let evaluated = interpreter.minEvaluatedEmbedCount(for: current.map(\.id))
         guard stale || dateMoved || embedCount - evaluated > threshold else { return nil }
+        // ⚠️ **遅れている本だけ**作り直す（ADR-160）。ここは「1 本でも遅れていれば起動する」
+        // 判定で、作り直す対象の選別は `refresh(onlyDrifted:)` がアルバム単位で行う。
         Diagnostics.mark("aialbum.drift: embedded=\(embedCount) evaluated=\(evaluated) "
-                         + "stale=\(stale) dateMoved=\(dateMoved) → full refresh")
-        return await refresh(current)
+                         + "stale=\(stale) dateMoved=\(dateMoved) → refresh (drifted only)")
+        return await refresh(current, onlyDrifted: true, driftThreshold: threshold)
     }
 
     func clearCache() {
