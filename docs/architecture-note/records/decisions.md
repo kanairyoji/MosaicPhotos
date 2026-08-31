@@ -21,6 +21,26 @@
 
 ---
 
+## ADR-161 `List` の行の中に遅延グリッド（LazyVGrid）を置かない
+- 状態: 採用
+- 文脈: 「調べる」画面で **間違い候補を『さらに表示』（24→48 枚）した直後**にアプリが落ちた。
+  端末のクラッシュレポート（`bug_type 309`・`EXC_BREAKPOINT / SIGTRAP`）の落ちたスレッドは
+  `UpdateCoalescingCollectionView.layoutSubviews` → `-[UICollectionView _updateVisibleCellsNow:]`
+  が**7 段の再入**→ `-[UICollectionViewCompositionalLayout invalidateLayoutWithContext:]` →
+  `libswiftCore._assertionFailure` で、アプリのコードは 1 フレームも無い。
+  診断ログの足あと（ADR-159）は
+  `inspector.report: rendered neighbors=15 outliers=48 ← inspector.report … ← people.reassignFace: done …`
+  ——**付け替え後の読み直しで 48 枚を描いたところ**だと分かった。
+  SwiftUI の `List` は UICollectionView 実装で、行の中の遅延グリッドは自分の高さを決めるたびに
+  レイアウトを無効化する。件数が増えると再計算が収束せず、UIKit 側の assertion に当たる。
+- 決定: `List` の行に `LazyVGrid` を置かず、**固定列数で自分で行に刻む**
+  （`FaceGridRows.chunked` ＋ 1 行＝`HStack`）。高さが確定するので何件並べても再計算が回らない。
+  `ScrollView` の中の `LazyVGrid` は従来どおり（そちらは問題にならない）。
+- 結果: 「さらに表示」で件数が増えても落ちない。刻み方（順序・端数・件数）は純ロジックの
+  テストで固定した。列数は固定 4（適応列と見た目はほぼ同じ）。
+- 関連: `PeopleKit/FaceGridRows.swift` / `PersonInspectorView.swift` / `FaceGridRowsTests` /
+  事例「『さらに表示』した直後に落ちる」・ADR-159（足あとが位置を特定した）。
+
 ## ADR-160 AI アルバムの再評価は「遅れている本だけ」流す
 - 状態: 採用
 - 文脈: 実機からディスク書き込みの資源警告（`diskwrites_resource`）が 2 通届いた——

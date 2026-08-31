@@ -21,7 +21,7 @@
 
 ---
 
-## 「調べる」画面で顔を分離するとアプリが落ちる（SIGTRAP・追跡中）
+## 「調べる」画面で『さらに表示』した直後に落ちる（List の中の LazyVGrid）
 - 症状: 実機（8/31 21:18・最新ビルド）でクラッシュ。ADR-159 の痕跡が初めて機能し、
   ログに `CRASH SIGTRAP — Swift の trap かシグナルで強制終了（直前の操作: people.reassignFace → new)`
   が残った。ユーザーの再現手順は「**別の人かもしれない写真 → さらに表示 → 出てきた顔を
@@ -37,8 +37,17 @@
      （壊れた埋め込みが 1 件混じると、一覧を出すだけで落ちる形だった）。
 - 関連: `FaceStore+Explain.swift` / `PersonInspectorView.swift` / `AnswerBasisView.swift` /
   `ReassignOutlierTests` / ADR-159。
-- 残課題: **真因は未確定**。端末の crash レポート（`MosaicPhotos-2026-08-31-*.ips`。名前に
-  `diskwrites` が付かない方）が取れれば 1 発で分かる。次に落ちれば足あとの列で位置が絞れる。
+- **決着（8/31 21:59・crash レポートと足あとの列）**: 真因は **`List` の行に置いた
+  `LazyVGrid`**（ADR-161）。クラッシュレポートの落ちたスレッドは
+  `UpdateCoalescingCollectionView.layoutSubviews` → `_updateVisibleCellsNow` の 7 段再入 →
+  `_assertionFailure` で**アプリのコードは 1 フレームも無い**。足あとは
+  `inspector.report: rendered neighbors=15 outliers=48 ← … ← people.reassignFace → new` で、
+  「付け替え後の読み直しで 48 枚を描いたところ」と分かった。固定列数で行に刻んで解消。
+  ※ 先に打った NaN ガードは**外れ**だった（診断ログに `壊れた類似度 …` は 1 件も出ていない）。
+  当てずっぽうの対策は「効いたように見えて再発する」ので、記録に残して区別する。
+- 教訓: **足あとの列（数手）とクラッシュレポートは、どちらか片方では足りない**。
+  レポートだけならアプリのコードが出ず「SwiftUI の中で落ちた」で終わり、足あとだけなら
+  「付け替えの後」までしか分からない。2 つ揃って初めて「48 枚を描いたところ」に届いた。
 
 ## 33 分で 1GB のディスク書き込み警告（AI アルバムの再評価が全本を流していた）
 - 症状: 実機から `MosaicPhotos.diskwrites_resource` が 2 通。1 通目は 8.5 時間、2 通目は

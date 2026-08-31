@@ -37,6 +37,8 @@ public struct PersonInspectorView: View {
 
     static let neighborPageSize = 15
     static let outlierPageSize = 24
+    /// 間違い候補の 1 行あたりの枚数（List の中では列数を固定して高さを決め打ちにする）。
+    static let outlierColumns = 4
     @State private var loading = false
     @State private var showingPicker = false
     /// 「別の人へ移す」対象の顔（間違い候補のタップ）。
@@ -400,32 +402,25 @@ public struct PersonInspectorView: View {
             }
         } else {
             Section {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 6)], spacing: 6) {
-                    ForEach(report.outliers) { face in
-                        Button { reassignTarget = face } label: {
-                            VStack(spacing: 2) {
-                                Color.clear
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .overlay {
-                                        FaceAvatarImage(refKey: face.refKey,
-                                                        box: showsWholePhoto ? nil : face.boundingBox,
-                                                        maxPixel: 320,
-                                                        contentMode: showsWholePhoto ? .fit : .fill)
-                                    }
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                                Text(percent(face.similarity))
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(face.belowThreshold ? .orange : .secondary)
-                                if face.confirmed {
-                                    Text(L("confirmed")).font(.caption2).foregroundStyle(.green)
-                                }
+                // ⚠️ **List の行の中に LazyVGrid を置かない**（実機 8/31 21:59 のクラッシュ）。
+                // SwiftUI の List は UICollectionView 実装で、行の中の遅延グリッドは自分の高さを
+                // 決めるたびにレイアウトを無効化する。件数が増える（「さらに表示」で 24→48）と
+                // 再計算が収束せず、UIKit 側の assertion で落ちた（スタックは
+                // `UpdateCoalescingCollectionView.layoutSubviews` → `_updateVisibleCellsNow` ×7 →
+                // `_assertionFailure`）。**行を自分で刻む**——1 行＝HStack で高さが確定するので、
+                // 何件並べても再計算のループにならない。
+                ForEach(outlierRows(report.outliers), id: \.id) { row in
+                    HStack(spacing: 6) {
+                        ForEach(row.faces) { face in outlierCell(face) }
+                        // 端数の行も列幅を揃える（最後の行だけ大きくならない）。
+                        if row.faces.count < Self.outlierColumns {
+                            ForEach(0..<(Self.outlierColumns - row.faces.count), id: \.self) { _ in
+                                Color.clear.aspectRatio(1, contentMode: .fit)
+                                    .frame(maxWidth: .infinity)
                             }
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 4)
                 if report.outliers.count >= outlierLimit {
                     Button(L("Show more")) {
                         outlierLimit += Self.outlierPageSize
@@ -438,6 +433,38 @@ public struct PersonInspectorView: View {
                 Text(L("These faces look least like the rest of this person. Orange means the app would not put this face here today. Tap one to move it to the right person."))
             }
         }
+    }
+
+    /// 間違い候補 1 件ぶんのセル（型チェックを膨らませないよう切り出す）。
+    private func outlierCell(_ face: PersonOutlierFace) -> some View {
+        Button { reassignTarget = face } label: {
+            VStack(spacing: 2) {
+                Color.clear
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        FaceAvatarImage(refKey: face.refKey,
+                                        box: showsWholePhoto ? nil : face.boundingBox,
+                                        maxPixel: 320,
+                                        contentMode: showsWholePhoto ? .fit : .fill)
+                    }
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text(percent(face.similarity))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(face.belowThreshold ? .orange : .secondary)
+                if face.confirmed {
+                    Text(L("confirmed")).font(.caption2).foregroundStyle(.green)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 1 行ぶんの並び（`id` は先頭の顔＝並びが変わっても対応が付く）。
+    private func outlierRows(_ faces: [PersonOutlierFace]) -> [OutlierRow] {
+        FaceGridRows.chunked(faces, columns: Self.outlierColumns)
+            .map { OutlierRow(id: $0.first?.faceID ?? "-", faces: $0) }
     }
 
     /// 間違い候補が空のときの説明（＝出ない理由）。
