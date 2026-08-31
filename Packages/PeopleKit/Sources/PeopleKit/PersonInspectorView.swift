@@ -493,7 +493,12 @@ public struct PersonInspectorView: View {
 
     /// 類似度をユーザー向けの百分率にする（cos 0.412 → 41%）。
     /// ⚠️ 内部の尺度（コサイン類似度）をそのまま出しても読めない。桁は落とすが順位は保つ。
-    private func percent(_ v: Float) -> String { "\(Int((v * 100).rounded()))%" }
+    /// ⚠️ `Int(_:)` は **NaN / 無限大で trap する**（Swift の仕様）。壊れた埋め込みや
+    /// 空の重心から来た類似度をそのまま流すと、表示するだけでアプリが落ちる。
+    private func percent(_ v: Float) -> String {
+        guard v.isFinite else { return "—" }
+        return "\(Int((v * 100).rounded()))%"
+    }
 
     /// 判定の結論をユーザー語にする（「なぜ一緒にならないか」が読んで分かること）。
     private func verdictLabel(_ v: FaceDecisionVerdict) -> String {

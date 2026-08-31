@@ -22,10 +22,17 @@ import Foundation
 /// - 時刻は付けない（`strftime` は signal-safe ではない。行の位置と次の launch 行で足りる）
 enum CrashSignals {
 
-    /// 直前の操作（`Diagnostics.breadcrumb`）。固定長・ゼロ終端。
-    private static let breadcrumbCapacity = 192
+    /// 直前の操作（`Diagnostics.breadcrumb`）の**足あと**。固定長・ゼロ終端。
+    ///
+    /// ⚠️ 1 つだけだと「その操作の**どこで**落ちたか」が分からない（実機 8/31:
+    /// `people.reassignFace → new` は取れたが、付け替え自体・一覧の作り直し・画面の再描画の
+    /// どれで落ちたのか特定できなかった）。**新しい順に数手**残す。
+    private static let breadcrumbCapacity = 512
+    private static let trailDepth = 6
     nonisolated(unsafe) private static var breadcrumb =
         UnsafeMutablePointer<CChar>.allocate(capacity: breadcrumbCapacity)
+    nonisolated(unsafe) private static var trail: [String] = []
+    private static let trailLock = NSLock()
 
     /// シグナル番号 → 書き出す前置き（install 時に作り置き）。
     nonisolated(unsafe) private static var messages =
@@ -61,7 +68,12 @@ enum CrashSignals {
 
     /// 直前の操作を覚える。**ここでだけ**アロケート・コピーする（ハンドラ内では読むだけ）。
     static func setBreadcrumb(_ label: String) {
-        label.withCString { src in
+        trailLock.lock()
+        trail.append(String(label.prefix(80)))   // 1 手ぶんは短く（足あとは数を残す）
+        if trail.count > trailDepth { trail.removeFirst(trail.count - trailDepth) }
+        let joined = trail.reversed().joined(separator: " ← ")
+        trailLock.unlock()
+        joined.withCString { src in
             _ = strlcpy(breadcrumb, src, breadcrumbCapacity)
         }
     }

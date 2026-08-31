@@ -21,6 +21,25 @@
 
 ---
 
+## 「調べる」画面で顔を分離するとアプリが落ちる（SIGTRAP・追跡中）
+- 症状: 実機（8/31 21:18・最新ビルド）でクラッシュ。ADR-159 の痕跡が初めて機能し、
+  ログに `CRASH SIGTRAP — Swift の trap かシグナルで強制終了（直前の操作: people.reassignFace → new)`
+  が残った。ユーザーの再現手順は「**別の人かもしれない写真 → さらに表示 → 出てきた顔を
+  『この人ではない』で新しい人物へ分離**」。
+- 分かっていること: ObjC 例外ではなく **Swift の trap**（fatalError / precondition / 範囲外 /
+  SwiftData）。FaceCore 側のロジックは再現テスト（分離 →人物一覧→レポート→確認候補の作り直し）で
+  再現しなかった＝**UI 層または表示値の変換が疑わしい**。
+- 打った手:
+  1. 足あとを**1 手から数手の列**にした（`people.reassignFace → new` の「どこで」落ちたかが
+     分かるよう、付け替えの段ごと・レポートの読み直し前後にも置いた）。
+  2. `%` 表示（`Int((v*100).rounded())`）は **NaN / 無限大で trap する**。表示側でガードし、
+     さらに `decisionReport` / `outlierFaces` が非有限の類似度を**表示側へ渡さない**ようにした
+     （壊れた埋め込みが 1 件混じると、一覧を出すだけで落ちる形だった）。
+- 関連: `FaceStore+Explain.swift` / `PersonInspectorView.swift` / `AnswerBasisView.swift` /
+  `ReassignOutlierTests` / ADR-159。
+- 残課題: **真因は未確定**。端末の crash レポート（`MosaicPhotos-2026-08-31-*.ips`。名前に
+  `diskwrites` が付かない方）が取れれば 1 発で分かる。次に落ちれば足あとの列で位置が絞れる。
+
 ## 33 分で 1GB のディスク書き込み警告（AI アルバムの再評価が全本を流していた）
 - 症状: 実機から `MosaicPhotos.diskwrites_resource` が 2 通。1 通目は 8.5 時間、2 通目は
   **33 分で 1,073.75MB**（`537.38 KB per second average, exceeding limit of 12.43 KB/s`）。

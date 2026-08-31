@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import MosaicSupport
 import PerceptionCore
 import SwiftData
 
@@ -124,6 +125,8 @@ extension FaceStore {
             let centroid = FaceClustering.normalized(sum)
             var sim = FaceClustering.dot(focusVec, centroid)
             for p in anchors[c.clusterID] ?? [] { sim = max(sim, FaceClustering.dot(focusVec, p)) }
+            // 壊れた重心（NaN/Inf）の相手は一覧に出さない（% 表示の Int 変換で trap する）。
+            guard sim.isFinite else { continue }
             scored.append((c, sim, centroid))
         }
         scored.sort { $0.sim > $1.sim }
@@ -211,9 +214,13 @@ extension FaceStore {
             return ([], .tooManyMembers(limit: scanLimit, members: members.count))
         }
         var scored: [PersonOutlierFace] = []
+        var broken = 0
         for f in members {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
             let sim = FaceClustering.dot(centroid, FaceClustering.normalized(vec))
+            // ⚠️ 壊れた埋め込み（NaN/Inf）は**表示側へ渡さない**。% 表示は Int 変換なので、
+            // 出そうとしただけで trap する。数を記録して、起きていることは分かるようにする。
+            guard sim.isFinite else { broken += 1; continue }
             scored.append(PersonOutlierFace(
                 faceID: f.faceID, refKey: f.refKey,
                 boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh),
@@ -221,6 +228,9 @@ extension FaceStore {
                 confirmed: f.confirmedAt != nil,
                 contributes: FaceStore.contributesToCentroid(f),
                 belowThreshold: sim < threshold))
+        }
+        if broken > 0 {
+            Diagnostics.mark("faces: outliers — 壊れた類似度 \(broken) 件を除外（cluster=\(clusterID)）")
         }
         scored.sort { $0.similarity < $1.similarity }
         return (Array(scored.prefix(limit)), .computed)
