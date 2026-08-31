@@ -165,7 +165,12 @@ public struct AnswerBasisView: View {
         }
     }
 
-    private func percent(_ v: Float) -> String { "\(Int((v * 100).rounded()))%" }
+    /// ⚠️ `Int(_:)` は **NaN / 無限大で trap する**（Swift の仕様）。壊れた埋め込みや
+    /// 空の重心から来た類似度をそのまま流すと、表示するだけでアプリが落ちる。
+    private func percent(_ v: Float) -> String {
+        guard v.isFinite else { return "—" }
+        return "\(Int((v * 100).rounded()))%"
+    }
 
     /// 分離度（AUC）を読める形に。0.50 で「無関係」。
     private func separationText(_ profile: AnswerSimilarityProfile) -> String {

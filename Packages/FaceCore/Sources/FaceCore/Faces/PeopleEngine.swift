@@ -602,13 +602,19 @@ public final class PeopleEngine {
 
     /// 顔を別の人物へ付け替える（「この人は別の人」）。`toClusterID` が nil なら新規人物。
     public func reassignFace(faceID: String, toClusterID: Int?) async {
-        Diagnostics.breadcrumb("people.reassignFace → \(toClusterID.map(String.init) ?? "new")")
+        // ⚠️ 足あとは**段ごと**に置く。1 つだけだと「付け替えのどこで落ちたか」が分からない
+        // （実機 8/31: `people.reassignFace → new` までしか取れなかった）。
+        let target = toClusterID.map(String.init) ?? "new"
+        Diagnostics.breadcrumb("people.reassignFace → \(target)")
         await store.beginUndo(
             label: "この顔を " + (toClusterID.map { label($0) } ?? "新しい人物") + " へ移す",
             clusterIDs: toClusterID.map { [$0] } ?? [], faceIDs: [faceID])
+        Diagnostics.breadcrumb("people.reassignFace: store → \(target)")
         await store.reassignFace(faceID: faceID, toClusterID: toClusterID)
+        Diagnostics.breadcrumb("people.reassignFace: reload")
         await refreshUndoLabel()
         await loadPeople()
+        Diagnostics.breadcrumb("people.reassignFace: done")
     }
 
     /// **この写真はこの人ではない**（写真 1 枚ぶんの顔をまとめて外す）。
@@ -686,7 +692,13 @@ public final class PeopleEngine {
     /// 判定の内訳（Developer Options のチューニング用・ADR-135）。読み取り専用。
     public func decisionReport(clusterID: Int, limit: Int = 12,
                                outlierLimit: Int = 24) async -> PersonDecisionReport? {
-        await store.decisionReport(clusterID: clusterID, limit: limit, outlierLimit: outlierLimit)
+        Diagnostics.breadcrumb("inspector.report cluster=\(clusterID) n=\(limit) o=\(outlierLimit)")
+        let report = await store.decisionReport(clusterID: clusterID, limit: limit,
+                                                outlierLimit: outlierLimit)
+        Diagnostics.breadcrumb("inspector.report: rendered "
+                               + "neighbors=\(report?.neighbors.count ?? -1) "
+                               + "outliers=\(report?.outliers.count ?? -1)")
+        return report
     }
 
     /// 2 人が同じ写真に一緒に写っている箇所（統合できない理由の提示用・ADR-146）。
