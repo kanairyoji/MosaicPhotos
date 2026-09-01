@@ -24,6 +24,9 @@ struct AIAnalysisStatusView: View {
     @State private var faceScanned = 0
     @State private var facesDetected = 0
     @State private var localPhotoTotal = 0
+    /// 「この画面を開いている間だけ全力で解析する」モード（ADR-165）。
+    /// 画面を閉じる・停止を押すと必ず元に戻す（ゲートも画面消灯も戻す）。
+    @State private var foregroundBoost = false
 
     private var monitor: BackgroundActivityMonitor { .shared }
     private var facesAvailable: Bool { people.isFaceModelAvailable }
@@ -44,6 +47,8 @@ struct AIAnalysisStatusView: View {
         .task { await refresh() }
         .onChange(of: engine.isTagging) { _, _ in Task { await refresh() } }
         .onChange(of: people.isScanning) { _, _ in Task { await refresh() } }
+        // ⚠️ 画面を離れたら必ず元に戻す（ゲートを開いたまま・画面を消させないままにしない）。
+        .onDisappear { if foregroundBoost { stopForegroundBoost() } }
     }
 
     // MARK: - 現在の状態
@@ -133,7 +138,17 @@ struct AIAnalysisStatusView: View {
             } label: {
                 Label(L("Analyze Now (while charging)"), systemImage: "bolt.badge.clock")
             }
-            .disabled(isAnalyzing)
+            .disabled(isAnalyzing || foregroundBoost)
+            // ⚠️ 背景ウィンドウ（BGTask）は **1 日に数回・1 回数分**しか来ない（実機 diagnostics-72:
+            // 5 分の窓のあと 8 時間半ゼロ）。2 万枚規模の積み残しは、これだけでは何日経っても
+            // 終わらない。「見ている間は全力で進める」経路を正面から用意する。
+            Button {
+                if foregroundBoost { stopForegroundBoost() } else { startForegroundBoost() }
+            } label: {
+                Label(foregroundBoost ? L("Stop") : L("Analyze While This Screen Is Open"),
+                      systemImage: foregroundBoost ? "stop.circle" : "play.circle")
+            }
+            .tint(foregroundBoost ? .red : nil)
             NavigationLink {
                 Form { AutoAlbumSettingsView(engine: engine) }
                     .navigationTitle(L("Album Automation"))
@@ -143,7 +158,35 @@ struct AIAnalysisStatusView: View {
             }
         } footer: {
             Text("“Analyze Now” starts immediately for 30 minutes — your iPhone must be charging. Otherwise analysis runs automatically based on Processing Timing (by default while charging, on Wi-Fi, and not in use).")
+            + Text(verbatim: "\n\n")
+            + Text("While this screen is open, analysis runs at full speed and the display stays on — charging is recommended. It stops as soon as you leave this screen or tap Stop. The device may get warm; analysis pauses on its own if it gets too hot.")
         }
+    }
+
+    // MARK: - 画面を開いている間の全力解析（ADR-165）
+
+    /// ⚠️ ここで外すのは**待機・電源のゲートだけ**。発熱（`ThermalGate`）と一括ロード中の
+    /// 保護（`HeavyLoad`）は `heavyShouldPause()` の手前にあるので外れない——
+    /// 「ユーザーが見ているから全力」と「端末を痛めない」は両立させる。
+    private func startForegroundBoost() {
+        foregroundBoost = true
+        BackgroundYield.debugForceHeavyWork = true
+        // 画面が消えると（自動ロック）そのまま背景＝中断になる。開いている間は消灯させない。
+        UIApplication.shared.isIdleTimerDisabled = true
+        Diagnostics.mark("analyze: foreground boost start")
+        engine.scheduleBackgroundFill()
+        if facesAvailable, !people.isScanning {
+            Task { people.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: dropboxStore)) }
+        }
+    }
+
+    /// 停止・画面を離れるときは**必ず**元に戻す（ゲートを開いたままにしない）。
+    private func stopForegroundBoost() {
+        foregroundBoost = false
+        BackgroundYield.debugForceHeavyWork = false
+        UIApplication.shared.isIdleTimerDisabled = false
+        people.stopScan()
+        Diagnostics.mark("analyze: foreground boost stop")
     }
 
     // MARK: - 部品
