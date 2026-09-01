@@ -19,9 +19,15 @@ final class FaceTagger {
 
     /// `candidateRefKeys`（端末写真の refKey 群）のうち未スキャン分を処理する。
     /// 進捗ごと・完了時に `onBatch` を呼ぶ（ピープル一覧の再読込に使う）。
+    /// ⚠️ 既定値は**夜間ウィンドウ向け**（実機 diagnostics-72）。スキャンは前面では始めない
+    /// （`startScan` が `isAppActive` で弾く）ので、ここで長く眠る相手はもう居ない。
+    /// 旧値（8 枚ごとに 2.5 秒休止）は 5 分の窓のうち **87 秒を睡眠に使っていた**——
+    /// 実作業は 1 枚 80ms で、280 枚＝22 秒しか進んでいなかった。
+    /// 譲りは `shouldPause` が**1 枚ごと**に見るので、休止を短くしても応答性は落ちない。
+    /// バッチを 16 に上げるのは、クラウド写真のサムネ往復（1 回 約 870ms）を半分に減らすため。
     func scan(candidateRefKeys: [String],
-              batchSize: Int = 8,
-              betweenBatchNs: UInt64 = 2_500_000_000,
+              batchSize: Int = 16,
+              betweenBatchNs: UInt64 = 500_000_000,
               allowSimulator: Bool = false,
               shouldPause: @MainActor () -> Bool = { false },
               networkAllowed: @MainActor () -> Bool = { true },

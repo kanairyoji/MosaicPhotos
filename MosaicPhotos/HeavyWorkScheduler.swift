@@ -27,6 +27,9 @@ enum HeavyWorkScheduler {
     /// CLIP 埋め込みの残作業を理由にバックアップを連続で見送れる上限。これを超えたら
     /// 埋め込みが残っていてもバックアップの窓を 1 回明け渡す（飢餓の防止・上記 1.5 を参照）。
     private static let maxBackupDeferrals = 3
+    /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を見送れる連続回数。
+    /// これを超えたら生成に窓を明け渡す（生成も飢えさせない）。
+    private static let maxGenerateDeferrals = 4
 
     /// フォアグラウンドで構築済みのストア群（RootView が設定）。アプリがメモリに残ったまま
     /// BG 起動された場合はこれを再利用し、プロセス再起動時のみ作り直す。
@@ -333,11 +336,33 @@ enum HeavyWorkScheduler {
         // generate はピークが大きく（実測 ~550〜880MB）BG の厳しい jetsam 上限に触れてアプリごと
         // kill され、進捗が振り出しに戻る主因だった。残り許容量に**十分**な余裕がある時だけ実行する
         // （閾値を 700→900MB に引き上げ・Fix A）。余裕が無ければスキップし軽い処理だけ進める。
-        let availableMB = MemoryBudget.availableBytes() / 1_048_576
-        if availableMB > 900 {
-            await stores.autoAlbumEngine.refreshIfNeeded()
+        // ⚠️ **同じ窓で生成と解析を同時に走らせない**（実機 diagnostics-72）。
+        // 生成は `isGeneratingAlbums` を立て、`heavyShouldPause()` はそれを見て譲るので、
+        // 生成が始まった瞬間に顔スキャンと埋め込みが止まる。しかも生成自体は 26 秒では
+        // 終わらず**毎回 `generate: aborted`**（このログでは中断 3 回・完了 0 回）。
+        // 結果、窓は「止まった解析＋終わらない生成」で丸ごと空転していた
+        // （5 分の窓で顔は 280 枚＝実作業 22 秒ぶんしか進んでいない）。
+        // 残作業があるうちは生成を見送り、**窓ごとに 1 つの仕事を終わらせる**。
+        // ただしバックアップと同じく上限つきで順番を回す（生成も飢えさせない）。
+        let faceBacklog = stores.peopleEngine.remaining
+        let genDeferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak)
+        let analysisBacklog = embedBacklog > 0 || faceBacklog > 0
+        if analysisBacklog, genDeferrals < Self.maxGenerateDeferrals {
+            UserDefaults.standard.set(genDeferrals + 1, forKey: AppSettingsKeys.generateDeferralStreak)
+            Diagnostics.mark("bgtask: defer generate \(genDeferrals + 1)/\(Self.maxGenerateDeferrals) "
+                             + "(embed=\(embedBacklog) faces=\(faceBacklog))")
         } else {
-            Diagnostics.mark("bgtask: skip generate (available=\(availableMB)MB)")
+            UserDefaults.standard.set(0, forKey: AppSettingsKeys.generateDeferralStreak)
+            if analysisBacklog {
+                Diagnostics.mark("bgtask: generate turn (deferred \(genDeferrals)x, "
+                                 + "embed=\(embedBacklog) faces=\(faceBacklog))")
+            }
+            let availableMB = MemoryBudget.availableBytes() / 1_048_576
+            if availableMB > 900 {
+                await stores.autoAlbumEngine.refreshIfNeeded()
+            } else {
+                Diagnostics.mark("bgtask: skip generate (available=\(availableMB)MB)")
+            }
         }
         if Task.isCancelled { return }
 
