@@ -37,11 +37,20 @@ struct FaceUndoRecord: Sendable {
 
 extension FaceStore {
 
-    /// 1 回ぶんの控えに含める顔の上限。これを超える操作は取り消しの対象にしない
-    /// （数千枚の人物を丸ごと控えるのは、目的（直前の 1 手を戻す）に見合わない）。
-    static let undoFaceLimit = 5000
+    /// 1 回ぶんの控えに含める顔の上限。これを超える操作は取り消しの対象にしない。
+    ///
+    /// ⚠️ 旧値 5,000 は**低すぎた**（実機 diagnostics-71/72 で
+    /// `undo skipped — too many faces (5017)` が頻発し、**大きな人物の統合だけ戻せない**
+    /// ＝「間違えたのに戻すボタンが出ない」状態だった）。上限が要るのは控えの重さのためだが、
+    /// 重さの正体は**行数ではなく `embedding`（1 枚 約 1KB）の materialize** で、
+    /// 射影して読むようにしたので行数は問題にならない（下の `photoFaceSnapshots`）。
+    /// `undoFaceLimit` はテストから下げられるよう `var`（本番では変更しない）。
+    nonisolated(unsafe) static var undoFaceLimit = 50_000
     /// 控えておく手数。
     static let undoDepth = 10
+    /// 控え全体で保持する顔の総数の上限。深さだけだと、大きな統合が 10 手たまったときに
+    /// 常駐が伸びる。古い手から捨てて総量を有界にする。
+    nonisolated(unsafe) static var undoTotalFaceBudget = 60_000
 
     /// これから触る人物・顔の状態を控える（操作の**直前**に呼ぶ）。
     /// `clusterIDs` に挙げた人物のメンバーは全員控える（統合で移動するため）。
@@ -50,8 +59,12 @@ extension FaceStore {
         var snaps: [FaceUndoRecord.FaceSnap] = []
         var seen = Set<String>()
         // ⚠️ クラスタごとに引かない（ADR-119）。1 回の fetch でまとめて取る。
-        let byCluster = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
-            predicate: #Predicate { ids.contains($0.clusterID) }))) ?? []
+        // ⚠️ **射影して読む**（ADR-96 と同じ理由）。控えに要るのは 4 列だけなのに、
+        // 既定の fetch は `embedding`（1 枚 約 1KB）まで materialize する。
+        // 5,000 枚の人物なら 5MB＋実体化コストで、それが「上限で戻せない」の原因だった。
+        var byClusterQuery = FetchDescriptor<DetectedFace>(predicate: #Predicate { ids.contains($0.clusterID) })
+        byClusterQuery.propertiesToFetch = [\.faceID, \.clusterID, \.confirmedAt, \.contributesToCentroid]
+        let byCluster = (try? modelContext.fetch(byClusterQuery)) ?? []
         for f in byCluster where seen.insert(f.faceID).inserted {
             snaps.append(.init(faceID: f.faceID, clusterID: f.clusterID,
                                confirmedAt: f.confirmedAt,
@@ -59,8 +72,9 @@ extension FaceStore {
         }
         let extra = faceIDs.filter { !seen.contains($0) }
         if !extra.isEmpty {
-            let rows = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
-                predicate: #Predicate { extra.contains($0.faceID) }))) ?? []
+            var extraQuery = FetchDescriptor<DetectedFace>(predicate: #Predicate { extra.contains($0.faceID) })
+            extraQuery.propertiesToFetch = [\.faceID, \.clusterID, \.confirmedAt, \.contributesToCentroid]
+            let rows = (try? modelContext.fetch(extraQuery)) ?? []
             for f in rows where seen.insert(f.faceID).inserted {
                 snaps.append(.init(faceID: f.faceID, clusterID: f.clusterID,
                                    confirmedAt: f.confirmedAt,
@@ -83,6 +97,11 @@ extension FaceStore {
             label: label, faces: snaps, clusters: clusters, startedAt: Date(),
             maxClusterIDBefore: all.map(\.clusterID).max() ?? -1))
         if undoStack.count > Self.undoDepth { undoStack.removeFirst() }
+        // 総量も有界にする（大きな統合が続いても常駐を伸ばさない）。
+        while undoStack.count > 1,
+              undoStack.reduce(0, { $0 + $1.faces.count }) > Self.undoTotalFaceBudget {
+            undoStack.removeFirst()
+        }
     }
 
     /// 直前の操作の説明（無ければ nil）。UI の「戻す」に出す。

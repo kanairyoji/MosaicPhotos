@@ -83,4 +83,40 @@ struct FaceUndoTests {
         #expect(await store.lastUndoLabel() == nil)
         #expect(await store.undoLast() == nil, "控えが無いのに何かを戻している")
     }
+
+    /// ⚠️ **大きな人物の統合こそ戻したい**。旧実装は 1 手あたり 5,000 顔で打ち切っており、
+    /// 実機ログに `undo skipped — too many faces (5017)` が並んで、
+    /// 「1 対 1 の確認で間違えたのに戻すボタンが出ない」状態になっていた（8/31・9/1）。
+    /// 上限の理由は行数ではなく `embedding` の materialize だったので、射影して読み、上限を上げた。
+    @Test("上限に収まる統合は戻せる（上限を跨ぐと控えない）")
+    func largeMergeIsUndoableWithinLimit() async {
+        let (store, aID, bID) = await makeStore()
+        #expect(aID >= 0 && bID >= 0)
+
+        // 現行の上限（5 万）なら、この規模はもちろん控えられる。
+        await store.beginUndo(label: "統合", clusterIDs: [aID, bID])
+        #expect(await store.lastUndoLabel() == "統合", "控えが取れていない＝戻すボタンが出ない")
+        _ = await store.undoLast()
+
+        // 上限を跨ぐ操作は従来どおり控えない（無制限にはしない）。
+        let saved = FaceStore.undoFaceLimit
+        FaceStore.undoFaceLimit = 3
+        defer { FaceStore.undoFaceLimit = saved }
+        await store.beginUndo(label: "大きすぎる統合", clusterIDs: [aID, bID])
+        #expect(await store.lastUndoLabel() == nil, "上限を超えたのに控えてしまっている")
+    }
+
+    @Test("控えの総量は有界（古い手から捨てる）")
+    func undoStackStaysBounded() async {
+        let (store, aID, bID) = await makeStore()
+        let saved = FaceStore.undoTotalFaceBudget
+        FaceStore.undoTotalFaceBudget = 8   // A(4枚)+B(3枚)=7 なので 2 手目で溢れる
+        defer { FaceStore.undoTotalFaceBudget = saved }
+
+        await store.beginUndo(label: "1 手目", clusterIDs: [aID, bID])
+        await store.beginUndo(label: "2 手目", clusterIDs: [aID, bID])
+        #expect(await store.lastUndoLabel() == "2 手目")
+        #expect(await store.undoLast() == "2 手目")
+        #expect(await store.undoLast() == nil, "総量の上限で古い手が捨てられていない")
+    }
 }
