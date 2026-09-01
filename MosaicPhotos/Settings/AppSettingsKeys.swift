@@ -17,6 +17,9 @@ enum AppSettingsKeys {
     /// CLIP 埋め込みの残作業を理由にバックアップを**連続で見送った回数**。
     /// 上限に達したら埋め込みが残っていてもバックアップへ窓を明け渡す（`HeavyWorkScheduler`・飢餓防止）。
     static let backupDeferralStreak = "backup.deferralStreak"
+    /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を**連続で見送った回数**。
+    /// 上限に達したら残っていても生成へ窓を明け渡す（`HeavyWorkScheduler`・飢餓防止）。
+    static let generateDeferralStreak = "generate.deferralStreak"
     /// キャプションが顔スキャンに譲り続けた回数（ADR-86・上限で「キャプション窓」にする）。
     // ※ 旧 `captionDeferralStreak`（"caption.deferralStreak"）は VLM 廃止で撤去（ADR-108）。
     /// この端末で解析が始まり得た時刻（ADR-87・停滞検出の基準。未実行パスの誤検知を防ぐ）。
