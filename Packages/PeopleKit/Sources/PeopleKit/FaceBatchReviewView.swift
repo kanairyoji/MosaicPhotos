@@ -88,6 +88,7 @@ public struct FaceBatchReviewView: View {
                     ToolbarItem(placement: .primaryAction) {
                         Button { undoLast() } label: {
                             Label(L("Undo"), systemImage: "arrow.uturn.backward")
+                                .labelStyle(.titleAndIcon)
                         }
                         .accessibilityHint(Text(verbatim: undoLabel))
                     }
