@@ -76,16 +76,9 @@ public struct FaceReviewView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-                // ⚠️ 実フィードバック「たまに、間違った！と思うことがある」。連続で答える画面では、
-                // 間違いに気づくのは**次のカードが出た直後**なので、その場で戻せる必要がある。
-                if let undoLabel = peopleEngine.undoLabel {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { undoLast() } label: {
-                            Label(L("Undo"), systemImage: "arrow.uturn.backward")
-                        }
-                        .accessibilityHint(Text(verbatim: undoLabel))
-                    }
-                }
+                // ⚠️ 「戻す」はツールバーに置かない。**「閉じる」と隣り合って紛らわしい**
+                // （実フィードバック 9/2）。回答ボタンのすぐ上＝間違いに気づく場所に、
+                // 文字つきで出す（`undoRow`）。
             }
             .task {
                 // レビュー表示中は人物一覧の再発行を保留（回答ごとの 2〜4 秒ハング対策・diagnostics-51）。
@@ -183,6 +176,8 @@ public struct FaceReviewView: View {
 
             Spacer()
 
+            undoRow
+
             HStack(spacing: 12) {
                 answerButton(L("No"), systemImage: "xmark", tint: .red) { answer(item, yes: false) }
                 answerButton(L("Skip"), systemImage: "arrow.right", tint: .secondary) { advance() }
@@ -269,6 +264,30 @@ public struct FaceReviewView: View {
                 .font(.footnote)
         }
         .buttonStyle(.bordered)
+    }
+
+    /// 直前の回答を戻す行。**回答ボタンのすぐ上**に置く——間違いに気づくのは答えた直後で、
+    /// 視線も指もここにある。何を戻すのかが分かるよう、控えの説明を小さく添える。
+    @ViewBuilder
+    private var undoRow: some View {
+        if let undoLabel = peopleEngine.undoLabel {
+            VStack(spacing: 2) {
+                Button { undoLast() } label: {
+                    Label(L("Undo"), systemImage: "arrow.uturn.backward")
+                        .labelStyle(.titleAndIcon)
+                        .font(.callout.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                Text(verbatim: undoLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 24)
+            }
+            .padding(.bottom, 10)
+        }
     }
 
     private func answerButton(_ title: String, systemImage: String, tint: Color,
