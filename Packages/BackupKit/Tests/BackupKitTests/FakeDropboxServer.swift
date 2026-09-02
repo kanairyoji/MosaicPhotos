@@ -1,5 +1,6 @@
 import Foundation
 import DropboxCore
+@testable import BackupKit
 
 /// **状態を持つ** Dropbox の偽サーバー（テスト専用）。
 ///
@@ -25,6 +26,9 @@ actor FakeDropboxServer: HTTPClient {
 
     /// path_lower → エントリ。
     private(set) var files: [String: Entry] = [:]
+    /// path_lower → アップロードされた本体（download で返す）。
+    /// 「上げたものが、そのまま取り出せるか」＝オフロード後の復元忠実性を検証するため。
+    private var bodies: [String: Data] = [:]
     /// 発行済みリクエストの記録（呼ばれ方の検証用）。
     private(set) var requestLog: [String] = []
     private var jobCounter = 0
@@ -170,6 +174,7 @@ actor FakeDropboxServer: HTTPClient {
             }
             files[to] = Entry(contentHash: source.contentHash, isFolder: false,
                               rev: "r\(files.count)")
+            bodies[to] = bodies[from]
             results.append(#"{".tag":"success","success":{".tag":"file","path_lower":"\#(to)","content_hash":"\#(source.contentHash)"}}"#)
         }
         return finishBatch(results: results, resp: resp)
@@ -198,9 +203,11 @@ actor FakeDropboxServer: HTTPClient {
             if files[key]?.isFolder == true {
                 for path in files.keys where path == key || path.hasPrefix(key + "/") {
                     files.removeValue(forKey: path)
+                    bodies.removeValue(forKey: path)
                 }
             } else {
                 files.removeValue(forKey: key)
+                bodies.removeValue(forKey: key)
             }
             results.append(#"{".tag":"success","success":{"metadata":{".tag":"file","path_lower":"\#(key)"}}}"#)
         }
@@ -264,7 +271,10 @@ actor FakeDropboxServer: HTTPClient {
             return resp(400, "{}")
         }
         let key = arg.path.lowercased()
-        let hash = "h\((request.httpBody ?? Data()).count)"
+        let body = request.httpBody ?? Data()
+        // 本物と同じ content_hash を返す（アップロードの検証経路をそのまま通せる）。
+        let hash = DropboxContentHash.hash(of: body)
+        bodies[key] = body
         files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)")
         return resp(200, #"{"path_lower":"\#(key)","content_hash":"\#(hash)"}"#)
     }
@@ -277,7 +287,10 @@ actor FakeDropboxServer: HTTPClient {
               files[arg.path.lowercased()] != nil else {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
-        return resp(200, "{}")
+        // アップロードされた本体があればそれを返す（seed したファイルは中身を持たない）。
+        guard let body = bodies[arg.path.lowercased()] else { return resp(200, "{}") }
+        return (body, HTTPURLResponse(url: request.url!, statusCode: 200,
+                                      httpVersion: nil, headerFields: nil)!)
     }
 
     /// Dropbox の autorename 相当（"a.jpg" → "a (1).jpg"）。

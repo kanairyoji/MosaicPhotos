@@ -113,6 +113,44 @@ struct MetadataDurabilityTests {
         #expect(!ok, "書けていないのに成功を返すと、台帳に送信済みの印が付いて再送されない")
     }
 
+    // MARK: - 「取れたが読めない」を「無い」と読まない（レビュー指摘）
+
+    /// ⚠️ HTTP 200 で返ってきた既存 JSON がデコード不能なとき、空として上書きすると
+    /// その月の人物名・アルバム・位置情報・オフロードマーカーが丸ごと消える。
+    /// 端末を消すと再生成できない情報なので、**書かずに失敗として残す**（次回再送）。
+    @Test("既存シャードが読めない JSON なら、そのシャードは書かない（再送に残す）")
+    func unreadableShardSkipsWrite() async {
+        let server = Fake(downloadResponses: [
+            "/b/.mosaic/meta/2025-08.json": (200, "{ this is not valid json")])
+        let writer = MetadataShardWriter(uploader: DropboxBackupUploader(httpClient: server),
+                                         token: "t")
+
+        let result = await writer.applyEntries(
+            byShard: ["2025-08": ["/b/a.jpg": entry(["太郎"])]], folder: "/b") { _ in }
+
+        #expect(await server.uploadCount() == 0, "読めていないのに空から上書きした（既存が消える）")
+        #expect(result.written.isEmpty, "デコード不能を新規ファイルの不在と同じ成功経路にしている")
+        #expect(result.failed["2025-08"] != nil, "再送のために失敗分を返していない")
+    }
+
+    @Test("マーカー更新も、既存シャードが読めない JSON なら書かず false を返す")
+    func unreadableShardSkipsMarkerUpdate() async {
+        let server = Fake(downloadResponses: [
+            "/b/.mosaic/meta/2025-08.json": (200, #"{"entries": [broken"#)])
+        let writer = MetadataShardWriter(uploader: DropboxBackupUploader(httpClient: server),
+                                         token: "t")
+
+        let ok = await writer.updateEntries(
+            paths: ["/b/a.jpg"], folder: "/b", shardName: "2025-08",
+            mutate: { $0.offloadedAt = "2026-08-26T00:00:00Z" },
+            makeDefault: { _ in DropboxBackupMetadata.Entry(people: [], albums: [],
+                                                            localIdentifier: "off-1") },
+            log: { _ in })
+
+        #expect(!ok, "書けていないのに成功を返すと、台帳に送信済みの印が付いて再送されない")
+        #expect(await server.uploadCount() == 0, "既存のマーカーごと空で上書きした")
+    }
+
     // MARK: - 並行するシャード更新（レビュー指摘）
 
     /// **状態を持つ**偽 Dropbox。アップロードされた JSON を保持し、以後の download がそれを返す。
@@ -324,6 +362,60 @@ struct BackupRecordCommitTests {
         #expect(records.count == 1)
         #expect(records.first?.contentHash == "h2")
     }
+
+    // MARK: - 削除 → 再取り込み（localIdentifier の付け替え・レビュー指摘）
+
+    /// ⚠️ 端末から削除して同じ写真を再取り込みすると localIdentifier が変わる。実体は同じなので
+    /// 409→hash 一致で「済み」扱いになり `upsertRecord` の**既存分岐**へ来るが、そこで
+    /// localIdentifier を据え置くと記録は**消えた旧 ID**を指したまま残る。runner は新 ID を
+    /// 進捗台帳へ入れるので以後 pending にも入らず、自己修復しない。
+    private func reimported() async -> BackupStore {
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        // 1 回目: 旧 ID でバックアップ。
+        _ = await store.upsertRecord(
+            dropboxPath: "/b/IMG_0001.HEIC", localIdentifier: "OLD-ID", filename: "IMG_0001.HEIC",
+            creationDate: Date(timeIntervalSince1970: 1_600_000_000), contentHash: "hA",
+            people: [], albums: [], isFavorite: false)
+        // 2 回目: 削除→再取り込み後。同じパス・同じ hash（409 の hash 一致経路）で新 ID。
+        _ = await store.upsertRecord(
+            dropboxPath: "/b/IMG_0001.HEIC", localIdentifier: "NEW-ID", filename: "IMG_0001.HEIC",
+            creationDate: Date(timeIntervalSince1970: 1_600_000_000), contentHash: "hA",
+            people: [], albums: [], isFavorite: false)
+        return store
+    }
+
+    @Test("再取り込みの記録は現在の localIdentifier を指し、重複もしない")
+    func reimportRebindsRecordToCurrentAsset() async {
+        let store = await reimported()
+        let records = await store.allRecordsLite()
+        #expect(records.count == 1, "同じ Dropbox パスの記録が重複した")
+        #expect(records.first?.localIdentifier == "NEW-ID",
+                "記録が消えた旧 ID を指したまま＝共有もオフロードもこの写真に届かない")
+    }
+
+    @Test("進捗台帳を消しても、済み状態が現在の ID で記録から復元できる")
+    func recordedIdentifiersFollowCurrentAsset() async {
+        let store = await reimported()
+        let ids = await store.recordedLocalIdentifiers()
+        #expect(ids.contains("NEW-ID"), "台帳クリア後の済み判定が現在の ID で復元できない")
+    }
+
+    @Test("現在の localIdentifier から共有用の Dropbox パスを解決できる")
+    func sharePathResolvesFromCurrentIdentifier() async {
+        let store = await reimported()
+        let refs = await store.backupRefs(forLocalIdentifiers: ["NEW-ID"])
+        #expect(refs["NEW-ID"]?.dropboxPath == "/b/img_0001.heic",
+                "共有が「バックアップ待ち」から進めない")
+        #expect(await store.localToCloudPaths()["NEW-ID"] == "/b/img_0001.heic")
+    }
+
+    @Test("オフロード候補の走査（記録 ID → PHAsset）も現在の資産に当たる")
+    func offloadIndexPointsAtCurrentAsset() async {
+        let store = await reimported()
+        let index = await store.backupCopyIndex()
+        #expect(index["/b/img_0001.heic"] == "NEW-ID",
+                "オフロード候補・二重表示判定が現在の資産を解決できない")
+    }
 }
 
 // MARK: - アカウント・保存先ごとの分離（レビュー指摘）
@@ -413,6 +505,8 @@ private final class DrainToken: AccessTokenProvider {
 @MainActor
 private final class StubRunnerDelegate: BackupRunnerDelegate {
     var phases: [BackupEngine.Phase] = []
+    /// 再送キューはアカウント指紋で名前空間が決まる。テストごとに一意にして混線を避ける。
+    var fingerprint: String = "acct"
     func runnerSetPhase(_ phase: BackupEngine.Phase) { phases.append(phase) }
     func runnerLog(_ message: String) {}
     func runnerSaveRecord(dropboxPath: String, asset: PHAsset, filename: String,
@@ -420,7 +514,7 @@ private final class StubRunnerDelegate: BackupRunnerDelegate {
                           contentHash: String?) async -> Bool { true }
     func runnerRecordedLocalIdentifiers() async -> Set<String> { [] }
     func runnerPriorityLocalIdentifiers() async -> Set<String> { [] }
-    func runnerAccountFingerprint() async -> String? { "acct" }
+    func runnerAccountFingerprint() async -> String? { fingerprint }
 }
 
 /// ⚠️ 「上げる写真が無い」で早期 return すると、前回送れなかったメタデータが
@@ -488,6 +582,78 @@ struct PendingMetadataDrainTests {
                                                                             pendingStore: store)
 
         #expect(!store.load().isEmpty, "送信に失敗したのにキューから消えた（欠落が永久化する）")
+    }
+}
+
+// MARK: - 壊れたカタログ（レビュー指摘）
+
+/// パスごとに download 応答を差し替えられ、アップロード先を記録するクライアント。
+private actor CatalogServer: HTTPClient {
+    private let downloads: [String: (Int, String)]
+    private(set) var uploaded: [String] = []
+
+    init(downloads: [String: (Int, String)]) { self.downloads = downloads }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = request.url!.absoluteString
+        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
+            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
+                                              httpVersion: nil, headerFields: nil)!)
+        }
+        struct Arg: Decodable { let path: String }
+        let path = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
+            .flatMap { try? JSONDecoder().decode(Arg.self, from: Data($0.utf8)) }?.path ?? ""
+
+        if url.contains("files/download") {
+            let (code, body) = downloads[path] ?? (409, #"{"error_summary":"path/not_found/"}"#)
+            return resp(code, body)
+        }
+        if url.contains("files/upload") {
+            uploaded.append(path)
+            return resp(200, "{}")
+        }
+        return resp(200, "{}")
+    }
+}
+
+/// ⚠️ カタログ（アルバム名・人物名・シャード一覧・アルバム ID 対応）も、
+/// 「200 で取れたが読めない」を不在と同じ経路で扱うと**空から作り直して上書き**してしまう。
+@Suite("壊れたカタログを空で上書きしない")
+@MainActor
+struct CatalogDurabilityTests {
+
+    private func entry() -> DropboxBackupMetadata.Entry {
+        DropboxBackupMetadata.Entry(people: ["太郎"], albums: ["旅行"], localIdentifier: "id")
+    }
+
+    @Test("既存カタログが読めない JSON なら書かず、書けたシャードを再送キューへ戻す")
+    func brokenCatalogIsNotOverwritten() async {
+        let folder = "/backup"
+        let catalogPath = folder + BackupMetadataV2.catalogSuffix
+        let server = CatalogServer(downloads: [catalogPath: (200, "<html>not json</html>")])
+        let delegate = StubRunnerDelegate()
+        delegate.fingerprint = "acct-\(UUID().uuidString)"
+        let queue = PendingMetadataStore(account: delegate.fingerprint, folder: folder)
+        defer { _ = queue.save([:]) }
+
+        let runner = BackupRunner(tokenProvider: DrainToken(),
+                                  uploader: DropboxBackupUploader(httpClient: server),
+                                  progressStore: BackupProgressStore(),
+                                  uploadLimit: { 0 }, delegate: delegate)
+        await runner.writeMetadata(
+            newEntries: [BackupMetadataPlanning.NewEntry(
+                path: "\(folder)/a.jpg",
+                date: Date(timeIntervalSince1970: 1_700_000_000),
+                entry: entry())],
+            indexes: BackupRunner.Indexes(people: [:], albums: [:], albumIDs: [:]),
+            folder: folder, token: "t")
+
+        let uploaded = await server.uploaded
+        #expect(!uploaded.contains(catalogPath),
+                "読めない既存カタログを空から作り直して上書きした: \(uploaded)")
+        #expect(uploaded.contains { $0.contains("meta/") }, "シャードは書けているはず")
+        #expect(!queue.load().isEmpty,
+                "カタログを書けなかったのにシャードを再送キューへ戻していない（次回作り直せない）")
     }
 }
 

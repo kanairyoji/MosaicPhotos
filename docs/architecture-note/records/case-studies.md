@@ -21,6 +21,62 @@
 
 ---
 
+## 編集済み写真のバックアップが「編集前の姿」だった（オフロードで編集結果を失う）
+- 症状: 写真アプリで編集した写真をバックアップ → オフロード（実削除）すると、クラウドに
+  残るのは**編集前の原画**。「最近削除した項目」の保存期間を過ぎると編集結果は復元できない。
+- 原因: 2 つの穴が噛み合っていた。(1) `BackupAssetReader.read` が
+  `resources.first(where: { $0.type == .photo })`＝**原画**を最優先していた。
+  (2) オフロードの編集ガードは `modificationDate > backedUpAt` だけなので、
+  **初回バックアップより前に編集した写真**（編集日時 < バックアップ日時）は素通りする。
+  削除直前の hash 再検証も同じ `read` を通るため、原画同士で一致して `.eligible` になる。
+  どちらか片方だけなら削除は止まっていた。
+- 対処（ADR-168）: `.fullSizePhoto` があればそれを上げ、名前は「原画の stem ＋ `-edited` ＋
+  **実データの形式**に対応する拡張子」にする。拡張子は UTI →先頭バイト判定の順で決め、
+  `DeltaPageParser.imageExtensions` に無ければ**名前を作らずスキップ**（誤った名前で上げない）。
+  編集レンディションが端末に無いときは原画へフォールバックしない。読み取り結果に
+  `isEditedRendition` を持たせ、hash 不一致の skip 理由を「編集結果が未バックアップ」と明示。
+- 教訓: **「バックアップの読み取り」と「削除前の検証」が同じ関数を通ることは、安全側にも
+  危険側にも効く。**両方が同じように間違うと、検証は「一致している」と言い続ける。
+  検証が守るべきなのは「削除によって失われるもの」——原画ではなく、いま画面に見えているもの。
+- 関連: `BackupRenditionNaming.swift`（新規）/ `BackupAssetReader.swift` / `OffloadService.swift` /
+  `BackupRenditionNamingTests` / `OffloadRestoreFidelityTests` / ADR-168 / ADR-40。
+- 残課題: 遡及はしない（旧版で上げた編集写真の Dropbox 側は原画のまま。差分判定を
+  localIdentifier ベースから hash ベースへ変える設計変更が要る。ただし条件が効いて削除はされない）。
+  iCloud 最適化で編集レンディションが端末に無い写真は、その分だけ被覆率が下がる。
+
+## 再取り込みした写真の記録が、消えた localIdentifier を指したまま残る
+- 症状: 一度バックアップした写真を端末から削除し、同じ写真を再取り込みしてバックアップすると、
+  バックアップは「完了」になるのに、その写真だけクラウド共有が「バックアップ待ち」のまま。
+  オフロード候補にも出ず、進捗 UserDefaults を消しても済み状態が復元されない。
+- 原因: 再取り込みで `localIdentifier` が変わる。実体は同じなので 409→content_hash 一致で
+  `.uploaded` 扱いになり `BackupStore.upsertRecord` の**既存分岐**へ来るが、そこは
+  people/albums/isFavorite/backedUpAt/contentHash しか更新せず、**localIdentifier を据え置いて**
+  いた。一方 runner は新 ID を進捗台帳へ入れるので、以後この写真は pending に入らず
+  **自己修復しない**。`backupRefs` / `localToCloudPaths` / `backupCopyIndex` /
+  `offloadCandidateAssets` / `recordedLocalIdentifiers` のすべてが新 ID を解決できなくなる。
+- 対処: 既存分岐で localIdentifier（および filename・creationDate）を現在値へ揃える。
+  同一パス＝同一 content_hash は検証済みなので、「その Dropbox 副本に対応する生きている
+  PHAsset は**最後に検証できた方**が正しい」という規則にした（dropboxPath がキーなので記録は 1 件のまま）。
+- 教訓: **upsert の「既存分岐」は、更新しない列こそ設計判断**。書かない列は「変わらない」と
+  主張しているのと同じで、その前提が崩れたとき（ID の再採番）静かに壊れる。
+- 関連: `BackupStore.swift` / `MetadataDurabilityTests`（Backup record commit スイート）。
+
+## 読めない JSON を「ファイルが無い」と同じに扱い、メタデータを空で上書きしていた
+- 症状: Dropbox 上のカタログまたは撮影月シャードが壊れた JSON になっていると、次の更新で
+  既存の人物名・アルバム・位置情報・オフロードマーカーが**空の内容で上書き**される。
+- 原因: 通信失敗については既に「取れなかったら書かない」（`DownloadOutcome.failure`）が
+  実装済みだったのに、**HTTP 200 で取れたがデコードできない**場合だけ同じ保護から漏れていた
+  （`mergedShard` / `updatedCatalog` / `MetadataShardWriter.updateEntries` がそろって
+  `try? decode(...) ?? 空` と書かれていた）。「無い」と「読めない」を同じ成功経路に流していた。
+- 対処: 3 つの入口すべてで「200 だが読めない」を**失敗**として扱う。シャードは
+  `ApplyResult.failed` に入って再送キューへ、マーカーは台帳の `markerUploadedAt` が nil のまま
+  残って `retryPendingOffloadMarkers` が再送、カタログは書かずに当該シャードを再送キューへ戻す。
+  恒久的に壊れたファイルは黙って再試行し続けることになるので `Diagnostics.mark` で可視化する。
+- 教訓: **「取れなかった」を分けたなら、「取れたが読めない」も同じ側に置く。**
+  同じ危険（既存を空で潰す）の別の入口であり、片方だけ塞いでも守れていない。
+- 関連: `BackupMetadataPlanning.swift` / `MetadataShardWriter.swift` / `BackupRunner.swift` /
+  `MetadataDurabilityTests` / `BackupMetadataPlanningTests` / ADR-38。
+
 ## 顔の認識が「動いていない」——動いてはいるが、窓の 9 割を譲りと休止に使っていた
 - 症状: 実フィードバック（9/2）「昨晩も前日も、ピープルの顔認識が動いていない気がする」。
 - 実際: 動いている。ただし 1 回の BGTask 窓（実測 約 5 分・毎回 `bgtask: expired`）で

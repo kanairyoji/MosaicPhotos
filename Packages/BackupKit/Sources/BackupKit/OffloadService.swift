@@ -46,12 +46,17 @@ public struct OffloadableAsset: Sendable {
     public let backedUpAt: Date?            // BackupAssetRecord.backedUpAt
     public let isLivePhoto: Bool
     /// 写真の現データ（hash 再計算用）。取得不可（iCloud のみ等）は nil。
-    public let loadData: @Sendable () async -> Data?
+    ///
+    /// ⚠️ 「削除によって失われるもの」を読むこと（ADR-168）。編集済みの写真では
+    /// **編集結果**（`.fullSizePhoto`）を読み、`isEditedRendition` でそれを伝える。
+    /// 原画を読んでしまうと、クラウド上の原画と hash が一致して適格になり、
+    /// 編集結果を保全しないまま削除する。
+    public let loadData: @Sendable () async -> (data: Data, isEditedRendition: Bool)?
 
     public init(localIdentifier: String, dropboxPath: String, filename: String,
                 albums: [String], captureDate: Date?, modificationDate: Date?,
                 backedUpAt: Date?, isLivePhoto: Bool,
-                loadData: @escaping @Sendable () async -> Data?) {
+                loadData: @escaping @Sendable () async -> (data: Data, isEditedRendition: Bool)?) {
         self.localIdentifier = localIdentifier
         self.dropboxPath = dropboxPath
         self.filename = filename
@@ -121,8 +126,11 @@ enum OffloadPlanning {
         return false
     }
 
+    /// - Parameter isEditedRendition: 端末側で読んだのが**編集結果**か（`loadData` の報告）。
+    ///   hash 不一致の理由を「クラウドには編集前の原画しか無い」と言い分けるために使う。
     static func verdict(asset: OffloadableAsset, localHash: String?, localSize: Int?,
-                        remote: RemoteFileInfo?) -> OffloadVerdict {
+                        remote: RemoteFileInfo?,
+                        isEditedRendition: Bool = false) -> OffloadVerdict {
         if asset.isLivePhoto {
             // Live Photo は動画部分をバックアップしていない＝消すと動画が失われる。
             return .skip(reason: "Live Photo (video part is not backed up)")
@@ -139,6 +147,12 @@ enum OffloadPlanning {
             return .skip(reason: "not found on Dropbox")
         }
         guard remote.contentHash == localHash else {
+            if isEditedRendition {
+                // この修正より前に上げた編集済み写真＝クラウド側は原画のまま。削除すると
+                // 編集結果が失われるので、再バックアップされるまで永久に不適格でよい。
+                return .skip(reason: "edited version is not backed up "
+                             + "(cloud copy is the unedited original)")
+            }
             return .skip(reason: "content hash mismatch (cloud copy differs from device)")
         }
         if let size = remote.size, size != localSize {
@@ -203,11 +217,12 @@ public final class OffloadService {
         var eligibleCount = 0
         for asset in assets {
             if eligibleCount >= limit { break }
-            let data = await asset.loadData()
-            let localHash = data.map { DropboxContentHash.hash(of: $0) }
+            let loaded = await asset.loadData()
+            let localHash = loaded.map { DropboxContentHash.hash(of: $0.data) }
             let remote = await uploader.getMetadata(path: asset.dropboxPath, token: token)
             let verdict = OffloadPlanning.verdict(asset: asset, localHash: localHash,
-                                                  localSize: data?.count, remote: remote)
+                                                  localSize: loaded?.data.count, remote: remote,
+                                                  isEditedRendition: loaded?.isEditedRendition ?? false)
             if verdict == .eligible { eligibleCount += 1 }
             items.append(OffloadPlanItem(localIdentifier: asset.localIdentifier,
                                          filename: asset.filename,
@@ -240,11 +255,12 @@ public final class OffloadService {
         var skipped: [(String, String)] = []
         for asset in assets {
             if verified.count >= limit { break }
-            let data = await asset.loadData()
-            let localHash = data.map { DropboxContentHash.hash(of: $0) }
+            let loaded = await asset.loadData()
+            let localHash = loaded.map { DropboxContentHash.hash(of: $0.data) }
             let remote = await uploader.getMetadata(path: asset.dropboxPath, token: token)
             switch OffloadPlanning.verdict(asset: asset, localHash: localHash,
-                                           localSize: data?.count, remote: remote) {
+                                           localSize: loaded?.data.count, remote: remote,
+                                           isEditedRendition: loaded?.isEditedRendition ?? false) {
             case .eligible:
                 verified.append((asset, localHash ?? ""))
             case .skip(let reason):

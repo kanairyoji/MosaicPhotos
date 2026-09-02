@@ -127,7 +127,8 @@ final class BackupRunner {
     // MARK: - フェーズ間で受け渡す値
 
     /// フェーズ 2 の成果物（端末側の索引）。
-    private struct Indexes {
+    /// （internal＝`writeMetadata` を直接叩くテストから組み立てられるようにするため）
+    struct Indexes {
         let people: [String: [String]]      // localIdentifier → 人物名（顔クラスタ・ユーザー命名）
         let albums: [String: [String]]      // localIdentifier → 所属アルバム名
         let albumIDs: [String: String]      // アルバム名 → PHAssetCollection.localIdentifier
@@ -349,7 +350,7 @@ final class BackupRunner {
                            folder: String, token: String,
                            indexes: Indexes,
                            tally: inout UploadTally) async -> ItemOutcome {
-        guard case .success(let data, let filename) = fetchResult else {
+        guard case .success(let data, let filename, _) = fetchResult else {
             if case .skipped(let filename, let reason) = fetchResult {
                 addLog("[\(i+1)/\(total)] SKIP \(filename): \(reason)")
                 tally.skippedRead += 1
@@ -468,8 +469,9 @@ final class BackupRunner {
     /// 送信も再送キューへの保存も失敗した件数（0 なら健全）。完了メッセージに反映する。
     private var metadataLost = 0
 
-    private func writeMetadata(newEntries: [BackupMetadataPlanning.NewEntry],
-                               indexes: Indexes, folder: String, token: String) async {
+    /// （internal＝カタログ経路の回帰テストから直接呼ぶため。本番の呼び出しは `run` のみ）
+    func writeMetadata(newEntries: [BackupMetadataPlanning.NewEntry],
+                       indexes: Indexes, folder: String, token: String) async {
         // ⚠️ 前回送れなかった分を**先に取り込む**。写真の実体は既にアップロード済みで、
         // その ID は二度と pending に入らないため、ここで送り直さないとメタデータの
         // 欠落が永久化する（レビュー指摘）。
@@ -566,11 +568,18 @@ final class BackupRunner {
                                path: String, token: String) async -> Bool {
         let albumNames = Array(Set(indexes.albums.values.flatMap { $0 })).sorted()
         let peopleNames = Array(Set(indexes.people.values.flatMap { $0 })).sorted()
-        let catalog = BackupMetadataPlanning.updatedCatalog(
+        // ⚠️ 既存カタログが「取れたが読めない」ときは**書かない**（レビュー指摘）。空から
+        // 作り直すと、アルバム名・人物名・シャード一覧・アルバム ID 対応が丸ごと消える。
+        // 書かなければ既存のシャードが再送キューへ戻り（呼び出し側）、次回また試行される。
+        guard let catalog = BackupMetadataPlanning.updatedCatalog(
             existing: existing, touchedShards: touched,
             albums: albumNames, people: peopleNames, albumIDs: indexes.albumIDs,
             deviceID: BackupDeviceIdentity.currentID(),
-            deviceName: BackupDeviceIdentity.currentDisplayName())
+            deviceName: BackupDeviceIdentity.currentDisplayName()) else {
+            addLog("  catalog.json: skipped — existing file is not readable JSON")
+            Diagnostics.mark("backup: catalog unreadable — \(path)")
+            return false
+        }
         let result = await uploader.uploadJSONResult(catalog, to: path, token: token)
         addLog("  catalog.json (shards=\(catalog.shards.count)): \(result.detail)")
         return result.ok
