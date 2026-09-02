@@ -311,8 +311,11 @@ public final class BackupEngine {
             .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
         guard destination == .dropbox else { return false }
         let key = BackupSettingsKeys.lastReconcileAt
-        let last = UserDefaults.standard.object(forKey: key) as? Double
-        if let last, now.timeIntervalSinceReferenceDate - last < Self.reconcileInterval { return false }
+        let last = (UserDefaults.standard.object(forKey: key) as? Double)
+            .map { Date(timeIntervalSinceReferenceDate: $0) }
+        // 判定は純ロジック（テスト済み）。ここは反映だけ。
+        guard BackupReconcilePolicy.isDue(lastRun: last, now: now,
+                                          interval: Self.reconcileInterval) else { return false }
         // ⚠️ 時刻は**始める前**に記録する。失敗のたびに毎晩全件一覧を引き直さないため
         // （通信断が続く端末で、窓のたびに数万件の list_folder を投げるのは高くつく）。
         UserDefaults.standard.set(now.timeIntervalSinceReferenceDate, forKey: key)

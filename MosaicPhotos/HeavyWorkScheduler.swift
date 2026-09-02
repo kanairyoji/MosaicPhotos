@@ -346,15 +346,18 @@ enum HeavyWorkScheduler {
         // ただしバックアップと同じく上限つきで順番を回す（生成も飢えさせない）。
         let faceBacklog = stores.peopleEngine.remaining
         let genDeferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak)
-        let analysisBacklog = embedBacklog > 0 || faceBacklog > 0
-        if analysisBacklog, genDeferrals < Self.maxGenerateDeferrals {
-            UserDefaults.standard.set(genDeferrals + 1, forKey: AppSettingsKeys.generateDeferralStreak)
-            Diagnostics.mark("bgtask: defer generate \(genDeferrals + 1)/\(Self.maxGenerateDeferrals) "
+        // 判定は純ロジック（`NightlyWorkPolicy`・テスト済み）。ここは反映だけ。
+        switch NightlyWorkPolicy.generateDecision(embedBacklog: embedBacklog, faceBacklog: faceBacklog,
+                                                  deferrals: genDeferrals,
+                                                  maxDeferrals: Self.maxGenerateDeferrals) {
+        case .defer_(let streak):
+            UserDefaults.standard.set(streak, forKey: AppSettingsKeys.generateDeferralStreak)
+            Diagnostics.mark("bgtask: defer generate \(streak)/\(Self.maxGenerateDeferrals) "
                              + "(embed=\(embedBacklog) faces=\(faceBacklog))")
-        } else {
+        case .run(let afterDeferrals):
             UserDefaults.standard.set(0, forKey: AppSettingsKeys.generateDeferralStreak)
-            if analysisBacklog {
-                Diagnostics.mark("bgtask: generate turn (deferred \(genDeferrals)x, "
+            if afterDeferrals > 0 {
+                Diagnostics.mark("bgtask: generate turn (deferred \(afterDeferrals)x, "
                                  + "embed=\(embedBacklog) faces=\(faceBacklog))")
             }
             let availableMB = MemoryBudget.availableBytes() / 1_048_576
