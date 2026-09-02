@@ -61,6 +61,12 @@ actor FakeDropboxServer: HTTPClient {
         files.filter { !$0.value.isFolder }.keys.sorted()
     }
 
+    /// アップロード（`files/upload`）の回数。「無駄に上げ直していないか」の検証用。
+    /// ⚠️ 結果（ファイルの有無）だけを見ると、毎回上げ直す実装でも通ってしまう。
+    func uploadCount() -> Int {
+        requestLog.filter { $0.contains("files/upload") }.count
+    }
+
     func setJobsTimeOutButComplete(_ value: Bool) { jobsTimeOutButComplete = value }
     func setRateLimit(everyNth: Int) { rateLimitEveryNthRequest = everyNth }
     func setFailCopyPaths(_ paths: Set<String>) { failCopyPaths = paths }
