@@ -1,5 +1,6 @@
 import DropboxCore
 import Foundation
+import MosaicSupport
 
 /// メタデータ v2 シャードの「ダウンロード → マージ → アップロード」を一元化する（B3）。
 /// 旧実装は BackupRunner（バックアップ時のエントリ追記）と OffloadService（オフロード
@@ -43,7 +44,16 @@ struct MetadataShardWriter {
                     await log("  meta/\(shard).json: skipped — could not read existing (\(reason))")
                     return false
                 }
-                let merged = BackupMetadataPlanning.mergedShard(existing: existing, adding: entries)
+                // ⚠️ 「200 で取れたが読めない」も**取れなかったのと同じ**に扱う（レビュー指摘）。
+                // 空として上書きすると、その月の人物名・アルバム・位置・オフロードマーカーが
+                // まとめて消える。書かずに失敗として返せば、呼び出し側が再送キューへ残す。
+                guard let merged = BackupMetadataPlanning.mergedShard(existing: existing,
+                                                                     adding: entries) else {
+                    await log("  meta/\(shard).json: skipped — existing file is not readable JSON")
+                    // 恒久的に壊れたファイルは黙って再試行し続けることになるので可視化する。
+                    Diagnostics.mark("backup: metadata shard unreadable — \(shardPath)")
+                    return false
+                }
                 let upload = await uploader.uploadJSONResult(merged, to: shardPath, token: token)
                 await log("  meta/\(shard).json (+\(entries.count) → \(merged.entries.count)): \(upload.detail)")
                 return upload.ok
@@ -73,8 +83,17 @@ struct MetadataShardWriter {
             var metadata: DropboxBackupMetadata
             switch await uploader.downloadResult(path: shardPath, token: token) {
             case .found(let data):
-                metadata = (try? JSONDecoder().decode(DropboxBackupMetadata.self, from: data))
-                    ?? DropboxBackupMetadata()
+                // ⚠️ デコード不能を空へ落とさない（レビュー指摘）。空で上書きすると既存の
+                // 人物名・アルバム・位置・他の写真のマーカーが消える。ここで false を返せば
+                // 台帳の markerUploadedAt は nil のまま残り、後から再送される。
+                guard let decoded = try? JSONDecoder().decode(DropboxBackupMetadata.self,
+                                                              from: data) else {
+                    await log("offload.marker: meta/\(shardName).json skipped — "
+                              + "existing file is not readable JSON")
+                    Diagnostics.mark("backup: metadata shard unreadable — \(shardPath)")
+                    return false
+                }
+                metadata = decoded
             case .notFound:
                 metadata = DropboxBackupMetadata()
             case .failure(let reason):

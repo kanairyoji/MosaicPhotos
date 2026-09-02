@@ -14,7 +14,8 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
   Sources/BackupKit/
     BackupEngine.swift             @MainActor @Observable。バックアップのオーケストレーション
     DropboxBackupUploader.swift    写真/metadata の HTTP アップロード（認証・SwiftData から独立・テスト対象）
-    BackupAssetReader.swift        PHAsset 本体データの取得
+    BackupAssetReader.swift        PHAsset 本体データの取得（編集済みは fullSizePhoto＝今の見た目）
+    BackupRenditionNaming.swift    どのレンディションを上げるか＋名前づけの純ロジック（ADR-168・テスト対象）
     BackupIndexing.swift           People/Album インデックス構築（top-level・Task.detached 用）
     BackupPlanning.swift           アップロード差分算出・エラー要約の純ロジック（テスト対象）
     BackupMetadataPlanning.swift   メタデータ v2（カタログ＋撮影月シャード・ADR-38）の分割/マージ純ロジック

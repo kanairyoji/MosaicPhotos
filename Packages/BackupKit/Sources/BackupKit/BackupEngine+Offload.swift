@@ -66,9 +66,10 @@ extension BackupEngine {
                     // PHAsset は Sendable でないため、クロージャ内で ID から取り直す。
                     guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
                         .firstObject else { return nil }
-                    if case .success(let data, _) = await BackupAssetReader.read(asset: asset,
-                                                                                 fallback: filename) {
-                        return data
+                    // ⚠️ バックアップと**同じ読み取り**を通す＝削除で失われる「現在の姿」を検証する。
+                    if case .success(let data, _, let isEdited) =
+                        await BackupAssetReader.read(asset: asset, fallback: filename) {
+                        return (data, isEdited)
                     }
                     return nil
                 })

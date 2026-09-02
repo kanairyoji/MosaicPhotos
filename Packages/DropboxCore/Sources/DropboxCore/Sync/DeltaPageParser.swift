@@ -12,9 +12,12 @@ struct DeltaPage {
 /// list_folder レスポンスを `DeltaPage` に解析する純ロジック。
 /// 画像判定・撮影日時（time_taken ?? client_modified）・media_info からの座標抽出・
 /// 削除/サブフォルダの振り分けを担う。`DropboxSyncEngine` から分離してテスト可能にする。
-enum DeltaPageParser {
+public enum DeltaPageParser {
 
-    static let imageExtensions: Set<String> = [
+    /// Cloud 一覧に載る画像拡張子の**唯一の出典**。
+    /// ⚠️ public なのは、バックアップ側が付けるファイル名の拡張子をここに揃えるため
+    /// （この集合に無い名前で上げると、その写真は Cloud 一覧から消える＝共有もできない）。
+    public static let imageExtensions: Set<String> = [
         "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "heic", "webp", "avif", "jfif"
     ]
 

@@ -46,34 +46,53 @@ struct BackupMetadataPlanningTests {
         let existing = DropboxBackupMetadata(entries: ["/a/1.jpg": entry(["旧太郎"])])
         let existingData = try JSONEncoder().encode(existing)
         // 同キー上書き＋新キー追加
-        let merged = BackupMetadataPlanning.mergedShard(
+        let merged = try #require(BackupMetadataPlanning.mergedShard(
             existing: existingData,
-            adding: ["/a/1.jpg": entry(["山田太郎"]), "/a/2.jpg": entry()])
+            adding: ["/a/1.jpg": entry(["山田太郎"]), "/a/2.jpg": entry()]))
         #expect(merged.entries.count == 2)
         #expect(merged.entries["/a/1.jpg"]?.people == ["山田太郎"])
         // 既存無し（初回）
-        let fresh = BackupMetadataPlanning.mergedShard(existing: nil, adding: ["/a/3.jpg": entry()])
+        let fresh = try #require(BackupMetadataPlanning.mergedShard(existing: nil,
+                                                                    adding: ["/a/3.jpg": entry()]))
         #expect(fresh.entries.count == 1)
+    }
+
+    /// ⚠️ 「200 で取れたが読めない」は**不在ではない**。空として上書きすると、その月の
+    /// 人物名・アルバム・位置情報・オフロードマーカーが一括で失われる（レビュー指摘）。
+    @Test("mergedShard: 既存が読めない JSON なら nil（空で上書きしない）")
+    func shardMergeRefusesUnreadableExisting() {
+        let broken = Data("not json at all".utf8)
+        #expect(BackupMetadataPlanning.mergedShard(existing: broken,
+                                                   adding: ["/a/1.jpg": entry()]) == nil,
+                "デコード不能を空として扱うと既存メタデータが消える")
+    }
+
+    @Test("updatedCatalog: 既存が読めない JSON なら nil（空で上書きしない）")
+    func catalogUpdateRefusesUnreadableExisting() {
+        let broken = Data("{\"shards\":".utf8)   // 途中で切れた JSON
+        #expect(BackupMetadataPlanning.updatedCatalog(existing: broken, touchedShards: ["2025-08"],
+                                                      albums: ["A"], people: []) == nil,
+                "壊れたカタログを空から作り直すとアルバム名・人物名が消える")
     }
 
     @Test("updatedCatalog はシャード追記（重複なし）＋アルバム/人物の全置換（空なら維持）")
     func catalogUpdate() throws {
         let base = BackupCatalog(shards: ["2025-07"], albums: ["旅行"], people: ["山田太郎"])
         let baseData = try JSONEncoder().encode(base)
-        let updated = BackupMetadataPlanning.updatedCatalog(
+        let updated = try #require(BackupMetadataPlanning.updatedCatalog(
             existing: baseData, touchedShards: ["2025-08", "2025-07"],
-            albums: ["旅行", "家族"], people: ["山田太郎", "山田花子"])
+            albums: ["旅行", "家族"], people: ["山田太郎", "山田花子"]))
         #expect(updated.shards == ["2025-07", "2025-08"])
         #expect(updated.albums == ["旅行", "家族"])
         #expect(updated.people == ["山田太郎", "山田花子"])
         // 空のアルバム/人物一覧では既存カタログを消さない（権限縮退時の保護）
-        let kept = BackupMetadataPlanning.updatedCatalog(
-            existing: baseData, touchedShards: [], albums: [], people: [])
+        let kept = try #require(BackupMetadataPlanning.updatedCatalog(
+            existing: baseData, touchedShards: [], albums: [], people: []))
         #expect(kept.albums == ["旅行"])
         #expect(kept.people == ["山田太郎"])
         // 既存無し（初回）
-        let fresh = BackupMetadataPlanning.updatedCatalog(
-            existing: nil, touchedShards: ["2025-08"], albums: ["A"], people: [])
+        let fresh = try #require(BackupMetadataPlanning.updatedCatalog(
+            existing: nil, touchedShards: ["2025-08"], albums: ["A"], people: []))
         #expect(fresh.schemaVersion == 2)
         #expect(fresh.shards == ["2025-08"])
     }
@@ -105,9 +124,9 @@ struct BackupMetadataPlanningTests {
         let base = BackupCatalog(shards: [], albums: ["旧名"], people: [],
                                  albumIDs: ["旧名": "COLL-1"])
         let baseData = try JSONEncoder().encode(base)
-        let updated = BackupMetadataPlanning.updatedCatalog(
+        let updated = try #require(BackupMetadataPlanning.updatedCatalog(
             existing: baseData, touchedShards: [], albums: ["新名"], people: [],
-            albumIDs: ["新名": "COLL-1"])
+            albumIDs: ["新名": "COLL-1"]))
         // 旧名の対応も残る＝「旧名 → COLL-1 → 新名」の追跡が可能
         #expect(updated.albumIDs?["旧名"] == "COLL-1")
         #expect(updated.albumIDs?["新名"] == "COLL-1")

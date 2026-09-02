@@ -68,11 +68,12 @@ struct OffloadSafetyTests {
 
     private func asset(id: String = "ID-1", path: String = "/backup/img_0001.jpg",
                        modified: Date? = nil, backedUpAt: Date? = Date(),
-                       live: Bool = false, data: Data?) -> OffloadableAsset {
+                       live: Bool = false, edited: Bool = false,
+                       data: Data?) -> OffloadableAsset {
         OffloadableAsset(localIdentifier: id, dropboxPath: path, filename: "img_0001.jpg",
                          albums: ["旅行"], captureDate: Date(timeIntervalSince1970: 1_700_000_000),
                          modificationDate: modified, backedUpAt: backedUpAt,
-                         isLivePhoto: live, loadData: { data })
+                         isLivePhoto: live, loadData: { data.map { ($0, edited) } })
     }
 
     private func makeService(files: [String: (hash: String, size: Int)],
@@ -165,6 +166,39 @@ struct OffloadSafetyTests {
         #expect(result.skipped.first?.1.contains("edited") == true)
     }
 
+    /// ⚠️ 初回バックアップ**より前**に編集された写真は「編集後にバックアップ」ではないので
+    /// `modificationDate > backedUpAt` の網に掛からない。旧実装は原画を上げ、直前検証も原画で
+    /// 行っていたため hash が一致して適格になり、**編集結果を残さないまま削除**していた
+    /// （ADR-168）。いまは端末側が編集結果を読むので、クラウドの原画と一致しない。
+    @Test("編集結果がクラウドに無い（クラウドは原画のまま）→ 削除しない・理由も編集由来")
+    func editedRenditionNotBackedUp() async {
+        let deleter = MockDeleter()
+        let service = makeService(
+            files: ["/backup/img_0001.jpg": (hash: "hash-of-the-unedited-original",
+                                             size: photoData.count)],
+            deleter: deleter)
+        let result = await service.execute(
+            assets: [asset(edited: true, data: photoData)], limit: 10,
+            recordLedger: { _ in Issue.record("must not record"); return true },
+            rollbackLedger: { _ in })
+        #expect(result.deleted.isEmpty)
+        #expect(deleter.deletedIDs.isEmpty, "編集結果が保全されていないのに写真を消した")
+        #expect(result.skipped.first?.1.contains("edited") == true,
+                "理由が「編集結果が未バックアップ」と分かるようになっていない: \(result.skipped)")
+    }
+
+    @Test("編集結果がクラウドと一致するときだけ適格になる")
+    func editedRenditionBackedUpIsEligible() async {
+        let deleter = MockDeleter()
+        let service = makeService(
+            files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
+            deleter: deleter)
+        let result = await service.execute(
+            assets: [asset(edited: true, data: photoData)], limit: 10,
+            recordLedger: { _ in true }, rollbackLedger: { _ in })
+        #expect(result.deleted == ["ID-1"])
+    }
+
     @Test("Live Photo → 削除しない（動画部分が未バックアップ）")
     func livePhoto() async {
         let deleter = MockDeleter()
@@ -240,7 +274,7 @@ struct OffloadLedgerDurabilityTests {
             localIdentifier: id, dropboxPath: "/backup/\(id).jpg", filename: "\(id).jpg",
             albums: ["Trip"], captureDate: Date(timeIntervalSince1970: 1_700_000_000),
             modificationDate: nil, backedUpAt: Date(timeIntervalSince1970: 1_700_000_100),
-            isLivePhoto: false, loadData: { data })
+            isLivePhoto: false, loadData: { (data, false) })
     }
 
     @Test("台帳の保存に失敗したら削除しない")

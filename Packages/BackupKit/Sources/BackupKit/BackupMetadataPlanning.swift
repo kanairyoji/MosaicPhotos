@@ -22,11 +22,20 @@ enum BackupMetadataPlanning {
         return out
     }
 
-    /// 既存シャード（クラウドからダウンロードした JSON。無ければ nil）へ新規分をマージする。
-    /// 既存キーは新しい値で上書き（再アップロード時に最新のアルバム/人物を反映）。
-    static func mergedShard(existing: Data?, adding: [String: DropboxBackupMetadata.Entry]) -> DropboxBackupMetadata {
-        let base = existing.flatMap { try? JSONDecoder().decode(DropboxBackupMetadata.self, from: $0) }
-            ?? DropboxBackupMetadata()
+    /// 既存シャード（クラウドからダウンロードした JSON。**ファイルが無ければ** nil）へ新規分を
+    /// マージする。既存キーは新しい値で上書き（再アップロード時に最新のアルバム/人物を反映）。
+    ///
+    /// ⚠️ **「取れたが読めない」を「無い」と読まない**（レビュー指摘）。取得失敗（通信断）は
+    /// 呼び出し側が `.failure` で弾いているが、200 で返ってきた JSON がデコード不能な場合まで
+    /// 空へ潰すと、その月の人物名・アルバム・位置情報・オフロードマーカーが**空で上書き**される。
+    /// 端末を消すと再生成できない情報なので、読めないときは書かない側に倒す。
+    /// - Returns: マージ結果。**既存があるのにデコードできなければ nil**（＝書いてはいけない）。
+    static func mergedShard(existing: Data?,
+                            adding: [String: DropboxBackupMetadata.Entry]) -> DropboxBackupMetadata? {
+        guard let existing else { return DropboxBackupMetadata().merging(adding) }
+        guard let base = try? JSONDecoder().decode(DropboxBackupMetadata.self, from: existing) else {
+            return nil
+        }
         return base.merging(adding)
     }
 
@@ -46,14 +55,26 @@ enum BackupMetadataPlanning {
         }
     }
 
-    /// 既存カタログ（無ければ nil）へ、今回触ったシャードとアルバム/人物カタログを反映する。
+    /// 既存カタログ（**ファイルが無ければ** nil）へ、今回触ったシャードとアルバム/人物カタログを
+    /// 反映する。
+    ///
+    /// ⚠️ シャードと同じ理由で、**デコード不能な既存カタログを空として上書きしない**
+    /// （アルバム名・人物名・シャード一覧・アルバム ID 対応が丸ごと失われる）。
+    /// - Returns: 更新結果。**既存があるのにデコードできなければ nil**（＝書いてはいけない）。
     static func updatedCatalog(existing: Data?, touchedShards: [String],
                                albums: [String], people: [String],
                                albumIDs: [String: String]? = nil,
                                deviceID: String? = nil,
-                               deviceName: String? = nil) -> BackupCatalog {
-        let base = existing.flatMap { try? JSONDecoder().decode(BackupCatalog.self, from: $0) }
-            ?? BackupCatalog()
+                               deviceName: String? = nil) -> BackupCatalog? {
+        let base: BackupCatalog
+        if let existing {
+            guard let decoded = try? JSONDecoder().decode(BackupCatalog.self, from: existing) else {
+                return nil
+            }
+            base = decoded
+        } else {
+            base = BackupCatalog()
+        }
         return base.updating(touchedShards: touchedShards, albums: albums, people: people,
                              albumIDs: albumIDs, deviceID: deviceID, deviceName: deviceName)
     }

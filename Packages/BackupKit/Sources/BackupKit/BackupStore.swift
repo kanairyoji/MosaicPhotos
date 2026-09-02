@@ -86,6 +86,20 @@ public actor BackupStore {
             existing.isFavorite = isFavorite
             existing.backedUpAt = Date()
             if let contentHash { existing.contentHash = contentHash }
+            // ⚠️ **実体の対応も現在の PHAsset へ付け替える**（レビュー指摘）。
+            // 同じ写真を端末から削除して再取り込みすると localIdentifier が変わる。実体は
+            // 同じなので 409→content_hash 一致で「済み」扱いになりここへ来るが、旧実装は
+            // localIdentifier を据え置いたため、記録は**消えた旧 ID** を指したまま残った。
+            // 一方 runner は新 ID を進捗台帳へ入れる＝以後この写真は pending に入らず
+            // 自己修復しない。結果、共有（backupRefs）・localToCloudPaths・backupCopyIndex・
+            // オフロード候補（記録 ID → PHAsset 解決）のすべてが新 ID を解決できなくなる。
+            // 同一パス＝同一 content_hash は検証済みなので、その Dropbox 副本に対応する
+            // 「生きている PHAsset」は**最後に検証できた方**が正しい、という規則にする。
+            // （バイト列も名前も同一の重複写真が 2 枚ある場合は last-writer-wins になる。
+            //   従来は first-writer-wins だったが、どちらでも記録は 1 件のまま。）
+            if let localIdentifier { existing.localIdentifier = localIdentifier }
+            existing.filename     = filename
+            existing.creationDate = creationDate
         } else {
             modelContext.insert(BackupAssetRecord(
                 dropboxPath: dropboxPath, localIdentifier: localIdentifier,

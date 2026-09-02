@@ -21,6 +21,36 @@
 
 ---
 
+## ADR-168 バックアップは「今見えているもの」を上げる——編集済みは fullSizePhoto ＋ 実形式に沿った名前
+- 状態: 採用
+- 文脈: `BackupAssetReader` は `resources.first(where: { $0.type == .photo })` を最優先していた。
+  `.photo` は**原画**で、写真アプリで編集した写真では画面に見えているものではない。
+  一方オフロード（実削除）の適格判定は「バックアップ後に編集された」（`modificationDate >
+  backedUpAt`）しか見ないので、**初回バックアップより前に編集した写真は素通り**する。
+  削除直前の hash 再検証も同じ読み取りを通るため原画同士で一致し、`.eligible` → 実削除。
+  編集結果はクラウドにもアプリにも残らず、「最近削除した項目」の保存期間を過ぎたら復元できない。
+- 決定: (1) `.fullSizePhoto`（編集結果）があればそれを上げる。無ければ従来どおり `.photo`
+  （未編集の挙動・名前とも不変＝既存バックアップを上げ直さない）。
+  (2) 編集結果の名前は「**原画の stem ＋ `-edited` ＋ 実データの形式に対応する拡張子**」。
+  `.fullSizePhoto` の `originalFilename` は "FullSizeRender.jpg" のように写真ごとに一意でなく、
+  原画の拡張子を流用すると **`.HEIC` という名前の JPEG** ができる（共有＝`ShareTempFile` は
+  Dropbox 上の名前をそのまま一時ファイル名にするので、他アプリへ誤った型で渡る）。
+  拡張子は UTI → 先頭バイトの形式判定の順で決め、**`DeltaPageParser.imageExtensions`
+  （Cloud 一覧の唯一の出典）に無い／決められないときは名前を作らずスキップ**する。
+  (3) 編集レンディションが端末に無い（iCloud 最適化）ときは**原画へフォールバックしない**
+  ——フォールバックすると「上げたものと見た目が違う」状態が復活する。
+  (4) 読み取り結果に `isEditedRendition` を持たせ、オフロードの skip 理由を
+  「編集結果が未バックアップ（クラウドは原画）」と言い分ける。
+- 結果: 編集済み写真は現在の見た目が保全され、旧版で上げた編集写真は hash 不一致で
+  **削除されない**（ドライランに理由が出る）。トレードオフとして、編集レンディションが端末に
+  無い写真はバックアップ対象から外れる（喪失はしないが被覆率がその分下がる）。
+  遡及はしない——旧版で上げた編集写真の Dropbox 側は原画のままで、差分判定を
+  localIdentifier ベースから hash ベースへ変えるまで再アップロードされない（残課題）。
+- 関連: `BackupRenditionNaming.swift`（新規・純ロジック）/ `BackupAssetReader.swift` /
+  `OffloadService.swift` / `DeltaPageParser.swift`（`imageExtensions` を public 化）/
+  `BackupRenditionNamingTests` / `OffloadRestoreFidelityTests` / `OffloadSafetyTests` /
+  `MosaicPhotosTests/BackupEditedRenditionFixtureTests`（opt-in・実ライブラリ）/ ADR-40。
+
 ## ADR-163 夜間ウィンドウでは「1 つの仕事を終わらせる」——生成と解析を同じ窓で走らせない
 - 状態: 採用（ADR-72 のバックアップ公平性ルールを生成にも広げる）
 - 文脈: 実フィードバック「顔の認識が動いていない気がする」。実機 diagnostics-72 を見ると
