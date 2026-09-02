@@ -629,3 +629,48 @@ struct ShareFolderPrefixTests {
         #expect(ShareNaming.folderName("Kids/Trip:2025", kind: .album) == "Album-Kids_Trip_2025")
     }
 }
+
+/// 人物名の共有（ADR-167）。名前は**個人情報かつ外部入力**なので、
+/// 送るかどうかを選べること・受け取った値を素通ししないことの両方を固定する。
+@Suite("人物名の共有")
+struct ShareNameTests {
+
+    private func defaultsSuite() -> UserDefaults {
+        UserDefaults(suiteName: "share-names-\(UUID().uuidString)")!
+    }
+
+    @Test("既定は共有する（未設定＝ON）")
+    func defaultsToEnabled() {
+        let d = defaultsSuite()
+        #expect(ShareSettingsKeys.isShareNamesEnabled(d), "未設定なのに OFF になっている")
+        d.set(false, forKey: ShareSettingsKeys.shareNamesEnabled)
+        #expect(ShareSettingsKeys.isShareNamesEnabled(d) == false)
+    }
+
+    @Test("受け取った名前は前後の空白を落とし、長すぎる名前は切り詰める")
+    func incomingNamesAreSanitized() {
+        let embedding = Data(repeating: 0, count: 1024).base64EncodedString()
+        func face(_ name: String?) -> ShareSidecar.Face {
+            ShareSidecar.Face(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, n: name)
+        }
+        let entry = ShareSidecar.Entry(faces: [
+            face("  太郎  "), face("   "), face(String(repeating: "あ", count: 200)),
+        ])
+        let cleaned = ShareSidecar.validate(entry)
+        #expect(cleaned?.faces?.count == 3, "顔そのものは名前の有無に関係なく残る")
+        #expect(cleaned?.faces?[0].n == "太郎", "前後の空白が落ちていない")
+        #expect(cleaned?.faces?[1].n == nil, "空白だけの名前は落とす")
+        #expect((cleaned?.faces?[2].n?.count ?? 0) <= 64, "長すぎる名前が切り詰められていない")
+    }
+
+    @Test("名前が無くても顔は共有される（グルーピングは成立する）")
+    func facesSurviveWithoutNames() {
+        let embedding = Data(repeating: 0, count: 1024).base64EncodedString()
+        let entry = ShareSidecar.Entry(faces: [
+            ShareSidecar.Face(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9),
+        ])
+        let cleaned = ShareSidecar.validate(entry)
+        #expect(cleaned?.faces?.count == 1)
+        #expect(cleaned?.faces?[0].n == nil)
+    }
+}

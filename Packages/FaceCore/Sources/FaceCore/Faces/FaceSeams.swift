@@ -88,14 +88,22 @@ public struct DetectedFaceSignal: Sendable, Equatable {
     public let hasSmile: Bool?
     /// 撮影日（時期グループ分割用・ADR-61）。アプリが refKey から解決して載せる。未取得は nil。
     public let captureDate: Date?
+    /// この顔の人物名（**家族共有の書き出し/取り込みでのみ使う**・ADR-167）。
+    ///
+    /// ⚠️ 検出（`FacePerceptionProvider`）は名前を知らないので、そこでは常に nil。
+    /// 名前が入るのは (1) 共有の書き出し（自分が付けた名前を載せる）と
+    /// (2) 家族のサイドカーの取り込み（相手が付けた名前を受け取る）だけ。
+    /// 名前は個人情報なので、**設定で送らないことも選べる**（既定は送る）。
+    public let personName: String?
 
     public init(boundingBox: CGRect, embedding: Data, quality: Float = 1, hasSmile: Bool? = nil,
-                captureDate: Date? = nil) {
+                captureDate: Date? = nil, personName: String? = nil) {
         self.boundingBox = boundingBox
         self.embedding = embedding
         self.quality = quality
         self.hasSmile = hasSmile
         self.captureDate = captureDate
+        self.personName = personName
     }
 }
 

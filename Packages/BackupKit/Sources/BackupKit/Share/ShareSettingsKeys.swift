@@ -10,6 +10,15 @@ public enum ShareSettingsKeys {
     /// OFF にすると共有メニューが消え、既存セットの反映も止まる。
     public static let provideEnabled = "shareProvideEnabled"
 
+    /// 共有に**人物名を含めるか**（既定 ON・ADR-167）。
+    /// OFF にすると顔（グルーピングの材料）だけを送り、名前は送らない。
+    /// ⚠️ 名前は個人情報なので、送らない選択ができること自体に意味がある。
+    public static let shareNamesEnabled = "shareNamesEnabled"
+    public static func isShareNamesEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: shareNamesEnabled) == nil
+            ? true : defaults.bool(forKey: shareNamesEnabled)
+    }
+
     /// ⚠️ 読み出しは `defaults` を引数に取る（既定 `.standard`）。テストが**自分専用の
     /// UserDefaults スイート**を渡せるようにするため——共有の設定はプロセス全体で 1 つなので、
     /// 並列実行するテストが互いのフラグを踏んで落ちる（実際に踏んだ）。

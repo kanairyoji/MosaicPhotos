@@ -113,6 +113,7 @@ struct ShareProvideView: View {
     var onShareRootChanged: @MainActor () -> Void = {}
 
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
+    @AppStorage(ShareSettingsKeys.shareNamesEnabled) private var shareNames = true
     @AppStorage(ShareSettingsKeys.shareRootFolder)
     private var shareRoot = ShareSettingsKeys.defaultShareRootFolder
     @AppStorage(BackupSettingsKeys.destination)
@@ -126,6 +127,11 @@ struct ShareProvideView: View {
                 Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
             }
             if provideEnabled {
+                Section {
+                    Toggle(L("Include People Names"), isOn: $shareNames)
+                } footer: {
+                    Text(L("Shares the names you gave to people, so the same person is already named on your family's devices. Faces are always shared (that is how people are grouped) — this only controls the names. Turning it off does not remove names already shared."))
+                }
                 setsSection
                 syncSection
                 shareRootSection

@@ -2,6 +2,8 @@ import Foundation
 
 /// バックアップ機能の永続設定キー。`dropboxFolder` はホストアプリ（HomeView）も参照するため公開する。
 public enum BackupSettingsKeys {
+    /// 最後に Dropbox と照合した時刻（週 1 の自動照合・ADR-166）。
+    public static let lastReconcileAt = "backup.lastReconcileAt"
     public static let destination = "backupDestination"
     public static let dropboxFolder = "backupDropboxFolder"
     /// `dropboxFolder` の既定値（アップロード先フォルダ）。

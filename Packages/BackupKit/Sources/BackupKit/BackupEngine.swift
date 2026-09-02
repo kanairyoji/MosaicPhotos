@@ -296,6 +296,39 @@ public final class BackupEngine {
         await loadAlbums()
     }
 
+    /// 週 1 回だけ、夜間ウィンドウから自動で照合する（ADR-166）。
+    ///
+    /// ⚠️ 照合は**手動（Developer Options）でしか走っていなかった**。Dropbox 側で写真を消されても
+    /// 台帳は「済み」のままなので、アプリは気づかない。共有はバックアップ済みのコピーを
+    /// 共有フォルダへ複製する仕組みなので、**実体が消えると共有の自己修復も失敗し続ける**
+    /// （コピー元が無い）。オフロード済みなら原本がどこにも無い状態にもなり得る。
+    /// 一方で照合は全件の一覧取得なので毎晩やる意味はない——週 1 回で足りる。
+    /// - Returns: 実際に照合したら true（間隔内・実行中なら false）。
+    @discardableResult
+    public func reconcileIfDueWeekly(now: Date = Date()) async -> Bool {
+        guard !isBusy else { return false }
+        let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
+            .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
+        guard destination == .dropbox else { return false }
+        let key = BackupSettingsKeys.lastReconcileAt
+        let last = UserDefaults.standard.object(forKey: key) as? Double
+        if let last, now.timeIntervalSinceReferenceDate - last < Self.reconcileInterval { return false }
+        // ⚠️ 時刻は**始める前**に記録する。失敗のたびに毎晩全件一覧を引き直さないため
+        // （通信断が続く端末で、窓のたびに数万件の list_folder を投げるのは高くつく）。
+        UserDefaults.standard.set(now.timeIntervalSinceReferenceDate, forKey: key)
+        Diagnostics.mark("reconcile: weekly check start")
+        if let result = await reconcileWithDropbox() {
+            Diagnostics.mark("reconcile: weekly — verified=\(result.verified) "
+                             + "removed=\(result.removed) remote=\(result.remoteFiles)")
+        } else {
+            Diagnostics.mark("reconcile: weekly — skipped or failed")
+        }
+        return true
+    }
+
+    /// 照合の最短間隔（7 日）。
+    static let reconcileInterval: TimeInterval = 7 * 24 * 60 * 60
+
     // MARK: - Nightly auto backup (ADR-42)
 
     /// 夜間の重い処理ウィンドウ（BGProcessingTask・電源＋Wi-Fi＋非使用）からの自動バックアップ。
