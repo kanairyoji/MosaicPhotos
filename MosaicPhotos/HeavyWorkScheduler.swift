@@ -366,6 +366,22 @@ enum HeavyWorkScheduler {
         }
         if Task.isCancelled { return }
 
+        // 2.5 家族共有（ADR-166）: 反映と受信は**夜間にも回す**。
+        // ⚠️ これまでの起動条件は「起動 25 秒後」「バックアップ完走後」「手動」だけで、
+        // アプリを開かない日が続くと**反映も自己修復も走らなかった**（外部削除された写真が
+        // 戻らないまま放置される）。回線ポリシーは各処理の内側が見る。
+        if NetworkStateMonitor.shared.networkAllowed() {
+            await stores.shareImporter.runIfNeeded()
+            if ShareSettingsKeys.isProvideEnabled() { await stores.shareEngine.syncNow() }
+        }
+        if Task.isCancelled { return }
+
+        // 2.6 バックアップ台帳と Dropbox の実体を**週 1 回**照合する（ADR-166）。
+        // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない
+        // （共有の自己修復もコピー元が無くて失敗し続ける）。全件一覧なので毎晩はやらない。
+        await stores.backupEngine.reconcileIfDueWeekly()
+        if Task.isCancelled { return }
+
         // 3. 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。進捗はモニタで観測。
         let monitor = BackgroundActivityMonitor.shared
         while !Task.isCancelled {

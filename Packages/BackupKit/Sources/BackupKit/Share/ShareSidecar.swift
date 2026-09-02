@@ -18,6 +18,9 @@ public enum ShareSidecar {
 
     public static let formatVersion = 1
 
+    /// 人物名の最大長（外部入力なので必ず切り詰める）。
+    static let maxNameLength = 64
+
     // MARK: - DTO
 
     /// 顔 1 個分（`DetectedFaceSignal` 相当・CGRect 非依存の素の数値）。
@@ -34,11 +37,14 @@ public enum ShareSidecar {
         public var s: Bool?
         /// 撮影日（epoch 秒・未取得 nil）。
         public var d: Double?
+        /// 人物名（ADR-167）。**送信側の設定で載せないことも選べる**ので、常に nil であり得る。
+        /// 受信側は名前を「提案」として扱う——自分が既に付けた名前は上書きしない。
+        public var n: String?
 
         public init(x: Double, y: Double, w: Double, h: Double,
-                    e: String, q: Float, s: Bool? = nil, d: Double? = nil) {
+                    e: String, q: Float, s: Bool? = nil, d: Double? = nil, n: String? = nil) {
             self.x = x; self.y = y; self.w = w; self.h = h
-            self.e = e; self.q = q; self.s = s; self.d = d
+            self.e = e; self.q = q; self.s = s; self.d = d; self.n = n
         }
     }
 
@@ -151,6 +157,12 @@ public enum ShareSidecar {
                 var cleaned = face
                 if let d = face.d, !(d.isFinite && Self.plausibleEpochRange.contains(d)) {
                     cleaned.d = nil
+                }
+                // 人物名も**外部入力**。長さを切り詰め、空白だけの名前は落とす
+                // （画面や検索へそのまま出る値なので、素通しにしない）。
+                if let name = cleaned.n {
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    cleaned.n = trimmed.isEmpty ? nil : String(trimmed.prefix(maxNameLength))
                 }
                 return cleaned
             }

@@ -1,5 +1,6 @@
 import DropboxCore
 import Foundation
+import MosaicSupport
 
 // MARK: - 反映（コピー＋サイドカー）
 //
@@ -398,9 +399,21 @@ extension ShareSyncEngine {
         guard let (data, checksum) = await Task.detached(priority: .utility, operation: {
             ShareSidecar.encode(file).map { ($0, ShareSidecar.checksum($0)) }
         }).value else { return }
-        guard checksum != set.sidecarChecksum else { return }   // 変化なし → 再アップロード不要
-
+        // ⚠️ **中身が同じでも「実在するか」を確かめる**（ADR-166）。以前はチェックサム比較だけで
+        // 済ませていたため、誰かが `.mosaic-share` を消すと**解析結果だけ永久に戻らなかった**
+        // （写真は下のコピー計画で自己修復されるのに、サイドカーだけ取り残される）。
+        // 実在確認は 1 セットにつき list_folder 1 回で、しかも**内容が変わっていないときだけ**
+        // 走る（変わっていればどのみちアップロードする）。
         let sidecarFolder = "\(setFolder)/\(ShareSidecar.subfolderName)"
+        if checksum == set.sidecarChecksum {
+            let listing = await copier.listFolder(path: sidecarFolder, token: token)
+            // 一覧が取れない（通信断・フォルダ未作成）ときは、あるものとして扱わない。
+            // フォルダごと消えている場合も nil か空になるので、下のアップロードで作り直す。
+            let exists = listing?.contains { !$0.isFolder && $0.name == ShareSidecar.fileName } ?? false
+            if exists { return }   // 変化なし＋実在 → 再アップロード不要
+            BackupLogger.info("Share: '\(set.folderName)' sidecar missing — restoring")
+            Diagnostics.mark("share: sidecar missing → 復元します（\(set.folderName)）")
+        }
         guard await copier.createFolder(path: sidecarFolder, token: token),
               await copier.uploadFile(data: data,
                                       to: ShareSidecar.sidecarPath(setFolderPath: setFolder),

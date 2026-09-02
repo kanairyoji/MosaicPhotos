@@ -1,12 +1,15 @@
 import Foundation
+import MosaicSupport
 
 /// 家族共有（ADR-112）の顔シグナル輸出入ファサード。
 extension PeopleEngine {
 
     /// refKey 群の検出顔シグナル（サイドカー輸出用）。
-    public func exportFaceSignals(forRefKeys keys: [String]) async -> [String: [DetectedFaceSignal]] {
+    /// - Parameter includeNames: 自分が付けた人物名も載せるか（ADR-167・設定で切れる）。
+    public func exportFaceSignals(forRefKeys keys: [String],
+                                  includeNames: Bool = false) async -> [String: [DetectedFaceSignal]] {
         guard !keys.isEmpty else { return [:] }
-        return await store.faceSignals(forRefKeys: keys)
+        return await store.faceSignals(forRefKeys: keys, includeNames: includeNames)
     }
 
     /// 家族のサイドカー由来の顔シグナルを取り込む。**未スキャンの写真だけ**記録し
@@ -22,6 +25,13 @@ extension PeopleEngine {
         let fresh = batch.filter { unscanned.contains($0.refKey) }
         guard !fresh.isEmpty else { return (0, true) }
         let saved = await store.recordScans(fresh)
+        // 家族が付けた名前を**提案として**取り込む（ADR-167）。
+        // ⚠️ 自分が既に付けた名前は上書きしない——名前は持ち主の判断で、
+        // 受信のたびに相手の呼び方へ書き換わるのは事故に近い。
+        if saved {
+            let named = await store.applySharedNames(fresh)
+            if named > 0 { Diagnostics.mark("share: 家族の人物名を \(named) 人に取り込みました") }
+        }
         setNeedsPeopleReload()
         return (saved ? fresh.count : 0, saved)
     }

@@ -20,7 +20,10 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
     func analysisEntries(forRefKeys refKeys: [String]) async
         -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry]) {
         let analysis = await autoAlbumEngine.analysisExport(forRefKeys: refKeys)
-        let faces = await peopleEngine.exportFaceSignals(forRefKeys: refKeys)
+        // 人物名を載せるかは設定（既定 ON・ADR-167）。OFF なら顔だけを送る。
+        let includeNames = ShareSettingsKeys.isShareNamesEnabled()
+        let faces = await peopleEngine.exportFaceSignals(forRefKeys: refKeys,
+                                                         includeNames: includeNames)
         let versions = ShareSidecar.Versions(tag: AutoAlbumEngine.shareTagVersion,
                                              perception: AutoAlbumEngine.sharePerceptionVersion,
                                              face: peopleEngine.effectiveScanVersion)
@@ -46,7 +49,8 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
                                           e: signal.embedding.base64EncodedString(),
                                           q: signal.quality,
                                           s: signal.hasSmile,
-                                          d: signal.captureDate?.timeIntervalSince1970)
+                                          d: signal.captureDate?.timeIntervalSince1970,
+                                          n: signal.personName)
                     }
                 }
                 if entry != ShareSidecar.Entry() { entries[key] = entry }
@@ -161,7 +165,8 @@ final class SharedAnalysisImporter {
                         return DetectedFaceSignal(
                             boundingBox: CGRect(x: face.x, y: face.y, width: face.w, height: face.h),
                             embedding: embedding, quality: face.q, hasSmile: face.s,
-                            captureDate: face.d.map { Date(timeIntervalSince1970: $0) })
+                            captureDate: face.d.map { Date(timeIntervalSince1970: $0) },
+                            personName: face.n)
                     }
                     if !signals.isEmpty { faces.append((refKey, signals)) }
                 }
