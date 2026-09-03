@@ -77,6 +77,22 @@
 - 関連: `BackupMetadataPlanning.swift` / `MetadataShardWriter.swift` / `BackupRunner.swift` /
   `MetadataDurabilityTests` / `BackupMetadataPlanningTests` / ADR-38。
 
+## 接頭辞を落としたのに表示が変わらない（書く側は `People-`、読む側は `people-`）
+- 症状: 共有アルバムの表示から内部の接頭辞を落とす修正を入れたのに、実機（シミュレータ）で
+  **表示が変わらない**。ユーザーからの指摘は「people-XXXX になっています」——**小文字**だった。
+- 原因: Dropbox の一覧は `path_lower`（すべて小文字）で取り込む（`DeltaPageParser`）。
+  つまり手元に来るフォルダ名は `people-金居家`。一方フォルダを**作る**ときの接頭辞は
+  `People-` なので、`hasPrefix("People-")` では一致せず素通りしていた。
+  **書いた名前と読める名前が違う**のに、書く側の形だけを見て実装した。
+- 対処: 接頭辞の照合を大文字小文字を無視する形にする。種類の判別（ADR-158 の同名取り違え防止）も
+  同じ関数を通るので、実データでは**そちらも効いていなかった**ことになる。
+- 教訓: **テストを自分の書いた形だけで作らない。** 最初のテストは `"People-金居家"` しか
+  試しておらず、実データの形（小文字）を 1 行足すだけで捕まえられた。
+  ⚠️ 外部システムから来る値は、**書いたときの形と読むときの形が違い得る**——
+  `path_lower` / `path_display` のように、API が明示的に別の表現を返す場合はなおさら。
+- 関連: `ShareNaming.swift` / `SharedAlbumDiscovery.swift` / `ShareDisplayNameTests` /
+  ADR-158（種類による取り違え防止）。
+
 ## 顔の認識が「動いていない」——動いてはいるが、窓の 9 割を譲りと休止に使っていた
 - 症状: 実フィードバック（9/2）「昨晩も前日も、ピープルの顔認識が動いていない気がする」。
 - 実際: 動いている。ただし 1 回の BGTask 窓（実測 約 5 分・毎回 `bgtask: expired`）で

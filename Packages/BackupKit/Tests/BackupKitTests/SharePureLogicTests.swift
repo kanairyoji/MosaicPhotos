@@ -689,6 +689,20 @@ struct ShareDisplayNameTests {
         #expect(ShareNaming.displayName(fromFolderName: "Person-太郎") == "太郎")
     }
 
+    /// ⚠️ **実データは小文字**（実フィードバック 9/3）。Dropbox の一覧は `path_lower` で
+    /// 取り込むので、手元に来るフォルダ名は `people-金居家`。書く側は `People-` なので、
+    /// 大文字前提で照合すると**一致せず素通り**する（この不具合を最初のテストは見逃した）。
+    @Test("小文字で来ても接頭辞を落とす（Dropbox の path_lower）")
+    func stripsLowercasedPrefix() {
+        #expect(ShareNaming.displayName(fromFolderName: "people-金居家") == "金居家")
+        #expect(ShareNaming.displayName(fromFolderName: "album-沖縄旅行") == "沖縄旅行")
+        #expect(ShareNaming.displayName(fromFolderName: "person-太郎") == "太郎")
+        // 種類の判別も同じく小文字で効くこと（同名の取り違え防止＝ADR-158 が実データで働く）。
+        #expect(ShareNaming.kind(fromFolderName: "people-金居家") == .group)
+        #expect(ShareNaming.kind(fromFolderName: "album-沖縄旅行") == .album)
+        #expect(ShareNaming.kind(fromFolderName: "person-太郎") == .person)
+    }
+
     @Test("接頭辞の無いフォルダはそのまま出す")
     func keepsUnprefixed() {
         #expect(ShareNaming.displayName(fromFolderName: "沖縄旅行") == "沖縄旅行")
