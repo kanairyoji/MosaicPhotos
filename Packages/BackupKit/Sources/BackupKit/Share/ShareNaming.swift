@@ -35,6 +35,18 @@ public enum ShareNaming {
         return nil
     }
 
+    /// フォルダ名から**表示用の名前**を作る（接頭辞を落とす）。
+    ///
+    /// ⚠️ `People-` / `Album-` / `Person-` は **Dropbox 上で種類を見分けるための内部の印**で、
+    /// アプリの画面に出すものではない（実フィードバック: 共有アルバムが "People-◯◯" と出る）。
+    /// 接頭辞が無いフォルダ（他アプリ・手作りの共有）はそのまま返す。
+    public static func displayName(fromFolderName folderName: String) -> String {
+        guard let kind = kind(fromFolderName: folderName) else { return folderName }
+        let stripped = String(folderName.dropFirst(prefix(for: kind).count))
+        // 接頭辞だけの名前（"People-"）は落とすと空になるので、元の名前を返す。
+        return stripped.isEmpty ? folderName : stripped
+    }
+
     /// 種類つきのフォルダ名（例: `People-木村家` / `Album-沖縄旅行`）。
     /// 作成元が分からない場合（手動作成・旧セット）は接頭辞なし。
     public static func folderName(_ name: String, kind: ShareSourceKey.Kind?,
