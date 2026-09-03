@@ -9,7 +9,8 @@
 ## 途中終了すると成功済み写真のメタデータが失われる
 
 - 箇所: `Packages/BackupKit/Sources/BackupKit/BackupRunner.swift:0`
-- 分類:  /  / local
+- 分類: dataLoss / backgroundWindow / local / **優先度 P1**（不可逆）
+- 評価: **重要度: 高。** 人物名・アルバム・位置は端末を消すと再生成できない。夜間ウィンドウは毎回 expired で終わるので、中断は日常的に起きる。
 - 検討した回数: 1（初出 2026-08-26）
 - 症状: 写真本体はバックアップ済みになる一方、人物・アルバム・位置・お気に入り等のメタデータが Dropbox に残らず、再インストールや機種変更後に復元できない。
 - 退けた方向:
@@ -18,7 +19,8 @@
 ## 検証後の変更を見ずに端末写真を削除する
 
 - 箇所: `Packages/BackupKit/Sources/BackupKit/OffloadService.swift:0`
-- 分類:  /  / design
+- 分類: wrongDeletion / raceOnly / design / **優先度 P1**（不可逆）
+- 評価: **重要度: 最高。** 実害が最も大きい（写真そのものを失う）。ただし根本は PhotoKit に原子的な compare-and-delete が無いことで、「どこまでの窓を許すか」の設計判断が要る。
 - 検討した回数: 1（初出 2026-08-26）
 - 症状: 検証後に編集された写真、または検証後にクラウド側の同一コピーが失われた写真を端末から削除し、最新データを失う可能性がある。
 - 退けた方向:
@@ -27,7 +29,8 @@
 ## メンバー更新中のコピーが除外写真を復活させる
 
 - 箇所: `Packages/BackupKit/Sources/BackupKit/Share/ShareSyncEngine.swift:0`
-- 分類:  /  / local
+- 分類: wrongResult / commonPath / local / **優先度 P1**
+- 評価: **重要度: 高。** 意図して外した写真が家族に見え続ける。メンバー更新をすれば通る経路で、頻度が高い。
 - 検討した回数: 1（初出 2026-08-26）
 - 症状: 「今の内容に更新」または同じ共有セットの再共有で外した写真が、共有先の Dropbox フォルダに残り続ける。ローカル記録には存在しないため、その後も通常の反映では管理・削除できない。
 - 退けた方向:
@@ -36,7 +39,8 @@
 ## 旧アカウントの遅延ダウンロードが新キャッシュへ入る
 
 - 箇所: `Packages/DropboxCore/Sources/DropboxCore/Store/DropboxPhotoStore+Images.swift:0`
-- 分類:  /  / design / 優先度 P2
+- 分類: wrongResult / specificSetting / design / **優先度 P2**
+- 評価: **重要度: 中。** アカウント切替時のみ。表示が誤るが、データは失われずキャッシュを消せば直る。
 - 検討した回数: 1（初出 2026-08-26）
 - 症状: アカウント切替後、同じ Dropbox パスにある写真のサムネイルやフル画像として、切替前アカウントの画像が表示される。
 - 退けた方向:
