@@ -306,30 +306,46 @@ extension FaceStore {
     /// 条件を満たした分から段階的に戻る。戻り値は**未適用の残り**（次回セッションで再試行）。
     func reapplyNames(_ entries: [(name: String, memberRefKeys: [String])])
         -> [(name: String, memberRefKeys: [String])] {
-        var remaining: [(name: String, memberRefKeys: [String])] = []
-        var takenNames = Set(allClusters().compactMap { c -> String? in
-            (c.name?.isEmpty == false) ? c.name : nil
-        })
+        guard !entries.isEmpty else { return [] }
+
+        // ⚠️ **同名クラスタがあることを理由にエントリを捨てない**（ADR-169）。
+        // 「太郎」が 2 人いるのは普通で、捨てると 2 人目の名前と旧メンバーの対応が
+        // **永久に失われる**（残りにも積まれないので再試行もされない）。
+        // 既に名前が付いているクラスタは「割り当て先の候補から外す」だけにする
+        // ——エントリ自体は必ず生き残らせ、対応先が無ければ残りとして返す。
+        let named = Set(allClusters().filter { $0.name?.isEmpty == false }.map(\.clusterID))
+
+        // 各エントリの候補（新クラスタ → 重なり枚数）を作る。足切りは従来どおり
+        // 「重なり ≥ max(2, 旧メンバーの 20%)」。
+        var candidates: [NameCarryoverMatching.Entry] = []
         for entry in entries {
-            // 既に同名クラスタがある（ユーザーが手で付け直した等）→ 消化済み扱い。
-            if takenNames.contains(entry.name) { continue }
             let keys = entry.memberRefKeys
-            let rows = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
-                predicate: #Predicate { keys.contains($0.refKey) && $0.clusterID >= 0 }))) ?? []
+            var d = FetchDescriptor<DetectedFace>(
+                predicate: #Predicate { keys.contains($0.refKey) && $0.clusterID >= 0 })
+            d.propertiesToFetch = [\.clusterID, \.refKey]
+            let rows = (countedFetchOptional(d)) ?? []
             var overlap: [Int: Set<String>] = [:]
-            for f in rows { overlap[f.clusterID, default: []].insert(f.refKey) }
-            let need = max(2, entry.memberRefKeys.count / 5)
-            if let best = overlap.max(by: { $0.value.count < $1.value.count }),
-               best.value.count >= need,
-               let c = cluster(best.key), c.name?.isEmpty ?? true {
-                c.name = entry.name
-                takenNames.insert(entry.name)
-                continue
+            for f in rows where !named.contains(f.clusterID) {
+                overlap[f.clusterID, default: []].insert(f.refKey)
             }
-            remaining.append(entry)
+            let need = max(2, entry.memberRefKeys.count / 5)
+            let viable = overlap.compactMapValues { $0.count >= need ? $0.count : nil }
+            candidates.append(.init(name: entry.name, candidates: viable))
+        }
+
+        // ⚠️ **一対一で解く**（貪欲だと、局所的な最良ペアが別エントリ唯一の対応先を奪う）。
+        let (assignments, unmatched) = NameCarryoverMatching.match(candidates)
+        for (index, clusterID) in assignments {
+            guard let c = cluster(clusterID), c.name?.isEmpty ?? true else { continue }
+            c.name = entries[index].name
         }
         try? modelContext.save()
-        return remaining
+        if !unmatched.isEmpty {
+            Self.log.info("faces: carryover — \(assignments.count) 件を再適用 / "
+                          + "\(unmatched.count) 件は対応先未確定（次回へ持ち越し）")
+        }
+        // 対応先が決まらなかったものは**必ず**残りとして返す（次のスキャンで再評価）。
+        return unmatched.map { entries[$0] }
     }
 
     func reset() {

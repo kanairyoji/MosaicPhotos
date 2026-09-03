@@ -472,6 +472,12 @@ extension FaceStore {
             if let srcCover = src.coverFaceID { dst.coverFaceID = srcCover }
         }
         if dst.coverFaceID == nil { dst.coverFaceID = src.coverFaceID }
+        // ⚠️ **ピープルグループの参照を付け替える**（レビュー指摘）。統合で src の行は消えるが、
+        // グループは clusterID で人物を指しているので、放置すると
+        // `PeopleGroupInfo.resolve` が「現存しないメンバー」として黙って落とす
+        // ＝ユーザーから見ると**家族グループから 1 人消える**。
+        // dst が既にメンバーなら src を取り除くだけ（重複させない）。
+        remapPeopleGroups(from: srcID, to: dstID)
         modelContext.delete(src)
         try? modelContext.save()
         clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次スキャンで再構築）

@@ -33,6 +33,14 @@ struct FaceUndoRecord: Sendable {
     let startedAt: Date
     /// これより大きい clusterID は、この操作で新しく作られたもの。
     let maxClusterIDBefore: Int
+    /// ピープルグループの構成（id → メンバー clusterID）。
+    ///
+    /// ⚠️ 統合はグループの参照を付け替える（`remapPeopleGroups`）。控えないと、
+    /// **取り消しても家族グループは統合後のままになる**——顔と人物だけ元に戻り、
+    /// グループは統合先を指し続けるので、元の人物がグループから消えたままになる（レビュー指摘）。
+    /// グループはユーザーが作る数個〜十数個なので、**全件を控えて全件を書き戻す**
+    /// （どのグループが影響を受けるかを操作ごとに見極めるより、そのほうが漏れない）。
+    let groups: [UUID: [Int]]
 }
 
 extension FaceStore {
@@ -93,9 +101,13 @@ extension FaceStore {
                                        name: $0.name, coverFaceID: $0.coverFaceID,
                                        personGroupID: $0.personGroupID)
         }
+        let groups = Dictionary(
+            allPeopleGroupRecords().map { ($0.id, $0.memberClusterIDs) },
+            uniquingKeysWith: { first, _ in first })
         undoStack.append(FaceUndoRecord(
             label: label, faces: snaps, clusters: clusters, startedAt: Date(),
-            maxClusterIDBefore: all.map(\.clusterID).max() ?? -1))
+            maxClusterIDBefore: all.map(\.clusterID).max() ?? -1,
+            groups: groups))
         if undoStack.count > Self.undoDepth { undoStack.removeFirst() }
         // 総量も有界にする（大きな統合が続いても常駐を伸ばさない）。
         while undoStack.count > 1,
@@ -137,6 +149,15 @@ extension FaceStore {
                     clusterID: snap.clusterID, sum: snap.sum, count: snap.count,
                     name: snap.name, coverFaceID: snap.coverFaceID,
                     personGroupID: snap.personGroupID))
+            }
+        }
+        // 2.5) ピープルグループの構成を戻す（統合による参照の付け替えを取り消す）。
+        // 控えに無いグループ（この操作より後に作られた）は触らない。
+        if !record.groups.isEmpty {
+            for group in (try? modelContext.fetch(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
+                guard let before = record.groups[group.id],
+                      group.memberClusterIDs != before else { continue }
+                group.memberClusterIDs = before
             }
         }
         // 3) この操作で記録した学習（負例・正例）を消す。
