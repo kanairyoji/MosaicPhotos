@@ -27,9 +27,14 @@ public enum ShareNaming {
     /// すると **AI アルバムに同じ名前を付けただけで、人物の共有に結び付いてしまう**
     /// （実フィードバック 8/31: 同名の AI アルバムが勝手に共有された）。
     /// フォルダ名の接頭辞は作成時と移行時に付くので、ここから種類を復元する。
+    /// ⚠️ **大文字小文字を無視して**照合する。Dropbox の一覧は `path_lower`（すべて小文字）で
+    /// 取り込むので、実際に手元に来るフォルダ名は `people-金居家` のように小文字になる
+    /// （実フィードバック 9/3: 接頭辞を落としたはずが表示が変わらなかった）。
+    /// 作成時に付ける名前は `People-` なので、**書いた側と読む側で見え方が違う**。
     public static func kind(fromFolderName folderName: String) -> ShareSourceKey.Kind? {
+        let lower = folderName.lowercased()
         for kind in [ShareSourceKey.Kind.album, .person, .group]
-        where folderName.hasPrefix(prefix(for: kind)) {
+        where lower.hasPrefix(prefix(for: kind).lowercased()) {
             return kind
         }
         return nil
