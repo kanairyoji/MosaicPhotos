@@ -150,6 +150,10 @@ extension DropboxPhotoStore {
         DropboxLogger.verbose("fullImage() downloading from API — \(item.name)")
         struct Arg: Encodable { let path: String }
         guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return nil }
+        // ⚠️ **開始時のアカウントを控える**（ADR-174）。ダウンロードとデコードの待ち合わせの間に
+        // アカウントが切り替わり得る。旧アカウントの画像を新しいキャッシュへ書くと、
+        // 同じパスの写真として**別人の画像**が出る（キャッシュを消さない限り直らない）。
+        guard let stamp = imageStamp() else { return nil }
         DropboxActivityMonitor.shared.beginFullImage()
         defer { DropboxActivityMonitor.shared.endFullImage() }
         let data: Data
@@ -162,6 +166,12 @@ extension DropboxPhotoStore {
         }
         // ★ 元バイト列のままキャッシュ（EXIF 保持）。表示用は画面相当へダウンサンプルして
         //   常駐・一時メモリを抑える（ビューアはズーム無し＝フル解像度は不要）。
+        // 保存の直前に照合する（ここを過ぎると旧アカウントの中身が新しいキャッシュに残る）。
+        guard Self.shouldDeliverImage(captured: stamp, currentGeneration: currentLoadGeneration,
+                                      currentAccountId: auth.credential?.accountId) else {
+            DropboxLogger.info("fullImage() dropped — account changed during download (\(item.name))")
+            return nil
+        }
         await cache.storeFullImageData(data, for: item.path)
         let decoded = await Task.detached(priority: .userInitiated) {
             (ImageDownsampling.downsample(data: data)
@@ -169,6 +179,12 @@ extension DropboxPhotoStore {
                 .map(SendableUIImage.init)
         }.value
         guard let image = decoded?.image else { return nil }
+        // デコードも待ち合わせなので、**返す直前**にもう一度見る。
+        guard Self.shouldDeliverImage(captured: stamp, currentGeneration: currentLoadGeneration,
+                                      currentAccountId: auth.credential?.accountId) else {
+            DropboxLogger.info("fullImage() dropped — account changed before delivery (\(item.name))")
+            return nil
+        }
         DropboxLogger.verbose("fullImage() downloaded \(data.count) bytes — \(item.name)")
         PerfTrace.logSpan("fullImage.download", ms: PerfTrace.msSince(t0), detail: "\(data.count / 1024)KB")
         return image
@@ -187,8 +203,14 @@ extension DropboxPhotoStore {
         guard let argString = encodeDropboxAPIArg(Arg(path: item.path)) else { return nil }
         DropboxActivityMonitor.shared.beginFullImage()
         defer { DropboxActivityMonitor.shared.endFullImage() }
+        guard let stamp = imageStamp() else { return nil }
         guard let data = try? await apiClient.contentDownload(
             url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else { return nil }
+        guard Self.shouldDeliverImage(captured: stamp, currentGeneration: currentLoadGeneration,
+                                      currentAccountId: auth.credential?.accountId) else {
+            DropboxLogger.info("originalData() dropped — account changed during download")
+            return nil
+        }
         await cache.storeFullImageData(data, for: item.path)   // 原バイト保存（EXIF 保持）
         return (data, item.name)
     }

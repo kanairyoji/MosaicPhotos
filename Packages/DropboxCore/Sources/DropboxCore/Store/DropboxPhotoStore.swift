@@ -93,6 +93,28 @@ public final class DropboxPhotoStore {
         return captured.accountId == currentAccountId
     }
 
+    /// **ダウンロードした画像を保存・配達してよいか**（ADR-174）。
+    ///
+    /// ⚠️ 判定は `shouldApplyLoad` と同じだが、見る場所が違う。一覧は「代入の直前」で見れば
+    /// 足りるのに対し、画像は**ダウンロード → デコード**と待ち合わせが複数あり、その間に
+    /// アカウントが切り替わり得る。旧アカウントの画像を新しいキャッシュへ書くと、
+    /// **同じパスの写真として別人の画像が出る**（キャッシュを消さない限り直らない）。
+    /// 保存の直前と、返す直前の両方で見ること。
+    static func shouldDeliverImage(captured: LoadStamp, currentGeneration: Int,
+                                   currentAccountId: String?) -> Bool {
+        shouldApplyLoad(captured: captured, currentGeneration: currentGeneration,
+                        currentAccountId: currentAccountId, isCancelled: Task.isCancelled)
+    }
+
+    /// 画像取得の開始時に捕まえる札。`nil` なら未接続＝取得しない。
+    func imageStamp() -> LoadStamp? {
+        guard let accountId = auth.credential?.accountId else { return nil }
+        return LoadStamp(generation: loadGeneration, accountId: accountId)
+    }
+
+    /// 現在の世代（画像経路の照合用）。
+    var currentLoadGeneration: Int { loadGeneration }
+
     /// accountId → 指紋（保存・比較用）。
     static func accountFingerprint(_ accountId: String) -> String {
         let digest = SHA256.hash(data: Data(accountId.utf8))
