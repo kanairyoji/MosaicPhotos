@@ -78,6 +78,27 @@ extension FaceStore {
         return records.map { ($0.id, $0.name, $0.memberClusterIDs, $0.createdAt) }
     }
 
+    /// 人物の統合でメンバーの clusterID が変わったとき、グループの参照を付け替える。
+    ///
+    /// ⚠️ グループは clusterID で人物を指しているので、統合で消えた ID を残すと
+    /// **家族グループからその人が黙って消える**（`resolve` が現存しないメンバーを落とす）。
+    /// `to` が既にメンバーなら `from` を取り除くだけ（同じ人物を 2 回入れない）。
+    /// - Returns: 触ったグループの数。
+    @discardableResult
+    func remapPeopleGroups(from srcID: Int, to dstID: Int) -> Int {
+        let records = (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? []
+        var touched = 0
+        for record in records where record.memberClusterIDs.contains(srcID) {
+            var ids = record.memberClusterIDs.map { $0 == srcID ? dstID : $0 }
+            // 付け替えで重複したら 1 つに畳む（順序は保つ）。
+            var seen = Set<Int>()
+            ids = ids.filter { seen.insert($0).inserted }
+            record.memberClusterIDs = ids
+            touched += 1
+        }
+        return touched
+    }
+
     func createPeopleGroup(name: String, memberClusterIDs: [Int]) -> UUID {
         let record = PeopleGroupRecord(name: name, memberClusterIDs: memberClusterIDs)
         modelContext.insert(record)
