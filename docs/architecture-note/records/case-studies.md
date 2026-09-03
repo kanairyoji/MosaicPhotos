@@ -77,6 +77,23 @@
 - 関連: `BackupMetadataPlanning.swift` / `MetadataShardWriter.swift` / `BackupRunner.swift` /
   `MetadataDurabilityTests` / `BackupMetadataPlanningTests` / ADR-38。
 
+## `swift build` が通ったのに、アプリのビルドで落ちた（`private` とファイル分割）
+- 症状: `PersonInspectorView.swift`（772 行）を 4 ファイルへ分けた直後、
+  `cd Packages/PeopleKit && swift build` も `swift test` も**通った**のに、
+  アプリターゲットのビルドが `'report' is inaccessible due to 'private' protection level`
+  で落ちた。
+- 原因: 2 つ重なっていた。
+  (1) Swift の `private` は**同一ファイル内**に限られる。見た目を別ファイルの extension へ
+  移すと、`private` な `@State` やヘルパは参照できない。
+  (2) それでも `swift build` が通ったのは、**`.build` が古いまま**だったから
+  （root の CLAUDE.md にある既知の落とし穴——新規ファイルを足すと stale になる）。
+  つまり「通った」ことが誤りの隠蔽になっていた。
+- 対処: 分割した型のメンバーを internal にする（`HomeView` / `HomeSections` と同じ方針。
+  理由をコメントに残す）。検証は `rm -rf Packages/*/.build` の後にやり直す。
+- 教訓: **ファイルを分けたら、パッケージ単体のビルドを信用しない。** 少なくとも
+  アプリターゲットのビルド（または `.build` を消してからのやり直し）まで通す。
+- 関連: `PersonInspectorView*.swift` / root `CLAUDE.md`「既知の落とし穴」。
+
 ## 接頭辞を落としたのに表示が変わらない（書く側は `People-`、読む側は `people-`）
 - 症状: 共有アルバムの表示から内部の接頭辞を落とす修正を入れたのに、実機（シミュレータ）で
   **表示が変わらない**。ユーザーからの指摘は「people-XXXX になっています」——**小文字**だった。
