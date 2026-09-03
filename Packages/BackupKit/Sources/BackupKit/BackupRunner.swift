@@ -163,6 +163,10 @@ final class BackupRunner {
         let indexes = await buildIndexes()
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
 
+        // 再送キューの名前空間はアカウント＋保存先で決まる。1 枚ごとに await しないよう控える。
+        cachedAccountFingerprint = await delegate.runnerAccountFingerprint()
+        cachedPendingStore = nil
+
         // 3-4. 全アセット取得 → 差分算出（済み＝台帳∪記録・上限適用）
         let assets = fetchAssetsSorted()
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
@@ -412,6 +416,21 @@ final class BackupRunner {
                     longitude: asset.location?.coordinate.longitude,
                     isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot)
                 )))
+            // ⚠️ **メタデータを先に永続化してから**完了記録を保存する（ADR-171）。
+            // 逆順だと、その間に中断されたとき「写真は済み・メタデータは無い」が確定する
+            // ——写真本体は進捗台帳に載って次回の対象から外れるので、人物名・アルバム・
+            // 位置情報は**二度と作られない**。実行の最後にまとめて送る旧実装は、
+            // 途中終了で **それまでの全件**を失っていた（レビュー指摘）。
+            let queuedMeta = pendingStore(folder: folder).appendEntry(
+                shard: BackupMetadataV2.shardName(for: asset.creationDate),
+                path: savedPath, entry: tally.newEntries[tally.newEntries.count - 1].entry)
+            if !queuedMeta {
+                // 永続化できないなら完了記録も作らない＝次回この写真をもう一度通す
+                //（実体は Dropbox にあるので 409/hash 照合で再アップロードは起きない）。
+                addLog("  ⚠️ metadata could not be queued — leaving photo for next run")
+                Diagnostics.mark("backup: metadata journal write failed — \(filename)")
+                return .done
+            }
             // ⚠️ 記録の**永続化を待ってから**進捗台帳へ入れる。fire-and-forget だと、
             // 大量アップロード後や BGTask 終了時に保存タスクが残ったままアプリが止まり、
             // 「次回は再アップロードされないのに SwiftData 記録が無い」写真ができる
@@ -468,6 +487,9 @@ final class BackupRunner {
     /// シャードの download→merge→upload は `MetadataShardWriter` に集約（B3）。
     /// 送信も再送キューへの保存も失敗した件数（0 なら健全）。完了メッセージに反映する。
     private var metadataLost = 0
+    /// 再送キューの控え（1 枚ごとに作り直さない）と、その材料のアカウント指紋。
+    private var cachedPendingStore: PendingMetadataStore?
+    private var cachedAccountFingerprint: String?
 
     /// （internal＝カタログ経路の回帰テストから直接呼ぶため。本番の呼び出しは `run` のみ）
     func writeMetadata(newEntries: [BackupMetadataPlanning.NewEntry],
@@ -513,7 +535,10 @@ final class BackupRunner {
                 stillPending[shard] = byShard[shard] ?? [:]
             }
         }
+        // ⚠️ **本体へ書いてからジャーナルを消す**（順序が逆だと、消してから保存に失敗した瞬間に
+        // 残りが失われる）。`save` は残す分を本体へ書き切るので、成功後のジャーナルは不要。
         let queued = pendingStore.save(stillPending)
+        if queued { pendingStore.clearJournal() }
         if !stillPending.isEmpty {
             let count = PendingMetadataStore.entryCount(stillPending)
             if queued {
@@ -535,6 +560,14 @@ final class BackupRunner {
     /// アップロード対象が無い回に、保留メタデータだけを送り直す。
     /// カタログは触らない（このパスでは albums/people の索引を作っていないため、
     /// 空の索引で上書きすると**既存のカタログから名前が消える**）。
+    /// 再送キュー（アカウント＋保存先ごと）。1 枚ごとに作り直さないよう控える。
+    private func pendingStore(folder: String) -> PendingMetadataStore {
+        if let cached = cachedPendingStore { return cached }
+        let store = PendingMetadataStore(account: cachedAccountFingerprint, folder: folder)
+        cachedPendingStore = store
+        return store
+    }
+
     private func drainPendingMetadataIfNeeded(folder: String) async {
         let account = await delegate.runnerAccountFingerprint()
         await drainPendingMetadata(folder: folder,

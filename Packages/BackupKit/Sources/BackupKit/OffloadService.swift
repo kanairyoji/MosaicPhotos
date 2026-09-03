@@ -255,14 +255,10 @@ public final class OffloadService {
         var skipped: [(String, String)] = []
         for asset in assets {
             if verified.count >= limit { break }
-            let loaded = await asset.loadData()
-            let localHash = loaded.map { DropboxContentHash.hash(of: $0.data) }
-            let remote = await uploader.getMetadata(path: asset.dropboxPath, token: token)
-            switch OffloadPlanning.verdict(asset: asset, localHash: localHash,
-                                           localSize: loaded?.data.count, remote: remote,
-                                           isEditedRendition: loaded?.isEditedRendition ?? false) {
+            let (verdict, hash) = await recheck(asset: asset, token: token)
+            switch verdict {
             case .eligible:
-                verified.append((asset, localHash ?? ""))
+                verified.append((asset, hash ?? ""))
             case .skip(let reason):
                 skipped.append((asset.filename, reason))
                 log("offload.execute: skip \(asset.filename) — \(reason)")
@@ -285,6 +281,39 @@ public final class OffloadService {
             let reason = "ledger write failed"
             return ([], skipped + verified.map { ($0.asset.filename, reason) })
         }
+
+        // 2.5 **削除の直前にもう一度**照合する（ADR-173）。
+        //
+        // ⚠️ 手順 1 の検証から実際の削除までには、台帳の書き込みと OS の確認ダイアログが挟まる。
+        // ダイアログはユーザーが放置すれば何分でも開いたままで、その間に写真アプリで編集・
+        // 置換されても、あるいは Dropbox 側の同一コピーが消えても、手順 1 の結果は古いまま。
+        // 日付（`modificationDate`）は変わらない置換もあるので、**バイト列を取り直して**照合する。
+        // 対象は検証済みの分だけ（≤ limit）なので往復は有界。
+        var finalTargets: [(asset: OffloadableAsset, hash: String)] = []
+        for candidate in verified {
+            let (verdict, hash) = await recheck(asset: candidate.asset, token: token)
+            switch verdict {
+            case .eligible where hash == candidate.hash || candidate.hash.isEmpty:
+                finalTargets.append((candidate.asset, hash ?? candidate.hash))
+            case .eligible:
+                // 内容が変わった＝別のものになっている。消さない。
+                skipped.append((candidate.asset.filename, "changed since verification"))
+                log("offload.execute: skip \(candidate.asset.filename) — changed since verification")
+            case .skip(let reason):
+                skipped.append((candidate.asset.filename, reason))
+                log("offload.execute: skip \(candidate.asset.filename) — \(reason) (final check)")
+            }
+        }
+        if finalTargets.count != verified.count {
+            let dropped = verified.count - finalTargets.count
+            Diagnostics.mark("offload: 直前の再照合で \(dropped) 枚を削除対象から外しました")
+            // 台帳に書いてしまった分を戻す（消さないものを「オフロード済み」にしない）。
+            let keep = Set(finalTargets.map(\.asset.localIdentifier))
+            let revert = verified.map(\.asset.localIdentifier).filter { !keep.contains($0) }
+            if !revert.isEmpty { await rollbackLedger(revert) }
+        }
+        verified = finalTargets
+        guard !verified.isEmpty else { return ([], skipped) }
 
         // 3. 削除（PhotoKit＝OS 確認ダイアログ・「最近削除した項目」へ）。
         let ids = verified.map(\.asset.localIdentifier)
@@ -311,6 +340,21 @@ public final class OffloadService {
     /// - Returns: **書き込めた** localIdentifier（呼び出し側が台帳へ印を付ける）。
     ///   書けなかった分は台帳に「未送信」として残り、後から再送される。
     @discardableResult
+    /// 1 枚ぶんの照合（バイト列を取り直し、クラウドの実体も見る）。
+    ///
+    /// ⚠️ **日付を信用しない**。`modificationDate` が変わらない置換はあり得るので、
+    /// 実データを読んで hash とサイズで比べる（`OffloadPlanning.verdict` がその判定を持つ）。
+    private func recheck(asset: OffloadableAsset, token: String) async
+        -> (OffloadVerdict, String?) {
+        let loaded = await asset.loadData()
+        let localHash = loaded.map { DropboxContentHash.hash(of: $0.data) }
+        let remote = await uploader.getMetadata(path: asset.dropboxPath, token: token)
+        let verdict = OffloadPlanning.verdict(asset: asset, localHash: localHash,
+                                              localSize: loaded?.data.count, remote: remote,
+                                              isEditedRendition: loaded?.isEditedRendition ?? false)
+        return (verdict, localHash)
+    }
+
     public func uploadOffloadMarkers(for targets: [OffloadMarkerTarget],
                                      token: String) async -> [String] {
         let folderByPath: (String) -> String? = { path in

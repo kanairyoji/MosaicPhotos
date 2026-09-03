@@ -43,10 +43,78 @@ struct PendingMetadataStore {
         fileURL = directory.appendingPathComponent(filename)
     }
 
+    /// 追記ジャーナル（1 行 1 エントリ）。**アップロード成功のたびに 1 行だけ**足す。
+    ///
+    /// ⚠️ なぜ本体（JSON 全体）に書かないか: 本体は毎回まるごと書き直すので、
+    /// 1 枚ごとに保存すると枚数の 2 乗に比例する（1 万枚で現実的でない）。
+    /// 追記なら 1 枚あたり一定コストで、途中終了しても**それまでの全行が残る**。
+    private var journalURL: URL {
+        fileURL.deletingPathExtension().appendingPathExtension("jsonl")
+    }
+
+    /// ジャーナル 1 行の形。
+    private struct JournalLine: Codable {
+        let shard: String
+        let path: String
+        let entry: DropboxBackupMetadata.Entry
+    }
+
+    /// 1 件を**その場で永続化**する（写真の完了記録より先に呼ぶ）。
+    ///
+    /// ⚠️ 順序が肝（ADR-171）。完了記録を先に保存すると、その間に中断されたとき
+    /// 「写真は済み・メタデータは無い」状態が確定する——写真本体は進捗台帳に載って
+    /// 次回の対象から外れるので、**人物名・アルバム・位置情報は二度と作られない**。
+    /// - Returns: 書けたか。false なら呼び出し側は**完了記録を保存してはいけない**。
+    @discardableResult
+    func appendEntry(shard: String, path: String,
+                     entry: DropboxBackupMetadata.Entry) -> Bool {
+        guard let line = try? JSONEncoder().encode(JournalLine(shard: shard, path: path, entry: entry))
+        else { return false }
+        var data = line
+        data.append(0x0A)   // 改行
+        do {
+            if FileManager.default.fileExists(atPath: journalURL.path) {
+                let handle = try FileHandle(forWritingTo: journalURL)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            } else {
+                try data.write(to: journalURL, options: .atomic)
+            }
+            return true
+        } catch {
+            BackupLogger.error("PendingMetadataStore: journal append failed — \(error)")
+            return false
+        }
+    }
+
+    /// 本体＋ジャーナルを合わせて読む（ジャーナルが後勝ち＝より新しい）。
+    ///
+    /// ⚠️ 壊れた行は**捨てずに読み飛ばす**（1 行の破損で残り全部を失わない）。
     func load() -> Payload {
-        guard let data = try? Data(contentsOf: fileURL),
-              let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return [:] }
+        var payload: Payload = [:]
+        if let data = try? Data(contentsOf: fileURL),
+           let decoded = try? JSONDecoder().decode(Payload.self, from: data) {
+            payload = decoded
+        }
+        guard let journal = try? Data(contentsOf: journalURL),
+              let text = String(data: journal, encoding: .utf8) else { return payload }
+        var broken = 0
+        for raw in text.split(separator: "\n") {
+            guard let line = try? JSONDecoder().decode(JournalLine.self, from: Data(raw.utf8)) else {
+                broken += 1
+                continue
+            }
+            payload[line.shard, default: [:]][line.path] = line.entry
+        }
+        if broken > 0 { BackupLogger.info("PendingMetadataStore: skipped \(broken) broken journal line(s)") }
         return payload
+    }
+
+    /// ジャーナルを消す（**送信が確認できた後だけ**呼ぶ）。
+    /// 残った分は `save(_:)` が本体へ書き直しているので、ここで消しても失われない。
+    func clearJournal() {
+        try? FileManager.default.removeItem(at: journalURL)
     }
 
     /// - Returns: **保存できたか**。false のときはバックアップを正常完了扱いにしてはいけない

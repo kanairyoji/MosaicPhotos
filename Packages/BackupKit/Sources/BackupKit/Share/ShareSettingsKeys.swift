@@ -82,7 +82,13 @@ public enum ShareSettingsKeys {
     public static let deletedFolders = "shareDeletedFolders"
 
     /// 墓標を覚えておく時間。非同期ジョブの上限（約 4 分）に余裕を見た値。
+    /// ⚠️ **フォルダ墓標にだけ**使う。単枚の墓標は時間で消さない（ADR-172）——
+    /// 猶予後にコピージョブが完走すると、外したはずの写真が残り続けるため。
     public static let deletedFolderGraceSeconds: TimeInterval = 15 * 60
+
+    /// 単枚の墓標の上限（古い順に捨てる）。不在を確認できるまで残す方針なので時間では消さないが、
+    /// 設定の肥大は避ける。ここに達するのは異常事態（確認が延々できていない）。
+    public static let maxFileTombstones = 5000
 
     /// **単枚**の墓標（メンバーから外した写真の予定コピー先）。フォルダ墓標と同じ理由で要る——
     /// 反映を止めても、発行済みの copy_batch はサーバー側で完走するため、記録を消した後に

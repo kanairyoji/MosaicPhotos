@@ -209,7 +209,13 @@ extension ShareSyncEngine {
             ShareSettingsKeys.setDeletedFolderTombstones(folders, account: account, defaults)
         }
 
-        // 単枚の墓標（メンバーから外した写真の予定コピー先）も同じ規則で掃除する。
+        // 単枚の墓標（メンバーから外した写真の予定コピー先）。
+        //
+        // ⚠️ **時間で消さない**（ADR-172）。発行済みの copy_batch はクライアントが諦めても
+        // サーバー側で走り続ける。猶予（15 分）で墓標を捨てると、その後にジョブが完走した場合
+        // **外したはずの写真が共有フォルダに残り続ける**——記録には無いので、以後どの反映でも
+        // 掃除されない（家族には見えたまま）。
+        // 消してよいのは「**実在しないことを確かめられた**」ときだけにする。
         var files = ShareSettingsKeys.deletedFileTombstones(account: account, defaults)
         guard !files.isEmpty else { return }
         let paths = Array(files.keys)
@@ -217,10 +223,28 @@ extension ShareSyncEngine {
             Array(paths[$0..<min($0 + 100, paths.count)])
         }) {
             guard await copier.deleteBatch(paths: chunk, token: token) else { continue }
-            for path in chunk where now.timeIntervalSince(files[path] ?? now)
-                >= ShareSettingsKeys.deletedFolderGraceSeconds {
+        }
+        // 削除を投げたうえで、**親フォルダを 1 回ずつ見て不在を確認**する。
+        // 一覧が取れない（通信断・フォルダ自体が無い）ときは消さずに残す＝次の反映で再確認。
+        var confirmedGone = Set<String>()
+        var parentFolders = Set(paths.map { ($0 as NSString).deletingLastPathComponent })
+        parentFolders.remove("")
+        for folder in parentFolders {
+            guard let listing = await copier.listFolder(path: folder, token: token) else { continue }
+            let present = Set(listing.map { $0.pathLower })
+            for path in paths where path.hasPrefix(folder + "/") && !present.contains(path) {
+                confirmedGone.insert(path)
+            }
+        }
+        for path in confirmedGone { files.removeValue(forKey: path) }
+        // 墓標が無限に増えないよう上限だけ設ける（古い順に捨てる）。確認できないまま
+        // これを超えるのは異常事態なので、記録に残す。
+        if files.count > ShareSettingsKeys.maxFileTombstones {
+            let dropped = files.count - ShareSettingsKeys.maxFileTombstones
+            for (path, _) in files.sorted(by: { $0.value < $1.value }).prefix(dropped) {
                 files.removeValue(forKey: path)
             }
+            Diagnostics.mark("share: 墓標が上限を超えたため古い \(dropped) 件を破棄しました")
         }
         ShareSettingsKeys.setDeletedFileTombstones(files, account: account, defaults)
     }

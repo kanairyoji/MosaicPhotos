@@ -38,6 +38,9 @@ private actor FakeDropbox: HTTPClient {
 
     /// metadata シャードのアップロードを失敗させる。
     var failMarkerUpload = false
+
+    /// 外部（他端末・Web UI）からクラウドのコピーが消えた状況を作る。
+    func removeFile(_ path: String) { files.removeValue(forKey: path) }
     func setFailMarkerUpload(_ value: Bool) { failMarkerUpload = value }
 }
 
@@ -508,5 +511,104 @@ struct OffloadLedgerScanTests {
                                                   makeCandidate: asset)
         #expect(scan.usable == 4)
         #expect(scan.candidates.count == 4)
+    }
+}
+
+// MARK: - 削除直前の再照合（ADR-173）
+
+/// ⚠️ 手順 1 の検証から実際の削除までには、台帳の書き込みと **OS の確認ダイアログ**が挟まる。
+/// ダイアログはユーザーが放置すれば何分でも開いたままで、その間に写真が編集・置換されても、
+/// あるいはクラウド側の同一コピーが消えても、手順 1 の結果は古いまま。
+/// `modificationDate` が変わらない置換もあるので、**バイト列を取り直して**照合する。
+@Suite("削除直前の再照合")
+@MainActor
+struct OffloadFinalRecheckTests {
+
+    /// 呼ばれるたびに違う内容を返すアセット（1 回目は元データ、2 回目＝直前の再照合で置換後）。
+    private func mutatingAsset(_ id: String, first: Data, then second: Data) -> OffloadableAsset {
+        let counter = Counter()
+        return OffloadableAsset(
+            localIdentifier: id, dropboxPath: "/backup/\(id).jpg", filename: "\(id).jpg",
+            albums: [], captureDate: nil,
+            modificationDate: nil,                       // ⚠️ 日付は変わらない置換
+            backedUpAt: Date(timeIntervalSince1970: 1_700_000_100),
+            isLivePhoto: false,
+            loadData: { counter.next() == 0 ? (first, false) : (second, false) })
+    }
+
+    /// `loadData` の呼び出し回数を数える（@Sendable クロージャから触るので参照型で持つ）。
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func next() -> Int { lock.lock(); defer { lock.unlock() }; let c = count; count += 1; return c }
+    }
+
+    @Test("検証後に中身が変わった写真は消さない（日付が同じでも）")
+    func changedAfterVerificationIsNotDeleted() async {
+        let original = Data("original-bytes".utf8)
+        let replaced = Data("replaced-bytes!".utf8)
+        let hash = DropboxContentHash.hash(of: original)
+        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, original.count)])
+        let deleter = MockDeleter()
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: deleter, log: { _ in })
+        var rolledBack: [String] = []
+
+        let result = await service.execute(
+            assets: [mutatingAsset("a", first: original, then: replaced)], limit: 10,
+            recordLedger: { _ in true },
+            rollbackLedger: { ids in rolledBack = ids })
+
+        #expect(deleter.deletedIDs.isEmpty, "検証後に置き換わった写真を消した（最新データを失う）")
+        #expect(result.deleted.isEmpty)
+        #expect(rolledBack == ["a"], "消さないのに台帳へオフロード済みとして残している")
+        #expect(result.skipped.contains { $0.0 == "a.jpg" }, "理由が伝わらない")
+    }
+
+    @Test("変わっていなければ従来どおり消す")
+    func unchangedIsStillDeleted() async {
+        let data = Data("stable-bytes".utf8)
+        let hash = DropboxContentHash.hash(of: data)
+        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, data.count)])
+        let deleter = MockDeleter()
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: deleter, log: { _ in })
+
+        let result = await service.execute(
+            assets: [mutatingAsset("a", first: data, then: data)], limit: 10,
+            recordLedger: { _ in true }, rollbackLedger: { _ in })
+
+        #expect(deleter.deletedIDs == [["a"]], "健全な写真まで消せなくなっている")
+        #expect(result.deleted == ["a"])
+    }
+
+    /// クラウド側の同一コピーが検証後に消えた場合も、削除してはいけない。
+    @Test("検証後にクラウドのコピーが消えたら削除しない")
+    func remoteGoneAfterVerificationIsNotDeleted() async {
+        let data = Data("stable-bytes".utf8)
+        let hash = DropboxContentHash.hash(of: data)
+        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, data.count)])
+        let deleter = MockDeleter()
+        let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                                     tokenProvider: StubToken(), deleter: deleter, log: { _ in })
+        let asset = OffloadableAsset(
+            localIdentifier: "a", dropboxPath: "/backup/a.jpg", filename: "a.jpg",
+            albums: [], captureDate: nil, modificationDate: nil,
+            backedUpAt: Date(timeIntervalSince1970: 1_700_000_100),
+            isLivePhoto: false, loadData: { (data, false) })
+
+        var rolledBack: [String] = []
+        let result = await service.execute(
+            assets: [asset], limit: 10,
+            recordLedger: { _ in
+                // 台帳を書いている間に、クラウド側のコピーが消えた（他端末・Web UI から）。
+                await server.removeFile("/backup/a.jpg")
+                return true
+            },
+            rollbackLedger: { ids in rolledBack = ids })
+
+        #expect(deleter.deletedIDs.isEmpty, "クラウドから消えているのに端末からも消した（写真を失う）")
+        #expect(rolledBack == ["a"])
+        _ = result
     }
 }

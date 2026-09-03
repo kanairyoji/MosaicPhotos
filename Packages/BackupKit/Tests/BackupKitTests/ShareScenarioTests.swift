@@ -834,3 +834,78 @@ struct ShareMemberUpdateExclusionTests {
                 "発行済みジョブが後から作るファイルを掃除できない: \(tombstones.keys)")
     }
 }
+
+// MARK: - 墓標は「不在を確認するまで」残す（ADR-172）
+
+/// ⚠️ 発行済みの `copy_batch` は、クライアントが諦めてもサーバー側で走り続ける。
+/// 猶予（15 分）で墓標を捨てると、その後にジョブが完走したとき
+/// **外したはずの写真が共有フォルダに残り続ける**——記録には無いので以後どの反映でも掃除されない。
+@Suite("共有の墓標（不在確認まで残す）")
+@MainActor
+struct ShareTombstoneRetentionTests {
+
+    private static let shareRoot = "/MosaicShare"
+
+    private func makeStack() async -> (ShareSyncEngine, BackupStore, FakeDropboxServer, UserDefaults) {
+        let defaults = isolatedShareDefaults()
+        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
+        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let server = FakeDropboxServer()
+        await server.seed("/mosaicphotos/a.jpg", hash: "hA")
+        await store.upsertRecord(dropboxPath: "/mosaicphotos/a.jpg", localIdentifier: "a",
+                                 filename: "a.jpg", creationDate: nil, contentHash: "hA",
+                                 people: [], albums: [], isFavorite: false)
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
+                                     storeProvider: { store }, httpClient: server,
+                                     defaults: defaults)
+        engine.pollIntervalNs = 1_000_000
+        engine.maxPollAttempts = 3
+        return (engine, store, server, defaults)
+    }
+
+    private func tombstones(_ defaults: UserDefaults) -> [String: Date] {
+        ShareSettingsKeys.deletedFileTombstones(account: nil, defaults)
+    }
+
+    /// 本命。猶予を過ぎていても、**実在を確認できないうちは墓標を残す**。
+    @Test("猶予を過ぎても、まだ在るなら墓標を消さない")
+    func keepsTombstoneWhileFileExists() async {
+        let (engine, _, server, defaults) = await makeStack()
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+
+        // 外した写真の予定コピー先に、猶予をとうに過ぎた墓標を置く。
+        let folder = SharePlanning.setFolderPath(
+            shareRoot: Self.shareRoot, folderName: ShareNaming.folderName("Trip", kind: nil),
+            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+        let ghost = "\(folder)/ghost.jpg"
+        let old = Date().addingTimeInterval(-ShareSettingsKeys.deletedFolderGraceSeconds * 4)
+        ShareSettingsKeys.setDeletedFileTombstones([ghost: old], account: nil, defaults)
+        // 遅れてきたコピージョブが作ったファイル（削除できない設定にして「残る」を再現）。
+        await server.seed(ghost, hash: "hGhost")
+        await server.setFailDeletePaths([ghost])
+
+        await engine.syncNow()
+        #expect(tombstones(defaults)[ghost] != nil,
+                "まだ在るのに墓標を捨てた（この写真は以後どの反映でも掃除されない）")
+    }
+
+    @Test("不在を確認できたら墓標を消す")
+    func dropsTombstoneOnceGone() async {
+        let (engine, _, server, defaults) = await makeStack()
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+
+        let folder = SharePlanning.setFolderPath(
+            shareRoot: Self.shareRoot, folderName: ShareNaming.folderName("Trip", kind: nil),
+            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+        let ghost = "\(folder)/ghost.jpg"
+        ShareSettingsKeys.setDeletedFileTombstones([ghost: Date()], account: nil, defaults)
+        await server.seed(ghost, hash: "hGhost")   // 削除は成功する（failDeletePaths を設定しない）
+
+        await engine.syncNow()
+        #expect(await server.filePaths().contains(ghost) == false, "fixture: 削除できていない")
+        #expect(tombstones(defaults)[ghost] == nil, "不在を確認したのに墓標が残っている")
+    }
+}
