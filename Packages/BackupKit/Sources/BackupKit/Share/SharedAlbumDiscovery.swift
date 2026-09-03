@@ -76,7 +76,9 @@ public enum SharedAlbumDiscovery {
                 }
             }
             return Album(folderPath: group.display,
-                         name: (group.display as NSString).lastPathComponent,
+                         // ⚠️ 接頭辞（`People-` 等）は種類を見分けるための内部の印なので**表示しない**。
+                         name: ShareNaming.displayName(
+                             fromFolderName: (group.display as NSString).lastPathComponent),
                          photoCount: sorted.count,
                          coverPath: sorted.first,
                          providerName: provider)

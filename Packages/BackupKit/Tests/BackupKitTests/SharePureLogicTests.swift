@@ -674,3 +674,41 @@ struct ShareNameTests {
         #expect(cleaned?.faces?[0].n == nil)
     }
 }
+
+/// 共有アルバムの**表示名**（実フィードバック 9/3: 共有アルバムが "People-◯◯" と出る）。
+///
+/// ⚠️ `People-` / `Album-` / `Person-` は Dropbox 上で種類を見分けるための**内部の印**で、
+/// アプリの画面に出すものではない。折り返し（作成 → 表示）で元の名前に戻ること。
+@Suite("共有アルバムの表示名")
+struct ShareDisplayNameTests {
+
+    @Test("接頭辞は表示名から落とす")
+    func stripsPrefix() {
+        #expect(ShareNaming.displayName(fromFolderName: "People-金居家") == "金居家")
+        #expect(ShareNaming.displayName(fromFolderName: "Album-沖縄旅行") == "沖縄旅行")
+        #expect(ShareNaming.displayName(fromFolderName: "Person-太郎") == "太郎")
+    }
+
+    @Test("接頭辞の無いフォルダはそのまま出す")
+    func keepsUnprefixed() {
+        #expect(ShareNaming.displayName(fromFolderName: "沖縄旅行") == "沖縄旅行")
+        // 種類の語を含むだけの名前は接頭辞ではない（落としてはいけない）。
+        #expect(ShareNaming.displayName(fromFolderName: "Peopleの写真") == "Peopleの写真")
+    }
+
+    @Test("接頭辞だけの名前は空にしない")
+    func doesNotProduceEmptyName() {
+        #expect(ShareNaming.displayName(fromFolderName: "People-") == "People-")
+    }
+
+    /// 作成時に付けた接頭辞が、表示で元の名前に戻ること（折り返し）。
+    @Test("作成 → 表示で元の名前に戻る")
+    func roundTrips() {
+        for (kind, name) in [(ShareSourceKey.Kind.group, "金居家"),
+                             (.album, "沖縄旅行"), (.person, "太郎")] {
+            let folder = ShareNaming.folderName(name, kind: kind)
+            #expect(ShareNaming.displayName(fromFolderName: folder) == name,
+                    "\(folder) → 表示名が元に戻らない")
+        }
+    }
+}
