@@ -34,7 +34,7 @@ public final class BackupEngine {
     /// バックアップ済み localIdentifier のメモリキャッシュ（フル画像ビューのバッジ判定用・同期参照）。
     /// 「UserDefaults 台帳 ∪ SwiftData 記録」。起動時に**オフメインで**ウォームし、
     /// アップロード成功のたびに追記、完了フェーズで読み直す。
-    @ObservationIgnored private var backedUpIDs: Set<String> = []
+    @ObservationIgnored var backedUpIDs: Set<String> = []   // internal: +Settle
     /// キャッシュのウォーム完了フラグ。完了前のバッジ判定は nil（非表示）を返す
     /// （未ウォームで false を返すと「未バックアップ」と誤表示するため）。
     @ObservationIgnored private var cachesWarmed = false
@@ -49,6 +49,9 @@ public final class BackupEngine {
     @ObservationIgnored var accountIdProvider: @MainActor () -> String?
     @ObservationIgnored let uploader: DropboxBackupUploader
     @ObservationIgnored private let progressStore = BackupProgressStore()
+    /// 背景アップロード（ADR-181）。アプリが結線する（nil なら夜間も前面経路のまま）。
+    /// テスト・macOS では触らない（背景 URLSession を作らない）。
+    @ObservationIgnored public var backgroundUploads: BackgroundUploadSession?
     @ObservationIgnored private var backupTask: Task<Void, Never>?
     /// SwiftData ストア（@ModelActor・オフメイン生成）。生成完了を待たずに engine init を返すため
     /// Task で保持し、利用側は `store()` で await する。
@@ -231,7 +234,11 @@ public final class BackupEngine {
                 progressStore: self.progressStore,
                 uploadLimit: { self.effectiveUploadLimit },
                 delegate: GenerationScopedRunnerDelegate(base: self, generation: generation),
-                peopleNamesProvider: self.peopleNamesProvider
+                peopleNamesProvider: self.peopleNamesProvider,
+                backgroundUploads: self.backgroundUploads,
+                spool: self.backgroundUploads?.spool ?? UploadSpool(),
+                // 夜間だけ OS に持ち出す。手動実行は進捗を目で追える前面経路のまま。
+                useBackgroundUploads: { self.isNightlyRun }
             )
             // 完走時のみアルバム一覧を更新する（runner の戻り値で通知される）。
             let completed = await runner.run(folder: deviceRoot)
@@ -417,7 +424,7 @@ public final class BackupEngine {
     }
 
     /// 状況キャッシュの無効化（記録・台帳が変わったとき）。
-    private func invalidateStatus() {
+    func invalidateStatus() {   // internal: +Settle
         cachedStatus = nil
     }
 

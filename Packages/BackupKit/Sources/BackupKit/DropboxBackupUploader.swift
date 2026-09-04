@@ -193,9 +193,8 @@ struct DropboxBackupUploader {
     ///   （media_info が付かない）写真では**バックアップ副本が「今日撮った写真」になる**——
     ///   実フィードバック「バックアップを新しい写真と認識しているのか、時系列になっていない」。
     ///   秒精度の UTC（`yyyy-MM-ddTHH:mm:ssZ`）でしか受け付けないので必ずこの形式で送る。
-    func upload(data: Data, to path: String, token: String,
-                expectedHash: String, autorename: Bool = false,
-                clientModified: Date? = nil) async -> BackupUploadResult {
+    /// `files/upload` の `Dropbox-API-Arg`（背景セッション＝`BackgroundUploadSession` とも共有）。
+    static func uploadAPIArg(path: String, autorename: Bool, clientModified: Date?) -> String? {
         struct Arg: Encodable {
             let path: String
             let mode = "add"
@@ -203,9 +202,21 @@ struct DropboxBackupUploader {
             let mute = true
             let client_modified: String?
         }
-        guard let argStr = encodeDropboxAPIArg(
-            Arg(path: path, autorename: autorename,
-                client_modified: clientModified.map(Self.dropboxTimestamp))) else {
+        return encodeDropboxAPIArg(Arg(path: path, autorename: autorename,
+                                       client_modified: clientModified.map(Self.dropboxTimestamp)))
+    }
+
+    /// 背景セッション用: ボディを**ファイルから**送るリクエスト（`uploadTask(with:fromFile:)` は
+    /// `httpBody` を無視するので、ヘッダだけを組む）。
+    static func uploadRequestWithoutBody(argStr: String, token: String) -> URLRequest {
+        contentRequest(url: uploadURL, argStr: argStr, body: nil, token: token, timeout: 300)
+    }
+
+    func upload(data: Data, to path: String, token: String,
+                expectedHash: String, autorename: Bool = false,
+                clientModified: Date? = nil) async -> BackupUploadResult {
+        guard let argStr = Self.uploadAPIArg(path: path, autorename: autorename,
+                                             clientModified: clientModified) else {
             return .error(-1, "Failed to encode Dropbox-API-Arg for path: \(path)")
         }
         let req = Self.makeRequest(argStr: argStr, body: data, token: token, timeout: 300)

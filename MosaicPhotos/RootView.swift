@@ -103,6 +103,10 @@ final class HomeStores {
         // ADR-175: 配置の版が変わっていれば台帳をリセット（新配置 `Backup/` へ上げ直す）。
         // 起動直後・バックアップが動く前に 1 回だけ。
         await backupEngine.resetForLayoutChangeIfNeeded()
+        // ADR-181: 夜間バックアップは背景 URLSession に持ち出す。眠っている間に終わった
+        // 転送の応答もここで受け取る（settle は AppDelegate が結線済み）。
+        backupEngine.backgroundUploads = BackgroundUploadSession.shared
+        BackgroundUploadSession.shared.connect()
         await Task.yield()
         let albumScanner = LocalAlbumScanner()
         let peopleEngine = await makePeopleEngine(dropboxStore: dropboxStore)

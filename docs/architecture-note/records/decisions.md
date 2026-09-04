@@ -56,6 +56,40 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-181 夜間バックアップは背景 URLSession に持ち出す（fire-and-forget・OS が窓の外でも上げ続ける）
+- 状態: 採用（ADR-180 の「残る限界」への回答）
+- 文脈: ADR-180 で夜間バックアップは毎窓・上限なしになったが、アップロードは前面の `URLSession`
+  なので **BGTask の窓（約 5 分）を出られない**。1 枚 1〜2 秒で 150〜300 枚／窓が天井で、
+  6 万枚の上げ直し（ADR-175）は何百晩もかかる。窓の中でしか動けないのは「応答を待って台帳に
+  書く」構造のせいで、転送そのものは OS（`nsurlsessiond`）に任せられる。
+- 決定: 夜間実行だけ、写真を **spool（`Caches/BackupSpool/<uuid>.bin` ＋ 意図 `<uuid>.json`）**
+  に置いて背景 `URLSession`（identifier 固定・`sessionSendsLaunchEvents`）の `uploadTask(fromFile:)`
+  へ渡し、応答は**窓の外・別プロセス起動でも**受け取る。
+  ```
+  窓の中（数十 ms／枚・ディスク速度）                      窓の外（OS 任せ・何時間でも）
+   読む → hash → spool に書く → uploadTask ── 転送 ──▶ 応答 → hash 照合 → ジャーナル → 台帳「済み」→ spool 削除
+  ```
+  **不変条件（ADR-40 / ADR-171 を崩さない）**: (1) 「済み」は応答の `content_hash` が投入時の
+  hash と一致したときだけ（`BackgroundUploadSession.classify`）。(2) メタデータのジャーナル →
+  記録の順（`BackgroundSettlement.perform`）。(3) 応答が来ない／失敗した spool は次の窓で
+  再投入（3 回で諦める＝次回の通常対象に戻る）。(4) **409 は前面経路へ**——hash 照合と autorename
+  は `uploadOne` の仕事なので、印（`conflict`）を付けて次の窓で前面経路に回す。
+  (5) 転送中の写真は次の窓の対象から外す（spool が「転送中」の台帳を兼ねる）。
+  上限は `BackgroundUploadPolicy`（400 枚／1 GB／空き 3 GB 未満は積まない）——積んでも速くならず
+  ディスクを食うだけ。上限で窓を閉じ、残りは次の窓（捌けた分だけ空く）。
+  手動実行は前面経路のまま（進捗を目で追える・上限で待ち時間が有界）。
+- 結果: 窓の中の仕事が「読んで置く」だけになり、1 窓で数百枚を OS に渡せる。転送は夜通し続き、
+  完了は `AppDelegate.handleEventsForBackgroundURLSession` で起こされて台帳へ落ちる
+  （台帳更新が**全部終わってから**完了ハンドラを呼ぶ＝早く呼ぶと更新の途中で吊るされる）。
+  制約: 背景で投入した転送は OS が裁量扱い（電源＋Wi-Fi 時に流す＝夜間条件と同じ）。トークンは
+  投入時のものなので、4 時間を超えて遅れた転送は 401 → 次の窓で再投入。spool は Caches
+  なので OS に消されうるが、消えても写真が次回の対象に戻るだけで失うものは無い。
+  テストは純ロジック（意図・spool・上限・振り分け・応答分類・落とし方の順序）を macOS で回し、
+  hash 照合とジャーナル順序は**変異で落ちること**を確認済み。
+- 関連: `BackupKit/BackgroundUpload/`（`UploadSpool` / `BackgroundUploadSession` /
+  `BackupRunner+BackgroundUpload` / `BackupEngine+Settle`）/ `MosaicPhotos/AppDelegate.swift` /
+  `BackgroundUploadTests` / ADR-40 / ADR-171 / ADR-180。
+
 ## ADR-180 夜間のバックアップは解析と並行して毎窓走らせ、1 回あたりの上限を外す
 - 状態: 採用（ADR-72 の順番回しを置換）
 - 文脈: 実フィードバック「バックアップは SSD とネットワークしか使わず CPU は限定的。画像解析と
