@@ -24,8 +24,6 @@ enum HeavyWorkScheduler {
     /// 不変の `let` なので nonisolated で安全。
     nonisolated static let taskID = "com.kanai.MosaicPhotos.heavywork"
 
-    /// CLIP 埋め込みの残作業を理由にバックアップを連続で見送れる上限。これを超えたら
-    /// 埋め込みが残っていてもバックアップの窓を 1 回明け渡す（飢餓の防止・上記 1.5 を参照）。
     /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を見送れる連続回数。
     /// これを超えたら生成に窓を明け渡す（生成も飢えさせない）。
     private static let maxGenerateDeferrals = 4
@@ -317,7 +315,6 @@ enum HeavyWorkScheduler {
         // 1 枚ずつ読んで上げる trickle 実装では当たらない（実測 footprint は解析側が支配的）。
         // 実フィードバック「バックアップは画像処理と並行して動かしてよい。現状あまり動いていない」。
         let embedBacklog = await stores.autoAlbumEngine.pendingEmbedCount()
-        UserDefaults.standard.set(0, forKey: AppSettingsKeys.backupDeferralStreak)
         if embedBacklog > 0 {
             Diagnostics.mark("bgtask: backup alongside analysis (embed backlog=\(embedBacklog))")
         }

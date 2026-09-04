@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>背面窓（「夜間処理」）のパイプライン | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "dd-background-window";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / 背面窓のパイプライン</nav>
+      <h1>背面窓（「夜間処理」）のパイプライン</h1>
+      <p class="lead">アプリが背面（スクリーンロック・アプリ切替）にあり、電源ポリシーを満たすとき、OS が <code>BGProcessingTask</code> で数分の「窓」をくれる。その窓で何を・どの順に・どの資源で進めるか、窓の外に何を持ち出すか、そして何晩で終わるかを、図と実測で説明する。</p>
+
+      <div class="box note">
+        <span class="box-h">「夜間」は名前だけ</span>
+        コード・ログでは <code>nightly</code> / <code>bgtask</code> と呼んでいるが、条件は<strong>「電源接続（既定ポリシー）＋アプリが背面」</strong>だけで時刻は見ていない。昼間でも、充電しながらロックしていれば同じ窓が開く。
+        本章では以後<strong>「背面窓」</strong>と呼ぶ（コード名は据え置き）。
+      </div>
+
+      <h2>1. 窓はいつ開くか（トリガと前提）</h2>
+      <div class="mermaid">
+flowchart LR
+  A[scenePhase → background<br/>（ロック・アプリ切替）] --> B[HeavyWorkScheduler.submit<br/>BGProcessingTaskRequest]
+  B --> C{OS の裁量}
+  C -->|電源ポリシー=充電中なら<br/>requiresExternalPower| D[電源に接続されるまで待つ]
+  D --> E[窓が開く<br/>handle → runHeavyWork]
+  C -->|ポリシー=常に| E
+  E --> F[期限切れ or 完了<br/>setTaskCompleted → 次回を再予約]
+  G[前面復帰<br/>scenePhase → active] -->|stopForForeground| H[実行中の一切を明示キャンセル<br/>（ADR-79）]
+      </div>
+      <table>
+        <tr><th>項目</th><th>値・挙動</th><th>出典</th></tr>
+        <tr><td>予約のタイミング</td><td>背面遷移のたび（＋起動時の保険 <code>submitIfMissing</code>）</td><td><code>MosaicPhotosApp</code> / <code>HeavyWorkScheduler.submit</code></td></tr>
+        <tr><td>電源条件</td><td>電源ポリシー「充電中」なら <code>requiresExternalPower = true</code>。「常に」なら電源なしでも</td><td>ADR-80</td></tr>
+        <tr><td>回線条件</td><td>予約には付けない（端末写真の解析は回線不要）。クラウド分は各処理の回線ポリシーが弾く</td><td>ADR-25</td></tr>
+        <tr><td>窓の長さ</td><td>OS 裁量。実測 <strong>2 分 49 秒（期限切れ）〜 3 分 43 秒（完走）</strong>。5 分前後が上限の目安</td><td>diagnostics 2026-08-30</td></tr>
+        <tr><td>完了通知</td><td><code>CompletionLatch</code> で 1 回だけ（期限切れと本体終了の競合を潰す）</td><td>レビュー指摘</td></tr>
+      </table>
+
+      <h2>2. 窓の中で何が起きるか（1 窓の時系列）</h2>
+      <p><code>runHeavyWork</code> は「起こす → 判断する → 待つ」の 3 拍子。重い処理は<strong>起こすだけ</strong>で完了を待たない（待つと窓を食い潰して次が始まらない＝Fix C）。</p>
+      <div class="mermaid">
+gantt
+  title 1 窓の時系列（実測ベースの目安・4 分の窓）
+  dateFormat mm:ss
+  axisFormat %M:%S
+  section 準備
+  HomeStores.shared（温: 0.1s / 冷: 数秒）        :done, s1, 00:00, 00:03
+  顔スキャン候補の列挙（85k refKey・detached）  :done, s2, 00:03, 00:12
+  section 起こす（並行・窓の間ずっと）
+  顔スキャン（ANE ゲート越し・16 枚/0.5s）        :active, f1, 00:12, 04:00
+  シーンタグ → CLIP 埋め込み（同上・8 枚/0.5〜2.5s） :active, t1, 00:14, 04:00
+  バックアップ（読む→spool→OS へ・ADR-181）       :crit, b1, 00:16, 01:30
+  section 判断（直列・短い）
+  沈黙検出 logStalledPasses                        :s3, 00:14, 00:16
+  生成の可否 NightlyWorkPolicy（4 回見送り→実行）   :s4, 00:16, 00:18
+  家族共有 反映/受信（回線 OK のとき）              :s5, 00:18, 00:40
+  台帳と実体の照合（週 1）                           :s6, 00:40, 00:50
+  section 待つ
+  10 秒ごとに「まだ働いているか」を見る            :w1, 00:50, 04:00
+  section 期限切れ
+  cancel → 顔/タグ/埋め込み停止・spool を OS へ・完了通知 :milestone, e1, 04:00, 0s
+      </div>
+      <p>順序の要点（矢印は「先に起こす理由」）:</p>
+      <div class="mermaid">
+flowchart TD
+  ST[HomeStores.shared] --> FACE[顔スキャン startScan]
+  ST --> FILL[restartBackgroundFill<br/>タグ → 埋め込み]
+  FACE -. ANE ゲートで直列 .- FILL
+  ST --> BK[バックアップ startNightlyIfEnabled]
+  FILL --> GEN{生成の可否<br/>embed/face 残 = 0<br/>or 4 回見送った?}
+  GEN -->|見送り| SH[共有 反映/受信]
+  GEN -->|実行 &amp; 空き 900MB 超| G[refreshIfNeeded<br/>（生成中は解析が譲る）] --> SH
+  SH --> RC[照合（週 1）] --> WAIT[待ちループ]
+  BK -. 資源が重ならない<br/>（ディスク＋通信） .- FACE
+      </div>
+      <table>
+        <tr><th>#</th><th>工程</th><th>起こす／待つ</th><th>使う資源</th><th>止め方</th><th>1 単位の所要（実測）</th></tr>
+        <tr><td>0</td><td>ストア群の用意 <code>HomeStores.shared()</code></td><td>待つ</td><td>CPU・ディスク（SwiftData）</td><td>—</td><td>温 0.1s／冷（背面起動）数秒</td></tr>
+        <tr><td>1</td><td>顔スキャン <code>PeopleEngine.startScan</code></td><td>起こす</td><td><strong>ANE</strong>（Vision＋facenet）・画像デコード</td><td><code>stopScan</code>（1 枚単位で降りる）</td><td>16 枚バッチ・0.5s 休止。クラウドはキャッシュ済みサムネ（ADR-179 後は再計測待ち）</td></tr>
+        <tr><td>2</td><td>シーンタグ → CLIP 埋め込み <code>restartBackgroundFill</code></td><td>起こす</td><td><strong>ANE</strong>（Vision 分類・CLIP）</td><td><code>stopBackgroundWork</code></td><td>タグ 8 枚/0.5s（~2 枚/s）、埋め込み 192 枚を 16〜33s（85〜170ms/枚）</td></tr>
+        <tr><td>3</td><td>沈黙検出 <code>logStalledPasses</code></td><td>待つ（短い）</td><td>DB カウント</td><td>—</td><td>&lt;1s</td></tr>
+        <tr><td>4</td><td>バックアップ <code>startNightlyIfEnabled</code>（ADR-180/181）</td><td>起こす</td><td><strong>ディスク</strong>（読む・spool に書く）。転送は<strong>窓の外</strong>で OS</td><td><code>cancel</code>（積んだ分は OS へ渡してから降りる）</td><td>旧: 1 枚 1〜2s（HTTP 込み）。新: 読む＋書くだけ＝数十〜数百 ms/枚（上限 400 枚／1GB）</td></tr>
+        <tr><td>5</td><td>アルバム生成の可否 <code>NightlyWorkPolicy</code></td><td>待つ（実行時は 18〜26s）</td><td>CPU・<strong>メモリ（ピーク 550〜880MB）</strong></td><td>ステップ境界で abort</td><td>残作業があれば最大 4 窓見送り。実行中は解析が譲る（相互排他）</td></tr>
+        <tr><td>6</td><td>家族共有 反映/受信（ADR-166）</td><td>待つ</td><td>通信（RPC のみ・軽い）</td><td><code>Task.isCancelled</code></td><td>セット数×list_folder（数秒）</td></tr>
+        <tr><td>7</td><td>台帳と実体の照合（ADR-166）</td><td>待つ・週 1</td><td>通信（全件一覧）</td><td>同上</td><td>数十秒（8 万件）</td></tr>
+        <tr><td>8</td><td>待ちループ</td><td>10s ごと</td><td>—</td><td>期限切れ＝cancel</td><td>残作業が全部片付いたら早期終了</td></tr>
+      </table>
+
+      <h2>3. ゲート（誰が誰に譲るか）</h2>
+      <p>窓の中では画面が無いので UI への譲りは要らない（ADR-179）。残るゲートは<strong>資源保護</strong>だけ。</p>
+      <table>
+        <tr><th>ゲート</th><th>見る側</th><th>意味</th><th>根拠</th></tr>
+        <tr><td><code>MLInferenceGate</code>（ANE の直列化）</td><td>顔・タグ・埋め込みの推論</td><td>ANE を使う重い処理は同時に 1 つ。合計スループットは ANE で決まるので<strong>並行起動しても損はしない</strong></td><td>diagnostics-19（デッドロック）</td></tr>
+        <tr><td><code>isGeneratingAlbums</code></td><td>解析すべて（<code>heavyShouldPause</code>）</td><td>生成はピーク 550〜880MB。解析と重ねると jetsam。<strong>生成中だけ</strong>解析が止まる</td><td>ADR-163 / diagnostics-72</td></tr>
+        <tr><td><code>HeavyLoad.isInFlight</code></td><td>解析すべて</td><td>数万件の実体化・モデルロードが重なる瞬間を避ける</td><td>ADR-122 / diagnostics-66</td></tr>
+        <tr><td><code>ThermalGate</code></td><td>解析すべて</td><td>熱で止める（デバッグ全開でも効く）</td><td>—</td></tr>
+        <tr><td><code>MemoryPressureMonitor.isUnderPressure</code></td><td>クラウド解析の画像取得</td><td>圧迫中は空を返して次のバッチへ（背面ではこれだけ見る）</td><td>ADR-179</td></tr>
+        <tr><td>電源・回線ポリシー</td><td>バックアップ・共有・クラウド解析</td><td>ユーザー設定。ローカル解析は回線を見ない</td><td>ADR-25 / ADR-80</td></tr>
+        <tr><td><code>NightlyWorkPolicy.generateDecision</code></td><td>生成</td><td>残作業があるうちは見送り、4 回で必ず回す（飢餓防止）</td><td>ADR-163</td></tr>
+      </table>
+      <p>見送りやすい形で書くと: <strong>ユーザーが待っている処理 &gt; 生成 &gt; 解析（顔・タグ・埋め込み）</strong>、バックアップは横に並ぶ（資源が別）。「誰も待っていない処理のために、待っている処理を遅らせない」（ADR-122 の向き）。</p>
+
+      <h2>4. 窓の外へ持ち出すもの（ADR-181・fire-and-forget）</h2>
+      <p>窓の中で完結させる必要があるのは<strong>「済み」の判断</strong>ではなく<strong>「意図の記録」</strong>だけ、という発見が ADR-181 の中身。転送そのものは OS に任せ、応答で判断する。</p>
+      <div class="mermaid">
+sequenceDiagram
+  participant W as 背面窓（BackupRunner）
+  participant S as spool（Caches/BackupSpool）
+  participant OS as OS（nsurlsessiond）
+  participant D as Dropbox
+  participant A as 次のプロセス（AppDelegate → BackupEngine.settle）
+  W->>W: PHAsset を読む・content_hash を計算
+  W->>S: <uuid>.bin（本体）→ <uuid>.json（意図: path / hash / meta）
+  W->>OS: uploadTask(fromFile:)（20 枚ごとに渡す・期限切れでも渡してから降りる）
+  Note over W: 窓が閉じる（プロセスは眠る／死ぬ）
+  OS->>D: 転送（裁量＝電源＋Wi-Fi 時・何時間でも）
+  D-->>OS: 200 {content_hash}
+  OS->>A: handleEventsForBackgroundURLSession（起こす）
+  A->>S: 意図を読む
+  A->>A: hash 照合 → メタデータをジャーナル → 台帳「済み」
+  A->>S: 削除
+  A->>OS: completionHandler（台帳更新が全部終わってから）
+      </div>
+      <table>
+        <tr><th>応答</th><th>扱い</th><th>不変条件</th></tr>
+        <tr><td>200 ＋ hash 一致</td><td>ジャーナル → 記録 → spool 削除</td><td>ADR-40（検証後にしか済みにしない）／ADR-171（メタデータが先）</td></tr>
+        <tr><td>200 だが hash 不一致・5xx・401・通信エラー</td><td>spool に残す → 次の窓で再投入（3 回で諦め＝通常対象へ戻る）</td><td>「済み」を付けないので二重・欠落は起きない</td></tr>
+        <tr><td>409（同パスに既存）</td><td>印を付けて<strong>前面経路</strong>へ（hash 照合・autorename は <code>uploadOne</code> の仕事）</td><td>判断ロジックを 2 箇所に持たない</td></tr>
+        <tr><td>応答が来ない（spool が残る）</td><td>次の窓の対象から外す（転送中扱い）＋無条件で再投入</td><td>「積んだが渡せなかった」を取り残さない（本章のレビューで修正）</td></tr>
+      </table>
+
+      <h2>5. 何晩で終わるか（WBS 的な見積り）</h2>
+      <p>「1 窓で進む量 × 1 日の窓数」で残作業を割る。窓数は充電習慣に依存する（就寝中の充電で 1 晩に数窓〜十数窓。OS は窓の間隔を空ける）。</p>
+      <table>
+        <tr><th>作業</th><th>残作業（実機 2026-08-30）</th><th>1 単位の所要</th><th>1 窓（4 分）で進む量</th><th>窓数の目安</th><th>備考</th></tr>
+        <tr><td>顔スキャン（クラウド）</td><td>25,373 枚</td><td>旧: 104 枚/2.5 分（UI 譲りで空振り多数）</td><td>旧 ~170 枚 → ADR-179 後は<strong>再計測</strong>（ANE を占有すれば数百枚）</td><td>旧 150 窓 → 目標 50 窓以下</td><td>タグ/埋め込みと ANE を分け合う</td></tr>
+        <tr><td>シーンタグ</td><td>386 → 0（完了）</td><td>~2 枚/s</td><td>~240 枚（40 バッチ上限）</td><td>—</td><td>新規写真ぶんだけ</td></tr>
+        <tr><td>CLIP 埋め込み</td><td>2,451 枚</td><td>85〜170 ms/枚</td><td>~600 枚（顔と ANE を折半して）</td><td>4〜5 窓</td><td>—</td></tr>
+        <tr><td>バックアップ（ADR-175 で上げ直し）</td><td>~60,000 枚</td><td>旧: 1〜2 s/枚（窓内 HTTP）。新: 読んで置くだけ</td><td>旧 150〜300 枚 → 新 <strong>400 枚（spool 上限）</strong>を渡し、転送は窓の外</td><td>旧 200〜400 窓 → 新 150 窓（上限で律速）</td><td>上限は捌け次第で緩められる（1 GB / 400 枚は初期値）</td></tr>
+        <tr><td>アルバム生成</td><td>差分があるとき</td><td>18〜26 s</td><td>0 or 1 回</td><td>5 窓に 1 回</td><td>残作業があるうちは見送り</td></tr>
+        <tr><td>家族共有 反映/受信</td><td>セット数ぶん</td><td>数秒</td><td>毎窓</td><td>—</td><td>軽い RPC</td></tr>
+        <tr><td>照合</td><td>週 1</td><td>数十秒</td><td>週 1</td><td>—</td><td>全件一覧</td></tr>
+      </table>
+      <div class="box why">
+        <span class="box-h">律速はどこか</span>
+        解析は <strong>ANE の総量</strong>で決まり、顔・タグ・埋め込みはそれを分け合う（並行起動は順番回しより単純で、合計は同じ）。
+        バックアップは <strong>spool の上限</strong>と <strong>OS の転送速度</strong>で決まり、ANE とは無関係——だから解析と並べてよい（ADR-180）。
+        生成は<strong>メモリ</strong>で決まり、解析と重ねられないから窓を分ける（ADR-163）。
+      </div>
+
+      <h2>6. レビュー（2026-09-05）: 流れの正しさ・性能の妥当性・単純化</h2>
+      <h3>修正した</h3>
+      <table>
+        <tr><th>指摘</th><th>何が起きるか</th><th>対処</th></tr>
+        <tr><td>spool の取り残し（ADR-181 の初版）</td><td>期限切れで「積んだが OS へ渡せなかった」ジョブが残ると、次の窓では「転送中」として対象外になり、新しく積むものが無い窓では誰も拾わず<strong>永久に残る</strong></td><td>渡す処理を「この実行で積んだ分があるとき」から<strong>無条件</strong>に変更（対象ゼロの早期 return 側にも置く）。テスト <code>flushIsUnconditional</code></td></tr>
+        <tr><td>死んだ設定キー <code>backupDeferralStreak</code></td><td>ADR-180 で見送りを廃止した後も毎窓 0 を書いていた。読み手が「まだ見送りがある」と誤解する</td><td>キーと書き込みを削除。<code>maxGenerateDeferrals</code> の古いコメントも整理</td></tr>
+      </table>
+      <h3>妥当と判断した（据え置き）</h3>
+      <ul>
+        <li><strong>顔とタグ/埋め込みの同時起動</strong>: ANE ゲートで直列化されるので合計は変わらず、順番回し（ADR-86/93 の名残）を持たないぶん単純。</li>
+        <li><strong>バックアップの並行</strong>: 資源が重ならない（ADR-180）。ADR-181 で窓内の仕事はディスクだけになり、より軽くなった。</li>
+        <li><strong>生成の見送り上限 4</strong>: 5 窓に 1 回 ~26 s を失うだけ。生成が飢えない最小の保険。</li>
+        <li><strong>10 秒ポーリングの待ちループ</strong>: 通知に作り替えるほどの利得が無い。</li>
+        <li><strong>窓の冒頭の <code>HomeStores.shared()</code></strong>: 背面起動では避けられない固定費。温かければ 0.1 s。</li>
+      </ul>
+      <h3>推奨（未着手・要判断）</h3>
+      <table>
+        <tr><th>候補</th><th>いまの形</th><th>提案</th><th>効果／コスト</th></tr>
+        <tr><td>進捗台帳を SwiftData 記録に一本化</td><td><code>BackupProgressStore</code> が UserDefaults に<strong>8 万件の文字列配列</strong>を持ち、実行ごとに全読み・全書き（5〜8 MB の plist）。記録（<code>BackupAssetRecord</code>）が正本で、台帳は毎回そこから「修復」している</td><td>台帳を廃止し、<code>computePending</code> と件数表示を記録の射影クエリだけにする</td><td>毎窓の固定費削減・ADR-119 型（規模比例）の芽を摘む。<code>Clear upload progress</code>・照合の意味を整理する必要あり（中）</td></tr>
+        <tr><td><code>buildIndexes()</code> のキャッシュ</td><td>毎窓、人物索引とアルバム索引を全走査で作る（数秒）</td><td>索引の署名（人物名の版・アルバムの count）が同じなら前回のものを使う</td><td>窓ごとに数秒（小）</td></tr>
+        <tr><td>共有 反映/受信の頻度</td><td>毎窓（回線 OK なら）</td><td>日 1 回で足りるか実測で決める（セットごとに list_folder）</td><td>通信量（小）。まず計測</td></tr>
+        <tr><td>spool 上限の緩和</td><td>400 枚／1 GB（初期値）</td><td>OS の転送実績（何時間で捌けたか）を診断ログに残し、捌け次第で上げる</td><td>上げ直し 6 万枚の完了が早まる（要計測）</td></tr>
+        <tr><td>名前</td><td>「夜間」「nightly」</td><td>ログ・文書は「背面窓」に寄せる（コード名は据え置き）</td><td>誤解の予防</td></tr>
+      </table>
+
+      <div class="box refs">
+        <span class="box-h">関連コード・記録</span>
+        <ul>
+          <li><a class="srclink" data-path="MosaicPhotos/HeavyWorkScheduler.swift">HeavyWorkScheduler.swift</a> — 窓の本体 <code>runHeavyWork</code></li>
+          <li><a class="srclink" data-path="MosaicPhotos/NightlyWorkPolicy.swift">NightlyWorkPolicy.swift</a> — 生成の可否（純ロジック）</li>
+          <li><a class="srclink" data-path="Packages/BackupKit/Sources/BackupKit/BackgroundUpload/BackgroundUploadSession.swift">BackgroundUploadSession.swift</a> / <a class="srclink" data-path="Packages/BackupKit/Sources/BackupKit/BackgroundUpload/UploadSpool.swift">UploadSpool.swift</a> — ADR-181</li>
+          <li><a class="srclink" data-path="MosaicPhotos/AppDelegate.swift">AppDelegate.swift</a> — 背景セッションの完了で起こされる入口</li>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/BackgroundYield.swift">BackgroundYield.swift</a> — <code>heavyShouldPause</code></li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/background-behavior.md">records/background-behavior.md</a> — どの設定で何が動くかの早見表</li>
+          <li>ADR-25 / 79 / 80 / 122 / 163 / 166 / 179 / 180 / 181（<a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>）</li>
+        </ul>
+      </div>
+      <p>背景: <a href="concurrency-internals.html">並行・バックグラウンド処理</a> / <a href="../features/background.html">バックグラウンドと省電力</a> / <a href="../features/backup.html">バックアップ</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

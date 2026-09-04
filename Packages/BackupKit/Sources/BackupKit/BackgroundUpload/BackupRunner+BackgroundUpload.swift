@@ -81,12 +81,16 @@ extension BackupRunner {
     }
 
     /// spool のジョブを OS の背景セッションへ渡す（重複投入は session 側が弾く）。
-    func flushSpool(token: String, tally: UploadTally) async {
-        guard let backgroundUploads, tally.spooled > 0 else { return }
+    ///
+    /// ⚠️ 「この実行で積んだ分があるときだけ」にしない。前の窓が期限切れで**積んだまま渡せずに**
+    /// 終わったジョブは spool に残り、次の窓では「転送中」として対象から外れる。ここで無条件に
+    /// 渡さないと、新しく積むものが無い窓では誰も拾わず永久に残る。
+    func flushSpool(token: String) async {
+        guard let backgroundUploads else { return }
         let n = await backgroundUploads.enqueuePending(token: token)
         if n > 0 {
             addLog("Handed \(n) upload(s) to the background session")
-            Diagnostics.mark("backup(bg): handed \(n) upload(s) to the OS (spooled=\(tally.spooled))")
+            Diagnostics.mark("backup(bg): handed \(n) upload(s) to the OS")
         }
     }
 }
