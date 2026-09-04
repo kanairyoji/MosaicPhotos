@@ -49,3 +49,24 @@ struct BackupLayoutChangeTests {
         freshDefaults()
     }
 }
+
+/// 夜間（自動）の実行では「1 回あたりの上限」を外す（ADR-180）。
+///
+/// ⚠️ 既定の 10 枚を夜間にも当てると、5 分の窓に 10 枚しか上がらず、6 万枚の上げ直しは
+/// 何年も終わらない。夜間には**窓の期限**という別の上限があるので、枚数の上限は要らない。
+@Suite("夜間の上限", .serialized)
+@MainActor
+struct NightlyUploadLimitTests {
+
+    @Test("手動は設定の上限、夜間は無制限（0）")
+    func nightlyRunHasNoPerRunLimit() {
+        UserDefaults.standard.set(10, forKey: BackupSettingsKeys.uploadLimit)
+        defer { UserDefaults.standard.removeObject(forKey: BackupSettingsKeys.uploadLimit) }
+        let engine = BackupEngine(auth: DropboxAuthService(appKey: "k", redirectURI: "app://cb"))
+        #expect(engine.effectiveUploadLimit == 10, "手動の上限が効いていない")
+        engine.setNightlyRunForTesting(true)
+        #expect(engine.effectiveUploadLimit == 0, "夜間なのに 1 回あたりの上限が残っている")
+        engine.setNightlyRunForTesting(false)
+        #expect(engine.effectiveUploadLimit == 10, "夜間の印が下りていない")
+    }
+}
