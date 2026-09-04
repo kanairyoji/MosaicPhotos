@@ -17,6 +17,10 @@ final class FaceTagger {
         self.provider = provider
     }
 
+    /// 連続でこの回数、1 枚も解析できなければ今回のスキャンを畳む（次の窓に回す）。
+    /// 3 バッチ＝48 枚ぶん空振りすれば、原因（譲り・回線・取得失敗）は続いていると見てよい。
+    static let maxEmptyBatches = 3
+
     /// `candidateRefKeys`（端末写真の refKey 群）のうち未スキャン分を処理する。
     /// 進捗ごと・完了時に `onBatch` を呼ぶ（ピープル一覧の再読込に使う）。
     /// ⚠️ 既定値は**夜間ウィンドウ向け**（実機 diagnostics-72）。スキャンは前面では始めない
@@ -75,6 +79,7 @@ final class FaceTagger {
         var index = 0
         var processed = 0
         var facesFound = 0
+        var emptyStreak = 0   // 連続で 1 枚も解析できなかったバッチ数（ADR-179）
         // ⚠️ 停止判定は 1 枚単位（検出+埋め込みは 1 枚数百 ms〜。バッチ一括だと
         // ロック解除直後の譲りが遅れる）。保存はバッチ 1 回（T3）を維持。
         await BackgroundTrickle.run(
@@ -110,9 +115,21 @@ final class FaceTagger {
                 // 解析できた写真だけを記録する（nil＝画像が取れず未解析なので記録しない）。
                 let records = results.compactMap { $0 }
                 guard !records.isEmpty else {
-                    // 全件が未解析（例: 閲覧中でずっと譲った）。バッチ自体は進めて次へ。
+                    // 全件が未解析（画像が取れなかった＝譲った／回線／バッチ失敗）。
+                    // ⚠️ **空のまま何バッチも進めない**（ADR-179）。以前は「進めて次へ」だったので、
+                    // 画像が一切取れない状態が続くと**todo 全体を空で歩き切って** `finished —
+                    // scanned=0` で終わり、次の窓でまた同じことを繰り返していた（実フィードバック
+                    // 「夜間解析が進まなくなった」）。連続で空なら原因は続いているので、
+                    // 窓を無駄にせず畳んで次の窓に回す。
+                    emptyStreak += 1
+                    if emptyStreak >= Self.maxEmptyBatches {
+                        Diagnostics.mark("faces: \(emptyStreak) 連続で画像が取れないため今回は畳みます "
+                                         + "（scanned=\(processed)/\(todo.count)・譲り／回線／取得失敗）")
+                        return .stop
+                    }
                     return batch.isEmpty ? .stop : .proceed
                 }
+                emptyStreak = 0
                 facesFound += records.reduce(0) { $0 + $1.faces.count }
                 await store.recordScans(records)   // T3: save はバッチ 1 回
                 processed += batch.count
