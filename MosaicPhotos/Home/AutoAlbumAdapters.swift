@@ -87,7 +87,17 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
             // 表示サムネ取得中・メモリ圧迫）に一元化する。譲った回は空を返すだけで、
             // 顔スキャンは次のバッチで拾い直す（差分処理なので取りこぼさない）。
             cloudAnalysisImages: { [weak dropboxStore] paths in
-                guard await !MainActor.run(body: { BackgroundYield.uiBusy }) else {
+                // ⚠️ 譲るのは**前面で誰かが見ている間だけ**（ADR-179）。夜間ウィンドウ（非アクティブ）
+                // では画面は無いのに、バックアップ・共有・生成の準備が Dropbox のサムネ取得を
+                // 走らせて `cloudThumbnailBusy` が立ち続け、顔スキャンの**全バッチが空で返って
+                // 何も進まない**状態になっていた（実フィードバック「夜間解析が進まなくなった」）。
+                // メモリ圧迫だけは夜間でも譲る（jetsam の保護）。
+                let shouldYield = await MainActor.run {
+                    BackgroundYield.isAppActive
+                        ? BackgroundYield.uiBusy
+                        : MemoryPressureMonitor.shared.isUnderPressure
+                }
+                guard !shouldYield else {
                     PerfTrace.count("faceAnalysis.yield")
                     return [:]
                 }

@@ -24,6 +24,17 @@ struct FaceTaggerRecordingTests {
         }
     }
 
+    /// 画像が**一切取れない**状況（譲り続け・回線断・取得失敗）を再現し、呼ばれた枚数を数える。
+    private final class StarvedProvider: FacePerceptionProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var requested = 0
+        var isAvailable: Bool { true }
+        func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]] {
+            lock.lock(); requested += refKeys.count; lock.unlock()
+            return [:]   // 何も解析できない
+        }
+    }
+
     private func signal() -> DetectedFaceSignal {
         DetectedFaceSignal(boundingBox: .init(x: 0.4, y: 0.4, width: 0.2, height: 0.2),
                            embedding: Data(count: 8), quality: 0.9)
@@ -66,4 +77,37 @@ struct FaceTaggerRecordingTests {
         let scanned = await store.scannedRefKeys()
         #expect(scanned.isEmpty)
     }
+
+    /// ⚠️ 画像が取れない状態が続いても、以前は **todo 全体を空で歩き切って** `finished — scanned=0`
+    /// で終わり、次の窓でまた同じことを繰り返していた（実フィードバック「夜間解析が進まなくなった」）。
+    /// 連続で空なら原因は続いているので、早めに畳んで窓を無駄にしない（ADR-179）。
+    @Test("画像が取れない状態が続いたら、todo を歩き切らずに畳む")
+    @MainActor
+    func stopsAfterConsecutiveEmptyBatches() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let provider = StarvedProvider()
+        let tagger = FaceTagger(store: store, provider: provider)
+        let candidates = (0..<200).map { "C-/photo/\($0).jpg" }   // 4 枚 × 50 バッチぶん
+
+        await tagger.scan(candidateRefKeys: candidates, batchSize: 4, betweenBatchNs: 0,
+                          allowSimulator: true, onBatch: {})
+
+        // 3 バッチ（12 枚）で畳む。200 枚すべてを要求していたら旧挙動。
+        #expect(provider.requested <= 4 * FaceTagger.maxEmptyBatches,
+                "空のまま歩き切っている: \(provider.requested) 枚を要求した")
+        #expect(await store.scannedRefKeys().isEmpty, "解析できていないのに記録している")
+    }
+
+    /// 途中で画像が取れるようになれば、空の連続は途切れて最後まで進む。
+    @Test("空が途切れれば最後まで進む")
+    @MainActor
+    func continuesWhenImagesReturn() async {
+        // 最初の 2 バッチ（8 枚）は取れず、以降は取れる。
+        var response: [String: [DetectedFaceSignal]] = [:]
+        let candidates = (0..<40).map { "L-p\($0)" }
+        for key in candidates.dropFirst(8) { response[key] = [] }
+        let store = await runScan(response: response, candidates: candidates)
+        #expect(await store.scannedRefKeys().count == 32, "空が途切れた後に進んでいない")
+    }
 }
+
