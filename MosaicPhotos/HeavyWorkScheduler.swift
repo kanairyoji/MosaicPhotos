@@ -26,7 +26,6 @@ enum HeavyWorkScheduler {
 
     /// CLIP 埋め込みの残作業を理由にバックアップを連続で見送れる上限。これを超えたら
     /// 埋め込みが残っていてもバックアップの窓を 1 回明け渡す（飢餓の防止・上記 1.5 を参照）。
-    private static let maxBackupDeferrals = 3
     /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を見送れる連続回数。
     /// これを超えたら生成に窓を明け渡す（生成も飢えさせない）。
     private static let maxGenerateDeferrals = 4
@@ -309,28 +308,20 @@ enum HeavyWorkScheduler {
         await logStalledPasses(stores: stores)
 
         // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
-        // 3-b: **AI（CLIP 埋め込み）の残作業が無い窓でだけ**開始する。両方ともメモリ/IO が重く、
-        // 同一窓で同時に走らせるとピークが跳ねる。埋め込みが残る間はバックアップを見送り、AI が一巡した
-        // 後の窓で回す（バックアップは差分から再開されるので遅延しても取りこぼさない）。
-        // ⚠️ ADR-72 は「埋め込み残 0 の窓でだけバックアップ」としていたが、実機ログ（diagnostics-20）で
-        // **バックアップが事実上始まらない**ことが分かった。残 44,017 枚に対し 1 窓あたり 192 枚
-        // （trickle の maxBatches 上限）しか進まないため、残 0 になるまで数十時間ぶんの窓が必要で、
-        // その間バックアップは毎回見送られていた（`bgtask: defer backup (embed backlog=44017)` が反復）。
-        // 「同時に走らせない」という元の意図は保ちつつ、**連続して見送った回数に上限**を設けて
-        // 必ず順番が回るようにする（公平性）。バックアップは差分再開なので飛び飛びでも取りこぼさない。
+        // 経緯: ADR-72「埋め込み残 0 の窓だけ」→ 事実上始まらない（diagnostics-20）→ 4 回に 1 回の
+        // 順番回し → ADR-180 で**毎窓・解析と並行**へ（資源が重ならないため）。
+        // ADR-180: バックアップは解析と**並行して**毎窓起こす（見送りは廃止）。
+        // 以前は「埋め込みの残作業が無い窓だけ」→「4 回に 1 回」と譲っていたが、バックアップは
+        // ディスク読み＋通信で、CPU/ANE をほぼ使わない。解析（推論）とは資源が重ならないので、
+        // 同じ窓で走らせても互いを遅くしない。譲らせていた根拠（メモリのピーク・ADR-72）は
+        // 1 枚ずつ読んで上げる trickle 実装では当たらない（実測 footprint は解析側が支配的）。
+        // 実フィードバック「バックアップは画像処理と並行して動かしてよい。現状あまり動いていない」。
         let embedBacklog = await stores.autoAlbumEngine.pendingEmbedCount()
-        let deferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.backupDeferralStreak)
-        if embedBacklog == 0 || deferrals >= Self.maxBackupDeferrals {
-            if embedBacklog > 0 {
-                Diagnostics.mark("bgtask: backup turn (deferred \(deferrals)x, embed backlog=\(embedBacklog))")
-            }
-            UserDefaults.standard.set(0, forKey: AppSettingsKeys.backupDeferralStreak)
-            stores.backupEngine.startNightlyIfEnabled()
-        } else {
-            UserDefaults.standard.set(deferrals + 1, forKey: AppSettingsKeys.backupDeferralStreak)
-            Diagnostics.mark("bgtask: defer backup \(deferrals + 1)/\(Self.maxBackupDeferrals) "
-                             + "(embed backlog=\(embedBacklog))")
+        UserDefaults.standard.set(0, forKey: AppSettingsKeys.backupDeferralStreak)
+        if embedBacklog > 0 {
+            Diagnostics.mark("bgtask: backup alongside analysis (embed backlog=\(embedBacklog))")
         }
+        stores.backupEngine.startNightlyIfEnabled()
 
         // 2. アルバム生成（差分があるときだけ・~26s 上限）。**顔/埋め込みを起こした後**に回す。
         // generate はピークが大きく（実測 ~550〜880MB）BG の厳しい jetsam 上限に触れてアプリごと

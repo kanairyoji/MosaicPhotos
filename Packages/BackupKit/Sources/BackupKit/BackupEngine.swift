@@ -109,11 +109,20 @@ public final class BackupEngine {
     /// BackupKit は AutoAlbumCore に依存しないため、アプリ（Composition Root）が PeopleEngine を結線する。
     @ObservationIgnored public var peopleNamesProvider: (@Sendable () async -> [String: [String]])?
     /// 実効アップロード上限。設定キーが存在すればその値、無ければ `debugUploadLimit`。
+    ///
+    /// ⚠️ **夜間（自動）は上限を外す**（ADR-180）。「1 回あたり」の上限は手動実行で待ち時間を
+    /// 有界にするためのもので、夜間ウィンドウには**窓の期限**という別の上限がある。既定の 10 枚を
+    /// 夜間にも当てると、5 分の窓に 10 枚しか上がらず、6 万枚の上げ直しは何年も終わらない
+    /// （実フィードバック「バックアップがあまり動いていない」）。
     var effectiveUploadLimit: Int {
-        UserDefaults.standard.object(forKey: BackupSettingsKeys.uploadLimit) == nil
+        if isNightlyRun { return 0 }   // 0 = 全件（窓の期限で止まる）
+        return UserDefaults.standard.object(forKey: BackupSettingsKeys.uploadLimit) == nil
             ? debugUploadLimit
             : UserDefaults.standard.integer(forKey: BackupSettingsKeys.uploadLimit)
     }
+
+    /// いま走っているのが夜間（自動）の実行か。`startNightlyIfEnabled` が立て、完了で下ろす。
+    @ObservationIgnored private(set) var isNightlyRun = false
 
     /// バックアップ進捗として保存済みのローカル ID 数（設定表示用）。
     public var uploadedIDCount: Int { progressStore.loadUploadedIDs().count }
@@ -236,6 +245,7 @@ public final class BackupEngine {
                 await self.retryPendingOffloadMarkers()
             }
             self.backupTask = nil
+            self.isNightlyRun = false
         }
     }
 
@@ -244,6 +254,9 @@ public final class BackupEngine {
 
     /// テスト用: 照合中フラグだけを立てる（実際の通信・SwiftData 更新は行わない）。
     func setReconcilingForTesting(_ value: Bool) { isReconciling = value }
+
+    /// テスト用: 夜間実行の印だけを立てる。
+    func setNightlyRunForTesting(_ value: Bool) { isNightlyRun = value }
 
     /// テスト用: 実行世代だけを進める（実際の通信は行わない）。
     func beginRunGenerationForTesting() -> Int {
@@ -256,6 +269,7 @@ public final class BackupEngine {
         runGeneration &+= 1
         backupTask?.cancel()
         backupTask = nil
+        isNightlyRun = false
         if isRunning {
             addLog("Cancelled by user.")
             phase = .cancelled
@@ -369,11 +383,12 @@ public final class BackupEngine {
             Diagnostics.mark("backup: skip — destination is \(destination.rawValue) (not Dropbox)")
             return
         }
-        Diagnostics.mark("backup: nightly start")
+        Diagnostics.mark("backup: nightly start (no per-run limit; the window is the limit)")
         let folder = backupNormalizedPath(
             UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                 ?? BackupSettingsKeys.defaultDropboxFolder)
         addLog("Nightly backup starting…")
+        isNightlyRun = true
         start(folder: folder)
     }
 
