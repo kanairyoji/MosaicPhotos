@@ -56,6 +56,41 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-178 キーセット・ページングは並びと `>` の順序を揃える（`.lexical`）
+- 状態: 採用（ADR-143 の補足・**実害の疑いあり**）
+- 文脈: 「別の人かもしれない写真」の上限撤廃（ADR-177）でページ送りを書き、規模テストの
+  **変異検証**で「160 顔中 100 顔しか読めず、5 顔が二重」が発覚した。原因は
+  `SortDescriptor(\.refKey)` の既定が数字を意識した順（"dsc5" < "dsc49"）で並べる一方、
+  `#Predicate` の `>` は単純な文字列比較で、**並びと比較の順序が食い違う**こと。
+  カーソル `"…-49"` の次のページに `"…-5"`（辞書順で大きい）が再び現れ、`"…-100"` 以降
+  （辞書順で小さい）が二度と来ない。
+  同型のコードが **`AutoAlbumStore` に 2 箇所**あった——`allEnrichedPhotosLite`（AI アルバム・
+  旅行・検索の母集団）と `enrichmentVectorPage`（意味検索のベクトル）。テストで再現すると
+  埋め込みは 160 件中 100 件、メタ一覧は 5,200 件が 5,755 件（重複）だった。
+  実データの refKey（`L-<UUID>`・`C-/写真/2024-05-03/dsc03019.jpg`）は数字を含むので、
+  **実機でも意味検索の母集団から写真が黙って抜けていた可能性が高い**。ADR-143 で潰した
+  `Duplicate values for key` の別経路でもある。
+- 決定: キーセット・ページングの `SortDescriptor` は必ず `comparator: .lexical` を指定する
+  （3 箇所すべて）。テストは**件数と一意性**を見る（回数だけだと「少ないほど良い」に見えて
+  取りこぼしを見逃す）。
+- 結果: 3 箇所とも全件をちょうど 1 回ずつ返す。実機では次の再評価で母集団が増える可能性がある
+  （欠けていた写真が戻る）。
+- 教訓: **変異検証は書いた本人の思い込みを壊す。** 「fetch 回数が 4 倍以下」という緩い assert は
+  1 顔 1 fetch の変異にも通ってしまい、そこから本物の欠陥まで辿り着いた。
+- 関連: `AutoAlbumStore.swift` / `FaceStore+Explain.swift` / `EmbeddingPagingOrderTests` /
+  `ScaleRegressionTests.outlierScanIsPaged` / ADR-143 / ADR-119。
+
+## ADR-177 「別の人かもしれない写真」は人物の大きさで諦めない
+- 状態: 採用
+- 文脈: 実フィードバック「（未確認）顔が N 枚あり…と出る。候補を上げられないか」。
+  `outlierFaces` は 8,000 顔で打ち切っていた——`faces(inCluster:)` が埋め込み（1KB/顔）ごと
+  全件を materialize するため。しかし混入は**いちばん大きな人物でこそ起きる**ので、
+  大きい人物ほど調べられないのは本末転倒。
+- 決定: 埋め込みは採点に要るので射影では省けない。代わりに**ページで読み**（500 件）、
+  手元には「似ている度の低い上位 `limit` 件」だけを残す（有界）。`tooManyMembers` は撤去。
+- 結果: 5,000 顔の人物でも候補が出る。読み出しはページ数に比例（規模テストで固定）。
+- 関連: `FaceStore+Explain.swift` / `FaceDecisionExplainTests` / ADR-96 / ADR-164 / ADR-178。
+
 ## ADR-176 バックアップの写真は撮影年月のフォルダに分ける
 - 状態: 採用（ADR-175 の補足）
 - 文脈: 写真本体を `Backup/` 直下に平置きしていた。8 万枚規模だと Dropbox の Web/アプリで

@@ -71,8 +71,7 @@ public enum PersonOutlierStatus: Sendable, Equatable {
     case computed
     /// この人物に顔が無い。
     case noMembers
-    /// メンバーが多すぎるので省いた（デバッグ画面のために全埋め込みを読まない）。
-    case tooManyMembers(limit: Int, members: Int)
+    // ※ 旧 `tooManyMembers` は撤去（ADR-177）。人物の大きさで計算を諦めない。
 }
 
 public struct PersonDecisionReport: Sendable {
@@ -205,34 +204,65 @@ extension FaceStore {
     /// 確認済み（アンカー）の顔も外れることはある——ユーザーが本人と言っている以上、
     /// 候補には出すが印を付けて区別する。
     func outlierFaces(clusterID: Int, centroid: [Float], threshold: Float,
-                      limit: Int = 24, scanLimit: Int = 8000)
+                      limit: Int = 24, pageSize: Int = 500)
         -> (faces: [PersonOutlierFace], status: PersonOutlierStatus) {
-        let members = faces(inCluster: clusterID)
-        guard !members.isEmpty else { return ([], .noMembers) }
-        guard members.count <= scanLimit else {
-            Self.log.info("faces: outliers skipped — too many members (\(members.count))")
-            return ([], .tooManyMembers(limit: scanLimit, members: members.count))
-        }
-        var scored: [PersonOutlierFace] = []
+        // ⚠️ **人物の大きさで諦めない**（実フィードバック「顔が N 枚あり、未確認と出る」）。
+        // 以前は 8,000 顔で打ち切っていた——`faces(inCluster:)` が埋め込み（1KB/顔）ごと
+        // 全件を materialize するので、大きな人物ではメモリが跳ねたため。
+        // 埋め込み自体は採点に要るので射影では省けない。代わりに**ページで読み**、
+        // 手元には「似ている度の低い上位 `limit` 件」だけを残す（有界）。
+        // 見つけたいのは**混入**で、それはいちばん大きな人物でこそ起きる。
+        let cid = clusterID
+        var scored: [PersonOutlierFace] = []   // 常に limit 件以下・似ている度の昇順
         var broken = 0
-        for f in members {
-            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-            let sim = FaceClustering.dot(centroid, FaceClustering.normalized(vec))
-            // ⚠️ 壊れた埋め込み（NaN/Inf）は**表示側へ渡さない**。% 表示は Int 変換なので、
-            // 出そうとしただけで trap する。数を記録して、起きていることは分かるようにする。
-            guard sim.isFinite else { broken += 1; continue }
-            scored.append(PersonOutlierFace(
-                faceID: f.faceID, refKey: f.refKey,
-                boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh),
-                similarity: sim, quality: f.quality,
-                confirmed: f.confirmedAt != nil,
-                contributes: FaceStore.contributesToCentroid(f),
-                belowThreshold: sim < threshold))
+        var seen = 0
+        var cursor: String?
+        while true {
+            // faceID 昇順のカーソルで送る（オフセットだと途中の挿入でずれる・ADR-143）。
+            //
+            // ⚠️ **並びと `>` の比較を同じ順序にする**（`.lexical`）。既定の `SortDescriptor`
+            // は数字を意識した順（"…-5" < "…-49"）で並べる一方、`#Predicate` の `>` は
+            // 単純な文字列比較なので、両者が食い違うと**ページの継ぎ目で行が飛ぶ**
+            // （160 顔のうち 100 顔しか読めなかった。規模テストの変異検証で発覚）。
+            var d: FetchDescriptor<DetectedFace>
+            if let cursor {
+                d = FetchDescriptor<DetectedFace>(
+                    predicate: #Predicate { $0.clusterID == cid && $0.faceID > cursor },
+                    sortBy: [SortDescriptor(\.faceID, comparator: .lexical)])
+            } else {
+                d = FetchDescriptor<DetectedFace>(
+                    predicate: #Predicate { $0.clusterID == cid },
+                    sortBy: [SortDescriptor(\.faceID, comparator: .lexical)])
+            }
+            d.fetchLimit = pageSize
+            let page = (countedFetchOptional(d)) ?? []
+            guard !page.isEmpty else { break }
+            for f in page {
+                seen += 1
+                guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
+                let sim = FaceClustering.dot(centroid, FaceClustering.normalized(vec))
+                // 壊れた埋め込み（NaN/Inf）は表示側へ渡さない（% 表示の Int 変換で trap する）。
+                guard sim.isFinite else { broken += 1; continue }
+                // 上位 limit 件に入らないものは捨てる（有界）。
+                if scored.count >= limit, let worst = scored.last, sim >= worst.similarity { continue }
+                let face = PersonOutlierFace(
+                    faceID: f.faceID, refKey: f.refKey,
+                    boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh),
+                    similarity: sim, quality: f.quality,
+                    confirmed: f.confirmedAt != nil,
+                    contributes: FaceStore.contributesToCentroid(f),
+                    belowThreshold: sim < threshold)
+                let at = scored.firstIndex { $0.similarity > sim } ?? scored.count
+                scored.insert(face, at: at)
+                if scored.count > limit { scored.removeLast() }
+            }
+            if page.count < pageSize { break }
+            cursor = page.last?.faceID
         }
+        guard seen > 0 else { return ([], .noMembers) }
         if broken > 0 {
             Diagnostics.mark("faces: outliers — 壊れた類似度 \(broken) 件を除外（cluster=\(clusterID)）")
         }
-        scored.sort { $0.similarity < $1.similarity }
-        return (Array(scored.prefix(limit)), .computed)
+        return (scored, .computed)
     }
 }
