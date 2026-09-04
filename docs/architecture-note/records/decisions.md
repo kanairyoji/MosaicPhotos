@@ -56,6 +56,26 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-176 バックアップの写真は撮影年月のフォルダに分ける
+- 状態: 採用（ADR-175 の補足）
+- 文脈: 写真本体を `Backup/` 直下に平置きしていた。8 万枚規模だと Dropbox の Web/アプリで
+  開くだけで重く、`list_folder` の一覧取得も長い（実フィードバック「フォルダで整理した方が
+  いいのでは」）。ADR-175 で台帳をリセットして全部上げ直すタイミングなので、構成を変えるなら
+  いまが最も安い。
+- 決定: `Backup/<YYYY>/<YYYY-MM>/<ファイル名>`（撮影日不明は `Backup/undated/`）。
+  月の決め方はメタデータのシャード（`.mosaic/meta/<YYYY-MM>.json`）と**同じ関数**
+  （`BackupMetadataV2.shardName`＝UTC 固定）を使い、「この月の写真とそのメタデータ」が
+  対応するようにする。年で 1 段挟むのは `Backup/` 直下に月フォルダが百数十個並ぶのを
+  避けるため。`.mosaic/` は直下のまま（数十ファイル・カタログの入口は固定パスの方が復元に有利）。
+  共有セットの中は**平置きのまま**（人物・アルバム単位で数百件が上限。家族が開いたとき
+  月フォルダをまたぐ方が不便）。
+- 結果: 月あたり数百枚に収まる。台帳・オフロード・共有はいずれもフルパスを記録して参照し、
+  照合の一覧は再帰なので、下流に「直下にある」前提は無い（確認済み）。
+  同名衝突は月が分かれることでむしろ減る（同月なら既存の autorename 経路）。
+  ⚠️ 実際のアップロード経路は `PHAsset` 依存で単体テストできないため、フォルダの導出
+  （純関数）だけをテストで固定した。実機では最初のバックアップ後に Dropbox 上で確認する。
+- 関連: `BackupLayout.photoFolder` / `BackupRunner.swift` / `BackupPhotoFolderTests` / ADR-38 / ADR-175。
+
 ## ADR-175 Dropbox の配置を 1 ルートにまとめる（`<root>/<端末>/Backup` と `Share`）
 - 状態: 採用
 - 文脈: バックアップ（`/MosaicPhotos/<端末>/`）と共有（`/MosaicShare/<端末>/`）が**別のルート**で、

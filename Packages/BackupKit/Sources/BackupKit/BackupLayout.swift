@@ -1,3 +1,4 @@
+import DropboxCore
 import Foundation
 
 /// Dropbox 上のフォルダ配置（ADR-175）。**パスを組む場所はここだけ**にする。
@@ -6,6 +7,9 @@ import Foundation
 /// /MosaicPhotos/                 ← 唯一のルート（設定 `dropboxFolder`）
 ///   iPhone-E7EC95/               ← 端末フォルダ（ADR-41・Keychain の短 ID）
 ///     Backup/                    ← 写真本体と .mosaic メタデータ
+///       2025/2025-08/ …          ← 写真は撮影年月で分ける（ADR-176）
+///       undated/                 ← 撮影日不明
+///       .mosaic/                 ← カタログとシャード（直下のまま）
 ///     Share/                     ← 共有セット（People-◯◯ / Album-◯◯ …）
 /// ```
 ///
@@ -54,6 +58,30 @@ public enum BackupLayout {
         let device = deviceRoot(root: root, deviceFolder: deviceFolder)
         guard !deviceFolder.isEmpty else { return device }
         return appendingOnce(device, shareSubfolder)
+    }
+
+    // MARK: - 写真本体の置き場（撮影年月・ADR-176）
+
+    /// 撮影日不明の写真を入れるフォルダ名。
+    public static let undatedFolder = "undated"
+
+    /// 写真 1 枚の置き場: `<backupRoot>/<YYYY>/<YYYY-MM>`（撮影日不明は `<backupRoot>/undated`）。
+    ///
+    /// ⚠️ なぜ分けるか: 8 万枚を 1 フォルダに置くと、Dropbox の Web/アプリで開くだけで重く、
+    /// `list_folder` の一覧取得も長くなる（実フィードバック）。月あたり数百枚に収まる粒度にする。
+    /// メタデータのシャード（`.mosaic/meta/<YYYY-MM>.json`）と**同じ切り方**なので、
+    /// 「この月の写真とそのメタデータ」が対応する。年で 1 段挟むのは `Backup/` 直下に
+    /// 月フォルダが百数十個並ぶのを避けるため。
+    ///
+    /// 月の決め方は `BackupMetadataV2.shardName(for:)`（**UTC 固定**）と共有する。端末の
+    /// タイムゾーンで月が揺れると、同じ写真が別フォルダへ上がり得る。
+    public static func photoFolder(backupRoot: String, captureDate: Date?) -> String {
+        let shard = BackupMetadataV2.shardName(for: captureDate)
+        guard shard != BackupMetadataV2.undatedShardName, shard.count >= 4 else {
+            return backupRoot + "/" + undatedFolder
+        }
+        let year = String(shard.prefix(4))
+        return backupRoot + "/" + year + "/" + shard
     }
 
     /// 末尾が既にその要素なら足さない（大小は Dropbox に合わせて無視）。

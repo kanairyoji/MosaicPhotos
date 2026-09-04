@@ -365,7 +365,9 @@ final class BackupRunner {
         setPhase(.uploading(current: i + 1, total: total, filename: filename))
         guard !Task.isCancelled else { setPhase(.cancelled); return .fatal }
 
-        let dropboxPath = folder + "/" + filename
+        // ADR-176: 写真は撮影年月のフォルダへ（`files/upload` は中間フォルダを自動で作る）。
+        let dropboxPath = BackupLayout.photoFolder(backupRoot: folder,
+                                                   captureDate: asset.creationDate) + "/" + filename
         addLog("[\(i+1)/\(total)] \(filename) (\(data.count) bytes) → \(dropboxPath)")
 
         // ADR-40: ローカルで content_hash を計算し、応答の hash と一致して初めて「済み」にする。

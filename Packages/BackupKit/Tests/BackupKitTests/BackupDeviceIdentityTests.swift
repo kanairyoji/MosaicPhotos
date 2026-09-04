@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BackupKit
+import DropboxCore
 
 /// 端末フォルダ名の決定ロジック（ADR-41・純関数部分）。
 /// Keychain 永続化はロジックが薄いため対象外（フォルダ名の組み立てだけを固定する）。
@@ -174,3 +175,54 @@ struct DeviceBackupRootTests {
         #expect(BackupLayout.backupRoot(root: share, deviceFolder: "iPhone-1") == backup)
     }
 }
+
+/// 写真本体の置き場（ADR-176）。8 万枚を 1 フォルダに置かず、撮影年月で分ける。
+@Suite("写真の置き場（撮影年月）")
+struct BackupPhotoFolderTests {
+
+    private let root = "/MosaicPhotos/iPhone-1/Backup"
+
+    private func date(_ iso: String) -> Date {
+        let f = ISO8601DateFormatter()
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f.date(from: iso)!
+    }
+
+    @Test("撮影年月のフォルダへ（年 / 年-月）")
+    func yearThenMonth() {
+        #expect(BackupLayout.photoFolder(backupRoot: root, captureDate: date("2025-08-15T10:00:00Z"))
+                == "\(root)/2025/2025-08")
+        #expect(BackupLayout.photoFolder(backupRoot: root, captureDate: date("2019-01-01T00:00:00Z"))
+                == "\(root)/2019/2019-01")
+    }
+
+    @Test("撮影日不明は undated")
+    func undated() {
+        #expect(BackupLayout.photoFolder(backupRoot: root, captureDate: nil) == "\(root)/undated")
+    }
+
+    /// ⚠️ メタデータのシャード（`.mosaic/meta/<YYYY-MM>.json`）と**同じ月**に入ること。
+    /// 切り方が違うと「この月の写真とそのメタデータ」が対応しなくなる。
+    @Test("メタデータのシャードと同じ月の切り方")
+    func matchesShardMonth() {
+        for iso in ["2025-08-31T23:59:59Z", "2025-09-01T00:00:00Z", "2020-02-29T12:00:00Z"] {
+            let d = date(iso)
+            let folder = BackupLayout.photoFolder(backupRoot: root, captureDate: d)
+            let shard = BackupMetadataV2.shardName(for: d)
+            #expect(folder.hasSuffix("/\(shard)"), "\(iso): フォルダ \(folder) とシャード \(shard) が違う")
+        }
+    }
+
+    /// 端末のタイムゾーンで月が揺れると、同じ写真が別フォルダへ上がり得る。UTC 固定であること。
+    @Test("月の境界は UTC で決める（端末のタイムゾーンに依らない）")
+    func utcBoundary() {
+        // JST では 9/1 09:00 だが UTC では 9/1 00:00 → 9 月。
+        // JST では 8/31 23:30 は UTC で 8/31 14:30 → 8 月。どちらも UTC の月で決まる。
+        let f = ISO8601DateFormatter()
+        f.timeZone = TimeZone(identifier: "Asia/Tokyo")
+        let jstLateAug = f.date(from: "2025-09-01T08:59:59+09:00")!   // UTC 8/31 23:59:59
+        #expect(BackupLayout.photoFolder(backupRoot: root, captureDate: jstLateAug)
+                .hasSuffix("/2025/2025-08"), "JST の日付で月を決めている")
+    }
+}
+
