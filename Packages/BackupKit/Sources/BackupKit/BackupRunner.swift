@@ -103,13 +103,23 @@ final class BackupRunner {
     /// 人物名（localIdentifier → 命名済み顔クラスタのフルネーム）。アプリが PeopleEngine を結線する。
     /// ユーザー入力（命名）は端末を削除すると再生成できないため metadata に保全する（ADR-38）。
     private let peopleNamesProvider: (@Sendable () async -> [String: [String]])?
+    /// 背景アップロード（ADR-181）。nil なら従来の前面経路だけ。
+    let backgroundUploads: BackgroundUploadEnqueuing?
+    let spool: UploadSpool
+    let spoolPolicy: BackgroundUploadPolicy
+    /// この実行で背景アップロードを使うか（夜間＝窓の外へ転送を持ち出したい回だけ）。
+    private let useBackgroundUploads: () -> Bool
     init(
         tokenProvider: AccessTokenProvider,
         uploader: DropboxBackupUploader,
         progressStore: BackupProgressStore,
         uploadLimit: @escaping () -> Int,
         delegate: BackupRunnerDelegate,
-        peopleNamesProvider: (@Sendable () async -> [String: [String]])? = nil
+        peopleNamesProvider: (@Sendable () async -> [String: [String]])? = nil,
+        backgroundUploads: BackgroundUploadEnqueuing? = nil,
+        spool: UploadSpool = UploadSpool(),
+        spoolPolicy: BackgroundUploadPolicy = BackgroundUploadPolicy(),
+        useBackgroundUploads: @escaping () -> Bool = { false }
     ) {
         self.tokenProvider = tokenProvider
         self.uploader = uploader
@@ -117,6 +127,10 @@ final class BackupRunner {
         self.uploadLimit = uploadLimit
         self.delegate = delegate
         self.peopleNamesProvider = peopleNamesProvider
+        self.backgroundUploads = backgroundUploads
+        self.spool = spool
+        self.spoolPolicy = spoolPolicy
+        self.useBackgroundUploads = useBackgroundUploads
     }
 
     /// 背景アップロードを行ってよいか（電源＋回線ポリシー）。アップロードループの一時停止判定に使う。
@@ -135,18 +149,24 @@ final class BackupRunner {
     }
 
     /// アップロードループの集計。
-    private struct UploadTally {
+    struct UploadTally {
         var uploaded = 0
+        /// OS に渡した数（背景アップロード・ADR-181。「済み」ではない＝応答で確定する）。
+        var spooled = 0
         var skippedRead = 0
+        /// spool の集計（初回に走査して以後は加算・ADR-181）。nil＝未走査。
+        var spoolJobCount: Int?
+        var spoolBytes = 0
         var trackedIDs: Set<String>
         var newEntries: [BackupMetadataPlanning.NewEntry] = []
     }
 
     /// 1 枚のアップロード結果。
-    private enum ItemOutcome {
+    enum ItemOutcome {
         case done            // 成功（tally 更新済み）
         case skipped         // 読み込みスキップ（続行）
         case fatal           // 実行を止める（fail 済み・進捗保存済み）
+        case spoolFull       // 背景 spool が上限（この窓はここまで・残りは次の窓）
     }
 
     // MARK: - Backup main loop（オーケストレータ）
@@ -170,7 +190,14 @@ final class BackupRunner {
         // 3-4. 全アセット取得 → 差分算出（済み＝台帳∪記録・上限適用）
         let assets = fetchAssetsSorted()
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
-        let (pending, alreadySkipped, doneIDs) = await computePending(assets: assets)
+        var (pending, alreadySkipped, doneIDs) = await computePending(assets: assets)
+        // ADR-181: 背景セッションが転送中の写真は対象から外し、409 を受けた写真は前面経路へ回す。
+        let background = backgroundUploads != nil && useBackgroundUploads()
+        let bgPlan = background ? backgroundPlan() : BackgroundPlan()
+        if !bgPlan.inFlight.isEmpty {
+            pending.removeAll { bgPlan.inFlight.contains($0.localIdentifier) }
+            addLog("In flight (background session): \(bgPlan.inFlight.count)")
+        }
         guard !pending.isEmpty else {
             // ⚠️ 写真が全部バックアップ済みでも、**前回送れなかったメタデータ**が残っていれば
             // ここで送り直す。早期 return してしまうと、新しい写真が増えるまでキューが
@@ -198,9 +225,16 @@ final class BackupRunner {
         // 検証・記録（ADR-40 の hash 照合と「済み」記録）の順序は一切変えない。
         var tally = UploadTally(trackedIDs: doneIDs)
         var readAhead: Task<FetchDataResult, Never>?
-        for (i, asset) in pending.enumerated() {
-            guard !Task.isCancelled else { readAhead = nil; setPhase(.cancelled); return false }
-            guard await waitUntilUploadAllowed() else { readAhead = nil; setPhase(.cancelled); return false }
+        /// 中断・打ち切りの共通の出口: 積んだ分だけは OS へ渡してから帰る。
+        func bail(_ phase: BackupEngine.Phase?) async -> Bool {
+            readAhead = nil
+            await flushSpool(token: token, tally: tally)
+            if let phase { setPhase(phase) }
+            return false
+        }
+        uploadLoop: for (i, asset) in pending.enumerated() {
+            guard !Task.isCancelled else { return await bail(.cancelled) }
+            guard await waitUntilUploadAllowed() else { return await bail(.cancelled) }
 
             // 現在の 1 枚: 先読み済みならそれを使い、無ければ（初回・中断後）ここで読む。
             let fetched: FetchDataResult
@@ -218,31 +252,51 @@ final class BackupRunner {
                 readAhead = Task { await Self.readAsset(next) }
             }
 
-            switch await uploadOne(asset: asset, fetched: fetched, index: i, total: pending.count,
-                                   folder: folder, token: token,
-                                   indexes: indexes, tally: &tally) {
-            case .done, .skipped: continue
-            case .fatal: readAhead = nil; return false
+            // ADR-181: 夜間は spool に積んで OS に渡す（応答は窓の外で受ける）。
+            // 409 を受けた写真だけは前面経路（hash 照合・autorename）で片付ける。
+            let outcome: ItemOutcome
+            if background, !bgPlan.conflicts.contains(asset.localIdentifier) {
+                outcome = spoolOne(asset: asset, fetched: fetched, index: i, total: pending.count,
+                                   folder: folder, indexes: indexes, tally: &tally)
+            } else {
+                outcome = await uploadOne(asset: asset, fetched: fetched, index: i, total: pending.count,
+                                          folder: folder, token: token,
+                                          indexes: indexes, tally: &tally)
+            }
+            switch outcome {
+            case .done, .skipped:
+                // 積んだ分は小刻みに OS へ渡す（窓の期限で止まっても、渡した分は転送が続く）。
+                if tally.spooled > 0, tally.spooled % Self.spoolFlushEvery == 0 {
+                    await flushSpool(token: token, tally: tally)
+                }
+            case .fatal:
+                return await bail(nil)   // fail 済み（phase は設定済み）
+            case .spoolFull:
+                addLog("Background spool is full — the rest waits for the next window")
+                readAhead = nil
+                break uploadLoop
             }
         }
         readAhead = nil
         progressStore.saveUploadedIDs(tally.trackedIDs)
+        await flushSpool(token: token, tally: tally)
 
         // 7. メタデータ v2（触った撮影月シャード＋カタログ）
         await writeMetadata(newEntries: tally.newEntries, indexes: indexes,
                             folder: folder, token: token)
 
         let totalSkipped = alreadySkipped + tally.skippedRead
-            + (pending.count - tally.uploaded - tally.skippedRead)
+            + (pending.count - tally.uploaded - tally.spooled - tally.skippedRead)
+        let handedOff = tally.spooled > 0 ? ", handed to OS: \(tally.spooled)" : ""
         if metadataLost > 0 {
             // メタデータを失った回は「完了」と言い切らない（写真本体は上がっている）。
-            addLog("Done with warnings — uploaded: \(tally.uploaded), skipped: \(totalSkipped), "
+            addLog("Done with warnings — uploaded: \(tally.uploaded)\(handedOff), skipped: \(totalSkipped), "
                    + "metadata lost: \(metadataLost)")
         } else {
-            addLog("Done — uploaded: \(tally.uploaded), skipped: \(totalSkipped)")
+            addLog("Done — uploaded: \(tally.uploaded)\(handedOff), skipped: \(totalSkipped)")
         }
         // 完了は診断ログにも残す（ADR-86・addLog はアプリ内バッファのみ＝実行有無が追えなかった）。
-        Diagnostics.mark("backup: done — uploaded=\(tally.uploaded) skipped=\(totalSkipped)")
+        Diagnostics.mark("backup: done — uploaded=\(tally.uploaded) spooled=\(tally.spooled) skipped=\(totalSkipped)")
         setPhase(.completed(uploaded: tally.uploaded, skipped: totalSkipped))
         // バックアップ完了後のアルバム一覧更新（loadAlbums）は engine 側で行う（戻り値 true で通知）。
         return true
@@ -563,7 +617,7 @@ final class BackupRunner {
     /// カタログは触らない（このパスでは albums/people の索引を作っていないため、
     /// 空の索引で上書きすると**既存のカタログから名前が消える**）。
     /// 再送キュー（アカウント＋保存先ごと）。1 枚ごとに作り直さないよう控える。
-    private func pendingStore(folder: String) -> PendingMetadataStore {
+    func pendingStore(folder: String) -> PendingMetadataStore {
         if let cached = cachedPendingStore { return cached }
         let store = PendingMetadataStore(account: cachedAccountFingerprint, folder: folder)
         cachedPendingStore = store
@@ -622,11 +676,11 @@ final class BackupRunner {
 
     // MARK: - Helpers
 
-    private func setPhase(_ phase: BackupEngine.Phase) {
+    func setPhase(_ phase: BackupEngine.Phase) {
         delegate.runnerSetPhase(phase)
     }
 
-    private func addLog(_ message: String) {
+    func addLog(_ message: String) {
         delegate.runnerLog(message)
     }
 

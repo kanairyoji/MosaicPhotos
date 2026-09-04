@@ -23,6 +23,11 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
     BackupSettingsKeys.swift / BackupDestination.swift  設定キー / 値オブジェクト
     BackupSettingsView.swift       バックアップ通常設定ビュー（#if canImport(UIKit)）
     BackupDebugSection.swift       Developer Options 向け詳細診断セクション（進捗/フォルダ確認/統計/ログ・public）
+    BackgroundUpload/              夜間の背景アップロード（ADR-181・fire-and-forget）
+      UploadSpool.swift              投入の意図＋本体のファイル台帳（`Caches/BackupSpool`）・`BackgroundUploadPolicy`（積む上限）
+      BackgroundUploadSession.swift  背景 URLSession（identifier 固定・遅延生成）。応答の分類 `classify` / 投入の振り分け `split` は純ロジック
+      BackupRunner+BackgroundUpload.swift  runner の spool 経路（`spoolOne` / `flushSpool` / `backgroundPlan`＝転送中は対象外・409 は前面へ）
+      BackupEngine+Settle.swift      応答 → ジャーナル → 記録（`BackgroundSettlement.perform` で順序を固定）
     BackupLogger.swift             内部ロガー（MosaicSupport の LogChannel に委譲）
     BackupAlbumInfo.swift / BackupAssetRecord.swift  値オブジェクト / @Model
   Tests/BackupKitTests/            BackupPlanning / DropboxBackupUploader のテスト（macOS）

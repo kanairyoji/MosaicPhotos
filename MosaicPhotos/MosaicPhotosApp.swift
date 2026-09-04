@@ -4,6 +4,8 @@ import SwiftUI
 @main
 struct MosaicPhotosApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    /// 背景 URLSession の完了イベント（ADR-181）を受けるためだけの delegate。
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         // 未捕捉例外・メモリ圧迫を端末上の診断ログへ記録する（実機でも原因を追えるように）。
