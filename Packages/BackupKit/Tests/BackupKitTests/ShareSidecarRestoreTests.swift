@@ -17,7 +17,10 @@ import DropboxCore
 @MainActor
 struct ShareSidecarRestoreTests {
 
-    private static let shareRoot = "/MosaicShare"
+    private static let backupRoot = "/MosaicPhotos"
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
 
     /// 固定の解析結果を返すスタブ。`entries` を差し替えると「解析が進んだ」状況を作れる。
     private final class StubAnalysis: ShareAnalysisSource {
@@ -35,7 +38,7 @@ struct ShareSidecarRestoreTests {
         async -> (engine: ShareSyncEngine, server: FakeDropboxServer) {
         let defaults = isolatedShareDefaults()
         defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
-        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
 
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
@@ -56,7 +59,7 @@ struct ShareSidecarRestoreTests {
     private func sidecarPath(_ name: String) -> String {
         let folder = SharePlanning.setFolderPath(
             shareRoot: Self.shareRoot, folderName: ShareNaming.folderName(name, kind: nil),
-            deviceFolder: BackupDeviceIdentity.currentFolderName())!
+            deviceFolder: nil)!   // shareRoot は端末フォルダ込み（ADR-175）
         return ShareSidecar.sidecarPath(setFolderPath: folder).lowercased()
     }
 

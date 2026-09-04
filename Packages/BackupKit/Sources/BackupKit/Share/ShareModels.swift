@@ -73,8 +73,14 @@ public final class ShareSet {
     /// nil＝印が付く前のセット＝移行の検査対象（規約: 無いものを繰り返し探さない）。
     public var layoutVersion: Int?
 
-    /// 現在のフォルダ配置の版。`<root>/<端末フォルダ>/<種類接頭辞+名前>/`。
-    public static let currentLayoutVersion = 1
+    /// 現在のフォルダ配置の版。
+    /// 1: `/MosaicShare/<端末>/<種類接頭辞+名前>/`（別ルート）
+    /// 2: `/MosaicPhotos/<端末>/Share/<種類接頭辞+名前>/`（バックアップと同じルート・ADR-175）
+    ///
+    /// ⚠️ 版 1 のセットは**移動しない**（ユーザー判断＝既存データは移行しない）。
+    /// 新配置へ**コピーし直す**（`sharedPath` を捨てて `.pending` へ戻す）。
+    /// 旧フォルダは Dropbox 上に残り、片付けは人が行う。
+    public static let currentLayoutVersion = 2
 
     public init(id: UUID = UUID(), name: String, folderName: String,
                 createdAt: Date = Date(), sidecarChecksum: String? = nil,

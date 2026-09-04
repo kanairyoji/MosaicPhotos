@@ -155,30 +155,48 @@ public final class BackupEngine {
 
     // MARK: - Public API
 
-    /// バックアップの実保存先（端末フォルダ・ADR-41）: `<root>/<表示名>-<短ID>`。
+    /// バックアップの実保存先（ADR-175）: `<root>/<表示名>-<短ID>/Backup`。
     /// 家族で 1 アカウントを共有しても、ファイルも `.mosaic` メタデータも端末ごとに分離される。
+    /// 組み立ては `BackupLayout` に集約（共有側と同じ端末フォルダの下に `Backup` / `Share`）。
     public static func deviceBackupRoot(for rootFolder: String) -> String {
         deviceBackupRoot(for: rootFolder, deviceFolder: BackupDeviceIdentity.currentFolderName())
     }
 
-    /// 端末フォルダを 1 段だけ足す（純ロジック・テスト対象）。
-    ///
-    /// ⚠️ **冪等にする**。この関数の結果が設定へ書き戻ったり、既に端末フォルダ配下のパスを
-    /// 渡されたりすると `/Root/iPhone-XXXX/iPhone-XXXX/…` と二重になり、**同じ写真が
-    /// 別パスへ再アップロードされる**（台帳には無いパスなので「未バックアップ」と判定される）。
-    /// 実機で二重パスらしき報告があり、確定はできなかったが構造上あり得るので塞ぐ。
     nonisolated static func deviceBackupRoot(for rootFolder: String,
                                              deviceFolder: String) -> String {
-        let root = backupNormalizedPath(rootFolder)
-        guard !deviceFolder.isEmpty else { return root }
-        // 既に同じ端末フォルダで終わっているなら足さない（大小は Dropbox に合わせて無視）。
-        let suffix = "/" + deviceFolder
-        if root.lowercased().hasSuffix(suffix.lowercased()) { return root }
-        return root + suffix
+        BackupLayout.backupRoot(root: rootFolder, deviceFolder: deviceFolder)
     }
 
     /// 実行世代（キャンセル・再実行のたびに進む）。旧タスクの更新を弾くために使う。
     @ObservationIgnored private var runGeneration = 0
+
+    /// 配置の版が変わっていたら台帳をリセットする（ADR-175）。
+    ///
+    /// ⚠️ **既存データは移行しない**（ユーザー判断）。旧配置（`<root>/<端末>/` 直下）の
+    /// ファイルは Dropbox に残し、台帳を捨てて**新配置へ上げ直す**。実体の再転送は起きる
+    /// （新パスには 409/hash 照合が効かない＝旧パスの実体は見えない）。
+    ///
+    /// ⚠️ **オフロード台帳は消さない**（`clearAllBackupRecords` と同じ）。オフロード済みの写真は
+    /// 端末に無く、**旧パスのクラウド代替が唯一の実体**なので、参照を失うと辿れなくなる。
+    /// - Returns: リセットしたら true。
+    @discardableResult
+    public func resetForLayoutChangeIfNeeded() async -> Bool {
+        let stored = UserDefaults.standard.integer(forKey: BackupSettingsKeys.layoutVersion)
+        // 0 = 未記録（この版より前のインストール）。旧配置で運用していた可能性が高いので切り替える。
+        guard stored != BackupLayout.currentVersion else { return false }
+        guard !isBusy else { return false }   // 実行中は次回に回す（記録の整合を壊さない）
+        progressStore.saveUploadedIDs([])
+        await store().deleteAllRecords()
+        invalidateStatus()
+        await reloadBackedUpIDs()
+        UserDefaults.standard.set(BackupLayout.currentVersion, forKey: BackupSettingsKeys.layoutVersion)
+        addLog("Layout changed (v\(stored) → v\(BackupLayout.currentVersion)): backup records reset; "
+               + "photos will be re-uploaded under \(BackupLayout.backupSubfolder)/")
+        Diagnostics.mark("backup: 配置の版 v\(stored)→v\(BackupLayout.currentVersion) — 台帳をリセット"
+                         + "（旧フォルダは残します。新配置へ上げ直します）")
+        await loadAlbums()
+        return true
+    }
 
     public func start(folder: String) {
         // 照合中も塞ぐ（照合は phase を触らないので isRunning だけでは素通りする）。

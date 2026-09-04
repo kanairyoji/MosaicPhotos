@@ -56,6 +56,11 @@ public enum SharedAlbumDiscovery {
             let root = rootsLower[rootIndex]
             let folderLower = (lower as NSString).deletingLastPathComponent
             guard !folderLower.isEmpty else { continue }
+            // ⚠️ ADR-175: 共有はバックアップと同じルートの端末フォルダ配下 `Share/` に置く。
+            // 家族が `/MosaicPhotos` ごと共有してきた場合、`Backup/` 配下の写真まで
+            // 「共有アルバム」に見えてしまう。**`Share/` 配下だけ**を共有セットとして扱う
+            // （旧配置 `/MosaicShare/...` は `Backup/` を含まないので従来どおり全部通る）。
+            if SharedAlbumDiscovery.isUnderBackupSubfolder(folderLower, root: root) { continue }
             let folderDisplay = String(path.prefix(folderLower.count))
             groups[folderLower, default: (folderDisplay, [])].paths.append(path)
             _ = root
@@ -87,5 +92,14 @@ public enum SharedAlbumDiscovery {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 || ($0.name == $1.name && ($0.providerName ?? "") < ($1.providerName ?? ""))
         }
+    }
+
+    /// パスがバックアップ側（`…/<端末>/Backup/…`）にあるか（共有セットとして扱わない）。
+    /// 端末フォルダの直下に `Backup` があり、その配下なら真。`Share` 配下・旧配置は偽。
+    static func isUnderBackupSubfolder(_ folderLower: String, root: String) -> Bool {
+        let relative = folderLower.dropFirst(root.count).split(separator: "/")
+        // <端末>/Backup/... の形（端末フォルダの次の要素が Backup）。
+        guard relative.count >= 2 else { return false }
+        return relative[1].lowercased() == BackupLayout.backupSubfolder.lowercased()
     }
 }

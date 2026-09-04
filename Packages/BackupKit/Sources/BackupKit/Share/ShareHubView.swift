@@ -114,8 +114,8 @@ struct ShareProvideView: View {
 
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
     @AppStorage(ShareSettingsKeys.shareNamesEnabled) private var shareNames = true
-    @AppStorage(ShareSettingsKeys.shareRootFolder)
-    private var shareRoot = ShareSettingsKeys.defaultShareRootFolder
+    /// 共有の置き場（表示のみ・ADR-175）。バックアップと同じルートの端末フォルダ配下 `Share/`。
+    private var shareRoot: String { ShareSettingsKeys.currentShareRoot() }
     @AppStorage(BackupSettingsKeys.destination)
     private var backupDestination: BackupDestination = .disabled
 
@@ -243,18 +243,27 @@ struct ShareProvideView: View {
         }
     }
 
+    /// 共有の置き場は**設定ではなく表示**（ADR-175）。以前は `/MosaicShare` を自由に決められたが、
+    /// バックアップと別ルートになって Dropbox 上で端末フォルダが 2 箇所に散っていた。
+    /// いまはバックアップのルートから導出するので、ここでは場所を見せるだけ。
     private var shareRootSection: some View {
         Section {
-            TextField(L("Shared folder"), text: $shareRoot)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                // ルートを変えたら表示の除外パスも更新する（変えないと旧ルートが隠れたまま・
-                // 新ルートが Cloud/All に二重表示される）。家族フォルダ変更と同じ経路を叩く。
-                .onChange(of: shareRoot) { _, _ in onShareRootChanged() }
+            LabeledContent(L("Shared folder")) {
+                Text(verbatim: shareRoot)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+            }
+            if let legacy = ShareSettingsKeys.legacyShareRootIfAny() {
+                // 旧配置のフォルダは移行しない（ユーザー判断）。残っていることだけ伝える。
+                Text(L("Earlier versions shared into “\(legacy)”. Those files were left in place — you can delete that folder in Dropbox once your family has switched to the new location."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text(L("Shared Folder (yours)"))
         } footer: {
-            Text(L("Share this folder with others in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it."))
+            Text(L("Share this folder with others in the Dropbox app (inviting them as view-only is recommended). It sits under your backup folder, next to your backups, so everything for this device is in one place."))
         }
     }
 }

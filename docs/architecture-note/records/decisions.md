@@ -56,6 +56,35 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-175 Dropbox の配置を 1 ルートにまとめる（`<root>/<端末>/Backup` と `Share`）
+- 状態: 採用
+- 文脈: バックアップ（`/MosaicPhotos/<端末>/`）と共有（`/MosaicShare/<端末>/`）が**別のルート**で、
+  端末フォルダが 2 箇所に散り、Dropbox 上で「どこに何があるか」が分かりにくかった
+  （実フィードバック「わかりやすく整理したい」）。
+- 決定:
+  ```
+  /MosaicPhotos/<端末>/Backup/   ← 写真本体と .mosaic メタデータ
+  /MosaicPhotos/<端末>/Share/    ← 共有セット（People-◯◯ / Album-◯◯ …）
+  ```
+  (1) パスの組み立てを `BackupLayout`（純ロジック）に集約する。**冪等**——配下のパスを渡されても
+  `…/Backup/<端末>/Backup` と二重にならない（実装直後に二重化し、テストが捕まえた）。
+  (2) 共有ルートの設定（`/MosaicShare`）は**廃止**し、バックアップルートから導出する。
+  設定画面の入力欄は表示だけにする。
+  (3) **既存データは移行しない**（ユーザー判断）。バックアップは配置の版（`layoutVersion`）で
+  台帳をリセットして新配置へ**上げ直す**。共有セットは記録を `.pending` へ戻して新配置へ
+  **コピーし直す**。旧フォルダは Dropbox に残り、片付けは人が行う（設定画面に案内を出す）。
+  (4) **オフロード台帳は消さない**——オフロード済みの写真は端末に無く、旧パスのクラウド代替が
+  唯一の実体。参照を失うと辿れなくなる。
+  (5) 受信側: 家族が `/MosaicPhotos` ごと共有してきても `Backup/` の写真を共有アルバムに
+  しない（`Share/` 配下だけを見る）。旧配置（`/MosaicShare`）の家族フォルダは従来どおり。
+  (6) 表示: 自分の共有ルート（新）と旧ルート（設定に残っていれば）を Cloud/All から隠す。
+- 結果: 端末ごとに 1 箇所を見れば済む。トレードオフ: 初回は**写真の再転送**が起きる
+  （新パスには 409/hash 照合が効かない）。家族は共有フォルダの**招待し直し**が要る。
+- 関連: `BackupLayout.swift` / `BackupEngine.swift`（`resetForLayoutChangeIfNeeded`）/
+  `ShareSettingsKeys.swift` / `ShareSyncEngine+Sync.swift`（`migrateFolderIfNeeded`）/
+  `SharedAlbumDiscovery.swift` / `ShareSupport.swift`（`ShareVisibility`）/
+  `DeviceBackupRootTests` / `BackupLayoutChangeTests` / `ShareScenarioTests` / ADR-41 / ADR-112。
+
 ## ADR-171 メタデータは 1 枚ごとに追記し、完了記録より先に永続化する
 - 状態: 採用（残課題 P1・dataLoss）
 - 文脈: 人物名・アルバム・位置は**実行の最後にまとめて**送っていた。夜間ウィンドウは毎回

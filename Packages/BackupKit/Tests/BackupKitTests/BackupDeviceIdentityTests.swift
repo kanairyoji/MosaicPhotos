@@ -105,36 +105,47 @@ struct BackupDeviceIDStabilityTests {
 
 // MARK: - 端末フォルダの付け方（二重化の防止）
 
-/// ⚠️ 端末フォルダを二重に足すと `/Root/iPhone-XXXX/iPhone-XXXX/…` になり、
+/// ⚠️ 端末フォルダを二重に足すと `/Root/iPhone-XXXX/Backup/iPhone-XXXX/Backup/…` になり、
 /// **同じ写真が別パスへ再アップロードされる**（台帳に無いパスなので未バックアップ扱い）。
 /// 一覧には旧パスと新パスの両方が並び、「古い写真が急に増えた」ように見える。
-@Suite("端末フォルダの付与")
+/// ADR-175: 実保存先は `<root>/<端末>/Backup`、共有は `<root>/<端末>/Share`。
+@Suite("端末フォルダの付与（ADR-175 の配置）")
 struct DeviceBackupRootTests {
 
-    @Test("ルートに端末フォルダを 1 段足す")
-    func appendsOnce() {
+    @Test("ルートに端末フォルダと Backup を足す")
+    func appendsDeviceAndBackup() {
         #expect(BackupEngine.deviceBackupRoot(for: "/MosaicPhotos", deviceFolder: "iPhone-8D1681")
-                == "/MosaicPhotos/iPhone-8D1681")
+                == "/MosaicPhotos/iPhone-8D1681/Backup")
     }
 
-    @Test("既に端末フォルダ配下なら足さない（冪等）")
+    /// ⚠️ 実装直後にこれが落ちた（`…/Backup/iPhone-X/Backup` と二重になった）。
+    /// 結果が設定へ書き戻る経路が 1 つでもあれば、この二重化がそのまま再アップロードになる。
+    @Test("既に配下のパスを渡しても二重にしない（冪等）")
     func idempotent() {
         let once = BackupEngine.deviceBackupRoot(for: "/MosaicPhotos", deviceFolder: "iPhone-8D1681")
         #expect(BackupEngine.deviceBackupRoot(for: once, deviceFolder: "iPhone-8D1681") == once,
                 "二重に足すと同じ写真が別パスへ再アップロードされる")
+        // 端末フォルダまでのパスを渡しても同じ答えになる。
+        #expect(BackupEngine.deviceBackupRoot(for: "/MosaicPhotos/iPhone-8D1681",
+                                              deviceFolder: "iPhone-8D1681") == once)
     }
 
     @Test("大小が違っても二重にしない")
     func caseInsensitive() {
         #expect(BackupEngine.deviceBackupRoot(for: "/mosaicphotos/iphone-8d1681",
                                               deviceFolder: "iPhone-8D1681")
-                == "/mosaicphotos/iphone-8d1681")
+                == "/mosaicphotos/iphone-8d1681/Backup")
+        // 配下のパスを渡したときは末尾の `backup` を剥がして付け直すので、大小は正規形に揃う。
+        // Dropbox はパスの大小を無視するので、二重化さえしなければよい（大小一致は求めない）。
+        #expect(BackupEngine.deviceBackupRoot(for: "/mosaicphotos/iphone-8d1681/backup",
+                                              deviceFolder: "iPhone-8D1681").lowercased()
+                == "/mosaicphotos/iphone-8d1681/backup")
     }
 
     @Test("末尾のスラッシュや前後の空白を正規化する")
     func normalizesInput() {
         #expect(BackupEngine.deviceBackupRoot(for: " /MosaicPhotos/ ", deviceFolder: "iPhone-1")
-                == "/MosaicPhotos/iPhone-1")
+                == "/MosaicPhotos/iPhone-1/Backup")
     }
 
     @Test("端末フォルダ名が空なら何も足さない")
@@ -147,6 +158,19 @@ struct DeviceBackupRootTests {
     @Test("途中に同名があっても末尾でなければ足す")
     func onlySuffixCounts() {
         #expect(BackupEngine.deviceBackupRoot(for: "/iPhone-1/Photos", deviceFolder: "iPhone-1")
-                == "/iPhone-1/Photos/iPhone-1")
+                == "/iPhone-1/Photos/iPhone-1/Backup")
+    }
+
+    /// 共有はバックアップと**同じ端末フォルダ**の隣に置く（ADR-175 の要点）。
+    @Test("共有ルートはバックアップと同じ端末フォルダの Share")
+    func shareRootSitsNextToBackup() {
+        let backup = BackupLayout.backupRoot(root: "/MosaicPhotos", deviceFolder: "iPhone-1")
+        let share = BackupLayout.shareRoot(root: "/MosaicPhotos", deviceFolder: "iPhone-1")
+        #expect(backup == "/MosaicPhotos/iPhone-1/Backup")
+        #expect(share == "/MosaicPhotos/iPhone-1/Share")
+        #expect((backup as NSString).deletingLastPathComponent
+                == (share as NSString).deletingLastPathComponent, "端末フォルダが揃っていない")
+        // Share 配下のパスを渡されても Backup と混ざらない。
+        #expect(BackupLayout.backupRoot(root: share, deviceFolder: "iPhone-1") == backup)
     }
 }

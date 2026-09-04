@@ -31,10 +31,12 @@ public enum ShareSettingsKeys {
             ? true : defaults.bool(forKey: provideEnabled)
     }
 
-    /// 自分が共有を書き出すルートフォルダ（既定 `/MosaicShare`）。
-    /// ユーザーはこのフォルダを Dropbox 側で家族に共有する（閲覧のみ招待を推奨）。
-    public static let shareRootFolder = "shareRootFolder"
-    public static let defaultShareRootFolder = "/MosaicShare"
+    /// 旧: 自分が共有を書き出すルートフォルダ（既定 `/MosaicShare`）。
+    ///
+    /// ⚠️ **廃止**（ADR-175）。共有はバックアップと同じルートの端末フォルダ配下 `Share/` に置く
+    /// ので、共有だけの別ルートは持たない。キーは**旧設定の検出**（移行案内）のためだけに残す。
+    public static let legacyShareRootFolder = "shareRootFolder"
+    public static let legacyDefaultShareRootFolder = "/MosaicShare"
 
     /// 家族から共有されたフォルダ（受信側）。JSON エンコードした [String]。
     /// 同期ルートへの追加と解析サイドカーの取り込み対象を兼ねる。
@@ -43,14 +45,26 @@ public enum ShareSettingsKeys {
     /// 取り込み済みサイドカーの rev 記録（[path: rev] の JSON）。同一 rev の再取り込みを省く。
     public static let importedSidecarRevs = "shareImportedSidecarRevs"
 
-    /// 現在の共有ルート（正規化済み）。
+    /// 現在の共有ルート（ADR-175）: **バックアップと同じルート**の端末フォルダ配下 `Share/`。
+    ///
+    /// ⚠️ 旧設定（`/MosaicShare`）はもう見ない。`SharePlanning.setFolderPath` は
+    /// `deviceFolder` を足す引数を持つが、ここで返す値は**端末フォルダ込み**なので
+    /// 呼び出し側は `deviceFolder: nil` で使う（二重に足さない）。
     public static func currentShareRoot(_ defaults: UserDefaults = .standard) -> String {
-        let raw = defaults.string(forKey: shareRootFolder) ?? defaultShareRootFolder
+        let backupRoot = defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
+            ?? BackupSettingsKeys.defaultDropboxFolder
+        return BackupLayout.shareRoot(root: backupRoot,
+                                      deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
+
+    /// 旧配置の共有ルート（`/MosaicShare`）が設定に残っているか。
+    /// 移行しない方針（ADR-175）なので、**旧フォルダが残っていることを案内する**ためだけに使う。
+    public static func legacyShareRootIfAny(_ defaults: UserDefaults = .standard) -> String? {
+        guard let raw = defaults.string(forKey: legacyShareRootFolder) else {
+            return nil
+        }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "/" else { return defaultShareRootFolder }
-        var s = trimmed.hasPrefix("/") ? trimmed : "/" + trimmed
-        while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
-        return s
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// 家族フォルダ一覧（正規化済み・重複除去）。

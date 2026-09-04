@@ -6,6 +6,9 @@ public enum BackupSettingsKeys {
     public static let lastReconcileAt = "backup.lastReconcileAt"
     public static let destination = "backupDestination"
     public static let dropboxFolder = "backupDropboxFolder"
+    /// バックアップの配置の版（`BackupLayout.currentVersion`）。版が変わったら台帳をリセットして
+    /// 新配置へ上げ直す（ADR-175・既存データは移行しない）。
+    public static let layoutVersion = "backup.layoutVersion"
     /// `dropboxFolder` の既定値（アップロード先フォルダ）。
     public static let defaultDropboxFolder = "/MosaicPhotos"
     public static let uploadedLocalIDs = "backupUploadedLocalIDs"

@@ -351,7 +351,7 @@ public final class ShareSyncEngine {
         // 空名を許すと共有ルートごと消える。記録だけ消して手動対応に委ねる。
         guard let folder = SharePlanning.setFolderPath(
                 shareRoot: ShareSettingsKeys.currentShareRoot(defaults), folderName: set.folderName,
-                deviceFolder: BackupDeviceIdentity.currentFolderName()) else {
+                deviceFolder: nil /* ADR-175: shareRoot は端末フォルダ込み */) else {
             BackupLogger.error("Share: refusing to delete set with invalid folder name")
             lastError = .invalidFolderName
             return false

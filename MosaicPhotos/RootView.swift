@@ -100,6 +100,9 @@ final class HomeStores {
         let mergedStore = MergedPhotoStore(dropboxStore: dropboxStore)
         await Task.yield()
         let backupEngine = BackupEngine(auth: auth)
+        // ADR-175: 配置の版が変わっていれば台帳をリセット（新配置 `Backup/` へ上げ直す）。
+        // 起動直後・バックアップが動く前に 1 回だけ。
+        await backupEngine.resetForLayoutChangeIfNeeded()
         await Task.yield()
         let albumScanner = LocalAlbumScanner()
         let peopleEngine = await makePeopleEngine(dropboxStore: dropboxStore)

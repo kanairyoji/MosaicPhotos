@@ -215,9 +215,15 @@ private struct PreparedImport: Sendable {
 enum ShareVisibility {
     /// 自分の共有ルートを Cloud/All の表示から除外する（原本と共有コピーの重複表示を防ぐ）。
     /// ただしそのパスが「家族フォルダ」として登録されている場合は除外しない（受信側）。
+    ///
+    /// ⚠️ ADR-175 で共有ルートは `<backup root>/<端末>/Share` になった。バックアップルートは
+    /// 同期対象（ADR-44）なので、除外しないと**自分の共有コピーが必ず一覧に出る**。
+    /// 旧配置（`/MosaicShare`）が設定に残っていれば、そちらも引き続き隠す（旧フォルダは
+    /// 移行せず残す方針なので、片付けるまで二重表示になるのを防ぐ）。
     static func apply(to store: DropboxPhotoStore) {
-        let root = ShareSettingsKeys.currentShareRoot().lowercased()
         let family = ShareSettingsKeys.currentFamilyFolders().map { $0.lowercased() }
-        store.setExcludedPathPrefixes(family.contains(root) ? [] : [root])
+        var roots = [ShareSettingsKeys.currentShareRoot().lowercased()]
+        if let legacy = ShareSettingsKeys.legacyShareRootIfAny()?.lowercased() { roots.append(legacy) }
+        store.setExcludedPathPrefixes(roots.filter { !family.contains($0) })
     }
 }

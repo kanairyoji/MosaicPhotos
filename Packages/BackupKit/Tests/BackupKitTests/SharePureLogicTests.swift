@@ -431,6 +431,41 @@ struct SharedAlbumDiscoveryTests {
         #expect(albums.first { $0.name == "Trip" }?.coverPath == "/MosaicShare/Trip/a.jpg")
     }
 
+    /// ADR-175: 共有はバックアップと同じルートの端末フォルダ配下 `Share/`。
+    /// 家族が `/MosaicPhotos` ごと共有してきても、**`Backup/` の写真を共有アルバムにしない**。
+    @Test("新配置ではルートごと共有されても Backup/ の写真は共有アルバムにならない")
+    func newLayoutIgnoresBackupSubfolder() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: [
+                "/MosaicPhotos/iPhone-1/Share/People-金居家/a.jpg",
+                "/MosaicPhotos/iPhone-1/Share/People-金居家/b.jpg",
+                "/MosaicPhotos/iPhone-1/Backup/IMG_0001.HEIC",     // ← 個人のバックアップ
+                "/MosaicPhotos/iPhone-1/Backup/IMG_0002.HEIC",
+            ],
+            familyRoots: ["/mosaicphotos"])
+        #expect(albums.map(\.name) == ["金居家"], "Backup/ が共有アルバムとして見えている: \(albums.map(\.name))")
+        #expect(albums.first?.providerName == "iPhone-1", "提供者名が端末フォルダになっていない")
+        #expect(albums.first?.photoCount == 2)
+    }
+
+    /// 家族が `Share/` フォルダを直接共有してきた場合（ふつうの使い方）。
+    @Test("Share/ を直接共有された構成でも拾える")
+    func shareSubfolderSharedDirectly() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/MosaicPhotos/iPhone-1/Share/Album-沖縄/a.jpg"],
+            familyRoots: ["/mosaicphotos/iphone-1/share"])
+        #expect(albums.map(\.name) == ["沖縄"])
+    }
+
+    /// 旧配置（`/MosaicShare/…`）は `Backup/` を含まないので、従来どおり全部通る。
+    @Test("旧配置の家族フォルダは従来どおり")
+    func legacyLayoutStillWorks() {
+        let albums = SharedAlbumDiscovery.albums(
+            itemPaths: ["/MosaicShare/iPhone-1/People-金居家/a.jpg"],
+            familyRoots: ["/mosaicshare"])
+        #expect(albums.map(\.name) == ["金居家"])
+    }
+
     @Test("ルート直下の写真はフォルダ自身のアルバムになる（セットを直接共有された構成）")
     func rootItselfAsAlbum() {
         let albums = SharedAlbumDiscovery.albums(
