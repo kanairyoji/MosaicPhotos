@@ -162,15 +162,22 @@ actor AutoAlbumStore {
     /// 付加情報済みの全写真（戦略の入力）。埋め込みは別テーブルなので、この fetch は
     /// メタデータのみで軽量（巨大 blob を一切載せない）。
     func allEnrichedPhotosLite() -> [EnrichedPhoto] {
+        allEnrichedPhotosLite(pageSize: 5000)
+    }
+
+    /// ページ幅を指定できる版（テスト用。継ぎ目の挙動を小さな規模で確かめるため）。
+    func allEnrichedPhotosLite(pageSize: Int) -> [EnrichedPhoto] {
         allEnrichedPhotosLiteCallsForTesting += 1
         // R4: 8.5万件の @Model を一括 materialize するとメモリがスパイクするため、**使い捨て
         // ModelContext でページ fetch→値型化→破棄**し、materialize を 1 ページに有界化する。
         // 蓄積するのは軽量な値型（EnrichedPhoto）だけ。直前の prune/更新を見るよう save 済みにする。
         try? modelContext.save()
-        let pageSize = 5000
         var result: [EnrichedPhoto] = []
         // ⚠️ **カーソル（refKey）で送る**（ADR-143）。オフセットだと、夜間の索引付けが
         // 走査中に行を挿入したときに以降の全ページがずれ、**同じ写真が 2 回**入る。
+        // ⚠️ **並びと `>` の順序を揃える**（`.lexical`・ADR-178）。既定の並びは数字を意識した順
+        // （"dsc5" < "dsc49"）だが `#Predicate` の `>` は単純な文字列比較なので、食い違うと
+        // ページの継ぎ目で**行が飛び、別の行が二重に返る**（5,200 件が 5,755 件になった）。
         var cursor: String?
         while true {
             let ctx = ModelContext(modelContainer)   // ページごとに破棄して materialize を解放
@@ -178,9 +185,9 @@ actor AutoAlbumStore {
             if let cursor {
                 descriptor = FetchDescriptor<PhotoEnrichment>(
                     predicate: #Predicate { $0.refKey > cursor },
-                    sortBy: [SortDescriptor(\.refKey)])
+                    sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
             } else {
-                descriptor = FetchDescriptor<PhotoEnrichment>(sortBy: [SortDescriptor(\.refKey)])
+                descriptor = FetchDescriptor<PhotoEnrichment>(sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
             }
             descriptor.fetchLimit = pageSize
             let records = (try? ctx.fetch(descriptor)) ?? []
@@ -202,14 +209,16 @@ actor AutoAlbumStore {
     /// 実際に `Fatal error: Duplicate values for key: 'C-/写真/…jpg'` でクラッシュした。
     /// refKey の昇順で「前回の最後より大きいもの」を取る（キーセット・ページング）＝
     /// 挿入があってもズレない。
+    /// ⚠️ 並びは `.lexical`（ADR-178）。`>` と同じ順序でないと継ぎ目で行が飛ぶ
+    /// （実測: 160 件中 100 件しか読めなかった＝**意味検索から写真が黙って消える**）。
     func enrichmentVectorPage(after cursor: String?, limit: Int) -> [(refKey: String, clipVector: Data)] {
         var descriptor: FetchDescriptor<PhotoEmbedding>
         if let cursor {
             descriptor = FetchDescriptor<PhotoEmbedding>(
                 predicate: #Predicate { $0.refKey > cursor },
-                sortBy: [SortDescriptor(\.refKey)])
+                sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
         } else {
-            descriptor = FetchDescriptor<PhotoEmbedding>(sortBy: [SortDescriptor(\.refKey)])
+            descriptor = FetchDescriptor<PhotoEmbedding>(sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
         }
         descriptor.fetchLimit = limit
         let records = (try? modelContext.fetch(descriptor)) ?? []

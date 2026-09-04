@@ -209,4 +209,49 @@ struct ScaleRegressionTests {
         #expect(largeCount <= smallCount * 2,
                 "人物 4 倍で fetch が \(smallCount) → \(largeCount) 回に増えた")
     }
+
+    /// 「別の人かもしれない写真」（ADR-177）。**人物の大きさで諦めない**代わりに、
+    /// 読み出しはページ単位で**有界**であること——fetch 回数は「顔数 ÷ ページ」に比例し、
+    /// 顔数そのものには比例しない（1 顔 1 fetch に戻ると 1 万顔で 1 万往復になる）。
+    @Test("間違い候補の探索は顔数に比例して fetch しない（ページ単位）")
+    func outlierScanIsPaged() async {
+        // 1 人に多数の顔（同じ向きのベクトル＝必ず 1 クラスタに入る）。
+        func makeBigPerson(faces: Int) async -> (FaceStore, Int) {
+            let store = FaceStore(isStoredInMemoryOnly: true)
+            for i in 0..<faces {
+                let signal = DetectedFaceSignal(
+                    boundingBox: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.3),
+                    embedding: ClipMath.encodeHalf([1, Float(i % 7) * 0.001, 0]), quality: 0.9)
+                await store.recordScan(refKey: "L-big-\(i)", faces: [signal])
+            }
+            let id = await store.clusterCountsForTesting().max { $0.value < $1.value }?.key ?? -1
+            return (store, id)
+        }
+        let (small, smallID) = await makeBigPerson(faces: 40)
+        let (large, largeID) = await makeBigPerson(faces: 160)
+        // 前提: 1 クラスタに全部入っている（fixture が意図した規模か）。
+        #expect(await small.clusterCountsForTesting()[smallID] == 40, "fixture: 40 顔が 1 人になっていない")
+        #expect(await large.clusterCountsForTesting()[largeID] == 160, "fixture: 160 顔が 1 人になっていない")
+
+        let page = 50
+        let smallFetches = await fetchCount {
+            _ = await small.outlierFaces(clusterID: smallID, centroid: [1, 0, 0], threshold: 0.5,
+                                         limit: 24, pageSize: page)
+        }
+        var largeResult: [PersonOutlierFace] = []
+        let largeFetches = await fetchCount {
+            largeResult = await large.outlierFaces(clusterID: largeID, centroid: [1, 0, 0],
+                                                   threshold: 0.5, limit: 160, pageSize: page).faces
+        }
+        // ⚠️ **全件を読めていること**（ここが最初は壊れていた）。並びと `>` の順序が食い違うと
+        // ページの継ぎ目で行が飛び、160 顔のうち 100 顔しか読めなかった。
+        // 回数だけ見ていると「少ないほど良い」に見えて、取りこぼしを見逃す。
+        #expect(largeResult.count == 160, "ページの継ぎ目で顔を取りこぼしている: \(largeResult.count)/160")
+        #expect(Set(largeResult.map(\.faceID)).count == 160, "同じ顔を二重に読んでいる")
+        // 40 顔 → 1 ページ、160 顔 → 4 ページ。顔数 4 倍で fetch はちょうど 4 倍
+        // （1 顔 1 fetch なら 160 回になる）。
+        #expect(largeFetches == 4, "ページ単位で読めていない: \(largeFetches)（1 顔 1 fetch なら 160）")
+        #expect(smallFetches == 1)
+    }
 }
+

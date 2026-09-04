@@ -135,7 +135,7 @@ struct FaceDecisionExplainTests {
 
     /// ⚠️ 空リストの理由を UI が言い分けられること（ADR-145）。
     /// 「候補が無い」と「計算していない」を混ぜると、画面から消えた理由が分からない。
-    @Test("上限を超える人物では、候補が空でも「未計算」と分かる")
+    @Test("大きな人物でもページで読み、上位 N 件は全体の中で正しい")
     func outlierStatusExplainsEmptyList() async {
         let store = FaceStore(isStoredInMemoryOnly: true)
         for i in 0..<6 {
@@ -152,17 +152,19 @@ struct FaceDecisionExplainTests {
         // 前提: 6 枚の人物。
         #expect(map[aID]?.count == 6)
 
-        // 上限 3 枚（＜メンバー数）なら「未計算」を返す。
-        let skipped = await store.outlierFaces(clusterID: aID, centroid: [1, 0, 0],
-                                               threshold: 0.5, limit: 24, scanLimit: 3)
-        #expect(skipped.faces.isEmpty)
-        #expect(skipped.status == .tooManyMembers(limit: 3, members: 6))
-
-        // 上限内なら計算済み（空でも「計算した」と分かる）。
+        // ⚠️ 人物の大きさで諦めない（実フィードバック「顔が N 枚あり、未確認と出る」）。
+        // ページ（2 件）を跨いで読んでも、上位 `limit` 件が**全体の中で**似ている度の低い順になること。
         let computed = await store.outlierFaces(clusterID: aID, centroid: [1, 0, 0],
-                                                threshold: 0.5, limit: 24)
+                                                threshold: 0.5, limit: 3, pageSize: 2)
         #expect(computed.status == .computed)
-        #expect(!computed.faces.isEmpty)
+        #expect(computed.faces.count == 3, "limit 件に絞られていない")
+        let sims = computed.faces.map(\.similarity)
+        #expect(sims == sims.sorted(), "似ている度の昇順になっていない: \(sims)")
+        // 全件を 1 ページで読んだ結果と一致する（ページ分割で取りこぼしていない）。
+        let whole = await store.outlierFaces(clusterID: aID, centroid: [1, 0, 0],
+                                             threshold: 0.5, limit: 3, pageSize: 1000)
+        #expect(computed.faces.map(\.faceID) == whole.faces.map(\.faceID),
+                "ページを跨ぐと結果が変わる")
 
         // 顔が無い人物は「顔なし」。
         let empty = await store.outlierFaces(clusterID: 9999, centroid: [1, 0, 0], threshold: 0.5)

@@ -247,8 +247,6 @@ extension PersonInspectorView {
             return L("(None) Every face of this person was checked and none stood out.")
         case .noMembers:
             return L("(None) This person has no faces yet.")
-        case .tooManyMembers(let limit, let members):
-            return L("(Not checked) This person has \(members) faces, more than the \(limit) this check covers.")
         }
     }
 
