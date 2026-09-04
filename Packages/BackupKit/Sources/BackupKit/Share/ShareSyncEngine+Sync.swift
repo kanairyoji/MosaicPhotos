@@ -98,88 +98,26 @@ extension ShareSyncEngine {
     private func migrateFolderIfNeeded(set: ShareSetLite, shareRoot: String,
                                        store: BackupStore, copier: DropboxShareCopier,
                                        token: String) async -> ShareSetLite {
-        // ⚠️ 検査済みの印があれば何もしない。無いと**毎回の反映で旧配置を探し続ける**
-        // （存在しないパスへの move が 1 セットにつき 1 往復・規約: 無いものを繰り返し探さない）。
+        // ⚠️ 検査済みの印があれば何もしない（規約: 無いものを繰り返し探さない）。
         guard set.layoutVersion != ShareSet.currentLayoutVersion else { return set }
+
+        // ADR-175: 配置が `/MosaicShare/<端末>/…` から `/MosaicPhotos/<端末>/Share/…` へ変わった。
+        // **旧フォルダは動かさない**（ユーザー判断＝既存データは移行しない）。
+        // 代わりに、このセットの記録を「未コピー」へ戻して**新配置へコピーし直す**。
+        // 種類の接頭辞（`People-` 等）が無い旧々セットは、ついでに名前も付け直す。
         let kind = set.sourceKey.flatMap(ShareSourceKey.init)?.kind
         let allNames = await store.allShareSets().map(\.folderName)
-        // 種類が分からない（作成元不明の旧セット）なら名前は据え置き、置き場所だけ直す。
         let newName = ShareNaming.migratedFolderName(current: set.folderName, name: set.name,
                                                      kind: kind, existing: allNames)
             ?? set.folderName
-        let device = BackupDeviceIdentity.currentFolderName()
-        guard let desired = SharePlanning.setFolderPath(shareRoot: shareRoot,
-                                                        folderName: newName,
-                                                        deviceFolder: device) else { return set }
-
-        /// 検査が済んだ印（移行不要だった場合も含む）。以後この探索は走らない。
-        func markChecked() async -> ShareSetLite {
-            await store.markShareSetLayoutCurrent(setID: set.id)
-            return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
-                                createdAt: set.createdAt, sidecarChecksum: set.sidecarChecksum,
-                                sourceKey: set.sourceKey,
-                                layoutVersion: ShareSet.currentLayoutVersion)
-        }
-
-        // 旧レイアウトの候補（上から順に試す）。端末フォルダ以前は共有ルート直下だった。
-        var candidates: [String] = []
-        for path in [
-            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: set.folderName,
-                                        deviceFolder: device),
-            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: set.folderName,
-                                        deviceFolder: nil),
-            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: newName,
-                                        deviceFolder: nil),
-        ] {
-            guard let path, path.lowercased() != desired.lowercased(),
-                  !candidates.contains(where: { $0.lowercased() == path.lowercased() })
-            else { continue }
-            candidates.append(path)
-        }
-        guard !candidates.isEmpty else { return await markChecked() }
-
-        func adopt(movedFrom old: String) async -> ShareSetLite {
-            await store.renameShareSet(setID: set.id, folderName: newName,
-                                       oldPathPrefix: old, newPathPrefix: desired)
-            return ShareSetLite(id: set.id, name: set.name, folderName: newName,
-                                createdAt: set.createdAt, sidecarChecksum: nil,
-                                sourceKey: set.sourceKey,
-                                layoutVersion: ShareSet.currentLayoutVersion)
-        }
-
-        for old in candidates {
-            switch await copier.moveFolder(from: old, to: desired, token: token) {
-            case .moved:
-                BackupLogger.info("Share: moved '\(old)' → '\(desired)'")
-                return await adopt(movedFrom: old)
-            case .destinationExists:
-                // 移動先が既にある（`to/conflict/folder`）。move では永久に解決しないので
-                // **移動先を正とする**——記録の接頭辞だけ付け替えて移行を終わらせる。
-                //
-                // ⚠️ これが無いと、反映のたびに 409 → 旧接頭辞のままの記録 → コピー先も旧フォルダ
-                // （既にファイルがある＝全件 conflict）→ 「コピー失敗」で重複掃除もスキップ、という
-                // 収束しない輪に入る（実機 diagnostics-64〜66 で copy=4297 が 3 ログとも同じ数字）。
-                // 付け替えたあとは、移動先に既に在るファイルは**採用**され（ハッシュ一致）、
-                // 足りないぶんだけサーバーサイドコピーで埋まる＝通常の収束経路に戻る。
-                //
-                // 旧フォルダは**消さない**（共有相手にも見えるユーザーのデータ。中身は次の反映で
-                // 移動先へ作り直される）。残骸の掃除は人の判断に委ねるため、場所をログに残す。
-                BackupLogger.info("Share: '\(desired)' already exists — adopting it as the set folder; "
-                    + "the old folder '\(old)' is left as-is (delete it manually if unneeded)")
-                return await adopt(movedFrom: old)
-            case .failed:
-                // 通信断・権限など。次回に持ち越す（他の候補も同じ理由で失敗する）。
-                BackupLogger.error("Share: move '\(old)' → '\(desired)' failed — retrying next run")
-                return set
-            case .sourceMissing:
-                continue   // その候補は存在しない。次の候補へ。
-            }
-        }
-
-        // どの候補も実在しない＝まだ 1 度も反映していない。記録だけ現在のレイアウトへ。
-        guard newName != set.folderName else { return await markChecked() }
-        BackupLogger.info("Share: renamed '\(set.folderName)' → '\(newName)' (not yet on Dropbox)")
-        return await adopt(movedFrom: candidates[0])
+        await store.resetShareSetForRelayout(setID: set.id, folderName: newName)
+        BackupLogger.info("Share: '\(set.folderName)' → '\(newName)' re-created under the new layout "
+                          + "(old folder left in place)")
+        Diagnostics.mark("share: 配置変更のため '\(set.name)' を新しい場所へコピーし直します（旧フォルダは残します）")
+        return ShareSetLite(id: set.id, name: set.name, folderName: newName,
+                            createdAt: set.createdAt, sidecarChecksum: nil,
+                            sourceKey: set.sourceKey,
+                            layoutVersion: ShareSet.currentLayoutVersion)
     }
 
     /// テスト用: 現在のファイル墓標。
@@ -261,7 +199,7 @@ extension ShareSyncEngine {
               let folder = SharePlanning.setFolderPath(
                 shareRoot: ShareSettingsKeys.currentShareRoot(defaults),
                 folderName: set.folderName,
-                deviceFolder: BackupDeviceIdentity.currentFolderName()) else { return }
+                deviceFolder: nil /* ADR-175: shareRoot は端末フォルダ込み */) else { return }
 
         let localIDs = items.filter { $0.refKey.hasPrefix("L-") }.map { String($0.refKey.dropFirst(2)) }
         let backupRefs = await store.backupRefs(forLocalIdentifiers: localIDs)
@@ -288,7 +226,7 @@ extension ShareSyncEngine {
         guard !items.isEmpty else { return }
         guard let setFolder = SharePlanning.setFolderPath(
                 shareRoot: shareRoot, folderName: set.folderName,
-                deviceFolder: BackupDeviceIdentity.currentFolderName()) else {
+                deviceFolder: nil /* ADR-175: shareRoot は端末フォルダ込み */) else {
             BackupLogger.error("Share sync: invalid folder name — skipping set")
             return
         }

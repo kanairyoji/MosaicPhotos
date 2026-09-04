@@ -110,6 +110,29 @@ extension BackupStore {
         try? modelContext.save()
     }
 
+    /// 配置変更（ADR-175）: セットを**新配置でコピーし直す**状態に戻す。
+    ///
+    /// 旧フォルダは動かさない（既存データは移行しない）ので、記録上のコピー先
+    /// （`sharedPath` / `sharedContentHash`）を捨てて `.pending` へ戻す。
+    /// 次の反映が新しい共有ルートへコピーし、サイドカーも作り直す。
+    public func resetShareSetForRelayout(setID: UUID, folderName: String) {
+        let id = setID
+        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
+            predicate: #Predicate { $0.id == id })).first else { return }
+        set.folderName = folderName
+        set.layoutVersion = ShareSet.currentLayoutVersion
+        set.sidecarChecksum = nil
+        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
+            predicate: #Predicate { $0.setID == id }))) ?? []
+        for item in items {
+            item.stateRaw = ShareItemState.pending.rawValue
+            item.sharedPath = nil
+            item.sharedContentHash = nil
+            item.copiedAt = nil
+        }
+        try? modelContext.save()
+    }
+
     /// フォルダ配置の検査が済んだ印を付ける（移行不要だった場合も含む）。
     /// これが無いと、旧配置の候補パスを**毎回の反映で探し続ける**（往復の無駄）。
     public func markShareSetLayoutCurrent(setID: UUID) {

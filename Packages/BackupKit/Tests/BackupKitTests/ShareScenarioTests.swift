@@ -19,7 +19,11 @@ func isolatedShareDefaults() -> UserDefaults {
 @MainActor
 struct ShareScenarioTests {
 
-    private static let shareRoot = "/MosaicShare"
+    /// ADR-175: 共有ルートはバックアップルート（`/MosaicPhotos`）の端末フォルダ配下 `Share/`。
+    private static let backupRoot = "/MosaicPhotos"
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
 
 
     /// 反映エンジン一式を組む。バックアップ済み写真を `backup` に与える。
@@ -29,7 +33,7 @@ struct ShareScenarioTests {
         // provide を OFF にすると反映が丸ごと空振りする（実際に踏んだ・原因が分かりにくい）。
         let defaults = isolatedShareDefaults()
         defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
-        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
 
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
@@ -59,7 +63,7 @@ struct ShareScenarioTests {
     private func setFolder(_ name: String, kind: ShareSourceKey.Kind? = nil) -> String {
         SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
                                     folderName: ShareNaming.folderName(name, kind: kind),
-                                    deviceFolder: BackupDeviceIdentity.currentFolderName())!
+                                    deviceFolder: nil)!   // shareRoot は端末フォルダ込み（ADR-175）
             .lowercased()
     }
 
@@ -89,144 +93,57 @@ struct ShareScenarioTests {
         #expect(afterMore == afterFirst, "反映のたびにファイルが増減する: \(afterMore)")
     }
 
-    /// 接頭辞を入れる前に作った共有セットは、フォルダ名が `Trip` のまま残る。
-    /// **作り直させずに**改名で追いつかせる（写真の再コピーは起きてはならない）。
-    @Test("接頭辞なしの既存セットは反映時に改名される（写真は再コピーしない）")
-    func legacySetIsRenamedInPlace() async {
+    /// ADR-175: 配置が変わったセットは**旧フォルダを動かさず**、新配置へコピーし直す。
+    /// 既存データは移行しない（ユーザー判断）——旧フォルダは Dropbox に残り、人が片付ける。
+    @Test("旧配置のセットは新配置へコピーし直され、旧フォルダは残る")
+    func legacySetIsRecopiedUnderNewLayout() async {
         let (engine, store, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
         let sourceKey = ShareSourceKey.group(UUID()).encoded
 
-        // 接頭辞が付く前の状態を再現（フォルダ名 = 素のセット名）。
+        // 旧配置（`/MosaicShare/<端末>/Group`）にコピー済みだった状態を再現する。
+        let legacyRoot = "/MosaicShare/\(BackupDeviceIdentity.currentFolderName())/Group".lowercased()
+        await server.seed(legacyRoot, hash: "", isFolder: true)
+        await server.seed("\(legacyRoot)/a.jpg", hash: "hA")
+        await server.seed("\(legacyRoot)/b.jpg", hash: "hB")
         let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
                                                              sourceKey: sourceKey)
         _ = await store.addShareItems(setID: set.id, refKeys: ["L-a", "L-b"])
+        await store.updateShareItems(setID: set.id, updates: [
+            (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
+             sharedPath: "\(legacyRoot)/a.jpg", sharedContentHash: "hA"),
+            (refKey: "L-b", state: .copied, sourcePath: "/mosaicphotos/b.jpg",
+             sharedPath: "\(legacyRoot)/b.jpg", sharedContentHash: "hB")])
+
         await engine.syncNow()
 
-        let old = SharePlanning.setFolderPath(
-            shareRoot: Self.shareRoot, folderName: "Group",
-            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+        // 新配置へコピーされている（種類の接頭辞も付く）。
         let new = setFolder("Group", kind: .group)
         let files = await sharedFiles(server)
-        #expect(files.count == 2, "改名で写真が増減した: \(files)")
-        #expect(files.allSatisfy { $0.hasPrefix(new + "/") },
-                "新フォルダへ移動していない: \(files)")
-        #expect(!files.contains { $0.hasPrefix(old + "/") }, "旧フォルダが残っている: \(files)")
-
-        // ⚠️ 旧配置の探索は**一度きり**（規約: 無いものを繰り返し探さない）。
-        let movesAfterFirst = await server.requestLog.filter { $0.contains("move_v2") }.count
-
-        // 記録も張り替わっているので、次の反映で再コピーが起きない。
-        await engine.syncNow()
-        #expect(await sharedFiles(server) == files, "改名後の反映でファイルが変わった")
+        #expect(files.sorted() == ["\(new)/a.jpg", "\(new)/b.jpg"], "新配置へコピーされていない: \(files)")
         #expect(await store.allShareSets().first?.folderName == "People-Group")
-        let movesAfterSecond = await server.requestLog.filter { $0.contains("move_v2") }.count
-        #expect(movesAfterSecond == movesAfterFirst,
-                "反映のたびに旧配置を探している（往復の無駄）: \(movesAfterFirst) → \(movesAfterSecond)")
+        // ⚠️ 旧フォルダは**動かさない**（移行しない方針）。
+        #expect(await server.filePaths().contains("\(legacyRoot)/a.jpg"), "旧フォルダを動かしている")
+        #expect(await server.requestLog.contains { $0.contains("move_v2") } == false,
+                "旧配置を move しようとしている")
+
+        // 記録は新配置を指しているので、次の反映で再コピー（＝重複）が起きない。
+        await engine.syncNow()
+        #expect(await sharedFiles(server) == files, "2 回目の反映でファイルが増減した")
     }
 
-    /// ⚠️ これが「Dropbox 上のパスが直らない」の正体（実フィードバック）。端末フォルダが
-    /// 入る前のセットは共有ルート直下にあり、計画は `sharedPath` をそのまま再利用するので、
-    /// **フォルダを作る先だけ新レイアウトになり写真は旧パスに書かれ続ける**。
-    @Test("端末フォルダ以前の共有ルート直下セットも新レイアウトへ移動する")
-    func legacyRootLevelSetIsMovedUnderDeviceFolder() async {
-        let (engine, store, server) = await makeStack(backup: [
-            ("a", "/mosaicphotos/a.jpg", "hA")])
-        let sourceKey = ShareSourceKey.group(UUID()).encoded
-
-        // 旧レイアウト（`<root>/<セット名>`・端末フォルダ無し）を再現する。
-        let legacy = SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
-                                                 folderName: "Group")!.lowercased()
-        await server.seed(legacy, hash: "", isFolder: true)
-        await server.seed("\(legacy)/a.jpg", hash: "hA")
-        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
-                                                             sourceKey: sourceKey)
-        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
-        await store.updateShareItems(setID: set.id, updates: [
-            (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
-             sharedPath: "\(legacy)/a.jpg", sharedContentHash: "hA")])
-
-        await engine.syncNow()
-
-        let files = await sharedFiles(server)
-        #expect(files == ["\(setFolder("Group", kind: .group))/a.jpg"],
-                "新レイアウトへ移動していない: \(files)")
-        #expect(await store.allShareSets().first?.folderName == "People-Group")
-
-        // 記録も張り替わっているので、次の反映で再コピー（＝重複）が起きない。
-        await engine.syncNow()
-        #expect(await sharedFiles(server) == files, "移動後の反映でファイルが増減した")
-    }
-
-    /// 改名できない回（**通信断**）に記録だけ進めると、クラウド上の実体を見失って全部
-    /// コピーし直す。通信の失敗は次回に持ち越し、**元のフォルダのまま使い続ける**こと。
-    @Test("改名が通信で失敗した回は元のフォルダ名のまま反映を続ける")
-    func failedRenameKeepsOldFolder() async {
-        let (engine, store, server) = await makeStack(backup: [
-            ("a", "/mosaicphotos/a.jpg", "hA")])
-        let sourceKey = ShareSourceKey.group(UUID()).encoded
-        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
-                                                             sourceKey: sourceKey)
+    /// 配置の検査は**一度きり**（規約: 無いものを繰り返し探さない）。
+    @Test("配置の切り替えは 1 回だけで、以後の反映は通常どおり")
+    func relayoutHappensOnce() async {
+        let (engine, store, _) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
+        let set = await store.createLegacyShareSetForTesting(
+            name: "Group", folderName: "Group", sourceKey: ShareSourceKey.group(UUID()).encoded)
         _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
 
-        // 旧フォルダは反映済み。move は通信エラーで落ちる。
-        let oldFolder = SharePlanning.setFolderPath(
-            shareRoot: Self.shareRoot, folderName: "Group",
-            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
-        await server.seed(oldFolder, hash: "", isFolder: true)
-        await server.setFailMove(true)
         await engine.syncNow()
-
-        #expect(await store.allShareSets().first?.folderName == "Group",
-                "改名に失敗したのに記録だけ進んだ")
-        let files = await sharedFiles(server)
-        #expect(!files.isEmpty && files.allSatisfy { $0.hasPrefix(oldFolder + "/") },
-                "旧フォルダ配下に反映されていない: \(files)")
-    }
-
-    /// ⚠️ 実機で共有の移行が**永久に収束しなかった**形（diagnostics-64〜66）。移動先フォルダが
-    /// 既にあると move は毎回 `to/conflict/folder` で失敗する。旧実装は「失敗＝次回に持ち越し」
-    /// としていたので、記録は旧接頭辞のまま → コピー先も旧フォルダ（既にファイルがある＝全件
-    /// conflict）→ 「コピー失敗」で重複掃除もスキップ、という輪から出られなかった
-    /// （実機ログ 3 本すべてで copy=4297 / dupes=316 が同じ数字のまま）。
-    /// 移動先が既にあるなら**それを正として採用**し、移行を終わらせる。
-    @Test("移動先フォルダが既にあるときは、そちらを採用して移行を終える")
-    func existingDestinationFolderIsAdopted() async {
-        let (engine, store, server) = await makeStack(backup: [
-            ("a", "/mosaicphotos/a.jpg", "hA")])
-        let sourceKey = ShareSourceKey.group(UUID()).encoded
-
-        // 旧レイアウト（共有ルート直下）に反映済み＋新レイアウトのフォルダも既にある状態。
-        let legacy = SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
-                                                 folderName: "Group")!.lowercased()
-        await server.seed(legacy, hash: "", isFolder: true)
-        await server.seed("\(legacy)/a.jpg", hash: "hA")
-        await server.seed(setFolder("Group", kind: .group), hash: "", isFolder: true)
-        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
-                                                             sourceKey: sourceKey)
-        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
-        await store.updateShareItems(setID: set.id, updates: [
-            (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
-             sharedPath: "\(legacy)/a.jpg", sharedContentHash: "hA")])
-
-        await engine.syncNow()
-
-        let newFolder = setFolder("Group", kind: .group)
-        #expect(await store.allShareSets().first?.folderName == "People-Group",
-                "移動先を採用したのに記録が旧のまま＝次回また 409 になる")
-        var files = await sharedFiles(server)
-        #expect(files.contains("\(newFolder)/a.jpg"), "移動先に写真が揃っていない: \(files)")
-        // 旧フォルダは**消さない**（共有相手にも見えるユーザーのデータ）。
-        #expect(files.contains("\(legacy)/a.jpg"), "旧フォルダのファイルを消した: \(files)")
-
-        // ⚠️ ここが回帰の要: 2 回目以降に move を投げ直さない（＝輪から出ている）。
-        let movesAfterFirst = await server.requestLog.filter { $0.contains("move_v2") }.count
-        await engine.syncNow()
-        #expect(await server.requestLog.filter { $0.contains("move_v2") }.count == movesAfterFirst,
-                "反映のたびに同じ移動を試している（409 の輪から出ていない）")
-        files = await sharedFiles(server)
-        await engine.syncNow()
-        #expect(await sharedFiles(server) == files, "採用後の反映でファイルが増減した")
+        let after = await store.allShareSets().first
+        #expect(after?.layoutVersion == ShareSet.currentLayoutVersion, "配置の版が更新されていない")
+        #expect(after?.folderName == "People-Group")
     }
 
     // MARK: - 人物 ID の振り直し（レビュー指摘）
@@ -770,12 +687,16 @@ struct ShareTombstoneAccountTests {
 @MainActor
 struct ShareMemberUpdateExclusionTests {
 
-    private static let shareRoot = "/MosaicShare"
+    /// ADR-175: 共有ルートはバックアップルート（`/MosaicPhotos`）の端末フォルダ配下 `Share/`。
+    private static let backupRoot = "/MosaicPhotos"
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
 
     private func makeStack() async -> (ShareSyncEngine, BackupStore, FakeDropboxServer) {
         let defaults = isolatedShareDefaults()
         defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
-        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
         for (id, path, hash) in [("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")] {
@@ -844,12 +765,16 @@ struct ShareMemberUpdateExclusionTests {
 @MainActor
 struct ShareTombstoneRetentionTests {
 
-    private static let shareRoot = "/MosaicShare"
+    /// ADR-175: 共有ルートはバックアップルート（`/MosaicPhotos`）の端末フォルダ配下 `Share/`。
+    private static let backupRoot = "/MosaicPhotos"
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
 
     private func makeStack() async -> (ShareSyncEngine, BackupStore, FakeDropboxServer, UserDefaults) {
         let defaults = isolatedShareDefaults()
         defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
-        defaults.set(Self.shareRoot, forKey: ShareSettingsKeys.shareRootFolder)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
         await server.seed("/mosaicphotos/a.jpg", hash: "hA")
@@ -878,7 +803,7 @@ struct ShareTombstoneRetentionTests {
         // 外した写真の予定コピー先に、猶予をとうに過ぎた墓標を置く。
         let folder = SharePlanning.setFolderPath(
             shareRoot: Self.shareRoot, folderName: ShareNaming.folderName("Trip", kind: nil),
-            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+            deviceFolder: nil)!.lowercased()   // shareRoot は端末フォルダ込み（ADR-175）
         let ghost = "\(folder)/ghost.jpg"
         let old = Date().addingTimeInterval(-ShareSettingsKeys.deletedFolderGraceSeconds * 4)
         ShareSettingsKeys.setDeletedFileTombstones([ghost: old], account: nil, defaults)
@@ -899,7 +824,7 @@ struct ShareTombstoneRetentionTests {
 
         let folder = SharePlanning.setFolderPath(
             shareRoot: Self.shareRoot, folderName: ShareNaming.folderName("Trip", kind: nil),
-            deviceFolder: BackupDeviceIdentity.currentFolderName())!.lowercased()
+            deviceFolder: nil)!.lowercased()   // shareRoot は端末フォルダ込み（ADR-175）
         let ghost = "\(folder)/ghost.jpg"
         ShareSettingsKeys.setDeletedFileTombstones([ghost: Date()], account: nil, defaults)
         await server.seed(ghost, hash: "hGhost")   // 削除は成功する（failDeletePaths を設定しない）

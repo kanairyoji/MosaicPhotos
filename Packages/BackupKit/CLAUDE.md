@@ -12,6 +12,7 @@ i18n・テスト手順）は root の `CLAUDE.md` にある。こちらには**�
 ```
 Packages/BackupKit/               ← 端末写真→Dropbox バックアップ（DropboxCore / MosaicSupport に依存）
   Sources/BackupKit/
+    BackupLayout.swift             Dropbox の配置（`<root>/<端末>/Backup` と `Share`・ADR-175）。パスを組む場所はここだけ
     BackupEngine.swift             @MainActor @Observable。バックアップのオーケストレーション
     DropboxBackupUploader.swift    写真/metadata の HTTP アップロード（認証・SwiftData から独立・テスト対象）
     BackupAssetReader.swift        PHAsset 本体データの取得（編集済みは fullSizePhoto＝今の見た目）
