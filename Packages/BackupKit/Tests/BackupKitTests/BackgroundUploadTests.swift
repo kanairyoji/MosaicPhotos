@@ -254,4 +254,17 @@ struct BackupRunnerBackgroundPlanTests {
         #expect(plan.conflicts == ["L-b"])
         #expect(spool.pendingJobs().map(\.id) == ["a"], "409 待ちのコピーは前面経路が読み直すので消す")
     }
+
+    @Test("この実行で何も積まなくても、残っている spool は OS へ渡す（前の窓の取り残し）")
+    func flushIsUnconditional() async {
+        let enqueuer = RecordingEnqueuer()
+        let runner = BackupRunner(tokenProvider: StubToken(),
+                                  uploader: DropboxBackupUploader(httpClient: URLSessionHTTPClient()),
+                                  progressStore: BackupProgressStore(), uploadLimit: { 0 },
+                                  delegate: NoopRunnerDelegate(),
+                                  backgroundUploads: enqueuer, spool: UploadSpool(directory: tempDir()),
+                                  useBackgroundUploads: { true })
+        await runner.flushSpool(token: "tok")
+        #expect(enqueuer.calls == 1, "積んだ分が無い窓で渡さないと、前の窓の取り残しが永久に残る")
+    }
 }

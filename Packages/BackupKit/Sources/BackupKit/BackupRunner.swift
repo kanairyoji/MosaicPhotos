@@ -203,6 +203,10 @@ final class BackupRunner {
             // ここで送り直す。早期 return してしまうと、新しい写真が増えるまでキューが
             // 永久に滞留する（人物名・位置・アルバムが欠けたまま・レビュー指摘）。
             await drainPendingMetadataIfNeeded(folder: folder)
+            // ADR-181: 対象が無くても、前の窓で積んだまま渡せなかった spool は OS へ渡す。
+            if background, !bgPlan.inFlight.isEmpty, let token = try? await tokenProvider.freshAccessToken() {
+                await flushSpool(token: token)
+            }
             addLog("Nothing to upload.")
             setPhase(.completed(uploaded: 0, skipped: alreadySkipped))
             return false
@@ -215,6 +219,8 @@ final class BackupRunner {
             return false
         }
         addLog("Token OK")
+        // ADR-181: 前の窓で積んだまま渡せなかった分を先に OS へ（無条件・上の注記）。
+        if background { await flushSpool(token: token) }
 
         // 6. 1 枚ずつアップロード（検証つき・電源/回線ポーズ・キャンセル対応）
         //
@@ -228,7 +234,7 @@ final class BackupRunner {
         /// 中断・打ち切りの共通の出口: 積んだ分だけは OS へ渡してから帰る。
         func bail(_ phase: BackupEngine.Phase?) async -> Bool {
             readAhead = nil
-            await flushSpool(token: token, tally: tally)
+            await flushSpool(token: token)
             if let phase { setPhase(phase) }
             return false
         }
@@ -267,7 +273,7 @@ final class BackupRunner {
             case .done, .skipped:
                 // 積んだ分は小刻みに OS へ渡す（窓の期限で止まっても、渡した分は転送が続く）。
                 if tally.spooled > 0, tally.spooled % Self.spoolFlushEvery == 0 {
-                    await flushSpool(token: token, tally: tally)
+                    await flushSpool(token: token)
                 }
             case .fatal:
                 return await bail(nil)   // fail 済み（phase は設定済み）
@@ -279,7 +285,7 @@ final class BackupRunner {
         }
         readAhead = nil
         progressStore.saveUploadedIDs(tally.trackedIDs)
-        await flushSpool(token: token, tally: tally)
+        await flushSpool(token: token)
 
         // 7. メタデータ v2（触った撮影月シャード＋カタログ）
         await writeMetadata(newEntries: tally.newEntries, indexes: indexes,

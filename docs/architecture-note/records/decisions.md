@@ -86,6 +86,10 @@
   なので OS に消されうるが、消えても写真が次回の対象に戻るだけで失うものは無い。
   テストは純ロジック（意図・spool・上限・振り分け・応答分類・落とし方の順序）を macOS で回し、
   hash 照合とジャーナル順序は**変異で落ちること**を確認済み。
+  追記（同日レビュー）: 初版は「この実行で積んだ分があるときだけ OS へ渡す」だったが、期限切れで
+  積んだまま渡せなかったジョブは次の窓で「転送中」扱い＝対象外になり、新しく積むものが無い窓では
+  **誰も拾わず永久に残る**。渡す処理を無条件にした（`flushIsUnconditional`）。
+  背面窓全体の時系列・資源・見積りは `deep-dive/background-window.html` に専用章を設けた。
 - 関連: `BackupKit/BackgroundUpload/`（`UploadSpool` / `BackgroundUploadSession` /
   `BackupRunner+BackgroundUpload` / `BackupEngine+Settle`）/ `MosaicPhotos/AppDelegate.swift` /
   `BackgroundUploadTests` / ADR-40 / ADR-171 / ADR-180。

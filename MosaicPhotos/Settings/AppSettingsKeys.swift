@@ -14,9 +14,6 @@ enum AppSettingsKeys {
     static let faceScanOnSimulator = "debug.faceScanOnSimulator"
     /// D: BGProcessingTask の最終実行記録（開始時刻・結果・所要分。Developer Options で表示）。
     static let bgTaskLastRun = "debug.bgTaskLastRun"
-    /// CLIP 埋め込みの残作業を理由にバックアップを**連続で見送った回数**。
-    /// 上限に達したら埋め込みが残っていてもバックアップへ窓を明け渡す（`HeavyWorkScheduler`・飢餓防止）。
-    static let backupDeferralStreak = "backup.deferralStreak"
     /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を**連続で見送った回数**。
     /// 上限に達したら残っていても生成へ窓を明け渡す（`HeavyWorkScheduler`・飢餓防止）。
     static let generateDeferralStreak = "generate.deferralStreak"
