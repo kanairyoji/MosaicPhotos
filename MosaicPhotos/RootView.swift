@@ -171,6 +171,9 @@ final class HomeStores {
         // 解析候補（顔・タグ・埋め込み）でも同じ台帳で**端末に原本があるバックアップコピー**を外す
         // （表示と同じ重複排除。外さないとコピー側でもう一度解析し、分母が増え続ける）。
         AnalysisCandidates.backupCopyIndexProvider = mergedStore.backupCopyIndexProvider
+        // 自分の共有ルート（クラウド共有のコピー）も解析しない——原本と解析結果はバックアップにある。
+        AnalysisCandidates.excludedCloudPathPrefixes = ([ShareSettingsKeys.currentShareRoot()]
+            + [ShareSettingsKeys.legacyShareRootIfAny()].compactMap { $0 }).map { $0.lowercased() }
         // 人物・グループ・場所・アルバムの**メンバー限定ストア**にも同じ索引を渡す
         // （渡していなかったので、それらの画面では副本が二重に出て並びも崩れていた）。
         MergedPhotoStore.defaultBackupCopyIndexProvider = mergedStore.backupCopyIndexProvider

@@ -38,9 +38,11 @@
   すべての消費者（表示・解析・集計）が同じ規則を共有しないと、片方が膨らむ。
 - 関連: `AnalysisCandidates.swift` / `AutoAlbumAdapters.cloudPhotos` / `FaceStore+Prune.swift` /
   `AnalysisCandidatesTests` / `PruneMissingPhotosTests` / ADR-44 / ADR-175 / ADR-181。
-- 残課題: ADR-175 で台帳をリセットしたため、**旧配置のコピー**（`/MosaicPhotos/<端末>/` 直下の
-  フラットなファイル）は台帳から外れ、端末に原本があっても隠れない（表示・解析とも「別の写真」扱い）。
-  旧フォルダを消すか、旧配置を規則で隠すかの判断待ち。
+- 追記（同日）: **自分の共有ルート**（`…/Share`・旧 `/MosaicShare`）配下も解析しない
+  （`AnalysisCandidates.excludedCloudPathPrefixes`）。共有コピーの原本と解析結果はバックアップ
+  （または端末）にあるので、共有したからといって顔・タグ・埋め込みをやり直す理由が無い。
+  家族フォルダとして登録して表示に出している場合も同じ（表示の除外とは独立）。
+- 旧配置のコピーは利用者が Dropbox 側で削除済み（台帳リセット＋上げ直し中）。
 
 ---
 
