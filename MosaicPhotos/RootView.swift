@@ -153,12 +153,19 @@ final class HomeStores {
         // ピープルの顔アバターが使うクラウド画像の取得先（PeopleKit の注入点）。
         // ⚠️ これを設定し忘れると、**クラウド写真の顔サムネが 1 枚も出ない**（レビュー画面が
         // 空のカードになる）。PeopleKit をパッケージへ出したとき実際に落として気づいた。
-        // 取得は**キャッシュ済みのみ**（追加 DL しない・ADR-88）、無ければ温めるだけ（ADR-81）。
+        // 取得は**キャッシュ済みのみ**（待たない・ADR-88）。無ければ**可視優先で取りに行かせる**
+        // （待つのはビュー側のポーリング＝届いたら差し替わる）。
+        // ⚠️ 以前は低優先の先読み（`prefetch`）で温めていたが、先読みは (1) 回線ポリシー
+        //    （Wi-Fi のみ等）で黙って捨てられ、(2) 写真閲覧中（`isViewingPhoto`）は取り出されず、
+        //    (3) グリッドのスクロールで取り消される。ユーザーが**いま見ている**顔の画像なので
+        //    グリッドの可視セルと同じ扱い（FIFO・先読みより先）にする（実フィードバック:
+        //    「似ている人」のサムネイルが更新されない）。待たない（fire-and-forget）ので
+        //    ADR-88 の「行列に並ばされて画面が固まる」は起きない。
         PeopleImageSources.cachedCloudThumbnail = { [weak dropboxStore] path in
             await dropboxStore?.cachedThumbnail(for: dropboxFileItem(path: path))
         }
         PeopleImageSources.warmCloudThumbnail = { [weak dropboxStore] path in
-            dropboxStore?.prefetch([dropboxFileItem(path: path)], targetSize: .zero)
+            Task { _ = await dropboxStore?.thumbnail(for: dropboxFileItem(path: path)) }
         }
 
         // 人物・グループ・場所・アルバムの**メンバー限定ストア**にも同じ索引を渡す

@@ -62,6 +62,16 @@ public struct FaceAvatarImage: View {
                 image = await FaceAvatarCache.load(refKey: refKey, box: box, maxPixel: maxPixel)
                 if image != nil { return }
             }
+            // ⚠️ 20 秒で諦めて**そのまま**にしない（実フィードバック: 「似ている人」のサムネイルが
+            // 更新されない）。取得が行列の後ろに回ると 20 秒を超えることがあり、届いた後も
+            // セルが作り直されるまで人型アイコンのままだった。**見えている間だけ**ゆっくり
+            // 見に行き続ける（`.task` は画面外で必ずキャンセルされるので、抱え込みはしない）。
+            for _ in 0..<FaceAvatarCache.slowPollCount {
+                try? await Task.sleep(for: .seconds(FaceAvatarCache.slowPollSeconds))
+                if Task.isCancelled { return }
+                image = await FaceAvatarCache.load(refKey: refKey, box: box, maxPixel: maxPixel)
+                if image != nil { return }
+            }
         }
         // ⚠️ キーが変わったら **@State ごと作り直す**。`.task(id:)` だけだと SwiftUI は
         // 同じビューを再利用するため、次の読み込みが終わるまで `image` に**前の顔が残る**。
@@ -101,6 +111,9 @@ enum FaceAvatarCache {
     /// 打ち切るのは、届かないものを無限に追うと画面外の分まで抱え続けるため
     /// （届かない＝回線ポリシーで止まっている等。次に表示されたときに改めて取りに行く）。
     static let retryDelays: [Double] = [0.4, 0.8, 1.5, 2.5, 4, 5, 6]
+    /// 上の後、見えている間だけ続ける遅いポーリング（6 秒 × 50 回 ≒ 5 分）。
+    static let slowPollSeconds: Double = 6
+    static let slowPollCount = 50
 
     static func key(refKey: String?, box: CGRect?, maxPixel: CGFloat) -> String {
         let b = box.map { String(format: "%.4f,%.4f,%.4f,%.4f", $0.minX, $0.minY, $0.width, $0.height) } ?? "-"
