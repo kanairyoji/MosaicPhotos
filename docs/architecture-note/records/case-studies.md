@@ -30,9 +30,16 @@
 - 対処: 温めを**可視優先の取得**（`thumbnail(for:)` を待たずに発行＝グリッドの可視セルと同じ扱い）に
   変え、ビューは**見えている間だけ** 6 秒おきに見に行き続ける（`.task` は画面外で必ずキャンセル）。
   ADR-88 の「行列に並ばされて画面が固まる」は、待たない（fire-and-forget）ので起きない。
+- 追記（同日・「タップしても開けない」）: サムネが出ない顔の多くは**写真がもう無い顔**だった。
+  写真を削除・移動（ADR-175 の配置替えで旧パスが同期対象外に）・非表示にしても顔台帳には顔と
+  走査記録が残り（実機: 走査記録 76,558 に対し候補 75,741＝約 800 枚）、人物のメンバー数・重心に
+  効き続け、顔一覧に画像の無い顔として並ぶ。開けないのは写真が存在しないから。
+  `FaceStore.pruneMissingPhotos(existingRefKeys:)` を追加し、解析セッションの開始時と処理枠で
+  候補（スキャナと同じ列挙）との差を消す（重心は前面の付け替えと同じ規則で引く・空になった人物は消す）。
+  安全弁: 欠けが走査記録の 5% を超えるときは候補が揃っていない（Dropbox 未ロード・写真アクセス制限）
+  とみなして何もしない。テスト `PruneMissingPhotosTests`。
 - 関連: `RootView.swift`（`PeopleImageSources.warmCloudThumbnail`）/ `FaceAvatarImage.swift`
-  （`slowPollSeconds`）/ ADR-81 / ADR-88。
-- 残課題: 実機で確認。ローカル写真（PHImageManager）側なら別の原因。
+  （`slowPollSeconds`）/ `FaceStore+Prune.swift` / ADR-81 / ADR-88 / ADR-175。
 
 ---
 
