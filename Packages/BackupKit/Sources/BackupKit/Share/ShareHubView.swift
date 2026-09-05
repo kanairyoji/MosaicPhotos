@@ -189,7 +189,12 @@ struct ShareProvideView: View {
     private var syncSection: some View {
         Section {
             Button {
-                Task { await engine.syncNow() }
+                // 作成元（人物・AI アルバム）のいまのメンバーに追従してから反映する（ADR-183 C）。
+                // 処理枠と同じ順序＝「押せば夜間と同じことが今すぐ起きる」。
+                Task {
+                    await engine.refreshAllFromSource()
+                    await engine.syncNow()
+                }
             } label: {
                 if engine.isSyncing {
                     HStack {
