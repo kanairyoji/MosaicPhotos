@@ -81,6 +81,13 @@
   受信側の再デコードは変わったシャードだけ。送信側のサイドカー状態（`sidecarChecksum`）は不要になった
   （モデルの列は残置）。テスト: シャード分割・差分計画・決定的エンコード・受信側の 1 回一覧と差分取得・
   旧形式の読み取り・作成元追従（`ShareSidecarShardTests`）。既存の復元テスト（ADR-166）はそのまま通る。
+  本物の Dropbox には接続していない。代わりに `FakeDropboxServer` を**本物に近づけた**——
+  `list_folder` のページング（`has_more` → `list_folder/continue`・ページ幅を設定可）、再帰一覧に
+  中間フォルダのエントリを含める（本物は必ず含む）、アップロードの `content_hash` は本物と同じ計算
+  （独立に計算した既知ベクトルで検証済み）。その上で 3 セット × 60 枚・ページ幅 50 で「2 回目の反映は
+  コピーもアップロードも無く一覧は 1 回」、1 枚外して「空になったシャードだけ消え他は触らない」、
+  受信側がページを跨いで全シャードを拾う、を固定（`ShareLargeScaleTests`）。ページング打ち切りと
+  「常に上げる」の変異で落ちることを確認。
 - 関連: `ShareSidecar.swift`（`shards` / `shardPath`）/ `ShareSyncEngine+Sync.swift`
   （`RemoteShareIndex` / `ShareSidecarPlanning` / `updateSidecar`）/ `ShareSidecarFetch.swift` /
   `ShareSyncEngine.refreshAllFromSource` / `DropboxShareCopier.listFolder(recursive:)` /
