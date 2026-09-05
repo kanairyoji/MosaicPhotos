@@ -41,6 +41,26 @@ flowchart LR
         <tr><td>完了通知</td><td><code>CompletionLatch</code> で 1 回だけ（期限切れと本体終了の競合を潰す）</td><td>レビュー指摘</td></tr>
       </table>
 
+      <h3>1.1 OS はどう決めているか（ベンダー情報と外部解析の要点）</h3>
+      <p>予約（<code>submit</code>）は「候補に載せる」だけで、実行の可否は OS のスケジューラ <strong>DAS（Duet Activity Scheduler・<code>dasd</code>）</strong>が決める。Apple 自身が「予約から起動までの遅れは<strong>何時間にもなり得る</strong>」と明記している（開発者向け文書「Starting and terminating tasks during development」）。</p>
+      <table>
+        <tr><th>要因（WWDC20「Background execution demystified」の 7 要因）</th><th>BGProcessingTask への効き方</th><th>このアプリで確認すること</th></tr>
+        <tr><td>1. 電池残量が危険域</td><td>電源接続中に走るので事実上無関係</td><td>—</td></tr>
+        <tr><td>2. 低電力モード</td><td>同上（ただし低電力モードは Background App Refresh 自体を止める）</td><td>低電力モード OFF</td></tr>
+        <tr><td>3. アプリの使用頻度（端末内の予測エンジン）</td><td>緩い: 「ここ数週間に前面で使った」程度で足りる</td><td>普段使っていれば OK</td></tr>
+        <tr><td>4. App Switcher（強制終了）</td><td><strong>スワイプで終了したアプリは候補から外れる</strong>。次に自分で起動するまで枠は来ない</td><td>ロック前にスワイプで消さない</td></tr>
+        <tr><td>5. Background App Refresh の設定</td><td>全 background モードに効く親スイッチ（既定 ON・アプリ別に OFF 可）</td><td>設定 → 一般 → App のバックグラウンド更新 → MosaicPhotos が ON</td></tr>
+        <tr><td>6. エネルギー／通信の予算</td><td>電源接続中はエネルギー予算を消費しない</td><td>—</td></tr>
+        <tr><td>7. レート制限</td><td>「毎日充電するなら毎日 1 回」程度が想定。分単位の連続実行は前提にない</td><td>—</td></tr>
+      </table>
+      <p>加えて BGProcessingTask 固有の条件: <strong>端末がアイドル（画面ロック・操作なし）</strong>かつ<strong>電源接続中</strong>に走り、ユーザーが端末を使い始めた瞬間に期限切れになる。<code>requiresExternalPower = false</code> は「電源なしでも走ってよい」という許可にすぎず、DTS は「電源なしでは一度も走らないこともあり、それは許容範囲の挙動」と回答している。逆に、<strong>ケーブルを挿す</strong>ことが評価のトリガになり、挿してから 1〜2 分で起動した報告がある。</p>
+      <div class="box note">
+        <span class="box-h">実測（diagnostics-73・2026-09-05）</span>
+        ロック 2 分 18 秒・2 分 24 秒・29 秒の 3 回で <code>bgtask: submitted</code> は毎回出たが <code>bgtask: begin</code> は 0 回。数分のロックでは開かないのが普通で、8/30 のように背面遷移直後に開くこともある（OS 裁量）。同じ設計上の制約は Apple の写真アプリ自身（解析は充電中の夜間）にもある。
+      </div>
+      <p><strong>なぜ拒否されたかを見る方法</strong>: iPhone を Mac に接続し Console.app でプロセス <code>dasd</code> を絞り、<code>heavywork</code> で検索する。DAS は活動ごとに <code>BatteryLevelPolicy</code> / <code>DeviceActivityPolicy</code> / <code>ThermalPolicy</code> / <code>ApplicationPolicy</code> / <code>BudgetPolicy</code> などの重み付きスコアを記録し、<code>FinalDecision: Can Proceed</code> か <code>Must Not Proceed</code>（根拠つき）を出す。開発中は Xcode のデバッガから <code>_simulateLaunchForTaskWithIdentifier:</code> で即起動できる（Developer Options の「Run BG routine now」は同じルーチンを前面で回す代替）。</p>
+      <p><strong>OS の裁量に頼らない選択肢</strong>: (a) ADR-165 の「この画面を開いている間、解析する」（前面のまま進める）。(b) iOS 26 の <code>BGContinuedProcessingTask</code>——ユーザーがボタンを押して始めた作業を、ロック後も<strong>システムの進捗 UI つき</strong>で続けられる。Apple は「自動のメンテナンス・バックアップ・写真同期には使うな」と明言しているので、<strong>明示的な「今すぐ解析（ロックしても続ける）」ボタン</strong>の形でなら適合する。進捗の報告が必須で、遅いとシステムが続行を尋ねる。未採用（要判断）。</p>
+
       <h2>2. 処理枠の中で何が起きるか（1 処理枠の時系列）</h2>
       <p><code>runHeavyWork</code> は「起こす → 判断する → 待つ」の 3 拍子。重い処理は<strong>起こすだけ</strong>で完了を待たない（待つと処理枠を食い潰して次が始まらない＝Fix C）。</p>
       <div class="mermaid">
@@ -188,6 +208,8 @@ sequenceDiagram
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/BackgroundYield.swift">BackgroundYield.swift</a> — <code>heavyShouldPause</code></li>
           <li><a class="srclink" data-path="docs/architecture-note/records/background-behavior.md">records/background-behavior.md</a> — どの設定で何が動くかの早見表</li>
           <li>ADR-25 / 79 / 80 / 122 / 163 / 166 / 179 / 180 / 181（<a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>）</li>
+          <li>Apple: <a href="https://developer.apple.com/videos/play/wwdc2020/10063/">WWDC20 10063 Background execution demystified</a> / <a href="https://developer.apple.com/videos/play/wwdc2025/227/">WWDC25 227 Finish tasks in the background</a> / <a href="https://developer.apple.com/documentation/backgroundtasks/starting-and-terminating-tasks-during-development">Starting and terminating tasks during development</a> / <a href="https://developer.apple.com/forums/thread/685525">iOS Background Execution Limits（DTS）</a> / <a href="https://developer.apple.com/forums/thread/127500">BGProcessingTask starts only if connected to power</a></li>
+          <li>外部解析: <a href="https://eclecticlight.co/2023/01/23/scheduled-activities-1-scheduling-by-das/">Scheduled activities: Scheduling by DAS（Eclectic Light）</a></li>
         </ul>
       </div>
       <p>背景: <a href="concurrency-internals.html">並行・バックグラウンド処理</a> / <a href="../features/background.html">バックグラウンドと省電力</a> / <a href="../features/backup.html">バックアップ</a></p>
