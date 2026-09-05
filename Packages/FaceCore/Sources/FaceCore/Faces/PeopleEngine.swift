@@ -484,6 +484,23 @@ public final class PeopleEngine {
 
     /// 顔スキャンの進捗統計（ユーザー向け「AI 解析の状況」画面用）。
     /// `scanned`＝スキャン済み写真数、`faces`＝検出顔総数。件数取得のみで軽い（辞書は返さない）。
+    /// 写真が無くなった顔と走査記録を消す（削除・移動・同期対象外）。候補はスキャナと同じ列挙。
+    /// 欠けが多すぎる（候補が揃っていない疑い）ときは何もしない。消したら人物一覧を作り直す。
+    /// - Returns: 消した顔の数（何もしなかったら 0）。
+    @discardableResult
+    public func pruneMissingPhotos(candidateRefKeys: [String]) async -> Int {
+        guard isFaceModelAvailable, !candidateRefKeys.isEmpty else { return 0 }
+        guard let result = await store.pruneMissingPhotos(existingRefKeys: Set(candidateRefKeys)) else {
+            Diagnostics.mark("faces: prune skipped — candidates look incomplete")
+            return 0
+        }
+        if result.faces > 0 || result.clusters > 0 {
+            Diagnostics.mark("faces: pruned faces=\(result.faces) photos=\(result.photos) emptyClusters=\(result.clusters)")
+            await loadPeople()
+        }
+        return result.faces
+    }
+
     /// 候補のうち未スキャンの枚数（AI 解析画面の「残り」）。候補は `analysisOrderedRefKeys` と同じもの。
     public func pendingScanCount(candidateRefKeys: [String]) async -> Int {
         await store.pendingCount(candidateRefKeys: candidateRefKeys)
