@@ -47,4 +47,15 @@ struct PruneMissingPhotosTests {
         #expect(result == nil)
         #expect(await store.scannedCount() == 20, "実在するかもしれない顔を消した")
     }
+
+    @Test("理由の分かっている欠け（候補から外したバックアップコピー）は割合に関係なく消す")
+    func knownGoneBypassesTheFraction() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        _ = await store.recordScans((0..<20).map { ("C-copy\($0)", [signal(unit($0 % 8))]) }
+                                    + [("L-a", [signal(unit(0))])])
+        let copies = Set((0..<20).map { "C-copy\($0)" })
+        let result = await store.pruneMissingPhotos(existingRefKeys: ["L-a"], knownGone: copies)
+        #expect(result?.photos == 20, "95% の欠けでも理由があれば消す")
+        #expect(await store.scannedCount() == 1)
+    }
 }

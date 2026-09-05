@@ -190,12 +190,14 @@ final class AnalysisSession {
     private func runLoop() async {
         let allowSim = UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
         if people.isFaceModelAvailable, !people.isScanning {
-            let candidates = await analysisOrderedRefKeys(dropboxStore: dropboxStore)
+            let candidates = await analysisCandidates(dropboxStore: dropboxStore)
             guard !Task.isCancelled else { return }
             // 無くなった写真の顔を先に掃除する（サムネの出ない・開けない顔が一覧に残る）。
-            await people.pruneMissingPhotos(candidateRefKeys: candidates)
+            // 候補から外したバックアップコピー（端末に原本あり）も「無い」扱いで消す。
+            await people.pruneMissingPhotos(candidateRefKeys: candidates.ordered,
+                                            knownGone: candidates.excludedBackupCopies)
             guard !Task.isCancelled else { return }
-            people.startScan(candidateRefKeys: candidates, allowSimulator: allowSim)
+            people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
         }
         faceScanStarted = true
         scheduleFillIfIdle()
