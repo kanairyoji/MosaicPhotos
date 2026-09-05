@@ -314,9 +314,11 @@ enum HeavyWorkScheduler {
         if stores.analysisSession.isActive {
             Diagnostics.mark("bgtask: analysis session active — not starting analysis here")
         } else {
-            stores.peopleEngine.startScan(
-                candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
-                allowSimulator: allowSim)
+            let candidates = await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore)
+            // 無くなった写真の顔を掃除してから（削除・配置替え・同期対象外＝ADR-175 後に残る幽霊）。
+            await stores.peopleEngine.pruneMissingPhotos(candidateRefKeys: candidates)
+            if Task.isCancelled { return }
+            stores.peopleEngine.startScan(candidateRefKeys: candidates, allowSimulator: allowSim)
             // 夜間窓は重い処理のための特権時間。前面で始まって眠っている実行が居座っていると窓を
             // 丸ごと空転させるので、明け渡させてから始め直す（ADR-95）。
             stores.autoAlbumEngine.restartBackgroundFill()

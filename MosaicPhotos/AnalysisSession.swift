@@ -192,6 +192,9 @@ final class AnalysisSession {
         if people.isFaceModelAvailable, !people.isScanning {
             let candidates = await analysisOrderedRefKeys(dropboxStore: dropboxStore)
             guard !Task.isCancelled else { return }
+            // 無くなった写真の顔を先に掃除する（サムネの出ない・開けない顔が一覧に残る）。
+            await people.pruneMissingPhotos(candidateRefKeys: candidates)
+            guard !Task.isCancelled else { return }
             people.startScan(candidateRefKeys: candidates, allowSimulator: allowSim)
         }
         faceScanStarted = true
