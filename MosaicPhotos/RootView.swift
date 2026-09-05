@@ -126,7 +126,8 @@ final class HomeStores {
                                                         peopleEngine: peopleEngine)
         shareEngine.analysisSource = shareAnalysisAdapter
         let shareSourceResolver = ShareSourceMemberResolver(peopleEngine: peopleEngine,
-                                                           autoAlbumEngine: autoAlbumEngine)
+                                                           autoAlbumEngine: autoAlbumEngine,
+                                                           dropboxStore: dropboxStore)
         shareEngine.sourceResolver = shareSourceResolver
         // 顔を全消去すると clusterID が 0 から振り直される。人物を指す共有セットの参照は
         // 当てにならなくなるので外す（残すと別人の写真を家族フォルダへ足しかねない）。

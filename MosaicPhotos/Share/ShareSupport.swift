@@ -1,6 +1,7 @@
 import AutoAlbumCore
 import BackupKit
 import DropboxKit
+import PhotosFeatureKit
 import MosaicSupport
 import SwiftUI
 
@@ -68,26 +69,47 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
 final class ShareSourceMemberResolver: ShareSourceResolver {
     private let peopleEngine: PeopleEngine
     private let autoAlbumEngine: AutoAlbumEngine
+    private let dropboxStore: DropboxPhotoStore
 
-    init(peopleEngine: PeopleEngine, autoAlbumEngine: AutoAlbumEngine) {
+    init(peopleEngine: PeopleEngine, autoAlbumEngine: AutoAlbumEngine, dropboxStore: DropboxPhotoStore) {
         self.peopleEngine = peopleEngine
         self.autoAlbumEngine = autoAlbumEngine
+        self.dropboxStore = dropboxStore
     }
 
     func currentMembers(for key: ShareSourceKey) async -> [String]? {
+        let raw: [String]
         switch key {
         case .group(let id):
             // 現存するグループだけ解決する（解除済みなら nil＝孤児セット）。
             guard peopleEngine.peopleGroups.contains(where: { $0.id == id }) else { return nil }
-            return await peopleEngine.memberRefKeys(forGroup: id)
+            raw = await peopleEngine.memberRefKeys(forGroup: id)
         case .person(let clusterID):
             guard peopleEngine.people.contains(where: { $0.clusterID == clusterID }) else { return nil }
-            return await peopleEngine.memberRefKeys(forPerson: clusterID)
+            raw = await peopleEngine.memberRefKeys(forPerson: clusterID)
         case .album(let id):
             let all = autoAlbumEngine.albums + autoAlbumEngine.aiAlbums + autoAlbumEngine.pathAlbums
             guard let album = all.first(where: { $0.id == id }) else { return nil }
-            return album.memberRefs
+            raw = album.memberRefs
         }
+        return await shareable(raw)
+    }
+
+    /// 共有に載せない refKey を落とす（解析候補の除外と同じ規則・ADR-183 C）。
+    /// - 端末に原本があるバックアップコピー（原本の L- が既にメンバー）——同じ写真を 2 度コピーし、
+    ///   宛先名が衝突して autorename と掃除の空回りになる。
+    /// - 自分の共有ルート配下のコピー——共有の中へ共有をコピーすることになる。
+    /// 幽霊（消えた写真の顔）は別途 `pruneMissingPhotos` が消す。
+    private func shareable(_ refKeys: [String]) async -> [String] {
+        let cloudItems = dropboxStore.items
+        let excluded = await AnalysisCandidates.hiddenBackupCopyRefKeys(
+            cloudItems: cloudItems, localRefKeys: refKeys.filter { $0.hasPrefix("L-") })
+        guard !excluded.isEmpty else { return refKeys }
+        let kept = refKeys.filter { !excluded.contains($0) }
+        if kept.count != refKeys.count {
+            Diagnostics.mark("share: source members — dropped \(refKeys.count - kept.count) backup/share copies")
+        }
+        return kept
     }
 }
 
