@@ -41,6 +41,12 @@ public enum AnalysisCandidates {
     /// ⚠️ 未結線なら**何も隠さない**（分からないものは隠さない＝`BackupCopyHiding` の方針）。
     @MainActor public static var backupCopyIndexProvider: (@Sendable () async -> [String: BackupCopyInfo])?
 
+    /// 解析しないクラウドのパス接頭辞（小文字）。**自分の共有ルート**（`…/Share`・旧 `/MosaicShare`）。
+    /// 共有コピーの原本と解析結果はバックアップ（または端末）にあるので、共有したからといって
+    /// 顔・タグ・埋め込みをやり直さない（実フィードバック）。家族フォルダとして登録していて
+    /// 表示に出る場合でも、解析はしない。
+    @MainActor public static var excludedCloudPathPrefixes: [String] = []
+
     /// **端末に原本があるバックアップコピー**のクラウド refKey（"C-<path>"・パスは小文字で照合）。
     /// 表示の重複排除（`MergedPhotoStore`）と同じ規則。解析（顔・タグ・埋め込み）の候補から外す。
     ///
@@ -50,17 +56,20 @@ public enum AnalysisCandidates {
     /// 解析していた（顔が二重・分母が増え続ける）。
     @MainActor
     public static func hiddenBackupCopyRefKeys(cloudItems: [DropboxFileItem], localRefKeys: [String]) async -> Set<String> {
-        guard let provider = backupCopyIndexProvider else { return [] }
-        let index = await provider()
-        guard !index.isEmpty else { return [] }
+        let index = await backupCopyIndexProvider?() ?? [:]
+        let prefixes = excludedCloudPathPrefixes
+        guard !index.isEmpty || !prefixes.isEmpty else { return [] }
         return await Task.detached(priority: .utility) {
             let localIDs = Set(localRefKeys.compactMap { PhotoRef.decode($0)?.localIdentifier })
             let hidden = BackupCopyHiding.hiddenPaths(
                 backupPathToLocalID: index.compactMapValues(\.localIdentifier), localIdentifiers: localIDs)
-            guard !hidden.isEmpty else { return [] }
             var keys = Set<String>()
-            for item in cloudItems where hidden.contains(item.path.lowercased()) {
-                keys.insert(PhotoRef.cloud(item.path).encoded)
+            for item in cloudItems {
+                let lower = item.path.lowercased()
+                if hidden.contains(lower)
+                    || prefixes.contains(where: { lower == $0 || lower.hasPrefix($0 + "/") }) {
+                    keys.insert(PhotoRef.cloud(item.path).encoded)
+                }
             }
             return keys
         }.value
