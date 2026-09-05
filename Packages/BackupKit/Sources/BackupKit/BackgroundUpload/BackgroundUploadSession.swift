@@ -52,6 +52,13 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
     /// OS が「イベントは全部渡した」と言ったか（＋台帳更新の残り数が 0 で完了ハンドラを呼ぶ）。
     private var finishRequested = false
     private var settlesInFlight = 0
+    /// 応答を受けて台帳へ書いている最中のジョブ。spool にはまだ在るが「未投入」ではない。
+    /// ⚠️ これを除外しないと、次の flush が**済んだ直後の写真をもう一度上げる**
+    /// （実機 diagnostics-74: 400 枚に対して 626 回投入・重複分は 409 → 前面経路送り）。
+    private var settling: Set<String> = []
+    /// この実行（1 つの処理枠）で投入済みのジョブ。同じ枠内では再投入しない
+    /// （即失敗するジョブが 1 枠で 3 回試して諦めてしまうのを防ぐ＝再試行は枠ごとに 1 回）。
+    private var attemptedThisRun: Set<String> = []
     /// 台帳を更新する相手の解決手段（アプリが起動時に結線。ストア構築を待てるよう async）。
     public var settlerProvider: (@Sendable () async -> Settler?)?
 
@@ -84,10 +91,15 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
 
     /// spool にあるジョブを背景セッションへ投入する（既に走っているタスクは重複投入しない）。
     /// - Returns: 投入した数。
+    /// バックアップ 1 回の実行の始まり（同じ枠内の再投入抑止をリセットする）。
+    public func beginRun() {
+        lock.lock(); attemptedThisRun = []; lock.unlock()
+    }
+
     @discardableResult
     public func enqueuePending(token: String) async -> Int {
         let running = await runningJobIDs()
-        let split = Self.split(pending: spool.pendingJobs(), running: running)
+        let split = Self.split(pending: spool.pendingJobs(), running: running, excluded: excludedFromEnqueue())
         for job in split.giveUp {
             BackupLogger.error("BackgroundUpload: giving up \(job.filename) after \(job.attempts) attempts")
             Diagnostics.mark("backup(bg): \(job.filename) を \(job.attempts) 回で諦めました（次回の通常対象へ）")
@@ -104,18 +116,28 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
             task.taskDescription = job.id
             job.attempts += 1
             spool.update(job: job)
+            noteAttempted(job.id)
             task.resume()
             count += 1
         }
         return count
     }
 
+    /// （同期ヘルパ: async 文脈で NSLock を直接握らない）
+    private func excludedFromEnqueue() -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return settling.union(attemptedThisRun)
+    }
+    private func noteAttempted(_ id: String) {
+        lock.lock(); attemptedThisRun.insert(id); lock.unlock()
+    }
+
     /// spool のジョブを「投入する / 諦める」に分ける純ロジック。
-    /// 転送中（OS が持っている）と 409 待ち（前面経路の仕事）は触らない。
-    static func split(pending: [UploadSpool.Job], running: Set<String>)
+    /// 転送中（OS が持っている）・台帳へ書いている最中・この枠で投入済み・409 待ち（前面経路の仕事）は触らない。
+    static func split(pending: [UploadSpool.Job], running: Set<String>, excluded: Set<String> = [])
         -> (enqueue: [UploadSpool.Job], giveUp: [UploadSpool.Job]) {
         var enqueue: [UploadSpool.Job] = [], giveUp: [UploadSpool.Job] = []
-        for job in pending where !running.contains(job.id) && !job.conflict {
+        for job in pending where !running.contains(job.id) && !excluded.contains(job.id) && !job.conflict {
             if job.attempts >= maxAttempts { giveUp.append(job) } else { enqueue.append(job) }
         }
         return (enqueue, giveUp)
@@ -174,8 +196,8 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
         _ = session   // 生成＝応答の配信が始まる
     }
 
-    private func endSettle() {
-        lock.lock(); settlesInFlight -= 1; lock.unlock()
+    private func endSettle(_ jobID: String) {
+        lock.lock(); settlesInFlight -= 1; settling.remove(jobID); lock.unlock()
         completeIfDrained()
     }
 
@@ -223,10 +245,10 @@ extension BackgroundUploadSession: URLSessionDataDelegate {
             marked.conflict = true
             spool.update(job: marked)
         case .settle(let savedPath, let hash):
-            lock.lock(); settlesInFlight += 1; lock.unlock()
+            lock.lock(); settlesInFlight += 1; settling.insert(jobID); lock.unlock()
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                defer { self.endSettle() }
+                defer { self.endSettle(jobID) }
                 let settler = await self.settlerProvider?()
                 let ok = await settler?.settle(job: job, savedPath: savedPath, contentHash: hash) ?? false
                 if ok {
@@ -248,6 +270,8 @@ extension BackgroundUploadSession: URLSessionDataDelegate {
 
 /// `BackupRunner` から見た背景セッション（テストは spool の中身だけを検証し、実セッションは作らない）。
 protocol BackgroundUploadEnqueuing: AnyObject, Sendable {
+    /// バックアップ 1 回の実行の始まり（同じ枠内の再投入抑止をリセットする）。
+    func beginRun()
     /// spool のジョブを OS へ渡す。戻り値は投入した数。
     func enqueuePending(token: String) async -> Int
 }

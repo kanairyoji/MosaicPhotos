@@ -275,18 +275,39 @@ struct DropboxBackupUploader {
             return (false, "failed (arg encode error)")
         }
         let req = Self.makeRequest(argStr: argStr, body: jsonData, token: token, timeout: 60)
-        do {
-            let (respData, resp) = try await httpClient.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
-            if code == 200 {
-                return (true, "OK (\(jsonData.count) bytes)")
-            } else {
+        // ⚠️ 429（書き込み競合・レート制限）と 5xx は**短い退避で数回**やり直す。背景転送が
+        // 数百本走っている最中のメタデータ書き込みは同じ名前空間への書き込み競合で弾かれやすく、
+        // 1 回で諦めると再送キューが枠をまたいで滞留する（実機 diagnostics-74）。
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                let (respData, resp) = try await httpClient.data(for: req)
+                let http = resp as? HTTPURLResponse
+                let code = http?.statusCode ?? -1
+                if code == 200 {
+                    return (true, "OK (\(jsonData.count) bytes)")
+                }
                 let body = String(data: respData, encoding: .utf8) ?? ""
-                return (false, "HTTP \(code): \(BackupPlanning.dropboxErrorSummary(from: body))")
+                let detail = "HTTP \(code): \(BackupPlanning.dropboxErrorSummary(from: body))"
+                guard let delay = Self.retryDelay(status: code, attempt: attempt,
+                                                  retryAfter: http?.value(forHTTPHeaderField: "Retry-After"))
+                else { return (false, detail) }
+                try? await Task.sleep(for: .seconds(delay))
+            } catch {
+                return (false, "network error: \(error.localizedDescription)")
             }
-        } catch {
-            return (false, "network error: \(error.localizedDescription)")
         }
+    }
+
+    /// 再試行するなら待ち秒数、しないなら nil（純ロジック・テスト対象）。
+    /// 429 と 5xx だけ、最大 3 回（初回＋2 回）。Retry-After があればそれに従う（上限 30 秒）。
+    static func retryDelay(status: Int, attempt: Int, retryAfter: String?) -> Double? {
+        guard attempt < 3, status == 429 || (500...599).contains(status) else { return nil }
+        if let retryAfter, let secs = Double(retryAfter.trimmingCharacters(in: .whitespaces)) {
+            return min(max(secs, 1), 30)
+        }
+        return Double(1 << attempt)   // 2, 4
     }
 
     /// ⚠️ Dropbox-API-Arg ヘッダーには必ず `encodeDropboxAPIArg()` の結果を使うこと。
