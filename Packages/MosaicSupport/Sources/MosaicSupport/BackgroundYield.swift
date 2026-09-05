@@ -32,6 +32,14 @@ public enum BackgroundYield {
     /// ⚠️ `didSet` でウォッチドッグへ伝える。背面の「ハング」は OS の throttle であって体感とは
     /// 無関係なので、計測から外す必要がある（ADR-82）。呼び出し側が別途伝える方式だと必ず
     /// 忘れるため、唯一の出典であるこの変数から自動で同期する。
+    /// アプリが**背面**（scenePhase == .background）にあるか。`isAppActive == false` には
+    /// 「前面だが inactive（通知センター等）」も含まれるので別に持つ。
+    /// 背面ではプロセスは通常吊るされており、前面の定期ループ（HomeView）が動くのは
+    /// **BGTask がプロセスを起こした瞬間だけ**。その瞬間に前面ループが生成を始めると、
+    /// 処理枠側の判断（`NightlyWorkPolicy`＝残作業があれば生成を見送る）を素通りして
+    /// 解析を止めてしまう（実機 diagnostics-74）。背面では処理枠側だけが判断する。
+    public static var isAppInBackground = false
+
     public static var isAppActive = true {
         didSet { MainThreadWatchdog.shared.setAppActive(isAppActive) }
     }

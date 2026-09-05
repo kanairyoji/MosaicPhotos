@@ -15,6 +15,8 @@ struct MetadataShardWriter {
         var written: [String] = []
         /// 書けなかったシャードのエントリ（再送のために呼び出し側が保持する）。
         var failed: [String: [String: DropboxBackupMetadata.Entry]] = [:]
+        /// 最初の失敗の詳細（診断ログ用・"HTTP 429: too_many_write_operations" など）。
+        var firstFailure: String?
     }
 
     /// シャードごとの新規/更新エントリを反映する（触ったシャードだけ通信する）。
@@ -42,6 +44,7 @@ struct MetadataShardWriter {
                     existing = nil      // 新規シャード＝空から作ってよい
                 case .failure(let reason):
                     await log("  meta/\(shard).json: skipped — could not read existing (\(reason))")
+                    if result.firstFailure == nil { result.firstFailure = "read: \(reason)" }
                     return false
                 }
                 // ⚠️ 「200 で取れたが読めない」も**取れなかったのと同じ**に扱う（レビュー指摘）。
@@ -56,6 +59,7 @@ struct MetadataShardWriter {
                 }
                 let upload = await uploader.uploadJSONResult(merged, to: shardPath, token: token)
                 await log("  meta/\(shard).json (+\(entries.count) → \(merged.entries.count)): \(upload.detail)")
+                if !upload.ok, result.firstFailure == nil { result.firstFailure = upload.detail }
                 return upload.ok
             }
             if written {

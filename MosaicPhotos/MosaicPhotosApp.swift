@@ -33,6 +33,7 @@ struct MosaicPhotosApp: App {
             // 重い処理の中央ゲート: アクティブ（＝ユーザーが操作中）の間は一切動かさない。
             // 画面ロック/アプリ切替（inactive/background）で解放される（実行の主役は BGTask）。
             BackgroundYield.isAppActive = (phase == .active)
+            BackgroundYield.isAppInBackground = (phase == .background)
             // D: 遷移の実測（復帰時に何が走っていたか）を診断ログへ 1 行残す。
             HeavyWorkScheduler.noteScenePhase("\(phase)")
             // ADR-79: 復帰したら夜間処理を**明示的に止める**。ゲートを閉じるだけでは、実行中の

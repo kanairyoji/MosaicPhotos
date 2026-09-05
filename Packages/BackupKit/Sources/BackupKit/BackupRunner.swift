@@ -193,6 +193,7 @@ final class BackupRunner {
         var (pending, alreadySkipped, doneIDs) = await computePending(assets: assets)
         // ADR-181: 背景セッションが転送中の写真は対象から外し、409 を受けた写真は前面経路へ回す。
         let background = backgroundUploads != nil && useBackgroundUploads()
+        if background { backgroundUploads?.beginRun() }
         let bgPlan = background ? backgroundPlan() : BackgroundPlan()
         if !bgPlan.inFlight.isEmpty {
             pending.removeAll { bgPlan.inFlight.contains($0.localIdentifier) }
@@ -219,8 +220,14 @@ final class BackupRunner {
             return false
         }
         addLog("Token OK")
-        // ADR-181: 前の窓で積んだまま渡せなかった分を先に OS へ（無条件・上の注記）。
-        if background { await flushSpool(token: token) }
+        if background {
+            // ⚠️ 前の枠で背景から届いた分のメタデータを、**投入を始める前の静かなうちに**送る。
+            // 実行の最後（OS の転送が数百本走っている最中）に送ると Dropbox の書き込み競合で
+            // 落ちやすい（実機 diagnostics-74: 16 シャード全滅 → pending=90）。
+            await drainPendingMetadata(folder: folder, pendingStore: pendingStore(folder: folder))
+            // ADR-181: 前の枠で積んだまま渡せなかった分を先に OS へ（無条件・上の注記）。
+            await flushSpool(token: token)
+        }
 
         // 6. 1 枚ずつアップロード（検証つき・電源/回線ポーズ・キャンセル対応）
         //
@@ -605,7 +612,9 @@ final class BackupRunner {
             let count = PendingMetadataStore.entryCount(stillPending)
             if queued {
                 addLog("  ⚠️ \(count) metadata entry(s) could not be written — will retry next run")
-                Diagnostics.mark("backup: metadata pending=\(count) shards=\(stillPending.count)")
+                // 理由を診断ログにも残す（アプリ内ログだけでは実機で原因が追えない）。
+                Diagnostics.mark("backup: metadata pending=\(count) shards=\(stillPending.count)"
+                                 + (applied.firstFailure.map { " — \($0)" } ?? ""))
             } else {
                 // ⚠️ 送信も再送キューへの保存も失敗＝**この分は失われる**。写真本体は進捗台帳に
                 // 載って次回の対象から外れるので、黙って完了にしない（レビュー指摘）。

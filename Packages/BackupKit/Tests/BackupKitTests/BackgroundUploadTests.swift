@@ -143,6 +143,17 @@ struct BackgroundUploadSplitTests {
         #expect(Set(result.enqueue.map(\.id)) == ["fresh", "retry"])
         #expect(result.giveUp.map(\.id) == ["exhausted"])
     }
+
+    @Test("台帳へ書いている最中・この枠で投入済みのジョブは再投入しない（diagnostics-74 の重複投入）")
+    func settlingAndAttemptedAreExcluded() {
+        let settling = makeJob("settling")
+        let attempted = makeJob("attempted", attempts: 1)
+        let fresh = makeJob("fresh")
+        let result = BackgroundUploadSession.split(pending: [settling, attempted, fresh], running: [],
+                                                   excluded: ["settling", "attempted"])
+        #expect(result.enqueue.map(\.id) == ["fresh"])
+        #expect(result.giveUp.isEmpty)
+    }
 }
 
 // MARK: - 応答の分類（ADR-40 を崩さない）
@@ -231,6 +242,7 @@ private final class StubToken: AccessTokenProvider {
 
 private final class RecordingEnqueuer: BackgroundUploadEnqueuing, @unchecked Sendable {
     var calls = 0
+    func beginRun() {}
     func enqueuePending(token: String) async -> Int { calls += 1; return 0 }
 }
 
@@ -266,5 +278,23 @@ struct BackupRunnerBackgroundPlanTests {
                                   useBackgroundUploads: { true })
         await runner.flushSpool(token: "tok")
         #expect(enqueuer.calls == 1, "積んだ分が無い窓で渡さないと、前の窓の取り残しが永久に残る")
+    }
+}
+
+
+// MARK: - メタデータ書き込みの再試行（429/5xx）
+
+@Suite("Metadata upload retry")
+struct MetadataUploadRetryTests {
+
+    @Test("429 と 5xx だけ、最大 3 回。Retry-After があれば従う（上限 30 秒）")
+    func retryPolicy() {
+        #expect(DropboxBackupUploader.retryDelay(status: 429, attempt: 1, retryAfter: nil) == 2)
+        #expect(DropboxBackupUploader.retryDelay(status: 429, attempt: 2, retryAfter: nil) == 4)
+        #expect(DropboxBackupUploader.retryDelay(status: 429, attempt: 3, retryAfter: nil) == nil, "3 回目で諦める")
+        #expect(DropboxBackupUploader.retryDelay(status: 503, attempt: 1, retryAfter: "5") == 5)
+        #expect(DropboxBackupUploader.retryDelay(status: 429, attempt: 1, retryAfter: "600") == 30, "上限 30 秒")
+        #expect(DropboxBackupUploader.retryDelay(status: 409, attempt: 1, retryAfter: nil) == nil, "409 は再試行しない")
+        #expect(DropboxBackupUploader.retryDelay(status: 401, attempt: 1, retryAfter: nil) == nil)
     }
 }

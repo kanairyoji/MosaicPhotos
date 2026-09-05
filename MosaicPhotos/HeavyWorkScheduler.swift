@@ -274,8 +274,17 @@ enum HeavyWorkScheduler {
         // BGTask 実行中＝アプリは非アクティブ確定。バックグラウンド起動では scenePhase の
         // 変化が来ないことがあり、初期値（true）のままだと中央ゲートが開かない。
         let previousActive = BackgroundYield.isAppActive
+        let previousBackground = BackgroundYield.isAppInBackground
         BackgroundYield.isAppActive = false
-        defer { if restoreAppActive { BackgroundYield.isAppActive = previousActive } }
+        // 背面起動では scenePhase の変化が来ないことがある。処理枠の間は「背面」を明示し、
+        // 前面の定期ループ（HomeView）に判断させない（diagnostics-74・`isAppInBackground` の注記）。
+        BackgroundYield.isAppInBackground = true
+        defer {
+            if restoreAppActive {
+                BackgroundYield.isAppActive = previousActive
+                BackgroundYield.isAppInBackground = previousBackground
+            }
+        }
         // ストア群：プロセス内で唯一の共有インスタンス（前景 RootView と同じ）。別々に build すると
         // PeopleEngine/AutoAlbumEngine が二重化し顔/タグが二重起動するため必ず shared() を使う。
         let stores = await HomeStores.shared()

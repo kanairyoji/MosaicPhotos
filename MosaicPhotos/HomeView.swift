@@ -383,7 +383,8 @@ private struct HomeLifecycleTasks: ViewModifier {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
                     // 重い処理の中央ゲート（電源＋Wi-Fi＋ロック中）＋回線ポリシーを満たすときだけ
                     // 定期再スキャンする（操作中は動かさない方針・逆ジオコーディングは通信）。
-                    guard BackgroundYield.heavyWorkAllowed,
+                    guard !BackgroundYield.isAppInBackground,   // 背面の判断は処理枠側（上と同じ理由）
+                          BackgroundYield.heavyWorkAllowed,
                           NetworkStateMonitor.shared.networkAllowed() else { continue }
                     await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
                 }
@@ -394,6 +395,11 @@ private struct HomeLifecycleTasks: ViewModifier {
                 Diagnostics.mark("autoAlbum loadOrGenerate done")
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
+                    // ⚠️ 背面では判断しない。吊るされていたこのループは BGTask がプロセスを起こした
+                    // 瞬間に「期限超過」で発火し、処理枠側の見送り判断（NightlyWorkPolicy）を
+                    // 素通りして生成を始めていた（diagnostics-74: 枠の開始と同時に generate 25.6s・
+                    // その間 顔スキャンが停止）。背面の生成は HeavyWorkScheduler だけが起こす。
+                    guard !BackgroundYield.isAppInBackground else { continue }
                     await autoAlbumEngine.refreshIfNeeded()
                 }
             }

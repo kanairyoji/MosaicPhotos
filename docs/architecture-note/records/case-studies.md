@@ -21,6 +21,40 @@
 
 ---
 
+## 処理枠の開始と同時に前面ループが生成を始め、背景アップロードが同じ写真を 626 回投入した（diagnostics-74）
+- 症状: ADR-181 初回の実機（2026-09-05 09:02〜09:07・枠 4 分 56 秒）。(1) `bgtask: begin` と同じ秒に
+  `generate: begin`——スケジューラは `defer generate 4/4` と見送ったのに生成が走り（25.6 秒）、
+  その間 `face.pauseWait` が積み上がって顔スキャン 18 枚に 96 秒かかった。(2) spool は 400 枚なのに
+  `handed N upload(s)` の合計が 626＝226 回の重複投入、うち 7 枚が「3 回で諦めました」。
+  (3) 実行の最後のメタデータ書き込みが 16 シャード全滅（`metadata pending=90`）。
+- 原因: (1) 背面ではプロセスが吊るされているので HomeView の定期ループ（10 秒ティック →
+  `refreshIfNeeded`）は動かない。BGTask がプロセスを起こした瞬間に**期限超過のティックが発火**し、
+  `monolithicHeavyWorkAllowed`（非アクティブ）を通って生成を始めた。処理枠側の判断
+  （`NightlyWorkPolicy`）は別の入口からは見えない。(2) 応答が来た写真は台帳へ書き終わるまで
+  spool に残る。20 枚ごとの flush が「spool にあり・OS のタスク一覧に無い」＝未投入と読んで
+  **済んだ直後の写真をもう一度投入**した（→ 409 → 前面経路送り）。同じ枠内で何度でも
+  再投入したので、即失敗するジョブは 1 枠で 3 回試して諦めた。(3) 理由はログに無い（アプリ内
+  ログのみ）。数百本の転送が同じ名前空間へ走っている最中の書き込みなので、Dropbox の
+  書き込み競合（429 `too_many_write_operations`）が最有力。
+- 対処: (1) `BackgroundYield.isAppInBackground` を導入し、背面（scenePhase == .background・
+  処理枠の間は明示 true）では HomeView の生成／場所ティックを**判断させない**。背面の生成は
+  `HeavyWorkScheduler` だけが起こす。(2) 「台帳へ書いている最中」と「この枠で投入済み」を
+  投入対象から除外（`split(pending:running:excluded:)`・再試行は枠ごとに 1 回）。
+  (3) メタデータの再送を**投入を始める前**（前の枠の分が静かなうちに）へ移し、
+  `uploadJSONResult` に 429/5xx の短い再試行（Retry-After 準拠・最大 3 回）を足し、
+  失敗理由を診断ログへ残す（`ApplyResult.firstFailure`）。
+- 教訓: **「起こすだけ」の設計は、起こされる側にも入口が複数ある**。処理枠が判断しても、
+  同じエンジンに別の入口（前面ループ）があれば素通りされる。背面では判断者を 1 人にする。
+  fire-and-forget の「済み」は非同期に確定するので、**投入対象の判定は「まだ在る」ではなく
+  「まだ何も起きていない」で行う**。
+- 関連: `HomeView.swift` / `BackgroundYield.swift` / `HeavyWorkScheduler.swift` /
+  `BackgroundUploadSession.swift` / `BackupRunner.swift` / `DropboxBackupUploader.retryDelay` /
+  `BackgroundUploadTests`（`settlingAndAttemptedAreExcluded`）/ `MetadataUploadRetryTests` / ADR-163 / ADR-181。
+- 残課題: メタデータ全滅の理由は次の実機ログ（`backup: metadata pending=… — HTTP …`）で確定する。
+  枠の冒頭 40 秒はモデルロード（顔 ~20 秒・CLIP 初回バッチ 42 秒）が占める＝固定費。
+
+---
+
 ## 編集済み写真のバックアップが「編集前の姿」だった（オフロードで編集結果を失う）
 - 症状: 写真アプリで編集した写真をバックアップ → オフロード（実削除）すると、クラウドに
   残るのは**編集前の原画**。「最近削除した項目」の保存期間を過ぎると編集結果は復元できない。
