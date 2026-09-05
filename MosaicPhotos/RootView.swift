@@ -168,6 +168,9 @@ final class HomeStores {
             Task { _ = await dropboxStore?.thumbnail(for: dropboxFileItem(path: path)) }
         }
 
+        // 解析候補（顔・タグ・埋め込み）でも同じ台帳で**端末に原本があるバックアップコピー**を外す
+        // （表示と同じ重複排除。外さないとコピー側でもう一度解析し、分母が増え続ける）。
+        AnalysisCandidates.backupCopyIndexProvider = mergedStore.backupCopyIndexProvider
         // 人物・グループ・場所・アルバムの**メンバー限定ストア**にも同じ索引を渡す
         // （渡していなかったので、それらの画面では副本が二重に出て並びも崩れていた）。
         MergedPhotoStore.defaultBackupCopyIndexProvider = mergedStore.backupCopyIndexProvider

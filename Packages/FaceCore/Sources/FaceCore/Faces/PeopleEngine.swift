@@ -488,9 +488,10 @@ public final class PeopleEngine {
     /// 欠けが多すぎる（候補が揃っていない疑い）ときは何もしない。消したら人物一覧を作り直す。
     /// - Returns: 消した顔の数（何もしなかったら 0）。
     @discardableResult
-    public func pruneMissingPhotos(candidateRefKeys: [String]) async -> Int {
+    public func pruneMissingPhotos(candidateRefKeys: [String], knownGone: Set<String> = []) async -> Int {
         guard isFaceModelAvailable, !candidateRefKeys.isEmpty else { return 0 }
-        guard let result = await store.pruneMissingPhotos(existingRefKeys: Set(candidateRefKeys)) else {
+        guard let result = await store.pruneMissingPhotos(existingRefKeys: Set(candidateRefKeys),
+                                                          knownGone: knownGone) else {
             Diagnostics.mark("faces: prune skipped — candidates look incomplete")
             return 0
         }

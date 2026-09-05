@@ -14,14 +14,19 @@ extension FaceStore {
     /// （Dropbox 未ロード・写真アクセス制限）とみなして**何もしない**——実在する顔を消さない。
     static let pruneMaxFraction = 0.05
 
-    /// - Parameter existingRefKeys: いま存在する写真（スキャナと同じ候補列挙）。
-    /// - Returns: 消した数。候補が信用できない（欠けが上限超）ときは nil。
-    func pruneMissingPhotos(existingRefKeys: Set<String>) -> (faces: Int, photos: Int, clusters: Int)? {
+    /// - Parameters:
+    ///   - existingRefKeys: いま存在する写真（スキャナと同じ候補列挙）。
+    ///   - knownGone: 「無い」と**分かっている**写真（候補から意図して外したバックアップコピー等）。
+    ///     こちらは安全弁（割合の上限）の対象外——理由が分かっているので数が多くても消してよい。
+    /// - Returns: 消した数。候補が信用できない（説明のつかない欠けが上限超）ときは nil。
+    func pruneMissingPhotos(existingRefKeys: Set<String>, knownGone: Set<String> = [])
+        -> (faces: Int, photos: Int, clusters: Int)? {
         let scanned = scannedRefKeys()
         let missing = scanned.subtracting(existingRefKeys)
         guard !missing.isEmpty else { return (0, 0, 0) }
-        guard Double(missing.count) <= Double(scanned.count) * Self.pruneMaxFraction else {
-            Self.log.error("faces: prune skipped — \(missing.count)/\(scanned.count) missing (candidates incomplete?)")
+        let unexplained = missing.subtracting(knownGone)
+        guard Double(unexplained.count) <= Double(scanned.count) * Self.pruneMaxFraction else {
+            Self.log.error("faces: prune skipped — \(unexplained.count)/\(scanned.count) missing without a reason (candidates incomplete?)")
             return nil
         }
 

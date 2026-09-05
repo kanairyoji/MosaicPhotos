@@ -32,6 +32,46 @@ nonisolated public func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] 
 /// 夜間 BGTask でも同じ経路を通るため、背面での長い停止の一因でもあった。
 @MainActor
 public func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [String] {
+    await analysisCandidates(dropboxStore: dropboxStore).ordered
+}
+
+/// 解析候補の供給元（合成層が結線する）。
+public enum AnalysisCandidates {
+    /// バックアップ台帳（Dropbox パス小文字 → 端末の写真）。`MergedPhotoStore.backupCopyIndexProvider` と同じもの。
+    /// ⚠️ 未結線なら**何も隠さない**（分からないものは隠さない＝`BackupCopyHiding` の方針）。
+    @MainActor public static var backupCopyIndexProvider: (@Sendable () async -> [String: BackupCopyInfo])?
+
+    /// **端末に原本があるバックアップコピー**のクラウド refKey（"C-<path>"・パスは小文字で照合）。
+    /// 表示の重複排除（`MergedPhotoStore`）と同じ規則。解析（顔・タグ・埋め込み）の候補から外す。
+    ///
+    /// ⚠️ なぜ要るか（実フィードバック「ピープルの分母がじわじわ上がる」）: バックアップフォルダは
+    /// 同期対象（ADR-44）なので、背景アップロード（ADR-181）で上がった写真が**新しいクラウド写真**として
+    /// 現れる。表示では隠れるが解析候補には入っていたため、端末で解析済みの写真をコピー側でもう一度
+    /// 解析していた（顔が二重・分母が増え続ける）。
+    @MainActor
+    public static func hiddenBackupCopyRefKeys(cloudItems: [DropboxFileItem], localRefKeys: [String]) async -> Set<String> {
+        guard let provider = backupCopyIndexProvider else { return [] }
+        let index = await provider()
+        guard !index.isEmpty else { return [] }
+        return await Task.detached(priority: .utility) {
+            let localIDs = Set(localRefKeys.compactMap { PhotoRef.decode($0)?.localIdentifier })
+            let hidden = BackupCopyHiding.hiddenPaths(
+                backupPathToLocalID: index.compactMapValues(\.localIdentifier), localIdentifiers: localIDs)
+            guard !hidden.isEmpty else { return [] }
+            var keys = Set<String>()
+            for item in cloudItems where hidden.contains(item.path.lowercased()) {
+                keys.insert(PhotoRef.cloud(item.path).encoded)
+            }
+            return keys
+        }.value
+    }
+}
+
+/// 解析候補（処理順つき）と、候補から外した**バックアップコピー**（端末に原本あり）。
+/// 外した分は顔台帳の掃除（`pruneMissingPhotos`）で「無くなった」扱いにしてよい。
+@MainActor
+public func analysisCandidates(dropboxStore: DropboxPhotoStore) async
+    -> (ordered: [String], excludedBackupCopies: Set<String>) {
     // ⚠️ items は All Photos / Cloud を開くまで読み込まれない（ADR-85）。起動直後はこの関数の方が
     // 早く、空のまま候補を作ると**クラウド写真が丸ごと解析対象から漏れる**。実機ログ diag-33 で
     // candidates=6699（ローカルのみ）になり、2 秒後に 68,200 件がロードされていた。
@@ -40,10 +80,13 @@ public func analysisOrderedRefKeys(dropboxStore: DropboxPhotoStore) async -> [St
     let cloudItems = dropboxStore.items                             // MainActor 上のスナップショット（安価）
     let local = await localImageRefKeys()                           // 既に detached
     let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)
-    return await Task.detached(priority: .utility) {
-        let cloud = cloudImageRefKeys(items: cloudItems)            // ローカル(新→古)＋クラウド(新→古)
+    let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: cloudItems, localRefKeys: local)
+    let ordered = await Task.detached(priority: .utility) {
+        var cloud = cloudImageRefKeys(items: cloudItems)            // ローカル(新→古)＋クラウド(新→古)
+        if !hidden.isEmpty { cloud.removeAll { hidden.contains($0) } }
         return AnalysisOrder.ordered(local + cloud, favorites: favorites)
     }.value
+    return (ordered, hidden)
 }
 
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。

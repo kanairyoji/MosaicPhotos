@@ -120,11 +120,16 @@ struct DropboxCloudPhotoProvider: CloudPhotoProvider {
         // main では snapshot（COW の配列コピー＝軽い）だけ取り、67k 件の map は
         // オフメインで行う（generate から呼ばれるためメインを塞がない）。
         let items = await MainActor.run { store.items }
+        // 端末に原本があるバックアップコピーは台帳に入れない（顔スキャンの候補と同じ規則）。
+        // 入れると原本と同じ写真をコピー側でもタグ付け・埋め込みし、台帳と分母が増え続ける。
+        let local = await localImageRefKeys()
+        let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: items, localRefKeys: local)
         return await Task.detached(priority: .utility) {
-            items.map { item in
-                CloudPhotoMeta(path: item.path, captureDate: item.captureDate,
-                               latitude: item.latitude, longitude: item.longitude,
-                               contentHash: item.contentHash)
+            items.compactMap { item in
+                if !hidden.isEmpty, hidden.contains(PhotoRef.cloud(item.path).encoded) { return nil }
+                return CloudPhotoMeta(path: item.path, captureDate: item.captureDate,
+                                      latitude: item.latitude, longitude: item.longitude,
+                                      contentHash: item.contentHash)
             }
         }.value
     }
