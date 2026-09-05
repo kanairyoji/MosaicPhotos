@@ -23,9 +23,11 @@ struct AIAnalysisStatusView: View {
     let session: AnalysisSession
 
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
+    /// 顔スキャン: 候補（スクリーンショット除外・端末＋クラウド）のうち済んだ枚数と候補総数。
+    /// ⚠️ 記録の総数÷ライブラリ総数では、削除済みの記録と候補外の写真で「存在しない残り」が出る。
     @State private var faceScanned = 0
+    @State private var faceCandidates = 0
     @State private var facesDetected = 0
-    @State private var localPhotoTotal = 0
 
     private var monitor: BackgroundActivityMonitor { .shared }
     private var facesAvailable: Bool { people.isFaceModelAvailable }
@@ -113,7 +115,7 @@ struct AIAnalysisStatusView: View {
 
     private var peopleSection: some View {
         Section {
-            progressRow(done: faceScanned, total: localPhotoTotal, running: people.isScanning)
+            progressRow(done: faceScanned, total: faceCandidates, running: people.isScanning)
             LabeledContent(L("People found"), value: "\(people.people.count)")
             LabeledContent(L("Faces detected"), value: "\(facesDetected)")
             lastRunRow(.faces)
@@ -230,13 +232,15 @@ struct AIAnalysisStatusView: View {
     private func refresh() async {
         async let prog = engine.analysisProgress()
         async let stats = people.scanStats()
-        async let localTotal: Int = facesAvailable ? localImagePhotoCount() : 0
         progress = await prog
-        let s = await stats
-        faceScanned = s.scanned
-        facesDetected = s.faces
-        // 顔スキャンは端末＋クラウド両方が対象になったので分母も合算（クラウドは同期済み件数）。
-        localPhotoTotal = await localTotal + (facesAvailable ? dropboxStore.items.count : 0)
+        facesDetected = await stats.faces
+        // 顔スキャンの分母は**候補そのもの**（スキャナと同じ列挙）、分子は「候補のうち済んだ数」。
+        if facesAvailable {
+            let candidates = await analysisOrderedRefKeys(dropboxStore: dropboxStore)
+            let pending = await people.pendingScanCount(candidateRefKeys: candidates)
+            faceCandidates = candidates.count
+            faceScanned = max(0, candidates.count - pending)
+        }
     }
 
     private func percentText(done: Int, total: Int) -> String {
