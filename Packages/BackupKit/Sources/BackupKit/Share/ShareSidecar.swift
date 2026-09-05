@@ -11,9 +11,39 @@ public enum ShareSidecar {
 
     /// サイドカーの置き場所（セットフォルダからの相対）。
     public static let subfolderName = ".mosaic-share"
-    public static let fileName = "analysis-v1.json"
-    public static func sidecarPath(setFolderPath: String) -> String {
-        "\(setFolderPath)/\(subfolderName)/\(fileName)"
+    /// 旧形式（1 セット 1 ファイル）。受信側は読み続け、送信側はシャードを置いたら消す（ADR-183）。
+    public static let legacyFileName = "analysis-v1.json"
+    public static func legacySidecarPath(setFolderPath: String) -> String {
+        "\(setFolderPath)/\(subfolderName)/\(legacyFileName)"
+    }
+
+    // MARK: - シャード（ADR-183）
+
+    /// content_hash の先頭 `shardPrefixLength` 桁ごとに 1 ファイル（`shard-<xx>.json`・空のシャードは置かない）。
+    /// 1 セット 1 ファイルだと写真 1 枚の増減で数十 MB を作り直して上げ下ろしする（12,941 枚のセットで
+    /// 20〜30MB）。写真ごとの解析結果は不変なので、触れたシャードだけを動かす。
+    public static let shardPrefixLength = 2
+    public static let shardFilePrefix = "shard-"
+
+    public static func shardName(forHash hash: String) -> String {
+        String(hash.lowercased().prefix(shardPrefixLength))
+    }
+    public static func shardFileName(_ shard: String) -> String { "\(shardFilePrefix)\(shard).json" }
+    public static func shardPath(setFolderPath: String, shard: String) -> String {
+        "\(setFolderPath)/\(subfolderName)/\(shardFileName(shard))"
+    }
+    /// サイドカーのファイル名か（シャード・旧形式）。受信側の一覧の絞り込みに使う。
+    public static func isSidecarFileName(_ name: String) -> Bool {
+        name == legacyFileName || (name.hasPrefix(shardFilePrefix) && name.hasSuffix(".json"))
+    }
+
+    /// エントリをシャードに分ける（純ロジック）。キーはシャード名、値はそのシャードのファイル。
+    public static func shards(versions: Versions, entries: [String: Entry]) -> [String: File] {
+        var grouped: [String: [String: Entry]] = [:]
+        for (hash, entry) in entries {
+            grouped[shardName(forHash: hash), default: [:]][hash.lowercased()] = entry
+        }
+        return grouped.mapValues { File(versions: versions, entries: $0) }
     }
 
     public static let formatVersion = 1

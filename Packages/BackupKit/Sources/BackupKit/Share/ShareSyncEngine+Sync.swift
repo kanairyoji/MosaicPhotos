@@ -55,18 +55,34 @@ extension ShareSyncEngine {
 
         await sweepDeletedFolders(copier: copier, token: token)
 
+        // 配置の追いつき（フォルダ名の変更）は一覧を取る**前**に済ませる。
+        var sets: [ShareSetLite] = []
         for set in await store.allShareSets() {
+            sets.append(await migrateFolderIfNeeded(set: set, shareRoot: shareRoot,
+                                                    store: store, copier: copier, token: token))
+        }
+        guard !sets.isEmpty else { lastSyncAt = Date(); await refresh(); return }
+
+        // ADR-183: 共有ルートを**再帰で 1 回**一覧し、全セットの写真の実在とサイドカーの実在・内容
+        // （content_hash）をまとめて知る。以前はセットごとに create_folder ＋ list_folder ＋
+        // サイドカーの list_folder＝セット数 × 3 回の往復だった。
+        // 取れない（通信断）ときは全部スキップ——実在不明のまま再コピーすると autorename で重複を作る。
+        guard await copier.createFolder(path: shareRoot, token: token),
+              let listing = await copier.listFolder(path: shareRoot, token: token, recursive: true) else {
+            lastError = .folderCheckFailed
+            BackupLogger.error("Share sync: list_folder(recursive) failed — \(shareRoot)")
+            return
+        }
+        let remote = RemoteShareIndex(listing: listing)
+
+        for set in sets {
             // 途中でユーザーが削除操作を始めたら、そこで止める（続きは次回の反映で拾う）。
             if isMutating || Task.isCancelled {
                 needsAnotherPass = true
                 break
             }
-            // 端末フォルダ・種類接頭辞が入る前に作ったセットは、ここで**フォルダごと移動**して
-            // 追いつかせる（作り直させるとクラウド上の写真をコピーし直すことになる）。
-            let current = await migrateFolderIfNeeded(set: set, shareRoot: shareRoot,
-                                                      store: store, copier: copier, token: token)
-            await sync(set: current, shareRoot: shareRoot, store: store,
-                       copier: copier, token: token)
+            await sync(set: set, shareRoot: shareRoot, store: store,
+                       copier: copier, token: token, remote: remote)
             await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映（変化なしなら無通知）
         }
         lastSyncAt = Date()
@@ -221,7 +237,7 @@ extension ShareSyncEngine {
     }
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,
-                      copier: DropboxShareCopier, token: String) async {
+                      copier: DropboxShareCopier, token: String, remote: RemoteShareIndex) async {
         let items = await store.shareItems(setID: set.id)
         guard !items.isEmpty else { return }
         guard let setFolder = SharePlanning.setFolderPath(
@@ -231,19 +247,16 @@ extension ShareSyncEngine {
             return
         }
 
-        // フォルダを確保してから実在一覧を取る。一覧が取れない（通信断）ときは
-        // このセットをスキップする（実在不明のまま再コピーすると autorename で重複を作る）。
-        guard await copier.createFolder(path: setFolder, token: token) else {
-            lastError = .folderPrepareFailed
-            BackupLogger.error("Share sync: create_folder failed — \(setFolder)")
-            return
+        // セットのフォルダが無ければ作る（一覧に無い＝初回か外部削除）。実在一覧は共有ルートの
+        // 再帰一覧（ADR-183）から切り出す＝セットごとの往復は無い。
+        if !remote.hasFolder(setFolder) {
+            guard await copier.createFolder(path: setFolder, token: token) else {
+                lastError = .folderPrepareFailed
+                BackupLogger.error("Share sync: create_folder failed — \(setFolder)")
+                return
+            }
         }
-        guard let listing = await copier.listFolder(path: setFolder, token: token) else {
-            lastError = .folderCheckFailed
-            BackupLogger.error("Share sync: list_folder failed — \(setFolder)")
-            return
-        }
-        let remoteFiles = listing.filter { !$0.isFolder }
+        let remoteFiles = remote.photoFiles(inSetFolder: setFolder)
             .map { SharePlanning.RemoteFile(pathLower: $0.pathLower, contentHash: $0.contentHash) }
 
         // 計画（純ロジック）: コピー / 採用 / 掃除 / バックアップ待ちを算出。
@@ -336,12 +349,21 @@ extension ShareSyncEngine {
         }
 
         await updateSidecar(set: set, setFolder: setFolder, store: store,
-                            copier: copier, token: token)
+                            copier: copier, token: token,
+                            remoteSidecars: remote.sidecarFiles(inSetFolder: setFolder))
     }
 
-    /// 解析サイドカーを組み立てて、内容が変わっていればアップロードする。
+    /// 解析サイドカーを**シャード単位**で同期する（ADR-183）。
+    ///
+    /// 状態は持たない: 「上げるべきか」は共有ルートの再帰一覧にある各シャードの `content_hash` と、
+    /// 手元で組んだシャードの `content_hash`（同じ計算・`DropboxContentHash`）の比較だけで決まる。
+    /// - 手元にあって遠隔に無い／内容が違う → アップロード
+    /// - 遠隔にあって手元に無い（シャードが空になった）→ 削除
+    /// - 旧形式 `analysis-v1.json` が残っていれば削除（受信側はシャードを読む）
+    /// 消されたサイドカーの復元（ADR-166）は「遠隔に無い → 上げる」に自然に含まれる。
     private func updateSidecar(set: ShareSetLite, setFolder: String, store: BackupStore,
-                               copier: DropboxShareCopier, token: String) async {
+                               copier: DropboxShareCopier, token: String,
+                               remoteSidecars: [DropboxShareCopier.ListedFile]) async {
         guard let analysisSource else { return }
         let items = await store.shareItems(setID: set.id)
         let copiedItems = items.filter { $0.state == .copied && $0.sharedContentHash != nil }
@@ -356,31 +378,104 @@ extension ShareSyncEngine {
         }
         guard !entriesByHash.isEmpty else { return }
 
-        let file = ShareSidecar.File(versions: payload.versions, entries: entriesByHash)
-        // JSON エンコード（sortedKeys）とチェックサムは数 MB 規模になり得るのでオフメインで。
-        guard let (data, checksum) = await Task.detached(priority: .utility, operation: {
-            ShareSidecar.encode(file).map { ($0, ShareSidecar.checksum($0)) }
-        }).value else { return }
-        // ⚠️ **中身が同じでも「実在するか」を確かめる**（ADR-166）。以前はチェックサム比較だけで
-        // 済ませていたため、誰かが `.mosaic-share` を消すと**解析結果だけ永久に戻らなかった**
-        // （写真は下のコピー計画で自己修復されるのに、サイドカーだけ取り残される）。
-        // 実在確認は 1 セットにつき list_folder 1 回で、しかも**内容が変わっていないときだけ**
-        // 走る（変わっていればどのみちアップロードする）。
+        // シャードのエンコードと content_hash は数 MB 規模になり得るのでオフメインで。
+        let versions = payload.versions
+        let local: [String: (data: Data, hash: String)] = await Task.detached(priority: .utility) {
+            var out: [String: (data: Data, hash: String)] = [:]
+            for (shard, file) in ShareSidecar.shards(versions: versions, entries: entriesByHash) {
+                guard let data = ShareSidecar.encode(file) else { continue }
+                out[shard] = (data, DropboxContentHash.hash(of: data))
+            }
+            return out
+        }.value
+
+        let plan = ShareSidecarPlanning.plan(local: local.mapValues(\.hash),
+                                             remote: remoteSidecars.map {
+                                                 ShareSidecarPlanning.RemoteFile(name: $0.name, contentHash: $0.contentHash)
+                                             })
+        guard !plan.upload.isEmpty || !plan.delete.isEmpty else { return }
+
         let sidecarFolder = "\(setFolder)/\(ShareSidecar.subfolderName)"
-        if checksum == set.sidecarChecksum {
-            let listing = await copier.listFolder(path: sidecarFolder, token: token)
-            // 一覧が取れない（通信断・フォルダ未作成）ときは、あるものとして扱わない。
-            // フォルダごと消えている場合も nil か空になるので、下のアップロードで作り直す。
-            let exists = listing?.contains { !$0.isFolder && $0.name == ShareSidecar.fileName } ?? false
-            if exists { return }   // 変化なし＋実在 → 再アップロード不要
-            BackupLogger.info("Share: '\(set.folderName)' sidecar missing — restoring")
-            Diagnostics.mark("share: sidecar missing → 復元します（\(set.folderName)）")
+        if !plan.upload.isEmpty {
+            guard await copier.createFolder(path: sidecarFolder, token: token) else { return }
         }
-        guard await copier.createFolder(path: sidecarFolder, token: token),
-              await copier.uploadFile(data: data,
-                                      to: ShareSidecar.sidecarPath(setFolderPath: setFolder),
-                                      token: token) else { return }
-        await store.setShareSidecarChecksum(setID: set.id, checksum: checksum)
-        BackupLogger.info("Share: '\(set.folderName)' sidecar updated (\(entriesByHash.count) entries)")
+        var uploaded = 0
+        for shard in plan.upload.sorted() {
+            guard let data = local[shard]?.data else { continue }
+            if await copier.uploadFile(data: data, to: ShareSidecar.shardPath(setFolderPath: setFolder, shard: shard),
+                                       token: token) {
+                uploaded += 1
+            }
+        }
+        if !plan.delete.isEmpty {
+            _ = await copier.deleteBatch(paths: plan.delete.map { "\(sidecarFolder)/\($0)" }, token: token)
+        }
+        if uploaded > 0 || !plan.delete.isEmpty {
+            BackupLogger.info("Share: '\(set.folderName)' sidecar shards +\(uploaded) -\(plan.delete.count) "
+                              + "(\(entriesByHash.count) entries in \(local.count) shards)")
+        }
+    }
+}
+
+/// 共有ルートの再帰一覧を、セットごとの「写真の実在」と「サイドカーの実在」に切り出す（ADR-183）。
+struct RemoteShareIndex {
+    private let folders: Set<String>
+    private let files: [DropboxShareCopier.ListedFile]
+
+    init(listing: [DropboxShareCopier.ListedFile]) {
+        folders = Set(listing.filter(\.isFolder).map(\.pathLower))
+        files = listing.filter { !$0.isFolder }
+    }
+
+    func hasFolder(_ path: String) -> Bool { folders.contains(path.lowercased()) }
+
+    /// セットフォルダ**直下**の写真（サイドカーのフォルダ配下は含めない）。
+    func photoFiles(inSetFolder setFolder: String) -> [DropboxShareCopier.ListedFile] {
+        let prefix = setFolder.lowercased() + "/"
+        return files.filter { file in
+            guard file.pathLower.hasPrefix(prefix) else { return false }
+            return !file.pathLower.dropFirst(prefix.count).contains("/")
+        }
+    }
+
+    /// セットのサイドカーファイル（シャード・旧形式）。
+    func sidecarFiles(inSetFolder setFolder: String) -> [DropboxShareCopier.ListedFile] {
+        let prefix = setFolder.lowercased() + "/" + ShareSidecar.subfolderName + "/"
+        return files.filter { $0.pathLower.hasPrefix(prefix) && ShareSidecar.isSidecarFileName($0.name) }
+    }
+}
+
+/// サイドカーのシャードの差分計画（純ロジック・テスト対象）。
+public enum ShareSidecarPlanning {
+    public struct RemoteFile: Sendable, Equatable {
+        public let name: String
+        public let contentHash: String?
+        public init(name: String, contentHash: String?) { self.name = name; self.contentHash = contentHash }
+    }
+    public struct Plan: Equatable {
+        /// 上げるシャード名。
+        public var upload: [String] = []
+        /// 消すファイル名（空になったシャード・旧形式）。
+        public var delete: [String] = []
+    }
+
+    /// - Parameters:
+    ///   - local: シャード名 → 手元で組んだファイルの content_hash。
+    ///   - remote: `.mosaic-share` にあるサイドカーファイル。
+    public static func plan(local: [String: String], remote: [RemoteFile]) -> Plan {
+        var plan = Plan()
+        var remoteByName: [String: String?] = [:]
+        for file in remote { remoteByName[file.name] = file.contentHash }
+        for (shard, hash) in local {
+            let name = ShareSidecar.shardFileName(shard)
+            if remoteByName[name] != hash { plan.upload.append(shard) }
+        }
+        let localNames = Set(local.keys.map(ShareSidecar.shardFileName))
+        for file in remote where !localNames.contains(file.name) {
+            plan.delete.append(file.name)   // 空になったシャード、または旧形式
+        }
+        plan.upload.sort()
+        plan.delete.sort()
+        return plan
     }
 }

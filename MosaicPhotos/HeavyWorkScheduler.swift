@@ -388,7 +388,11 @@ enum HeavyWorkScheduler {
         // 戻らないまま放置される）。回線ポリシーは各処理の内側が見る。
         if NetworkStateMonitor.shared.networkAllowed() {
             await stores.shareImporter.runIfNeeded()
-            if ShareSettingsKeys.isProvideEnabled() { await stores.shareEngine.syncNow() }
+            if ShareSettingsKeys.isProvideEnabled() {
+                // ADR-183 C: 共有セットを作成元（人物・AI アルバム）のいまのメンバーに追従させてから反映。
+                await stores.shareEngine.refreshAllFromSource()
+                await stores.shareEngine.syncNow()
+            }
         }
         if Task.isCancelled { return }
 

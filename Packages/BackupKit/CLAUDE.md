@@ -28,6 +28,12 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
       BackgroundUploadSession.swift  背景 URLSession（identifier 固定・遅延生成）。応答の分類 `classify` / 投入の振り分け `split` は純ロジック
       BackupRunner+BackgroundUpload.swift  runner の spool 経路（`spoolOne` / `flushSpool` / `backgroundPlan`＝転送中は対象外・409 は前面へ）
       BackupEngine+Settle.swift      応答 → ジャーナル → 記録（`BackgroundSettlement.perform` で順序を固定）
+    Share/                         家族共有（ADR-112/166/183）
+      ShareSyncEngine.swift          @MainActor @Observable。セット CRUD・作成元追従（`refreshAllFromSource`）
+      ShareSyncEngine+Sync.swift     反映本体（共有ルートの再帰一覧 1 回 → copy_batch/delete_batch → シャードの差分同期）。`RemoteShareIndex` / `ShareSidecarPlanning`（純ロジック）
+      ShareSidecar.swift             サイドカーの形式（content_hash キー・`shard-<xx>.json`・防御的検証）
+      ShareSidecarFetch.swift        受信側の取得（家族フォルダの再帰一覧 1 回・rev 差分）
+      SharePlanning.swift / ShareImportPlanning.swift  コピー計画 / 受信側の突合（純ロジック）
     BackupLogger.swift             内部ロガー（MosaicSupport の LogChannel に委譲）
     BackupAlbumInfo.swift / BackupAssetRecord.swift  値オブジェクト / @Model
   Tests/BackupKitTests/            BackupPlanning / DropboxBackupUploader のテスト（macOS）

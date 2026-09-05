@@ -56,6 +56,36 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-183 共有の解析サイドカーをシャード化し、反映は共有ルートの再帰一覧 1 回で・作成元へ自動追従
+- 状態: 採用（ADR-112 / ADR-166 の実装を置換）
+- 文脈: 共有アルバム（人物・AI アルバム）は写真が増減する。反映は `copy_batch`（サーバー側コピー・
+  転送なし）と `delete_batch` で軽いが、**解析サイドカーが 1 セット 1 ファイル**（CLIP 1.4KB＋顔 1.4KB/顔）
+  で、12,941 枚のセットは 20〜30MB。写真が 1 枚増減するたびに送信側は丸ごと作り直して上げ、受信側は
+  丸ごと落として全部デコードしていた（既取り込み分はデコード後に捨てる）。さらに反映のたびにセットごとに
+  `create_folder`＋`list_folder`＋サイドカー実在確認の `list_folder`（セット数 × 3 往復）、受信側も
+  セットごとの `list_folder`（N+1）。作成元（人物・AI アルバム）が育っても共有セットは手動更新だった。
+- 決定:
+  (A) **シャード化**: `<セット>/.mosaic-share/shard-<xx>.json`（content_hash 先頭 2 桁・空は置かない）。
+  写真ごとの解析結果は不変なので、触れたシャードだけが動く。送信側は**状態を持たない**——共有ルートの
+  一覧にある各シャードの `content_hash` と、手元で組んだシャードの `content_hash`（同じ計算＝
+  `DropboxContentHash`・決定的エンコード）を比べて「無い／違う → 上げる、余る → 消す」
+  （`ShareSidecarPlanning.plan`）。消されたサイドカーの復元（ADR-166）は自然に含まれる。
+  旧 `analysis-v1.json` は受信側が読み続け、送信側はシャードを置いたら消す。
+  (B) **一覧は 1 回**: 送信側は共有ルートの `list_folder(recursive)` 1 回で全セットの写真・サイドカーの
+  実在を得る（`RemoteShareIndex`）。セットの `create_folder` は一覧に無いときだけ。受信側も家族フォルダごとに
+  再帰 1 回で全シャードの rev を得て、変わったものだけ落とす。rev の記録は一覧に無いパスを捨てる
+  （旧「500 件超で末尾 300 件」はシャード化で取り込み済みの記録まで捨てて再取得を誘発する）。
+  (C) **作成元への自動追従**: 処理枠の共有反映の直前に `refreshAllFromSource()`（作成元が現存する
+  セットだけ・孤児は触らない）。反映の差分はシャード単位なので夜間に回しても軽い。
+- 結果: 増減 1 枚あたりの転送は 25MB → 1 シャード（数十〜数百 KB）。往復はセット数 × 3 → 2〜3。
+  受信側の再デコードは変わったシャードだけ。送信側のサイドカー状態（`sidecarChecksum`）は不要になった
+  （モデルの列は残置）。テスト: シャード分割・差分計画・決定的エンコード・受信側の 1 回一覧と差分取得・
+  旧形式の読み取り・作成元追従（`ShareSidecarShardTests`）。既存の復元テスト（ADR-166）はそのまま通る。
+- 関連: `ShareSidecar.swift`（`shards` / `shardPath`）/ `ShareSyncEngine+Sync.swift`
+  （`RemoteShareIndex` / `ShareSidecarPlanning` / `updateSidecar`）/ `ShareSidecarFetch.swift` /
+  `ShareSyncEngine.refreshAllFromSource` / `DropboxShareCopier.listFolder(recursive:)` /
+  `HeavyWorkScheduler` / ADR-112 / ADR-166。
+
 ## ADR-182 「今すぐ解析」を解析セッション 1 本に統合し、iOS 26 の継続タスクに載せる
 - 状態: 採用（ADR-165 の「開いている間」と旧「今すぐ処理（30 分）」を置換）
 - 文脈: 処理枠（BGProcessingTask）は OS 裁量で、数分のロックでは開かず、開いても 5 分前後

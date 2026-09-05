@@ -1,5 +1,6 @@
 import DropboxCore
 import Foundation
+import MosaicSupport
 import Observation
 
 /// 送信側の解析サイドカー供給 seam。実体はアプリ（Composition Root）が
@@ -439,17 +440,41 @@ public final class ShareSyncEngine {
     /// 作成元の**現在の内容**にセットを合わせ直す（追加＋除外＋反映）。
     /// 戻り値は (追加, 除外)。作成元が解決できない（孤児セット）なら nil。
     @discardableResult
-    public func refreshFromSource(setID: UUID) async -> (added: Int, removed: Int)? {
+    public func refreshFromSource(setID: UUID, thenSync: Bool = true) async -> (added: Int, removed: Int)? {
         guard let resolver = sourceResolver else { return nil }
         let store = await storeProvider()
         guard let set = await store.allShareSets().first(where: { $0.id == setID }),
               let key = set.sourceKey.flatMap(ShareSourceKey.init),
               let members = await resolver.currentMembers(for: key) else { return nil }
         let result = await updateSetMembers(setID: setID, refKeys: members, store: store)
-        BackupLogger.info("Share: refreshed '\(set.folderName)' from source (+\(result.added) / -\(result.removed))")
+        if result.added > 0 || result.removed > 0 {
+            BackupLogger.info("Share: refreshed '\(set.folderName)' from source (+\(result.added) / -\(result.removed))")
+        }
         await refresh()
-        scheduleSync()
+        if thenSync { scheduleSync() }
         return result
+    }
+
+    /// 作成元（人物・グループ・AI アルバム）が現存する全セットを、いまのメンバーに追従させる（ADR-183 C）。
+    /// 処理枠の共有反映の直前に呼ぶ——AI アルバムの再評価や人物の成長で写真が増減しても、
+    /// 共有側が置き去りにならない。反映（コピー・削除・シャード更新）は続く `syncNow()` が行う。
+    /// 作成元が無いセット（孤児）は触らない。
+    @discardableResult
+    public func refreshAllFromSource() async -> (sets: Int, added: Int, removed: Int) {
+        guard sourceResolver != nil else { return (0, 0, 0) }
+        let store = await storeProvider()
+        var sets = 0, added = 0, removed = 0
+        for set in await store.allShareSets() where set.sourceKey != nil {
+            if Task.isCancelled { break }
+            guard let result = await refreshFromSource(setID: set.id, thenSync: false) else { continue }
+            sets += 1
+            added += result.added
+            removed += result.removed
+        }
+        if added > 0 || removed > 0 {
+            Diagnostics.mark("share: refreshed \(sets) set(s) from source (+\(added) / -\(removed))")
+        }
+        return (sets, added, removed)
     }
 
     /// このセットの作成元が現存するか（孤児セットの判定・UI 表示用）。
