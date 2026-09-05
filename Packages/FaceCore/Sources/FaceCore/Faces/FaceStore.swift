@@ -373,6 +373,15 @@ actor FaceStore {
 
     func scannedCount() -> Int { (try? modelContext.fetchCount(FetchDescriptor<ScannedPhoto>())) ?? 0 }
 
+    /// 候補のうち**まだスキャンしていない**枚数（画面の「残り」表示用）。
+    /// ⚠️ `scannedCount()`（記録の総数）を分子にすると、削除済み写真の記録が分子に残り、
+    /// 分母（ライブラリ総数）にはスクリーンショット等の候補外が混ざって、**存在しない残作業**が
+    /// 表示される（実機: 実際は残 27 枚なのに「残り 1 万枚」）。集合の差で数える。
+    func pendingCount(candidateRefKeys: [String]) -> Int {
+        let done = scannedRefKeys()
+        return candidateRefKeys.reduce(0) { $0 + (done.contains($1) ? 0 : 1) }
+    }
+
     /// 全スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」判定に使う。
     func scannedFaceCounts() -> [String: Int] {
         let markers = (countedFetchOptional(FetchDescriptor<ScannedPhoto>())) ?? []

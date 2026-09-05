@@ -484,6 +484,11 @@ public final class PeopleEngine {
 
     /// 顔スキャンの進捗統計（ユーザー向け「AI 解析の状況」画面用）。
     /// `scanned`＝スキャン済み写真数、`faces`＝検出顔総数。件数取得のみで軽い（辞書は返さない）。
+    /// 候補のうち未スキャンの枚数（AI 解析画面の「残り」）。候補は `analysisOrderedRefKeys` と同じもの。
+    public func pendingScanCount(candidateRefKeys: [String]) async -> Int {
+        await store.pendingCount(candidateRefKeys: candidateRefKeys)
+    }
+
     public func scanStats() async -> (scanned: Int, faces: Int) {
         async let scanned = store.scannedCount()
         async let faces = store.faceCount()
