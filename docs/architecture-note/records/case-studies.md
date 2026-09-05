@@ -30,9 +30,14 @@
   **存在しない「残り約 1 万枚」**を表示していた。
 - 対処: 分母を候補そのもの（`analysisOrderedRefKeys`＝スキャナと同じ列挙）、分子を「候補のうち済んだ数」
   （`FaceStore.pendingCount(candidateRefKeys:)`＝集合の差）にした。テスト `ScanPendingCountTests`。
+- 追記（同日）: シーンタグ行も同じ形だった——分子＝タグ台帳（別コンテナ）の記録総数 88,184、
+  分母＝台帳（PhotoEnrichment）86,821 で **100% 超**。削除・移動した写真のタグ記録が残るため。
+  分子を「台帳の refKey のうち現行版でタグ付け済み」（`TagStore.taggedCount(among:)`）にした。
 - 教訓: **進捗の分子と分母は同じ列挙から取る**。別々の出典（記録の総数／ライブラリの総数）を割ると、
   片方にしか無いものの分だけ嘘になる。「終わらない」の相談は、まず「残りの数が本物か」を疑う。
-- 関連: `AIAnalysisStatusView.refresh` / `PeopleEngine.pendingScanCount` / ADR-182 / diagnostics-75。
+  分子が分母を超えたら、それは進捗ではなく出典のズレ。
+- 関連: `AIAnalysisStatusView.refresh` / `PeopleEngine.pendingScanCount` / `TagStore.taggedCount(among:)` /
+  ADR-182 / diagnostics-75。
 
 ---
 
