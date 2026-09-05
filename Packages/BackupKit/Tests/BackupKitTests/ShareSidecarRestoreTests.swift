@@ -3,7 +3,7 @@ import Testing
 @testable import BackupKit
 import DropboxCore
 
-/// 解析サイドカー（`.mosaic-share/analysis-v1.json`）の**復元**（ADR-166）。
+/// 解析サイドカー（`.mosaic-share/shard-<xx>.json`・ADR-183）の**復元**（ADR-166）。
 ///
 /// ⚠️ 以前はアップロードの要否を「中身が変わったか」だけで決めていた。そのため誰かが
 /// Dropbox 上の `.mosaic-share` を消すと、**写真は自己修復されるのに解析結果だけ永久に戻らない**。
@@ -55,12 +55,13 @@ struct ShareSidecarRestoreTests {
         return (engine, server)
     }
 
-    /// サイドカーの実パス（セットフォルダ配下・小文字）。
+    /// サイドカー（"hA" のシャード）の実パス（セットフォルダ配下・小文字）。
     private func sidecarPath(_ name: String) -> String {
         let folder = SharePlanning.setFolderPath(
             shareRoot: Self.shareRoot, folderName: ShareNaming.folderName(name, kind: nil),
             deviceFolder: nil)!   // shareRoot は端末フォルダ込み（ADR-175）
-        return ShareSidecar.sidecarPath(setFolderPath: folder).lowercased()
+        return ShareSidecar.shardPath(setFolderPath: folder,
+                                      shard: ShareSidecar.shardName(forHash: "hA")).lowercased()
     }
 
     private func sidecarExists(_ server: FakeDropboxServer, _ name: String) async -> Bool {

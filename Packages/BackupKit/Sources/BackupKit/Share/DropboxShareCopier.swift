@@ -185,9 +185,10 @@ struct DropboxShareCopier {
 
     // MARK: - 一覧
 
-    /// フォルダ直下の一覧（非再帰・ページング追従）。取得失敗は nil（「空」と区別する）。
-    func listFolder(path: String, token: String) async -> [ListedFile]? {
-        struct Body: Encodable { let path: String; let recursive = false }
+    /// フォルダの一覧（ページング追従）。取得失敗は nil（「空」と区別する）。
+    /// - Parameter recursive: true なら配下を丸ごと（ADR-183: 共有ルート 1 回でセット全部の実在が分かる）。
+    func listFolder(path: String, token: String, recursive: Bool = false) async -> [ListedFile]? {
+        struct Body: Encodable { let path: String; let recursive: Bool }
         struct ContinueBody: Encodable { let cursor: String }
         struct RawEntry: Decodable {
             let tag: String
@@ -207,10 +208,10 @@ struct DropboxShareCopier {
 
         var out: [ListedFile] = []
         var req = Self.rpcRequest(url: Self.listFolderURL, token: token)
-        guard let body = try? JSONEncoder().encode(Body(path: path)) else { return nil }
+        guard let body = try? JSONEncoder().encode(Body(path: path, recursive: recursive)) else { return nil }
         req.httpBody = body
 
-        for _ in 0..<100 {   // 100 ページ（1 ページ最大 2,000 件）で十分な上限
+        for _ in 0..<200 {   // 200 ページ（1 ページ最大 2,000 件）＝再帰でも十分な上限
             guard let (data, resp) = try? await httpClient.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200,
                   let page = try? JSONDecoder().decode(Page.self, from: data) else { return nil }

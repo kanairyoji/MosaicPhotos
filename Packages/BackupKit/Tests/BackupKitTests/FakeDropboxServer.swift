@@ -57,6 +57,13 @@ actor FakeDropboxServer: HTTPClient {
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder, rev: "r\(files.count)")
     }
 
+    /// 中身つきでファイルを置く（他端末がアップロードしたサイドカー等を模す）。content_hash は本物と同じ計算。
+    func upload(path: String, data: Data) {
+        let key = path.lowercased()
+        bodies[key] = data
+        files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false, rev: "r\(files.count)")
+    }
+
     /// 外部（他端末・Dropbox の Web UI）からの削除を模す。
     func remove(_ path: String) { files.removeValue(forKey: path.lowercased()) }
 
@@ -234,15 +241,17 @@ actor FakeDropboxServer: HTTPClient {
 
     private func handleListFolder(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
-        struct Body: Decodable { let path: String? }
-        let root = ((try? JSONDecoder().decode(Body.self, from: body))?.path ?? "").lowercased()
+        struct Body: Decodable { let path: String?; let recursive: Bool? }
+        let parsed = try? JSONDecoder().decode(Body.self, from: body)
+        let root = (parsed?.path ?? "").lowercased()
+        let recursive = parsed?.recursive ?? false
         if !root.isEmpty, files[root] == nil {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
-        // 直下のみ（非再帰）。
+        // 直下のみ（非再帰）／配下ごと（再帰・ADR-183）。
         let entries = files.filter { path, _ in
             guard path != root, path.hasPrefix(root + "/") else { return false }
-            return !path.dropFirst(root.count + 1).contains("/")
+            return recursive || !path.dropFirst(root.count + 1).contains("/")
         }
         .sorted { $0.key < $1.key }
         .map { path, entry -> String in
