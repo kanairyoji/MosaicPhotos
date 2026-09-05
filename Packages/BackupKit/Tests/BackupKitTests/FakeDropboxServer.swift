@@ -35,6 +35,11 @@ actor FakeDropboxServer: HTTPClient {
     /// 完了待ちジョブ（check で返す結果）。
     private var pendingJobs: [String: String] = [:]
     private var requestCount = 0
+    /// `list_folder` の 1 ページの件数（本物は最大 2,000）。小さくしてページングを踏ませる。
+    private var pageSize = 2_000
+    /// 発行済みカーソル → 残りのエントリ（JSON 文字列）。
+    private var cursors: [String: [String]] = [:]
+    private var cursorCounter = 0
 
     // MARK: - 障害注入
 
@@ -83,6 +88,8 @@ actor FakeDropboxServer: HTTPClient {
     func setFailCopyPaths(_ paths: Set<String>) { failCopyPaths = paths }
     func setFailDeletePaths(_ paths: Set<String>) { failDeletePaths = paths }
     func setFailMove(_ value: Bool) { failMove = value }
+    /// ページングを踏ませる（本物は 2,000 件/ページ・`has_more` と `list_folder/continue`）。
+    func setPageSize(_ value: Int) { pageSize = max(1, value) }
 
     // MARK: - HTTPClient
 
@@ -107,6 +114,7 @@ actor FakeDropboxServer: HTTPClient {
         if url.contains("files/move_v2")  { return handleMove(body, resp) }
         if url.contains("copy_batch_v2") { return handleCopyBatch(body, resp) }
         if url.contains("delete_batch")  { return handleDeleteBatch(body, resp) }
+        if url.contains("list_folder/continue") { return handleListFolderContinue(body, resp) }
         if url.contains("list_folder")   { return handleListFolder(body, resp) }
         if url.contains("get_metadata")  { return handleGetMetadata(body, resp) }
         if url.contains("files/upload")  { return handleUpload(request, resp) }
@@ -249,17 +257,48 @@ actor FakeDropboxServer: HTTPClient {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
         // 直下のみ（非再帰）／配下ごと（再帰・ADR-183）。
-        let entries = files.filter { path, _ in
+        var listed = files.filter { path, _ in
             guard path != root, path.hasPrefix(root + "/") else { return false }
             return recursive || !path.dropFirst(root.count + 1).contains("/")
         }
-        .sorted { $0.key < $1.key }
-        .map { path, entry -> String in
-            let name = (path as NSString).lastPathComponent
-            let tag = entry.isFolder ? "folder" : "file"
-            return #"{".tag":"\#(tag)","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry.rev)","content_hash":"\#(entry.contentHash)"}"#
+        // 本物の Dropbox は**中間フォルダのエントリを必ず含む**（copy_batch でファイルを置いた
+        // だけでも親フォルダは一覧に出る）。seed/create していない親を補う。
+        if recursive {
+            for path in Array(listed.keys) {
+                var parent = (path as NSString).deletingLastPathComponent
+                while parent.count > root.count, listed[parent] == nil {
+                    listed[parent] = Entry(contentHash: "", isFolder: true, rev: "")
+                    parent = (parent as NSString).deletingLastPathComponent
+                }
+            }
         }
-        return resp(200, #"{"entries":[\#(entries.joined(separator: ","))],"cursor":"c","has_more":false}"#)
+        let entries = listed.sorted { $0.key < $1.key }
+            .map { path, entry -> String in
+                let name = (path as NSString).lastPathComponent
+                let tag = entry.isFolder ? "folder" : "file"
+                return #"{".tag":"\#(tag)","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry.rev)","content_hash":"\#(entry.contentHash)"}"#
+            }
+        return page(entries, resp)
+    }
+
+    private func handleListFolderContinue(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
+        -> (Data, URLResponse) {
+        struct Body: Decodable { let cursor: String }
+        guard let parsed = try? JSONDecoder().decode(Body.self, from: body),
+              let remaining = cursors.removeValue(forKey: parsed.cursor) else {
+            return resp(409, #"{"error_summary":"reset/"}"#)
+        }
+        return page(remaining, resp)
+    }
+
+    /// 1 ページ返し、残りはカーソルに預ける（本物の `has_more` / `list_folder/continue` と同じ形）。
+    private func page(_ entries: [String], _ resp: (Int, String) -> (Data, URLResponse)) -> (Data, URLResponse) {
+        let head = Array(entries.prefix(pageSize))
+        let rest = Array(entries.dropFirst(pageSize))
+        cursorCounter += 1
+        let cursor = "c\(cursorCounter)"
+        if !rest.isEmpty { cursors[cursor] = rest }
+        return resp(200, #"{"entries":[\#(head.joined(separator: ","))],"cursor":"\#(cursor)","has_more":\#(rest.isEmpty ? "false" : "true")}"#)
     }
 
     private func handleGetMetadata(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
