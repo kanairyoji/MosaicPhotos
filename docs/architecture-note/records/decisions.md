@@ -56,6 +56,35 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-182 「今すぐ解析」を解析セッション 1 本に統合し、iOS 26 の継続タスクに載せる
+- 状態: 採用（ADR-165 の「開いている間」と旧「今すぐ処理（30 分）」を置換）
+- 文脈: 処理枠（BGProcessingTask）は OS 裁量で、数分のロックでは開かず、開いても 5 分前後
+  （diagnostics-73/74）。利用者が「充電台に置いて放置している間に進めたい」のに、手動の入口が
+  「30 分ブースト」「開いている間」の 2 つに割れ、どちらもロックすると止まった（背面＝吊るされる）。
+  調査の結果（処理枠の章 1.1）、iOS には CPU 時間を増やす権限は無く、使えるのは
+  (a) 前面（無制限）、(b) 背景 URLSession（転送のみ）、(c) iOS 26 `BGContinuedProcessingTask`
+  ——利用者が始めた作業をアプリを閉じても続け、進捗を Live Activity に出す新 API。
+  Apple は自動のメンテナンス・バックアップ用途を禁じているが、ボタンで始める解析は適合する。
+- 決定: 入口を **「今すぐ解析」1 ボタン・1 進捗・1 停止**にする（`AnalysisSession`・アプリ層）。
+  タップで `BGContinuedProcessingTaskRequest`（`strategy = .fail`）を submit し、受理されれば
+  **継続モード**（アプリを閉じても続く・Live Activity に進捗・そこから停止可）、拒否／シミュレータなら
+  **前面のみモード**（画面を離れると止まる）に自動で落ちる。走らせる中身は処理枠と同じトリクル
+  （顔 → タグ → 埋め込み）で、ゲートは `BackgroundYield.sessionActive` で開ける——熱・一括ロード保護・
+  生成との相互排他（メモリ）は免除しない。**一枚岩（生成・AI アルバムの本番化）は起こさない**。
+  進捗は `AnalysisSessionPolicy.progressUnits`（残作業の最大値を分母・モデルロード中も「準備中」の
+  目盛りを進める＝報告しないタスクは OS に殺される）。停止条件は残作業ゼロ／停止操作／
+  OS の expiration／電源なしで電池 20% 未満（`shouldStopForBattery`）。
+  処理枠との衝突は `isActive` で避ける（処理枠は解析の起動を飛ばし、前面復帰の `stopForForeground`
+  もセッションの作業を止めない）。旧「30 分ブースト」（`manualBoostUntil`）は撤去。
+- 結果: 充電台＋「今すぐ解析」で処理枠を待たずに進む。**既知の制約**: 端末を本当にロックすると
+  継続タスクが止まる iOS のバグ（FB19916760・DTS が「端末を起こす assertion の付け忘れ」と認めた・
+  26.2 beta 3 でも未修正）。直るまでは「解析中は画面を消さない」（既定 ON）が命綱。ロックで止まっても
+  差分は残り、次の処理枠か次のタップで続きから進む。バックアップは別の関心事として今回は含めない
+  （同じ仕組みで「今すぐバックアップ」を後から足せる）。
+- 関連: `MosaicPhotos/AnalysisSession.swift` / `AnalysisSessionPolicy.swift` /
+  `AnalysisSessionPolicyTests` / `BackgroundYield.sessionActive` / `AIAnalysisStatusView` /
+  `Config/Info.plist`（`com.kanai.MosaicPhotos.analyze`）/ ADR-165 / ADR-179 / 処理枠の章 1.1。
+
 ## ADR-181 夜間バックアップは背景 URLSession に持ち出す（fire-and-forget・OS が窓の外でも上げ続ける）
 - 状態: 採用（ADR-180 の「残る限界」への回答）
 - 文脈: ADR-180 で夜間バックアップは毎窓・上限なしになったが、アップロードは前面の `URLSession`

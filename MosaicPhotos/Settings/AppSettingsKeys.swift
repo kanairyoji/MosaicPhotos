@@ -12,6 +12,9 @@ enum AppSettingsKeys {
     /// ピープルの顔スキャンをシミュレータでも走らせる（既定 OFF）。デバッグ用。
     /// 顔モデルは cpuOnly で遅いが動作はするので、実機が無いときの動作確認に使う。
     static let faceScanOnSimulator = "debug.faceScanOnSimulator"
+    /// 解析セッション（ADR-182）中に画面を消灯させないか（既定 ON。iOS 26 の
+    /// BGContinuedProcessingTask がロックで止まる既知の問題への備え）。
+    static let analysisKeepScreenOn = "analysis.keepScreenOn"
     /// D: BGProcessingTask の最終実行記録（開始時刻・結果・所要分。Developer Options で表示）。
     static let bgTaskLastRun = "debug.bgTaskLastRun"
     /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を**連続で見送った回数**。

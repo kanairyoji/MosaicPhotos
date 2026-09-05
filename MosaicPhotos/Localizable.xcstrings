@@ -4224,6 +4224,126 @@
           }
         }
       }
+    },
+    "Analyze Now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ解析"
+          }
+        }
+      }
+    },
+    "Keep Screen On While Analyzing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析中は画面を消さない"
+          }
+        }
+      }
+    },
+    "Continues after you leave the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを閉じても続きます。"
+          }
+        }
+      }
+    },
+    "Runs only while this screen is open.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画面を開いている間だけ動きます。"
+          }
+        }
+      }
+    },
+    "Everything is analyzed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて解析済みです。"
+          }
+        }
+      }
+    },
+    "iOS stopped the analysis. Tap Analyze Now to continue from where it left off.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS が解析を停止しました。「今すぐ解析」をタップすると続きから再開します。"
+          }
+        }
+      }
+    },
+    "Stopped because the battery is low. Plug in and tap Analyze Now to continue.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電池残量が少ないため停止しました。充電してから「今すぐ解析」をタップすると続きから再開します。"
+          }
+        }
+      }
+    },
+    "Analyzing photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を解析中"
+          }
+        }
+      }
+    },
+    "Faces, tags, and the search index": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔・タグ・検索の索引"
+          }
+        }
+      }
+    },
+    "“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「今すぐ解析」は顔・タグ・検索の索引を全力で進め、アプリを閉じても続きます。進捗は Dynamic Island / ロック画面に表示され、そこから停止もできます。すべて解析し終えるか、充電なしで電池が 20% を下回ると自動で終わります。"
+          }
+        }
+      }
+    },
+    "Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面をロックすると止まることがあります（Apple が修正中の iOS の既知の問題）。「解析中は画面を消さない」で回避できます（充電しながらがおすすめ）。端末が温かくなることがあり、熱くなりすぎると自動的に一時停止します。それ以外は「処理のタイミング」の設定に従って自動で進みます。"
+          }
+        }
+      }
+    },
+    "Indexing runs automatically while the device is charging and idle (or locked). To run it right now, use AI Analysis → Analyze Now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引付けは、充電中で操作していない（またはロック中の）ときに自動で進みます。今すぐ進めるには「AI 解析」→「今すぐ解析」を使ってください。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

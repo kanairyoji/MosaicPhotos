@@ -12,6 +12,9 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.kanai.MosaicPhotos.heavywork</string>
+		<!-- 解析セッション（BGContinuedProcessingTask・ADR-182）: 利用者が始めた解析を
+		     アプリを閉じても続ける。登録はタップ時（起動時登録は不要）。 -->
+		<string>com.kanai.MosaicPhotos.analyze</string>
 	</array>
 </dict>
 </plist>

@@ -33,6 +33,8 @@ final class HomeStores {
     let shareImporter: SharedAnalysisImporter
     /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
     let assetIndex = LocalAssetIndex()
+    /// 解析セッション（「今すぐ解析」・ADR-182）。
+    let analysisSession: AnalysisSession
 
     private init(dropboxStore: DropboxPhotoStore, mergedStore: MergedPhotoStore,
                  backupEngine: BackupEngine, albumScanner: LocalAlbumScanner,
@@ -41,6 +43,8 @@ final class HomeStores {
                  shareEngine: ShareSyncEngine, shareAnalysisAdapter: ShareAnalysisAdapter,
                  shareSourceResolver: ShareSourceMemberResolver,
                  shareImporter: SharedAnalysisImporter) {
+        self.analysisSession = AnalysisSession(engine: autoAlbumEngine, people: peopleEngine,
+                                               dropboxStore: dropboxStore)
         self.dropboxStore = dropboxStore
         self.mergedStore = mergedStore
         self.backupEngine = backupEngine
