@@ -15,12 +15,11 @@ extension AIAlbumService {
     /// LLM は走らない（解釈未保存のアルバムだけ初回に 1 回解釈して保存＝旧データの移行）。
 
     /// 前面に戻っていたら、この一枚岩の再評価は始めない/続けない（ADR-107）。
-    /// 手動ブースト中とデバッグ全開は明示操作なので免除する。
+    /// デバッグ全開は明示操作なので免除する（解析セッション＝ADR-182 は一枚岩を起こさないので関係ない）。
     /// ⚠️ 判定は**重い段の前ごと**に見る。1 回だけ見る作りだと、判定と実処理の間に
     /// ユーザーが戻ってきたときに代金だけ払って捨てることになる（diagnostics-67）。
     private var shouldAbortForForeground: Bool {
         BackgroundYield.isAppActive && !BackgroundYield.debugForceHeavyWork
-            && Date() >= BackgroundYield.manualBoostUntil
     }
 
     /// - Parameters:

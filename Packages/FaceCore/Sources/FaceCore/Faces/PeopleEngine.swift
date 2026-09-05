@@ -256,7 +256,8 @@ public final class PeopleEngine {
         // 実測: ロック解除直後に 32,582 枚を対象に開始 → `face.pauseWait=30`（10 秒ごと）で
         // 譲り続け → **0 枚**で終了。準備のコストだけを払っていた。
         // 夜間（非アクティブ）と明示操作（デバッグ全開）は従来どおり通す。
-        guard !BackgroundYield.isAppActive || BackgroundYield.debugForceHeavyWork else {
+        guard !BackgroundYield.isAppActive || BackgroundYield.debugForceHeavyWork
+                || BackgroundYield.sessionActive else {
             Diagnostics.mark("faces: startScan skip — app is active (heavy work runs when idle)")
             isLoaded = true
             return

@@ -129,8 +129,11 @@ enum HeavyWorkScheduler {
     @MainActor
     private static func stopBackgroundProcessing(cancelBackup: Bool) {
         guard let stores else { return }
-        stores.peopleEngine.stopScan()
-        stores.autoAlbumEngine.stopBackgroundWork()
+        // 解析セッション（ADR-182）の作業は処理枠の都合では止めない（OS の継続タスクが面倒を見る）。
+        if !stores.analysisSession.isActive {
+            stores.peopleEngine.stopScan()
+            stores.autoAlbumEngine.stopBackgroundWork()
+        }
         if cancelBackup, stores.backupEngine.isRunning { stores.backupEngine.cancel() }
     }
 
@@ -156,7 +159,10 @@ enum HeavyWorkScheduler {
         currentWork.clear()
         // BGTask のルーチンが起こした fire-and-forget のタスク群は、上の cancel では止まらない
         // （構造化されていないため）。エンジンへ個別に停止を伝える。
-        stopBackgroundProcessing(cancelBackup: false)
+        // ⚠️ 解析セッション（ADR-182）の作業は**利用者が始めたもの**なので復帰では止めない。
+        if stores?.analysisSession.isActive != true {
+            stopBackgroundProcessing(cancelBackup: false)
+        }
         if hadWork { Diagnostics.mark("bgtask: stopped for foreground") }
     }
 
@@ -303,12 +309,18 @@ enum HeavyWorkScheduler {
 
         // 顔スキャンを起こす（差分ベース・毎窓）。旧キャプション窓の順番回し（ADR-86/93）は
         // VLM 廃止（ADR-108）で不要になった＝窓はタグ・埋め込み・顔スキャンで使い切る。
-        stores.peopleEngine.startScan(
-            candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
-            allowSimulator: allowSim)
-        // 夜間窓は重い処理のための特権時間。前面で始まって眠っている実行が居座っていると窓を
-        // 丸ごと空転させるので、明け渡させてから始め直す（ADR-95）。
-        stores.autoAlbumEngine.restartBackgroundFill()
+        // ⚠️ 解析セッション（ADR-182）が走っているなら同じトリクルが既に全力で動いている。
+        // 重ねて起こさない（restart は実行中の埋め込みを一度畳んでしまう）。
+        if stores.analysisSession.isActive {
+            Diagnostics.mark("bgtask: analysis session active — not starting analysis here")
+        } else {
+            stores.peopleEngine.startScan(
+                candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: stores.dropboxStore),
+                allowSimulator: allowSim)
+            // 夜間窓は重い処理のための特権時間。前面で始まって眠っている実行が居座っていると窓を
+            // 丸ごと空転させるので、明け渡させてから始め直す（ADR-95）。
+            stores.autoAlbumEngine.restartBackgroundFill()
+        }
 
         // 「動くべきなのに動いていない」パスを毎窓チェックして診断ログへ（ADR-87）。
         // 飢餓バグは沈黙として現れるため、こちらから沈黙を検出しにいく。

@@ -59,7 +59,7 @@ flowchart LR
         ロック 2 分 18 秒・2 分 24 秒・29 秒の 3 回で <code>bgtask: submitted</code> は毎回出たが <code>bgtask: begin</code> は 0 回。数分のロックでは開かないのが普通で、8/30 のように背面遷移直後に開くこともある（OS 裁量）。同じ設計上の制約は Apple の写真アプリ自身（解析は充電中の夜間）にもある。
       </div>
       <p><strong>なぜ拒否されたかを見る方法</strong>: iPhone を Mac に接続し Console.app でプロセス <code>dasd</code> を絞り、<code>heavywork</code> で検索する。DAS は活動ごとに <code>BatteryLevelPolicy</code> / <code>DeviceActivityPolicy</code> / <code>ThermalPolicy</code> / <code>ApplicationPolicy</code> / <code>BudgetPolicy</code> などの重み付きスコアを記録し、<code>FinalDecision: Can Proceed</code> か <code>Must Not Proceed</code>（根拠つき）を出す。開発中は Xcode のデバッガから <code>_simulateLaunchForTaskWithIdentifier:</code> で即起動できる（Developer Options の「Run BG routine now」は同じルーチンを前面で回す代替）。</p>
-      <p><strong>OS の裁量に頼らない選択肢</strong>: (a) ADR-165 の「この画面を開いている間、解析する」（前面のまま進める）。(b) iOS 26 の <code>BGContinuedProcessingTask</code>——ユーザーがボタンを押して始めた作業を、ロック後も<strong>システムの進捗 UI つき</strong>で続けられる。Apple は「自動のメンテナンス・バックアップ・写真同期には使うな」と明言しているので、<strong>明示的な「今すぐ解析（ロックしても続ける）」ボタン</strong>の形でなら適合する。進捗の報告が必須で、遅いとシステムが続行を尋ねる。未採用（要判断）。</p>
+      <p><strong>OS の裁量に頼らない選択肢</strong>: (a) ADR-165 の「この画面を開いている間、解析する」（前面のまま進める）。(b) iOS 26 の <code>BGContinuedProcessingTask</code>——ユーザーがボタンを押して始めた作業を、ロック後も<strong>システムの進捗 UI つき</strong>で続けられる。Apple は「自動のメンテナンス・バックアップ・写真同期には使うな」と明言しているので、<strong>明示的な「今すぐ解析（ロックしても続ける）」ボタン</strong>の形でなら適合する。進捗の報告が必須で、遅いとシステムが続行を尋ねる。<strong>→ ADR-182 で採用</strong>（<code>AnalysisSession</code>・「今すぐ解析」1 ボタンに統合。端末を本当にロックすると止まる iOS のバグ FB19916760 は修正待ちで、それまでは「画面を消さない」が命綱）。</p>
 
       <h2>2. 処理枠の中で何が起きるか（1 処理枠の時系列）</h2>
       <p><code>runHeavyWork</code> は「起こす → 判断する → 待つ」の 3 拍子。重い処理は<strong>起こすだけ</strong>で完了を待たない（待つと処理枠を食い潰して次が始まらない＝Fix C）。</p>

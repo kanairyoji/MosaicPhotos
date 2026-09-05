@@ -50,19 +50,17 @@ public enum BackgroundYield {
     /// ※ 生成との相互排他（isGeneratingAlbums）だけは維持する（メモリ保護）。
     public static var debugForceHeavyWork = false
 
-    /// 手動ブースト（設定の「今すぐ処理」）。期限内は**非アクティブ条件と Wi-Fi 条件**を免除する
-    /// （明示操作なのでフォアグラウンドでも実行。電源接続・低電力 OFF は維持）。
-    public static var manualBoostUntil = Date.distantPast
-
-    /// 「今すぐ処理」を有効化する（既定 30 分・電源接続中のみ効く）。
-    public static func boostHeavyWork(minutes: Double = 30) {
-        manualBoostUntil = Date().addingTimeInterval(minutes * 60)
-    }
+    /// **解析セッション**（利用者が「今すぐ解析」で始めた・ADR-182）。true の間は待機・電源・
+    /// 使用状況・回線のゲートを免除して全力で進める。熱（`ThermalGate`）・一括ロード保護
+    /// （`HeavyLoad`）・生成との相互排他（メモリ保護）は免除しない。
+    /// 旧「今すぐ処理（30 分）」（`manualBoostUntil`）はこれに置き換えた——「30 分」の意味が
+    /// 利用者に伝わらず、ロックすると背面＝吊るされて止まるので実質「開いている間」と同じだった。
+    public static var sessionActive = false
 
     /// 重い処理の**開始/継続の共通条件**（回線を要する作業向け＝クラウド分を含む）。判定は 4 軸の
     /// 独立した設定に従う（ADR-80）＝自動処理の有無・控えめ（前面で動かすか）・電源・回線。
     /// 既定は「自動処理あり＋控えめ ON＋充電中のみ＋Wi-Fi のみ」＝アプリ使用中は一切動かない（ADR-25）。
-    /// 手動ブースト中は使用状況/回線条件を免除（明示操作＝フォアグラウンド実行を許可。電源系の安全弁は維持）。
+    /// 解析セッション中は使用状況/回線/電源条件を免除（明示操作＝前面でも全力。熱の安全弁は維持）。
     public static var heavyWorkAllowed: Bool { heavyWorkAllowed(requiresNetwork: true) }
 
     /// **ローカル専用**の重い処理（端末内写真の顔スキャン・CLIP 埋め込み）向けの許可判定。
@@ -76,10 +74,7 @@ public enum BackgroundYield {
         // iOS が「冷めてから充電します」に入り、朝に充電が終わっていない（実フィードバック）。
         // 充電されなければ翌晩も進まないので、ここだけは明示操作でも免除しない。
         if ThermalGate.shared.shouldPause() { return false }
-        if debugForceHeavyWork { return true }
-        if Date() < manualBoostUntil {
-            return PowerStateMonitor.shared.isOnPower && !PowerStateMonitor.shared.isLowPowerMode
-        }
+        if debugForceHeavyWork || sessionActive { return true }
         guard !uiBusy else { return false }
         // 低電力モードはどの設定でも常時ブロック（安全弁）。電源ポリシーの whileCharging にも
         // 含まれるが、`always` を選んでいても低電力モードは尊重する。
@@ -102,10 +97,13 @@ public enum BackgroundYield {
     /// 数十秒〜数十分 ANE・CPU・ModelActor を占有し、**ユーザーが戻ってきても途中で譲れない**
     /// （diagnostics-46: 前面 finalize 中の操作が毎回引っかかる＝「いちいち固まる」の正体）。
     /// よって前面アイドルでは動かさず、**非アクティブ（画面ロック・アプリ切替＝主役は夜間 BGTask）
-    /// に限定**する。手動ブースト/デバッグ全開は明示操作なので免除（従来どおり前面でも動く）。
+    /// に限定**する。デバッグ全開は明示操作なので免除（従来どおり前面でも動く）。
     public static var monolithicHeavyWorkAllowed: Bool {
         guard heavyWorkAllowed else { return false }
-        if debugForceHeavyWork || Date() < manualBoostUntil { return true }
+        if debugForceHeavyWork { return true }
+        // 解析セッションは一枚岩（生成・本番化）を起こさない——セッションの仕事はトリクル
+        // （顔・タグ・埋め込み）だけで、生成が始まると解析が止まる（相互排他）。
+        if sessionActive { return false }
         return !isAppActive
     }
 
@@ -124,6 +122,8 @@ public enum BackgroundYield {
         // 生成との相互排他と同じ**メモリ保護**なので、デバッグ全開でも外さない。
         if HeavyLoad.isInFlight() { return true }
         if debugForceHeavyWork { return false }
+        // 解析セッション中は生成との相互排他（メモリ保護）だけ残す。
+        if sessionActive { return BackgroundActivityMonitor.shared.isGeneratingAlbums }
         return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 }
