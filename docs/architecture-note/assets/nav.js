@@ -34,7 +34,7 @@
     ]},
     { title: "詳細実装 (Deep Dive)", items: [
       { id: "dd-concurrency", href: "deep-dive/concurrency-internals.html", label: "並行・バックグラウンド処理" },
-      { id: "dd-background-window", href: "deep-dive/background-window.html", label: "背面窓（夜間処理）のパイプライン" },
+      { id: "dd-background-window", href: "deep-dive/background-window.html", label: "バックグラウンド処理枠（夜間処理）のパイプライン" },
       { id: "dd-cache",       href: "deep-dive/cache-internals.html",       label: "キャッシュ実装詳細" },
       { id: "dd-data-model",  href: "deep-dive/data-model.html",            label: "データ構造詳細" },
       { id: "dd-ai-album",    href: "deep-dive/ai-album-internals.html",    label: "AI アルバム実装詳細" },

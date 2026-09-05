@@ -89,7 +89,7 @@
   追記（同日レビュー）: 初版は「この実行で積んだ分があるときだけ OS へ渡す」だったが、期限切れで
   積んだまま渡せなかったジョブは次の窓で「転送中」扱い＝対象外になり、新しく積むものが無い窓では
   **誰も拾わず永久に残る**。渡す処理を無条件にした（`flushIsUnconditional`）。
-  背面窓全体の時系列・資源・見積りは `deep-dive/background-window.html` に専用章を設けた。
+  バックグラウンド処理枠全体の時系列・資源・見積りは `deep-dive/background-window.html` に専用章を設けた。
 - 関連: `BackupKit/BackgroundUpload/`（`UploadSpool` / `BackgroundUploadSession` /
   `BackupRunner+BackgroundUpload` / `BackupEngine+Settle`）/ `MosaicPhotos/AppDelegate.swift` /
   `BackgroundUploadTests` / ADR-40 / ADR-171 / ADR-180。
