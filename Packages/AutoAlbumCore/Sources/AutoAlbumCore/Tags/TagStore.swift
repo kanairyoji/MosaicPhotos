@@ -78,13 +78,23 @@ actor TagStore {
     /// タグ付け済み（現行版）の refKey 集合。
     func taggedRefKeys() -> Set<String> {
         let v = Self.currentVersion
-        let records = (try? modelContext.fetch(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.version >= v }))) ?? []
+        var descriptor = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.version >= v })
+        descriptor.propertiesToFetch = [\.refKey]   // 8 万件のタグ配列を実体化しない（射影）
+        let records = (try? modelContext.fetch(descriptor)) ?? []
         return Set(records.map(\.refKey))
     }
 
+    /// 台帳の記録数（診断用）。⚠️ 進捗の分子に使わない——削除・移動した写真の記録や旧版の記録が
+    /// 残るので、台帳（PhotoEnrichment）の件数を分母にすると 100% を超える（実機: 86,821 枚中 88,184）。
     func taggedCount() -> Int {
         (try? modelContext.fetchCount(FetchDescriptor<PhotoTagRecord>())) ?? 0
+    }
+
+    /// 指定した写真（台帳の refKey）のうち、現行版でタグ付け済みの枚数（進捗の分子）。
+    /// 分母と同じ列挙から数えるので、削除済みの記録・旧版の記録は入らない。
+    func taggedCount(among refKeys: [String]) -> Int {
+        let done = taggedRefKeys()
+        return refKeys.reduce(0) { $0 + (done.contains($1) ? 1 : 0) }
     }
 
     /// タグの頻度上位（識別子・降順）。AI アルバム作成のサジェストチップ

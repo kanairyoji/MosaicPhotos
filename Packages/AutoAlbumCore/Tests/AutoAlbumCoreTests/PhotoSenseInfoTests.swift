@@ -99,4 +99,17 @@ struct PhotoSenseInfoTests {
         let withFav = [photo("L-a", favorite: true), photo("L-b")]
         #expect(pickCoverRef(withFav, usage: usage) == "L-a")
     }
+
+    @Test("進捗の分子は「台帳の写真のうちタグ付け済み」——削除済みの記録は数えない")
+    func taggedCountAmongLedgerKeys() async {
+        let store = TagStore(isStoredInMemoryOnly: true)
+        await store.recordTags([
+            (refKey: "L-a", info: PhotoSenseInfo(tags: ["beach"])),
+            (refKey: "L-b", info: PhotoSenseInfo(tags: ["dog"])),
+            (refKey: "L-deleted", info: PhotoSenseInfo(tags: ["old"])),   // 台帳から消えた写真の記録
+        ])
+        let ledger = ["L-a", "L-b", "L-c"]   // c は未タグ
+        #expect(await store.taggedCount(among: ledger) == 2)
+        #expect(await store.taggedCount() == 3, "記録の総数は 3＝分子に使うと 3/3 で嘘になる")
+    }
 }

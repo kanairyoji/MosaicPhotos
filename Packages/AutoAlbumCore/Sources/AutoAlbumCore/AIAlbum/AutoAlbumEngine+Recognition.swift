@@ -435,9 +435,13 @@ extension AutoAlbumEngine {
     public func analysisProgress() async -> AnalysisProgress {
         async let total = store.enrichmentCount()
         async let embedded = store.embeddedCount()
-        async let tagged = tagStore.taggedCount()
+        // ⚠️ タグの分子は**分母と同じ列挙（台帳の refKey）**から数える。タグ台帳は別コンテナで、
+        // 削除・移動した写真の記録が残るため、記録の総数を分子にすると 100% を超えた
+        // （実機: 86,821 枚中 88,184）。ピープルの「残り」と同じ形の誤り。
+        let keys = await store.enrichedRefKeysNewestFirst()
+        let tagged = await tagStore.taggedCount(among: keys)
         return AnalysisProgress(total: await total, embedded: await embedded,
-                                sceneTagged: await tagged)
+                                sceneTagged: tagged)
     }
 
     /// 全写真の認識結果（CLIP 埋め込み・キャプション）を消去し、最新ロジックで一から付け直す。
