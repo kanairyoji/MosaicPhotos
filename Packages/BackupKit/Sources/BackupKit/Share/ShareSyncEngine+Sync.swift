@@ -289,6 +289,14 @@ extension ShareSyncEngine {
             })
         }
 
+        // ADR-183: サイドカー（シャード）は**コピーの前に**、いまコピー済みの分で揃える。
+        // コピーは 500 枚/回・100 枚ごとのサーバー側ジョブ待ちで数分かかるので、後回しだと
+        // 「反映を押してもサイドカーが何分も更新されない」（実フィードバック: 検証に時間がかかる）。
+        // 差分はシャード単位なので二度組んでも軽い。今回コピーした分は末尾でもう一度反映する。
+        await updateSidecar(set: set, setFolder: setFolder, store: store,
+                            copier: copier, token: token,
+                            remoteSidecars: remote.sidecarFiles(inSetFolder: setFolder))
+
         // ⚠️ 掃除より**先に**コピーする（diagnostics-55）。逆順だと、コピーが失敗し続けている
         // 状態でも掃除だけが毎回走り、「削除 → 変更通知 → 反映 → また削除」の空回りになる
         // （実機で 2,226 → 1,710 件と削除し続けても収束しなかった）。掃除は**コピーが
@@ -348,9 +356,19 @@ extension ShareSyncEngine {
                                          token: token)
         }
 
-        await updateSidecar(set: set, setFolder: setFolder, store: store,
-                            copier: copier, token: token,
-                            remoteSidecars: remote.sidecarFiles(inSetFolder: setFolder))
+        // 今回コピーした分のエントリを足す（上で置いたシャードは一覧に無いので、遠隔の状態は
+        // 「上げた直後の hash」で補う＝同じものを上げ直さない）。
+        if copiedCount > 0 {
+            let justUploaded = uploadedShardNames
+            let names = Set(justUploaded.map(\.name))
+            let remoteNow = remote.sidecarFiles(inSetFolder: setFolder).filter { !names.contains($0.name) }
+                + justUploaded.map {
+                    DropboxShareCopier.ListedFile(pathLower: "", name: $0.name, rev: nil,
+                                                  contentHash: $0.hash, isFolder: false)
+                }
+            await updateSidecar(set: set, setFolder: setFolder, store: store,
+                                copier: copier, token: token, remoteSidecars: remoteNow)
+        }
     }
 
     /// 解析サイドカーを**シャード単位**で同期する（ADR-183）。
@@ -364,6 +382,7 @@ extension ShareSyncEngine {
     private func updateSidecar(set: ShareSetLite, setFolder: String, store: BackupStore,
                                copier: DropboxShareCopier, token: String,
                                remoteSidecars: [DropboxShareCopier.ListedFile]) async {
+        uploadedShardNames.removeAll()
         guard let analysisSource else { return }
         let items = await store.shareItems(setID: set.id)
         let copiedItems = items.filter { $0.state == .copied && $0.sharedContentHash != nil }
@@ -401,18 +420,21 @@ extension ShareSyncEngine {
         }
         var uploaded = 0
         for shard in plan.upload.sorted() {
-            guard let data = local[shard]?.data else { continue }
-            if await copier.uploadFile(data: data, to: ShareSidecar.shardPath(setFolderPath: setFolder, shard: shard),
+            guard let entry = local[shard] else { continue }
+            if await copier.uploadFile(data: entry.data, to: ShareSidecar.shardPath(setFolderPath: setFolder, shard: shard),
                                        token: token) {
                 uploaded += 1
+                uploadedShardNames.append((name: ShareSidecar.shardFileName(shard), hash: entry.hash))
             }
         }
         if !plan.delete.isEmpty {
             _ = await copier.deleteBatch(paths: plan.delete.map { "\(sidecarFolder)/\($0)" }, token: token)
         }
         if uploaded > 0 || !plan.delete.isEmpty {
-            BackupLogger.info("Share: '\(set.folderName)' sidecar shards +\(uploaded) -\(plan.delete.count) "
-                              + "(\(entriesByHash.count) entries in \(local.count) shards)")
+            let line = "Share: '\(set.folderName)' sidecar shards +\(uploaded) -\(plan.delete.count) "
+                + "(\(entriesByHash.count) entries in \(local.count) shards)"
+            BackupLogger.info(line)
+            Diagnostics.mark(line)   // Release でも実機ログに残す（検証の目印）
         }
     }
 }

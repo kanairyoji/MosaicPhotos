@@ -132,6 +132,29 @@ struct ShareLargeScaleTests {
         #expect(await server.uploadCount() == uploadsAfterFirst, "無関係なシャードを上げ直している")
     }
 
+    @Test("同じ反映の中で、サイドカーの更新はコピーより先に行う")
+    func sidecarUpdatesBeforeCopies() async {
+        let (engine, _, server) = await makeStack(photos: 30, pageSize: 2_000)
+        let setID = await engine.createSet(name: "Big", refKeys: (0..<20).map { "L-p\($0)" })!
+        await settle(engine)
+
+        // 10 枚追加（コピーが要る）＋ 1 枚外す（shard-03 が空になる＝サイドカーの変更が要る）。
+        _ = await engine.addItems(setID: setID, refKeys: (20..<30).map { "L-p\($0)" })
+        _ = await engine.removeItems(setID: setID, refKeys: ["L-p3"])
+        let mark = await server.requestLog.count
+        await settle(engine)
+
+        // ⚠️ コピーは 500 枚/回・100 枚ごとのジョブ待ちで数分かかる。サイドカーを後回しにすると
+        // 「反映を押しても何分も更新されない」（実フィードバック）。順序を回数ではなく**並び**で固定する。
+        let log = Array(await server.requestLog.dropFirst(mark))
+        let firstSidecarWrite = log.firstIndex { $0.contains("delete_batch") || $0.contains("files/upload") }
+        let firstCopy = log.firstIndex { $0.contains("copy_batch_v2") }
+        #expect(firstSidecarWrite != nil && firstCopy != nil, "fixture: どちらも起きていない")
+        if let a = firstSidecarWrite, let b = firstCopy {
+            #expect(a < b, "サイドカーの更新がコピーの後回しになっている")
+        }
+    }
+
     @Test("受信側もページを跨いで全シャードを拾う")
     func receiverFollowsPages() async {
         UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedSidecarRevs)

@@ -265,6 +265,9 @@ public final class ShareSyncEngine {
 
     /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
     @ObservationIgnored var syncTask: Task<Void, Never>?
+    /// 直近の `updateSidecar` で上げたシャード（名前 → content_hash）。同じ反映の後半で
+    /// もう一度組むとき、一覧に無い「上げた直後」の状態を補うため。
+    @ObservationIgnored var uploadedShardNames: [(name: String, hash: String)] = []
 
     /// 既存セットへ写真を追加して反映する。追加できた件数を返す。
     @discardableResult
