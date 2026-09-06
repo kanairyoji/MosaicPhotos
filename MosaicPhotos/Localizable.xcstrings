@@ -4395,16 +4395,6 @@
         }
       }
     },
-    "All caches share one limit. When it is reached, the app removes the least valuable items first: full-size cloud photos (prefetched ones before viewed ones), then face avatars, and thumbnails last. Nothing you browse is ever unavailable — removed items are simply fetched again.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すべてのキャッシュが 1 つの上限を共有します。上限に達すると、価値の低いものから削除します: クラウド写真の本体（先読みしただけのもの → 開いたもの）、次に顔のアバター、最後にサムネイル。削除されても閲覧できなくなることはなく、必要になれば取得し直すだけです。"
-          }
-        }
-      }
-    },
     "Total": {
       "localizations": {
         "ja": {
@@ -4445,16 +4435,6 @@
         }
       }
     },
-    "Face avatars": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "顔のアバター"
-          }
-        }
-      }
-    },
     "%lld%% of storage (default)": {
       "localizations": {
         "ja": {
@@ -4471,6 +4451,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "ストレージの %lld%%"
+          }
+        }
+      }
+    },
+    "Face thumbnails (People)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔のサムネイル（ピープル）"
+          }
+        }
+      }
+    },
+    "All caches share one limit. When it is reached, the app removes the least valuable items first: full-size cloud photos (prefetched ones before viewed ones), then face thumbnails used in People, and thumbnails last. Nothing you browse is ever unavailable — removed items are simply fetched again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのキャッシュが 1 つの上限を共有します。上限に達すると、価値の低いものから削除します: クラウド写真の本体（先読みしただけのもの → 開いたもの）、次にピープルで使う顔のサムネイル、最後に写真のサムネイル。削除されても閲覧できなくなることはなく、必要になれば取得し直すだけです。"
           }
         }
       }

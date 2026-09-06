@@ -11,7 +11,7 @@ public enum CacheBudget {
     /// 既定の割合（%）。
     public static let defaultPercent = 10
     /// 選べる割合。
-    public static let percentChoices = [5, 10, 20]
+    public static let percentChoices = [5, 10, 20, 30, 40]
     /// 選べる固定値（GB）。
     public static let fixedGBChoices = [2, 5, 10, 20, 50, 100]
     /// 空き容量をこれ以上は食わない。

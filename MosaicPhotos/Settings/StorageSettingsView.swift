@@ -1,6 +1,7 @@
 import DropboxKit
 import ImageCacheKit
 import LocalPhotoKit
+import PeopleKit
 import PhotosFeatureKit
 import SwiftUI
 
@@ -40,8 +41,8 @@ struct StorageSettingsView: View {
             Picker("Cache limit", selection: $mode) {
                 ForEach(CacheBudget.percentChoices, id: \.self) { p in
                     Text(p == CacheBudget.defaultPercent
-                         ? L("\(p)%% of storage (default)")
-                         : L("\(p)%% of storage")).tag(p)
+                         ? L("\(p)% of storage (default)")
+                         : L("\(p)% of storage")).tag(p)
                 }
                 Text(L("Fixed size")).tag(fixedTag)
             }
@@ -60,7 +61,7 @@ struct StorageSettingsView: View {
         } header: {
             Text("Cache Limit")
         } footer: {
-            Text("All caches share one limit. When it is reached, the app removes the least valuable items first: full-size cloud photos (prefetched ones before viewed ones), then face avatars, and thumbnails last. Nothing you browse is ever unavailable — removed items are simply fetched again.")
+            Text("All caches share one limit. When it is reached, the app removes the least valuable items first: full-size cloud photos (prefetched ones before viewed ones), then face thumbnails used in People, and thumbnails last. Nothing you browse is ever unavailable — removed items are simply fetched again.")
         }
     }
 
@@ -90,7 +91,7 @@ struct StorageSettingsView: View {
         case "local.thumbnails":   return L("Thumbnails (device photos)")
         case "dropbox.thumbnails": return L("Thumbnails (Dropbox)")
         case "dropbox.fullImages": return L("Full-size photos (Dropbox)")
-        case "faces.avatars":      return L("Face avatars")
+        case "faces.avatars":      return L("Face thumbnails (People)")
         default: return id
         }
     }
@@ -119,6 +120,9 @@ struct StorageSettingsView: View {
     // MARK: - 読み書き
 
     private func load() async {
+        // 参加は各キャッシュの初回生成時。まだ触っていないキャッシュも一覧に出すため、ここで起こす。
+        _ = await ThumbnailCache.shared.currentDiskUsage()
+        FaceAvatarCache.ensureBudgetRegistration()
         let setting = CacheBudget.setting()
         mode = setting.isFixed ? fixedTag : setting.percent
         if setting.isFixed { fixedGB = setting.fixedGB }

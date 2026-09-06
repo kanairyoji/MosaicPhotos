@@ -14,7 +14,11 @@ Packages/ImageCacheKit/            ← 画像キャッシュ共通プリミテ�
   Sources/ImageCacheKit/
     MemoryImageCache.swift         NSCache ラッパー（メモリ層）
     DiskImageStore.swift           ディレクトリ単位のディスク I/O + LRU 列挙（コアは Foundation のみ）
-  Tests/ImageCacheKitTests/        DiskImageStore の LRU/IO テスト（macOS）
-  ※ LocalPhotoCore（ThumbnailCache）と DropboxCore（DropboxCacheStore）が共用。破棄ポリシーは各利用側が持つ
+    CacheBudget.swift              アプリ全体のディスク予算（ADR-185）: CacheBudget（総容量の 10%・安全弁）/
+                                   CacheBudgetPlanner（本体画像→派生→サムネの順・同層は古い順・床＝純ロジック）/
+                                   CacheBudgetCoordinator（actor・参加者に evict(bytes:) を配る）/ BudgetedCache（参加プロトコル）
+  Tests/ImageCacheKitTests/        DiskImageStore の LRU/IO テスト・CacheBudgetTests（macOS）
+  ※ LocalPhotoCore（ThumbnailCache）・DropboxCore（DropboxCacheStore）・PeopleKit（顔サムネ）が参加。
+    各キャッシュは自分の LRU で捨て、「いくら捨てるか」だけを協調役から受け取る
 
 ```
