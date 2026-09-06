@@ -9,7 +9,7 @@ public struct ShareHubView: View {
     private let engine: ShareSyncEngine
     /// 家族フォルダ（受信側）の変更通知。アプリが同期ルート・取り込みへ反映する。
     private let onFamilyFoldersChanged: @MainActor () -> Void
-    /// 「今すぐ取り込み」（受信側・サイドカー取り込み）。未設定なら非表示。
+    /// 「今すぐ取り込み」（受信側・解析データ取り込み）。未設定なら非表示。
     private let onImportNow: (@MainActor () async -> Void)?
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true

@@ -122,7 +122,7 @@ MosaicPhotos (app)
 ├── DropboxKit        Dropbox UI layer (depends on DropboxCore)
 ├── BackupKit         device → Dropbox backup: verified uploads (content hash), nightly
 │                     auto-run, per-device folders, offload ledger + preview;
-│                     cloud sharing (shared sets, server-side copy, analysis sidecar)
+│                     cloud sharing (shared sets, server-side copy, analysis analysis data)
 ├── PhotosFeatureKit  merges local + Dropbox (MergedPhotoStore) and place grouping
 ├── FaceCore          face recognition & People (detection gates, clustering, people groups)
 ├── AutoAlbumCore     auto albums + on-device AI logic (SwiftUI-free): trips, folder-name

@@ -229,11 +229,11 @@ struct DropboxShareCopier {
         return out
     }
 
-    // MARK: - サイドカーのアップロード（上書き）
+    // MARK: - 解析データのアップロード（上書き）
 
     private static let uploadURL = "https://content.dropboxapi.com/2/files/upload"
 
-    /// 小さなファイル（サイドカー JSON）を上書きアップロードする。
+    /// 小さなファイル（解析データ JSON）を上書きアップロードする。
     func uploadFile(data: Data, to path: String, token: String) async -> Bool {
         struct Arg: Encodable {
             let path: String
@@ -250,13 +250,13 @@ struct DropboxShareCopier {
         req.timeoutInterval = 60
         guard let (_, resp) = try? await httpClient.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            BackupLogger.error("ShareCopier: sidecar upload failed — \(path)")
+            BackupLogger.error("ShareCopier: analysis data upload failed — \(path)")
             return false
         }
         return true
     }
 
-    /// パスのファイルをダウンロードする（受信側のサイドカー読み込み用）。存在しない・エラーは nil。
+    /// パスのファイルをダウンロードする（受信側の解析データ読み込み用）。存在しない・エラーは nil。
     private static let downloadURL = "https://content.dropboxapi.com/2/files/download"
     func downloadFile(path: String, token: String) async -> Data? {
         struct Arg: Encodable { let path: String }

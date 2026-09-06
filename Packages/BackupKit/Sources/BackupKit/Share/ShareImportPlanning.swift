@@ -1,7 +1,7 @@
 import Foundation
 
 /// 受信側の解析取り込み計画（純ロジック・テスト対象）。
-/// サイドカーのエントリ（content_hash キー）を、受信側の同期済みクラウド写真
+/// 解析データのエントリ（content_hash キー）を、受信側の同期済みクラウド写真
 /// （refKey "C-<path>" と content_hash）に突合し、モデル版が一致するセクションだけを
 /// 取り込み対象として返す。
 public enum ShareImportPlanning {
@@ -28,26 +28,26 @@ public enum ShareImportPlanning {
 
     /// 取り込み対象（refKey 単位・セクション別）。
     public struct Batch: Sendable {
-        public var tags: [(refKey: String, entry: ShareSidecar.Entry)] = []
+        public var tags: [(refKey: String, entry: ShareAnalysisData.Entry)] = []
         public var embeddings: [(refKey: String, vectorHalf: Data)] = []
-        public var faces: [(refKey: String, faces: [ShareSidecar.Face])] = []
+        public var faces: [(refKey: String, faces: [ShareAnalysisData.Face])] = []
         public init() {}
     }
 
     /// - Parameters:
-    ///   - sidecar: 検証済みサイドカー（`ShareSidecar.decodeValidated` の結果）。
+    ///   - analysisData: 検証済み解析データ（`ShareAnalysisData.decodeValidated` の結果）。
     ///   - localItems: 受信側の同期済み写真（content_hash 付きのもののみ）。
     ///   - versions: 受信側のモデル版。
     /// - Returns: セクション別の取り込みバッチ。同一 content_hash に複数 refKey が
     ///   対応する場合（同じ写真が複数セットにある等）は全 refKey に展開する。
-    public static func plan(sidecar: ShareSidecar.File,
+    public static func plan(analysisData: ShareAnalysisData.File,
                             localItems: [LocalItem],
                             versions: ReceiverVersions) -> Batch {
-        plan(sidecar: sidecar, index: index(of: localItems), versions: versions)
+        plan(analysisData: analysisData, index: index(of: localItems), versions: versions)
     }
 
-    /// content_hash → refKey 群の索引。**サイドカーごとに作り直さない**ために切り出す
-    /// （受信側は 6.8 万件規模を扱うので、サイドカー数ぶんの再構築は無視できない）。
+    /// content_hash → refKey 群の索引。**解析データごとに作り直さない**ために切り出す
+    /// （受信側は 6.8 万件規模を扱うので、解析データ数ぶんの再構築は無視できない）。
     public static func index(of localItems: [LocalItem]) -> [String: [String]] {
         var byHash: [String: [String]] = [:]
         byHash.reserveCapacity(localItems.count)
@@ -57,16 +57,16 @@ public enum ShareImportPlanning {
         return byHash
     }
 
-    /// 索引を使い回す版（複数サイドカーを処理するときはこちらを使う）。
-    public static func plan(sidecar: ShareSidecar.File,
+    /// 索引を使い回す版（複数解析データを処理するときはこちらを使う）。
+    public static func plan(analysisData: ShareAnalysisData.File,
                             index byHash: [String: [String]],
                             versions: ReceiverVersions) -> Batch {
-        let tagOK = sidecar.versions.tag == versions.tag
-        let clipOK = sidecar.versions.perception == versions.perception
-        let faceOK = sidecar.versions.face == versions.face
+        let tagOK = analysisData.versions.tag == versions.tag
+        let clipOK = analysisData.versions.perception == versions.perception
+        let faceOK = analysisData.versions.face == versions.face
 
         var batch = Batch()
-        for (hash, entry) in sidecar.entries {
+        for (hash, entry) in analysisData.entries {
             guard let refKeys = byHash[hash] else { continue }
             for refKey in refKeys {
                 if tagOK, entry.tags != nil || entry.ocr != nil || entry.human != nil || entry.aes != nil {

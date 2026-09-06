@@ -92,7 +92,7 @@ public struct DetectedFaceSignal: Sendable, Equatable {
     ///
     /// ⚠️ 検出（`FacePerceptionProvider`）は名前を知らないので、そこでは常に nil。
     /// 名前が入るのは (1) 共有の書き出し（自分が付けた名前を載せる）と
-    /// (2) 家族のサイドカーの取り込み（相手が付けた名前を受け取る）だけ。
+    /// (2) 家族の解析データの取り込み（相手が付けた名前を受け取る）だけ。
     /// 名前は個人情報なので、**設定で送らないことも選べる**（既定は送る）。
     public let personName: String?
 

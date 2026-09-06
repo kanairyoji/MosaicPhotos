@@ -3,12 +3,12 @@ import Foundation
 import MosaicSupport
 import Observation
 
-/// 送信側の解析サイドカー供給 seam。実体はアプリ（Composition Root）が
+/// 送信側の解析データ供給 seam。実体はアプリ（Composition Root）が
 /// AutoAlbumCore / FaceCore のストアから組み立てて注入する。
 public protocol ShareAnalysisSource: AnyObject {
-    /// refKey 群の解析エントリ（キーは refKey・値はサイドカーの 1 エントリ）と各セクションの版。
+    /// refKey 群の解析エントリ（キーは refKey・値は解析データの 1 エントリ）と各セクションの版。
     @MainActor func analysisEntries(forRefKeys refKeys: [String]) async
-        -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry])
+        -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry])
 }
 
 /// 共有セットの**作成元**（人物・グループ・アルバム）の現在のメンバーを解決する seam。
@@ -22,7 +22,7 @@ public protocol ShareSourceResolver: AnyObject {
 /// 家族共有（共有セット）のオーケストレーション（ADR-112）。
 ///
 /// 「共有はバックアップの射影」——選択した写真をサーバーサイドコピーで共有フォルダへ投影し、
-/// 解析結果（タグ・CLIP・顔）をサイドカーとして同梱する。正本（バックアップ・原本）には
+/// 解析結果（タグ・CLIP・顔）を解析データとして同梱する。正本（バックアップ・原本）には
 /// 一切手を触れない。削除系（セット削除・単枚解除）はユーザー操作起点のみ。
 @MainActor
 @Observable
@@ -77,7 +77,7 @@ public final class ShareSyncEngine {
     /// （⚠️ 猶予時間内にアカウントを切り替えると、**別アカウントの同名フォルダ**を
     /// 消しに行く・レビュー指摘）。未注入なら nil＝「持ち主不明」として分離される。
     @ObservationIgnored public var accountFingerprint: @MainActor () -> String? = { nil }
-    /// 解析サイドカーの供給元（未設定なら写真のみ共有）。
+    /// 解析データの供給元（未設定なら写真のみ共有）。
     @ObservationIgnored public weak var analysisSource: ShareAnalysisSource?
     /// 作成元の現在メンバー解決（未設定なら「今の内容に更新」を出さない）。
     @ObservationIgnored public weak var sourceResolver: ShareSourceResolver?
@@ -193,7 +193,7 @@ public final class ShareSyncEngine {
         _ = await store.addShareItems(setID: set.id, refKeys: refKeys)
         BackupLogger.info("Share: created set '\(folderName)' with \(refKeys.count) items")
         await refresh()
-        // 反映（ネットワーク往復・コピー・サイドカー生成）はバックグラウンドで行う。
+        // 反映（ネットワーク往復・コピー・解析データ生成）はバックグラウンドで行う。
         // ここで待つと作成シートが反映完了まで閉じられず UI が固まって見える（実フィードバック）。
         scheduleSync()
         return set.id
@@ -265,7 +265,7 @@ public final class ShareSyncEngine {
 
     /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
     @ObservationIgnored var syncTask: Task<Void, Never>?
-    /// 直近の `updateSidecar` で上げたシャード（名前 → content_hash）。同じ反映の後半で
+    /// 直近の `updateAnalysisData` で上げたシャード（名前 → content_hash）。同じ反映の後半で
     /// もう一度組むとき、一覧に無い「上げた直後」の状態を補うため。
     @ObservationIgnored var uploadedShardNames: [(name: String, hash: String)] = []
 
@@ -414,7 +414,7 @@ public final class ShareSyncEngine {
         let toRemove = ok ? refKeys : refKeys.filter { removable.contains($0) }
         if !toRemove.isEmpty { await store.removeShareItems(setID: setID, refKeys: toRemove) }
         await refresh()
-        scheduleSync()   // サイドカーから外した分を反映
+        scheduleSync()   // 解析データから外した分を反映
         return ok
     }
 

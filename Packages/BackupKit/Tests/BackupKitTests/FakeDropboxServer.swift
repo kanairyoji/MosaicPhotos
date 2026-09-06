@@ -62,7 +62,7 @@ actor FakeDropboxServer: HTTPClient {
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder, rev: "r\(files.count)")
     }
 
-    /// 中身つきでファイルを置く（他端末がアップロードしたサイドカー等を模す）。content_hash は本物と同じ計算。
+    /// 中身つきでファイルを置く（他端末がアップロードした解析データ等を模す）。content_hash は本物と同じ計算。
     func upload(path: String, data: Data) {
         let key = path.lowercased()
         bodies[key] = data

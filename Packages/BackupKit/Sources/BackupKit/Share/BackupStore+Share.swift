@@ -97,7 +97,7 @@ extension BackupStore {
             predicate: #Predicate { $0.id == id })).first else { return }
         set.folderName = folderName
         set.layoutVersion = ShareSet.currentLayoutVersion
-        // サイドカーは新フォルダで作り直す（チェックサム一致で更新を飛ばさないよう捨てる）。
+        // 解析データは新フォルダで作り直す（チェックサム一致で更新を飛ばさないよう捨てる）。
         set.sidecarChecksum = nil
         let oldLower = oldPathPrefix.lowercased()
         let newLower = newPathPrefix.lowercased()
@@ -114,7 +114,7 @@ extension BackupStore {
     ///
     /// 旧フォルダは動かさない（既存データは移行しない）ので、記録上のコピー先
     /// （`sharedPath` / `sharedContentHash`）を捨てて `.pending` へ戻す。
-    /// 次の反映が新しい共有ルートへコピーし、サイドカーも作り直す。
+    /// 次の反映が新しい共有ルートへコピーし、解析データも作り直す。
     public func resetShareSetForRelayout(setID: UUID, folderName: String) {
         let id = setID
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
@@ -153,7 +153,7 @@ extension BackupStore {
         try? modelContext.save()
     }
 
-    public func setShareSidecarChecksum(setID: UUID, checksum: String?) {
+    public func setShareAnalysisDataChecksum(setID: UUID, checksum: String?) {
         let id = setID
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
             predicate: #Predicate { $0.id == id })).first else { return }

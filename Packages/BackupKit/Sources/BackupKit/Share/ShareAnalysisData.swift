@@ -1,19 +1,19 @@
 import Foundation
 
-/// 共有セットの解析サイドカー（`<セット>/.mosaic-share/analysis-v1.json`）のフォーマットと
+/// 共有セットの**解析データ**（旧称サイドカー。写真に付けたタグ・CLIP 埋め込み・顔を、写真とは別ファイルで同梱したもの）（`<セット>/.mosaic-share/analysis-v1.json`）のフォーマットと
 /// エンコード/デコード・防御的検証（純ロジック・テスト対象）。
 ///
 /// - エントリのキーは **Dropbox content_hash**（送信者と受信者で refKey が異なるため、
 ///   パスにも refKey にも依存しない結合キーを使う・ADR-112）。
 /// - 受信側は**自分のモデル版と一致するセクションだけ**取り込む（不一致は自前解析に任せる）。
 /// - 別デバイスが書いた外部入力なので、受信側は `validate` で上限・次元・有限性を検査してから使う。
-public enum ShareSidecar {
+public enum ShareAnalysisData {
 
-    /// サイドカーの置き場所（セットフォルダからの相対）。
+    /// 解析データの置き場所（セットフォルダからの相対）。
     public static let subfolderName = ".mosaic-share"
     /// 旧形式（1 セット 1 ファイル）。受信側は読み続け、送信側はシャードを置いたら消す（ADR-183）。
     public static let legacyFileName = "analysis-v1.json"
-    public static func legacySidecarPath(setFolderPath: String) -> String {
+    public static func legacyAnalysisPath(setFolderPath: String) -> String {
         "\(setFolderPath)/\(subfolderName)/\(legacyFileName)"
     }
 
@@ -32,8 +32,8 @@ public enum ShareSidecar {
     public static func shardPath(setFolderPath: String, shard: String) -> String {
         "\(setFolderPath)/\(subfolderName)/\(shardFileName(shard))"
     }
-    /// サイドカーのファイル名か（シャード・旧形式）。受信側の一覧の絞り込みに使う。
-    public static func isSidecarFileName(_ name: String) -> Bool {
+    /// 解析データのファイル名か（シャード・旧形式）。受信側の一覧の絞り込みに使う。
+    public static func isAnalysisFileName(_ name: String) -> Bool {
         name == legacyFileName || (name.hasPrefix(shardFilePrefix) && name.hasSuffix(".json"))
     }
 
@@ -111,7 +111,7 @@ public enum ShareSidecar {
         /// content_hash → 解析エントリ。
         public var entries: [String: Entry]
 
-        public init(formatVersion: Int = ShareSidecar.formatVersion,
+        public init(formatVersion: Int = ShareAnalysisData.formatVersion,
                     versions: Versions, entries: [String: Entry]) {
             self.formatVersion = formatVersion
             self.versions = versions

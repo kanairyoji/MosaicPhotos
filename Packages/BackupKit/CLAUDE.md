@@ -30,9 +30,9 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
       BackupEngine+Settle.swift      応答 → ジャーナル → 記録（`BackgroundSettlement.perform` で順序を固定）
     Share/                         家族共有（ADR-112/166/183）
       ShareSyncEngine.swift          @MainActor @Observable。セット CRUD・作成元追従（`refreshAllFromSource`）
-      ShareSyncEngine+Sync.swift     反映本体（共有ルートの再帰一覧 1 回 → copy_batch/delete_batch → シャードの差分同期）。`RemoteShareIndex` / `ShareSidecarPlanning`（純ロジック）
-      ShareSidecar.swift             サイドカーの形式（content_hash キー・`shard-<xx>.json`・防御的検証）
-      ShareSidecarFetch.swift        受信側の取得（家族フォルダの再帰一覧 1 回・rev 差分）
+      ShareSyncEngine+Sync.swift     反映本体（共有ルートの再帰一覧 1 回 → copy_batch/delete_batch → シャードの差分同期）。`RemoteShareIndex` / `ShareAnalysisPlanning`（純ロジック）
+      ShareAnalysisData.swift             解析データの形式（content_hash キー・`shard-<xx>.json`・防御的検証）
+      ShareAnalysisFetch.swift        受信側の取得（家族フォルダの再帰一覧 1 回・rev 差分）
       SharePlanning.swift / ShareImportPlanning.swift  コピー計画 / 受信側の突合（純ロジック）
     BackupLogger.swift             内部ロガー（MosaicSupport の LogChannel に委譲）
     BackupAlbumInfo.swift / BackupAssetRecord.swift  値オブジェクト / @Model

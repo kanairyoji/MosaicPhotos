@@ -39,11 +39,11 @@ public enum ShareSettingsKeys {
     public static let legacyDefaultShareRootFolder = "/MosaicShare"
 
     /// 家族から共有されたフォルダ（受信側）。JSON エンコードした [String]。
-    /// 同期ルートへの追加と解析サイドカーの取り込み対象を兼ねる。
+    /// 同期ルートへの追加と解析データの取り込み対象を兼ねる。
     public static let familyFolders = "shareFamilyFolders"
 
-    /// 取り込み済みサイドカーの rev 記録（[path: rev] の JSON）。同一 rev の再取り込みを省く。
-    public static let importedSidecarRevs = "shareImportedSidecarRevs"
+    /// 取り込み済み解析データの rev 記録（[path: rev] の JSON）。同一 rev の再取り込みを省く。
+    public static let importedAnalysisRevs = "shareImportedSidecarRevs"   // 値は互換のため据え置き（rev 記録を失わない）
 
     /// 現在の共有ルート（ADR-175）: **バックアップと同じルート**の端末フォルダ配下 `Share/`。
     ///

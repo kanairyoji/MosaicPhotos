@@ -1,28 +1,28 @@
 import DropboxCore
 import Foundation
 
-/// 受信側: 家族の共有フォルダから解析サイドカーを見つけて取得する（ADR-112）。
+/// 受信側: 家族の共有フォルダから解析データを見つけて取得する（ADR-112）。
 /// rev（Dropbox のファイル版）を記録し、**変わったものだけ**ダウンロード・検証して返す。
 /// ストアへの取り込み（TagStore / 埋め込み / 顔）はアプリ側（Composition Root）が行う。
-public struct ShareSidecarFetch {
+public struct ShareAnalysisFetch {
     private let httpClient: HTTPClient
 
     public init(httpClient: HTTPClient = URLSessionHTTPClient()) {
         self.httpClient = httpClient
     }
 
-    /// 取得済みサイドカー 1 件。
+    /// 取得済み解析データ 1 件。
     public struct Fetched: Sendable {
-        /// サイドカーファイルのパス（rev 記録キー）。
-        public let sidecarPathLower: String
+        /// 解析データファイルのパス（rev 記録キー）。
+        public let analysisPathLower: String
         public let rev: String
         /// 検証済みの中身。
-        public let file: ShareSidecar.File
-        /// このサイドカーが属するセットフォルダ（表示・ログ用）。
+        public let file: ShareAnalysisData.File
+        /// この解析データが属するセットフォルダ（表示・ログ用）。
         public let setFolderPathLower: String
     }
 
-    /// 家族フォルダ群からサイドカー（シャード・旧形式）を列挙し、rev が前回取り込みから
+    /// 家族フォルダ群から解析データ（シャード・旧形式）を列挙し、rev が前回取り込みから
     /// 変わったものだけ返す（ADR-183）。
     ///
     /// 一覧は家族フォルダごとに**再帰で 1 回**（以前はセットごとに `.mosaic-share` を
@@ -41,19 +41,19 @@ public struct ShareSidecarFetch {
                 allListed = false   // 一覧が取れない回は記録を捨てない（全部の再取得を誘発する）
                 continue
             }
-            let marker = "/" + ShareSidecar.subfolderName + "/"
-            for file in listing where !file.isFolder && ShareSidecar.isSidecarFileName(file.name) {
+            let marker = "/" + ShareAnalysisData.subfolderName + "/"
+            for file in listing where !file.isFolder && ShareAnalysisData.isAnalysisFileName(file.name) {
                 guard let range = file.pathLower.range(of: marker, options: .backwards) else { continue }
                 seenPaths.insert(file.pathLower)
                 let rev = file.rev ?? ""
                 if !rev.isEmpty, knownRevs[file.pathLower] == rev { continue }   // 変化なし
                 guard let data = await copier.downloadFile(path: file.pathLower, token: token),
-                      let decoded = ShareSidecar.decodeValidated(data) else {
-                    BackupLogger.error("ShareSidecarFetch: invalid sidecar — \(file.pathLower)")
+                      let decoded = ShareAnalysisData.decodeValidated(data) else {
+                    BackupLogger.error("ShareAnalysisFetch: invalid analysis data — \(file.pathLower)")
                     continue
                 }
                 let setFolder = String(file.pathLower[..<range.lowerBound])
-                out.append(Fetched(sidecarPathLower: file.pathLower, rev: rev,
+                out.append(Fetched(analysisPathLower: file.pathLower, rev: rev,
                                    file: decoded, setFolderPathLower: setFolder))
             }
         }
@@ -67,7 +67,7 @@ public struct ShareSidecarFetch {
     public static func markImported(_ fetched: Fetched) {
         guard !fetched.rev.isEmpty else { return }
         var revs = storedRevs()
-        revs[fetched.sidecarPathLower] = fetched.rev
+        revs[fetched.analysisPathLower] = fetched.rev
         save(revs)
     }
 
@@ -80,12 +80,12 @@ public struct ShareSidecarFetch {
 
     private static func save(_ revs: [String: String]) {
         if let data = try? JSONEncoder().encode(revs) {
-            UserDefaults.standard.set(data, forKey: ShareSettingsKeys.importedSidecarRevs)
+            UserDefaults.standard.set(data, forKey: ShareSettingsKeys.importedAnalysisRevs)
         }
     }
 
     static func storedRevs() -> [String: String] {
-        guard let data = UserDefaults.standard.data(forKey: ShareSettingsKeys.importedSidecarRevs),
+        guard let data = UserDefaults.standard.data(forKey: ShareSettingsKeys.importedAnalysisRevs),
               let revs = try? JSONDecoder().decode([String: String].self, from: data) else {
             return [:]
         }
