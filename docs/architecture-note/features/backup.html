@@ -52,6 +52,37 @@ graph TD
         <li>人物名・キャプションは BackupKit から AutoAlbumCore へ依存せず、seam（<code>peopleNamesProvider</code> / <code>captionsProvider</code>）で Composition Root（<code>AutoAlbumAdapters</code>）が結線する。</li>
       </ul>
 
+      <h2>メタデータのライフサイクル（誰が書き、誰が読み、どう壊れないか）</h2>
+      <p>「Dropbox 上のメタ情報」は 3 種類あり、置き場所も寿命も違う。混同しないために 1 枚にまとめる。</p>
+      <table>
+        <tr><th>種類</th><th>置き場所</th><th>正本か</th><th>書く側</th><th>読む側</th></tr>
+        <tr><td><strong>Dropbox の一覧</strong>（パス・content_hash・撮影日・座標・rev）</td><td>端末の SwiftData（<code>CachedDropboxItem</code> / <code>DropboxSyncState</code>＝カーソル）</td><td>Dropbox が正本・端末は<strong>キャッシュ</strong></td><td><code>DropboxSyncEngine</code>（<code>list_folder</code> のカーソル差分＋<code>longpoll</code>）</td><td>グリッド・解析候補・共有の突合（<a href="dropbox.html">Dropbox 連携</a>／<a href="../deep-dive/cache-internals.html">キャッシュ実装詳細</a>）</td></tr>
+        <tr><td><strong>バックアップのメタデータ v2</strong>（人物名・アルバム・お気に入り・GPS・localIdentifier）</td><td>Dropbox: <code>Backup/.mosaic/catalog.json</code>＋<code>meta/&lt;YYYY-MM&gt;.json</code>（撮影月シャード）</td><td><strong>Dropbox が正本</strong>（端末を消しても残す情報）</td><td><code>BackupRunner</code>（下図）</td><td>受信側の <code>loadBackupMetadata</code>（オフロード済み写真の名前・アルバム復元）・共有の作成元解決</td></tr>
+        <tr><td><strong>共有の解析サイドカー</strong>（タグ・CLIP・顔）</td><td>Dropbox: <code>Share/&lt;セット&gt;/.mosaic-share/shard-&lt;xx&gt;.json</code></td><td>派生物（端末の解析台帳から毎回組み直せる）</td><td><code>ShareSyncEngine</code>（状態を持たず content_hash 比較）</td><td>家族の端末（<a href="cloud-sharing.html">クラウド共有</a>）</td></tr>
+      </table>
+      <h3>書く側: 1 枚ごとに耐久化してから「済み」（ADR-171）</h3>
+      <div class="mermaid">
+flowchart LR
+  U[写真 1 枚の<br/>アップロード成功<br/>hash 照合済み] --> J["ジャーナル追記<br/>Caches/…/pending.jsonl<br/>（1 行 1 写真・原子的）"]
+  J --> R[台帳 BackupAssetRecord<br/>「済み」]
+  R --> N{実行の最後}
+  N --> M["触った撮影月シャードだけ<br/>download → merge → upload<br/>＋ catalog.json"]
+  M -->|成功| C[ジャーナルを消す]
+  M -->|失敗 429/通信| K["ジャーナルに残す<br/>→ 次回の最初（投入前・静かなうち）に再送"]
+      </div>
+      <ul>
+        <li><strong>順序が不変条件</strong>: ジャーナル → 記録 → シャード。逆順だと中断時に「写真は済み・メタデータ無し」が確定し、写真は次回の対象から外れるので<strong>人物名・アルバム・位置は二度と作られない</strong>（旧実装は実行の最後にまとめて送り、途中終了でそれまでの全件を失った）。</li>
+        <li><strong>シャード書きは download → merge → upload</strong>（既存を取れなかった／読めなかったときは書かない＝空で上書きして 1 か月分を消さない）。同じシャードを触るオフロードマーカーの書き込みとは <code>MetadataShardLock</code> で直列化。</li>
+        <li><strong>背景アップロード（ADR-181）でも同じ</strong>: 応答を受けた側（<code>BackupEngine.settle</code>）が同じ順序で書く。</li>
+        <li><strong>429（書き込み競合）</strong>は Retry-After 準拠で短く再試行し、それでも残れば次回。背景転送が数百本走っている最中は起きやすいので、再送は次回の投入前に回す。</li>
+      </ul>
+      <h3>読む側: rev で差分だけ・無いものは覚える</h3>
+      <ul>
+        <li><code>loadBackupMetadata</code> は各 JSON の <strong>rev</strong>（Dropbox の版数）を <code>get_metadata</code> で確認し、前回と同じならローカルキャッシュ（<code>Caches/DropboxKit/backup-metadata/</code>）を使う。変わった分だけ並列ダウンロード。旧実装は毎起動で 15〜25MB を逐次 DL してメインでデコードしていた。</li>
+        <li>バックアップを使っていない端末では 4 パスの 409 を毎起動 3 秒ずつ待っていたので、<strong>不在を TTL つきで記録</strong>する（<code>BackupMetadataAbsence</code>・ADR-82）。メタデータを書いたら必ず無効化する（書く側とセット）。</li>
+        <li>v1（凍結された <code>metadata.json</code>）をベースに v2 を上書きマージして読む（ADR-38・旧データの互換）。</li>
+      </ul>
+
       <h2>オフロード台帳と端末アルバムの合成表示（ADR-39）</h2>
       <p>将来のオフロード（バックアップ済みローカル写真の検証つき削除）に備え、<strong>台帳と表示合成</strong>を先行実装している。<code>OffloadRecord</code>（SwiftData）が「アプリが削除した写真」の localIdentifier / Dropbox パス / 所属アルバムを記録し、端末アルバムを開く <code>DeviceAlbumPhotosView</code> が「PHAssetCollection 現存メンバー＋台帳のクラウド代替」をメンバー限定 <code>MergedPhotoStore</code> で混在表示する（撮影日ソートで元の位置に混ざる）。補完の条件を<strong>「台帳にある」に限定</strong>するのが要点＝ユーザーが写真アプリで意図的に削除した写真を蘇らせない。再インストール時は metadata v2 の <code>offloadedAt</code> マーカーから台帳を再構築する。台帳が空（現状）のときの表示は従来と完全に同一。</p>
 
