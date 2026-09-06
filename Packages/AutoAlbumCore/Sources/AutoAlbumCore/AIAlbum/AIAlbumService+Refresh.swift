@@ -110,6 +110,48 @@ extension AIAlbumService {
         return updated.sorted { $0.representativeDate > $1.representativeDate }
     }
 
+    /// 人物の修正（「この写真は XX ではない」「別の人」・付け替え・統合）の直後に、
+    /// **人物条件を持つ AI アルバムから、条件を満たさなくなった写真だけを外す**。
+    ///
+    /// ⚠️ 実フィードバック: AI アルバムで人違いを見つけて「XX ではない」を選んでも**変化なし**。
+    /// 人物アルバムは顔クラスタを直接見るので即座に変わるが、AI アルバムのメンバーは
+    /// 評価時のスナップショット（`memberRefs`）で、次の再評価（夜間・ドリフト）まで古いまま。
+    /// 追加（新たに XX になった写真）は次の再評価に任せ、ここでは**外す**だけ——
+    /// 既存メンバー × ハード条件の再判定だけなので速く、意味採点も LLM も走らない。
+    /// - Returns: 変わったアルバムがあれば全体（順序は現状維持）、無ければ nil。
+    func pruneAfterPeopleChange(_ current: [AutoAlbumInfo]) async -> [AutoAlbumInfo]? {
+        guard !current.isEmpty else { return nil }
+        let now = Date()
+        var updated = current
+        var touched = 0
+        var dropped = 0
+        for (index, album) in current.enumerated() {
+            guard let criteria = album.criteria, !criteria.isEmpty,
+                  let saved = interpreter.saved(for: album.id), saved.criteria == criteria,
+                  saved.spec.hasPeopleConditions, !album.memberRefs.isEmpty else { continue }
+            let spec = saved.spec
+            guard let peopleMap = await peopleMapIfNeeded(for: spec) else { continue }
+            let querySignals = await querySignalsIfNeeded(for: spec)
+            let existing = await store.enrichedPhotos(forRefKeys: album.memberRefs)
+            let kept = QueryEvaluator.hardFilter(existing, spec: spec, now: now,
+                                                 peopleByRefKey: peopleMap, signals: querySignals)
+            guard kept.count < existing.count else { continue }
+            let members = kept.sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+            let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title,
+                                                 interpretedTitle: saved.spec.title,
+                                                 criteria: criteria, members: members,
+                                                 aesthetics: await coverAesthetics(members),
+                                                 usage: await coverUsage(members))
+            await store.upsert(albumInfo: info)
+            updated[index] = info
+            touched += 1
+            dropped += existing.count - kept.count
+        }
+        guard touched > 0 else { return nil }
+        Diagnostics.mark("aialbum.peopleChange: \(touched) album(s) — dropped \(dropped) photo(s) that no longer match")
+        return updated
+    }
+
     /// 増分再評価（Phase 2）：**新規に埋め込まれた refKey 群だけ**を採点してプールへマージし、
     /// 閾値を超えた写真をメンバーへ追加する。全ベクトルのページ走査・LLM は一切行わない。
     /// 解釈やプールが未保存のアルバムは触らない（ドリフト検知のフル再評価に任せる）。

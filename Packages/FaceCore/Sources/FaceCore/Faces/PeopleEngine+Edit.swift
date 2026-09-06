@@ -18,7 +18,7 @@ extension PeopleEngine {
     public func rename(clusterID: Int, name: String?) async {
         Diagnostics.breadcrumb("people.rename cluster=\(clusterID)")
         await store.rename(clusterID: clusterID, name: name)
-        await loadPeople()
+        await loadPeopleAfterEdit()
     }
 
     /// 人物 src を人物 dst に統合する（同一人物が別々に認識されたときの修正）。
@@ -28,7 +28,7 @@ extension PeopleEngine {
     /// 後で `unlinkPerson` で解除できる。
     public func linkPeople(_ clusterIDs: [Int]) async {
         await store.linkClusters(clusterIDs)
-        await loadPeople()
+        await loadPeopleAfterEdit()
     }
 
     /// 束ねる前に、**別々の名前**が付いていないか調べる（ADR-94）。
@@ -42,13 +42,13 @@ extension PeopleEngine {
     public func linkPeople(_ clusterIDs: [Int], keepingName name: String) async {
         await store.unifyName(name, in: clusterIDs)
         await store.linkClusters(clusterIDs)
-        await loadPeople()
+        await loadPeopleAfterEdit()
     }
 
     /// 束ねから 1 クラスタを外す（別人だった等）。
     public func unlinkPerson(clusterID: Int) async {
         await store.unlinkCluster(clusterID)
-        await loadPeople()
+        await loadPeopleAfterEdit()
     }
 
     /// この人物の束ねを全解除する（束ねられた全クラスタを単独に戻す）。
@@ -57,7 +57,7 @@ extension PeopleEngine {
         for id in await store.linkedClusterIDs(primary: clusterID) {
             await store.unlinkCluster(id)
         }
-        await loadPeople()
+        await loadPeopleAfterEdit()
     }
 
     /// 統合の結果。**拒否される**ことがある（ユーザーが既に別人と表明している／
@@ -79,7 +79,7 @@ extension PeopleEngine {
         let rejection = await store.mergeClusters(from: srcClusterID, into: dstClusterID,
                                                   recordNotSameOnConflict: false)
         await refreshUndoLabel()
-        await loadPeople()
+        await loadPeopleAfterEdit()
         switch rejection {
         case .none: return .merged
         case .differentNames: return .rejectedDifferentNames
@@ -95,7 +95,7 @@ extension PeopleEngine {
     /// 代表写真（トップに出す顔）を選ぶ。
     public func setCover(clusterID: Int, faceID: String) async {
         await store.setCover(clusterID: clusterID, faceID: faceID)
-        await loadPeople()
+        await loadPeopleAfterEdit()
     }
 
     /// 顔を別の人物へ付け替える（「この人は別の人」）。`toClusterID` が nil なら新規人物。
@@ -111,7 +111,7 @@ extension PeopleEngine {
         await store.reassignFace(faceID: faceID, toClusterID: toClusterID)
         Diagnostics.breadcrumb("people.reassignFace: reload")
         await refreshUndoLabel()
-        await loadPeople()
+        await loadPeopleAfterEdit()
         Diagnostics.breadcrumb("people.reassignFace: done")
     }
 
@@ -132,7 +132,7 @@ extension PeopleEngine {
             let removed = await store.removePhoto(refKey: key, from: clusterID)
             if removed > 0 {
                 await refreshUndoLabel()
-                await loadPeople()
+                await loadPeopleAfterEdit()
                 return removed
             }
         }
@@ -158,7 +158,7 @@ extension PeopleEngine {
             let moved = await store.movePhoto(refKey: key, from: clusterID, to: toClusterID)
             if moved > 0 {
                 await refreshUndoLabel()
-                await loadPeople()
+                await loadPeopleAfterEdit()
                 return moved
             }
         }

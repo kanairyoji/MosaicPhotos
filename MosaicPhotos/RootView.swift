@@ -131,6 +131,11 @@ final class HomeStores {
         shareEngine.sourceResolver = shareSourceResolver
         // 顔を全消去すると clusterID が 0 から振り直される。人物を指す共有セットの参照は
         // 当てにならなくなるので外す（残すと別人の写真を家族フォルダへ足しかねない）。
+        // 人物を手で直したら、人物条件を持つ AI アルバムから外れた写真を即座に落とす
+        // （実フィードバック: AI アルバムで「XX ではない」を選んでも変化なし）。
+        peopleEngine.onPeopleEdited = { [weak autoAlbumEngine] in
+            await autoAlbumEngine?.pruneAIAlbumsAfterPeopleChange()
+        }
         peopleEngine.onPersonIdentitiesInvalidated = { [weak shareEngine] in
             await shareEngine?.detachPersonSources()
         }
