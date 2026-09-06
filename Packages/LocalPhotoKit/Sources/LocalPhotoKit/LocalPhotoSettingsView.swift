@@ -7,7 +7,8 @@ import SwiftUI
 public struct LocalPhotoSettingsView: View {
     // 0 = Auto（端末 RAM に応じて自動）。既定は Auto。
     @AppStorage(CacheSettingsKeys.memoryLimitMB) private var memoryLimitMB = 0
-    @AppStorage(CacheSettingsKeys.diskLimitMB)   private var diskLimitMB   = 500
+    // 0 = Auto（端末の総容量の 10%）。既定は Auto。
+    @AppStorage(CacheSettingsKeys.diskLimitMB)   private var diskLimitMB   = 0
     @State private var diskUsage = 0
     @State private var photoCount = 0
     @State private var albumCount = 0
@@ -22,6 +23,8 @@ public struct LocalPhotoSettingsView: View {
             LabeledContent(L("User albums"), value: "\(albumCount)")
         }
 
+        // メモリ（表示中のサムネを保持する量）とディスク（サムネの保存量）は別物なので節を分ける
+        // （実フィードバック: 「メモリのセクションにディスク上限がある」）。
         Section {
             Picker(L("Memory limit"), selection: $memoryLimitMB) {
                 Text(L("Auto (\(ThumbnailMemoryBudget.autoMB()) MB)")).tag(0)
@@ -30,11 +33,20 @@ public struct LocalPhotoSettingsView: View {
                 Text("200 MB").tag(200)
                 Text("400 MB").tag(400)
             }
+        } header: {
+            Text(L("Thumbnails in Memory"))
+        } footer: {
+            Text(L("How many decoded thumbnails stay in memory for instant scrolling. “Auto” scales to this device's RAM."))
+        }
+
+        Section {
             Picker(L("Disk limit"), selection: $diskLimitMB) {
-                Text("200 MB").tag(200)
-                Text("500 MB").tag(500)
+                Text(L("Auto (\(formatBytes(ThumbnailDiskBudget.autoBytes())))")).tag(0)
                 Text("1 GB").tag(1024)
                 Text("2 GB").tag(2048)
+                Text("5 GB").tag(5 * 1024)
+                Text("10 GB").tag(10 * 1024)
+                Text("20 GB").tag(20 * 1024)
             }
             LabeledContent(L("Disk usage"), value: formatBytes(diskUsage))
             Button(L("Clear Photo Cache"), role: .destructive) {
@@ -52,9 +64,9 @@ public struct LocalPhotoSettingsView: View {
                 Text(L("All locally cached thumbnails will be deleted and re-fetched as you browse."))
             }
         } header: {
-            Text(L("Photo Cache"))
+            Text(L("Thumbnails on Disk"))
         } footer: {
-            Text(L("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails. “Auto” scales the memory limit to this device's RAM."))
+            Text(L("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails (about 20–40 KB each). “Auto” allows up to 10% of this device's storage; only what you actually browse is stored, and the oldest are removed first when the limit is reached."))
         }
         }
         .task {
@@ -72,7 +84,7 @@ public struct LocalPhotoSettingsView: View {
             Task { await ThumbnailCache.shared.updateMemoryLimit(bytes) }
         }
         .onChange(of: diskLimitMB) { _, newVal in
-            Task { await ThumbnailCache.shared.updateDiskLimit(newVal * 1024 * 1024) }
+            Task { await ThumbnailCache.shared.updateDiskLimit(ThumbnailDiskBudget.effectiveBytes(forSettingMB: newVal)) }
         }
     }
 
