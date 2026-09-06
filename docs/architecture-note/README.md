@@ -20,7 +20,7 @@ open docs/architecture-note/index.html
 - `features/` — 写真ソース統一 / グリッド / Dropbox / オンデバイス AI / バックアップ / 場所 / キャッシュ / 診断
 - `deep-dive/` — 並行・キャッシュ・データ構造・AI アルバムの実装詳細、バックグラウンド処理枠（夜間処理）のパイプライン
 - `tech/` — 技術プライマー（Observation / SwiftData / PhotosKit / CLIP / Core ML・FM / OAuth PKCE / SPM）
-- `design-decisions/` — 設計判断・事例ハイライト（重要トップ10。全件は `records/` の MD）
+- `design-decisions/` — 設計判断・事例ハイライト（重要トップ 16。全件は `records/` の MD）
 - `case-studies/` — メモリ枯渇と圧縮 / 起動の高速化
 - `appendix/` — 用語集 / 規約とテスト方針
 

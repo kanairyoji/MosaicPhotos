@@ -12,7 +12,7 @@
   <main>
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / ハイライト</nav>
-      <h1>設計判断ハイライト（重要トップ 13）</h1>
+      <h1>設計判断ハイライト（重要トップ 16）</h1>
       <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）から、特に重要な <strong>13 個</strong>を抜粋して紹介する。各項は要点のみ。個別のバグ・性能対応の顛末（事例）は正本の case-studies.md と深掘りページへ。<strong>全件は Markdown のマスター</strong>を参照。</p>
 
       <div class="box note">
@@ -88,6 +88,21 @@
       <p><strong>文脈:</strong> 「バレエの<人名>」にバレエと無関係の写真が混ざる実障害。解釈（spec）は正しく AND なのに、LLM が内容語にも人物名を重複させると、字句チャネル（人物名一致）が RRF <strong>和集合</strong>経由で本人の全写真を通し、実質 OR になっていた。<br>
       <strong>決定:</strong> 評価時にハード条件（人物・場所）へ接地済みの語を内容語から除く<strong>実効内容語</strong>を導入。内容の意図が残らなければハード絞り込みの結果を返す。「X の Y」型は計測ハーネスの恒久カテゴリ（compound・7 本）として固定した。<br>
       <strong>結果:</strong> compound P=1.000（混入ゼロ）を計測で確認・回帰フロア 0.91 を常設。既存アルバムは解釈器の版上げ＋stale ドリフト再評価で夜間に自動修正。</p>
+
+      <h2><span class="tag">設計</span> 14. 処理枠の外へ「転送」を持ち出す＝fire-and-forget バックアップ <span class="muted">(ADR-180・ADR-181)</span></h2>
+      <p><strong>文脈:</strong> 充電中の処理枠（BGProcessingTask）は OS 裁量で数分。前面の URLSession は枠の外へ出られず、1 枠 150〜300 枚が天井で、配置替え後の 6 万枚の上げ直しが何百晩もかかる。<br>
+      <strong>決定:</strong> 枠の中では「読む → spool に置く → 背景 URLSession に渡す」だけにし、転送は OS に任せる。応答は <code>AppDelegate</code> で（別プロセス起動でも）受け、<strong>content_hash が一致したときだけ</strong>「済み」にする（ADR-40 は不変）。メタデータのジャーナル → 記録の順序（ADR-171）も不変。409 は前面経路へ、失敗は枠ごとに 1 回ずつ 3 回まで。<br>
+      <strong>結果:</strong> 1 枠で数百枚を OS に渡し、転送は夜通し続く。初版の「積んだが渡せなかった spool が永久に残る」「済んだ直後の写真を再投入（400 枚に 626 回）」は実機ログで捕まえて直した——fire-and-forget の「済み」は非同期に確定するので、投入対象の判定は「まだ在る」ではなく「まだ何も起きていない」で行う。</p>
+
+      <h2><span class="tag">設計</span> 15. 手動の入口は 1 つ＝解析セッション（iOS 26 の継続タスク） <span class="muted">(ADR-182)</span></h2>
+      <p><strong>文脈:</strong> 処理枠はロックしてすぐには開かず何時間も待つことがある。手動の入口が「30 分ブースト」「開いている間」の 2 つに割れ、どちらもロックすると止まった。iOS に CPU 時間を増やす権限は無い。<br>
+      <strong>決定:</strong> 「今すぐ解析」1 ボタン・1 進捗・1 停止。<code>BGContinuedProcessingTask</code>（利用者が始めた作業をアプリを閉じても続け、進捗を Live Activity に出す）に載せ、受理されなければ前面のみに自動で落ちる。ゲートは <code>sessionActive</code> で開けるが、熱・一括ロード保護・生成との相互排他は免除しない。<br>
+      <strong>結果:</strong> 充電台＋「今すぐ解析」で処理枠を待たずに終わる。端末を本当にロックすると止まる iOS のバグ（Apple が修正中）には「画面を消さない」（既定 ON）で備える。</p>
+
+      <h2><span class="tag">設計</span> 16. 共有の解析サイドカーはシャード化し、送信側は状態を持たない <span class="muted">(ADR-183)</span></h2>
+      <p><strong>文脈:</strong> 1 セット 1 ファイルのサイドカーは 12,941 枚で 20〜30MB。写真が 1 枚増減するたびに丸ごと作り直して上げ、受信側は丸ごと落として全部デコードしていた。反映のたびにセット数 × 3 往復の一覧も。<br>
+      <strong>決定:</strong> content_hash 先頭 2 桁ごとの <code>shard-&lt;xx&gt;.json</code>。「上げるべきか」は共有ルートの再帰一覧 1 回にある各シャードの content_hash と、手元で組んだシャードの content_hash（同じ計算・決定的エンコード）の比較だけで決める。消されたサイドカーの復元も同じ規則に含まれる。反映の直前に作成元（人物・AI アルバム）へ自動追従し、サイドカーはコピーより先に更新する。<br>
+      <strong>結果:</strong> 増減 1 枚あたり 25MB → 1 シャード。往復はセット数 × 3 → 2〜3。実機で 256 シャード・旧形式 1 件削除を確認。偽 Dropbox にページング・中間フォルダを足して規模で固定した。</p>
 
       <div class="box refs">
         <span class="box-h">もっと読む</span>
