@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import CoreGraphics
 import CryptoKit
+import ImageCacheKit
 import MosaicSupport
 import SwiftUI
 import UIKit
@@ -101,6 +102,8 @@ enum FaceAvatarCache {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let dir = caches.appendingPathComponent("FaceAvatars", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // ADR-185: アプリ全体のキャッシュ予算に参加（派生物の層＝サムネより先に捨てられる）。
+        Task { await CacheBudgetCoordinator.shared.register(FaceAvatarBudgetParticipant(directory: dir)) }
         return dir
     }()
 
@@ -167,9 +170,30 @@ enum FaceAvatarCache {
         }) else { return nil }
         cache.setObject(image, forKey: k)
         Task.detached(priority: .utility) {
-            if let data = image.jpegData(compressionQuality: 0.85) { try? data.write(to: url) }
+            if let data = image.jpegData(compressionQuality: 0.85) {
+                try? data.write(to: url)
+                CacheBudgetCoordinator.shared.noteGrowth()
+            }
         }
         return image
+    }
+}
+
+/// 顔アバターのディスク層を予算に参加させる（ADR-185）。追い出しは書いた順（mtime）。
+final class FaceAvatarBudgetParticipant: BudgetedCache, @unchecked Sendable {
+    let budgetID = "faces.avatars"
+    let budgetTier: CacheBudgetTier = .derived
+    private let store: DiskImageStore
+    init(directory: URL) { store = DiskImageStore(directory: directory) }
+    func budgetUsage() async -> Int { store.totalUsage() }
+    func budgetOldestAccess() async -> Date? { store.entries().map(\.modified).min() }
+    func budgetEvict(bytes: Int) async -> Int {
+        var removed = 0
+        for entry in store.entries().sorted(by: { $0.modified < $1.modified }) where removed < bytes {
+            store.removeFile(at: entry.url)
+            removed += entry.size
+        }
+        return removed
     }
 }
 #endif

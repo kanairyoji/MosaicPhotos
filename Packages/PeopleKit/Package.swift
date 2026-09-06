@@ -25,6 +25,7 @@ let package = Package(
         .package(path: "../DropboxKit"),         // クラウド写真ストア（人物アルバム）
         .package(path: "../LocalPhotoKit"),      // 端末写真ストア（人物アルバム）
         .package(path: "../MosaicSupport"),
+        .package(path: "../ImageCacheKit"),      // 顔アバターのディスク層を予算へ（ADR-185）
     ],
     targets: [
         .target(
@@ -37,6 +38,7 @@ let package = Package(
                 .product(name: "DropboxKit", package: "DropboxKit"),
                 .product(name: "LocalPhotoKit", package: "LocalPhotoKit"),
                 .product(name: "MosaicSupport", package: "MosaicSupport"),
+                .product(name: "ImageCacheKit", package: "ImageCacheKit"),
             ],
             path: "Sources/PeopleKit",
             // ⚠️ SwiftPM CLI は .xcstrings を自動認識しない。明示しないと Bundle.module が

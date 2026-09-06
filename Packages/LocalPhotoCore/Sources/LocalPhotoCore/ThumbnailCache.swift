@@ -28,18 +28,17 @@ public actor ThumbnailCache {
 
         // memoryLimitMB は未設定(0)=「Auto」。Auto は端末 RAM に応じて自動算出する。
         let memMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.memoryLimitMB)
-        var diskMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.diskLimitMB)
-        // 旧既定（200/500MB）で保存されていた値は Auto（総容量の 10%）へ引き上げる
-        // （新しい選択肢は 1GB から。旧値のままだと Picker に該当が無く、上限も小さすぎる）。
-        if diskMB > 0, diskMB < 1024 {
-            diskMB = 0
-            UserDefaults.standard.set(0, forKey: CacheSettingsKeys.diskLimitMB)
-        }
+        let diskMB = UserDefaults.standard.integer(forKey: CacheSettingsKeys.diskLimitMB)   // 旧設定（未使用・ADR-185）
         // critical 圧迫でも全消去せず段階縮小に留める（サムネは小さく、再取得/再デコードの storm を避ける）。
         memory = MemoryImageCache(totalCostLimit: ThumbnailMemoryBudget.effectiveBytes(forSettingMB: memMB),
                                   purgeOnCritical: false)
-        // diskMB は未設定(0)=「Auto」＝端末の総容量の 10%（`ThumbnailDiskBudget`）。
-        maxDiskBytes = ThumbnailDiskBudget.effectiveBytes(forSettingMB: diskMB)
+        // ADR-185: ディスク上限は**個別に持たない**。アプリ全体の予算（`CacheBudgetCoordinator`）が
+        // 合計を見て捨てさせる。ここに残す `maxDiskBytes` は協調役が居ないとき（テスト等）の
+        // 暴走防止の安全弁で、名目予算の 2 倍。
+        _ = diskMB
+        maxDiskBytes = 2 * CacheBudget.nominalBytes(setting: CacheBudget.setting(),
+                                                    totalCapacity: CacheBudget.volumeCapacity().total ?? 0)
+        Task { await CacheBudgetCoordinator.shared.register(self) }
 
         diskUsage = disk.totalUsage()
     }
@@ -140,7 +139,9 @@ public actor ThumbnailCache {
         guard disk.write(data, name: name) else { return }
         diskUsage = diskUsage - oldSize + data.count
 
-        if diskUsage > maxDiskBytes { evictDisk() }
+        // 予算の判定は協調役がまとめて行う（書き込みごとにディレクトリを舐めない）。
+        CacheBudgetCoordinator.shared.noteGrowth()
+        if diskUsage > maxDiskBytes { evictDisk() }   // 安全弁（通常は届かない）
     }
 
     /// キー（"localIdentifier:WxH"）からアセット ID 部分を取り出す（近似サイズ索引用）。
@@ -168,6 +169,27 @@ public actor ThumbnailCache {
             disk.removeFile(at: entry.url)
             diskUsage -= entry.size
         }
+    }
+}
+
+// MARK: - 予算への参加（ADR-185）
+
+extension ThumbnailCache: BudgetedCache {
+    public nonisolated var budgetID: String { "local.thumbnails" }
+    public nonisolated var budgetTier: CacheBudgetTier { .thumbnails }
+    public func budgetUsage() async -> Int { diskUsage }
+    public func budgetOldestAccess() async -> Date? {
+        disk.entries().map(\.modified).min()
+    }
+    public func budgetEvict(bytes: Int) async -> Int {
+        let entries = disk.entries().sorted { $0.modified < $1.modified }
+        var removed = 0
+        for entry in entries where removed < bytes {
+            disk.removeFile(at: entry.url)
+            diskUsage -= entry.size
+            removed += entry.size
+        }
+        return removed
     }
 }
 #endif

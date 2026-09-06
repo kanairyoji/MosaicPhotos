@@ -119,6 +119,8 @@ extension DropboxPhotoStore {
             guard let data = try? await self.apiClient.contentDownload(
                 url: DropboxInternalConstants.downloadFileURL, apiArg: argString) else { return }
             await self.cache.storeFullImageData(data, for: item.path)
+            // 先読みしただけ＝予算超過時に先に捨てる側（開いたら印が外れる・ADR-185）。
+            await self.cache.markFullImagePrefetched(item.path)
         }
     }
 

@@ -38,8 +38,18 @@ actor DropboxCacheStore {
     var recentTouches: [String: Date] = [:]
     var pendingTouchSaves = 0
 
+    /// 安全弁（協調役が居ないときの暴走防止）。通常の追い出しは `CacheBudgetCoordinator`（ADR-185）。
     var thumbnailByteLimit: Int
     var fullImageByteLimit: Int
+    /// 種別ごとの使用量（バイト）。起動時に台帳から 1 回集計し、以後は増減で追う
+    /// （予算の判定のたびに 6.8 万行を舐めない・ADR-119）。nil＝未集計。
+    var usageTotals: [CacheUsageEntry.CacheKind: Int] = [:]
+    var usageTotalsLoaded = false
+    /// **先読みしただけ**（まだ開いていない）本体画像のパス。予算超過時はここから先に捨てる。
+    /// 永続化しない＝再起動後は全部「開いた」扱い（安全側）。
+    var prefetchedFullImages: Set<String> = []
+    /// 予算への参加（種別ごとに 1 つ・強参照で保持）。
+    var budgetParticipants: [DropboxCacheBudgetParticipant] = []
 
     /// キャッシュ全体の世代（`clearAll` で進む）。進行中の保存を無効にするために使う。
     var cacheEpoch = 0
@@ -81,8 +91,11 @@ actor DropboxCacheStore {
         thumbnailStore = DiskImageStore(directory: baseURL.appendingPathComponent("thumbnails", isDirectory: true))
         fullImageStore = DiskImageStore(directory: baseURL.appendingPathComponent("fullimages", isDirectory: true))
 
-        self.thumbnailByteLimit = thumbnailByteLimit
-        self.fullImageByteLimit = fullImageByteLimit
+        // ADR-185: 個別上限は安全弁（名目予算の 2 倍）に格下げ。合計は協調役が予算に収める。
+        let safety = 2 * CacheBudget.nominalBytes(setting: CacheBudget.setting(),
+                                                  totalCapacity: CacheBudget.volumeCapacity().total ?? 0)
+        self.thumbnailByteLimit = isStoredInMemoryOnly ? thumbnailByteLimit : max(thumbnailByteLimit, safety)
+        self.fullImageByteLimit = isStoredInMemoryOnly ? fullImageByteLimit : max(fullImageByteLimit, safety)
         // メモリ常駐を有界化：Dropbox サムネは固定サイズ（thumbnailAPISize＝w256h256・デコード約256KB）。
         // 実デコードサイズでコスト計上する `insertDecoded` に合わせ、件数上限＋総コスト上限を設ける。
         // ⚠️ critical 圧迫でも**全消去しない**（purgeOnCritical: false）。全消去すると閲覧中に毎回

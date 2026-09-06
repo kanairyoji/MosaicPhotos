@@ -226,6 +226,16 @@
           }
         }
       }
+    },
+    "Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails (about 20–40 KB each). The size is governed by the app-wide cache limit in Settings → Storage; thumbnails are the last thing removed when that limit is reached.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デコード済みのセルサイズのサムネイルを保存し、写真ごとの再デコード（iCloud 最適化された原本の再取得）なしにグリッドをなめらかにスクロールできるようにします。ここに写真本体は複製されません——小さなサムネイル（1 枚 20〜40 KB 程度）だけです。容量は「設定 → Storage」のアプリ全体のキャッシュ上限に従い、上限に達しても最後まで残されます。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

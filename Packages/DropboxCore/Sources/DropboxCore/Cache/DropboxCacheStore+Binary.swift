@@ -130,6 +130,7 @@ extension DropboxCacheStore {
         }.value
         guard let image = decoded?.image else { return nil }
         touchUsage(kind: .fullImage, path: path)
+        markFullImageViewed(path)   // 開いた＝先読み扱いを解く（ADR-185）
         return image
     }
 

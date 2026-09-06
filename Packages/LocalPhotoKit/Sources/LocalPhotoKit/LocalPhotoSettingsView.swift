@@ -7,8 +7,6 @@ import SwiftUI
 public struct LocalPhotoSettingsView: View {
     // 0 = Auto（端末 RAM に応じて自動）。既定は Auto。
     @AppStorage(CacheSettingsKeys.memoryLimitMB) private var memoryLimitMB = 0
-    // 0 = Auto（端末の総容量の 10%）。既定は Auto。
-    @AppStorage(CacheSettingsKeys.diskLimitMB)   private var diskLimitMB   = 0
     @State private var diskUsage = 0
     @State private var photoCount = 0
     @State private var albumCount = 0
@@ -40,14 +38,6 @@ public struct LocalPhotoSettingsView: View {
         }
 
         Section {
-            Picker(L("Disk limit"), selection: $diskLimitMB) {
-                Text(L("Auto (\(formatBytes(ThumbnailDiskBudget.autoBytes())))")).tag(0)
-                Text("1 GB").tag(1024)
-                Text("2 GB").tag(2048)
-                Text("5 GB").tag(5 * 1024)
-                Text("10 GB").tag(10 * 1024)
-                Text("20 GB").tag(20 * 1024)
-            }
             LabeledContent(L("Disk usage"), value: formatBytes(diskUsage))
             Button(L("Clear Photo Cache"), role: .destructive) {
                 showClearConfirm = true
@@ -66,7 +56,7 @@ public struct LocalPhotoSettingsView: View {
         } header: {
             Text(L("Thumbnails on Disk"))
         } footer: {
-            Text(L("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails (about 20–40 KB each). “Auto” allows up to 10% of this device's storage; only what you actually browse is stored, and the oldest are removed first when the limit is reached."))
+            Text(L("Stores already-decoded, cell-sized thumbnails so the grid scrolls smoothly without re-decoding each photo (and without re-fetching iCloud-optimized originals). Full photos are never duplicated here — only small thumbnails (about 20–40 KB each). The size is governed by the app-wide cache limit in Settings → Storage; thumbnails are the last thing removed when that limit is reached."))
         }
         }
         .task {
@@ -82,9 +72,6 @@ public struct LocalPhotoSettingsView: View {
             // 0=Auto は端末 RAM から解決する。
             let bytes = ThumbnailMemoryBudget.effectiveBytes(forSettingMB: newVal)
             Task { await ThumbnailCache.shared.updateMemoryLimit(bytes) }
-        }
-        .onChange(of: diskLimitMB) { _, newVal in
-            Task { await ThumbnailCache.shared.updateDiskLimit(ThumbnailDiskBudget.effectiveBytes(forSettingMB: newVal)) }
         }
     }
 
