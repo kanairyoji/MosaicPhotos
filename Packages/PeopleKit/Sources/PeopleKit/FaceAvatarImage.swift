@@ -91,7 +91,10 @@ public struct FaceAvatarImage: View {
 
 /// 顔クロップ画像のキャッシュ（メモリ＋ディスク）。`loadFaceAvatar`（PHImageManager 取得＋クロップ）の前段。
 /// ディスク層があるので再起動後もフル画像の再取得・再クロップをしない（カルーセルの初期表示が速い）。
-enum FaceAvatarCache {
+public enum FaceAvatarCache {
+    /// 予算への参加を確実にする（ディスク層は初回利用時に作られるため、設定画面が先に開いても一覧に出るように）。
+    public static func ensureBudgetRegistration() { _ = diskDir }
+
     private static let cache: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()
         c.countLimit = 200   // 顔クロップは小さい（数十KB）ので件数上限のみで十分
