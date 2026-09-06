@@ -46,6 +46,15 @@ struct AIAnalysisStatusView: View {
             actionSection
         }
         .task { await refresh() }
+        // 解析中は数秒おきに数え直す（実フィードバック: 「今すぐ解析」で進んでいるのに数字が動かない）。
+        // 候補の列挙（8.5 万件）は 1 分に 1 回で足りるので、数え直しはカウントだけにする。
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, isAnalyzing || session.isActive else { continue }
+                await refresh(reuseCandidatesWithin: 60)
+            }
+        }
         .onChange(of: engine.isTagging) { _, _ in Task { await refresh() } }
         .onChange(of: people.isScanning) { _, _ in Task { await refresh() } }
         // 前面のみモードは画面を離れたら止める（継続モードは OS が面倒を見るので続く）。
@@ -229,19 +238,28 @@ struct AIAnalysisStatusView: View {
 
     // MARK: - 取得・整形
 
-    private func refresh() async {
+    /// - Parameter reuseCandidatesWithin: この秒数以内に列挙した候補があれば使い回す（定期の数え直し用）。
+    private func refresh(reuseCandidatesWithin: TimeInterval = 0) async {
         async let prog = engine.analysisProgress()
         async let stats = people.scanStats()
         progress = await prog
         facesDetected = await stats.faces
         // 顔スキャンの分母は**候補そのもの**（スキャナと同じ列挙）、分子は「候補のうち済んだ数」。
         if facesAvailable {
-            let candidates = await analysisOrderedRefKeys(dropboxStore: dropboxStore)
+            let candidates: [String]
+            if let cached = cachedCandidates, Date().timeIntervalSince(cached.at) < reuseCandidatesWithin {
+                candidates = cached.keys
+            } else {
+                candidates = await analysisOrderedRefKeys(dropboxStore: dropboxStore)
+                cachedCandidates = (candidates, Date())
+            }
             let pending = await people.pendingScanCount(candidateRefKeys: candidates)
             faceCandidates = candidates.count
             faceScanned = max(0, candidates.count - pending)
         }
     }
+
+    @State private var cachedCandidates: (keys: [String], at: Date)?
 
     private func percentText(done: Int, total: Int) -> String {
         guard total > 0 else { return "—" }
