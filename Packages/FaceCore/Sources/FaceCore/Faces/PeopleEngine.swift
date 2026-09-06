@@ -352,6 +352,18 @@ public final class PeopleEngine {
     /// アプリ（Composition Root）がここで参照を無効化する。
     @ObservationIgnored public var onPersonIdentitiesInvalidated: (@MainActor () async -> Void)?
 
+    /// ユーザーが人物を**手で直した**直後に呼ばれる（「XX ではない」「別の人」・付け替え・統合・分割）。
+    /// 人物条件を持つ AI アルバムは評価時のスナップショットなので、アプリ（Composition Root）が
+    /// ここで条件を満たさなくなった写真を外す（実フィードバック: AI アルバムで直しても変化なし）。
+    /// スキャンの進行では呼ばない（そちらは通常の再評価に任せる）。
+    @ObservationIgnored public var onPeopleEdited: (@MainActor () async -> Void)?
+
+    /// 手動修正のあとの一覧更新＋通知（`PeopleEngine+Edit` の各操作から呼ぶ）。
+    func loadPeopleAfterEdit() async {
+        await loadPeople()
+        await onPeopleEdited?()
+    }
+
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
     /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
     private func migrateScanVersionIfNeeded() async {

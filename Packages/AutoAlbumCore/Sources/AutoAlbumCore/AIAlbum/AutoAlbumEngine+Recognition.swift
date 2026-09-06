@@ -185,6 +185,15 @@ extension AutoAlbumEngine {
         }
     }
 
+    /// 人物の手動修正の直後: 人物条件を持つ AI アルバムから、条件を満たさなくなった写真を外す
+    ///（追加は次の再評価に任せる）。`PeopleEngine.onPeopleEdited` から呼ばれる。
+    public func pruneAIAlbumsAfterPeopleChange() async {
+        guard !aiAlbums.isEmpty else { return }
+        if let pruned = await aiService.pruneAfterPeopleChange(aiAlbums) {
+            aiAlbums = pruned
+        }
+    }
+
     public func deleteAIAlbum(id: String) async {
         aiAlbums = await aiService.delete(id: id)
     }

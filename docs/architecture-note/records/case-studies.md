@@ -21,6 +21,24 @@
 
 ---
 
+## AI アルバムで「この写真は XX ではない」を選んでも変化なし
+- 症状: AI アルバム（人物名を含むクエリ）で人違いを見つけ、写真の長押しメニューから
+  「XX ではない」を選んでも、アルバムの中身が変わらない。
+- 原因: 人物の修正自体は効いている（顔はクラスタから外れ、人物アルバムは即座に変わる）。
+  AI アルバムのメンバーは**評価時のスナップショット**（`AutoAlbumInfo.memberRefs`）で、
+  人物条件は評価のたびに `peopleByRefKeyProvider`（顔クラスタの現在値）で接地するが、
+  評価が走るのは夜間・ドリフト検知・本番化のときだけ。修正から次の評価まで古いまま。
+- 対処: `PeopleEngine.onPeopleEdited`（手動修正の直後だけ・スキャンの進行では呼ばない）→
+  `AIAlbumService.pruneAfterPeopleChange`: 人物条件を持つ AI アルバムの既存メンバーにハード条件を
+  再判定し、満たさなくなった写真だけ外す（追加は次の再評価に任せる）。意味採点も LLM も走らない。
+  テスト `AIAlbumPeopleChangeTests`。
+- 教訓: 「直した」場所と「表示している」場所の台帳が別なら、修正の通知経路が要る。
+  人物アルバムはクラスタを直接見るので気づかなかった。
+- 関連: `PeopleEngine+Edit`（`loadPeopleAfterEdit`）/ `AIAlbumService+Refresh.swift` /
+  `AutoAlbumEngine.pruneAIAlbumsAfterPeopleChange` / `RootView.swift`。
+
+---
+
 ## ピープルの分母がじわじわ上がる＝バックアップコピーを解析候補に入れていた
 - 症状: AI 解析画面で顔・タグ・埋め込みが 100% なのに、ピープルの分母（候補数）が 75,741 → 75,891 と
   増え続け、増えた分がクラウド写真として再スキャンされる（diagnostics-76: `todo=49 (cloud=49)`）。
