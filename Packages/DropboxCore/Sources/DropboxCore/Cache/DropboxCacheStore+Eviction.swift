@@ -33,8 +33,43 @@ extension DropboxCacheStore {
     /// 保存後の使用量記録＋容量制限を actor 上で行う。
     func recordStored(kind: CacheUsageEntry.CacheKind, path: String, byteSize: Int) {
         recordUsage(kind: kind, path: path, byteSize: byteSize)
-        enforceCapacity(kind: kind)
+        // ADR-185: 容量判定は協調役がまとめて行う（以前は書き込みごとに全行 fetch していた）。
+        CacheBudgetCoordinator.shared.noteGrowth()
+        if usageTotal(kind) > limit(for: kind) { enforceCapacity(kind: kind) }   // 安全弁
     }
+
+    func limit(for kind: CacheUsageEntry.CacheKind) -> Int {
+        kind == .thumbnail ? thumbnailByteLimit : fullImageByteLimit
+    }
+
+    // MARK: - 使用量の集計（増減で追う）
+
+    /// 種別の使用量。初回だけ台帳を集計し、以後は増減で追う。
+    func usageTotal(_ kind: CacheUsageEntry.CacheKind) -> Int {
+        loadUsageTotalsIfNeeded()
+        return usageTotals[kind] ?? 0
+    }
+
+    private func loadUsageTotalsIfNeeded() {
+        guard !usageTotalsLoaded else { return }
+        usageTotalsLoaded = true
+        var thumb = 0, full = 0
+        var d = FetchDescriptor<CacheUsageEntry>()
+        d.propertiesToFetch = [\.kind, \.byteSize]
+        for entry in (try? modelContext.fetch(d)) ?? [] {
+            if entry.kind == CacheUsageEntry.CacheKind.thumbnail.rawValue { thumb += entry.byteSize } else { full += entry.byteSize }
+        }
+        usageTotals = [.thumbnail: thumb, .fullImage: full]
+    }
+
+    private func adjustUsage(_ kind: CacheUsageEntry.CacheKind, by delta: Int) {
+        loadUsageTotalsIfNeeded()
+        usageTotals[kind, default: 0] = max(0, (usageTotals[kind] ?? 0) + delta)
+    }
+
+    /// 先読みで置いた本体画像に印を付ける／開いたら外す（予算超過時は先読み分から捨てる）。
+    func markFullImagePrefetched(_ path: String) { prefetchedFullImages.insert(path) }
+    func markFullImageViewed(_ path: String) { prefetchedFullImages.remove(path) }
 
     // MARK: - Invalidation / clearing
 
@@ -124,11 +159,13 @@ extension DropboxCacheStore {
 
     private func recordUsage(kind: CacheUsageEntry.CacheKind, path: String, byteSize: Int) {
         if let existing = fetchUsageEntry(kind: kind, path: path) {
+            adjustUsage(kind, by: byteSize - existing.byteSize)
             existing.byteSize = byteSize
             existing.lastAccessedAt = Date()
         } else {
             let key = CacheUsageEntry.makeKey(kind: kind, path: path)
             modelContext.insert(CacheUsageEntry(key: key, kind: kind, byteSize: byteSize))
+            adjustUsage(kind, by: byteSize)
         }
         try? modelContext.save()
     }
@@ -165,6 +202,7 @@ extension DropboxCacheStore {
 
     private func removeUsageEntry(kind: CacheUsageEntry.CacheKind, path: String) {
         guard let existing = fetchUsageEntry(kind: kind, path: path) else { return }
+        adjustUsage(kind, by: -existing.byteSize)
         modelContext.delete(existing)
         try? modelContext.save()
     }
@@ -198,9 +236,55 @@ extension DropboxCacheStore {
                 thumbnailMemory.removeImage(forKey: path)
             }
             total -= entry.byteSize
+            adjustUsage(kind, by: -entry.byteSize)
             modelContext.delete(entry)
         }
         try? modelContext.save()
+    }
+
+    // MARK: - 予算からの追い出し（ADR-185）
+
+    /// 最も古く触った記録の時刻（協調役が同じ層の中で順番を決めるため）。
+    func oldestAccess(kind: CacheUsageEntry.CacheKind) -> Date? {
+        flushUsageTouches()
+        let kindRaw = kind.rawValue
+        var d = FetchDescriptor<CacheUsageEntry>(predicate: #Predicate { $0.kind == kindRaw },
+                                                 sortBy: [SortDescriptor(\.lastAccessedAt, order: .forward)])
+        d.fetchLimit = 1
+        return (try? modelContext.fetch(d))?.first?.lastAccessedAt
+    }
+
+    /// 古い順に `bytes` ぶん捨てる。本体画像は**先読みしただけの分から**捨てる（開いたものを守る）。
+    /// - Returns: 実際に減った量。
+    func evict(kind: CacheUsageEntry.CacheKind, bytes: Int) -> Int {
+        flushUsageTouches()
+        let kindRaw = kind.rawValue
+        let d = FetchDescriptor<CacheUsageEntry>(predicate: #Predicate { $0.kind == kindRaw },
+                                                 sortBy: [SortDescriptor(\.lastAccessedAt, order: .forward)])
+        guard let entries = try? modelContext.fetch(d), !entries.isEmpty else { return 0 }
+        let prefix = "\(kindRaw):"
+        func path(_ e: CacheUsageEntry) -> String { String(e.key.dropFirst(prefix.count)) }
+        // 本体画像は先読み分を前に並べる（その中では古い順）。
+        let ordered: [CacheUsageEntry]
+        if kind == .fullImage, !prefetchedFullImages.isEmpty {
+            let pre = entries.filter { prefetchedFullImages.contains(path($0)) }
+            let rest = entries.filter { !prefetchedFullImages.contains(path($0)) }
+            ordered = pre + rest
+        } else {
+            ordered = entries
+        }
+        var removed = 0
+        for entry in ordered where removed < bytes {
+            let p = path(entry)
+            store(for: kind).remove(name: DropboxCacheNaming.fileName(kind: kind, path: p))
+            if kind == .thumbnail { thumbnailMemory.removeImage(forKey: p) }
+            prefetchedFullImages.remove(p)
+            removed += entry.byteSize
+            adjustUsage(kind, by: -entry.byteSize)
+            modelContext.delete(entry)
+        }
+        try? modelContext.save()
+        return removed
     }
 
     // MARK: - Limit configuration

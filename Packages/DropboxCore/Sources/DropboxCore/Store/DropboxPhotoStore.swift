@@ -178,7 +178,10 @@ public final class DropboxPhotoStore {
 
     public convenience init(auth: DropboxAuthService,
                             httpClient: HTTPClient = URLSessionHTTPClient()) {
-        self.init(auth: auth, httpClient: httpClient, cache: DropboxCacheStore())
+        let cache = DropboxCacheStore()
+        self.init(auth: auth, httpClient: httpClient, cache: cache)
+        // ADR-185: サムネ／本体画像をアプリ全体のキャッシュ予算に参加させる（本番の store だけ）。
+        Task { await cache.joinCacheBudget() }
     }
 
     /// キャッシュを差し替えられる内部 init（テストはインメモリのストアを渡す）。
@@ -529,12 +532,9 @@ public final class DropboxPhotoStore {
 
     // MARK: - Cache limit configuration
 
-    /// Updates the running cache byte limits and evicts if the new limit is tighter.
-    /// Call this when the user changes limit settings so the change takes effect immediately.
-    public func applyCacheLimits(thumbnailMB: Int, fullImageMB: Int) async {
-        await cache.setThumbnailByteLimit(thumbnailMB * 1_024 * 1_024)
-        await cache.setFullImageByteLimit(fullImageMB * 1_024 * 1_024)
-    }
+    /// 旧: 種別ごとの上限を設定から反映していた。ADR-185 で上限は予算（`CacheBudget`）に一本化。
+    /// 呼び出しは互換のため残すが何もしない。
+    public func applyCacheLimits(thumbnailMB: Int, fullImageMB: Int) async {}
 
     /// サムネイルの同時バッチ取得数を設定で変更する（常識的範囲にクランプ）。
     public func applyThumbnailConcurrency(_ value: Int) {

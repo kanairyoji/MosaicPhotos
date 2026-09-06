@@ -15,6 +15,11 @@
       <h1>キャッシュ戦略</h1>
       <p class="lead">画像キャッシュのプリミティブ（メモリ + ディスク I/O）を <code>ImageCacheKit</code> に共通化し、端末写真と Dropbox の双方が利用する。破棄ポリシー（LRU）は利用側が持つ。</p>
 
+      <div class="box note">
+        <span class="box-h">ディスクの上限は 1 つ（ADR-185）</span>
+        キャッシュごとの上限は持たない。予算＝端末の総容量の 10%（設定で 5% / 20% / 固定 GB）を端末サムネ・Dropbox サムネ・Dropbox 本体画像・顔アバターが共有し、超えたら<strong>本体画像（先読み → 閲覧済み）→ 顔アバター → サムネ（端末・Dropbox を区別せず古い順）</strong>の順に捨てる。各層に床、空き 2GB の安全弁。実体は <code>ImageCacheKit</code> の <code>CacheBudget</code> / <code>CacheBudgetPlanner</code>（純ロジック）/ <code>CacheBudgetCoordinator</code>（actor）。各キャッシュは <code>BudgetedCache</code> で参加し、書き込み後に <code>noteGrowth()</code> を呼ぶだけ（判定はまとめて）。枚数もユーザーも見ない規則なので、ライブラリが育っても設定を変える必要がない。
+      </div>
+
       <h2>2 層キャッシュ</h2>
       <div class="mermaid">
 graph TD

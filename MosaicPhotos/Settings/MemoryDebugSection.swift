@@ -9,7 +9,6 @@ import SwiftUI
 /// 値は実行時にアプリが参照しているものをそのまま表示する。
 struct MemoryDebugSection: View {
     @AppStorage(CacheSettingsKeys.memoryLimitMB) private var memoryLimitMB = 0
-    @AppStorage(CacheSettingsKeys.diskLimitMB)   private var diskLimitMB   = 500
     @AppStorage(AutoAlbumSettingsKeys.backgroundProcessingLevel)
     private var backgroundLevel = BackgroundProcessing.defaultIndex
 
@@ -56,8 +55,7 @@ struct MemoryDebugSection: View {
     private var cacheSection: some View {
         Section {
             LabeledContent("ローカルのサムネ（メモリ上限）", value: localMemoryLimitText)
-            LabeledContent("ローカルのサムネ（ディスク上限）",
-                           value: diskLimitMB > 0 ? "\(diskLimitMB) MB" : "Auto (\(formattedBytes(ThumbnailDiskBudget.autoBytes())))")
+            LabeledContent("ローカルのサムネ（ディスク上限）", value: "予算に一本化（Storage・ADR-185）")
             LabeledContent("ローカルのサムネ（ディスク使用量）", value: formattedBytes(localDiskUsage))
             LabeledContent("Dropbox のサムネ（メモリ）",
                            value: "\(DropboxDebugConstants.thumbnailMemoryCostLimitMB) MB / "

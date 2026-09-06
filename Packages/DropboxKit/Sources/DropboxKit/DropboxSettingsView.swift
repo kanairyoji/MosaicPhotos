@@ -10,8 +10,6 @@ public struct DropboxSettingsView: View {
     let dropboxAuth: DropboxAuthService
     /// バックグラウンド同期状態の表示に使用するストア（省略可）。
     let store: DropboxPhotoStore?
-    @AppStorage(DropboxCacheSettingsKeys.thumbnailLimitMB) private var dropboxThumbLimitMB     = 50
-    @AppStorage(DropboxCacheSettingsKeys.fullImageLimitMB) private var dropboxFullImageLimitMB = 200
     @AppStorage(DropboxCacheSettingsKeys.thumbnailConcurrency)
     private var thumbnailConcurrency = DropboxThumbnailSettings.defaultConcurrency
     @AppStorage(DropboxActivitySettingsKeys.showBar) private var showActivityBar = true
@@ -31,14 +29,11 @@ public struct DropboxSettingsView: View {
             sourceFolderSection
             performanceSection
             activitySection
-            cacheLimitsSection
+            // キャッシュの上限は「設定 → Storage」の予算に一本化（ADR-185）。ここには置かない。
         }
         // Use onAppear (not .task) so the values always re-apply when the user
         // navigates back to the Settings tab, not just on first appearance.
         .onAppear {
-            // DropboxCacheStore は UserDefaults を読まないため、
-            // 設定タブの表示時に保存済みの値を実行中のキャッシュへ反映する。
-            Task { await store?.applyCacheLimits(thumbnailMB: dropboxThumbLimitMB, fullImageMB: dropboxFullImageLimitMB) }
             store?.applyThumbnailConcurrency(thumbnailConcurrency)
         }
     }
@@ -164,29 +159,6 @@ public struct DropboxSettingsView: View {
     }
 
     // MARK: - Cache limits section
-
-    private var cacheLimitsSection: some View {
-        Section(L("Cache Limits")) {
-            Picker(L("Thumbnail limit"), selection: $dropboxThumbLimitMB) {
-                Text("25 MB").tag(25)
-                Text("50 MB").tag(50)
-                Text("100 MB").tag(100)
-                Text("200 MB").tag(200)
-            }
-            .onChange(of: dropboxThumbLimitMB) { _, newVal in
-                Task { await store?.applyCacheLimits(thumbnailMB: newVal, fullImageMB: dropboxFullImageLimitMB) }
-            }
-            Picker(L("Full image limit"), selection: $dropboxFullImageLimitMB) {
-                Text("100 MB").tag(100)
-                Text("200 MB").tag(200)
-                Text("500 MB").tag(500)
-                Text("1 GB").tag(1024)
-            }
-            .onChange(of: dropboxFullImageLimitMB) { _, newVal in
-                Task { await store?.applyCacheLimits(thumbnailMB: dropboxThumbLimitMB, fullImageMB: newVal) }
-            }
-        }
-    }
 
     // MARK: - Helpers
 
