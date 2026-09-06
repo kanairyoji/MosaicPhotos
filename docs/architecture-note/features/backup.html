@@ -32,10 +32,15 @@ graph TD
   AUTH --> IDX[People/Album インデックス構築]
   IDX --> FETCH[PHAsset 一覧取得]
   FETCH --> PLAN[BackupPlanning<br/>差分算出（上限考慮）]
-  PLAN --> UP[1枚ずつアップロード]
+  PLAN --> MODE{夜間（自動）か}
+  MODE -->|手動| UP[1枚ずつアップロード<br/>応答の hash を照合して記録]
+  MODE -->|夜間| SP["読む → spool に置く → 背景 URLSession へ<br/>（ADR-181・転送は処理枠の外で OS が続ける）"]
+  SP -.応答は後日.-> SET["settle: hash 照合 → ジャーナル → 記録"]
   UP --> META["メタデータ v2 更新<br/>触った撮影月シャード＋catalog.json"]
-  META --> DONE["完了（uploaded / skipped）"]
+  SP --> META
+  META --> DONE["完了（uploaded / spooled / skipped）"]
       </div>
+      <p>保存先は <code>&lt;root&gt;/&lt;端末&gt;/Backup/&lt;YYYY&gt;/&lt;YYYY-MM&gt;/</code>（ADR-175/176）。パスを組むのは <code>BackupLayout</code> だけ。</p>
 
       <h2>差分とメタデータ v2（ADR-38）</h2>
       <p>アップロード済み ID は <code>BackupAssetRecord</code>（SwiftData）で管理し、再実行時は未送信分だけを送る。1 回あたりの上限（10/50/100/500/無制限）を設定でき、<code>BackupPlanning</code> が純関数として差分を決める。</p>
@@ -50,8 +55,8 @@ graph TD
       <h2>オフロード台帳と端末アルバムの合成表示（ADR-39）</h2>
       <p>将来のオフロード（バックアップ済みローカル写真の検証つき削除）に備え、<strong>台帳と表示合成</strong>を先行実装している。<code>OffloadRecord</code>（SwiftData）が「アプリが削除した写真」の localIdentifier / Dropbox パス / 所属アルバムを記録し、端末アルバムを開く <code>DeviceAlbumPhotosView</code> が「PHAssetCollection 現存メンバー＋台帳のクラウド代替」をメンバー限定 <code>MergedPhotoStore</code> で混在表示する（撮影日ソートで元の位置に混ざる）。補完の条件を<strong>「台帳にある」に限定</strong>するのが要点＝ユーザーが写真アプリで意図的に削除した写真を蘇らせない。再インストール時は metadata v2 の <code>offloadedAt</code> マーカーから台帳を再構築する。台帳が空（現状）のときの表示は従来と完全に同一。</p>
 
-      <h2>夜間の自動バックアップと状況表示（ADR-42）</h2>
-      <p>宛先が Dropbox のとき、夜間の重い処理ウィンドウ（BGProcessingTask・電源＋Wi-Fi＋非使用）で AI 索引と並んで<strong>バックアップも自動実行</strong>される（手動と同じ経路：上限設定・電源/回線ポーズ・検証つきアップロード）。期限切れ時は明示キャンセル——「済み」記録は hash 検証後にしか付かないため、中断しても次回差分から安全に再開する。バックアップ画面の先頭には<strong>「バックアップ済み X / Y」と残数</strong>を常時表示する。</p>
+      <h2>自動バックアップ（ADR-42 → ADR-180/181）</h2>
+      <p>宛先が Dropbox のとき、バックグラウンド処理枠（BGProcessingTask・充電中＋アプリが背面）で AI 索引と<strong>並行して</strong>毎枠バックアップが走る（ADR-180・資源が重ならない）。処理枠の中では写真を読んで spool（<code>Caches/BackupSpool</code>）に置き、<strong>背景 URLSession に渡すだけ</strong>（ADR-181）。転送は処理枠が閉じた後も OS が続け、応答は <code>AppDelegate</code> 経由で（別プロセス起動でも）受け取り、<strong>content_hash が一致したときだけ</strong>「済み」にする（ADR-40 は不変）。409 は前面経路へ、失敗は枠ごとに 1 回ずつ 3 回まで再投入。手動実行は進捗を目で追える前面経路のまま。バックアップ画面の先頭には<strong>「バックアップ済み X / Y」と残数</strong>を常時表示する。全体の時系列は <a href="../deep-dive/background-window.html">バックグラウンド処理枠の章</a>。</p>
 
       <div class="box warn">
         <span class="box-h">「クラウド共有」とは別機能</span>

@@ -40,15 +40,17 @@
       <p>この依存関係は設計上避けられないが、<strong>体験としては隠す</strong>。共有セットに入っている未バックアップ写真は、次回バックアップの<strong>先頭へ並べ替えられる</strong>（<code>BackupRunner</code> の優先 ID）。数万枚の順番待ちの最後尾に置かれて何日も反映されない、という事態を防ぐためである。</p>
 
       <h2>レイアウト</h2>
-      <pre><code>/MosaicPhotos/                    ← バックアップ（全量・非共有・正本）
-  IMG_0001.jpg …
-  .mosaic/                        ← 台帳（catalog＋撮影月シャード）
-
-/MosaicShare/                     ← 共有ルート（ユーザーが Dropbox 側で家族に共有）
-  &lt;セット名&gt;/                      ← 共有セット＝サブフォルダ
-    IMG_0123.jpg …
-    .mosaic-share/analysis-v1.json  ← 解析サイドカー（このセットの写真の分だけ）
+      <pre><code>/MosaicPhotos/&lt;端末&gt;/               ← 端末ごとのルート（ADR-175）
+  Backup/                          ← バックアップ（全量・非共有・正本）
+    2024/2024-03/IMG_0001.jpg …    ← 撮影年月で整理（ADR-176）
+    .mosaic/                       ← 台帳（catalog＋撮影月シャード）
+  Share/                           ← 共有ルート（ユーザーが Dropbox 側で家族に共有）
+    People-&lt;名前&gt;/                  ← 共有セット＝サブフォルダ（種類の接頭辞つき）
+      IMG_0123.jpg …
+      .mosaic-share/shard-ab.json  ← 解析サイドカー（content_hash 先頭 2 桁ごと・ADR-183）
+      .mosaic-share/shard-cd.json
 </code></pre>
+      <p>サイドカーは <strong>1 セット 1 ファイルではなくシャード</strong>（<code>shard-&lt;xx&gt;.json</code>）。写真ごとの解析結果は不変なので、写真が増減しても触れたシャードだけが動く（12,941 枚のセットで 1 枚の増減＝25MB の作り直しだったものが 1 シャード・数十〜数百 KB）。旧 <code>analysis-v1.json</code> は受信側が読み続け、送信側はシャードを置いたら消す。</p>
       <p>セットがフォルダとして見えるので、<strong>相手が MosaicPhotos を使っていなくても Dropbox 公式アプリでそのまま閲覧できる</strong>。使っている場合は、共有フォルダを同期ルートに追加するだけで（既存の複数ルート機構）ホームにアルバムとして現れる。</p>
       <div class="box warn">
         <span class="box-h">共有フォルダに置かないもの</span>
@@ -64,7 +66,7 @@
         <tr><td><code>clip</code></td><td>CLIP 画像埋め込み（Float16 512 次元・base64・約 1KB）</td><td>知覚版（モデル ID 込み）</td></tr>
         <tr><td><code>faces</code></td><td>顔ごとの bbox・埋め込み・品質・撮影日</td><td>顔スキャン版</td></tr>
       </table>
-      <p><strong>人物名は載せない</strong>。名前はユーザーがその端末で付けたラベルであって、写真の属性ではない。受け取った側は自分のクラスタに自分で名前を付ける。</p>
+      <p>人物名は<strong>設定で載せる／載せないを選べる</strong>（既定は載せる・ADR-167）。受け取った側は名前を「提案」として扱い、自分が既に付けた名前は上書きしない。</p>
       <div class="box why">
         <span class="box-h">content_hash が効く理由</span>
         受信側の同期エンジンは <code>list_folder</code> の応答に <code>content_hash</code> を含めて受け取っている。<strong>追加のダウンロードなしで</strong>手元の写真とサイドカーのエントリを突合できる。パスにも refKey にも依存しないので、フォルダ整理や同名衝突の改名にも影響されない。
@@ -102,23 +104,37 @@
         <strong>リモートの非同期ジョブは、クライアントが待つのをやめても走り続ける。</strong>「タイムアウト＝失敗」と決めつけたリトライは二重実行になる。冪等にする唯一の方法は<strong>実行前に実在を確認して採用する</strong>ことで、<code>autorename</code> のように「衝突を黙って回避する」機構はリトライと組み合わせると増殖装置になる。
       </div>
 
-      <h2>自己修復と反映のタイミング</h2>
-      <p>反映のたびに共有フォルダを実在照合し、次を自動で直す。</p>
+      <h2>反映の 1 回（ADR-183）</h2>
+      <div class="mermaid">
+flowchart LR
+  R[作成元へ追従<br/>refreshAllFromSource] --> L[共有ルートを<br/>list_folder(recursive) 1 回]
+  L --> S1[サイドカー（シャード）<br/>差分同期]
+  S1 --> C[copy_batch<br/>500 枚/回・サーバー側]
+  C --> D[delete_batch<br/>外れた写真・墓標]
+  D --> S2[今回コピーした分の<br/>シャードを追記]
+      </div>
       <ul>
-        <li><strong>外部削除</strong>（家族が消した・整理した）→ 再コピー。</li>
-        <li><strong>元写真の更新</strong>（編集して <code>content_hash</code> が変わった）→ 再コピー。</li>
-        <li><strong>一覧が取れない</strong>（通信断）→ そのセットは<strong>スキップ</strong>する。実在不明のまま再コピーすると重複を作るため。</li>
+        <li><strong>一覧は 1 回</strong>: 共有ルートの再帰一覧（<code>RemoteShareIndex</code>）で全セットの写真の実在とサイドカーの <code>content_hash</code> を得る。以前はセットごとに <code>create_folder</code>＋<code>list_folder</code>＋実在確認（× 3 往復）。</li>
+        <li><strong>サイドカーは状態を持たない</strong>: 一覧にある各シャードの <code>content_hash</code> と、手元で組んだシャードの <code>content_hash</code>（同じ計算・決定的エンコード）を比べ、「無い／違う → 上げる、余る → 消す」（<code>ShareSidecarPlanning.plan</code>）。消されたサイドカーの復元（ADR-166）はこの規則に含まれる。</li>
+        <li><strong>サイドカーはコピーより先</strong>: コピーは 100 枚ごとのサーバー側ジョブ待ちで数分かかる。後回しだと「反映を押しても何分も更新されない」。</li>
+        <li><strong>作成元に自動追従</strong>: 人物・グループ・AI アルバムが育ったら共有セットも増減する。追従の解決では、端末に原本があるバックアップコピーと自分の共有ルート配下は載せない（解析候補と同じ規則）。</li>
       </ul>
-      <p>実行は「起動から少し遅らせて」「バックアップ完走後」「ハブの『今すぐ反映』」の 3 経路。自動実行は回線ポリシーに従う（<a href="background.html">バックグラウンドと省電力</a>の依存ゲート表を参照）。</p>
+      <h2>自己修復</h2>
+      <ul>
+        <li><strong>外部削除</strong>（家族が消した・整理した）→ 再コピー。サイドカーも同じ規則で復元。</li>
+        <li><strong>元写真の更新</strong>（編集して <code>content_hash</code> が変わった）→ 再コピー。</li>
+        <li><strong>一覧が取れない</strong>（通信断）→ その回は<strong>全部スキップ</strong>する。実在不明のまま再コピーすると重複を作るため。</li>
+      </ul>
+      <p>実行は「起動から少し遅らせて」「バックアップ完走後」「処理枠（充電中・ロック中）」「ハブの『今すぐ反映』」。自動実行は回線ポリシーに従う（<a href="background.html">バックグラウンドと省電力</a>の依存ゲート表を参照）。受信側も家族フォルダごとに再帰一覧 1 回で全シャードの rev を得て、変わったものだけ落とす。</p>
 
       <h2>構成</h2>
       <table>
         <tr><th>型</th><th>役割</th></tr>
-        <tr><td><code>ShareSyncEngine</code></td><td><code>@MainActor @Observable</code>。反映のオーケストレーション（コピー・採用・掃除・サイドカー更新）</td></tr>
+        <tr><td><code>ShareSyncEngine</code></td><td><code>@MainActor @Observable</code>。反映のオーケストレーション（作成元追従・再帰一覧・シャード差分・コピー・採用・掃除）</td></tr>
         <tr><td><code>SharePlanning</code></td><td><strong>純ロジック</strong>。コピー / 採用 / 掃除 / バックアップ待ちを決定的に算出（テスト対象）</td></tr>
         <tr><td><code>ShareSidecar</code></td><td>サイドカーの DTO・決定的エンコード・<strong>防御的検証</strong>（純ロジック）</td></tr>
         <tr><td><code>DropboxShareCopier</code></td><td><code>copy_batch_v2</code> / <code>delete_batch</code> / <code>list_folder</code>。非同期ジョブのポーリング追従。HTTP のみに依存</td></tr>
-        <tr><td><code>ShareSidecarFetch</code></td><td>受信側。rev が変わったサイドカーだけ取得・検証</td></tr>
+        <tr><td><code>ShareSidecarFetch</code></td><td>受信側。家族フォルダの再帰一覧 1 回で、rev が変わったシャードだけ取得・検証</td></tr>
         <tr><td><code>ShareImportPlanning</code></td><td><strong>純ロジック</strong>。content_hash の突合と版ゲート</td></tr>
         <tr><td><code>SharedAlbumDiscovery</code></td><td><strong>純ロジック</strong>。同期済みパスから受信アルバム（セット）を発見</td></tr>
       </table>

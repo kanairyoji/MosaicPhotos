@@ -59,6 +59,7 @@ flowchart LR
         ロック 2 分 18 秒・2 分 24 秒・29 秒の 3 回で <code>bgtask: submitted</code> は毎回出たが <code>bgtask: begin</code> は 0 回。数分のロックでは開かないのが普通で、8/30 のように背面遷移直後に開くこともある（OS 裁量）。同じ設計上の制約は Apple の写真アプリ自身（解析は充電中の夜間）にもある。
       </div>
       <p><strong>なぜ拒否されたかを見る方法</strong>: iPhone を Mac に接続し Console.app でプロセス <code>dasd</code> を絞り、<code>heavywork</code> で検索する。DAS は活動ごとに <code>BatteryLevelPolicy</code> / <code>DeviceActivityPolicy</code> / <code>ThermalPolicy</code> / <code>ApplicationPolicy</code> / <code>BudgetPolicy</code> などの重み付きスコアを記録し、<code>FinalDecision: Can Proceed</code> か <code>Must Not Proceed</code>（根拠つき）を出す。開発中は Xcode のデバッガから <code>_simulateLaunchForTaskWithIdentifier:</code> で即起動できる（Developer Options の「Run BG routine now」は同じルーチンを前面で回す代替）。</p>
+      <p><strong>処理枠が開いていても解析セッション（ADR-182）が走っていれば、処理枠は解析の起動を飛ばす</strong>（バックアップ・共有・照合は従来どおり）。前面復帰の <code>stopForForeground</code> もセッションの作業は止めない。</p>
       <p><strong>OS の裁量に頼らない選択肢</strong>: (a) ADR-165 の「この画面を開いている間、解析する」（前面のまま進める）。(b) iOS 26 の <code>BGContinuedProcessingTask</code>——ユーザーがボタンを押して始めた作業を、ロック後も<strong>システムの進捗 UI つき</strong>で続けられる。Apple は「自動のメンテナンス・バックアップ・写真同期には使うな」と明言しているので、<strong>明示的な「今すぐ解析（ロックしても続ける）」ボタン</strong>の形でなら適合する。進捗の報告が必須で、遅いとシステムが続行を尋ねる。<strong>→ ADR-182 で採用</strong>（<code>AnalysisSession</code>・「今すぐ解析」1 ボタンに統合。端末を本当にロックすると止まる iOS のバグ FB19916760 は修正待ちで、それまでは「画面を消さない」が命綱）。</p>
 
       <h2>2. 処理枠の中で何が起きるか（1 処理枠の時系列）</h2>
@@ -101,12 +102,13 @@ flowchart TD
       <table>
         <tr><th>#</th><th>工程</th><th>起こす／待つ</th><th>使う資源</th><th>止め方</th><th>1 単位の所要（実測）</th></tr>
         <tr><td>0</td><td>ストア群の用意 <code>HomeStores.shared()</code></td><td>待つ</td><td>CPU・ディスク（SwiftData）</td><td>—</td><td>温 0.1s／冷（背面起動）数秒</td></tr>
+        <tr><td>0.5</td><td>幽霊の掃除 <code>pruneMissingPhotos</code></td><td>待つ（短い）</td><td>DB（集合の差）</td><td>—</td><td>候補（端末＋クラウド・原本のあるバックアップコピーと自分の共有コピーは除外）に無い写真の顔と走査記録を消す。欠けが 5% 超なら候補不備とみなして何もしない</td></tr>
         <tr><td>1</td><td>顔スキャン <code>PeopleEngine.startScan</code></td><td>起こす</td><td><strong>ANE</strong>（Vision＋facenet）・画像デコード</td><td><code>stopScan</code>（1 枚単位で降りる）</td><td>16 枚バッチ・0.5s 休止。クラウドはキャッシュ済みサムネ（ADR-179 後は再計測待ち）</td></tr>
         <tr><td>2</td><td>シーンタグ → CLIP 埋め込み <code>restartBackgroundFill</code></td><td>起こす</td><td><strong>ANE</strong>（Vision 分類・CLIP）</td><td><code>stopBackgroundWork</code></td><td>タグ 8 枚/0.5s（~2 枚/s）、埋め込み 192 枚を 16〜33s（85〜170ms/枚）</td></tr>
         <tr><td>3</td><td>沈黙検出 <code>logStalledPasses</code></td><td>待つ（短い）</td><td>DB カウント</td><td>—</td><td>&lt;1s</td></tr>
         <tr><td>4</td><td>バックアップ <code>startNightlyIfEnabled</code>（ADR-180/181）</td><td>起こす</td><td><strong>ディスク</strong>（読む・spool に書く）。転送は<strong>処理枠の外</strong>で OS</td><td><code>cancel</code>（積んだ分は OS へ渡してから降りる）</td><td>旧: 1 枚 1〜2s（HTTP 込み）。新: 読む＋書くだけ＝数十〜数百 ms/枚（上限 400 枚／1GB）</td></tr>
         <tr><td>5</td><td>アルバム生成の可否 <code>NightlyWorkPolicy</code></td><td>待つ（実行時は 18〜26s）</td><td>CPU・<strong>メモリ（ピーク 550〜880MB）</strong></td><td>ステップ境界で abort</td><td>残作業があれば最大 4 処理枠見送り。実行中は解析が譲る（相互排他）</td></tr>
-        <tr><td>6</td><td>家族共有 反映/受信（ADR-166）</td><td>待つ</td><td>通信（RPC のみ・軽い）</td><td><code>Task.isCancelled</code></td><td>セット数×list_folder（数秒）</td></tr>
+        <tr><td>6</td><td>家族共有 反映/受信（ADR-166/183）</td><td>待つ</td><td>通信（RPC のみ・軽い）</td><td><code>Task.isCancelled</code></td><td>作成元へ追従 → 共有ルートの再帰一覧 1 回 → シャード差分 → copy_batch（500 枚/回・ジョブ待ちで数分）</td></tr>
         <tr><td>7</td><td>台帳と実体の照合（ADR-166）</td><td>待つ・週 1</td><td>通信（全件一覧）</td><td>同上</td><td>数十秒（8 万件）</td></tr>
         <tr><td>8</td><td>待ちループ</td><td>10s ごと</td><td>—</td><td>期限切れ＝cancel</td><td>残作業が全部片付いたら早期終了</td></tr>
       </table>
