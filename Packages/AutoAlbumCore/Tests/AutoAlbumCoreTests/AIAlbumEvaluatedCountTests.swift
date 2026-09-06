@@ -99,7 +99,7 @@ struct AIAlbumEvaluatedCountTests {
 
 // MARK: - 共有解析の取り込み（レビュー指摘）
 
-/// ⚠️ 「取り込み済み（rev）」を記録すると、同じサイドカーは以後ダウンロードされない。
+/// ⚠️ 「取り込み済み（rev）」を記録すると、同じ解析データは以後ダウンロードされない。
 /// 保存に失敗した回に記録すると、欠けた解析結果を**二度と取り直せない**。
 @Suite("Shared analysis import — persistence")
 @MainActor

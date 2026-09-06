@@ -28,6 +28,8 @@
         <tr><td>LLM 審査 (AlbumVerifier)</td><td>候補の証拠行を Foundation Models が keep/drop/unsure 判定し多数決する最終段。</td></tr>
         <tr><td>ピープル (顔クラスタ)</td><td>Vision 顔検出＋同梱 AuraFace-v1（ArcFace 系・512 次元）で埋め込み→逐次クラスタリングした自前の「人物」（端末＋クラウド両対応・FacesV1 別コンテナ）。</td></tr>
         <tr><td>Foundation Models</td><td>OS 内蔵のオンデバイス LLM。本アプリではクエリ翻訳・解釈と LLM 審査に使用。</td></tr>
+        <tr><td>解析データ（旧称サイドカー）</td><td>クラウド共有で写真に同梱する認識結果（シーンタグ・CLIP 埋め込み・顔）。写真とは別ファイル（<code>.mosaic-share/shard-&lt;xx&gt;.json</code>・content_hash で結ぶ）で、受け取った端末は解析し直さない。</td></tr>
+        <tr><td>バックグラウンド処理枠（「夜間処理」）</td><td>充電中にアプリが背面にあるとき OS がくれる数分の実行枠（BGProcessingTask）。時刻は見ていない。</td></tr>
       </table>
 
       <h2>永続化 / 並行性</h2>

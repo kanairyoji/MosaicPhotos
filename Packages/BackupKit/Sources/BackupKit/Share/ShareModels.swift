@@ -63,7 +63,7 @@ public final class ShareSet {
     /// 実フォルダ名（`ShareNaming.sanitize` 済み・共有ルート直下）。
     public var folderName: String
     public var createdAt: Date
-    /// 最後にアップロードしたサイドカーのチェックサム（変化がなければ再アップロードを省く）。
+    /// 最後にアップロードした解析データのチェックサム（変化がなければ再アップロードを省く）。
     public var sidecarChecksum: String?
     /// 作成元（"pgroup-<uuid>" / "person-<clusterID>" / "album-<id>"）。
     /// 元のカードに「クラウド共有中」バッジを出すための参照。手動作成は nil。
@@ -106,7 +106,7 @@ public final class ShareItem {
     public var sourcePath: String?
     /// コピー結果の実パス（autorename 後・小文字正規化）。
     public var sharedPath: String?
-    /// コピー時点の content_hash（解析サイドカーの結合キー・ドリフト検知）。
+    /// コピー時点の content_hash（解析データの結合キー・ドリフト検知）。
     public var sharedContentHash: String?
     /// ShareItemState の rawValue。
     public var stateRaw: String

@@ -86,7 +86,7 @@ graph LR
       <p>スキーマを変えたら <code>ModelConfiguration</code> 名を採番して旧ストアを破棄→再構築する（現行 <code>"AutoAlbumV10"</code>）。マイグレーションを書かず<strong>破棄採番</strong>にしているのは、付加情報は再生成可能（写真本体が真実の源）だから。軽微な追加列は SwiftData の軽量マイグレーションに任せる（例: 座標列の追加）。</p>
 
       <h2>Dropbox 側のモデル</h2>
-      <p><code>CachedDropboxItem</code>（path unique・contentHash で無効化）/ <code>CacheUsageEntry</code>（LRU 台帳）/ <code>DropboxSyncState</code>（カーソル）。詳細は <a href="cache-internals.html">キャッシュ実装詳細</a>。Dropbox 側に<strong>置く</strong>メタデータ（バックアップの v2 台帳・共有サイドカー）の置き場所と書き込み順序は <a href="../features/backup.html">バックアップ</a>の「メタデータのライフサイクル」。</p>
+      <p><code>CachedDropboxItem</code>（path unique・contentHash で無効化）/ <code>CacheUsageEntry</code>（LRU 台帳）/ <code>DropboxSyncState</code>（カーソル）。詳細は <a href="cache-internals.html">キャッシュ実装詳細</a>。Dropbox 側に<strong>置く</strong>メタデータ（バックアップの v2 台帳・共有解析データ）の置き場所と書き込み順序は <a href="../features/backup.html">バックアップ</a>の「メタデータのライフサイクル」。</p>
 
       <div class="box refs">
         <span class="box-h">関連コード</span>

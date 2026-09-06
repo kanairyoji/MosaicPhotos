@@ -58,7 +58,7 @@ graph TD
         <tr><th>種類</th><th>置き場所</th><th>正本か</th><th>書く側</th><th>読む側</th></tr>
         <tr><td><strong>Dropbox の一覧</strong>（パス・content_hash・撮影日・座標・rev）</td><td>端末の SwiftData（<code>CachedDropboxItem</code> / <code>DropboxSyncState</code>＝カーソル）</td><td>Dropbox が正本・端末は<strong>キャッシュ</strong></td><td><code>DropboxSyncEngine</code>（<code>list_folder</code> のカーソル差分＋<code>longpoll</code>）</td><td>グリッド・解析候補・共有の突合（<a href="dropbox.html">Dropbox 連携</a>／<a href="../deep-dive/cache-internals.html">キャッシュ実装詳細</a>）</td></tr>
         <tr><td><strong>バックアップのメタデータ v2</strong>（人物名・アルバム・お気に入り・GPS・localIdentifier）</td><td>Dropbox: <code>Backup/.mosaic/catalog.json</code>＋<code>meta/&lt;YYYY-MM&gt;.json</code>（撮影月シャード）</td><td><strong>Dropbox が正本</strong>（端末を消しても残す情報）</td><td><code>BackupRunner</code>（下図）</td><td>受信側の <code>loadBackupMetadata</code>（オフロード済み写真の名前・アルバム復元）・共有の作成元解決</td></tr>
-        <tr><td><strong>共有の解析サイドカー</strong>（タグ・CLIP・顔）</td><td>Dropbox: <code>Share/&lt;セット&gt;/.mosaic-share/shard-&lt;xx&gt;.json</code></td><td>派生物（端末の解析台帳から毎回組み直せる）</td><td><code>ShareSyncEngine</code>（状態を持たず content_hash 比較）</td><td>家族の端末（<a href="cloud-sharing.html">クラウド共有</a>）</td></tr>
+        <tr><td><strong>共有の解析データ</strong>（タグ・CLIP・顔）</td><td>Dropbox: <code>Share/&lt;セット&gt;/.mosaic-share/shard-&lt;xx&gt;.json</code></td><td>派生物（端末の解析台帳から毎回組み直せる）</td><td><code>ShareSyncEngine</code>（状態を持たず content_hash 比較）</td><td>家族の端末（<a href="cloud-sharing.html">クラウド共有</a>）</td></tr>
       </table>
       <h3>書く側: 1 枚ごとに耐久化してから「済み」（ADR-171）</h3>
       <div class="mermaid">

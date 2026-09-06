@@ -3,7 +3,7 @@ import Testing
 @testable import BackupKit
 import DropboxCore
 
-/// 解析サイドカー（`.mosaic-share/shard-<xx>.json`・ADR-183）の**復元**（ADR-166）。
+/// 解析データ（`.mosaic-share/shard-<xx>.json`・ADR-183）の**復元**（ADR-166）。
 ///
 /// ⚠️ 以前はアップロードの要否を「中身が変わったか」だけで決めていた。そのため誰かが
 /// Dropbox 上の `.mosaic-share` を消すと、**写真は自己修復されるのに解析結果だけ永久に戻らない**。
@@ -13,9 +13,9 @@ import DropboxCore
 /// 1. 消えたら復元する
 /// 2. 在るなら**アップロードし直さない**（毎回上げると数 MB を無駄に往復する）
 /// 3. 中身が変われば当然上げ直す
-@Suite("サイドカーの復元")
+@Suite("解析データの復元")
 @MainActor
-struct ShareSidecarRestoreTests {
+struct ShareAnalysisRestoreTests {
 
     private static let backupRoot = "/MosaicPhotos"
     private static var shareRoot: String {
@@ -27,10 +27,10 @@ struct ShareSidecarRestoreTests {
         var tags: [String]
         init(tags: [String]) { self.tags = tags }
         func analysisEntries(forRefKeys refKeys: [String]) async
-            -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry]) {
-            var entries: [String: ShareSidecar.Entry] = [:]
-            for key in refKeys { entries[key] = ShareSidecar.Entry(tags: tags) }
-            return (ShareSidecar.Versions(tag: 1, perception: 1, face: 1), entries)
+            -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
+            var entries: [String: ShareAnalysisData.Entry] = [:]
+            for key in refKeys { entries[key] = ShareAnalysisData.Entry(tags: tags) }
+            return (ShareAnalysisData.Versions(tag: 1, perception: 1, face: 1), entries)
         }
     }
 
@@ -55,44 +55,44 @@ struct ShareSidecarRestoreTests {
         return (engine, server)
     }
 
-    /// サイドカー（"hA" のシャード）の実パス（セットフォルダ配下・小文字）。
-    private func sidecarPath(_ name: String) -> String {
+    /// 解析データ（"hA" のシャード）の実パス（セットフォルダ配下・小文字）。
+    private func analysisPath(_ name: String) -> String {
         let folder = SharePlanning.setFolderPath(
             shareRoot: Self.shareRoot, folderName: ShareNaming.folderName(name, kind: nil),
             deviceFolder: nil)!   // shareRoot は端末フォルダ込み（ADR-175）
-        return ShareSidecar.shardPath(setFolderPath: folder,
-                                      shard: ShareSidecar.shardName(forHash: "hA")).lowercased()
+        return ShareAnalysisData.shardPath(setFolderPath: folder,
+                                      shard: ShareAnalysisData.shardName(forHash: "hA")).lowercased()
     }
 
-    private func sidecarExists(_ server: FakeDropboxServer, _ name: String) async -> Bool {
-        await server.filePaths().contains(sidecarPath(name))
+    private func analysisExists(_ server: FakeDropboxServer, _ name: String) async -> Bool {
+        await server.filePaths().contains(analysisPath(name))
     }
 
-    @Test("初回の反映でサイドカーが作られる")
-    func sidecarIsCreated() async {
+    @Test("初回の反映で解析データが作られる")
+    func analysisIsCreated() async {
         let stub = StubAnalysis(tags: ["beach"])
         let (engine, server) = await makeStack(analysis: stub)
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
-        #expect(await sidecarExists(server, "Trip"), "サイドカーが作られていない")
+        #expect(await analysisExists(server, "Trip"), "解析データが作られていない")
     }
 
     /// ⚠️ 本命。外部（Dropbox の Web UI・他端末）から消された状況を作り、次の反映で戻ることを見る。
-    @Test("外部から消されたサイドカーは次の反映で復元される")
-    func deletedSidecarIsRestored() async {
+    @Test("外部から消された解析データは次の反映で復元される")
+    func deletedAnalysisIsRestored() async {
         let stub = StubAnalysis(tags: ["beach"])
         let (engine, server) = await makeStack(analysis: stub)
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
-        #expect(await sidecarExists(server, "Trip"), "fixture: 先にサイドカーが無い")
+        #expect(await analysisExists(server, "Trip"), "fixture: 先に解析データが無い")
 
         // 外部削除（中身は変えていないので、旧実装ではチェックサム一致で上げ直されない）。
-        await server.remove(sidecarPath("Trip"))
-        #expect(await sidecarExists(server, "Trip") == false, "fixture: 削除できていない")
+        await server.remove(analysisPath("Trip"))
+        #expect(await analysisExists(server, "Trip") == false, "fixture: 削除できていない")
 
         await engine.syncNow()
-        #expect(await sidecarExists(server, "Trip"),
-                "消えたサイドカーが復元されていない（解析結果だけ永久に失われる）")
+        #expect(await analysisExists(server, "Trip"),
+                "消えた解析データが復元されていない（解析結果だけ永久に失われる）")
     }
 
     /// 実在確認のために毎回上げ直しては、数 MB を無駄に往復することになる。
@@ -123,6 +123,6 @@ struct ShareSidecarRestoreTests {
         stub.tags = ["beach", "sunset"]   // 解析が進んだ
         await engine.syncNow()
         #expect(await server.uploadCount() > uploadsAfterFirst,
-                "解析が進んだのにサイドカーが更新されていない")
+                "解析が進んだのに解析データが更新されていない")
     }
 }

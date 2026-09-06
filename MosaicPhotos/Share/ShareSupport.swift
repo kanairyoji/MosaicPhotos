@@ -5,10 +5,10 @@ import PhotosFeatureKit
 import MosaicSupport
 import SwiftUI
 
-// MARK: - 送信側: 解析サイドカーの供給（ADR-112）
+// MARK: - 送信側: 解析データの供給（ADR-112）
 
 /// AutoAlbumCore（タグ・CLIP）と FaceCore（顔シグナル）の解析を、BackupKit の
-/// サイドカー DTO へ橋渡しする Composition Root アダプタ。
+/// 解析データ DTO へ橋渡しする Composition Root アダプタ。
 final class ShareAnalysisAdapter: ShareAnalysisSource {
     private let autoAlbumEngine: AutoAlbumEngine
     private let peopleEngine: PeopleEngine
@@ -19,21 +19,21 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
     }
 
     func analysisEntries(forRefKeys refKeys: [String]) async
-        -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry]) {
+        -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
         let analysis = await autoAlbumEngine.analysisExport(forRefKeys: refKeys)
         // 人物名を載せるかは設定（既定 ON・ADR-167）。OFF なら顔だけを送る。
         let includeNames = ShareSettingsKeys.isShareNamesEnabled()
         let faces = await peopleEngine.exportFaceSignals(forRefKeys: refKeys,
                                                          includeNames: includeNames)
-        let versions = ShareSidecar.Versions(tag: AutoAlbumEngine.shareTagVersion,
+        let versions = ShareAnalysisData.Versions(tag: AutoAlbumEngine.shareTagVersion,
                                              perception: AutoAlbumEngine.sharePerceptionVersion,
                                              face: peopleEngine.effectiveScanVersion)
 
         // base64 変換・辞書構築は数千枚規模になり得るのでオフメインで組み立てる。
-        let entries = await Task.detached(priority: .utility) { () -> [String: ShareSidecar.Entry] in
-            var entries: [String: ShareSidecar.Entry] = [:]
+        let entries = await Task.detached(priority: .utility) { () -> [String: ShareAnalysisData.Entry] in
+            var entries: [String: ShareAnalysisData.Entry] = [:]
             for key in refKeys {
-                var entry = ShareSidecar.Entry()
+                var entry = ShareAnalysisData.Entry()
                 if let a = analysis[key] {
                     entry.tags = a.tags.isEmpty ? nil : a.tags
                     entry.ocr = a.ocrText
@@ -43,7 +43,7 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
                 }
                 if let f = faces[key], !f.isEmpty {
                     entry.faces = f.map { signal in
-                        ShareSidecar.Face(x: signal.boundingBox.origin.x,
+                        ShareAnalysisData.Face(x: signal.boundingBox.origin.x,
                                           y: signal.boundingBox.origin.y,
                                           w: signal.boundingBox.width,
                                           h: signal.boundingBox.height,
@@ -54,7 +54,7 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
                                           n: signal.personName)
                     }
                 }
-                if entry != ShareSidecar.Entry() { entries[key] = entry }
+                if entry != ShareAnalysisData.Entry() { entries[key] = entry }
             }
             return entries
         }.value
@@ -113,9 +113,9 @@ final class ShareSourceMemberResolver: ShareSourceResolver {
     }
 }
 
-// MARK: - 受信側: サイドカーの取り込み
+// MARK: - 受信側: 解析データの取り込み
 
-/// 家族の共有フォルダから解析サイドカーを取得し、受信側の各ストア
+/// 家族の共有フォルダから解析データを取得し、受信側の各ストア
 /// （タグ台帳・CLIP 埋め込み・顔）へ取り込む。取り込み済み写真は夜間の自前解析
 /// （サムネ DL＋推論）がスキップされる。
 @Observable
@@ -132,7 +132,7 @@ final class SharedAnalysisImporter {
         self.peopleEngine = peopleEngine
     }
 
-    /// 家族フォルダが設定されていれば、更新されたサイドカーを取得して取り込む。
+    /// 家族フォルダが設定されていれば、更新された解析データを取得して取り込む。
     func runIfNeeded() async {
         guard !isRunning else { return }
         // 「受ける」が OFF なら何もしない（提供・バックアップとは独立・ADR-112 追記）。
@@ -144,7 +144,7 @@ final class SharedAnalysisImporter {
         isRunning = true
         defer { isRunning = false }
 
-        let fetched = await ShareSidecarFetch().fetchUpdated(roots: roots, token: token)
+        let fetched = await ShareAnalysisFetch().fetchUpdated(roots: roots, token: token)
         guard !fetched.isEmpty else { return }
 
         let versions = ShareImportPlanning.ReceiverVersions(
@@ -153,7 +153,7 @@ final class SharedAnalysisImporter {
             face: peopleEngine.effectiveScanVersion)
 
         // ⚠️ ここから先は **すべてオフメイン**（規約: 巨大コレクションを MainActor に通さない）。
-        // 受信側の突合は 6.8 万件規模の走査＋文字列生成、さらにサイドカーごとの base64 デコード
+        // 受信側の突合は 6.8 万件規模の走査＋文字列生成、さらに解析データごとの base64 デコード
         // （数千顔ぶん）を伴う。メインで回すとホーム描画・スクロールを直撃する。
         // メインへ戻すのは各ストアへ渡す Sendable なバッチだけにする。
         let itemsSnapshot = dropboxStore.items.map { (path: $0.path, hash: $0.contentHash) }
@@ -168,12 +168,12 @@ final class SharedAnalysisImporter {
                 return ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(item.path).encoded,
                                                      contentHash: hash)
             }
-            // 索引は 1 回だけ作ってサイドカー間で使い回す。
+            // 索引は 1 回だけ作って解析データ間で使い回す。
             let index = ShareImportPlanning.index(of: localItems)
             let hashSet = Set(index.keys)
 
-            return fetched.map { sidecar in
-                let batch = ShareImportPlanning.plan(sidecar: sidecar.file, index: index,
+            return fetched.map { analysisData in
+                let batch = ShareImportPlanning.plan(analysisData: analysisData.file, index: index,
                                                      versions: versions)
                 let tags = batch.tags.map {
                     (refKey: $0.refKey,
@@ -192,10 +192,10 @@ final class SharedAnalysisImporter {
                     }
                     if !signals.isEmpty { faces.append((refKey, signals)) }
                 }
-                // まだ同期されていない写真が残っているサイドカーは rev を記録しない
+                // まだ同期されていない写真が残っている解析データは rev を記録しない
                 // （次回の実行で残りを取り込む。取り込みは既存レコードをスキップするので冪等）。
-                let fullyMatched = sidecar.file.entries.keys.allSatisfy { hashSet.contains($0) }
-                return PreparedImport(sidecar: sidecar, tags: tags,
+                let fullyMatched = analysisData.file.entries.keys.allSatisfy { hashSet.contains($0) }
+                return PreparedImport(analysisData: analysisData, tags: tags,
                                       embeddings: batch.embeddings, faces: faces,
                                       fullyMatched: fullyMatched)
             }
@@ -205,17 +205,17 @@ final class SharedAnalysisImporter {
             let counts = await autoAlbumEngine.importSharedAnalysis(
                 tags: prepared.tags, embeddings: prepared.embeddings)
             let faces = await peopleEngine.importFaceScans(prepared.faces)
-            Diagnostics.mark("share import: \(prepared.sidecar.setFolderPathLower) — "
+            Diagnostics.mark("share import: \(prepared.analysisData.setFolderPathLower) — "
                 + "tags \(counts.tags), embeddings \(counts.embeddings), faces \(faces.photos) photos")
             // ⚠️ 「取り込み済み」を記録するのは、**全部コミットできたとき**だけ。
-            // 保存に失敗した回に記録すると、同じサイドカーは以後ダウンロードされず、
+            // 保存に失敗した回に記録すると、同じ解析データは以後ダウンロードされず、
             // 欠けた解析結果を再取得できない（レビュー指摘）。
             // 未同期の写真が残っている場合（fullyMatched=false）も同様に記録しない。
             let committed = counts.saved && faces.saved
             if prepared.fullyMatched && committed {
-                ShareSidecarFetch.markImported(prepared.sidecar)
+                ShareAnalysisFetch.markImported(prepared.analysisData)
             } else if !committed {
-                Diagnostics.mark("share import: \(prepared.sidecar.setFolderPathLower) — "
+                Diagnostics.mark("share import: \(prepared.analysisData.setFolderPathLower) — "
                     + "not marked imported (persistence failed); will retry")
             }
         }
@@ -224,11 +224,11 @@ final class SharedAnalysisImporter {
 
 /// オフメインで組み立てた取り込み材料（メインへはこれだけ返す）。
 private struct PreparedImport: Sendable {
-    let sidecar: ShareSidecarFetch.Fetched
+    let analysisData: ShareAnalysisFetch.Fetched
     let tags: [(refKey: String, info: PhotoSenseInfo)]
     let embeddings: [(refKey: String, vectorHalf: Data)]
     let faces: [(refKey: String, faces: [DetectedFaceSignal])]
-    /// サイドカーの全エントリが手元の写真に突合できたか（rev 記録の可否）。
+    /// 解析データの全エントリが手元の写真に突合できたか（rev 記録の可否）。
     let fullyMatched: Bool
 }
 

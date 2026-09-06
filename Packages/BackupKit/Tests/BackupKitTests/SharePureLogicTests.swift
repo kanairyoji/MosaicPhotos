@@ -266,37 +266,37 @@ struct SharePlanningTests {
     }
 }
 
-// MARK: - ShareSidecar
+// MARK: - ShareAnalysisData
 
-@Suite("ShareSidecar (解析サイドカーの検証)")
-struct ShareSidecarTests {
+@Suite("ShareAnalysisData (解析データの検証)")
+struct ShareAnalysisDataTests {
 
     private var validHash: String { String(repeating: "ab", count: 32) }
     private var validEmbedding: String {
-        Data(repeating: 0x11, count: ShareSidecar.embeddingByteCount).base64EncodedString()
+        Data(repeating: 0x11, count: ShareAnalysisData.embeddingByteCount).base64EncodedString()
     }
 
-    private func file(entries: [String: ShareSidecar.Entry]) -> ShareSidecar.File {
-        ShareSidecar.File(versions: .init(tag: 3, perception: 8, face: 4), entries: entries)
+    private func file(entries: [String: ShareAnalysisData.Entry]) -> ShareAnalysisData.File {
+        ShareAnalysisData.File(versions: .init(tag: 3, perception: 8, face: 4), entries: entries)
     }
 
     @Test("エンコード→デコードで内容が保たれる（決定的エンコード）")
     func roundTrip() {
         let original = file(entries: [validHash: .init(tags: ["beach", "sunset"], human: 2,
                                                        clip: validEmbedding)])
-        let data = ShareSidecar.encode(original)
+        let data = ShareAnalysisData.encode(original)
         #expect(data != nil)
-        let decoded = ShareSidecar.decodeValidated(data!)
+        let decoded = ShareAnalysisData.decodeValidated(data!)
         #expect(decoded == original)
         // 同じ内容は同じバイト列（チェックサム比較の前提）。
-        #expect(ShareSidecar.encode(original) == data)
+        #expect(ShareAnalysisData.encode(original) == data)
     }
 
     @Test("不正な content_hash キーのエントリは捨てられる")
     func invalidHashKeyDropped() {
         let bad = file(entries: ["not-a-hash": .init(tags: ["x"]),
                                  validHash: .init(tags: ["ok"])])
-        let decoded = ShareSidecar.decodeValidated(ShareSidecar.encode(bad)!)
+        let decoded = ShareAnalysisData.decodeValidated(ShareAnalysisData.encode(bad)!)
         #expect(decoded?.entries.count == 1)
         #expect(decoded?.entries[validHash]?.tags == ["ok"])
     }
@@ -306,13 +306,13 @@ struct ShareSidecarTests {
         let short = Data(repeating: 1, count: 10).base64EncodedString()
         // Float16 の NaN（0x7FFF）だけを敷き詰めたベクトル。
         var nanData = Data()
-        for _ in 0..<(ShareSidecar.embeddingByteCount / 2) {
+        for _ in 0..<(ShareAnalysisData.embeddingByteCount / 2) {
             nanData.append(contentsOf: [0xFF, 0x7F])
         }
-        let entry = ShareSidecar.Entry(tags: ["keep"], clip: short,
+        let entry = ShareAnalysisData.Entry(tags: ["keep"], clip: short,
                                        faces: [.init(x: 0.1, y: 0.1, w: 0.2, h: 0.2,
                                                      e: nanData.base64EncodedString(), q: 0.9)])
-        let decoded = ShareSidecar.decodeValidated(ShareSidecar.encode(file(entries: [validHash: entry]))!)
+        let decoded = ShareAnalysisData.decodeValidated(ShareAnalysisData.encode(file(entries: [validHash: entry]))!)
         let cleaned = decoded?.entries[validHash]
         #expect(cleaned?.tags == ["keep"])
         #expect(cleaned?.clip == nil, "次元不正の CLIP が残った")
@@ -321,8 +321,8 @@ struct ShareSidecarTests {
 
     @Test("全セクションが落ちたエントリは丸ごと消える")
     func fullyInvalidEntryDropped() {
-        let entry = ShareSidecar.Entry(clip: "!!!not-base64!!!")
-        let decoded = ShareSidecar.decodeValidated(ShareSidecar.encode(file(entries: [validHash: entry]))!)
+        let entry = ShareAnalysisData.Entry(clip: "!!!not-base64!!!")
+        let decoded = ShareAnalysisData.decodeValidated(ShareAnalysisData.encode(file(entries: [validHash: entry]))!)
         #expect(decoded?.entries.isEmpty == true)
     }
 
@@ -330,18 +330,18 @@ struct ShareSidecarTests {
     func rejectsUnknownFormatVersion() {
         var bad = file(entries: [validHash: .init(tags: ["x"])])
         bad.formatVersion = 999
-        #expect(ShareSidecar.decodeValidated(ShareSidecar.encode(bad)!) == nil)
+        #expect(ShareAnalysisData.decodeValidated(ShareAnalysisData.encode(bad)!) == nil)
     }
 
     @Test("タグ・OCR は上限で刈り込まれる")
     func capsAreEnforced() {
         let manyTags = (0..<200).map { "tag\($0)" }
         let longOcr = String(repeating: "x", count: 10_000)
-        let entry = ShareSidecar.Entry(tags: manyTags, ocr: longOcr)
-        let decoded = ShareSidecar.decodeValidated(ShareSidecar.encode(file(entries: [validHash: entry]))!)
+        let entry = ShareAnalysisData.Entry(tags: manyTags, ocr: longOcr)
+        let decoded = ShareAnalysisData.decodeValidated(ShareAnalysisData.encode(file(entries: [validHash: entry]))!)
         let cleaned = decoded?.entries[validHash]
-        #expect(cleaned?.tags?.count == ShareSidecar.maxTagsPerEntry)
-        #expect(cleaned?.ocr?.count == ShareSidecar.maxOcrLength)
+        #expect(cleaned?.tags?.count == ShareAnalysisData.maxTagsPerEntry)
+        #expect(cleaned?.ocr?.count == ShareAnalysisData.maxOcrLength)
     }
 }
 
@@ -353,12 +353,12 @@ struct ShareImportPlanningTests {
     private var hashA: String { String(repeating: "aa", count: 32) }
     private var hashB: String { String(repeating: "bb", count: 32) }
     private var embedding: String {
-        Data(repeating: 0x11, count: ShareSidecar.embeddingByteCount).base64EncodedString()
+        Data(repeating: 0x11, count: ShareAnalysisData.embeddingByteCount).base64EncodedString()
     }
 
-    private func sidecar(versions: ShareSidecar.Versions = .init(tag: 3, perception: 8, face: 4))
-        -> ShareSidecar.File {
-        ShareSidecar.File(versions: versions, entries: [
+    private func analysisData(versions: ShareAnalysisData.Versions = .init(tag: 3, perception: 8, face: 4))
+        -> ShareAnalysisData.File {
+        ShareAnalysisData.File(versions: versions, entries: [
             hashA: .init(tags: ["beach"], clip: embedding,
                          faces: [.init(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9)]),
             hashB: .init(tags: ["cat"]),
@@ -372,7 +372,7 @@ struct ShareImportPlanningTests {
     @Test("content_hash で受信側 refKey に突合される")
     func matchesByHash() {
         let batch = ShareImportPlanning.plan(
-            sidecar: sidecar(),
+            analysisData: analysisData(),
             localItems: [.init(refKey: "C-/mosaicshare/trip/a.jpg", contentHash: hashA)],
             versions: receiver)
         #expect(batch.tags.map(\.refKey) == ["C-/mosaicshare/trip/a.jpg"])
@@ -383,7 +383,7 @@ struct ShareImportPlanningTests {
     @Test("同じ写真が複数セットにあれば全 refKey に展開する")
     func expandsToAllRefKeys() {
         let batch = ShareImportPlanning.plan(
-            sidecar: sidecar(),
+            analysisData: analysisData(),
             localItems: [.init(refKey: "C-/a/x.jpg", contentHash: hashA),
                          .init(refKey: "C-/b/x.jpg", contentHash: hashA)],
             versions: receiver)
@@ -394,7 +394,7 @@ struct ShareImportPlanningTests {
     @Test("版が一致しないセクションは取り込まない")
     func versionGating() {
         let batch = ShareImportPlanning.plan(
-            sidecar: sidecar(versions: .init(tag: 2, perception: 7, face: 4)),
+            analysisData: analysisData(versions: .init(tag: 2, perception: 7, face: 4)),
             localItems: [.init(refKey: "C-/a.jpg", contentHash: hashA)],
             versions: receiver)
         #expect(batch.tags.isEmpty, "タグ版不一致なのに取り込まれた")
@@ -405,7 +405,7 @@ struct ShareImportPlanningTests {
     @Test("受信側に無い写真のエントリは無視される")
     func unmatchedEntriesIgnored() {
         let batch = ShareImportPlanning.plan(
-            sidecar: sidecar(),
+            analysisData: analysisData(),
             localItems: [.init(refKey: "C-/c.jpg", contentHash: String(repeating: "cc", count: 32))],
             versions: receiver)
         #expect(batch.tags.isEmpty)
@@ -526,12 +526,12 @@ struct ShareSourceKeyTests {
     }
 }
 
-@Suite("ShareSidecar 日付検証（外部入力）")
-struct ShareSidecarDateTests {
+@Suite("ShareAnalysisData 日付検証（外部入力）")
+struct ShareAnalysisDateTests {
 
     private var hash: String { String(repeating: "cd", count: 32) }
     private var embedding: String {
-        Data(repeating: 0x11, count: ShareSidecar.embeddingByteCount).base64EncodedString()
+        Data(repeating: 0x11, count: ShareAnalysisData.embeddingByteCount).base64EncodedString()
     }
 
     /// NaN/巨大値の撮影日をそのまま Date にすると、人物の時期分割で日付ソートの
@@ -541,12 +541,12 @@ struct ShareSidecarDateTests {
     /// `validate` を直接叩いて検証する。巨大値は JSON で表現できるため実際に届き得る。
     @Test("非有限・非現実的な撮影日は nil に落とす（顔自体は残す）")
     func dropsImplausibleCaptureDates() {
-        func face(_ d: Double?) -> ShareSidecar.Face {
+        func face(_ d: Double?) -> ShareAnalysisData.Face {
             .init(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, s: nil, d: d)
         }
-        let entry = ShareSidecar.Entry(faces: [face(.nan), face(1e300), face(-1e300),
+        let entry = ShareAnalysisData.Entry(faces: [face(.nan), face(1e300), face(-1e300),
                                                face(1_750_000_000)])
-        let cleaned = ShareSidecar.validate(entry)
+        let cleaned = ShareAnalysisData.validate(entry)
         let faces = cleaned?.faces
         #expect(faces?.count == 4, "顔そのものは残すべき")
         #expect(faces?.prefix(3).allSatisfy { $0.d == nil } == true, "不正な日付が残った")
@@ -556,14 +556,14 @@ struct ShareSidecarDateTests {
     /// 巨大値は JSON 経由でも実際に届く（NaN と違ってエンコードできる）。
     @Test("JSON 経由でも範囲外の撮影日は落ちる")
     func dropsImplausibleDatesThroughJSON() {
-        let entry = ShareSidecar.Entry(faces: [
+        let entry = ShareAnalysisData.Entry(faces: [
             .init(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, s: nil, d: 1e300)])
-        let file = ShareSidecar.File(versions: .init(tag: 3, perception: 8, face: 4),
+        let file = ShareAnalysisData.File(versions: .init(tag: 3, perception: 8, face: 4),
                                      entries: [hash: entry])
-        guard let data = ShareSidecar.encode(file) else {
+        guard let data = ShareAnalysisData.encode(file) else {
             Issue.record("エンコードできなかった"); return
         }
-        let decoded = ShareSidecar.decodeValidated(data)
+        let decoded = ShareAnalysisData.decodeValidated(data)
         #expect(decoded?.entries[hash]?.faces?.first?.d == nil)
     }
 }
@@ -685,13 +685,13 @@ struct ShareNameTests {
     @Test("受け取った名前は前後の空白を落とし、長すぎる名前は切り詰める")
     func incomingNamesAreSanitized() {
         let embedding = Data(repeating: 0, count: 1024).base64EncodedString()
-        func face(_ name: String?) -> ShareSidecar.Face {
-            ShareSidecar.Face(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, n: name)
+        func face(_ name: String?) -> ShareAnalysisData.Face {
+            ShareAnalysisData.Face(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9, n: name)
         }
-        let entry = ShareSidecar.Entry(faces: [
+        let entry = ShareAnalysisData.Entry(faces: [
             face("  太郎  "), face("   "), face(String(repeating: "あ", count: 200)),
         ])
-        let cleaned = ShareSidecar.validate(entry)
+        let cleaned = ShareAnalysisData.validate(entry)
         #expect(cleaned?.faces?.count == 3, "顔そのものは名前の有無に関係なく残る")
         #expect(cleaned?.faces?[0].n == "太郎", "前後の空白が落ちていない")
         #expect(cleaned?.faces?[1].n == nil, "空白だけの名前は落とす")
@@ -701,10 +701,10 @@ struct ShareNameTests {
     @Test("名前が無くても顔は共有される（グルーピングは成立する）")
     func facesSurviveWithoutNames() {
         let embedding = Data(repeating: 0, count: 1024).base64EncodedString()
-        let entry = ShareSidecar.Entry(faces: [
-            ShareSidecar.Face(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9),
+        let entry = ShareAnalysisData.Entry(faces: [
+            ShareAnalysisData.Face(x: 0.1, y: 0.1, w: 0.2, h: 0.2, e: embedding, q: 0.9),
         ])
-        let cleaned = ShareSidecar.validate(entry)
+        let cleaned = ShareAnalysisData.validate(entry)
         #expect(cleaned?.faces?.count == 1)
         #expect(cleaned?.faces?[0].n == nil)
     }

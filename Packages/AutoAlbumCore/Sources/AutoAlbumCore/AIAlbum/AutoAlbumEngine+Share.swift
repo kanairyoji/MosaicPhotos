@@ -1,6 +1,6 @@
 import Foundation
 
-/// 写真 1 枚分の解析輸出値（家族共有サイドカー用・ADR-112）。
+/// 写真 1 枚分の解析輸出値（家族共有解析データ用・ADR-112）。
 /// タグ台帳（TagsV1）と CLIP 埋め込み（AutoAlbumV10）から組み立てる Sendable 値。
 public struct PhotoAnalysisExport: Sendable {
     public let tags: [String]
@@ -21,11 +21,11 @@ public struct PhotoAnalysisExport: Sendable {
 }
 
 /// 家族共有（ADR-112）の解析輸出入ファサード。
-/// 送信側: 共有セットのサイドカーへ載せる解析を取り出す。
-/// 受信側: 家族のサイドカー由来の解析を取り込む（既存レコードは上書きしない＝自前解析優先）。
+/// 送信側: 共有セットの解析データへ載せる解析を取り出す。
+/// 受信側: 家族の解析データ由来の解析を取り込む（既存レコードは上書きしない＝自前解析優先）。
 extension AutoAlbumEngine {
 
-    /// サイドカーのセクション版（送信側が記載・受信側は一致時のみ取り込む）。
+    /// 解析データのセクション版（送信側が記載・受信側は一致時のみ取り込む）。
     public static var shareTagVersion: Int { TagStore.currentVersion }
     public static var sharePerceptionVersion: Int { perceptionVersion }
 
@@ -43,7 +43,7 @@ extension AutoAlbumEngine {
             let export = PhotoAnalysisExport(
                 tags: tags[key] ?? [], ocrText: ocr[key], humanCount: humans[key],
                 aesthetic: aesthetics[key], clipHalf: embeddings[key])
-            // 何も解析が無い写真は載せない（サイドカーの無駄を省く）。
+            // 何も解析が無い写真は載せない（解析データの無駄を省く）。
             if !export.tags.isEmpty || export.ocrText != nil || export.humanCount != nil
                 || export.aesthetic != nil || export.clipHalf != nil {
                 out[key] = export

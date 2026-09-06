@@ -25,11 +25,11 @@ final class HomeStores {
     let autoAlbumEngine: AutoAlbumEngine
     /// 家族共有（共有セット・ADR-112）。
     let shareEngine: ShareSyncEngine
-    /// 共有サイドカーの解析供給アダプタ（shareEngine.analysisSource は weak のためここで保持）。
+    /// 共有解析データの解析供給アダプタ（shareEngine.analysisSource は weak のためここで保持）。
     let shareAnalysisAdapter: ShareAnalysisAdapter
     /// 作成元メンバーの解決役（sourceResolver は weak のためここで保持）。
     let shareSourceResolver: ShareSourceMemberResolver
-    /// 家族フォルダのサイドカー取り込み（受信側）。
+    /// 家族フォルダの解析データ取り込み（受信側）。
     let shareImporter: SharedAnalysisImporter
     /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
     let assetIndex = LocalAssetIndex()
@@ -119,7 +119,7 @@ final class HomeStores {
         let autoAlbumEngine = await makeAutoAlbumEngine(dropboxStore: dropboxStore, backupEngine: backupEngine,
                                                         peopleEngine: peopleEngine)
         await Task.yield()
-        // 家族共有（ADR-112）: エンジン＋解析サイドカーの供給＋受信側の取り込み。
+        // 家族共有（ADR-112）: エンジン＋解析データの供給＋受信側の取り込み。
         let shareEngine = ShareSyncEngine(tokenProvider: auth,
                                           storeProvider: { await backupEngine.sharedBackupStore() })
         let shareAnalysisAdapter = ShareAnalysisAdapter(autoAlbumEngine: autoAlbumEngine,

@@ -417,7 +417,7 @@ private struct HomeLifecycleTasks: ViewModifier {
             // 共有セット概要の初期ロード（バッジの材料。DB 読みだけで軽い・通信なし）。
             .task { await shareEngine.refresh() }
 
-            // 家族共有（ADR-112）: 起動から少し遅らせて (1) 家族サイドカーの取り込み、
+            // 家族共有（ADR-112）: 起動から少し遅らせて (1) 家族解析データの取り込み、
             // (2) 共有セットの反映（保留分・自己修復）を行う。自動通信なので回線ポリシーに従う。
             .task {
                 try? await Task.sleep(for: .seconds(25))

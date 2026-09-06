@@ -15,10 +15,10 @@ struct ShareLargeScaleTests {
 
     private final class StubAnalysis: ShareAnalysisSource {
         func analysisEntries(forRefKeys refKeys: [String]) async
-            -> (versions: ShareSidecar.Versions, entries: [String: ShareSidecar.Entry]) {
-            var entries: [String: ShareSidecar.Entry] = [:]
-            for key in refKeys { entries[key] = ShareSidecar.Entry(tags: ["t-" + key]) }
-            return (ShareSidecar.Versions(tag: 1, perception: 1, face: 1), entries)
+            -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
+            var entries: [String: ShareAnalysisData.Entry] = [:]
+            for key in refKeys { entries[key] = ShareAnalysisData.Entry(tags: ["t-" + key]) }
+            return (ShareAnalysisData.Versions(tag: 1, perception: 1, face: 1), entries)
         }
     }
 
@@ -132,45 +132,45 @@ struct ShareLargeScaleTests {
         #expect(await server.uploadCount() == uploadsAfterFirst, "無関係なシャードを上げ直している")
     }
 
-    @Test("同じ反映の中で、サイドカーの更新はコピーより先に行う")
-    func sidecarUpdatesBeforeCopies() async {
+    @Test("同じ反映の中で、解析データの更新はコピーより先に行う")
+    func analysisDataUpdatesBeforeCopies() async {
         let (engine, _, server) = await makeStack(photos: 30, pageSize: 2_000)
         let setID = await engine.createSet(name: "Big", refKeys: (0..<20).map { "L-p\($0)" })!
         await settle(engine)
 
-        // 10 枚追加（コピーが要る）＋ 1 枚外す（shard-03 が空になる＝サイドカーの変更が要る）。
+        // 10 枚追加（コピーが要る）＋ 1 枚外す（shard-03 が空になる＝解析データの変更が要る）。
         _ = await engine.addItems(setID: setID, refKeys: (20..<30).map { "L-p\($0)" })
         _ = await engine.removeItems(setID: setID, refKeys: ["L-p3"])
         let mark = await server.requestLog.count
         await settle(engine)
 
-        // ⚠️ コピーは 500 枚/回・100 枚ごとのジョブ待ちで数分かかる。サイドカーを後回しにすると
+        // ⚠️ コピーは 500 枚/回・100 枚ごとのジョブ待ちで数分かかる。解析データを後回しにすると
         // 「反映を押しても何分も更新されない」（実フィードバック）。順序を回数ではなく**並び**で固定する。
         let log = Array(await server.requestLog.dropFirst(mark))
-        let firstSidecarWrite = log.firstIndex { $0.contains("delete_batch") || $0.contains("files/upload") }
+        let firstAnalysisWrite = log.firstIndex { $0.contains("delete_batch") || $0.contains("files/upload") }
         let firstCopy = log.firstIndex { $0.contains("copy_batch_v2") }
-        #expect(firstSidecarWrite != nil && firstCopy != nil, "fixture: どちらも起きていない")
-        if let a = firstSidecarWrite, let b = firstCopy {
-            #expect(a < b, "サイドカーの更新がコピーの後回しになっている")
+        #expect(firstAnalysisWrite != nil && firstCopy != nil, "fixture: どちらも起きていない")
+        if let a = firstAnalysisWrite, let b = firstCopy {
+            #expect(a < b, "解析データの更新がコピーの後回しになっている")
         }
     }
 
     @Test("受信側もページを跨いで全シャードを拾う")
     func receiverFollowsPages() async {
-        UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedSidecarRevs)
-        defer { UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedSidecarRevs) }
+        UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
+        defer { UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs) }
         let server = FakeDropboxServer()
         await server.setPageSize(5)
         let root = "/family/x/share"
         await server.seed(root, hash: "", isFolder: true)
         for i in 0..<12 {
             await server.seed("\(root)/set/img\(i).jpg", hash: hash(i))
-            let file = ShareSidecar.File(versions: ShareSidecar.Versions(tag: 1),
-                                         entries: [hash(i): ShareSidecar.Entry(tags: ["x"])])
+            let file = ShareAnalysisData.File(versions: ShareAnalysisData.Versions(tag: 1),
+                                         entries: [hash(i): ShareAnalysisData.Entry(tags: ["x"])])
             await server.upload(path: "\(root)/set/.mosaic-share/shard-\(String(format: "%02x", i)).json",
-                                data: ShareSidecar.encode(file)!)
+                                data: ShareAnalysisData.encode(file)!)
         }
-        let fetched = await ShareSidecarFetch(httpClient: server).fetchUpdated(roots: [root], token: "t")
+        let fetched = await ShareAnalysisFetch(httpClient: server).fetchUpdated(roots: [root], token: "t")
         #expect(fetched.count == 12, "ページの続きにあるシャードを取りこぼした")
     }
 }

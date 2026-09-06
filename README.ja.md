@@ -122,7 +122,7 @@ MosaicPhotos (app)
 ├── DropboxKit        Dropbox の UI 層（DropboxCore に依存）
 ├── BackupKit         端末→Dropbox バックアップ：検証つきアップロード（content hash）・夜間自動・
 │                     端末別フォルダ・オフロード台帳＋プレビュー／
-│                     クラウド共有（共有セット・サーバーサイドコピー・解析サイドカー）
+│                     クラウド共有（共有セット・サーバーサイドコピー・解析データ）
 ├── PhotosFeatureKit  ローカル＋Dropbox の統合（MergedPhotoStore）と場所グルーピング
 ├── FaceCore          顔認識・ピープル（検出ゲート・クラスタリング・ピープルグループ）
 ├── AutoAlbumCore     自動アルバム＋オンデバイス AI ロジック（SwiftUI 非依存）：旅行・フォルダ名アルバム・

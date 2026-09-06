@@ -110,7 +110,7 @@ actor TagStore {
 
     /// バッチ記録（save は 1 回）。既存レコードは更新（版を上げて再タグした場合も上書き）。
     /// - Returns: **永続化できたか**。取り込み側は成功したときだけ「取り込み済み」を記録する
-    ///   （握り潰すと、欠けたまま同じサイドカーを二度と取りに行かない・レビュー指摘）。
+    ///   （握り潰すと、欠けたまま同じ解析データを二度と取りに行かない・レビュー指摘）。
     @discardableResult
     func recordTags(_ batch: [(refKey: String, info: PhotoSenseInfo)]) -> Bool {
         for entry in batch {

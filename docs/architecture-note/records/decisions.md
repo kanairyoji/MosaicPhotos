@@ -56,31 +56,31 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
-## ADR-183 共有の解析サイドカーをシャード化し、反映は共有ルートの再帰一覧 1 回で・作成元へ自動追従
+## ADR-183 共有の解析データ（旧称サイドカー）をシャード化し、反映は共有ルートの再帰一覧 1 回で・作成元へ自動追従
 - 状態: 採用（ADR-112 / ADR-166 の実装を置換）
 - 文脈: 共有アルバム（人物・AI アルバム）は写真が増減する。反映は `copy_batch`（サーバー側コピー・
-  転送なし）と `delete_batch` で軽いが、**解析サイドカーが 1 セット 1 ファイル**（CLIP 1.4KB＋顔 1.4KB/顔）
+  転送なし）と `delete_batch` で軽いが、**解析データが 1 セット 1 ファイル**（CLIP 1.4KB＋顔 1.4KB/顔）
   で、12,941 枚のセットは 20〜30MB。写真が 1 枚増減するたびに送信側は丸ごと作り直して上げ、受信側は
   丸ごと落として全部デコードしていた（既取り込み分はデコード後に捨てる）。さらに反映のたびにセットごとに
-  `create_folder`＋`list_folder`＋サイドカー実在確認の `list_folder`（セット数 × 3 往復）、受信側も
+  `create_folder`＋`list_folder`＋解析データ実在確認の `list_folder`（セット数 × 3 往復）、受信側も
   セットごとの `list_folder`（N+1）。作成元（人物・AI アルバム）が育っても共有セットは手動更新だった。
 - 決定:
   (A) **シャード化**: `<セット>/.mosaic-share/shard-<xx>.json`（content_hash 先頭 2 桁・空は置かない）。
   写真ごとの解析結果は不変なので、触れたシャードだけが動く。送信側は**状態を持たない**——共有ルートの
   一覧にある各シャードの `content_hash` と、手元で組んだシャードの `content_hash`（同じ計算＝
   `DropboxContentHash`・決定的エンコード）を比べて「無い／違う → 上げる、余る → 消す」
-  （`ShareSidecarPlanning.plan`）。消されたサイドカーの復元（ADR-166）は自然に含まれる。
+  （`ShareAnalysisPlanning.plan`）。消された解析データの復元（ADR-166）は自然に含まれる。
   旧 `analysis-v1.json` は受信側が読み続け、送信側はシャードを置いたら消す。
-  (B) **一覧は 1 回**: 送信側は共有ルートの `list_folder(recursive)` 1 回で全セットの写真・サイドカーの
+  (B) **一覧は 1 回**: 送信側は共有ルートの `list_folder(recursive)` 1 回で全セットの写真・解析データの
   実在を得る（`RemoteShareIndex`）。セットの `create_folder` は一覧に無いときだけ。受信側も家族フォルダごとに
   再帰 1 回で全シャードの rev を得て、変わったものだけ落とす。rev の記録は一覧に無いパスを捨てる
   （旧「500 件超で末尾 300 件」はシャード化で取り込み済みの記録まで捨てて再取得を誘発する）。
   (C) **作成元への自動追従**: 処理枠の共有反映の直前に `refreshAllFromSource()`（作成元が現存する
   セットだけ・孤児は触らない）。反映の差分はシャード単位なので夜間に回しても軽い。
 - 結果: 増減 1 枚あたりの転送は 25MB → 1 シャード（数十〜数百 KB）。往復はセット数 × 3 → 2〜3。
-  受信側の再デコードは変わったシャードだけ。送信側のサイドカー状態（`sidecarChecksum`）は不要になった
+  受信側の再デコードは変わったシャードだけ。送信側の解析データ状態（`analysis dataChecksum`）は不要になった
   （モデルの列は残置）。テスト: シャード分割・差分計画・決定的エンコード・受信側の 1 回一覧と差分取得・
-  旧形式の読み取り・作成元追従（`ShareSidecarShardTests`）。既存の復元テスト（ADR-166）はそのまま通る。
+  旧形式の読み取り・作成元追従（`ShareAnalysisShardTests`）。既存の復元テスト（ADR-166）はそのまま通る。
   本物の Dropbox には接続していない。代わりに `FakeDropboxServer` を**本物に近づけた**——
   `list_folder` のページング（`has_more` → `list_folder/continue`・ページ幅を設定可）、再帰一覧に
   中間フォルダのエントリを含める（本物は必ず含む）、アップロードの `content_hash` は本物と同じ計算
@@ -88,8 +88,8 @@
   コピーもアップロードも無く一覧は 1 回」、1 枚外して「空になったシャードだけ消え他は触らない」、
   受信側がページを跨いで全シャードを拾う、を固定（`ShareLargeScaleTests`）。ページング打ち切りと
   「常に上げる」の変異で落ちることを確認。
-- 関連: `ShareSidecar.swift`（`shards` / `shardPath`）/ `ShareSyncEngine+Sync.swift`
-  （`RemoteShareIndex` / `ShareSidecarPlanning` / `updateSidecar`）/ `ShareSidecarFetch.swift` /
+- 関連: `ShareAnalysisData.swift`（`shards` / `shardPath`）/ `ShareSyncEngine+Sync.swift`
+  （`RemoteShareIndex` / `ShareAnalysisPlanning` / `updateAnalysisData`）/ `ShareAnalysisFetch.swift` /
   `ShareSyncEngine.refreshAllFromSource` / `DropboxShareCopier.listFolder(recursive:)` /
   `HeavyWorkScheduler` / ADR-112 / ADR-166。
 
@@ -391,10 +391,10 @@
 
 ## ADR-167 人物名も共有する（既定 ON・設定で切れる／受信側は「提案」として扱う）
 - 状態: 採用
-- 文脈: 共有サイドカー（ADR-112）は顔（bbox・identity 埋め込み・品質・笑顔・撮影日）を運ぶが、
+- 文脈: 共有解析データ（ADR-112）は顔（bbox・identity 埋め込み・品質・笑顔・撮影日）を運ぶが、
   **人物名は運んでいなかった**。そのため受信側では「同じ人だ」というまとまりはできるのに、
   名前は「Person 42」のままで、家族全員がそれぞれ名前を付け直す必要があった。
-- 決定: サイドカーの `Face` に `n`（名前）を足し、**既定で共有する**。
+- 決定: 解析データの `Face` に `n`（名前）を足し、**既定で共有する**。
   設定「人物名も共有する」（`shareNamesEnabled`・共有を提供する画面）で送らない選択もできる
   ——名前は個人情報で、送らない選択ができること自体に意味がある。
   受信側は名前を**提案**として扱う: (1) **既に名前がある人物は上書きしない**
@@ -403,20 +403,20 @@
   空白を落とし 64 文字で切り詰める。
 - 結果: 家族の端末でも同じ人に名前が付いた状態になる。名前を送らない設定でも顔は共有され、
   グルーピングは従来どおり成立する（切り分けが独立している）。
-- 関連: `ShareSidecar.swift` / `ShareSettingsKeys.swift` / `FaceStore+ShareExport.swift`
+- 関連: `ShareAnalysisData.swift` / `ShareSettingsKeys.swift` / `FaceStore+ShareExport.swift`
   （`applySharedNames`）/ `ShareNameTests` / `SharedNameImportTests` / ADR-112。
 
-## ADR-166 共有と実体の整合を、開かなくても保つ（夜間反映・サイドカー復元・週 1 照合）
+## ADR-166 共有と実体の整合を、開かなくても保つ（夜間反映・解析データ復元・週 1 照合）
 - 状態: 採用
 - 文脈: 実装状況を点検したところ、共有まわりに 3 つの穴があった。
-  (1) **サイドカーが消えても復元されない**——アップロードは「内容が変わったか」だけで判定して
+  (1) **解析データが消えても復元されない**——アップロードは「内容が変わったか」だけで判定して
   おり、実在を確認していなかった。写真は自己修復されるのに解析結果だけ取り残される。
   (2) **バックアップの実体が消えても気づけない**——`reconcileWithDropbox()` は
   Developer Options からの手動のみ。共有は「バックアップ済みのコピーを複製」する仕組みなので、
   実体が消えると共有の自己修復もコピー元が無くて失敗し続ける。
   (3) **反映のきっかけが弱い**——「起動 25 秒後」「バックアップ完走後」「手動」だけで、
   アプリを開かない日が続くと反映も自己修復も走らない。
-- 決定: (1) サイドカーは**内容が同じときだけ実在確認**して、無ければ復元する
+- 決定: (1) 解析データは**内容が同じときだけ実在確認**して、無ければ復元する
   （list_folder 1 回・変化があればどのみち上げるので追加コストは最小）。
   (2) `reconcileIfDueWeekly()` を足し、夜間ウィンドウから**週 1 回**照合する。
   時刻は**始める前**に記録して、失敗続きでも毎晩の全件一覧を避ける。
@@ -1529,7 +1529,7 @@
 - 関連: `FaceCore/Faces/PeopleGroups.swift`・`MosaicPhotos/Home/PeopleGroupViews.swift`・
   `PeopleGroupsTests`。ADR-61（人物束ね）/ ADR-95（遅延取得）/ ADR-112（クラウド共有）。
 
-## ADR-112 家族共有＝「バックアップの射影」＋解析サイドカー同梱
+## ADR-112 家族共有＝「バックアップの射影」＋解析データ同梱
 - 状態: 採用
 - 文脈: 全量バックアップは維持したまま、選んだ写真（子供・旅行）だけを家族に共有したい。
   家族も本アプリを使う前提で、送信側で解析済みのベクトル・タグ・顔も引き継ぎ、受信側の
@@ -1542,7 +1542,7 @@
      `files/copy_batch_v2` でコピーし、正本（バックアップ・原本）には一切触れない。
      セット削除・単枚解除はユーザー操作起点のみ（自動削除しない）。共有フォルダの家族への
      共有操作自体は Dropbox 側でユーザーが行う（sharing API 権限を持たない）。
-  2. **解析はサイドカーで同梱**。`<セット>/.mosaic-share/analysis-v1.json` に、共有した写真
+  2. **解析は解析データで同梱**。`<セット>/.mosaic-share/analysis-v1.json` に、共有した写真
      **だけ**の解析（Vision タグ・OCR・人数・美的・CLIP 埋め込み・顔シグナル）を載せる。
      キーは **content_hash**（送信者と受信者で refKey が異なるため、パスにも refKey にも
      依存しない結合キー）。人物名・地名・バックアップ台帳は載せない。
@@ -1550,7 +1550,7 @@
      取り込みは既存レコードをスキップ（自前解析が常に優先）し、夜間タガーは取り込み済みを
      「処理済み」に採用してスキップ（`adoptImportedEmbeddings`）。顔は `recordScans` の
      逐次クラスタリングで受信側の人物へ自然に合流する（共有された子供の写真が受信側の
-     命名済み人物アルバムに入る）。サイドカーは外部入力として防御的検証
+     命名済み人物アルバムに入る）。解析データは外部入力として防御的検証
      （サイズ/件数/次元/有限性の上限・不正エントリは黙って破棄）を通す。
   4. **ローカル写真はバックアップ経由・クラウド写真は原本から直接コピー**。未バックアップは
      waitingBackup で保留し、バックアップ完走後に自動反映（バックアップ隊列に割り込まない）。
@@ -1564,8 +1564,8 @@
   共有分の容量は二重計上（許容済み）。1 枚が複数セットに入るとコピーも複数（許容済み）。
   セット名変更は非対応（作り直しで代替・フェーズ 2 で move 対応）。アルバム共有は
   スナップショット方式（自動追従なし・フェーズ 2 でレビュー承認式を検討）。
-- 関連: `BackupKit/Share/*`（ShareSyncEngine / SharePlanning / ShareSidecar /
-  DropboxShareCopier / ShareSidecarFetch / ShareHubView）、`AutoAlbumEngine+Share` /
+- 関連: `BackupKit/Share/*`（ShareSyncEngine / SharePlanning / ShareAnalysisData /
+  DropboxShareCopier / ShareAnalysisFetch / ShareHubView）、`AutoAlbumEngine+Share` /
   `PeopleEngine+Share` / `PhotoTagger`（採用スキップ）、アプリ `ShareSupport.swift`。
   テスト: `SharePureLogicTests` / `ShareCopierTests`（macOS）。
 - 追記（複数ユーザー共有・実フィードバック）: 共有レイアウトに**端末フォルダを挟む**
@@ -1595,7 +1595,7 @@
   共有し直しても再利用経路に入り、フォルダ名は変わらない）。作り直しを促すと写真を
   コピーし直すことになるため、**反映のたびにフォルダ名を検査し、必要なら
   `files/move_v2` で改名する**（サーバーサイド move ＝実体の転送なし・配下ごと移動）。
-  記録側は `folderName` と各アイテムの `sharedPath` 接頭辞を張り替え、サイドカーの
+  記録側は `folderName` と各アイテムの `sharedPath` 接頭辞を張り替え、解析データの
   チェックサムは捨てて作り直す。**改名に失敗した回は記録を進めない**——記録だけ先に
   進めるとクラウド上の実体を見失い、全部コピーし直す事故になる（次回の反映で再試行）。
   移動元が無い（まだ 1 度も反映していない）場合は記録だけ直す。
