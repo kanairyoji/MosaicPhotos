@@ -56,7 +56,8 @@ struct MemoryDebugSection: View {
     private var cacheSection: some View {
         Section {
             LabeledContent("ローカルのサムネ（メモリ上限）", value: localMemoryLimitText)
-            LabeledContent("ローカルのサムネ（ディスク上限）", value: "\(diskLimitMB) MB")
+            LabeledContent("ローカルのサムネ（ディスク上限）",
+                           value: diskLimitMB > 0 ? "\(diskLimitMB) MB" : "Auto (\(formattedBytes(ThumbnailDiskBudget.autoBytes())))")
             LabeledContent("ローカルのサムネ（ディスク使用量）", value: formattedBytes(localDiskUsage))
             LabeledContent("Dropbox のサムネ（メモリ）",
                            value: "\(DropboxDebugConstants.thumbnailMemoryCostLimitMB) MB / "
