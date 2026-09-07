@@ -118,6 +118,9 @@ public protocol FacePerceptionProvider: Sendable {
     /// 定数でなく設定駆動にするのは、**モデルを再生成せずにアプリだけ更新した**場合に
     /// 誤って旧モデルのまま全再スキャンが走るのを防ぐため（版はモデルと一緒に届く）。
     var pipelineVersion: Int { get }
+    /// 同梱モデルの ID（face_config.json の `model`・ADR-186）。`ModelGeneration.legacyFace` と違えば
+    /// `PeopleEngine` が影の世代（別コンテナ）を育て、網羅が閾値に達したら切り替える。
+    var modelID: String { get }
     /// 類似度スケール依存の定数一式（ADR-70）。同梱モデルの宣言（face_config.json の tuning）。
     var tuning: FaceTuning { get }
     func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]]
@@ -135,4 +138,10 @@ public extension FacePerceptionProvider {
     var tuning: FaceTuning { .facenet }
     /// 既定は無処理（先読みの必要がないローカル専用実装向け）。
     func warmUp(refKeys: [String]) {}
+}
+
+
+public extension FacePerceptionProvider {
+    /// 既定＝既存データの世代（ID を宣言しない実装・テスト用スタブ）。
+    var modelID: String { ModelGeneration.legacyFace }
 }

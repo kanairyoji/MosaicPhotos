@@ -36,10 +36,20 @@ public func makeResilientModelContainer(
     log: (String) -> Void
 ) -> ModelContainer {
     let config = ModelConfiguration(name, schema: schema)
+    // ADR-186: 台帳はアプリの版が変わった最初の起動で、開く前に控えを取る（マイグレーション失敗の保険）。
+    if policy == .ledger { StoreSnapshot.takeIfBuildChanged(name: name, storeURL: config.url) }
     do {
         return try ModelContainer(for: schema, configurations: [config])
     } catch {
         log(openFailedMessage + " — \(error)")
+        // ADR-186: 台帳なら、退避する前に**控えから戻して 1 回だけ**開き直す
+        //（スキーマ変更のマイグレーション失敗で学習結果を失わない）。
+        if policy == .ledger, !StoreRecovery.isTransient(error),
+           StoreSnapshot.restore(name: name, storeURL: config.url),
+           let container = try? ModelContainer(for: schema, configurations: [config]) {
+            log("ModelContainer '\(name)': opened from snapshot after a failed open.")
+            return container
+        }
         // ⚠️ **失敗の理由を見てから**手を決める。理由を見ずに削除すると、容量不足や
         // ファイル保護（端末ロック中）のような一時的な失敗でも台帳を失う（レビュー指摘）。
         switch StoreRecovery.action(for: error, policy: policy) {

@@ -40,6 +40,7 @@ struct AIAnalysisStatusView: View {
     var body: some View {
         Group {
             statusSection
+            if staleEmbeddings > 0 || faceMigration != nil { modelUpdateSection }
             semanticSearchSection
             sceneTagsSection
             if facesAvailable { peopleSection }
@@ -256,10 +257,34 @@ struct AIAnalysisStatusView: View {
             let pending = await people.pendingScanCount(candidateRefKeys: candidates)
             faceCandidates = candidates.count
             faceScanned = max(0, candidates.count - pending)
+            faceMigration = await people.faceModelMigrationProgress(candidateRefKeys: candidates)
         }
+        staleEmbeddings = await engine.pendingEmbeddingMigration()
     }
 
     @State private var cachedCandidates: (keys: [String], at: Date)?
+    /// モデル更新の移行（ADR-186）: 旧モデルで作った埋め込みの残り／顔の影の世代の進み具合。
+    @State private var staleEmbeddings = 0
+    @State private var faceMigration: (scanned: Int, total: Int)?
+
+    // MARK: - モデル更新（ADR-186）
+
+    /// モデルが更新された後、索引を**少しずつ**新モデルへ移している間だけ出す。
+    /// DB を丸ごと作り直さないので、この間も検索・ピープルは従来の結果で使える。
+    private var modelUpdateSection: some View {
+        Section {
+            if staleEmbeddings > 0 {
+                LabeledContent(L("Search index"), value: L("\(staleEmbeddings) left"))
+            }
+            if let m = faceMigration {
+                progressRow(done: m.scanned, total: m.total, running: people.isScanning)
+            }
+        } header: {
+            Text("Model Update")
+        } footer: {
+            Text("A newer recognition model is included in this version. Photos are re-analyzed gradually, newest first, while search and People keep working with the previous results. People switches to the new model once most photos are done; names are carried over.")
+        }
+    }
 
     private func percentText(done: Int, total: Int) -> String {
         guard total > 0 else { return "—" }

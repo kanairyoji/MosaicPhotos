@@ -4474,6 +4474,36 @@
           }
         }
       }
+    },
+    "Search index": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索の索引"
+          }
+        }
+      }
+    },
+    "Model Update": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルの更新"
+          }
+        }
+      }
+    },
+    "A newer recognition model is included in this version. Photos are re-analyzed gradually, newest first, while search and People keep working with the previous results. People switches to the new model once most photos are done; names are carried over.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このバージョンには新しい認識モデルが含まれています。写真は新しいものから順に少しずつ解析し直され、その間も検索とピープルは従来の結果で使えます。ピープルは大半の写真が終わった時点で新しいモデルに切り替わり、名前は引き継がれます。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
