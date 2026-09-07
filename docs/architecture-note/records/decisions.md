@@ -56,6 +56,45 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-186 モデル更新は索引を「少しずつ」新モデルへ移す（行ごとの版・顔は影の世代・台帳は消さない）
+- 状態: 採用
+- 文脈: 学習済みモデル（CLIP・顔）は今後も更新される。従来はモデル更新＝版番号を上げて**索引を一斉に
+  作り直す**（CLIP は全写真を未埋め込みに戻す＝検索が空になる、顔は全消去→再スキャン＝ピープルが痩せる）。
+  8 万枚の再解析には数週間かかり、その間ユーザーは劣化を我慢する。実フィードバック:
+  「写真を少しずつ順番に新しいモデルで解析していけるように」「DB 構造が変わって解析データが
+  無くなったら嫌」。
+- 決定: 索引の性質で 3 通りに分ける（`ModelGeneration` の doc に一覧）。
+  1. **シーンタグ**: 行ごとの版（既存・`PhotoTagRecord.version`）。変更なし。
+  2. **CLIP 埋め込み**: 行ごとに `PhotoEmbedding.modelID`（optional・nil＝列導入前＝現行）。
+     `ModelGeneration.clip` を変えると、未埋め込みが尽きた後に**旧モデルの行を新しい写真から上書き**
+     （`staleEmbeddingRefKeys`・`PhotoTagger`）。検索は現行モデルの行だけを使う（空間を混ぜない）。
+     旧テキストタワーを 1 リリース同梱して未移行の行も当てる二重空間検索は、検索側の対応
+     （空間ごとのクエリ埋め込み）とセットで最初のモデル更新時に実装する（`retainedClipTextTowers` の注記）。
+     `perceptionVersion` は知覚ロジックの版として残すが、モデル更新では上げない。
+  3. **顔**: クラスタという全体構造を持つので行の版では混ぜられない。同梱モデルの ID
+     （face_config.json の `model`＝`FacePerceptionProvider.modelID`）が現行世代（UserDefaults
+     `faces.activeModel`・既定 "auraface-v1-r100"＝コンテナ "FacesV1"）と違えば、**影の世代**
+     `Faces-<id>` を別コンテナで育てる（`PeopleEngine.shadowStore`・スキャンは影へ・表示は旧のまま）。
+     網羅が候補の 90% に達したら `promoteShadow`: 名前は写真の重なりで移し（既存の持ち越し・ADR-51/169）、
+     グループは名前で結び直し、現行世代を差し替える。**旧コンテナは消さない**（1 リリース残す）。
+     影を育てている間は版上げの全再スキャン（`migrateScanVersionIfNeeded`）を止める。
+- 台帳を消さないための約束（ユーザーの学習結果＝人物名・束ね・修正）:
+  - スキーマ変更は **optional 列の追加だけ**（軽量マイグレーション）。**コンテナ名の採番はしない**
+    （採番＝旧ストアの破棄。`AutoAlbumV10` の慣習はキャッシュ向けの逃げ道で、台帳には使わない）。
+  - FacesV1 は `.ledger` 方針に変更（壊れても削除せず退避）。
+  - `StoreSnapshot`: 台帳はアプリの版が変わった最初の起動で**開く前に控え**を取り、開けなければ控えから
+    戻して 1 回だけ再試行（`makeResilientModelContainer`）。
+- 持ち越せないもの: 埋め込みで記録した修正（`FaceCorrection` の負例・確認）。空間が違うので意味を持たず、
+  新世代には効かない（同じ誤りが再び出ることがある）。今後の修正記録は写真の組を併記する方向。
+- 結果: モデル更新の日に検索が空になったり、ピープルが痩せたりしない。AI 解析画面に「モデルの更新」節
+  （索引の残り・顔の影の世代の進み具合）。テスト: 埋め込みの移行（新しい順・legacy 扱い・上書き・
+  検索除外）・影の世代（旧に書かない・網羅不足なら切り替えない・切り替えで名前とグループが移り旧は残る）・
+  控えの取得と復元。
+- 関連: `PerceptionCore/ModelGeneration.swift`（方針の一次記述）/ `PhotoEmbedding.modelID` /
+  `AutoAlbumStore.staleEmbeddingRefKeys` / `PhotoTagger` / `FaceStore.containerName(for:)` /
+  `PeopleEngine+Generation.swift` / `MosaicSupport/StoreSnapshot.swift` / `ResilientModelContainer` /
+  `EmbeddingModelMigrationTests` / `FaceModelGenerationTests` / `StoreSnapshotTests` / ADR-31 / ADR-51 / ADR-70 / ADR-169。
+
 ## ADR-185 ディスクキャッシュは「1 つの予算を全キャッシュで共有し、価値の低い順に捨てる」（総容量の 10%・変更可）
 - 状態: 採用（ADR-184 を置換）
 - 文脈: キャッシュが 5 つ（端末サムネ・Dropbox サムネ・Dropbox 本体画像・顔アバター・spool）あり、

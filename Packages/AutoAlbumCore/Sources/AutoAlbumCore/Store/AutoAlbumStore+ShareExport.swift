@@ -1,3 +1,4 @@
+import PerceptionCore
 import Foundation
 import MosaicSupport
 import SwiftData
@@ -58,7 +59,8 @@ extension AutoAlbumStore {
             var embDesc = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == key })
             embDesc.fetchLimit = 1
             guard (try? modelContext.fetch(embDesc).first) == nil else { continue }
-            modelContext.insert(PhotoEmbedding(refKey: key, vector: entry.vectorHalf))
+            // 共有で受け取った埋め込みは送信側の版（`sharePerceptionVersion` 一致を確認済み）＝現行。
+            modelContext.insert(PhotoEmbedding(refKey: key, vector: entry.vectorHalf, modelID: ModelGeneration.clip))
             added += 1
             var enrDesc = FetchDescriptor<PhotoEnrichment>(predicate: #Predicate { $0.refKey == key })
             enrDesc.fetchLimit = 1

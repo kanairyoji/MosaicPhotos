@@ -97,6 +97,20 @@ final class PhotoTagger {
                         Self.log.info("embed: adopted \(adopted.count) imported embeddings")
                         page.removeAll { adopted.contains($0) }
                     }
+                    // ADR-186: 未埋め込みが尽きたら、**旧モデルで作った埋め込みを新しい写真から上書き**する
+                    //（モデル更新の移行）。DB を丸ごと作り直さず、少しずつ新しい空間へ移す。
+                    // 回線NG のときはクラウド分を含まない（未埋め込みと同じ扱い）。
+                    if page.isEmpty, netOK {
+                        let stale = await store.staleEmbeddingRefKeys(limit: max(batchSize, 512))
+                        if !stale.isEmpty {
+                            Self.log.info("embed: migrating \(stale.count) embedding(s) to \(ModelGeneration.clip)")
+                            page = stale
+                        }
+                    } else if page.isEmpty {
+                        let stale = await store.staleEmbeddingRefKeys(limit: max(batchSize, 512))
+                            .filter { $0.hasPrefix("L-") }
+                        if !stale.isEmpty { page = stale }
+                    }
                     keyQueue = AnalysisOrder.ordered(page, favorites: favorites)
                 }
                 let refKeys = Array(keyQueue.prefix(batchSize))

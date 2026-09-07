@@ -49,6 +49,11 @@ graph TD
         検索文→<code>QuerySpec</code>・英訳・<strong>言い換えプローブ（最大 4）</strong>の LLM 解釈は<strong>アルバム作成/編集時に 1 回だけ</strong>実行して <code>AIAlbumInterpretationStore</code>（JSONFileStore・版管理）へ永続化する。起動時・写真追加時に LLM は走らない。意味採点は主フレーズ＋プローブの <strong>max-over-probes</strong>＝言い換え表現の取りこぼしを回収（ハーネス実測で言い換え再現率 +17〜18pt）。ただし<strong>除外つきアルバムではプローブを対比に使わない</strong>（肯定の最大値が底上げされ除外が素通りする回帰の防止）。再評価は増分（新規埋め込み分だけ採点）＋ドリフト検知のフル再評価。
       </div>
 
+      <div class="box note">
+        <span class="box-h">モデル更新のしかた（ADR-186）</span>
+        モデルを差し替えても索引は<strong>丸ごと作り直さない</strong>。CLIP は <code>PhotoEmbedding.modelID</code>（行ごと）で旧モデルの行を新しい写真から上書き（検索は現行モデルの行だけ）、顔は同梱モデルの ID（<code>face_config.json</code> の <code>model</code>）が現行世代と違えば別コンテナ <code>Faces-&lt;id&gt;</code> の<strong>影の世代</strong>を育て、網羅 90% で名前・グループを移して切り替える（旧コンテナは 1 リリース残す）。台帳は optional 列の追加だけで進め、アプリの版が変わった最初の起動では開く前に控えを取る（<code>StoreSnapshot</code>）。手順の一次記述は <a class="srclink" data-path="Packages/PerceptionCore/Sources/PerceptionCore/ModelGeneration.swift">ModelGeneration.swift</a>。
+      </div>
+
       <h2>採用モデル（すべて実測で選定・詳細は model-evaluations.md）</h2>
       <table>
         <tr><th>役割</th><th>採用</th><th>サイズ</th><th>選定の根拠（実測）</th></tr>

@@ -441,6 +441,11 @@ extension AutoAlbumEngine {
     /// 画像解析の進捗スナップショット（ユーザー向け「AI 解析の状況」画面用）。
     /// `total`（取り込み済み写真数＝分母）と、各パスの完了数を 1 回で取得する。
     /// 完了時刻は `AnalysisActivity.lastActivity(_:)` で別途読む（UserDefaults・同期）。
+    /// モデル更新の移行で残っている埋め込みの数（ADR-186・AI 解析画面の表示用）。0 なら移行なし。
+    public func pendingEmbeddingMigration() async -> Int {
+        await store.staleEmbeddingCount()
+    }
+
     public func analysisProgress() async -> AnalysisProgress {
         async let total = store.enrichmentCount()
         async let embedded = store.embeddedCount()

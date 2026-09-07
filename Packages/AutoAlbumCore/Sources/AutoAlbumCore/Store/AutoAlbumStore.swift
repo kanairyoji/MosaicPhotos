@@ -212,6 +212,18 @@ actor AutoAlbumStore {
     /// ⚠️ 並びは `.lexical`（ADR-178）。`>` と同じ順序でないと継ぎ目で行が飛ぶ
     /// （実測: 160 件中 100 件しか読めなかった＝**意味検索から写真が黙って消える**）。
     func enrichmentVectorPage(after cursor: String?, limit: Int) -> [(refKey: String, clipVector: Data)] {
+        // ⚠️ 空間の違うベクトルは混ぜない（ADR-186）。いまは**現行モデルの行だけ**を返す。
+        // 旧テキストタワーを同梱して未移行の行も当てる（`ModelGeneration.retainedClipTextTowers`）には、
+        // 検索側がクエリを空間ごとに埋め込む必要がある（`enrichmentVectorPageWithModel` を使い、
+        // `AIAlbumSearcher` に modelID → クエリベクトルの辞書を渡す）。最初のモデル更新時に実装する。
+        enrichmentVectorPageWithModel(after: cursor, limit: limit)
+            .filter { ModelGeneration.isCurrentClip($0.modelID) }
+            .map { (refKey: $0.refKey, clipVector: $0.clipVector) }
+    }
+
+    /// モデル ID つきのページ（旧テキストタワーを残した二重空間検索の入口・ADR-186）。
+    func enrichmentVectorPageWithModel(after cursor: String?, limit: Int)
+        -> [(refKey: String, clipVector: Data, modelID: String?)] {
         var descriptor: FetchDescriptor<PhotoEmbedding>
         if let cursor {
             descriptor = FetchDescriptor<PhotoEmbedding>(
@@ -224,8 +236,50 @@ actor AutoAlbumStore {
         let records = (try? modelContext.fetch(descriptor)) ?? []
         return records.compactMap { rec in
             guard let floats = ClipMath.decodeHalf(rec.vector) else { return nil }
-            return (refKey: rec.refKey, clipVector: ClipMath.encode(floats))
+            return (refKey: rec.refKey, clipVector: ClipMath.encode(floats), modelID: rec.modelID)
         }
+    }
+
+    /// テスト用: 任意のモデル ID で埋め込み行を置く（移行のテストは「旧モデルの行」が要る）。
+    func insertEmbeddingForTesting(refKey: String, vector: Data, modelID: String?) {
+        let d = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == refKey })
+        if let existing = try? modelContext.fetch(d).first {
+            existing.vector = vector; existing.modelID = modelID
+        } else {
+            modelContext.insert(PhotoEmbedding(refKey: refKey, vector: vector, modelID: modelID))
+        }
+        try? modelContext.save()
+    }
+
+    // MARK: - モデル更新の移行（ADR-186）
+
+    /// 現行モデル以外で作られた埋め込みの数（AI 解析画面の「モデル更新の残り」）。
+    func staleEmbeddingCount() -> Int {
+        let current = ModelGeneration.clip
+        let legacyIsCurrent = ModelGeneration.legacyClip == current
+        let d = legacyIsCurrent
+            ? FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.modelID != nil && $0.modelID != current })
+            : FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.modelID == nil || $0.modelID != current })
+        return (try? modelContext.fetchCount(d)) ?? 0
+    }
+
+    /// 現行モデル以外で作られた埋め込みの refKey を**新しい写真から**返す（少しずつ上書きする）。
+    /// 埋め込みの表には撮影日が無いので、台帳（PhotoEnrichment）の並びで順序を付ける。
+    func staleEmbeddingRefKeys(limit: Int) -> [String] {
+        let current = ModelGeneration.clip
+        let legacyIsCurrent = ModelGeneration.legacyClip == current
+        var d = legacyIsCurrent
+            ? FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.modelID != nil && $0.modelID != current })
+            : FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.modelID == nil || $0.modelID != current })
+        d.propertiesToFetch = [\.refKey]
+        let stale = Set(((try? modelContext.fetch(d)) ?? []).map(\.refKey))
+        guard !stale.isEmpty else { return [] }
+        var out: [String] = []
+        for key in enrichedRefKeysNewestFirst() where stale.contains(key) {
+            out.append(key)
+            if out.count >= limit { break }
+        }
+        return out
     }
 
     /// 増分評価用：指定 refKey 群の埋め込みだけを取り出す（fp32 復元済み）。
@@ -359,8 +413,9 @@ actor AutoAlbumStore {
             let embDesc = FetchDescriptor<PhotoEmbedding>(predicate: #Predicate { $0.refKey == refKey })
             if let existing = try? modelContext.fetch(embDesc).first {
                 existing.vector = half
+                existing.modelID = ModelGeneration.clip   // 旧世代の行を上書き＝移行（ADR-186）
             } else {
-                modelContext.insert(PhotoEmbedding(refKey: refKey, vector: half))
+                modelContext.insert(PhotoEmbedding(refKey: refKey, vector: half, modelID: ModelGeneration.clip))
             }
         }
         try? modelContext.save()

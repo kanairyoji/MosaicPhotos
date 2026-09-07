@@ -16,9 +16,15 @@ final class PhotoEmbedding {
     @Attribute(.unique) var refKey: String
     /// Float16 little-endian でパックした 512 次元ベクトル。`ClipMath.encodeHalf` / `decodeHalf` で変換。
     var vector: Data
+    /// このベクトルを作った CLIP モデルの ID（`ModelGeneration.clip`・ADR-186）。
+    /// ⚠️ **optional で後から足した列**（軽量マイグレーション＝既存データを保つ）。nil は列の導入前に
+    /// 作られた行で `ModelGeneration.legacyClip` とみなす。モデル更新時は行を少しずつ上書きしていく
+    /// （DB を丸ごと作り直さない）。空間が違うベクトルは検索で混ぜない（`isSearchableClip`）。
+    var modelID: String?
 
-    init(refKey: String, vector: Data) {
+    init(refKey: String, vector: Data, modelID: String? = ModelGeneration.clip) {
         self.refKey = refKey
         self.vector = vector
+        self.modelID = modelID
     }
 }

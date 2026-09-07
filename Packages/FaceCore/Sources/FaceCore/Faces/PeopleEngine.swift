@@ -29,9 +29,16 @@ public final class PeopleEngine {
     /// 未スキャン残り枚数（おおよそ）。
     public private(set) var remaining = 0
 
-    @ObservationIgnored let store: FaceStore   // internal: 同モジュールの機能別 extension（PersonCleanup 等）が使う
-    @ObservationIgnored private let tagger: FaceTagger
-    @ObservationIgnored private let faceProvider: FacePerceptionProvider?
+    /// 表示・編集に使う**現行世代**の台帳。影の世代の切り替え（`promoteShadowIfReady`）で差し替わる（ADR-186）。
+    @ObservationIgnored var store: FaceStore   // internal: 同モジュールの機能別 extension（PersonCleanup 等）が使う
+    @ObservationIgnored var tagger: FaceTagger
+    @ObservationIgnored let faceProvider: FacePerceptionProvider?
+    /// **影の世代**（ADR-186）: 同梱モデルの ID が現行世代と違うとき、新モデルで別コンテナを育てる。
+    /// スキャンはこちらへ、表示は `store`（旧世代）のまま。網羅が閾値に達したら `promoteShadowIfReady` で切り替える。
+    @ObservationIgnored var shadowStore: FaceStore?
+    /// 影の世代を切り替える網羅の閾値（候補に対するスキャン済みの割合）。
+    static let shadowPromotionCoverage = 0.9
+    static let activeFaceModelKey = "faces.activeModel"
     /// お気に入り写真の refKey 集合（"L-…"）を返す seam（アプリ側＝PhotoKit が実装）。
     /// 代表写真の自動選択で「お気に入りの写真を優先」するために使う。nil なら優先なし。
     @ObservationIgnored private let favoriteRefKeysProvider: (() async -> Set<String>)?
@@ -90,26 +97,44 @@ public final class PeopleEngine {
     /// `makeWithOffMainStore` を使う。
     init(faceProvider: FacePerceptionProvider?,
          favoriteRefKeysProvider: (() async -> Set<String>)? = nil,
-         store: FaceStore? = nil) {
+         store: FaceStore? = nil,
+         shadowStore: FaceStore? = nil) {
         let store = store ?? FaceStore()
         self.store = store
         self.faceProvider = faceProvider
         self.favoriteRefKeysProvider = favoriteRefKeysProvider
-        self.tagger = FaceTagger(store: store, provider: faceProvider)
+        self.shadowStore = shadowStore
+        // スキャンは影の世代があればそちらへ（新モデルの埋め込みを旧世代のクラスタに混ぜない）。
+        self.tagger = FaceTagger(store: shadowStore ?? store, provider: faceProvider)
+    }
+
+    /// 現行世代（表示に使っている台帳）の顔モデル ID。未記録なら既存データの世代。
+    static func activeFaceModelID(_ defaults: UserDefaults = .standard) -> String {
+        defaults.string(forKey: activeFaceModelKey) ?? ModelGeneration.legacyFace
     }
 
     /// 本番用ファクトリ。コンテナを開くディスク I/O をメインから外すため **オフメインで生成**する。
     /// ⚠️ 実行スレッドの分離はこれではなく `FaceStore.unownedExecutor`（専用キュー）の役目
     /// （既定 executor は**呼び出し元のスレッド**で走る＝`ModelStoreExecutor` に詳述）。
+    ///
+    /// ADR-186: 同梱モデルの ID（`faceProvider.modelID`）が現行世代と違えば、**影の世代**のコンテナも開く。
+    /// 表示は現行世代のまま、スキャンは影へ。網羅が閾値に達したら切り替える（DB を消さない）。
     public static func makeWithOffMainStore(
         faceProvider: FacePerceptionProvider?,
         favoriteRefKeysProvider: (() async -> Set<String>)? = nil
     ) async -> PeopleEngine {
+        let active = activeFaceModelID()
+        let bundled = faceProvider?.modelID ?? active
         // 起動背景の SwiftData 初期化（ユーザーが直接待つ処理ではない）＝ .utility へ（提案2）。
-        let store = await Task.detached(priority: .utility) { FaceStore() }.value
+        let store = await Task.detached(priority: .utility) { FaceStore(modelID: active) }.value
+        var shadow: FaceStore?
+        if bundled != active, faceProvider?.isAvailable == true {
+            shadow = await Task.detached(priority: .utility) { FaceStore(modelID: bundled) }.value
+            Diagnostics.mark("faces: model \(active) → \(bundled) — growing shadow generation (\(FaceStore.containerName(for: bundled)))")
+        }
         return PeopleEngine(faceProvider: faceProvider,
                             favoriteRefKeysProvider: favoriteRefKeysProvider,
-                            store: store)
+                            store: store, shadowStore: shadow)
     }
 
     /// 顔モデルが同梱され利用可能か（未同梱ならピープルは無効＝空表示）。
@@ -308,6 +333,8 @@ public final class PeopleEngine {
             if !BackgroundYield.heavyShouldPause() {
                 await self.rebuildClustersIfNeeded()
             }
+            // ADR-186: 影の世代が十分育っていれば、ここで現行世代に切り替える。
+            await self.promoteShadowIfReady(candidateCount: candidateRefKeys.count)
             // 自分の世代のときだけ片付ける（stopScan 後に始まった新スキャンを踏まない）。
             guard self.scanGeneration == generation else { return }
             self.isScanning = false
@@ -335,7 +362,7 @@ public final class PeopleEngine {
     /// **埋め込みの作り方が変わる版上げでは新旧の埋め込みを混在させられない**
     /// （コサイン類似度が壊れる）ため、全再スキャンする。
     public static let faceScanVersion = 4
-    private static let faceScanVersionKey = "faceScanVersion"
+    static let faceScanVersionKey = "faceScanVersion"
 
     /// 実効パイプライン版。**同梱モデル（provider）が宣言**した版を優先する（ADR-70）。
     /// モデルを差し替えたら face_config.json の pipelineVersion が上がり、全再スキャンが走る。
@@ -367,6 +394,9 @@ public final class PeopleEngine {
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
     /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
     private func migrateScanVersionIfNeeded() async {
+        // ADR-186: 影の世代を育てている間は版上げの全再スキャンをしない（旧世代は凍結・
+        // 新世代は最初から新パイプライン）。切り替え時に版を記録する。
+        guard shadowStore == nil else { return }
         let stored = UserDefaults.standard.integer(forKey: Self.faceScanVersionKey)
         let current = effectiveScanVersion
         guard stored < current else { return }
@@ -421,7 +451,7 @@ public final class PeopleEngine {
     }
 
     /// 名前持ち越しの永続化（Application Support・再起動/数晩に跨る再スキャンに耐える）。
-    private struct NameCarryover: Codable {
+    struct NameCarryover: Codable {
         var savedAt: Date
         var entries: [Entry]
         struct Entry: Codable {
@@ -441,7 +471,7 @@ public final class PeopleEngine {
         return try? JSONDecoder().decode(NameCarryover.self, from: data)
     }
 
-    private func saveCarryover(_ carryover: NameCarryover?) {
+    func saveCarryover(_ carryover: NameCarryover?) {
         guard let carryover else {
             try? FileManager.default.removeItem(at: carryoverURL)
             return

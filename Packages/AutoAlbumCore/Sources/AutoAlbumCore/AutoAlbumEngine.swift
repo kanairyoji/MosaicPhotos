@@ -263,6 +263,10 @@ public final class AutoAlbumEngine {
 
     /// タグ付け（Vision/CLIP 知覚）ロジックのバージョン。抽出の改善時に上げると、起動時に1回だけ
     /// 全ローカル写真の sceneTagged をリセットして付け直す（メタデータ・地名は保持）。
+    /// 知覚**ロジック**の版（前処理・パイプラインの変更で付け直したいとき）。
+    /// ⚠️ **モデルファイルの更新ではここを上げない**（ADR-186）。モデルは `ModelGeneration.clip` の ID を
+    /// 変えると、`PhotoEmbedding.modelID` が違う行から新しい写真の順に上書きされていく（DB は消えない）。
+    /// ここを上げると全写真が「未埋め込み」に戻り、検索が一斉に穴になる——最後の手段。
     static let perceptionVersion = 8   // v8: CLIP を INT8 量子化（重み半減・精度ほぼ不変）→全再埋め込み（ADR-31）
 
     public func loadOrGenerate() async {
