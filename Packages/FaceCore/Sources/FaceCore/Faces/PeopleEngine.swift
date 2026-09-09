@@ -132,6 +132,10 @@ public final class PeopleEngine {
             shadow = await Task.detached(priority: .utility) { FaceStore(modelID: bundled) }.value
             Diagnostics.mark("faces: model \(active) → \(bundled) — growing shadow generation (\(FaceStore.containerName(for: bundled)))")
         }
+        // ADR-187: 消えたクラスタを指したままの顔（旧実装の掃除・付け替えの名残）は起動時に未割当へ戻す。
+        // 放置すると、その ID が別人に再利用されたときに黙って別人のアルバムへ合流する。
+        let orphans = await store.repairOrphanFaces()
+        if orphans > 0 { Diagnostics.mark("faces: repaired \(orphans) orphan face(s) at launch (ADR-187)") }
         return PeopleEngine(faceProvider: faceProvider,
                             favoriteRefKeysProvider: favoriteRefKeysProvider,
                             store: store, shadowStore: shadow)
@@ -532,6 +536,8 @@ public final class PeopleEngine {
     @discardableResult
     public func pruneMissingPhotos(candidateRefKeys: [String], knownGone: Set<String> = []) async -> Int {
         guard isFaceModelAvailable, !candidateRefKeys.isEmpty else { return 0 }
+        let orphans = await store.repairOrphanFaces()
+        if orphans > 0 { Diagnostics.mark("faces: repaired \(orphans) orphan face(s) (ADR-187)") }
         guard let result = await store.pruneMissingPhotos(existingRefKeys: Set(candidateRefKeys),
                                                           knownGone: knownGone) else {
             Diagnostics.mark("faces: prune skipped — candidates look incomplete")

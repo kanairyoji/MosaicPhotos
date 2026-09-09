@@ -121,6 +121,9 @@ actor FaceStore {
     var undoStack: [FaceUndoRecord] = []
 
     var clusteringCache: FaceClustering?
+    /// インメモリ（テスト）の店は高水位を UserDefaults に持たない（テストどうしで ID が繋がらないように）。
+    var isEphemeral: Bool { modelContainer.configurations.first?.isStoredInMemoryOnly ?? false }
+    var ephemeralHighWater = -1
     /// 負例エグゼンプラ（修正ジャーナル由来・ADR-45）のインメモリキャッシュ。
     /// clusteringCache と同じライフサイクルで再利用し、修正追加で無効化する。
     var negativesCache: [FaceClustering.NegativePair]?
@@ -207,6 +210,11 @@ actor FaceStore {
     /// テスト用: クラスタ ID → 件数（重心の二重計上を検査する）。
     func clusterCountsForTesting() -> [Int: Int] {
         Dictionary(uniqueKeysWithValues: allClusters().map { ($0.clusterID, $0.count) })
+    }
+
+    /// ユーザーが「この人物」と表明した行か（名前・束ね・代表写真）。機械の都合で消してはいけない。
+    static func isUserClaimed(_ c: PersonCluster) -> Bool {
+        (c.name?.isEmpty == false) || c.personGroupID != nil || c.coverFaceID != nil
     }
 
     func allClusters() -> [PersonCluster] {
@@ -538,7 +546,7 @@ actor FaceStore {
                 prototypes: anchors[r.clusterID] ?? []))
         }
         var clustering = FaceClustering(threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor,
-                                        seedClusters: seed)
+                                        seedClusters: seed, minimumNextID: clusterIDHighWater() + 1)
         // 確立した人物は校正の引き上げ分を免除する（ADR-141）。
         clustering.baseThreshold = tuning.clusterThreshold
         clustering.anchoredClusterIDs = Set(anchors.keys)
@@ -622,12 +630,37 @@ actor FaceStore {
     /// クラスタリング結果を `PersonCluster` テーブルへ書き戻す（sum/count のみ）。
     /// `coverFaceID` は**ユーザーが代表写真を選んだときだけ** `setCover` が書く。未設定（nil）の
     /// 代表は読み出し時（`peopleClusters`）に「お気に入り優先→先頭」で自動選択する。
+    /// **クラスタ ID は二度と再利用しない**（ADR-187）。
+    ///
+    /// ⚠️ 以前は「既存クラスタの最大 ID + 1」から採番していた。最大 ID の人物が消える
+    /// （写真の削除で顔が無くなる・付け替えで最後の顔が抜ける・掃除）と、**次に生まれた別人が
+    /// 同じ ID を受け取る**。ID を持って参照している側（ピープルグループのメンバー・共有セットの
+    /// 作成元・開いたままの人物アルバム）は、そのまま**別人を指す**——実フィードバック
+    /// 「気がついたらアルバムの中身がごっそり別人になっていた」。
+    /// 消えた ID も含めた高水位を UserDefaults に持ち、そこから先しか使わない。
+    private var clusterIDHighWaterKey: String { "faces.clusterIDHighWater.\(Self.containerName)" }
+
+    func clusterIDHighWater() -> Int {
+        let stored = isEphemeral ? ephemeralHighWater : UserDefaults.standard.integer(forKey: clusterIDHighWaterKey)
+        let current = allClusters().map(\.clusterID).max() ?? -1
+        return max(stored, current)
+    }
+
+    func noteClusterIDs(upTo id: Int) {
+        if isEphemeral {
+            ephemeralHighWater = max(ephemeralHighWater, id)
+        } else if id > UserDefaults.standard.integer(forKey: clusterIDHighWaterKey) {
+            UserDefaults.standard.set(id, forKey: clusterIDHighWaterKey)
+        }
+    }
+
     func persist(_ clustering: FaceClustering) {
         // ⚠️ クラスタごとに引かない（ADR-119）。既存行は **1 回**取って辞書にする。
         // ここは再クラスタの書き戻しで、クラスタ数ぶんの往復がそのまま
         // `@ModelActor` の占有時間になる（占有中はピープル画面・写真の人物名が待たされる）。
         var existingByID: [Int: PersonCluster] = [:]
         for row in allClusters() { existingByID[row.clusterID] = row }
+        noteClusterIDs(upTo: clustering.clusters.map(\.id).max() ?? -1)
         for c in clustering.clusters {
             if let existing = existingByID[c.id] {
                 existing.sum = ClipMath.encodeHalf(c.sum)

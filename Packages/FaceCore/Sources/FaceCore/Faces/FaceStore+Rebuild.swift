@@ -180,7 +180,7 @@ extension FaceStore {
 
         // 2) 残りの顔を品質降順に割り当て（新規クラスタ ID は既存の最大より先から）。
         var clustering = FaceClustering(threshold: thr, qualityFloor: Self.qualityFloor,
-                                        seedClusters: seeds, minimumNextID: maxExistingID + 1)
+                                        seedClusters: seeds, minimumNextID: max(maxExistingID, clusterIDHighWater()) + 1)
         // 確立した人物は校正の引き上げ分を免除する（ADR-141）。種は上でアンカーから作っている。
         clustering.baseThreshold = tuning.clusterThreshold
         clustering.anchoredClusterIDs = Set(seeds.filter { !$0.prototypes.isEmpty }.map(\.id))
