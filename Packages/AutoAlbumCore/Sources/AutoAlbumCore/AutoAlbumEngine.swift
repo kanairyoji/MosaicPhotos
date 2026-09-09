@@ -24,6 +24,14 @@ public final class AutoAlbumEngine {
     /// 自然文から作る AI アルバム（ユーザー作成・保存）。
     public internal(set) var aiAlbums: [AutoAlbumInfo] = []
     public private(set) var isLoaded = false
+
+    /// 同じ ID のアルバムの**いまの値**（無ければ渡された値のまま）。開いたままのアルバム画面が
+    /// 遷移時の写しでなく最新のメンバーを映すために使う。
+    public func liveAlbum(_ album: AutoAlbumInfo) -> AutoAlbumInfo {
+        let id = album.id
+        return aiAlbums.first { $0.id == id } ?? albums.first { $0.id == id }
+            ?? pathAlbums.first { $0.id == id } ?? album
+    }
     public private(set) var isGenerating = false {
         didSet { BackgroundActivityMonitor.shared.generatingTimePlace = isGenerating }
     }

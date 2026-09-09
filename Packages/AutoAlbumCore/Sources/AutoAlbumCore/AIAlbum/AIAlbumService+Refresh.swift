@@ -125,12 +125,15 @@ extension AIAlbumService {
         var updated = current
         var touched = 0
         var dropped = 0
+        // 名前表（全顔の射影）はアルバムごとに引かず、この 1 回で共有する。
+        var sharedPeopleMap: [String: [String]]??
         for (index, album) in current.enumerated() {
             guard let criteria = album.criteria, !criteria.isEmpty,
                   let saved = interpreter.saved(for: album.id), saved.criteria == criteria,
                   saved.spec.hasPeopleConditions, !album.memberRefs.isEmpty else { continue }
             let spec = saved.spec
-            guard let peopleMap = await peopleMapIfNeeded(for: spec) else { continue }
+            if sharedPeopleMap == nil { sharedPeopleMap = .some(await peopleMapIfNeeded(for: spec)) }
+            guard let peopleMap = sharedPeopleMap ?? nil else { continue }
             let querySignals = await querySignalsIfNeeded(for: spec)
             let existing = await store.enrichedPhotos(forRefKeys: album.memberRefs)
             let kept = QueryEvaluator.hardFilter(existing, spec: spec, now: now,
