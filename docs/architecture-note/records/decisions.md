@@ -56,6 +56,30 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-187 クラスタ ID は再利用しない・ユーザーが表明した人物の行は消さない
+- 状態: 採用
+- 文脈: 実フィードバック「ピープルアルバムの中身が、気がついたらごっそり別人になっていた」
+  「AI アルバムで『XX ではない』を選んでも効かない」。コードを追うと ID の再利用があった:
+  新しいクラスタの ID は**既存クラスタの最大 ID + 1**で採番していた（`loadClustering` の `nextID`・
+  再クラスタの `minimumNextID` も同じ）。最大 ID の人物が消える——写真の削除・付け替えで最後の顔が
+  抜ける（`removeFromCluster` は最後の 1 顔でクラスタ行ごと削除）・掃除（ADR の幽霊掃除で 14 クラスタ）
+  ——と、**次に生まれた別人が同じ ID を受け取る**。ID で参照している側（ピープルグループのメンバー・
+  共有セットの作成元 `person(N)`・開いたままの人物アルバム・消えたクラスタを指したままの顔）は
+  そのまま別人を指す。同じ理由で、`solePerson` が返す人物と `removePhoto` の対象が食い違い、
+  「XX ではない」が 0 件（対象なし）で空振りし得る。
+- 決定: (1) **クラスタ ID の高水位**（消えた ID も含む最大値）を UserDefaults に持ち、新規 ID は必ず
+  その先から（`FaceStore.clusterIDHighWater` / `noteClusterIDs`・インメモリの店はテストどうしで
+  繋がらないよう店内に持つ）。(2) **ユーザーが表明した人物（名前・束ね・代表写真）の行は消さない**
+  （`isUserClaimed`）——最後の顔が抜けても空の人物として残す（次に本人の顔が来れば同じ名前で復活）。
+  掃除（`pruneMissingPhotos`）も同じ規則。(3) 消えたクラスタを指したままの**孤児の顔**は起動時と掃除の
+  前に未割当へ戻す（`repairOrphanFaces`）。
+- 結果: ID は単調に増え、参照側が別人を指すことは起きない。既に起きてしまった入れ替わりは
+  自動では戻せない（どの ID が誰だったかの記録が無い）——グループ・共有セットは作り直し。
+  テスト: 消えた最大 ID を新人物が受け取らない（高水位を外す変異で落ちる）・名前付きの行は最後の顔が
+  抜けても残る・孤児の修復（`ClusterIdentityTests`）。
+- 関連: `FaceStore.swift`（高水位・`isUserClaimed`）/ `FaceStore+Edit.removeFromCluster` /
+  `FaceStore+Prune`（掃除の規則・`repairOrphanFaces`）/ `PeopleEngine.makeWithOffMainStore` / ADR-130 / ADR-132。
+
 ## ADR-186 モデル更新は索引を「少しずつ」新モデルへ移す（行ごとの版・顔は影の世代・台帳は消さない）
 - 状態: 採用
 - 文脈: 学習済みモデル（CLIP・顔）は今後も更新される。従来はモデル更新＝版番号を上げて**索引を一斉に

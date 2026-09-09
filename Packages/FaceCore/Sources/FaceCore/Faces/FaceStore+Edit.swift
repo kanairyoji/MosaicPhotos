@@ -189,8 +189,17 @@ extension FaceStore {
         }
         guard let sum = ClipMath.decodeHalf(c.sum),
               let updated = FaceClustering.removing(vec, fromSum: sum, count: c.count, quality: quality) else {
-            // 最後の 1 顔（または sum 破損）＝クラスタごと削除。
-            modelContext.delete(c)
+            // 最後の 1 顔（または sum 破損）。
+            // ⚠️ **ユーザーが表明した人物（名前・束ね・代表写真）の行は消さない**（ADR-187）。
+            // 消すと名前が失われ、ID が空くので参照側が別人を指し得る。空の人物として残し、
+            // 次に本人の顔が来れば元の名前で復活する。
+            if FaceStore.isUserClaimed(c) {
+                c.sum = ClipMath.encodeHalf([Float](repeating: 0, count: vec.count))
+                c.count = 0
+                if c.coverFaceID == faceID { c.coverFaceID = nil }
+            } else {
+                modelContext.delete(c)
+            }
             return
         }
         c.sum = ClipMath.encodeHalf(updated.sum)

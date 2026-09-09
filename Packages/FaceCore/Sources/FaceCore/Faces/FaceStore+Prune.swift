@@ -55,13 +55,14 @@ extension FaceStore {
         try? modelContext.save()
 
         // 顔が 1 つも残らなかった人物は消す（membership だけの顔も含めて数える）。
+        // ⚠️ ユーザーが表明した人物（名前・束ね・代表写真）は空でも残す（ADR-187）。
         var clustersRemoved = 0
         for clusterID in touched {
             guard let c = cluster(clusterID) else { clustersRemoved += 1; continue }
             let cid = clusterID
             let remaining = (try? modelContext.fetchCount(FetchDescriptor<DetectedFace>(
                 predicate: #Predicate { $0.clusterID == cid }))) ?? 0
-            if remaining == 0 {
+            if remaining == 0, !FaceStore.isUserClaimed(c) {
                 modelContext.delete(c)
                 clustersRemoved += 1
             }
@@ -71,5 +72,33 @@ extension FaceStore {
         Self.log.info("faces: pruned \(facesRemoved) face(s) of \(missing.count) missing photo(s), "
                       + "\(clustersRemoved) empty cluster(s)")
         return (facesRemoved, missing.count, clustersRemoved)
+    }
+
+    /// **孤児の顔**（消えたクラスタ ID を指したままの顔）を未割当に戻す（ADR-187）。
+    /// 以前はクラスタ行が消えても顔の clusterID が残り、その ID が別人に再利用されると
+    /// 別人のアルバムへ黙って合流していた。未割当に戻せば次の再クラスタで正しい場所へ入る。
+    /// - Returns: 戻した顔の数。
+    func repairOrphanFaces() -> Int {
+        let live = Set(allClusters().map(\.clusterID))
+        var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID >= 0 })
+        d.propertiesToFetch = [\.clusterID]
+        let faces = (try? modelContext.fetch(d)) ?? []
+        var fixed = 0
+        for f in faces where !live.contains(f.clusterID) {
+            f.clusterID = FaceClustering.unassigned
+            f.contributesToCentroid = false
+            fixed += 1
+        }
+        if fixed > 0 {
+            try? modelContext.save()
+            clusteringCache = nil
+            Self.log.error("faces: repaired \(fixed) orphan face(s) pointing at deleted clusters")
+        }
+        return fixed
+    }
+
+    /// テスト用: クラスタ行だけを消す（顔は残る＝孤児を作る）。
+    func deleteClusterRowForTesting(_ clusterID: Int) {
+        if let c = cluster(clusterID) { modelContext.delete(c); try? modelContext.save(); clusteringCache = nil }
     }
 }
