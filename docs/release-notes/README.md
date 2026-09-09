@@ -66,6 +66,15 @@ xcodebuild -exportArchive -archivePath <path>.xcarchive \
 #   signingStyle=automatic / manageAppVersionAndBuildNumber=false
 ```
 
+⚠️ **配布証明書と Xcode のアカウントが要る**（1.16 で詰まった）。keychain に
+`Apple Distribution` が無いと `exportArchive` は `No signing certificate "iOS Distribution" found`
+で止まる。`-authenticationKeyPath/-authenticationKeyID/-authenticationKeyIssuerID` に
+App Store Connect の API キーを渡しても**クラウド署名は通らない**（`Cloud signing permission error`
+＝API キーの権限では配布証明書を発行できない）。**Xcode → Settings → Accounts で Apple Account を
+サインイン**すれば、証明書が発行されて CLI のエクスポート＋アップロードがそのまま通る。
+証明書は失効・入れ替えで消えるので、久しぶりのリリースでは `security find-identity -v -p codesigning`
+で先に確認する（`Apple Distribution: … (MMLN9NXVM4)` が要る）。
+
 アップロード後、処理完了（`builds_list` で processingState=VALID）まで数分待つ。
 ⚠️ CLI アップロードでは**暗号化申告が未設定**になる（Xcode GUI の質問が出ないため）。
 `builds_update_encryption`（uses_non_exempt_encryption=false）を提出前に必ず実行する。
