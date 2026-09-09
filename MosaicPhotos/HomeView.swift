@@ -154,7 +154,9 @@ struct HomeView: View {
             PlacePhotosView(place: place, dropboxStore: dropboxStore, assetIndex: assetIndex)
         case .autoAlbum(let album):
             // AI アルバムは画面内「…」からも削除できる（ホームカードの操作と統一）。
-            AutoAlbumPhotosView(album: album, dropboxStore: dropboxStore, assetIndex: assetIndex,
+            // 渡すのは**エンジンの最新値**（遷移時の写しではない）。開いている間に人物修正で
+            // メンバーが減ったら、その場で描き直すため（AutoAlbumPhotosView の onChange）。
+            AutoAlbumPhotosView(album: autoAlbumEngine.liveAlbum(album), dropboxStore: dropboxStore, assetIndex: assetIndex,
                 onDelete: album.strategyID == AIAlbumStrategy.strategyID
                     ? { Task { await autoAlbumEngine.deleteAIAlbum(id: album.id) }; destination = nil }
                     : nil)

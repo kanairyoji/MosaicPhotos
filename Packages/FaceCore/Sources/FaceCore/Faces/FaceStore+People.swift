@@ -333,7 +333,12 @@ extension FaceStore {
     func peopleNamesByRefKey(minFaces: Int) -> [String: [String]] {
         let nameByCluster = personNameByCluster(minFaces: minFaces)
         guard !nameByCluster.isEmpty else { return [:] }
-        let faces = (countedFetchOptional(FetchDescriptor<DetectedFace>())) ?? []
+        // ⚠️ 射影で取る（refKey と clusterID だけ）。全列だと 1 顔 ≈1KB の埋め込みまで
+        // 実体化し、10 万顔で 100MB 超・数十秒——AI アルバムの掃除が人物条件のアルバムごとに
+        // ここを呼ぶので、人物アルバムの描き直しがその後ろで待たされていた。
+        var d = FetchDescriptor<DetectedFace>()
+        d.propertiesToFetch = [\.refKey, \.clusterID]
+        let faces = (countedFetchOptional(d)) ?? []
         var out: [String: [String]] = [:]
         for f in faces {
             guard let name = nameByCluster[f.clusterID] else { continue }

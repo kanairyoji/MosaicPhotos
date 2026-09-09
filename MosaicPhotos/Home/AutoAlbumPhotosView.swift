@@ -13,6 +13,8 @@ import SwiftUI
 struct AutoAlbumPhotosView: View {
     @State private var store: MergedPhotoStore
     private let album: AutoAlbumInfo
+    private let dropboxStore: DropboxPhotoStore
+    private let assetIndex: LocalAssetIndex
     /// 画面内「…」メニューの削除アクション（AI アルバムのみ・nil なら「…」を出さない）。
     private let onDelete: (() -> Void)?
     /// 家族共有（ADR-112）。未注入（nil）なら共有メニューを出さない。
@@ -28,12 +30,22 @@ struct AutoAlbumPhotosView: View {
             localIDs: album.localIdentifiers, cloudPaths: album.cloudPaths,
             dropboxStore: dropboxStore, assetIndex: assetIndex))
         self.album = album
+        self.dropboxStore = dropboxStore
+        self.assetIndex = assetIndex
         self.onDelete = onDelete
     }
 
     var body: some View {
         PhotoSourceContentView(store: store, title: album.placesLabel) {
             AutoAlbumDetailHeader(album: album)
+        }
+        // ⚠️ 開いたままのアルバムのメンバーが変わったら（AI アルバムで「XX ではない」→
+        // 人物条件を満たさない写真の掃除）、ストアを組み直して描き直す。`album` は
+        // HomeView がエンジンの最新値を渡すので、ここは差分だけ見ればよい
+        // （実フィードバック: 選んでも消えず、入り直すと消えている）。
+        .onChange(of: album.memberRefs) { _, _ in
+            store = .forMembers(localIDs: album.localIdentifiers, cloudPaths: album.cloudPaths,
+                                dropboxStore: dropboxStore, assetIndex: assetIndex)
         }
         // アルバム画面内の「…」メニュー（ホームカードの「…」/長押しと同じ操作を画面内でも）。
         .environment(\.sourceMenuContent, menuContent)

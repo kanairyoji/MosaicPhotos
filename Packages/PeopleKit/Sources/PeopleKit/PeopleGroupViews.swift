@@ -312,12 +312,23 @@ public struct PeopleGroupAlbumView: View {
         }
         .task {
             guard store == nil else { return }
-            let members = await peopleEngine.memberRefKeys(forGroup: group.id)
-            let refs = members.compactMap(PhotoRef.decode)
-            store = .forMembers(localIDs: refs.compactMap(\.localIdentifier),
-                                cloudPaths: refs.compactMap(\.cloudPath),
-                                dropboxStore: dropboxStore, assetIndex: assetIndex)
+            await reload()
         }
+        // 写真ごとの汎用メニュー（「XX ではない」「別の人…」）で直したら、開いたまま描き直す
+        // （PersonAlbumView と同じ。差分が無ければ組み直さない＝スクロール位置を保つ）。
+        .onChange(of: peopleEngine.editVersion) { _, _ in Task { await reload() } }
+    }
+
+    @State private var members: [String] = []
+
+    private func reload() async {
+        let latest = await peopleEngine.memberRefKeys(forGroup: group.id)
+        guard store == nil || latest != members else { return }
+        members = latest
+        let refs = latest.compactMap(PhotoRef.decode)
+        store = .forMembers(localIDs: refs.compactMap(\.localIdentifier),
+                            cloudPaths: refs.compactMap(\.cloudPath),
+                            dropboxStore: dropboxStore, assetIndex: assetIndex)
     }
 }
 #endif

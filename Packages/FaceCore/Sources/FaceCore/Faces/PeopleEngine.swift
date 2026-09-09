@@ -388,11 +388,43 @@ public final class PeopleEngine {
     /// ここで条件を満たさなくなった写真を外す（実フィードバック: AI アルバムで直しても変化なし）。
     /// スキャンの進行では呼ばない（そちらは通常の再評価に任せる）。
     @ObservationIgnored public var onPeopleEdited: (@MainActor () async -> Void)?
+    /// 手動修正のたびに増える版。メンバー限定の写真画面（束ねグループのアルバム等）は
+    /// これを `onChange` で見て、開いたまま描き直す（写真ごとの汎用メニューから直したとき）。
+    public private(set) var editVersion = 0
+    @ObservationIgnored private var editFollowUpTask: Task<Void, Never>?
+    @ObservationIgnored private var editFollowUpPending = false
 
     /// 手動修正のあとの一覧更新＋通知（`PeopleEngine+Edit` の各操作から呼ぶ）。
+    ///
+    /// ⚠️ 通知（AI アルバムの掃除）は**待たない**。実フィードバック「人物アルバムで
+    /// 『XX ではない』を選んでも再描画されない。ホームに戻って入り直すと消えている」——
+    /// 呼び出し側（人物アルバムの `reload`）はこの戻りを待ってから描き直すが、AI アルバムの
+    /// 掃除は人物条件のあるアルバムごとに全顔の名前表を引いていて数十秒かかり、その間
+    /// 画面が古いままだった。ユーザーが待っている描き直しを、誰も待っていない掃除の後ろに
+    /// 並べない（ADR-122 と同じ向き）。掃除は連続操作を 1 回にまとめて背景で回す。
     func loadPeopleAfterEdit() async {
         await loadPeople()
-        await onPeopleEdited?()
+        editVersion &+= 1
+        scheduleEditFollowUp()
+    }
+
+    /// 背景の後追い（AI アルバム掃除）。走行中に次の操作が来たら、終わってからもう 1 回だけ回す。
+    private func scheduleEditFollowUp() {
+        guard onPeopleEdited != nil else { return }
+        editFollowUpPending = true
+        guard editFollowUpTask == nil else { return }
+        editFollowUpTask = Task { [weak self] in
+            while let self, self.editFollowUpPending {
+                self.editFollowUpPending = false
+                await self.onPeopleEdited?()
+            }
+            self?.editFollowUpTask = nil
+        }
+    }
+
+    /// テスト・設定画面用: 進行中の後追いが終わるまで待つ。
+    public func awaitEditFollowUp() async {
+        while let task = editFollowUpTask { await task.value }
     }
 
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
