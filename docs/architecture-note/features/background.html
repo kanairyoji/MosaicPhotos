@@ -69,8 +69,8 @@
         止めるのは<strong>自動・継続のバックグラウンド処理</strong>だけ。ユーザーが今見ている写真の取得（サムネ/フル画像）は前景操作なので常に行う。
       </div>
 
-      <h2>AI アルバム作成は 2 段階（即時プレビュー→夜間本番化）</h2>
-      <p>重い処理を使用中に走らせないため、AI アルバムの作成は 2 段階に分ける。作成時は<strong>決定的プレビュー</strong>（レキシコン＋日付＋タグ照合・LLM なし・1〜2 秒）で即座にメンバーを見せ、<code>pendingFinalization</code> を立てる。実際の LLM 解釈・証拠ゲート・審査（<code>finalizePending</code>）は<strong>夜間パイプライン</strong>で本番化する。作成画面にはこのタイミングを明記する。</p>
+      <h2>AI アルバム作成は 2 段階（即時プレビュー→その場で本番化）</h2>
+      <p>UI を固めないため、AI アルバムの作成は 2 段階に分ける。作成時は<strong>決定的プレビュー</strong>（レキシコン＋日付＋タグ照合・LLM なし・1〜2 秒）で即座にメンバーを見せ、続けて<strong>その場で本番化</strong>する（<code>finalizeNow</code>・ADR-110＝FM 解釈＋フル評価＋証拠ゲート＋LLM 審査を十数秒。ユーザーの明示操作なので夜間ゲートの対象外・utility 優先度）。夜間に残るのは<strong>語彙接地（重心）がコールドのときの仕上げ</strong>だけで、そのときは <code>pendingFinalization</code> が残り <code>finalizePending</code> が接地込みで仕上げる。「バレエ」のようなレキシコン外の語が翌朝まで条件にならなかった問題（diagnostics-49）はこれで解消した。</p>
 
       <h2>電源ゲート（PowerStateMonitor）</h2>
       <p><code>UIDevice.batteryState</code> と <code>ProcessInfo.isLowPowerModeEnabled</code> を監視し、ポリシー <code>BackgroundPowerPolicy</code>（<strong>While charging=既定</strong> / Always / Off）と合わせて <code>backgroundAllowed()</code> を返す。<em>While charging</em> は「電源接続（charging/full）かつ 低電力モード OFF」。</p>

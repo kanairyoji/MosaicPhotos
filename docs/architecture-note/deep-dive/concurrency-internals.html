@@ -19,7 +19,7 @@
       <table>
         <tr><th>区分</th><th>実体</th><th>役割</th></tr>
         <tr><td>MainActor</td><td>各ストア・エンジン（<code>@Observable</code>）</td><td>UI 状態・公開 API</td></tr>
-        <tr><td>専用アクタ</td><td><code>AutoAlbumStore</code>（@ModelActor）/ <code>DropboxCacheStore</code>（actor）/ <code>PlaceNameResolver</code>（actor）</td><td>DB・キャッシュ・地名解決の直列化</td></tr>
+        <tr><td>専用アクタ</td><td><code>AutoAlbumStore</code> / <code>TagStore</code> / <code>FaceStore</code>（いずれも @ModelActor ＋専用シリアルキュー）/ <code>DropboxCacheStore</code>（actor）/ <code>PlaceNameResolver</code>（actor）</td><td>DB・キャッシュ・地名解決の直列化。@ModelActor は <code>unownedExecutor</code> を差し替えないと<strong>呼び出し元のスレッド（＝メイン）で fetch が走る</strong>（ADR-121・下記）</td></tr>
         <tr><td>detached</td><td><code>Task.detached(priority: .utility)</code></td><td>全件列挙・グリッド集約・署名計算など CPU 仕事</td></tr>
         <tr><td>background</td><td><code>Task(priority: .background)</code></td><td>CLIP 埋め込みの trickle 実行</td></tr>
       </table>
@@ -80,6 +80,14 @@ graph TD
         <li><strong>ユーザー操作中</strong> — グリッドのスクロール/スクラブ、画面遷移、<strong>写真ビュー表示中</strong>（タップ直後含む）。</li>
         <li><strong>メモリ圧迫中</strong> — <code>MemoryPressureMonitor.isUnderPressure</code>（約 20 秒後に自動解除）。</li>
         <li><strong>クラウド取得中</strong> — Dropbox サムネのドレイン中（<code>cloudThumbnailBusy</code>）・フル画像取得中（<code>fullImageBusy</code>）。</li>
+      </ul>
+
+      <h2><code>@ModelActor</code> の executor を差し替える（ADR-121）</h2>
+      <p><code>@ModelActor</code> マクロが合成する既定 executor は、ジョブを<strong>呼び出し元のスレッドで実行する</strong>。MainActor から <code>await store.allEnrichedPhotosLite()</code> と書くと、<code>await</code> があるのに fetch は<strong>メインスレッドで走る</strong>——見た目はオフメインなのでレビューでも気づけない（実機で 10.9 秒の前面ハング）。よく言われる「init したスレッドに束縛される」は誤りで、オフメインで生成しても防げない。</p>
+      <ul>
+        <li>対処は <code>nonisolated var unownedExecutor</code> を専用のシリアルキュー（<code>MosaicSupport.ModelStoreExecutor.serialQueue(label:)</code>）に差し替えること。actor の直列性（＝<code>ModelContext</code> を 1 スレッドで使う保証）はそのまま保たれる。</li>
+        <li>キューに QoS は付けない（enqueue 側の優先度を引き継がせる）。</li>
+        <li>新しい <code>@ModelActor</code> を足したら、MainActor から呼んで <code>Thread.isMainThread == false</code> を確かめる回帰テスト（<code>ModelActorExecutorTests</code>）を 1 本足す——無いと、次に足したストアで同じハングが静かに戻る。</li>
       </ul>
 
       <h2>ANE 直列化ゲート（MLInferenceGate）</h2>

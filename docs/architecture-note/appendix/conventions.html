@@ -30,7 +30,7 @@
       <h2>テストの 2 系統</h2>
       <table>
         <tr><th>系統</th><th>対象</th><th>実行</th></tr>
-        <tr><td>FAST（macOS）</td><td>Foundation のみの純ロジック（<code>PhotoSourceKit</code> / <code>AutoAlbumCore</code> / <code>BackupKit</code> など）</td><td><code>swift test</code></td></tr>
+        <tr><td>FAST（macOS）</td><td>Foundation のみの純ロジック（<code>MosaicSupport</code> / <code>PhotoSourceKit</code> / <code>ImageCacheKit</code> / <code>BackupKit</code> / <code>DropboxKit</code> / <code>LocalPhotoCore</code> / <code>PerceptionCore</code> / <code>FaceCore</code> / <code>AutoAlbumCore</code> / <code>PeopleKit</code>）</td><td><code>swift test</code></td></tr>
         <tr><td>iOS Sim</td><td>UIKit / SwiftData / Photos 依存（<code>DropboxCore</code> / <code>PhotosFeatureKit</code>）</td><td><code>xcodebuild test -destination 'platform=iOS Simulator,...'</code></td></tr>
       </table>
       <pre><code># 全テスト一括（fast = macOS のみ / ios = シミュレータ / all = 両方）

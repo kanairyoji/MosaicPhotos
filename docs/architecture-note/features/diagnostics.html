@@ -29,19 +29,29 @@
       </div>
 
       <h2>自己修復する ModelContainer</h2>
-      <p>SwiftData の <code>ModelContainer</code> 初期化は、ストア破損やスキーマ不整合のとき<strong>起動時に trap</strong>し、実機で原因不明のクラッシュになりやすい。そこで <code>makeResilientContainer(...)</code> が段階的にフォールバックする。</p>
+      <p>SwiftData の <code>ModelContainer</code> 初期化は、ストア破損やスキーマ不整合のとき<strong>起動時に trap</strong>し、実機で原因不明のクラッシュになりやすい。そこで <code>resilientModelContainer(name:schema:policy:)</code>（内部は <code>makeResilientModelContainer</code>）が段階的にフォールバックする。<strong>手を決める前に失敗の理由を見る</strong>のが要点で、容量不足やファイル保護（端末ロック中）のような一時的な失敗では<strong>ファイルを消さず</strong>その起動だけインメモリで動く。</p>
       <div class="mermaid">
 graph TD
   A[ModelContainer 生成] --> B{成功?}
   B -->|はい| OK[使用]
-  B -->|いいえ| C[ストアファイル削除<br/>.store / -wal / -shm]
+  B -->|いいえ| R{失敗の理由は?}
+  R -->|一時的<br/>容量不足・ファイル保護| M[ファイルは残しこの起動だけインメモリ]
+  R -->|台帳（.ledger）| S{控えから戻せる?}
+  S -->|はい| S2[StoreSnapshot から復元して再オープン] --> OK
+  S -->|いいえ| C
+  R -->|作り直せるキャッシュ| C[ストアファイル削除<br/>.store / -wal / -shm]
   C --> D[再生成]
   D --> E{成功?}
   E -->|はい| OK
   E -->|いいえ| F[インメモリで起動]
+  M --> OK
   F --> OK
       </div>
-      <p>データは失うが<strong>起動は止めない</strong>（失敗は診断ログへ）。<code>AutoAlbumStore</code> / <code>DropboxCacheStore</code> / <code>BackupEngine</code> が採用。</p>
+      <p>データは失うが<strong>起動は止めない</strong>（失敗は診断ログへ）。<code>AutoAlbumStore</code> / <code>TagStore</code> / <code>FaceStore</code> / <code>DropboxCacheStore</code> / <code>BackupEngine</code> が採用する。</p>
+      <div class="box note">
+        <span class="box-h">作り直せるキャッシュと台帳を区別する（ADR-186）</span>
+        破棄していいのは<strong>再生成できるもの</strong>（付加情報・埋め込み・Dropbox キャッシュ＝<code>.rebuildable</code>）だけ。人物名やユーザー修正のように<strong>作り直せない台帳</strong>（FacesV1・BackupKit＝<code>.ledger</code>）は、アプリの版が変わった最初の起動で<strong>開く前に控えを取り</strong>（<code>StoreSnapshot</code>）、マイグレーションに失敗したら控えから戻して 1 回だけ開き直す。台帳側はスキーマの採番（破棄）ではなく optional 列の追加だけで進める。
+      </div>
 
       <h2>メモリ圧迫への対応</h2>
       <p><code>MosaicSupport.MemoryPressureMonitor</code> が圧迫フラグを保持し、<code>Diagnostics</code> のメモリ圧迫ソースが warning/critical で立てる（一定時間後に自動解除）。背景の CLIP 埋め込みはこのフラグを見て一時停止し、jetsam を避ける。</p>
@@ -54,7 +64,7 @@ graph TD
         <ul>
           <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/Diagnostics.swift">Diagnostics.swift</a></li>
           <li><a class="srclink" data-path="MosaicPhotos/Settings/DiagnosticsLogView.swift">DiagnosticsLogView.swift</a></li>
-          <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/Store/AutoAlbumStore.swift">AutoAlbumStore.swift</a> — makeResilientContainer</li>
+          <li><a class="srclink" data-path="Packages/MosaicSupport/Sources/MosaicSupport/ResilientModelContainer.swift">ResilientModelContainer.swift</a> — 自己修復と復旧ポリシー</li>
         </ul>
       </div>
     </article>

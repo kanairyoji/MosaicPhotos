@@ -18,7 +18,7 @@
       <h2>2 系統の実行環境（scripts/test.sh）</h2>
       <table>
         <tr><th>系統</th><th>対象</th><th>実行</th><th>速度</th></tr>
-        <tr><td><strong>FAST</strong></td><td>Foundation のみの純ロジック（<code>AutoAlbumCore</code> / <code>FaceCore</code> / <code>PhotoSourceKit</code> / <code>MosaicSupport</code> / <code>BackupKit</code> / <code>ImageCacheKit</code> / <code>PerceptionCore</code> ほか）</td><td>macOS の <code>swift test</code></td><td>各パッケージ数秒〜十数秒</td></tr>
+        <tr><td><strong>FAST</strong></td><td>Foundation のみの純ロジック（<code>AutoAlbumCore</code> / <code>FaceCore</code> / <code>PeopleKit</code> / <code>PhotoSourceKit</code> / <code>MosaicSupport</code> / <code>BackupKit</code> / <code>DropboxKit</code> / <code>LocalPhotoCore</code> / <code>ImageCacheKit</code> / <code>PerceptionCore</code>）</td><td>macOS の <code>swift test</code></td><td>各パッケージ数秒〜十数秒</td></tr>
         <tr><td><strong>IOS</strong></td><td>UIKit / SwiftData / Photos に依存するもの（<code>DropboxCore</code> / <code>PhotosFeatureKit</code>）と UI テスト</td><td>iOS シミュレータの <code>xcodebuild test</code></td><td>分オーダー</td></tr>
       </table>
       <p><code>scripts/test.sh all</code> が両系統を一括で回す。各 SPM パッケージは <code>.iOS(.v17)</code> 宣言＋<code>@available</code> ゲートで <strong>macOS でもビルド可能</strong>に保っており、これが FAST 系統の前提になっている（アプリ本体の最小 iOS は 26.0）。</p>
@@ -34,7 +34,7 @@
       <table>
         <tr><th>領域</th><th>代表テスト</th><th>守っているもの</th></tr>
         <tr><td>検索の解釈・接地</td><td><code>VocabularyGroundingTests</code> / <code>QuerySpecSanitizerTests</code> / <code>RelativeDateParserTests</code></td><td>広い語の展開規則・LLM 出力の防御的接地・日付解釈（唯一の出典）</td></tr>
-        <tr><td>検索の評価規則</td><td><code>AIAlbumSearcherTests</code> / <code>HardGroundedContentTests</code> / <code>AttributeConditionTests</code></td><td>RRF 融合・「人物×内容は AND」・属性条件の fail-closed・空を返すポリシー</td></tr>
+        <tr><td>検索の評価規則</td><td><code>AIAlbumSearchTests</code> / <code>HardGroundedContentTests</code> / <code>AttributeConditionTests</code></td><td>RRF 融合・「人物×内容は AND」・属性条件の fail-closed・空を返すポリシー</td></tr>
         <tr><td>検出性能（データセット）</td><td><code>SearchEvalTests</code> / <code>SearchEvalRegressionTests</code> / <code>SearchEvalCaltechTests</code></td><td>COCO 123 クエリの計測＋<strong>カテゴリ別 F1 回帰フロア</strong>・語彙接地の end-to-end（<a href="datasets.html">次ページ</a>）</td></tr>
         <tr><td>顔クラスタリング</td><td><code>FaceClusteringTests</code> / <code>FacePersonGroupingTests</code> / <code>PersonCleanupTests</code> / <code>PeopleOrderingTests</code></td><td>逐次クラスタの規則・束ね・混入の一括分離・一覧の決定的順序</td></tr>
         <tr><td>顔の検出性能</td><td><code>FaceAccuracyEvalTests</code>（FG-NET / LFW）</td><td>しきい値・ゲート・アルゴリズム変更の採否判定（<a href="datasets.html">次ページ</a>）</td></tr>

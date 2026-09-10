@@ -35,7 +35,7 @@ MosaicPhotos/                      ← メインアプリターゲット（合�
     AppSettingsKeys.swift          アプリ層の @AppStorage キー集約
   ※ 顔認識ロジックは Packages/FaceCore/（旧 AutoAlbumCore/Faces）へ分離・共通プリミティブは Packages/PerceptionCore/
   MobileCLIP/                      CLIP の Core ML モデル＋語彙（.gitignore 対象・scripts/build_mobileclip.sh で生成）
-  FaceModel/                       顔認識モデル（.gitignore 対象・scripts/build_facenet.sh で生成）
+  FaceModel/                       顔認識モデル（AuraFace-v1・.gitignore 対象・scripts/build_auraface.sh で生成）
   HeavyWorkScheduler.swift         BGProcessingTask（ロック中の夜間処理＝タグ/埋め込み/顔スキャン/生成）
 
 ```

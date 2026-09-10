@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/iOS-26%2B-blue" alt="iOS 26+">
   <img src="https://img.shields.io/badge/Swift-SwiftUI-orange" alt="SwiftUI">
   <img src="https://img.shields.io/badge/AI-on--device%20CLIP-purple" alt="on-device CLIP">
-  <img src="https://img.shields.io/badge/tests-270%2B%20passing-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/tests-1300%2B%20passing-brightgreen" alt="tests">
   <a href="https://kanairyoji.github.io/MosaicPhotos/architecture-note/"><img src="https://img.shields.io/badge/docs-Architecture%20Note-brightgreen" alt="Architecture Note"></a>
 </p>
 
@@ -96,7 +96,7 @@
 - **クラウド** — Dropbox の写真閲覧。差分同期で常に最新、サムネイル（256px）と本体はローカルにキャッシュ。
 - **アルバム** — 端末のユーザー作成アルバム（独立にスキャン・キャッシュ）。
 - **場所** — **オンデバイス逆ジオコーディング**で市区町村ごとにグループ化。端末と Dropbox の位置情報つき写真を統合し、位置データが増えるほど自動で育ちます。
-- **バックアップ — 検証つき・自動・家族共有対応** — 端末写真を Dropbox へ**内容ハッシュ検証つき**でバックアップ：アップロード後に Dropbox 側のバイト列一致を確認できたものだけ「済み」になります（同名衝突も同じ仕組みで検出し自動リネーム）。AI 索引と同じ**夜間ウィンドウ（充電＋Wi-Fi＋未使用時）に自動実行**され、設定に**「バックアップ済み X / Y」**、全画面表示に写真ごとのバッジを表示。保存先は**端末ごとのサブフォルダ**（例 `iPhone-3F2A8C`）なので、家族で 1 つの Dropbox を共有しても衝突しません。アルバム所属・お気に入り・人物名・GPS・AI 説明文も写真とともに保全——再インストールや将来の**オフロード**（端末容量の解放。検証つきのドライランプレビュー画面を先行搭載）に備えます。
+- **バックアップ — 検証つき・自動・家族共有対応** — 端末写真を Dropbox へ**内容ハッシュ検証つき**でバックアップ：アップロード後に Dropbox 側のバイト列一致を確認できたものだけ「済み」になります（同名衝突も同じ仕組みで検出し自動リネーム）。AI 索引と同じ**夜間ウィンドウ（充電＋Wi-Fi＋未使用時）に自動実行**され、設定に**「バックアップ済み X / Y」**、全画面表示に写真ごとのバッジを表示。保存先は**端末ごとのサブフォルダ**（例 `iPhone-3F2A8C`）なので、家族で 1 つの Dropbox を共有しても衝突しません。アルバム所属・お気に入り・人物名・GPS・localIdentifier（ローカル⇔クラウド対応表）も写真とともに保全——再インストールや将来の**オフロード**（端末容量の解放。検証つきのドライランプレビュー画面を先行搭載）に備えます。
 - **クラウド共有 — 選んだ写真だけを、解析ごと分け合う** — アルバム・人物・ピープルグループの「…」から**クラウド共有**でセットを作ると、選んだ写真が Dropbox の共有フォルダへ**サーバー上でコピー**されます（写真データの再アップロードは発生せず、**原本とバックアップには一切触れません**）。相手が MosaicPhotos を使っていれば、**AI 解析（シーンタグ・CLIP 埋め込み・顔）も一緒に届く**ので、受け取った端末で解析し直す必要がありません——共有された子供の写真が、相手の端末の命名済み人物アルバムへ自動で合流します（結合キーは端末に依存しない `content_hash`）。**「受け取る」「提供する」「バックアップ」は独立した設定**で、受け取るだけなら Dropbox 接続だけで動きます（端末写真の提供のみバックアップが前提）。共有フォルダを誰に見せるかは Dropbox 側の操作（閲覧のみ招待を推奨）。
 
 - **バックグラウンド・電池・通信** — 2 つの独立した設定で電池と通信量を管理します。
@@ -166,7 +166,7 @@ AI はすべて **`AutoAlbumCore`**（SwiftUI 非依存）にあり、アプリ�
 | キャッシュ | SwiftData（メタデータ）＋独自バイナリキャッシュ（LRU 破棄） |
 | オンデバイス AI | Vision 画像分類（OS 内蔵・約 1,300 クラス）· OpenCLIP ViT-B-32（DataComp/MIT・INT8）埋め込み · AuraFace-v1 顔埋め込み＝ピープル（Apache 2.0・任意）— すべて Core ML · 解釈/翻訳/プローブ生成/審査は Apple Foundation Models |
 | 最小 OS | iOS 26 |
-| パッケージ | Swift Package Manager（ローカル 13 パッケージ） |
+| パッケージ | Swift Package Manager（ローカル 14 パッケージ） |
 
 ## プライバシーとセキュリティ
 

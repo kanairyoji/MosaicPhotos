@@ -143,6 +143,9 @@
   捨てられるのは総容量の 10% を使い切ったとき（128GB 端末で 30 万枚超）。本体画像は「サムネが
   使っていない残り」を自動的に使う。テスト: 予算・安全弁・層の順序・同層の古い順・床・協調役の収束
   （`CacheBudgetTests`）。
+- 追記（2026-09-06・同日の後続コミット）: 割合の選択肢に **30% / 40%** を足した（現行は
+  5 / 10 / 20 / 30 / 40% ＋固定 GB 2〜100。`CacheBudget.percentChoices`）。クラウド中心の使い方では
+  10% で足りないという実フィードバックによる。あわせて Picker 表示の "%%" エスケープ崩れと未翻訳を修正。
 - 関連: `ImageCacheKit/CacheBudget.swift` / `ThumbnailCache`（`BudgetedCache`）/
   `DropboxCacheBudgetParticipant` / `DropboxCacheStore+Eviction`（`evict(kind:bytes:)`・先読み優先）/
   `FaceAvatarBudgetParticipant` / `StorageSettingsView` / ADR-88 / ADR-184。

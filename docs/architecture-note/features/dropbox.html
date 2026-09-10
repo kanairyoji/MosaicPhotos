@@ -47,7 +47,7 @@ graph LR
       </div>
 
       <h2>キャッシュ機構</h2>
-      <p><code>DropboxCacheStore</code>（<code>actor</code>）が、メタデータを SwiftData（<code>CachedDropboxItem</code> 等）、バイナリを <code>ImageCacheKit</code> で <code>Caches/DropboxKit/{thumbnails,fullimages}/</code> にハッシュ名で保存する。<code>contentHash</code> 変更で無効化し、<code>CacheUsageEntry</code>（最終アクセス）ベースの <strong>LRU 容量管理</strong>を行う。</p>
+      <p><code>DropboxCacheStore</code>（<code>actor</code>）が、メタデータを SwiftData（<code>CachedDropboxItem</code> 等）、バイナリを <code>ImageCacheKit</code> で <code>Caches/DropboxKit/{thumbnails,fullimages}/</code> にハッシュ名で保存する。<code>contentHash</code> 変更で無効化し、<code>CacheUsageEntry</code>（最終アクセス）ベースの <strong>LRU</strong> で古い順に捨てる。捨てる量はアプリ全体で 1 つの<a href="caching.html">ディスク予算</a>（ADR-185）が決める。</p>
 
       <h2>UI 層との分離</h2>
       <p>ロジックはすべて <code>DropboxCore</code>（SwiftUI 非依存）。UI（<code>DropboxKit</code>）は <code>PhotoStore</code> 適合・サムネセル・設定画面を担う。詳細な診断は <code>DropboxDebugSection</code>（Developer Options で合成）に分離。</p>

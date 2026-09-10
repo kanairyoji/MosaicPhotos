@@ -44,12 +44,12 @@ graph TD
 
       <h2>差分とメタデータ v2（ADR-38）</h2>
       <p>アップロード済み ID は <code>BackupAssetRecord</code>（SwiftData）で管理し、再実行時は未送信分だけを送る。1 回あたりの上限（10/50/100/500/無制限）を設定でき、<code>BackupPlanning</code> が純関数として差分を決める。</p>
-      <p>メタデータは <strong>v2 ＝カタログ＋撮影月シャード</strong>（ADR-38）。将来の<strong>オフロード</strong>（バックアップ済みローカル写真の削除）を見据え、<strong>端末を削除すると再生成できない情報</strong>を写真ごとに保全する：アルバム所属・お気に入り・撮影日（v1 から）に加え、<strong>人物名（顔クラスタのユーザー命名）・GPS（EXIF に無い写真の唯一の出典）・localIdentifier（ローカル⇔クラウド対応表）・スクリーンショット判定・VLM キャプション</strong>（v2 で追加・すべて Optional＝v1 と相互に読める）。</p>
+      <p>メタデータは <strong>v2 ＝カタログ＋撮影月シャード</strong>（ADR-38）。将来の<strong>オフロード</strong>（バックアップ済みローカル写真の削除）を見据え、<strong>端末を削除すると再生成できない情報</strong>を写真ごとに保全する：アルバム所属・お気に入り・撮影日（v1 から）に加え、<strong>人物名（顔クラスタのユーザー命名）・GPS（EXIF に無い写真の唯一の出典）・localIdentifier（ローカル⇔クラウド対応表）・スクリーンショット判定</strong>（v2 で追加・すべて Optional＝v1 と相互に読める）。※ <code>caption</code> 列は旧 VLM キャプション（ADR-108 で廃止）の名残で、<strong>アップロード済み JSON をデコードするためだけに残置</strong>し新規は常に nil。</p>
       <ul>
         <li><code>.mosaic/catalog.json</code> — 入口（スキーマ版・シャード一覧・アルバム/人物カタログ・数 KB）。</li>
         <li><code>.mosaic/meta/&lt;YYYY-MM&gt;.json</code> — 撮影月シャード。バックアップ 1 回で更新するのは<strong>触った月だけ</strong>（download→merge→upload）。旧 v1 の「全エントリを毎回書き直す」（6 万枚で 15〜25MB/回）を有界化した。</li>
         <li>v1 <code>metadata.json</code> は<strong>凍結</strong>。読み込み（<code>DropboxPhotoStore.loadBackupMetadata</code>）は「v1 ベース → v2 シャードで上書きマージ」で統合する。</li>
-        <li>人物名・キャプションは BackupKit から AutoAlbumCore へ依存せず、seam（<code>peopleNamesProvider</code> / <code>captionsProvider</code>）で Composition Root（<code>AutoAlbumAdapters</code>）が結線する。</li>
+        <li>人物名は BackupKit から AutoAlbumCore へ依存せず、seam（<code>peopleNamesProvider</code>）で Composition Root（<code>AutoAlbumAdapters</code>）が結線する。</li>
       </ul>
 
       <h2>メタデータのライフサイクル（誰が書き、誰が読み、どう壊れないか）</h2>
