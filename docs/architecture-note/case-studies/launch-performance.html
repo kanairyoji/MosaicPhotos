@@ -41,10 +41,11 @@ sequenceDiagram
       <p>ホーム表示後のバックグラウンド処理を時差で開始する（<code>HomeLifecycleTasks</code>）。</p>
       <table>
         <tr><th>タイミング</th><th>処理</th></tr>
-        <tr><td>即時</td><td>アルバムスキャン（キャッシュ即ロード）</td></tr>
+        <tr><td>即時</td><td>アルバムスキャン（キャッシュ即ロード）・ピープル読み込み＋顔スキャン開始・自動アルバム読み込み／生成</td></tr>
         <tr><td>+1.5s</td><td>場所スキャン</td></tr>
-        <tr><td>+3s</td><td>自動アルバム再生成・AI 再評価・背景タグ付け</td></tr>
+        <tr><td>+3s</td><td>PHAsset 索引の構築</td></tr>
         <tr><td>+5s</td><td>バックアップ記録ロード</td></tr>
+        <tr><td>+25s</td><td>家族共有の取り込み・反映</td></tr>
       </table>
 
       <div class="box why">

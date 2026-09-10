@@ -36,7 +36,7 @@
       </div>
       <div class="box why">
         <span class="box-h">3. 起動時 trap を避ける</span>
-        破損・スキーマ不整合で <code>ModelContainer</code> 初期化が trap する。本アプリは <code>makeResilientContainer</code> で「削除→再試行→インメモリ」とフォールバックする（→ <a href="../features/diagnostics.html">診断と堅牢性</a>）。スキーマ変更時は <code>ModelConfiguration</code> 名（例 <code>"AutoAlbumV10"</code>）を採番して旧ストアを破棄する。
+        破損・スキーマ不整合で <code>ModelContainer</code> 初期化が trap する。本アプリは <code>resilientModelContainer</code> で「理由を見る→（作り直せるものだけ）削除→再試行→インメモリ」とフォールバックする（→ <a href="../features/diagnostics.html">診断と堅牢性</a>）。スキーマ変更時は <code>ModelConfiguration</code> 名（例 <code>"AutoAlbumV10"</code>）を採番して旧ストアを破棄する。
       </div>
 
       <h2>メモリを有界に保つ書き込み</h2>

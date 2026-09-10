@@ -13,7 +13,7 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 設計判断・事例 / ハイライト</nav>
       <h1>設計判断ハイライト（重要トップ 16）</h1>
-      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）から、特に重要な <strong>13 個</strong>を抜粋して紹介する。各項は要点のみ。個別のバグ・性能対応の顛末（事例）は正本の case-studies.md と深掘りページへ。<strong>全件は Markdown のマスター</strong>を参照。</p>
+      <p class="lead">本アプリで「効いた／学びになった」設計判断（ADR）から、特に重要な <strong>19 個</strong>を抜粋して紹介する。各項は要点のみ。個別のバグ・性能対応の顛末（事例）は正本の case-studies.md と深掘りページへ。<strong>全件は Markdown のマスター</strong>を参照。</p>
 
       <div class="box note">
         <span class="box-h">このページは“抜粋”、正本は Markdown</span>
@@ -32,7 +32,7 @@
       <h2><span class="tag">設計</span> 2. ロジック層 / UI 層の分離（Core/UI） <span class="muted">(ADR-3)</span></h2>
       <p><strong>文脈:</strong> 副作用（PhotosKit/URLSession/SwiftData）を UI から切り離してテストしたい。<br>
       <strong>決定:</strong> <code>*Core</code>（SwiftUI 非依存）と <code>*Kit</code>（UI・<code>@_exported import</code>）に分割。<br>
-      <strong>結果:</strong> 純ロジックを macOS で高速テスト。import は 1 つで済む。パッケージ数は増える（現在 13 個）。</p>
+      <strong>結果:</strong> 純ロジックを macOS で高速テスト。import は 1 つで済む。パッケージ数は増える（現在 14 個）。</p>
 
       <h2><span class="tag">設計</span> 3. グリッドを UICollectionView に置換 <span class="muted">(ADR-4)</span></h2>
       <p><strong>文脈:</strong> 8 万件超（実機 86,172 枚）で <code>LazyVGrid</code> + <code>scrollTo</code> のスクラバーが不安定。<br>
@@ -51,7 +51,7 @@
 
       <h2><span class="tag">設計</span> 6. ModelContainer を自己修復で構築 <span class="muted">(ADR-7)</span></h2>
       <p><strong>文脈:</strong> SwiftData は破損・不整合で起動時 trap し、実機で原因不明クラッシュ。<br>
-      <strong>決定:</strong> <code>makeResilientContainer</code> で「削除→再試行→インメモリ」とフォールバック。<br>
+      <strong>決定:</strong> <code>resilientModelContainer</code> で「失敗の理由を見る→（作り直せるキャッシュだけ）削除→再試行→インメモリ」とフォールバック。台帳（<code>.ledger</code>）は控え（<code>StoreSnapshot</code>）から戻す（ADR-186）。<br>
       <strong>結果:</strong> 起動を止めない。最悪データは失うが回復する（埋め込みは背景で再生成）。</p>
 
       <h2><span class="tag">設計</span> 7. 重い処理は「使っていない時だけ」＋4 軸の独立設定 <span class="muted">(ADR-25・ADR-80・ADR-107)</span></h2>

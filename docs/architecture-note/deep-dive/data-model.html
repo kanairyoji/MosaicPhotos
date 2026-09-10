@@ -50,11 +50,11 @@
       </table>
       <div class="box note">
         <span class="box-h">別コンテナに分けるもの</span>
-        シーンタグ（＋OCR・人数・美的スコア）は <code>TagStore</code>（<strong>TagsV1</strong>）、顔クラスタは <code>FaceStore</code>（<strong>FacesV1</strong>）と、AI アルバム本体（<code>AutoAlbumV10</code>）とは別の <code>ModelConfiguration</code> に分離する。スキーマ変更や破棄採番が互いのデータを壊さないため。
+        シーンタグ（＋OCR・人数・美的スコア）は <code>TagStore</code>（<strong>TagsV1</strong>）、顔クラスタは <code>FaceStore</code>（<strong>Faces-&lt;顔モデル ID&gt;</strong>・現行世代の既定名は互換のため <strong>FacesV1</strong>）と、AI アルバム本体（<code>AutoAlbumV10</code>）とは別の <code>ModelConfiguration</code> に分離する。スキーマ変更や破棄採番が互いのデータを壊さないため。顔モデルを換えたときは<strong>別コンテナで「影の世代」を育て、網羅 90% で切り替える</strong>（名前は写真の重なりで持ち越し・旧コンテナは 1 リリース残す＝ADR-186）。
       </div>
 
       <h2>埋め込み: PhotoEmbedding（別テーブル・fp16）</h2>
-      <p>メタデータ取得が巨大 blob に触れないよう分離。<code>refKey</code>(unique) + <code>vector: Data</code>（Float16 パック・約1KB）。読み出し時に fp32 へ復元する。理由は <a href="../case-studies/memory.html">事例: メモリ枯渇</a>。</p>
+      <p>メタデータ取得が巨大 blob に触れないよう分離。<code>refKey</code>(unique) + <code>vector: Data</code>（Float16 パック・約1KB）+ <code>modelID</code>（作ったモデルの ID・後から足した optional 列＝ADR-186）。読み出し時に fp32 へ復元する。モデルを差し替えても DB は作り直さず、<strong>行ごとに新しいモデルの値で上書きしていく</strong>（検索は現行モデルの行だけを使う＝空間の違うベクトルを混ぜない）。理由は <a href="../case-studies/memory.html">事例: メモリ枯渇</a>。</p>
 
       <h2>生成アルバム: GeneratedAlbum / AutoAlbumInfo</h2>
       <p>旅行・フォルダ・AI アルバムの永続レコード。Photos.app は変更しない<strong>仮想アルバム</strong>。</p>

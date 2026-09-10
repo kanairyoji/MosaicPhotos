@@ -13,7 +13,7 @@
     <article>
       <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / キャッシュ実装詳細</nav>
       <h1>キャッシュ実装詳細</h1>
-      <p class="lead">プリミティブは <code>ImageCacheKit</code> に共通化し、破棄ポリシーは利用側が持つ。ここでは命名規則・無効化・LRU の実装まで踏み込む。</p>
+      <p class="lead">プリミティブ（メモリ層・ディスク I/O）と<strong>ディスク予算</strong>は <code>ImageCacheKit</code> に共通化し、「古い順に捨てる」手段は各キャッシュが持つ。ここでは命名規則・無効化・予算による追い出しの実装まで踏み込む。</p>
 
       <h2>プリミティブ: DiskImageStore</h2>
       <p><code>FileManager</code> を薄く包んだだけの I/O 層。破棄ポリシー（LRU）は持たず、<strong>LRU 列挙の材料だけ</strong>提供する。コアは Foundation のみ（macOS テスト可）、<code>UIImage</code> 便宜は <code>#if canImport(UIKit)</code>。</p>
@@ -25,18 +25,34 @@
         <tr><td><code>totalUsage()</code></td><td>合計バイト数</td></tr>
       </table>
 
-      <h2>2 つの利用側と別々のポリシー</h2>
+      <h2>ディスクは 1 つの予算を全キャッシュで分け合う（ADR-185）</h2>
+      <p>キャッシュごとの上限は持たない。予算（既定＝端末の総容量の 10%）を 4 つの参加者が共有し、超えたぶんだけ協調役が「どこから何バイト捨てるか」を決める。各キャッシュは<strong>自分の LRU で捨てる手段</strong>（<code>budgetEvict(bytes:)</code>）だけを実装する。</p>
       <div class="mermaid">
 graph TD
-  ICK["ImageCacheKit<br/>MemoryImageCache + DiskImageStore"]
-  TC["LocalPhotoCore: ThumbnailCache (actor)<br/>mtime ベース LRU"]
-  DCS["DropboxCore: DropboxCacheStore (actor)<br/>SwiftData(CacheUsageEntry) ベース LRU + 容量上限"]
+  ICK["ImageCacheKit<br/>CacheBudget / CacheBudgetPlanner（純）<br/>CacheBudgetCoordinator（actor）"]
+  TC["local.thumbnails<br/>LocalPhotoCore: ThumbnailCache（mtime LRU）"]
+  DT["dropbox.thumbnails<br/>DropboxCacheStore（CacheUsageEntry LRU）"]
+  DF["dropbox.fullImages<br/>DropboxCacheStore（先読み → 閲覧済みの順）"]
+  FA["faces.avatars<br/>PeopleKit: 顔アバター"]
   ICK --> TC
-  ICK --> DCS
+  ICK --> DT
+  ICK --> DF
+  ICK --> FA
       </div>
+      <table>
+        <tr><th>層（<code>CacheBudgetTier</code>）</th><th>参加者</th><th>床（予算比）</th><th>捨てる順</th></tr>
+        <tr><td><code>fullImages</code></td><td>Dropbox の本体画像</td><td>0.10</td><td>最初に捨てる（1 件が大きく、再取得はタップ 1 回）</td></tr>
+        <tr><td><code>derived</code></td><td>顔アバター</td><td>0.02</td><td>次（サムネから作り直せる）</td></tr>
+        <tr><td><code>thumbnails</code></td><td>端末サムネ・Dropbox サムネ</td><td>0.50</td><td>最後まで守る（小さく・常時使い・解析にも要る）</td></tr>
+      </table>
+      <ul>
+        <li>層の合計がその層の床を割ったら次の層へ。同じ層の中では<strong>最後に触った時刻が最も古いキャッシュ</strong>から <code>chunkBytes</code>（64MB）ずつ。1 手ごとに状態を取り直す（<code>CacheBudgetPlanner.nextStep</code>＝純関数・テスト対象）。</li>
+        <li>判定は<strong>まとめて</strong>行う。各キャッシュは書き込み後に <code>noteGrowth()</code> を呼ぶだけで、協調役が数秒後に 1 回だけ合計を見る（旧実装は書き込みのたびに Dropbox の全行 fetch＝6.8 万行を舐めていた）。</li>
+        <li>空き容量が 2GB を切る手前で予算を縮める安全弁つき（<code>effectiveBytes</code>）。極端に小さい端末でも下限 500MB は使う。</li>
+      </ul>
       <div class="box why">
-        <span class="box-h">なぜポリシーを共通化しないか</span>
-        端末写真は「再生成が容易・無効化条件なし」なので mtime LRU で十分。Dropbox は「<strong>contentHash で無効化</strong>」「容量上限の厳密管理」が要るため SwiftData で最終アクセスを持つ。要件が違うので「プリミティブ共通・ポリシー個別」に留める。
+        <span class="box-h">なぜ「キャッシュごとの上限」をやめたか（ADR-184/185）</span>
+        上限が別々だと、片方が余っていても片方だけが溢れる。しかも上限はユーザーが枚数を見て決められる値ではない（端末サムネは 8 万枚で数 GB、本体画像は 1 枚数 MB）。<strong>枚数もユーザーも見ない規則</strong>——「1 つの予算・価値の低い順に捨てる」——にすると、ライブラリが育っても設定を変えずに済む。捨てられたものは次に見たときに取り直すだけで、機能は落ちない。
       </div>
 
       <h2>Dropbox キャッシュの構造</h2>
@@ -65,16 +81,17 @@ graph LR
   INV --> FETCH["API で取得 → 保存 → 台帳更新"]
       </div>
 
-      <h2>LRU 容量管理</h2>
-      <p><code>DropboxCacheStore+Eviction</code> が <code>CacheUsageEntry</code> を最終アクセス昇順に並べ、種別ごとの上限（サムネ/本体）を超えた分を古い方から削除する。上限は設定（Storage 画面・<code>DropboxCacheSettingsKeys</code>）で変更可能。</p>
+      <h2>Dropbox 側の追い出し</h2>
+      <p><code>DropboxCacheStore+Eviction</code> が <code>CacheUsageEntry</code> を最終アクセス昇順に並べ、協調役から渡されたバイト数ぶんを古い方から削除する（本体画像は<strong>先読みしただけのもの → 閲覧済み</strong>の順）。種別ごとのバイト上限は<strong>安全弁として残っている</strong>だけで、通常の追い出しは予算が決める（<code>DropboxCacheSettingsKeys</code> の旧上限キーは未使用）。使用量は初回だけ台帳を集計し、以後は増減で追う。</p>
 
       <h2>メモリ層</h2>
-      <p><code>MemoryImageCache</code> は <code>NSCache</code> ラッパー。disk より前段で当たればディスク I/O を避ける。<code>NSCache</code> は OS のメモリ状況で自動破棄されるため、メモリ層自体の上限管理は OS に委ねる。</p>
+      <p><code>MemoryImageCache</code> は <code>NSCache</code> ラッパー。disk より前段で当たればディスク I/O を避ける。上限（<code>totalCostLimit</code>）は固定値ではなく<strong>端末のメモリ予算から算出</strong>する（<code>MosaicSupport.MemoryBudget</code>＝<code>os_proc_available_memory()</code> の約 5% を 60〜192MB にクランプ）——固定値だと低 RAM 機で jetsam、高 RAM 機で取りこぼし（ディスク再デコードの storm）になるため。圧迫時は <code>MemoryPressureMonitor</code> に登録した解放ハンドラで <strong>warning＝上限半減（LRU で縮小）</strong>、<strong>critical＝全消去</strong>。ただしサムネのキャッシュだけは <code>purgeOnCritical: false</code> で全消去せず段階縮小に留める（全部消すとディスク再デコードが一斉に走る）。</p>
 
       <div class="box refs">
         <span class="box-h">関連コード</span>
         <ul>
           <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit/DiskImageStore.swift">DiskImageStore.swift</a></li>
+          <li><a class="srclink" data-path="Packages/ImageCacheKit/Sources/ImageCacheKit/CacheBudget.swift">CacheBudget.swift</a> — 予算・層・協調役（ADR-185）</li>
           <li><a class="srclink" data-path="Packages/DropboxCore/Sources/DropboxCore/Cache/DropboxCacheNaming.swift">DropboxCacheNaming.swift</a></li>
           <li><a class="srclink" data-path="Packages/DropboxCore/Sources/DropboxCore/Cache/DropboxCacheStore+Eviction.swift">DropboxCacheStore+Eviction.swift</a></li>
           <li><a class="srclink" data-path="Packages/LocalPhotoCore/Sources/LocalPhotoCore/ThumbnailCache.swift">ThumbnailCache.swift</a></li>

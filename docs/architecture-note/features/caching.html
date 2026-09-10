@@ -17,7 +17,7 @@
 
       <div class="box note">
         <span class="box-h">ディスクの上限は 1 つ（ADR-185）</span>
-        キャッシュごとの上限は持たない。予算＝端末の総容量の 10%（設定で 5% / 20% / 固定 GB）を端末サムネ・Dropbox サムネ・Dropbox 本体画像・顔アバターが共有し、超えたら<strong>本体画像（先読み → 閲覧済み）→ 顔アバター → サムネ（端末・Dropbox を区別せず古い順）</strong>の順に捨てる。各層に床、空き 2GB の安全弁。実体は <code>ImageCacheKit</code> の <code>CacheBudget</code> / <code>CacheBudgetPlanner</code>（純ロジック）/ <code>CacheBudgetCoordinator</code>（actor）。各キャッシュは <code>BudgetedCache</code> で参加し、書き込み後に <code>noteGrowth()</code> を呼ぶだけ（判定はまとめて）。枚数もユーザーも見ない規則なので、ライブラリが育っても設定を変える必要がない。
+        キャッシュごとの上限は持たない。予算＝端末の総容量の 10%（設定で 5% / 10% / 20% / 30% / 40% か固定 GB＝2〜100GB）を端末サムネ・Dropbox サムネ・Dropbox 本体画像・顔アバターが共有し、超えたら<strong>本体画像（先読み → 閲覧済み）→ 顔アバター → サムネ（端末・Dropbox を区別せず古い順）</strong>の順に捨てる。各層に床、空き 2GB の安全弁。実体は <code>ImageCacheKit</code> の <code>CacheBudget</code> / <code>CacheBudgetPlanner</code>（純ロジック）/ <code>CacheBudgetCoordinator</code>（actor）。各キャッシュは <code>BudgetedCache</code> で参加し、書き込み後に <code>noteGrowth()</code> を呼ぶだけ（判定はまとめて）。枚数もユーザーも見ない規則なので、ライブラリが育っても設定を変える必要がない。
       </div>
 
       <h2>2 層キャッシュ</h2>
@@ -34,18 +34,20 @@ graph TD
         <li><code>DiskImageStore</code> — ディレクトリ単位のディスク I/O と LRU 列挙。コアは Foundation のみ（macOS テスト可）、<code>UIImage</code> 便宜は <code>#if canImport(UIKit)</code>。</li>
       </ul>
 
-      <h2>利用側ごとの破棄ポリシー</h2>
+      <h2>予算の参加者と、それぞれの「捨て方」</h2>
+      <p>「いくら捨てるか」は協調役が決め、「どれを捨てるか」は各キャッシュが自分の LRU で決める（<code>BudgetedCache</code>）。</p>
       <table>
-        <tr><th>利用側</th><th>メタ管理</th><th>破棄</th></tr>
-        <tr><td><code>LocalPhotoCore</code> の <code>ThumbnailCache</code>（actor）</td><td>—</td><td>LRU（独自）</td></tr>
-        <tr><td><code>DropboxCore</code> の <code>DropboxCacheStore</code>（actor）</td><td>SwiftData（<code>CachedDropboxItem</code> / <code>CacheUsageEntry</code>）</td><td><code>CacheUsageEntry</code>（最終アクセス）ベースの LRU・容量上限</td></tr>
+        <tr><th>参加者</th><th>層</th><th>メタ管理</th><th>古い順の決め方</th></tr>
+        <tr><td><code>LocalPhotoCore</code> の <code>ThumbnailCache</code>（actor）</td><td>サムネ</td><td>—</td><td>ファイルの mtime</td></tr>
+        <tr><td><code>DropboxCore</code> の <code>DropboxCacheStore</code>（actor・サムネ／本体画像の 2 参加者）</td><td>サムネ／本体画像</td><td>SwiftData（<code>CachedDropboxItem</code> / <code>CacheUsageEntry</code>）</td><td><code>CacheUsageEntry</code> の最終アクセス（本体画像は先読み → 閲覧済みの順）</td></tr>
+        <tr><td><code>PeopleKit</code> の顔アバター</td><td>派生物</td><td>—</td><td>ファイルの mtime</td></tr>
       </table>
 
       <h2>Dropbox キャッシュの無効化</h2>
       <p>ファイルの <code>contentHash</code> 変更を検知してエントリを無効化する。バイナリは <code>Caches/DropboxKit/{thumbnails,fullimages}/</code> にハッシュ化ファイル名（<code>DropboxCacheNaming</code>）で保存。</p>
 
-      <h2>上限はユーザー設定</h2>
-      <p>サムネ/フル画像の上限は設定（Storage 画面）から変更でき、キーは各パッケージの専用 enum（<code>CacheSettingsKeys</code> / <code>DropboxCacheSettingsKeys</code>）に集約する。</p>
+      <h2>ユーザーが決めるのは「予算」だけ</h2>
+      <p>設定（Storage 画面）で決めるのは<strong>全体の上限 1 つ</strong>（割合か固定 GB・キーは <code>CacheBudget.Keys</code>）。同じ画面に参加者ごとの使用量と合計を出す。種別ごとの上限キー（<code>CacheSettingsKeys.diskLimitMB</code> / <code>DropboxCacheSettingsKeys</code> の各 limit）は ADR-185 以降<strong>使っていない</strong>（メモリ層の上限＝<code>memoryLimitMB</code> は「Auto＝端末 RAM から算出」を既定に残る）。</p>
 
       <div class="box why">
         <span class="box-h">設計判断</span>

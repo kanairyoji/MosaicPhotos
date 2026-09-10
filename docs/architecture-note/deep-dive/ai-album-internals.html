@@ -81,14 +81,16 @@
       </table>
       <p>これらを統括するファサードが <code>AutoAlbumEngine</code>（@MainActor @Observable）で、アプリの <code>AutoAlbumAdapters</code>（Composition Root）が seam（<code>TextEmbedder</code> / <code>QueryTranslator</code> / タグ・顔の各 provider）を注入する。</p>
 
-      <h2>ライフサイクル：即時プレビュー → 夜間本番化</h2>
-      <p>作成/編集（<code>AIAlbumService.make</code>）は<strong>LLM を一切呼ばない</strong>。決定的レイヤーだけの「プレビュー解釈」（<code>AIAlbumInterpreter.previewInterpretation</code>：レキシコン・日付パーサ・人物接地）で 1〜2 秒で結果を出し、<code>pendingFinalization</code> フラグ付きで保存する。FM 解釈と LLM 審査を含む本番化は夜間（<code>finalizePending</code>・電源＋Wi-Fi＋ロック中）に行う。UI を固めず、重い推論を夜間ゲートに寄せるための 2 段構えである（ADR-25/28）。</p>
+      <h2>ライフサイクル：即時プレビュー → その場で本番化（→ 接地は夜間）</h2>
+      <p>作成/編集（<code>AIAlbumService.make</code>）は<strong>LLM を一切呼ばない</strong>。決定的レイヤーだけの「プレビュー解釈」（<code>AIAlbumInterpreter.previewInterpretation</code>：レキシコン・日付パーサ・人物接地）で 1〜2 秒で結果を出し、<code>pendingFinalization</code> フラグ付きで保存する。FM 解釈と LLM 審査を含む本番化は、続けて<strong>その場で</strong>行う（<code>finalizeNow</code>・ADR-110＝十数秒。ユーザーの明示操作なので夜間ゲートの対象外）。夜間（<code>finalizePending</code>・電源＋Wi-Fi＋ロック中）に残るのは<strong>語彙接地の重心がコールドだったとき</strong>の仕上げだけ——UI を固めず、しかし「バレエ」のようなレキシコン外の語が翌朝まで条件化されない（diagnostics-49）を避ける 2 段構えである（ADR-25/28/110）。</p>
       <div class="mermaid">
 graph TD
   MAKE["make(id, title, criteria)"] --> PREV["previewInterpretation<br/>決定的レイヤーのみ・LLM なし"]
   PREV --> RS1["rankedSearch＋証拠ゲート"]
   RS1 --> SAVE1["保存: pendingFinalization=true<br/>0 件でも保存する"]
-  SAVE1 -.夜間 BGTask.-> FIN["finalizePending"]
+  SAVE1 --> NOW["finalizeNow（その場・ADR-110）"]
+  SAVE1 -.接地が未了なら夜間 BGTask.-> FIN["finalizePending"]
+  NOW --> INT
   FIN --> INT["FM 解釈（interpretation）<br/>QuerySpec＋英訳＋プローブ → 永続化"]
   INT --> RS2["rankedSearch（フル）"]
   RS2 --> GATE["証拠ゲート（除外つきのみ）"]
@@ -116,7 +118,7 @@ graph TD
       </ul>
 
       <h2>フェーズ 2：検索（searchWithPool）</h2>
-      <p>本体は <code>AIAlbumSearcher.searchWithPool</code>。純ロジックなので macOS テストで固めてある（<code>AIAlbumSearcherTests</code> / <code>MultiProbeTests</code> 等）。処理順：</p>
+      <p>本体は <code>AIAlbumSearcher.searchWithPool</code>。純ロジックなので macOS テストで固めてある（<code>AIAlbumSearchTests</code> / <code>MultiProbeTests</code> 等）。処理順：</p>
       <ol>
         <li><strong>ハード条件</strong>：<code>QueryEvaluator.hardFilter</code>。人物条件は <code>peopleByRefKey</code>（現在の顔クラスタ名）で<strong>ライブ照合</strong>し、無ければ焼き込み値（<code>EnrichedPhoto.people</code>）へフォールバック。改名・統合が即反映される。</li>
         <li><strong>顔実測の除外</strong>：「人が写っていない」系の除外があるときは <code>faceCounts</code>（顔スキャン実測）で顔のある写真をハード除外。未スキャン分は CLIP 対比が受け持つ。</li>
@@ -152,7 +154,7 @@ graph TD
       <h2>テストの置き場所</h2>
       <table>
         <tr><th>対象</th><th>テスト</th><th>実行環境</th></tr>
-        <tr><td>検索・融合・増分・プローブ</td><td><code>AutoAlbumCoreTests</code>（<code>AIAlbumSearcherTests</code> / <code>MultiProbeTests</code> / <code>LexicalSearchTests</code> ほか）</td><td>macOS <code>swift test</code>（FAST）</td></tr>
+        <tr><td>検索・融合・増分・プローブ</td><td><code>AutoAlbumCoreTests</code>（<code>AIAlbumSearchTests</code> / <code>MultiProbeTests</code> / <code>LexicalSearchTests</code> ほか）</td><td>macOS <code>swift test</code>（FAST）</td></tr>
         <tr><td>検索品質（解釈→接地→照合→証拠ゲート）</td><td><code>SearchEvalTests</code>（COCO val2017 ラベル・116 本）／<code>SearchEvalCaltechTests</code>（Caltech-101・広い語の接地）／<code>SearchEvalRegressionTests</code>（<strong>回帰フロア</strong>＝カテゴリ別 F1 の下限と全体 precision≥0.97）</td><td>macOS <code>swift test --filter SearchEval</code>（FAST）</td></tr>
         <tr><td>検索品質（認識力込み・Recall@k）</td><td><code>SearchQualityTests</code>（Imagenette 200 枚＋28 クエリ・要モデル同梱）</td><td>アプリテストターゲット（実機/シミュレータ）</td></tr>
         <tr><td>CLIP の有限性・自然文一致</td><td><code>ImageRecognitionTests</code></td><td>アプリテストターゲット（モデル未同梱はスキップ）</td></tr>
@@ -166,7 +168,7 @@ graph TD
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/QueryEmbedder.swift">QueryEmbedder.swift</a> — フレーズ選定・semanticScore</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumVerificationCoordinator.swift">AIAlbumVerificationCoordinator.swift</a> — 証拠ゲート・審査</li>
           <li><a class="srclink" data-path="Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumInterpreter.swift">AIAlbumInterpreter.swift</a> — 解釈・接地・プローブ</li>
-          <li><a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> — 検索品質の台帳（正本）。現行 COCO 116 本マクロ P=1.000 / R=0.833 / F1=0.896・Caltech（接地込み）F1=0.860</li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/search-quality.md">records/search-quality.md</a> — 検索品質の台帳（正本）。現行 COCO 123 本マクロ P=1.000 / R=0.837 / F1=0.899・Caltech（接地込み）F1=0.860</li>
         </ul>
       </div>
 

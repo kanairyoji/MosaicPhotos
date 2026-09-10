@@ -103,7 +103,7 @@ flowchart TD
         <tr><th>#</th><th>工程</th><th>起こす／待つ</th><th>使う資源</th><th>止め方</th><th>1 単位の所要（実測）</th></tr>
         <tr><td>0</td><td>ストア群の用意 <code>HomeStores.shared()</code></td><td>待つ</td><td>CPU・ディスク（SwiftData）</td><td>—</td><td>温 0.1s／冷（背面起動）数秒</td></tr>
         <tr><td>0.5</td><td>幽霊の掃除 <code>pruneMissingPhotos</code></td><td>待つ（短い）</td><td>DB（集合の差）</td><td>—</td><td>候補（端末＋クラウド・原本のあるバックアップコピーと自分の共有コピーは除外）に無い写真の顔と走査記録を消す。欠けが 5% 超なら候補不備とみなして何もしない</td></tr>
-        <tr><td>1</td><td>顔スキャン <code>PeopleEngine.startScan</code></td><td>起こす</td><td><strong>ANE</strong>（Vision＋facenet）・画像デコード</td><td><code>stopScan</code>（1 枚単位で降りる）</td><td>16 枚バッチ・0.5s 休止。クラウドはキャッシュ済みサムネ（ADR-179 後は再計測待ち）</td></tr>
+        <tr><td>1</td><td>顔スキャン <code>PeopleEngine.startScan</code></td><td>起こす</td><td><strong>ANE</strong>（Vision＋AuraFace）・画像デコード</td><td><code>stopScan</code>（1 枚単位で降りる）</td><td>16 枚バッチ・0.5s 休止。クラウドはキャッシュ済みサムネ（ADR-179 後は再計測待ち）</td></tr>
         <tr><td>2</td><td>シーンタグ → CLIP 埋め込み <code>restartBackgroundFill</code></td><td>起こす</td><td><strong>ANE</strong>（Vision 分類・CLIP）</td><td><code>stopBackgroundWork</code></td><td>タグ 8 枚/0.5s（~2 枚/s）、埋め込み 192 枚を 16〜33s（85〜170ms/枚）</td></tr>
         <tr><td>3</td><td>沈黙検出 <code>logStalledPasses</code></td><td>待つ（短い）</td><td>DB カウント</td><td>—</td><td>&lt;1s</td></tr>
         <tr><td>4</td><td>バックアップ <code>startNightlyIfEnabled</code>（ADR-180/181）</td><td>起こす</td><td><strong>ディスク</strong>（読む・spool に書く）。転送は<strong>処理枠の外</strong>で OS</td><td><code>cancel</code>（積んだ分は OS へ渡してから降りる）</td><td>旧: 1 枚 1〜2s（HTTP 込み）。新: 読む＋書くだけ＝数十〜数百 ms/枚（上限 400 枚／1GB）</td></tr>
