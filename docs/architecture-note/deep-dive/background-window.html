@@ -122,10 +122,22 @@ flowchart TD
         <tr><td><code>HeavyLoad.isInFlight</code></td><td>解析すべて</td><td>数万件の実体化・モデルロードが重なる瞬間を避ける</td><td>ADR-122 / diagnostics-66</td></tr>
         <tr><td><code>ThermalGate</code></td><td>解析すべて</td><td>熱で止める（デバッグ全開でも効く）</td><td>—</td></tr>
         <tr><td><code>MemoryPressureMonitor.isUnderPressure</code></td><td>クラウド解析の画像取得</td><td>圧迫中は空を返して次のバッチへ（背面ではこれだけ見る）</td><td>ADR-179</td></tr>
+        <tr><td><code>BackgroundYield.analysisShouldYieldToUI</code></td><td>解析すべて（顔・タグ・埋め込み）</td><td><strong>前面で誰かが見ている間だけ</strong>譲る。背面ではメモリ圧迫だけを見る——画面が無いのにサムネのドレインで止まっていた（ADR-179 の規則をゲート側へ広げた）</td><td>ADR-188</td></tr>
+        <tr><td>サムネ要求の<strong>目的</strong>（<code>ThumbnailPurpose</code>）</td><td>解析のクラウド取得</td><td>解析は中優先レーン（表示の後ろ）に並び、<code>cloudThumbnailBusy</code> を名乗らない＝<strong>自分の取得で自分を止めない</strong></td><td>ADR-188</td></tr>
         <tr><td>電源・回線ポリシー</td><td>バックアップ・共有・クラウド解析</td><td>ユーザー設定。ローカル解析は回線を見ない</td><td>ADR-25 / ADR-80</td></tr>
         <tr><td><code>NightlyWorkPolicy.generateDecision</code></td><td>生成</td><td>残作業があるうちは見送り、4 回で必ず回す（飢餓防止）</td><td>ADR-163</td></tr>
       </table>
       <p>見送りやすい形で書くと: <strong>ユーザーが待っている処理 &gt; 生成 &gt; 解析（顔・タグ・埋め込み）</strong>、バックアップは横に並ぶ（資源が別）。「誰も待っていない処理のために、待っている処理を遅らせない」（ADR-122 の向き）。</p>
+
+      <div class="box note">
+        <span class="box-h">ゲートは「やめる合図」ではなく「待つ合図」（ADR-188）</span>
+        埋め込みの段は以前 <code>while !heavyShouldPause()</code> で回しており、<strong>入口で閉じていると
+        ループに一度も入らず実行ごと終わって</strong>いた。実機（diagnostics-81）では処理枠 4 分 56 秒の頭で
+        <code>embed loop entry (pause=true)</code> を出し、以後 1 枚も埋め込まないまま期限切れ——
+        閉じていた理由はバックアップの一括ロードとサムネのドレインで、どちらも数秒〜数十秒で開くものだった。
+        現在は <code>BackgroundTrickle.runPhasesWaitingForGate</code> で<strong>待ってから回す</strong>
+        （60 秒開かなければ畳んで実行中フラグを解放＝ADR-95 は不変）。
+      </div>
 
       <h2>4. 処理枠の外へ持ち出すもの（ADR-181・fire-and-forget）</h2>
       <p>処理枠の中で完結させる必要があるのは<strong>「済み」の判断</strong>ではなく<strong>「意図の記録」</strong>だけ、という発見が ADR-181 の中身。転送そのものは OS に任せ、応答で判断する。</p>

@@ -37,6 +37,14 @@ sequenceDiagram
 
       <h2>差分同期</h2>
       <p><code>DropboxSyncEngine</code> が <code>list_folder</code> のカーソルで差分を取り、<code>longpoll</code> で変更を待つ。カーソルは SwiftData（<code>DropboxSyncState</code>）に保持。初回フルスキャンはページごとに頻発するため、再フェッチ/再代入を<strong>スロットリング</strong>（先頭即時 + 以降は間引き）してメイン負荷を抑える。</p>
+      <div class="box note">
+        <span class="box-h">自分のアップロードで回り続けない（ADR-190）</span>
+        バックアップ・家族共有のコピーは<strong>自分が監視しているルート</strong>へ落ちるため、<code>longpoll</code> は
+        「変化あり」を返し続ける。続く <code>continue</code> が「表示対象の増減 0」を返しても、以前は待たずに
+        次の longpoll を投げており、実機で <strong>10 分に 202 周</strong>（診断ログの 47%）回っていた。
+        現在は <code>SyncPollPacing</code> が 1 周あたり最低 1 秒空け、空振りが続くほど 2→4→8→16→30 秒と
+        延ばす。<strong>実変化が 1 件でもあれば即リセット</strong>するので、本物の更新への追従は変わらない。
+      </div>
       <div class="mermaid">
 graph LR
   LF[list_folder] --> CUR[(カーソル保存)]

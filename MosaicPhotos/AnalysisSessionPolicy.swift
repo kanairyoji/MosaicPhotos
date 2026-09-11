@@ -32,6 +32,18 @@ enum AnalysisSessionPolicy {
         return (min(done, total), total)
     }
 
+    /// この停止理由で「やり残し」の印を**残す**か（diagnostics-81）。
+    ///
+    /// 残すのは、利用者の意思とは無関係に止まったとき——OS に止められた（ロック・熱・資源）、
+    /// 電池が尽きた、前面のみモードで画面を離れた。次にアプリを開いたときに自動再開する。
+    /// 「全部終わった」「利用者が止めた」は完了として印を下ろす。
+    static func keepsPendingFlag(_ reason: AnalysisSession.StopReason) -> Bool {
+        switch reason {
+        case .finished, .user:            return false
+        case .expired, .lowBattery, .leftScreen: return true
+        }
+    }
+
     /// セッションが終わったか。分母未確定（顔スキャンがまだ始まっていない）のうちは終わらない。
     static func isFinished(remaining: Int, tagging: Bool, scanning: Bool, faceScanSettled: Bool) -> Bool {
         remaining == 0 && !tagging && !scanning && faceScanSettled

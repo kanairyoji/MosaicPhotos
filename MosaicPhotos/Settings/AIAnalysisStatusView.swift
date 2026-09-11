@@ -155,6 +155,12 @@ struct AIAnalysisStatusView: View {
                 }
                 if case .stopped(let reason) = session.state, let text = stopText(reason) {
                     Text(text).font(.caption).foregroundStyle(.secondary)
+                } else if AnalysisSession.isPending {
+                    // 前回のセッションが終わっていない（ロック・OS の停止・アプリの終了）。
+                    // 次にアプリを開いたときに自動再開するが、ここでも状況を伝える。
+                    Label(L("The last analysis was interrupted. It resumes automatically when you open the app — or tap Analyze Now."),
+                          systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Toggle(isOn: Binding(get: { session.keepScreenOn }, set: { session.keepScreenOn = $0 })) {
@@ -191,6 +197,10 @@ struct AIAnalysisStatusView: View {
                  ? L("Continues after you leave the app.")
                  : L("Runs only while this screen is open."))
                 .font(.caption).foregroundStyle(.secondary)
+            if session.didAutoResume {
+                Text("Resumed the analysis that was interrupted earlier.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 

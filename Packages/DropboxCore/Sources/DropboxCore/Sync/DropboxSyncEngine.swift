@@ -227,6 +227,9 @@ final class DropboxSyncEngine {
 
     private func pollLoop(scopeKey: String, startCursor: String, isPrimary: Bool) async {
         var cursor = startCursor
+        /// 「変化あり」と言われたのに**表示対象の増減が 0 だった**周の連続数（diagnostics-81）。
+        /// 自分のバックアップ・共有コピーが同じルートへ落ちると延々と立つので、ここで間隔を空ける。
+        var emptyStreak = 0
 
         while !Task.isCancelled {
             reportState(.polling, isPrimary: isPrimary)
@@ -244,6 +247,7 @@ final class DropboxSyncEngine {
                 if result.changes {
                     reportState(.fetchingDelta, isPrimary: isPrimary)
                     var deltaHasMore = true
+                    var sawRealChange = false
                     while deltaHasMore && !Task.isCancelled {
                         let page = try await fetchDeltaPage(cursor: cursor)
                         deltaHasMore = page.hasMore
@@ -252,6 +256,7 @@ final class DropboxSyncEngine {
                                          added: page.added, removed: page.removed,
                                          newCursor: page.cursor)
                         if !page.added.isEmpty || !page.removed.isEmpty {
+                            sawRealChange = true
                             onCacheUpdated(page.added.map { $0.path.lowercased() }
                                 + page.removed.map { $0.lowercased() })
                             DropboxLogger.info("SyncEngine: delta — +\(page.added.count), -\(page.removed.count)")
@@ -259,8 +264,19 @@ final class DropboxSyncEngine {
                             DropboxLogger.verbose("SyncEngine: delta — no image changes, cursor advanced")
                         }
                     }
+                    // ⚠️ **変化ありでも間隔を空ける**（diagnostics-81）。自分のアップロードが
+                    //    同じルートに落ちると changes=true が鳴り続け、待ちが無いと
+                    //    「longpoll → delta（空）→ longpoll」を無停止で回してしまう。
+                    //    本物の変化があれば streak を 0 に戻すので、追従の速さは変わらない。
+                    emptyStreak = sawRealChange ? 0 : emptyStreak + 1
+                    if emptyStreak == 1 || emptyStreak % 20 == 0 {
+                        DropboxLogger.verbose("SyncEngine: empty delta streak=\(emptyStreak) — pacing polls")
+                    }
+                    try await Task.sleep(nanoseconds: SyncPollPacing.delayNs(emptyStreak: emptyStreak))
+                    guard !Task.isCancelled else { break }
                 } else {
                     DropboxLogger.verbose("SyncEngine: longpoll — no changes")
+                    emptyStreak = 0
                     // longpoll が即座に返った場合（本番では稀・テストのスタブでは常時）に、
                     // 待ち無しで再 longpoll するとビジーループ化して main actor を飢餓させる。
                     // 最小待ちを入れて協調的にする（cancel されたら即 break）。

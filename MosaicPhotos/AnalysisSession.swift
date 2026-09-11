@@ -91,14 +91,30 @@ final class AnalysisSession {
 
     // MARK: - 開始・停止
 
-    func start() {
+    /// - Parameter autoResume: 中断されたセッションの自動再開か（画面を見ていない可能性がある）。
+    ///   OS が継続タスクを受けなかった場合、自動再開では**前面のみで走らせない**——
+    ///   「使っている間は重い処理を動かさない」（ADR-25）を、利用者が見ていないところで破らない。
+    func start(autoResume: Bool = false) {
         guard !isActive else { return }
         faceScanStarted = false
         warmupTicks = 0
         remaining = 0
         peakRemaining = 0
+        didAutoResume = false
         BackgroundYield.sessionActive = true
         let mode: Mode = submitContinuedTask() ? .continued : .foregroundOnly
+        if autoResume, mode == .foregroundOnly {
+            // OS が継続タスクを受けなかった＝アプリを閉じたら止まる。自動再開でそれを始めると
+            // 「見ていない前面」で重い処理が走り続ける。印（理由も）は残したまま、次の機会に譲る。
+            BackgroundYield.sessionActive = false
+            Diagnostics.mark("analyze: auto-resume deferred — the system did not accept a continued task")
+            return
+        }
+        // ⚠️ **押した事実を永続化する**（diagnostics-81）。セッションはメモリ上の存在なので、
+        // ロック（iOS の既知の問題）・OS の期限切れ・プロセス終了で消える。印が残っていれば
+        // 次の前面復帰で自動再開でき、「夜に押したのに朝まで何も進んでいない」を防げる。
+        Self.markPending(true)
+        UserDefaults.standard.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
         state = .running(mode)
         applyIdleTimer()
         UIDevice.current.isBatteryMonitoringEnabled = true
@@ -115,6 +131,16 @@ final class AnalysisSession {
         BackgroundYield.sessionActive = false
         UIApplication.shared.isIdleTimerDisabled = false
         state = .stopped(reason)
+        // 「終わった」「利用者が止めた」だけが完了。OS に止められた・電池・画面離脱は**未完**として
+        // 印を残し、次の前面復帰で続きから再開する。
+        if AnalysisSessionPolicy.keepsPendingFlag(reason) {
+            Self.markPending(true)
+            let defaults = UserDefaults.standard
+            defaults.set("\(reason)", forKey: AppSettingsKeys.analysisSessionInterruptedReason)
+            defaults.set(Date(), forKey: AppSettingsKeys.analysisSessionInterruptedAt)
+        } else {
+            Self.markPending(false)
+        }
         Diagnostics.mark("analyze: session stop (\(reason)) remaining=\(remaining)")
         if let task {
             // 期限切れでも完了でも、必ず 1 回だけ呼ぶ（呼ばないと OS が次を受けなくなる）。
@@ -127,6 +153,61 @@ final class AnalysisSession {
     func screenLeft() {
         if mode == .foregroundOnly { stop(.leftScreen) }
     }
+
+    // MARK: - 中断からの再開（diagnostics-81）
+
+    /// 「今すぐ解析」を押したあと、まだ終わっていないか（プロセスを跨いで残る印）。
+    static var isPending: Bool { UserDefaults.standard.bool(forKey: AppSettingsKeys.analysisSessionPending) }
+
+    /// 中断の理由（表示用・未中断なら nil）。
+    static var interruptedReason: String? {
+        guard isPending else { return nil }
+        return UserDefaults.standard.string(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
+    }
+
+    private static func markPending(_ pending: Bool) {
+        let defaults = UserDefaults.standard
+        defaults.set(pending, forKey: AppSettingsKeys.analysisSessionPending)
+        if !pending {
+            defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
+            defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedAt)
+        }
+    }
+
+    /// 中断されたセッションを**自動で再開**する。アプリが前面に戻ったとき／起動直後に呼ぶ。
+    ///
+    /// 再開するのは「利用者が明示的に始めて、まだ終わっていない」ときだけ。止めたときは印を
+    /// 下ろしてあるので再開しない。残作業ゼロなら再開せず印だけ下ろす（押したのに全部済んでいた場合）。
+    func resumeIfPending() async {
+        guard !isActive, Self.isPending else { return }
+        // プロセスが消えた場合は停止理由すら残らない。ここで「前回が終わっていない」ことを記録する。
+        // ⚠️ 前面復帰のたびに呼ばれるので、記録はプロセスにつき 1 回だけ（ログを埋めない）。
+        if !loggedUnfinished {
+            loggedUnfinished = true
+            Diagnostics.mark("analyze: previous session unfinished (\(Self.interruptedReason ?? "process ended"))")
+        }
+        if AnalysisSessionPolicy.shouldStopForBattery(onPower: PowerStateMonitor.shared.isOnPower,
+                                                     level: UIDevice.current.batteryLevel) {
+            Diagnostics.mark("analyze: auto-resume skipped — battery low and not charging")
+            return
+        }
+        let progress = await engine.analysisProgress()
+        let pending = max(0, progress.total - progress.sceneTagged) + max(0, progress.total - progress.embedded)
+        guard pending > 0 || people.remaining > 0 else {
+            Diagnostics.mark("analyze: nothing left — clearing pending session")
+            Self.markPending(false)
+            return
+        }
+        Diagnostics.mark("analyze: auto-resuming (pending=\(pending))")
+        start(autoResume: true)
+        didAutoResume = isActive    // start() が false に戻すので、その後に立てる
+    }
+
+    /// 直近の開始が**自動再開**だったか（画面の案内用）。
+    private(set) var didAutoResume = false
+
+    /// 「前回が終わっていない」をこのプロセスで既に記録したか（前面復帰のたびに書かない）。
+    @ObservationIgnored private var loggedUnfinished = false
 
     // MARK: - BGContinuedProcessingTask
 

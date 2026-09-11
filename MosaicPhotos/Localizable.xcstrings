@@ -3039,6 +3039,16 @@
         }
       }
     },
+    "Resumed the analysis that was interrupted earlier.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中断されていた解析を再開しました。"
+          }
+        }
+      }
+    },
     "Review": {
       "localizations": {
         "ja": {
@@ -3563,6 +3573,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "いまバックグラウンドで写真を解析しています。"
+          }
+        }
+      }
+    },
+    "The last analysis was interrupted. It resumes automatically when you open the app — or tap Analyze Now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回の解析は中断されました。アプリを開くと自動で再開します（「今すぐ解析」を押しても再開できます）。"
           }
         }
       }

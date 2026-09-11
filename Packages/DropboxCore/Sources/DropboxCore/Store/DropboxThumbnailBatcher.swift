@@ -4,21 +4,35 @@ import ImageCacheKit
 import MosaicSupport
 import UIKit
 
+/// サムネイル要求の目的。**表示（人が見ている）か、解析（夜間の顔・タグ・埋め込み）か**を区別する。
+///
+/// ⚠️ なぜ要るか（diagnostics-81）: 解析は 1 枚ずつクラウドのサムネを取りに来るが、その取得自体が
+/// `cloudThumbnailBusy`（＝「UI が忙しい」の印）を立てるため、**解析が自分の取得で自分を止めて**
+/// いた。目的を分ければ、表示の要求だけが UI ビジーを名乗り、解析は行列の後ろに並ぶ。
+public enum ThumbnailPurpose: Sendable {
+    /// 画面に出す（可視セル・最優先・UI ビジーを名乗る）。
+    case display
+    /// 夜間・セッションの解析（低優先・UI ビジーを名乗らない）。
+    case analysis
+}
+
 /// Dropbox サムネイルのオンデマンド取得をバッチにまとめて `get_thumbnail_batch` API
 /// （最大25枚/リクエスト）で一括取得する。`DropboxPhotoStore` から分離した並行処理ユニット。
 ///
 /// 設計の要点：
-/// - **2 段優先キュー**：可視セル要求（`thumbnail(for:)`・待機者あり）を**最優先(FIFO)**、
+/// - **3 段優先キュー**：可視セル要求（`thumbnail(for:)`・待機者あり）を**最優先(FIFO)**、
+///   解析要求（`purpose: .analysis`・待機者あり）を**中優先(FIFO)**、
 ///   先読み（`prefetch(_:)`・待機者なし）を**低優先(LIFO・上限つき)**で別プールに持つ。各ウェーブは
-///   可視→先読みの順でチャンクを埋めるため、表示中のセルが先読みの行列に埋もれて待たされない。
+///   可視→解析→先読みの順でチャンクを埋めるため、表示中のセルが行列に埋もれて待たされない。
 /// - **先読みのキャンセル**：スクロールで画面外へ出た先読みは `cancelPrefetch(_:)` で**取得前に破棄**し、
 ///   見えていないサムネのネットワーク取得を止める（行列が深くならない）。
 /// - **キャッシュ済みは積まない**：先読みはメモリ/ディスクに既にあるものを `thumbnailExists` で除外し、
 ///   無駄なネットワーク取得を避ける。
 /// - **churn 耐性**：可視要求の Task がセル再描画でキャンセルされても、待機者だけ解放しフェッチは継続して
 ///   キャッシュへ書く（churn が収まれば即ヒット）。
-/// - **背景処理へ譲る**：ドレイン稼働中は `BackgroundActivityMonitor.cloudThumbnailBusy` を立て、
-///   CLIP 背景埋め込みに CPU を譲らせる。
+/// - **背景処理へ譲る**：**表示のための**取得が残っている間だけ
+///   `BackgroundActivityMonitor.cloudThumbnailBusy` を立て、CLIP 背景埋め込みに CPU を譲らせる。
+///   解析自身の取得では立てない——立てると解析が自分の取得で自分を止める（ADR-188・diagnostics-81）。
 ///
 /// 1 チャンク分のネットワーク取得・デコード・キャッシュ書き込みは `DropboxThumbnailChunkFetcher`、
 /// DTO とエンコード/デコードは `DropboxThumbnailBatchRequest`（純ロジック）に分離している。
@@ -36,6 +50,12 @@ final class DropboxThumbnailBatcher {
 
     /// 可視セルが要求中のサムネ（待機者あり・最優先）。path で重複排除。
     private var pendingVisible: [String: DropboxFileItem] = [:]
+    /// 解析要求（待機者あり・**中優先 FIFO**）。表示より後、先読みより先に取る。
+    /// 表示と分けるのは、解析のドレインで `cloudThumbnailBusy` を立てないため（diagnostics-81）。
+    private var pendingAnalysis: [String: DropboxFileItem] = [:]
+    private var analysisOrder: [String] = []
+    /// 取得中のうち**表示のための**パス。UI ビジー判定はこれと `pendingVisible` だけを見る。
+    private var displayInFlight: Set<String> = []
     /// 先読み（待機者なし・低優先・LIFO）。挿入順を `prefetchOrder`（古い→新しい）で保持し、
     /// drain は末尾（最新）から取り出す。上限超過は古い順に破棄する。
     private var prefetchItems: [String: DropboxFileItem] = [:]
@@ -77,7 +97,7 @@ final class DropboxThumbnailBatcher {
     /// サムネイルを返す。キャッシュヒット時は即返し、ミス時は**可視（最優先）**プールへ積んで取得する。
     ///
     /// 呼び出し元 Task のキャンセルでは待機者だけを解放し、フェッチ自体は中断しない。
-    func thumbnail(for item: DropboxFileItem) async -> UIImage? {
+    func thumbnail(for item: DropboxFileItem, purpose: ThumbnailPurpose = .display) async -> UIImage? {
         // メモリヒットは actor hop なしで即答（スクラブ時のキュー待ちを避ける）。
         if let hot = cache.cachedThumbnail(for: item.path) {
             PerfTrace.count("thumb.cacheHit")
@@ -93,7 +113,10 @@ final class DropboxThumbnailBatcher {
         let image = await withTaskCancellationHandler {
             await withCheckedContinuation { cont in
                 thumbnailWaiters[token] = (item.path, cont)
-                enqueueVisible(item)
+                switch purpose {
+                case .display:  enqueueVisible(item)
+                case .analysis: enqueueAnalysis(item)
+                }
                 updatePendingActivity()
                 scheduleBatchFlushIfNeeded()
             }
@@ -123,6 +146,22 @@ final class DropboxThumbnailBatcher {
         }
     }
 
+    #if DEBUG
+    /// テスト用: ドレインを走らせずに 1 件だけ積む（どのプールに入るかの検証）。
+    func enqueueForTesting(_ item: DropboxFileItem, purpose: ThumbnailPurpose) {
+        switch purpose {
+        case .display:  enqueueVisible(item)
+        case .analysis: enqueueAnalysis(item)
+        }
+    }
+
+    /// テスト用: いま「UI が忙しい」を名乗っているか（＝表示のための取得が残っているか）。
+    var claimsUIBusyForTesting: Bool { !pendingVisible.isEmpty || !displayInFlight.isEmpty }
+
+    /// テスト用: 次のウェーブの取り出し順（可視 → 解析 → 先読み）を見る。
+    func nextWavePathsForTesting() -> [String] { nextWave().flatMap { $0.map(\.path) } }
+    #endif
+
     /// 画面外へスクロールした先読みの取得を**取り消す**（可視要求・取得中のものは触らない）。
     func cancelPrefetch(_ items: [DropboxFileItem]) {
         for item in items { removePrefetch(item.path) }
@@ -134,8 +173,33 @@ final class DropboxThumbnailBatcher {
     private func enqueueVisible(_ item: DropboxFileItem) {
         let path = item.path
         removePrefetch(path)                 // 先読みプールから可視へ昇格
+        removeAnalysis(path)                 // 解析プールからも可視へ昇格（人が見ている方が先）
         if inFlight.contains(path) { return } // 取得中なら待機者だけで足りる（完了時に配送）
         pendingVisible[path] = item
+        refreshCloudBusy()
+    }
+
+    /// 解析要求を中優先プールへ積む（FIFO＝古い要求から処理し、待たせっぱなしにしない）。
+    private func enqueueAnalysis(_ item: DropboxFileItem) {
+        let path = item.path
+        if pendingVisible[path] != nil || inFlight.contains(path) { return }
+        if pendingAnalysis[path] == nil {
+            pendingAnalysis[path] = item
+            analysisOrder.append(path)
+        }
+    }
+
+    private func removeAnalysis(_ path: String) {
+        if pendingAnalysis.removeValue(forKey: path) != nil,
+           let i = analysisOrder.firstIndex(of: path) {
+            analysisOrder.remove(at: i)
+        }
+    }
+
+    /// **表示のための**取得が残っているかで UI ビジーを更新する。解析だけのドレインでは立てない
+    /// （立てると解析が自分の取得で自分を止める＝diagnostics-81）。
+    private func refreshCloudBusy() {
+        BackgroundActivityMonitor.shared.cloudThumbnailBusy = !pendingVisible.isEmpty || !displayInFlight.isEmpty
     }
 
     private func enqueuePrefetch(_ item: DropboxFileItem) {
@@ -162,7 +226,8 @@ final class DropboxThumbnailBatcher {
     }
 
     private func updatePendingActivity() {
-        DropboxActivityMonitor.shared.setThumbnailPending(pendingVisible.count + prefetchItems.count)
+        DropboxActivityMonitor.shared.setThumbnailPending(
+            pendingVisible.count + pendingAnalysis.count + prefetchItems.count)
     }
 
     private func cancelWaiter(token: UUID) {
@@ -184,7 +249,7 @@ final class DropboxThumbnailBatcher {
     // MARK: - Draining
 
     private func scheduleBatchFlushIfNeeded() {
-        let total = pendingVisible.count + prefetchItems.count
+        let total = pendingVisible.count + pendingAnalysis.count + prefetchItems.count
         if pendingVisible.count >= chunkSize || total >= chunkSize {
             startDraining()
         } else if total > 0, batchDebounceTask == nil {
@@ -202,7 +267,7 @@ final class DropboxThumbnailBatcher {
         batchDebounceTask = nil
         guard !isDraining else { return }
         isDraining = true
-        BackgroundActivityMonitor.shared.cloudThumbnailBusy = true   // 背景 CLIP に譲らせる
+        refreshCloudBusy()   // 表示の要求があるときだけ「UI が忙しい」を名乗る
         Task { await self.drain() }
     }
 
@@ -212,11 +277,12 @@ final class DropboxThumbnailBatcher {
         defer {
             isDraining = false
             DropboxActivityMonitor.shared.setThumbnailActiveSlots(0)
-            BackgroundActivityMonitor.shared.cloudThumbnailBusy = false
+            displayInFlight.removeAll()
+            refreshCloudBusy()
             // 計測: 1 ドレイン分の集計（キャッシュヒット率・デコード/待ち時間など）を 1 行に。
             PerfTrace.flushCounters("thumb-drain")
         }
-        while !pendingVisible.isEmpty || !prefetchItems.isEmpty {
+        while !pendingVisible.isEmpty || !pendingAnalysis.isEmpty || !prefetchItems.isEmpty {
             let wave = nextWave()
             if wave.isEmpty { break }
             DropboxActivityMonitor.shared.setThumbnailActiveSlots(wave.count)
@@ -240,8 +306,11 @@ final class DropboxThumbnailBatcher {
         while wave.count < maxConcurrentRequests {
             var chunk: [DropboxFileItem] = []
             while chunk.count < chunkSize {
-                guard let item = takeVisible() ?? (allowPrefetch ? takePrefetch() : nil) else { break }
+                let fromVisible = takeVisible()
+                guard let item = fromVisible ?? takeAnalysis() ?? (allowPrefetch ? takePrefetch() : nil)
+                else { break }
                 inFlight.insert(item.path)
+                if fromVisible != nil { displayInFlight.insert(item.path) }
                 chunk.append(item)
             }
             if chunk.isEmpty { break }
@@ -253,6 +322,14 @@ final class DropboxThumbnailBatcher {
     private func takeVisible() -> DropboxFileItem? {
         guard let path = pendingVisible.keys.first else { return nil }
         return pendingVisible.removeValue(forKey: path)
+    }
+
+    private func takeAnalysis() -> DropboxFileItem? {
+        while !analysisOrder.isEmpty {                       // FIFO: 古い要求から
+            let path = analysisOrder.removeFirst()
+            if let item = pendingAnalysis.removeValue(forKey: path) { return item }
+        }
+        return nil
     }
 
     private func takePrefetch() -> DropboxFileItem? {
@@ -277,8 +354,10 @@ final class DropboxThumbnailBatcher {
         // 配送済みの待機者は既に除去されているため二重配送にはならない。
         for item in items {
             inFlight.remove(item.path)
+            displayInFlight.remove(item.path)
             deliver(cache.cachedThumbnail(for: item.path), forPath: item.path)
         }
+        refreshCloudBusy()
     }
 }
 #endif

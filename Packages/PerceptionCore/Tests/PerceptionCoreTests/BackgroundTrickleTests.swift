@@ -149,3 +149,52 @@ struct BackgroundTrickleTests {
         #expect(committed == 1, "ループを畳まずバッチを回し続けている（commit=\(committed)）")
     }
 }
+
+/// diagnostics-81 の回帰: **ゲートが閉じていても実行を捨てない**。
+/// 以前は埋め込みループが `while !shouldPause()` で、入口で閉じていると 1 枚も処理せずに
+/// 実行ごと終わっていた（処理枠 4 分 56 秒がまるごと空転）。
+@Suite("ゲートが開くのを待ってからフェーズを回す")
+@MainActor
+struct GateWaitingPhaseLoopTests {
+
+    @Test("入口で閉じていても、開いたらフェーズが回る（捨てない）")
+    func waitsForGateThenRuns() async {
+        var gateChecks = 0
+        var phaseRuns = 0
+        await BackgroundTrickle.runPhasesWaitingForGate(
+            shouldPause: {
+                gateChecks += 1
+                return gateChecks <= 3      // 最初の 3 回は閉じている（0.3s × 3 ≒ 1 秒）
+            },
+            phase: {
+                phaseRuns += 1
+                return false                // 1 回回って残作業なし
+            })
+        #expect(phaseRuns == 1, "ゲートが開いたのにフェーズが回っていない（実行を捨てている）")
+    }
+
+    @Test("進捗がある限りフェーズを繰り返す")
+    func repeatsWhileProgressing() async {
+        var phaseRuns = 0
+        await BackgroundTrickle.runPhasesWaitingForGate(
+            shouldPause: { false },
+            phase: {
+                phaseRuns += 1
+                return phaseRuns < 3        // 2 回は進捗あり、3 回目で打ち止め
+            })
+        #expect(phaseRuns == 3)
+    }
+
+    @Test("開かないまま上限を超えたら、フェーズを回さずに畳む（フラグを握らない）")
+    func standsDownWhenGateNeverOpens() async {
+        var phaseRuns = 0
+        var stoodDown = false
+        await BackgroundTrickle.runPhasesWaitingForGate(
+            shouldPause: { true },
+            maxPauseNs: 600_000_000,        // 0.6s で諦める（テストを速く）
+            onStandDown: { stoodDown = true },
+            phase: { phaseRuns += 1; return true })
+        #expect(stoodDown)
+        #expect(phaseRuns == 0)
+    }
+}
