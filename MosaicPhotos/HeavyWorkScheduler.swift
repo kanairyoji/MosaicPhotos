@@ -61,9 +61,16 @@ enum HeavyWorkScheduler {
         do {
             try BGTaskScheduler.shared.submit(request)
             Diagnostics.mark("bgtask: submitted")
+            // ⚠️ 予約は「候補に載せた」だけ。**本当に積まれているか**と、そのときの端末条件を
+            //    台帳に残す（diagnostics-81: 12 時間 窓が来なかったとき、これが無かったので
+            //    「予約が消えていた」のか「OS が実行しなかった」のか区別できなかった）。
+            RunTimeline.record("submit: requiresPower=\(request.requiresExternalPower) "
+                               + environmentLine())
+            logPendingRequests(context: "submit")
         } catch {
             // シミュレータ等では未サポートで失敗する（実害なし）。
             DiagnosticsLog.shared.append("bgtask: submit failed — \(error.localizedDescription)")
+            RunTimeline.record("submit failed — \(error.localizedDescription)")
         }
     }
 
@@ -83,7 +90,10 @@ enum HeavyWorkScheduler {
         //    来たときに前回からの経過を書いておかないと、後から「何時間空いたか」を数えられない。
         let sinceLast = Self.minutesSinceLastWindow()
         Self.recordWindowBegin()
-        Diagnostics.mark("bgtask: begin" + (sinceLast.map { " (前回の窓から \($0) 分)" } ?? " (この端末で最初の窓)"))
+        let gapText = sinceLast.map { " (前回の窓から \($0) 分)" } ?? " (この端末で最初の窓)"
+        Diagnostics.mark("bgtask: begin" + gapText)
+        RunTimeline.record("window begin\(gapText) " + Self.environmentLine())
+        RunTimeline.noteState("window")
         let started = Date()
         // この実行の世代。以後の完了通知はこのトークンを添えて行う
         // （前の実行の遅れた通知がこの枠を奪わないように）。
@@ -93,6 +103,9 @@ enum HeavyWorkScheduler {
         @MainActor func completeOnce(outcome: String, success: Bool) {
             completionLatch.completeOnce(token) {
                 Diagnostics.mark("bgtask: end (\(outcome))")
+                let mins = Int(Date().timeIntervalSince(started) / 60)
+                RunTimeline.record("window end (\(outcome)・\(mins) 分) " + Self.environmentLine())
+                RunTimeline.noteState("idle")
                 recordLastRun(started: started, outcome: outcome)
                 task.setTaskCompleted(success: success)
                 submit()   // 次回分を再予約（残作業はまた次のロック中に進む）
@@ -261,6 +274,38 @@ enum HeavyWorkScheduler {
         }
         if let line = AnalysisStallCheck.logLine(states, now: Date(), installedAt: installedAt) {
             Diagnostics.mark(line)
+        }
+    }
+
+    /// いまの端末条件を 1 行で（台帳用）。**窓が来ない理由の候補を、来たときに全部残す**。
+    static func environmentLine() -> String {
+        let refresh: String
+        switch UIApplication.shared.backgroundRefreshStatus {
+        case .available: refresh = "on"
+        case .denied: refresh = "OFF(ユーザー設定)"
+        case .restricted: refresh = "制限"
+        @unknown default: refresh = "?"
+        }
+        let power = PowerStateMonitor.shared
+        let battery = power.batteryLevel >= 0 ? "\(Int(power.batteryLevel * 100))%" : "?"
+        let thermal = ProcessInfo.processInfo.thermalState
+        let available = MemoryBudget.availableBytes() / 1024 / 1024
+        let footprint = currentMemoryFootprintMB().map { String(format: "%.0fMB", $0) } ?? "?"
+        return "[bgRefresh=\(refresh) 充電=\(power.isOnPower) 電池=\(battery) "
+            + "低電力=\(power.isLowPowerMode) 熱=\(thermal.rawValue) "
+            + "footprint=\(footprint) 空き=\(available)MB]"
+    }
+
+    /// OS に積まれている予約を台帳へ書く（消えていれば「予約が無い」と分かる）。
+    static func logPendingRequests(context: String) {
+        BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            let list = requests.isEmpty
+                ? "なし"
+                : requests.map { r in
+                    let when = (r as? BGProcessingTaskRequest)?.earliestBeginDate
+                    return r.identifier + (when.map { " (>= \($0))" } ?? "")
+                }.joined(separator: ", ")
+            RunTimeline.record("pending(\(context)): \(list)")
         }
     }
 

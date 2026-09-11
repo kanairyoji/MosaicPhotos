@@ -119,6 +119,8 @@ final class AnalysisSession {
         applyModeGates()
         UIDevice.current.isBatteryMonitoringEnabled = true
         Diagnostics.mark("analyze: session start (\(mode))")
+        RunTimeline.record("session start (\(mode))\(autoResume ? " ＝自動再開" : "")")
+        RunTimeline.noteState("session")
         loop = Task { [weak self] in await self?.runLoop() }
     }
 
@@ -143,6 +145,8 @@ final class AnalysisSession {
             Self.markPending(false)
         }
         Diagnostics.mark("analyze: session stop (\(reason)) remaining=\(remaining)")
+        RunTimeline.record("session stop (\(reason)) remaining=\(remaining)")
+        RunTimeline.noteState("idle")
         if let task {
             // 期限切れでも完了でも、必ず 1 回だけ呼ぶ（呼ばないと OS が次を受けなくなる）。
             task.setTaskCompleted(success: reason == .finished)
@@ -167,6 +171,7 @@ final class AnalysisSession {
         state = .running(.foregroundOnly)
         applyModeGates()
         Diagnostics.mark("analyze: continuing in the foreground (the system ended the continued task)")
+        RunTimeline.record("session: 継続タスクが OS に止められた → 前面で続行")
     }
 
     /// モードに応じたゲートと画面消灯の設定。

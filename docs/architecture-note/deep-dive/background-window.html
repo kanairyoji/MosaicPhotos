@@ -130,6 +130,21 @@ flowchart TD
       <p>見送りやすい形で書くと: <strong>ユーザーが待っている処理 &gt; 生成 &gt; 解析（顔・タグ・埋め込み）</strong>、バックアップは横に並ぶ（資源が別）。「誰も待っていない処理のために、待っている処理を遅らせない」（ADR-122 の向き）。</p>
 
       <div class="box note">
+        <span class="box-h">「枠が来なかった」を後から診断する（ADR-192）</span>
+        アプリが動いていない時間のことは、その時間には書けない。だから<strong>次に動いた瞬間</strong>に
+        空白を説明する: 前回の終わり方（<code>window</code> のまま終わっていれば
+        「処理枠の途中で iOS に終了させられた疑い」）・前回の窓からの経過・端末条件
+        （バックグラウンド更新／充電／電池／低電力／熱／footprint／空きメモリ）・
+        <strong>OS に積まれている予約</strong>（<code>getPendingTaskRequests</code>）。
+        さらに <strong>MetricKit の <code>MXAppExitMetric</code></strong>（メモリ上限＝jetsam・
+        ウォッチドッグ・BGTask 期限超過）と <code>MXCrashDiagnostic</code> を読む——ここが
+        <strong>OS しか知らない終了理由</strong>で、以前は購読しながら捨てていた。
+        記録先は診断ログとは別の<strong>実行タイムライン</strong>（<code>run-timeline.log</code>・
+        Developer Options で閲覧/共有）。1 日数十行しかないので数か月ぶん残り、
+        同期や顔検出のログに押し流されない。
+      </div>
+
+      <div class="box note">
         <span class="box-h">枠が来ないときに、アプリができること（ADR-191）</span>
         予約は「候補に載せる」だけで、実行の可否は OS（DAS）が決める——実機 diagnostics-81 では
         <strong>充電中にもかかわらず 12 時間 1 度も開かなかった</strong>。アプリ側の手当ては 3 つ。
