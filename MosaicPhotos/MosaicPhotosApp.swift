@@ -22,6 +22,14 @@ struct MosaicPhotosApp: App {
         HeavyWorkScheduler.register()
         // B: 予約の保険（force-quit 後の復帰などで予約が消えていたら入れ直す）。
         HeavyWorkScheduler.submitIfMissing()
+        // ⚠️ **動いていなかった時間について、動き出した瞬間に分かることを全部書く**（diagnostics-81）。
+        //    前回の終わり方（正常／窓の途中＝iOS に終了させられた疑い）・いまの端末条件・
+        //    OS に積まれている予約。これが無かったので「12 時間 窓が来なかった」の理由を
+        //    実機ログから特定できなかった。
+        RunTimeline.record("launch — \(appVersionLine()) " + HeavyWorkScheduler.environmentLine())
+        if let previous = RunTimeline.previousRunSummary() { RunTimeline.record("前回: \(previous)") }
+        RunTimeline.noteState("idle")
+        HeavyWorkScheduler.logPendingRequests(context: "launch")
     }
 
     var body: some Scene {

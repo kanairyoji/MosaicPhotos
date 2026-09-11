@@ -23,6 +23,18 @@ public final class HangDiagnostics: NSObject, MXMetricManagerSubscriber {
 
     public func didReceive(_ payloads: [MXDiagnosticPayload]) {
         for payload in payloads {
+            // クラッシュ（落ちて消えたのなら、窓が来ない理由はそれ）。ハングと同じ扱いで残す。
+            for crash in payload.crashDiagnostics ?? [] {
+                let reason = crash.terminationReason ?? "?"
+                let signal = crash.signal.map { "signal=\($0)" } ?? ""
+                let line = "CRASH-DIAG: \(reason) \(signal) "
+                    + "(exception=\(crash.exceptionType.map(String.init(describing:)) ?? "?"))"
+                RunTimeline.record(line)
+                DiagnosticsLog.shared.append(line)
+                for f in Self.topFrames(fromCallStackJSON: crash.callStackTree.jsonRepresentation(), limit: 10) {
+                    DiagnosticsLog.shared.append("CRASH-DIAG:   \(f)")
+                }
+            }
             for hang in payload.hangDiagnostics ?? [] {
                 let seconds = hang.hangDuration.converted(to: .seconds).value
                 DiagnosticsLog.shared.append(String(format: "HANG-DIAG: %.1fs のハング（OS 採取）",
@@ -36,7 +48,44 @@ public final class HangDiagnostics: NSObject, MXMetricManagerSubscriber {
         }
     }
 
-    public func didReceive(_ payloads: [MXMetricPayload]) {}
+    /// 日次のメトリクス。**ここに「アプリがなぜ終了したか」が入っている**（`MXAppExitMetric`）。
+    ///
+    /// ⚠️ 以前はこのメソッドを空にしていた（diagnostics-81 の反省）。「夜間に処理枠が来ない」の
+    /// 原因候補——iOS がメモリ確保のためにアプリを終了した（jetsam）、ウォッチドッグ、BGTask の
+    /// 期限超過——は**すべて OS 側にしか記録が無い**。購読していながら捨てていたので、
+    /// 実機ログをいくら読んでも答えが出なかった。ペイロードは 1 日 1 回届き、直前 24 時間を覆う。
+    public func didReceive(_ payloads: [MXMetricPayload]) {
+        for payload in payloads {
+            guard let exits = payload.applicationExitMetrics else { continue }
+            let bg = Self.counts(fromBackground: exits.backgroundExitData)
+            let fg = Self.counts(fromForeground: exits.foregroundExitData)
+            let line = "EXIT-METRIC: \(RunTimeline.exitSummary(background: bg, foreground: fg))"
+            RunTimeline.record(line)
+            DiagnosticsLog.shared.append(line)
+        }
+    }
+
+    private static func counts(fromBackground d: MXBackgroundExitData) -> [String: Int] {
+        ["normal": d.cumulativeNormalAppExitCount,
+         "memoryResourceLimit": d.cumulativeMemoryResourceLimitExitCount,
+         "memoryPressure": d.cumulativeMemoryPressureExitCount,
+         "cpuResourceLimit": d.cumulativeCPUResourceLimitExitCount,
+         "watchdog": d.cumulativeAppWatchdogExitCount,
+         "backgroundTaskTimeout": d.cumulativeBackgroundTaskAssertionTimeoutExitCount,
+         "suspendedWithLockedFile": d.cumulativeSuspendedWithLockedFileExitCount,
+         "badAccess": d.cumulativeBadAccessExitCount,
+         "illegalInstruction": d.cumulativeIllegalInstructionExitCount,
+         "abnormal": d.cumulativeAbnormalExitCount]
+    }
+
+    private static func counts(fromForeground d: MXForegroundExitData) -> [String: Int] {
+        ["normal": d.cumulativeNormalAppExitCount,
+         "memoryResourceLimit": d.cumulativeMemoryResourceLimitExitCount,
+         "watchdog": d.cumulativeAppWatchdogExitCount,
+         "badAccess": d.cumulativeBadAccessExitCount,
+         "illegalInstruction": d.cumulativeIllegalInstructionExitCount,
+         "abnormal": d.cumulativeAbnormalExitCount]
+    }
 
     /// MetricKit の callStackTree JSON から「自アプリのフレームを優先して」上位を抜き出す（純・テスト対象）。
     /// フォーマット: {"callStacks":[{"callStackRootFrames":[{binaryName, offsetIntoBinaryTextSegment,

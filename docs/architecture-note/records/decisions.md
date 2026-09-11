@@ -56,6 +56,39 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-192 「動いていない時間」を診断できるようにする（実行タイムライン＋OS の終了理由）
+- 状態: 採用
+- 文脈: diagnostics-81 の実機ログを受け取っても、**「12 時間 処理枠が来なかった理由」に
+  答えられなかった**。理由は 3 つで、どれも設計側の落ち度だった。
+  1. **アプリが動いていない時間のことは、その時間には書けない**。にもかかわらず、次に動いた
+     瞬間に「空白について分かること」（前回どう終わったか・前回の窓からの経過・端末条件）を
+     何も書いていなかった。
+  2. **OS は答えを持っていたのに、それを捨てていた**。`HangDiagnostics` は MetricKit を
+     購読していたが `didReceive(_ payloads: [MXMetricPayload])` が**空実装**で、
+     `MXAppExitMetric`（メモリ上限＝jetsam・ウォッチドッグ・BGTask 期限超過などの終了理由）も
+     `MXCrashDiagnostic` も読んでいなかった。
+  3. **流量の桁が違うものを 1 つのログに混ぜていた**。末尾 256KB の診断ログは Dropbox の同期と
+     顔検出の行で埋まり（実測 47%）、1 日数十行しかない起動・処理枠の記録が押し出されて消えた。
+- 決定:
+  1. **実行タイムライン**（`RunTimeline`・`Caches/run-timeline.log`）を分ける。書くのは起動・
+     予約・処理枠の開始/終了・解析セッションの開始/停止・終了理由だけ。同じ 256KB でも数か月残る。
+     Developer Options から閲覧・共有できる（診断ログと同じ画面を使い回す）。
+  2. **次に動いた瞬間に空白を説明する**: `RunTimeline.noteState()` のパンくず（idle / window /
+     session）を `UserDefaults` に残し、起動時に前回の終わり方を要約する——`window` のまま
+     終わっていれば「処理枠の途中で iOS に終了させられた疑い」。あわせて端末条件
+     （バックグラウンド更新・充電・電池・低電力・熱・footprint・空きメモリ）と、
+     **OS に積まれている予約**（`getPendingTaskRequests`）を記録する。
+  3. **MetricKit の終了理由を読む**: `MXAppExitMetric` の背面/前面カウンタを日本語ラベルで
+     台帳へ（0 件は書かない）。`MXCrashDiagnostic` も記録する。1 日 1 回・直前 24 時間ぶんが届く。
+- 結果: 「窓が来ない」が沈黙ではなく**記録**になる。次のログでは「予約は積まれていたか」
+  「前回は窓の途中で殺されたか」「iOS は何を理由に終了させたか」に、ログだけで答えられる。
+  ⚠️ MetricKit は即時ではない（1 日 1 回）ので、当日中に答えが要る場面には間に合わない——
+  そこはパンくずと環境スナップショットで埋める。
+- 関連: `RunTimeline.swift` / `HangDiagnostics`（`MXMetricPayload` / `MXCrashDiagnostic`）/
+  `HeavyWorkScheduler.environmentLine()` / `logPendingRequests(context:)` /
+  `DiagnosticsLogView`（ログを差し替え可能に）/ `RunTimelineTests` / ADR-106 / ADR-117 /
+  diagnostics-81。
+
 ## ADR-191 OS の都合で解析を終わらせない（前面継続への降格）＋「なぜ進まないか」をアプリが言う
 - 状態: 採用（ADR-182/189 の追補）
 - 文脈: 実フィードバック「電源ケーブルを繋いでアプリも動かしっぱなしなのに、やりたい事が

@@ -95,6 +95,13 @@ struct DeveloperSettingsView: View {
     private var logsSection: some View {
         Section {
             NavigationLink("診断ログを見る") { DiagnosticsLogView() }
+            // 「いつ動いて、いつ動かなかったか」だけの台帳（diagnostics-81）。
+            // 診断ログは同期や顔検出の行で流れてしまうので、数か月ぶん残るこちらを別に持つ。
+            NavigationLink("実行タイムラインを見る（起動・処理枠・解析・終了理由）") {
+                DiagnosticsLogView(log: RunTimeline.log,
+                                   title: "実行タイムライン",
+                                   emptyText: "まだ記録はありません。")
+            }
             Toggle("詳細ログを記録", isOn: $verboseLogging)
             Toggle("パフォーマンス計測", isOn: $perfTracing)
                 .onChange(of: perfTracing) { _, on in PerfTrace.isEnabled = on }

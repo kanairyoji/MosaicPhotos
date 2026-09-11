@@ -11,6 +11,11 @@ import SwiftUI
 /// (1) 読み込みは `async`（`recentLines`）、(2) 描画は行単位の `LazyVStack`＝
 /// 見えている行だけレイアウトする、の 2 点で解消する。全文が要るときは共有ボタンを使う。
 struct DiagnosticsLogView: View {
+    /// 表示するログ。既定は診断ログ（従来）。
+    var log: DiagnosticsLog = .shared
+    var title: String = "診断ログ"
+    var emptyText: String = "まだ診断ログはありません。"
+
     @State private var lines: [String] = []
     @State private var isLoading = true
 
@@ -19,7 +24,7 @@ struct DiagnosticsLogView: View {
             if isLoading {
                 Color.clear.busyOverlay(true, text: "読み込み中…")
             } else if lines.isEmpty {
-                Text("まだ診断ログはありません。")
+                Text(emptyText)
                     .foregroundStyle(.secondary)
             } else {
                 ScrollView {
@@ -37,18 +42,18 @@ struct DiagnosticsLogView: View {
                 }
             }
         }
-        .navigationTitle("診断ログ")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("消去", role: .destructive) {
-                    DiagnosticsLog.shared.clear()
+                    log.clear()
                     lines = []
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 // 全文が要るときはこちら（画面には末尾のみ出す）。
-                ShareLink(item: DiagnosticsLog.shared.url)
+                ShareLink(item: log.url)
             }
             ToolbarItem(placement: .bottomBar) {
                 Button {
@@ -64,7 +69,7 @@ struct DiagnosticsLogView: View {
 
     private func load() async {
         isLoading = true
-        lines = await DiagnosticsLog.shared.recentLines()
+        lines = await log.recentLines()
         isLoading = false
     }
 }
