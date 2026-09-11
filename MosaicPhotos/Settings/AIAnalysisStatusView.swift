@@ -45,6 +45,7 @@ struct AIAnalysisStatusView: View {
             sceneTagsSection
             if facesAvailable { peopleSection }
             actionSection
+            blockersSection
         }
         .task { await refresh() }
         // 解析中は数秒おきに数え直す（実フィードバック: 「今すぐ解析」で進んでいるのに数字が動かない）。
@@ -178,6 +179,82 @@ struct AIAnalysisStatusView: View {
             + Text(verbatim: "\n\n")
             + Text("Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.")
         }
+    }
+
+    // MARK: - 自動で進まない理由（diagnostics-81）
+
+    /// いま自動の解析を止めている条件（アプリが知り得るものは全部出す）。
+    private var currentBlockers: [AnalysisBlockerDiagnosis.Blocker] {
+        AnalysisBlockerDiagnosis.blockers(
+            automaticEnabled: HeavyWorkTiming.current != .paused,
+            backgroundRefreshAvailable: UIApplication.shared.backgroundRefreshStatus == .available,
+            lowPowerMode: PowerStateMonitor.shared.isLowPowerMode,
+            requiresPower: BackgroundPowerPolicy(
+                rawValue: UserDefaults.standard.integer(forKey: PowerStateMonitor.policyKey)) == .whileCharging,
+            onPower: PowerStateMonitor.shared.isOnPower,
+            thermalPaused: ThermalGate.shared.shouldPause(),
+            networkAllowed: NetworkStateMonitor.shared.networkAllowed())
+    }
+
+    /// 「条件は満たしているのに、半日以上 処理枠が来ていない」か。
+    private var isWindowStarved: Bool {
+        AnalysisBlockerDiagnosis.isWindowStarved(
+            blockers: currentBlockers,
+            minutesSinceLastWindow: HeavyWorkScheduler.minutesSinceLastWindow())
+    }
+
+    /// 自動の解析が止まっている理由を並べる。全部満たしていれば、その旨と最後の処理枠を出す。
+    @ViewBuilder
+    private var blockersSection: some View {
+        let blockers = currentBlockers
+        Section {
+            if blockers.isEmpty {
+                Label(L("All conditions for automatic analysis are met."), systemImage: "checkmark.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if let minutes = HeavyWorkScheduler.minutesSinceLastWindow() {
+                    LabeledContent(L("Last background window"), value: elapsedText(minutes))
+                }
+                if isWindowStarved {
+                    Text("iOS has not given the app a background window for a long time. This can happen if the app was swiped away from the app switcher, or if iOS ended it to free memory. Tap Analyze Now (keep the device plugged in) to continue right away.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(blockers, id: \.self) { blocker in
+                    Label(blockerText(blocker), systemImage: blockerIcon(blocker))
+                        .font(.subheadline)
+                }
+                Text("Analysis resumes by itself once these are resolved. “Analyze Now” ignores all of them except heat.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Automatic Analysis")
+        }
+    }
+
+    private func blockerText(_ blocker: AnalysisBlockerDiagnosis.Blocker) -> String {
+        switch blocker {
+        case .automaticOff:        return L("Automatic analysis is turned off (Processing Timing).")
+        case .backgroundRefreshOff: return L("Background App Refresh is off for this app — iOS never gives it a background window. Turn it on in Settings → General → Background App Refresh.")
+        case .lowPowerMode:        return L("Low Power Mode is on.")
+        case .notCharging:         return L("Not charging (the current setting runs heavy work only while charging).")
+        case .tooHot:              return L("Paused because the device is warm — charging is prioritized.")
+        case .networkBlocked:      return L("The current network does not meet the setting, so cloud photos are skipped.")
+        }
+    }
+
+    private func blockerIcon(_ blocker: AnalysisBlockerDiagnosis.Blocker) -> String {
+        switch blocker {
+        case .automaticOff:         return "pause.circle"
+        case .backgroundRefreshOff: return "app.badge.checkmark"
+        case .lowPowerMode:         return "battery.25"
+        case .notCharging:          return "powerplug"
+        case .tooHot:               return "thermometer.medium"
+        case .networkBlocked:       return "wifi.slash"
+        }
+    }
+
+    private func elapsedText(_ minutes: Int) -> String {
+        minutes < 60 ? L("\(minutes) min ago") : L("\(minutes / 60) h ago")
     }
 
     /// セッション中の進捗行（残り枚数・モード）。

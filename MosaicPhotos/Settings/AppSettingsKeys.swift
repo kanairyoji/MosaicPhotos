@@ -25,6 +25,8 @@ enum AppSettingsKeys {
     static let analysisSessionInterruptedReason = "analysis.sessionInterruptedReason"
     /// 中断された時刻（表示用）。
     static let analysisSessionInterruptedAt = "analysis.sessionInterruptedAt"
+    /// 直近にバックグラウンド処理枠が開いた時刻（窓と窓の間隔を測る・diagnostics-81）。
+    static let bgTaskLastBeginAt = "debug.bgTaskLastBeginAt"
     /// D: BGProcessingTask の最終実行記録（開始時刻・結果・所要分。Developer Options で表示）。
     static let bgTaskLastRun = "debug.bgTaskLastRun"
     /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を**連続で見送った回数**。

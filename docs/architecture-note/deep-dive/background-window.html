@@ -130,6 +130,20 @@ flowchart TD
       <p>見送りやすい形で書くと: <strong>ユーザーが待っている処理 &gt; 生成 &gt; 解析（顔・タグ・埋め込み）</strong>、バックアップは横に並ぶ（資源が別）。「誰も待っていない処理のために、待っている処理を遅らせない」（ADR-122 の向き）。</p>
 
       <div class="box note">
+        <span class="box-h">枠が来ないときに、アプリができること（ADR-191）</span>
+        予約は「候補に載せる」だけで、実行の可否は OS（DAS）が決める——実機 diagnostics-81 では
+        <strong>充電中にもかかわらず 12 時間 1 度も開かなかった</strong>。アプリ側の手当ては 3 つ。
+        (1) <strong>継続タスクが止められても、前面なら前面のみモードへ降格して走り続ける</strong>
+        （電源＋前面という理想的な条件で OS の裁量を待つ理由は無い）。
+        (2) <strong>止めている条件を画面に出す</strong>（自動処理 OFF・バックグラウンド更新 OFF・
+        低電力・未充電・発熱・回線＝<code>AnalysisBlockerDiagnosis</code>）。どれも無いのに半日以上
+        開かないときは、App スイッチャーでの終了や jetsam の可能性と「今すぐ解析」を案内する。
+        (3) <strong>窓の間隔をログに残す</strong>（<code>bgtask: begin (前回の窓から N 分)</code>）——
+        「来ない」は沈黙として現れるので、来たときに書いておかないと後から数えられない。
+        ⚠️ <strong>画面を消してロックした状態</strong>の解析は依然として OS 次第で、ここは動かせない。
+      </div>
+
+      <div class="box note">
         <span class="box-h">ゲートは「やめる合図」ではなく「待つ合図」（ADR-188）</span>
         埋め込みの段は以前 <code>while !heavyShouldPause()</code> で回しており、<strong>入口で閉じていると
         ループに一度も入らず実行ごと終わって</strong>いた。実機（diagnostics-81）では処理枠 4 分 56 秒の頭で

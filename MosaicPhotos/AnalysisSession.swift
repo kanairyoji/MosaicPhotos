@@ -116,7 +116,7 @@ final class AnalysisSession {
         Self.markPending(true)
         UserDefaults.standard.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
         state = .running(mode)
-        applyIdleTimer()
+        applyModeGates()
         UIDevice.current.isBatteryMonitoringEnabled = true
         Diagnostics.mark("analyze: session start (\(mode))")
         loop = Task { [weak self] in await self?.runLoop() }
@@ -129,6 +129,7 @@ final class AnalysisSession {
         people.stopScan()
         engine.stopBackgroundWork()
         BackgroundYield.sessionActive = false
+        BackgroundYield.sessionYieldsToUI = false
         UIApplication.shared.isIdleTimerDisabled = false
         state = .stopped(reason)
         // 「終わった」「利用者が止めた」だけが完了。OS に止められた・電池・画面離脱は**未完**として
@@ -147,6 +148,35 @@ final class AnalysisSession {
             task.setTaskCompleted(success: reason == .finished)
             self.task = nil
         }
+    }
+
+    /// OS が継続タスクを止めたときの受け身。**アプリが前面にあるなら止めない**——
+    /// 電源につないで画面を見ている状況で「OS の都合」を理由に解析を終えるのは、
+    /// 利用者から見れば「やりたい事ができない」だけ（実フィードバック）。前面のみモードへ
+    /// 降格して走り続け、背面なら素直に止めて印を残す（次に開いたとき自動再開する）。
+    private func continueInForegroundOrStop() {
+        // 期限切れでも `setTaskCompleted` は必ず 1 回呼ぶ（呼ばないと OS が次を受けない）。
+        if let task {
+            task.setTaskCompleted(success: false)
+            self.task = nil
+        }
+        guard isActive, BackgroundYield.isAppActive else {
+            stop(.expired)
+            return
+        }
+        state = .running(.foregroundOnly)
+        applyModeGates()
+        Diagnostics.mark("analyze: continuing in the foreground (the system ended the continued task)")
+    }
+
+    /// モードに応じたゲートと画面消灯の設定。
+    ///
+    /// 前面のみモードでは **UI へ譲る**（スクロール・写真表示・サムネ取得中は休む）。
+    /// 継続モードは画面が無い前提なので譲らない（全力）。前面で全力のまま走ると、
+    /// 利用者が写真を見ている最中に ANE と CPU を奪ってカクつく（ADR-25 の趣旨）。
+    private func applyModeGates() {
+        BackgroundYield.sessionYieldsToUI = (mode == .foregroundOnly)
+        applyIdleTimer()
     }
 
     /// 前面のみモードで画面を離れたとき（ビューの onDisappear）。継続モードなら何もしない。
@@ -255,7 +285,7 @@ final class AnalysisSession {
         task.expirationHandler = { [weak self] in
             Task { @MainActor in
                 Diagnostics.mark("analyze: continued task expired by the system")
-                self?.stop(.expired)
+                self?.continueInForegroundOrStop()
             }
         }
         publishProgress()

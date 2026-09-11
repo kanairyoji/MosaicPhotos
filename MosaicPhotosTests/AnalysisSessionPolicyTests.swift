@@ -53,3 +53,48 @@ final class AnalysisSessionPendingFlagTests: XCTestCase {
         XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.user), "利用者が止めたら再開しない")
     }
 }
+
+/// diagnostics-81 の追補: **「なぜ進まないか」をアプリ自身が言える**こと。
+final class AnalysisBlockerDiagnosisTests: XCTestCase {
+
+    private func blockers(automatic: Bool = true, refresh: Bool = true, lowPower: Bool = false,
+                          requiresPower: Bool = true, onPower: Bool = true,
+                          hot: Bool = false, network: Bool = true) -> [AnalysisBlockerDiagnosis.Blocker] {
+        AnalysisBlockerDiagnosis.blockers(automaticEnabled: automatic,
+                                          backgroundRefreshAvailable: refresh,
+                                          lowPowerMode: lowPower,
+                                          requiresPower: requiresPower,
+                                          onPower: onPower,
+                                          thermalPaused: hot,
+                                          networkAllowed: network)
+    }
+
+    func testNoBlockersWhenEverythingIsSatisfied() {
+        XCTAssertTrue(blockers().isEmpty)
+    }
+
+    func testEachConditionIsReported() {
+        XCTAssertEqual(blockers(automatic: false), [.automaticOff])
+        XCTAssertEqual(blockers(refresh: false), [.backgroundRefreshOff])
+        XCTAssertEqual(blockers(lowPower: true), [.lowPowerMode])
+        XCTAssertEqual(blockers(onPower: false), [.notCharging])
+        XCTAssertEqual(blockers(hot: true), [.tooHot])
+        XCTAssertEqual(blockers(network: false), [.networkBlocked])
+    }
+
+    func testChargingIsNotRequiredWhenThePolicySaysAlways() {
+        XCTAssertTrue(blockers(requiresPower: false, onPower: false).isEmpty,
+                      "電源ポリシーが「常に」なら、充電していなくても理由にはならない")
+    }
+
+    func testStarvationOnlyCountsWhenNothingElseBlocks() {
+        XCTAssertTrue(AnalysisBlockerDiagnosis.isWindowStarved(blockers: [], minutesSinceLastWindow: 13 * 60))
+        XCTAssertFalse(AnalysisBlockerDiagnosis.isWindowStarved(blockers: [], minutesSinceLastWindow: 60),
+                       "数時間の空白は正常（OS の裁量）")
+        XCTAssertFalse(AnalysisBlockerDiagnosis.isWindowStarved(blockers: [.notCharging],
+                                                               minutesSinceLastWindow: 24 * 60),
+                       "理由が分かっているときは「枠が来ない」と言わない")
+        XCTAssertFalse(AnalysisBlockerDiagnosis.isWindowStarved(blockers: [], minutesSinceLastWindow: nil),
+                       "一度も開いていない端末では判断しない")
+    }
+}

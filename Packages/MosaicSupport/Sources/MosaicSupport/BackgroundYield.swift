@@ -70,6 +70,11 @@ public enum BackgroundYield {
     /// 利用者に伝わらず、ロックすると背面＝吊るされて止まるので実質「開いている間」と同じだった。
     public static var sessionActive = false
 
+    /// 解析セッションのうち**前面でしか走れないもの**（OS が継続タスクを受けなかった／期限切れで
+    /// 降格した）。この間は UI へ譲る——画面が生きている前提なので、利用者が写真を見ている最中に
+    /// ANE と CPU を奪わない。継続モード（画面が無い前提）は譲らず全力で進める。
+    public static var sessionYieldsToUI = false
+
     /// 重い処理の**開始/継続の共通条件**（回線を要する作業向け＝クラウド分を含む）。判定は 4 軸の
     /// 独立した設定に従う（ADR-80）＝自動処理の有無・控えめ（前面で動かすか）・電源・回線。
     /// 既定は「自動処理あり＋控えめ ON＋充電中のみ＋Wi-Fi のみ」＝アプリ使用中は一切動かない（ADR-25）。
@@ -136,7 +141,11 @@ public enum BackgroundYield {
         if HeavyLoad.isInFlight() { return true }
         if debugForceHeavyWork { return false }
         // 解析セッション中は生成との相互排他（メモリ保護）だけ残す。
-        if sessionActive { return BackgroundActivityMonitor.shared.isGeneratingAlbums }
+        // ただし前面のみモード（継続タスクが無い）では UI へも譲る（操作を妨げない）。
+        if sessionActive {
+            if BackgroundActivityMonitor.shared.isGeneratingAlbums { return true }
+            return sessionYieldsToUI && analysisShouldYieldToUI
+        }
         return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 }
