@@ -35,3 +35,21 @@ final class AnalysisSessionPolicyTests: XCTestCase {
         XCTAssertEqual(AnalysisSessionPolicy.remaining(faces: -1, tagsPending: 2, embedPending: -5), 2)
     }
 }
+
+/// diagnostics-81 の回帰: **中断されたセッションを「終わった」ことにしない**。
+///
+/// セッションはメモリ上の存在なので、ロック（iOS の既知の問題）・OS の期限切れ・
+/// プロセス終了で消える。永続化していないと誰も気づかず、朝まで何も進まない。
+final class AnalysisSessionPendingFlagTests: XCTestCase {
+
+    func testInterruptionsKeepThePendingFlag() {
+        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.expired), "OS に止められた＝やり残し")
+        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.lowBattery), "電池切れ＝やり残し")
+        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.leftScreen), "画面離脱＝やり残し")
+    }
+
+    func testCompletionAndUserStopClearIt() {
+        XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.finished), "全部終わったら再開しない")
+        XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.user), "利用者が止めたら再開しない")
+    }
+}

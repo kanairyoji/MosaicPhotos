@@ -42,6 +42,18 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
     /// 1 ジョブぶんの再投入上限。これを超えたら諦めて spool を消す（次回の通常対象に戻る）。
     public static let maxAttempts = 3
 
+    /// **1 回の投入で OS に渡す上限**（diagnostics-81）。
+    /// 実機では 1 枠で 813 件を一気に渡し、Dropbox から 429 を 713 回受けて 132 枚を
+    /// 「3 回失敗」で捨てていた。転送は枠の外で OS が続けるので、一度に渡す意味は無い。
+    public static let maxEnqueuePerFlush = 40
+
+    /// 429（レート制限）を受けたら、この時刻まで新規投入を止める。`Retry-After` を尊重する。
+    private var rateLimitedUntil: Date?
+    /// `Retry-After` が無いときの既定の待ち（秒）。
+    static let defaultRetryAfterSeconds: TimeInterval = 30
+    /// レート制限の上限（暴走した指定を鵜呑みにしない）。
+    static let maxRetryAfterSeconds: TimeInterval = 15 * 60
+
     let spool: UploadSpool
     private let lock = NSLock()
     private var _session: URLSession?
@@ -98,8 +110,14 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
 
     @discardableResult
     public func enqueuePending(token: String) async -> Int {
+        // Dropbox が「多すぎる」と言っている間は出さない（出せば 429 が増えるだけ）。
+        if isRateLimited() {
+            Diagnostics.mark("backup(bg): レート制限中のため投入を見送りました")
+            return 0
+        }
         let running = await runningJobIDs()
-        let split = Self.split(pending: spool.pendingJobs(), running: running, excluded: excludedFromEnqueue())
+        let split = Self.split(pending: spool.pendingJobs(), running: running, excluded: excludedFromEnqueue(),
+                               limit: Self.maxEnqueuePerFlush)
         for job in split.giveUp {
             BackupLogger.error("BackgroundUpload: giving up \(job.filename) after \(job.attempts) attempts")
             Diagnostics.mark("backup(bg): \(job.filename) を \(job.attempts) 回で諦めました（次回の通常対象へ）")
@@ -134,11 +152,14 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
 
     /// spool のジョブを「投入する / 諦める」に分ける純ロジック。
     /// 転送中（OS が持っている）・台帳へ書いている最中・この枠で投入済み・409 待ち（前面経路の仕事）は触らない。
-    static func split(pending: [UploadSpool.Job], running: Set<String>, excluded: Set<String> = [])
+    /// - Parameter limit: 1 回で投入する上限（転送は枠の外で OS が続けるので、一度に渡さない）。
+    static func split(pending: [UploadSpool.Job], running: Set<String>, excluded: Set<String> = [],
+                      limit: Int = .max)
         -> (enqueue: [UploadSpool.Job], giveUp: [UploadSpool.Job]) {
         var enqueue: [UploadSpool.Job] = [], giveUp: [UploadSpool.Job] = []
         for job in pending where !running.contains(job.id) && !excluded.contains(job.id) && !job.conflict {
-            if job.attempts >= maxAttempts { giveUp.append(job) } else { enqueue.append(job) }
+            if job.attempts >= maxAttempts { giveUp.append(job) }
+            else if enqueue.count < limit { enqueue.append(job) }
         }
         return (enqueue, giveUp)
     }
@@ -151,9 +172,13 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
         case retry(reason: String)
         /// 409＝前面経路（hash 照合・autorename）へ。
         case conflict
+        /// 429＝**サーバーが「今は多すぎる」と言っている**。失敗ではないので試行回数を消費せず、
+        /// 指定された時間（`Retry-After`）だけ投入を止めてから出し直す。
+        case rateLimited(retryAfter: TimeInterval)
     }
 
-    static func classify(job: UploadSpool.Job, status: Int, body: Data, failed: Bool) -> ResponseOutcome {
+    static func classify(job: UploadSpool.Job, status: Int, body: Data, failed: Bool,
+                         retryAfterHeader: String? = nil) -> ResponseOutcome {
         if failed { return .retry(reason: "transport error") }
         switch status {
         case 200:
@@ -166,9 +191,44 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
             return .settle(savedPath: parsed?.path_lower ?? job.dropboxPath.lowercased(), contentHash: hash)
         case 409:
             return .conflict
+        case 429:
+            // ⚠️ **429 は失敗ではない**（diagnostics-81）。以前は既定の `.retry` に落ちて
+            // 試行回数を 1 つ消費し、混雑した枠では 3 回であっという間に「諦め」に達していた
+            // （実機で 132 枚）。サーバーの指定を尊重して待ち、回数は減らさない。
+            return .rateLimited(retryAfter: retryAfterSeconds(from: retryAfterHeader, body: body))
         default:
             return .retry(reason: "HTTP \(status)")
         }
+    }
+
+    /// `Retry-After` ヘッダ（秒）またはレスポンス本文の `retry_after` から待ち時間を読む。
+    /// 読めなければ既定値。常識的な範囲へクランプする（純ロジック）。
+    static func retryAfterSeconds(from header: String?, body: Data) -> TimeInterval {
+        var seconds: TimeInterval?
+        if let header, let value = TimeInterval(header.trimmingCharacters(in: .whitespaces)) {
+            seconds = value
+        } else if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            // Dropbox は本文に {"error": {"reason": {...}, "retry_after": 5}} を返すことがある。
+            if let value = json["retry_after"] as? Double { seconds = value }
+            else if let error = json["error"] as? [String: Any], let value = error["retry_after"] as? Double {
+                seconds = value
+            }
+        }
+        return min(max(seconds ?? defaultRetryAfterSeconds, 1), maxRetryAfterSeconds)
+    }
+
+    /// いま新規投入を止めているか（テスト・診断用に時刻を注入できる）。
+    func isRateLimited(now: Date = Date()) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let until = rateLimitedUntil else { return false }
+        return now < until
+    }
+
+    private func noteRateLimited(retryAfter: TimeInterval) {
+        lock.lock()
+        let until = Date().addingTimeInterval(retryAfter)
+        if (rateLimitedUntil ?? .distantPast) < until { rateLimitedUntil = until }
+        lock.unlock()
     }
 
     /// いま OS が転送中のジョブ ID（重複投入の防止）。
@@ -228,9 +288,20 @@ extension BackgroundUploadSession: URLSessionDataDelegate {
         let body = bodies.removeValue(forKey: task.taskIdentifier) ?? Data()
         lock.unlock()
         guard let jobID = task.taskDescription, let job = spool.job(id: jobID) else { return }
-        let status = (task.response as? HTTPURLResponse)?.statusCode ?? -1
+        let response = task.response as? HTTPURLResponse
+        let status = response?.statusCode ?? -1
+        let retryAfterHeader = response?.value(forHTTPHeaderField: "Retry-After")
 
-        switch Self.classify(job: job, status: status, body: body, failed: error != nil) {
+        switch Self.classify(job: job, status: status, body: body, failed: error != nil,
+                             retryAfterHeader: retryAfterHeader) {
+        case .rateLimited(let retryAfter):
+            // 試行回数を**戻す**（レート制限で 3 回の再試行を食い潰さない）。
+            var restored = job
+            restored.attempts = max(0, restored.attempts - 1)
+            spool.update(job: restored)
+            noteRateLimited(retryAfter: retryAfter)
+            BackupLogger.error("BackgroundUpload: \(job.filename) — HTTP 429 — waiting \(Int(retryAfter))s")
+            Diagnostics.mark("backup(bg): レート制限（429）— \(Int(retryAfter)) 秒待ってから出し直します")
         case .retry(let reason):
             // spool は残す（次の窓で再投入・attempts で上限）。
             BackupLogger.error("BackgroundUpload: \(job.filename) — \(reason)\(error.map { " (\($0.localizedDescription))" } ?? "") — will retry")

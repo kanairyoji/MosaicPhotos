@@ -144,6 +144,20 @@ struct BackgroundUploadSplitTests {
         #expect(result.giveUp.map(\.id) == ["exhausted"])
     }
 
+    @Test("1 回に渡す数には上限がある（diagnostics-81: 813 件を一気に渡して 429 の嵐）")
+    func enqueueIsCapped() {
+        let jobs = (0..<100).map { makeJob("j\($0)") }
+        let result = BackgroundUploadSession.split(pending: jobs, running: [], excluded: [],
+                                                   limit: BackgroundUploadSession.maxEnqueuePerFlush)
+        #expect(result.enqueue.count == BackgroundUploadSession.maxEnqueuePerFlush)
+        #expect(result.giveUp.isEmpty)
+        // 上限は「渡す数」だけを絞る。諦め（上限回数超過）は件数に関係なく拾う。
+        let withExhausted = jobs + [makeJob("dead", attempts: BackgroundUploadSession.maxAttempts)]
+        let r2 = BackgroundUploadSession.split(pending: withExhausted, running: [], excluded: [], limit: 5)
+        #expect(r2.enqueue.count == 5)
+        #expect(r2.giveUp.map(\.id) == ["dead"])
+    }
+
     @Test("台帳へ書いている最中・この枠で投入済みのジョブは再投入しない（diagnostics-74 の重複投入）")
     func settlingAndAttemptedAreExcluded() {
         let settling = makeJob("settling")
@@ -175,6 +189,30 @@ struct BackgroundUploadResponseTests {
         let body = Data(#"{"content_hash":"deadbeef","path_lower":"/x/y.jpg"}"#.utf8)
         #expect(BackgroundUploadSession.classify(job: job, status: 200, body: body, failed: false)
                 == .retry(reason: "hash mismatch"))
+    }
+
+    @Test("429 は失敗ではない — 待ち時間つきで出し直す（試行回数を食わない）")
+    func rateLimitIsNotAFailure() {
+        // ヘッダの Retry-After を尊重する。
+        #expect(BackgroundUploadSession.classify(job: job, status: 429, body: Data(), failed: false,
+                                                 retryAfterHeader: "12")
+                == .rateLimited(retryAfter: 12))
+        // ヘッダが無ければ本文の retry_after（Dropbox の形）。
+        let body = Data(#"{"error":{"reason":{".tag":"too_many_write_operations"},"retry_after":7}}"#.utf8)
+        #expect(BackgroundUploadSession.classify(job: job, status: 429, body: body, failed: false)
+                == .rateLimited(retryAfter: 7))
+        // どちらも無ければ既定値。
+        #expect(BackgroundUploadSession.classify(job: job, status: 429, body: Data(), failed: false)
+                == .rateLimited(retryAfter: BackgroundUploadSession.defaultRetryAfterSeconds))
+    }
+
+    @Test("待ち時間は常識的な範囲にクランプする（0 秒連打・暴走した指定を鵜呑みにしない）")
+    func retryAfterIsClamped() {
+        #expect(BackgroundUploadSession.retryAfterSeconds(from: "0", body: Data()) >= 1)
+        #expect(BackgroundUploadSession.retryAfterSeconds(from: "99999", body: Data())
+                == BackgroundUploadSession.maxRetryAfterSeconds)
+        #expect(BackgroundUploadSession.retryAfterSeconds(from: "not-a-number", body: Data())
+                == BackgroundUploadSession.defaultRetryAfterSeconds)
     }
 
     @Test("409 は前面経路へ、通信エラー・401・5xx は再投入")

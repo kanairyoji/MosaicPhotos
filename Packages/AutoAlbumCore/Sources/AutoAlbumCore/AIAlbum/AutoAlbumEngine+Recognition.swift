@@ -397,11 +397,21 @@ extension AutoAlbumEngine {
             Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.heavyShouldPause()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums) "
                              + "unembedded=\(await store.unembeddedCount()))")
-            while !BackgroundYield.heavyShouldPause(), !Task.isCancelled {
+            // ⚠️ ゲートが閉じていても**待つ**（diagnostics-81）。以前はここが
+            //    `while !heavyShouldPause()` で、入口で閉じていると**ループに一度も入らず**
+            //    実行ごと捨てていた。実機では処理枠 4 分 56 秒の頭で `pause=true` を出し、
+            //    以後 1 枚も埋め込まないまま期限切れになっている（閉じていた理由は
+            //    バックアップの一括ロードとサムネのドレイン＝どちらも数秒〜数十秒で開く）。
+            //    待ちの上限（60 秒）を超えたときだけ畳む＝実行中フラグは握り続けない（ADR-95）。
+            await BackgroundTrickle.runPhasesWaitingForGate(
+                shouldPause: { BackgroundYield.heavyShouldPause() },
+                pausePerfLabel: "embed.gateWait",
+                onStandDown: { Diagnostics.mark("bgfill: embed gate stayed closed — standing down") }
+            ) {
                 let embed = await runEmbedPhase(preset: preset, favorites: favorites,
                                                 shouldPause: embedPause)
                 // 1 枚も進まなかった＝残作業なし → 終了。
-                if embed.after >= embed.before { break }
+                return embed.after < embed.before
             }
             // isTagging は先頭の defer で必ず戻す（二重起動抑止と対）。
         }

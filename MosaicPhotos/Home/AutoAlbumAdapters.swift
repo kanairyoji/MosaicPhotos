@@ -69,7 +69,8 @@ func makeAutoAlbumEngine(dropboxStore: DropboxPhotoStore, backupEngine: BackupEn
 /// クラウド写真の顔検出用に Dropbox のキャッシュ済みサムネ（128px・追加DL無し）を注入する。
 func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
     let cloudImage: @Sendable (String) async -> CGImage? = { path in
-        let image = await dropboxStore.thumbnail(for: dropboxFileItem(path: path))
+        // 解析レーン（表示の後ろ・UI ビジーを名乗らない）で取る＝diagnostics-81。
+        let image = await dropboxStore.analysisThumbnail(for: dropboxFileItem(path: path))
         return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
     let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
@@ -92,11 +93,9 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
                 // 走らせて `cloudThumbnailBusy` が立ち続け、顔スキャンの**全バッチが空で返って
                 // 何も進まない**状態になっていた（実フィードバック「夜間解析が進まなくなった」）。
                 // メモリ圧迫だけは夜間でも譲る（jetsam の保護）。
-                let shouldYield = await MainActor.run {
-                    BackgroundYield.isAppActive
-                        ? BackgroundYield.uiBusy
-                        : MemoryPressureMonitor.shared.isUnderPressure
-                }
+                // 判定は `BackgroundYield.analysisShouldYieldToUI` に一元化した（同じ規則を
+                // ゲート側でも使う＝diagnostics-81 で CLIP/タグ側が漏れていた）。
+                let shouldYield = await MainActor.run { BackgroundYield.analysisShouldYieldToUI }
                 guard !shouldYield else {
                     PerfTrace.count("faceAnalysis.yield")
                     return [:]

@@ -15,6 +15,16 @@ enum AppSettingsKeys {
     /// 解析セッション（ADR-182）中に画面を消灯させないか（既定 ON。iOS 26 の
     /// BGContinuedProcessingTask がロックで止まる既知の問題への備え）。
     static let analysisKeepScreenOn = "analysis.keepScreenOn"
+    /// 解析セッション（ADR-182）が**まだ終わっていない**か。
+    /// 「今すぐ解析」を押した時点で立て、全部終わったとき・利用者が止めたときだけ下ろす。
+    /// ⚠️ セッションはメモリ上の存在で、ロック（iOS の既知の問題）・OS の期限切れ・
+    /// プロセス終了で消える。永続化していないと、消えたことに誰も気づかず朝まで何も進まない
+    /// （実機 diagnostics-81）。この印が残っていれば次の前面復帰で自動再開する。
+    static let analysisSessionPending = "analysis.sessionPending"
+    /// 中断されたセッションの停止理由（表示用・`AnalysisSession.StopReason` の rawValue 相当）。
+    static let analysisSessionInterruptedReason = "analysis.sessionInterruptedReason"
+    /// 中断された時刻（表示用）。
+    static let analysisSessionInterruptedAt = "analysis.sessionInterruptedAt"
     /// D: BGProcessingTask の最終実行記録（開始時刻・結果・所要分。Developer Options で表示）。
     static let bgTaskLastRun = "debug.bgTaskLastRun"
     /// 解析（顔・埋め込み）の残作業を理由にアルバム生成を**連続で見送った回数**。

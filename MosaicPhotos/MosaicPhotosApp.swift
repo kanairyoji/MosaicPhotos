@@ -39,7 +39,13 @@ struct MosaicPhotosApp: App {
             // ADR-79: 復帰したら夜間処理を**明示的に止める**。ゲートを閉じるだけでは、実行中の
             // 1 単位が走り切るまで ANE/CPU が塞がり、眠っている間もモデルを抱え続けて
             // カクつきの原因になっていた。
-            if phase == .active { HeavyWorkScheduler.stopForForeground() }
+            if phase == .active {
+                HeavyWorkScheduler.stopForForeground()
+                // 中断された解析セッションを自動で再開する（diagnostics-81）。
+                // ロック（iOS の既知の問題）・OS の期限切れ・プロセス終了でセッションは消えるが、
+                // 「押した」という事実は永続化してあるので、戻ってきたら続きから再開する。
+                Task { @MainActor in await HeavyWorkScheduler.stores?.analysisSession.resumeIfPending() }
+            }
             // バックグラウンド遷移（ロック含む）で次回の重い処理を予約する。
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
             if phase == .background { HeavyWorkScheduler.submit() }

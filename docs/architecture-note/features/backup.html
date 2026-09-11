@@ -75,6 +75,7 @@ flowchart LR
         <li><strong>シャード書きは download → merge → upload</strong>（既存を取れなかった／読めなかったときは書かない＝空で上書きして 1 か月分を消さない）。同じシャードを触るオフロードマーカーの書き込みとは <code>MetadataShardLock</code> で直列化。</li>
         <li><strong>背景アップロード（ADR-181）でも同じ</strong>: 応答を受けた側（<code>BackupEngine.settle</code>）が同じ順序で書く。</li>
         <li><strong>429（書き込み競合）</strong>は Retry-After 準拠で短く再試行し、それでも残れば次回。背景転送が数百本走っている最中は起きやすいので、再送は次回の投入前に回す。</li>
+        <li><strong>429 は「失敗」ではない</strong>（ADR-190）: 背景アップロードの応答が 429 なら<strong>試行回数を戻し</strong>、<code>Retry-After</code>（無ければ 30 秒）だけ投入を止める。以前は既定の再投入扱いで回数を消費し、混雑した枠では 3 回で「諦め」に達していた（実機 diagnostics-81: 429 が 713 回・132 枚を放棄）。あわせて<strong>1 回に渡す数を 40 件に制限</strong>した——転送は枠の外で OS が続けるので、一度に渡す利点は無く、渡した数だけレート制限を誘発する（同ログでは 813 件を一気に渡していた）。</li>
       </ul>
       <h3>読む側: rev で差分だけ・無いものは覚える</h3>
       <ul>

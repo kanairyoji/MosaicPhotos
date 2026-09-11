@@ -122,6 +122,35 @@ public enum BackgroundTrickle {
         }
     }
 
+    /// **ゲートが開くのを待ってからフェーズを回す**ループ（diagnostics-81）。
+    ///
+    /// ⚠️ なぜ要るか: 「ゲートが閉じていたら回さない」と書くと、**その実行が丸ごと捨てられる**。
+    /// 実機 diagnostics-81 では、処理枠（4分56秒）の頭で CLIP 埋め込みが
+    /// `embed loop entry (pause=true)` を出し、以後 1 枚も埋め込まないまま期限切れになった。
+    /// 閉じていた理由はバックアップの一括ロード（`HeavyLoad`）とサムネのドレインで、
+    /// どちらも**数秒〜数十秒で開く**ものだった。ゲートは「やめる合図」ではなく「待つ合図」。
+    ///
+    /// - Parameters:
+    ///   - shouldPause: ゲート。true の間は待つ。
+    ///   - maxPauseNs: 待ちの上限。超えたら `onStandDown` を呼んで畳む（実行中フラグを握り続けない）。
+    ///   - phase: 1 フェーズ。**進捗があれば true**（false＝残作業なし → ループを終える）。
+    public static func runPhasesWaitingForGate(
+        shouldPause: @MainActor () -> Bool,
+        maxPauseNs: UInt64 = defaultMaxPauseNs,
+        pausePerfLabel: String? = nil,
+        onStandDown: (@MainActor () -> Void)? = nil,
+        phase: @MainActor () async -> Bool
+    ) async {
+        while !Task.isCancelled {
+            if await waitWhilePaused(shouldPause, pausePerfLabel: pausePerfLabel, maxPauseNs: maxPauseNs) {
+                onStandDown?()
+                return
+            }
+            guard !Task.isCancelled else { return }
+            if await phase() == false { return }
+        }
+    }
+
     /// バッチ間スリープのサーマル係数（候補D）。重い処理は電源＋アイドル中のみだが、連続処理で
     /// 温まるため、逼迫時は休止を延ばして緩める（ユーザー選択のプリセットより速くはしない＝1x が上限）。
     public static func thermalPauseMultiplier() -> Double {

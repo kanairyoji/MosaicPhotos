@@ -56,6 +56,87 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-190 自分の通信で自分を詰まらせない（429 は Retry-After で待つ・投入は小分け・空振りのポーリングは間合いを空ける）
+- 状態: 採用
+- 文脈: diagnostics-81 の処理枠では、バックアップが 1 枠で **813 件**を背景 URLSession へ渡し、
+  Dropbox から **429 を 713 回**受けて **132 枚を「3 回失敗」で捨てて**いた。429 は
+  `classify` の既定分岐（`.retry`）に落ちるため**試行回数を消費**しており、混雑した枠では
+  3 回があっという間に尽きる。さらに、上げたファイルは**自分が監視しているルート**へ落ちるので
+  `longpoll` が `changes=true` を返し続け、「longpoll → delta（表示対象の増減 0）→ すぐ longpoll」を
+  **10 分で 202 周**（1 周 ≈ 0.7 秒）回していた。`changes=false` 側には最小待ちがあるのに、
+  `changes=true` 側だけ素通りだったのが原因。実害は三重で、(1) 往復と SwiftData 書き込みが
+  処理枠（解析と同じ資源）を食う、(2) API レートを消費して**自分のアップロードが 429 を受ける**、
+  (3) 末尾 256KB の診断ログを埋め尽くし（実測 47%）、**夜間の証拠が押し出されて消える**。
+- 決定:
+  1. **429 は失敗ではない**。`ResponseOutcome.rateLimited(retryAfter:)` を新設し、試行回数を戻して
+     `Retry-After`（ヘッダ／本文の `retry_after`・1〜900 秒にクランプ）だけ投入を止める。
+  2. **1 回に渡す数に上限**（`maxEnqueuePerFlush = 40`）。転送は枠の外で OS が続けるので、
+     一度に渡す利点は無く、渡した数だけレート制限を誘発する。
+  3. **ポーリングは空振りで間合いを空ける**（`SyncPollPacing`）。1 周あたり最低 1 秒、
+     「変化ありと言われたのに表示対象の増減が 0」の周が続いたら 1→2→4→8→16→30 秒と延ばす。
+     **実変化が 1 件でもあれば即リセット**するので、本物の更新への追従の速さは変えない。
+- 結果: 空振りのポーリングが 85 周/分 → 8 周/分以下になり、処理枠と API レートが解析へ回る。
+  診断ログも夜間ぶんが残る。⚠️ トレードオフ: 自分以外が上げた変化も、空振りが続いた直後は
+  最大 30 秒遅れて反映される（longpoll の性質上もともと即時ではない）。
+- 関連: `SyncPollPacing.swift` / `DropboxSyncEngine.pollLoop` / `BackgroundUploadSession`
+  （`classify` / `split(limit:)` / `retryAfterSeconds`）/ `SyncPollPacingTests` /
+  `BackgroundUploadTests` / ADR-181 / diagnostics-81。
+
+## ADR-189 利用者が始めた解析は「押した事実」を永続化し、中断されたら自動で再開する
+- 状態: 採用（ADR-182 の追補）
+- 文脈: 「今すぐ解析」（ADR-182）のセッションは**メモリ上の存在**で、永続化も自動再開も無かった。
+  端末をロックすると継続タスクが止まる iOS のバグ（FB19916760）、OS の期限切れ、プロセス終了の
+  どれでも消え、**消えたことが誰にも分からない**（プロセスごと死んだ場合は停止マークすら残らない）。
+  実フィードバック「夜に解析して寝たのに、朝になっても進んでいない」の実体はこれで、
+  diagnostics-81 のログにもセッションのマークは 1 つも無く、25 分ずつプロセスが吊るされていた。
+- 決定: 押した時点で `analysis.sessionPending` を立て、**「全部終わった」「利用者が止めた」
+  だけが印を下ろす**（`AnalysisSessionPolicy.keepsPendingFlag`＝純ロジック）。前面復帰と起動時に
+  `resumeIfPending()` が残作業を確認して**自動再開**し、中断の事実と理由を診断ログと
+  AI 解析画面に出す。⚠️ ただし OS が継続タスクを受けなかったとき（前面のみモード）は
+  **自動再開しない**——見ていない前面で重い処理を走らせるのは ADR-25 の約束を破るため、
+  印は残したまま次の機会に譲る。電池が下限を割っている（電源なし）ときも再開しない。
+- 結果: 中断は「気づかれずに永久に止まる」から「次にアプリを開いたら続きから」に変わった。
+  ⚠️ トレードオフ: 自動再開は画面を点けたまま（既定 ON）走るので、アプリを開いている間は
+  画面が消えない。止めたい利用者は「停止」を押す（押せば印は下りる）。
+- 関連: `AnalysisSession.start(autoResume:)` / `resumeIfPending()` / `AnalysisSessionPolicy` /
+  `AppSettingsKeys.analysisSessionPending` / `MosaicPhotosApp`（scenePhase）/ `RootView` /
+  ADR-182 / ADR-25 / diagnostics-81。
+
+## ADR-188 ゲートは「やめる合図」ではなく「待つ合図」。そして解析は自分の取得で自分を止めない
+- 状態: 採用
+- 文脈: diagnostics-81 の夜、OS がくれた処理枠 2 回（4分19秒・4分56秒）で CLIP 埋め込みは
+  **合計 24 枚**しか進まなかった（残り 35,583 枚・推論時間の合計は 0.37 秒＝ANE は遊んでいた）。
+  2 つの独立した原因があった。
+  1. **ゲートを「やめる合図」に使っていた**: 埋め込みは `while !heavyShouldPause()` で回しており、
+     入口で閉じていると**ループに一度も入らず実行ごと終了**する。実機ログは
+     `embed loop entry (pause=true)` のあと期限切れまで無音——**枠の残り 3 分が丸ごと捨てられた**。
+     閉じていた理由はバックアップの一括ロード（`HeavyLoad`）とサムネのドレインで、
+     どちらも数秒〜数十秒で開くものだった。タグ付けの段には `waitWhilePaused` があったのに、
+     埋め込みの段にだけ無かった（非対称が原因）。
+  2. **解析が自分の取得で自分を止めていた**: クラウド写真の埋め込みは表示用と同じ
+     `thumbnail(for:)` を通り、バッチャはドレイン中に `cloudThumbnailBusy`（＝「UI が忙しい」の印）を
+     立てる。その印は `uiBusy` → `heavyWorkAllowedLocal` → `heavyShouldPause()` に直結するので、
+     **サムネを取りに行くという行為そのものが停止条件**になっていた（`clip.pauseWait` が
+     2.5 秒あたり 4〜7 回）。顔スキャンだけは ADR-179 で取得経路を分けて回避済みだったが、
+     CLIP とタグには同じ手当てが入っていなかった。
+- 決定:
+  1. `BackgroundTrickle.runPhasesWaitingForGate` を新設し、埋め込みループを**待つ**側へ変える。
+     待ちの上限（60 秒）を超えたときだけ畳む＝実行中フラグは握り続けない（ADR-95 は不変）。
+  2. サムネ要求に**目的**を持たせる（`ThumbnailPurpose.display / .analysis`）。解析は
+     `analysisThumbnail(for:)` で中優先レーン（表示の後ろ・先読みの前）に並び、
+     `cloudThumbnailBusy` を**名乗らない**。UI ビジーは「表示のための取得が残っているか」だけで決める。
+  3. ゲート側も ADR-179 の規則へ揃える: `BackgroundYield.analysisShouldYieldToUI` ＝
+     **前面で誰かが見ている間だけ譲り、背面ではメモリ圧迫だけ見る**。顔アダプタのインライン判定も
+     これに一本化した。
+- 結果: 処理枠の残り時間が埋め込みに使えるようになり、解析の自己停止が消えた。
+  表示は従来どおり最優先（人が見ているサムネが解析の行列に埋もれない）。
+  ⚠️ トレードオフ: 背面ではサムネのドレイン中でも解析が回るので、バックアップ・共有と
+  帯域を share する（資源が別なので ADR-180 の並行と同じ判断）。
+- 関連: `BackgroundTrickle.runPhasesWaitingForGate` / `AutoAlbumEngine+Recognition`（埋め込みループ）/
+  `DropboxThumbnailBatcher`（`ThumbnailPurpose`・`displayInFlight`）/ `DropboxPhotoStore.analysisThumbnail` /
+  `BackgroundYield.analysisShouldYieldToUI` / `AnalysisYieldGateTests` / `ThumbnailPurposeTests` /
+  `GateWaitingPhaseLoopTests` / ADR-179 / ADR-95 / ADR-131 / diagnostics-81。
+
 ## ADR-187 クラスタ ID は再利用しない・ユーザーが表明した人物の行は消さない
 - 状態: 採用
 - 文脈: 実フィードバック「ピープルアルバムの中身が、気がついたらごっそり別人になっていた」

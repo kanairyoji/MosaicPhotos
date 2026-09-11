@@ -14,7 +14,17 @@ extension DropboxPhotoStore {
     /// サムネイルを返す。取得は `DropboxThumbnailBatcher` に委譲する
     /// （キャッシュ確認・バッチ集約・キャンセル耐性はバッチャ側に集約）。
     public func thumbnail(for item: DropboxFileItem) async -> UIImage? {
-        await thumbnailBatcher.thumbnail(for: item)
+        await thumbnailBatcher.thumbnail(for: item, purpose: .display)
+    }
+
+    /// **解析（夜間・セッション）用**のサムネ取得。表示用と同じキャッシュに乗るが、
+    /// 行列では表示の後ろに並び、`cloudThumbnailBusy`（UI が忙しい印）を立てない。
+    ///
+    /// ⚠️ 表示用 `thumbnail(for:)` をそのまま使うと、**解析が自分の取得で自分を止める**
+    /// （実機 diagnostics-81: ドレイン中は `heavyShouldPause()` が true になり、
+    /// 処理枠の残り時間を丸ごと捨てていた）。解析はこちらを使う。
+    public func analysisThumbnail(for item: DropboxFileItem) async -> UIImage? {
+        await thumbnailBatcher.thumbnail(for: item, purpose: .analysis)
     }
 
     /// **キャッシュ済み（メモリ/ディスク）のサムネだけ**を返す。ネットワークは一切使わない（ADR-88）。

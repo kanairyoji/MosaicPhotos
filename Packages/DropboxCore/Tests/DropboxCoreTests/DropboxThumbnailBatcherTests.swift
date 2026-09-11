@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import MosaicSupport
 import Testing
 import UIKit
 @testable import DropboxCore
@@ -210,5 +211,63 @@ struct DropboxThumbnailBatcherTests {
         }
         return image.pngData()!.base64EncodedString()
     }()
+}
+
+/// diagnostics-81 の回帰: **解析のサムネ取得が「UI が忙しい」を名乗らない**こと。
+///
+/// 以前は解析（顔・タグ・CLIP）が表示用と同じ経路で取りに行き、そのドレインが
+/// `cloudThumbnailBusy` を立てていた。その印は `BackgroundYield.heavyShouldPause()` に
+/// 直結しているので、**解析が自分の取得で自分を止める**状態だった（処理枠で埋め込み 0 枚）。
+@Suite("サムネ取得の目的（表示 / 解析）")
+@MainActor
+struct ThumbnailPurposeTests {
+
+    private func makeAuth() -> DropboxAuthService {
+        let auth = DropboxAuthService(appKey: "k", redirectURI: "scheme://cb")
+        auth.setCredentialForTesting(DropboxCredential(
+            accessToken: "test-token", refreshToken: nil, expiresAt: nil,
+            accountId: "acc", connectedAt: Date(), lastRefreshedAt: nil))
+        return auth
+    }
+
+    private func makeBatcher(_ stub: StubHTTPClient, chunkSize: Int = 25) -> DropboxThumbnailBatcher {
+        DropboxThumbnailBatcher(
+            apiClient: DropboxAPIClient(httpClient: stub, tokenProvider: makeAuth()),
+            cache: DropboxCacheStore(isStoredInMemoryOnly: true),
+            debounceNs: 5_000_000,
+            chunkSize: chunkSize)
+    }
+
+    private func item(_ path: String) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
+    }
+
+    @Test("解析の要求は「UI が忙しい」を名乗らない／表示の要求は名乗る")
+    func uiBusyClaimFollowsDisplayOnly() {
+        let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))
+        let batcher = makeBatcher(stub)
+
+        batcher.enqueueForTesting(item("/analysis-1.jpg"), purpose: .analysis)
+        batcher.enqueueForTesting(item("/analysis-2.jpg"), purpose: .analysis)
+        #expect(batcher.claimsUIBusyForTesting == false,
+                "解析の取得が UI ビジーを名乗っている＝解析が自分の取得で自分を止める（diagnostics-81）")
+
+        batcher.enqueueForTesting(item("/display.jpg"), purpose: .display)
+        #expect(batcher.claimsUIBusyForTesting, "表示の取得で UI ビジーが立たない＝背景処理が譲らなくなる")
+    }
+
+    @Test("ウェーブの取り出し順は 表示 → 解析 → 先読み（人が見ている方を待たせない）")
+    func waveOrderIsDisplayThenAnalysisThenPrefetch() {
+        let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))
+        let batcher = makeBatcher(stub)
+
+        // 解析を先に積んでも、表示が先に出ること（順番は到着順ではなく優先度で決まる）。
+        batcher.enqueueForTesting(item("/a-analysis.jpg"), purpose: .analysis)
+        batcher.enqueueForTesting(item("/b-display.jpg"), purpose: .display)
+        let order = batcher.nextWavePathsForTesting()
+
+        #expect(order.first == "/b-display.jpg", "解析が表示より先に取り出されている（グリッドが待たされる）")
+        #expect(order.contains("/a-analysis.jpg"), "解析の要求が落ちている")
+    }
 }
 #endif

@@ -79,7 +79,8 @@ graph TD
       <ul>
         <li><strong>ユーザー操作中</strong> — グリッドのスクロール/スクラブ、画面遷移、<strong>写真ビュー表示中</strong>（タップ直後含む）。</li>
         <li><strong>メモリ圧迫中</strong> — <code>MemoryPressureMonitor.isUnderPressure</code>（約 20 秒後に自動解除）。</li>
-        <li><strong>クラウド取得中</strong> — Dropbox サムネのドレイン中（<code>cloudThumbnailBusy</code>）・フル画像取得中（<code>fullImageBusy</code>）。</li>
+        <li><strong>クラウド取得中</strong> — <strong>表示のための</strong> Dropbox サムネのドレイン中（<code>cloudThumbnailBusy</code>）・フル画像取得中（<code>fullImageBusy</code>）。解析自身の取得（<code>ThumbnailPurpose.analysis</code>）はこの印を立てない——立てると<strong>自分の取得で自分を止める</strong>（ADR-188・実機で埋め込みが 1 枚も進まなかった）。</li>
+        <li>※ 上の 3 つを見るのは<strong>前面で誰かが見ている間だけ</strong>（<code>BackgroundYield.analysisShouldYieldToUI</code>）。背面（処理枠・ロック中）はメモリ圧迫だけを見る（ADR-179/188）。</li>
       </ul>
 
       <h2><code>@ModelActor</code> の executor を差し替える（ADR-121）</h2>

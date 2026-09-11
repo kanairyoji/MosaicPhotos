@@ -17,11 +17,24 @@ public enum BackgroundYield {
             || BackgroundActivityMonitor.shared.cloudThumbnailBusy
     }
 
+    /// 解析（顔・タグ・埋め込み）が **UI へ譲るべきか**。
+    ///
+    /// ⚠️ 譲るのは**前面で誰かが見ている間だけ**（ADR-179）。背面ではメモリ圧迫だけを見る——
+    /// 画面が無いのに、バックアップ・共有・そして**解析自身のサムネ取得**で `cloudThumbnailBusy`
+    /// が立ち続け、夜間の解析が丸ごと止まっていた（実機 diagnostics-81: 処理枠 4 分 56 秒で
+    /// CLIP 埋め込み 0 枚）。取得経路側の手当て（`analysisThumbnail`）と対で使う。
+    public static var analysisShouldYieldToUI: Bool {
+        isAppActive ? uiBusy : MemoryPressureMonitor.shared.isUnderPressure
+    }
+
     /// 標準判定（電源条件込み）。`powerOK` が false なら常に譲る。
     /// **アルバム生成中も譲る**（相互排他）：起動直後に generate（85k 件の SwiftData 処理）と
     /// ANE 推論・画像ロードが同時に走るとメモリが跳ね（実測 668MB）システム全体がストールする。
+    ///
+    /// ⚠️ UI への譲りは `analysisShouldYieldToUI`（前面だけ）を使う。生の `uiBusy` を見ると、
+    /// 背面で解析が自分のサムネ取得に譲って止まる（ADR-188・diagnostics-81）。
     public static func shouldPause(powerOK: Bool) -> Bool {
-        !powerOK || uiBusy || BackgroundActivityMonitor.shared.isGeneratingAlbums
+        !powerOK || analysisShouldYieldToUI || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }
 
     // MARK: - 重い処理の実行方針（ユーザー指定・全アプリ共通）
@@ -75,7 +88,7 @@ public enum BackgroundYield {
         // 充電されなければ翌晩も進まないので、ここだけは明示操作でも免除しない。
         if ThermalGate.shared.shouldPause() { return false }
         if debugForceHeavyWork || sessionActive { return true }
-        guard !uiBusy else { return false }
+        guard !analysisShouldYieldToUI else { return false }
         // 低電力モードはどの設定でも常時ブロック（安全弁）。電源ポリシーの whileCharging にも
         // 含まれるが、`always` を選んでいても低電力モードは尊重する。
         guard !PowerStateMonitor.shared.isLowPowerMode else { return false }
