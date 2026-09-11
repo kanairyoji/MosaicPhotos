@@ -56,6 +56,39 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-191 OS の都合で解析を終わらせない（前面継続への降格）＋「なぜ進まないか」をアプリが言う
+- 状態: 採用（ADR-182/189 の追補）
+- 文脈: 実フィードバック「電源ケーブルを繋いでアプリも動かしっぱなしなのに、やりたい事が
+  できないなんて事はないはず」。まったくそのとおりで、**電源＋前面という理想的な条件では
+  OS の処理枠を待つ必要はない**。にもかかわらず、(1) 継続タスク（`BGContinuedProcessingTask`）が
+  OS に止められると、アプリが前面にあっても `stop(.expired)` で解析ごと終わっていた。
+  (2) 処理枠が来ない理由（バックグラウンド更新 OFF・低電力・未充電・発熱）は端末の設定で
+  決まるのに、利用者に見える場所が無く、Mac に繋いで Console で `dasd` を読むしかなかった。
+  実機 diagnostics-81 では、充電中にもかかわらず 22:36 以降 **12 時間 窓が 1 度も来ていない**。
+- 決定:
+  1. **期限切れ＝終了にしない**。継続タスクが止められたとき、アプリが前面なら
+     `.foregroundOnly` へ**降格して走り続ける**（`setTaskCompleted` は必ず 1 回呼ぶ）。
+     背面なら従来どおり止め、やり残しの印を残す（ADR-189 が次の前面復帰で再開する）。
+  2. **前面のみモードでは UI へ譲る**（`BackgroundYield.sessionYieldsToUI`）。画面が生きている
+     前提なので、写真を見ている最中に ANE と CPU を奪わない（継続モード＝画面が無い前提は
+     従来どおり全力）。
+  3. **「自動で進まない理由」を画面に出す**（`AnalysisBlockerDiagnosis`＝純ロジック）。
+     自動処理 OFF / バックグラウンド更新 OFF / 低電力 / 未充電 / 発熱 / 回線を、直しやすい順に
+     並べる。理由がどれも無いのに**半日以上 枠が来ていない**ときは、その旨と
+     「App スイッチャーで終了したか、iOS がメモリ確保のため終了した可能性」＋
+     「今すぐ解析を押せば続きから進む」を案内する。
+  4. **窓の間隔を診断ログに残す**（`bgtask: begin (前回の窓から N 分)`）。「窓が来ない」は
+     沈黙として現れるので、来たときに間隔を書いておかないと後から数えられない。
+- 結果: 電源＋前面なら OS の裁量に関係なく進む。枠が来ないときも、利用者は理由を画面で見て
+  自分で直せる（あるいは「今すぐ解析」で回避できる）。⚠️ 残る制約: **画面を消してロックした
+  状態**では、依然として OS の処理枠と継続タスク（iOS のバグ FB19916760 の対象）に依存する。
+  そこは Apple の仕様どおりで、アプリ側からは動かせない——だから「画面を消さない」既定 ON と
+  自動再開で埋める。
+- 関連: `AnalysisSession.continueInForegroundOrStop()` / `applyModeGates()` /
+  `BackgroundYield.sessionYieldsToUI` / `AnalysisBlockerDiagnosis` /
+  `AIAnalysisStatusView.blockersSection` / `HeavyWorkScheduler.minutesSinceLastWindow()` /
+  `AnalysisBlockerDiagnosisTests` / ADR-182 / ADR-189 / diagnostics-81。
+
 ## ADR-190 自分の通信で自分を詰まらせない（429 は Retry-After で待つ・投入は小分け・空振りのポーリングは間合いを空ける）
 - 状態: 採用
 - 文脈: diagnostics-81 の処理枠では、バックアップが 1 枠で **813 件**を背景 URLSession へ渡し、

@@ -79,7 +79,11 @@ enum HeavyWorkScheduler {
     private static let completionLatch = CompletionLatch()
 
     private static func handle(_ task: BGProcessingTask) {
-        Diagnostics.mark("bgtask: begin")
+        // ⚠️ **窓と窓の間隔を残す**（diagnostics-81）。「窓が来ない」は沈黙として現れるので、
+        //    来たときに前回からの経過を書いておかないと、後から「何時間空いたか」を数えられない。
+        let sinceLast = Self.minutesSinceLastWindow()
+        Self.recordWindowBegin()
+        Diagnostics.mark("bgtask: begin" + (sinceLast.map { " (前回の窓から \($0) 分)" } ?? " (この端末で最初の窓)"))
         let started = Date()
         // この実行の世代。以後の完了通知はこのトークンを添えて行う
         // （前の実行の遅れた通知がこの枠を奪わないように）。
@@ -258,6 +262,18 @@ enum HeavyWorkScheduler {
         if let line = AnalysisStallCheck.logLine(states, now: Date(), installedAt: installedAt) {
             Diagnostics.mark(line)
         }
+    }
+
+    /// 直近に窓が開いた時刻（間隔の計測用）。
+    private static func recordWindowBegin() {
+        UserDefaults.standard.set(Date().timeIntervalSinceReferenceDate, forKey: AppSettingsKeys.bgTaskLastBeginAt)
+    }
+
+    /// 前回の窓からの経過（分）。まだ一度も開いていなければ nil。
+    static func minutesSinceLastWindow(now: Date = Date()) -> Int? {
+        let raw = UserDefaults.standard.double(forKey: AppSettingsKeys.bgTaskLastBeginAt)
+        guard raw > 0 else { return nil }
+        return Int(now.timeIntervalSince(Date(timeIntervalSinceReferenceDate: raw)) / 60)
     }
 
     /// D: 最終実行の記録（Developer Options で表示）。ログを開かずに夜間実行の有無を確認できる。
