@@ -59,6 +59,9 @@ struct AIAnalysisStatusView: View {
         }
         .onChange(of: engine.isTagging) { _, _ in Task { await refresh() } }
         .onChange(of: people.isScanning) { _, _ in Task { await refresh() } }
+        // 継続タスクを使わない設定では、**この画面を開いたときに**中断の続きを再開する
+        // （見ていない前面では走らせない・ADR-193）。「続ける」設定なら前面復帰時に再開済み。
+        .task { await session.resumeIfPending(statusScreenOpen: true) }
         // 前面のみモードは画面を離れたら止める（継続モードは OS が面倒を見るので続く）。
         .onDisappear { session.screenLeft() }
     }
@@ -167,6 +170,7 @@ struct AIAnalysisStatusView: View {
             Toggle(isOn: Binding(get: { session.keepScreenOn }, set: { session.keepScreenOn = $0 })) {
                 Label(L("Keep Screen On While Analyzing"), systemImage: "sun.max")
             }
+            continuationPicker
             NavigationLink {
                 Form { AutoAlbumSettingsView(engine: engine) }
                     .navigationTitle(L("Album Automation"))
@@ -175,9 +179,41 @@ struct AIAnalysisStatusView: View {
                 Label(L("Processing Timing & Speed"), systemImage: "slider.horizontal.3")
             }
         } footer: {
-            Text("“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.")
+            Text("“When You Leave the App” only decides whether analysis keeps running once you leave — nightly background analysis is unaffected by it.")
+            + Text(verbatim: "\n\n")
+            + Text("“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.")
             + Text(verbatim: "\n\n")
             + Text("Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.")
+        }
+    }
+
+    /// 「アプリを離れたときの解析」（ADR-193）。選んでいるのは表示ではなく**継続タスクを使う場面**
+    /// ——進捗 UI は OS が出すもので、アプリからは消せないため。
+    private var continuationPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker(selection: Binding(
+                get: { AnalysisContinuation.current },
+                set: { UserDefaults.standard.set($0.rawValue, forKey: AppSettingsKeys.analysisContinuation) })
+            ) {
+                Text("Keep going").tag(AnalysisContinuation.always)
+                Text("Only when I start it").tag(AnalysisContinuation.manualOnly)
+                Text("Only while this screen is open").tag(AnalysisContinuation.whileOpen)
+            } label: {
+                Label(L("When You Leave the App"), systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
+            }
+            Text(continuationHint)
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var continuationHint: String {
+        switch AnalysisContinuation.current {
+        case .always:
+            return L("Analysis continues after you leave the app, and resumes by itself when you open the app while charging. iOS shows a progress indicator on the Lock Screen and in the Dynamic Island while it runs — that indicator cannot be hidden.")
+        case .manualOnly:
+            return L("Only an analysis you start with Analyze Now keeps going after you leave the app. An interrupted analysis resumes while this screen is open and the device is charging.")
+        case .whileOpen:
+            return L("Analysis runs only while this screen is open, so no indicator appears. Nightly background analysis is unaffected.")
         }
     }
 

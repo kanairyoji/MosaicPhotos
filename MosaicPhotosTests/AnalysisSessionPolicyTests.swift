@@ -98,3 +98,62 @@ final class AnalysisBlockerDiagnosisTests: XCTestCase {
                        "一度も開いていない端末では判断しない")
     }
 }
+
+/// ADR-193: **アプリを離れたときの解析**（継続タスクを使う場面）の設定。
+///
+/// 選んでいるのは表示ではなく「継続タスクを使うか」——進捗 UI は OS が出すもので、
+/// アプリからは消せない。だから「うるさい」への答えは使う場面を減らすことだけ。
+final class AnalysisContinuationPolicyTests: XCTestCase {
+
+    // MARK: - どの段で継続タスクを要求するか
+
+    func testAlwaysKeepsGoingForBothManualAndAutoResume() {
+        XCTAssertTrue(AnalysisContinuationPolicy.requestsContinuedTask(.always, autoResume: false))
+        XCTAssertTrue(AnalysisContinuationPolicy.requestsContinuedTask(.always, autoResume: true))
+    }
+
+    func testManualOnlyKeepsGoingOnlyWhenTheUserTapped() {
+        XCTAssertTrue(AnalysisContinuationPolicy.requestsContinuedTask(.manualOnly, autoResume: false))
+        XCTAssertFalse(AnalysisContinuationPolicy.requestsContinuedTask(.manualOnly, autoResume: true),
+                       "自動再開でインジケータが出るのが「うるさい」の主因")
+    }
+
+    func testWhileOpenNeverRequestsAContinuedTask() {
+        XCTAssertFalse(AnalysisContinuationPolicy.requestsContinuedTask(.whileOpen, autoResume: false))
+        XCTAssertFalse(AnalysisContinuationPolicy.requestsContinuedTask(.whileOpen, autoResume: true))
+    }
+
+    // MARK: - 自動再開の条件（電源必須・見ていない前面では走らせない）
+
+    func testAutoResumeAlwaysRequiresPower() {
+        for level in AnalysisContinuation.allCases {
+            XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(level, onPower: false,
+                                                                       statusScreenOpen: true),
+                           "電池だけのときは自動再開しない（\(level)）")
+        }
+    }
+
+    func testKeepGoingResumesEvenAwayFromTheScreen() {
+        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.always, onPower: true,
+                                                                  statusScreenOpen: false))
+    }
+
+    func testWithoutAContinuedTaskResumeNeedsTheScreenOpen() {
+        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.manualOnly, onPower: true,
+                                                                   statusScreenOpen: false),
+                       "見ていない前面で重い処理を走らせない（ADR-25）")
+        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.manualOnly, onPower: true,
+                                                                  statusScreenOpen: true))
+        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: true,
+                                                                   statusScreenOpen: false))
+        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: true,
+                                                                  statusScreenOpen: true))
+    }
+
+    // MARK: - 既定値（移行なしで現行動作のまま）
+
+    func testDefaultIsKeepGoing() {
+        XCTAssertEqual(AnalysisContinuation.default, .always)
+        XCTAssertEqual(AnalysisContinuation(rawValue: 0), .always, "未設定(0)＝現行動作")
+    }
+}
