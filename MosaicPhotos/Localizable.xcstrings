@@ -471,6 +471,16 @@
         }
       }
     },
+    "Analysis continues after you leave the app, and resumes by itself when you open the app while charging. iOS shows a progress indicator on the Lock Screen and in the Dynamic Island while it runs — that indicator cannot be hidden.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを離れても解析が続き、充電中にアプリを開くと中断の続きから自動で再開します。動いている間、iOS がロック画面と Dynamic Island に進捗を表示します（この表示は消せません）。"
+          }
+        }
+      }
+    },
     "Analysis is not running right now. It resumes automatically under the conditions you set in Processing Timing, or tap “Analyze Now” below.": {
       "localizations": {
         "ja": {
@@ -2716,6 +2726,36 @@
         }
       }
     },
+    "Only an analysis you start with Analyze Now keeps going after you leave the app. An interrupted analysis resumes while this screen is open and the device is charging.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「今すぐ解析」で始めたものだけ、アプリを離れても続きます。中断された解析は、充電中にこの画面を開いている間に再開します。"
+          }
+        }
+      }
+    },
+    "Only when I start it": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "押したときだけ続ける"
+          }
+        }
+      }
+    },
+    "Only while this screen is open": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画面を開いている間だけ"
+          }
+        }
+      }
+    },
     "Or choose the correct person": {
       "localizations": {
         "ja": {
@@ -3910,6 +3950,16 @@
         }
       }
     },
+    "When You Leave the App": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを離れたときの解析"
+          }
+        }
+      }
+    },
     "Which of these are the same person as above?": {
       "localizations": {
         "ja": {
@@ -4101,6 +4151,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "「今すぐ解析」を押すと 30 分間すぐに実行します（iPhone の充電が必要です）。それ以外は「処理のタイミング」の設定に従って自動で進みます（既定では、充電中・Wi-Fi・未使用のとき）。"
+          }
+        }
+      }
+    },
+    "“When You Leave the App” only decides whether analysis keeps running once you leave — nightly background analysis is unaffected by it.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「アプリを離れたときの解析」が決めるのは、離れたあとも続けるかどうかだけです。夜間の自動解析はこの設定の影響を受けません。"
           }
         }
       }
@@ -4365,12 +4425,32 @@
         }
       }
     },
+    "Analysis runs only while this screen is open, so no indicator appears. Nightly background analysis is unaffected.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画面を開いている間だけ解析します（表示は出ません）。夜間の自動解析には影響しません。"
+          }
+        }
+      }
+    },
     "Analyze Now": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "今すぐ解析"
+          }
+        }
+      }
+    },
+    "Keep going": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "続ける"
           }
         }
       }

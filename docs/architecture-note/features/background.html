@@ -58,7 +58,7 @@
         <tr><td><strong>重い処理（一枚岩）</strong>（AI アルバムの本番化・ドリフト再評価・自動アルバム生成）</td><td>あり</td><td>最高</td><td>上記に加え<strong>非アクティブ限定</strong>（<code>monolithicHeavyWorkAllowed</code>・ADR-107）。途中で譲れないため</td></tr>
         <tr><td>Dropbox 差分同期（longpoll/delta）</td><td>あり</td><td>中</td><td>接続中＋回線</td></tr>
         <tr><td>端末→Dropbox バックアップ</td><td>あり</td><td>高</td><td>電源＋回線（ファイル間で一時停止）。処理枠では毎枠・解析と並行（ADR-180）、転送は背景 URLSession で枠の外へ（ADR-181）</td></tr>
-        <tr><td><strong>解析セッション「今すぐ解析」</strong>（ADR-182）</td><td>クラウド分のみ</td><td>最高</td><td>利用者が始める。<code>BackgroundYield.sessionActive</code> で待機・電源・使用状況・回線を免除（熱・一括ロード保護・生成との相互排他は残す）。iOS 26 の <code>BGContinuedProcessingTask</code> に載ればアプリを閉じても続く。電源なしで電池 20% 未満は自動停止。<strong>OS に止められてもアプリが前面なら前面のみモードで走り続ける</strong>（ADR-191・前面では UI へ譲る）。背面で止まった場合は<strong>次にアプリを開いたときに自動再開</strong>する（押した事実を永続化＝ADR-189。ただし OS が継続タスクを受けなかったときは自動再開しない＝見ていない前面で重い処理を走らせない）</td></tr>
+        <tr><td><strong>解析セッション「今すぐ解析」</strong>（ADR-182）</td><td>クラウド分のみ</td><td>最高</td><td>利用者が始める。<code>BackgroundYield.sessionActive</code> で待機・電源・使用状況・回線を免除（熱・一括ロード保護・生成との相互排他は残す）。iOS 26 の <code>BGContinuedProcessingTask</code> に載ればアプリを閉じても続く。電源なしで電池 20% 未満は自動停止。<strong>OS に止められてもアプリが前面なら前面のみモードで走り続ける</strong>（ADR-191・前面では UI へ譲る）。アプリを離れても続けるか（＝ロック画面の進捗インジケータが出る場面）は<strong>3 段で選べる</strong>（ADR-193・既定は「続ける」。自動再開はどの段でも充電中のみ）。背面で止まった場合は<strong>次にアプリを開いたときに自動再開</strong>する（押した事実を永続化＝ADR-189。ただし OS が継続タスクを受けなかったときは自動再開しない＝見ていない前面で重い処理を走らせない）</td></tr>
         <tr><td>家族共有の反映・受信</td><td>あり</td><td>中</td><td>回線。起動後・バックアップ完走後・処理枠・手動。反映の直前に作成元へ自動追従（ADR-183）</td></tr>
         <tr><td>場所スキャン（オフライン逆ジオコーディング）</td><td>なし</td><td>中</td><td>backgroundAllowed（電源ポリシー）</td></tr>
         <tr><td>アルバム走査</td><td>なし</td><td>低</td><td>初回はゲートなし（UX 優先）／定期は電源</td></tr>

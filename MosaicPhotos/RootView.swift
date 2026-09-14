@@ -236,7 +236,7 @@ struct RootView: View {
             loadingTimer.cancel()
             // 中断された解析セッションの自動再開（diagnostics-81）。起動時は scenePhase の
             // 変化が来ないので、ストアが揃ったこの場で 1 回だけ見る。
-            await built.analysisSession.resumeIfPending()
+            await built.analysisSession.resumeIfPending(statusScreenOpen: false)
         }
     }
 }

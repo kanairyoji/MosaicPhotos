@@ -92,8 +92,10 @@ final class AnalysisSession {
     // MARK: - 開始・停止
 
     /// - Parameter autoResume: 中断されたセッションの自動再開か（画面を見ていない可能性がある）。
-    ///   OS が継続タスクを受けなかった場合、自動再開では**前面のみで走らせない**——
-    ///   「使っている間は重い処理を動かさない」（ADR-25）を、利用者が見ていないところで破らない。
+    ///   設定（`AnalysisContinuation`・ADR-193）が継続タスクを使う場面なのに **OS が受けなかった**
+    ///   ときは、自動再開では走らせない——「使っている間は重い処理を動かさない」（ADR-25）を、
+    ///   利用者が見ていないところで破らない。前面のみで走るのは、画面を開いているときだけ
+    ///   （呼び出し側の `resumeIfPending(statusScreenOpen:)` が担保する）。
     func start(autoResume: Bool = false) {
         guard !isActive else { return }
         faceScanStarted = false
@@ -102,10 +104,14 @@ final class AnalysisSession {
         peakRemaining = 0
         didAutoResume = false
         BackgroundYield.sessionActive = true
-        let mode: Mode = submitContinuedTask() ? .continued : .foregroundOnly
-        if autoResume, mode == .foregroundOnly {
-            // OS が継続タスクを受けなかった＝アプリを閉じたら止まる。自動再開でそれを始めると
-            // 「見ていない前面」で重い処理が走り続ける。印（理由も）は残したまま、次の機会に譲る。
+        // 設定（ADR-193）が「アプリを離れても続ける」場面のときだけ、OS の継続タスクを要求する。
+        // 要求しない段では最初から前面のみ＝インジケータは出ない。
+        let level = AnalysisContinuation.current
+        let wantsContinued = AnalysisContinuationPolicy.requestsContinuedTask(level, autoResume: autoResume)
+        let mode: Mode = (wantsContinued && submitContinuedTask()) ? .continued : .foregroundOnly
+        if autoResume, wantsContinued, mode == .foregroundOnly {
+            // 継続タスクを使う設定なのに OS が受けなかった＝アプリを閉じたら止まる。自動再開で
+            // それを始めると「見ていない前面」で重い処理が走り続ける。印は残して次の機会に譲る。
             BackgroundYield.sessionActive = false
             Diagnostics.mark("analyze: auto-resume deferred — the system did not accept a continued task")
             return
@@ -118,8 +124,8 @@ final class AnalysisSession {
         state = .running(mode)
         applyModeGates()
         UIDevice.current.isBatteryMonitoringEnabled = true
-        Diagnostics.mark("analyze: session start (\(mode))")
-        RunTimeline.record("session start (\(mode))\(autoResume ? " ＝自動再開" : "")")
+        Diagnostics.mark("analyze: session start (\(mode)) continuation=\(level)")
+        RunTimeline.record("session start (\(mode)・設定=\(level))\(autoResume ? " ＝自動再開" : "")")
         RunTimeline.noteState("session")
         loop = Task { [weak self] in await self?.runLoop() }
     }
@@ -213,7 +219,9 @@ final class AnalysisSession {
     ///
     /// 再開するのは「利用者が明示的に始めて、まだ終わっていない」ときだけ。止めたときは印を
     /// 下ろしてあるので再開しない。残作業ゼロなら再開せず印だけ下ろす（押したのに全部済んでいた場合）。
-    func resumeIfPending() async {
+    /// - Parameter statusScreenOpen: AI 解析の状況を開いているか。継続タスクを使わない段では、
+    ///   **開いているときだけ**自動再開する（見ていない前面で走らせないため）。
+    func resumeIfPending(statusScreenOpen: Bool = false) async {
         guard !isActive, Self.isPending else { return }
         // プロセスが消えた場合は停止理由すら残らない。ここで「前回が終わっていない」ことを記録する。
         // ⚠️ 前面復帰のたびに呼ばれるので、記録はプロセスにつき 1 回だけ（ログを埋めない）。
@@ -221,9 +229,15 @@ final class AnalysisSession {
             loggedUnfinished = true
             Diagnostics.mark("analyze: previous session unfinished (\(Self.interruptedReason ?? "process ended"))")
         }
-        if AnalysisSessionPolicy.shouldStopForBattery(onPower: PowerStateMonitor.shared.isOnPower,
-                                                     level: UIDevice.current.batteryLevel) {
-            Diagnostics.mark("analyze: auto-resume skipped — battery low and not charging")
+        // 自動再開は**電源接続が必須**（ADR-193）。外出先でアプリを開いただけで走り出し、
+        // 電池を食う／インジケータが出るのを防ぐ。手動で押したときは従来どおり免除。
+        let level = AnalysisContinuation.current
+        guard AnalysisContinuationPolicy.allowsAutoResume(level,
+                                                          onPower: PowerStateMonitor.shared.isOnPower,
+                                                          statusScreenOpen: statusScreenOpen) else {
+            Diagnostics.mark("analyze: auto-resume skipped — "
+                             + "power=\(PowerStateMonitor.shared.isOnPower) "
+                             + "screen=\(statusScreenOpen) continuation=\(level)")
             return
         }
         let progress = await engine.analysisProgress()
