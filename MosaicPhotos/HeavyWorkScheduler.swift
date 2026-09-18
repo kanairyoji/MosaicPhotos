@@ -93,7 +93,7 @@ enum HeavyWorkScheduler {
         let gapText = sinceLast.map { " (前回の窓から \($0) 分)" } ?? " (この端末で最初の窓)"
         Diagnostics.mark("bgtask: begin" + gapText)
         RunTimeline.record("window begin\(gapText) " + Self.environmentLine())
-        RunTimeline.noteState("window")
+        RunTimeline.noteState("window", active: true)
         let started = Date()
         // この実行の世代。以後の完了通知はこのトークンを添えて行う
         // （前の実行の遅れた通知がこの枠を奪わないように）。
@@ -105,7 +105,7 @@ enum HeavyWorkScheduler {
                 Diagnostics.mark("bgtask: end (\(outcome))")
                 let mins = Int(Date().timeIntervalSince(started) / 60)
                 RunTimeline.record("window end (\(outcome)・\(mins) 分) " + Self.environmentLine())
-                RunTimeline.noteState("idle")
+                RunTimeline.noteState("window", active: false)
                 recordLastRun(started: started, outcome: outcome)
                 task.setTaskCompleted(success: success)
                 submit()   // 次回分を再予約（残作業はまた次のロック中に進む）

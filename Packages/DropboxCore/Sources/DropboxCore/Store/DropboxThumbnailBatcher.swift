@@ -147,11 +147,15 @@ final class DropboxThumbnailBatcher {
     }
 
     #if DEBUG
+    /// テスト用の積み先（本番の `ThumbnailPurpose` ＋ 先読み）。
+    enum TestEnqueue { case display, analysis, prefetchForTesting }
+
     /// テスト用: ドレインを走らせずに 1 件だけ積む（どのプールに入るかの検証）。
-    func enqueueForTesting(_ item: DropboxFileItem, purpose: ThumbnailPurpose) {
+    func enqueueForTesting(_ item: DropboxFileItem, purpose: TestEnqueue) {
         switch purpose {
-        case .display:  enqueueVisible(item)
-        case .analysis: enqueueAnalysis(item)
+        case .display:            enqueueVisible(item)
+        case .analysis:           enqueueAnalysis(item)
+        case .prefetchForTesting: enqueuePrefetch(item)
         }
     }
 
@@ -174,7 +178,14 @@ final class DropboxThumbnailBatcher {
         let path = item.path
         removePrefetch(path)                 // 先読みプールから可視へ昇格
         removeAnalysis(path)                 // 解析プールからも可視へ昇格（人が見ている方が先）
-        if inFlight.contains(path) { return } // 取得中なら待機者だけで足りる（完了時に配送）
+        if inFlight.contains(path) {
+            // 取得中なら待機者だけで足りる（完了時に配送）。ただし **UI ビジーは名乗る**
+            // （レビュー指摘）——解析が始めた取得を可視セルが待っている状況で黙っていると、
+            // 背景処理が譲らず、人が見ているサムネが後回しになる（この変更が守るはずの不変条件の逆）。
+            displayInFlight.insert(path)
+            refreshCloudBusy()
+            return
+        }
         pendingVisible[path] = item
         refreshCloudBusy()
     }
@@ -183,6 +194,10 @@ final class DropboxThumbnailBatcher {
     private func enqueueAnalysis(_ item: DropboxFileItem) {
         let path = item.path
         if pendingVisible[path] != nil || inFlight.contains(path) { return }
+        // ⚠️ 先読みプールからは外す（レビュー指摘）。残したままだと `nextWave()` が
+        // 解析プールと先読みプールの**両方から同じ path を取り**、1 リクエストに重複が入って
+        // `deliver` が 2 回走る。
+        removePrefetch(path)
         if pendingAnalysis[path] == nil {
             pendingAnalysis[path] = item
             analysisOrder.append(path)

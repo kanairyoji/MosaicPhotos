@@ -256,6 +256,35 @@ struct ThumbnailPurposeTests {
         #expect(batcher.claimsUIBusyForTesting, "表示の取得で UI ビジーが立たない＝背景処理が譲らなくなる")
     }
 
+    @Test("先読み中の写真を解析が要求しても、同じウェーブに二重に入らない（レビュー指摘）")
+    func analysisDoesNotDuplicateAPrefetchedPath() {
+        let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))
+        let batcher = makeBatcher(stub)
+
+        batcher.enqueueForTesting(item("/dup.jpg"), purpose: .prefetchForTesting)
+        batcher.enqueueForTesting(item("/dup.jpg"), purpose: .analysis)
+        let order = batcher.nextWavePathsForTesting()
+
+        #expect(order.filter { $0 == "/dup.jpg" }.count == 1,
+                "同じ path が 1 リクエストに 2 回入り、配送も 2 回走る")
+    }
+
+    @Test("解析が始めた取得を可視セルが待つときも UI ビジーを名乗る（レビュー指摘）")
+    func visibleWaiterOnAnalysisFetchClaimsUIBusy() {
+        let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))
+        let batcher = makeBatcher(stub)
+
+        // 解析が取得を始めた（＝inFlight）状態を作る。
+        batcher.enqueueForTesting(item("/shared.jpg"), purpose: .analysis)
+        _ = batcher.nextWavePathsForTesting()          // inFlight へ移す
+        #expect(batcher.claimsUIBusyForTesting == false, "解析だけなら名乗らない")
+
+        // そこへ可視セルの要求が来たら、取得中でも UI ビジーになる。
+        batcher.enqueueForTesting(item("/shared.jpg"), purpose: .display)
+        #expect(batcher.claimsUIBusyForTesting,
+                "人が見ているサムネを待っているのに、背景処理が譲らなくなる")
+    }
+
     @Test("ウェーブの取り出し順は 表示 → 解析 → 先読み（人が見ている方を待たせない）")
     func waveOrderIsDisplayThenAnalysisThenPrefetch() {
         let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))

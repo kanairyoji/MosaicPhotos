@@ -33,20 +33,35 @@ public enum RunTimeline {
     private static let stateAtKey = "runTimeline.stateAt"
 
     /// いま何をしているかを残す。プロセスが突然終わっても、次の起動でここから推測できる。
-    /// - Parameter state: `"idle"` / `"window"`（処理枠の中）/ `"session"`（今すぐ解析）など。
-    public static func noteState(_ state: String) {
+    ///
+    /// ⚠️ **処理枠とセッションは同時に走り得る**ので、1 つのスロットを共有すると片方の終了が
+    /// もう片方の「実行中」を `idle` で塗り潰し、次の起動で「正常に終わった」と誤報する
+    /// （レビュー指摘＝この機能の目的そのものを壊す）。名前つきで別々に持ち、
+    /// **1 つでも実行中なら実行中**として要約する。
+    /// - Parameters:
+    ///   - state: `"window"`（処理枠の中）/ `"session"`（今すぐ解析）など。
+    ///   - active: 始まったなら true、終わったなら false。
+    public static func noteState(_ state: String, active: Bool) {
         let d = UserDefaults.standard
-        d.set(state, forKey: stateKey)
+        var running = Set(d.stringArray(forKey: stateKey) ?? [])
+        if active { running.insert(state) } else { running.remove(state) }
+        d.set(Array(running).sorted(), forKey: stateKey)
         d.set(Date().timeIntervalSinceReferenceDate, forKey: stateAtKey)
+    }
+
+    /// すべての実行中フラグを下ろす（起動直後に 1 回＝前回の残骸を読んだあと）。
+    public static func clearStates() {
+        UserDefaults.standard.set([String](), forKey: stateKey)
     }
 
     /// 前回の実行がどう終わったか（起動時に 1 回呼ぶ）。
     public static func previousRunSummary(now: Date = Date()) -> String? {
         let d = UserDefaults.standard
-        guard let state = d.string(forKey: stateKey) else { return nil }
+        let running = d.stringArray(forKey: stateKey) ?? []
+        guard !running.isEmpty else { return nil }
         let raw = d.double(forKey: stateAtKey)
         let at = raw > 0 ? Date(timeIntervalSinceReferenceDate: raw) : nil
-        return summary(state: state, at: at, now: now)
+        return summary(state: running.joined(separator: "+"), at: at, now: now)
     }
 
     /// 前回の終わり方の要約（純ロジック・テスト対象）。
@@ -57,7 +72,7 @@ public enum RunTimeline {
         let elapsed = at.map { Int(now.timeIntervalSince($0) / 60) }
         let ago = elapsed.map { "\($0) 分前" } ?? "時刻不明"
         switch state {
-        case "idle":
+        case "", "idle":
             return nil                       // 正常に終わっている＝書くことは無い
         case "window":
             return "前回は**処理枠の途中**で終了している（\(ago)）。iOS による終了（メモリ・ウォッチドッグ）か強制終了の疑い"

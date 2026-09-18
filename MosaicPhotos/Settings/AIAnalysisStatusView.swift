@@ -22,6 +22,11 @@ struct AIAnalysisStatusView: View {
     /// 解析セッション（「今すぐ解析」・ADR-182）。
     let session: AnalysisSession
 
+    /// ⚠️ `UserDefaults` の直読みでは**画面が更新されない**（レビュー指摘）。選んでも表示が
+    /// 前の値のまま＝壊れて見える。`@AppStorage` にして SwiftUI に変更を伝える。
+    @AppStorage(AppSettingsKeys.analysisContinuation) private var continuationRaw = AnalysisContinuation.default.rawValue
+    @AppStorage(AppSettingsKeys.analysisSessionPending) private var sessionPending = false
+
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
     /// 顔スキャン: 候補（スクリーンショット除外・端末＋クラウド）のうち済んだ枚数と候補総数。
     /// ⚠️ 記録の総数÷ライブラリ総数では、削除済みの記録と候補外の写真で「存在しない残り」が出る。
@@ -61,7 +66,10 @@ struct AIAnalysisStatusView: View {
         .onChange(of: people.isScanning) { _, _ in Task { await refresh() } }
         // 継続タスクを使わない設定では、**この画面を開いたときに**中断の続きを再開する
         // （見ていない前面では走らせない・ADR-193）。「続ける」設定なら前面復帰時に再開済み。
-        .task { await session.resumeIfPending(statusScreenOpen: true) }
+        .task {
+            session.screenAppeared()
+            await session.resumeIfPending(statusScreenOpen: true)
+        }
         // 前面のみモードは画面を離れたら止める（継続モードは OS が面倒を見るので続く）。
         .onDisappear { session.screenLeft() }
     }
@@ -159,7 +167,7 @@ struct AIAnalysisStatusView: View {
                 }
                 if case .stopped(let reason) = session.state, let text = stopText(reason) {
                     Text(text).font(.caption).foregroundStyle(.secondary)
-                } else if AnalysisSession.isPending {
+                } else if sessionPending {
                     // 前回のセッションが終わっていない（ロック・OS の停止・アプリの終了）。
                     // 次にアプリを開いたときに自動再開するが、ここでも状況を伝える。
                     Label(L("The last analysis was interrupted. It resumes automatically when you open the app — or tap Analyze Now."),
@@ -192,8 +200,8 @@ struct AIAnalysisStatusView: View {
     private var continuationPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             Picker(selection: Binding(
-                get: { AnalysisContinuation.current },
-                set: { UserDefaults.standard.set($0.rawValue, forKey: AppSettingsKeys.analysisContinuation) })
+                get: { AnalysisContinuation(rawValue: continuationRaw) ?? .default },
+                set: { continuationRaw = $0.rawValue })
             ) {
                 Text("Keep going").tag(AnalysisContinuation.always)
                 Text("Only when I start it").tag(AnalysisContinuation.manualOnly)
@@ -207,7 +215,7 @@ struct AIAnalysisStatusView: View {
     }
 
     private var continuationHint: String {
-        switch AnalysisContinuation.current {
+        switch AnalysisContinuation(rawValue: continuationRaw) ?? .default {
         case .always:
             return L("Analysis continues after you leave the app, and resumes by itself when you open the app while charging. iOS shows a progress indicator on the Lock Screen and in the Dynamic Island while it runs — that indicator cannot be hidden.")
         case .manualOnly:

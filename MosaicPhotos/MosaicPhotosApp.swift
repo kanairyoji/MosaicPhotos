@@ -28,7 +28,7 @@ struct MosaicPhotosApp: App {
         //    実機ログから特定できなかった。
         RunTimeline.record("launch — \(appVersionLine()) " + HeavyWorkScheduler.environmentLine())
         if let previous = RunTimeline.previousRunSummary() { RunTimeline.record("前回: \(previous)") }
-        RunTimeline.noteState("idle")
+        RunTimeline.clearStates()   // 前回の残骸は上で読んだので畳む
         HeavyWorkScheduler.logPendingRequests(context: "launch")
     }
 
@@ -60,6 +60,10 @@ struct MosaicPhotosApp: App {
             }
             // バックグラウンド遷移（ロック含む）で次回の重い処理を予約する。
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
+            if phase != .active {
+                // 前面のみモードのセッションは前面にいる間だけのもの（レビュー指摘）。
+                HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()
+            }
             if phase == .background { HeavyWorkScheduler.submit() }
         }
     }

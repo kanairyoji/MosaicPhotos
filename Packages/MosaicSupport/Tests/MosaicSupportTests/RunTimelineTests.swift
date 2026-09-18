@@ -29,6 +29,17 @@ struct RunTimelineTests {
         #expect(RunTimeline.summary(state: "weird", at: nil, now: now)?.contains("時刻不明") == true)
     }
 
+    @Test("処理枠とセッションは互いの「実行中」を潰さない（レビュー指摘）")
+    func twoStatesDoNotClobberEachOther() {
+        let now = Date()
+        // 窓とセッションが同時に走り、窓だけが終わった状態＝セッションはまだ実行中。
+        #expect(RunTimeline.summary(state: "session", at: now, now: now) != nil)
+        // 片方が終わっただけで「正常終了」と読まないこと（空の集合のときだけ nil）。
+        #expect(RunTimeline.summary(state: "", at: now, now: now) == nil)
+        #expect(RunTimeline.summary(state: "session+window", at: now, now: now) != nil,
+                "両方が実行中のまま終了したら、当然それを残す")
+    }
+
     // MARK: - OS が持っている終了理由
 
     @Test("0 の項目は書かず、起きた終了だけを日本語で並べる")

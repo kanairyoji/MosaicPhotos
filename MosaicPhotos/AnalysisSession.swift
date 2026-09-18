@@ -126,7 +126,7 @@ final class AnalysisSession {
         UIDevice.current.isBatteryMonitoringEnabled = true
         Diagnostics.mark("analyze: session start (\(mode)) continuation=\(level)")
         RunTimeline.record("session start (\(mode)・設定=\(level))\(autoResume ? " ＝自動再開" : "")")
-        RunTimeline.noteState("session")
+        RunTimeline.noteState("session", active: true)
         loop = Task { [weak self] in await self?.runLoop() }
     }
 
@@ -152,7 +152,7 @@ final class AnalysisSession {
         }
         Diagnostics.mark("analyze: session stop (\(reason)) remaining=\(remaining)")
         RunTimeline.record("session stop (\(reason)) remaining=\(remaining)")
-        RunTimeline.noteState("idle")
+        RunTimeline.noteState("session", active: false)
         if let task {
             // 期限切れでも完了でも、必ず 1 回だけ呼ぶ（呼ばないと OS が次を受けなくなる）。
             task.setTaskCompleted(success: reason == .finished)
@@ -170,7 +170,11 @@ final class AnalysisSession {
             task.setTaskCompleted(success: false)
             self.task = nil
         }
-        guard isActive, BackgroundYield.isAppActive else {
+        // ⚠️ 降格してよいのは **AI 解析の状況を開いている**ときだけ（レビュー指摘）。
+        // 前面のみモードを止められるのはその画面の `onDisappear`（`screenLeft`）だけなので、
+        // 写真を見ている最中に降格すると**誰も止められないセッション**が残り、
+        // `sessionActive` が立ちっぱなし＝電源・回線ポリシーが無効化され、画面も消えなくなる。
+        guard isActive, BackgroundYield.isAppActive, statusScreenVisible else {
             stop(.expired)
             return
         }
@@ -190,8 +194,25 @@ final class AnalysisSession {
         applyIdleTimer()
     }
 
+    /// AI 解析の状況が表示されているか（ビューが onAppear/onDisappear で報告する）。
+    /// 前面のみモードが生きてよいのは、この画面が開いている間だけ。
+    private(set) var statusScreenVisible = false
+
+    /// AI 解析の状況が現れたとき（ビューの onAppear）。
+    func screenAppeared() { statusScreenVisible = true }
+
     /// 前面のみモードで画面を離れたとき（ビューの onDisappear）。継続モードなら何もしない。
     func screenLeft() {
+        statusScreenVisible = false
+        if mode == .foregroundOnly { stop(.leftScreen) }
+    }
+
+    /// アプリが前面から外れたとき（`scenePhase` が active 以外）。
+    ///
+    /// ⚠️ 前面のみモードは**前面にいる間だけ**のもの。止めずに残すと `sessionActive` が
+    /// 立ちっぱなしになり、電源・回線ポリシーの免除と画面消灯の抑止が効いたままになる
+    /// （レビュー指摘）。やり残しの印は残るので、次に開いたときに続きから再開する。
+    func appLeftForeground() {
         if mode == .foregroundOnly { stop(.leftScreen) }
     }
 
@@ -242,7 +263,14 @@ final class AnalysisSession {
         }
         let progress = await engine.analysisProgress()
         let pending = max(0, progress.total - progress.sceneTagged) + max(0, progress.total - progress.embedded)
-        guard pending > 0 || people.remaining > 0 else {
+        // ⚠️ **顔の残りはここでは分からない**（レビュー指摘）。`people.remaining` はスキャン中の
+        // 進捗コールバックでしか更新されないので、プロセスが変わった直後は必ず 0——それを
+        // 「残り無し」と読むと、jetsam で中断された顔スキャンが**二度と再開されない**
+        // （タグと埋め込みだけ終わっている状態＝diagnostics-81 の場面で起こり得る）。
+        // 分からないときは再開して、**セッション自身に終わりを判定させる**
+        //（残作業ゼロなら数秒で `.finished` になり、そこで印が下りる）。
+        // 印を下ろしてよいのは「顔スキャンがそもそも無い（モデル未同梱）」ときだけ。
+        guard pending > 0 || people.isFaceModelAvailable else {
             Diagnostics.mark("analyze: nothing left — clearing pending session")
             Self.markPending(false)
             return
