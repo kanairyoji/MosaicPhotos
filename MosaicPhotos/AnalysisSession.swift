@@ -142,6 +142,8 @@ final class AnalysisSession {
         state = .stopped(reason)
         // 「終わった」「利用者が止めた」だけが完了。OS に止められた・電池・画面離脱は**未完**として
         // 印を残し、次の前面復帰で続きから再開する。
+        // 本当に終わったときだけ、顔の残りを 0 として確定する（上の注記と対）。
+        if reason == .finished { Self.lastKnownFaceRemaining = 0 }
         if AnalysisSessionPolicy.keepsPendingFlag(reason) {
             Self.markPending(true)
             let defaults = UserDefaults.standard
@@ -233,9 +235,15 @@ final class AnalysisSession {
     /// かといって「モデルが同梱されているか」で代用すると、**残作業ゼロでも毎回セッションを
     /// 起こす**ことになり、8.5 万件の候補列挙・`sessionActive` による電源/回線ポリシーの無効化・
     /// ロック画面のインジケータまで無意味に走る（レビュー指摘）。観測できた値を持ち越す。
-    private static var lastKnownFaceRemaining: Int {
-        get { UserDefaults.standard.integer(forKey: AppSettingsKeys.analysisFaceRemaining) }
-        set { UserDefaults.standard.set(max(0, newValue), forKey: AppSettingsKeys.analysisFaceRemaining) }
+    /// ⚠️ **nil（未観測）と 0（残り無し）を区別する**（レビュー指摘）。`integer(forKey:)` は
+    /// キーが無いときも 0 を返すので、それで判断すると「一度も観測していない端末」＝
+    /// 「残っていない」になり、直そうとした不具合（顔だけ残った中断が再開されない）が戻る。
+    private static var lastKnownFaceRemaining: Int? {
+        get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisFaceRemaining) as? Int }
+        set {
+            guard let newValue else { return }
+            UserDefaults.standard.set(max(0, newValue), forKey: AppSettingsKeys.analysisFaceRemaining)
+        }
     }
 
     private static func markPending(_ pending: Bool) {
@@ -277,10 +285,21 @@ final class AnalysisSession {
         // 顔の残りは**前回観測した値**で判断する（`people.remaining` は新しいプロセスでは 0 で、
         // 「残っていない」と「分からない」の区別が付かない）。一度も観測していない端末では
         // 「分からない」＝再開してセッション自身に終わりを判定させる。
-        let faceBacklog = people.isFaceModelAvailable ? Self.lastKnownFaceRemaining : 0
+        // 未観測（nil）は「分からない」＝再開してセッション自身に終わりを判定させる。
+        let faceBacklog = people.isFaceModelAvailable ? (Self.lastKnownFaceRemaining ?? .max) : 0
         guard pending > 0 || faceBacklog > 0 else {
             Diagnostics.mark("analyze: nothing left — clearing pending session")
             Self.markPending(false)
+            return
+        }
+        // ⚠️ ここまでに **DB カウントで待っている**（全件）。その間に利用者が画面を戻ると、
+        // `onDisappear` → `screenLeft()` が先に走り、閉じた画面のために前面のみモードの
+        // セッションが立ち上がる＝誰も止められない（レビュー指摘）。直前にもう一度見る。
+        guard !Task.isCancelled,
+              AnalysisContinuationPolicy.allowsAutoResume(level,
+                                                          onPower: PowerStateMonitor.shared.isOnPower,
+                                                          statusScreenOpen: statusScreenVisible) else {
+            Diagnostics.mark("analyze: auto-resume aborted — the screen closed while counting")
             return
         }
         Diagnostics.mark("analyze: auto-resuming (pending=\(pending))")
@@ -382,9 +401,11 @@ final class AnalysisSession {
             }
             let faces = people.isScanning ? people.remaining : 0
             // 観測できた残りを持ち越す（プロセスが死んでも次の起動で判断できる）。
-            // スキャンが落ち着いたら 0 を書く＝次の起動で無駄なセッションを起こさない。
-            if people.isScanning { Self.lastKnownFaceRemaining = faces }
-            else if faceScanStarted { Self.lastKnownFaceRemaining = 0 }
+            // ⚠️ **スキャンが終わった＝残り 0 ではない**（レビュー指摘）。顔スキャンは
+            // クラウドのサムネ未取得や譲り待ちで**残作業を抱えたまま畳む**ので、そこで 0 を
+            // 書くと次の起動で「もう無い」と誤判定する。0 を書くのは本当に終わったとき
+            // （`stop(.finished)`）だけにする。
+            if people.isScanning, people.remaining > 0 { Self.lastKnownFaceRemaining = people.remaining }
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }

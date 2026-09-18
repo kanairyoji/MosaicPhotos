@@ -143,6 +143,10 @@ final class DropboxThumbnailBatcher {
                 if pendingVisible[path] != nil || pendingAnalysis[path] != nil
                     || inFlight.contains(path) { continue }
                 if await cache.thumbnailExists(for: path) { continue }   // メモリ/ディスクにあれば不要
+                // ⚠️ 上の判定は `await` の**前**なので、その間に解析の要求やドレインが入り得る
+                //（レビュー指摘）。積む直前にもう一度見る＝同じ path が 2 つのプールに残らない。
+                if pendingVisible[path] != nil || pendingAnalysis[path] != nil
+                    || inFlight.contains(path) { continue }
                 enqueuePrefetch(item)
             }
             updatePendingActivity()
@@ -165,6 +169,11 @@ final class DropboxThumbnailBatcher {
 
     /// テスト用: いま「UI が忙しい」を名乗っているか（＝表示のための取得が残っているか）。
     var claimsUIBusyForTesting: Bool { !pendingVisible.isEmpty || !displayInFlight.isEmpty }
+
+    /// テスト用: 各プールの中身（消費しない）。ドレインを待つ判定に使う。
+    func pendingPathsForTesting() -> (visible: [String], analysis: [String], prefetch: [String]) {
+        (Array(pendingVisible.keys).sorted(), analysisOrder, prefetchOrder)
+    }
 
     /// テスト用: 次のウェーブの取り出し順（可視 → 解析 → 先読み）を見る。
     func nextWavePathsForTesting() -> [String] { nextWave().flatMap { $0.map(\.path) } }

@@ -27,6 +27,10 @@ struct AIAnalysisStatusView: View {
     @AppStorage(AppSettingsKeys.analysisContinuation) private var continuationRaw = AnalysisContinuation.default.rawValue
     @AppStorage(AppSettingsKeys.analysisSessionPending) private var sessionPending = false
 
+    /// 数え直しが重ならないようにする札（Section ごとに配られる `.task` を 1 本へ畳む）。
+    @State private var refreshInFlight = false
+    @State private var pollingStarted = false
+
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
     /// 顔スキャン: 候補（スクリーンショット除外・端末＋クラウド）のうち済んだ枚数と候補総数。
     /// ⚠️ 記録の総数÷ライブラリ総数では、削除済みの記録と候補外の写真で「存在しない残り」が出る。
@@ -52,18 +56,26 @@ struct AIAnalysisStatusView: View {
             actionSection
             blockersSection
         }
-        .task { await refresh() }
+        // ⚠️ これらの修飾子も **Section ごとに配られる**（body は `Group`・レビュー指摘）。
+        //    素通しだと開いた瞬間に refresh が約 7 本同時に走り、そのたびに 8.5 万件の候補列挙と
+        //    FaceStore（@ModelActor）への問い合わせが重なって、人物一覧まで巻き添えで遅くなる
+        //    （ADR-119 の「規模に比例する呼び出し」がそのまま 7 倍になる）。
+        //    ビューの実体は 1 つなので、@State の札で 1 本に畳む。
+        .task { await refreshOnce() }
         // 解析中は数秒おきに数え直す（実フィードバック: 「今すぐ解析」で進んでいるのに数字が動かない）。
         // 候補の列挙（8.5 万件）は 1 分に 1 回で足りるので、数え直しはカウントだけにする。
         .task {
+            guard !pollingStarted else { return }   // 1 本だけ回す
+            pollingStarted = true
+            defer { pollingStarted = false }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(4))
                 guard !Task.isCancelled, isAnalyzing || session.isActive else { continue }
-                await refresh(reuseCandidatesWithin: 60)
+                await refreshOnce(reuseCandidatesWithin: 60)
             }
         }
-        .onChange(of: engine.isTagging) { _, _ in Task { await refresh() } }
-        .onChange(of: people.isScanning) { _, _ in Task { await refresh() } }
+        .onChange(of: engine.isTagging) { _, _ in Task { await refreshOnce() } }
+        .onChange(of: people.isScanning) { _, _ in Task { await refreshOnce() } }
         // ⚠️ 画面の出入りの報告は**ここに書かない**（レビュー指摘）。この body は `Section` の
         // `Group` で、修飾子は各 Section へ配られる。`Form` は行を遅延生成するので、
         // スクロールしてセクションが画面外に出ただけで `onDisappear`＝解析が止まっていた。
@@ -367,6 +379,14 @@ struct AIAnalysisStatusView: View {
     // MARK: - 取得・整形
 
     /// - Parameter reuseCandidatesWithin: この秒数以内に列挙した候補があれば使い回す（定期の数え直し用）。
+    /// `refresh` を**同時に 1 本だけ**にする包み（重い列挙を 7 本走らせない）。
+    private func refreshOnce(reuseCandidatesWithin seconds: TimeInterval = 0) async {
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
+        await refresh(reuseCandidatesWithin: seconds)
+    }
+
     private func refresh(reuseCandidatesWithin: TimeInterval = 0) async {
         async let prog = engine.analysisProgress()
         async let stats = people.scanStats()

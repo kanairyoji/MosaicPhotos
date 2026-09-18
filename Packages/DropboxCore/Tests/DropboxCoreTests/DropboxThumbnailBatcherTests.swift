@@ -230,11 +230,12 @@ struct ThumbnailPurposeTests {
         return auth
     }
 
-    private func makeBatcher(_ stub: StubHTTPClient, chunkSize: Int = 25) -> DropboxThumbnailBatcher {
+    private func makeBatcher(_ stub: StubHTTPClient, chunkSize: Int = 25,
+                            debounceNs: UInt64 = 5_000_000) -> DropboxThumbnailBatcher {
         DropboxThumbnailBatcher(
             apiClient: DropboxAPIClient(httpClient: stub, tokenProvider: makeAuth()),
             cache: DropboxCacheStore(isStoredInMemoryOnly: true),
-            debounceNs: 5_000_000,
+            debounceNs: debounceNs,
             chunkSize: chunkSize)
     }
 
@@ -272,15 +273,25 @@ struct ThumbnailPurposeTests {
     @Test("解析が積んだ写真を後から先読みしても二重にならない（逆順・レビュー指摘）")
     func prefetchDoesNotDuplicateAnAnalysisPath() async {
         let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))
-        let batcher = makeBatcher(stub)
+        // ⚠️ ドレインを走らせない（デバウンスを十分長く取る）。走ると path が inFlight へ移り、
+        //    ウェーブが空になって**バグがあっても通る**テストになる（前版はこれでフレーキーだった）。
+        let batcher = makeBatcher(stub, debounceNs: 10_000_000_000)
 
         batcher.enqueueForTesting(item("/dup2.jpg"), purpose: .analysis)
-        batcher.prefetch([item("/dup2.jpg")])          // スクロールで先読みが来る
-        try? await Task.sleep(nanoseconds: 50_000_000) // prefetch は Task 内で積む
-        let order = batcher.nextWavePathsForTesting()
+        // スクロールで先読みが来る。`/other.jpg` は解析に無いので必ず積まれる＝
+        // これが見えたら「先読みの処理が終わった」と判定できる（固定 sleep にしない）。
+        batcher.prefetch([item("/dup2.jpg"), item("/other.jpg")])
+        for _ in 0..<200 where !batcher.pendingPathsForTesting().prefetch.contains("/other.jpg") {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
 
-        #expect(order.filter { $0 == "/dup2.jpg" }.count == 1,
-                "1 リクエストに同じ path が 2 回入る（Dropbox はバッチごと拒否し得る）")
+        let pools = batcher.pendingPathsForTesting()
+        #expect(pools.analysis == ["/dup2.jpg"])
+        #expect(pools.prefetch.contains("/dup2.jpg") == false,
+                "解析プールに居る path が先読みにも積まれている＝1 リクエストに 2 回入る")
+
+        let order = batcher.nextWavePathsForTesting()
+        #expect(order.filter { $0 == "/dup2.jpg" }.count == 1)
     }
 
     @Test("解析が始めた取得を可視セルが待つときも UI ビジーを名乗る（レビュー指摘）")
