@@ -33,8 +33,10 @@ final class HomeStores {
     let shareImporter: SharedAnalysisImporter
     /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
     let assetIndex = LocalAssetIndex()
-    /// 解析セッション（「今すぐ解析」・ADR-182）。
+    /// 解析のブースト（「今すぐ解析」・ADR-182/195）。
     let analysisSession: AnalysisSession
+    /// 常設の方針を評価して残作業を進める駆動役（ADR-195）。
+    let analysisDriver: AnalysisDriver
 
     private init(dropboxStore: DropboxPhotoStore, mergedStore: MergedPhotoStore,
                  backupEngine: BackupEngine, albumScanner: LocalAlbumScanner,
@@ -43,8 +45,11 @@ final class HomeStores {
                  shareEngine: ShareSyncEngine, shareAnalysisAdapter: ShareAnalysisAdapter,
                  shareSourceResolver: ShareSourceMemberResolver,
                  shareImporter: SharedAnalysisImporter) {
-        self.analysisSession = AnalysisSession(engine: autoAlbumEngine, people: peopleEngine,
-                                               dropboxStore: dropboxStore)
+        let session = AnalysisSession(engine: autoAlbumEngine, people: peopleEngine,
+                                      dropboxStore: dropboxStore)
+        self.analysisSession = session
+        self.analysisDriver = AnalysisDriver(engine: autoAlbumEngine, people: peopleEngine,
+                                             dropboxStore: dropboxStore, session: session)
         self.dropboxStore = dropboxStore
         self.mergedStore = mergedStore
         self.backupEngine = backupEngine
@@ -234,9 +239,9 @@ struct RootView: View {
             // ロック中実行（BGProcessingTask）が同じストア群を再利用できるよう共有する。
             HeavyWorkScheduler.stores = built
             loadingTimer.cancel()
-            // 中断された解析セッションの自動再開（diagnostics-81）。起動時は scenePhase の
-            // 変化が来ないので、ストアが揃ったこの場で 1 回だけ見る。
-            await built.analysisSession.resumeIfPending(statusScreenOpen: false)
+            // 起動時は scenePhase の変化が来ないので、駆動役の前面監視をここで始める（ADR-195）。
+            built.analysisDriver.startIdleWatch()
+            await built.analysisDriver.kick(.launch)
         }
     }
 }

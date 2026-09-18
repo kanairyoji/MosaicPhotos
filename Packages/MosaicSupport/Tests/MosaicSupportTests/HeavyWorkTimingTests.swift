@@ -2,19 +2,18 @@ import Foundation
 import Testing
 @testable import MosaicSupport
 
-/// AI 処理タイミングの判定（4 軸・ADR-80）。
-/// 軸は「自動処理の有無 / 控えめ（前面で動かすか） / 電源 / 回線」で、互いに独立していることを固定する。
-@Suite("HeavyWorkTiming (4-axis gate)")
+/// AI 処理タイミングの判定（3 軸・ADR-80 → ADR-195）。
+/// 軸は「自動処理の有無 / 電源 / 回線」で互いに独立。前面では「20 秒触っていない」だけを要求する
+///（旧「控えめ＝前面では動かさない」の軸は ADR-195 で廃止＝操作中に譲るのは常時の挙動）。
+@Suite("HeavyWorkTiming (3-axis gate)")
 struct HeavyWorkTimingTests {
 
-    /// 既定シナリオ: 自動処理オン・控えめ ON・非使用・電源 OK・回線 OK。
+    /// 既定シナリオ: 自動処理オン・非使用・電源 OK・回線 OK。
     private func allows(_ t: HeavyWorkTiming = .enabled,
-                        conservative: Bool = true,
                         active: Bool = false, idle: Bool = false,
                         power: Bool = true, network: Bool = true,
                         requiresNetwork: Bool = true) -> Bool {
-        t.allows(isConservative: conservative,
-                 isAppActive: active, foregroundIdle: idle,
+        t.allows(isAppActive: active, foregroundIdle: idle,
                  powerAllowed: power, networkAllowed: network,
                  requiresNetwork: requiresNetwork)
     }
@@ -22,28 +21,21 @@ struct HeavyWorkTimingTests {
     @Test("paused は常に不可（他の条件がすべて揃っていても）")
     func pausedNeverRuns() {
         #expect(!allows(.paused))
-        #expect(!allows(.paused, conservative: false, active: true, idle: true))
+        #expect(!allows(.paused, active: true, idle: true))
     }
 
-    @Test("控えめ ON: アプリ使用中は合間でも動かない（非使用なら動く）")
-    func conservativeBlocksForeground() {
-        #expect(allows(conservative: true, active: false))                 // 非使用＝動く
-        #expect(!allows(conservative: true, active: true, idle: true))     // 前面は合間でも不可
-        #expect(!allows(conservative: true, active: true, idle: false))
+    @Test("前面: 20 秒触っていなければ動く・タッチ直後は動かない（ADR-195・設定不要）")
+    func foregroundRunsWhenIdle() {
+        #expect(allows(active: true, idle: true))
+        #expect(!allows(active: true, idle: false))   // 操作直後
+        #expect(allows(active: false))                 // 非使用は当然可
     }
 
-    @Test("控えめ OFF: 前面でも 20 秒アイドルなら動く・タッチ直後は動かない")
-    func nonConservativeAllowsIdleForeground() {
-        #expect(allows(conservative: false, active: true, idle: true))
-        #expect(!allows(conservative: false, active: true, idle: false))   // 操作直後
-        #expect(allows(conservative: false, active: false))                 // 非使用は当然可
-    }
-
-    @Test("電源条件は独立して効く（控えめ・前面と無関係）")
+    @Test("電源条件は独立して効く（前面・アイドルと無関係）")
     func powerAxisIsIndependent() {
         #expect(!allows(power: false))
-        #expect(!allows(conservative: false, active: true, idle: true, power: false))
-        #expect(allows(conservative: false, active: true, idle: true, power: true))
+        #expect(!allows(active: true, idle: true, power: false))
+        #expect(allows(active: true, idle: true, power: true))
     }
 
     @Test("回線条件は『通信を要する作業』にだけ効く")
@@ -56,32 +48,24 @@ struct HeavyWorkTimingTests {
         #expect(!allows(power: false, network: false, requiresNetwork: false))
     }
 
-    @Test("4 軸は互いに独立（どれか 1 つが NG なら不可・全部 OK なら可）")
+    @Test("3 軸＋前面アイドルは互いに独立（どれか 1 つが NG なら不可・全部 OK なら可）")
     func axesAreIndependent() {
         let bools = [false, true]
-        for conservative in bools { for active in bools { for idle in bools {
+        for active in bools { for idle in bools {
             for power in bools { for network in bools {
-                let expected = !(conservative && active)     // 控えめ ON × 前面 → 不可
-                    && !(active && !idle)                     // 前面でタッチ直後 → 不可
-                    && power                                  // 電源 NG → 不可
-                    && network                                // 回線 NG → 不可（requiresNetwork:true）
-                #expect(allows(conservative: conservative, active: active, idle: idle,
-                               power: power, network: network) == expected,
-                        "conservative=\(conservative) active=\(active) idle=\(idle) power=\(power) network=\(network)")
+                let expected = !(active && !idle)     // 前面でタッチ直後 → 不可
+                    && power                          // 電源 NG → 不可
+                    && network                        // 回線 NG → 不可（requiresNetwork:true）
+                #expect(allows(active: active, idle: idle, power: power, network: network) == expected,
+                        "active=\(active) idle=\(idle) power=\(power) network=\(network)")
             }}
-        }}}
+        }}
     }
-}
-
-/// 旧 5 段階 → 4 軸の移行（ユーザーの意思を壊さないこと）。
-@Suite("HeavyWorkTiming migration")
-struct HeavyWorkTimingMigrationTests {
 
     @Test("旧 paused(0) は自動処理オフへ（他は既定のまま）")
     func migratesPaused() {
         let plan = HeavyWorkTiming.migrationPlan(legacyRawValue: 0)
         #expect(plan.timing == .paused)
-        #expect(plan.conservative)
         #expect(plan.power == nil && plan.data == nil)
     }
 
@@ -89,7 +73,6 @@ struct HeavyWorkTimingMigrationTests {
     func migratesNightly() {
         let plan = HeavyWorkTiming.migrationPlan(legacyRawValue: 1)
         #expect(plan.timing == .enabled)
-        #expect(plan.conservative)
         #expect(plan.power == nil && plan.data == nil)
     }
 
@@ -97,14 +80,12 @@ struct HeavyWorkTimingMigrationTests {
     func migratesChargeActive() {
         let plan = HeavyWorkTiming.migrationPlan(legacyRawValue: 2)
         #expect(plan.timing == .enabled)
-        #expect(!plan.conservative)
         #expect(plan.power == nil && plan.data == nil)   // 電源は充電中のまま
     }
 
     @Test("旧 battery(3) は控えめ OFF ＋ 電源『常に』")
     func migratesBattery() {
         let plan = HeavyWorkTiming.migrationPlan(legacyRawValue: 3)
-        #expect(!plan.conservative)
         #expect(plan.power == .always)
         #expect(plan.data == nil)                        // 回線は Wi-Fi のまま
     }
@@ -112,7 +93,6 @@ struct HeavyWorkTimingMigrationTests {
     @Test("旧 unlimited(4) は控えめ OFF ＋ 電源『常に』＋ 回線『セルラーも』")
     func migratesUnlimited() {
         let plan = HeavyWorkTiming.migrationPlan(legacyRawValue: 4)
-        #expect(!plan.conservative)
         #expect(plan.power == .always)
         #expect(plan.data == .unrestricted)
     }
@@ -121,7 +101,6 @@ struct HeavyWorkTimingMigrationTests {
     func migratesUnknown() {
         let plan = HeavyWorkTiming.migrationPlan(legacyRawValue: 99)
         #expect(plan.timing == .enabled)
-        #expect(plan.conservative)
     }
 
     @Test("移行は 1 度だけ実行し、2 回目は既存の設定を上書きしない")
@@ -135,13 +114,12 @@ struct HeavyWorkTimingMigrationTests {
         defaults.set(4, forKey: HeavyWorkTiming.defaultsKey)   // 旧 unlimited
         HeavyWorkTiming.migrateLegacySettingsIfNeeded(defaults: defaults)
         #expect(defaults.integer(forKey: HeavyWorkTiming.defaultsKey) == HeavyWorkTiming.enabled.rawValue)
-        #expect(defaults.bool(forKey: HeavyWorkTiming.conservativeKey) == false)
         #expect(defaults.integer(forKey: PowerStateMonitor.policyKey) == BackgroundPowerPolicy.always.rawValue)
 
-        // 移行後にユーザーが控えめ ON へ戻したら、再実行しても戻されない。
-        defaults.set(true, forKey: HeavyWorkTiming.conservativeKey)
+        // 移行後にユーザーが「自動処理オフ」へ変えたら、再実行しても戻されない。
+        defaults.set(HeavyWorkTiming.paused.rawValue, forKey: HeavyWorkTiming.defaultsKey)
         HeavyWorkTiming.migrateLegacySettingsIfNeeded(defaults: defaults)
-        #expect(defaults.bool(forKey: HeavyWorkTiming.conservativeKey))
+        #expect(defaults.integer(forKey: HeavyWorkTiming.defaultsKey) == HeavyWorkTiming.paused.rawValue)
     }
 
     @Test("新規インストール（旧値なし）は何も書き換えない")
@@ -154,6 +132,5 @@ struct HeavyWorkTimingMigrationTests {
 
         HeavyWorkTiming.migrateLegacySettingsIfNeeded(defaults: defaults)
         #expect(defaults.object(forKey: HeavyWorkTiming.defaultsKey) == nil)
-        #expect(defaults.object(forKey: HeavyWorkTiming.conservativeKey) == nil)
     }
 }

@@ -5,18 +5,25 @@ import MosaicSupport
 import PhotosFeatureKit
 import SwiftUI
 
-/// 解析セッション（ADR-182）: 利用者が「今すぐ解析」で始める、顔・タグ・埋め込みの全力実行。
+/// 解析の**ブースト**（ADR-182 → ADR-195）: 利用者が「今すぐ解析」で始める、顔・タグ・埋め込みの全力実行。
 ///
-/// ## 入口は 1 つ
-/// 旧「今すぐ解析（充電中・30 分）」と「この画面を開いている間、解析する」を統合した。
-/// 中身は iOS 26 の `BGContinuedProcessingTask`（利用者が始めた作業をアプリを閉じても続け、
-/// 進捗は Live Activity に出る）を軸にし、OS が受けてくれない場面は**前面のみ**に自動で落ちる。
+/// ## 位置づけ
+/// 自動の解析は常設の方針（`AnalysisDriver`＝条件が揃っていれば進める）が担う。
+/// ブーストはその方針を**一時的に上書きする**だけ——電源・回線・アイドルの条件を無視して全力で進め、
+/// iOS 26 の継続タスク（`BGContinuedProcessingTask`・利用者が始めた作業をアプリを閉じても続ける・
+/// 進捗は Live Activity に出る）を試す。OS が受けてくれない場面は前面のみで走る。
 ///
-/// ## 処理枠（HeavyWorkScheduler）との関係
+/// ## 永続化しない・再開しない
+/// ブーストは**メモリ上だけ**の存在で、終わったら（完了・停止・OS の期限切れ・電池・アプリを離れた）
+/// 単に方針に戻る。以前はここに「押した事実の永続化と自動再開」（ADR-189）があり、
+/// 電源・画面・継続タスク・手動/自動・クールダウンの 5 軸が絡んで 9 周壊れ続けた。
+/// 方針が前面でも進めるようになった今、ブーストが死んでも進捗は止まらないので、再開は要らない。
+///
+/// ## 処理枠（HeavyWorkScheduler）・駆動役（AnalysisDriver）との関係
 /// - 走らせるのは同じトリクル（`PeopleEngine.startScan` / `AutoAlbumEngine.scheduleBackgroundFill`）。
-///   ゲートは `BackgroundYield.sessionActive` で開ける（熱・一括ロード保護・生成との相互排他は残る）。
-/// - セッション中に処理枠が開いても、解析の起動は重ねない（`isActive` を見て飛ばす）。
-///   前面復帰の `stopForForeground` もセッションの作業は止めない。
+///   ゲートは `BackgroundYield.sessionActive` で開ける（熱・一括ロード保護・生成との相互排他・
+///   前面での UI への譲りは残る）。
+/// - ブースト中は処理枠も駆動役も解析を重ねて起こさない（`isActive` を見て飛ばす）。
 /// - 一枚岩（生成・AI アルバムの本番化）は起こさない——始まると解析が止まる。
 ///
 /// ## 進捗
@@ -25,8 +32,8 @@ import SwiftUI
 ///
 /// ## 既知の制約（2026-09 時点）
 /// 端末を本当にロックすると継続タスクが止まる iOS のバグ（FB19916760・DTS が認めた）。
-/// 直るまでは「画面を点けたままにする」（既定 ON）が命綱。ロックで止まっても差分は残り、
-/// 次の処理枠か次のタップで続きから進む。
+/// 直るまでは「画面を点けたままにする」（既定 ON・ブースト中だけ）が命綱。止まっても差分は残り、
+/// 方針（充電中に開けば前面で進む／処理枠）が続きを進める。
 @MainActor
 @Observable
 final class AnalysisSession {
@@ -36,18 +43,16 @@ final class AnalysisSession {
     enum Mode: Equatable {
         /// OS の継続タスクに載っている（アプリを閉じても続く）。
         case continued
-        /// 前面のみ（OS が受けなかった／シミュレータ）。画面を離れると止まる。
+        /// 前面のみ（OS が受けなかった／シミュレータ）。アプリを離れると止まる。
         case foregroundOnly
     }
 
     enum StopReason: Equatable {
         case finished        // 残作業ゼロ
         case user            // 停止ボタン・Live Activity の×
-        case expired         // OS が止めた（熱・資源）
+        case expired         // OS が止めた（熱・資源・ロック）
         case lowBattery      // 電源なしで電池が下限
-        case leftScreen      // 前面のみモードで画面を離れた
-        /// 回線待ちなどで**一部を次の機会に回した**（OS に止められたわけではない）。
-        case deferred
+        case leftApp         // 前面のみモードでアプリを離れた
     }
 
     enum State: Equatable {
@@ -64,7 +69,7 @@ final class AnalysisSession {
     var isActive: Bool { if case .running = state { return true } else { return false } }
     var mode: Mode? { if case .running(let m) = state { return m } else { return nil } }
 
-    /// 画面を消灯させない（既定 ON）。設定として永続化。
+    /// 画面を消灯させない（既定 ON・ブースト中だけ効く）。設定として永続化。
     var keepScreenOn: Bool {
         get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisKeepScreenOn) as? Bool ?? true }
         set {
@@ -72,6 +77,9 @@ final class AnalysisSession {
             if isActive { applyIdleTimer() }
         }
     }
+
+    /// 終わったときに呼ばれる（駆動役が方針へ戻すために使う）。
+    @ObservationIgnored var onStopped: (() -> Void)?
 
     private let engine: AutoAlbumEngine
     private let people: PeopleEngine
@@ -82,6 +90,8 @@ final class AnalysisSession {
     @ObservationIgnored private var faceScanStarted = false
     @ObservationIgnored private var warmupTicks = 0
     @ObservationIgnored private var lastFillScheduledAt = Date.distantPast
+    @ObservationIgnored private var tagsPending = 0
+    @ObservationIgnored private var embedPending = 0
     /// 同じ識別子を 2 回登録するとアプリが殺されるので、プロセス内で 1 回に絞る。
     @ObservationIgnored private static var registered = false
 
@@ -93,48 +103,20 @@ final class AnalysisSession {
 
     // MARK: - 開始・停止
 
-    /// - Parameter autoResume: 中断されたセッションの自動再開か（画面を見ていない可能性がある）。
-    ///   設定（`AnalysisContinuation`・ADR-193）が継続タスクを使う場面なのに **OS が受けなかった**
-    ///   ときは、自動再開では走らせない——「使っている間は重い処理を動かさない」（ADR-25）を、
-    ///   利用者が見ていないところで破らない。前面のみで走るのは、画面を開いているときだけ
-    ///   （呼び出し側の `resumeIfPending(statusScreenOpen:)` が担保する）。
-    func start(autoResume: Bool = false) {
+    /// 「今すぐ解析」。利用者の明示操作なので、電源・回線・アイドルの条件は見ない。
+    func start() {
         guard !isActive else { return }
         faceScanStarted = false
         warmupTicks = 0
         remaining = 0
         peakRemaining = 0
-        didAutoResume = false
         BackgroundYield.sessionActive = true
-        // 設定（ADR-193）が「アプリを離れても続ける」場面のときだけ、OS の継続タスクを要求する。
-        // 要求しない段では最初から前面のみ＝インジケータは出ない。
-        let level = AnalysisContinuation.current
-        let wantsContinued = AnalysisContinuationPolicy.requestsContinuedTask(level, autoResume: autoResume)
-        let mode: Mode = (wantsContinued && submitContinuedTask()) ? .continued : .foregroundOnly
-        if autoResume, wantsContinued, mode == .foregroundOnly {
-            // 継続タスクを使う設定なのに OS が受けなかった＝アプリを閉じたら止まる。自動再開で
-            // それを始めると「見ていない前面」で重い処理が走り続ける。印は残して次の機会に譲る。
-            BackgroundYield.sessionActive = false
-            Diagnostics.mark("analyze: auto-resume deferred — the system did not accept a continued task")
-            return
-        }
-        // ⚠️ **押した事実を永続化する**（diagnostics-81）。セッションはメモリ上の存在なので、
-        // ロック（iOS の既知の問題）・OS の期限切れ・プロセス終了で消える。印が残っていれば
-        // 次の前面復帰で自動再開でき、「夜に押したのに朝まで何も進んでいない」を防げる。
-        Self.markPending(true)
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
-        // 手動で始めたセッションは、サブ画面へ進んで戻っても（電源なしでも）再開してよい。
-        if !autoResume {
-            defaults.set(true, forKey: AppSettingsKeys.analysisSessionWasManual)
-            // 明示操作はクールダウンを解除する（押したのに 30 分待たされない）。
-            defaults.removeObject(forKey: AppSettingsKeys.analysisDeferredAt)
-        }
+        let mode: Mode = submitContinuedTask() ? .continued : .foregroundOnly
         state = .running(mode)
-        applyModeGates()
+        applyIdleTimer()
         UIDevice.current.isBatteryMonitoringEnabled = true
-        Diagnostics.mark("analyze: session start (\(mode)) continuation=\(level)")
-        RunTimeline.record("session start (\(mode)・設定=\(level))\(autoResume ? " ＝自動再開" : "")")
+        Diagnostics.mark("analyze: boost start (\(mode))")
+        RunTimeline.record("boost start (\(mode))")
         RunTimeline.noteState("session", active: true)
         loop = Task { [weak self] in await self?.runLoop() }
     }
@@ -146,178 +128,25 @@ final class AnalysisSession {
         people.stopScan()
         engine.stopBackgroundWork()
         BackgroundYield.sessionActive = false
-        BackgroundYield.sessionYieldsToUI = false
         UIApplication.shared.isIdleTimerDisabled = false
         state = .stopped(reason)
-        // 「終わった」「利用者が止めた」だけが完了。OS に止められた・電池・画面離脱は**未完**として
-        // 印を残し、次の前面復帰で続きから再開する。
-        if AnalysisSessionPolicy.keepsPendingFlag(reason) {
-            Self.markPending(true)
-            let defaults = UserDefaults.standard
-            defaults.set("\(reason)", forKey: AppSettingsKeys.analysisSessionInterruptedReason)
-            defaults.set(Date(), forKey: AppSettingsKeys.analysisSessionInterruptedAt)
-        } else {
-            Self.markPending(false)
-        }
-        Diagnostics.mark("analyze: session stop (\(reason)) remaining=\(remaining)")
-        RunTimeline.record("session stop (\(reason)) remaining=\(remaining)")
+        Diagnostics.mark("analyze: boost stop (\(reason)) remaining=\(remaining)")
+        RunTimeline.record("boost stop (\(reason)) remaining=\(remaining)")
         RunTimeline.noteState("session", active: false)
         if let task {
             // 期限切れでも完了でも、必ず 1 回だけ呼ぶ（呼ばないと OS が次を受けなくなる）。
-            // `.deferred` は失敗ではない（やり残しを次の機会に回しただけ）。
-            task.setTaskCompleted(success: reason == .finished || reason == .deferred)
+            task.setTaskCompleted(success: reason == .finished)
             self.task = nil
         }
+        onStopped?()
     }
 
-    /// OS が継続タスクを止めたときの受け身。**アプリが前面にあるなら止めない**——
-    /// 電源につないで画面を見ている状況で「OS の都合」を理由に解析を終えるのは、
-    /// 利用者から見れば「やりたい事ができない」だけ（実フィードバック）。前面のみモードへ
-    /// 降格して走り続け、背面なら素直に止めて印を残す（次に開いたとき自動再開する）。
-    private func continueInForegroundOrStop() {
-        // 期限切れでも `setTaskCompleted` は必ず 1 回呼ぶ（呼ばないと OS が次を受けない）。
-        if let task {
-            task.setTaskCompleted(success: false)
-            self.task = nil
-        }
-        // ⚠️ 降格してよいのは **AI 解析の状況を開いている**ときだけ（レビュー指摘）。
-        // 前面のみモードを止められるのはその画面の `onDisappear`（`screenLeft`）だけなので、
-        // 写真を見ている最中に降格すると**誰も止められないセッション**が残り、
-        // `sessionActive` が立ちっぱなし＝電源・回線ポリシーが無効化され、画面も消えなくなる。
-        guard isActive, BackgroundYield.isAppActive, statusScreenVisible else {
-            stop(.expired)
-            return
-        }
-        state = .running(.foregroundOnly)
-        applyModeGates()
-        Diagnostics.mark("analyze: continuing in the foreground (the system ended the continued task)")
-        RunTimeline.record("session: 継続タスクが OS に止められた → 前面で続行")
-    }
-
-    /// モードに応じたゲートと画面消灯の設定。
-    ///
-    /// 前面のみモードでは **UI へ譲る**（スクロール・写真表示・サムネ取得中は休む）。
-    /// 継続モードは画面が無い前提なので譲らない（全力）。前面で全力のまま走ると、
-    /// 利用者が写真を見ている最中に ANE と CPU を奪ってカクつく（ADR-25 の趣旨）。
-    private func applyModeGates() {
-        BackgroundYield.sessionYieldsToUI = (mode == .foregroundOnly)
-        applyIdleTimer()
-    }
-
-    /// AI 解析の状況が表示されているか（ビューが onAppear/onDisappear で報告する）。
-    /// 前面のみモードが生きてよいのは、この画面が開いている間だけ。
-    private(set) var statusScreenVisible = false
-
-    /// AI 解析の状況が現れたとき（ビューの onAppear）。
-    func screenAppeared() { statusScreenVisible = true }
-
-    /// 前面のみモードで画面を離れたとき（ビューの onDisappear）。継続モードなら何もしない。
-    func screenLeft() {
-        statusScreenVisible = false
-        if mode == .foregroundOnly { stop(.leftScreen) }
-    }
-
-    /// アプリが前面から外れたとき（`scenePhase` が active 以外）。
-    ///
-    /// ⚠️ 前面のみモードは**前面にいる間だけ**のもの。止めずに残すと `sessionActive` が
-    /// 立ちっぱなしになり、電源・回線ポリシーの免除と画面消灯の抑止が効いたままになる
-    /// （レビュー指摘）。やり残しの印は残るので、次に開いたときに続きから再開する。
+    /// アプリが前面から外れたとき（`scenePhase == .background`）。
+    /// 前面のみモードは**前面にいる間だけ**のもの。止めずに残すと `sessionActive` が立ちっぱなしになり、
+    /// 電源・回線ポリシーの免除と画面消灯の抑止が効いたままになる。継続モードは OS が面倒を見る。
     func appLeftForeground() {
-        if mode == .foregroundOnly { stop(.leftScreen) }
+        if mode == .foregroundOnly { stop(.leftApp) }
     }
-
-    // MARK: - 中断からの再開（diagnostics-81）
-
-    /// 「今すぐ解析」を押したあと、まだ終わっていないか（プロセスを跨いで残る印）。
-    static var isPending: Bool { UserDefaults.standard.bool(forKey: AppSettingsKeys.analysisSessionPending) }
-
-    /// 中断の理由（表示用・未中断なら nil）。
-    static var interruptedReason: String? {
-        guard isPending else { return nil }
-        return UserDefaults.standard.string(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
-    }
-
-    /// `.deferred` のあと、これだけの間は自動再開しない。
-    private static let deferredCooldown: TimeInterval = 30 * 60
-
-    private static var deferredAt: Date? {
-        let raw = UserDefaults.standard.double(forKey: AppSettingsKeys.analysisDeferredAt)
-        return raw > 0 ? Date(timeIntervalSinceReferenceDate: raw) : nil
-    }
-
-    private static func markPending(_ pending: Bool) {
-        let defaults = UserDefaults.standard
-        defaults.set(pending, forKey: AppSettingsKeys.analysisSessionPending)
-        if !pending {
-            defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
-            defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedAt)
-            defaults.removeObject(forKey: AppSettingsKeys.analysisSessionWasManual)
-            defaults.removeObject(forKey: AppSettingsKeys.analysisDeferredAt)
-        }
-    }
-
-    /// 中断されたセッションを**自動で再開**する。アプリが前面に戻ったとき／起動直後に呼ぶ。
-    ///
-    /// 再開するのは「利用者が明示的に始めて、まだ終わっていない」ときだけ。止めたときは印を
-    /// 下ろしてあるので再開しない。残作業ゼロなら再開せず印だけ下ろす（押したのに全部済んでいた場合）。
-    /// - Parameter statusScreenOpen: AI 解析の状況を開いているか。継続タスクを使わない段では、
-    ///   **開いているときだけ**自動再開する（見ていない前面で走らせないため）。
-    func resumeIfPending(statusScreenOpen: Bool = false) async {
-        guard !isActive, Self.isPending else { return }
-        // プロセスが消えた場合は停止理由すら残らない。ここで「前回が終わっていない」ことを記録する。
-        // ⚠️ 前面復帰のたびに呼ばれるので、記録はプロセスにつき 1 回だけ（ログを埋めない）。
-        if !loggedUnfinished {
-            loggedUnfinished = true
-            Diagnostics.mark("analyze: previous session unfinished (\(Self.interruptedReason ?? "process ended"))")
-        }
-        // 自動再開は**電源接続が必須**（ADR-193）。外出先でアプリを開いただけで走り出し、
-        // 電池を食う／インジケータが出るのを防ぐ。手動で押したときは従来どおり免除。
-        let level = AnalysisContinuation.current
-        let wasManual = UserDefaults.standard.bool(forKey: AppSettingsKeys.analysisSessionWasManual)
-        // ⚠️ **電池切れは全経路で止める**（レビュー指摘）。下の「手動なら電源を免除」を通すと、
-        // 電池 20% 未満でもセッションが立ち上がり、`runLoop` が 2 秒後に電池で止める——
-        // 開いては消えるインジケータの点滅になる。免除する前にここで断つ。
-        if AnalysisSessionPolicy.shouldStopForBattery(onPower: PowerStateMonitor.shared.isOnPower,
-                                                     level: UIDevice.current.batteryLevel) {
-            Diagnostics.mark("analyze: auto-resume skipped — battery low and not charging")
-            return
-        }
-        // ⚠️ `.deferred`（やり残しを次回へ回した）直後は**しばらく再開しない**。回線待ちや
-        // サムネ未到着で残りが減らない状況では、前面に戻るたびにフルセッションが立ち、
-        // 既定モードではロック画面のインジケータが毎回点滅する。
-        // ただし**押した本人が画面を見ているとき**はクールダウンを適用しない（レビュー指摘）
-        // ——手動の作業が最大 30 分、何の説明も無く失われるため。
-        if !(wasManual && statusScreenOpen),
-           let deferredAt = Self.deferredAt, Date().timeIntervalSince(deferredAt) < Self.deferredCooldown {
-            Diagnostics.mark("analyze: auto-resume skipped — cooling down after a deferred run")
-            return
-        }
-        guard AnalysisContinuationPolicy.allowsAutoResume(level,
-                                                          onPower: PowerStateMonitor.shared.isOnPower,
-                                                          statusScreenOpen: statusScreenOpen,
-                                                          wasManual: wasManual) else {
-            Diagnostics.mark("analyze: auto-resume skipped — "
-                             + "power=\(PowerStateMonitor.shared.isOnPower) "
-                             + "screen=\(statusScreenOpen) continuation=\(level)")
-            return
-        }
-        // ⚠️ ここで全件カウント（`analysisProgress`）を取らない（レビュー指摘）。判断に使わない
-        // 値のために 8.5 万件の集計を毎回の前面復帰で払うのは、ADR-119 が禁じている形そのもの。
-        // ⚠️ 「まだ残っているか」を**ここで推測しない**（レビュー 5 周ぶんの結論）。ライブの
-        // カウンタも、それを 2 秒ごとに写した値も、「まだ始まっていない」「途中で畳んだ」
-        // 「本当に終わった」を区別できず、直すたびに別の穴が開いた。**印が立っているなら
-        // 再開し、終わりの判定はセッション自身が台帳に聞いて決める**（`pendingScanCount`）。
-        // 残作業が無ければ数秒で `.finished` になって印が下りる＝空振りは 1 回で収束する。
-        Diagnostics.mark("analyze: auto-resuming")
-        start(autoResume: true)
-        didAutoResume = isActive    // start() が false に戻すので、その後に立てる
-    }
-
-    /// 直近の開始が**自動再開**だったか（画面の案内用）。
-    private(set) var didAutoResume = false
-
-    /// 「前回が終わっていない」をこのプロセスで既に記録したか（前面復帰のたびに書かない）。
-    @ObservationIgnored private var loggedUnfinished = false
 
     // MARK: - BGContinuedProcessingTask
 
@@ -364,8 +193,9 @@ final class AnalysisSession {
         self.task = task
         task.expirationHandler = { [weak self] in
             Task { @MainActor in
+                // OS に止められたら、ブーストはここで終わり。続きは方針（駆動役・処理枠）が進める。
                 Diagnostics.mark("analyze: continued task expired by the system")
-                self?.continueInForegroundOrStop()
+                self?.stop(.expired)
             }
         }
         publishProgress()
@@ -406,7 +236,6 @@ final class AnalysisSession {
                 embedPending = max(0, p.total - p.embedded)
             }
             let faces = people.isScanning ? people.remaining : 0
-            // 観測できた残りを持ち越す（プロセスが死んでも次の起動で判断できる）。
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }
@@ -421,49 +250,16 @@ final class AnalysisSession {
                                                           level: UIDevice.current.batteryLevel) {
                 stop(.lowBattery); return
             }
-            // 顔スキャンは 1 セッション 1 回（空振りで畳んだ分＝クラウドのサムネ未取得は次回へ）。
+            // 顔スキャンは 1 ブースト 1 回。空振りで畳んだ分（クラウドのサムネ未取得など）は
+            // 方針（駆動役・処理枠）が次の機会に拾う——ここで「終わったか」を厳密に確定する必要は無い。
+            // 早めに `.finished` になっても、失うものは無い（続きは方針が進める）。
             let faceSettled = !people.isFaceModelAvailable || (faceScanStarted && !people.isScanning)
             if AnalysisSessionPolicy.isFinished(remaining: rem, tagging: engine.isTagging,
                                                 scanning: people.isScanning, faceScanSettled: faceSettled) {
-                // ⚠️ ここまではライブの値の話で、**顔スキャンが早期に畳んだ場合も同じ形**になる
-                // （クラウドのサムネ未取得・譲り待ち・回線 NG）。終わりを確定する前に
-                // **台帳へ実際の残りを聞く**（`pendingScanCount`）。残っていれば「終わった」に
-                // せず、やり残しの印を残して降りる＝次の機会に続きから進む。
-                let faceBacklog = await remainingFaceWork()
-                guard !Task.isCancelled, isActive else { return }
-                if faceBacklog == 0 {
-                    stop(.finished)
-                } else {
-                    // ⚠️ `.expired`（＝OS に止められた）とは言わない（レビュー指摘）。嘘の理由を
-                    // 画面に出すうえ、`setTaskCompleted(success: false)` を繰り返して OS の
-                    // 受け入れを悪くする。回線待ちなどで**次の機会に回しただけ**の終わり方。
-                    Diagnostics.mark("analyze: face backlog remains (\(faceBacklog)) — deferring")
-                    UserDefaults.standard.set(Date().timeIntervalSinceReferenceDate,
-                                              forKey: AppSettingsKeys.analysisDeferredAt)
-                    stop(.deferred)
-                }
-                return
+                stop(.finished); return
             }
         }
     }
-
-    /// 台帳に聞く「まだ顔スキャンが必要な枚数」。
-    ///
-    /// ⚠️ **タガーが実際に対象にする集合と揃える**（レビュー指摘）。`FaceTagger` は回線が
-    /// 許可されないときクラウド（"C-"）を今回の対象から外すので、全件で数えると
-    /// 「いつまでも残っている」ことになり、セッションが終われず**毎回再開し続ける**。
-    /// 候補は走っているスキャン自身が持っているものを使う（8.5 万件を数え直さない）。
-    private func remainingFaceWork() async -> Int {
-        guard people.isFaceModelAvailable else { return 0 }
-        let candidates = people.scanCandidates
-        guard !candidates.isEmpty else { return 0 }
-        let keys = NetworkStateMonitor.shared.networkAllowed()
-            ? candidates
-            : candidates.filter { $0.hasPrefix("L-") }
-        return await people.pendingScanCount(candidateRefKeys: keys)
-    }
-    @ObservationIgnored private var tagsPending = 0
-    @ObservationIgnored private var embedPending = 0
 
     private func scheduleFillIfIdle() {
         guard !engine.isTagging, Date().timeIntervalSince(lastFillScheduledAt) > 5 else { return }

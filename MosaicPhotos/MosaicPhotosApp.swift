@@ -49,24 +49,21 @@ struct MosaicPhotosApp: App {
             // カクつきの原因になっていた。
             if phase == .active {
                 HeavyWorkScheduler.stopForForeground()
-                // 中断された解析セッションを自動で再開する（diagnostics-81）。
-                // ロック（iOS の既知の問題）・OS の期限切れ・プロセス終了でセッションは消えるが、
-                // 「押した」という事実は永続化してあるので、戻ってきたら続きから再開する。
-                // ⚠️ 画面の可視状態は**セッションが知っている**ものを渡す（レビュー指摘）。
-                // ここで false を決め打つと、AI 解析の状況を開いたまま Control Center を
-                // 引いて戻ったときに再開されない（`.task` は再実行されないため）。
-                Task { @MainActor in
-                    guard let session = HeavyWorkScheduler.stores?.analysisSession else { return }
-                    await session.resumeIfPending(statusScreenOpen: session.statusScreenVisible)
+                // 前面では駆動役が方針を評価して残作業を進める（ADR-195）。復帰は「操作」扱いなので
+                // 20 秒はアイドルにならない＝すぐには起こさず、アイドル監視が拾う。
+                if let driver = HeavyWorkScheduler.stores?.analysisDriver {
+                    driver.startIdleWatch()
+                    Task { @MainActor in await driver.kick(.foreground) }
                 }
+            } else {
+                HeavyWorkScheduler.stores?.analysisDriver.stopIdleWatch()
             }
             // バックグラウンド遷移（ロック含む）で次回の重い処理を予約する。
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
-            // ⚠️ 止めるのは **background** のときだけ（レビュー指摘）。`.inactive` は
-            // Control Center・通知センター・着信バナー・App スイッチャーのジェスチャでも来る。
-            // そこで止めると、画面を開いたまま通知を見ただけで解析が黙って終わる。
+            // ⚠️ 止めるのは **background** のときだけ。`.inactive` は Control Center・通知センター・
+            // 着信バナー・App スイッチャーのジェスチャでも来る。
             if phase == .background {
-                // 前面のみモードのセッションは前面にいる間だけのもの。
+                // 前面のみモードのブーストは前面にいる間だけのもの。
                 HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()
             }
             if phase == .background { HeavyWorkScheduler.submit() }

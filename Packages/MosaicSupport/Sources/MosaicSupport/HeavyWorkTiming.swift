@@ -2,17 +2,17 @@ import Foundation
 
 /// 重い処理（AI 索引・顔認識・アルバム生成）を**いつ動かすか**の判定（ADR-80）。
 ///
-/// ## 4 つの軸を独立させる
+/// ## 3 つの軸を独立させる（ADR-80 → ADR-195）
 /// 旧実装は 5 段階の梯子（paused / nightly / chargeActive / battery / unlimited）で、
 /// 「前面でも動かすか」「バッテリーでも動かすか」「モバイル回線でも動かすか」を**一本に混ぜて**いた。
-/// そのため (1)「電源は必須のままモバイル回線だけ許す」が表現できず、(2) 電源・回線は
-/// `PowerStateMonitor` / `NetworkStateMonitor` の設定と**二重**になっていた（どちらか厳しい方が効く＝
-/// 片方を緩めても動かない、という分かりにくさ）。今は 4 軸を独立した設定として扱う:
+/// ADR-80 で 4 軸に分けたのち、ADR-195 で「前面でも動かすか（控えめ）」の軸を**廃止**した——
+/// 「操作中は 1 単位ごとに譲る」が常時の挙動なので、前面で動かすかを設定で選ぶ必要が無い。
+/// 前面では **20 秒触っていなければ動く**（触れば即譲る）。これで「充電してアプリを開いて
+/// いれば進む」が既定になる。
 ///
 /// | 軸 | 設定 | 既定 |
 /// |---|---|---|
 /// | 自動処理する/しない | `HeavyWorkTiming`（enabled / paused） | enabled |
-/// | **前面でも動かすか** | `conservativeKey`（控えめに動かす） | **ON＝前面では動かさない** |
 /// | 電源 | `PowerStateMonitor.policy` | 充電中のみ |
 /// | 回線 | `NetworkStateMonitor.policy` | Wi-Fi のみ |
 ///
@@ -27,10 +27,6 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
     /// UserDefaults キー（設定 UI と `BackgroundYield` が共用）。
     public static let defaultsKey = "heavywork.timing"
 
-    /// 「画像分析を控えめに動かす」（ON＝アプリ使用中は動かさない）の永続キー。**既定 ON**。
-    /// OFF にすると、アプリを開いたままでも `foregroundIdleSeconds` 放置で動くようになる。
-    public static let conservativeKey = "heavywork.conservative"
-
     /// 旧 5 段階からの移行を一度だけ行うためのフラグキー。
     static let migrationKey = "heavywork.axesMigrated"
 
@@ -40,11 +36,6 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
         let raw = UserDefaults.standard.object(forKey: defaultsKey) as? Int
         guard let raw else { return .enabled }
         return raw == paused.rawValue ? .paused : .enabled
-    }
-
-    /// 「控えめに動かす」設定（既定 ON＝前面では動かさない）。
-    public static var isConservative: Bool {
-        UserDefaults.standard.object(forKey: conservativeKey) as? Bool ?? true
     }
 
     /// アプリ使用中（フォアグラウンド）に「操作の合間」とみなすアイドル秒数。
@@ -62,7 +53,6 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
         guard let legacy = defaults.object(forKey: defaultsKey) as? Int else { return }
         let plan = migrationPlan(legacyRawValue: legacy)
         defaults.set(plan.timing.rawValue, forKey: defaultsKey)
-        defaults.set(plan.conservative, forKey: conservativeKey)
         // 電源・回線は既存の独立設定へ写す。**緩める方向にだけ**書く（nil＝触らない）＝
         // ユーザーが既に電源/回線を個別に絞っていた場合、その設定を上書きしない。
         if let power = plan.power { defaults.set(power.rawValue, forKey: PowerStateMonitor.policyKey) }
@@ -71,19 +61,17 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
 
     /// 移行の内容（純ロジック・テスト対象）。旧 rawValue → 各軸の設定値。
     /// - 旧 0 (paused)       → 自動処理オフ。他は既定のまま。
-    /// - 旧 1 (nightly)      → 既定のまま（控えめ ON・電源=充電中・回線=Wi-Fi）。
-    /// - 旧 2 (chargeActive) → 控えめ OFF（前面でも動かしたい意思）。
-    /// - 旧 3 (battery)      → 控えめ OFF ＋ 電源=常に。
-    /// - 旧 4 (unlimited)    → 控えめ OFF ＋ 電源=常に ＋ 回線=セルラーも。
+    /// - 旧 1 (nightly)      → 既定のまま（電源=充電中・回線=Wi-Fi）。
+    /// - 旧 2 (chargeActive) → 既定のまま（前面で動かす意思は ADR-195 で常時の挙動になった）。
+    /// - 旧 3 (battery)      → 電源=常に。
+    /// - 旧 4 (unlimited)    → 電源=常に ＋ 回線=セルラーも。
     public static func migrationPlan(legacyRawValue: Int)
-        -> (timing: HeavyWorkTiming, conservative: Bool,
-            power: BackgroundPowerPolicy?, data: BackgroundDataPolicy?) {
+        -> (timing: HeavyWorkTiming, power: BackgroundPowerPolicy?, data: BackgroundDataPolicy?) {
         switch legacyRawValue {
-        case 0:  return (.paused, true, nil, nil)
-        case 2:  return (.enabled, false, nil, nil)
-        case 3:  return (.enabled, false, .always, nil)
-        case 4:  return (.enabled, false, .always, .unrestricted)
-        default: return (.enabled, true, nil, nil)   // 1（nightly）と未知の値
+        case 0:  return (.paused, nil, nil)
+        case 3:  return (.enabled, .always, nil)
+        case 4:  return (.enabled, .always, .unrestricted)
+        default: return (.enabled, nil, nil)   // 1（nightly）・2（chargeActive）と未知の値
         }
     }
 
@@ -91,22 +79,19 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
 
     /// この設定・状況で重い処理を動かしてよいか。
     /// - Parameters:
-    ///   - isConservative: 「控えめに動かす」設定（true＝アプリ使用中は動かさない）
     ///   - isAppActive: アプリがフォアグラウンドでアクティブか
     ///   - foregroundIdle: アプリ使用中だが最後のタッチから `foregroundIdleSeconds` 以上経過したか
     ///   - powerAllowed: 電源ポリシー（`PowerStateMonitor.backgroundAllowed()`）を満たすか
     ///   - networkAllowed: 回線ポリシー（`NetworkStateMonitor.networkAllowed()`）を満たすか
     ///   - requiresNetwork: この作業が回線を必要とするか。**端末内写真の顔スキャン・CLIP 埋め込みは
     ///     通信不要なので false**（電源＋非使用だけで走る）。false なら回線条件を課さない。
-    public func allows(isConservative: Bool,
-                       isAppActive: Bool, foregroundIdle: Bool,
+    public func allows(isAppActive: Bool, foregroundIdle: Bool,
                        powerAllowed: Bool, networkAllowed: Bool,
                        requiresNetwork: Bool = true) -> Bool {
         guard self != .paused else { return false }
 
-        // 前面での実行は「控えめ」設定だけが決める（段階には埋め込まない）。
+        // 前面では「触っていないこと」だけを要求する（ADR-195）。触れば各処理が 1 単位ごとに譲る。
         if isAppActive {
-            guard !isConservative else { return false }   // 控えめ ON＝アプリ使用中は動かさない
             guard foregroundIdle else { return false }    // 最終タッチから 20 秒未満は動かさない
         }
 

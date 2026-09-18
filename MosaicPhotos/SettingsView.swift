@@ -69,8 +69,6 @@ struct SettingsView: View {
                                              mergedStore: stores.mergedStore, dropboxStore: stores.dropboxStore,
                                              session: stores.analysisSession)
                     }
-                    // 画面の出入りは Form 全体で 1 回ずつ（セクション単位で発火させない）。
-                    .analysisScreenLifecycle(stores.analysisSession)
                 } label: {
                     row(L("AI Analysis"), systemImage: "wand.and.stars", value: analysisStatusText)
                 }

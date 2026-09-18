@@ -461,42 +461,12 @@
         }
       }
     },
-    "Analysis also runs while the app is open, once you have not touched the screen for 20 seconds. It stops as soon as you interact again — indexing finishes sooner, but you may notice brief slowdowns.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを開いたままでも、20 秒操作がなければ解析します。画面に触れるとすぐ止まります。解析は早く終わりますが、短い引っかかりを感じることがあります。"
-          }
-        }
-      }
-    },
-    "Analysis continues after you leave the app, and resumes by itself when you open the app while charging. iOS shows a progress indicator on the Lock Screen and in the Dynamic Island while it runs — that indicator cannot be hidden.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを離れても解析が続き、充電中にアプリを開くと中断の続きから自動で再開します。動いている間、iOS がロック画面と Dynamic Island に進捗を表示します（この表示は消せません）。"
-          }
-        }
-      }
-    },
     "Analysis is not running right now. It resumes automatically under the conditions you set in Processing Timing, or tap “Analyze Now” below.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "現在は解析していません。「処理のタイミング」で設定した条件になると自動で再開します。下の「今すぐ解析」ですぐ始めることもできます。"
-          }
-        }
-      }
-    },
-    "Analysis never runs while you are using the app — only when you switch away or your iPhone is locked. Recommended: no slowdowns while browsing.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを使っている間は解析しません（他のアプリに切り替えたときや、iPhone をロックしている間だけ動きます）。閲覧中に遅くならない推奨設定です。"
           }
         }
       }
@@ -1875,12 +1845,12 @@
         }
       }
     },
-    "Indexes your photos in the background so AI albums and search stay up to date. Power and network conditions are set in Settings → Background & Battery.": {
+    "Indexes your photos so AI albums and search stay up to date — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds (it yields the moment you interact). Power and network conditions are set in Settings → Background & Battery.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "AI アルバムと検索を最新に保つため、写真をバックグラウンドで解析します。電源と回線の条件は「設定 → バックグラウンドとバッテリー」で指定します。"
+            "value": "AI アルバムと検索を最新に保つため、写真を自動で解析します。iPhone のロック中に加えて、アプリを開いたままでも 20 秒触らなければ進みます（操作するとすぐ譲ります）。電源と通信の条件は 設定 → Background & Battery で決めます。"
           }
         }
       }
@@ -2726,36 +2696,6 @@
         }
       }
     },
-    "Only an analysis you start with Analyze Now keeps going after you leave the app. An interrupted analysis resumes while this screen is open and the device is charging.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "「今すぐ解析」で始めたものだけ、アプリを離れても続きます。中断された解析は、充電中にこの画面を開いている間に再開します。"
-          }
-        }
-      }
-    },
-    "Only when I start it": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "押したときだけ続ける"
-          }
-        }
-      }
-    },
-    "Only while this screen is open": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この画面を開いている間だけ"
-          }
-        }
-      }
-    },
     "Or choose the correct person": {
       "localizations": {
         "ja": {
@@ -3179,16 +3119,6 @@
         }
       }
     },
-    "Resumed the analysis that was interrupted earlier.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "中断されていた解析を再開しました。"
-          }
-        }
-      }
-    },
     "Review": {
       "localizations": {
         "ja": {
@@ -3239,16 +3169,6 @@
         }
       }
     },
-    "Run image analysis conservatively": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画像分析を控えめに動かす"
-          }
-        }
-      }
-    },
     "Runs only while your iPhone is charging, on Wi-Fi, and not in use (locked or in another app) — typically overnight. Zero impact while you use the app.": {
       "extractionState": "stale",
       "localizations": {
@@ -3267,6 +3187,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "可能なかぎり常に実行します（モバイル通信も使用）。バッテリーを消費し、通信量が大きくなる場合があります。"
+          }
+        }
+      }
+    },
+    "Runs while the app is open.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを開いている間だけ動きます。"
           }
         }
       }
@@ -3514,16 +3444,6 @@
         }
       }
     },
-    "Some photos (cloud photos waiting for Wi‑Fi) are left for the next run. They continue automatically.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一部（Wi‑Fi 待ちのクラウド写真など）は次の機会に回しました。自動で続きます。"
-          }
-        }
-      }
-    },
     "Sources": {
       "localizations": {
         "ja": {
@@ -3733,16 +3653,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "回線が設定の条件を満たしていないため、クラウドの写真は後回しになります。"
-          }
-        }
-      }
-    },
-    "The last analysis was interrupted. It resumes automatically when you open the app — or tap Analyze Now.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前回の解析は中断されました。アプリを開くと自動で再開します（「今すぐ解析」を押しても再開できます）。"
           }
         }
       }
@@ -3960,16 +3870,6 @@
         }
       }
     },
-    "When You Leave the App": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを離れたときの解析"
-          }
-        }
-      }
-    },
     "Which of these are the same person as above?": {
       "localizations": {
         "ja": {
@@ -4161,16 +4061,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "「今すぐ解析」を押すと 30 分間すぐに実行します（iPhone の充電が必要です）。それ以外は「処理のタイミング」の設定に従って自動で進みます（既定では、充電中・Wi-Fi・未使用のとき）。"
-          }
-        }
-      }
-    },
-    "“When You Leave the App” only decides whether analysis keeps running once you leave — nightly background analysis is unaffected by it.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "「アプリを離れたときの解析」が決めるのは、離れたあとも続けるかどうかだけです。夜間の自動解析はこの設定の影響を受けません。"
           }
         }
       }
@@ -4435,12 +4325,12 @@
         }
       }
     },
-    "Analysis runs only while this screen is open, so no indicator appears. Nightly background analysis is unaffected.": {
+    "Analysis runs by itself whenever the conditions in Processing Timing are met — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds. Nothing to resume: it simply continues from where it is.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "この画面を開いている間だけ解析します（表示は出ません）。夜間の自動解析には影響しません。"
+            "value": "解析は「処理のタイミング」の条件を満たす間、自動で進みます——iPhone のロック中に加えて、アプリを開いたままでも 20 秒触らなければ進みます。「再開」の操作は要りません。いつでも続きから進みます。"
           }
         }
       }
@@ -4451,16 +4341,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "今すぐ解析"
-          }
-        }
-      }
-    },
-    "Keep going": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "続ける"
           }
         }
       }
@@ -4485,16 +4365,6 @@
         }
       }
     },
-    "Runs only while this screen is open.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この画面を開いている間だけ動きます。"
-          }
-        }
-      }
-    },
     "Everything is analyzed.": {
       "localizations": {
         "ja": {
@@ -4505,22 +4375,22 @@
         }
       }
     },
+    "iOS ended the boost. Analysis keeps going automatically while charging — or tap Analyze Now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS が全力解析を止めました。充電中は自動で続きます（「今すぐ解析」で今すぐ再開もできます）。"
+          }
+        }
+      }
+    },
     "iOS has not given the app a background window for a long time. This can happen if the app was swiped away from the app switcher, or if iOS ended it to free memory. Tap Analyze Now (keep the device plugged in) to continue right away.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "iOS が長い間このアプリに処理の時間をくれていません。App スイッチャーでアプリを上にスワイプして終了した場合や、iOS がメモリ確保のためにアプリを終了した場合に起こります。「今すぐ解析」を押せば（電源につないだまま）すぐに続きから進みます。"
-          }
-        }
-      }
-    },
-    "iOS stopped the analysis. Tap Analyze Now to continue from where it left off.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iOS が解析を停止しました。「今すぐ解析」をタップすると続きから再開します。"
           }
         }
       }

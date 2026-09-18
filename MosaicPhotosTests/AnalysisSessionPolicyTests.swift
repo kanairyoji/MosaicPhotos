@@ -35,31 +35,6 @@ final class AnalysisSessionPolicyTests: XCTestCase {
         XCTAssertEqual(AnalysisSessionPolicy.remaining(faces: -1, tagsPending: 2, embedPending: -5), 2)
     }
 }
-
-/// diagnostics-81 の回帰: **中断されたセッションを「終わった」ことにしない**。
-///
-/// セッションはメモリ上の存在なので、ロック（iOS の既知の問題）・OS の期限切れ・
-/// プロセス終了で消える。永続化していないと誰も気づかず、朝まで何も進まない。
-final class AnalysisSessionPendingFlagTests: XCTestCase {
-
-    func testInterruptionsKeepThePendingFlag() {
-        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.expired), "OS に止められた＝やり残し")
-        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.lowBattery), "電池切れ＝やり残し")
-        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.leftScreen), "画面離脱＝やり残し")
-    }
-
-    func testDeferredKeepsTheFlagButIsNotAFailure() {
-        // 回線待ちでクラウド分を次回に回した終わり方。印は残す（続きがある）が、
-        // OS に「失敗」と報告する類のものではない（レビュー指摘）。
-        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.deferred))
-    }
-
-    func testCompletionAndUserStopClearIt() {
-        XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.finished), "全部終わったら再開しない")
-        XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.user), "利用者が止めたら再開しない")
-    }
-}
-
 /// diagnostics-81 の追補: **「なぜ進まないか」をアプリ自身が言える**こと。
 final class AnalysisBlockerDiagnosisTests: XCTestCase {
 
@@ -104,78 +79,38 @@ final class AnalysisBlockerDiagnosisTests: XCTestCase {
                        "一度も開いていない端末では判断しない")
     }
 }
+/// ADR-195: 常設の方針を評価して残作業を進める駆動役の判断。
+/// 「再開」は無い——条件が揃っていれば起こし、揃っていなければ何もしない、だけ。
+final class AnalysisDriverPolicyTests: XCTestCase {
 
-/// ADR-193: **アプリを離れたときの解析**（継続タスクを使う場面）の設定。
-///
-/// 選んでいるのは表示ではなく「継続タスクを使うか」——進捗 UI は OS が出すもので、
-/// アプリからは消せない。だから「うるさい」への答えは使う場面を減らすことだけ。
-final class AnalysisContinuationPolicyTests: XCTestCase {
-
-    // MARK: - どの段で継続タスクを要求するか
-
-    func testAlwaysKeepsGoingForBothManualAndAutoResume() {
-        XCTAssertTrue(AnalysisContinuationPolicy.requestsContinuedTask(.always, autoResume: false))
-        XCTAssertTrue(AnalysisContinuationPolicy.requestsContinuedTask(.always, autoResume: true))
+    private func decide(_ trigger: AnalysisDriver.Trigger, active: Bool = true, allowed: Bool = true,
+                        boost: Bool = false, since: TimeInterval = 999) -> AnalysisDriverPolicy.Decision {
+        AnalysisDriverPolicy.decide(trigger: trigger, appActive: active, allowed: allowed,
+                                    boostActive: boost, sinceLastKick: since)
     }
 
-    func testManualOnlyKeepsGoingOnlyWhenTheUserTapped() {
-        XCTAssertTrue(AnalysisContinuationPolicy.requestsContinuedTask(.manualOnly, autoResume: false))
-        XCTAssertFalse(AnalysisContinuationPolicy.requestsContinuedTask(.manualOnly, autoResume: true),
-                       "自動再開でインジケータが出るのが「うるさい」の主因")
+    func testKicksWhenPolicyAllowsInForeground() {
+        XCTAssertEqual(decide(.foreground), .kick)
+        XCTAssertEqual(decide(.power), .kick)
+        XCTAssertEqual(decide(.idle), .kick)
     }
 
-    func testWhileOpenNeverRequestsAContinuedTask() {
-        XCTAssertFalse(AnalysisContinuationPolicy.requestsContinuedTask(.whileOpen, autoResume: false))
-        XCTAssertFalse(AnalysisContinuationPolicy.requestsContinuedTask(.whileOpen, autoResume: true))
+    func testBackgroundIsLeftToTheProcessingWindow() {
+        XCTAssertEqual(decide(.power, active: false), .background, "背面は処理枠の管轄＝駆動役は起こさない")
     }
 
-    // MARK: - 自動再開の条件（電源必須・見ていない前面では走らせない）
-
-    func testAutoResumeAlwaysRequiresPower() {
-        for level in AnalysisContinuation.allCases {
-            XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(level, onPower: false,
-                                                                       statusScreenOpen: true),
-                           "電池だけのときは自動再開しない（\(level)）")
-        }
+    func testDoesNotStackOnTopOfABoost() {
+        XCTAssertEqual(decide(.idle, boost: true), .boostActive)
     }
 
-    func testKeepGoingResumesEvenAwayFromTheScreen() {
-        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.always, onPower: true,
-                                                                  statusScreenOpen: false))
+    func testRespectsThePolicy() {
+        XCTAssertEqual(decide(.foreground, allowed: false), .notAllowed, "電源・回線・アイドル・自動処理オフは方針が決める")
     }
 
-    func testManualSessionResumesWithoutPowerWhileTheScreenIsOpen() {
-        // サブ画面（処理のタイミング）へ進んで戻ると onDisappear で止まる。押した本人が
-        // 画面を見ているなら、電池だけでも続きから再開してよい（レビュー指摘）。
-        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: false,
-                                                                  statusScreenOpen: true,
-                                                                  wasManual: true))
-        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: false,
-                                                                   statusScreenOpen: false,
-                                                                   wasManual: true),
-                       "画面を見ていないなら、手動でも勝手には走らせない")
-        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.always, onPower: false,
-                                                                   statusScreenOpen: false,
-                                                                   wasManual: false),
-                       "自動再開は従来どおり電源が要る")
-    }
-
-    func testWithoutAContinuedTaskResumeNeedsTheScreenOpen() {
-        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.manualOnly, onPower: true,
-                                                                   statusScreenOpen: false),
-                       "見ていない前面で重い処理を走らせない（ADR-25）")
-        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.manualOnly, onPower: true,
-                                                                  statusScreenOpen: true))
-        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: true,
-                                                                   statusScreenOpen: false))
-        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: true,
-                                                                  statusScreenOpen: true))
-    }
-
-    // MARK: - 既定値（移行なしで現行動作のまま）
-
-    func testDefaultIsKeepGoing() {
-        XCTAssertEqual(AnalysisContinuation.default, .always)
-        XCTAssertEqual(AnalysisContinuation(rawValue: 0), .always, "未設定(0)＝現行動作")
+    func testIdleTriggerIsThrottledButOthersAreNot() {
+        XCTAssertEqual(decide(.idle, since: 10), .throttled, "5 秒ごとの検知をそのまま毎回起こさない")
+        XCTAssertEqual(decide(.idle, since: AnalysisDriverPolicy.idleKickInterval), .kick)
+        XCTAssertEqual(decide(.power, since: 0), .kick, "条件の変化は即座に反映する")
+        XCTAssertEqual(decide(.boostEnded, since: 0), .kick)
     }
 }

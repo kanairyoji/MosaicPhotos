@@ -70,10 +70,6 @@ public enum BackgroundYield {
     /// 利用者に伝わらず、ロックすると背面＝吊るされて止まるので実質「開いている間」と同じだった。
     public static var sessionActive = false
 
-    /// 解析セッションのうち**前面でしか走れないもの**（OS が継続タスクを受けなかった／期限切れで
-    /// 降格した）。この間は UI へ譲る——画面が生きている前提なので、利用者が写真を見ている最中に
-    /// ANE と CPU を奪わない。継続モード（画面が無い前提）は譲らず全力で進める。
-    public static var sessionYieldsToUI = false
 
     /// 重い処理の**開始/継続の共通条件**（回線を要する作業向け＝クラウド分を含む）。判定は 4 軸の
     /// 独立した設定に従う（ADR-80）＝自動処理の有無・控えめ（前面で動かすか）・電源・回線。
@@ -99,7 +95,6 @@ public enum BackgroundYield {
         guard !PowerStateMonitor.shared.isLowPowerMode else { return false }
         let idle = BackgroundActivityMonitor.shared.idleSeconds >= HeavyWorkTiming.foregroundIdleSeconds
         return HeavyWorkTiming.current.allows(
-            isConservative: HeavyWorkTiming.isConservative,
             isAppActive: isAppActive,
             foregroundIdle: idle,
             powerAllowed: PowerStateMonitor.shared.backgroundAllowed(),
@@ -140,11 +135,10 @@ public enum BackgroundYield {
         // 生成との相互排他と同じ**メモリ保護**なので、デバッグ全開でも外さない。
         if HeavyLoad.isInFlight() { return true }
         if debugForceHeavyWork { return false }
-        // 解析セッション中は生成との相互排他（メモリ保護）だけ残す。
-        // ただし前面のみモード（継続タスクが無い）では UI へも譲る（操作を妨げない）。
+        // 解析セッション（ブースト）中は、生成との相互排他（メモリ保護）と、前面での UI への
+        // 譲り（写真を見ている最中に ANE と CPU を奪わない）だけ残す。電源・回線・アイドルは免除。
         if sessionActive {
-            if BackgroundActivityMonitor.shared.isGeneratingAlbums { return true }
-            return sessionYieldsToUI && analysisShouldYieldToUI
+            return BackgroundActivityMonitor.shared.isGeneratingAlbums || analysisShouldYieldToUI
         }
         return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
     }

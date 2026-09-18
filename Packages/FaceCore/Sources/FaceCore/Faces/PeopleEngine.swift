@@ -48,11 +48,6 @@ public final class PeopleEngine {
     @ObservationIgnored private var scanGeneration = 0
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
     @ObservationIgnored private var lastCandidates: [String] = []
-
-    /// 直近のスキャンが対象にした候補（読み取り専用）。
-    /// 呼び出し側が「同じ候補集合に対する残り」を台帳へ聞くために使う——
-    /// 8.5 万件の列挙をもう一度やらずに済む（ADR-194）。
-    public var scanCandidates: [String] { lastCandidates }
     @ObservationIgnored private var lastAllowSimulator = false
     /// `setNeedsPeopleReload()` のデバウンス用。連続要求は最後の 1 回だけ生き残る（ADR-95）。
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
@@ -282,17 +277,17 @@ public final class PeopleEngine {
             Diagnostics.mark("faces: startScan skip — already running (resumes when gate opens)")
             return
         }
-        // ⚠️ **前面では起こさない**（実機 diagnostics-62/63）。方針は「操作している間は重い処理を
-        // 一切動かさない」なので、前面で始めても内部の譲り判定で止まり、譲り待ちの上限で畳む。
-        // ところが**畳むまでに入口の準備は済ませてしまう**——`scannedRefKeys()` は
+        // ⚠️ **いま動けないなら起こさない**（実機 diagnostics-62/63）。始めても内部の譲り判定で止まり、
+        // 譲り待ちの上限で畳むが、**畳むまでに入口の準備は済ませてしまう**——`scannedRefKeys()` は
         // ScannedPhoto を全件（実測 75,000 行超）読む。しかも `FaceStore` は単一の
         // `@ModelActor` なので、その間ピープル一覧・写真の人物名が後ろで待たされる。
         // 実測: ロック解除直後に 32,582 枚を対象に開始 → `face.pauseWait=30`（10 秒ごと）で
         // 譲り続け → **0 枚**で終了。準備のコストだけを払っていた。
-        // 夜間（非アクティブ）と明示操作（デバッグ全開）は従来どおり通す。
-        guard !BackgroundYield.isAppActive || BackgroundYield.debugForceHeavyWork
+        // 判定は方針そのもの（`heavyWorkAllowedLocal`＝ADR-195: 前面でも 20 秒触っていなければ可）。
+        // 明示操作（デバッグ全開・「今すぐ解析」）は従来どおり通す。
+        guard BackgroundYield.heavyWorkAllowedLocal || BackgroundYield.debugForceHeavyWork
                 || BackgroundYield.sessionActive else {
-            Diagnostics.mark("faces: startScan skip — app is active (heavy work runs when idle)")
+            Diagnostics.mark("faces: startScan skip — heavy work not allowed right now (policy)")
             isLoaded = true
             return
         }

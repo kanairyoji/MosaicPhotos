@@ -22,11 +22,6 @@ struct AIAnalysisStatusView: View {
     /// 解析セッション（「今すぐ解析」・ADR-182）。
     let session: AnalysisSession
 
-    /// ⚠️ `UserDefaults` の直読みでは**画面が更新されない**（レビュー指摘）。選んでも表示が
-    /// 前の値のまま＝壊れて見える。`@AppStorage` にして SwiftUI に変更を伝える。
-    @AppStorage(AppSettingsKeys.analysisContinuation) private var continuationRaw = AnalysisContinuation.default.rawValue
-    @AppStorage(AppSettingsKeys.analysisSessionPending) private var sessionPending = false
-
     /// 数え直しを重ねないための札（Section ごとに配られる `.task` の仕事を畳む）。
     @State private var refreshInFlight = false
     /// 実行中に来た要求。**捨てずに拾い直す**（捨てると完了直後の更新が消える）。
@@ -79,10 +74,6 @@ struct AIAnalysisStatusView: View {
         }
         .onChange(of: engine.isTagging) { _, _ in Task { await refreshOnce() } }
         .onChange(of: people.isScanning) { _, _ in Task { await refreshOnce() } }
-        // ⚠️ 画面の出入りの報告は**ここに書かない**（レビュー指摘）。この body は `Section` の
-        // `Group` で、修飾子は各 Section へ配られる。`Form` は行を遅延生成するので、
-        // スクロールしてセクションが画面外に出ただけで `onDisappear`＝解析が止まっていた。
-        // 報告は Form 全体に付ける（`analysisScreenLifecycle`・呼び出し側の `SettingsView`）。
     }
 
     // MARK: - 現在の状態
@@ -178,18 +169,11 @@ struct AIAnalysisStatusView: View {
                 }
                 if case .stopped(let reason) = session.state, let text = stopText(reason) {
                     Text(text).font(.caption).foregroundStyle(.secondary)
-                } else if sessionPending {
-                    // 前回のセッションが終わっていない（ロック・OS の停止・アプリの終了）。
-                    // 次にアプリを開いたときに自動再開するが、ここでも状況を伝える。
-                    Label(L("The last analysis was interrupted. It resumes automatically when you open the app — or tap Analyze Now."),
-                          systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Toggle(isOn: Binding(get: { session.keepScreenOn }, set: { session.keepScreenOn = $0 })) {
                 Label(L("Keep Screen On While Analyzing"), systemImage: "sun.max")
             }
-            continuationPicker
             NavigationLink {
                 Form { AutoAlbumSettingsView(engine: engine) }
                     .navigationTitle(L("Album Automation"))
@@ -198,41 +182,11 @@ struct AIAnalysisStatusView: View {
                 Label(L("Processing Timing & Speed"), systemImage: "slider.horizontal.3")
             }
         } footer: {
-            Text("“When You Leave the App” only decides whether analysis keeps running once you leave — nightly background analysis is unaffected by it.")
+            Text("Analysis runs by itself whenever the conditions in Processing Timing are met — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds. Nothing to resume: it simply continues from where it is.")
             + Text(verbatim: "\n\n")
             + Text("“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.")
             + Text(verbatim: "\n\n")
             + Text("Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.")
-        }
-    }
-
-    /// 「アプリを離れたときの解析」（ADR-193）。選んでいるのは表示ではなく**継続タスクを使う場面**
-    /// ——進捗 UI は OS が出すもので、アプリからは消せないため。
-    private var continuationPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Picker(selection: Binding(
-                get: { AnalysisContinuation(rawValue: continuationRaw) ?? .default },
-                set: { continuationRaw = $0.rawValue })
-            ) {
-                Text("Keep going").tag(AnalysisContinuation.always)
-                Text("Only when I start it").tag(AnalysisContinuation.manualOnly)
-                Text("Only while this screen is open").tag(AnalysisContinuation.whileOpen)
-            } label: {
-                Label(L("When You Leave the App"), systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
-            }
-            Text(continuationHint)
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    private var continuationHint: String {
-        switch AnalysisContinuation(rawValue: continuationRaw) ?? .default {
-        case .always:
-            return L("Analysis continues after you leave the app, and resumes by itself when you open the app while charging. iOS shows a progress indicator on the Lock Screen and in the Dynamic Island while it runs — that indicator cannot be hidden.")
-        case .manualOnly:
-            return L("Only an analysis you start with Analyze Now keeps going after you leave the app. An interrupted analysis resumes while this screen is open and the device is charging.")
-        case .whileOpen:
-            return L("Analysis runs only while this screen is open, so no indicator appears. Nightly background analysis is unaffected.")
         }
     }
 
@@ -327,23 +281,17 @@ struct AIAnalysisStatusView: View {
             }
             Text(session.mode == .continued
                  ? L("Continues after you leave the app.")
-                 : L("Runs only while this screen is open."))
+                 : L("Runs while the app is open."))
                 .font(.caption).foregroundStyle(.secondary)
-            if session.didAutoResume {
-                Text("Resumed the analysis that was interrupted earlier.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
     }
 
     private func stopText(_ reason: AnalysisSession.StopReason) -> String? {
         switch reason {
         case .finished: return L("Everything is analyzed.")
-        case .expired: return L("iOS stopped the analysis. Tap Analyze Now to continue from where it left off.")
+        case .expired: return L("iOS ended the boost. Analysis keeps going automatically while charging — or tap Analyze Now.")
         case .lowBattery: return L("Stopped because the battery is low. Plug in and tap Analyze Now to continue.")
-        case .deferred:
-            return L("Some photos (cloud photos waiting for Wi‑Fi) are left for the next run. They continue automatically.")
-        case .user, .leftScreen: return nil
+        case .user, .leftApp: return nil
         }
     }
 
@@ -402,18 +350,19 @@ struct AIAnalysisStatusView: View {
         // 完了直後の数字が凍る・レビュー指摘）。暴走しないのは、拾い直しでは候補の列挙を
         // 使い回す＝1 回が軽いため（4 秒ポーリングに追い越されて終わらなくなることが無い）。
         // ただし明示的に「新鮮に」と言われた要求（onChange）はその通り数え直す。
-        // 抜けるときは**必ず旗を下ろす**（キャンセルで抜けた分を次回に持ち越さない・レビュー指摘）。
-        defer { refreshRequested = false; refreshRequestedFresh = false }
-        var lastWasFresh = (seconds == 0)
+        // 普通に抜けるときは旗を下ろす。**キャンセルで抜けたときは残す**（レビュー指摘）——
+        // ループの持ち主は Section ごとの `.task` なので、スクロールでその Section が消えると
+        // ここがキャンセルされる。旗を下ろすと直前に立った要求（解析完了の onChange）が誰にも
+        // 処理されず、完了直後の数字が凍る。残しておけば次に来た呼び出しが拾う。
+        defer { if !Task.isCancelled { refreshRequested = false; refreshRequestedFresh = false } }
         while refreshRequested, !Task.isCancelled {
             refreshRequested = false
             let wantsFresh = refreshRequestedFresh
             refreshRequestedFresh = false
-            // ⚠️ 直前が「新鮮な列挙」だったなら、続けてもう一度 8.5 万件を舐めない（レビュー指摘）。
-            // 開いた瞬間は Section ごとに要求が 7 本来るので、素直に従うと二重の全列挙になる。
-            let useFresh = wantsFresh && !lastWasFresh
-            lastWasFresh = useFresh
-            await refresh(reuseCandidatesWithin: useFresh ? 0 : 60)
+            // ⚠️ 「新鮮に」でも、数秒以内に列挙したばかりならもう一度 8.5 万件を舐めない
+            //（レビュー指摘）。開いた瞬間は Section ごとに要求が 7 本来るので、素直に従うと
+            // 二重の全列挙になる。抑制は時刻で決める（「1 回おき」だと要求の並びに依存する）。
+            await refresh(reuseCandidatesWithin: wantsFresh ? 5 : 60)
         }
     }
 
@@ -478,24 +427,5 @@ struct AIAnalysisStatusView: View {
         let fmt = RelativeDateTimeFormatter()
         fmt.unitsStyle = .full
         return fmt.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-/// AI 解析の状況「画面」の出入りを **1 か所**で報告する修飾子。
-///
-/// ⚠️ `AIAnalysisStatusView` の `body` は `Section` の `Group` なので、そこに `.task` /
-/// `.onDisappear` を付けると **Form の遅延生成でセクションごとに発火**する
-/// （スクロールで `screenLeft()` が呼ばれ、前面のみモードの解析が止まる・レビュー指摘）。
-/// 画面を包む `Form` に付けることで、出入りが 1 回ずつになる。
-extension View {
-    func analysisScreenLifecycle(_ session: AnalysisSession) -> some View {
-        self
-            .task {
-                session.screenAppeared()
-                // 継続タスクを使わない設定では、この画面を開いたときに中断の続きを再開する
-                // （見ていない前面では走らせない・ADR-193）。
-                await session.resumeIfPending(statusScreenOpen: true)
-            }
-            .onDisappear { session.screenLeft() }
     }
 }

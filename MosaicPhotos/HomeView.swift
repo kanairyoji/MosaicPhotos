@@ -213,7 +213,8 @@ struct HomeView: View {
             autoAlbumEngine: autoAlbumEngine,
             assetIndex: assetIndex,
             shareEngine: stores.shareEngine,
-            shareImporter: stores.shareImporter))
+            shareImporter: stores.shareImporter,
+            analysisDriver: stores.analysisDriver))
         // バッジ対象 ID は**共有セット/グループが変わったときだけ**作り直す（body で計算しない）。
         .task { updateCloudSharedBadges() }
         .onChange(of: stores.shareEngine.sets) { _, _ in updateCloudSharedBadges() }
@@ -356,6 +357,8 @@ private struct HomeLifecycleTasks: ViewModifier {
     let assetIndex: LocalAssetIndex
     let shareEngine: ShareSyncEngine
     let shareImporter: SharedAnalysisImporter
+    /// 常設の方針を評価して残作業を進める駆動役（ADR-195）。
+    let analysisDriver: AnalysisDriver
 
     private var rescanIntervalSeconds: Int {
         let secs = UserDefaults.standard.integer(forKey: PlacesSettingsKeys.rescanIntervalSeconds)
@@ -367,11 +370,10 @@ private struct HomeLifecycleTasks: ViewModifier {
             // アルバムスキャン：キャッシュがあれば即ロード、なければバックグラウンドでスキャン。
             // バックアップとは独立して動作する。
             .task { await albumScanner.loadOrScan(); Diagnostics.mark("albums loaded") }
-            // ピープル（人物＝顔アルバム）：キャッシュ即ロード→無ければスキャン。端末ライブラリのみ。
+            // ピープル（人物＝顔アルバム）：キャッシュ即ロード。スキャンは駆動役が方針に従って起こす（ADR-195）。
             .task {
                 await peopleEngine.loadPeople()
-                let allowSim = UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
-                peopleEngine.startScan(candidateRefKeys: await analysisOrderedRefKeys(dropboxStore: dropboxStore), allowSimulator: allowSim)
+                await analysisDriver.kick(.launch)
             }
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする
@@ -488,10 +490,9 @@ private struct HomeLifecycleTasks: ViewModifier {
         }
     }
 
-    /// 電源/回線が復帰したら、同期の再評価と背景埋め込みの再起動を行う。
-    /// `scheduleBackgroundFill` は実行中なら no-op なので二重起動にはならない。
+    /// 電源/回線が変わったら、同期を再評価し、駆動役に方針を見直させる（ADR-195）。
     private func resumeBackgroundWork() {
         evaluateSync()
-        autoAlbumEngine.scheduleBackgroundFill()
+        Task { await analysisDriver.kick(.power) }
     }
 }

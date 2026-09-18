@@ -23,8 +23,6 @@ struct AutoAlbumSettingsView: View {
     private var backgroundLevel = BackgroundProcessing.defaultIndex
     @AppStorage(HeavyWorkTiming.defaultsKey)
     private var heavyWorkTiming = HeavyWorkTiming.enabled.rawValue
-    @AppStorage(HeavyWorkTiming.conservativeKey)
-    private var conservativeAnalysis = true
 
     private var selectedPreset: BackgroundProcessingPreset {
         BackgroundProcessing.preset(at: backgroundLevel)
@@ -35,19 +33,12 @@ struct AutoAlbumSettingsView: View {
         (HeavyWorkTiming(rawValue: heavyWorkTiming) ?? .enabled) != .paused
     }
 
-    /// 「控えめに動かす」の説明（ON/OFF で意味が変わるので文言も切り替える）。
-    private var conservativeFooter: String {
-        conservativeAnalysis
-            ? L("Analysis never runs while you are using the app — only when you switch away or your iPhone is locked. Recommended: no slowdowns while browsing.")
-            : L("Analysis also runs while the app is open, once you have not touched the screen for 20 seconds. It stops as soon as you interact again — indexing finishes sooner, but you may notice brief slowdowns.")
-    }
-
     var body: some View {
         Group {
-            // AI 処理を「いつ動かすか」は 4 軸の独立設定（ADR-80）。ここでは (1) 自動処理の有無と
-            // (2) 前面で動かすか（控えめ）を扱う。(3) 電源と (4) 回線は General → Background & Battery
-            // に一本化した（以前はこの段階ピッカーと二重で、片方を緩めても動かない原因になっていた）。
-            // 判定本体は HeavyWorkTiming.allows（テスト済み）。
+            // AI 処理を「いつ動かすか」は 3 軸の独立設定（ADR-80 → ADR-195）。ここでは (1) 自動処理の
+            // 有無を扱う。(2) 電源と (3) 回線は General → Background & Battery に一本化した。
+            // 旧「控えめ（前面で動かすか）」の軸は廃止＝前面でも 20 秒触っていなければ動き、
+            // 触れば 1 単位ごとに譲る（判定本体は HeavyWorkTiming.allows・テスト済み）。
             Section {
                 Toggle(isOn: Binding(
                     get: { automaticEnabled },
@@ -58,16 +49,7 @@ struct AutoAlbumSettingsView: View {
             } header: {
                 Text("Processing Timing")
             } footer: {
-                Text(L("Indexes your photos in the background so AI albums and search stay up to date. Power and network conditions are set in Settings → Background & Battery."))
-            }
-
-            Section {
-                Toggle(isOn: $conservativeAnalysis) {
-                    Text(L("Run image analysis conservatively"))
-                }
-                .disabled(!automaticEnabled)
-            } footer: {
-                Text(conservativeFooter)
+                Text(L("Indexes your photos so AI albums and search stay up to date — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds (it yields the moment you interact). Power and network conditions are set in Settings → Background & Battery."))
             }
 
             Section {
