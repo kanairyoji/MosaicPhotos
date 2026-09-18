@@ -449,9 +449,9 @@ private struct HomeLifecycleTasks: ViewModifier {
             }
             // 電源・回線の変化で Dropbox 差分同期を起動/停止し、背景埋め込みを再開する
             //（電源復帰／Wi-Fi 復帰で保留分＝クラウド写真の埋め込みを拾い直す）。
-            .onChange(of: PowerStateMonitor.shared.isOnPower) { _, _ in resumeBackgroundWork() }
-            .onChange(of: PowerStateMonitor.shared.isLowPowerMode) { _, _ in resumeBackgroundWork() }
-            .onChange(of: NetworkStateMonitor.shared.networkAllowed()) { _, _ in resumeBackgroundWork() }
+            .onChange(of: PowerStateMonitor.shared.isOnPower) { _, _ in resumeBackgroundWork(.power) }
+            .onChange(of: PowerStateMonitor.shared.isLowPowerMode) { _, _ in resumeBackgroundWork(.power) }
+            .onChange(of: NetworkStateMonitor.shared.networkAllowed()) { _, _ in resumeBackgroundWork(.network) }
             // 背景スキャンの稼働状況をアクティビティバーへ橋渡し（下位パッケージに依存を足さない）。
             .onChange(of: placeScanner.isScanning) { _, v in BackgroundActivityMonitor.shared.isScanningPlaces = v }
             .onChange(of: albumScanner.isScanning) { _, v in BackgroundActivityMonitor.shared.isScanningAlbums = v }
@@ -491,8 +491,8 @@ private struct HomeLifecycleTasks: ViewModifier {
     }
 
     /// 電源/回線が変わったら、同期を再評価し、駆動役に方針を見直させる（ADR-195）。
-    private func resumeBackgroundWork() {
+    private func resumeBackgroundWork(_ trigger: AnalysisDriver.Trigger) {
         evaluateSync()
-        Task { await analysisDriver.kick(.power) }
+        Task { await analysisDriver.kick(trigger) }
     }
 }

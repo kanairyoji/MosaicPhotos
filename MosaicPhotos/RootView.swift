@@ -240,8 +240,8 @@ struct RootView: View {
             HeavyWorkScheduler.stores = built
             loadingTimer.cancel()
             // 起動時は scenePhase の変化が来ないので、駆動役の前面監視をここで始める（ADR-195）。
+            // 起動時の起こし（`.launch`）は HomeView 側＝人物のロード後に 1 回だけ。
             built.analysisDriver.startIdleWatch()
-            await built.analysisDriver.kick(.launch)
         }
     }
 }

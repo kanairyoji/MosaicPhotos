@@ -15,7 +15,8 @@ typealias AnalysisCandidateSet = (ordered: [String], excludedBackupCopies: Set<S
 /// 自動再開（ADR-189）を足した結果、5 つの軸が絡んで 9 周壊れ続けた（case-studies）。
 ///
 /// ## 何をするか
-/// **条件が変わった瞬間**（前面復帰・20 秒アイドル・電源・回線・熱・写真の追加・ブーストの終了）に
+/// **条件が変わった瞬間**（起動・前面復帰・20 秒アイドル・電源・回線・ブーストの終了。熱の回復や
+/// 写真の追加のように合図が来ない条件は、アイドル中 120 秒ごとの再評価で拾う）に
 /// 方針（`BackgroundYield.heavyWorkAllowedLocal`）を見て、許されていれば既存のトリクル
 /// （`scheduleBackgroundFill` / `startScan`）を起こす。それだけ。トリクルは差分処理で、
 /// 操作されれば 1 単位ごとに譲り、60 秒開かなければ自分で畳む（ADR-95）。畳んだあとは、
@@ -30,7 +31,7 @@ final class AnalysisDriver {
 
     /// 起こす契機。方針の再評価が要るのは「条件が変わった瞬間」だけ。
     enum Trigger: String {
-        case launch, foreground, idle, power, network, thermal, photosChanged, boostEnded
+        case launch, foreground, idle, power, network, boostEnded
     }
 
     private let engine: AutoAlbumEngine
@@ -90,6 +91,8 @@ final class AnalysisDriver {
     }
 
     /// 前面にいる間、20 秒アイドルを検知して起こす（`scenePhase == .active` で始め、離れたら止める）。
+    /// アイドル中は 120 秒ごとに方針を見直すので、**熱の回復や写真の追加のような「変わった合図が
+    /// 来ない条件」もここで拾う**（専用の契機を足すより、再評価が安いので 1 本に寄せる）。
     func startIdleWatch() {
         idleTicker?.cancel()
         idleTicker = Task { [weak self] in
