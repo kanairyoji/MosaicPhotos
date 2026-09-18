@@ -137,7 +137,11 @@ final class DropboxThumbnailBatcher {
             guard let self else { return }
             for item in items {
                 let path = item.path
-                if pendingVisible[path] != nil || inFlight.contains(path) { continue }
+                // ⚠️ 解析プールに居るものも積まない（レビュー指摘）。片側だけ外していたので、
+                // 「解析が積む → その後スクロールで先読みされる」順では**両方のプールに残り**、
+                // 1 リクエストに同じ path が 2 回入る（Dropbox はバッチごと拒否し得る）。
+                if pendingVisible[path] != nil || pendingAnalysis[path] != nil
+                    || inFlight.contains(path) { continue }
                 if await cache.thumbnailExists(for: path) { continue }   // メモリ/ディスクにあれば不要
                 enqueuePrefetch(item)
             }

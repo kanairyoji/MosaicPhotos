@@ -269,6 +269,20 @@ struct ThumbnailPurposeTests {
                 "同じ path が 1 リクエストに 2 回入り、配送も 2 回走る")
     }
 
+    @Test("解析が積んだ写真を後から先読みしても二重にならない（逆順・レビュー指摘）")
+    func prefetchDoesNotDuplicateAnAnalysisPath() async {
+        let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))
+        let batcher = makeBatcher(stub)
+
+        batcher.enqueueForTesting(item("/dup2.jpg"), purpose: .analysis)
+        batcher.prefetch([item("/dup2.jpg")])          // スクロールで先読みが来る
+        try? await Task.sleep(nanoseconds: 50_000_000) // prefetch は Task 内で積む
+        let order = batcher.nextWavePathsForTesting()
+
+        #expect(order.filter { $0 == "/dup2.jpg" }.count == 1,
+                "1 リクエストに同じ path が 2 回入る（Dropbox はバッチごと拒否し得る）")
+    }
+
     @Test("解析が始めた取得を可視セルが待つときも UI ビジーを名乗る（レビュー指摘）")
     func visibleWaiterOnAnalysisFetchClaimsUIBusy() {
         let stub = StubHTTPClient(responder: StubHTTPClient.thumbnailBatchSuccess(pngBase64: onePixelPNGBase64))

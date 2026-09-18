@@ -52,16 +52,21 @@ struct MosaicPhotosApp: App {
                 // 中断された解析セッションを自動で再開する（diagnostics-81）。
                 // ロック（iOS の既知の問題）・OS の期限切れ・プロセス終了でセッションは消えるが、
                 // 「押した」という事実は永続化してあるので、戻ってきたら続きから再開する。
-                // 画面の外なので statusScreenOpen=false。継続タスクを使わない設定では、
-                // AI 解析の状況を開いたときに（下記 onAppear で）再開する。
+                // ⚠️ 画面の可視状態は**セッションが知っている**ものを渡す（レビュー指摘）。
+                // ここで false を決め打つと、AI 解析の状況を開いたまま Control Center を
+                // 引いて戻ったときに再開されない（`.task` は再実行されないため）。
                 Task { @MainActor in
-                    await HeavyWorkScheduler.stores?.analysisSession.resumeIfPending(statusScreenOpen: false)
+                    guard let session = HeavyWorkScheduler.stores?.analysisSession else { return }
+                    await session.resumeIfPending(statusScreenOpen: session.statusScreenVisible)
                 }
             }
             // バックグラウンド遷移（ロック含む）で次回の重い処理を予約する。
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
-            if phase != .active {
-                // 前面のみモードのセッションは前面にいる間だけのもの（レビュー指摘）。
+            // ⚠️ 止めるのは **background** のときだけ（レビュー指摘）。`.inactive` は
+            // Control Center・通知センター・着信バナー・App スイッチャーのジェスチャでも来る。
+            // そこで止めると、画面を開いたまま通知を見ただけで解析が黙って終わる。
+            if phase == .background {
+                // 前面のみモードのセッションは前面にいる間だけのもの。
                 HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()
             }
             if phase == .background { HeavyWorkScheduler.submit() }

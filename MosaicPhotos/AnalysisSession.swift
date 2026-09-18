@@ -227,6 +227,17 @@ final class AnalysisSession {
         return UserDefaults.standard.string(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
     }
 
+    /// 最後に観測した**顔スキャンの残り枚数**（プロセスを跨いで残す）。
+    ///
+    /// ⚠️ `PeopleEngine.remaining` はスキャン中しか更新されないので、新しいプロセスでは常に 0。
+    /// かといって「モデルが同梱されているか」で代用すると、**残作業ゼロでも毎回セッションを
+    /// 起こす**ことになり、8.5 万件の候補列挙・`sessionActive` による電源/回線ポリシーの無効化・
+    /// ロック画面のインジケータまで無意味に走る（レビュー指摘）。観測できた値を持ち越す。
+    private static var lastKnownFaceRemaining: Int {
+        get { UserDefaults.standard.integer(forKey: AppSettingsKeys.analysisFaceRemaining) }
+        set { UserDefaults.standard.set(max(0, newValue), forKey: AppSettingsKeys.analysisFaceRemaining) }
+    }
+
     private static func markPending(_ pending: Bool) {
         let defaults = UserDefaults.standard
         defaults.set(pending, forKey: AppSettingsKeys.analysisSessionPending)
@@ -263,14 +274,11 @@ final class AnalysisSession {
         }
         let progress = await engine.analysisProgress()
         let pending = max(0, progress.total - progress.sceneTagged) + max(0, progress.total - progress.embedded)
-        // ⚠️ **顔の残りはここでは分からない**（レビュー指摘）。`people.remaining` はスキャン中の
-        // 進捗コールバックでしか更新されないので、プロセスが変わった直後は必ず 0——それを
-        // 「残り無し」と読むと、jetsam で中断された顔スキャンが**二度と再開されない**
-        // （タグと埋め込みだけ終わっている状態＝diagnostics-81 の場面で起こり得る）。
-        // 分からないときは再開して、**セッション自身に終わりを判定させる**
-        //（残作業ゼロなら数秒で `.finished` になり、そこで印が下りる）。
-        // 印を下ろしてよいのは「顔スキャンがそもそも無い（モデル未同梱）」ときだけ。
-        guard pending > 0 || people.isFaceModelAvailable else {
+        // 顔の残りは**前回観測した値**で判断する（`people.remaining` は新しいプロセスでは 0 で、
+        // 「残っていない」と「分からない」の区別が付かない）。一度も観測していない端末では
+        // 「分からない」＝再開してセッション自身に終わりを判定させる。
+        let faceBacklog = people.isFaceModelAvailable ? Self.lastKnownFaceRemaining : 0
+        guard pending > 0 || faceBacklog > 0 else {
             Diagnostics.mark("analyze: nothing left — clearing pending session")
             Self.markPending(false)
             return
@@ -373,6 +381,10 @@ final class AnalysisSession {
                 embedPending = max(0, p.total - p.embedded)
             }
             let faces = people.isScanning ? people.remaining : 0
+            // 観測できた残りを持ち越す（プロセスが死んでも次の起動で判断できる）。
+            // スキャンが落ち着いたら 0 を書く＝次の起動で無駄なセッションを起こさない。
+            if people.isScanning { Self.lastKnownFaceRemaining = faces }
+            else if faceScanStarted { Self.lastKnownFaceRemaining = 0 }
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }

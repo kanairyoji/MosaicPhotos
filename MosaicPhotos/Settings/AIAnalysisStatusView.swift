@@ -64,14 +64,10 @@ struct AIAnalysisStatusView: View {
         }
         .onChange(of: engine.isTagging) { _, _ in Task { await refresh() } }
         .onChange(of: people.isScanning) { _, _ in Task { await refresh() } }
-        // 継続タスクを使わない設定では、**この画面を開いたときに**中断の続きを再開する
-        // （見ていない前面では走らせない・ADR-193）。「続ける」設定なら前面復帰時に再開済み。
-        .task {
-            session.screenAppeared()
-            await session.resumeIfPending(statusScreenOpen: true)
-        }
-        // 前面のみモードは画面を離れたら止める（継続モードは OS が面倒を見るので続く）。
-        .onDisappear { session.screenLeft() }
+        // ⚠️ 画面の出入りの報告は**ここに書かない**（レビュー指摘）。この body は `Section` の
+        // `Group` で、修飾子は各 Section へ配られる。`Form` は行を遅延生成するので、
+        // スクロールしてセクションが画面外に出ただけで `onDisappear`＝解析が止まっていた。
+        // 報告は Form 全体に付ける（`analysisScreenLifecycle`・呼び出し側の `SettingsView`）。
     }
 
     // MARK: - 現在の状態
@@ -432,5 +428,24 @@ struct AIAnalysisStatusView: View {
         let fmt = RelativeDateTimeFormatter()
         fmt.unitsStyle = .full
         return fmt.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+/// AI 解析の状況「画面」の出入りを **1 か所**で報告する修飾子。
+///
+/// ⚠️ `AIAnalysisStatusView` の `body` は `Section` の `Group` なので、そこに `.task` /
+/// `.onDisappear` を付けると **Form の遅延生成でセクションごとに発火**する
+/// （スクロールで `screenLeft()` が呼ばれ、前面のみモードの解析が止まる・レビュー指摘）。
+/// 画面を包む `Form` に付けることで、出入りが 1 回ずつになる。
+extension View {
+    func analysisScreenLifecycle(_ session: AnalysisSession) -> some View {
+        self
+            .task {
+                session.screenAppeared()
+                // 継続タスクを使わない設定では、この画面を開いたときに中断の続きを再開する
+                // （見ていない前面では走らせない・ADR-193）。
+                await session.resumeIfPending(statusScreenOpen: true)
+            }
+            .onDisappear { session.screenLeft() }
     }
 }

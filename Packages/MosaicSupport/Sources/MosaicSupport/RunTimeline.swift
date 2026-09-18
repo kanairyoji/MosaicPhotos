@@ -43,10 +43,16 @@ public enum RunTimeline {
     ///   - active: 始まったなら true、終わったなら false。
     public static func noteState(_ state: String, active: Bool) {
         let d = UserDefaults.standard
-        var running = Set(d.stringArray(forKey: stateKey) ?? [])
+        var running = Set(storedStates(d))
+        let wasEmpty = running.isEmpty
         if active { running.insert(state) } else { running.remove(state) }
         d.set(Array(running).sorted(), forKey: stateKey)
-        d.set(Date().timeIntervalSinceReferenceDate, forKey: stateAtKey)
+        // ⚠️ 時刻は**何も走っていない状態から走り出した瞬間**だけ記録する（レビュー指摘）。
+        // 毎回書き換えると、窓が終わった時刻でセッションの「N 分前」が上書きされ、
+        // 「いつから走っていたか」が無関係な出来事の時刻になる。
+        if wasEmpty, !running.isEmpty {
+            d.set(Date().timeIntervalSinceReferenceDate, forKey: stateAtKey)
+        }
     }
 
     /// すべての実行中フラグを下ろす（起動直後に 1 回＝前回の残骸を読んだあと）。
@@ -54,10 +60,20 @@ public enum RunTimeline {
         UserDefaults.standard.set([String](), forKey: stateKey)
     }
 
+    /// 保存された実行中の状態。
+    ///
+    /// ⚠️ 旧ビルドは**文字列 1 つ**で保存していた（レビュー指摘）。配列として読むと nil になり、
+    /// 版を上げた最初の起動——つまり jetsam の痕跡が一番欲しい起動——でパンくずを落とす。
+    private static func storedStates(_ d: UserDefaults) -> [String] {
+        if let array = d.stringArray(forKey: stateKey) { return array }
+        if let legacy = d.string(forKey: stateKey), legacy != "idle" { return [legacy] }
+        return []
+    }
+
     /// 前回の実行がどう終わったか（起動時に 1 回呼ぶ）。
     public static func previousRunSummary(now: Date = Date()) -> String? {
         let d = UserDefaults.standard
-        let running = d.stringArray(forKey: stateKey) ?? []
+        let running = storedStates(d)
         guard !running.isEmpty else { return nil }
         let raw = d.double(forKey: stateAtKey)
         let at = raw > 0 ? Date(timeIntervalSinceReferenceDate: raw) : nil

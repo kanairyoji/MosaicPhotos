@@ -40,6 +40,22 @@ struct RunTimelineTests {
                 "両方が実行中のまま終了したら、当然それを残す")
     }
 
+    @Test("旧ビルドの文字列パンくずも読める（版を上げた最初の起動で落とさない）")
+    func legacyStringBreadcrumbStillReads() {
+        // 旧形式は String 1 つ。配列として読むと nil になり、jetsam の痕跡が一番欲しい
+        // 「版を上げた最初の起動」で証拠を落としていた（レビュー指摘）。
+        let d = UserDefaults.standard
+        let key = "runTimeline.state"
+        let saved = d.object(forKey: key)
+        defer { d.set(saved, forKey: key) }
+
+        d.set("window", forKey: key)                 // 旧形式
+        #expect(RunTimeline.previousRunSummary()?.contains("処理枠の途中") == true)
+
+        d.set("idle", forKey: key)                   // 旧形式の正常終了
+        #expect(RunTimeline.previousRunSummary() == nil)
+    }
+
     // MARK: - OS が持っている終了理由
 
     @Test("0 の項目は書かず、起きた終了だけを日本語で並べる")

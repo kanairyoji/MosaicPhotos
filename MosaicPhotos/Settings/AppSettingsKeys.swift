@@ -18,6 +18,10 @@ enum AppSettingsKeys {
     /// アプリを離れたときに解析を続けるか（`AnalysisContinuation` の rawValue・ADR-193）。
     /// 未設定＝0＝「続ける」（現行動作）。
     static let analysisContinuation = "analysis.continuation"
+    /// 最後に観測した顔スキャンの残り枚数（プロセスを跨いで持ち越す・レビュー指摘）。
+    /// ライブのカウンタは新しいプロセスでは 0 なので、「残っていない」と「分からない」を
+    /// 区別するために観測値を保存する。
+    static let analysisFaceRemaining = "analysis.faceRemaining"
     /// 解析セッション（ADR-182）が**まだ終わっていない**か。
     /// 「今すぐ解析」を押した時点で立て、全部終わったとき・利用者が止めたときだけ下ろす。
     /// ⚠️ セッションはメモリ上の存在で、ロック（iOS の既知の問題）・OS の期限切れ・
