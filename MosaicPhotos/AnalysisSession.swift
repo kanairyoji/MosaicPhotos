@@ -78,9 +78,6 @@ final class AnalysisSession {
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var task: BGContinuedProcessingTask?
     @ObservationIgnored private var faceScanStarted = false
-    /// 顔スキャンが**走っている最中に残り 0** を観測したか（＝本当に捌けた）。
-    /// 早期に畳んだだけの終了と区別するために要る（レビュー指摘）。
-    @ObservationIgnored private var observedFaceDrained = false
     @ObservationIgnored private var warmupTicks = 0
     @ObservationIgnored private var lastFillScheduledAt = Date.distantPast
     /// 同じ識別子を 2 回登録するとアプリが殺されるので、プロセス内で 1 回に絞る。
@@ -102,7 +99,6 @@ final class AnalysisSession {
     func start(autoResume: Bool = false) {
         guard !isActive else { return }
         faceScanStarted = false
-        observedFaceDrained = false
         warmupTicks = 0
         remaining = 0
         peakRemaining = 0
@@ -146,10 +142,6 @@ final class AnalysisSession {
         state = .stopped(reason)
         // 「終わった」「利用者が止めた」だけが完了。OS に止められた・電池・画面離脱は**未完**として
         // 印を残し、次の前面復帰で続きから再開する。
-        // ⚠️ `.finished` は**顔スキャンが残作業を抱えたまま畳んだ**ときにも成立する
-        // （`faceScanSettled` は「始めて、いま走っていない」だけ＝レビュー指摘）。
-        // 0 を確定してよいのは、**スキャン中に残り 0 を実際に観測した**ときだけ。
-        if reason == .finished, observedFaceDrained { Self.lastKnownFaceRemaining = 0 }
         if AnalysisSessionPolicy.keepsPendingFlag(reason) {
             Self.markPending(true)
             let defaults = UserDefaults.standard
@@ -235,28 +227,6 @@ final class AnalysisSession {
         return UserDefaults.standard.string(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
     }
 
-    /// 最後に観測した**顔スキャンの残り枚数**（プロセスを跨いで残す）。
-    ///
-    /// ⚠️ `PeopleEngine.remaining` はスキャン中しか更新されないので、新しいプロセスでは常に 0。
-    /// かといって「モデルが同梱されているか」で代用すると、**残作業ゼロでも毎回セッションを
-    /// 起こす**ことになり、8.5 万件の候補列挙・`sessionActive` による電源/回線ポリシーの無効化・
-    /// ロック画面のインジケータまで無意味に走る（レビュー指摘）。観測できた値を持ち越す。
-    /// ⚠️ **nil（未観測）と 0（残り無し）を区別する**（レビュー指摘）。`integer(forKey:)` は
-    /// キーが無いときも 0 を返すので、それで判断すると「一度も観測していない端末」＝
-    /// 「残っていない」になり、直そうとした不具合（顔だけ残った中断が再開されない）が戻る。
-    private static var lastKnownFaceRemaining: Int? {
-        get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisFaceRemaining) as? Int }
-        set {
-            // nil＝「もう分からない」（顔パイプラインの版上げ・ピープルのリセット）。
-            // 握り潰すと古い 0 が残り、全再スキャンが必要なのに「残り無し」と読まれる（レビュー指摘）。
-            guard let newValue else {
-                UserDefaults.standard.removeObject(forKey: AppSettingsKeys.analysisFaceRemaining)
-                return
-            }
-            UserDefaults.standard.set(max(0, newValue), forKey: AppSettingsKeys.analysisFaceRemaining)
-        }
-    }
-
     private static func markPending(_ pending: Bool) {
         let defaults = UserDefaults.standard
         defaults.set(pending, forKey: AppSettingsKeys.analysisSessionPending)
@@ -293,16 +263,12 @@ final class AnalysisSession {
         }
         let progress = await engine.analysisProgress()
         let pending = max(0, progress.total - progress.sceneTagged) + max(0, progress.total - progress.embedded)
-        // 顔の残りは**前回観測した値**で判断する（`people.remaining` は新しいプロセスでは 0 で、
-        // 「残っていない」と「分からない」の区別が付かない）。一度も観測していない端末では
-        // 「分からない」＝再開してセッション自身に終わりを判定させる。
-        // 未観測（nil）は「分からない」＝再開してセッション自身に終わりを判定させる。
-        let faceBacklog = people.isFaceModelAvailable ? (Self.lastKnownFaceRemaining ?? .max) : 0
-        guard pending > 0 || faceBacklog > 0 else {
-            Diagnostics.mark("analyze: nothing left — clearing pending session")
-            Self.markPending(false)
-            return
-        }
+        // ⚠️ 「まだ残っているか」を**ここで推測しない**（レビュー 5 周ぶんの結論）。ライブの
+        // カウンタも、それを 2 秒ごとに写した値も、「まだ始まっていない」「途中で畳んだ」
+        // 「本当に終わった」を区別できず、直すたびに別の穴が開いた。**印が立っているなら
+        // 再開し、終わりの判定はセッション自身が台帳に聞いて決める**（`pendingScanCount`）。
+        // 残作業が無ければ数秒で `.finished` になって印が下りる＝空振りは 1 回で収束する。
+        Diagnostics.mark("analyze: resume check — tags/embeds pending=\(pending)")
         // ⚠️ ここまでに **DB カウントで待っている**（全件）。その間に利用者が画面を戻ると、
         // `onDisappear` → `screenLeft()` が先に走り、閉じた画面のために前面のみモードの
         // セッションが立ち上がる＝誰も止められない（レビュー指摘）。直前にもう一度見る。
@@ -394,6 +360,7 @@ final class AnalysisSession {
                                             knownGone: candidates.excludedBackupCopies)
             guard !Task.isCancelled else { return }
             people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
+            faceCandidates = candidates.ordered   // 終わりの確定で台帳に聞くときに使う
         }
         faceScanStarted = true
         scheduleFillIfIdle()
@@ -412,14 +379,6 @@ final class AnalysisSession {
             }
             let faces = people.isScanning ? people.remaining : 0
             // 観測できた残りを持ち越す（プロセスが死んでも次の起動で判断できる）。
-            // ⚠️ **スキャンが終わった＝残り 0 ではない**（レビュー指摘）。顔スキャンは
-            // クラウドのサムネ未取得や譲り待ちで**残作業を抱えたまま畳む**ので、そこで 0 を
-            // 書くと次の起動で「もう無い」と誤判定する。0 を書くのは本当に終わったとき
-            // （`stop(.finished)`）だけにする。
-            if people.isScanning {
-                if people.remaining > 0 { Self.lastKnownFaceRemaining = people.remaining }
-                else { observedFaceDrained = true }   // 走っていて残り 0＝本当に捌けた
-            }
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }
@@ -438,11 +397,27 @@ final class AnalysisSession {
             let faceSettled = !people.isFaceModelAvailable || (faceScanStarted && !people.isScanning)
             if AnalysisSessionPolicy.isFinished(remaining: rem, tagging: engine.isTagging,
                                                 scanning: people.isScanning, faceScanSettled: faceSettled) {
-                stop(.finished); return
+                // ⚠️ ここまではライブの値の話で、**顔スキャンが早期に畳んだ場合も同じ形**になる
+                // （クラウドのサムネ未取得・譲り待ち・回線 NG）。終わりを確定する前に
+                // **台帳へ実際の残りを聞く**（`pendingScanCount`）。残っていれば「終わった」に
+                // せず、やり残しの印を残して降りる＝次の機会に続きから進む。
+                let faceBacklog = people.isFaceModelAvailable && !faceCandidates.isEmpty
+                    ? await people.pendingScanCount(candidateRefKeys: faceCandidates)
+                    : 0
+                guard !Task.isCancelled, isActive else { return }
+                if faceBacklog == 0 {
+                    stop(.finished)
+                } else {
+                    Diagnostics.mark("analyze: face backlog remains (\(faceBacklog)) — leaving it for the next run")
+                    stop(.expired)
+                }
+                return
             }
         }
     }
 
+    /// 顔スキャンの候補（終わりを確定するとき、台帳に実数を聞くために持つ）。
+    @ObservationIgnored private var faceCandidates: [String] = []
     @ObservationIgnored private var tagsPending = 0
     @ObservationIgnored private var embedPending = 0
 

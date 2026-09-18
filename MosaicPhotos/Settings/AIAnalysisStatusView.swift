@@ -390,9 +390,12 @@ struct AIAnalysisStatusView: View {
         refreshInFlight = true
         defer { refreshInFlight = false }
         await refresh(reuseCandidatesWithin: seconds)
-        while refreshRequested, !Task.isCancelled {
+        // 実行中に来た要求は **1 回だけ**拾い直す（ループにすると、4 秒より長くかかる環境で
+        // 拾い直しが終わらず数え直しが連続する＝顔スキャンと競合する・レビュー指摘）。
+        // 拾い直しでは候補の列挙を使い回す（8.5 万件を 2 度舐めない）。
+        if refreshRequested, !Task.isCancelled {
             refreshRequested = false
-            await refresh(reuseCandidatesWithin: seconds)
+            await refresh(reuseCandidatesWithin: max(seconds, 60))
         }
     }
 
