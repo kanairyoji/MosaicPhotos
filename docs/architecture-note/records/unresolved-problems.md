@@ -76,3 +76,63 @@
 **あわせて分かった既存の非対称**: 電池 20% 未満でも「今すぐ解析」の**手動タップは始まってしまい**、
 `runLoop` が約 2 秒後に電池で止める＝インジケータが一瞬光る。自動再開側は手前で断つように
 したが、手動側は素通り。押した人の意図を尊重するか、押す前に断って理由を出すかは設計判断。
+
+## ADR-195 のレビューが出した 10 件（2026-09-18 23:00・次回の出発点）
+`392e627` までを対象にレビューを 1 周回した結果。**今夜は修正しない**——上の 3 件と同じ理由
+（レビューを受けられない時刻に未検証の変更を入れない）。重い順。★＝コードを読んで確認済み、
+☆＝レビュワーの指摘のまま（未検証）。
+
+1. **★（高）前面で一枚岩が動くようになってしまった（ADR-107 の退行）** —
+   `AutoAlbumEngine.refreshIfNeeded` は `refinePlaceNames` を
+   `monolithicHeavyWorkAllowed` の**外**で呼ぶ（AutoAlbumEngine.swift:350）。その中で地名が
+   変わると `await generate()` を呼ぶ（同:404）。控えめ軸があった頃は前面で
+   `heavyWorkAllowed` が偽だったので到達しなかったが、ADR-195 で前面アイドルでも真になる。
+   HomeView の定期ティックは `!isAppInBackground` だけのゲートなので、充電＋20 秒放置で
+   86k 件の台帳読み＋譲れない generate が前面で走る＝diagnostics-46 の固まりが戻る。
+   → `refinePlaceNames` ごと `monolithicHeavyWorkAllowed` の内側へ移すのが素直。
+2. **★（中）`.launch` / `.foreground` の起こしは production では必ず空振り** —
+   `stopForForeground()` が `noteUserInteraction()` を呼ぶ（ADR-79・意図的）ので、
+   `.active` 直後の `idleSeconds` は 0。`heavyWorkAllowedLocal` は 20 秒アイドルを要求するため
+   `kick(.foreground)` は常に `.notAllowed`。`.launch` も `lastInteractionAt` が起動時刻なので同じ。
+   **前面の生きた契機はアイドルティックだけ**で、2 つの契機は誤解を招くログを 1 行出すだけ。
+   さらに通知バナー等の `.inactive`→`.active` のたびに `stopForForeground` が
+   駆動役の前面作業を止め、再開まで「20 秒アイドル かつ 前回の kick から 120 秒」＝最大 2 分空く。
+3. **☆（中）`.boostEnded` が両トリクルに対して no-op** — `stop()` が直前に
+   `engine.stopBackgroundWork()` / `people.stopScan()` を呼ぶが `isTagging` / `isRunning` は
+   実行中の 1 単位が解けるまで下りない。直後の `kick` は
+   `bgfill: skip — already tagging/embedding` と `tagger.scan skip — isRunning=true` で空振りし、
+   `lastKickAt` だけ立つ→次のアイドル起こしまで 120 秒死ぬ。
+   → 窓の先頭と同じ `restartBackgroundFill()`（世代ガードつき）を使う／少し待ってから起こす。
+4. **☆（中）`.lowBattery` で止めた直後に方針が同じ処理を再開する** — 電源ポリシー「常に」だと
+   `backgroundAllowed()` が無条件に真で、電池の下限は `runLoop` の中にしか無い。
+   「電池のため止めた」と表示しながら同じトリクルが 0% まで回り得る。
+   → 電池の下限を方針側（`heavyWorkAllowedLocal` か `PowerStateMonitor`）へ移す。
+5. **☆（中）`startScan` を通すゲートが、譲る側のゲートより緩い** — 入口は
+   `heavyWorkAllowedLocal` だが、トリクルが譲るのは `heavyShouldPause()`＝これに加えて
+   `HeavyLoad.isInFlight()` / `isGeneratingAlbums` / `isBrowsingPeople` を見る。起動直後の
+   一括ロード中にアイドル起こしが来ると、75k 行の `scannedRefKeys()` を読んでから
+   ゲート待ち→60 秒で 0 枚のまま畳む＝diagnostics-62/63 の「入口代だけ払う」形。
+   → 入口の判定を `!heavyShouldPause()` に揃える。
+6. **☆（中）残作業があるのに `.finished`（「すべて解析済みです」）と言い得る** —
+   ADR-194 の台帳照会を外したので、顔スキャンが譲り待ちで畳んだ・回線 NG でクラウドを
+   対象外にした場合も「終わった」と表示し `setTaskCompleted(success: true)` を返す。
+   コード中の「早めに `.finished` でも失うものは無い」は、方針が実際に続けられる場合だけ成り立つ。
+7. **☆（低）空振りでも `lastKickAt` を立てる／`kicking` 中の契機を捨てる** — ゲート待ちで
+   60 秒後に畳んだ直後に条件が開いても、次の評価は 120 秒後。候補列挙中に来た
+   `.power` / `.network` / `.boostEnded` は `guard !kicking` でログも残さず消える。
+8. **☆（低）毎回のアイドル起こしが規模比例の前口上を丸ごと繰り返す** — 残作業の有無を見ないので、
+   充電中に開きっぱなしだと 1 時間に約 30 回、`enrichedRefKeysNewestFirst()`（86k）と
+   `scannedRefKeys()`（75k）を読む。CLAUDE.md の「無いものを繰り返し探さない」に反する。
+   → 安い残作業カウントで門を作る／空振り後はバックオフし `.power` 等で解除。
+9. **☆（低）`RunTimeline` に 120 秒ごとの行を書いている** — この台帳は「1 日に数十行」の前提で
+   256KB を数か月ぶん保つ設計（diagnostics-81 の教訓）。実際に仕事をした起こしだけ記録する。
+10. **☆（低）ADR-119 の規模テストが無い** — `AnalysisDriverPolicyTests` は enum の判断しか見ない。
+    「空の残作業で N 回アイドル起こし → 全件 fetch は高々 1 回」を `PerfTrace.takeCounts()` で
+    数える回帰テストが要る。
+
+**あわせて掃除するもの**: 廃止した「控えめ」「4 軸」「60 秒アイドル」を指すコメントが
+`BackgroundYield.swift:74-76,109` / `MosaicPhotosApp.swift:15` / `TouchActivityTracker.swift:5` /
+`HeavyWorkScheduler.swift:13` / `AutoAlbumEngine.swift:333` に残る。
+`HeavyWorkTimingTests` のテスト名も「控えめ ON/OFF」のまま（本文は見ていない）。
+`AnalysisSession.runLoop` は駆動役と同じ候補列挙・prune・startScan を重複して持ち、
+駆動役の 10 分キャッシュを迂回している。
