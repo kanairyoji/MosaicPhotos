@@ -18,6 +18,11 @@ enum AppSettingsKeys {
     /// アプリを離れたときに解析を続けるか（`AnalysisContinuation` の rawValue・ADR-193）。
     /// 未設定＝0＝「続ける」（現行動作）。
     static let analysisContinuation = "analysis.continuation"
+    /// 中断された解析が「利用者が自分で押したもの」か（サブ画面への遷移で失わないため）。
+    static let analysisSessionWasManual = "analysis.sessionWasManual"
+    /// `.deferred`（やり残しを次回に回した）で終えた時刻。これから一定時間は自動再開しない
+    /// ——毎回の前面復帰でフルセッションが立ち上がり、インジケータが点滅するのを防ぐ。
+    static let analysisDeferredAt = "analysis.deferredAt"
     /// 解析セッション（ADR-182）が**まだ終わっていない**か。
     /// 「今すぐ解析」を押した時点で立て、全部終わったとき・利用者が止めたときだけ下ろす。
     /// ⚠️ セッションはメモリ上の存在で、ロック（iOS の既知の問題）・OS の期限切れ・

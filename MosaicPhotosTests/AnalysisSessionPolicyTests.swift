@@ -144,6 +144,22 @@ final class AnalysisContinuationPolicyTests: XCTestCase {
                                                                   statusScreenOpen: false))
     }
 
+    func testManualSessionResumesWithoutPowerWhileTheScreenIsOpen() {
+        // サブ画面（処理のタイミング）へ進んで戻ると onDisappear で止まる。押した本人が
+        // 画面を見ているなら、電池だけでも続きから再開してよい（レビュー指摘）。
+        XCTAssertTrue(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: false,
+                                                                  statusScreenOpen: true,
+                                                                  wasManual: true))
+        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.whileOpen, onPower: false,
+                                                                   statusScreenOpen: false,
+                                                                   wasManual: true),
+                       "画面を見ていないなら、手動でも勝手には走らせない")
+        XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.always, onPower: false,
+                                                                   statusScreenOpen: false,
+                                                                   wasManual: false),
+                       "自動再開は従来どおり電源が要る")
+    }
+
     func testWithoutAContinuedTaskResumeNeedsTheScreenOpen() {
         XCTAssertFalse(AnalysisContinuationPolicy.allowsAutoResume(.manualOnly, onPower: true,
                                                                    statusScreenOpen: false),

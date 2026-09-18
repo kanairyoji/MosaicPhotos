@@ -45,9 +45,14 @@ enum AnalysisContinuationPolicy {
     ///   （電池 20% 未満での自動停止という安全弁は別に効いている）。
     /// - 継続タスクを使わない段（`manualOnly` の自動再開・`whileOpen`）は、**AI 解析の状況を
     ///   開いているときだけ**。見ていない前面で重い処理を走らせない（ADR-25）。
+    /// - Parameter wasManual: その中断が「利用者が自分で押したセッション」のものか。
+    ///   押した本人が**いまこの画面を見ている**なら、電源は要求しない——この画面から
+    ///   「処理のタイミング」へ進んで戻っただけで解析が永久に失われるのを防ぐ（レビュー指摘）。
     static func allowsAutoResume(_ level: AnalysisContinuation,
                                  onPower: Bool,
-                                 statusScreenOpen: Bool) -> Bool {
+                                 statusScreenOpen: Bool,
+                                 wasManual: Bool = false) -> Bool {
+        if wasManual, statusScreenOpen { return true }
         guard onPower else { return false }
         return requestsContinuedTask(level, autoResume: true) ? true : statusScreenOpen
     }

@@ -29,8 +29,10 @@ struct AIAnalysisStatusView: View {
 
     /// 数え直しを重ねないための札（Section ごとに配られる `.task` の仕事を畳む）。
     @State private var refreshInFlight = false
-    /// 実行中に来た要求。**捨てずに 1 回だけ拾い直す**（捨てると完了直後の更新が消える）。
+    /// 実行中に来た要求。**捨てずに拾い直す**（捨てると完了直後の更新が消える）。
     @State private var refreshRequested = false
+    /// 拾い直しの中に「候補を数え直してほしい」要求（`reuseCandidatesWithin: 0`）が混じっていたか。
+    @State private var refreshRequestedFresh = false
 
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
     /// 顔スキャン: 候補（スクリーンショット除外・端末＋クラウド）のうち済んだ枚数と候補総数。
@@ -388,19 +390,24 @@ struct AIAnalysisStatusView: View {
     /// 最中に解析が終わったときの `.onChange` が消え、ポーリングも
     /// 「解析中でなければ数え直さない」ので、**終わった瞬間の数字が止まったまま**になる。
     private func refreshOnce(reuseCandidatesWithin seconds: TimeInterval = 0) async {
-        if refreshInFlight { refreshRequested = true; return }
+        if refreshInFlight {
+            refreshRequested = true
+            if seconds == 0 { refreshRequestedFresh = true }   // 明示の「新鮮に」を握り潰さない
+            return
+        }
         refreshInFlight = true
         defer { refreshInFlight = false }
         await refresh(reuseCandidatesWithin: seconds)
-        // 実行中に来た要求は拾い直すが、**上限つき**にする（レビュー指摘）。無制限だと 1 回が
-        // 4 秒より長い環境で数え直しが連続し、報告対象の顔スキャンと競合する。1 回だけだと、
-        // 拾い直しの最中に来た要求が旗を立てたまま捨てられ、完了直後の数字が凍る。
-        // 抜けるときは**必ず旗を下ろす**（次回に幽霊の再実行を残さない）。
-        for _ in 0..<2 where refreshRequested && !Task.isCancelled {
+        // 実行中に来た要求は**最後まで拾う**（上限で切ると、切った先の要求が捨てられて
+        // 完了直後の数字が凍る・レビュー指摘）。暴走しないのは、拾い直しでは候補の列挙を
+        // 使い回す＝1 回が軽いため（4 秒ポーリングに追い越されて終わらなくなることが無い）。
+        // ただし明示的に「新鮮に」と言われた要求（onChange）はその通り数え直す。
+        while refreshRequested, !Task.isCancelled {
             refreshRequested = false
-            await refresh(reuseCandidatesWithin: max(seconds, 60))
+            let fresh = refreshRequestedFresh
+            refreshRequestedFresh = false
+            await refresh(reuseCandidatesWithin: fresh ? 0 : 60)
         }
-        refreshRequested = false
     }
 
     private func refresh(reuseCandidatesWithin: TimeInterval = 0) async {

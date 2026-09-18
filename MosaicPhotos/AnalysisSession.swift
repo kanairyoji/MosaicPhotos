@@ -122,7 +122,10 @@ final class AnalysisSession {
         // ロック（iOS の既知の問題）・OS の期限切れ・プロセス終了で消える。印が残っていれば
         // 次の前面復帰で自動再開でき、「夜に押したのに朝まで何も進んでいない」を防げる。
         Self.markPending(true)
-        UserDefaults.standard.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
+        // 手動で始めたセッションは、サブ画面へ進んで戻っても（電源なしでも）再開してよい。
+        if !autoResume { defaults.set(true, forKey: AppSettingsKeys.analysisSessionWasManual) }
         state = .running(mode)
         applyModeGates()
         UIDevice.current.isBatteryMonitoringEnabled = true
@@ -230,12 +233,22 @@ final class AnalysisSession {
         return UserDefaults.standard.string(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
     }
 
+    /// `.deferred` のあと、これだけの間は自動再開しない。
+    private static let deferredCooldown: TimeInterval = 30 * 60
+
+    private static var deferredAt: Date? {
+        let raw = UserDefaults.standard.double(forKey: AppSettingsKeys.analysisDeferredAt)
+        return raw > 0 ? Date(timeIntervalSinceReferenceDate: raw) : nil
+    }
+
     private static func markPending(_ pending: Bool) {
         let defaults = UserDefaults.standard
         defaults.set(pending, forKey: AppSettingsKeys.analysisSessionPending)
         if !pending {
             defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
             defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedAt)
+            defaults.removeObject(forKey: AppSettingsKeys.analysisSessionWasManual)
+            defaults.removeObject(forKey: AppSettingsKeys.analysisDeferredAt)
         }
     }
 
@@ -256,9 +269,18 @@ final class AnalysisSession {
         // 自動再開は**電源接続が必須**（ADR-193）。外出先でアプリを開いただけで走り出し、
         // 電池を食う／インジケータが出るのを防ぐ。手動で押したときは従来どおり免除。
         let level = AnalysisContinuation.current
+        let wasManual = UserDefaults.standard.bool(forKey: AppSettingsKeys.analysisSessionWasManual)
+        // ⚠️ `.deferred`（やり残しを次回へ回した）直後は**しばらく再開しない**（レビュー指摘）。
+        // 回線待ちやサムネ未到着で残りが減らない状況では、前面に戻るたびにフルセッションが立ち、
+        // 既定モードではロック画面のインジケータが毎回点滅する。
+        if let deferredAt = Self.deferredAt, Date().timeIntervalSince(deferredAt) < Self.deferredCooldown {
+            Diagnostics.mark("analyze: auto-resume skipped — cooling down after a deferred run")
+            return
+        }
         guard AnalysisContinuationPolicy.allowsAutoResume(level,
                                                           onPower: PowerStateMonitor.shared.isOnPower,
-                                                          statusScreenOpen: statusScreenOpen) else {
+                                                          statusScreenOpen: statusScreenOpen,
+                                                          wasManual: wasManual) else {
             Diagnostics.mark("analyze: auto-resume skipped — "
                              + "power=\(PowerStateMonitor.shared.isOnPower) "
                              + "screen=\(statusScreenOpen) continuation=\(level)")
@@ -271,16 +293,6 @@ final class AnalysisSession {
         // 「本当に終わった」を区別できず、直すたびに別の穴が開いた。**印が立っているなら
         // 再開し、終わりの判定はセッション自身が台帳に聞いて決める**（`pendingScanCount`）。
         // 残作業が無ければ数秒で `.finished` になって印が下りる＝空振りは 1 回で収束する。
-        // ⚠️ ここまでに **DB カウントで待っている**（全件）。その間に利用者が画面を戻ると、
-        // `onDisappear` → `screenLeft()` が先に走り、閉じた画面のために前面のみモードの
-        // セッションが立ち上がる＝誰も止められない（レビュー指摘）。直前にもう一度見る。
-        guard !Task.isCancelled,
-              AnalysisContinuationPolicy.allowsAutoResume(level,
-                                                          onPower: PowerStateMonitor.shared.isOnPower,
-                                                          statusScreenOpen: statusScreenVisible) else {
-            Diagnostics.mark("analyze: auto-resume aborted — the screen closed while counting")
-            return
-        }
         Diagnostics.mark("analyze: auto-resuming")
         start(autoResume: true)
         didAutoResume = isActive    // start() が false に戻すので、その後に立てる
@@ -411,6 +423,8 @@ final class AnalysisSession {
                     // 画面に出すうえ、`setTaskCompleted(success: false)` を繰り返して OS の
                     // 受け入れを悪くする。回線待ちなどで**次の機会に回しただけ**の終わり方。
                     Diagnostics.mark("analyze: face backlog remains (\(faceBacklog)) — deferring")
+                    UserDefaults.standard.set(Date().timeIntervalSinceReferenceDate,
+                                              forKey: AppSettingsKeys.analysisDeferredAt)
                     stop(.deferred)
                 }
                 return
