@@ -125,7 +125,11 @@ final class AnalysisSession {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: AppSettingsKeys.analysisSessionInterruptedReason)
         // 手動で始めたセッションは、サブ画面へ進んで戻っても（電源なしでも）再開してよい。
-        if !autoResume { defaults.set(true, forKey: AppSettingsKeys.analysisSessionWasManual) }
+        if !autoResume {
+            defaults.set(true, forKey: AppSettingsKeys.analysisSessionWasManual)
+            // 明示操作はクールダウンを解除する（押したのに 30 分待たされない）。
+            defaults.removeObject(forKey: AppSettingsKeys.analysisDeferredAt)
+        }
         state = .running(mode)
         applyModeGates()
         UIDevice.current.isBatteryMonitoringEnabled = true
@@ -270,10 +274,21 @@ final class AnalysisSession {
         // 電池を食う／インジケータが出るのを防ぐ。手動で押したときは従来どおり免除。
         let level = AnalysisContinuation.current
         let wasManual = UserDefaults.standard.bool(forKey: AppSettingsKeys.analysisSessionWasManual)
-        // ⚠️ `.deferred`（やり残しを次回へ回した）直後は**しばらく再開しない**（レビュー指摘）。
-        // 回線待ちやサムネ未到着で残りが減らない状況では、前面に戻るたびにフルセッションが立ち、
+        // ⚠️ **電池切れは全経路で止める**（レビュー指摘）。下の「手動なら電源を免除」を通すと、
+        // 電池 20% 未満でもセッションが立ち上がり、`runLoop` が 2 秒後に電池で止める——
+        // 開いては消えるインジケータの点滅になる。免除する前にここで断つ。
+        if AnalysisSessionPolicy.shouldStopForBattery(onPower: PowerStateMonitor.shared.isOnPower,
+                                                     level: UIDevice.current.batteryLevel) {
+            Diagnostics.mark("analyze: auto-resume skipped — battery low and not charging")
+            return
+        }
+        // ⚠️ `.deferred`（やり残しを次回へ回した）直後は**しばらく再開しない**。回線待ちや
+        // サムネ未到着で残りが減らない状況では、前面に戻るたびにフルセッションが立ち、
         // 既定モードではロック画面のインジケータが毎回点滅する。
-        if let deferredAt = Self.deferredAt, Date().timeIntervalSince(deferredAt) < Self.deferredCooldown {
+        // ただし**押した本人が画面を見ているとき**はクールダウンを適用しない（レビュー指摘）
+        // ——手動の作業が最大 30 分、何の説明も無く失われるため。
+        if !(wasManual && statusScreenOpen),
+           let deferredAt = Self.deferredAt, Date().timeIntervalSince(deferredAt) < Self.deferredCooldown {
             Diagnostics.mark("analyze: auto-resume skipped — cooling down after a deferred run")
             return
         }

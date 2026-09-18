@@ -402,11 +402,18 @@ struct AIAnalysisStatusView: View {
         // 完了直後の数字が凍る・レビュー指摘）。暴走しないのは、拾い直しでは候補の列挙を
         // 使い回す＝1 回が軽いため（4 秒ポーリングに追い越されて終わらなくなることが無い）。
         // ただし明示的に「新鮮に」と言われた要求（onChange）はその通り数え直す。
+        // 抜けるときは**必ず旗を下ろす**（キャンセルで抜けた分を次回に持ち越さない・レビュー指摘）。
+        defer { refreshRequested = false; refreshRequestedFresh = false }
+        var lastWasFresh = (seconds == 0)
         while refreshRequested, !Task.isCancelled {
             refreshRequested = false
-            let fresh = refreshRequestedFresh
+            let wantsFresh = refreshRequestedFresh
             refreshRequestedFresh = false
-            await refresh(reuseCandidatesWithin: fresh ? 0 : 60)
+            // ⚠️ 直前が「新鮮な列挙」だったなら、続けてもう一度 8.5 万件を舐めない（レビュー指摘）。
+            // 開いた瞬間は Section ごとに要求が 7 本来るので、素直に従うと二重の全列挙になる。
+            let useFresh = wantsFresh && !lastWasFresh
+            lastWasFresh = useFresh
+            await refresh(reuseCandidatesWithin: useFresh ? 0 : 60)
         }
     }
 

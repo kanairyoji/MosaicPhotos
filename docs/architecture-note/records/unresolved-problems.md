@@ -29,6 +29,12 @@
   swift-testing のテストバンドル側で、失敗したテスト名は出ていない。
 - 疑い: 並列実行下でのハーネスのクラッシュか、テスト内の競合（BackupKit は偽 Dropbox サーバと
   背景アップロードの並行テストを多く持つ）。後者なら**本番コードの競合を映している**可能性がある。
-- 次に見るとき: 落ちたら `.build/` の `*.xctest` のクラッシュログ（~/Library/Logs/DiagnosticReports）を
-  拾う。`swift test --parallel` の有無で再現性が変わるかも見る。頻度が上がるようなら
+- 追記（同日 22:05）: **2 度目が別パッケージ（FaceCore）で発生**。どちらも
+  `scripts/test.sh all`（複数パッケージを続けて回す）の最中で、単体での再実行は通る
+  （FaceCore 247 テスト・BackupKit 281 テスト）。パッケージ固有ではなく、
+  **並列実行下のハーネスか、テストが共有する何か**（一時ディレクトリ・インメモリ SwiftData の
+  同時生成など）を疑う段階。2 時間で 2 回＝無視できない頻度。
+- 次に見るとき: 落ちたら `~/Library/Logs/DiagnosticReports` の `*PackageTests*.ips` を拾い、
+  クラッシュしたスレッドのフレームを見る（どのテストか特定できる）。
+  `swift test --parallel` の有無で再現性が変わるかも見る。頻度が上がるようなら
   `-sanitize=thread` で回す。
