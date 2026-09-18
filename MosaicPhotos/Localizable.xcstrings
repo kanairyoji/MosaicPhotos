@@ -3514,6 +3514,16 @@
         }
       }
     },
+    "Some photos (cloud photos waiting for Wi‑Fi) are left for the next run. They continue automatically.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部（Wi‑Fi 待ちのクラウド写真など）は次の機会に回しました。自動で続きます。"
+          }
+        }
+      }
+    },
     "Sources": {
       "localizations": {
         "ja": {

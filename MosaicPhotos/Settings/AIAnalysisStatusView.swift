@@ -339,6 +339,8 @@ struct AIAnalysisStatusView: View {
         case .finished: return L("Everything is analyzed.")
         case .expired: return L("iOS stopped the analysis. Tap Analyze Now to continue from where it left off.")
         case .lowBattery: return L("Stopped because the battery is low. Plug in and tap Analyze Now to continue.")
+        case .deferred:
+            return L("Some photos (cloud photos waiting for Wi‑Fi) are left for the next run. They continue automatically.")
         case .user, .leftScreen: return nil
         }
     }
@@ -390,13 +392,15 @@ struct AIAnalysisStatusView: View {
         refreshInFlight = true
         defer { refreshInFlight = false }
         await refresh(reuseCandidatesWithin: seconds)
-        // 実行中に来た要求は **1 回だけ**拾い直す（ループにすると、4 秒より長くかかる環境で
-        // 拾い直しが終わらず数え直しが連続する＝顔スキャンと競合する・レビュー指摘）。
-        // 拾い直しでは候補の列挙を使い回す（8.5 万件を 2 度舐めない）。
-        if refreshRequested, !Task.isCancelled {
+        // 実行中に来た要求は拾い直すが、**上限つき**にする（レビュー指摘）。無制限だと 1 回が
+        // 4 秒より長い環境で数え直しが連続し、報告対象の顔スキャンと競合する。1 回だけだと、
+        // 拾い直しの最中に来た要求が旗を立てたまま捨てられ、完了直後の数字が凍る。
+        // 抜けるときは**必ず旗を下ろす**（次回に幽霊の再実行を残さない）。
+        for _ in 0..<2 where refreshRequested && !Task.isCancelled {
             refreshRequested = false
             await refresh(reuseCandidatesWithin: max(seconds, 60))
         }
+        refreshRequested = false
     }
 
     private func refresh(reuseCandidatesWithin: TimeInterval = 0) async {

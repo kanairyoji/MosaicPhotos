@@ -40,7 +40,7 @@ enum AnalysisSessionPolicy {
     static func keepsPendingFlag(_ reason: AnalysisSession.StopReason) -> Bool {
         switch reason {
         case .finished, .user:            return false
-        case .expired, .lowBattery, .leftScreen: return true
+        case .expired, .lowBattery, .leftScreen, .deferred: return true
         }
     }
 

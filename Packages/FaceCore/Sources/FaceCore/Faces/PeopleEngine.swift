@@ -48,6 +48,11 @@ public final class PeopleEngine {
     @ObservationIgnored private var scanGeneration = 0
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
     @ObservationIgnored private var lastCandidates: [String] = []
+
+    /// 直近のスキャンが対象にした候補（読み取り専用）。
+    /// 呼び出し側が「同じ候補集合に対する残り」を台帳へ聞くために使う——
+    /// 8.5 万件の列挙をもう一度やらずに済む（ADR-194）。
+    public var scanCandidates: [String] { lastCandidates }
     @ObservationIgnored private var lastAllowSimulator = false
     /// `setNeedsPeopleReload()` のデバウンス用。連続要求は最後の 1 回だけ生き残る（ADR-95）。
     @ObservationIgnored private var reloadTask: Task<Void, Never>?

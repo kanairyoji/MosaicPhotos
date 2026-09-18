@@ -48,6 +48,12 @@ final class AnalysisSessionPendingFlagTests: XCTestCase {
         XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.leftScreen), "画面離脱＝やり残し")
     }
 
+    func testDeferredKeepsTheFlagButIsNotAFailure() {
+        // 回線待ちでクラウド分を次回に回した終わり方。印は残す（続きがある）が、
+        // OS に「失敗」と報告する類のものではない（レビュー指摘）。
+        XCTAssertTrue(AnalysisSessionPolicy.keepsPendingFlag(.deferred))
+    }
+
     func testCompletionAndUserStopClearIt() {
         XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.finished), "全部終わったら再開しない")
         XCTAssertFalse(AnalysisSessionPolicy.keepsPendingFlag(.user), "利用者が止めたら再開しない")

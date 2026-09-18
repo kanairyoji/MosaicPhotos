@@ -46,6 +46,8 @@ final class AnalysisSession {
         case expired         // OS が止めた（熱・資源）
         case lowBattery      // 電源なしで電池が下限
         case leftScreen      // 前面のみモードで画面を離れた
+        /// 回線待ちなどで**一部を次の機会に回した**（OS に止められたわけではない）。
+        case deferred
     }
 
     enum State: Equatable {
@@ -155,7 +157,8 @@ final class AnalysisSession {
         RunTimeline.noteState("session", active: false)
         if let task {
             // 期限切れでも完了でも、必ず 1 回だけ呼ぶ（呼ばないと OS が次を受けなくなる）。
-            task.setTaskCompleted(success: reason == .finished)
+            // `.deferred` は失敗ではない（やり残しを次の機会に回しただけ）。
+            task.setTaskCompleted(success: reason == .finished || reason == .deferred)
             self.task = nil
         }
     }
@@ -261,14 +264,13 @@ final class AnalysisSession {
                              + "screen=\(statusScreenOpen) continuation=\(level)")
             return
         }
-        let progress = await engine.analysisProgress()
-        let pending = max(0, progress.total - progress.sceneTagged) + max(0, progress.total - progress.embedded)
+        // ⚠️ ここで全件カウント（`analysisProgress`）を取らない（レビュー指摘）。判断に使わない
+        // 値のために 8.5 万件の集計を毎回の前面復帰で払うのは、ADR-119 が禁じている形そのもの。
         // ⚠️ 「まだ残っているか」を**ここで推測しない**（レビュー 5 周ぶんの結論）。ライブの
         // カウンタも、それを 2 秒ごとに写した値も、「まだ始まっていない」「途中で畳んだ」
         // 「本当に終わった」を区別できず、直すたびに別の穴が開いた。**印が立っているなら
         // 再開し、終わりの判定はセッション自身が台帳に聞いて決める**（`pendingScanCount`）。
         // 残作業が無ければ数秒で `.finished` になって印が下りる＝空振りは 1 回で収束する。
-        Diagnostics.mark("analyze: resume check — tags/embeds pending=\(pending)")
         // ⚠️ ここまでに **DB カウントで待っている**（全件）。その間に利用者が画面を戻ると、
         // `onDisappear` → `screenLeft()` が先に走り、閉じた画面のために前面のみモードの
         // セッションが立ち上がる＝誰も止められない（レビュー指摘）。直前にもう一度見る。
@@ -279,7 +281,7 @@ final class AnalysisSession {
             Diagnostics.mark("analyze: auto-resume aborted — the screen closed while counting")
             return
         }
-        Diagnostics.mark("analyze: auto-resuming (pending=\(pending))")
+        Diagnostics.mark("analyze: auto-resuming")
         start(autoResume: true)
         didAutoResume = isActive    // start() が false に戻すので、その後に立てる
     }
@@ -360,7 +362,6 @@ final class AnalysisSession {
                                             knownGone: candidates.excludedBackupCopies)
             guard !Task.isCancelled else { return }
             people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
-            faceCandidates = candidates.ordered   // 終わりの確定で台帳に聞くときに使う
         }
         faceScanStarted = true
         scheduleFillIfIdle()
@@ -401,23 +402,37 @@ final class AnalysisSession {
                 // （クラウドのサムネ未取得・譲り待ち・回線 NG）。終わりを確定する前に
                 // **台帳へ実際の残りを聞く**（`pendingScanCount`）。残っていれば「終わった」に
                 // せず、やり残しの印を残して降りる＝次の機会に続きから進む。
-                let faceBacklog = people.isFaceModelAvailable && !faceCandidates.isEmpty
-                    ? await people.pendingScanCount(candidateRefKeys: faceCandidates)
-                    : 0
+                let faceBacklog = await remainingFaceWork()
                 guard !Task.isCancelled, isActive else { return }
                 if faceBacklog == 0 {
                     stop(.finished)
                 } else {
-                    Diagnostics.mark("analyze: face backlog remains (\(faceBacklog)) — leaving it for the next run")
-                    stop(.expired)
+                    // ⚠️ `.expired`（＝OS に止められた）とは言わない（レビュー指摘）。嘘の理由を
+                    // 画面に出すうえ、`setTaskCompleted(success: false)` を繰り返して OS の
+                    // 受け入れを悪くする。回線待ちなどで**次の機会に回しただけ**の終わり方。
+                    Diagnostics.mark("analyze: face backlog remains (\(faceBacklog)) — deferring")
+                    stop(.deferred)
                 }
                 return
             }
         }
     }
 
-    /// 顔スキャンの候補（終わりを確定するとき、台帳に実数を聞くために持つ）。
-    @ObservationIgnored private var faceCandidates: [String] = []
+    /// 台帳に聞く「まだ顔スキャンが必要な枚数」。
+    ///
+    /// ⚠️ **タガーが実際に対象にする集合と揃える**（レビュー指摘）。`FaceTagger` は回線が
+    /// 許可されないときクラウド（"C-"）を今回の対象から外すので、全件で数えると
+    /// 「いつまでも残っている」ことになり、セッションが終われず**毎回再開し続ける**。
+    /// 候補は走っているスキャン自身が持っているものを使う（8.5 万件を数え直さない）。
+    private func remainingFaceWork() async -> Int {
+        guard people.isFaceModelAvailable else { return 0 }
+        let candidates = people.scanCandidates
+        guard !candidates.isEmpty else { return 0 }
+        let keys = NetworkStateMonitor.shared.networkAllowed()
+            ? candidates
+            : candidates.filter { $0.hasPrefix("L-") }
+        return await people.pendingScanCount(candidateRefKeys: keys)
+    }
     @ObservationIgnored private var tagsPending = 0
     @ObservationIgnored private var embedPending = 0
 

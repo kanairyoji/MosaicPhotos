@@ -79,9 +79,17 @@
 - 結果: 空振りのセッションは「起きて数秒で終わり、印が下りる」1 回で自然に収束する
   （毎回起きることはない）。判定に使う値が**権威ある 1 つ**になり、観測窓の罠が消えた。
   ⚠️ 代償: 終わりの確定で 1 回だけ DB クエリが増える（候補集合に対する count・セッション終了時のみ）。
-- 関連: `AnalysisSession.runLoop`（`pendingScanCount` による確定）/ `resumeIfPending` /
-  `PeopleEngine.pendingScanCount` / ADR-189 / ADR-119（規模に比例する呼び出し）/
-  case-studies「レビューループが拾った…」。
+- 追記（同日・レビュー 7 周目の指摘）: 台帳に聞くときは **`FaceTagger` が実際に対象にする
+  集合と揃える**。タガーは回線が許可されないときクラウド（"C-"）を今回の対象から外すので、
+  全候補で数えると「いつまでも残っている」ことになり、セッションが終われず
+  **前面に戻るたび再開し続ける**（8.5 万件の列挙つき）。候補は走っているスキャン自身が
+  持っているもの（`PeopleEngine.scanCandidates`）を使う——数え直さない。
+  あわせて、やり残しを次回に回した終わり方には専用の理由 `.deferred` を設けた
+  （`.expired` を流用すると「iOS に止められた」と嘘の説明を画面に出し、
+  `setTaskCompleted(success: false)` を繰り返して OS の受け入れを悪くする）。
+- 関連: `AnalysisSession.runLoop`（`remainingFaceWork` による確定）/ `resumeIfPending` /
+  `PeopleEngine.pendingScanCount` / `PeopleEngine.scanCandidates` / `FaceTagger`（回線での絞り込み）/
+  ADR-189 / ADR-119（規模に比例する呼び出し）/ case-studies「レビューループが拾った…」。
 
 ## ADR-193 「アプリを離れたときの解析」を 1 本の軸で選べるようにする（継続タスクを使う場面）
 - 状態: 採用（ADR-182/189/191 の追補）
