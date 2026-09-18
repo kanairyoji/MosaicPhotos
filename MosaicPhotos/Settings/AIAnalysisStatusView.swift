@@ -27,9 +27,10 @@ struct AIAnalysisStatusView: View {
     @AppStorage(AppSettingsKeys.analysisContinuation) private var continuationRaw = AnalysisContinuation.default.rawValue
     @AppStorage(AppSettingsKeys.analysisSessionPending) private var sessionPending = false
 
-    /// 数え直しが重ならないようにする札（Section ごとに配られる `.task` を 1 本へ畳む）。
+    /// 数え直しを重ねないための札（Section ごとに配られる `.task` の仕事を畳む）。
     @State private var refreshInFlight = false
-    @State private var pollingStarted = false
+    /// 実行中に来た要求。**捨てずに 1 回だけ拾い直す**（捨てると完了直後の更新が消える）。
+    @State private var refreshRequested = false
 
     @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
     /// 顔スキャン: 候補（スクリーンショット除外・端末＋クラウド）のうち済んだ枚数と候補総数。
@@ -64,10 +65,10 @@ struct AIAnalysisStatusView: View {
         .task { await refreshOnce() }
         // 解析中は数秒おきに数え直す（実フィードバック: 「今すぐ解析」で進んでいるのに数字が動かない）。
         // 候補の列挙（8.5 万件）は 1 分に 1 回で足りるので、数え直しはカウントだけにする。
+        // ⚠️ 「1 本だけ回す」札は使わない（レビュー指摘）。札を持つ Section が
+        //    スクロールで消えるとループごと死に、**見えている間だけ数字が凍る**。
+        //    7 本走らせたまま、下の `refreshOnce` で**仕事の方を畳む**。
         .task {
-            guard !pollingStarted else { return }   // 1 本だけ回す
-            pollingStarted = true
-            defer { pollingStarted = false }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(4))
                 guard !Task.isCancelled, isAnalyzing || session.isActive else { continue }
@@ -380,11 +381,19 @@ struct AIAnalysisStatusView: View {
 
     /// - Parameter reuseCandidatesWithin: この秒数以内に列挙した候補があれば使い回す（定期の数え直し用）。
     /// `refresh` を**同時に 1 本だけ**にする包み（重い列挙を 7 本走らせない）。
+    ///
+    /// ⚠️ 実行中に来た要求は**捨てずに畳む**（レビュー指摘）。捨てると、初回の列挙（数秒）の
+    /// 最中に解析が終わったときの `.onChange` が消え、ポーリングも
+    /// 「解析中でなければ数え直さない」ので、**終わった瞬間の数字が止まったまま**になる。
     private func refreshOnce(reuseCandidatesWithin seconds: TimeInterval = 0) async {
-        guard !refreshInFlight else { return }
+        if refreshInFlight { refreshRequested = true; return }
         refreshInFlight = true
         defer { refreshInFlight = false }
         await refresh(reuseCandidatesWithin: seconds)
+        while refreshRequested, !Task.isCancelled {
+            refreshRequested = false
+            await refresh(reuseCandidatesWithin: seconds)
+        }
     }
 
     private func refresh(reuseCandidatesWithin: TimeInterval = 0) async {

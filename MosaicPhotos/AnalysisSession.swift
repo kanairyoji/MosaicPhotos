@@ -78,6 +78,9 @@ final class AnalysisSession {
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var task: BGContinuedProcessingTask?
     @ObservationIgnored private var faceScanStarted = false
+    /// 顔スキャンが**走っている最中に残り 0** を観測したか（＝本当に捌けた）。
+    /// 早期に畳んだだけの終了と区別するために要る（レビュー指摘）。
+    @ObservationIgnored private var observedFaceDrained = false
     @ObservationIgnored private var warmupTicks = 0
     @ObservationIgnored private var lastFillScheduledAt = Date.distantPast
     /// 同じ識別子を 2 回登録するとアプリが殺されるので、プロセス内で 1 回に絞る。
@@ -99,6 +102,7 @@ final class AnalysisSession {
     func start(autoResume: Bool = false) {
         guard !isActive else { return }
         faceScanStarted = false
+        observedFaceDrained = false
         warmupTicks = 0
         remaining = 0
         peakRemaining = 0
@@ -142,8 +146,10 @@ final class AnalysisSession {
         state = .stopped(reason)
         // 「終わった」「利用者が止めた」だけが完了。OS に止められた・電池・画面離脱は**未完**として
         // 印を残し、次の前面復帰で続きから再開する。
-        // 本当に終わったときだけ、顔の残りを 0 として確定する（上の注記と対）。
-        if reason == .finished { Self.lastKnownFaceRemaining = 0 }
+        // ⚠️ `.finished` は**顔スキャンが残作業を抱えたまま畳んだ**ときにも成立する
+        // （`faceScanSettled` は「始めて、いま走っていない」だけ＝レビュー指摘）。
+        // 0 を確定してよいのは、**スキャン中に残り 0 を実際に観測した**ときだけ。
+        if reason == .finished, observedFaceDrained { Self.lastKnownFaceRemaining = 0 }
         if AnalysisSessionPolicy.keepsPendingFlag(reason) {
             Self.markPending(true)
             let defaults = UserDefaults.standard
@@ -241,7 +247,12 @@ final class AnalysisSession {
     private static var lastKnownFaceRemaining: Int? {
         get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisFaceRemaining) as? Int }
         set {
-            guard let newValue else { return }
+            // nil＝「もう分からない」（顔パイプラインの版上げ・ピープルのリセット）。
+            // 握り潰すと古い 0 が残り、全再スキャンが必要なのに「残り無し」と読まれる（レビュー指摘）。
+            guard let newValue else {
+                UserDefaults.standard.removeObject(forKey: AppSettingsKeys.analysisFaceRemaining)
+                return
+            }
             UserDefaults.standard.set(max(0, newValue), forKey: AppSettingsKeys.analysisFaceRemaining)
         }
     }
@@ -405,7 +416,10 @@ final class AnalysisSession {
             // クラウドのサムネ未取得や譲り待ちで**残作業を抱えたまま畳む**ので、そこで 0 を
             // 書くと次の起動で「もう無い」と誤判定する。0 を書くのは本当に終わったとき
             // （`stop(.finished)`）だけにする。
-            if people.isScanning, people.remaining > 0 { Self.lastKnownFaceRemaining = people.remaining }
+            if people.isScanning {
+                if people.remaining > 0 { Self.lastKnownFaceRemaining = people.remaining }
+                else { observedFaceDrained = true }   // 走っていて残り 0＝本当に捌けた
+            }
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }

@@ -286,6 +286,9 @@ struct ThumbnailPurposeTests {
         }
 
         let pools = batcher.pendingPathsForTesting()
+        // ⚠️ 番兵が本当に積まれたことを確かめる（レビュー指摘・repo 規約「空でも通る assert を
+        //    書かない」）。prefetch が何も積まなくなると、下の 2 つは自動的に真になってしまう。
+        #expect(pools.prefetch.contains("/other.jpg"), "先読みが機能していない＝この検証は無意味")
         #expect(pools.analysis == ["/dup2.jpg"])
         #expect(pools.prefetch.contains("/dup2.jpg") == false,
                 "解析プールに居る path が先読みにも積まれている＝1 リクエストに 2 回入る")
