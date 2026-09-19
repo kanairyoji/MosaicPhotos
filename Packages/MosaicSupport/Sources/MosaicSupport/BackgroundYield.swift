@@ -113,6 +113,15 @@ public enum BackgroundYield {
         /// ブースト実行中（一枚岩は起こさない——始まると解析が止まる）。
         case boostRunning
 
+        /// **一時的に順番を譲っているだけ**か（「条件が整っていない」ではない）。
+        /// 数秒〜数十秒で自然に解ける種類のもの。
+        public nonisolated var isTransientYield: Bool {
+            switch self {
+            case .uiBusy, .foregroundNotIdle, .generating, .heavyLoad, .memoryPressure: return true
+            default: return false
+            }
+        }
+
         /// この条件を素通りできる**最小の段**。nil＝誰も素通りできない（安全弁）。
         public nonisolated var skippableBy: Exemption? {
             switch self {
@@ -123,6 +132,13 @@ public enum BackgroundYield {
                 return nil
             // ブーストでも譲る（生成との相互排他＝メモリ保護、前面での UI への譲り）。
             case .generating, .uiBusy, .boostRunning:
+                return .debug
+            // ⚠️ **回線ポリシーはブーストでも外さない**（レビュー指摘）。ADR-196 では
+            // 「全力で解析」の一部として免除したが、これは**利用者の実費**（68k 件の
+            // サムネをセルラーで取得し得る）。「Wi-Fi のみ」は費用のために選ばれている。
+            // クラウド分を飛ばしたことは `.blocked([.networkBlocked])` で正直に報告する
+            // ——嘘の完了（ADR-196 が直した問題）は起きない。
+            case .networkBlocked:
                 return .debug
             // 方針の条件。ブーストは利用者の明示操作なので免除する。
             default:
@@ -156,6 +172,17 @@ public enum BackgroundYield {
         public let work: HeavyWork
         public let blockers: [Blocker]
         public nonisolated var allowed: Bool { blockers.isEmpty }
+        /// **一時的に譲っているだけ**の条件を除いた blocker。
+        ///
+        /// `uiBusy` / `foregroundNotIdle` / `generating` / `heavyLoad` / `memoryPressure` は
+        /// 「いま順番を譲っている」であって「条件が整っていない」ではない。設定画面の
+        /// 「なぜ進まないか」や、ブーストの完了判定でこれらを混ぜると:
+        /// - 画面を開いた直後は必ず `foregroundNotIdle` が立つので「条件はすべて満たしています」が
+        ///   **出なくなる**（処理枠の飢餓診断＝diagnostics-81 が届かない）
+        /// - 写真を見ている最中に解析が終わると「写真を見ているので止まっています」と嘘を表示する
+        public nonisolated var persistentBlockers: [Blocker] {
+            blockers.filter { !$0.isTransientYield }
+        }
         /// この条件で止まっているか。**表の射影**（新しい規則ではない）。
         ///
         /// ⚠️ 「今回の対象にクラウド分を含めるか」のように**実行の最初に 1 回だけ決まる**

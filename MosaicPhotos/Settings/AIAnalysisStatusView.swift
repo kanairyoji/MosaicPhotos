@@ -189,10 +189,18 @@ struct AIAnalysisStatusView: View {
         return analysis + window.filter { !analysis.contains($0) }
     }
 
+    /// 飢餓の判定に使う条件。**一時的に譲っているだけの行は外す**（レビュー指摘）。
+    /// この画面を開いた直後は必ず `foregroundNotIdle` が立つので、混ぜたままだと
+    /// 「条件はすべて満たしています」＋「処理枠が来ていません」が**永久に出ない**
+    /// ——diagnostics-81 のために足した診断が、利用者に届かなくなる。
+    private var persistentBlockers: [BackgroundYield.Blocker] {
+        currentBlockers.filter { !$0.isTransientYield }
+    }
+
     /// 「条件は満たしているのに、半日以上 処理枠が来ていない」か。
     private var isWindowStarved: Bool {
         AnalysisWindowHealth.isStarved(
-            blockers: currentBlockers,
+            blockers: persistentBlockers,
             minutesSinceLastWindow: HeavyWorkScheduler.minutesSinceLastWindow())
     }
 
@@ -201,7 +209,7 @@ struct AIAnalysisStatusView: View {
     private var blockersSection: some View {
         let blockers = currentBlockers
         Section {
-            if blockers.isEmpty {
+            if persistentBlockers.isEmpty {
                 Label(L("All conditions for automatic analysis are met."), systemImage: "checkmark.circle")
                     .font(.subheadline).foregroundStyle(.secondary)
                 if let minutes = HeavyWorkScheduler.minutesSinceLastWindow() {
@@ -216,7 +224,7 @@ struct AIAnalysisStatusView: View {
                     Label(blockerText(blocker), systemImage: blockerIcon(blocker))
                         .font(.subheadline)
                 }
-                Text("Analysis resumes by itself once these are resolved. “Analyze Now” ignores all of them except heat.")
+                Text("Analysis resumes by itself once these are resolved. “Analyze Now” ignores the settings above (automatic analysis, charging, and idle time), but not heat, a low battery, memory pressure, or your network setting.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         } header: {

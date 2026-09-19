@@ -125,9 +125,19 @@ enum NightlyPlan {
     /// 3. **generate は残作業があるうちは見送る**。生成は `isGeneratingAlbums` を立て、
     ///    解析がそれを見て譲るので、同じ窓で両方やると窓が丸ごと空転する（diagnostics-72）。
     ///    ただし連続見送りの上限で順番を回す（生成も飢えさせない・ADR-163）。
+    /// 窓の先頭の 1 手（解析を起こす）。**残りの手順より先に実行する**——顔の残作業は
+    /// 起こしたあとでないと測れない（`PeopleEngine.remaining` はスキャン中しか更新されない）。
+    static func analysisStep(boostActive: Bool) -> Step {
+        boostActive ? .skipAnalysisBoostActive : .startAnalysis
+    }
+
     static func steps(_ i: Inputs) -> [Step] {
+        [analysisStep(boostActive: i.boostActive)] + remainingSteps(i)
+    }
+
+    /// 解析を起こしたあとの手順。
+    static func remainingSteps(_ i: Inputs) -> [Step] {
         var out: [Step] = []
-        out.append(i.boostActive ? .skipAnalysisBoostActive : .startAnalysis)
         out.append(.logStalledPasses)
         out.append(.startBackup)
 

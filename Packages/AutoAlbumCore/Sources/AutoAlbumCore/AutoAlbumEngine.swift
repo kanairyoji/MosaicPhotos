@@ -45,7 +45,7 @@ public final class AutoAlbumEngine {
     /// Vision/CLIP タグ付けの実行中か（UI のスピナー用）。
     /// **状態は `fill` が持つ**（ADR-198）——`SingleFlightTask` は `@Observable` なので、
     /// この計算プロパティ越しでも SwiftUI が追従する。
-    public var isTagging: Bool { fill.isRunning }
+    public var isTagging: Bool { fill.isRunning || reanalyze.isRunning }
     public internal(set) var status: String = ""
 
     @ObservationIgnored static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Engine")
@@ -66,6 +66,8 @@ public final class AutoAlbumEngine {
     @ObservationIgnored let fill = SingleFlightTask()
     /// 表示ラベラの事前ウォーム（CLIP テキストタワー＋約300語）。復帰時に止める（ADR-80）。
     @ObservationIgnored let prewarm = SingleFlightTask()
+    /// 「再解析」（全消し→付け直し）。**利用者が始めた作業**なので前面復帰や処理枠では止めない。
+    @ObservationIgnored let reanalyze = SingleFlightTask()
     /// 重い保守処理（generate）の世代。`stopBackgroundWork()` で進み、実行中の generate は
     /// ステップ境界で世代のズレを見て自ら降りる（ADR-79 追記）。
     ///
@@ -178,10 +180,12 @@ public final class AutoAlbumEngine {
         // アクティビティバーへの鏡写し。⚠️ 本体の defer でやると、明け渡した旧タスクが遅れて
         // 終わったときに**走り続けている後続の表示を落とす**（ADR-198）。世代を知っている
         // `SingleFlightTask` 側から通知してもらう。
-        fill.onStateChange = { running in
+        let mirror: (Bool) -> Void = { running in
             BackgroundActivityMonitor.shared.isEmbedding = running
             if !running { BackgroundActivityMonitor.shared.embedRemaining = 0 }
         }
+        fill.onStateChange = mirror
+        reanalyze.onStateChange = mirror
     }
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }

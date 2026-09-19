@@ -267,3 +267,29 @@ struct FaceSeedBuilderTests {
         #expect(r.seeds.isEmpty)
     }
 }
+
+/// レビューが拾った回帰（ADR-198 のレビュー）: 2 人の無名命名済みが同じクラスタへ合流したとき、
+/// **利用者が付けた名前が 1 つ消える**。旧実装は行き先の名前をその場で読み直していたので
+/// 2 人目は見送られていた。反映側で「もう名前が入った先」を除く必要がある。
+@Suite("名前の追随：行き先の取り合い（レビュー回帰）")
+struct FaceNameFollowingCollisionTests {
+
+    @Test("回帰: 2 人が同じ無名クラスタへ流れても、名前を上書きしない")
+    func twoNamesDoNotCollide() {
+        let candidates = [
+            FaceNameFollowing.Candidate(clusterID: 1, name: "私", faceIDs: ["a", "b"]),
+            FaceNameFollowing.Candidate(clusterID: 2, name: "娘", faceIDs: ["c", "d"]),
+        ]
+        let assignment = ["a": 9, "b": 9, "c": 9, "d": 9]
+        // 純ロジックは「どちらも 9 へ行ける」と答える——**反映側で捌く**のが仕様。
+        var available: Set<Int> = [9]
+        var applied: [FaceNameFollowing.Move] = []
+        for move in FaceNameFollowing.moves(candidates: candidates, assignment: assignment,
+                                            isUnnamed: { available.contains($0) }) {
+            guard available.contains(move.to) else { continue }
+            applied.append(move)
+            available.remove(move.to)
+        }
+        #expect(applied.count == 1, "2 つ適用すると 1 人目の名前が消える: \(applied)")
+    }
+}

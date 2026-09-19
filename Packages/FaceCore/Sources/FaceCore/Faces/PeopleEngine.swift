@@ -292,7 +292,10 @@ public final class PeopleEngine {
             return
         }
         Diagnostics.mark("faces: startScan → begin (candidates=\(candidateRefKeys.count) allowSim=\(allowSimulator))")
-        scan.start { [weak self] in
+        // ⚠️ `.background` を明示する（レビュー指摘）。素の `Task { }` は呼び出し元の
+        // 優先度を引き継ぐので、駆動役（`.userInitiated`）から起こされると顔検出が
+        // UI 操作と CPU を奪い合う。
+        scan.start(priority: .background) { [weak self] in
             guard let self else { return }
             await self.store.apply(tuning: self.tuning)   // スキャン前に必ず適用（ADR-70）
             // 版上げ（埋め込みパイプライン変更＝ADR-51）なら全再スキャンへ移行する

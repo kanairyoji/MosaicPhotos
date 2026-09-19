@@ -274,14 +274,28 @@ extension AutoAlbumEngine {
     /// 窓は `bgfill: skip` だけを残して丸ごと空転する（実機 diagnostics-38: 窓 77 秒で有効な処理 0）。
     /// 各処理は差分ベースかつバッチごとに保存しているので、割り込んでも取りこぼさない。
     public func restartBackgroundFill() {
+        // ⚠️ 利用者が始めた再解析は明け渡させない（レビュー指摘）。窓の都合で「再解析中」を
+        // 畳むと、進捗が消えたうえにスピナーだけ止まって「終わった」ように見える。
+        guard !reanalyze.isRunning else {
+            Diagnostics.mark("bgfill: skip restart — re-analysis in progress")
+            return
+        }
         if fill.isRunning { Diagnostics.mark("bgfill: preempting the in-flight run for the background window") }
-        fill.restart { [weak self] in await self?.runTrickle() }
+        fill.restart(priority: .background) { [weak self] in await self?.runTrickle() }
     }
 
     /// 未タグ写真の Vision シーンタグ付け＋CLIP 埋め込みをバックグラウンドで進める（非ブロッキング）。
     /// 走行中なら何もしない（`SingleFlightTask` が二重起動と世代ガードを持つ・ADR-198）。
     public func scheduleBackgroundFill() {
-        guard fill.start({ [weak self] in await self?.runTrickle() }) else {
+        // 再解析（利用者が始めた全消し→付け直し）と同時には走らせない。
+        guard !reanalyze.isRunning else {
+            Diagnostics.mark("bgfill: skip — re-analysis in progress")
+            return
+        }
+        // ⚠️ `.background` を明示する（レビュー指摘）。素の `Task { }` は呼び出し元の
+        // 優先度を引き継ぐので、SwiftUI の `.task` や駆動役から起こされると昇格し、
+        // 「UI 操作と CPU を奪い合わない」という方針（ADR-80）が消える。
+        guard fill.start(priority: .background, { [weak self] in await self?.runTrickle() }) else {
             Diagnostics.mark("bgfill: skip — already tagging/embedding")
             return
         }
@@ -338,7 +352,7 @@ extension AutoAlbumEngine {
             // ANE 直列化ゲートは encodeText の内側で**1 語ずつ**取る（ADR-73）。ここでまとめて
             // 包むと約300語ぶんゲートを握り続け、その間の顔スキャン・タグ付けが完全に止まる。
             // 止めるのは `stopBackgroundWork`（cancelPrewarm と対）。
-            prewarm.start { [weak self] in
+            prewarm.start(priority: .background) { [weak self] in
                 guard let labeler = self?.labelProvider else { return }
                 await labeler.prewarm()
             }
@@ -436,9 +450,14 @@ extension AutoAlbumEngine {
     /// 全写真の認識結果（CLIP 埋め込み・キャプション）を消去し、最新ロジックで一から付け直す。
     /// 「再解析」用。完了まで await する（UI はスピナー表示）。
     public func reanalyzePhotos() async {
-        // 走行中なら何もしない。完了まで待つ（UI はスピナー表示）。
-        guard fill.start({ [weak self] in await self?.runReanalyze() }) else { return }
-        await fill.waitUntilIdle()
+        // ⚠️ **専用のハンドルで走らせる**（レビュー指摘）。`fill` を共用していたため、
+        // 通知バナーや Control Center での `inactive → active` が `stopForForeground()` →
+        // `stopBackgroundWork()` → `fill.stop()` を通って**利用者が始めた再解析を止め**、
+        // しかもスピナーだけ消えて「終わった」ように見えていた。
+        // 旧実装（呼び出し側のタスク上で走る）と同じく、前面復帰では止まらない。
+        guard !fill.isRunning else { return }
+        guard reanalyze.start(priority: .userInitiated, { [weak self] in await self?.runReanalyze() }) else { return }
+        await reanalyze.waitUntilIdle()
     }
 
     private func runReanalyze() async {

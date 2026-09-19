@@ -2,6 +2,26 @@ import Foundation
 import Testing
 @testable import MosaicSupport
 
+/// 本体が終わるまで外から握っておくための小さな門。
+///
+/// ⚠️ **`open()` が `wait()` より先に来ても取りこぼさない**こと。素の
+/// `withCheckedContinuation` を直に使うと、タスク本体がまだ始まっていない時点で
+/// `resume` しようとして**永久に待つ**（このテストで実際にハングさせた）。
+@MainActor
+private final class TestGate {
+    private var cont: CheckedContinuation<Void, Never>?
+    private var opened = false
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { cont = $0 }
+    }
+    func open() {
+        opened = true
+        cont?.resume()
+        cont = nil
+    }
+}
+
 /// `SingleFlightTask`（ADR-198）。手書きで 24 か所に散っていた「1 本だけ走らせる／世代ガード／
 /// 走行中の要求を 1 回だけ拾い直す」を 1 つにまとめたもの。
 /// **過去に実際に踏んだ 2 つのバグを回帰として固定する。**
@@ -9,25 +29,10 @@ import Testing
 @MainActor
 struct SingleFlightTaskTests {
 
-    /// 本体が終わるまで外から握っておくための小さな門。
-    private final class Gate {
-        private var cont: CheckedContinuation<Void, Never>?
-        private var opened = false
-        func wait() async {
-            if opened { return }
-            await withCheckedContinuation { cont = $0 }
-        }
-        func open() {
-            opened = true
-            cont?.resume()
-            cont = nil
-        }
-    }
-
     @Test("走行中に start しても二重に走らない")
     func startIsSingleFlight() async {
         let flight = SingleFlightTask()
-        let gate = Gate()
+        let gate = TestGate()
         var runs = 0
 
         #expect(flight.start { runs += 1; await gate.wait() })
@@ -43,7 +48,7 @@ struct SingleFlightTaskTests {
     @Test("restart は走行中でも明け渡させて始め直す（ADR-95・窓の先頭）")
     func restartPreempts() async {
         let flight = SingleFlightTask()
-        let first = Gate()
+        let first = TestGate()
         var order: [String] = []
 
         flight.start { order.append("first-begin"); await first.wait(); order.append("first-end") }
@@ -60,8 +65,8 @@ struct SingleFlightTaskTests {
     @Test("回帰: 明け渡した旧タスクが遅れて終わっても、後続の実行中フラグを落とさない")
     func staleTaskDoesNotClobberTheNewOne() async {
         let flight = SingleFlightTask()
-        let stale = Gate()
-        let fresh = Gate()
+        let stale = TestGate()
+        let fresh = TestGate()
 
         flight.start { await stale.wait() }          // A
         flight.restart { await fresh.wait() }        // B（A は明け渡し）
@@ -81,7 +86,7 @@ struct SingleFlightTaskTests {
     @Test("回帰: 走行中に来た要求は捨てずに 1 回だけ拾い直す")
     func coalescedRequestIsNotDropped() async {
         let flight = SingleFlightTask()
-        let gate = Gate()
+        let gate = TestGate()
         var runs = 0
 
         flight.start { runs += 1; await gate.wait() }
@@ -106,7 +111,7 @@ struct SingleFlightTaskTests {
     @Test("stop は走行中の作業も予約も止める")
     func stopClearsPending() async {
         let flight = SingleFlightTask()
-        let gate = Gate()
+        let gate = TestGate()
         var runs = 0
 
         flight.start { runs += 1; await gate.wait() }
@@ -191,13 +196,120 @@ struct SingleFlightStateChangeTests {
         var events: [Bool] = []
         flight.onStateChange = { events.append($0) }
 
-        var release: (() -> Void)?
-        flight.start { await withCheckedContinuation { c in release = { c.resume() } } }
+        let stale = TestGate()
+        flight.start { await stale.wait() }
         flight.restart { }                 // 旧タスクを明け渡す
-        release?()                          // 旧タスクが遅れて終わる
+        stale.open()                        // 旧タスクが遅れて終わる
         await flight.waitUntilIdle()
 
         // true → (restart では走り続けているので通知なし) → false の 2 回だけ。
         #expect(events == [true, false], "余計な状態変化が飛んでいる: \(events)")
+    }
+}
+
+/// `waitUntilIdle()` は**止めた作業も待つ**（ADR-198・レビュー前の自己点検で見つけた退行）。
+///
+/// `cancel()` は「降りてくれ」と伝えるだけで、実行中の 1 単位は最後まで走る。
+/// `PeopleEngine.reset` は「本当に止まってからストアを消す」必要があり、待たずに消すと
+/// `FaceTagger.isRunning` が残って次のスキャンが無言で skip される。
+@Suite("SingleFlightTask の停止待ち", .serialized)
+@MainActor
+struct SingleFlightWaitTests {
+
+    @Test("回帰: stop したあとの waitUntilIdle は、止めた作業が終わるまで返らない")
+    func waitsForTheStoppedWork() async {
+        let flight = SingleFlightTask()
+        let gate = TestGate()
+        var finished = false
+        flight.start {
+            await gate.wait()
+            finished = true          // キャンセルを見たあとの後始末（ストアの書き込み停止に相当）
+        }
+        flight.stop()
+        #expect(!finished)
+
+        gate.open()                  // 止めた作業がようやく降りる
+        await flight.waitUntilIdle()
+        #expect(finished, "止めた作業の完了を待たずに返った（ストアを消す前に止まっていない）")
+    }
+
+    @Test("回帰: restart のあとの waitUntilIdle は、明け渡した方も新しい方も待つ")
+    func waitsForBothTheRetiredAndTheCurrent() async {
+        let flight = SingleFlightTask()
+        let old = TestGate(), fresh = TestGate()
+        var done: [String] = []
+        flight.start { await old.wait(); done.append("old") }
+        flight.restart { await fresh.wait(); done.append("new") }
+        old.open()
+        fresh.open()
+        await flight.waitUntilIdle()
+        #expect(done.sorted() == ["new", "old"], "待ち漏れ: \(done)")
+    }
+}
+
+/// レビューが拾った 3 件の回帰（ADR-198 のレビュー・2026-09-19）。
+@Suite("SingleFlightTask のレビュー回帰", .serialized)
+@MainActor
+struct SingleFlightReviewRegressionTests {
+
+    /// 素の `Task { }` は**呼び出し元の優先度を引き継ぐ**。背景トリクルが
+    /// 駆動役（`.userInitiated`）や SwiftUI の `.task` から起こされると昇格し、
+    /// UI 操作と CPU を奪い合う（「QoS は .background」という方針が消える）。
+    @Test("回帰: 指定した優先度で走る（素の Task は呼び出し元を引き継ぐ）")
+    func runsAtTheRequestedPriority() async {
+        let flight = SingleFlightTask()
+        // ⚠️ `waitUntilIdle()` で待つと、待つ側（.medium）の優先度が**待たれる側へ昇格**して
+        // しまい、指定した優先度を測れない。眠って様子を見る（依存を作らない）。
+        var observed: TaskPriority?
+        flight.start(priority: .background) { observed = Task.currentPriority }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(observed == .background, "指定した優先度で走っていない: \(String(describing: observed))")
+
+        var inherited: TaskPriority?
+        flight.start { inherited = Task.currentPriority }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(inherited != .background, "優先度を指定していないのに .background になっている（テストが何も守っていない）")
+    }
+
+    /// `stop()` は予約を捨てるのに `restart()` は残す、という非対称は罠
+    /// （捨てたはずの作業が明け渡しのあとに蘇る）。
+    @Test("回帰: restart は予約も捨てる（stop と対称）")
+    func restartClearsPending() async {
+        let flight = SingleFlightTask()
+        let gate = TestGate()
+        var ran: [String] = []
+        flight.start { await gate.wait() }
+        flight.coalesce { ran.append("stale") }
+        flight.restart { ran.append("fresh") }
+        gate.open()
+        await flight.waitUntilIdle()
+        #expect(ran == ["fresh"], "明け渡した実行の予約が蘇った: \(ran)")
+    }
+}
+
+/// `DebouncedTask` は body の実行中も重複を防ぐ（レビュー指摘）。
+@Suite("DebouncedTask の重複防止", .serialized)
+@MainActor
+struct DebouncedTaskOverlapTests {
+
+    /// `loadPeople()` は 600〜1000ms、静止時間は 700ms。実行中に次の要求が来るのは日常的で、
+    /// そこで 2 本目が走ると「間引きのために入れた仕組みが重複実行を許す」ことになる。
+    @Test("回帰: body の実行中に来た要求で 2 本目を起こさない")
+    func doesNotStartASecondRunWhileTheBodyIsRunning() async {
+        let debounced = DebouncedTask(quietMilliseconds: 10)
+        let gate = TestGate()
+        var running = 0
+        var maxConcurrent = 0
+
+        debounced.schedule {
+            running += 1; maxConcurrent = max(maxConcurrent, running)
+            await gate.wait()
+            running -= 1
+        }
+        try? await Task.sleep(nanoseconds: 40_000_000)   // body に入るまで待つ
+        debounced.schedule { running += 1; maxConcurrent = max(maxConcurrent, running); running -= 1 }
+        gate.open()
+        await debounced.waitUntilIdle()
+        #expect(maxConcurrent == 1, "同時に \(maxConcurrent) 本走った（重複実行）")
     }
 }

@@ -156,6 +156,12 @@ extension FaceStore {
             f.contributesToCentroid = newID >= 0
                 && (pinnedCluster[f.faceID] != nil || Float(f.quality) >= Self.qualityFloor)
         }
+        // ⚠️ 無名の集合は**削除より前に**作る（レビュー指摘）。削除後に `existing` の
+        // `name` / `clusterID` を読むと、消した `PersonCluster` のプロパティを触ることになる。
+        var unnamedBeforeDelete = Set(existing.filter { $0.name?.isEmpty ?? true }.map(\.clusterID))
+        unnamedBeforeDelete.formUnion(
+            Set(clustering.clusters.map(\.id)).subtracting(existing.map(\.clusterID)))
+
         for c in existing where !seedIDs.contains(c.clusterID) {
             modelContext.delete(c)
         }
@@ -167,15 +173,17 @@ extension FaceStore {
         // なり、自分の顔は "People 9" として追い出されていた）。過半が移った先が無名なら、
         // 名前をそちらへ移す。
         // 判断は `FaceNameFollowing.moves`（純・テスト対象・ADR-198）。ここは反映だけ。
-        let candidates = anchorlessNamed
-        // 無名かどうかは先に値で集める（純ロジックへ actor 隔離を持ち込まない）。
-        let unnamed = Set(existing.filter { $0.name?.isEmpty ?? true }.map(\.clusterID))
-            .union(Set(clustering.clusters.map(\.id)).subtracting(existing.map(\.clusterID)))
-        for move in FaceNameFollowing.moves(candidates: candidates, assignment: newAssignment,
-                                            isUnnamed: { unnamed.contains($0) }) {
-            guard let dst = cluster(move.to) else { continue }
+        // ⚠️ **1 つ移すたびに行き先を「名前あり」に落とす**（レビュー指摘）。旧実装は
+        // 行き先の名前を**その場で読み直して**いたので、2 人の無名命名済みが同じクラスタへ
+        // 合流したとき 2 人目は見送られた。集合を固定したまま回すと両方が通り、
+        // 1 人目の名前が上書きされて**利用者が付けた名前が消える**。
+        var available = unnamedBeforeDelete
+        for move in FaceNameFollowing.moves(candidates: anchorlessNamed, assignment: newAssignment,
+                                            isUnnamed: { available.contains($0) }) {
+            guard available.contains(move.to), let dst = cluster(move.to) else { continue }
             cluster(move.from)?.name = nil
             dst.name = move.name
+            available.remove(move.to)
             Self.log.info("faces: rebuild — name '\(move.name)' followed its members \(move.from)→\(move.to)")
         }
 

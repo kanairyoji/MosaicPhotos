@@ -348,9 +348,17 @@ enum HeavyWorkScheduler {
             Self.stores = stores
             guard !Task.isCancelled else { return }
 
-            let plan = NightlyPlan.steps(await gatherInputs(stores))
-            RunTimeline.record("window plan: " + plan.map(\.label).joined(separator: "→"))
-            for step in plan {
+            // ⚠️ 解析は**先に起こしてから**残りの手順を決める（レビュー指摘）。
+            // 顔の残作業（`PeopleEngine.remaining`）はスキャン中しか更新されないので、
+            // 起こす前に測ると必ず 0 になり、ADR-163 の「顔の残作業があるうちは生成を
+            // 見送る」が永久に効かなくなる（生成と解析の共倒れ＝diagnostics-72 の再発）。
+            let analysis = NightlyPlan.analysisStep(boostActive: stores.analysisSession.isActive)
+            await perform(analysis, stores: stores)
+            guard !Task.isCancelled else { return }
+
+            let rest = NightlyPlan.remainingSteps(await gatherInputs(stores))
+            RunTimeline.record("window plan: " + ([analysis] + rest).map(\.label).joined(separator: "→"))
+            for step in rest {
                 guard !Task.isCancelled else { break }
                 await perform(step, stores: stores)
             }

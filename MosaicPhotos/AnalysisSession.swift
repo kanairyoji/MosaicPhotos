@@ -81,7 +81,24 @@ final class AnalysisSession {
     /// 夜間の自動解析はどちらでも動く。
     var continueAfterLeaving: Bool {
         get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisContinueAfterLeaving) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: AppSettingsKeys.analysisContinueAfterLeaving) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: AppSettingsKeys.analysisContinueAfterLeaving)
+            // ⚠️ **その場で効かせる**（レビュー指摘）。このトグルの目的はロック画面と
+            // Dynamic Island のインジケータを消すことなので、走行中に切ったときに
+            // 次回まで出たままだと「効かない設定」に見える。継続タスクだけ降ろして
+            // 前面のみモードで走り続ける（解析は止めない）。
+            if !newValue, mode == .continued { downgradeToForegroundOnly() }
+        }
+    }
+
+    /// 継続タスクを降りて前面のみモードにする（解析は続ける）。
+    private func downgradeToForegroundOnly() {
+        if let task {
+            task.setTaskCompleted(success: false)
+            self.task = nil
+        }
+        state = .running(.foregroundOnly)
+        Diagnostics.mark("analyze: downgraded to foreground-only (setting)")
     }
 
     /// 画面を消灯させない（既定 ON・ブースト中だけ効く）。設定として永続化。
@@ -264,12 +281,16 @@ final class AnalysisSession {
             // 同じ処理を再開していた（レビュー指摘）。
             let verdict = BackgroundYield.verdict(for: .cloudTrickle)
             if verdict.blocks(.lowBattery) { stop(.lowBattery); return }
+            // ⚠️ 「いま順番を譲っている」だけの条件は完了判定に混ぜない（レビュー指摘）。
+            // 混ぜると、写真を見ている最中に解析が終わったときに
+            // 「写真を見ているので止まっています」と**嘘を表示する**。
+            let blocking = verdict.persistentBlockers
 
             // 顔スキャンは 1 ブースト 1 回。畳んだあとに残作業が見えていれば、
             // **それは「終わった」ではなく「止められている」**——ゲートに理由を聞いて区別する。
             if AnalysisSessionPolicy.isFinished(remaining: rem, tagging: engine.isTagging,
                                                 scanning: people.isScanning) {
-                stop(verdict.allowed ? .finished : .blocked(verdict.blockers)); return
+                stop(blocking.isEmpty ? .finished : .blocked(blocking)); return
             }
         }
     }

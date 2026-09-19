@@ -4445,6 +4445,16 @@
         }
       }
     },
+    "Analysis resumes by itself once these are resolved. “Analyze Now” ignores the settings above (automatic analysis, charging, and idle time), but not heat, a low battery, memory pressure, or your network setting.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "これらが解消されれば、解析は自動で再開します。「今すぐ解析」は上の設定（自動で解析する・充電・操作からの経過）を無視しますが、発熱・電池残量・メモリ不足・通信の設定は無視しません。"
+          }
+        }
+      }
+    },
     "Analysis runs by itself whenever the conditions in Processing Timing are met — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds. Nothing to resume: it simply continues from where it is.": {
       "localizations": {
         "ja": {

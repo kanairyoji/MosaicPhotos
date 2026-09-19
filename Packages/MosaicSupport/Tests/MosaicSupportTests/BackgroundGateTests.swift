@@ -106,17 +106,28 @@ struct BackgroundGateTests {
 
     // MARK: - 免除の段
 
-    @Test("ブーストは方針の条件（自動処理オフ・電源・回線・アイドル）を免除する")
+    @Test("ブーストは方針の条件（自動処理オフ・電源・アイドル）を免除する")
     func boostSkipsPolicyConditions() {
         var env = clean()
         env.automaticEnabled = false
         env.powerPolicy = .whileCharging
         env.onPower = false
-        env.networkAllowed = false
         env.scenePhase = .active
         env.idleSeconds = 0
         #expect(!blockers(env, .cloudTrickle).isEmpty, "平常なら止まる")
-        #expect(blockers(env, .cloudTrickle, .boost).isEmpty, "ブーストは全部免除する")
+        #expect(blockers(env, .cloudTrickle, .boost).isEmpty, "ブーストは方針の条件を免除する")
+    }
+
+    /// ⚠️ **回線だけは例外**（レビュー指摘）。ADR-196 では「全力で解析」の一部として
+    /// 免除したが、これは**利用者の実費**（68k 件のサムネをセルラーで取得し得る）。
+    /// 「Wi-Fi のみ」は費用のために選ばれている設定なので、明示操作でも外さない。
+    /// クラウド分を飛ばしたことは `.blocked([.networkBlocked])` で正直に報告する。
+    @Test("回帰: 回線ポリシーはブーストでも外さない（通信費は利用者の実費）")
+    func boostDoesNotOverrideTheDataPolicy() {
+        var env = clean(); env.networkAllowed = false
+        #expect(blockers(env, .cloudTrickle, .boost) == [.networkBlocked])
+        #expect(blockers(env, .localTrickle, .boost).isEmpty, "端末内写真は通信不要なので進む")
+        #expect(blockers(env, .cloudTrickle, .debug).isEmpty, "検証用のデバッグ全開だけは外せる")
     }
 
     @Test("熱・メモリ・一括ロードは誰も素通りできない（安全弁）")
