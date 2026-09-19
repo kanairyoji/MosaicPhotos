@@ -169,6 +169,8 @@ public final class DebouncedTask {
 
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private let quietNanoseconds: UInt64
+    /// 世代。末尾の後片付けを「自分がまだ最新のとき」だけ行うための札。
+    @ObservationIgnored private var generation = 0
 
     /// - Parameter quietMilliseconds: 最後の要求からこの時間だけ静止したら実行する。
     public init(quietMilliseconds: UInt64) {
@@ -176,19 +178,30 @@ public final class DebouncedTask {
     }
 
     /// 要求する。前の予約は取り消され、静止時間が測り直される。
+    ///
+    /// ⚠️ **前の実行が body の途中なら、終わるまで待ってから静止時間を測る**（レビュー指摘）。
+    /// ハンドルを保持するだけでは重複実行は防げない——`cancel()` は「降りてくれ」と伝えるだけで、
+    /// `loadPeople()` のように取り消しを見ないコードは最後まで走る。待って初めて
+    /// 「同時に 1 本」が成立する（ADR-95・diagnostics-38 の 600〜1000ms ハングの重なり）。
+    ///
+    /// ⚠️ **末尾の `task = nil` は世代で守る**（レビュー指摘）。守らないと、終わりかけの古い
+    /// 実行が**新しい予約のハンドルを消す**。消えると次の `schedule()` の `cancel()` が空振りし、
+    /// 取り消せない実行が 2 本並ぶ——間引きのために入れた仕組みが重複実行を作っていた。
     public func schedule(_ body: @escaping () async -> Void) {
-        task?.cancel()
+        let previous = task
+        previous?.cancel()
         isScheduled = true
+        generation &+= 1
+        let mine = generation
         task = Task { [weak self] in
             guard let self else { return }
+            // 前の実行が走っている間は順番を待つ（取り消し済みなら即座に返る）。
+            await previous?.value
             try? await Task.sleep(nanoseconds: self.quietNanoseconds)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.generation == mine else { return }
             self.isScheduled = false
-            // ⚠️ ハンドルは **body の実行中も保持する**（レビュー指摘）。先に nil にすると、
-            // 実行中に来た `schedule()` が「走っていない」と見て 2 本目を起こす——
-            // 間引きのために入れた仕組みが、まさに防ぎたかった重複実行を許してしまう。
-            // `loadPeople()` は 600〜1000ms かかり、静止時間は 700ms なので現実に重なる。
             await body()
+            guard self.generation == mine else { return }
             self.task = nil
         }
     }
@@ -197,6 +210,7 @@ public final class DebouncedTask {
     public func cancel() {
         task?.cancel()
         task = nil
+        generation &+= 1        // 走行中のものに末尾の後片付けをさせない
         isScheduled = false
     }
 

@@ -6,6 +6,85 @@
 
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
+## 名前の持ち越し（ADR-130）が production では一度も動かない
+
+- 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Rebuild.swift:181`（`assignment: newAssignment`）
+  と `FaceSeedBuilder.swift:180`（`anchorlessNamed` の `faceIDs`）
+- 分類: deadSafetyNet / 優先度 P2（初出 2026-09-19・レビューループ）
+- 症状: `FaceNameFollowing.moves` は**常に空を返す**。したがって ADR-130 の保護
+  （「自分の顔のアルバムが、いつの間にか丸ごと娘の顔になっていた」への対処）は
+  一度も発火しない。ADR-198 のレビューで入れた「行き先を 1 回だけ使う」修正も死んだコードに当たった。
+- 確かめ方（コードから追える）:
+  1. `anchorlessNamed` の候補が持つ `faceIDs` は `pinnedMembers.map(\.faceID)`。
+  2. その顔はすべて `result.pinned` に入っている（`FaceSeedBuilder.swift:147`）。
+  3. `rebuildClusters` は `pending = allFaces.filter { pinnedCluster[$0.faceID] == nil }` で
+     ピン留め済みを除外し、`newAssignment` は `pending` からしか埋まらない。
+  4. よって候補の `assignment[faceID]` は必ず nil → `landing` が空 → `best == nil` → `continue`。
+- なぜ設計判断が要るか: これは退行ではなく**ADR-132（ピン留め）との重なり**。
+  ピン留めが「ユーザーが表明した人物のメンバーは機械の都合で外に出さない」を保証するなら、
+  「顔がまるごと別クラスタへ移る」事態は起こり得ず、ADR-130 の機構は役目を終えている。
+  選択肢は 3 つあり、どれを採るかは顔まわりの方針判断:
+  - (a) 死んだ経路として `FaceNameFollowing` ごと削る（複雑さは減るが、将来ピン留めを緩めたとき
+    保護が無いことに誰も気づけない）。
+  - (b) `moves` に渡す割り当てへピン留め分も混ぜ、「動いていないから移さない」が
+    正しい理由で成立するようにする（挙動は変わらないが、経路が生きていることを表明できる）。
+  - (c) 候補の `faceIDs` を「ピン留めできなかった顔も含む全メンバー」に広げ、保護を実際に効かせる
+    （埋め込みが壊れた顔などは今もピン留めされないので、ここだけ経路が残る）。
+- 付随: `existing = allClusters()` は並び順を指定しない `FetchDescriptor` なので、
+  (c) を採る場合は「どの名前が残るか」が SwiftData の取得順に依存する。決定的な並びが要る。
+- テストの穴: `FaceClusteringSetupTests.twoNamesDoNotCollide` は**呼び出し側のループをテスト内に
+  書き写して**いるため、production の経路が死んでいることを暴けない。(b)(c) のどちらを採っても、
+  `rebuildClusters()` を実際に呼ぶ end-to-end テストに置き換える必要がある。
+
+## 解析の完了判定が「止められている」を「終わった」と言い得る
+
+- 箇所: `MosaicPhotos/AnalysisSession.swift:268`（`faces = people.isScanning ? people.remaining : 0`）
+  と `:287`（`persistentBlockers`）
+- 分類: falseCompletion / 優先度 P2（初出 2026-09-19・レビューループ）
+- 症状: 顔スキャンが**始められなかった**とき `isScanning == false` なので残数が 0 に潰れる。
+  タグ・埋め込みが済んでいれば `rem == 0` となり完了扱いになる。ADR-196 のレビューで
+  `persistentBlockers` を入れたことで、`generating` / `memoryPressure` / `heavyLoad` は
+  「一時的な譲り」として理由からも外れるため、画面には「すべて解析済み」と出て
+  OS には `setTaskCompleted(success: true)` が返る——顔の残作業を抱えたまま。
+- 矛盾の中身: `isTransientYield` が「一時的」とする 3 つは、`skippableBy` では
+  「誰も素通りできない／debug のみ」＝**ブーストでも外せない**条件でもある。
+  2 つの分類軸が同じ列を逆向きに扱っている。
+- 解決と言える条件:
+  - 顔の残作業があるのに完了と表示しない（スキャンが始められなかった場合を含む）。
+  - 写真を見ている最中に解析が終わったとき「写真を見ているので止まっています」とも言わない
+    （ADR-196 のレビューで直した嘘を戻さない）。
+- 退けた方向: `isTransientYield` に `generating` などを足し引きするだけでは、上の 2 条件が
+  両立しない。残数の測り方（`isScanning ? remaining : 0`）自体が「始められなかった」と
+  「もう無い」を区別できていないので、そこを分けないと表示は正しくならない。
+
+## 夜間の窓で顔の残数が常に 0 と測られる
+
+- 箇所: `MosaicPhotos/HeavyWorkScheduler.swift:379`（`faceBacklog: stores.peopleEngine.remaining`）
+- 分類: inertFix / 優先度 P2（初出 2026-09-19・レビューループ）
+- 症状: ADR-163 の「解析を起こしてから顔の残数を測る」修正（`analysisStep` / `remainingSteps` の分割）は、
+  測る位置は直したが**測れる状態になる前に測っている**。`startScan` は `.background` の Task を
+  起こすだけで、`remaining` が書かれるのはスキャンの `onProgress`——そこへ届くのは
+  `store.scannedRefKeys()`（7.5 万行 fetch）などの後。`gatherInputs` は `kick` の直後に走るので、
+  新しい窓では常に 0 のまま。
+- 帰結: 埋め込みの残りが 0 で顔だけ残っている窓で `.generate` が同じ窓に入り、
+  diagnostics-72 の共倒れが再び起き得る。
+- なぜ設計判断が要るか: 素直な修正（`remaining` が入るまで待つ）は窓の時間を食う。
+  残数を「スキャン開始前に安く見積もる」経路（未スキャン件数の COUNT）を足すか、
+  生成の判断を窓の後半へ遅らせるか、どちらを採るかは夜間の枠配分の方針。
+
+## 開いたままの共有アルバムに撮影日の反映が届かない
+
+- 箇所: `MosaicPhotos/RootView.swift`（`onCaptureDatesChanged`）と
+  `Packages/PhotosFeatureKit/Sources/PhotosFeatureKit/MergedPhotoStore.swift:104`
+- 分類: staleUI / 優先度 P3（初出 2026-09-19・レビューループ・ADR-199）
+- 症状: 受信した撮影日を記録したあとホーム（All Photos）のストアは索引を取り直すが、
+  共有アルバム画面は `forMembers` で作った自前のストアを持ち、索引を引くのは `start()` の 1 回だけ。
+  開いたまま取り込みが走ると、閉じて開き直すまで古い並びのまま。
+- なぜ設計判断が要るか: メンバー限定ストアは画面ごとに使い捨てで大量に生まれる（diagnostics-20 で
+  18 秒に 546 回）。全部に通知を配る仕組みを足すと、捨てられるはずのストアまで再構築を始める
+  ——`MergedPhotoStore` が `init` で監視を張らない理由そのものに反する。生きているストアだけを
+  弱参照で登録する仕組みが要る。
+
 ## 再評価中の編集結果が一覧から消える
 
 - 箇所: `Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumService+Refresh.swift:96`

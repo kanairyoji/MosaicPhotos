@@ -455,7 +455,14 @@ extension AutoAlbumEngine {
         // `stopBackgroundWork()` → `fill.stop()` を通って**利用者が始めた再解析を止め**、
         // しかもスピナーだけ消えて「終わった」ように見えていた。
         // 旧実装（呼び出し側のタスク上で走る）と同じく、前面復帰では止まらない。
-        guard !fill.isRunning else { return }
+        // ⚠️ **`isRunning` を見るだけでは足りない**（レビュー指摘）。`stop()` は旗をその場で
+        // 下ろすが、走っている 1 単位（クラウドなら 8 枚＋サムネ DL）は最後まで走る。その間に
+        // 再解析へ入ると `clearPerception()` が**全埋め込みを消した直後に**
+        // `embedUnprocessed` が `PhotoTagger.isTagging` の再入ガードで即 return し、
+        // 「再解析が終わりました」と言いながら CLIP 索引が空になる。
+        // 背景の埋め込みは再解析に置き換わるので、**降ろして・降りきるまで待つ**。
+        fill.stop()
+        await fill.waitUntilIdle()
         guard reanalyze.start(priority: .userInitiated, { [weak self] in await self?.runReanalyze() }) else { return }
         await reanalyze.waitUntilIdle()
     }
@@ -473,6 +480,12 @@ extension AutoAlbumEngine {
                                       shouldPause: { [weak self] in
                                           (self?.isInteracting ?? false) || MemoryPressureMonitor.shared.isUnderPressure
                                       },
+                                      // ⚠️ **回線ポリシーは再解析でも効かせる**（レビュー指摘）。
+                                      // 既定値（常に許可）のままだったので、`clearPerception()` で
+                                      // 全件が未処理に戻った直後に、クラウド約 6.8 万件のサムネを
+                                      // セルラーで取りに行き得た。「Wi-Fi のみ」は費用のために
+                                      // 選ばれている（ADR-196 の免除撤回と同じ理由）。
+                                      networkAllowed: { !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked) },
                                       onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
             [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
         }

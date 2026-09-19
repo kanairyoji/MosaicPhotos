@@ -29,7 +29,35 @@ public struct ShareAnalysisFetch {
     /// list_folder していた＝N+1 回）。フォルダ自身がセットである構成（セットフォルダを
     /// 直接共有された場合）も、再帰一覧なら区別なく拾える。
     /// シャードなので、写真が増減したセットでも**変わったシャードだけ**ダウンロードする。
+    /// **受信側が解析データから読み取れる項目の版**（ADR-199）。
+    ///
+    /// ⚠️ 「取り込み済み」の判定は rev（Dropbox のファイル版）だけなので、**受信側が賢くなっても
+    /// 再取得は起きない**。解析データに新しい項目が増えたとき、旧ビルドの受信側が先に取り込んで
+    /// rev を記録してしまうと、更新後もその項目は永久に届かない。
+    ///
+    /// 実際に踏みかけた形: 送信側が先に更新して撮影日つきのシャードを上げる → 受信側は旧ビルドの
+    /// まま取り込み、`d` を無視して rev を記録 → 受信側が更新 → `fetchUpdated` は毎回 `[]` を返し、
+    /// 共有アルバムはアップロード順のまま。利用者に取り戻す手段が無い。
+    ///
+    /// ここを上げると、次の実行で記録済み rev を 1 回だけ捨てて全部を取り直す。
+    /// **解析データから新しく読む項目を足したら必ず上げる。**
+    public static let receiverCapabilityVersion = 2
+
+    private static let capabilityVersionKey = "share.receiverCapabilityVersion"
+
+    /// 受信側の読み取り能力が上がっていたら、記録済み rev を 1 回だけ捨てる。
+    static func invalidateRevsIfCapabilityGrew() {
+        let defaults = UserDefaults.standard
+        let stored = defaults.integer(forKey: capabilityVersionKey)   // 未設定は 0
+        guard stored < receiverCapabilityVersion else { return }
+        defaults.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
+        defaults.set(receiverCapabilityVersion, forKey: capabilityVersionKey)
+        BackupLogger.info("ShareAnalysisFetch: receiver capability \(stored) → "
+            + "\(receiverCapabilityVersion) — re-fetching all analysis data once")
+    }
+
     public func fetchUpdated(roots: [String], token: String) async -> [Fetched] {
+        Self.invalidateRevsIfCapabilityGrew()
         let copier = DropboxShareCopier(httpClient: httpClient)
         let knownRevs = Self.storedRevs()
         var out: [Fetched] = []

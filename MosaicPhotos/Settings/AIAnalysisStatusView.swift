@@ -152,8 +152,14 @@ struct AIAnalysisStatusView: View {
                     Text(text).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            // ⚠️ **セッションにも通す**（レビュー指摘）。`@AppStorage` への代入は
+            // `UserDefaults` を直接書くだけなので、`AnalysisSession.continueAfterLeaving` の
+            // setter を通らない——走行中に OFF にしても継続タスクが降りず、ロック画面と
+            // Dynamic Island のインジケータが出たままになる（この設定を戻した目的そのもの）。
+            // 表示は `@AppStorage` 側で即座に追従させる（ADR-193 のレビュー指摘）。
             Toggle(isOn: Binding(get: { continueAfterLeaving },
-                                 set: { continueAfterLeaving = $0 })) {
+                                 set: { continueAfterLeaving = $0
+                                        session.continueAfterLeaving = $0 })) {
                 Label(L("Keep Analyzing After Leaving the App"),
                       systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
             }

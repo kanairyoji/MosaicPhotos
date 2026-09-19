@@ -20,9 +20,10 @@ import MosaicSupport
 /// 並び順が黙って壊れ、解析データの rev は「取り込み済み」のままなので**再取得されない**。
 public struct SharedCaptureDateStore: Sendable {
 
-    /// 表の上限。家族フォルダの写真枚数ぶんなので通常は数百〜数千件だが、
-    /// 壊れた/巨大な入力で無制限に育てない（1 件あたり約 90 バイト ≒ 上限 1.8MB）。
-    public static let maxEntries = 20_000
+    /// 表の上限。1 件あたり約 90 バイト ≒ 上限 4.5MB。
+    /// ⚠️ 共有セット 1 つで 12,941 枚に達した実績があるので、2 セットで 2 万件を超える。
+    /// 上限に当たると並びが崩れるので、現実的な枚数より十分上に取る（レビュー指摘）。
+    public static let maxEntries = 50_000
 
     private let url: URL
 
@@ -32,6 +33,12 @@ public struct SharedCaptureDateStore: Sendable {
                                                  appropriateFor: nil, create: true))
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         url = base.appendingPathComponent(filename)
+    }
+
+    /// テスト用（往復と、書けない場所での挙動を確かめる）。
+    /// `PendingMetadataStore` と同じ差し込み口の形に揃えてある。
+    init(directory: URL, filename: String) {
+        url = directory.appendingPathComponent(filename)
     }
 
     /// Dropbox パス（小文字）→ 撮影日。表示側が引く形そのまま。
@@ -68,7 +75,14 @@ public struct SharedCaptureDateStore: Sendable {
     ///
     /// - 新しい値が**勝つ**（提供者が撮影日を直したら追従する）。
     /// - `keeping` が nil なら掃除しない（一覧が取れなかった回に全部消さないため）。
-    /// - 上限を超えたら**新しい撮影日から**残す（最近の写真ほど見られる）。
+    /// - 上限を超えたら**古い撮影日から**残す。
+    ///
+    /// ⚠️ 残す向きは「古い方」。**逆にしてはいけない**（レビュー指摘）。撮影日を落とした写真は
+    /// Dropbox の日付＝提供者が反映した時刻（≒最近）にフォールバックするので、
+    /// - 新しい写真を落とす → ずれは小さい（元々最近の写真）。
+    /// - 古い写真を落とす → 何年も前の写真が列の**末尾＝最新側**へ飛ぶ。
+    /// つまり古い写真ほど上書きの価値が高い。新しい方を残す実装は、元の不具合を
+    /// 「古い写真だけ」に集中させて悪化させる。
     public static func merged(existing: [String: Date],
                               adding: [String: Date],
                               keeping: Set<String>?) -> [String: Date] {
@@ -79,7 +93,9 @@ public struct SharedCaptureDateStore: Sendable {
             out = out.filter { lower.contains($0.key) }
         }
         guard out.count > maxEntries else { return out }
-        let kept = out.sorted { $0.value > $1.value }.prefix(maxEntries)
+        // 同着はパスで決定的に切る（実行ごとに残る顔ぶれが変わらないように）。
+        let kept = out.sorted { $0.value != $1.value ? $0.value < $1.value : $0.key < $1.key }
+            .prefix(maxEntries)
         return Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
     }
 

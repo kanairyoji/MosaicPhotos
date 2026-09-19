@@ -147,10 +147,14 @@ final class SharedAnalysisImporter {
         guard ShareSettingsKeys.isReceiveEnabled() else { return }
         let roots = ShareSettingsKeys.currentFamilyFolders()
         guard !roots.isEmpty else { return }
-        guard case .connected = dropboxStore.auth.connectionStatus,
-              let token = try? await dropboxStore.auth.freshAccessToken() else { return }
+        guard case .connected = dropboxStore.auth.connectionStatus else { return }
+        // ⚠️ **旗は `await` の前に立てる**（レビュー指摘）。トークンの更新は通信を伴うので
+        // ここで実際に中断し、旗が立つ前に 2 本目が入口を通り抜けられた。2 本同時に走ると
+        // 撮影日の表（読んで・混ぜて・書く）が**後勝ちで片方を丸ごと失い**、しかも先行分は
+        // rev を「取り込み済み」にしてしまうので二度と取り直せない（ADR-199）。
         isRunning = true
         defer { isRunning = false }
+        guard let token = try? await dropboxStore.auth.freshAccessToken() else { return }
 
         let fetched = await ShareAnalysisFetch().fetchUpdated(roots: roots, token: token)
         guard !fetched.isEmpty else { return }

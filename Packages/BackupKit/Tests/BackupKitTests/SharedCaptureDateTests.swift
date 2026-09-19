@@ -122,16 +122,64 @@ struct SharedCaptureDateTests {
         #expect(merged.count == 1)
     }
 
-    @Test("上限を超えたら新しい撮影日から残す")
-    func capsToNewest() {
+    /// ⚠️ 残す向きは**古い方**。撮影日を落とした写真は Dropbox の日付（≒提供者が反映した時刻）に
+    /// 落ちるので、古い写真ほど上書きの価値が高い——古い方を捨てると何年も前の写真が
+    /// 列の末尾（最新側）へ飛び、元の不具合より悪くなる。
+    @Test("上限を超えたら古い撮影日から残す")
+    func capsToOldest() {
         var existing: [String: Date] = [:]
         let over = SharedCaptureDateStore.maxEntries + 50
         for i in 0..<over { existing["/family/\(i).jpg"] = date(Double(i)) }
         let merged = SharedCaptureDateStore.merged(existing: existing, adding: [:], keeping: nil)
         #expect(merged.count == SharedCaptureDateStore.maxEntries)
-        // 残るのは新しい側（epoch が大きい方）。
-        #expect(merged["/family/\(over - 1).jpg"] != nil)
-        #expect(merged["/family/0.jpg"] == nil)
+        // 捨てられた範囲を**全部**確かめる（並べ替えずに prefix する退行を確実に落とす）。
+        for i in SharedCaptureDateStore.maxEntries..<over {
+            #expect(merged["/family/\(i).jpg"] == nil, "新しい側が残った: \(i)")
+        }
+        // 残った範囲も端まで確かめる。
+        #expect(merged["/family/0.jpg"] != nil)
+        #expect(merged["/family/\(SharedCaptureDateStore.maxEntries - 1).jpg"] != nil)
+    }
+
+    // MARK: - 永続化（ファイルへの往復）
+
+    @Test("保存した撮影日を読み直せる")
+    func roundTripsThroughTheFile() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = SharedCaptureDateStore(directory: dir, filename: "dates.json")
+        #expect(store.load().isEmpty, "まだ何も書いていないのに読めた")
+
+        let saved = store.record(["/Family/Set/A.JPG": date(1_600_000_000)])
+        #expect(saved["/family/set/a.jpg"] == date(1_600_000_000))
+
+        // 別インスタンスで読み直す＝本番と同じ経路（起動をまたぐ）。
+        let reopened = SharedCaptureDateStore(directory: dir, filename: "dates.json")
+        #expect(reopened.load() == ["/family/set/a.jpg": date(1_600_000_000)],
+                "保存した撮影日が読み直せない＝並びが黙って直らない")
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test("書けない場所でも落ちない（撮影日が無いだけ）")
+    func survivesAnUnwritableLocation() {
+        // 実在するファイルをディレクトリとして使う＝書き込みが必ず失敗する。
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        FileManager.default.createFile(atPath: file.path, contents: Data("x".utf8))
+        let store = SharedCaptureDateStore(directory: file, filename: "dates.json")
+        let table = store.record(["/family/a.jpg": date(100)])
+        #expect(table["/family/a.jpg"] == date(100), "戻り値は混ぜた結果を返すべき")
+        #expect(store.load().isEmpty, "書けていないのに読めた")
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    // MARK: - 受信側の読み取り能力の版
+
+    /// ⚠️ 解析データから新しく読む項目を足したら、この版を必ず上げる。上げないと、
+    /// 旧ビルドで取り込んだ rev が「取り込み済み」のまま残り、新項目は永久に届かない。
+    @Test("撮影日を読むビルドは受信能力の版が 2 以上")
+    func capabilityVersionCoversCaptureDates() {
+        #expect(ShareAnalysisFetch.receiverCapabilityVersion >= 2)
     }
 
     @Test("読み込みでも不正な epoch は落とす")

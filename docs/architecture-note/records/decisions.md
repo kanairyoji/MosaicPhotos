@@ -36,6 +36,14 @@
   - ロールアウトは自動。送信側の解析データは毎回組み直して content_hash で比較するので、`d` が増えた時点でシャードが上がり、受信側の rev が変わって取り込まれる。**逆に言えば、提供者のアプリが更新されるまで既存アルバムの並びは直らない。**
   - 置き場所は Caches ではなく Application Support。Caches だと OS に消されて並びが黙って壊れるのに、解析データの rev は「取り込み済み」のままで**再取得されない**。
   - 掃除は「いま同期済みの家族フォルダ配下」を基準にする回だけ（一覧が取れなかった回に全消しすると並びが壊れる）。上限 2 万件、溢れたら新しい撮影日から残す。
+- **追補（レビューで直した点・2026-09-19）**:
+  - 受信側の読み取り能力に版を持たせる（`ShareAnalysisFetch.receiverCapabilityVersion`）。
+    rev だけを鍵にすると、旧ビルドで一度取り込んだ解析データは**受信側が更新しても再取得されず**、
+    撮影日が永久に届かない。解析データから新しく読む項目を足したら必ず上げる。
+  - 上限超過で残すのは**古い撮影日**。撮影日を落とした写真は Dropbox の日付（≒反映時刻）に
+    落ちるので、古い写真ほど上書きの価値が高い。逆向きだと古い写真が列の最新側へ飛ぶ。
+  - 取り込みの再入防止の旗は `await`（トークン更新）の**前**に立てる。2 本同時に走ると
+    撮影日の表が後勝ちで片方失われ、rev は記録済みなので取り直せない。
 - 関連: `Share/ShareAnalysisData.swift` / `ShareImportPlanning.swift` / `SharedCaptureDates.swift`（新）/ `AutoAlbumStore+ShareExport.swift` / `AutoAlbumEngine+Share.swift` / `MosaicPhotos/Share/ShareSupport.swift` / `RootView.swift`。ADR-128 追補（バックアップ副本の撮影日）・ADR-112（家族共有）・ADR-183（解析データのシャード）。
 
 ## ADR-169 名前の持ち越しは「一対一対応」として解く（同名の別人を捨てない）

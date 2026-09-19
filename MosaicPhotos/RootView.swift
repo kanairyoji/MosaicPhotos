@@ -147,7 +147,11 @@ final class HomeStores {
         let shareImporter = SharedAnalysisImporter(
             dropboxStore: dropboxStore, autoAlbumEngine: autoAlbumEngine,
             peopleEngine: peopleEngine,
-            // 受け取った撮影日が増えたら、表示中の一覧の並びを取り直す（ADR-199）。
+            // 受け取った撮影日が増えたら、ホーム（All Photos）の並びを取り直す（ADR-199）。
+            // ⚠️ **共有アルバムの画面には届かない**（レビュー指摘）。あの画面は
+            // `forMembers` で自前のストアを持ち、索引を引くのは `start()` の 1 回だけ。
+            // 開いたまま取り込みが走った場合は、閉じて開き直すまで古い並びのまま。
+            // 未解決として `unresolved-problems.md` に記録した。
             onCaptureDatesChanged: { [weak mergedStore] in
                 await mergedStore?.refreshBackupCopyIndex()
             })

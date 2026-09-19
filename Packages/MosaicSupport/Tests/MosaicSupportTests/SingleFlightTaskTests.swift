@@ -268,7 +268,7 @@ struct SingleFlightReviewRegressionTests {
         var inherited: TaskPriority?
         flight.start { inherited = Task.currentPriority }
         try? await Task.sleep(nanoseconds: 50_000_000)
-        #expect(inherited != .background, "優先度を指定していないのに .background になっている（テストが何も守っていない）")
+        #expect(inherited != nil && inherited != .background, "優先度を指定していないのに .background になっている（テストが何も守っていない）")
     }
 
     /// `stop()` は予約を捨てるのに `restart()` は残す、という非対称は罠
@@ -292,24 +292,82 @@ struct SingleFlightReviewRegressionTests {
 @MainActor
 struct DebouncedTaskOverlapTests {
 
+    /// 条件が成立するまで待つ（上限つき）。
+    /// ⚠️ `Task.yield()` では**静止時間（`Task.sleep`）は進まない**ので実時間で待つ。
+    /// これは「速いこと」の判定ではなく「起きるはずのことが起きるまで待つ」ので、
+    /// 負荷の高い CI で上限に余裕があるかぎり揺れない（ADR-119）。
+    private func waitUntil(_ condition: () -> Bool, limitMs: Int = 2_000) async {
+        for _ in 0..<(limitMs / 5) {
+            if condition() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
     /// `loadPeople()` は 600〜1000ms、静止時間は 700ms。実行中に次の要求が来るのは日常的で、
     /// そこで 2 本目が走ると「間引きのために入れた仕組みが重複実行を許す」ことになる。
+    ///
+    /// ⚠️ 旧版はここで `gate.open()` を 2 本目の予約直後に呼んでいたため、1 本目が
+    /// 静止時間より先に終わってしまい、**欠陥があっても通った**（レビュー指摘）。
+    /// 関門は「2 本目が走り出せたはず」の時間を過ぎるまで閉じたままにする。
     @Test("回帰: body の実行中に来た要求で 2 本目を起こさない")
     func doesNotStartASecondRunWhileTheBodyIsRunning() async {
         let debounced = DebouncedTask(quietMilliseconds: 10)
         let gate = TestGate()
         var running = 0
         var maxConcurrent = 0
+        var entered: [String] = []
 
         debounced.schedule {
+            entered.append("first")
             running += 1; maxConcurrent = max(maxConcurrent, running)
             await gate.wait()
             running -= 1
         }
-        try? await Task.sleep(nanoseconds: 40_000_000)   // body に入るまで待つ
-        debounced.schedule { running += 1; maxConcurrent = max(maxConcurrent, running); running -= 1 }
+        // fixture の前提を**確かめる**: 1 本目が本当に body へ入っていること（ADR-119）。
+        await waitUntil { !entered.isEmpty }
+        #expect(entered == ["first"], "1 本目が body に入っていない＝前提が成立していない")
+
+        debounced.schedule {
+            entered.append("second")
+            running += 1; maxConcurrent = max(maxConcurrent, running); running -= 1
+        }
+        // 静止時間 10ms に対して 300ms 待つ（30 倍の余裕）。欠陥があればここで 2 本目が走る。
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        #expect(maxConcurrent == 1, "1 本目の実行中に 2 本目が走った（同時 \(maxConcurrent) 本）")
+
         gate.open()
         await debounced.waitUntilIdle()
-        #expect(maxConcurrent == 1, "同時に \(maxConcurrent) 本走った（重複実行）")
+        #expect(entered == ["first", "second"], "順に 1 回ずつ走らなかった: \(entered)")
+        #expect(maxConcurrent == 1)
+    }
+
+    /// 回帰: **終わりかけの古い実行が、新しい予約のハンドルを消さない**。
+    /// 消すと `waitUntilIdle()` が「もう無い」と見て即座に返り、`cancel()` も空振りする
+    /// ——取り消せない実行が積み上がる入口になっていた（レビュー指摘）。
+    @Test("回帰: 古い実行が新しい予約のハンドルを消さない")
+    func finishingRunDoesNotDiscardTheNewerHandle() async {
+        let debounced = DebouncedTask(quietMilliseconds: 10)
+        let gate = TestGate()
+        var ran: [String] = []
+
+        debounced.schedule {
+            ran.append("first-begin")
+            await gate.wait()
+            ran.append("first-end")
+        }
+        await waitUntil { !ran.isEmpty }
+        #expect(ran == ["first-begin"], "1 本目が body に入っていない＝前提が成立していない")
+
+        debounced.schedule { ran.append("second") }
+        gate.open()
+        // 1 本目が**終わりきる**まで待つ。ハンドルを消す退行はこの瞬間に起きる。
+        await waitUntil { ran.contains("first-end") }
+        #expect(ran.contains("first-end"), "1 本目が終わっていない＝前提が成立していない")
+
+        // ハンドルが残っていれば `waitUntilIdle()` は 2 本目を待つ。消えていれば
+        // 「もう無い」と見て即座に返り、2 本目は裏で走り続ける。
+        await debounced.waitUntilIdle()
+        #expect(ran.contains("second"),
+                "2 本目を待たずに idle になった（ハンドルが消えている）: \(ran)")
     }
 }
