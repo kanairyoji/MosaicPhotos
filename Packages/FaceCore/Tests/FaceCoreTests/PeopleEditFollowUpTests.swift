@@ -18,6 +18,32 @@ struct PeopleEditFollowUpTests {
     @MainActor
     final class Counter { var calls = 0; var finished = 0 }
 
+    /// 後追いを**テストが開けるまで止めておく**関門。
+    ///
+    /// ⚠️ ここを `Task.sleep` で代用しない。以前は「後追いは 300ms 眠る／修正は 0.25 秒未満で
+    /// 戻る」という**壁時計の比較**で書いていて、CI の負荷が高い回に 0.2725 秒かかって落ちた
+    /// （ADR-119 の「時間は CI で揺れるが回数は決定的」を、このテスト自身が破っていた）。
+    /// 関門なら「開けるまで絶対に終わらない」ので、待ったかどうかを時間抜きで判定できる。
+    ///
+    /// 開いた後に来た `wait()` は素通りさせる（合流した 2 回目の後追いがここで止まらないように）。
+    @MainActor
+    final class Gate {
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var isOpen = false
+
+        func wait() async {
+            if isOpen { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func open() {
+            isOpen = true
+            let pending = waiters
+            waiters = []
+            for continuation in pending { continuation.resume() }
+        }
+    }
+
     @Test("removePhoto は後追いの完了を待たず、連続操作の後追いは 1 回にまとまる")
     @MainActor
     func removePhotoReturnsBeforeFollowUp() async {
@@ -29,21 +55,21 @@ struct PeopleEditFollowUpTests {
 
         let engine = PeopleEngine(faceProvider: nil, store: store)
         let counter = Counter()
+        let gate = Gate()
         engine.onPeopleEdited = {
             counter.calls += 1
-            try? await Task.sleep(for: .milliseconds(300))   // 掃除が遅い状況を模す
+            await gate.wait()          // 掃除が終わらない状況を模す（開けるまで絶対に終わらない）
             counter.finished += 1
         }
 
-        let t0 = Date()
         let removed1 = await engine.removePhoto(itemID: "L-a0", from: cid)
         let removed2 = await engine.removePhoto(itemID: "L-a1", from: cid)
-        let elapsed = Date().timeIntervalSince(t0)
         #expect(removed1 == 1 && removed2 == 1)
-        // 修正そのものは後追いの 300ms×2 を待たない。
-        #expect(elapsed < 0.25, "後追いを待ってしまった: \(elapsed)s")
+        // ⚠️ ここが本題。関門は閉じたままなので、後追いを待つ実装なら**戻ってこない**。
+        // 戻ってきて `finished == 0` なら、待っていないことが時間に依らず確定する。
         #expect(counter.finished == 0, "戻る前に後追いが終わっている＝待っていた")
 
+        gate.open()
         await engine.awaitEditFollowUp()
         // 走行中に来た 2 回目は、終わってからもう 1 回だけ（2 回以下・0 回ではない）。
         #expect(counter.calls >= 1 && counter.calls <= 2, "後追いの回数: \(counter.calls)")
