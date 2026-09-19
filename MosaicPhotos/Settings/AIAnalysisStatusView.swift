@@ -24,6 +24,10 @@ struct AIAnalysisStatusView: View {
 
     /// 数字と数え直しループの持ち主（ADR-196）。**`.task` が Section ごとに配られても 1 本**。
     @State private var model = AnalysisStatusModel()
+    /// 「今すぐ解析」がアプリを離れても続くか（ADR-197）。
+    /// ⚠️ `UserDefaults` の直読みではなく `@AppStorage`——直読みだと選んでも表示が前の値のままで
+    /// 壊れて見える（ADR-193 のときのレビュー指摘）。
+    @AppStorage(AppSettingsKeys.analysisContinueAfterLeaving) private var continueAfterLeaving = true
 
     private var deps: AnalysisStatusModel.Deps {
         .init(engine: engine, people: people, dropboxStore: dropboxStore, session: session)
@@ -148,6 +152,11 @@ struct AIAnalysisStatusView: View {
                     Text(text).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Toggle(isOn: Binding(get: { continueAfterLeaving },
+                                 set: { continueAfterLeaving = $0 })) {
+                Label(L("Keep Analyzing After Leaving the App"),
+                      systemImage: "rectangle.portrait.on.rectangle.portrait.angled")
+            }
             Toggle(isOn: Binding(get: { session.keepScreenOn }, set: { session.keepScreenOn = $0 })) {
                 Label(L("Keep Screen On While Analyzing"), systemImage: "sun.max")
             }
@@ -161,7 +170,7 @@ struct AIAnalysisStatusView: View {
         } footer: {
             Text("Analysis runs by itself whenever the conditions in Processing Timing are met — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds. Nothing to resume: it simply continues from where it is.")
             + Text(verbatim: "\n\n")
-            + Text("“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.")
+            + Text("“Analyze Now” runs faces, tags, and the search index at full speed, ignoring the conditions above (except heat and a low battery). With “Keep Analyzing After Leaving the App” on, it continues after you leave — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. Turn it off if you would rather not see that indicator; analysis then runs only while the app is open. Either way, nightly background analysis is unaffected.")
             + Text(verbatim: "\n\n")
             + Text("Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.")
         }
@@ -218,6 +227,7 @@ struct AIAnalysisStatusView: View {
     private func blockerText(_ blocker: BackgroundYield.Blocker) -> String {
         switch blocker {
         case .automaticOff:         return L("Automatic analysis is turned off (Processing Timing).")
+        case .foregroundAnalysisOff: return L("“Analyze while the app is open” is off, so analysis waits until you leave the app or lock your iPhone.")
         case .backgroundRefreshOff: return L("Background App Refresh is off for this app — iOS never gives it a background window. Turn it on in Settings → General → Background App Refresh.")
         case .lowPowerMode:         return L("Low Power Mode is on.")
         case .notCharging:          return L("Not charging (the current setting runs heavy work only while charging).")
@@ -237,6 +247,7 @@ struct AIAnalysisStatusView: View {
     private func blockerIcon(_ blocker: BackgroundYield.Blocker) -> String {
         switch blocker {
         case .automaticOff:              return "pause.circle"
+        case .foregroundAnalysisOff:     return "hand.raised"
         case .backgroundRefreshOff:      return "app.badge.checkmark"
         case .lowPowerMode, .lowBattery: return "battery.25"
         case .notCharging, .powerOff:    return "powerplug"

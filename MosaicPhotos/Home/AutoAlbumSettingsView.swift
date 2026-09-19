@@ -23,6 +23,8 @@ struct AutoAlbumSettingsView: View {
     private var backgroundLevel = BackgroundProcessing.defaultIndex
     @AppStorage(HeavyWorkTiming.defaultsKey)
     private var heavyWorkTiming = HeavyWorkTiming.enabled.rawValue
+    /// アプリを開いている間も解析するか（ADR-197・既定 ON）。
+    @AppStorage(HeavyWorkTiming.foregroundAnalysisKey) private var foregroundAnalysis = true
 
     private var selectedPreset: BackgroundProcessingPreset {
         BackgroundProcessing.preset(at: backgroundLevel)
@@ -33,12 +35,19 @@ struct AutoAlbumSettingsView: View {
         (HeavyWorkTiming(rawValue: heavyWorkTiming) ?? .enabled) != .paused
     }
 
+    /// 「アプリを開いている間も解析する」の説明（ON/OFF で意味が変わるので文言も切り替える）。
+    private var foregroundAnalysisFooter: String {
+        foregroundAnalysis
+            ? L("Indexes your photos so AI albums and search stay up to date — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds (it yields the moment you interact). Power and network conditions are set in Settings → Background & Battery.")
+            : L("Indexes your photos while your iPhone is locked or you are using another app. Nothing runs while this app is open, so browsing never slows down and the battery is not used for analysis in your hand. Power and network conditions are set in Settings → Background & Battery.")
+    }
+
     var body: some View {
         Group {
-            // AI 処理を「いつ動かすか」は 3 軸の独立設定（ADR-80 → ADR-195）。ここでは (1) 自動処理の
-            // 有無を扱う。(2) 電源と (3) 回線は General → Background & Battery に一本化した。
-            // 旧「控えめ（前面で動かすか）」の軸は廃止＝前面でも 20 秒触っていなければ動き、
-            // 触れば 1 単位ごとに譲る（判定本体は HeavyWorkTiming.allows・テスト済み）。
+            // AI 処理を「いつ動かすか」の設定（ADR-80 → ADR-195 → ADR-197）。ここでは
+            // (1) 自動処理の有無と (2) 前面でも動かすかを扱う。電源と回線は
+            // General → Background & Battery に一本化した。判定本体はゲートの表
+            // （`BackgroundYield.blockers` のそれぞれ `automaticOff` / `foregroundAnalysisOff` 行）。
             Section {
                 Toggle(isOn: Binding(
                     get: { automaticEnabled },
@@ -46,10 +55,14 @@ struct AutoAlbumSettingsView: View {
                 )) {
                     Text(L("Automatic analysis"))
                 }
+                Toggle(isOn: $foregroundAnalysis) {
+                    Text(L("Analyze while the app is open"))
+                }
+                .disabled(!automaticEnabled)
             } header: {
                 Text("Processing Timing")
             } footer: {
-                Text(L("Indexes your photos so AI albums and search stay up to date — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds (it yields the moment you interact). Power and network conditions are set in Settings → Background & Battery."))
+                Text(foregroundAnalysisFooter)
             }
 
             Section {

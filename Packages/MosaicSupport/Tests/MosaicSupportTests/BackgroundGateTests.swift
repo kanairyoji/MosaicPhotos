@@ -210,3 +210,55 @@ struct BackgroundGateTests {
         #expect(order.last == .tooHot, "端末の状態は後ろ")
     }
 }
+
+/// ADR-197: ADR-195 で誤って廃止した「前面でも解析するか」の設定を、表の行として戻したもの。
+///
+/// 廃止の根拠は「トリクルは 1 単位ごとに譲るので体感の代償が無い」だったが、これは**応答性**に
+/// しか答えていない——**電池と発熱**の代償は残る。「手に持って使っている間は一切動かして
+/// ほしくない」という要求は正当なので、選べる形に戻した。
+@Suite("前面で解析するかの設定（ADR-197）")
+struct ForegroundAnalysisSettingTests {
+
+    typealias Env = BackgroundYield.Environment
+    typealias Blocker = BackgroundYield.Blocker
+
+    private func blockers(_ env: Env, _ work: BackgroundYield.HeavyWork,
+                          _ ex: BackgroundYield.Exemption = .none) -> [Blocker] {
+        BackgroundYield.blockers(env, for: work, exemption: ex)
+    }
+
+    @Test("OFF なら前面では動かない（20 秒放置していても）")
+    func offStopsForegroundWork() {
+        var env = Env(foregroundAnalysisEnabled: false, idleSeconds: 999, scenePhase: .active)
+        #expect(blockers(env, .localTrickle) == [.foregroundAnalysisOff])
+        env.foregroundAnalysisEnabled = true
+        #expect(blockers(env, .localTrickle).isEmpty, "ON なら従来どおり進む")
+    }
+
+    @Test("OFF でも背面（ロック中・他アプリ使用中）は動く＝夜間の解析は止まらない")
+    func offDoesNotStopBackgroundWork() {
+        let env = Env(foregroundAnalysisEnabled: false, scenePhase: .background)
+        #expect(blockers(env, .localTrickle).isEmpty)
+        #expect(blockers(env, .cloudTrickle).isEmpty)
+        #expect(blockers(env, .window).isEmpty, "処理枠の予約にも影響しない")
+    }
+
+    @Test("OFF でも「今すぐ解析」は動く（明示操作は免除）")
+    func boostIgnoresTheSetting() {
+        let env = Env(foregroundAnalysisEnabled: false, idleSeconds: 0, scenePhase: .active)
+        #expect(!blockers(env, .localTrickle).isEmpty)
+        #expect(blockers(env, .localTrickle, .boost).isEmpty)
+    }
+
+    /// 画面は止めている条件を「直しやすい順」に出すので、並びは宣言順に揃っていること。
+    @Test("止めている条件の並びは宣言順（アプリの設定が先頭）")
+    func blockersKeepDeclaredOrder() {
+        let env = Env(automaticEnabled: false, foregroundAnalysisEnabled: false,
+                      tooHot: true, idleSeconds: 0, scenePhase: .active)
+        let order = blockers(env, .localTrickle)
+        #expect(order.first == .automaticOff)
+        #expect(order.contains(.foregroundAnalysisOff))
+        #expect(order.firstIndex(of: .foregroundAnalysisOff)! < order.firstIndex(of: .tooHot)!,
+                "アプリの設定（直しやすい）は端末の状態より前")
+    }
+}

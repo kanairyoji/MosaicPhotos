@@ -82,6 +82,8 @@ public enum BackgroundYield {
     public enum Blocker: String, Sendable, CaseIterable {
         /// 「自動で解析する」が OFF（設定 → アルバム → 処理のタイミング）。
         case automaticOff
+        /// 「アプリを開いている間も解析する」が OFF（前面でだけ効く・ADR-197）。
+        case foregroundAnalysisOff
         /// iOS の「App のバックグラウンド更新」が OFF／制限。処理枠そのものが来ない。
         case backgroundRefreshOff
         /// 低電力モード（どの設定でも重い処理は止まる・安全弁）。
@@ -141,7 +143,7 @@ public enum BackgroundYield {
             case .backgroundRefreshOff:
                 return work == .window
             // 処理枠は OS が起こすかどうかなので、アプリ側の実行時条件は問わない。
-            case .memoryPressure, .heavyLoad, .generating, .uiBusy, .foregroundNotIdle:
+            case .memoryPressure, .heavyLoad, .generating, .uiBusy, .foregroundNotIdle, .foregroundAnalysisOff:
                 return work != .window
             default:
                 return true
@@ -222,6 +224,8 @@ public enum BackgroundYield {
         /// 電池残量（0〜1）。読めないときは nil＝電池では止めない。
         public var batteryLevel: Float?
         public var networkAllowed: Bool
+        /// アプリを開いている間も解析するか（ADR-197）。
+        public var foregroundAnalysisEnabled: Bool
         public var tooHot: Bool
         public var memoryPressure: Bool
         public var heavyLoadInFlight: Bool
@@ -237,6 +241,7 @@ public enum BackgroundYield {
                     onPower: Bool = true,
                     batteryLevel: Float? = nil,
                     networkAllowed: Bool = true,
+                    foregroundAnalysisEnabled: Bool = true,
                     tooHot: Bool = false,
                     memoryPressure: Bool = false,
                     heavyLoadInFlight: Bool = false,
@@ -251,6 +256,7 @@ public enum BackgroundYield {
             self.onPower = onPower
             self.batteryLevel = batteryLevel
             self.networkAllowed = networkAllowed
+            self.foregroundAnalysisEnabled = foregroundAnalysisEnabled
             self.tooHot = tooHot
             self.memoryPressure = memoryPressure
             self.heavyLoadInFlight = heavyLoadInFlight
@@ -288,6 +294,7 @@ public enum BackgroundYield {
             onPower: power.isOnPower,
             batteryLevel: power.batteryLevelIfKnown,
             networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
+            foregroundAnalysisEnabled: HeavyWorkTiming.foregroundAnalysisEnabled,
             tooHot: ThermalGate.shared.shouldPause(),
             memoryPressure: MemoryPressureMonitor.shared.isUnderPressure,
             heavyLoadInFlight: HeavyLoad.isInFlight(),
@@ -324,17 +331,21 @@ public enum BackgroundYield {
         // 背面では画面が無いのに、解析自身のサムネ取得で `uiBusy` が立ち続けて
         // 夜間の解析が丸ごと止まっていた（diagnostics-81）。
         if env.scenePhase == .active {
+            if !env.foregroundAnalysisEnabled { raw.append(.foregroundAnalysisOff) }
             if env.uiBusy { raw.append(.uiBusy) }
             if env.idleSeconds < HeavyWorkTiming.foregroundIdleSeconds { raw.append(.foregroundNotIdle) }
             raw.append(.appActive)
         }
         if exemption == .boost { raw.append(.boostRunning) }
 
+        // ⚠️ 並び順は**宣言順**（＝直しやすい順）に揃える。画面はこの順で出すので、
+        // 組み立ての都合で順番が変わると表示の意味が変わる。
+        let order = Dictionary(uniqueKeysWithValues: Blocker.allCases.enumerated().map { ($1, $0) })
         return raw.filter { b in
             guard b.applies(to: work) else { return false }
             guard let skip = b.skippableBy else { return true }   // 安全弁は誰も外せない
             return exemption < skip
-        }
+        }.sorted { (order[$0] ?? 0) < (order[$1] ?? 0) }
     }
 
     /// いまこの仕事を動かしてよいか。**入口も 1 単位ごとの譲りも、これを呼ぶ**。

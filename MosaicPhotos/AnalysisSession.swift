@@ -73,6 +73,17 @@ final class AnalysisSession {
     var isActive: Bool { if case .running = state { return true } else { return false } }
     var mode: Mode? { if case .running(let m) = state { return m } else { return nil } }
 
+    /// アプリを離れても「今すぐ解析」を続けるか（既定 ON・ADR-197）。
+    ///
+    /// ⚠️ OFF は「解析を止める設定」ではない——**OS の継続タスクを使わない**という意味で、
+    /// 結果としてロック画面と Dynamic Island の進捗インジケータが出なくなる（あの表示は
+    /// アプリからは消せない。そもそも進捗を報告しないタスクは OS が殺す）。
+    /// 夜間の自動解析はどちらでも動く。
+    var continueAfterLeaving: Bool {
+        get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisContinueAfterLeaving) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: AppSettingsKeys.analysisContinueAfterLeaving) }
+    }
+
     /// 画面を消灯させない（既定 ON・ブースト中だけ効く）。設定として永続化。
     var keepScreenOn: Bool {
         get { UserDefaults.standard.object(forKey: AppSettingsKeys.analysisKeepScreenOn) as? Bool ?? true }
@@ -163,6 +174,9 @@ final class AnalysisSession {
 
     /// OS の継続タスクに載せる。受けてもらえなければ false（前面のみで続ける）。
     private func submitContinuedTask() -> Bool {
+        // 利用者が「アプリを開いている間だけ」を選んでいれば、継続タスクは取らない
+        // ＝インジケータも出ない（ADR-197）。
+        guard continueAfterLeaving else { return false }
         #if targetEnvironment(simulator)
         return false
         #else

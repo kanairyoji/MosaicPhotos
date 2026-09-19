@@ -15,6 +15,10 @@ enum AppSettingsKeys {
     /// 解析セッション（ADR-182）中に画面を消灯させないか（既定 ON。iOS 26 の
     /// BGContinuedProcessingTask がロックで止まる既知の問題への備え）。
     static let analysisKeepScreenOn = "analysis.keepScreenOn"
+
+    /// 「今すぐ解析」がアプリを離れても続くか（ADR-193 → ADR-195 で誤って廃止 → ADR-197 で復活）。
+    /// OFF なら OS の継続タスクを使わない＝ロック画面と Dynamic Island のインジケータが出ない。
+    static let analysisContinueAfterLeaving = "analysis.continueAfterLeaving"
     /// 直近にバックグラウンド処理枠が開いた時刻（窓と窓の間隔を測る・diagnostics-81）。
     static let bgTaskLastBeginAt = "debug.bgTaskLastBeginAt"
     /// D: BGProcessingTask の最終実行記録（開始時刻・結果・所要分。Developer Options で表示）。

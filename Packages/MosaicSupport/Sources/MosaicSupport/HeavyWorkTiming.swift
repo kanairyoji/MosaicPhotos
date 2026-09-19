@@ -40,6 +40,20 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
         return raw == paused.rawValue ? .paused : .enabled
     }
 
+    /// **アプリを開いている間も解析するか**（ADR-197）。既定 ON。
+    ///
+    /// ⚠️ ADR-195 で旧「画像分析を控えめに動かす」（ON＝前面では動かさない）を廃止したが、
+    /// これは誤りだった。廃止の根拠は「トリクルは 1 単位ごとに譲るので体感の代償が無い」で、
+    /// これは**応答性**にしか答えていない——**電池と発熱**の代償は残る。「手に持って使っている
+    /// 間は一切動かしてほしくない」という要求は正当なので、選べる形で戻す。
+    /// 名前は肯定形にした（旧設定は ON が「動かさない」で意味が反転していた）。
+    public static let foregroundAnalysisKey = "heavywork.foregroundAnalysis"
+
+    /// アプリを開いている間も解析するか（未設定は ON）。
+    public static var foregroundAnalysisEnabled: Bool {
+        UserDefaults.standard.object(forKey: foregroundAnalysisKey) as? Bool ?? true
+    }
+
     /// アプリ使用中（フォアグラウンド）に「操作の合間」とみなすアイドル秒数。
     /// 全タッチを UIWindow レベルで捕捉した上での値なので短くても誤発火しない。
     public static let foregroundIdleSeconds: TimeInterval = 20
