@@ -144,9 +144,13 @@ final class HomeStores {
         peopleEngine.onPersonIdentitiesInvalidated = { [weak shareEngine] in
             await shareEngine?.detachPersonSources()
         }
-        let shareImporter = SharedAnalysisImporter(dropboxStore: dropboxStore,
-                                                   autoAlbumEngine: autoAlbumEngine,
-                                                   peopleEngine: peopleEngine)
+        let shareImporter = SharedAnalysisImporter(
+            dropboxStore: dropboxStore, autoAlbumEngine: autoAlbumEngine,
+            peopleEngine: peopleEngine,
+            // 受け取った撮影日が増えたら、表示中の一覧の並びを取り直す（ADR-199）。
+            onCaptureDatesChanged: { [weak mergedStore] in
+                await mergedStore?.refreshBackupCopyIndex()
+            })
         // バックアップコピーの二重表示を防ぐ（実機 diagnostics-57/58）。バックアップフォルダは
         // オフロード写真のクラウド代替のため同期対象に入れているが、**端末に原本が有る写真まで
         // 二重に出ていた**。台帳（パス → localIdentifier）を渡し、原本が有るものは隠す。
@@ -157,9 +161,20 @@ final class HomeStores {
             // ⚠️ 撮影日も一緒に渡す。Dropbox 側の日付は EXIF が読めない写真だと
             // **アップロード時刻**になるので、台帳の `creationDate` を正として上書きする
             // （ADR-128 追補・実フィードバック「バックアップを新しい写真と認識している」）。
-            return await store.backupCopyRecords().mapValues {
+            var index = await store.backupCopyRecords().mapValues {
                 BackupCopyInfo(localIdentifier: $0.localIdentifier, captureDate: $0.captureDate)
             }
+            // ⚠️ **受け取った共有写真の撮影日も同じ表に混ぜる**（ADR-199・実フィードバック
+            // 「共有フォルダの表示が撮影時間順でない」）。上の台帳はバックアップのパスしか
+            // 持たないので、家族フォルダ配下のパスは 1 件も当たらない。受信側で撮影日を
+            // 復元できるのは解析データ（`Entry.d`）だけなので、そこから貯めた表を重ねる。
+            // `localIdentifier` は nil＝**隠す対象にはしない**（原本は手元に無い）。
+            for (path, date) in await Task.detached(priority: .utility, operation: {
+                SharedCaptureDateStore().load()
+            }).value where index[path] == nil {
+                index[path] = BackupCopyInfo(localIdentifier: nil, captureDate: date)
+            }
+            return index
         }
         // ピープルの顔アバターが使うクラウド画像の取得先（PeopleKit の注入点）。
         // ⚠️ これを設定し忘れると、**クラウド写真の顔サムネが 1 枚も出ない**（レビュー画面が

@@ -40,6 +40,10 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
                     entry.human = a.humanCount
                     entry.aes = a.aesthetic
                     entry.clip = a.clipHalf?.base64EncodedString()
+                    // 撮影日（ADR-199）。受信側は Dropbox の日付しか見えず、共有コピーは
+                    // サーバーサイドコピーなので EXIF 由来の `time_taken` が付かないことが多い
+                    // ——載せないと**アップロード順**に並ぶ。
+                    entry.d = a.captureDate?.timeIntervalSince1970
                 }
                 if let f = faces[key], !f.isEmpty {
                     entry.faces = f.map { signal in
@@ -123,13 +127,17 @@ final class SharedAnalysisImporter {
     private let dropboxStore: DropboxPhotoStore
     private let autoAlbumEngine: AutoAlbumEngine
     private let peopleEngine: PeopleEngine
+    /// 受信した撮影日が増えたときに呼ぶ（表示中の一覧へ反映させる・ADR-199）。
+    private let onCaptureDatesChanged: (@MainActor () async -> Void)?
     private(set) var isRunning = false
 
     init(dropboxStore: DropboxPhotoStore, autoAlbumEngine: AutoAlbumEngine,
-         peopleEngine: PeopleEngine) {
+         peopleEngine: PeopleEngine,
+         onCaptureDatesChanged: (@MainActor () async -> Void)? = nil) {
         self.dropboxStore = dropboxStore
         self.autoAlbumEngine = autoAlbumEngine
         self.peopleEngine = peopleEngine
+        self.onCaptureDatesChanged = onCaptureDatesChanged
     }
 
     /// 家族フォルダが設定されていれば、更新された解析データを取得して取り込む。
@@ -195,11 +203,42 @@ final class SharedAnalysisImporter {
                 // まだ同期されていない写真が残っている解析データは rev を記録しない
                 // （次回の実行で残りを取り込む。取り込みは既存レコードをスキップするので冪等）。
                 let fullyMatched = analysisData.file.entries.keys.allSatisfy { hashSet.contains($0) }
+                // 撮影日は refKey（"C-<path>"）で来るので、表示側が引く形（パス小文字）へ戻す。
+                var captureDates: [String: Date] = [:]
+                for (refKey, date) in batch.captureDates {
+                    guard case .cloud(let path)? = PhotoRef.decode(refKey) else { continue }
+                    captureDates[path.lowercased()] = date
+                }
                 return PreparedImport(analysisData: analysisData, tags: tags,
                                       embeddings: batch.embeddings, faces: faces,
-                                      fullyMatched: fullyMatched)
+                                      captureDates: captureDates, fullyMatched: fullyMatched)
             }
         }.value
+
+        // ⚠️ **撮影日はここで先に確定させる**（ADR-199）。取り込み（タグ/埋め込み/顔）とは
+        // 独立した表示用の事実で、モデル版が合わず本体の取り込みが 1 件も起きない相手でも、
+        // 並び順だけは直せる。
+        //
+        // ⚠️ 掃除は**全部の解析データが突合できた回だけ**。同期が途中だと「まだ手元に無いだけ」の
+        // 写真まで一覧から消えて見え、その記録を捨ててしまう（解析データの rev は突合が済むまで
+        // 記録されないので再取得はされるが、それまでの間、並びが黙って壊れる）。
+        let fullyMatchedAll = prepared.allSatisfy(\.fullyMatched)
+        let syncedSharedPaths: Set<String>? = fullyMatchedAll
+            ? Set(itemsSnapshot.map { $0.path.lowercased() }.filter { lower in
+                rootsLower.contains { lower == $0 || lower.hasPrefix($0 + "/") }
+            })
+            : nil
+        let incomingDates = prepared.reduce(into: [String: Date]()) { acc, item in
+            acc.merge(item.captureDates) { _, new in new }
+        }
+        if !incomingDates.isEmpty {
+            let table = await Task.detached(priority: .utility) {
+                SharedCaptureDateStore().record(incomingDates, keeping: syncedSharedPaths)
+            }.value
+            Diagnostics.mark("share import: capture dates — +\(incomingDates.count), total \(table.count)")
+            // 開きっぱなしの一覧にも効かせる（次に開き直すまで古い並びのままにしない）。
+            await onCaptureDatesChanged?()
+        }
 
         for prepared in prepared {
             let counts = await autoAlbumEngine.importSharedAnalysis(
@@ -228,6 +267,8 @@ private struct PreparedImport: Sendable {
     let tags: [(refKey: String, info: PhotoSenseInfo)]
     let embeddings: [(refKey: String, vectorHalf: Data)]
     let faces: [(refKey: String, faces: [DetectedFaceSignal])]
+    /// Dropbox パス（小文字）→ 撮影日（ADR-199・表示の並び替え用）。
+    let captureDates: [String: Date]
     /// 解析データの全エントリが手元の写真に突合できたか（rev 記録の可否）。
     let fullyMatched: Bool
 }

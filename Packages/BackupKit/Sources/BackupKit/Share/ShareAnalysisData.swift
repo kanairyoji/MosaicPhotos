@@ -87,11 +87,25 @@ public enum ShareAnalysisData {
         /// CLIP 埋め込み（Float16 512 次元・base64）。
         public var clip: String?
         public var faces: [Face]?
+        /// **撮影日**（epoch 秒・未取得 nil・ADR-199）。
+        ///
+        /// ⚠️ これが無いと受信側は写真を**並べられない**。受信側に見えるのは Dropbox が返す
+        /// `time_taken ?? client_modified` だけで、共有コピーはサーバーサイドコピー
+        /// （`copy_batch_v2`）で作られるため EXIF 由来の `time_taken` が付かないことが多く、
+        /// 日付が「提供者が反映した時刻」に落ちる＝**アップロード順に並ぶ**（実フィードバック
+        /// 「共有フォルダの表示が撮影時間順でない」）。送信側の台帳には正しい撮影日があるので、
+        /// 解析データに 1 枚 8 バイト載せて渡す。
+        ///
+        /// ⚠️ モデル版（`versions`）で**ゲートしない**。撮影日はモデルに依存しない写真の事実で、
+        /// タグ・CLIP・顔の版が合わなくても正しく使える。
+        public var d: Double?
 
         public init(tags: [String]? = nil, ocr: String? = nil, human: Int? = nil,
-                    aes: Double? = nil, clip: String? = nil, faces: [Face]? = nil) {
+                    aes: Double? = nil, clip: String? = nil, faces: [Face]? = nil,
+                    d: Double? = nil) {
             self.tags = tags; self.ocr = ocr; self.human = human
             self.aes = aes; self.clip = clip; self.faces = faces
+            self.d = d
         }
     }
 
@@ -175,6 +189,9 @@ public enum ShareAnalysisData {
         if let human = entry.human, (0...500).contains(human) { out.human = human }
         if let aes = entry.aes, aes.isFinite, (-1.0...1.0).contains(aes) { out.aes = aes }
         if let clip = entry.clip, validEmbedding(clip) { out.clip = clip }
+        // 撮影日は顔の `d` と同じ検証（NaN・範囲外は「日付なし」へ落とす）。ここを素通しにすると
+        // 並べ替えの strict weak ordering が壊れる（顔の時期分割で実際に踏んだ）。
+        if let d = entry.d, d.isFinite, Self.plausibleEpochRange.contains(d) { out.d = d }
         if let faces = entry.faces {
             let valid = faces.prefix(maxFacesPerEntry).compactMap { face -> Face? in
                 guard validEmbedding(face.e),
@@ -199,7 +216,7 @@ public enum ShareAnalysisData {
             if !valid.isEmpty { out.faces = Array(valid) }
         }
         let empty = out.tags == nil && out.ocr == nil && out.human == nil
-            && out.aes == nil && out.clip == nil && out.faces == nil
+            && out.aes == nil && out.clip == nil && out.faces == nil && out.d == nil
         return empty ? nil : out
     }
 

@@ -9,14 +9,18 @@ public struct PhotoAnalysisExport: Sendable {
     public let aesthetic: Double?
     /// CLIP 埋め込み（Float16 512 次元パック）。未解析は nil。
     public let clipHalf: Data?
+    /// **撮影日**（ADR-199）。受信側はこれが無いと写真を時系列に並べられない
+    /// （Dropbox の日付は共有コピーでは反映時刻に落ちる）。
+    public let captureDate: Date?
 
     public init(tags: [String], ocrText: String?, humanCount: Int?,
-                aesthetic: Double?, clipHalf: Data?) {
+                aesthetic: Double?, clipHalf: Data?, captureDate: Date? = nil) {
         self.tags = tags
         self.ocrText = ocrText
         self.humanCount = humanCount
         self.aesthetic = aesthetic
         self.clipHalf = clipHalf
+        self.captureDate = captureDate
     }
 }
 
@@ -37,15 +41,18 @@ extension AutoAlbumEngine {
         let humans = await tagStore.humanCounts(forRefKeys: keys)
         let aesthetics = await tagStore.aesthetics(forRefKeys: keys)
         let embeddings = await store.embeddingsHalf(forRefKeys: keys)
+        let dates = await store.captureDates(forRefKeys: keys)
 
         var out: [String: PhotoAnalysisExport] = [:]
         for key in keys {
             let export = PhotoAnalysisExport(
                 tags: tags[key] ?? [], ocrText: ocr[key], humanCount: humans[key],
-                aesthetic: aesthetics[key], clipHalf: embeddings[key])
+                aesthetic: aesthetics[key], clipHalf: embeddings[key], captureDate: dates[key])
             // 何も解析が無い写真は載せない（解析データの無駄を省く）。
+            // ⚠️ **撮影日だけの写真は載せる**（ADR-199）。解析が何も無くても、受信側は
+            // それが無いと並べられない——8 バイトで並び順が直るなら載せる価値がある。
             if !export.tags.isEmpty || export.ocrText != nil || export.humanCount != nil
-                || export.aesthetic != nil || export.clipHalf != nil {
+                || export.aesthetic != nil || export.clipHalf != nil || export.captureDate != nil {
                 out[key] = export
             }
         }

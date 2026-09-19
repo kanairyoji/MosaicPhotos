@@ -31,6 +31,8 @@ public enum ShareImportPlanning {
         public var tags: [(refKey: String, entry: ShareAnalysisData.Entry)] = []
         public var embeddings: [(refKey: String, vectorHalf: Data)] = []
         public var faces: [(refKey: String, faces: [ShareAnalysisData.Face])] = []
+        /// **撮影日**（ADR-199）。受信側の並び替えに使う。モデル版でゲートしない。
+        public var captureDates: [(refKey: String, date: Date)] = []
         public init() {}
     }
 
@@ -78,12 +80,18 @@ public enum ShareImportPlanning {
                 if faceOK, let faces = entry.faces, !faces.isEmpty {
                     batch.faces.append((refKey, faces))
                 }
+                // ⚠️ 撮影日は**版でゲートしない**。モデルに依存しない写真の事実なので、
+                // タグ・CLIP・顔の版が食い違う相手からでも並び順だけは正しく直せる。
+                if let d = entry.d {
+                    batch.captureDates.append((refKey, Date(timeIntervalSince1970: d)))
+                }
             }
         }
         // 決定的な順序（テスト・ログの安定のため）。
         batch.tags.sort { $0.refKey < $1.refKey }
         batch.embeddings.sort { $0.refKey < $1.refKey }
         batch.faces.sort { $0.refKey < $1.refKey }
+        batch.captureDates.sort { $0.refKey < $1.refKey }
         return batch
     }
 }

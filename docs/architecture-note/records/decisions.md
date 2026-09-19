@@ -21,6 +21,23 @@
 
 ---
 
+## ADR-199 共有写真の撮影日は解析データで渡す（Dropbox の日付は共有コピーでは当てにならない）
+- 状態: 採用（実フィードバック「共有フォルダの表示が撮影時間順でないです。Dropbox へのアップロード順になっている？」）
+- 文脈: 受け取った共有アルバム（`SharedAlbumPhotosView`）は `MergedPhotoStore` が撮影日昇順で並べる。クラウド写真の撮影日は Dropbox が返す `time_taken ?? client_modified`（`DeltaPageParser`）。共有コピーは `copy_batch_v2` のサーバーサイドコピーで作られるため EXIF 由来の `time_taken` が付かないことが多く、日付は「提供者が反映した時刻」へ落ちる＝**反映順（実質アップロード順）に並ぶ**。
+  自分のバックアップ副本には同じ問題への対処が既にあった（ADR-128 追補: 台帳の撮影日で上書き）。ただしその上書きは**バックアップ台帳のパス**を引くので、家族フォルダ配下のパスは 1 件も当たらない。さらに受信側には台帳そのものが無く、`ShareAnalysisData.Entry` は撮影日を運んでいなかった（顔の `Face.d` にはあったが、顔が 1 つも無い写真には何も無い）。**受信側が撮影日を復元できる経路が 1 本も存在しなかった。**
+- 決定: 撮影日を解析データに 1 枚 8 バイト載せる。
+  1. `ShareAnalysisData.Entry.d`（epoch 秒）を追加。検証は `Face.d` と同じ範囲（NaN・非現実値は「日付なし」へ落とす）。
+  2. 送信側は `PhotoEnrichment.captureDate`（`AutoAlbumStore.captureDates(forRefKeys:)` のまとめ引き・2 列射影）から載せる。**撮影日だけの写真も載せる**——解析が空でも並び順はそれで直る。
+  3. 受信側は `ShareImportPlanning.Batch.captureDates` で受け、`SharedCaptureDateStore`（Application Support の小さな JSON・パス小文字 → 撮影日）へ貯める。
+  4. 表示は**既存の撮影日上書きに合流**させる。Composition Root が `backupCopyIndexProvider` の中で台帳と共有の表を重ねるだけで、`MergedPhotoStore` は無改造。`localIdentifier` は nil なので副本隠しの対象にはならない。
+- 結果:
+  - 受け取った共有アルバムが撮影日順に並ぶ。**表示の仕組みは 1 つのまま**（バックアップ副本と同じ道を通る）。
+  - 撮影日は**モデル版でゲートしない**。タグ・CLIP・顔は版が一致したときだけ取り込むが、撮影日はモデルに依存しない写真の事実なので、版が食い違う相手からでも並び順だけは直せる。
+  - ロールアウトは自動。送信側の解析データは毎回組み直して content_hash で比較するので、`d` が増えた時点でシャードが上がり、受信側の rev が変わって取り込まれる。**逆に言えば、提供者のアプリが更新されるまで既存アルバムの並びは直らない。**
+  - 置き場所は Caches ではなく Application Support。Caches だと OS に消されて並びが黙って壊れるのに、解析データの rev は「取り込み済み」のままで**再取得されない**。
+  - 掃除は「いま同期済みの家族フォルダ配下」を基準にする回だけ（一覧が取れなかった回に全消しすると並びが壊れる）。上限 2 万件、溢れたら新しい撮影日から残す。
+- 関連: `Share/ShareAnalysisData.swift` / `ShareImportPlanning.swift` / `SharedCaptureDates.swift`（新）/ `AutoAlbumStore+ShareExport.swift` / `AutoAlbumEngine+Share.swift` / `MosaicPhotos/Share/ShareSupport.swift` / `RootView.swift`。ADR-128 追補（バックアップ副本の撮影日）・ADR-112（家族共有）・ADR-183（解析データのシャード）。
+
 ## ADR-169 名前の持ち越しは「一対一対応」として解く（同名の別人を捨てない）
 - 状態: 採用（レビューループの指摘・P1 dataLoss）
 - 文脈: 版上げ（顔モデル・パイプライン）後の再スキャンでは、旧人物の名前を

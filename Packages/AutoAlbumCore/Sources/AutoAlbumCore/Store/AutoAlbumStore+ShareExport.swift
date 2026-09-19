@@ -37,6 +37,30 @@ extension AutoAlbumStore {
         return out
     }
 
+    /// refKey → **撮影日**（ADR-199）。存在し、日付が入っているものだけ返す。
+    ///
+    /// 受信側は Dropbox の日付しか見えず、共有コピーはサーバーサイドコピーなので EXIF 由来の
+    /// `time_taken` が付かないことが多い——そのままだとアップロード順に並ぶ。送信側の台帳
+    /// （`PhotoEnrichment.captureDate`）が唯一の正しい出典なので、解析データに載せて渡す。
+    ///
+    /// ⚠️ 兄弟（`embeddingsHalf` / `TagStore.tags` ほか）と同じく **1 回でまとめて引く**
+    /// （ADR-119）。列は 2 つだけ射影する（共有 1 回で最大 500 枚ぶんを実体化しない）。
+    func captureDates(forRefKeys keys: [String]) -> [String: Date] {
+        guard !keys.isEmpty else { return [:] }
+        var out: [String: Date] = [:]
+        for chunk in Self.refKeyChunks(keys) {
+            let set = Set(chunk)
+            var descriptor = FetchDescriptor<PhotoEnrichment>(
+                predicate: #Predicate { set.contains($0.refKey) })
+            descriptor.propertiesToFetch = [\.refKey, \.captureDate]
+            for record in countedFetch(descriptor) {
+                guard let date = record.captureDate else { continue }
+                out[record.refKey] = date
+            }
+        }
+        return out
+    }
+
     /// まとめ引きの分割単位。1 クエリに渡す条件が多すぎると SQLite の変数上限に当たるため、
     /// 一定数で切る（切っても往復は「件数 ÷ この値」で、件数に比例した往復にはならない）。
     static let fetchChunk = 400
