@@ -151,7 +151,16 @@ public final class MergedPhotoStore {
             // 指紋は**ここ（オフメイン）で**取る。メインで取ると id の文字列生成が
             // そのまま画面の停止時間になる。
             var hasher = Hasher()
-            for item in merged { hasher.combine(item.id) }
+            // ⚠️ **撮影日も指紋に入れる**（レビュー指摘・ADR-199）。id はパスなので、
+            // 撮影日が直っても並び順が変わらなければ指紋が一致し、`setItems` が
+            // 「中身が同じ」と見て代入を飛ばす——**月の見出しと情報パネルは
+            // アップロード時刻のまま**で、アプリを開き直すまで直らない。
+            // 共有フォルダは撮影順にアップロードされることが多いので、
+            // 「日付だけ直って並びは同じ」は ADR-199 がいちばん効いてほしい場面そのもの。
+            for item in merged {
+                hasher.combine(item.id)
+                hasher.combine(item.captureDate)
+            }
             hasher.combine(merged.count)
             let signature = hasher.finalize()
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000

@@ -88,9 +88,21 @@ public enum SharedAlbumDiscovery {
                          coverPath: sorted.first,
                          providerName: provider)
         }
+        // ⚠️ **全順序にする**（レビュー指摘）。以前は 1 つ目の比較が大文字小文字を無視し、
+        // 2 つ目が完全一致のときだけ提供者で切っていたので、"Trip"/"trip" が「同順」なのに
+        // "Trip" どうしには順序がある＝**比較不能が推移しない**。Swift の `sorted` は
+        // 未定義動作で、同じデータでも並びが実行ごとに変わり得た（デバッグ版では落ちる）。
         .sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                || ($0.name == $1.name && ($0.providerName ?? "") < ($1.providerName ?? ""))
+            switch $0.name.localizedCaseInsensitiveCompare($1.name) {
+            case .orderedAscending:  return true
+            case .orderedDescending: return false
+            case .orderedSame:
+                // 同じ綴り（大文字小文字違いを含む）は、提供者 → id で決定的に切る。
+                if $0.providerName ?? "" != $1.providerName ?? "" {
+                    return ($0.providerName ?? "") < ($1.providerName ?? "")
+                }
+                return $0.id < $1.id
+            }
         }
     }
 

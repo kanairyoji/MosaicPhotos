@@ -5,6 +5,14 @@ import Foundation
 /// rev（Dropbox のファイル版）を記録し、**変わったものだけ**ダウンロード・検証して返す。
 /// ストアへの取り込み（TagStore / 埋め込み / 顔）はアプリ側（Composition Root）が行う。
 public struct ShareAnalysisFetch {
+    /// 記録の置き場所。
+    ///
+    /// ⚠️ **テストはここを差し替える**（レビュー指摘）。rev・続きの印・受信能力の版・保存失敗の数を
+    /// すべて `UserDefaults.standard` に置いていたため、並行して走る別スイートと取り合っていた
+    /// ——片方の `pruneStoredRevs` がもう片方の rev を消し、落ち方が実行順に依存した。
+    /// swift-testing はスイートを既定で並列実行するので、`.serialized` では防げない。
+    nonisolated(unsafe) static var defaults: UserDefaults = .standard
+
     private let httpClient: HTTPClient
 
     public init(httpClient: HTTPClient = URLSessionHTTPClient()) {
@@ -73,7 +81,7 @@ public struct ShareAnalysisFetch {
     private static let cursorKey = "share.analysisFetchCursor"
 
     static func storedCursor() -> String? {
-        UserDefaults.standard.string(forKey: cursorKey)
+        Self.defaults.string(forKey: cursorKey)
     }
 
     /// 撮影日の保存に失敗し続けたときに、取り込みを止め続けないための上限（レビュー指摘）。
@@ -88,7 +96,7 @@ public struct ShareAnalysisFetch {
 
     /// 撮影日の保存失敗を数える。まだ見送ってよいなら true。
     public static func shouldRetryCaptureDateSave() -> Bool {
-        let defaults = UserDefaults.standard
+        let defaults = Self.defaults
         let count = defaults.integer(forKey: saveFailureKey) + 1
         defaults.set(count, forKey: saveFailureKey)
         if count > captureDateSaveRetryLimit {
@@ -101,12 +109,42 @@ public struct ShareAnalysisFetch {
 
     /// 保存できた回に数え直す。
     public static func resetCaptureDateSaveFailures() {
-        UserDefaults.standard.removeObject(forKey: saveFailureKey)
+        Self.defaults.removeObject(forKey: saveFailureKey)
     }
 
     static func saveCursor(_ path: String?) {
-        if let path { UserDefaults.standard.set(path, forKey: cursorKey) }
-        else { UserDefaults.standard.removeObject(forKey: cursorKey) }
+        if let path { Self.defaults.set(path, forKey: cursorKey) }
+        else { Self.defaults.removeObject(forKey: cursorKey) }
+    }
+
+    /// 1 回の実行で「どれを試すか」を決める（純ロジック・テスト対象）。
+    ///
+    /// 実際のダウンロードの成否は呼び出し側が知っているので、ここでは
+    /// **成否に応じて印と予算がどう動くか**を 1 か所に固めてテストできる形にする。
+    /// 規則は `fetchUpdated` の中のコメントに書いた 2 つ:
+    /// - 印は**試した**ところまで進む（先頭が恒久的に失敗しても止まらない）
+    /// - 予算は**取れた数**で数える（1 件も取れない回に印だけ進めない）
+    struct RunPlan: Equatable {
+        /// 試した順のパス。
+        var attempted: [String] = []
+        /// 次に保存する印（試したものが無ければ nil＝据え置き）。
+        var cursor: String?
+    }
+
+    /// `outcome` は 1 件ごとの結果（true＝取れた）。テストから成否を並べて渡す。
+    static func planRun(rotated: [String], budget: Int, failureStreakLimit: Int,
+                        outcome: (String) -> Bool) -> RunPlan {
+        var plan = RunPlan()
+        var taken = 0
+        var streak = 0
+        for path in rotated {
+            if taken >= budget { break }
+            if streak >= failureStreakLimit { break }
+            plan.attempted.append(path)
+            plan.cursor = path
+            if outcome(path) { taken += 1; streak = 0 } else { streak += 1 }
+        }
+        return plan
     }
 
     /// 候補を「前回の続き」から並べ替える（純ロジック・テスト対象）。
@@ -119,7 +157,7 @@ public struct ShareAnalysisFetch {
 
     /// 受信側の読み取り能力が上がっていたら、記録済み rev を 1 回だけ捨てる。
     static func invalidateRevsIfCapabilityGrew() {
-        let defaults = UserDefaults.standard
+        let defaults = Self.defaults
         let stored = defaults.integer(forKey: capabilityVersionKey)   // 未設定は 0
         guard stored < receiverCapabilityVersion else { return }
         defaults.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
@@ -157,43 +195,53 @@ public struct ShareAnalysisFetch {
 
         // 2 巡目: 前回の続きから上限まで取る（一巡させて飢餓を作らない）。
         //
-        // ⚠️ **予算は「取れた数」で数える**（レビュー指摘）。試した数で数えると、429 や通信断で
-        // 落ちた回に何も取れないまま印だけ 48 個進み、その 48 個は一巡するまで戻ってこない。
-        // ⚠️ **印は取れたところまでしか進めない**。取れなかったシャードを飛ばすと、
-        // 同じ理由で取りこぼしが一巡ぶん遅れる。
-        // ⚠️ ただし**連続で落ち続けたら畳む**。レート制限や圏外で 48 回叩き続けない。
+        // ## 印（続きの位置）と予算の規則 — **一度ひっくり返して戻した。読まずに変えないこと。**
+        //
+        // 規則1: **印は「試した」ところまで進める**（成否を問わない）。
+        // 規則2: **予算は「取れた数」で数える**。
+        //
+        // この 2 つは別々の目的を持っていて、混ぜると必ずどちらかが壊れる。
+        // - 規則1 を破り「取れたところまで」にすると、**先頭の候補が恒久的に失敗したときに
+        //   印が一生進まない**（消えた共有フォルダ・権限剥奪・窓が閉じて 1 件目から取り消し）。
+        //   その先の候補は二度とダウンロードされず、取り込みが丸ごと止まる。しかも
+        //   「1 件でも取れれば印はそこまで進む」ので、守りたかった性質（失敗を飛ばさない）すら
+        //   成立していなかった。これはレビュー 5 周目で見つかった。
+        // - 規則2 を破り「試した数」で数えると、レート制限や通信断で 1 件も取れなかった回に
+        //   印だけ 48 個進み、その 48 個が一巡するまで戻ってこない。これは 4 周目で見つかった。
+        //
+        // 規則1 の代償は「失敗したシャードは一巡ぶん遅れる」こと。候補は ⌈N/48⌉ 回で一周するので
+        // 遅れは有界で、**止まらない**。止まる方の害が桁違いに大きいので、こちらを選ぶ。
+        // 連続で落ち続けたらその回は畳む（レート制限・圏外で 48 回叩かない）。
         let order = Dictionary(candidates.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         let rotatedPaths = Self.rotated(candidates.map(\.path).sorted(), after: Self.storedCursor())
-        var lastTaken: String?
+        var lastAttempted: String?
         var taken = 0
         var consecutiveFailures = 0
         for path in rotatedPaths {
             if taken >= Self.maxFilesPerRun { break }
-            if Task.isCancelled { break }                      // 窓が閉じたら印を進めずに降りる
+            if Task.isCancelled { break }
             if consecutiveFailures >= Self.failureStreakLimit {
                 BackupLogger.info("ShareAnalysisFetch: giving up this run after "
                     + "\(consecutiveFailures) consecutive download failures")
                 break
             }
             guard let candidate = order[path] else { continue }
+            lastAttempted = path                               // 規則1
             guard let data = await copier.downloadFile(path: path, token: token) else {
-                // 通信・レート制限・権限。**印は進めない**ので次の実行でここから取り直す。
                 BackupLogger.error("ShareAnalysisFetch: download failed — \(path)")
-                consecutiveFailures += 1
+                consecutiveFailures += 1                       // 規則2: 予算は減らさない
                 continue
             }
             consecutiveFailures = 0
             taken += 1
-            lastTaken = path
             guard let decoded = ShareAnalysisData.decodeValidated(data) else {
-                // 中身が壊れている＝取り直しても同じ。印を進めて次へ（ここで止まらない）。
                 BackupLogger.error("ShareAnalysisFetch: invalid analysis data — \(path)")
                 continue
             }
             out.append(Fetched(analysisPathLower: path, rev: candidate.rev,
                                file: decoded, setFolderPathLower: candidate.setFolder))
         }
-        if let lastTaken { Self.saveCursor(lastTaken) }
+        if let lastAttempted { Self.saveCursor(lastAttempted) }
         // 一覧に無くなったパスの rev 記録は捨てる（肥大防止。以前の「500 件超で末尾 300 件」は
         // シャード化で件数が増えると取り込み済みの記録まで捨てて再取得を誘発する）。
         if allListed { Self.pruneStoredRevs(keeping: seenPaths) }
@@ -217,12 +265,12 @@ public struct ShareAnalysisFetch {
 
     private static func save(_ revs: [String: String]) {
         if let data = try? JSONEncoder().encode(revs) {
-            UserDefaults.standard.set(data, forKey: ShareSettingsKeys.importedAnalysisRevs)
+            Self.defaults.set(data, forKey: ShareSettingsKeys.importedAnalysisRevs)
         }
     }
 
     static func storedRevs() -> [String: String] {
-        guard let data = UserDefaults.standard.data(forKey: ShareSettingsKeys.importedAnalysisRevs),
+        guard let data = Self.defaults.data(forKey: ShareSettingsKeys.importedAnalysisRevs),
               let revs = try? JSONDecoder().decode([String: String].self, from: data) else {
             return [:]
         }

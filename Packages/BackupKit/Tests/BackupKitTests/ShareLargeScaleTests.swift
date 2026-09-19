@@ -157,13 +157,15 @@ struct ShareLargeScaleTests {
 
     @Test("受信側もページを跨いで全シャードを拾う")
     func receiverFollowsPages() async {
-        UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
-        // ⚠️ 取得の「続きの印」も消す。消さないと、この実行より前の履歴で
-        // どこから取るかが変わり、テストが順序依存になる（レビュー指摘）。
-        ShareAnalysisFetch.saveCursor(nil)
+        // ⚠️ 記録の置き場所を**このテスト専用**にする。既定（standard）のままだと、
+        // 並行して走る別スイートと rev を取り合い、片方の掃除がもう片方の記録を消す
+        // ——落ち方が実行順に依存する（レビュー指摘）。`.serialized` では防げない
+        // （swift-testing はスイートを既定で並列実行する）。
+        let suiteName = "ShareAnalysisFetchTests.\(UUID().uuidString)"
+        ShareAnalysisFetch.defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defer {
-            UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
-            ShareAnalysisFetch.saveCursor(nil)
+            UserDefaults.standard.removePersistentDomain(forName: suiteName)
+            ShareAnalysisFetch.defaults = .standard
         }
         let server = FakeDropboxServer()
         await server.setPageSize(5)

@@ -84,9 +84,14 @@ public struct SharedCaptureDateStore: Sendable {
         let existing = load()
         let merged = Self.merged(existing: existing, adding: dates, keeping: keeping)
         let saved = save(merged)
+        // ⚠️ **書けなかった回は「落ちた」「押し出した」を数えない**（レビュー指摘）。
+        // 数えると、実際にはディスク上で無傷の記録を「失われた」と診断ログに書いてしまう。
+        // 取りこぼしを必ず残す方針なので、**嘘の取りこぼし**は抜けと同じくらい害になる。
+        guard saved else {
+            return Outcome(table: load(), saveFailed: true,
+                           droppedByCap: [], evictedExisting: 0)
+        }
         // 入らなかったものは**混ぜた結果**で判定する（ファイルを読み直さない）。
-        // ⚠️ 値まで見る。存在の有無だけだと、前回の**古い値が残っているキー**を
-        // 「入った」と誤認する——提供者が撮影日を直しても直らなくなる。
         var droppedByCap: Set<String> = []
         for (path, date) in dates where merged[path.lowercased()] != date {
             droppedByCap.insert(path.lowercased())
@@ -98,7 +103,7 @@ public struct SharedCaptureDateStore: Sendable {
             merged[key] == nil && !incoming.contains(key)
                 && (lowerKeeping?.contains(key) ?? true)   // 掃除で消えたぶんは数えない
         }.count
-        return Outcome(table: saved ? merged : load(), saveFailed: !saved,
+        return Outcome(table: merged, saveFailed: false,
                        droppedByCap: droppedByCap, evictedExisting: evictedByCap)
     }
 

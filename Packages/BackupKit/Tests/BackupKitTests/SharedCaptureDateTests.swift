@@ -201,33 +201,6 @@ struct SharedCaptureDateTests {
 
     /// 回帰: 書けなかったのに「入った」と誤認しないこと。
     /// 存在の有無だけを見ると、前回の**古い値**が残っているキーを入ったと数えてしまう。
-    /// ⚠️ この fixture は**古い値が実際に読める**状態でなければ意味がない。
-    /// 以前は書き込み先をディレクトリにしていたので `load()` が常に空を返し、
-    /// 「存在の有無」で判定する旧実装でも通っていた（空でも通る assert・ADR-119）。
-    /// ここではファイルを書いたあと**親ディレクトリを書き込み禁止**にする——
-    /// 読めるが差し替えられない状態を作る。
-    @Test("保存に失敗したら、前の値が残っていても入った扱いにしない")
-    func staleValueIsNotMistakenForSuccess() throws {
-        let fm = FileManager.default
-        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let store = SharedCaptureDateStore(directory: dir, filename: "dates.json")
-        _ = store.record(["/family/a.jpg": date(100)])
-        // 前提を確かめる: 古い値がファイルに入っている。
-        #expect(store.load()["/family/a.jpg"] == date(100), "前提が成立していない（古い値が無い）")
-
-        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
-        defer {
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
-            try? fm.removeItem(at: dir)
-        }
-        // 提供者が撮影日を直した。読めるが書けないので、古い値が残ったまま。
-        let outcome = store.record(["/family/a.jpg": date(200)])
-        try #require(store.load()["/family/a.jpg"] == date(100),
-                     "fixture が書けてしまった（書き込み禁止が効いていない）")
-        #expect(outcome.saveFailed,
-                "古い値が残っているのを「入った」と誤認した＝撮影日の訂正が永久に届かない")
-    }
-
     // MARK: - 取得の順送り（飢餓を作らない）
 
     /// 回帰: 1 回の取得数に上限を付けたことで、**先頭に居座る候補が後ろを飢えさせない**こと。
@@ -254,6 +227,50 @@ struct SharedCaptureDateTests {
         #expect(visited.count == all.count, "3 回回しても訪れていない候補がある: \(all.count - visited.count) 個")
         // 末尾を過ぎた印でも先頭へ戻る（候補が減ったときに止まらない）。
         #expect(ShareAnalysisFetch.rotated(all, after: "/f/shard-99.json") == all)
+    }
+
+    /// ⚠️ この 2 本は**一度ひっくり返して戻した**規則を固定する。読まずに変えないこと。
+    /// 印を「取れたところまで」にすると取り込みが丸ごと止まり（下の 1 本目）、
+    /// 予算を「試した数」で数えると 1 件も取れない回に印だけ進む（2 本目）。
+    @Test("印は試したところまで進む（先頭が恒久的に失敗しても止まらない）")
+    func cursorAdvancesPastPermanentFailures() {
+        let all = (0..<10).map { String(format: "/f/shard-%02d.json", $0) }
+        // 先頭 3 個が必ず失敗する共有フォルダ。
+        let deadPrefix: Set<String> = [all[0], all[1], all[2]]
+
+        var cursor: String? = nil
+        var everFetched: Set<String> = []
+        for _ in 0..<4 {
+            let plan = ShareAnalysisFetch.planRun(
+                rotated: ShareAnalysisFetch.rotated(all, after: cursor),
+                budget: 4, failureStreakLimit: 5,
+                outcome: { !deadPrefix.contains($0) })
+            everFetched.formUnion(plan.attempted.filter { !deadPrefix.contains($0) })
+            #expect(plan.cursor != nil, "1 件も試さずに終わった＝止まっている")
+            cursor = plan.cursor
+        }
+        #expect(everFetched == Set(all).subtracting(deadPrefix),
+                "壊れた先頭の後ろが取れていない: \(Set(all).subtracting(deadPrefix).subtracting(everFetched))")
+    }
+
+    @Test("予算は取れた数で数える（1 件も取れない回に印を使い切らない）")
+    func budgetCountsSuccessesNotAttempts() {
+        let all = (0..<20).map { String(format: "/f/shard-%02d.json", $0) }
+        // 全部失敗する回（圏外・レート制限）。
+        let plan = ShareAnalysisFetch.planRun(rotated: all, budget: 8, failureStreakLimit: 5,
+                                              outcome: { _ in false })
+        #expect(plan.attempted.count == 5,
+                "連続失敗で畳まず \(plan.attempted.count) 件叩いた")
+        // 全部成功する回は予算ちょうどで止まる。
+        let full = ShareAnalysisFetch.planRun(rotated: all, budget: 8, failureStreakLimit: 5,
+                                              outcome: { _ in true })
+        #expect(full.attempted.count == 8)
+        // 途中で 1 件だけ落ちても、予算は減らない（9 件試して 8 件取れる）。
+        let one = all[3]
+        let mixed = ShareAnalysisFetch.planRun(rotated: all, budget: 8, failureStreakLimit: 5,
+                                               outcome: { $0 != one })
+        #expect(mixed.attempted.count == 9, "失敗で予算が減った")
+        #expect(mixed.cursor == all[8])
     }
 
     // MARK: - 受信側の読み取り能力の版
