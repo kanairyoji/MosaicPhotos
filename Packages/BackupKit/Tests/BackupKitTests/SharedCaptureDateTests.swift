@@ -151,7 +151,8 @@ struct SharedCaptureDateTests {
         #expect(store.load().isEmpty, "まだ何も書いていないのに読めた")
 
         let saved = store.record(["/Family/Set/A.JPG": date(1_600_000_000)])
-        #expect(saved["/family/set/a.jpg"] == date(1_600_000_000))
+        #expect(saved.table["/family/set/a.jpg"] == date(1_600_000_000))
+        #expect(saved.dropped.isEmpty, "収まったのに落ちた扱いになった")
 
         // 別インスタンスで読み直す＝本番と同じ経路（起動をまたぐ）。
         let reopened = SharedCaptureDateStore(directory: dir, filename: "dates.json")
@@ -167,10 +168,33 @@ struct SharedCaptureDateTests {
             .appendingPathComponent(UUID().uuidString)
         FileManager.default.createFile(atPath: file.path, contents: Data("x".utf8))
         let store = SharedCaptureDateStore(directory: file, filename: "dates.json")
-        let table = store.record(["/family/a.jpg": date(100)])
-        #expect(table["/family/a.jpg"] == date(100), "戻り値は混ぜた結果を返すべき")
+        let outcome = store.record(["/family/a.jpg": date(100)])
+        #expect(outcome.table["/family/a.jpg"] == date(100), "戻り値は混ぜた結果を返すべき")
         #expect(store.load().isEmpty, "書けていないのに読めた")
+        // ⚠️ 書けていないなら「落ちた」と報告する。そうしないと呼び出し側が
+        // 「取り込み済み」にしてしまい、撮影日を二度と取り直せない。
+        #expect(outcome.dropped == ["/family/a.jpg"],
+                "保存できなかったのに落ちたと報告しない＝永久に失う")
         try? FileManager.default.removeItem(at: file)
+    }
+
+    @Test("上限に当たって入らなかった受信ぶんは「落ちた」と報告する")
+    func reportsIncomingDatesThatDidNotFit() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = SharedCaptureDateStore(directory: dir, filename: "dates.json")
+
+        // 古い側で表を埋めきる。
+        var old: [String: Date] = [:]
+        for i in 0..<SharedCaptureDateStore.maxEntries { old["/family/old\(i).jpg"] = date(Double(i)) }
+        _ = store.record(old)
+
+        // そこへ「新しい」写真が届く＝古い側を残す規則なので入らない。
+        let outcome = store.record(["/family/new.jpg": date(9_000_000_000)])
+        #expect(outcome.table["/family/new.jpg"] == nil, "上限を超えて入ってしまった")
+        #expect(outcome.dropped == ["/family/new.jpg"],
+                "入らなかったのに報告しない＝取り込み済みにされて永久に失う")
+        try? FileManager.default.removeItem(at: dir)
     }
 
     // MARK: - 受信側の読み取り能力の版

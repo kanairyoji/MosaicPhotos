@@ -45,6 +45,20 @@ public struct ShareAnalysisFetch {
 
     private static let capabilityVersionKey = "share.receiverCapabilityVersion"
 
+    /// 1 回の実行でダウンロードする解析データの上限（ADR-199 のレビュー指摘）。
+    ///
+    /// ⚠️ **一覧は全部見るが、取ってくるのは有界**。`fetchUpdated` は結果を丸ごと配列で返し、
+    /// 呼び出し側（`SharedAnalysisImporter`）はそれを base64 のまま保持したうえで復号した
+    /// `Data` も同時に持つ。シャードは 1 セットあたり最大 256 個あるので、
+    /// 受信能力の版を上げて記録を捨てた回に**全部を 1 度に**取ると、
+    /// 1 セットで 100MB 規模を同時に抱える——`PhotoEmbedding` を inline に持っていた頃の
+    /// 起動クラッシュと同じ形（ADR-119/122）。しかも jetsam されると版だけ上がって
+    /// 記録は空なので、毎回同じ山を作り直す無限ループになる。
+    ///
+    /// 取らなかったシャードは rev が古いままなので**次の実行で続きから**取れる。
+    /// 総量は変わらず、「どれも少しずつ進む」状態になる（ADR-85 と同じ考え方）。
+    static let maxFilesPerRun = 48
+
     /// 受信側の読み取り能力が上がっていたら、記録済み rev を 1 回だけ捨てる。
     static func invalidateRevsIfCapabilityGrew() {
         let defaults = UserDefaults.standard
@@ -72,9 +86,11 @@ public struct ShareAnalysisFetch {
             let marker = "/" + ShareAnalysisData.subfolderName + "/"
             for file in listing where !file.isFolder && ShareAnalysisData.isAnalysisFileName(file.name) {
                 guard let range = file.pathLower.range(of: marker, options: .backwards) else { continue }
+                // ⚠️ 一覧には**必ず**入れる（打ち切っても記録の掃除が狂わないように）。
                 seenPaths.insert(file.pathLower)
                 let rev = file.rev ?? ""
                 if !rev.isEmpty, knownRevs[file.pathLower] == rev { continue }   // 変化なし
+                guard out.count < Self.maxFilesPerRun else { continue }          // 続きは次の実行で
                 guard let data = await copier.downloadFile(path: file.pathLower, token: token),
                       let decoded = ShareAnalysisData.decodeValidated(data) else {
                     BackupLogger.error("ShareAnalysisFetch: invalid analysis data — \(file.pathLower)")

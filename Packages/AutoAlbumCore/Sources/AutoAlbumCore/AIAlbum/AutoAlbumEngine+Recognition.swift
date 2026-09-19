@@ -461,9 +461,19 @@ extension AutoAlbumEngine {
         // `embedUnprocessed` が `PhotoTagger.isTagging` の再入ガードで即 return し、
         // 「再解析が終わりました」と言いながら CLIP 索引が空になる。
         // 背景の埋め込みは再解析に置き換わるので、**降ろして・降りきるまで待つ**。
-        fill.stop()
-        await fill.waitUntilIdle()
-        guard reanalyze.start(priority: .userInitiated, { [weak self] in await self?.runReanalyze() }) else { return }
+        // ⚠️ **待つ前に旗を立てる**（レビュー指摘）。降りきるのを待っている間、
+        // `fill.isRunning` も `reanalyze.isRunning` も false なので `isTagging` は false ——
+        // ボタンは押せたままで、(a) 連打で 2 本目が入って索引を消した直後に何もせず終わる、
+        // (b) その隙に `scheduleFillIfIdle` が新しいトリクルを起こし、
+        // `waitUntilIdle` がそれを待ってしまう（数分「何も起きない」ように見え、
+        // その間に書いた埋め込みは `clearPerception()` で捨てられる）。
+        // ハンドルを先に取ってから、その中で降ろす・待つ。
+        guard reanalyze.start(priority: .userInitiated, { [weak self] in
+            guard let self else { return }
+            self.fill.stop()
+            await self.fill.waitUntilIdle()
+            await self.runReanalyze()
+        }) else { return }
         await reanalyze.waitUntilIdle()
     }
 

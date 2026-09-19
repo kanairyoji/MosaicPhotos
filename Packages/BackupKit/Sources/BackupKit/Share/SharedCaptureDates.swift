@@ -50,15 +50,28 @@ public struct SharedCaptureDateStore: Sendable {
         return raw.compactMapValues { Self.date(from: $0) }
     }
 
+    /// 記録の結果。
+    public struct Outcome: Sendable {
+        /// 保存後の表（呼び出し側がそのまま表示へ渡せる）。
+        public let table: [String: Date]
+        /// **収まらなかった**受信ぶんのパス（上限に当たって落ちた・小文字）。
+        ///
+        /// ⚠️ 空でないなら、その解析データを「取り込み済み」にしてはいけない。
+        /// 記録の判定は rev だけなので、一度そう記録すると**二度と取り直せない**——
+        /// 落ちた撮影日は永久に戻らない（ADR-199 の追補・レビュー指摘）。
+        public let dropped: Set<String>
+    }
+
     /// 撮影日を記録する。`keeping` を渡すと、そこに無いパスの記録は捨てる
     /// （家族フォルダから消えた写真の記録を残さない）。
-    ///
-    /// - Returns: 保存後の表（呼び出し側がそのまま表示へ渡せる）。
     @discardableResult
-    public func record(_ dates: [String: Date], keeping: Set<String>? = nil) -> [String: Date] {
+    public func record(_ dates: [String: Date], keeping: Set<String>? = nil) -> Outcome {
         let merged = Self.merged(existing: load(), adding: dates, keeping: keeping)
         save(merged)
-        return merged
+        // 書けたかどうかも見る（書けていなければ全部「落ちた」扱い＝取り直せるようにする）。
+        let persisted = load()
+        let dropped = Set(dates.keys.map { $0.lowercased() }).filter { persisted[$0] == nil }
+        return Outcome(table: merged, dropped: dropped)
     }
 
     func save(_ dates: [String: Date]) {

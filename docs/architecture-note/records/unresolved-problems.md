@@ -6,6 +6,28 @@
 
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
+## 「アプリを離れても解析を続ける」トグルが片道でしか効かない
+
+- 箇所: `MosaicPhotos/AnalysisSession.swift:82-92`（setter が `!newValue` しか扱わない）と
+  `:95-102`（`downgradeToForegroundOnly`）
+- 分類: settingIneffective / 優先度 P2（初出 2026-09-20・レビューループ 2 周目）
+- 症状:
+  1. **戻せない**: 走行中に OFF → 前面のみモードへ降りる。そのあと ON に戻しても
+     `mode` は `.foregroundOnly` のままなので、アプリを離れると解析が止まる。
+     設定は「離れても続ける」と表示しているのに止まる＝表示と挙動が逆。
+  2. **消したはずの表示が出る**: `submitContinuedTask()` は `BGTaskScheduler.submit` の
+     成功で `.continued` にするが、`self.task` は OS がハンドラを呼ぶまで nil。
+     その窓で OFF にすると `downgradeToForegroundOnly` は降ろすものが無く、
+     `BGTaskScheduler.cancel` も呼ばれない。あとから OS がタスクを渡すと `attach` が受け取り、
+     ロック画面と Dynamic Island のインジケータが出る——消すために OFF にしたのに。
+- なぜ設計判断が要るか: 1 は「ON に戻したら継続タスクを取り直す」で直りそうに見えるが、
+  BGTask の再 submit は OS の裁量で、走行中に何度も submit/cancel を繰り返す挙動は
+  実機でしか確かめられない。2 は `BGTaskScheduler.cancel(taskRequestWithIdentifier:)` を
+  足すだけに見えるが、`attach` 側でも「いま継続モードを望んでいるか」を見ないと
+  競合は残る。どちらも**実機で確かめてから**入れるべき種類の変更。
+- 補足: この経路は 1 周目の修正（トグルをセッションに通す）で**初めて到達可能**になった。
+  それまで setter は一度も呼ばれていなかったので、症状は存在しなかった。
+
 ## 名前の持ち越し（ADR-130）が production では一度も動かない
 
 - 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Rebuild.swift:181`（`assignment: newAssignment`）

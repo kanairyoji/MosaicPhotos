@@ -226,7 +226,15 @@ final class SharedAnalysisImporter {
         // ⚠️ 掃除は**全部の解析データが突合できた回だけ**。同期が途中だと「まだ手元に無いだけ」の
         // 写真まで一覧から消えて見え、その記録を捨ててしまう（解析データの rev は突合が済むまで
         // 記録されないので再取得はされるが、それまでの間、並びが黙って壊れる）。
-        let fullyMatchedAll = prepared.allSatisfy(\.fullyMatched)
+        // ⚠️ 掃除の基準が信用できるのは、**手元の一覧が出そろっているとき**だけ。
+        // 初回同期の途中だと「まだ手元に無いだけ」の写真が一覧から消えて見え、その記録を捨てる。
+        // 捨てた写真の解析データは rev が記録済みなら二度と取り直せない（レビュー指摘）。
+        let cacheSettled: Bool
+        switch dropboxStore.syncState {
+        case .initialSync, .error: cacheSettled = false
+        case .idle, .polling, .fetchingDelta: cacheSettled = true
+        }
+        let fullyMatchedAll = cacheSettled && prepared.allSatisfy(\.fullyMatched)
         let syncedSharedPaths: Set<String>? = fullyMatchedAll
             ? Set(itemsSnapshot.map { $0.path.lowercased() }.filter { lower in
                 rootsLower.contains { lower == $0 || lower.hasPrefix($0 + "/") }
@@ -235,11 +243,14 @@ final class SharedAnalysisImporter {
         let incomingDates = prepared.reduce(into: [String: Date]()) { acc, item in
             acc.merge(item.captureDates) { _, new in new }
         }
+        var droppedDates: Set<String> = []
         if !incomingDates.isEmpty {
-            let table = await Task.detached(priority: .utility) {
+            let outcome = await Task.detached(priority: .utility) {
                 SharedCaptureDateStore().record(incomingDates, keeping: syncedSharedPaths)
             }.value
-            Diagnostics.mark("share import: capture dates — +\(incomingDates.count), total \(table.count)")
+            droppedDates = outcome.dropped
+            Diagnostics.mark("share import: capture dates — +\(incomingDates.count), "
+                + "total \(outcome.table.count), dropped \(outcome.dropped.count)")
             // 開きっぱなしの一覧にも効かせる（次に開き直すまで古い並びのままにしない）。
             await onCaptureDatesChanged?()
         }
@@ -254,8 +265,11 @@ final class SharedAnalysisImporter {
             // 保存に失敗した回に記録すると、同じ解析データは以後ダウンロードされず、
             // 欠けた解析結果を再取得できない（レビュー指摘）。
             // 未同期の写真が残っている場合（fullyMatched=false）も同様に記録しない。
+            // ⚠️ 撮影日が 1 件でも収まらなかった解析データは「取り込み済み」にしない
+            // （記録すると rev で弾かれ、落ちた撮影日は二度と取り直せない・レビュー指摘）。
+            let datesLanded = prepared.captureDates.keys.allSatisfy { !droppedDates.contains($0) }
             let committed = counts.saved && faces.saved
-            if prepared.fullyMatched && committed {
+            if prepared.fullyMatched && committed && datesLanded {
                 ShareAnalysisFetch.markImported(prepared.analysisData)
             } else if !committed {
                 Diagnostics.mark("share import: \(prepared.analysisData.setFolderPathLower) — "

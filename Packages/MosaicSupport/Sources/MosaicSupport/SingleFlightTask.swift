@@ -108,12 +108,18 @@ public final class SingleFlightTask {
     /// 最後まで走る。`reset` のように「本当に止まってからストアを消す」必要がある呼び出しが
     /// あるので、明け渡した/止めたハンドルも `retiring` に控えて待つ
     /// （待たずに消すと `FaceTagger.isRunning` が残り、次のスキャンが無言で skip される）。
+    /// ⚠️ **控えを先に空にしない**（レビュー指摘）。以前は `removeAll()` を最初の `await` の前で
+    /// 呼んでいたので、**2 人目の待ち手が「もう何も無い」と見て即座に返った**。
+    /// `reanalyzePhotos()` がこのメソッドの最初の本番利用者になった時点で、
+    /// 連打で「索引を消した直後に何もせず終わる」が再び起き得た（まさにこの修正が塞いだ経路）。
+    /// 1 本ずつ待って、**待ち終わったものだけ**取り除く。他の待ち手からも同じ列が見える。
     public func waitUntilIdle() async {
         while true {
-            if !retiring.isEmpty {
-                let stopped = retiring
-                retiring.removeAll()
-                for handle in stopped { await handle.value }
+            if let handle = retiring.first {
+                await handle.value
+                if let index = retiring.firstIndex(where: { $0 == handle }) {
+                    retiring.remove(at: index)
+                }
                 continue
             }
             guard let current = task else { return }

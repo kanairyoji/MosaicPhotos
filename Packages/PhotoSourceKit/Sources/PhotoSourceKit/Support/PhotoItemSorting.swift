@@ -18,6 +18,7 @@ public extension Array where Element: PhotoItem {
         sorted {
             switch ($0.captureDate, $1.captureDate) {
             case let (a?, b?): return a < b   // 古い順
+            case (nil, nil):   return false   // ⚠️ 同順。true にすると a<b と b<a が同時に成立する
             case (nil, _):     return true    // nil は先頭（最古扱い）
             case (_, nil):     return false
             }

@@ -287,6 +287,52 @@ struct SingleFlightReviewRegressionTests {
     }
 }
 
+/// 止めた作業の待ち合わせ（`waitUntilIdle`）は**複数の待ち手**に耐える必要がある。
+/// `reanalyzePhotos()` が最初の本番利用者で、そこは連打され得る。
+@Suite("SingleFlightTask: 止めた作業を 2 人で待つ", .serialized)
+@MainActor
+struct SingleFlightDrainTests {
+
+    private func waitUntil(_ condition: () -> Bool, limitMs: Int = 2_000) async {
+        for _ in 0..<(limitMs / 5) {
+            if condition() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    /// 回帰: 2 人目の待ち手が「もう何も無い」と見て**先に返ってしまわない**こと。
+    /// 旧実装は最初の `await` の前に控えを空にしていたので、2 人目は素通りしていた。
+    /// 本番での帰結は「索引を消した直後に何もせず終わる」——この待ち合わせが塞いだはずの経路。
+    @Test("回帰: 2 人目の待ち手も、止めた作業が終わるまで返らない")
+    func secondWaiterAlsoWaitsForStoppedWork() async {
+        let flight = SingleFlightTask()
+        let gate = TestGate()
+        var finished = false
+
+        _ = flight.start {
+            await gate.wait()
+            finished = true
+        }
+        await waitUntil { flight.isRunning }
+        flight.stop()          // 旗は下りるが body は関門で止まったまま
+
+        var firstReturned = false
+        var secondReturned = false
+        async let first: Void = { await flight.waitUntilIdle(); firstReturned = true }()
+        async let second: Void = { await flight.waitUntilIdle(); secondReturned = true }()
+
+        // 関門を開けるまでは、どちらも返ってはいけない。
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        #expect(!firstReturned && !secondReturned,
+                "止めた作業が終わる前に返った（first=\(firstReturned) second=\(secondReturned)）")
+
+        gate.open()
+        _ = await (first, second)
+        #expect(finished, "待ち終わったのに body が終わっていない")
+        #expect(firstReturned && secondReturned)
+    }
+}
+
 /// `DebouncedTask` は body の実行中も重複を防ぐ（レビュー指摘）。
 @Suite("DebouncedTask の重複防止", .serialized)
 @MainActor
