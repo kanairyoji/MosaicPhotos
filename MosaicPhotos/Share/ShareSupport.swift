@@ -243,14 +243,24 @@ final class SharedAnalysisImporter {
         let incomingDates = prepared.reduce(into: [String: Date]()) { acc, item in
             acc.merge(item.captureDates) { _, new in new }
         }
-        var droppedDates: Set<String> = []
+        // 保存そのものに失敗した回だけ「取り込み済み」を見送る（やり直す価値がある）。
+        // ⚠️ 上限に当たって入らなかったぶんで見送ってはいけない——やり直しても同じ結果なので、
+        // その解析データは永久に取り込み済みにならず、1 回あたりの取得上限を食い潰して
+        // **その先のシャードが一つも取れなくなる**（レビュー指摘）。
+        var captureDateSaveFailed = false
         if !incomingDates.isEmpty {
             let outcome = await Task.detached(priority: .utility) {
                 SharedCaptureDateStore().record(incomingDates, keeping: syncedSharedPaths)
             }.value
-            droppedDates = outcome.dropped
+            captureDateSaveFailed = outcome.saveFailed
             Diagnostics.mark("share import: capture dates — +\(incomingDates.count), "
-                + "total \(outcome.table.count), dropped \(outcome.dropped.count)")
+                + "total \(outcome.table.count), overCap \(outcome.droppedByCap.count), "
+                + "saveFailed \(outcome.saveFailed)")
+            if !outcome.droppedByCap.isEmpty {
+                // 設計上の限界（表の上限）。再試行では解決しないので、印は進める。
+                Diagnostics.mark("share import: \(outcome.droppedByCap.count) capture date(s) "
+                    + "did not fit (cap \(SharedCaptureDateStore.maxEntries))")
+            }
             // 開きっぱなしの一覧にも効かせる（次に開き直すまで古い並びのままにしない）。
             await onCaptureDatesChanged?()
         }
@@ -265,9 +275,8 @@ final class SharedAnalysisImporter {
             // 保存に失敗した回に記録すると、同じ解析データは以後ダウンロードされず、
             // 欠けた解析結果を再取得できない（レビュー指摘）。
             // 未同期の写真が残っている場合（fullyMatched=false）も同様に記録しない。
-            // ⚠️ 撮影日が 1 件でも収まらなかった解析データは「取り込み済み」にしない
-            // （記録すると rev で弾かれ、落ちた撮影日は二度と取り直せない・レビュー指摘）。
-            let datesLanded = prepared.captureDates.keys.allSatisfy { !droppedDates.contains($0) }
+            // 撮影日の**保存に失敗した**回は見送る（次回やり直せる）。
+            let datesLanded = prepared.captureDates.isEmpty || !captureDateSaveFailed
             let committed = counts.saved && faces.saved
             if prepared.fullyMatched && committed && datesLanded {
                 ShareAnalysisFetch.markImported(prepared.analysisData)

@@ -152,7 +152,7 @@ struct SharedCaptureDateTests {
 
         let saved = store.record(["/Family/Set/A.JPG": date(1_600_000_000)])
         #expect(saved.table["/family/set/a.jpg"] == date(1_600_000_000))
-        #expect(saved.dropped.isEmpty, "収まったのに落ちた扱いになった")
+        #expect(!saved.saveFailed && saved.droppedByCap.isEmpty, "収まったのに失敗扱いになった")
 
         // 別インスタンスで読み直す＝本番と同じ経路（起動をまたぐ）。
         let reopened = SharedCaptureDateStore(directory: dir, filename: "dates.json")
@@ -169,12 +169,11 @@ struct SharedCaptureDateTests {
         FileManager.default.createFile(atPath: file.path, contents: Data("x".utf8))
         let store = SharedCaptureDateStore(directory: file, filename: "dates.json")
         let outcome = store.record(["/family/a.jpg": date(100)])
-        #expect(outcome.table["/family/a.jpg"] == date(100), "戻り値は混ぜた結果を返すべき")
+        // 戻り値は**実際に残っているもの**を返す（書けなかったのに入ったように見せない）。
+        #expect(outcome.table.isEmpty, "書けていないのに入ったと報告した")
         #expect(store.load().isEmpty, "書けていないのに読めた")
-        // ⚠️ 書けていないなら「落ちた」と報告する。そうしないと呼び出し側が
-        // 「取り込み済み」にしてしまい、撮影日を二度と取り直せない。
-        #expect(outcome.dropped == ["/family/a.jpg"],
-                "保存できなかったのに落ちたと報告しない＝永久に失う")
+        // ⚠️ 保存できなかった回は**やり直す価値がある**失敗として報告する。
+        #expect(outcome.saveFailed, "保存できなかったのに成功と報告した＝永久に失う")
         try? FileManager.default.removeItem(at: file)
     }
 
@@ -192,9 +191,60 @@ struct SharedCaptureDateTests {
         // そこへ「新しい」写真が届く＝古い側を残す規則なので入らない。
         let outcome = store.record(["/family/new.jpg": date(9_000_000_000)])
         #expect(outcome.table["/family/new.jpg"] == nil, "上限を超えて入ってしまった")
-        #expect(outcome.dropped == ["/family/new.jpg"],
-                "入らなかったのに報告しない＝取り込み済みにされて永久に失う")
+        // ⚠️ 上限は**やり直しても同じ**。保存の失敗と混ぜてはいけない——混ぜると
+        // その解析データが永久に取り込み済みにならず、取得の上限を食い潰して
+        // その先のシャードが一つも取れなくなる。
+        #expect(outcome.droppedByCap == ["/family/new.jpg"])
+        #expect(!outcome.saveFailed, "上限を保存失敗として報告した＝取り込みが止まる")
         try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// 回帰: 書けなかったのに「入った」と誤認しないこと。
+    /// 存在の有無だけを見ると、前回の**古い値**が残っているキーを入ったと数えてしまう。
+    @Test("保存に失敗したら、前の値が残っていても入った扱いにしない")
+    func staleValueIsNotMistakenForSuccess() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = SharedCaptureDateStore(directory: dir, filename: "dates.json")
+        _ = store.record(["/family/a.jpg": date(100)])
+        #expect(store.load()["/family/a.jpg"] == date(100))
+
+        // 書き込み先をディレクトリに変えて必ず失敗させる（中身は古い値のまま）。
+        try? FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("blocked.json"), withIntermediateDirectories: true)
+        let blocked = SharedCaptureDateStore(directory: dir, filename: "blocked.json")
+        _ = blocked.record(["/family/a.jpg": date(100)])
+        let outcome = blocked.record(["/family/a.jpg": date(200)])   // 提供者が撮影日を直した
+        #expect(outcome.saveFailed, "書けていないのに成功と報告した")
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    // MARK: - 取得の順送り（飢餓を作らない）
+
+    /// 回帰: 1 回の取得数に上限を付けたことで、**先頭に居座る候補が後ろを飢えさせない**こと。
+    /// 候補から外れるのは「取り込み済み」を記録できたときだけで、その条件は何度も
+    /// 続けて満たされないことがある。毎回先頭から取ると 49 個目以降は一度も取れない。
+    @Test("続きから取るので、候補が一巡する")
+    func rotationVisitsEveryCandidate() {
+        let all = (0..<10).map { String(format: "/f/shard-%02d.json", $0) }
+        // 印が無ければ先頭から。
+        #expect(ShareAnalysisFetch.rotated(all, after: nil) == all)
+        // 印の次から始まり、末尾まで行ったら先頭へ回り込む。
+        let fromThird = ShareAnalysisFetch.rotated(all, after: all[2])
+        #expect(fromThird.first == all[3])
+        #expect(fromThird.count == all.count)
+        #expect(Set(fromThird) == Set(all), "一巡で全部を訪れない")
+        // 上限 4 で 3 回回せば、10 個のうち 10 個すべてを訪れる。
+        var cursor: String? = nil
+        var visited: Set<String> = []
+        for _ in 0..<3 {
+            let window = ShareAnalysisFetch.rotated(all, after: cursor).prefix(4)
+            visited.formUnion(window)
+            cursor = window.last
+        }
+        #expect(visited.count == all.count, "3 回回しても訪れていない候補がある: \(all.count - visited.count) 個")
+        // 末尾を過ぎた印でも先頭へ戻る（候補が減ったときに止まらない）。
+        #expect(ShareAnalysisFetch.rotated(all, after: "/f/shard-99.json") == all)
     }
 
     // MARK: - 受信側の読み取り能力の版

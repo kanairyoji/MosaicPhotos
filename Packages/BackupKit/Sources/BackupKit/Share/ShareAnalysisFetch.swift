@@ -59,6 +59,33 @@ public struct ShareAnalysisFetch {
     /// 総量は変わらず、「どれも少しずつ進む」状態になる（ADR-85 と同じ考え方）。
     static let maxFilesPerRun = 48
 
+    /// 前回どこまで取ったか（次はその続きから）。
+    ///
+    /// ⚠️ **打ち切りだけでは進まない**（レビュー指摘）。候補から外れるのは
+    /// 「取り込み済み」として rev を記録できたときだけで、その条件は何度も続けて
+    /// 満たされないことがある（受信側の同期が途中だとシャードはほぼ全部が未突合）。
+    /// 毎回先頭 48 個を取り直すと、**49 個目以降は一度もダウンロードされない**
+    /// ——打ち切りを入れる前は全部取れていたので、これは打ち切りが作った飢餓。
+    /// 続きから始めて一巡させれば、記録できない回が続いても全部が順番に回る。
+    private static let cursorKey = "share.analysisFetchCursor"
+
+    static func storedCursor() -> String? {
+        UserDefaults.standard.string(forKey: cursorKey)
+    }
+
+    static func saveCursor(_ path: String?) {
+        if let path { UserDefaults.standard.set(path, forKey: cursorKey) }
+        else { UserDefaults.standard.removeObject(forKey: cursorKey) }
+    }
+
+    /// 候補を「前回の続き」から並べ替える（純ロジック・テスト対象）。
+    /// `cursor` より大きい最初の要素から始めて、末尾まで行ったら先頭へ回り込む。
+    static func rotated(_ candidates: [String], after cursor: String?) -> [String] {
+        guard let cursor, !candidates.isEmpty else { return candidates }
+        guard let start = candidates.firstIndex(where: { $0 > cursor }) else { return candidates }
+        return Array(candidates[start...] + candidates[..<start])
+    }
+
     /// 受信側の読み取り能力が上がっていたら、記録済み rev を 1 回だけ捨てる。
     static func invalidateRevsIfCapabilityGrew() {
         let defaults = UserDefaults.standard
@@ -78,6 +105,9 @@ public struct ShareAnalysisFetch {
         var seenPaths = Set<String>()
         var allListed = true
 
+        // 1 巡目: 一覧を全部見て、候補（rev が変わったもの）を集める。
+        // ⚠️ 一覧には**必ず**入れる（打ち切っても記録の掃除が狂わないように）。
+        var candidates: [(path: String, rev: String, setFolder: String)] = []
         for root in roots {
             guard let listing = await copier.listFolder(path: root, token: token, recursive: true) else {
                 allListed = false   // 一覧が取れない回は記録を捨てない（全部の再取得を誘発する）
@@ -86,21 +116,31 @@ public struct ShareAnalysisFetch {
             let marker = "/" + ShareAnalysisData.subfolderName + "/"
             for file in listing where !file.isFolder && ShareAnalysisData.isAnalysisFileName(file.name) {
                 guard let range = file.pathLower.range(of: marker, options: .backwards) else { continue }
-                // ⚠️ 一覧には**必ず**入れる（打ち切っても記録の掃除が狂わないように）。
                 seenPaths.insert(file.pathLower)
                 let rev = file.rev ?? ""
                 if !rev.isEmpty, knownRevs[file.pathLower] == rev { continue }   // 変化なし
-                guard out.count < Self.maxFilesPerRun else { continue }          // 続きは次の実行で
-                guard let data = await copier.downloadFile(path: file.pathLower, token: token),
-                      let decoded = ShareAnalysisData.decodeValidated(data) else {
-                    BackupLogger.error("ShareAnalysisFetch: invalid analysis data — \(file.pathLower)")
-                    continue
-                }
-                let setFolder = String(file.pathLower[..<range.lowerBound])
-                out.append(Fetched(analysisPathLower: file.pathLower, rev: rev,
-                                   file: decoded, setFolderPathLower: setFolder))
+                candidates.append((file.pathLower, rev,
+                                   String(file.pathLower[..<range.lowerBound])))
             }
         }
+
+        // 2 巡目: 前回の続きから上限まで取る（一巡させて飢餓を作らない）。
+        let order = Dictionary(candidates.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        let rotatedPaths = Self.rotated(candidates.map(\.path).sorted(), after: Self.storedCursor())
+        var lastTaken: String?
+        for path in rotatedPaths.prefix(Self.maxFilesPerRun) {
+            guard let candidate = order[path] else { continue }
+            lastTaken = path
+            guard let data = await copier.downloadFile(path: path, token: token),
+                  let decoded = ShareAnalysisData.decodeValidated(data) else {
+                BackupLogger.error("ShareAnalysisFetch: invalid analysis data — \(path)")
+                continue
+            }
+            out.append(Fetched(analysisPathLower: path, rev: candidate.rev,
+                               file: decoded, setFolderPathLower: candidate.setFolder))
+        }
+        // 壊れていて取り込めないシャードでも印は進める（そこで止まらない）。
+        if let lastTaken { Self.saveCursor(lastTaken) }
         // 一覧に無くなったパスの rev 記録は捨てる（肥大防止。以前の「500 件超で末尾 300 件」は
         // シャード化で件数が増えると取り込み済みの記録まで捨てて再取得を誘発する）。
         if allListed { Self.pruneStoredRevs(keeping: seenPaths) }

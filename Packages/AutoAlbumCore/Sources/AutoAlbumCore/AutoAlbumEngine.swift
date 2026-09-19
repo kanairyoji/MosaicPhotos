@@ -180,7 +180,14 @@ public final class AutoAlbumEngine {
         // アクティビティバーへの鏡写し。⚠️ 本体の defer でやると、明け渡した旧タスクが遅れて
         // 終わったときに**走り続けている後続の表示を落とす**（ADR-198）。世代を知っている
         // `SingleFlightTask` 側から通知してもらう。
-        let mirror: (Bool) -> Void = { running in
+        // ⚠️ **2 本のどちらかが走っていれば「走っている」**（レビュー指摘）。引数の `running` を
+        // そのまま反映すると、再解析の本体の中で `fill.stop()` を呼んだ瞬間に「止まった」と
+        // 書き込んでしまう。`reanalyze.isRunning` は既に true なので二度と通知されず、
+        // 再解析の間ずっとランプが消え、進捗行が隠れ、夜間の窓は「何も走っていない」と
+        // 判断して早じまいする。
+        let mirror: (Bool) -> Void = { [weak self] _ in
+            guard let self else { return }
+            let running = self.fill.isRunning || self.reanalyze.isRunning
             BackgroundActivityMonitor.shared.isEmbedding = running
             if !running { BackgroundActivityMonitor.shared.embedRemaining = 0 }
         }

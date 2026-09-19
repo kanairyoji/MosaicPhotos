@@ -51,15 +51,21 @@ public struct SharedCaptureDateStore: Sendable {
     }
 
     /// 記録の結果。
+    ///
+    /// ⚠️ **「やり直す価値がある失敗」と「やり直しても同じ結果」を分ける**（レビュー指摘）。
+    /// 分けないと、上限に当たって落ちた撮影日のせいでその解析データが永久に
+    /// 「取り込み済み」にならず、毎回同じものを取り直す——しかも 1 回あたりの取得数には
+    /// 上限があるので、その先のシャードが一つも取れなくなる（取り込み全体が止まる）。
     public struct Outcome: Sendable {
         /// 保存後の表（呼び出し側がそのまま表示へ渡せる）。
         public let table: [String: Date]
-        /// **収まらなかった**受信ぶんのパス（上限に当たって落ちた・小文字）。
-        ///
-        /// ⚠️ 空でないなら、その解析データを「取り込み済み」にしてはいけない。
-        /// 記録の判定は rev だけなので、一度そう記録すると**二度と取り直せない**——
-        /// 落ちた撮影日は永久に戻らない（ADR-199 の追補・レビュー指摘）。
-        public let dropped: Set<String>
+        /// ファイルへの保存そのものに失敗した。**やり直す価値がある**ので、
+        /// この回の解析データは「取り込み済み」にしない。
+        public let saveFailed: Bool
+        /// 上限（または掃除）に当たって入らなかった受信ぶん（小文字）。
+        /// **やり直しても同じ**なので、取り込み済みにしてよい——ここで止めると全体が進まない。
+        /// 撮影日は戻らないが、それは上限という設計上の限界で、再試行では解決しない。
+        public let droppedByCap: Set<String>
     }
 
     /// 撮影日を記録する。`keeping` を渡すと、そこに無いパスの記録は捨てる
@@ -67,19 +73,32 @@ public struct SharedCaptureDateStore: Sendable {
     @discardableResult
     public func record(_ dates: [String: Date], keeping: Set<String>? = nil) -> Outcome {
         let merged = Self.merged(existing: load(), adding: dates, keeping: keeping)
-        save(merged)
-        // 書けたかどうかも見る（書けていなければ全部「落ちた」扱い＝取り直せるようにする）。
-        let persisted = load()
-        let dropped = Set(dates.keys.map { $0.lowercased() }).filter { persisted[$0] == nil }
-        return Outcome(table: merged, dropped: dropped)
+        let saved = save(merged)
+        // 入らなかったものは**混ぜた結果**で判定する（ファイルを読み直さない）。
+        // ⚠️ 値まで見る。存在の有無だけだと、前回の**古い値が残っているキー**を
+        // 「入った」と誤認する——提供者が撮影日を直しても直らなくなる。
+        var droppedByCap: Set<String> = []
+        for (path, date) in dates where merged[path.lowercased()] != date {
+            droppedByCap.insert(path.lowercased())
+        }
+        return Outcome(table: saved ? merged : load(),
+                       saveFailed: !saved, droppedByCap: droppedByCap)
     }
 
-    func save(_ dates: [String: Date]) {
+    /// - Returns: 書けたか。書けなければ呼び出し側が次回やり直す。
+    @discardableResult
+    func save(_ dates: [String: Date]) -> Bool {
         let raw = dates.mapValues(\.timeIntervalSince1970)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard let data = try? JSONEncoder().encode(raw) else { return }
-        try? data.write(to: url, options: .atomic)
+        guard let data = try? JSONEncoder().encode(raw) else { return false }
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            BackupLogger.error("SharedCaptureDateStore: save failed — \(error.localizedDescription)")
+            return false
+        }
     }
 
     // MARK: - 純ロジック（テスト対象）
