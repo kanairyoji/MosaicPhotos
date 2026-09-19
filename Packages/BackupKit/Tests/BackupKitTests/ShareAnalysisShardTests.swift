@@ -68,7 +68,13 @@ struct ShareAnalysisFetchTests {
     @Test("家族フォルダ 1 回の再帰一覧で、変わったシャードだけ取得する")
     func fetchesOnlyChangedShards() async {
         UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
-        defer { UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs) }
+        // ⚠️ 取得の「続きの印」も消す。消さないと、この実行より前の履歴で
+        // どこから取るかが変わり、テストが順序依存になる（レビュー指摘）。
+        ShareAnalysisFetch.saveCursor(nil)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
+            ShareAnalysisFetch.saveCursor(nil)
+        }
         let server = FakeDropboxServer()
         let root = "/family/iphone-x/share"
         await server.seed(root, hash: "", isFolder: true)
@@ -98,7 +104,13 @@ struct ShareAnalysisFetchTests {
     @Test("旧形式 analysis-v1.json も読める")
     func readsLegacyFile() async {
         UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
-        defer { UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs) }
+        // ⚠️ 取得の「続きの印」も消す。消さないと、この実行より前の履歴で
+        // どこから取るかが変わり、テストが順序依存になる（レビュー指摘）。
+        ShareAnalysisFetch.saveCursor(nil)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
+            ShareAnalysisFetch.saveCursor(nil)
+        }
         let server = FakeDropboxServer()
         let root = "/family/iphone-y/share"
         await server.seed(root, hash: "", isFolder: true)

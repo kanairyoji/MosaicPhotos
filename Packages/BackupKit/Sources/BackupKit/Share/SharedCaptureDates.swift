@@ -63,16 +63,26 @@ public struct SharedCaptureDateStore: Sendable {
         /// この回の解析データは「取り込み済み」にしない。
         public let saveFailed: Bool
         /// 上限（または掃除）に当たって入らなかった受信ぶん（小文字）。
-        /// **やり直しても同じ**なので、取り込み済みにしてよい——ここで止めると全体が進まない。
-        /// 撮影日は戻らないが、それは上限という設計上の限界で、再試行では解決しない。
+        ///
+        /// ⚠️ ここで取り込みを止めてはいけない。止めると解析データが永久に取り込み済みに
+        /// ならず、取得の上限を食い潰して全体が進まなくなる（レビュー 3 周目）。
+        /// ⚠️ ただし「やり直しても同じ」とは限らない——掃除で表が縮めば明日は入り得る。
+        /// それでも止めないのは、**止めた場合の害（取り込み全体の停止）が大きすぎる**から。
         public let droppedByCap: Set<String>
+        /// 上限に当たって**既存の記録から押し出された**件数（レビュー指摘）。
+        ///
+        /// 押し出された写真の解析データは既に「取り込み済み」なので再取得されない
+        /// ＝撮影日は戻らない。受信ぶんだけを見ていると 0 件と報告され、
+        /// **静かに並びが壊れる**。数えて記録に残す。
+        public let evictedExisting: Int
     }
 
     /// 撮影日を記録する。`keeping` を渡すと、そこに無いパスの記録は捨てる
     /// （家族フォルダから消えた写真の記録を残さない）。
     @discardableResult
     public func record(_ dates: [String: Date], keeping: Set<String>? = nil) -> Outcome {
-        let merged = Self.merged(existing: load(), adding: dates, keeping: keeping)
+        let existing = load()
+        let merged = Self.merged(existing: existing, adding: dates, keeping: keeping)
         let saved = save(merged)
         // 入らなかったものは**混ぜた結果**で判定する（ファイルを読み直さない）。
         // ⚠️ 値まで見る。存在の有無だけだと、前回の**古い値が残っているキー**を
@@ -81,8 +91,15 @@ public struct SharedCaptureDateStore: Sendable {
         for (path, date) in dates where merged[path.lowercased()] != date {
             droppedByCap.insert(path.lowercased())
         }
-        return Outcome(table: saved ? merged : load(),
-                       saveFailed: !saved, droppedByCap: droppedByCap)
+        // 既存の記録が押し出された数（掃除で消えたぶんは除く＝上限が原因のものだけ）。
+        let incoming = Set(dates.keys.map { $0.lowercased() })
+        let lowerKeeping = keeping.map { Set($0.map { $0.lowercased() }) }
+        let evictedByCap = existing.keys.filter { key in
+            merged[key] == nil && !incoming.contains(key)
+                && (lowerKeeping?.contains(key) ?? true)   // 掃除で消えたぶんは数えない
+        }.count
+        return Outcome(table: saved ? merged : load(), saveFailed: !saved,
+                       droppedByCap: droppedByCap, evictedExisting: evictedByCap)
     }
 
     /// - Returns: 書けたか。書けなければ呼び出し側が次回やり直す。

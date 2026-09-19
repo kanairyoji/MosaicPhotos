@@ -252,14 +252,21 @@ final class SharedAnalysisImporter {
             let outcome = await Task.detached(priority: .utility) {
                 SharedCaptureDateStore().record(incomingDates, keeping: syncedSharedPaths)
             }.value
+            // ⚠️ 見送るのは**数回まで**。容量不足のように直らない失敗だと毎回見送られ、
+            // 取り込みが一度も記録されないまま毎回同じシャードを取り直し続ける（レビュー指摘）。
             captureDateSaveFailed = outcome.saveFailed
+                && ShareAnalysisFetch.shouldRetryCaptureDateSave()
+            if !outcome.saveFailed { ShareAnalysisFetch.resetCaptureDateSaveFailures() }
             Diagnostics.mark("share import: capture dates — +\(incomingDates.count), "
                 + "total \(outcome.table.count), overCap \(outcome.droppedByCap.count), "
-                + "saveFailed \(outcome.saveFailed)")
-            if !outcome.droppedByCap.isEmpty {
-                // 設計上の限界（表の上限）。再試行では解決しないので、印は進める。
-                Diagnostics.mark("share import: \(outcome.droppedByCap.count) capture date(s) "
-                    + "did not fit (cap \(SharedCaptureDateStore.maxEntries))")
+                + "evicted \(outcome.evictedExisting), saveFailed \(outcome.saveFailed)")
+            if !outcome.droppedByCap.isEmpty || outcome.evictedExisting > 0 {
+                // 表の上限。押し出された既存ぶんは**既に取り込み済み＝再取得されない**ので、
+                // その写真の並びは戻らない。黙って起きないよう必ず残す。
+                Diagnostics.mark("share import: capture-date table is full "
+                    + "(cap \(SharedCaptureDateStore.maxEntries)) — "
+                    + "\(outcome.droppedByCap.count) incoming did not fit, "
+                    + "\(outcome.evictedExisting) existing evicted (ordering lost for those)")
             }
             // 開きっぱなしの一覧にも効かせる（次に開き直すまで古い並びのままにしない）。
             await onCaptureDatesChanged?()

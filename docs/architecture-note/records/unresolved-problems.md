@@ -135,6 +135,19 @@
   （FaceCore 247 テスト・BackupKit 281 テスト）。パッケージ固有ではなく、
   **並列実行下のハーネスか、テストが共有する何か**（一時ディレクトリ・インメモリ SwiftData の
   同時生成など）を疑う段階。2 時間で 2 回＝無視できない頻度。
+- 追記（2026-09-19 21:37・スタックが取れた）: クラッシュレポート（`swiftpm-testing-helper`）の
+  落ちたスレッドは **SwiftData のコンテナ生成中**で、
+  `NSPersistentStoreCoordinator.addPersistentStore` →
+  `NSSQLiteConnection.createTriggersForEntities` → `_generateTriggerSQL` →
+  `-[__NSDictionaryM setObject:forKey:]` が `nil` で EXC_BAD_ACCESS。キューは
+  `SQLQueue … for null`。**こちらのコードではなく CoreData 内部**で、
+  同一スキーマのコンテナを同時に開いたときの競合に見える。
+  swift-testing は既定でテストを並列実行するので、`@ModelActor` を作るテストが
+  同時に走ると踏み得る。対策候補: 該当スイートに `.serialized` を付ける／
+  コンテナ生成を 1 か所の `actor` に通す。どちらも**本番の挙動を変えない**ので、
+  再現条件が絞れてから入れる。
+- 追記（2026-09-20 09:05）: **3 度目**（BackupKit・単体実行中）。直後の 3 連続再実行は通過。
+  頻度は落ちていない。
 - 次に見るとき: 落ちたら `~/Library/Logs/DiagnosticReports` の `*PackageTests*.ips` を拾い、
   クラッシュしたスレッドのフレームを見る（どのテストか特定できる）。
   `swift test --parallel` の有無で再現性が変わるかも見る。頻度が上がるようなら

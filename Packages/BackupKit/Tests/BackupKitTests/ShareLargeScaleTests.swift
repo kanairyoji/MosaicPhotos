@@ -158,7 +158,13 @@ struct ShareLargeScaleTests {
     @Test("受信側もページを跨いで全シャードを拾う")
     func receiverFollowsPages() async {
         UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
-        defer { UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs) }
+        // ⚠️ 取得の「続きの印」も消す。消さないと、この実行より前の履歴で
+        // どこから取るかが変わり、テストが順序依存になる（レビュー指摘）。
+        ShareAnalysisFetch.saveCursor(nil)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
+            ShareAnalysisFetch.saveCursor(nil)
+        }
         let server = FakeDropboxServer()
         await server.setPageSize(5)
         let root = "/family/x/share"

@@ -59,6 +59,9 @@ public struct ShareAnalysisFetch {
     /// 総量は変わらず、「どれも少しずつ進む」状態になる（ADR-85 と同じ考え方）。
     static let maxFilesPerRun = 48
 
+    /// 連続でダウンロードに失敗したら、その回は畳む（レート制限・圏外で叩き続けない）。
+    static let failureStreakLimit = 5
+
     /// 前回どこまで取ったか（次はその続きから）。
     ///
     /// ⚠️ **打ち切りだけでは進まない**（レビュー指摘）。候補から外れるのは
@@ -71,6 +74,34 @@ public struct ShareAnalysisFetch {
 
     static func storedCursor() -> String? {
         UserDefaults.standard.string(forKey: cursorKey)
+    }
+
+    /// 撮影日の保存に失敗し続けたときに、取り込みを止め続けないための上限（レビュー指摘）。
+    ///
+    /// ⚠️ 保存失敗で「取り込み済み」を見送るのは、やり直す価値があるから。ただし容量不足など
+    /// **直らない失敗**だと毎回見送られ、解析データの取り込みが一度も記録されないまま
+    /// 毎回 48 個を取り直し続ける。撮影日は並び順のための付加情報で、タグ・埋め込み・顔の
+    /// 取り込み自体は成功している——数回でこらえて先へ進める。
+    public static let captureDateSaveRetryLimit = 3
+
+    private static let saveFailureKey = "share.captureDateSaveFailures"
+
+    /// 撮影日の保存失敗を数える。まだ見送ってよいなら true。
+    public static func shouldRetryCaptureDateSave() -> Bool {
+        let defaults = UserDefaults.standard
+        let count = defaults.integer(forKey: saveFailureKey) + 1
+        defaults.set(count, forKey: saveFailureKey)
+        if count > captureDateSaveRetryLimit {
+            BackupLogger.error("ShareAnalysisFetch: capture-date save has failed \(count) times — "
+                + "marking analysis imported anyway (ordering will stay wrong)")
+            return false
+        }
+        return true
+    }
+
+    /// 保存できた回に数え直す。
+    public static func resetCaptureDateSaveFailures() {
+        UserDefaults.standard.removeObject(forKey: saveFailureKey)
     }
 
     static func saveCursor(_ path: String?) {
@@ -125,21 +156,43 @@ public struct ShareAnalysisFetch {
         }
 
         // 2 巡目: 前回の続きから上限まで取る（一巡させて飢餓を作らない）。
+        //
+        // ⚠️ **予算は「取れた数」で数える**（レビュー指摘）。試した数で数えると、429 や通信断で
+        // 落ちた回に何も取れないまま印だけ 48 個進み、その 48 個は一巡するまで戻ってこない。
+        // ⚠️ **印は取れたところまでしか進めない**。取れなかったシャードを飛ばすと、
+        // 同じ理由で取りこぼしが一巡ぶん遅れる。
+        // ⚠️ ただし**連続で落ち続けたら畳む**。レート制限や圏外で 48 回叩き続けない。
         let order = Dictionary(candidates.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         let rotatedPaths = Self.rotated(candidates.map(\.path).sorted(), after: Self.storedCursor())
         var lastTaken: String?
-        for path in rotatedPaths.prefix(Self.maxFilesPerRun) {
+        var taken = 0
+        var consecutiveFailures = 0
+        for path in rotatedPaths {
+            if taken >= Self.maxFilesPerRun { break }
+            if Task.isCancelled { break }                      // 窓が閉じたら印を進めずに降りる
+            if consecutiveFailures >= Self.failureStreakLimit {
+                BackupLogger.info("ShareAnalysisFetch: giving up this run after "
+                    + "\(consecutiveFailures) consecutive download failures")
+                break
+            }
             guard let candidate = order[path] else { continue }
+            guard let data = await copier.downloadFile(path: path, token: token) else {
+                // 通信・レート制限・権限。**印は進めない**ので次の実行でここから取り直す。
+                BackupLogger.error("ShareAnalysisFetch: download failed — \(path)")
+                consecutiveFailures += 1
+                continue
+            }
+            consecutiveFailures = 0
+            taken += 1
             lastTaken = path
-            guard let data = await copier.downloadFile(path: path, token: token),
-                  let decoded = ShareAnalysisData.decodeValidated(data) else {
+            guard let decoded = ShareAnalysisData.decodeValidated(data) else {
+                // 中身が壊れている＝取り直しても同じ。印を進めて次へ（ここで止まらない）。
                 BackupLogger.error("ShareAnalysisFetch: invalid analysis data — \(path)")
                 continue
             }
             out.append(Fetched(analysisPathLower: path, rev: candidate.rev,
                                file: decoded, setFolderPathLower: candidate.setFolder))
         }
-        // 壊れていて取り込めないシャードでも印は進める（そこで止まらない）。
         if let lastTaken { Self.saveCursor(lastTaken) }
         // 一覧に無くなったパスの rev 記録は捨てる（肥大防止。以前の「500 件超で末尾 300 件」は
         // シャード化で件数が増えると取り込み済みの記録まで捨てて再取得を誘発する）。

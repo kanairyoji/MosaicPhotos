@@ -201,22 +201,31 @@ struct SharedCaptureDateTests {
 
     /// 回帰: 書けなかったのに「入った」と誤認しないこと。
     /// 存在の有無だけを見ると、前回の**古い値**が残っているキーを入ったと数えてしまう。
+    /// ⚠️ この fixture は**古い値が実際に読める**状態でなければ意味がない。
+    /// 以前は書き込み先をディレクトリにしていたので `load()` が常に空を返し、
+    /// 「存在の有無」で判定する旧実装でも通っていた（空でも通る assert・ADR-119）。
+    /// ここではファイルを書いたあと**親ディレクトリを書き込み禁止**にする——
+    /// 読めるが差し替えられない状態を作る。
     @Test("保存に失敗したら、前の値が残っていても入った扱いにしない")
-    func staleValueIsNotMistakenForSuccess() {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    func staleValueIsNotMistakenForSuccess() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let store = SharedCaptureDateStore(directory: dir, filename: "dates.json")
         _ = store.record(["/family/a.jpg": date(100)])
-        #expect(store.load()["/family/a.jpg"] == date(100))
+        // 前提を確かめる: 古い値がファイルに入っている。
+        #expect(store.load()["/family/a.jpg"] == date(100), "前提が成立していない（古い値が無い）")
 
-        // 書き込み先をディレクトリに変えて必ず失敗させる（中身は古い値のまま）。
-        try? FileManager.default.createDirectory(
-            at: dir.appendingPathComponent("blocked.json"), withIntermediateDirectories: true)
-        let blocked = SharedCaptureDateStore(directory: dir, filename: "blocked.json")
-        _ = blocked.record(["/family/a.jpg": date(100)])
-        let outcome = blocked.record(["/family/a.jpg": date(200)])   // 提供者が撮影日を直した
-        #expect(outcome.saveFailed, "書けていないのに成功と報告した")
-        try? FileManager.default.removeItem(at: dir)
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+            try? fm.removeItem(at: dir)
+        }
+        // 提供者が撮影日を直した。読めるが書けないので、古い値が残ったまま。
+        let outcome = store.record(["/family/a.jpg": date(200)])
+        try #require(store.load()["/family/a.jpg"] == date(100),
+                     "fixture が書けてしまった（書き込み禁止が効いていない）")
+        #expect(outcome.saveFailed,
+                "古い値が残っているのを「入った」と誤認した＝撮影日の訂正が永久に届かない")
     }
 
     // MARK: - 取得の順送り（飢餓を作らない）

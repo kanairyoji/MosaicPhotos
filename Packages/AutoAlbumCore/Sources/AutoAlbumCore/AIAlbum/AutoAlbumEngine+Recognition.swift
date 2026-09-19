@@ -478,6 +478,9 @@ extension AutoAlbumEngine {
     }
 
     private func runReanalyze() async {
+        // 前のトリクルの残数がそのまま出続けないように先に 0 にする（レビュー指摘）。
+        // 鏡写しは「どちらかが走っていれば走っている」なので、ここは自分で消す。
+        BackgroundActivityMonitor.shared.embedRemaining = 0
         await store.clearPerception()
         // 埋め込みを全消しするので、AI アルバムの評価状態（プール）もリセットする（解釈は保持）。
         aiService.resetEvaluationState()
