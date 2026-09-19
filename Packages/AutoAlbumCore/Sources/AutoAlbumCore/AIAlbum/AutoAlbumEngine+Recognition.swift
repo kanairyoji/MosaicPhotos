@@ -249,160 +249,125 @@ extension AutoAlbumEngine {
 
     // MARK: - Recognition (Vision/CLIP タグ付け)
 
-    /// 1 回の背景実行でシーンタグに割り当てるバッチ数の上限（ADR-85）。
-    /// 8 枚/バッチなので 40 バッチ ≒ 320 枚。これを超えたら打ち切って CLIP 埋め込み・
-    /// キャプションへ順番を回す（タグが窓を独占して埋め込みが飢餓するのを防ぐ）。
-    /// 次の実行で続きから進むので、総量は変わらず「どれも少しずつ進む」状態になる。
-    static var tagBatchesPerRun: Int { 40 }
-
-    /// 背景の重い処理（タグ付け・埋め込み・キャプション）を**明示的に止める**（ADR-79）。
+    /// 背景の重い処理（タグ付け・埋め込み）を**明示的に止める**（ADR-79）。
     /// フォアグラウンド復帰で呼ぶ。トリクル各段は `Task.isCancelled` を 1 単位ごとに見るため、
     /// 実行中の 1 枚が終わり次第すぐ抜ける。作業は差分ベースなので次の夜間窓で続きから再開する。
     /// 完了は待たない（復帰時にメインを塞がないため）。
     public func stopBackgroundWork() {
-        backgroundFillTask?.cancel()
-        backgroundFillTask = nil
+        fill.stop()
         // 表示ラベラの事前ウォーム（約300語の text encode）も止める（ADR-80）。
         // ⚠️ 外側の Task を cancel するだけでは**止まらない**（ADR-95 追記）。ラベラは二重構築を
         //    防ぐため共有 Task に合流する作りで、そこへは伝播しないため、約300語の encode と
         //    CLIP テキストタワーのロード（実機 diagnostics-40 で 15456ms）が走り切って ANE ゲートを
         //    占有し続けていた。中断の意思を seam で明示的に伝える。
-        prewarmTask?.cancel()
-        prewarmTask = nil
+        prewarm.stop()
         labelProvider?.cancelPrewarm()
         // 実行中の generate（前面の定期ループから起動されたものを含む）にも降りるよう伝える。
         // generate は呼び出し側のタスク上で走るため cancel では止められない（ADR-79 追記）。
         requestAbortHeavyWork()
     }
 
-    /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
-    /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
-    /// 未タグ写真の Vision タグ付け＋CLIP 埋め込みをバックグラウンドで進める。
-    /// ※ 一時停止で滞留したタスクは、ゲートが開けば（`shouldYield` が false になれば）内部の
-    ///   `waitWhilePaused` で**自分で再開**する。生成フラグ滞留の安全弁は
-    ///   `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）とデバッグ全開バイパスが担う。
     /// 実行中の背景処理を**明け渡させてから**開始し直す。夜間 BGTask 窓の先頭でだけ使う（ADR-95）。
     ///
     /// BGTask 窓は重い処理のための特権時間で、実測では 77 秒しか無いこともある。そこへ
     /// 「前面起動時に始まってゲート閉で眠っている bgfill」が実行中フラグを握ったままだと、
-    /// 窓は `bgfill: skip — already tagging/embedding` だけを残して丸ごと空転する
-    ///（実機 diagnostics-38: 窓 77 秒のうち有効な処理は 0）。滞留側を降ろして窓を使い切る。
+    /// 窓は `bgfill: skip` だけを残して丸ごと空転する（実機 diagnostics-38: 窓 77 秒で有効な処理 0）。
     /// 各処理は差分ベースかつバッチごとに保存しているので、割り込んでも取りこぼさない。
     public func restartBackgroundFill() {
-        if isTagging {
-            Diagnostics.mark("bgfill: preempting the in-flight run for the background window")
-            fillGeneration &+= 1        // 旧タスクの末尾処理を無効化（世代ガード）
-            backgroundFillTask?.cancel()
-            backgroundFillTask = nil
-            isTagging = false
-        }
-        scheduleBackgroundFill()
+        if fill.isRunning { Diagnostics.mark("bgfill: preempting the in-flight run for the background window") }
+        fill.restart { [weak self] in await self?.runTrickle() }
     }
 
+    /// 未タグ写真の Vision シーンタグ付け＋CLIP 埋め込みをバックグラウンドで進める（非ブロッキング）。
+    /// 走行中なら何もしない（`SingleFlightTask` が二重起動と世代ガードを持つ・ADR-198）。
     public func scheduleBackgroundFill() {
-        // D: 二重起動の抑止。前景の起動タスクと夜間 BGTask が同じエンジンに対して同時に呼び得るため、
-        //    実行中フラグを**同期的に**立ててから Task を起こす（Task 内で立てると 2 本すり抜ける）。
-        // 一時停止で滞留したタスクはゲートが開けば内部の waitWhilePaused で自分で再開する（force 撤去）。
-        // 真因の画像ロードハング（PHAssetImageLoader）は修正済みなので、以前 isTagging を握り続けていた
-        // launch タスクも自力で解けて完了する。
-        guard !isTagging else {
+        guard fill.start({ [weak self] in await self?.runTrickle() }) else {
             Diagnostics.mark("bgfill: skip — already tagging/embedding")
             return
         }
-        isTagging = true
-        fillGeneration &+= 1
-        let generation = fillGeneration
+    }
+
+    /// トリクル本体。**判断は `TricklePlan.steps`（純ロジック）**で、ここは反映だけ（ADR-198）。
+    private func runTrickle() async {
+        Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.shouldYield()) "
+                         + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
+        // ⚠️ **準備の前にゲートを待つ**（ADR-95 追記）。この下の準備——お気に入り再取得・
+        //    全解析対象キーの取得（約 86k）・`AnalysisOrder.ordered` の並べ替え——は数秒かかる。
+        //    以前はゲート判定より先に走っており、`bgfill: begin (pause=true)` から
+        //    `tags: start` まで実機で 5〜8 秒、その間にメインが 2.0〜3.2 秒ブロックしていた
+        //    （diagnostics-39・起動時と前面復帰時の残ハングの正体）。しかも直後に
+        //    `tags: finished — 0 tagged` で捨てられる＝**やる気が無いときに準備だけしていた**。
+        //    待ちは 60 秒で打ち切られ、フラグを解放して抜ける（居座らない）。
+        if await BackgroundTrickle.waitWhilePaused({ BackgroundYield.shouldYield() }) {
+            Diagnostics.mark("bgfill: gate stayed closed — standing down")
+            return
+        }
+        guard !Task.isCancelled else { return }
+
+        // 回線ポリシーはゲートの表から引く（ブーストは免除される・ADR-196）。
+        let plan = TricklePlan.steps(.init(
+            networkAllowed: !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked),
+            labelerNeedsWarming: labelProvider != nil && labelProvider?.isReady != true,
+            gateOpen: !BackgroundYield.shouldYield()))
+        Diagnostics.mark("bgfill: plan " + plan.map(\.label).joined(separator: "→"))
+
+        // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
+        await refreshFavoritesCache()
+        let favorites = favoritesCache
         let preset = Self.currentBackgroundPreset()
-        backgroundFillTask = Task(priority: .background) {
-            // 世代ガード: `restartBackgroundFill` で明け渡した旧タスクが遅れて末尾に来ても、
-            // 後続タスクの実行中フラグ／ハンドルを踏まない（ADR-95）。
-            defer {
-                if fillGeneration == generation {
-                    isTagging = false
-                    backgroundFillTask = nil
-                }
-            }
-            Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.shouldYield()) "
-                             + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
-            // ⚠️ **準備の前にゲートを待つ**（ADR-95 追記）。この下の準備——お気に入り再取得・
-            //    全解析対象キーの取得（約 86k）・`AnalysisOrder.ordered` の並べ替え——は数秒かかる。
-            //    以前はゲート判定より先に走っており、`bgfill: begin (pause=true)` から
-            //    `tags: start` まで実機で 5〜8 秒、その間にメインが 2.0〜3.2 秒ブロックしていた
-            //    （diagnostics-39・起動時と前面復帰時の残ハングの正体）。しかも直後に
-            //    `tags: finished — 0 tagged` で捨てられる＝**やる気が無いときに準備だけしていた**。
-            //    待ちは 60 秒で打ち切られ、フラグを解放して抜ける（居座らない）。
-            if await BackgroundTrickle.waitWhilePaused({ BackgroundYield.shouldYield() }) {
-                Diagnostics.mark("bgfill: gate stayed closed — standing down")
+
+        for step in plan {
+            // ⚠️ フェーズの切れ目で**キャンセルを見る**（ADR-95）。フォアグラウンド復帰の
+            //    `stopForForeground()` はこのタスクを cancel するが、以前は次フェーズへそのまま進み、
+            //    「embed loop entry (unembedded=40181)」→「embed: finished — 0 photos in 0.0s」という
+            //    実態と食い違うログだけを残していた（実機 diagnostics-38）。
+            guard !Task.isCancelled else {
+                Diagnostics.mark("bgfill: cancelled before \(step.label)")
                 return
             }
-            guard !Task.isCancelled else { return }
-            // 表示ラベラの概念埋め込み（約300語）は**別タスクで前もって温める**（fire-and-forget）。
-            // ANE 直列化ゲートは encodeText の内側で**1 語ずつ**取る（ADR-73）。ここでまとめて包むと
-            // 約300語ぶんゲートを握り続け、その間の顔スキャン・タグ付けが完全に止まる。
-            //
-            // ⚠️ ゲートが閉じているときは**起動しない**（ADR-80）。以前はゲート判定の外にあったため、
-            // 起動直後（pause=true）でも CLIP テキストタワーのロード（新規インストール直後は
-            // 実測 23 秒）＋約300語の encode が走り、起動を重くしていた。未ウォームでも実害はない
-            // ——`isReady` が false のとき insight は CLIP ラベルを飛ばし Vision タグだけで即返す。
-            if !BackgroundYield.shouldYield() {
-                prewarmTask = Task(priority: .background) { [weak self] in
-                    guard let self, let labeler = self.labelProvider else { return }
-                    await labeler.prewarm()
-                    self.prewarmTask = nil
-                }
+            await perform(step, favorites: favorites, preset: preset)
+        }
+    }
+
+    /// 1 手を実行する。**ここに判断を書かない**（書くと単独で確かめられなくなる）。
+    private func perform(_ step: TricklePlan.Step,
+                         favorites: Set<String>,
+                         preset: BackgroundProcessingPreset) async {
+        switch step {
+        case .warmLabeler:
+            // ANE 直列化ゲートは encodeText の内側で**1 語ずつ**取る（ADR-73）。ここでまとめて
+            // 包むと約300語ぶんゲートを握り続け、その間の顔スキャン・タグ付けが完全に止まる。
+            // 止めるのは `stopBackgroundWork`（cancelPrewarm と対）。
+            prewarm.start { [weak self] in
+                guard let labeler = self?.labelProvider else { return }
+                await labeler.prewarm()
             }
-            // お気に入り集合を先に取り込み、全解析の**処理順（お気に入り優先）**に使う（変化するので毎回更新）。
-            await refreshFavoritesCache()
-            let favorites = favoritesCache
-            // P1: まずシーンタグ（Vision・数十ms/枚＝速い）を進める。
-            // タグは検索の一次ランキングなので、CLIP 埋め込みより先に揃える価値が高い。
+
+        case .tagScenes(let maxBatches, let localOnly):
             // 候補は **お気に入り(ローカル→クラウド)→その他(ローカル→クラウド)・各新→古**（AnalysisOrder）。
-            // クラウド写真のタグ付けはサムネDLを要するため、回線NG（Wi-Fi 待ち等）なら今回はローカルのみ
-            // （Wi-Fi 復帰後の次回にクラウド分を拾う）。ローカルは通信不要なので常に進む（Fix B）。
-            //
-            // ⚠️ **1 回の実行あたりの上限を設ける**（ADR-85）。上限なしだとタグが全量終わるまで
-            //    下の埋め込みループに到達せず、CLIP 埋め込みが**永久に飢餓**する。実測（実機ログ
-            //    diag-28〜33）でタグは 33,662→24,505 と進む一方、未埋め込みは 43,611→43,626 と
-            //    まったく減らず、`embed: batch` が数週間 1 度も出ていなかった。夜間の窓は数分〜
-            //    数十分で、その間ずっとタグが窓を使い切っていたため。ADR-72 の「バックアップが
-            //    埋め込みに飢餓する」と同じ構造で、対処も同じ＝**順番を必ず回す**。
-            // 回線ポリシーはゲートの表から引く（ブーストは免除される・ADR-196）。
-            let tagNetOK = !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked)
-            let tagPool = await store.enrichedRefKeysNewestFirst()
+            let pool = await store.enrichedRefKeysNewestFirst()
             // ⚠️ 絞り込みと並べ替えは**メインから降ろす**（ADR-95 追記）。`AnalysisOrder.ordered` は
             //    約 86k 件の安定ソート（比較ごとに Set 参照）で、MainActor で回すと数百ms〜秒級に
             //    なる（CLAUDE.md 性能原則 4）。純ロジックなので detached で計算し、結果だけ受け取る。
             let candidates = await Task.detached(priority: .background) {
-                AnalysisOrder.ordered(tagNetOK ? tagPool : tagPool.filter { $0.hasPrefix("L-") },
+                AnalysisOrder.ordered(localOnly ? pool.filter { $0.hasPrefix("L-") } : pool,
                                       favorites: favorites)
             }.value
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
-                                           maxBatches: Self.tagBatchesPerRun,
+                                           maxBatches: maxBatches,
                                            shouldPause: { BackgroundYield.shouldYield() })
-            // ⚠️ フェーズの切れ目で**キャンセルを見る**（ADR-95）。フォアグラウンド復帰の
-            //    `stopForForeground()` はこのタスクを cancel するが、以前は次フェーズへそのまま進み、
-            //    「embed loop entry (unembedded=40181)」→「embed: finished — 0 photos in 0.0s」という
-            //    実態と食い違うログだけを残していた（実機 diagnostics-38）。トリクル本体が先頭で
-            //    キャンセルを見て即 return するため、作業はゼロなのに着手したように見えていた。
-            guard !Task.isCancelled else {
-                Diagnostics.mark("bgfill: cancelled after tag phase")
-                return
-            }
-            // P2: CLIP 埋め込みを進捗しなくなるまで回す（VLM キャプションのインターリーブは
-            // 廃止＝ADR-108。窓はすべて埋め込み・タグ・顔スキャンに使う）。
+
+        case .embed:
             let embedPause: @MainActor () -> Bool = { [weak self] in
-                // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との相互排他）は
-                // BackgroundYield.shouldYield に一元化。埋め込みは操作中も譲る。
+                // 重い処理の共通方針はゲートの表に一元化（ADR-196）。埋め込みは操作中も譲る。
                 (self?.isInteracting ?? false) || BackgroundYield.shouldYield()
             }
             Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.shouldYield()) "
-                             + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums) "
                              + "unembedded=\(await store.unembeddedCount()))")
             // ⚠️ ゲートが閉じていても**待つ**（diagnostics-81）。以前はここが
             //    `while !shouldYield()` で、入口で閉じていると**ループに一度も入らず**
             //    実行ごと捨てていた。実機では処理枠 4 分 56 秒の頭で `pause=true` を出し、
-            //    以後 1 枚も埋め込まないまま期限切れになっている（閉じていた理由は
-            //    バックアップの一括ロードとサムネのドレイン＝どちらも数秒〜数十秒で開く）。
+            //    以後 1 枚も埋め込まないまま期限切れになっている。
             //    待ちの上限（60 秒）を超えたときだけ畳む＝実行中フラグは握り続けない（ADR-95）。
             await BackgroundTrickle.runPhasesWaitingForGate(
                 shouldPause: { BackgroundYield.shouldYield() },
@@ -414,7 +379,6 @@ extension AutoAlbumEngine {
                 // 1 枚も進まなかった＝残作業なし → 終了。
                 return embed.after < embed.before
             }
-            // isTagging は先頭の defer で必ず戻す（二重起動抑止と対）。
         }
     }
 
@@ -472,14 +436,18 @@ extension AutoAlbumEngine {
     /// 全写真の認識結果（CLIP 埋め込み・キャプション）を消去し、最新ロジックで一から付け直す。
     /// 「再解析」用。完了まで await する（UI はスピナー表示）。
     public func reanalyzePhotos() async {
-        guard !isTagging else { return }
+        // 走行中なら何もしない。完了まで待つ（UI はスピナー表示）。
+        guard fill.start({ [weak self] in await self?.runReanalyze() }) else { return }
+        await fill.waitUntilIdle()
+    }
+
+    private func runReanalyze() async {
         await store.clearPerception()
         // 埋め込みを全消しするので、AI アルバムの評価状態（プール）もリセットする（解釈は保持）。
         aiService.resetEvaluationState()
         await refreshFavoritesCache()
         let favorites = favoritesCache
         let preset = Self.currentBackgroundPreset()
-        isTagging = true
         await tagger.embedUnprocessed(batchSize: preset.batchSize,
                                       betweenBatchNs: preset.betweenBatchNs,
                                       favorites: favorites,
@@ -489,6 +457,5 @@ extension AutoAlbumEngine {
                                       onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
             [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
         }
-        isTagging = false
     }
 }

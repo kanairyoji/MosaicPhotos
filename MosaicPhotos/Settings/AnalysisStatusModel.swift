@@ -49,7 +49,9 @@ final class AnalysisStatusModel {
 
     struct Deps {
         let engine: AutoAlbumEngine
-        let people: PeopleEngine
+        /// ⚠️ スキャンの**断面**だけ（ADR-198）。ポーリングで読むのでプロトコルでよい
+        /// （ビュー本体は観測のため具象型 `PeopleEngine` を使う）。
+        let people: FaceScanControl
         let dropboxStore: DropboxPhotoStore
         let session: AnalysisSession
     }

@@ -25,7 +25,9 @@ public final class PeopleEngine {
     /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
     public private(set) var isLoaded = false
-    public private(set) var isScanning = false
+    /// 顔スキャンが走っているか。**状態は `scan` が持つ**（ADR-198）——`SingleFlightTask` は
+    /// `@Observable` なので、この計算プロパティ越しでも SwiftUI が追従する。
+    public var isScanning: Bool { scan.isRunning }
     /// 未スキャン残り枚数（おおよそ）。
     public private(set) var remaining = 0
 
@@ -42,15 +44,14 @@ public final class PeopleEngine {
     /// お気に入り写真の refKey 集合（"L-…"）を返す seam（アプリ側＝PhotoKit が実装）。
     /// 代表写真の自動選択で「お気に入りの写真を優先」するために使う。nil なら優先なし。
     @ObservationIgnored private let favoriteRefKeysProvider: (() async -> Set<String>)?
-    @ObservationIgnored private var scanTask: Task<Void, Never>?
-    /// スキャンの世代。`stopScan` / `startScan` で進み、末尾処理は「自分の世代のときだけ」
-    /// ハンドルと進捗フラグを片付ける（止めた直後に始まった新スキャンを踏まないため）。
-    @ObservationIgnored private var scanGeneration = 0
+    /// 顔スキャン。二重起動の抑止・世代ガード・明け渡しは `SingleFlightTask` が持つ（ADR-198。
+    /// 以前は `scanTask` / `scanGeneration` / `isScanning` の 3 つを手で管理していた）。
+    @ObservationIgnored let scan = SingleFlightTask()
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
     @ObservationIgnored private var lastCandidates: [String] = []
     @ObservationIgnored private var lastAllowSimulator = false
-    /// `setNeedsPeopleReload()` のデバウンス用。連続要求は最後の 1 回だけ生き残る（ADR-95）。
-    @ObservationIgnored private var reloadTask: Task<Void, Never>?
+    /// 人物一覧の再読込を間引く（連続する変更を 1 回にまとめる・ADR-95/198）。
+    @ObservationIgnored private let reload = DebouncedTask(quietMilliseconds: 700)
 
     /// 「人物」として扱う最小の写真枚数（レビュー・検索・名前解決の母数）。
     /// 少ない断片も統合の対象にはしたいので、ここは低めに保つ。
@@ -106,6 +107,15 @@ public final class PeopleEngine {
         self.shadowStore = shadowStore
         // スキャンは影の世代があればそちらへ（新モデルの埋め込みを旧世代のクラスタに混ぜない）。
         self.tagger = FaceTagger(store: shadowStore ?? store, provider: faceProvider)
+        // アクティビティバーへの鏡写し。⚠️ スキャン本体の末尾でやると、止めた直後に始まった
+        // 新スキャンの表示を旧タスクが落とす（ADR-198）。世代を知っている側から通知してもらう。
+        scan.onStateChange = { [weak self] running in
+            BackgroundActivityMonitor.shared.isScanningFaces = running
+            if !running {
+                BackgroundActivityMonitor.shared.faceScanRemaining = 0
+                self?.remaining = 0
+            }
+        }
     }
 
     /// 現行世代（表示に使っている台帳）の顔モデル ID。未記録なら既存データの世代。
@@ -182,7 +192,7 @@ public final class PeopleEngine {
     /// 実機（diagnostics-38）では 1 分間に 30 回 `loadPeople()` が走り、その 1 回ごとに
     /// フォアグラウンドが 600〜1000ms 固まっていた（1 分あたりのハング数＝発行回数と完全一致）。
     /// 一覧は「最終的に正しければよい」表示なので、静止するまで待って 1 回だけ出す（ADR-95）。
-    public func setNeedsPeopleReload(quietMs: UInt64 = 700) {
+    public func setNeedsPeopleReload() {
         // レビュー UI 表示中は再発行を**保留**する（diagnostics-51）。人物が 900 級に育つと
         // 一覧の配り直し＝SwiftUI 再描画が 1 回 2〜4 秒のメインハングになり、回答のたびに
         // 引っかかっていた。レビュー中のカード進行は一覧に依存しないので、閉じるときに
@@ -191,12 +201,7 @@ public final class PeopleEngine {
             reloadPendingWhileHeld = true
             return
         }
-        reloadTask?.cancel()
-        reloadTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: quietMs * 1_000_000)
-            guard !Task.isCancelled, let self else { return }
-            await self.loadPeople()
-        }
+        reload.schedule { [weak self] in await self?.loadPeople() }
     }
 
     /// レビュー UI（1対1レビュー・まとめて確認・整理）の表示中、人物一覧の再発行を保留する。
@@ -246,16 +251,9 @@ public final class PeopleEngine {
     /// 終わり次第すぐ抜ける。スキャンは差分（未処理 refKey）ベースなので次窓で続きから再開する。
     /// `reset(includingCorrections:)` と違い**完了を待たない**（復帰時にメインを塞がないため）。
     public func stopScan() {
-        guard scanTask != nil else { return }
-        scanTask?.cancel()
-        scanTask = nil
-        // 世代を進める＝止めた側のタスクが遅れて末尾処理に来ても、後続スキャンの
-        // ハンドル/フラグを踏まないようにする（二重起動の防止）。
-        // 進捗フラグは**ここで**畳む（世代ガードにより旧タスクの末尾処理は素通りするため）。
-        scanGeneration &+= 1
-        isScanning = false
-        BackgroundActivityMonitor.shared.isScanningFaces = false
-        BackgroundActivityMonitor.shared.faceScanRemaining = 0
+        guard scan.isRunning else { return }
+        // 世代ガードと進捗フラグの片付けは `SingleFlightTask` が持つ（ADR-198）。
+        scan.stop()
         Diagnostics.mark("faces: stopScan (foreground return)")
     }
 
@@ -273,7 +271,7 @@ public final class PeopleEngine {
         // 一時停止で滞留したスキャンは、ゲートが開けば（shouldYield()=false）内部の waitWhilePaused で
         // 自分で再開する（旧: force による差し替えは isRunning レースで詰まったため撤去）。真因の画像ロード
         // ハング（PHAssetImageLoader）は別途修正済みなので、再開後は正常に検出まで進む。
-        guard scanTask == nil else {
+        guard !scan.isRunning else {
             Diagnostics.mark("faces: startScan skip — already running (resumes when gate opens)")
             return
         }
@@ -294,12 +292,8 @@ public final class PeopleEngine {
             return
         }
         Diagnostics.mark("faces: startScan → begin (candidates=\(candidateRefKeys.count) allowSim=\(allowSimulator))")
-        scanGeneration &+= 1
-        let generation = scanGeneration
-        scanTask = Task(priority: .background) { [weak self] in
+        scan.start { [weak self] in
             guard let self else { return }
-            self.isScanning = true
-            BackgroundActivityMonitor.shared.isScanningFaces = true
             await self.store.apply(tuning: self.tuning)   // スキャン前に必ず適用（ADR-70）
             // 版上げ（埋め込みパイプライン変更＝ADR-51）なら全再スキャンへ移行する
             //（命名は写真の重なりで持ち越し・修正ジャーナルは残す）。
@@ -344,12 +338,7 @@ public final class PeopleEngine {
             }
             // ADR-186: 影の世代が十分育っていれば、ここで現行世代に切り替える。
             await self.promoteShadowIfReady(candidateCount: candidateRefKeys.count)
-            // 自分の世代のときだけ片付ける（stopScan 後に始まった新スキャンを踏まない）。
-            guard self.scanGeneration == generation else { return }
-            self.isScanning = false
-            BackgroundActivityMonitor.shared.isScanningFaces = false
-            BackgroundActivityMonitor.shared.faceScanRemaining = 0
-            self.scanTask = nil
+            // 実行中フラグ・進捗の片付けは `scan.onStateChange`（世代を知っている側）が行う。
         }
     }
 
@@ -396,8 +385,8 @@ public final class PeopleEngine {
     /// 手動修正のたびに増える版。メンバー限定の写真画面（束ねグループのアルバム等）は
     /// これを `onChange` で見て、開いたまま描き直す（写真ごとの汎用メニューから直したとき）。
     public private(set) var editVersion = 0
-    @ObservationIgnored private var editFollowUpTask: Task<Void, Never>?
-    @ObservationIgnored private var editFollowUpPending = false
+    /// 編集後の後追い（AI アルバム掃除）。走行中に次の操作が来たら 1 回だけ拾い直す（ADR-198）。
+    @ObservationIgnored private let editFollowUp = SingleFlightTask()
 
     /// 手動修正のあとの一覧更新＋通知（`PeopleEngine+Edit` の各操作から呼ぶ）。
     ///
@@ -416,21 +405,11 @@ public final class PeopleEngine {
     /// 背景の後追い（AI アルバム掃除）。走行中に次の操作が来たら、終わってからもう 1 回だけ回す。
     private func scheduleEditFollowUp() {
         guard onPeopleEdited != nil else { return }
-        editFollowUpPending = true
-        guard editFollowUpTask == nil else { return }
-        editFollowUpTask = Task { [weak self] in
-            while let self, self.editFollowUpPending {
-                self.editFollowUpPending = false
-                await self.onPeopleEdited?()
-            }
-            self?.editFollowUpTask = nil
-        }
+        editFollowUp.coalesce { [weak self] in await self?.onPeopleEdited?() }
     }
 
     /// テスト・設定画面用: 進行中の後追いが終わるまで待つ。
-    public func awaitEditFollowUp() async {
-        while let task = editFollowUpTask { await task.value }
-    }
+    public func awaitEditFollowUp() async { await editFollowUp.waitUntilIdle() }
 
     /// 版が上がっていたら、命名スナップショットを取ってから全消去→再スキャンに移行する。
     /// 修正ジャーナル（FaceCorrection）は残す（負例・校正はモデル不変のため引き続き有効）。
@@ -693,10 +672,8 @@ public final class PeopleEngine {
     public func reset(includingCorrections: Bool) async {
         // 進行中スキャンを止め、**完了を待ってから**ストアを消す（FaceTagger.isRunning のクリアと
         // ストア書き込みの停止を保証。待たずに再スキャンすると isRunning が残って無言 skip する）。
-        let running = scanTask
-        running?.cancel()
-        scanTask = nil
-        await running?.value
+        scan.stop()
+        await scan.waitUntilIdle()
         await clearUndoHistory()   // 消したあとの世界には戻す先が無い
         if includingCorrections {
             await store.resetIncludingCorrections()

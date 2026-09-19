@@ -61,12 +61,6 @@ extension FaceStore {
         // さらに種の `count` は**以前の規模を引き継ぐ**（確立した人物を作り直しの瞬間に
         // 新参扱いしない）。
         let faceByID = Dictionary(allFaces.map { ($0.faceID, $0) }, uniquingKeysWith: { a, _ in a })
-        var seeds: [FaceClustering.Cluster] = []
-        var seedIDs = Set<Int>()
-        var anchorlessNamed: [(clusterID: Int, name: String, faceIDs: [String])] = []
-        // 確認顔（アンカー）は再割り当てせず**その人物に固定**する。値は固定先のクラスタ ID
-        // ——代表写真の顔が既に別クラスタへ流れている場合は、ここで引き戻す。
-        var pinnedCluster: [String: Int] = [:]
         // ⚠️ **名前付き人物が痩せたら記録する**（ADR-144）。実フィードバック「ピープルアルバムの
         // 写真の全数が減っている気がする」。感覚を裏取りできるよう、再クラスタの前後で
         // 名前付き人物の枚数を突き合わせ、減った分だけ診断ログに出す。
@@ -76,130 +70,44 @@ extension FaceStore {
             let photos = Set((facesByCluster[c.clusterID] ?? []).map(\.refKey)).count
             namedBefore[c.clusterID] = (name, photos)
         }
-        for c in existing {
-            let members = facesByCluster[c.clusterID] ?? []
-            // 代表写真の顔は、いま別クラスタへ流れていても**この人物のアンカー**として扱う
-            // （追い出されたあとでも、ユーザーの表明で引き戻せるようにする）。
-            let coverFace = c.coverFaceID.flatMap { faceByID[$0] }
-            var anchors = members.filter { $0.confirmedAt != nil }
-            if let coverFace, !anchors.contains(where: { $0.faceID == coverFace.faceID }) {
-                anchors.append(coverFace)
-            }
-            // ⚠️ **束ね（personGroupID）もユーザーの表明**（ADR-134）。種にしないと、この行は
-            // 再クラスタで削除され（下の「種以外は削除」）、**束ねが黙って消える**——
-            // 「何度も束ねているのに忘れる」の正体はこれ。
-            let isSeed = (c.name?.isEmpty == false) || !anchors.isEmpty || c.personGroupID != nil
-            guard isSeed else { continue }
-            // アンカーは**代表顔を先頭**に、確認の新しい順から上限まで（`prototypes` は 1 顔ごとに
-            // 全候補と内積を取るので、増やしすぎると再クラスタが人数×アンカー数で重くなる）。
-            let orderedAnchors = ([coverFace].compactMap { $0 }
-                + anchors.filter { $0.faceID != coverFace?.faceID }
-                    .sorted { ($0.confirmedAt ?? .distantPast) > ($1.confirmedAt ?? .distantPast) })
-                .prefix(Self.maxSeedPrototypes)
-            var sum: [Float] = []
-            var count = 0
-            var protos: [[Float]] = []
-            for a in orderedAnchors {
-                guard let vec = ClipMath.decodeHalf(a.embedding) else { continue }
-                if sum.isEmpty { sum = [Float](repeating: 0, count: vec.count) }
-                protos.append(FaceClustering.normalized(vec))
-            }
-            let anchorCentroid = protos.first.map { first -> [Float] in
-                var acc = first
-                for p in protos.dropFirst() {
-                    for i in acc.indices where i < p.count { acc[i] += p[i] }
-                }
-                return FaceClustering.normalized(acc)
-            }
 
-            // ⚠️⚠️ **ユーザーが表明した人物（名前 or 代表写真 or 確認顔）のメンバーは、
-            // 機械の都合で外に出さない**（ADR-132）。実フィードバック:
-            // 「すでに名前の付いているアルバムは、よほどのことが無い限り 2 つに分けたり、
-            //   構成するグループを切り分けたりは不要。そういうケースは一人ずつ確認する画面に
-            //   出して、ユーザーが『この人ではない』と指摘して初めて分割を検討すればよい」。
-            // 以前は**メンバー全員を毎晩プールへ戻して割り当て直していた**ので、しきい値・
-            // マージン・別クラスタの成長といった機械の都合だけで、名前を付けたアルバムの中身が
-            // 毎晩入れ替わり得た。今は既存メンバーはその人物に留め、外れるのは
-            // **ユーザーの指摘（負例）に一致した顔だけ**にする。
-            var pinnedMembers: [DetectedFace] = []
-            for m in members {
-                guard let vec = ClipMath.decodeHalf(m.embedding) else { continue }
-                // ユーザーが「この人ではない」と外した顔と同一人物なら、留めない
-                // （同じ誤りの再発を防ぐ・ADR-45 の負例エグゼンプラ）。
-                //
-                // ⚠️⚠️ **既にこの人物に入っている顔を、負例で一斉に外さない**（ADR-140）。
-                // 実フィードバック: 「診断画面で数枚を『この人ではない』にしたら、その人物の
-                // アルバムが激減した」。負例の「同一人物」線（arcface 0.45）は**本人の顔どうしの
-                // 類似度より低い**ので、外した 1 枚が本人に似ていると**アルバムのほぼ全員が
-                // その負例に一致**して一斉に外れる（実測 12 枚→3 枚）。
-                // ここで外すのは「外したその顔と実質同じ顔」（連写・重複検出）だけにする。
-                // 混入は**ユーザーが 1 枚ずつ外す**——そのための入口は増やした（ADR-133/137）。
-                // 新しく入ろうとする顔の拒否（`assign` 側）は相対判定で従来どおり効く。
-                let normalized = FaceClustering.normalized(vec)
-                let isAnchor = m.confirmedAt != nil || m.faceID == c.coverFaceID
-                if !isAnchor, let anchorCentroid,
-                   let matched = FaceClustering.firstNegativeMatch(
-                       normalized, centroid: anchorCentroid, negatives: negatives,
-                       sameThreshold: tuning.negativeSameThreshold),
-                   FaceClustering.dot(normalized, matched.faceCentroid)
-                       >= FaceClustering.negativeDuplicateThreshold {
-                    continue
-                }
-                pinnedMembers.append(m)
-                pinnedCluster[m.faceID] = c.clusterID
-                // 重心は**留めたメンバーの加重平均**（＝再クラスタ前と同じ向き）。アンカーは
-                // 上の `prototypes` として別に効くので、重心が薄まっても本人は引き当てられる。
-                guard FaceStore.contributesToCentroid(m) else { continue }
-                if sum.isEmpty || sum.allSatisfy({ $0 == 0 }) {
-                    sum = [Float](repeating: 0, count: vec.count)
-                    count = 0
-                }
-                let added = FaceClustering.adding(vec, toSum: sum, count: count,
-                                                  quality: Float(m.quality))
-                sum = added.sum
-                count = added.count
-            }
-            if sum.isEmpty || count == 0 {
-                // 留めるメンバーが 1 人も居ない（全員がユーザー指摘で外れた等）。
-                // 向きだけ現重心 or アンカーから維持する。
-                guard let fallback = anchorCentroid ?? ClipMath.decodeHalf(c.sum) else { continue }
-                sum = FaceClustering.normalized(fallback)
-                count = max(1, count)
-            }
-            seeds.append(FaceClustering.Cluster(
-                id: c.clusterID, centroid: FaceClustering.normalized(sum),
-                sum: sum, count: count, faceIDs: [], prototypes: protos))
-            seedIDs.insert(c.clusterID)
-            // アンカーが 1 つも無い命名済み人物は、同一性の後ろ盾が重心の向きだけ。
-            // 顔が大きく入れ替わったときに名前を人の側へ持っていけるよう、旧メンバーを控える
-            // （下の 3.5）。アンカーがある人物は種が動かないので対象外。
-            if protos.isEmpty, let name = c.name, !name.isEmpty {
-                anchorlessNamed.append((c.clusterID, name, pinnedMembers.map(\.faceID)))
-            }
+        // 種の構築は `FaceSeedBuilder`（純・テスト対象・ADR-198）に出した。ここは値の受け渡しだけ。
+        // ⚠️ 埋め込みは**クロージャで 1 枚ずつ**復号する。全顔の `[Float]` を値にすると
+        //    86k × 512 次元 × 4 バイト ≒ 176MB を一度に確保することになる（ADR-6/119/122）。
+        func ref(_ f: DetectedFace) -> FaceSeedBuilder.FaceRef {
+            .init(faceID: f.faceID, quality: Float(f.quality),
+                  confirmedAt: f.confirmedAt, contributesToCentroid: f.contributesToCentroid)
         }
+        let clusterRefs = existing.map { c in
+            FaceSeedBuilder.ClusterRef(
+                clusterID: c.clusterID, name: c.name, coverFaceID: c.coverFaceID,
+                hasPersonGroup: c.personGroupID != nil,
+                members: (facesByCluster[c.clusterID] ?? []).map(ref))
+        }
+        let storedCentroids = Dictionary(uniqueKeysWithValues:
+            existing.map { ($0.clusterID, ClipMath.decodeHalf($0.sum)) })
+        let built = FaceSeedBuilder.build(
+            clusters: clusterRefs,
+            coverFace: { faceByID[$0].map(ref) },
+            embedding: { faceByID[$0].flatMap { ClipMath.decodeHalf($0.embedding) } },
+            storedCentroid: { storedCentroids[$0] ?? nil },
+            negatives: negatives,
+            tuning: tuning,
+            qualityFloor: Self.qualityFloor,
+            maxSeedPrototypes: Self.maxSeedPrototypes)
+        let seeds = built.seeds
+        let seedIDs = Set(seeds.map { $0.id })
+        let pinnedCluster = built.pinned
+        let anchorlessNamed = built.anchorlessNamed
 
         // 2) 残りの顔を品質降順に割り当て（新規クラスタ ID は既存の最大より先から）。
-        var clustering = FaceClustering(threshold: thr, qualityFloor: Self.qualityFloor,
-                                        seedClusters: seeds, minimumNextID: max(maxExistingID, clusterIDHighWater()) + 1)
-        // 確立した人物は校正の引き上げ分を免除する（ADR-141）。種は上でアンカーから作っている。
-        clustering.baseThreshold = tuning.clusterThreshold
-        clustering.anchoredClusterIDs = Set(seeds.filter { !$0.prototypes.isEmpty }.map(\.id))
-        clustering.assignMargin = tuning.assignMargin   // マージンゲート（ADR-57）
-        clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
-        clustering.negativeSameThreshold = tuning.negativeSameThreshold
-        // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
-        // マージンゲートの免除（ADR-126・校正で bar が上がっているときだけ）。
-        clustering.rivalAwareMarginGate = Self.rivalAwareMarginGateWhenCalibratedUp
-            && clustering.threshold > tuning.clusterThreshold
-        clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
-        clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
-        clustering.rivalAlikeMargin = tuning.rivalAlikeMargin
-        // 実効しきい値の頭打ち（ADR-68 追補・少人数ライブラリ限定）。しきい値は校正で
-        // 上がり得るので、そこへサイズ加算が乗って跳ね上がるのを止める。
-        if Self.capEffectiveThresholdWhenFewPeople {
-            clustering.effectiveThresholdCap = clustering.threshold
-            clustering.effectiveThresholdCapMaxPeople = Self.effectiveThresholdCapMaxPeople
-        }
+        // ノブの設定は `FaceClusteringSetup`（純・テスト対象）に一元化した（ADR-198）——
+        // 以前はスキャン時（`makeClustering`）と**同じ 10 行がここにもコピー**されていた。
+        // 種はアンカーから作ってあるので、校正の引き上げ分を免除する対象＝prototypes を持つ種。
+        var clustering = FaceClusteringSetup.make(
+            threshold: thr, qualityFloor: Self.qualityFloor, tuning: tuning,
+            seeds: seeds, minimumNextID: max(maxExistingID, clusterIDHighWater()) + 1,
+            anchoredClusterIDs: Set(seeds.filter { !$0.prototypes.isEmpty }.map(\.id)))
         let pending = allFaces.filter { pinnedCluster[$0.faceID] == nil }
             .sorted { $0.quality > $1.quality }
         // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。
@@ -258,20 +166,17 @@ extension FaceStore {
         // 別人が、その名前のアルバムとして表示される（実害: 「私」のアルバムが娘の写真に
         // なり、自分の顔は "People 9" として追い出されていた）。過半が移った先が無名なら、
         // 名前をそちらへ移す。
-        for entry in anchorlessNamed where !entry.faceIDs.isEmpty {
-            var landing: [Int: Int] = [:]
-            for fid in entry.faceIDs {
-                let cid = newAssignment[fid] ?? FaceClustering.unassigned
-                if cid >= 0 { landing[cid, default: 0] += 1 }
-            }
-            let kept = landing[entry.clusterID] ?? 0
-            guard kept * 2 < entry.faceIDs.count,
-                  let best = landing.max(by: { $0.value < $1.value }),
-                  best.key != entry.clusterID, best.value * 2 >= entry.faceIDs.count,
-                  let dst = cluster(best.key), dst.name?.isEmpty ?? true else { continue }
-            cluster(entry.clusterID)?.name = nil
-            dst.name = entry.name
-            Self.log.info("faces: rebuild — name '\(entry.name)' followed its members \(entry.clusterID)→\(best.key)")
+        // 判断は `FaceNameFollowing.moves`（純・テスト対象・ADR-198）。ここは反映だけ。
+        let candidates = anchorlessNamed
+        // 無名かどうかは先に値で集める（純ロジックへ actor 隔離を持ち込まない）。
+        let unnamed = Set(existing.filter { $0.name?.isEmpty ?? true }.map(\.clusterID))
+            .union(Set(clustering.clusters.map(\.id)).subtracting(existing.map(\.clusterID)))
+        for move in FaceNameFollowing.moves(candidates: candidates, assignment: newAssignment,
+                                            isUnnamed: { unnamed.contains($0) }) {
+            guard let dst = cluster(move.to) else { continue }
+            cluster(move.from)?.name = nil
+            dst.name = move.name
+            Self.log.info("faces: rebuild — name '\(move.name)' followed its members \(move.from)→\(move.to)")
         }
 
         try? modelContext.save()

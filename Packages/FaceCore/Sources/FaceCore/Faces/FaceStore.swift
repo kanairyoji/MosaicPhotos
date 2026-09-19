@@ -545,28 +545,12 @@ actor FaceStore {
                 sum: sum, count: r.count, faceIDs: r.coverFaceID.map { [$0] } ?? [],
                 prototypes: anchors[r.clusterID] ?? []))
         }
-        var clustering = FaceClustering(threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor,
-                                        seedClusters: seed, minimumNextID: clusterIDHighWater() + 1)
-        // 確立した人物は校正の引き上げ分を免除する（ADR-141）。
-        clustering.baseThreshold = tuning.clusterThreshold
-        clustering.anchoredClusterIDs = Set(anchors.keys)
-        clustering.assignMargin = tuning.assignMargin   // マージンゲート（ADR-57）
-        clustering.sizeAdaptiveMarginMax = tuning.sizeAdaptiveMarginMax   // サイズ適応（ADR-58）
-        clustering.negativeSameThreshold = tuning.negativeSameThreshold
-        // マージンゲートの免除（ADR-126・校正で bar が上がっているときだけ）
-        clustering.rivalAwareMarginGate = Self.rivalAwareMarginGateWhenCalibratedUp
-            && clustering.threshold > tuning.clusterThreshold
-        // サイズ適応マージンの免除（ADR-68・少人数ライブラリ限定）
-        clustering.rivalAwareSizeMargin = Self.rivalAwareSizeMargin
-        clustering.rivalAwareSizeMarginMaxPeople = Self.rivalAwareSizeMarginMaxPeople
-        clustering.rivalAlikeMargin = tuning.rivalAlikeMargin
-        // 実効しきい値の頭打ち（ADR-68 追補・少人数ライブラリ限定）。しきい値は校正で
-        // 上がり得るので、そこへサイズ加算が乗って跳ね上がるのを止める。
-        if Self.capEffectiveThresholdWhenFewPeople {
-            clustering.effectiveThresholdCap = clustering.threshold
-            clustering.effectiveThresholdCapMaxPeople = Self.effectiveThresholdCapMaxPeople
-        }
-        return clustering
+        // ノブの設定は `FaceClusteringSetup`（純・テスト対象）に一元化した（ADR-198）——
+        // 以前は再クラスタ（`FaceStore+Rebuild`）にも**同じ 10 行がコピー**されていた。
+        return FaceClusteringSetup.make(
+            threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor, tuning: tuning,
+            seeds: seed, minimumNextID: clusterIDHighWater() + 1,
+            anchoredClusterIDs: Set(anchors.keys))
     }
 
     /// クラスタごとのアンカー（確認済みの顔の正規化済み埋め込み・新しい順に最大 5）。

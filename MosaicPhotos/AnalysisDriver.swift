@@ -54,7 +54,8 @@ final class AnalysisDriver {
     }
 
     private let engine: AutoAlbumEngine
-    private let people: PeopleEngine
+    /// ⚠️ スキャンの**断面**だけを持つ（ADR-198）。編集・レビュー API へは手を伸ばせない。
+    private let people: FaceScanControl
     private let dropboxStore: DropboxPhotoStore
     private let session: AnalysisSession
 
@@ -68,7 +69,7 @@ final class AnalysisDriver {
     /// 走行中に来た契機（1 つだけ畳んで拾い直す）。
     private var pendingTrigger: Trigger?
 
-    init(engine: AutoAlbumEngine, people: PeopleEngine,
+    init(engine: AutoAlbumEngine, people: FaceScanControl,
          dropboxStore: DropboxPhotoStore, session: AnalysisSession) {
         self.engine = engine
         self.people = people

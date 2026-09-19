@@ -101,7 +101,8 @@ final class AnalysisSession {
     @ObservationIgnored var onStart: (() async -> Void)?
 
     private let engine: AutoAlbumEngine
-    private let people: PeopleEngine
+    /// ⚠️ スキャンの**断面**だけを持つ（ADR-198）。
+    private let people: FaceScanControl
     private let dropboxStore: DropboxPhotoStore
 
     @ObservationIgnored private var loop: Task<Void, Never>?
@@ -113,7 +114,7 @@ final class AnalysisSession {
     /// 同じ識別子を 2 回登録するとアプリが殺されるので、プロセス内で 1 回に絞る。
     @ObservationIgnored private static var registered = false
 
-    init(engine: AutoAlbumEngine, people: PeopleEngine, dropboxStore: DropboxPhotoStore) {
+    init(engine: AutoAlbumEngine, people: FaceScanControl, dropboxStore: DropboxPhotoStore) {
         self.engine = engine
         self.people = people
         self.dropboxStore = dropboxStore

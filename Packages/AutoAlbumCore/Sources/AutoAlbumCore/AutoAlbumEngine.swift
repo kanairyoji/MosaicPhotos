@@ -42,13 +42,10 @@ public final class AutoAlbumEngine {
     /// AI アルバムを作成/更新中のフラグ（UI のスピナー用）。コンポーザーは即 dismiss し、
     /// 実処理はバックグラウンドで進むため、AI アルバムのセクションヘッダーでこの間だけ回す。
     public internal(set) var isMakingAIAlbum = false
-    /// Vision/CLIP タグ付けの実行中フラグ（UI のスピナー用）。
-    public internal(set) var isTagging = false {
-        didSet {
-            BackgroundActivityMonitor.shared.isEmbedding = isTagging
-            if !isTagging { BackgroundActivityMonitor.shared.embedRemaining = 0 }
-        }
-    }
+    /// Vision/CLIP タグ付けの実行中か（UI のスピナー用）。
+    /// **状態は `fill` が持つ**（ADR-198）——`SingleFlightTask` は `@Observable` なので、
+    /// この計算プロパティ越しでも SwiftUI が追従する。
+    public var isTagging: Bool { fill.isRunning }
     public internal(set) var status: String = ""
 
     @ObservationIgnored static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Engine")
@@ -63,14 +60,12 @@ public final class AutoAlbumEngine {
     @ObservationIgnored let tagger: PhotoTagger
     @ObservationIgnored private var observer: PhotoLibraryObserver?
     @ObservationIgnored private var libraryDirty = false
-    /// 背景タグ付け/埋め込み/キャプションのタスク（`scheduleBackgroundFill`）。
-    /// フォアグラウンド復帰で明示キャンセルするために保持する（ADR-79）。
-    @ObservationIgnored var backgroundFillTask: Task<Void, Never>?
-    /// `scheduleBackgroundFill` の世代。`restartBackgroundFill` で明け渡すたびに進み、
-    /// 各タスクの末尾処理は「自分の世代のときだけ」フラグ／ハンドルを片付ける（ADR-95）。
-    @ObservationIgnored var fillGeneration = 0
+    /// 背景トリクル（シーンタグ → CLIP 埋め込み）。二重起動の抑止・世代ガード・明け渡しは
+    /// `SingleFlightTask` が持つ（ADR-198。以前は `isTagging` / `fillGeneration` /
+    /// `backgroundFillTask` の 3 つを手で管理していた）。
+    @ObservationIgnored let fill = SingleFlightTask()
     /// 表示ラベラの事前ウォーム（CLIP テキストタワー＋約300語）。復帰時に止める（ADR-80）。
-    @ObservationIgnored var prewarmTask: Task<Void, Never>?
+    @ObservationIgnored let prewarm = SingleFlightTask()
     /// 重い保守処理（generate）の世代。`stopBackgroundWork()` で進み、実行中の generate は
     /// ステップ境界で世代のズレを見て自ら降りる（ADR-79 追記）。
     ///
@@ -180,6 +175,13 @@ public final class AutoAlbumEngine {
         }
         self.pathGenerator = PathAlbumGenerator(store: store, cloudProvider: cloudProvider)
         self.tagger = PhotoTagger(store: store, perception: perception)
+        // アクティビティバーへの鏡写し。⚠️ 本体の defer でやると、明け渡した旧タスクが遅れて
+        // 終わったときに**走り続けている後続の表示を落とす**（ADR-198）。世代を知っている
+        // `SingleFlightTask` 側から通知してもらう。
+        fill.onStateChange = { running in
+            BackgroundActivityMonitor.shared.isEmbedding = running
+            if !running { BackgroundActivityMonitor.shared.embedRemaining = 0 }
+        }
     }
 
     public func enrichmentCount() async -> Int { await store.enrichmentCount() }
