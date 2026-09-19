@@ -1,145 +1,354 @@
 import Foundation
 
-/// 背景の重い処理（CLIP 埋め込み・顔スキャン）が「今は譲るべきか」の共通判定。
-/// 以前は CLIP（`AutoAlbumEngine`）と顔スキャン（`PeopleEngine`）が同じ条件式を並列に持っており、
-/// 条件を足すとき（例: フル画像取得中を追加）に片方だけ直る恐れがあった。ここに一元化する。
+/// 重い処理を「いま動かしてよいか」の**唯一の判定**（ADR-196）。
 ///
-/// 電源条件だけは用途で異なる（CLIP＝ユーザーのポリシー設定 / 顔スキャン＝電源接続固定）ため、
-/// `powerOK` として呼び出し側が渡す。
+/// ## なぜ 1 つにしたか
+/// 以前はここに 11 の述語が並んでいた（`heavyWorkAllowed` / `heavyWorkAllowedLocal` /
+/// `monolithicHeavyWorkAllowed` / `heavyShouldPause` / `analysisShouldYieldToUI` / `uiBusy` …）。
+/// どれも「条件の部分集合」で、**どれを使うかが呼び手側の知識**になっていた。結果:
+/// - 入口（`PeopleEngine.startScan` ＝ `heavyWorkAllowedLocal`）と譲り（`heavyShouldPause`）が
+///   **別の集合**を見ていて、「入ってよい」と言われて 75,000 行を読んでから「やっぱり譲れ」に
+///   なる（diagnostics-62/63 の「入口代だけ払う」）。
+/// - 画面の「なぜ進まないか」（旧 `AnalysisBlockerDiagnosis`）が**別実装**で、ゲートが閉じて
+///   いるのに「すべての条件を満たしています」と言えてしまう。
+/// - 「控えめ」の軸を外した（ADR-195）ときに `refinePlaceNames` → `generate` が前面で
+///   到達可能になり、ADR-107 の一枚岩ゲートをすり抜けた。
+///
+/// ## 作り
+/// 軸は 2 つだけ。**どの仕事か**（`HeavyWork`）と**誰が聞いているか**（`Exemption`）。
+/// 条件は `Blocker` の**表**（`applies(to:)` と `skippableBy`）で、判定は純関数
+/// `blockers(_:for:exemption:)` 1 つ。呼び手は `verdict(for:)` を呼ぶだけで、
+/// 部分集合を選べない——**入口と譲りが同じ式になる**。
+///
+/// 表は `docs/architecture-note/records/background-behavior.md` の早見表と同じもの。
 @MainActor
 public enum BackgroundYield {
-    /// UI・リソースの共通譲り条件：メモリ圧迫中・写真ビュー表示中（タップ直後の遷移含む）・
-    /// フル画像取得中・クラウドのサムネ取得中。
-    public static var uiBusy: Bool {
-        MemoryPressureMonitor.shared.isUnderPressure
-            || BackgroundActivityMonitor.shared.isViewingPhoto
-            || BackgroundActivityMonitor.shared.fullImageBusy
-            || BackgroundActivityMonitor.shared.cloudThumbnailBusy
-    }
 
-    /// 解析（顔・タグ・埋め込み）が **UI へ譲るべきか**。
+    // MARK: - 仕事の種類
+
+    /// 重い処理の種類。違いは**2 つの軸**だけ——通信が要るか、始めたら譲れるか。
     ///
-    /// ⚠️ 譲るのは**前面で誰かが見ている間だけ**（ADR-179）。背面ではメモリ圧迫だけを見る——
-    /// 画面が無いのに、バックアップ・共有・そして**解析自身のサムネ取得**で `cloudThumbnailBusy`
-    /// が立ち続け、夜間の解析が丸ごと止まっていた（実機 diagnostics-81: 処理枠 4 分 56 秒で
-    /// CLIP 埋め込み 0 枚）。取得経路側の手当て（`analysisThumbnail`）と対で使う。
-    public static var analysisShouldYieldToUI: Bool {
-        isAppActive ? uiBusy : MemoryPressureMonitor.shared.isUnderPressure
-    }
+    /// ⚠️ この 2 つを 1 つに畳むと、通信の要らない一枚岩（AI アルバムの本番化・ドリフト
+    /// 再評価＝台帳と埋め込みを読むだけ）まで Wi-Fi 待ちで止まる。
+    public enum HeavyWork: String, Sendable, CaseIterable {
+        /// 端末内写真の顔・タグ・埋め込み（回線不要・1 単位ごとに譲れる）。
+        case localTrickle
+        /// クラウド写真の解析（サムネ DL を伴うので回線が要る）。
+        case cloudTrickle
+        /// 通信の要らない一枚岩（AI アルバムの本番化・ドリフト再評価）。始まると譲れない。
+        case localMonolith
+        /// 通信の要る一枚岩（アルバム生成＝クラウド一覧・地名の高精度化＝CLGeocoder）。
+        case cloudMonolith
+        /// OS の処理枠（BGProcessingTask）そのものが来るか。画面の説明用。
+        case window
 
-    /// 標準判定（電源条件込み）。`powerOK` が false なら常に譲る。
-    /// **アルバム生成中も譲る**（相互排他）：起動直後に generate（85k 件の SwiftData 処理）と
-    /// ANE 推論・画像ロードが同時に走るとメモリが跳ね（実測 668MB）システム全体がストールする。
-    ///
-    /// ⚠️ UI への譲りは `analysisShouldYieldToUI`（前面だけ）を使う。生の `uiBusy` を見ると、
-    /// 背面で解析が自分のサムネ取得に譲って止まる（ADR-188・diagnostics-81）。
-    public static func shouldPause(powerOK: Bool) -> Bool {
-        !powerOK || analysisShouldYieldToUI || BackgroundActivityMonitor.shared.isGeneratingAlbums
-    }
-
-    // MARK: - 重い処理の実行方針（ユーザー指定・全アプリ共通）
-
-    /// アプリがフォアグラウンドでアクティブか（`MosaicPhotosApp` が scenePhase から更新する）。
-    /// 方針: **ユーザーが操作している間（＝アクティブ）は重い処理を一切動かさない**。
-    /// 画面ロック・アプリ切替で非アクティブになったときだけ動かす（実行の主役は夜間 BGTask）。
-    /// ⚠️ `didSet` でウォッチドッグへ伝える。背面の「ハング」は OS の throttle であって体感とは
-    /// 無関係なので、計測から外す必要がある（ADR-82）。呼び出し側が別途伝える方式だと必ず
-    /// 忘れるため、唯一の出典であるこの変数から自動で同期する。
-    /// アプリが**背面**（scenePhase == .background）にあるか。`isAppActive == false` には
-    /// 「前面だが inactive（通知センター等）」も含まれるので別に持つ。
-    /// 背面ではプロセスは通常吊るされており、前面の定期ループ（HomeView）が動くのは
-    /// **BGTask がプロセスを起こした瞬間だけ**。その瞬間に前面ループが生成を始めると、
-    /// 処理枠側の判断（`NightlyWorkPolicy`＝残作業があれば生成を見送る）を素通りして
-    /// 解析を止めてしまう（実機 diagnostics-74）。背面では処理枠側だけが判断する。
-    public static var isAppInBackground = false
-
-    public static var isAppActive = true {
-        didSet { MainThreadWatchdog.shared.setAppActive(isAppActive) }
-    }
-
-    /// デバッグ（Developer Options）: 重い処理のゲート（電源・低電力・アイドル・UIビジー）を
-    /// **全面的に無効化**する。バックグラウンドでしか動かない処理（アルバム生成・CLIP 埋め込み・
-    /// 顔スキャン・ドリフト再評価）をその場で動かして検証するためのもの。アプリ再起動でリセット。
-    /// ※ 生成との相互排他（isGeneratingAlbums）だけは維持する（メモリ保護）。
-    public static var debugForceHeavyWork = false
-
-    /// **解析セッション**（利用者が「今すぐ解析」で始めた・ADR-182）。true の間は待機・電源・
-    /// 使用状況・回線のゲートを免除して全力で進める。熱（`ThermalGate`）・一括ロード保護
-    /// （`HeavyLoad`）・生成との相互排他（メモリ保護）は免除しない。
-    /// 旧「今すぐ処理（30 分）」（`manualBoostUntil`）はこれに置き換えた——「30 分」の意味が
-    /// 利用者に伝わらず、ロックすると背面＝吊るされて止まるので実質「開いている間」と同じだった。
-    public static var sessionActive = false
-
-
-    /// 重い処理の**開始/継続の共通条件**（回線を要する作業向け＝クラウド分を含む）。判定は 4 軸の
-    /// 独立した設定に従う（ADR-80）＝自動処理の有無・控えめ（前面で動かすか）・電源・回線。
-    /// 既定は「自動処理あり＋控えめ ON＋充電中のみ＋Wi-Fi のみ」＝アプリ使用中は一切動かない（ADR-25）。
-    /// 解析セッション中は使用状況/回線/電源条件を免除（明示操作＝前面でも全力。熱の安全弁は維持）。
-    public static var heavyWorkAllowed: Bool { heavyWorkAllowed(requiresNetwork: true) }
-
-    /// **ローカル専用**の重い処理（端末内写真の顔スキャン・CLIP 埋め込み）向けの許可判定。
-    /// 通信を要しないため **Wi-Fi 条件を課さない**（電源＋非使用＋低電力OFF だけで走る）。
-    /// これが無いと、Wi-Fi 未接続/未検出の夜間に端末内写真の解析まで止まっていた（実障害）。
-    /// クラウド分（サムネDL）は各処理が `NetworkStateMonitor.networkAllowed()` で個別に守る。
-    public static var heavyWorkAllowedLocal: Bool { heavyWorkAllowed(requiresNetwork: false) }
-
-    private static func heavyWorkAllowed(requiresNetwork: Bool) -> Bool {
-        // ⚠️ **熱はデバッグ全開・手動ブーストより優先**する。夜間の解析で端末が温まると
-        // iOS が「冷めてから充電します」に入り、朝に充電が終わっていない（実フィードバック）。
-        // 充電されなければ翌晩も進まないので、ここだけは明示操作でも免除しない。
-        if ThermalGate.shared.shouldPause() { return false }
-        if debugForceHeavyWork || sessionActive { return true }
-        guard !analysisShouldYieldToUI else { return false }
-        // 低電力モードはどの設定でも常時ブロック（安全弁）。電源ポリシーの whileCharging にも
-        // 含まれるが、`always` を選んでいても低電力モードは尊重する。
-        guard !PowerStateMonitor.shared.isLowPowerMode else { return false }
-        let idle = BackgroundActivityMonitor.shared.idleSeconds >= HeavyWorkTiming.foregroundIdleSeconds
-        return HeavyWorkTiming.current.allows(
-            isAppActive: isAppActive,
-            foregroundIdle: idle,
-            powerAllowed: PowerStateMonitor.shared.backgroundAllowed(),
-            networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
-            requiresNetwork: requiresNetwork)
-    }
-
-    /// **中断できない一枚岩の重い処理**の許可判定（AI アルバムの本番化＝FM 解釈＋フル検索＋
-    /// 重心構築、ドリフト再評価、アルバム自動生成）。
-    ///
-    /// トリクル系（埋め込み・顔・タグ）は 1 単位ごとに `heavyShouldPause()` で譲れるので
-    /// 前面アイドル（控えめ OFF＋20 秒放置）でも安全だが、一枚岩はいったん始まると
-    /// 数十秒〜数十分 ANE・CPU・ModelActor を占有し、**ユーザーが戻ってきても途中で譲れない**
-    /// （diagnostics-46: 前面 finalize 中の操作が毎回引っかかる＝「いちいち固まる」の正体）。
-    /// よって前面アイドルでは動かさず、**非アクティブ（画面ロック・アプリ切替＝主役は夜間 BGTask）
-    /// に限定**する。デバッグ全開は明示操作なので免除（従来どおり前面でも動く）。
-    public static var monolithicHeavyWorkAllowed: Bool {
-        guard heavyWorkAllowed else { return false }
-        if debugForceHeavyWork { return true }
-        // 解析セッションは一枚岩（生成・本番化）を起こさない——セッションの仕事はトリクル
-        // （顔・タグ・埋め込み）だけで、生成が始まると解析が止まる（相互排他）。
-        if sessionActive { return false }
-        return !isAppActive
-    }
-
-    /// 重い処理（CLIP 埋め込み・顔スキャン・Vision タグ）の譲り判定：**ローカル許可**を満たさない、
-    /// またはアルバム生成中（相互排他）なら譲る。ローカル処理は回線条件を課さない（Wi-Fi 不要）。
-    /// クラウド分（サムネDL）は各処理側が `NetworkStateMonitor.networkAllowed()` で別途ゲートする。
-    /// ※ 生成側（refreshIfNeeded）は回線ありの `heavyWorkAllowed` を見る（自分のフラグは見ない）。
-    /// ※ **デバッグ全開時（debugForceHeavyWork）は生成との相互排他も外す**。「夜間ルーチンを今すぐ実行」
-    ///   で検証するとき、generate のフラグ滞留で顔/埋め込みが一切動かないのを避ける（メモリは検証者が承知）。
-    public static func heavyShouldPause() -> Bool {
-        // 熱はデバッグ全開でも効かせる（上の注記と同じ理由）。
-        if ThermalGate.shared.shouldPause() { return true }
-        // ⚠️ 起動・復帰の一括ロード中も譲る（`HeavyLoad`）。単体では健全な処理でも、
-        // 73k 件の実体化・68k 件のパスアルバム・86k 件のマージ・モデルのロードが重なると
-        // footprint が 569MB まで伸びる（実機 diagnostics-66・背面 568MB で jetsam 実績あり）。
-        // 生成との相互排他と同じ**メモリ保護**なので、デバッグ全開でも外さない。
-        if HeavyLoad.isInFlight() { return true }
-        if debugForceHeavyWork { return false }
-        // 解析セッション（ブースト）中は、生成との相互排他（メモリ保護）と、前面での UI への
-        // 譲り（写真を見ている最中に ANE と CPU を奪わない）だけ残す。電源・回線・アイドルは免除。
-        if sessionActive {
-            return BackgroundActivityMonitor.shared.isGeneratingAlbums || analysisShouldYieldToUI
+        /// 通信が要るか。
+        public nonisolated var requiresNetwork: Bool {
+            self == .cloudTrickle || self == .cloudMonolith
         }
-        return !heavyWorkAllowedLocal || BackgroundActivityMonitor.shared.isGeneratingAlbums
+        /// 始まると譲れないか（前面では動かさない・ADR-107）。
+        public nonisolated var isMonolith: Bool {
+            self == .localMonolith || self == .cloudMonolith
+        }
+    }
+
+    // MARK: - 誰が聞いているか
+
+    /// 免除の段。強いほど多くを素通りできる。
+    public enum Exemption: Int, Sendable, Comparable {
+        /// 平常（自動の解析）。
+        case none = 0
+        /// 利用者が始めたブースト（「今すぐ解析」・ADR-182/195）。方針の条件を免除する。
+        case boost = 1
+        /// Developer Options の「重い処理のゲートを無効化」。検証用。
+        case debug = 2
+
+        public static func < (a: Exemption, b: Exemption) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// アプリの画面状態（事実）。旧 `isAppActive` ＋ `isAppInBackground` を 1 つにしたもの。
+    public enum ScenePhaseKind: String, Sendable {
+        /// 前面でアクティブ（利用者が触れる状態）。
+        case active
+        /// 前面だが非アクティブ（通知センター・着信バナー・App スイッチャー）。
+        case inactive
+        /// 背面（ロック・アプリ切替）。処理枠が動くのはここ。
+        case background
+    }
+
+    // MARK: - 止めている条件
+
+    /// 重い処理を止めている条件。**並び順＝利用者が直しやすい順**（画面はこの順で出す）。
+    public enum Blocker: String, Sendable, CaseIterable {
+        /// 「自動で解析する」が OFF（設定 → アルバム → 処理のタイミング）。
+        case automaticOff
+        /// iOS の「App のバックグラウンド更新」が OFF／制限。処理枠そのものが来ない。
+        case backgroundRefreshOff
+        /// 低電力モード（どの設定でも重い処理は止まる・安全弁）。
+        case lowPowerMode
+        /// 電源ポリシーが「充電中のみ」なのに充電していない。
+        case notCharging
+        /// 電源ポリシーが「オフ」。
+        case powerOff
+        /// 電源なしで電池が下限（20%）を割った。**誰も素通りできない**。
+        case lowBattery
+        /// 回線ポリシーを満たしていない（クラウド写真の解析だけが止まる）。
+        case networkBlocked
+        /// 発熱で停止中（充電を優先する・ADR-118）。**誰も素通りできない**。
+        case tooHot
+        /// メモリ圧迫中。**誰も素通りできない**（jetsam の保護）。
+        case memoryPressure
+        /// 起動・復帰の一括ロード中（ADR-122）。**誰も素通りできない**（同上）。
+        case heavyLoad
+        /// アルバム生成中（相互排他・メモリ保護）。
+        case generating
+        /// 前面で利用者が見ている（写真表示・フル画像取得・表示サムネ取得）。
+        case uiBusy
+        /// 前面だが、最後のタッチから 20 秒経っていない（ADR-195）。
+        case foregroundNotIdle
+        /// 前面でアクティブ（一枚岩は始まると譲れないので非アクティブ限定・ADR-107）。
+        case appActive
+        /// ブースト実行中（一枚岩は起こさない——始まると解析が止まる）。
+        case boostRunning
+
+        /// この条件を素通りできる**最小の段**。nil＝誰も素通りできない（安全弁）。
+        public nonisolated var skippableBy: Exemption? {
+            switch self {
+            // 熱・メモリ・一括ロード・電池は明示操作でも外さない。
+            // 熱: 外すと iOS が「冷めてから充電」に入り、朝に充電が終わっていない（実フィードバック）。
+            // 電池: 外すと「電池のため止めた」と言った直後に方針が同じ処理を再開する（レビュー指摘）。
+            case .tooHot, .memoryPressure, .heavyLoad, .lowBattery:
+                return nil
+            // ブーストでも譲る（生成との相互排他＝メモリ保護、前面での UI への譲り）。
+            case .generating, .uiBusy, .boostRunning:
+                return .debug
+            // 方針の条件。ブーストは利用者の明示操作なので免除する。
+            default:
+                return .boost
+            }
+        }
+
+        /// この条件を課す仕事の種類。
+        public nonisolated func applies(to work: HeavyWork) -> Bool {
+            switch self {
+            // 通信を要する作業だけ。端末内写真は Wi-Fi 無しでも進む（実障害の対処）。
+            case .networkBlocked:
+                return work.requiresNetwork
+            // 一枚岩だけ（トリクルは 1 単位ごとに譲れるので前面アイドルでも安全）。
+            case .appActive, .boostRunning:
+                return work.isMonolith
+            // 処理枠が来るかどうかの話。前面の解析には効かない。
+            case .backgroundRefreshOff:
+                return work == .window
+            // 処理枠は OS が起こすかどうかなので、アプリ側の実行時条件は問わない。
+            case .memoryPressure, .heavyLoad, .generating, .uiBusy, .foregroundNotIdle:
+                return work != .window
+            default:
+                return true
+            }
+        }
+    }
+
+    /// 判定結果。空なら動いてよい。
+    public struct Verdict: Sendable, Equatable {
+        public let work: HeavyWork
+        public let blockers: [Blocker]
+        public nonisolated var allowed: Bool { blockers.isEmpty }
+        /// この条件で止まっているか。**表の射影**（新しい規則ではない）。
+        ///
+        /// ⚠️ 「今回の対象にクラウド分を含めるか」のように**実行の最初に 1 回だけ決まる**
+        /// 選択には、`allowed` 全体ではなくこれを使う。全体で見ると、UI ビジーのような
+        /// 一時的な理由でクラウド候補が丸ごと対象外になってしまう。
+        public nonisolated func blocks(_ blocker: Blocker) -> Bool { blockers.contains(blocker) }
+        /// 診断ログ用の 1 行。
+        public nonisolated var reason: String {
+            blockers.isEmpty ? "ok" : blockers.map(\.rawValue).joined(separator: ",")
+        }
+        public nonisolated init(work: HeavyWork, blockers: [Blocker]) {
+            self.work = work
+            self.blockers = blockers
+        }
+    }
+
+    // MARK: - 状態（2 つだけ）
+
+    /// アプリの画面状態。`MosaicPhotosApp` が scenePhase から更新する。
+    /// 処理枠は `withScenePhase(.background)` で**スコープとして**入る（手で戻さない）。
+    public private(set) static var scenePhase: ScenePhaseKind = .active
+
+    /// いまの免除の段。ブーストは `AnalysisSession` が、デバッグ全開は
+    /// Developer Options と `withExemption` が設定する。
+    public private(set) static var exemption: Exemption = .none
+
+    /// 画面状態を更新する。
+    /// ⚠️ ウォッチドッグへ伝える（背面の「ハング」は OS の throttle で体感とは無関係＝ADR-82）。
+    /// 呼び出し側が別途伝える方式だと必ず忘れるので、唯一の出典であるここから同期する。
+    public static func setScenePhase(_ phase: ScenePhaseKind) {
+        scenePhase = phase
+        MainThreadWatchdog.shared.setAppActive(phase == .active)
+    }
+
+    /// 免除の段を設定する（ブーストの開始・終了）。
+    public static func setExemption(_ e: Exemption) { exemption = e }
+
+    /// 画面状態を一時的に変える（処理枠の実行中など）。**戻し忘れが起きない形**。
+    /// 旧実装は `isAppActive` / `isAppInBackground` を手で書き換え、`restoreAppActive` という
+    /// 引数で後始末していた（戻し忘れがレビューで 1 回指摘されている）。
+    public static func withScenePhase<T>(_ phase: ScenePhaseKind,
+                                         _ body: () async -> T) async -> T {
+        let previous = scenePhase
+        setScenePhase(phase)
+        defer { setScenePhase(previous) }
+        return await body()
+    }
+
+    /// 免除の段を一時的に上げる（デバッグ実行）。
+    public static func withExemption<T>(_ e: Exemption, _ body: () async -> T) async -> T {
+        let previous = exemption
+        exemption = e
+        defer { exemption = previous }
+        return await body()
+    }
+
+    // MARK: - 環境（判定の入力）
+
+    /// 判定に要る端末・アプリの状態。**純ロジックに渡すための値**（テストはここを組み立てる）。
+    public struct Environment: Sendable, Equatable {
+        public var automaticEnabled: Bool
+        public var backgroundRefreshAvailable: Bool
+        public var lowPowerMode: Bool
+        public var powerPolicy: BackgroundPowerPolicy
+        public var onPower: Bool
+        /// 電池残量（0〜1）。読めないときは nil＝電池では止めない。
+        public var batteryLevel: Float?
+        public var networkAllowed: Bool
+        public var tooHot: Bool
+        public var memoryPressure: Bool
+        public var heavyLoadInFlight: Bool
+        public var generatingAlbums: Bool
+        public var uiBusy: Bool
+        public var idleSeconds: TimeInterval
+        public var scenePhase: ScenePhaseKind
+
+        public nonisolated init(automaticEnabled: Bool = true,
+                    backgroundRefreshAvailable: Bool = true,
+                    lowPowerMode: Bool = false,
+                    powerPolicy: BackgroundPowerPolicy = .whileCharging,
+                    onPower: Bool = true,
+                    batteryLevel: Float? = nil,
+                    networkAllowed: Bool = true,
+                    tooHot: Bool = false,
+                    memoryPressure: Bool = false,
+                    heavyLoadInFlight: Bool = false,
+                    generatingAlbums: Bool = false,
+                    uiBusy: Bool = false,
+                    idleSeconds: TimeInterval = .greatestFiniteMagnitude,
+                    scenePhase: ScenePhaseKind = .background) {
+            self.automaticEnabled = automaticEnabled
+            self.backgroundRefreshAvailable = backgroundRefreshAvailable
+            self.lowPowerMode = lowPowerMode
+            self.powerPolicy = powerPolicy
+            self.onPower = onPower
+            self.batteryLevel = batteryLevel
+            self.networkAllowed = networkAllowed
+            self.tooHot = tooHot
+            self.memoryPressure = memoryPressure
+            self.heavyLoadInFlight = heavyLoadInFlight
+            self.generatingAlbums = generatingAlbums
+            self.uiBusy = uiBusy
+            self.idleSeconds = idleSeconds
+            self.scenePhase = scenePhase
+        }
+    }
+
+    /// 電源なしでこれを下回ったら重い処理を止める（ブーストでも外さない）。
+    public nonisolated static let lowBatteryFloor: Float = 0.2
+
+    /// 「App のバックグラウンド更新」が使えるか。**アプリ層が起動時に差す**
+    /// （`UIApplication` を MosaicSupport へ持ち込まないための seam）。
+    public nonisolated(unsafe) static var backgroundRefreshAvailableProvider: @MainActor () -> Bool = { true }
+
+    /// テスト用の差し替え（本番は nil）。
+    ///
+    /// ⚠️ これが無いと、判定が**実行マシンの状態**（低電力モード・充電・回線）に左右される。
+    /// 旧実装の述語は入力が狭かったので表面化しなかったが、条件を 1 つの表にまとめた以上、
+    /// テストは環境を自分で組み立てる必要がある（規約「テスト用 seam（DI）」）。
+    public static var environmentOverrideForTesting: Environment?
+
+    /// いまの端末・アプリの状態を読む（各モニタに触るのはここだけ）。
+    public static func currentEnvironment() -> Environment {
+        if let override = environmentOverrideForTesting { return override }
+        let power = PowerStateMonitor.shared
+        let monitor = BackgroundActivityMonitor.shared
+        return Environment(
+            automaticEnabled: HeavyWorkTiming.current != .paused,
+            backgroundRefreshAvailable: backgroundRefreshAvailableProvider(),
+            lowPowerMode: power.isLowPowerMode,
+            powerPolicy: power.policy,
+            onPower: power.isOnPower,
+            batteryLevel: power.batteryLevelIfKnown,
+            networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
+            tooHot: ThermalGate.shared.shouldPause(),
+            memoryPressure: MemoryPressureMonitor.shared.isUnderPressure,
+            heavyLoadInFlight: HeavyLoad.isInFlight(),
+            generatingAlbums: monitor.isGeneratingAlbums,
+            uiBusy: monitor.isViewingPhoto || monitor.fullImageBusy || monitor.cloudThumbnailBusy,
+            idleSeconds: monitor.idleSeconds,
+            scenePhase: scenePhase)
+    }
+
+    // MARK: - 判定（純ロジック・テスト対象）
+
+    /// この環境・この仕事・この段で、止めている条件を並べる。空なら動いてよい。
+    public nonisolated static func blockers(_ env: Environment,
+                                            for work: HeavyWork,
+                                            exemption: Exemption) -> [Blocker] {
+        var raw: [Blocker] = []
+        if !env.automaticEnabled { raw.append(.automaticOff) }
+        if !env.backgroundRefreshAvailable { raw.append(.backgroundRefreshOff) }
+        if env.lowPowerMode { raw.append(.lowPowerMode) }
+        switch env.powerPolicy {
+        case .whileCharging: if !env.onPower { raw.append(.notCharging) }
+        case .off:           raw.append(.powerOff)
+        case .always:        break
+        }
+        if !env.onPower, let level = env.batteryLevel, level >= 0, level < lowBatteryFloor {
+            raw.append(.lowBattery)
+        }
+        if !env.networkAllowed { raw.append(.networkBlocked) }
+        if env.tooHot { raw.append(.tooHot) }
+        if env.memoryPressure { raw.append(.memoryPressure) }
+        if env.heavyLoadInFlight { raw.append(.heavyLoad) }
+        if env.generatingAlbums { raw.append(.generating) }
+        // UI への譲りとアイドルは**前面でアクティブなときだけ**見る（ADR-179）。
+        // 背面では画面が無いのに、解析自身のサムネ取得で `uiBusy` が立ち続けて
+        // 夜間の解析が丸ごと止まっていた（diagnostics-81）。
+        if env.scenePhase == .active {
+            if env.uiBusy { raw.append(.uiBusy) }
+            if env.idleSeconds < HeavyWorkTiming.foregroundIdleSeconds { raw.append(.foregroundNotIdle) }
+            raw.append(.appActive)
+        }
+        if exemption == .boost { raw.append(.boostRunning) }
+
+        return raw.filter { b in
+            guard b.applies(to: work) else { return false }
+            guard let skip = b.skippableBy else { return true }   // 安全弁は誰も外せない
+            return exemption < skip
+        }
+    }
+
+    /// いまこの仕事を動かしてよいか。**入口も 1 単位ごとの譲りも、これを呼ぶ**。
+    public static func verdict(for work: HeavyWork) -> Verdict {
+        Verdict(work: work, blockers: blockers(currentEnvironment(), for: work, exemption: exemption))
+    }
+
+    /// `!verdict(for:).allowed` の言い換え（トリクルの譲り判定で読みやすくするため）。
+    public static func shouldYield(_ work: HeavyWork = .localTrickle) -> Bool {
+        !verdict(for: work).allowed
+    }
+
+    /// いま動かしてよいか（`verdict(for:).allowed` の言い換え）。
+    public static func allows(_ work: HeavyWork) -> Bool {
+        verdict(for: work).allowed
     }
 }

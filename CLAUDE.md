@@ -185,9 +185,32 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
   6. **重い一括ロードは札を立てる（ADR-122）**。「単体で速いか」ではなく「同時に何が走るか」で
      メモリのピークは決まる。数万件を実体化する／モデルを読む処理を足したら
      `HeavyLoad.span(_:)`（または `begin`/`end`）で申告し、中断できない背景ロードは
-     `BackgroundYield.heavyShouldPause()` を**始める直前に**見て順番を待つ。
+     `BackgroundYield.verdict(for:)` を**始める直前に**見て順番を待つ。
      向きは一方通行——ユーザーが待っている処理を、誰も待っていない処理のために遅らせない。
 - **背景 CLIP 埋め込みのスロットリング**: `PhotoTagger.embedUnprocessed` は小バッチ＋バッチ間スリープ＋`.background` QoS で trickle 実行する。重さは `BackgroundProcessing.presets`（段階）で設定可能（`AutoAlbumSettingsView`・キーは `AutoAlbumSettingsKeys.backgroundProcessingLevel`）。各段は名称＋パラメータ（件数/休止秒）を UI に提示する。**停止判定は 1 枚単位**（`perceive` をバッチ一括でなく 1 枚ずつ呼び、各推論の前に `shouldPause` を確認）で、操作・遷移が来たら即譲れるようにする（8枚一括だとその間 CPU/ANE を握って画面遷移が飢餓する）。`shouldPause` でユーザー操作中（スクラブ）と **メモリ圧迫中（`MosaicSupport.MemoryPressureMonitor.isUnderPressure`）** と **クラウドのサムネ取得中（`BackgroundActivityMonitor.cloudThumbnailBusy`＝Dropbox バッチャのドレイン中）** と **フル画像取得中（`fullImageBusy`＝`DropboxActivityMonitor.beginFullImage` が橋渡し）** と **写真ビュー表示中（`isViewingPhoto`＝タップ直後の遷移含む。`PhotoPageView`/グリッドが報告）** は処理を譲る（メモリ圧迫は `Diagnostics` の warning/critical でフラグ＋自動解除）。**シミュレータでは背景埋め込みを実行しない**（CLIP が `.cpuOnly` で 1 枚数秒〜十数秒かかり遷移を飢餓させ検証の妨げになるため。`#if targetEnvironment(simulator)` で早期 return・実機=ANE の挙動は不変）
+- **「重い処理を動かしてよいか」は 1 つの表で決める（ADR-196）**: 判定は
+  `BackgroundYield.verdict(for: HeavyWork)` **だけ**。`HeavyWork` は「通信が要るか × 始めたら
+  譲れるか」（`localTrickle` / `cloudTrickle` / `localMonolith` / `cloudMonolith`）＋ `window`。
+  免除は `Exemption`（`none` / `boost`＝「今すぐ解析」 / `debug`＝Developer Options）の 1 軸で、
+  条件（`Blocker`）ごとに「どの段なら素通りできるか」が表に書いてある。
+  - **入口の判定と 1 単位ごとの譲り判定は同じ式を使う**（`allows(_:)` と `shouldYield(_:)` は
+    同じ関数の言い換え）。以前は 11 の述語が条件の部分集合を持ち、入口が譲りより緩かったため
+    「入ってよい」と言われて 75,000 行を読んでから畳んでいた（diagnostics-62/63）。
+  - **新しい条件を足すときは `Blocker` に行を 1 つ足す**（`applies(to:)` と `skippableBy` を書く）。
+    呼び出し側に `if` を足さない——それが 11 述語に増えた経緯そのもの。
+  - 画面の「なぜ進まないか」は `verdict(for:).blockers` を描くだけ。**条件を再実装しない**。
+  - 状態は `scenePhase` と `exemption` の 2 つだけ。一時変更は `withScenePhase` /
+    `withExemption` の**スコープ**で入る（手で書き換えて後始末しない）。
+  - テストは `BackgroundYield.environmentOverrideForTesting` で環境を組み立てる
+    （実行マシンの低電力モード等に判定が左右されるため）。表の正本は
+    `docs/architecture-note/records/background-behavior.md`。
+- **夜間の処理枠で「何を・どの順でやるか」は `NightlyPlan.steps`（純ロジック）**: `HeavyWorkScheduler`
+  は反映するだけ。順序は実機の失敗が出典（窓の食い潰し・生成と解析の共倒れ・バックアップの飢餓）
+  なので、**変えるときは `NightlyPlanTests` を見る**。判断を `runHeavyWork` に直書きすると
+  BGTask を起こさないと確かめられない＝実質テストできなくなる。
+- **解析を起こす「前口上」は `AnalysisDriver.kick(_:)` にしかない**: 候補の列挙（8.5 万件）→
+  消えた写真の掃除 → 顔スキャン → タグ/埋め込み、の 4 手。ブーストも処理枠もここを呼ぶ。
+  かつて 3 か所にコピーされ、3 つとも微妙に違っていた（ADR-196）。
 - **メモリ圧迫対応は `MemoryPressureMonitor` に集約**: `Diagnostics` の `DispatchSource` 圧迫イベントは `MemoryPressureMonitor.handle(level:)` に流すだけ。中枢が (1) 圧迫フラグ設定（自動解除）、(2) **登録された解放ハンドラ**の呼び出し、(3) 診断ログ追記（レベル/footprint/端末RAM）、(4) Developer Options 用の履歴/回数蓄積を行う。`MemoryImageCache` は `register(_:)` した解放ハンドラで **warning=上限半減（LRU 縮小）／critical=即時全消去** する（`ImageCacheKit` → `MosaicSupport` 依存）。履歴は `MemoryDebugSection` に表示（ADR-20）
 - **CLIP モデルの扱い**: 同梱モデルは **OpenCLIP ViT-B-32/datacomp_xl（MIT）**。Core ML モデルと語彙は `MosaicPhotos/MobileCLIP/` に置き **`.gitignore` 対象**（サイズ）。`scripts/build_mobileclip.sh`（内部で `scripts/convert_clip.py`・open_clip→Core ML）で生成する。ファイル名は `MobileCLIP*`／config 名 `mobileclip_config.json` を互換のため据え置き（中身は OpenCLIP）。⚠️ 変換は**画像エンコーダを `compute_precision=FLOAT16`**（実機 ANE は fp16 前提）。**CLIP の mean/std 正規化は画像エンコーダ内に内包**し、ImageType は `scale=1/255` のままにする（アプリの入力経路を不変に保つ／旧 MobileCLIP は mean/std 無しだった点と異なる）。imageSize は config 経由（ViT-B-32 は 224）。モデルを変えたら `AutoAlbumSettingsKeys.perceptionVersion` を採番して全再埋め込み。fp16 は一部シミュレータで NaN 化し得るが、ランタイムの有限性チェックが nil に落として安全に無効化する（**画像タワーの検証・本番は実機**。`ImageRecognitionTests` の画像系はシミュレータでスキップ）。未同梱でもアプリは動作し、CLIP 機能だけ無効化される。ランタイム（`MobileCLIPRuntime`）は `MobileCLIPKit` にあり `static let shared` で**遅延ロード**（起動を重くしない）。ロード結果は診断ログに残し、`MobileCLIP.modelsBundled` でロードせず同梱判定できる（Developer Options で可視化）。シミュレータは `.cpuOnly`、実機は `.cpuAndNeuralEngine`（GPU は UI 合成と食い合うため意図的に外す＝`CoreMLModelSupport`）
 - **ピープル（顔クラスタ）＝オンデバイス顔認識**: 写真アプリの「ピープル」は**公開 PhotoKit API でアクセス不可**（旧 subtype-1000 方式は誤りで常に空＝撤去）。代わりに **Vision 顔検出＋同梱顔モデル（AuraFace-v1／ArcFace 系 R100・Apache 2.0・512次元L2正規化。ADR-70 で facenet から換装）で identity 埋め込み→逐次クラスタリング**で自前の「人物」を作る。ロジックは `FaceCore`（`Sources/FaceCore/Faces/`。`FaceClustering`（純・コサイン逐次・テスト）/ `FaceStore`（@ModelActor・**別コンテナ "FacesV1"**）/ `FaceTagger`（背景スキャン）/ `PeopleEngine`（@MainActor @Observable ファサード）/ `PersonInfo`（表示値型）/ 純ロジック各種（下記）/ seam `FacePerceptionProvider`・`DetectedFaceSignal`）。実体（Vision+CoreML）は `MobileCLIPKit`（`FaceModelRuntime`・`FacePerceptionAdapter`）。モデルは `MosaicPhotos/FaceModel/`（**`.gitignore` 対象**・`scripts/build_auraface.sh`＋`convert_auraface.py` で生成・FLOAT16。世代は `face_config.json` の `model`＝現行 `auraface-v1-r100`）。未同梱なら `isFaceModelAvailable==false` でセクション非表示。**端末写真は 1024px（ADR-51・旧640px）・クラウド写真は Dropbox のキャッシュ済みサムネ**で顔検出（追加DL無し）。人物アルバム表示・代表顔アバターもクラウド対応。パイプライン版（`PeopleEngine.faceScanVersion`）を上げると全再スキャンし、**命名は写真の重なりで持ち越す**（ADR-51）。精度・アルゴリズムは**データセット計測で決める**（`docs/architecture-note/records/face-accuracy.md`＝台帳・FG-NET/LFW・`FaceAccuracyEvalTests`／`FaceEvalMetrics`）。

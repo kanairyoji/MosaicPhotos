@@ -61,9 +61,9 @@ struct AIAlbumRefreshForegroundTests {
     func skipsBeforeTheHeavyLoadWhenForeground() async {
         let albumID = "album-fg"
         let (service, store) = await makeStack(albumID: albumID)
-        let wasActive = BackgroundYield.isAppActive
-        BackgroundYield.isAppActive = true
-        defer { BackgroundYield.isAppActive = wasActive }
+        // ⚠️ 実行マシンの状態（低電力モード等）に左右されないよう、環境を組み立てて差す。
+        BackgroundYield.environmentOverrideForTesting = .init(idleSeconds: 999, scenePhase: .active)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
 
         let albums = [makeAlbum(id: albumID)]
         let out = await service.refresh(albums)
@@ -79,9 +79,8 @@ struct AIAlbumRefreshForegroundTests {
     func runsWhenInactive() async {
         let albumID = "album-bg"
         let (service, store) = await makeStack(albumID: albumID)
-        let wasActive = BackgroundYield.isAppActive
-        BackgroundYield.isAppActive = false
-        defer { BackgroundYield.isAppActive = wasActive }
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .background)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
 
         _ = await service.refresh([makeAlbum(id: albumID)])
 

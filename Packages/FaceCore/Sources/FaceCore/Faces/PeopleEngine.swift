@@ -237,7 +237,7 @@ public final class PeopleEngine {
 
     /// 端末写真の refKey 候補（"L-…"）の未スキャン分を背景で処理する。重複起動は防ぐ。
     /// `allowSimulator` が true なら（Developer Options のデバッグトグル）シミュレータでも走らせる。
-    /// ※ 一時停止で滞留した既存スキャンは、ゲートが開けば（`BackgroundYield.heavyShouldPause` が
+    /// ※ 一時停止で滞留した既存スキャンは、ゲートが開けば（`BackgroundYield.shouldYield()` が
     ///   false になれば）**自分で再開**するので、force のような再生成は行わない（旧実装の await 詰まり
     ///   を撤去）。生成フラグ滞留の安全弁は `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）と
     ///   デバッグ全開時の相互排他バイパスが担う。
@@ -270,7 +270,7 @@ public final class PeopleEngine {
         }
         lastCandidates = candidateRefKeys
         lastAllowSimulator = allowSimulator
-        // 一時停止で滞留したスキャンは、ゲートが開けば（heavyShouldPause=false）内部の waitWhilePaused で
+        // 一時停止で滞留したスキャンは、ゲートが開けば（shouldYield()=false）内部の waitWhilePaused で
         // 自分で再開する（旧: force による差し替えは isRunning レースで詰まったため撤去）。真因の画像ロード
         // ハング（PHAssetImageLoader）は別途修正済みなので、再開後は正常に検出まで進む。
         guard scanTask == nil else {
@@ -283,10 +283,12 @@ public final class PeopleEngine {
         // `@ModelActor` なので、その間ピープル一覧・写真の人物名が後ろで待たされる。
         // 実測: ロック解除直後に 32,582 枚を対象に開始 → `face.pauseWait=30`（10 秒ごと）で
         // 譲り続け → **0 枚**で終了。準備のコストだけを払っていた。
-        // 判定は方針そのもの（`heavyWorkAllowedLocal`＝ADR-195: 前面でも 20 秒触っていなければ可）。
-        // 明示操作（デバッグ全開・「今すぐ解析」）は従来どおり通す。
-        guard BackgroundYield.heavyWorkAllowedLocal || BackgroundYield.debugForceHeavyWork
-                || BackgroundYield.sessionActive else {
+        // ⚠️ 入口は**譲りとまったく同じ式**で判定する（ADR-196）。以前は入口が
+        // `heavyWorkAllowedLocal`、譲りが `heavyShouldPause()` で、前者は一括ロード・生成中を
+        // 見ていなかった。結果「入ってよい」と言われて `scannedRefKeys()`（75,000 行）を読んでから
+        // 譲り待ちに入り、60 秒で 0 枚のまま畳む（diagnostics-62/63 の「入口代だけ払う」）。
+        // ブースト・デバッグ全開の免除は `BackgroundYield.exemption` の中に入っている。
+        guard BackgroundYield.allows(.localTrickle) else {
             Diagnostics.mark("faces: startScan skip — heavy work not allowed right now (policy)")
             isLoaded = true
             return
@@ -309,9 +311,9 @@ public final class PeopleEngine {
                 allowSimulator: allowSimulator,
                 shouldPause: { [weak self] in
                     // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との
-                    // 相互排他）は BackgroundYield.heavyShouldPause に一元化。端末内写真の顔検出は
+                    // 相互排他）は BackgroundYield.shouldYield() に一元化。端末内写真の顔検出は
                     // 通信不要なので Wi-Fi は要求しない（ローカルゲート）。
-                    if BackgroundYield.heavyShouldPause() { return true }
+                    if BackgroundYield.shouldYield() { return true }
                     // ⚠️ **ユーザーがピープルを触っている間は譲る**（ADR-142）。顔スキャンと
                     // 人物一覧・レビューの候補探索は**同じ `@ModelActor` を奪い合う**ので、
                     // スキャン中は一覧の読み込みが 0.4 秒 → 13 秒まで伸びていた（diagnostics-68）。
@@ -320,7 +322,10 @@ public final class PeopleEngine {
                 },
                 networkAllowed: {
                     // クラウド写真の顔検出はキャッシュ済みサムネDLを要するため回線ポリシーに従う。
-                    NetworkStateMonitor.shared.networkAllowed()
+                    // ⚠️ モニタを直読みしない（ADR-196）。ブーストは回線ポリシーを免除するので、
+                    // 直読みだと「全力で解析します」と言いながらクラウド分を落とし、
+                    // さらに「すべて解析済みです」と嘘の完了を出す（レビュー指摘）。
+                    !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked)
                 },
                 onProgress: {
                     self.remaining = $0
@@ -334,7 +339,7 @@ public final class PeopleEngine {
             //（夜間ウィンドウ内・数秒・順序依存の誤りを解消する）。
             // 版上げ再スキャン中なら、進んだ分だけ名前を段階的に戻す（数晩に分かれても可）。
             await self.reapplyCarryoverNames()
-            if !BackgroundYield.heavyShouldPause() {
+            if !BackgroundYield.shouldYield() {
                 await self.rebuildClustersIfNeeded()
             }
             // ADR-186: 影の世代が十分育っていれば、ここで現行世代に切り替える。

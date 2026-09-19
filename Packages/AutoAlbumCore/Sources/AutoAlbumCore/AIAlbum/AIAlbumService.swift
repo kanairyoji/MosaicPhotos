@@ -143,7 +143,8 @@ final class AIAlbumService {
         // カタログはループ外で 1 回だけ構築（refresh と同じ・diagnostics-48）。
         let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
         for id in pendingIDs {
-            if BackgroundYield.heavyShouldPause() { break }   // ロック解除等 → 残りは次回夜間へ
+            // 本番化は一枚岩（FM 解釈＋フル評価）。ロック解除等で降りて残りは次回夜間へ。
+            if BackgroundYield.shouldYield(.localMonolith) { break }
             guard let index = out.firstIndex(where: { $0.id == id }),
                   let criteria = out[index].criteria, !criteria.isEmpty else { continue }
             // interpretation() は pending の解釈をキャッシュ扱いしない＝ここで FM 解釈が走る。

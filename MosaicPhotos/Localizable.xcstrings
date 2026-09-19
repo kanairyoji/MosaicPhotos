@@ -339,6 +339,16 @@
         }
       }
     },
+    "Album building waits until you leave the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムの作成は、アプリを離れてから行います。"
+          }
+        }
+      }
+    },
     "Album name (optional)": {
       "localizations": {
         "ja": {
@@ -716,6 +726,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "背景処理の速度"
+          }
+        }
+      }
+    },
+    "Background work is turned off in Background & Battery.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンド処理が「オフ」に設定されています（Background & Battery）。"
           }
         }
       }
@@ -2766,6 +2786,56 @@
         }
       }
     },
+    "Paused because you are using the app — it resumes 20 seconds after you stop touching the screen.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを操作している間は止まります。画面に触らなくなって 20 秒で再開します。"
+          }
+        }
+      }
+    },
+    "Paused because you are viewing photos right now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を見ている間は解析を譲っています。"
+          }
+        }
+      }
+    },
+    "Paused briefly because memory is tight.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メモリに余裕がないため、少しの間お休みしています。"
+          }
+        }
+      }
+    },
+    "Paused briefly while albums are being built.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アルバムを作っている間、少しの間お休みしています。"
+          }
+        }
+      }
+    },
+    "Paused briefly while the photo library finishes loading.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真の読み込みが終わるまで、少しの間お休みしています。"
+          }
+        }
+      }
+    },
     "Paused — manual only": {
       "extractionState": "stale",
       "localizations": {
@@ -3643,6 +3713,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "いまバックグラウンドで写真を解析しています。"
+          }
+        }
+      }
+    },
+    "The battery is below 20% and the device is not charging.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電池が 20% を下回っていて、充電もしていません。"
           }
         }
       }

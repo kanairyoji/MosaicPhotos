@@ -1,5 +1,6 @@
 import MosaicSupport
 import SwiftUI
+import UIKit
 
 @main
 struct MosaicPhotosApp: App {
@@ -12,8 +13,13 @@ struct MosaicPhotosApp: App {
         Diagnostics.install()
         // アプリ内の言語設定（System/日本語/English）を起動時に反映する。
         AppLocale.loadFromDefaults()
-        // 旧 5 段階の処理タイミング設定を 4 軸（自動処理/控えめ/電源/回線）へ移行する（ADR-80・1 度だけ）。
+        // 旧 5 段階の処理タイミング設定を 3 軸（自動処理/電源/回線）へ移行する（ADR-80/195・1 度だけ）。
         HeavyWorkTiming.migrateLegacySettingsIfNeeded()
+        // ゲートの表（ADR-196）に「App のバックグラウンド更新」を差す。
+        // MosaicSupport へ UIKit を持ち込まないための seam。
+        BackgroundYield.backgroundRefreshAvailableProvider = {
+            UIApplication.shared.backgroundRefreshStatus == .available
+        }
         // パフォーマンス計測の永続トグル（Developer Options）を起動時に反映する。既定 OFF。
         PerfTrace.isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.perfTracing)
         // センサー: 起動（App.init）→ ホーム初回表示までの所要（endScreen は HomeView 側）。
@@ -35,13 +41,12 @@ struct MosaicPhotosApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .task { BackgroundYield.isAppActive = (scenePhase == .active) }
+                .task { BackgroundYield.setScenePhase(.init(scenePhase)) }
         }
         .onChange(of: scenePhase) { _, phase in
             // 重い処理の中央ゲート: アクティブ（＝ユーザーが操作中）の間は一切動かさない。
             // 画面ロック/アプリ切替（inactive/background）で解放される（実行の主役は BGTask）。
-            BackgroundYield.isAppActive = (phase == .active)
-            BackgroundYield.isAppInBackground = (phase == .background)
+            BackgroundYield.setScenePhase(.init(phase))
             // D: 遷移の実測（復帰時に何が走っていたか）を診断ログへ 1 行残す。
             HeavyWorkScheduler.noteScenePhase("\(phase)")
             // ADR-79: 復帰したら夜間処理を**明示的に止める**。ゲートを閉じるだけでは、実行中の
@@ -67,6 +72,18 @@ struct MosaicPhotosApp: App {
                 HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()
             }
             if phase == .background { HeavyWorkScheduler.submit() }
+        }
+    }
+}
+
+/// SwiftUI の `ScenePhase` をゲートの画面状態へ写す（ADR-196）。
+/// `.inactive` は通知センター・着信バナー・App スイッチャーでも来るので、背面とは区別する。
+extension BackgroundYield.ScenePhaseKind {
+    init(_ phase: ScenePhase) {
+        switch phase {
+        case .active:     self = .active
+        case .background: self = .background
+        default:          self = .inactive
         }
     }
 }

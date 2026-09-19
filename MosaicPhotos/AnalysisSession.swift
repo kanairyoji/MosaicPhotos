@@ -21,7 +21,7 @@ import SwiftUI
 ///
 /// ## 処理枠（HeavyWorkScheduler）・駆動役（AnalysisDriver）との関係
 /// - 走らせるのは同じトリクル（`PeopleEngine.startScan` / `AutoAlbumEngine.scheduleBackgroundFill`）。
-///   ゲートは `BackgroundYield.sessionActive` で開ける（熱・一括ロード保護・生成との相互排他・
+///   ゲートは `BackgroundYield.exemption = .boost` で開ける（熱・電池・一括ロード保護・生成との相互排他・
 ///   前面での UI への譲りは残る）。
 /// - ブースト中は処理枠も駆動役も解析を重ねて起こさない（`isActive` を見て飛ばす）。
 /// - 一枚岩（生成・AI アルバムの本番化）は起こさない——始まると解析が止まる。
@@ -49,6 +49,10 @@ final class AnalysisSession {
 
     enum StopReason: Equatable {
         case finished        // 残作業ゼロ
+        /// 残作業はあるが、ゲートが閉じていてこれ以上進めない（熱・メモリ・生成中・回線…）。
+        /// ⚠️ ここを `.finished` に丸めると「すべて解析済みです」と嘘を表示し、
+        /// OS には `setTaskCompleted(success: true)` を返す（レビュー指摘）。
+        case blocked([BackgroundYield.Blocker])
         case user            // 停止ボタン・Live Activity の×
         case expired         // OS が止めた（熱・資源・ロック）
         case lowBattery      // 電源なしで電池が下限
@@ -80,6 +84,10 @@ final class AnalysisSession {
 
     /// 終わったときに呼ばれる（駆動役が方針へ戻すために使う）。
     @ObservationIgnored var onStopped: (() -> Void)?
+    /// 始めるときに呼ばれる。**残作業を起こす前口上は駆動役が持つ唯一のもの**（ADR-196）。
+    /// 以前はここにも同じ 4 手（候補列挙 → 掃除 → 顔スキャン → タグ/埋め込み）が書いてあり、
+    /// 駆動役・処理枠と合わせて 3 コピーが微妙に違っていた。
+    @ObservationIgnored var onStart: (() async -> Void)?
 
     private let engine: AutoAlbumEngine
     private let people: PeopleEngine
@@ -87,7 +95,6 @@ final class AnalysisSession {
 
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var task: BGContinuedProcessingTask?
-    @ObservationIgnored private var faceScanStarted = false
     @ObservationIgnored private var warmupTicks = 0
     @ObservationIgnored private var lastFillScheduledAt = Date.distantPast
     @ObservationIgnored private var tagsPending = 0
@@ -106,11 +113,10 @@ final class AnalysisSession {
     /// 「今すぐ解析」。利用者の明示操作なので、電源・回線・アイドルの条件は見ない。
     func start() {
         guard !isActive else { return }
-        faceScanStarted = false
         warmupTicks = 0
         remaining = 0
         peakRemaining = 0
-        BackgroundYield.sessionActive = true
+        BackgroundYield.setExemption(.boost)
         let mode: Mode = submitContinuedTask() ? .continued : .foregroundOnly
         state = .running(mode)
         applyIdleTimer()
@@ -118,7 +124,12 @@ final class AnalysisSession {
         Diagnostics.mark("analyze: boost start (\(mode))")
         RunTimeline.record("boost start (\(mode))")
         RunTimeline.noteState("session", active: true)
-        loop = Task { [weak self] in await self?.runLoop() }
+        loop = Task { [weak self] in
+            // 前口上 → 進捗の監視。前口上を待ってから監視に入るので、
+            // 「顔スキャンがまだ始まっていない」状態で完了判定が走ることはない。
+            await self?.onStart?()
+            await self?.watchProgress()
+        }
     }
 
     func stop(_ reason: StopReason = .user) {
@@ -127,7 +138,7 @@ final class AnalysisSession {
         loop = nil
         people.stopScan()
         engine.stopBackgroundWork()
-        BackgroundYield.sessionActive = false
+        BackgroundYield.setExemption(.none)
         UIApplication.shared.isIdleTimerDisabled = false
         state = .stopped(reason)
         Diagnostics.mark("analyze: boost stop (\(reason)) remaining=\(remaining)")
@@ -142,7 +153,7 @@ final class AnalysisSession {
     }
 
     /// アプリが前面から外れたとき（`scenePhase == .background`）。
-    /// 前面のみモードは**前面にいる間だけ**のもの。止めずに残すと `sessionActive` が立ちっぱなしになり、
+    /// 前面のみモードは**前面にいる間だけ**のもの。止めずに残すと免除（`.boost`）が残ったままになり、
     /// 電源・回線ポリシーの免除と画面消灯の抑止が効いたままになる。継続モードは OS が面倒を見る。
     func appLeftForeground() {
         if mode == .foregroundOnly { stop(.leftApp) }
@@ -208,21 +219,8 @@ final class AnalysisSession {
 
     // MARK: - 実行ループ
 
-    private func runLoop() async {
-        let allowSim = UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
-        if people.isFaceModelAvailable, !people.isScanning {
-            let candidates = await analysisCandidates(dropboxStore: dropboxStore)
-            guard !Task.isCancelled else { return }
-            // 無くなった写真の顔を先に掃除する（サムネの出ない・開けない顔が一覧に残る）。
-            // 候補から外したバックアップコピー（端末に原本あり）も「無い」扱いで消す。
-            await people.pruneMissingPhotos(candidateRefKeys: candidates.ordered,
-                                            knownGone: candidates.excludedBackupCopies)
-            guard !Task.isCancelled else { return }
-            people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
-        }
-        faceScanStarted = true
-        scheduleFillIfIdle()
-
+    /// 進捗を測って画面と Live Activity に出し、終わりを判定する。**起こす仕事は持たない**。
+    private func watchProgress() async {
         var tick = 0
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(2))
@@ -246,17 +244,17 @@ final class AnalysisSession {
             // タグは 1 回の実行に上限があるので、止まっていて残りがあれば次を起こす。
             if tagsPending + embedPending > 0 { scheduleFillIfIdle() }
 
-            if AnalysisSessionPolicy.shouldStopForBattery(onPower: PowerStateMonitor.shared.isOnPower,
-                                                          level: UIDevice.current.batteryLevel) {
-                stop(.lowBattery); return
-            }
-            // 顔スキャンは 1 ブースト 1 回。空振りで畳んだ分（クラウドのサムネ未取得など）は
-            // 方針（駆動役・処理枠）が次の機会に拾う——ここで「終わったか」を厳密に確定する必要は無い。
-            // 早めに `.finished` になっても、失うものは無い（続きは方針が進める）。
-            let faceSettled = !people.isFaceModelAvailable || (faceScanStarted && !people.isScanning)
+            // 電池の下限はゲートの表の行（ブーストでも外れない・ADR-196）。
+            // 以前はここだけに下限があり、電源ポリシー「常に」だと停止直後に方針が
+            // 同じ処理を再開していた（レビュー指摘）。
+            let verdict = BackgroundYield.verdict(for: .cloudTrickle)
+            if verdict.blocks(.lowBattery) { stop(.lowBattery); return }
+
+            // 顔スキャンは 1 ブースト 1 回。畳んだあとに残作業が見えていれば、
+            // **それは「終わった」ではなく「止められている」**——ゲートに理由を聞いて区別する。
             if AnalysisSessionPolicy.isFinished(remaining: rem, tagging: engine.isTagging,
-                                                scanning: people.isScanning, faceScanSettled: faceSettled) {
-                stop(.finished); return
+                                                scanning: people.isScanning) {
+                stop(verdict.allowed ? .finished : .blocked(verdict.blockers)); return
             }
         }
     }

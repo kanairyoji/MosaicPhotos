@@ -21,7 +21,7 @@ extension DropboxPhotoStore {
     /// 行列では表示の後ろに並び、`cloudThumbnailBusy`（UI が忙しい印）を立てない。
     ///
     /// ⚠️ 表示用 `thumbnail(for:)` をそのまま使うと、**解析が自分の取得で自分を止める**
-    /// （実機 diagnostics-81: ドレイン中は `heavyShouldPause()` が true になり、
+    /// （実機 diagnostics-81: ドレイン中は `shouldYield()` が true になり、
     /// 処理枠の残り時間を丸ごと捨てていた）。解析はこちらを使う。
     public func analysisThumbnail(for item: DropboxFileItem) async -> UIImage? {
         await thumbnailBatcher.thumbnail(for: item, purpose: .analysis)

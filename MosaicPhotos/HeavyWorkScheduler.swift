@@ -10,7 +10,7 @@ import PhotosFeatureKit
 /// スクリーンロック中（アプリがバックグラウンド）に重い処理を進めるスケジューラ。
 ///
 /// 方針（ユーザー指定）: アルバム生成・CLIP 埋め込み・顔スキャンは「電源接続＋アイドル」でのみ動く。
-/// フォアグラウンドでは `BackgroundYield.heavyWorkAllowed`（60 秒アイドル）が同じ判定を行い、
+/// フォアグラウンドでは `BackgroundYield.allows(.cloudTrickle)`（60 秒アイドル）が同じ判定を行い、
 /// ロック中はこの `BGProcessingTask` が OS に起こされて続きを進める（`requiresExternalPower = true`
 /// なので **電源に接続されていない限り OS は起動しない**）。
 ///
@@ -221,12 +221,11 @@ enum HeavyWorkScheduler {
         isDebugRunning = true
         Diagnostics.mark("bgtask: debug run begin (limit=\(Int(timeLimit))s)")
         let started = Date()
-        let previousForce = BackgroundYield.debugForceHeavyWork
-        BackgroundYield.debugForceHeavyWork = true
 
         let work = Task { @MainActor in
-            // 前面から叩くデバッグ実行。終わったら「非アクティブ扱い」を元へ戻す。
-            await runHeavyWork(restoreAppActive: true)
+            // 前面から叩くデバッグ実行。ゲートの免除も画面状態もスコープで入るので、
+            // 本番の窓との違いは**時間制限だけ**になる（旧 `restoreAppActive` は不要）。
+            await BackgroundYield.withExemption(.debug) { await runHeavyWork() }
             finish(outcome: "manual-completed")
         }
         // 時間制限（実 BG の期限切れを模擬）。
@@ -243,7 +242,6 @@ enum HeavyWorkScheduler {
         func finish(outcome: String) {
             guard isDebugRunning else { return }
             isDebugRunning = false
-            BackgroundYield.debugForceHeavyWork = previousForce
             Diagnostics.mark("bgtask: debug run end (\(outcome))")
             recordLastRun(started: started, outcome: outcome)
         }
@@ -331,139 +329,94 @@ enum HeavyWorkScheduler {
                                   forKey: AppSettingsKeys.bgTaskLastRun)
     }
 
-    /// 重い処理を一通り進める。フォアグラウンドと同じゲート（heavyShouldPause）を通るが、
-    /// BG 中は操作が発生しないためアイドル条件は自然に満たされる。
-    /// - Parameter restoreAppActive: 終了時に `BackgroundYield.isAppActive` を元へ戻すか。
-    ///   フォアグラウンドから叩くデバッグ実行（`debugRunNow`）は true——戻さないと、
-    ///   次の scenePhase 変化まで「非アクティブ扱い」が残り、**ユーザー操作中でも重い処理が
-    ///   走り続ける**（レビュー指摘）。実際の BGTask は false（非アクティブが正しい状態）。
-    private static func runHeavyWork(restoreAppActive: Bool = false) async {
-        // BGTask 実行中＝アプリは非アクティブ確定。バックグラウンド起動では scenePhase の
-        // 変化が来ないことがあり、初期値（true）のままだと中央ゲートが開かない。
-        let previousActive = BackgroundYield.isAppActive
-        let previousBackground = BackgroundYield.isAppInBackground
-        BackgroundYield.isAppActive = false
-        // 背面起動では scenePhase の変化が来ないことがある。処理枠の間は「背面」を明示し、
-        // 前面の定期ループ（HomeView）に判断させない（diagnostics-74・`isAppInBackground` の注記）。
-        BackgroundYield.isAppInBackground = true
-        defer {
-            if restoreAppActive {
-                BackgroundYield.isAppActive = previousActive
-                BackgroundYield.isAppInBackground = previousBackground
+    /// 処理枠で重い処理を一通り進める。**判断は `NightlyPlan.steps`（純ロジック・テスト対象）**で、
+    /// ここは反映だけ（ADR-196）。
+    ///
+    /// 以前はこの関数が 142 行の直列手続きで、9 つの責務と `Task.isCancelled` の確認 4 か所を
+    /// 抱え、テストが 1 本も無かった。窓の使い方は実機で繰り返し失敗している領域なので、
+    /// 順序と条件は `NightlyPlan` に出してテストで固定する。
+    private static func runHeavyWork() async {
+        // 背面起動では scenePhase の変化が来ないことがあり、初期値（active）のままだと中央ゲートが
+        // 開かない。処理枠の間は「背面」を明示して、前面の定期ループ（HomeView）に判断させない
+        // （diagnostics-74）。
+        // ⚠️ **スコープで入る**——以前は `isAppActive` / `isAppInBackground` を手で書き換え、
+        // `restoreAppActive` という引数で後始末していた（戻し忘れがレビューで指摘されている）。
+        await BackgroundYield.withScenePhase(.background) {
+            // ストア群：プロセス内で唯一の共有インスタンス（前景 RootView と同じ）。別々に build すると
+            // PeopleEngine/AutoAlbumEngine が二重化し顔/タグが二重起動するため必ず shared() を使う。
+            let stores = await HomeStores.shared()
+            Self.stores = stores
+            guard !Task.isCancelled else { return }
+
+            let plan = NightlyPlan.steps(await gatherInputs(stores))
+            RunTimeline.record("window plan: " + plan.map(\.label).joined(separator: "→"))
+            for step in plan {
+                guard !Task.isCancelled else { break }
+                await perform(step, stores: stores)
+            }
+            // 期限切れ（キャンセル）時は夜間バックアップも止める（アップロード途中でプロセスが
+            // 吊るされるより明示キャンセルが安全。「済み」記録は検証後のみ付くので、中断しても
+            // 次回に差分から再開される）。
+            if Task.isCancelled, stores.backupEngine.isRunning {
+                stores.backupEngine.cancel()
             }
         }
-        // ストア群：プロセス内で唯一の共有インスタンス（前景 RootView と同じ）。別々に build すると
-        // PeopleEngine/AutoAlbumEngine が二重化し顔/タグが二重起動するため必ず shared() を使う。
-        let stores = await HomeStores.shared()
-        Self.stores = stores
-        if Task.isCancelled { return }
+    }
 
-        // 1. 顔スキャン＋CLIP 埋め込み/タグを**先に**開始する（それぞれ内部でトリクル実行・
-        //    1枚ごとに譲り判定）。BG 窓は短く（数秒〜数分で expire することが多い）、generate を
-        //    先に await すると窓を食い潰して顔/埋め込みが開始すらしない実障害があった（Fix C）。
-        //    これらは端末内写真なら通信不要で走る（Fix B・ローカルゲート）。
-        // シミュレータでは FaceTagger が既定でスキップするため、**この BG ルーチンでは顔スキャンを許可**
-        // する（`debugForceHeavyWork`＝「Run BG routine now」/ゲート強制時、または「Face scan in
-        // Simulator」トグル ON 時）。これが無いと Run BG routine を押しても People が増えなかった。
-        let allowSim = BackgroundYield.debugForceHeavyWork
-            || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
+    /// 判断の入力を測る（各値を読むのはここだけ）。
+    private static func gatherInputs(_ stores: HomeStores) async -> NightlyPlan.Inputs {
+        NightlyPlan.Inputs(
+            boostActive: stores.analysisSession.isActive,
+            embedBacklog: await stores.autoAlbumEngine.pendingEmbedCount(),
+            faceBacklog: stores.peopleEngine.remaining,
+            generateDeferrals: UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak),
+            maxGenerateDeferrals: maxGenerateDeferrals,
+            availableMB: Int(MemoryBudget.availableBytes() / 1_048_576),
+            networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
+            provideShareEnabled: ShareSettingsKeys.isProvideEnabled())
+    }
 
-        // 顔スキャンを起こす（差分ベース・毎窓）。旧キャプション窓の順番回し（ADR-86/93）は
-        // VLM 廃止（ADR-108）で不要になった＝窓はタグ・埋め込み・顔スキャンで使い切る。
-        // ⚠️ 解析セッション（ADR-182）が走っているなら同じトリクルが既に全力で動いている。
-        // 重ねて起こさない（restart は実行中の埋め込みを一度畳んでしまう）。
-        if stores.analysisSession.isActive {
-            Diagnostics.mark("bgtask: analysis session active — not starting analysis here")
-        } else {
-            let candidates = await analysisCandidates(dropboxStore: stores.dropboxStore)
-            // 無くなった写真の顔を掃除してから（削除・配置替え・同期対象外＝ADR-175 後に残る幽霊。
-            // 端末に原本があるバックアップコピーも候補から外したので、その顔も消す）。
-            await stores.peopleEngine.pruneMissingPhotos(candidateRefKeys: candidates.ordered,
-                                                         knownGone: candidates.excludedBackupCopies)
-            if Task.isCancelled { return }
-            stores.peopleEngine.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
-            // 夜間窓は重い処理のための特権時間。前面で始まって眠っている実行が居座っていると窓を
-            // 丸ごと空転させるので、明け渡させてから始め直す（ADR-95）。
-            stores.autoAlbumEngine.restartBackgroundFill()
-        }
-
-        // 「動くべきなのに動いていない」パスを毎窓チェックして診断ログへ（ADR-87）。
-        // 飢餓バグは沈黙として現れるため、こちらから沈黙を検出しにいく。
-        await logStalledPasses(stores: stores)
-
-        // 1.5 バックアップ（ADR-42）: 宛先が Dropbox のとき、夜間ウィンドウで自動実行する。
-        // 経緯: ADR-72「埋め込み残 0 の窓だけ」→ 事実上始まらない（diagnostics-20）→ 4 回に 1 回の
-        // 順番回し → ADR-180 で**毎窓・解析と並行**へ（資源が重ならないため）。
-        // ADR-180: バックアップは解析と**並行して**毎窓起こす（見送りは廃止）。
-        // 以前は「埋め込みの残作業が無い窓だけ」→「4 回に 1 回」と譲っていたが、バックアップは
-        // ディスク読み＋通信で、CPU/ANE をほぼ使わない。解析（推論）とは資源が重ならないので、
-        // 同じ窓で走らせても互いを遅くしない。譲らせていた根拠（メモリのピーク・ADR-72）は
-        // 1 枚ずつ読んで上げる trickle 実装では当たらない（実測 footprint は解析側が支配的）。
-        // 実フィードバック「バックアップは画像処理と並行して動かしてよい。現状あまり動いていない」。
-        let embedBacklog = await stores.autoAlbumEngine.pendingEmbedCount()
-        if embedBacklog > 0 {
-            Diagnostics.mark("bgtask: backup alongside analysis (embed backlog=\(embedBacklog))")
-        }
-        stores.backupEngine.startNightlyIfEnabled()
-
-        // 2. アルバム生成（差分があるときだけ・~26s 上限）。**顔/埋め込みを起こした後**に回す。
-        // generate はピークが大きく（実測 ~550〜880MB）BG の厳しい jetsam 上限に触れてアプリごと
-        // kill され、進捗が振り出しに戻る主因だった。残り許容量に**十分**な余裕がある時だけ実行する
-        // （閾値を 700→900MB に引き上げ・Fix A）。余裕が無ければスキップし軽い処理だけ進める。
-        // ⚠️ **同じ窓で生成と解析を同時に走らせない**（実機 diagnostics-72）。
-        // 生成は `isGeneratingAlbums` を立て、`heavyShouldPause()` はそれを見て譲るので、
-        // 生成が始まった瞬間に顔スキャンと埋め込みが止まる。しかも生成自体は 26 秒では
-        // 終わらず**毎回 `generate: aborted`**（このログでは中断 3 回・完了 0 回）。
-        // 結果、窓は「止まった解析＋終わらない生成」で丸ごと空転していた
-        // （5 分の窓で顔は 280 枚＝実作業 22 秒ぶんしか進んでいない）。
-        // 残作業があるうちは生成を見送り、**窓ごとに 1 つの仕事を終わらせる**。
-        // ただしバックアップと同じく上限つきで順番を回す（生成も飢えさせない）。
-        let faceBacklog = stores.peopleEngine.remaining
-        let genDeferrals = UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak)
-        // 判定は純ロジック（`NightlyWorkPolicy`・テスト済み）。ここは反映だけ。
-        switch NightlyWorkPolicy.generateDecision(embedBacklog: embedBacklog, faceBacklog: faceBacklog,
-                                                  deferrals: genDeferrals,
-                                                  maxDeferrals: Self.maxGenerateDeferrals) {
-        case .defer_(let streak):
-            UserDefaults.standard.set(streak, forKey: AppSettingsKeys.generateDeferralStreak)
-            Diagnostics.mark("bgtask: defer generate \(streak)/\(Self.maxGenerateDeferrals) "
-                             + "(embed=\(embedBacklog) faces=\(faceBacklog))")
-        case .run(let afterDeferrals):
+    /// 1 手を実行する。**ここに判断を書かない**（書くと窓を起こさないと確かめられなくなる）。
+    private static func perform(_ step: NightlyPlan.Step, stores: HomeStores) async {
+        switch step {
+        case .startAnalysis:
+            // 候補の列挙・消えた写真の掃除・顔スキャン・タグ/埋め込みは駆動役が持つ唯一の前口上。
+            // 窓は特権時間なので、滞留した前面の実行を明け渡させてから始め直す（ADR-95）。
+            await stores.analysisDriver.kick(.window)
+        case .skipAnalysisBoostActive:
+            Diagnostics.mark("bgtask: boost active — not starting analysis here")
+        case .logStalledPasses:
+            // 「動くべきなのに動いていない」パスを毎窓チェックして診断ログへ（ADR-87）。
+            // 飢餓バグは沈黙として現れるため、こちらから沈黙を検出しにいく。
+            await logStalledPasses(stores: stores)
+        case .startBackup:
+            stores.backupEngine.startNightlyIfEnabled()
+        case .generate:
             UserDefaults.standard.set(0, forKey: AppSettingsKeys.generateDeferralStreak)
-            if afterDeferrals > 0 {
-                Diagnostics.mark("bgtask: generate turn (deferred \(afterDeferrals)x, "
-                                 + "embed=\(embedBacklog) faces=\(faceBacklog))")
-            }
-            let availableMB = MemoryBudget.availableBytes() / 1_048_576
-            if availableMB > 900 {
-                await stores.autoAlbumEngine.refreshIfNeeded()
-            } else {
-                Diagnostics.mark("bgtask: skip generate (available=\(availableMB)MB)")
-            }
-        }
-        if Task.isCancelled { return }
-
-        // 2.5 家族共有（ADR-166）: 反映と受信は**夜間にも回す**。
-        // ⚠️ これまでの起動条件は「起動 25 秒後」「バックアップ完走後」「手動」だけで、
-        // アプリを開かない日が続くと**反映も自己修復も走らなかった**（外部削除された写真が
-        // 戻らないまま放置される）。回線ポリシーは各処理の内側が見る。
-        if NetworkStateMonitor.shared.networkAllowed() {
+            await stores.autoAlbumEngine.refreshIfNeeded()
+        case .deferGenerate(let streak):
+            UserDefaults.standard.set(streak, forKey: AppSettingsKeys.generateDeferralStreak)
+            Diagnostics.mark("bgtask: defer generate \(streak)/\(maxGenerateDeferrals)")
+        case .skipGenerateLowMemory(let mb):
+            // 見送りではなく「順番は来たが余裕が無い」なので、連続見送りの数は戻す。
+            UserDefaults.standard.set(0, forKey: AppSettingsKeys.generateDeferralStreak)
+            Diagnostics.mark("bgtask: skip generate (available=\(mb)MB)")
+        case .shareImport:
             await stores.shareImporter.runIfNeeded()
-            if ShareSettingsKeys.isProvideEnabled() {
-                // ADR-183 C: 共有セットを作成元（人物・AI アルバム）のいまのメンバーに追従させてから反映。
-                await stores.shareEngine.refreshAllFromSource()
-                await stores.shareEngine.syncNow()
-            }
+        case .shareSync:
+            // ADR-183 C: 共有セットを作成元（人物・AI アルバム）のいまのメンバーに追従させてから反映。
+            await stores.shareEngine.refreshAllFromSource()
+            await stores.shareEngine.syncNow()
+        case .reconcileBackup:
+            // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない（ADR-166）。
+            await stores.backupEngine.reconcileIfDueWeekly()
+        case .drainUntilIdle:
+            await drainUntilIdle(stores: stores)
         }
-        if Task.isCancelled { return }
+    }
 
-        // 2.6 バックアップ台帳と Dropbox の実体を**週 1 回**照合する（ADR-166）。
-        // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない
-        // （共有の自己修復もコピー元が無くて失敗し続ける）。全件一覧なので毎晩はやらない。
-        await stores.backupEngine.reconcileIfDueWeekly()
-        if Task.isCancelled { return }
-
-        // 3. 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。進捗はモニタで観測。
+    /// 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。進捗はモニタで観測。
+    private static func drainUntilIdle(stores: HomeStores) async {
         let monitor = BackgroundActivityMonitor.shared
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
@@ -471,12 +424,6 @@ enum HeavyWorkScheduler {
                 || monitor.embedRemaining > 0 || monitor.faceScanRemaining > 0
                 || stores.backupEngine.isRunning
             if !working { break }   // 全部片付いた
-        }
-        // 期限切れ（キャンセル）時は夜間バックアップも止める（アップロード途中で
-        // プロセスが吊るされるより明示キャンセルが安全。「済み」記録は検証後のみ
-        // 付くので、中断しても次回に差分から再開される）。
-        if Task.isCancelled, stores.backupEngine.isRunning {
-            stores.backupEngine.cancel()
         }
     }
 }

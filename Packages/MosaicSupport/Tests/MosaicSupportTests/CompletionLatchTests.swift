@@ -70,39 +70,47 @@ struct CompletionLatchTests {
     }
 }
 
-/// ⚠️ 重い処理のルーチンは「アプリは非アクティブ」を前提にゲートを開ける。
-/// フォアグラウンドから叩くデバッグ実行でこのフラグを立てっぱなしにすると、
-/// 次の scenePhase 変化まで**ユーザー操作中でも重い処理が走り続ける**（レビュー指摘）。
-@Suite("BackgroundYield.isAppActive の一時変更")
+/// 画面状態の一時変更は**スコープ**で入る（ADR-196）。
+///
+/// 以前は `BackgroundYield.isAppActive` を手で書き換え、`restoreAppActive` という引数で
+/// 後始末していた。戻し忘れると「次の scenePhase 変化までユーザー操作中でも重い処理が走り続ける」
+/// （レビュー指摘）。スコープなら戻し忘れが書けない。
+@Suite("画面状態のスコープ（withScenePhase）", .serialized)
 @MainActor
-struct AppActiveRestoreTests {
+struct ScenePhaseScopeTests {
 
-    /// 実運用と同じ形（保存 → 変更 → defer で復元）を模した最小の関数。
-    private func runWithInactive(restore: Bool, body: () -> Void) {
-        let previous = BackgroundYield.isAppActive
-        BackgroundYield.isAppActive = false
-        defer { if restore { BackgroundYield.isAppActive = previous } }
-        body()
-    }
+    @Test("抜けたら必ず元へ戻る")
+    func restoresOnExit() async {
+        BackgroundYield.setScenePhase(.active)
+        defer { BackgroundYield.setScenePhase(.active) }
 
-    @Test("復元ありなら、実行後に元の値へ戻る（前面デバッグ実行）")
-    func restoresPreviousValue() {
-        BackgroundYield.isAppActive = true
-        defer { BackgroundYield.isAppActive = true }
-
-        runWithInactive(restore: true) {
-            #expect(!BackgroundYield.isAppActive, "実行中は非アクティブ扱いであること")
+        await BackgroundYield.withScenePhase(.background) {
+            #expect(BackgroundYield.scenePhase == .background, "実行中は背面扱いであること")
         }
-        #expect(BackgroundYield.isAppActive,
-                "前面に戻っているのに非アクティブ扱いが残る（操作中でも重い処理が走る）")
+        #expect(BackgroundYield.scenePhase == .active,
+                "前面に戻っているのに背面扱いが残る（操作中でも重い処理が走る）")
     }
 
-    @Test("復元なしなら非アクティブのまま（実 BGTask）")
-    func keepsInactiveForRealBackgroundRun() {
-        BackgroundYield.isAppActive = true
-        defer { BackgroundYield.isAppActive = true }
+    @Test("入れ子でも元へ戻る")
+    func restoresWhenNested() async {
+        BackgroundYield.setScenePhase(.active)
+        defer { BackgroundYield.setScenePhase(.active) }
 
-        runWithInactive(restore: false) {}
-        #expect(!BackgroundYield.isAppActive)
+        await BackgroundYield.withScenePhase(.background) {
+            await BackgroundYield.withScenePhase(.inactive) {
+                #expect(BackgroundYield.scenePhase == .inactive)
+            }
+            #expect(BackgroundYield.scenePhase == .background)
+        }
+        #expect(BackgroundYield.scenePhase == .active)
+    }
+
+    @Test("免除の段もスコープで戻る")
+    func exemptionScopeRestores() async {
+        BackgroundYield.setExemption(.none)
+        await BackgroundYield.withExemption(.debug) {
+            #expect(BackgroundYield.exemption == .debug)
+        }
+        #expect(BackgroundYield.exemption == .none)
     }
 }

@@ -216,7 +216,7 @@ struct DropboxThumbnailBatcherTests {
 /// diagnostics-81 の回帰: **解析のサムネ取得が「UI が忙しい」を名乗らない**こと。
 ///
 /// 以前は解析（顔・タグ・CLIP）が表示用と同じ経路で取りに行き、そのドレインが
-/// `cloudThumbnailBusy` を立てていた。その印は `BackgroundYield.heavyShouldPause()` に
+/// `cloudThumbnailBusy` を立てていた。その印は `BackgroundYield.shouldYield()` に
 /// 直結しているので、**解析が自分の取得で自分を止める**状態だった（処理枠で埋め込み 0 枚）。
 @Suite("サムネ取得の目的（表示 / 解析）")
 @MainActor

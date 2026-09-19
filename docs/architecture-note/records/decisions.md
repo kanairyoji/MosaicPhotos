@@ -56,6 +56,76 @@
 - 関連: `PeopleGroups.swift` / `FaceStore+Edit.swift` / `FaceStore+Undo.swift` /
   `PeopleGroupMergeUndoTests` / ADR-113 / ADR-136。
 
+## ADR-196 「動かしてよいか」を 1 つの表にする（ゲート・窓の手順・画面の所有権）
+- 状態: 採用（ADR-25/80/107/179/188/195 の述語を置換・ADR-194 の残りを撤去）
+- 文脈: 保守負担を実測（fix コミットの密度・退行率・可変状態・結合・継ぎ足しコメント）して
+  上位 3 領域を並べたところ、**3 つとも同じ 1 つの問題の現れ方**だった。証拠:
+  1. **解析を起こす前口上が 3 コピー**。「候補の列挙（8.5 万件）→ 消えた写真の掃除 →
+     顔スキャン → タグ/埋め込み」の 4 手が `AnalysisDriver.kick` / `AnalysisSession.runLoop` /
+     `HeavyWorkScheduler.runHeavyWork` に別々に書かれ、3 つとも微妙に違った
+     （候補キャッシュの有無・`scheduleBackgroundFill` と `restartBackgroundFill` の違い）。
+  2. **「なぜ動かないか」の実装が 2 つ**。ゲート（`BackgroundYield.heavyWorkAllowed`）と
+     画面（`AnalysisBlockerDiagnosis`・63 行）が同じ質問に別々のコードで答えており、
+     ゲートが閉じているのに「すべての条件を満たしています」と言える状態だった。
+  3. **入口と譲りが別の述語**。`PeopleEngine.startScan` の入口は `heavyWorkAllowedLocal`、
+     1 単位ごとの譲りは `heavyShouldPause()`。前者は `HeavyLoad` と `isGeneratingAlbums` を
+     見ないので、「入ってよい」と言われて `scannedRefKeys()`（75,000 行）を読んでから
+     譲り待ちに入り、60 秒で 0 枚のまま畳む（diagnostics-62/63「入口代だけ払う」）。
+  4. **「誰が聞いているか」がグローバル変数 4 つ**（`isAppActive` / `isAppInBackground` /
+     `sessionActive` / `debugForceHeavyWork`）で、**処理枠はそのうち 2 つに嘘をついて**
+     ゲートを開けていた。`restoreAppActive` という引数はその嘘の後始末専用で、
+     戻し忘れが 1 回レビューで指摘されている。
+  5. 述語は 11 個あり、`shouldPause(powerOK:)` は**完全な死にコード**、
+     `debugForceHeavyWork` の doc（「生成との相互排他だけは維持する」）は**実装と矛盾**していた。
+- 決定: 3 つを 1 つの設計として直す。
+  1. **ゲートを 1 つの表にする**（設計 A）。軸は「どの仕事か」（`HeavyWork`＝通信が要るか ×
+     始めたら譲れるか ＋ 処理枠）と「誰が聞いているか」（`Exemption`＝none/boost/debug）の 2 つだけ。
+     条件は `Blocker` の表（`applies(to:)` と `skippableBy`）で、判定は純関数
+     `blockers(_:for:exemption:)` 1 つ。呼び手は `verdict(for:)` を呼ぶだけで**部分集合を選べない**
+     ——入口と譲りが同じ式になる。状態は `scenePhase` と `exemption` の 2 つに減らし、
+     一時変更は `withScenePhase` / `withExemption` の**スコープ**で入る（手で戻さない）。
+     画面は `verdict(for:).blockers` を描くだけになり、`AnalysisBlockerDiagnosis` は削除。
+  2. **夜間窓を「手順の表」にする**（設計 B）。`NightlyPlan.steps(Inputs) -> [Step]` を純ロジックに
+     出し、`runHeavyWork` は反映だけ（142 行 → 実行 40 行＋判断 60 行）。見送り・スキップも
+     `Step` として残すので、窓が何を決めたかが `RunTimeline` に 1 行で出る。
+     デバッグ実行は同じ `steps()` を `.debug` 免除と短い制限時間で回すだけになった。
+  3. **画面とブーストの所有権を移す**（設計 C）。数え直しループの持ち主をビュー階層から
+     `@State` のモデル（`AnalysisStatusModel`）へ移し、3 つの旗（`refreshInFlight` /
+     `refreshRequested` / `refreshRequestedFresh`）を撤去。ブーストは `onStart` で駆動役へ委譲し、
+     前口上のコピーを 3 → 1 にした。終わりの判定はゲートに理由を聞き、残作業があるのに
+     畳んだ場合は `.finished` ではなく **`.blocked([Blocker])`** で止める。
+- 結果:
+  | | 前 | 後 |
+  |---|---|---|
+  | ゲート述語 | 11（うち死にコード 1） | 1（＋言い換え 2） |
+  | 「誰が聞いているか」の状態 | 4（窓は 2 つに嘘をつく） | 2（スコープで出入り） |
+  | 「なぜ動かないか」の実装 | 2 | 1 |
+  | 解析の前口上 | 3 コピー | 1 |
+  | テストできない判断 | `runHeavyWork` 142 行（0 本） | `steps()`・ゲート表（純・33 本） |
+  昨夜記録した 10 件の指摘は全部これで解消した（前面の一枚岩・空振りの起こし・`.boostEnded` の
+  no-op・電池の再開・入口の緩さ・嘘の完了・`RunTimeline` の氾濫・規模テストの欠如）。
+  ⚠️ **意図的な挙動変更が 3 つ**:
+  (a) **電池の下限（20%）を表の行にした**＝ブーストでも外れない。以前は電源ポリシー「常に」だと
+      `backgroundAllowed()` が無条件に真で、下限はブーストのループの中にしか無く、
+      「電池のため止めた」と言った直後に方針が同じ処理を再開していた。
+  (b) **`startScan` の入口を譲りと同じ厳しさにした**。一括ロード中・生成中は入らない代わりに、
+      起こし直しは駆動役が確実に行う（`alreadyRunning` で走行中は無視、空振りはバックオフ）。
+  (c) **クラウド分の可否をゲートから引く**ようにした（`verdict.blocks(.networkBlocked)`）。
+      以前は `FaceTagger` / `PhotoTagger` が `NetworkStateMonitor` を直読みしており、
+      ブーストが回線ポリシーを免除しているのにクラウド写真を落とし、さらに「すべて解析済み」と
+      嘘の完了を出していた。
+  ⚠️ 代償: `HeavyWork` が 5 ケース（local/cloud × trickle/monolith ＋ window）になった。
+  通信の要否と譲れるかを 1 つに畳むと、通信の要らない一枚岩（AI アルバムの本番化・ドリフト
+  再評価＝台帳と埋め込みを読むだけ）まで Wi-Fi 待ちで止まる——実際に実装中 1 度そうした。
+  ⚠️ テストは `environmentOverrideForTesting` で環境を組み立てる。条件を 1 つの表にした結果、
+  判定が**実行マシンの状態**（低電力モード等）に左右されるようになった（実際に 1 本落ちた）。
+- 関連: `BackgroundYield.swift`（表）/ `BackgroundGateTests`（表の検証・総当たりの不変条件）/
+  `NightlyWorkPolicy.swift`（`NightlyPlan.steps`）/ `NightlyPlanTests` /
+  `AnalysisDriver.swift`（唯一の前口上）/ `AnalysisDriverPolicyTests` / `AnalysisDriverScaleTests` /
+  `AnalysisStatusModel.swift` / `AnalysisWindowHealth.swift`（旧 `AnalysisBlockerDiagnosis`）/
+  ADR-25 / ADR-79 / ADR-80 / ADR-95 / ADR-107 / ADR-119 / ADR-179 / ADR-188 / ADR-195 /
+  case-studies「上位 3 領域が同じ 1 つの問題だった」。
+
 ## ADR-195 解析は「常設の方針」で自動的に進め、「今すぐ解析」は無状態のブーストにする（セッション概念の置換）
 - 状態: 採用（ADR-189/193/194 を置換・ADR-191 の一部を置換・ADR-25/80 を 3 軸へ改定）
 - 文脈: 「夜間解析が進まない」に対して ADR-189（押した事実の永続化＋自動再開）→ ADR-191
@@ -103,7 +173,7 @@
   ADR-189 / ADR-191 / ADR-193 / ADR-194 / case-studies「『今すぐ解析』の周りが 9 周壊れ続けた結論」。
 
 ## ADR-194 「終わったか」はライブのカウンタで推測せず、台帳に聞いて確定する
-- 状態: **置換（→ ADR-195）**——再開そのものを廃止したため「終わりの確定」も不要になった。旧: 採用（ADR-189 の追補・レビューループ 5 周の結論）
+- 状態: **置換（→ ADR-195/196）**——再開そのものを廃止したため「終わりの確定」も不要になった。旧: 採用（ADR-189 の追補・レビューループ 5 周の結論）
 - 文脈: 中断された解析セッションの自動再開（ADR-189）で、「もう残作業は無いのに毎回
   セッションを起こす」を避けようとして、**顔スキャンの残り枚数をライブのカウンタから
   推測**する仕組みを入れた。ここから 5 周連続で欠陥が出た——毎回直したつもりが、

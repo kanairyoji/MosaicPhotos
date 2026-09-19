@@ -70,7 +70,7 @@ graph TD
       </table>
 
       <h2>「譲る」条件（協調的一時停止）</h2>
-      <p>そもそも重い処理が動くのは <code>BackgroundYield.heavyWorkAllowed</code>（既定＝電源＋低電力OFF＋アプリ非アクティブ＋Wi-Fi。判定は<a href="../features/background.html">3 軸の独立設定</a>＝自動処理・電源・回線。前面では 20 秒アイドルも要求＝ADR-195）が真のときだけ。端末内写真だけを扱う処理は <code>heavyWorkAllowedLocal</code>（回線条件なし）を見る。加えて処理中も、次のいずれかが立つ間は <strong>1 枚ごとに</strong> <code>shouldPause</code> を確認して 0.3s スリープで待機し即譲る（ADR-25。8 枚一括だと画面遷移が飢餓するため 1 枚単位）。</p>
+      <p>そもそも重い処理が動くのは <code>BackgroundYield.verdict(for:).allowed</code> が真のときだけ（既定＝電源＋低電力OFF＋アプリ非アクティブ＋Wi-Fi。判定は<a href="../features/background.html">3 軸の独立設定</a>＝自動処理・電源・回線。前面では 20 秒アイドルも要求＝ADR-195）。<strong>「どの仕事か」を引数で渡す</strong>——端末内写真だけを扱う処理は <code>.localTrickle</code>（回線条件なし）、クラウド分は <code>.cloudTrickle</code>、一枚岩は <code>.localMonolith</code> / <code>.cloudMonolith</code>（ADR-196）。加えて処理中も、次のいずれかが立つ間は <strong>1 枚ごとに</strong> <code>shouldPause</code> を確認して 0.3s スリープで待機し即譲る（ADR-25。8 枚一括だと画面遷移が飢餓するため 1 枚単位）。</p>
       <div class="box why">
         <span class="box-h">「譲れる処理」と「譲れない処理」を別ゲートにする（ADR-107）</span>
         上の 1 単位ごとの譲りが効くのは<strong>トリクル系</strong>（CLIP 埋め込み・顔スキャン・シーンタグ）だけ。<strong>AI アルバムの本番化（finalize）・ドリフト再評価・アルバム自動生成</strong>は<strong>一枚岩</strong>で、FM 解釈＋フル検索＋重心構築＋数万件の SwiftData が一続きに走り、<strong>始まるとユーザーが戻ってきても途中で譲れない</strong>。実機（diagnostics-46）では控えめ OFF の前面アイドルで finalize が起動し、以後の全操作が ANE ゲート待ち（実測 7.9s）・ModelActor 競合・CPU 競合で引っかかっていた。そこで <code>BackgroundYield.monolithicHeavyWorkAllowed</code>（＝<code>heavyWorkAllowed</code> ＋<strong>非アクティブ限定</strong>）を新設し、一枚岩だけをそちらへ移した。手動ブースト・デバッグ全開は明示操作なので免除。

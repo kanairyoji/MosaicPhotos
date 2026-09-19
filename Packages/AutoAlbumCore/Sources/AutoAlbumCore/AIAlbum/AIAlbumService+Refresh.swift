@@ -14,12 +14,14 @@ extension AIAlbumService {
     /// フル再評価：保存済み解釈で全写真を採点し直す（プール・評価済み枚数も更新）。
     /// LLM は走らない（解釈未保存のアルバムだけ初回に 1 回解釈して保存＝旧データの移行）。
 
-    /// 前面に戻っていたら、この一枚岩の再評価は始めない/続けない（ADR-107）。
-    /// デバッグ全開は明示操作なので免除する（解析セッション＝ADR-182 は一枚岩を起こさないので関係ない）。
+    /// この一枚岩の再評価を始めない/続けない条件（ADR-107 → ADR-196）。
+    /// 前面復帰のほか、一括ロード・メモリ圧迫・生成中も降りる（どれも始めたら譲れないため）。
+    /// 免除（デバッグ全開）はゲートの表の中で扱う。
     /// ⚠️ 判定は**重い段の前ごと**に見る。1 回だけ見る作りだと、判定と実処理の間に
     /// ユーザーが戻ってきたときに代金だけ払って捨てることになる（diagnostics-67）。
-    private var shouldAbortForForeground: Bool {
-        BackgroundYield.isAppActive && !BackgroundYield.debugForceHeavyWork
+    private var shouldAbort: Bool {
+        // 台帳と埋め込みを読むだけなので通信は要らない（Wi-Fi 待ちで止めない）。
+        !BackgroundYield.allows(.localMonolith)
     }
 
     /// - Parameters:
@@ -41,7 +43,7 @@ extension AIAlbumService {
         // （実測 12〜13 秒・footprint が 279→490MB）を払い切ってから `aborted for foreground (0/5)`
         // で捨てていた。**1 件も進まないのに毎ティック同じ代金を払う**形で、ドリフト条件
         // （embedded−evaluated > 500）は満たされたままなので永久に繰り返す。
-        guard !shouldAbortForForeground else {
+        guard !shouldAbort else {
             Diagnostics.mark("aialbum.refresh: skipped — foreground (before load)")
             return current
         }
@@ -55,7 +57,7 @@ extension AIAlbumService {
         // （diagnostics-48: v7 移行の全再解釈がアルバムごとに 86k フェッチ＋カタログ構築を
         //  繰り返し、約 10 秒 × 5 本の負荷で前面のメインを飢餓させた）。
         // 読み出しの間に戻ってきていたら、カタログ構築（もう一度 86k 件を舐める）は始めない。
-        guard !shouldAbortForForeground else {
+        guard !shouldAbort else {
             Diagnostics.mark("aialbum.refresh: skipped — foreground (after load)")
             return current
         }
@@ -67,7 +69,7 @@ extension AIAlbumService {
             // 前面復帰したら次のアルバムへ進まない（一枚岩の途中放棄・ADR-107 の考え方）。
             // 背面で始まった refresh がユーザー復帰後も数分続き、体感フリーズになっていた
             // （diagnostics-48）。残りは現状のまま返し、次の夜間窓（stale 判定）が続きをやる。
-            if shouldAbortForForeground {
+            if shouldAbort {
                 Diagnostics.mark("aialbum.refresh: aborted for foreground (\(updated.count)/\(current.count))")
                 updated.append(contentsOf: current[updated.count...])
                 break

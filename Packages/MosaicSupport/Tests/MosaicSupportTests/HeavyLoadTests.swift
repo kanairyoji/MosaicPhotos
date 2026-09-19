@@ -57,12 +57,12 @@ struct HeavyLoadTests {
 
     /// 一括ロード中は、背景の重い処理（トリクル・モデルのロード）が譲る。
     /// ここが繋がっていないと札を立てても何も起きない。
-    @Test("札が立っている間は heavyShouldPause が true")
+    @Test("札が立っている間はゲートが閉じる")
     @MainActor
     func gateReflectsFlag() {
         fresh()
         HeavyLoad.begin("boot")
-        #expect(BackgroundYield.heavyShouldPause())
+        #expect(BackgroundYield.shouldYield())
         HeavyLoad.end("boot")
     }
 }

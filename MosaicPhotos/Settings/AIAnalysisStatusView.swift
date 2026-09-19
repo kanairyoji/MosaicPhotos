@@ -22,19 +22,12 @@ struct AIAnalysisStatusView: View {
     /// 解析セッション（「今すぐ解析」・ADR-182）。
     let session: AnalysisSession
 
-    /// 数え直しを重ねないための札（Section ごとに配られる `.task` の仕事を畳む）。
-    @State private var refreshInFlight = false
-    /// 実行中に来た要求。**捨てずに拾い直す**（捨てると完了直後の更新が消える）。
-    @State private var refreshRequested = false
-    /// 拾い直しの中に「候補を数え直してほしい」要求（`reuseCandidatesWithin: 0`）が混じっていたか。
-    @State private var refreshRequestedFresh = false
+    /// 数字と数え直しループの持ち主（ADR-196）。**`.task` が Section ごとに配られても 1 本**。
+    @State private var model = AnalysisStatusModel()
 
-    @State private var progress = AnalysisProgress(total: 0, embedded: 0, sceneTagged: 0)
-    /// 顔スキャン: 候補（スクリーンショット除外・端末＋クラウド）のうち済んだ枚数と候補総数。
-    /// ⚠️ 記録の総数÷ライブラリ総数では、削除済みの記録と候補外の写真で「存在しない残り」が出る。
-    @State private var faceScanned = 0
-    @State private var faceCandidates = 0
-    @State private var facesDetected = 0
+    private var deps: AnalysisStatusModel.Deps {
+        .init(engine: engine, people: people, dropboxStore: dropboxStore, session: session)
+    }
 
     private var monitor: BackgroundActivityMonitor { .shared }
     private var facesAvailable: Bool { people.isFaceModelAvailable }
@@ -47,33 +40,17 @@ struct AIAnalysisStatusView: View {
     var body: some View {
         Group {
             statusSection
-            if staleEmbeddings > 0 || faceMigration != nil { modelUpdateSection }
+            if model.staleEmbeddings > 0 || model.faceMigration != nil { modelUpdateSection }
             semanticSearchSection
             sceneTagsSection
             if facesAvailable { peopleSection }
             actionSection
             blockersSection
         }
-        // ⚠️ これらの修飾子も **Section ごとに配られる**（body は `Group`・レビュー指摘）。
-        //    素通しだと開いた瞬間に refresh が約 7 本同時に走り、そのたびに 8.5 万件の候補列挙と
-        //    FaceStore（@ModelActor）への問い合わせが重なって、人物一覧まで巻き添えで遅くなる
-        //    （ADR-119 の「規模に比例する呼び出し」がそのまま 7 倍になる）。
-        //    ビューの実体は 1 つなので、@State の札で 1 本に畳む。
-        .task { await refreshOnce() }
-        // 解析中は数秒おきに数え直す（実フィードバック: 「今すぐ解析」で進んでいるのに数字が動かない）。
-        // 候補の列挙（8.5 万件）は 1 分に 1 回で足りるので、数え直しはカウントだけにする。
-        // ⚠️ 「1 本だけ回す」札は使わない（レビュー指摘）。札を持つ Section が
-        //    スクロールで消えるとループごと死に、**見えている間だけ数字が凍る**。
-        //    7 本走らせたまま、下の `refreshOnce` で**仕事の方を畳む**。
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(4))
-                guard !Task.isCancelled, isAnalyzing || session.isActive else { continue }
-                await refreshOnce(reuseCandidatesWithin: 60)
-            }
-        }
-        .onChange(of: engine.isTagging) { _, _ in Task { await refreshOnce() } }
-        .onChange(of: people.isScanning) { _, _ in Task { await refreshOnce() } }
+        // ⚠️ この修飾子は **Section ごとに配られる**（body は `Group`）。`ensureRunning` は
+        //    何度呼ばれても 1 本に畳むので素通しでよい。ループの持ち主はモデルなので、
+        //    スクロールで Section が消えても死なない（ADR-196・旧実装の 3 つの旗を置換）。
+        .task { model.ensureRunning(deps) }
     }
 
     // MARK: - 現在の状態
@@ -111,7 +88,7 @@ struct AIAnalysisStatusView: View {
 
     private var semanticSearchSection: some View {
         Section {
-            progressRow(done: progress.embedded, total: progress.total,
+            progressRow(done: model.progress.embedded, total: model.progress.total,
                         running: monitor.isEmbedding)
             lastRunRow(.embeddings)
         } header: {
@@ -125,7 +102,7 @@ struct AIAnalysisStatusView: View {
 
     private var sceneTagsSection: some View {
         Section {
-            progressRow(done: progress.sceneTagged, total: progress.total,
+            progressRow(done: model.progress.sceneTagged, total: model.progress.total,
                         running: engine.isTagging)
             lastRunRow(.sceneTags)
         } header: {
@@ -139,9 +116,9 @@ struct AIAnalysisStatusView: View {
 
     private var peopleSection: some View {
         Section {
-            progressRow(done: faceScanned, total: faceCandidates, running: people.isScanning)
+            progressRow(done: model.faceScanned, total: model.faceCandidates, running: people.isScanning)
             LabeledContent(L("People found"), value: "\(people.people.count)")
-            LabeledContent(L("Faces detected"), value: "\(facesDetected)")
+            LabeledContent(L("Faces detected"), value: "\(model.facesDetected)")
             lastRunRow(.faces)
         } header: {
             Text("People")
@@ -192,22 +169,20 @@ struct AIAnalysisStatusView: View {
 
     // MARK: - 自動で進まない理由（diagnostics-81）
 
-    /// いま自動の解析を止めている条件（アプリが知り得るものは全部出す）。
-    private var currentBlockers: [AnalysisBlockerDiagnosis.Blocker] {
-        AnalysisBlockerDiagnosis.blockers(
-            automaticEnabled: HeavyWorkTiming.current != .paused,
-            backgroundRefreshAvailable: UIApplication.shared.backgroundRefreshStatus == .available,
-            lowPowerMode: PowerStateMonitor.shared.isLowPowerMode,
-            requiresPower: BackgroundPowerPolicy(
-                rawValue: UserDefaults.standard.integer(forKey: PowerStateMonitor.policyKey)) == .whileCharging,
-            onPower: PowerStateMonitor.shared.isOnPower,
-            thermalPaused: ThermalGate.shared.shouldPause(),
-            networkAllowed: NetworkStateMonitor.shared.networkAllowed())
+    /// いま自動の解析を止めている条件。**ゲートそのものを読む**（ADR-196）。
+    ///
+    /// ⚠️ ここで条件を再実装しない。以前は `AnalysisBlockerDiagnosis` が同じ質問に別々のコードで
+    /// 答えており、ゲートが閉じているのに「すべての条件を満たしています」と言える状態だった。
+    /// 「解析が動くか」（クラウド分＝回線も要る）と「処理枠が来るか」の両方を見る。
+    private var currentBlockers: [BackgroundYield.Blocker] {
+        let analysis = BackgroundYield.verdict(for: .cloudTrickle).blockers
+        let window = BackgroundYield.verdict(for: .window).blockers
+        return analysis + window.filter { !analysis.contains($0) }
     }
 
     /// 「条件は満たしているのに、半日以上 処理枠が来ていない」か。
     private var isWindowStarved: Bool {
-        AnalysisBlockerDiagnosis.isWindowStarved(
+        AnalysisWindowHealth.isStarved(
             blockers: currentBlockers,
             minutesSinceLastWindow: HeavyWorkScheduler.minutesSinceLastWindow())
     }
@@ -240,25 +215,36 @@ struct AIAnalysisStatusView: View {
         }
     }
 
-    private func blockerText(_ blocker: AnalysisBlockerDiagnosis.Blocker) -> String {
+    private func blockerText(_ blocker: BackgroundYield.Blocker) -> String {
         switch blocker {
-        case .automaticOff:        return L("Automatic analysis is turned off (Processing Timing).")
+        case .automaticOff:         return L("Automatic analysis is turned off (Processing Timing).")
         case .backgroundRefreshOff: return L("Background App Refresh is off for this app — iOS never gives it a background window. Turn it on in Settings → General → Background App Refresh.")
-        case .lowPowerMode:        return L("Low Power Mode is on.")
-        case .notCharging:         return L("Not charging (the current setting runs heavy work only while charging).")
-        case .tooHot:              return L("Paused because the device is warm — charging is prioritized.")
-        case .networkBlocked:      return L("The current network does not meet the setting, so cloud photos are skipped.")
+        case .lowPowerMode:         return L("Low Power Mode is on.")
+        case .notCharging:          return L("Not charging (the current setting runs heavy work only while charging).")
+        case .powerOff:             return L("Background work is turned off in Background & Battery.")
+        case .lowBattery:           return L("The battery is below 20% and the device is not charging.")
+        case .networkBlocked:       return L("The current network does not meet the setting, so cloud photos are skipped.")
+        case .tooHot:               return L("Paused because the device is warm — charging is prioritized.")
+        case .memoryPressure:       return L("Paused briefly because memory is tight.")
+        case .heavyLoad:            return L("Paused briefly while the photo library finishes loading.")
+        case .generating:           return L("Paused briefly while albums are being built.")
+        case .uiBusy:               return L("Paused because you are viewing photos right now.")
+        case .foregroundNotIdle:    return L("Paused because you are using the app — it resumes 20 seconds after you stop touching the screen.")
+        case .appActive, .boostRunning: return L("Album building waits until you leave the app.")
         }
     }
 
-    private func blockerIcon(_ blocker: AnalysisBlockerDiagnosis.Blocker) -> String {
+    private func blockerIcon(_ blocker: BackgroundYield.Blocker) -> String {
         switch blocker {
-        case .automaticOff:         return "pause.circle"
-        case .backgroundRefreshOff: return "app.badge.checkmark"
-        case .lowPowerMode:         return "battery.25"
-        case .notCharging:          return "powerplug"
-        case .tooHot:               return "thermometer.medium"
-        case .networkBlocked:       return "wifi.slash"
+        case .automaticOff:              return "pause.circle"
+        case .backgroundRefreshOff:      return "app.badge.checkmark"
+        case .lowPowerMode, .lowBattery: return "battery.25"
+        case .notCharging, .powerOff:    return "powerplug"
+        case .tooHot:                    return "thermometer.medium"
+        case .networkBlocked:            return "wifi.slash"
+        case .memoryPressure, .heavyLoad: return "memorychip"
+        case .generating:                return "rectangle.stack"
+        case .uiBusy, .foregroundNotIdle, .appActive, .boostRunning: return "hand.tap"
         }
     }
 
@@ -291,6 +277,10 @@ struct AIAnalysisStatusView: View {
         case .finished: return L("Everything is analyzed.")
         case .expired: return L("iOS ended the boost. Analysis keeps going automatically while charging — or tap Analyze Now.")
         case .lowBattery: return L("Stopped because the battery is low. Plug in and tap Analyze Now to continue.")
+        case .blocked(let blockers):
+            // 「すべて解析済みです」と嘘をつかない。止めている理由をそのまま出す。
+            guard let first = blockers.first else { return L("Everything is analyzed.") }
+            return blockerText(first)
         case .user, .leftApp: return nil
         }
     }
@@ -329,80 +319,16 @@ struct AIAnalysisStatusView: View {
         LabeledContent(L("Last analyzed"), value: lastRunText(pass))
     }
 
-    // MARK: - 取得・整形
-
-    /// - Parameter reuseCandidatesWithin: この秒数以内に列挙した候補があれば使い回す（定期の数え直し用）。
-    /// `refresh` を**同時に 1 本だけ**にする包み（重い列挙を 7 本走らせない）。
-    ///
-    /// ⚠️ 実行中に来た要求は**捨てずに畳む**（レビュー指摘）。捨てると、初回の列挙（数秒）の
-    /// 最中に解析が終わったときの `.onChange` が消え、ポーリングも
-    /// 「解析中でなければ数え直さない」ので、**終わった瞬間の数字が止まったまま**になる。
-    private func refreshOnce(reuseCandidatesWithin seconds: TimeInterval = 0) async {
-        if refreshInFlight {
-            refreshRequested = true
-            if seconds == 0 { refreshRequestedFresh = true }   // 明示の「新鮮に」を握り潰さない
-            return
-        }
-        refreshInFlight = true
-        defer { refreshInFlight = false }
-        await refresh(reuseCandidatesWithin: seconds)
-        // 実行中に来た要求は**最後まで拾う**（上限で切ると、切った先の要求が捨てられて
-        // 完了直後の数字が凍る・レビュー指摘）。暴走しないのは、拾い直しでは候補の列挙を
-        // 使い回す＝1 回が軽いため（4 秒ポーリングに追い越されて終わらなくなることが無い）。
-        // ただし明示的に「新鮮に」と言われた要求（onChange）はその通り数え直す。
-        // 普通に抜けるときは旗を下ろす。**キャンセルで抜けたときは残す**（レビュー指摘）——
-        // ループの持ち主は Section ごとの `.task` なので、スクロールでその Section が消えると
-        // ここがキャンセルされる。旗を下ろすと直前に立った要求（解析完了の onChange）が誰にも
-        // 処理されず、完了直後の数字が凍る。残しておけば次に来た呼び出しが拾う。
-        defer { if !Task.isCancelled { refreshRequested = false; refreshRequestedFresh = false } }
-        while refreshRequested, !Task.isCancelled {
-            refreshRequested = false
-            let wantsFresh = refreshRequestedFresh
-            refreshRequestedFresh = false
-            // ⚠️ 「新鮮に」でも、数秒以内に列挙したばかりならもう一度 8.5 万件を舐めない
-            //（レビュー指摘）。開いた瞬間は Section ごとに要求が 7 本来るので、素直に従うと
-            // 二重の全列挙になる。抑制は時刻で決める（「1 回おき」だと要求の並びに依存する）。
-            await refresh(reuseCandidatesWithin: wantsFresh ? 5 : 60)
-        }
-    }
-
-    private func refresh(reuseCandidatesWithin: TimeInterval = 0) async {
-        async let prog = engine.analysisProgress()
-        async let stats = people.scanStats()
-        progress = await prog
-        facesDetected = await stats.faces
-        // 顔スキャンの分母は**候補そのもの**（スキャナと同じ列挙）、分子は「候補のうち済んだ数」。
-        if facesAvailable {
-            let candidates: [String]
-            if let cached = cachedCandidates, Date().timeIntervalSince(cached.at) < reuseCandidatesWithin {
-                candidates = cached.keys
-            } else {
-                candidates = await analysisOrderedRefKeys(dropboxStore: dropboxStore)
-                cachedCandidates = (candidates, Date())
-            }
-            let pending = await people.pendingScanCount(candidateRefKeys: candidates)
-            faceCandidates = candidates.count
-            faceScanned = max(0, candidates.count - pending)
-            faceMigration = await people.faceModelMigrationProgress(candidateRefKeys: candidates)
-        }
-        staleEmbeddings = await engine.pendingEmbeddingMigration()
-    }
-
-    @State private var cachedCandidates: (keys: [String], at: Date)?
-    /// モデル更新の移行（ADR-186）: 旧モデルで作った埋め込みの残り／顔の影の世代の進み具合。
-    @State private var staleEmbeddings = 0
-    @State private var faceMigration: (scanned: Int, total: Int)?
-
     // MARK: - モデル更新（ADR-186）
 
     /// モデルが更新された後、索引を**少しずつ**新モデルへ移している間だけ出す。
     /// DB を丸ごと作り直さないので、この間も検索・ピープルは従来の結果で使える。
     private var modelUpdateSection: some View {
         Section {
-            if staleEmbeddings > 0 {
-                LabeledContent(L("Search index"), value: L("\(staleEmbeddings) left"))
+            if model.staleEmbeddings > 0 {
+                LabeledContent(L("Search index"), value: L("\(model.staleEmbeddings) left"))
             }
-            if let m = faceMigration {
+            if let m = model.faceMigration {
                 progressRow(done: m.scanned, total: m.total, running: people.isScanning)
             }
         } header: {

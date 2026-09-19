@@ -4,19 +4,14 @@ import Foundation
 /// `AnalysisSession` は状態を持ち、判断はすべてここに置く（`NightlyWorkPolicy` と同じ分け方）。
 enum AnalysisSessionPolicy {
 
-    /// 電池がこれを下回ったら（電源なしのとき）止める。
-    static let lowBatteryFloor: Float = 0.2
-
     /// 進捗の「準備中」枠（モデルロードの 20〜40 秒に 1 目盛りずつ進める）。
     /// BGContinuedProcessingTask は**進捗を報告しないタスクから OS が殺す**ので、
     /// 写真が 1 枚も終わらない間も何かが進んでいると伝える。
     static let warmupUnits: Int64 = 20
 
-    /// 電源なしで電池が下限を割ったら止める。残量が読めない（負）なら止めない。
-    static func shouldStopForBattery(onPower: Bool, level: Float) -> Bool {
-        guard !onPower, level >= 0 else { return false }
-        return level < lowBatteryFloor
-    }
+    // ⚠️ 電池の下限は **`BackgroundYield` のゲート表**（ADR-196）が持つ。ここに置くと
+    //    ブーストのループの中でしか効かず、「電池のため止めた」と言った直後に方針が
+    //    同じ処理を再開する（レビュー指摘）。
 
     /// 残作業の合計（顔・タグ・埋め込み）。負の値（分母未確定）は 0 扱い。
     static func remaining(faces: Int, tagsPending: Int, embedPending: Int) -> Int {
@@ -32,8 +27,13 @@ enum AnalysisSessionPolicy {
         return (min(done, total), total)
     }
 
-    /// セッションが終わったか。分母未確定（顔スキャンがまだ始まっていない）のうちは終わらない。
-    static func isFinished(remaining: Int, tagging: Bool, scanning: Bool, faceScanSettled: Bool) -> Bool {
-        remaining == 0 && !tagging && !scanning && faceScanSettled
+    /// このブーストでやることが無くなったか。
+    ///
+    /// 呼ぶのは**前口上が終わったあと**（`AnalysisSession.watchProgress`）なので、
+    /// 「顔スキャンがまだ始まっていない」状態は考えなくてよい（旧 `faceScanSettled` は撤去）。
+    /// ⚠️ これは「残作業ゼロ」ではなく「いま動かせるものが無い」。残作業があるのにゲートで
+    /// 畳んだ場合を `.finished` と区別するのは呼び出し側（ゲートに理由を聞く）。
+    static func isFinished(remaining: Int, tagging: Bool, scanning: Bool) -> Bool {
+        remaining == 0 && !tagging && !scanning
     }
 }

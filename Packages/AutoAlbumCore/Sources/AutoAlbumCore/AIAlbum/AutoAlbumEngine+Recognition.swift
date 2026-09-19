@@ -278,7 +278,7 @@ extension AutoAlbumEngine {
     /// 未タグ写真の Vision タグ付け＋AI アルバム再評価をバックグラウンドで進める（非ブロッキング）。
     /// QoS は `.background`：UI 操作（.userInitiated）と CPU を奪い合わず、OS が優先度を下げる。
     /// 未タグ写真の Vision タグ付け＋CLIP 埋め込みをバックグラウンドで進める。
-    /// ※ 一時停止で滞留したタスクは、ゲートが開けば（`heavyShouldPause` が false になれば）内部の
+    /// ※ 一時停止で滞留したタスクは、ゲートが開けば（`shouldYield` が false になれば）内部の
     ///   `waitWhilePaused` で**自分で再開**する。生成フラグ滞留の安全弁は
     ///   `BackgroundActivityMonitor.isGeneratingAlbums`（時間失効）とデバッグ全開バイパスが担う。
     /// 実行中の背景処理を**明け渡させてから**開始し直す。夜間 BGTask 窓の先頭でだけ使う（ADR-95）。
@@ -322,7 +322,7 @@ extension AutoAlbumEngine {
                     backgroundFillTask = nil
                 }
             }
-            Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.heavyShouldPause()) "
+            Diagnostics.mark("bgfill: begin (pause=\(BackgroundYield.shouldYield()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums))")
             // ⚠️ **準備の前にゲートを待つ**（ADR-95 追記）。この下の準備——お気に入り再取得・
             //    全解析対象キーの取得（約 86k）・`AnalysisOrder.ordered` の並べ替え——は数秒かかる。
@@ -331,7 +331,7 @@ extension AutoAlbumEngine {
             //    （diagnostics-39・起動時と前面復帰時の残ハングの正体）。しかも直後に
             //    `tags: finished — 0 tagged` で捨てられる＝**やる気が無いときに準備だけしていた**。
             //    待ちは 60 秒で打ち切られ、フラグを解放して抜ける（居座らない）。
-            if await BackgroundTrickle.waitWhilePaused({ BackgroundYield.heavyShouldPause() }) {
+            if await BackgroundTrickle.waitWhilePaused({ BackgroundYield.shouldYield() }) {
                 Diagnostics.mark("bgfill: gate stayed closed — standing down")
                 return
             }
@@ -344,7 +344,7 @@ extension AutoAlbumEngine {
             // 起動直後（pause=true）でも CLIP テキストタワーのロード（新規インストール直後は
             // 実測 23 秒）＋約300語の encode が走り、起動を重くしていた。未ウォームでも実害はない
             // ——`isReady` が false のとき insight は CLIP ラベルを飛ばし Vision タグだけで即返す。
-            if !BackgroundYield.heavyShouldPause() {
+            if !BackgroundYield.shouldYield() {
                 prewarmTask = Task(priority: .background) { [weak self] in
                     guard let self, let labeler = self.labelProvider else { return }
                     await labeler.prewarm()
@@ -366,7 +366,8 @@ extension AutoAlbumEngine {
             //    まったく減らず、`embed: batch` が数週間 1 度も出ていなかった。夜間の窓は数分〜
             //    数十分で、その間ずっとタグが窓を使い切っていたため。ADR-72 の「バックアップが
             //    埋め込みに飢餓する」と同じ構造で、対処も同じ＝**順番を必ず回す**。
-            let tagNetOK = NetworkStateMonitor.shared.networkAllowed()
+            // 回線ポリシーはゲートの表から引く（ブーストは免除される・ADR-196）。
+            let tagNetOK = !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked)
             let tagPool = await store.enrichedRefKeysNewestFirst()
             // ⚠️ 絞り込みと並べ替えは**メインから降ろす**（ADR-95 追記）。`AnalysisOrder.ordered` は
             //    約 86k 件の安定ソート（比較ごとに Set 参照）で、MainActor で回すと数百ms〜秒級に
@@ -377,7 +378,7 @@ extension AutoAlbumEngine {
             }.value
             await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                            maxBatches: Self.tagBatchesPerRun,
-                                           shouldPause: { BackgroundYield.heavyShouldPause() })
+                                           shouldPause: { BackgroundYield.shouldYield() })
             // ⚠️ フェーズの切れ目で**キャンセルを見る**（ADR-95）。フォアグラウンド復帰の
             //    `stopForForeground()` はこのタスクを cancel するが、以前は次フェーズへそのまま進み、
             //    「embed loop entry (unembedded=40181)」→「embed: finished — 0 photos in 0.0s」という
@@ -391,20 +392,20 @@ extension AutoAlbumEngine {
             // 廃止＝ADR-108。窓はすべて埋め込み・タグ・顔スキャンに使う）。
             let embedPause: @MainActor () -> Bool = { [weak self] in
                 // 重い処理の共通方針（電源接続＋低電力OFF＋一定時間アイドル＋生成との相互排他）は
-                // BackgroundYield.heavyShouldPause に一元化。埋め込みは操作中も譲る。
-                (self?.isInteracting ?? false) || BackgroundYield.heavyShouldPause()
+                // BackgroundYield.shouldYield に一元化。埋め込みは操作中も譲る。
+                (self?.isInteracting ?? false) || BackgroundYield.shouldYield()
             }
-            Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.heavyShouldPause()) "
+            Diagnostics.mark("bgfill: embed loop entry (pause=\(BackgroundYield.shouldYield()) "
                              + "generating=\(BackgroundActivityMonitor.shared.isGeneratingAlbums) "
                              + "unembedded=\(await store.unembeddedCount()))")
             // ⚠️ ゲートが閉じていても**待つ**（diagnostics-81）。以前はここが
-            //    `while !heavyShouldPause()` で、入口で閉じていると**ループに一度も入らず**
+            //    `while !shouldYield()` で、入口で閉じていると**ループに一度も入らず**
             //    実行ごと捨てていた。実機では処理枠 4 分 56 秒の頭で `pause=true` を出し、
             //    以後 1 枚も埋め込まないまま期限切れになっている（閉じていた理由は
             //    バックアップの一括ロードとサムネのドレイン＝どちらも数秒〜数十秒で開く）。
             //    待ちの上限（60 秒）を超えたときだけ畳む＝実行中フラグは握り続けない（ADR-95）。
             await BackgroundTrickle.runPhasesWaitingForGate(
-                shouldPause: { BackgroundYield.heavyShouldPause() },
+                shouldPause: { BackgroundYield.shouldYield() },
                 pausePerfLabel: "embed.gateWait",
                 onStandDown: { Diagnostics.mark("bgfill: embed gate stayed closed — standing down") }
             ) {
@@ -427,7 +428,7 @@ extension AutoAlbumEngine {
                                       maxBatches: 12,
                                       favorites: favorites,
                                       shouldPause: shouldPause,
-                                      networkAllowed: { NetworkStateMonitor.shared.networkAllowed() },
+                                      networkAllowed: { !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked) },
                                       onProgress: { BackgroundActivityMonitor.shared.embedRemaining = $0 }) {
             [weak self] newKeys in await self?.refreshAIAlbumsThrottled(newRefKeys: newKeys)
         }

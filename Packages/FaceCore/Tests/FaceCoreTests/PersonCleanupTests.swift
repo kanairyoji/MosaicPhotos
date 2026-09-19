@@ -220,22 +220,21 @@ struct ForegroundScanSuppressionTests {
         PeopleEngine(faceProvider: nil, store: FaceStore(isStoredInMemoryOnly: true))
     }
 
-    @Test("前面のときは開始しない")
+    @Test("前面で操作中のときは開始しない（入口＝譲りと同じ判定・ADR-196）")
     func doesNotStartWhileActive() {
-        let wasActive = BackgroundYield.isAppActive
-        defer { BackgroundYield.isAppActive = wasActive }
-        BackgroundYield.isAppActive = true
+        // 前面でアクティブ＝触っている直後（アイドル 0 秒）。実行マシンの状態に左右されないよう差す。
+        BackgroundYield.environmentOverrideForTesting = .init(idleSeconds: 0, scenePhase: .active)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
 
         let engine = makeEngine()
         engine.startScan(candidateRefKeys: ["L-1", "L-2"])
-        #expect(!engine.isScanning, "前面で起こすと入口の準備コストだけ payer になる")
+        #expect(!engine.isScanning, "操作中に起こすと入口の準備コストだけ払うことになる")
     }
 
     @Test("非アクティブ（ロック中・夜間）なら従来どおり")
     func startsWhenInactive() {
-        let wasActive = BackgroundYield.isAppActive
-        defer { BackgroundYield.isAppActive = wasActive }
-        BackgroundYield.isAppActive = false
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .background)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
 
         let engine = makeEngine()
         engine.startScan(candidateRefKeys: ["L-1", "L-2"])

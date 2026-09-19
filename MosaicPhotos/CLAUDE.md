@@ -36,6 +36,15 @@ MosaicPhotos/                      ← メインアプリターゲット（合�
   ※ 顔認識ロジックは Packages/FaceCore/（旧 AutoAlbumCore/Faces）へ分離・共通プリミティブは Packages/PerceptionCore/
   MobileCLIP/                      CLIP の Core ML モデル＋語彙（.gitignore 対象・scripts/build_mobileclip.sh で生成）
   FaceModel/                       顔認識モデル（AuraFace-v1・.gitignore 対象・scripts/build_auraface.sh で生成）
-  HeavyWorkScheduler.swift         BGProcessingTask（ロック中の夜間処理＝タグ/埋め込み/顔スキャン/生成）
+  HeavyWorkScheduler.swift         BGProcessingTask（ロック中の夜間処理）。判断は NightlyPlan、ここは反映だけ
+  NightlyWorkPolicy.swift          夜間窓の純ロジック（生成の見送り／週 1 照合）＋ NightlyPlan.steps（窓の手順）
+  AnalysisDriver.swift             常設の方針を評価して残作業を起こす駆動役＋ AnalysisDriverPolicy（純）。
+                                   **解析を起こす前口上はここにしかない**（ADR-195/196）
+  AnalysisSession.swift            「今すぐ解析」＝無状態のブースト（BGContinuedProcessingTask）。
+                                   前口上は駆動役へ委譲し、進捗の監視と停止判定だけを持つ
+  AnalysisSessionPolicy.swift      ブーストの純ロジック（進捗の合成・終わりの判定）
+  AnalysisWindowHealth.swift       「条件は満たしているのに処理枠が来ない」の判定（純）
+  Settings/AnalysisStatusModel.swift  AI 解析の状況画面の数字と数え直しループの持ち主
+                                   （body が Group { Section } なので、ループはビュー階層に置かない）
 
 ```

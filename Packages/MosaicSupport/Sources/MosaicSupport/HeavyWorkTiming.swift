@@ -16,8 +16,10 @@ import Foundation
 /// | 電源 | `PowerStateMonitor.policy` | 充電中のみ |
 /// | 回線 | `NetworkStateMonitor.policy` | Wi-Fi のみ |
 ///
-/// 本型は 1 つ目の軸（自動処理の有無）と、判定の**純ロジック**（`allows`）だけを持つ。
-/// 電源・回線の状態は呼び出し側（`BackgroundYield`）が各モニタから渡す。
+/// 本型が持つのは 1 つ目の軸（自動処理の有無）と、旧 5 段階からの移行だけ。
+/// **判定そのものは `BackgroundYield` のゲート表**（ADR-196）が持つ——以前はここに
+/// `allows(isAppActive:foregroundIdle:powerAllowed:networkAllowed:requiresNetwork:)` があり、
+/// 「どの条件をどの仕事に課すか」が呼び出し側の引数の組み方に散っていた。
 public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
     /// 自動処理なし（「今すぐ処理」とデバッグ実行だけ可）。
     case paused = 0
@@ -73,30 +75,5 @@ public enum HeavyWorkTiming: Int, CaseIterable, Sendable {
         case 4:  return (.enabled, .always, .unrestricted)
         default: return (.enabled, nil, nil)   // 1（nightly）・2（chargeActive）と未知の値
         }
-    }
-
-    // MARK: - 判定（純ロジック・テスト対象）
-
-    /// この設定・状況で重い処理を動かしてよいか。
-    /// - Parameters:
-    ///   - isAppActive: アプリがフォアグラウンドでアクティブか
-    ///   - foregroundIdle: アプリ使用中だが最後のタッチから `foregroundIdleSeconds` 以上経過したか
-    ///   - powerAllowed: 電源ポリシー（`PowerStateMonitor.backgroundAllowed()`）を満たすか
-    ///   - networkAllowed: 回線ポリシー（`NetworkStateMonitor.networkAllowed()`）を満たすか
-    ///   - requiresNetwork: この作業が回線を必要とするか。**端末内写真の顔スキャン・CLIP 埋め込みは
-    ///     通信不要なので false**（電源＋非使用だけで走る）。false なら回線条件を課さない。
-    public func allows(isAppActive: Bool, foregroundIdle: Bool,
-                       powerAllowed: Bool, networkAllowed: Bool,
-                       requiresNetwork: Bool = true) -> Bool {
-        guard self != .paused else { return false }
-
-        // 前面では「触っていないこと」だけを要求する（ADR-195）。触れば各処理が 1 単位ごとに譲る。
-        if isAppActive {
-            guard foregroundIdle else { return false }    // 最終タッチから 20 秒未満は動かさない
-        }
-
-        guard powerAllowed else { return false }
-        // 回線を要する作業のみ課す。ローカル処理（端末内写真）は回線条件なしで走る。
-        return requiresNetwork ? networkAllowed : true
     }
 }

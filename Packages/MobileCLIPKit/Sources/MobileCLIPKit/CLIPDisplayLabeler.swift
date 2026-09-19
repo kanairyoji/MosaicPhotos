@@ -29,9 +29,9 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     /// 最初の `encodeText` が CLIP テキストタワーのロード（実測 12.9 秒・約 120MB）を起こし、
     /// **ロードは中断できない**ので、起動の一括ロードや前面復帰と重なると footprint が跳ねる
     /// （569MB まで伸び、しかも直後に `cancelPrewarm` で捨てられていた＝完全な無駄）。
-    /// 判定は `heavyShouldPause()` に集約されている（`HeavyLoad` の札も含む）。
+    /// 判定は `shouldYield()` に集約されている（`HeavyLoad` の札も含む）。
     public nonisolated func prewarm() async {
-        if await MainActor.run(body: { BackgroundYield.heavyShouldPause() }) {
+        if await MainActor.run(body: { BackgroundYield.shouldYield() }) {
             Diagnostics.mark("labeler: prewarm deferred — heavy work paused before model load")
             return
         }
@@ -115,7 +115,7 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
             // ⚠️ ゲートも 1 語ごとに見る（キャンセルだけでは足りない）。前面復帰や起動の一括ロードが
             // 始まったら、`cancelPrewarm` が届かなくても自分から降りる。
             if built.count % Self.gateCheckStride == 0,
-               await MainActor.run(body: { BackgroundYield.heavyShouldPause() }) {
+               await MainActor.run(body: { BackgroundYield.shouldYield() }) {
                 Diagnostics.mark("labeler: prewarm yielded at \(built.count)/\(concepts.count)")
                 return nil
             }

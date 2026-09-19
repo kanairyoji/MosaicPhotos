@@ -23,7 +23,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     private var maxMs: Double = 0
     /// 背面で観測した停止の回数（ユーザーには見えないので本体の集計には混ぜない）。
     private var backgroundStalls = 0
-    /// アプリが前面でアクティブか（`BackgroundYield.isAppActive` が同期する）。
+    /// アプリが前面でアクティブか（`(BackgroundYield.scenePhase == .active)` が同期する）。
     /// ⚠️ **背面の「ハング」は計測ノイズ**（ADR-82）。iOS はアプリが背面にいる間メインランループを
     /// 絞り、必要なら中断する。`ProcessSuspension` は**正式な中断**しか捉えられないため、
     /// 単なる throttle は「メインが 28 秒ブロック」として記録され、実機ログを読み誤らせていた
@@ -55,7 +55,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
 
     private init() {}
 
-    /// 前面/背面を伝える（`BackgroundYield.isAppActive` から自動で同期される）。
+    /// 前面/背面を伝える（`(BackgroundYield.scenePhase == .active)` から自動で同期される）。
     /// `nonisolated`：ウォッチドッグは MainActor 外（専用 queue・main.async クロージャ）から
     /// この値を読むため、ロック保護の素の状態として持つ。
     public func setAppActive(_ active: Bool) {

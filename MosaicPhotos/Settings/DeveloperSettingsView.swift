@@ -30,7 +30,7 @@ struct DeveloperSettingsView: View {
     @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
     @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
     /// デバッグ: 重い処理のゲートを全面無効化（ランタイムのみ・再起動でリセット）。
-    @State private var forceHeavyWork = BackgroundYield.debugForceHeavyWork
+    @State private var forceHeavyWork = (BackgroundYield.exemption == .debug)
     @State private var heavyWorking = false
     /// BG タスク検証: 予約状態と「その場実行」中フラグ。
     @State private var bgPendingStatus = "…"
@@ -139,8 +139,12 @@ struct DeveloperSettingsView: View {
     private var heavyWorkDebugSection: some View {
         Section {
             Toggle("重い処理のゲートを常に開く", isOn: $forceHeavyWork)
-                .onChange(of: forceHeavyWork) { _, on in BackgroundYield.debugForceHeavyWork = on }
-            LabeledContent("いま重い処理を実行してよいか", value: BackgroundYield.heavyWorkAllowed ? "はい" : "いいえ")
+                .onChange(of: forceHeavyWork) { _, on in BackgroundYield.setExemption(on ? .debug : .none) }
+            // ゲートの表（ADR-196）をそのまま出す。「いいえ」のとき**何が止めているか**まで見える。
+            ForEach(BackgroundYield.HeavyWork.allCases, id: \.self) { work in
+                let v = BackgroundYield.verdict(for: work)
+                LabeledContent(work.rawValue, value: v.allowed ? "はい" : v.reason)
+            }
             Button {
                 Task {
                     heavyWorking = true
