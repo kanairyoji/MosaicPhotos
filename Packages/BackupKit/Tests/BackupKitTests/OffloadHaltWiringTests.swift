@@ -17,7 +17,10 @@ import Testing
 struct OffloadHaltWiringTests {
 
     private let root = "/MosaicPhotos"
-    private let backupRoot = "/MosaicPhotos/iPhone-E7/Backup"
+    /// ⚠️ **実際の端末フォルダ名から組み立てる**。決め打ちのパスにすると、印の書き先が
+    /// 「管轄外」と判定されて再送が 0 件になる——その判定自体が正しいので、
+    /// テストの前提の方を本物に合わせる。
+    private var backupRoot: String { BackupEngine.deviceBackupRoot(for: root) }
     private let photo = Data("only-copy".utf8)
 
     private func makeEngine(_ server: FakeDropboxServer,
@@ -91,6 +94,71 @@ struct OffloadHaltWiringTests {
             #expect(engine.offloadHalt == nil, "在る写真を消えたと判定して停止した（誤発動）")
             #expect(UserDefaults.standard.integer(forKey: BackupSettingsKeys.offloadAutoThresholdMB) == 500,
                     "何も起きていないのに設定を書き換えた")
+        }
+    }
+
+    // MARK: - 台帳の建て直しと、印の再送（どちらもエンジン側の配線）
+
+    /// ⚠️ **既に台帳があるなら建て直さない**。実端末の台帳が正で、クラウドの印は
+    /// 「無くしたときの控え」でしかない。上書きすると、端末で直した内容を捨てることになる。
+    @Test("台帳が空のときだけ、印から建て直す")
+    func rebuildOnlyWhenTheLedgerIsEmpty() async {
+        await withBackupFolder {
+            let server = FakeDropboxServer()
+            let (store, path) = await prepared(server)
+            let engine = makeEngine(server, store: store)
+            let metadata = DropboxBackupMetadata(entries: [
+                "\(backupRoot)/2023/2023-11/other.jpg".lowercased(): DropboxBackupMetadata.Entry(
+                    people: [], albums: ["旅行"], localIdentifier: "ID-other",
+                    offloadedAt: "2026-09-01T00:00:00Z")])
+
+            // (1) 台帳には既に 1 件ある（`prepared` が入れた）＝建て直さない。
+            await engine.rebuildOffloadLedgerIfEmpty(from: metadata)
+            var snapshot = await store.offloadLedgerSnapshot()
+            #expect(snapshot.count == 1, "台帳が在るのに印で上書きした（端末側の記録を失う）")
+
+            // (2) 台帳を空にすると、印から建て直す。
+            await store.removeOffloads(localIdentifiers: ["ID-a"])
+            await engine.reloadOffloadLedger()
+            await engine.rebuildOffloadLedgerIfEmpty(from: metadata)
+            snapshot = await store.offloadLedgerSnapshot()
+            #expect(snapshot.count == 1, "空の台帳を印から建て直していない")
+            #expect(snapshot.byAlbum.values.flatMap { $0 }
+                        .contains("\(backupRoot)/2023/2023-11/other.jpg".lowercased()),
+                    "建て直した中身が印と違う")
+            _ = path
+        }
+    }
+
+    /// 未送信の印は、**台帳を出典に**再送される（写真はもう端末に無いので候補走査には現れない）。
+    @Test("未送信の印は、台帳から再送されて送信済みになる")
+    func pendingMarkersAreResentFromTheLedger() async {
+        await withBackupFolder {
+            let server = FakeDropboxServer()
+            let (store, _) = await prepared(server)
+            let engine = makeEngine(server, store: store)
+            #expect(await store.offloadsPendingMarker().count == 1, "前提: 未送信が 1 件")
+
+            let sent = await engine.retryPendingOffloadMarkers()
+
+            #expect(sent == 1, "台帳を出典に再送できていない")
+            #expect(await store.offloadsPendingMarker().isEmpty, "送れたのに未送信のまま")
+        }
+    }
+
+    /// 書けなかった回は**未送信のまま**残る（送信済みにすると二度と再送されない）。
+    @Test("再送に失敗したら、未送信のまま残る")
+    func failedResendStaysPending() async {
+        await withBackupFolder {
+            let server = FakeDropboxServer()
+            let (store, _) = await prepared(server)
+            await server.failUploads(matching: ".mosaic", status: 403)
+            let engine = makeEngine(server, store: store)
+
+            let sent = await engine.retryPendingOffloadMarkers()
+
+            #expect(sent == 0, "書けていないのに送信済みにした")
+            #expect(await store.offloadsPendingMarker().count == 1, "未送信の記録が消えた")
         }
     }
 
