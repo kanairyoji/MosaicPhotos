@@ -213,12 +213,30 @@ public enum BackgroundYield {
     /// ⚠️ ウォッチドッグへ伝える（背面の「ハング」は OS の throttle で体感とは無関係＝ADR-82）。
     /// 呼び出し側が別途伝える方式だと必ず忘れるので、唯一の出典であるここから同期する。
     public static func setScenePhase(_ phase: ScenePhaseKind) {
+        outsideWrites &+= 1        // スコープの外から入った＝後始末で上書きしない印
+        applyScenePhase(phase)
+    }
+
+    private static func applyScenePhase(_ phase: ScenePhaseKind) {
         scenePhase = phase
         MainThreadWatchdog.shared.setAppActive(phase == .active)
     }
 
     /// 免除の段を設定する（ブーストの開始・終了）。
-    public static func setExemption(_ e: Exemption) { exemption = e }
+    public static func setExemption(_ e: Exemption) {
+        outsideWrites &+= 1
+        exemption = e
+    }
+
+    /// **スコープの外から**状態が書かれた回数。
+    ///
+    /// ⚠️ 後始末を「値が変わっていないか」で決めてはいけない（レビュー 13 周目）。
+    /// 値は**誰が書いたかを表さない**ので、外から**同じ値**が書かれたときに
+    /// 「誰も触っていない」と誤判定して上書きしてしまう
+    /// ——12 周目に「無条件に戻す」を直した結果、逆向きに同じ事故が起きていた。
+    /// 数えるのは外からの書き込みだけ（スコープ自身の出入りは数えない）ので、
+    /// 入れ子でも正しく戻り、外から書かれたときだけ手を引く。
+    private static var outsideWrites = 0
 
     /// 画面状態を一時的に変える（処理枠の実行中など）。**戻し忘れが起きない形**。
     /// 旧実装は `isAppActive` / `isAppInBackground` を手で書き換え、`restoreAppActive` という
@@ -234,8 +252,9 @@ public enum BackgroundYield {
     public static func withScenePhase<T>(_ phase: ScenePhaseKind,
                                          _ body: () async -> T) async -> T {
         let previous = scenePhase
-        setScenePhase(phase)
-        defer { if scenePhase == phase { setScenePhase(previous) } }
+        applyScenePhase(phase)
+        let stamp = outsideWrites
+        defer { if outsideWrites == stamp { applyScenePhase(previous) } }
         return await body()
     }
 
@@ -245,7 +264,8 @@ public enum BackgroundYield {
     public static func withExemption<T>(_ e: Exemption, _ body: () async -> T) async -> T {
         let previous = exemption
         exemption = e
-        defer { if exemption == e { exemption = previous } }
+        let stamp = outsideWrites
+        defer { if outsideWrites == stamp { exemption = previous } }
         return await body()
     }
 

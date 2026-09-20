@@ -134,6 +134,39 @@ struct ScenePhaseScopeTests {
                 "外から入った前面を古い値で上書きした（以後ずっと背面扱いになる）")
     }
 
+    /// 回帰: 外から入った値が**たまたまスコープと同じ**でも、書き戻さないこと。
+    ///
+    /// ⚠️ 値は「誰が書いたか」を表さない。12 周目に「値が変わっていなければ戻す」で直したが、
+    /// それだと外から同じ値が書かれたときに「誰も触っていない」と誤判定して上書きする
+    /// ——前面のまま背面扱いで固定される事故の、ちょうど裏返し。
+    /// 例: デバッグ実行（前面で開始・中で背面扱い）の最中に画面を消すと、
+    /// アプリ側が `.background` を書く。抜けるときに `.active` へ戻すと、
+    /// **画面を消しているのに前面扱い**になり、重い処理が課されたまま止まる。
+    @Test("回帰: 外から同じ値が書かれても、抜けるときに書き戻さない")
+    func doesNotRestoreWhenOutsideWroteTheSameValue() async {
+        BackgroundYield.setScenePhase(.active)
+        defer { BackgroundYield.setScenePhase(.active) }
+
+        await BackgroundYield.withScenePhase(.background) {
+            // 実行中に画面が消えた（アプリ側の onChange 相当・**同じ値**）。
+            BackgroundYield.setScenePhase(.background)
+        }
+        #expect(BackgroundYield.scenePhase == .background,
+                "外から入った背面を、同じ値だからと前面へ戻した（消灯中なのに前面扱い）")
+    }
+
+    @Test("回帰: 外から同じ段が書かれても、抜けるときに段を戻さない")
+    func doesNotRestoreWhenOutsideWroteTheSameExemption() async {
+        BackgroundYield.setExemption(.none)
+        defer { BackgroundYield.setExemption(.none) }
+
+        await BackgroundYield.withExemption(.debug) {
+            BackgroundYield.setExemption(.debug)   // 設定画面でトグルを ON にした
+        }
+        #expect(BackgroundYield.exemption == .debug,
+                "トグルが ON なのにデバッグ実行の後始末が段を下げた")
+    }
+
     @Test("回帰: 実行中にブーストが始まったら、抜けるときに段を下げない")
     func doesNotClobberAnExemptionChangedFromOutside() async {
         BackgroundYield.setExemption(.none)

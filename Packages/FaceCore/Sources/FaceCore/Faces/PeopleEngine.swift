@@ -208,6 +208,7 @@ public final class PeopleEngine {
     /// ネスト可（複数画面が重なっても最後の 1 つが閉じるまで保留）。
     @ObservationIgnored private var reloadHoldCount = 0
     @ObservationIgnored private var reloadPendingWhileHeld = false
+    @ObservationIgnored private var editPendingWhileHeld = false
 
     /// ピープル関連の画面を開いているか（＝顔スキャンは譲る）。
     var isBrowsingPeople: Bool { reloadHoldCount > 0 }
@@ -216,7 +217,14 @@ public final class PeopleEngine {
 
     public func endPeopleReloadHold() {
         reloadHoldCount = max(0, reloadHoldCount - 1)
-        guard reloadHoldCount == 0, reloadPendingWhileHeld else { return }
+        guard reloadHoldCount == 0 else { return }
+        // 保留中に人物の構成が変わっていれば、閉じるときに 1 回だけ知らせる。
+        if editPendingWhileHeld {
+            editPendingWhileHeld = false
+            editVersion &+= 1
+            scheduleEditFollowUp()
+        }
+        guard reloadPendingWhileHeld else { return }
         reloadPendingWhileHeld = false
         Task { [weak self] in await self?.loadPeople() }
     }
@@ -332,14 +340,13 @@ public final class PeopleEngine {
                 //    人物リストを再発行し続けることになる（実機で 600〜1000ms のハングが
                 //    その回数ぶん出ていた・ADR-95）。スキャン進捗の反映は急がないのでまとめる。
                 onBatch: { [weak self] in self?.setNeedsPeopleReload() })
-            // ⚠️ **止められたらここで降りる**（レビュー指摘）。`tagger.scan` は取り消しを
-            // 受けると**正常に返る**ので、確認しないと下の仕上げへそのまま流れ込む。
-            // 処理枠の期限切れは `stopScan()` → `setTaskCompleted(success: false)` の順で走り、
-            // その時点では背面・充電・アイドルなので `shouldYield()` は false——
-            // **OS に「窓は終わった」と告げた後で全再クラスタが始まり**、書き込みの途中で
-            // 中断・終了され得る。前面復帰（ADR-79）でも、譲ってほしい場面で名前の貼り直しと
-            // **世代の切り替え**（`promoteShadowIfReady`）まで走ってしまう。
-            guard !Task.isCancelled else { return }
+            // ⚠️ **ここで取り消しを見て降りてはいけない**（レビュー 11 周目で入れ、13 周目で撤回）。
+            // 残作業が窓 1 回で終わらない限り、productive な夜は**必ず**期限切れ＝取り消しで
+            // 終わる。取り消しで降りると、下の 3 つは「何も進まなかった夜」にしか走らなくなる
+            // ——名前の段階的な復元（版上げ後の数晩がかり）も、修正を全体へ広げる夜間の
+            // 自己修復（ADR-46 B2）も、**進んだ夜には一度も走らない**という逆転が起きる。
+            // 元の懸念（窓を畳んだ後に全再クラスタが始まる）は実在するが、直し方が要る
+            // ——`unresolved-problems.md` に記録した。
             // B2: スキャン完了後、修正が増えていれば制約付き再クラスタリングで全体を最適化
             //（夜間ウィンドウ内・数秒・順序依存の誤りを解消する）。
             // 版上げ再スキャン中なら、進んだ分だけ名前を段階的に戻す（数晩に分かれても可）。
@@ -424,6 +431,15 @@ public final class PeopleEngine {
     /// 一覧の再読み込みと**分けてある**のは、レビュー表示中は再発行を保留したいから
     /// （`setNeedsPeopleReload` の保留は 900 人規模で 2〜4 秒のメインハングを避けるため）。
     func notifyPeopleEdited() {
+        // ⚠️ **レビュー表示中はためる**（レビュー 13 周目）。後追い（AI アルバムの掃除）は
+        // 顔の台帳を**全件**引くので、回答 1 回ごとに出すと、回答そのものが待つ
+        // `@ModelActor` の列に毎回その全件走査が割り込む（diagnostics-68 の再来）。
+        // ADR-95・diagnostics-51 で回答の経路から重い処理を外したのと同じ理由。
+        // 閉じるときに 1 回だけ出せば、掃除の目的（分けた人物の写真を落とす）は果たせる。
+        if reloadHoldCount > 0 {
+            editPendingWhileHeld = true
+            return
+        }
         editVersion &+= 1
         scheduleEditFollowUp()
     }
@@ -472,11 +488,16 @@ public final class PeopleEngine {
 
     /// 版が上がっていたらクラウド分のスキャン結果だけ捨てて測り直す。
     /// クラスタと命名は残るので、再スキャンした顔は既存の人物へ合流する。
+    /// ⚠️ ここも**控えを捨てる**（レビュー 13 周目）。`resetCloudScans` は中で
+    /// `rebuildClusters()` を呼ぶので、クラスタ ID と構成が変わる＝戻す先が無くなる。
+    /// 版上げの全再スキャン・モデル世代の切り替え・再クラスタは既にそうしており、
+    /// **ここだけ 10 行違いで漏れていた**。
     private func migrateCloudAnalysisIfNeeded() async {
         let stored = UserDefaults.standard.integer(forKey: Self.cloudAnalysisVersionKey)
         guard stored < Self.cloudAnalysisVersion else { return }
         let discarded = await store.resetCloudScans()
         if discarded > 0 {
+            await clearUndoHistory()   // 再クラスタで戻す先が変わっている
             Diagnostics.mark("faces: cloud analysis v\(stored)→v\(Self.cloudAnalysisVersion) "
                              + "— discarded \(discarded) cloud scans (local kept)")
             await loadPeople()
@@ -639,6 +660,10 @@ public final class PeopleEngine {
         if result.absorbed > 0 {
             await clearUndoHistory()   // 大量に動くので、戻す先が変わっている
             await loadPeople()
+            // ⚠️ ここも通知する（レビュー 13 周目）。「小さなまとまりを整理」は利用者の操作で
+            // 人物の構成を変えるのに、開いたままのグループアルバムが描き直されなかった
+            // ——レビューの回答に通知を足したのと**同じ穴**が、1 か所残っていた。
+            notifyPeopleEdited()
         }
         return result
     }
