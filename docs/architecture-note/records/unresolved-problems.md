@@ -6,6 +6,35 @@
 
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
+## 共有セットの追従で、バックアップ台帳をセットの数だけ読み直す
+
+- 箇所: `MosaicPhotos/Share/ShareSupport.swift`（`ShareSourceMemberResolver.shareable`）→
+  `Packages/PhotosFeatureKit/Sources/PhotosFeatureKit/AnalysisCandidates.swift`
+  （`hiddenBackupCopyRefKeys`）。呼び元は
+  `Packages/BackupKit/Sources/BackupKit/Share/ShareSyncEngine.swift` の `refreshAllFromSource`
+- 分類: scaleProportional / 優先度 P3（初出 2026-09-20・レビューループ 21 周目）
+- 症状: 処理枠ごとに走る `refreshAllFromSource` は共有セットを 1 本ずつ追従させるが、
+  その中で**セットごとに**「バックアップコピーを共有に載せない」判定を作り直している。
+  1 本あたり (1) `BackupStore.backupCopyIndex()`＝`BackupAssetRecord` の全件（2 列射影・
+  実機で数万行）と (2) クラウド一覧 68k 件の走査。セットが 5 本なら 5 周ぶん。
+  走査は `Task.detached` でオフメインだが、台帳の fetch はストアのシリアルキューを占める。
+- なぜ設計判断が要るか: 20 周目の AI アルバム（`AIAlbumLedgers`）と**同じ形に見えて、
+  同じ直し方が効かない**。あちらは 1 回の再評価の中だけで共有すればよかったが、こちらの
+  解決役（`ShareSourceMemberResolver`）は**アプリと同じ寿命**で、バックアップ台帳は
+  バックアップが動くたびに増える。素直にキャッシュすると**無効化経路が要る**
+  （CLAUDE.md 性能原則 3 の「無効化経路を必ずセットで」）。
+- 選択肢:
+  1. **1 回の追従（`refreshAllFromSource`）の中だけで共有する**。BackupKit 側の
+     `ShareSourceResolver` に「まとめて解決する」API を足し、解決役がその中でだけ index を持つ。
+     無効化が要らない（20 周目と同じ考え方）。欠点はプロトコルが 1 つ増えること。
+  2. **`BackupStore` 側に版を持たせる**（記録を書くたびに採番）。解決役は版が変わったときだけ
+     読み直す。利点は他の利用側（解析候補・二重表示の判定）にも効くこと。欠点は台帳に
+     状態が増えること。
+  3. **入れない**。セット数は普通 1 桁で、夜間の処理枠でしか走らない。実測もまだ無い
+     （CLAUDE.md 性能原則「まず 1 単位あたりの内訳を実測してから手を入れる」）。
+- 補足: まず **D 節（実機・性能）で 1 単位の所要を測る**のが順序として正しい。
+  セット数 × 数万行が体感に出ていないなら、3 を選んでよい。
+
 ## 台帳の全件読み出しに `HeavyLoad` の申告が無い
 
 - 箇所: `Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags/TagStore.swift`

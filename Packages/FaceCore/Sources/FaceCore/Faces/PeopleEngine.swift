@@ -22,6 +22,19 @@ public final class PeopleEngine {
         let floor = minPhotosForList
         return allPeople.filter { $0.name != nil || $0.count >= floor }
     }
+
+    /// この人物が**まだ在るか**（共有セットの作成元が現存するか等の判定用）。
+    ///
+    /// ⚠️ **存在の判定に `people` を使わない。** `people` は「ピープルに載せるか」という
+    /// **表示の線**（ADR-125・無名でフロア未満を隠す）であって、人物が在るかどうかではない。
+    /// 表示の線で存在を判定すると、写真が減って（削除・「XX ではない」・再クラスタ）フロアを
+    /// 下回った瞬間に、その人物は**消えた**と読まれる。実害の例: 無名のまま共有したセットが、
+    /// 枚数が 10 を割った時点で「作成元が無い孤児」と判定され、以後メンバーに追従しなくなる。
+    /// 同じ理由で `person(containing:)` も `displayName(for:)` も `allPeople` を見ている。
+    public func personExists(clusterID: Int) -> Bool {
+        allPeople.contains { $0.clusterID == clusterID }
+    }
+
     /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
     public private(set) var isLoaded = false

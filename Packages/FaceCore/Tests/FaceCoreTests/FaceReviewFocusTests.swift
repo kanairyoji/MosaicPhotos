@@ -137,6 +137,23 @@ struct PeopleDisplayFloorTests {
         #expect(engine.allPeople.count == 5, "全件は保持する（学習・内部処理の母数は変えない）")
     }
 
+    /// ⚠️ **表示の線で「在るか」を判定しない。** 共有セットの作成元が現存するかの判定に
+    /// `people` を使うと、写真が減ってフロアを下回った無名の人物が「消えた」と読まれ、
+    /// そのセットは孤児扱いになって以後メンバーに追従しなくなる（送信側 ShareSupport の実例）。
+    @Test("枚数がフロアを下回っても、人物は在るものとして扱う")
+    func existenceIsNotTheDisplayLine() async {
+        let engine = PeopleEngine(faceProvider: nil)
+        let previous = engine.minPhotosForList
+        defer { engine.minPhotosForList = previous }
+        engine.minPhotosForList = 10
+        engine.setPeopleForTesting([person(7, count: 4, name: nil)])   // 無名・フロア未満
+
+        #expect(engine.people.isEmpty, "前提: 表示からは外れている（この線は変えない）")
+        #expect(engine.personExists(clusterID: 7),
+                "表示から外れただけの人物を「消えた」と判定している（共有セットが孤児になる）")
+        #expect(engine.personExists(clusterID: 999) == false, "居ない人物まで在ると答えている")
+    }
+
     @Test("フロアを下げると小さい人物も出てくる（隠したものを取り戻せる）")
     func loweringTheFloorBringsThemBack() async {
         let engine = PeopleEngine(faceProvider: nil)

@@ -89,7 +89,9 @@ final class ShareSourceMemberResolver: ShareSourceResolver {
             guard peopleEngine.peopleGroups.contains(where: { $0.id == id }) else { return nil }
             raw = await peopleEngine.memberRefKeys(forGroup: id)
         case .person(let clusterID):
-            guard peopleEngine.people.contains(where: { $0.clusterID == clusterID }) else { return nil }
+            // ⚠️ 在るかどうかは `personExists`（＝`allPeople`）で見る。`people` は表示の線
+            // （無名でフロア未満を隠す・ADR-125）なので、枚数が減っただけで孤児扱いになる。
+            guard peopleEngine.personExists(clusterID: clusterID) else { return nil }
             raw = await peopleEngine.memberRefKeys(forPerson: clusterID)
         case .album(let id):
             let all = autoAlbumEngine.albums + autoAlbumEngine.aiAlbums + autoAlbumEngine.pathAlbums
