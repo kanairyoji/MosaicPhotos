@@ -496,11 +496,16 @@ public final class PeopleEngine {
         let stored = UserDefaults.standard.integer(forKey: Self.cloudAnalysisVersionKey)
         guard stored < Self.cloudAnalysisVersion else { return }
         let discarded = await store.resetCloudScans()
+        // ⚠️ **捨てた枚数で条件を付けない**（レビュー 14 周目）。`resetCloudScans` は
+        // 捨てた枚数に関わらず**必ず再クラスタする**ので、0 枚でもクラスタ ID と構成は変わる
+        // ——Dropbox 未接続（よくある状態）だと 0 枚のまま全再クラスタが起き、
+        // 控えだけが残って「戻す」が消えたクラスタを名前つき・顔ゼロで作り直していた。
+        // 13 周目にここへ入れた修正は、**`if` の 1 段内側**に置いてしまっていた。
+        await clearUndoHistory()
+        await loadPeople()
         if discarded > 0 {
-            await clearUndoHistory()   // 再クラスタで戻す先が変わっている
             Diagnostics.mark("faces: cloud analysis v\(stored)→v\(Self.cloudAnalysisVersion) "
                              + "— discarded \(discarded) cloud scans (local kept)")
-            await loadPeople()
         }
         UserDefaults.standard.set(Self.cloudAnalysisVersion, forKey: Self.cloudAnalysisVersionKey)
     }

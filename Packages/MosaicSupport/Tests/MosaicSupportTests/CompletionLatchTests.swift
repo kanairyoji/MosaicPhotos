@@ -167,6 +167,44 @@ struct ScenePhaseScopeTests {
                 "トグルが ON なのにデバッグ実行の後始末が段を下げた")
     }
 
+    /// 回帰: **片方への書き込みが、もう片方のスコープの後始末を止めない**こと。
+    ///
+    /// ⚠️ 13 周目は「外からの書き込み回数」を 1 つの数で兼ねたが、それだと
+    /// 画面状態への書き込みが免除のスコープを止め、免除への書き込みが画面状態の
+    /// スコープを止める。実測での帰結:
+    /// - デバッグ実行中に画面を消す → 免除が `.debug` のまま固定＝全ゲートが外れる
+    /// - デバッグ実行中に「今すぐ解析」 → 前面なのに背面扱いのまま固定
+    /// 本番で両方のスコープが重なるのは `debugRunNow`（免除の中で画面状態）。
+    @Test("回帰: 画面状態への書き込みが、免除の後始末を止めない")
+    func scenePhaseWriteDoesNotBlockExemptionRestore() async {
+        BackgroundYield.setScenePhase(.active)
+        BackgroundYield.setExemption(.none)
+        defer { BackgroundYield.setScenePhase(.active); BackgroundYield.setExemption(.none) }
+
+        await BackgroundYield.withExemption(.debug) {
+            await BackgroundYield.withScenePhase(.background) {
+                BackgroundYield.setScenePhase(.background)   // 実行中に画面を消した
+            }
+        }
+        #expect(BackgroundYield.exemption == .none,
+                "画面状態を書いただけで免除が戻らなくなった（全ゲートが外れたまま固定）")
+        #expect(BackgroundYield.scenePhase == .background, "外から入った背面は残ること")
+    }
+
+    @Test("回帰: 免除への書き込みが、画面状態の後始末を止めない")
+    func exemptionWriteDoesNotBlockScenePhaseRestore() async {
+        BackgroundYield.setScenePhase(.active)
+        BackgroundYield.setExemption(.none)
+        defer { BackgroundYield.setScenePhase(.active); BackgroundYield.setExemption(.none) }
+
+        await BackgroundYield.withScenePhase(.background) {
+            BackgroundYield.setExemption(.boost)   // 実行中に「今すぐ解析」を押した
+        }
+        #expect(BackgroundYield.scenePhase == .active,
+                "免除を書いただけで画面状態が戻らなくなった（前面なのに背面扱いで固定）")
+        #expect(BackgroundYield.exemption == .boost, "外から入ったブーストは残ること")
+    }
+
     @Test("回帰: 実行中にブーストが始まったら、抜けるときに段を下げない")
     func doesNotClobberAnExemptionChangedFromOutside() async {
         BackgroundYield.setExemption(.none)
