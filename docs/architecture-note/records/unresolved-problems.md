@@ -6,34 +6,49 @@
 
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
-## 共有セットの追従で、バックアップ台帳をセットの数だけ読み直す
+## バックアップ台帳の対応表を、呼ばれるたびに丸ごと作り直す
 
-- 箇所: `MosaicPhotos/Share/ShareSupport.swift`（`ShareSourceMemberResolver.shareable`）→
-  `Packages/PhotosFeatureKit/Sources/PhotosFeatureKit/AnalysisCandidates.swift`
-  （`hiddenBackupCopyRefKeys`）。呼び元は
-  `Packages/BackupKit/Sources/BackupKit/Share/ShareSyncEngine.swift` の `refreshAllFromSource`
-- 分類: scaleProportional / 優先度 P3（初出 2026-09-20・レビューループ 21 周目）
-- 症状: 処理枠ごとに走る `refreshAllFromSource` は共有セットを 1 本ずつ追従させるが、
-  その中で**セットごとに**「バックアップコピーを共有に載せない」判定を作り直している。
-  1 本あたり (1) `BackupStore.backupCopyIndex()`＝`BackupAssetRecord` の全件（2 列射影・
-  実機で数万行）と (2) クラウド一覧 68k 件の走査。セットが 5 本なら 5 周ぶん。
-  走査は `Task.detached` でオフメインだが、台帳の fetch はストアのシリアルキューを占める。
-- なぜ設計判断が要るか: 20 周目の AI アルバム（`AIAlbumLedgers`）と**同じ形に見えて、
-  同じ直し方が効かない**。あちらは 1 回の再評価の中だけで共有すればよかったが、こちらの
-  解決役（`ShareSourceMemberResolver`）は**アプリと同じ寿命**で、バックアップ台帳は
-  バックアップが動くたびに増える。素直にキャッシュすると**無効化経路が要る**
-  （CLAUDE.md 性能原則 3 の「無効化経路を必ずセットで」）。
+- 箇所: 組み立ては `MosaicPhotos/RootView.swift`（`mergedStore.backupCopyIndexProvider`）。
+  そこから同じクロージャが**3 か所**へ配られる——`MergedPhotoStore.backupCopyIndexProvider` /
+  `AnalysisCandidates.backupCopyIndexProvider` / `MergedPhotoStore.defaultBackupCopyIndexProvider`。
+  消費側は `MergedPhotoStore.refreshBackupCopyIndex()`（`start()` から）と
+  `AnalysisCandidates.hiddenBackupCopyRefKeys`
+- 分類: scaleProportional / 優先度 P3（初出 2026-09-20・レビューループ 21 周目。
+  22 周目に**中身を訂正**し、範囲を広げた）
+- 1 回あたりの中身（21 周目の記録は `backupCopyIndex()` と書いていたが**誤り**。実際は次の 2 つ）:
+  1. `BackupStore.backupCopyRecords()`＝`BackupAssetRecord` の全件（3 列射影・実機で数万行）
+  2. `SharedCaptureDateStore().load()`＝受信した撮影日の表を**丸ごと JSON デコード**
+     （上限 50,000 件・ADR-199）
+  どちらもオフメインだが、1 の fetch はストアのシリアルキューを、2 は CPU を占める。
+- 症状（呼ばれ方が 2 通りある）:
+  - **共有セットの追従**: 処理枠ごとの `refreshAllFromSource` が**セット 1 本につき 1 回**
+    呼ぶ（`shareable` → `hiddenBackupCopyRefKeys`）。さらにその中でクラウド一覧 68k 件を走査する。
+    セットが 5 本なら 5 周ぶん。
+  - **アルバムを開くたび**: 人物・場所・AI アルバムは `MergedPhotoStore.forMembers` で
+    **毎回新しいストア**を作り、`PhotoSourceContentView` の `.task` が `start()` を呼ぶ。
+    `start()` は `await refreshBackupCopyIndex()` を**グリッドの組み立ての前に**置いているので、
+    開くたびに上の 1+2 を待つ。⚠️ **同じ関数の 2 行上で、まったく同じ理由から
+    `cachedItems()` の呼び直しを避けている**（「All Photos を開くたびに呼ぶと無駄が大きい
+    （実機ログで確認）」）。クラウド一覧には効いている配慮が、台帳側には無い。
+- なぜ設計判断が要るか: 20 周目の AI アルバム（`AIAlbumLedgers`）と同じ形に見えて、
+  **同じ直し方が効かない**。あちらは 1 回の再評価の中だけで共有すればよく、中身が変わらない
+  ことを示せた。こちらの持ち主（解決役・メンバーストア）は**アプリと同じ寿命**で、
+  バックアップ台帳はバックアップが動くたびに増える。共有すると
+  「アルバムを開いた時点で 1 回ぶん古い表を使う」＝二重表示の判定と撮影日がわずかに遅れる。
+  **無効化経路とセット**にしないと、20 周目に避けた種類の取引を黙って入れることになる。
 - 選択肢:
-  1. **1 回の追従（`refreshAllFromSource`）の中だけで共有する**。BackupKit 側の
-     `ShareSourceResolver` に「まとめて解決する」API を足し、解決役がその中でだけ index を持つ。
-     無効化が要らない（20 周目と同じ考え方）。欠点はプロトコルが 1 つ増えること。
-  2. **`BackupStore` 側に版を持たせる**（記録を書くたびに採番）。解決役は版が変わったときだけ
-     読み直す。利点は他の利用側（解析候補・二重表示の判定）にも効くこと。欠点は台帳に
-     状態が増えること。
-  3. **入れない**。セット数は普通 1 桁で、夜間の処理枠でしか走らない。実測もまだ無い
-     （CLAUDE.md 性能原則「まず 1 単位あたりの内訳を実測してから手を入れる」）。
-- 補足: まず **D 節（実機・性能）で 1 単位の所要を測る**のが順序として正しい。
-  セット数 × 数万行が体感に出ていないなら、3 を選んでよい。
+  1. **1 回の追従（`refreshAllFromSource`）の中だけで共有する**。BackupKit の
+     `ShareSourceResolver` に「まとめて解決する」API を足し、解決役がその中でだけ表を持つ。
+     無効化が要らない（20 周目と同じ考え方）。アルバムを開く側には効かない。
+  2. **共有のスナップショットを 1 つ持つ**（`MergedPhotoStore.defaultBackupCopyIndex` を
+     `defaultBackupCopyIndexProvider` の隣に置き、`forMembers` で種として渡す）。
+     アルバムを開く側に効く。欠点は上記の「1 回ぶん古い」窓ができること。
+  3. **`BackupStore` 側に版を持たせる**（記録を書くたびに採番）。版が変わったときだけ読み直す。
+     3 か所すべてに効き、古い表を使う窓も無い。欠点は台帳に状態が増えること。
+  4. **入れない**。セット数は普通 1 桁、アルバムを開く頻度もそれほど高くない。実測がまだ無い。
+- 補足: **まず測る**のが順序（CLAUDE.md 性能原則「まず 1 単位あたりの内訳を実測してから手を入れる」）。
+  `device-verification.md` の D5 に「アルバムを開いたときの 1 単位」を足した。
+  体感に出ていないなら 4 を選んでよい。
 
 ## 台帳の全件読み出しに `HeavyLoad` の申告が無い
 

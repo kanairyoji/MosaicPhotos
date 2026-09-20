@@ -21,6 +21,36 @@
 
 ---
 
+## 欠陥が 0 件だった周の記録（22 周目・受信側の総当たり）
+
+レビュー 22 周目。**新しい欠陥は 1 件も出なかった。** 何も見つからなかったことも記録に残す
+——「その範囲は見た」が次の周の出発点になるため。
+
+- 見た範囲（共有の受信側とバックアップ）:
+  `SharedAnalysisImporter.runIfNeeded`（ShareSupport）/ `ShareImportPlanning.plan` /
+  送信側の `updateAnalysisData` / `PeopleEngine.importFaceScans` → `FaceStore.recordScans` /
+  `MergedPhotoStore.refreshBackupCopyIndex` と `rebuildItems` / `DropboxPhotoStore` の除外フィルタ。
+- 確かめて**問題なしと判定**したもの（次に同じ疑いを持たないため）:
+  - 撮影日の保存失敗カウンタは `UserDefaults` に持っている（`ShareAnalysisFetch` を実行ごとに
+    作り直しても数え直されない＝「見送りが永久に続く」形にはならない）。
+  - `recordScans` の中で `loadClustering` / `loadNegatives` を写真ごとに呼んでいるが、
+    どちらもインメモリキャッシュ（ADR-142）で全件復元は 1 回だけ。
+  - 取り込みでクラスタが新しく生まれる経路も `persist` が `noteClusterIDs` を呼ぶので、
+    クラスタ ID の高水位は進む（ADR-187 は逐次スキャン側にも効いている）。
+  - 解析データのキー（content_hash）は送信側で `lowercased()` して書いている。
+    受信側の索引だけが小文字化していて**一方だけ**に見えるが、実データは両側とも小文字。
+    ⚠️ 証拠が無いので「防御的に直す」はしない（17 周目の教訓——挙動をコードの読みだけで断定しない）。
+- 出たのは**記録の訂正 1 件と範囲の拡張**だけ: 21 周目に「セットごとに `backupCopyIndex()` を
+  読む」と書いたのは誤りで、実際にアプリが配っているのは `backupCopyRecords()`（3 列全件）＋
+  `SharedCaptureDateStore().load()`（最大 5 万件の JSON デコード）。しかも同じクロージャが
+  **アルバムを開くたび**にも走る（`MergedPhotoStore.start()`）。`unresolved-problems.md` を
+  差し替え、実機で測る項目（D5）を足した。
+- 教訓: **「見つからなかった」と「見ていない」は別物なので、別々に書く。** 前者を書き残さないと、
+  次の周が同じ範囲をもう一度なぞる。逆に、書いておけば周回の価値は「見つけた数」ではなく
+  「まだ見ていない範囲がどれだけ減ったか」で測れる。
+
+---
+
 ## 共有セットの「作成元が在るか」を、**表示の線**で判定していた
 
 レビュー 21 周目。
