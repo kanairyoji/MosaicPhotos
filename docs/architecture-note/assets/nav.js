@@ -42,6 +42,7 @@
     { title: "テストと評価", items: [
       { id: "test-strategy", href: "testing/strategy.html", label: "テスト戦略の全体像" },
       { id: "test-datasets", href: "testing/datasets.html", label: "データセット評価と意思決定" },
+      { id: "test-fake-dropbox", href: "testing/fake-dropbox.html", label: "Dropbox のテスト（偽サーバー）" },
     ]},
     { title: "技術プライマー", items: [
       { id: "tech-observation",   href: "tech/swift-observation.html",        label: "Swift Observation" },

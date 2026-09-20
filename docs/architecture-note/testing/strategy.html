@@ -38,8 +38,9 @@
         <tr><td>検出性能（データセット）</td><td><code>SearchEvalTests</code> / <code>SearchEvalRegressionTests</code> / <code>SearchEvalCaltechTests</code></td><td>COCO 123 クエリの計測＋<strong>カテゴリ別 F1 回帰フロア</strong>・語彙接地の end-to-end（<a href="datasets.html">次ページ</a>）</td></tr>
         <tr><td>顔クラスタリング</td><td><code>FaceClusteringTests</code> / <code>FacePersonGroupingTests</code> / <code>PersonCleanupTests</code> / <code>PeopleOrderingTests</code></td><td>逐次クラスタの規則・束ね・混入の一括分離・一覧の決定的順序</td></tr>
         <tr><td>顔の検出性能</td><td><code>FaceAccuracyEvalTests</code>（FG-NET / LFW）</td><td>しきい値・ゲート・アルゴリズム変更の採否判定（<a href="datasets.html">次ページ</a>）</td></tr>
-        <tr><td>Dropbox</td><td><code>DropboxCoreTests</code>（APIClient / AuthService / PKCE / SyncEngine / Batcher…）</td><td>認証・差分同期・サムネバッチング（HTTP はスタブ）</td></tr>
-        <tr><td>バックアップ</td><td><code>BackupPlanningTests</code> / <code>DropboxBackupUploaderTests</code></td><td>差分算出・メタデータ v2 の分割/マージ・検証つきアップロード</td></tr>
+        <tr><td>Dropbox（1 往復）</td><td><code>DropboxCoreTests</code>（APIClient / AuthService / PKCE / Batcher…）</td><td>認証・リクエストの組み立て・応答の解釈（HTTP はスタブ）</td></tr>
+        <tr><td>Dropbox（収束）</td><td><code>SyncConvergenceTests</code> / <code>SyncRecoveryTests</code> / <code>Offload*Tests</code> / <code>Share*Tests</code></td><td><strong>状態を持つ偽サーバー</strong>で、初回同期・差分・カーソル失効・オフロードの印・共有の反映を通しで（<a href="fake-dropbox.html">次ページ</a>）</td></tr>
+        <tr><td>バックアップ</td><td><code>BackupPlanningTests</code> / <code>DropboxBackupUploaderTests</code> / <code>MetadataDurabilityTests</code></td><td>差分算出・メタデータ v2 の分割/マージ・検証つきアップロード・再送キュー</td></tr>
         <tr><td>背景処理の骨格</td><td><code>BackgroundTrickleTests</code> / <code>TurnTakingTests</code> / <code>AnalysisStallCheckTests</code></td><td>譲り・キャンセル規則・飢餓の検出（「沈黙として現れるバグ」をこちらから検出する）</td></tr>
         <tr><td>アプリターゲット</td><td><code>ImageRecognitionTests</code>（モデル同梱時のみ・未同梱はスキップ）</td><td>CLIP の有限性（fp16 NaN 回帰）・画像/テキスト識別・翻訳素通し</td></tr>
       </table>
@@ -59,6 +60,7 @@
         <ul>
           <li><a class="srclink" data-path="scripts/test.sh">scripts/test.sh</a> — 2 系統の一括実行</li>
           <li><a href="datasets.html">データセット評価と意思決定</a> — 検出性能の測り方と、それで決めた判断</li>
+          <li><a href="fake-dropbox.html">Dropbox のテスト（偽サーバー）</a> — 状態を持つ偽 Dropbox と異常の仕込み方</li>
           <li><a href="../appendix/conventions.html">規約とテスト方針</a></li>
         </ul>
       </div>

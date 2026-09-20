@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dropbox のテスト（偽サーバー） | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "test-fake-dropbox";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / テストと評価 / Dropbox のテスト（偽サーバー）</nav>
+      <h1>Dropbox のテスト（偽サーバー）</h1>
+      <p class="lead">Dropbox に関わる不具合は「1 回の応答」ではなく <strong>反映を何度も繰り返したときの収束</strong>として現れる——重複コピーが 1,300 件生まれる、掃除が空回りする、消した写真が一覧に残る、同期が永久に止まる。こうした形は、決められた応答を順に返すスタブでは<strong>構造的に再現できない</strong>。そこで <code>FakeDropboxServer</code> は<strong>状態を持つ偽の Dropbox</strong> として作ってある。ネットワークは使わない。</p>
+
+      <h2>作り</h2>
+      <p>アプリの通信はすべて <code>HTTPClient</code> プロトコル越しに行う。本番は <code>URLSessionHTTPClient</code>、テストは偽サーバーを差す——<strong>差し替えはこの 1 点だけ</strong>で、ソケットもローカルサーバーもポートも使わない。偽サーバーは <code>URLRequest</code> を受け取り、URL からエンドポイントを判定して <code>(Data, HTTPURLResponse)</code> を自分で組み立てて返す <code>actor</code> である。だから速い（BackupKit の 338 本が 14 秒）し、ポート衝突も順序依存も起きない。</p>
+      <p>ダミーを返すだけと違うのは、<strong>状態を持つ</strong>点にある。</p>
+      <table>
+        <tr><th>持ちもの</th><th>内容</th></tr>
+        <tr><td><code>files</code></td><td>path_lower → content_hash・サイズ・rev・表示名</td></tr>
+        <tr><td><code>bodies</code></td><td>path_lower → 実際のバイト列（<code>download</code> はこれを返す）</td></tr>
+        <tr><td><code>changeLog</code></td><td>(通し番号, パス, 消えたか) — 差分同期（<code>longpoll</code> → <code>continue</code>）の材料</td></tr>
+        <tr><td><code>cursors</code></td><td>ページ送りの続き（<code>has_more</code> → <code>continue</code>）</td></tr>
+      </table>
+      <p>アップロードすれば <code>files</code> に入り、次の <code>list_folder</code> に現れ、<code>download</code> で<strong>同じバイト列</strong>が返る。<code>content_hash</code> は<strong>本物と同じアルゴリズム</strong>（<code>DropboxContentHash</code>）で計算するので、アプリの検証経路（アップロード直後の照合・オフロード直前の照合）がそのまま通る。これが「2 回反映したら収束するか」を試せる理由である。</p>
+
+      <h2>異常の仕込み方（1 本のルール表）</h2>
+      <p>「どのエンドポイントの・どのパスに・何回・何を起こすか」を 1 行で書く（ADR-204）。</p>
+      <pre><code>let server = FakeDropboxServer()
+await server.upload(path: "/a.jpg", data: bytes)          // 置く
+
+await server.inject(.init(endpoint: "files/upload",       // 仕込む
+                          pathContains: ".mosaic",
+                          times: 2,                        // -1 = ずっと
+                          effect: .status(429, retryAfter: 3)))
+…
+#expect(await server.pendingFaults().isEmpty)             // 仕込みが実際に使われたか
+print(await server.transcript())                          // 落ちたとき何が起きたか</code></pre>
+      <table>
+        <tr><th>効果（<code>Effect</code>）</th><th>作れる状況</th></tr>
+        <tr><td><code>.status(code, retryAfter:)</code></td><td>429（レート制限・書き込み競合）/ 403（権限なし）/ 507（容量不足）/ 409（衝突・カーソル失効）など。<code>Retry-After</code> ヘッダも返せる</td></tr>
+        <tr><td><code>.truncateBody</code></td><td><strong>HTTP 200 なのに中身が途中で切れている</strong>——hash 照合が存在する理由そのもの</td></tr>
+        <tr><td><code>.delay(milliseconds:)</code></td><td>遅い応答（タイムアウト・並行数・待ち行列の挙動）</td></tr>
+        <tr><td><code>.networkError</code></td><td>接続そのものの失敗</td></tr>
+        <tr><td><code>.drop</code></td><td>応答を返さない。⚠️ <strong>キャンセルされるまで戻らない</strong>ので、キャンセルの効かない呼び出しに使うと止まる</td></tr>
+      </table>
+      <p><strong><code>times</code> が要点</strong>である。恒久的な失敗しか作れないと「失敗が続いたあと、直ったら収束するか」を確かめられない——オフロードは<strong>写真を消してから</strong>印を書くので、そこがいちばん大事な性質になる。</p>
+      <p><strong><code>pendingFaults()</code> で「使われなかった仕込み」を検査できる。</strong> テストが緑でも、仕込んだ失敗が経路に当たっていなければ何も確かめていない。</p>
+
+      <h2>観測（落ちたときに読むもの）</h2>
+      <table>
+        <tr><th>API</th><th>用途</th></tr>
+        <tr><td><code>transcript()</code></td><td>人が読める通信記録（<code>POST files/upload /a.jpg → 200 (12 B ↑ / 48 B ↓)</code>）</td></tr>
+        <tr><td><code>callCounts()</code></td><td>エンドポイント別の回数。<strong>回数で見る</strong>規模テスト（ADR-119）にそのまま使える</td></tr>
+        <tr><td><code>dump()</code></td><td>いまサーバーに在るものを 1 行ずつ（収束しないテストの原因調査）</td></tr>
+        <tr><td><code>trafficBytes()</code></td><td>送受信の合計。「回数は同じだが量が増えた」を捕まえる</td></tr>
+      </table>
+
+      <h2>この偽サーバーで再現できること</h2>
+      <ul>
+        <li><strong>差分同期</strong> — <code>get_latest_cursor</code> → <code>longpoll</code> → <code>continue</code>。サーバー側の増減が反映されるか、変化が無い回に書き直していないか</li>
+        <li><strong>カーソル失効</strong>（<code>reset</code>）— ここから <strong>ADR-203</strong> の欠陥（同期が永久に止まる）が出た</li>
+        <li><strong>ページング</strong> — <code>has_more</code> を跨いで全件そろうか／<strong>途中で失敗した回に部分結果を渡していないか</strong></li>
+        <li><strong>同名衝突</strong> — <code>mode=add</code> の 409 → <code>autorename</code> で別名保存され、<strong>実際の保存先</strong>が返る</li>
+        <li><strong>非同期ジョブ</strong> — 即完了／N 回 <code>in_progress</code> の後で完了／<strong>クライアントにはタイムアウトだがサーバーでは完了</strong>（実障害の再現）</li>
+        <li><strong>オフロードの印</strong> — 書いて、<strong>読む側と同じ手順</strong>（カタログ → 載っているシャードだけ）で辿り直せるか</li>
+        <li>容量不足・権限なし・時計のずれ・アカウント切り替え</li>
+      </ul>
+
+      <div class="box warn">
+        <span class="box-h">⚠️ 弱い偽物は、経路をまるごと隠す</span>
+        <p>同じ日に 2 回踏んだ。<code>get_metadata</code> が <code>size</code> を常に 1 で返していたため<strong>オフロードの照合が必ず失敗</strong>し、その流れをどのテストも通っていなかった。<code>files/upload</code> が <code>mode=add</code> を無視して上書きしていたため<strong>同名衝突の経路が存在しなかった</strong>。どちらも「テストは緑だが、その経路を一度も通っていない」状態である。</p>
+        <p>だから <strong>状態を持つ偽物は 1 つだけ</strong>にしてある（以前は 5 つ併存していた）。忠実度の不足を直せば、その瞬間に全テストへ効く。新しい壊れ方が要るときは <code>Effect</code> に 1 行足す——失敗の種類ごとにプロパティを増やさない。偽物そのもののテスト（<code>FakeDropboxServerTests</code>）も置いてある。</p>
+        <p>例外は「<strong>1 往復の組み立て/解釈</strong>」を見るスタブ（応答の分類・応答の列・無応答）。あれらは状態を模倣していないので、統合の対象ではない。</p>
+      </div>
+
+      <h2>実機の代わりにはならない</h2>
+      <p>本物の権限・レート制限・他端末からの同時変更・Dropbox 側の仕様変更までは再現しない。とくに<strong>オフロードは写真を消す機能</strong>なので、最初の 1 枚は実機で確かめる運用にしている（<code>records/device-verification.md</code> の Z0 / Z4 / Z5）。この偽サーバーが閉じるのは「アプリの中で筋が通っているか」までである。</p>
+
+      <div class="box refs">
+        <span class="box-h">関連</span>
+        <ul>
+          <li><a class="srclink" data-path="Packages/DropboxCore/Sources/DropboxTestSupport/FakeDropboxServer.swift">FakeDropboxServer.swift</a> — 偽サーバー本体（<code>DropboxTestSupport</code>・DropboxCore と BackupKit の両方のテストから使う）</li>
+          <li><a class="srclink" data-path="Packages/DropboxCore/Tests/DropboxCoreTests/FakeDropboxServerTests.swift">FakeDropboxServerTests.swift</a> — 偽サーバーそのもののテスト</li>
+          <li><a href="strategy.html">テスト戦略の全体像</a></li>
+          <li><a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a> — ADR-203（カーソル失効）/ ADR-204（ルール表）の本文</li>
+          <li><a href="../features/backup.html">バックアップとオフロード</a></li>
+        </ul>
+      </div>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>
