@@ -16,6 +16,17 @@ final class CachedDropboxItem {
     /// 撮影地の緯度・経度（`media_info` から取得。未取得時は nil）。追加プロパティは軽量マイグレーション。
     var latitude: Double?
     var longitude: Double?
+    /// **撮影日時を Dropbox に問い合わせた日時**（ADR-201）。nil＝まだ訊いていない。
+    ///
+    /// ⚠️ Dropbox は一覧系 API（`list_folder` / `continue` / `get_thumbnail_batch`）で
+    /// **`media_info` を返さない**（2019-12-02 以降・公式 SDK の記述）。つまり一覧から取れる
+    /// 日付は `client_modified`＝**アップロード時刻**で、撮影日時ではない。実際の撮影日時は
+    /// `files/get_metadata` を 1 枚ずつ叩くしかない。
+    ///
+    /// 訊いた事実をここに残すのは、**無かったことも憶えておく**ため（CLAUDE.md 性能原則 3）。
+    /// EXIF が無い写真は何度訊いても無いので、毎回往復すると 6.8 万枚ぶんの無駄になる。
+    /// 中身が差し替わったら（contentHash が変わったら）`applyDelta` が nil へ戻す＝訊き直す。
+    var captureDateProbedAt: Date?
     var cachedAt: Date
 
     init(
@@ -25,6 +36,7 @@ final class CachedDropboxItem {
         captureDate: Date? = nil,
         latitude: Double? = nil,
         longitude: Double? = nil,
+        captureDateProbedAt: Date? = nil,
         cachedAt: Date = Date()
     ) {
         self.path = path
@@ -33,6 +45,7 @@ final class CachedDropboxItem {
         self.captureDate = captureDate
         self.latitude = latitude
         self.longitude = longitude
+        self.captureDateProbedAt = captureDateProbedAt
         self.cachedAt = cachedAt
     }
 }

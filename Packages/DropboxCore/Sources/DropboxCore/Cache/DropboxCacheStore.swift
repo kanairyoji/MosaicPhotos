@@ -225,6 +225,49 @@ actor DropboxCacheStore {
     }
 
     /// 単発取得（get_metadata）で得た位置情報を該当アイテムへ保存する。
+    /// まだ撮影日時を問い合わせていない写真のパス（最大 `limit` 件・新しい順）。
+    ///
+    /// ⚠️ **射影で取る**（パス 1 列だけ）。全列を実体化すると 6.8 万行ぶんの `@Model` を作る
+    /// ことになる（`cachedItems` の注記と同じ理由）。
+    /// ⚠️ 並びは**新しい順**。利用者が最初に見るのは一覧の末尾（最新）なので、そこから直す。
+    func pathsNeedingCaptureDateProbe(limit: Int) -> [String] {
+        var descriptor = FetchDescriptor<CachedDropboxItem>(
+            predicate: #Predicate { $0.captureDateProbedAt == nil },
+            sortBy: [SortDescriptor(\.captureDate, order: .reverse)])
+        descriptor.propertiesToFetch = [\.path]
+        descriptor.fetchLimit = limit
+        return ((try? modelContext.fetch(descriptor)) ?? []).map(\.path)
+    }
+
+    /// 1 枚ぶんの問い合わせ結果を記録する（撮影日時・撮影地）。
+    ///
+    /// ⚠️ **取れなかったことも記録する**（`captureDate` は触らず `captureDateProbedAt` だけ進める）。
+    /// EXIF の無い写真は何度訊いても無いので、記録しないと毎回往復することになる。
+    /// - Returns: 表示に関わる値が変わったか（呼び出し側が一覧の作り直しを判断する材料）。
+    @discardableResult
+    func recordCaptureDateProbe(path: String, captureDate: Date?,
+                                latitude: Double?, longitude: Double?,
+                                probedAt: Date = Date()) -> Bool {
+        guard let existing = fetchCachedItem(path: path) else { return false }
+        var changed = false
+        if let captureDate, existing.captureDate != captureDate {
+            existing.captureDate = captureDate
+            changed = true
+        }
+        if let latitude, existing.latitude != latitude { existing.latitude = latitude; changed = true }
+        if let longitude, existing.longitude != longitude { existing.longitude = longitude; changed = true }
+        existing.captureDateProbedAt = probedAt
+        try? modelContext.save()
+        if changed { itemsRevision &+= 1 }
+        return changed
+    }
+
+    /// 未問い合わせの件数（進捗表示・テスト用）。
+    func captureDateProbePendingCount() -> Int {
+        (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>(
+            predicate: #Predicate { $0.captureDateProbedAt == nil }))) ?? 0
+    }
+
     func updateLocation(path: String, latitude: Double, longitude: Double) {
         guard let existing = fetchCachedItem(path: path) else { return }
         existing.latitude = latitude
@@ -265,18 +308,25 @@ actor DropboxCacheStore {
                 // 実測: 初回同期で `inserted=0 / updated=109,679`——1 件も新規が無いのに
                 // 11 万行を書き直しており、OS が 12 分で 1.07GB の書き込みを検出して警告した
                 // （制限の約 117 倍）。ディスク書き込みは発熱・電池・フラッシュ寿命に直結する。
+                let hashChanged = existing.contentHash != item.contentHash
+                // ⚠️ 一覧の日付は `client_modified`＝**アップロード時刻**（Dropbox は一覧系 API で
+                // media_info を返さない・ADR-201）。1 枚ずつ問い合わせて得た撮影日時を、
+                // これで上書きしてはいけない。上書きすると毎回の同期で値が行き来して
+                // **全行がダーティ**になり、並びも戻る。中身が差し替わったら訊き直す。
+                let keepsProbedDate = existing.captureDateProbedAt != nil && !hashChanged
                 let changed = existing.name != item.name
-                    || existing.contentHash != item.contentHash
-                    || existing.captureDate != item.captureDate
+                    || hashChanged
+                    || (!keepsProbedDate && existing.captureDate != item.captureDate)
                     || (item.latitude != nil && existing.latitude != item.latitude)
                     || (item.longitude != nil && existing.longitude != item.longitude)
                 guard changed else { continue }   // 触らない＝ダーティにしない
-                if existing.contentHash != item.contentHash {
+                if hashChanged {
                     invalidate(path: item.path)
+                    existing.captureDateProbedAt = nil   // 中身が変わった＝撮影日時も訊き直す
                 }
                 existing.name = item.name
                 existing.contentHash = item.contentHash
-                existing.captureDate = item.captureDate
+                if !keepsProbedDate { existing.captureDate = item.captureDate }
                 // 位置情報は media_info が pending のとき nil で来るため、既存値を上書きで消さない。
                 if item.latitude != nil { existing.latitude = item.latitude }
                 if item.longitude != nil { existing.longitude = item.longitude }

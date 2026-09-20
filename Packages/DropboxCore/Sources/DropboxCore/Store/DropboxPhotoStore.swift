@@ -445,6 +445,10 @@ public final class DropboxPhotoStore {
         }
     }
 
+    /// キャッシュ側の値が変わったので一覧を作り直す（撮影日時の穴埋めなど・ADR-201）。
+    /// 間引きは効いたまま＝連続で呼んでも往復や再構築が積み上がらない。
+    func refreshItemsFromCacheSoon() { scheduleCacheRefresh() }
+
     /// 保留中の間引きを取り消し、最終反映を即時にスケジュールする（初回同期完了時など）。
     private func forceCacheRefreshSoon() {
         trailingRefreshTask?.cancel()

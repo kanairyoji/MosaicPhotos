@@ -59,6 +59,17 @@ struct PendingMetadataStore {
         let entry: DropboxBackupMetadata.Entry
     }
 
+    /// 追記（`appendEntry`）と取り出し（`takeAll`）を直列化する錠。
+    ///
+    /// ⚠️ なぜ要るか（ADR-200）: 旧実装は「読む → 送る → ジャーナルをファイルごと消す」だった。
+    /// 読んでから消すまでの間にも**背景アップロードの完了通知は届き続け**、1 件ごとに
+    /// 1 行が追記される。その行はスナップショットに無いまま、ファイルごと消えていた——
+    /// 写真の実体は上がって完了記録が付くので、その人物名・アルバム・位置情報は
+    /// **二度と作られない**。錠で直列化すれば、取り出しの後の追記は必ず**新しいファイル**へ行く。
+    ///
+    /// 1 本のグローバルな錠で足りる（1 回の書き込みは数百バイトで、競合しても待ちは一瞬）。
+    private static let journalLock = NSLock()
+
     /// 1 件を**その場で永続化**する（写真の完了記録より先に呼ぶ）。
     ///
     /// ⚠️ 順序が肝（ADR-171）。完了記録を先に保存すると、その間に中断されたとき
@@ -72,6 +83,8 @@ struct PendingMetadataStore {
         else { return false }
         var data = line
         data.append(0x0A)   // 改行
+        Self.journalLock.lock()
+        defer { Self.journalLock.unlock() }
         do {
             if FileManager.default.fileExists(atPath: journalURL.path) {
                 let handle = try FileHandle(forWritingTo: journalURL)
@@ -92,6 +105,13 @@ struct PendingMetadataStore {
     ///
     /// ⚠️ 壊れた行は**捨てずに読み飛ばす**（1 行の破損で残り全部を失わない）。
     func load() -> Payload {
+        Self.journalLock.lock()
+        defer { Self.journalLock.unlock() }
+        return loadUnlocked()
+    }
+
+    /// 錠を取らない版（錠の中から呼ぶ）。
+    private func loadUnlocked() -> Payload {
         var payload: Payload = [:]
         if let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode(Payload.self, from: data) {
@@ -111,10 +131,30 @@ struct PendingMetadataStore {
         return payload
     }
 
-    /// ジャーナルを消す（**送信が確認できた後だけ**呼ぶ）。
-    /// 残った分は `save(_:)` が本体へ書き直しているので、ここで消しても失われない。
-    func clearJournal() {
+    /// **送るぶんを取り出す**（本体＋ジャーナルを 1 つにまとめ、ジャーナルを空にする）。
+    ///
+    /// これがキューの**唯一の消費口**。手順は錠の下で:
+    ///   1. 本体とジャーナルを読んで 1 つにする
+    ///   2. まとめたものを本体へ書く（原子的）
+    ///   3. **本体へ書けたときだけ**ジャーナルを消す
+    /// 書けなければジャーナルを残す＝次回もう一度読める（同じ内容を 2 度送るのは無害＝冪等）。
+    ///
+    /// ⚠️ 消費をここ 1 か所にしたので、**同じ行を 2 度送ることはもう無い**。旧実装は
+    /// 実行の前半（背景経路の先出し）と後半（`writeMetadata`）の両方が `load()` していて、
+    /// 前半はジャーナルを消さないため、同じ行が 1 回の実行で 2 回送られていた。しかも
+    /// 「送る写真が 0 枚」の回は後半に届かないので、**ジャーナルが一度も空にならず**
+    /// 窓のたびに履歴ぜんぶを送り直していた。
+    func takeAll() -> Payload {
+        Self.journalLock.lock()
+        defer { Self.journalLock.unlock() }
+        let payload = loadUnlocked()
+        guard !payload.isEmpty else { return [:] }
+        guard save(payload) else {
+            BackupLogger.error("PendingMetadataStore: could not fold the journal — keeping it")
+            return payload   // ジャーナルは残す（次回もう一度読める）
+        }
         try? FileManager.default.removeItem(at: journalURL)
+        return payload
     }
 
     /// - Returns: **保存できたか**。false のときはバックアップを正常完了扱いにしてはいけない

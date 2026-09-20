@@ -22,7 +22,9 @@ Packages/DropboxCore/              ← Dropbox のロジック層（ImageCacheKi
                                    DropboxCacheNaming(純)/ CachedDropboxItem / CacheUsageEntry(@Model)/
                                    DropboxCacheDebugModel
     Models/                        DropboxFileItem / DropboxMediaInfo / DropboxBackupMetadata
-    Store/                         DropboxPhotoStore(@Observable)/ DropboxThumbnailBatcher
+    Store/                         DropboxPhotoStore(@Observable)/ DropboxThumbnailBatcher /
+                                   DropboxPhotoStore+Location.swift（**media_info の解決**＝撮影日時と
+                                   撮影地を 1 往復で取り、「無かった」ことも記録する・ADR-201）
     Support/                       DateProvider / AccessTokenProvider / DropboxLogger(→LogChannel)
   Tests/DropboxCoreTests/          APIClient/AuthService/PKCE/SyncEngine/DeltaParser/Batcher/Cache/Naming/MediaInfo/Metadata（iOS Sim）
 

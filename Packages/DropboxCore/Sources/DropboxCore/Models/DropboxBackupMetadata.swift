@@ -84,10 +84,28 @@ public struct DropboxBackupMetadata: Codable, Sendable {
     }
 
     /// 既存エントリに新しいエントリをマージして返す（既存キーは上書き）。
+    ///
+    /// ⚠️ **オフロードの印（`offloadedAt` / `verifiedAt`）だけは消さない。**
+    /// 印は「アプリが端末の原本を消した」という**起きた事実**の記録で、再インストール後に
+    /// 台帳を建て直す唯一の手掛かり（`BackupMetadataPlanning.offloadCandidates`）。
+    /// 一方、バックアップ側が作るエントリは印の存在を知らない（常に nil）。素朴に上書きすると、
+    /// 再送キューに残っていた古いエントリが 1 枚流れただけで印が消え、**その写真は
+    /// 「ユーザーが写真アプリで消した写真」と区別できなくなる**＝二度と復元できない。
+    /// 新しいエントリが印を持っているとき（オフロード経路）はそちらを採る。
     public func merging(_ other: [String: Entry]) -> DropboxBackupMetadata {
         var merged = self
-        merged.entries.merge(other) { _, new in new }
+        merged.entries.merge(other) { old, new in new.keepingOffloadMarkers(of: old) }
         merged.updatedAt = ISO8601DateFormatter().string(from: Date())
         return merged
+    }
+}
+
+extension DropboxBackupMetadata.Entry {
+    /// 自分が印を持っていなければ、古いエントリの印を引き継ぐ（上の注記を参照）。
+    public func keepingOffloadMarkers(of old: DropboxBackupMetadata.Entry) -> Self {
+        var out = self
+        if out.offloadedAt == nil { out.offloadedAt = old.offloadedAt }
+        if out.verifiedAt == nil { out.verifiedAt = old.verifiedAt }
+        return out
     }
 }

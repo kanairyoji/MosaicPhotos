@@ -20,6 +20,11 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
     BackupIndexing.swift           People/Album インデックス構築（top-level・Task.detached 用）
     BackupPlanning.swift           アップロード差分算出・エラー要約の純ロジック（テスト対象）
     BackupMetadataPlanning.swift   メタデータ v2（カタログ＋撮影月シャード・ADR-38）の分割/マージ純ロジック
+    BackupMetadataStore.swift      **メタデータ v2 の唯一の書き手**（ADR-200）。`root` を持ち、
+                                   シャードを書いたら必ずカタログへ登録する。印の書き先を
+                                   パスから推測しない。バックアップもオフロードもここを通る
+    PendingMetadataStore.swift     再送キュー（本体 JSON ＋ 追記ジャーナル）。消費口は `takeAll` の
+                                   1 つだけ（追記と同じ錠の下・ADR-200）
     BackupSettingsKeys.swift / BackupDestination.swift  設定キー / 値オブジェクト
     BackupSettingsView.swift       バックアップ通常設定ビュー（#if canImport(UIKit)）
     BackupDebugSection.swift       Developer Options 向け詳細診断セクション（進捗/フォルダ確認/統計/ログ・public）

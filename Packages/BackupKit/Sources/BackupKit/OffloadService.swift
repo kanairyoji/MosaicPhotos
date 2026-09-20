@@ -198,12 +198,17 @@ public final class OffloadService {
     private let tokenProvider: AccessTokenProvider
     private let deleter: PhotoDeleter
     private let log: @MainActor (String) -> Void
+    /// この端末のバックアップルート（`<設定>/<端末>/Backup`）。印の書き先を決める唯一の出典。
+    /// ⚠️ **写真のパスから推測しない**（ADR-200）。写真は `<root>/<年>/<年-月>/` に在る。
+    private let backupRoot: String
 
     init(uploader: DropboxBackupUploader, tokenProvider: AccessTokenProvider,
-         deleter: PhotoDeleter, log: @escaping @MainActor (String) -> Void) {
+         deleter: PhotoDeleter, backupRoot: String,
+         log: @escaping @MainActor (String) -> Void) {
         self.uploader = uploader
         self.tokenProvider = tokenProvider
         self.deleter = deleter
+        self.backupRoot = backupRoot
         self.log = log
     }
 
@@ -355,35 +360,39 @@ public final class OffloadService {
         return (verdict, localHash)
     }
 
+    /// オフロードの印（`offloadedAt` / `verifiedAt`）を撮影月シャードへ書く。
+    ///
+    /// ⚠️ 書き先は **`backupRoot` から決める**（ADR-200）。以前は写真のパスの親フォルダから
+    /// 作っていたが、写真が年月フォルダへ移った（ADR-176）あとの親は `<root>/2025/2025-08` で、
+    /// 読む側が見ない場所だった。印はカタログ登録まで含めて `BackupMetadataStore` が面倒を見る。
+    /// - Returns: **印を書けた** localIdentifier（呼び出し側が台帳に「送信済み」と記録する）。
+    ///   書けなかった分は未送信のまま残り、`retryPendingOffloadMarkers` が後から再送する。
     public func uploadOffloadMarkers(for targets: [OffloadMarkerTarget],
                                      token: String) async -> [String] {
-        let folderByPath: (String) -> String? = { path in
-            // "/Folder/name.jpg" → "/Folder"（バックアップフォルダ直下前提）
-            guard let idx = path.lastIndex(of: "/") else { return nil }
-            return String(path[..<idx])
-        }
         let now = ISO8601DateFormatter().string(from: Date())
-        let writer = MetadataShardWriter(uploader: uploader, token: token)
-        // ⚠️ **フォルダとシャードの組**で束ねる。撮影月だけで束ねて先頭要素の親フォルダへ
-        // まとめて書くと、旧レイアウトと端末フォルダ、あるいは保存先変更の前後の写真が
-        // 同じ月に混ざったとき、**別フォルダのエントリまで最初のシャードへ書かれ**、
-        // しかも全件を送信済み扱いにしてしまう（レビュー指摘）。
-        var byFolderShard: [String: (folder: String, shard: String, targets: [OffloadMarkerTarget])] = [:]
-        for target in targets {
-            guard let folder = folderByPath(target.dropboxPath) else { continue }
-            let shard = BackupMetadataV2.shardName(for: target.captureDate)
-            let key = "\(folder.lowercased())|\(shard)"
-            byFolderShard[key, default: (folder, shard, [])].targets.append(target)
+        let store = BackupMetadataStore(uploader: uploader, token: token, root: backupRoot)
+        // ⚠️ **管轄外のパスには書かない**。台帳に別のルート（保存先を変える前・別端末から
+        // 引き継いだ記録）のパスが混ざっていたら、印を書く先が分からない＝推測しない。
+        // 黙って捨てず、未送信として残す（次にルートが一致すれば送られる）。
+        let (mine, foreign) = targets.reduce(into: ([OffloadMarkerTarget](), [OffloadMarkerTarget]())) {
+            store.owns(path: $1.dropboxPath) ? $0.0.append($1) : $0.1.append($1)
+        }
+        if !foreign.isEmpty {
+            log("offload.marker: \(foreign.count) target(s) are not under \(backupRoot) — left unsent")
+            Diagnostics.mark("offload: \(foreign.count) marker(s) outside the backup root")
+        }
+        // 撮影月だけで束ねてよい（ルートは 1 つに決まっているので、別フォルダのエントリが
+        // 同じシャードへ混ざることはない）。
+        var byShard: [String: [OffloadMarkerTarget]] = [:]
+        for target in mine {
+            byShard[BackupMetadataV2.shardName(for: target.captureDate), default: []].append(target)
         }
         var written: [String] = []
-        for (_, group) in byFolderShard {
-            let folder = group.folder
-            let shard = group.shard
-            let shardTargets = group.targets
+        for (shard, shardTargets) in byShard.sorted(by: { $0.key < $1.key }) {
             let byPath = Dictionary(shardTargets.map { ($0.dropboxPath, $0) },
                                     uniquingKeysWith: { first, _ in first })
-            let ok = await writer.updateEntries(
-                paths: shardTargets.map(\.dropboxPath), folder: folder, shardName: shard,
+            let ok = await store.mark(
+                paths: shardTargets.map(\.dropboxPath), shard: shard,
                 mutate: { entry in
                     entry.offloadedAt = now
                     entry.verifiedAt = now

@@ -137,8 +137,17 @@ extension BackupEngine {
         return written.count
     }
 
+    /// 現在のバックアップルート（`<設定>/<端末>/Backup`）。印の書き先はここから決める。
+    private static func currentBackupRoot() -> String {
+        let root = backupNormalizedPath(
+            UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                ?? BackupSettingsKeys.defaultDropboxFolder)
+        return deviceBackupRoot(for: root)
+    }
+
     private func makeOffloadService(deleter: PhotoDeleter = PhotoKitDeleter()) -> OffloadService {
         OffloadService(uploader: uploader, tokenProvider: tokenProvider,
-                       deleter: deleter, log: { [weak self] in self?.addLog($0) })
+                       deleter: deleter, backupRoot: Self.currentBackupRoot(),
+                       log: { [weak self] in self?.addLog($0) })
     }
 }

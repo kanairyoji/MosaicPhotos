@@ -568,7 +568,12 @@ final class BackupRunner {
         // 欠落が永久化する（レビュー指摘）。
         let pendingStore = PendingMetadataStore(
             account: await delegate.runnerAccountFingerprint(), folder: folder)
-        let carried = pendingStore.load()
+        // ⚠️ **キューの消費口はここ（`takeAll`）だけ**（ADR-200）。本体とジャーナルを 1 つに
+        // 畳んでからジャーナルを空にするので、(1) 送信中に届いた背景アップロードの行は
+        // 新しいジャーナルへ入って失われない、(2) 同じ行を 1 回の実行で 2 度送らない。
+        // 今回ぶんのエントリも 1 枚ごとにジャーナルへ入っている（`appendEntry`）ので、
+        // ここで畳んだ時点で永続化は済んでいる＝この後に落ちても次回送り直せる。
+        let carried = pendingStore.takeAll()
         let byShard = PendingMetadataStore.merged(
             pending: carried, adding: BackupMetadataPlanning.groupedByShard(newEntries))
         guard !byShard.isEmpty else { return }
@@ -577,37 +582,27 @@ final class BackupRunner {
             addLog("Re-sending \(PendingMetadataStore.entryCount(carried)) metadata entry(s) from a previous run…")
         }
         addLog("Uploading metadata v2 (\(PendingMetadataStore.entryCount(byShard)) entries → \(byShard.count) shard(s))…")
-        let writer = MetadataShardWriter(uploader: uploader, token: token)
-        let applied = await writer.applyEntries(byShard: byShard, folder: folder) { line in
+        // シャードとカタログの両方を `BackupMetadataStore` が面倒を見る（書いたシャードは
+        // 必ずカタログに載る＝読む側が開ける）。
+        let store = BackupMetadataStore(uploader: uploader, token: token, root: folder)
+        let applied = await store.apply(
+            byShard: byShard,
+            facts: BackupMetadataStore.CatalogFacts(
+                albums: Array(Set(indexes.albums.values.flatMap { $0 })).sorted(),
+                people: Array(Set(indexes.people.values.flatMap { $0 })).sorted(),
+                albumIDs: indexes.albumIDs)) { line in
             self.addLog(line)
-        }
-
-        let catalogPath = folder + BackupMetadataV2.catalogSuffix
-        // カタログも取得失敗と不在を区別する（失敗時は既存を壊さないよう書かない）。
-        var catalogWritten = false
-        switch await uploader.downloadResult(path: catalogPath, token: token) {
-        case .found(let data):
-            catalogWritten = await uploadCatalog(existing: data, touched: applied.written,
-                                                 indexes: indexes, path: catalogPath, token: token)
-        case .notFound:
-            catalogWritten = await uploadCatalog(existing: nil, touched: applied.written,
-                                                 indexes: indexes, path: catalogPath, token: token)
-        case .failure(let reason):
-            addLog("  catalog.json: skipped — could not read existing (\(reason))")
         }
 
         // 失敗分を保存（成功したら記録を消す）。カタログだけ失敗した場合も、次回の実行で
         // シャードを書き直す＝カタログも作り直されるように、書けたシャードを残しておく。
         var stillPending = applied.failed
-        if !catalogWritten, !applied.written.isEmpty {
+        if !applied.catalogWritten, !applied.written.isEmpty {
             for shard in applied.written where stillPending[shard] == nil {
                 stillPending[shard] = byShard[shard] ?? [:]
             }
         }
-        // ⚠️ **本体へ書いてからジャーナルを消す**（順序が逆だと、消してから保存に失敗した瞬間に
-        // 残りが失われる）。`save` は残す分を本体へ書き切るので、成功後のジャーナルは不要。
         let queued = pendingStore.save(stillPending)
-        if queued { pendingStore.clearJournal() }
         if !stillPending.isEmpty {
             let count = PendingMetadataStore.entryCount(stillPending)
             if queued {
@@ -647,17 +642,23 @@ final class BackupRunner {
 
     /// 保留キューを指定して送り直す（キューの置き場所を差し替えられるようにした本体）。
     func drainPendingMetadata(folder: String, pendingStore: PendingMetadataStore) async {
-        let carried = pendingStore.load()
-        guard !carried.isEmpty else { return }
-
+        // ⚠️ 接続を確かめてから取り出す。取り出し（`takeAll`）はジャーナルを畳んで空にするので、
+        // 送れないと分かっている回に先に呼ぶ意味がない。
+        guard !pendingStore.load().isEmpty else { return }
         guard let token = try? await tokenProvider.freshAccessToken() else {
             addLog("Pending metadata: not connected — will retry next run")
             return
         }
+        let carried = pendingStore.takeAll()
+        guard !carried.isEmpty else { return }
         setPhase(.uploadingMetadata)
         addLog("Re-sending \(PendingMetadataStore.entryCount(carried)) metadata entry(s) from a previous run…")
-        let writer = MetadataShardWriter(uploader: uploader, token: token)
-        let applied = await writer.applyEntries(byShard: carried, folder: folder) { line in
+        // ⚠️ この経路もカタログを更新する。以前は「索引が無いから触らない」としていたが、
+        // 登録されていないシャードは読む側が**開かない**——前回書けなかった月を送り直しても
+        // 届かないままだった。索引が無いときは `facts: nil`＝シャード一覧だけを足す
+        // （空の索引でアルバム名・人物名を消さない）。
+        let store = BackupMetadataStore(uploader: uploader, token: token, root: folder)
+        let applied = await store.apply(byShard: carried, facts: nil) { line in
             self.addLog(line)
         }
         if !pendingStore.save(applied.failed) {
@@ -665,28 +666,6 @@ final class BackupRunner {
             addLog("  ✗ \(metadataLost) metadata entry(s) lost — could not send or queue for retry")
         }
         if !applied.written.isEmpty { BackupMetadataAbsence.invalidateAll() }
-    }
-
-    /// カタログを書く。書けたか返す。
-    private func uploadCatalog(existing: Data?, touched: [String], indexes: Indexes,
-                               path: String, token: String) async -> Bool {
-        let albumNames = Array(Set(indexes.albums.values.flatMap { $0 })).sorted()
-        let peopleNames = Array(Set(indexes.people.values.flatMap { $0 })).sorted()
-        // ⚠️ 既存カタログが「取れたが読めない」ときは**書かない**（レビュー指摘）。空から
-        // 作り直すと、アルバム名・人物名・シャード一覧・アルバム ID 対応が丸ごと消える。
-        // 書かなければ既存のシャードが再送キューへ戻り（呼び出し側）、次回また試行される。
-        guard let catalog = BackupMetadataPlanning.updatedCatalog(
-            existing: existing, touchedShards: touched,
-            albums: albumNames, people: peopleNames, albumIDs: indexes.albumIDs,
-            deviceID: BackupDeviceIdentity.currentID(),
-            deviceName: BackupDeviceIdentity.currentDisplayName()) else {
-            addLog("  catalog.json: skipped — existing file is not readable JSON")
-            Diagnostics.mark("backup: catalog unreadable — \(path)")
-            return false
-        }
-        let result = await uploader.uploadJSONResult(catalog, to: path, token: token)
-        addLog("  catalog.json (shards=\(catalog.shards.count)): \(result.detail)")
-        return result.ok
     }
 
     // MARK: - Helpers

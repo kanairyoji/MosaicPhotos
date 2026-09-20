@@ -395,6 +395,27 @@ private struct HomeLifecycleTasks: ViewModifier {
                     await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
                 }
             }
+            // クラウド写真の**撮影日時の穴埋め**（ADR-201）。
+            //
+            // ⚠️ Dropbox は一覧系 API で `media_info` を返さない（2019-12-02 以降）ので、
+            // 一覧から得られる日付は**アップロード時刻**。撮影日時は 1 枚ずつ
+            // `get_metadata` を叩くしかない（数秒/枚）。前面の操作を邪魔しないよう、
+            // 場所スキャンと同じ条件（電源＋回線＋非操作＝`.cloudTrickle`）でだけ少しずつ進める。
+            // 訊いた結果は「無かった」も含めて記録されるので、一巡すれば止まる。
+            .task {
+                try? await Task.sleep(for: .seconds(8))   // 起動直後の山を避ける
+                while !Task.isCancelled {
+                    guard BackgroundYield.scenePhase != .background,
+                          BackgroundYield.allows(.cloudTrickle),
+                          case .connected = dropboxStore.auth.connectionStatus else {
+                        try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
+                        continue
+                    }
+                    let probed = await dropboxStore.fillMissingCaptureDates()
+                    // 残っていないなら急がない。残っていれば短い間隔で次の塊へ進む。
+                    try? await Task.sleep(for: .seconds(probed > 0 ? 3 : rescanIntervalSeconds))
+                }
+            }
             // 自動アルバム（時間＋場所）：キャッシュ即ロード→無ければ生成。以降は写真追加で再生成。
             .task {
                 await autoAlbumEngine.loadOrGenerate()
