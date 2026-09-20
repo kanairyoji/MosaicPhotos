@@ -1,24 +1,5 @@
 import Foundation
 
-/// グリッド構成の指紋（純ロジック・テスト対象）。
-///
-/// ⚠️ **ID 列全体**から作ること。件数と両端だけの指紋では、件数が同じまま中間が
-/// 入れ替わった変化（1 枚消えて 1 枚増えた・並び替え）を取りこぼす。取りこぼすと
-/// `PhotoCollectionView` は snapshot / `idToIndex` を作り直さないまま `items` だけ
-/// 差し替えるため、**別の写真が表示され、タップ時の ID も食い違う**（レビュー指摘）。
-///
-/// `Hasher` の種はプロセスごとに変わるが、比較はプロセス内で完結するので問題ない。
-func gridIdentitySignature<S: Sequence>(_ ids: S) -> Int where S.Element: Hashable {
-    var hasher = Hasher()
-    var count = 0
-    for id in ids {
-        hasher.combine(id)
-        count += 1
-    }
-    hasher.combine(count)   // 長さも混ぜる（前方一致の取り違えを防ぐ）
-    return hasher.finalize()
-}
-
 /// 2 つの配列が**同じ実体**（COW の同一バッファ）かを O(1) で見分ける。
 ///
 /// ⚠️ なぜ要るか（実機 diagnostics-59）: サムネイルの密表示が重い、という報告。
@@ -26,7 +7,7 @@ func gridIdentitySignature<S: Sequence>(_ ids: S) -> Int where S.Element: Hashab
 ///
 ///     PhotoCollectionView.updateUIView
 ///       → Coordinator.update(items:…)
-///         → gridIdentitySignature
+///         → gridContentSignature
 ///           → MergedPhotoItem.id.getter : Swift.String
 ///             → LocalPhotoItem.id.getter : Swift.String   （PHAsset.localIdentifier を読む）
 ///
@@ -46,7 +27,14 @@ func sharesStorage<T>(_ lhs: [T], _ rhs: [T]) -> Bool {
     return left == right
 }
 
-/// 一覧の指紋（**撮影日も混ぜる**版）。スナップショットを作り直すかの判定に使う。
+/// グリッド構成の指紋（純ロジック・テスト対象）。スナップショットを作り直すかの判定に使う。
+///
+/// ⚠️ **列全体**から作ること。件数と両端だけの指紋では、件数が同じまま中間が
+/// 入れ替わった変化（1 枚消えて 1 枚増えた・並び替え）を取りこぼす。取りこぼすと
+/// `PhotoCollectionView` は snapshot / `idToIndex` を作り直さないまま `items` だけ
+/// 差し替えるため、**別の写真が表示され、タップ時の ID も食い違う**（レビュー指摘）。
+///
+/// `Hasher` の種はプロセスごとに変わるが、比較はプロセス内で完結するので問題ない。
 ///
 /// ⚠️ **識別子だけでは足りない**（レビュー 7 周目）。月の見出しは撮影日で決まるので、
 /// 「並びは同じまま撮影日だけが直る」更新を識別子で判定すると**見出しが古いまま**残る。

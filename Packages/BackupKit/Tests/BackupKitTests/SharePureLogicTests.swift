@@ -577,7 +577,7 @@ struct ShareSetLifecycleTests {
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         // provide を OFF にしておくと syncNow は即 return するのでネットワークを触らない。
         // ⚠️ `.standard` ではなく専用スイート——並列に走る反映テストの provide を消してしまう。
-        let defaults = TestDefaults.scratch("share-lifecycle") ?? .standard
+        let defaults = TestDefaults.scratch("share-lifecycle")
         defaults.set(false, forKey: ShareSettingsKeys.provideEnabled)
         let engine = ShareSyncEngine(tokenProvider: NeverTokenProvider(),
                                      storeProvider: { store },

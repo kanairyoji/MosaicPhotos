@@ -167,6 +167,10 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 await store.loadMore()
             }
         }
+        .onChange(of: pagingAnchorIsStale) { _, stale in
+            // 一覧が並び替わった（撮影日の反映など）。めくる前に位置を合わせ直す。
+            if stale { resyncPaging() }
+        }
         .onChange(of: currentID) { _, newID in
             // ⚠️ 位置の解決は**ここで 1 回だけ**行い、以降は当たりとして使い回す
             // （以前は currentItem / recenter / prefetch / 末尾判定がそれぞれ走査していた）。
@@ -184,6 +188,27 @@ public struct PhotoPageView<Store: PhotoStore>: View {
                 Task { await store.loadMore() }
             }
         }
+    }
+
+    /// 当たり（`currentIndex`）が外れているか＝**一覧が並び替わった合図**。O(1)。
+    ///
+    /// ⚠️ 並び替えは `currentID` を変えないので、`onChange(of: currentID)` では気づけない
+    /// （レビュー 8 周目）。気づかないと `windowItems` が古い位置のまま切り出され、
+    /// **ラベルと情報パネルは選んだ写真、めくられている中身は別の写真**という状態になる。
+    /// 受け取った撮影日の反映で写真が列の末尾から中ほどへ動く、が実際に起きる場面。
+    private var pagingAnchorIsStale: Bool {
+        let items = allItems
+        guard items.indices.contains(currentIndex) else { return !items.isEmpty }
+        return items[currentIndex].id != currentID
+    }
+
+    /// 並び替えに追随する（当たりを引き直し、ウィンドウを選択中の写真の中心へ寄せる）。
+    private func resyncPaging() {
+        let items = allItems
+        guard let index = PagingIndex.resolve(items, id: currentID, hint: currentIndex) else { return }
+        currentIndex = index
+        let maxLo = max(0, items.count - (Self.windowRadius * 2 + 1))
+        windowLowerBound = max(0, min(index - Self.windowRadius, maxLo))
     }
 
     /// スワイプで現在 index が端へ近づいたら、ウィンドウを現在 index 中心に寄せ直す。

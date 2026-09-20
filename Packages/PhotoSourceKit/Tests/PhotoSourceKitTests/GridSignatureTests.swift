@@ -5,48 +5,62 @@ import Testing
 /// ⚠️ グリッドは指紋が変わらない限り snapshot と `idToIndex` を作り直さない。
 /// 指紋が「件数＋両端の ID」だけだと、件数が同じまま中間が入れ替わった変化を取りこぼし、
 /// **表示している写真とタップ時の ID が食い違う**（レビュー指摘）。
-@Suite("gridIdentitySignature")
+/// テスト用のダミー写真（識別子と撮影日だけを動かす）。
+private struct DatedItem: PhotoItem {
+    let id: String
+    let captureDate: Date?
+}
+
+/// ⚠️ ここは**本番が呼ぶ関数**（`gridContentSignature`）を直接叩く。
+/// 以前は同じ性質を別関数（`gridIdentitySignature`）で確かめていたが、本番が
+/// 呼ばなくなった時点で**死んだ関数の性質を保証する**だけになっていた
+/// ——本物から `hasher.combine(count)` を消しても緑のままだった（レビュー 8 周目）。
+@Suite("gridContentSignature（ID 列）")
 struct GridSignatureTests {
+
+    private func ids(_ list: [String]) -> [DatedItem] {
+        list.map { DatedItem(id: $0, captureDate: nil) }
+    }
 
     @Test("同じ ID 列は同じ指紋")
     func stableForSameList() {
-        #expect(gridIdentitySignature(["a", "b", "c"]) == gridIdentitySignature(["a", "b", "c"]))
+        #expect(gridContentSignature(ids(["a", "b", "c"])) == gridContentSignature(ids(["a", "b", "c"])))
     }
 
     /// 件数も両端も同じで**中間だけ差し替わった**ケース（旧実装が取りこぼしていた本命）。
     @Test("件数と両端が同じでも中間が変われば指紋が変わる")
     func detectsMiddleReplacement() {
-        let before = gridIdentitySignature(["first", "x", "last"])
-        let after = gridIdentitySignature(["first", "y", "last"])
+        let before = gridContentSignature(ids(["first", "x", "last"]))
+        let after = gridContentSignature(ids(["first", "y", "last"]))
         #expect(before != after, "中間の入れ替えを取りこぼす（別写真を表示してしまう）")
     }
 
     @Test("件数と両端が同じでも並びが変われば指紋が変わる")
     func detectsReordering() {
-        let before = gridIdentitySignature(["first", "x", "y", "last"])
-        let after = gridIdentitySignature(["first", "y", "x", "last"])
+        let before = gridContentSignature(ids(["first", "x", "y", "last"]))
+        let after = gridContentSignature(ids(["first", "y", "x", "last"]))
         #expect(before != after, "並び替えを取りこぼす（タップ時の ID が食い違う）")
     }
 
     /// 1 枚消えて 1 枚増える（同時到着）＝件数も両端も不変。
     @Test("同数の追加と削除が同時に起きても指紋が変わる")
     func detectsSwapWithSameCount() {
-        let before = gridIdentitySignature(["a", "removed", "z"])
-        let after = gridIdentitySignature(["a", "added", "z"])
+        let before = gridContentSignature(ids(["a", "removed", "z"]))
+        let after = gridContentSignature(ids(["a", "added", "z"]))
         #expect(before != after)
     }
 
     @Test("件数が変われば指紋が変わる")
     func detectsCountChange() {
-        #expect(gridIdentitySignature(["a", "b"]) != gridIdentitySignature(["a", "b", "c"]))
-        #expect(gridIdentitySignature([String]()) != gridIdentitySignature(["a"]))
+        #expect(gridContentSignature(ids(["a", "b"])) != gridContentSignature(ids(["a", "b", "c"])))
+        #expect(gridContentSignature(ids([])) != gridContentSignature(ids(["a"])))
     }
 }
 
 // MARK: - 同一実体の判定（指紋の再計算を省く）
 
 /// ⚠️ サムネイルの密表示が重いという報告で、採取したメインスタックが
-/// `Coordinator.update` → `gridIdentitySignature` → `MergedPhotoItem.id.getter` を
+/// `Coordinator.update` → `gridContentSignature` → `MergedPhotoItem.id.getter` を
 /// 名指ししていた（実機 diagnostics-59）。ズームで列数を変えるだけでも updateUIView は
 /// 走るため、中身が 1 つも変わっていないのに 86,000 件ぶんの文字列生成をやり直していた。
 @Suite("配列の同一実体判定")
@@ -89,17 +103,15 @@ struct SharesStorageTests {
     /// 同一実体と判定したときは、指紋も必ず一致していること（省いてよい根拠）。
     @Test("同一実体なら指紋も一致する")
     func sharedStorageImpliesSameSignature() {
-        let items = (0..<500).map { "L-\($0)" }
+        // ⚠️ 本番と同じ要素型（撮影日を持つ写真）で確かめる。同一実体なら撮影日も同じなので、
+        // 指紋を省いてよい——という根拠そのものを試す。
+        let items = (0..<500).map {
+            DatedItem(id: "L-\($0)", captureDate: Date(timeIntervalSince1970: Double($0)))
+        }
         let copy = items
         #expect(sharesStorage(items, copy))
-        #expect(gridIdentitySignature(items) == gridIdentitySignature(copy))
+        #expect(gridContentSignature(items) == gridContentSignature(copy))
     }
-}
-
-/// テスト用のダミー写真（撮影日だけを動かす）。
-private struct DatedItem: PhotoItem {
-    let id: String
-    let captureDate: Date?
 }
 
 /// 月の見出しは撮影日で決まるので、スナップショットを作り直すかの判定にも撮影日が要る。
