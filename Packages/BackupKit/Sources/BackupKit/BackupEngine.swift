@@ -162,6 +162,8 @@ public final class BackupEngine {
         offloadedPathsByAlbum = byAlbum
         offloadCount = count
         backedUpIDs = progressStore.loadUploadedIDs().union(await recorded)
+        // 起動後の最初の読み込みで、前回の停止（未確認）を拾い直す（再起動しても知らせは残る）。
+        refreshOffloadHaltNotice()
         cachesWarmed = true
     }
 
@@ -316,6 +318,16 @@ public final class BackupEngine {
         }
         let (verifiedIDs, removed) = await store().reconcile(remote: remote, listedAt: listedAt)
         progressStore.saveUploadedIDs(verifiedIDs)
+        // ⚠️ **オフロード済みの写真の実体が消えていないか**（ADR-202）。オフロード済みは
+        // クラウドのコピーが唯一のコピーなので、消えていたらその写真はもう無い。
+        // 同じことを繰り返させないよう自動オフロードを止め、一覧の上で知らせる。
+        // 一覧が完全な回にしか来ない（`listFolder` は部分結果を返さない）＝誤発動しない。
+        let missing = await store().missingOffloadedPaths(remote: remote)
+        if !missing.isEmpty {
+            OffloadHalt.record(missingPaths: missing)
+            addLog("⚠️ \(missing.count) offloaded photo(s) are missing in Dropbox — auto offload stopped")
+        }
+        refreshOffloadHaltNotice()
         invalidateStatus()
         await reloadBackedUpIDs()
         addLog("Reconcile: verified \(verifiedIDs.count), removed \(removed) stale record(s), remote files \(remote.count)")
@@ -485,6 +497,22 @@ public final class BackupEngine {
         guard !candidates.isEmpty else { return }
         addLog("Rebuilding offload ledger from metadata (\(candidates.count) entries)…")
         await recordOffloads(candidates)
+    }
+
+    /// **オフロードの緊急停止**の知らせ（ADR-202）。未確認の停止があるあいだ、
+    /// 写真の一覧の上に出し、設定画面で「確認した」を押すまで自動オフロードを設定させない。
+    /// `@Observable` なので、ここを更新すれば画面が追従する。
+    public private(set) var offloadHalt: OffloadHalt.Notice?
+
+    /// 永続状態から知らせを取り直す（起動時・照合の後・「確認した」の後に呼ぶ）。
+    public func refreshOffloadHaltNotice() {
+        offloadHalt = OffloadHalt.current
+    }
+
+    /// 利用者が「確認した」を押した。
+    public func acknowledgeOffloadHalt() {
+        OffloadHalt.acknowledge()
+        refreshOffloadHaltNotice()
     }
 
     /// 台帳キャッシュを store から読み直す（変更時）。

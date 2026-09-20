@@ -24,8 +24,46 @@ public struct OffloadSettingsView: View {
         self.engine = engine
     }
 
+    /// 「エラーが出たのでオフロードを止めました」——止めた事実・理由・確認ボタン。
+    ///
+    /// ⚠️ ここに出すのは**起きた事実**であって警告ではない。写真は既に失われている
+    /// （オフロード済み＝クラウドのコピーが唯一のコピーだった）。できるのは
+    /// 「これ以上繰り返さない」ことだけなので、まず止めた、と伝える。
+    @ViewBuilder
+    private func haltSection(_ halt: OffloadHalt.Notice) -> some View {
+        Section {
+            Label(L("Offload stopped"), systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .font(.headline)
+            Text(String(format: L("%d offloaded photo(s) are no longer in Dropbox. Those photos only existed there, so they cannot be recovered. Auto offload has been turned off."),
+                        halt.missingCount))
+                .font(.footnote)
+            if !halt.samplePaths.isEmpty {
+                DisclosureGroup(L("Affected files")) {
+                    ForEach(halt.samplePaths, id: \.self) { path in
+                        Text(path).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if halt.missingCount > halt.samplePaths.count {
+                        Text(String(format: L("and %d more"),
+                                    halt.missingCount - halt.samplePaths.count))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Button(L("I understand")) {
+                engine.acknowledgeOffloadHalt()
+            }
+            .buttonStyle(.borderedProminent)
+        } footer: {
+            Text(L("Check whether the files were deleted from Dropbox by another device or from the web. Auto offload stays off until you turn it back on yourself."))
+        }
+    }
+
     public var body: some View {
         List {
+            // ⚠️ **止めた事実を最初に出す**（ADR-202）。黙って設定を変えない。
+            if let halt = engine.offloadHalt { haltSection(halt) }
+
             Section {
                 Text(L("Offload removes photos from this device after verifying that an identical copy exists in Dropbox (content hash match). Deleted photos remain in Recently Deleted for 30 days."))
                     .font(.footnote).foregroundStyle(.secondary)
@@ -41,8 +79,16 @@ public struct OffloadSettingsView: View {
                         Text(mb >= 1024 ? "\(mb / 1024) GB" : "\(mb) MB").tag(mb)
                     }
                 }
+                // ⚠️ 確認するまで触らせない（ADR-202）。止めた理由を読まないまま
+                // 再開できると、写真を失い続ける経路をそのまま繰り返すことになる。
+                .disabled(engine.offloadHalt != nil)
             } footer: {
-                Text(L("When free space on this device drops below the selected amount, verified old photos will be offloaded automatically."))
+                if engine.offloadHalt != nil {
+                    Text(L("Auto offload is locked until you acknowledge the problem above."))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(L("When free space on this device drops below the selected amount, verified old photos will be offloaded automatically."))
+                }
             }
             .onChange(of: autoThresholdMB) { _, newValue in
                 // 自動オフロード本体は未実装。選択されたら案内を出して「オフロードしない」へ戻す。

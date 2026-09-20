@@ -16,6 +16,10 @@ struct SourceHostView<Content: View>: View {
     let dismissToHome: () -> Void
     @ViewBuilder let content: () -> Content
     @State private var showingSettings = false
+    /// オフロードの緊急停止の知らせから開く画面（ADR-202）。
+    /// ⚠️ 設定の階層を辿らせず**その画面へ直接**出す。読ませたいのは「止めた理由」と
+    /// 「確認した」ボタンで、途中の設定一覧は邪魔にしかならない。
+    @State private var showingOffloadSettings = false
 
     var body: some View {
         let autoAlbumEngine = stores.autoAlbumEngine
@@ -69,8 +73,32 @@ struct SourceHostView<Content: View>: View {
                     SettingsView(stores: stores)
                 }
             }
+            // オフロードの緊急停止（ADR-202）: 一覧の上に知らせを出し、押したらその設定画面へ。
+            .environment(\.sourceNotice, stores.backupEngine.offloadHalt.map(Self.notice(for:)))
+            .environment(\.sourceNoticeAction) { showingOffloadSettings = true }
+            .sheet(isPresented: $showingOffloadSettings) {
+                NavigationStack {
+                    OffloadSettingsView(engine: stores.backupEngine)
+                        .navigationTitle(Text("Offload"))
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") { showingOffloadSettings = false }
+                            }
+                        }
+                }
+            }
             // Developer Options が ON のとき、最上部に Dropbox 通信アクティビティを重ねる。
             .dropboxActivityBar()
+    }
+
+    /// 停止の知らせ → 一覧の上に出す帯の文面（ADR-202）。
+    /// ⚠️ 事実だけを書く。写真は**既に失われている**ので、警告ではなく報告にする。
+    private static func notice(for halt: OffloadHalt.Notice) -> SourceNotice {
+        SourceNotice(
+            title: String(localized: "Offload stopped"),
+            message: String(format: String(localized: "%d offloaded photo(s) are missing from Dropbox. Tap to review."),
+                            halt.missingCount))
     }
 
     /// PhotoItem.id → 端末写真の localIdentifier。

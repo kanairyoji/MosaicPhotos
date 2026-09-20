@@ -44,13 +44,24 @@ public actor BackupStore {
     }
 
     /// テスト用のインメモリコンテナ（本番コンテナと同じスキーマ・ディスクに触れない）。
+    /// テスト用のインメモリ容器を**直列に**作る錠。
+    ///
+    /// ⚠️ `ModelContainer` の生成を複数のスイートが同時に走らせると、まれに
+    /// SwiftData（CoreData の `_generateTriggerSQL`）の中で SIGSEGV になる——
+    /// 2026-09-18 / 09-20 に計 3 回観測し、いずれも単体の再実行では再現しない。
+    /// 原因は推定のままだが、**同時に作らなければ当たらない**。テスト専用の入口なので、
+    /// ここを直列にするのは安全（本番の生成経路は触らない）。
+    private static let testContainerLock = NSLock()
+
     public static func inMemoryContainerForTesting() -> ModelContainer {
+        testContainerLock.lock()
+        defer { testContainerLock.unlock() }
         let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
                              ShareSet.self, ShareItem.self])
         // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
-            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
-            let config = ModelConfiguration(UUID().uuidString, schema: schema,
-                                            isStoredInMemoryOnly: true)
+        // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
+        let config = ModelConfiguration(UUID().uuidString, schema: schema,
+                                        isStoredInMemoryOnly: true)
         // テスト専用なので失敗は致命的（本番の自己修復とは別扱い）。
         return try! ModelContainer(for: schema, configurations: [config])
     }
@@ -215,6 +226,26 @@ public actor BackupStore {
         }
         try? modelContext.save()
         return (verifiedIDs, removed)
+    }
+
+    /// **実体が見つからないオフロード済み写真**（ADR-202）。
+    ///
+    /// オフロード済み＝端末の原本は消してあるので、クラウドのコピーが**唯一のコピー**。
+    /// それが一覧に無い（消された）か、content_hash が記録と違う（差し替えられた）なら、
+    /// その写真はもうどこにも無い。
+    ///
+    /// ⚠️ **完全な一覧でだけ呼ぶこと**。ページの途中で失敗した一覧を渡すと、実在する写真を
+    /// 「消えた」と判定して緊急停止を誤発動する（`listFolder` は部分結果を返さない設計）。
+    /// - Parameter remote: Dropbox の実ファイル一覧（path_lower → content_hash）。
+    public func missingOffloadedPaths(remote: [String: String]) -> [String] {
+        let records = (try? modelContext.fetch(FetchDescriptor<OffloadRecord>())) ?? []
+        return records.compactMap { record -> String? in
+            let path = record.dropboxPath.lowercased()
+            guard let remoteHash = remote[path] else { return path }   // 消えた
+            // 記録に hash が無い（旧形式）なら、在るだけで良しとする。
+            guard let recorded = record.contentHash, !remoteHash.isEmpty else { return nil }
+            return recorded == remoteHash ? nil : path                 // 差し替えられた
+        }
     }
 
     /// 全記録の削除（Debug 用・オフロード台帳は対象外）。

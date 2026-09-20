@@ -31,6 +31,16 @@
         }
       }
     },
+    "%d offloaded photo(s) are missing from Dropbox. Tap to review.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフロード済みの写真 %d 枚が Dropbox で見つかりません。タップして確認してください。"
+          }
+        }
+      }
+    },
     "%d photos": {
       "localizations": {
         "ja": {
@@ -129,6 +139,26 @@
         }
       }
     },
+    "%lld%% of storage": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ストレージの %lld%%"
+          }
+        }
+      }
+    },
+    "%lld%% of storage (default)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ストレージの %lld%%（既定）"
+          }
+        }
+      }
+    },
     "%llds pause": {
       "localizations": {
         "ja": {
@@ -193,6 +223,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "同じ名前のグループが既にあります。"
+          }
+        }
+      }
+    },
+    "A newer recognition model is included in this version. Photos are re-analyzed gradually, newest first, while search and People keep working with the previous results. People switches to the new model once most photos are done; names are carried over.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このバージョンには新しい認識モデルが含まれています。写真は新しいものから順に少しずつ解析し直され、その間も検索とピープルは従来の結果で使えます。ピープルは大半の写真が終わった時点で新しいモデルに切り替わり、名前は引き継がれます。"
           }
         }
       }
@@ -399,16 +439,6 @@
         }
       }
     },
-    "All conditions for automatic analysis are met.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動で解析する条件は満たしています。"
-          }
-        }
-      }
-    },
     "All Photos": {
       "localizations": {
         "ja": {
@@ -425,6 +455,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "まとめて確認"
+          }
+        }
+      }
+    },
+    "All caches share one limit. When it is reached, the app removes the least valuable items first: full-size cloud photos (prefetched ones before viewed ones), then face thumbnails used in People, and thumbnails last. Nothing you browse is ever unavailable — removed items are simply fetched again.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのキャッシュが 1 つの上限を共有します。上限に達すると、価値の低いものから削除します: クラウド写真の本体（先読みしただけのもの → 開いたもの）、次にピープルで使う顔のサムネイル、最後に写真のサムネイル。削除されても閲覧できなくなることはなく、必要になれば取得し直すだけです。"
+          }
+        }
+      }
+    },
+    "All conditions for automatic analysis are met.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動で解析する条件は満たしています。"
           }
         }
       }
@@ -481,12 +531,73 @@
         }
       }
     },
+    "Analysis resumes by itself once these are resolved. “Analyze Now” ignores all of them except heat.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上の条件が解消すれば自動で再開します。「今すぐ解析」は発熱以外のすべてを無視して進めます。"
+          }
+        }
+      }
+    },
+    "Analysis resumes by itself once these are resolved. “Analyze Now” ignores the settings above (automatic analysis, charging, and idle time), but not heat, a low battery, memory pressure, or your network setting.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "これらが解消されれば、解析は自動で再開します。「今すぐ解析」は上の設定（自動で解析する・充電・操作からの経過）を無視しますが、発熱・電池残量・メモリ不足・通信の設定は無視しません。"
+          }
+        }
+      }
+    },
+    "Analysis runs by itself whenever the conditions in Processing Timing are met — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds. Nothing to resume: it simply continues from where it is.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析は「処理のタイミング」の条件を満たす間、自動で進みます——iPhone のロック中に加えて、アプリを開いたままでも 20 秒触らなければ進みます。「再開」の操作は要りません。いつでも続きから進みます。"
+          }
+        }
+      }
+    },
+    "Analyze Now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ解析"
+          }
+        }
+      }
+    },
     "Analyze Now (while charging)": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "今すぐ解析（充電中）"
+          }
+        }
+      }
+    },
+    "Analyze While This Screen Is Open": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画面を開いている間、解析する"
+          }
+        }
+      }
+    },
+    "Analyze while the app is open": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを開いている間も解析する"
           }
         }
       }
@@ -507,6 +618,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "解析中"
+          }
+        }
+      }
+    },
+    "Analyzing photos": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を解析中"
           }
         }
       }
@@ -589,22 +710,22 @@
         }
       }
     },
-    "Automatic analysis": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動で解析する"
-          }
-        }
-      }
-    },
     "Automatic Analysis": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
             "value": "自動の解析"
+          }
+        }
+      }
+    },
+    "Automatic analysis": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動で解析する"
           }
         }
       }
@@ -781,6 +902,16 @@
         }
       }
     },
+    "Budget": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限"
+          }
+        }
+      }
+    },
     "Build tools": {
       "localizations": {
         "ja": {
@@ -805,6 +936,26 @@
     "CLIP 埋め込みを今すぐ開始": {
       "comment": "A button that starts CLIP embedding immediately.",
       "isCommentAutoGenerated": true
+    },
+    "Cache Limit": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャッシュの上限"
+          }
+        }
+      }
+    },
+    "Cache limit": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャッシュの上限"
+          }
+        }
+      }
     },
     "Cancel": {
       "localizations": {
@@ -1114,6 +1265,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "自宅から離れた連続する日を1つの旅行にまとめます（複数日の旅行を日ごとに分割しません）。まとめる間隔が大きいほど旅行中の空白日を許容し、自宅滞在で新しい旅行が始まります。"
+          }
+        }
+      }
+    },
+    "Continues after you leave the app.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを閉じても続きます。"
           }
         }
       }
@@ -1441,6 +1602,16 @@
         }
       }
     },
+    "Everything is analyzed.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて解析済みです。"
+          }
+        }
+      }
+    },
     "Exclude photos already in an album": {
       "localizations": {
         "ja": {
@@ -1452,6 +1623,16 @@
       }
     },
     "Face Yield Measurement": {},
+    "Face thumbnails (People)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔のサムネイル（ピープル）"
+          }
+        }
+      }
+    },
     "Faces are detected and grouped into people entirely on device, for both device and Dropbox photos (cloud faces use already-cached thumbnails, so no extra downloads).": {
       "localizations": {
         "ja": {
@@ -1468,6 +1649,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "検出した顔"
+          }
+        }
+      }
+    },
+    "Faces, tags, and the search index": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顔・タグ・検索の索引"
           }
         }
       }
@@ -1553,6 +1744,16 @@
         }
       }
     },
+    "Fixed size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定サイズ"
+          }
+        }
+      }
+    },
     "Folder Albums": {
       "localizations": {
         "ja": {
@@ -1609,6 +1810,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Dropbox のフォルダから"
+          }
+        }
+      }
+    },
+    "Full-size photos (Dropbox)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真の本体（Dropbox）"
           }
         }
       }
@@ -1895,6 +2106,16 @@
         }
       }
     },
+    "Indexing runs automatically while the device is charging and idle (or locked). To run it right now, use AI Analysis → Analyze Now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "索引付けは、充電中で操作していない（またはロック中の）ときに自動で進みます。今すぐ進めるには「AI 解析」→「今すぐ解析」を使ってください。"
+          }
+        }
+      }
+    },
     "Indexing runs automatically while the device is charging and idle (or locked). “Process Now” starts immediately for 30 minutes — charging is still required.": {
       "localizations": {
         "ja": {
@@ -1961,6 +2182,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "この写真は「%@」さんですか？"
+          }
+        }
+      }
+    },
+    "Keep Analyzing After Leaving the App": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを離れても解析を続ける"
+          }
+        }
+      }
+    },
+    "Keep Screen On While Analyzing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析中は画面を消さない"
           }
         }
       }
@@ -2114,6 +2355,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "位置の粒度"
+          }
+        }
+      }
+    },
+    "Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面をロックすると止まることがあります（Apple が修正中の iOS の既知の問題）。「解析中は画面を消さない」で回避できます（充電しながらがおすすめ）。端末が温かくなることがあり、熱くなりすぎると自動的に一時停止します。それ以外は「処理のタイミング」の設定に従って自動で進みます。"
           }
         }
       }
@@ -2299,6 +2550,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "旅行の最小枚数"
+          }
+        }
+      }
+    },
+    "Model Update": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルの更新"
           }
         }
       }
@@ -2660,6 +2921,26 @@
     "Offline reverse geocoding (album place names & Places)": {
       "comment": "Description of a license item for the GeoNames dataset used for offline reverse geocoding.",
       "isCommentAutoGenerated": true
+    },
+    "Offload": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフロード"
+          }
+        }
+      }
+    },
+    "Offload stopped": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフロードを停止しました"
+          }
+        }
+      }
     },
     "On": {
       "localizations": {
@@ -3088,6 +3369,16 @@
         }
       }
     },
+    "Reduced from %@ to keep free space on this device.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この端末の空き容量を確保するため、%@ から縮小しています。"
+          }
+        }
+      }
+    },
     "Reference model & tokenizer": {
       "localizations": {
         "ja": {
@@ -3308,6 +3599,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "シーンタグ"
+          }
+        }
+      }
+    },
+    "Search index": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索の索引"
           }
         }
       }
@@ -3555,6 +3856,17 @@
         }
       }
     },
+    "Stop": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止"
+          }
+        }
+      }
+    },
     "Stop Cloud Sharing…": {
       "localizations": {
         "ja": {
@@ -3581,6 +3893,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "クラウド共有を停止しますか？ 共有フォルダから削除されるので、共有相手にはこれらの写真が見えなくなります。相手が既に保存したコピーは取り消せません。アルバムや人物、端末の写真、バックアップはそのまま残ります。"
+          }
+        }
+      }
+    },
+    "Stopped because the battery is low. Plug in and tap Analyze Now to continue.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電池残量が少ないため停止しました。充電してから「今すぐ解析」をタップすると続きから再開します。"
           }
         }
       }
@@ -3807,6 +4129,26 @@
         }
       }
     },
+    "Thumbnails (Dropbox)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サムネイル（Dropbox）"
+          }
+        }
+      }
+    },
+    "Thumbnails (device photos)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サムネイル（端末の写真）"
+          }
+        }
+      }
+    },
     "Time & Place": {
       "localizations": {
         "ja": {
@@ -3833,6 +4175,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "タイトル"
+          }
+        }
+      }
+    },
+    "Total": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "合計"
           }
         }
       }
@@ -3990,6 +4342,17 @@
         }
       }
     },
+    "While this screen is open, analysis runs at full speed and the display stays on — charging is recommended. It stops as soon as you leave this screen or tap Stop. The device may get warm; analysis pauses on its own if it gets too hot.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この画面を開いている間は、待機や電源の条件を待たずに全力で解析します（画面は消灯しません）。充電しながらのご利用をおすすめします。画面を離れるか「停止」を押すと止まります。端末が熱くなった場合は自動で休止します。"
+          }
+        }
+      }
+    },
     "Wi-Fi only": {
       "localizations": {
         "ja": {
@@ -4100,6 +4463,26 @@
         }
       }
     },
+    "iOS ended the boost. Analysis keeps going automatically while charging — or tap Analyze Now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS が全力解析を止めました。充電中は自動で続きます（「今すぐ解析」で今すぐ再開もできます）。"
+          }
+        }
+      }
+    },
+    "iOS has not given the app a background window for a long time. This can happen if the app was swiped away from the app switcher, or if iOS ended it to free memory. Tap Analyze Now (keep the device plugged in) to continue right away.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS が長い間このアプリに処理の時間をくれていません。App スイッチャーでアプリを上にスワイプして終了した場合や、iOS がメモリ確保のためにアプリを終了した場合に起こります。「今すぐ解析」を押せば（電源につないだまま）すぐに続きから進みます。"
+          }
+        }
+      }
+    },
     "one folder level (any chars except “/”)": {
       "localizations": {
         "ja": {
@@ -4141,6 +4524,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "「%1$@」を「%2$@」に統合します。自動では元に戻せません。"
+          }
+        }
+      }
+    },
+    "“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「今すぐ解析」は顔・タグ・検索の索引を全力で進め、アプリを閉じても続きます。進捗は Dynamic Island / ロック画面に表示され、そこから停止もできます。すべて解析し終えるか、充電なしで電池が 20% を下回ると自動で終わります。"
           }
         }
       }
@@ -4391,370 +4784,7 @@
       "comment": "A label that describes whether the face recognition model is bundled with the app.",
       "isCommentAutoGenerated": true
     },
-    "顔（未割当）": {},
-    "Analyze while the app is open": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを開いている間も解析する"
-          }
-        }
-      }
-    },
-    "Analyze While This Screen Is Open": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この画面を開いている間、解析する"
-          }
-        }
-      }
-    },
-    "Stop": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "停止"
-          }
-        }
-      }
-    },
-    "While this screen is open, analysis runs at full speed and the display stays on — charging is recommended. It stops as soon as you leave this screen or tap Stop. The device may get warm; analysis pauses on its own if it gets too hot.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この画面を開いている間は、待機や電源の条件を待たずに全力で解析します（画面は消灯しません）。充電しながらのご利用をおすすめします。画面を離れるか「停止」を押すと止まります。端末が熱くなった場合は自動で休止します。"
-          }
-        }
-      }
-    },
-    "Analysis resumes by itself once these are resolved. “Analyze Now” ignores all of them except heat.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上の条件が解消すれば自動で再開します。「今すぐ解析」は発熱以外のすべてを無視して進めます。"
-          }
-        }
-      }
-    },
-    "Analysis resumes by itself once these are resolved. “Analyze Now” ignores the settings above (automatic analysis, charging, and idle time), but not heat, a low battery, memory pressure, or your network setting.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "これらが解消されれば、解析は自動で再開します。「今すぐ解析」は上の設定（自動で解析する・充電・操作からの経過）を無視しますが、発熱・電池残量・メモリ不足・通信の設定は無視しません。"
-          }
-        }
-      }
-    },
-    "Analysis runs by itself whenever the conditions in Processing Timing are met — while your iPhone is locked, and also while the app is open once you have not touched the screen for 20 seconds. Nothing to resume: it simply continues from where it is.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "解析は「処理のタイミング」の条件を満たす間、自動で進みます——iPhone のロック中に加えて、アプリを開いたままでも 20 秒触らなければ進みます。「再開」の操作は要りません。いつでも続きから進みます。"
-          }
-        }
-      }
-    },
-    "Analyze Now": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今すぐ解析"
-          }
-        }
-      }
-    },
-    "Keep Analyzing After Leaving the App": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを離れても解析を続ける"
-          }
-        }
-      }
-    },
-    "Keep Screen On While Analyzing": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "解析中は画面を消さない"
-          }
-        }
-      }
-    },
-    "Continues after you leave the app.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを閉じても続きます。"
-          }
-        }
-      }
-    },
-    "Everything is analyzed.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すべて解析済みです。"
-          }
-        }
-      }
-    },
-    "iOS ended the boost. Analysis keeps going automatically while charging — or tap Analyze Now.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iOS が全力解析を止めました。充電中は自動で続きます（「今すぐ解析」で今すぐ再開もできます）。"
-          }
-        }
-      }
-    },
-    "iOS has not given the app a background window for a long time. This can happen if the app was swiped away from the app switcher, or if iOS ended it to free memory. Tap Analyze Now (keep the device plugged in) to continue right away.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iOS が長い間このアプリに処理の時間をくれていません。App スイッチャーでアプリを上にスワイプして終了した場合や、iOS がメモリ確保のためにアプリを終了した場合に起こります。「今すぐ解析」を押せば（電源につないだまま）すぐに続きから進みます。"
-          }
-        }
-      }
-    },
-    "Stopped because the battery is low. Plug in and tap Analyze Now to continue.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "電池残量が少ないため停止しました。充電してから「今すぐ解析」をタップすると続きから再開します。"
-          }
-        }
-      }
-    },
-    "Analyzing photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真を解析中"
-          }
-        }
-      }
-    },
-    "Faces, tags, and the search index": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "顔・タグ・検索の索引"
-          }
-        }
-      }
-    },
-    "“Analyze Now” runs faces, tags, and the search index at full speed and keeps going after you leave the app — progress appears in the Dynamic Island / Lock Screen, where you can also stop it. It ends by itself when everything is analyzed, or if the battery drops below 20% while not charging.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "「今すぐ解析」は顔・タグ・検索の索引を全力で進め、アプリを閉じても続きます。進捗は Dynamic Island / ロック画面に表示され、そこから停止もできます。すべて解析し終えるか、充電なしで電池が 20% を下回ると自動で終わります。"
-          }
-        }
-      }
-    },
-    "Locking the screen may pause it (a known iOS issue Apple is fixing). Keep Screen On avoids that — charging is recommended. The device may get warm; analysis pauses on its own if it gets too hot. Otherwise analysis runs automatically based on Processing Timing.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画面をロックすると止まることがあります（Apple が修正中の iOS の既知の問題）。「解析中は画面を消さない」で回避できます（充電しながらがおすすめ）。端末が温かくなることがあり、熱くなりすぎると自動的に一時停止します。それ以外は「処理のタイミング」の設定に従って自動で進みます。"
-          }
-        }
-      }
-    },
-    "Indexing runs automatically while the device is charging and idle (or locked). To run it right now, use AI Analysis → Analyze Now.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "索引付けは、充電中で操作していない（またはロック中の）ときに自動で進みます。今すぐ進めるには「AI 解析」→「今すぐ解析」を使ってください。"
-          }
-        }
-      }
-    },
-    "Cache limit": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "キャッシュの上限"
-          }
-        }
-      }
-    },
-    "Cache Limit": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "キャッシュの上限"
-          }
-        }
-      }
-    },
-    "Fixed size": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "固定サイズ"
-          }
-        }
-      }
-    },
-    "Budget": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上限"
-          }
-        }
-      }
-    },
-    "Reduced from %@ to keep free space on this device.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この端末の空き容量を確保するため、%@ から縮小しています。"
-          }
-        }
-      }
-    },
-    "Total": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "合計"
-          }
-        }
-      }
-    },
-    "Thumbnails (device photos)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "サムネイル（端末の写真）"
-          }
-        }
-      }
-    },
-    "Thumbnails (Dropbox)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "サムネイル（Dropbox）"
-          }
-        }
-      }
-    },
-    "Full-size photos (Dropbox)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真の本体（Dropbox）"
-          }
-        }
-      }
-    },
-    "%lld%% of storage (default)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ストレージの %lld%%（既定）"
-          }
-        }
-      }
-    },
-    "%lld%% of storage": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ストレージの %lld%%"
-          }
-        }
-      }
-    },
-    "Face thumbnails (People)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "顔のサムネイル（ピープル）"
-          }
-        }
-      }
-    },
-    "All caches share one limit. When it is reached, the app removes the least valuable items first: full-size cloud photos (prefetched ones before viewed ones), then face thumbnails used in People, and thumbnails last. Nothing you browse is ever unavailable — removed items are simply fetched again.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すべてのキャッシュが 1 つの上限を共有します。上限に達すると、価値の低いものから削除します: クラウド写真の本体（先読みしただけのもの → 開いたもの）、次にピープルで使う顔のサムネイル、最後に写真のサムネイル。削除されても閲覧できなくなることはなく、必要になれば取得し直すだけです。"
-          }
-        }
-      }
-    },
-    "Search index": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "検索の索引"
-          }
-        }
-      }
-    },
-    "Model Update": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "モデルの更新"
-          }
-        }
-      }
-    },
-    "A newer recognition model is included in this version. Photos are re-analyzed gradually, newest first, while search and People keep working with the previous results. People switches to the new model once most photos are done; names are carried over.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このバージョンには新しい認識モデルが含まれています。写真は新しいものから順に少しずつ解析し直され、その間も検索とピープルは従来の結果で使えます。ピープルは大半の写真が終わった時点で新しいモデルに切り替わり、名前は引き継がれます。"
-          }
-        }
-      }
-    }
+    "顔（未割当）": {}
   },
   "version": "1.1"
 }

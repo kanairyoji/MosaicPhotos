@@ -26,6 +26,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     /// ベストショット判定（フィルタ ON のとき台帳から読み込む・OFF で破棄）。
     @Environment(\.photoQualityProvider) private var photoQualityProvider
     @State private var beautifulMembership: (@Sendable (String) -> Bool)?
+    /// 一覧の上に出す知らせ（ADR-202・現状はオフロードの緊急停止だけ）。
+    @Environment(\.sourceNotice) private var sourceNotice
+    @Environment(\.sourceNoticeAction) private var sourceNoticeAction
 
     public init(store: Store, title: String, @ViewBuilder header: () -> Header = { EmptyView() }) {
         self.store = store
@@ -36,6 +39,11 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // ⚠️ ヘッダーより**上**に出す。見ている人に今すぐ伝えたいことなので、
+                // 画面ごとの見出しに埋もれさせない。
+                if let sourceNotice {
+                    SourceNoticeBanner(notice: sourceNotice, action: sourceNoticeAction)
+                }
                 header
                 Group {
                     switch store.state {
