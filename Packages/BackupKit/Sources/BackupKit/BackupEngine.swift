@@ -142,13 +142,27 @@ public final class BackupEngine {
         Task { await reloadBackedUpIDs() }
     }
 
-    public init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient()) {
-        self.tokenProvider = auth
+    public convenience init(auth: DropboxAuthService,
+                            httpClient: HTTPClient = URLSessionHTTPClient()) {
+        self.init(auth: auth, httpClient: httpClient, store: nil)
+    }
+
+    /// - Parameters:
+    ///   - store: **テスト用の差し替え**（nil＝本番＝ディスク上の容器をオフメインで作る）。
+    ///     ⚠️ 配線（照合 → 検知 → 緊急停止）が生きているかは部品単位では確かめられない。
+    ///     台帳を差し替えられないと、通しのテストが実機の台帳を書いてしまう。
+    ///   - tokenProvider: 同じくテスト用（nil＝`auth`）。`auth.credential` は外から差せないため。
+    init(auth: DropboxAuthService, httpClient: HTTPClient = URLSessionHTTPClient(),
+         store: BackupStore?, tokenProvider: AccessTokenProvider? = nil) {
+        self.tokenProvider = tokenProvider ?? auth
         self.accountIdProvider = { [weak auth] in auth?.credential?.accountId }
         self.uploader = DropboxBackupUploader(httpClient: httpClient)
         // SwiftData は BackupStore（@ModelActor）へ分離し**オフメイン生成**する。
         // 旧実装は init で全記録 fetch×2 がメインで走り、記録が増えると起動ハングの構図だった。
-        self.storeTask = Task { await BackupStore.makeDetached() }
+        self.storeTask = Task {
+            if let store { return store }
+            return await BackupStore.makeDetached()
+        }
         Task { await warmCaches() }
     }
 
