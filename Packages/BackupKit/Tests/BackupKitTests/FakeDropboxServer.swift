@@ -60,6 +60,59 @@ actor FakeDropboxServer: HTTPClient {
     /// move_v2 を通信エラー（500）にする。「通信断で改名できない回」を再現するため。
     var failMove = false
 
+    /// **狙ったパスだけを、狙った回数だけ失敗させる**（オフロードの検証用）。
+    ///
+    /// ⚠️ なぜ「回数」が要るか: オフロードは**写真を消してから**印を書くので、
+    /// 印が書けなかった回に大事なのは「失敗したこと」ではなく**そのあと収束するか**。
+    /// 恒久的な失敗しか作れないと、「再送で最終的に届く」を確かめられない。
+    struct Failure: Equatable {
+        var status: Int
+        /// 残り失敗回数（負＝ずっと失敗）。
+        var remaining: Int
+    }
+    private var uploadFailures: [String: Failure] = [:]
+    private var metadataFailures: [String: Failure] = [:]
+
+    /// `files/upload` のうち、パスにこの語を含むものを失敗させる。
+    /// - Parameters:
+    ///   - status: 429（レート制限）/ 403（権限なし）/ 500（一時障害）など。
+    ///   - times: 失敗させる回数（既定 -1＝ずっと）。
+    func failUploads(matching fragment: String, status: Int = 429, times: Int = -1) {
+        uploadFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
+    }
+
+    /// `files/get_metadata` のうち、パスにこの語を含むものを失敗させる。
+    /// オフロードの**照合**（hash・サイズ）が取れない回を作るために使う。
+    func failGetMetadata(matching fragment: String, status: Int = 429, times: Int = -1) {
+        metadataFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
+    }
+
+    /// 注入した失敗をすべて解除する（「レート制限が明けた」「権限が戻った」を作る）。
+    func clearFailures() {
+        uploadFailures.removeAll()
+        metadataFailures.removeAll()
+    }
+
+    /// 失敗させるべきか判定し、回数を 1 減らす。
+    private func consumeFailure(in table: inout [String: Failure], path: String) -> Int? {
+        let key = path.lowercased()
+        guard let (fragment, failure) = table.first(where: { key.contains($0.key) }) else { return nil }
+        guard failure.remaining != 0 else { return nil }
+        if failure.remaining > 0 {
+            table[fragment] = Failure(status: failure.status, remaining: failure.remaining - 1)
+        }
+        return failure.status
+    }
+
+    /// Dropbox が返すエラー本文（要約はアプリのログにそのまま出る）。
+    private static func errorBody(_ status: Int) -> String {
+        switch status {
+        case 429: return #"{"error_summary":"too_many_write_operations/.."}"#
+        case 403: return #"{"error_summary":"insufficient_permissions/.."}"#
+        default:  return #"{"error_summary":"internal_error/.."}"#
+        }
+    }
+
     init(files: [String: Entry] = [:]) { self.files = files }
 
     /// 既存ファイルを直接置く（テストの前提条件づくり）。
@@ -311,8 +364,13 @@ actor FakeDropboxServer: HTTPClient {
     private func handleGetMetadata(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
         struct Body: Decodable { let path: String }
-        guard let parsed = try? JSONDecoder().decode(Body.self, from: body),
-              let entry = files[parsed.path.lowercased()] else {
+        guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
+            return resp(400, "{}")
+        }
+        if let status = consumeFailure(in: &metadataFailures, path: parsed.path) {
+            return resp(status, Self.errorBody(status))
+        }
+        guard let entry = files[parsed.path.lowercased()] else {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
         return resp(200, #"{"content_hash":"\#(entry.contentHash)","size":\#(entry.size)}"#)
@@ -326,6 +384,9 @@ actor FakeDropboxServer: HTTPClient {
             return resp(400, "{}")
         }
         let key = arg.path.lowercased()
+        if let status = consumeFailure(in: &uploadFailures, path: key) {
+            return resp(status, Self.errorBody(status))
+        }
         let body = request.httpBody ?? Data()
         // 本物と同じ content_hash を返す（アップロードの検証経路をそのまま通せる）。
         let hash = DropboxContentHash.hash(of: body)
