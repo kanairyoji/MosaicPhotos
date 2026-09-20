@@ -10,6 +10,21 @@ import DropboxCore
 /// このサーバーはファイル表を保持し、`copy_batch` / `delete_batch` / `list_folder` を
 /// 実際に反映するので、「反映を 2 回・3 回走らせたら収束するか」を検証できる。
 ///
+/// ## 使い方（仕込みは 1 本のルール表）
+/// ```swift
+/// let server = FakeDropboxServer()
+/// await server.upload(path: "/a.jpg", data: bytes)      // 置く
+/// await server.inject(.init(endpoint: "files/upload",   // 仕込む
+///                           pathContains: ".mosaic",
+///                           times: 2,                    // -1 = ずっと
+///                           effect: .status(429, retryAfter: 3)))
+/// …
+/// #expect(await server.pendingFaults().isEmpty)         // 仕込みが実際に使われたか
+/// print(await server.transcript())                      // 落ちたとき何が起きたか
+/// ```
+/// 効果は `Effect` の 5 つ（HTTP エラー・本文の切れ・遅延・接続失敗・無応答）。
+/// **新しい壊れ方は `Effect` に 1 行足す**——失敗の種類ごとにプロパティを増やさない。
+///
 /// ## ⚠️ Dropbox の偽物は**これ 1 つ**にする（2026-09-20 に統合）
 /// かつては用途ごとに簡易スタブが 5 つ併存していた（`FakeDropbox` / `RecordingDropbox` /
 /// `MarkerRecorder` / `StatefulShardServer` / `Fake`）。忠実度がまちまちで、
@@ -138,61 +153,117 @@ public actor FakeDropboxServer: HTTPClient {
     /// ⚠️ なぜ「回数」が要るか: オフロードは**写真を消してから**印を書くので、
     /// 印が書けなかった回に大事なのは「失敗したこと」ではなく**そのあと収束するか**。
     /// 恒久的な失敗しか作れないと、「再送で最終的に届く」を確かめられない。
-    public struct Failure: Equatable {
-        var status: Int
-        /// 残り失敗回数（負＝ずっと失敗）。
-        var remaining: Int
+    ///
+    /// ## 注入は**1 本のルール表**（`inject`）
+    /// 「どのエンドポイントの・どのパスに・何回・何を起こすか」を 1 行で書く。
+    /// ⚠️ 失敗の種類ごとにプロパティとセッターを足す作りは、**同じ増え方を繰り返す**
+    /// （ADR-196 でゲート判定を 11 の述語から 1 つの表へ畳んだのと同じ話）。
+    /// 新しい失敗が要るときは `Effect` に 1 行足すだけで済むようにしておく。
+    public struct Fault: Equatable, Sendable {
+        /// 対象のエンドポイント（`files/upload` 等）。nil＝すべて。
+        public var endpoint: String?
+        /// 対象のパスに含まれる語。nil または空＝パスで絞らない。
+        public var pathContains: String?
+        /// 適用する回数（-1＝ずっと）。**「何回目までは失敗するが、その後は通る」**を作れる
+        /// ことが要点——恒久的な失敗しか作れないと収束を確かめられない。
+        public var times: Int
+        public var effect: Effect
+
+        public init(endpoint: String? = nil, pathContains: String? = nil,
+                    times: Int = -1, effect: Effect) {
+            self.endpoint = endpoint
+            self.pathContains = pathContains
+            self.times = times
+            self.effect = effect
+        }
+
+        func matches(endpoint requested: String, path: String) -> Bool {
+            if let endpoint, !requested.contains(endpoint) { return false }
+            if let pathContains, !pathContains.isEmpty,
+               !path.lowercased().contains(pathContains.lowercased()) { return false }
+            return times != 0
+        }
     }
-    private var uploadFailures: [String: Failure] = [:]
-    private var metadataFailures: [String: Failure] = [:]
-    private var downloadFailures: [String: Failure] = [:]
+
+    /// 起こせること。**新しい壊れ方はここへ 1 行足す**（プロパティを増やさない）。
+    public enum Effect: Equatable, Sendable {
+        /// HTTP エラー。`retryAfter` を付けると `Retry-After` ヘッダも返す。
+        case status(Int, retryAfter: Int? = nil)
+        /// HTTP 200 だが**本文が途中で切れる**（「成功したのに中身が違う」）。
+        case truncateBody
+        /// 応答をこのミリ秒だけ遅らせる（失敗ではない・そのあと通常の応答）。
+        case delay(milliseconds: Int)
+        /// 接続そのものが失敗する（`URLError`）。
+        case networkError
+        /// **応答を返さない**（呼び出し側のタイムアウト・キャンセルを試す）。
+        /// ⚠️ キャンセルされるまで戻らないので、キャンセルの効かない呼び出しでは止まる。
+        case drop
+    }
+
+    private var faults: [Fault] = []
+
+    /// 失敗（や遅延）を 1 つ仕込む。
+    public func inject(_ fault: Fault) { faults.append(fault) }
+
+    /// **まだ使われていないルール**。⚠️ 「起こしたはずの失敗が実は起きていなかった」を
+    /// 見つけるために使う——テストが緑でも、経路を通っていなければ何も確かめていない。
+    public func pendingFaults() -> [Fault] { faults.filter { $0.times != 0 } }
+
+    /// 仕込んだものをすべて解除する（「レート制限が明けた」「権限が戻った」を作る）。
+    public func clearFaults() {
+        faults.removeAll()
+        rateLimitEveryNthRequest = 0
+    }
+
+    /// 該当するルールを 1 つ消費して返す（回数を 1 減らす）。
+    private func consumeFault(endpoint: String, path: String) -> Effect? {
+        guard let index = faults.firstIndex(where: { $0.matches(endpoint: endpoint, path: path) })
+        else { return nil }
+        if faults[index].times > 0 { faults[index].times -= 1 }
+        return faults[index].effect
+    }
+
+    // MARK: - 別名（読みやすさのため・中身は `inject` 1 つ）
 
     /// `files/upload` のうち、パスにこの語を含むものを失敗させる。
-    /// - Parameters:
-    ///   - status: 429（レート制限）/ 403（権限なし）/ 500（一時障害）など。
-    ///   - times: 失敗させる回数（既定 -1＝ずっと）。
     public func failUploads(matching fragment: String, status: Int = 429, times: Int = -1) {
-        uploadFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
+        inject(.init(endpoint: "files/upload", pathContains: fragment, times: times,
+                     effect: .status(status)))
     }
 
     /// `files/get_metadata` のうち、パスにこの語を含むものを失敗させる。
     /// オフロードの**照合**（hash・サイズ）が取れない回を作るために使う。
     public func failGetMetadata(matching fragment: String, status: Int = 429, times: Int = -1) {
-        metadataFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
+        inject(.init(endpoint: "get_metadata", pathContains: fragment, times: times,
+                     effect: .status(status)))
     }
 
     /// `files/download` のうち、パスにこの語を含むものを失敗させる。
     /// ⚠️ メタデータの読み書きで「**無い**」と「**取れなかった**」を区別できているかを見るために要る
     /// （取れなかった回に空として上書きすると、その月の記録が丸ごと消える）。
-    /// 401（トークン切れ）・429・500 など。
     public func failDownloads(matching fragment: String, status: Int = 401, times: Int = -1) {
-        downloadFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
+        inject(.init(endpoint: "files/download", pathContains: fragment, times: times,
+                     effect: .status(status)))
     }
 
     /// `list_folder/continue`（2 ページ目以降）を失敗させる。
     /// ⚠️ 照合は「一覧が全部取れたこと」が前提で、**途中で失敗した回に 1 ページ目を全部と
     /// 読むと、残り全部の記録が消える**（オフロード済みなら写真がアプリから消える）。
-    public var failListFolderContinue = false
-    public func setFailListFolderContinue(_ value: Bool) { failListFolderContinue = value }
-
-    /// 注入した失敗をすべて解除する（「レート制限が明けた」「権限が戻った」を作る）。
-    public func clearFailures() {
-        uploadFailures.removeAll()
-        metadataFailures.removeAll()
-        downloadFailures.removeAll()
-        failListFolderContinue = false
-    }
-
-    /// 失敗させるべきか判定し、回数を 1 減らす。
-    private func consumeFailure(in table: inout [String: Failure], path: String) -> Int? {
-        let key = path.lowercased()
-        guard let (fragment, failure) = table.first(where: { key.contains($0.key) }) else { return nil }
-        guard failure.remaining != 0 else { return nil }
-        if failure.remaining > 0 {
-            table[fragment] = Failure(status: failure.status, remaining: failure.remaining - 1)
+    public func setFailListFolderContinue(_ value: Bool) {
+        if value {
+            inject(.init(endpoint: "list_folder/continue", effect: .status(500)))
+        } else {
+            faults.removeAll { $0.endpoint == "list_folder/continue" }
         }
-        return failure.status
     }
+
+    /// このパス片を含むダウンロードの本文を**途中で切る**（中身が壊れた応答）。
+    public func truncateDownloads(matching fragment: String) {
+        inject(.init(endpoint: "files/download", pathContains: fragment, effect: .truncateBody))
+    }
+
+    /// 旧名（`clearFaults` と同じ）。
+    public func clearFailures() { clearFaults() }
 
     /// A2: `copy_batch` / `delete_batch` の非同期ジョブを、**この回数だけ** `in_progress` にする
     /// （0＝即完了）。本番の共有反映はここを通るのに、遅延完了を一度も試していなかった。
@@ -204,13 +275,6 @@ public actor FakeDropboxServer: HTTPClient {
     /// A4: 空き容量（バイト）。これを超えるアップロードは `insufficient_space`。-1＝無制限。
     public private(set) var freeSpaceBytes = -1
     public func setFreeSpace(bytes: Int) { freeSpaceBytes = bytes }
-
-    /// B1: このパス片を含むダウンロードの本文を**途中で切る**（中身が壊れた応答）。
-    /// 「HTTP 200 なのに中身が違う」＝hash 照合が存在する理由そのもの。
-    public private(set) var truncateDownloadsMatching: String?
-    public func truncateDownloads(matching fragment: String) {
-        truncateDownloadsMatching = fragment.lowercased()
-    }
 
     /// B3: このアカウントとして振る舞う（`get_current_account`）。
     public private(set) var accountID = "acct-fake"
@@ -320,20 +384,59 @@ public actor FakeDropboxServer: HTTPClient {
     // MARK: - HTTPClient
 
     public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let result = try await route(request)
+        // ⚠️ **仕込んだ失敗の判定はここ 1 か所**（各ハンドラへ if を散らさない）。
+        let endpoint = Self.endpoint(of: request)
+        let path = Self.argPath(of: request)
+        var truncate = false
+        if let effect = consumeFault(endpoint: endpoint, path: path) {
+            switch effect {
+            case .status(let code, let retryAfter):
+                let headers = retryAfter.map { ["Retry-After": "\($0)"] } ?? [:]
+                let response = HTTPURLResponse(url: request.url!, statusCode: code,
+                                               httpVersion: nil, headerFields: headers)!
+                let body = Data(Self.errorBody(code).utf8)
+                exchanges.append(Exchange(endpoint: endpoint, path: path, status: code,
+                                          sentBytes: (request.httpBody ?? Data()).count,
+                                          receivedBytes: body.count))
+                return (body, response)
+            case .networkError:
+                throw URLError(.networkConnectionLost)
+            case .drop:
+                // キャンセルされるまで戻らない（呼び出し側のタイムアウトを試すため）。
+                try await Task.sleep(for: .seconds(3600))
+                throw CancellationError()
+            case .delay(let milliseconds):
+                try? await Task.sleep(for: .milliseconds(milliseconds))
+            case .truncateBody:
+                truncate = true
+            }
+        }
+        var result = try await route(request)
+        if truncate {
+            // 「HTTP 200 なのに中身が途中で切れている」＝hash 照合が働くかを見るため。
+            result.0 = result.0.prefix(max(0, result.0.count / 2))
+        }
         // 観測（C1/C2/C4）: 1 往復ぶんを記録する。
-        let url = request.url!.absoluteString
-        let endpoint = url.components(separatedBy: "/2/").last ?? url
-        struct Arg: Decodable { let path: String? }
-        let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
-        let raw = header ?? String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
-        let path = (try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? ""
         exchanges.append(Exchange(
             endpoint: endpoint, path: path,
             status: (result.1 as? HTTPURLResponse)?.statusCode ?? -1,
             sentBytes: (request.httpBody ?? Data()).count,
             receivedBytes: result.0.count))
         return result
+    }
+
+    /// URL から `files/upload` のようなエンドポイント名を取る。
+    private static func endpoint(of request: URLRequest) -> String {
+        let url = request.url!.absoluteString
+        return url.components(separatedBy: "/2/").last ?? url
+    }
+
+    /// リクエストが指しているパス（`Dropbox-API-Arg` か本文の `path`）。
+    private static func argPath(of request: URLRequest) -> String {
+        struct Arg: Decodable { let path: String? }
+        let raw = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
+            ?? String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
+        return (try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? ""
     }
 
     private func route(_ request: URLRequest) async throws -> (Data, URLResponse) {
@@ -376,22 +479,11 @@ public actor FakeDropboxServer: HTTPClient {
             let since = Self.deltaRevision(of: cursor) ?? revision
             return resp(200, #"{"changes":\#(revision > since ? "true" : "false")}"#)
         }
-        if url.contains("list_folder/continue") {
-            if failListFolderContinue { return resp(500, Self.errorBody(500)) }
-            return handleListFolderContinue(body, plain)
-        }
+        if url.contains("list_folder/continue") { return handleListFolderContinue(body, plain) }
         if url.contains("list_folder")   { return handleListFolder(body, plain) }
         if url.contains("get_metadata")  { return handleGetMetadata(body, plain) }
         if url.contains("files/upload")  { return handleUpload(request, plain) }
-        if url.contains("files/download") {
-            struct Arg: Decodable { let path: String }
-            let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? "{}"
-            let path = (try? JSONDecoder().decode(Arg.self, from: Data(header.utf8)))?.path ?? ""
-            if let status = consumeFailure(in: &downloadFailures, path: path) {
-                return resp(status, Self.errorBody(status))
-            }
-            return handleDownload(request, plain)
-        }
+        if url.contains("files/download") { return handleDownload(request, plain) }
         return resp(400, #"{"error_summary":"unsupported_endpoint/"}"#)
     }
 
@@ -620,9 +712,6 @@ public actor FakeDropboxServer: HTTPClient {
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(400, "{}")
         }
-        if let status = consumeFailure(in: &metadataFailures, path: parsed.path) {
-            return resp(status, Self.errorBody(status))
-        }
         guard let entry = files[parsed.path.lowercased()] else {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
@@ -642,9 +731,6 @@ public actor FakeDropboxServer: HTTPClient {
         }
         var key = arg.path.lowercased()
         uploadedPaths.append(key)
-        if let status = consumeFailure(in: &uploadFailures, path: key) {
-            return resp(status, Self.errorBody(status))
-        }
         let body = request.httpBody ?? Data()
         // A4: 空き容量が足りなければ 507（Dropbox は insufficient_space を返す）。
         if freeSpaceBytes >= 0, body.count > freeSpaceBytes {
@@ -679,11 +765,7 @@ public actor FakeDropboxServer: HTTPClient {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
         // アップロードされた本体があればそれを返す（seed したファイルは中身を持たない）。
-        guard var body = bodies[arg.path.lowercased()] else { return resp(200, "{}") }
-        // B1: 途中で切れた応答（HTTP 200 なのに中身が違う）。hash 照合が働くかを見るため。
-        if let fragment = truncateDownloadsMatching, arg.path.lowercased().contains(fragment) {
-            body = body.prefix(max(0, body.count / 2))
-        }
+        guard let body = bodies[arg.path.lowercased()] else { return resp(200, "{}") }
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200,
                                       httpVersion: nil, headerFields: nil)!)
     }
