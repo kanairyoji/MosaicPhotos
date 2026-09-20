@@ -96,6 +96,18 @@ final class DropboxSyncEngine {
     }
 
     private func syncLoop(accountId: String, root: String, isPrimary: Bool) async {
+        // ⚠️ **カーソル失効からやり直せるようにする**（ADR-203）。Dropbox は差分カーソルを
+        // 失効させることがあり（`continue` が `reset`）、失効したカーソルは二度と有効に
+        // ならない。以前はこれを一時エラーとして 30 秒ごとに投げ直していたため、
+        // **同期が永久に止まっていた**（利用者からは「新しい写真が出てこない」）。
+        while !Task.isCancelled {
+            guard await syncOnce(accountId: accountId, root: root, isPrimary: isPrimary) else { return }
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor was reset — starting over")
+        }
+    }
+
+    /// - Returns: **やり直しが要るか**（カーソル失効）。false なら終了してよい。
+    private func syncOnce(accountId: String, root: String, isPrimary: Bool) async -> Bool {
         let scopeKey = Self.scopeKey(accountId: accountId, root: root)
         let state = await cache.syncStateInfo(accountId: scopeKey)
         let cursor = state?.cursor
@@ -109,13 +121,14 @@ final class DropboxSyncEngine {
         //   **未走査フォルダの既存写真が永久に取得されない**（レビュー指摘）。
         if let cursor, itemCount > 0, state?.isInitialSyncCompleted == true {
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
-            await pollLoop(scopeKey: scopeKey, startCursor: cursor, isPrimary: isPrimary)
+            return await pollLoop(scopeKey: scopeKey, startCursor: cursor, isPrimary: isPrimary)
         } else {
             let reason = cursor == nil ? "no cursor"
                 : itemCount == 0 ? "cursor present but 0 items"
                 : "initial sync never completed (interrupted or pre-upgrade)"
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(reason) — starting initial sync")
-            await initialSync(accountId: accountId, root: root, scopeKey: scopeKey, isPrimary: isPrimary)
+            return await initialSync(accountId: accountId, root: root, scopeKey: scopeKey,
+                                     isPrimary: isPrimary)
         }
     }
 
@@ -126,14 +139,16 @@ final class DropboxSyncEngine {
 
     // MARK: - Parallel initial sync
 
-    private func initialSync(accountId: String, root: String, scopeKey: String, isPrimary: Bool) async {
+    /// - Returns: **やり直しが要るか**（後続の poll でカーソルが失効した場合）。
+    private func initialSync(accountId: String, root: String, scopeKey: String,
+                             isPrimary: Bool) async -> Bool {
         do {
             reportState(.initialSync(fetched: 0), isPrimary: isPrimary)
 
             // Step 1: ロングポールのベースラインカーソルをスキャン開始前に確保。
             // これにより、スキャン中の変更はポーリングフェーズで差分として拾われる。
             let baselineCursor = try await getLatestCursor(path: root)
-            guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+            guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return false }
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: baseline cursor acquired")
 
             // Step 2: スキャン対象フォルダ列を決める。
@@ -147,7 +162,7 @@ final class DropboxSyncEngine {
                 var shallowCursor: String? = nil
                 var shallowHasMore = true
                 while shallowHasMore {
-                    guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+                    guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return false }
                     let page = try await fetchDeltaPage(cursor: shallowCursor, path: "", recursive: false)
                     allImages.append(contentsOf: page.added)
                     topFolders.append(contentsOf: page.subfolderPaths)
@@ -172,11 +187,11 @@ final class DropboxSyncEngine {
             //    group の結果が返ってこなくなる問題が発生したため、逐次処理に変更。
             // ⚠️ ページ単位で即時書き込む（ページ完了ごとに applyDelta + onCacheUpdated）。
             for folderPath in scanFolders {
-                guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+                guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return false }
                 var cur: String? = nil
                 var more = true
                 while more {
-                    guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+                    guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return false }
                     let pg = try await fetchDeltaPage(cursor: cur, path: folderPath, recursive: true)
                     if !pg.added.isEmpty {
                         allImages.append(contentsOf: pg.added)
@@ -191,7 +206,7 @@ final class DropboxSyncEngine {
                 }
             }
 
-            guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return }
+            guard !Task.isCancelled else { reportState(.idle, isPrimary: isPrimary); return false }
 
             // Step 4: 古いキャッシュエントリを除去し、最終カーソルを確実に保存。
             // ⚠️ prune は**このルートの配下だけ**を対象にする（マルチルートで他ルートの
@@ -213,7 +228,8 @@ final class DropboxSyncEngine {
             await cache.markInitialSyncCompleted(accountId: scopeKey)
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
-            await pollLoop(scopeKey: scopeKey, startCursor: baselineCursor, isPrimary: isPrimary)
+            return await pollLoop(scopeKey: scopeKey, startCursor: baselineCursor,
+                                  isPrimary: isPrimary)
 
         } catch is CancellationError {
             reportState(.idle, isPrimary: isPrimary)
@@ -221,11 +237,13 @@ final class DropboxSyncEngine {
             DropboxLogger.error("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync error — \(error.localizedDescription)")
             reportState(.error(error.localizedDescription), isPrimary: isPrimary)
         }
+        return false
     }
 
     // MARK: - Longpoll loop
 
-    private func pollLoop(scopeKey: String, startCursor: String, isPrimary: Bool) async {
+    /// - Returns: **やり直しが要るか**（カーソル失効＝投げ直しても無駄）。
+    private func pollLoop(scopeKey: String, startCursor: String, isPrimary: Bool) async -> Bool {
         var cursor = startCursor
         /// 「変化あり」と言われたのに**表示対象の増減が 0 だった**周の連続数（diagnostics-81）。
         /// 自分のバックアップ・共有コピーが同じルートへ落ちると延々と立つので、ここで間隔を空ける。
@@ -286,6 +304,11 @@ final class DropboxSyncEngine {
 
             } catch is CancellationError {
                 break
+            } catch let error as SyncError where error.isCursorReset {
+                // ⚠️ 失効したカーソルは**二度と有効にならない**。捨てて一覧から作り直す。
+                DropboxLogger.error("SyncEngine: cursor reset — discarding it and re-syncing")
+                await cache.resetSyncCursor(accountId: scopeKey)
+                return true
             } catch {
                 DropboxLogger.error("SyncEngine: poll error — \(error.localizedDescription)")
                 reportState(.error(error.localizedDescription), isPrimary: isPrimary)
@@ -299,6 +322,7 @@ final class DropboxSyncEngine {
 
         reportState(.idle, isPrimary: isPrimary)
         DropboxLogger.info("SyncEngine: poll loop ended")
+        return false
     }
 
     // MARK: - Network: list_folder/get_latest_cursor
@@ -396,6 +420,13 @@ final class DropboxSyncEngine {
     private enum SyncError: LocalizedError {
         case invalidResponse
         case httpError(statusCode: Int, body: String)
+
+        /// 差分カーソルの失効（Dropbox は 409 ＋ `error_summary: "reset/…"`）。
+        /// ⚠️ これだけは**やり直しても無駄**なので、一時エラーと同じ扱いにしてはいけない。
+        var isCursorReset: Bool {
+            guard case .httpError(let status, let body) = self, status == 409 else { return false }
+            return body.contains("reset")
+        }
 
         var errorDescription: String? {
             switch self {

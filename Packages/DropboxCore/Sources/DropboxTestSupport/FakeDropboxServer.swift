@@ -36,6 +36,8 @@ public actor FakeDropboxServer: HTTPClient {
         var contentHash: String
         var isFolder: Bool
         var rev: String
+        /// 表示名（**元の大文字小文字を保つ**）。本物の `name` は path_lower と違う。
+        public var displayName: String = ""
         /// ファイルサイズ（`get_metadata` が返す）。
         /// ⚠️ **本物と同じ値を返すこと**。ここを固定値にしていたため、オフロードの照合
         /// （hash ＋ **サイズ**の完全一致）がこの偽サーバーでは必ず落ち、オフロードの流れを
@@ -50,6 +52,45 @@ public actor FakeDropboxServer: HTTPClient {
     private var bodies: [String: Data] = [:]
     /// 発行済みリクエストの記録（呼ばれ方の検証用）。
     public private(set) var requestLog: [String] = []
+
+    // MARK: - 観測（テストが落ちたときに「何が起きたか」を読めるように）
+
+    /// 1 往復の記録。`transcript()` で人が読める形にする。
+    public struct Exchange: Sendable {
+        public let endpoint: String
+        public let path: String
+        public let status: Int
+        public let sentBytes: Int
+        public let receivedBytes: Int
+    }
+    public private(set) var exchanges: [Exchange] = []
+
+    /// **人が読める通信記録**。テストが落ちたとき、これを出せば何を何回呼んだかが分かる。
+    /// 例: `POST files/upload /a.jpg → 200 (12 B ↑ / 48 B ↓)`
+    public func transcript() -> String {
+        exchanges.map {
+            "POST \($0.endpoint) \($0.path.isEmpty ? "-" : $0.path) → \($0.status) "
+            + "(\($0.sentBytes) B ↑ / \($0.receivedBytes) B ↓)"
+        }.joined(separator: "\n")
+    }
+
+    /// エンドポイント別の呼び出し回数。**回数で見る**規模テスト（ADR-119）にそのまま使える。
+    public func callCounts() -> [String: Int] {
+        exchanges.reduce(into: [:]) { $0[$1.endpoint, default: 0] += 1 }
+    }
+
+    /// 送受信の合計バイト数。「回数は同じだが量が増えた」を捕まえる。
+    public func trafficBytes() -> (sent: Int, received: Int) {
+        (exchanges.reduce(0) { $0 + $1.sentBytes }, exchanges.reduce(0) { $0 + $1.receivedBytes })
+    }
+
+    /// いまサーバーに在るものを 1 行ずつ（収束しないテストの原因調査用）。
+    public func dump() -> String {
+        files.sorted { $0.key < $1.key }.map { path, entry in
+            entry.isFolder ? "DIR  \(path)"
+                           : "FILE \(path)  \(entry.size) B  \(entry.contentHash.prefix(12))…"
+        }.joined(separator: "\n")
+    }
     private var jobCounter = 0
     /// 完了待ちジョブ（check で返す結果）。
     private var pendingJobs: [String: String] = [:]
@@ -153,6 +194,66 @@ public actor FakeDropboxServer: HTTPClient {
         return failure.status
     }
 
+    /// A2: `copy_batch` / `delete_batch` の非同期ジョブを、**この回数だけ** `in_progress` にする
+    /// （0＝即完了）。本番の共有反映はここを通るのに、遅延完了を一度も試していなかった。
+    public private(set) var asyncJobChecksBeforeComplete = 0
+    public func setAsyncJobChecks(_ count: Int) { asyncJobChecksBeforeComplete = max(0, count) }
+    /// ジョブ ID → 残りの `in_progress` 回数。
+    private var jobChecksRemaining: [String: Int] = [:]
+
+    /// A4: 空き容量（バイト）。これを超えるアップロードは `insufficient_space`。-1＝無制限。
+    public private(set) var freeSpaceBytes = -1
+    public func setFreeSpace(bytes: Int) { freeSpaceBytes = bytes }
+
+    /// B1: このパス片を含むダウンロードの本文を**途中で切る**（中身が壊れた応答）。
+    /// 「HTTP 200 なのに中身が違う」＝hash 照合が存在する理由そのもの。
+    public private(set) var truncateDownloadsMatching: String?
+    public func truncateDownloads(matching fragment: String) {
+        truncateDownloadsMatching = fragment.lowercased()
+    }
+
+    /// B3: このアカウントとして振る舞う（`get_current_account`）。
+    public private(set) var accountID = "acct-fake"
+    public func setAccountID(_ id: String) { accountID = id }
+
+    /// B4: 発行済みカーソルを失効させる（次の `continue` は `reset` を返す）。
+    /// Dropbox は稀にこれを返し、アプリは**初回同期からやり直す**必要がある。
+    public private(set) var cursorsExpired = false
+    public func expireCursors() { cursorsExpired = true }
+    public func restoreCursors() { cursorsExpired = false }
+
+    /// B5: 一覧が返す `server_modified` をこの時刻にする（端末との時計のずれを作る）。
+    public private(set) var serverModified = Date(timeIntervalSince1970: 1_700_000_000)
+    public func setServerModified(_ date: Date) { serverModified = date }
+    private var serverModifiedString: String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: serverModified)
+    }
+
+    /// B2: すべての応答をこのミリ秒だけ遅らせる。
+    public private(set) var responseDelay = 0
+    public func setResponseDelay(milliseconds: Int) { responseDelay = max(0, milliseconds) }
+
+    /// A1: 429 に `Retry-After`（秒）を付ける。0＝付けない。
+    /// ⚠️ アプリは**このヘッダを読む**実装を持っているのに、付けない偽物しか無かったため
+    /// その経路を一度も通していなかった。
+    public private(set) var retryAfterSeconds = 0
+    public func setRetryAfter(seconds: Int) { retryAfterSeconds = max(0, seconds) }
+
+    /// A5: 429 の種類を「名前空間の書き込み競合」にする（待てば通る種類）。
+    public private(set) var rateLimitIsWriteConflict = false
+    public func setRateLimitIsWriteConflict(_ value: Bool) { rateLimitIsWriteConflict = value }
+
+    private func rateLimited(_ resp: (Int, String, [String: String]) -> (Data, URLResponse))
+        -> (Data, URLResponse) {
+        let summary = rateLimitIsWriteConflict
+            ? #"{"error_summary":"too_many_write_operations/.."}"#
+            : #"{"error_summary":"too_many_requests/.."}"#
+        let headers = retryAfterSeconds > 0 ? ["Retry-After": "\(retryAfterSeconds)"] : [:]
+        return resp(429, summary, headers)
+    }
+
     /// Dropbox が返すエラー本文（要約はアプリのログにそのまま出る）。
     private static func errorBody(_ status: Int) -> String {
         switch status {
@@ -168,7 +269,9 @@ public actor FakeDropboxServer: HTTPClient {
     /// 既存ファイルを直接置く（テストの前提条件づくり）。
     public func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1) {
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder,
-                                         rev: "r\(files.count)", size: size)
+                                         rev: "r\(files.count)",
+                                         displayName: (path as NSString).lastPathComponent,
+                                         size: size)
     }
 
     /// 中身つきでファイルを置く（他端末がアップロードした解析データ等を模す）。content_hash は本物と同じ計算。
@@ -177,7 +280,8 @@ public actor FakeDropboxServer: HTTPClient {
         note(key, deleted: false)
         bodies[key] = data
         files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false,
-                           rev: "r\(files.count)", size: data.count)
+                           rev: "r\(files.count)",
+                           displayName: (path as NSString).lastPathComponent, size: data.count)
     }
 
     /// 外部（他端末・Dropbox の Web UI）からの削除を模す。
@@ -216,26 +320,51 @@ public actor FakeDropboxServer: HTTPClient {
     // MARK: - HTTPClient
 
     public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let result = try await route(request)
+        // 観測（C1/C2/C4）: 1 往復ぶんを記録する。
+        let url = request.url!.absoluteString
+        let endpoint = url.components(separatedBy: "/2/").last ?? url
+        struct Arg: Decodable { let path: String? }
+        let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
+        let raw = header ?? String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
+        let path = (try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? ""
+        exchanges.append(Exchange(
+            endpoint: endpoint, path: path,
+            status: (result.1 as? HTTPURLResponse)?.statusCode ?? -1,
+            sentBytes: (request.httpBody ?? Data()).count,
+            receivedBytes: result.0.count))
+        return result
+    }
+
+    private func route(_ request: URLRequest) async throws -> (Data, URLResponse) {
         let url = request.url!.absoluteString
         requestCount += 1
         requestLog.append(url)
 
-        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
+        func resp(_ code: Int, _ body: String, headers: [String: String] = [:])
+            -> (Data, URLResponse) {
             (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                              httpVersion: nil, headerFields: nil)!)
+                                              httpVersion: nil, headerFields: headers)!)
         }
+        // B2: 遅い応答（タイムアウト・並行数・待ち行列の挙動を試すため）。
+        if responseDelay > 0 { try? await Task.sleep(for: .milliseconds(responseDelay)) }
+        // 既存ハンドラは「状態＋本文」の 2 引数版を受け取る（ヘッダ付きは 429 だけで使う）。
+        let plain: (Int, String) -> (Data, URLResponse) = { resp($0, $1) }
         if rateLimitEveryNthRequest > 0, requestCount % rateLimitEveryNthRequest == 0 {
-            return resp(429, #"{"error_summary":"too_many_requests/"}"#)
+            return rateLimited(resp)
         }
 
         let body = request.httpBody ?? Data()
-        if url.contains("create_folder_v2") { return handleCreateFolder(body, resp) }
+        if url.contains("create_folder_v2") { return handleCreateFolder(body, plain) }
         if url.contains("copy_batch/check_v2") || url.contains("delete_batch/check") {
-            return handleCheck(body, resp)
+            return handleCheck(body, plain)
         }
-        if url.contains("files/move_v2")  { return handleMove(body, resp) }
-        if url.contains("copy_batch_v2") { return handleCopyBatch(body, resp) }
-        if url.contains("delete_batch")  { return handleDeleteBatch(body, resp) }
+        if url.contains("files/move_v2")  { return handleMove(body, plain) }
+        if url.contains("copy_batch_v2") { return handleCopyBatch(body, plain) }
+        if url.contains("delete_batch")  { return handleDeleteBatch(body, plain) }
+        if url.contains("get_current_account") {
+            return resp(200, #"{"account_id":"\#(accountID)","name":{"display_name":"Fake"}}"#)
+        }
         if url.contains("list_folder/get_latest_cursor") {
             // 「いまの状態」を指すカーソル。以後の `continue` はここから先の変更だけを返す。
             return resp(200, #"{"cursor":"rev-\#(revision)"}"#)
@@ -249,11 +378,11 @@ public actor FakeDropboxServer: HTTPClient {
         }
         if url.contains("list_folder/continue") {
             if failListFolderContinue { return resp(500, Self.errorBody(500)) }
-            return handleListFolderContinue(body, resp)
+            return handleListFolderContinue(body, plain)
         }
-        if url.contains("list_folder")   { return handleListFolder(body, resp) }
-        if url.contains("get_metadata")  { return handleGetMetadata(body, resp) }
-        if url.contains("files/upload")  { return handleUpload(request, resp) }
+        if url.contains("list_folder")   { return handleListFolder(body, plain) }
+        if url.contains("get_metadata")  { return handleGetMetadata(body, plain) }
+        if url.contains("files/upload")  { return handleUpload(request, plain) }
         if url.contains("files/download") {
             struct Arg: Decodable { let path: String }
             let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? "{}"
@@ -261,7 +390,7 @@ public actor FakeDropboxServer: HTTPClient {
             if let status = consumeFailure(in: &downloadFailures, path: path) {
                 return resp(status, Self.errorBody(status))
             }
-            return handleDownload(request, resp)
+            return handleDownload(request, plain)
         }
         return resp(400, #"{"error_summary":"unsupported_endpoint/"}"#)
     }
@@ -378,6 +507,15 @@ public actor FakeDropboxServer: HTTPClient {
     private func finishBatch(results: [String],
                              resp: (Int, String) -> (Data, URLResponse)) -> (Data, URLResponse) {
         let complete = #"{".tag":"complete","entries":[\#(results.joined(separator: ","))]}"#
+        // A2: 正常な**遅延完了**（N 回 in_progress を返してから complete）。
+        // 本番の共有反映はここを通るのに、以前は「即完了」か「永遠に未完了」しか作れなかった。
+        if asyncJobChecksBeforeComplete > 0, !jobsTimeOutButComplete {
+            jobCounter += 1
+            let jobID = "job\(jobCounter)"
+            pendingJobs[jobID] = complete
+            jobChecksRemaining[jobID] = asyncJobChecksBeforeComplete
+            return resp(200, #"{".tag":"async_job_id","async_job_id":"\#(jobID)"}"#)
+        }
         guard jobsTimeOutButComplete else { return resp(200, complete) }
         jobCounter += 1
         let jobID = "job\(jobCounter)"
@@ -387,8 +525,19 @@ public actor FakeDropboxServer: HTTPClient {
 
     private func handleCheck(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
+        struct Body: Decodable { let async_job_id: String? }
+        let jobID = (try? JSONDecoder().decode(Body.self, from: body))?.async_job_id ?? ""
+        // 遅延完了（A2）: 残り回数を 1 つ減らし、0 になったら結果を返す。
+        if let remaining = jobChecksRemaining[jobID] {
+            if remaining > 1 {
+                jobChecksRemaining[jobID] = remaining - 1
+                return resp(200, #"{".tag":"in_progress"}"#)
+            }
+            jobChecksRemaining[jobID] = nil
+            if let complete = pendingJobs.removeValue(forKey: jobID) { return resp(200, complete) }
+        }
         // タイムアウト再現中は永遠に in_progress を返す。
-        resp(200, #"{".tag":"in_progress"}"#)
+        return resp(200, #"{".tag":"in_progress"}"#)
     }
 
     private func handleListFolder(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
@@ -418,9 +567,10 @@ public actor FakeDropboxServer: HTTPClient {
         }
         let entries = listed.sorted { $0.key < $1.key }
             .map { path, entry -> String in
-                let name = (path as NSString).lastPathComponent
+                let name = entry.displayName.isEmpty
+                    ? (path as NSString).lastPathComponent : entry.displayName
                 let tag = entry.isFolder ? "folder" : "file"
-                return #"{".tag":"\#(tag)","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry.rev)","content_hash":"\#(entry.contentHash)"}"#
+                return #"{".tag":"\#(tag)","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry.rev)","content_hash":"\#(entry.contentHash)","server_modified":"\#(serverModifiedString)"}"#
             }
         return page(entries, resp)
     }
@@ -431,6 +581,8 @@ public actor FakeDropboxServer: HTTPClient {
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(409, #"{"error_summary":"reset/"}"#)
         }
+        // B4: 失効したカーソル。本物も稀に返す＝アプリは初回同期からやり直す必要がある。
+        if cursorsExpired { return resp(409, #"{"error_summary":"reset/.."}"#) }
         // (a) 差分カーソル（`rev-<n>`）＝「この番号より後の変更」を返す。
         if let since = Self.deltaRevision(of: parsed.cursor) {
             var latest: [String: Bool] = [:]        // path → 消えたか（同じパスは最後の状態）
@@ -494,6 +646,10 @@ public actor FakeDropboxServer: HTTPClient {
             return resp(status, Self.errorBody(status))
         }
         let body = request.httpBody ?? Data()
+        // A4: 空き容量が足りなければ 507（Dropbox は insufficient_space を返す）。
+        if freeSpaceBytes >= 0, body.count > freeSpaceBytes {
+            return resp(507, #"{"error_summary":"path/insufficient_space/.."}"#)
+        }
         // 本物と同じ content_hash を返す（アップロードの検証経路をそのまま通せる）。
         let hash = DropboxContentHash.hash(of: body)
         // ⚠️ **`mode=add` の衝突を本物どおりに返す**。以前は常に上書きしていたため、
@@ -508,6 +664,7 @@ public actor FakeDropboxServer: HTTPClient {
         }
         bodies[key] = body
         files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)",
+                           displayName: (arg.path as NSString).lastPathComponent,
                            size: body.count)
         note(key, deleted: false)
         return resp(200, #"{"path_lower":"\#(key)","content_hash":"\#(hash)"}"#)
@@ -522,7 +679,11 @@ public actor FakeDropboxServer: HTTPClient {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
         // アップロードされた本体があればそれを返す（seed したファイルは中身を持たない）。
-        guard let body = bodies[arg.path.lowercased()] else { return resp(200, "{}") }
+        guard var body = bodies[arg.path.lowercased()] else { return resp(200, "{}") }
+        // B1: 途中で切れた応答（HTTP 200 なのに中身が違う）。hash 照合が働くかを見るため。
+        if let fragment = truncateDownloadsMatching, arg.path.lowercased().contains(fragment) {
+            body = body.prefix(max(0, body.count / 2))
+        }
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200,
                                       httpVersion: nil, headerFields: nil)!)
     }

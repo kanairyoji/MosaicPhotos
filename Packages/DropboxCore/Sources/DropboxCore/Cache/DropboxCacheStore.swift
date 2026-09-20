@@ -212,6 +212,19 @@ actor DropboxCacheStore {
                              initialSyncCompletedAt: state.initialSyncCompletedAt)
     }
 
+    /// **カーソルを捨てて、初回同期からやり直せる状態に戻す**（ADR-203）。
+    ///
+    /// ⚠️ Dropbox は差分カーソルを失効させることがある（`list_folder/continue` が
+    /// `reset` を返す）。失効したカーソルは**二度と有効にならない**ので、投げ直しても無駄で、
+    /// 捨てて一覧から作り直すしかない。キャッシュの中身（写真の行）は消さない——
+    /// 初回同期は「取ってきた一覧に無いものを消す」形で収束するため。
+    func resetSyncCursor(accountId: String) {
+        guard let state = fetchSyncState(accountId: accountId) else { return }
+        state.cursor = nil
+        state.initialSyncCompletedAt = nil
+        try? modelContext.save()
+    }
+
     /// 初回スキャンの完走を記録する（完走時のみ呼ぶ）。
     func markInitialSyncCompleted(accountId: String, at date: Date = Date()) {
         let state = fetchSyncState(accountId: accountId)
