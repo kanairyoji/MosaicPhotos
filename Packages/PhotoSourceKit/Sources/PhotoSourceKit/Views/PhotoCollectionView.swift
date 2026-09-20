@@ -292,7 +292,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 idsHash = cached.hash
             } else {
                 let tHash = PerfTrace.nowNs()
-                idsHash = gridIdentitySignature(items.lazy.map(\.id))
+                idsHash = gridContentSignature(items)
                 PerfTrace.logSpan("grid.signature", ms: PerfTrace.msSince(tHash),
                                   detail: "items=\(items.count)")
                 cachedIDsHash = (items, idsHash)

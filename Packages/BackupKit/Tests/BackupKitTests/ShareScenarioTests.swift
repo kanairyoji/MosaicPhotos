@@ -7,7 +7,7 @@ import DropboxCore
 /// クラウド共有の設定はプロセスに 1 つなので、並列に走る他テストが provide を OFF にすると
 /// 反映が丸ごと空振りする（実際に踏んだ・原因が分かりにくい落ち方をする）。
 func isolatedShareDefaults() -> UserDefaults {
-    UserDefaults(suiteName: "share-tests-\(UUID().uuidString)") ?? .standard
+    TestDefaults.scratch("share-tests")
 }
 
 /// クラウド共有の**シナリオテスト**（状態を持つ偽 Dropbox に対するエンドツーエンド検証）。
@@ -645,7 +645,7 @@ struct ShareMultiUserTests {
 struct ShareTombstoneAccountTests {
 
     private func defaults() -> UserDefaults {
-        UserDefaults(suiteName: "tombstone-\(UUID().uuidString)") ?? .standard
+        TestDefaults.scratch("tombstone")
     }
 
     @Test("別アカウントの墓標は見えない")

@@ -95,3 +95,53 @@ struct SharesStorageTests {
         #expect(gridIdentitySignature(items) == gridIdentitySignature(copy))
     }
 }
+
+/// テスト用のダミー写真（撮影日だけを動かす）。
+private struct DatedItem: PhotoItem {
+    let id: String
+    let captureDate: Date?
+}
+
+/// 月の見出しは撮影日で決まるので、スナップショットを作り直すかの判定にも撮影日が要る。
+@Suite("gridContentSignature（撮影日も混ぜる）")
+struct GridContentSignatureTests {
+
+    private func item(_ id: String, _ epoch: Double?) -> DatedItem {
+        DatedItem(id: id, captureDate: epoch.map { Date(timeIntervalSince1970: $0) })
+    }
+
+    /// 回帰: **並びが同じでも撮影日が直れば作り直す**（ADR-199）。
+    /// 共有フォルダは撮影順にアップロードされることが多いので、受け取った撮影日を
+    /// 反映しても並びは変わらない。識別子だけで判定すると**月の見出しが古いまま**残る。
+    @Test("並びが同じでも撮影日が変われば違う指紋")
+    func captureDateChangesTheSignature() {
+        // どちらも過去の日付（`CaptureDate.meaningful` の上限に掛からない値を使う）。
+        let uploaded = [item("C-/f/a.jpg", 1_700_000_000), item("C-/f/b.jpg", 1_700_000_100)]
+        let taken    = [item("C-/f/a.jpg", 1_000_000_000), item("C-/f/b.jpg", 1_000_000_100)]
+        #expect(gridContentSignature(uploaded) != gridContentSignature(taken),
+                "撮影日だけが直った更新を取りこぼす＝見出しがアップロード時刻のまま残る")
+    }
+
+    @Test("撮影日が同じなら同じ指紋（作り直さない）")
+    func sameDatesSameSignature() {
+        let a = [item("C-/f/a.jpg", 1_700_000_000), item("C-/f/b.jpg", 1_700_000_100)]
+        let b = [item("C-/f/a.jpg", 1_700_000_000), item("C-/f/b.jpg", 1_700_000_100)]
+        #expect(gridContentSignature(a) == gridContentSignature(b))
+    }
+
+    /// 撮影日の有無だけを見る実装（`captureDate != nil` を混ぜる等）に退行させない。
+    @Test("撮影日が有る/無いだけでなく、値そのものを見る")
+    func valueMattersNotJustPresence() {
+        let early = [item("C-/f/a.jpg", 1_000_000_000)]
+        let late  = [item("C-/f/a.jpg", 1_700_000_000)]
+        let none  = [item("C-/f/a.jpg", nil)]
+        #expect(gridContentSignature(early) != gridContentSignature(late))
+        #expect(gridContentSignature(early) != gridContentSignature(none))
+    }
+
+    @Test("識別子が変われば違う指紋（元の性質を保つ）")
+    func idStillMatters() {
+        #expect(gridContentSignature([item("C-/f/a.jpg", 1_700_000_000)])
+                != gridContentSignature([item("C-/f/b.jpg", 1_700_000_000)]))
+    }
+}

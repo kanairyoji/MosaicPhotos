@@ -45,3 +45,25 @@ func sharesStorage<T>(_ lhs: [T], _ rhs: [T]) -> Bool {
     let right = rhs.withUnsafeBufferPointer { UInt(bitPattern: $0.baseAddress) }
     return left == right
 }
+
+/// 一覧の指紋（**撮影日も混ぜる**版）。スナップショットを作り直すかの判定に使う。
+///
+/// ⚠️ **識別子だけでは足りない**（レビュー 7 周目）。月の見出しは撮影日で決まるので、
+/// 「並びは同じまま撮影日だけが直る」更新を識別子で判定すると**見出しが古いまま**残る。
+/// 共有フォルダは撮影順にアップロードされることが多く、受け取った撮影日を反映しても
+/// 並びは変わらない——ADR-199 がいちばん効いてほしい場面がまさにそれで、
+/// ストア側の指紋に撮影日を入れても（`MergedPhotoStore.signature(of:)`）、ここで止められていた。
+///
+/// 撮影日の読み出しは、判定が真になった後に走る `photoGridSections` が同じぶんだけ行う。
+/// 二重になるのは作り直す回だけで、桁は変わらない。
+func gridContentSignature<S: Sequence>(_ items: S) -> Int where S.Element: PhotoItem {
+    var hasher = Hasher()
+    var count = 0
+    for item in items {
+        hasher.combine(item.id)
+        hasher.combine(item.captureDate)
+        count += 1
+    }
+    hasher.combine(count)   // 長さも混ぜる（前方一致を取り違えない）
+    return hasher.finalize()
+}

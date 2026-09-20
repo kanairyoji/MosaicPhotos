@@ -93,16 +93,27 @@ struct MergedSignatureTests {
     /// 情報パネルがアップロード時刻のまま残る（開き直すまで直らない）。
     @Test("並びが同じでも撮影日が変われば違う指紋")
     func captureDateIsMixedIn() {
-        let uploaded = Date(timeIntervalSince1970: 1_800_000_000)   // 反映時刻（最近）
-        let taken    = Date(timeIntervalSince1970: 1_000_000_000)   // 本当の撮影日
+        // ⚠️ どちらも**過去**の日付にする（レビュー指摘）。以前は反映時刻側に
+        // 2027 年を使っていたが、`DropboxFileItem.init` は `CaptureDate.meaningful`
+        // （上限＝今から 2 日後）で未来を nil に落とすので、**nil と日付**を比べていた
+        // ——「反映時刻 vs 撮影日」という、このテストが名乗る条件を試していなかった。
+        // しかも 2027-01-13 を過ぎると黙って別の条件に変わる。
+        let uploaded = Date(timeIntervalSince1970: 1_700_000_000)   // 反映時刻（2023-11）
+        let taken    = Date(timeIntervalSince1970: 1_000_000_000)   // 本当の撮影日（2001-09）
         let before = signature(["C-/f/a.jpg", "C-/f/b.jpg"], dates: [uploaded, uploaded])
         let after  = signature(["C-/f/a.jpg", "C-/f/b.jpg"], dates: [taken, taken])
         #expect(before != after,
                 "撮影日だけが直った更新を取りこぼす＝ADR-199 がいちばん効く場面で反映されない")
     }
 
-    @Test("撮影日が無い写真どうしは同じ指紋")
-    func missingDatesAreStable() {
-        #expect(signature(["C-/f/a.jpg"], dates: [nil]) == signature(["C-/f/a.jpg"], dates: [nil]))
+    /// 撮影日の**有無**だけを見る実装（`captureDate != nil` を混ぜる等）に退行させない。
+    /// ⚠️ 以前はここが `signature(x) == signature(x)` で、何も検証していなかった。
+    @Test("撮影日は有無ではなく値そのものが効く")
+    func captureDateValueMattersNotJustPresence() {
+        let early = signature(["C-/f/a.jpg"], dates: [Date(timeIntervalSince1970: 1_000_000_000)])
+        let late  = signature(["C-/f/a.jpg"], dates: [Date(timeIntervalSince1970: 1_700_000_000)])
+        let none  = signature(["C-/f/a.jpg"], dates: [nil])
+        #expect(early != late, "日付の値が効いていない（有無しか見ていない）")
+        #expect(early != none)
     }
 }
