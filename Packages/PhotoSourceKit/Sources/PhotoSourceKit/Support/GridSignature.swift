@@ -52,6 +52,9 @@ func gridContentSignature<S: Sequence>(_ items: S) -> Int where S.Element: Photo
         hasher.combine(item.captureDate)
         count += 1
     }
-    hasher.combine(count)   // 長さも混ぜる（前方一致を取り違えない）
+    // 長さも混ぜる。⚠️ ただし**要素を 1 つずつ混ぜている以上これは念のため**で、
+    // この行を消しても指紋は区別できる（`Hasher` は混ぜた回数で状態が変わる）。
+    // テストで守れない＝消しても緑のままなのは、そういう理由（レビュー 9 周目）。
+    hasher.combine(count)
     return hasher.finalize()
 }

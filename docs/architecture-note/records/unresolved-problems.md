@@ -28,6 +28,35 @@
 - 補足: この経路は 1 周目の修正（トグルをセッションに通す）で**初めて到達可能**になった。
   それまで setter は一度も呼ばれていなかったので、症状は存在しなかった。
 
+## 全画面で開いている最中に一覧が並び替わると、ラベルと中身が食い違う
+
+- 箇所: `Packages/PhotoSourceKit/Sources/PhotoSourceKit/Views/PhotoPageView.swift`
+  （`windowItems` / `windowLowerBound` / `recenterWindowIfNeeded`）
+- 分類: staleUI / 優先度 P2（初出 2026-09-20・レビューループ 8〜9 周目）
+- 症状: 写真を全画面で開いている最中に一覧が並び替わると、上部ラベルと情報パネルは
+  **選んでいる写真**の値を出すのに、めくられている中身は**別の写真**になる。
+  次にスワイプするまで直らない。ADR-199（受け取った撮影日の反映）で写真が列の末尾
+  （アップロード順の位置）から中ほど（撮影日の位置）へ動く、がまさにこの形。
+- 原因: 全 8.6 万件を `TabView` に渡さず中央±30 のウィンドウだけを切り出す。その位置を
+  寄せ直す `recenterWindowIfNeeded` の呼び出し口は `onChange(of: currentID)` だけで、
+  **並び替えは `currentID` を変えない**。
+- **退けた方向（8 周目で入れて 9 周目で撤回）**: 「`currentIndex` と `currentID` がズレたら
+  並び替わった合図」として検知する。`currentIndex` はその `onChange` の中でしか更新されないので
+  `currentID` に 1 パス遅れ、**ズレはめくるたびに必ず真**になる。そこで位置を引き直すと、
+  外れた当たりで `PagingIndex.resolve` が全件走査に落ち、1 回のスワイプで 2 度の線形探索
+  （各要素で `PHAsset.localIdentifier` を読む）が走る——18 秒のハング（diagnostics-58）を
+  作った経路そのもの。**稀な表示の乱れを、確実な性能退行と交換してはいけない。**
+- 解決と言える条件:
+  - 一覧が並び替わったときにウィンドウが選択中の写真を含むよう寄せ直される。
+  - **ふつうのスワイプでは 1 件も余計に走査しない**（`PagingIndex` の当たりが効き続ける）。
+- 検討した方向:
+  - (a) ストアに「中身の版」を持たせ（`MergedPhotoStore` は既に指紋を計算している）、
+    `PhotoStore` プロトコルへ既定値つきで足して `onChange(of: store.contentVersion)` で拾う。
+    正確で O(1)。ただしプロトコルを触るので、他のストアの実装方針も決める必要がある。
+  - (b) `windowItems` の中で「窓が `currentID` を含むか」を毎回見る（窓の幅ぶん＝61 件の走査）。
+    状態を持たずに済むが、計算プロパティなので**並び替え後は毎パス全件走査**に落ちる。
+  - どちらを採るかは、`PhotoStore` プロトコルに表示以外の関心事（中身の版）を持たせてよいかの判断。
+
 ## 名前の持ち越し（ADR-130）が production では一度も動かない
 
 - 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Rebuild.swift:181`（`assignment: newAssignment`）
@@ -148,6 +177,18 @@
   再現条件が絞れてから入れる。
 - 追記（2026-09-20 09:05）: **3 度目**（BackupKit・単体実行中）。直後の 3 連続再実行は通過。
   頻度は落ちていない。
+- 追記（2026-09-20 10:10）: **4 度目**（FaceCore・`scripts/test.sh fast` 中）。
+  その回の変更は PhotoSourceKit とドキュメントだけで、FaceCore には触れていない。
+  半日で 4 回＝検証のたびに 1 回は踏む頻度になってきた。
+  - 対策候補を調べた結果: インメモリのコンテナ生成は **6 か所に散っている**
+    （`FaceStore` / `BackupStore` / `TagStore` / `AutoAlbumStore` / `DropboxCacheStore` /
+    `PhotoUsage` がそれぞれ `try? ModelContainer(...)` を直に呼ぶ）。
+    `makeResilientModelContainer` に鍵を掛けても届かない。
+    直すなら「生成を 1 か所に通して直列化する」形になり、5 パッケージ 7 か所の変更。
+  - **まだ入れない**。原因は「同一スキーマのコンテナ同時生成」と**推定**しているだけで、
+    確証が無い。症状はテスト実行だけに出ており、本番で踏んだ記録は無い。
+    確証の無い利益のために、本番の生成経路を組み替えるのは釣り合わない
+    （レビュー 9 周目の教訓）。再現条件を絞るか、本番で 1 度でも踏んだら着手する。
 - 次に見るとき: 落ちたら `~/Library/Logs/DiagnosticReports` の `*PackageTests*.ips` を拾い、
   クラッシュしたスレッドのフレームを見る（どのテストか特定できる）。
   `swift test --parallel` の有無で再現性が変わるかも見る。頻度が上がるようなら
