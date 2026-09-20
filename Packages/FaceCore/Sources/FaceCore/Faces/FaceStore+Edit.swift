@@ -169,8 +169,20 @@ extension FaceStore {
         clusteringCache = nil   // しきい値が変わり得るため次スキャンで再構築
     }
 
+    /// ⚠️ **高水位から採る**（ADR-187）。「いまある最大＋1」だと、消えたクラスタの ID を
+    /// 別人に配り直してしまう。ADR-187 は `persist` と `rebuildClusters` をこの形に直したが、
+    /// **手での編集（付け替え・分割）の経路だけ元の式が残っていた**（レビュー指摘）。
+    ///
+    /// 実害: 家族のピープルグループや共有セット（`ShareSourceKey.person(N)`）は ID で人を指す。
+    /// 写真が消えてクラスタ N が消えたあと、別人が N を受け取ると、
+    /// **その別人の写真が家族の共有フォルダへ流れ込む**。
+    /// テスト用: 次に配られる ID を見る（手での編集の経路を回帰で固定するため）。
+    func nextClusterIDForTesting() -> Int { nextClusterID() }
+
     func nextClusterID() -> Int {
-        (allClusters().map(\.clusterID).max() ?? -1) + 1
+        let id = clusterIDHighWater() + 1
+        noteClusterIDs(upTo: id)
+        return id
     }
 
     /// クラスタからこの顔を外す。

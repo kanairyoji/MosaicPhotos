@@ -57,6 +57,77 @@
     状態を持たずに済むが、計算プロパティなので**並び替え後は毎パス全件走査**に落ちる。
   - どちらを採るかは、`PhotoStore` プロトコルに表示以外の関心事（中身の版）を持たせてよいかの判断。
 
+## 再クラスタ後の「重心へ寄与したか」の記録が実際の計算と食い違う
+
+- 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Rebuild.swift:154-157`（書き戻し）と
+  `FaceSeedBuilder.swift:149`（種の計算）
+- 分類: dataLoss / 優先度 **P1**（初出 2026-09-20・レビューループ 10 周目）
+- 症状（推定・実機未確認）: 名前や確認顔を持つ人物から写真を数枚外すと、
+  **人物の重心が壊れる**か、**行ごと消えて人物が一覧から居なくなる**。
+- 原因: 種を作るとき、ピン留めしたメンバーのうち**品質フロアを満たすものだけ**を
+  `sum`/`count` に足している（`guard member.contributes(qualityFloor:) else { continue }`）。
+  ところが書き戻しは `pinnedCluster[f.faceID] != nil || quality >= floor` で、
+  **ピン留めなら品質に関係なく「寄与した」と記録する**。実ライブラリの顔は約半分が
+  フロア未満（`FaceStore+People.swift:13-15`）なので、30 枚の人物で `count == 4` なのに
+  30 行が「寄与した」と言う状態になる。
+  あとで写真を外すと 1 枚ごとに単位ベクトルを引き `count` を減らすので、
+  4 枚外したところで `count` が尽きる（`FaceClustering.removing` の `count > 1` ガード）。
+  - 名前/代表顔/束ねがある → `sum` が零ベクトルになり、次の再クラスタまで誰も合流しない。
+  - **確認顔だけの無名クラスタ** → `isUserClaimed` は `confirmedAt` を見ないので**行が消える**。
+    残った顔は孤児になり、`repairOrphanFaces` が未割り当てへ戻す＝人物が消える。
+  - 種のピン留めが全員フロア未満だと `count = max(1, count)` で 1 になり、**最初の 1 枚で消える**。
+- なぜ設計判断が要るか: 素直に書き戻しを `quality >= floor` だけにすると計算とは揃うが、
+  `contributes` は `contributesToCentroid ?? (quality >= qualityFloor)` なので、
+  既存行の値が次の判断に効く（自己参照）。どの時点の値を正とするか＝
+  「寄与したか」を**事実の記録**とするか**方針の再評価**とするかの選択が要る。
+  併せて `isUserClaimed` に `confirmedAt` を含めるかも決める必要がある
+  （確認顔は ADR-132 の言う「ユーザーの表明」なのに、行の保護対象に入っていない）。
+- 補足: `contributesToCentroid` に触れるテストは fixture 用の 1 か所だけ。
+
+## 再クラスタで無名クラスタの ID が毎晩変わり、ピープルグループが黙って欠ける
+
+- 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Rebuild.swift:165-168`
+- 分類: dataLoss / 優先度 P2（初出 2026-09-20・レビューループ 10 周目）
+- 症状（推定・実機未確認）: 家族のピープルグループに無名の人物（「Person 12」など）を入れると、
+  次の再クラスタでその人がグループから**黙って消える**。共有フォルダからもその人の写真が消える。
+- 原因: 種になるのは「名前・確認顔・代表顔・**束ね（`personGroupID`）**」を持つクラスタだけ。
+  `PeopleGroupRecord`（ユーザーが作ったピープルグループ）のメンバーであることは**種の条件に入っていない**
+  ——`personGroupID`（同じ子を束ねる）とは別の概念。種でないクラスタは行ごと消え、
+  顔は新しい ID へ割り当て直される。`remapPeopleGroups` は手動の統合からしか呼ばれず、
+  `PeopleGroupInfo.resolve` は解決できないメンバーを黙って落とす。
+- なぜ設計判断が要るか: 素直な修正は「グループのメンバーも種にする」だが、
+  それは**無名のクラスタを機械の再編から守る**ことを意味し、ADR-132 の適用範囲を広げる判断になる。
+  代わりに再クラスタ後に ID を付け替える（`remapPeopleGroups` を呼ぶ）道もあるが、
+  無名クラスタは分裂・統合もするので 1 対 1 に対応しない。
+
+## パイプライン版を上げると束ねとピープルグループが失われる
+
+- 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/PeopleEngine.swift:424-436`
+- 分類: dataLoss / 優先度 P2（初出 2026-09-20・レビューループ 10 周目）
+- 症状（推定・実機未確認）: 顔パイプラインの版を上げて再スキャンすると、名前は持ち越されるが、
+  **子どもの束ね（ADR-61/134）は解けて別人に戻り**、ピープルグループは中身が空になる。
+- 原因: 持ち越しの荷物（`NameCarryover.Entry`）が `name` と `memberRefKeys` だけで、
+  `personGroupID` を含まない。`store.reset()` は `PeopleGroupRecord` を消さないので、
+  記録は残るが指している ID が二度と解決しない。
+  モデル世代の切り替え（`promoteShadow`）は名前でグループを組み直すが、束ねの再現は無い。
+- なぜ設計判断が要るか: 束ねは「この 2 つのクラスタは同じ人」という表明で、
+  再スキャン後のクラスタとの対応づけが要る。名前と同じ「写真の重なり」で寄せるのか、
+  束ねだけ別の持ち越し方にするのかを決める必要がある。
+
+## モデル世代の切り替えが `@Model` をアクターの外で読む
+
+- 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/PeopleEngine+Generation.swift:58,61`
+- 分類: concurrency / 優先度 P2（初出 2026-09-20・レビューループ 10 周目）
+- 症状: `allClusters()` が返す `[PersonCluster]` を `@MainActor` 側で `reduce` しており、
+  2 つの別な `ModelContext`（それぞれ専用キューに固定）が持つモデルを外から読んでいる。
+  FaceCore は tools-version 5.9 なので strict concurrency では弾かれない。
+- なぜ重いか: この経路は**モデル世代の切り替えでどの名前が残るかを決める**ところ。
+  ここで誤った文脈の読みや古い値を掴むと、名前とグループの所属を**移行の最中に**失う。
+- 直し方の候補: `namedClusterEntries()`（既にある射影）と同型の Sendable 射影を
+  `FaceStore` 側に足して、アクターの中で辞書まで作って返す。
+  ⚠️ `migrateScanVersionIfNeeded` は既にそうしているので、**同じ形に揃えるだけ**に見える。
+  ただし影の世代（別コンテナ）を同時に触る経路なので、実機での確認が要る。
+
 ## 名前の持ち越し（ADR-130）が production では一度も動かない
 
 - 箇所: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+Rebuild.swift:181`（`assignment: newAssignment`）

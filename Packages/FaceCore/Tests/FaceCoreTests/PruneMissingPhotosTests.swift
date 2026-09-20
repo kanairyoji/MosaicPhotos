@@ -91,6 +91,30 @@ struct ClusterIdentityTests {
                 "消えた ID が再利用された（参照側が別人を指す）")
     }
 
+    /// 回帰: ADR-187 の規則は**手での編集の経路にも**効くこと。
+    /// `persist` と `rebuildClusters` は高水位から採るよう直されたが、
+    /// 付け替え・分割が使う `nextClusterID()` だけ「いまある最大＋1」のまま残っていた
+    /// （レビュー指摘）。家族のピープルグループや共有セットは ID で人を指すので、
+    /// 再利用されると**別人の写真が家族の共有フォルダへ流れ込む**。
+    @Test("最大 ID の人物が消えた後、手で直しても同じ ID を配らない")
+    func manualEditDoesNotReuseRetiredClusterID() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        _ = await store.recordScans([("L-a", [signal(unit(0))]), ("L-b", [signal(unit(1))]),
+                                     ("L-c", [signal(unit(2))])])
+        let ids = await store.allClusters().map(\.clusterID).sorted()
+        #expect(ids.count == 3, "fixture: 3 人物になっていない")
+        let maxID = ids.last!
+
+        await store.deleteClusterRowForTesting(maxID)
+        _ = await store.repairOrphanFaces()
+        #expect(await store.allClusters().map(\.clusterID).contains(maxID) == false,
+                "fixture: 消えていない")
+
+        // 手での編集（「この人ではない」＝新しい人物へ付け替え）。
+        let issued = await store.nextClusterIDForTesting()
+        #expect(issued > maxID, "消えた ID を手での編集が配り直した: \(issued) <= \(maxID)")
+    }
+
     @Test("名前の付いた人物は最後の顔が外れても行が残る（名前を失わない）")
     func namedClusterSurvivesLosingLastFace() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

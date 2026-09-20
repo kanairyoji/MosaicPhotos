@@ -320,8 +320,16 @@ extension FaceStore {
             var seen = Set<String>()
             for c in cs { seen.formUnion(refKeysByCluster[c.clusterID] ?? []) }
             guard seen.count >= minFaces else { continue }
-            let primary = cs.first { $0.name?.isEmpty == false }
-                ?? cs.max { $0.count < $1.count } ?? cs[0]
+            // ⚠️ **決定的に選ぶ**（ADR-94・レビュー指摘）。`allClusters()` の取得順は不定なので、
+            // `first { 名前つき }` や `max(by:)`（同点では反復順の最後を返す）だと、束ねた人物で
+            // **起動のたびに違う名前が同じ写真に出る**。230 行上の `peopleClusters` は同じ理由で
+            // 既に直してあり、ここだけ残っていた。規則は向こうと同じ順序。
+            let primary = cs.sorted { a, b in
+                let an = a.name?.isEmpty == false, bn = b.name?.isEmpty == false
+                if an != bn { return an }                            // 名前つきが先
+                if a.count != b.count { return a.count > b.count }   // 次に写真の多い方
+                return a.clusterID < b.clusterID                     // 最後は ID で決定的に
+            }[0]
             let name = primary.name ?? "Person \(primary.clusterID + 1)"
             for c in cs { out[c.clusterID] = name }
         }

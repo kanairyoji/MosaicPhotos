@@ -67,6 +67,7 @@ extension FaceStore {
             (photos[$0.clusterID] ?? 0) >= Self.absorbTargetMinPhotos
                 && (($0.name?.isEmpty == false) || !(anchors[$0.clusterID] ?? []).isEmpty)
         }
+        let targetIDs = Set(targets.map(\.clusterID))
         let rivals = clusters.filter { (photos[$0.clusterID] ?? 0) >= 3 }
         guard !targets.isEmpty else {
             // ⚠️ 黙って戻らない。**「走って 0 件」と「そもそも走っていない」は別**で、
@@ -108,7 +109,12 @@ extension FaceStore {
             for rival in rivals where rival.clusterID != fragment.clusterID {
                 guard let other = centroid[rival.clusterID] else { continue }
                 let sim = FaceClustering.dot(vector, other)
-                let isTarget = targets.contains { $0.clusterID == rival.clusterID }
+                // ⚠️ 集合で引く（ADR-119）。`targets.contains { $0.clusterID == … }` は
+                // 断片 × 相手 × 吸収先の三重ループになり、ライブラリが育つほど
+                // 二乗で効いてくる（実測規模で 1,170 断片 × 約 1,300 クラスタ）。
+                // ここは `FaceStore` の単一アクター上で、ピープル一覧や情報パネルと
+                // 同じ順番待ちの列にいる（ADR-142・diagnostics-68）。
+                let isTarget = targetIDs.contains(rival.clusterID)
                 if isTarget, sim > (best?.sim ?? -1) {
                     if let previous = best { runnerUp = max(runnerUp, previous.sim) }
                     best = (rival.clusterID, sim)
