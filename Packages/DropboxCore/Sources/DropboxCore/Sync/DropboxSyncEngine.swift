@@ -310,6 +310,13 @@ final class DropboxSyncEngine {
             let path: String
             let recursive = true
             let limit = DropboxInternalConstants.listFolderPageLimit
+            // ⚠️ **ここにも付ける**（レビュー 16 周目）。`continue` は「元の呼び出しの設定を
+            // 引き継ぐ」——その「元の呼び出し」は `list_folder` ではなく**このカーソルを作った
+            // 呼び出し**。初回スキャンが作るカーソルは捨てられ、生き残るのはここで取った
+            // カーソルだけなので、付けないと**最初の同期のあとに増えた写真すべて**で
+            // `media_info` が来なくなる＝撮影日が `client_modified`（アップロード時刻）に落ち、
+            // 撮影地も付かない。「時系列に並ばない」（ADR-128・ADR-199）の残っていた根。
+            let include_media_info = true
         }
         struct Response: Decodable { let cursor: String }
 

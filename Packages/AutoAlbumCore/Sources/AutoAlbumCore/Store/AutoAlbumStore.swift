@@ -216,9 +216,26 @@ actor AutoAlbumStore {
         // 旧テキストタワーを同梱して未移行の行も当てる（`ModelGeneration.retainedClipTextTowers`）には、
         // 検索側がクエリを空間ごとに埋め込む必要がある（`enrichmentVectorPageWithModel` を使い、
         // `AIAlbumSearcher` に modelID → クエリベクトルの辞書を渡す）。最初のモデル更新時に実装する。
-        enrichmentVectorPageWithModel(after: cursor, limit: limit)
-            .filter { ModelGeneration.isCurrentClip($0.modelID) }
-            .map { (refKey: $0.refKey, clipVector: $0.clipVector) }
+        // ⚠️ **絞り込みで減った件数を「表の終わり」と取り違えさせない**（レビュー 16 周目）。
+        // `fetchLimit` は絞り込みの**前**に効くので、旧モデルの行が混ざるページは短くなる。
+        // 呼び出し側は「ページが上限より短い＝終わり」で打ち切るので、モデル更新の最中は
+        // **最初のページだけ読んで走査が止まる**（移行は新しい写真から進むため、
+        // refKey 順では現行行が散らばる＝1 ページ目でほぼ必ず短くなる）。
+        // 上限ぶんの**現行行**が集まるまで読み進める。カーソルは読んだ最後の行で進める。
+        var out: [(refKey: String, clipVector: Data)] = []
+        var next = cursor
+        while out.count < limit {
+            let page = enrichmentVectorPageWithModel(after: next, limit: limit)
+            if page.isEmpty { break }
+            for row in page where ModelGeneration.isCurrentClip(row.modelID) {
+                out.append((refKey: row.refKey, clipVector: row.clipVector))
+                if out.count >= limit { break }
+            }
+            guard let last = page.last?.refKey else { break }
+            next = last
+            if page.count < limit { break }   // 表の終わりに達した
+        }
+        return out
     }
 
     /// モデル ID つきのページ（旧テキストタワーを残した二重空間検索の入口・ADR-186）。
@@ -291,6 +308,12 @@ actor AutoAlbumStore {
         let records = (try? modelContext.fetch(descriptor)) ?? []
         var out: [String: Data] = [:]
         for rec in records {
+            // ⚠️ **空間の違うベクトルは混ぜない**（ADR-186・レビュー 16 周目）。
+            // ページ走査の側（`enrichmentVectorPage`）は現行モデルの行だけを返すのに、
+            // 増分評価の入口であるここには絞り込みが無く、モデル更新の最中に
+            // **旧空間のベクトルを新しいテキストタワーと突き合わせて**
+            // その結果を永続プールへ混ぜていた。
+            guard ModelGeneration.isCurrentClip(rec.modelID) else { continue }
             guard let floats = ClipMath.decodeHalf(rec.vector) else { continue }
             out[rec.refKey] = ClipMath.encode(floats)
         }
