@@ -22,6 +22,11 @@ actor FakeDropboxServer: HTTPClient {
         var contentHash: String
         var isFolder: Bool
         var rev: String
+        /// ファイルサイズ（`get_metadata` が返す）。
+        /// ⚠️ **本物と同じ値を返すこと**。ここを固定値にしていたため、オフロードの照合
+        /// （hash ＋ **サイズ**の完全一致）がこの偽サーバーでは必ず落ち、オフロードの流れを
+        /// 一度も通せなかった（「印を書いて、読み直す」の検証ができなかった）。
+        var size: Int = 1
     }
 
     /// path_lower → エントリ。
@@ -58,15 +63,17 @@ actor FakeDropboxServer: HTTPClient {
     init(files: [String: Entry] = [:]) { self.files = files }
 
     /// 既存ファイルを直接置く（テストの前提条件づくり）。
-    func seed(_ path: String, hash: String, isFolder: Bool = false) {
-        files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder, rev: "r\(files.count)")
+    func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1) {
+        files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder,
+                                         rev: "r\(files.count)", size: size)
     }
 
     /// 中身つきでファイルを置く（他端末がアップロードした解析データ等を模す）。content_hash は本物と同じ計算。
     func upload(path: String, data: Data) {
         let key = path.lowercased()
         bodies[key] = data
-        files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false, rev: "r\(files.count)")
+        files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false,
+                           rev: "r\(files.count)", size: data.count)
     }
 
     /// 外部（他端末・Dropbox の Web UI）からの削除を模す。
@@ -308,7 +315,7 @@ actor FakeDropboxServer: HTTPClient {
               let entry = files[parsed.path.lowercased()] else {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
-        return resp(200, #"{"content_hash":"\#(entry.contentHash)","size":1}"#)
+        return resp(200, #"{"content_hash":"\#(entry.contentHash)","size":\#(entry.size)}"#)
     }
 
     private func handleUpload(_ request: URLRequest, _ resp: (Int, String) -> (Data, URLResponse))
@@ -323,7 +330,8 @@ actor FakeDropboxServer: HTTPClient {
         // 本物と同じ content_hash を返す（アップロードの検証経路をそのまま通せる）。
         let hash = DropboxContentHash.hash(of: body)
         bodies[key] = body
-        files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)")
+        files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)",
+                           size: body.count)
         return resp(200, #"{"path_lower":"\#(key)","content_hash":"\#(hash)"}"#)
     }
 
