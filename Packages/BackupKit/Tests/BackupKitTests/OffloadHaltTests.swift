@@ -19,19 +19,20 @@ import Testing
 struct OffloadHaltTests {
 
     private let root = "/MosaicPhotos/iPhone-E7/Backup"
-    private let photo = Data("only-copy".utf8)
+    /// 配線のテスト（`OffloadHaltWiringTests.swift`・同じ Suite）からも使う。
+    let haltPhoto = Data("only-copy".utf8)
 
     private func storeWithOffloaded(paths: [String]) async -> BackupStore {
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         _ = await store.upsertOffloads(paths.map {
             (localIdentifier: "ID-\($0)", dropboxPath: $0, albums: ["旅行"],
              captureDate: Date(timeIntervalSince1970: 1_700_000_000),
-             contentHash: DropboxContentHash.hash(of: photo))
+             contentHash: DropboxContentHash.hash(of: haltPhoto))
         })
         return store
     }
 
-    private func cleanDefaults() {
+    func cleanDefaults() {
         OffloadHalt.resetForTesting()
         UserDefaults.standard.removeObject(forKey: BackupSettingsKeys.offloadAutoThresholdMB)
     }
@@ -69,7 +70,7 @@ struct OffloadHaltTests {
         let store = await storeWithOffloaded(paths: [path])
 
         let missing = await store.missingOffloadedPaths(
-            remote: [path.lowercased(): DropboxContentHash.hash(of: photo)])
+            remote: [path.lowercased(): DropboxContentHash.hash(of: haltPhoto)])
 
         #expect(missing.isEmpty, "在る写真を消えたと判定した（緊急停止の誤発動）")
     }

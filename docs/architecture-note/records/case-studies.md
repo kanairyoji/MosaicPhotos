@@ -64,6 +64,34 @@
 
 ---
 
+## CI が赤くなった: 並列に走る Suite が同じ `UserDefaults` を奪い合っていた
+
+- 症状: push 後の GitHub Actions（`fast` ジョブ）が失敗。手元では `scripts/test.sh all` が
+  何度も通っていたので、**CI で初めて表に出た**。
+- 調べ方: ログはダウンロードに認証が要るため読めない。**ジョブとステップの結果だけ**を
+  API で取り、失敗が `fast`（＝macOS の `swift test`）だと絞り込んだうえで、
+  今日足したテストを疑って手元で**対象を絞って繰り返し**回した——
+  `swift test --filter OffloadHalt` を 6 回で、失敗数は **6・6・8・2・5・6**。
+  全体実行では紛れて通っていたが、絞ると毎回落ちる。
+- 原因: `OffloadHaltTests` と `OffloadHaltWiringTests` が**別々の Suite** なのに、
+  どちらも `UserDefaults.standard` の同じキー（停止の記録・自動オフロードのしきい値・
+  バックアップ先フォルダ）を書き換えていた。**swift-testing の Suite は既定で並列**で、
+  `.serialized` は*その Suite の中だけ*を直列にする。
+- ⚠️ **同じ形を 2 回踏んだ**。1 回目は `BackgroundYield.environmentOverrideForTesting`
+  （20 周目）。そのときの対処「この上書きを使うテストは 1 つの `.serialized` Suite に集める」を
+  **自分で書いておきながら、`UserDefaults` で繰り返した**。
+- 対処: 配線のテストを `extension OffloadHaltTests` にして 1 つの Suite（14 本）へ統合。
+  8 回連続で 0 失敗、BackupKit 全体 3 回も 0 失敗。
+- 一般化して `testing/strategy.html` に節を足した:
+  **プロセス全体で 1 つの状態を触るテストは、(1) 使い捨ての状態を注入する
+  （`TestDefaults.scratch` のような seam）か、(2) 1 つの `.serialized` Suite に集める**。
+  本番が `.standard` を直に読む場合は (2) になる。
+- 教訓: **「手元で通る」は「並列でも通る」ではない。** 並列実行の当たり外れは実行ごとに
+  変わるので、疑わしいテストは**絞って繰り返す**（全体実行では紛れる）。
+  そして**一度書いた教訓は、別の顔で戻ってくる**——状態の種類が違うだけで同じ罠だった。
+
+---
+
 ## 偽 Dropbox を 14 点強化したら、同期が永久に止まる欠陥が出た
 
 - 経緯: 偽サーバーの改良案（忠実度 5・異常 5・観測 4）を出して全部実装した。

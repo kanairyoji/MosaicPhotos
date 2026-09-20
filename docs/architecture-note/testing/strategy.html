@@ -45,6 +45,15 @@
         <tr><td>アプリターゲット</td><td><code>ImageRecognitionTests</code>（モデル同梱時のみ・未同梱はスキップ）</td><td>CLIP の有限性（fp16 NaN 回帰）・画像/テキスト識別・翻訳素通し</td></tr>
       </table>
 
+      <h2>⚠️ プロセス全体で 1 つの状態を触るテスト</h2>
+      <p>swift-testing の <strong>Suite は既定で並列に走る</strong>。<code>.serialized</code> は<strong>その Suite の中だけ</strong>を直列にするので、別々の Suite が同じ「プロセス全体で 1 つの状態」を書き換えると壊れる。しかも<strong>単体では再現せず、実行のたびに落ちる本数が変わる</strong>——同じ形で 2 回踏んだ。</p>
+      <table>
+        <tr><th>踏んだ状態</th><th>症状</th><th>対処</th></tr>
+        <tr><td><code>BackgroundYield.environmentOverrideForTesting</code></td><td>隣の Suite が <code>.active</code> を差している間、再評価が「前面だから降りる」で 1 件も進まない</td><td>この上書きを使うテストを 1 つの <code>.serialized</code> Suite へ集めた</td></tr>
+        <tr><td><code>UserDefaults.standard</code>（オフロードの停止記録・設定）</td><td>実行のたびに 2〜8 本が落ちる。<strong>CI で初めて赤になった</strong>（手元の全体実行はたまたま通っていた）</td><td>同上。2 つの Suite を 1 つへ統合（片方を <code>extension</code> にする）</td></tr>
+      </table>
+      <p>対処は 2 つのどちらか——<strong>(1) 使い捨ての状態を注入する</strong>（<code>TestDefaults.scratch</code> / <code>PendingMetadataStore(directory:)</code> のように seam を用意する）か、<strong>(2) 触るテストを 1 つの <code>.serialized</code> Suite に集める</strong>。(1) が取れるなら (1) が良い（並列のまま速い）。本番コードが <code>.standard</code> を直接読む場合は (2) になる。</p>
+
       <h2>実機ログも「テスト」の一部</h2>
       <p>シミュレータ・macOS では再現しない問題（ANE デッドロック・メモリ飢餓・OS スロットル・Core ML の fp16 破綻）があるため、<strong>実機の診断ログ（<code>Diagnostics</code>・<code>PerfTrace</code>・MetricKit）を継続的に読む運用</strong>を検証の最終段に置いている。「Mac で正常＝実機で正常」ではない、が繰り返し得られた教訓（詳細は<a href="../features/diagnostics.html">診断と堅牢性</a>）。</p>
 
