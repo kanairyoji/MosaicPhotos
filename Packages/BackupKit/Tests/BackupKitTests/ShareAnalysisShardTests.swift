@@ -69,14 +69,14 @@ struct ShareAnalysisFetchTests {
     func fetchesOnlyChangedShards() async {
         // ⚠️ 記録の置き場所を**このテスト専用**にする。既定（standard）のままだと、
         // 並行して走る別スイートと rev を取り合い、片方の掃除がもう片方の記録を消す
-        // ——落ち方が実行順に依存する（レビュー指摘）。`.serialized` では防げない
+        // ——落ち方が実行順に依存する。`.serialized` では防げない
         // （swift-testing はスイートを既定で並列実行する）。
-        let suiteName = "ShareAnalysisFetchTests.\(UUID().uuidString)"
-        ShareAnalysisFetch.defaults = UserDefaults(suiteName: suiteName) ?? .standard
-        defer {
-            UserDefaults.standard.removePersistentDomain(forName: suiteName)
-            ShareAnalysisFetch.defaults = .standard
-        }
+        // ⚠️ 名前は**テストごとに固定**（UUID にすると実行のたびに plist が増え続ける）。
+        // 置き場所はインスタンスが持つので、可変なグローバルの取り合いは起きない。
+        let suiteName = "MosaicPhotos.ShareTests.fetchesOnlyChangedShards"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.removePersistentDomain(forName: suiteName)   // 前回の残りを消してから始める
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let server = FakeDropboxServer()
         let root = "/family/iphone-x/share"
         await server.seed(root, hash: "", isFolder: true)
@@ -88,14 +88,14 @@ struct ShareAnalysisFetchTests {
         await server.upload(path: "\(root)/people-a/.mosaic-share/shard-cd.json",
                             data: shardData([hash("cd12"): ShareAnalysisData.Entry(tags: ["dog"])]))
 
-        let fetch = ShareAnalysisFetch(httpClient: server)
+        let fetch = ShareAnalysisFetch(httpClient: server, defaults: defaults)
         let first = await fetch.fetchUpdated(roots: [root], token: "t")
         #expect(first.count == 2)
         #expect(Set(first.map(\.setFolderPathLower)) == ["\(root)/people-a"])
         let listCalls = await server.requestLog.filter { $0.contains("list_folder") }.count
         #expect(listCalls == 1, "家族フォルダごとに 1 回の一覧で済むこと（以前はセットごと＝N+1 回）")
 
-        for f in first { ShareAnalysisFetch.markImported(f) }
+        for f in first { fetch.markImported(f) }
         // 1 シャードだけ変える → それだけ返る。
         await server.upload(path: "\(root)/people-a/.mosaic-share/shard-cd.json",
                             data: shardData([hash("cd12"): ShareAnalysisData.Entry(tags: ["dog", "park"])]))
@@ -107,14 +107,14 @@ struct ShareAnalysisFetchTests {
     func readsLegacyFile() async {
         // ⚠️ 記録の置き場所を**このテスト専用**にする。既定（standard）のままだと、
         // 並行して走る別スイートと rev を取り合い、片方の掃除がもう片方の記録を消す
-        // ——落ち方が実行順に依存する（レビュー指摘）。`.serialized` では防げない
+        // ——落ち方が実行順に依存する。`.serialized` では防げない
         // （swift-testing はスイートを既定で並列実行する）。
-        let suiteName = "ShareAnalysisFetchTests.\(UUID().uuidString)"
-        ShareAnalysisFetch.defaults = UserDefaults(suiteName: suiteName) ?? .standard
-        defer {
-            UserDefaults.standard.removePersistentDomain(forName: suiteName)
-            ShareAnalysisFetch.defaults = .standard
-        }
+        // ⚠️ 名前は**テストごとに固定**（UUID にすると実行のたびに plist が増え続ける）。
+        // 置き場所はインスタンスが持つので、可変なグローバルの取り合いは起きない。
+        let suiteName = "MosaicPhotos.ShareTests.readsLegacyFile"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.removePersistentDomain(forName: suiteName)   // 前回の残りを消してから始める
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let server = FakeDropboxServer()
         let root = "/family/iphone-y/share"
         await server.seed(root, hash: "", isFolder: true)
@@ -122,7 +122,7 @@ struct ShareAnalysisFetchTests {
         await server.seed("\(root)/album-t/.mosaic-share", hash: "", isFolder: true)
         await server.upload(path: "\(root)/album-t/.mosaic-share/analysis-v1.json",
                             data: shardData([hash("0a00"): ShareAnalysisData.Entry(tags: ["old"])]))
-        let fetched = await ShareAnalysisFetch(httpClient: server).fetchUpdated(roots: [root], token: "t")
+        let fetched = await ShareAnalysisFetch(httpClient: server, defaults: defaults).fetchUpdated(roots: [root], token: "t")
         #expect(fetched.count == 1)
         #expect(fetched.first?.file.entries[hash("0a00")]?.tags == ["old"])
     }

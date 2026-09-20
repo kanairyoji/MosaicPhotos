@@ -156,7 +156,9 @@ final class SharedAnalysisImporter {
         defer { isRunning = false }
         guard let token = try? await dropboxStore.auth.freshAccessToken() else { return }
 
-        let fetched = await ShareAnalysisFetch().fetchUpdated(roots: roots, token: token)
+        // 記録の置き場所を持つので、この実行のあいだ 1 つのインスタンスを使い回す。
+        let fetcher = ShareAnalysisFetch()
+        let fetched = await fetcher.fetchUpdated(roots: roots, token: token)
         guard !fetched.isEmpty else { return }
 
         let versions = ShareImportPlanning.ReceiverVersions(
@@ -255,8 +257,8 @@ final class SharedAnalysisImporter {
             // ⚠️ 見送るのは**数回まで**。容量不足のように直らない失敗だと毎回見送られ、
             // 取り込みが一度も記録されないまま毎回同じシャードを取り直し続ける（レビュー指摘）。
             captureDateSaveFailed = outcome.saveFailed
-                && ShareAnalysisFetch.shouldRetryCaptureDateSave()
-            if !outcome.saveFailed { ShareAnalysisFetch.resetCaptureDateSaveFailures() }
+                && fetcher.shouldRetryCaptureDateSave()
+            if !outcome.saveFailed { fetcher.resetCaptureDateSaveFailures() }
             Diagnostics.mark("share import: capture dates — +\(incomingDates.count), "
                 + "total \(outcome.table.count), overCap \(outcome.droppedByCap.count), "
                 + "evicted \(outcome.evictedExisting), saveFailed \(outcome.saveFailed)")
@@ -286,7 +288,7 @@ final class SharedAnalysisImporter {
             let datesLanded = prepared.captureDates.isEmpty || !captureDateSaveFailed
             let committed = counts.saved && faces.saved
             if prepared.fullyMatched && committed && datesLanded {
-                ShareAnalysisFetch.markImported(prepared.analysisData)
+                fetcher.markImported(prepared.analysisData)
             } else if !committed {
                 Diagnostics.mark("share import: \(prepared.analysisData.setFolderPathLower) — "
                     + "not marked imported (persistence failed); will retry")

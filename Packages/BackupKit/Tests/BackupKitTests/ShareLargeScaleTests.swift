@@ -159,14 +159,14 @@ struct ShareLargeScaleTests {
     func receiverFollowsPages() async {
         // ⚠️ 記録の置き場所を**このテスト専用**にする。既定（standard）のままだと、
         // 並行して走る別スイートと rev を取り合い、片方の掃除がもう片方の記録を消す
-        // ——落ち方が実行順に依存する（レビュー指摘）。`.serialized` では防げない
+        // ——落ち方が実行順に依存する。`.serialized` では防げない
         // （swift-testing はスイートを既定で並列実行する）。
-        let suiteName = "ShareAnalysisFetchTests.\(UUID().uuidString)"
-        ShareAnalysisFetch.defaults = UserDefaults(suiteName: suiteName) ?? .standard
-        defer {
-            UserDefaults.standard.removePersistentDomain(forName: suiteName)
-            ShareAnalysisFetch.defaults = .standard
-        }
+        // ⚠️ 名前は**テストごとに固定**（UUID にすると実行のたびに plist が増え続ける）。
+        // 置き場所はインスタンスが持つので、可変なグローバルの取り合いは起きない。
+        let suiteName = "MosaicPhotos.ShareTests.receiverFollowsPages"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.removePersistentDomain(forName: suiteName)   // 前回の残りを消してから始める
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let server = FakeDropboxServer()
         await server.setPageSize(5)
         let root = "/family/x/share"
@@ -178,7 +178,7 @@ struct ShareLargeScaleTests {
             await server.upload(path: "\(root)/set/.mosaic-share/shard-\(String(format: "%02x", i)).json",
                                 data: ShareAnalysisData.encode(file)!)
         }
-        let fetched = await ShareAnalysisFetch(httpClient: server).fetchUpdated(roots: [root], token: "t")
+        let fetched = await ShareAnalysisFetch(httpClient: server, defaults: defaults).fetchUpdated(roots: [root], token: "t")
         #expect(fetched.count == 12, "ページの続きにあるシャードを取りこぼした")
     }
 }

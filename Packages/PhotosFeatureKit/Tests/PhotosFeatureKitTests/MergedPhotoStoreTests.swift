@@ -1,4 +1,6 @@
+import Foundation
 import Testing
+import DropboxKit
 @testable import PhotosFeatureKit
 
 // MARK: - バックアップコピーの二重表示（実機 diagnostics-57/58）
@@ -55,11 +57,13 @@ struct BackupCopyHidingTests {
 @Suite("統合一覧の指紋")
 struct MergedSignatureTests {
 
-    private func signature(_ ids: [String]) -> Int {
-        var hasher = Hasher()
-        for id in ids { hasher.combine(id) }
-        hasher.combine(ids.count)
-        return hasher.finalize()
+    /// ⚠️ **本番と同じ関数を呼ぶ**（レビュー指摘）。以前はここに式を書き写していたので、
+    /// 本番の指紋に撮影日を足しても気づかず、**その行を消しても緑のまま**だった。
+    private func signature(_ ids: [String], dates: [Date?]? = nil) -> Int {
+        MergedPhotoStore.signature(of: ids.enumerated().map { index, id in
+            .cloud(DropboxFileItem(path: id, name: id,
+                                   captureDate: dates.flatMap { $0.indices.contains(index) ? $0[index] : nil }))
+        })
     }
 
     @Test("同じ並びなら同じ指紋")
@@ -81,5 +85,24 @@ struct MergedSignatureTests {
     @Test("長さも混ぜる（前方一致を取り違えない）")
     func lengthIsMixedIn() {
         #expect(signature(["L-1"]) != signature(["L-1", "L-2"]))
+    }
+
+    /// 回帰: **並び順が同じでも撮影日が直れば別の指紋**（ADR-199）。
+    /// 共有フォルダは撮影順にアップロードされることが多いので、受け取った撮影日を
+    /// 反映しても並びは変わらない——指紋が同じだと代入が飛ばされ、月の見出しと
+    /// 情報パネルがアップロード時刻のまま残る（開き直すまで直らない）。
+    @Test("並びが同じでも撮影日が変われば違う指紋")
+    func captureDateIsMixedIn() {
+        let uploaded = Date(timeIntervalSince1970: 1_800_000_000)   // 反映時刻（最近）
+        let taken    = Date(timeIntervalSince1970: 1_000_000_000)   // 本当の撮影日
+        let before = signature(["C-/f/a.jpg", "C-/f/b.jpg"], dates: [uploaded, uploaded])
+        let after  = signature(["C-/f/a.jpg", "C-/f/b.jpg"], dates: [taken, taken])
+        #expect(before != after,
+                "撮影日だけが直った更新を取りこぼす＝ADR-199 がいちばん効く場面で反映されない")
+    }
+
+    @Test("撮影日が無い写真どうしは同じ指紋")
+    func missingDatesAreStable() {
+        #expect(signature(["C-/f/a.jpg"], dates: [nil]) == signature(["C-/f/a.jpg"], dates: [nil]))
     }
 }

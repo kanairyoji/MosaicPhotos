@@ -5,18 +5,22 @@ import Foundation
 /// rev（Dropbox のファイル版）を記録し、**変わったものだけ**ダウンロード・検証して返す。
 /// ストアへの取り込み（TagStore / 埋め込み / 顔）はアプリ側（Composition Root）が行う。
 public struct ShareAnalysisFetch {
-    /// 記録の置き場所。
-    ///
-    /// ⚠️ **テストはここを差し替える**（レビュー指摘）。rev・続きの印・受信能力の版・保存失敗の数を
-    /// すべて `UserDefaults.standard` に置いていたため、並行して走る別スイートと取り合っていた
-    /// ——片方の `pruneStoredRevs` がもう片方の rev を消し、落ち方が実行順に依存した。
-    /// swift-testing はスイートを既定で並列実行するので、`.serialized` では防げない。
-    nonisolated(unsafe) static var defaults: UserDefaults = .standard
-
     private let httpClient: HTTPClient
 
-    public init(httpClient: HTTPClient = URLSessionHTTPClient()) {
+    /// 記録の置き場所（rev・続きの印・受信能力の版・保存失敗の数）。
+    ///
+    /// ⚠️ **インスタンスに持たせる**（レビュー 6 周目）。5 周目では
+    /// `nonisolated(unsafe) static var` にしたが、それは競合を**直さず移しただけ**だった
+    /// ——並行して走る 2 つのテストスイートが 1 つのグローバルを取り合い、
+    /// 片方の `pruneStoredRevs` がもう片方の rev を消す競合がそのまま再現した
+    /// （しかも後始末が「元の値」でなく `.standard` に戻すので、既定の置き場所を汚した）。
+    /// 可変なグローバルを差し込み口にしてはいけない。
+    private let defaults: UserDefaults
+
+    public init(httpClient: HTTPClient = URLSessionHTTPClient(),
+                defaults: UserDefaults = .standard) {
         self.httpClient = httpClient
+        self.defaults = defaults
     }
 
     /// 取得済み解析データ 1 件。
@@ -80,8 +84,8 @@ public struct ShareAnalysisFetch {
     /// 続きから始めて一巡させれば、記録できない回が続いても全部が順番に回る。
     private static let cursorKey = "share.analysisFetchCursor"
 
-    static func storedCursor() -> String? {
-        Self.defaults.string(forKey: cursorKey)
+    func storedCursor() -> String? {
+        defaults.string(forKey: Self.cursorKey)
     }
 
     /// 撮影日の保存に失敗し続けたときに、取り込みを止め続けないための上限（レビュー指摘）。
@@ -95,11 +99,11 @@ public struct ShareAnalysisFetch {
     private static let saveFailureKey = "share.captureDateSaveFailures"
 
     /// 撮影日の保存失敗を数える。まだ見送ってよいなら true。
-    public static func shouldRetryCaptureDateSave() -> Bool {
-        let defaults = Self.defaults
-        let count = defaults.integer(forKey: saveFailureKey) + 1
-        defaults.set(count, forKey: saveFailureKey)
-        if count > captureDateSaveRetryLimit {
+    public func shouldRetryCaptureDateSave() -> Bool {
+        let defaults = defaults
+        let count = defaults.integer(forKey: Self.saveFailureKey) + 1
+        defaults.set(count, forKey: Self.saveFailureKey)
+        if count > Self.captureDateSaveRetryLimit {
             BackupLogger.error("ShareAnalysisFetch: capture-date save has failed \(count) times — "
                 + "marking analysis imported anyway (ordering will stay wrong)")
             return false
@@ -108,13 +112,13 @@ public struct ShareAnalysisFetch {
     }
 
     /// 保存できた回に数え直す。
-    public static func resetCaptureDateSaveFailures() {
-        Self.defaults.removeObject(forKey: saveFailureKey)
+    public func resetCaptureDateSaveFailures() {
+        defaults.removeObject(forKey: Self.saveFailureKey)
     }
 
-    static func saveCursor(_ path: String?) {
-        if let path { Self.defaults.set(path, forKey: cursorKey) }
-        else { Self.defaults.removeObject(forKey: cursorKey) }
+    func saveCursor(_ path: String?) {
+        if let path { defaults.set(path, forKey: Self.cursorKey) }
+        else { defaults.removeObject(forKey: Self.cursorKey) }
     }
 
     /// 1 回の実行で「どれを試すか」を決める（純ロジック・テスト対象）。
@@ -156,20 +160,20 @@ public struct ShareAnalysisFetch {
     }
 
     /// 受信側の読み取り能力が上がっていたら、記録済み rev を 1 回だけ捨てる。
-    static func invalidateRevsIfCapabilityGrew() {
-        let defaults = Self.defaults
-        let stored = defaults.integer(forKey: capabilityVersionKey)   // 未設定は 0
-        guard stored < receiverCapabilityVersion else { return }
+    func invalidateRevsIfCapabilityGrew() {
+        let defaults = defaults
+        let stored = defaults.integer(forKey: Self.capabilityVersionKey)   // 未設定は 0
+        guard stored < Self.receiverCapabilityVersion else { return }
         defaults.removeObject(forKey: ShareSettingsKeys.importedAnalysisRevs)
-        defaults.set(receiverCapabilityVersion, forKey: capabilityVersionKey)
+        defaults.set(Self.receiverCapabilityVersion, forKey: Self.capabilityVersionKey)
         BackupLogger.info("ShareAnalysisFetch: receiver capability \(stored) → "
-            + "\(receiverCapabilityVersion) — re-fetching all analysis data once")
+            + "\(Self.receiverCapabilityVersion) — re-fetching all analysis data once")
     }
 
     public func fetchUpdated(roots: [String], token: String) async -> [Fetched] {
-        Self.invalidateRevsIfCapabilityGrew()
+        invalidateRevsIfCapabilityGrew()
         let copier = DropboxShareCopier(httpClient: httpClient)
-        let knownRevs = Self.storedRevs()
+        let knownRevs = storedRevs()
         var out: [Fetched] = []
         var seenPaths = Set<String>()
         var allListed = true
@@ -213,7 +217,7 @@ public struct ShareAnalysisFetch {
         // 遅れは有界で、**止まらない**。止まる方の害が桁違いに大きいので、こちらを選ぶ。
         // 連続で落ち続けたらその回は畳む（レート制限・圏外で 48 回叩かない）。
         let order = Dictionary(candidates.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
-        let rotatedPaths = Self.rotated(candidates.map(\.path).sorted(), after: Self.storedCursor())
+        let rotatedPaths = Self.rotated(candidates.map(\.path).sorted(), after: storedCursor())
         var lastAttempted: String?
         var taken = 0
         var consecutiveFailures = 0
@@ -241,15 +245,15 @@ public struct ShareAnalysisFetch {
             out.append(Fetched(analysisPathLower: path, rev: candidate.rev,
                                file: decoded, setFolderPathLower: candidate.setFolder))
         }
-        if let lastAttempted { Self.saveCursor(lastAttempted) }
+        if let lastAttempted { saveCursor(lastAttempted) }
         // 一覧に無くなったパスの rev 記録は捨てる（肥大防止。以前の「500 件超で末尾 300 件」は
         // シャード化で件数が増えると取り込み済みの記録まで捨てて再取得を誘発する）。
-        if allListed { Self.pruneStoredRevs(keeping: seenPaths) }
+        if allListed { pruneStoredRevs(keeping: seenPaths) }
         return out
     }
 
     /// 取り込み完了を記録する（同じ rev の再取り込みを省く）。
-    public static func markImported(_ fetched: Fetched) {
+    public func markImported(_ fetched: Fetched) {
         guard !fetched.rev.isEmpty else { return }
         var revs = storedRevs()
         revs[fetched.analysisPathLower] = fetched.rev
@@ -257,20 +261,20 @@ public struct ShareAnalysisFetch {
     }
 
     /// 一覧に無くなったパスの記録を捨てる（家族フォルダの整理・シャードの消滅）。
-    static func pruneStoredRevs(keeping paths: Set<String>) {
+    func pruneStoredRevs(keeping paths: Set<String>) {
         let revs = storedRevs()
         let kept = revs.filter { paths.contains($0.key) }
         if kept.count != revs.count { save(kept) }
     }
 
-    private static func save(_ revs: [String: String]) {
+    private func save(_ revs: [String: String]) {
         if let data = try? JSONEncoder().encode(revs) {
-            Self.defaults.set(data, forKey: ShareSettingsKeys.importedAnalysisRevs)
+            defaults.set(data, forKey: ShareSettingsKeys.importedAnalysisRevs)
         }
     }
 
-    static func storedRevs() -> [String: String] {
-        guard let data = Self.defaults.data(forKey: ShareSettingsKeys.importedAnalysisRevs),
+    func storedRevs() -> [String: String] {
+        guard let data = defaults.data(forKey: ShareSettingsKeys.importedAnalysisRevs),
               let revs = try? JSONDecoder().decode([String: String].self, from: data) else {
             return [:]
         }

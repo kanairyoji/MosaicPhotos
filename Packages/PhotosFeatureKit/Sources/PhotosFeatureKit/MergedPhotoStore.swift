@@ -150,24 +150,33 @@ public final class MergedPhotoStore {
             if Task.isCancelled { return }
             // 指紋は**ここ（オフメイン）で**取る。メインで取ると id の文字列生成が
             // そのまま画面の停止時間になる。
-            var hasher = Hasher()
-            // ⚠️ **撮影日も指紋に入れる**（レビュー指摘・ADR-199）。id はパスなので、
-            // 撮影日が直っても並び順が変わらなければ指紋が一致し、`setItems` が
-            // 「中身が同じ」と見て代入を飛ばす——**月の見出しと情報パネルは
-            // アップロード時刻のまま**で、アプリを開き直すまで直らない。
-            // 共有フォルダは撮影順にアップロードされることが多いので、
-            // 「日付だけ直って並びは同じ」は ADR-199 がいちばん効いてほしい場面そのもの。
-            for item in merged {
-                hasher.combine(item.id)
-                hasher.combine(item.captureDate)
-            }
-            hasher.combine(merged.count)
-            let signature = hasher.finalize()
+            let signature = MergedPhotoStore.signature(of: merged)
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) "
                              + "hiddenBackupCopies=\(hidden.count) total=\(merged.count) sort=\(Int(ms))ms")
             await self?.setItems(merged, generation: generation, signature: signature)
         }
+    }
+
+    /// 一覧の**指紋**（純関数・テスト対象）。
+    ///
+    /// ⚠️ **テスト側に同じ式を書き写さない**（レビュー指摘）。以前はテストが自前の
+    /// 指紋関数を持っていたので、本番に撮影日を足してもテストは気づかず、
+    /// **その行を消しても緑のまま**だった。本番とテストが同じ関数を呼ぶ形にする。
+    ///
+    /// ⚠️ **撮影日も入れる**（ADR-199）。id はパスなので、撮影日が直っても並び順が
+    /// 変わらなければ指紋が一致し、`setItems` が「中身が同じ」と見て代入を飛ばす
+    /// ——月の見出しと情報パネルはアップロード時刻のままで、開き直すまで直らない。
+    /// 共有フォルダは撮影順にアップロードされることが多いので、
+    /// 「日付だけ直って並びは同じ」は ADR-199 がいちばん効いてほしい場面そのもの。
+    nonisolated static func signature(of items: [MergedPhotoItem]) -> Int {
+        var hasher = Hasher()
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.captureDate)
+        }
+        hasher.combine(items.count)
+        return hasher.finalize()
     }
 
     /// テスト用: その世代がまだ現行か（追い越されていないか）。
