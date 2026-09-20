@@ -5,44 +5,6 @@ import Testing
 
 // MARK: - テストダブル（層 2: 偽 Dropbox ＋ 削除呼び出しの記録）
 
-/// パスごとに応答を返す偽 Dropbox。get_metadata / download / upload を最低限エミュレート。
-private actor FakeDropbox: HTTPClient {
-    /// path → (content_hash, size)。無いパスへの get_metadata は 409。
-    var files: [String: (hash: String, size: Int)]
-    init(files: [String: (hash: String, size: Int)]) { self.files = files }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let url = request.url!.absoluteString
-        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
-            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                              httpVersion: nil, headerFields: nil)!)
-        }
-        if url.contains("get_metadata") {
-            struct Body: Decodable { let path: String }
-            guard let body = request.httpBody,
-                  let parsed = try? JSONDecoder().decode(Body.self, from: body),
-                  let file = files[parsed.path] else {
-                return resp(409, #"{"error_summary":"path/not_found/"}"#)
-            }
-            return resp(200, #"{"content_hash":"\#(file.hash)","size":\#(file.size)}"#)
-        }
-        if url.contains("download") {
-            return resp(409, #"{"error_summary":"path/not_found/"}"#)   // シャード無し＝新規
-        }
-        if url.contains("upload") {
-            // マーカー書き込み。失敗を注入できるようにする（再送の検証に使う）。
-            return failMarkerUpload ? resp(500, "{}") : resp(200, "{}")
-        }
-        return resp(200, "{}")
-    }
-
-    /// metadata シャードのアップロードを失敗させる。
-    var failMarkerUpload = false
-
-    /// 外部（他端末・Web UI）からクラウドのコピーが消えた状況を作る。
-    func removeFile(_ path: String) { files.removeValue(forKey: path) }
-    func setFailMarkerUpload(_ value: Bool) { failMarkerUpload = value }
-}
 
 /// 削除要求を記録するだけのモック（実削除しない）。
 private final class MockDeleter: PhotoDeleter, @unchecked Sendable {
@@ -80,10 +42,14 @@ struct OffloadSafetyTests {
     }
 
     private func makeService(files: [String: (hash: String, size: Int)],
-                             deleter: MockDeleter) -> OffloadService {
-        OffloadService(uploader: DropboxBackupUploader(httpClient: FakeDropbox(files: files)),
-                       tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
-                       log: { _ in })
+                             deleter: MockDeleter) async -> OffloadService {
+        let server = FakeDropboxServer()
+        for (path, file) in files {
+            await server.seed(path, hash: file.hash, size: file.size)
+        }
+        return OffloadService(uploader: DropboxBackupUploader(httpClient: server),
+                              tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
+                              log: { _ in })
     }
 
     // MARK: 正常系
@@ -91,7 +57,7 @@ struct OffloadSafetyTests {
     @Test("hash・サイズが完全一致する写真だけが削除される（台帳記録つき）")
     func happyPath() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         var ledger: [String] = []
@@ -109,7 +75,7 @@ struct OffloadSafetyTests {
     @Test("クラウドに実在しない → 削除しない")
     func notOnCloud() async {
         let deleter = MockDeleter()
-        let service = makeService(files: [:], deleter: deleter)   // Dropbox は空
+        let service = await makeService(files: [:], deleter: deleter)   // Dropbox は空
         let result = await service.execute(assets: [asset(data: photoData)], limit: 10,
                                            recordLedger: { _ in Issue.record("must not record"); return true },
                                            rollbackLedger: { _ in })
@@ -121,7 +87,7 @@ struct OffloadSafetyTests {
     @Test("hash 不一致（クラウドのファイルが別物）→ 削除しない")
     func hashMismatch() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: "different-hash", size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(data: photoData)], limit: 10,
@@ -134,7 +100,7 @@ struct OffloadSafetyTests {
     @Test("サイズ不一致 → 削除しない")
     func sizeMismatch() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count + 999)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(data: photoData)], limit: 10,
@@ -146,7 +112,7 @@ struct OffloadSafetyTests {
     @Test("端末データが読めない（iCloud のみ等）→ 削除しない")
     func unreadableData() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(data: nil)], limit: 10,
@@ -158,7 +124,7 @@ struct OffloadSafetyTests {
     @Test("バックアップ後に編集された → 削除しない")
     func editedAfterBackup() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let backedUp = Date(timeIntervalSince1970: 1_700_000_000)
@@ -177,7 +143,7 @@ struct OffloadSafetyTests {
     @Test("編集結果がクラウドに無い（クラウドは原画のまま）→ 削除しない・理由も編集由来")
     func editedRenditionNotBackedUp() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: "hash-of-the-unedited-original",
                                              size: photoData.count)],
             deleter: deleter)
@@ -194,7 +160,7 @@ struct OffloadSafetyTests {
     @Test("編集結果がクラウドと一致するときだけ適格になる")
     func editedRenditionBackedUpIsEligible() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(
@@ -206,7 +172,7 @@ struct OffloadSafetyTests {
     @Test("Live Photo → 削除しない（動画部分が未バックアップ）")
     func livePhoto() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let result = await service.execute(assets: [asset(live: true, data: photoData)], limit: 10,
@@ -219,7 +185,7 @@ struct OffloadSafetyTests {
     func userCancelRollsBackLedger() async {
         let deleter = MockDeleter()
         deleter.result = false   // キャンセル
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         var recorded: [String] = []
@@ -239,7 +205,7 @@ struct OffloadSafetyTests {
         let files = (1...5).reduce(into: [String: (hash: String, size: Int)]()) { dict, i in
             dict["/backup/img_000\(i).jpg"] = (hash: photoHash, size: photoData.count)
         }
-        let service = makeService(files: files, deleter: deleter)
+        let service = await makeService(files: files, deleter: deleter)
         let assets = (1...5).map {
             asset(id: "ID-\($0)", path: "/backup/img_000\($0).jpg", data: photoData)
         }
@@ -252,7 +218,7 @@ struct OffloadSafetyTests {
     @Test("plan（ドライラン）は削除要求を一切出さない")
     func planNeverDeletes() async {
         let deleter = MockDeleter()
-        let service = makeService(
+        let service = await makeService(
             files: ["/backup/img_0001.jpg": (hash: photoHash, size: photoData.count)],
             deleter: deleter)
         let plan = await service.plan(assets: [asset(data: photoData)], limit: 10)
@@ -284,7 +250,8 @@ struct OffloadLedgerDurabilityTests {
     @Test("台帳の保存に失敗したら削除しない")
     func ledgerWriteFailureAbortsDeletion() async {
         let hash = DropboxContentHash.hash(of: photoData)
-        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, photoData.count)])
+        let server = FakeDropboxServer()
+        await server.seed("/backup/a.jpg", hash: hash, size: photoData.count)
         let deleter = MockDeleter()
         let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                                      tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
@@ -307,8 +274,10 @@ struct OffloadLedgerDurabilityTests {
     @Test("マーカー送信に失敗しても、台帳から再送できる")
     func pendingMarkersAreRetriedFromLedger() async {
         let hash = DropboxContentHash.hash(of: photoData)
-        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, photoData.count)])
-        await server.setFailMarkerUpload(true)
+        let server = FakeDropboxServer()
+        await server.seed("/backup/a.jpg", hash: hash, size: photoData.count)
+        // ⚠️ 403（権限）＝やり直さない失敗。429・5xx は自力で 3 回やり直すのでテストが待たされる。
+        await server.failUploads(matching: ".mosaic", status: 403)
         let deleter = MockDeleter()
         let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                                      tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
@@ -325,7 +294,7 @@ struct OffloadLedgerDurabilityTests {
         #expect(markedUploaded.isEmpty, "書けていないのに送信済みとして印を付けた")
 
         // 通信が回復したら、台帳の情報だけで再送できる（写真はもう端末に無い）。
-        await server.setFailMarkerUpload(false)
+        await server.clearFailures()   // 権限が戻った／レート制限が明けた
         let target = OffloadMarkerTarget(localIdentifier: "a", dropboxPath: "/backup/a.jpg",
                                          albums: ["Trip"], captureDate: nil)
         let written = await service.uploadOffloadMarkers(for: [target], token: "t")
@@ -335,7 +304,8 @@ struct OffloadLedgerDurabilityTests {
     @Test("マーカーを書けた分だけ送信済みとして記録する")
     func successfulMarkersAreRecorded() async {
         let hash = DropboxContentHash.hash(of: photoData)
-        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, photoData.count)])
+        let server = FakeDropboxServer()
+        await server.seed("/backup/a.jpg", hash: hash, size: photoData.count)
         let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                                      tokenProvider: StubToken(), deleter: MockDeleter(), backupRoot: "/backup",
                                      log: { _ in })
@@ -398,36 +368,6 @@ struct OffloadCandidateScanTests {
 
 // MARK: - マーカーの束ね方（レビュー指摘）
 
-/// アップロード先パスと本文を記録するだけのクライアント（シャードは常に「新規」）。
-private actor RecordingDropbox: HTTPClient {
-    private(set) var uploads: [(path: String, body: Data)] = []
-    /// このパス片を含むアップロードを 500 で失敗させる（カタログだけ書けない回の再現）。
-    private var failUploadsMatching: String?
-
-    func setFailUploads(matching fragment: String) { failUploadsMatching = fragment }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let url = request.url!.absoluteString
-        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
-            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                              httpVersion: nil, headerFields: nil)!)
-        }
-        if url.contains("download") || url.contains("get_metadata") {
-            return resp(409, #"{"error_summary":"path/not_found/"}"#)
-        }
-        if url.contains("upload") {
-            struct Arg: Decodable { let path: String }
-            let raw = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? "{}"
-            let path = (try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? "?"
-            uploads.append((path, request.httpBody ?? Data()))
-            if let fragment = failUploadsMatching, path.contains(fragment) {
-                return resp(500, "server error")
-            }
-            return resp(200, "{}")
-        }
-        return resp(200, "{}")
-    }
-}
 
 /// 印の**書き先**（ADR-200）。読む側はカタログに載ったシャードしか開かないので、
 /// 書き手の義務は 2 つ——(1) `<backupRoot>/.mosaic/meta/` に置く、(2) カタログに登録する。
@@ -450,7 +390,7 @@ struct OffloadMarkerDestinationTests {
                                    albums: [], captureDate: date)
     }
 
-    private func service(_ server: RecordingDropbox,
+    private func service(_ server: FakeDropboxServer,
                          root: String = "/MosaicPhotos/iPhone-E7/Backup") -> OffloadService {
         OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                        tokenProvider: StubToken(), deleter: MockDeleter(),
@@ -459,14 +399,14 @@ struct OffloadMarkerDestinationTests {
 
     @Test("印はバックアップルート直下の .mosaic へ書く（写真の年月フォルダではない）")
     func markersGoToTheRootMetadataFolder() async {
-        let server = RecordingDropbox()
+        let server = FakeDropboxServer()
         let written = await service(server).uploadOffloadMarkers(for: [target("a")], token: "t")
 
-        let uploads = await server.uploads
+        let uploads = await server.uploadedPaths
         #expect(written == ["a"])
-        #expect(uploads.contains { $0.path == "/MosaicPhotos/iPhone-E7/Backup/.mosaic/meta/2023-11.json" },
-                "読む側が見ない場所へ書いている: \(uploads.map(\.path))")
-        #expect(!uploads.contains { $0.path.contains("/2023/2023-11/.mosaic/") },
+        #expect(uploads.contains { $0 == "/mosaicphotos/iphone-e7/backup/.mosaic/meta/2023-11.json" },
+                "読む側が見ない場所へ書いている: \(uploads)")
+        #expect(!uploads.contains { $0.contains("/2023/2023-11/.mosaic/") },
                 "写真の年月フォルダの下に .mosaic を作っている（誰も読まない）")
     }
 
@@ -474,16 +414,15 @@ struct OffloadMarkerDestinationTests {
     /// 分かった「二重の届かなさ」の片方）。
     @Test("印を書いたシャードはカタログに登録される")
     func writtenShardIsRegisteredInTheCatalog() async {
-        let server = RecordingDropbox()
+        let server = FakeDropboxServer()
         _ = await service(server).uploadOffloadMarkers(for: [target("a")], token: "t")
 
-        let uploads = await server.uploads
-        guard let catalog = uploads.last(where: {
-            $0.path == "/MosaicPhotos/iPhone-E7/Backup/.mosaic/catalog.json" }) else {
+        let uploads = await server.uploadedPaths
+        guard let catalog = await server.body(at: "/MosaicPhotos/iPhone-E7/Backup/.mosaic/catalog.json") else {
             Issue.record("カタログを書いていない（書いたシャードが読まれない）")
             return
         }
-        let decoded = try? JSONDecoder().decode(BackupCatalog.self, from: catalog.body)
+        let decoded = try? JSONDecoder().decode(BackupCatalog.self, from: catalog)
         #expect(decoded?.shards.contains("2023-11") == true,
                 "シャードがカタログに載っていない: \(decoded?.shards ?? [])")
     }
@@ -492,8 +431,8 @@ struct OffloadMarkerDestinationTests {
     /// 台帳に印を付けてしまうと二度と登録されない。
     @Test("カタログを書けなかったら送信済みにしない")
     func catalogFailureLeavesTheMarkerUnsent() async {
-        let server = RecordingDropbox()
-        await server.setFailUploads(matching: "catalog.json")
+        let server = FakeDropboxServer()
+        await server.failUploads(matching: "catalog.json", status: 403)
         let written = await service(server).uploadOffloadMarkers(for: [target("a")], token: "t")
 
         #expect(written.isEmpty, "カタログに載っていないのに送信済みにした（二度と登録されない）")
@@ -503,7 +442,7 @@ struct OffloadMarkerDestinationTests {
     /// 書き先は**推測しない**。黙って捨てず、未送信として残す。
     @Test("管轄外のパスには書かない（送信済みにもしない）")
     func pathsOutsideTheRootAreLeftUnsent() async {
-        let server = RecordingDropbox()
+        let server = FakeDropboxServer()
         let outsider = OffloadMarkerTarget(
             localIdentifier: "x", dropboxPath: "/OtherRoot/iPhone-ZZ/Backup/2023/2023-11/x.jpg",
             albums: [], captureDate: Date(timeIntervalSince1970: 1_700_000_000))
@@ -512,8 +451,8 @@ struct OffloadMarkerDestinationTests {
                                                                  token: "t")
 
         #expect(written == ["a"], "管轄外のパスまで送信済みにした")
-        let uploads = await server.uploads
-        #expect(!uploads.contains { $0.path.hasPrefix("/OtherRoot/") },
+        let uploads = await server.uploadedPaths
+        #expect(!uploads.contains { $0.hasPrefix("/otherroot/") },
                 "別のルートの台帳へ書き込んだ")
     }
 }
@@ -605,7 +544,8 @@ struct OffloadFinalRecheckTests {
         let original = Data("original-bytes".utf8)
         let replaced = Data("replaced-bytes!".utf8)
         let hash = DropboxContentHash.hash(of: original)
-        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, original.count)])
+        let server = FakeDropboxServer()
+        await server.seed("/backup/a.jpg", hash: hash, size: original.count)
         let deleter = MockDeleter()
         let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                                      tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
@@ -627,7 +567,8 @@ struct OffloadFinalRecheckTests {
     func unchangedIsStillDeleted() async {
         let data = Data("stable-bytes".utf8)
         let hash = DropboxContentHash.hash(of: data)
-        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, data.count)])
+        let server = FakeDropboxServer()
+        await server.seed("/backup/a.jpg", hash: hash, size: data.count)
         let deleter = MockDeleter()
         let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                                      tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
@@ -646,7 +587,8 @@ struct OffloadFinalRecheckTests {
     func remoteGoneAfterVerificationIsNotDeleted() async {
         let data = Data("stable-bytes".utf8)
         let hash = DropboxContentHash.hash(of: data)
-        let server = FakeDropbox(files: ["/backup/a.jpg": (hash, data.count)])
+        let server = FakeDropboxServer()
+        await server.seed("/backup/a.jpg", hash: hash, size: data.count)
         let deleter = MockDeleter()
         let service = OffloadService(uploader: DropboxBackupUploader(httpClient: server),
                                      tokenProvider: StubToken(), deleter: deleter, backupRoot: "/backup",
@@ -662,7 +604,7 @@ struct OffloadFinalRecheckTests {
             assets: [asset], limit: 10,
             recordLedger: { _ in
                 // 台帳を書いている間に、クラウド側のコピーが消えた（他端末・Web UI から）。
-                await server.removeFile("/backup/a.jpg")
+                await server.remove("/backup/a.jpg")
                 return true
             },
             rollbackLedger: { ids in rolledBack = ids })

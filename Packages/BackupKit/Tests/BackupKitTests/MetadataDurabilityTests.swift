@@ -12,42 +12,6 @@ import Testing
 struct MetadataDurabilityTests {
 
     /// 応答をパスごとに差し替えられる偽 Dropbox。
-    private actor Fake: HTTPClient {
-        /// download の応答（path → (status, body)）。既定は 200 + 空シャード。
-        var downloadResponses: [String: (Int, String)] = [:]
-        var uploadStatus = 200
-        private(set) var uploadedBodies: [String: String] = [:]
-
-        init(downloadResponses: [String: (Int, String)] = [:], uploadStatus: Int = 200) {
-            self.downloadResponses = downloadResponses
-            self.uploadStatus = uploadStatus
-        }
-
-        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-            let url = request.url!.absoluteString
-            func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
-                (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                                  httpVersion: nil, headerFields: nil)!)
-            }
-            struct Arg: Decodable { let path: String }
-            let arg = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
-                .flatMap { try? JSONDecoder().decode(Arg.self, from: Data($0.utf8)) }
-            let path = arg?.path ?? ""
-
-            if url.contains("files/download") {
-                let (code, body) = downloadResponses[path] ?? (200, #"{"entries":{}}"#)
-                return resp(code, body)
-            }
-            if url.contains("files/upload") {
-                uploadedBodies[path] = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
-                return resp(uploadStatus, "{}")
-            }
-            return resp(200, "{}")
-        }
-
-        func uploaded(_ path: String) -> String? { uploadedBodies[path] }
-        func uploadCount() -> Int { uploadedBodies.count }
-    }
 
     private func entry(_ people: [String]) -> DropboxBackupMetadata.Entry {
         DropboxBackupMetadata.Entry(people: people, albums: [], localIdentifier: "id")
@@ -58,7 +22,8 @@ struct MetadataDurabilityTests {
     @Test("既存シャードの取得に失敗したら、そのシャードは書かない")
     func failedDownloadSkipsWrite() async {
         // 認証切れ（401）。「無い」ではないので、既存を空で上書きしてはいけない。
-        let server = Fake(downloadResponses: ["/b/.mosaic/meta/2025-08.json": (401, "expired_access_token")])
+        let server = FakeDropboxServer()
+        await server.failDownloads(matching: "meta/2025-08.json", status: 401)
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
@@ -71,20 +36,23 @@ struct MetadataDurabilityTests {
 
     @Test("ファイルが無い（not_found）ときは新規シャードとして書く")
     func notFoundCreatesNewShard() async {
-        let server = Fake(downloadResponses: [
-            "/b/.mosaic/meta/2025-08.json": (409, #"{"error_summary":"path/not_found/."}"#)])
+        let server = FakeDropboxServer()   // 何も置かない＝そのシャードは存在しない
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
         let result = await writer.apply(byShard: ["2025-08": ["/b/a.jpg": entry(["太郎"])]], facts: nil) { _ in }
 
         #expect(result.written == ["2025-08"], "新規作成できていない")
-        #expect(await server.uploaded("/b/.mosaic/meta/2025-08.json")?.contains("太郎") == true)
+        let written = await server.body(at: "/b/.mosaic/meta/2025-08.json")
+        #expect(String(decoding: written ?? Data(), as: UTF8.self).contains("太郎"))
     }
 
     @Test("送信に失敗したシャードは失敗として返る（再送の材料）")
     func failedUploadIsReported() async {
-        let server = Fake(uploadStatus: 500)
+        let server = FakeDropboxServer()
+        // ⚠️ 403（権限）を使う。429・5xx は `uploadJSONResult` が自力で 3 回やり直すので、
+        // 「1 回で失敗して終わる」状況にならずテストが数秒待つことになる。
+        await server.failUploads(matching: ".mosaic", status: 403)
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
@@ -96,7 +64,10 @@ struct MetadataDurabilityTests {
 
     @Test("送信に失敗した部分更新（マーカー）は false を返す（送信済みにしない）")
     func failedMarkerUpdateIsReported() async {
-        let server = Fake(uploadStatus: 500)
+        let server = FakeDropboxServer()
+        // ⚠️ 403（権限）を使う。429・5xx は `uploadJSONResult` が自力で 3 回やり直すので、
+        // 「1 回で失敗して終わる」状況にならずテストが数秒待つことになる。
+        await server.failUploads(matching: ".mosaic", status: 403)
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
@@ -123,8 +94,8 @@ struct MetadataDurabilityTests {
                                                     verifiedAt: "2026-09-01T00:00:00Z",
                                                     offloadedAt: "2026-09-01T00:00:00Z")])
         let existing = try! JSONEncoder().encode(marked)
-        let server = Fake(downloadResponses: [
-            "/b/.mosaic/meta/2025-08.json": (200, String(decoding: existing, as: UTF8.self))])
+        let server = FakeDropboxServer()
+        await server.upload(path: "/b/.mosaic/meta/2025-08.json", data: existing)
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
@@ -132,7 +103,8 @@ struct MetadataDurabilityTests {
         _ = await writer.apply(byShard: ["2025-08": ["/b/a.jpg": entry(["太郎"])]],
                                facts: nil) { _ in }
 
-        let body = await server.uploaded("/b/.mosaic/meta/2025-08.json") ?? ""
+        let body = String(decoding: await server.body(at: "/b/.mosaic/meta/2025-08.json") ?? Data(),
+                          as: UTF8.self)
         let decoded = try? JSONDecoder().decode(DropboxBackupMetadata.self, from: Data(body.utf8))
         #expect(decoded?.entries["/b/a.jpg"]?.people == ["太郎"], "新しい内容が反映されていない")
         #expect(decoded?.entries["/b/a.jpg"]?.offloadedAt != nil,
@@ -147,8 +119,8 @@ struct MetadataDurabilityTests {
     /// 端末を消すと再生成できない情報なので、**書かずに失敗として残す**（次回再送）。
     @Test("既存シャードが読めない JSON なら、そのシャードは書かない（再送に残す）")
     func unreadableShardSkipsWrite() async {
-        let server = Fake(downloadResponses: [
-            "/b/.mosaic/meta/2025-08.json": (200, "{ this is not valid json")])
+        let server = FakeDropboxServer()
+        await server.upload(path: "/b/.mosaic/meta/2025-08.json", data: Data(("{ this is not valid json").utf8))
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
@@ -161,8 +133,8 @@ struct MetadataDurabilityTests {
 
     @Test("マーカー更新も、既存シャードが読めない JSON なら書かず false を返す")
     func unreadableShardSkipsMarkerUpdate() async {
-        let server = Fake(downloadResponses: [
-            "/b/.mosaic/meta/2025-08.json": (200, #"{"entries": [broken"#)])
+        let server = FakeDropboxServer()
+        await server.upload(path: "/b/.mosaic/meta/2025-08.json", data: Data((#"{"entries": [broken"#).utf8))
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: "/b")
 
@@ -180,44 +152,6 @@ struct MetadataDurabilityTests {
 
     /// **状態を持つ**偽 Dropbox。アップロードされた JSON を保持し、以後の download がそれを返す。
     /// download に人工的な遅延を入れ、read-modify-write の競合を確実に作る。
-    private actor StatefulShardServer: HTTPClient {
-        private var stored: [String: String] = [:]
-        private let uploadStatus: Int
-        private let downloadDelayNs: UInt64
-
-        init(uploadStatus: Int = 200, downloadDelayNs: UInt64 = 30_000_000) {
-            self.uploadStatus = uploadStatus
-            self.downloadDelayNs = downloadDelayNs
-        }
-
-        func body(at path: String) -> String? { stored[path] }
-
-        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-            let url = request.url!.absoluteString
-            func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
-                (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                                  httpVersion: nil, headerFields: nil)!)
-            }
-            struct Arg: Decodable { let path: String }
-            let path = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
-                .flatMap { try? JSONDecoder().decode(Arg.self, from: Data($0.utf8)) }?.path ?? ""
-
-            if url.contains("files/download") {
-                // 遅い download（actor の再入で、直列化されていなければ両者が同じ旧内容を読む）。
-                try? await Task.sleep(nanoseconds: downloadDelayNs)
-                guard let body = stored[path] else {
-                    return resp(409, #"{"error_summary":"path/not_found/."}"#)
-                }
-                return resp(200, body)
-            }
-            if url.contains("files/upload") {
-                guard uploadStatus == 200 else { return resp(uploadStatus, "{}") }
-                stored[path] = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
-                return resp(200, "{}")
-            }
-            return resp(200, "{}")
-        }
-    }
 
     @Test("同じシャードへのバックアップ追記とオフロードマーカー更新が並行しても、両方が残る")
     func concurrentShardUpdatesKeepBothChanges() async {
@@ -225,7 +159,7 @@ struct MetadataDurabilityTests {
         // 台帳は「送信済み」なので再送されず、再インストール後に台帳を再構築できない。
         let folder = "/concurrent"
         let shardPath = folder + BackupMetadataV2.shardSuffix("2025-08")
-        let server = StatefulShardServer()
+        let server = FakeDropboxServer()
         let writer = BackupMetadataStore(uploader: DropboxBackupUploader(httpClient: server),
                                          token: "t", root: folder)
 
@@ -242,8 +176,8 @@ struct MetadataDurabilityTests {
 
         #expect(applied.written == ["2025-08"])
         #expect(markerOK)
-        let final = await server.body(at: shardPath) ?? ""
-        let decoded = try? JSONDecoder().decode(DropboxBackupMetadata.self, from: Data(final.utf8))
+        let final = await server.body(at: shardPath) ?? Data()
+        let decoded = try? JSONDecoder().decode(DropboxBackupMetadata.self, from: final)
         #expect(decoded?.entries["\(folder)/new.jpg"]?.people == ["太郎"],
                 "バックアップの追記が並行するマーカー更新に消された")
         #expect(decoded?.entries["\(folder)/offloaded.jpg"]?.offloadedAt != nil,
@@ -497,42 +431,6 @@ struct PendingMetadataNamespaceTests {
 
 // MARK: - アップロード対象が無い回の再送（レビュー指摘）
 
-/// アップロード先パス・本文を記録するだけのクライアント（シャードは常に「新規」）。
-private actor MarkerRecorder: HTTPClient {
-    private(set) var uploaded: [String] = []
-    /// 送信されたファイルの中身（パス → 本文）。カタログの中身を確かめるため。
-    private(set) var bodies: [String: Data] = [:]
-    /// 既に在るファイル（パス → 本文）。既存カタログを置いてから再送させる用。
-    private var existing: [String: String] = [:]
-    var failUploads = false
-    func setFailUploads(_ value: Bool) { failUploads = value }
-    func seed(_ path: String, _ body: String) { existing[path] = body }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let url = request.url!.absoluteString
-        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
-            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                              httpVersion: nil, headerFields: nil)!)
-        }
-        struct Arg: Decodable { let path: String }
-        func argPath() -> String {
-            let raw = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
-                ?? String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
-            return (try? JSONDecoder().decode(Arg.self, from: Data(raw.utf8)))?.path ?? "?"
-        }
-        if url.contains("download") || url.contains("get_metadata") {
-            if let body = existing[argPath()] { return resp(200, body) }
-            return resp(409, #"{"error_summary":"path/not_found/"}"#)
-        }
-        if url.contains("upload") {
-            let path = argPath()
-            uploaded.append(path)
-            bodies[path] = request.httpBody ?? Data()
-            return failUploads ? resp(500, "{}") : resp(200, "{}")
-        }
-        return resp(200, "{}")
-    }
-}
 
 private final class DrainToken: AccessTokenProvider {
     func freshAccessToken() async throws -> String { "t" }
@@ -561,7 +459,7 @@ private final class StubRunnerDelegate: BackupRunnerDelegate {
 struct PendingMetadataDrainTests {
 
     private func makeRunner(_ delegate: StubRunnerDelegate,
-                            _ server: MarkerRecorder) -> BackupRunner {
+                            _ server: FakeDropboxServer) -> BackupRunner {
         BackupRunner(tokenProvider: DrainToken(),
                      uploader: DropboxBackupUploader(httpClient: server),
                      progressStore: BackupProgressStore(),
@@ -584,13 +482,13 @@ struct PendingMetadataDrainTests {
 
     @Test("新規アップロードが 1 枚も無くても、保留分は送り直してキューが空になる")
     func drainsQueueWithoutNewUploads() async {
-        let server = MarkerRecorder()
+        let server = FakeDropboxServer()
         let delegate = StubRunnerDelegate()
         let store = queue(payload)
 
         await makeRunner(delegate, server).drainPendingMetadata(folder: "/backup", pendingStore: store)
 
-        let uploaded = await server.uploaded
+        let uploaded = await server.uploadedPaths
         #expect(uploaded.contains { $0.contains("2023-11") }, "保留分を送っていない: \(uploaded)")
         #expect(store.load().isEmpty, "送れたのにキューに残っている（次回また送る）")
     }
@@ -602,17 +500,16 @@ struct PendingMetadataDrainTests {
     /// （空の索引で上書きすると既存のアルバム名・人物名が消える）。
     @Test("再送はカタログにシャードを足すが、既存の名前は消さない")
     func drainRegistersShardWithoutClearingNames() async {
-        let server = MarkerRecorder()
+        let server = FakeDropboxServer()
         let existing = BackupCatalog(shards: ["2023-10"], albums: ["Trip"], people: ["名前"])
-        await server.seed("/backup/.mosaic/catalog.json",
-                          String(decoding: try! JSONEncoder().encode(existing), as: UTF8.self))
+        await server.upload(path: "/backup/.mosaic/catalog.json",
+                            data: try! JSONEncoder().encode(existing))
         let store = queue(payload)
 
         await makeRunner(StubRunnerDelegate(), server).drainPendingMetadata(folder: "/backup",
                                                                             pendingStore: store)
 
-        let bodies = await server.bodies
-        guard let written = bodies["/backup/.mosaic/catalog.json"],
+        guard let written = await server.body(at: "/backup/.mosaic/catalog.json"),
               let catalog = try? JSONDecoder().decode(BackupCatalog.self, from: written) else {
             Issue.record("カタログを書いていない（再送したシャードが読まれない）")
             return
@@ -629,7 +526,7 @@ struct PendingMetadataDrainTests {
     /// 通信は課金と枠の消費なので、**回数で**確かめる（ADR-119 の考え方）。
     @Test("先出しと本送信が続けて走っても、同じシャードは 1 回しか送らない")
     func theSameShardIsSentOnce() async {
-        let server = MarkerRecorder()
+        let server = FakeDropboxServer()
         let store = queue([:])
         // 写真 1 枚ぶんがジャーナルに入った状態（アップロード完了ごとに 1 行足される）。
         #expect(store.appendEntry(
@@ -643,7 +540,7 @@ struct PendingMetadataDrainTests {
         await runner.writeMetadata(newEntries: [], indexes: BackupRunner.Indexes(people: [:], albums: [:], albumIDs: [:]),
                                    folder: "/backup", token: "t")
 
-        let shardUploads = await server.uploaded.filter { $0.contains("meta/2023-11") }
+        let shardUploads = await server.uploadedPaths.filter { $0.contains("meta/2023-11") }
         #expect(shardUploads.count == 1,
                 "同じシャードを \(shardUploads.count) 回送っている（通信と枠の無駄・二重送信）")
         #expect(store.load().isEmpty, "送れたのにキューに残っている")
@@ -651,8 +548,9 @@ struct PendingMetadataDrainTests {
 
     @Test("送れなかった分はキューに残る")
     func failedEntriesStayQueued() async {
-        let server = MarkerRecorder()
-        await server.setFailUploads(true)
+        let server = FakeDropboxServer()
+        // ⚠️ 403（権限）＝やり直さない失敗。429・5xx は自力で 3 回やり直すのでテストが待たされる。
+        await server.failUploads(matching: ".mosaic", status: 403)
         let store = queue(payload)
 
         await makeRunner(StubRunnerDelegate(), server).drainPendingMetadata(folder: "/backup",
@@ -665,33 +563,6 @@ struct PendingMetadataDrainTests {
 // MARK: - 壊れたカタログ（レビュー指摘）
 
 /// パスごとに download 応答を差し替えられ、アップロード先を記録するクライアント。
-private actor CatalogServer: HTTPClient {
-    private let downloads: [String: (Int, String)]
-    private(set) var uploaded: [String] = []
-
-    init(downloads: [String: (Int, String)]) { self.downloads = downloads }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        let url = request.url!.absoluteString
-        func resp(_ code: Int, _ body: String) -> (Data, URLResponse) {
-            (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code,
-                                              httpVersion: nil, headerFields: nil)!)
-        }
-        struct Arg: Decodable { let path: String }
-        let path = request.value(forHTTPHeaderField: "Dropbox-API-Arg")
-            .flatMap { try? JSONDecoder().decode(Arg.self, from: Data($0.utf8)) }?.path ?? ""
-
-        if url.contains("files/download") {
-            let (code, body) = downloads[path] ?? (409, #"{"error_summary":"path/not_found/"}"#)
-            return resp(code, body)
-        }
-        if url.contains("files/upload") {
-            uploaded.append(path)
-            return resp(200, "{}")
-        }
-        return resp(200, "{}")
-    }
-}
 
 /// ⚠️ カタログ（アルバム名・人物名・シャード一覧・アルバム ID 対応）も、
 /// 「200 で取れたが読めない」を不在と同じ経路で扱うと**空から作り直して上書き**してしまう。
@@ -707,7 +578,9 @@ struct CatalogDurabilityTests {
     func brokenCatalogIsNotOverwritten() async {
         let folder = "/backup"
         let catalogPath = folder + BackupMetadataV2.catalogSuffix
-        let server = CatalogServer(downloads: [catalogPath: (200, "<html>not json</html>")])
+        let server = FakeDropboxServer()
+        // 「200 で取れたが読めない」既存カタログ（HTML が返る等）を置く。
+        await server.upload(path: catalogPath, data: Data("<html>not json</html>".utf8))
         let delegate = StubRunnerDelegate()
         delegate.fingerprint = "acct-\(UUID().uuidString)"
         let queue = PendingMetadataStore(account: delegate.fingerprint, folder: folder)
@@ -725,7 +598,7 @@ struct CatalogDurabilityTests {
             indexes: BackupRunner.Indexes(people: [:], albums: [:], albumIDs: [:]),
             folder: folder, token: "t")
 
-        let uploaded = await server.uploaded
+        let uploaded = await server.uploadedPaths
         #expect(!uploaded.contains(catalogPath),
                 "読めない既存カタログを空から作り直して上書きした: \(uploaded)")
         #expect(uploaded.contains { $0.contains("meta/") }, "シャードは書けているはず")

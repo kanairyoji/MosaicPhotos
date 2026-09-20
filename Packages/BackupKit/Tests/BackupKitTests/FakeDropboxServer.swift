@@ -11,6 +11,21 @@ import DropboxCore
 /// このサーバーはファイル表を保持し、`copy_batch` / `delete_batch` / `list_folder` を
 /// 実際に反映するので、「反映を 2 回・3 回走らせたら収束するか」を検証できる。
 ///
+/// ## ⚠️ Dropbox の偽物は**これ 1 つ**にする（2026-09-20 に統合）
+/// かつては用途ごとに簡易スタブが 5 つ併存していた（`FakeDropbox` / `RecordingDropbox` /
+/// `MarkerRecorder` / `StatefulShardServer` / `Fake`）。忠実度がまちまちで、
+/// **弱い偽物は経路をまるごと隠す**——同じ日に 2 回踏んだ:
+///   - `get_metadata` が `size` を常に 1 で返し、**オフロードの照合が必ず失敗**していた
+///     （＝オフロードの流れをどのテストも通れなかった）
+///   - `files/upload` が `mode=add` を無視して上書きし、**同名衝突（409→autorename）の
+///     経路が存在しなかった**
+/// 1 つに寄せてあれば、忠実度の不足を直した瞬間に**全テストへ効く**。
+/// 新しい振る舞いが要るときは、ここへ足すこと（別の偽物を作らない）。
+///
+/// 例外: **リクエスト/レスポンス 1 回ぶんを検査する**スタブは別でよい
+/// （`BackupEngineUploadTests` の応答分類、`ShareCopierTests` の応答列）。
+/// あれらは「状態」ではなく「1 往復の組み立てと解釈」を見ている。
+///
 /// ## 再現できる実障害
 /// - `jobsTimeOutButComplete`: **クライアントにはタイムアウトを返すが、サーバー側では完了する**
 ///   非同期ジョブ（diagnostics-52 の暴走の引き金そのもの）。
@@ -72,6 +87,7 @@ actor FakeDropboxServer: HTTPClient {
     }
     private var uploadFailures: [String: Failure] = [:]
     private var metadataFailures: [String: Failure] = [:]
+    private var downloadFailures: [String: Failure] = [:]
 
     /// `files/upload` のうち、パスにこの語を含むものを失敗させる。
     /// - Parameters:
@@ -87,6 +103,14 @@ actor FakeDropboxServer: HTTPClient {
         metadataFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
     }
 
+    /// `files/download` のうち、パスにこの語を含むものを失敗させる。
+    /// ⚠️ メタデータの読み書きで「**無い**」と「**取れなかった**」を区別できているかを見るために要る
+    /// （取れなかった回に空として上書きすると、その月の記録が丸ごと消える）。
+    /// 401（トークン切れ）・429・500 など。
+    func failDownloads(matching fragment: String, status: Int = 401, times: Int = -1) {
+        downloadFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
+    }
+
     /// `list_folder/continue`（2 ページ目以降）を失敗させる。
     /// ⚠️ 照合は「一覧が全部取れたこと」が前提で、**途中で失敗した回に 1 ページ目を全部と
     /// 読むと、残り全部の記録が消える**（オフロード済みなら写真がアプリから消える）。
@@ -97,6 +121,7 @@ actor FakeDropboxServer: HTTPClient {
     func clearFailures() {
         uploadFailures.removeAll()
         metadataFailures.removeAll()
+        downloadFailures.removeAll()
         failListFolderContinue = false
     }
 
@@ -116,6 +141,7 @@ actor FakeDropboxServer: HTTPClient {
         switch status {
         case 429: return #"{"error_summary":"too_many_write_operations/.."}"#
         case 403: return #"{"error_summary":"insufficient_permissions/.."}"#
+        case 401: return #"{"error_summary":"expired_access_token/.."}"#
         default:  return #"{"error_summary":"internal_error/.."}"#
         }
     }
@@ -143,6 +169,14 @@ actor FakeDropboxServer: HTTPClient {
     func filePaths() -> [String] {
         files.filter { !$0.value.isFolder }.keys.sorted()
     }
+
+    /// そのパスに**いま置かれている中身**（アップロードされたもの・seed した本体）。
+    /// 「書いた JSON が意図どおりか」を確かめるのに使う。
+    func body(at path: String) -> Data? { bodies[path.lowercased()] }
+
+    /// アップロードが要求された順のパス一覧（**失敗した回も含む**）。
+    /// 「何回・どの順で送ったか」を数えるために使う（ADR-119 の考え方＝回数で見る）。
+    private(set) var uploadedPaths: [String] = []
 
     /// アップロード（`files/upload`）の回数。「無駄に上げ直していないか」の検証用。
     /// ⚠️ 結果（ファイルの有無）だけを見ると、毎回上げ直す実装でも通ってしまう。
@@ -188,7 +222,15 @@ actor FakeDropboxServer: HTTPClient {
         if url.contains("list_folder")   { return handleListFolder(body, resp) }
         if url.contains("get_metadata")  { return handleGetMetadata(body, resp) }
         if url.contains("files/upload")  { return handleUpload(request, resp) }
-        if url.contains("files/download") { return handleDownload(request, resp) }
+        if url.contains("files/download") {
+            struct Arg: Decodable { let path: String }
+            let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg") ?? "{}"
+            let path = (try? JSONDecoder().decode(Arg.self, from: Data(header.utf8)))?.path ?? ""
+            if let status = consumeFailure(in: &downloadFailures, path: path) {
+                return resp(status, Self.errorBody(status))
+            }
+            return handleDownload(request, resp)
+        }
         return resp(400, #"{"error_summary":"unsupported_endpoint/"}"#)
     }
 
@@ -398,6 +440,7 @@ actor FakeDropboxServer: HTTPClient {
             return resp(400, "{}")
         }
         var key = arg.path.lowercased()
+        uploadedPaths.append(key)
         if let status = consumeFailure(in: &uploadFailures, path: key) {
             return resp(status, Self.errorBody(status))
         }

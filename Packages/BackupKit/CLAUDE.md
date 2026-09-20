@@ -42,5 +42,11 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
     BackupLogger.swift             内部ロガー（MosaicSupport の LogChannel に委譲）
     BackupAlbumInfo.swift / BackupAssetRecord.swift  値オブジェクト / @Model
   Tests/BackupKitTests/            BackupPlanning / DropboxBackupUploader のテスト（macOS）
+    FakeDropboxServer.swift        ⚠️ **状態を持つ Dropbox の偽物はこれ 1 つ**（2026-09-20 に統合）。
+                                   ファイル表・ページング・非同期ジョブ・autorename・失敗注入を持つ。
+                                   新しい振る舞いが要るときは**ここへ足す**（別の偽物を作らない）
+                                   ——弱い偽物は経路をまるごと隠す（`size` を常に 1 で返して
+                                   オフロードが通れない、等を実際に踏んだ）。
+                                   例外は「1 往復の組み立て/解釈」を見るスタブ（応答分類・応答列）
 
 ```
