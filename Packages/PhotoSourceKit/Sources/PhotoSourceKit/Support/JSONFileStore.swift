@@ -19,11 +19,30 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         return try? JSONDecoder().decode(Value.self, from: data)
     }
 
+    /// ⚠️ **エンコードと書き込みは呼び出し元のスレッドで走る。** 数万件の辞書を MainActor から
+    /// 保存すると、そのまま前面の停止になる（CLAUDE.md 性能原則 4「巨大コレクションを
+    /// MainActor に通さない」）。大きい値は `saveInBackground(_:)` を使うこと。
     public func save(_ value: Value) {
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(value) {
             try? data.write(to: url, options: .atomic)
         }
+    }
+}
+
+extension JSONFileStore where Value: Sendable {
+    /// **エンコードと書き込みを呼び出し元のスレッドから外して**保存する。
+    ///
+    /// キャッシュの保存は「すぐ書けたか」より「呼び出し元を止めないこと」が大事で、
+    /// 失われても次回作り直せる。戻り値の `Task` を待てば書き終わりを確かめられる
+    /// （テスト・確実に残したい場面のみ。通常は待たない）。
+    ///
+    /// ⚠️ 同じファイルへ同時に書くと**最後の書き手が勝つ**（`.atomic` なのでファイルが
+    /// 壊れることはない）。作り直せるキャッシュに使うこと。
+    @discardableResult
+    public func saveInBackground(_ value: Value) -> Task<Void, Never> {
+        let store = self
+        return Task.detached(priority: .utility) { store.save(value) }
     }
 }

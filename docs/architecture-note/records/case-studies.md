@@ -21,6 +21,49 @@
 
 ---
 
+## 場所スキャンが、数万件の GPS キャッシュを**メインスレッドで**書いていた
+
+レビュー 23 周目。
+
+- 症状: 場所スキャン（定期・設定からの再スキャン）と**地図を開くたび**に、EXIF GPS の
+  キャッシュ（`Places/localGPS.json`）を保存していた。`JSONFileStore.save` は
+  **エンコードも書き込みも呼び出し元のスレッドで走る**ので、`@MainActor` の `PlaceScanner`
+  から呼ぶとそのまま前面の停止になる。
+- 規模: このキャッシュは「`PHAsset.location` が無い写真」1 枚につき 1 件で、
+  **読んで GPS が無かった写真も**（再読込を避けるため lat/lon とも nil で）残す。
+  つまりスクリーンショットや受け取った画像を含む、ライブラリ規模に比例した辞書になる。
+  さらに**中身が変わっていなくても毎回書いていた**（定期スキャンの大半は新しい写真が無い）。
+- 原因: 同じ関数の中で、列挙（`fetchLocalLocatedCandidates`）は `Task.detached` で
+  丁寧にオフメインへ出してあるのに、**その直後の保存だけが素通し**だった。
+  性能原則 4（巨大コレクションを MainActor に通さない）は列挙にだけ適用され、
+  永続化は「ただの保存」として見落とされていた。同じ形を diag-34 で踏んでいる
+  （`stampFavorites` だけがメインに残っていて 2.5〜3.4 秒の停止）。
+- 対処:
+  - `JSONFileStore.saveInBackground(_:)`（`Value: Sendable` の extension）を足し、
+    エンコードと書き込みを呼び出し元のスレッドから外す。`save` 側には
+    「呼び出し元で走る」ことを**注意書きとして明記**した（次に使う人が同じ踏み方をしないため）。
+  - `PlaceScanner` の 2 か所（スキャン・地図を開く）をそれに替え、
+    **件数が増えていなければ書かない**ようにした。このキャッシュは追加しかしない
+    （既存キーを書き換えない）ので、件数の一致は中身の一致と同じ。
+- 検証: `JSONFileStoreTests` に 1 本追加。⚠️ 「保存できた」だけを見るテストは、
+  呼び出し元で書く実装に戻しても通る＝**直したはずの停止を検出できない**。観測したいのは
+  *どこで走ったか*なので、`encode(to:)` の中で `Thread.isMainThread` を記録する値を使う。
+  旧挙動（呼び出し元で `save`）に戻すと落ちることを確認済み。
+- 関連: `Packages/PhotoSourceKit/Sources/PhotoSourceKit/Support/JSONFileStore.swift` /
+  `Packages/PhotosFeatureKit/Sources/PhotosFeatureKit/PlaceScanner.swift` /
+  `Packages/PhotoSourceKit/Tests/PhotoSourceKitTests/JSONFileStoreTests.swift`。
+  CLAUDE.md 性能原則 4・diag-34。
+- 確かめて**問題なしと判定**したもの（同じ疑いを二度持たないため）:
+  - AI アルバムの解釈ストア（`AIAlbumInterpretationStore.set`）もアルバム 1 本ごとに
+    **全アルバムぶんの JSON** を MainActor で書くが、`scoredPool` は `poolLimit = 300` で
+    刈られているので全体で数千件規模＝停止にはならない。**上限があることが効いている。**
+- 残課題: このキャッシュは**消えた写真の分を掃除しない**（追加しかしない）。ライブラリを
+  入れ替えると古い localIdentifier が残り続ける。実害は容量だけなので直していない。
+- 教訓: **オフメインへ出すときは「読む側」だけでなく「書く側」も見る。** 列挙・集計は
+  意識されやすいが、その結果の永続化は「ただの保存」と見なされて同じ関数の中に残る。
+
+---
+
 ## 欠陥が 0 件だった周の記録（22 周目・受信側の総当たり）
 
 レビュー 22 周目。**新しい欠陥は 1 件も出なかった。** 何も見つからなかったことも記録に残す

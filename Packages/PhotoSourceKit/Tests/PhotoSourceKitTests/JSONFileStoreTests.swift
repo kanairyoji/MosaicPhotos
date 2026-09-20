@@ -29,6 +29,46 @@ struct JSONFileStoreTests {
         #expect(store.load() == value)
     }
 
+    /// **エンコードがどのスレッドで走ったか**を自分で記録する値。
+    /// ⚠️ 「保存できた」だけを見るテストは、呼び出し元のスレッドで書く実装に戻しても通る
+    /// （＝直したはずの停止を検出できない）。観測したいのは*どこで走ったか*なので、
+    /// `encode(to:)` の中で記録する。
+    private struct ThreadProbe: Codable, Sendable, Equatable {
+        final class Sink: @unchecked Sendable { var encodedOnMain: Bool? }
+        static let sink = Sink()
+        let name: String
+
+        init(name: String) { self.name = name }
+
+        func encode(to encoder: any Encoder) throws {
+            Self.sink.encodedOnMain = Thread.isMainThread
+            var container = encoder.singleValueContainer()
+            try container.encode(name)
+        }
+
+        init(from decoder: any Decoder) throws {
+            name = try decoder.singleValueContainer().decode(String.self)
+        }
+    }
+
+    /// ⚠️ 大きいキャッシュ（数万件）を MainActor から `save` すると、エンコードと書き込みが
+    /// そのまま前面の停止になる（CLAUDE.md 性能原則 4）。`saveInBackground` は呼び出し元の
+    /// スレッドから外して書く——**呼び出し元がメインでも、エンコードはメインで走らないこと**。
+    @Test("saveInBackground は呼び出し元のスレッドでエンコードしない")
+    @MainActor
+    func saveInBackgroundLeavesTheCallersThread() async {
+        defer { cleanup() }
+        let store = JSONFileStore<ThreadProbe>(filename: uniqueName())
+        ThreadProbe.sink.encodedOnMain = nil
+        #expect(Thread.isMainThread, "前提: 呼び出し元はメインスレッド")
+
+        await store.saveInBackground(ThreadProbe(name: "Kyoto")).value
+
+        #expect(ThreadProbe.sink.encodedOnMain == false,
+                "呼び出し元（メイン）でエンコードしている＝前面が止まる")
+        #expect(store.load() == ThreadProbe(name: "Kyoto"), "背景で保存したのに読み戻せない")
+    }
+
     @Test("未存在ファイルの load は nil")
     func missingFileReturnsNil() {
         defer { cleanup() }

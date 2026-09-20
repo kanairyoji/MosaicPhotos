@@ -93,7 +93,7 @@ public final class PlaceScanner {
                 fetchLocalLocatedCandidates(exifCache: snapshot)
             }.value
             localGPSCache = local.cache
-            localGPSStore.save(local.cache)
+            persistLocalGPS(local.cache, previousCount: snapshot.count)
             let localCandidates = local.candidates
             let cloud = await Task.detached(priority: .userInitiated) {
                 dropboxItems.compactMap { item -> PlaceCandidate? in
@@ -147,7 +147,7 @@ public final class PlaceScanner {
             fetchLocalLocatedCandidates(exifCache: snapshot)
         }.value
         localGPSCache = local.cache
-        localGPSStore.save(local.cache)
+        persistLocalGPS(local.cache, previousCount: snapshot.count)
 
         // 2. クラウド候補抽出（67k 件の compactMap）・グリッド集約・署名計算を **オフメイン**で行う
         //    （メインスレッドで 67k を回すと起動・定期スキャンでカクつくため）。
@@ -197,6 +197,21 @@ public final class PlaceScanner {
         await PlaceNameResolver.shared.persist()
         store.save(places)
         lastScanSignature = signature
+    }
+
+    /// EXIF GPS のキャッシュを保存する。
+    ///
+    /// ⚠️ **メインスレッドで書かない**（CLAUDE.md 性能原則 4）。この辞書は
+    /// 「`PHAsset.location` が無い写真」1 枚につき 1 件で、読んで GPS が無かった写真も
+    /// （再読込を避けるため）残すので、ライブラリ規模に比例して育つ。`JSONFileStore.save` は
+    /// エンコードも書き込みも呼び出し元で走るため、以前はスキャンのたび・地図を開くたびに
+    /// 数万件ぶんの JSON エンコードが前面で走っていた。
+    ///
+    /// ⚠️ **増えていなければ書かない**。キャッシュは追加しかしない（既存キーを書き換えない）ので、
+    /// 件数が同じ＝中身も同じ。定期スキャンの大半はここで何もしないことになる。
+    private func persistLocalGPS(_ cache: [String: CachedGPS], previousCount: Int) {
+        guard cache.count != previousCount else { return }
+        localGPSStore.saveInBackground(cache)
     }
 
     /// 写真ライブラリのアクセス権を確認し、未決定なら要求する。
