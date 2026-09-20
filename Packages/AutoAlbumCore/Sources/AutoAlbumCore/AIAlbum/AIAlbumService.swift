@@ -48,19 +48,23 @@ final class AIAlbumService {
     /// 「綺麗」のしきい値はベストショットフィルタ（ADR-78）と同じ分布適応＝定義を 1 つに保つ。
     /// internal: コンポーザの件数プレビュー（`AutoAlbumEngine.groundingPreview`）も同じシグナルで
     /// 数える（シグナル無しの hardFilter は属性条件が fail-closed になり「綺麗な写真→0 枚」と出る）。
-    func querySignalsIfNeeded(for spec: QuerySpec) async -> QuerySignals {
+    /// - Parameter ledgers: アルバムのループから呼ぶときは**ループの外で作った 1 つ**を渡す
+    ///   （台帳の全件読み出しがアルバム数ぶん繰り返されるのを防ぐ）。省略時はこの 1 回だけのもの。
+    func querySignalsIfNeeded(for spec: QuerySpec,
+                              ledgers: AIAlbumLedgers? = nil) async -> QuerySignals {
+        let ledgers = ledgers ?? AIAlbumLedgers(tagStore: tagStore)
         var signals = QuerySignals()
         if spec.needsSmileSignal {
             signals.smileCounts = await smileCountsProvider?() ?? [:]
         }
-        if spec.needsAestheticSignal, let tagStore {
-            let scores = await tagStore.allAesthetics()
+        if spec.needsAestheticSignal, tagStore != nil {
+            let scores = await ledgers.aesthetics()
             signals.aesthetics = scores
             signals.aestheticFloor = PhotoQuality.adaptiveThreshold(scores: Array(scores.values))
         }
         // 人数条件（S12）: humanCount 実測（タグ付けパスで全写真に付く・網羅率 約86%）。
-        if spec.needsPeopleCountSignal, let tagStore {
-            signals.humanCounts = await tagStore.allHumanCounts()
+        if spec.needsPeopleCountSignal, tagStore != nil {
+            signals.humanCounts = await ledgers.humanCounts()
         }
         return signals
     }
@@ -357,8 +361,12 @@ final class AIAlbumService {
         return await faceCountsProvider()
     }
 
+    /// - Parameter ledgers: アルバムのループから呼ぶときは**ループの外で作った 1 つ**を渡す。
+    ///   省略時はこの 1 回だけのスナップショットを作る（単発の作成・再設定はこれまでと同じ回数）。
     func rankedSearch(_ allLite: [EnrichedPhoto], saved: SavedInterpretation,
-                              now: Date) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
+                              now: Date,
+                              ledgers: AIAlbumLedgers? = nil) async -> (members: [EnrichedPhoto], pool: [String: Float]) {
+        let ledgers = ledgers ?? AIAlbumLedgers(tagStore: tagStore)
         // 意味検索の clipVector はストアからページ単位で読む（一度に全件を載せない）。
         // ⚠️ スコアリング（数万件×512 次元コサイン＋フィルタ）は CPU を食うので Task.detached で
         // オフメイン実行する（本サービスは @MainActor。直呼びだと ~1s 級のメイン占有になる）。
@@ -380,18 +388,18 @@ final class AIAlbumService {
         PerfTrace.logSpan("aialbum.peopleMap", ms: PerfTrace.msSince(tPeople))
         // P1: タグ台帳（refKey → シーンタグ）。一次ランキングと離散除外に使う。
         let tTags = PerfTrace.nowNs()
-        let tags = await tagStore?.allTags() ?? [:]
+        let tags = await ledgers.tags()
         PerfTrace.logSpan("aialbum.tagsLedger", ms: PerfTrace.msSince(tTags))
         // OCR 台帳（refKey → 写真内テキスト）。字句検索チャネルへ（photo-info-expansion）。
         let tOcr = PerfTrace.nowNs()
-        let ocr = await tagStore?.allOcrTexts() ?? [:]
+        let ocr = await ledgers.ocrTexts()
         PerfTrace.logSpan("aialbum.ocrLedger", ms: PerfTrace.msSince(tOcr))
         // 人物証拠（humanCount）は人系の除外があるときだけ読む（86k 件の台帳なので無駄に引かない）。
         let tHuman = PerfTrace.nowNs()
-        let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
+        let humanCounts = faceCounts == nil ? [:] : (await ledgers.humanCounts())
         PerfTrace.logSpan("aialbum.humanCounts", ms: PerfTrace.msSince(tHuman))
         // 属性条件（笑顔・美的）のシグナル（S10・ADR-103・条件があるときだけ取得）。
-        let querySignals = await querySignalsIfNeeded(for: spec)
+        let querySignals = await querySignalsIfNeeded(for: spec, ledgers: ledgers)
         let tScore = PerfTrace.nowNs()
         defer { PerfTrace.logSpan("aialbum.score", ms: PerfTrace.msSince(tScore)) }
         return await Task.detached(priority: .utility) {

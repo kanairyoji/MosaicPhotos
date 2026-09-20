@@ -62,6 +62,10 @@ extension AIAlbumService {
             return current
         }
         let catalog = await Task.detached(priority: .utility) { AIAlbumCatalog.build(from: all) }.value
+        // タグ台帳（タグ/OCR/人数/美的）も**ループの外で 1 つ**にする。中身はアルバムごとに
+        // 変わらないのに、以前はアルバム 1 本ごとに全件（8.6 万行）を 2〜4 回引き直していた。
+        // 遅延なので、条件を持つアルバムが無ければ 1 回も引かない（従来どおり）。
+        let ledgers = AIAlbumLedgers(tagStore: tagStore)
 
         var updated: [AutoAlbumInfo] = []
         var skipped = 0
@@ -88,7 +92,7 @@ extension AIAlbumService {
             }
             var saved = await interpreter.interpretation(id: album.id, criteria: criteria, now: now,
                                                          baseLite: all, prebuiltCatalog: catalog)
-            var (members, pool) = await rankedSearch(all, saved: saved, now: now)
+            var (members, pool) = await rankedSearch(all, saved: saved, now: now, ledgers: ledgers)
             members = await verification.evidenceGatedIfExcluding(members, spec: saved.spec)
             members = await verification.verified(members, criteria: criteria)
             saved.scoredPool = pool
@@ -129,6 +133,8 @@ extension AIAlbumService {
         var dropped = 0
         // 名前表（全顔の射影）はアルバムごとに引かず、この 1 回で共有する。
         var sharedPeopleMap: [String: [String]]??
+        // タグ台帳（美的・人数）も同じ理由で 1 回にする（全件 8.6 万行 × アルバム数だった）。
+        let ledgers = AIAlbumLedgers(tagStore: tagStore)
         for (index, album) in current.enumerated() {
             guard let criteria = album.criteria, !criteria.isEmpty,
                   let saved = interpreter.saved(for: album.id), saved.criteria == criteria,
@@ -136,7 +142,7 @@ extension AIAlbumService {
             let spec = saved.spec
             if sharedPeopleMap == nil { sharedPeopleMap = .some(await peopleMapIfNeeded(for: spec)) }
             guard let peopleMap = sharedPeopleMap ?? nil else { continue }
-            let querySignals = await querySignalsIfNeeded(for: spec)
+            let querySignals = await querySignalsIfNeeded(for: spec, ledgers: ledgers)
             let existing = await store.enrichedPhotos(forRefKeys: album.memberRefs)
             let kept = QueryEvaluator.hardFilter(existing, spec: spec, now: now,
                                                  peopleByRefKey: peopleMap, signals: querySignals)
@@ -185,6 +191,8 @@ extension AIAlbumService {
         // 評価済み件数は現実（埋め込み総数）を超えないよう頭打ちにする。待機列へ戻した分を
         // 再処理すると、既に数えたアルバムで二重加算になり得るため。
         let embeddedNow = await store.embeddedCount()
+        // 台帳（人数・美的）はアルバムをまたいで同じ。ループの外で 1 つにする。
+        let ledgers = AIAlbumLedgers(tagStore: tagStore)
         for (index, album) in current.enumerated() {
             guard let criteria = album.criteria, !criteria.isEmpty,
                   var saved = interpreter.saved(for: album.id), saved.criteria == criteria,
@@ -198,9 +206,9 @@ extension AIAlbumService {
             let faceCounts = await faceCountsIfNeeded(for: spec)
             // 人物証拠は humanCount（網羅率 約86%）を主軸に、顔スキャンを補助にする（ADR-100）。
             // ⚠️ フル評価と**同一の規則**にすること（食い違うと増分と全体で結果が変わる）。
-            let humanCounts = faceCounts == nil ? [:] : (await tagStore?.allHumanCounts() ?? [:])
+            let humanCounts = faceCounts == nil ? [:] : (await ledgers.humanCounts())
             // 属性条件のシグナルも増分評価で同一規則（S10）。
-            let querySignals = await querySignalsIfNeeded(for: spec)
+            let querySignals = await querySignalsIfNeeded(for: spec, ledgers: ledgers)
             // ⚠️ 評価済み件数は「採点できた」ときにだけ進める。先に進めてしまうと、
             // クエリ埋め込みが取れなかった回（モデルのロード失敗・キャンセル）の写真が
             // **採点されていないのに評価済み**となり、ドリフト検知も差分ゼロと判断して

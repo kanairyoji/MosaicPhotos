@@ -6,6 +6,33 @@
 
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
+## 台帳の全件読み出しに `HeavyLoad` の申告が無い
+
+- 箇所: `Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags/TagStore.swift`
+  （`allTags` / `allHumanCounts` / `allOcrTexts` / `allAesthetics`）と、
+  `Store/AutoAlbumStore.swift` の `allEnrichedPhotosLite`
+- 分類: ruleViolation / 優先度 P2（初出 2026-09-20・レビューループ 20 周目）
+- 症状: どれも**数万件を実体化する**（実機 8.6 万行）のに、`HeavyLoad.span(_:)` の申告が無い。
+  CLAUDE.md の性能原則 6（ADR-122）は「数万件を実体化する／モデルを読む処理を足したら
+  申告する」と定めている。申告が無いので、この読み出しの最中に別の重い処理
+  （背景 CLIP・顔スキャン・バックアップ）が同時に走り得る。メモリのピークは
+  「単体で速いか」ではなく「同時に何が走るか」で決まる、という前提が効いていない。
+- なぜ設計判断が要るか: 申告を足すこと自体は 1 行だが、**足した瞬間に他の背景処理の
+  譲り方が変わる**（`BackgroundYield.verdict` が `heavyLoadInFlight` を見る）。
+  夜間の窓は `NightlyPlan` が順序を決めており、そこへ新しい相互排除が入ると
+  「窓の食い潰し」「生成と解析の共倒れ」（ADR で順序を決めた実機の失敗そのもの）が
+  別の形で再発し得る。BGTask を起こさないと確かめられない種類の変更。
+- 選択肢:
+  1. **全件読み出しの中で申告する**（`TagStore` / `AutoAlbumStore` の各メソッドを `span` で包む）。
+     漏れが出ないのが利点。欠点は、単発の軽い呼び出し（1 アルバムの作成時）でも札が立つこと。
+  2. **呼び出し側の「まとまり」で申告する**（`refresh` / `refreshIncremental` /
+     `pruneAfterPeopleChange` の全体を 1 つの `span` で包む）。夜間の重い処理だけに札が立つ。
+     欠点は、新しい呼び出し側が足されたときに漏れること（＝今回の再発）。
+  3. **入れない**。今のところ実機でこの同時実行が原因の圧迫は観測されていない
+     （観測されたのは 279→490MB のフットプリント増だが、これは単体の読み出しぶん）。
+- 補足: 20 周目に読み出しの**回数**（アルバム数ぶんの繰り返し）は直した（`AIAlbumLedgers`）。
+  残っているのは**1 回ぶんの重さを申告するか**という別の問題。
+
 ## 「アプリを離れても解析を続ける」トグルが片道でしか効かない
 
 - 箇所: `MosaicPhotos/AnalysisSession.swift:82-92`（setter が `!newValue` しか扱わない）と

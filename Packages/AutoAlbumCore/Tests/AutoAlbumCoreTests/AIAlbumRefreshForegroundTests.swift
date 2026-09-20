@@ -9,6 +9,11 @@ import Testing
 /// （実測 12〜13 秒・footprint 279→490MB）を払い切ってから `aborted for foreground (0/5)` で
 /// 捨てていた。**1 件も進まない**ので評価済み件数は変わらず、ドリフト条件は満たされたまま
 /// ——つまり毎ティック同じ代金を払い続ける（収束しない輪）。判定は重い段の前ごとに見る。
+/// ⚠️ **規模退行テスト（下段）もこの Suite に入れる**。`BackgroundYield.environmentOverrideForTesting`
+/// はプロセス全体で 1 つなのに、swift-testing の Suite は既定で**並列**に走る。別 Suite に分けると、
+/// 片方が `.active` を差している間にもう片方の再評価が「前面だから降りる」で 1 件も進まず、
+/// 単体では緑・全体では落ちる（実際に踏んだ）。この上書きを使うテストは 1 つの `.serialized`
+/// Suite にまとめること。
 @Suite("AIAlbum フル再評価の前面判定", .serialized)
 @MainActor
 struct AIAlbumRefreshForegroundTests {
@@ -87,5 +92,71 @@ struct AIAlbumRefreshForegroundTests {
         #expect(await store.allEnrichedPhotosLiteCallsForTesting >= 1, "台帳を読まずに評価した")
         #expect(service.savedInterpretationForTesting(albumID)?.evaluatedEmbedCount == 1,
                 "評価済み件数が進んでいない（次回また同じ再評価が走る）")
+    }
+
+    // MARK: - 規模退行（台帳の全件読み出しがアルバム数に比例しないこと・ADR-119）
+
+    /// ⚠️ 直った形: 写真の台帳（`allEnrichedPhotosLite`）とカタログは diagnostics-48 でループの
+    /// 外へ出したのに、**タグ台帳（タグ/OCR/人数/美的）だけ取り残されていた**。アルバム 1 本ごとに
+    /// 8.6 万行の全件 fetch が 2〜4 回走り、5 本で 10〜20 周ぶんになる。
+    /// 「1 回ぶんに見える呼び出しが、実はライブラリ規模 × アルバム数に比例していた」形そのもの。
+    /// 検証するのは**時間ではなく回数**（`TagStore.fullLedgerReadsForTesting`）。
+    private func makeLedgerStack(albums count: Int) async -> (AIAlbumService, TagStore, [AutoAlbumInfo]) {
+        let store = AutoAlbumStore(isStoredInMemoryOnly: true)
+        await store.upsert([
+            EnrichedPhoto(id: "L-a", captureDate: Date(timeIntervalSince1970: 1_700_000_000),
+                          latitude: nil, longitude: nil, placeName: nil,
+                          clipVector: vector([1, 0, 0]))])
+        _ = await store.upsertImportedEmbeddings([
+            (refKey: "L-a", vectorHalf: ClipMath.encodeHalf([1, 0, 0]))])
+        let tagStore = TagStore(isStoredInMemoryOnly: true)
+        _ = await tagStore.recordTags([
+            (refKey: "L-a", info: PhotoSenseInfo(tags: ["sea"], ocrText: "beach",
+                                                 humanCount: 0, aesthetic: 0.5))])
+        let service = AIAlbumService(store: store, tagStore: tagStore,
+                                     understanding: RuleBasedQueryUnderstanding(),
+                                     textEmbedder: FixedEmbedder())
+        var infos: [AutoAlbumInfo] = []
+        for index in 0..<count {
+            let id = "ledger-\(count)-\(index)"
+            var saved = SavedInterpretation(
+                criteria: "海の写真",
+                spec: QuerySpec(clauses: [QueryClause([.content(["sea"])])]),
+                semanticText: "photos of the sea",
+                scoredPool: [:],
+                evaluatedEmbedCount: 0)
+            saved.pendingFinalization = false
+            service.saveInterpretationForTesting(saved, for: id)
+            let info = makeAlbum(id: id)
+            await store.upsert(albumInfo: info)
+            infos.append(info)
+        }
+        return (service, tagStore, infos)
+    }
+
+    @Test("アルバムが増えても、タグ台帳の全件読み出しは増えない")
+    func fullLedgerReadsDoNotScaleWithAlbums() async {
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .background)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
+
+        let (smallService, smallTags, smallAlbums) = await makeLedgerStack(albums: 3)
+        let (largeService, largeTags, largeAlbums) = await makeLedgerStack(albums: 12)   // 4 倍
+
+        _ = await smallService.refresh(smallAlbums)
+        _ = await largeService.refresh(largeAlbums)
+
+        let small = await smallTags.fullLedgerReadsForTesting
+        let large = await largeTags.fullLedgerReadsForTesting
+
+        // ⚠️ fixture が本当に評価まで進んでいるかを先に確かめる（空でも通る assert を書かない）。
+        #expect(small > 0, "台帳を一度も読んでいない＝評価まで進んでいない（テストが何も見ていない）")
+        #expect(smallService.savedInterpretationForTesting(smallAlbums[0].id)?.evaluatedEmbedCount == 1,
+                "評価が進んでいない（fixture が条件を満たしていない）")
+
+        #expect(large <= small,
+                """
+                アルバム 4 倍（3 → 12 本）で台帳の全件読み出しが \(small) → \(large) 回に増えた。
+                台帳はアルバムごとに変わらないので、ループの外で 1 つ（AIAlbumLedgers）にすること。
+                """)
     }
 }

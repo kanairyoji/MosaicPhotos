@@ -21,6 +21,49 @@
 
 ---
 
+## AI アルバムの再評価で、タグ台帳の全件読み出しがアルバム数ぶん繰り返されていた
+
+レビュー 20 周目。
+
+- 症状: 夜間のフル再評価で、タグ台帳（`PhotoTagRecord`・実機 8.6 万行）の**全件 fetch が
+  アルバム 1 本につき 2〜4 回**走っていた。アルバム 5 本なら 10〜20 周ぶん。
+  増分再評価（`refreshIncremental`）と人物修正後の掃除（`pruneAfterPeopleChange`）も同じ形。
+- 原因: **diagnostics-48 の修正が、途中までしか届いていなかった。** あのとき
+  「アルバムごとに 86k フェッチ＋カタログ構築を繰り返す」問題を直し、写真の台帳
+  （`allEnrichedPhotosLite`）とカタログをループの外へ出した。しかし同じループの中で
+  `rankedSearch` が呼ぶ `allTags` / `allOcrTexts` / `allHumanCounts`、
+  `querySignalsIfNeeded` が呼ぶ `allAesthetics` / `allHumanCounts` は**そのまま残った**。
+  `pruneAfterPeopleChange` が名前表（全顔の射影）だけを「アルバムごとに引かず、この 1 回で
+  共有する」と明記して括り出していたのが、意図は正しく**範囲が足りていなかった**証拠。
+  ADR-119 の形そのもの——「1 回ぶんに見える呼び出し」が、実は**写真数 × アルバム数**に比例していた。
+- 対処: `AIAlbumLedgers`（AIAlbum/AIAlbumLedgers.swift）を足し、1 回の処理の中で共有する。
+  - **遅延**に取る（値でなく `Task` を控えるので、取得中の重複も起きない）。条件を持つ
+    アルバムが 1 本も無ければ 1 回も読まない＝「人系の除外があるときだけ `allHumanCounts`」
+    「美的条件があるときだけ `allAesthetics`」という従来の性質を変えない。
+  - **1 回の処理の中でだけ**生かす（跨いで持ち回らない。夜間に台帳は育つ）。
+  - 単発の作成・再設定（`rankedSearch` を 1 回だけ呼ぶ経路）は、省略時に使い捨ての
+    スナップショットを作るので**読み出し回数はこれまでと同じ**。
+  - 中身は同一のまま渡すので、**アルバムのメンバーは変わらない**（クエリ集ハーネス
+    123 クエリの MACRO P=1.000 / R=0.837 / F1=0.899 は修正前と一致）。
+- 検証: 規模退行テスト 1 本（ADR-119 の形＝**時間ではなく回数**）。
+  `TagStore.fullLedgerReadsForTesting` を数え、アルバム 3 → 12 本（4 倍）で全件読み出しが
+  増えないこと。修正を一時的に戻すと落ちることを確認済み。
+- **テストを 1 回、自分で壊した**: 新しい Suite を分けて書いたら、**単体では緑・全体では落ちた**。
+  `BackgroundYield.environmentOverrideForTesting` はプロセス全体で 1 つなのに、swift-testing の
+  Suite は既定で**並列**に走る。隣の Suite が `.active` を差している間に再評価が
+  「前面だから降りる」で 1 件も進まず、読み出し回数が 0 になっていた。
+  この上書きを使うテストは 1 つの `.serialized` Suite にまとめた（ファイル冒頭に理由を明記）。
+- 関連: `Packages/AutoAlbumCore/Sources/AutoAlbumCore/AIAlbum/AIAlbumLedgers.swift` /
+  `AIAlbumService.swift` / `AIAlbumService+Refresh.swift` / `Tags/TagStore.swift` /
+  `Tests/AutoAlbumCoreTests/AIAlbumRefreshForegroundTests.swift`。ADR-119 / diagnostics-48。
+- 残課題: これらの全件読み出しは数万件を実体化するのに **`HeavyLoad` の申告が無い**
+  （CLAUDE.md ADR-122 の規則）。申告を足すと他の背景処理の譲り方が変わるため、
+  判断が要る＝`unresolved-problems.md` に選択肢を残した。
+- 教訓: **「ループの外に出す」修正は、出し切ったかを数えて確かめる。** 部分的に出すと、
+  残りが同じ比例をそのまま持ち続け、しかも「あの問題は直した」という記憶が再発見を遅らせる。
+
+---
+
 ## 記録を監査したら、10 件が誤っていた
 
 レビュー 18 周目。17 周目で**自分が誤った因果を記録していた**ことが分かったので、

@@ -50,6 +50,15 @@ actor TagStore {
     /// （`unownedExecutor` の回帰検証。`ModelActorExecutorTests` から呼ぶ）。
     func runsOnMainThreadForTesting() -> Bool { Thread.isMainThread }
 
+    /// テスト用: 台帳の**全件読み出し**（`allTags` / `allHumanCounts` / `allOcrTexts` /
+    /// `allAesthetics`）が何回走ったか。規模退行テスト（ADR-119）の土台。
+    ///
+    /// ⚠️ 検証するのは**時間ではなく回数**。全件読み出しは写真数に比例するので、
+    /// 「アルバム数を増やしても回数が増えないこと」が見たい性質そのものになる。
+    /// インスタンスごとに数える（グローバルのカウンタだと、並行して走る別の Suite の
+    /// 読み出しが混ざる）。
+    private(set) var fullLedgerReadsForTesting = 0
+
     private static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Tags")
 
     /// 現行のタグ付け版。v2: OCR・動物・人物数・美的スコア・アセット種別タグを追加。
@@ -187,6 +196,7 @@ actor TagStore {
 
     /// 全タグ台帳（refKey → tags）。検索の一次ランキングで使う（数万件・値は小さい）。
     func allTags() -> [String: [String]] {
+        fullLedgerReadsForTesting += 1
         let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
         var out: [String: [String]] = [:]
         out.reserveCapacity(records.count)
@@ -202,6 +212,7 @@ actor TagStore {
     /// `humanCount` は夜間タグ付けパスで既に計算・保存済みで網羅率は約 86%、しかも上半身検出なので
     /// 後ろ姿や小さい顔も拾える＝「人がいない」の担保に適する。新たな計算は不要。
     func allHumanCounts() -> [String: Int] {
+        fullLedgerReadsForTesting += 1
         let records = (try? modelContext.fetch(
             FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.humanCount != nil }))) ?? []
         var out: [String: Int] = [:]
@@ -214,6 +225,7 @@ actor TagStore {
 
     /// 全 OCR 台帳（refKey → 写真内テキスト・非空のみ）。字句検索（LexicalSearch）用。
     func allOcrTexts() -> [String: String] {
+        fullLedgerReadsForTesting += 1
         let records = (try? modelContext.fetch(
             FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.ocrText != nil }))) ?? []
         var out: [String: String] = [:]
@@ -246,6 +258,7 @@ actor TagStore {
     /// 美的スコアの全台帳（refKey → スコア・「ベストショット」フィルタ用）。
     /// スコア未付与（nil＝未解析）は含めない。分布適応しきい値の算出に全件が要る。
     func allAesthetics() -> [String: Double] {
+        fullLedgerReadsForTesting += 1
         var d = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.aesthetic != nil })
         d.propertiesToFetch = [\.refKey, \.aesthetic]
         let records = (try? modelContext.fetch(d)) ?? []
