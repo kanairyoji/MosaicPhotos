@@ -5,7 +5,8 @@ import Testing
 /// 共有写真の撮影日（ADR-199）。
 /// 実フィードバック「共有フォルダの表示が撮影時間順でない。Dropbox へのアップロード順になっている？」
 /// 受信側が見られる日付は Dropbox の `time_taken ?? client_modified` だけで、共有コピーは
-/// サーバーサイドコピーなので `time_taken` が付かず、反映時刻＝アップロード順に並んでいた。
+/// Dropbox は 2019-12-02 以降、一覧系で `media_info` を返さない（`include_media_info` も無視）ので
+/// `time_taken` は常に nil。日付は `client_modified`＝反映時刻に落ち、アップロード順に並んでいた。
 @Suite("共有写真の撮影日（ADR-199）")
 struct SharedCaptureDateTests {
 

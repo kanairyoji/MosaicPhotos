@@ -39,8 +39,8 @@ extension AutoAlbumStore {
 
     /// refKey → **撮影日**（ADR-199）。存在し、日付が入っているものだけ返す。
     ///
-    /// 受信側は Dropbox の日付しか見えず、共有コピーはサーバーサイドコピーなので EXIF 由来の
-    /// `time_taken` が付かないことが多い——そのままだとアップロード順に並ぶ。送信側の台帳
+    /// 受信側は Dropbox の日付しか見えず、そこには EXIF 由来の `time_taken` が入らない
+    /// （2019-12-02 以降、一覧系は `media_info` を返さない）——そのままだとアップロード順に並ぶ。送信側の台帳
     /// （`PhotoEnrichment.captureDate`）が唯一の正しい出典なので、解析データに載せて渡す。
     ///
     /// ⚠️ 兄弟（`embeddingsHalf` / `TagStore.tags` ほか）と同じく **1 回でまとめて引く**

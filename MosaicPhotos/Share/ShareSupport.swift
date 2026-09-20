@@ -41,7 +41,7 @@ final class ShareAnalysisAdapter: ShareAnalysisSource {
                     entry.aes = a.aesthetic
                     entry.clip = a.clipHalf?.base64EncodedString()
                     // 撮影日（ADR-199）。受信側は Dropbox の日付しか見えず、共有コピーは
-                    // サーバーサイドコピーなので EXIF 由来の `time_taken` が付かないことが多い
+                    // Dropbox は 2019-12-02 以降、一覧系で `media_info` を返さないので `time_taken` は nil
                     // ——載せないと**アップロード順**に並ぶ。
                     entry.d = a.captureDate?.timeIntervalSince1970
                 }

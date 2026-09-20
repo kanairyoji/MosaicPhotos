@@ -90,9 +90,9 @@ public enum ShareAnalysisData {
         /// **撮影日**（epoch 秒・未取得 nil・ADR-199）。
         ///
         /// ⚠️ これが無いと受信側は写真を**並べられない**。受信側に見えるのは Dropbox が返す
-        /// `time_taken ?? client_modified` だけで、共有コピーはサーバーサイドコピー
-        /// （`copy_batch_v2`）で作られるため EXIF 由来の `time_taken` が付かないことが多く、
-        /// 日付が「提供者が反映した時刻」に落ちる＝**アップロード順に並ぶ**（実フィードバック
+        /// `time_taken ?? client_modified` だけ。Dropbox は 2019-12-02 以降、一覧系で
+        /// `media_info` を返さない（`include_media_info` も無視）ので `time_taken` は常に nil。
+        /// 日付が `client_modified`＝「提供者が反映した時刻」に落ちる＝**アップロード順に並ぶ**（実フィードバック
         /// 「共有フォルダの表示が撮影時間順でない」）。送信側の台帳には正しい撮影日があるので、
         /// 解析データに 1 枚 8 バイト載せて渡す。
         ///
