@@ -128,35 +128,47 @@
   ⚠️ `migrateScanVersionIfNeeded` は既にそうしているので、**同じ形に揃えるだけ**に見える。
   ただし影の世代（別コンテナ）を同時に触る経路なので、実機での確認が要る。
 
-## 【次の周で対応予定】夜間窓スケジューラのレビュー指摘 8 件
+## 夜間窓スケジューラ: 実機でしか確かめられない 5 件
 
-レビュー 11 周目で夜間窓スケジューラ（スコアボード 3 位・履歴 1 位）を見た結果。
-PeopleEngine 側の修正と同じコミットに混ぜると読めなくなるので、**次の周で着手する**。
-ここは着手までの覚書で、片付いたら各項を消してよい。
+レビュー 11 周目の指摘 8 件のうち、3 件（画面状態の上書き・前面復帰でのバックアップ中断・
+照合の回線ゲート）は 12 周目で直した。残りはここに置く。
 
-1. **【重い】`withScenePhase` が古い値で上書きし、以後ずっと前面解析が止まる**
-   （`HeavyWorkScheduler.swift:344` / `BackgroundYield.swift:226-232`）
-   窓に入るとき `previous` を控え、抜けるとき書き戻す。ところが同じ変数は
-   `MosaicPhotosApp.onChange` も書いており、そちらは**変化したときだけ**動く。
-   窓の最中に前面へ戻ると `.active` が入り、窓が畳まれるときに `.background` へ戻される
-   ——**前面なのに背面扱い**。`onChange` は次の遷移まで来ないので、アプリを背面に
-   落とすまで直らない。帰結: 前面・アイドル・電源・回線のどの契機でも解析が起きない、
-   UI への譲りが効かない、メインスレッドの見張りが止まる。
-   直し方: 抜けるときの書き戻しを「自分が入れた値のままなら」に限る（`withExemption` も同様）。
-2. 週次の照合（ADR-166）が**ほぼ永久に走らない**。同じ窓の 3 手前で
-   `.startBackup` がエンジンを busy にするため、`.reconcileBackup` の `guard !isBusy` で必ず抜ける。
-3. その照合が**回線ポリシーを見ない**。`.shareImport`/`.shareSync` は `networkAllowed` の中なのに
-   `.reconcileBackup` だけ外にあり、全件一覧をセルラーで引き得る。
-4. **前面復帰で夜間バックアップが止まる**。`stopBackgroundProcessing(cancelBackup:)` は
-   期限切れと前面復帰を区別しているのに、`runHeavyWork` の末尾が `Task.isCancelled` だけで
-   `backupEngine.cancel()` を呼ぶ。`background-behavior.md` は「止めない」と書いている。
-5. `expirationHandler` の設定が MainActor 1 ホップ遅れる。背景起動では
-   その間 `HomeStores.build()` が走っており、そこで窓が切れると**誰も止めない**。
-6. Developer Options の「今すぐ実行」の時計が前回ぶん残り、次の実行を殺す。
-7. `AnalysisSession` が Developer Options の「全ゲートを外す」を上書きする。
-8. `background-behavior.md` と実装が食い違う行が 3 つ（発熱の対象・夜間バックアップの自動処理・
-   家族共有の電源）。`gatherInputs` が回線モニタを直読みしている（ADR-196 の規則から外れている）。
-   `requiresExternalPower` が電源ポリシー `.off` と `.always` で同じ要求になる。
+1. **週次の照合（ADR-166）がほぼ永久に走らない**
+   - 箇所: `NightlyWorkPolicy.swift`（`.startBackup` と `.reconcileBackup` の距離）、
+     `BackupEngine.swift:348`（`guard !isBusy`）
+   - 同じ窓の 3 手前で `.startBackup` がエンジンを busy にする（`phase` は同期で立つ）ので、
+     `.reconcileBackup` は必ず空振りし `lastReconcileAt` も動かない。
+     どちらも `destination == .dropbox` を要求するので、**照合が走り得る唯一の構成が
+     走らない構成と同じ**。ADR-180 で 1 回あたりの上限を外したため、
+     積み残しがあると窓いっぱい busy のまま。
+   - 帰結: Dropbox 側で消した写真が台帳で「済み」のまま残り、オフロードした原本が
+     失われているのに済み扱いになる。共有の自己修復も元が無いまま失敗し続ける。
+   - なぜ設計判断が要るか: 順序を入れ替える（照合を先にする）と、照合の全件一覧で
+     窓の頭を使い切り得る。`isBusy` を無視して並走させると、同じ台帳を 2 経路で書く。
+     どちらを採るかは夜間の枠配分の方針。
+2. **`expirationHandler` の設定が MainActor 1 ホップ遅れる**
+   - 箇所: `HeavyWorkScheduler.swift:36-39`（登録）と `:121`（設定）
+   - 背景起動ではその間に `HomeStores.build()`（20 以上のストア構築）が走る。
+     そこで窓が切れると**誰も止めず**、OS への完了通知も遅れる。
+   - なぜ設計判断が要るか: 登録の場で暫定のハンドラを付けるのが素直だが、
+     本ハンドラへの差し替えと OS の発火が競合する窓ができる（暫定が完了を告げた後に
+     本体が走り出す形）。BGTask の挙動は**実機でしか確かめられない**ので、
+     `device-verification.md` の項目と一緒に確かめてから入れる。
+3. `AnalysisSession` が Developer Options の「全ゲートを外す」を上書きする
+   （`AnalysisSession.swift:148,170`）。免除は 1 つの変数を 2 人が絶対値で書いている。
+   「今すぐ解析」で `.debug` が `.boost` へ下がり、止めると `.none` になる。
+   トグルは ON のままなのに全ゲートが復活する。**段の持ち主を 1 人にする**設計が要る。
+4. Developer Options の「今すぐ実行」の時計が前回ぶん残り、次の実行を殺す
+   （`HeavyWorkScheduler.swift:232-240`）。世代を見ていない。開発用なので優先度は低い。
+5. **`background-behavior.md` と実装が食い違う行が 3 つ**
+   - 発熱の対象「処理枠以外」: 実装は `.window` にも課す
+   - 夜間バックアップの「自動処理 ○」: 実装は見ていない（同じ表の別の行は ✗ と書いており矛盾）
+   - 家族共有の「電源 ○」: 実装は回線しか見ていない（同じ表の別の行は ✗）
+   - 併せて `gatherInputs` が回線モニタを直読みしており（ADR-196 の「モニタを直読みしない」に反する）、
+     `requiresExternalPower` が電源ポリシー `.off` と `.always` で同じ要求になる
+     （背景処理を切った人にだけ窓を要求しに行く）。
+   - 表と実装のどちらを正とするかを決める必要がある。表は「正本」と書かれているので、
+     まず表を実装に合わせるか、実装を表に寄せるかの判断から。
 
 ## 名前の持ち越し（ADR-130）が production では一度も動かない
 

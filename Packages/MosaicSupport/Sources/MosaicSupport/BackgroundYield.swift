@@ -223,19 +223,29 @@ public enum BackgroundYield {
     /// 画面状態を一時的に変える（処理枠の実行中など）。**戻し忘れが起きない形**。
     /// 旧実装は `isAppActive` / `isAppInBackground` を手で書き換え、`restoreAppActive` という
     /// 引数で後始末していた（戻し忘れがレビューで 1 回指摘されている）。
+    ///
+    /// ⚠️ **自分が入れた値のままのときだけ戻す**（レビュー 11 周目）。この変数は
+    /// `MosaicPhotosApp.onChange` も書いており、そちらは**変化したときだけ**動く。
+    /// 無条件に書き戻すと、窓の最中に前面へ戻った場合に `.active` を `.background` で
+    /// 上書きし、**前面なのに背面扱い**のまま固定される——`onChange` は次の遷移まで
+    /// 来ないので、アプリを背面へ落とすまで直らない。
+    /// 帰結は「前面・アイドル・電源・回線のどの契機でも解析が起きない」
+    /// 「UI への譲りが効かない」「メインスレッドの見張りが止まる」。
     public static func withScenePhase<T>(_ phase: ScenePhaseKind,
                                          _ body: () async -> T) async -> T {
         let previous = scenePhase
         setScenePhase(phase)
-        defer { setScenePhase(previous) }
+        defer { if scenePhase == phase { setScenePhase(previous) } }
         return await body()
     }
 
     /// 免除の段を一時的に上げる（デバッグ実行）。
+    /// ⚠️ `withScenePhase` と同じ理由で、**自分が入れた段のままのときだけ**戻す
+    /// （デバッグ実行の最中にブーストが始まると、その終わりに段を引き下げてしまう）。
     public static func withExemption<T>(_ e: Exemption, _ body: () async -> T) async -> T {
         let previous = exemption
         exemption = e
-        defer { exemption = previous }
+        defer { if exemption == e { exemption = previous } }
         return await body()
     }
 

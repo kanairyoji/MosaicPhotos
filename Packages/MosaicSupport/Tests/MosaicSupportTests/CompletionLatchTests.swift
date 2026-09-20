@@ -113,4 +113,36 @@ struct ScenePhaseScopeTests {
         }
         #expect(BackgroundYield.exemption == .none)
     }
+
+    /// 回帰: **スコープの中で外から画面状態が変わったら、書き戻さない**（レビュー 11 周目）。
+    ///
+    /// この変数はアプリ側の `onChange` も書いており、そちらは**変化したときだけ**動く。
+    /// 窓の実行中に前面へ戻ると `.active` が入る。そこでスコープが `.background` を
+    /// 書き戻すと**前面なのに背面扱い**で固定され、`onChange` は次の遷移まで来ないので
+    /// アプリを背面へ落とすまで直らない。前面・アイドル・電源・回線のどの契機でも
+    /// 解析が起きなくなり、UI への譲りも効かなくなる。
+    @Test("回帰: 実行中に前面へ戻ったら、抜けるときに背面へ戻さない")
+    func doesNotClobberAPhaseChangedFromOutside() async {
+        BackgroundYield.setScenePhase(.background)
+        defer { BackgroundYield.setScenePhase(.active) }
+
+        await BackgroundYield.withScenePhase(.background) {
+            // 窓の最中にユーザーがアプリを開いた（アプリ側の onChange 相当）。
+            BackgroundYield.setScenePhase(.active)
+        }
+        #expect(BackgroundYield.scenePhase == .active,
+                "外から入った前面を古い値で上書きした（以後ずっと背面扱いになる）")
+    }
+
+    @Test("回帰: 実行中にブーストが始まったら、抜けるときに段を下げない")
+    func doesNotClobberAnExemptionChangedFromOutside() async {
+        BackgroundYield.setExemption(.none)
+        defer { BackgroundYield.setExemption(.none) }
+
+        await BackgroundYield.withExemption(.debug) {
+            BackgroundYield.setExemption(.boost)   // 実行中に「今すぐ解析」が始まった
+        }
+        #expect(BackgroundYield.exemption == .boost,
+                "走っているブーストの免除をデバッグ実行の後始末が取り消した")
+    }
 }

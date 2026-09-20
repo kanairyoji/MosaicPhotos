@@ -158,8 +158,12 @@ enum NightlyPlan {
         if i.networkAllowed {
             out.append(.shareImport)
             if i.provideShareEnabled { out.append(.shareSync) }
+            // ⚠️ **週次の照合も回線の中**（レビュー 11 周目）。Dropbox の全件一覧を引くので
+            // 通信が要るのに、ここだけ外にあった——「Wi-Fi のみ」でもセルラーで
+            // 全件一覧を引き得た（ADR-198 で撤回した「ブーストは回線を免除」と同じ、
+            // 利用者の実費の問題）。`background-behavior.md` の表も回線 ○ と書いている。
+            out.append(.reconcileBackup)
         }
-        out.append(.reconcileBackup)
         out.append(.drainUntilIdle)
         return out
     }

@@ -362,12 +362,15 @@ enum HeavyWorkScheduler {
                 guard !Task.isCancelled else { break }
                 await perform(step, stores: stores)
             }
-            // 期限切れ（キャンセル）時は夜間バックアップも止める（アップロード途中でプロセスが
-            // 吊るされるより明示キャンセルが安全。「済み」記録は検証後のみ付くので、中断しても
-            // 次回に差分から再開される）。
-            if Task.isCancelled, stores.backupEngine.isRunning {
-                stores.backupEngine.cancel()
-            }
+            // ⚠️ **ここでバックアップを止めない**（レビュー 11 周目）。`Task.isCancelled` は
+            // 期限切れでも**前面復帰でも**真になるので、ここで止めると
+            // 「フォアグラウンド復帰では夜間バックアップを止めない」という決め
+            // （`background-behavior.md`・`stopBackgroundProcessing` の `cancelBackup`）が
+            // 実装されていないことになる——電話を手に取るだけで毎回中断していた。
+            // しかも本体がここまで巻き戻るのは数十秒後になり得るので、その間に
+            // **利用者が設定画面から始めたバックアップ**を横から止め得る。
+            // 止めるべき経路（期限切れ・デバッグ実行の打ち切り）は
+            // `stopBackgroundProcessing(cancelBackup: true)` で明示的に止めている。
         }
     }
 
