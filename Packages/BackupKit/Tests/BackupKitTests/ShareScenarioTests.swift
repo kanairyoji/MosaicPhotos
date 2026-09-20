@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import BackupKit
 import DropboxCore
+import DropboxTestSupport
 
 /// テストごとに独立した設定スイート（`.standard` を共有しない）。
 /// クラウド共有の設定はプロセスに 1 つなので、並列に走る他テストが provide を OFF にすると

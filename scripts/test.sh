@@ -97,7 +97,15 @@ run_ios() {
     # -resultBundlePath: 失敗時に失敗テスト名を出せるよう xcresult を必ず残す（-quiet はテスト名を
     #   出さないため、これが無いと CI ログから原因テストが特定できない）。
     local bundle=".build/TestResults-$pkg.xcresult"
-    if ! ( cd "Packages/$pkg" && rm -rf "$bundle" && xcodebuild test -scheme "$pkg" -destination "$SIM" \
+    # ⚠️ 製品が複数あるパッケージでは、製品名のスキーム（例 DropboxCore）に test アクションが
+    # 付かない（"not configured for the test action"）。その場合は SwiftPM が必ず用意する
+    # <パッケージ名>-Package スキームを使う。単一製品のパッケージには -Package が無いので、
+    # 在るときだけ切り替える。
+    local scheme="$pkg"
+    if ( cd "Packages/$pkg" && xcodebuild -list 2>/dev/null | grep -qE "^ +$pkg-Package$" ); then
+      scheme="$pkg-Package"
+    fi
+    if ! ( cd "Packages/$pkg" && rm -rf "$bundle" && xcodebuild test -scheme "$scheme" -destination "$SIM" \
         -retry-tests-on-failure -test-iterations 2 \
         -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
         -resultBundlePath "$bundle" -quiet ); then

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import BackupKit
+@testable import DropboxCore
 
 /// Dropbox content_hash の実装検証（ADR-40・層 1）。
 /// 期待値は Python hashlib で独立に計算した値（実装と同じコードで作らない＝循環しない）。

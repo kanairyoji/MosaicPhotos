@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import BackupKit
 import DropboxCore
+import DropboxTestSupport
 
 /// 解析データ（`.mosaic-share/shard-<xx>.json`・ADR-183）の**復元**（ADR-166）。
 ///

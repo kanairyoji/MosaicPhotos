@@ -24,7 +24,12 @@ let package = Package(
         ),
         .testTarget(
             name: "BackupKitTests",
-            dependencies: ["BackupKit"],
+            dependencies: [
+                "BackupKit",
+                // 状態を持つ偽 Dropbox は DropboxCore 側の支援ターゲットに 1 つだけ置く
+                //（BackupKit と DropboxCore の両方のテストから同じものを使う）。
+                .product(name: "DropboxTestSupport", package: "DropboxCore"),
+            ],
             path: "Tests/BackupKitTests"
         ),
     ]

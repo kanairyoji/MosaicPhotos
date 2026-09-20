@@ -1,5 +1,6 @@
 import CoreGraphics
 import DropboxCore
+import DropboxTestSupport
 import Foundation
 import ImageIO
 import Testing

@@ -1,4 +1,5 @@
 import DropboxCore
+import DropboxTestSupport
 import Foundation
 import Photos
 import Testing

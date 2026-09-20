@@ -1,6 +1,5 @@
 import Foundation
 import DropboxCore
-@testable import BackupKit
 
 /// **状態を持つ** Dropbox の偽サーバー（テスト専用）。
 ///
@@ -31,9 +30,9 @@ import DropboxCore
 ///   非同期ジョブ（diagnostics-52 の暴走の引き金そのもの）。
 /// - `rateLimitEveryNthRequest`: 429（diagnostics-54 で疑われたレート制限）。
 /// - `failCopyPaths`: 特定のコピーだけ失敗させる（部分失敗の扱いを検証）。
-actor FakeDropboxServer: HTTPClient {
+public actor FakeDropboxServer: HTTPClient {
 
-    struct Entry: Equatable {
+    public struct Entry: Equatable {
         var contentHash: String
         var isFolder: Bool
         var rev: String
@@ -45,42 +44,60 @@ actor FakeDropboxServer: HTTPClient {
     }
 
     /// path_lower → エントリ。
-    private(set) var files: [String: Entry] = [:]
+    public private(set) var files: [String: Entry] = [:]
     /// path_lower → アップロードされた本体（download で返す）。
     /// 「上げたものが、そのまま取り出せるか」＝オフロード後の復元忠実性を検証するため。
     private var bodies: [String: Data] = [:]
     /// 発行済みリクエストの記録（呼ばれ方の検証用）。
-    private(set) var requestLog: [String] = []
+    public private(set) var requestLog: [String] = []
     private var jobCounter = 0
     /// 完了待ちジョブ（check で返す結果）。
     private var pendingJobs: [String: String] = [:]
     private var requestCount = 0
     /// `list_folder` の 1 ページの件数（本物は最大 2,000）。小さくしてページングを踏ませる。
     private var pageSize = 2_000
-    /// 発行済みカーソル → 残りのエントリ（JSON 文字列）。
+    /// 発行済みカーソル → 残りのエントリ（JSON 文字列）。**1 回の一覧のページ送り**用。
     private var cursors: [String: [String]] = [:]
     private var cursorCounter = 0
+
+    // MARK: - 差分同期（longpoll → continue）
+
+    /// 変更の通し番号。ファイルが増減・変化するたびに進む。
+    private var revision = 0
+    /// 変更の履歴（通し番号・パス・消えたか）。`continue` が「この番号より後」を返す。
+    private var changeLog: [(revision: Int, path: String, deleted: Bool)] = []
+
+    /// 変更を 1 件記録する（`upload` / `remove` / コピー・削除・移動から呼ぶ）。
+    private func note(_ path: String, deleted: Bool) {
+        revision += 1
+        changeLog.append((revision, path.lowercased(), deleted))
+    }
+
+    /// 差分カーソル（`rev-<n>`）が指す番号。ページ送りカーソルと混ざらないよう接頭辞で分ける。
+    private static func deltaRevision(of cursor: String) -> Int? {
+        cursor.hasPrefix("rev-") ? Int(cursor.dropFirst(4)) : nil
+    }
 
     // MARK: - 障害注入
 
     /// 非同期ジョブを「クライアントには in_progress を返し続ける（＝タイムアウトさせる）」が、
     /// **サーバー側の効果は即座に適用**する。実機の暴走を正確に再現するための設定。
-    var jobsTimeOutButComplete = false
+    public var jobsTimeOutButComplete = false
     /// N 回に 1 回 429 を返す（0 で無効）。
-    var rateLimitEveryNthRequest = 0
+    public var rateLimitEveryNthRequest = 0
     /// この接頭辞に一致するコピー先は失敗させる。
     var failCopyPaths: Set<String> = []
     /// このパスの削除を失敗させる（no_permission 相当＝「無い」ではない本物の失敗）。
     var failDeletePaths: Set<String> = []
     /// move_v2 を通信エラー（500）にする。「通信断で改名できない回」を再現するため。
-    var failMove = false
+    public var failMove = false
 
     /// **狙ったパスだけを、狙った回数だけ失敗させる**（オフロードの検証用）。
     ///
     /// ⚠️ なぜ「回数」が要るか: オフロードは**写真を消してから**印を書くので、
     /// 印が書けなかった回に大事なのは「失敗したこと」ではなく**そのあと収束するか**。
     /// 恒久的な失敗しか作れないと、「再送で最終的に届く」を確かめられない。
-    struct Failure: Equatable {
+    public struct Failure: Equatable {
         var status: Int
         /// 残り失敗回数（負＝ずっと失敗）。
         var remaining: Int
@@ -93,13 +110,13 @@ actor FakeDropboxServer: HTTPClient {
     /// - Parameters:
     ///   - status: 429（レート制限）/ 403（権限なし）/ 500（一時障害）など。
     ///   - times: 失敗させる回数（既定 -1＝ずっと）。
-    func failUploads(matching fragment: String, status: Int = 429, times: Int = -1) {
+    public func failUploads(matching fragment: String, status: Int = 429, times: Int = -1) {
         uploadFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
     }
 
     /// `files/get_metadata` のうち、パスにこの語を含むものを失敗させる。
     /// オフロードの**照合**（hash・サイズ）が取れない回を作るために使う。
-    func failGetMetadata(matching fragment: String, status: Int = 429, times: Int = -1) {
+    public func failGetMetadata(matching fragment: String, status: Int = 429, times: Int = -1) {
         metadataFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
     }
 
@@ -107,18 +124,18 @@ actor FakeDropboxServer: HTTPClient {
     /// ⚠️ メタデータの読み書きで「**無い**」と「**取れなかった**」を区別できているかを見るために要る
     /// （取れなかった回に空として上書きすると、その月の記録が丸ごと消える）。
     /// 401（トークン切れ）・429・500 など。
-    func failDownloads(matching fragment: String, status: Int = 401, times: Int = -1) {
+    public func failDownloads(matching fragment: String, status: Int = 401, times: Int = -1) {
         downloadFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
     }
 
     /// `list_folder/continue`（2 ページ目以降）を失敗させる。
     /// ⚠️ 照合は「一覧が全部取れたこと」が前提で、**途中で失敗した回に 1 ページ目を全部と
     /// 読むと、残り全部の記録が消える**（オフロード済みなら写真がアプリから消える）。
-    var failListFolderContinue = false
-    func setFailListFolderContinue(_ value: Bool) { failListFolderContinue = value }
+    public var failListFolderContinue = false
+    public func setFailListFolderContinue(_ value: Bool) { failListFolderContinue = value }
 
     /// 注入した失敗をすべて解除する（「レート制限が明けた」「権限が戻った」を作る）。
-    func clearFailures() {
+    public func clearFailures() {
         uploadFailures.removeAll()
         metadataFailures.removeAll()
         downloadFailures.removeAll()
@@ -146,55 +163,59 @@ actor FakeDropboxServer: HTTPClient {
         }
     }
 
-    init(files: [String: Entry] = [:]) { self.files = files }
+    public init(files: [String: Entry] = [:]) { self.files = files }
 
     /// 既存ファイルを直接置く（テストの前提条件づくり）。
-    func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1) {
+    public func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1) {
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder,
                                          rev: "r\(files.count)", size: size)
     }
 
     /// 中身つきでファイルを置く（他端末がアップロードした解析データ等を模す）。content_hash は本物と同じ計算。
-    func upload(path: String, data: Data) {
+    public func upload(path: String, data: Data) {
         let key = path.lowercased()
+        note(key, deleted: false)
         bodies[key] = data
         files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false,
                            rev: "r\(files.count)", size: data.count)
     }
 
     /// 外部（他端末・Dropbox の Web UI）からの削除を模す。
-    func remove(_ path: String) { files.removeValue(forKey: path.lowercased()) }
+    public func remove(_ path: String) {
+        files.removeValue(forKey: path.lowercased())
+        note(path, deleted: true)
+    }
 
     /// 現在のファイル一覧（フォルダを除く・パス昇順）。
-    func filePaths() -> [String] {
+    public func filePaths() -> [String] {
         files.filter { !$0.value.isFolder }.keys.sorted()
     }
 
     /// そのパスに**いま置かれている中身**（アップロードされたもの・seed した本体）。
     /// 「書いた JSON が意図どおりか」を確かめるのに使う。
-    func body(at path: String) -> Data? { bodies[path.lowercased()] }
+    public func body(at path: String) -> Data? { bodies[path.lowercased()] }
 
     /// アップロードが要求された順のパス一覧（**失敗した回も含む**）。
     /// 「何回・どの順で送ったか」を数えるために使う（ADR-119 の考え方＝回数で見る）。
-    private(set) var uploadedPaths: [String] = []
+    public private(set) var uploadedPaths: [String] = []
 
     /// アップロード（`files/upload`）の回数。「無駄に上げ直していないか」の検証用。
     /// ⚠️ 結果（ファイルの有無）だけを見ると、毎回上げ直す実装でも通ってしまう。
-    func uploadCount() -> Int {
+    public func uploadCount() -> Int {
         requestLog.filter { $0.contains("files/upload") }.count
     }
 
-    func setJobsTimeOutButComplete(_ value: Bool) { jobsTimeOutButComplete = value }
-    func setRateLimit(everyNth: Int) { rateLimitEveryNthRequest = everyNth }
-    func setFailCopyPaths(_ paths: Set<String>) { failCopyPaths = paths }
-    func setFailDeletePaths(_ paths: Set<String>) { failDeletePaths = paths }
-    func setFailMove(_ value: Bool) { failMove = value }
+    public func setJobsTimeOutButComplete(_ value: Bool) { jobsTimeOutButComplete = value }
+    public func setRateLimit(everyNth: Int) { rateLimitEveryNthRequest = everyNth }
+    public func setFailCopyPaths(_ paths: Set<String>) { failCopyPaths = paths }
+    public func setFailDeletePaths(_ paths: Set<String>) { failDeletePaths = paths }
+    public func setFailMove(_ value: Bool) { failMove = value }
     /// ページングを踏ませる（本物は 2,000 件/ページ・`has_more` と `list_folder/continue`）。
-    func setPageSize(_ value: Int) { pageSize = max(1, value) }
+    public func setPageSize(_ value: Int) { pageSize = max(1, value) }
 
     // MARK: - HTTPClient
 
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+    public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         let url = request.url!.absoluteString
         requestCount += 1
         requestLog.append(url)
@@ -215,6 +236,17 @@ actor FakeDropboxServer: HTTPClient {
         if url.contains("files/move_v2")  { return handleMove(body, resp) }
         if url.contains("copy_batch_v2") { return handleCopyBatch(body, resp) }
         if url.contains("delete_batch")  { return handleDeleteBatch(body, resp) }
+        if url.contains("list_folder/get_latest_cursor") {
+            // 「いまの状態」を指すカーソル。以後の `continue` はここから先の変更だけを返す。
+            return resp(200, #"{"cursor":"rev-\#(revision)"}"#)
+        }
+        if url.contains("list_folder/longpoll") {
+            // 本物は変更があるまで待つ。偽物は**その場で答える**（テストを待たせない）。
+            struct Body: Decodable { let cursor: String }
+            let cursor = (try? JSONDecoder().decode(Body.self, from: body))?.cursor ?? ""
+            let since = Self.deltaRevision(of: cursor) ?? revision
+            return resp(200, #"{"changes":\#(revision > since ? "true" : "false")}"#)
+        }
         if url.contains("list_folder/continue") {
             if failListFolderContinue { return resp(500, Self.errorBody(500)) }
             return handleListFolderContinue(body, resp)
@@ -396,8 +428,25 @@ actor FakeDropboxServer: HTTPClient {
     private func handleListFolderContinue(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
         struct Body: Decodable { let cursor: String }
-        guard let parsed = try? JSONDecoder().decode(Body.self, from: body),
-              let remaining = cursors.removeValue(forKey: parsed.cursor) else {
+        guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
+            return resp(409, #"{"error_summary":"reset/"}"#)
+        }
+        // (a) 差分カーソル（`rev-<n>`）＝「この番号より後の変更」を返す。
+        if let since = Self.deltaRevision(of: parsed.cursor) {
+            var latest: [String: Bool] = [:]        // path → 消えたか（同じパスは最後の状態）
+            for change in changeLog where change.revision > since {
+                latest[change.path] = change.deleted
+            }
+            let entries = latest.sorted { $0.key < $1.key }.map { path, deleted -> String in
+                if deleted { return #"{".tag":"deleted","path_lower":"\#(path)"}"# }
+                let entry = files[path]
+                let name = (path as NSString).lastPathComponent
+                return #"{".tag":"file","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry?.rev ?? "r")","content_hash":"\#(entry?.contentHash ?? "")"}"#
+            }
+            return resp(200, #"{"entries":[\#(entries.joined(separator: ","))],"cursor":"rev-\#(revision)","has_more":false}"#)
+        }
+        // (b) ページ送りカーソル＝1 回の一覧の続き。
+        guard let remaining = cursors.removeValue(forKey: parsed.cursor) else {
             return resp(409, #"{"error_summary":"reset/"}"#)
         }
         return page(remaining, resp)
@@ -460,6 +509,7 @@ actor FakeDropboxServer: HTTPClient {
         bodies[key] = body
         files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)",
                            size: body.count)
+        note(key, deleted: false)
         return resp(200, #"{"path_lower":"\#(key)","content_hash":"\#(hash)"}"#)
     }
 
@@ -492,6 +542,7 @@ actor FakeDropboxServer: HTTPClient {
 }
 
 /// 常に同じトークンを返す（偽サーバーは検証しない）。
-final class FakeTokenProvider: AccessTokenProvider, @unchecked Sendable {
-    func freshAccessToken() async throws -> String { "test-token" }
+public final class FakeTokenProvider: AccessTokenProvider, @unchecked Sendable {
+    public init() {}
+    public func freshAccessToken() async throws -> String { "test-token" }
 }
