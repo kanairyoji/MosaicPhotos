@@ -58,6 +58,7 @@ extension PeopleEngine {
         // 1 回答につき 1 回フォアグラウンドが固まる（実機 diagnostics-38・ADR-95）ので、
         // 静止してから 1 回だけ反映する。カードの供給元は `reviewItems` で `people` ではない。
         setNeedsPeopleReload()
+        notifyPeopleEdited()     // 統合・notSame は人物の構成を変える操作（レビュー指摘）
     }
 
     // MARK: - 品質スナップショット（ADR-68）
@@ -125,7 +126,10 @@ extension PeopleEngine {
         // 誤統合の痕跡（1 枚に同じ人物が 2 回）はその場で自動修復する。
         // ユーザーに毎回選ばせる操作ではない（実フィードバック・ADR-68 追補6）。
         await store.repairSamePhotoViolations()
-        await loadPeople()
+        // ⚠️ `loadPeople()` を直に呼ばない（レビュー指摘）。この画面は再発行を保留しており、
+        // 直呼びは保留を素通りして**回答のたびに 2〜4 秒のメインハング**を出す（diagnostics-51）。
+        setNeedsPeopleReload()
+        notifyPeopleEdited()          // 統合・notSame は人物の構成を変える操作
         return rejected
     }
 
@@ -154,6 +158,7 @@ extension PeopleEngine {
         }
         await refreshUndoLabel()
         setNeedsPeopleReload()   // 連続回答をまとめる（ADR-95）
+        notifyPeopleEdited()     // 分割は人物の構成を変える操作（レビュー指摘）
     }
 
     /// 「この写真は「◯◯」さんですか？」への回答（A2）。
@@ -168,6 +173,7 @@ extension PeopleEngine {
         }
         await refreshUndoLabel()
         setNeedsPeopleReload()   // 連続回答をまとめる（ADR-95）
+        notifyPeopleEdited()     // 「この人ではない」は人物の構成を変える操作（レビュー指摘）
     }
 
     // MARK: - 制約付き再クラスタリング（B2・ADR-46）

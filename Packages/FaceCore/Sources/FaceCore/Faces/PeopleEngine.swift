@@ -332,6 +332,14 @@ public final class PeopleEngine {
                 //    人物リストを再発行し続けることになる（実機で 600〜1000ms のハングが
                 //    その回数ぶん出ていた・ADR-95）。スキャン進捗の反映は急がないのでまとめる。
                 onBatch: { [weak self] in self?.setNeedsPeopleReload() })
+            // ⚠️ **止められたらここで降りる**（レビュー指摘）。`tagger.scan` は取り消しを
+            // 受けると**正常に返る**ので、確認しないと下の仕上げへそのまま流れ込む。
+            // 処理枠の期限切れは `stopScan()` → `setTaskCompleted(success: false)` の順で走り、
+            // その時点では背面・充電・アイドルなので `shouldYield()` は false——
+            // **OS に「窓は終わった」と告げた後で全再クラスタが始まり**、書き込みの途中で
+            // 中断・終了され得る。前面復帰（ADR-79）でも、譲ってほしい場面で名前の貼り直しと
+            // **世代の切り替え**（`promoteShadowIfReady`）まで走ってしまう。
+            guard !Task.isCancelled else { return }
             // B2: スキャン完了後、修正が増えていれば制約付き再クラスタリングで全体を最適化
             //（夜間ウィンドウ内・数秒・順序依存の誤りを解消する）。
             // 版上げ再スキャン中なら、進んだ分だけ名前を段階的に戻す（数晩に分かれても可）。
@@ -401,6 +409,21 @@ public final class PeopleEngine {
     /// 並べない（ADR-122 と同じ向き）。掃除は連続操作を 1 回にまとめて背景で回す。
     func loadPeopleAfterEdit() async {
         await loadPeople()
+        notifyPeopleEdited()
+    }
+
+    /// 「人物の構成が利用者の操作で変わった」ことだけを知らせる（一覧の再読み込みは含まない）。
+    ///
+    /// ⚠️ **レビュー画面の回答からも呼ぶ**（レビュー指摘）。統合・分割・「この人ではない」は
+    /// どれも人物の構成を変える操作なのに、レビュー経由だと `editVersion` が上がらず
+    /// `onPeopleEdited` も走っていなかった。結果、**分けたばかりの人物の写真が
+    /// AI アルバムに残り**、開いたままのグループアルバムも描き直されない
+    /// （`onPeopleEdited` の説明は「XX ではない・付け替え・統合・分割」を挙げているのに、
+    /// その 4 つのどれもレビュー経由では通っていなかった）。
+    ///
+    /// 一覧の再読み込みと**分けてある**のは、レビュー表示中は再発行を保留したいから
+    /// （`setNeedsPeopleReload` の保留は 900 人規模で 2〜4 秒のメインハングを避けるため）。
+    func notifyPeopleEdited() {
         editVersion &+= 1
         scheduleEditFollowUp()
     }
@@ -428,6 +451,11 @@ public final class PeopleEngine {
             if !snapshot.isEmpty { saveCarryover(NameCarryover(savedAt: Date(), entries:
                 snapshot.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) })) }
             await store.reset()
+            // ⚠️ **控えも捨てる**（レビュー指摘）。`reset()` は `undoStack` を消さないので、
+            // 「戻す」の行が残ったまま押せてしまう。押すと消えたはずのクラスタ ID の行を
+            // **名前つき・顔ゼロで作り直し**、空の人物が一覧に居座る。
+            // 再クラスタ・`reset(includingCorrections:)` は同じ理由で既にそうしている。
+            await clearUndoHistory()
             // clusterID が振り直される＝外部が持つ人物参照は当てにならない。
             await onPersonIdentitiesInvalidated?()
             Diagnostics.mark("faces: scan pipeline v\(stored == 0 ? 1 : stored)→v\(current) "
@@ -505,26 +533,25 @@ public final class PeopleEngine {
     }
 
 
-    /// 写真（`PhotoItem.id`：生 localIdentifier か "L-…" refKey）に写っている人物の表示名。
-    /// フル画像ビューの People 表示に使う。顔スキャンは端末写真のみなのでクラウドは空。
+    /// 写真（`PhotoItem.id`：生 localIdentifier / 生 Dropbox パス / "L-…" / "C-…"）に
+    /// 写っている人物の表示名。フル画像ビューの People 表示に使う。
+    ///
+    /// ⚠️ **クラウドの refKey も試す**（レビュー指摘）。ADR-90 以降クラウド写真も顔を検出して
+    /// いるのに、ここだけ `"L-"` しか試していなかった。Cloud タブの `DropboxFileItem.id` は
+    /// **接頭辞の無い生パス**なので、同じ画面で**顔の黄枠は出るのに人物名は空**という
+    /// 食い違いになる（黄枠と長押しの「この人ではない」は `refKeyCandidates` を使っている）。
     public func names(forItemID id: String) async -> [String] {
-        var candidates: [String] = []
-        if PhotoRef.decode(id) != nil { candidates.append(id) }
-        candidates.append(PhotoRef.local(id).encoded)
-        for key in candidates {
+        for key in Self.refKeyCandidates(for: id) {
             let names = await store.peopleNames(refKey: key, minFaces: minFaces)
             if !names.isEmpty { return names }
         }
         return []
     }
 
-    /// 写真（`PhotoItem.id`：生 localIdentifier か "L-…" refKey）に写っている顔の数（実測）。
-    /// フル画像ビューの表示用。未スキャン（クラウド含む）は nil＝「まだ数えていない」。
+    /// 写真に写っている顔の数（実測）。フル画像ビューの表示用。
+    /// 未スキャンは nil＝「まだ数えていない」。`names(forItemID:)` と同じ候補を試す。
     public func faceCount(forItemID id: String) async -> Int? {
-        var candidates: [String] = []
-        if PhotoRef.decode(id) != nil { candidates.append(id) }
-        candidates.append(PhotoRef.local(id).encoded)
-        for key in candidates {
+        for key in Self.refKeyCandidates(for: id) {
             if let n = await store.faceCount(refKey: key) { return n }
         }
         return nil

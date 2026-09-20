@@ -24,7 +24,11 @@ extension PeopleEngine {
         Diagnostics.breadcrumb("people.undo")
         let undone = await store.undoLast()
         await refreshUndoLabel()
-        await loadPeople()
+        // ⚠️ `loadPeople()` を直に呼ばない（レビュー指摘）。「戻す」はレビュー画面からしか
+        // 押せず、その画面は再発行を保留している。直呼びは保留を素通りして
+        // **2〜4 秒のメインハング**を出す（diagnostics-51）。
+        setNeedsPeopleReload()
+        notifyPeopleEdited()     // 取り消しも人物の構成を変える
         return undone
     }
 

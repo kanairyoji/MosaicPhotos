@@ -67,6 +67,11 @@ extension PeopleEngine {
             }
         }
         // 3. 切り替え（旧コンテナは消さない）。
+        // ⚠️ **控えを捨ててから差し替える**（レビュー指摘）。`undoStack` は `FaceStore` が
+        // メモリに持つので、差し替えると空になるのに **`undoLabel` は published のまま残る**
+        // ——「戻す」の行が出ているのに押しても何も起きない。
+        // 再クラスタ（`rebuildClustersIfNeeded`）と `reset` は同じ理由で既にそうしている。
+        await clearUndoHistory()
         store = shadow
         shadowStore = nil
         tagger = FaceTagger(store: shadow, provider: faceProvider)
