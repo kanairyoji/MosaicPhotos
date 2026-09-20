@@ -623,6 +623,32 @@ struct PendingMetadataDrainTests {
         #expect(catalog.people == ["名前"], "空の索引で人物名を消した")
     }
 
+    /// ⚠️ **1 回の実行で同じシャードを 2 度送らない**（ADR-200）。
+    /// 旧実装は実行の前半（背景経路の先出し＝`drainPendingMetadata`）と後半（`writeMetadata`）の
+    /// 両方がキューを読み、前半はジャーナルを消さないので同じ行が 2 回流れていた。
+    /// 通信は課金と枠の消費なので、**回数で**確かめる（ADR-119 の考え方）。
+    @Test("先出しと本送信が続けて走っても、同じシャードは 1 回しか送らない")
+    func theSameShardIsSentOnce() async {
+        let server = MarkerRecorder()
+        let store = queue([:])
+        // 写真 1 枚ぶんがジャーナルに入った状態（アップロード完了ごとに 1 行足される）。
+        #expect(store.appendEntry(
+            shard: "2023-11", path: "/backup/a.jpg",
+            entry: DropboxBackupMetadata.Entry(people: ["名前"], albums: ["Trip"],
+                                               localIdentifier: "a")))
+        let runner = makeRunner(StubRunnerDelegate(), server)
+
+        // 実行の前半（背景経路の先出し）→ 後半（本送信）。
+        await runner.drainPendingMetadata(folder: "/backup", pendingStore: store)
+        await runner.writeMetadata(newEntries: [], indexes: BackupRunner.Indexes(people: [:], albums: [:], albumIDs: [:]),
+                                   folder: "/backup", token: "t")
+
+        let shardUploads = await server.uploaded.filter { $0.contains("meta/2023-11") }
+        #expect(shardUploads.count == 1,
+                "同じシャードを \(shardUploads.count) 回送っている（通信と枠の無駄・二重送信）")
+        #expect(store.load().isEmpty, "送れたのにキューに残っている")
+    }
+
     @Test("送れなかった分はキューに残る")
     func failedEntriesStayQueued() async {
         let server = MarkerRecorder()

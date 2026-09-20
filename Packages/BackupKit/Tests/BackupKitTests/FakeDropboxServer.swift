@@ -87,10 +87,17 @@ actor FakeDropboxServer: HTTPClient {
         metadataFailures[fragment.lowercased()] = Failure(status: status, remaining: times)
     }
 
+    /// `list_folder/continue`（2 ページ目以降）を失敗させる。
+    /// ⚠️ 照合は「一覧が全部取れたこと」が前提で、**途中で失敗した回に 1 ページ目を全部と
+    /// 読むと、残り全部の記録が消える**（オフロード済みなら写真がアプリから消える）。
+    var failListFolderContinue = false
+    func setFailListFolderContinue(_ value: Bool) { failListFolderContinue = value }
+
     /// 注入した失敗をすべて解除する（「レート制限が明けた」「権限が戻った」を作る）。
     func clearFailures() {
         uploadFailures.removeAll()
         metadataFailures.removeAll()
+        failListFolderContinue = false
     }
 
     /// 失敗させるべきか判定し、回数を 1 減らす。
@@ -174,7 +181,10 @@ actor FakeDropboxServer: HTTPClient {
         if url.contains("files/move_v2")  { return handleMove(body, resp) }
         if url.contains("copy_batch_v2") { return handleCopyBatch(body, resp) }
         if url.contains("delete_batch")  { return handleDeleteBatch(body, resp) }
-        if url.contains("list_folder/continue") { return handleListFolderContinue(body, resp) }
+        if url.contains("list_folder/continue") {
+            if failListFolderContinue { return resp(500, Self.errorBody(500)) }
+            return handleListFolderContinue(body, resp)
+        }
         if url.contains("list_folder")   { return handleListFolder(body, resp) }
         if url.contains("get_metadata")  { return handleGetMetadata(body, resp) }
         if url.contains("files/upload")  { return handleUpload(request, resp) }
@@ -378,18 +388,32 @@ actor FakeDropboxServer: HTTPClient {
 
     private func handleUpload(_ request: URLRequest, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
-        struct Arg: Decodable { let path: String }
+        struct Arg: Decodable {
+            let path: String
+            let mode: String?
+            let autorename: Bool?
+        }
         guard let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg"),
               let arg = try? JSONDecoder().decode(Arg.self, from: Data(header.utf8)) else {
             return resp(400, "{}")
         }
-        let key = arg.path.lowercased()
+        var key = arg.path.lowercased()
         if let status = consumeFailure(in: &uploadFailures, path: key) {
             return resp(status, Self.errorBody(status))
         }
         let body = request.httpBody ?? Data()
         // 本物と同じ content_hash を返す（アップロードの検証経路をそのまま通せる）。
         let hash = DropboxContentHash.hash(of: body)
+        // ⚠️ **`mode=add` の衝突を本物どおりに返す**。以前は常に上書きしていたため、
+        // バックアップの「409 → 同一性確認 → autorename で再試行」という現実の経路を
+        // 一度も通せなかった（別名保存された写真の**実際の保存先**を台帳が持てているか、
+        // という検証がまるごと抜けていた）。
+        if arg.mode == "add", let existing = files[key], existing.contentHash != hash {
+            guard arg.autorename == true else {
+                return resp(409, #"{"error_summary":"path/conflict/file/.."}"#)
+            }
+            key = Self.autorenamed(key, existing: Set(files.keys)).lowercased()
+        }
         bodies[key] = body
         files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)",
                            size: body.count)
