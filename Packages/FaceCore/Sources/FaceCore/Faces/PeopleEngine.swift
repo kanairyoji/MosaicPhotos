@@ -609,13 +609,24 @@ public final class PeopleEngine {
     public func pruneMissingPhotos(candidateRefKeys: [String], knownGone: Set<String> = []) async -> Int {
         guard isFaceModelAvailable, !candidateRefKeys.isEmpty else { return 0 }
         let orphans = await store.repairOrphanFaces()
-        if orphans > 0 { Diagnostics.mark("faces: repaired \(orphans) orphan face(s) (ADR-187)") }
+        if orphans > 0 {
+            // 孤児の顔は所属を書き換える＝戻す先が変わっている。
+            await clearUndoHistory()
+            Diagnostics.mark("faces: repaired \(orphans) orphan face(s) (ADR-187)")
+        }
         guard let result = await store.pruneMissingPhotos(existingRefKeys: Set(candidateRefKeys),
                                                           knownGone: knownGone) else {
             Diagnostics.mark("faces: prune skipped — candidates look incomplete")
             return 0
         }
         if result.faces > 0 || result.clusters > 0 {
+            // ⚠️ **ここも控えを捨てる**（レビュー 15 周目）。掃除は顔の行を消し、
+            // その分をクラスタの重心から引き、空になった行を消す——**戻す先が変わっている**。
+            // 捨てないと「戻す」が、消えた顔のぶんを含む古い重心を書き戻し、
+            // 掃除で消えた行を**顔ゼロ・重心つき**で復活させる（次のスキャンで二重に数える）。
+            // 再クラスタ・版上げ・世代の切り替え・断片の吸収は既にそうしており、
+            // **写真が消えたときの掃除だけが漏れていた**。
+            await clearUndoHistory()
             Diagnostics.mark("faces: pruned faces=\(result.faces) photos=\(result.photos) emptyClusters=\(result.clusters)")
             await loadPeople()
         }
