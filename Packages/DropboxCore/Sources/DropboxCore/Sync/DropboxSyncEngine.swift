@@ -310,13 +310,6 @@ final class DropboxSyncEngine {
             let path: String
             let recursive = true
             let limit = DropboxInternalConstants.listFolderPageLimit
-            // ⚠️ **ここにも付ける**（レビュー 16 周目）。`continue` は「元の呼び出しの設定を
-            // 引き継ぐ」——その「元の呼び出し」は `list_folder` ではなく**このカーソルを作った
-            // 呼び出し**。初回スキャンが作るカーソルは捨てられ、生き残るのはここで取った
-            // カーソルだけなので、付けないと**最初の同期のあとに増えた写真すべて**で
-            // `media_info` が来なくなる＝撮影日が `client_modified`（アップロード時刻）に落ち、
-            // 撮影地も付かない。「時系列に並ばない」（ADR-128・ADR-199）の残っていた根。
-            let include_media_info = true
         }
         struct Response: Decodable { let cursor: String }
 
@@ -344,8 +337,14 @@ final class DropboxSyncEngine {
             url = DropboxInternalConstants.listFolderContinueURL
             body = try JSONEncoder().encode(Body(cursor: cursor))
         } else {
-            // include_media_info=true で各ファイルの media_info（撮影地・撮影日時）を取得する。
-            // continue 側は元の list_folder の設定を引き継ぐため指定不要。
+            // ⚠️ **`media_info` はここでは返ってこない**（Dropbox 公式 SDK の記述・
+            // 「This field will not be set on entries returned by list_folder,
+            // list_folder_continue, or get_thumbnail_batch, **starting December 2, 2019**」）。
+            // `include_media_info` を付けても無視されるので、**一覧から撮影日時・撮影地は取れない**。
+            // 引数は害が無いので残す（将来仕様が戻ったときの意図表明）。
+            // 撮影地を取っている唯一の経路は `DropboxPhotoStore+Location` の
+            // `files/get_metadata`（1 枚ずつ・4〜6 秒）で、そちらは対象外なので今も効く。
+            // 撮影日をどう取るかは未解決（`unresolved-problems.md`）。
             struct Body: Encodable {
                 let path: String
                 let recursive: Bool
