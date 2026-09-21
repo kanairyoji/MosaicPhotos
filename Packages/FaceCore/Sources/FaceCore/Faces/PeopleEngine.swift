@@ -299,7 +299,9 @@ public final class PeopleEngine {
     @discardableResult
     public func measureBacklogIfUnknown(candidateRefKeys: [String]) async -> Bool {
         guard isFaceModelAvailable, faceBacklog == nil else { return false }
-        let pending = await store.pendingCount(candidateRefKeys: candidateRefKeys)
+        // ⚠️ **スキャンが走る側の台帳で測る**。影の世代（モデル更新中）はスキャンが
+        // そちらへ向かうので、現行世代で測ると「もう全部済んでいる」と出てしまう。
+        let pending = await (shadowStore ?? store).pendingCount(candidateRefKeys: candidateRefKeys)
         faceBacklog = pending
         Diagnostics.mark("faces: backlog measured without scanning — \(pending)")
         return true

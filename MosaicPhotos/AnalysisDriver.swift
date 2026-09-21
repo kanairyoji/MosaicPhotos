@@ -140,18 +140,35 @@ final class AnalysisDriver {
         // 顔（候補の列挙は短時間だけ使い回す）。
         if people.isFaceModelAvailable, !people.isScanning {
             let candidates = await candidatesReusingCache(now: now)
+            let allowSim = BackgroundYield.exemption == .debug
+                || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
             if !Task.isCancelled, BackgroundYield.allows(.localTrickle) {
-                let allowSim = BackgroundYield.exemption == .debug
-                    || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
                 people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
             }
             // ⚠️ **起こせなかった回こそ、残作業を測っておく**（ADR-207）。測らないと
             // 「終わったから 0」と「始められなかったから 0」が区別できず、完了の表示が嘘になる。
-            // シミュレータ・取り消し・ゲートの再判定で降りた場合もここへ来る。
+            // 取り消し・ゲートの再判定で降りた場合もここへ来る。
             // 測るのは**この起動で一度も測っていないとき**だけ（以後はスキャン側が更新する）。
-            await people.measureBacklogIfUnknown(candidateRefKeys: candidates.ordered)
+            //
+            // ⚠️ ただし**この構成では一生スキャンしない**ぶんは数えない（レビュー 5 周目）。
+            // シミュレータは既定で顔スキャンを走らせないので、そこで残作業を数えると
+            // ブーストが**永久に完了しない**（残りがあるのに誰も減らせない）。
+            // 「まだ終わっていない」ではなく「ここでは行わない」なので、0 が正しい。
+            if canScanFacesHere(allowSimulator: allowSim) {
+                await people.measureBacklogIfUnknown(candidateRefKeys: candidates.ordered)
+            }
         }
         return engine.isTagging || people.isScanning
+    }
+
+    /// この端末・この設定で顔スキャンが**そもそも走り得るか**（ADR-207）。
+    /// シミュレータは既定で走らせない（CLIP が cpuOnly で 1 枚数秒かかり検証の妨げになる）。
+    private func canScanFacesHere(allowSimulator: Bool) -> Bool {
+        #if targetEnvironment(simulator)
+        return allowSimulator
+        #else
+        return true
+        #endif
     }
 
     /// 前面にいる間、20 秒アイドルを検知して起こす（`scenePhase == .active` で始め、離れたら止める）。

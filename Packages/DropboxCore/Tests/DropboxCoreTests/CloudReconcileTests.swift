@@ -56,6 +56,22 @@ import DropboxTestSupport
 @MainActor
 struct CloudReconcileSyncTests {
 
+    /// 見直しを終えたルートの数（`initialSyncCompletedAt` が基準より進んだもの）。
+    private func rescannedCount(_ scopes: [String], in cache: DropboxCacheStore,
+                                after baseline: Date) async -> Int {
+        var count = 0
+        for scope in scopes {
+            if let last = await cache.syncStateInfo(accountId: scope)?.initialSyncCompletedAt,
+               last > baseline { count += 1 }
+        }
+        return count
+    }
+
+    private func allRescanned(_ scopes: [String], in cache: DropboxCacheStore,
+                              after baseline: Date) async -> Bool {
+        await rescannedCount(scopes, in: cache, after: baseline) == scopes.count
+    }
+
     /// `allSatisfy` の async 版（待ち条件をルートごとに書くため）。
     private func allComplete(_ scopes: [String], in cache: DropboxCacheStore) async -> Bool {
         for scope in scopes {
@@ -241,8 +257,8 @@ struct CloudReconcileSyncTests {
         let baseCursor = await server.requestLog.filter { $0.contains("get_latest_cursor") }.count
         let baseLongpoll = await server.requestLog.filter { $0.contains("longpoll") }.count
 
-        let engine = makeEngine(server, cache: cache, recorder: recorder)
-        engine.start(accountId: account, roots: roots)
+        let engine2 = makeEngine(server, cache: cache, recorder: recorder)
+        engine2.start(accountId: account, roots: roots)
         // ⚠️ **時間で待たない**。「1 本目が見直しに入り、かつ 2 本目が判断を終えた」
         // ところまで待つ。longpoll は**ポーリングへ回ったルートしか投げない**ので、
         // それが 1 本出たことが「2 本目は見直しを見送った」の証拠になる。
@@ -253,11 +269,27 @@ struct CloudReconcileSyncTests {
             return cursors > baseCursor && polls > baseLongpoll
         }
         let during = (await server.requestLog.filter { $0.contains("get_latest_cursor") }.count) - baseCursor
-        engine.stop()
 
         #expect(during == 1, """
                 1 本目の見直しの最中に \(during) 本が全件一覧を始めている。
                 実機のルート 3 本は同じ日に期限を迎えるので、これは必ず起きる。
+                """)
+
+        // ⚠️ **「1 本ずつ」は「最初の 1 本だけ」ではない**（クラウドレビューの指摘）。
+        // 確保を返し忘れると、2 本目以降はそのセッション中ずっと見直されない——
+        // 重なりだけを見るテストでは、その状態も緑になる。
+        // 1 本目が終わったあと、2 本目も順番が回ってくることまで見る。
+        // ⚠️ 待つのは「一覧を始めた回数」ではなく**両方が見直しを終えたこと**
+        //（始めただけで数えると、2 本目が走り出した瞬間に止めてしまう）。
+        await server.setResponseDelay(milliseconds: 0)
+        let scopes = roots.map { self.account + "|" + $0.lowercased() }
+        await waitUntil(10) { await self.allRescanned(scopes, in: cache, after: stale) }
+        let done = await rescannedCount(scopes, in: cache, after: stale)
+        engine2.stop()
+
+        #expect(done == scopes.count, """
+                見直しを終えたのは \(done)/\(scopes.count) 本だけ。
+                確保を返していないと、最初の 1 本以外はセッション中ずっと見直されない。
                 """)
     }
 

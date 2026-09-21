@@ -187,7 +187,16 @@ final class DropboxSyncEngine {
     private func initialSync(accountId: String, root: String, scopeKey: String,
                              isPrimary: Bool, isReconcile: Bool = false) async -> Bool {
         // 確保は `syncOnce` が済ませている（判定と地続きにするため）。ここでは返すだけ。
-        defer { if isReconcile { isReconcilingAnyRoot = false } }
+        //
+        // ⚠️ **`defer` だけに任せない**（クラウドレビューの指摘・レビュー 5 周目）。
+        // この関数は全件走査のあと `return await pollLoop(...)` で**末尾呼び出し**するので、
+        // `defer` が走るのは pollLoop が返ったとき——つまりカーソル失効・ルート消失・
+        // 取り消しが起きるまで走らない。結果、確保が返らず
+        // **「1 本ずつ」ではなく「最初の 1 本だけ」**になっていた（他のルートは
+        // そのセッション中ずっと見直されない）。走査を終えた時点で明示的に返す。
+        // `defer` は取りこぼし（throw・途中 return）の安全弁として残す。
+        func releaseReconcileSlot() { if isReconcile { isReconcilingAnyRoot = false } }
+        defer { releaseReconcileSlot() }
         do {
             if !isReconcile { reportState(.initialSync(fetched: 0), isPrimary: isPrimary) }
 
@@ -278,6 +287,7 @@ final class DropboxSyncEngine {
             await cache.markInitialSyncCompleted(accountId: scopeKey, at: completedAt)
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(isReconcile ? "weekly reconcile" : "initial sync") complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
+            releaseReconcileSlot()   // 走査はここで終わり。次のルートへ譲る。
             return await pollLoop(scopeKey: scopeKey, root: root,
                                   startCursor: baselineCursor, isPrimary: isPrimary,
                                   lastFullScan: completedAt)
@@ -298,6 +308,7 @@ final class DropboxSyncEngine {
                 if let cursor = state?.cursor, !Task.isCancelled {
                     DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: "
                         + "reconcile failed — back to polling (will retry next launch)")
+                    releaseReconcileSlot()   // 失敗でも走査は終わり。次のルートへ譲る。
                     return await pollLoop(scopeKey: scopeKey, root: root, startCursor: cursor,
                                           isPrimary: isPrimary,
                                           lastFullScan: state?.initialSyncCompletedAt)
