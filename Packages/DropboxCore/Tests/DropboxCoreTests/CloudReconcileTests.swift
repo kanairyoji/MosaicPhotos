@@ -237,14 +237,22 @@ struct CloudReconcileSyncTests {
         // ⚠️ 数えるのは `callCounts()` ではなく `requestLog`。前者は**応答を返した後**に
         // 積むので、飛行中のリクエストが見えない——「同時に走っていないこと」を
         // 見たいのに、遅い応答ほど数えられなくなる（最初にこれで 0 件と出た）。
-        // ⚠️ 見る時刻は遅延の半分以下にする（余裕 2.5 倍）。
         await server.setResponseDelay(milliseconds: 500)
-        let before = await server.requestLog.filter { $0.contains("get_latest_cursor") }.count
+        let baseCursor = await server.requestLog.filter { $0.contains("get_latest_cursor") }.count
+        let baseLongpoll = await server.requestLog.filter { $0.contains("longpoll") }.count
 
         let engine = makeEngine(server, cache: cache, recorder: recorder)
         engine.start(accountId: account, roots: roots)
-        try? await Task.sleep(for: .milliseconds(200))
-        let during = (await server.requestLog.filter { $0.contains("get_latest_cursor") }.count) - before
+        // ⚠️ **時間で待たない**。「1 本目が見直しに入り、かつ 2 本目が判断を終えた」
+        // ところまで待つ。longpoll は**ポーリングへ回ったルートしか投げない**ので、
+        // それが 1 本出たことが「2 本目は見直しを見送った」の証拠になる。
+        // 固定の待ちにすると、遅いマシンではどちらもまだ動いておらず 0 本＝偽の赤になる。
+        await waitUntil {
+            let cursors = await server.requestLog.filter { $0.contains("get_latest_cursor") }.count
+            let polls = await server.requestLog.filter { $0.contains("longpoll") }.count
+            return cursors > baseCursor && polls > baseLongpoll
+        }
+        let during = (await server.requestLog.filter { $0.contains("get_latest_cursor") }.count) - baseCursor
         engine.stop()
 
         #expect(during == 1, """

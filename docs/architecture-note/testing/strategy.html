@@ -54,6 +54,17 @@
       </table>
       <p>対処は 2 つのどちらか——<strong>(1) 使い捨ての状態を注入する</strong>（<code>TestDefaults.scratch</code> / <code>PendingMetadataStore(directory:)</code> のように seam を用意する）か、<strong>(2) 触るテストを 1 つの <code>.serialized</code> Suite に集める</strong>。(1) が取れるなら (1) が良い（並列のまま速い）。本番コードが <code>.standard</code> を直接読む場合は (2) になる。</p>
 
+      <h2>⚠️ 非同期を「時間」で待たない</h2>
+      <p>背景処理のテストで <code>Task.sleep(200ms)</code> のような固定の待ちを置くと、<strong>込み合った回だけ何も起きないまま緑になる</strong>。単体では落ちるのに全体実行では通る——いちばん見つけにくい形の偽陽性で、ADR-119 の「空でも通る assert を書かない」が非同期の待ちでも出る。</p>
+      <table>
+        <tr><th>やりたいこと</th><th>× 時間で待つ</th><th>○ 事実で待つ</th></tr>
+        <tr><td>仕込んだ失敗を踏ませる</td><td><code>sleep(400ms)</code> のあと結果を見る</td><td><code>requestLog</code> にその往復が載るまで待つ</td></tr>
+        <tr><td>「同時に走っていない」を見る</td><td>遅延の半分で覗く</td><td>1 本目が始まり、<strong>かつ 2 本目が別の道（longpoll）へ回った</strong>ことまで待つ</td></tr>
+        <tr><td>処理が終わったことを見る</td><td>件数がそろうまで待つ</td><td><strong>完了の印</strong>（<code>initialSyncCompletedAt</code> 等）が立つまで待つ。件数は途中でもそろう</td></tr>
+      </table>
+      <p>⚠️ 観測点の選び方にも同じ罠がある。偽 Dropbox の <code>callCounts()</code> は<strong>応答を返した後</strong>に積むので、<strong>飛行中のリクエストが見えない</strong>——「同時に走っていないこと」を見たいのに、遅い応答ほど数えられなくなる（最初にこれで 0 件と出た）。入口で積む <code>requestLog</code> を使う。</p>
+      <p>⚠️ 仕込みの当たり先も確かめる。<code>FakeDropboxServer</code> のエンドポイント指定は<strong>部分一致</strong>なので、<code>files/list_folder</code> は <code>list_folder/longpoll</code> にも <code>get_latest_cursor</code> にも当たる。確かめたい経路の前提まで壊していないか見る。</p>
+
       <h2>実機ログも「テスト」の一部</h2>
       <p>シミュレータ・macOS では再現しない問題（ANE デッドロック・メモリ飢餓・OS スロットル・Core ML の fp16 破綻）があるため、<strong>実機の診断ログ（<code>Diagnostics</code>・<code>PerfTrace</code>・MetricKit）を継続的に読む運用</strong>を検証の最終段に置いている。「Mac で正常＝実機で正常」ではない、が繰り返し得られた教訓（詳細は<a href="../features/diagnostics.html">診断と堅牢性</a>）。</p>
 
