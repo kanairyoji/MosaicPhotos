@@ -100,6 +100,67 @@ struct CaptureDateProbeNetworkTests {
                 "訊けなかった回を『訊いた』と記録した（その写真は永久に直らない）")
     }
 
+    /// ⚠️ **「そこに無い」は訊けなかったのとは違う**（diagnostics-82）。
+    /// 消えた写真のキャッシュ行は候補の先頭（撮影日＝アップロード時刻＝いちばん新しい）に
+    /// 居座るので、記録しないと穴埋めが**その 12 件から一歩も進まない**。
+    /// 実機では 63 回連続で残り 80,172 件のまま動かず、734 回の 409 を費やした。
+    @Test("存在しないパスは『訊いた』と記録する（永久に叩き続けない）")
+    func permanentNotFoundIsRecorded() async {
+        let cache = await seeded()
+        let store = makeStore(cache, responder: Self.json(
+            #"{"error":{".tag":"path","path":{".tag":"not_found"}},"error_summary":"path/not_found/"}"#,
+            status: 409))
+
+        _ = await store.probeMediaInfo(for: path)
+
+        #expect(await cache.pathsNeedingCaptureDateProbe(limit: 10).isEmpty,
+                "無いと分かったパスを候補に残した（穴埋めがここで永久に止まる）")
+        #expect(await cache.cachedItems(accountId: "acc1").first?.captureDate == uploadedAt,
+                "訊けなかっただけで既存の日付を消した")
+    }
+
+    /// 穴埋めが**死んだ行に飲まれない**こと（実機の詰まりそのもの）。
+    @Test("存在しない写真が先頭にあっても、穴埋めは先へ進む")
+    func fillMakesProgressPastMissingFiles() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        // 撮影日が新しい順に候補へ並ぶので、消えた写真（＝アップロード時刻を持つ）が先頭に来る。
+        let newest = Date(timeIntervalSince1970: 1_800_000_000)
+        let gone = (0..<3).map {
+            DropboxFileItem(path: "/gone/\($0).jpg", name: "\($0).jpg",
+                            contentHash: "g\($0)", captureDate: newest)
+        }
+        let alive = (0..<2).map {
+            DropboxFileItem(path: "/cloud/\($0).jpg", name: "\($0).jpg",
+                            contentHash: "h\($0)", captureDate: uploadedAt)
+        }
+        await cache.applyDelta(accountId: "acc1", added: gone + alive, removed: [], newCursor: "c1")
+        let store = makeStore(cache) { request in
+            // ⚠️ JSONEncoder は "/" を "\/" と書く。パスの判定は区切りを含めない
+            //（含めると全部が「生きている」側に落ちて、テストが素通りする）。
+            let arg = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let missing = arg.contains("gone")
+            let body = missing
+                ? #"{"error_summary":"path/not_found/"}"#
+                : #"{"media_info":{"metadata":{"time_taken":"2014-05-13T16:53:20Z"}}}"#
+            return (Data(body.utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: missing ? 409 : 200,
+                                    httpVersion: nil, headerFields: nil)!)
+        }
+
+        _ = await store.fillMissingCaptureDates(limit: 3)   // 消えた 3 件で 1 巡ぶん
+        _ = await store.fillMissingCaptureDates(limit: 3)   // 生きている 2 件へ進めるはず
+
+        let pending = await cache.captureDateProbePendingCount()
+        #expect(pending == 0, """
+                消えた写真に飲まれて穴埋めが進んでいない（残り \(pending) 件）。
+                実機では 63 回連続で残り 80,172 件のまま動かなかった。
+                """)
+        let filled = await cache.cachedItems(accountId: "acc1")
+            .filter { $0.path.hasPrefix("/cloud/") }
+        #expect(filled.allSatisfy { $0.captureDate == Date(timeIntervalSince1970: 1_400_000_000) },
+                "生きている写真の撮影日が入っていない")
+    }
+
     /// 無意味な日付（1970 等）は弾く——一覧側（`DropboxFileItem`）と同じ規則。
     @Test("意味のない撮影日時は取り込まない")
     func meaninglessDatesAreRejected() async {

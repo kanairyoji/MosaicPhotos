@@ -23,10 +23,24 @@ extension DropboxPhotoStore {
     public func probeMediaInfo(for path: String) async
         -> (captureDate: Date?, coordinate: CLLocationCoordinate2D?) {
         struct Arg: Encodable { let path: String; let include_media_info = true }
-        guard let body = try? JSONEncoder().encode(Arg(path: path)),
-              let data = try? await apiClient.rpc(url: DropboxInternalConstants.getMetadataURL,
-                                                  jsonBody: body)
-        else { return (nil, nil) }   // 通信できなかった回は**記録しない**（次回訊き直す）
+        guard let body = try? JSONEncoder().encode(Arg(path: path)) else { return (nil, nil) }
+        let data: Data
+        do {
+            data = try await apiClient.rpc(url: DropboxInternalConstants.getMetadataURL,
+                                           jsonBody: body)
+        } catch DropboxAPIClient.APIError.http(let status, let errBody)
+                    where status == 409 && errBody.contains("not_found") {
+            // ⚠️ **「そこに無い」は訊き直しても変わらない**（diagnostics-82）。
+            // 通信できなかった回と同じ「記録しない」にすると、消えた写真のキャッシュ行が
+            // 候補の先頭に居座って**同じ 12 件を永久に叩き続ける**。実機では 63 回連続で
+            // remaining=80,172 のまま動かず、734 回の 409 を費やして本来の穴埋めが
+            // 1 枚も進まなかった。訊いた事実だけ記録して先へ進める。
+            await cache.recordCaptureDateProbe(path: path, captureDate: nil,
+                                               latitude: nil, longitude: nil)
+            return (nil, nil)
+        } catch {
+            return (nil, nil)   // 通信できなかった回は**記録しない**（次回訊き直す）
+        }
 
         struct Meta: Decodable { let media_info: DropboxMediaInfo? }
         let metadata = (try? JSONDecoder().decode(Meta.self, from: data))?.media_info?.metadata

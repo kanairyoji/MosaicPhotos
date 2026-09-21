@@ -121,7 +121,8 @@ final class DropboxSyncEngine {
         //   **未走査フォルダの既存写真が永久に取得されない**（レビュー指摘）。
         if let cursor, itemCount > 0, state?.isInitialSyncCompleted == true {
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
-            return await pollLoop(scopeKey: scopeKey, startCursor: cursor, isPrimary: isPrimary)
+            return await pollLoop(scopeKey: scopeKey, root: root,
+                                  startCursor: cursor, isPrimary: isPrimary)
         } else {
             let reason = cursor == nil ? "no cursor"
                 : itemCount == 0 ? "cursor present but 0 items"
@@ -228,8 +229,8 @@ final class DropboxSyncEngine {
             await cache.markInitialSyncCompleted(accountId: scopeKey)
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
-            return await pollLoop(scopeKey: scopeKey, startCursor: baselineCursor,
-                                  isPrimary: isPrimary)
+            return await pollLoop(scopeKey: scopeKey, root: root,
+                                  startCursor: baselineCursor, isPrimary: isPrimary)
 
         } catch is CancellationError {
             reportState(.idle, isPrimary: isPrimary)
@@ -243,7 +244,8 @@ final class DropboxSyncEngine {
     // MARK: - Longpoll loop
 
     /// - Returns: **やり直しが要るか**（カーソル失効＝投げ直しても無駄）。
-    private func pollLoop(scopeKey: String, startCursor: String, isPrimary: Bool) async -> Bool {
+    private func pollLoop(scopeKey: String, root: String, startCursor: String,
+                          isPrimary: Bool) async -> Bool {
         var cursor = startCursor
         /// 「変化あり」と言われたのに**表示対象の増減が 0 だった**周の連続数（diagnostics-81）。
         /// 自分のバックアップ・共有コピーが同じルートへ落ちると延々と立つので、ここで間隔を空ける。
@@ -309,6 +311,27 @@ final class DropboxSyncEngine {
                 DropboxLogger.error("SyncEngine: cursor reset — discarding it and re-syncing")
                 await cache.resetSyncCursor(accountId: scopeKey)
                 return true
+            } catch let error as SyncError where error.isPathNotFound {
+                // ⚠️ **ルートそのものが無い**（消された・名前が変わった・共有が解除された）。
+                // これも一時エラーではないので、投げ直しても永久に 409 が返る。
+                // 実機ログ（diagnostics-82）では家族フォルダが消えたまま 18 日間・30 秒ごとに
+                // 409 を出し続け、そのルートのキャッシュ 8,513 行が**開けない写真として
+                // 一覧に残り続けた**（「ファイルがありません」）。差分が二度と届かない以上、
+                // 掃除しに来るものは他に無いので、ここで落とし切る。
+                // キャッシュは作り直せるので、フォルダが戻れば次の初回同期で復元される。
+                let prefix = root.isEmpty ? "" : root.lowercased() + "/"
+                let stale = await cache.cachedPaths(withPrefix: prefix)
+                DropboxLogger.error("SyncEngine[\(root.isEmpty ? "/" : root)]: root is gone "
+                    + "(path/not_found) — dropping \(stale.count) cached rows and stopping this root")
+                if !stale.isEmpty {
+                    await cache.applyDelta(accountId: scopeKey, added: [], removed: stale,
+                                           newCursor: cursor)
+                    onCacheUpdated(stale)
+                }
+                await cache.resetSyncCursor(accountId: scopeKey)
+                reportState(.error("Folder not found: \(root.isEmpty ? "/" : root)"),
+                            isPrimary: isPrimary)
+                return false
             } catch {
                 DropboxLogger.error("SyncEngine: poll error — \(error.localizedDescription)")
                 reportState(.error(error.localizedDescription), isPrimary: isPrimary)
@@ -426,6 +449,14 @@ final class DropboxSyncEngine {
         var isCursorReset: Bool {
             guard case .httpError(let status, let body) = self, status == 409 else { return false }
             return body.contains("reset")
+        }
+
+        /// 対象パスが存在しない（Dropbox は 409 ＋ `error_summary: "path/not_found/"`）。
+        /// ⚠️ カーソル失効と同じく**やり直しても無駄**。同期ルートが消えた・共有が解除された
+        /// ときにここへ来る（diagnostics-82）。
+        var isPathNotFound: Bool {
+            guard case .httpError(let status, let body) = self, status == 409 else { return false }
+            return body.contains("not_found")
         }
 
         var errorDescription: String? {

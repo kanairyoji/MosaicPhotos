@@ -184,6 +184,10 @@ public struct ShareAnalysisFetch {
         for root in roots {
             guard let listing = await copier.listFolder(path: root, token: token, recursive: true) else {
                 allListed = false   // 一覧が取れない回は記録を捨てない（全部の再取得を誘発する）
+                // ⚠️ **黙って諦めない**（diagnostics-82）。家族フォルダが消えていると
+                // 取り込みは永久に 0 件だが、ログが 1 行も出ないので実機で気づけなかった。
+                BackupLogger.error("ShareAnalysisFetch: cannot list family folder — \(root) "
+                    + "(deleted, renamed, or no longer shared?)")
                 continue
             }
             let marker = "/" + ShareAnalysisData.subfolderName + "/"

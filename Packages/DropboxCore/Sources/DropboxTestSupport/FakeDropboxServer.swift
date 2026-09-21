@@ -129,9 +129,21 @@ public actor FakeDropboxServer: HTTPClient {
         changeLog.append((revision, path.lowercased(), deleted))
     }
 
-    /// 差分カーソル（`rev-<n>`）が指す番号。ページ送りカーソルと混ざらないよう接頭辞で分ける。
+    /// 差分カーソル（`rev-<n>|<root>`）が指す番号。ページ送りカーソルと混ざらないよう接頭辞で分ける。
+    ///
+    /// ⚠️ **カーソルは「どのフォルダの差分か」を覚えている**。本物の Dropbox もそうで、
+    /// その根のフォルダが消えると `continue` は `path/not_found` を返す（diagnostics-82）。
+    /// 番号だけを持たせていたころは、この形の壊れ方をテストで作れなかった。
     private static func deltaRevision(of cursor: String) -> Int? {
-        cursor.hasPrefix("rev-") ? Int(cursor.dropFirst(4)) : nil
+        guard cursor.hasPrefix("rev-") else { return nil }
+        let body = cursor.dropFirst(4)
+        return Int(body.prefix(while: { $0 != "|" }))
+    }
+
+    /// 差分カーソルが張られたフォルダ（小文字・"" ＝アカウント全体）。
+    private static func deltaRoot(of cursor: String) -> String {
+        guard let bar = cursor.firstIndex(of: "|") else { return "" }
+        return String(cursor[cursor.index(after: bar)...])
     }
 
     // MARK: - 障害注入
@@ -354,6 +366,18 @@ public actor FakeDropboxServer: HTTPClient {
         note(path, deleted: true)
     }
 
+    /// フォルダごと消える（Web UI での削除・共有の解除を模す）。
+    /// ⚠️ 配下も一緒に消す。残すと `list_folder` は 409 なのに `continue` は中身を返す、
+    /// という本物には無い状態になる。
+    public func removeFolder(_ path: String) {
+        let root = path.lowercased()
+        for key in files.keys where key == root || key.hasPrefix(root + "/") {
+            files.removeValue(forKey: key)
+            bodies.removeValue(forKey: key)
+            note(key, deleted: true)
+        }
+    }
+
     /// 現在のファイル一覧（フォルダを除く・パス昇順）。
     public func filePaths() -> [String] {
         files.filter { !$0.value.isFolder }.keys.sorted()
@@ -470,7 +494,9 @@ public actor FakeDropboxServer: HTTPClient {
         }
         if url.contains("list_folder/get_latest_cursor") {
             // 「いまの状態」を指すカーソル。以後の `continue` はここから先の変更だけを返す。
-            return resp(200, #"{"cursor":"rev-\#(revision)"}"#)
+            struct Body: Decodable { let path: String? }
+            let root = ((try? JSONDecoder().decode(Body.self, from: body))?.path ?? "").lowercased()
+            return resp(200, #"{"cursor":"rev-\#(revision)|\#(root)"}"#)
         }
         if url.contains("list_folder/longpoll") {
             // 本物は変更があるまで待つ。偽物は**その場で答える**（テストを待たせない）。
@@ -675,10 +701,17 @@ public actor FakeDropboxServer: HTTPClient {
         }
         // B4: 失効したカーソル。本物も稀に返す＝アプリは初回同期からやり直す必要がある。
         if cursorsExpired { return resp(409, #"{"error_summary":"reset/.."}"#) }
-        // (a) 差分カーソル（`rev-<n>`）＝「この番号より後の変更」を返す。
+        // (a) 差分カーソル（`rev-<n>|<root>`）＝「この番号より後の変更」を返す。
         if let since = Self.deltaRevision(of: parsed.cursor) {
+            let root = Self.deltaRoot(of: parsed.cursor)
+            // ⚠️ **根のフォルダが消えていたら `path/not_found`**（本物と同じ）。
+            // 実機では家族フォルダが消えたあと、この 409 を 30 秒ごとに 18 日間受け続けた。
+            if !root.isEmpty, files[root] == nil {
+                return resp(409, #"{"error":{".tag":"path","path":{".tag":"not_found"}},"error_summary":"path/not_found/"}"#)
+            }
             var latest: [String: Bool] = [:]        // path → 消えたか（同じパスは最後の状態）
             for change in changeLog where change.revision > since {
+                guard root.isEmpty || change.path.hasPrefix(root + "/") else { continue }
                 latest[change.path] = change.deleted
             }
             let entries = latest.sorted { $0.key < $1.key }.map { path, deleted -> String in
@@ -687,7 +720,7 @@ public actor FakeDropboxServer: HTTPClient {
                 let name = (path as NSString).lastPathComponent
                 return #"{".tag":"file","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry?.rev ?? "r")","content_hash":"\#(entry?.contentHash ?? "")"}"#
             }
-            return resp(200, #"{"entries":[\#(entries.joined(separator: ","))],"cursor":"rev-\#(revision)","has_more":false}"#)
+            return resp(200, #"{"entries":[\#(entries.joined(separator: ","))],"cursor":"rev-\#(revision)|\#(root)","has_more":false}"#)
         }
         // (b) ページ送りカーソル＝1 回の一覧の続き。
         guard let remaining = cursors.removeValue(forKey: parsed.cursor) else {
