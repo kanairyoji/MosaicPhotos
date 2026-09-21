@@ -11,7 +11,6 @@ struct DropboxShareCopier {
     private static let createFolderURL = "https://api.dropboxapi.com/2/files/create_folder_v2"
     private static let copyBatchURL = "https://api.dropboxapi.com/2/files/copy_batch_v2"
     private static let copyBatchCheckURL = "https://api.dropboxapi.com/2/files/copy_batch/check_v2"
-    private static let moveURL = "https://api.dropboxapi.com/2/files/move_v2"
     private static let deleteBatchURL = "https://api.dropboxapi.com/2/files/delete_batch"
     private static let deleteBatchCheckURL = "https://api.dropboxapi.com/2/files/delete_batch/check"
     private static let listFolderURL = "https://api.dropboxapi.com/2/files/list_folder"
@@ -42,46 +41,12 @@ struct DropboxShareCopier {
         let isFolder: Bool
     }
 
-    // MARK: - フォルダの移動（改名）
-
-    enum MoveOutcome: Equatable {
-        /// 移動できた。
-        case moved
-        /// 移動元が無い（まだ 1 度も反映していない等）＝記録だけ直せばよい。
-        case sourceMissing
-        /// **移動先が既にある**（`to/conflict/folder`）。移動では解決しないので、
-        /// 呼び出し側が「移動先を正とする」判断をする（リトライしても永久に同じ）。
-        case destinationExists
-        /// 通信断・権限など。次回に持ち越す。
-        case failed
-    }
-
-    /// フォルダを改名する（サーバーサイド move。実体の転送は起きない）。
-    /// `autorename` は使わない——連番フォルダができると「どちらが正か」が分からなくなる。
-    func moveFolder(from: String, to: String, token: String) async -> MoveOutcome {
-        struct Body: Encodable {
-            let from_path: String
-            let to_path: String
-            let autorename = false
-        }
-        var req = Self.rpcRequest(url: Self.moveURL, token: token)
-        guard let body = try? JSONEncoder().encode(Body(from_path: from, to_path: to))
-        else { return .failed }
-        req.httpBody = body
-        guard let (data, resp) = try? await httpClient.data(for: req),
-              let status = (resp as? HTTPURLResponse)?.statusCode else { return .failed }
-        if status == 200 { return .moved }
-        let text = String(data: data, encoding: .utf8) ?? ""
-        if status == 409, text.contains("from_lookup/not_found") { return .sourceMissing }
-        // ⚠️ 「移動先が既にある」は**リトライで解決しない**（実機 diagnostics-64〜66 で 409 が
-        // 反映のたびに出続け、共有の移行が収束しなかった）。失敗と区別して呼び出し側へ返す。
-        if status == 409, text.contains("to/conflict") { return .destinationExists }
-        // ⚠️ エラータグまで残す。status だけだと「移動先が既にある」のか「通信/権限」なのかが
-        // 実機ログから区別できず、毎回の反映で同じ失敗を繰り返しているのに手が出せない
-        // （diagnostics-64/65 で 409 が続いた）。本文は Dropbox のエラー JSON（機密は含まない）。
-        BackupLogger.error("ShareCopier: move failed (\(status)) — \(from) → \(to) — \(Self.errorSummary(text))")
-        return .failed
-    }
+    // ⚠️ **フォルダの改名（`files/move_v2`）は撤去した**（ADR-209）。
+    // 差分方式ではフォルダも「望ましい集合との差」で収束するので、名前が変わったら
+    // 旧フォルダが望ましくない側に回って消え、新フォルダへコピーし直される
+    // （サーバーサイドコピーなので転送は起きない）。
+    // 移動は `to/conflict/folder` で永久に収束しない経路を作り、実機で実際に詰まった
+    // （diagnostics-64〜66）。動かさない方が単純で、壊れ方も少ない。
 
     /// Dropbox のエラー本文から要点だけを取り出す（長い JSON をログに流し込まない）。
     static func errorSummary(_ text: String, limit: Int = 200) -> String {
