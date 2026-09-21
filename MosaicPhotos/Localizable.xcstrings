@@ -3825,6 +3825,26 @@
         }
       }
     },
+    "Some photos are not analyzed yet.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだ解析していない写真があります。"
+          }
+        }
+      }
+    },
+    "Some photos are not analyzed yet. Analysis keeps going automatically while charging — or tap Analyze Now.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだ解析していない写真があります。充電中は自動で続きます。すぐに進めたいときは「今すぐ解析」を押してください。"
+          }
+        }
+      }
+    },
     "Sources": {
       "localizations": {
         "ja": {

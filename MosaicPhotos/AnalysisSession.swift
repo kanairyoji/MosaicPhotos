@@ -53,6 +53,10 @@ final class AnalysisSession {
         /// ⚠️ ここを `.finished` に丸めると「すべて解析済みです」と嘘を表示し、
         /// OS には `setTaskCompleted(success: true)` を返す（レビュー指摘）。
         case blocked([BackgroundYield.Blocker])
+        /// 残作業はあるが、**止めている条件は無い**（スキャンが畳まれた・この構成では
+        /// 走らせられない）。⚠️ ここを `.finished` に丸めると、また「すべて解析済みです」に
+        /// 戻る——`.blocked([])` も同じ穴だったので、理由を持つ形にして塞ぐ（ADR-207）。
+        case incomplete(remaining: Int)
         case user            // 停止ボタン・Live Activity の×
         case expired         // OS が止めた（熱・資源・ロック）
         case lowBattery      // 電源なしで電池が下限
@@ -265,12 +269,15 @@ final class AnalysisSession {
                 tagsPending = max(0, p.total - p.sceneTagged)
                 embedPending = max(0, p.total - p.embedded)
             }
-            // ⚠️ **`remaining` を完了判定に使わない**（ADR-207）。あれはスキャン中しか
-            // 意味を持たず、止まると 0 に戻るので「終わった」と「始められなかった」が
-            // 同じ値になる——残作業を抱えたまま「すべて解析済み」と表示していた。
-            // `faceBacklog` は最後に測った本当の残りで、回線待ちで外したクラウド分も含む。
-            // nil＝まだ測っていない（モデル未同梱なら 0 で正しい）。
-            let faces = people.faceBacklog ?? 0
+            // ⚠️ **2 つの「残り」を混ぜない**（ADR-207・レビュー 6 周目）。
+            // - `runnableFaces`: **いま動かせる**顔の残り。止まれば 0 になるので、
+            //   「この周でまだ何か走っているか」の判断に使う。これを本当の残作業に
+            //   置き換えると、畳んだあと誰も減らせない数が残り続けて
+            //   **ブーストが永久に終わらない**（進捗も止まったまま）。
+            // - `faceBacklog`: **本当の残作業**。止める理由を決めるときに使う
+            //   ——0 でないのに「すべて解析済み」と言わないため。
+            let runnableFaces = people.isScanning ? people.remaining : 0
+            let faces = runnableFaces
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }
@@ -295,7 +302,8 @@ final class AnalysisSession {
             // **それは「終わった」ではなく「止められている」**——ゲートに理由を聞いて区別する。
             if AnalysisSessionPolicy.isFinished(remaining: rem, tagging: engine.isTagging,
                                                 scanning: people.isScanning) {
-                stop(blocking.isEmpty ? .finished : .blocked(blocking)); return
+                stop(AnalysisSessionPolicy.stopReason(blockers: blocking,
+                                                      faceBacklog: people.faceBacklog ?? 0)); return
             }
         }
     }

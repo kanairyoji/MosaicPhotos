@@ -52,6 +52,12 @@
   スキャンが走ればその中で同じ取得をしている。
 - ⚠️ 混ぜてはいけない: `onProgress` に回線待ちのぶんを足すと `drainUntilIdle` が 0 にならず、
   Wi-Fi の無い夜は窓を期限まで空転させる。**進捗と残作業は別の問いである**。
+- ⚠️ 追記（レビュー 6 周目・同日）: **完了の「引き金」と「言い分」も別の問い**だった。
+  引き金（`isFinished`）は「いま動かせるものが無いか」で、本当の残作業を混ぜると
+  **誰も減らせない数が残り続けてブーストが永久に終わらない**（進捗も止まったまま）。
+  言い分（`stopReason`）の側で本当の残作業を見る。
+  併せて `.blocked([])` が画面で「すべて解析済みです」に落ちる穴を塞いだ
+  ——理由の無い未完了を表す道が無かったので、嘘へ丸められていた（`.incomplete`）。
 - 関連: `FaceTagger.swift` / `PeopleEngine.swift` / `FaceScanControl.swift` /
   `AnalysisDriver.swift` / `AnalysisSession.swift` / `HeavyWorkScheduler.swift` /
   `FaceBacklogTests.swift` / ADR-163 / ADR-196。

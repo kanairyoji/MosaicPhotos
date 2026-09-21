@@ -26,6 +26,23 @@ final class AnalysisSessionPolicyTests: XCTestCase {
         XCTAssertFalse(AnalysisSessionPolicy.isFinished(remaining: 3, tagging: false, scanning: false))
     }
 
+    /// ⚠️ **「いま動かせるものが無い」は「終わった」ではない**（ADR-207）。
+    /// 以前は `blockers.isEmpty ? .finished : .blocked(blockers)` だけで、
+    /// 理由の無い未完了を表す道が無かった。しかも画面側は `.blocked([])` を
+    /// 「すべて解析済みです」に落としていたので、**2 重に嘘へ丸められていた**。
+    func testStopReasonNeverClaimsDoneWhileFacesRemain() {
+        XCTAssertEqual(AnalysisSessionPolicy.stopReason(blockers: [], faceBacklog: 0), .finished)
+        XCTAssertEqual(AnalysisSessionPolicy.stopReason(blockers: [], faceBacklog: 7),
+                       .incomplete(remaining: 7),
+                       "顔が 7 枚残っているのに『すべて解析済み』と言っている")
+        XCTAssertEqual(AnalysisSessionPolicy.stopReason(blockers: [.tooHot], faceBacklog: 0),
+                       .blocked([.tooHot]),
+                       "止めている理由があるなら、それを言う（残りが 0 でも）")
+        XCTAssertEqual(AnalysisSessionPolicy.stopReason(blockers: [.tooHot], faceBacklog: 7),
+                       .blocked([.tooHot]),
+                       "理由があるときは理由を優先する（利用者が直せるのはこちら）")
+    }
+
     func testRemainingClampsNegatives() {
         XCTAssertEqual(AnalysisSessionPolicy.remaining(faces: -1, tagsPending: 2, embedPending: -5), 2)
     }

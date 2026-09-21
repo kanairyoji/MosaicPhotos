@@ -1,3 +1,4 @@
+import MosaicSupport
 import Foundation
 
 /// 解析セッション（ADR-182）の純ロジック: 進捗の合成・停止判定。
@@ -35,5 +36,22 @@ enum AnalysisSessionPolicy {
     /// 畳んだ場合を `.finished` と区別するのは呼び出し側（ゲートに理由を聞く）。
     static func isFinished(remaining: Int, tagging: Bool, scanning: Bool) -> Bool {
         remaining == 0 && !tagging && !scanning
+    }
+
+    /// 止まったときに**何と言うか**（純ロジック・テスト対象・ADR-207）。
+    ///
+    /// ⚠️ 「いま動かせるものが無い」は「終わった」ではない。判断の材料は 2 つ:
+    /// - `blockers`: ゲートが閉じている理由（熱・回線・電源…）。あれば**それを言う**。
+    /// - `faceBacklog`: 本当の顔の残作業。理由が無くても、残っていれば「終わった」とは言わない
+    ///   （スキャンが畳まれた・この構成では走らせられない）。
+    ///
+    /// ⚠️ 以前は `blockers.isEmpty ? .finished : .blocked(blockers)` だけで、
+    /// **`.blocked([])` が画面側で「すべて解析済みです」に落ちていた**——理由の無い
+    /// 未完了を表す道が無かったので、嘘に丸められていた。
+    static func stopReason(blockers: [BackgroundYield.Blocker],
+                           faceBacklog: Int) -> AnalysisSession.StopReason {
+        if let _ = blockers.first { return .blocked(blockers) }
+        if faceBacklog > 0 { return .incomplete(remaining: faceBacklog) }
+        return .finished
     }
 }

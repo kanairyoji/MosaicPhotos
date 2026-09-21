@@ -304,8 +304,12 @@ struct AIAnalysisStatusView: View {
         case .lowBattery: return L("Stopped because the battery is low. Plug in and tap Analyze Now to continue.")
         case .blocked(let blockers):
             // 「すべて解析済みです」と嘘をつかない。止めている理由をそのまま出す。
-            guard let first = blockers.first else { return L("Everything is analyzed.") }
+            // ⚠️ 理由が空のときに「すべて解析済み」へ落とさない（ADR-207）——
+            // それが嘘の完了そのものだった。理由の無い未完了は `.incomplete` で来る。
+            guard let first = blockers.first else { return L("Some photos are not analyzed yet.") }
             return blockerText(first)
+        case .incomplete:
+            return L("Some photos are not analyzed yet. Analysis keeps going automatically while charging — or tap Analyze Now.")
         case .user, .leftApp: return nil
         }
     }
