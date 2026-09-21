@@ -250,6 +250,11 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         }
     }
 
+    /// 連結の計測ハーネス用（ADR-211/212）: 本番と同一経路の信号（矩形・埋め込み・品質・胴体）。
+    public func debugSignals(_ cg: CGImage, isCloud: Bool = false) async -> [DetectedFaceSignal] {
+        await analyzeFaces(in: cg, isCloud: isCloud).analyses.compactMap(\.signal)
+    }
+
     private struct FaceAnalysis {
         var report: FaceGateReport
         var signal: DetectedFaceSignal?
