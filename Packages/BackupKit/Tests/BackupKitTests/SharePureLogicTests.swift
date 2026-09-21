@@ -210,6 +210,48 @@ struct SharePlanningTests {
         #expect(p.deletions.isEmpty)
     }
 
+    // MARK: - 宛先が一意に決まること
+
+    /// ⚠️ **digest を切り詰めない**のが効いている。8 桁（32 ビット）にしていたときは、
+    /// 1 セット 12,941 枚で約 1.9% の確率で 2 枚が同じ宛先になり、
+    /// 辞書の代入で**片方が黙って落ちた**（家族に届かない写真が生まれた）。
+    /// 全桁なら衝突しないので、衝突を解く仕組み自体が要らない。
+    @Test("元の名前も中身も紛らわしい写真を並べても、宛先は全部違う")
+    func destinationsAreUniqueAcrossManyPhotos() {
+        let count = 200
+        let items = (0..<count).map { item("L-p\($0)") }
+        var backup: [String: SharePlanning.BackupRef] = [:]
+        for index in 0..<count {
+            // 元のファイル名は全部同じ。中身だけが違う。
+            backup["p\(index)"] = .init(dropboxPath: "/backup/IMG.jpg", contentHash: "h\(index)")
+        }
+        let p = plan(items: items, backup: backup, remoteFiles: [])
+
+        #expect(p.copies.count == count, "枚数ぶんの宛先が無い: \(p.copies.count)")
+        #expect(Set(p.copies.map { $0.toPath.lowercased() }).count == count,
+                "宛先が重複している（片方が黙って落ちる）")
+    }
+
+    /// ⚠️ 計画がメンバーの並び順に依存しないこと（依存すると、外して入れ直しただけで
+    /// 名前が変わり、削除とコピーが無駄に走る）。
+    @Test("計画はメンバーの並び順に依存しない")
+    func planIsOrderIndependent() {
+        var backup: [String: SharePlanning.BackupRef] = [:]
+        for index in 0..<8 {
+            backup["p\(index)"] = .init(dropboxPath: "/backup/IMG.jpg", contentHash: "h\(index)")
+        }
+        let forward = (0..<8).map { item("L-p\($0)") }
+        let a = plan(items: forward, backup: backup, remoteFiles: [])
+        let b = plan(items: Array(forward.reversed()), backup: backup, remoteFiles: [])
+        #expect(a == b, "並び順で計画が変わる（入れ直すだけで作り直しになる）")
+    }
+
+    /// 印は SHA-256 の全桁。切り詰めると衝突が現実の確率で起きる。
+    @Test("印は digest を切り詰めない（16 進 64 桁）")
+    func identityUsesTheWholeDigest() {
+        #expect(ShareNaming.identity(refKey: "L-a", contentHash: "h").count == 64)
+    }
+
     @Test("同じ写真が 2 回入っていても宛先は 1 つ")
     func duplicateMembersShareOneDestination() {
         let p = plan(items: [item("L-a"), item("L-a")],
@@ -231,10 +273,10 @@ struct SharePlanningTests {
 @Suite("共有ファイル名（中身で決まる・ADR-209）")
 struct ShareFileNamingTests {
 
-    @Test("印は 16 進 8 桁・同じ入力なら同じ")
+    @Test("印は同じ入力なら同じ")
     func identityIsStable() {
         let a = ShareNaming.identity(refKey: "L-x", contentHash: "h1")
-        #expect(a.count == 8)
+        #expect(a.count == 64)
         #expect(a.allSatisfy { $0.isHexDigit })
         #expect(a == ShareNaming.identity(refKey: "L-x", contentHash: "h1"))
         #expect(a != ShareNaming.identity(refKey: "L-x", contentHash: "h2"), "中身が変われば印も変わる")
@@ -243,16 +285,18 @@ struct ShareFileNamingTests {
 
     @Test("拡張子は保たれ、印が幹の末尾に付く")
     func fileNameShape() {
-        let name = ShareNaming.sharedFileName(sourceFileName: "IMG_1234.jpg", identity: "3f9a2c1d")
-        #expect(name == "IMG_1234--3f9a2c1d.jpg")
-        #expect(ShareNaming.sharedFileName(sourceFileName: "noext", identity: "00112233")
-                == "noext--00112233")
+        let identity = ShareNaming.identity(refKey: "L-a", contentHash: "h")
+        let name = ShareNaming.sharedFileName(sourceFileName: "IMG_1234.jpg", identity: identity)
+        #expect(name == "IMG_1234--\(identity).jpg")
+        #expect(ShareNaming.sharedFileName(sourceFileName: "noext", identity: identity)
+                == "noext--\(identity)")
     }
 
     @Test("このアプリが置いた名前だけを自分の持ち物と見なす")
     func recognisesOwnFiles() {
-        #expect(ShareNaming.isShareManagedFileName("IMG_1234--3f9a2c1d.jpg"))
-        #expect(ShareNaming.isShareManagedFileName("a--00112233"))
+        let identity = ShareNaming.identity(refKey: "L-a", contentHash: "h")
+        #expect(ShareNaming.isShareManagedFileName("IMG_1234--\(identity).jpg"))
+        #expect(ShareNaming.isShareManagedFileName("a--00112233"), "切り詰めていた頃の印も自分のもの")
         // 家族が置いたもの・旧形式は触らない。
         #expect(!ShareNaming.isShareManagedFileName("IMG_1234.jpg"))
         #expect(!ShareNaming.isShareManagedFileName("IMG (1).jpg"))
@@ -261,13 +305,15 @@ struct ShareFileNamingTests {
         #expect(!ShareNaming.isShareManagedFileName("note--3F9A2C1D.jpg"), "大文字は使わない")
     }
 
-    /// ⚠️ 長い名前でも Dropbox のパス長に収まるよう幹を切る。
+    /// ⚠️ 長い名前でも Dropbox のパス長（260 文字）に収まるよう幹を切る。
+    /// 印が 64 桁あるので、幹は 80 文字まで。
     @Test("長すぎる名前は幹を切る（印と拡張子は残す）")
     func trimsLongNames() {
+        let identity = ShareNaming.identity(refKey: "L-a", contentHash: "h")
         let long = String(repeating: "あ", count: 300) + ".jpg"
-        let name = ShareNaming.sharedFileName(sourceFileName: long, identity: "3f9a2c1d")
-        #expect(name.hasSuffix("--3f9a2c1d.jpg"))
-        #expect(name.count <= 140)
+        let name = ShareNaming.sharedFileName(sourceFileName: long, identity: identity)
+        #expect(name.hasSuffix("--\(identity).jpg"))
+        #expect(name.count <= 150, "パス長に収まらない: \(name.count) 文字")
     }
 }
 

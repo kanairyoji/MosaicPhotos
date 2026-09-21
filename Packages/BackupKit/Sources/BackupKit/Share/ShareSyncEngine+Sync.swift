@@ -74,10 +74,6 @@ extension ShareSyncEngine {
         }
         let remote = RemoteShareIndex(listing: listing)
 
-        // セットフォルダの差分（削除したセット・名前を変えたセット・遅れて復活したフォルダ）。
-        await sweepUnwantedFolders(sets: sets, shareRoot: shareRoot, remote: remote,
-                                   copier: copier, token: token)
-
         for set in sets {
             guard !Task.isCancelled else {
                 needsAnotherPass = true
@@ -87,6 +83,14 @@ extension ShareSyncEngine {
                        copier: copier, token: token, remote: remote)
             await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映（変化なしなら無通知）
         }
+        // ⚠️ **フォルダの掃除は最後**（紛らわしい名前のテストが捕まえた）。
+        // 先にやると、**コピー元が掃除対象のフォルダに在る**場合に元を消してからコピーする
+        // ことになり、コピーが永久に失敗する（クラウド写真は共有ルートの中にも在り得る）。
+        // 掃除は「どのセットも持たないフォルダを消す」だけなので、後回しにしても
+        // 判断は変わらない——変わるのは「元を取り終わってから消す」ことだけ。
+        await sweepUnwantedFolders(sets: sets, shareRoot: shareRoot, remote: remote,
+                                   copier: copier, token: token)
+
         lastSyncAt = Date()
         await refresh()
 

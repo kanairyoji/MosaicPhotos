@@ -87,7 +87,7 @@ public enum ShareNaming {
 
     // MARK: - 共有ファイル名（中身で決まる・ADR-209）
 
-    /// 共有フォルダに置くファイル名を**中身から決める**ための印（16 進 8 桁）。
+    /// 共有フォルダに置くファイル名を**中身から決める**ための印（SHA-256 を 16 進 64 桁・全部）。
     ///
     /// ⚠️ これが差分方式の要。**同じ写真 → 必ず同じ名前**なので、
     /// - コピーは何度やり直しても同じファイルになる（冪等）＝重複が生まれない
@@ -98,25 +98,32 @@ public enum ShareNaming {
     /// 以前は宛先名をアイテムごとに採番して覚えており、その記録と実在の食い違いを
     /// 直すために採用・自己修復・墓標・残骸掃除が必要だった。
     ///
+    /// ⚠️ **digest を切り詰めない**。最初は 8 桁（32 ビット）にしていたが、
+    /// 1 セット 12,941 枚の実績に対して誕生日問題で**約 1.9% が衝突**する——
+    /// 衝突すると片方が黙って共有されない（家族に届かない）。
+    /// 桁を伸ばして確率を下げるより、**全部付けて衝突という概念を消す**方が単純で安全。
+    /// 衝突しないと決まれば、衝突を解く仕組み（印を伸ばす・落ちた写真を記録する）も要らない。
+    ///
     /// - Parameter contentHash: Dropbox の `content_hash`。**不明なら refKey だけで決める**
-    ///   （クラウド原本は手元に hash が無い。その場合は中身の差し替えを検知できないが、
-    ///   一意性と冪等性は保たれる）。
+    ///   （クラウド原本は手元に hash が無い場合がある。そのときは中身の差し替えを
+    ///   検知できないが、一意性と冪等性は保たれる）。
     public static func identity(refKey: String, contentHash: String?) -> String {
         let seed = "\(refKey)|\(contentHash ?? "")"
-        let digest = SHA256.hash(data: Data(seed.utf8))
-        return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: Data(seed.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// 印と元のファイル名から、共有フォルダでのファイル名を作る。
-    /// 例: `IMG_1234.jpg` ＋ `3f9a2c1d` → `IMG_1234--3f9a2c1d.jpg`
+    /// 例: `IMG_1234.jpg` ＋ 64 桁の印 → `IMG_1234--<64 桁>.jpg`
     public static func sharedFileName(sourceFileName: String, identity: String) -> String {
         let ext = (sourceFileName as NSString).pathExtension
         var stem = (sourceFileName as NSString).deletingPathExtension
         stem = String(stem.unicodeScalars.map { forbidden.contains($0) ? "_" : Character($0) })
         stem = stem.trimmingCharacters(in: .whitespacesAndNewlines)
         while stem.hasSuffix(".") { stem.removeLast() }
-        // ⚠️ 長い名前は切る（Dropbox のパス長 260 文字制限。印と拡張子のぶんを残す）。
-        if stem.count > 120 { stem = String(stem.prefix(120)) }
+        // ⚠️ 長い名前は切る（Dropbox のパス長 260 文字制限）。
+        // 印 64 桁＋区切り 2＋拡張子で約 70 文字使うので、幹は 80 文字までにする
+        // （セットフォルダのパスが 60〜80 文字あっても収まる）。
+        if stem.count > 80 { stem = String(stem.prefix(80)) }
         if stem.isEmpty { stem = "photo" }
         return ext.isEmpty ? "\(stem)\(identitySeparator)\(identity)"
                            : "\(stem)\(identitySeparator)\(identity).\(ext)"
@@ -125,15 +132,15 @@ public enum ShareNaming {
     /// 印の区切り。⚠️ 元のファイル名に現れにくい形を選ぶ（誤判定を避ける）。
     static let identitySeparator = "--"
 
-    /// このアプリが置いたファイル名か（＝差分で消してよいか）。
-    ///
-    /// ⚠️ **消す側の安全弁**。共有フォルダに家族が手で置いたファイルには触らない。
-    /// 印の形（`--` ＋ 16 進 8 桁 ＋ 任意の拡張子）に合うものだけを自分の持ち物とみなす。
+    /// このアプリが置いた名前か。**診断とテストのための判定**
+    /// （掃除の可否には使わない——セットフォルダ直下は名前に関係なく管理する・ADR-209）。
+    /// ⚠️ 桁数で厳密に絞らない（印を切り詰めていた頃のファイルも自分のものと見なす）。
     public static func isShareManagedFileName(_ filename: String) -> Bool {
         let stem = (filename as NSString).deletingPathExtension
         guard let range = stem.range(of: identitySeparator, options: .backwards) else { return false }
         let tail = stem[range.upperBound...]
-        return tail.count == 8 && tail.allSatisfy { $0.isHexDigit && ($0.isNumber || $0.isLowercase) }
+        guard tail.count >= 8, tail.count % 2 == 0 else { return false }
+        return tail.allSatisfy { $0.isHexDigit && ($0.isNumber || $0.isLowercase) }
     }
 
     /// セット名 → フォルダ名。空になった場合は "Shared" にフォールバック。

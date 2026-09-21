@@ -107,25 +107,36 @@ public enum SharePlanning {
         var plan = Plan()
 
         // 1. 望ましい集合を作る（宛先パス小文字 → コピー元）。
+        //
+        // ⚠️ **refKey 順に決める**。印が衝突したときに「どちらが短い名前を取るか」が
+        // メンバーの追加順で変わると、外して入れ直しただけで名前が入れ替わり、
+        // 削除とコピーが無駄に走る。順序に依存しない規則にする。
         var desired: [String: (refKey: String, fromPath: String, toPath: String)] = [:]
-        for item in items {
+        var waiting: [String] = []
+        for item in items.sorted(by: { $0.refKey < $1.refKey }) {
             guard let source = resolveSource(refKey: item.refKey,
                                              backupByLocalID: backupByLocalID,
                                              cloudHashByPath: cloudHashByPath) else {
-                plan.waitingBackup.append(item.refKey)
+                waiting.append(item.refKey)
                 continue
             }
+            // 同じ写真が同じセットに 2 回入っていても宛先は 1 つ（重複しない）。
+            if plan.sourceByRefKey[item.refKey] != nil { continue }
+
+            // ⚠️ 宛先は**中身から一意に決まる**（印は SHA-256 の全桁）。だから
+            // 衝突を解く仕組みが要らない——桁を切り詰めていた頃は、衝突したときに
+            // 辞書の代入で片方が黙って落ちた（家族に届かない写真が生まれた）。
             let identity = ShareNaming.identity(refKey: item.refKey, contentHash: source.contentHash)
             let filename = ShareNaming.sharedFileName(
                 sourceFileName: (source.dropboxPath as NSString).lastPathComponent,
                 identity: identity)
             let toPath = "\(setFolder)/\(filename)"
-            // 同じ写真が同じセットに 2 回入っていても宛先は 1 つ（重複しない）。
             desired[toPath.lowercased()] = (item.refKey, source.dropboxPath, toPath)
             plan.sourceByRefKey[item.refKey] = SourceRef(fromPath: source.dropboxPath,
                                                          contentHash: source.contentHash,
                                                          destinationLower: toPath.lowercased())
         }
+        plan.waitingBackup = waiting.sorted()
 
         // 一覧が取れなかった回は何も決めない（実在が分からないまま消す/コピーするのが最悪）。
         guard let remoteFiles else { return plan }

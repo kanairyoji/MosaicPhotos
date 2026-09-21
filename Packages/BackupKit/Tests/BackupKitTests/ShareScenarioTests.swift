@@ -759,3 +759,339 @@ struct ShareMigrationTests {
                 "家族のサブフォルダの中身を消した: \(files)")
     }
 }
+
+// MARK: - 差分方式の取りこぼし（レビューで足した分・ADR-209）
+
+@Suite("差分の細部", .serialized)
+@MainActor
+struct ShareDifferentialDetailTests {
+
+    private static let backupRoot = "/MosaicPhotos"
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
+
+    @MainActor private final class StubAnalysis: ShareAnalysisSource {
+        private(set) var asked: [String] = []
+        func analysisEntries(forRefKeys refKeys: [String]) async
+            -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
+            asked = refKeys.sorted()
+            var entries: [String: ShareAnalysisData.Entry] = [:]
+            for key in refKeys { entries[key] = ShareAnalysisData.Entry(tags: ["x"]) }
+            return (ShareAnalysisData.Versions(tag: 1), entries)
+        }
+    }
+
+    private func makeStack(cloud: [String: String] = [:])
+        async -> (ShareSyncEngine, BackupStore, FakeDropboxServer, StubAnalysis) {
+        let defaults = isolatedShareDefaults()
+        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let server = FakeDropboxServer()
+        await server.seed("/mosaicphotos/a.jpg", hash: "hA")
+        await store.upsertRecord(dropboxPath: "/mosaicphotos/a.jpg", localIdentifier: "a",
+                                 filename: "a.jpg", creationDate: nil, contentHash: "hA",
+                                 people: [], albums: [], isFavorite: false)
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(), storeProvider: { store },
+                                     httpClient: server, defaults: defaults)
+        engine.pollIntervalNs = 1_000_000
+        engine.maxPollAttempts = 3
+        let analysis = StubAnalysis()
+        engine.analysisSource = analysis
+        engine.cloudSourceHashProvider = { cloud }
+        return (engine, store, server, analysis)
+    }
+
+    private func sharedFiles(_ server: FakeDropboxServer) async -> [String] {
+        await server.filePaths().filter {
+            $0.hasPrefix(Self.shareRoot.lowercased() + "/")
+                && !$0.contains("/\(ShareAnalysisData.subfolderName)/")
+        }
+    }
+
+    /// ⚠️ クラウド原本（"C-"）の `content_hash` は手元の同期キャッシュが知っている。
+    /// 渡さないと**原本が差し替わっても名前が変わらない**＝古いコピーが残り続ける。
+    @Test("クラウド原本の中身が差し替わったら、コピーし直す")
+    func cloudSourceDriftIsDetected() async {
+        var cloud = ["/photos/x.jpg": "OLD"]
+        let (engine, _, server, _) = await makeStack(cloud: cloud)
+        await server.seed("/photos/x.jpg", hash: "OLD")
+        _ = await engine.createSet(name: "Trip", refKeys: ["C-/photos/x.jpg"])
+        await engine.syncNow()
+        let before = await sharedFiles(server)
+        #expect(before.count == 1)
+
+        // 原本が差し替わった（同じパス・違う中身）。
+        await server.seed("/photos/x.jpg", hash: "NEW")
+        cloud["/photos/x.jpg"] = "NEW"
+        engine.cloudSourceHashProvider = { cloud }
+        await engine.syncNow()
+
+        let after = await sharedFiles(server)
+        #expect(after.count == 1, "古いコピーが残っている: \(after)")
+        #expect(after != before, "差し替えに気づかず古い名前のまま: \(after)")
+    }
+
+    /// ⚠️ 解析データのキーは**写真の content_hash**。受信側は自分の同期一覧と突合するので、
+    /// **まだ共有フォルダに無い写真**の解析結果を載せても、突合する相手が居ない。
+    ///
+    /// ⚠️ 試すのは「**解決はできるが、まだコピーされていない**」写真。
+    /// 最初はバックアップ未完了の写真で書いたが、あれは「元が解決できない」という
+    /// 別の条件で弾かれるので、この規則を壊しても素通りした（変異で確認）。
+    @Test("解析データは、共有フォルダに実際に在る写真のぶんだけ作る")
+    func analysisCoversOnlyPresentPhotos() async {
+        let (engine, store, server, analysis) = await makeStack()
+        await server.seed("/mosaicphotos/b.jpg", hash: "hB")
+        await store.upsertRecord(dropboxPath: "/mosaicphotos/b.jpg", localIdentifier: "b",
+                                 filename: "b.jpg", creationDate: nil, contentHash: "hB",
+                                 people: [], albums: [], isFavorite: false)
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
+
+        // b のコピーだけを失敗させる（元は解決できるが、共有フォルダには置かれない）。
+        let setID = await store.allShareSets().first!.id
+        let items = await store.shareItems(setID: setID)
+        let plan = SharePlanning.plan(
+            items: items,
+            backupByLocalID: await store.backupRefs(forLocalIdentifiers: ["a", "b"]),
+            setFolder: SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
+                                                   folderName: "Trip", deviceFolder: nil)!,
+            remoteFiles: [])
+        let bDestination = plan.copies.first { $0.refKey == "L-b" }!.toPath
+        await server.setFailCopyPaths([bDestination.lowercased()])
+
+        await engine.syncNow()
+
+        #expect(await sharedFiles(server).count == 1, "前提: a だけが共有されている")
+        #expect(!analysis.asked.contains("L-b"),
+                "共有フォルダに無い写真の解析結果まで組んでいる: \(analysis.asked)")
+        #expect(analysis.asked.contains("L-a"), "共有できた写真の解析結果が無い")
+    }
+
+    /// ⚠️ 掃除の範囲は**共有ルートの直下**だけ。深い階層のフォルダを消しに行かない。
+    @Test("フォルダの掃除は共有ルート直下だけを見る")
+    func folderSweepOnlyLooksAtDirectChildren() async {
+        let (engine, _, server, _) = await makeStack()
+        // 直下でないフォルダ（セットフォルダの中の家族のフォルダ）。
+        await server.seed("\(Self.shareRoot.lowercased())/Other/deep/keep.txt", hash: "hK")
+
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+
+        // `Other` は直下なので消える。その中身も一緒に消える（フォルダごと）。
+        let files = await server.filePaths()
+        #expect(!files.contains { $0.contains("/other/") }, "直下の孤児フォルダが残っている: \(files)")
+        // 共有ルート自体は消さない。
+        #expect(await server.filePaths().contains { $0.hasPrefix(Self.shareRoot.lowercased() + "/") },
+                "共有ルートごと消した")
+    }
+
+    /// ⚠️ 元が 1 件も解決できない回に共有フォルダを空にしない（記録に残して黙らない）。
+    @Test("元が解決できない回は掃除を見送り、記録に残す")
+    func skipsSweepWhenNothingResolves() async {
+        let (engine, store, server, _) = await makeStack()
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 1)
+
+        // バックアップ記録を消す＝元が解決できない状態を作る。
+        await store.deleteAllRecords()
+        await engine.syncNow()
+
+        #expect(await sharedFiles(server).count == 1,
+                "元が解決できない回に共有フォルダを空にした")
+    }
+}
+
+// MARK: - 紛らわしい入力（差分方式が壊れやすい形を集める・ADR-209）
+
+/// **同名・同内容・記号・大文字小文字**——差分方式は「宛先名で写真を同一視する」ので、
+/// 名前が紛らわしい入力に弱い。実際に壊れやすい形を並べて、通しで確かめる。
+///
+/// ⚠️ ここは純ロジックではなく**通し**で見る。計画が正しくても、偽 Dropbox が
+/// 大文字小文字を畳む・中間フォルダを作る、といった実物の性質と噛み合って初めて分かる
+/// 壊れ方があるため（実際に `seed` が中間フォルダを作らない穴で読み違えた）。
+@Suite("紛らわしい名前の写真", .serialized)
+@MainActor
+struct ShareTrickyNameTests {
+
+    private static let backupRoot = "/MosaicPhotos"
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
+
+    /// `backup` は (localIdentifier, Dropbox 上の原本パス, content_hash)。
+    private func makeStack(backup: [(String, String, String)])
+        async -> (ShareSyncEngine, BackupStore, FakeDropboxServer) {
+        let defaults = isolatedShareDefaults()
+        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let server = FakeDropboxServer()
+        for (id, path, hash) in backup {
+            await server.seed(path, hash: hash)
+            await store.upsertRecord(dropboxPath: path, localIdentifier: id,
+                                     filename: (path as NSString).lastPathComponent,
+                                     creationDate: nil, contentHash: hash,
+                                     people: [], albums: [], isFavorite: false)
+        }
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(), storeProvider: { store },
+                                     httpClient: server, defaults: defaults)
+        engine.pollIntervalNs = 1_000_000
+        engine.maxPollAttempts = 3
+        return (engine, store, server)
+    }
+
+    private func sharedFiles(_ server: FakeDropboxServer) async -> [String] {
+        await server.filePaths().filter {
+            $0.hasPrefix(Self.shareRoot.lowercased() + "/")
+                && !$0.contains("/\(ShareAnalysisData.subfolderName)/")
+        }
+    }
+
+    private func hashes(_ server: FakeDropboxServer) async -> [String] {
+        var out: [String] = []
+        for path in await sharedFiles(server) { out.append(await server.contentHash(at: path) ?? "") }
+        return out.sorted()
+    }
+
+    /// ⚠️ **本命**。違うフォルダに同じ名前の別写真——スマホの写真は `IMG_0001.jpg` が
+    /// 年をまたいで何枚もある。旧方式はここで `autorename` に頼り、
+    /// タイムアウト × リトライで 1,300 件の重複を作った（diagnostics-52）。
+    @Test("同じファイル名の別写真を 10 枚入れても、全部が別々に共有される")
+    func manyPhotosWithTheSameFileName() async {
+        let backup = (0..<10).map { ("p\($0)", "/mosaicphotos/\($0)/IMG_0001.jpg", "h\($0)") }
+        let (engine, _, server) = await makeStack(backup: backup)
+
+        _ = await engine.createSet(name: "Trip", refKeys: (0..<10).map { "L-p\($0)" })
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files.count == 10, "10 枚そろっていない: \(files.count) 枚")
+        #expect(Set(files).count == 10, "宛先が重複している")
+        #expect(await hashes(server) == (0..<10).map { "h\($0)" }.sorted(),
+                "中身が取り違えられている")
+        // 2 回目で増減しない（冪等）。
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 10, "2 回目でファイルが増減した")
+        #expect(!files.contains { $0.contains(" 2.") || $0.contains("(1)") },
+                "連番や autorename の跡がある: \(files)")
+    }
+
+    /// ⚠️ **同じ中身の別写真**（同じ写真を 2 回バックアップした・別端末からの同一画像）。
+    /// refKey が違うので別メンバーであり、**2 枚とも共有されるのが正しい**。
+    /// 宛先が中身だけで決まっていたら 1 枚に潰れてしまう。
+    @Test("同じ中身でも別メンバーなら、2 枚とも共有される")
+    func sameContentDifferentMembers() async {
+        let (engine, _, server) = await makeStack(backup: [
+            ("p0", "/mosaicphotos/a/IMG.jpg", "SAME"),
+            ("p1", "/mosaicphotos/b/IMG.jpg", "SAME")])
+
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-p0", "L-p1"])
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files.count == 2, "同じ中身の別メンバーが 1 枚に潰れた: \(files)")
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 2, "2 回目で増減した")
+    }
+
+    /// ⚠️ 大文字小文字だけ違う名前。Dropbox のパスは**大文字小文字を区別しない**ので、
+    /// 宛先が名前だけで決まっていると上書きが起きる。
+    @Test("大文字小文字だけ違う名前でも、別々に共有される")
+    func caseOnlyDifferentNames() async {
+        let (engine, _, server) = await makeStack(backup: [
+            ("p0", "/mosaicphotos/a/img.jpg", "h0"),
+            ("p1", "/mosaicphotos/b/IMG.JPG", "h1")])
+
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-p0", "L-p1"])
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files.count == 2, "大文字小文字違いで上書きされた: \(files)")
+        #expect(await hashes(server) == ["h0", "h1"], "中身が失われた")
+    }
+
+    /// ⚠️ 印の区切り（`--`）や連番の形を**元の名前が含んでいる**場合。
+    /// 「自分が置いた名前か」を形で判定していた頃は、ここで誤判定した。
+    @Test("元の名前が印の形を含んでいても壊れない")
+    func sourceNamesThatLookLikeOurs() async {
+        let (engine, _, server) = await makeStack(backup: [
+            ("p0", "/mosaicphotos/a/IMG--0011223344556677.jpg", "h0"),
+            ("p1", "/mosaicphotos/b/IMG (1).jpg", "h1"),
+            ("p2", "/mosaicphotos/c/IMG 2.jpg", "h2")])
+
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-p0", "L-p1", "L-p2"])
+        await engine.syncNow()
+        let first = await sharedFiles(server)
+        #expect(first.count == 3, "3 枚そろっていない: \(first)")
+
+        // 2 回目で「自分のものではない」と誤判定して消したり作り直したりしない。
+        await engine.syncNow()
+        #expect(await sharedFiles(server).sorted() == first.sorted(), "2 回目で入れ替わった")
+    }
+
+    /// ⚠️ 拡張子なし・記号・日本語・非常に長い名前。パス長の上限にも触れる。
+    @Test("拡張子なし・記号・日本語・長い名前でも共有できる")
+    func unusualFileNames() async {
+        let long = String(repeating: "写真", count: 100)
+        let (engine, _, server) = await makeStack(backup: [
+            ("p0", "/mosaicphotos/a/noext", "h0"),
+            ("p1", "/mosaicphotos/b/家族の写真 2024.jpg", "h1"),
+            ("p2", "/mosaicphotos/c/\(long).jpg", "h2"),
+            ("p3", "/mosaicphotos/d/.hidden.jpg", "h3")])
+
+        _ = await engine.createSet(name: "Trip", refKeys: (0..<4).map { "L-p\($0)" })
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files.count == 4, "共有できていない名前がある: \(files)")
+        #expect(await hashes(server) == ["h0", "h1", "h2", "h3"], "中身が失われた")
+        // Dropbox のパス長（260）に収まっている。
+        #expect(files.allSatisfy { $0.count < 260 }, "パスが長すぎる: \(files.map(\.count))")
+        await engine.syncNow()
+        #expect(await sharedFiles(server).sorted() == files.sorted(), "2 回目で入れ替わった")
+    }
+
+    /// ⚠️ **同じ写真を 2 つのセットに入れる**。セットごとに独立したコピーができ、
+    /// 片方から外してももう片方は残ること。
+    @Test("同じ写真を 2 つのセットへ入れても、片方の除外が他方に及ばない")
+    func samePhotoInTwoSets() async {
+        let (engine, store, server) = await makeStack(backup: [
+            ("p0", "/mosaicphotos/a/IMG.jpg", "h0")])
+
+        _ = await engine.createSet(name: "SetA", refKeys: ["L-p0"])
+        _ = await engine.createSet(name: "SetB", refKeys: ["L-p0"])
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 2, "セットごとのコピーができていない")
+
+        let a = await store.allShareSets().first { $0.name == "SetA" }!
+        _ = await engine.removeItems(setID: a.id, refKeys: ["L-p0"])
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files.count == 1, "片方の除外が他方に及んだ: \(files)")
+        #expect(files[0].contains("/setb/"), "残ったのが SetB でない: \(files)")
+    }
+
+    /// ⚠️ 元の写真が**共有フォルダの中**にある（クラウド写真をそのセットから共有する）。
+    /// コピー元とコピー先が同じフォルダにあると、掃除がコピー元を消しに行きかねない。
+    @Test("コピー元が共有フォルダの中にあっても、元を消さない")
+    func sourceInsideShareFolderIsNotSwept() async {
+        let (engine, _, server) = await makeStack(backup: [])
+        // 別セットのフォルダに置かれた写真を、クラウド写真として共有する。
+        let other = "\(Self.shareRoot.lowercased())/Other/photo.jpg"
+        await server.seed(other, hash: "hX")
+
+        _ = await engine.createSet(name: "Trip", refKeys: ["C-\(other)"])
+        await engine.syncNow()
+
+        // ⚠️ **コピーが先、フォルダの掃除は後**。逆順だと元を消してからコピーすることになり、
+        // コピーが永久に失敗する（この順序をこのテストが押さえている）。
+        let trip = await sharedFiles(server).filter { $0.contains("/trip/") }
+        #expect(trip.count == 1, "コピーが作られていない（元を先に消した）: \(trip)")
+        #expect(await server.contentHash(at: trip[0]) == "hX", "中身が違う")
+        // どのセットも持たない `Other` は、コピーを取り終えたあとで消える。
+        #expect(!(await server.filePaths().contains(other)), "孤児フォルダが残っている")
+    }
+}
