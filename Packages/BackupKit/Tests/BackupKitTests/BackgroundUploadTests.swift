@@ -158,6 +158,49 @@ struct BackgroundUploadSplitTests {
         #expect(r2.giveUp.map(\.id) == ["dead"])
     }
 
+    /// ⚠️ **数ではなく「同時数」で絞る**（実機 diagnostics-82）。
+    /// 1 回に渡す数を 813 → 40 に減らしても 429 は消えなかった。出ていたのは
+    /// `too_many_write_operations`＝**同じ名前空間への同時書き込み**で、40 を一度に渡せば
+    /// 40 が同時に同じフォルダへ書きに行く。4.5 時間で 429 が 862 回・成功 0 枚だった。
+    @Test("転送中のぶんを差し引いて、同時に走る数を抑える")
+    func enqueueCapacityAccountsForRunningTransfers() {
+        let maxInFlight = BackgroundUploadSession.maxInFlight
+        #expect(BackgroundUploadSession.enqueueCapacity(running: 0) == maxInFlight,
+                "空いているのに渡さないのは遅いだけ")
+        #expect(BackgroundUploadSession.enqueueCapacity(running: maxInFlight - 1) == 1)
+        #expect(BackgroundUploadSession.enqueueCapacity(running: maxInFlight) == 0,
+                "上限まで走っているのに追加で渡している（同時書き込みが増える）")
+        #expect(BackgroundUploadSession.enqueueCapacity(running: maxInFlight + 10) == 0,
+                "負の数を渡そうとしている")
+        // 1 回に渡す上限の方が小さければ、そちらが効く。
+        #expect(BackgroundUploadSession.enqueueCapacity(running: 0, maxInFlight: 100, perFlush: 5) == 5)
+    }
+
+    /// ⚠️ **待てと言われたら、待ってから自分で出し直す**（実機 diagnostics-82）。
+    /// Dropbox は `retry_after: 1`（1 秒）を返していたのに、投入の口がバックアップ実行中の
+    /// `flushSpool` しか無く、次の投入は**次の窓＝30 分後**だった。結果、同じ写真が
+    /// 30 分ごとに 1 回だけ試されては 429 を受け、4.5 時間で 1 枚も上がらなかった。
+    @Test("レート制限の間は出し直さず、明けたら自分で出しに行く")
+    func topUpWaitsWhileRateLimitedThenResumes() async {
+        final class Calls: @unchecked Sendable { var count = 0 }
+        let calls = Calls()
+        // (1) レート制限中は、トークンを取りに行きもしない。
+        let limited = BackgroundUploadSession(spool: UploadSpool(directory: tempDir()))
+        limited.tokenProvider = { calls.count += 1; return nil }   // nil＝ここで止まる（OS へは渡さない）
+        limited.noteRateLimited(retryAfter: 60)
+        await limited.scheduleTopUp()?.value
+        #expect(calls.count == 0, "待てと言われている間に出し直している（429 が増えるだけ）")
+
+        // (2) 制限が無ければ、自分から出し直しに行く。
+        // ⚠️ 同じセッションで「明けた」を作ることはできない——待ちは**短縮しない**
+        // （`noteRateLimited` は今より遠い時刻しか受け付けない）。それが正しい仕様なので、
+        // テストの方を分ける。
+        let free = BackgroundUploadSession(spool: UploadSpool(directory: tempDir()))
+        free.tokenProvider = { calls.count += 1; return nil }
+        await free.scheduleTopUp()?.value
+        #expect(calls.count == 1, "誰も出し直さない（次の窓まで 30 分止まる）")
+    }
+
     @Test("台帳へ書いている最中・この枠で投入済みのジョブは再投入しない（diagnostics-74 の重複投入）")
     func settlingAndAttemptedAreExcluded() {
         let settling = makeJob("settling")

@@ -47,6 +47,21 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
     /// 「3 回失敗」で捨てていた。転送は枠の外で OS が続けるので、一度に渡す意味は無い。
     public static let maxEnqueuePerFlush = 40
 
+    /// **同時に走らせる上限**（diagnostics-82）。
+    ///
+    /// ⚠️ 813 → 40 に減らしてもなお足りなかった。Dropbox の 429 には 2 種類あり、
+    /// 実機で出ていたのは `too_many_write_operations`＝**同じ名前空間への同時書き込み**。
+    /// 数を減らすのではなく**同時数**を抑えないと消えない（40 を一度に渡せば、40 が同時に
+    /// 同じフォルダへ書きに行く）。実機ログでは 4.5 時間に 429 が 862 回、成功 0 枚だった。
+    public static let maxInFlight = 4
+
+    /// いま OS へ渡してよい数（純ロジック）。転送中のぶんを差し引く。
+    static func enqueueCapacity(running: Int,
+                                maxInFlight: Int = BackgroundUploadSession.maxInFlight,
+                                perFlush: Int = BackgroundUploadSession.maxEnqueuePerFlush) -> Int {
+        max(0, min(perFlush, maxInFlight - running))
+    }
+
     /// 429（レート制限）を受けたら、この時刻まで新規投入を止める。`Retry-After` を尊重する。
     private var rateLimitedUntil: Date?
     /// `Retry-After` が無いときの既定の待ち（秒）。
@@ -73,6 +88,16 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
     private var attemptedThisRun: Set<String> = []
     /// 台帳を更新する相手の解決手段（アプリが起動時に結線。ストア構築を待てるよう async）。
     public var settlerProvider: (@Sendable () async -> Settler?)?
+
+    /// **自分で出し直す**ためのトークン（アプリが起動時に結線）。
+    ///
+    /// ⚠️ これが無いと、`retry_after: 1`（1 秒待て）と言われても次の投入は**次の窓**＝
+    /// 30 分後になる（実機 diagnostics-82: 4.5 時間で 429 が 862 回・成功 0 枚）。
+    /// 投入の口はバックアップ実行中の `flushSpool` しか無く、実行が終われば誰も出し直さない。
+    public var tokenProvider: (@Sendable () async -> String?)?
+
+    /// 出し直しの予約が走っているか（多重に走らせない）。
+    private var topUpScheduled = false
 
     public init(spool: UploadSpool = UploadSpool()) {
         self.spool = spool
@@ -116,8 +141,12 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
             return 0
         }
         let running = await runningJobIDs()
+        // ⚠️ **同時数で絞る**（diagnostics-82）。一度に渡す数を減らしても、渡した全部が
+        // 同時に同じ名前空間へ書きに行けば `too_many_write_operations` は消えない。
+        let capacity = Self.enqueueCapacity(running: running.count)
+        guard capacity > 0 else { return 0 }
         let split = Self.split(pending: spool.pendingJobs(), running: running, excluded: excludedFromEnqueue(),
-                               limit: Self.maxEnqueuePerFlush)
+                               limit: capacity)
         for job in split.giveUp {
             BackupLogger.error("BackgroundUpload: giving up \(job.filename) after \(job.attempts) attempts")
             Diagnostics.mark("backup(bg): \(job.filename) を \(job.attempts) 回で諦めました（次回の通常対象へ）")
@@ -148,6 +177,9 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
     }
     private func noteAttempted(_ id: String) {
         lock.lock(); attemptedThisRun.insert(id); lock.unlock()
+    }
+    private func clearAttempted(_ id: String) {
+        lock.lock(); attemptedThisRun.remove(id); lock.unlock()
     }
 
     /// spool のジョブを「投入する / 諦める」に分ける純ロジック。
@@ -224,7 +256,31 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
         return now < until
     }
 
-    private func noteRateLimited(retryAfter: TimeInterval) {
+    /// 待ち時間のあと、**自分で**続きを OS へ渡す。
+    ///
+    /// 転送が 1 つ終わるたび（`settle`）と、レート制限を受けたとき（待ち時間のあと）に呼ぶ。
+    /// これがあるので「4 枚ずつ流し続ける」形になり、窓の終わりで止まらない。
+    /// ⚠️ アプリが吊るされていれば動かないが、そのときは OS が応答で起こしてくれる
+    /// （起こされた側でまた `settle` → ここへ来る）。
+    /// - Returns: 走らせた仕事（テストが待つため）。既に予約済みなら nil。
+    @discardableResult
+    func scheduleTopUp(after delay: TimeInterval = 0) -> Task<Void, Never>? {
+        lock.lock()
+        if topUpScheduled { lock.unlock(); return nil }
+        topUpScheduled = true
+        lock.unlock()
+        return Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard let self else { return }
+            defer { lock.lock(); topUpScheduled = false; lock.unlock() }
+            guard !isRateLimited(), let token = await tokenProvider?() else { return }
+            let sent = await enqueuePending(token: token)
+            if sent > 0 { BackupLogger.info("BackgroundUpload: topped up \(sent) job(s)") }
+        }
+    }
+
+    /// （internal＝「レート制限中は出し直さない」をテストから作るため）
+    func noteRateLimited(retryAfter: TimeInterval) {
         lock.lock()
         let until = Date().addingTimeInterval(retryAfter)
         if (rateLimitedUntil ?? .distantPast) < until { rateLimitedUntil = until }
@@ -258,6 +314,8 @@ public final class BackgroundUploadSession: NSObject, @unchecked Sendable {
 
     private func endSettle(_ jobID: String) {
         lock.lock(); settlesInFlight -= 1; settling.remove(jobID); lock.unlock()
+        // 1 枚終わったぶんの空きへ、次の 1 枚を流す（4 枚ずつ流し続ける形にする）。
+        scheduleTopUp()
         completeIfDrained()
     }
 
@@ -300,8 +358,12 @@ extension BackgroundUploadSession: URLSessionDataDelegate {
             restored.attempts = max(0, restored.attempts - 1)
             spool.update(job: restored)
             noteRateLimited(retryAfter: retryAfter)
+            // ⚠️ 429 は試行回数を消費しないので、**この枠の「投入済み」印も外す**
+            // （外さないと、待ち時間が過ぎても同じ枠では二度と出せない）。
+            clearAttempted(jobID)
             BackupLogger.error("BackgroundUpload: \(job.filename) — HTTP 429 — waiting \(Int(retryAfter))s")
             Diagnostics.mark("backup(bg): レート制限（429）— \(Int(retryAfter)) 秒待ってから出し直します")
+            scheduleTopUp(after: retryAfter)
         case .retry(let reason):
             // spool は残す（次の窓で再投入・attempts で上限）。
             BackupLogger.error("BackgroundUpload: \(job.filename) — \(reason)\(error.map { " (\($0.localizedDescription))" } ?? "") — will retry")

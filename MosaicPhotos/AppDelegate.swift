@@ -1,4 +1,5 @@
 import BackupKit
+import DropboxCore
 import MosaicSupport
 import UIKit
 
@@ -16,6 +17,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // 次の窓で上げ直しにはなるが、無駄）。ストアの構築は settle 側が待つ。
         BackgroundUploadSession.shared.settlerProvider = {
             await HomeStores.shared().backupEngine
+        }
+        // ⚠️ **自分で出し直せるようにする**（diagnostics-82）。これが無いと、Dropbox に
+        // 「1 秒待て」と言われても次の投入は次の窓＝30 分後になる（投入の口がバックアップ
+        // 実行中にしか無いため）。実機では 4.5 時間で 429 を 862 回受けて 1 枚も上がらなかった。
+        BackgroundUploadSession.shared.tokenProvider = {
+            try? await HomeStores.shared().dropboxStore.auth.freshAccessToken()
         }
         return true
     }
