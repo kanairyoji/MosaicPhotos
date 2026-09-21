@@ -56,6 +56,15 @@ import DropboxTestSupport
 @MainActor
 struct CloudReconcileSyncTests {
 
+    /// `allSatisfy` の async 版（待ち条件をルートごとに書くため）。
+    private func allComplete(_ scopes: [String], in cache: DropboxCacheStore) async -> Bool {
+        for scope in scopes {
+            guard await cache.syncStateInfo(accountId: scope)?.isInitialSyncCompleted == true
+            else { return false }
+        }
+        return true
+    }
+
     private let root = "/Photos"
     private let account = "acc"
     private var scope: String { account + "|" + root.lowercased() }
@@ -155,6 +164,93 @@ struct CloudReconcileSyncTests {
 
         #expect(await cachedPaths(cache).count == 3,
                 "期限が来ていないのに全件を引き直している（毎起動で 8 万件の一覧を引く）")
+    }
+
+    /// ⚠️ **見直しに失敗しても、動いていたポーリングを止めない**（レビュー 1 周目）。
+    /// 週次の見直しは利用者が頼んだ処理ではなく、キャッシュは既に揃っている。
+    /// 失敗で `syncLoop` を抜けると、**通信が一瞬切れただけでそのルートの同期が
+    /// アプリを開き直すまで止まる**＝新しい写真が出てこなくなる。
+    @Test("見直しに失敗しても、差分の追従は続く")
+    func failedReconcileFallsBackToPolling() async {
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .background)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
+        let server = FakeDropboxServer()
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let recorder = Recorder()
+        await seedThenLoseOneDeletion(server, cache: cache, recorder: recorder)
+        await cache.markInitialSyncCompleted(accountId: scope,
+                                             at: Date().addingTimeInterval(-8 * 24 * 60 * 60))
+        // ⚠️ 仕込みは**見直しだけに当たるもの**を選ぶ。`files/list_folder` を指定すると
+        // `list_folder/longpoll` にも当たり（`matches` は部分一致）、ポーリングごと
+        // 落ちてしまう——「ポーリングが生きていること」を見たいのに前提を壊す。
+        // 見直しの入口（ベースラインカーソルの取得）だけを落とす。
+        await server.inject(.init(endpoint: "get_latest_cursor", effect: .status(500)))
+
+        let engine = makeEngine(server, cache: cache, recorder: recorder)
+        engine.start(accountId: account, roots: [root])
+        // 見直しが失敗したあと、差分で拾える追加が届くこと＝ポーリングが生きている。
+        try? await Task.sleep(for: .milliseconds(300))
+        await server.upload(path: "\(root)/after-failure.jpg", data: Data("new".utf8))
+        await waitUntil { await self.cachedPaths(cache).contains("\(root.lowercased())/after-failure.jpg") }
+        engine.stop()
+
+        let paths = await cachedPaths(cache)
+        #expect(paths.contains("\(root.lowercased())/after-failure.jpg"), """
+                見直しの失敗でポーリングごと止まっている（\(paths)）。
+                通信が一瞬切れただけで、そのルートの同期がアプリを開き直すまで止まる。
+                """)
+        // ⚠️ 画面へエラーを出さない（利用者から見れば何も起きていない。しかも `.error` は
+        // 共有の取り込みの掃除まで止める＝`cacheSettled`）。
+        let reportedErrors = recorder.states.filter { if case .error = $0 { return true } else { return false } }
+        #expect(reportedErrors.isEmpty, "頼んでもいない見直しの失敗を画面のエラーにした")
+    }
+
+    /// ⚠️ **ルートが揃って期限を迎えても、一斉には引かない**（レビュー 1 周目）。
+    /// 実機のルートは 3 本（ソース・バックアップ・家族）で、**どれも同じ日に初回同期を
+    /// 終えている**＝期限も同じ日に来る。素直に書くと 3 本が同じ窓で全件一覧を引き、
+    /// 数分しかない窓で揃って中途半端に終わる——誰も印を進められないので、
+    /// 次の窓でまた 3 本が一斉に始まる。
+    @Test("複数のルートが同時に期限を迎えても、見直しは 1 本ずつ")
+    func reconcilesOneRootAtATime() async {
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .background)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
+        let server = FakeDropboxServer()
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let recorder = Recorder()
+        let roots = ["/A", "/B"]
+        for folder in roots {
+            await server.seed(folder, hash: "", isFolder: true)
+            await server.upload(path: "\(folder)/p.jpg", data: Data("photo".utf8))
+        }
+        let warmUp = makeEngine(server, cache: cache, recorder: recorder)
+        warmUp.start(accountId: account, roots: roots)
+        await waitUntil {
+            await self.allComplete(roots.map { self.account + "|" + $0.lowercased() }, in: cache)
+        }
+        warmUp.stop()
+        let stale = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        for folder in roots {
+            await cache.markInitialSyncCompleted(accountId: account + "|" + folder.lowercased(),
+                                                 at: stale)
+        }
+        // 応答を遅くして、1 本目が走っている「最中」を作る。
+        // ⚠️ 数えるのは `callCounts()` ではなく `requestLog`。前者は**応答を返した後**に
+        // 積むので、飛行中のリクエストが見えない——「同時に走っていないこと」を
+        // 見たいのに、遅い応答ほど数えられなくなる（最初にこれで 0 件と出た）。
+        // ⚠️ 見る時刻は遅延の半分以下にする（余裕 2.5 倍）。
+        await server.setResponseDelay(milliseconds: 500)
+        let before = await server.requestLog.filter { $0.contains("get_latest_cursor") }.count
+
+        let engine = makeEngine(server, cache: cache, recorder: recorder)
+        engine.start(accountId: account, roots: roots)
+        try? await Task.sleep(for: .milliseconds(200))
+        let during = (await server.requestLog.filter { $0.contains("get_latest_cursor") }.count) - before
+        engine.stop()
+
+        #expect(during == 1, """
+                1 本目の見直しの最中に \(during) 本が全件一覧を始めている。
+                実機のルート 3 本は同じ日に期限を迎えるので、これは必ず起きる。
+                """)
     }
 
     /// ⚠️ **前面では走らせない**（ADR-107）。8 万件の一覧は一枚岩の通信処理で、

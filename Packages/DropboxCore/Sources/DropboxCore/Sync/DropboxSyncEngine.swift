@@ -32,6 +32,20 @@ final class DropboxSyncEngine {
 
     private var syncTask: Task<Void, Never>?
 
+    /// いずれかのルートが**全件の見直し中**か（ADR-206）。
+    ///
+    /// ⚠️ ルートは 3 本（ソース・バックアップ・家族）が並行に回っていて、どれも
+    /// **同じ日に初回同期を終えている**。期限も同じ日に来るので、素直に書くと
+    /// 3 本が同じ窓で一斉に全件一覧を引く。窓は数分しかないので、揃って中途半端に
+    /// 終わって誰も印を進められない——次の窓でまた 3 本が一斉に始まる。1 本ずつにする。
+    private var isReconcilingAnyRoot = false
+
+    /// 見直しに失敗したルート（この起動のあいだは再挑戦しない）。
+    ///
+    /// ⚠️ 失敗のたびに投げ直すと、通信が不調な端末で**ポーリングが見直しに食われる**。
+    /// 次の起動でやり直せばよい（印は進めていないので期限は来たまま）。
+    private var reconcileFailedRoots: Set<String> = []
+
     // MARK: - Init
 
     init(
@@ -124,7 +138,13 @@ final class DropboxSyncEngine {
         // その行が永久に残るので、掃除しに来る経路が要る。掃除の処理は初回同期が持っている
         // ので、期限が来たらそれをやり直すだけでよい。
         // ⚠️ **前面では走らせない**。8 万件の一覧は一枚岩の通信処理（ADR-107）。
-        let reconcileDue = Self.shouldReconcileNow(lastFullScan: state?.initialSyncCompletedAt)
+        let reconcileDue = shouldReconcileNow(scopeKey: scopeKey,
+                                              lastFullScan: state?.initialSyncCompletedAt)
+        // ⚠️ **確保は判定の直後**（`await` を挟まない）。挟むと、その中断のあいだに
+        // 別のルートが同じ判定を通り抜けて、2 本同時に全件一覧を引く。
+        // ルートは 3 本とも同じ日に初回同期を終えている＝期限も同じ日に来るので、
+        // これは「たまに起きる」ではなく**必ず起きる**。
+        if reconcileDue { isReconcilingAnyRoot = true }
         if let cursor, itemCount > 0, state?.isInitialSyncCompleted == true, !reconcileDue {
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
             return await pollLoop(scopeKey: scopeKey, root: root, startCursor: cursor,
@@ -141,13 +161,15 @@ final class DropboxSyncEngine {
         }
     }
 
-    /// いま全件の見直しに入ってよいか。**期限と、重い通信を始めてよいかの両方**を見る。
+    /// いま全件の見直しに入ってよいか。**期限・重い通信の可否・他のルートの都合**を見る。
     ///
     /// ⚠️ 判定を 1 か所に置く（`syncOnce` と `pollLoop` が同じ式を使う）。別々に書くと、
     /// 片方が「やり直せ」と言って片方が「まだ」と言う状態になり、やり直しの合図だけが
     /// 空回りする——ADR-196 で畳んだ「入口と譲りで違う条件」と同じ形。
-    private static func shouldReconcileNow(lastFullScan: Date?, now: Date = Date()) -> Bool {
-        CloudReconcilePolicy.isDue(lastFullScan: lastFullScan, now: now)
+    private func shouldReconcileNow(scopeKey: String, lastFullScan: Date?,
+                                    now: Date = Date()) -> Bool {
+        guard !isReconcilingAnyRoot, !reconcileFailedRoots.contains(scopeKey) else { return false }
+        return CloudReconcilePolicy.isDue(lastFullScan: lastFullScan, now: now)
             && BackgroundYield.allows(.cloudMonolith)
     }
 
@@ -164,6 +186,8 @@ final class DropboxSyncEngine {
     ///   「同期中」を出すと、週に 1 度だけ理由もなく進捗が走るように見える。
     private func initialSync(accountId: String, root: String, scopeKey: String,
                              isPrimary: Bool, isReconcile: Bool = false) async -> Bool {
+        // 確保は `syncOnce` が済ませている（判定と地続きにするため）。ここでは返すだけ。
+        defer { if isReconcile { isReconcilingAnyRoot = false } }
         do {
             if !isReconcile { reportState(.initialSync(fetched: 0), isPrimary: isPrimary) }
 
@@ -261,7 +285,24 @@ final class DropboxSyncEngine {
         } catch is CancellationError {
             reportState(.idle, isPrimary: isPrimary)
         } catch {
-            DropboxLogger.error("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync error — \(error.localizedDescription)")
+            DropboxLogger.error("SyncEngine[\(root.isEmpty ? "/" : root)]: \(isReconcile ? "weekly reconcile" : "initial sync") error — \(error.localizedDescription)")
+            // ⚠️ **見直しの失敗で、動いていたポーリングまで止めない**（ADR-206 のレビュー 1 周目）。
+            // 週次の見直しは利用者が頼んだ処理ではなく、キャッシュは既に揃っている。
+            // ここで `false` を返すと `syncLoop` が抜けて**そのルートの同期がアプリを
+            // 開き直すまで止まる**——通信が一瞬切れただけで、新しい写真が出てこなくなる。
+            // `.error` を画面へ出すのも筋が違う（利用者から見れば何も起きていない。
+            // しかも `.error` は共有の取り込みの掃除まで止める＝`cacheSettled`）。
+            if isReconcile {
+                reconcileFailedRoots.insert(scopeKey)
+                let state = await cache.syncStateInfo(accountId: scopeKey)
+                if let cursor = state?.cursor, !Task.isCancelled {
+                    DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: "
+                        + "reconcile failed — back to polling (will retry next launch)")
+                    return await pollLoop(scopeKey: scopeKey, root: root, startCursor: cursor,
+                                          isPrimary: isPrimary,
+                                          lastFullScan: state?.initialSyncCompletedAt)
+                }
+            }
             reportState(.error(error.localizedDescription), isPrimary: isPrimary)
         }
         return false
@@ -290,7 +331,7 @@ final class DropboxSyncEngine {
                 // 「まだ動かしてよい時間ではない」と判断して poll へ戻した瞬間に
                 // ここがまた true を返し、通信を 1 度もせずに回り続ける（タイトループ）。
                 // 後ろに置けば、最悪でも 1 周 1 longpoll のコストが入る。
-                if Self.shouldReconcileNow(lastFullScan: lastFullScan) {
+                if shouldReconcileNow(scopeKey: scopeKey, lastFullScan: lastFullScan) {
                     DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: "
                         + "weekly reconcile due — re-listing to drop anything that is gone")
                     return true
