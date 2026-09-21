@@ -131,7 +131,13 @@ extension FaceStore {
 
         // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
         // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。基準の人物だけを見る。
-        var items: [FaceReviewItem] = auditSplitItems(targets: Array(focus.prefix(Self.boundaryScanLimit)),
+        // ⚠️ **散らばっている人物から尋ねる**（ADR-210）。以前は「注目人物の並び順（命名済み →
+        // 大きい順）」の先頭から見ていたので、混入が疑わしい人物が上限の外に居ると
+        // 一生尋ねられなかった。散らばり（`FaceClusterHealth.spread`）は夜間に測った値で、
+        // 2-means（実際の分割試行）より桁で安い足切りになる。
+        let byDrift = FaceClusterHealth.auditOrder(focus, spread: { $0.spread.map { Float($0) } },
+                                                   clusterID: { $0.clusterID })
+        var items: [FaceReviewItem] = auditSplitItems(targets: Array(byDrift.prefix(Self.boundaryScanLimit)),
                                                       limit: 5, membersByCluster: membersByCluster)
             .filter { !excluding.contains($0.id) }
 
@@ -456,7 +462,10 @@ extension FaceStore {
             // 似ている度が高い対は**あらかじめ選んでおく**（ADR-153）。黙って結合はしない。
             candidates.append(.init(clusterID: c.clusterID, face: face,
                                     count: c.count, similarity: entry.sim,
-                                    preselected: entry.sim >= tuning.autoSuggestBar))
+                                    preselected: MergePolicy.action(
+                                        similarity: entry.sim, isFragmentToPerson: false,
+                                        bars: MergePolicy.bars(tuning: tuning, threshold: thr))
+                                        == .preselect))
         }
         guard !candidates.isEmpty else { return nil }
 

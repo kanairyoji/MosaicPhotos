@@ -67,6 +67,14 @@ public struct FaceClustering {
         /// 割り当ては「重心またはいずれかのアンカーとの最大類似」で判定＝人物内のばらつき
         /// （年代・眼鏡・角度）で単一重心から遠くなった顔でも正しく合流できる。
         public var prototypes: [[Float]] = []
+        /// **重心の成長を止めているか**（ADR-210）。ばらつき（`FaceClusterHealth.spread`）が
+        /// 大きいクラスタは、既に別人が混ざっている疑いが濃い。そこへさらに顔を足すと
+        /// 重心が中間へ寄り、**混入が次の混入を呼ぶ**。凍結中のクラスタには所属（faceIDs）
+        /// だけを付け、`sum`/`count`/`centroid` は一切動かさない（第2パスと同じ扱い）。
+        ///
+        /// ⚠️ 顔を**弾かない**のが要点。ADR-59（外れ値を抜く）は成長データで正当な顔まで
+        /// 落として不採用になった。ここは「入れるが、重心の材料にはしない」なので網羅は減らない。
+        public var centroidFrozen: Bool = false
     }
 
     public private(set) var clusters: [Cluster] = []
@@ -224,14 +232,38 @@ public struct FaceClustering {
         return prototypes
     }
 
-    /// - Parameter excludedClusterIDs: 合流を許さないクラスタ（**同一写真 cannot-link**：
-    ///   1 枚の写真に同じ人物は 1 回しか写らないため、同じ写真の先行顔が入ったクラスタを除外する）。
+    /// 1 顔を置いた結果。**クラスタ ID だけでは足りない**——重心（sum/count）に足したかどうかを
+    /// 呼び出し側が記録しないと、後で付け替えるときに「引いてよい顔か」が分からなくなる（ADR-210）。
+    public struct Assignment: Sendable, Equatable {
+        public let clusterID: Int
+        /// `sum`/`count` に足したか。第2パス・重心凍結クラスタへの所属は false。
+        public let contributed: Bool
+        public static let unassigned = Assignment(clusterID: FaceClustering.unassigned,
+                                                  contributed: false)
+        public init(clusterID: Int, contributed: Bool) {
+            self.clusterID = clusterID
+            self.contributed = contributed
+        }
+    }
+
+    /// クラスタ ID だけを返す従来の入口（テスト・評価ハーネス用）。
+    /// **本番は `place` を使う**（重心へ足したかを行に残すため）。
     @discardableResult
     public mutating func assign(faceID: String, embedding: [Float],
                                 quality: Float = 1, negatives: [NegativePair] = [],
                                 excludedClusterIDs: Set<Int> = []) -> Int {
+        place(faceID: faceID, embedding: embedding, quality: quality,
+              negatives: negatives, excludedClusterIDs: excludedClusterIDs).clusterID
+    }
+
+    /// - Parameter excludedClusterIDs: 合流を許さないクラスタ（**同一写真 cannot-link**：
+    ///   1 枚の写真に同じ人物は 1 回しか写らないため、同じ写真の先行顔が入ったクラスタを除外する）。
+    @discardableResult
+    public mutating func place(faceID: String, embedding: [Float],
+                               quality: Float = 1, negatives: [NegativePair] = [],
+                               excludedClusterIDs: Set<Int> = []) -> Assignment {
         let v = FaceClustering.normalized(embedding)
-        if quality < qualityFloor { return FaceClustering.unassigned }
+        if quality < qualityFloor { return .unassigned }
 
         // 類似度降順で候補を見て、しきい値以上かつ負例に拒否されない最初のクラスタへ合流。
         // 類似度は「重心 or アンカー（確認済みの顔）との最大」（B3 マルチプロトタイプ）。
@@ -247,13 +279,13 @@ public struct FaceClustering {
            // 競合どうしが似ている＝同一人物の別クラスタなら、紛らわしくても取り込んでよい。
            !(rivalAwareMarginGate && clustersAlike(scored[0].index, scored[1].index)) {
             // 曖昧な顔で新クラスタを増やさない方針（ADR-68）。
-            if ambiguousPolicy == .leaveUnassigned { return FaceClustering.unassigned }
+            if ambiguousPolicy == .leaveUnassigned { return .unassigned }
             let id = nextID
             nextID += 1
             let w = max(quality, 0.01)
             clusters.append(Cluster(id: id, centroid: v, sum: v.map { $0 * w }, count: 1, faceIDs: [faceID]))
             maintainAutoPrototype(v, quality: quality, at: clusters.count - 1)
-            return id
+            return Assignment(clusterID: id, contributed: true)
         }
         // 候補を見る下限。確立した人物には校正の引き上げ分を課さないので（ADR-141）、
         // **打ち切りも緩い方に合わせる**——ここを calibrated のままにすると、免除が効く前に
@@ -293,13 +325,19 @@ public struct FaceClustering {
                     continue
                 }
             }
+            // ⚠️ **重心を凍結したクラスタには所属だけ付ける**（ADR-210）。ばらつきが大きい＝
+            // 既に混ざっている疑いが濃いクラスタの重心を、さらに動かさない。
+            if clusters[cand.index].centroidFrozen {
+                clusters[cand.index].faceIDs.append(faceID)
+                return Assignment(clusterID: clusters[cand.index].id, contributed: false)
+            }
             let w = max(quality, 0.01)
             for i in clusters[cand.index].sum.indices { clusters[cand.index].sum[i] += v[i] * w }
             clusters[cand.index].count += 1
             clusters[cand.index].faceIDs.append(faceID)
             clusters[cand.index].centroid = FaceClustering.normalized(clusters[cand.index].sum)
             maintainAutoPrototype(v, quality: quality, at: cand.index)
-            return clusters[cand.index].id
+            return Assignment(clusterID: clusters[cand.index].id, contributed: true)
         }
         // 該当クラスタなし → 新規（sum は品質重み付き＝以後の removing と整合）。
         let id = nextID
@@ -307,7 +345,7 @@ public struct FaceClustering {
         let w = max(quality, 0.01)
         clusters.append(Cluster(id: id, centroid: v, sum: v.map { $0 * w }, count: 1, faceIDs: [faceID]))
         maintainAutoPrototype(v, quality: quality, at: clusters.count - 1)
-        return id
+        return Assignment(clusterID: id, contributed: true)
     }
 
     /// 第2パス割当のしきい値（membership のみ）。データセット計測（FG-NET/LFW）で決定:

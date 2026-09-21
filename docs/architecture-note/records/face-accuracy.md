@@ -109,6 +109,25 @@
   （0.65 以上の対がゼロ）。「最悪ケース」の代表であって日常の家族写真の代表ではない。
   下限 0.40 の採用は、実機の回答分布（yes の下位 5% が 0.669）と併せて決めた。
 
+## ⚠️ データセットで決められないもの（2026-09-21・ADR-211/212）
+
+**FG-NET / LFW は顔のクロップだけ**で、連写も、場面の構造も、服装も持たない。
+連写の連結（ADR-211）と服装の連結（ADR-212）は、この 2 つのデータセットでは
+**良くなったかどうかを測れない**。「測れないから入れない」でも「測らずに入れる」でもなく、
+断片吸収のバーを実機の分布で決めた ADR-162 と同じ手順を踏む:
+
+1. **バーを保守的に高く置く**（胴体 0.90＝ほぼ複製の線）。
+2. **根拠を行に残す**（`DetectedFace.linkSource`＝face / secondPass / temporal / torso /
+   absorb / user）。付け替えの記録（`FaceCorrection.linkSource`）にも同じ値を控える。
+3. **バー別の分布**を夜間の診断ログへ出す（「0.85 にしたら何件増えるか」がそのまま読める）。
+4. 判断材料は **根拠別の付け替え率**——「その根拠で入った顔を、ユーザーが何割外したか」。
+
+代わりに、**データセットで測れる部分**は従来どおり中核指標で見る:
+- 重心の凍結（ADR-210）は「散らばり vs 純度」の相関として FG-NET / LFW で測れる（未実施）。
+- 代表顔の絞り込み（ADR-214）は B3 指標に影響しない（代表はクラスタリングに使わない）。
+
+⚠️ 上の 2 つは**まだ計測していない**。実機の分布が出てから台帳へ追記する。
+
 ## 計測方法
 
 ```bash
@@ -164,7 +183,13 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 | クロップ再検証の最小占有 | 幅 25% | `FaceQualityGate.cropVerifyMinSide` |
 | 埋め込み | **AuraFace-v1（ArcFace 系 R100・Apache 2.0）**・512 次元・**5 点整列**＋マルチクロップ 3 平均 | `FacePerceptionAdapter` |
 | 処理解像度 | ローカル 1024px / クラウドはキャッシュサムネ | 同上 |
-| 共起 notSame | 同一写真 3 回以上で別人扱い | `FaceStore.coOccurrenceNotSame` |
+| 共起 notSame | 同一写真 3 回以上で別人扱い | `MergePolicy.coOccurrenceNotSame` |
+| **重心の凍結**（散らばり） | ばらつき（重心からの距離の品質重み付き中央値）> **1 − しきい値** かつメンバー 8 以上 | `FaceClusterHealth.shouldFreezeCentroid`（ADR-210） |
+| **連写の連結** | 撮影日 3 秒以内・矩形 IoU 0.5 以上・**所属のみ** | `TemporalLinking`（ADR-211） |
+| **服装の連結** | 同じ場面（1 時間）・胴体コサイン 0.90 以上・1 位 2 位の差 0.05・顔の最低線 0.30（facenet 0.45）・**所属のみ** | `TorsoLinking` / `FaceTuning.torsoFaceFloor`（ADR-212） |
+| 胴体の領域 | 顔の真下・幅 2.0 倍 × 高さ 2.5 倍・画面内に 50% 以上残ること | `TorsoRegion`（ADR-212） |
+| 統合の帯（自動吸収 / 事前選択 / 尋ねる） | 0.75 / 0.85 / max(0.40, しきい値)（arcface） | `MergePolicy.bars`（ADR-213） |
+| 代表顔の候補 | 重心との類似が**校正後しきい値以上**の顔に絞る（全員が下回るときは絞らない） | `FaceStore.bestCoverFace`（ADR-214） |
 | パイプライン版数 | **v5**（face_config.json が宣言・ADR-70） | `FacePerceptionProvider.pipelineVersion` |
 
 ## 計測ログ

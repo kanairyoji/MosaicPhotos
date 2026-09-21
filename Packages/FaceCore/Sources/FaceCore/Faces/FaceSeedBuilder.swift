@@ -25,21 +25,23 @@ public enum FaceSeedBuilder {
         public let quality: Float
         /// ユーザーが「この人だ」と確認した時刻。新しい順にアンカーとして使う。
         public let confirmedAt: Date?
-        /// 重心へ寄与するか。`nil` なら品質フロアで判定する（旧データ互換）。
-        public let contributesToCentroid: Bool?
 
-        public init(faceID: String, quality: Float,
-                    confirmedAt: Date? = nil, contributesToCentroid: Bool? = nil) {
+        public init(faceID: String, quality: Float, confirmedAt: Date? = nil) {
             self.faceID = faceID
             self.quality = quality
             self.confirmedAt = confirmedAt
-            self.contributesToCentroid = contributesToCentroid
         }
 
         var isAnchorByConfirmation: Bool { confirmedAt != nil }
-        func contributes(qualityFloor: Float) -> Bool {
-            contributesToCentroid ?? (quality >= qualityFloor)
-        }
+
+        /// 重心（sum/count）の材料にしてよい顔か。
+        ///
+        /// ⚠️⚠️ **行に記録された `contributesToCentroid` を見ない**（ADR-210）。
+        /// 以前はそれを優先して読んでいたため、判断が**自分の過去の記録を参照する**形になり、
+        /// 一度ずれた記録が毎晩そのまま受け継がれた（しかも書き戻し側は別の規則で書いていた）。
+        /// 再クラスタは重心を**作り直す**のだから、材料の選び方は最初の割り当てと同じ
+        /// 「品質フロア以上か」だけで決める——そして決めた結果を事実として書き戻す。
+        func contributes(qualityFloor: Float) -> Bool { quality >= qualityFloor }
     }
 
     /// クラスタの**軽い**メタデータ。
@@ -71,6 +73,10 @@ public enum FaceSeedBuilder {
         public var pinned: [String: Int] = [:]
         /// アンカーの無い命名済み人物（顔がまるごと移ったら名前も移す・ADR-130）。
         public var anchorlessNamed: [FaceNameFollowing.Candidate] = []
+        /// **実際に `sum`/`count` へ足した顔**（ADR-210）。書き戻しはこれを事実として写す
+        /// ——「留めた顔はすべて寄与した」と推し量ってはいけない（実ライブラリでは顔の
+        /// 約半数がフロア未満で、`count` が実体の 1/7 になっていた）。
+        public var contributed: Set<String> = []
     }
 
     /// 種を作る。
@@ -147,6 +153,7 @@ public enum FaceSeedBuilder {
                 result.pinned[member.faceID] = cluster.clusterID
                 // 重心は**留めたメンバーの加重平均**（＝再クラスタ前と同じ向き）。
                 guard member.contributes(qualityFloor: qualityFloor) else { continue }
+                result.contributed.insert(member.faceID)
                 if sum.isEmpty || sum.allSatisfy({ $0 == 0 }) {
                     sum = [Float](repeating: 0, count: vector.count)
                     count = 0
@@ -165,7 +172,15 @@ public enum FaceSeedBuilder {
                 // のに、上で `pinned` へ入れた顔は残る。その顔は削除されるクラスタを指したままに
                 // なり、起動時の `repairOrphanFaces`（ADR-187）に拾われる。直すと挙動が変わるため
                 // ここでは保存し、`unresolved-problems.md` に記録した。
-                guard let fallback = anchorCentroid ?? storedCentroid(cluster.clusterID) else { continue }
+                guard let fallback = anchorCentroid ?? storedCentroid(cluster.clusterID) else {
+                    // ⚠️ **孤児を作らずに降りる**（ADR-210）。ここで種を作れないのにピン留めだけ
+                    // 残すと、その顔は「これから削除されるクラスタ」を指したまま書き戻され、
+                    // 起動時の `repairOrphanFaces` に拾われるまで人物から消える。
+                    // 留めるのをやめれば、その顔は普通の再割り当てへ回るだけで済む。
+                    for member in pinnedMembers { result.pinned[member.faceID] = nil }
+                    for member in pinnedMembers { result.contributed.remove(member.faceID) }
+                    continue
+                }
                 sum = FaceClustering.normalized(fallback)
                 count = max(1, count)
             }

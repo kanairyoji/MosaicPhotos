@@ -66,7 +66,8 @@ extension FaceStore {
             let sim = FaceClustering.dot(FaceClustering.normalized(vec),
                                          FaceClustering.normalized(oldSum))
             recordCorrection(kind: "reassign", faceEmbedding: face.embedding,
-                             wrongEmbedding: ClipMath.encodeHalf(oldSum), similarity: sim)
+                             wrongEmbedding: ClipMath.encodeHalf(oldSum), similarity: sim,
+                             linkSource: face.linkSource)
         }
         // ADR-46: 付け替え先を**ユーザーが選んだ**＝「この顔はこの人」という確認。
         // 正例として記録し、アンカー（マルチプロトタイプ）にする。
@@ -95,6 +96,7 @@ extension FaceStore {
                      contributes: contributesNow)
         face.clusterID = targetCID
         face.contributesToCentroid = contributesNow
+        face.linkSource = FaceLinkSource.user.rawValue
         try? modelContext.save()
         clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次回に再構築）
     }
@@ -150,14 +152,18 @@ extension FaceStore {
     }
 
     /// 修正ジャーナルへ 1 件追記（ADR-45/46）。負例・校正キャッシュを無効化する。
+    /// - Parameter linkSource: **その顔が何を根拠に入っていたか**（ADR-212）。付け替えの
+    ///   あとでは顔の行から失われるので、記録する側がその場で控える。これがあって初めて
+    ///   「連写で繋いだ顔・服装で繋いだ顔を、ユーザーが何割外したか」が出せる。
     func recordCorrection(kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
                           similarity: Float? = nil,
-                          confidence: AnswerConfidence = .high) {
+                          confidence: AnswerConfidence = .high,
+                          linkSource: String? = nil) {
         modelContext.insert(FaceCorrection(
             id: UUID().uuidString, kind: kind,
             faceEmbedding: faceEmbedding, wrongEmbedding: wrongEmbedding,
             similarity: similarity.map(Double.init), confidence: confidence.rawValue,
-            profile: tuning.name, createdAt: Date()))
+            profile: tuning.name, linkSource: linkSource, createdAt: Date()))
         // ⚠️ 校正の材料は**足すだけ**（全件を読み直さない・ADR-142）。
         if var samples = calibrationSamplesCache, let sim = similarity {
             FaceStore.appendCalibrationSample(kind: kind, similarity: sim,
@@ -205,7 +211,7 @@ extension FaceStore {
             // ⚠️ **ユーザーが表明した人物（名前・束ね・代表写真）の行は消さない**（ADR-187）。
             // 消すと名前が失われ、ID が空くので参照側が別人を指し得る。空の人物として残し、
             // 次に本人の顔が来れば元の名前で復活する。
-            if FaceStore.isUserClaimed(c) {
+            if isUserClaimed(c) {
                 c.sum = ClipMath.encodeHalf([Float](repeating: 0, count: vec.count))
                 c.count = 0
                 if c.coverFaceID == faceID { c.coverFaceID = nil }
@@ -292,7 +298,7 @@ extension FaceStore {
                                          FaceClustering.normalized(srcSum))
             recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
                              wrongEmbedding: ClipMath.encodeHalf(srcSum), similarity: sim,
-                             confidence: .high)
+                             confidence: .high, linkSource: f.linkSource)
             let contributed = FaceStore.contributesToCentroid(f)
             removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
                               faceID: f.faceID, contributes: contributed)
@@ -352,7 +358,8 @@ extension FaceStore {
                     let sim = FaceClustering.dot(FaceClustering.normalized(vec),
                                                  FaceClustering.normalized(cSum))
                     recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
-                                     wrongEmbedding: ClipMath.encodeHalf(cSum), similarity: sim)
+                                     wrongEmbedding: ClipMath.encodeHalf(cSum), similarity: sim,
+                                     linkSource: f.linkSource)
                     // ⚠️ 重心からも寄与を除く。外すだけだと sum/count に抜いた顔が残り、
                     // 夜間の再クラスタまで重心が汚れたままになる（reassignFace と同じ規則）。
                     removeFromCluster(clusterID: f.clusterID, vec: vec,

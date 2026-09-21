@@ -20,18 +20,12 @@ public struct FragmentAbsorbResult: Sendable, Equatable {
 
 extension FaceStore {
 
-    /// 「断片」とみなす最大の写真枚数。
-    ///
-    /// ⚠️ **1〜2 枚に限る**（ADR-154）。実フィードバック「1〜2 枚のグループがたくさんあって、
-    /// 4,000 枚の人物と同一人物」。枚数が増えるほど「間違えたときに動かす写真」が増え、
-    /// 人物どうしの結合（自動化しないと決めた・ADR-153）に近づく。
-    static let absorbMaxPhotos = 2
-    /// 吸収先として認める最小の写真枚数（＝確立した人物）。
-    static let absorbTargetMinPhotos = FaceClustering.matureCountDefault
-    /// 2 位との差。**紛らわしければ吸収しない**——兄弟・親子で取り違えないための保険。
-    static let absorbMargin: Float = 0.05
-    /// 1 回で吸収する上限（夜間処理を有界にする）。
-    static let absorbLimitPerRun = 500
+    /// 断片吸収の形の定数。**正本は `MergePolicy`**（ADR-213 で 1 か所に集めた）。
+    /// 意味と出典はそちらに書いてある——ここは呼び出し側の名前を変えないための別名。
+    static var absorbMaxPhotos: Int { MergePolicy.absorbMaxPhotos }
+    static var absorbTargetMinPhotos: Int { MergePolicy.absorbTargetMinPhotos }
+    static var absorbMargin: Float { MergePolicy.absorbMargin }
+    static var absorbLimitPerRun: Int { MergePolicy.absorbLimitPerRun }
 
     /// 小さな断片を、確立した人物へ機械的に寄せる。
     ///
@@ -44,7 +38,7 @@ extension FaceStore {
     /// `absorbTargetMinPhotos` 枚以上）。近さは `autoAbsorbBar` 以上かつ 2 位と `absorbMargin` 差。
     /// 同一写真の重なり・負例・「別人」記録があるものは対象外。
     @discardableResult
-    func absorbFragments(limit: Int = FaceStore.absorbLimitPerRun) -> FragmentAbsorbResult {
+    func absorbFragments(limit: Int = MergePolicy.absorbLimitPerRun) -> FragmentAbsorbResult {
         let photos = photoCountsByCluster()
         let clusters = allClusters()
         guard clusters.count >= 2 else {

@@ -153,9 +153,8 @@ struct FaceSeedBuilderTests {
         (0..<dim).map { Float(($0 * 7 + seed * 13) % 11) / 11.0 + (($0 == seed % dim) ? 1.0 : 0.0) }
     }
     private func face(_ id: String, quality: Float = 0.8,
-                      confirmed: Bool = false, contributes: Bool? = nil) -> FaceSeedBuilder.FaceRef {
-        .init(faceID: id, quality: quality,
-              confirmedAt: confirmed ? Date() : nil, contributesToCentroid: contributes)
+                      confirmed: Bool = false) -> FaceSeedBuilder.FaceRef {
+        .init(faceID: id, quality: quality, confirmedAt: confirmed ? Date() : nil)
     }
     private func build(_ clusters: [FaceSeedBuilder.ClusterRef],
                        embeddings: [String: [Float]],

@@ -35,11 +35,33 @@ final class DetectedFace {
     /// **重心が壊れる**。count==1 のクラスタでは「最後の 1 顔」と誤認してクラスタごと消え、
     /// 残った顔が存在しないクラスタ ID を指す（レビュー指摘）。
     /// nil＝この列より前に作られた行（品質フロアで推定する）。
+    ///
+    /// ⚠️⚠️ **これは「事実の記録」であって「方針」ではない**（ADR-210）。書いてよいのは
+    /// 実際に `sum` へ足した（または足さなかった）当人だけで、後から品質で推し量してはいけない。
+    /// 以前は再クラスタの書き戻しが「留めた顔はすべて寄与した」と記録しており、
+    /// 実際の `sum` は品質フロア以上の顔だけで作られていた——実ライブラリでは顔の約半数が
+    /// フロア未満なので、30 枚の人物で `count == 4` なのに 30 行が「寄与した」と言う状態になった。
+    /// その人物から数枚外すと `count` が尽き、**人物が丸ごと消える**（`FaceCentroidAudit` が見張る）。
     var contributesToCentroid: Bool?
+
+    /// **服装（胴体）の埋め込み**（CLIP・Float16・ADR-212）。顔の下の領域を切り出して埋め込む。
+    /// 同じ場面の中でだけ「同じ人」の手がかりに使う。未計測・対象外は nil。
+    ///
+    /// ⚠️ 顔の埋め込みとは**別の空間**（ArcFace ではなく CLIP）。コサインの分布も違うので、
+    /// 2 つの数字を直接足し算しない（`TorsoLinking` が順位と相対差で扱う）。
+    var torsoEmbedding: Data?
+
+    /// **何を根拠にこの人物へ入ったか**（`FaceLinkSource` の rawValue・ADR-212）。
+    ///
+    /// ⚠️ 根拠を残さないと、後から効果を測れない。顔のデータセット（FG-NET/LFW）には
+    /// 連写も服装も無いので、時系列・服装による連結の良し悪しは**実機でしか分からない**。
+    /// 「どの根拠で入った顔を、ユーザーが何割外したか」が唯一の判断材料になる（ADR-162 と同じ）。
+    var linkSource: String?
 
     init(faceID: String, refKey: String, bx: Double, by: Double, bw: Double, bh: Double,
          embedding: Data, quality: Double, clusterID: Int, hasSmile: Bool? = nil,
-         captureDate: Date? = nil, contributesToCentroid: Bool? = nil) {
+         captureDate: Date? = nil, contributesToCentroid: Bool? = nil,
+         torsoEmbedding: Data? = nil, linkSource: String? = nil) {
         self.faceID = faceID
         self.refKey = refKey
         self.bx = bx; self.by = by; self.bw = bw; self.bh = bh
@@ -49,7 +71,25 @@ final class DetectedFace {
         self.hasSmile = hasSmile
         self.captureDate = captureDate
         self.contributesToCentroid = contributesToCentroid
+        self.torsoEmbedding = torsoEmbedding
+        self.linkSource = linkSource
     }
+}
+
+/// 顔が人物へ入った**根拠**（ADR-212）。効果を測るために行へ残す。
+enum FaceLinkSource: String, Sendable, CaseIterable {
+    /// 顔の埋め込みで本割り当て（重心を作った）。
+    case face
+    /// 顔の埋め込みで第2パス（membership のみ・ADR-66）。
+    case secondPass
+    /// 連写の同じ位置から（ADR-211）。
+    case temporal
+    /// 同じ場面の服装から（ADR-212）。
+    case torso
+    /// 断片の自動吸収（ADR-154）。
+    case absorb
+    /// ユーザーの表明（確認・付け替え・統合）。
+    case user
 }
 
 /// 顔クラスタ（＝1 人物）。重心更新用の生合計と件数、任意の名前・代表顔を持つ。
@@ -66,14 +106,23 @@ final class PersonCluster {
     /// 時期クラスタを束ねる）。nil = 従来どおり 1 クラスタ=1 人物。名前・代表は束ねの主クラスタが持つ。
     var personGroupID: Int?
 
+    /// **メンバーの散らばり**（`FaceClusterHealth.spread`・ADR-210）。重心からの距離
+    /// （1 − コサイン）の品質重み付き中央値で、夜間の再クラスタが測り直して入れる。
+    /// nil = まだ測っていない（この列より前の行・断片）。
+    ///
+    /// ⚠️ 「純度が低い」を直接は測れない（正解を知らないので）。散らばりは**その代理**で、
+    /// 過半のメンバーが重心から遠い＝重心がもう誰の顔でもない、という状態を捕まえる。
+    var spread: Double?
+
     init(clusterID: Int, sum: Data, count: Int, name: String? = nil, coverFaceID: String? = nil,
-         personGroupID: Int? = nil) {
+         personGroupID: Int? = nil, spread: Double? = nil) {
         self.clusterID = clusterID
         self.sum = sum
         self.count = count
         self.name = name
         self.coverFaceID = coverFaceID
         self.personGroupID = personGroupID
+        self.spread = spread
     }
 }
 
@@ -107,11 +156,17 @@ final class FaceCorrection {
     /// （facenet の類似度 0.5-0.7 が AuraFace の校正を上限まで押し上げた実障害）。
     /// 既存行（列追加前）は nil ＝ "facenet"（v4 世代）として扱う。
     var profile: String?
+    /// **この顔が何を根拠に入っていたか**（`FaceLinkSource` の rawValue・ADR-212）。
+    ///
+    /// ⚠️ 修正のときに**その場で**控える。あとから顔の行を見に行っても、もう付け替え済みで
+    /// 根拠は失われている。これがあると「連写で繋いだ顔・服装で繋いだ顔を、ユーザーが
+    /// 何割外したか」が出せる——顔のデータセットでは測れない部分の唯一の物差しになる。
+    var linkSource: String?
     var createdAt: Date
 
     init(id: String, kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
          similarity: Double? = nil, confidence: Double? = nil, profile: String? = nil,
-         createdAt: Date) {
+         linkSource: String? = nil, createdAt: Date) {
         self.id = id
         self.kind = kind
         self.faceEmbedding = faceEmbedding
@@ -119,6 +174,7 @@ final class FaceCorrection {
         self.similarity = similarity
         self.confidence = confidence
         self.profile = profile
+        self.linkSource = linkSource
         self.createdAt = createdAt
     }
 }

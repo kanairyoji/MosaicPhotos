@@ -71,12 +71,16 @@ extension FaceStore {
             namedBefore[c.clusterID] = (name, photos)
         }
 
+        // ⚠️ **作り直す前に、今の記録が壊れていないかを見る**（ADR-210）。全顔はもう手元に
+        // あるので追加の読み出しは要らない。ここで出しておかないと、このあと重心を作り直した
+        // 時点でずれが消えてしまい、**壊れていたことに誰も気づけないまま**毎晩直り続ける。
+        reportCentroidDrift(existing: existing, facesByCluster: facesByCluster)
+
         // 種の構築は `FaceSeedBuilder`（純・テスト対象・ADR-198）に出した。ここは値の受け渡しだけ。
         // ⚠️ 埋め込みは**クロージャで 1 枚ずつ**復号する。全顔の `[Float]` を値にすると
         //    86k × 512 次元 × 4 バイト ≒ 176MB を一度に確保することになる（ADR-6/119/122）。
         func ref(_ f: DetectedFace) -> FaceSeedBuilder.FaceRef {
-            .init(faceID: f.faceID, quality: Float(f.quality),
-                  confirmedAt: f.confirmedAt, contributesToCentroid: f.contributesToCentroid)
+            .init(faceID: f.faceID, quality: Float(f.quality), confirmedAt: f.confirmedAt)
         }
         let clusterRefs = existing.map { c in
             FaceSeedBuilder.ClusterRef(
@@ -118,14 +122,23 @@ extension FaceStore {
             usedByPhoto[f.refKey, default: []].insert(pinned)
         }
         var newAssignment: [String: Int] = [:]
+        // ⚠️ **実際に重心へ足した顔**だけを集める（ADR-210）。品質で推し量らない——
+        // 重心を凍結したクラスタ（ADR-210）へ入った顔は、品質が高くても足していない。
+        var contributed = built.contributed
+        var linkSource: [String: FaceLinkSource] = [:]
+        for faceID in contributed { linkSource[faceID] = .face }
         for f in pending {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-            let cid = clustering.assign(
+            let placement = clustering.place(
                 faceID: f.faceID, embedding: vec,
                 quality: Float(f.quality), negatives: negatives,
                 excludedClusterIDs: usedByPhoto[f.refKey] ?? [])
-            newAssignment[f.faceID] = cid
-            if cid >= 0 { usedByPhoto[f.refKey, default: []].insert(cid) }
+            newAssignment[f.faceID] = placement.clusterID
+            if placement.clusterID >= 0 {
+                usedByPhoto[f.refKey, default: []].insert(placement.clusterID)
+                linkSource[f.faceID] = placement.contributed ? .face : .secondPass
+            }
+            if placement.contributed { contributed.insert(f.faceID) }
         }
 
         // 第2パス（ADR-66・recall 回復）: 品質フロア未満で捨てていた顔（横顔・ぶれ・小さめ等・埋め込みは
@@ -141,8 +154,34 @@ extension FaceStore {
             if cid >= 0 {
                 newAssignment[f.faceID] = cid
                 usedByPhoto[f.refKey, default: []].insert(cid)
+                linkSource[f.faceID] = .secondPass
             }
         }
+
+        // 2.5) **埋め込み以外の証拠で拾い直す**（ADR-211/212）。どちらも所属だけを足し、
+        // `sum`/`count` には一切触らない——間違えても人物の重心は汚れず、1 枚外せば直る。
+        // ⚠️ 順番に意味がある: 連写（位置）は服装より**強い証拠**なので先に効かせ、
+        // 服装はそれでも残った顔だけを見る（弱い証拠で先に埋めない）。
+        // ⚠️ **今の割り当ての写しを渡す**（`newAssignment` を直に読むクロージャを渡しながら
+        // 同じ辞書を inout で渡すと、排他アクセス違反で落ちる）。写しなので、連結のあいだ
+        // 「どこまでが連結前の事実か」も固定される——連結が連結を根拠にする循環も同時に防げる。
+        func clusterLookup(_ assignment: [String: Int]) -> (DetectedFace) -> Int {
+            { f in pinnedCluster[f.faceID] ?? (assignment[f.faceID] ?? FaceClustering.unassigned) }
+        }
+        let centroidByCluster = Dictionary(uniqueKeysWithValues:
+            clustering.clusters.map { ($0.id, $0.centroid) })
+        let burst = linkByBurst(allFaces, faceByID: faceByID,
+                                currentCluster: clusterLookup(newAssignment),
+                                contributed: contributed, negatives: negatives,
+                                centroidByCluster: centroidByCluster,
+                                newAssignment: &newAssignment, usedByPhoto: &usedByPhoto,
+                                linkSource: &linkSource)
+        let torso = linkByTorso(allFaces, faceByID: faceByID,
+                                currentCluster: clusterLookup(newAssignment),
+                                contributed: contributed, negatives: negatives,
+                                centroidByCluster: centroidByCluster,
+                                newAssignment: &newAssignment, usedByPhoto: &usedByPhoto,
+                                linkSource: &linkSource)
 
         // 3) 書き戻し: 顔の clusterID（確認顔は種のまま）・種以外の旧クラスタ行は削除して再作成。
         var moved = 0
@@ -151,10 +190,12 @@ extension FaceStore {
                 ?? (newAssignment[f.faceID] ?? FaceClustering.unassigned)
             if f.clusterID != newID { moved += 1 }
             f.clusterID = newID
-            // 重心に寄与したかを更新する。第2パスで入れた顔（品質フロア未満）は
-            // membership だけなので false（付け替え時に引いてはいけない）。
-            f.contributesToCentroid = newID >= 0
-                && (pinnedCluster[f.faceID] != nil || Float(f.quality) >= Self.qualityFloor)
+            // ⚠️⚠️ **事実を写すだけ**（ADR-210）。以前はここで「留めた顔はすべて寄与した」と
+            // 品質を無視して書いており、種の計算（フロア以上だけ足す）と食い違っていた。
+            // 実ライブラリでは顔の約半数がフロア未満なので、`count` が実体の数分の 1 になり、
+            // 数枚外しただけでクラスタが消える状態になっていた。
+            f.contributesToCentroid = newID >= 0 && contributed.contains(f.faceID)
+            f.linkSource = newID >= 0 ? (linkSource[f.faceID] ?? .face).rawValue : nil
         }
         // ⚠️ 無名の集合は**削除より前に**作る（レビュー指摘）。削除後に `existing` の
         // `name` / `clusterID` を読むと、消した `PersonCluster` のプロパティを触ることになる。
@@ -187,10 +228,16 @@ extension FaceStore {
             Self.log.info("faces: rebuild — name '\(move.name)' followed its members \(move.from)→\(move.to)")
         }
 
+        // 3.6) **次の晩のために、各人物の散らばりを測っておく**（ADR-210）。
+        // スキャン中は重心が動かない前提なので、ここで測った値が翌日の凍結判断になる。
+        recordClusterSpreads(faces: allFaces, contributed: contributed)
+        reportLinkSources()
+
         try? modelContext.save()
         clusteringCache = nil
         reportNamedShrink(before: namedBefore)
-        Self.log.info("faces: rebuild — clusters=\(clustering.clusters.count) moved=\(moved) thr=\(thr)")
+        Self.log.info("faces: rebuild — clusters=\(clustering.clusters.count) moved=\(moved) "
+                      + "thr=\(thr) burst=\(burst.linked) torso=\(torso.linked)")
         return (clustering.clusters.count, moved)
     }
 

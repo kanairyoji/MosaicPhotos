@@ -85,6 +85,11 @@ public struct PersonDecisionReport: Sendable {
     public let totalPeople: Int
     /// 学習済みの負例（「この人ではない」）の数。
     public let negativeCount: Int
+    /// **メンバーの散らばり**（`FaceClusterHealth.spread`・ADR-210）。nil = まだ測っていない。
+    /// 「なぜこの人物がおかしいのか」を数で言えるようにするための行。
+    public let spread: Float?
+    /// 散らばりが大きく、**重心の成長を止めている**か（ADR-210）。
+    public let centroidFrozen: Bool
 }
 
 extension FaceStore {
@@ -191,7 +196,11 @@ extension FaceStore {
                 isGrouped: focus.personGroupID != nil),
             settings: settings, neighbors: rows,
             outliers: outliers, outlierStatus: outlierStatus,
-            totalPeople: clusters.count, negativeCount: negatives.count)
+            totalPeople: clusters.count, negativeCount: negatives.count,
+            spread: focus.spread.map { Float($0) },
+            centroidFrozen: FaceClusterHealth.shouldFreezeCentroid(
+                spread: focus.spread.map { Float($0) }, members: focus.count,
+                threshold: settings.threshold))
     }
 }
 

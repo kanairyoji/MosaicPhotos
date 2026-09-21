@@ -219,6 +219,22 @@ extension FacePerceptionAdapter {
         }
     }
 
+    /// **胴体（服装）の切り抜き**（ADR-212）。領域の決め方は `TorsoRegion`（純・テスト対象）、
+    /// ここは座標系の変換だけ。⚠️ 顔と違ってマージンを足さない——服は輪郭ではなく
+    /// 色と柄で比べるので、周囲の背景を入れるほど「同じ場所で撮った別人」が似て見える。
+    func cropTorso(_ cg: CGImage, normalizedBox: CGRect,
+                   width: CGFloat, height: CGFloat) -> CGImage? {
+        let pixel = CGRect(
+            x: normalizedBox.origin.x * width,
+            y: (1 - normalizedBox.origin.y - normalizedBox.height) * height,   // y 反転
+            width: normalizedBox.width * width,
+            height: normalizedBox.height * height).integral
+        // 小さすぎる胴体は服の柄が潰れて、どの服とも似る。顔の下限（48px）と同じ桁で切る。
+        guard pixel.width >= FaceQualityGate.minFacePixels,
+              pixel.height >= FaceQualityGate.minFacePixels else { return nil }
+        return cg.cropping(to: pixel)
+    }
+
     /// Vision の正規化 bbox（原点左下・y 上向き）→ CGImage のピクセル矩形（原点左上）へ変換し、
     /// 顔の周囲にマージンを付けて切り抜く（顔モデルは輪郭周辺も使うため）。
     func cropFace(_ cg: CGImage, normalizedBox: CGRect, width: CGFloat, height: CGFloat) -> CGImage? {

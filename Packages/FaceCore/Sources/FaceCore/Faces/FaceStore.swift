@@ -106,9 +106,8 @@ actor FaceStore {
     static let capEffectiveThresholdWhenFewPeople = true
     static let effectiveThresholdCapMaxPeople = 10
 
-    /// 共起 notSame: 2 クラスタが同じ写真にこれ以上の回数一緒に写っていたら「別人」とみなし
-    /// 統合サジェストを出さない（同一人物は 1 枚の写真に 1 回しか写れない・偶発の誤検出は許容）。
-    static let coOccurrenceNotSame = 3
+    /// 共起 notSame の回数。正本は `MergePolicy`（ADR-213）。
+    static var coOccurrenceNotSame: Int { MergePolicy.coOccurrenceNotSame }
     /// 負例エグゼンプラの上限（コスト有界化・新しい順に保持）。
     static let maxNegatives = 400
 
@@ -207,6 +206,63 @@ actor FaceStore {
         faces(inCluster: clusterID).map(\.faceID)
     }
 
+    /// テスト用: 代表写真だけを外す（確認顔は残す）。
+    func clearCoverForTesting(clusterID: Int) {
+        cluster(clusterID)?.coverFaceID = nil
+        try? modelContext.save()
+    }
+
+    /// テスト用: この人物の行がまだ在るか。
+    func clusterExistsForTesting(_ clusterID: Int) -> Bool { cluster(clusterID) != nil }
+
+    /// テスト用: いまこの人物の代表に選ばれる顔。
+    func coverFaceIDForTesting(inCluster clusterID: Int) -> String? {
+        bestCoverFace(inCluster: clusterID, coverFaceID: nil)?.faceID
+    }
+
+    /// テスト用: この顔が属するクラスタ ID。
+    /// ⚠️ 再クラスタは**ID を再利用しない**（ADR-187）ので、作り直したあとの人物を
+    /// 固定の ID で指してはいけない。既知のメンバーから引く。
+    func clusterIDForTesting(faceID: String) -> Int? { face(byID: faceID)?.clusterID }
+
+    /// テスト用: この顔が何を根拠に入ったか（ADR-212）。
+    func linkSourceForTesting(_ faceID: String) -> String? { face(byID: faceID)?.linkSource }
+
+    /// テスト用: 散らばりを直に入れる（重心が壊れた人物を作るのは合成では難しいため）。
+    func setClusterSpreadForTesting(clusterID: Int, spread: Double?) {
+        cluster(clusterID)?.spread = spread
+        clusteringCache = nil
+        try? modelContext.save()
+    }
+
+    /// テスト用: クラスタ ID → 散らばり（ADR-210）。
+    func spreadsForTesting() -> [Int: Double?] {
+        Dictionary(uniqueKeysWithValues: allClusters().map { ($0.clusterID, $0.spread) })
+    }
+
+    /// テスト用: この人物で**実際に重心へ寄与している**顔（記録された事実・ADR-210）。
+    func contributingFaceIDsForTesting(inCluster clusterID: Int) -> [String] {
+        faces(inCluster: clusterID).filter { $0.contributesToCentroid == true }
+            .map(\.faceID).sorted()
+    }
+
+    /// テスト用: 写真 → その写真の顔が属するクラスタ ID（同一写真 cannot-link の検査）。
+    func clusterIDsByPhotoForTesting() -> [String: [Int]] {
+        var out: [String: [Int]] = [:]
+        for f in (countedFetchOptional(FetchDescriptor<DetectedFace>())) ?? [] {
+            out[f.refKey, default: []].append(f.clusterID)
+        }
+        return out
+    }
+
+    /// テスト用: いまの記録に食い違いがあるか（ADR-210）。
+    func centroidDriftFindingsForTesting() -> [FaceCentroidAudit.Finding] {
+        let all = (countedFetchOptional(FetchDescriptor<DetectedFace>())) ?? []
+        var byCluster: [Int: [DetectedFace]] = [:]
+        for f in all where f.clusterID >= 0 { byCluster[f.clusterID, default: []].append(f) }
+        return centroidDriftFindings(existing: allClusters(), facesByCluster: byCluster)
+    }
+
     /// テスト用: クラスタ ID → 件数（重心の二重計上を検査する）。
     func clusterCountsForTesting() -> [Int: Int] {
         Dictionary(uniqueKeysWithValues: allClusters().map { ($0.clusterID, $0.count) })
@@ -215,6 +271,17 @@ actor FaceStore {
     /// ユーザーが「この人物」と表明した行か（名前・束ね・代表写真）。機械の都合で消してはいけない。
     static func isUserClaimed(_ c: PersonCluster) -> Bool {
         (c.name?.isEmpty == false) || c.personGroupID != nil || c.coverFaceID != nil
+    }
+
+    /// 上に**確認顔**（「この顔はこの人」・ADR-46）を加えた判定（ADR-210）。
+    ///
+    /// ⚠️ 確認顔も ADR-132 の言う「ユーザーの表明」なのに、行の保護対象から漏れていた。
+    /// 名前も代表写真も付けず、レビューで「はい」とだけ答えて育てた人物は、
+    /// 最後の 1 顔を外した瞬間に**行ごと消える**（残った顔は孤児になる）。
+    /// ⚠️ 顔を 1 回引くので、**最後の 1 顔の経路でだけ**呼ぶ（毎回の削除で引かない）。
+    func isUserClaimed(_ c: PersonCluster) -> Bool {
+        if Self.isUserClaimed(c) { return true }
+        return anchorCount(clusterID: c.clusterID) > 0
     }
 
     func allClusters() -> [PersonCluster] {
@@ -243,8 +310,27 @@ actor FaceStore {
     /// 代表顔は見た目だけの話ではない——命名・代表選択でアンカー（確認顔）になり、再クラスタで
     /// 動かない錨になる（ADR-130/132）。同点のときに fetch 順で決まると、
     /// **同じデータでも実行ごとに違う顔が錨になり**、結果が揺れる（テストが CI でだけ落ちた）。
-    static func bestCoverFace(_ faces: [DetectedFace]) -> DetectedFace? {
-        faces.max { a, b in
+    ///
+    /// ⚠️⚠️ **見た目の良さだけで選ばない**（ADR-214）。代表顔は錨になるので、混ざり込んだ
+    /// 別人の「よく写った顔」が代表になると、その別人がこの人物の同一性そのものになる
+    /// （ADR-130 で実際に起きた「私のアルバムが丸ごと娘になった」の増幅経路）。
+    /// 重心から遠い顔＝この人物らしくない顔は、どれだけ綺麗でも候補から外す。
+    /// ⚠️ 全員が遠いときは**絞らない**（絞って 0 人になると代表が消え、人物一覧から落ちる）。
+    ///
+    /// - Parameters:
+    ///   - centroid: クラスタの重心（正規化済み）。nil なら従来どおり見た目だけで選ぶ。
+    ///   - minSimilarity: この類似未満の顔を候補から外す（0 = 外さない）。
+    static func bestCoverFace(_ faces: [DetectedFace], centroid: [Float]? = nil,
+                              minSimilarity: Float = 0) -> DetectedFace? {
+        var pool = faces
+        if let centroid, minSimilarity > 0 {
+            let near = faces.filter { f in
+                guard let v = ClipMath.decodeHalf(f.embedding) else { return false }
+                return FaceClustering.dot(FaceClustering.normalized(v), centroid) >= minSimilarity
+            }
+            if !near.isEmpty { pool = near }
+        }
+        return pool.max { a, b in
             let sa = coverScore(a), sb = coverScore(b)
             if sa != sb { return sa < sb }
             return a.faceID > b.faceID   // 同点 → faceID の小さい方を採る
@@ -378,7 +464,11 @@ actor FaceStore {
             predicate: #Predicate { $0.clusterID == cid },
             sortBy: [SortDescriptor(\.quality, order: .reverse)])
         d.fetchLimit = 16   // 品質上位だけ見れば代表は決まる（笑顔・大きさの微調整のみ）
-        return Self.bestCoverFace((countedFetchOptional(d)) ?? [])
+        // この人物らしくない顔は候補から外す（ADR-214）。重心は既に読んである行から取る。
+        let centroid = cluster(cid).flatMap { ClipMath.decodeHalf($0.sum) }
+            .map { FaceClustering.normalized($0) }
+        return Self.bestCoverFace((countedFetchOptional(d)) ?? [], centroid: centroid,
+                                  minSimilarity: calibratedThreshold())
     }
 
     func faces(inPhoto refKey: String) -> [DetectedFace] {
@@ -466,18 +556,23 @@ actor FaceStore {
                 guard let vec = ClipMath.decodeHalf(face.embedding) else { continue }
                 let faceID = "\(refKey)#\(i)"
                 // 品質重み＋負例つき割り当て（ADR-45）。フロア未満は -1（未割当・重心を汚さない）。
-                var cid = clustering.assign(faceID: faceID, embedding: vec,
-                                            quality: face.quality, negatives: negatives,
-                                            excludedClusterIDs: usedClusters)
-                // 重心に寄与したか（＝本割り当てで入ったか）を**行に残す**。付け替え時に
-                // 「引いてよい顔か」を後から確実に判定するため（レビュー指摘）。
-                var contributes = cid >= 0
+                // ⚠️ **`place` を使う**（ADR-210）。クラスタ ID だけでは「重心に足したか」が
+                // 分からず、重心が凍結されたクラスタ（ADR-210）へ所属だけ付いた場合に
+                // 「足した」と誤記録してしまう。事実は足した当人にしか書けない。
+                let placement = clustering.place(faceID: faceID, embedding: vec,
+                                                 quality: face.quality, negatives: negatives,
+                                                 excludedClusterIDs: usedClusters)
+                var cid = placement.clusterID
+                var contributes = placement.contributed
+                var source: FaceLinkSource? = cid >= 0
+                    ? (contributes ? .face : .secondPass) : nil
                 // 第2パス（ADR-66・recall 回復）: フロア未満で未割当なら、重心を汚さず最寄り人物へ
                 // membership だけ割り当てる（クラスタ形成前なら未割当のまま＝夜間 rebuild が拾う）。
                 if cid < 0 && face.quality < Self.qualityFloor {
                     cid = clustering.assignMembershipOnly(faceID: faceID, embedding: vec,
                                                           excludedClusterIDs: usedClusters)
                     contributes = false
+                    source = cid >= 0 ? .secondPass : nil
                 }
                 if cid >= 0 { usedClusters.insert(cid) }
                 modelContext.insert(DetectedFace(
@@ -486,7 +581,8 @@ actor FaceStore {
                     bw: face.boundingBox.size.width, bh: face.boundingBox.size.height,
                     embedding: face.embedding, quality: Double(face.quality), clusterID: cid,
                     hasSmile: face.hasSmile, captureDate: face.captureDate,
-                    contributesToCentroid: contributes))
+                    contributesToCentroid: contributes,
+                    torsoEmbedding: face.torsoEmbedding, linkSource: source?.rawValue))
             }
             persist(clustering)
             clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）
@@ -538,17 +634,23 @@ actor FaceStore {
         if let cached = clusteringCache { return cached }
         let anchors = anchorsByCluster()
         var seed: [FaceClustering.Cluster] = []
+        let threshold = calibratedThreshold()
         for r in allClusters() {
             guard let sum = ClipMath.decodeHalf(r.sum) else { continue }
+            // ⚠️ 散らばりすぎた人物は**重心を凍結**したまま復元する（ADR-210）。
+            // 記録された `spread` は夜間の再クラスタが測ったもの＝その晩までの事実で、
+            // スキャンのあいだ重心が動かないので、この判断も晩まで変わらない。
+            let frozen = FaceClusterHealth.shouldFreezeCentroid(
+                spread: r.spread.map { Float($0) }, members: r.count, threshold: threshold)
             seed.append(FaceClustering.Cluster(
                 id: r.clusterID, centroid: FaceClustering.normalized(sum),
                 sum: sum, count: r.count, faceIDs: r.coverFaceID.map { [$0] } ?? [],
-                prototypes: anchors[r.clusterID] ?? []))
+                prototypes: anchors[r.clusterID] ?? [], centroidFrozen: frozen))
         }
         // ノブの設定は `FaceClusteringSetup`（純・テスト対象）に一元化した（ADR-198）——
         // 以前は再クラスタ（`FaceStore+Rebuild`）にも**同じ 10 行がコピー**されていた。
         return FaceClusteringSetup.make(
-            threshold: calibratedThreshold(), qualityFloor: Self.qualityFloor, tuning: tuning,
+            threshold: threshold, qualityFloor: Self.qualityFloor, tuning: tuning,
             seeds: seed, minimumNextID: clusterIDHighWater() + 1,
             anchoredClusterIDs: Set(anchors.keys))
     }
