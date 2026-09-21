@@ -225,12 +225,6 @@ actor FaceStore {
     /// 固定の ID で指してはいけない。既知のメンバーから引く。
     func clusterIDForTesting(faceID: String) -> Int? { face(byID: faceID)?.clusterID }
 
-    /// テスト用: 散らばりを直に入れる（重心が壊れた人物を作るのは合成では難しいため）。
-    func setClusterSpreadForTesting(clusterID: Int, spread: Double?) {
-        cluster(clusterID)?.spread = spread
-        clusteringCache = nil
-        try? modelContext.save()
-    }
 
     /// テスト用: クラスタ ID → 散らばり（ADR-210）。
     func spreadsForTesting() -> [Int: Double?] {
@@ -633,15 +627,10 @@ actor FaceStore {
         let threshold = calibratedThreshold()
         for r in allClusters() {
             guard let sum = ClipMath.decodeHalf(r.sum) else { continue }
-            // ⚠️ 散らばりすぎた人物は**重心を凍結**したまま復元する（ADR-210）。
-            // 記録された `spread` は夜間の再クラスタが測ったもの＝その晩までの事実で、
-            // スキャンのあいだ重心が動かないので、この判断も晩まで変わらない。
-            let frozen = FaceClusterHealth.shouldFreezeCentroid(
-                spread: r.spread.map { Float($0) }, members: r.count, threshold: threshold)
             seed.append(FaceClustering.Cluster(
                 id: r.clusterID, centroid: FaceClustering.normalized(sum),
                 sum: sum, count: r.count, faceIDs: r.coverFaceID.map { [$0] } ?? [],
-                prototypes: anchors[r.clusterID] ?? [], centroidFrozen: frozen))
+                prototypes: anchors[r.clusterID] ?? []))
         }
         // ノブの設定は `FaceClusteringSetup`（純・テスト対象）に一元化した（ADR-198）——
         // 以前は再クラスタ（`FaceStore+Rebuild`）にも**同じ 10 行がコピー**されていた。

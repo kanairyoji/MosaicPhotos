@@ -4,6 +4,7 @@ import PerceptionCore
 import SwiftData
 
 /// 再クラスタの補助: **重心の整合検査**・**散らばりの記録**（ADR-210）と、根拠別の成績。
+/// （散らばりによる重心の凍結は FG-NET / LFW で効果が無く撤回した・ADR-216）
 /// 判断そのものは純ロジック側にあり、ここは永続層との受け渡しと診断ログだけを持つ。
 ///
 /// ⚠️ 連写（ADR-211）・服装（ADR-212）による連結はここにあったが、PIPA の計測で
@@ -79,7 +80,8 @@ extension FaceStore {
     // MARK: - 散らばりの記録（ADR-210）
 
     /// 最終的な所属から、各人物の**散らばり**（`FaceClusterHealth.spread`）を測って記録する。
-    /// 次のスキャンはこの値を見て、散らばりすぎた人物の重心を凍結する。
+    /// 事後監査（「この人物は 2 人では？」）を尋ねる順番と、判定の内訳に使う。
+    /// （重心の凍結にも使っていたが撤回した・ADR-216）
     ///
     /// - Parameter contributed: 重心を作った顔の faceID（散らばりも**この顔だけ**で測る——
     ///   membership だけの顔は定義上いつも遠いので、混ぜると全員が「散らばっている」になる）。
@@ -89,18 +91,11 @@ extension FaceStore {
             guard let vector = ClipMath.decodeHalf(f.embedding) else { continue }
             membersByCluster[f.clusterID, default: []].append((vector, Float(f.quality)))
         }
-        var frozen = 0
-        let threshold = calibratedThreshold()
         for c in allClusters() {
             guard let members = membersByCluster[c.clusterID], !members.isEmpty,
                   let sum = ClipMath.decodeHalf(c.sum) else { c.spread = nil; continue }
             let spread = FaceClusterHealth.spread(members: members, centroid: sum)
             c.spread = spread.map { Double($0) }
-            if FaceClusterHealth.shouldFreezeCentroid(spread: spread, members: members.count,
-                                                      threshold: threshold) { frozen += 1 }
-        }
-        if frozen > 0 {
-            Diagnostics.mark("faces: centroid frozen — \(frozen) 人（ばらつきがしきい値の裏側）")
         }
     }
 }

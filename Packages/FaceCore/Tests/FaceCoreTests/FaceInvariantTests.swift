@@ -136,27 +136,7 @@ struct FaceInvariantTests {
         }
     }
 
-    // MARK: - 3. 重心を凍結したクラスタは所属だけ受け取る
-
-    @Test("凍結したクラスタへ入った顔は『足した』と報告されない")
-    func frozenClusterAcceptsMembershipOnly() {
-        var clustering = FaceClustering(threshold: 0.5, qualityFloor: 0.1,
-                                        seedClusters: [
-                                            .init(id: 1, centroid: [1, 0, 0], sum: [1, 0, 0],
-                                                  count: 12, faceIDs: [], prototypes: [],
-                                                  centroidFrozen: true)
-                                        ], minimumNextID: 2)
-        let before = clustering.clusters[0]
-        let placed = clustering.place(faceID: "x", embedding: [0.99, 0.1, 0], quality: 1)
-        #expect(placed.clusterID == 1)
-        #expect(placed.contributed == false)
-        #expect(clustering.clusters[0].sum == before.sum)
-        #expect(clustering.clusters[0].count == before.count)
-        #expect(clustering.clusters[0].centroid == before.centroid)
-        #expect(clustering.clusters[0].faceIDs.contains("x"))
-    }
-
-    // MARK: - 4. はっきり分かれているデータなら、順序で答えが変わらない
+    // MARK: - 3. はっきり分かれているデータなら、順序で答えが変わらない
 
     /// 逐次貪欲は原理的に順序依存だが、**曖昧でないデータでは順序に依らない**はず。
     /// ここが崩れるなら、しきい値やマージンの効き方に見落としがある。
@@ -182,7 +162,7 @@ struct FaceInvariantTests {
         }
     }
 
-    // MARK: - 5. 校正はどんなサンプルでも暴れない
+    // MARK: - 4. 校正はどんなサンプルでも暴れない
 
     /// ⚠️ 実機で校正値が可動域の上限に張り付き、「直すほど厳しくなる」状態になった（ADR-149）。
     /// どんな入力でも可動域を出ず、分離しないデータでは既定値のままであることを固定する。

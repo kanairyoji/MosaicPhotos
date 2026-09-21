@@ -3,7 +3,7 @@ import Testing
 @testable import FaceCore
 
 /// クラスタの散らばり（ADR-210）。混入の代理指標なので、**外れ値 1 枚で跳ねない**ことと
-/// **少数のクラスタを凍結しない**ことが要点。
+/// 測れない（未測定）を 0 と区別することが要点。
 @Suite("クラスタの散らばり（ADR-210）")
 struct FaceClusterHealthTests {
 
@@ -53,25 +53,6 @@ struct FaceClusterHealthTests {
         #expect(spread < 0.01)
     }
 
-    /// **新しい目盛りを増やさない**ための決定（バー＝1 − しきい値）。
-    @Test("凍結のバーはしきい値に追随する")
-    func freezeBarFollowsThreshold() {
-        // arcface のしきい値 0.35 → 距離 0.65 を超えたら凍結。
-        #expect(FaceClusterHealth.shouldFreezeCentroid(spread: 0.70, members: 20, threshold: 0.35))
-        #expect(!FaceClusterHealth.shouldFreezeCentroid(spread: 0.60, members: 20, threshold: 0.35))
-        // しきい値が校正で上がれば、バーも一緒に下がる。
-        #expect(FaceClusterHealth.shouldFreezeCentroid(spread: 0.60, members: 20, threshold: 0.45))
-    }
-
-    /// ⚠️ 少数のクラスタで凍結すると**育たなくなる**（中央値が 1 枚で決まる）。
-    @Test("メンバーが少ない人物は凍結しない・未測定でも凍結しない")
-    func smallOrUnmeasuredIsNeverFrozen() {
-        #expect(!FaceClusterHealth.shouldFreezeCentroid(spread: 0.99, members: 2, threshold: 0.35))
-        #expect(!FaceClusterHealth.shouldFreezeCentroid(spread: nil, members: 100, threshold: 0.35))
-        #expect(FaceClusterHealth.minMembersToJudge == FaceClusterAudit.Config
-                    .init(minMembers: 8, minGroupSize: 3, minMargin: 0.2, maxSeparation: 0.4)
-                    .minMembers)
-    }
 
     @Test("監査の順番は散らばりの大きい順・同値はクラスタ ID の小さい順（決定的）")
     func auditOrderIsDeterministic() {

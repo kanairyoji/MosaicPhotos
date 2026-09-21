@@ -67,14 +67,9 @@ public struct FaceClustering {
         /// 割り当ては「重心またはいずれかのアンカーとの最大類似」で判定＝人物内のばらつき
         /// （年代・眼鏡・角度）で単一重心から遠くなった顔でも正しく合流できる。
         public var prototypes: [[Float]] = []
-        /// **重心の成長を止めているか**（ADR-210）。ばらつき（`FaceClusterHealth.spread`）が
-        /// 大きいクラスタは、既に別人が混ざっている疑いが濃い。そこへさらに顔を足すと
-        /// 重心が中間へ寄り、**混入が次の混入を呼ぶ**。凍結中のクラスタには所属（faceIDs）
-        /// だけを付け、`sum`/`count`/`centroid` は一切動かさない（第2パスと同じ扱い）。
-        ///
-        /// ⚠️ 顔を**弾かない**のが要点。ADR-59（外れ値を抜く）は成長データで正当な顔まで
-        /// 落として不採用になった。ここは「入れるが、重心の材料にはしない」なので網羅は減らない。
-        public var centroidFrozen: Bool = false
+        // ⚠️ ここに「重心の凍結」（ADR-210）があったが、FG-NET / LFW で一度も発動せず
+        // （散らばりの最大 0.47 に対してバー 0.65）、バーを下げても F1 は ±0.008 の範囲で
+        // 改善しなかったため撤回した（ADR-216）。
     }
 
     public private(set) var clusters: [Cluster] = []
@@ -324,12 +319,6 @@ public struct FaceClustering {
                     || simToRejected > cand.sim + FaceClustering.negativeMargin {
                     continue
                 }
-            }
-            // ⚠️ **重心を凍結したクラスタには所属だけ付ける**（ADR-210）。ばらつきが大きい＝
-            // 既に混ざっている疑いが濃いクラスタの重心を、さらに動かさない。
-            if clusters[cand.index].centroidFrozen {
-                clusters[cand.index].faceIDs.append(faceID)
-                return Assignment(clusterID: clusters[cand.index].id, contributed: false)
             }
             let w = max(quality, 0.01)
             for i in clusters[cand.index].sum.indices { clusters[cand.index].sum[i] += v[i] * w }
