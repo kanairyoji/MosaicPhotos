@@ -76,7 +76,7 @@ struct AIAnalysisStatusView: View {
                     LabeledContent(L("Indexing for search"), value: remainingText(monitor.embedRemaining))
                 }
                 if people.isScanning {
-                    LabeledContent(L("Scanning faces"), value: remainingText(people.remaining))
+                    LabeledContent(L("Scanning faces"), value: remainingText(people.scanProgressRemaining))
                 }
             }
         } header: {

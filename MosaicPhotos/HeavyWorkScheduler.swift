@@ -257,7 +257,13 @@ enum HeavyWorkScheduler {
                   lastActivity: AnalysisActivity.lastActivity(.sceneTags)),
             .init(pass: .embeddings, pending: max(0, progress.total - progress.embedded),
                   lastActivity: AnalysisActivity.lastActivity(.embeddings)),
-            .init(pass: .faces, pending: stores.peopleEngine.remaining,
+            // ⚠️ **`remaining` は使わない**（ADR-207・レビュー 7 周目）。あれはスキャン中しか
+            // 書かれないので、`kick` の直後に走るこの検査からは**常に 0**に見える。
+            // `stalled` は `pending > 0` を入口にしているので、顔の停滞は
+            // **一度も検出できなかった**——沈黙を検出しにいく仕組みが、それ自体沈黙していた
+            // （ADR-87 が守りたかったのはまさにこの形の飢餓バグ）。
+            .init(pass: .faces,
+                  pending: stores.peopleEngine.faceBacklog ?? stores.peopleEngine.scanProgressRemaining,
                   lastActivity: AnalysisActivity.lastActivity(.faces)),
         ]
         // 一度も動いていないパスは「この端末で解析が始まり得た時刻」からの経過で判定する。
@@ -349,7 +355,7 @@ enum HeavyWorkScheduler {
             guard !Task.isCancelled else { return }
 
             // ⚠️ 解析は**先に起こしてから**残りの手順を決める（レビュー指摘）。
-            // 顔の残作業（`PeopleEngine.remaining`）はスキャン中しか更新されないので、
+            // 顔の残作業（`PeopleEngine.scanProgressRemaining`）はスキャン中しか更新されないので、
             // 起こす前に測ると必ず 0 になり、ADR-163 の「顔の残作業があるうちは生成を
             // 見送る」が永久に効かなくなる（生成と解析の共倒れ＝diagnostics-72 の再発）。
             let analysis = NightlyPlan.analysisStep(boostActive: stores.analysisSession.isActive)
@@ -384,7 +390,7 @@ enum HeavyWorkScheduler {
             // は `kick` の直後に走るので、新しい窓では**常に 0**だった（ADR-163 の修正が
             // 効いていなかった）。埋め込みが 0 で顔だけ残っている窓に生成が入り、
             // diagnostics-72 の共倒れが再発し得る。
-            faceBacklog: stores.peopleEngine.faceBacklog ?? stores.peopleEngine.remaining,
+            faceBacklog: stores.peopleEngine.faceBacklog ?? stores.peopleEngine.scanProgressRemaining,
             generateDeferrals: UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak),
             maxGenerateDeferrals: maxGenerateDeferrals,
             availableMB: Int(MemoryBudget.availableBytes() / 1_048_576),

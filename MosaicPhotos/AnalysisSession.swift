@@ -276,7 +276,7 @@ final class AnalysisSession {
             //   **ブーストが永久に終わらない**（進捗も止まったまま）。
             // - `faceBacklog`: **本当の残作業**。止める理由を決めるときに使う
             //   ——0 でないのに「すべて解析済み」と言わないため。
-            let runnableFaces = people.isScanning ? people.remaining : 0
+            let runnableFaces = people.isScanning ? people.scanProgressRemaining : 0
             let faces = runnableFaces
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)

@@ -42,7 +42,11 @@ public final class PeopleEngine {
     /// `@Observable` なので、この計算プロパティ越しでも SwiftUI が追従する。
     public var isScanning: Bool { scan.isRunning }
     /// 未スキャン残り枚数（おおよそ）。
-    public private(set) var remaining = 0
+    /// **スキャン中の進捗**（この実行の残り）。止まると 0 に戻る。
+    /// ⚠️ 名前が `remaining` だったころ、3 か所で「残作業」と読み違えられた
+    /// （完了判定・夜間の枠配分・停滞検出）。いずれも「終わった」と「始められなかった」を
+    /// 同じ 0 で扱ってしまう。**残作業は `faceBacklog`**（ADR-207）。
+    public private(set) var scanProgressRemaining = 0
 
     /// **スキャンしていなくても答えられる顔の残作業**（ADR-207）。
     ///
@@ -135,7 +139,7 @@ public final class PeopleEngine {
             BackgroundActivityMonitor.shared.isScanningFaces = running
             if !running {
                 BackgroundActivityMonitor.shared.faceScanRemaining = 0
-                self?.remaining = 0
+                self?.scanProgressRemaining = 0
                 // ⚠️ `faceBacklog` は**ここで 0 にしない**。止まった理由（終わった／譲った）を
                 // 区別できなくなる。本当の残りはスキャン側が `onBacklog` で置いていく。
             }
@@ -375,7 +379,7 @@ public final class PeopleEngine {
                     !BackgroundYield.verdict(for: .cloudTrickle).blocks(.networkBlocked)
                 },
                 onProgress: {
-                    self.remaining = $0
+                    self.scanProgressRemaining = $0
                     BackgroundActivityMonitor.shared.faceScanRemaining = $0
                 },
                 onBacklog: { todo, deferred in

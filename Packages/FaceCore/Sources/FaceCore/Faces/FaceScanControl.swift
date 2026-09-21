@@ -22,9 +22,10 @@ public protocol FaceScanControl: AnyObject {
     var isFaceModelAvailable: Bool { get }
     /// いまスキャンが走っているか。
     var isScanning: Bool { get }
-    /// 未スキャンの残り枚数（おおよそ・**スキャン中のみ**更新。止まると 0 に戻る）。
-    /// ⚠️ 完了の判定には使わないこと——「終わった」と「始められなかった」が同じ 0 になる。
-    var remaining: Int { get }
+    /// **スキャン中の進捗**（この実行の残り・止まると 0 に戻る）。表示用。
+    /// ⚠️ **残作業ではない**。完了の判定・枠配分・停滞検出に使うと、
+    /// 「終わった」と「始められなかった」が同じ 0 になる。そちらは `faceBacklog`。
+    var scanProgressRemaining: Int { get }
 
     /// **スキャンしていなくても答えられる**顔の残作業（ADR-207）。
     /// 回線待ちで今回は外したクラウド分も含む。nil＝この起動でまだ測っていない。

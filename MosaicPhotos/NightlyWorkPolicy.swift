@@ -130,7 +130,7 @@ enum NightlyPlan {
     ///    解析がそれを見て譲るので、同じ窓で両方やると窓が丸ごと空転する（diagnostics-72）。
     ///    ただし連続見送りの上限で順番を回す（生成も飢えさせない・ADR-163）。
     /// 窓の先頭の 1 手（解析を起こす）。**残りの手順より先に実行する**——顔の残作業は
-    /// 起こしたあとでないと測れない（`PeopleEngine.remaining` はスキャン中しか更新されない）。
+    /// 起こしたあとでないと測れない（`PeopleEngine.scanProgressRemaining` はスキャン中しか更新されない）。
     static func analysisStep(boostActive: Bool) -> Step {
         boostActive ? .skipAnalysisBoostActive : .startAnalysis
     }
