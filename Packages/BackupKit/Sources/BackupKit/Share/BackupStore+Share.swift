@@ -14,21 +14,7 @@ extension BackupStore {
         modelContext.insert(set)
         try? modelContext.save()
         return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
-                            createdAt: set.createdAt, sidecarChecksum: nil, sourceKey: sourceKey,
-                            layoutVersion: set.layoutVersion)
-    }
-
-    /// テスト専用: 旧配置（フォルダ配置の印が無い）のセットを作る。
-    /// 移行経路を検証するために、印が付く前のデータをそのまま再現する。
-    func createLegacyShareSetForTesting(name: String, folderName: String,
-                                        sourceKey: String? = nil) -> ShareSetLite {
-        let set = ShareSet(name: name, folderName: folderName, sourceKey: sourceKey,
-                           layoutVersion: nil)
-        modelContext.insert(set)
-        try? modelContext.save()
-        return ShareSetLite(id: set.id, name: set.name, folderName: set.folderName,
-                            createdAt: set.createdAt, sidecarChecksum: nil, sourceKey: sourceKey,
-                            layoutVersion: nil)
+                            createdAt: set.createdAt, sourceKey: sourceKey)
     }
 
     public func allShareSets() -> [ShareSetLite] {
@@ -36,28 +22,42 @@ extension BackupStore {
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]))) ?? []
         return sets.map {
             ShareSetLite(id: $0.id, name: $0.name, folderName: $0.folderName,
-                         createdAt: $0.createdAt, sidecarChecksum: $0.sidecarChecksum,
-                         sourceKey: $0.sourceKey, layoutVersion: $0.layoutVersion)
+                         createdAt: $0.createdAt, sourceKey: $0.sourceKey)
         }
     }
 
-    /// 全セットの概要を **1 回の fetch** で集計する（セットごとの N+1 クエリを避ける）。
-    /// 返すのは setID → (総数, コピー済み, バックアップ待ち, 失敗)。
-    public func shareItemCounts() -> [UUID: (total: Int, copied: Int, waitingBackup: Int, failed: Int)] {
-        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>())) ?? []
-        var out: [UUID: (total: Int, copied: Int, waitingBackup: Int, failed: Int)] = [:]
-        for item in items {
-            var c = out[item.setID] ?? (0, 0, 0, 0)
-            c.total += 1
-            switch ShareItemState(rawValue: item.stateRaw) ?? .pending {
-            case .copied:        c.copied += 1
-            case .waitingBackup: c.waitingBackup += 1
-            case .failed:        c.failed += 1
-            case .pending:       break
-            }
-            out[item.setID] = c
+    /// セットごとのメンバー総数を **1 回の fetch** で数える（N+1 クエリを避ける）。
+    ///
+    /// ⚠️ 「共有済み何枚か」は**ここでは分からない**（ADR-209）。それは Dropbox の実在が
+    /// 答えるもので、記録には無い。画面に出す数は反映のたびに数え直して
+    /// `ShareSet.lastSyncedPresent` へ控える。
+    public func shareItemTotals() -> [UUID: Int] {
+        var descriptor = FetchDescriptor<ShareItem>()
+        descriptor.propertiesToFetch = [\.setID]
+        let items = (try? modelContext.fetch(descriptor)) ?? []
+        var out: [UUID: Int] = [:]
+        for item in items { out[item.setID, default: 0] += 1 }
+        return out
+    }
+
+    /// セットごとの「最後の反映で共有済み / バックアップ待ちだった枚数」（表示の控え）。
+    public func shareSyncedCounts() -> [UUID: (present: Int, waiting: Int)] {
+        let sets = (try? modelContext.fetch(FetchDescriptor<ShareSet>())) ?? []
+        var out: [UUID: (present: Int, waiting: Int)] = [:]
+        for set in sets {
+            out[set.id] = (set.lastSyncedPresent ?? 0, set.lastSyncedWaiting ?? 0)
         }
         return out
+    }
+
+    /// 反映の結果を控える（表示用）。
+    public func recordShareSyncCounts(setID: UUID, present: Int, waiting: Int) {
+        let id = setID
+        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
+            predicate: #Predicate { $0.id == id })).first else { return }
+        set.lastSyncedPresent = present
+        set.lastSyncedWaiting = waiting
+        try? modelContext.save()
     }
 
     /// 共有セットの件数（存在判定用・全件マテリアライズを避ける）。
@@ -87,60 +87,17 @@ extension BackupStore {
         try? modelContext.save()
     }
 
-    /// フォルダ名を変更し、配下アイテムの `sharedPath` も新しいパスへ張り替える。
-    /// Dropbox 側の move は呼び出し側の責務（成功したときだけここへ来る）。
-    /// パス接頭辞の置換なので、実体の再コピーは発生しない。
-    public func renameShareSet(setID: UUID, folderName: String,
-                               oldPathPrefix: String, newPathPrefix: String) {
-        let id = setID
-        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
-            predicate: #Predicate { $0.id == id })).first else { return }
-        set.folderName = folderName
-        set.layoutVersion = ShareSet.currentLayoutVersion
-        // 解析データは新フォルダで作り直す（チェックサム一致で更新を飛ばさないよう捨てる）。
-        set.sidecarChecksum = nil
-        let oldLower = oldPathPrefix.lowercased()
-        let newLower = newPathPrefix.lowercased()
-        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
-            predicate: #Predicate { $0.setID == id }))) ?? []
-        for item in items {
-            guard let path = item.sharedPath?.lowercased(), path.hasPrefix(oldLower) else { continue }
-            item.sharedPath = newLower + String(path.dropFirst(oldLower.count))
-        }
-        try? modelContext.save()
-    }
-
-    /// 配置変更（ADR-175）: セットを**新配置でコピーし直す**状態に戻す。
+    /// フォルダ名を変更する。
     ///
-    /// 旧フォルダは動かさない（既存データは移行しない）ので、記録上のコピー先
-    /// （`sharedPath` / `sharedContentHash`）を捨てて `.pending` へ戻す。
-    /// 次の反映が新しい共有ルートへコピーし、解析データも作り直す。
-    public func resetShareSetForRelayout(setID: UUID, folderName: String) {
+    /// ⚠️ Dropbox 側の旧フォルダは**触らない**（ADR-209）。フォルダも差分で収束するので、
+    /// 旧フォルダは「望ましくないフォルダ」として次の反映が消し、新フォルダへコピーし直す。
+    /// サーバーサイドコピーなので転送は起きない。
+    public func renameShareSet(setID: UUID, folderName: String) {
         let id = setID
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
             predicate: #Predicate { $0.id == id })).first else { return }
         set.folderName = folderName
-        set.layoutVersion = ShareSet.currentLayoutVersion
-        set.sidecarChecksum = nil
-        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
-            predicate: #Predicate { $0.setID == id }))) ?? []
-        for item in items {
-            item.stateRaw = ShareItemState.pending.rawValue
-            item.sharedPath = nil
-            item.sharedContentHash = nil
-            item.copiedAt = nil
-        }
-        try? modelContext.save()
-    }
-
-    /// フォルダ配置の検査が済んだ印を付ける（移行不要だった場合も含む）。
-    /// これが無いと、旧配置の候補パスを**毎回の反映で探し続ける**（往復の無駄）。
-    public func markShareSetLayoutCurrent(setID: UUID) {
-        let id = setID
-        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
-            predicate: #Predicate { $0.id == id })).first else { return }
-        guard set.layoutVersion != ShareSet.currentLayoutVersion else { return }
-        set.layoutVersion = ShareSet.currentLayoutVersion
+        set.lastSyncedPresent = nil
         try? modelContext.save()
     }
 
@@ -150,14 +107,6 @@ extension BackupStore {
         guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
             predicate: #Predicate { $0.id == id })).first else { return }
         set.sourceKey = nil
-        try? modelContext.save()
-    }
-
-    public func setShareAnalysisDataChecksum(setID: UUID, checksum: String?) {
-        let id = setID
-        guard let set = try? modelContext.fetch(FetchDescriptor<ShareSet>(
-            predicate: #Predicate { $0.id == id })).first else { return }
-        set.sidecarChecksum = checksum
         try? modelContext.save()
     }
 
@@ -182,12 +131,7 @@ extension BackupStore {
         let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
             predicate: #Predicate { $0.setID == id },
             sortBy: [SortDescriptor(\.addedAt, order: .forward)]))) ?? []
-        return items.map {
-            ShareItemLite(refKey: $0.refKey, sourcePath: $0.sourcePath,
-                          sharedPath: $0.sharedPath, sharedContentHash: $0.sharedContentHash,
-                          state: ShareItemState(rawValue: $0.stateRaw) ?? .pending,
-                          addedAt: $0.addedAt)
-        }
+        return items.map { ShareItemLite(refKey: $0.refKey, addedAt: $0.addedAt) }
     }
 
     /// アイテム記録を削除する（Dropbox 側の削除は呼び出し側の責務）。
@@ -200,41 +144,24 @@ extension BackupStore {
         try? modelContext.save()
     }
 
-    /// 反映結果の記録（コピー成功/失敗/バックアップ待ち）。
-    public func updateShareItems(setID: UUID,
-                                 updates: [(refKey: String, state: ShareItemState,
-                                            sourcePath: String?, sharedPath: String?,
-                                            sharedContentHash: String?)]) {
-        let id = setID
-        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
-            predicate: #Predicate { $0.setID == id }))) ?? []
-        var byKey: [String: ShareItem] = [:]
-        for item in items { byKey[item.refKey] = item }
-        for update in updates {
-            guard let item = byKey[update.refKey] else { continue }
-            item.stateRaw = update.state.rawValue
-            if let source = update.sourcePath { item.sourcePath = source }
-            if let shared = update.sharedPath {
-                item.sharedPath = shared.lowercased()
-                item.copiedAt = Date()
-            }
-            if let hash = update.sharedContentHash { item.sharedContentHash = hash }
-        }
-        try? modelContext.save()
-    }
-
-    /// 共有待ち（waitingBackup / pending）の端末写真 localIdentifier。
+    /// **まだバックアップされていない**共有メンバーの端末写真 localIdentifier。
     /// バックアップ隊列の優先対象（ADR-112 追記: 共有に選ばれた写真から先にバックアップする）。
+    ///
+    /// ⚠️ 以前はアイテムの状態（`waitingBackup` / `pending`）で判定していた。いまは状態を
+    /// 持たないので、**バックアップ記録の有無で直接引く**（ADR-209）。記録が真実なのは
+    /// バックアップ側であって、共有側ではない。
     public func shareWaitingLocalIdentifiers() -> Set<String> {
-        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>())) ?? []
-        var out: Set<String> = []
-        for item in items where item.refKey.hasPrefix("L-") {
-            let state = ShareItemState(rawValue: item.stateRaw) ?? .pending
-            if state == .waitingBackup || state == .pending {
-                out.insert(String(item.refKey.dropFirst(2)))
-            }
-        }
-        return out
+        var itemDescriptor = FetchDescriptor<ShareItem>()
+        itemDescriptor.propertiesToFetch = [\.refKey]
+        let items = (try? modelContext.fetch(itemDescriptor)) ?? []
+        let wanted = Set(items.map(\.refKey).filter { $0.hasPrefix("L-") }
+            .map { String($0.dropFirst(2)) })
+        guard !wanted.isEmpty else { return [] }
+        var backupDescriptor = FetchDescriptor<BackupAssetRecord>()
+        backupDescriptor.propertiesToFetch = [\.localIdentifier]
+        let backedUp = Set(((try? modelContext.fetch(backupDescriptor)) ?? [])
+            .compactMap(\.localIdentifier))
+        return wanted.subtracting(backedUp)
     }
 
     // MARK: - バックアップ記録の参照（"L-" 写真の実体解決）

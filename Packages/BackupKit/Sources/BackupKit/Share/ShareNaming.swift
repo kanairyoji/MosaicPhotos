@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// 共有セットのフォルダ名サニタイズ（純ロジック・テスト対象）。
@@ -82,6 +83,57 @@ public enum ShareNaming {
         let others = existing.filter { $0.lowercased() != currentTrimmed.lowercased() }
         let proposed = folderName(name, kind: kind, existing: others)
         return proposed == currentTrimmed ? nil : proposed
+    }
+
+    // MARK: - 共有ファイル名（中身で決まる・ADR-209）
+
+    /// 共有フォルダに置くファイル名を**中身から決める**ための印（16 進 8 桁）。
+    ///
+    /// ⚠️ これが差分方式の要。**同じ写真 → 必ず同じ名前**なので、
+    /// - コピーは何度やり直しても同じファイルになる（冪等）＝重複が生まれない
+    /// - 別の写真は別の名前になる＝衝突しない＝`autorename` が要らない
+    /// - 中身が差し替われば名前が変わる＝旧名は「望ましくない」側へ回って消える
+    ///
+    /// 記録（どこへコピーしたか）を持たなくてよくなるのはこの性質のおかげ。
+    /// 以前は宛先名をアイテムごとに採番して覚えており、その記録と実在の食い違いを
+    /// 直すために採用・自己修復・墓標・残骸掃除が必要だった。
+    ///
+    /// - Parameter contentHash: Dropbox の `content_hash`。**不明なら refKey だけで決める**
+    ///   （クラウド原本は手元に hash が無い。その場合は中身の差し替えを検知できないが、
+    ///   一意性と冪等性は保たれる）。
+    public static func identity(refKey: String, contentHash: String?) -> String {
+        let seed = "\(refKey)|\(contentHash ?? "")"
+        let digest = SHA256.hash(data: Data(seed.utf8))
+        return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 印と元のファイル名から、共有フォルダでのファイル名を作る。
+    /// 例: `IMG_1234.jpg` ＋ `3f9a2c1d` → `IMG_1234--3f9a2c1d.jpg`
+    public static func sharedFileName(sourceFileName: String, identity: String) -> String {
+        let ext = (sourceFileName as NSString).pathExtension
+        var stem = (sourceFileName as NSString).deletingPathExtension
+        stem = String(stem.unicodeScalars.map { forbidden.contains($0) ? "_" : Character($0) })
+        stem = stem.trimmingCharacters(in: .whitespacesAndNewlines)
+        while stem.hasSuffix(".") { stem.removeLast() }
+        // ⚠️ 長い名前は切る（Dropbox のパス長 260 文字制限。印と拡張子のぶんを残す）。
+        if stem.count > 120 { stem = String(stem.prefix(120)) }
+        if stem.isEmpty { stem = "photo" }
+        return ext.isEmpty ? "\(stem)\(identitySeparator)\(identity)"
+                           : "\(stem)\(identitySeparator)\(identity).\(ext)"
+    }
+
+    /// 印の区切り。⚠️ 元のファイル名に現れにくい形を選ぶ（誤判定を避ける）。
+    static let identitySeparator = "--"
+
+    /// このアプリが置いたファイル名か（＝差分で消してよいか）。
+    ///
+    /// ⚠️ **消す側の安全弁**。共有フォルダに家族が手で置いたファイルには触らない。
+    /// 印の形（`--` ＋ 16 進 8 桁 ＋ 任意の拡張子）に合うものだけを自分の持ち物とみなす。
+    public static func isShareManagedFileName(_ filename: String) -> Bool {
+        let stem = (filename as NSString).deletingPathExtension
+        guard let range = stem.range(of: identitySeparator, options: .backwards) else { return false }
+        let tail = stem[range.upperBound...]
+        return tail.count == 8 && tail.allSatisfy { $0.isHexDigit && ($0.isNumber || $0.isLowercase) }
     }
 
     /// セット名 → フォルダ名。空になった場合は "Shared" にフォールバック。

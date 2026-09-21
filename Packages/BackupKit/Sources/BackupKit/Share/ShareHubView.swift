@@ -178,9 +178,8 @@ struct ShareProvideView: View {
         if set.waitingBackup > 0 {
             parts.append(String(format: L("%d waiting for backup"), set.waitingBackup))
         }
-        if set.failed > 0 {
-            parts.append(String(format: L("%d failed"), set.failed))
-        }
+        // ⚠️ 「失敗」の欄は無くした（ADR-209）。失敗はただの「まだ望ましい状態でない」で、
+        // 次の反映が同じ差分を見て投げ直す——利用者に区別して見せる意味が無い。
         return parts.joined(separator: " · ")
     }
 
@@ -367,17 +366,9 @@ struct ShareSetDetailView: View {
         List {
             Section {
                 ForEach(items, id: \.refKey) { item in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(displayName(for: item))
-                                .lineLimit(1)
-                            Text(stateLabel(for: item.state))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        stateIcon(for: item.state)
-                    }
+                    // ⚠️ 1 枚ごとの「共有済みか」は**記録に無い**（ADR-209）。
+                    // 真実は Dropbox の実在なので、セット全体の「N/M 枚」で示す。
+                    Text(displayName(for: item)).lineLimit(1)
                 }
                 .onDelete { offsets in
                     let refKeys = offsets.map { items[$0].refKey }
@@ -387,7 +378,7 @@ struct ShareSetDetailView: View {
                     }
                 }
             } footer: {
-                Text(L("Swipe to remove a photo from this set (the copy in the shared folder is deleted; the original is kept)."))
+                Text(L("Swipe to remove a photo from this set (the copy in the shared folder is removed on the next sync; the original is kept)."))
             }
 
             Section {
@@ -446,34 +437,10 @@ struct ShareSetDetailView: View {
     }
 
     private func displayName(for item: ShareItemLite) -> String {
-        if let path = item.sharedPath ?? item.sourcePath {
-            return (path as NSString).lastPathComponent
-        }
         if item.refKey.hasPrefix("C-") {
-            return ((item.refKey as NSString).lastPathComponent)
+            return (String(item.refKey.dropFirst(2)) as NSString).lastPathComponent
         }
-        return L("(waiting for backup)")
-    }
-
-    private func stateLabel(for state: ShareItemState) -> String {
-        switch state {
-        case .pending:       return L("Waiting to sync")
-        case .waitingBackup: return L("Waiting for backup")
-        case .copied:        return L("Shared")
-        case .failed:        return L("Failed — will retry")
-        }
-    }
-
-    @ViewBuilder
-    private func stateIcon(for state: ShareItemState) -> some View {
-        switch state {
-        case .copied:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        case .pending, .waitingBackup:
-            Image(systemName: "clock").foregroundStyle(.secondary)
-        case .failed:
-            Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-        }
+        return L("Photo on this device")
     }
 }
 #endif

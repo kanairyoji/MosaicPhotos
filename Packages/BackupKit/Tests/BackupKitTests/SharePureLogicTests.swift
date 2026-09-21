@@ -66,205 +66,211 @@ struct ShareKindFromFolderTests {
     }
 }
 
-@Suite("SharePlanning (反映計画)")
+@Suite("SharePlanning (差分の計画・ADR-209)")
 struct SharePlanningTests {
 
-    private func item(_ refKey: String, state: ShareItemState = .pending,
-                      sharedPath: String? = nil, sharedHash: String? = nil) -> ShareItemLite {
-        ShareItemLite(refKey: refKey, sourcePath: nil, sharedPath: sharedPath,
-                      sharedContentHash: sharedHash, state: state, addedAt: Date())
+    private let setFolder = "/MosaicPhotos/dev/Share/Trip"
+
+    private func item(_ refKey: String) -> ShareItemLite {
+        ShareItemLite(refKey: refKey, addedAt: Date())
+    }
+
+    private func remote(_ paths: [String], hash: String? = "h") -> [SharePlanning.RemoteFile] {
+        paths.map { SharePlanning.RemoteFile(pathLower: $0.lowercased(), contentHash: hash) }
+    }
+
+    /// その写真が置かれるべき宛先（テストが実装と同じ規則で名前を組む）。
+    private func destination(refKey: String, sourcePath: String, hash: String?) -> String {
+        let identity = ShareNaming.identity(refKey: refKey, contentHash: hash)
+        let name = ShareNaming.sharedFileName(
+            sourceFileName: (sourcePath as NSString).lastPathComponent, identity: identity)
+        return "\(setFolder)/\(name)"
     }
 
     private func plan(items: [ShareItemLite],
                       backup: [String: SharePlanning.BackupRef] = [:],
-                      remote: [SharePlanning.RemoteFile]? = nil) -> SharePlanning.Plan {
-        SharePlanning.plan(items: items, backupByLocalID: backup,
-                           shareRoot: "/MosaicShare", folderName: "Trip", remoteFiles: remote)
+                      cloudHashes: [String: String] = [:],
+                      remoteFiles: [SharePlanning.RemoteFile]?) -> SharePlanning.Plan {
+        SharePlanning.plan(items: items, backupByLocalID: backup, cloudHashByPath: cloudHashes,
+                           setFolder: setFolder, remoteFiles: remoteFiles)
     }
+
+    // MARK: - 望ましい集合の作り方
 
     @Test("クラウド写真は原本パスから・ローカル写真はバックアップ記録からコピーする")
     func resolvesSources() {
-        let result = plan(
-            items: [item("C-/Photos/a.jpg"), item("L-local1")],
-            backup: ["local1": .init(dropboxPath: "/mosaicphotos/b.jpg", contentHash: "h1")],
-            remote: [])
-        #expect(result.copies.count == 2)
-        #expect(result.copies.contains(.init(refKey: "C-/Photos/a.jpg", fromPath: "/Photos/a.jpg",
-                                             toPath: "/MosaicShare/Trip/a.jpg")))
-        #expect(result.copies.contains(.init(refKey: "L-local1", fromPath: "/mosaicphotos/b.jpg",
-                                             toPath: "/MosaicShare/Trip/b.jpg")))
-        #expect(result.waitingBackup.isEmpty)
+        let p = plan(items: [item("C-/photos/x.jpg"), item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: [])
+        #expect(p.copies.map(\.fromPath).sorted() == ["/backup/a.jpg", "/photos/x.jpg"])
+        #expect(p.waitingBackup.isEmpty)
     }
 
-    @Test("バックアップ記録が無いローカル写真は waitingBackup")
-    func unbackedLocalWaits() {
-        let result = plan(items: [item("L-none")])
-        #expect(result.copies.isEmpty)
-        #expect(result.waitingBackup == ["L-none"])
+    @Test("バックアップ記録が無いローカル写真は waitingBackup（コピーもしない）")
+    func waitsForBackup() {
+        let p = plan(items: [item("L-missing")], remoteFiles: [])
+        #expect(p.waitingBackup == ["L-missing"])
+        #expect(p.copies.isEmpty)
     }
 
-    @Test("同名ソースには衝突しない宛先を決定的に割り当てる（autorename 不使用）")
-    func assignsUniqueDestinations() {
-        let result = plan(
-            items: [item("C-/A/IMG.jpg"), item("C-/B/IMG.jpg"), item("C-/C/IMG.jpg")],
-            remote: [])
-        #expect(result.copies.map(\.toPath) ==
-                ["/MosaicShare/Trip/IMG.jpg", "/MosaicShare/Trip/IMG 2.jpg", "/MosaicShare/Trip/IMG 3.jpg"])
+    /// ⚠️ **宛先名は中身から決まる**（ADR-209）。これが差分方式の土台。
+    @Test("同じ写真は必ず同じ宛先・別の写真は必ず別の宛先")
+    func destinationsAreContentAddressed() {
+        let a = destination(refKey: "L-a", sourcePath: "/backup/IMG.jpg", hash: "hA")
+        let again = destination(refKey: "L-a", sourcePath: "/backup/IMG.jpg", hash: "hA")
+        let other = destination(refKey: "L-b", sourcePath: "/backup/IMG.jpg", hash: "hB")
+        #expect(a == again, "同じ写真なのに宛先が変わる（冪等でない）")
+        #expect(a != other, "元のファイル名が同じ別写真が同じ宛先になる（衝突する）")
     }
 
-    @Test("宛先が既に実在するなら採用（コピーしない）＝タイムアウト後のリトライが冪等")
-    func adoptsExistingDestination() {
-        let result = plan(
-            items: [item("L-a", state: .failed)],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remote: [.init(pathLower: "/mosaicshare/trip/a.jpg", contentHash: "h1")])
-        #expect(result.copies.isEmpty, "実在する宛先へ再コピーした（重複の温床）")
-        #expect(result.adoptions == [.init(refKey: "L-a",
-                                           sharedPathLower: "/mosaicshare/trip/a.jpg",
-                                           contentHash: "h1")])
+    /// 以前は同名ソースに連番（"a 2.jpg"）を振っていた。中身で決まるなら要らない。
+    @Test("元のファイル名が同じでも連番は要らない")
+    func sameFileNameDoesNotCollide() {
+        let p = plan(items: [item("L-a"), item("L-b")],
+                     backup: ["a": .init(dropboxPath: "/x/IMG.jpg", contentHash: "hA"),
+                              "b": .init(dropboxPath: "/y/IMG.jpg", contentHash: "hB")],
+                     remoteFiles: [])
+        #expect(Set(p.copies.map(\.toPath)).count == 2, "宛先が衝突している")
+        #expect(p.copies.allSatisfy { !$0.toPath.contains(" 2.") }, "連番が振られている")
     }
 
-    @Test("宛先実在でも中身が違えば採用せず別名コピー")
-    func differentContentGetsAlternateName() {
-        let result = plan(
-            items: [item("L-a", state: .pending)],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "NEW")],
-            remote: [.init(pathLower: "/mosaicshare/trip/a.jpg", contentHash: "OLD")])
-        #expect(result.adoptions.isEmpty)
-        #expect(result.copies == [.init(refKey: "L-a", fromPath: "/mosaicphotos/a.jpg",
-                                        toPath: "/MosaicShare/Trip/a 2.jpg")])
+    // MARK: - 差分
+
+    @Test("実在するものはコピーしない（冪等）")
+    func presentIsNotCopied() {
+        let dest = destination(refKey: "L-a", sourcePath: "/backup/a.jpg", hash: "hA")
+        let p = plan(items: [item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: remote([dest]))
+        #expect(p.copies.isEmpty)
+        #expect(p.present == 1)
+        #expect(p.deletions.isEmpty)
     }
 
-    @Test("コピー済みは再コピーしない（実在・ハッシュ一致）")
-    func copiedItemsAreSkipped() {
-        let result = plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/a.jpg", sharedHash: "h1")],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remote: [.init(pathLower: "/mosaicshare/trip/a.jpg", contentHash: "h1")])
-        #expect(result.copies.isEmpty)
-        #expect(result.adoptions.isEmpty)
+    /// 外部から消されても、望ましい集合には残っているので次の反映で戻る（自己修復）。
+    @Test("共有側から消えた写真は、次の反映でコピーし直される")
+    func externalDeletionHeals() {
+        let p = plan(items: [item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: [])
+        #expect(p.copies.count == 1)
     }
 
-    @Test("共有側から消えたコピー済みは再コピー（自己修復）")
-    func missingRemoteIsRecopied() {
-        let result = plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/a.jpg", sharedHash: "h1")],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remote: [])
-        #expect(result.copies.count == 1)
+    /// ⚠️ 中身が差し替われば**名前が変わる**ので、旧名は自然に「望ましくない」側へ回る。
+    @Test("元が更新されたら、新しい名前でコピーし直し旧名を消す")
+    func contentDriftReplacesTheCopy() {
+        let oldDest = destination(refKey: "L-a", sourcePath: "/backup/a.jpg", hash: "OLD")
+        let p = plan(items: [item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "NEW")],
+                     remoteFiles: remote([oldDest]))
+        #expect(p.copies.count == 1, "新しい中身をコピーしない")
+        #expect(p.deletions == [oldDest.lowercased()], "古い中身のコピーが残る")
     }
 
-    @Test("未照合（remote 一覧なし）ではコピー済みの実在チェックをしない")
-    func noRemoteListingSkipsPresenceCheck() {
-        let result = plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/a.jpg", sharedHash: "h1")],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-            remote: nil)
-        #expect(result.copies.isEmpty)
+    @Test("メンバーから外れた写真のコピーは消える")
+    func removedMemberIsDeleted() {
+        let gone = destination(refKey: "L-b", sourcePath: "/backup/b.jpg", hash: "hB")
+        let kept = destination(refKey: "L-a", sourcePath: "/backup/a.jpg", hash: "hA")
+        let p = plan(items: [item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: remote([kept, gone]))
+        #expect(p.deletions == [gone.lowercased()])
+        #expect(p.copies.isEmpty)
     }
 
-    @Test("autorename 暴走の残骸（name (N).ext・記録に属さず元名が実在）だけ掃除対象になる")
-    func duplicateCleanupTargets() {
-        let result = plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/img.jpg", sharedHash: "h1")],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/img.jpg", contentHash: "h1")],
-            remote: [
-                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "h1"),
-                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "h1"),
-                .init(pathLower: "/mosaicshare/trip/img (12).jpg", contentHash: "h1"),
-                .init(pathLower: "/mosaicshare/trip/other (1).jpg", contentHash: "hx"),  // 元名なし → 残す
-                .init(pathLower: "/mosaicshare/trip/party (2024).jpg", contentHash: "hy"),  // 数字だが元名なし → 残す
-            ])
-        #expect(result.duplicatesToDelete ==
-                ["/mosaicshare/trip/img (1).jpg", "/mosaicshare/trip/img (12).jpg"])
+    // MARK: - 安全弁
+
+    /// ⚠️ セットフォルダは**セットの射影**。直下にあってよいのは望ましい集合だけ。
+    /// 旧方式のコピー（元のファイル名）もここで片付く——残すと家族に同じ写真が 2 枚見える。
+    @Test("望ましい集合に無いファイルは、名前の形に関係なく消す")
+    func unwantedFilesAreSwept() {
+        let p = plan(items: [item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: remote(["\(setFolder)/a.jpg",            // 旧方式のコピー
+                                          "\(setFolder)/IMG_9999.jpg"]))
+        #expect(p.deletions.count == 2, "望ましくないファイルを残している: \(p.deletions)")
     }
 
-    @Test("記録に属する (N) 形式のファイルは掃除しない")
-    func ownedAutorenameFilesAreKept() {
-        let result = plan(
-            items: [item("L-a", state: .copied, sharedPath: "/mosaicshare/trip/img (1).jpg", sharedHash: "h1")],
-            backup: ["a": .init(dropboxPath: "/mosaicphotos/img.jpg", contentHash: "h1")],
-            remote: [
-                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "h2"),
-                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "h1"),
-            ])
-        #expect(result.duplicatesToDelete.isEmpty)
+    /// ⚠️ 元が 1 件も解決できない回に全部消さない（バックアップ記録の読み出し失敗など）。
+    @Test("望ましい集合が空でメンバーが居る回は、何も消さない")
+    func doesNotWipeWhenResolutionFails() {
+        let existing = destination(refKey: "L-a", sourcePath: "/backup/a.jpg", hash: "hA")
+        let p = plan(items: [item("L-a")], backup: [:], remoteFiles: remote([existing]))
+        #expect(p.deletions.isEmpty, "解決できない回に共有フォルダを空にしている")
+        #expect(p.skippedDeletionsForSafety, "見送ったことを記録していない")
     }
 
-    /// ⚠️ 検証: 元のファイル名自体が "name (1).ext" の**別写真**が、たまたま同じフォルダに
-    /// "name.ext" があるだけで「重複」と誤判定されないか（コピー記録がまだ無い状態）。
-    /// ⚠️ 重複大量生成の再発防止（レビュー指摘）。バックアップ照合で記録が消えると
-    /// アイテムは `waitingBackup` へ戻るが **sharedPath は残る**。このとき自分の既存コピー名を
-    /// 再利用できないと、セット全体が " 2" 付きで複製される（過去 2 回の暴走と同種）。
-    @Test("sharedPath を保持したまま再コピーに回っても、同じ宛先を再利用する")
-    func reusesOwnDestinationOnRecopy() {
-        for state in [ShareItemState.waitingBackup, .failed, .pending] {
-            let result = plan(
-                items: [item("L-a", state: state, sharedPath: "/mosaicshare/trip/a.jpg")],
-                backup: ["a": .init(dropboxPath: "/mosaicphotos/a.jpg", contentHash: "h1")],
-                remote: [])   // 共有側には無い＝コピーが必要
-            #expect(result.copies.map(\.toPath) == ["/mosaicshare/trip/a.jpg"],
-                    "\(state) で自分のコピー先を再利用せず複製した: \(result.copies.map(\.toPath))")
-        }
+    /// ⚠️ 一覧が取れなかった回は**何も決めない**（実在が分からないまま動くのが最悪）。
+    @Test("一覧が取れなかった回はコピーも削除もしない")
+    func unknownRemoteDoesNothing() {
+        let p = plan(items: [item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: nil)
+        #expect(p.copies.isEmpty)
+        #expect(p.deletions.isEmpty)
     }
 
-    /// 「今回の計画が使う予定のパス」は掃除しない（採用直後に消す経路の防止）。
-    @Test("同じ回に採用したファイルを掃除対象にしない")
-    func doesNotDeleteWhatItJustAdopted() {
-        let result = plan(
-            items: [item("C-/src/img.jpg"), item("C-/src/img (1).jpg")],
-            remote: [
-                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "hSAME"),
-                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "hSAME"),
-            ])
-        let adopted = Set(result.adoptions.map(\.sharedPathLower))
-        for path in result.duplicatesToDelete {
-            #expect(!adopted.contains(path), "採用したファイルを削除しようとしている: \(path)")
-        }
+    @Test("同じ写真が 2 回入っていても宛先は 1 つ")
+    func duplicateMembersShareOneDestination() {
+        let p = plan(items: [item("L-a"), item("L-a")],
+                     backup: ["a": .init(dropboxPath: "/backup/a.jpg", contentHash: "hA")],
+                     remoteFiles: [])
+        #expect(p.copies.count == 1)
     }
 
-    @Test("元名が (N) 形式の別写真は掃除対象にしない（中身が違えば残す）")
-    func doesNotDeleteDistinctPhotoNamedLikeDuplicate() {
-        let result = plan(
-            items: [item("C-/src/img.jpg", state: .copied,
-                         sharedPath: "/mosaicshare/trip/img.jpg", sharedHash: "hA"),
-                    // まだコピー記録が無い（pending）別写真。元ファイル名が "img (1).jpg"。
-                    item("C-/src/img (1).jpg", state: .pending)],
-            remote: [
-                .init(pathLower: "/mosaicshare/trip/img.jpg", contentHash: "hA"),
-                // 中身は hB＝img.jpg とは別写真。
-                .init(pathLower: "/mosaicshare/trip/img (1).jpg", contentHash: "hB"),
-            ])
-        #expect(!result.duplicatesToDelete.contains("/mosaicshare/trip/img (1).jpg"),
-                "中身の違う別写真を重複として削除しようとしている")
-    }
-
-    /// 削除は不可逆なので、フォルダ名の異常は**必ず nil**（呼び出し側が中断する）。
     @Test("不正なフォルダ名は setFolderPath が拒否する（共有ルート全消しの防止）")
-    func setFolderPathRejectsUnsafeNames() {
-        #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare", folderName: "Trip")
-                == "/MosaicShare/Trip")
-        // 末尾スラッシュのルートも正規化される。
-        #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare/", folderName: "Trip")
-                == "/MosaicShare/Trip")
-        // 危険な名前はすべて拒否。
-        for bad in ["", "   ", "..", ".", "a/b", "a\\b"] {
-            #expect(SharePlanning.setFolderPath(shareRoot: "/MosaicShare", folderName: bad) == nil,
-                    "危険なフォルダ名を通した: \(bad)")
+    func rejectsUnsafeFolderNames() {
+        for bad in ["", "  ", "a/b", "..", ".", "a\\b"] {
+            #expect(SharePlanning.setFolderPath(shareRoot: "/Share", folderName: bad) == nil,
+                    "危険なフォルダ名を通した: '\(bad)'")
         }
-        // ルート側が壊れている場合も拒否（ルート直下を消しに行かない）。
-        #expect(SharePlanning.setFolderPath(shareRoot: "", folderName: "Trip") == nil)
-        #expect(SharePlanning.setFolderPath(shareRoot: "/", folderName: "Trip") == nil)
-    }
-
-    @Test("autorenameBase の解析")
-    func autorenameBaseParsing() {
-        #expect(SharePlanning.autorenameBase(of: "/s/t/img (3).jpg") == "/s/t/img.jpg")
-        #expect(SharePlanning.autorenameBase(of: "/s/t/img.jpg") == nil)
-        #expect(SharePlanning.autorenameBase(of: "/s/t/(1).jpg") == nil)
-        #expect(SharePlanning.autorenameBase(of: "/s/t/img (a).jpg") == nil)
+        #expect(SharePlanning.setFolderPath(shareRoot: "/Share", folderName: "Trip") == "/Share/Trip")
     }
 }
+
+@Suite("共有ファイル名（中身で決まる・ADR-209）")
+struct ShareFileNamingTests {
+
+    @Test("印は 16 進 8 桁・同じ入力なら同じ")
+    func identityIsStable() {
+        let a = ShareNaming.identity(refKey: "L-x", contentHash: "h1")
+        #expect(a.count == 8)
+        #expect(a.allSatisfy { $0.isHexDigit })
+        #expect(a == ShareNaming.identity(refKey: "L-x", contentHash: "h1"))
+        #expect(a != ShareNaming.identity(refKey: "L-x", contentHash: "h2"), "中身が変われば印も変わる")
+        #expect(a != ShareNaming.identity(refKey: "L-y", contentHash: "h1"), "別の写真は別の印")
+    }
+
+    @Test("拡張子は保たれ、印が幹の末尾に付く")
+    func fileNameShape() {
+        let name = ShareNaming.sharedFileName(sourceFileName: "IMG_1234.jpg", identity: "3f9a2c1d")
+        #expect(name == "IMG_1234--3f9a2c1d.jpg")
+        #expect(ShareNaming.sharedFileName(sourceFileName: "noext", identity: "00112233")
+                == "noext--00112233")
+    }
+
+    @Test("このアプリが置いた名前だけを自分の持ち物と見なす")
+    func recognisesOwnFiles() {
+        #expect(ShareNaming.isShareManagedFileName("IMG_1234--3f9a2c1d.jpg"))
+        #expect(ShareNaming.isShareManagedFileName("a--00112233"))
+        // 家族が置いたもの・旧形式は触らない。
+        #expect(!ShareNaming.isShareManagedFileName("IMG_1234.jpg"))
+        #expect(!ShareNaming.isShareManagedFileName("IMG (1).jpg"))
+        #expect(!ShareNaming.isShareManagedFileName("note--xyz.txt"), "16 進でない")
+        #expect(!ShareNaming.isShareManagedFileName("note--3f9a2c1.jpg"), "7 桁は違う")
+        #expect(!ShareNaming.isShareManagedFileName("note--3F9A2C1D.jpg"), "大文字は使わない")
+    }
+
+    /// ⚠️ 長い名前でも Dropbox のパス長に収まるよう幹を切る。
+    @Test("長すぎる名前は幹を切る（印と拡張子は残す）")
+    func trimsLongNames() {
+        let long = String(repeating: "あ", count: 300) + ".jpg"
+        let name = ShareNaming.sharedFileName(sourceFileName: long, identity: "3f9a2c1d")
+        #expect(name.hasSuffix("--3f9a2c1d.jpg"))
+        #expect(name.count <= 140)
+    }
+}
+
 
 // MARK: - ShareAnalysisData
 

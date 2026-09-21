@@ -1,17 +1,32 @@
 import Foundation
 
-/// 共有セット 1 つ分の反映計画（純ロジック・テスト対象）。
-/// 「何をコピー / 採用 / 掃除すべきか・何がバックアップ待ちか」を、アイテム記録＋
-/// バックアップ記録＋共有フォルダの実在一覧から**決定的に**算出する。実行（API 呼び出し）は
-/// `ShareSyncEngine` が担う。
+/// 共有セット 1 つ分の反映計画（純ロジック・テスト対象・ADR-209）。
 ///
-/// ## 重複防止の原則（diagnostics-52 の実障害）
-/// copy_batch の完了待ちがタイムアウトしても**ジョブはサーバー側で走り続ける**。
-/// 以前は「失敗→autorename つきで再コピー」だったため、タイムアウト×リトライで
-/// `IMG (1).jpg` 形式の重複が約 1,300 件量産された。対策:
-/// 1. **宛先名は計画側で決定**（autorename 不使用）。同名衝突は決定的な連番で回避。
-/// 2. **宛先が既に実在するなら「採用」**（コピーせず記録だけ更新）＝リトライが冪等になる。
-/// 3. 過去の暴走で生まれた autorename 形式の重複は**掃除対象**として列挙する。
+/// ## 考え方: 「望ましい集合」と「実在」の差分
+///
+/// ```
+/// 望ましい = { 宛先名(メンバー) : 元が解決できるメンバー }      ← 記録を見ずに決まる
+/// 実在     = セットフォルダ直下の写真                          ← 一覧から分かる
+///
+/// コピー = 望ましい − 実在
+/// 削除   = 実在 − 望ましい
+/// ```
+///
+/// 宛先名は `ShareNaming.sharedFileName` が**中身から決める**ので、
+/// 同じ写真は必ず同じ名前になる。だから「どこへコピーしたか」を覚えておく必要がない。
+///
+/// ## これで消えた仕組み（以前は全部ここにあった）
+/// - 4 状態の状態機械（`pending` / `waitingBackup` / `copied` / `failed`）と
+///   `sharedPath` / `sharedContentHash` の記録
+/// - **採用**（宛先が既に在るなら記録だけ更新）——「在る」＝終わっている、で足りる
+/// - **宛先名の予約表と別名割当**——別の写真は別の名前になるので衝突しない
+/// - **ドリフト検知**（元が更新されたら再コピー）——hash が変われば名前が変わる
+/// - **`autorename` 残骸の掃除**（"name (N).ext"・中身一致の安全条件つき）——衝突しないので生まれない
+/// - **墓標**（遅れて完走したジョブが作るファイルを覚えておく）——望ましくない名前は次の差分で消える
+///
+/// ⚠️ 代償は「**共有フォルダのファイル名が元の名前と違う**」こと
+/// （`IMG_1234.jpg` → `IMG_1234--3f9a2c1d.jpg`）。受信側アプリの表示には出ないが、
+/// 家族が Dropbox アプリや Finder で直接見ると印が見える。
 public enum SharePlanning {
 
     /// バックアップ記録の参照値（localIdentifier で引く）。
@@ -21,6 +36,21 @@ public enum SharePlanning {
         public init(dropboxPath: String, contentHash: String?) {
             self.dropboxPath = dropboxPath
             self.contentHash = contentHash
+        }
+    }
+
+    /// 解決済みのコピー元と、そこから決まる宛先（解析データの組み立てにも使う）。
+    public struct SourceRef: Sendable, Equatable {
+        /// コピー元の Dropbox パス。
+        public let fromPath: String
+        /// その写真の `content_hash`（分かる場合。解析データのキーになる）。
+        public let contentHash: String?
+        /// 共有フォルダでの宛先（小文字）。
+        public let destinationLower: String
+        public init(fromPath: String, contentHash: String?, destinationLower: String) {
+            self.fromPath = fromPath
+            self.contentHash = contentHash
+            self.destinationLower = destinationLower
         }
     }
 
@@ -35,14 +65,20 @@ public enum SharePlanning {
     }
 
     public struct Plan: Sendable, Equatable {
-        /// コピーすべき (refKey, コピー元, コピー先)。宛先は衝突しない名前を割り当て済み。
+        /// コピーすべき (refKey, コピー元, コピー先)。宛先は中身から決まっている。
         public var copies: [Copy] = []
-        /// コピー不要で記録だけ更新するもの（宛先が既に実在＝タイムアウト後に完了していた等）。
-        public var adoptions: [Adoption] = []
+        /// 消すべきファイル（セットフォルダ直下で、望ましい集合に無いもの）。
+        public var deletions: [String] = []
         /// バックアップ完了待ちの refKey（ローカル写真でバックアップ記録なし）。
         public var waitingBackup: [String] = []
-        /// 掃除すべき重複ファイル（過去の autorename 暴走で生まれた "name (N).ext"）。
-        public var duplicatesToDelete: [String] = []
+        /// 既に望ましい状態で置かれている件数（画面の「共有済み N/M」に使う）。
+        public var present: Int = 0
+        /// ⚠️ 削除を見送ったか（望ましい集合が空なのにメンバーが居る＝解決に失敗している回）。
+        /// 記録に残して、黙って何もしない状態が続かないようにする。
+        public var skippedDeletionsForSafety: Bool = false
+        /// refKey → 解決したコピー元と宛先。解析データ（キーは写真の content_hash）を
+        /// 組むときに、**いま共有フォルダに在る写真だけ**を選ぶために使う。
+        public var sourceByRefKey: [String: SourceRef] = [:]
 
         public struct Copy: Sendable, Equatable {
             public let refKey: String
@@ -54,148 +90,95 @@ public enum SharePlanning {
                 self.toPath = toPath
             }
         }
-
-        public struct Adoption: Sendable, Equatable {
-            public let refKey: String
-            public let sharedPathLower: String
-            public let contentHash: String?
-            public init(refKey: String, sharedPathLower: String, contentHash: String?) {
-                self.refKey = refKey
-                self.sharedPathLower = sharedPathLower
-                self.contentHash = contentHash
-            }
-        }
     }
 
     /// - Parameters:
-    ///   - items: セットのアイテム記録。
+    ///   - items: セットのメンバー（refKey だけ・状態は持たない）。
     ///   - backupByLocalID: localIdentifier → バックアップ記録（"L-" 写真の実体解決）。
-    ///   - shareRoot: 共有ルート（宛先パスの組み立て用）。
-    ///   - folderName: セットフォルダ名。
-    ///   - remoteFiles: セットフォルダの実在ファイル。nil は「未照合」＝存在チェック・採用・
-    ///     掃除を行わない（コピーの宛先割り当てのみ）。
+    ///   - cloudHashByPath: クラウド原本（"C-"）のパス小文字 → content_hash（分かるものだけ）。
+    ///   - setFolder: セットフォルダの絶対パス。
+    ///   - remoteFiles: セットフォルダ直下の実在ファイル。**nil は「一覧が取れなかった」**
+    ///     ＝削除もコピーもしない（実在不明のまま動くと壊す）。
     public static func plan(items: [ShareItemLite],
                             backupByLocalID: [String: BackupRef],
-                            shareRoot: String,
-                            folderName: String,
-                            remoteFiles: [RemoteFile]? = nil) -> Plan {
+                            cloudHashByPath: [String: String] = [:],
+                            setFolder: String,
+                            remoteFiles: [RemoteFile]?) -> Plan {
         var plan = Plan()
-        let remoteByPath: [String: RemoteFile]? = remoteFiles.map {
-            Dictionary(uniqueKeysWithValues: $0.map { ($0.pathLower, $0) })
-        }
-        /// この計画内で使用済みの宛先（小文字）。同名ソースの衝突回避に使う。
-        var usedDestinations = Set<String>()
-        /// 記録済み sharedPath は最初から予約しておく（新規の宛先が既存コピーと衝突しないように）。
-        for item in items {
-            if let shared = item.sharedPath { usedDestinations.insert(shared.lowercased()) }
-        }
 
-        /// 衝突しない宛先を決定的に割り当てる（"a.jpg" → "a 2.jpg" → "a 3.jpg" …）。
-        /// 実在一覧との衝突は**採用候補**なのでここでは避けない（下で採用判定する）。
-        func assignDestination(fromPath: String) -> String {
-            let filename = (fromPath as NSString).lastPathComponent
-            let ext = (filename as NSString).pathExtension
-            let stem = (filename as NSString).deletingPathExtension
-            var candidate = filename
-            var n = 2
-            while usedDestinations.contains("\(shareRoot)/\(folderName)/\(candidate)".lowercased()) {
-                candidate = ext.isEmpty ? "\(stem) \(n)" : "\(stem) \(n).\(ext)"
-                n += 1
-            }
-            let dest = "\(shareRoot)/\(folderName)/\(candidate)"
-            usedDestinations.insert(dest.lowercased())
-            return dest
-        }
-
+        // 1. 望ましい集合を作る（宛先パス小文字 → コピー元）。
+        var desired: [String: (refKey: String, fromPath: String, toPath: String)] = [:]
         for item in items {
-            let source: BackupRef?
-            if item.refKey.hasPrefix("C-") {
-                // クラウド写真: 原本パスから直接コピー（バックアップ不要）。
-                source = BackupRef(dropboxPath: String(item.refKey.dropFirst(2)), contentHash: nil)
-            } else if item.refKey.hasPrefix("L-") {
-                source = backupByLocalID[String(item.refKey.dropFirst(2))]
-            } else {
-                source = nil
-            }
-            guard let source else {
+            guard let source = resolveSource(refKey: item.refKey,
+                                             backupByLocalID: backupByLocalID,
+                                             cloudHashByPath: cloudHashByPath) else {
                 plan.waitingBackup.append(item.refKey)
                 continue
             }
-
-            func copyOrAdopt() {
-                // ⚠️ **自分の記録済みコピー先があれば、それをそのまま再利用する**。
-                // 以前は常に新規採番していたため、再コピーに回ったアイテムが自分の既存コピー名を
-                // 使えず必ず " 2" で複製されていた（バックアップ照合で記録が消えて waitingBackup へ
-                // 戻ると、セット全体が複製される経路だった・レビュー指摘）。
-                // 予約表には既に自分の分が入っているので、衝突判定は通さず直接使う。
-                let dest = item.sharedPath ?? assignDestination(fromPath: source.dropboxPath)
-                // 宛先が既に実在するなら採用する（タイムアウト後に完了していたジョブの成果や
-                // 前回の残置）。ソースのハッシュが分かっていて一致しない場合だけコピーへ回す
-                // （同名別写真の可能性）——その場合も autorename に頼らず別名を割り当てる。
-                if let remote = remoteByPath?[dest.lowercased()] {
-                    if source.contentHash == nil || source.contentHash == remote.contentHash {
-                        plan.adoptions.append(.init(refKey: item.refKey,
-                                                    sharedPathLower: remote.pathLower,
-                                                    contentHash: remote.contentHash))
-                        return
-                    }
-                    // 中身が違う → 別名でコピー。
-                    let alt = assignDestination(fromPath: source.dropboxPath)
-                    plan.copies.append(.init(refKey: item.refKey,
-                                             fromPath: source.dropboxPath, toPath: alt))
-                    return
-                }
-                plan.copies.append(.init(refKey: item.refKey,
-                                         fromPath: source.dropboxPath, toPath: dest))
-            }
-
-            switch item.state {
-            case .pending, .failed, .waitingBackup:
-                copyOrAdopt()
-            case .copied:
-                // 共有側から消えた（外部削除）→ 再コピーで自己修復。
-                if let remoteByPath, let shared = item.sharedPath,
-                   remoteByPath[shared.lowercased()] == nil {
-                    copyOrAdopt()
-                    continue
-                }
-                // 元が更新された（バックアップの content_hash が変わった）→ 再コピー。
-                if let sourceHash = source.contentHash, let sharedHash = item.sharedContentHash,
-                   sourceHash != sharedHash {
-                    copyOrAdopt()
-                }
-            }
+            let identity = ShareNaming.identity(refKey: item.refKey, contentHash: source.contentHash)
+            let filename = ShareNaming.sharedFileName(
+                sourceFileName: (source.dropboxPath as NSString).lastPathComponent,
+                identity: identity)
+            let toPath = "\(setFolder)/\(filename)"
+            // 同じ写真が同じセットに 2 回入っていても宛先は 1 つ（重複しない）。
+            desired[toPath.lowercased()] = (item.refKey, source.dropboxPath, toPath)
+            plan.sourceByRefKey[item.refKey] = SourceRef(fromPath: source.dropboxPath,
+                                                         contentHash: source.contentHash,
+                                                         destinationLower: toPath.lowercased())
         }
 
-        // 掃除: 過去の autorename 暴走で生まれた "name (N).ext" を消す。条件は 3 つとも必要:
-        // (1) どのアイテムにも記録されていない、(2) 元名のファイルが実在する、
-        // (3) **元名のファイルと中身（content_hash）が一致する**。
+        // 一覧が取れなかった回は何も決めない（実在が分からないまま消す/コピーするのが最悪）。
+        guard let remoteFiles else { return plan }
+
+        let presentPaths = Set(remoteFiles.map(\.pathLower))
+
+        // 2. コピー ＝ 望ましい − 実在。
+        for (lower, entry) in desired where !presentPaths.contains(lower) {
+            plan.copies.append(.init(refKey: entry.refKey, fromPath: entry.fromPath,
+                                     toPath: entry.toPath))
+        }
+        plan.copies.sort { $0.toPath < $1.toPath }
+        plan.present = desired.count - plan.copies.count
+
+        // 3. 削除 ＝ 実在 − 望ましい。
         //
-        // ⚠️ (3) が要る理由: 元のファイル名自体が "IMG (1).jpg" の**別写真**は珍しくない
-        // （ダウンロード由来など）。名前の形だけで消すと、たまたま "IMG.jpg" が同居している
-        // だけでユーザーの写真が削除され、しかも次回の反映で再コピー → また削除の
-        // 空回りループになる（レビューでテストにより再現）。中身が同じものだけを消す。
-        if let remoteFiles {
-            // ⚠️ 「今回の計画が使う予定のパス」は絶対に消さない（採用した直後に削除して
-            // しまう経路があった・レビュー指摘）。記録済み＋採用＋コピー先をすべて除外する。
-            var owned = Set(items.compactMap { $0.sharedPath?.lowercased() })
-            owned.formUnion(plan.adoptions.map { $0.sharedPathLower })
-            owned.formUnion(plan.copies.map { $0.toPath.lowercased() })
-            let byPath = Dictionary(remoteFiles.map { ($0.pathLower, $0) },
-                                    uniquingKeysWith: { first, _ in first })
-            for file in remoteFiles {
-                guard !owned.contains(file.pathLower),
-                      let basePath = autorenameBase(of: file.pathLower),
-                      let baseFile = byPath[basePath],
-                      // ハッシュ不明（片方でも nil）なら消さない＝安全側に倒す。
-                      let hash = file.contentHash, let baseHash = baseFile.contentHash,
-                      hash == baseHash
-                else { continue }
-                plan.duplicatesToDelete.append(file.pathLower)
-            }
-            plan.duplicatesToDelete.sort()
+        // ⚠️ **セットフォルダは「セットの射影」**なので、直下にあってよいファイルは
+        //    望ましい集合のものだけ。それ以外は消す——名前の形では絞らない。
+        //
+        //    最初は「このアプリが置いた名前（`--<印>`）のものだけ消す」という安全弁にしていた。
+        //    家族が手で置いたファイルを守るためだが、**旧方式のコピー（元のファイル名）が
+        //    永久に残る**ことになり、家族には同じ写真が 2 枚見えた。重複の害のほうが大きい。
+        //    守るのは「フォルダ」と「解析データ」——直下のファイルだけを対象にするので、
+        //    家族が作ったサブフォルダと `.mosaic-share/` は触らない。
+        //
+        // ⚠️ **安全弁**: 望ましい集合が空なのに**メンバーは居る**回は何も消さない。
+        //    バックアップ記録の読み出しに失敗したような回に、共有フォルダを空にしないため
+        //    （作り直すので失われはしないが、家族には「全部消えて戻る」が見える）。
+        //    メンバーも 0 なら本当に空が正しいので、そのまま全部消す。
+        if desired.isEmpty && !items.isEmpty {
+            plan.skippedDeletionsForSafety = true
+            return plan
         }
+        for file in remoteFiles where !desired.keys.contains(file.pathLower) {
+            plan.deletions.append(file.pathLower)
+        }
+        plan.deletions.sort()
         return plan
+    }
+
+    /// refKey → コピー元（解決できなければ nil＝バックアップ待ち）。
+    private static func resolveSource(refKey: String,
+                                      backupByLocalID: [String: BackupRef],
+                                      cloudHashByPath: [String: String]) -> BackupRef? {
+        if refKey.hasPrefix("C-") {
+            // クラウド写真: 原本パスから直接コピー（バックアップ不要）。
+            let path = String(refKey.dropFirst(2))
+            return BackupRef(dropboxPath: path, contentHash: cloudHashByPath[path.lowercased()])
+        }
+        if refKey.hasPrefix("L-") {
+            return backupByLocalID[String(refKey.dropFirst(2))]
+        }
+        return nil
     }
 
     /// セットフォルダの絶対パスを組み立てる。**不正なフォルダ名は nil**（呼び出し側は中断する）。
@@ -225,21 +208,5 @@ public enum SharePlanning {
     static func isSafeFolderComponent(_ name: String) -> Bool {
         !name.isEmpty && !name.contains("/") && !name.contains("\\")
             && name != "." && name != ".."
-    }
-
-    /// "…/name (3).jpg" → "…/name.jpg"（autorename 形式でなければ nil）。
-    static func autorenameBase(of pathLower: String) -> String? {
-        let filename = (pathLower as NSString).lastPathComponent
-        let directory = (pathLower as NSString).deletingLastPathComponent
-        let ext = (filename as NSString).pathExtension
-        let stem = (filename as NSString).deletingPathExtension
-        guard let open = stem.lastIndex(of: "("), stem.hasSuffix(")"),
-              open > stem.startIndex else { return nil }
-        let digits = stem[stem.index(after: open)..<stem.index(before: stem.endIndex)]
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-        let baseStem = String(stem[..<open]).trimmingCharacters(in: .whitespaces)
-        guard !baseStem.isEmpty else { return nil }
-        let baseName = ext.isEmpty ? baseStem : "\(baseStem).\(ext)"
-        return directory.isEmpty ? baseName : "\(directory)/\(baseName)"
     }
 }

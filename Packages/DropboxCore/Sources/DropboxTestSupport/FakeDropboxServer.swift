@@ -346,7 +346,24 @@ public actor FakeDropboxServer: HTTPClient {
     public init(files: [String: Entry] = [:]) { self.files = files }
 
     /// 既存ファイルを直接置く（テストの前提条件づくり）。
+    /// 親フォルダを作る（無ければ）。
+    ///
+    /// ⚠️ **本物は中間フォルダを自動で作る**（`files/upload` も `copy_batch` も）。
+    /// 偽物が作らないと、`seed("/a/b/c.jpg")` したあと `/a/b` の一覧が
+    /// **`path/not_found`** になる——テストが「フォルダが無い」経路へ入り、
+    /// 実際には起きない振る舞い（全部コピーし直す・掃除が走らない）を見て
+    /// 実装のせいだと読み違える（移行のテストで実際に踏んだ）。
+    private func ensureParents(of path: String) {
+        var parent = (path.lowercased() as NSString).deletingLastPathComponent
+        while parent.count > 1, files[parent] == nil {
+            files[parent] = Entry(contentHash: "", isFolder: true, rev: "",
+                                  displayName: (parent as NSString).lastPathComponent)
+            parent = (parent as NSString).deletingLastPathComponent
+        }
+    }
+
     public func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1) {
+        ensureParents(of: path)
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder,
                                          rev: "r\(files.count)",
                                          displayName: (path as NSString).lastPathComponent,
@@ -356,6 +373,7 @@ public actor FakeDropboxServer: HTTPClient {
     /// 中身つきでファイルを置く（他端末がアップロードした解析データ等を模す）。content_hash は本物と同じ計算。
     public func upload(path: String, data: Data) {
         let key = path.lowercased()
+        ensureParents(of: path)
         note(key, deleted: false)
         bodies[key] = data
         files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false,

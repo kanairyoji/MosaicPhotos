@@ -38,7 +38,6 @@ public final class ShareSyncEngine {
         public var total = 0
         public var copied = 0
         public var waitingBackup = 0
-        public var failed = 0
     }
 
     // ⚠️ `internal(set)`：反映（`+Sync`）が同じ型の別ファイルにあるため、`private(set)` だと
@@ -51,7 +50,6 @@ public final class ShareSyncEngine {
     ///
     /// ⚠️ 排他しないと「削除 → 走行中の反映が続きのチャンクをコピー」で、消したはずの
     /// 共有フォルダが写真つきで復活し、記録が無いので二度と掃除されない（レビュー指摘）。
-    @ObservationIgnored var isMutating = false
     public internal(set) var lastSyncAt: Date?
     public internal(set) var lastError: SyncError?
 
@@ -114,23 +112,23 @@ public final class ShareSyncEngine {
     // MARK: - セット操作（UI から呼ぶ）
 
     /// セット概要を読み直す（ハブ表示用）。
-    /// ⚠️ 集計は **1 回の fetch**（`shareItemCounts`）で行う。以前はセットごとに
+    /// ⚠️ 集計は **1 回の fetch**（`shareItemTotals`）で行う。以前はセットごとに
     /// 全アイテムを引いており、セット N 個 × 数千アイテムの N+1 クエリになっていた。
     /// また **内容が同じなら代入しない**（`@Observable` は代入だけで購読ビューを
     /// 無効化するので、ホーム全体の再評価が無駄に走る・ADR-95 と同じ理由）。
     public func refresh() async {
         let store = await storeProvider()
         let all = await store.allShareSets()
-        let counts = await store.shareItemCounts()
+        let totals = await store.shareItemTotals()
+        let synced = await store.shareSyncedCounts()
         let summaries: [SetSummary] = all.map { set in
             var summary = SetSummary(id: set.id, name: set.name,
                                      folderName: set.folderName, createdAt: set.createdAt)
             summary.sourceKey = set.sourceKey
-            if let c = counts[set.id] {
-                summary.total = c.total
-                summary.copied = c.copied
-                summary.waitingBackup = c.waitingBackup
-                summary.failed = c.failed
+            summary.total = totals[set.id] ?? 0
+            if let c = synced[set.id] {
+                summary.copied = c.present
+                summary.waitingBackup = c.waiting
             }
             return summary
         }
@@ -199,69 +197,40 @@ public final class ShareSyncEngine {
         return set.id
     }
 
-    /// 既存セットのメンバーを **今の内容へ合わせる**（追加＋除外）。共有側の実ファイル削除は
-    /// 除外分だけ行い、残りは次の反映が面倒を見る。作成元キーも最新に更新する。
+    /// 既存セットのメンバーを **今の内容へ合わせる**（追加＋除外）。
     ///
-    /// ⚠️ 削除系（`deleteSet` / `removeItems`）と**同じ排他区間**に入れること。反映は先に読んだ
-    /// 計画でコピーするため、排他なしで除外すると「記録を消した後に旧計画がコピー」して
-    /// 孤児ファイルが残る（レビュー指摘）。
+    /// ⚠️ **Dropbox 側は触らない**（ADR-209）。外したメンバーのファイルは、次の反映で
+    /// 「望ましくないファイル」として差分が消す。以前はここで `delete_batch` を投げ、
+    /// 失敗したら記録を残す／未コピー分には墓標を置く、と分岐していた——
+    /// 記録と実在を手で合わせようとするからそうなる。
+    /// - Returns: (追加, 除外) の件数。
     @discardableResult
     public func updateSetMembers(setID: UUID, refKeys: [String], sourceKey: String? = nil,
                                  store: BackupStore? = nil) async -> (added: Int, removed: Int) {
-        // 呼び出し元（createSet の再利用経路）が既に排他を取っている場合は二重に取らない。
-        let ownsExclusion = !isMutating
-        if ownsExclusion {
-            isMutating = true
-            guard await waitForSyncToPause() else {
-                isMutating = false
-                lastError = .syncBusy
-                return (0, 0)
-            }
-        }
-        defer { if ownsExclusion { isMutating = false } }
-
-        let resolvedStore: BackupStore
-        if let store { resolvedStore = store } else { resolvedStore = await storeProvider() }
-        let store = resolvedStore
+        let resolved: BackupStore
+        if let store { resolved = store } else { resolved = await storeProvider() }
+        let store = resolved
         let wanted = Set(refKeys)
         let current = await store.shareItems(setID: setID)
-        let obsolete = current.filter { !wanted.contains($0.refKey) }
-
-        var removed = 0
-        if !obsolete.isEmpty {
-            // 共有フォルダ側の実ファイルも消す（記録だけ消すと孤児ファイルが残る）。
-            // ⚠️ **消せたときだけ記録を消す**。失敗しても記録を消すと、以後その写真を
-            // 自分の持ち物として認識できず孤児が永久に残る（レビュー指摘）。
-            let paths = obsolete.compactMap(\.sharedPath)
-            var ok = true
-            if !paths.isEmpty {
-                if let token = try? await tokenProvider.freshAccessToken() {
-                    ok = await makeCopier().deleteBatch(paths: paths, token: token)
-                    if !ok { lastError = .folderRemoveFailed }
-                } else {
-                    ok = false
-                    lastError = .notConnected
-                }
-            }
-            // 未コピー分も、発行済みのサーバー側ジョブで後から現れ得る（上と同じ理由）。
-            await addFileTombstones(for: obsolete.filter { $0.sharedPath == nil }, setID: setID,
-                                    store: store)
-            // まだコピーされていない分は共有側に何も無いので、失敗時もそのまま外してよい。
-            let dropped = ok ? obsolete : obsolete.filter { $0.sharedPath == nil }
-            if !dropped.isEmpty {
-                await store.removeShareItems(setID: setID, refKeys: dropped.map(\.refKey))
-            }
-            removed = dropped.count
-        }
+        let obsolete = current.filter { !wanted.contains($0.refKey) }.map(\.refKey)
+        if !obsolete.isEmpty { await store.removeShareItems(setID: setID, refKeys: obsolete) }
         let added = await store.addShareItems(setID: setID, refKeys: refKeys)
         if let sourceKey { await store.setShareSourceKey(setID: setID, sourceKey: sourceKey) }
-        return (added, removed)
+        return (added, obsolete.count)
     }
 
     /// 反映をバックグラウンドで開始する（進捗はハブの isSyncing / セット状態で見える）。
     private func scheduleSync() {
         Task { await syncNow() }
     }
+
+    /// **クラウド原本（"C-"）の content_hash** を引く seam（パス小文字 → hash）。
+    ///
+    /// ⚠️ 共有の宛先名は中身から決まる（ADR-209）ので、クラウド写真も hash が要る。
+    /// 実体はアプリ（Composition Root）が Dropbox の同期キャッシュを見て差す。
+    /// 差さない場合は refKey だけで名前が決まる——一意性と冪等性は保たれるが、
+    /// **原本が差し替わったことを検知できない**（旧実装も同じだった）。
+    @ObservationIgnored public var cloudSourceHashProvider: @MainActor () -> [String: String] = { [:] }
 
     /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
     @ObservationIgnored var syncTask: Task<Void, Never>?
@@ -329,114 +298,48 @@ public final class ShareSyncEngine {
 
     /// クラウド共有を停止する（＝共有フォルダごと削除する）。`deleteSet` の別名で、
     /// 呼び出し側の意図（設定画面の「セット削除」ではなく、共有元からの「停止」）を残す。
-    /// 正本（端末写真・バックアップ）には触れない。
     @discardableResult
     public func stopSharing(setID: UUID) async -> Bool {
         await deleteSet(id: setID)
     }
 
-    /// セットを削除する（共有フォルダごと）。リモート削除に失敗したら記録は残す（再試行可能）。
+    /// セットを削除する（共有フォルダごと）。
+    ///
+    /// ⚠️ **記録を消すだけでよい**（ADR-209）。フォルダも差分で収束するので、
+    /// 次の反映が「どのセットも持たないフォルダ」として消す。削除をここで待つ必要も、
+    /// 反映を止める必要も、墓標を置く必要も無い——以前はそのすべてが要った
+    /// （Dropbox にジョブ取り消しの API が無く、発行済みのコピーが後から
+    /// フォルダを復活させるため）。
+    /// 正本（端末写真・バックアップ）には触れない。
+    @discardableResult
     public func deleteSet(id: UUID) async -> Bool {
-        isMutating = true
-        defer { isMutating = false }
-        // 反映を止められないまま消すと、進行中のコピーがフォルダを復活させて
-        // 「記録は消えたのにクラウドには残る」になる。止まらないなら何もしない。
-        guard await waitForSyncToPause() else {
-            lastError = .syncBusy
-            return false
-        }
-        guard let token = try? await tokenProvider.freshAccessToken() else {
-            lastError = .notConnected
-            return false
-        }
         let store = await storeProvider()
         guard let set = await store.allShareSets().first(where: { $0.id == id }) else { return true }
-        // ⚠️ 不正なフォルダ名（空・区切り・親参照）では**絶対に削除しない**。
-        // 空名を許すと共有ルートごと消える。記録だけ消して手動対応に委ねる。
-        guard let folder = SharePlanning.setFolderPath(
-                shareRoot: ShareSettingsKeys.currentShareRoot(defaults), folderName: set.folderName,
-                deviceFolder: nil /* ADR-175: shareRoot は端末フォルダ込み */) else {
-            BackupLogger.error("Share: refusing to delete set with invalid folder name")
+        // ⚠️ 不正なフォルダ名は**そもそも消しに行かない**。差分の対象にもならないよう、
+        // 記録だけ消して人の判断に委ねる（空名を許すと共有ルートごと消える）。
+        if SharePlanning.setFolderPath(shareRoot: ShareSettingsKeys.currentShareRoot(defaults),
+                                       folderName: set.folderName, deviceFolder: nil) == nil {
+            BackupLogger.error("Share: set has an invalid folder name — removing the record only")
             lastError = .invalidFolderName
-            return false
-        }
-        let copier = makeCopier()
-        guard await copier.deleteBatch(paths: [folder], token: token) else {
-            lastError = .folderRemoveFailed
-            return false
         }
         await store.deleteShareSet(id: id)
-        // 墓標を残す。進行中だったコピーが後から完走してフォルダを復活させても、
-        // 次以降の反映が消し直せるようにする（クライアント側のキャンセルでは止まらない）。
-        let account = accountFingerprint()
-        var tombstones = ShareSettingsKeys.deletedFolderTombstones(account: account, defaults)
-        tombstones[folder] = Date()
-        ShareSettingsKeys.setDeletedFolderTombstones(tombstones, account: account, defaults)
         BackupLogger.info("Share: deleted set '\(set.folderName)'")
         await refresh()
+        scheduleSync()
         return true
     }
 
-    /// 写真をセットから外す（コピー済みなら共有側ファイルも削除）。
+    /// 写真をセットから外す。
     ///
-    /// ⚠️ **共有側を消せたときだけ記録を消す**。以前は削除の成否を無視して記録を消していたため、
-    /// 失敗すると以後その写真を自分の持ち物として認識できず、共有先に孤児ファイルが
-    /// 永久に残っていた（レビュー指摘）。失敗時は記録を残して再試行できる状態に保つ。
+    /// ⚠️ **記録を消すだけ**（ADR-209）。共有フォルダのファイルは次の反映で差分が消す。
+    /// 遅れて完走したコピーが後からファイルを作っても、それは「望ましくない名前」なので
+    /// やはり差分が消す——だから墓標（予定コピー先を覚えておく仕組み）が要らない。
     @discardableResult
     public func removeItems(setID: UUID, refKeys: [String]) async -> Bool {
-        isMutating = true
-        defer { isMutating = false }
-        guard await waitForSyncToPause() else {
-            lastError = .syncBusy
-            return false
-        }
         let store = await storeProvider()
-        let items = await store.shareItems(setID: setID)
-        let targets = items.filter { refKeys.contains($0.refKey) }
-        // ⚠️ 「まだコピーされていない」は**この瞬間の記録**でしかない。反映を止めても
-        // Dropbox 側で発行済みの copy_batch は完走するため、記録を消した後にファイルが
-        // 現れ得る（レビュー指摘）。予定されていたコピー先に**ファイル墓標**を置いて、
-        // 後から現れたら次の反映で消す。
-        await addFileTombstones(for: targets.filter { $0.sharedPath == nil }, setID: setID,
-                                store: store)
-        let removable = Set(targets.filter { $0.sharedPath == nil }.map(\.refKey))
-        let remotePaths = targets.compactMap(\.sharedPath)
-        var ok = true
-        if !remotePaths.isEmpty {
-            if let token = try? await tokenProvider.freshAccessToken() {
-                ok = await makeCopier().deleteBatch(paths: remotePaths, token: token)
-                if !ok { lastError = .folderRemoveFailed }
-            } else {
-                ok = false
-                lastError = .notConnected
-            }
-        }
-        let toRemove = ok ? refKeys : refKeys.filter { removable.contains($0) }
-        if !toRemove.isEmpty { await store.removeShareItems(setID: setID, refKeys: toRemove) }
+        await store.removeShareItems(setID: setID, refKeys: refKeys)
         await refresh()
-        scheduleSync()   // 解析データから外した分を反映
-        return ok
-    }
-
-    /// 反映を止めてから変更操作へ進む。**止まったかどうかを返す**。
-    ///
-    /// ⚠️ 以前は 3 秒待って*無条件に*先へ進んでいた。しかしコピーのポーリングは最長 4 分あり、
-    /// `sync(set:)` は途中で `isMutating` を見直さない。結果、セット削除の後に進行中のコピーが
-    /// 完走して**共有フォルダだけ復活し、ローカル記録は消えている**状態になり得た（レビュー指摘）。
-    /// → (1) 反映 Task を**キャンセル**して終了を待つ、(2) それでも止まらなければ
-    /// **変更操作を中止**する（記録とクラウドの食い違いを作るくらいなら、やらない方がよい）。
-    private func waitForSyncToPause(timeoutMs: Int = 8000) async -> Bool {
-        guard isSyncing else { return true }
-        syncTask?.cancel()
-        var waited = 0
-        while isSyncing, waited < timeoutMs {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            waited += 100
-        }
-        if isSyncing {
-            BackupLogger.error("Share: sync did not stop in time — aborting the mutation")
-            return false
-        }
+        scheduleSync()
         return true
     }
 

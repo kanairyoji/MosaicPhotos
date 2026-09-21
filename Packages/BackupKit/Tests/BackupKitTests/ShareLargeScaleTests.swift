@@ -67,12 +67,17 @@ struct ShareLargeScaleTests {
         await server.requestLog.filter { $0.contains(endpoint) }.count
     }
 
-    private func copiedCount(_ store: BackupStore) async -> Int {
-        var n = 0
-        for set in await store.allShareSets() {
-            n += await store.shareItems(setID: set.id).filter { $0.state == .copied }.count
-        }
-        return n
+    /// 共有フォルダに**実際に置かれている**写真の枚数（記録ではなく実在で数える・ADR-209）。
+    private static var shareRoot: String {
+        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
+
+    /// 共有フォルダに**実際に置かれている**写真の枚数（記録ではなく実在で数える・ADR-209）。
+    private func copiedCount(_ server: FakeDropboxServer) async -> Int {
+        let root = Self.shareRoot.lowercased() + "/"
+        return await server.filePaths().filter {
+            $0.hasPrefix(root) && !$0.contains("/\(ShareAnalysisData.subfolderName)/")
+        }.count
     }
 
     @Test("再帰一覧はページを跨いでも全件返す（has_more → continue）")
@@ -97,7 +102,7 @@ struct ShareLargeScaleTests {
             _ = await engine.createSet(name: "Set\(s)", refKeys: keys)
         }
         await settle(engine)
-        #expect(await copiedCount(store) == 180, "fixture: 全部コピーされていない")
+        #expect(await copiedCount(server) == 180, "fixture: 全部コピーされていない")
         let shardFiles = await server.filePaths().filter { $0.contains("/.mosaic-share/shard-") }
         #expect(shardFiles.count > 3, "fixture: シャードが複数できていない（hash を散らしたか）")
         let uploadsAfterFirst = await server.uploadCount()

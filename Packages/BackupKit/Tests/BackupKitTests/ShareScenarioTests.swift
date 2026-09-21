@@ -94,58 +94,27 @@ struct ShareScenarioTests {
         #expect(afterMore == afterFirst, "反映のたびにファイルが増減する: \(afterMore)")
     }
 
-    /// ADR-175: 配置が変わったセットは**旧フォルダを動かさず**、新配置へコピーし直す。
-    /// 既存データは移行しない（ユーザー判断）——旧フォルダは Dropbox に残り、人が片付ける。
-    @Test("旧配置のセットは新配置へコピーし直され、旧フォルダは残る")
-    func legacySetIsRecopiedUnderNewLayout() async {
-        let (engine, store, server) = await makeStack(backup: [
-            ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
-        let sourceKey = ShareSourceKey.group(UUID()).encoded
+    /// ⚠️ **旧配置のフォルダは差分が片付ける**（ADR-209）。以前は「移行」という専用の手が
+    /// あり、記録を `pending` へ戻して配置の版を進めていた。いまはフォルダも差分なので、
+    /// どのセットも持たないフォルダは自然に消え、望ましい場所へコピーし直される。
+    @Test("どのセットも持たないフォルダは、次の反映で消える")
+    func unownedFolderIsRemoved() async {
+        let (engine, _, server) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
+        // 誰のものでもないフォルダが共有ルート直下に在る状態を作る。
+        let stray = "\(Self.shareRoot.lowercased())/Group"
+        await server.seed(stray, hash: "", isFolder: true)
+        await server.seed("\(stray)/leftover.jpg", hash: "hOld")
 
-        // 旧配置（`/MosaicShare/<端末>/Group`）にコピー済みだった状態を再現する。
-        let legacyRoot = "/MosaicShare/\(BackupDeviceIdentity.currentFolderName())/Group".lowercased()
-        await server.seed(legacyRoot, hash: "", isFolder: true)
-        await server.seed("\(legacyRoot)/a.jpg", hash: "hA")
-        await server.seed("\(legacyRoot)/b.jpg", hash: "hB")
-        let set = await store.createLegacyShareSetForTesting(name: "Group", folderName: "Group",
-                                                             sourceKey: sourceKey)
-        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a", "L-b"])
-        await store.updateShareItems(setID: set.id, updates: [
-            (refKey: "L-a", state: .copied, sourcePath: "/mosaicphotos/a.jpg",
-             sharedPath: "\(legacyRoot)/a.jpg", sharedContentHash: "hA"),
-            (refKey: "L-b", state: .copied, sourcePath: "/mosaicphotos/b.jpg",
-             sharedPath: "\(legacyRoot)/b.jpg", sharedContentHash: "hB")])
-
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
-        // 新配置へコピーされている（種類の接頭辞も付く）。
-        let new = setFolder("Group", kind: .group)
-        let files = await sharedFiles(server)
-        #expect(files.sorted() == ["\(new)/a.jpg", "\(new)/b.jpg"], "新配置へコピーされていない: \(files)")
-        #expect(await store.allShareSets().first?.folderName == "People-Group")
-        // ⚠️ 旧フォルダは**動かさない**（移行しない方針）。
-        #expect(await server.filePaths().contains("\(legacyRoot)/a.jpg"), "旧フォルダを動かしている")
-        #expect(await server.requestLog.contains { $0.contains("move_v2") } == false,
-                "旧配置を move しようとしている")
-
-        // 記録は新配置を指しているので、次の反映で再コピー（＝重複）が起きない。
-        await engine.syncNow()
-        #expect(await sharedFiles(server) == files, "2 回目の反映でファイルが増減した")
+        let folders = await server.filePaths()
+        #expect(!folders.contains("\(stray)/leftover.jpg"),
+                "どのセットも持たないフォルダが残っている: \(folders)")
+        let mine = await sharedFiles(server)
+        #expect(mine.count == 1, "自分のセットのコピーが作られていない: \(mine)")
     }
 
-    /// 配置の検査は**一度きり**（規約: 無いものを繰り返し探さない）。
-    @Test("配置の切り替えは 1 回だけで、以後の反映は通常どおり")
-    func relayoutHappensOnce() async {
-        let (engine, store, _) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
-        let set = await store.createLegacyShareSetForTesting(
-            name: "Group", folderName: "Group", sourceKey: ShareSourceKey.group(UUID()).encoded)
-        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
-
-        await engine.syncNow()
-        let after = await store.allShareSets().first
-        #expect(after?.layoutVersion == ShareSet.currentLayoutVersion, "配置の版が更新されていない")
-        #expect(after?.folderName == "People-Group")
-    }
 
     // MARK: - 人物 ID の振り直し（レビュー指摘）
 
@@ -190,27 +159,28 @@ struct ShareScenarioTests {
 
     // MARK: - 削除の失敗を成功と誤認しない（レビュー指摘）
 
-    /// ⚠️ バッチ自体が完了しても、エントリ単位で失敗する（権限不足など）。
-    /// 全体成否だけ見て成功と誤認すると、記録を消してクラウドに管理不能なフォルダが残る。
-    @Test("削除がエントリ単位で失敗したらセット記録を消さない")
-    func failedDeleteKeepsSetRecord() async {
+    /// ⚠️ 削除が**失敗しても孤児にならない**こと（ADR-209 で意味が変わった）。
+    /// 以前は「消せたときだけ記録を消す」——消せないまま記録を消すと、クラウドに
+    /// 誰の持ち物でもないフォルダが残ったから。いまはフォルダも差分なので、
+    /// 記録が無いフォルダは**次の反映が何度でも消しに行く**。だから記録は先に消してよい。
+    @Test("削除が一時的に失敗しても、権限が戻れば次の反映で消える")
+    func failedDeleteIsRetriedByTheNextSync() async {
         let (engine, store, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/a.jpg", "hA")])
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
-        // セット削除はフォルダ 1 件の削除。これを「消せない」失敗にする。
         await server.setFailDeletePaths([setFolder("Trip")])
         let setID = await store.allShareSets().first!.id
-        #expect(await engine.deleteSet(id: setID) == false, "削除できていないのに成功を返した")
-        #expect(await store.allShareSets().count == 1, "リモートに残っているのに記録を消した")
-        #expect(await sharedFiles(server).count == 1)
+        #expect(await engine.deleteSet(id: setID), "記録の削除は即座に成立する")
+        #expect(await store.allShareSets().isEmpty, "記録が残っている")
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 1, "前提: まだ消せていない")
 
-        // 権限が戻れば、同じ操作で消える（再試行できる状態が保たれている）。
+        // 権限が戻れば、次の反映が消す（再試行のための記録は要らない）。
         await server.setFailDeletePaths([])
-        #expect(await engine.deleteSet(id: setID))
-        #expect(await store.allShareSets().isEmpty)
-        #expect(await sharedFiles(server).isEmpty)
+        await engine.syncNow()
+        #expect(await sharedFiles(server).isEmpty, "権限が戻っても掃除されない")
     }
 
     /// 「元から無い」失敗は目的達成なので成功に数える（掃除が永久に終わらなくなるのを防ぐ）。
@@ -229,26 +199,34 @@ struct ShareScenarioTests {
         #expect(await store.shareItems(setID: setID).isEmpty, "記録が残ってしまった")
     }
 
-    /// 単枚解除も同じ。消せなかった写真の記録を消すと、以後それを自分の持ち物として
-    /// 認識できず、共有先に孤児ファイルが永久に残る。
-    @Test("単枚解除で削除に失敗したら記録を残す（再試行できる）")
-    func failedItemDeleteKeepsRecord() async {
+    /// ⚠️ ADR-209 で意味が変わった。以前は「消せたときだけ記録を消す」——消せないまま
+    /// 記録を消すと、その写真を自分の持ち物として認識できなくなり孤児が永久に残ったから。
+    /// いまは**望ましい集合に無いものは何度でも消しに行く**ので、記録は先に消してよい。
+    @Test("単枚解除の削除が失敗しても、次の反映で消える")
+    func failedItemDeleteIsRetriedByTheNextSync() async {
         let (engine, store, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")])
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
         await engine.syncNow()
         let setID = await store.allShareSets().first!.id
+        let victim = await sharedFiles(server).first { $0.contains("a--") }!
 
-        await server.setFailDeletePaths(["\(setFolder("Trip"))/a.jpg"])
-        #expect(await engine.removeItems(setID: setID, refKeys: ["L-a"]) == false)
-        let refs = await store.shareItems(setID: setID).map(\.refKey)
-        #expect(refs.sorted() == ["L-a", "L-b"], "消せていないのに記録を落とした: \(refs)")
-        #expect(await sharedFiles(server).count == 2)
+        await server.setFailDeletePaths([victim])
+        _ = await engine.removeItems(setID: setID, refKeys: ["L-a"])
+        await engine.syncNow()
+        #expect(await sharedFiles(server).count == 2, "前提: まだ消せていない")
+
+        await server.setFailDeletePaths([])
+        await engine.syncNow()
+        let files = await sharedFiles(server)
+        #expect(files.count == 1, "権限が戻っても掃除されない: \(files)")
+        #expect(files[0].contains("b--"), "残ったのが b でない: \(files)")
     }
 
     /// ⚠️ **クライアントがポーリングをやめても、サーバー側のコピージョブは止まらない**
     /// （Dropbox にジョブ取り消しの API は無い）。削除直後にジョブが完走すると、消した
-    /// フォルダが復活し、記録は既に無いので誰も掃除できない孤児になる。
+    /// フォルダが復活する。以前は墓標で待ち構えていたが、いまは
+    /// 「どのセットも持たないフォルダは消す」という差分がそのまま面倒を見る。
     @Test("削除後に復活した共有フォルダは次の反映で消し直される")
     func resurrectedFolderIsSweptOnNextSync() async {
         let (engine, store, server) = await makeStack(backup: [
@@ -257,13 +235,14 @@ struct ShareScenarioTests {
         await engine.syncNow()
         let setID = await store.allShareSets().first!.id
         #expect(await engine.deleteSet(id: setID))
+        await engine.syncNow()
         #expect(await sharedFiles(server).isEmpty)
 
         // 遅れて完走したコピージョブがフォルダを作り直した状況を模す。
         await server.seed(setFolder("Trip"), hash: "", isFolder: true)
         await server.seed("\(setFolder("Trip"))/a.jpg", hash: "hA")
 
-        // 別セットがあっても無くても、反映は墓標を掃除する。
+        // ⚠️ **墓標は要らない**（ADR-209）。記録に無いフォルダは差分が消す。
         await engine.syncNow()
         let files = await sharedFiles(server)
         #expect(files.isEmpty, "復活したフォルダが残っている（誰の持ち物でもない孤児）: \(files)")
@@ -293,15 +272,14 @@ struct ShareScenarioTests {
         let deleted = await engine.deleteSet(id: setID)
         _ = await syncing.value
 
-        // 「消せた」なら記録もクラウドも空。「消せなかった」なら記録は残る。
-        // どちらでもよいが、**記録だけ消えてクラウドに残る**のは駄目。
+        // ⚠️ ADR-209 で意味が変わった。**一時的に「記録は無いがクラウドに残る」状態は許す**
+        // ——差分が次の反映で必ず消すので、永久に残らないことだけが要件。
+        // 以前は反映を止めてから消す必要があり、止まらなければ削除自体を中止していた。
+        #expect(deleted, "記録の削除が成立していない")
+        #expect(await store.allShareSets().isEmpty, "記録が残っている")
+        await engine.syncNow()
         let files = await sharedFiles(server)
-        let sets = await store.allShareSets()
-        #expect(deleted, "反映を止められず削除できなかった（キャンセルが効いていない）")
-        #expect(sets.isEmpty == deleted, "削除の成否と記録の有無が食い違う")
-        if sets.isEmpty {
-            #expect(files.isEmpty, "記録を消したのに共有フォルダが残っている: \(files)")
-        }
+        #expect(files.isEmpty, "次の反映でも共有フォルダが残っている: \(files)")
     }
 
     // MARK: - 共有の停止（共有元から）
@@ -322,6 +300,7 @@ struct ShareScenarioTests {
         let setID = engine.sharedSetID(sourceKey: sourceKey, name: "Family")
         #expect(setID != nil, "共有中なのに停止対象が引けない（メニューが出ない）")
         #expect(await engine.stopSharing(setID: setID!))
+        await engine.syncNow()   // 実体の掃除は次の反映（ADR-209）
 
         #expect(await sharedFiles(server).isEmpty, "共有フォルダのファイルが残っている")
         #expect(engine.sharedSetID(sourceKey: sourceKey, name: "Family") == nil,
@@ -370,28 +349,43 @@ struct ShareScenarioTests {
                 "autorename 形式または連番の重複ができた: \(final)")
     }
 
-    /// diagnostics-55: コピーが失敗し続ける状況で掃除だけが走り、削除→再コピーの空回りに
-    /// なった。コピー失敗時は掃除しない安全弁が効いているかを見る。
-    @Test("コピーが失敗する回は掃除を行わない（空回りループの防止）")
-    func skipsCleanupWhenCopyFails() async {
+    /// diagnostics-55: コピーが失敗し続ける状況で掃除だけが走り、削除→再コピーの空回りになった。
+    ///
+    /// ⚠️ ADR-209 でこの空回りは**構造的に起きなくなった**。当時の掃除対象は
+    /// 「正規ファイルの重複」で、正規が作れていない状態で消すと次回また同じものを作り直した。
+    /// いまの掃除対象は「望ましい集合に無いファイル」——コピーが失敗しても、
+    /// 望ましくないことは変わらないので、消してよいし、消しても再び作られない。
+    /// 確かめるのは**空回りしないこと**（反映を繰り返しても書き込みが増え続けない）。
+    @Test("コピーが失敗し続けても、削除と再コピーの空回りにならない")
+    func failingCopiesDoNotCauseChurn() async {
         let (engine, _, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/img.jpg", "hSAME")])
-        // 過去の暴走で生まれた重複を置いておく（元名と同じ内容＝掃除対象）。
         await seedInSet(server, set: "Trip", file: "img.jpg", hash: "hSAME")
-        await seedInSet(server, set: "Trip", file: "img (1).jpg", hash: "hSAME")
 
-        // 未コピーのアイテムを 1 つ作り、そのコピーを必ず失敗させる。
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "C-/other/x.jpg"])
         await server.setFailCopyPaths(["\(setFolder("Trip"))/x.jpg"])
-
         await engine.syncNow()
-        let files = await sharedFiles(server)
-        #expect(files.contains("\(setFolder("Trip"))/img (1).jpg"),
-                "コピー失敗の回に掃除が走った（空回りループの入口）: \(files)")
+
+        func writes() async -> Int {
+            await server.requestLog.filter {
+                $0.contains("copy_batch") || $0.contains("delete_batch")
+            }.count
+        }
+        let first = await writes()
+        await engine.syncNow()
+        let second = await writes()
+        await engine.syncNow()
+        let third = await writes()
+        // 失敗するコピーは毎回投げ直すが、**削除が毎回増えるのは空回り**。
+        #expect(third - second == second - first,
+                "反映のたびに書き込みが増えている（空回り）: \(first) → \(second) → \(third)")
     }
 
-    @Test("コピーが完全に成功した回は重複を掃除する")
-    func cleansDuplicatesOnSuccessfulRun() async {
+    /// ⚠️ ADR-209: **`autorename` の残骸という概念が無くなった**。宛先名が中身から決まるので
+    /// 衝突が起きず、"(N)" 付きのファイルはそもそも生まれない。既に在るものは
+    /// 「望ましくないファイル」として掃除される（セットフォルダはセットの射影）。
+    @Test("セットフォルダ直下の望ましくないファイルは掃除される")
+    func sweepsUnwantedFilesInSetFolder() async {
         let (engine, _, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/img.jpg", "hSAME")])
         await seedInSet(server, set: "Trip", file: "img.jpg", hash: "hSAME")
@@ -401,24 +395,24 @@ struct ShareScenarioTests {
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(!files.contains("\(setFolder("Trip"))/img (1).jpg"), "重複が掃除されない: \(files)")
-        #expect(files.contains("\(setFolder("Trip"))/img.jpg"), "正規ファイルまで消えた: \(files)")
+        #expect(files.count == 1, "望ましくないファイルが残っている: \(files)")
+        #expect(files[0].contains("img--"), "自分のコピーが作られていない: \(files)")
     }
 
-    /// 中身の違う「(1)」付きファイルは消してはいけない（ユーザーの写真）。
-    @Test("中身の違う (N) 形式ファイルは掃除しない")
-    func keepsDistinctFileNamedLikeDuplicate() async {
+    /// ⚠️ **掃除はセットフォルダ直下のファイルだけ**。家族が作ったサブフォルダは触らない
+    /// （`.mosaic-share/` の解析データが巻き添えで消えないのと同じ理由）。
+    @Test("セットフォルダのサブフォルダには触らない")
+    func doesNotTouchSubfolders() async {
         let (engine, _, server) = await makeStack(backup: [
             ("a", "/mosaicphotos/img.jpg", "hA")])
-        await seedInSet(server, set: "Trip", file: "img.jpg", hash: "hA")
-        await seedInSet(server, set: "Trip", file: "img (1).jpg", hash: "hDIFFERENT")
+        await server.seed("\(setFolder("Trip"))/family/note.txt", hash: "hNote")
 
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(files.contains("\(setFolder("Trip"))/img (1).jpg"),
-                "中身の違う写真を削除した: \(files)")
+        #expect(files.contains("\(setFolder("Trip"))/family/note.txt"),
+                "サブフォルダの中身を消した: \(files)")
     }
 
     // MARK: - 自己修復
@@ -430,8 +424,9 @@ struct ShareScenarioTests {
         await engine.syncNow()
         #expect(await sharedFiles(server).count == 1)
 
-        // 相手が共有フォルダから削除した状況。
-        _ = try? await server.data(for: deleteRequest(path: "\(setFolder("Trip"))/a.jpg"))
+        // 相手が共有フォルダから削除した状況（宛先名は中身から決まるので実在から引く）。
+        let copy = await sharedFiles(server)[0]
+        _ = try? await server.data(for: deleteRequest(path: copy))
         #expect(await sharedFiles(server).isEmpty)
 
         await engine.syncNow()
@@ -456,8 +451,10 @@ struct ShareScenarioTests {
 
         let setID = await store.allShareSets()[0].id
         _ = await engine.deleteSet(id: setID)
-        #expect(await sharedFiles(server).isEmpty, "セット削除後も共有ファイルが残っている")
         #expect(await store.allShareSets().isEmpty)
+        // ⚠️ Dropbox 側は**次の反映**で片付く（ADR-209: 削除もその場でやらない）。
+        await engine.syncNow()
+        #expect(await sharedFiles(server).isEmpty, "セット削除後も共有ファイルが残っている")
     }
 
     @Test("単枚解除でそのファイルだけ消える")
@@ -467,10 +464,15 @@ struct ShareScenarioTests {
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
         await engine.syncNow()
 
+        let before = await sharedFiles(server)
+        #expect(before.count == 2)
+
         let setID = await store.allShareSets()[0].id
         await engine.removeItems(setID: setID, refKeys: ["L-a"])
+        await engine.syncNow()   // 実体の掃除は次の反映（ADR-209）
         let files = await sharedFiles(server)
-        #expect(files == ["\(setFolder("Trip"))/b.jpg"], "解除の結果が想定と違う: \(files)")
+        #expect(files.count == 1, "解除した 1 枚だけが消えていない: \(files)")
+        #expect(files[0].contains("b--"), "残ったのが b のコピーでない: \(files)")
     }
 
     /// グループを作り直して再共有しても、Dropbox 上にフォルダが 2 つできない。
@@ -509,7 +511,8 @@ struct ShareScenarioTests {
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(files == ["\(setFolder("Trip"))/a.jpg"], "外れた写真が残っている: \(files)")
+        #expect(files.count == 1, "外れた写真が残っている: \(files)")
+        #expect(files[0].contains("a--"), "残ったのが a のコピーでない: \(files)")
     }
 
     // MARK: - 障害耐性
@@ -537,11 +540,11 @@ struct ShareScenarioTests {
         await engine.syncNow()
 
         let files = await sharedFiles(server)
-        #expect(files == ["\(setFolder("Trip"))/a.jpg"])
-        let setID = await store.allShareSets()[0].id
-        let items = await store.shareItems(setID: setID)
-        #expect(items.first { $0.refKey == "L-missing" }?.state == .waitingBackup,
-                "未バックアップが waitingBackup になっていない")
+        #expect(files.count == 1, "バックアップ済みの 1 枚だけがコピーされていない: \(files)")
+        // ⚠️ 「待ち」は記録ではなく**バックアップ記録の不在**が答える（ADR-209）。
+        #expect(await store.shareWaitingLocalIdentifiers().contains("missing"),
+                "未バックアップの写真がバックアップ隊列の優先対象になっていない")
+        #expect(engine.sets.first?.waitingBackup == 1, "画面の「待ち」件数が出ていない")
     }
 }
 
@@ -638,57 +641,27 @@ struct ShareMultiUserTests {
     }
 }
 
-// MARK: - 墓標のアカウント分離・排他（再レビュー指摘）
+// MARK: - 差分方式で不要になった仕組み（ADR-209）
+//
+// ⚠️ ここには「墓標のアカウント分離」と「メンバー更新の排他」のテストがあった。
+// どちらも**仕組みごと撤去した**ので、対応するテストも消してある。
+// - 墓標: 遅れて完走したコピーが作るファイルは「望ましくない名前」なので次の差分が消す。
+// - 排他: 反映中にメンバーが変わっても、最悪「不要な 1 枚を作って次で消す」だけ。
+//   孤児が永久に残らないので、反映を止めて待つ必要が無い。
+// 代わりの保証は `ShareInvariantTests`（ランダムな操作列に対する不変条件）が持つ。
 
-/// ⚠️ 墓標をパスだけで持つと、猶予時間（15 分）の内に Dropbox アカウントを切り替えたとき、
-/// **新しいアカウントの同名フォルダ**を消しに行く。共有ルートは既定値が同じなので普通に衝突する。
-@Suite("共有の墓標（アカウント分離）")
-struct ShareTombstoneAccountTests {
+// MARK: - 旧方式からの移行（ADR-209）
 
-    private func defaults() -> UserDefaults {
-        TestDefaults.scratch("tombstone")
-    }
-
-    @Test("別アカウントの墓標は見えない")
-    func tombstonesAreScopedByAccount() {
-        let d = defaults()
-        let path = "/MosaicShare/iPhone-AAA/People-家族"
-        ShareSettingsKeys.setDeletedFolderTombstones([path: Date()], account: "acct-a", d)
-
-        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-a", d)[path] != nil)
-        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-b", d).isEmpty,
-                "別アカウントの同名フォルダを消しに行く")
-    }
-
-    @Test("片方のアカウントを更新しても、もう片方は消えない")
-    func updatingOneAccountKeepsTheOther() {
-        let d = defaults()
-        ShareSettingsKeys.setDeletedFolderTombstones(["/a": Date()], account: "acct-a", d)
-        ShareSettingsKeys.setDeletedFolderTombstones(["/b": Date()], account: "acct-b", d)
-        ShareSettingsKeys.setDeletedFolderTombstones([:], account: "acct-a", d)   // a を掃除
-
-        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-a", d).isEmpty)
-        #expect(ShareSettingsKeys.deletedFileTombstones(account: "acct-b", d).isEmpty)
-        #expect(ShareSettingsKeys.deletedFolderTombstones(account: "acct-b", d)["/b"] != nil,
-                "他アカウントの墓標まで消している")
-    }
-
-    @Test("ファイル墓標もアカウントで分かれる")
-    func fileTombstonesAreScoped() {
-        let d = defaults()
-        ShareSettingsKeys.setDeletedFileTombstones(["/x/a.jpg": Date()], account: "acct-a", d)
-        #expect(ShareSettingsKeys.deletedFileTombstones(account: "acct-a", d).count == 1)
-        #expect(ShareSettingsKeys.deletedFileTombstones(account: "acct-b", d).isEmpty)
-    }
-}
-
-/// ⚠️ `updateSetMembers` だけが削除系の排他区間の外にあった。反映は先に読んだ計画でコピーするため、
-/// 排他なしで除外すると「記録を消した後に旧計画がコピー」して孤児ファイルが残る。
-@Suite("メンバー更新の排他", .serialized)
+/// **差分方式へ切り替えた端末が、既存の共有フォルダをどう片付けるか。**
+///
+/// 旧方式は元のファイル名（`a.jpg`）でコピーしていた。新方式の宛先は中身から決まる
+/// （`a--<印>.jpg`）ので、旧ファイルは「望ましくない」側に回る。
+/// ⚠️ **移行のコードは 1 行も無い**——差分がそのまま面倒を見る。これが差分方式の効き目で、
+/// 旧方式では「配置の移行」という専用の手（記録を戻す・版を進める・move する）が要った。
+@Suite("旧方式からの移行", .serialized)
 @MainActor
-struct ShareMemberUpdateExclusionTests {
+struct ShareMigrationTests {
 
-    /// ADR-175: 共有ルートはバックアップルート（`/MosaicPhotos`）の端末フォルダ配下 `Share/`。
     private static let backupRoot = "/MosaicPhotos"
     private static var shareRoot: String {
         BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
@@ -700,10 +673,10 @@ struct ShareMemberUpdateExclusionTests {
         defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
-        for (id, path, hash) in [("a", "/mosaicphotos/a.jpg", "hA"), ("b", "/mosaicphotos/b.jpg", "hB")] {
-            await server.seed(path, hash: hash)
-            await store.upsertRecord(dropboxPath: path, localIdentifier: id, filename: "\(id).jpg",
-                                     creationDate: nil, contentHash: hash,
+        for (id, hash) in [("a", "hA"), ("b", "hB")] {
+            await server.seed("/mosaicphotos/\(id).jpg", hash: hash)
+            await store.upsertRecord(dropboxPath: "/mosaicphotos/\(id).jpg", localIdentifier: id,
+                                     filename: "\(id).jpg", creationDate: nil, contentHash: hash,
                                      people: [], albums: [], isFavorite: false)
         }
         let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(), storeProvider: { store },
@@ -713,125 +686,76 @@ struct ShareMemberUpdateExclusionTests {
         return (engine, store, server)
     }
 
-    /// 反映（コピー）が走っている最中にメンバーを外すと、**記録を消した後に旧計画がコピー**して
-    /// 孤児ファイルが残る。除外は削除系と同じ排他区間で行い、走行中の反映を止めてから進める。
-    @Test("反映中のメンバー更新は、反映を止めてから進む")
-    func memberUpdateStopsRunningSync() async {
+    private func sharedFiles(_ server: FakeDropboxServer) async -> [String] {
+        await server.filePaths().filter { $0.hasPrefix(Self.shareRoot.lowercased() + "/") }
+    }
+
+    private func setFolder() -> String {
+        SharePlanning.setFolderPath(shareRoot: Self.shareRoot, folderName: "Trip",
+                                    deviceFolder: nil)!.lowercased()
+    }
+
+    /// ⚠️ **旧方式のコピーは消えて、中身で決まる名前でコピーし直される。**
+    /// 転送は起きない（サーバーサイドコピー）が、受信側には削除＋追加として届く。
+    @Test("旧方式の名前で置かれたコピーは、次の反映で置き換わる")
+    func legacyCopiesAreReplaced() async {
         let (engine, store, server) = await makeStack()
-        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
-        await server.setJobsTimeOutButComplete(true)   // ジョブが終わらない＝反映が続く
-        engine.maxPollAttempts = 100_000
-
-        let syncing = Task { await engine.syncNow() }
-        while !engine.isSyncing { await Task.yield() }
-
-        let setID = await store.allShareSets().first!.id
-        let result = await engine.updateSetMembers(setID: setID, refKeys: ["L-a"])
-
-        // 除外が成立したなら、その時点で反映は止まっている（走らせたまま記録を消していない）。
-        if result.removed > 0 {
-            #expect(!engine.isSyncing,
-                    "反映を走らせたままメンバーを外した（旧計画のコピーが孤児として残る）")
-            let refs = await store.shareItems(setID: setID).map(\.refKey)
-            #expect(refs == ["L-a"])
-        } else {
-            #expect(engine.lastError == .syncBusy, "諦めたのに理由が伝わらない")
-        }
-
-        await server.setJobsTimeOutButComplete(false)
-        _ = await syncing.value
-    }
-
-    /// 未コピーの写真を外したときは、予定コピー先に墓標を置く（サーバー側ジョブ対策）。
-    @Test("未コピー分を外すと、予定コピー先に墓標が残る")
-    func removingUncopiedLeavesFileTombstone() async {
-        let (engine, store, _) = await makeStack()
-        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])   // まだ反映していない
-        let setID = await store.allShareSets().first!.id
-
-        _ = await engine.removeItems(setID: setID, refKeys: ["L-b"])
-
-        let tombstones = engine.fileTombstonesForTesting()
-        #expect(tombstones.keys.contains { $0.hasSuffix("/b.jpg") },
-                "発行済みジョブが後から作るファイルを掃除できない: \(tombstones.keys)")
-    }
-}
-
-// MARK: - 墓標は「不在を確認するまで」残す（ADR-172）
-
-/// ⚠️ 発行済みの `copy_batch` は、クライアントが諦めてもサーバー側で走り続ける。
-/// 猶予（15 分）で墓標を捨てると、その後にジョブが完走したとき
-/// **外したはずの写真が共有フォルダに残り続ける**——記録には無いので以後どの反映でも掃除されない。
-@Suite("共有の墓標（不在確認まで残す）")
-@MainActor
-struct ShareTombstoneRetentionTests {
-
-    /// ADR-175: 共有ルートはバックアップルート（`/MosaicPhotos`）の端末フォルダ配下 `Share/`。
-    private static let backupRoot = "/MosaicPhotos"
-    private static var shareRoot: String {
-        BackupLayout.shareRoot(root: backupRoot, deviceFolder: BackupDeviceIdentity.currentFolderName())
-    }
-
-    private func makeStack() async -> (ShareSyncEngine, BackupStore, FakeDropboxServer, UserDefaults) {
-        let defaults = isolatedShareDefaults()
-        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
-        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
-        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
-        let server = FakeDropboxServer()
-        await server.seed("/mosaicphotos/a.jpg", hash: "hA")
-        await store.upsertRecord(dropboxPath: "/mosaicphotos/a.jpg", localIdentifier: "a",
-                                 filename: "a.jpg", creationDate: nil, contentHash: "hA",
-                                 people: [], albums: [], isFavorite: false)
-        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
-                                     storeProvider: { store }, httpClient: server,
-                                     defaults: defaults)
-        engine.pollIntervalNs = 1_000_000
-        engine.maxPollAttempts = 3
-        return (engine, store, server, defaults)
-    }
-
-    private func tombstones(_ defaults: UserDefaults) -> [String: Date] {
-        ShareSettingsKeys.deletedFileTombstones(account: nil, defaults)
-    }
-
-    /// 本命。猶予を過ぎていても、**実在を確認できないうちは墓標を残す**。
-    @Test("猶予を過ぎても、まだ在るなら墓標を消さない")
-    func keepsTombstoneWhileFileExists() async {
-        let (engine, _, server, defaults) = await makeStack()
-        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
-        await engine.syncNow()
-
-        // 外した写真の予定コピー先に、猶予をとうに過ぎた墓標を置く。
-        let folder = SharePlanning.setFolderPath(
-            shareRoot: Self.shareRoot, folderName: ShareNaming.folderName("Trip", kind: nil),
-            deviceFolder: nil)!.lowercased()   // shareRoot は端末フォルダ込み（ADR-175）
-        let ghost = "\(folder)/ghost.jpg"
-        let old = Date().addingTimeInterval(-ShareSettingsKeys.deletedFolderGraceSeconds * 4)
-        ShareSettingsKeys.setDeletedFileTombstones([ghost: old], account: nil, defaults)
-        // 遅れてきたコピージョブが作ったファイル（削除できない設定にして「残る」を再現）。
-        await server.seed(ghost, hash: "hGhost")
-        await server.setFailDeletePaths([ghost])
+        // 旧方式が置いた状態を再現（元のファイル名そのまま）。
+        await server.seed(setFolder(), hash: "", isFolder: true)
+        await server.seed("\(setFolder())/a.jpg", hash: "hA")
+        await server.seed("\(setFolder())/b.jpg", hash: "hB")
+        let set = await store.createShareSet(name: "Trip", folderName: "Trip")
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a", "L-b"])
 
         await engine.syncNow()
-        #expect(tombstones(defaults)[ghost] != nil,
-                "まだ在るのに墓標を捨てた（この写真は以後どの反映でも掃除されない）")
+
+        let files = await sharedFiles(server).sorted()
+        #expect(files.count == 2, "枚数が合わない: \(files)")
+        #expect(files.allSatisfy { ShareNaming.isShareManagedFileName(($0 as NSString).lastPathComponent) },
+                "旧方式の名前が残っている: \(files)")
+        // 中身は保たれる（同じ写真が同じ枚数ある）。
+        var hashes: [String] = []
+        for path in files { hashes.append(await server.contentHash(at: path) ?? "") }
+        #expect(hashes.sorted() == ["hA", "hB"], "中身が変わった: \(hashes)")
     }
 
-    @Test("不在を確認できたら墓標を消す")
-    func dropsTombstoneOnceGone() async {
-        let (engine, _, server, defaults) = await makeStack()
-        _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
-        await engine.syncNow()
-
-        let folder = SharePlanning.setFolderPath(
-            shareRoot: Self.shareRoot, folderName: ShareNaming.folderName("Trip", kind: nil),
-            deviceFolder: nil)!.lowercased()   // shareRoot は端末フォルダ込み（ADR-175）
-        let ghost = "\(folder)/ghost.jpg"
-        ShareSettingsKeys.setDeletedFileTombstones([ghost: Date()], account: nil, defaults)
-        await server.seed(ghost, hash: "hGhost")   // 削除は成功する（failDeletePaths を設定しない）
+    /// 移行は**一度きり**（2 回目の反映は何も書かない）。
+    @Test("移行したあとは落ち着く（2 回目は書き込まない）")
+    func migrationConvergesInOneRound() async {
+        let (engine, store, server) = await makeStack()
+        await server.seed(setFolder(), hash: "", isFolder: true)
+        await server.seed("\(setFolder())/a.jpg", hash: "hA")
+        let set = await store.createShareSet(name: "Trip", folderName: "Trip")
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
 
         await engine.syncNow()
-        #expect(await server.filePaths().contains(ghost) == false, "fixture: 削除できていない")
-        #expect(tombstones(defaults)[ghost] == nil, "不在を確認したのに墓標が残っている")
+        let writesAfterFirst = await server.requestLog.filter {
+            $0.contains("copy_batch") || $0.contains("delete_batch") || $0.contains("files/upload")
+        }.count
+
+        await engine.syncNow()
+        let writesAfterSecond = await server.requestLog.filter {
+            $0.contains("copy_batch") || $0.contains("delete_batch") || $0.contains("files/upload")
+        }.count
+        #expect(writesAfterSecond == writesAfterFirst,
+                "移行が収束していない（毎回 \(writesAfterSecond - writesAfterFirst) 件書いている）")
+    }
+
+    /// ⚠️ **掃除はセットフォルダ「直下のファイル」だけ**。家族が作ったサブフォルダと
+    /// その中身には触らない（`.mosaic-share/` も同じ理由で無事）。
+    @Test("家族が作ったサブフォルダの中身は触らない")
+    func familySubfoldersSurviveMigration() async {
+        let (engine, store, server) = await makeStack()
+        await server.seed(setFolder(), hash: "", isFolder: true)
+        await server.seed("\(setFolder())/family", hash: "", isFolder: true)
+        await server.seed("\(setFolder())/family/note.txt", hash: "hNote")
+        let set = await store.createShareSet(name: "Trip", folderName: "Trip")
+        _ = await store.addShareItems(setID: set.id, refKeys: ["L-a"])
+
+        await engine.syncNow()
+
+        let files = await sharedFiles(server)
+        #expect(files.contains("\(setFolder())/family/note.txt"),
+                "家族のサブフォルダの中身を消した: \(files)")
     }
 }

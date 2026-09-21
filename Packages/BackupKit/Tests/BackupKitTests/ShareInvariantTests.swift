@@ -24,15 +24,20 @@ import DropboxTestSupport
 /// 4. **孤児が無い**: どのセットのメンバーでもない写真・フォルダが残らない。
 /// 5. **受信側が復元できる**: 全メンバーに解析データが届く。
 ///
-/// ## この網で最初に捕まったもの（2026-09-21・差分方式へ移る前の実装）
-/// **8 種のうち 3 種が壊れた**。どれも既存のテストでは出ていなかった。
+/// ## この網が捕まえたもの（2026-09-21）
+/// **差分方式へ移る前**（記録が真実）の実装では、8 種のうち 3 種が壊れた。
+/// どれも既存のテストでは出ていなかった。
 /// - 種 2: **孤児**——どのセットのメンバーでもない写真が共有フォルダに残る（家族には見えたまま）。
 /// - 種 3: **メンバーの写真が無い**——記録は「コピー済み」なのに実体が無い（家族に見えない）。
 /// - 種 4: **収束しない**——落ち着いたはずの反映が毎回 1 件書き込む。
 ///
-/// 3 つとも「**記録が真実**」という設計に由来する。記録と実在が食い違ったとき、
-/// 食い違いの種類ごとに直し方（採用・自己修復・墓標・掃除）を足してきたが、
-/// 組み合わせが増えるほど漏れが出る。
+/// 3 つとも「記録が真実」という設計に由来する。記録と実在が食い違ったとき、食い違いの
+/// 種類ごとに直し方（採用・自己修復・墓標・掃除）を足してきたが、組み合わせが増えるほど漏れが出る。
+/// **差分方式（ADR-209）へ移したら 3 件とも消えた。**
+///
+/// 移行のさなかにも 1 件捕まえた——「メンバーが 0 のセットは何もしない」と早期に戻ると、
+/// フォルダに残った自分のコピーが誰にも掃除されない孤児になる。
+/// 差分では「望ましい集合が空」も立派な答えで、早期 return がそれを潰していた。
 @Suite("クラウド共有の不変条件（ランダム操作列）", .serialized)
 @MainActor
 struct ShareInvariantTests {
@@ -210,19 +215,43 @@ struct ShareInvariantTests {
     }
 
     /// 健全なサーバーに戻して、収束するまで反映する。
-    private func settle(_ world: World, rounds: Int = 12) async {
+    ///
+    /// ⚠️ **走行中なら待ってから次を投げる**。`syncNow` は走行中の呼び出しを
+    /// 「あとで 1 回だけ再走」に畳むので、待たずに連打すると**ほとんどが空振りする**
+    /// ——最初はそれで 12 回のうち 4 回しか走っておらず、収束していないのを
+    /// 実装のせいだと読み違えた。
+    private func settle(_ world: World, rounds: Int = 10) async {
         await world.server.clearFaults()
         await world.server.setJobsTimeOutButComplete(false)
-        for _ in 0..<rounds { await world.engine.syncNow() }
+        for _ in 0..<rounds {
+            await quiesce(world)
+            await world.engine.syncNow()
+        }
+        await quiesce(world)
+    }
+
+    /// 予約された反映（`scheduleSync` の投げっぱなし Task）が片付くまで待つ。
+    private func quiesce(_ world: World) async {
+        for _ in 0..<2_000 where world.engine.isSyncing {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
     }
 
     // MARK: - 不変条件
 
     private func checkInvariants(_ world: World, seed: UInt64, trace: [String]) async {
+        let sets = await world.store.allShareSets()
+        let dump = await sharedPhotos(world).sorted { $0.key < $1.key }
+            .map { "\(($0.key as NSString).lastPathComponent)=\($0.value)" }
+        let memberDump = await members(world).values.map { $0.values.sorted() }
         let context = """
 
             種=\(seed)
             操作列: \(trace.joined(separator: " → "))
+            セット: \(sets.map(\.folderName))
+            メンバー: \(memberDump)
+            実在: \(dump)
+            通信: copy=\(await world.server.requestLog.filter { $0.contains("copy_batch") }.count)             delete=\(await world.server.requestLog.filter { $0.contains("delete_batch") }.count)             list=\(await world.server.requestLog.filter { $0.contains("files/list_folder") }.count)             mkdir=\(await world.server.requestLog.filter { $0.contains("create_folder") }.count)
             """
         let membersBySet = await members(world)
         let wantedHashes = Set(membersBySet.values.flatMap { $0.values }.filter { !$0.isEmpty })
@@ -263,7 +292,7 @@ struct ShareInvariantTests {
     // MARK: - 本体
 
     @Test("ランダムな操作列のあと、反映は収束して不変条件を満たす",
-          arguments: [UInt64(1), 2, 3, 4, 5, 6, 7, 8])
+          arguments: Array<UInt64>(1...20))
     func convergesUnderRandomOperations(seed: UInt64) async {
         var rng = Seeded(seed: seed)
         var world = await makeWorld(photoCount: 8, seed: seed)
@@ -284,22 +313,6 @@ struct ShareInvariantTests {
 
         await settle(world)
 
-        // ⚠️ **差分方式へ移す前の実装が抱えている 3 件**（この網が最初に捕まえたもの）。
-        // 種 2: 孤児（メンバーでない写真が残る）。種 3: メンバーの写真が無い。
-        // 種 4: 収束しない（落ち着いた反映が毎回書き込む）。
-        // どちらも「記録が真実」という設計に由来する（実在と記録の食い違いを直しきれない）。
-        // 差分方式（望ましい集合 − 実在）へ移したらこの印を外すこと。
-        let knownBroken: Set<UInt64> = [2, 3, 4]
-        // ⚠️ `when:` が偽でも本体は走る（抑止されないだけ）。二重に呼ばないこと——
-        // `checkInvariants` は最後に反映を 1 回するので、2 度呼ぶと状態が変わる。
-        // ⚠️ `isIntermittent: true`。`scheduleSync()` は投げっぱなしの Task なので、
-        // 操作と反映の噛み合い方が実行ごとに少し変わる——出る回と出ない回がある
-        //（これ自体が「記録が真実」の実装の弱さでもある）。
-        await withKnownIssue("記録が真実の実装が抱える食い違い（差分方式で解消する）",
-                             isIntermittent: true) {
-            await checkInvariants(world, seed: seed, trace: trace)
-        } when: {
-            knownBroken.contains(seed)
-        }
+        await checkInvariants(world, seed: seed, trace: trace)
     }
 }
