@@ -905,6 +905,19 @@ struct ShareDifferentialDetailTests {
                 """)
     }
 
+    /// ⚠️ **セットが 1 つも無い状態を「失敗」にしない**。提供を ON にしただけで
+    /// まだ何も共有していない利用者に、毎回の反映でエラーが出てしまう
+    /// （共有ルートがまだ無いので一覧が `path/not_found` になる）。
+    @Test("セットが無いだけならエラーにしない")
+    func emptyStateIsNotAnError() async {
+        let (engine, _, _, _) = await makeStack()   // セットを作らない
+
+        await engine.syncNow()
+        #expect(engine.lastError == nil, "何も共有していないだけでエラーが出る: \(String(describing: engine.lastError))")
+        await engine.syncNow()
+        #expect(engine.lastError == nil, "2 回目でもエラーが出る")
+    }
+
     /// ⚠️ 掃除の範囲は**共有ルートの直下**だけ。深い階層のフォルダを消しに行かない。
     @Test("フォルダの掃除は共有ルート直下だけを見る")
     func folderSweepOnlyLooksAtDirectChildren() async {

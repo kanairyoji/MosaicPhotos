@@ -64,7 +64,13 @@ extension ShareSyncEngine {
         let listing: [DropboxShareCopier.ListedFile]
         if let fetched = await copier.listFolder(path: shareRoot, token: token, recursive: true) {
             listing = fetched
-        } else if !sets.isEmpty, await copier.createFolder(path: shareRoot, token: token) {
+        } else if sets.isEmpty {
+            // ⚠️ **セットが 1 つも無いなら、共有ルートが無いのが正常**（作りに行かない）。
+            // ここをエラーにすると、提供を ON にしただけでまだ何も共有していない利用者に
+            // **毎回の反映でエラーが出る**（画面に赤字が出たまま消えない）。
+            lastSyncAt = Date()
+            return
+        } else if await copier.createFolder(path: shareRoot, token: token) {
             // ルートがまだ無かった（初回）。作れたなら空として進む。
             listing = []
         } else {
