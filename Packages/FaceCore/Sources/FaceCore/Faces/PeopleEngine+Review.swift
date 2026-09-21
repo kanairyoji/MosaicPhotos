@@ -191,7 +191,9 @@ extension PeopleEngine {
     ///    外れるのはユーザーの指摘＝負例に一致した顔だけ。機械の都合でアルバムを割らない）
     /// 8: ADR-134（統合＝ユーザーの「同じ人」表明をアンカーとして残す／束ねたクラスタを
     ///    種に含める。7 までは、まとめて確認や束ねの結果が再クラスタで消えることがあった）
-    public static let clusterRuleVersion = 8
+    /// 9: ADR-217（夜の再クラスタを**平均連結**に。1 枚ずつ最寄りへ入れる逐次方式は、重心が
+    ///    少しずつ動いて混入が混入を呼んだ。名前・確認のある人物のメンバーは 7 のまま動かさない）
+    public static let clusterRuleVersion = 9
 
     /// 修正が増えていたら全体を割り当て直す（夜間スキャン完了後に呼ばれる）。
     /// 命名済み/確認済みクラスタは ID・名前を保持し、確認顔は must-link として固定。
@@ -220,7 +222,8 @@ extension PeopleEngine {
         let ruleChanged = defaults.integer(forKey: ruleKey) != Self.clusterRuleVersion
         guard correctionsGrew || scansGrew || stale || thresholdChanged || ruleChanged else { return }
         Diagnostics.breadcrumb("people.rebuildClusters")
-        let result = await store.rebuildClusters()
+        // 全顔の行を読み、山ごとの和（数万 × 512 次元）を持つ重い一括処理（ADR-122）。
+        let result = await HeavyLoad.span("faces.rebuild") { await store.rebuildClusters() }
         // 再クラスタの後は**戻す先が変わっている**（クラスタ ID も構成も）。控えは捨てる。
         await clearUndoHistory()
         // 1〜2 枚の断片を確立した人物へ寄せる（ADR-154）。人物どうしの結合は自動化しない。
@@ -242,7 +245,8 @@ extension PeopleEngine {
     /// Developer Options 用: 即時再クラスタリング（動作検証）。
     public func debugRebuildClustersNow() async {
         Diagnostics.breadcrumb("people.rebuildClusters")
-        let result = await store.rebuildClusters()
+        // 全顔の行を読み、山ごとの和（数万 × 512 次元）を持つ重い一括処理（ADR-122）。
+        let result = await HeavyLoad.span("faces.rebuild") { await store.rebuildClusters() }
         // 再クラスタの後は**戻す先が変わっている**（クラスタ ID も構成も）。控えは捨てる。
         await clearUndoHistory()
         // 1〜2 枚の断片を確立した人物へ寄せる（ADR-154）。人物どうしの結合は自動化しない。

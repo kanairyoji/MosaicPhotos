@@ -104,41 +104,66 @@ extension FaceStore {
         let pinnedCluster = built.pinned
         let anchorlessNamed = built.anchorlessNamed
 
-        // 2) 残りの顔を品質降順に割り当て（新規クラスタ ID は既存の最大より先から）。
-        // ノブの設定は `FaceClusteringSetup`（純・テスト対象）に一元化した（ADR-198）——
-        // 以前はスキャン時（`makeClustering`）と**同じ 10 行がここにもコピー**されていた。
-        // 種はアンカーから作ってあるので、校正の引き上げ分を免除する対象＝prototypes を持つ種。
-        var clustering = FaceClusteringSetup.make(
-            threshold: thr, qualityFloor: Self.qualityFloor, tuning: tuning,
-            seeds: seeds, minimumNextID: max(maxExistingID, clusterIDHighWater()) + 1,
-            anchoredClusterIDs: Set(seeds.filter { !$0.prototypes.isEmpty }.map(\.id)))
+        // 2) 残りの顔を**平均連結**でまとめる（ADR-217）。以前は品質降順に 1 枚ずつ最寄りの山へ
+        // 入れる逐次方式で、山に顔が入るたびに重心が動き「混入が次の混入を呼ぶ」形だった
+        // （ADR-130）。ここでは「山の全員と全員の類似の平均」でいちばん近い組から順にまとめる。
+        // 計測（face-accuracy.md 2026-09-22）: FG-NET / LFW / PIPA のすべてで純度・最悪の人物の
+        // 純度が上がった（代わりに成長写真の子供は分かれやすい＝レビューと束ねで直せる側の誤り）。
+        // ⚠️ 種（名前・確認・代表写真・束ね）は `FaceSeedBuilder` が固定したまま山として参加し、
+        // 種どうしはまとめない（ADR-153）。同じ写真・負例の拒否も守る。
+        // ⚠️ 校正後のしきい値（`thr`）はここでは使わない——平均連結の線はプロファイルの値
+        // （`tuning.agglomeration`）。校正は昼の逐次割り当て（`recordScan`）に効く。
         let pending = allFaces.filter { pinnedCluster[$0.faceID] == nil }
-            .sorted { $0.quality > $1.quality }
+            .sorted { $0.quality != $1.quality ? $0.quality > $1.quality : $0.faceID < $1.faceID }
         // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。
         // 確認顔は種クラスタに残るため、その写真×クラスタの占有を先に登録する。
         var usedByPhoto: [String: Set<Int>] = [:]
+        var seedPhotos: [Int: Set<String>] = [:]
+        var seedMembers: [Int: [String]] = [:]
         for f in allFaces {
             guard let pinned = pinnedCluster[f.faceID] else { continue }
             usedByPhoto[f.refKey, default: []].insert(pinned)
+            seedPhotos[pinned, default: []].insert(f.refKey)
+            if built.contributed.contains(f.faceID) { seedMembers[pinned, default: []].append(f.faceID) }
         }
-        var newAssignment: [String: Int] = [:]
-        // ⚠️ **実際に重心へ足した顔**だけを集める（ADR-210）。品質で推し量らない——
-        // 重心を凍結したクラスタ（ADR-210）へ入った顔は、品質が高くても足していない。
-        var contributed = built.contributed
+        // ⚠️ 埋め込みは**1 枚ずつ**復号する（86k × 512 次元を一度に持たない・ADR-119/122）。
+        func decode(_ faceID: String) -> [Float]? {
+            faceByID[faceID].flatMap { ClipMath.decodeHalf($0.embedding) }
+        }
+        let agglomerationStart = Date()
+        let groups = FaceAgglomeration.cluster(
+            faces: pending.filter { Float($0.quality) >= Self.qualityFloor }
+                .map { .init(faceID: $0.faceID, photo: $0.refKey) },
+            seeds: seeds.map { seed in
+                .init(clusterID: seed.id, memberFaceIDs: seedMembers[seed.id] ?? [],
+                      photos: seedPhotos[seed.id] ?? [], fallbackCentroid: seed.centroid)
+            },
+            embedding: decode,
+            config: tuning.agglomeration,
+            blocked: FaceAgglomeration.negativeBlocker(
+                negatives: negatives, sameThreshold: tuning.negativeSameThreshold))
+        // 実機で所要を確かめる材料（device-verification.md の E1）。
+        Diagnostics.mark("faces: agglomeration — 顔 \(pending.count) → 人物 \(groups.count)"
+                         + "（種 \(seeds.count)）\(Int(Date().timeIntervalSince(agglomerationStart) * 1000))ms")
+        let nextID = max(maxExistingID, clusterIDHighWater()) + 1
+        let materialized = FaceAgglomeration.materialize(
+            groups, seeds: seeds, nextID: nextID, embedding: decode,
+            quality: { Float(faceByID[$0]?.quality ?? 1) })
+        // 第2パス用に、まとめ上がった人物を逐次の器へ載せる（書き戻しもこの器から行う）。
+        var clustering = FaceClusteringSetup.make(
+            threshold: thr, qualityFloor: Self.qualityFloor, tuning: tuning,
+            seeds: materialized.clusters,
+            minimumNextID: max(nextID, (materialized.clusters.map(\.id).max() ?? -1) + 1),
+            anchoredClusterIDs: Set(seeds.filter { !$0.prototypes.isEmpty }.map(\.id)))
+        var newAssignment = materialized.assignment
+        // ⚠️ **実際に重心へ足した顔**だけを集める（ADR-210）。平均連結で山に入った顔は、
+        // 品質フロア以上なので全員が重み付き和に入っている。
+        let contributed = built.contributed.union(materialized.assignment.keys)
         var linkSource: [String: FaceLinkSource] = [:]
         for faceID in contributed { linkSource[faceID] = .face }
-        for f in pending {
-            guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-            let placement = clustering.place(
-                faceID: f.faceID, embedding: vec,
-                quality: Float(f.quality), negatives: negatives,
-                excludedClusterIDs: usedByPhoto[f.refKey] ?? [])
-            newAssignment[f.faceID] = placement.clusterID
-            if placement.clusterID >= 0 {
-                usedByPhoto[f.refKey, default: []].insert(placement.clusterID)
-                linkSource[f.faceID] = placement.contributed ? .face : .secondPass
-            }
-            if placement.contributed { contributed.insert(f.faceID) }
+        for (faceID, clusterID) in materialized.assignment {
+            guard let face = faceByID[faceID] else { continue }
+            usedByPhoto[face.refKey, default: []].insert(clusterID)
         }
 
         // 第2パス（ADR-66・recall 回復）: 品質フロア未満で捨てていた顔（横顔・ぶれ・小さめ等・埋め込みは

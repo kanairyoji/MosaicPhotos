@@ -43,6 +43,9 @@ public struct FaceTuning: Sendable, Equatable {
     /// 事後監査（ADR-69）の分離マージン下限／群間類似度上限。
     public var auditMinMargin: Float
     public var auditMaxSeparation: Float
+    /// **夜間の再クラスタ**（平均連結・ADR-217）の線。小さな山の線とまとめる線。
+    /// 計測: face-accuracy.md 2026-09-22（FG-NET / LFW / PIPA で純度・最悪の人物の純度が上がる点）。
+    public var agglomeration: FaceAgglomeration.Config
 
     /// facenet（InceptionResnetV1/VGGFace2・v4 パイプライン）。
     /// 計測: face-accuracy.md 2026-08-01〜06（同一人物平均 0.550・FG-NET F1 0.664）。
@@ -52,7 +55,8 @@ public struct FaceTuning: Sendable, Equatable {
         secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.50,
         autoAbsorbBar: 0.80, autoSuggestBar: 0.90,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
-        auditMinMargin: 0.25, auditMaxSeparation: 0.35)
+        auditMinMargin: 0.25, auditMaxSeparation: 0.35,
+        agglomeration: .init(microThreshold: 0.65, mergeBar: 0.60))
 
     /// ArcFace 系（AuraFace-v1・v5 パイプライン）。類似度スケールが約 0.1 低い
     /// （同一人物平均 0.434・別人 0.120・兄弟の代理 0.188）。
@@ -63,7 +67,8 @@ public struct FaceTuning: Sendable, Equatable {
         secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.40,
         autoAbsorbBar: 0.75, autoSuggestBar: 0.85,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
-        auditMinMargin: 0.20, auditMaxSeparation: 0.40)
+        auditMinMargin: 0.20, auditMaxSeparation: 0.40,
+        agglomeration: .init(microThreshold: 0.55, mergeBar: 0.40))
 
     /// 実際に使う「尋ねる」下限。
     ///
