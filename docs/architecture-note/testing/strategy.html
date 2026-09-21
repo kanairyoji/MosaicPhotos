@@ -65,6 +65,10 @@
       <p>⚠️ 観測点の選び方にも同じ罠がある。偽 Dropbox の <code>callCounts()</code> は<strong>応答を返した後</strong>に積むので、<strong>飛行中のリクエストが見えない</strong>——「同時に走っていないこと」を見たいのに、遅い応答ほど数えられなくなる（最初にこれで 0 件と出た）。入口で積む <code>requestLog</code> を使う。</p>
       <p>⚠️ 仕込みの当たり先も確かめる。<code>FakeDropboxServer</code> のエンドポイント指定は<strong>部分一致</strong>なので、<code>files/list_folder</code> は <code>list_folder/longpoll</code> にも <code>get_latest_cursor</code> にも当たる。確かめたい経路の前提まで壊していないか見る。</p>
 
+      <h2>⚠️ 「待つ側」の上限もテストから縮める</h2>
+      <p>譲り待ち・再試行・タイムアウトの上限が定数のままだと、その経路を通るテストが<strong>その秒数だけかかる</strong>。実際に「譲ったまま畳む」顔スキャンのテストが 1 本 <strong>61.6 秒</strong>かかっていた（既定の譲り待ち上限が 60 秒）。<code>maxPauseNs</code> を引数に出して 30ms を渡したら <strong>0.33 秒</strong>になった。</p>
+      <p>判断の閾値（<code>batchSize</code> / <code>betweenBatchNs</code> / <code>maxPauseNs</code>）は既定値つきの引数にしておく。本番の呼び出しは変わらず、テストだけが現実的な速さになる。⚠️ 逆に、<strong>閾値を跨ぐことに意味があるテストでは縮めない</strong>（ADR-119 の「打ち切り上限を入れたなら、テストの規模はその上限を跨ぐこと」）。</p>
+
       <h2>実機ログも「テスト」の一部</h2>
       <p>シミュレータ・macOS では再現しない問題（ANE デッドロック・メモリ飢餓・OS スロットル・Core ML の fp16 破綻）があるため、<strong>実機の診断ログ（<code>Diagnostics</code>・<code>PerfTrace</code>・MetricKit）を継続的に読む運用</strong>を検証の最終段に置いている。「Mac で正常＝実機で正常」ではない、が繰り返し得られた教訓（詳細は<a href="../features/diagnostics.html">診断と堅牢性</a>）。</p>
 

@@ -39,6 +39,9 @@ struct FaceBacklogTests {
         var processed = 0
         var backlog: (todo: Int, deferred: Int)?
         await tagger.scan(candidateRefKeys: candidates, batchSize: 4, betweenBatchNs: 0,
+                          // ⚠️ 譲り待ちの上限を縮める。既定は 60 秒で、このテストは
+                          // 「譲ったまま畳む」経路を通すので、そのままだと 1 本 60 秒かかる。
+                          maxPauseNs: 30_000_000,
                           allowSimulator: true,
                           shouldPause: { processed >= 4 },
                           onProgress: { processed = 12 - $0 },

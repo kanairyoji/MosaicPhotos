@@ -32,6 +32,9 @@ final class FaceTagger {
     func scan(candidateRefKeys: [String],
               batchSize: Int = 16,
               betweenBatchNs: UInt64 = 500_000_000,
+              /// 1 単位ぶんの譲り待ちの上限（ADR-95）。**テストから縮めるための seam**——
+              /// 既定の 60 秒のままだと「譲って畳む」経路のテストが 1 本 60 秒かかる。
+              maxPauseNs: UInt64 = BackgroundTrickle.defaultMaxPauseNs,
               allowSimulator: Bool = false,
               shouldPause: @MainActor () -> Bool = { false },
               networkAllowed: @MainActor () -> Bool = { true },
@@ -103,6 +106,7 @@ final class FaceTagger {
             shouldPause: shouldPause,
             pausePerfLabel: "face.pauseWait",   // センサー: 譲り待ちの発生数
             unitPerfLabel: "face.photoMs",
+            maxPauseNs: maxPauseNs,
             // クラウド分のサムネをバッチごとに一括先行取得する（ADR-83）。
             warmBatch: { [provider] batch in provider.warmUp(refKeys: batch) },
             nextBatch: { _ in
