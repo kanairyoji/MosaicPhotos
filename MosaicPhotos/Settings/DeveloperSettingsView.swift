@@ -29,10 +29,6 @@ struct DeveloperSettingsView: View {
     @AppStorage(AppSettingsKeys.verboseLogging) private var verboseLogging = true
     @AppStorage(AppSettingsKeys.perfTracing) private var perfTracing = false
     @AppStorage(AppSettingsKeys.faceScanOnSimulator) private var faceScanOnSimulator = false
-    // 埋め込み以外の証拠で繋ぐか（ADR-211/212）。効果は実機の数字でしか確かめられないので、
-    // **降ろせるようにしておく**（設定 1 つの代償は表の行 1 つ・ADR-197）。
-    @AppStorage(FaceLinkSettingsKeys.burstLinking) private var burstLinking = true
-    @AppStorage(FaceLinkSettingsKeys.torsoLinking) private var torsoLinking = true
     /// デバッグ: 重い処理のゲートを全面無効化（ランタイムのみ・再起動でリセット）。
     @State private var forceHeavyWork = (BackgroundYield.exemption == .debug)
     @State private var heavyWorking = false
@@ -245,8 +241,6 @@ struct DeveloperSettingsView: View {
             Button("クラスタを今すぐ再構築（制約付き）") {
                 Task { await peopleEngine.debugRebuildClustersNow() }
             }
-            Toggle("連写の位置で繋ぐ", isOn: $burstLinking)
-            Toggle("同じ場面の服装で繋ぐ", isOn: $torsoLinking)
             // しきい値・マージンの効き方を数字で見る（ADR-135）。ユーザー向けにも
             // 「人物を調べる」として出している（ADR-147）ので、画面は PeopleKit 側。
             NavigationLink("人物を調べる（内訳）") {
@@ -262,9 +256,7 @@ struct DeveloperSettingsView: View {
         } footer: {
             Text("顔クラスタ（人物）の再スキャン・再構築を行います。「修正内容は保持」は、あなたが直した"
                  + "名前や誤りの学習（負例）を残したまま顔を検出し直します。「学習を破棄」はそれらも消します。"
-                 + "※ シミュレータの顔スキャンは既定で無効です（CPU のみで遅いため）。上のトグルで有効にできます。\n"
-                 + "「連写の位置」「同じ場面の服装」は、顔がぶれて判定できない写真を補う手がかりです。"
-                 + "どちらも人物への所属だけを足し、人物の基準（重心）は変えません。")
+                 + "※ シミュレータの顔スキャンは既定で無効です（CPU のみで遅いため）。上のトグルで有効にできます。")
         }
     }
 

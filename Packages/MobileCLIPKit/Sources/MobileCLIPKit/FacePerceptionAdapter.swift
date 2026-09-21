@@ -58,19 +58,6 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     /// 同梱判定のみ（**ロードを起こさない**・1-a）。実ロードは初回 `detectFaces`→`embed` まで遅延。
     public var isAvailable: Bool { FaceModel.modelBundled }
 
-    /// **服装（胴体）の埋め込みを作るか**（ADR-212）。CLIP 未同梱なら自動的に無効。
-    ///
-    /// ⚠️ 顔 1 つにつき CLIP の推論が 1 回増える（顔モデルは 1 顔 3 クロップなので、
-    /// 夜間の枠でおよそ 3 割増）。効果が実機の数字で確かめられるまで**降ろせるようにしておく**
-    /// ——設定を 1 つ足す代償は表の行 1 つ（ADR-197）で、効かないものを外せない方が高くつく。
-    public static var torsoEnabled: Bool {
-        guard MobileCLIP.modelsBundled else { return false }
-        if UserDefaults.standard.object(forKey: FaceLinkSettingsKeys.torsoLinking) == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: FaceLinkSettingsKeys.torsoLinking)
-    }
-
     public func detectFaces(refKeys: [String]) async -> [String: [DetectedFaceSignal]] {
         var result: [String: [DetectedFaceSignal]] = [:]
         var loaded = 0, nilImage = 0, rawFaces = 0, embedded = 0, visionErr = 0
@@ -250,11 +237,6 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         }
     }
 
-    /// 連結の計測ハーネス用（ADR-211/212）: 本番と同一経路の信号（矩形・埋め込み・品質・胴体）。
-    public func debugSignals(_ cg: CGImage, isCloud: Bool = false) async -> [DetectedFaceSignal] {
-        await analyzeFaces(in: cg, isCloud: isCloud).analyses.compactMap(\.signal)
-    }
-
     private struct FaceAnalysis {
         var report: FaceGateReport
         var signal: DetectedFaceSignal?
@@ -288,13 +270,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             var hasSmile: Bool?
             var reason: String?
             var cropRange: Range<Int>?
-            /// 胴体クロップの索引（`torsoCrops` 内）。nil＝作れなかった（画面外など）。
-            var torsoIndex: Int?
         }
         var rows: [Row] = []
         var flatCrops: [CGImage] = []
-        // ⚠️ **顔とは別のモデル**（CLIP）なので別のバッチにする。1 枚の写真ぶんだけ積む。
-        var torsoCrops: [CGImage] = []
 
         // Pass 1: 品質ゲート・クロップ生成。埋め込み対象のクロップを平坦配列へ集める。
         for face in faces {
@@ -351,15 +329,6 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                         let start = flatCrops.count
                         flatCrops.append(contentsOf: crops)
                         row.cropRange = start..<flatCrops.count
-                        // 服装（胴体）の切り出し（ADR-212）。**採用された顔だけ**が対象で、
-                        // 作れなければ黙って顔だけの判断に戻る（受理の可否には一切関与しない）。
-                        if FacePerceptionAdapter.torsoEnabled,
-                           let torsoBox = TorsoRegion.normalizedBox(forFace: face.box),
-                           let torsoCrop = cropTorso(cg, normalizedBox: torsoBox,
-                                                     width: width, height: height) {
-                            row.torsoIndex = torsoCrops.count
-                            torsoCrops.append(torsoCrop)
-                        }
                     }
                 } else {
                     row.reason = "crop-failed"
@@ -370,10 +339,6 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
 
         // Pass 2: 全クロップを 1 回でバッチ推論（顔・クロップを跨いで償却）。ゲートは runtime の内側。
         let vectors = await FaceModelRuntime.shared.embed(flatCrops)
-        // 胴体は CLIP（別モデル）。⚠️ ANE は同時に 1 つ（`MLInferenceGate`）なので、
-        // 顔の推論が終わってから握る——ここを並行にするとデッドロックの条件を作る（diagnostics-19）。
-        let torsoVectors: [[Float]?] = torsoCrops.isEmpty
-            ? [] : await MobileCLIPRuntime.shared.encodeImages(torsoCrops)
 
         // Pass 3: 顔ごとに自分のクロップの埋め込みを平均→再正規化して signal を組む。
         var out: [FaceAnalysis] = []
@@ -383,17 +348,11 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
             if let range = row.cropRange {
                 let v = range.compactMap { vectors[$0] }
                 if let averaged = FaceClustering.averagedEmbedding(v) {
-                    // CLIP の出力は L2 正規化済み。比べる側（`TorsoLinking`）でも正規化するので
-                    // ここは素通しでよい。
-                    let torso = row.torsoIndex
-                        .flatMap { $0 < torsoVectors.count ? torsoVectors[$0] : nil }
-                        .map { ClipMath.encodeHalf($0) }
                     signal = DetectedFaceSignal(
                         boundingBox: row.box,
                         embedding: ClipMath.encodeHalf(averaged),
                         quality: row.adjusted,
-                        hasSmile: row.hasSmile,
-                        torsoEmbedding: torso)
+                        hasSmile: row.hasSmile)
                 } else {
                     reason = "embed-failed"
                 }

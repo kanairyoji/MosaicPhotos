@@ -44,24 +44,21 @@ final class DetectedFace {
     /// その人物から数枚外すと `count` が尽き、**人物が丸ごと消える**（`FaceCentroidAudit` が見張る）。
     var contributesToCentroid: Bool?
 
-    /// **服装（胴体）の埋め込み**（CLIP・Float16・ADR-212）。顔の下の領域を切り出して埋め込む。
-    /// 同じ場面の中でだけ「同じ人」の手がかりに使う。未計測・対象外は nil。
-    ///
-    /// ⚠️ 顔の埋め込みとは**別の空間**（ArcFace ではなく CLIP）。コサインの分布も違うので、
-    /// 2 つの数字を直接足し算しない（`TorsoLinking` が順位と相対差で扱う）。
+    /// **撤回**（ADR-212）: 服装（胴体）の CLIP 埋め込みを入れていた列。PIPA の計測で
+    /// 服装による連結に効果が無いと分かり、書き手を撤去した。台帳（FacesV1）は列を消さない
+    /// 方針（ADR-186）なので列だけ残し、再クラスタが残った値を空にする。常に nil。
     var torsoEmbedding: Data?
 
     /// **何を根拠にこの人物へ入ったか**（`FaceLinkSource` の rawValue・ADR-212）。
     ///
-    /// ⚠️ 根拠を残さないと、後から効果を測れない。顔のデータセット（FG-NET/LFW）には
-    /// 連写も服装も無いので、時系列・服装による連結の良し悪しは**実機でしか分からない**。
-    /// 「どの根拠で入った顔を、ユーザーが何割外したか」が唯一の判断材料になる（ADR-162 と同じ）。
+    /// ⚠️ 根拠を残さないと、後から効果を測れない。「どの根拠で入った顔を、ユーザーが
+    /// 何割外したか」は実機でしか分からない（ADR-162 と同じ）。
     var linkSource: String?
 
     init(faceID: String, refKey: String, bx: Double, by: Double, bw: Double, bh: Double,
          embedding: Data, quality: Double, clusterID: Int, hasSmile: Bool? = nil,
          captureDate: Date? = nil, contributesToCentroid: Bool? = nil,
-         torsoEmbedding: Data? = nil, linkSource: String? = nil) {
+         linkSource: String? = nil) {
         self.faceID = faceID
         self.refKey = refKey
         self.bx = bx; self.by = by; self.bw = bw; self.bh = bh
@@ -71,7 +68,7 @@ final class DetectedFace {
         self.hasSmile = hasSmile
         self.captureDate = captureDate
         self.contributesToCentroid = contributesToCentroid
-        self.torsoEmbedding = torsoEmbedding
+        self.torsoEmbedding = nil
         self.linkSource = linkSource
     }
 }
@@ -82,10 +79,6 @@ enum FaceLinkSource: String, Sendable, CaseIterable {
     case face
     /// 顔の埋め込みで第2パス（membership のみ・ADR-66）。
     case secondPass
-    /// 連写の同じ位置から（ADR-211）。
-    case temporal
-    /// 同じ場面の服装から（ADR-212）。
-    case torso
     /// 断片の自動吸収（ADR-154）。
     case absorb
     /// ユーザーの表明（確認・付け替え・統合）。
@@ -159,8 +152,7 @@ final class FaceCorrection {
     /// **この顔が何を根拠に入っていたか**（`FaceLinkSource` の rawValue・ADR-212）。
     ///
     /// ⚠️ 修正のときに**その場で**控える。あとから顔の行を見に行っても、もう付け替え済みで
-    /// 根拠は失われている。これがあると「連写で繋いだ顔・服装で繋いだ顔を、ユーザーが
-    /// 何割外したか」が出せる——顔のデータセットでは測れない部分の唯一の物差しになる。
+    /// 根拠は失われている。これがあると「第2パスで入った顔を、ユーザーが何割外したか」が出せる。
     var linkSource: String?
     var createdAt: Date
 

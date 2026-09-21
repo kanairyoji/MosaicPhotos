@@ -28,18 +28,6 @@ public struct FaceTuning: Sendable, Equatable {
     /// 間違いは 1 枚外すだけで直る（人物どうしの結合は取り返しが付かないので自動化しない）。
     public var autoAbsorbBar: Float
 
-    /// **服装が後押しするときの、顔の最低線**（ADR-212）。
-    ///
-    /// 胴体（服装）が実質同じ写りだと分かっているときに限り、顔に要求する類似をここまで下げる。
-    /// 第2パス（`secondPassThreshold`）より**低い**のが要点——下げるために胴体を見るのだから、
-    /// 同じ線を要求したら胴体は何も足していないことになる。ただし 0 にはしない:
-    /// 顔が積極的に「別人だ」と言っている（＝類似が地の分布より低い）ものは、
-    /// 服が一致していても繋がない。
-    ///
-    /// ⚠️ 値は「第2パスの線 − 0.10」。0.10 は負例の相対判定（ADR-140）と同じ幅で、
-    /// 「はっきり違う」と言うのに要る差として実測済みのもの。新しい目盛りを増やさない。
-    public var torsoFaceFloor: Float
-
     /// **あらかじめ選んでおく**（まとめて確認）バー（ADR-153）。
     ///
     /// ⚠️ 自動で結合するのではなく、**チェックを付けた状態で見せる**ための値。実機 7,710 件の
@@ -62,7 +50,7 @@ public struct FaceTuning: Sendable, Equatable {
         name: "facenet",
         clusterThreshold: 0.50, assignMargin: 0.05, sizeAdaptiveMarginMax: 0.10,
         secondPassThreshold: 0.55, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.50,
-        autoAbsorbBar: 0.80, torsoFaceFloor: 0.45, autoSuggestBar: 0.90,
+        autoAbsorbBar: 0.80, autoSuggestBar: 0.90,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
         auditMinMargin: 0.25, auditMaxSeparation: 0.35)
 
@@ -73,7 +61,7 @@ public struct FaceTuning: Sendable, Equatable {
         name: "arcface",
         clusterThreshold: 0.35, assignMargin: 0.04, sizeAdaptiveMarginMax: 0.08,
         secondPassThreshold: 0.40, rivalAlikeMargin: 0.20, mergeCandidateFloor: 0.40,
-        autoAbsorbBar: 0.75, torsoFaceFloor: 0.30, autoSuggestBar: 0.85,
+        autoAbsorbBar: 0.75, autoSuggestBar: 0.85,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
         auditMinMargin: 0.20, auditMaxSeparation: 0.40)
 

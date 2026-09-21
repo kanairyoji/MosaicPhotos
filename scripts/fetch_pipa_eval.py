@@ -21,6 +21,9 @@ PIPA の座標は 1024px 版の画素なので、取得した版との比で換�
 ⚠️ 画像は写真ごとに異なる CC ライセンス。手元の計測にのみ使い、リポジトリへ入れない。
 
 使い方: python3 scripts/fetch_pipa_eval.py [--photos 3000]
+
+計測ハーネス（`PIPALinkingEvalTests`）は連結の撤回（ADR-215）と一緒に消した。
+再現するときはコミット 8a7c2d3 から取り出す（連写・服装の実装もそのコミットにある）。
 """
 import argparse, csv, io, json, os, re, subprocess, sys, time, urllib.request, tarfile
 from collections import defaultdict

@@ -95,21 +95,15 @@ public struct DetectedFaceSignal: Sendable, Equatable {
     /// (2) 家族の解析データの取り込み（相手が付けた名前を受け取る）だけ。
     /// 名前は個人情報なので、**設定で送らないことも選べる**（既定は送る）。
     public let personName: String?
-    /// **服装（胴体）の埋め込み**（CLIP・`ClipMath.encodeHalf` 形式・ADR-212）。
-    /// 顔の下の領域から作る。作れない（画面外・重なり・CLIP 未同梱）ときは nil で、
-    /// そのときは顔だけで判断する（無音でのフォールバック）。
-    public let torsoEmbedding: Data?
 
     public init(boundingBox: CGRect, embedding: Data, quality: Float = 1, hasSmile: Bool? = nil,
-                captureDate: Date? = nil, personName: String? = nil,
-                torsoEmbedding: Data? = nil) {
+                captureDate: Date? = nil, personName: String? = nil) {
         self.boundingBox = boundingBox
         self.embedding = embedding
         self.quality = quality
         self.hasSmile = hasSmile
         self.captureDate = captureDate
         self.personName = personName
-        self.torsoEmbedding = torsoEmbedding
     }
 }
 

@@ -225,9 +225,6 @@ actor FaceStore {
     /// 固定の ID で指してはいけない。既知のメンバーから引く。
     func clusterIDForTesting(faceID: String) -> Int? { face(byID: faceID)?.clusterID }
 
-    /// テスト用: この顔が何を根拠に入ったか（ADR-212）。
-    func linkSourceForTesting(_ faceID: String) -> String? { face(byID: faceID)?.linkSource }
-
     /// テスト用: 散らばりを直に入れる（重心が壊れた人物を作るのは合成では難しいため）。
     func setClusterSpreadForTesting(clusterID: Int, spread: Double?) {
         cluster(clusterID)?.spread = spread
@@ -581,8 +578,7 @@ actor FaceStore {
                     bw: face.boundingBox.size.width, bh: face.boundingBox.size.height,
                     embedding: face.embedding, quality: Double(face.quality), clusterID: cid,
                     hasSmile: face.hasSmile, captureDate: face.captureDate,
-                    contributesToCentroid: contributes,
-                    torsoEmbedding: face.torsoEmbedding, linkSource: source?.rawValue))
+                    contributesToCentroid: contributes, linkSource: source?.rawValue))
             }
             persist(clustering)
             clusteringCache = clustering   // 次の写真はここから逐次継続（全復元しない）

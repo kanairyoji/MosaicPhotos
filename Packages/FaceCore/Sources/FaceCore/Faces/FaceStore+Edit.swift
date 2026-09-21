@@ -153,8 +153,7 @@ extension FaceStore {
 
     /// 修正ジャーナルへ 1 件追記（ADR-45/46）。負例・校正キャッシュを無効化する。
     /// - Parameter linkSource: **その顔が何を根拠に入っていたか**（ADR-212）。付け替えの
-    ///   あとでは顔の行から失われるので、記録する側がその場で控える。これがあって初めて
-    ///   「連写で繋いだ顔・服装で繋いだ顔を、ユーザーが何割外したか」が出せる。
+    ///   あとでは顔の行から失われるので、記録する側がその場で控える。
     func recordCorrection(kind: String, faceEmbedding: Data, wrongEmbedding: Data?,
                           similarity: Float? = nil,
                           confidence: AnswerConfidence = .high,

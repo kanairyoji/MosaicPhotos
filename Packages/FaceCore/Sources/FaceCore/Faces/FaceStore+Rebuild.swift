@@ -158,30 +158,9 @@ extension FaceStore {
             }
         }
 
-        // 2.5) **埋め込み以外の証拠で拾い直す**（ADR-211/212）。どちらも所属だけを足し、
-        // `sum`/`count` には一切触らない——間違えても人物の重心は汚れず、1 枚外せば直る。
-        // ⚠️ 順番に意味がある: 連写（位置）は服装より**強い証拠**なので先に効かせ、
-        // 服装はそれでも残った顔だけを見る（弱い証拠で先に埋めない）。
-        // ⚠️ **今の割り当ての写しを渡す**（`newAssignment` を直に読むクロージャを渡しながら
-        // 同じ辞書を inout で渡すと、排他アクセス違反で落ちる）。写しなので、連結のあいだ
-        // 「どこまでが連結前の事実か」も固定される——連結が連結を根拠にする循環も同時に防げる。
-        func clusterLookup(_ assignment: [String: Int]) -> (DetectedFace) -> Int {
-            { f in pinnedCluster[f.faceID] ?? (assignment[f.faceID] ?? FaceClustering.unassigned) }
-        }
-        let centroidByCluster = Dictionary(uniqueKeysWithValues:
-            clustering.clusters.map { ($0.id, $0.centroid) })
-        let burst = linkByBurst(allFaces, faceByID: faceByID,
-                                currentCluster: clusterLookup(newAssignment),
-                                contributed: contributed, negatives: negatives,
-                                centroidByCluster: centroidByCluster,
-                                newAssignment: &newAssignment, usedByPhoto: &usedByPhoto,
-                                linkSource: &linkSource)
-        let torso = linkByTorso(allFaces, faceByID: faceByID,
-                                currentCluster: clusterLookup(newAssignment),
-                                contributed: contributed, negatives: negatives,
-                                centroidByCluster: centroidByCluster,
-                                newAssignment: &newAssignment, usedByPhoto: &usedByPhoto,
-                                linkSource: &linkSource)
+        // ⚠️ ここには連写（ADR-211）・服装（ADR-212）による拾い直しがあったが、PIPA の計測で
+        // 繋いだ顔の正解率が 0%（第2パスは 92.5%）・B-Cubed F1 も下がると分かり撤回した
+        // （face-accuracy.md の PIPA 節）。第2パスの後に残る顔はそもそも少なく、上限でも 1% 未満。
 
         // 3) 書き戻し: 顔の clusterID（確認顔は種のまま）・種以外の旧クラスタ行は削除して再作成。
         var moved = 0
@@ -196,6 +175,9 @@ extension FaceStore {
             // 数枚外しただけでクラスタが消える状態になっていた。
             f.contributesToCentroid = newID >= 0 && contributed.contains(f.faceID)
             f.linkSource = newID >= 0 ? (linkSource[f.faceID] ?? .face).rawValue : nil
+            // 撤回した服装の埋め込み（ADR-212）が残っていれば空けて容量を返す。列は台帳の
+            // 互換のため残す（ADR-186: 台帳は列を消さない）。
+            if f.torsoEmbedding != nil { f.torsoEmbedding = nil }
         }
         // ⚠️ 無名の集合は**削除より前に**作る（レビュー指摘）。削除後に `existing` の
         // `name` / `clusterID` を読むと、消した `PersonCluster` のプロパティを触ることになる。
@@ -237,7 +219,7 @@ extension FaceStore {
         clusteringCache = nil
         reportNamedShrink(before: namedBefore)
         Self.log.info("faces: rebuild — clusters=\(clustering.clusters.count) moved=\(moved) "
-                      + "thr=\(thr) burst=\(burst.linked) torso=\(torso.linked)")
+                      + "thr=\(thr)")
         return (clustering.clusters.count, moved)
     }
 
