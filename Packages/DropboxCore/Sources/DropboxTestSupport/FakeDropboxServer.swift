@@ -403,6 +403,12 @@ public actor FakeDropboxServer: HTTPClient {
     /// 「書いた JSON が意図どおりか」を確かめるのに使う。
     public func body(at path: String) -> Data? { bodies[path.lowercased()] }
 
+    /// そのパスの `content_hash`（無ければ nil）。「同じ写真が 2 つ置かれていないか」のような
+    /// **中身で見る検証**に使う（パス名だけを見ると、名前を変えた同じ写真を見逃す）。
+    public func contentHash(at path: String) -> String? {
+        files[path.lowercased()].map(\.contentHash)
+    }
+
     /// アップロードが要求された順のパス一覧（**失敗した回も含む**）。
     /// 「何回・どの順で送ったか」を数えるために使う（ADR-119 の考え方＝回数で見る）。
     public private(set) var uploadedPaths: [String] = []
