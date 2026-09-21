@@ -515,7 +515,11 @@
   書き写して**いるため、production の経路が死んでいることを暴けない。(b)(c) のどちらを採っても、
   `rebuildClusters()` を実際に呼ぶ end-to-end テストに置き換える必要がある。
 
-## 解析の完了判定が「止められている」を「終わった」と言い得る
+## （解決済み）解析の完了判定が「止められている」を「終わった」と言い得る — 2026-09-21 に対処（ADR-207）
+
+⚠️ 残数の測り方そのものを直した（`PeopleEngine.faceBacklog`＝スキャンしていなくても
+答えられる値・回線待ちで外したクラウド分も含む）。`isTransientYield` は触っていないので、
+「写真を見ているので止まっています」の嘘も戻っていない。以下は当時の記述。
 
 - 箇所: `MosaicPhotos/AnalysisSession.swift:268`（`faces = people.isScanning ? people.remaining : 0`）
   と `:287`（`persistentBlockers`）
@@ -536,7 +540,11 @@
   両立しない。残数の測り方（`isScanning ? remaining : 0`）自体が「始められなかった」と
   「もう無い」を区別できていないので、そこを分けないと表示は正しくならない。
 
-## 夜間の窓で顔の残数が常に 0 と測られる
+## （解決済み）夜間の窓で顔の残数が常に 0 と測られる — 2026-09-21 に対処（ADR-207）
+
+⚠️ 「測る位置」ではなく**測っている値**が問題だった（`remaining` はスキャン中しか
+意味を持たない）。`faceBacklog` を読むようにして、スキャンを起こせなかった回も測る。
+以下は当時の記述。
 
 - 箇所: `MosaicPhotos/HeavyWorkScheduler.swift:379`（`faceBacklog: stores.peopleEngine.remaining`）
 - 分類: inertFix / 優先度 P2（初出 2026-09-19・レビューループ）

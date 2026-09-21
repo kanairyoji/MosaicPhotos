@@ -265,7 +265,12 @@ final class AnalysisSession {
                 tagsPending = max(0, p.total - p.sceneTagged)
                 embedPending = max(0, p.total - p.embedded)
             }
-            let faces = people.isScanning ? people.remaining : 0
+            // ⚠️ **`remaining` を完了判定に使わない**（ADR-207）。あれはスキャン中しか
+            // 意味を持たず、止まると 0 に戻るので「終わった」と「始められなかった」が
+            // 同じ値になる——残作業を抱えたまま「すべて解析済み」と表示していた。
+            // `faceBacklog` は最後に測った本当の残りで、回線待ちで外したクラウド分も含む。
+            // nil＝まだ測っていない（モデル未同梱なら 0 で正しい）。
+            let faces = people.faceBacklog ?? 0
             let rem = AnalysisSessionPolicy.remaining(faces: faces, tagsPending: tagsPending,
                                                       embedPending: embedPending)
             if rem == remaining { warmupTicks += 1 }

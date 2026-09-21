@@ -379,7 +379,12 @@ enum HeavyWorkScheduler {
         NightlyPlan.Inputs(
             boostActive: stores.analysisSession.isActive,
             embedBacklog: await stores.autoAlbumEngine.pendingEmbedCount(),
-            faceBacklog: stores.peopleEngine.remaining,
+            // ⚠️ **`remaining` は使わない**（ADR-207）。`kick` は `.background` の Task を
+            // 起こすだけで、`remaining` が書かれるのはスキャンの `onProgress`——`gatherInputs`
+            // は `kick` の直後に走るので、新しい窓では**常に 0**だった（ADR-163 の修正が
+            // 効いていなかった）。埋め込みが 0 で顔だけ残っている窓に生成が入り、
+            // diagnostics-72 の共倒れが再発し得る。
+            faceBacklog: stores.peopleEngine.faceBacklog ?? stores.peopleEngine.remaining,
             generateDeferrals: UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak),
             maxGenerateDeferrals: maxGenerateDeferrals,
             availableMB: Int(MemoryBudget.availableBytes() / 1_048_576),

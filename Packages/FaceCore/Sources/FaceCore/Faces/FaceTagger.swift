@@ -36,6 +36,7 @@ final class FaceTagger {
               shouldPause: @MainActor () -> Bool = { false },
               networkAllowed: @MainActor () -> Bool = { true },
               onProgress: @MainActor (Int) -> Void = { _ in },
+              onBacklog: @MainActor (_ todo: Int, _ deferred: Int) -> Void = { _, _ in },
               onBatch: () async -> Void) async {
         guard let provider, provider.isAvailable else {
             Self.log.info("face scan: skipped — face model not bundled / provider unavailable")
@@ -57,7 +58,16 @@ final class FaceTagger {
             return
         }
         isRunning = true
-        defer { isRunning = false; onProgress(0) }
+        // ⚠️ **終わりに 0 を報せない**（ADR-207）。以前は `onProgress(0)` を固定で返していたので、
+        // 「全部終わった」と「譲って途中で畳んだ」が**同じ値**になり、残作業を抱えたまま
+        // 「すべて解析済み」と表示していた。畳んだ時点の本当の残りを返す。
+        var remainingNow = 0
+        var deferredNow = 0
+        defer {
+            isRunning = false
+            onProgress(remainingNow)
+            onBacklog(remainingNow, deferredNow)
+        }
 
         let done = await store.scannedRefKeys()
         // ローカル("L-")を必ず先に、クラウド("C-")は後回し（母数が巨大で細切れ窓では終わらないため）。
@@ -67,10 +77,16 @@ final class FaceTagger {
         let localTodo = candidateRefKeys.filter { $0.hasPrefix("L-") && !done.contains($0) }
         let cloudTodo = cloudOK ? candidateRefKeys.filter { $0.hasPrefix("C-") && !done.contains($0) } : []
         let todo = localTodo + cloudTodo
+        // ⚠️ **回線待ちで外したぶんも数える**（ADR-207）。クラウド分を対象から外した回は
+        // `todo` が実際の残作業より少なくなる。Wi-Fi が無い端末で端末内写真を配り終えると
+        // `todo` が空になり、「もう無い」と読めてしまう——クラウドの顔は残っているのに。
+        deferredNow = cloudOK ? 0 : candidateRefKeys.filter { $0.hasPrefix("C-") && !done.contains($0) }.count
+        remainingNow = todo.count
+        onBacklog(remainingNow, deferredNow)
         Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(done.count) "
-                         + "todo=\(todo.count) (local=\(localTodo.count) cloud=\(cloudTodo.count)\(cloudOK ? "" : " deferred:no-wifi"))")
+                         + "todo=\(todo.count) (local=\(localTodo.count) cloud=\(cloudTodo.count)\(cloudOK ? "" : " deferred:no-wifi=\(deferredNow)"))")
         guard !todo.isEmpty else {
-            Diagnostics.mark("faces: nothing to scan (all done)")
+            Diagnostics.mark("faces: nothing to scan (all done\(deferredNow > 0 ? ", \(deferredNow) waiting for Wi-Fi" : ""))")
             return
         }
         Self.log.info("face scan: start — \(todo.count) photos to scan (batch \(batchSize))")
@@ -134,7 +150,8 @@ final class FaceTagger {
                 await store.recordScans(records)   // T3: save はバッチ 1 回
                 processed += batch.count
                 AnalysisActivity.recordActivity(.faces)
-                onProgress(max(0, todo.count - processed))
+                remainingNow = max(0, todo.count - processed)
+                onProgress(remainingNow)
 
                 if (batchIndex + 1) % 8 == 0 {
                     Diagnostics.mark("faces: \(processed)/\(todo.count) scanned, faces=\(facesFound)")

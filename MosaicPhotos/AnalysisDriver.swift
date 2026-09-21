@@ -145,6 +145,11 @@ final class AnalysisDriver {
                     || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
                 people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
             }
+            // ⚠️ **起こせなかった回こそ、残作業を測っておく**（ADR-207）。測らないと
+            // 「終わったから 0」と「始められなかったから 0」が区別できず、完了の表示が嘘になる。
+            // シミュレータ・取り消し・ゲートの再判定で降りた場合もここへ来る。
+            // 測るのは**この起動で一度も測っていないとき**だけ（以後はスキャン側が更新する）。
+            await people.measureBacklogIfUnknown(candidateRefKeys: candidates.ordered)
         }
         return engine.isTagging || people.isScanning
     }

@@ -22,8 +22,17 @@ public protocol FaceScanControl: AnyObject {
     var isFaceModelAvailable: Bool { get }
     /// いまスキャンが走っているか。
     var isScanning: Bool { get }
-    /// 未スキャンの残り枚数（おおよそ・スキャン中のみ更新）。
+    /// 未スキャンの残り枚数（おおよそ・**スキャン中のみ**更新。止まると 0 に戻る）。
+    /// ⚠️ 完了の判定には使わないこと——「終わった」と「始められなかった」が同じ 0 になる。
     var remaining: Int { get }
+
+    /// **スキャンしていなくても答えられる**顔の残作業（ADR-207）。
+    /// 回線待ちで今回は外したクラウド分も含む。nil＝この起動でまだ測っていない。
+    var faceBacklog: Int? { get }
+
+    /// まだ測っていなければ測る（走査済みの refKey を 1 回引くので、毎回は呼ばない）。
+    @discardableResult
+    func measureBacklogIfUnknown(candidateRefKeys: [String]) async -> Bool
 
     /// 未スキャン分を背景で処理する。走行中なら何もしない。
     func startScan(candidateRefKeys: [String], allowSimulator: Bool)

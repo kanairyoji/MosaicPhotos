@@ -44,6 +44,15 @@ public final class PeopleEngine {
     /// 未スキャン残り枚数（おおよそ）。
     public private(set) var remaining = 0
 
+    /// **スキャンしていなくても答えられる顔の残作業**（ADR-207）。
+    ///
+    /// ⚠️ `remaining` はスキャン中しか意味を持たない（止まると 0 に戻る）。
+    /// 「終わったから 0」と「始められなかったから 0」が同じ値になるので、
+    /// 完了の判定にそのまま使うと**残作業を抱えたまま「すべて解析済み」と表示する**。
+    /// こちらは最後に測った値を保ち、回線待ちで外したぶん（クラウド）も足して持つ。
+    /// - nil: この起動でまだ一度も測っていない（＝分からない。0 と区別すること）
+    public private(set) var faceBacklog: Int?
+
     /// 表示・編集に使う**現行世代**の台帳。影の世代の切り替え（`promoteShadowIfReady`）で差し替わる（ADR-186）。
     @ObservationIgnored var store: FaceStore   // internal: 同モジュールの機能別 extension（PersonCleanup 等）が使う
     @ObservationIgnored var tagger: FaceTagger
@@ -127,6 +136,8 @@ public final class PeopleEngine {
             if !running {
                 BackgroundActivityMonitor.shared.faceScanRemaining = 0
                 self?.remaining = 0
+                // ⚠️ `faceBacklog` は**ここで 0 にしない**。止まった理由（終わった／譲った）を
+                // 区別できなくなる。本当の残りはスキャン側が `onBacklog` で置いていく。
             }
         }
     }
@@ -278,6 +289,22 @@ public final class PeopleEngine {
         Diagnostics.mark("faces: stopScan (foreground return)")
     }
 
+    /// **スキャンせずに顔の残作業を測る**（ADR-207）。
+    ///
+    /// ⚠️ スキャンが始められなかった回（ゲートが閉じた・シミュレータ・取り消し）でも
+    /// 残作業は分かっていないと、「終わったから 0」と区別がつかない。
+    /// 走査済みの refKey を 1 回引くので安くはない——**まだ一度も測っていないときだけ**
+    /// 呼ぶこと（以後はスキャン側が `onBacklog` で更新する）。
+    /// - Returns: 測ったか（モデル未同梱・既知のときは測らない）。
+    @discardableResult
+    public func measureBacklogIfUnknown(candidateRefKeys: [String]) async -> Bool {
+        guard isFaceModelAvailable, faceBacklog == nil else { return false }
+        let pending = await store.pendingCount(candidateRefKeys: candidateRefKeys)
+        faceBacklog = pending
+        Diagnostics.mark("faces: backlog measured without scanning — \(pending)")
+        return true
+    }
+
     public func startScan(candidateRefKeys: [String], allowSimulator: Bool = false) {
         // 診断: startScan がなぜ走らない/走るのかを可視化する（実機で faces:start が一切出ない事例の切り分け）。
         guard isFaceModelAvailable else {
@@ -348,6 +375,13 @@ public final class PeopleEngine {
                 onProgress: {
                     self.remaining = $0
                     BackgroundActivityMonitor.shared.faceScanRemaining = $0
+                },
+                onBacklog: { todo, deferred in
+                    // ⚠️ `onProgress` とは**別の事実**。あちらは「この実行の残り」で、
+                    // 進捗バーと `drainUntilIdle` が読む。こちらは「本当の残作業」で、
+                    // 回線待ちで今回は外したクラウド分も含む。混ぜると、Wi-Fi が無い夜に
+                    // 窓が畳めなくなる（`drainUntilIdle` が 0 にならない）。
+                    self.faceBacklog = todo + deferred
                 },
                 // ⚠️ バッチごとに `loadPeople()` を直に呼ぶと、スキャン中ずっと 2 秒に 1 回
                 //    人物リストを再発行し続けることになる（実機で 600〜1000ms のハングが
