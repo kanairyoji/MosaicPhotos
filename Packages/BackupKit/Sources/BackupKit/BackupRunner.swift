@@ -28,7 +28,8 @@ protocol BackupRunnerDelegate: AnyObject {
     /// 端末フォルダ移行の組み合わせで同一写真がルートと端末フォルダに重複した）。
     func runnerRecordedLocalIdentifiers() async -> Set<String>
     /// バックアップを優先すべき localIdentifier（クラウド共有で待たれている写真・ADR-112）。
-    func runnerPriorityLocalIdentifiers() async -> Set<String>
+    /// 共有セットに入っている端末写真（バックアップ済みかは問わない）。
+    func runnerShareMemberLocalIdentifiers() async -> Set<String>
     /// 現在の Dropbox アカウントの指紋（保留メタデータのキューをアカウントごとに分けるため）。
     /// 生の accountId は扱わない（等値比較にしか使わないので指紋で足りる）。
     func runnerAccountFingerprint() async -> String?
@@ -74,8 +75,8 @@ final class GenerationScopedRunnerDelegate: BackupRunnerDelegate {
         await base?.runnerRecordedLocalIdentifiers() ?? []
     }
 
-    func runnerPriorityLocalIdentifiers() async -> Set<String> {
-        await base?.runnerPriorityLocalIdentifiers() ?? []
+    func runnerShareMemberLocalIdentifiers() async -> Set<String> {
+        await base?.runnerShareMemberLocalIdentifiers() ?? []
     }
 
     func runnerAccountFingerprint() async -> String? {
@@ -376,7 +377,9 @@ final class BackupRunner {
         var pending = assets.filter { pendingSet.contains($0.localIdentifier) }
         // クラウド共有で待たれている写真を先頭へ（安定・相対順は維持）。共有セットの
         // 「バックアップ待ち」が夜間バックアップの進行を何日も待たされるのを防ぐ（ADR-112）。
-        let priority = await delegate.runnerPriorityLocalIdentifiers()
+        // ⚠️ 「待たれている」＝**共有メンバー − バックアップ済み**。差し引きはここで行う——
+        // `doneIDs` は既に手元にあるので、ストア側で引き直すと数万行を 2 度読むことになる。
+        let priority = await delegate.runnerShareMemberLocalIdentifiers().subtracting(doneIDs)
         if !priority.isEmpty {
             let first = pending.filter { priority.contains($0.localIdentifier) }
             if !first.isEmpty {

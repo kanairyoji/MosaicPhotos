@@ -541,9 +541,10 @@ struct ShareScenarioTests {
 
         let files = await sharedFiles(server)
         #expect(files.count == 1, "バックアップ済みの 1 枚だけがコピーされていない: \(files)")
-        // ⚠️ 「待ち」は記録ではなく**バックアップ記録の不在**が答える（ADR-209）。
-        #expect(await store.shareWaitingLocalIdentifiers().contains("missing"),
-                "未バックアップの写真がバックアップ隊列の優先対象になっていない")
+        // ⚠️ 「待ち」は記録ではなく**共有メンバー − バックアップ済み**が答える（ADR-209）。
+        // 差し引きは呼び出し側（`BackupRunner`）が行うので、ここはメンバーだけを見る。
+        #expect(await store.shareMemberLocalIdentifiers() == ["a", "missing"],
+                "共有メンバーの端末写真を拾えていない")
         #expect(engine.sets.first?.waitingBackup == 1, "画面の「待ち」件数が出ていない")
     }
 }
@@ -772,10 +773,14 @@ struct ShareDifferentialDetailTests {
     }
 
     @MainActor private final class StubAnalysis: ShareAnalysisSource {
-        private(set) var asked: [String] = []
+        /// ⚠️ **累積する**（最後の 1 回で上書きしない）。反映は 1 回の `syncNow` でも
+        /// 「コピー前」「コピー後」の 2 度ここを通り、さらに予約された反映が続くので、
+        /// 最後の値だけ見ると**途中の 1 回だけが間違っている**状態を見逃す
+        /// （実際にそれで変異が素通りした）。
+        private(set) var asked: Set<String> = []
         func analysisEntries(forRefKeys refKeys: [String]) async
             -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
-            asked = refKeys.sorted()
+            asked.formUnion(refKeys)
             var entries: [String: ShareAnalysisData.Entry] = [:]
             for key in refKeys { entries[key] = ShareAnalysisData.Entry(tags: ["x"]) }
             return (ShareAnalysisData.Versions(tag: 1), entries)
@@ -864,8 +869,40 @@ struct ShareDifferentialDetailTests {
 
         #expect(await sharedFiles(server).count == 1, "前提: a だけが共有されている")
         #expect(!analysis.asked.contains("L-b"),
-                "共有フォルダに無い写真の解析結果まで組んでいる: \(analysis.asked)")
+                "共有フォルダに無い写真の解析結果まで組んでいる: \(analysis.asked.sorted())")
         #expect(analysis.asked.contains("L-a"), "共有できた写真の解析結果が無い")
+    }
+
+    /// ⚠️ **コピーに失敗した写真の解析データを送らない**。
+    /// 初回の反映は「コピーを投げた分」を在るものとして扱っていたので、失敗した写真の
+    /// エントリまでシャードに載り、受信側には突合できないエントリが届いていた
+    /// （次の反映で上げ直しにもなる）。応答を見て、**成功した宛先だけ**を数える。
+    @Test("コピーに失敗した写真は、その回の解析データにも載らない")
+    func failedCopiesAreNotInTheAnalysisShard() async {
+        let (engine, store, server, analysis) = await makeStack()
+        await server.seed("/mosaicphotos/b.jpg", hash: "hB")
+        await store.upsertRecord(dropboxPath: "/mosaicphotos/b.jpg", localIdentifier: "b",
+                                 filename: "b.jpg", creationDate: nil, contentHash: "hB",
+                                 people: [], albums: [], isFavorite: false)
+        _ = await engine.createSet(name: "Trip", refKeys: ["L-a", "L-b"])
+
+        let setID = await store.allShareSets().first!.id
+        let plan = SharePlanning.plan(
+            items: await store.shareItems(setID: setID),
+            backupByLocalID: await store.backupRefs(forLocalIdentifiers: ["a", "b"]),
+            setFolder: SharePlanning.setFolderPath(shareRoot: Self.shareRoot,
+                                                   folderName: "Trip", deviceFolder: nil)!,
+            remoteFiles: [])
+        await server.setFailCopyPaths([plan.copies.first { $0.refKey == "L-b" }!.toPath.lowercased()])
+
+        await engine.syncNow()
+
+        #expect(await sharedFiles(server).count == 1, "前提: a だけが共有されている")
+        // ⚠️ 2 周目（コピー後の解析データ更新）でも b を在るものとして扱っていないこと。
+        #expect(!analysis.asked.contains("L-b"), """
+                コピーに失敗した写真の解析データを送っている（\(analysis.asked.sorted())）。
+                受信側には突合できないエントリが届き、次の反映で上げ直しにもなる。
+                """)
     }
 
     /// ⚠️ 掃除の範囲は**共有ルートの直下**だけ。深い階層のフォルダを消しに行かない。

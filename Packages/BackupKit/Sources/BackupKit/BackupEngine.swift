@@ -600,8 +600,8 @@ extension BackupEngine: BackupRunnerDelegate {
         return true
     }
 
-    func runnerPriorityLocalIdentifiers() async -> Set<String> {
-        await store().shareWaitingLocalIdentifiers()
+    func runnerShareMemberLocalIdentifiers() async -> Set<String> {
+        await store().shareMemberLocalIdentifiers()
     }
 
     /// 現在のアカウントの指紋（生の accountId は保存しない）。

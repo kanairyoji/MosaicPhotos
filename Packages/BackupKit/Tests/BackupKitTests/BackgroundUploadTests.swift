@@ -313,7 +313,7 @@ private final class NoopRunnerDelegate: BackupRunnerDelegate {
                           people: [String], albums: [String], isFavorite: Bool,
                           contentHash: String?) async -> Bool { true }
     func runnerRecordedLocalIdentifiers() async -> Set<String> { [] }
-    func runnerPriorityLocalIdentifiers() async -> Set<String> { [] }
+    func runnerShareMemberLocalIdentifiers() async -> Set<String> { [] }
     func runnerAccountFingerprint() async -> String? { nil }
 }
 

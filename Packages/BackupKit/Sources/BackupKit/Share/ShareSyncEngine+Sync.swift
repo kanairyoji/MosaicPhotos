@@ -187,6 +187,10 @@ extension ShareSyncEngine {
 
         // コピー。1 回の上限を超える分は次回に回す（レート制限を誘発しない）。
         var copied = 0
+        /// 実際にコピーできた宛先（小文字）。⚠️ **「投げた分」ではなく「成功した分」**を持つ——
+        /// 解析データはここに在る写真のぶんだけ作るので、失敗した宛先を混ぜると
+        /// 受信側に突合できないエントリを送ることになる（次の反映で上げ直しにもなる）。
+        var copiedDestinations = Set<String>()
         let budget = min(plan.copies.count, Self.maxCopiesPerRun)
         if plan.copies.count > budget {
             BackupLogger.info("Share sync: '\(set.folderName)' copying \(budget) of \(plan.copies.count) this run")
@@ -197,7 +201,14 @@ extension ShareSyncEngine {
             guard !Task.isCancelled else { needsAnotherPass = true; break }
             let entries = chunk.map { (from: $0.fromPath, to: $0.toPath) }
             let result = await copier.copyBatch(entries: entries, token: token)
-            copied += result?.entries.compactMap { $0 }.count ?? 0
+            for (index, copy) in chunk.enumerated() {
+                guard let entry = result?.entries[index] ?? nil else { continue }
+                copied += 1
+                // 実パスは Dropbox の応答から取る（こちらの組んだ宛先と同じはずだが、
+                // 正規化の差を取り込まないよう応答を正とする）。
+                copiedDestinations.insert(entry.pathLower.isEmpty
+                                          ? copy.toPath.lowercased() : entry.pathLower)
+            }
         }
         if copied > 0 {
             BackupLogger.info("Share: '\(set.folderName)' copied \(copied)/\(plan.copies.count)")
@@ -220,7 +231,7 @@ extension ShareSyncEngine {
 
         // コピーした分の解析データを足す（一覧はコピー前のものなので、ここで補う）。
         if copied > 0 {
-            let nowPresent = presentPaths.union(plan.copies.prefix(budget).map { $0.toPath.lowercased() })
+            let nowPresent = presentPaths.union(copiedDestinations)
             await updateAnalysisData(set: set, setFolder: setFolder, items: items,
                                      presentPathsLower: nowPresent, sourceByRefKey: plan.sourceByRefKey,
                                      copier: copier, token: token,

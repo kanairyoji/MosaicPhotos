@@ -144,24 +144,21 @@ extension BackupStore {
         try? modelContext.save()
     }
 
-    /// **まだバックアップされていない**共有メンバーの端末写真 localIdentifier。
-    /// バックアップ隊列の優先対象（ADR-112 追記: 共有に選ばれた写真から先にバックアップする）。
+    /// **共有セットに入っている端末写真**の localIdentifier（全セットぶん）。
     ///
-    /// ⚠️ 以前はアイテムの状態（`waitingBackup` / `pending`）で判定していた。いまは状態を
-    /// 持たないので、**バックアップ記録の有無で直接引く**（ADR-209）。記録が真実なのは
-    /// バックアップ側であって、共有側ではない。
-    public func shareWaitingLocalIdentifiers() -> Set<String> {
-        var itemDescriptor = FetchDescriptor<ShareItem>()
-        itemDescriptor.propertiesToFetch = [\.refKey]
-        let items = (try? modelContext.fetch(itemDescriptor)) ?? []
-        let wanted = Set(items.map(\.refKey).filter { $0.hasPrefix("L-") }
-            .map { String($0.dropFirst(2)) })
-        guard !wanted.isEmpty else { return [] }
-        var backupDescriptor = FetchDescriptor<BackupAssetRecord>()
-        backupDescriptor.propertiesToFetch = [\.localIdentifier]
-        let backedUp = Set(((try? modelContext.fetch(backupDescriptor)) ?? [])
-            .compactMap(\.localIdentifier))
-        return wanted.subtracting(backedUp)
+    /// バックアップ隊列はこのうち「まだバックアップされていないもの」を優先する
+    /// （ADR-112 追記: 共有に選ばれた写真から先にバックアップする）。
+    ///
+    /// ⚠️ **ここで「まだバックアップされていない」まで求めない**（ADR-119）。
+    /// それにはバックアップ記録の全件（数万行）が要るが、呼び出し側は**同じ集合を
+    /// 既に持っている**（`computePending` の `doneIDs`）。ここで引き直すと、
+    /// 1 回のバックアップで同じ数万行を 2 度読むことになる。
+    /// 共有メンバーは数百〜数千なので、こちらだけを返して差し引きは呼び出し側に任せる。
+    public func shareMemberLocalIdentifiers() -> Set<String> {
+        var descriptor = FetchDescriptor<ShareItem>()
+        descriptor.propertiesToFetch = [\.refKey]
+        let items = (try? modelContext.fetch(descriptor)) ?? []
+        return Set(items.map(\.refKey).filter { $0.hasPrefix("L-") }.map { String($0.dropFirst(2)) })
     }
 
     // MARK: - バックアップ記録の参照（"L-" 写真の実体解決）
