@@ -384,7 +384,8 @@ enum HeavyWorkScheduler {
             maxGenerateDeferrals: maxGenerateDeferrals,
             availableMB: Int(MemoryBudget.availableBytes() / 1_048_576),
             networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
-            provideShareEnabled: ShareSettingsKeys.isProvideEnabled())
+            provideShareEnabled: ShareSettingsKeys.isProvideEnabled(),
+            backupReconcileDue: stores.backupEngine.isReconcileDue())
     }
 
     /// 1 手を実行する。**ここに判断を書かない**（書くと窓を起こさないと確かめられなくなる）。

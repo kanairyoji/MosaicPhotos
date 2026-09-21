@@ -131,9 +131,9 @@ final class NightlyPlanTests: XCTestCase {
     /// 順序は実機の失敗が出典（Fix C・ADR-180・diagnostics-72）。**動かすならここを見る**。
     func testDefaultOrderIsAnalysisThenBackupThenGenerate() {
         let steps = labels(.init())
-        // 既定の `Inputs` は回線あり。共有と照合はその中に並ぶ。
+        // 既定の `Inputs` は回線あり・照合の期限は来ていない。共有はその中に並ぶ。
         XCTAssertEqual(steps, ["analysis", "stallCheck", "backup", "generate",
-                               "shareImport", "reconcile", "drain"])
+                               "shareImport", "drain"])
         XCTAssertTrue(steps.firstIndex(of: "analysis")! < steps.firstIndex(of: "generate")!,
                       "generate を先に await すると窓を食い潰して顔/埋め込みが開始すらしない（Fix C）")
         XCTAssertTrue(steps.firstIndex(of: "backup")! < steps.firstIndex(of: "generate")!,
@@ -177,9 +177,33 @@ final class NightlyPlanTests: XCTestCase {
     /// Dropbox の全件一覧を引く手なのに、以前は回線の判定の外にあり、
     /// 「Wi-Fi のみ」でもセルラーで引き得た（利用者の実費・ADR-198 と同じ問題）。
     func testWeeklyReconcileRequiresTheNetwork() {
-        XCTAssertFalse(labels(.init(networkAllowed: false)).contains("reconcile"),
+        XCTAssertFalse(labels(.init(networkAllowed: false, backupReconcileDue: true)).contains("reconcile"),
                        "回線が許されないのに全件一覧を引く（Wi-Fi のみでもセルラーで走る）")
-        XCTAssertTrue(labels(.init(networkAllowed: true)).contains("reconcile"))
+        XCTAssertTrue(labels(.init(networkAllowed: true, backupReconcileDue: true)).contains("reconcile"))
+    }
+
+    /// ⚠️ **照合はバックアップより前**（ADR-206）。`.startBackup` は投げっぱなしで
+    /// `isRunning` を立て、照合は `guard !isBusy` で門前払いされる。ADR-180 で 1 回あたりの
+    /// 上限を外してから、積み残しのある端末では窓いっぱい busy のままになり、
+    /// **照合がいちばん要る端末で、照合だけが永久に走らなかった**。
+    /// 照合はオフロードの緊急停止（ADR-202）の唯一の発火点なので、走らないと
+    /// 「唯一のコピーが消えた」ことに誰も気づけない。
+    func testDueReconcileRunsBeforeBackup() {
+        let steps = labels(.init(backupReconcileDue: true))
+        guard let reconcile = steps.firstIndex(of: "reconcile"),
+              let backup = steps.firstIndex(of: "backup") else {
+            return XCTFail("期限の週に照合の手が無い: \(steps)")
+        }
+        XCTAssertTrue(reconcile < backup, """
+            照合がバックアップより後にある（\(steps)）。
+            バックアップが isRunning を立てるので、照合は guard !isBusy で必ず空振りする。
+            """)
+    }
+
+    /// ふだんの週は手順を変えない（52 回に 1 回だけ前へ出る）。
+    func testReconcileIsAbsentWhenNotDue() {
+        XCTAssertFalse(labels(.init(backupReconcileDue: false)).contains("reconcile"),
+                       "期限が来ていないのに全件一覧を引いている")
     }
 
     /// 窓は必ず「待つ」で終わる（残作業が続く限り期限まで使い切る）。

@@ -21,6 +21,49 @@
 
 ---
 
+## ADR-206 照合は「いちばん要る端末でいちばん走らない」ようになっていた——順番と、クラウド側にも同じ仕組みを
+- 状態: 採用
+- 文脈: 週次の照合が 2 つとも成立していなかった。
+  - **バックアップ台帳**: 夜間の手順は `backup → … → reconcile` の順で、`.startBackup` は
+    投げっぱなしで `isRunning` を立てる。照合は `guard !isBusy`（走行中のアップロードと
+    一覧が食い違うため）で門前払いされる。ADR-180 で 1 回あたりの上限を外してから、
+    積み残しのある端末は窓いっぱい busy のままになった——つまり
+    **照合がいちばん要る端末で、照合だけが永久に走らない**。しかも照合は
+    オフロードの緊急停止（ADR-202）の**唯一の発火点**なので、
+    「唯一のコピーが消えた」ことに誰も気づけない状態だった。
+  - **クラウドのキャッシュ**: 一覧を取り直して掃除する処理は初回同期の中にしかなく、
+    差分が「消えた」通知を一度でも取りこぼすとその行は永久に残る（ADR-205 の実機事例）。
+    バックアップ台帳には週 1 回の照合があるのに、クラウド側には無かった。
+- 決定:
+  1. **照合はバックアップより前**。ただし期限の週だけ（`NightlyPlan.Inputs.backupReconcileDue`）。
+     52 回に 1 回しか手順が変わらないので、ふだんの窓の性質は保つ。
+  2. **失敗した回は間隔を縮める**（7 日 → 1 日）。刻印を始める前に置くのは正しい
+     （通信断の端末が毎晩全件一覧を投げないため）が、そのままだと窓が切れた回のぶん
+     緊急停止が丸 1 週間遅れる。
+  3. **`missingOffloadedPaths` にも `listedAt` を渡す**。`reconcile(remote:listedAt:)` は
+     `backedUpAt > listedAt` で走行中のアップロードを守っているのに、緊急停止の判定には
+     その保護が無く、`guard !isBusy` に守られているだけだった。並走したら
+     **在る写真を「消えた」と読んで誤発動する**。誤発動は自動オフロードを止めるので実害がある。
+  4. **クラウドのキャッシュも週 1 回、全件を見直す**。新しい仕掛けは足さない——
+     掃除の処理は初回同期の Step 4 が持っており、「最後に全件を見た時刻」は
+     `DropboxSyncState.initialSyncCompletedAt` がそのまま持っている。
+     期限が来たら初回同期をやり直すだけでよい（`CloudReconcilePolicy.isDue`）。
+     判定は `syncOnce`（起動時）と `pollLoop`（起動しっぱなし）で**同じ式**を使う
+     （`shouldReconcileNow`）。**前面では走らせない**（`BackgroundYield.allows(.cloudMonolith)`）。
+     見直しの回は進捗を画面へ出さない——キャッシュは既に埋まっていて、
+     利用者から見れば何も起きていないのが正しい。
+- 結果: 照合が実際に走るようになり、緊急停止が機能する。クラウドの取りこぼしが
+  最長 7 日で自力回復する。トレードオフは (a) 期限の週はバックアップの開始が
+  照合のぶん遅れる、(b) 週 1 回 `list_folder` を全件ぶん引く（`applyDelta` は
+  変わっていない行を書かないので、書き込みは増えない）。
+- ⚠️ 罠: `pollLoop` の期限判定は **longpoll の後**に置く。周の先頭に置くと、`syncOnce` が
+  「まだ動かしてよい時間ではない」と判断して poll へ戻した瞬間にまた true を返し、
+  通信を 1 度もせずに回り続ける（タイトループ）。
+- 関連: `NightlyWorkPolicy.swift` / `HeavyWorkScheduler.swift` / `BackupEngine.swift`
+  （`isReconcileDue`）/ `BackupReconcilePolicy.swift`（`stampAfterFailure`）/
+  `BackupStore.swift`（`missingOffloadedPaths`）/ `CloudReconcilePolicy.swift` /
+  `DropboxSyncEngine.swift` / ADR-166 / ADR-180 / ADR-202 / ADR-205。
+
 ## ADR-205 「そこに無い」は一時エラーではない——`path/not_found` を恒久の失敗として扱う
 - 状態: 採用
 - 文脈: 実機ログ（diagnostics-82・受信側シミュレータ）で、家族の共有フォルダ `/MosaicShare`

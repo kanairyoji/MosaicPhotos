@@ -236,10 +236,20 @@ public actor BackupStore {
     ///
     /// ⚠️ **完全な一覧でだけ呼ぶこと**。ページの途中で失敗した一覧を渡すと、実在する写真を
     /// 「消えた」と判定して緊急停止を誤発動する（`listFolder` は部分結果を返さない設計）。
-    /// - Parameter remote: Dropbox の実ファイル一覧（path_lower → content_hash）。
-    public func missingOffloadedPaths(remote: [String: String]) -> [String] {
+    ///
+    /// ⚠️ **一覧を取った後にオフロードされた記録は判定しない**（ADR-206）。
+    /// 一覧の取得後にアップロード＋オフロードされた写真はその一覧に載っていないので、
+    /// 素直に突き合わせると「消えた」と読めてしまい、**緊急停止が誤発動する**。
+    /// 誤発動は自動オフロードを止めて確認を促すので、実害がある。
+    /// `reconcile(remote:listedAt:)` が `backedUpAt` で同じ保護をしているのと対にする
+    /// ——以前はこちらだけ保護が無く、`BackupEngine` の `guard !isBusy` に守られていた。
+    /// - Parameters:
+    ///   - remote: Dropbox の実ファイル一覧（path_lower → content_hash）。
+    ///   - listedAt: その一覧を取りに行った時刻（**取得の直前**に採ったもの）。
+    public func missingOffloadedPaths(remote: [String: String], listedAt: Date) -> [String] {
         let records = (try? modelContext.fetch(FetchDescriptor<OffloadRecord>())) ?? []
         return records.compactMap { record -> String? in
+            guard record.offloadedAt <= listedAt else { return nil }   // 一覧より後＝判定できない
             let path = record.dropboxPath.lowercased()
             guard let remoteHash = remote[path] else { return path }   // 消えた
             // 記録に hash が無い（旧形式）なら、在るだけで良しとする。

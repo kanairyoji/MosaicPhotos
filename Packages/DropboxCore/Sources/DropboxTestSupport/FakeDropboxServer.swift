@@ -366,6 +366,19 @@ public actor FakeDropboxServer: HTTPClient {
         note(path, deleted: true)
     }
 
+    /// **差分に載らない削除**（取りこぼした削除通知を模す）。
+    ///
+    /// ⚠️ 本物の Dropbox は削除を必ず差分で知らせるが、受信側がそれを取りこぼすことはある
+    /// （カーソル失効・適用中のプロセス終了・保存の失敗）。取りこぼした後の世界は
+    /// 「サーバーには無いのに、差分では二度と知らされない」＝これと同じ形になる。
+    /// 週次の見直し（ADR-206）がそれを掃除できるかを試すために要る。
+    public func removeSilently(_ path: String) {
+        let key = path.lowercased()
+        files.removeValue(forKey: key)
+        bodies.removeValue(forKey: key)
+        // `note(_:deleted:)` を**呼ばない**＝変更ログに載らない。
+    }
+
     /// フォルダごと消える（Web UI での削除・共有の解除を模す）。
     /// ⚠️ 配下も一緒に消す。残すと `list_folder` は 409 なのに `continue` は中身を返す、
     /// という本物には無い状態になる。

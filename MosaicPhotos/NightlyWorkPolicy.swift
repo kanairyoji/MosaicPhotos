@@ -57,11 +57,14 @@ enum NightlyPlan {
         var availableMB: Int
         var networkAllowed: Bool
         var provideShareEnabled: Bool
+        /// バックアップ台帳の週次照合の期限が来ているか（ADR-206）。
+        /// ⚠️ **手順の位置がこれで変わる**（来ている週だけバックアップの前に出す）。
+        var backupReconcileDue: Bool
 
         init(boostActive: Bool = false, embedBacklog: Int = 0, faceBacklog: Int = 0,
              generateDeferrals: Int = 0, maxGenerateDeferrals: Int = 4,
              availableMB: Int = 2048, networkAllowed: Bool = true,
-             provideShareEnabled: Bool = false) {
+             provideShareEnabled: Bool = false, backupReconcileDue: Bool = false) {
             self.boostActive = boostActive
             self.embedBacklog = embedBacklog
             self.faceBacklog = faceBacklog
@@ -70,6 +73,7 @@ enum NightlyPlan {
             self.availableMB = availableMB
             self.networkAllowed = networkAllowed
             self.provideShareEnabled = provideShareEnabled
+            self.backupReconcileDue = backupReconcileDue
         }
     }
 
@@ -139,6 +143,14 @@ enum NightlyPlan {
     static func remainingSteps(_ i: Inputs) -> [Step] {
         var out: [Step] = []
         out.append(.logStalledPasses)
+        // ⚠️ **照合はバックアップより前**（ADR-206）。`.startBackup` は投げっぱなしで
+        // `isRunning` を立て、照合は `guard !isBusy` で門前払いされる。ADR-180 で 1 回あたりの
+        // 上限を外してから、積み残しのある端末では窓いっぱい busy のままになり——
+        // **照合がいちばん要る端末で、照合だけが永久に走らなかった**。
+        // 照合はオフロードの緊急停止（ADR-202）の唯一の発火点なので、走らないと
+        // 「唯一のコピーが消えた」ことに誰も気づけない。
+        // 期限が来た週だけ前へ出す（52 回に 1 回なので、ふだんの手順は変えない）。
+        if i.networkAllowed && i.backupReconcileDue { out.append(.reconcileBackup) }
         out.append(.startBackup)
 
         switch NightlyWorkPolicy.generateDecision(embedBacklog: i.embedBacklog,
@@ -162,7 +174,7 @@ enum NightlyPlan {
             // 通信が要るのに、ここだけ外にあった——「Wi-Fi のみ」でもセルラーで
             // 全件一覧を引き得た（ADR-198 で撤回した「ブーストは回線を免除」と同じ、
             // 利用者の実費の問題）。`background-behavior.md` の表も回線 ○ と書いている。
-            out.append(.reconcileBackup)
+            // 位置は上へ移した（ADR-206）。回線の条件はそちらにも書いてある。
         }
         out.append(.drainUntilIdle)
         return out

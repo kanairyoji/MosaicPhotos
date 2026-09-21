@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import MosaicSupport
 
 /// バックグラウンドメタ情報同期エンジン。
 ///
@@ -119,18 +120,35 @@ final class DropboxSyncEngine {
         //   ⚠️ カーソルはスキャン中にも書かれるため、「カーソルがある＝走査済み」ではない。
         //   途中で終了すると「一部の写真＋カーソル」が残り、次回起動が poll へ直行して
         //   **未走査フォルダの既存写真が永久に取得されない**（レビュー指摘）。
-        if let cursor, itemCount > 0, state?.isInitialSyncCompleted == true {
+        // ⚠️ **週 1 回は全件を見直す**（ADR-206）。差分は「消えた」通知を取りこぼすと
+        // その行が永久に残るので、掃除しに来る経路が要る。掃除の処理は初回同期が持っている
+        // ので、期限が来たらそれをやり直すだけでよい。
+        // ⚠️ **前面では走らせない**。8 万件の一覧は一枚岩の通信処理（ADR-107）。
+        let reconcileDue = Self.shouldReconcileNow(lastFullScan: state?.initialSyncCompletedAt)
+        if let cursor, itemCount > 0, state?.isInitialSyncCompleted == true, !reconcileDue {
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
-            return await pollLoop(scopeKey: scopeKey, root: root,
-                                  startCursor: cursor, isPrimary: isPrimary)
+            return await pollLoop(scopeKey: scopeKey, root: root, startCursor: cursor,
+                                  isPrimary: isPrimary,
+                                  lastFullScan: state?.initialSyncCompletedAt)
         } else {
             let reason = cursor == nil ? "no cursor"
                 : itemCount == 0 ? "cursor present but 0 items"
+                : reconcileDue ? "weekly reconcile due"
                 : "initial sync never completed (interrupted or pre-upgrade)"
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(reason) — starting initial sync")
             return await initialSync(accountId: accountId, root: root, scopeKey: scopeKey,
-                                     isPrimary: isPrimary)
+                                     isPrimary: isPrimary, isReconcile: reconcileDue)
         }
+    }
+
+    /// いま全件の見直しに入ってよいか。**期限と、重い通信を始めてよいかの両方**を見る。
+    ///
+    /// ⚠️ 判定を 1 か所に置く（`syncOnce` と `pollLoop` が同じ式を使う）。別々に書くと、
+    /// 片方が「やり直せ」と言って片方が「まだ」と言う状態になり、やり直しの合図だけが
+    /// 空回りする——ADR-196 で畳んだ「入口と譲りで違う条件」と同じ形。
+    private static func shouldReconcileNow(lastFullScan: Date?, now: Date = Date()) -> Bool {
+        CloudReconcilePolicy.isDue(lastFullScan: lastFullScan, now: now)
+            && BackgroundYield.allows(.cloudMonolith)
     }
 
     /// UI 状態の報告（プライマリルートのみ）。追加ルートは静かに同期する。
@@ -141,10 +159,13 @@ final class DropboxSyncEngine {
     // MARK: - Parallel initial sync
 
     /// - Returns: **やり直しが要るか**（後続の poll でカーソルが失効した場合）。
+    /// - Parameter isReconcile: 週次の見直し（ADR-206）か。**進捗を画面へ出さない**——
+    ///   キャッシュは既に埋まっていて、利用者から見れば何も起きていないのが正しい状態。
+    ///   「同期中」を出すと、週に 1 度だけ理由もなく進捗が走るように見える。
     private func initialSync(accountId: String, root: String, scopeKey: String,
-                             isPrimary: Bool) async -> Bool {
+                             isPrimary: Bool, isReconcile: Bool = false) async -> Bool {
         do {
-            reportState(.initialSync(fetched: 0), isPrimary: isPrimary)
+            if !isReconcile { reportState(.initialSync(fetched: 0), isPrimary: isPrimary) }
 
             // Step 1: ロングポールのベースラインカーソルをスキャン開始前に確保。
             // これにより、スキャン中の変更はポーリングフェーズで差分として拾われる。
@@ -199,7 +220,9 @@ final class DropboxSyncEngine {
                         await cache.applyDelta(accountId: scopeKey,
                                          added: pg.added, removed: [],
                                          newCursor: baselineCursor)
-                        reportState(.initialSync(fetched: allImages.count), isPrimary: isPrimary)
+                        if !isReconcile {
+                            reportState(.initialSync(fetched: allImages.count), isPrimary: isPrimary)
+                        }
                         onCacheUpdated(pg.added.map { $0.path.lowercased() })
                     }
                     cur = pg.cursor
@@ -226,11 +249,14 @@ final class DropboxSyncEngine {
             // .polling 移行前に state を確定させる（空配列＝全体反映）。
             onCacheUpdated([])
             // ここまで来て初めて「走査済み」。以後の起動は poll へ直行してよい。
-            await cache.markInitialSyncCompleted(accountId: scopeKey)
-            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: initial sync complete — \(allImages.count) images, \(stalePaths.count) stale removed")
+            // ⚠️ この時刻は「最後に全件を見終えた時刻」でもある（ADR-206 の照合の基準）。
+            let completedAt = Date()
+            await cache.markInitialSyncCompleted(accountId: scopeKey, at: completedAt)
+            DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(isReconcile ? "weekly reconcile" : "initial sync") complete — \(allImages.count) images, \(stalePaths.count) stale removed")
 
             return await pollLoop(scopeKey: scopeKey, root: root,
-                                  startCursor: baselineCursor, isPrimary: isPrimary)
+                                  startCursor: baselineCursor, isPrimary: isPrimary,
+                                  lastFullScan: completedAt)
 
         } catch is CancellationError {
             reportState(.idle, isPrimary: isPrimary)
@@ -243,9 +269,11 @@ final class DropboxSyncEngine {
 
     // MARK: - Longpoll loop
 
-    /// - Returns: **やり直しが要るか**（カーソル失効＝投げ直しても無駄）。
+    /// - Parameter lastFullScan: 最後に全件を見終えた時刻（週次の見直しの基準・ADR-206）。
+    ///   ポーリング中は変わらないので、入るときに 1 度もらって持っておく。
+    /// - Returns: **やり直しが要るか**（カーソル失効・ルート消失・週次の見直し）。
     private func pollLoop(scopeKey: String, root: String, startCursor: String,
-                          isPrimary: Bool) async -> Bool {
+                          isPrimary: Bool, lastFullScan: Date?) async -> Bool {
         var cursor = startCursor
         /// 「変化あり」と言われたのに**表示対象の増減が 0 だった**周の連続数（diagnostics-81）。
         /// 自分のバックアップ・共有コピーが同じルートへ落ちると延々と立つので、ここで間隔を空ける。
@@ -257,6 +285,16 @@ final class DropboxSyncEngine {
             do {
                 let result = try await longpoll(cursor: cursor)
                 guard !Task.isCancelled else { break }
+
+                // ⚠️ **判定は longpoll の後**（ADR-206）。周の先頭に置くと、`syncOnce` が
+                // 「まだ動かしてよい時間ではない」と判断して poll へ戻した瞬間に
+                // ここがまた true を返し、通信を 1 度もせずに回り続ける（タイトループ）。
+                // 後ろに置けば、最悪でも 1 周 1 longpoll のコストが入る。
+                if Self.shouldReconcileNow(lastFullScan: lastFullScan) {
+                    DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: "
+                        + "weekly reconcile due — re-listing to drop anything that is gone")
+                    return true
+                }
 
                 if let backoff = result.backoff, backoff > 0 {
                     DropboxLogger.verbose("SyncEngine: backoff \(backoff)s")

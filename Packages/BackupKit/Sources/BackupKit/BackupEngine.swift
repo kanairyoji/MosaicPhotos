@@ -336,7 +336,7 @@ public final class BackupEngine {
         // クラウドのコピーが唯一のコピーなので、消えていたらその写真はもう無い。
         // 同じことを繰り返させないよう自動オフロードを止め、一覧の上で知らせる。
         // 一覧が完全な回にしか来ない（`listFolder` は部分結果を返さない）＝誤発動しない。
-        let missing = await store().missingOffloadedPaths(remote: remote)
+        let missing = await store().missingOffloadedPaths(remote: remote, listedAt: listedAt)
         if !missing.isEmpty {
             OffloadHalt.record(missingPaths: missing)
             addLog("⚠️ \(missing.count) offloaded photo(s) are missing in Dropbox — auto offload stopped")
@@ -372,15 +372,8 @@ public final class BackupEngine {
     @discardableResult
     public func reconcileIfDueWeekly(now: Date = Date()) async -> Bool {
         guard !isBusy else { return false }
-        let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
-            .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
-        guard destination == .dropbox else { return false }
+        guard isReconcileDue(now: now) else { return false }
         let key = BackupSettingsKeys.lastReconcileAt
-        let last = (UserDefaults.standard.object(forKey: key) as? Double)
-            .map { Date(timeIntervalSinceReferenceDate: $0) }
-        // 判定は純ロジック（テスト済み）。ここは反映だけ。
-        guard BackupReconcilePolicy.isDue(lastRun: last, now: now,
-                                          interval: Self.reconcileInterval) else { return false }
         // ⚠️ 時刻は**始める前**に記録する。失敗のたびに毎晩全件一覧を引き直さないため
         // （通信断が続く端末で、窓のたびに数万件の list_folder を投げるのは高くつく）。
         UserDefaults.standard.set(now.timeIntervalSinceReferenceDate, forKey: key)
@@ -389,13 +382,35 @@ public final class BackupEngine {
             Diagnostics.mark("reconcile: weekly — verified=\(result.verified) "
                              + "removed=\(result.removed) remote=\(result.remoteFiles)")
         } else {
-            Diagnostics.mark("reconcile: weekly — skipped or failed")
+            // ⚠️ 失敗した回は**間隔を縮めて**やり直す（ADR-206）。丸 1 週間待つと、
+            // 窓が途中で切れた回のぶんだけオフロードの緊急停止が遅れる。
+            let stamp = BackupReconcilePolicy.stampAfterFailure(
+                now: now, interval: Self.reconcileInterval, retryAfter: Self.reconcileRetryInterval)
+            UserDefaults.standard.set(stamp.timeIntervalSinceReferenceDate, forKey: key)
+            Diagnostics.mark("reconcile: weekly — skipped or failed (retrying in "
+                             + "\(Int(Self.reconcileRetryInterval / 3600))h)")
         }
         return true
     }
 
+    /// 週次照合の期限が来ているか（夜間の手順を組むときに読む・ADR-206）。
+    ///
+    /// ⚠️ **`isBusy` は見ない**。手順を組む側は「期限が来ているか」だけを知りたい
+    /// （busy かどうかは実行する時点の話で、そのために照合を前へ出すのだから）。
+    public func isReconcileDue(now: Date = Date()) -> Bool {
+        let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
+            .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
+        guard destination == .dropbox else { return false }
+        let last = (UserDefaults.standard.object(forKey: BackupSettingsKeys.lastReconcileAt) as? Double)
+            .map { Date(timeIntervalSinceReferenceDate: $0) }
+        return BackupReconcilePolicy.isDue(lastRun: last, now: now,
+                                           interval: Self.reconcileInterval)
+    }
+
     /// 照合の最短間隔（7 日）。
     static let reconcileInterval: TimeInterval = 7 * 24 * 60 * 60
+    /// 失敗した回のやり直し間隔（1 日）。
+    static let reconcileRetryInterval: TimeInterval = 24 * 60 * 60
 
     // MARK: - Nightly auto backup (ADR-42)
 

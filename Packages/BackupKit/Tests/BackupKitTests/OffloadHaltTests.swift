@@ -21,6 +21,8 @@ struct OffloadHaltTests {
     private let root = "/MosaicPhotos/iPhone-E7/Backup"
     /// 配線のテスト（`OffloadHaltWiringTests.swift`・同じ Suite）からも使う。
     let haltPhoto = Data("only-copy".utf8)
+    /// 「この一覧は、テストが作ったオフロードより後に取った」ことを表す時刻。
+    private let listedAfterAllOffloads = Date.distantFuture
 
     private func storeWithOffloaded(paths: [String]) async -> BackupStore {
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
@@ -44,7 +46,8 @@ struct OffloadHaltTests {
         let path = "\(root)/2023/2023-11/a.jpg"
         let store = await storeWithOffloaded(paths: [path])
 
-        let missing = await store.missingOffloadedPaths(remote: [:])   // Dropbox に何も無い
+        let missing = await store.missingOffloadedPaths(remote: [:],   // Dropbox に何も無い
+                                                        listedAt: listedAfterAllOffloads)
 
         // ⚠️ 台帳もリモート一覧（`path_lower`）も小文字。突合は小文字で揃える。
         #expect(missing == [path.lowercased()], "唯一のコピーが消えているのに気づいていない")
@@ -58,7 +61,8 @@ struct OffloadHaltTests {
         let store = await storeWithOffloaded(paths: [path])
 
         let missing = await store.missingOffloadedPaths(
-            remote: [path.lowercased(): DropboxContentHash.hash(of: Data("different".utf8))])
+            remote: [path.lowercased(): DropboxContentHash.hash(of: Data("different".utf8))],
+            listedAt: listedAfterAllOffloads)
 
         #expect(missing == [path.lowercased()], "別物に差し替わっているのに在ると判定した")
     }
@@ -70,9 +74,30 @@ struct OffloadHaltTests {
         let store = await storeWithOffloaded(paths: [path])
 
         let missing = await store.missingOffloadedPaths(
-            remote: [path.lowercased(): DropboxContentHash.hash(of: haltPhoto)])
+            remote: [path.lowercased(): DropboxContentHash.hash(of: haltPhoto)],
+            listedAt: listedAfterAllOffloads)
 
         #expect(missing.isEmpty, "在る写真を消えたと判定した（緊急停止の誤発動）")
+    }
+
+    /// ⚠️ **一覧を取った後にオフロードされた写真で誤発動しない**（ADR-206）。
+    /// バックアップと照合が並走すると、一覧の取得後に上がった写真はその一覧に載らない。
+    /// 素直に突き合わせると「消えた」と読めてしまい、自動オフロードが止まって
+    /// 確認するまでピッカーが触れなくなる——在るのに。
+    /// `reconcile(remote:listedAt:)` は `backedUpAt` で同じ保護をしている。対にする。
+    @Test("一覧より後にオフロードされた写真は判定しない（誤発動を防ぐ）")
+    func ignoresOffloadsNewerThanTheListing() async {
+        let path = "\(root)/2023/2023-11/a.jpg"
+        let store = await storeWithOffloaded(paths: [path])
+
+        // 一覧は「オフロードより前」に取った＝この写真は載っていなくて当然。
+        let missing = await store.missingOffloadedPaths(remote: [:],
+                                                        listedAt: Date.distantPast)
+
+        #expect(missing.isEmpty, """
+                一覧より後にオフロードされた写真を「消えた」と判定した。
+                バックアップと照合が並走した回に緊急停止が誤発動する。
+                """)
     }
 
     // MARK: - 停止・確認
