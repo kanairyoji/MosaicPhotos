@@ -71,6 +71,41 @@ struct MissingRootRecoveryTests {
                 """)
     }
 
+    /// ⚠️ **アカウント全体（root == ""）では掃除しない**（レビュー 2 周目）。
+    /// 掃除の範囲は「このルートの配下」なので、root が空だと**キャッシュ全体**が対象になる。
+    /// アカウントのルートは消えようがないから、そこで not_found が返るのは想定外の応答
+    /// ——得るものが無いのに 8 万行を捨てることになる。
+    @Test("アカウント全体を同期しているときは、not_found でキャッシュを捨てない")
+    func doesNotWipeEverythingForTheAccountRoot() async {
+        let server = FakeDropboxServer()
+        for index in 0..<3 {
+            await server.upload(path: "/p\(index).jpg", data: Data("photo-\(index)".utf8))
+        }
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let engine = makeEngine(server, cache: cache, recorder: Recorder())
+
+        engine.start(accountId: "acc", roots: [""])
+        await waitUntil { await self.cachedCount(cache) == 3 }
+
+        // 差分の取得だけが「そこに無い」と言ってくる（想定外の応答）。
+        await server.inject(.init(endpoint: "list_folder/continue", effect: .status(409)))
+        await server.upload(path: "/p9.jpg", data: Data("new".utf8))   // 差分を起こす
+        // ⚠️ **時間ではなく「仕込みが実際に使われたこと」で待つ**。固定の待ちにしていたら、
+        // 並列実行で込み合った回だけ差分取得まで届かず、**何も起きていないのに緑**になった
+        //（単体で走らせると落ちる＝フレーキー）。ADR-119 の「空でも通る assert を書かない」。
+        await waitUntil {
+            await server.requestLog.contains { $0.contains("list_folder/continue") }
+        }
+        try? await Task.sleep(for: .milliseconds(100))   // 掃除が走るなら走り切る余地
+        engine.stop()
+
+        let count = await cachedCount(cache)
+        #expect(count == 3, """
+                アカウント全体のキャッシュを捨てた（残り \(count) 件）。
+                ルートが空のとき、掃除の範囲は「配下」ではなく**全部**になる。
+                """)
+    }
+
     /// ⚠️ **死んだカーソルを残さない**。残すと次回起動も poll へ直行して同じ 409 を踏み、
     /// 一覧の取り直し（＝掃除）に入る道が塞がれる。
     /// 「30 秒ごとに投げ直さない」ことそのものは待ち時間が長すぎて単体テストで測れないので、

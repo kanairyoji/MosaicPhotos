@@ -390,8 +390,12 @@ final class DropboxSyncEngine {
                 DropboxLogger.error("SyncEngine: cursor reset — discarding it and re-syncing")
                 await cache.resetSyncCursor(accountId: scopeKey)
                 return true
-            } catch let error as SyncError where error.isPathNotFound {
+            } catch let error as SyncError where error.isPathNotFound && !root.isEmpty {
                 // ⚠️ **ルートそのものが無い**（消された・名前が変わった・共有が解除された）。
+                // ⚠️ **アカウント全体（root == ""）は対象外**（レビュー 2 周目）。掃除の範囲は
+                // 「このルートの配下」で、root が空だと**キャッシュ全体**になる。
+                // アカウントのルートは消えようがないので、そこで not_found が返るのは
+                // こちらの読み違いか想定外の応答——得るものが無いのに 8 万行を捨てる。
                 // これも一時エラーではないので、投げ直しても永久に 409 が返る。
                 // 実機ログ（diagnostics-82）では家族フォルダが消えたまま 18 日間・30 秒ごとに
                 // 409 を出し続け、そのルートのキャッシュ 8,513 行が**開けない写真として

@@ -336,6 +336,9 @@ public actor FakeDropboxServer: HTTPClient {
         case 429: return #"{"error_summary":"too_many_write_operations/.."}"#
         case 403: return #"{"error_summary":"insufficient_permissions/.."}"#
         case 401: return #"{"error_summary":"expired_access_token/.."}"#
+        // ⚠️ 409 は「そこに無い」。本物の list / download / continue が返す形に揃える
+        //（このクラスのハンドラも同じ本文を直接返している）。
+        case 409: return #"{"error":{".tag":"path","path":{".tag":"not_found"}},"error_summary":"path/not_found/"}"#
         default:  return #"{"error_summary":"internal_error/.."}"#
         }
     }
