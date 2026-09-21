@@ -77,39 +77,56 @@ VAR_DECL = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |private |intern
                       r"var\s+\w+")
 
 
+# 本体を持つ宣言の頭（`func` / `init` / `subscript`）。折り返したシグネチャの 1 行目を捕まえる。
+DECL_HEAD = re.compile(r"\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |private |internal |fileprivate |static |"
+                       r"override |nonisolated |mutating |final |convenience |required |@discardableResult )*"
+                       r"(?:func\s+\w+|init\b|subscript\b)")
+
 def stored_state(text):
     """**型が持ち越す可変状態**の数（＝不整合になり得る組み合わせ）。
 
     ⚠️ 以前は行頭の `var` を無差別に数えていたので、次の 3 つが混ざっていた。
-    重み 13（構造系で最大）なので、順位そのものが歪んでいた——2026-09-21 の計測で
-    「顔クラスタ後処理 166」の **57%（95 個）が関数内のローカル変数**、
-    「解析状況/ブースト 43」の **47%（20 個）が計算プロパティ**だと分かった。
+    重み 13（構造系で最大）なので、順位そのものが歪んでいた。
 
-    - **関数・クロージャの中のローカル `var`**: 手続きの中だけで閉じている。
+    - **関数・クロージャ・計算プロパティの中のローカル `var`**: 手続きの中で閉じている。
       長い関数の指標としては意味があるが、それは `maxBranches` が見ている。
     - **計算プロパティ**（`var x: T { ... }`）: 由来が 1 つに決まる派生値で、
       **状態ではない**。むしろ状態を減らす書き方なので、加点すると逆向きの誘導になる。
-    - Codable の DTO フィールド: `var` なのはデコードの都合（`ShareAnalysisData` の
-      `x` `y` `w` `h` …）。ここは数えたままにする——型が持ち越す値ではあるので。
+    - Codable の DTO フィールドは数えたままにする（型が持ち越す値ではある）。
 
-    数えるのは**型のスコープに置かれた格納プロパティ**だけ（`didSet`/`willSet` 付きも含む）。
+    ⚠️ **本体に入ったかの判定は、`{` が宣言と同じ行に来ない場合がある**。
+    Swift では引数が多いと `func f(a: Int,` / `        b: Int) -> T {` と折り返すのが普通で、
+    宣言行だけを見ていると本体に入ったと分からない。分からないと中のローカル変数を
+    全部「状態」に数える——最初の修正がこれを踏み、顔クラスタ後処理を
+    **63**（正しくは 13）と報告していた。折り返しは `pending` で跨ぐ。
     """
     stored = 0
     depth = 0
-    func_depth = None          # func の本体に入った深さ（抜けたら None へ戻す）
+    body = None        # 本体に入った深さ（そこへ戻ったら型スコープに復帰）
+    pending = False    # 宣言は見たが本体の `{` がまだ来ていない（折り返したシグネチャ）
     for raw in text.split("\n"):
         line = raw.split("//")[0]
-        if VAR_DECL.match(line) and func_depth is None:
+        if body is None and not pending and VAR_DECL.match(line):
             brace, eq = line.find("{"), line.find("=")
             computed = brace >= 0 and (eq < 0 or eq > brace) \
                 and "didSet" not in line and "willSet" not in line
-            if not computed:
+            if computed:
+                body = depth       # 計算プロパティの本体も型スコープではない
+            else:
                 stored += 1
-        if FUNC_HEAD.match(line) and "{" in line and func_depth is None:
-            func_depth = depth
+                if brace >= 0:
+                    body = depth   # `var x = { … }()` のような初期化クロージャ
+        elif body is None and DECL_HEAD.match(line):
+            pending = True
+        # ⚠️ **開き括弧が閉じ括弧より多い行**でだけ本体に入ったとみなす。既定引数の
+        # クロージャ（`onProgress: (Int) -> Void = { _ in },`）は括弧が釣り合うので、
+        # ここで誤って本体に入ったことにしない。
+        if pending and line.count("{") > line.count("}"):
+            body = depth
+            pending = False
         depth += line.count("{") - line.count("}")
-        if func_depth is not None and depth <= func_depth:
-            func_depth = None
+        if body is not None and depth <= body:
+            body = None
     return stored
 BRANCH = re.compile(r"\b(if|guard|switch|case|while|for|catch)\b|&&|\|\||\?\?")
 
@@ -253,10 +270,117 @@ def score(rows):
     return rows
 
 
+
+# ⚠️ **計測の道具にもテストが要る**（2026-09-21・1 日で 2 回バグを入れた）。
+# `python3 scripts/complexity_scoreboard.py --selftest` で通す。
+# 指標を変えたら、まずここへ「壊れていたときの入力」を 1 件足すこと。
+SELFTEST_CASES = [
+    ("素の格納プロパティ", 2, """
+struct A {
+    var a = 0
+    private var b: String?
+}
+"""),
+    ("計算プロパティは状態ではない", 1, """
+struct A {
+    var stored = 0
+    var derived: Int { stored * 2 }
+    var multiline: Bool {
+        stored > 0
+    }
+}
+"""),
+    ("計算プロパティの本体のローカルは数えない", 1, """
+struct A {
+    var stored = 0
+    var summary: String {
+        var out = ""
+        for _ in 0..<3 { out += "x" }
+        return out
+    }
+}
+"""),
+    ("関数の中のローカルは数えない", 1, """
+struct A {
+    var stored = 0
+    func run() {
+        var local = 0
+        local += 1
+    }
+}
+"""),
+    # ⚠️ 実際に踏んだ穴。折り返したシグネチャは本体の `{` が別の行に来る。
+    ("折り返したシグネチャの本体も、中は数えない", 1, """
+struct A {
+    var stored = 0
+    func run(first: Int,
+             second: Int) -> Int {
+        var local = first
+        local += second
+        return local
+    }
+}
+"""),
+    # ⚠️ 既定引数のクロージャは括弧が釣り合う。ここで本体に入ったことにすると、
+    # そのあとの本体を型スコープと誤認して中のローカルを全部数える。
+    ("既定引数のクロージャで本体に入ったと誤解しない", 1, """
+struct A {
+    var stored = 0
+    func run(onEach: (Int) -> Void = { _ in },
+             limit: Int = 10) {
+        var local = 0
+        local += limit
+    }
+}
+"""),
+    ("didSet 付きは格納プロパティ", 1, """
+struct A {
+    var watched: Int = 0 {
+        didSet { print(watched) }
+    }
+}
+"""),
+    ("クロージャで初期化する格納プロパティは 1 件（中身は数えない）", 1, """
+struct A {
+    var made: Int = {
+        var seed = 1
+        return seed + 1
+    }()
+}
+"""),
+    ("init の中のローカルは数えない", 1, """
+struct A {
+    var stored: Int
+    init(value: Int,
+         extra: Int) {
+        var local = value
+        local += extra
+        stored = local
+    }
+}
+"""),
+]
+
+
+def selftest():
+    bad = 0
+    for name, expected, text in SELFTEST_CASES:
+        got = stored_state(text)
+        mark = "✔" if got == expected else "✘"
+        if got != expected:
+            bad += 1
+        print(f"{mark} {name}: 期待 {expected} / 実測 {got}")
+    print("すべて通過" if bad == 0 else f"{bad} 件が食い違っている")
+    return 0 if bad == 0 else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--selftest", action="store_true", help="指標の数え方だけを確かめる（リポジトリを読まない）")
     args = ap.parse_args()
+    if args.selftest:
+        sys.exit(selftest())
     rows = score(measure())
     if args.json:
         json.dump(rows, sys.stdout, ensure_ascii=False, indent=2)
