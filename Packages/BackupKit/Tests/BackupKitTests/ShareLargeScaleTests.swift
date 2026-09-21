@@ -1,6 +1,7 @@
 import DropboxCore
 import DropboxTestSupport
 import Foundation
+import MosaicSupport
 import Testing
 @testable import BackupKit
 
@@ -186,5 +187,65 @@ struct ShareLargeScaleTests {
         }
         let fetched = await ShareAnalysisFetch(httpClient: server, defaults: defaults).fetchUpdated(roots: [root], token: "t")
         #expect(fetched.count == 12, "ページの続きにあるシャードを取りこぼした")
+    }
+}
+
+// MARK: - 規模退行（ADR-119: 回数で見る）
+
+/// ⚠️ **回数で見る**（時間は CI で揺れる）。共有メンバーは 1 セットで 12,941 枚に達した
+/// 実績があるので、「セットごとに全メンバーを数え直す」形は規模に比例して効いてくる。
+@Suite("共有: 規模に比例しないこと", .serialized)
+@MainActor
+struct ShareScaleRegressionTests {
+
+    private static let backupRoot = "/MosaicPhotos"
+
+    private func makeStack(photos: Int)
+        async -> (ShareSyncEngine, BackupStore, FakeDropboxServer) {
+        let defaults = isolatedShareDefaults()
+        defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
+        defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        let server = FakeDropboxServer()
+        for index in 0..<photos {
+            let path = "/mosaicphotos/\(index).jpg"
+            await server.seed(path, hash: "h\(index)")
+            await store.upsertRecord(dropboxPath: path, localIdentifier: "p\(index)",
+                                     filename: "\(index).jpg", creationDate: nil,
+                                     contentHash: "h\(index)", people: [], albums: [],
+                                     isFavorite: false)
+        }
+        let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(), storeProvider: { store },
+                                     httpClient: server, defaults: defaults)
+        engine.pollIntervalNs = 1_000_000
+        engine.maxPollAttempts = 3
+        return (engine, store, server)
+    }
+
+    /// セットを 4 倍にしても、メンバーの数え直しが 4 倍にならないこと。
+    ///
+    /// ⚠️ 以前は `refresh()` をセットごとに呼び、その中で**毎回全メンバーを射影**していた
+    /// ——1 回の反映で「メンバー総数 × セット数」行を触る。1 回数えて使い回す。
+    @Test("セット数を 4 倍にしても、メンバーの数え直しは比例して増えない")
+    func memberCountingDoesNotScaleWithSetCount() async {
+        func countsAfterSync(sets: Int) async -> Int {
+            let (engine, _, _) = await makeStack(photos: sets * 4)
+            for s in 0..<sets {
+                _ = await engine.createSet(name: "Set\(s)",
+                                           refKeys: (0..<4).map { "L-p\(s * 4 + $0)" })
+            }
+            PerfTrace.isEnabled = true
+            _ = PerfTrace.takeCounts()      // ここまでを捨てる
+            await engine.syncNow()
+            return PerfTrace.takeCounts()["share.itemTotals"] ?? 0
+        }
+        let small = await countsAfterSync(sets: 1)
+        let large = await countsAfterSync(sets: 4)
+
+        #expect(small > 0, "計測できていない（PerfTrace が無効か、経路を通っていない）")
+        #expect(large <= small + 1, """
+                セット数 4 倍で数え直しが \(small) → \(large) 回に増えている。
+                1 回の反映でメンバーを数えるのは 1 回でよい（ADR-119）。
+                """)
     }
 }

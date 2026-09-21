@@ -74,6 +74,9 @@ extension ShareSyncEngine {
         }
         let remote = RemoteShareIndex(listing: listing)
 
+        // ⚠️ メンバー数は**1 回だけ数えて使い回す**（ADR-119）。セットごとに数え直すと
+        // 「メンバー総数 × セット数」行を 1 回の反映で射影することになる。
+        let totals = await store.shareItemTotals()
         for set in sets {
             guard !Task.isCancelled else {
                 needsAnotherPass = true
@@ -81,7 +84,7 @@ extension ShareSyncEngine {
             }
             await sync(set: set, shareRoot: shareRoot, store: store,
                        copier: copier, token: token, remote: remote)
-            await refresh()   // セットごとに進捗（共有済み N/M）を UI へ反映（変化なしなら無通知）
+            await refresh(totals: totals)   // 進捗（共有済み N/M）を UI へ（変化なしなら無通知）
         }
         // ⚠️ **フォルダの掃除は最後**（紛らわしい名前のテストが捕まえた）。
         // 先にやると、**コピー元が掃除対象のフォルダに在る**場合に元を消してからコピーする

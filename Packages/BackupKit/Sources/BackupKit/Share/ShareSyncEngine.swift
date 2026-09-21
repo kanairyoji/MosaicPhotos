@@ -117,9 +117,18 @@ public final class ShareSyncEngine {
     /// また **内容が同じなら代入しない**（`@Observable` は代入だけで購読ビューを
     /// 無効化するので、ホーム全体の再評価が無駄に走る・ADR-95 と同じ理由）。
     public func refresh() async {
+        await refresh(totals: nil)
+    }
+
+    /// - Parameter totals: セットごとのメンバー数。**反映の途中は使い回す**（ADR-119）——
+    ///   メンバーは 1 セットで 12,941 枚に達した実績があり、セットごとに数え直すと
+    ///   1 回の反映で「メンバー総数 × セット数」行を射影することになる。
+    ///   nil なら数え直す（UI から呼ばれる通常の経路）。
+    func refresh(totals precomputed: [UUID: Int]?) async {
         let store = await storeProvider()
         let all = await store.allShareSets()
-        let totals = await store.shareItemTotals()
+        let totals: [UUID: Int]
+        if let precomputed { totals = precomputed } else { totals = await store.shareItemTotals() }
         let synced = await store.shareSyncedCounts()
         let summaries: [SetSummary] = all.map { set in
             var summary = SetSummary(id: set.id, name: set.name,

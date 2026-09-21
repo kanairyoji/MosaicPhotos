@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import SwiftData
 
 /// 共有セット（家族共有）の永続化。BackupKit コンテナ（BackupStore actor）に相乗りする
@@ -32,6 +33,9 @@ extension BackupStore {
     /// 答えるもので、記録には無い。画面に出す数は反映のたびに数え直して
     /// `ShareSet.lastSyncedPresent` へ控える。
     public func shareItemTotals() -> [UUID: Int] {
+        // ⚠️ **回数を数えられるようにしておく**（ADR-119）。メンバーは 1 セットで
+        // 12,941 枚に達した実績があるので、反映のたびにセット数ぶん呼ぶと規模に比例する。
+        PerfTrace.count("share.itemTotals")
         var descriptor = FetchDescriptor<ShareItem>()
         descriptor.propertiesToFetch = [\.setID]
         let items = (try? modelContext.fetch(descriptor)) ?? []
