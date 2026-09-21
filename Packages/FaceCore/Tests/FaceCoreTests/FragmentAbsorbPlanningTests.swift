@@ -197,11 +197,17 @@ struct ReviewCandidatePlanningTests {
     /// いちばん尋ねる価値のある（近い）対が落ちる。
     @Test("上限で切るのは、近い順に並べた後")
     func limitKeepsTheClosestPairs() {
+        // ⚠️ **生成順と近い順をわざとずらす**。揃えてしまうと「並べ替える前に打ち切る」
+        // 誤りが素通りする——最初に書いたテストがまさにそれで、変異を入れても緑のままだった。
+        // id が小さいほど遠く、大きいほど近い並びにする。
         var c = [0: unit([1, 0, 0])]
-        for i in 1...5 { c[i] = unit([1, Float(i) * 0.05, 0]) }
+        for i in 1...5 { c[i] = unit([1, Float(6 - i) * 0.2, 0]) }
         let pairs = candidates(focus: [0], others: Array(0...5), centroid: c, scanLimit: 2)
         #expect(pairs.count == 2)
-        #expect(pairs.map(\.b) == [1, 2], "いちばん近い 2 対が残っていない: \(pairs.map(\.b))")
+        #expect(pairs.map(\.b) == [5, 4], """
+                いちばん近い 2 対が残っていない（\(pairs.map(\.b))）。
+                並べ替える前に打ち切ると、たまたま先に見つかった遠い対が残る。
+                """)
         #expect(pairs[0].sim >= pairs[1].sim, "降順になっていない")
     }
 
