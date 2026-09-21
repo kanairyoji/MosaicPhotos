@@ -97,22 +97,15 @@ extension FaceStore {
 
         // A1 の候補対（**片側は必ず基準**）。ここでは重心だけで絞り込む＝顔はまだ読まない。
         // 共起（同一写真）の判定は写真集合が要るので、対を絞ってから読む。
-        var mergeCandidates: [(a: Int, b: Int, sim: Float)] = []
-        for f in focus {
-            guard let ca = centroid[f.clusterID] else { continue }
-            for c in clusters where c.clusterID != f.clusterID {
-                guard let cb = centroid[c.clusterID] else { continue }
-                let sim = FaceClustering.dot(ca, cb)
-                guard sim >= tuning.mergeBandFloor(threshold: thr),
-                      !notSameIndex.isMarkedNotSame(f.clusterID, c.clusterID) else { continue }
-                // 別々の名前が付いた人物どうしは出さない（ユーザーが既に別人と表明済み・追補5）。
-                guard !Self.namesConflict(name[f.clusterID], name[c.clusterID]) else { continue }
-                mergeCandidates.append((f.clusterID, c.clusterID, sim))
-            }
-        }
-        mergeCandidates.sort { $0.sim > $1.sim }
-        // 出題は `limit` 件までなので、候補も上位だけ見れば足りる（顔の読み出しを有界にする）。
-        mergeCandidates = Array(mergeCandidates.prefix(Self.mergePairScanLimit))
+        // 選び方の規則は純ロジックへ（`ReviewCandidatePlanning`）。
+        let mergeCandidates = ReviewCandidatePlanning.mergeCandidates(
+            focus: focus.map(\.clusterID),
+            others: clusters.map(\.clusterID),
+            centroid: centroid, name: name,
+            bandFloor: tuning.mergeBandFloor(threshold: thr),
+            scanLimit: Self.mergePairScanLimit,
+            isMarkedNotSame: { notSameIndex.isMarkedNotSame($0, $1) },
+            namesConflict: { Self.namesConflict($0, $1) })
         guard !Task.isCancelled else { return [] }
 
         // ここで初めて顔を読む——**基準と、候補に挙がったクラスタだけ**。

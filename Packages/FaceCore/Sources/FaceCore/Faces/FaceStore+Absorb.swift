@@ -61,11 +61,17 @@ extension FaceStore {
             guard let sum = ClipMath.decodeHalf(c.sum) else { continue }
             centroid[c.clusterID] = FaceClustering.normalized(sum)
         }
+        // 選別の規則は純ロジックへ（ADR-154/155 が議論したのはここ）。
+        func shape(of c: PersonCluster) -> FragmentAbsorbPlanning.Shape {
+            FragmentAbsorbPlanning.Shape(photos: photos[c.clusterID] ?? 0,
+                                         hasName: c.name?.isEmpty == false,
+                                         isGrouped: c.personGroupID != nil,
+                                         hasAnchor: !(anchors[c.clusterID] ?? []).isEmpty)
+        }
         // 吸収先＝確立した人物。ライバル判定は「3 枚以上の人物」全体で見る
         //（小さな別人に近い断片を、たまたま大きい人へ吸わせない）。
         let targets = clusters.filter {
-            (photos[$0.clusterID] ?? 0) >= Self.absorbTargetMinPhotos
-                && (($0.name?.isEmpty == false) || !(anchors[$0.clusterID] ?? []).isEmpty)
+            FragmentAbsorbPlanning.isTarget(shape(of: $0), minPhotos: Self.absorbTargetMinPhotos)
         }
         let targetIDs = Set(targets.map(\.clusterID))
         let rivals = clusters.filter { (photos[$0.clusterID] ?? 0) >= 3 }
@@ -77,15 +83,12 @@ extension FaceStore {
             return FragmentAbsorbResult(absorbed: 0, people: 0, skipped: 0, skippedTooBig: 0)
         }
 
-        let fragments = clusters.filter { c in
-            let count = photos[c.clusterID] ?? 0
-            return count >= 1 && count <= Self.absorbMaxPhotos
-                && (c.name?.isEmpty ?? true) && c.personGroupID == nil
-                && (anchors[c.clusterID] ?? []).isEmpty
+        let fragments = clusters.filter {
+            FragmentAbsorbPlanning.isFragment(shape(of: $0), maxPhotos: Self.absorbMaxPhotos)
         }
         var absorbed = 0, skipped = 0
         // 見送りの内訳（どの条件で落ちたのかが分からないと、次にどこを緩めるか決められない）。
-        var belowBar = 0, marginal = 0, blockedCount = 0
+        var skips = FragmentAbsorbPlanning.SkipCounts()
         // ⚠️ **バーを動かす判断は、この端末の分布で決める**（ADR-162）。データセット
         // （FG-NET/LFW）は「1 人が多数の写真を持つ」形が違うので、バーの当てはめには弱い。
         // 「バー以外の条件を全部通った断片」が、どの近さに何件あるかを数える。
@@ -94,63 +97,51 @@ extension FaceStore {
         var wouldAbsorb = [Float: Int](uniqueKeysWithValues: probeBars.map { ($0, 0) })
         var into = Set<Int>()
         // 上限を上げれば対象になり得た数（無名・アンカーなしで、上限だけが理由の分）。
-        let tooBig = clusters.filter { c in
-            let count = photos[c.clusterID] ?? 0
-            return count > Self.absorbMaxPhotos && count < Self.absorbTargetMinPhotos
-                && (c.name?.isEmpty ?? true) && c.personGroupID == nil
-                && (anchors[c.clusterID] ?? []).isEmpty
+        let tooBig = clusters.filter {
+            FragmentAbsorbPlanning.isTooBigToAbsorb(shape(of: $0),
+                                                    maxPhotos: Self.absorbMaxPhotos,
+                                                    minPhotos: Self.absorbTargetMinPhotos)
         }.count
+
+        // ⚠️ **集合で引く**（ADR-119）。`targets.contains { $0.clusterID == … }` は
+        // 断片 × 相手 × 吸収先の三重ループになり、ライブラリが育つほど二乗で効いてくる
+        // （実測規模で 1,170 断片 × 約 1,300 クラスタ）。ここは `FaceStore` の単一アクター上で、
+        // ピープル一覧や情報パネルと同じ順番待ちの列にいる（ADR-142・diagnostics-68）。
+        let neighbours = rivals.compactMap { rival -> FragmentAbsorbPlanning.Neighbour? in
+            guard let vector = centroid[rival.clusterID] else { return nil }
+            return FragmentAbsorbPlanning.Neighbour(
+                clusterID: rival.clusterID, centroid: vector,
+                isTarget: targetIDs.contains(rival.clusterID),
+                refKeys: refKeysByCluster[rival.clusterID] ?? [])
+        }
+
         for fragment in fragments {
             guard absorbed < limit else { break }
             guard let vector = centroid[fragment.clusterID] else { continue }
-            // 最も近い「吸収先」と、最も近い「その他の人物」（2 位）を出す。
-            var best: (id: Int, sim: Float)?
-            var runnerUp: Float = -1
-            for rival in rivals where rival.clusterID != fragment.clusterID {
-                guard let other = centroid[rival.clusterID] else { continue }
-                let sim = FaceClustering.dot(vector, other)
-                // ⚠️ 集合で引く（ADR-119）。`targets.contains { $0.clusterID == … }` は
-                // 断片 × 相手 × 吸収先の三重ループになり、ライブラリが育つほど
-                // 二乗で効いてくる（実測規模で 1,170 断片 × 約 1,300 クラスタ）。
-                // ここは `FaceStore` の単一アクター上で、ピープル一覧や情報パネルと
-                // 同じ順番待ちの列にいる（ADR-142・diagnostics-68）。
-                let isTarget = targetIDs.contains(rival.clusterID)
-                if isTarget, sim > (best?.sim ?? -1) {
-                    if let previous = best { runnerUp = max(runnerUp, previous.sim) }
-                    best = (rival.clusterID, sim)
-                } else {
-                    runnerUp = max(runnerUp, sim)
-                }
+            // 判定は純ロジック（`FragmentAbsorbPlanning`）。ここは適用と記録だけ。
+            let decision = FragmentAbsorbPlanning.decide(
+                fragmentID: fragment.clusterID, centroid: vector,
+                refKeys: refKeysByCluster[fragment.clusterID] ?? [],
+                neighbours: neighbours, negatives: negatives,
+                bar: tuning.autoAbsorbBar, margin: Self.absorbMargin,
+                negativeSameThreshold: tuning.negativeSameThreshold,
+                isBlockedPair: { a, b in blocked.contains(Self.pairKey(a, b)) })
+            if let similarity = decision.cleanSimilarity {
+                for bar in probeBars where similarity >= bar { wouldAbsorb[bar, default: 0] += 1 }
             }
-            guard let best else { skipped += 1; belowBar += 1; continue }
-            // ⚠️ 判定の順番は変えない（記録の内訳が意味を保つ）が、**バー以外の条件**は
-            // バーで落ちた断片についても評価する——「バーを下げたら何件寄るか」を数えるため。
-            let marginOK = best.sim - runnerUp >= Self.absorbMargin
-            let fragmentPhotos = refKeysByCluster[fragment.clusterID] ?? []
-            let targetCentroid = centroid[best.id]
-            let clean = marginOK
-                && fragmentPhotos.isDisjoint(with: refKeysByCluster[best.id] ?? [])
-                && !blocked.contains(Self.pairKey(fragment.clusterID, best.id))
-                && targetCentroid.map {
-                    !FaceClustering.negativeRejects(vector, centroid: $0, negatives: negatives,
-                                                    sameThreshold: tuning.negativeSameThreshold)
-                } ?? false
-            if clean {
-                for bar in probeBars where best.sim >= bar { wouldAbsorb[bar, default: 0] += 1 }
-            }
-            guard best.sim >= tuning.autoAbsorbBar else { skipped += 1; belowBar += 1; continue }
-            // 紛らわしい（2 位が近い）なら人に尋ねる。
-            guard marginOK else { skipped += 1; marginal += 1; continue }
-            // 同一写真・負例・「別人」記録があるものは触らない。
-            guard clean else { skipped += 1; blockedCount += 1; continue }
-
-            // ⚠️ **機械の判断はジャーナルにもアンカーにも残さない**（ADR-152）。
-            if mergeClusters(from: fragment.clusterID, into: best.id,
-                             recordNotSameOnConflict: false, userInitiated: false) == nil {
-                absorbed += 1
-                into.insert(best.id)
-            } else {
+            switch decision.outcome {
+            case .skip(let reason):
                 skipped += 1
+                skips.record(reason)
+            case .absorb(let target):
+                // ⚠️ **機械の判断はジャーナルにもアンカーにも残さない**（ADR-152）。
+                if mergeClusters(from: fragment.clusterID, into: target,
+                                 recordNotSameOnConflict: false, userInitiated: false) == nil {
+                    absorbed += 1
+                    into.insert(target)
+                } else {
+                    skipped += 1
+                }
             }
         }
         if absorbed > 0 { try? modelContext.save(); clusteringCache = nil }
@@ -160,7 +151,7 @@ extension FaceStore {
             .joined(separator: " ")
         Diagnostics.mark("faces: absorb — absorbed=\(absorbed) into=\(into.count) "
                          + "fragments=\(fragments.count) targets=\(targets.count) "
-                         + "skipped=\(skipped)(bar=\(belowBar) margin=\(marginal) blocked=\(blockedCount)) "
+                         + "skipped=\(skipped)(bar=\(skips.belowBar) margin=\(skips.marginal) blocked=\(skips.blocked)) "
                          + "tooBig=\(tooBig) bar=\(tuning.autoAbsorbBar) | バー別に寄る数 \(distribution)")
         return FragmentAbsorbResult(absorbed: absorbed, people: into.count,
                                     skipped: skipped, skippedTooBig: tooBig)

@@ -74,7 +74,43 @@ PATCH_MARK = re.compile(r"⚠️|レビュー指摘|追記|追補|diagnostics-\d
 FUNC_HEAD = re.compile(r"\s*(?:@\w+\s+)*(?:public |private |internal |fileprivate |static |override |"
                        r"nonisolated |mutating |final |@discardableResult )*func\s+\w+")
 VAR_DECL = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |private |internal |fileprivate |static )*"
-                      r"var\s+\w+", re.M)
+                      r"var\s+\w+")
+
+
+def stored_state(text):
+    """**型が持ち越す可変状態**の数（＝不整合になり得る組み合わせ）。
+
+    ⚠️ 以前は行頭の `var` を無差別に数えていたので、次の 3 つが混ざっていた。
+    重み 13（構造系で最大）なので、順位そのものが歪んでいた——2026-09-21 の計測で
+    「顔クラスタ後処理 166」の **57%（95 個）が関数内のローカル変数**、
+    「解析状況/ブースト 43」の **47%（20 個）が計算プロパティ**だと分かった。
+
+    - **関数・クロージャの中のローカル `var`**: 手続きの中だけで閉じている。
+      長い関数の指標としては意味があるが、それは `maxBranches` が見ている。
+    - **計算プロパティ**（`var x: T { ... }`）: 由来が 1 つに決まる派生値で、
+      **状態ではない**。むしろ状態を減らす書き方なので、加点すると逆向きの誘導になる。
+    - Codable の DTO フィールド: `var` なのはデコードの都合（`ShareAnalysisData` の
+      `x` `y` `w` `h` …）。ここは数えたままにする——型が持ち越す値ではあるので。
+
+    数えるのは**型のスコープに置かれた格納プロパティ**だけ（`didSet`/`willSet` 付きも含む）。
+    """
+    stored = 0
+    depth = 0
+    func_depth = None          # func の本体に入った深さ（抜けたら None へ戻す）
+    for raw in text.split("\n"):
+        line = raw.split("//")[0]
+        if VAR_DECL.match(line) and func_depth is None:
+            brace, eq = line.find("{"), line.find("=")
+            computed = brace >= 0 and (eq < 0 or eq > brace) \
+                and "didSet" not in line and "willSet" not in line
+            if not computed:
+                stored += 1
+        if FUNC_HEAD.match(line) and "{" in line and func_depth is None:
+            func_depth = depth
+        depth += line.count("{") - line.count("}")
+        if func_depth is not None and depth <= func_depth:
+            func_depth = None
+    return stored
 BRANCH = re.compile(r"\b(if|guard|switch|case|while|for|catch)\b|&&|\|\||\?\?")
 
 # 履歴系（これまでの欠陥・退行）と構造系（いまのコードのリスク）で重みを分ける。
@@ -184,7 +220,7 @@ def measure():
         coupling = len({p for p, t in src.items()
                         if any(re.search(r"\b" + re.escape(x) + r"\b", t) for x in types)
                         and not any(p.startswith(y) for y in paths)})
-        state = sum(len(VAR_DECL.findall(src[p])) for p in own)
+        state = sum(stored_state(src[p]) for p in own)
         marks = sum(len(PATCH_MARK.findall(src[p])) for p in own)
         branches = max((max_branches(src[p]) for p in own), default=0)
         test_count = sum(len(re.findall(r"@Test|func test", t)) for p, t in tests.items()
