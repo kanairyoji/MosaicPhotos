@@ -186,7 +186,9 @@ extension FaceStore {
         }
         let started = Date()
         let groups = FaceAgglomeration.cluster(
-            faces: pending.filter { Float($0.quality) >= Self.qualityFloor }
+            // ⚠️ 平均連結へ入れる線は `inclusionFloor`（0.10・ADR-220）。昼の品質フロア（0.40）で
+            // 切ると、実機では実アルバムの顔の 6 割がここに入れなかった。
+            faces: pending.filter { Float($0.quality) >= tuning.agglomeration.inclusionFloor }
                 .map { .init(faceID: $0.faceID, photo: $0.refKey) },
             seeds: built.seeds.map { seed in
                 .init(clusterID: seed.id, memberFaceIDs: seedMembers[seed.id] ?? [],
@@ -212,7 +214,7 @@ extension FaceStore {
             minimumNextID: max(nextID, (materialized.clusters.map(\.id).max() ?? -1) + 1),
             anchoredClusterIDs: Set(built.seeds.filter { !$0.prototypes.isEmpty }.map(\.id)))
         // ⚠️ **実際に重心へ足した顔**だけを集める（ADR-210）。平均連結で山に入った顔は、
-        // 品質フロア以上なので全員が重み付き和に入っている。
+        // 全員が（品質で重み付けして）和に入っている。
         let contributed = built.contributed.union(materialized.assignment.keys)
         var linkSource: [String: FaceLinkSource] = [:]
         for faceID in contributed { linkSource[faceID] = .face }
@@ -225,15 +227,15 @@ extension FaceStore {
                                  linkSource: linkSource, usedByPhoto: usedByPhoto)
     }
 
-    /// 3) 第2パス（ADR-66・recall 回復）: 品質フロア未満で捨てていた顔（横顔・ぶれ・小さめ等・
-    /// 埋め込みはある）を、**重心を汚さず**最寄り人物へ membership だけ割り当てる（sum/count 不変）。
+    /// 3) 第2パス（ADR-66・recall 回復）: 平均連結に入れなかった顔（`inclusionFloor` 未満＝極端に
+    /// 写りの悪い顔）を、**重心を汚さず**最寄り人物へ membership だけ割り当てる（sum/count 不変）。
     /// 「人が写っているのに People に出ない」を減らす。線はプロファイルの `secondPassThreshold`。
     ///
     /// ⚠️ 連写（ADR-211）・服装（ADR-212）による拾い直しはこの後ろにあったが、PIPA の計測で
     /// 繋いだ顔の正解率 0%・B-Cubed F1 低下と分かり撤回した（face-accuracy.md の PIPA 節）。
     private func assignSecondPass(_ state: inout RebuildAssignment) {
         for f in state.pending where (state.assignment[f.faceID] ?? FaceClustering.unassigned) < 0
-            && Float(f.quality) < Self.qualityFloor {
+            && Float(f.quality) < tuning.agglomeration.inclusionFloor {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
             let cid = state.clustering.assignMembershipOnly(
                 faceID: f.faceID, embedding: vec,

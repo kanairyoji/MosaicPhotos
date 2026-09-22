@@ -56,7 +56,7 @@ public struct FaceTuning: Sendable, Equatable {
         autoAbsorbBar: 0.80, autoSuggestBar: 0.90,
         calibrationRange: 0.35...0.55, negativeSameThreshold: 0.55,
         auditMinMargin: 0.25, auditMaxSeparation: 0.35,
-        agglomeration: .init(microThreshold: 0.65, mergeBar: 0.60))
+        agglomeration: .init(microThreshold: 0.65, mergeBar: 0.60, inclusionFloor: 0.10))
 
     /// ArcFace 系（AuraFace-v1・v5 パイプライン）。類似度スケールが約 0.1 低い
     /// （同一人物平均 0.434・別人 0.120・兄弟の代理 0.188）。
@@ -69,7 +69,7 @@ public struct FaceTuning: Sendable, Equatable {
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
         auditMinMargin: 0.20, auditMaxSeparation: 0.40,
         // ⚠️ 赤ちゃんの時期の決まり（ADR-219）は判別器を外して無効（撤回・学習データの権利）。
-        agglomeration: .init(microThreshold: 0.55, mergeBar: 0.40))
+        agglomeration: .init(microThreshold: 0.55, mergeBar: 0.40, inclusionFloor: 0.10))
 
     /// 実際に使う「尋ねる」下限。
     ///

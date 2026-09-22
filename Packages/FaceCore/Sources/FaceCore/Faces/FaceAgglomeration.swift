@@ -42,13 +42,21 @@ public enum FaceAgglomeration {
         public var neighbors: Int
         /// 赤ちゃんの時期の決まり（ADR-219）。nil なら使わない。
         public var babyRule: BabyRule?
+        /// **この品質以上の顔を平均連結に入れる**（ADR-220）。これ未満は第2パス（所属だけ）へ。
+        ///
+        /// ⚠️ 昼の逐次割り当ての品質フロア（`FaceStore.qualityFloor` 0.40）とは別。実機の品質
+        /// （OS の顔品質 × 減点）は多くの顔で 0.1〜0.4 になり、0.40 では実アルバムの顔の 6 割が
+        /// 平均連結に入れなかった。平均連結は「全員と全員の平均」で測るので、写りの悪い顔が
+        /// 混ざっても 1 枚で山が引きずられない＝捨てずに入れたほうが純度も再現率も上がる。
+        public var inclusionFloor: Float
 
         public init(microThreshold: Float, mergeBar: Float, neighbors: Int = 30,
-                    babyRule: BabyRule? = nil) {
+                    babyRule: BabyRule? = nil, inclusionFloor: Float = 0.40) {
             self.microThreshold = microThreshold
             self.mergeBar = mergeBar
             self.neighbors = neighbors
             self.babyRule = babyRule
+            self.inclusionFloor = inclusionFloor
         }
     }
 

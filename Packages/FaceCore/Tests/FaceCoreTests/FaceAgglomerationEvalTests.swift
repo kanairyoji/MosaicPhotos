@@ -107,7 +107,8 @@ struct FaceAgglomerationEvalTests {
         let pending = faces.sorted { $0.quality != $1.quality ? $0.quality > $1.quality : $0.id < $1.id }
         let byID = Dictionary(uniqueKeysWithValues: faces.map { ($0.id, $0) })
         let groups = FaceAgglomeration.cluster(
-            faces: pending.filter { $0.quality >= floor }.map { .init(faceID: $0.id, photo: $0.photo) },
+            faces: pending.filter { $0.quality >= config.inclusionFloor }
+                .map { .init(faceID: $0.id, photo: $0.photo) },
             seeds: [], embedding: { byID[$0]?.embedding }, captureDate: { byID[$0]?.date },
             config: config)
         var clusters: [FaceClustering.Cluster] = []
@@ -131,13 +132,15 @@ struct FaceAgglomerationEvalTests {
         var clustering = FaceClusteringSetup.make(
             threshold: tuning.clusterThreshold, qualityFloor: floor, tuning: tuning,
             seeds: clusters, minimumNextID: groups.count, anchoredClusterIDs: [])
-        secondPass(pending, clustering: &clustering, assignment: &assignment, used: &used)
+        secondPass(pending, clustering: &clustering, assignment: &assignment, used: &used,
+                   below: config.inclusionFloor)
         return assignment
     }
 
     static func secondPass(_ pending: [Face], clustering: inout FaceClustering,
-                           assignment: inout [String: Int], used: inout [String: Set<Int>]) {
-        for f in pending where (assignment[f.id] ?? -1) < 0 && f.quality < floor {
+                           assignment: inout [String: Int], used: inout [String: Set<Int>],
+                           below: Float = floor) {
+        for f in pending where (assignment[f.id] ?? -1) < 0 && f.quality < below {
             let cid = clustering.assignMembershipOnly(faceID: f.id, embedding: f.embedding,
                                                       excludedClusterIDs: used[f.photo] ?? [],
                                                       threshold: tuning.secondPassThreshold)
@@ -216,6 +219,48 @@ struct FaceAgglomerationEvalTests {
                 let agg = Self.agglomerative(faces, config: .init(microThreshold: 0.65, mergeBar: bar))
                 Self.emit(Self.line(String(format: "AGG-FACENET[%@] 平均連結 小さな山 0.65・まとめる線 %.2f", name, bar),
                                     Self.score(agg, faces), violations: Self.samePhotoViolations(agg, faces)))
+            }
+        }
+    }
+
+    // MARK: - 実機相当の品質（ADR-220）
+
+    /// ⚠️ シミュレータでは OS の顔品質が取れず 1.0 になる（本番は nil を 1.0 として扱う）。
+    /// 計測キャッシュの品質は「1.0 × 減点」なので、Mac で取った OS の品質
+    /// （`scripts/os_face_quality.swift` → `os-quality.json`）と合成して実機の値を再現する。
+    /// 減点は上限（`profileCap`）か係数なので: 上限がかかった顔は min(OS, 上限)、それ以外は OS × 係数。
+    static func deviceLike(_ faces: [Face], osQualityPath: String) -> [Face]? {
+        guard let data = FileManager.default.contents(atPath: osQualityPath),
+              let os = try? JSONDecoder().decode([String: Float].self, from: data) else { return nil }
+        let cap = FaceQualityGate.profileCap
+        return faces.map { f in
+            guard let raw = os[f.id] else { return f }
+            let q = f.quality <= cap + 0.0001 ? min(raw, f.quality) : raw * f.quality
+            return Face(id: f.id, photo: f.photo, truth: f.truth, embedding: f.embedding,
+                        quality: q, age: f.age, date: f.date)
+        }
+    }
+
+    @Test("実機相当の品質で、平均連結に入れる線（0.40 → 0.10）を比べる", .enabled(if: available))
+    func inclusionFloorOnDeviceQuality() throws {
+        var sets: [(String, [Face]?)] = [
+            ("fgnet", Self.deviceLike(try Self.loadCrops("fgnet"), osQualityPath: Self.root + "/fgnet/os-quality.json")),
+            ("lfw", Self.deviceLike(try Self.loadCrops("lfw"), osQualityPath: Self.root + "/lfw/os-quality.json")),
+        ]
+        if let pipa = try Self.loadPIPA() {
+            sets.append(("pipa", Self.deviceLike(pipa, osQualityPath: Self.pipaRoot + "/os-quality.json")))
+        }
+        for (name, maybe) in sets {
+            guard let faces = maybe else { Self.emit("FLOOR[\(name)]: os-quality.json が無い"); continue }
+            let below = faces.filter { $0.quality < FaceStore.qualityFloor }.count
+            Self.emit("FLOOR[\(name)] 実機相当の品質で 0.40 未満 \(below)/\(faces.count)")
+            for floor: Float in [0.40, 0.10] {
+                var config = Self.tuning.agglomeration
+                config.inclusionFloor = floor
+                let result = Self.agglomerative(faces, config: config)
+                let unassigned = faces.filter { $0.truth != nil && (result[$0.id] ?? -1) < 0 }.count
+                Self.emit(Self.line(String(format: "FLOOR[%@] 平均連結に入れる線 %.2f（入らず %d）", name, floor, unassigned),
+                                    Self.score(result, faces), violations: Self.samePhotoViolations(result, faces)))
             }
         }
     }
