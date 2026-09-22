@@ -149,7 +149,7 @@ extension FaceStore {
             storedCentroid: { storedCentroids[$0] ?? nil },
             negatives: negatives,
             tuning: tuning,
-            qualityFloor: Self.qualityFloor,
+            qualityFloor: seedQualityFloor,
             maxSeedPrototypes: Self.maxSeedPrototypes)
     }
 

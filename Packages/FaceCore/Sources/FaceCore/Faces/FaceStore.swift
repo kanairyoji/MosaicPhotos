@@ -62,6 +62,27 @@ actor FaceStore {
     /// （PeopleEngine が provider.tuning を apply する）。既定は facenet（後方互換）。
     var tuning: FaceTuning = .facenet
 
+    /// 昼の逐次割り当て（`recordScan`）で**重心へ入れる**品質の線。これ未満は所属だけ（第2パス）。
+    ///
+    /// ⚠️ **下げない**（ADR-221・実機相当の品質で計測）。下げるとその日のうちの精度は上がるが、
+    /// 夜の作り直しでどの線も同じ水準に戻る＝得は一時的。一方、昼に名前付き人物へ誤って入った
+    /// 写りの悪い顔は、名前付き人物のメンバーを動かさない決まり（ADR-132）のために**夜になっても
+    /// 外れない**＝名前付きアルバムの純度が恒久的に下がる（LFW 0.914 → 0.891）。
+    var dayQualityFloor: Float = FaceStore.qualityFloor
+    /// 名前付き人物（種）の重心を**作り直すときに使う顔**の品質の線（`FaceSeedBuilder`）。
+    ///
+    /// 0.20（ADR-221）: 実機の品質では名前付き人物の顔の多くが 0.40 未満になり、重心が少数の顔で
+    /// 作られていた。0.20 で名前付き人物の純度が上がる（LFW 0.914 → 0.952・他は不変）。
+    /// 0.10 も同じ結果だったので控えめな方を採る。
+    var seedQualityFloor: Float = 0.20
+
+    /// 計測用: 2 つの線を差し替える（クラスタリングの器も作り直す）。
+    func setQualityFloorsForTesting(day: Float, seed: Float) {
+        dayQualityFloor = day
+        seedQualityFloor = seed
+        clusteringCache = nil
+    }
+
     func apply(tuning: FaceTuning) {
         guard self.tuning != tuning else { return }
         self.tuning = tuning
@@ -564,7 +585,7 @@ actor FaceStore {
                     ? (contributes ? .face : .secondPass) : nil
                 // 第2パス（ADR-66・recall 回復）: フロア未満で未割当なら、重心を汚さず最寄り人物へ
                 // membership だけ割り当てる（クラスタ形成前なら未割当のまま＝夜間 rebuild が拾う）。
-                if cid < 0 && face.quality < Self.qualityFloor {
+                if cid < 0 && face.quality < dayQualityFloor {
                     cid = clustering.assignMembershipOnly(faceID: faceID, embedding: vec,
                                                           excludedClusterIDs: usedClusters)
                     contributes = false
@@ -640,7 +661,7 @@ actor FaceStore {
         // ノブの設定は `FaceClusteringSetup`（純・テスト対象）に一元化した（ADR-198）——
         // 以前は再クラスタ（`FaceStore+Rebuild`）にも**同じ 10 行がコピー**されていた。
         return FaceClusteringSetup.make(
-            threshold: threshold, qualityFloor: Self.qualityFloor, tuning: tuning,
+            threshold: threshold, qualityFloor: dayQualityFloor, tuning: tuning,
             seeds: seed, minimumNextID: clusterIDHighWater() + 1,
             anchoredClusterIDs: Set(anchors.keys))
     }

@@ -26,10 +26,11 @@ struct CentroidRecordTests {
             await store.recordScan(refKey: "L-hi\(i)",
                                    faces: [signal([1, Float(i) * 0.01, 0], quality: 0.9)])
         }
-        // 品質フロア（0.40）未満＝第2パスで membership だけ入る顔。
+        // 昼の線（0.40）未満＝第2パスで membership だけ入る顔。名前付き人物の重心を作り直す線
+        // （0.20・ADR-221）よりも下に置く＝夜の作り直しでも重心へは入らない。
         for i in 0..<10 {
             await store.recordScan(refKey: "L-lo\(i)",
-                                   faces: [signal([1, Float(i) * 0.01, 0.02], quality: 0.2)])
+                                   faces: [signal([1, Float(i) * 0.01, 0.02], quality: 0.1)])
         }
         await store.rename(clusterID: 0, name: "私")
         return store
