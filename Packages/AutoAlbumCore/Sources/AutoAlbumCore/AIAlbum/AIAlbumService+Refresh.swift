@@ -179,135 +179,149 @@ extension AIAlbumService {
     func refreshIncremental(newRefKeys: [String],
                             current: [AutoAlbumInfo]) async -> IncrementalResult {
         guard !current.isEmpty, !newRefKeys.isEmpty else { return IncrementalResult(albums: current) }
-        let now = Date()
-        let newPhotos = await store.enrichedPhotos(forRefKeys: newRefKeys)
-        let newVectors = await store.vectors(forRefKeys: newRefKeys)
-        guard !newPhotos.isEmpty else { return IncrementalResult(albums: current) }
+        let photos = await store.enrichedPhotos(forRefKeys: newRefKeys)
+        guard !photos.isEmpty else { return IncrementalResult(albums: current) }
+        let batch = IncrementalBatch(
+            refKeys: newRefKeys, photos: photos,
+            vectors: await store.vectors(forRefKeys: newRefKeys),
+            // 評価済み件数の頭打ちに使う（`AIAlbumIncremental.advancedEvaluatedCount`）。
+            embeddedNow: await store.embeddedCount(), now: Date(),
+            // 台帳（人数・美的）はアルバムをまたいで同じ。ループの外で 1 つにする。
+            ledgers: AIAlbumLedgers(tagStore: tagStore))
 
         var updated = current
         var touched = 0
         /// 1 つでも採点できなかったアルバムがあれば、この分は待機列へ戻す。
         var deferred = false
-        // 評価済み件数は現実（埋め込み総数）を超えないよう頭打ちにする。待機列へ戻した分を
-        // 再処理すると、既に数えたアルバムで二重加算になり得るため。
-        let embeddedNow = await store.embeddedCount()
-        // 台帳（人数・美的）はアルバムをまたいで同じ。ループの外で 1 つにする。
-        let ledgers = AIAlbumLedgers(tagStore: tagStore)
         for (index, album) in current.enumerated() {
             guard let criteria = album.criteria, !criteria.isEmpty,
-                  var saved = interpreter.saved(for: album.id), saved.criteria == criteria,
+                  let saved = interpreter.saved(for: album.id), saved.criteria == criteria,
                   saved.evaluatedEmbedCount > 0 else { continue }
-
-            // ハード条件の適用＋意味採点（decode＋vDSP コサイン×新規枚数）は**オフメイン**で行う。
-            // 増分再評価はフォアグラウンドの埋め込み進行中にも走るため、メインに載せると
-            // 閲覧操作と CPU を奪い合う（AI アルバム見直しの一環・ADR-43 系）。
-            let spec = saved.spec
-            let peopleMap = await peopleMapIfNeeded(for: spec)
-            let faceCounts = await faceCountsIfNeeded(for: spec)
-            // 人物証拠は humanCount（網羅率 約86%）を主軸に、顔スキャンを補助にする（ADR-100）。
-            // ⚠️ フル評価と**同一の規則**にすること（食い違うと増分と全体で結果が変わる）。
-            let humanCounts = faceCounts == nil ? [:] : (await ledgers.humanCounts())
-            // 属性条件のシグナルも増分評価で同一規則（S10）。
-            let querySignals = await querySignalsIfNeeded(for: spec, ledgers: ledgers)
-            // ⚠️ 評価済み件数は「採点できた」ときにだけ進める。先に進めてしまうと、
-            // クエリ埋め込みが取れなかった回（モデルのロード失敗・キャンセル）の写真が
-            // **採点されていないのに評価済み**となり、ドリフト検知も差分ゼロと判断して
-            // 二度と再評価されない（レビュー指摘）。
-            // 内容の意図が実効的に無い（内容語が全部ハード接地語・除外も無し）アルバムは、
-            // フル評価（searchWithPool）と同じく**ハード通過分をそのまま追加**する（ADR-109）。
-            // 英訳文で意味採点すると「太郎」だけのアルバムに新規の太郎写真が入らないことがある。
-            let effective = spec.effectiveContentTerms
-            if effective.include.isEmpty && effective.exclude.isEmpty
-                && spec.hasHardConstraints {
-                // この経路はハード条件だけで判定が完結する＝今回の新規分は評価済み。
-                saved.evaluatedEmbedCount = min(saved.evaluatedEmbedCount + newRefKeys.count,
-                                                max(saved.evaluatedEmbedCount, embeddedNow))
-                interpreter.save(saved, for: album.id)
-                let base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
-                                                     peopleByRefKey: peopleMap, signals: querySignals)
-                let existing = Set(album.memberRefs)
-                let newlyIn = base.filter { !existing.contains($0.id) }
-                guard !newlyIn.isEmpty else { continue }
-                let existingPhotos = await store.enrichedPhotos(forRefKeys: album.memberRefs)
-                let members = (existingPhotos + newlyIn)
-                    .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
-                let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title,
-                                                     interpretedTitle: saved.spec.title,
-                                                     criteria: criteria, members: members,
-                                                     aesthetics: await coverAesthetics(members),
-                                                     usage: await coverUsage(members))
-                await store.upsert(albumInfo: info)
+            let outcome = AIAlbumIncremental.isHardOnly(saved.spec)
+                ? await incrementalHardOnly(album: album, criteria: criteria, saved: saved, batch: batch)
+                : await incrementalSemantic(album: album, criteria: criteria, saved: saved, batch: batch)
+            switch outcome {
+            case .unchanged: break
+            case .deferred: deferred = true
+            case .updated(let info):
                 updated[index] = info
                 touched += 1
-                continue
             }
-            // 意味採点のクエリ埋め込み（キャッシュ）。取れないなら**何も進めずに**次回へ回す
-            // （評価済みにしてしまうと、この写真たちは二度と採点されない）。
-            guard let q = await queryVectors(for: saved) else {
-                Diagnostics.mark("aialbum.incremental: query embedding unavailable — "
-                    + "deferring \(newRefKeys.count) photo(s) for album \(album.id)")
-                deferred = true
-                continue
-            }
-            // ここから先は採点できる。今回の新規分を評価済みに数える
-            // （待機列へ戻した分の再処理で二重加算しないよう、現実の埋め込み総数で頭打ち）。
-            saved.evaluatedEmbedCount = min(saved.evaluatedEmbedCount + newRefKeys.count,
-                                            max(saved.evaluatedEmbedCount, embeddedNow))
-            let (base, added) = await Task.detached(priority: .utility) {
-                () -> ([EnrichedPhoto], [String: Float]) in
-                // ハード条件（相対日付は now で解決）を新規分に適用。
-                var base = QueryEvaluator.hardFilter(newPhotos, spec: spec, now: now,
-                                                     peopleByRefKey: peopleMap, signals: querySignals)
-                // 人系の除外があれば実測の人数でハード除外（フル評価と同じ規則・ADR-100）。
-                // 証拠が無い写真は通さない（「無い＝いない」と読まない）。
-                if faceCounts != nil {
-                    base = base.filter { photo in
-                        if let human = humanCounts[photo.id] { return human == 0 }
-                        if let faces = faceCounts?[photo.id] { return faces == 0 }
-                        return false
-                    }
-                }
-                var added: [String: Float] = [:]
-                for photo in base {
-                    guard let data = newVectors[photo.id], let v = ClipMath.decode(data) else { continue }
-                    // 採点規則（max-over-probes＋除外の相対判定）はフル評価と同一（QueryEmbedder に一元化）。
-                    guard let pos = QueryEmbedder.semanticScore(q, photoVector: v) else { continue }
-                    added[photo.id] = pos
-                }
-                return (base, added)
-            }.value
-            guard !base.isEmpty else { interpreter.save(saved, for: album.id); continue }
-            guard !added.isEmpty else { interpreter.save(saved, for: album.id); continue }
-
-            saved.scoredPool = AIAlbumSearcher.mergePool(saved.scoredPool, adding: added)
-            interpreter.save(saved, for: album.id)
-
-            // 閾値を超えた新規だけメンバーへ追加（既存メンバーは維持・並びは日付降順で再構成）。
-            let memberKeys = Set(AIAlbumSearcher.memberKeys(fromPool: saved.scoredPool))
-            let existing = Set(album.memberRefs)
-            let newlyIn = base.filter { memberKeys.contains($0.id) && !existing.contains($0.id) }
-            guard !newlyIn.isEmpty else { continue }
-
-            // P2: 増分の新規追加分も証拠ゲート → LLM 審査（小さいバッチ＝安価）。
-            let gatedNew = await verification.evidenceGatedIfExcluding(newlyIn, spec: saved.spec)
-            let verifiedNew = await verification.verified(gatedNew, criteria: criteria)
-            guard !verifiedNew.isEmpty else { continue }
-            let existingPhotos = await store.enrichedPhotos(forRefKeys: album.memberRefs)
-            let members = (existingPhotos + verifiedNew)
-                .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
-            let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title, interpretedTitle: saved.spec.title,
-                                                 criteria: criteria, members: members,
-                                                 aesthetics: await coverAesthetics(members),
-                                                 usage: await coverUsage(members))
-            await store.upsert(albumInfo: info)
-            updated[index] = info
-            touched += 1
         }
         if touched > 0 {
             Diagnostics.mark("aialbum.incremental: new=\(newRefKeys.count) touched=\(touched)/\(current.count)")
         }
         return IncrementalResult(albums: updated.sorted { $0.representativeDate > $1.representativeDate },
                                  deferredRefKeys: deferred ? newRefKeys : [])
+    }
+
+    /// 増分再評価の 1 回ぶんの材料（全アルバムで共有する）。
+    struct IncrementalBatch {
+        let refKeys: [String]
+        let photos: [EnrichedPhoto]
+        let vectors: [String: Data]
+        let embeddedNow: Int
+        let now: Date
+        let ledgers: AIAlbumLedgers
+    }
+
+    /// 1 本のアルバムの増分再評価の結果。
+    enum IncrementalOutcome {
+        /// 足す写真が無かった（採点はした＝評価済み件数は進めてある）。
+        case unchanged
+        /// 採点できなかった（クエリ埋め込みが取れない）。**何も進めていない**＝待機列へ戻す。
+        case deferred
+        case updated(AutoAlbumInfo)
+    }
+
+    /// ハード条件だけで判定が完結するアルバム（ADR-109）。この経路では今回の新規分は評価済み。
+    private func incrementalHardOnly(album: AutoAlbumInfo, criteria: String,
+                                     saved: SavedInterpretation,
+                                     batch: IncrementalBatch) async -> IncrementalOutcome {
+        var saved = saved
+        let spec = saved.spec
+        saved.evaluatedEmbedCount = AIAlbumIncremental.advancedEvaluatedCount(
+            saved.evaluatedEmbedCount, adding: batch.refKeys.count, embeddedNow: batch.embeddedNow)
+        interpreter.save(saved, for: album.id)
+        let passed = QueryEvaluator.hardFilter(
+            batch.photos, spec: spec, now: batch.now,
+            peopleByRefKey: await peopleMapIfNeeded(for: spec),
+            signals: await querySignalsIfNeeded(for: spec, ledgers: batch.ledgers))
+        let existing = Set(album.memberRefs)
+        let newlyIn = passed.filter { !existing.contains($0.id) }
+        guard !newlyIn.isEmpty else { return .unchanged }
+        return .updated(await commitAddedMembers(album: album, criteria: criteria,
+                                                 saved: saved, adding: newlyIn))
+    }
+
+    /// 意味採点をするアルバム。採点 → プールへ合流 → 線を越えた新規だけ証拠ゲートと LLM 審査 → 追加。
+    private func incrementalSemantic(album: AutoAlbumInfo, criteria: String,
+                                     saved: SavedInterpretation,
+                                     batch: IncrementalBatch) async -> IncrementalOutcome {
+        var saved = saved
+        let spec = saved.spec
+        let peopleMap = await peopleMapIfNeeded(for: spec)
+        let faceCounts = await faceCountsIfNeeded(for: spec)
+        // 人物証拠は humanCount（網羅率 約86%）を主軸に、顔スキャンを補助にする（ADR-100）。
+        // ⚠️ フル評価と**同一の規則**にすること（食い違うと増分と全体で結果が変わる）。
+        let humanCounts = faceCounts == nil ? [:] : (await batch.ledgers.humanCounts())
+        // 属性条件のシグナルも増分評価で同一規則（S10）。
+        let signals = await querySignalsIfNeeded(for: spec, ledgers: batch.ledgers)
+        // 意味採点のクエリ埋め込み（キャッシュ）。取れないなら**何も進めずに**次回へ回す。
+        // ⚠️ 評価済み件数は「採点できた」ときにだけ進める。先に進めると、モデルのロード失敗・
+        // キャンセルの回の写真が**採点されていないのに評価済み**となり、ドリフト検知も
+        // 差分ゼロと判断して二度と再評価されない（レビュー指摘）。
+        guard let query = await queryVectors(for: saved) else {
+            Diagnostics.mark("aialbum.incremental: query embedding unavailable — "
+                + "deferring \(batch.refKeys.count) photo(s) for album \(album.id)")
+            return .deferred
+        }
+        saved.evaluatedEmbedCount = AIAlbumIncremental.advancedEvaluatedCount(
+            saved.evaluatedEmbedCount, adding: batch.refKeys.count, embeddedNow: batch.embeddedNow)
+        // ハード条件＋意味採点（decode＋vDSP コサイン×新規枚数）は**オフメイン**で行う。
+        // 増分再評価はフォアグラウンドの埋め込み進行中にも走るため、メインに載せると
+        // 閲覧操作と CPU を奪い合う（ADR-43 系）。
+        let (photos, vectors, now) = (batch.photos, batch.vectors, batch.now)
+        let (passed, scores) = await Task.detached(priority: .utility) {
+            AIAlbumIncremental.scoreNewPhotos(photos, vectors: vectors, spec: spec, now: now,
+                                              peopleMap: peopleMap, signals: signals,
+                                              faceCounts: faceCounts, humanCounts: humanCounts,
+                                              query: query)
+        }.value
+        guard !passed.isEmpty, !scores.isEmpty else {
+            interpreter.save(saved, for: album.id)
+            return .unchanged
+        }
+        saved.scoredPool = AIAlbumSearcher.mergePool(saved.scoredPool, adding: scores)
+        interpreter.save(saved, for: album.id)
+
+        // 線を越えた新規だけメンバーへ追加（既存メンバーは維持・並びは日付降順で再構成）。
+        let memberKeys = Set(AIAlbumSearcher.memberKeys(fromPool: saved.scoredPool))
+        let existing = Set(album.memberRefs)
+        let newlyIn = passed.filter { memberKeys.contains($0.id) && !existing.contains($0.id) }
+        guard !newlyIn.isEmpty else { return .unchanged }
+        // 増分の新規追加分も証拠ゲート → LLM 審査（小さいバッチ＝安価）。
+        let gated = await verification.evidenceGatedIfExcluding(newlyIn, spec: spec)
+        let verified = await verification.verified(gated, criteria: criteria)
+        guard !verified.isEmpty else { return .unchanged }
+        return .updated(await commitAddedMembers(album: album, criteria: criteria,
+                                                 saved: saved, adding: verified))
+    }
+
+    /// 既存のメンバーに新しい写真を足し（日付降順）、アルバムを保存して返す。
+    private func commitAddedMembers(album: AutoAlbumInfo, criteria: String,
+                                    saved: SavedInterpretation,
+                                    adding newlyIn: [EnrichedPhoto]) async -> AutoAlbumInfo {
+        let existingPhotos = await store.enrichedPhotos(forRefKeys: album.memberRefs)
+        let members = (existingPhotos + newlyIn)
+            .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
+        let info = AIAlbumSearcher.buildInfo(id: album.id, title: album.title,
+                                             interpretedTitle: saved.spec.title,
+                                             criteria: criteria, members: members,
+                                             aesthetics: await coverAesthetics(members),
+                                             usage: await coverUsage(members))
+        await store.upsert(albumInfo: info)
+        return info
     }
 
     /// ドリフト検知：保存済みの評価時点と現在の埋め込み枚数の差が `threshold` を超えていたら
