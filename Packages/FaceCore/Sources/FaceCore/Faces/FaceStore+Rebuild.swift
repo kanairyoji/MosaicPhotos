@@ -139,6 +139,8 @@ extension FaceStore {
                       photos: seedPhotos[seed.id] ?? [], fallbackCentroid: seed.centroid)
             },
             embedding: decode,
+            // 撮影日は赤ちゃんの時期の決まり（ADR-219）にだけ使う。種のメンバーの日付も要る。
+            captureDate: { faceByID[$0]?.captureDate },
             config: tuning.agglomeration,
             blocked: FaceAgglomeration.negativeBlocker(
                 negatives: negatives, sameThreshold: tuning.negativeSameThreshold))

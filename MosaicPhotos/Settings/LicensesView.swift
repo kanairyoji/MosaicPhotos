@@ -74,6 +74,12 @@ struct LicensesView: View {
                         license: "CC BY 4.0",
                         url: "https://www.geonames.org/",
                         text: geoNamesNotice),
+                    LicenseItem(
+                        name: "FairFace",
+                        role: L("Baby-face detector for People (learned numbers only; no images)"),
+                        license: "CC BY 4.0",
+                        url: "https://github.com/joojs/fairface",
+                        text: fairFaceNotice),
                 ]),
 
             LicenseSection(

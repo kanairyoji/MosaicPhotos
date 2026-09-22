@@ -153,6 +153,20 @@ Source: https://www.geonames.org/
 License: Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
 """
 
+let fairFaceNotice = """
+FairFace: Face Attribute Dataset for Balanced Race, Gender, and Age
+Kärkkäinen, K., & Joo, J. (WACV 2021)
+
+People uses a small baby-face detector (513 numbers) learned from the FairFace
+age labels ("0-2") to keep siblings' baby photos from being grouped as one person.
+No FairFace images are included in the app — only the learned numbers.
+
+The detector is generated locally (scripts/train_baby_probe.py).
+
+Source: https://github.com/joojs/fairface
+License: Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
+"""
+
 let pillowLicenseText = """
 The Python Imaging Library (PIL) is
 

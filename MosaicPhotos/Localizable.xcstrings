@@ -761,6 +761,17 @@
         }
       }
     },
+    "Baby-face detector for People (learned numbers only; no images)": {
+      "comment": "Description of a license item for the FairFace dataset used to learn the baby-face detector.",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピープルの赤ちゃんの顔の判定（学習した数値のみ・画像は含まない）"
+          }
+        }
+      }
+    },
     "BPE tokenizer algorithm, ported to Swift": {
       "localizations": {
         "ja": {

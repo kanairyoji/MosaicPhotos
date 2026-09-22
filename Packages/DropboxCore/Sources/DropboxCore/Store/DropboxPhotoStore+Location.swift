@@ -104,6 +104,12 @@ extension DropboxPhotoStore {
         return probed
     }
 
+    /// パスの束 → **EXIF の撮影日時**（アップロード時刻は含まない・ADR-218）。
+    /// 顔の撮影日（時期グループ・赤ちゃんの時期の決まり）はこれを使う。ネットには出ない。
+    public func exifCaptureDates(paths: [String]) async -> [String: Date] {
+        await cache.exifCaptureDates(paths: paths)
+    }
+
     /// ISO 8601（`time_taken` は "2015-05-12T15:50:38Z" 形式）。
     static let iso8601: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

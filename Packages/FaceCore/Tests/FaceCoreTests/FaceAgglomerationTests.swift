@@ -200,4 +200,61 @@ struct FaceAgglomerationTests {
         #expect(small > 0)
         #expect(large <= small)
     }
+
+    // MARK: - 赤ちゃんの時期の決まり（ADR-219）
+
+    /// 1 次元目が大きい顔を「赤ちゃん」と判定する、テスト用の判別器。
+    static let probe = BabyProbe(weights: [1, 0, 0, 0], bias: 0, threshold: 0.5)
+    static let year: TimeInterval = 365 * 86_400
+    static func babyConfig(span: Double = 3) -> FaceAgglomeration.Config {
+        .init(microThreshold: 0.55, mergeBar: 0.40,
+              babyRule: .init(probe: probe, maxSpan: span * year))
+    }
+
+    @Test("赤ちゃんの顔どうしで撮影日が離れすぎていたら、似ていてもまとめない（兄と弟）")
+    func babiesFarApartStaySeparate() {
+        let baby: [Float] = FaceClustering.normalized([1, 0.1, 0, 0])
+        let base = Date(timeIntervalSince1970: 1_500_000_000)
+        let dates: [String: Date] = [
+            "older-0": base, "older-1": base.addingTimeInterval(0.5 * Self.year),
+            "younger-0": base.addingTimeInterval(4 * Self.year),
+            "younger-1": base.addingTimeInterval(4.5 * Self.year),
+        ]
+        let faces = dates.keys.sorted().map { FaceAgglomeration.Face(faceID: $0, photo: $0) }
+        let withRule = FaceAgglomeration.cluster(faces: faces, seeds: [], embedding: { _ in baby },
+                                                 captureDate: { dates[$0] }, config: Self.babyConfig())
+        let partition = Set(withRule.map { Set($0.faceIDs) })
+        #expect(partition == [["older-0", "older-1"], ["younger-0", "younger-1"]])
+
+        // 決まりが無ければ（従来）、同じ顔なので 1 人にまとまる。
+        let without = FaceAgglomeration.cluster(faces: faces, seeds: [], embedding: { _ in baby },
+                                                captureDate: { dates[$0] }, config: Self.config)
+        #expect(without.count == 1)
+    }
+
+    @Test("大人の顔は、撮影日が何年離れていてもまとまる（決まりは赤ちゃんにだけ効く）")
+    func adultsAreUnaffected() {
+        let adult: [Float] = FaceClustering.normalized([0, 1, 0.1, 0])
+        let base = Date(timeIntervalSince1970: 1_500_000_000)
+        let faces = (0..<4).map { FaceAgglomeration.Face(faceID: "a\($0)", photo: "a\($0)") }
+        let groups = FaceAgglomeration.cluster(
+            faces: faces, seeds: [], embedding: { _ in adult },
+            captureDate: { id in base.addingTimeInterval(Double(id.dropFirst())! * 5 * Self.year) },
+            config: Self.babyConfig())
+        #expect(groups.count == 1)
+    }
+
+    @Test("名前を付けた子の赤ちゃん時代から離れた赤ちゃんの顔は、その子へ入れない")
+    func babyRuleAppliesToSeeds() {
+        let baby: [Float] = FaceClustering.normalized([1, 0.1, 0, 0])
+        let base = Date(timeIntervalSince1970: 1_500_000_000)
+        let dates: [String: Date] = ["named": base, "near": base.addingTimeInterval(Self.year),
+                                     "far": base.addingTimeInterval(5 * Self.year)]
+        let groups = FaceAgglomeration.cluster(
+            faces: [.init(faceID: "near", photo: "P2"), .init(faceID: "far", photo: "P3")],
+            seeds: [.init(clusterID: 1, memberFaceIDs: ["named"], photos: ["P1"])],
+            embedding: { _ in baby }, captureDate: { dates[$0] }, config: Self.babyConfig())
+        #expect(groups.first { $0.seedID == 1 }?.faceIDs == ["near"])
+        #expect(groups.contains { $0.seedID == nil && $0.faceIDs == ["far"] })
+    }
 }

@@ -40,11 +40,31 @@ public enum FaceAgglomeration {
         public var mergeBar: Float
         /// 各山が覚えておく近い相手の数。
         public var neighbors: Int
+        /// 赤ちゃんの時期の決まり（ADR-219）。nil なら使わない。
+        public var babyRule: BabyRule?
 
-        public init(microThreshold: Float, mergeBar: Float, neighbors: Int = 30) {
+        public init(microThreshold: Float, mergeBar: Float, neighbors: Int = 30,
+                    babyRule: BabyRule? = nil) {
             self.microThreshold = microThreshold
             self.mergeBar = mergeBar
             self.neighbors = neighbors
+            self.babyRule = babyRule
+        }
+    }
+
+    /// **赤ちゃんの顔どうしで、撮影日が離れすぎていたら別人**（ADR-219）。
+    ///
+    /// 赤ちゃんの顔は 2〜3 年しか続かない。兄弟は赤ちゃんの時期がずれるので、撮影日が
+    /// `maxSpan` を超えて離れた赤ちゃんの顔は、似ていても同じ人ではない（兄と弟の赤ちゃん時代）。
+    /// ⚠️ **まとめることを禁じるだけ**で、分けはしない（ADR-60「年齢帯で全員を分ける」は失敗した）。
+    /// 対象は赤ちゃんと判定した顔だけなので、大人・大きい子には効かない。
+    public struct BabyRule: Sendable, Equatable {
+        public var probe: BabyProbe
+        /// 1 つの人物に入る赤ちゃんの顔の、撮影日の幅の上限。
+        public var maxSpan: TimeInterval
+        public init(probe: BabyProbe, maxSpan: TimeInterval) {
+            self.probe = probe
+            self.maxSpan = maxSpan
         }
     }
 
@@ -97,17 +117,27 @@ public enum FaceAgglomeration {
     ///   - faces: 割り当てる顔。**この順に**小さな山へ入れる（本番は品質の降順）。
     ///   - embedding: faceID → 埋め込み（正規化前でよい）。
     ///   - blocked: 追加の拒否（負例など）。true ならその 2 つの山をまとめない。
+    ///   - captureDate: faceID → 撮影日（赤ちゃんの時期の決まりにだけ使う）。
     public static func cluster(faces: [Face],
                                seeds: [Seed],
                                embedding: (String) -> [Float]?,
+                               captureDate: (String) -> Date? = { _ in nil },
                                config: Config,
                                blocked: ((GroupSummary, GroupSummary) -> Bool)? = nil) -> [Group] {
         var store = GroupStore()
+        store.babyRule = config.babyRule
+        /// 赤ちゃんと判定した顔の撮影日（赤ちゃんでない・日付不明なら nil）。
+        func babyDate(_ id: String, _ unit: [Float]) -> Date? {
+            guard let rule = config.babyRule, let date = captureDate(id),
+                  rule.probe.isBaby(unit) else { return nil }
+            return date
+        }
 
         // 種を先に山として置く（種の山には、あとで顔が入る）。
         for seed in seeds {
             var sum: [Float] = []
             var count = 0
+            var babies = BabySpan()
             for id in seed.memberFaceIDs {
                 guard let raw = embedding(id) else { continue }
                 let v = FaceClustering.normalized(raw)
@@ -115,6 +145,7 @@ public enum FaceAgglomeration {
                 guard v.count == sum.count else { continue }
                 vDSP_vadd(sum, 1, v, 1, &sum, 1, vDSP_Length(v.count))
                 count += 1
+                babies.add(babyDate(id, v))
             }
             if count == 0 {
                 guard let fallback = seed.fallbackCentroid, !fallback.isEmpty else { continue }
@@ -122,12 +153,12 @@ public enum FaceAgglomeration {
                 count = 1
             }
             store.append(sum: sum, count: count, seedID: seed.clusterID, photos: seed.photos,
-                         faceIDs: [])
+                         faceIDs: [], babies: babies)
         }
         let seedGroupCount = store.count
 
         // 1) 小さな山。種には入れない（種へは山ごと、平均連結で判定して入れる）。
-        let micro = buildMicroGroups(faces: faces, embedding: embedding,
+        let micro = buildMicroGroups(faces: faces, embedding: embedding, babyDate: babyDate,
                                      threshold: config.microThreshold, into: &store,
                                      skipFirst: seedGroupCount)
 
@@ -217,6 +248,7 @@ public enum FaceAgglomeration {
     /// 顔を順に、平均類似が線以上で**写真が重ならない**いちばん近い山へ入れる。無ければ新しい山。
     /// - Returns: 小さな山の索引の並び（作られた順＝出力の順序を決定的にする）。
     private static func buildMicroGroups(faces: [Face], embedding: (String) -> [Float]?,
+                                         babyDate: (String, [Float]) -> Date?,
                                          threshold: Float, into store: inout GroupStore,
                                          skipFirst: Int) -> [Int] {
         var created: [Int] = []
@@ -226,6 +258,7 @@ public enum FaceAgglomeration {
             let v = FaceClustering.normalized(raw)
             if dim == 0 { dim = v.count; store.dimension = dim }
             guard v.count == dim else { continue }
+            let baby = BabySpan(babyDate(face.faceID, v))
             var best = -1
             var bestScore = threshold
             // 行列×ベクトル 1 回で全部の小さな山との平均類似を出す（数万回の照合を 1 命令に）。
@@ -233,16 +266,17 @@ public enum FaceAgglomeration {
             for (offset, score) in scores.enumerated() where score >= bestScore {
                 let index = skipFirst + offset
                 if store.photos[index].contains(face.photo) { continue }
+                if !store.babiesCompatible(store.babies[index], baby) { continue }
                 if score > bestScore || best < 0 {
                     best = index
                     bestScore = score
                 }
             }
             if best >= 0 {
-                store.add(v, photo: face.photo, faceID: face.faceID, to: best)
+                store.add(v, photo: face.photo, faceID: face.faceID, baby: baby, to: best)
             } else {
                 store.append(sum: v, count: 1, seedID: nil, photos: [face.photo],
-                             faceIDs: [face.faceID])
+                             faceIDs: [face.faceID], babies: baby)
                 created.append(store.count - 1)
             }
         }
@@ -281,6 +315,9 @@ public enum FaceAgglomeration {
             if !store.photos[i].isDisjoint(with: store.photos[j]) {
                 rejected.insert(PairKey(i, j)); continue
             }
+            if !store.babiesCompatible(store.babies[i], store.babies[j]) {
+                rejected.insert(PairKey(i, j)); continue
+            }
             if let blocked, blocked(store.summary(i), store.summary(j)) {
                 rejected.insert(PairKey(i, j)); continue
             }
@@ -312,13 +349,16 @@ public enum FaceAgglomeration {
         var photos: [Set<String>] = []
         var faceIDs: [[String]] = []
         var alive: [Bool] = []
+        /// 山の中の赤ちゃんの顔の撮影日の幅（ADR-219）。
+        var babies: [BabySpan] = []
+        var babyRule: BabyRule?
         /// 平均（sum / count）の行列。小さな山の照合で使う。
         var means: [Float] = []
 
         var count: Int { counts.count }
 
         mutating func append(sum: [Float], count: Int, seedID: Int?, photos: Set<String>,
-                             faceIDs: [String]) {
+                             faceIDs: [String], babies: BabySpan = BabySpan()) {
             if dimension == 0 { dimension = sum.count }
             guard sum.count == dimension else { return }
             sums.append(contentsOf: sum)
@@ -326,12 +366,15 @@ public enum FaceAgglomeration {
             self.seedID.append(seedID)
             self.photos.append(photos)
             self.faceIDs.append(faceIDs)
+            self.babies.append(babies)
             alive.append(true)
             let scale = 1 / Float(max(count, 1))
             means.append(contentsOf: sum.map { $0 * scale })
         }
 
-        mutating func add(_ v: [Float], photo: String, faceID: String, to index: Int) {
+        mutating func add(_ v: [Float], photo: String, faceID: String, baby: BabySpan,
+                          to index: Int) {
+            babies[index].merge(baby)
             let base = index * dimension
             for d in 0..<dimension { sums[base + d] += v[d] }
             counts[index] += 1
@@ -347,9 +390,18 @@ public enum FaceAgglomeration {
             counts[keep] += counts[drop]
             photos[keep].formUnion(photos[drop])
             faceIDs[keep].append(contentsOf: faceIDs[drop])
+            babies[keep].merge(babies[drop])
             alive[drop] = false
             photos[drop] = []
             faceIDs[drop] = []
+        }
+
+        /// 2 つの山の赤ちゃんの顔を合わせても、撮影日の幅が上限に収まるか（決まりが無ければ常に true）。
+        func babiesCompatible(_ a: BabySpan, _ b: BabySpan) -> Bool {
+            guard let rule = babyRule else { return true }
+            var merged = a
+            merged.merge(b)
+            return merged.width <= rule.maxSpan
         }
 
         /// 平均連結 = (和A・和B) / (件数A × 件数B)。
@@ -443,6 +495,31 @@ public enum FaceAgglomeration {
                 out.append(Group(seedID: nil, faceIDs: faceIDs[i]))
             }
             return out
+        }
+    }
+
+    /// 赤ちゃんの顔の撮影日の最小と最大（無ければ空）。
+    struct BabySpan: Equatable {
+        var earliest: Date?
+        var latest: Date?
+
+        init(_ date: Date? = nil) {
+            earliest = date
+            latest = date
+        }
+
+        mutating func add(_ date: Date?) { merge(BabySpan(date)) }
+
+        mutating func merge(_ other: BabySpan) {
+            guard let otherEarliest = other.earliest, let otherLatest = other.latest else { return }
+            earliest = min(earliest ?? otherEarliest, otherEarliest)
+            latest = max(latest ?? otherLatest, otherLatest)
+        }
+
+        /// 幅（赤ちゃんの顔が 1 つも無ければ 0）。
+        var width: TimeInterval {
+            guard let earliest, let latest else { return 0 }
+            return latest.timeIntervalSince(earliest)
         }
     }
 

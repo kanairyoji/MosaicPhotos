@@ -27,6 +27,16 @@ final class CachedDropboxItem {
     /// EXIF が無い写真は何度訊いても無いので、毎回往復すると 6.8 万枚ぶんの無駄になる。
     /// 中身が差し替わったら（contentHash が変わったら）`applyDelta` が nil へ戻す＝訊き直す。
     var captureDateProbedAt: Date?
+    /// **EXIF の撮影日時だけ**（`get_metadata` の `media_info.time_taken`＝Dropbox が元写真の EXIF から
+    /// 読んだ値）。アップロード時刻は**決して入れない**。
+    ///
+    /// ⚠️ `captureDate` は「EXIF が取れればそれ、取れなければアップロード時刻のまま」なので、
+    /// 値を見ても**どちらなのか区別できない**。顔の撮影日（赤ちゃんの時期の決まり・ADR-61）に
+    /// アップロード時刻を使うと、数年ずれた日付で判定してしまう。撮影日時が要る判断はこちらを使う。
+    var exifCaptureDate: Date?
+    /// `exifCaptureDate` を問い合わせた日時（nil＝まだ）。この列より前に問い合わせた行は
+    /// どちらだったか分からないので、もう一度だけ問い合わせ直す（`captureDateProbedAt` とは別）。
+    var exifProbedAt: Date?
     var cachedAt: Date
 
     init(

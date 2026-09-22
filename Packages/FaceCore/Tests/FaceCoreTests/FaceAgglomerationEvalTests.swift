@@ -27,6 +27,8 @@ struct FaceAgglomerationEvalTests {
         let truth: String?
         let embedding: [Float]
         let quality: Float
+        var age: Int? = nil
+        var date: Date? = nil
     }
 
     static func emit(_ line: String) {
@@ -53,7 +55,8 @@ struct FaceAgglomerationEvalTests {
             let c = line.split(separator: ",").map(String.init)
             guard c.count >= 2, let e = cache.embeddings[c[0]], !e.isEmpty else { return nil }
             return Face(id: c[0], photo: c[0], truth: c[1], embedding: e,
-                        quality: cache.qualities?[c[0]] ?? 1)
+                        quality: cache.qualities?[c[0]] ?? 1,
+                        age: c.count > 2 ? Int(c[2]) : nil)
         }
     }
 
@@ -63,14 +66,19 @@ struct FaceAgglomerationEvalTests {
         let embedding: [Float]
         let quality: Float
         let truth: String?
+        let date: String?
     }
 
     static func loadPIPA() throws -> [Face]? {
         let path = pipaRoot + "/faces-auraface-v1-r100.json"
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         let rows = try JSONDecoder().decode([PipaFace].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(identifier: "UTC")
+        parser.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         return rows.map { Face(id: $0.id, photo: $0.photo, truth: $0.truth, embedding: $0.embedding,
-                               quality: $0.quality) }
+                               quality: $0.quality, date: $0.date.flatMap { parser.date(from: $0) }) }
     }
 
     nonisolated(unsafe) static var tuning = FaceTuning.arcFace
@@ -100,7 +108,8 @@ struct FaceAgglomerationEvalTests {
         let byID = Dictionary(uniqueKeysWithValues: faces.map { ($0.id, $0) })
         let groups = FaceAgglomeration.cluster(
             faces: pending.filter { $0.quality >= floor }.map { .init(faceID: $0.id, photo: $0.photo) },
-            seeds: [], embedding: { byID[$0]?.embedding }, config: config)
+            seeds: [], embedding: { byID[$0]?.embedding }, captureDate: { byID[$0]?.date },
+            config: config)
         var clusters: [FaceClustering.Cluster] = []
         var assignment: [String: Int] = [:]
         var used: [String: Set<Int>] = [:]
@@ -207,6 +216,89 @@ struct FaceAgglomerationEvalTests {
                 let agg = Self.agglomerative(faces, config: .init(microThreshold: 0.65, mergeBar: bar))
                 Self.emit(Self.line(String(format: "AGG-FACENET[%@] 平均連結 小さな山 0.65・まとめる線 %.2f", name, bar),
                                     Self.score(agg, faces), violations: Self.samePhotoViolations(agg, faces)))
+            }
+        }
+    }
+
+    // MARK: - 赤ちゃんの時期の決まり（ADR-219）
+
+    struct ProbeFile: Decodable {
+        let weights: [Float]
+        let bias: Float
+        let threshold: Float
+    }
+
+    static let probePath = NSHomeDirectory() + "/DEV/tmp/face-eval-fairface/baby_probe.json"
+
+    /// 別人の山に入った赤ちゃん（0〜2 歳）の顔の数（FG-NET の年齢で数える）。
+    static func misplacedBabies(_ assignment: [String: Int], _ faces: [Face]) -> (bad: Int, total: Int) {
+        var byCluster: [Int: [Face]] = [:]
+        for f in faces { if let c = assignment[f.id], c >= 0 { byCluster[c, default: []].append(f) } }
+        var bad = 0, total = 0
+        for f in faces where (f.age ?? 99) <= 2 {
+            total += 1
+            guard let c = assignment[f.id], c >= 0, let members = byCluster[c] else { continue }
+            var counts: [String: Int] = [:]
+            for m in members { if let t = m.truth { counts[t, default: 0] += 1 } }
+            let owner = counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }?.key
+            if owner != f.truth { bad += 1 }
+        }
+        return (bad, total)
+    }
+
+    @Test("赤ちゃんの時期の決まり: FG-NET（架空の誕生年）と PIPA（本物の撮影日）",
+          .enabled(if: FileManager.default.fileExists(atPath: probePath) && available))
+    func babyRule() throws {
+        let file = try JSONDecoder().decode(ProbeFile.self, from: Data(contentsOf: URL(fileURLWithPath: Self.probePath)))
+        let probe = BabyProbe(weights: file.weights, bias: file.bias, threshold: file.threshold)
+        let year: TimeInterval = 365.25 * 86_400
+        var sets: [(String, [Face])] = []
+
+        // FG-NET: 2〜3 人ずつの「家族」にし、誕生年を 1.5〜4 年ずらす（固定シード）。
+        var fgnet = try Self.loadCrops("fgnet")
+        var random = FaceAgglomerationTests.Random(state: 7)
+        let persons = Array(Set(fgnet.compactMap(\.truth))).sorted()
+        var birth: [String: Double] = [:]
+        var index = 0
+        while index < persons.count {
+            let size = 2 + Int(random.next() % 2)
+            var year0 = 1990 + Double(random.next() % 25)
+            for p in persons[index..<min(index + size, persons.count)] {
+                birth[p] = year0
+                year0 += 1.5 + Double(random.unit()) * 2.5
+            }
+            index += size
+        }
+        for i in fgnet.indices {
+            guard let p = fgnet[i].truth, let b = birth[p], let age = fgnet[i].age else { continue }
+            let when = b + Double(age) + Double(random.unit())
+            fgnet[i].date = Date(timeIntervalSince1970: (when - 1970) * year)
+        }
+        sets.append(("fgnet 家族", fgnet))
+        if let pipa = try Self.loadPIPA() { sets.append(("pipa", pipa)) }
+
+        for (name, faces) in sets {
+            // ⚠️ 基準は**決まりを外した**本番の線（プロファイルは決まりを有効にしてある）。
+            var base = Self.tuning.agglomeration
+            base.babyRule = nil
+            let flagged = faces.filter { probe.isBaby(FaceClustering.normalized($0.embedding)) }.count
+            // 本番に同梱した判別器と、計測に使った判別器が同じか（生成し直し忘れの検出）。
+            #expect(probe.weights.count == BabyProbe.auraFace.weights.count)
+            #expect(zip(probe.weights, BabyProbe.auraFace.weights).allSatisfy { abs($0 - $1) < 1e-5 })
+            #expect(abs(probe.threshold - BabyProbe.auraFace.threshold) < 1e-5)
+            Self.emit("BABY[\(name)] 赤ちゃんと判定した顔 \(flagged)/\(faces.count)")
+            let off = Self.agglomerative(faces, config: base)
+            let offBabies = Self.misplacedBabies(off, faces)
+            Self.emit(Self.line("BABY[\(name)] 決まりなし（別人の山の赤ちゃん \(offBabies.bad)/\(offBabies.total)）",
+                                Self.score(off, faces), violations: Self.samePhotoViolations(off, faces)))
+            for span in [2.0, 3.0] {
+                var config = base
+                config.babyRule = .init(probe: probe, maxSpan: span * year)
+                let on = Self.agglomerative(faces, config: config)
+                let onBabies = Self.misplacedBabies(on, faces)
+                Self.emit(Self.line(String(format: "BABY[%@] %.0f 年超は別人（別人の山の赤ちゃん %d/%d）",
+                                           name, span, onBabies.bad, onBabies.total),
+                                    Self.score(on, faces), violations: Self.samePhotoViolations(on, faces)))
             }
         }
     }

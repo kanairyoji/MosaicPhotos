@@ -2,6 +2,7 @@
 import Foundation
 import Testing
 @testable import DropboxCore
+import MosaicSupport
 
 /// クラウド写真の**撮影日時の穴埋め**（ADR-201）。
 ///
@@ -96,6 +97,68 @@ struct CaptureDateProbeTests {
 
         #expect(await store.pathsNeedingCaptureDateProbe(limit: 10) == ["/a.jpg"],
                 "差し替わった写真の撮影日時を訊き直していない")
+    }
+
+    // MARK: - EXIF の撮影日時だけを別に持つ（ADR-218）
+
+    /// ⚠️ `captureDate` は EXIF が無いとアップロード時刻のまま残る。顔の撮影日に使う
+    /// `exifCaptureDate` には**アップロード時刻を決して入れない**。
+    @Test("EXIF が無い写真は、撮影日時の問い合わせ結果に出てこない（アップロード時刻を返さない）")
+    func exifDatesNeverReturnUploadTime() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let a = DropboxFileItem(path: "/a.jpg", name: "a.jpg", contentHash: "h", captureDate: uploadedAt)
+        let b = DropboxFileItem(path: "/b.jpg", name: "b.jpg", contentHash: "h", captureDate: uploadedAt)
+        let c = DropboxFileItem(path: "/c.jpg", name: "c.jpg", contentHash: "h", captureDate: uploadedAt)
+        await store.applyDelta(accountId: "acc1", added: [a, b, c], removed: [], newCursor: "c1")
+        await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: shotAt, latitude: nil, longitude: nil)
+        await store.recordCaptureDateProbe(path: "/b.jpg", captureDate: nil, latitude: nil, longitude: nil)
+        // c はまだ訊いていない。
+
+        let dates = await store.exifCaptureDates(paths: ["/a.jpg", "/b.jpg", "/c.jpg"])
+        #expect(dates == ["/a.jpg": shotAt])
+        // 一覧の日付（並び用）は従来どおり: b はアップロード時刻のまま。
+        #expect(await store.cachedItems(accountId: "acc1").first { $0.path == "/b.jpg" }?.captureDate == uploadedAt)
+    }
+
+    /// 列ができる前に訊いた行は、EXIF だったのかアップロード時刻だったのか分からない＝一度だけ訊き直す。
+    @Test("EXIF の印が無い（以前に訊いた）写真は、もう一度だけ対象に挙がる")
+    func previouslyProbedRowsAreAskedOnceMore() async {
+        let store = await store(with: item())
+        await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: nil, latitude: nil, longitude: nil)
+        #expect(await store.pathsNeedingCaptureDateProbe(limit: 10).isEmpty)
+
+        await store.forgetExifProbeForTesting(path: "/a.jpg")
+        #expect(await store.pathsNeedingCaptureDateProbe(limit: 10) == ["/a.jpg"])
+
+        await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: nil, latitude: nil, longitude: nil)
+        #expect(await store.pathsNeedingCaptureDateProbe(limit: 10).isEmpty, "何度も訊き直している")
+    }
+
+    @Test("中身が変わったら、EXIF の撮影日時も捨てて訊き直す")
+    func changedContentDropsExifDate() async {
+        let store = await store(with: item(hash: "h1"))
+        await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: shotAt, latitude: nil, longitude: nil)
+        await store.applyDelta(accountId: "acc1", added: [item(hash: "h2")], removed: [], newCursor: "c2")
+        #expect(await store.exifCaptureDates(paths: ["/a.jpg"]).isEmpty)
+    }
+
+    /// ADR-119: 束で引く。写真の数に比例して読み出し回数が増えない（500 件ごとに 1 回）。
+    @Test("撮影日時の問い合わせは、写真 1 枚ずつ読まない")
+    func exifDatesAreFetchedInChunks() async {
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let items = (0..<1_200).map {
+            DropboxFileItem(path: "/p\($0).jpg", name: "p\($0).jpg", contentHash: "h", captureDate: uploadedAt)
+        }
+        await store.applyDelta(accountId: "acc1", added: items, removed: [], newCursor: "c1")
+        for i in 0..<1_200 {
+            await store.recordCaptureDateProbe(path: "/p\(i).jpg", captureDate: shotAt, latitude: nil, longitude: nil)
+        }
+        PerfTrace.setEnabledForTesting(true)
+        _ = PerfTrace.takeCounts()
+        let dates = await store.exifCaptureDates(paths: items.map(\.path))
+        let fetches = PerfTrace.takeCounts()["cache.exifDates.fetch"] ?? 0
+        #expect(dates.count == 1_200)   // ⚠️ 取りこぼしていない（空でも通る assert にしない）
+        #expect(fetches == 3)           // 1,200 件 ÷ 500 件＝3 回
     }
 }
 #endif

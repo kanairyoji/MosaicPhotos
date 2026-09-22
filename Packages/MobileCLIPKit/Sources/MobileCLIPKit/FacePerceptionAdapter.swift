@@ -25,13 +25,21 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
     let cloudAnalysisImages: (@Sendable ([String]) async -> [String: Data])?
     /// 1 バッチぶんの 1024px 画像置き場（使ったら破棄）。
     private let analysisCache = CloudAnalysisImageCache()
+    /// クラウド path 群 → **EXIF の撮影日時**（ADR-218）。
+    ///
+    /// ⚠️ ダウンロードした 1024px 画像からは読めない——Dropbox の縮小画像（`get_thumbnail_batch`）は
+    /// 元写真のメタデータを写さない。Dropbox が元写真の EXIF から読んだ `time_taken` を、
+    /// キャッシュから引く（ネットには出ない）。アップロード時刻は返さない。
+    let cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])?
 
     public init(cloudImage: (@Sendable (String) async -> CGImage?)? = nil,
                 warmCloud: (@Sendable ([String]) -> Void)? = nil,
-                cloudAnalysisImages: (@Sendable ([String]) async -> [String: Data])? = nil) {
+                cloudAnalysisImages: (@Sendable ([String]) async -> [String: Data])? = nil,
+                cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])? = nil) {
         self.cloudImage = cloudImage
         self.warmCloud = warmCloud
         self.cloudAnalysisImages = cloudAnalysisImages
+        self.cloudCaptureDates = cloudCaptureDates
     }
 
     /// バッチの素材を先に取りに行く（ADR-83）。顔解析は **1024px をバッチ取得**して
@@ -69,6 +77,9 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
         // 壁時計なので suspend 中も進み、1 枚が 29 分に化けて合計を壊す（実機ログ diagnostics-20 で
         // load 合計 1,868,367ms のうち 1,769,333ms が単一の外れ値だった。中央値は 81ms）。
         var loadMs = 0.0, inferMs = 0.0, discarded = 0
+        // クラウド写真の撮影日は、束の頭で**まとめて 1 回**引く（写真ごとに引かない・ADR-119）。
+        let cloudPaths = refKeys.compactMap { PhotoRef.decode($0)?.cloudPath }
+        let cloudDates = cloudPaths.isEmpty ? [:] : (await cloudCaptureDates?(cloudPaths) ?? [:])
         for refKey in refKeys {
             // ⚠️ **画像を取りに行く前に**降りる（実機 diagnostics-56）。以前はキャンセル判定が
             // ループの末尾（ロード＋推論の後）にしか無く、1 キー呼び出しでは事実上機能しなかった。
@@ -132,9 +143,11 @@ public struct FacePerceptionAdapter: FacePerceptionProvider {
                 loadMs += loadElapsed
                 inferMs += inferElapsed
             }
-            // ADR-61: 撮影日を載せる（時期グループ分割用）。ローカルは PHAsset.creationDate。
-            // クラウドは seam 未整備のため当面 nil（personReps は nil を最古扱いで動く）。
-            if let localID = ref.localIdentifier, let date = Self.creationDate(localID) {
+            // ADR-61: 撮影日を載せる（時期グループ分割用）。ローカルは PHAsset.creationDate、
+            // クラウドは EXIF の撮影日時（ADR-218・無ければ nil＝アップロード時刻では埋めない）。
+            let captureDate = ref.localIdentifier.flatMap(Self.creationDate)
+                ?? ref.cloudPath.flatMap { cloudDates[$0] }
+            if let date = captureDate {
                 signals = signals.map { DetectedFaceSignal(
                     boundingBox: $0.boundingBox, embedding: $0.embedding, quality: $0.quality,
                     hasSmile: $0.hasSmile, captureDate: date) }

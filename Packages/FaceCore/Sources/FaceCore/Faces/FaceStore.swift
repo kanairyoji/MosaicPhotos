@@ -120,6 +120,10 @@ actor FaceStore {
     var undoStack: [FaceUndoRecord] = []
 
     var clusteringCache: FaceClustering?
+    /// このストアが発行した fetch の回数（規模テスト用・ADR-119）。
+    /// ⚠️ `PerfTrace` のカウンタはプロセス全体で共有されるので、並行して走る別のテストの
+    /// 読み出しまで数えてしまう（全体実行でだけ 48 回・170 回と数えて落ちた）。ストアごとに数える。
+    var fetchCountForTesting = 0
     /// インメモリ（テスト）の店は高水位を UserDefaults に持たない（テストどうしで ID が繋がらないように）。
     var isEphemeral: Bool { modelContainer.configurations.first?.isStoredInMemoryOnly ?? false }
     var ephemeralHighWater = -1
@@ -294,6 +298,7 @@ actor FaceStore {
 
     func countedFetchOptional<T: PersistentModel>(_ descriptor: FetchDescriptor<T>) -> [T]? {
         PerfTrace.count("faceStore.fetch")
+        fetchCountForTesting += 1
         return try? modelContext.fetch(descriptor)
     }
 

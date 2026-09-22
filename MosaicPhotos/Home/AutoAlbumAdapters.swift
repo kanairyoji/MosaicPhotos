@@ -74,6 +74,12 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
         return image.flatMap(orientationNormalizedCGImage)   // EXIF 回転を正規化（座標ズレ防止）
     }
     let warmCloud = makeCloudThumbnailWarmer(dropboxStore: dropboxStore)
+    // クラウド写真の撮影日は **EXIF の撮影日時だけ**（ADR-218）。Dropbox の縮小画像は EXIF を
+    // 落とすので画像からは読めない。Dropbox が元写真の EXIF から読んだ値をキャッシュから引く
+    // （ネットには出ない・アップロード時刻は返さない）。
+    let cloudCaptureDates: @Sendable ([String]) async -> [String: Date] = { [weak dropboxStore] paths in
+        await dropboxStore?.exifCaptureDates(paths: paths) ?? [:]
+    }
     // FaceStore も同様にオフメイン生成（コンテナを開く I/O をメインから外す）。
     return await PeopleEngine.makeWithOffMainStore(
         faceProvider: FacePerceptionAdapter(
@@ -101,8 +107,10 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
                     return [:]
                 }
                 return await dropboxStore?.faceAnalysisThumbnails(paths: paths) ?? [:]
-            }),
-        favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) })
+            },
+            cloudCaptureDates: cloudCaptureDates),
+        favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) },
+        cloudCaptureDates: cloudCaptureDates)
 }
 
 /// `DropboxPhotoStore.items` を AutoAlbumCore の中立メタデータへ写像する CloudPhotoProvider 実体。

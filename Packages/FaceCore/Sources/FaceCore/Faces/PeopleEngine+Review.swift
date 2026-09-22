@@ -193,11 +193,14 @@ extension PeopleEngine {
     ///    種に含める。7 までは、まとめて確認や束ねの結果が再クラスタで消えることがあった）
     /// 9: ADR-217（夜の再クラスタを**平均連結**に。1 枚ずつ最寄りへ入れる逐次方式は、重心が
     ///    少しずつ動いて混入が混入を呼んだ。名前・確認のある人物のメンバーは 7 のまま動かさない）
-    public static let clusterRuleVersion = 9
+    /// 10: ADR-219（赤ちゃんの顔どうしで撮影日が 3 年を超えて離れていたら、似ていてもまとめない）
+    public static let clusterRuleVersion = 10
 
     /// 修正が増えていたら全体を割り当て直す（夜間スキャン完了後に呼ばれる）。
     /// 命名済み/確認済みクラスタは ID・名前を保持し、確認顔は must-link として固定。
     public func rebuildClustersIfNeeded() async {
+        // 作り直すかどうかに関わらず、分かったクラウドの撮影日を先に埋める（ADR-218）。
+        await fillCloudCaptureDates()
         let markerKey = "faceRebuildCorrectionCount"
         let scanMarkerKey = "faceRebuildScannedCount"
         let dateMarkerKey = "faceRebuildLastDate"
@@ -240,6 +243,16 @@ extension PeopleEngine {
         // 実機で追えるようにする・ADR-68）。
         await logQualityReport()
         await loadPeople()
+    }
+
+    /// 撮影日が空のクラウドの顔へ、EXIF の撮影日時を埋める（ADR-218）。ネットには出ない。
+    func fillCloudCaptureDates() async {
+        guard let cloudCaptureDates else { return }
+        let paths = await store.cloudPathsMissingCaptureDate()
+        guard !paths.isEmpty else { return }
+        let dates = await cloudCaptureDates(paths)
+        let filled = await store.fillCloudCaptureDates(dates)
+        Diagnostics.mark("faces: cloud capture dates — 空の写真 \(paths.count) / 分かった \(dates.count) / 埋めた顔 \(filled)")
     }
 
     /// Developer Options 用: 即時再クラスタリング（動作検証）。

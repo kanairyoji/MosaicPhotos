@@ -68,7 +68,9 @@ public struct FaceTuning: Sendable, Equatable {
         autoAbsorbBar: 0.75, autoSuggestBar: 0.85,
         calibrationRange: 0.25...0.40, negativeSameThreshold: 0.45,
         auditMinMargin: 0.20, auditMaxSeparation: 0.40,
-        agglomeration: .init(microThreshold: 0.55, mergeBar: 0.40))
+        // 赤ちゃんの時期の決まり（ADR-219）: 判別器は AuraFace の埋め込み空間に固有。
+        agglomeration: .init(microThreshold: 0.55, mergeBar: 0.40,
+                             babyRule: .init(probe: .auraFace, maxSpan: 3 * 365.25 * 86_400)))
 
     /// 実際に使う「尋ねる」下限。
     ///

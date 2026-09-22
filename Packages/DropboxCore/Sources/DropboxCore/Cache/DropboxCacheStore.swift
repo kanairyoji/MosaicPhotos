@@ -258,7 +258,9 @@ actor DropboxCacheStore {
     /// ⚠️ 並びは**新しい順**。利用者が最初に見るのは一覧の末尾（最新）なので、そこから直す。
     func pathsNeedingCaptureDateProbe(limit: Int) -> [String] {
         var descriptor = FetchDescriptor<CachedDropboxItem>(
-            predicate: #Predicate { $0.captureDateProbedAt == nil },
+            // ⚠️ `exifProbedAt` で選ぶ。`captureDateProbedAt` だけの行（EXIF 由来か
+            // アップロード時刻か区別できない時期に訊いた行）も、一度だけ訊き直す。
+            predicate: #Predicate { $0.exifProbedAt == nil },
             sortBy: [SortDescriptor(\.captureDate, order: .reverse)])
         descriptor.propertiesToFetch = [\.path]
         descriptor.fetchLimit = limit
@@ -283,6 +285,9 @@ actor DropboxCacheStore {
         if let latitude, existing.latitude != latitude { existing.latitude = latitude; changed = true }
         if let longitude, existing.longitude != longitude { existing.longitude = longitude; changed = true }
         existing.captureDateProbedAt = probedAt
+        // EXIF の撮影日時だけを別に控える（取れなかったら nil＝「無かった」も事実として残る）。
+        existing.exifCaptureDate = captureDate
+        existing.exifProbedAt = probedAt
         try? modelContext.save()
         if changed { itemsRevision &+= 1 }
         return changed
@@ -291,7 +296,7 @@ actor DropboxCacheStore {
     /// 未問い合わせの件数（進捗表示・テスト用）。
     func captureDateProbePendingCount() -> Int {
         (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>(
-            predicate: #Predicate { $0.captureDateProbedAt == nil }))) ?? 0
+            predicate: #Predicate { $0.exifProbedAt == nil }))) ?? 0
     }
 
     func updateLocation(path: String, latitude: Double, longitude: Double) {
@@ -349,6 +354,8 @@ actor DropboxCacheStore {
                 if hashChanged {
                     invalidate(path: item.path)
                     existing.captureDateProbedAt = nil   // 中身が変わった＝撮影日時も訊き直す
+                    existing.exifProbedAt = nil
+                    existing.exifCaptureDate = nil
                 }
                 existing.name = item.name
                 existing.contentHash = item.contentHash
@@ -433,6 +440,34 @@ actor DropboxCacheStore {
     }
 
     // MARK: - SwiftData fetch helpers
+
+    /// パスの束 → **EXIF の撮影日時**（取れている行だけ）。顔の撮影日に使う（ADR-218）。
+    ///
+    /// ⚠️ 1 枚ずつ引かない（ADR-119）。束を分けて `IN` で引く（1 回あたり 500 件）。
+    func exifCaptureDates(paths: [String]) -> [String: Date] {
+        var out: [String: Date] = [:]
+        var start = 0
+        while start < paths.count {
+            let chunk = Array(paths[start..<min(start + 500, paths.count)])
+            start += chunk.count
+            var descriptor = FetchDescriptor<CachedDropboxItem>(
+                predicate: #Predicate { chunk.contains($0.path) && $0.exifCaptureDate != nil })
+            descriptor.propertiesToFetch = [\.path, \.exifCaptureDate]
+            PerfTrace.count("cache.exifDates.fetch")
+            for row in (try? modelContext.fetch(descriptor)) ?? [] {
+                if let date = row.exifCaptureDate { out[row.path] = date }
+            }
+        }
+        return out
+    }
+
+    /// テスト用: 「`exifProbedAt` の列ができる前に訊いた行」を作る。
+    func forgetExifProbeForTesting(path: String) {
+        guard let row = fetchCachedItem(path: path) else { return }
+        row.exifProbedAt = nil
+        row.exifCaptureDate = nil
+        try? modelContext.save()
+    }
 
     private func fetchCachedItem(path: String) -> CachedDropboxItem? {
         let predicate = #Predicate<CachedDropboxItem> { $0.path == path }

@@ -70,6 +70,9 @@ public final class PeopleEngine {
     /// お気に入り写真の refKey 集合（"L-…"）を返す seam（アプリ側＝PhotoKit が実装）。
     /// 代表写真の自動選択で「お気に入りの写真を優先」するために使う。nil なら優先なし。
     @ObservationIgnored private let favoriteRefKeysProvider: (() async -> Set<String>)?
+    /// クラウド path 群 → **EXIF の撮影日時**（ADR-218・アップロード時刻は返さない）。
+    /// 先にスキャンした顔の撮影日を、分かった分から埋め直すのに使う。
+    @ObservationIgnored let cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])?
     /// 顔スキャン。二重起動の抑止・世代ガード・明け渡しは `SingleFlightTask` が持つ（ADR-198。
     /// 以前は `scanTask` / `scanGeneration` / `isScanning` の 3 つを手で管理していた）。
     @ObservationIgnored let scan = SingleFlightTask()
@@ -124,12 +127,14 @@ public final class PeopleEngine {
     /// `makeWithOffMainStore` を使う。
     init(faceProvider: FacePerceptionProvider?,
          favoriteRefKeysProvider: (() async -> Set<String>)? = nil,
+         cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])? = nil,
          store: FaceStore? = nil,
          shadowStore: FaceStore? = nil) {
         let store = store ?? FaceStore()
         self.store = store
         self.faceProvider = faceProvider
         self.favoriteRefKeysProvider = favoriteRefKeysProvider
+        self.cloudCaptureDates = cloudCaptureDates
         self.shadowStore = shadowStore
         // スキャンは影の世代があればそちらへ（新モデルの埋め込みを旧世代のクラスタに混ぜない）。
         self.tagger = FaceTagger(store: shadowStore ?? store, provider: faceProvider)
@@ -159,7 +164,8 @@ public final class PeopleEngine {
     /// 表示は現行世代のまま、スキャンは影へ。網羅が閾値に達したら切り替える（DB を消さない）。
     public static func makeWithOffMainStore(
         faceProvider: FacePerceptionProvider?,
-        favoriteRefKeysProvider: (() async -> Set<String>)? = nil
+        favoriteRefKeysProvider: (() async -> Set<String>)? = nil,
+        cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])? = nil
     ) async -> PeopleEngine {
         let active = activeFaceModelID()
         let bundled = faceProvider?.modelID ?? active
@@ -176,6 +182,7 @@ public final class PeopleEngine {
         if orphans > 0 { Diagnostics.mark("faces: repaired \(orphans) orphan face(s) at launch (ADR-187)") }
         return PeopleEngine(faceProvider: faceProvider,
                             favoriteRefKeysProvider: favoriteRefKeysProvider,
+                            cloudCaptureDates: cloudCaptureDates,
                             store: store, shadowStore: shadow)
     }
 
