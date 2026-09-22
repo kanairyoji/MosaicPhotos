@@ -35,7 +35,6 @@ extension FaceStore {
         let thr = calibratedThreshold()
         let negatives = loadNegatives()
         let existing = allClusters()
-        let maxExistingID = existing.map(\.clusterID).max() ?? -1
         // ⚠️ **既に上で全顔を読んでいる**（`allFaces`）。クラスタごとに引き直すと、
         // 人物数ぶんの往復が丸ごと無駄になる（1,316 人なら 1,316 回）。しかも再クラスタは
         // 単一の `@ModelActor` を占有するので、その間はピープル画面・写真の人物名が待たされる。
@@ -44,41 +43,94 @@ extension FaceStore {
         for f in allFaces where f.clusterID >= 0 {
             facesByCluster[f.clusterID, default: []].append(f)
         }
-
-        // 1) 種クラスタ（命名済み or 確認顔あり）: アンカーだけから重心を作り直す。
-        //
-        // ⚠️⚠️ **人物の同一性は、ユーザーが表明したものを最優先で守る**（ADR-130）。
-        // 実フィードバック: 「自分の顔のアルバムが、いつの間にか丸ごと娘の顔になっていた。
-        // 自分の写真は People 9 として追い出されていた」。原因は種の作り方が弱かったこと:
-        // (a) **代表写真（cover）をアンカーにしていなかった**。1 対 1 の確認をしていない人物
-        //     （まとめて確認だけで育てた人物）は `confirmedAt` を 1 つも持たないので、
-        //     種は「現重心を 1 票」だけになる。
-        // (b) その **count=1** が致命的で、サイズ適応マージン（ADR-58）は小さいクラスタほど
-        //     合流を厳しくする——**1,000 枚の確立した人物が、再クラスタの瞬間だけ
-        //     「生まれたての 1 顔クラスタ」として扱われる**。本人の顔すら入れなくなる。
-        // (c) 重心自体が別人へ引きずられていると、そのまま別人のアルバムになる。
-        // 対処: **代表写真をアンカーに含める**（ユーザーが「この人はこの顔」と選んだ表明）。
-        // さらに種の `count` は**以前の規模を引き継ぐ**（確立した人物を作り直しの瞬間に
-        // 新参扱いしない）。
         let faceByID = Dictionary(allFaces.map { ($0.faceID, $0) }, uniquingKeysWith: { a, _ in a })
         // ⚠️ **名前付き人物が痩せたら記録する**（ADR-144）。実フィードバック「ピープルアルバムの
-        // 写真の全数が減っている気がする」。感覚を裏取りできるよう、再クラスタの前後で
-        // 名前付き人物の枚数を突き合わせ、減った分だけ診断ログに出す。
-        var namedBefore: [Int: (name: String, photos: Int)] = [:]
-        for c in existing {
-            guard let name = c.name, !name.isEmpty else { continue }
-            let photos = Set((facesByCluster[c.clusterID] ?? []).map(\.refKey)).count
-            namedBefore[c.clusterID] = (name, photos)
-        }
+        // 写真の全数が減っている気がする」。再クラスタの前後で名前付き人物の枚数を突き合わせる。
+        let namedBefore = Self.namedPhotoCounts(existing, facesByCluster: facesByCluster)
 
         // ⚠️ **作り直す前に、今の記録が壊れていないかを見る**（ADR-210）。全顔はもう手元に
         // あるので追加の読み出しは要らない。ここで出しておかないと、このあと重心を作り直した
         // 時点でずれが消えてしまい、**壊れていたことに誰も気づけないまま**毎晩直り続ける。
         reportCentroidDrift(existing: existing, facesByCluster: facesByCluster)
 
-        // 種の構築は `FaceSeedBuilder`（純・テスト対象・ADR-198）に出した。ここは値の受け渡しだけ。
-        // ⚠️ 埋め込みは**クロージャで 1 枚ずつ**復号する。全顔の `[Float]` を値にすると
-        //    86k × 512 次元 × 4 バイト ≒ 176MB を一度に確保することになる（ADR-6/119/122）。
+        // 1) 種（名前・確認・代表写真・束ね＝ユーザーが表明した人物）を作り直す。
+        let built = buildSeeds(existing: existing, facesByCluster: facesByCluster,
+                               faceByID: faceByID, negatives: negatives)
+        // 2) 残りの顔を平均連結でまとめる（ADR-217）→ 3) 写りの悪い顔を所属だけ付ける（ADR-66）。
+        var state = assignByAgglomeration(allFaces: allFaces, faceByID: faceByID, built: built,
+                                          negatives: negatives, threshold: thr,
+                                          maxExistingID: existing.map(\.clusterID).max() ?? -1)
+        assignSecondPass(&state)
+
+        // 4) 書き戻し: 顔の clusterID（確認顔は種のまま）・種以外の旧クラスタ行は削除して再作成。
+        let moved = writeBack(allFaces, pinned: built.pinned, state: state)
+        // ⚠️ 無名の集合は**削除より前に**作る（レビュー指摘）。削除後に `existing` の
+        // `name` / `clusterID` を読むと、消した `PersonCluster` のプロパティを触ることになる。
+        var unnamedBeforeDelete = Set(existing.filter { $0.name?.isEmpty ?? true }.map(\.clusterID))
+        unnamedBeforeDelete.formUnion(
+            Set(state.clustering.clusters.map(\.id)).subtracting(existing.map(\.clusterID)))
+        let seedIDs = Set(built.seeds.map(\.id))
+        for c in existing where !seedIDs.contains(c.clusterID) {
+            modelContext.delete(c)
+        }
+        persist(state.clustering)
+
+        // 5) 名前は「人」に付いている（ADR-130）。
+        followNames(built.anchorlessNamed, assignment: state.assignment,
+                    unnamed: unnamedBeforeDelete)
+
+        // 6) 各人物の散らばりを測っておく（ADR-210）。事後監査を尋ねる順番と判定の内訳に使う。
+        recordClusterSpreads(faces: allFaces, contributed: state.contributed)
+        reportLinkSources()
+
+        try? modelContext.save()
+        clusteringCache = nil
+        reportNamedShrink(before: namedBefore)
+        Self.log.info("faces: rebuild — clusters=\(state.clustering.clusters.count) moved=\(moved) "
+                      + "thr=\(thr)")
+        return (state.clustering.clusters.count, moved)
+    }
+
+    /// 再クラスタの途中の割り当て（段から段へ受け渡す）。
+    struct RebuildAssignment {
+        /// 品質の降順に並べた、種に固定されていない顔。
+        var pending: [DetectedFace]
+        /// まとめ上がった人物の器（第2パスと書き戻しに使う）。
+        var clustering: FaceClustering
+        var assignment: [String: Int]
+        /// **実際に重心へ足した顔**（ADR-210）。
+        var contributed: Set<String>
+        var linkSource: [String: FaceLinkSource]
+        /// 同一写真 cannot-link（写真 → その写真で既に使った人物）。
+        var usedByPhoto: [String: Set<Int>]
+    }
+
+    /// 名前付き人物ごとの写真の枚数（再クラスタの前後比較・ADR-144）。
+    static func namedPhotoCounts(_ clusters: [PersonCluster],
+                                 facesByCluster: [Int: [DetectedFace]]) -> [Int: (name: String, photos: Int)] {
+        var out: [Int: (name: String, photos: Int)] = [:]
+        for c in clusters {
+            guard let name = c.name, !name.isEmpty else { continue }
+            out[c.clusterID] = (name, Set((facesByCluster[c.clusterID] ?? []).map(\.refKey)).count)
+        }
+        return out
+    }
+
+    /// 1) 種クラスタ（命名済み・確認顔・代表写真・束ね）: アンカーから重心を作り直す。
+    ///
+    /// ⚠️⚠️ **人物の同一性は、ユーザーが表明したものを最優先で守る**（ADR-130）。
+    /// 実フィードバック: 「自分の顔のアルバムが、いつの間にか丸ごと娘の顔になっていた。
+    /// 自分の写真は People 9 として追い出されていた」。原因は種の作り方が弱かったこと:
+    /// (a) **代表写真（cover）をアンカーにしていなかった**。まとめて確認だけで育てた人物は
+    ///     `confirmedAt` を 1 つも持たないので、種は「現重心を 1 票」だけになる。
+    /// (b) その **count=1** で、確立した人物が再クラスタの瞬間だけ新参扱いされた。
+    /// (c) 重心自体が別人へ引きずられていると、そのまま別人のアルバムになる。
+    /// 規則は `FaceSeedBuilder`（純・テスト対象・ADR-198）にある。ここは値の受け渡しだけ。
+    /// ⚠️ 埋め込みは**クロージャで 1 枚ずつ**復号する。全顔の `[Float]` を値にすると
+    ///    86k × 512 次元 × 4 バイト ≒ 176MB を一度に確保することになる（ADR-6/119/122）。
+    private func buildSeeds(existing: [PersonCluster], facesByCluster: [Int: [DetectedFace]],
+                            faceByID: [String: DetectedFace],
+                            negatives: [FaceClustering.NegativePair]) -> FaceSeedBuilder.Result {
         func ref(_ f: DetectedFace) -> FaceSeedBuilder.FaceRef {
             .init(faceID: f.faceID, quality: Float(f.quality), confirmedAt: f.confirmedAt)
         }
@@ -90,7 +142,7 @@ extension FaceStore {
         }
         let storedCentroids = Dictionary(uniqueKeysWithValues:
             existing.map { ($0.clusterID, ClipMath.decodeHalf($0.sum)) })
-        let built = FaceSeedBuilder.build(
+        return FaceSeedBuilder.build(
             clusters: clusterRefs,
             coverFace: { faceByID[$0].map(ref) },
             embedding: { faceByID[$0].flatMap { ClipMath.decodeHalf($0.embedding) } },
@@ -99,21 +151,23 @@ extension FaceStore {
             tuning: tuning,
             qualityFloor: Self.qualityFloor,
             maxSeedPrototypes: Self.maxSeedPrototypes)
-        let seeds = built.seeds
-        let seedIDs = Set(seeds.map { $0.id })
-        let pinnedCluster = built.pinned
-        let anchorlessNamed = built.anchorlessNamed
+    }
 
-        // 2) 残りの顔を**平均連結**でまとめる（ADR-217）。以前は品質降順に 1 枚ずつ最寄りの山へ
-        // 入れる逐次方式で、山に顔が入るたびに重心が動き「混入が次の混入を呼ぶ」形だった
-        // （ADR-130）。ここでは「山の全員と全員の類似の平均」でいちばん近い組から順にまとめる。
-        // 計測（face-accuracy.md 2026-09-22）: FG-NET / LFW / PIPA のすべてで純度・最悪の人物の
-        // 純度が上がった（代わりに成長写真の子供は分かれやすい＝レビューと束ねで直せる側の誤り）。
-        // ⚠️ 種（名前・確認・代表写真・束ね）は `FaceSeedBuilder` が固定したまま山として参加し、
-        // 種どうしはまとめない（ADR-153）。同じ写真・負例の拒否も守る。
-        // ⚠️ 校正後のしきい値（`thr`）はここでは使わない——平均連結の線はプロファイルの値
-        // （`tuning.agglomeration`）。校正は昼の逐次割り当て（`recordScan`）に効く。
-        let pending = allFaces.filter { pinnedCluster[$0.faceID] == nil }
+    /// 2) 残りの顔を**平均連結**でまとめる（ADR-217）。
+    ///
+    /// 以前は品質降順に 1 枚ずつ最寄りの山へ入れる逐次方式で、山に顔が入るたびに重心が動き
+    /// 「混入が次の混入を呼ぶ」形だった（ADR-130）。ここでは「山の全員と全員の類似の平均」で
+    /// いちばん近い組から順にまとめる（face-accuracy.md 2026-09-22）。
+    /// ⚠️ 種は `FaceSeedBuilder` が固定したまま山として参加し、種どうしはまとめない（ADR-153）。
+    /// 同じ写真・負例の拒否も守る。
+    /// ⚠️ 校正後のしきい値はここでは使わない——平均連結の線はプロファイルの値
+    /// （`tuning.agglomeration`）。校正は昼の逐次割り当て（`recordScan`）と第2パスの器に効く。
+    private func assignByAgglomeration(allFaces: [DetectedFace], faceByID: [String: DetectedFace],
+                                       built: FaceSeedBuilder.Result,
+                                       negatives: [FaceClustering.NegativePair],
+                                       threshold: Float, maxExistingID: Int) -> RebuildAssignment {
+        let pinned = built.pinned
+        let pending = allFaces.filter { pinned[$0.faceID] == nil }
             .sorted { $0.quality != $1.quality ? $0.quality > $1.quality : $0.faceID < $1.faceID }
         // 同一写真 cannot-link（recordScan と同じ制約を全体再割り当てにも）。
         // 確認顔は種クラスタに残るため、その写真×クラスタの占有を先に登録する。
@@ -121,43 +175,42 @@ extension FaceStore {
         var seedPhotos: [Int: Set<String>] = [:]
         var seedMembers: [Int: [String]] = [:]
         for f in allFaces {
-            guard let pinned = pinnedCluster[f.faceID] else { continue }
-            usedByPhoto[f.refKey, default: []].insert(pinned)
-            seedPhotos[pinned, default: []].insert(f.refKey)
-            if built.contributed.contains(f.faceID) { seedMembers[pinned, default: []].append(f.faceID) }
+            guard let cid = pinned[f.faceID] else { continue }
+            usedByPhoto[f.refKey, default: []].insert(cid)
+            seedPhotos[cid, default: []].insert(f.refKey)
+            if built.contributed.contains(f.faceID) { seedMembers[cid, default: []].append(f.faceID) }
         }
         // ⚠️ 埋め込みは**1 枚ずつ**復号する（86k × 512 次元を一度に持たない・ADR-119/122）。
         func decode(_ faceID: String) -> [Float]? {
             faceByID[faceID].flatMap { ClipMath.decodeHalf($0.embedding) }
         }
-        let agglomerationStart = Date()
+        let started = Date()
         let groups = FaceAgglomeration.cluster(
             faces: pending.filter { Float($0.quality) >= Self.qualityFloor }
                 .map { .init(faceID: $0.faceID, photo: $0.refKey) },
-            seeds: seeds.map { seed in
+            seeds: built.seeds.map { seed in
                 .init(clusterID: seed.id, memberFaceIDs: seedMembers[seed.id] ?? [],
                       photos: seedPhotos[seed.id] ?? [], fallbackCentroid: seed.centroid)
             },
             embedding: decode,
-            // 撮影日は赤ちゃんの時期の決まり（ADR-219）にだけ使う。種のメンバーの日付も要る。
+            // 撮影日は赤ちゃんの時期の決まり（ADR-219・いまは無効）にだけ使う。
             captureDate: { faceByID[$0]?.captureDate },
             config: tuning.agglomeration,
             blocked: FaceAgglomeration.negativeBlocker(
                 negatives: negatives, sameThreshold: tuning.negativeSameThreshold))
         // 実機で所要を確かめる材料（device-verification.md の E1）。
         Diagnostics.mark("faces: agglomeration — 顔 \(pending.count) → 人物 \(groups.count)"
-                         + "（種 \(seeds.count)）\(Int(Date().timeIntervalSince(agglomerationStart) * 1000))ms")
+                         + "（種 \(built.seeds.count)）\(Int(Date().timeIntervalSince(started) * 1000))ms")
         let nextID = max(maxExistingID, clusterIDHighWater()) + 1
         let materialized = FaceAgglomeration.materialize(
-            groups, seeds: seeds, nextID: nextID, embedding: decode,
+            groups, seeds: built.seeds, nextID: nextID, embedding: decode,
             quality: { Float(faceByID[$0]?.quality ?? 1) })
         // 第2パス用に、まとめ上がった人物を逐次の器へ載せる（書き戻しもこの器から行う）。
-        var clustering = FaceClusteringSetup.make(
-            threshold: thr, qualityFloor: Self.qualityFloor, tuning: tuning,
+        let clustering = FaceClusteringSetup.make(
+            threshold: threshold, qualityFloor: Self.qualityFloor, tuning: tuning,
             seeds: materialized.clusters,
             minimumNextID: max(nextID, (materialized.clusters.map(\.id).max() ?? -1) + 1),
-            anchoredClusterIDs: Set(seeds.filter { !$0.prototypes.isEmpty }.map(\.id)))
-        var newAssignment = materialized.assignment
+            anchoredClusterIDs: Set(built.seeds.filter { !$0.prototypes.isEmpty }.map(\.id)))
         // ⚠️ **実際に重心へ足した顔**だけを集める（ADR-210）。平均連結で山に入った顔は、
         // 品質フロア以上なので全員が重み付き和に入っている。
         let contributed = built.contributed.union(materialized.assignment.keys)
@@ -167,68 +220,65 @@ extension FaceStore {
             guard let face = faceByID[faceID] else { continue }
             usedByPhoto[face.refKey, default: []].insert(clusterID)
         }
+        return RebuildAssignment(pending: pending, clustering: clustering,
+                                 assignment: materialized.assignment, contributed: contributed,
+                                 linkSource: linkSource, usedByPhoto: usedByPhoto)
+    }
 
-        // 第2パス（ADR-66・recall 回復）: 品質フロア未満で捨てていた顔（横顔・ぶれ・小さめ等・埋め込みは
-        // ある）を、**重心を汚さず**最寄り人物へ membership だけ割り当てる。純度は不変（sum/count 不変）。
-        // 「人が写っているのに People に出ない」を減らす。データセット計測で閾値 0.55 を採用。
-        for f in pending where (newAssignment[f.faceID] ?? FaceClustering.unassigned) < 0
+    /// 3) 第2パス（ADR-66・recall 回復）: 品質フロア未満で捨てていた顔（横顔・ぶれ・小さめ等・
+    /// 埋め込みはある）を、**重心を汚さず**最寄り人物へ membership だけ割り当てる（sum/count 不変）。
+    /// 「人が写っているのに People に出ない」を減らす。線はプロファイルの `secondPassThreshold`。
+    ///
+    /// ⚠️ 連写（ADR-211）・服装（ADR-212）による拾い直しはこの後ろにあったが、PIPA の計測で
+    /// 繋いだ顔の正解率 0%・B-Cubed F1 低下と分かり撤回した（face-accuracy.md の PIPA 節）。
+    private func assignSecondPass(_ state: inout RebuildAssignment) {
+        for f in state.pending where (state.assignment[f.faceID] ?? FaceClustering.unassigned) < 0
             && Float(f.quality) < Self.qualityFloor {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-            let cid = clustering.assignMembershipOnly(
+            let cid = state.clustering.assignMembershipOnly(
                 faceID: f.faceID, embedding: vec,
-                excludedClusterIDs: usedByPhoto[f.refKey] ?? [],
+                excludedClusterIDs: state.usedByPhoto[f.refKey] ?? [],
                 threshold: tuning.secondPassThreshold)
             if cid >= 0 {
-                newAssignment[f.faceID] = cid
-                usedByPhoto[f.refKey, default: []].insert(cid)
-                linkSource[f.faceID] = .secondPass
+                state.assignment[f.faceID] = cid
+                state.usedByPhoto[f.refKey, default: []].insert(cid)
+                state.linkSource[f.faceID] = .secondPass
             }
         }
+    }
 
-        // ⚠️ ここには連写（ADR-211）・服装（ADR-212）による拾い直しがあったが、PIPA の計測で
-        // 繋いだ顔の正解率が 0%（第2パスは 92.5%）・B-Cubed F1 も下がると分かり撤回した
-        // （face-accuracy.md の PIPA 節）。第2パスの後に残る顔はそもそも少なく、上限でも 1% 未満。
-
-        // 3) 書き戻し: 顔の clusterID（確認顔は種のまま）・種以外の旧クラスタ行は削除して再作成。
+    /// 4) 顔の行へ書き戻す。- Returns: 人物が変わった顔の数。
+    private func writeBack(_ allFaces: [DetectedFace], pinned: [String: Int],
+                           state: RebuildAssignment) -> Int {
         var moved = 0
         for f in allFaces {
-            let newID = pinnedCluster[f.faceID]
-                ?? (newAssignment[f.faceID] ?? FaceClustering.unassigned)
+            let newID = pinned[f.faceID] ?? (state.assignment[f.faceID] ?? FaceClustering.unassigned)
             if f.clusterID != newID { moved += 1 }
             f.clusterID = newID
             // ⚠️⚠️ **事実を写すだけ**（ADR-210）。以前はここで「留めた顔はすべて寄与した」と
             // 品質を無視して書いており、種の計算（フロア以上だけ足す）と食い違っていた。
             // 実ライブラリでは顔の約半数がフロア未満なので、`count` が実体の数分の 1 になり、
             // 数枚外しただけでクラスタが消える状態になっていた。
-            f.contributesToCentroid = newID >= 0 && contributed.contains(f.faceID)
-            f.linkSource = newID >= 0 ? (linkSource[f.faceID] ?? .face).rawValue : nil
+            f.contributesToCentroid = newID >= 0 && state.contributed.contains(f.faceID)
+            f.linkSource = newID >= 0 ? (state.linkSource[f.faceID] ?? .face).rawValue : nil
             // 撤回した服装の埋め込み（ADR-212）が残っていれば空けて容量を返す。列は台帳の
             // 互換のため残す（ADR-186: 台帳は列を消さない）。
             if f.torsoEmbedding != nil { f.torsoEmbedding = nil }
         }
-        // ⚠️ 無名の集合は**削除より前に**作る（レビュー指摘）。削除後に `existing` の
-        // `name` / `clusterID` を読むと、消した `PersonCluster` のプロパティを触ることになる。
-        var unnamedBeforeDelete = Set(existing.filter { $0.name?.isEmpty ?? true }.map(\.clusterID))
-        unnamedBeforeDelete.formUnion(
-            Set(clustering.clusters.map(\.id)).subtracting(existing.map(\.clusterID)))
+        return moved
+    }
 
-        for c in existing where !seedIDs.contains(c.clusterID) {
-            modelContext.delete(c)
-        }
-        persist(clustering)
-
-        // 3.5) **名前は「人」に付いている**（ADR-130）。アンカーの無い命名済み人物の顔が
-        // まるごと別クラスタへ移ったのに、名前だけ元の ID に残ると——そこへ流れ込んだ
-        // 別人が、その名前のアルバムとして表示される（実害: 「私」のアルバムが娘の写真に
-        // なり、自分の顔は "People 9" として追い出されていた）。過半が移った先が無名なら、
-        // 名前をそちらへ移す。
-        // 判断は `FaceNameFollowing.moves`（純・テスト対象・ADR-198）。ここは反映だけ。
-        // ⚠️ **1 つ移すたびに行き先を「名前あり」に落とす**（レビュー指摘）。旧実装は
-        // 行き先の名前を**その場で読み直して**いたので、2 人の無名命名済みが同じクラスタへ
-        // 合流したとき 2 人目は見送られた。集合を固定したまま回すと両方が通り、
-        // 1 人目の名前が上書きされて**利用者が付けた名前が消える**。
-        var available = unnamedBeforeDelete
-        for move in FaceNameFollowing.moves(candidates: anchorlessNamed, assignment: newAssignment,
+    /// 5) **名前は「人」に付いている**（ADR-130）。アンカーの無い命名済み人物の顔が
+    /// まるごと別クラスタへ移ったのに、名前だけ元の ID に残ると——そこへ流れ込んだ
+    /// 別人が、その名前のアルバムとして表示される（実害: 「私」のアルバムが娘の写真に
+    /// なり、自分の顔は "People 9" として追い出されていた）。過半が移った先が無名なら、
+    /// 名前をそちらへ移す。判断は `FaceNameFollowing.moves`（純・テスト対象・ADR-198）。
+    /// ⚠️ **1 つ移すたびに行き先を「名前あり」に落とす**（レビュー指摘）。集合を固定したまま
+    /// 回すと、2 人の無名命名済みが同じクラスタへ合流したとき 1 人目の名前が上書きされて消える。
+    private func followNames(_ anchorlessNamed: [FaceNameFollowing.Candidate],
+                             assignment: [String: Int], unnamed: Set<Int>) {
+        var available = unnamed
+        for move in FaceNameFollowing.moves(candidates: anchorlessNamed, assignment: assignment,
                                             isUnnamed: { available.contains($0) }) {
             guard available.contains(move.to), let dst = cluster(move.to) else { continue }
             cluster(move.from)?.name = nil
@@ -236,18 +286,6 @@ extension FaceStore {
             available.remove(move.to)
             Self.log.info("faces: rebuild — name '\(move.name)' followed its members \(move.from)→\(move.to)")
         }
-
-        // 3.6) **次の晩のために、各人物の散らばりを測っておく**（ADR-210）。
-        // スキャン中は重心が動かない前提なので、ここで測った値が翌日の凍結判断になる。
-        recordClusterSpreads(faces: allFaces, contributed: contributed)
-        reportLinkSources()
-
-        try? modelContext.save()
-        clusteringCache = nil
-        reportNamedShrink(before: namedBefore)
-        Self.log.info("faces: rebuild — clusters=\(clustering.clusters.count) moved=\(moved) "
-                      + "thr=\(thr)")
-        return (clustering.clusters.count, moved)
     }
 
     /// 全消去（再スキャン用）。

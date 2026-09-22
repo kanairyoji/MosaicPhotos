@@ -51,4 +51,31 @@ enum ReviewCandidatePlanning {
         pairs.sort { $0.sim > $1.sim }
         return Array(pairs.prefix(scanLimit))
     }
+
+    /// A2 境界の顔: 1 人の人物から、尋ねる顔を選ぶ。
+    ///
+    /// 規則（どれも実フィードバックが出典）:
+    /// 1. 重心との類似が `threshold + band` 未満の顔だけ（＝混入した別人がいちばん出やすい位置）。
+    /// 2. **類似の低い順**（いちばん疑わしい顔から尋ねる）。
+    /// 3. `skipFaceID`（無名の人物の代表顔）は出さない——代表と並べて比べるカードなので、
+    ///    自分自身と比べることになる。
+    /// 4. 出題済み（`isExcluded`）は飛ばして**次点で埋める**。
+    /// 5. 1 人につき `perCluster` 枚まで。
+    ///
+    /// ⚠️ 確認済み・品質フロア未満の顔は、呼び出し側が候補に入れない（ADR-53 追補）。
+    static func boundaryFaces(_ candidates: [(faceID: String, similarity: Float)],
+                              threshold: Float, band: Float = 0.10, perCluster: Int = 2,
+                              skipFaceID: String?,
+                              isExcluded: (String) -> Bool) -> [(faceID: String, similarity: Float)] {
+        var picked: [(faceID: String, similarity: Float)] = []
+        let sorted = candidates.filter { $0.similarity < threshold + band }
+            .sorted { $0.similarity != $1.similarity ? $0.similarity < $1.similarity : $0.faceID < $1.faceID }
+        for candidate in sorted {
+            guard picked.count < perCluster else { break }
+            if candidate.faceID == skipFaceID { continue }
+            if isExcluded(candidate.faceID) { continue }
+            picked.append(candidate)
+        }
+        return picked
+    }
 }

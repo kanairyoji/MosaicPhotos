@@ -78,21 +78,7 @@ extension FaceStore {
         let focus = Self.focusClusters(anchorPool.isEmpty ? clusters : anchorPool)
         let focusIDs = Set(focus.map(\.clusterID))
 
-        // 「別人」と記録済みの対（重心埋め込みで照合＝ID の揺れに強い）。
-        let notSameRows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
-            // 「別人と答えた」対に加え、同一写真で統合できない対も出題から外す（ADR-152）。
-            predicate: #Predicate { $0.kind == "notSame" || $0.kind == "samePhotoBlock" }))) ?? [])
-            .compactMap {
-            row -> ([Float], [Float])? in
-            guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
-            guard let wrong = row.wrongEmbedding,
-                  let a = ClipMath.decodeHalf(row.faceEmbedding),
-                  let b = ClipMath.decodeHalf(wrong) else { return nil }
-            return (FaceClustering.normalized(a), FaceClustering.normalized(b))
-        }
-        // ⚠️ 対ごとに全記録を走査しない（実機 diagnostics-61: 27.8 秒のハングの犯人）。
-        // クラスタごとに「どの記録のどちら側へ一致するか」を先に求めておく（`NotSameIndex`）。
-        let notSameIndex = NotSameIndex(rows: notSameRows, centroids: centroid)
+        let notSameIndex = reviewNotSameIndex(centroids: centroid)
         guard !Task.isCancelled else { return [] }
 
         // A1 の候補対（**片側は必ず基準**）。ここでは重心だけで絞り込む＝顔はまだ読まない。
@@ -116,18 +102,9 @@ extension FaceStore {
         PerfTrace.logSpan("people.batchReview.faces", ms: PerfTrace.msSince(tFaces),
                           detail: "clusters=\(needed.count)")
 
-        var coverFace: [Int: PersonInfo.Face] = [:]
-        var photoSets: [Int: Set<String>] = [:]
-        let coverByCluster = Dictionary(uniqueKeysWithValues: clusters.map { ($0.clusterID, $0.coverFaceID) })
-        for (id, members) in membersByCluster {
-            photoSets[id] = Set(members.map(\.refKey))
-            let pick = coverByCluster[id].flatMap { fid in members.first { $0.faceID == fid } }
-                ?? members.max { $0.coverScore < $1.coverScore }
-            if let f = pick {
-                coverFace[id] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
-                                                boundingBox: f.box)
-            }
-        }
+        let (coverFace, photoSets) = Self.reviewCoverFacesAndPhotos(
+            membersByCluster: membersByCluster,
+            coverFaceIDs: Dictionary(uniqueKeysWithValues: clusters.map { ($0.clusterID, $0.coverFaceID) }))
 
         // A3: 事後監査（ADR-69）＝「この人物、実は 2 人では？」を最優先で尋ねる。
         // 混入は分裂より害が大きい（間違った人のアルバムに他人が混ざる）。基準の人物だけを見る。
@@ -156,42 +133,84 @@ extension FaceStore {
         }
 
         // A2: 境界の顔（クラスタごとに最大 2・類似が低い順）。**基準の人物だけ**を見る。
-        // ⚠️ 以前は「命名済み優先で並べた先頭 60 クラスタ」を走査しており、無名の断片まで
-        // 実体（埋め込み込み）で引いていた。基準に絞れば読み出しは数クラスタで済む。
-        // ⚠️ 基準が多い人（何百人も名前を付けた場合）でも上限を跨がない。ここは 1 人につき
-        // 実体（埋め込み込み）を 1 回引くので、基準の数がそのまま fetch 回数になる。
+        items += boundaryReviewItems(focus: focus, centroid: centroid, coverFace: coverFace,
+                                     threshold: thr, limit: limit - items.count,
+                                     excluding: excluding)
+        return items
+    }
+
+    /// 「別人」と記録済みの対（＋同一写真で統合できない対・ADR-152）を、クラスタごとに引ける形にする。
+    /// 重心埋め込みで照合する＝クラスタ ID の揺れに強い。
+    ///
+    /// ⚠️ 対ごとに全記録を走査しない（実機 diagnostics-61: 27.8 秒のハングの犯人）。
+    /// クラスタごとに「どの記録のどちら側へ一致するか」を先に求めておく（`NotSameIndex`）。
+    private func reviewNotSameIndex(centroids: [Int: [Float]]) -> NotSameIndex {
+        let rows = ((countedFetchOptional(FetchDescriptor<FaceCorrection>(
+            predicate: #Predicate { $0.kind == "notSame" || $0.kind == "samePhotoBlock" }))) ?? [])
+            .compactMap { row -> ([Float], [Float])? in
+                guard (row.profile ?? "facenet") == tuning.name else { return nil }   // 別空間（ADR-70 追補）
+                guard let wrong = row.wrongEmbedding,
+                      let a = ClipMath.decodeHalf(row.faceEmbedding),
+                      let b = ClipMath.decodeHalf(wrong) else { return nil }
+                return (FaceClustering.normalized(a), FaceClustering.normalized(b))
+            }
+        return NotSameIndex(rows: rows, centroids: centroids)
+    }
+
+    /// 各クラスタの代表顔（利用者が選んだ代表 → 無ければ見た目の点数が最大の顔）と、写っている写真。
+    private static func reviewCoverFacesAndPhotos(membersByCluster: [Int: [FaceDigest]],
+                                                  coverFaceIDs: [Int: String?])
+        -> (cover: [Int: PersonInfo.Face], photos: [Int: Set<String>]) {
+        var cover: [Int: PersonInfo.Face] = [:]
+        var photos: [Int: Set<String>] = [:]
+        for (id, members) in membersByCluster {
+            photos[id] = Set(members.map(\.refKey))
+            let chosen = coverFaceIDs[id].flatMap { $0 }.flatMap { fid in members.first { $0.faceID == fid } }
+                ?? members.max { $0.coverScore < $1.coverScore }
+            if let f = chosen {
+                cover[id] = PersonInfo.Face(faceID: f.faceID, refKey: f.refKey, boundingBox: f.box)
+            }
+        }
+        return (cover, photos)
+    }
+
+    /// A2 境界の顔のカード。選び方の規則は `ReviewCandidatePlanning.boundaryFaces`（純・テスト対象）。
+    ///
+    /// ⚠️ 以前は「命名済み優先で並べた先頭 60 クラスタ」を走査しており、無名の断片まで
+    /// 実体（埋め込み込み）で引いていた。基準に絞れば読み出しは数クラスタで済む。
+    /// ⚠️ 基準が多い人（何百人も名前を付けた場合）でも上限を跨がない。ここは 1 人につき
+    /// 実体（埋め込み込み）を 1 回引くので、基準の数がそのまま fetch 回数になる。
+    private func boundaryReviewItems(focus: [PersonCluster], centroid: [Int: [Float]],
+                                     coverFace: [Int: PersonInfo.Face], threshold: Float,
+                                     limit: Int, excluding: Set<String>) -> [FaceReviewItem] {
+        var items: [FaceReviewItem] = []
         for c in focus.prefix(Self.boundaryScanLimit) {
-            guard items.count < limit, !Task.isCancelled, let cen = centroid[c.clusterID] else { continue }
-            var boundary: [(face: DetectedFace, sim: Float)] = []
-            // 品質フロア未満の顔は出題しない（ADR-53 追補）。境界レビューは「最も疑わしい顔」を
-            // 選ぶため、旧データに残る誤検出（模様等の偽陽性・低品質）がそのまま最優先で出て
-            // 「顔じゃないカード」になる実障害があった。フロア未満は再スキャンで浄化されるまで
-            // 表示にも出さない（ユーザーに判断を求める価値がない）。
+            guard items.count < limit, !Task.isCancelled,
+                  let cen = centroid[c.clusterID], let cover = coverFace[c.clusterID] else { continue }
+            // 品質フロア未満の顔は出題しない（ADR-53 追補）。旧データに残る誤検出（模様等の
+            // 偽陽性・低品質）が「最も疑わしい顔」として最優先で出て「顔じゃないカード」になっていた。
+            var byID: [String: DetectedFace] = [:]
+            var candidates: [(faceID: String, similarity: Float)] = []
             for f in faces(inCluster: c.clusterID)
                 where f.confirmedAt == nil && f.quality >= Double(Self.qualityFloor) {
                 guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-                let sim = FaceClustering.dot(FaceClustering.normalized(vec), cen)
-                if sim < thr + 0.10 { boundary.append((f, sim)) }
+                byID[f.faceID] = f
+                candidates.append((f.faceID, FaceClustering.dot(FaceClustering.normalized(vec), cen)))
             }
-            guard let cover = coverFace[c.clusterID] else { continue }
-            var perCluster = 0
-            for entry in boundary.sorted(by: { $0.sim < $1.sim }) {
-                guard items.count < limit, perCluster < 2 else { break }
-                // 未命名（Person N）は name=nil ＝ UI が「代表の顔と並べて比較」カードにする
-                //（名前を出しても誰か分からず答えられない・実フィードバック）。
-                // 境界顔自身が代表と同一（1 枚だけのケース等）は比較にならないので出さない。
-                let displayName = (c.name?.isEmpty == false) ? c.name : nil
-                if displayName == nil && cover.faceID == entry.face.faceID { continue }
-                let item = FaceReviewItem.isThisPerson(
-                    face: PersonInfo.Face(faceID: entry.face.faceID, refKey: entry.face.refKey,
-                                          boundingBox: CGRect(x: entry.face.bx, y: entry.face.by,
-                                                              width: entry.face.bw, height: entry.face.bh)),
-                    clusterID: c.clusterID, name: displayName,
-                    coverFace: cover,
-                    similarity: entry.sim)
-                if excluding.contains(item.id) { continue }   // 出題済み → 次点で埋める
-                items.append(item)
-                perCluster += 1
+            // 未命名（Person N）は name=nil ＝ UI が「代表の顔と並べて比較」カードにする
+            //（名前を出しても誰か分からず答えられない・実フィードバック）。
+            let displayName = (c.name?.isEmpty == false) ? c.name : nil
+            let picks = ReviewCandidatePlanning.boundaryFaces(
+                candidates, threshold: threshold,
+                skipFaceID: displayName == nil ? cover.faceID : nil,
+                isExcluded: { excluding.contains("confirm|\($0)|\(c.clusterID)") })
+            for pick in picks {
+                guard items.count < limit, let f = byID[pick.faceID] else { break }
+                items.append(.isThisPerson(
+                    face: PersonInfo.Face(faceID: f.faceID, refKey: f.refKey,
+                                          boundingBox: CGRect(x: f.bx, y: f.by, width: f.bw, height: f.bh)),
+                    clusterID: c.clusterID, name: displayName, coverFace: cover,
+                    similarity: pick.similarity))
             }
         }
         return items
