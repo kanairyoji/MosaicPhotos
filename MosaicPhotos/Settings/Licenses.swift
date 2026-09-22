@@ -153,19 +153,21 @@ Source: https://www.geonames.org/
 License: Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
 """
 
-let fairFaceNotice = """
-FairFace: Face Attribute Dataset for Balanced Race, Gender, and Age
-Kärkkäinen, K., & Joo, J. (WACV 2021)
+let auraFaceNotice = """
+AuraFace-v1 (fal)
 
-People uses a small baby-face detector (513 numbers) learned from the FairFace
-age labels ("0-2") to keep siblings' baby photos from being grouped as one person.
-No FairFace images are included in the app — only the learned numbers.
+This app bundles a Core ML model converted from the AuraFace-v1 face recognition model
+(ResNet100 trained with Additive Angular Margin Loss, based on ArcFace). It turns each
+detected face into a 512-dimensional embedding so that People can group photos of the
+same person — entirely on device.
 
-The detector is generated locally (scripts/train_baby_probe.py).
+The model is converted locally (scripts/build_auraface.sh / scripts/convert_auraface.py)
+from the published ONNX weights (glintr100.onnx).
 
-Source: https://github.com/joojs/fairface
-License: Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
-"""
+Source: https://huggingface.co/fal/AuraFace-v1
+ArcFace paper: https://arxiv.org/abs/1801.07698
+
+""" + apacheLicenseText("Copyright (c) fal.ai — AuraFace-v1")
 
 let pillowLicenseText = """
 The Python Imaging Library (PIL) is

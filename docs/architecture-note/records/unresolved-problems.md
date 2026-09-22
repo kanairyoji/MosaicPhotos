@@ -7,14 +7,6 @@
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
 
-## 同梱している顔モデル AuraFace がライセンス画面に載っていない（2026-09-22 に発見）
-
-- 症状: `LicensesView` の「アプリに同梱」に OpenCLIP・GeoNames・FairFace はあるが、顔認識モデル
-  AuraFace-v1（Apache 2.0・`MosaicPhotos/FaceModel/`）が無い。Apache 2.0 は配布時にライセンスの写しと
-  出典の表示を求める。
-- 見つけた経緯: ADR-219 で FairFace の出典を足すときに気づいた。
-- 対処案: `LicensesView` に 1 項目足す（Apache 2.0 の全文は `Licenses.swift` に置く）。
-
 ## 規模テストの回数が、並行して走る別のテストの分まで数えられる（2026-09-22 に発見）
 
 - 症状: `PerfTrace.takeCounts()` のカウンタはプロセス全体で共有される。`CloudCaptureDateFillTests` の

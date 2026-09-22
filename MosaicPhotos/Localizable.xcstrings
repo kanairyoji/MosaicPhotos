@@ -761,13 +761,13 @@
         }
       }
     },
-    "Baby-face detector for People (learned numbers only; no images)": {
-      "comment": "Description of a license item for the FairFace dataset used to learn the baby-face detector.",
+    "On-device face recognition for People (Core ML model)": {
+      "comment": "Description of a license item for the AuraFace face recognition model bundled in the app.",
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ピープルの赤ちゃんの顔の判定（学習した数値のみ・画像は含まない）"
+            "value": "ピープルのオンデバイス顔認識（Core ML モデル）"
           }
         }
       }
