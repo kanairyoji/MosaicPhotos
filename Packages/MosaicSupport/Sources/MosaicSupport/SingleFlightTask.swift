@@ -193,7 +193,10 @@ public final class DebouncedTask {
     /// ⚠️ **末尾の `task = nil` は世代で守る**（レビュー指摘）。守らないと、終わりかけの古い
     /// 実行が**新しい予約のハンドルを消す**。消えると次の `schedule()` の `cancel()` が空振りし、
     /// 取り消せない実行が 2 本並ぶ——間引きのために入れた仕組みが重複実行を作っていた。
-    public func schedule(_ body: @escaping () async -> Void) {
+    /// - Parameter quietMilliseconds: この回だけ静止時間を変える（省略時は init の値）。
+    ///   ⚠️ **重い処理ほど長く空ける**ために使う（ADR-225）。既定のままだと、1 回が数秒かかる
+    ///   処理は「終わった直後にまた予約」で走り続ける。
+    public func schedule(quietMilliseconds: UInt64? = nil, _ body: @escaping () async -> Void) {
         let previous = task
         previous?.cancel()
         isScheduled = true
@@ -203,7 +206,8 @@ public final class DebouncedTask {
             guard let self else { return }
             // 前の実行が走っている間は順番を待つ（取り消し済みなら即座に返る）。
             await previous?.value
-            try? await Task.sleep(nanoseconds: self.quietNanoseconds)
+            try? await Task.sleep(nanoseconds: quietMilliseconds.map { $0 * 1_000_000 }
+                                    ?? self.quietNanoseconds)
             guard !Task.isCancelled, self.generation == mine else { return }
             self.isScheduled = false
             await body()

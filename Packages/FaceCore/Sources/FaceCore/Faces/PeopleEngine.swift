@@ -81,6 +81,21 @@ public final class PeopleEngine {
     @ObservationIgnored private var lastAllowSimulator = false
     /// 人物一覧の再読込を間引く（連続する変更を 1 回にまとめる・ADR-95/198）。
     @ObservationIgnored private let reload = DebouncedTask(quietMilliseconds: 700)
+    /// 直近の `loadPeople()` の所要（秒）。次の静止時間を決めるのに使う。
+    @ObservationIgnored private var lastPeopleLoadSeconds: TimeInterval = 0
+
+    /// 再読込の静止時間（純ロジック・テスト対象）。
+    ///
+    /// ⚠️ **重い一覧ほど長く空ける**（実機ログ diagnostics-93）。固定 700ms だったので、
+    /// 1 回 2.6 秒（最大 8.7 秒）かかる一覧が「終わった直後にまた予約」で走り続け、
+    /// **18 分で 160 回・合計 414 秒**——顔の `@ModelActor` の 4 割がここで埋まっていた
+    /// （同じ actor を使う写真の人物名・レビュー候補・スキャンが後ろで待つ）。
+    /// 一覧は「最終的に正しければよい」表示なので、重いときは素直に間隔を空ける。
+    static func reloadQuietMilliseconds(lastLoadSeconds: TimeInterval) -> UInt64 {
+        let base: TimeInterval = 0.7
+        let costBased = min(lastLoadSeconds * 4, 15.0)
+        return UInt64(max(base, costBased) * 1000)
+    }
 
     /// 「人物」として扱う最小の写真枚数（レビュー・検索・名前解決の母数）。
     /// 少ない断片も統合の対象にはしたいので、ここは低めに保つ。
@@ -211,6 +226,8 @@ public final class PeopleEngine {
         let fresh = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites,
                                                includeMembers: false)
         PerfTrace.logSpan("people.load.clusters", ms: PerfTrace.msSince(t2))
+        // 次の間引きは**この所要**から決まる（人物が増えるほど自然に空く・ADR-225）。
+        lastPeopleLoadSeconds = Double(PerfTrace.msSince(t0)) / 1000
         isLoaded = true
         // ⚠️ 中身が同じなら**代入しない**。`@Observable` は代入だけで購読ビューを無効化するので、
         //    スキャン中や連続レビューでは「変化なしの再描画」が積み上がっていた（ADR-95）。
@@ -236,7 +253,9 @@ public final class PeopleEngine {
             reloadPendingWhileHeld = true
             return
         }
-        reload.schedule { [weak self] in await self?.loadPeople() }
+        reload.schedule(quietMilliseconds: Self.reloadQuietMilliseconds(lastLoadSeconds: lastPeopleLoadSeconds)) {
+            [weak self] in await self?.loadPeople()
+        }
     }
 
     /// レビュー UI（1対1レビュー・まとめて確認・整理）の表示中、人物一覧の再発行を保留する。
