@@ -42,6 +42,16 @@ final class FaceModelRuntime: @unchecked Sendable {
         Self.log.info("face model released (memory pressure)")
     }
 
+    /// 夜の処理枠が終わったので手放す（ADR-223）。次回の窓で再ロードされる。
+    /// - Returns: 実際に手放したか。
+    @discardableResult
+    func releaseForIdle() -> Bool {
+        guard box.isLoaded else { return false }
+        box.reset()
+        Self.log.info("face model released (window ended)")
+        return true
+    }
+
     /// 初回利用まで遅延ロードする（`LoadOnce`・二重ロード防止＋失敗は再試行しない）。
     private func handle() async -> CoreMLModelHandle? {
         // 止めた直後に 10 秒級のロードを始めない（ADR-95 追記）。

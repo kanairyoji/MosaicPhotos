@@ -1,6 +1,7 @@
 import AutoAlbumCore
 import BackgroundTasks
 import BackupKit
+import MobileCLIPKit
 import MosaicSupport
 import SwiftUI
 import PhotosFeatureKit
@@ -103,6 +104,11 @@ enum HeavyWorkScheduler {
         @MainActor func completeOnce(outcome: String, success: Bool) {
             completionLatch.completeOnce(token) {
                 Diagnostics.mark("bgtask: end (\(outcome))")
+                // ⚠️ **モデルを抱えたまま眠らない**（ADR-223・実機ログ diagnostics-88）。
+                // 窓の中で CLIP テキスト塔（505MB）と顔モデル（650MB）を読み、そのまま
+                // 30 分の眠りに入っていた——背面のアプリは footprint の大きい順に落とされる。
+                // 前面なら手放さない（次の操作が再ロード待ちになる）。
+                PerceptionModels.releaseForIdle(reason: "window \(outcome)")
                 let mins = Int(Date().timeIntervalSince(started) / 60)
                 RunTimeline.record("window end (\(outcome)・\(mins) 分) " + Self.environmentLine())
                 RunTimeline.noteState("window", active: false)

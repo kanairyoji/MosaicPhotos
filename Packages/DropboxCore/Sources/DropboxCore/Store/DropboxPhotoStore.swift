@@ -130,8 +130,16 @@ public final class DropboxPhotoStore {
 
     // キャッシュ→items 反映のスロットリング用。
     @ObservationIgnored private var lastCacheRefresh = Date.distantPast
+    /// 最後に「キャッシュが変わった」と言われた時刻（静かになったかの判定用）。
+    @ObservationIgnored private var lastCacheChange = Date.distantPast
     @ObservationIgnored private var trailingRefreshTask: Task<Void, Never>?
     private static let cacheRefreshInterval: TimeInterval = 0.4
+    /// 変化が続いている間、これだけ静かになるまで反映を待つ（バックアップ中の連打対策）。
+    static let quietWindowDefault: TimeInterval = 1.5
+    /// 待ち続けないための頭打ち。変化が止まらなくてもこの間隔では必ず 1 回反映する。
+    static let maxCoalesceWindow: TimeInterval = 8.0
+    /// テストから短くするための穴（既定は `quietWindowDefault`）。
+    @ObservationIgnored var quietWindow: TimeInterval = DropboxPhotoStore.quietWindowDefault
     /// 初回同期中は delta ページが多数届くため、UI 反映（全件 fetch＋マージ＋グリッド再構築）を
     /// 粗い間隔へ間引いて O(N) 再処理の回数を抑える（完了時に最終反映を即時実行する）。
     private static let initialSyncRefreshInterval: TimeInterval = 5.0
@@ -429,14 +437,31 @@ public final class DropboxPhotoStore {
     }
 
     /// キャッシュ→items 反映をスロットリングして実行する。
-    /// 直近反映から `cacheRefreshInterval` 未満の連続呼び出しは1回に集約する。
-    private func scheduleCacheRefresh() {
+    ///
+    /// **変化が続いている間は待つ**（静かになってから 1 回・`quietWindow`）。ただし待ち続けない
+    /// ように `maxCoalesceWindow` で頭を打つ。
+    ///
+    /// ⚠️ なぜ「間隔」ではなく「静かになるまで」か（実機ログ diagnostics-87）:
+    /// バックアップ中はアップロードのたびに delta が届く（2 分 15 秒で 38 回）。前の形は
+    /// 「直近の反映から 0.4 秒空いていれば走る」だったので、**変化のたびに走り直し**ていた——
+    /// 73,936 行の実体化が 21 回・合計 27 秒（1 回 1.1〜1.4 秒）。
+    /// 反映は**表示のため**のものなので、変化が落ち着いてから 1 回で足りる。
+    /// - Parameter immediate: 「静かになるまで待つ」を飛ばす（初回同期の完了など、
+    ///   もう変化が来ないと分かっている最終反映で使う）。
+    private func scheduleCacheRefresh(immediate: Bool = false) {
+        lastCacheChange = immediate ? .distantPast : Date()
         guard trailingRefreshTask == nil else { return }   // 既に保留中なら集約
-        let elapsed = Date().timeIntervalSince(lastCacheRefresh)
-        let delay = max(0, currentRefreshInterval - elapsed)
+        let deadline = Date().addingTimeInterval(Self.maxCoalesceWindow)
         trailingRefreshTask = Task { [weak self] in
-            if delay > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            while !Task.isCancelled {
+                guard let self else { return }
+                // 「静かになるまで」と「直近の反映から空ける」の遅い方。ただし頭打ちあり。
+                let quietUntil = self.lastCacheChange.addingTimeInterval(self.quietWindow)
+                let spacedUntil = self.lastCacheRefresh.addingTimeInterval(self.currentRefreshInterval)
+                let wake = min(max(quietUntil, spacedUntil), deadline)
+                let wait = wake.timeIntervalSinceNow
+                if wait <= 0 { break }
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             }
             guard let self, !Task.isCancelled else { return }
             self.trailingRefreshTask = nil
@@ -454,7 +479,9 @@ public final class DropboxPhotoStore {
         trailingRefreshTask?.cancel()
         trailingRefreshTask = nil
         lastCacheRefresh = .distantPast
-        scheduleCacheRefresh()
+        // ⚠️ ここは**待たない**。初回同期の完了時に「静かになるまで」を挟むと、
+        // 最後の 1 回が遅れて一覧が古いまま見える。
+        scheduleCacheRefresh(immediate: true)
     }
 
     /// キャッシュから items を取得して反映する（内容が変わったときのみ再代入・2-b の署名比較）。

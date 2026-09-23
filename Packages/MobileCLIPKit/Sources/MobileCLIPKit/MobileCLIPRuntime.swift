@@ -58,6 +58,17 @@ final class MobileCLIPRuntime: @unchecked Sendable {
         if wasLoaded { Self.log.info("CLIP towers released (memory pressure)") }
     }
 
+    /// 夜の処理枠が終わったので手放す（ADR-223）。次回の窓で再ロードされる。
+    /// - Returns: 実際に手放したか。
+    @discardableResult
+    func releaseForIdle() -> Bool {
+        let wasLoaded = imageBox.isLoaded || textBox.isLoaded
+        imageBox.reset()
+        textBox.reset()
+        if wasLoaded { Self.log.info("CLIP towers released (window ended)") }
+        return wasLoaded
+    }
+
     // MARK: - タワー別の遅延ロード（二重ロード防止・失敗は一度だけ記録）
 
     /// テキスト塔（軽い方）。検索・AI アルバム再評価・表示タグの概念埋め込みが使う。

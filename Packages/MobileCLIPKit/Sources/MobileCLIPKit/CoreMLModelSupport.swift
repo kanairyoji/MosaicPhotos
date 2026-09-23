@@ -249,3 +249,28 @@ final class LoadOnce<Value: Sendable>: @unchecked Sendable {
         return false
     }
 }
+
+/// **同梱モデルを抱えたまま眠らない**（ADR-223）。
+///
+/// ⚠️ 実機ログ diagnostics-88: 夜の処理枠で CLIP テキスト塔（505MB）→ 顔モデル（650MB）と
+/// 読み込み、窓が終わってもそのまま常駐していた。アプリはその後 30 分眠るので、
+/// **誰も使っていない 300〜500MB を抱えたまま jetsam の候補になっていた**
+/// （背面のアプリは footprint の大きい順に落とされる）。
+///
+/// 窓の終わりに手放し、次の窓で読み直す（7〜17 秒）。窓は 30 分おきなので割に合う。
+/// ⚠️ **前面では手放さない**——検索やフル画像のタグ表示が次の操作で再ロード待ちになる。
+public enum PerceptionModels {
+
+    /// 窓が終わったので手放す。前面のときは何もしない。
+    /// - Returns: 実際に手放したか（ログ用）。
+    @discardableResult
+    @MainActor
+    public static func releaseForIdle(reason: String) -> Bool {
+        guard BackgroundYield.scenePhase != .active else { return false }
+        let clip = MobileCLIPRuntime.shared.releaseForIdle()
+        let face = FaceModelRuntime.shared.releaseForIdle()
+        guard clip || face else { return false }
+        Diagnostics.mark("models released (\(reason))")
+        return true
+    }
+}
