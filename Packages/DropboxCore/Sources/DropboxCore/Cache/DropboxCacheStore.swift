@@ -125,6 +125,12 @@ actor DropboxCacheStore {
         // **一度だけ全消去**する。ファイル名（SHA256(path).jpg）にサイズが入らないため、放置すると
         // 旧 128px がそのまま使われ「ぼやけたまま」になる。LRU 削除もファイル名再計算ベースなので
         // 命名変更では旧ファイルが孤児になる＝マーカー方式が正解。消去後は再取得で自然に埋まる。
+        // content_hash の表（15〜20MB）はメモリ圧迫で捨てる。作り直せるので保持する理由がない。
+        // ⚠️ 解放は actor 越し＝即時ではないが、中身は辞書 1 つなので取りこぼしても害はない。
+        _ = MemoryPressureMonitor.shared.register { [weak self] _ in
+            Task { await self?.dropContentHashIndex() }
+        }
+
         let sizeMarkerKey = "dropboxThumbnailAPISizeCached"
         let storedSize = UserDefaults.standard.string(forKey: sizeMarkerKey)
         if storedSize != DropboxInternalConstants.thumbnailAPISize {
@@ -200,6 +206,11 @@ actor DropboxCacheStore {
     /// （実機 diagnostics-38・その直後にメインが 2.8s / 3.5s ブロック）。
     /// 変わっていないものを取り直さない（CLAUDE.md 性能原則 3 の同型）。
     private(set) var itemsRevision: Int = 0
+    /// パス小文字 → content_hash の表（ADR-222/ADR-224）。作り直さず増減で直す。
+    /// ⚠️ 9.9 万件で 15〜20MB 前後。メモリ圧迫では捨てる（次の要求で作り直せる）。
+    private var contentHashIndex: [String: String]?
+    /// 表が対応している `itemsRevision`（合わなければ作り直す）。
+    private var contentHashIndexRevision = -1
     /// テスト用: `cachedItems`（全列の実体化）を呼んだ回数。本番では読まれない。
     private(set) var materializeCallsForTesting = 0
     /// テスト用の累計書き込み件数（本番では読まれない）。
@@ -392,7 +403,10 @@ actor DropboxCacheStore {
         try? modelContext.save()
         // アイテム集合が実際に変わったときだけ札を進める（変化なしのポーリングでは進めない＝
         // 表示側が 68,200 件の再取得を丸ごと省ける・ADR-95）。
-        if insertCount > 0 || updateCount > 0 || !removed.isEmpty { itemsRevision &+= 1 }
+        if insertCount > 0 || updateCount > 0 || !removed.isEmpty {
+            itemsRevision &+= 1
+            updateContentHashIndex(added: added, removed: removed, newRevision: itemsRevision)
+        }
         insertedForTesting += insertCount
         updatedForTesting += updateCount
         DropboxLogger.verbose("applyDelta() saved — inserted=\(insertCount), updated=\(updateCount), removed=\(removed.count)")
@@ -470,6 +484,11 @@ actor DropboxCacheStore {
     /// しかも `items` は**画面を開いたときだけ**作られるので、背景の窓では空のことがある。
     /// 用途は「今ある写真ぜんぶの hash」なので、2 列だけの射影で取る。
     func cachedContentHashes() -> [String: String] {
+        // ⚠️ **作り直さない**（実機ログ diagnostics-90）。9.9 万行の射影は、空いているときで 1.8 秒、
+        // 顔スキャン・バックアップと重なると **17.1 秒**かかった。その間この actor は塞がるので、
+        // サムネの取り出しも撮影日の問い合わせも後ろで待たされる。
+        // 表は `applyDelta` が**増減のぶんだけ**直す（ADR-119: 規模に比例する作り直しを消す）。
+        if let index = contentHashIndex, contentHashIndexRevision == itemsRevision { return index }
         let t0 = PerfTrace.nowNs()
         defer { PerfTrace.logSpan("cache.fetchContentHashes", ms: PerfTrace.msSince(t0)) }
         var descriptor = FetchDescriptor<CachedDropboxItem>()
@@ -480,7 +499,43 @@ actor DropboxCacheStore {
             guard let hash = row.contentHash else { continue }
             out[row.path.lowercased()] = hash
         }
+        contentHashIndex = out
+        contentHashIndexRevision = itemsRevision
         return out
+    }
+
+    /// 解析候補に要る **パスと撮影日だけ**の射影（ADR-224）。
+    ///
+    /// ⚠️ **`cachedItems` を使わない**（実機ログ diagnostics-90）。候補の列挙のために全列を
+    /// 実体化していたため、窓の開始で 98,951 行 × 全列＝**フットプリントが 821MB**まで跳ねていた
+    /// （`cache.fetchItems 3306ms` の直後）。候補に要るのは 2 列だけ。
+    func cachedPhotoRefs() -> [CloudPhotoRef] {
+        let t0 = PerfTrace.nowNs()
+        defer { PerfTrace.logSpan("cache.fetchPhotoRefs", ms: PerfTrace.msSince(t0)) }
+        var descriptor = FetchDescriptor<CachedDropboxItem>()
+        descriptor.propertiesToFetch = [\.path, \.captureDate]
+        PerfTrace.count("cache.photoRefs.fetch")
+        return ((try? modelContext.fetch(descriptor)) ?? [])
+            .map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
+    }
+
+    /// 増減のぶんだけ表を直す（`applyDelta` の中から呼ぶ）。表がまだ無ければ何もしない
+    /// ——次に要求されたときに 1 回だけ作る。
+    private func updateContentHashIndex(added: [DropboxFileItem], removed: [String],
+                                        newRevision: Int) {
+        guard contentHashIndex != nil else { return }
+        for path in removed { contentHashIndex?[path.lowercased()] = nil }
+        for item in added {
+            guard let hash = item.contentHash else { continue }
+            contentHashIndex?[item.path.lowercased()] = hash
+        }
+        contentHashIndexRevision = newRevision
+    }
+
+    /// 表を捨てる（メモリ圧迫・アカウント切替・リセット）。次の要求で作り直す。
+    func dropContentHashIndex() {
+        contentHashIndex = nil
+        contentHashIndexRevision = -1
     }
 
     /// テスト用: 「`exifProbedAt` の列ができる前に訊いた行」を作る。

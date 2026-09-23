@@ -17,7 +17,7 @@ import Photos
 ///
 /// ⚠️ `nonisolated`：6.8 万件のソート＋map をメインで回さない（ADR-82）。呼び出し側が
 /// `dropboxStore.items` のスナップショット（COW＝取得は安価）を渡し、この関数は off-main で走る。
-nonisolated public func cloudImageRefKeys(items: [DropboxFileItem]) -> [String] {
+nonisolated public func cloudImageRefKeys(items: [CloudPhotoRef]) -> [String] {
     items
         .sorted { ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }
         .map { PhotoRef.cloud($0.path).encoded }
@@ -55,7 +55,8 @@ public enum AnalysisCandidates {
     /// 現れる。表示では隠れるが解析候補には入っていたため、端末で解析済みの写真をコピー側でもう一度
     /// 解析していた（顔が二重・分母が増え続ける）。
     @MainActor
-    public static func hiddenBackupCopyRefKeys(cloudItems: [DropboxFileItem], localRefKeys: [String]) async -> Set<String> {
+    public static func hiddenBackupCopyRefKeys(cloudItems: [CloudPhotoRef],
+                                               localRefKeys: [String]) async -> Set<String> {
         let index = await backupCopyIndexProvider?() ?? [:]
         let prefixes = excludedCloudPathPrefixes
         guard !index.isEmpty || !prefixes.isEmpty else { return [] }
@@ -81,12 +82,12 @@ public enum AnalysisCandidates {
 @MainActor
 public func analysisCandidates(dropboxStore: DropboxPhotoStore) async
     -> (ordered: [String], excludedBackupCopies: Set<String>) {
-    // ⚠️ items は All Photos / Cloud を開くまで読み込まれない（ADR-85）。起動直後はこの関数の方が
-    // 早く、空のまま候補を作ると**クラウド写真が丸ごと解析対象から漏れる**。実機ログ diag-33 で
-    // candidates=6699（ローカルのみ）になり、2 秒後に 68,200 件がロードされていた。
-    // `DropboxCloudPhotoProvider.cloudPhotos()` は同じ理由で既にこのガードを持っている＝揃える。
-    if dropboxStore.items.isEmpty { await dropboxStore.loadItems() }
-    let cloudItems = dropboxStore.items                             // MainActor 上のスナップショット（安価）
+    // ⚠️ **表示用の `items` を使わない**（ADR-224・実機ログ diagnostics-90）。
+    // 候補に要るのはパスと撮影日だけなのに、`items` は全列の実体化を伴い、窓の開始で
+    // フットプリントが 821MB まで跳ねていた（`cache.fetchItems 3306ms` の直後）。
+    // 台帳から 2 列だけ引く。ついでに「items がまだ空なら読み込む」（ADR-85）も要らなくなる
+    // ——台帳は画面を開いていなくても埋まっているので、起動直後でも取りこぼさない。
+    let cloudItems = await dropboxStore.cloudPhotoRefs()
     let local = await localImageRefKeys()                           // 既に detached
     let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)
     let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: cloudItems, localRefKeys: local)

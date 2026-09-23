@@ -53,6 +53,33 @@ struct CloudContentHashProjectionTests {
             """)
     }
 
+    /// ⚠️ **作り直さない**（実機ログ diagnostics-90）。9.9 万行の射影は空いていて 1.8 秒、
+    /// 顔スキャン・バックアップと重なると **17.1 秒**——その間この actor は塞がる。
+    /// 表は増減のぶんだけ直し、2 回目以降は引き直さない。
+    @Test("2 回目は引き直さない。増減のぶんだけ表を直す")
+    func indexIsMaintainedIncrementally() async {
+        let store = await store([item("/a.jpg", hash: "h1"), item("/b.jpg", hash: "h2")])
+        PerfTrace.setEnabledForTesting(true)
+        _ = PerfTrace.takeCounts()
+
+        _ = await store.cachedContentHashes()
+        _ = await store.cachedContentHashes()
+        #expect((PerfTrace.takeCounts()["cache.contentHashes.fetch"] ?? 0) == 1,
+                "変化が無いのに引き直している")
+
+        // 1 枚増えて 1 枚消える → 引き直さずに表へ反映されること。
+        await store.applyDelta(accountId: "acc1", added: [item("/c.jpg", hash: "h3")],
+                               removed: ["/a.jpg"], newCursor: "c2")
+        let after = await store.cachedContentHashes()
+        let counts = PerfTrace.takeCounts()
+        PerfTrace.setEnabledForTesting(false)
+
+        #expect(after == ["/b.jpg": "h2", "/c.jpg": "h3"], "増減が表に反映されていない")
+        #expect((counts["cache.contentHashes.fetch"] ?? 0) == 0, """
+            delta のたびに 9.9 万行を引き直している（実機で 17 秒かかった形）。
+            """)
+    }
+
     /// ADR-119: 「1 回ぶんに見える呼び出し」が全列の実体化になっていないこと。**回数で見る**。
     @Test("射影は全列を実体化しない")
     func projectionDoesNotMaterializeAllColumns() async {

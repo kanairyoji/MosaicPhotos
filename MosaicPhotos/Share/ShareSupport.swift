@@ -107,7 +107,8 @@ final class ShareSourceMemberResolver: ShareSourceResolver {
     /// - 自分の共有ルート配下のコピー——共有の中へ共有をコピーすることになる。
     /// 幽霊（消えた写真の顔）は別途 `pruneMissingPhotos` が消す。
     private func shareable(_ refKeys: [String]) async -> [String] {
-        let cloudItems = dropboxStore.items
+        // ⚠️ 表示用の `items` ではなく台帳の射影（ADR-224）。全列の実体化を避ける。
+        let cloudItems = await dropboxStore.cloudPhotoRefs()
         let excluded = await AnalysisCandidates.hiddenBackupCopyRefKeys(
             cloudItems: cloudItems, localRefKeys: refKeys.filter { $0.hasPrefix("L-") })
         guard !excluded.isEmpty else { return refKeys }

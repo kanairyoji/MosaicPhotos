@@ -10,8 +10,8 @@ import Testing
 @Suite("AnalysisCandidates.hiddenBackupCopyRefKeys", .serialized)
 @MainActor
 struct AnalysisCandidatesTests {
-    private func item(_ path: String) -> DropboxFileItem {
-        DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
+    private func item(_ path: String) -> CloudPhotoRef {
+        CloudPhotoRef(path: path, captureDate: nil)
     }
 
     @Test("端末に原本があるコピーだけ外す。原本が無い（オフロード済み）コピーは残す")

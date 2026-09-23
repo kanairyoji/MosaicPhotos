@@ -35,8 +35,19 @@
   初回同期の完了など「もう変化が来ない」最終反映は `immediate` で待たない。
 - 結果: 背面の作り直しが 1/10 以下になる。代わりに背面では一覧が最大 30 秒古い
   ——見ている人はいないので、前面へ戻る時点で最新になっていればよい。
+- **追補（実機ログ diagnostics-90）**: 回数だけでなく**1 回の重さ**も問題だった。窓の開始で
+  `cachedItems`（98,951 行 × 全列）が走り、フットプリントが **821MB** まで跳ねていた。
+  さらに新しく足した `cachedContentHashes`（9.9 万行の射影）は、顔スキャン・バックアップと
+  重なると **17.1 秒**かかり、その間キャッシュの actor が塞がっていた。
+  - **表示用の配列を計算の入力に使わない**。解析候補の列挙は `CloudPhotoRef`
+    （パスと撮影日だけ）の射影を使う（`cloudPhotoRefs()`）。ついでに「items が空なら読み込む」
+    （ADR-85 の回避策）も不要になった——台帳は画面を開いていなくても埋まっている。
+  - **作り直さず、増減で直す**。content_hash の表は `applyDelta` が増減のぶんだけ更新し、
+    `itemsRevision` が一致する限り引き直さない（メモリ圧迫では捨てる＝作り直せる）。
 - 関連: `Store/DropboxPhotoStore.swift`（`scheduleCacheRefresh` / `currentRefreshInterval`）/
-  `DropboxPhotoStoreReflectCoalesceTests`。ADR-95。
+  `Cache/DropboxCacheStore.swift`（`cachedContentHashes` / `cachedPhotoRefs`）/
+  `Models/CloudPhotoRef.swift` / `PhotosFeatureKit/AnalysisCandidates.swift` /
+  `DropboxPhotoStoreReflectCoalesceTests` / `CloudContentHashProjectionTests`。ADR-95・ADR-119。
 
 ## ADR-223 夜の処理枠が終わったら、同梱モデルを手放して眠る
 - 状態: 採用

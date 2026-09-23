@@ -130,7 +130,9 @@ struct DropboxCloudPhotoProvider: CloudPhotoProvider {
         // 端末に原本があるバックアップコピーは台帳に入れない（顔スキャンの候補と同じ規則）。
         // 入れると原本と同じ写真をコピー側でもタグ付け・埋め込みし、台帳と分母が増え続ける。
         let local = await localImageRefKeys()
-        let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: items, localRefKeys: local)
+        // 除外判定はパスだけで足りるので、軽い値へ落として渡す（ADR-224）。
+        let refs = items.map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
+        let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: refs, localRefKeys: local)
         return await Task.detached(priority: .utility) {
             items.compactMap { item in
                 if !hidden.isEmpty, hidden.contains(PhotoRef.cloud(item.path).encoded) { return nil }

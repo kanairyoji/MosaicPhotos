@@ -21,6 +21,28 @@
 
 ---
 
+## 窓の開始でフットプリントが 821MB — 候補の列挙が表示用の全列を実体化していた
+
+2026-09-23（実機ログ diagnostics-90）。
+
+- 症状: 夜の窓が始まった直後に `cache.fetchItems 3306ms` → `PERF TICK footprint=821MB`。
+  同じログで新しい射影 `cache.fetchContentHashes` が **17.1 秒**（空いているときは 1.8 秒）。
+  人物一覧の読み込みも 22 秒まで伸びた（同じ actor の取り合い）。
+- 原因: 2 つとも「**1 回ぶんに見える呼び出しが、ライブラリ規模に比例していた**」（ADR-119）。
+  - 解析候補の列挙が `dropboxStore.items`（表示用）を使い、空なら `loadItems()` まで呼んでいた
+    ——必要なのはパスと撮影日だけなのに、98,951 行の**全列**（64 桁の content_hash を含む）を
+    実体化していた。
+  - content_hash の表は**毎回引き直し**ていた。空いていれば 1.8 秒でも、顔スキャンと
+    バックアップが走っている最中は 17 秒。その間、同じ actor を使うサムネ取得も撮影日の
+    問い合わせも後ろで待つ。
+- 対処: (1) `CloudPhotoRef`（パス＋撮影日）の射影 `cloudPhotoRefs()` を足し、解析候補はそれを使う。
+  (2) content_hash の表は `applyDelta` が**増減のぶんだけ**直し、`itemsRevision` が変わらない限り
+  引き直さない（メモリ圧迫では捨てる）。回帰テストは**回数**で固定した。
+- 教訓: **表示のために作った配列を、計算の入力に使わない**。表示用は「全部入り・長寿命」に
+  作ってあるので、計算側が借りると規模ぶんの代金を払う。
+- 関連: `Models/CloudPhotoRef.swift` / `Cache/DropboxCacheStore.swift` /
+  `PhotosFeatureKit/AnalysisCandidates.swift`。ADR-224・ADR-119・ADR-85。
+
 ## バックアップ中に、クラウド一覧の作り直しが 2 分 15 秒で 21 回
 
 2026-09-23（実機ログ diagnostics-87）。

@@ -110,6 +110,15 @@ extension DropboxPhotoStore {
         await cache.exifCaptureDates(paths: paths)
     }
 
+    /// 解析候補に渡す **パスと撮影日だけ**の一覧（ADR-224）。
+    ///
+    /// ⚠️ `items`（表示用）を使わないこと。あちらは全列の実体化を伴い、実機では
+    /// 窓の開始でフットプリントが 821MB まで跳ねた（diagnostics-90）。
+    /// こちらは 2 列だけなので、背面でも安全に呼べる。
+    public func cloudPhotoRefs() async -> [CloudPhotoRef] {
+        await cache.cachedPhotoRefs()
+    }
+
     /// 全クラウド写真の **パス小文字 → content_hash**（ADR-222）。
     ///
     /// ⚠️ 呼び出し側は `items` から hash を拾わないこと——表示用のアイテムは hash を
