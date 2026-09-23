@@ -14,6 +14,7 @@ public struct ShareHubView: View {
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
+    @AppStorage(ShareSettingsKeys.publishAnalysisEnabled) private var publishAnalysisEnabled = true
     @State private var familyFolders: [String] = ShareSettingsKeys.currentFamilyFolders()
 
     public init(engine: ShareSyncEngine,
@@ -55,6 +56,14 @@ public struct ShareHubView: View {
                 }
             } footer: {
                 Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
+            }
+
+            // 写真はコピーせず、解析結果だけを置く（ADR-222）。同じ Dropbox に繋いでいる
+            // 相手は写真をもう見られるので、共有セットを作らなくても解析が行き渡る。
+            Section {
+                Toggle(L("Share Photo Analysis"), isOn: $publishAnalysisEnabled)
+            } footer: {
+                Text(L("Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied."))
             }
         }
         .navigationTitle(L("Cloud Sharing"))

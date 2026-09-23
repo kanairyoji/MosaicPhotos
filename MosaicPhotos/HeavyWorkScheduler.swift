@@ -396,7 +396,8 @@ enum HeavyWorkScheduler {
             availableMB: Int(MemoryBudget.availableBytes() / 1_048_576),
             networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
             provideShareEnabled: ShareSettingsKeys.isProvideEnabled(),
-            backupReconcileDue: stores.backupEngine.isReconcileDue())
+            backupReconcileDue: stores.backupEngine.isReconcileDue(),
+            publishAnalysisEnabled: ShareSettingsKeys.isPublishAnalysisEnabled())
     }
 
     /// 1 手を実行する。**ここに判断を書かない**（書くと窓を起こさないと確かめられなくなる）。
@@ -430,6 +431,9 @@ enum HeavyWorkScheduler {
             // ADR-183 C: 共有セットを作成元（人物・AI アルバム）のいまのメンバーに追従させてから反映。
             await stores.shareEngine.refreshAllFromSource()
             await stores.shareEngine.syncNow()
+        case .publishAnalysis:
+            // 写真はコピーせず解析だけを置く（同じ Dropbox に繋いだだけの人にも届く・ADR-222）。
+            await stores.analysisPublisher.runIfNeeded()
         case .reconcileBackup:
             // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない（ADR-166）。
             await stores.backupEngine.reconcileIfDueWeekly()

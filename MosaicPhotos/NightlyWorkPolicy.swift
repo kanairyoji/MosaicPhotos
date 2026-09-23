@@ -60,11 +60,14 @@ enum NightlyPlan {
         /// バックアップ台帳の週次照合の期限が来ているか（ADR-206）。
         /// ⚠️ **手順の位置がこれで変わる**（来ている週だけバックアップの前に出す）。
         var backupReconcileDue: Bool
+        /// 同じ Dropbox の人へ解析を公開するか（ADR-222・既定 ON）。
+        var publishAnalysisEnabled: Bool
 
         init(boostActive: Bool = false, embedBacklog: Int = 0, faceBacklog: Int = 0,
              generateDeferrals: Int = 0, maxGenerateDeferrals: Int = 4,
              availableMB: Int = 2048, networkAllowed: Bool = true,
-             provideShareEnabled: Bool = false, backupReconcileDue: Bool = false) {
+             provideShareEnabled: Bool = false, backupReconcileDue: Bool = false,
+             publishAnalysisEnabled: Bool = false) {
             self.boostActive = boostActive
             self.embedBacklog = embedBacklog
             self.faceBacklog = faceBacklog
@@ -74,6 +77,7 @@ enum NightlyPlan {
             self.networkAllowed = networkAllowed
             self.provideShareEnabled = provideShareEnabled
             self.backupReconcileDue = backupReconcileDue
+            self.publishAnalysisEnabled = publishAnalysisEnabled
         }
     }
 
@@ -92,6 +96,8 @@ enum NightlyPlan {
         case skipGenerateLowMemory(availableMB: Int)
         case shareImport
         case shareSync
+        /// クラウド写真の解析を `<root>/<端末>/Analysis` へ公開（ADR-222）。
+        case publishAnalysis
         /// バックアップ台帳と実体の照合（週 1・内部で期限を見る）。
         case reconcileBackup
         /// 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。
@@ -109,6 +115,7 @@ enum NightlyPlan {
             case .skipGenerateLowMemory(let mb):   return "generate(skip:\(mb)MB)"
             case .shareImport:                     return "shareImport"
             case .shareSync:                       return "shareSync"
+            case .publishAnalysis:                 return "publishAnalysis"
             case .reconcileBackup:                 return "reconcile"
             case .drainUntilIdle:                  return "drain"
             }
@@ -170,6 +177,10 @@ enum NightlyPlan {
         if i.networkAllowed {
             out.append(.shareImport)
             if i.provideShareEnabled { out.append(.shareSync) }
+            // ⚠️ **公開は取り込みのあと**（ADR-222）。先に取り込むと、受け取った解析が
+            // 自分の台帳に入ってから公開されるので、同じ写真を 2 人が別々に解析し直す
+            // 空回りが早く止まる。
+            if i.publishAnalysisEnabled { out.append(.publishAnalysis) }
             // ⚠️ **週次の照合も回線の中**（レビュー 11 周目）。Dropbox の全件一覧を引くので
             // 通信が要るのに、ここだけ外にあった——「Wi-Fi のみ」でもセルラーで
             // 全件一覧を引き得た（ADR-198 で撤回した「ブーストは回線を免除」と同じ、

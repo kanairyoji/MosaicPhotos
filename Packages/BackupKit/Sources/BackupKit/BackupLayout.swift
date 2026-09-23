@@ -33,6 +33,7 @@ public enum BackupLayout {
     public static let currentVersion = 2
 
     public static let backupSubfolder = "Backup"
+    public static let analysisSubfolder = "Analysis"
     public static let shareSubfolder = "Share"
 
     /// 端末フォルダ: `<root>/<端末>`。
@@ -51,6 +52,18 @@ public enum BackupLayout {
         let device = deviceRoot(root: root, deviceFolder: deviceFolder)
         guard !deviceFolder.isEmpty else { return device }
         return appendingOnce(device, backupSubfolder)
+    }
+
+    /// 解析データの置き場: `<root>/<端末>/Analysis`（ADR-222）。
+    ///
+    /// 同じ Dropbox に接続している人へ、**写真をコピーせずに**解析結果（タグ・CLIP 埋め込み・
+    /// 顔・撮影日）を渡すための場所。共有セット（`Share/`）は写真のコピーと対で置くが、
+    /// クラウドにもともとある写真は既に相手からも見えているので、コピーは要らない。
+    /// 中身は共有セットと同じ形式（`.mosaic-share/shard-xx.json`・`content_hash` が鍵）。
+    public static func analysisRoot(root: String, deviceFolder: String) -> String {
+        let device = deviceRoot(root: root, deviceFolder: deviceFolder)
+        guard !deviceFolder.isEmpty else { return device }
+        return appendingOnce(device, analysisSubfolder)
     }
 
     /// 共有セットの親: `<root>/<端末>/Share`。

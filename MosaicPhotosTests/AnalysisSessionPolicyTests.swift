@@ -190,6 +190,23 @@ final class NightlyPlanTests: XCTestCase {
         XCTAssertTrue(labels(.init(provideShareEnabled: true)).contains("shareSync"))
     }
 
+    /// ADR-222: 解析の公開も回線の中。設定がオフなら 1 バイトも上げない。
+    func testPublishAnalysisFollowsTheNetworkAndItsSetting() {
+        XCTAssertFalse(labels(.init()).contains("publishAnalysis"), "設定がオフなら公開しない")
+        XCTAssertFalse(labels(.init(networkAllowed: false, publishAnalysisEnabled: true))
+                        .contains("publishAnalysis"),
+                       "回線が許されないのにアップロードしている（Wi-Fi のみでもセルラーで走る）")
+        let steps = labels(.init(publishAnalysisEnabled: true))
+        guard let publish = steps.firstIndex(of: "publishAnalysis"),
+              let importStep = steps.firstIndex(of: "shareImport") else {
+            return XCTFail("公開の手が無い: \(steps)")
+        }
+        XCTAssertTrue(importStep < publish, """
+            公開が取り込みより先にある（\(steps)）。受け取った解析が自分の台帳に入る前に
+            公開すると、同じ写真を 2 人が別々に解析し直す空回りが止まらない。
+            """)
+    }
+
     /// 回帰: **週次の照合も回線ポリシーに従う**（レビュー 11 周目）。
     /// Dropbox の全件一覧を引く手なのに、以前は回線の判定の外にあり、
     /// 「Wi-Fi のみ」でもセルラーで引き得た（利用者の実費・ADR-198 と同じ問題）。

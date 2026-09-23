@@ -147,8 +147,7 @@ final class SharedAnalysisImporter {
         guard !isRunning else { return }
         // 「受ける」が OFF なら何もしない（提供・バックアップとは独立・ADR-112 追記）。
         guard ShareSettingsKeys.isReceiveEnabled() else { return }
-        let roots = ShareSettingsKeys.currentFamilyFolders()
-        guard !roots.isEmpty else { return }
+        let familyRoots = ShareSettingsKeys.currentFamilyFolders()
         guard case .connected = dropboxStore.auth.connectionStatus else { return }
         // ⚠️ **旗は `await` の前に立てる**（レビュー指摘）。トークンの更新は通信を伴うので
         // ここで実際に中断し、旗が立つ前に 2 本目が入口を通り抜けられた。2 本同時に走ると
@@ -160,6 +159,16 @@ final class SharedAnalysisImporter {
 
         // 記録の置き場所を持つので、この実行のあいだ 1 つのインスタンスを使い回す。
         let fetcher = ShareAnalysisFetch()
+        // 家族の共有フォルダ（コピーと対の解析）に加えて、**同じ Dropbox に繋がっている
+        // 他の端末**が公開した解析（`<root>/<端末>/Analysis`）も見る（ADR-222）。
+        // 写真そのものは接続した時点で相手からも見えているので、共有セットを作らなくても
+        // 解析（タグ・埋め込み・顔・人物名・撮影日）が行き渡る。
+        let accountRoots = await fetcher.accountAnalysisRoots(
+            backupRoot: UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                ?? BackupSettingsKeys.defaultDropboxFolder,
+            ownDeviceFolder: BackupDeviceIdentity.currentFolderName(), token: token)
+        let roots = familyRoots + accountRoots
+        guard !roots.isEmpty else { return }
         let fetched = await fetcher.fetchUpdated(roots: roots, token: token)
         guard !fetched.isEmpty else { return }
 
@@ -173,14 +182,13 @@ final class SharedAnalysisImporter {
         // （数千顔ぶん）を伴う。メインで回すとホーム描画・スクロールを直撃する。
         // メインへ戻すのは各ストアへ渡す Sendable なバッチだけにする。
         let itemsSnapshot = dropboxStore.items.map { (path: $0.path, hash: $0.contentHash) }
-        let rootsLower = roots.map { $0.lowercased() }
         let prepared = await Task.detached(priority: .utility) { () -> [PreparedImport] in
-            // 家族フォルダ配下 かつ content_hash があるものだけを突合対象にする。
+            // 突合の対象は**手元のクラウド写真すべて**（content_hash があるもの・ADR-222）。
+            // 以前は家族フォルダ配下だけに絞っていたが、同じ Dropbox に繋がっている相手の
+            // 写真は共有フォルダの外にもある——鍵は content_hash（同じ中身＝同じ写真）なので、
+            // 置き場所で絞る意味は無い。
             let localItems: [ShareImportPlanning.LocalItem] = itemsSnapshot.compactMap { item in
                 guard let hash = item.hash else { return nil }
-                let lower = item.path.lowercased()
-                guard rootsLower.contains(where: { lower == $0 || lower.hasPrefix($0 + "/") })
-                else { return nil }
                 return ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(item.path).encoded,
                                                      contentHash: hash)
             }
@@ -239,10 +247,10 @@ final class SharedAnalysisImporter {
         case .idle, .polling, .fetchingDelta: cacheSettled = true
         }
         let fullyMatchedAll = cacheSettled && prepared.allSatisfy(\.fullyMatched)
+        // 掃除の基準も突合と同じ広さ（クラウド写真すべて）にする。狭いままだと、
+        // 共有フォルダの外の写真の撮影日を「もう無い写真のもの」と見て捨ててしまう。
         let syncedSharedPaths: Set<String>? = fullyMatchedAll
-            ? Set(itemsSnapshot.map { $0.path.lowercased() }.filter { lower in
-                rootsLower.contains { lower == $0 || lower.hasPrefix($0 + "/") }
-            })
+            ? Set(itemsSnapshot.map { $0.path.lowercased() })
             : nil
         let incomingDates = prepared.reduce(into: [String: Date]()) { acc, item in
             acc.merge(item.captureDates) { _, new in new }
@@ -326,5 +334,48 @@ enum ShareVisibility {
         var roots = [ShareSettingsKeys.currentShareRoot().lowercased()]
         if let legacy = ShareSettingsKeys.legacyShareRootIfAny()?.lowercased() { roots.append(legacy) }
         store.setExcludedPathPrefixes(roots.filter { !family.contains($0) })
+    }
+}
+
+// MARK: - 送信側: クラウド写真の解析を同じ Dropbox の人へ公開（ADR-222）
+
+/// 手元のクラウド写真ぜんぶの解析結果を `<root>/<端末>/Analysis` へ公開する役
+/// （本体は BackupKit の `AnalysisPublisher`。ここは「どの写真を渡すか」を決めるだけ）。
+///
+/// 共有セット（`Share/`）は**写真のコピーと対**なので、既に Dropbox にある写真には使えない。
+/// 家族が同じ Dropbox に繋いだだけの状態でも解析（タグ・埋め込み・顔・人物名・撮影日）が
+/// 行き渡るように、写真はコピーせず解析だけを置く。
+@Observable
+final class CloudAnalysisPublisher {
+    private let dropboxStore: DropboxPhotoStore
+    private let publisher: AnalysisPublisher
+    private(set) var isRunning = false
+
+    init(dropboxStore: DropboxPhotoStore, analysisSource: ShareAnalysisSource?) {
+        self.dropboxStore = dropboxStore
+        self.publisher = AnalysisPublisher(tokenProvider: dropboxStore.auth,
+                                           analysisSource: analysisSource)
+    }
+
+    /// 1 回ぶん公開する（変わったシャードだけ・上限つき。続きは次の窓で）。
+    func runIfNeeded() async {
+        guard !isRunning else { return }
+        guard ShareSettingsKeys.isPublishAnalysisEnabled() else { return }
+        guard case .connected = dropboxStore.auth.connectionStatus else { return }
+        isRunning = true
+        defer { isRunning = false }
+        // ⚠️ 一覧が出そろう前に公開しない。途中の一覧で作ったシャードは「消えた写真」の
+        // 掃除（stale）に引っかかり、次の窓で上げ直す空回りになる。
+        switch dropboxStore.syncState {
+        case .initialSync, .error: return
+        case .idle, .polling, .fetchingDelta: break
+        }
+        let photos = dropboxStore.items.compactMap { item -> AnalysisPublisher.CloudPhoto? in
+            guard let hash = item.contentHash else { return nil }
+            return AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(item.path).encoded,
+                                                contentHash: hash)
+        }
+        guard !photos.isEmpty else { return }
+        _ = await publisher.publish(photos: photos)
     }
 }

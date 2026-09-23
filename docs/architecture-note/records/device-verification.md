@@ -122,6 +122,14 @@
 | D5 | **アルバムを開いたときの 1 単位**（レビュー 22 周目） | 人物アルバム・場所・AI アルバムを開き、診断ログで `MergedPhotoStore.start()` 前後（台帳の対応表の取得＝`backupCopyRecords` の全件＋受信撮影日の JSON デコード）の所要を見る | 開くたびに数百 ms 以上かかっていないこと。かかっているなら `unresolved-problems.md`「バックアップ台帳の対応表を、呼ばれるたびに丸ごと作り直す」の選択肢 2 か 3 を採る。体感に出ないなら何もしない |
 | D4 | **AI アルバム再評価中のメモリ**（レビュー 20 周目） | 夜間の処理枠で AI アルバム 3 本以上を再評価させ、診断ログの footprint を見る | 台帳を 1 つに共有した代わりに**持っている時間が伸びた**（タグ＋OCR で数十 MB）。ピークが以前より上がっていないこと・圧迫が出たらループを抜けていること（`aialbum.refresh: aborted for foreground` か圧迫ログ） |
 
+### 解析の公開（ADR-222）
+
+- 家族の端末（または 2 台目）を同じ Dropbox に繋ぎ、夜の窓を 1 回回す。
+  `<root>/<端末>/Analysis/.mosaic-share/shard-xx.json` ができ、**2 回目の窓で 0 件**になること
+  （毎回全部を上げ直していないこと＝`share.publishAnalysis: 変更なし`）。
+- 受け取り側で `share import:` が家族フォルダの**外**の写真にも当たること（タグ・顔・人物名）。
+- 設定「写真の解析結果を共有」を OFF にしたら、窓でアップロードが 1 件も出ないこと。
+
 ---
 
 ## 見るべき診断ログ
@@ -134,3 +142,4 @@ Developer Options → 診断ログ。目印になる行:
 - `ShareAnalysisFetch: download failed` / `invalid analysis data`（区別されていること）
 - `merged.rebuild: local=… cloud=… total=… sort=…ms`
 - `embed: batch` / `embed: skipped — already running`
+- `share.publishAnalysis: 上げた N/M シャード（残り …）`（ADR-222・2 回目以降は「変更なし」）

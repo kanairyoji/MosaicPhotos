@@ -31,6 +31,7 @@ final class HomeStores {
     let shareSourceResolver: ShareSourceMemberResolver
     /// 家族フォルダの解析データ取り込み（受信側）。
     let shareImporter: SharedAnalysisImporter
+    let analysisPublisher: CloudAnalysisPublisher
     /// PHAsset の全ライブラリ索引（アルバム系ビューの高速オープン用・段階起動で構築）。
     let assetIndex = LocalAssetIndex()
     /// 解析のブースト（「今すぐ解析」・ADR-182/195）。
@@ -44,7 +45,8 @@ final class HomeStores {
                  placeScanner: PlaceScanner, autoAlbumEngine: AutoAlbumEngine,
                  shareEngine: ShareSyncEngine, shareAnalysisAdapter: ShareAnalysisAdapter,
                  shareSourceResolver: ShareSourceMemberResolver,
-                 shareImporter: SharedAnalysisImporter) {
+                 shareImporter: SharedAnalysisImporter,
+                 analysisPublisher: CloudAnalysisPublisher) {
         let session = AnalysisSession(engine: autoAlbumEngine, people: peopleEngine,
                                       dropboxStore: dropboxStore)
         self.analysisSession = session
@@ -61,6 +63,7 @@ final class HomeStores {
         self.shareAnalysisAdapter = shareAnalysisAdapter
         self.shareSourceResolver = shareSourceResolver
         self.shareImporter = shareImporter
+        self.analysisPublisher = analysisPublisher
     }
 
     /// プロセス内で唯一の共有インスタンス（構築済み）。前景（RootView）と夜間 BGTask
@@ -219,6 +222,10 @@ final class HomeStores {
         // （渡していなかったので、それらの画面では副本が二重に出て並びも崩れていた）。
         MergedPhotoStore.defaultBackupCopyIndexProvider = mergedStore.backupCopyIndexProvider
 
+        // 同じ Dropbox に繋がっている人へクラウド写真の解析を公開する（ADR-222・既定 ON）。
+        let analysisPublisher = CloudAnalysisPublisher(dropboxStore: dropboxStore,
+                                                       analysisSource: shareAnalysisAdapter)
+
         Diagnostics.mark("build: done")
         return HomeStores(dropboxStore: dropboxStore, mergedStore: mergedStore,
                           backupEngine: backupEngine, albumScanner: albumScanner,
@@ -226,7 +233,8 @@ final class HomeStores {
                           placeScanner: placeScanner, autoAlbumEngine: autoAlbumEngine,
                           shareEngine: shareEngine, shareAnalysisAdapter: shareAnalysisAdapter,
                           shareSourceResolver: shareSourceResolver,
-                          shareImporter: shareImporter)
+                          shareImporter: shareImporter,
+                          analysisPublisher: analysisPublisher)
     }
 }
 

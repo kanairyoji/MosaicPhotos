@@ -37,7 +37,13 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
       ShareSyncEngine.swift          @MainActor @Observable。セット CRUD・作成元追従（`refreshAllFromSource`）
       ShareSyncEngine+Sync.swift     反映本体（共有ルートの再帰一覧 1 回 → copy_batch/delete_batch → シャードの差分同期）。`RemoteShareIndex` / `ShareAnalysisPlanning`（純ロジック）
       ShareAnalysisData.swift             解析データの形式（content_hash キー・`shard-<xx>.json`・防御的検証）
-      ShareAnalysisFetch.swift        受信側の取得（家族フォルダの再帰一覧 1 回・rev 差分）
+      ShareAnalysisFetch.swift        受信側の取得（家族フォルダの再帰一覧 1 回・rev 差分）＋
+                                      `accountAnalysisRoots`＝同じ Dropbox の他端末の `Analysis` 発見（ADR-222）
+      AnalysisPublishPlanning.swift   解析の公開（ADR-222）の純ロジック。変わったシャードだけ・
+                                      続きから一巡・指紋（FNV-1a）。**JSON は `.sortedKeys` で書く**
+                                      （辞書の順序が揺れると毎回全部を上げ直す）
+      AnalysisPublisher.swift         公開の本体（設定チェック → 解析を 2,000 枚ずつ集める →
+                                      シャード → 計画 → アップロード/掃除 → 指紋と続きを保存）
       SharePlanning.swift / ShareImportPlanning.swift  コピー計画 / 受信側の突合（純ロジック）
     BackupLogger.swift             内部ロガー（MosaicSupport の LogChannel に委譲）
     BackupAlbumInfo.swift / BackupAssetRecord.swift  値オブジェクト / @Model

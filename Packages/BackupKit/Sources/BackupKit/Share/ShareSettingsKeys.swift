@@ -38,6 +38,23 @@ public enum ShareSettingsKeys {
     public static let legacyShareRootFolder = "shareRootFolder"
     public static let legacyDefaultShareRootFolder = "/MosaicShare"
 
+    /// **同じ Dropbox に接続している人へ、解析結果を公開するか**（既定 ON・ADR-222）。
+    ///
+    /// クラウドの写真は接続しただけで相手からも見えるのに、解析（タグ・CLIP 埋め込み・顔・
+    /// 人物名・撮影日）は各自の端末でやり直しになっていた。ON なら `<root>/<端末>/Analysis` へ
+    /// 解析結果だけを置き、同じ Dropbox に接続した端末が取り込める。
+    /// ⚠️ 人物名を載せるかは従来どおり `shareNamesEnabled` が決める（OFF なら顔だけ）。
+    public static let publishAnalysisEnabled = "sharePublishAnalysisEnabled"
+    public static func isPublishAnalysisEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: publishAnalysisEnabled) == nil
+            ? true : defaults.bool(forKey: publishAnalysisEnabled)
+    }
+
+    /// 公開済みシャードの指紋（[シャード名: 指紋] の JSON）。変わったシャードだけ上げ直す。
+    public static let publishedAnalysisDigests = "sharePublishedAnalysisDigests"
+    /// 公開の続きの位置（1 回の実行で上げるシャード数に上限があるため）。
+    public static let publishAnalysisCursor = "sharePublishAnalysisCursor"
+
     /// 家族から共有されたフォルダ（受信側）。JSON エンコードした [String]。
     /// 同期ルートへの追加と解析データの取り込み対象を兼ねる。
     public static let familyFolders = "shareFamilyFolders"

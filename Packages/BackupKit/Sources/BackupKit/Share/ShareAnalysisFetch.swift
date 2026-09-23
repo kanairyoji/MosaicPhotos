@@ -170,6 +170,30 @@ public struct ShareAnalysisFetch {
             + "\(Self.receiverCapabilityVersion) — re-fetching all analysis data once")
     }
 
+    /// **同じ Dropbox に接続している他の端末の解析フォルダ**を見つける（ADR-222）。
+    ///
+    /// 置き場所は `<root>/<端末>/Analysis`。ルート直下の端末フォルダを 1 回、その下を端末ごとに
+    /// 1 回だけ一覧する（`Analysis` の中身は `fetchUpdated` が再帰で見る）。
+    /// ⚠️ **自分の端末フォルダは除く**（自分が書いたものを取り込み直さない）。
+    /// ⚠️ バックアップのルートを再帰で一覧しない——写真が数万枚あるので一覧だけで重い。
+    public func accountAnalysisRoots(backupRoot: String, ownDeviceFolder: String,
+                                     token: String) async -> [String] {
+        let copier = DropboxShareCopier(httpClient: httpClient)
+        guard let devices = await copier.listFolder(path: backupRoot, token: token) else { return [] }
+        var roots: [String] = []
+        for device in devices where device.isFolder {
+            guard device.name.lowercased() != ownDeviceFolder.lowercased() else { continue }
+            guard let children = await copier.listFolder(path: device.pathLower, token: token)
+            else { continue }
+            if let analysis = children.first(where: {
+                $0.isFolder && $0.name.lowercased() == BackupLayout.analysisSubfolder.lowercased()
+            }) {
+                roots.append(analysis.pathLower)
+            }
+        }
+        return roots
+    }
+
     public func fetchUpdated(roots: [String], token: String) async -> [Fetched] {
         invalidateRevsIfCapabilityGrew()
         let copier = DropboxShareCopier(httpClient: httpClient)
