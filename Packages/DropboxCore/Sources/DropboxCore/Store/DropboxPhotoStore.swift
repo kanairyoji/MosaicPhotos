@@ -134,6 +134,8 @@ public final class DropboxPhotoStore {
     @ObservationIgnored private var lastCacheChange = Date.distantPast
     @ObservationIgnored private var trailingRefreshTask: Task<Void, Never>?
     private static let cacheRefreshInterval: TimeInterval = 0.4
+    /// テストから読む用（既定の下限）。
+    static var cacheRefreshIntervalForTesting: TimeInterval { cacheRefreshInterval }
     /// 変化が続いている間、これだけ静かになるまで反映を待つ（バックアップ中の連打対策）。
     static let quietWindowDefault: TimeInterval = 1.5
     /// 待ち続けないための頭打ち。変化が止まらなくてもこの間隔では必ず 1 回反映する。
@@ -147,21 +149,43 @@ public final class DropboxPhotoStore {
     /// 0 にはできない: 背面の解析候補の列挙（`AnalysisCandidates`）が `items` を読むので、
     /// 新しいクラウド写真がいつまでも解析対象にならなくなる。
     static let backgroundRefreshInterval: TimeInterval = 30.0
+    /// 間隔の頭打ち（前面で一覧が古いままになりすぎないように）。
+    static let maxRefreshInterval: TimeInterval = 10.0
+    /// 直近の作り直しにかかった秒数（規模に応じた間隔を決めるのに使う）。
+    @ObservationIgnored private var lastRefreshDuration: TimeInterval = 0
     /// テストから短くするための穴（既定は `quietWindowDefault`）。
     @ObservationIgnored var quietWindow: TimeInterval = DropboxPhotoStore.quietWindowDefault
     /// 同じくテスト用（背面の 30 秒を待たずに上限の効きを見る）。
     @ObservationIgnored var refreshIntervalOverrideForTesting: TimeInterval?
     /// 初回同期中は delta ページが多数届くため、UI 反映（全件 fetch＋マージ＋グリッド再構築）を
     /// 粗い間隔へ間引いて O(N) 再処理の回数を抑える（完了時に最終反映を即時実行する）。
-    private static let initialSyncRefreshInterval: TimeInterval = 5.0
+    static let initialSyncRefreshInterval: TimeInterval = 5.0
 
     /// 現在の状態に応じた反映間隔（＝この間隔より頻繁には作り直さない）。
-    /// 初回同期中は粗く、**背面はさらに粗く**（見ている人がいない・ADR-224）。
     private var currentRefreshInterval: TimeInterval {
         if let refreshIntervalOverrideForTesting { return refreshIntervalOverrideForTesting }
-        if BackgroundYield.scenePhase != .active { return Self.backgroundRefreshInterval }
-        if case .initialSync = syncState { return Self.initialSyncRefreshInterval }
-        return Self.cacheRefreshInterval
+        let phaseIsActive = BackgroundYield.scenePhase == .active
+        let initialSync: Bool
+        if case .initialSync = syncState { initialSync = true } else { initialSync = false }
+        return Self.refreshInterval(lastRefreshSeconds: lastRefreshDuration,
+                                    isActive: phaseIsActive, isInitialSync: initialSync)
+    }
+
+    /// 間引きの間隔（純ロジック・テスト対象）。
+    ///
+    /// ⚠️ **作り直しにかかる時間に応じて伸ばす**（実機ログ diagnostics-92）。前面では 0.4 秒固定に
+    /// していたが、バックアップ中は delta が 3 秒おきに届くので**毎回**作り直していた
+    /// （3 分で 40 回・1 回 1.2〜2.1 秒＝キャッシュの actor がほぼ埋まる）。
+    /// ライブラリが小さければ作り直しは一瞬（＝0.4 秒のまま素早く反映）、9.9 万件なら 1.5 秒
+    /// かかるので 6 秒空ける——**規模に応じて自分で決まる**ようにする。
+    /// 背面は見ている人がいないので下限 30 秒（ADR-224）。
+    static func refreshInterval(lastRefreshSeconds: TimeInterval,
+                                isActive: Bool, isInitialSync: Bool) -> TimeInterval {
+        // 直近の作り直しの 4 倍空ける＝キャッシュの actor を 2 割以上は空けておく。
+        let costBased = min(lastRefreshSeconds * 4, maxRefreshInterval)
+        guard isActive else { return max(backgroundRefreshInterval, costBased) }
+        if isInitialSync { return max(initialSyncRefreshInterval, costBased) }
+        return max(cacheRefreshInterval, costBased)
     }
 
     // MARK: - Enums
@@ -480,7 +504,10 @@ public final class DropboxPhotoStore {
             guard let self, !Task.isCancelled else { return }
             self.trailingRefreshTask = nil
             self.lastCacheRefresh = Date()
+            let started = Date()
             await self.refreshItemsFromCache()
+            // 次の間隔は**この所要**から決まる（規模が育つほど自然に空く）。
+            self.lastRefreshDuration = Date().timeIntervalSince(started)
         }
     }
 

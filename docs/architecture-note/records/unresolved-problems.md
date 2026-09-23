@@ -17,6 +17,10 @@
   （単体では通る）。`fetchCount` をストア引数つきに変え、`FaceStore.fetchCountForTesting` の差分で
   数えるようにした（`PerfTrace.setEnabledForTesting` の付け外しも他のテストと取り合いになるので消えた）。
 - 教訓: **共有のカウンタは、テストの差し込み口にしてはいけない**。「今は通っている」は根拠にならない。
+- **3 度目（2026-09-23・DropboxCore）**: 新しく足した射影のテストでも同じ罠を踏んだ
+  （`cache.contentHashes.fetch` を `PerfTrace` で数えて、全体実行でだけ落ちた）。
+  `DropboxCacheStore.contentHashFetchesForTesting` / `photoRefFetchesForTesting`（ストアごと）へ移した。
+  **新しく回数を数えるときは、最初からストアごとのカウンタを足す。**
 
 ## （解決済み）オフロード済みの写真の実体が消えても伝わらない — 2026-09-20 に対処
 

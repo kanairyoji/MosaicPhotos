@@ -44,6 +44,10 @@
     （ADR-85 の回避策）も不要になった——台帳は画面を開いていなくても埋まっている。
   - **作り直さず、増減で直す**。content_hash の表は `applyDelta` が増減のぶんだけ更新し、
     `itemsRevision` が一致する限り引き直さない（メモリ圧迫では捨てる＝作り直せる）。
+  - **間隔は作り直しの実測時間から決める**（追補 2・実機ログ diagnostics-92）。前面 0.4 秒固定では、
+    バックアップ中の delta（3 秒おき）に対して毎回作り直していた（3 分で 40 回）。
+    `refreshInterval = max(下限, 直近の所要 × 4)`（頭打ち 10 秒）——小さなライブラリは素早いまま、
+    9.9 万件なら自分で 6 秒空ける。下限は前面 0.4 秒 / 初回同期 5 秒 / 背面 30 秒。
 - 関連: `Store/DropboxPhotoStore.swift`（`scheduleCacheRefresh` / `currentRefreshInterval`）/
   `Cache/DropboxCacheStore.swift`（`cachedContentHashes` / `cachedPhotoRefs`）/
   `Models/CloudPhotoRef.swift` / `PhotosFeatureKit/AnalysisCandidates.swift` /

@@ -213,6 +213,13 @@ actor DropboxCacheStore {
     private var contentHashIndexRevision = -1
     /// テスト用: `cachedItems`（全列の実体化）を呼んだ回数。本番では読まれない。
     private(set) var materializeCallsForTesting = 0
+    /// テスト用: 射影を**実際に引いた**回数（表が効いていれば増えない）。
+    ///
+    /// ⚠️ `PerfTrace` のカウンタで数えない（FaceCore で同じ罠を踏んだ）。あれはプロセス全体で
+    /// 共有なので、並行して走る別スイートの読み出しまで混ざり、**単体では通るのに全体実行で
+    /// 落ちる**。ストアごとに数える。
+    private(set) var contentHashFetchesForTesting = 0
+    private(set) var photoRefFetchesForTesting = 0
     /// テスト用の累計書き込み件数（本番では読まれない）。
     var insertedForTesting = 0
     var updatedForTesting = 0
@@ -494,6 +501,7 @@ actor DropboxCacheStore {
         var descriptor = FetchDescriptor<CachedDropboxItem>()
         descriptor.propertiesToFetch = [\.path, \.contentHash]
         PerfTrace.count("cache.contentHashes.fetch")
+        contentHashFetchesForTesting += 1
         var out: [String: String] = [:]
         for row in (try? modelContext.fetch(descriptor)) ?? [] {
             guard let hash = row.contentHash else { continue }
@@ -515,6 +523,7 @@ actor DropboxCacheStore {
         var descriptor = FetchDescriptor<CachedDropboxItem>()
         descriptor.propertiesToFetch = [\.path, \.captureDate]
         PerfTrace.count("cache.photoRefs.fetch")
+        photoRefFetchesForTesting += 1
         return ((try? modelContext.fetch(descriptor)) ?? [])
             .map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
     }

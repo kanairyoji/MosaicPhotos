@@ -77,6 +77,27 @@ struct DropboxPhotoStoreReflectCoalesceTests {
         #expect(store.items.count == 11, "まとめた結果が最新を反映していない")
     }
 
+    /// 間引きの間隔は**作り直しの実測時間から決まる**（純ロジック・実機ログ diagnostics-92）。
+    ///
+    /// ⚠️ 前面 0.4 秒固定では、バックアップ中の delta（3 秒おき）に対して**毎回**作り直していた
+    /// ——3 分で 40 回・1 回 1.2〜2.1 秒。小さなライブラリは速いまま、大きいライブラリは自分で
+    /// 空けるようにする。
+    @Test("間隔は直近の作り直しの 4 倍（前面・背面・初回同期の下限つき）")
+    func intervalScalesWithCost() {
+        typealias Store = DropboxPhotoStore
+        // 小さいライブラリ（作り直し 10ms）＝従来どおり素早く反映。
+        #expect(Store.refreshInterval(lastRefreshSeconds: 0.01, isActive: true, isInitialSync: false)
+                == Store.cacheRefreshIntervalForTesting)
+        // 9.9 万件（1.5 秒）＝ 6 秒空ける。
+        #expect(Store.refreshInterval(lastRefreshSeconds: 1.5, isActive: true, isInitialSync: false) == 6)
+        // 頭打ち（前面で古いままになりすぎない）。
+        #expect(Store.refreshInterval(lastRefreshSeconds: 30, isActive: true, isInitialSync: false)
+                == Store.maxRefreshInterval)
+        // 背面は誰も見ていないので下限 30 秒（ADR-224）。
+        #expect(Store.refreshInterval(lastRefreshSeconds: 1.5, isActive: false, isInitialSync: false)
+                == Store.backgroundRefreshInterval)
+    }
+
     /// ⚠️ **無風だけでは足りない**（実機ログ diagnostics-89）。バックアップ中の delta は
     /// **3 秒おき**に届くので、無風 1.5 秒を毎回満たして作り直しが 5 分で 60 回・102 秒になった。
     /// 背面は誰も一覧を見ていないので、**回数の上限**（既定 30 秒に 1 回）で抑える。

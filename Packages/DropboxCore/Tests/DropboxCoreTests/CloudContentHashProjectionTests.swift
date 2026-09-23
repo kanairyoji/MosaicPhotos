@@ -59,23 +59,18 @@ struct CloudContentHashProjectionTests {
     @Test("2 回目は引き直さない。増減のぶんだけ表を直す")
     func indexIsMaintainedIncrementally() async {
         let store = await store([item("/a.jpg", hash: "h1"), item("/b.jpg", hash: "h2")])
-        PerfTrace.setEnabledForTesting(true)
-        _ = PerfTrace.takeCounts()
 
         _ = await store.cachedContentHashes()
         _ = await store.cachedContentHashes()
-        #expect((PerfTrace.takeCounts()["cache.contentHashes.fetch"] ?? 0) == 1,
-                "変化が無いのに引き直している")
+        #expect(await store.contentHashFetchesForTesting == 1, "変化が無いのに引き直している")
 
         // 1 枚増えて 1 枚消える → 引き直さずに表へ反映されること。
         await store.applyDelta(accountId: "acc1", added: [item("/c.jpg", hash: "h3")],
                                removed: ["/a.jpg"], newCursor: "c2")
         let after = await store.cachedContentHashes()
-        let counts = PerfTrace.takeCounts()
-        PerfTrace.setEnabledForTesting(false)
 
         #expect(after == ["/b.jpg": "h2", "/c.jpg": "h3"], "増減が表に反映されていない")
-        #expect((counts["cache.contentHashes.fetch"] ?? 0) == 0, """
+        #expect(await store.contentHashFetchesForTesting == 1, """
             delta のたびに 9.9 万行を引き直している（実機で 17 秒かかった形）。
             """)
     }
@@ -85,16 +80,13 @@ struct CloudContentHashProjectionTests {
     func projectionDoesNotMaterializeAllColumns() async {
         let items = (0..<200).map { item("/p\($0).jpg", hash: "h\($0)") }
         let store = await store(items)
-        PerfTrace.setEnabledForTesting(true)
-        _ = PerfTrace.takeCounts()
+        let materializedBefore = await store.materializeCallsForTesting
 
         let hashes = await store.cachedContentHashes()
-        let counts = PerfTrace.takeCounts()
-        PerfTrace.setEnabledForTesting(false)
 
         #expect(hashes.count == items.count, "取りこぼしている")
-        #expect(counts["cache.contentHashes.fetch"] == 1, "1 回の射影で取れていない")
-        #expect((counts["cache.itemsMaterialized"] ?? 0) == 0, """
+        #expect(await store.contentHashFetchesForTesting == 1, "1 回の射影で取れていない")
+        #expect(await store.materializeCallsForTesting == materializedBefore, """
             hash を取るために全列（67k 行）を実体化している。
             """)
     }
