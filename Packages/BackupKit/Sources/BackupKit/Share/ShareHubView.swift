@@ -11,18 +11,24 @@ public struct ShareHubView: View {
     private let onFamilyFoldersChanged: @MainActor () -> Void
     /// 「今すぐ取り込み」（受信側・解析データ取り込み）。未設定なら非表示。
     private let onImportNow: (@MainActor () async -> Void)?
+    /// 「今すぐ公開」（ADR-222・解析結果の公開）。短い結果を返す。未設定なら非表示。
+    private let onPublishNow: (@MainActor () async -> String)?
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
     @AppStorage(ShareSettingsKeys.publishAnalysisEnabled) private var publishAnalysisEnabled = true
     @State private var familyFolders: [String] = ShareSettingsKeys.currentFamilyFolders()
+    @State private var isPublishing = false
+    @State private var publishStatus: String?
 
     public init(engine: ShareSyncEngine,
                 onFamilyFoldersChanged: @escaping @MainActor () -> Void = {},
-                onImportNow: (@MainActor () async -> Void)? = nil) {
+                onImportNow: (@MainActor () async -> Void)? = nil,
+                onPublishNow: (@MainActor () async -> String)? = nil) {
         self.engine = engine
         self.onFamilyFoldersChanged = onFamilyFoldersChanged
         self.onImportNow = onImportNow
+        self.onPublishNow = onPublishNow
     }
 
     public var body: some View {
@@ -62,6 +68,33 @@ public struct ShareHubView: View {
             // 相手は写真をもう見られるので、共有セットを作らなくても解析が行き渡る。
             Section {
                 Toggle(L("Share Photo Analysis"), isOn: $publishAnalysisEnabled)
+                // 公開は夜間の処理枠で少しずつ進む。実機でその場で確かめられるよう、
+                // 手で 1 回ぶん走らせる口も置く（結果はそのまま下に出す）。
+                if let onPublishNow, publishAnalysisEnabled {
+                    Button {
+                        isPublishing = true
+                        publishStatus = nil
+                        Task {
+                            publishStatus = await onPublishNow()
+                            isPublishing = false
+                        }
+                    } label: {
+                        if isPublishing {
+                            HStack {
+                                ProgressView()
+                                Text(L("Publishing…"))
+                            }
+                        } else {
+                            Text(L("Publish Analysis Now"))
+                        }
+                    }
+                    .disabled(isPublishing)
+                    if let publishStatus {
+                        Text(publishStatus)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             } footer: {
                 Text(L("Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied."))
             }

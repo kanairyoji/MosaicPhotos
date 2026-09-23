@@ -14,6 +14,7 @@ struct DropboxHubView: View {
     /// 家族共有（ADR-112）。SettingsView（stores 経由）から渡す。nil なら導線を出さない。
     var shareEngine: ShareSyncEngine?
     var shareImporter: SharedAnalysisImporter?
+    var analysisPublisher: CloudAnalysisPublisher?
 
     /// 家族フォルダの変更を同期ルート・表示除外へ反映する（ADR-112）。
     private func familyFoldersChanged() {
@@ -49,6 +50,9 @@ struct DropboxHubView: View {
                                          onFamilyFoldersChanged: { familyFoldersChanged() },
                                          onImportNow: shareImporter.map { importer in
                                              { await importer.runIfNeeded() }
+                                         },
+                                         onPublishNow: analysisPublisher.map { publisher in
+                                             { await publisher.runIfNeeded() }
                                          })
                         } label: {
                             Label("Cloud Sharing", systemImage: "icloud.and.arrow.up")

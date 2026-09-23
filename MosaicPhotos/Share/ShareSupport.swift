@@ -358,16 +358,23 @@ final class CloudAnalysisPublisher {
     }
 
     /// 1 回ぶん公開する（変わったシャードだけ・上限つき。続きは次の窓で）。
-    func runIfNeeded() async {
-        guard !isRunning else { return }
-        guard ShareSettingsKeys.isPublishAnalysisEnabled() else { return }
-        guard case .connected = dropboxStore.auth.connectionStatus else { return }
+    /// - Returns: 画面に出す短い状態（診断ログにも同じ内容が残る）。
+    ///
+    /// ⚠️ **抜けるときも必ず 1 行残す**（実機ログ diagnostics-83）。黙って return すると、
+    /// ログを見ても「順番が回ってこなかった」のか「回ってきたが抜けた」のか区別できない。
+    @discardableResult
+    func runIfNeeded() async -> String {
+        guard !isRunning else { return mark("すでに実行中") }
+        guard ShareSettingsKeys.isPublishAnalysisEnabled() else { return mark("設定がオフ") }
+        guard case .connected = dropboxStore.auth.connectionStatus else {
+            return mark("Dropbox に接続していない")
+        }
         isRunning = true
         defer { isRunning = false }
         // ⚠️ 一覧が出そろう前に公開しない。途中の一覧で作ったシャードは「消えた写真」の
         // 掃除（stale）に引っかかり、次の窓で上げ直す空回りになる。
         switch dropboxStore.syncState {
-        case .initialSync, .error: return
+        case .initialSync, .error: return mark("クラウドの一覧が同期中 — 出そろってから公開する")
         case .idle, .polling, .fetchingDelta: break
         }
         let photos = dropboxStore.items.compactMap { item -> AnalysisPublisher.CloudPhoto? in
@@ -375,7 +382,15 @@ final class CloudAnalysisPublisher {
             return AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(item.path).encoded,
                                                 contentHash: hash)
         }
-        guard !photos.isEmpty else { return }
-        _ = await publisher.publish(photos: photos)
+        guard !photos.isEmpty else { return mark("クラウド写真が 0 件") }
+        let result = await publisher.publish(photos: photos)
+        return result.uploaded == 0 && result.remaining == 0
+            ? "変更なし（写真 \(photos.count) 枚）"
+            : "上げた \(result.uploaded) シャード・残り \(result.remaining)"
+    }
+
+    private func mark(_ reason: String) -> String {
+        Diagnostics.mark("share.publishAnalysis: \(reason)")
+        return reason
     }
 }

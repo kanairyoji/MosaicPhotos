@@ -51,13 +51,31 @@ public final class AnalysisPublisher {
     /// 1 回ぶん公開する。
     /// - Parameter photos: 解析済みか判断せずに渡してよい（解析が無い写真はエントリにならない）。
     /// - Returns: 上げたシャード数と、まだ残っている数。
+    ///
+    /// ⚠️ **抜けるときも必ず 1 行残す**（実機ログ diagnostics-83）。黙って return していたため、
+    /// ログを見ても「順番が回ってこなかった」のか「回ってきたが早々に抜けた」のか区別できず、
+    /// 原因（手順の最後に置いたので窓が先に切れていた）に辿り着くのに実機ログ 1 本ぶん遠回りした。
     @discardableResult
     public func publish(photos: [CloudPhoto],
                         budget: Int = AnalysisPublishPlanning.defaultBudget) async
         -> (uploaded: Int, remaining: Int) {
-        guard ShareSettingsKeys.isPublishAnalysisEnabled(defaults) else { return (0, 0) }
-        guard !photos.isEmpty, let source = analysisSource else { return (0, 0) }
-        guard let token = try? await tokenProvider.freshAccessToken() else { return (0, 0) }
+        guard ShareSettingsKeys.isPublishAnalysisEnabled(defaults) else {
+            Diagnostics.mark("share.publishAnalysis: 設定がオフ — 何もしない")
+            return (0, 0)
+        }
+        guard !photos.isEmpty else {
+            Diagnostics.mark("share.publishAnalysis: クラウド写真が 0 件 — 何もしない")
+            return (0, 0)
+        }
+        guard let source = analysisSource else {
+            Diagnostics.mark("share.publishAnalysis: 解析の供給元が無い — 何もしない")
+            return (0, 0)
+        }
+        guard let token = try? await tokenProvider.freshAccessToken() else {
+            Diagnostics.mark("share.publishAnalysis: トークンが取れない — 何もしない")
+            return (0, 0)
+        }
+        Diagnostics.mark("share.publishAnalysis: 開始（写真 \(photos.count) 枚）")
 
         // 解析結果を集める。⚠️ 6.8 万枚を一度に渡さない（base64 の文字列が一斉に載る）。
         let byRefKey = Dictionary(photos.map { ($0.refKey, $0.contentHash) },

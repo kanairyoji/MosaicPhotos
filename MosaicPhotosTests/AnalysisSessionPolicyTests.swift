@@ -196,14 +196,21 @@ final class NightlyPlanTests: XCTestCase {
         XCTAssertFalse(labels(.init(networkAllowed: false, publishAnalysisEnabled: true))
                         .contains("publishAnalysis"),
                        "回線が許されないのにアップロードしている（Wi-Fi のみでもセルラーで走る）")
-        let steps = labels(.init(publishAnalysisEnabled: true))
+        let steps = labels(.init(provideShareEnabled: true, publishAnalysisEnabled: true))
         guard let publish = steps.firstIndex(of: "publishAnalysis"),
-              let importStep = steps.firstIndex(of: "shareImport") else {
+              let importStep = steps.firstIndex(of: "shareImport"),
+              let sync = steps.firstIndex(of: "shareSync") else {
             return XCTFail("公開の手が無い: \(steps)")
         }
         XCTAssertTrue(importStep < publish, """
             公開が取り込みより先にある（\(steps)）。受け取った解析が自分の台帳に入る前に
             公開すると、同じ写真を 2 人が別々に解析し直す空回りが止まらない。
+            """)
+        // 回帰: 実機ログ diagnostics-83 では、最後に置いた公開に**一度も順番が回らなかった**。
+        // 反映は 1 回 500 件ずつコピーし、残り 9,265 件で窓（5 分）を使い切る。
+        XCTAssertTrue(publish < sync, """
+            公開が共有セットの反映より後にある（\(steps)）。反映は窓を使い切るので、
+            上限つきで軽い公開は先に出すこと。
             """)
     }
 

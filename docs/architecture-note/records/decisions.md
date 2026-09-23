@@ -53,6 +53,14 @@
   ⚠️ **公開する JSON は鍵を並べて書く**（`.sortedKeys`）。`Entry` の辞書は順序を持たないので、
   既定のエンコーダだと同じ中身でもバイト列が変わり、**何も変わっていなくても毎晩全部を上げ直す**。
   テストで実際に踏んだ。
+- **追補（実機ログ diagnostics-83・同日）**: 最初は公開を**反映（`shareSync`）の後**＝手順の最後に
+  置いたが、実機では**一度も順番が回ってこなかった**。反映は 1 回 500 件ずつコピーし、
+  この端末には 9,265 件が残っていたため、窓（約 5 分）を毎回使い切っていた。
+  公開は上限つき（8 シャード）で軽いので、**取り込みの後・反映の前**へ移した。
+  あわせて、(1) 公開が**抜けるときも必ず診断ログを 1 行残す**ようにした——黙って return して
+  いたため「順番が回らなかった」のか「回ったが抜けた」のかログから区別できず、原因に辿り着く
+  のに実機ログ 1 本ぶん遠回りした。(2) 設定に「今すぐ公開」を足した（窓を待たずに実機で
+  確かめられる・結果を画面にも出す）。
 - 関連: `Share/AnalysisPublishPlanning.swift` / `AnalysisPublisher.swift` / `ShareAnalysisFetch.accountAnalysisRoots`
   / `MosaicPhotos/Share/ShareSupport.swift`（`CloudAnalysisPublisher`・`SharedAnalysisImporter`）
   / `NightlyWorkPolicy.swift` / `AnalysisPublishTests`。ADR-112・ADR-183・ADR-199。

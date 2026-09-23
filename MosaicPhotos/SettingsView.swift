@@ -49,7 +49,8 @@ struct SettingsView: View {
                 NavigationLink {
                     DropboxHubView(dropboxAuth: dropboxAuth, store: store,
                                    backupEngine: backupEngine, autoAlbumEngine: autoAlbumEngine,
-                                   shareEngine: stores.shareEngine, shareImporter: stores.shareImporter)
+                                   shareEngine: stores.shareEngine, shareImporter: stores.shareImporter,
+                                   analysisPublisher: stores.analysisPublisher)
                 } label: {
                     row("Dropbox", systemImage: "cloud", value: dropboxStatusText)   // ブランド名は非翻訳
                 }
@@ -92,7 +93,8 @@ struct SettingsView: View {
                 NavigationLink {
                     ShareHubView(engine: stores.shareEngine,
                                  onFamilyFoldersChanged: { shareFamilyFoldersChanged() },
-                                 onImportNow: { await stores.shareImporter.runIfNeeded() })
+                                 onImportNow: { await stores.shareImporter.runIfNeeded() },
+                                 onPublishNow: { await stores.analysisPublisher.runIfNeeded() })
                 } label: {
                     row(L("Cloud Sharing"), systemImage: "icloud.and.arrow.up")
                 }

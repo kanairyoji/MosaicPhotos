@@ -1352,6 +1352,26 @@
           }
         }
       }
+    },
+    "Publish Analysis Now": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今すぐ公開"
+          }
+        }
+      }
+    },
+    "Publishing…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "公開中…"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
