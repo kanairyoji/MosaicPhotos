@@ -377,10 +377,13 @@ final class CloudAnalysisPublisher {
         case .initialSync, .error: return mark("クラウドの一覧が同期中 — 出そろってから公開する")
         case .idle, .polling, .fetchingDelta: break
         }
-        let photos = dropboxStore.items.compactMap { item -> AnalysisPublisher.CloudPhoto? in
-            guard let hash = item.contentHash else { return nil }
-            return AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(item.path).encoded,
-                                                contentHash: hash)
+        // ⚠️ **`dropboxStore.items` から hash を拾わない**（実機ログ diagnostics-84）。
+        // 表示用の `DropboxFileItem` は content_hash を**わざと持たない**（67k 件の長寿命配列に
+        // 64 桁の文字列を載せないため）ので、毎回 0 件になっていた。さらに `items` は
+        // 画面を開いたときだけ作られるので、背景の窓では空のこともある。台帳から射影で取る。
+        let hashes = await dropboxStore.cloudContentHashes()
+        let photos = hashes.map { path, hash in
+            AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(path).encoded, contentHash: hash)
         }
         guard !photos.isEmpty else { return mark("クラウド写真が 0 件") }
         let result = await publisher.publish(photos: photos)

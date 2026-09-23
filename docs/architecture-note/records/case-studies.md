@@ -21,6 +21,33 @@
 
 ---
 
+## 解析の公開が「クラウド写真 0 件」で何もしない — 表示用のアイテムは content_hash を持たない
+
+2026-09-23（実機ログ diagnostics-84）。
+
+- 症状: ADR-222 の「解析結果の公開」が、実機で毎回 `share.publishAnalysis: クラウド写真が 0 件` を
+  出して何もしなかった。同じログには `pathAlbum.fast: metas=73892` と delta 同期が並んでおり、
+  クラウド写真は確かに 7 万枚ある。
+- 原因: 公開する写真を `DropboxPhotoStore.items`（表示用）から作り、`item.contentHash` で
+  絞っていた。ところが `DropboxCacheStore.cachedItems` は **content_hash を渡さない**
+  （67k 件の長寿命配列に 64 桁の文字列を常駐させないための意図的な nil）。つまり
+  **絞り込みが常に全部を落としていた**。さらに `items` は画面を開いたときだけ作られる
+  （`reflectCachedItems`）ので、背景の窓ではそもそも空のこともある——2 つの理由で 0 件。
+- **同じ理由でもう 1 か所壊れていた**: 共有の宛先名を「中身から決める」ための
+  `ShareSyncEngine.cloudSourceHashProvider`（ADR-209）も、アプリ側の実装が同じく `items` を
+  舐めていたので、クラウド原本の hash は**常に空**だった（名前は refKey だけで決まり、
+  原本の差し替えを検知できない状態が続いていた）。公開のログが無ければ気づけなかった。
+- 対処: 台帳から 2 列だけの射影 `DropboxCacheStore.cachedContentHashes()`
+  （`DropboxPhotoStore.cloudContentHashes()` で公開）を足し、公開と `cloudSourceHashProvider` の
+  両方をそこへ向けた（provider は actor をまたぐので型を async に変更）。
+  回帰テスト `CloudContentHashProjectionTests`: 射影が hash を返す / **表示用アイテムは hash を
+  持たない**（拾い先を間違えたら落ちる）/ 射影が全列を実体化しない（回数で見る・ADR-119）。
+- 教訓: **「絞り込みが全部を落としている」は、空の結果としてしか現れない**。今回それを捕まえられたのは、
+  抜けた理由を 1 行ログに残すようにした直後だったから（同 ADR の追補）。黙って return する経路には、
+  必ず理由を書く。
+- 関連: `Cache/DropboxCacheStore.swift` / `Store/DropboxPhotoStore+Location.swift` /
+  `MosaicPhotos/Share/ShareSupport.swift` / `RootView.swift` / `Share/ShareSyncEngine.swift`。ADR-222・ADR-209。
+
 ## シミュレータでは OS の顔品質が取れず、品質まわりの計測が実機を代表していなかった
 
 2026-09-22。

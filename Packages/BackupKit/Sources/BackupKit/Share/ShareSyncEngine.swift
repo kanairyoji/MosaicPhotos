@@ -239,7 +239,12 @@ public final class ShareSyncEngine {
     /// 実体はアプリ（Composition Root）が Dropbox の同期キャッシュを見て差す。
     /// 差さない場合は refKey だけで名前が決まる——一意性と冪等性は保たれるが、
     /// **原本が差し替わったことを検知できない**（旧実装も同じだった）。
-    @ObservationIgnored public var cloudSourceHashProvider: @MainActor () -> [String: String] = { [:] }
+    ///
+    /// ⚠️ **async**（実機ログ diagnostics-84）。以前は同期クロージャで、アプリ側は
+    /// `DropboxPhotoStore.items` を舐めて hash を集めていた——ところが表示用のアイテムは
+    /// content_hash を**わざと持たない**ので、この表は**常に空**だった。台帳を引くには
+    /// actor をまたぐ必要があるので型を async にする。
+    @ObservationIgnored public var cloudSourceHashProvider: @MainActor () async -> [String: String] = { [:] }
 
     /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
     @ObservationIgnored var syncTask: Task<Void, Never>?

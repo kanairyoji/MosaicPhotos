@@ -61,6 +61,11 @@
   いたため「順番が回らなかった」のか「回ったが抜けた」のかログから区別できず、原因に辿り着く
   のに実機ログ 1 本ぶん遠回りした。(2) 設定に「今すぐ公開」を足した（窓を待たずに実機で
   確かめられる・結果を画面にも出す）。
+- **追補 2（実機ログ diagnostics-84・同日）**: 公開が毎回「クラウド写真が 0 件」で何もしなかった。
+  写真の一覧を `DropboxPhotoStore.items`（表示用）から作っていたが、表示用アイテムは
+  content_hash を**わざと持たない**うえ、`items` は画面を開いたときだけ作られる。
+  台帳の射影 `cloudContentHashes()` へ向け直した。詳細と、同じ理由で空だった
+  `cloudSourceHashProvider`（ADR-209）は `case-studies.md` を見ること。
 - 関連: `Share/AnalysisPublishPlanning.swift` / `AnalysisPublisher.swift` / `ShareAnalysisFetch.accountAnalysisRoots`
   / `MosaicPhotos/Share/ShareSupport.swift`（`CloudAnalysisPublisher`・`SharedAnalysisImporter`）
   / `NightlyWorkPolicy.swift` / `AnalysisPublishTests`。ADR-112・ADR-183・ADR-199。

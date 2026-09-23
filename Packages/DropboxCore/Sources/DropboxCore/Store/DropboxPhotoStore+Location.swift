@@ -110,6 +110,14 @@ extension DropboxPhotoStore {
         await cache.exifCaptureDates(paths: paths)
     }
 
+    /// 全クラウド写真の **パス小文字 → content_hash**（ADR-222）。
+    ///
+    /// ⚠️ 呼び出し側は `items` から hash を拾わないこと——表示用のアイテムは hash を
+    /// **持たない**し、`items` は画面を開いたときだけ作られる（背景の窓では空）。
+    public func cloudContentHashes() async -> [String: String] {
+        await cache.cachedContentHashes()
+    }
+
     /// ISO 8601（`time_taken` は "2015-05-12T15:50:38Z" 形式）。
     static let iso8601: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

@@ -173,7 +173,7 @@ extension ShareSyncEngine {
             .map { String($0.refKey.dropFirst(2)) }
         let backupRefs = await store.backupRefs(forLocalIdentifiers: localIDs)
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
-                                      cloudHashByPath: cloudSourceHashProvider(),
+                                      cloudHashByPath: await cloudSourceHashProvider(),
                                       setFolder: setFolder, remoteFiles: remoteFiles)
 
         BackupLogger.info("Share sync: '\(set.folderName)' items=\(items.count) "

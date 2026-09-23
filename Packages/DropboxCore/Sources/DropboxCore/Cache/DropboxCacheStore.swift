@@ -461,6 +461,28 @@ actor DropboxCacheStore {
         return out
     }
 
+    /// 全クラウド写真の **パス小文字 → content_hash**（射影・ADR-222）。
+    ///
+    /// ⚠️ **`cachedItems` で代用しない**。表示用の `DropboxFileItem` は `contentHash` を
+    /// **わざと持たない**（67k 件の長寿命配列に 64 桁の文字列を常駐させないため）。
+    /// 実際それに気づかず `dropboxStore.items` から hash を拾う実装にしてしまい、
+    /// 解析の公開が毎回「クラウド写真が 0 件」で何もしなかった（実機ログ diagnostics-84）。
+    /// しかも `items` は**画面を開いたときだけ**作られるので、背景の窓では空のことがある。
+    /// 用途は「今ある写真ぜんぶの hash」なので、2 列だけの射影で取る。
+    func cachedContentHashes() -> [String: String] {
+        let t0 = PerfTrace.nowNs()
+        defer { PerfTrace.logSpan("cache.fetchContentHashes", ms: PerfTrace.msSince(t0)) }
+        var descriptor = FetchDescriptor<CachedDropboxItem>()
+        descriptor.propertiesToFetch = [\.path, \.contentHash]
+        PerfTrace.count("cache.contentHashes.fetch")
+        var out: [String: String] = [:]
+        for row in (try? modelContext.fetch(descriptor)) ?? [] {
+            guard let hash = row.contentHash else { continue }
+            out[row.path.lowercased()] = hash
+        }
+        return out
+    }
+
     /// テスト用: 「`exifProbedAt` の列ができる前に訊いた行」を作る。
     func forgetExifProbeForTesting(path: String) {
         guard let row = fetchCachedItem(path: path) else { return }

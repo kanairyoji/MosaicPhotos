@@ -140,13 +140,12 @@ final class HomeStores {
         // ⚠️ 共有の宛先名は**中身から決まる**（ADR-209）。クラウド原本（"C-"）の
         // content_hash は Dropbox の同期キャッシュが知っているので、そこから渡す。
         // 渡さないと refKey だけで名前が決まり、原本が差し替わっても気づけない。
+        // ⚠️ **`items` から拾わない**（実機ログ diagnostics-84 で判明）。表示用の
+        // `DropboxFileItem` は content_hash を**わざと持たない**ので、この表は常に空だった
+        // ——クラウド原本の宛先名が「中身から決まる」はずが、実際には効いていない。
+        // 台帳から 2 列だけの射影で取る。
         shareEngine.cloudSourceHashProvider = { [weak dropboxStore] in
-            var out: [String: String] = [:]
-            for item in dropboxStore?.items ?? [] {
-                guard let hash = item.contentHash else { continue }
-                out[item.path.lowercased()] = hash
-            }
-            return out
+            await dropboxStore?.cloudContentHashes() ?? [:]
         }
         // 顔を全消去すると clusterID が 0 から振り直される。人物を指す共有セットの参照は
         // 当てにならなくなるので外す（残すと別人の写真を家族フォルダへ足しかねない）。
