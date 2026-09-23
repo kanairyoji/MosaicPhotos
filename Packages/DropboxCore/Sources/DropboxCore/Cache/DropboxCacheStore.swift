@@ -206,11 +206,19 @@ actor DropboxCacheStore {
     /// （実機 diagnostics-38・その直後にメインが 2.8s / 3.5s ブロック）。
     /// 変わっていないものを取り直さない（CLAUDE.md 性能原則 3 の同型）。
     private(set) var itemsRevision: Int = 0
-    /// パス小文字 → content_hash の表（ADR-222/ADR-224）。作り直さず増減で直す。
-    /// ⚠️ 9.9 万件で 15〜20MB 前後。メモリ圧迫では捨てる（次の要求で作り直せる）。
-    private var contentHashIndex: [String: String]?
+    /// 軽い表の 1 行（パス・content_hash・撮影日）。表示用の全列は持たない。
+    struct IndexedItem: Sendable {
+        let path: String
+        let hash: String?
+        let captureDate: Date?
+    }
+    /// パス小文字 → 軽い行の表（ADR-222/224）。作り直さず増減で直す。
+    /// ⚠️ 9.9 万件で 20〜30MB 前後。メモリ圧迫では捨てる（次の要求で作り直せる）。
+    private var cachedItemIndex: [String: IndexedItem]?
     /// 表が対応している `itemsRevision`（合わなければ作り直す）。
-    private var contentHashIndexRevision = -1
+    private var cachedItemIndexRevision = -1
+    /// 表を作るときのページの大きさ（実体化した行をページごとに手放す）。
+    static let indexPageSize = 5_000
     /// テスト用: `cachedItems`（全列の実体化）を呼んだ回数。本番では読まれない。
     private(set) var materializeCallsForTesting = 0
     /// テスト用: 射影を**実際に引いた**回数（表が効いていれば増えない）。
@@ -218,8 +226,7 @@ actor DropboxCacheStore {
     /// ⚠️ `PerfTrace` のカウンタで数えない（FaceCore で同じ罠を踏んだ）。あれはプロセス全体で
     /// 共有なので、並行して走る別スイートの読み出しまで混ざり、**単体では通るのに全体実行で
     /// 落ちる**。ストアごとに数える。
-    private(set) var contentHashFetchesForTesting = 0
-    private(set) var photoRefFetchesForTesting = 0
+    private(set) var itemIndexBuildsForTesting = 0
     /// テスト用の累計書き込み件数（本番では読まれない）。
     var insertedForTesting = 0
     var updatedForTesting = 0
@@ -307,7 +314,10 @@ actor DropboxCacheStore {
         existing.exifCaptureDate = captureDate
         existing.exifProbedAt = probedAt
         try? modelContext.save()
-        if changed { itemsRevision &+= 1 }
+        if changed {
+            itemsRevision &+= 1
+            updateIndexCaptureDate(path: path, captureDate: captureDate, newRevision: itemsRevision)
+        }
         return changed
     }
 
@@ -491,60 +501,84 @@ actor DropboxCacheStore {
     /// しかも `items` は**画面を開いたときだけ**作られるので、背景の窓では空のことがある。
     /// 用途は「今ある写真ぜんぶの hash」なので、2 列だけの射影で取る。
     func cachedContentHashes() -> [String: String] {
-        // ⚠️ **作り直さない**（実機ログ diagnostics-90）。9.9 万行の射影は、空いているときで 1.8 秒、
-        // 顔スキャン・バックアップと重なると **17.1 秒**かかった。その間この actor は塞がるので、
-        // サムネの取り出しも撮影日の問い合わせも後ろで待たされる。
-        // 表は `applyDelta` が**増減のぶんだけ**直す（ADR-119: 規模に比例する作り直しを消す）。
-        if let index = contentHashIndex, contentHashIndexRevision == itemsRevision { return index }
-        let t0 = PerfTrace.nowNs()
-        defer { PerfTrace.logSpan("cache.fetchContentHashes", ms: PerfTrace.msSince(t0)) }
-        var descriptor = FetchDescriptor<CachedDropboxItem>()
-        descriptor.propertiesToFetch = [\.path, \.contentHash]
-        PerfTrace.count("cache.contentHashes.fetch")
-        contentHashFetchesForTesting += 1
-        var out: [String: String] = [:]
-        for row in (try? modelContext.fetch(descriptor)) ?? [] {
-            guard let hash = row.contentHash else { continue }
-            out[row.path.lowercased()] = hash
-        }
-        contentHashIndex = out
-        contentHashIndexRevision = itemsRevision
-        return out
+        itemIndex().compactMapValues(\.hash)
     }
 
-    /// 解析候補に要る **パスと撮影日だけ**の射影（ADR-224）。
-    ///
-    /// ⚠️ **`cachedItems` を使わない**（実機ログ diagnostics-90）。候補の列挙のために全列を
-    /// 実体化していたため、窓の開始で 98,951 行 × 全列＝**フットプリントが 821MB**まで跳ねていた
-    /// （`cache.fetchItems 3306ms` の直後）。候補に要るのは 2 列だけ。
+    /// 解析候補に要る **パスと撮影日だけ**（ADR-224）。
     func cachedPhotoRefs() -> [CloudPhotoRef] {
+        itemIndex().values.map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
+    }
+
+    /// 軽い表（パス小文字 → パス・hash・撮影日）を返す。無ければ 1 回だけ作る。
+    ///
+    /// ⚠️ **SwiftData の `propertiesToFetch` は列を絞らない**（実機ログ diagnostics-94）。
+    /// 「2 列だけの射影」のつもりで書いた `cachedPhotoRefs` は、実測 **16.3 秒・
+    /// フットプリント 831MB**——`cachedItems`（全列）と変わらなかった。あの指定は**ヒント**で、
+    /// `PersistentModel` は結局まるごと実体化される。
+    /// だから (1) **一度だけ**作って以後は増減で直し、(2) 作るときは**使い捨ての `ModelContext` で
+    /// ページ分け**して、実体化した行をページごとに手放す（ADR-119 の常套手段）。
+    private func itemIndex() -> [String: IndexedItem] {
+        if let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision { return index }
         let t0 = PerfTrace.nowNs()
-        defer { PerfTrace.logSpan("cache.fetchPhotoRefs", ms: PerfTrace.msSince(t0)) }
-        var descriptor = FetchDescriptor<CachedDropboxItem>()
-        descriptor.propertiesToFetch = [\.path, \.captureDate]
-        PerfTrace.count("cache.photoRefs.fetch")
-        photoRefFetchesForTesting += 1
-        return ((try? modelContext.fetch(descriptor)) ?? [])
-            .map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
+        defer { PerfTrace.logSpan("cache.buildItemIndex", ms: PerfTrace.msSince(t0)) }
+        PerfTrace.count("cache.itemIndex.build")
+        itemIndexBuildsForTesting += 1
+        var out: [String: IndexedItem] = [:]
+        out.reserveCapacity(4096)
+        var offset = 0
+        while true {
+            // ⚠️ ページごとに**別の `ModelContext`** を使う。長生きのコンテキストは実体化した行を
+            // 登録し続けるので、ページ分けしてもメモリは減らない。
+            let context = ModelContext(modelContainer)
+            var descriptor = FetchDescriptor<CachedDropboxItem>(
+                sortBy: [SortDescriptor(\.path, order: .forward)])
+            descriptor.fetchOffset = offset
+            descriptor.fetchLimit = Self.indexPageSize
+            let page = (try? context.fetch(descriptor)) ?? []
+            for row in page {
+                out[row.path.lowercased()] = IndexedItem(path: row.path, hash: row.contentHash,
+                                                         captureDate: row.captureDate)
+            }
+            if page.count < Self.indexPageSize { break }
+            offset += page.count
+        }
+        cachedItemIndex = out
+        cachedItemIndexRevision = itemsRevision
+        return out
     }
 
     /// 増減のぶんだけ表を直す（`applyDelta` の中から呼ぶ）。表がまだ無ければ何もしない
     /// ——次に要求されたときに 1 回だけ作る。
     private func updateContentHashIndex(added: [DropboxFileItem], removed: [String],
                                         newRevision: Int) {
-        guard contentHashIndex != nil else { return }
-        for path in removed { contentHashIndex?[path.lowercased()] = nil }
+        guard cachedItemIndex != nil else { return }
+        for path in removed { cachedItemIndex?[path.lowercased()] = nil }
         for item in added {
-            guard let hash = item.contentHash else { continue }
-            contentHashIndex?[item.path.lowercased()] = hash
+            let key = item.path.lowercased()
+            // ⚠️ **訊いて得た撮影日時を、一覧の日付で潰さない**（ADR-201 と同じ決まり）。
+            // 一覧（delta）の日付は `client_modified`＝アップロード時刻。中身が同じなら、
+            // 表に入っている日付（EXIF 由来のことがある）をそのまま残す。
+            let existing = cachedItemIndex?[key]
+            let keepsDate = existing != nil && existing?.hash == item.contentHash
+            cachedItemIndex?[key] = IndexedItem(
+                path: item.path, hash: item.contentHash,
+                captureDate: keepsDate ? existing?.captureDate : item.captureDate)
         }
-        contentHashIndexRevision = newRevision
+        cachedItemIndexRevision = newRevision
+    }
+
+    /// 訊いて得た撮影日時を表へ反映する（`recordCaptureDateProbe` から呼ぶ）。
+    private func updateIndexCaptureDate(path: String, captureDate: Date?, newRevision: Int) {
+        guard let existing = cachedItemIndex?[path.lowercased()] else { return }
+        cachedItemIndex?[path.lowercased()] = IndexedItem(path: existing.path, hash: existing.hash,
+                                                          captureDate: captureDate ?? existing.captureDate)
+        cachedItemIndexRevision = newRevision
     }
 
     /// 表を捨てる（メモリ圧迫・アカウント切替・リセット）。次の要求で作り直す。
     func dropContentHashIndex() {
-        contentHashIndex = nil
-        contentHashIndexRevision = -1
+        cachedItemIndex = nil
+        cachedItemIndexRevision = -1
     }
 
     /// テスト用: 「`exifProbedAt` の列ができる前に訊いた行」を作る。

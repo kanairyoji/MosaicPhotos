@@ -62,7 +62,7 @@ struct CloudContentHashProjectionTests {
 
         _ = await store.cachedContentHashes()
         _ = await store.cachedContentHashes()
-        #expect(await store.contentHashFetchesForTesting == 1, "変化が無いのに引き直している")
+        #expect(await store.itemIndexBuildsForTesting == 1, "変化が無いのに引き直している")
 
         // 1 枚増えて 1 枚消える → 引き直さずに表へ反映されること。
         await store.applyDelta(accountId: "acc1", added: [item("/c.jpg", hash: "h3")],
@@ -70,9 +70,51 @@ struct CloudContentHashProjectionTests {
         let after = await store.cachedContentHashes()
 
         #expect(after == ["/b.jpg": "h2", "/c.jpg": "h3"], "増減が表に反映されていない")
-        #expect(await store.contentHashFetchesForTesting == 1, """
+        #expect(await store.itemIndexBuildsForTesting == 1, """
             delta のたびに 9.9 万行を引き直している（実機で 17 秒かかった形）。
             """)
+    }
+
+    /// ⚠️ **訊いて得た撮影日時を、同期の日付で潰さない**（ADR-201 と同じ決まり）。
+    /// 表は増減で直すので、ここを間違えると解析の処理順（新しい写真から）が狂う。
+    @Test("EXIF で訊き直した撮影日は、同じ中身の再同期で戻らない")
+    func probedCaptureDateSurvivesResync() async {
+        let uploaded = Date(timeIntervalSince1970: 1_700_000_000)
+        let shot = Date(timeIntervalSince1970: 1_400_000_000)
+        let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        await store.applyDelta(accountId: "acc1",
+                               added: [DropboxFileItem(path: "/a.jpg", name: "a.jpg",
+                                                       contentHash: "h1", captureDate: uploaded)],
+                               removed: [], newCursor: "c1")
+        _ = await store.cachedPhotoRefs()                       // 表を作る
+        _ = await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: shot,
+                                               latitude: nil, longitude: nil)
+        #expect(await store.cachedPhotoRefs().first?.captureDate == shot, "訊いた日付が表に入っていない")
+
+        // 同じ中身がもう一度 delta で来ても、アップロード時刻で戻らないこと。
+        await store.applyDelta(accountId: "acc1",
+                               added: [DropboxFileItem(path: "/a.jpg", name: "a.jpg",
+                                                       contentHash: "h1", captureDate: uploaded)],
+                               removed: [], newCursor: "c2")
+        #expect(await store.cachedPhotoRefs().first?.captureDate == shot, """
+            再同期でアップロード時刻に戻った（解析の処理順が狂う・ADR-201）。
+            """)
+    }
+
+    /// ⚠️ **ページの継ぎ目で取りこぼさない**（`FaceStore` の outlier ページングで実際に踏んだ形）。
+    /// 表はページ分けして作るので、境界をまたぐ規模で全件そろうことを固定する。
+    @Test("ページの大きさを超えても全件そろう")
+    func indexCoversEveryPage() async {
+        let count = DropboxCacheStore.indexPageSize + 37
+        let items = (0..<count).map { item(String(format: "/p%06d.jpg", $0), hash: "h\($0)") }
+        let store = await store(items)
+
+        let hashes = await store.cachedContentHashes()
+        let refs = await store.cachedPhotoRefs()
+
+        #expect(hashes.count == count, "ページの継ぎ目で落ちている: \(hashes.count)/\(count)")
+        #expect(refs.count == count)
+        #expect(await store.itemIndexBuildsForTesting == 1, "ページごとに作り直している")
     }
 
     /// ADR-119: 「1 回ぶんに見える呼び出し」が全列の実体化になっていないこと。**回数で見る**。
@@ -85,9 +127,9 @@ struct CloudContentHashProjectionTests {
         let hashes = await store.cachedContentHashes()
 
         #expect(hashes.count == items.count, "取りこぼしている")
-        #expect(await store.contentHashFetchesForTesting == 1, "1 回の射影で取れていない")
+        #expect(await store.itemIndexBuildsForTesting == 1, "1 回で作れていない")
         #expect(await store.materializeCallsForTesting == materializedBefore, """
-            hash を取るために全列（67k 行）を実体化している。
+            hash を取るために表示用の全件ロード（`cachedItems`）を通している。
             """)
     }
 }
