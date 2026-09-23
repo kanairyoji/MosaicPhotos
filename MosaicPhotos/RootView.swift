@@ -2,6 +2,7 @@ import AutoAlbumCore
 import BackupKit
 import DropboxKit
 import LocalPhotoKit
+import MobileCLIPKit
 import PhotoSourceKit
 import MosaicSupport
 import PhotosFeatureKit
@@ -153,6 +154,11 @@ final class HomeStores {
         // （実フィードバック: AI アルバムで「XX ではない」を選んでも変化なし）。
         peopleEngine.onPeopleEdited = { [weak autoAlbumEngine] in
             await autoAlbumEngine?.pruneAIAlbumsAfterPeopleChange()
+        }
+        // 顔スキャンが 1 巡したら顔モデルを手放す（ADR-223）。このあと窓はタグ → CLIP 埋め込みへ
+        // 進むので、持ち越すとモデルを 2 つ抱えることになる（実機ピーク 650MB）。
+        peopleEngine.onScanFinished = { backlog in
+            PerceptionModels.releaseFaceModelIfDone(backlog: backlog, reason: "face scan finished")
         }
         peopleEngine.onPersonIdentitiesInvalidated = { [weak shareEngine] in
             await shareEngine?.detachPersonSources()

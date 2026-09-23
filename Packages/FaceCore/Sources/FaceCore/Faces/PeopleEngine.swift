@@ -416,9 +416,18 @@ public final class PeopleEngine {
             }
             // ADR-186: 影の世代が十分育っていれば、ここで現行世代に切り替える。
             await self.promoteShadowIfReady(candidateCount: candidateRefKeys.count)
+            // ⚠️ **顔モデルを次の工程まで持ち越さない**（ADR-223・実機ログ diagnostics-88）。
+            // このあと窓ではタグ付け → CLIP 埋め込みが続く。顔モデル（約 300MB）を抱えたまま
+            // CLIP の塔を読むと、窓のピークが 650MB になる。手放すかの判断（前面か・残作業が
+            // あるか）は実装側（`MobileCLIPKit`）に任せる。
+            self.onScanFinished?(self.faceBacklog ?? 0)
             // 実行中フラグ・進捗の片付けは `scan.onStateChange`（世代を知っている側）が行う。
         }
     }
+
+    /// スキャンが 1 巡終わったときに呼ぶ（引数＝残作業）。実体はアプリが差す
+    /// ——顔モデルを手放すかどうかを決めるため（ADR-223・`MobileCLIPKit` は FaceCore を知らない）。
+    @ObservationIgnored public var onScanFinished: (@MainActor (Int) -> Void)?
 
     /// 直前の判定の説明（nil＝戻せるものが無い）。レビュー画面の「戻す」に出す。
     ///

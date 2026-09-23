@@ -261,6 +261,20 @@ final class LoadOnce<Value: Sendable>: @unchecked Sendable {
 /// ⚠️ **前面では手放さない**——検索やフル画像のタグ表示が次の操作で再ロード待ちになる。
 public enum PerceptionModels {
 
+    /// **顔モデルだけ**手放す（顔スキャンが 1 巡終わった時点・ADR-223）。
+    ///
+    /// このあと窓はタグ付け → CLIP 埋め込みへ進む。顔モデル（約 300MB）を持ち越すと
+    /// CLIP の塔と二重に抱えることになり、窓のピークが 650MB になる。
+    /// ⚠️ 残作業があるなら手放さない（すぐ読み直すことになる）。前面でも手放さない。
+    @discardableResult
+    @MainActor
+    public static func releaseFaceModelIfDone(backlog: Int, reason: String) -> Bool {
+        guard backlog == 0, BackgroundYield.scenePhase != .active else { return false }
+        guard FaceModelRuntime.shared.releaseForIdle() else { return false }
+        Diagnostics.mark("models released (\(reason))")
+        return true
+    }
+
     /// 窓が終わったので手放す。前面のときは何もしない。
     /// - Returns: 実際に手放したか（ログ用）。
     @discardableResult
