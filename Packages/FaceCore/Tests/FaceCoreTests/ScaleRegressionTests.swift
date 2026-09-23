@@ -51,14 +51,16 @@ struct ScaleRegressionTests {
         await store.clusterCountsForTesting().count
     }
 
-    /// 対象処理を 1 回走らせ、その間に発行された fetch 回数を返す。
-    private func fetchCount(_ body: () async -> Void) async -> Int {
-        PerfTrace.setEnabledForTesting(true)
-        _ = PerfTrace.takeCounts()          // 直前までの分を捨てる
+    /// 対象処理を 1 回走らせ、**そのストアが**発行した fetch 回数を返す。
+    ///
+    /// ⚠️ `PerfTrace` のカウンタで数えない（`FaceStore.fetchCountForTesting` のコメントも参照）。
+    /// あれはプロセス全体で共有なので、並行して走る別のスイートの読み出しまで混ざる
+    /// ——単体では通り、**全体実行でだけ**落ちる（実測 7→9・32→62 回）。
+    /// `setEnabledForTesting` の付け外しも他のテストと取り合いになる。
+    private func fetchCount(_ store: FaceStore, _ body: () async -> Void) async -> Int {
+        let before = await store.fetchCountForTesting
         await body()
-        let counts = PerfTrace.takeCounts()
-        PerfTrace.setEnabledForTesting(false)
-        return counts["faceStore.fetch"] ?? 0
+        return await store.fetchCountForTesting - before
     }
 
     /// 1 対 1 の確認カード生成。**人物が増えても fetch 回数は増えない**こと。
@@ -77,8 +79,8 @@ struct ScaleRegressionTests {
         #expect(largePeople >= smallPeople * 3,
                 "fixture がクラスタに分かれていない（\(smallPeople) → \(largePeople)）")
 
-        let smallCount = await fetchCount { _ = await small.reviewItems(minFaces: 1, limit: 30) }
-        let largeCount = await fetchCount { _ = await large.reviewItems(minFaces: 1, limit: 30) }
+        let smallCount = await fetchCount(small) { _ = await small.reviewItems(minFaces: 1, limit: 30) }
+        let largeCount = await fetchCount(large) { _ = await large.reviewItems(minFaces: 1, limit: 30) }
         #expect(smallCount > 0, "計測できていない（カウンタが動いていない）")
         #expect(largeCount <= smallCount * 2,
                 """
@@ -107,8 +109,8 @@ struct ScaleRegressionTests {
         #expect(largePeople >= smallPeople * 3,
                 "fixture の人物が増えていない（\(smallPeople) → \(largePeople)）")
 
-        let smallCount = await fetchCount { _ = await small.reviewItems(minFaces: 1, limit: 30) }
-        let largeCount = await fetchCount { _ = await large.reviewItems(minFaces: 1, limit: 30) }
+        let smallCount = await fetchCount(small) { _ = await small.reviewItems(minFaces: 1, limit: 30) }
+        let largeCount = await fetchCount(large) { _ = await large.reviewItems(minFaces: 1, limit: 30) }
         #expect(smallCount > 0, "計測できていない（カウンタが動いていない）")
         #expect(largeCount <= smallCount,
                 """
@@ -123,8 +125,8 @@ struct ScaleRegressionTests {
         let small = await makeStore(people: 40)
         let large = await makeStore(people: 160)
 
-        let smallCount = await fetchCount { _ = await small.batchReviewItem(minFaces: 1) }
-        let largeCount = await fetchCount { _ = await large.batchReviewItem(minFaces: 1) }
+        let smallCount = await fetchCount(small) { _ = await small.batchReviewItem(minFaces: 1) }
+        let largeCount = await fetchCount(large) { _ = await large.batchReviewItem(minFaces: 1) }
 
         #expect(smallCount > 0)
         #expect(largeCount <= smallCount * 2,
@@ -137,10 +139,10 @@ struct ScaleRegressionTests {
         let small = await makeStore(people: 40)
         let large = await makeStore(people: 160)
 
-        let smallCount = await fetchCount {
+        let smallCount = await fetchCount(small) {
             _ = await small.peopleClusters(minFaces: 1, favoriteRefKeys: [], includeMembers: false)
         }
-        let largeCount = await fetchCount {
+        let largeCount = await fetchCount(large) {
             _ = await large.peopleClusters(minFaces: 1, favoriteRefKeys: [], includeMembers: false)
         }
 
@@ -162,8 +164,8 @@ struct ScaleRegressionTests {
         #expect(largePeople >= smallPeople * 3,
                 "fixture がクラスタに分かれていない（\(smallPeople) → \(largePeople)）")
 
-        let smallCount = await fetchCount { _ = await small.peopleNames(refKey: "L-p0-0", minFaces: 1) }
-        let largeCount = await fetchCount { _ = await large.peopleNames(refKey: "L-p0-0", minFaces: 1) }
+        let smallCount = await fetchCount(small) { _ = await small.peopleNames(refKey: "L-p0-0", minFaces: 1) }
+        let largeCount = await fetchCount(large) { _ = await large.peopleNames(refKey: "L-p0-0", minFaces: 1) }
 
         #expect(smallCount > 0)
         #expect(largeCount <= smallCount * 2,
@@ -185,8 +187,8 @@ struct ScaleRegressionTests {
         #expect(largePeople >= smallPeople * 3,
                 "fixture がクラスタに分かれていない（\(smallPeople) → \(largePeople)）")
 
-        let smallCount = await fetchCount { _ = await small.rebuildClusters() }
-        let largeCount = await fetchCount { _ = await large.rebuildClusters() }
+        let smallCount = await fetchCount(small) { _ = await small.rebuildClusters() }
+        let largeCount = await fetchCount(large) { _ = await large.rebuildClusters() }
 
         #expect(smallCount > 0)
         #expect(largeCount <= smallCount * 2,
@@ -202,8 +204,8 @@ struct ScaleRegressionTests {
         let small = await makeStore(people: 40)
         let large = await makeStore(people: 160)
 
-        let smallCount = await fetchCount { _ = await small.namedClusterEntries() }
-        let largeCount = await fetchCount { _ = await large.namedClusterEntries() }
+        let smallCount = await fetchCount(small) { _ = await small.namedClusterEntries() }
+        let largeCount = await fetchCount(large) { _ = await large.namedClusterEntries() }
 
         #expect(smallCount > 0)
         #expect(largeCount <= smallCount * 2,
@@ -234,12 +236,12 @@ struct ScaleRegressionTests {
         #expect(await large.clusterCountsForTesting()[largeID] == 160, "fixture: 160 顔が 1 人になっていない")
 
         let page = 50
-        let smallFetches = await fetchCount {
+        let smallFetches = await fetchCount(small) {
             _ = await small.outlierFaces(clusterID: smallID, centroid: [1, 0, 0], threshold: 0.5,
                                          limit: 24, pageSize: page)
         }
         var largeResult: [PersonOutlierFace] = []
-        let largeFetches = await fetchCount {
+        let largeFetches = await fetchCount(large) {
             largeResult = await large.outlierFaces(clusterID: largeID, centroid: [1, 0, 0],
                                                    threshold: 0.5, limit: 160, pageSize: page).faces
         }
