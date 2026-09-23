@@ -176,31 +176,49 @@ public struct ShareAnalysisFetch {
     /// 1 回だけ一覧する（`Analysis` の中身は `fetchUpdated` が再帰で見る）。
     /// ⚠️ **自分の端末フォルダは除く**（自分が書いたものを取り込み直さない）。
     /// ⚠️ バックアップのルートを再帰で一覧しない——写真が数万枚あるので一覧だけで重い。
+    /// - Returns: 見つけた解析フォルダと、**全部を一覧できたか**。
+    ///   ⚠️ 失敗を空配列に潰さない（レビュー指摘）。潰すと「他の端末は無い」と区別できず、
+    ///   呼び出し側が記録（rev）を掃除してしまう——通信が 1 回こけるたびに
+    ///   256 シャード × 端末数を取り直す羽目になる。
     public func accountAnalysisRoots(backupRoot: String, ownDeviceFolder: String,
-                                     token: String) async -> [String] {
+                                     token: String) async -> (roots: [String], listedAll: Bool) {
         let copier = DropboxShareCopier(httpClient: httpClient)
-        guard let devices = await copier.listFolder(path: backupRoot, token: token) else { return [] }
+        guard let devices = await copier.listFolder(path: backupRoot, token: token) else {
+            BackupLogger.error("ShareAnalysisFetch: cannot list backup root — \(backupRoot)")
+            return ([], false)
+        }
         var roots: [String] = []
+        var listedAll = true
+        // ⚠️ 自分の端末は**安定 ID**（Keychain・フォルダ名の末尾）で外す（レビュー指摘）。
+        // フォルダ名は「表示名-ID」で、表示名は端末名の変更や機種変更の復元で**変わる**。
+        // 名前だけで比べていると、名前を変えた瞬間に**自分の解析を自分で取り込み**始める。
+        let ownSuffix = "-" + BackupDeviceIdentity.currentID().lowercased()
         for device in devices where device.isFolder {
-            guard device.name.lowercased() != ownDeviceFolder.lowercased() else { continue }
-            guard let children = await copier.listFolder(path: device.pathLower, token: token)
-            else { continue }
+            let name = device.name.lowercased()
+            guard name != ownDeviceFolder.lowercased(), !name.hasSuffix(ownSuffix) else { continue }
+            guard let children = await copier.listFolder(path: device.pathLower, token: token) else {
+                listedAll = false
+                continue
+            }
             if let analysis = children.first(where: {
                 $0.isFolder && $0.name.lowercased() == BackupLayout.analysisSubfolder.lowercased()
             }) {
                 roots.append(analysis.pathLower)
             }
         }
-        return roots
+        return (roots, listedAll)
     }
 
-    public func fetchUpdated(roots: [String], token: String) async -> [Fetched] {
+    /// - Parameter discoveryComplete: 解析フォルダの発見が**全部できたか**
+    ///   （false なら記録の掃除をしない＝取り直しを誘発しない）。
+    public func fetchUpdated(roots: [String], token: String,
+                             discoveryComplete: Bool = true) async -> [Fetched] {
         invalidateRevsIfCapabilityGrew()
         let copier = DropboxShareCopier(httpClient: httpClient)
         let knownRevs = storedRevs()
         var out: [Fetched] = []
         var seenPaths = Set<String>()
-        var allListed = true
+        var allListed = discoveryComplete
 
         // 1 巡目: 一覧を全部見て、候補（rev が変わったもの）を集める。
         // ⚠️ 一覧には**必ず**入れる（打ち切っても記録の掃除が狂わないように）。
@@ -217,7 +235,11 @@ public struct ShareAnalysisFetch {
             let marker = "/" + ShareAnalysisData.subfolderName + "/"
             for file in listing where !file.isFolder && ShareAnalysisData.isAnalysisFileName(file.name) {
                 guard let range = file.pathLower.range(of: marker, options: .backwards) else { continue }
-                seenPaths.insert(file.pathLower)
+                // ⚠️ **同じファイルを 2 度数えない**（レビュー指摘）。家族フォルダに
+                // バックアップのルートを登録すると、同じ `<端末>/Analysis/...` が
+                // 家族フォルダの再帰一覧と端末の発見の**両方**から来る——1 回の実行で
+                // 同じシャードを 2 回落として 2 回取り込み、上限（48）も半分になる。
+                guard seenPaths.insert(file.pathLower).inserted else { continue }
                 let rev = file.rev ?? ""
                 if !rev.isEmpty, knownRevs[file.pathLower] == rev { continue }   // 変化なし
                 candidates.append((file.pathLower, rev,

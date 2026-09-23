@@ -104,7 +104,8 @@ struct AnalysisPublishTests {
         let stub = SequencedClient([(200, root), (200, deviceB)])
         let roots = await ShareAnalysisFetch(httpClient: stub, defaults: TestDefaults.scratch("publish"))
             .accountAnalysisRoots(backupRoot: "/MosaicPhotos", ownDeviceFolder: "iPhone-A", token: "t")
-        #expect(roots == ["/mosaicphotos/iphone-b/analysis"])
+        #expect(roots.roots == ["/mosaicphotos/iphone-b/analysis"])
+        #expect(roots.listedAll, "全部一覧できたのに失敗扱いになっている")
         // 自分の端末は一覧すらしない（ルート 1 回＋相手 1 回の 2 リクエスト）。
         #expect(await stub.count() == 2)
     }
@@ -116,7 +117,7 @@ struct AnalysisPublishTests {
         let stub = SequencedClient([(200, root), (200, deviceB)])
         let roots = await ShareAnalysisFetch(httpClient: stub, defaults: TestDefaults.scratch("publish"))
             .accountAnalysisRoots(backupRoot: "/MosaicPhotos", ownDeviceFolder: "iPhone-A", token: "t")
-        #expect(roots.isEmpty)
+        #expect(roots.roots.isEmpty)
     }
 }
 
@@ -179,14 +180,51 @@ struct AnalysisOwnershipTests {
     func claimKeepsOriginalDate() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let mine = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceName: "iPhone",
-                                           previous: owner("iPhone-A"), now: now, photoCount: 10)
+                                           previous: owner("iPhone-A"), now: now, photoCount: 10,
+                                           published: true)
         #expect(mine.claimedAt == owner("iPhone-A").claimedAt, "自分の名乗りは名乗った日を保つ")
         #expect(mine.lastPublishedAt == now)
 
         let takenOver = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceName: "iPhone",
-                                                previous: owner("iPhone-B"), now: now, photoCount: 10)
+                                                previous: owner("iPhone-B"), now: now, photoCount: 10,
+                                                published: true)
         #expect(takenOver.deviceFolder == "iPhone-A")
         #expect(takenOver.claimedAt == now, "引き継ぎは今から名乗り直す")
+    }
+
+    /// ⚠️ **端末名を変えても自分は自分**（レビュー指摘）。フォルダ名は端末名の変更・機種変更の
+    /// 復元で変わるので、名前で比べると自分の名乗りを他人と誤認して公開が止まり、
+    /// 自分の解析を自分で取り込み始める。
+    @Test("端末名を変えても、安定 ID が同じなら自分の名乗りと分かる")
+    func identityFollowsStableID() {
+        let remote = AnalysisOwnership.Owner(deviceFolder: "iPhone-ABC123", deviceID: "ABC123",
+                                             deviceName: "iPhone",
+                                             claimedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        // 表示名が変わってフォルダ名が "iPad-ABC123" になっても、ID が同じなら自分。
+        #expect(AnalysisOwnership.decide(remote: remote, myDeviceFolder: "iPad-ABC123",
+                                         myDeviceID: "ABC123", acknowledgedDeviceFolder: nil) == .ours)
+        // 別 ID は別端末。
+        #expect(AnalysisOwnership.decide(remote: remote, myDeviceFolder: "iPhone-ZZZ999",
+                                         myDeviceID: "ZZZ999",
+                                         acknowledgedDeviceFolder: nil) == .otherDevice(remote))
+    }
+
+    /// ⚠️ 公開の前に名乗る回で「最後に公開できた日」を今にすると、1 枚も上げられない端末まで
+    /// 「生きている」ように見え、引き継ぎの判断材料が死ぬ（レビュー指摘）。
+    @Test("公開できていない回は「最後に公開できた日」を更新しない")
+    func claimDoesNotFakeLastPublished() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let fresh = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceID: "A",
+                                            myDeviceName: "iPhone", previous: nil, now: now,
+                                            photoCount: 100, published: false)
+        #expect(fresh.lastPublishedAt == nil)
+        #expect(fresh.photoCount == nil)
+
+        let after = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceID: "A",
+                                            myDeviceName: "iPhone", previous: fresh, now: now,
+                                            photoCount: 100, published: true)
+        #expect(after.lastPublishedAt == now)
+        #expect(after.claimedAt == fresh.claimedAt, "自分の名乗りは名乗った日を保つ")
     }
 
     @Test("JSON を往復できる")
@@ -194,7 +232,7 @@ struct AnalysisOwnershipTests {
         let original = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceName: "iPhone",
                                                previous: nil,
                                                now: Date(timeIntervalSince1970: 1_700_000_000),
-                                               photoCount: 68_000)
+                                               photoCount: 68_000, published: true)
         let data = AnalysisOwnership.encode(original)
         #expect(data != nil)
         #expect(AnalysisOwnership.decode(data!) == original)
@@ -344,6 +382,58 @@ struct AnalysisPublishFailureTests {
 
         #expect(outcome.uploaded == 0)
         #expect(defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor) == 0)
+        withExtendedLifetime(source) {}
+    }
+
+    /// ⚠️ **直らない失敗で止まらない**（レビュー指摘）。容量超過・権限エラーのように毎回落ちる
+    /// シャードがあると、印が固まって 01〜ff が一度も公開されない。
+    @Test("同じシャードで続けて失敗したら、飛ばして先へ進む")
+    func skipsShardThatKeepsFailing() async {
+        let photos = (0..<8).map { i in
+            AnalysisPublisher.CloudPhoto(
+                refKey: "C-/p\(i).jpg",
+                contentHash: String(format: "%02x", i) + String(repeating: "0", count: 62))
+        }
+        let defaults = TestDefaults.scratch("publish-stuck")
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        let source = StubAnalysisSource()
+
+        // 先頭シャードが毎回落ちる回を繰り返す（名乗り確認 → 名乗り → 失敗 ×2 → 名乗り）。
+        for _ in 0..<AnalysisPublisher.failureStreakLimit {
+            let stub = SequencedClient([(409, "{}"), (200, "{}"), (507, "{}"), (507, "{}"), (200, "{}")])
+            let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(),
+                                              analysisSource: source, httpClient: stub,
+                                              defaults: defaults)
+            _ = await publisher.publish(photos: photos, budget: 1)
+        }
+
+        #expect(defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor) == 1, """
+            同じシャードで 3 回失敗しても印が動いていない（残りが永久に公開されない）。
+            """)
+        withExtendedLifetime(source) {}
+    }
+
+    /// ⚠️ **消せたときだけ記録を落とす**（レビュー指摘）。失敗しても落とすと、そのシャードは
+    /// 二度と掃除の対象にならず、孤児が Dropbox に残り続ける。
+    @Test("消えたシャードの削除に失敗したら、記録は残す")
+    func keepsDigestWhenDeleteFails() async {
+        let defaults = TestDefaults.scratch("publish-stale")
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        let digests = try! JSONEncoder().encode(["zz": "old"])
+        defaults.set(digests, forKey: ShareSettingsKeys.publishedAnalysisDigests)
+        let photos = [AnalysisPublisher.CloudPhoto(refKey: "C-/a.jpg",
+                                                   contentHash: String(repeating: "a", count: 64))]
+        let source = StubAnalysisSource()
+        // 名乗り確認 → 名乗り → シャード → 削除（失敗）→ 名乗り。
+        let stub = SequencedClient([(409, "{}"), (200, "{}"), (200, "{}"), (503, "{}"), (200, "{}")])
+        let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
+                                          httpClient: stub, defaults: defaults)
+
+        _ = await publisher.publish(photos: photos, budget: 8)
+
+        let stored = (defaults.data(forKey: ShareSettingsKeys.publishedAnalysisDigests))
+            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        #expect(stored["zz"] == "old", "消せていないのに記録を落とした（孤児が残り続ける）")
         withExtendedLifetime(source) {}
     }
 

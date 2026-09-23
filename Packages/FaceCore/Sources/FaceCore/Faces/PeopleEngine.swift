@@ -56,6 +56,9 @@ public final class PeopleEngine {
     /// こちらは最後に測った値を保ち、回線待ちで外したぶん（クラウド）も足して持つ。
     /// - nil: この起動でまだ一度も測っていない（＝分からない。0 と区別すること）
     public private(set) var faceBacklog: Int?
+    /// **今ここで進められる残り**（回線待ちのクラウド分を含まない）。nil＝この実行では測っていない。
+    /// ⚠️ 「分からない」を 0（＝終わった）に丸めない（ADR-207）。モデルの解放はこれを見る。
+    @ObservationIgnored private var faceRemainingHere: Int?
 
     /// 表示・編集に使う**現行世代**の台帳。影の世代の切り替え（`promoteShadowIfReady`）で差し替わる（ADR-186）。
     @ObservationIgnored var store: FaceStore   // internal: 同モジュールの機能別 extension（PersonCleanup 等）が使う
@@ -91,9 +94,13 @@ public final class PeopleEngine {
     /// **18 分で 160 回・合計 414 秒**——顔の `@ModelActor` の 4 割がここで埋まっていた
     /// （同じ actor を使う写真の人物名・レビュー候補・スキャンが後ろで待つ）。
     /// 一覧は「最終的に正しければよい」表示なので、重いときは素直に間隔を空ける。
+    /// ⚠️ 頭打ちは **8 秒**（レビュー指摘）。`DebouncedTask` は「前の実行の終わり」から静止時間を
+    /// 測るので、実効の間隔は「所要 ＋ 静止時間」。所要が数秒まで伸びる端末で上限を 15 秒にすると、
+    /// スキャン中のバッチ通知（8 バッチ＝128 枚ごと）より間隔が長くなり、
+    /// **スキャンが終わるまで人物一覧が一度も更新されない**ことがある。
     static func reloadQuietMilliseconds(lastLoadSeconds: TimeInterval) -> UInt64 {
         let base: TimeInterval = 0.7
-        let costBased = min(lastLoadSeconds * 4, 15.0)
+        let costBased = min(lastLoadSeconds * 4, 8.0)
         return UInt64(max(base, costBased) * 1000)
     }
 
@@ -210,6 +217,18 @@ public final class PeopleEngine {
     /// ⚠️ メンバーキーは積まない（`includeMembers: false`）。人物アルバムだけが必要とするので
     /// `memberRefKeys(forPerson:)` で開いた画面が取りに来る（ADR-95）。
     public func loadPeople() async {
+        // ⚠️ **最後まで**測る（レビュー指摘）。次の間引きの間隔はこの所要から決まる（ADR-225）ので、
+        // 一覧の代入（SwiftUI の再発行＝diagnostics-51 で 2〜4 秒）とグループの作り直しを
+        // 含めないと、重い回ほど間引きが効かない。
+        // ⚠️ **中断を跨いだ回は捨てる**（ADR-80）。`PerfTrace` の時計はアプリのサスペンド中も進むので、
+        // 背面に落ちた回を採ると数十〜数百秒になり、以後ずっと上限（15 秒）に張り付く。
+        let epoch = ProcessSuspension.epoch
+        let measureStart = PerfTrace.nowNs()
+        defer {
+            if !ProcessSuspension.didSuspend(since: epoch) {
+                lastPeopleLoadSeconds = Double(PerfTrace.msSince(measureStart)) / 1000
+            }
+        }
         // ⚠️ 内訳を測る（ADR-95 追記）。実機 diagnostics-41 でも、レビュー連続回答の 1 回ごとに
         //    メインが 540〜645ms 止まり、そのハングが `faces: people=` の直前で終わっていた。
         //    答えは「**off-main ではなかった**」——既定の ModelActor executor は呼び出し元の
@@ -226,8 +245,6 @@ public final class PeopleEngine {
         let fresh = await store.peopleClusters(minFaces: minFaces, favoriteRefKeys: favorites,
                                                includeMembers: false)
         PerfTrace.logSpan("people.load.clusters", ms: PerfTrace.msSince(t2))
-        // 次の間引きは**この所要**から決まる（人物が増えるほど自然に空く・ADR-225）。
-        lastPeopleLoadSeconds = Double(PerfTrace.msSince(t0)) / 1000
         isLoaded = true
         // ⚠️ 中身が同じなら**代入しない**。`@Observable` は代入だけで購読ビューを無効化するので、
         //    スキャン中や連続レビューでは「変化なしの再描画」が積み上がっていた（ADR-95）。
@@ -414,6 +431,10 @@ public final class PeopleEngine {
                     // 回線待ちで今回は外したクラウド分も含む。混ぜると、Wi-Fi が無い夜に
                     // 窓が畳めなくなる（`drainUntilIdle` が 0 にならない）。
                     self.faceBacklog = todo + deferred
+                    // ⚠️ **「今ここで進められる残り」は別**（レビュー指摘）。モデルを手放してよいかは
+                    // こちらで決める——回線待ちのクラウド分（`deferred`）は今夜どうやっても
+                    // 減らないので、それを理由に顔モデルを抱え続けると ADR-223 が一度も効かない。
+                    self.faceRemainingHere = todo
                 },
                 // ⚠️ バッチごとに `loadPeople()` を直に呼ぶと、スキャン中ずっと 2 秒に 1 回
                 //    人物リストを再発行し続けることになる（実機で 600〜1000ms のハングが
@@ -439,7 +460,14 @@ public final class PeopleEngine {
             // このあと窓ではタグ付け → CLIP 埋め込みが続く。顔モデル（約 300MB）を抱えたまま
             // CLIP の塔を読むと、窓のピークが 650MB になる。手放すかの判断（前面か・残作業が
             // あるか）は実装側（`MobileCLIPKit`）に任せる。
-            self.onScanFinished?(self.faceBacklog ?? 0)
+            // ⚠️ **測れていないなら知らせない**（レビュー指摘）。`FaceTagger.scan` は
+            // 早期 return（既に実行中・シミュレータ・provider 無し）では `onBacklog` を
+            // 一度も呼ばないので、ここで古い値を使うと「終わった」と誤解して
+            // **まだ走っている旧スキャンからモデルを取り上げる**。
+            if let remaining = self.faceRemainingHere {
+                self.faceRemainingHere = nil
+                self.onScanFinished?(remaining)
+            }
             // 実行中フラグ・進捗の片付けは `scan.onStateChange`（世代を知っている側）が行う。
         }
     }

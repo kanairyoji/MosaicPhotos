@@ -164,13 +164,15 @@ final class SharedAnalysisImporter {
         // 他の端末**が公開した解析（`<root>/<端末>/Analysis`）も見る（ADR-222）。
         // 写真そのものは接続した時点で相手からも見えているので、共有セットを作らなくても
         // 解析（タグ・埋め込み・顔・人物名・撮影日）が行き渡る。
-        let accountRoots = await fetcher.accountAnalysisRoots(
+        let discovered = await fetcher.accountAnalysisRoots(
             backupRoot: UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                 ?? BackupSettingsKeys.defaultDropboxFolder,
             ownDeviceFolder: BackupDeviceIdentity.currentFolderName(), token: token)
-        let roots = familyRoots + accountRoots
+        let roots = familyRoots + discovered.roots
         guard !roots.isEmpty else { return }
-        let fetched = await fetcher.fetchUpdated(roots: roots, token: token)
+        // 発見が途中で失敗した回は記録（rev）を掃除させない（取り直しの山を作らない）。
+        let fetched = await fetcher.fetchUpdated(roots: roots, token: token,
+                                                 discoveryComplete: discovered.listedAll)
         guard !fetched.isEmpty else { return }
 
         let versions = ShareImportPlanning.ReceiverVersions(
@@ -182,16 +184,18 @@ final class SharedAnalysisImporter {
         // 受信側の突合は 6.8 万件規模の走査＋文字列生成、さらに解析データごとの base64 デコード
         // （数千顔ぶん）を伴う。メインで回すとホーム描画・スクロールを直撃する。
         // メインへ戻すのは各ストアへ渡す Sendable なバッチだけにする。
-        let itemsSnapshot = dropboxStore.items.map { (path: $0.path, hash: $0.contentHash) }
+        // ⚠️ **`items` から hash を拾わない**（レビュー指摘・公開側の diagnostics-84 と同じ罠）。
+        // 表示用の `DropboxFileItem` は content_hash を**わざと持たない**ので、ここを `items` に
+        // すると突合の鍵が 1 つも作れず、**取り込みが永久に 0 件**になる（しかも
+        // `fullyMatched` が常に false なので rev も記録されず、毎晩同じシャードを取り直す）。
+        // 台帳の表から取る＝公開側と同じ出典。
+        let hashesByPath = await dropboxStore.cloudContentHashes()
         let prepared = await Task.detached(priority: .utility) { () -> [PreparedImport] in
-            // 突合の対象は**手元のクラウド写真すべて**（content_hash があるもの・ADR-222）。
-            // 以前は家族フォルダ配下だけに絞っていたが、同じ Dropbox に繋がっている相手の
-            // 写真は共有フォルダの外にもある——鍵は content_hash（同じ中身＝同じ写真）なので、
-            // 置き場所で絞る意味は無い。
-            let localItems: [ShareImportPlanning.LocalItem] = itemsSnapshot.compactMap { item in
-                guard let hash = item.hash else { return nil }
-                return ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(item.path).encoded,
-                                                     contentHash: hash)
+            // 突合の対象は**手元のクラウド写真すべて**（ADR-222）。家族フォルダの外にも
+            // 相手の写真はある——鍵は content_hash（同じ中身＝同じ写真）なので置き場所で絞らない。
+            let localItems = hashesByPath.map { path, hash in
+                ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(path).encoded,
+                                              contentHash: hash)
             }
             // 索引は 1 回だけ作って解析データ間で使い回す。
             let index = ShareImportPlanning.index(of: localItems)
@@ -250,9 +254,7 @@ final class SharedAnalysisImporter {
         let fullyMatchedAll = cacheSettled && prepared.allSatisfy(\.fullyMatched)
         // 掃除の基準も突合と同じ広さ（クラウド写真すべて）にする。狭いままだと、
         // 共有フォルダの外の写真の撮影日を「もう無い写真のもの」と見て捨ててしまう。
-        let syncedSharedPaths: Set<String>? = fullyMatchedAll
-            ? Set(itemsSnapshot.map { $0.path.lowercased() })
-            : nil
+        let syncedSharedPaths: Set<String>? = fullyMatchedAll ? Set(hashesByPath.keys) : nil
         let incomingDates = prepared.reduce(into: [String: Date]()) { acc, item in
             acc.merge(item.captureDates) { _, new in new }
         }
@@ -383,9 +385,16 @@ final class CloudAnalysisPublisher {
         // 64 桁の文字列を載せないため）ので、毎回 0 件になっていた。さらに `items` は
         // 画面を開いたときだけ作られるので、背景の窓では空のこともある。台帳から射影で取る。
         let hashes = await dropboxStore.cloudContentHashes()
-        let photos = hashes.map { path, hash in
-            AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(path).encoded, contentHash: hash)
-        }
+        // ⚠️ 9.9 万件の map を**メインで回さない**（CLAUDE.md 性能原則 4）。ここはアプリ層＝
+        // 既定 MainActor なので、書かないとホーム描画を直撃する。重い一括なので札も立てる（ADR-122）。
+        let photos = await Task.detached(priority: .utility) {
+            await HeavyLoad.span("share.publishAnalysis.photos") {
+                hashes.map { path, hash in
+                    AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(path).encoded,
+                                                 contentHash: hash)
+                }
+            }
+        }.value
         guard !photos.isEmpty else { return mark("クラウド写真が 0 件") }
         let outcome = await publisher.publish(photos: photos)
         blockedBy = outcome.blockedBy

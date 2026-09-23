@@ -49,19 +49,34 @@ extension FaceStore {
                 personName: nameByCluster[face.clusterID]))
         }
 
-        if wanted.count <= 50 {
-            for key in wanted {
-                let refKey = key
-                let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
-                    predicate: #Predicate { $0.refKey == refKey }))) ?? []
-                faces.forEach(append)
+        // ⚠️ **全件 fetch をしない**（レビュー指摘）。以前は 50 件を超えると
+        // `FetchDescriptor<DetectedFace>()`（述語も上限も無し）で**顔テーブルを丸ごと**
+        // 実体化していた。`DetectedFace.embedding` は 1KB の Data 列なので、顔 10 万件なら
+        // 1 回で 100MB 超——しかも解析の公開（ADR-222）はシャードごとに呼ぶので
+        // **1 つの窓で 8 回**繰り返していた（写真の枚数ではなくテーブルの行数に比例する）。
+        // 束ねて `IN` で引く（`FaceStore` の他の経路と同じ手・ADR-119）。
+        let keys = Array(wanted)
+        var start = 0
+        while start < keys.count {
+            let chunk = Array(keys[start..<min(start + Self.exportChunkSize, keys.count)])
+            start += chunk.count
+            let faces = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
+                predicate: #Predicate { chunk.contains($0.refKey) }))) ?? []
+            faces.forEach(append)
+        }
+        // ⚠️ **並びを決めておく**（レビュー指摘）。`FetchDescriptor` に sortBy が無いと
+        // 並びは SQLite 任せで、再スキャンやストア再構築で変わり得る。並びが変わるだけで
+        // 公開データの指紋が変わり、中身が同じシャードを上げ直すことになる。
+        for (refKey, faces) in out {
+            out[refKey] = faces.sorted {
+                ($0.boundingBox.origin.y, $0.boundingBox.origin.x) < ($1.boundingBox.origin.y, $1.boundingBox.origin.x)
             }
-        } else {
-            let all = (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-            for face in all where wanted.contains(face.refKey) { append(face) }
         }
         return out
     }
+
+    /// 1 回の `IN` で引く refKey の数（`exifCaptureDates` と同じ刻み）。
+    static let exportChunkSize = 500
 
     /// 未スキャンの refKey だけを返す（取り込み前のフィルタ用）。
     func unscannedRefKeys(from keys: [String]) -> [String] {

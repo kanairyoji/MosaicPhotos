@@ -505,15 +505,39 @@ public final class DropboxPhotoStore {
             self.trailingRefreshTask = nil
             self.lastCacheRefresh = Date()
             let started = Date()
+            let materializedBefore = await self.cache.materializeCallsForTesting
             await self.refreshItemsFromCache()
-            // 次の間隔は**この所要**から決まる（規模が育つほど自然に空く）。
-            self.lastRefreshDuration = Date().timeIntervalSince(started)
+            // ⚠️ **本当に作り直した回だけ**を採る（レビュー指摘）。版が同じで即 return した回
+            // （EXIF プローブの空振り等）を採ると所要がほぼ 0 になり、**せっかくのバックオフが
+            // 毎回リセット**される——重い反映 → 軽い空振り → 0.4 秒間隔へ、を繰り返していた。
+            if await self.cache.materializeCallsForTesting != materializedBefore {
+                self.lastRefreshDuration = Date().timeIntervalSince(started)
+            }
+            // ⚠️ **走っている反映へ合流したら、取りこぼしが残る**（レビュー指摘）。
+            // 合流先は「始めた時点のスナップショット」なので、その後に届いた delta
+            // （初回同期の最後の数千枚など）が一覧に出ないまま確定する。反映が終わった時点で
+            // 版が進んでいたら、もう 1 回だけ入れ直す。
+            if await self.cache.currentItemsRevision() != self.lastReflectedRevision {
+                self.scheduleCacheRefresh(immediate: true)
+            }
         }
     }
 
     /// キャッシュ側の値が変わったので一覧を作り直す（撮影日時の穴埋めなど・ADR-201）。
     /// 間引きは効いたまま＝連続で呼んでも往復や再構築が積み上がらない。
     func refreshItemsFromCacheSoon() { scheduleCacheRefresh() }
+
+    /// 前面へ戻ったので、背面の長い待ち（30 秒）を切り上げる（レビュー指摘）。
+    ///
+    /// ⚠️ 待っている最中に画面へ戻ると、`scheduleCacheRefresh` は「既に保留中」で弾かれるため、
+    /// **最大 30 秒ぶん古い一覧**を見せたままになっていた（バックアップ中にアプリを開くと、
+    /// 上げたばかりの写真が出てこない）。予約を取り消して、前面の間隔で入れ直す。
+    public func wakeForForeground() {
+        guard trailingRefreshTask != nil else { return }
+        trailingRefreshTask?.cancel()
+        trailingRefreshTask = nil
+        scheduleCacheRefresh()
+    }
 
     /// 保留中の間引きを取り消し、最終反映を即時にスケジュールする（初回同期完了時など）。
     private func forceCacheRefreshSoon() {

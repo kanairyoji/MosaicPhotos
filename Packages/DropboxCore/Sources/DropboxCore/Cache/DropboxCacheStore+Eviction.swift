@@ -144,6 +144,12 @@ extension DropboxCacheStore {
         thumbnailStore.clear()
         fullImageStore.clear()
         thumbnailMemory.removeAll()
+        // ⚠️ **軽い表も捨てる**（レビュー指摘）。捨てないと、消したはずの行が表に残り続ける
+        // ——以後 `applyDelta` は増減しか当てないので、アカウント切替・キャッシュ消去・
+        // **同期ルートの変更**のあと、解析候補と公開が**古いライブラリを指したまま**になる
+        // （アプリを再起動するまで直らない）。版も進めて、表と一覧の両方を作り直させる。
+        dropContentHashIndex()
+        bumpItemsRevision()
         DropboxLogger.info("clearAll() complete")
     }
 

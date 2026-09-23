@@ -85,7 +85,11 @@ public final class AnalysisPublisher {
             .flatMap(AnalysisOwnership.decode)
         let decision = AnalysisOwnership.decide(
             remote: remoteOwner, myDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+            myDeviceID: BackupDeviceIdentity.currentID(),
             acknowledgedDeviceFolder: defaults.string(forKey: ShareSettingsKeys.acknowledgedAnalysisOwner))
+        // ⚠️ **承諾は引き継いだ時点で役目を終える**（レビュー指摘）。残したままだと、相手が
+        // あとでまた名乗っても黙って公開を続ける（2 台とも「引き継いだ」状態になり得る）。
+        if case .ours = decision { defaults.removeObject(forKey: ShareSettingsKeys.acknowledgedAnalysisOwner) }
         guard AnalysisOwnership.allowsPublishing(decision) else {
             guard case .otherDevice(let owner) = decision else { return bail("公開できない") }
             var outcome = bail("別の端末（\(owner.deviceFolder)）が公開している — 設定で確認して下さい")
@@ -117,10 +121,9 @@ public final class AnalysisPublisher {
         // シャードと名乗りで並んでいた）。名乗りが無いままだと、次の端末は「誰も名乗って
         // いない」と見て**二重に公開を始める**——この仕組みが防ぎたかったことそのもの。
         // まだ自分のものでないときだけ先に書く（自分のものなら最後の更新で足りる）。
-        if remoteOwner?.deviceFolder.caseInsensitiveCompare(BackupDeviceIdentity.currentFolderName())
-            != .orderedSame {
+        if case .ours = decision {} else {
             await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
-                             photoCount: photos.count, token: token)
+                             photoCount: photos.count, token: token, published: false)
         }
 
         let root = BackupLayout.analysisRoot(root: backupRoot,
@@ -137,9 +140,16 @@ public final class AnalysisPublisher {
             guard let refKeys = refKeysByShard[shard] else { lastDone = shard; continue }
             // このシャードの写真ぶんだけ解析を取る（数百枚）。取れた中身は次の shard へ持ち越さない。
             let result = await source.analysisEntries(forRefKeys: refKeys)
+            // ⚠️ **同じ content_hash に複数の refKey が当たる**（原本・バックアップのコピー・
+            // 共有のコピーは中身が同じ）。`result.entries` は辞書なので反復順が毎回変わり、
+            // 勝つ refKey が変わると**中身が変わっていないのに指紋が変わる**＝毎回上げ直す。
+            // refKey の小さい方を決定的に選ぶ（レビュー指摘）。
             var entries: [String: ShareAnalysisData.Entry] = [:]
+            var winnerRefKey: [String: String] = [:]
             for (refKey, entry) in result.entries {
                 guard let hash = hashByRefKey[refKey] else { continue }
+                if let current = winnerRefKey[hash], current <= refKey { continue }
+                winnerRefKey[hash] = refKey
                 entries[hash] = entry
             }
             // まだ 1 枚も解析されていないシャードは置かない（空のファイルを作らない）。
@@ -158,23 +168,40 @@ public final class AnalysisPublisher {
             digests[shard] = digest
             lastDone = shard
             uploaded += 1
+            clearFailureStreak()
         }
         // 対象から消えたシャード（写真が Dropbox から消えた等）は消す。記録も落とす。
         if !window.stale.isEmpty {
             let paths = window.stale.map { "\(root)/\(ShareAnalysisData.subfolderName)/\($0)" }
-            _ = await copier.deleteBatch(paths: paths, token: token)
-            for name in window.stale {
-                let shard = name.dropFirst(ShareAnalysisData.shardFilePrefix.count).dropLast(5)
-                digests[String(shard)] = nil
+            // ⚠️ **消せたときだけ記録を落とす**（レビュー指摘）。失敗しても記録を消すと、
+            // そのシャードは二度と `stale` に挙がらない（stale は記録から作る）ので、
+            // **孤児のシャードが Dropbox に残り続ける**——受信側は消えた写真の解析を取り込み続ける。
+            if await copier.deleteBatch(paths: paths, token: token) {
+                for name in window.stale {
+                    let shard = name.dropFirst(ShareAnalysisData.shardFilePrefix.count).dropLast(5)
+                    digests[String(shard)] = nil
+                }
+            } else {
+                Diagnostics.mark("share.publishAnalysis: 消せなかった \(window.stale.count) 個は"
+                                 + "記録に残す（次回また消しにいく）")
             }
         }
         setPublishedDigests(digests)
         // 済んだところまでで印を決める（失敗した shard は次回そこから）。
-        defaults.set(cursorAfter(lastDone: lastDone, shards: allShards),
+        // ⚠️ ただし**同じ shard で続けて失敗したら飛ばす**（レビュー指摘）。直らない失敗
+        // （容量超過 507・権限 401・特定パスの恒久エラー）だと、印が固まって
+        // **01〜ff が一度も公開されない**。受信側は同じ飢餓を踏んで「印は試したところまで
+        // 進める」と決めている（`ShareAnalysisFetch` の規則1）ので、こちらも歯止めを持つ。
+        let skipStuck = failed != nil && bumpFailureStreak(for: failed!) >= Self.failureStreakLimit
+        if skipStuck {
+            Diagnostics.mark("share.publishAnalysis: \(failed!) が \(Self.failureStreakLimit) 回続けて"
+                             + "失敗 — 今回は飛ばして次へ進む")
+        }
+        defaults.set(cursorAfter(lastDone: skipStuck ? failed : lastDone, shards: allShards),
                      forKey: ShareSettingsKeys.publishAnalysisCursor)
         // 変更が無い回も名乗りは更新する（「この端末は生きている」を残す＝引き継ぎの判断材料）。
         await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
-                         photoCount: photos.count, token: token)
+                         photoCount: photos.count, token: token, published: uploaded > 0)
         let failure = failed.map { "・\($0) で失敗したので次回はそこから" } ?? ""
         let message = uploaded == 0 && window.stale.isEmpty && failed == nil
             ? "変更なし（見たシャード \(window.shards.count)・写真 \(publishedPhotos)）"
@@ -194,6 +221,23 @@ public final class AnalysisPublisher {
         return shards.isEmpty ? 0 : (index + 1) % shards.count
     }
 
+    /// 同じシャードで続けて失敗したら飛ばす回数。
+    static let failureStreakLimit = 3
+    private static let failureStreakKey = "sharePublishAnalysisFailureStreak"
+
+    /// 失敗の連続回数を数える（別のシャードで失敗したら数え直す）。
+    private func bumpFailureStreak(for shard: String) -> Int {
+        let stored = defaults.string(forKey: Self.failureStreakKey)?.split(separator: "|")
+        let count = (stored?.first).map(String.init) == shard
+            ? (stored?.last).flatMap { Int($0) } ?? 0
+            : 0
+        let next = count + 1
+        defaults.set("\(shard)|\(next)", forKey: Self.failureStreakKey)
+        return next
+    }
+
+    private func clearFailureStreak() { defaults.removeObject(forKey: Self.failureStreakKey) }
+
     /// 設定のバックアップルート。
     private var backupRoot: String {
         defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
@@ -210,15 +254,20 @@ public final class AnalysisPublisher {
     /// ——名乗りは助言であって、公開の正しさには関わらない。
     private func writeOwner(copier: DropboxShareCopier, path: String,
                             previous: AnalysisOwnership.Owner?, photoCount: Int,
-                            token: String) async {
+                            token: String, published: Bool) async {
         let owner = AnalysisOwnership.claim(
             myDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+            myDeviceID: BackupDeviceIdentity.currentID(),
             myDeviceName: BackupDeviceIdentity.currentDisplayName(),
-            previous: previous, now: Date(), photoCount: photoCount)
+            previous: previous, now: Date(), photoCount: photoCount, published: published)
         guard let data = AnalysisOwnership.encode(owner) else { return }
         // ⚠️ 失敗は**必ず残す**。名乗りが書けていないと、次の端末が二重に公開を始める。
+        // ただし窓の期限切れ（キャンセル）は毎回起きる正常な終わり方なので、同じ文言で騒がない
+        // ——本当に危ない回の信号が埋もれる（レビュー指摘）。
         if await copier.uploadFile(data: data, to: path, token: token) == false {
-            Diagnostics.mark("share.publishAnalysis: 名乗りを書けなかった — 次の端末が二重に公開し得る")
+            Diagnostics.mark(Task.isCancelled
+                             ? "share.publishAnalysis: 窓が切れて名乗りを書けなかった（次の窓で書く）"
+                             : "share.publishAnalysis: 名乗りを書けなかった — 次の端末が二重に公開し得る")
         }
     }
 

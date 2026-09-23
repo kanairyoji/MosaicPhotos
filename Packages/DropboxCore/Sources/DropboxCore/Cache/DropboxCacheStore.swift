@@ -211,6 +211,10 @@ actor DropboxCacheStore {
         let path: String
         let hash: String?
         let captureDate: Date?
+        /// 撮影日時を**訊いて確かめた**行か（`captureDateProbedAt != nil`）。
+        /// ⚠️ DB 側の保持規則（ADR-201）と揃えるために要る（レビュー指摘）。持たないと
+        /// 「hash は同じだがまだ訊いていない・一覧の日付だけ変わった」行で DB と食い違う。
+        let probed: Bool
     }
     /// パス小文字 → 軽い行の表（ADR-222/224）。作り直さず増減で直す。
     /// ⚠️ 9.9 万件で 20〜30MB 前後。メモリ圧迫では捨てる（次の要求で作り直せる）。
@@ -506,7 +510,11 @@ actor DropboxCacheStore {
 
     /// 解析候補に要る **パスと撮影日だけ**（ADR-224）。
     func cachedPhotoRefs() -> [CloudPhotoRef] {
-        itemIndex().values.map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
+        // ⚠️ **並びを決めておく**（レビュー指摘）。辞書の `values` はプロセスごとに順が変わるので、
+        // 撮影日が同値・不明な写真の解析順が起動のたびに変わっていた（以前は DB の昇順で決定的）。
+        itemIndex().values
+            .map { CloudPhotoRef(path: $0.path, captureDate: $0.captureDate) }
+            .sorted { ($0.captureDate ?? .distantPast, $0.path) > ($1.captureDate ?? .distantPast, $1.path) }
     }
 
     /// 軽い表（パス小文字 → パス・hash・撮影日）を返す。無ければ 1 回だけ作る。
@@ -520,7 +528,13 @@ actor DropboxCacheStore {
     private func itemIndex() -> [String: IndexedItem] {
         if let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision { return index }
         let t0 = PerfTrace.nowNs()
-        defer { PerfTrace.logSpan("cache.buildItemIndex", ms: PerfTrace.msSince(t0)) }
+        // ⚠️ 表の作り直しは 9.9 万行を触る（実測 16 秒）。この actor は**その間ずっと塞がる**ので、
+        // 重い一括ロードとして申告する（ADR-122・`cachedItems` の呼び出し側と同じ扱い）。
+        HeavyLoad.begin("cache.itemIndex")
+        defer {
+            HeavyLoad.end("cache.itemIndex")
+            PerfTrace.logSpan("cache.buildItemIndex", ms: PerfTrace.msSince(t0))
+        }
         PerfTrace.count("cache.itemIndex.build")
         itemIndexBuildsForTesting += 1
         var out: [String: IndexedItem] = [:]
@@ -534,10 +548,18 @@ actor DropboxCacheStore {
                 sortBy: [SortDescriptor(\.path, order: .forward)])
             descriptor.fetchOffset = offset
             descriptor.fetchLimit = Self.indexPageSize
-            let page = (try? context.fetch(descriptor)) ?? []
+            // ⚠️ **失敗を「終わり」と読み違えない**（レビュー指摘）。`try?` で潰すと空ページに
+            // 見えるので、そこで打ち切った**欠けた表**を「完成品」として保存してしまう。
+            // 以後は版が変わるまで引き直さないので、欠落は永久に直らない
+            // （公開が一部の写真だけになる・候補から恒久的に漏れる）。
+            guard let page = try? context.fetch(descriptor) else {
+                DropboxLogger.error("buildItemIndex: fetch failed at offset \(offset) — 表は作らない")
+                return out   // 保存しない＝次の要求でやり直す
+            }
             for row in page {
                 out[row.path.lowercased()] = IndexedItem(path: row.path, hash: row.contentHash,
-                                                         captureDate: row.captureDate)
+                                                         captureDate: row.captureDate,
+                                                         probed: row.captureDateProbedAt != nil)
             }
             if page.count < Self.indexPageSize { break }
             offset += page.count
@@ -559,10 +581,14 @@ actor DropboxCacheStore {
             // 一覧（delta）の日付は `client_modified`＝アップロード時刻。中身が同じなら、
             // 表に入っている日付（EXIF 由来のことがある）をそのまま残す。
             let existing = cachedItemIndex?[key]
-            let keepsDate = existing != nil && existing?.hash == item.contentHash
+            let hashChanged = existing?.hash != item.contentHash
+            // DB 側と同じ規則（`applyDelta` の `keepsProbedDate`）: **訊いて確かめた日付**は
+            // 一覧の日付（＝アップロード時刻）で上書きしない。中身が変わったら訊き直す＝印も落とす。
+            let keepsDate = (existing?.probed ?? false) && !hashChanged
             cachedItemIndex?[key] = IndexedItem(
                 path: item.path, hash: item.contentHash,
-                captureDate: keepsDate ? existing?.captureDate : item.captureDate)
+                captureDate: keepsDate ? existing?.captureDate : item.captureDate,
+                probed: keepsDate)
         }
         cachedItemIndexRevision = newRevision
     }
@@ -570,10 +596,14 @@ actor DropboxCacheStore {
     /// 訊いて得た撮影日時を表へ反映する（`recordCaptureDateProbe` から呼ぶ）。
     private func updateIndexCaptureDate(path: String, captureDate: Date?, newRevision: Int) {
         guard let existing = cachedItemIndex?[path.lowercased()] else { return }
-        cachedItemIndex?[path.lowercased()] = IndexedItem(path: existing.path, hash: existing.hash,
-                                                          captureDate: captureDate ?? existing.captureDate)
+        cachedItemIndex?[path.lowercased()] = IndexedItem(
+            path: existing.path, hash: existing.hash,
+            captureDate: captureDate ?? existing.captureDate, probed: true)
         cachedItemIndexRevision = newRevision
     }
+
+    /// アイテム集合が変わったことを知らせる（表示側の再反映と表の作り直しの合図）。
+    func bumpItemsRevision() { itemsRevision &+= 1 }
 
     /// 表を捨てる（メモリ圧迫・アカウント切替・リセット）。次の要求で作り直す。
     func dropContentHashIndex() {

@@ -117,6 +117,22 @@ struct CloudContentHashProjectionTests {
         #expect(await store.itemIndexBuildsForTesting == 1, "ページごとに作り直している")
     }
 
+    /// ⚠️ **消したら表も捨てる**（レビュー指摘）。捨てないと、アカウント切替・キャッシュ消去・
+    /// **同期ルートの変更**のあとも、解析候補と公開が古いライブラリを指したままになる
+    /// （増減しか当てないので、アプリを再起動するまで直らない）。
+    @Test("キャッシュを消したら、表も作り直される")
+    func clearAllDropsTheIndex() async {
+        let store = await store([item("/a.jpg", hash: "h1"), item("/b.jpg", hash: "h2")])
+        #expect(await store.cachedContentHashes().count == 2)
+
+        await store.clearAll(accountId: "acc1")
+
+        #expect(await store.cachedContentHashes().isEmpty, """
+            消したはずの写真が表に残っている（同期ルートを狭めても解析対象が減らない）。
+            """)
+        #expect(await store.cachedPhotoRefs().isEmpty)
+    }
+
     /// ADR-119: 「1 回ぶんに見える呼び出し」が全列の実体化になっていないこと。**回数で見る**。
     @Test("射影は全列を実体化しない")
     func projectionDoesNotMaterializeAllColumns() async {

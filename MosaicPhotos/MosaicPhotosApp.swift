@@ -1,3 +1,4 @@
+import DropboxCore
 import MosaicSupport
 import SwiftUI
 import UIKit
@@ -54,6 +55,9 @@ struct MosaicPhotosApp: App {
             // カクつきの原因になっていた。
             if phase == .active {
                 HeavyWorkScheduler.stopForForeground()
+                // 背面の長い待ち（30 秒に 1 回）を切り上げて、開いた瞬間の一覧を新しくする
+                // （ADR-224 追補・レビュー指摘）。
+                HeavyWorkScheduler.stores?.dropboxStore.wakeForForeground()
                 // 前面では駆動役が方針を評価して残作業を進める（ADR-195）。復帰は「操作」扱いなので
                 // 20 秒はアイドルにならない＝すぐには起こさず、アイドル監視が拾う。
                 if let driver = HeavyWorkScheduler.stores?.analysisDriver {

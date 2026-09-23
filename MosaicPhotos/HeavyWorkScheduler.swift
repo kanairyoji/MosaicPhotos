@@ -108,7 +108,17 @@ enum HeavyWorkScheduler {
                 // 窓の中で CLIP テキスト塔（505MB）と顔モデル（650MB）を読み、そのまま
                 // 30 分の眠りに入っていた——背面のアプリは footprint の大きい順に落とされる。
                 // 前面なら手放さない（次の操作が再ロード待ちになる）。
-                PerceptionModels.releaseForIdle(reason: "window \(outcome)")
+                //
+                // ⚠️ **ブースト中は手放さない**（レビュー指摘）。「今すぐ解析」はアプリを閉じても
+                // 続く（ADR-182）ので、窓が期限切れで終わっても**走り続けている**。
+                // ここで取り上げると、その場で 10〜35 秒の再ロードが始まり、
+                // `MLInferenceGate` の中なので**その間すべての推論が止まる**。
+                // 窓の作業を止める側（`stopBackgroundProcessing`）も同じ免除を持っている。
+                if stores?.analysisSession.isActive == true {
+                    Diagnostics.mark("models kept (boost still running)")
+                } else {
+                    PerceptionModels.releaseForIdle(reason: "window \(outcome)")
+                }
                 let mins = Int(Date().timeIntervalSince(started) / 60)
                 RunTimeline.record("window end (\(outcome)・\(mins) 分) " + Self.environmentLine())
                 RunTimeline.noteState("window", active: false)

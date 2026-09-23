@@ -158,6 +158,8 @@ final class HomeStores {
         // 顔スキャンが 1 巡したら顔モデルを手放す（ADR-223）。このあと窓はタグ → CLIP 埋め込みへ
         // 進むので、持ち越すとモデルを 2 つ抱えることになる（実機ピーク 650MB）。
         peopleEngine.onScanFinished = { backlog in
+            // ⚠️ ブースト（「今すぐ解析」）の最中は手放さない——直後に読み直すことになる。
+            guard HeavyWorkScheduler.stores?.analysisSession.isActive != true else { return }
             PerceptionModels.releaseFaceModelIfDone(backlog: backlog, reason: "face scan finished")
         }
         peopleEngine.onPersonIdentitiesInvalidated = { [weak shareEngine] in

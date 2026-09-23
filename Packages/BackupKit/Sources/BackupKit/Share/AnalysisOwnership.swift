@@ -15,8 +15,13 @@ public enum AnalysisOwnership {
 
     /// 名乗りの中身（そのまま JSON）。
     public struct Owner: Codable, Equatable, Sendable {
-        /// 端末フォルダ名（`BackupDeviceIdentity.currentFolderName()`・実質の identity）。
+        /// 端末フォルダ名（`BackupDeviceIdentity.currentFolderName()`・人が見る名前）。
         public var deviceFolder: String
+        /// **安定 ID**（Keychain・`BackupDeviceIdentity.currentID()`）。
+        /// ⚠️ 同一判定はこちらで行う（レビュー指摘）。フォルダ名は端末名の変更や機種変更の復元で
+        /// 変わるので、名前で比べると**自分の名乗りを他人と誤認**して公開が止まる。
+        /// 旧い名乗り（ID 無し）との互換のため optional。
+        public var deviceID: String?
         /// 人が読む名前（Dropbox 上で見分ける補助）。
         public var deviceName: String
         /// 名乗った日時。
@@ -26,9 +31,10 @@ public enum AnalysisOwnership {
         /// 最後に公開した時点の写真枚数（同上）。
         public var photoCount: Int?
 
-        public init(deviceFolder: String, deviceName: String, claimedAt: Date,
-                    lastPublishedAt: Date? = nil, photoCount: Int? = nil) {
+        public init(deviceFolder: String, deviceID: String? = nil, deviceName: String,
+                    claimedAt: Date, lastPublishedAt: Date? = nil, photoCount: Int? = nil) {
             self.deviceFolder = deviceFolder
+            self.deviceID = deviceID
             self.deviceName = deviceName
             self.claimedAt = claimedAt
             self.lastPublishedAt = lastPublishedAt
@@ -54,10 +60,15 @@ public enum AnalysisOwnership {
     ///   - myDeviceFolder: この端末のフォルダ名。
     ///   - acknowledgedDeviceFolder: 利用者が「この端末で公開する」を選んだときの、
     ///     **そのとき名乗っていた端末**のフォルダ名。
-    public static func decide(remote: Owner?, myDeviceFolder: String,
+    public static func decide(remote: Owner?, myDeviceFolder: String, myDeviceID: String? = nil,
                               acknowledgedDeviceFolder: String?) -> Decision {
         guard let remote else { return .unclaimed }
-        if remote.deviceFolder.caseInsensitiveCompare(myDeviceFolder) == .orderedSame { return .ours }
+        // まず**安定 ID**で見る（端末名を変えても自分は自分）。無い名乗り（旧版）は名前で見る。
+        if let myDeviceID, let remoteID = remote.deviceID {
+            if remoteID.caseInsensitiveCompare(myDeviceID) == .orderedSame { return .ours }
+        } else if remote.deviceFolder.caseInsensitiveCompare(myDeviceFolder) == .orderedSame {
+            return .ours
+        }
         // ⚠️ 承諾は**その相手に対してだけ**効く。承諾したあと 3 台目が名乗ったら、もう一度尋ねる
         // （「一度 OK したから以後ずっと黙る」だと、増えた端末に気づけない）。
         if let acknowledgedDeviceFolder,
@@ -76,12 +87,22 @@ public enum AnalysisOwnership {
     }
 
     /// 名乗りを更新する（公開できた後に呼ぶ）。前の名乗りが他端末でも、引き継いだら自分になる。
-    public static func claim(myDeviceFolder: String, myDeviceName: String,
-                             previous: Owner?, now: Date, photoCount: Int?) -> Owner {
-        let mine = previous?.deviceFolder.caseInsensitiveCompare(myDeviceFolder) == .orderedSame
-        return Owner(deviceFolder: myDeviceFolder, deviceName: myDeviceName,
+    /// - Parameter published: この回に**実際に公開できたか**。
+    ///   ⚠️ 公開の前に名乗る回（引き継ぎ・初回）でも「最後に公開できた日」を今にすると、
+    ///   1 枚も上げられない端末まで「生きている」ように見え、引き継ぎの判断材料が死ぬ（レビュー指摘）。
+    public static func claim(myDeviceFolder: String, myDeviceID: String? = nil, myDeviceName: String,
+                             previous: Owner?, now: Date, photoCount: Int?,
+                             published: Bool) -> Owner {
+        let mine: Bool
+        if let myDeviceID, let previousID = previous?.deviceID {
+            mine = previousID.caseInsensitiveCompare(myDeviceID) == .orderedSame
+        } else {
+            mine = previous?.deviceFolder.caseInsensitiveCompare(myDeviceFolder) == .orderedSame
+        }
+        return Owner(deviceFolder: myDeviceFolder, deviceID: myDeviceID, deviceName: myDeviceName,
                      claimedAt: mine ? (previous?.claimedAt ?? now) : now,
-                     lastPublishedAt: now, photoCount: photoCount)
+                     lastPublishedAt: published ? now : (mine ? previous?.lastPublishedAt : nil),
+                     photoCount: published ? photoCount : (mine ? previous?.photoCount : nil))
     }
 
     public static func decode(_ data: Data) -> Owner? {
