@@ -92,63 +92,72 @@ public final class AnalysisPublisher {
             outcome.blockedBy = owner
             return outcome
         }
-        Diagnostics.mark("share.publishAnalysis: 開始（写真 \(photos.count) 枚）")
-
-        // 解析結果を集める。⚠️ 6.8 万枚を一度に渡さない（base64 の文字列が一斉に載る）。
-        let byRefKey = Dictionary(photos.map { ($0.refKey, $0.contentHash) },
-                                  uniquingKeysWith: { a, _ in a })
-        var entries: [String: ShareAnalysisData.Entry] = [:]
-        var versions = ShareAnalysisData.Versions(tag: 0, perception: 0, face: 0)
-        for chunk in stride(from: 0, to: photos.count, by: Self.entryChunkSize).map({
-            Array(photos[$0..<min($0 + Self.entryChunkSize, photos.count)])
-        }) {
-            let result = await source.analysisEntries(forRefKeys: chunk.map(\.refKey))
-            versions = result.versions
-            for (refKey, entry) in result.entries {
-                guard let hash = byRefKey[refKey] else { continue }
-                entries[hash.lowercased()] = entry
-            }
+        // ⚠️ **この回に見るシャードぶんだけ**を組み立てる（実機ログ diagnostics-85）。
+        // 全シャードを一度に作って全部を JSON にしていた頃はフットプリントが 637MB まで上がり、
+        // 解析の取得も 9.7 万枚ぶん（2,000 枚 × 49 回）で 1 回 67 秒かかっていた。
+        // 写真をシャード（content_hash の先頭 2 桁）で束ね、窓の shard だけを取りに行く。
+        var refKeysByShard: [String: [String]] = [:]
+        var hashByRefKey: [String: String] = [:]
+        for photo in photos {
+            let hash = photo.contentHash.lowercased()
+            refKeysByShard[ShareAnalysisData.shardName(forHash: hash), default: []].append(photo.refKey)
+            hashByRefKey[photo.refKey] = hash
         }
-
-        let files = ShareAnalysisData.shards(versions: versions, entries: entries)
-        let plan = AnalysisPublishPlanning.plan(files: files,
-                                                publishedDigests: publishedDigests(),
-                                                cursor: defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor),
-                                                budget: budget)
-        guard !plan.uploads.isEmpty || !plan.stale.isEmpty else {
-            // 変更が無い回も名乗りは更新する（「この端末は生きている」を残す＝引き継ぎの判断材料）。
-            await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
-                             photoCount: entries.count, token: token)
-            return bail("変更なし（写真 \(photos.count)・シャード \(files.count)）")
-        }
+        let window = AnalysisPublishPlanning.window(
+            presentShards: Set(refKeysByShard.keys),
+            publishedDigests: publishedDigests(),
+            cursor: defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor),
+            budget: budget)
+        Diagnostics.mark("share.publishAnalysis: 開始（写真 \(photos.count) 枚・"
+                         + "この回に見るシャード \(window.shards.count)/\(refKeysByShard.count)）")
 
         let root = BackupLayout.analysisRoot(root: backupRoot,
                                              deviceFolder: BackupDeviceIdentity.currentFolderName())
         var digests = publishedDigests()
         var uploaded = 0
-        for upload in plan.uploads {
-            let path = ShareAnalysisData.shardPath(setFolderPath: root, shard: upload.shard)
-            guard await copier.uploadFile(data: upload.data, to: path, token: token) else { break }
-            digests[upload.shard] = upload.digest
+        var publishedPhotos = 0
+        for shard in window.shards {
+            guard let refKeys = refKeysByShard[shard] else { continue }
+            // このシャードの写真ぶんだけ解析を取る（数百枚）。取れた中身は次の shard へ持ち越さない。
+            let result = await source.analysisEntries(forRefKeys: refKeys)
+            var entries: [String: ShareAnalysisData.Entry] = [:]
+            for (refKey, entry) in result.entries {
+                guard let hash = hashByRefKey[refKey] else { continue }
+                entries[hash] = entry
+            }
+            // まだ 1 枚も解析されていないシャードは置かない（空のファイルを作らない）。
+            guard !entries.isEmpty else { continue }
+            publishedPhotos += entries.count
+            let file = ShareAnalysisData.File(versions: result.versions, entries: entries)
+            guard let data = AnalysisPublishPlanning.encoded(file) else { continue }
+            let digest = AnalysisPublishPlanning.fingerprint(data)
+            guard digests[shard] != digest else { continue }   // 変わっていないシャードは上げない
+            let path = ShareAnalysisData.shardPath(setFolderPath: root, shard: shard)
+            guard await copier.uploadFile(data: data, to: path, token: token) else { break }
+            digests[shard] = digest
             uploaded += 1
         }
         // 対象から消えたシャード（写真が Dropbox から消えた等）は消す。記録も落とす。
-        if !plan.stale.isEmpty {
-            let paths = plan.stale.map { "\(root)/\(ShareAnalysisData.subfolderName)/\($0)" }
+        if !window.stale.isEmpty {
+            let paths = window.stale.map { "\(root)/\(ShareAnalysisData.subfolderName)/\($0)" }
             _ = await copier.deleteBatch(paths: paths, token: token)
-            for name in plan.stale {
+            for name in window.stale {
                 let shard = name.dropFirst(ShareAnalysisData.shardFilePrefix.count).dropLast(5)
                 digests[String(shard)] = nil
             }
         }
         setPublishedDigests(digests)
-        defaults.set(plan.nextCursor, forKey: ShareSettingsKeys.publishAnalysisCursor)
+        defaults.set(window.nextCursor, forKey: ShareSettingsKeys.publishAnalysisCursor)
+        // 変更が無い回も名乗りは更新する（「この端末は生きている」を残す＝引き継ぎの判断材料）。
         await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
-                         photoCount: entries.count, token: token)
-        let message = "上げた \(uploaded)/\(plan.uploads.count) シャード"
-            + "（残り \(plan.remaining)・消した \(plan.stale.count)・写真 \(entries.count)）"
+                         photoCount: photos.count, token: token)
+        let message = uploaded == 0 && window.stale.isEmpty
+            ? "変更なし（見たシャード \(window.shards.count)・写真 \(publishedPhotos)）"
+            : "上げた \(uploaded)/\(window.shards.count) シャード"
+                + "（見ていないシャード \(window.remaining)・消した \(window.stale.count)"
+                + "・写真 \(publishedPhotos)）"
         Diagnostics.mark("share.publishAnalysis: " + message)
-        return Outcome(uploaded: uploaded, remaining: plan.remaining, message: message)
+        return Outcome(uploaded: uploaded, remaining: window.remaining, message: message)
     }
 
     /// 設定のバックアップルート。
@@ -184,8 +193,6 @@ public final class AnalysisPublisher {
                                          token: token).flatMap(AnalysisOwnership.decode)
     }
 
-    /// 1 回に解析結果を問い合わせる写真の数（base64 の一時文字列を抱え込まないため）。
-    static let entryChunkSize = 2_000
 
     private func publishedDigests() -> [String: String] {
         guard let data = defaults.data(forKey: ShareSettingsKeys.publishedAnalysisDigests),

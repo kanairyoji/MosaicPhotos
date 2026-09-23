@@ -80,6 +80,9 @@
     引き継げる**（承諾は**その相手に対してだけ**効く＝3 台目が現れたらまた尋ねる）。
     相手の公開を止める手立ては無いので、相手側でも設定を切ってもらう必要がある——そう書いてある。
   - 名乗りは**変更が無かった回も更新**する（「この端末は生きている」＝引き継ぎの判断材料）。
+- **追補 4（1 回の大きさ・実機ログ diagnostics-85）**: 公開 1 回でフットプリントが 637MB・所要 67 秒。
+  全シャード（256 個）を作ってから 8 個を選んでいたため。**先に見るシャードを決め、そのシャードの
+  写真ぶんだけ**解析を取る形へ逆転した（ピーク 1/32・問い合わせ 49 回 → 8 回）。詳細は `case-studies.md`。
 - 関連: `Share/AnalysisPublishPlanning.swift` / `Share/AnalysisOwnership.swift` / `AnalysisPublisher.swift` / `ShareAnalysisFetch.accountAnalysisRoots`
   / `MosaicPhotos/Share/ShareSupport.swift`（`CloudAnalysisPublisher`・`SharedAnalysisImporter`）
   / `NightlyWorkPolicy.swift` / `AnalysisPublishTests`。ADR-112・ADR-183・ADR-199。
