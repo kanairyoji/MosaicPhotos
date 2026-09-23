@@ -42,6 +42,8 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
       AnalysisPublishPlanning.swift   解析の公開（ADR-222）の純ロジック。変わったシャードだけ・
                                       続きから一巡・指紋（FNV-1a）。**JSON は `.sortedKeys` で書く**
                                       （辞書の順序が揺れると毎回全部を上げ直す）
+      AnalysisOwnership.swift         公開する端末は 1 台（名乗り `<root>/.mosaic-analysis-owner.json`）。
+                                      **止めずに知らせる**＝端末を失くしても引き継げる（ADR-222 追補）
       AnalysisPublisher.swift         公開の本体（設定チェック → 解析を 2,000 枚ずつ集める →
                                       シャード → 計画 → アップロード/掃除 → 指紋と続きを保存）
       SharePlanning.swift / ShareImportPlanning.swift  コピー計画 / 受信側の突合（純ロジック）

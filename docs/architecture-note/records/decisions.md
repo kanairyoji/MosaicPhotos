@@ -66,7 +66,21 @@
   content_hash を**わざと持たない**うえ、`items` は画面を開いたときだけ作られる。
   台帳の射影 `cloudContentHashes()` へ向け直した。詳細と、同じ理由で空だった
   `cloudSourceHashProvider`（ADR-209）は `case-studies.md` を見ること。
-- 関連: `Share/AnalysisPublishPlanning.swift` / `AnalysisPublisher.swift` / `ShareAnalysisFetch.accountAnalysisRoots`
+- **追補 3（公開する端末は 1 台・既定 OFF）**: 実機で公開が動いたので、次は「2 台で ON にしたら
+  どうなるか」を決めた。端末フォルダ（`<root>/<端末>/Analysis`）は分かれているので**ファイルは
+  壊れない**（利用者の懸念だったが、上書きは起きない）。壊れない代わりに、**同じ写真の解析が
+  台数ぶん積まれる**——1 台で 100〜200MB（6.8 万枚）なので 3 台なら 500MB 前後を同じ内容に使い、
+  上りの通信も受け取り側の取り込みも台数ぶんになる。
+  - **既定を OFF に変えた**（ADR-222 本体では ON だった）。「気づいたら容量を倍使っていた」を
+    既定にしない。設定の説明にも「1 台だけで ON に」と明記する。
+  - `<root>/.mosaic-analysis-owner.json` に**名乗り**（端末フォルダ・表示名・名乗った日・
+    最後に公開できた日・枚数）を置く。公開の前に読み、別の端末が名乗っていたら
+    **公開しない**で設定画面に注意を出す。
+  - ⚠️ **止めきらない**。端末を失くす・機種変更はあるので、「この端末で公開する」で**いつでも
+    引き継げる**（承諾は**その相手に対してだけ**効く＝3 台目が現れたらまた尋ねる）。
+    相手の公開を止める手立ては無いので、相手側でも設定を切ってもらう必要がある——そう書いてある。
+  - 名乗りは**変更が無かった回も更新**する（「この端末は生きている」＝引き継ぎの判断材料）。
+- 関連: `Share/AnalysisPublishPlanning.swift` / `Share/AnalysisOwnership.swift` / `AnalysisPublisher.swift` / `ShareAnalysisFetch.accountAnalysisRoots`
   / `MosaicPhotos/Share/ShareSupport.swift`（`CloudAnalysisPublisher`・`SharedAnalysisImporter`）
   / `NightlyWorkPolicy.swift` / `AnalysisPublishTests`。ADR-112・ADR-183・ADR-199。
 

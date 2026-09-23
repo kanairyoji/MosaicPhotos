@@ -53,6 +53,12 @@ struct DropboxHubView: View {
                                          },
                                          onPublishNow: analysisPublisher.map { publisher in
                                              { await publisher.runIfNeeded() }
+                                         },
+                                         onCheckPublishingDevice: analysisPublisher.map { publisher in
+                                             { await publisher.otherPublishingDevice() }
+                                         },
+                                         onTakeOverPublishing: analysisPublisher.map { publisher in
+                                             { publisher.takeOverPublishing() }
                                          })
                         } label: {
                             Label("Cloud Sharing", systemImage: "icloud.and.arrow.up")

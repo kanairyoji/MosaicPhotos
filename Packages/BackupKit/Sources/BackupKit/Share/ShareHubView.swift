@@ -13,6 +13,10 @@ public struct ShareHubView: View {
     private let onImportNow: (@MainActor () async -> Void)?
     /// 「今すぐ公開」（ADR-222・解析結果の公開）。短い結果を返す。未設定なら非表示。
     private let onPublishNow: (@MainActor () async -> String)?
+    /// 今 Dropbox に名乗っている**別の**端末（無ければ nil）。注意を出すために見る。
+    private let onCheckPublishingDevice: (@MainActor () async -> AnalysisOwnership.Owner?)?
+    /// 「この端末で公開する」（引き継ぎの承諾）。
+    private let onTakeOverPublishing: (@MainActor () -> Void)?
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
@@ -20,15 +24,21 @@ public struct ShareHubView: View {
     @State private var familyFolders: [String] = ShareSettingsKeys.currentFamilyFolders()
     @State private var isPublishing = false
     @State private var publishStatus: String?
+    /// 別の端末が公開している（注意を出す）。
+    @State private var publishingDevice: AnalysisOwnership.Owner?
 
     public init(engine: ShareSyncEngine,
                 onFamilyFoldersChanged: @escaping @MainActor () -> Void = {},
                 onImportNow: (@MainActor () async -> Void)? = nil,
-                onPublishNow: (@MainActor () async -> String)? = nil) {
+                onPublishNow: (@MainActor () async -> String)? = nil,
+                onCheckPublishingDevice: (@MainActor () async -> AnalysisOwnership.Owner?)? = nil,
+                onTakeOverPublishing: (@MainActor () -> Void)? = nil) {
         self.engine = engine
         self.onFamilyFoldersChanged = onFamilyFoldersChanged
         self.onImportNow = onImportNow
         self.onPublishNow = onPublishNow
+        self.onCheckPublishingDevice = onCheckPublishingDevice
+        self.onTakeOverPublishing = onTakeOverPublishing
     }
 
     public var body: some View {
@@ -68,6 +78,38 @@ public struct ShareHubView: View {
             // 相手は写真をもう見られるので、共有セットを作らなくても解析が行き渡る。
             Section {
                 Toggle(L("Share Photo Analysis"), isOn: $publishAnalysisEnabled)
+                    .onChange(of: publishAnalysisEnabled) { _, on in
+                        guard on else { publishingDevice = nil; return }
+                        Task { publishingDevice = await onCheckPublishingDevice?() }
+                    }
+                // ⚠️ **1 台だけで ON にする**（ADR-222 追補）。端末フォルダは分かれているので
+                // ファイルは壊れないが、2 台で ON にすると同じ解析が台数ぶん容量を使う。
+                // 見つけたら知らせるだけ——端末を失くしたときに引き継げなくなるので止めない。
+                if publishAnalysisEnabled, let device = publishingDevice {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(L("Another device is already sharing analysis"),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        Text(String(format: L("Device: %@ (last published %@)"), device.deviceFolder,
+                                    device.lastPublishedAt.map {
+                                        $0.formatted(date: .abbreviated, time: .shortened)
+                                    } ?? L("never")))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(L("Publishing from two devices stores the same analysis twice in Dropbox. Turn this off on the other device, or take over here if that device is gone."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let onTakeOverPublishing {
+                            Button(L("Publish from This Device")) {
+                                onTakeOverPublishing()
+                                publishingDevice = nil
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
                 // 公開は夜間の処理枠で少しずつ進む。実機でその場で確かめられるよう、
                 // 手で 1 回ぶん走らせる口も置く（結果はそのまま下に出す）。
                 if let onPublishNow, publishAnalysisEnabled {
@@ -76,6 +118,7 @@ public struct ShareHubView: View {
                         publishStatus = nil
                         Task {
                             publishStatus = await onPublishNow()
+                            publishingDevice = await onCheckPublishingDevice?()
                             isPublishing = false
                         }
                     } label: {
@@ -96,12 +139,15 @@ public struct ShareHubView: View {
                     }
                 }
             } footer: {
-                Text(L("Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied."))
+                Text(L("Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\n⚠️ Turn this on for ONE device only. Each device that publishes stores its own full copy of the analysis (100–200MB for 68,000 photos), so two devices means paying twice for the same thing."))
             }
         }
         .navigationTitle(L("Cloud Sharing"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await engine.refresh() }
+        .task {
+            await engine.refresh()
+            if publishAnalysisEnabled { publishingDevice = await onCheckPublishingDevice?() }
+        }
     }
 
     // MARK: - 入り口の行（機能アイコン＋状態）

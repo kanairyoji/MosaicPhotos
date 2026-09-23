@@ -141,3 +141,167 @@ private actor SequencedClient: HTTPClient {
 
     func count() -> Int { requests }
 }
+
+/// **公開する端末は 1 台にする**ための名乗り（ADR-222 追補）。
+///
+/// 端末フォルダは分かれるのでファイルは壊れないが、2 台で公開すると同じ解析が台数ぶん
+/// Dropbox に積まれる。ここでは「知らせる／引き継げる」の線を固定する
+/// ——**止めきらない**こと（端末を失くしたら公開が永久に止まる）。
+@Suite("解析を公開する端末の名乗り（ADR-222）")
+struct AnalysisOwnershipTests {
+
+    private func owner(_ folder: String) -> AnalysisOwnership.Owner {
+        AnalysisOwnership.Owner(deviceFolder: folder, deviceName: "iPhone",
+                                claimedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    @Test("誰も名乗っていなければ公開してよい")
+    func unclaimed() {
+        let decision = AnalysisOwnership.decide(remote: nil, myDeviceFolder: "iPhone-A",
+                                                acknowledgedDeviceFolder: nil)
+        #expect(decision == .unclaimed)
+        #expect(AnalysisOwnership.allowsPublishing(decision))
+    }
+
+    @Test("自分が名乗っていれば公開してよい（大小は無視）")
+    func ours() {
+        let decision = AnalysisOwnership.decide(remote: owner("iphone-a"), myDeviceFolder: "iPhone-A",
+                                                acknowledgedDeviceFolder: nil)
+        #expect(decision == .ours)
+        #expect(AnalysisOwnership.allowsPublishing(decision))
+    }
+
+    @Test("別の端末が名乗っていたら公開しない（知らせるだけ）")
+    func otherDeviceBlocks() {
+        let decision = AnalysisOwnership.decide(remote: owner("iPhone-B"), myDeviceFolder: "iPhone-A",
+                                                acknowledgedDeviceFolder: nil)
+        #expect(decision == .otherDevice(owner("iPhone-B")))
+        #expect(AnalysisOwnership.allowsPublishing(decision) == false)
+    }
+
+    /// ⚠️ 端末を失くしたら引き継げないと困る。利用者が選べば**いつでも**引き継げる。
+    @Test("利用者が承諾した相手なら引き継いで公開する")
+    func acknowledgedTakesOver() {
+        let decision = AnalysisOwnership.decide(remote: owner("iPhone-B"), myDeviceFolder: "iPhone-A",
+                                                acknowledgedDeviceFolder: "iPhone-B")
+        #expect(decision == .takenOver(owner("iPhone-B")))
+        #expect(AnalysisOwnership.allowsPublishing(decision))
+    }
+
+    /// ⚠️ 承諾は**その相手に対してだけ**。3 台目が名乗ったらもう一度尋ねる
+    /// （「一度 OK したから以後ずっと黙る」だと、増えた端末に気づけない）。
+    @Test("承諾したのと別の端末が名乗ったら、また知らせる")
+    func acknowledgementIsPerDevice() {
+        let decision = AnalysisOwnership.decide(remote: owner("iPhone-C"), myDeviceFolder: "iPhone-A",
+                                                acknowledgedDeviceFolder: "iPhone-B")
+        #expect(AnalysisOwnership.allowsPublishing(decision) == false)
+    }
+
+    @Test("名乗りを書くと自分になる。自分の名乗りは claimedAt を引き継ぐ")
+    func claimKeepsOriginalDate() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let mine = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceName: "iPhone",
+                                           previous: owner("iPhone-A"), now: now, photoCount: 10)
+        #expect(mine.claimedAt == owner("iPhone-A").claimedAt, "自分の名乗りは名乗った日を保つ")
+        #expect(mine.lastPublishedAt == now)
+
+        let takenOver = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceName: "iPhone",
+                                                previous: owner("iPhone-B"), now: now, photoCount: 10)
+        #expect(takenOver.deviceFolder == "iPhone-A")
+        #expect(takenOver.claimedAt == now, "引き継ぎは今から名乗り直す")
+    }
+
+    @Test("JSON を往復できる")
+    func codableRoundTrip() {
+        let original = AnalysisOwnership.claim(myDeviceFolder: "iPhone-A", myDeviceName: "iPhone",
+                                               previous: nil,
+                                               now: Date(timeIntervalSince1970: 1_700_000_000),
+                                               photoCount: 68_000)
+        let data = AnalysisOwnership.encode(original)
+        #expect(data != nil)
+        #expect(AnalysisOwnership.decode(data!) == original)
+    }
+
+    /// ⚠️ **既定は OFF**（ADR-222 追補）。「気づいたら容量を倍使っていた」を既定にしない。
+    @Test("公開の設定は既定オフ")
+    func publishingIsOffByDefault() {
+        let defaults = TestDefaults.scratch("publish-default")
+        #expect(ShareSettingsKeys.isPublishAnalysisEnabled(defaults) == false)
+    }
+}
+
+/// 名乗りが**公開そのもの**に効いていること（配線のテスト）。
+@Suite("名乗りと公開の配線（ADR-222）")
+@MainActor
+struct AnalysisPublisherOwnershipTests {
+
+    private func ownerJSON(_ folder: String) -> String {
+        let owner = AnalysisOwnership.Owner(deviceFolder: folder, deviceName: "iPhone",
+                                            claimedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        return String(decoding: AnalysisOwnership.encode(owner)!, as: UTF8.self)
+    }
+
+    private func publisher(_ stub: SequencedClient, defaults: UserDefaults,
+                           source: StubAnalysisSource) -> AnalysisPublisher {
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        return AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
+                                 httpClient: stub, defaults: defaults)
+    }
+
+    private var photo: AnalysisPublisher.CloudPhoto {
+        AnalysisPublisher.CloudPhoto(refKey: "C-/a.jpg",
+                                     contentHash: String(repeating: "a", count: 64))
+    }
+
+    @Test("別の端末が名乗っていたら 1 バイトも上げない")
+    func blockedByOtherDevice() async {
+        // 名乗りのダウンロードだけで終わる（以降のリクエストは無い）。
+        let stub = SequencedClient([(200, ownerJSON("iPhone-OTHER"))])
+        // ⚠️ 供給元は**弱参照**で持たれる（アプリでは Composition Root が持つ）。
+        // テストで手放すと publish は「解析の供給元が無い」で抜け、名乗りを見にすら行かない。
+        let source = StubAnalysisSource()
+        let publisher = publisher(stub, defaults: TestDefaults.scratch("publish-owner"),
+                                  source: source)
+
+        let outcome = await publisher.publish(photos: [photo])
+
+        #expect(outcome.uploaded == 0)
+        #expect(outcome.blockedBy?.deviceFolder == "iPhone-OTHER")
+        #expect(await stub.count() == 1, "名乗りを見たあともリクエストを出している")
+        withExtendedLifetime(source) {}
+    }
+
+    @Test("誰も名乗っていなければ公開し、名乗りを書く")
+    func claimsAfterPublishing() async {
+        // 409（＝まだ無い）→ シャードのアップロード → 名乗りのアップロード。
+        let stub = SequencedClient([(409, #"{"error_summary":"path/not_found/.."}"#),
+                                    (200, "{}"), (200, "{}")])
+        let source = StubAnalysisSource()
+        let publisher = publisher(stub, defaults: TestDefaults.scratch("publish-owner"),
+                                  source: source)
+
+        let outcome = await publisher.publish(photos: [photo])
+
+        #expect(outcome.uploaded == 1)
+        #expect(outcome.blockedBy == nil)
+        // 1（名乗りの確認）＋ 1（シャード）＋ 1（名乗りの書き込み）
+        #expect(await stub.count() == 3, "名乗りを書いていない（次の端末が気づけない）")
+        withExtendedLifetime(source) {}
+    }
+}
+
+/// 解析を 1 件だけ返すスタブ。
+@MainActor
+private final class StubAnalysisSource: ShareAnalysisSource {
+    func analysisEntries(forRefKeys refKeys: [String]) async
+        -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
+        var entry = ShareAnalysisData.Entry()
+        entry.tags = ["cat"]
+        return (ShareAnalysisData.Versions(tag: 1, perception: 1, face: 1),
+                Dictionary(uniqueKeysWithValues: refKeys.map { ($0, entry) }))
+    }
+}
+
+private final class StubPublishToken: AccessTokenProvider {
+    func freshAccessToken() async throws -> String { "tok" }
+}

@@ -386,10 +386,34 @@ final class CloudAnalysisPublisher {
             AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(path).encoded, contentHash: hash)
         }
         guard !photos.isEmpty else { return mark("クラウド写真が 0 件") }
-        let result = await publisher.publish(photos: photos)
-        return result.uploaded == 0 && result.remaining == 0
-            ? "変更なし（写真 \(photos.count) 枚）"
-            : "上げた \(result.uploaded) シャード・残り \(result.remaining)"
+        let outcome = await publisher.publish(photos: photos)
+        blockedBy = outcome.blockedBy
+        return outcome.message
+    }
+
+    /// **別の端末が公開している**ときの相手（設定画面が注意を出すために見る）。
+    private(set) var blockedBy: AnalysisOwnership.Owner?
+
+    /// 今 Dropbox に名乗っている端末を読む（設定画面を開いたときの確認用）。
+    /// 自分が名乗っているなら nil を返す（注意は出さない）。
+    func otherPublishingDevice() async -> AnalysisOwnership.Owner? {
+        guard case .connected = dropboxStore.auth.connectionStatus else { return nil }
+        let owner = await publisher.currentOwner()
+        let decision = AnalysisOwnership.decide(
+            remote: owner, myDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+            acknowledgedDeviceFolder:
+                UserDefaults.standard.string(forKey: ShareSettingsKeys.acknowledgedAnalysisOwner))
+        blockedBy = { if case .otherDevice(let o) = decision { return o } else { return nil } }()
+        return blockedBy
+    }
+
+    /// 「この端末で公開する」（引き継ぎ）。⚠️ 相手の公開は止まらない——**止める手立ては無い**ので、
+    /// 相手の端末でも設定を切ってもらう必要がある。承諾は**その相手に対してだけ**効く。
+    func takeOverPublishing() {
+        guard let owner = blockedBy else { return }
+        UserDefaults.standard.set(owner.deviceFolder, forKey: ShareSettingsKeys.acknowledgedAnalysisOwner)
+        blockedBy = nil
+        Diagnostics.mark("share.publishAnalysis: 引き継ぎを承諾（前の端末 \(owner.deviceFolder)）")
     }
 
     private func mark(_ reason: String) -> String {

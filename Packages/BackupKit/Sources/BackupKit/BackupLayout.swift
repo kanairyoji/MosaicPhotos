@@ -66,6 +66,14 @@ public enum BackupLayout {
         return appendingOnce(device, analysisSubfolder)
     }
 
+    /// **解析を公開している端末**の名乗り: `<root>/.mosaic-analysis-owner.json`（ADR-222 追補）。
+    ///
+    /// 端末フォルダの**外**（ルート直下）に置く——どの端末からも同じ 1 か所を見るため。
+    public static let analysisOwnerFileName = ".mosaic-analysis-owner.json"
+    public static func analysisOwnerPath(root: String) -> String {
+        stripLayoutSuffix(backupNormalizedPath(root)) + "/" + analysisOwnerFileName
+    }
+
     /// 共有セットの親: `<root>/<端末>/Share`。
     public static func shareRoot(root: String, deviceFolder: String) -> String {
         let device = deviceRoot(root: root, deviceFolder: deviceFolder)

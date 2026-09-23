@@ -22,6 +22,14 @@ import MosaicSupport
 /// 呼び出し側は背景の処理枠（`BackgroundYield` の `.cloudTrickle`）の中で回す。
 public final class AnalysisPublisher {
 
+    /// 1 回ぶんの結果。`blockedBy` が付いていたら、**別の端末が公開している**（止めた）。
+    public struct Outcome: Sendable {
+        public var uploaded = 0
+        public var remaining = 0
+        public var blockedBy: AnalysisOwnership.Owner?
+        public var message = ""
+    }
+
     /// クラウド写真 1 枚（公開対象）。
     public struct CloudPhoto: Sendable, Equatable {
         public let refKey: String
@@ -57,23 +65,32 @@ public final class AnalysisPublisher {
     /// 原因（手順の最後に置いたので窓が先に切れていた）に辿り着くのに実機ログ 1 本ぶん遠回りした。
     @discardableResult
     public func publish(photos: [CloudPhoto],
-                        budget: Int = AnalysisPublishPlanning.defaultBudget) async
-        -> (uploaded: Int, remaining: Int) {
+                        budget: Int = AnalysisPublishPlanning.defaultBudget) async -> Outcome {
         guard ShareSettingsKeys.isPublishAnalysisEnabled(defaults) else {
-            Diagnostics.mark("share.publishAnalysis: 設定がオフ — 何もしない")
-            return (0, 0)
+            return bail("設定がオフ")
         }
-        guard !photos.isEmpty else {
-            Diagnostics.mark("share.publishAnalysis: クラウド写真が 0 件 — 何もしない")
-            return (0, 0)
-        }
-        guard let source = analysisSource else {
-            Diagnostics.mark("share.publishAnalysis: 解析の供給元が無い — 何もしない")
-            return (0, 0)
-        }
+        guard !photos.isEmpty else { return bail("クラウド写真が 0 件") }
+        guard let source = analysisSource else { return bail("解析の供給元が無い") }
         guard let token = try? await tokenProvider.freshAccessToken() else {
-            Diagnostics.mark("share.publishAnalysis: トークンが取れない — 何もしない")
-            return (0, 0)
+            return bail("トークンが取れない")
+        }
+
+        // ⚠️ **公開するのは 1 台だけ**（ADR-222 追補）。端末フォルダは分かれているので
+        // ファイルは壊れないが、2 台で公開すると同じ解析が台数ぶん Dropbox に積まれる。
+        // 止めるのではなく知らせる——利用者が設定で「この端末で公開する」を選べば引き継げる
+        // （端末を失くしたら、そうでないと永久に公開が止まる）。
+        let copier = DropboxShareCopier(httpClient: httpClient)
+        let ownerPath = BackupLayout.analysisOwnerPath(root: backupRoot)
+        let remoteOwner = await copier.downloadFile(path: ownerPath, token: token)
+            .flatMap(AnalysisOwnership.decode)
+        let decision = AnalysisOwnership.decide(
+            remote: remoteOwner, myDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+            acknowledgedDeviceFolder: defaults.string(forKey: ShareSettingsKeys.acknowledgedAnalysisOwner))
+        guard AnalysisOwnership.allowsPublishing(decision) else {
+            guard case .otherDevice(let owner) = decision else { return bail("公開できない") }
+            var outcome = bail("別の端末（\(owner.deviceFolder)）が公開している — 設定で確認して下さい")
+            outcome.blockedBy = owner
+            return outcome
         }
         Diagnostics.mark("share.publishAnalysis: 開始（写真 \(photos.count) 枚）")
 
@@ -99,15 +116,14 @@ public final class AnalysisPublisher {
                                                 cursor: defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor),
                                                 budget: budget)
         guard !plan.uploads.isEmpty || !plan.stale.isEmpty else {
-            Diagnostics.mark("share.publishAnalysis: 変更なし（写真 \(photos.count)・シャード \(files.count)）")
-            return (0, 0)
+            // 変更が無い回も名乗りは更新する（「この端末は生きている」を残す＝引き継ぎの判断材料）。
+            await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
+                             photoCount: entries.count, token: token)
+            return bail("変更なし（写真 \(photos.count)・シャード \(files.count)）")
         }
 
-        let root = BackupLayout.analysisRoot(
-            root: defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
-                ?? BackupSettingsKeys.defaultDropboxFolder,
-            deviceFolder: BackupDeviceIdentity.currentFolderName())
-        let copier = DropboxShareCopier(httpClient: httpClient)
+        let root = BackupLayout.analysisRoot(root: backupRoot,
+                                             deviceFolder: BackupDeviceIdentity.currentFolderName())
         var digests = publishedDigests()
         var uploaded = 0
         for upload in plan.uploads {
@@ -127,9 +143,45 @@ public final class AnalysisPublisher {
         }
         setPublishedDigests(digests)
         defaults.set(plan.nextCursor, forKey: ShareSettingsKeys.publishAnalysisCursor)
-        Diagnostics.mark("share.publishAnalysis: 上げた \(uploaded)/\(plan.uploads.count) シャード"
-                         + "（残り \(plan.remaining)・消した \(plan.stale.count)・写真 \(entries.count)）")
-        return (uploaded, plan.remaining)
+        await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
+                         photoCount: entries.count, token: token)
+        let message = "上げた \(uploaded)/\(plan.uploads.count) シャード"
+            + "（残り \(plan.remaining)・消した \(plan.stale.count)・写真 \(entries.count)）"
+        Diagnostics.mark("share.publishAnalysis: " + message)
+        return Outcome(uploaded: uploaded, remaining: plan.remaining, message: message)
+    }
+
+    /// 設定のバックアップルート。
+    private var backupRoot: String {
+        defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
+            ?? BackupSettingsKeys.defaultDropboxFolder
+    }
+
+    /// 何もせず抜けるときの共通処理。**理由は必ずログに残す**（実機ログ diagnostics-83/84）。
+    private func bail(_ reason: String) -> Outcome {
+        Diagnostics.mark("share.publishAnalysis: \(reason)")
+        return Outcome(message: reason)
+    }
+
+    /// 名乗りを書く（引き継いだ場合もここで自分になる）。失敗しても公開自体は成功扱い
+    /// ——名乗りは助言であって、公開の正しさには関わらない。
+    private func writeOwner(copier: DropboxShareCopier, path: String,
+                            previous: AnalysisOwnership.Owner?, photoCount: Int,
+                            token: String) async {
+        let owner = AnalysisOwnership.claim(
+            myDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+            myDeviceName: BackupDeviceIdentity.currentDisplayName(),
+            previous: previous, now: Date(), photoCount: photoCount)
+        guard let data = AnalysisOwnership.encode(owner) else { return }
+        _ = await copier.uploadFile(data: data, to: path, token: token)
+    }
+
+    /// 今の名乗りを読む（設定画面の注意書き用）。
+    public func currentOwner() async -> AnalysisOwnership.Owner? {
+        guard let token = try? await tokenProvider.freshAccessToken() else { return nil }
+        let copier = DropboxShareCopier(httpClient: httpClient)
+        return await copier.downloadFile(path: BackupLayout.analysisOwnerPath(root: backupRoot),
+                                         token: token).flatMap(AnalysisOwnership.decode)
     }
 
     /// 1 回に解析結果を問い合わせる写真の数（base64 の一時文字列を抱え込まないため）。

@@ -44,11 +44,19 @@ public enum ShareSettingsKeys {
     /// 人物名・撮影日）は各自の端末でやり直しになっていた。ON なら `<root>/<端末>/Analysis` へ
     /// 解析結果だけを置き、同じ Dropbox に接続した端末が取り込める。
     /// ⚠️ 人物名を載せるかは従来どおり `shareNamesEnabled` が決める（OFF なら顔だけ）。
+    /// 解析結果を公開するか（ADR-222）。
+    ///
+    /// ⚠️ **既定は OFF**（ADR-222 追補）。公開は端末フォルダごとに分かれるのでファイルは壊れないが、
+    /// 2 台で ON にすると**同じ写真の解析が台数ぶん Dropbox に積まれる**（1 台 100〜200MB）。
+    /// 「気づいたら容量を倍使っていた」を既定にしたくないので、入れるのは利用者の意思に任せる。
     public static let publishAnalysisEnabled = "sharePublishAnalysisEnabled"
     public static func isPublishAnalysisEnabled(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: publishAnalysisEnabled) == nil
-            ? true : defaults.bool(forKey: publishAnalysisEnabled)
+        defaults.bool(forKey: publishAnalysisEnabled)
     }
+
+    /// 「別の端末が公開しているが、この端末で公開する」と利用者が選んだときの、
+    /// **そのとき名乗っていた端末**のフォルダ名（`AnalysisOwnership.decide` に渡す）。
+    public static let acknowledgedAnalysisOwner = "shareAcknowledgedAnalysisOwner"
 
     /// 公開済みシャードの指紋（[シャード名: 指紋] の JSON）。変わったシャードだけ上げ直す。
     public static let publishedAnalysisDigests = "sharePublishedAnalysisDigests"

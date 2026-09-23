@@ -94,7 +94,13 @@ struct SettingsView: View {
                     ShareHubView(engine: stores.shareEngine,
                                  onFamilyFoldersChanged: { shareFamilyFoldersChanged() },
                                  onImportNow: { await stores.shareImporter.runIfNeeded() },
-                                 onPublishNow: { await stores.analysisPublisher.runIfNeeded() })
+                                 onPublishNow: { await stores.analysisPublisher.runIfNeeded() },
+                                 onCheckPublishingDevice: {
+                                     await stores.analysisPublisher.otherPublishingDevice()
+                                 },
+                                 onTakeOverPublishing: {
+                                     stores.analysisPublisher.takeOverPublishing()
+                                 })
                 } label: {
                     row(L("Cloud Sharing"), systemImage: "icloud.and.arrow.up")
                 }
