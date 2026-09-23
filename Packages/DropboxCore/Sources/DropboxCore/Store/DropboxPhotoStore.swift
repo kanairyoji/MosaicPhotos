@@ -138,14 +138,28 @@ public final class DropboxPhotoStore {
     static let quietWindowDefault: TimeInterval = 1.5
     /// 待ち続けないための頭打ち。変化が止まらなくてもこの間隔では必ず 1 回反映する。
     static let maxCoalesceWindow: TimeInterval = 8.0
+    /// **背面での最短間隔**（誰も一覧を見ていない・実機ログ diagnostics-89）。
+    ///
+    /// ⚠️ 「静かになってから 1 回」だけでは足りなかった。バックアップ中の delta は **3 秒おき**に
+    /// 届くので、無風 1.5 秒を毎回満たして**変化のたびに作り直していた**
+    /// ——5 分の窓で 60 回・合計 102 秒（1 回 1.1〜2.6 秒・73,936 行）。
+    /// 背面では誰も一覧を見ていないので、**回数の上限**を別に設ける。
+    /// 0 にはできない: 背面の解析候補の列挙（`AnalysisCandidates`）が `items` を読むので、
+    /// 新しいクラウド写真がいつまでも解析対象にならなくなる。
+    static let backgroundRefreshInterval: TimeInterval = 30.0
     /// テストから短くするための穴（既定は `quietWindowDefault`）。
     @ObservationIgnored var quietWindow: TimeInterval = DropboxPhotoStore.quietWindowDefault
+    /// 同じくテスト用（背面の 30 秒を待たずに上限の効きを見る）。
+    @ObservationIgnored var refreshIntervalOverrideForTesting: TimeInterval?
     /// 初回同期中は delta ページが多数届くため、UI 反映（全件 fetch＋マージ＋グリッド再構築）を
     /// 粗い間隔へ間引いて O(N) 再処理の回数を抑える（完了時に最終反映を即時実行する）。
     private static let initialSyncRefreshInterval: TimeInterval = 5.0
 
-    /// 現在の状態に応じた反映間隔。初回同期中だけ粗くする。
+    /// 現在の状態に応じた反映間隔（＝この間隔より頻繁には作り直さない）。
+    /// 初回同期中は粗く、**背面はさらに粗く**（見ている人がいない・ADR-224）。
     private var currentRefreshInterval: TimeInterval {
+        if let refreshIntervalOverrideForTesting { return refreshIntervalOverrideForTesting }
+        if BackgroundYield.scenePhase != .active { return Self.backgroundRefreshInterval }
         if case .initialSync = syncState { return Self.initialSyncRefreshInterval }
         return Self.cacheRefreshInterval
     }
@@ -451,7 +465,7 @@ public final class DropboxPhotoStore {
     private func scheduleCacheRefresh(immediate: Bool = false) {
         lastCacheChange = immediate ? .distantPast : Date()
         guard trailingRefreshTask == nil else { return }   // 既に保留中なら集約
-        let deadline = Date().addingTimeInterval(Self.maxCoalesceWindow)
+        let deadline = Date().addingTimeInterval(max(Self.maxCoalesceWindow, currentRefreshInterval))
         trailingRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }

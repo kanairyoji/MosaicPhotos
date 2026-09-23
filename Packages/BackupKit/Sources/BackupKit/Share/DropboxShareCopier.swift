@@ -197,6 +197,8 @@ struct DropboxShareCopier {
     // MARK: - 解析データのアップロード（上書き）
 
     private static let uploadURL = "https://content.dropboxapi.com/2/files/upload"
+    /// 429 の待ちの頭打ち（窓を食い潰さないため）。
+    static let maxRetryAfterSeconds: Double = 5
 
     /// 小さなファイル（解析データ JSON）を上書きアップロードする。
     func uploadFile(data: Data, to path: String, token: String) async -> Bool {
@@ -215,16 +217,29 @@ struct DropboxShareCopier {
         req.timeoutInterval = 60
         // ⚠️ **理由を残す**（実機ログ diagnostics-86）。以前はパスだけを書いていたので、
         // 回線が切れたのか・レート制限（429）なのか・権限（401）なのか分からなかった。
-        guard let (_, resp) = try? await httpClient.data(for: req) else {
-            BackupLogger.error("ShareCopier: analysis data upload failed (transport) — \(path)")
-            return false
+        //
+        // ⚠️ **429 は 1 回だけ待ち直す**（実機ログ diagnostics-89）。夜の窓では共有セットの反映と
+        // 解析の公開が小さな JSON を続けざまに上げるので、バックアップの送信と重なると
+        // Dropbox が 429 を返す。1 回の失敗で畳むと、そのシャードは次の窓（30 分後）まで来ない。
+        // 待ち時間は `Retry-After` に従う（無ければ 1 秒）。長すぎる指定は窓を食うので頭打ち。
+        for attempt in 0...1 {
+            guard let (_, resp) = try? await httpClient.data(for: req) else {
+                BackupLogger.error("ShareCopier: analysis data upload failed (transport) — \(path)")
+                return false
+            }
+            let http = resp as? HTTPURLResponse
+            let status = http?.statusCode ?? -1
+            if status == 200 { return true }
+            guard status == 429, attempt == 0 else {
+                BackupLogger.error("ShareCopier: analysis data upload failed (HTTP \(status)) — \(path)")
+                return false
+            }
+            let retryAfter = (http?.value(forHTTPHeaderField: "Retry-After")).flatMap(Double.init) ?? 1
+            let wait = min(max(retryAfter, 1), Self.maxRetryAfterSeconds)
+            BackupLogger.info("ShareCopier: upload 429 — waiting \(Int(wait))s — \(path)")
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
         }
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
-        guard status == 200 else {
-            BackupLogger.error("ShareCopier: analysis data upload failed (HTTP \(status)) — \(path)")
-            return false
-        }
-        return true
+        return false
     }
 
     /// パスのファイルをダウンロードする（受信側の解析データ読み込み用）。存在しない・エラーは nil。

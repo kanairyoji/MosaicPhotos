@@ -270,7 +270,7 @@ public enum PerceptionModels {
     @MainActor
     public static func releaseFaceModelIfDone(backlog: Int, reason: String) -> Bool {
         guard backlog == 0, BackgroundYield.scenePhase != .active else { return false }
-        guard FaceModelRuntime.shared.releaseForIdle() else { return false }
+        guard FaceModelRuntime.shared.releaseForIdle(reason: reason) else { return false }
         Diagnostics.mark("models released (\(reason))")
         return true
     }
@@ -282,7 +282,7 @@ public enum PerceptionModels {
     public static func releaseForIdle(reason: String) -> Bool {
         guard BackgroundYield.scenePhase != .active else { return false }
         let clip = MobileCLIPRuntime.shared.releaseForIdle()
-        let face = FaceModelRuntime.shared.releaseForIdle()
+        let face = FaceModelRuntime.shared.releaseForIdle(reason: reason)
         guard clip || face else { return false }
         Diagnostics.mark("models released (\(reason))")
         return true

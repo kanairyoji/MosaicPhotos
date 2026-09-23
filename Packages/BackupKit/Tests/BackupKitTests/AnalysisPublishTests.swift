@@ -302,6 +302,27 @@ struct AnalysisPublishFailureTests {
         withExtendedLifetime(source) {}
     }
 
+    /// ⚠️ **429 は 1 回だけ待ち直す**（実機ログ diagnostics-89）。夜の窓では共有の反映と公開が
+    /// 小さな JSON を続けざまに上げるので、バックアップの送信と重なると 429 が返る。
+    /// 1 回で畳むと、そのシャードは次の窓（30 分後）まで来ない。
+    @Test("429 は 1 回待ち直して、成功なら上げたことにする")
+    func retriesOnceAfterRateLimit() async {
+        let photos = [AnalysisPublisher.CloudPhoto(refKey: "C-/a.jpg",
+                                                   contentHash: String(repeating: "a", count: 64))]
+        let source = StubAnalysisSource()
+        let defaults = TestDefaults.scratch("publish-429")
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        // 名乗りの確認 → 429 → （待ち直して）成功 → 名乗りの書き込み。
+        let stub = SequencedClient([(409, "{}"), (429, "{}"), (200, "{}"), (200, "{}")])
+        let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
+                                          httpClient: stub, defaults: defaults)
+
+        let outcome = await publisher.publish(photos: photos, budget: 8)
+
+        #expect(outcome.uploaded == 1, "429 で畳んでいる（次の窓まで来ない）")
+        withExtendedLifetime(source) {}
+    }
+
     /// 1 個も済まなければ印は据え置き（同じ窓をもう一度）。
     @Test("最初のシャードで失敗したら印は動かさない")
     func cursorStaysWhenNothingSucceeded() async {

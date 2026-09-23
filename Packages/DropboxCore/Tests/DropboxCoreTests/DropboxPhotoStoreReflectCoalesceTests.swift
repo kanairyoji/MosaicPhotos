@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import MosaicSupport
 import Testing
 @testable import DropboxCore
 
@@ -74,6 +75,41 @@ struct DropboxPhotoStoreReflectCoalesceTests {
             （実機では 73,936 行 × 21 回＝27 秒になった）。
             """)
         #expect(store.items.count == 11, "まとめた結果が最新を反映していない")
+    }
+
+    /// ⚠️ **無風だけでは足りない**（実機ログ diagnostics-89）。バックアップ中の delta は
+    /// **3 秒おき**に届くので、無風 1.5 秒を毎回満たして作り直しが 5 分で 60 回・102 秒になった。
+    /// 背面は誰も一覧を見ていないので、**回数の上限**（既定 30 秒に 1 回）で抑える。
+    @Test("背面では、変化が 3 秒おきに来ても作り直しは上限まで")
+    func backgroundRefreshIsRateLimited() async throws {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        await cache.applyDelta(accountId: "acct-bg",
+                               added: [DropboxFileItem(path: "/g/0.jpg", name: "0.jpg", contentHash: "h0")],
+                               removed: [], newCursor: "c0")
+        let store = makeStore(cache: cache, accountId: "acct-bg")
+        store.quietWindow = 0.05
+        store.refreshIntervalOverrideForTesting = 1.0   // 背面の「30 秒に 1 回」をテスト用に 1 秒へ
+        BackgroundYield.setScenePhase(.background)
+        defer { BackgroundYield.setScenePhase(.active) }
+        let before = await cache.materializeCallsForTesting
+
+        // 実機と同じ形: 0.15 秒おきに変化が届く（無風 0.05 秒は毎回満たす）。
+        for i in 1...8 {
+            await cache.applyDelta(accountId: "acct-bg",
+                                   added: [DropboxFileItem(path: "/g/\(i).jpg", name: "\(i).jpg",
+                                                           contentHash: "h\(i)")],
+                                   removed: [], newCursor: "c\(i)")
+            store.refreshItemsFromCacheSoon()
+            try await Task.sleep(nanoseconds: 150_000_000)
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let materialized = await cache.materializeCallsForTesting - before
+        #expect(materialized <= 2, """
+            1.2 秒の間に作り直しが \(materialized) 回走った（上限 1 秒に 1 回のはず）。
+            無風だけを見ていると、実機のように 3 秒おきの変化で毎回走る。
+            """)
+        #expect(materialized >= 1, "背面でも最低 1 回は反映すること（解析候補が古いままになる）")
     }
 }
 #endif

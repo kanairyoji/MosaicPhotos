@@ -45,10 +45,10 @@ final class FaceModelRuntime: @unchecked Sendable {
     /// 夜の処理枠が終わったので手放す（ADR-223）。次回の窓で再ロードされる。
     /// - Returns: 実際に手放したか。
     @discardableResult
-    func releaseForIdle() -> Bool {
+    func releaseForIdle(reason: String = "idle") -> Bool {
         guard box.isLoaded else { return false }
         box.reset()
-        Self.log.info("face model released (window ended)")
+        Self.log.info("face model released (\(reason))")
         return true
     }
 
