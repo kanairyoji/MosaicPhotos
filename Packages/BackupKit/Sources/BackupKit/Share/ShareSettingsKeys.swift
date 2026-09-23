@@ -50,8 +50,14 @@ public enum ShareSettingsKeys {
     /// 2 台で ON にすると**同じ写真の解析が台数ぶん Dropbox に積まれる**（1 台 100〜200MB）。
     /// 「気づいたら容量を倍使っていた」を既定にしたくないので、入れるのは利用者の意思に任せる。
     public static let publishAnalysisEnabled = "sharePublishAnalysisEnabled"
+    /// ⚠️ **画面の `@AppStorage` にもこれを渡す**（実機ログ diagnostics-86）。
+    /// 既定を OFF にしたとき、キーの読み出し側だけ直して画面側は `= true` のままだった
+    /// ——**トグルは ON に見えるのに公開は「設定がオフ」で何もしない**、という食い違いになる。
+    /// 既定は 1 か所にしか書かない。
+    public static let publishAnalysisDefault = false
     public static func isPublishAnalysisEnabled(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: publishAnalysisEnabled)
+        defaults.object(forKey: publishAnalysisEnabled) == nil
+            ? publishAnalysisDefault : defaults.bool(forKey: publishAnalysisEnabled)
     }
 
     /// 「別の端末が公開しているが、この端末で公開する」と利用者が選んだときの、

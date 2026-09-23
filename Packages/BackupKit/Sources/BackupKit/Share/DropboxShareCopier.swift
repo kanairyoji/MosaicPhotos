@@ -213,9 +213,15 @@ struct DropboxShareCopier {
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         req.httpBody = data
         req.timeoutInterval = 60
-        guard let (_, resp) = try? await httpClient.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            BackupLogger.error("ShareCopier: analysis data upload failed — \(path)")
+        // ⚠️ **理由を残す**（実機ログ diagnostics-86）。以前はパスだけを書いていたので、
+        // 回線が切れたのか・レート制限（429）なのか・権限（401）なのか分からなかった。
+        guard let (_, resp) = try? await httpClient.data(for: req) else {
+            BackupLogger.error("ShareCopier: analysis data upload failed (transport) — \(path)")
+            return false
+        }
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            BackupLogger.error("ShareCopier: analysis data upload failed (HTTP \(status)) — \(path)")
             return false
         }
         return true

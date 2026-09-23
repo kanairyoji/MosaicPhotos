@@ -103,6 +103,7 @@ public final class AnalysisPublisher {
             refKeysByShard[ShareAnalysisData.shardName(forHash: hash), default: []].append(photo.refKey)
             hashByRefKey[photo.refKey] = hash
         }
+        let allShards = refKeysByShard.keys.sorted()
         let window = AnalysisPublishPlanning.window(
             presentShards: Set(refKeysByShard.keys),
             publishedDigests: publishedDigests(),
@@ -116,8 +117,13 @@ public final class AnalysisPublisher {
         var digests = publishedDigests()
         var uploaded = 0
         var publishedPhotos = 0
+        // ⚠️ **上げ損ねたシャードを飛ばさない**（実機ログ diagnostics-86）。
+        // 回線が切れて 1 個失敗したとき、印（cursor）を窓の最後まで進めてしまうと、その shard は
+        // **一巡（32 窓＝半日）待たされる**。どこまで済んだかで印を決め、失敗したら次回そこから。
+        var lastDone: String?
+        var failed: String?
         for shard in window.shards {
-            guard let refKeys = refKeysByShard[shard] else { continue }
+            guard let refKeys = refKeysByShard[shard] else { lastDone = shard; continue }
             // このシャードの写真ぶんだけ解析を取る（数百枚）。取れた中身は次の shard へ持ち越さない。
             let result = await source.analysisEntries(forRefKeys: refKeys)
             var entries: [String: ShareAnalysisData.Entry] = [:]
@@ -126,15 +132,20 @@ public final class AnalysisPublisher {
                 entries[hash] = entry
             }
             // まだ 1 枚も解析されていないシャードは置かない（空のファイルを作らない）。
-            guard !entries.isEmpty else { continue }
+            guard !entries.isEmpty else { lastDone = shard; continue }
             publishedPhotos += entries.count
             let file = ShareAnalysisData.File(versions: result.versions, entries: entries)
-            guard let data = AnalysisPublishPlanning.encoded(file) else { continue }
+            guard let data = AnalysisPublishPlanning.encoded(file) else { lastDone = shard; continue }
             let digest = AnalysisPublishPlanning.fingerprint(data)
-            guard digests[shard] != digest else { continue }   // 変わっていないシャードは上げない
+            guard digests[shard] != digest else { lastDone = shard; continue }   // 変わっていなければ上げない
             let path = ShareAnalysisData.shardPath(setFolderPath: root, shard: shard)
-            guard await copier.uploadFile(data: data, to: path, token: token) else { break }
+            guard await copier.uploadFile(data: data, to: path, token: token) else {
+                // 回線が切れた・レート制限。残りも失敗する見込みなので畳むが、印は進めない。
+                failed = shard
+                break
+            }
             digests[shard] = digest
+            lastDone = shard
             uploaded += 1
         }
         // 対象から消えたシャード（写真が Dropbox から消えた等）は消す。記録も落とす。
@@ -147,17 +158,29 @@ public final class AnalysisPublisher {
             }
         }
         setPublishedDigests(digests)
-        defaults.set(window.nextCursor, forKey: ShareSettingsKeys.publishAnalysisCursor)
+        // 済んだところまでで印を決める（失敗した shard は次回そこから）。
+        defaults.set(cursorAfter(lastDone: lastDone, shards: allShards),
+                     forKey: ShareSettingsKeys.publishAnalysisCursor)
         // 変更が無い回も名乗りは更新する（「この端末は生きている」を残す＝引き継ぎの判断材料）。
         await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
                          photoCount: photos.count, token: token)
-        let message = uploaded == 0 && window.stale.isEmpty
+        let failure = failed.map { "・\($0) で失敗したので次回はそこから" } ?? ""
+        let message = uploaded == 0 && window.stale.isEmpty && failed == nil
             ? "変更なし（見たシャード \(window.shards.count)・写真 \(publishedPhotos)）"
             : "上げた \(uploaded)/\(window.shards.count) シャード"
                 + "（見ていないシャード \(window.remaining)・消した \(window.stale.count)"
-                + "・写真 \(publishedPhotos)）"
+                + "・写真 \(publishedPhotos)\(failure)）"
         Diagnostics.mark("share.publishAnalysis: " + message)
         return Outcome(uploaded: uploaded, remaining: window.remaining, message: message)
+    }
+
+    /// 次回の再開位置。**済んだところまで**で決める（失敗した shard は次回そこから引き直す）。
+    /// 1 個も済んでいなければ印は据え置き（同じ窓をもう一度）。
+    private func cursorAfter(lastDone: String?, shards: [String]) -> Int {
+        guard let lastDone, let index = shards.firstIndex(of: lastDone) else {
+            return defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor)
+        }
+        return shards.isEmpty ? 0 : (index + 1) % shards.count
     }
 
     /// 設定のバックアップルート。

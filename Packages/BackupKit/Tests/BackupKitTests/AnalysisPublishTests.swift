@@ -268,6 +268,71 @@ struct AnalysisPublisherOwnershipTests {
     }
 }
 
+/// 上げ損ねたときの続き方（実機ログ diagnostics-86）。
+@Suite("公開が途中で失敗したとき（ADR-222）")
+@MainActor
+struct AnalysisPublishFailureTests {
+
+    /// ⚠️ 失敗した shard を飛ばして印を進めると、その shard は**一巡（半日）待たされる**。
+    @Test("上げ損ねたら、次回はその shard から")
+    func cursorStopsAtTheFailedShard() async {
+        // 8 シャード × 1 枚。3 個目のアップロードで回線が切れる想定。
+        let photos = (0..<8).map { i in
+            AnalysisPublisher.CloudPhoto(
+                refKey: "C-/p\(i).jpg",
+                contentHash: String(format: "%02x", i) + String(repeating: "0", count: 62))
+        }
+        let source = StubAnalysisSource()
+        let defaults = TestDefaults.scratch("publish-failure")
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        let stub = SequencedClient([(409, "{}"),                     // 名乗りの確認（未設定）
+                                    (200, "{}"), (200, "{}"),        // shard 00, 01 は成功
+                                    (503, "{}"),                     // shard 02 で失敗
+                                    (200, "{}")])                    // 名乗りの書き込み
+        let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
+                                          httpClient: stub, defaults: defaults)
+
+        let outcome = await publisher.publish(photos: photos, budget: 8)
+
+        #expect(outcome.uploaded == 2)
+        // 印は「済んだ最後」＝ shard 01 の次＝索引 2（= 失敗した shard 02）を指す。
+        #expect(defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor) == 2, """
+            印が窓の最後まで進んでいる。失敗した shard は一巡（32 窓＝半日）待たされる。
+            """)
+        withExtendedLifetime(source) {}
+    }
+
+    /// 1 個も済まなければ印は据え置き（同じ窓をもう一度）。
+    @Test("最初のシャードで失敗したら印は動かさない")
+    func cursorStaysWhenNothingSucceeded() async {
+        let photos = [AnalysisPublisher.CloudPhoto(refKey: "C-/a.jpg",
+                                                   contentHash: String(repeating: "a", count: 64))]
+        let source = StubAnalysisSource()
+        let defaults = TestDefaults.scratch("publish-failure")
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        defaults.set(0, forKey: ShareSettingsKeys.publishAnalysisCursor)
+        let stub = SequencedClient([(409, "{}"), (503, "{}"), (200, "{}")])
+        let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
+                                          httpClient: stub, defaults: defaults)
+
+        let outcome = await publisher.publish(photos: photos, budget: 8)
+
+        #expect(outcome.uploaded == 0)
+        #expect(defaults.integer(forKey: ShareSettingsKeys.publishAnalysisCursor) == 0)
+        withExtendedLifetime(source) {}
+    }
+
+    /// ⚠️ 既定は 1 か所にしか書かない（画面の `@AppStorage` も同じ値を使う）。
+    /// 画面側だけ `= true` のままだったので、**トグルは ON に見えるのに公開は「設定がオフ」**
+    /// という食い違いが実機で出た。
+    @Test("公開の設定の既定は 1 か所（画面と読み出しで食い違わない）")
+    func defaultIsSingleSourceOfTruth() {
+        let defaults = TestDefaults.scratch("publish-default2")
+        #expect(ShareSettingsKeys.isPublishAnalysisEnabled(defaults)
+                == ShareSettingsKeys.publishAnalysisDefault)
+    }
+}
+
 /// ADR-119 の規模テスト: **1 回の公開が、ライブラリ全体を実体化しない**こと。
 ///
 /// ⚠️ 実機（diagnostics-85）で 637MB まで上がった形がこれ——「1 回ぶんに見える呼び出し」が

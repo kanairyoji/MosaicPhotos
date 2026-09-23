@@ -21,6 +21,36 @@
 
 ---
 
+## トグルは ON に見えるのに「設定がオフ」— 既定値を 2 か所に書いていた
+
+2026-09-23（実機ログ diagnostics-86）。
+
+- 症状: 設定で「写真の解析結果を共有」が ON に見えるのに、「今すぐ公開」を押すと
+  `share.publishAnalysis: 設定がオフ` で何も起きない（2 回）。一度 OFF にして ON にし直すと動いた。
+- 原因: 既定を ON → OFF に変えたとき（ADR-222 追補）、**読み出し側**
+  （`ShareSettingsKeys.isPublishAnalysisEnabled`）だけを直し、**画面側**の
+  `@AppStorage(...) private var publishAnalysisEnabled = true` を直し忘れた。
+  キーが未設定のあいだ、画面は既定 `true`（ON に見える）・公開は既定 `false`（オフ）と食い違う。
+  OFF→ON でキーが**実際に書かれる**と食い違いが消えるので、「触ったら直った」ように見える。
+- 対処: 既定を `ShareSettingsKeys.publishAnalysisDefault` の 1 か所にし、画面の `@AppStorage` も
+  それを使う。読み出しは `object(forKey:) == nil` を見て既定へ倒す。
+  回帰テスト: 「読み出しの既定と公開の既定が一致する」。
+- 教訓: **`@AppStorage` の既定値は「もう 1 つの定義」**。キーの既定を変えたら、そのキーを使う
+  すべての `@AppStorage` を grep すること（あるいは既定を定数にして両方から使う）。
+- 関連: `Share/ShareSettingsKeys.swift` / `Share/ShareHubView.swift`。ADR-222。
+
+## 上げ損ねたシャードが半日待たされる — 印を窓の最後まで進めていた
+
+2026-09-23（実機ログ diagnostics-86）。
+
+- 症状: 公開の最中に `ShareCopier: analysis data upload failed — …/shard-0c.json`（回線が切れた回）。
+  結果は「上げた 4/8」。残り 4 個は次の窓で……とはならず、**一巡（32 窓＝約半日）後**まで来ない。
+- 原因: 失敗したら `break` していたのに、続きの印（cursor）は**窓の最後**（`window.nextCursor`）を
+  書いていた。上げ損ねた shard も「見た」ことにしていた。
+- 対処: 印は**済んだ最後の shard**で決める（失敗した shard は次回そこから）。1 個も済まなければ
+  据え置き＝同じ窓をもう一度。アップロード失敗のログに **HTTP ステータス**（429 / 401 / 切断）も出す。
+- 関連: `Share/AnalysisPublisher.swift` / `Share/DropboxShareCopier.swift`。ADR-222。
+
 ## 解析の公開 1 回が 637MB を積む — 全シャードを一度に組み立てていた
 
 2026-09-23（実機ログ diagnostics-85）。

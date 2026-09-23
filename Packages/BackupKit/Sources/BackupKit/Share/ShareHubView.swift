@@ -20,7 +20,8 @@ public struct ShareHubView: View {
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
-    @AppStorage(ShareSettingsKeys.publishAnalysisEnabled) private var publishAnalysisEnabled = true
+    @AppStorage(ShareSettingsKeys.publishAnalysisEnabled)
+    private var publishAnalysisEnabled = ShareSettingsKeys.publishAnalysisDefault
     @State private var familyFolders: [String] = ShareSettingsKeys.currentFamilyFolders()
     @State private var isPublishing = false
     @State private var publishStatus: String?
