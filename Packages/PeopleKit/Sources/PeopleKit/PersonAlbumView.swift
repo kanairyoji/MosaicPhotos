@@ -142,7 +142,7 @@ public struct PersonAlbumView: View {
             .environment(\.sourceMenuContent) {
                 AnyView(
                     Button { menuTarget = current } label: { Image(systemName: "ellipsis.circle") }
-                        .accessibilityLabel(Text("Person options"))
+                        .accessibilityLabel(Text(L("Person options")))
                 )
             }
     }

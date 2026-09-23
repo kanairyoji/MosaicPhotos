@@ -34,7 +34,7 @@ public struct PersonCleanupView: View {
                     ContentUnavailableView(
                         L("No split candidates"),
                         systemImage: "person.crop.circle.badge.checkmark",
-                        description: Text("This person looks consistent. To remove individual photos, use Manage Faces."))
+                        description: Text(L("This person looks consistent. To remove individual photos, use Manage Faces.")))
                 } else {
                     groupList
                 }
@@ -63,7 +63,7 @@ public struct PersonCleanupView: View {
             Button(L("Separate"), role: .destructive) { separate() }
             Button(L("Cancel"), role: .cancel) {}
         } message: {
-            Text("Selected groups become separate people. The app also learns from this so they stay apart.")
+            Text(L("Selected groups become separate people. The app also learns from this so they stay apart."))
         }
     }
 
@@ -76,7 +76,7 @@ public struct PersonCleanupView: View {
             } header: {
                 Text("Found \(subgroups.count) groups")
             } footer: {
-                Text("Check the groups that are NOT this person, then tap Separate. The largest group stays as this person.")
+                Text(L("Check the groups that are NOT this person, then tap Separate. The largest group stays as this person."))
             }
         }
     }

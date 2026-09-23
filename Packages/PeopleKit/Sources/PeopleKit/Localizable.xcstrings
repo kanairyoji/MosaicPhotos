@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Check the groups that are NOT this person, then tap Separate. The largest group stays as this person.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物ではないグループにチェックを付けて「分ける」を押してください。いちばん大きいグループがこの人物として残ります。"
+          }
+        }
+      }
+    },
+    "Selected groups become separate people. The app also learns from this so they stay apart.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選んだグループを別の人物にします。この判断は学習され、以後は混ざりにくくなります。"
+          }
+        }
+      }
+    },
+    "This person looks consistent. To remove individual photos, use Manage Faces.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この人物にばらつきは見当たりません。写真を 1 枚ずつ外すときは「顔の整理」を使ってください。"
+          }
+        }
+      }
+    },
+    "Group options": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "グループの操作"
+          }
+        }
+      }
+    },
     "%@ alike": {
       "localizations": {
         "ja": {

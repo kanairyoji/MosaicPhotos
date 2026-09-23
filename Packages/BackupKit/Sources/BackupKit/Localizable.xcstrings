@@ -1,6 +1,36 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Swipe to remove a photo from this set (the copy in the shared folder is removed on the next sync; the original is kept).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スワイプでこのセットから写真を外せます（共有フォルダ側のコピーは次回の同期で削除され、元の写真は残ります）。"
+          }
+        }
+      }
+    },
+    "Share this folder with others in the Dropbox app (inviting them as view-only is recommended). It sits under your backup folder, next to your backups, so everything for this device is in one place.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このフォルダを Dropbox アプリで共有できます（閲覧のみで招待することをおすすめします）。バックアップ用フォルダの下にあるので、この端末のものが 1 か所にまとまります。"
+          }
+        }
+      }
+    },
+    "Photo on this device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この端末の写真"
+          }
+        }
+      }
+    },
     "%d failed": {
       "localizations": {
         "ja": {

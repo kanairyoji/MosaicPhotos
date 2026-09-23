@@ -302,7 +302,7 @@ public struct PeopleGroupAlbumView: View {
                             Button { menuTarget = group } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
-                            .accessibilityLabel(Text("Group options"))
+                            .accessibilityLabel(Text(L("Group options")))
                         )
                     }
                     .peopleGroupActions(for: $menuTarget, engine: peopleEngine)
