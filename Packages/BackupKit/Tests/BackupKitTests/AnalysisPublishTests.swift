@@ -251,9 +251,11 @@ struct AnalysisPublisherOwnershipTests {
 
     @Test("誰も名乗っていなければ公開し、名乗りを書く")
     func claimsAfterPublishing() async {
-        // 409（＝まだ無い）→ シャードのアップロード → 名乗りのアップロード。
+        // 409（＝まだ無い）→ **名乗りを先に書く** → シャード → 最後に名乗りを更新。
+        // ⚠️ 名乗りが先なのは、窓が切れる間際でも「この端末が公開者」を残すため
+        // （実機ログ diagnostics-91: 最後に書いていたら名乗りごと落ちた）。
         let stub = SequencedClient([(409, #"{"error_summary":"path/not_found/.."}"#),
-                                    (200, "{}"), (200, "{}")])
+                                    (200, "{}"), (200, "{}"), (200, "{}")])
         let source = StubAnalysisSource()
         let publisher = publisher(stub, defaults: TestDefaults.scratch("publish-owner"),
                                   source: source)
@@ -262,8 +264,8 @@ struct AnalysisPublisherOwnershipTests {
 
         #expect(outcome.uploaded == 1)
         #expect(outcome.blockedBy == nil)
-        // 1（名乗りの確認）＋ 1（シャード）＋ 1（名乗りの書き込み）
-        #expect(await stub.count() == 3, "名乗りを書いていない（次の端末が気づけない）")
+        // 1（名乗りの確認）＋ 1（先に名乗る）＋ 1（シャード）＋ 1（名乗りの更新）
+        #expect(await stub.count() == 4, "名乗りを書いていない（次の端末が気づけない）")
         withExtendedLifetime(source) {}
     }
 }
@@ -286,9 +288,10 @@ struct AnalysisPublishFailureTests {
         let defaults = TestDefaults.scratch("publish-failure")
         defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
         let stub = SequencedClient([(409, "{}"),                     // 名乗りの確認（未設定）
+                                    (200, "{}"),                     // 先に名乗る
                                     (200, "{}"), (200, "{}"),        // shard 00, 01 は成功
-                                    (503, "{}"),                     // shard 02 で失敗
-                                    (200, "{}")])                    // 名乗りの書き込み
+                                    (503, "{}"), (503, "{}"),        // shard 02 は 2 回とも失敗
+                                    (200, "{}")])                    // 名乗りの更新
         let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
                                           httpClient: stub, defaults: defaults)
 
@@ -312,8 +315,8 @@ struct AnalysisPublishFailureTests {
         let source = StubAnalysisSource()
         let defaults = TestDefaults.scratch("publish-429")
         defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
-        // 名乗りの確認 → 429 → （待ち直して）成功 → 名乗りの書き込み。
-        let stub = SequencedClient([(409, "{}"), (429, "{}"), (200, "{}"), (200, "{}")])
+        // 名乗りの確認 → 先に名乗る → 429 → （待ち直して）成功 → 名乗りの更新。
+        let stub = SequencedClient([(409, "{}"), (200, "{}"), (429, "{}"), (200, "{}"), (200, "{}")])
         let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
                                           httpClient: stub, defaults: defaults)
 
@@ -332,7 +335,8 @@ struct AnalysisPublishFailureTests {
         let defaults = TestDefaults.scratch("publish-failure")
         defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
         defaults.set(0, forKey: ShareSettingsKeys.publishAnalysisCursor)
-        let stub = SequencedClient([(409, "{}"), (503, "{}"), (200, "{}")])
+        // 名乗りの確認 → 先に名乗る → シャードは 2 回とも失敗 → 名乗りの更新。
+        let stub = SequencedClient([(409, "{}"), (200, "{}"), (503, "{}"), (503, "{}"), (200, "{}")])
         let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
                                           httpClient: stub, defaults: defaults)
 
@@ -376,7 +380,7 @@ struct AnalysisPublishScaleTests {
         let defaults = TestDefaults.scratch("publish-scale")
         defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
         // 名乗りの確認（409＝未設定）→ シャード 8 個のアップロード → 名乗りの書き込み。
-        let stub = SequencedClient([(409, "{}")] + Array(repeating: (200, "{}"), count: 9))
+        let stub = SequencedClient([(409, "{}")] + Array(repeating: (200, "{}"), count: 10))
         let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
                                           httpClient: stub, defaults: defaults)
 

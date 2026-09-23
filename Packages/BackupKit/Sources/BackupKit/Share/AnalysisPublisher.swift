@@ -112,6 +112,17 @@ public final class AnalysisPublisher {
         Diagnostics.mark("share.publishAnalysis: 開始（写真 \(photos.count) 枚・"
                          + "この回に見るシャード \(window.shards.count)/\(refKeysByShard.count)）")
 
+        // ⚠️ **名乗りは先に書く**（実機ログ diagnostics-91）。以前は最後に書いていたので、
+        // 窓が切れる間際に公開した回は名乗りの書き込みごと落ちていた（`upload failed` が
+        // シャードと名乗りで並んでいた）。名乗りが無いままだと、次の端末は「誰も名乗って
+        // いない」と見て**二重に公開を始める**——この仕組みが防ぎたかったことそのもの。
+        // まだ自分のものでないときだけ先に書く（自分のものなら最後の更新で足りる）。
+        if remoteOwner?.deviceFolder.caseInsensitiveCompare(BackupDeviceIdentity.currentFolderName())
+            != .orderedSame {
+            await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
+                             photoCount: photos.count, token: token)
+        }
+
         let root = BackupLayout.analysisRoot(root: backupRoot,
                                              deviceFolder: BackupDeviceIdentity.currentFolderName())
         var digests = publishedDigests()
@@ -205,7 +216,10 @@ public final class AnalysisPublisher {
             myDeviceName: BackupDeviceIdentity.currentDisplayName(),
             previous: previous, now: Date(), photoCount: photoCount)
         guard let data = AnalysisOwnership.encode(owner) else { return }
-        _ = await copier.uploadFile(data: data, to: path, token: token)
+        // ⚠️ 失敗は**必ず残す**。名乗りが書けていないと、次の端末が二重に公開を始める。
+        if await copier.uploadFile(data: data, to: path, token: token) == false {
+            Diagnostics.mark("share.publishAnalysis: 名乗りを書けなかった — 次の端末が二重に公開し得る")
+        }
     }
 
     /// 今の名乗りを読む（設定画面の注意書き用）。

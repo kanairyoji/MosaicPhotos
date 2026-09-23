@@ -224,8 +224,16 @@ struct DropboxShareCopier {
         // 待ち時間は `Retry-After` に従う（無ければ 1 秒）。長すぎる指定は窓を食うので頭打ち。
         for attempt in 0...1 {
             guard let (_, resp) = try? await httpClient.data(for: req) else {
-                BackupLogger.error("ShareCopier: analysis data upload failed (transport) — \(path)")
-                return false
+                // ⚠️ **1 回だけやり直す**（実機ログ diagnostics-91）。夜の窓では回線が切れたり
+                // 背面遷移で要求が落ちたりして、単発の transport 失敗が出る。1 回で畳むと、
+                // そのシャードは次の窓（30 分後）まで来ない。だめなら素直に諦める。
+                guard attempt == 0, !Task.isCancelled else {
+                    BackupLogger.error("ShareCopier: upload failed (transport) — \(path)")
+                    return false
+                }
+                BackupLogger.info("ShareCopier: upload transport error — retrying once — \(path)")
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                continue
             }
             let http = resp as? HTTPURLResponse
             let status = http?.statusCode ?? -1
