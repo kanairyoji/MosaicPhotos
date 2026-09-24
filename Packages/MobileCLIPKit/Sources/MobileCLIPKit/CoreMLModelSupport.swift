@@ -281,14 +281,20 @@ public enum PerceptionModels {
         return true
     }
 
-    /// 窓が終わったので手放す。前面のときは何もしない。
-    /// - Returns: 実際に手放したか（ログ用）。
+    /// 窓の終わり・背面化で手放す。**前面のときは何もしない**
+    /// （前面のアイドル解放は `releaseIfIdle` の担当）。
+    ///
     /// ⚠️ **モデルごとに判断する**（レビュー指摘）。以前は「どちらかが走っていれば両方残す」
     /// だったので、顔スキャン中に背面へ落ちると**CLIP テキスト塔（505MB）も残った**
     /// ——背面は jetsam に殺される場所なので、前面より効く。
+    ///
     /// - Parameters:
-    ///   - clipBusy / faceBusy: そのモデルを使う処理が走っているか（既定 false＝両方手放す。
-    ///     窓の終わりのように「何も走っていない」ことが分かっている経路はそのまま呼ぶ）。
+    ///   - reason: 診断ログに残す理由（`CLIP released (…)` / `face model released (…)`）。
+    ///   - clipBusy: CLIP を使う処理が走っているか。true なら CLIP は残す。
+    ///   - faceBusy: 顔モデルを使う処理が走っているか。true なら顔モデルは残す。
+    ///     既定はどちらも false＝両方手放す（窓の終わりのように「何も走っていない」ことが
+    ///     分かっている経路はそのまま呼ぶ）。
+    /// - Returns: どちらか一方でも実際に手放したか（ログ用）。
     @discardableResult
     @MainActor
     public static func releaseForIdle(reason: String,
