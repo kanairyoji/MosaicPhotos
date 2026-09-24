@@ -51,7 +51,9 @@
   `MobileCLIPRuntime.swift`・`FaceModelRuntime.swift`（記録の呼び出し）/
   `HeavyWorkScheduler.releaseModelsIfIdleInForeground` / `AnalysisDriver.startIdleWatch`。
   ADR-223・ADR-226 追補・ADR-196。
-  ⚠️ 実機で確かめること: `device-verification.md` の **Z6**。
+  ⚠️ 実機で確かめること: `device-verification.md` の D 節
+  「前面で放置したときに手放すこと（ADR-228）」。⚠️ **Z6 は別件で使用済み**
+  （ADR-205・消えた同期ルート）なので番号を振らない。
 
 ## ADR-227 全件を読む処理は、使い捨ての `ModelContext` でページ分けして読む
 - 状態: 採用（ADR-224 の実測から一般化）
