@@ -40,6 +40,10 @@ public protocol FaceScanControl: AnyObject {
     /// 進行中のスキャンを明示的に止める（前面復帰・ADR-79）。
     func stopScan()
 
+    /// 背面で手放せる（作り直せる）キャッシュを捨てる（ADR-226 追補）。
+    /// ⚠️ 走っている最中は取り上げない（実装側で守る）。
+    func releaseCachesForBackground()
+
     /// 候補から消えた写真の顔を掃除する（サムネの出ない顔が一覧に残るのを防ぐ）。戻り値＝消した数。
     @discardableResult
     func pruneMissingPhotos(candidateRefKeys: [String], knownGone: Set<String>) async -> Int

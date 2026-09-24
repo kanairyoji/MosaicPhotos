@@ -81,7 +81,11 @@ struct MosaicPhotosApp: App {
             // ⚠️ 絞るのは **background のときだけ**。`.inactive` は Control Center・通知バナー・
             // App スイッチャーのジェスチャでも来るので、そこで捨てると戻った瞬間に再デコードの山になる
             // （同じ理由で `stopBackgroundProcessing` も background だけを見ている）。
-            if phase == .background { MemoryImageCache.setBackgroundMode(true) }
+            if phase == .background {
+                MemoryImageCache.setBackgroundMode(true)
+                // 誰も使っていないモデルも手放す（窓・ブースト中は除く・ADR-226 追補）。
+                HeavyWorkScheduler.releaseModelsIfIdleInBackground()
+            }
             if phase == .background {
                 // 前面のみモードのブーストは前面にいる間だけのもの。
                 HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()

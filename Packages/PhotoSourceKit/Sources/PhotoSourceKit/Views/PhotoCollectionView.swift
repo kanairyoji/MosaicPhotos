@@ -85,6 +85,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         /// ID 列の指紋の控え。**配列を一緒に保持する**（手放すとバッファが解放され、
         /// 別の配列が同じアドレスに載って「同じ」と誤判定し得るため）。
         private var cachedIDsHash: (items: [Store.Item], hash: Int)?
+        /// セクション名（ヘッダーの表示用）。スナップショットを反映したときだけ控える。
+        var sectionTitles: [String] = []
         private var idToIndex: [Store.Item.ID: Int] = [:]
         /// 現在適用済みの構成シグネチャ（再適用の要否判定）。
         private var appliedSignature = ""
@@ -232,8 +234,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 elementKind: UICollectionView.elementKindSectionHeader
             ) { [weak self] view, _, indexPath in
                 guard let self else { return }
-                let sections = self.dataSource.snapshot().sectionIdentifiers
-                view.title = indexPath.section < sections.count ? sections[indexPath.section] : nil
+                // ⚠️ **ここでスナップショットを取らない**（ADR-119 の形・レビュー指摘）。
+                // ここはヘッダーを dequeue するたび＝**スクロール中ずっと**呼ばれるのに、
+                // `dataSource.snapshot()` は 12 万件のスナップショットを丸ごと複製する。
+                // 欲しいのはセクション名だけなので、反映したときに控えた配列を見る。
+                view.title = indexPath.section < self.sectionTitles.count
+                    ? self.sectionTitles[indexPath.section] : nil
             }
             dataSource.supplementaryViewProvider = { cv, _, indexPath in
                 cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath)
@@ -377,6 +383,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                     guard let self, token == self.snapshotToken else { return }
                     self.items = unique
                     self.idToIndex = index
+                    self.sectionTitles = snapshot.sectionIdentifiers
                     self.dataSource.applySnapshotUsingReloadData(snapshot) { [weak self] in
                         let totalMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                         Diagnostics.mark("grid.snapshot(bg): items=\(unique.count) sections=\(sectionCount) "

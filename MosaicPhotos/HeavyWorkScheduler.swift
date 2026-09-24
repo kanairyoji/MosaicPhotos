@@ -199,6 +199,23 @@ enum HeavyWorkScheduler {
         if hadWork { Diagnostics.mark("bgtask: stopped for foreground") }
     }
 
+    /// 背面に落ちたので、**誰も使っていないモデルを手放す**（ADR-226 追補）。
+    ///
+    /// ⚠️ ADR-223 の解放点は「窓の終わり」と「顔スキャン 1 巡」の 2 つだけだった。そのため
+    /// **前面で検索やタグ表示のために読んだ CLIP テキスト塔（実測 footprint 505MB）は、
+    /// 背面へ落としても次の窓が終わるまで残る**（電源が無ければ永久に）。画像キャッシュを
+    /// 背面で絞るのと同じ理屈がモデルにも当てはまる。
+    /// ⚠️ ただし**窓やブーストが走っている間は手放さない**——走っている解析から取り上げると、
+    /// その場で 10〜35 秒の再ロードが始まり、ゲートの中なのでほかの推論も止まる。
+    @MainActor
+    static func releaseModelsIfIdleInBackground() {
+        guard currentWork.current == nil, stores?.analysisSession.isActive != true else { return }
+        PerceptionModels.releaseForIdle(reason: "background")
+        // 作り直せる大きな配列も手放す（候補 12MB・顔の候補 10MB・AI の下ごしらえ 30MB）。
+        stores?.analysisDriver.releaseCachesForBackground()
+        stores?.autoAlbumEngine.releaseSuggestionSnapshot()
+    }
+
     /// D: 前面/背面の遷移を実測ログに残す（復帰時のカクつき調査用）。
     /// 「復帰の瞬間に何が走っていたか」をログ 1 行で特定できるようにする。
     static func noteScenePhase(_ label: String) {

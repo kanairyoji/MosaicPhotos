@@ -37,7 +37,15 @@
   - 背面で走る顔スキャンはキャッシュ済みサムネを使うが、メモリに無ければディスクから読む
     （`ThumbnailDecode.limiter` で同時数は有界）。
 - 結果: 背面の常駐が下がる。代わりに前面へ戻った直後の数十枚はディスクから読み直す。
+- **追補（同じ考えをモデルと大きな配列にも）**: 背面で手放すのは画像だけではない。
+  - **Core ML の塔**: ADR-223 の解放点は「窓の終わり」「顔スキャン 1 巡」の 2 つだけで、
+    **前面の検索で読んだテキスト塔（実測 505MB）は背面へ落としても次の窓まで残る**。
+    背面へ入った時点で、**窓もブーストも走っていなければ**手放す
+    （走っている解析から取り上げると、その場で 10〜35 秒の再ロードが始まる）。
+  - **作り直せる大きな配列**: AI アルバムの下ごしらえ（台帳全行・約 30MB／`nil` を入れる経路が
+    どこにも無かった）、解析候補（約 12MB／期限切れでも捨てていなかった）、顔の候補（約 10MB）。
 - 関連: `ImageCacheKit/MemoryImageCache.swift` / `MosaicPhotosApp.swift` /
+  `HeavyWorkScheduler.releaseModelsIfIdleInBackground` / `AutoAlbumEngine.releaseSuggestionSnapshot` /
   `MemoryImageCacheBackgroundTests`。ADR-223・ADR-20。
 
 ## ADR-225 作り直しの間引きは「実測した所要」から決める（人物一覧・クラウド一覧）

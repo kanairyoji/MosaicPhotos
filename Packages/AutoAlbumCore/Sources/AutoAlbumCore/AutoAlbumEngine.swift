@@ -110,6 +110,17 @@ public final class AutoAlbumEngine {
     /// AI アルバム作成のサジェスト/接地プレビュー用のスナップショット（Suggestions extension が管理・
     /// 5 分で失効）。コンポーザーを開いている間のタイプごとの 85k 再フェッチを避ける。
     @ObservationIgnored var suggestionSnapshot: AIAlbumSuggestionSnapshot?
+
+    /// AI アルバムの下ごしらえ（`suggestionSnapshot`）を手放す。
+    ///
+    /// ⚠️ 中身は**台帳の全行**（12 万件で約 30MB）。作り直せるのに、`nil` を入れる経路が
+    /// どこにも無く、コンポーザを 1 回開いたらプロセスが終わるまで居座っていた。
+    /// 画面を閉じたときと、背面へ落ちたときに捨てる（次に開いたら作り直す＝数百 ms）。
+    public func releaseSuggestionSnapshot() {
+        guard suggestionSnapshot != nil else { return }
+        suggestionSnapshot = nil
+        Diagnostics.mark("aialbum: suggestion snapshot released")
+    }
     /// T5: AI アルバム再評価の時間スロットル用（Recognition extension が参照）。
     @ObservationIgnored var lastAIRefreshAt = Date.distantPast
     /// Phase 2: スロットル中に蓄積する「新規に埋め込まれた refKey」（増分再評価の入力）。

@@ -80,6 +80,8 @@ public final class PeopleEngine {
     /// 以前は `scanTask` / `scanGeneration` / `isScanning` の 3 つを手で管理していた）。
     @ObservationIgnored let scan = SingleFlightTask()
     /// 直近のスキャン候補（reset 後の再スキャンに使う）。
+    /// 直近のスキャン候補（reset 後の再スキャンに使う）。
+    /// ⚠️ 12 万件で約 10MB。**背面では手放す**（駆動役が列挙し直せる・ADR-226 追補）。
     @ObservationIgnored private var lastCandidates: [String] = []
     @ObservationIgnored private var lastAllowSimulator = false
     /// 人物一覧の再読込を間引く（連続する変更を 1 回にまとめる・ADR-95/198）。
@@ -206,6 +208,14 @@ public final class PeopleEngine {
                             favoriteRefKeysProvider: favoriteRefKeysProvider,
                             cloudCaptureDates: cloudCaptureDates,
                             store: store, shadowStore: shadow)
+    }
+
+    /// 背面で手放せるものを捨てる（ADR-226 追補）。次に要るときは作り直す。
+    public func releaseCachesForBackground() {
+        guard !isScanning else { return }   // 走っている最中は取り上げない
+        let had = !lastCandidates.isEmpty
+        lastCandidates = []
+        if had { Diagnostics.mark("faces: candidate list released (background)") }
     }
 
     /// 顔モデルが同梱され利用可能か（未同梱ならピープルは無効＝空表示）。

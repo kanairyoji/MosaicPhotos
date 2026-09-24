@@ -60,6 +60,8 @@ final class AnalysisDriver {
     private let session: AnalysisSession
 
     /// 顔スキャンの候補（8.5 万件の列挙＝数秒）は短時間だけ使い回す。
+    /// ⚠️ 12 万件の refKey で約 12MB。期限（`canReuseCandidates`）が切れたら「使わない」だけでなく
+    /// **捨てる**（ADR-226 追補）。持っていても作り直すので、抱えているぶんが丸ごと無駄。
     private var candidateCache: (candidates: AnalysisCandidateSet, at: Date)?
     private var lastKickAt = Date.distantPast
     /// 起こしても何も始まらなかった回数（＝残作業なし）。連続するほど間隔を空ける。
@@ -171,6 +173,14 @@ final class AnalysisDriver {
         #endif
     }
 
+    /// 背面で手放せるものを捨てる（ADR-226 追補）。次の窓で作り直す。
+    func releaseCachesForBackground() {
+        let had = candidateCache != nil
+        candidateCache = nil
+        people.releaseCachesForBackground()
+        if had { Diagnostics.mark("driver: candidate cache released (background)") }
+    }
+
     /// 前面にいる間、20 秒アイドルを検知して起こす（`scenePhase == .active` で始め、離れたら止める）。
     /// アイドル中は定期的に方針を見直すので、**熱の回復や写真の追加のような「変わった合図が
     /// 来ない条件」もここで拾う**（専用の契機を足すより、再評価が安いので 1 本に寄せる）。
@@ -195,10 +205,12 @@ final class AnalysisDriver {
     // MARK: - 候補
 
     private func candidatesReusingCache(now: Date) async -> AnalysisCandidateSet {
-        if let cached = candidateCache,
-           AnalysisDriverPolicy.canReuseCandidates(cachedAt: cached.at, now: now) {
-            PerfTrace.count("driver.candidates.reused")
-            return cached.candidates
+        if let cached = candidateCache {
+            if AnalysisDriverPolicy.canReuseCandidates(cachedAt: cached.at, now: now) {
+                PerfTrace.count("driver.candidates.reused")
+                return cached.candidates
+            }
+            candidateCache = nil   // 期限切れ＝もう使わないので抱えない
         }
         // ⚠️ ここが規模に比例する（PHAsset の列挙＋クラウド 68k 件の並べ替え・ADR-119）。
         // 回数を数えられるようにしておく（`PerfTrace.takeCounts()`）。
