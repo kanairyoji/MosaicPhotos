@@ -1727,6 +1727,7 @@ BGTask の期限切れの受け口が 1 ホップ遅れる件は、直し方が 
   `||` でつないでいたため、"Trip"/"trip" が同順なのに "Trip" どうしには順序がある
   ＝比較不能が推移しない。`sortedByCaptureDateAscending` で直したのと同じ種類の不備が
   別の場所に残っていた。
+  （※ その関数は 2026-09-24 に畳み、比較式は `PhotoItemSorting.isBeforeByCaptureDate` に移した。）
 - **書けなかった回に「押し出した」と診断ログへ書いていた。** ディスク上では無傷なのに
   失われたと記録する＝嘘の取りこぼし。「取りこぼしは必ず数えて残す」方針の下では、
   嘘は抜けと同じくらい害になる。
@@ -1871,6 +1872,8 @@ BGTask の期限切れの受け口が 1 ホップ遅れる件は、直し方が 
     Dropbox の同期状態を見て、出そろっているときだけ掃除する。
   - `sortedByCaptureDateAscending` が撮影日の無い写真どうしで strict weak ordering を
     満たしていなかった（`a<b` と `b<a` が同時に成立）。降順版は正しかった。
+    （※ 2026-09-24 に関数ごと畳み、比較式は `PhotoItemSorting.isBeforeByCaptureDate` へ。
+    その `(nil, nil) == false` はテストで固定してある。降順版は本番の呼び出しが 0 だったので削除。）
 - 教訓: **「取り直せる」は、取り直す量が有界でなければ成り立たない。** 1 周目で
   「永久に失う経路」を塞いだつもりが、塞ぎ方そのものが別の永久喪失（クラッシュループ）を
   作っていた。
@@ -3130,9 +3133,9 @@ BGTask の期限切れの受け口が 1 ホップ遅れる件は、直し方が 
 
 ## フォルダ名アルバムを開くとヘッダーは「325 photos」なのにグリッドが空
 - 症状: Dropbox のパス（フォルダ名）から作るアルバム（例「ヒロック」）を開くと、上部ヘッダーは「325 photos・期間」と出るのに、サムネイルグリッドが**真っ白（0 件）**。クラウド本体（Cloud ソース）は正常に表示される。
-- 原因: **保存済みフォルダアルバムのメンバー（クラウドパス）が現在の `dropboxStore.items` と 1 件も一致していなかった**。実データを SwiftData から直接確認して確定: アルバムのメンバーは `C-/写真/ヒロック/…jpeg`（325件）だが、現在の Dropbox キャッシュ（`ZCACHEDDROPBOXITEM`）は全て `/mosaicphotos/iphone-e7ec95/img_XXXX.jpg`＝**別 Dropbox アカウント時代のパス**が残存。`MergedPhotoStore.filteredCloudItems` は `filter.contains($0.path)` の完全一致なので交差が空→ `merged.rebuild: local=0 cloud=0 total=0`（診断ログで確認）。真因は「**フォルダアルバムは起動時に SwiftData から読むだけで再生成されない**」こと。`generate()`（起動時・版ゲート）は**エンリッチ台帳**からパスアルバムを作るが台帳にも旧アカウントのクラウドパスが残るため旧パスのまま。現在の一覧を出典にする `generateFast()`（=`generatePathAlbums`）は**セクションの更新ボタンでしか走らない**。結果、アカウント/フォルダ構成が変わると保存済みメンバーが現存パスとずれ、開いても 0 件になる。
+- 原因: **保存済みフォルダアルバムのメンバー（クラウドパス）が現在の `dropboxStore.items` と 1 件も一致していなかった**。実データを SwiftData から直接確認して確定: アルバムのメンバーは `C-/写真/ヒロック/…jpeg`（325件）だが、現在の Dropbox キャッシュ（`ZCACHEDDROPBOXITEM`）は全て `/mosaicphotos/iphone-e7ec95/img_XXXX.jpg`＝**別 Dropbox アカウント時代のパス**が残存。`MergedPhotoStore.filteredCloudItems`（※ 2026-09-24 に `appendVisibleCloudItems` へ統合。絞り込みの式は同じ）は `filter.contains($0.path)` の完全一致なので交差が空→ `merged.rebuild: local=0 cloud=0 total=0`（診断ログで確認）。真因は「**フォルダアルバムは起動時に SwiftData から読むだけで再生成されない**」こと。`generate()`（起動時・版ゲート）は**エンリッチ台帳**からパスアルバムを作るが台帳にも旧アカウントのクラウドパスが残るため旧パスのまま。現在の一覧を出典にする `generateFast()`（=`generatePathAlbums`）は**セクションの更新ボタンでしか走らない**。結果、アカウント/フォルダ構成が変わると保存済みメンバーが現存パスとずれ、開いても 0 件になる。
 - 対処: `AutoAlbumEngine.loadOrGenerate` の遅延セクションで、`pathAlbumsEnabled` のとき `generatePathAlbums()`（現在の `cloudProvider.cloudPhotos()`＝`dropboxStore.items` を出典）を毎起動走らせて**自己修復**。存在しないパスのアルバムは消え、現存フォルダのアルバムは現行 `item.path` で作り直される（＝フィルタと必ず一致）。ログで検証: `pathAlbum.fast: metas=7396 → done albums=20`。パスは path_lower で一貫（`DropboxFileItem.path`＝`path_lower`、`CloudPhotoMeta.path`＝`item.path`、`PhotoRef` は前置詞のみで無損失）なので、同一出典で作れば一致は構造的に保証される。
-- 関連: `AutoAlbumEngine.loadOrGenerate`（自己修復追加）・`PathAlbumGenerator.generateFast`/`computeFromEnriched`・`MergedPhotoStore.filteredCloudItems`・`AutoAlbumInfo.cloudPaths`。
+- 関連: `AutoAlbumEngine.loadOrGenerate`（自己修復追加）・`PathAlbumGenerator.generateFast`/`computeFromEnriched`・`MergedPhotoStore.filteredCloudItems`（現 `appendVisibleCloudItems`）・`AutoAlbumInfo.cloudPaths`。
 - 残課題: 旧アカウントのクラウドエンリッチ/顔レコードが台帳に残る（別アカウントへ切替時の一括パージは未実装）。**ビジュアル検証はシミュレータのスクリーンショット＋SwiftData 直読み＋診断ログ**で行った（実機不要の切り分け）。
 
 ## ピープルの代表顔が食べ物/桜など「顔でない領域」になる（誤検出・回転ではない）
