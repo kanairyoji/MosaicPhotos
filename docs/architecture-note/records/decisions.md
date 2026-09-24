@@ -37,6 +37,13 @@
   - 最終利用は `PerceptionModels.noteInference()` が記録する。呼ぶのは**同梱モデルを使う
     推論の入口 5 か所**（CLIP のテキスト/画像/画像バッチ、顔の 1 枚/バッチ）。Vision だけの
     経路（`VisionTagAdapter` / `FacePerceptionAdapter+Vision`）は自前モデルを読まないので数えない。
+    記録は推論の**開始時**（ゲートに入る前）。終了時にすると、ゲートで順番待ちしている
+    長い推論が「使っていない」と見えてしまう。
+  - ⚠️ **判定と「記録を消す」は不可分**（`ModelIdleTracker.consumeIfIdle`・レビュー 3 周目）。
+    `note()` は推論のスレッドから、判定はメインから呼ばれるので、「判定 → 手放す → 消す」と
+    3 段に分けると途中に `note()` が割り込み、**たった今使い始めた印を最後の消去が消す**
+    ——そのうえでモデルを取り上げることになる。錠の中で 1 つにすれば、割り込みは
+    消去の前か後のどちらかに定まる。
   - 「解析が走っているか」の判定は**背面側と同じ 1 つ**（`HeavyWorkScheduler.isAnalysisRunning`）。
     解放点ごとに条件を書くと、どれが効いたのか実機ログから切り分けられない（ADR-196 の
     「11 述語」と同じ轍）。
@@ -46,7 +53,7 @@
   「5 分以上空けた次の検索が再ロード待ちになる」こと。⚠️ **線を短くしてはいけない**——
   再ロードは実機 10〜35 秒で、アイドル解放が成り立つのは「誰も待っていない時間に払うから」。
   検索して結果を眺めている数分で手放すと、その前提が崩れる。
-- 関連: `MosaicSupport/ModelIdlePolicy.swift`（線引き・`ModelIdlePolicyTests` 7 本）/
+- 関連: `MosaicSupport/ModelIdlePolicy.swift`（線引き＋`ModelIdleTracker`・テスト 14 本）/
   `MobileCLIPKit/CoreMLModelSupport.swift`（`noteInference` / `releaseIfIdle`）/
   `MobileCLIPRuntime.swift`・`FaceModelRuntime.swift`（記録の呼び出し）/
   `HeavyWorkScheduler.releaseModelsIfIdleInForeground` / `AnalysisDriver.startIdleWatch`。

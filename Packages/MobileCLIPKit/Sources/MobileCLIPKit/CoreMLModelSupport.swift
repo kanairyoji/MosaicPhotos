@@ -292,36 +292,13 @@ public enum PerceptionModels {
 
     // MARK: - 前面でも、使われなくなったら手放す（常駐メモリの棚卸し）
 
-    /// 最後に推論が走った時刻。**どのスレッドからも書かれる**ので錠で守る。
-    /// nil＝このプロセスで一度も推論していない（＝モデルも載っていない）。
-    nonisolated(unsafe) private static var _lastInferenceAt: Date?
-    private static let lastInferenceLock = NSLock()
-
     /// 推論が走ったことを記録する。**`MLInferenceGate` を通る経路すべてから呼ぶ**
     /// ——呼び忘れると「使っていない」と誤判定して、使用中のモデルを手放しかねない。
     ///
     /// ⚠️ 記録するのは推論の**開始時**（ゲートに入る前）。終了時にすると、ゲートで待っている
     /// 長い推論が「使っていない」と見えて、走っている最中に取り上げられ得る。
     static func noteInference(now: Date = Date()) {
-        lastInferenceLock.lock()
-        _lastInferenceAt = now
-        lastInferenceLock.unlock()
-    }
-
-    /// 最後の推論時刻（診断・テスト用）。
-    static var lastInferenceAt: Date? {
-        lastInferenceLock.lock(); defer { lastInferenceLock.unlock() }
-        return _lastInferenceAt
-    }
-
-    /// 記録を消して「未使用」に戻す。
-    ///
-    /// ⚠️ **これは本番の経路でも呼ぶ**（`releaseIfIdle`）。名前に `ForTesting` を付けない
-    /// ——テスト専用に見える関数を本番から呼ぶと、消してよいものだと誤読される。
-    static func clearLastInference() {
-        lastInferenceLock.lock()
-        _lastInferenceAt = nil
-        lastInferenceLock.unlock()
+        ModelIdleTracker.shared.note(now: now)
     }
 
     /// **前面/背面を問わず**手放す（判断は呼び出し側が済ませている前提）。
@@ -336,6 +313,12 @@ public enum PerceptionModels {
     }
 
     /// 一定時間まったく使われていなければ手放す（前面でも）。
+    ///
+    /// ⚠️ 判定と「記録を消す」は `ModelIdleTracker` の中で**ひと続き**に行う。
+    /// ここで「判定 → 手放す → 消す」と 3 段に分けると、その途中に推論スレッドからの
+    /// `noteInference()` が割り込み、**たった今使い始めた印を消してしまう**
+    /// （そして走り始めた推論からモデルを取り上げる）。
+    ///
     /// - Parameter analysisRunning: 解析（窓・ブースト・埋め込み・顔スキャン）が走っているか。
     ///   走っている最中に取り上げると、その場で 10〜35 秒の再ロードが始まり、
     ///   ANE ゲートの中なのでほかの推論も止まる。
@@ -345,15 +328,9 @@ public enum PerceptionModels {
     public static func releaseIfIdle(now: Date = Date(),
                                      idleSeconds: TimeInterval = ModelIdlePolicy.idleSeconds,
                                      analysisRunning: Bool) -> Bool {
-        guard ModelIdlePolicy.shouldRelease(lastUse: lastInferenceAt, now: now,
-                                            idleSeconds: idleSeconds,
-                                            analysisRunning: analysisRunning) else { return false }
-        let released = releaseNow(reason: "idle \(Int(idleSeconds))s")
-        // ⚠️ **手放せたかに関わらず**記録を消す。「このアイドル期間はもう処理した」の印なので、
-        // 残すと 5 秒ごとに判定が通り続ける。載っていなければ `releaseNow` は false を返すが、
-        // そのたびに `MobileCLIPRuntime.shared` / `FaceModelRuntime.shared` へ触りにいく
-        // ——`static let shared` なので、**使っていないランタイムを起こしてしまう**。
-        clearLastInference()
-        return released
+        guard ModelIdleTracker.shared.consumeIfIdle(now: now, idleSeconds: idleSeconds,
+                                                    analysisRunning: analysisRunning)
+        else { return false }
+        return releaseNow(reason: "idle \(Int(idleSeconds))s")
     }
 }

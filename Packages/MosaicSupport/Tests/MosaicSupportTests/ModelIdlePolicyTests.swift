@@ -61,3 +61,77 @@ struct ModelIdlePolicyTests {
         #expect(ModelIdlePolicy.idleSeconds == 300)
     }
 }
+
+/// ⚠️ 判定と「記録を消す」が別々だと、その間に推論スレッドからの `note()` が割り込み、
+/// **たった今使い始めた印を消してしまう**（そして走り始めた推論からモデルを取り上げる）。
+/// `consumeIfIdle` はその 2 つをひと続きにするための入口なので、性質を固定する。
+@Suite("モデルの最終利用の記録")
+struct ModelIdleTrackerTests {
+
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+    private func ago(_ s: TimeInterval) -> Date { now.addingTimeInterval(-s) }
+
+    @Test("アイドルなら true を返し、記録を消す")
+    func consumesWhenIdle() {
+        let t = ModelIdleTracker()
+        t.note(now: ago(400))
+        #expect(t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        #expect(t.lastUseAt == nil, "記録が残ると 5 秒ごとに判定が通り続ける")
+    }
+
+    /// ⚠️ これが本命。1 回消費したら、次の推論があるまで二度と通らないこと。
+    @Test("続けて呼んでも 2 回目は通らない")
+    func consumesOnlyOnce() {
+        let t = ModelIdleTracker()
+        t.note(now: ago(400))
+        #expect(t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+    }
+
+    /// ⚠️ **消費のあとに来た `note()` は消されない**。消されると、走り始めた推論が
+    /// 「使っていない」ことになり、次の判定でモデルを取り上げられる。
+    @Test("消費の直後に使い始めたら、その印は残る")
+    func noteAfterConsumeSurvives() {
+        let t = ModelIdleTracker()
+        t.note(now: ago(400))
+        #expect(t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        t.note(now: now)                       // 推論が始まった
+        #expect(t.lastUseAt == now)
+        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false),
+                "使い始めた直後に手放そうとしている")
+    }
+
+    @Test("解析中は消費しない（記録も消さない）")
+    func doesNotConsumeWhileAnalysisRuns() {
+        let t = ModelIdleTracker()
+        t.note(now: ago(10_000))
+        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: true))
+        #expect(t.lastUseAt != nil, "解析中に記録だけ消えると、次に手放す機会を失う")
+    }
+
+    /// 一度も使っていなければ何も起きない（ランタイムの `shared` を起こさないため）。
+    @Test("未使用なら消費しない")
+    func neverUsedDoesNotConsume() {
+        let t = ModelIdleTracker()
+        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+    }
+
+    @Test("clear で未使用に戻る")
+    func clearResets() {
+        let t = ModelIdleTracker()
+        t.note(now: ago(400))
+        t.clear()
+        #expect(t.lastUseAt == nil)
+        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+    }
+
+    /// ⚠️ `shared` を使い回すと、並列に走る他のテストと取り合いになる（共有状態は
+    /// テストの差し込み口にしない・`unresolved-problems.md` の教訓）。独立性を明示する。
+    @Test("インスタンスごとに独立している")
+    func instancesAreIndependent() {
+        let a = ModelIdleTracker(), b = ModelIdleTracker()
+        a.note(now: ago(400))
+        #expect(b.lastUseAt == nil)
+        #expect(!b.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+    }
+}

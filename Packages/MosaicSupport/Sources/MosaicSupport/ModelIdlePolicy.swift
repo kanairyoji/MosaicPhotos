@@ -27,3 +27,56 @@ public enum ModelIdlePolicy {
         return now.timeIntervalSince(lastUse) >= idleSeconds
     }
 }
+
+/// 「最後にモデルを使った時刻」を持ち、**判定と消去をひと続きで**行う入れ物。
+///
+/// ⚠️ なぜ別の型にしたか（レビュー 3 周目）: 状態を `PerceptionModels` の static に置き、
+/// 「判定 → 手放す → 記録を消す」と 3 段で書いていた。ところが `note()` は**推論の
+/// スレッドから**、判定は**メインから**呼ばれるので、この 3 段の途中に `note()` が
+/// 割り込める。割り込むと、**たった今使い始めた印を最後の消去が上書きして消す**
+/// ——その直後に手放す判断が下り、走り始めた推論からモデルを取り上げることになる。
+/// 判定と消去を錠の中で 1 つにすれば、割り込みは「消去の前」か「後」のどちらかに定まる。
+///
+/// ⚠️ `note()` は推論の**開始時**に呼ぶこと（ゲートに入る前）。終了時にすると、
+/// ゲートで順番待ちしている長い推論が「使っていない」と見えてしまう。
+public final class ModelIdleTracker: @unchecked Sendable {
+
+    /// 本番で使う唯一の入れ物。テストは `init()` で独立したものを作る。
+    public static let shared = ModelIdleTracker()
+
+    private let lock = NSLock()
+    private var lastUse: Date?
+
+    public init() {}
+
+    /// 推論が走ったことを記録する。
+    public func note(now: Date = Date()) {
+        lock.lock(); lastUse = now; lock.unlock()
+    }
+
+    /// 最後に使った時刻（診断・テスト用）。
+    public var lastUseAt: Date? {
+        lock.lock(); defer { lock.unlock() }
+        return lastUse
+    }
+
+    /// 記録を消して「未使用」に戻す。
+    public func clear() {
+        lock.lock(); lastUse = nil; lock.unlock()
+    }
+
+    /// **手放してよいなら記録を消して true を返す**（判定と消去は不可分）。
+    ///
+    /// 消すのは「このアイドル期間はもう処理した」の印。消さないと 5 秒ごとに判定が通り続け、
+    /// そのたびにランタイムの `shared` へ触りにいく（`static let shared` なので
+    /// **使っていないランタイムを起こしてしまう**）。
+    public func consumeIfIdle(now: Date = Date(), idleSeconds: TimeInterval,
+                              analysisRunning: Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard ModelIdlePolicy.shouldRelease(lastUse: lastUse, now: now,
+                                            idleSeconds: idleSeconds,
+                                            analysisRunning: analysisRunning) else { return false }
+        lastUse = nil
+        return true
+    }
+}
