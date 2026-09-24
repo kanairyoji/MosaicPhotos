@@ -131,28 +131,56 @@ public final class MergedPhotoStore {
             let hidden = BackupCopyHiding.hiddenPaths(
                 backupPathToLocalID: backupIndex.compactMapValues(\.localIdentifier),
                 localIdentifiers: Set(localSnapshot.map(\.id)))
-            let visibleCloud = hidden.isEmpty
-                ? MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
-                : MergedPhotoStore.filteredCloudItems(cloudSnapshot, filter: filter)
-                    .filter { !hidden.contains($0.path.lowercased()) }
             // ⚠️ **撮影日は台帳を正とする**（ADR-128 追補・実フィードバック「時系列にならない」）。
             // Dropbox 側の日付は `time_taken ?? client_modified` で、EXIF から media_info が
             // 付かない（または同期時に pending だった）写真では**アップロード時刻**になる。
             // 隠すだけでは直らない——顔がクラウド副本側だけで検出された写真は、原本がその
             // アルバムに居ないので隠れず、日付だけが「今日」のまま残る。
-            let dated = visibleCloud.map { item -> DropboxFileItem in
-                guard let known = backupIndex[item.path.lowercased()]?.captureDate else { return item }
-                return item.withCaptureDate(known)
+            //
+            // ⚠️ **1 回の走査にまとめる**（常駐メモリの棚卸し）。以前は
+            // 絞り込み → 隠す → 撮影日の上書き → `.cloud` 包み、を 4 本の `let` で受けており、
+            // それぞれが 10 万件の配列なのに**同じスコープに居るので最後まで全部生きていた**
+            // （8.2 + 8.2 + 9 + 10.6 ≒ 36MB が再構築のたびに同時に立つ）。
+            // ⚠️ `path.lowercased()` も 1 件につき 1 回にする。隠す判定と撮影日の引き当てで
+            // 2 回呼んでいたので、再構築ごとに 20 万本の String を作って捨てていた。
+            // ⚠️ 並べる順（**ローカル → クラウド**）は変えないこと。`sorted` は安定ではないので、
+            // 撮影日が同じ写真どうしの前後が入れ替わり、指紋が毎回変わって再構築が止まらなくなる。
+            var merged: [MergedPhotoItem] = []
+            // ⚠️ **絞り込みがあるときに全件ぶん確保しない**。メンバー限定ストア（人物・場所・
+            // AI アルバム）は `cloudSnapshot` に全 10.2 万件を受け取り、`filter` で数十件だけ
+            // 通す。ここで `cloudSnapshot.count` を確保すると、アルバムを 1 つ開くたびに
+            // 9MB の空き領域を掴むことになる（開いている画面ぶん積み上がる）。
+            merged.reserveCapacity(local.count + (filter?.count ?? cloudSnapshot.count))
+            merged.append(contentsOf: local)
+            for item in cloudSnapshot {
+                if let filter, !filter.contains(item.path) { continue }
+                // 小文字化が要るのは「隠す」か「撮影日の上書き」を実際に引くときだけ。
+                // どちらの表も空なら 1 本も作らない。
+                if hidden.isEmpty, backupIndex.isEmpty {
+                    merged.append(.cloud(item))
+                    continue
+                }
+                let lower = item.path.lowercased()
+                if hidden.contains(lower) { continue }
+                if let known = backupIndex[lower]?.captureDate {
+                    merged.append(.cloud(item.withCaptureDate(known)))
+                } else {
+                    merged.append(.cloud(item))
+                }
             }
-            let cloud = dated.map(MergedPhotoItem.cloud)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
-            let merged = (local + cloud).sortedByCaptureDateAscending()
+            // ⚠️ **その場で並べ替える**。`sortedByCaptureDateAscending()` は結果を別配列で返すので、
+            // 並べ替えの前後で 12 万件の配列が 2 本同時に立つ（約 21MB）。
+            merged.sortByCaptureDateAscending()
             if Task.isCancelled { return }
             // 指紋は**ここ（オフメイン）で**取る。メインで取ると id の文字列生成が
             // そのまま画面の停止時間になる。
             let signature = MergedPhotoStore.signature(of: merged)
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloud.count) "
+            // ⚠️ ログの形は変えない（`device-verification.md` が目印にしている）。
+            // クラウド分は 1 本の配列に混ぜたので差で出す。
+            let cloudCount = merged.count - local.count
+            Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloudCount) "
                              + "hiddenBackupCopies=\(hidden.count) total=\(merged.count) sort=\(Int(ms))ms")
             await self?.setItems(merged, generation: generation, signature: signature)
         }
