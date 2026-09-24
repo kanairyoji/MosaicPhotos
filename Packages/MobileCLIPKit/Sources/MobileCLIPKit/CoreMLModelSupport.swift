@@ -327,25 +327,32 @@ public enum PerceptionModels {
     /// `note…Inference()` が割り込み、**たった今使い始めた印を消してしまう**
     /// （そして走り始めた推論からモデルを取り上げる）。
     ///
-    /// - Parameter analysisRunning: 解析（窓・ブースト・埋め込み・顔スキャン）が走っているか。
-    ///   走っている最中に取り上げると、その場で 10〜35 秒の再ロードが始まり、
-    ///   ANE ゲートの中なのでほかの推論も止まる。
+    /// ⚠️ 「走っているか」も**モデルごとに受け取る**（レビュー 10 周目）。1 つにまとめると、
+    /// 顔スキャンが走っているだけで CLIP テキスト塔（505MB）まで手放せなくなる
+    /// ——顔スキャンは CLIP を使わないのに。前面のブースト（「今すぐ解析」）は
+    /// 10 分以上続くことがあるので、これは実際に効く。
+    ///
+    /// なぜ記録（時刻）だけで足りないか: トリクルは操作のたびに譲るので、**走っているのに
+    /// 5 分以上推論していない**ことがある。そのとき手放すと、再開の 1 枚目で
+    /// 10〜35 秒の再ロードが始まる。時刻は「使った」を、この引数は「これから使う」を表す。
+    ///
+    /// - Parameters:
+    ///   - clipBusy: CLIP を使う処理（埋め込み・窓・ブースト・生成）が走っているか。
+    ///   - faceBusy: 顔モデルを使う処理（顔スキャン・窓・ブースト）が走っているか。
     /// - Returns: どちらか一方でも手放したか。
     @discardableResult
     @MainActor
     public static func releaseIfIdle(now: Date = Date(),
                                      idleSeconds: TimeInterval = ModelIdlePolicy.idleSeconds,
-                                     analysisRunning: Bool) -> Bool {
+                                     clipBusy: Bool, faceBusy: Bool) -> Bool {
         let reason = "idle \(Int(idleSeconds))s"
         var released = false
-        if clipIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds,
-                                  analysisRunning: analysisRunning),
+        if clipIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds, analysisRunning: clipBusy),
            MobileCLIPRuntime.shared.releaseForIdle(reason: reason) {
             Diagnostics.mark("CLIP released (\(reason))")
             released = true
         }
-        if faceIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds,
-                                  analysisRunning: analysisRunning),
+        if faceIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds, analysisRunning: faceBusy),
            FaceModelRuntime.shared.releaseForIdle(reason: reason) {
             Diagnostics.mark("face model released (\(reason))")
             released = true

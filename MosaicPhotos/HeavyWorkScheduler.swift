@@ -234,11 +234,36 @@ enum HeavyWorkScheduler {
     /// 線引き（既定 5 分・`ModelIdlePolicy`）は「誰も待っていない時間に再ロード代を払う」
     /// という前提が崩れない長さにしてある。
     ///
-    /// ⚠️ 条件は背面側と**同じ 1 つ**（`isAnalysisRunning`）にする。解放点ごとに条件を書くと、
-    /// どれが効いたのか実機ログから切り分けられなくなる（ADR-196 の「11 述語」と同じ轍）。
+    /// ⚠️ 条件の**出どころ**は背面側と同じ（`isCLIPBusy` / `isFaceModelBusy` と、その合成の
+    /// `isAnalysisRunning`）。解放点ごとに別々の述語を書き起こすと、どれが効いたのか
+    /// 実機ログから切り分けられなくなる（ADR-196 の「11 述語」と同じ轍）。
+    /// 前面はモデルごとに、背面は合成を使う——**式は 1 組、使い分けるのは粒度だけ**。
     @MainActor
     static func releaseModelsIfIdleInForeground() {
-        PerceptionModels.releaseIfIdle(analysisRunning: isAnalysisRunning)
+        // ⚠️ **モデルごとに渡す**（レビュー 10 周目）。1 つにまとめると、顔スキャンが
+        // 走っているだけで CLIP テキスト塔（505MB）まで手放せなくなる——顔スキャンは
+        // CLIP を使わないのに。前面のブーストは 10 分以上続くことがあるので実際に効く。
+        PerceptionModels.releaseIfIdle(clipBusy: isCLIPBusy, faceBusy: isFaceModelBusy)
+    }
+
+    /// CLIP を使う処理が走っているか。⚠️ 生成（`isGeneratingAlbums`）も CLIP を引く。
+    @MainActor
+    private static var isCLIPBusy: Bool {
+        isHeavyWorkRunning
+            || BackgroundActivityMonitor.shared.isEmbedding
+            || BackgroundActivityMonitor.shared.isGeneratingAlbums
+    }
+
+    /// 顔モデルを使う処理が走っているか。
+    @MainActor
+    private static var isFaceModelBusy: Bool {
+        isHeavyWorkRunning || BackgroundActivityMonitor.shared.isScanningFaces
+    }
+
+    /// どちらのモデルも使い得る「まとまった仕事」が走っているか（窓・ブースト）。
+    @MainActor
+    private static var isHeavyWorkRunning: Bool {
+        currentWork.current != nil || stores?.analysisSession.isActive == true
     }
 
     /// 解析（窓・ブースト・埋め込み・顔スキャン・アルバム生成）が走っているか。
@@ -257,14 +282,7 @@ enum HeavyWorkScheduler {
     /// `isGeneratingAlbums` に安全弁が要ったのは、あちらが**仕事を塞ぐ**判定だったから。
     /// ここは塞がないので、valve は足さない。
     @MainActor
-    private static var isAnalysisRunning: Bool {
-        let monitor = BackgroundActivityMonitor.shared
-        return currentWork.current != nil
-            || stores?.analysisSession.isActive == true
-            || monitor.isEmbedding
-            || monitor.isScanningFaces
-            || monitor.isGeneratingAlbums
-    }
+    private static var isAnalysisRunning: Bool { isCLIPBusy || isFaceModelBusy }
 
     /// D: 前面/背面の遷移を実測ログに残す（復帰時のカクつき調査用）。
     /// 「復帰の瞬間に何が走っていたか」をログ 1 行で特定できるようにする。
