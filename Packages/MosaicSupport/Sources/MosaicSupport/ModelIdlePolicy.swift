@@ -15,13 +15,23 @@ public enum ModelIdlePolicy {
     /// 一連の操作（数分）より十分長いところを採る。
     public static let idleSeconds: TimeInterval = 300
 
-    /// - Parameters:
-    ///   - lastUse: 最後に推論した時刻。**nil なら手放さない**（一度も使っていない＝
-    ///     そもそも載っていないので、手放しても何も減らずログだけが増える）。
-    ///   - analysisRunning: 解析が走っているか。走っていれば手放さない。
+    /// そのモデルを手放してよいか（純関数）。
+    ///
     /// ⚠️ `internal`。本番の呼び出しは同じファイルの `consumeIfIdle` **1 か所だけ**で、
     /// モジュールの外から使う理由が無い（判定と記録消去は不可分なので、外から
     /// 判定だけ呼べると「消し忘れ」を作れてしまう）。テストは `@testable` で見る。
+    ///
+    /// - Parameters:
+    ///   - lastUse: **そのモデルを**最後に使った時刻。**nil なら手放さない**
+    ///     （一度も使っていない＝そもそも載っていないので、手放しても何も減らず
+    ///     ログだけが増える。ランタイムの `shared` を起こす副作用もある）。
+    ///   - now: 判定する時刻（テストで固定するため引数にしてある）。
+    ///   - idleSeconds: これだけ経っていれば手放してよい（既定は `idleSeconds`）。
+    ///   - analysisRunning: **そのモデルを使う処理**が走っているか。走っていれば手放さない。
+    ///     ⚠️ 「解析全体が走っているか」ではない——呼び出し側はモデルごとの旗
+    ///     （`clipBusy` / `faceBusy`）を渡す。まとめると、顔スキャン中に CLIP まで
+    ///     手放せなくなる。
+    /// - Returns: 手放してよければ true。
     static func shouldRelease(lastUse: Date?, now: Date,
                               idleSeconds: TimeInterval,
                               analysisRunning: Bool) -> Bool {

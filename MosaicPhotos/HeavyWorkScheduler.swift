@@ -254,8 +254,8 @@ enum HeavyWorkScheduler {
         // 走っているだけで CLIP テキスト塔（505MB）まで手放せなくなる——顔スキャンは
         // CLIP を使わないのに。
         // ⚠️ 効くのは**アイドルのトリクル**（`AnalysisDriver` が窓もブーストも無しに
-        // 顔スキャンを起こす経路）。ブースト中は `isHeavyWorkRunning` で**両方 busy** に
-        // なるので、分けても何も変わらない——最初そう書いたが誤りだった（レビュー指摘）。
+        // 顔スキャンを起こす経路）だけ。ブースト中は `isHeavyWorkRunning` で両方 busy に
+        // なるので、分けても結果は変わらない。
         PerceptionModels.releaseIfIdle(clipBusy: isCLIPBusy, faceBusy: isFaceModelBusy)
     }
 

@@ -66,7 +66,7 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// 目印にしているので、嘘を書くと切り分けができなくなる。
     /// - Returns: 実際に手放したか。
     @discardableResult
-    func releaseForIdle(reason: String = "idle") -> Bool {
+    func releaseForIdle(reason: String) -> Bool {
         let wasLoaded = imageBox.isLoaded || textBox.isLoaded
         imageBox.reset()
         textBox.reset()

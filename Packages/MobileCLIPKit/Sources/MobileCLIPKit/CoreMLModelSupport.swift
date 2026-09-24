@@ -327,7 +327,7 @@ public enum PerceptionModels {
     /// 実機ログから区別できない（`device-verification.md` がこの 2 本を目印にしている）。
     @discardableResult
     @MainActor
-    static func releaseNow(reason: String, clipBusy: Bool = false, faceBusy: Bool = false) -> Bool {
+    private static func releaseNow(reason: String, clipBusy: Bool = false, faceBusy: Bool = false) -> Bool {
         var released = false
         if !clipBusy, MobileCLIPRuntime.shared.releaseForIdle(reason: reason) {
             Diagnostics.mark("CLIP released (\(reason))")

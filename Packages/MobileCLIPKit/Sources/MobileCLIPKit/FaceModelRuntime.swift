@@ -50,7 +50,7 @@ final class FaceModelRuntime: @unchecked Sendable {
     /// CLIP 側と同じく**必ず reset し、載っていたかを返すだけ**にする
     /// （進行中のロードも `generation` で無効化されるので、無駄な確定を防げる）。
     @discardableResult
-    func releaseForIdle(reason: String = "idle") -> Bool {
+    func releaseForIdle(reason: String) -> Bool {
         let wasLoaded = box.isLoaded
         box.reset()
         if wasLoaded { Self.log.info("face model released (\(reason))") }
