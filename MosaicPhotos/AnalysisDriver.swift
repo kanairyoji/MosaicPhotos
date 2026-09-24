@@ -193,6 +193,10 @@ final class AnalysisDriver {
                 if BackgroundActivityMonitor.shared.idleSeconds >= HeavyWorkTiming.foregroundIdleSeconds {
                     await self.kick(.idle)
                 }
+                // ⚠️ **前面で誰も使っていないモデルも手放す**（常駐メモリの棚卸し）。
+                // 専用のタイマーは足さない——「アイドル中は定期的に方針を見直す」ための
+                // 刻みが既にここにあるので、相乗りする（上のコメントと同じ理由）。
+                self.releaseModelsIfIdle()
             }
         }
     }
@@ -200,6 +204,21 @@ final class AnalysisDriver {
     func stopIdleWatch() {
         idleTicker?.cancel()
         idleTicker = nil
+    }
+
+    /// **前面で一定時間まったく使われていないモデルを手放す**（常駐メモリの棚卸し）。
+    ///
+    /// ⚠️ ADR-223／ADR-226 追補の解放点は「窓の終わり」「顔スキャン 1 巡」「背面化」の 3 つで、
+    /// どれも**前面にいる限り発火しない**。検索を 1 回すれば CLIP テキスト塔（実測 footprint
+    /// 505MB）が載り、あとは critical 圧迫まで載りっぱなしになる。アプリを開いたまま置いて
+    /// あるだけの時間は珍しくないので、ここが常駐の山として一番大きかった。
+    ///
+    /// ⚠️ **走っている解析からは取り上げない**。取り上げると、その場で 10〜35 秒の再ロードが
+    /// 始まり、ANE ゲートの中なのでほかの推論も巻き添えで止まる。判断は背面側と**同じ場所**
+    /// （`HeavyWorkScheduler`）に置く——2 つの解放点で条件が食い違うと、どちらが効いているのか
+    /// 実機ログから切り分けられなくなる。
+    private func releaseModelsIfIdle() {
+        HeavyWorkScheduler.releaseModelsIfIdleInForeground()
     }
 
     // MARK: - 候補

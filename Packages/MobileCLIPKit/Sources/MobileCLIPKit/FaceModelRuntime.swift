@@ -70,7 +70,8 @@ final class FaceModelRuntime: @unchecked Sendable {
     /// 顔切り抜き画像 → 512 次元 L2 正規化埋め込み。NaN/Inf は壊れとみなし nil
     /// （有限性ガードは CoreMLModelHandle 側で共通に行う）。
     func embed(_ cgImage: CGImage) async -> [Float]? {
-        await MLInferenceGate.shared.run { await self.unsafeEmbed(cgImage) }
+        PerceptionModels.noteInference()
+        return await MLInferenceGate.shared.run { await self.unsafeEmbed(cgImage) }
     }
 
     private func unsafeEmbed(_ cgImage: CGImage) async -> [Float]? {
@@ -83,6 +84,7 @@ final class FaceModelRuntime: @unchecked Sendable {
     /// 返り値は入力と同じ並び（変換失敗・非有限は nil）。バッチ失敗時は 1 枚ずつへフォールバック。
     func embed(_ images: [CGImage]) async -> [[Float]?] {
         guard !images.isEmpty else { return [] }
+        PerceptionModels.noteInference()
         return await MLInferenceGate.shared.run { await self.unsafeEmbed(images) }
     }
 

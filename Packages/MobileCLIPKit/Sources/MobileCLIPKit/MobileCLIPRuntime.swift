@@ -110,7 +110,8 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// 構築は既定の `.background` のままにする。
     func encodeText(_ tokens: [Int32],
                     priority: MLInferencePriority = .background) async -> [Float]? {
-        await MLInferenceGate.shared.run(priority: priority) { await self.unsafeEncodeText(tokens) }
+        PerceptionModels.noteInference()
+        return await MLInferenceGate.shared.run(priority: priority) { await self.unsafeEncodeText(tokens) }
     }
 
     private func unsafeEncodeText(_ tokens: [Int32]) async -> [Float]? {
@@ -134,6 +135,7 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// フォールバックする（安全側）。
     func encodeImages(_ images: [CGImage]) async -> [[Float]?] {
         guard !images.isEmpty else { return [] }
+        PerceptionModels.noteInference()
         return await MLInferenceGate.shared.run { await self.unsafeEncodeImages(images) }
     }
 
@@ -169,7 +171,8 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// 画像 → 正規化済み 512 次元埋め込み。リサイズ/画素変換はモデルの画像制約に従い自動。
     /// NaN/Inf 破棄（有限性ガード）は CoreMLModelHandle 側で共通に行う。
     func encodeImage(_ cgImage: CGImage) async -> [Float]? {
-        await MLInferenceGate.shared.run { await self.unsafeEncodeImage(cgImage) }
+        PerceptionModels.noteInference()
+        return await MLInferenceGate.shared.run { await self.unsafeEncodeImage(cgImage) }
     }
 
     private func unsafeEncodeImage(_ cgImage: CGImage) async -> [Float]? {

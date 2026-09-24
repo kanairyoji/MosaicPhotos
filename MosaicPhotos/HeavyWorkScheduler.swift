@@ -209,11 +209,39 @@ enum HeavyWorkScheduler {
     /// その場で 10〜35 秒の再ロードが始まり、ゲートの中なのでほかの推論も止まる。
     @MainActor
     static func releaseModelsIfIdleInBackground() {
-        guard currentWork.current == nil, stores?.analysisSession.isActive != true else { return }
+        guard !isAnalysisRunning else { return }
         PerceptionModels.releaseForIdle(reason: "background")
         // 作り直せる大きな配列も手放す（候補 12MB・顔の候補 10MB・AI の下ごしらえ 30MB）。
         stores?.analysisDriver.releaseCachesForBackground()
         stores?.autoAlbumEngine.releaseSuggestionSnapshot()
+    }
+
+    /// **前面でも、一定時間まったく使われていないモデルは手放す**（常駐メモリの棚卸し）。
+    /// `AnalysisDriver` のアイドル監視（5 秒刻み）から呼ばれる。
+    ///
+    /// ⚠️ ADR-223 の「前面では手放さない」は、**窓の終わりに手放すか**という問いへの答えで、
+    /// 「前面で放置され続けた場合」を見ていなかった。検索を 1 回すればテキスト塔
+    /// （実測 footprint 505MB）が載り、以後は critical 圧迫か背面化まで載りっぱなしになる。
+    /// 線引き（既定 5 分・`ModelIdlePolicy`）は「誰も待っていない時間に再ロード代を払う」
+    /// という前提が崩れない長さにしてある。
+    ///
+    /// ⚠️ 条件は背面側と**同じ 1 つ**（`isAnalysisRunning`）にする。解放点ごとに条件を書くと、
+    /// どれが効いたのか実機ログから切り分けられなくなる（ADR-196 の「11 述語」と同じ轍）。
+    @MainActor
+    static func releaseModelsIfIdleInForeground() {
+        PerceptionModels.releaseIfIdle(analysisRunning: isAnalysisRunning)
+    }
+
+    /// 解析（窓・ブースト・埋め込み・顔スキャン・アルバム生成）が走っているか。
+    /// モデルを取り上げてよいかの唯一の判定。
+    @MainActor
+    private static var isAnalysisRunning: Bool {
+        let monitor = BackgroundActivityMonitor.shared
+        return currentWork.current != nil
+            || stores?.analysisSession.isActive == true
+            || monitor.isEmbedding
+            || monitor.isScanningFaces
+            || monitor.isGeneratingAlbums
     }
 
     /// D: 前面/背面の遷移を実測ログに残す（復帰時のカクつき調査用）。

@@ -258,7 +258,13 @@ final class LoadOnce<Value: Sendable>: @unchecked Sendable {
 /// （背面のアプリは footprint の大きい順に落とされる）。
 ///
 /// 窓の終わりに手放し、次の窓で読み直す（7〜17 秒）。窓は 30 分おきなので割に合う。
-/// ⚠️ **前面では手放さない**——検索やフル画像のタグ表示が次の操作で再ロード待ちになる。
+///
+/// ⚠️ ADR-223 は「**前面では手放さない**」と決めたが、それは**窓の終わりに手放すか**という
+/// 問いへの答えで、「前面で放置され続けた場合」は見ていなかった（常駐メモリの棚卸し）。
+/// 実際には検索を 1 回すればテキスト塔（実測 footprint 505MB）が載り、その後は
+/// critical 圧迫か「背面化 + 窓の終了」まで載りっぱなしになる。電源に繋がない端末では
+/// 事実上ずっと常駐する。⚠️ `ModelIdlePolicy` はそこだけを埋める——**一定時間まったく
+/// 使われず、解析も走っていない**ときに限り、前面でも手放す。
 public enum PerceptionModels {
 
     /// **顔モデルだけ**手放す（顔スキャンが 1 巡終わった時点・ADR-223）。
@@ -281,10 +287,65 @@ public enum PerceptionModels {
     @MainActor
     public static func releaseForIdle(reason: String) -> Bool {
         guard BackgroundYield.scenePhase != .active else { return false }
+        return releaseNow(reason: reason)
+    }
+
+    // MARK: - 前面でも、使われなくなったら手放す（常駐メモリの棚卸し）
+
+    /// 最後に推論が走った時刻。**どのスレッドからも書かれる**ので錠で守る。
+    /// nil＝このプロセスで一度も推論していない（＝モデルも載っていない）。
+    nonisolated(unsafe) private static var _lastInferenceAt: Date?
+    private static let lastInferenceLock = NSLock()
+
+    /// 推論が走ったことを記録する。**`MLInferenceGate` を通る経路すべてから呼ぶ**
+    /// ——呼び忘れると「使っていない」と誤判定して、使用中のモデルを手放しかねない。
+    public static func noteInference(now: Date = Date()) {
+        lastInferenceLock.lock()
+        _lastInferenceAt = now
+        lastInferenceLock.unlock()
+    }
+
+    /// 最後の推論時刻（テスト・診断用）。
+    public static var lastInferenceAt: Date? {
+        lastInferenceLock.lock(); defer { lastInferenceLock.unlock() }
+        return _lastInferenceAt
+    }
+
+    /// テスト用: 記録を消す（未使用の状態に戻す）。
+    static func resetLastInferenceForTesting() {
+        lastInferenceLock.lock()
+        _lastInferenceAt = nil
+        lastInferenceLock.unlock()
+    }
+
+    /// **前面/背面を問わず**手放す（判断は呼び出し側が済ませている前提）。
+    @discardableResult
+    @MainActor
+    static func releaseNow(reason: String) -> Bool {
         let clip = MobileCLIPRuntime.shared.releaseForIdle()
         let face = FaceModelRuntime.shared.releaseForIdle(reason: reason)
         guard clip || face else { return false }
         Diagnostics.mark("models released (\(reason))")
         return true
+    }
+
+    /// 一定時間まったく使われていなければ手放す（前面でも）。
+    /// - Parameter analysisRunning: 解析（窓・ブースト・埋め込み・顔スキャン）が走っているか。
+    ///   走っている最中に取り上げると、その場で 10〜35 秒の再ロードが始まり、
+    ///   ANE ゲートの中なのでほかの推論も止まる。
+    /// - Returns: 実際に手放したか。
+    @discardableResult
+    @MainActor
+    public static func releaseIfIdle(now: Date = Date(),
+                                     idleSeconds: TimeInterval = ModelIdlePolicy.idleSeconds,
+                                     analysisRunning: Bool) -> Bool {
+        guard ModelIdlePolicy.shouldRelease(lastUse: lastInferenceAt, now: now,
+                                            idleSeconds: idleSeconds,
+                                            analysisRunning: analysisRunning) else { return false }
+        let released = releaseNow(reason: "idle \(Int(idleSeconds))s")
+        // ⚠️ 手放したら記録も消す。残すと、次に載せ直すまでの間に何度も
+        // 「アイドルだから手放す」と判定して診断ログを埋める。
+        if released { resetLastInferenceForTesting() }
+        return released
     }
 }

@@ -21,6 +21,38 @@
 
 ---
 
+## ADR-228 前面でも、一定時間使われていないモデルは手放す
+- 状態: 採用（ADR-223 の「前面では手放さない」を限定的に改める）
+- 文脈: 常駐メモリの棚卸しで、**解放点が 1 つも前面で発火しない**ことが分かった。
+  ADR-223 の解放点は「窓の終わり」と「顔スキャン 1 巡」、ADR-226 追補で「背面化」が増えたが、
+  どれも `BackgroundYield.scenePhase != .active` を条件に持つ。そのため
+  **前面で検索を 1 回すれば CLIP テキスト塔（実測 footprint 505MB）が載り、
+  critical 圧迫か背面化まで載りっぱなし**になる。アプリを開いたまま置いてある時間は
+  珍しくないので、これが単体でいちばん大きい常駐だった。
+  ⚠️ ADR-223 の「前面では手放さない」は誤りではない——あれは**窓の終わりに手放すか**という
+  問いへの答えで、「前面で放置され続けた場合」は問いの外にあった。
+- 決定: **最後の推論から一定時間（既定 5 分）まったく使われておらず、解析も走っていなければ、
+  前面でも手放す**。線引きは純ロジック `MosaicSupport/ModelIdlePolicy`（他の方針型＝
+  `BackgroundYield` / `HeavyWorkTiming` と同じ場所）。
+  - 最終利用は `PerceptionModels.noteInference()` が記録する。呼ぶのは**同梱モデルを使う
+    推論の入口 5 か所**（CLIP のテキスト/画像/画像バッチ、顔の 1 枚/バッチ）。Vision だけの
+    経路（`VisionTagAdapter` / `FacePerceptionAdapter+Vision`）は自前モデルを読まないので数えない。
+  - 「解析が走っているか」の判定は**背面側と同じ 1 つ**（`HeavyWorkScheduler.isAnalysisRunning`）。
+    解放点ごとに条件を書くと、どれが効いたのか実機ログから切り分けられない（ADR-196 の
+    「11 述語」と同じ轍）。
+  - タイマーは**足さない**。`AnalysisDriver` のアイドル監視（5 秒刻み・前面にいる間だけ）に
+    相乗りする。
+- 結果: 前面で放置したときの常駐が 300〜500MB 減る見込み（要実機計測）。代償は
+  「5 分以上空けた次の検索が再ロード待ちになる」こと。⚠️ **線を短くしてはいけない**——
+  再ロードは実機 10〜35 秒で、アイドル解放が成り立つのは「誰も待っていない時間に払うから」。
+  検索して結果を眺めている数分で手放すと、その前提が崩れる。
+- 関連: `MosaicSupport/ModelIdlePolicy.swift`（線引き・`ModelIdlePolicyTests` 7 本）/
+  `MobileCLIPKit/CoreMLModelSupport.swift`（`noteInference` / `releaseIfIdle`）/
+  `MobileCLIPRuntime.swift`・`FaceModelRuntime.swift`（記録の呼び出し）/
+  `HeavyWorkScheduler.releaseModelsIfIdleInForeground` / `AnalysisDriver.startIdleWatch`。
+  ADR-223・ADR-226 追補・ADR-196。
+  ⚠️ 実機で確かめること: `device-verification.md` の **Z6**。
+
 ## ADR-227 全件を読む処理は、使い捨ての `ModelContext` でページ分けして読む
 - 状態: 採用（ADR-224 の実測から一般化）
 - 文脈: 常駐メモリの棚卸し（クラウド 10.2 万枚・実機 `phys_footprint` 680〜840MB）で、
@@ -124,7 +156,8 @@
   `DropboxPhotoStoreReflectCoalesceTests` / `CloudContentHashProjectionTests`。ADR-95・ADR-119。
 
 ## ADR-223 夜の処理枠が終わったら、同梱モデルを手放して眠る
-- 状態: 採用
+- 状態: 採用（**前面の扱いは ADR-228 が限定的に改めた**——下記「前面では手放さない」は
+  「窓の終わりに手放すか」への答えで、前面で放置され続けた場合は見ていなかった）
 - 文脈: 実機ログ diagnostics-88 で、夜の窓のフットプリントが **650MB** に達していた
   （CLIP テキスト塔で 505MB → 顔モデルで 630〜650MB）。窓が終わってもモデルは常駐したままで、
   アプリはその後 30 分眠る。**背面のアプリは footprint の大きい順に落とされる**ので、

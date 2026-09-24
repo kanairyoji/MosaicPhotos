@@ -153,6 +153,22 @@
   「この端末で公開する」を押すと公開が始まり、`<root>/.mosaic-analysis-owner.json` の
   `deviceFolder` がこの端末に変わること。
 
+## Z6 前面で放置したときにモデルが手放されること（ADR-228）
+
+シミュレータでは背景埋め込みを走らせず、モデルも `.cpuOnly` なので**実機でしか確かめられない**。
+
+1. アプリを開き、AI 検索を 1 回実行する（CLIP テキスト塔が載る）。
+   診断ログに `model loaded CLIP text tower … (footprint=…)` が出ることを確認。
+2. そのまま**何も操作せず前面で 6 分置く**（画面が消えないよう自動ロックは切る）。
+3. `models released (idle 300s)` が出ること。出ないなら解析が走っている
+   （`analyze:` / `embed: batch` / 顔スキャンの行があるか確認）。
+4. その直後にもう一度検索し、`model loading… CLIP text tower` → `model loaded` と
+   再ロードされて**結果が返ること**（手放しても機能が壊れていないこと）。
+
+⚠️ **解析中に手放していないこと**も見る。「今すぐ解析」を押して走らせたまま 6 分置き、
+`models released` が **出ない**こと。出ていたら `isAnalysisRunning` の条件が足りていない
+（走っている推論から取り上げると ANE ゲートごと止まる）。
+
 ---
 
 ## 見るべき診断ログ
@@ -166,3 +182,4 @@ Developer Options → 診断ログ。目印になる行:
 - `merged.rebuild: local=… cloud=… total=… sort=…ms`
 - `embed: batch` / `embed: skipped — already running`
 - `share.publishAnalysis: 上げた N/M シャード（残り …）`（ADR-222・2 回目以降は「変更なし」）
+- `models released (idle 300s)` — 前面アイドルでのモデル解放（ADR-228）

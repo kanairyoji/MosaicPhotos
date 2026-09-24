@@ -21,6 +21,34 @@
 
 ---
 
+## 「id を作らずに比べる」を直したのに、指紋と位置解決には同じ確保が残っていた
+
+2026-09-24（常駐メモリの棚卸しの続き）。
+
+- 症状: 報告なし。`4df0ec1`（等値比較を `hasID` へ・スナップショット構築で id を 1 回だけ作る）を
+  入れた**あとに**、同じ形の確保が 3 経路そのまま残っているのをコードの読みで見つけた。
+- 原因: `MergedPhotoItem.id` は計算プロパティ（`"C-" + path` を毎回組み立てる）。直したのは
+  **等値比較と snapshot 構築**だけで、**ハッシュを取る経路**は手つかずだった。
+  1. `gridContentSignature` — 一覧の指紋。⚠️ **ズームで列数を変えるだけでも `updateUIView` から
+     走る**ので、中身が 1 つも変わっていないのに 12 万本の String を確保して捨てていた。
+     指紋は「作り直しを避ける」ための節約策なのに、その判定自体が規模比例の確保になっていた。
+  2. `MergedPhotoStore.signature(of:)` — 再構築のたびに同じ 12 万本。
+  3. `PagingIndex.resolve` — ⚠️ **この型は ADR-119 の確保を避けるために作られた**のに、
+     探索そのものは `$0.id == id` のままで、当たりが外れた回に全件ぶん作っていた。
+     制約が `Identifiable` だったので `hasID` を呼べなかった（型で塞がれていた）。
+- 対処: `PhotoItem` に `hashIdentity(into:)` を足す（既定 `hasher.combine(id)`、作るのが
+  高くつく実装だけ上書き＝`hasID` と同じ設計）。`MergedPhotoItem` は種別 1 バイト＋中身を混ぜる
+  ので、`"L-"`/`"C-"` の接頭辞と同じだけ区別できる。`==` と `hash(into:)` も id を作らない形へ
+  （`lhs.id == rhs.id` は 1 回の比較で String を 2 本作る）。`PagingIndex` の制約を `PhotoItem` に。
+- 教訓: **同じ形のバグは「直した経路」ではなく「その形」で探す。** `hasID` を足した時点で
+  「id を作らずに比べる」は済んだつもりになったが、*比べる*を直しても*混ぜる*が残っていた。
+  ADR-119 が言う「一覧の全件を触る処理」を、等値・ハッシュ・探索の 3 種で洗い直すべきだった。
+- 関連: `3ad7154` / `PhotoItem.swift`・`GridSignature.swift`・`PagingIndex.swift`・
+  `MergedPhotoItem.swift`・`MergedPhotoStore.swift`。回帰テストは回数を数える形で 6 本
+  （`PagingIndexTests` / `GridSignatureTests`・規模 4 倍で比例しないこと）。
+- 残課題: 残る 1 セット（snapshot が持つ 12 万本の id）は `MergedPhotoItem.id` が
+  `String` である限り消えない。整数 ID 化はパスの intern とセットで別途。
+
 ## ヘッダーを 1 つ出すたびに、12 万件のスナップショットを複製していた
 
 2026-09-24（常駐メモリの棚卸し中に発見）。
