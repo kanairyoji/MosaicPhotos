@@ -7,6 +7,56 @@
 片付いたら、この一覧から消して `decisions.md` / `case-studies.md` へ移すこと。
 
 
+## クラウドのパス文字列が、同じ 1 本を 6 か所で別々に確保している
+
+- 箇所: `DropboxFileItem.path`（`DropboxCore/Models/DropboxFileItem.swift:6`）を起点に、
+  `DropboxCacheStore.cachedItemIndex` のキー（`path.lowercased()`）と値（`IndexedItem.path`）、
+  `MergedPhotoItem.id`（`"C-" + path`）から snapshot / `idToIndex` / `uniquedByID` の Set。
+- 分類: scaleProportional / 優先度 P2（初出 2026-09-24・常駐メモリの棚卸し）
+- 症状: クラウドのパスは `/MosaicPhotos/<端末>/Backup/2025/2025-08/IMG_1234.HEIC` の形で、
+  **ディレクトリ部分は年月フォルダしかない＝数百通り**。それなのに 10.2 万件ぶんのフルパスが
+  上記 6 か所で独立にヒープ確保されている（1 本 ~104B）。推定 15〜25MB。
+  ファイル名だけなら 13 バイト＝**Swift の small-string（15 バイト）に収まりヒープ確保が 0 になる**。
+- なぜ設計判断が要るか: ⚠️ **`PhotoRef.cloud(path)` の refKey は SwiftData に永続化されている**
+  （タグ台帳・顔台帳・AI アルバムのメンバー）。パスの持ち方を変えるなら、
+  (a) 永続化の形は変えずに境界で組み立て直すか、(b) 版を上げて索引を移すか（ADR-186）を
+  先に決める必要がある。数字は**実機で測っていない推定**なので、まず測るのが順序。
+- 選択肢:
+  1. **ディレクトリ ID（UInt16）＋ファイル名**に分けて持つ。効き目最大。境界（refKey・
+     Dropbox API・表示）で組み立て直す。
+  2. `cachedItemIndex` のキーと値でパスを**共有**する（今は別々に確保している）。局所的で安全。
+  3. 入れない。まず実機で `phys_footprint` の内訳を採る。
+
+## グリッドの識別子が String なので、スナップショットが 12 万本の文字列を抱える
+
+- 箇所: `PhotoCollectionView.swift:79`（`UICollectionViewDiffableDataSource<String, Store.Item.ID>`）と
+  `:353` のスナップショット。`Store.Item.ID` は `MergedPhotoItem.id` ＝ `String`。
+- 分類: scaleProportional / 優先度 P2（初出 2026-09-24）
+- 症状: 一覧が画面にある間、snapshot（~14MB）と `idToIndex`（~19MB）が 12 万本の
+  String を抱える（推定）。`4df0ec1` と `3ad7154` で**作る回数**は 1 回まで減らしたが、
+  **1 セットは型として残る**。
+- なぜ設計判断が要るか: 整数 ID にするには「作り直しを跨いで同じパスに同じ ID を返す」
+  intern テーブルが要る＝上の項目とセット。diffable は安定 ID を前提にしているので、
+  ID が振り直されると差分が全件入れ替えになる。
+- 選択肢: 1. 上の intern とセットで `UInt32` 化（snapshot が 0.5MB になる）/
+  2. `idToIndex` を捨てて `dataSource.indexPath(for:)` に寄せる（~19MB・単独でも可能）/ 3. 入れない。
+
+## 端末写真を `[PHAsset]` に展開していて、PhotoKit の遅延実体化を捨てている
+
+- 箇所: `LocalAssetIndex.swift:55`（`byID: [String: PHAsset]`）/ `LocalPhotoStore.swift:192` /
+  `BackupRunner.swift:355` / `BackupEngine.swift:454`。`PHFetchResult` はどこにも保持していない
+  （リポジトリ全体で 0 件）。
+- 分類: scaleProportional / 優先度 P2（初出 2026-09-24）
+- 症状: `PHFetchResult` は PhotoKit が**内部でウィンドウ実体化する遅延コレクション**なのに、
+  全部 `enumerateObjects` で配列へ落としている。そのため 1.8 万個の `PHAsset` が
+  `LocalAssetIndex` と `LocalPhotoStore` で**2 セット**常駐する（推定 25MB）。
+- なぜ設計判断が要るか: `PHFetchResult` を持ち回すと (a) スレッドの扱い、
+  (b) `PHPhotoLibraryChangeObserver` の `changeDetails(for:)` による差分適用、が要る。
+  いまの「配列＋世代」の作りとは別物で、`PhotoRequest.limiter`（ADR で入れた同時実行制限）
+  との噛み合わせも見直しになる。
+- 選択肢: 1. `LocalAssetIndex` と `LocalPhotoStore` で PHAsset を**1 セット共有**する（局所的・
+  まずこれ）/ 2. `PHFetchResult` 保持へ寄せる（本筋だが大きい）/ 3. 入れない。
+
 ## （解決済み）規模テストの回数が、並行して走る別のテストの分まで数えられる（2026-09-22 に発見・2026-09-23 に対処）
 
 - 症状: `PerfTrace.takeCounts()` のカウンタはプロセス全体で共有される。`CloudCaptureDateFillTests` の
