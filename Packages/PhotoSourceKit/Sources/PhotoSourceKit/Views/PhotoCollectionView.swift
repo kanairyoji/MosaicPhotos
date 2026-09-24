@@ -347,14 +347,30 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 // すぎないので、**データの異常でアプリを落とさない**（ADR-143 と同じ原則）。
                 // 重複は先勝ちで落とし、原因追跡のため件数を記録する。
                 Diagnostics.breadcrumb("grid.snapshot items=\(items.count)")
-                let unique = uniquedByID(items)
+                // ⚠️ **id は 1 件につき 1 回だけ作る**（ADR-119・常駐メモリの棚卸し）。
+                // `MergedPhotoItem.id` は**計算プロパティ**（`"C-" + path` を毎回作る）なので、
+                // 以前は 1 回の反映で 12 万本の String を**3 セット**確保していた
+                // ——重複除去の Set・`idToIndex`・スナップショット。作った id を配列で持ち回し、
+                // グループ分けの側は `flatIndex` で引く。
+                var unique: [Store.Item] = []
+                var ids: [Store.Item.ID] = []
+                var index: [Store.Item.ID: Int] = [:]
+                unique.reserveCapacity(items.count)
+                ids.reserveCapacity(items.count)
+                index.reserveCapacity(items.count)
+                for item in items {
+                    let id = item.id
+                    // ⚠️ 同じ ID が 2 つ以上あると diffable data source は**例外で落ちる**
+                    // （実機 diagnostics-69）。先勝ちで落とす（表示のためにアプリを落とさない）。
+                    guard index[id] == nil else { continue }
+                    index[id] = unique.count
+                    unique.append(item)
+                    ids.append(id)
+                }
                 if unique.count != items.count {
                     Diagnostics.mark("grid.snapshot: dropped \(items.count - unique.count) duplicate id(s) "
                                      + "— 一覧に同じ写真が重複していた")
                 }
-                var index: [Store.Item.ID: Int] = [:]
-                index.reserveCapacity(unique.count)
-                for (i, item) in unique.enumerated() { index[item.id] = i }
 
                 var snapshot = NSDiffableDataSourceSnapshot<String, Store.Item.ID>()
                 if let grouping {
@@ -365,15 +381,16 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                     var order: [String] = []
                     var idsByTitle: [String: [Store.Item.ID]] = [:]
                     for section in sections {
-                        let ids = section.rows.flatMap { $0.entries.map { $0.item.id } }
+                        // `flatIndex` は `unique` の添字なので、作り置きした id をそのまま引ける。
+                        let sectionIDs = section.rows.flatMap { $0.entries.map { ids[$0.flatIndex] } }
                         if idsByTitle[section.title] == nil { order.append(section.title) }
-                        idsByTitle[section.title, default: []].append(contentsOf: ids)
+                        idsByTitle[section.title, default: []].append(contentsOf: sectionIDs)
                     }
                     snapshot.appendSections(order)
                     for title in order { snapshot.appendItems(idsByTitle[title] ?? [], toSection: title) }
                 } else {
                     snapshot.appendSections([""])   // dense：単一セクション（ヘッダなし）
-                    snapshot.appendItems(unique.map { $0.id }, toSection: "")
+                    snapshot.appendItems(ids, toSection: "")
                 }
                 let buildMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                 let sectionCount = snapshot.numberOfSections

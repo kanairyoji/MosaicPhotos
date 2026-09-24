@@ -56,7 +56,9 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         self.pagingItems = pagingItems
         self._currentID = State(initialValue: startID)
         let items = pagingItems ?? store.items
-        let startIndex = items.firstIndex(where: { $0.id == startID }) ?? 0
+        // ⚠️ `$0.id == startID` と書かない（ADR-119）。`id` が計算プロパティの実装では
+        // **1 件ごとに String を 1 本確保**するので、写真を 1 枚開くたびに 12 万本作ることになる。
+        let startIndex = items.firstIndex(where: { $0.hasID(startID) }) ?? 0
         _currentIndex = State(initialValue: startIndex)
         self._windowLowerBound = State(initialValue: max(0, startIndex - Self.windowRadius))
     }

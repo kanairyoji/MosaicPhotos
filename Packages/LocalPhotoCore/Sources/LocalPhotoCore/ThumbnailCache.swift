@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import ImageCacheKit
+import MosaicSupport
 import UIKit
 
 /// Two-level thumbnail cache: in-memory (`MemoryImageCache`) + on-disk (`DiskImageStore`),
@@ -20,6 +21,14 @@ public actor ThumbnailCache {
     /// アセットごとに「最後にメモリへ載せたキー（＝サイズ）」を覚える。ズーム直後の
     /// キャッシュミス時に別サイズを暫定表示するための軽量索引（メモリのみ・NSCache は列挙不可のため）。
     private var lastKeyByAsset: [String: String] = [:]
+    /// ⚠️ この索引は**作り直せる**（次にサムネを載せたときに埋まる）のに、`clear()` の全消しでしか
+    /// 減らず、圧迫でも残っていた（常駐メモリの棚卸し）。表示した写真ぶん（最大 1.8 万件）。
+    private var pressureToken: Int?
+
+    /// 暫定表示用の索引を捨てる（圧迫時・次にサムネを載せたら埋まり直す）。
+    func dropLastKeyIndex() {
+        lastKeyByAsset.removeAll(keepingCapacity: false)
+    }
 
     private init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -41,6 +50,11 @@ public actor ThumbnailCache {
         Task { await CacheBudgetCoordinator.shared.register(self) }
 
         diskUsage = disk.totalUsage()
+        // ⚠️ 登録は**全プロパティの初期化が済んでから**（`self` を渡すため）。
+        // 圧迫では暫定表示用の索引を捨てる（画像そのものは NSCache が段階縮小する）。
+        pressureToken = MemoryPressureMonitor.shared.register { [weak self] _ in
+            Task { await self?.dropLastKeyIndex() }
+        }
     }
 
     // MARK: - Configuration

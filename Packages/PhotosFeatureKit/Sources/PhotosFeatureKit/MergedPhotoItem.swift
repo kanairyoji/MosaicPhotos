@@ -21,6 +21,17 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// ⚠️ **id を作らずに比べる**（ADR-119）。`id` は毎回 String を作るので、
+    /// 全走査で使うと 1 タップで 12 万本の確保になる。接頭辞と中身を直接見る。
+    public func hasID(_ candidate: String) -> Bool {
+        switch self {
+        case .local(let item):
+            return candidate.hasPrefix("L-") && candidate.dropFirst(2) == item.id
+        case .cloud(let item):
+            return candidate.hasPrefix("C-") && candidate.dropFirst(2) == item.id
+        }
+    }
+
     public var captureDate: Date? {
         switch self {
         case .local(let item): return item.captureDate

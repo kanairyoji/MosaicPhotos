@@ -4,6 +4,14 @@ import Foundation
 /// A single photo that can be displayed from any source.
 public protocol PhotoItem: Identifiable, Hashable, Sendable {
     var captureDate: Date? { get }
+
+    /// **id を作らずに**同一性を判定する（ADR-119・常駐メモリの棚卸し）。
+    ///
+    /// ⚠️ `id` が計算プロパティの実装（`MergedPhotoItem` は `"C-" + path` を毎回作る）では、
+    /// `items.firstIndex { $0.id == x }` が**1 件ごとに String を 1 本確保**する。
+    /// 写真を 1 枚開くたびに 12 万本作っていた（CLAUDE.md が名指しする形そのもの）。
+    /// 既定は `id == candidate`。作るのが高くつく実装だけ上書きする。
+    func hasID(_ candidate: ID) -> Bool
     /// Short title shown in the navigation bar of the detail page.
     /// Return `nil` to fall back to the formatted `captureDate`.
     var displayTitle: String? { get }
@@ -44,6 +52,7 @@ public struct PhotoSourceLocation: Equatable, Sendable {
 }
 
 public extension PhotoItem {
+    func hasID(_ candidate: ID) -> Bool { id == candidate }
     var displayTitle: String? { nil }
     var coordinate: CLLocationCoordinate2D? { nil }
     var isFavorite: Bool { false }
