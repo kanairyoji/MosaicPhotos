@@ -246,7 +246,16 @@ enum HeavyWorkScheduler {
         PerceptionModels.releaseIfIdle(clipBusy: isCLIPBusy, faceBusy: isFaceModelBusy)
     }
 
-    /// CLIP を使う処理が走っているか。⚠️ 生成（`isGeneratingAlbums`）も CLIP を引く。
+    /// CLIP を使う処理が走っているか。
+    ///
+    /// ⚠️ `isGeneratingAlbums` を含めているのは**安全側に倒しているだけ**で、
+    /// 「生成が CLIP を引く」と確かめたわけではない（`AutoAlbumEngine.generate()` は
+    /// メタデータのエンリッチが主で、Vision タグと埋め込みは別のトリクルが付ける）。
+    /// 生成は 20〜45 秒で終わるので、その間だけ抱えても代償は小さい——
+    /// 逆に外して取りこぼすと 10〜35 秒の再ロードになる。**確かめずに外さない**。
+    ///
+    /// ⚠️ AI アルバムの再評価は CLIP を引くが、ここには現れない。あちらは
+    /// `encodeText` のたびに記録が更新されるので、時刻の側で守られる。
     @MainActor
     private static var isCLIPBusy: Bool {
         isHeavyWorkRunning
