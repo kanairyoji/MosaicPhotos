@@ -125,12 +125,13 @@ public final class MergedPhotoStore {
             HeavyLoad.begin("merged.rebuild")
             defer { HeavyLoad.end("merged.rebuild") }
             let t0 = CFAbsoluteTimeGetCurrent()
-            let local = localSnapshot.map(MergedPhotoItem.local)
             // ⚠️ この端末のバックアップコピーは、**端末に原本が無いときだけ**出す
             // （原本が有るのに出すと 1 枚の写真が二重に並ぶ・実機 diagnostics-57/58）。
+            // ⚠️ `.lazy` で中間配列を作らない（レビュー 7 周目）。`Set(...map(\.id))` は
+            // 1.8 万件の String 配列を一度作ってから Set に詰め直していた。
             let hidden = BackupCopyHiding.hiddenPaths(
                 backupCopies: backupIndex,
-                localIdentifiers: Set(localSnapshot.map(\.id)))
+                localIdentifiers: Set(localSnapshot.lazy.map(\.id)))
             // ⚠️ **撮影日は台帳を正とする**（ADR-128 追補・実フィードバック「時系列にならない」）。
             // Dropbox 側の日付は `time_taken ?? client_modified` で、EXIF から media_info が
             // 付かない（または同期時に pending だった）写真では**アップロード時刻**になる。
@@ -150,8 +151,10 @@ public final class MergedPhotoStore {
             // AI アルバム）は `cloudSnapshot` に全 10.2 万件を受け取り、`filter` で数十件だけ
             // 通す。ここで `cloudSnapshot.count` を確保すると、アルバムを 1 つ開くたびに
             // 9MB の空き領域を掴むことになる（開いている画面ぶん積み上がる）。
-            merged.reserveCapacity(local.count + (filter?.count ?? cloudSnapshot.count))
-            merged.append(contentsOf: local)
+            merged.reserveCapacity(localSnapshot.count + (filter?.count ?? cloudSnapshot.count))
+            // ⚠️ ここも `.lazy`。`localSnapshot.map(MergedPhotoItem.local)` を一度受けると、
+            // 1.8 万件ぶん（約 1.6MB）の配列が `merged` と別に立つ。
+            merged.append(contentsOf: localSnapshot.lazy.map(MergedPhotoItem.local))
             MergedPhotoStore.appendVisibleCloudItems(cloudSnapshot, filter: filter, hidden: hidden,
                                                      backupIndex: backupIndex, to: &merged)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
@@ -165,8 +168,8 @@ public final class MergedPhotoStore {
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
             // ⚠️ ログの形は変えない（`device-verification.md` が目印にしている）。
             // クラウド分は 1 本の配列に混ぜたので差で出す。
-            let cloudCount = merged.count - local.count
-            Diagnostics.mark("merged.rebuild: local=\(local.count) cloud=\(cloudCount) "
+            let cloudCount = merged.count - localSnapshot.count
+            Diagnostics.mark("merged.rebuild: local=\(localSnapshot.count) cloud=\(cloudCount) "
                              + "hiddenBackupCopies=\(hidden.count) total=\(merged.count) sort=\(Int(ms))ms")
             await self?.setItems(merged, generation: generation, signature: signature)
         }
