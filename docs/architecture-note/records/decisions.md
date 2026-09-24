@@ -57,8 +57,6 @@
     使わないのに）。前面のブーストは 10 分以上続くので実際に効く。
     ⚠️ 記録（時刻）だけで足りない理由: トリクルは操作のたびに譲るので、**走っているのに
     5 分以上推論していない**ことがある。時刻は「使った」を、busy は「これから使う」を表す。
-    解放点ごとに条件を書くと、どれが効いたのか実機ログから切り分けられない（ADR-196 の
-    「11 述語」と同じ轍）。
     ⚠️ **これで背面側の挙動も変わった**（レビュー 6 周目で明文化）。従来の背面の条件は
     「窓の仕事」と「ブースト」の 2 つだけで、前面のトリクルが埋め込み中に背面へ落ちると
     **走っているその処理からモデルを取り上げて**いた。埋め込み・顔スキャン・生成を
@@ -71,7 +69,7 @@
   「5 分以上空けた次の検索が再ロード待ちになる」こと。⚠️ **線を短くしてはいけない**——
   再ロードは実機 10〜35 秒で、アイドル解放が成り立つのは「誰も待っていない時間に払うから」。
   検索して結果を眺めている数分で手放すと、その前提が崩れる。
-- 関連: `MosaicSupport/ModelIdlePolicy.swift`（線引き＋`ModelIdleTracker`・テスト 14 本）/
+- 関連: `MosaicSupport/ModelIdlePolicy.swift`（線引き＋`ModelIdleTracker`・テスト 13 本）/
   `MobileCLIPKit/CoreMLModelSupport.swift`（`noteCLIPInference` / `noteFaceInference` /
   `releaseIfIdle(clipBusy:faceBusy:)`）/
   `MobileCLIPRuntime.swift`・`FaceModelRuntime.swift`（記録の呼び出し）/
