@@ -162,8 +162,11 @@
 1. アプリを開き、AI 検索を 1 回実行する（CLIP テキスト塔が載る）。
    診断ログに `model loaded CLIP text tower … (footprint=…)` が出ることを確認。
 2. そのまま**何も操作せず前面で 6 分置く**（画面が消えないよう自動ロックは切る）。
-3. `models released (idle 300s)` が出ること。出ないなら解析が走っている
+3. `CLIP released (idle 300s)` が出ること。出ないなら解析が走っている
    （`analyze:` / `embed: batch` / 顔スキャンの行があるか確認）。
+   ⚠️ **CLIP と顔モデルは別々に手放す**（記録もモデルごと）。顔スキャンを最近していなければ
+   `face model released (idle 300s)` が先に出ているはず——写真を眺めているだけで走る
+   CLIP の推論に顔モデルが引きずられて残っていないこと（レビュー指摘で分離した）。
 4. その直後にもう一度検索し、`model loading… CLIP text tower` → `model loaded` と
    再ロードされて**結果が返ること**（手放しても機能が壊れていないこと）。
 
@@ -184,4 +187,5 @@ Developer Options → 診断ログ。目印になる行:
 - `merged.rebuild: local=… cloud=… total=… sort=…ms`
 - `embed: batch` / `embed: skipped — already running`
 - `share.publishAnalysis: 上げた N/M シャード（残り …）`（ADR-222・2 回目以降は「変更なし」）
-- `models released (idle 300s)` — 前面アイドルでのモデル解放（ADR-228）
+- `CLIP released (idle 300s)` / `face model released (idle 300s)` — 前面アイドルでの
+  モデル解放（ADR-228）。**モデルごとに別々**に出る

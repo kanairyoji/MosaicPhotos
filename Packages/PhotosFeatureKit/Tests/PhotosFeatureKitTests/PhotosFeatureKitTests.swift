@@ -414,8 +414,9 @@ struct MemberStoreBackupHidingTests {
     /// オフロード済み（端末に原本が無い）写真まで隠すと、アルバムから写真が消える。
     @Test("原本が同じアルバムに居る副本だけを隠す")
     func hidesOnlyWhenOriginalIsPresent() {
-        let index = ["/backup/a.jpg": "local-a", "/backup/b.jpg": "local-b"]
-        let hidden = BackupCopyHiding.hiddenPaths(backupPathToLocalID: index,
+        let index = ["/backup/a.jpg": BackupCopyInfo(localIdentifier: "local-a", captureDate: nil),
+                     "/backup/b.jpg": BackupCopyInfo(localIdentifier: "local-b", captureDate: nil)]
+        let hidden = BackupCopyHiding.hiddenPaths(backupCopies: index,
                                                   localIdentifiers: ["local-a"])
         #expect(hidden == ["/backup/a.jpg"])
         #expect(!hidden.contains("/backup/b.jpg"), "原本が無い写真まで隠すと、アルバムから消える")

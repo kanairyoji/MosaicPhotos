@@ -11,12 +11,16 @@ import DropboxKit
 @Suite("バックアップコピーの隠蔽")
 struct BackupCopyHidingTests {
 
-    private let index = ["/mosaicphotos/img_0001.jpg": "LOCAL-1",
-                         "/mosaicphotos/img_0002.jpg": "LOCAL-2"]
+    /// 台帳の索引（本番と同じ型）。⚠️ `[String: String]` を受ける版は畳んだので、
+    /// テストも本番と同じ `BackupCopyInfo` を渡す（レビュー 9 周目）。
+    private let index = [
+        "/mosaicphotos/img_0001.jpg": BackupCopyInfo(localIdentifier: "LOCAL-1", captureDate: nil),
+        "/mosaicphotos/img_0002.jpg": BackupCopyInfo(localIdentifier: "LOCAL-2", captureDate: nil),
+    ]
 
     @Test("端末に原本が有るコピーは隠す")
     func hidesWhenOriginalExists() {
-        let hidden = BackupCopyHiding.hiddenPaths(backupPathToLocalID: index,
+        let hidden = BackupCopyHiding.hiddenPaths(backupCopies: index,
                                                   localIdentifiers: ["LOCAL-1"])
         #expect(hidden == ["/mosaicphotos/img_0001.jpg"], "1 枚の写真が二重に並ぶ")
     }
@@ -24,7 +28,7 @@ struct BackupCopyHidingTests {
     /// オフロード（端末から消した）写真は、クラウドのコピーが**唯一の実体**。
     @Test("端末に原本が無いコピーは残す")
     func keepsWhenOriginalIsGone() {
-        let hidden = BackupCopyHiding.hiddenPaths(backupPathToLocalID: index,
+        let hidden = BackupCopyHiding.hiddenPaths(backupCopies: index,
                                                   localIdentifiers: ["LOCAL-1"])
         #expect(!hidden.contains("/mosaicphotos/img_0002.jpg"),
                 "オフロード済みの写真が一覧から消える")
@@ -33,15 +37,15 @@ struct BackupCopyHidingTests {
     /// 隠して「無い」と思わせるのは取り返しがつかない。分からないなら重複させる方を選ぶ。
     @Test("対応が分からなければ何も隠さない")
     func unknownMappingHidesNothing() {
-        #expect(BackupCopyHiding.hiddenPaths(backupPathToLocalID: [:],
+        #expect(BackupCopyHiding.hiddenPaths(backupCopies: [:],
                                              localIdentifiers: ["LOCAL-1"]).isEmpty)
-        #expect(BackupCopyHiding.hiddenPaths(backupPathToLocalID: index,
+        #expect(BackupCopyHiding.hiddenPaths(backupCopies: index,
                                              localIdentifiers: []).isEmpty)
     }
 
     @Test("台帳に無いクラウド写真は対象外")
     func unrelatedCloudPhotosAreUntouched() {
-        let hidden = BackupCopyHiding.hiddenPaths(backupPathToLocalID: index,
+        let hidden = BackupCopyHiding.hiddenPaths(backupCopies: index,
                                                   localIdentifiers: ["LOCAL-1", "LOCAL-2"])
         #expect(!hidden.contains("/写真/family/old.jpg"))
         #expect(hidden.count == 2)

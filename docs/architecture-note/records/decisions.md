@@ -34,9 +34,14 @@
 - 決定: **最後の推論から一定時間（既定 5 分）まったく使われておらず、解析も走っていなければ、
   前面でも手放す**。線引きは純ロジック `MosaicSupport/ModelIdlePolicy`（他の方針型＝
   `BackgroundYield` / `HeavyWorkTiming` と同じ場所）。
-  - 最終利用は `PerceptionModels.noteInference()` が記録する。呼ぶのは**同梱モデルを使う
-    推論の入口 5 か所**（CLIP のテキスト/画像/画像バッチ、顔の 1 枚/バッチ）。Vision だけの
-    経路（`VisionTagAdapter` / `FacePerceptionAdapter+Vision`）は自前モデルを読まないので数えない。
+  - 最終利用は **モデルごとに**記録する（`noteCLIPInference` / `noteFaceInference`）。
+    呼ぶのは**同梱モデルを使う推論の入口 5 か所**（CLIP のテキスト/画像/画像バッチ、
+    顔の 1 枚/バッチ）。Vision だけの経路（`VisionTagAdapter` /
+    `FacePerceptionAdapter+Vision`）は自前モデルを読まないので数えない。
+    ⚠️ **1 つの記録にまとめてはいけない**（レビュー指摘）。まとめると、写真を眺めている
+    だけで走る CLIP の推論（表示タグ＝`CLIPDisplayLabeler` が数分おき）が、何時間も
+    使っていない顔モデル（300〜650MB）を引き止める——ADR-228 がいちばん減らしたい
+    「開いたまま眺めている」場面で減らなくなる。
     記録は推論の**開始時**（ゲートに入る前）。終了時にすると、ゲートで順番待ちしている
     長い推論が「使っていない」と見えてしまう。
   - ⚠️ **判定と「記録を消す」は不可分**（`ModelIdleTracker.consumeIfIdle`・レビュー 3 周目）。

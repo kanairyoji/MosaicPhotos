@@ -290,47 +290,66 @@ public enum PerceptionModels {
         return releaseNow(reason: reason)
     }
 
-    // MARK: - 前面でも、使われなくなったら手放す（常駐メモリの棚卸し）
+    // MARK: - 前面でも、使われなくなったら手放す（ADR-228）
 
-    /// 推論が走ったことを記録する。**`MLInferenceGate` を通る経路すべてから呼ぶ**
+    /// ⚠️ **モデルごとに記録を持つ**（レビュー指摘）。1 つにまとめると、写真を眺めている
+    /// だけで走る CLIP の推論（表示タグ＝`CLIPDisplayLabeler` が数分おき）が、
+    /// **何時間も使っていない顔モデル（300〜650MB）を引き止める**。
+    /// ADR-228 がいちばん減らしたい「開いたまま眺めている」場面で減らなくなる。
+    private static let clipIdle = ModelIdleTracker()
+    private static let faceIdle = ModelIdleTracker()
+
+    /// CLIP の推論が走ったことを記録する。**CLIP を使う入口すべてから呼ぶ**
     /// ——呼び忘れると「使っていない」と誤判定して、使用中のモデルを手放しかねない。
     ///
     /// ⚠️ 記録するのは推論の**開始時**（ゲートに入る前）。終了時にすると、ゲートで待っている
     /// 長い推論が「使っていない」と見えて、走っている最中に取り上げられ得る。
-    static func noteInference(now: Date = Date()) {
-        ModelIdleTracker.shared.note(now: now)
-    }
+    static func noteCLIPInference(now: Date = Date()) { clipIdle.note(now: now) }
+
+    /// 顔モデルの推論が走ったことを記録する（同上）。
+    static func noteFaceInference(now: Date = Date()) { faceIdle.note(now: now) }
 
     /// **前面/背面を問わず**手放す（判断は呼び出し側が済ませている前提）。
     @discardableResult
     @MainActor
     static func releaseNow(reason: String) -> Bool {
-        let clip = MobileCLIPRuntime.shared.releaseForIdle()
+        let clip = MobileCLIPRuntime.shared.releaseForIdle(reason: reason)
         let face = FaceModelRuntime.shared.releaseForIdle(reason: reason)
         guard clip || face else { return false }
         Diagnostics.mark("models released (\(reason))")
         return true
     }
 
-    /// 一定時間まったく使われていなければ手放す（前面でも）。
+    /// 一定時間まったく使われていないモデルを手放す（前面でも）。**モデルごとに別々に**判断する。
     ///
     /// ⚠️ 判定と「記録を消す」は `ModelIdleTracker` の中で**ひと続き**に行う。
     /// ここで「判定 → 手放す → 消す」と 3 段に分けると、その途中に推論スレッドからの
-    /// `noteInference()` が割り込み、**たった今使い始めた印を消してしまう**
+    /// `note…Inference()` が割り込み、**たった今使い始めた印を消してしまう**
     /// （そして走り始めた推論からモデルを取り上げる）。
     ///
     /// - Parameter analysisRunning: 解析（窓・ブースト・埋め込み・顔スキャン）が走っているか。
     ///   走っている最中に取り上げると、その場で 10〜35 秒の再ロードが始まり、
     ///   ANE ゲートの中なのでほかの推論も止まる。
-    /// - Returns: 実際に手放したか。
+    /// - Returns: どちらか一方でも手放したか。
     @discardableResult
     @MainActor
     public static func releaseIfIdle(now: Date = Date(),
                                      idleSeconds: TimeInterval = ModelIdlePolicy.idleSeconds,
                                      analysisRunning: Bool) -> Bool {
-        guard ModelIdleTracker.shared.consumeIfIdle(now: now, idleSeconds: idleSeconds,
-                                                    analysisRunning: analysisRunning)
-        else { return false }
-        return releaseNow(reason: "idle \(Int(idleSeconds))s")
+        let reason = "idle \(Int(idleSeconds))s"
+        var released = false
+        if clipIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds,
+                                  analysisRunning: analysisRunning),
+           MobileCLIPRuntime.shared.releaseForIdle(reason: reason) {
+            Diagnostics.mark("CLIP released (\(reason))")
+            released = true
+        }
+        if faceIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds,
+                                  analysisRunning: analysisRunning),
+           FaceModelRuntime.shared.releaseForIdle(reason: reason) {
+            Diagnostics.mark("face model released (\(reason))")
+            released = true
+        }
+        return released
     }
 }

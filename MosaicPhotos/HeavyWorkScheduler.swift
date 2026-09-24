@@ -209,11 +209,20 @@ enum HeavyWorkScheduler {
     /// その場で 10〜35 秒の再ロードが始まり、ゲートの中なのでほかの推論も止まる。
     @MainActor
     static func releaseModelsIfIdleInBackground() {
+        // ⚠️ **配列とモデルで条件が違う**（レビュー指摘）。ADR-228 で判定を 1 つに寄せたとき、
+        // この下の 2 行（作り直せる大きな配列＝候補 12MB・顔の候補 10MB・AI の下ごしらえ 30MB）
+        // まで新しい厳しい条件で塞いでしまっていた。配列は**走っている解析が困らない**
+        // （次に要るときに作り直す）ので、元どおりの条件で落とす。ここを塞ぐと、
+        // 前面のトリクル中にホームへ抜けただけで 52MB が背面のあいだ居座り、
+        // 解放点が他に無いので次の窓まで残る——ADR-226 が消したはずの jetsam 露出そのもの。
+        if currentWork.current == nil, stores?.analysisSession.isActive != true {
+            stores?.analysisDriver.releaseCachesForBackground()
+            stores?.autoAlbumEngine.releaseSuggestionSnapshot()
+        }
+        // モデルは**走っている解析から取り上げない**（取り上げると 10〜35 秒の再ロードが
+        // その場で始まり、ANE ゲートの中なのでほかの推論も止まる）。
         guard !isAnalysisRunning else { return }
         PerceptionModels.releaseForIdle(reason: "background")
-        // 作り直せる大きな配列も手放す（候補 12MB・顔の候補 10MB・AI の下ごしらえ 30MB）。
-        stores?.analysisDriver.releaseCachesForBackground()
-        stores?.autoAlbumEngine.releaseSuggestionSnapshot()
     }
 
     /// **前面でも、一定時間まったく使われていないモデルは手放す**（常駐メモリの棚卸し）。

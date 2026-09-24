@@ -58,14 +58,19 @@ final class MobileCLIPRuntime: @unchecked Sendable {
         if wasLoaded { Self.log.info("CLIP towers released (memory pressure)") }
     }
 
-    /// 夜の処理枠が終わったので手放す（ADR-223）。次回の窓で再ロードされる。
+    /// 誰も使っていないので手放す（ADR-223／ADR-228）。次回の encode で再ロードされる。
+    ///
+    /// ⚠️ 理由は**必ず受け取る**（レビュー指摘）。以前は `"window ended"` を直書きしており、
+    /// ADR-228 で前面のアイドル解放からも呼ばれるようになった今、**前面に居るのに
+    /// 「窓が終わった」とログに出る**。実機確認（`device-verification.md`）はこのログを
+    /// 目印にしているので、嘘を書くと切り分けができなくなる。
     /// - Returns: 実際に手放したか。
     @discardableResult
-    func releaseForIdle() -> Bool {
+    func releaseForIdle(reason: String = "idle") -> Bool {
         let wasLoaded = imageBox.isLoaded || textBox.isLoaded
         imageBox.reset()
         textBox.reset()
-        if wasLoaded { Self.log.info("CLIP towers released (window ended)") }
+        if wasLoaded { Self.log.info("CLIP towers released (\(reason))") }
         return wasLoaded
     }
 
@@ -110,7 +115,7 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// 構築は既定の `.background` のままにする。
     func encodeText(_ tokens: [Int32],
                     priority: MLInferencePriority = .background) async -> [Float]? {
-        PerceptionModels.noteInference()
+        PerceptionModels.noteCLIPInference()
         return await MLInferenceGate.shared.run(priority: priority) { await self.unsafeEncodeText(tokens) }
     }
 
@@ -135,7 +140,7 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// フォールバックする（安全側）。
     func encodeImages(_ images: [CGImage]) async -> [[Float]?] {
         guard !images.isEmpty else { return [] }
-        PerceptionModels.noteInference()
+        PerceptionModels.noteCLIPInference()
         return await MLInferenceGate.shared.run { await self.unsafeEncodeImages(images) }
     }
 
@@ -171,7 +176,7 @@ final class MobileCLIPRuntime: @unchecked Sendable {
     /// 画像 → 正規化済み 512 次元埋め込み。リサイズ/画素変換はモデルの画像制約に従い自動。
     /// NaN/Inf 破棄（有限性ガード）は CoreMLModelHandle 側で共通に行う。
     func encodeImage(_ cgImage: CGImage) async -> [Float]? {
-        PerceptionModels.noteInference()
+        PerceptionModels.noteCLIPInference()
         return await MLInferenceGate.shared.run { await self.unsafeEncodeImage(cgImage) }
     }
 

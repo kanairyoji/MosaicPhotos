@@ -116,15 +116,6 @@ struct ModelIdleTrackerTests {
         #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
     }
 
-    @Test("clear で未使用に戻る")
-    func clearResets() {
-        let t = ModelIdleTracker()
-        t.note(now: ago(400))
-        t.clear()
-        #expect(t.lastUseAt == nil)
-        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
-    }
-
     /// ⚠️ `shared` を使い回すと、並列に走る他のテストと取り合いになる（共有状態は
     /// テストの差し込み口にしない・`unresolved-problems.md` の教訓）。独立性を明示する。
     @Test("インスタンスごとに独立している")

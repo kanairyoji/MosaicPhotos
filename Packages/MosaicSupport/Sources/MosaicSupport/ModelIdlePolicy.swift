@@ -41,8 +41,11 @@ public enum ModelIdlePolicy {
 /// ゲートで順番待ちしている長い推論が「使っていない」と見えてしまう。
 public final class ModelIdleTracker: @unchecked Sendable {
 
-    /// 本番で使う唯一の入れ物。テストは `init()` で独立したものを作る。
-    public static let shared = ModelIdleTracker()
+    /// ⚠️ **`shared` は置かない**（レビュー指摘）。モデルごとに 1 つ持つ
+    /// ——CLIP と顔モデルで 1 つの記録を共有すると、**写真を眺めているだけで走る
+    /// CLIP の推論が、何時間も使っていない顔モデル（300〜650MB）を引き止める**
+    /// （表示タグの `CLIPDisplayLabeler` が数分おきに走るので、記録が 5 分を超えない）。
+    /// これでは ADR-228 がいちばん減らしたい場面で減らない。所有は `PerceptionModels`。
 
     private let lock = NSLock()
     private var lastUse: Date?
@@ -54,15 +57,11 @@ public final class ModelIdleTracker: @unchecked Sendable {
         lock.lock(); lastUse = now; lock.unlock()
     }
 
-    /// 最後に使った時刻（診断・テスト用）。
+    /// 最後に使った時刻。**テストが `consumeIfIdle` の副作用（記録を消したか）を
+    /// 観測するための窓**で、本番の判断には使わない（判断は `consumeIfIdle` の中だけ）。
     public var lastUseAt: Date? {
         lock.lock(); defer { lock.unlock() }
         return lastUse
-    }
-
-    /// 記録を消して「未使用」に戻す。
-    public func clear() {
-        lock.lock(); lastUse = nil; lock.unlock()
     }
 
     /// **手放してよいなら記録を消して true を返す**（判定と消去は不可分）。
