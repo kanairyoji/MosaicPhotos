@@ -48,7 +48,11 @@ func gridContentSignature<S: Sequence>(_ items: S) -> Int where S.Element: Photo
     var hasher = Hasher()
     var count = 0
     for item in items {
-        hasher.combine(item.id)
+        // ⚠️ `hasher.combine(item.id)` と書かないこと（常駐メモリの棚卸し）。
+        // `MergedPhotoItem.id` は計算プロパティなので、そう書くと**この 1 行だけで
+        // 12 万本の String を確保して捨てる**——指紋は「作り直しを避ける」ための
+        // 節約策なのに、その判定自体が規模比例の確保になっていた。
+        item.hashIdentity(into: &hasher)
         hasher.combine(item.captureDate)
         count += 1
     }

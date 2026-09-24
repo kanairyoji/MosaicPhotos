@@ -83,12 +83,32 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// ⚠️ **id を作らずにハッシュする**（常駐メモリの棚卸し）。一覧の指紋は全件に対して
+    /// これを呼ぶので、`hasher.combine(id)` だと 1 回の指紋計算で 12 万本の String を
+    /// 確保して捨てることになる（`hasID` と同じ理由・ADR-119 が名指しする形）。
+    /// 種別を先に混ぜるので、`"L-"`/`"C-"` の接頭辞と同じだけ区別できる。
+    public func hashIdentity(into hasher: inout Hasher) {
+        switch self {
+        case .local(let item):
+            hasher.combine(0 as UInt8)
+            hasher.combine(item.id)
+        case .cloud(let item):
+            hasher.combine(1 as UInt8)
+            hasher.combine(item.id)
+        }
+    }
+
+    /// ⚠️ ここも **id を作らない**。`lhs.id == rhs.id` は 1 回の比較で String を 2 本作る。
     public static func == (lhs: MergedPhotoItem, rhs: MergedPhotoItem) -> Bool {
-        lhs.id == rhs.id
+        switch (lhs, rhs) {
+        case (.local(let l), .local(let r)): return l.id == r.id
+        case (.cloud(let l), .cloud(let r)): return l.id == r.id
+        default: return false
+        }
     }
 
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
+        hashIdentity(into: &hasher)
     }
 }
 

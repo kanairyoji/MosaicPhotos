@@ -156,4 +156,62 @@ struct GridContentSignatureTests {
         #expect(gridContentSignature([item("C-/f/a.jpg", 1_700_000_000)])
                 != gridContentSignature([item("C-/f/b.jpg", 1_700_000_000)]))
     }
+
+    // MARK: - 指紋が id を作らないこと（常駐メモリの棚卸し）
+
+    /// `id` を読んだ回数を数えるアイテム。本番の `MergedPhotoItem` と同じく
+    /// **`hashIdentity` を上書きして String を作らない**。
+    private final class Counter: @unchecked Sendable { var reads = 0 }
+
+    private struct CheapHashItem: PhotoItem, @unchecked Sendable {
+        let raw: Int
+        let counter: Counter
+        var id: String {
+            counter.reads += 1
+            return "C-/folder/\(raw).jpg"      // 本番と同じく毎回組み立てる
+        }
+        var captureDate: Date? { nil }
+        /// 種別＋中身を直接混ぜる（String を作らない）。
+        func hashIdentity(into hasher: inout Hasher) {
+            hasher.combine(1 as UInt8)
+            hasher.combine(raw)
+        }
+        static func == (l: CheapHashItem, r: CheapHashItem) -> Bool { l.raw == r.raw }
+        func hash(into hasher: inout Hasher) { hasher.combine(raw) }
+    }
+
+    /// ⚠️ 指紋は「作り直しを避ける」ための節約策なのに、その判定自体が全件ぶんの
+    /// String 確保になっていた（ズームで列数を変えるだけでも走る）。
+    @Test("指紋の計算で id を 1 本も作らない")
+    func signatureBuildsNoIDs() {
+        let counter = Counter()
+        let list = (0..<5_000).map { CheapHashItem(raw: $0, counter: counter) }
+        _ = gridContentSignature(list)
+        #expect(counter.reads == 0,
+                "指紋が hashIdentity を通っていない（id を \(counter.reads) 回作った）")
+    }
+
+    /// 規模を 4 倍にしても回数が比例しないこと（ADR-119 の形・回数は決定的）。
+    @Test("規模を 4 倍にしても id の生成回数は増えない")
+    func signatureScaleDoesNotBuildIDs() {
+        func reads(_ n: Int) -> Int {
+            let counter = Counter()
+            _ = gridContentSignature((0..<n).map { CheapHashItem(raw: $0, counter: counter) })
+            return counter.reads
+        }
+        let small = reads(2_500)
+        let large = reads(10_000)
+        #expect(small == 0 && large == 0,
+                "規模に比例して id を作っている（2,500件=\(small) / 10,000件=\(large)）")
+    }
+
+    /// ⚠️ 上書きしても**区別できること**。`hashIdentity` で種別を混ぜ忘れると、
+    /// 端末写真とクラウド写真で同じ中身が来たときに同一視される。
+    @Test("hashIdentity を上書きしても中身の違いは指紋に出る")
+    func cheapHashStillDistinguishes() {
+        let counter = Counter()
+        let a = [CheapHashItem(raw: 1, counter: counter)]
+        let b = [CheapHashItem(raw: 2, counter: counter)]
+        #expect(gridContentSignature(a) != gridContentSignature(b))
+    }
 }

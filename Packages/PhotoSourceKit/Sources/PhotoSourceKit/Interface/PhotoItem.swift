@@ -12,6 +12,19 @@ public protocol PhotoItem: Identifiable, Hashable, Sendable {
     /// 写真を 1 枚開くたびに 12 万本作っていた（CLAUDE.md が名指しする形そのもの）。
     /// 既定は `id == candidate`。作るのが高くつく実装だけ上書きする。
     func hasID(_ candidate: ID) -> Bool
+
+    /// **id を作らずに**同一性をハッシュへ混ぜる（`hasID` の等値版に対するハッシュ版）。
+    ///
+    /// ⚠️ `hasID` だけでは足りない（常駐メモリの棚卸し）。一覧の指紋
+    /// （`gridContentSignature` / `MergedPhotoStore.signature`）は全件に対して
+    /// `hasher.combine(item.id)` を呼ぶので、`id` が計算プロパティだと**1 回の指紋計算で
+    /// 12 万本の String を確保して捨てる**。等値比較の経路だけ直しても、指紋の経路が
+    /// 同じ形で残っていた。既定は `hasher.combine(id)`。作るのが高くつく実装だけ上書きする。
+    ///
+    /// ⚠️ 上書きするときは**種別（接頭辞に相当するもの）も必ず混ぜる**こと。
+    /// 端末写真とクラウド写真で同じ文字列が来ても別物として区別できなくなる。
+    func hashIdentity(into hasher: inout Hasher)
+
     /// Short title shown in the navigation bar of the detail page.
     /// Return `nil` to fall back to the formatted `captureDate`.
     var displayTitle: String? { get }
@@ -53,6 +66,7 @@ public struct PhotoSourceLocation: Equatable, Sendable {
 
 public extension PhotoItem {
     func hasID(_ candidate: ID) -> Bool { id == candidate }
+    func hashIdentity(into hasher: inout Hasher) { hasher.combine(id) }
     var displayTitle: String? { nil }
     var coordinate: CLLocationCoordinate2D? { nil }
     var isFavorite: Bool { false }

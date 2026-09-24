@@ -18,16 +18,21 @@ import Foundation
 public enum PagingIndex {
 
     /// `id` の位置を返す。`hint` が当たっていれば **O(1)**、外れたときだけ線形探索する。
+    ///
+    /// ⚠️ 比較は **`hasID` を通すこと**（常駐メモリの棚卸し）。`$0.id == id` と書くと、
+    /// 当たりが外れた回に**全件ぶんの String を確保して捨てる**——この型はまさにその確保を
+    /// 避けるために作られたのに、探索そのものは `id` を作る書き方のままだった。
+    /// そのため制約は `Identifiable` ではなく `PhotoItem`（`hasID` を持つ方）にする。
     /// - Parameter hint: 直前に分かっていた位置（無ければ nil）。
-    public static func resolve<Item: Identifiable>(_ items: [Item], id: Item.ID,
-                                                   hint: Int?) -> Int? {
-        if let hint, items.indices.contains(hint), items[hint].id == id { return hint }
-        return items.firstIndex { $0.id == id }
+    public static func resolve<Item: PhotoItem>(_ items: [Item], id: Item.ID,
+                                                hint: Int?) -> Int? {
+        if let hint, items.indices.contains(hint), items[hint].hasID(id) { return hint }
+        return items.firstIndex { $0.hasID(id) }
     }
 
     /// `hint` を検証して当たっていれば要素を返す（外れたら探索）。
-    public static func item<Item: Identifiable>(_ items: [Item], id: Item.ID,
-                                                hint: Int?) -> Item? {
+    public static func item<Item: PhotoItem>(_ items: [Item], id: Item.ID,
+                                             hint: Int?) -> Item? {
         guard let index = resolve(items, id: id, hint: hint) else { return nil }
         return items[index]
     }

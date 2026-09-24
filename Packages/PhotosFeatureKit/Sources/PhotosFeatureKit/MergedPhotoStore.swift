@@ -172,7 +172,10 @@ public final class MergedPhotoStore {
     nonisolated static func signature(of items: [MergedPhotoItem]) -> Int {
         var hasher = Hasher()
         for item in items {
-            hasher.combine(item.id)
+            // ⚠️ `hasher.combine(item.id)` と書かないこと（`gridContentSignature` と同じ理由・
+            // 常駐メモリの棚卸し）。`id` は計算プロパティで、再構築のたびに 12 万本の
+            // String を確保して捨てていた。
+            item.hashIdentity(into: &hasher)
             hasher.combine(item.captureDate)
         }
         hasher.combine(items.count)
