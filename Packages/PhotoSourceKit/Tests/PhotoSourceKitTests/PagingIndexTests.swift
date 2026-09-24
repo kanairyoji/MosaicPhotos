@@ -122,16 +122,20 @@ struct PagingIndexTests {
     /// 時間は CI で揺れるが回数は決定的なので、回数で固定する。
     @Test("規模を 4 倍にしても id の生成回数は増えない")
     func scaleDoesNotIncreaseIDBuilds() {
-        func reads(_ n: Int) -> Int {
+        /// ⚠️ **結果も返して確かめる**。回数だけ見ると、探索が空振りしていても
+        /// 「0 回だった」で緑になる（CLAUDE.md「空でも通る assert を書かない」）。
+        func scan(_ n: Int) -> (found: Int?, reads: Int) {
             let counter = Counter()
             let list = cheapItems(n, counter)
-            _ = PagingIndex.resolve(list, id: "L-\(n - 1)", hint: nil)   // 最悪＝末尾まで走査
-            return counter.reads
+            let found = PagingIndex.resolve(list, id: "L-\(n - 1)", hint: nil)   // 最悪＝末尾まで走査
+            return (found, counter.reads)
         }
-        let small = reads(2_500)
-        let large = reads(10_000)
-        #expect(small == 0 && large == 0,
-                "規模に比例して id を作っている（2,500件=\(small) 回 / 10,000件=\(large) 回）")
+        let small = scan(2_500)
+        let large = scan(10_000)
+        #expect(small.found == 2_499, "末尾まで走査できていない（空振りなら回数も 0 になる）")
+        #expect(large.found == 9_999, "末尾まで走査できていない（空振りなら回数も 0 になる）")
+        #expect(small.reads == 0 && large.reads == 0,
+                "規模に比例して id を作っている（2,500件=\(small.reads) 回 / 10,000件=\(large.reads) 回）")
     }
 
     /// 居ない id を全件走査で探す場合も同じ（早期 return が無いぶん最悪ケース）。

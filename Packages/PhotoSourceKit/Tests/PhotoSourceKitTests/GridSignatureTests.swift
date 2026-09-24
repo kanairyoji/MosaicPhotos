@@ -186,7 +186,11 @@ struct GridContentSignatureTests {
     func signatureBuildsNoIDs() {
         let counter = Counter()
         let list = (0..<5_000).map { CheapHashItem(raw: $0, counter: counter) }
-        _ = gridContentSignature(list)
+        // ⚠️ **中身を実際に混ぜたことも確かめる**。指紋を捨てて回数だけ見ると、
+        // 早期 return する実装に戻しても「0 回だった」で緑になる
+        //（CLAUDE.md「空でも通る assert を書かない」）。
+        #expect(gridContentSignature(list) != gridContentSignature(list.dropLast()),
+                "全件を混ぜていない（1 件減らしても指紋が変わらない）")
         #expect(counter.reads == 0,
                 "指紋が hashIdentity を通っていない（id を \(counter.reads) 回作った）")
     }
@@ -194,15 +198,18 @@ struct GridContentSignatureTests {
     /// 規模を 4 倍にしても回数が比例しないこと（ADR-119 の形・回数は決定的）。
     @Test("規模を 4 倍にしても id の生成回数は増えない")
     func signatureScaleDoesNotBuildIDs() {
-        func reads(_ n: Int) -> Int {
+        /// ⚠️ 指紋も返して、実際に全件を混ぜたことを確かめる（空振りでも 0 回になるため）。
+        func scan(_ n: Int) -> (signature: Int, shortened: Int, reads: Int) {
             let counter = Counter()
-            _ = gridContentSignature((0..<n).map { CheapHashItem(raw: $0, counter: counter) })
-            return counter.reads
+            let list = (0..<n).map { CheapHashItem(raw: $0, counter: counter) }
+            return (gridContentSignature(list), gridContentSignature(list.dropLast()), counter.reads)
         }
-        let small = reads(2_500)
-        let large = reads(10_000)
-        #expect(small == 0 && large == 0,
-                "規模に比例して id を作っている（2,500件=\(small) / 10,000件=\(large)）")
+        let small = scan(2_500)
+        let large = scan(10_000)
+        #expect(small.signature != small.shortened, "2,500 件を混ぜていない")
+        #expect(large.signature != large.shortened, "10,000 件を混ぜていない")
+        #expect(small.reads == 0 && large.reads == 0,
+                "規模に比例して id を作っている（2,500件=\(small.reads) / 10,000件=\(large.reads)）")
     }
 
     /// ⚠️ 上書きしても**区別できること**。`hashIdentity` で種別を混ぜ忘れると、
