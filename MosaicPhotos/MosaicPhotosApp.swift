@@ -1,4 +1,5 @@
 import DropboxCore
+import ImageCacheKit
 import MosaicSupport
 import SwiftUI
 import UIKit
@@ -58,6 +59,8 @@ struct MosaicPhotosApp: App {
                 // 背面の長い待ち（30 秒に 1 回）を切り上げて、開いた瞬間の一覧を新しくする
                 // （ADR-224 追補・レビュー指摘）。
                 HeavyWorkScheduler.stores?.dropboxStore.wakeForForeground()
+                // 画像キャッシュの上限を戻す（背面では絞っている・ADR-226）。
+                MemoryImageCache.setBackgroundMode(false)
                 // 前面では駆動役が方針を評価して残作業を進める（ADR-195）。復帰は「操作」扱いなので
                 // 20 秒はアイドルにならない＝すぐには起こさず、アイドル監視が拾う。
                 if let driver = HeavyWorkScheduler.stores?.analysisDriver {
@@ -71,6 +74,14 @@ struct MosaicPhotosApp: App {
             // 電源接続が条件（requiresExternalPower）なので、電源が無い限り OS は起動しない。
             // ⚠️ 止めるのは **background** のときだけ。`.inactive` は Control Center・通知センター・
             // 着信バナー・App スイッチャーのジェスチャでも来る。
+            // ⚠️ **見ていない画像を抱えて眠らない**（ADR-226）。サムネのメモリ上限は
+            // 端末の予算の約 5%（60〜192MB）× 2 系統（クラウド・端末）。背面では誰も見ないのに
+            // 抱えたままで、背面のアプリは footprint の大きい順に落とされる。
+            // 中身はディスクに残るので、戻ったら再デコードで埋まり直す。
+            // ⚠️ 絞るのは **background のときだけ**。`.inactive` は Control Center・通知バナー・
+            // App スイッチャーのジェスチャでも来るので、そこで捨てると戻った瞬間に再デコードの山になる
+            // （同じ理由で `stopBackgroundProcessing` も background だけを見ている）。
+            if phase == .background { MemoryImageCache.setBackgroundMode(true) }
             if phase == .background {
                 // 前面のみモードのブーストは前面にいる間だけのもの。
                 HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()

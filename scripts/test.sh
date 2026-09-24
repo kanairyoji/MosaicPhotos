@@ -29,7 +29,7 @@ FAST_PACKAGES=(MosaicSupport PhotoSourceKit ImageCacheKit BackupKit DropboxKit L
 
 # iOS シミュレータでしか走らない（UIKit/SwiftData/Photos 依存テストを含む）パッケージ。
 # PhotosFeatureKit は MergedPhotoStore / MergedPhotoItem / PlaceScanner の検証を含む。
-IOS_PACKAGES=(DropboxCore PhotosFeatureKit)
+IOS_PACKAGES=(DropboxCore PhotosFeatureKit ImageCacheKit)
 
 run_fast() {
   for pkg in "${FAST_PACKAGES[@]}"; do
