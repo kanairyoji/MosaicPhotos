@@ -84,6 +84,38 @@ actor TagStore {
 
     // MARK: - タグ付け進捗
 
+
+    /// **読み取り専用の全件走査**を、使い捨ての `ModelContext` でページ分けして行う。
+    ///
+    /// ⚠️ SwiftData の長生きコンテキストは**実体化した行を登録し続ける**（ADR-224 の実測）。
+    /// タグ台帳は 8 万行 ×（タグ配列・OCR 文字列）なので、1 回の全件 fetch が数十 MB の常駐に
+    /// なり、**そのまま解放されない**。ページごとに使い捨てのコンテキストで読み、値へ写したら
+    /// 捨てる（`AutoAlbumStore` の埋め込みページングと同じ手）。
+    /// ⚠️ **書き込みには使わない**（ここで取った `@Model` を本体のコンテキストへ渡さないこと）。
+    private func forEachRecordPage(_ body: ([PhotoTagRecord]) -> Void) {
+        var cursor: String?
+        while true {
+            let ctx = ModelContext(modelContainer)
+            var descriptor: FetchDescriptor<PhotoTagRecord>
+            if let cursor {
+                descriptor = FetchDescriptor<PhotoTagRecord>(
+                    predicate: #Predicate { $0.refKey > cursor },
+                    sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
+            } else {
+                descriptor = FetchDescriptor<PhotoTagRecord>(
+                    sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
+            }
+            descriptor.fetchLimit = Self.readPageSize
+            guard let page = try? ctx.fetch(descriptor), !page.isEmpty else { return }
+            body(page)
+            cursor = page.last?.refKey
+            if page.count < Self.readPageSize { return }
+        }
+    }
+
+    /// 読み取りのページの大きさ（実体化した行をページごとに手放す）。
+    static let readPageSize = 5_000
+
     /// タグ付け済み（現行版）の refKey 集合。
     func taggedRefKeys() -> Set<String> {
         let v = Self.currentVersion
@@ -110,9 +142,10 @@ actor TagStore {
     /// （「よく写るもの」＝頻出タグ∩レキシコンの日本語表示）に使う。
     func topTags(limit: Int) -> [String] {
         var counts: [String: Int] = [:]
-        let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
-        for record in records {
-            for tag in record.tags { counts[tag, default: 0] += 1 }
+        forEachRecordPage { records in
+            for record in records {
+                for tag in record.tags { counts[tag, default: 0] += 1 }
+            }
         }
         return counts.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }
@@ -170,10 +203,11 @@ actor TagStore {
     /// - Parameter minCount: これ未満しか出現しないタグは語彙に入れない（誤タグの裾を切る）。
     /// - Parameter limit: 上限（接地は語彙数ぶんのコサインなので有界にする）。
     func tagVocabulary(minCount: Int = 3, limit: Int = 600) -> [String] {
-        let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
         var freq: [String: Int] = [:]
-        for r in records {
-            for tag in r.tags { freq[tag.lowercased(), default: 0] += 1 }
+        forEachRecordPage { records in
+            for r in records {
+                for tag in r.tags { freq[tag.lowercased(), default: 0] += 1 }
+            }
         }
         return freq.filter { $0.value >= minCount }
             .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
@@ -197,10 +231,10 @@ actor TagStore {
     /// 全タグ台帳（refKey → tags）。検索の一次ランキングで使う（数万件・値は小さい）。
     func allTags() -> [String: [String]] {
         fullLedgerReadsForTesting += 1
-        let records = (try? modelContext.fetch(FetchDescriptor<PhotoTagRecord>())) ?? []
         var out: [String: [String]] = [:]
-        out.reserveCapacity(records.count)
-        for r in records where !r.tags.isEmpty { out[r.refKey] = r.tags }
+        forEachRecordPage { records in
+            for r in records where !r.tags.isEmpty { out[r.refKey] = r.tags }
+        }
         return out
     }
 
@@ -213,12 +247,11 @@ actor TagStore {
     /// 後ろ姿や小さい顔も拾える＝「人がいない」の担保に適する。新たな計算は不要。
     func allHumanCounts() -> [String: Int] {
         fullLedgerReadsForTesting += 1
-        let records = (try? modelContext.fetch(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.humanCount != nil }))) ?? []
         var out: [String: Int] = [:]
-        out.reserveCapacity(records.count)
-        for r in records {
-            if let count = r.humanCount { out[r.refKey] = count }
+        forEachRecordPage { records in
+            for r in records {
+                if let count = r.humanCount { out[r.refKey] = count }
+            }
         }
         return out
     }
@@ -226,10 +259,10 @@ actor TagStore {
     /// 全 OCR 台帳（refKey → 写真内テキスト・非空のみ）。字句検索（LexicalSearch）用。
     func allOcrTexts() -> [String: String] {
         fullLedgerReadsForTesting += 1
-        let records = (try? modelContext.fetch(
-            FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.ocrText != nil }))) ?? []
         var out: [String: String] = [:]
-        for r in records { if let t = r.ocrText, !t.isEmpty { out[r.refKey] = t } }
+        forEachRecordPage { records in
+            for r in records { if let t = r.ocrText, !t.isEmpty { out[r.refKey] = t } }
+        }
         return out
     }
 

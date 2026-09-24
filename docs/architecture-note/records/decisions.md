@@ -21,6 +21,27 @@
 
 ---
 
+## ADR-227 全件を読む処理は、使い捨ての `ModelContext` でページ分けして読む
+- 状態: 採用（ADR-224 の実測から一般化）
+- 文脈: 常駐メモリの棚卸し（クラウド 10.2 万枚・実機 `phys_footprint` 680〜840MB）で、
+  **いちばん大きく、いちばん解放されない塊**が SwiftData だった。
+  `propertiesToFetch` は列を絞らず（ADR-224 の実測）、**長生きの `ModelContext` は実体化した行を
+  登録し続ける**ので、全件 fetch の 1 回がそのまま常駐になる。`ModelContext.reset()` は
+  リポジトリ全体で 0 件、使い捨てコンテキストは 4 か所だけだった。
+- 決定: **読み取り専用の全件走査は使い捨ての `ModelContext` で行う**。大きい台帳は
+  さらに**カーソルでページ分け**して、ページごとに値へ写して捨てる
+  （`AutoAlbumStore` の埋め込みページングと同じ手）。
+  - ⚠️ **書き込みには使わない**。使い捨てで取った `@Model` を本体のコンテキストへ渡さない。
+    書き戻しがある経路（再クラスタ等）は「読みは使い捨て・書きは本体」に分けてから移す。
+  - 適用済み: `TagStore`（`allTags` / `allHumanCounts` / `allOcrTexts` / `topTags` / `tagVocabulary`）、
+    `FaceStore.qualityReport`（夜の再クラスタ直後に必ず走る・顔 10 万件 × 埋め込み 1KB）、
+    `BackupStore.recordedLocalIdentifiers` / `localToCloudPaths`。
+  - 未適用（次）: `FaceStore+Rebuild` の全顔読み（書き戻しあり）、`FaceStore+Edit.repairSamePhotoViolations`、
+    `BackupStore` の残り、`clearPerception`。
+- 結果: 読むために積んだぶんが読み終わりで返る。代わりにページごとにコンテキストを作る手間が増える
+  （実測では全件 1 回と同程度）。
+- 関連: `Tags/TagStore.forEachRecordPage` / `Store/AutoAlbumStore`（先例）/ ADR-224・ADR-119・ADR-122。
+
 ## ADR-226 背面では、見ていない画像を抱えて眠らない
 - 状態: 採用（ADR-223 の考え方を画像キャッシュへ広げる）
 - 文脈: 実機（クラウド 10.2 万枚）で `phys_footprint` が常時 680〜840MB、窓の頭で **1061MB**。

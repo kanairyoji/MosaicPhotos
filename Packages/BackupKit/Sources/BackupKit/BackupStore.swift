@@ -180,13 +180,15 @@ public actor BackupStore {
 
     /// 記録にある localIdentifier 集合（済み判定の確かな出典・台帳消失時の自己修復用）。
     public func recordedLocalIdentifiers() -> Set<String> {
-        let records = (try? modelContext.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
+        // ⚠️ 読み取り専用なので**使い捨てのコンテキスト**で（ADR-224）。長生きのコンテキストに
+        // 数万行（1 行 700〜900B）を登録させると、そのまま常駐する。
+        let records = (try? ModelContext(modelContainer).fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
         return Set(records.compactMap(\.localIdentifier))
     }
 
     /// 「ローカル localIdentifier → Dropbox path」対応（自動アルバムの重複排除用）。
     public func localToCloudPaths() -> [String: String] {
-        let records = (try? modelContext.fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
+        let records = (try? ModelContext(modelContainer).fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
         var map: [String: String] = [:]
         for record in records {
             if let id = record.localIdentifier { map[id] = record.dropboxPath }

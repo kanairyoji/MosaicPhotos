@@ -295,7 +295,10 @@ extension FaceStore {
     /// 実機ライブラリの品質を**正解ラベル無しで**測る（`FaceQualityReport` 参照）。
     /// Developer Options と診断ログから使う。O(クラスタ数²) の項があるので上限を設ける。
     func qualityReport(minFaces: Int, maxClustersForPairScan: Int = 1_500) -> FaceQualityReport {
-        let allFaces = (countedFetchOptional(FetchDescriptor<DetectedFace>())) ?? []
+        // ⚠️ **読み取り専用なので使い捨てのコンテキストで読む**（ADR-224 の実測）。
+        // 長生きのコンテキストは実体化した行を登録し続けるため、顔 10 万件 ×（埋め込み 1KB）が
+        // そのまま常駐していた。ここは夜の再クラスタの直後に必ず走る（＝最悪の時に積む）。
+        let allFaces = (try? ModelContext(modelContainer).fetch(FetchDescriptor<DetectedFace>())) ?? []
         let clusters = allClusters()
         var report = FaceQualityReport()
         report.scannedPhotos = scannedCount()
