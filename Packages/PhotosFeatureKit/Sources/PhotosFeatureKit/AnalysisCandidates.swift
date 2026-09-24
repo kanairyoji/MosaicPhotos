@@ -63,7 +63,7 @@ public enum AnalysisCandidates {
         return await Task.detached(priority: .utility) {
             let localIDs = Set(localRefKeys.compactMap { PhotoRef.decode($0)?.localIdentifier })
             let hidden = BackupCopyHiding.hiddenPaths(
-                backupPathToLocalID: index.compactMapValues(\.localIdentifier), localIdentifiers: localIDs)
+                backupCopies: index, localIdentifiers: localIDs)
             var keys = Set<String>()
             for item in cloudItems {
                 let lower = item.path.lowercased()

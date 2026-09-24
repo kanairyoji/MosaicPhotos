@@ -28,9 +28,29 @@ public enum BackupCopyHiding {
     /// - Returns: 表示から外すパス（小文字）の集合。
     public static func hiddenPaths(backupPathToLocalID: [String: String],
                                    localIdentifiers: Set<String>) -> Set<String> {
-        guard !backupPathToLocalID.isEmpty, !localIdentifiers.isEmpty else { return [] }
+        hiddenPaths(backupPathToLocalID, localIdentifiers: localIdentifiers) { $0 }
+    }
+
+    /// 台帳の索引（`[String: BackupCopyInfo]`）から直接求める。
+    ///
+    /// ⚠️ 呼び出し側で `index.compactMapValues(\.localIdentifier)` と書かないこと
+    /// （常駐メモリの棚卸し）。あれは**撮影日を落とすためだけに索引を丸ごと複製する**。
+    /// 索引は最大 7 万件あるので、再構築のたび・解析候補を数えるたびに 12MB の
+    /// 一時辞書が立っていた。ここで直接引けば複製は要らない。
+    public static func hiddenPaths(backupCopies: [String: BackupCopyInfo],
+                                   localIdentifiers: Set<String>) -> Set<String> {
+        hiddenPaths(backupCopies, localIdentifiers: localIdentifiers) { $0.localIdentifier }
+    }
+
+    /// 本体（値から localIdentifier を取り出す方法だけを差し替える）。
+    /// ⚠️ 判定を 2 か所に書き写さないための 1 本。
+    private static func hiddenPaths<Value>(_ table: [String: Value],
+                                           localIdentifiers: Set<String>,
+                                           localID: (Value) -> String?) -> Set<String> {
+        guard !table.isEmpty, !localIdentifiers.isEmpty else { return [] }
         var hidden = Set<String>()
-        for (path, localID) in backupPathToLocalID where localIdentifiers.contains(localID) {
+        for (path, value) in table {
+            guard let id = localID(value), localIdentifiers.contains(id) else { continue }
             hidden.insert(path)
         }
         return hidden

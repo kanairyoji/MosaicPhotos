@@ -129,7 +129,7 @@ public final class MergedPhotoStore {
             // ⚠️ この端末のバックアップコピーは、**端末に原本が無いときだけ**出す
             // （原本が有るのに出すと 1 枚の写真が二重に並ぶ・実機 diagnostics-57/58）。
             let hidden = BackupCopyHiding.hiddenPaths(
-                backupPathToLocalID: backupIndex.compactMapValues(\.localIdentifier),
+                backupCopies: backupIndex,
                 localIdentifiers: Set(localSnapshot.map(\.id)))
             // ⚠️ **撮影日は台帳を正とする**（ADR-128 追補・実フィードバック「時系列にならない」）。
             // Dropbox 側の日付は `time_taken ?? client_modified` で、EXIF から media_info が
