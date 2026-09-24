@@ -16,28 +16,93 @@ import Testing
 
 // MARK: - MergedPhotoStore pure helpers
 
-@Suite("MergedPhotoStore.filteredCloudItems")
-struct FilteredCloudItemsTests {
-    private func item(_ path: String) -> DropboxFileItem {
-        DropboxFileItem(path: path, name: (path as NSString).lastPathComponent)
+/// ⚠️ ここは**本番が呼ぶ関数**（`appendVisibleCloudItems`）を直接叩く。
+/// 以前は絞り込みだけを別関数（`filteredCloudItems`）で確かめていたが、`rebuildItems` を
+/// 1 回の走査にまとめた時点で**本番から呼ばれなくなり、死んだ関数の性質を保証するだけ**に
+/// なっていた（`GridSignatureTests` が同じ轍を記録している）。関数ごと畳んで、
+/// 絞り込み・隠す・撮影日の上書きを本物の入口で押さえる。
+@Suite("MergedPhotoStore.appendVisibleCloudItems")
+struct VisibleCloudItemsTests {
+    private func item(_ path: String, _ date: Date? = nil) -> DropboxFileItem {
+        DropboxFileItem(path: path, name: (path as NSString).lastPathComponent, captureDate: date)
     }
 
-    @Test("フィルタが nil なら全件返す")
+    private func run(_ items: [DropboxFileItem], filter: Set<String>? = nil,
+                     hidden: Set<String> = [],
+                     backupIndex: [String: BackupCopyInfo] = [:]) -> [MergedPhotoItem] {
+        var out: [MergedPhotoItem] = []
+        MergedPhotoStore.appendVisibleCloudItems(items, filter: filter, hidden: hidden,
+                                                 backupIndex: backupIndex, to: &out)
+        return out
+    }
+
+    private func paths(_ items: [MergedPhotoItem]) -> [String] {
+        items.compactMap { if case .cloud(let c) = $0 { return c.path } else { return nil } }
+    }
+
+    @Test("フィルタが nil なら全件積む")
     func nilFilterReturnsAll() {
-        let items = [item("/a.jpg"), item("/b.jpg")]
-        #expect(MergedPhotoStore.filteredCloudItems(items, filter: nil).map(\.path) == ["/a.jpg", "/b.jpg"])
+        #expect(paths(run([item("/a.jpg"), item("/b.jpg")])) == ["/a.jpg", "/b.jpg"])
     }
 
-    @Test("フィルタに含まれるパスだけ返す（順序は元のまま）")
+    @Test("フィルタに含まれるパスだけ積む（順序は元のまま）")
     func keepsOnlyFiltered() {
         let items = [item("/a.jpg"), item("/b.jpg"), item("/c.jpg")]
-        let result = MergedPhotoStore.filteredCloudItems(items, filter: ["/a.jpg", "/c.jpg"])
-        #expect(result.map(\.path) == ["/a.jpg", "/c.jpg"])
+        #expect(paths(run(items, filter: ["/a.jpg", "/c.jpg"])) == ["/a.jpg", "/c.jpg"])
     }
 
-    @Test("空フィルタは空を返す")
+    @Test("空フィルタは何も積まない")
     func emptyFilterReturnsEmpty() {
-        #expect(MergedPhotoStore.filteredCloudItems([item("/a.jpg")], filter: []).isEmpty)
+        #expect(run([item("/a.jpg")], filter: []).isEmpty)
+    }
+
+    /// ⚠️ 既存の要素は消さない（`merged` にはローカル分が先に入っている）。
+    @Test("既にある要素の後ろへ足す")
+    func appendsAfterExisting() {
+        var out: [MergedPhotoItem] = []
+        MergedPhotoStore.appendVisibleCloudItems([item("/a.jpg")], filter: nil, hidden: [],
+                                                 backupIndex: [:], to: &out)
+        MergedPhotoStore.appendVisibleCloudItems([item("/b.jpg")], filter: nil, hidden: [],
+                                                 backupIndex: [:], to: &out)
+        #expect(paths(out) == ["/a.jpg", "/b.jpg"])
+    }
+
+    /// 端末に原本があるバックアップ副本は出さない（実機 diagnostics-57/58）。
+    @Test("隠す集合にあるパスは積まない（照合は小文字）")
+    func skipsHidden() {
+        let items = [item("/Backup/A.JPG"), item("/Backup/B.JPG")]
+        #expect(paths(run(items, hidden: ["/backup/a.jpg"])) == ["/Backup/B.JPG"])
+    }
+
+    /// ⚠️ 撮影日は台帳を正とする（ADR-128 追補）。Dropbox 側はアップロード時刻に落ちている。
+    @Test("台帳に撮影日があれば上書きする")
+    func overridesCaptureDate() {
+        let upload = Date(timeIntervalSince1970: 1_700_000_000)
+        let taken = Date(timeIntervalSince1970: 1_000_000_000)
+        let out = run([item("/Backup/A.JPG", upload)],
+                      backupIndex: ["/backup/a.jpg": BackupCopyInfo(localIdentifier: nil,
+                                                                    captureDate: taken)])
+        #expect(out.first?.captureDate == taken)
+    }
+
+    /// 台帳に無いパスは元の撮影日のまま（空の索引で全件が nil 化しないこと）。
+    @Test("台帳に無ければ元の撮影日のまま")
+    func keepsCaptureDateWhenNotInLedger() {
+        let upload = Date(timeIntervalSince1970: 1_700_000_000)
+        let out = run([item("/other/x.jpg", upload)],
+                      backupIndex: ["/backup/a.jpg": BackupCopyInfo(localIdentifier: nil,
+                                                                    captureDate: nil)])
+        #expect(out.first?.captureDate == upload)
+    }
+
+    /// 台帳に**エントリはあるが撮影日が nil**なら上書きしない（nil で潰さない）。
+    @Test("台帳の撮影日が nil なら上書きしない")
+    func doesNotOverrideWithNil() {
+        let upload = Date(timeIntervalSince1970: 1_700_000_000)
+        let out = run([item("/Backup/A.JPG", upload)],
+                      backupIndex: ["/backup/a.jpg": BackupCopyInfo(localIdentifier: "L1",
+                                                                    captureDate: nil)])
+        #expect(out.first?.captureDate == upload)
     }
 }
 

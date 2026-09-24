@@ -152,22 +152,8 @@ public final class MergedPhotoStore {
             // 9MB の空き領域を掴むことになる（開いている画面ぶん積み上がる）。
             merged.reserveCapacity(local.count + (filter?.count ?? cloudSnapshot.count))
             merged.append(contentsOf: local)
-            for item in cloudSnapshot {
-                if let filter, !filter.contains(item.path) { continue }
-                // 小文字化が要るのは「隠す」か「撮影日の上書き」を実際に引くときだけ。
-                // どちらの表も空なら 1 本も作らない。
-                if hidden.isEmpty, backupIndex.isEmpty {
-                    merged.append(.cloud(item))
-                    continue
-                }
-                let lower = item.path.lowercased()
-                if hidden.contains(lower) { continue }
-                if let known = backupIndex[lower]?.captureDate {
-                    merged.append(.cloud(item.withCaptureDate(known)))
-                } else {
-                    merged.append(.cloud(item))
-                }
-            }
+            MergedPhotoStore.appendVisibleCloudItems(cloudSnapshot, filter: filter, hidden: hidden,
+                                                     backupIndex: backupIndex, to: &merged)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
             // ⚠️ **その場で並べ替える**。`sortedByCaptureDateAscending()` は結果を別配列で返すので、
             // 並べ替えの前後で 12 万件の配列が 2 本同時に立つ（約 21MB）。
@@ -265,11 +251,34 @@ extension MergedPhotoStore: PhotoStore {
     // MARK: - Pure helpers (テスト対象)
 
     /// Dropbox アイテムをパスフィルタで絞り込む。フィルタが nil なら全件。
-    nonisolated static func filteredCloudItems(
-        _ items: [DropboxFileItem], filter: Set<String>?
-    ) -> [DropboxFileItem] {
-        guard let filter else { return items }
-        return items.filter { filter.contains($0.path) }
+    /// クラウド側の表示項目を **1 回の走査**で `merged` へ積む（純ロジック・テスト対象）。
+    ///
+    /// 3 つのことを同時にやる。分けて書くと 10 万件の中間配列が段数ぶん立つ（常駐メモリの棚卸し）。
+    /// 1. `filter`（メンバー限定ストアのパス集合。nil なら全件）
+    /// 2. `hidden`（端末に原本があるバックアップ副本を隠す・diagnostics-57/58）
+    /// 3. 撮影日の上書き（台帳を正とする・ADR-128 追補）
+    ///
+    /// ⚠️ `path.lowercased()` は **1 件につき 1 回**。`hidden` と `backupIndex` が
+    /// どちらも空なら 1 本も作らない（ホームの一覧は台帳が未構築のうちここを通る）。
+    nonisolated static func appendVisibleCloudItems(
+        _ items: [DropboxFileItem], filter: Set<String>?, hidden: Set<String>,
+        backupIndex: [String: BackupCopyInfo], to merged: inout [MergedPhotoItem]
+    ) {
+        let needsLowercased = !hidden.isEmpty || !backupIndex.isEmpty
+        for item in items {
+            if let filter, !filter.contains(item.path) { continue }
+            guard needsLowercased else {
+                merged.append(.cloud(item))
+                continue
+            }
+            let lower = item.path.lowercased()
+            if hidden.contains(lower) { continue }
+            if let known = backupIndex[lower]?.captureDate {
+                merged.append(.cloud(item.withCaptureDate(known)))
+            } else {
+                merged.append(.cloud(item))
+            }
+        }
     }
 
     /// 統合状態を解決する。ローカル権限が無い（needsSetup/failed）場合は全体をブロックし、

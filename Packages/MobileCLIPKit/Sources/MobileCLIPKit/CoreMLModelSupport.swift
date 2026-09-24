@@ -299,20 +299,26 @@ public enum PerceptionModels {
 
     /// 推論が走ったことを記録する。**`MLInferenceGate` を通る経路すべてから呼ぶ**
     /// ——呼び忘れると「使っていない」と誤判定して、使用中のモデルを手放しかねない。
-    public static func noteInference(now: Date = Date()) {
+    ///
+    /// ⚠️ 記録するのは推論の**開始時**（ゲートに入る前）。終了時にすると、ゲートで待っている
+    /// 長い推論が「使っていない」と見えて、走っている最中に取り上げられ得る。
+    static func noteInference(now: Date = Date()) {
         lastInferenceLock.lock()
         _lastInferenceAt = now
         lastInferenceLock.unlock()
     }
 
-    /// 最後の推論時刻（テスト・診断用）。
-    public static var lastInferenceAt: Date? {
+    /// 最後の推論時刻（診断・テスト用）。
+    static var lastInferenceAt: Date? {
         lastInferenceLock.lock(); defer { lastInferenceLock.unlock() }
         return _lastInferenceAt
     }
 
-    /// テスト用: 記録を消す（未使用の状態に戻す）。
-    static func resetLastInferenceForTesting() {
+    /// 記録を消して「未使用」に戻す。
+    ///
+    /// ⚠️ **これは本番の経路でも呼ぶ**（`releaseIfIdle`）。名前に `ForTesting` を付けない
+    /// ——テスト専用に見える関数を本番から呼ぶと、消してよいものだと誤読される。
+    static func clearLastInference() {
         lastInferenceLock.lock()
         _lastInferenceAt = nil
         lastInferenceLock.unlock()
@@ -343,9 +349,11 @@ public enum PerceptionModels {
                                             idleSeconds: idleSeconds,
                                             analysisRunning: analysisRunning) else { return false }
         let released = releaseNow(reason: "idle \(Int(idleSeconds))s")
-        // ⚠️ 手放したら記録も消す。残すと、次に載せ直すまでの間に何度も
-        // 「アイドルだから手放す」と判定して診断ログを埋める。
-        if released { resetLastInferenceForTesting() }
+        // ⚠️ **手放せたかに関わらず**記録を消す。「このアイドル期間はもう処理した」の印なので、
+        // 残すと 5 秒ごとに判定が通り続ける。載っていなければ `releaseNow` は false を返すが、
+        // そのたびに `MobileCLIPRuntime.shared` / `FaceModelRuntime.shared` へ触りにいく
+        // ——`static let shared` なので、**使っていないランタイムを起こしてしまう**。
+        clearLastInference()
         return released
     }
 }
