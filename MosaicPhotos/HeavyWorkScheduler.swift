@@ -215,7 +215,9 @@ enum HeavyWorkScheduler {
         // （次に要るときに作り直す）ので、元どおりの条件で落とす。ここを塞ぐと、
         // 前面のトリクル中にホームへ抜けただけで 52MB が背面のあいだ居座り、
         // 解放点が他に無いので次の窓まで残る——ADR-226 が消したはずの jetsam 露出そのもの。
-        if currentWork.current == nil, stores?.analysisSession.isActive != true {
+        // ⚠️ 条件は `isHeavyWorkRunning`（窓＋ブースト）を**使い回す**。同じ式をここに
+        // 書き写すと、片方だけ直したときに静かに食い違う（ADR-196 の「11 述語」の入口）。
+        if !isHeavyWorkRunning {
             stores?.analysisDriver.releaseCachesForBackground()
             stores?.autoAlbumEngine.releaseSuggestionSnapshot()
         }
