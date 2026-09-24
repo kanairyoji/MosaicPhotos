@@ -19,9 +19,12 @@ public enum ModelIdlePolicy {
     ///   - lastUse: 最後に推論した時刻。**nil なら手放さない**（一度も使っていない＝
     ///     そもそも載っていないので、手放しても何も減らずログだけが増える）。
     ///   - analysisRunning: 解析が走っているか。走っていれば手放さない。
-    public static func shouldRelease(lastUse: Date?, now: Date,
-                                     idleSeconds: TimeInterval,
-                                     analysisRunning: Bool) -> Bool {
+    /// ⚠️ `internal`。本番の呼び出しは同じファイルの `consumeIfIdle` **1 か所だけ**で、
+    /// モジュールの外から使う理由が無い（判定と記録消去は不可分なので、外から
+    /// 判定だけ呼べると「消し忘れ」を作れてしまう）。テストは `@testable` で見る。
+    static func shouldRelease(lastUse: Date?, now: Date,
+                              idleSeconds: TimeInterval,
+                              analysisRunning: Bool) -> Bool {
         guard !analysisRunning else { return false }
         guard let lastUse else { return false }
         return now.timeIntervalSince(lastUse) >= idleSeconds
