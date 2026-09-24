@@ -124,6 +124,13 @@
 
 ### 解析の公開（ADR-222）
 
+### 窓の頭の山（解析候補の列挙・調査中）
+
+実機ログ diagnostics-95 で、窓の開始直後にフットプリントが 751MB → **1061MB** へ跳ねる。
+`driver.candidates.enumerated` の直後なので `analysisCandidates` の中だが、どの段かは未特定。
+段ごとの所要を出すようにしたので、次のログで `candidates.cloudRefs` / `candidates.localRefs` /
+`candidates.hidden` / `candidates.order` の 4 行を見る（どれが長いか＝どれが積んでいるか）。
+
 ### モデルを抱えたまま眠らない（ADR-223）
 
 - 夜の窓のログで `models released (face scan finished)` と `models released (window …)` が出ること。

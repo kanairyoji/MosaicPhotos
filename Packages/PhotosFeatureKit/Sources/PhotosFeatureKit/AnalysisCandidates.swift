@@ -87,16 +87,35 @@ public func analysisCandidates(dropboxStore: DropboxPhotoStore) async
     // フットプリントが 821MB まで跳ねていた（`cache.fetchItems 3306ms` の直後）。
     // 台帳から 2 列だけ引く。ついでに「items がまだ空なら読み込む」（ADR-85）も要らなくなる
     // ——台帳は画面を開いていなくても埋まっているので、起動直後でも取りこぼさない。
-    let cloudItems = await dropboxStore.cloudPhotoRefs()
-    let local = await localImageRefKeys()                           // 既に detached
-    let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)
-    let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: cloudItems, localRefKeys: local)
-    let ordered = await Task.detached(priority: .utility) {
-        var cloud = cloudImageRefKeys(items: cloudItems)            // ローカル(新→古)＋クラウド(新→古)
-        if !hidden.isEmpty { cloud.removeAll { hidden.contains($0) } }
-        return AnalysisOrder.ordered(local + cloud, favorites: favorites)
-    }.value
-    return (ordered, hidden)
+    // ⚠️ **内訳を測る**（実機ログ diagnostics-95）。窓の頭でフットプリントが 751MB → 1061MB へ
+    // 跳ねる山がここにある（`driver.candidates.enumerated` の直後）。どの段が積んでいるのかは
+    // 実測しないと分からない——推測で直す前に、段ごとの所要を残す（ADR-82 の「まず内訳を実測」）。
+    // 重い一括なので札も立てる（ADR-122）。
+    return await HeavyLoad.span("analysis.candidates") {
+        let t0 = PerfTrace.nowNs()
+        let cloudItems = await dropboxStore.cloudPhotoRefs()
+        PerfTrace.logSpan("candidates.cloudRefs", ms: PerfTrace.msSince(t0),
+                          detail: "n=\(cloudItems.count)")
+
+        let t1 = PerfTrace.nowNs()
+        let local = await localImageRefKeys()                       // 既に detached
+        PerfTrace.logSpan("candidates.localRefs", ms: PerfTrace.msSince(t1), detail: "n=\(local.count)")
+
+        let t2 = PerfTrace.nowNs()
+        let favorites = await favoriteImageRefKeys(dropboxStore: dropboxStore)
+        let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(cloudItems: cloudItems,
+                                                                      localRefKeys: local)
+        PerfTrace.logSpan("candidates.hidden", ms: PerfTrace.msSince(t2), detail: "n=\(hidden.count)")
+
+        let t3 = PerfTrace.nowNs()
+        let ordered = await Task.detached(priority: .utility) {
+            var cloud = cloudImageRefKeys(items: cloudItems)        // ローカル(新→古)＋クラウド(新→古)
+            if !hidden.isEmpty { cloud.removeAll { hidden.contains($0) } }
+            return AnalysisOrder.ordered(local + cloud, favorites: favorites)
+        }.value
+        PerfTrace.logSpan("candidates.order", ms: PerfTrace.msSince(t3), detail: "n=\(ordered.count)")
+        return (ordered, hidden)
+    }
 }
 
 /// 端末写真（画像）の refKey 一覧（"L-<localIdentifier>"）。ピープルの顔スキャン候補に使う。
