@@ -72,7 +72,8 @@
   再ロードは実機 10〜35 秒で、アイドル解放が成り立つのは「誰も待っていない時間に払うから」。
   検索して結果を眺めている数分で手放すと、その前提が崩れる。
 - 関連: `MosaicSupport/ModelIdlePolicy.swift`（線引き＋`ModelIdleTracker`・テスト 14 本）/
-  `MobileCLIPKit/CoreMLModelSupport.swift`（`noteInference` / `releaseIfIdle`）/
+  `MobileCLIPKit/CoreMLModelSupport.swift`（`noteCLIPInference` / `noteFaceInference` /
+  `releaseIfIdle(clipBusy:faceBusy:)`）/
   `MobileCLIPRuntime.swift`・`FaceModelRuntime.swift`（記録の呼び出し）/
   `HeavyWorkScheduler.releaseModelsIfIdleInForeground` / `AnalysisDriver.startIdleWatch`。
   ADR-223・ADR-226 追補・ADR-196。

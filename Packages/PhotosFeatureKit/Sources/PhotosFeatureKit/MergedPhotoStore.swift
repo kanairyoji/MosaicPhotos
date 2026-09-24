@@ -158,7 +158,7 @@ public final class MergedPhotoStore {
             MergedPhotoStore.appendVisibleCloudItems(cloudSnapshot, filter: filter, hidden: hidden,
                                                      backupIndex: backupIndex, to: &merged)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
-            // ⚠️ **その場で並べ替える**。`sortedByCaptureDateAscending()` は結果を別配列で返すので、
+            // ⚠️ **その場で並べ替える**（`sort`・戻り値版は置いていない）。結果を別配列で返すと、
             // 並べ替えの前後で 12 万件の配列が 2 本同時に立つ（約 21MB）。
             merged.sortByCaptureDateAscending()
             if Task.isCancelled { return }
