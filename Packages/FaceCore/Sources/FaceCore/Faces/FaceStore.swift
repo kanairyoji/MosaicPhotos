@@ -354,8 +354,69 @@ actor FaceStore {
         }
     }
 
+    /// 代表選びに要る値だけを写したもの（`@Model` を持ち回さないため・ADR-227）。
+    struct CoverRank: Sendable {
+        let faceID: String
+        let quality: Double
+        let hasSmile: Bool?
+        let bw: Double
+
+        init(_ f: DetectedFace) {
+            faceID = f.faceID
+            quality = f.quality
+            hasSmile = f.hasSmile
+            bw = f.bw
+        }
+    }
+
+    /// 値だけで代表を選ぶ（`bestCoverFace` と**同じ規則**）。
+    static func bestCoverFaceID(_ candidates: [CoverRank]) -> String? {
+        candidates.max { a, b in
+            let sa = coverScore(quality: a.quality, hasSmile: a.hasSmile, bw: a.bw)
+            let sb = coverScore(quality: b.quality, hasSmile: b.hasSmile, bw: b.bw)
+            if sa != sb { return sa < sb }
+            return a.faceID > b.faceID   // 同点 → faceID の小さい方を採る
+        }?.faceID
+    }
+
+    static func coverScore(quality: Double, hasSmile: Bool?, bw: Double) -> Double {
+        quality + (hasSmile == true ? 0.3 : 0) + min(bw, 1.0) * 0.2
+    }
+
+    /// **読み取り専用の全顔走査**を、使い捨ての `ModelContext` でページ分けして行う（ADR-227）。
+    ///
+    /// ⚠️ 顔は 10 万件 ×（埋め込み 1KB）なので、本体のコンテキストで全件 fetch すると
+    /// **そのまま常駐する**（長生きのコンテキストは実体化した行を登録し続ける）。
+    /// ⚠️ ここで取った `@Model` を**本体のコンテキストへ渡さない**（値へ写してから使う）。
+    /// テスト用: ページ読みで読んだ**行数**（本体のコンテキストに登録していない行）。
+    var pagedFaceRowsForTesting = 0
+
+    func forEachFacePage(_ body: ([DetectedFace]) -> Void) {
+        var cursor: String?
+        while true {
+            let ctx = ModelContext(modelContainer)
+            var descriptor: FetchDescriptor<DetectedFace>
+            if let cursor {
+                descriptor = FetchDescriptor<DetectedFace>(
+                    predicate: #Predicate { $0.faceID > cursor },
+                    sortBy: [SortDescriptor(\.faceID)])
+            } else {
+                descriptor = FetchDescriptor<DetectedFace>(sortBy: [SortDescriptor(\.faceID)])
+            }
+            descriptor.fetchLimit = Self.readPageSize
+            guard let page = try? ctx.fetch(descriptor), !page.isEmpty else { return }
+            pagedFaceRowsForTesting += page.count
+            body(page)
+            cursor = page.last?.faceID
+            if page.count < Self.readPageSize { return }
+        }
+    }
+
+    /// 読み取りページの大きさ（実体化した行をページごとに手放す）。
+    static let readPageSize = 5_000
+
     static func coverScore(_ f: DetectedFace) -> Double {
-        f.quality + (f.hasSmile == true ? 0.3 : 0) + min(f.bw, 1.0) * 0.2
+        coverScore(quality: f.quality, hasSmile: f.hasSmile, bw: f.bw)
     }
 
     func face(byID faceID: String) -> DetectedFace? {

@@ -341,17 +341,40 @@ extension FaceStore {
     /// 戻り値: 修復した顔の数。
     @discardableResult
     func repairSamePhotoViolations() -> Int {
-        var byPhotoCluster: [String: [DetectedFace]] = [:]
-        for f in (try? modelContext.fetch(FetchDescriptor<DetectedFace>())) ?? []
-        where f.clusterID >= 0 {
-            byPhotoCluster["\(f.refKey)|\(f.clusterID)", default: []].append(f)
+        // ⚠️ **読みはページ・書きは対象だけ**（ADR-227）。ここは**前面のタップごと**に走るのに、
+        // 以前は本体のコンテキストで顔 10 万件（埋め込み 1KB/件）を全件 fetch していた
+        // ——読むだけで 100MB 超を常駐させ、直す顔は普通 0〜数件。
+        // 1) 値だけ集めて違反を見つける（使い捨てコンテキストのページ読み）
+        // 2) 直す顔だけを本体のコンテキストで引いて書き換える
+        var ranksByPhotoCluster: [String: [FaceStore.CoverRank]] = [:]
+        forEachFacePage { page in
+            for f in page where f.clusterID >= 0 {
+                ranksByPhotoCluster["\(f.refKey)|\(f.clusterID)", default: []].append(
+                    FaceStore.CoverRank(f))
+            }
         }
+        // 違反（同じ写真・同じ人物に 2 顔以上）から、外す faceID を決める。
+        var dropIDs: [String] = []
+        for (_, ranks) in ranksByPhotoCluster where ranks.count >= 2 {
+            guard let keepID = FaceStore.bestCoverFaceID(ranks) else { continue }
+            dropIDs.append(contentsOf: ranks.map(\.faceID).filter { $0 != keepID })
+        }
+        guard !dropIDs.isEmpty else { return 0 }
+
         var repaired = 0
-        for (_, group) in byPhotoCluster where group.count >= 2 {
-            // 残すのは代表選択と同じ基準（品質＋笑顔＋大きさ）で最良の 1 顔。
-            guard let keep = Self.bestCoverFace(group) else { continue }
-            let clusterSum = cluster(group[0].clusterID).flatMap { ClipMath.decodeHalf($0.sum) }
-            for f in group where f.faceID != keep.faceID {
+        var start = 0
+        while start < dropIDs.count {
+            let chunk = Array(dropIDs[start..<min(start + FaceStore.readPageSize, dropIDs.count)])
+            start += chunk.count
+            let group = (try? modelContext.fetch(FetchDescriptor<DetectedFace>(
+                predicate: #Predicate { chunk.contains($0.faceID) }))) ?? []
+            var sumByCluster: [Int: [Float]] = [:]
+            for f in group {
+                let clusterSum = sumByCluster[f.clusterID] ?? {
+                    let s = cluster(f.clusterID).flatMap { ClipMath.decodeHalf($0.sum) }
+                    if let s { sumByCluster[f.clusterID] = s }
+                    return s
+                }()
                 // 「この顔はこのクラスタではない」を負例として記録（ADR-45）。
                 if let vec = ClipMath.decodeHalf(f.embedding), let cSum = clusterSum {
                     let sim = FaceClustering.dot(FaceClustering.normalized(vec),

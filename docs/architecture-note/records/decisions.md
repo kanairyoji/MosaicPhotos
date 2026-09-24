@@ -36,8 +36,12 @@
   - 適用済み: `TagStore`（`allTags` / `allHumanCounts` / `allOcrTexts` / `topTags` / `tagVocabulary`）、
     `FaceStore.qualityReport`（夜の再クラスタ直後に必ず走る・顔 10 万件 × 埋め込み 1KB）、
     `BackupStore.recordedLocalIdentifiers` / `localToCloudPaths`。
-  - 未適用（次）: `FaceStore+Rebuild` の全顔読み（書き戻しあり）、`FaceStore+Edit.repairSamePhotoViolations`、
-    `BackupStore` の残り、`clearPerception`。
+  - **書き戻しがある経路は「読みはページ・書きは対象だけ」に分ける**。適用済み:
+    `FaceStore+Edit.repairSamePhotoViolations`（**前面のタップごと**に走るのに顔を全件読んでいた。
+    直す顔は普通 0〜数件なので、値だけページ読みして違反を見つけ、**外す顔だけ**を本体の
+    コンテキストで引いて書き換える）。代表選びは値版 `bestCoverFaceID` に切り出して規則を共有。
+  - 未適用（次）: `FaceStore+Rebuild` の全顔読み（clustering の中核で書き戻しも多い＝
+    「読みは値・書きは faceID 指定」への分解が要る）、`BackupStore` の残り、`clearPerception`。
 - 結果: 読むために積んだぶんが読み終わりで返る。代わりにページごとにコンテキストを作る手間が増える
   （実測では全件 1 回と同程度）。
 - 関連: `Tags/TagStore.forEachRecordPage` / `Store/AutoAlbumStore`（先例）/ ADR-224・ADR-119・ADR-122。
