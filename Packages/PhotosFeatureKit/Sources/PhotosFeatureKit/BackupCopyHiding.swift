@@ -19,13 +19,6 @@ import Foundation
 /// （隠して「無い」と思わせるのは取り返しがつかない）。
 public enum BackupCopyHiding {
 
-    /// 隠すべきクラウドパス（小文字）を求める。
-    ///
-    /// - Parameters:
-    ///   - backupPathToLocalID: バックアップ台帳の対応（Dropbox パス小文字 → localIdentifier）。
-    ///     空なら何も隠さない（台帳が未構築・別端末のフォルダなど）。
-    ///   - localIdentifiers: いま端末に有る写真の localIdentifier。
-    /// - Returns: 表示から外すパス（小文字）の集合。
     /// 台帳の索引から、隠すべきクラウドパス（小文字）を求める。
     ///
     /// ⚠️ 呼び出し側で `index.compactMapValues(\.localIdentifier)` と書かないこと
