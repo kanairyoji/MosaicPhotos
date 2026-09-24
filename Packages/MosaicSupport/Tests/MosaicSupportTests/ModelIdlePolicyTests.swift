@@ -65,27 +65,36 @@ struct ModelIdlePolicyTests {
 /// ⚠️ 判定と「記録を消す」が別々だと、その間に推論スレッドからの `note()` が割り込み、
 /// **たった今使い始めた印を消してしまう**（そして走り始めた推論からモデルを取り上げる）。
 /// `consumeIfIdle` はその 2 つをひと続きにするための入口なので、性質を固定する。
+///
+/// ⚠️ 確かめ方は**本番が使う API だけ**で書く（レビュー 21 周目）。以前は内部の
+/// `lastUseAt` を覗いて「記録が消えたか」を見ていたが、それは**本番の誰も呼ばない
+/// アクセサ**で、消すと通らなくなるテスト＝内部実装のテストになっていた。
+/// 「もう一度消費できるか」で言い換えれば、外から見える振る舞いだけで同じことが言える。
 @Suite("モデルの最終利用の記録")
 struct ModelIdleTrackerTests {
 
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
     private func ago(_ s: TimeInterval) -> Date { now.addingTimeInterval(-s) }
 
-    @Test("アイドルなら true を返し、記録を消す")
+    private func idle(_ t: ModelIdleTracker, analysisRunning: Bool = false) -> Bool {
+        t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: analysisRunning)
+    }
+
+    @Test("アイドルなら true を返す")
     func consumesWhenIdle() {
         let t = ModelIdleTracker()
         t.note(now: ago(400))
-        #expect(t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
-        #expect(t.lastUseAt == nil, "記録が残ると 5 秒ごとに判定が通り続ける")
+        #expect(idle(t))
     }
 
-    /// ⚠️ これが本命。1 回消費したら、次の推論があるまで二度と通らないこと。
+    /// ⚠️ これが本命。1 回消費したら、次の推論があるまで二度と通らないこと
+    /// （＝記録が消えている。5 秒ごとに判定が通り続けるとランタイムを起こしてしまう）。
     @Test("続けて呼んでも 2 回目は通らない")
     func consumesOnlyOnce() {
         let t = ModelIdleTracker()
         t.note(now: ago(400))
-        #expect(t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
-        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        #expect(idle(t))
+        #expect(!idle(t))
     }
 
     /// ⚠️ **消費のあとに来た `note()` は消されない**。消されると、走り始めた推論が
@@ -94,26 +103,36 @@ struct ModelIdleTrackerTests {
     func noteAfterConsumeSurvives() {
         let t = ModelIdleTracker()
         t.note(now: ago(400))
-        #expect(t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        #expect(idle(t))
         t.note(now: now)                       // 推論が始まった
-        #expect(t.lastUseAt == now)
-        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false),
-                "使い始めた直後に手放そうとしている")
+        #expect(!idle(t), "使い始めた直後に手放そうとしている")
     }
 
-    @Test("解析中は消費しない（記録も消さない）")
-    func doesNotConsumeWhileAnalysisRuns() {
+    /// ⚠️ 解析中は**記録も消さない**。消すと、解析が終わったあとに手放す機会を失う。
+    /// 「解析が終わった体で呼び直すと通る」ことで、記録が残っているのを確かめる。
+    @Test("解析中は消費せず、記録も消さない")
+    func doesNotConsumeOrClearWhileAnalysisRuns() {
         let t = ModelIdleTracker()
         t.note(now: ago(10_000))
-        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: true))
-        #expect(t.lastUseAt != nil, "解析中に記録だけ消えると、次に手放す機会を失う")
+        #expect(!idle(t, analysisRunning: true))
+        #expect(idle(t), "解析中に記録だけ消えている（終わっても手放せない）")
     }
 
     /// 一度も使っていなければ何も起きない（ランタイムの `shared` を起こさないため）。
     @Test("未使用なら消費しない")
     func neverUsedDoesNotConsume() {
+        #expect(!idle(ModelIdleTracker()))
+    }
+
+    /// 線の手前では消費しない（記録も残る＝あとで線を越えたら通る）。
+    @Test("線の手前では消費せず、記録も残る")
+    func keepsRecordBeforeThreshold() {
         let t = ModelIdleTracker()
-        #expect(!t.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        t.note(now: ago(299))
+        #expect(!idle(t))
+        #expect(t.consumeIfIdle(now: now.addingTimeInterval(1), idleSeconds: 300,
+                                analysisRunning: false),
+                "1 秒後に線を越えたのに通らない（記録が消えている）")
     }
 
     /// ⚠️ `shared` を使い回すと、並列に走る他のテストと取り合いになる（共有状態は
@@ -122,7 +141,6 @@ struct ModelIdleTrackerTests {
     func instancesAreIndependent() {
         let a = ModelIdleTracker(), b = ModelIdleTracker()
         a.note(now: ago(400))
-        #expect(b.lastUseAt == nil)
-        #expect(!b.consumeIfIdle(now: now, idleSeconds: 300, analysisRunning: false))
+        #expect(!idle(b), "別のインスタンスの記録が見えている")
     }
 }

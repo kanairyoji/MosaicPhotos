@@ -277,17 +277,24 @@ public enum PerceptionModels {
     public static func releaseFaceModelIfDone(backlog: Int, reason: String) -> Bool {
         guard backlog == 0, BackgroundYield.scenePhase != .active else { return false }
         guard FaceModelRuntime.shared.releaseForIdle(reason: reason) else { return false }
-        Diagnostics.mark("models released (\(reason))")
+        Diagnostics.mark("face model released (\(reason))")
         return true
     }
 
     /// 窓が終わったので手放す。前面のときは何もしない。
     /// - Returns: 実際に手放したか（ログ用）。
+    /// ⚠️ **モデルごとに判断する**（レビュー指摘）。以前は「どちらかが走っていれば両方残す」
+    /// だったので、顔スキャン中に背面へ落ちると**CLIP テキスト塔（505MB）も残った**
+    /// ——背面は jetsam に殺される場所なので、前面より効く。
+    /// - Parameters:
+    ///   - clipBusy / faceBusy: そのモデルを使う処理が走っているか（既定 false＝両方手放す。
+    ///     窓の終わりのように「何も走っていない」ことが分かっている経路はそのまま呼ぶ）。
     @discardableResult
     @MainActor
-    public static func releaseForIdle(reason: String) -> Bool {
+    public static func releaseForIdle(reason: String,
+                                      clipBusy: Bool = false, faceBusy: Bool = false) -> Bool {
         guard BackgroundYield.scenePhase != .active else { return false }
-        return releaseNow(reason: reason)
+        return releaseNow(reason: reason, clipBusy: clipBusy, faceBusy: faceBusy)
     }
 
     // MARK: - 前面でも、使われなくなったら手放す（ADR-228）
@@ -309,15 +316,22 @@ public enum PerceptionModels {
     /// 顔モデルの推論が走ったことを記録する（同上）。
     static func noteFaceInference(now: Date = Date()) { faceIdle.note(now: now) }
 
-    /// **前面/背面を問わず**手放す（判断は呼び出し側が済ませている前提）。
+    /// **前面/背面を問わず**手放す（アイドル判定は呼び出し側が済ませている前提）。
+    /// ⚠️ ログは**モデルごと**に出す。「両方まとめて」だと、片方だけ手放した回を
+    /// 実機ログから区別できない（`device-verification.md` がこの 2 本を目印にしている）。
     @discardableResult
     @MainActor
-    static func releaseNow(reason: String) -> Bool {
-        let clip = MobileCLIPRuntime.shared.releaseForIdle(reason: reason)
-        let face = FaceModelRuntime.shared.releaseForIdle(reason: reason)
-        guard clip || face else { return false }
-        Diagnostics.mark("models released (\(reason))")
-        return true
+    static func releaseNow(reason: String, clipBusy: Bool = false, faceBusy: Bool = false) -> Bool {
+        var released = false
+        if !clipBusy, MobileCLIPRuntime.shared.releaseForIdle(reason: reason) {
+            Diagnostics.mark("CLIP released (\(reason))")
+            released = true
+        }
+        if !faceBusy, FaceModelRuntime.shared.releaseForIdle(reason: reason) {
+            Diagnostics.mark("face model released (\(reason))")
+            released = true
+        }
+        return released
     }
 
     /// 一定時間まったく使われていないモデルを手放す（前面でも）。**モデルごとに別々に**判断する。
@@ -346,17 +360,13 @@ public enum PerceptionModels {
                                      idleSeconds: TimeInterval = ModelIdlePolicy.idleSeconds,
                                      clipBusy: Bool, faceBusy: Bool) -> Bool {
         let reason = "idle \(Int(idleSeconds))s"
-        var released = false
-        if clipIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds, analysisRunning: clipBusy),
-           MobileCLIPRuntime.shared.releaseForIdle(reason: reason) {
-            Diagnostics.mark("CLIP released (\(reason))")
-            released = true
-        }
-        if faceIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds, analysisRunning: faceBusy),
-           FaceModelRuntime.shared.releaseForIdle(reason: reason) {
-            Diagnostics.mark("face model released (\(reason))")
-            released = true
-        }
-        return released
+        // 「アイドルとして消費できたか」を busy に翻訳して `releaseNow` に渡す
+        // ——ログの出し方を 1 か所に保つ（前面と背面で文言が割れない）。
+        let clipIdleNow = clipIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds,
+                                                 analysisRunning: clipBusy)
+        let faceIdleNow = faceIdle.consumeIfIdle(now: now, idleSeconds: idleSeconds,
+                                                 analysisRunning: faceBusy)
+        guard clipIdleNow || faceIdleNow else { return false }
+        return releaseNow(reason: reason, clipBusy: !clipIdleNow, faceBusy: !faceIdleNow)
     }
 }

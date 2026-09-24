@@ -133,7 +133,11 @@
 
 ### モデルを抱えたまま眠らない（ADR-223）
 
-- 夜の窓のログで `models released (face scan finished)` と `models released (window …)` が出ること。
+- 夜の窓のログで `face model released (face scan finished)` と、窓の終わりの
+  `CLIP released (window …)` / `face model released (window …)` が出ること。
+  ⚠️ 目印は**モデルごと**（以前の `models released (…)` は廃止）。片方だけ手放した回を
+  区別できるようにするため——「どちらかが走っていれば両方残す」で 505MB が
+  残っていたのを直したので、そこが見えないと退行に気づけない。
 - 窓の中のピーク（`PERF TICK footprint=`）が 650MB より下がっていること
   （顔モデルと CLIP の塔を同時に抱えていないこと）。
 - 前面で**使っている間**は解放されないこと（検索・タグ表示が毎回モデル読み直しにならない）。

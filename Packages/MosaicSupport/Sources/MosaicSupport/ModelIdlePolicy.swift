@@ -57,13 +57,6 @@ public final class ModelIdleTracker: @unchecked Sendable {
         lock.lock(); lastUse = now; lock.unlock()
     }
 
-    /// 最後に使った時刻。**テストが `consumeIfIdle` の副作用（記録を消したか）を
-    /// 観測するための窓**で、本番の判断には使わない（判断は `consumeIfIdle` の中だけ）。
-    public var lastUseAt: Date? {
-        lock.lock(); defer { lock.unlock() }
-        return lastUse
-    }
-
     /// **手放してよいなら記録を消して true を返す**（判定と消去は不可分）。
     ///
     /// 消すのは「このアイドル期間はもう処理した」の印。消さないと 5 秒ごとに判定が通り続け、

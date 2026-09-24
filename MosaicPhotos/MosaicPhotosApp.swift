@@ -82,15 +82,18 @@ struct MosaicPhotosApp: App {
             // App スイッチャーのジェスチャでも来るので、そこで捨てると戻った瞬間に再デコードの山になる
             // （同じ理由で `stopBackgroundProcessing` も background だけを見ている）。
             if phase == .background {
-                MemoryImageCache.setBackgroundMode(true)
-                // 誰も使っていないモデルも手放す（窓・ブースト中は除く・ADR-226 追補）。
-                HeavyWorkScheduler.releaseModelsIfIdleInBackground()
-            }
-            if phase == .background {
-                // 前面のみモードのブーストは前面にいる間だけのもの。
+                // ⚠️ **順序が要る**（レビュー指摘）。前面のみモードのブーストは前面にいる間
+                // だけのものなので、**先に終わらせる**。以前は解放を先に呼んでおり、
+                // その時点ではセッションがまだ active＝「走っている」と見えるため、
+                // モデルも 52MB の配列も**何ひとつ解放されなかった**。1 行あとに
+                // セッションが終わっても、次の窓まで誰も解放しに来ない
+                // ——ADR-226/228 が存在する場面そのもので何も効いていなかった。
                 HeavyWorkScheduler.stores?.analysisSession.appLeftForeground()
+                MemoryImageCache.setBackgroundMode(true)
+                // 誰も使っていないモデルを手放す（走っている解析からは取り上げない・ADR-228）。
+                HeavyWorkScheduler.releaseModelsIfIdleInBackground()
+                HeavyWorkScheduler.submit()
             }
-            if phase == .background { HeavyWorkScheduler.submit() }
         }
     }
 }

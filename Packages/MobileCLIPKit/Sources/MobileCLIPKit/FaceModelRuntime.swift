@@ -44,12 +44,17 @@ final class FaceModelRuntime: @unchecked Sendable {
 
     /// 夜の処理枠が終わったので手放す（ADR-223）。次回の窓で再ロードされる。
     /// - Returns: 実際に手放したか。
+    /// ⚠️ **`isLoaded` で早期 return しない**（レビュー指摘）。`LoadOnce.isLoaded` は
+    /// **ロード進行中も false** なので、そこで抜けると「アイドルとして記録を消したのに
+    /// モデルは残る」状態を作る——次の推論まで誰も手放しに来ないので載りっぱなしになる。
+    /// CLIP 側と同じく**必ず reset し、載っていたかを返すだけ**にする
+    /// （進行中のロードも `generation` で無効化されるので、無駄な確定を防げる）。
     @discardableResult
     func releaseForIdle(reason: String = "idle") -> Bool {
-        guard box.isLoaded else { return false }
+        let wasLoaded = box.isLoaded
         box.reset()
-        Self.log.info("face model released (\(reason))")
-        return true
+        if wasLoaded { Self.log.info("face model released (\(reason))") }
+        return wasLoaded
     }
 
     /// 初回利用まで遅延ロードする（`LoadOnce`・二重ロード防止＋失敗は再試行しない）。

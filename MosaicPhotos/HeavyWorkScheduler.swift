@@ -226,8 +226,11 @@ enum HeavyWorkScheduler {
         }
         // モデルは**走っている解析から取り上げない**（取り上げると 10〜35 秒の再ロードが
         // その場で始まり、ANE ゲートの中なのでほかの推論も止まる）。
-        guard !isAnalysisRunning else { return }
-        PerceptionModels.releaseForIdle(reason: "background")
+        // ⚠️ **モデルごとに渡す**（レビュー指摘）。「どちらかが走っていれば両方残す」だと、
+        // 顔スキャン中に背面へ落ちただけで CLIP テキスト塔（505MB）まで残る
+        // ——背面は jetsam に殺される場所なので、前面より効く。
+        PerceptionModels.releaseForIdle(reason: "background",
+                                        clipBusy: isCLIPBusy, faceBusy: isFaceModelBusy)
     }
 
     /// **前面でも、一定時間まったく使われていないモデルは手放す**（常駐メモリの棚卸し）。
@@ -247,7 +250,10 @@ enum HeavyWorkScheduler {
     static func releaseModelsIfIdleInForeground() {
         // ⚠️ **モデルごとに渡す**（レビュー 10 周目）。1 つにまとめると、顔スキャンが
         // 走っているだけで CLIP テキスト塔（505MB）まで手放せなくなる——顔スキャンは
-        // CLIP を使わないのに。前面のブーストは 10 分以上続くことがあるので実際に効く。
+        // CLIP を使わないのに。
+        // ⚠️ 効くのは**アイドルのトリクル**（`AnalysisDriver` が窓もブーストも無しに
+        // 顔スキャンを起こす経路）。ブースト中は `isHeavyWorkRunning` で**両方 busy** に
+        // なるので、分けても何も変わらない——最初そう書いたが誤りだった（レビュー指摘）。
         PerceptionModels.releaseIfIdle(clipBusy: isCLIPBusy, faceBusy: isFaceModelBusy)
     }
 
@@ -260,7 +266,11 @@ enum HeavyWorkScheduler {
     /// 逆に外して取りこぼすと 10〜35 秒の再ロードになる。**確かめずに外さない**。
     ///
     /// ⚠️ AI アルバムの再評価は CLIP を引くが、ここには現れない。あちらは
-    /// `encodeText` のたびに記録が更新されるので、時刻の側で守られる。
+    /// `encodeText` のたびに記録が更新されるので、**前面のアイドル解放**
+    /// （`releaseIfIdle`）では時刻の側で守られる。
+    /// ⚠️ ただし**背面化の経路は記録を見ない**（`releaseForIdle` → `releaseNow`）ので、
+    /// 再評価の最中にホームへ抜けると塔を取り上げる。走っている推論は自分のハンドルを
+    /// 掴んでいるので壊れず、次の呼び出しで読み直す＝自己修復する（レビュー指摘）。
     @MainActor
     private static var isCLIPBusy: Bool {
         isHeavyWorkRunning
@@ -279,24 +289,6 @@ enum HeavyWorkScheduler {
     private static var isHeavyWorkRunning: Bool {
         currentWork.current != nil || stores?.analysisSession.isActive == true
     }
-
-    /// 解析（窓・ブースト・埋め込み・顔スキャン・アルバム生成）が走っているか。
-    /// モデルを取り上げてよいかの唯一の判定。
-    ///
-    /// ⚠️ **背面側の挙動もこれで変わった**（ADR-228 で 1 つに寄せたときの副作用）。
-    /// 以前の背面の条件は「窓の仕事」と「ブースト」の 2 つだけで、前面のトリクルが
-    /// 埋め込み中に背面へ落ちると、**走っているその処理からモデルを取り上げて**いた
-    /// （次の 1 枚で 10〜35 秒の再ロードが始まる）。埋め込み・顔スキャン・生成を足したのは
-    /// その穴を塞ぐためで、意図した変更。
-    ///
-    /// ⚠️ 代償: `isEmbedding` / `isScanningFaces` には `isGeneratingAlbums` のような
-    /// 時間切れの安全弁が無い（状態機械の `onStateChange` 由来なので立ちっぱなしに
-    /// なりにくいが、絶対ではない）。立ちっぱなしになったときの影響は
-    /// **「モデルが解放されない」だけで、解析そのものは止まらない**——
-    /// `isGeneratingAlbums` に安全弁が要ったのは、あちらが**仕事を塞ぐ**判定だったから。
-    /// ここは塞がないので、valve は足さない。
-    @MainActor
-    private static var isAnalysisRunning: Bool { isCLIPBusy || isFaceModelBusy }
 
     /// D: 前面/背面の遷移を実測ログに残す（復帰時のカクつき調査用）。
     /// 「復帰の瞬間に何が走っていたか」をログ 1 行で特定できるようにする。
