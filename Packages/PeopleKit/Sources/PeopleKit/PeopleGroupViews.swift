@@ -104,6 +104,12 @@ public struct PeopleGroupEditorSheet: View {
         peopleEngine.peopleGroupNameExists(name, excluding: editing?.id)
     }
 
+    /// 選べる人の一覧（規則は `PeopleGroupSelection.selectable`・テスト対象）。
+    private var selectableMembers: [PersonInfo] {
+        PeopleGroupSelection.selectable(shown: peopleEngine.people,
+                                       all: peopleEngine.allPeople, selected: selected)
+    }
+
 
     public init(peopleEngine: PeopleEngine, editing: PeopleGroupInfo? = nil) {
         self.peopleEngine = peopleEngine
@@ -126,7 +132,7 @@ public struct PeopleGroupEditorSheet: View {
                     }
                 }
                 Section(L("Members")) {
-                    ForEach(peopleEngine.people) { person in
+                    ForEach(selectableMembers) { person in
                         Button {
                             // ⚠️ **記録が代表以外のクラスタを指していることがある**（ADR-232）。
                             // 代表は束ねの中で入れ替わるので、外すときは**その人物の全 ID**を

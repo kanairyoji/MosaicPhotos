@@ -106,6 +106,15 @@
     ——ADR-125 の線は「一覧に出すか」だけで、内部の判定の母数は変えない
     （`reloadPeopleGroups` が同じ理由で既にそうしていた）。
   - `allClusters()` を 1 回の呼び出しに畳んだ（ADR-119）。
+- レビューループ 3 周目:
+  - **ルート変更の消去は非同期**（`Task { await cache.clearAll(...) }`）なので、「消す前に
+    世代を進める」1 回では**消している間に始まった読み込み**を捨てられない——その読み込みは
+    新しい世代の札を持って素通りし、消した直後に古い一覧を書き戻す。消したあとにもう一度進める。
+    ⚠️ `clearCache` は同期的に消すので 1 回で足りる。**同じ作法に「揃えた」つもりで、
+    揃わない条件（非同期）を見落としていた。**
+  - **フロアを割ったメンバーが編集画面から消えて外せなくなる**。`people`（表示フロア済み）で
+    一覧を作っていたため、見えない・触れないメンバーがグループに居座る。無名のメンバーを
+    守るようにしたぶん、この状態は起きやすくなっていた（`PeopleGroupSelection.selectable`）。
 - 関連: `CarriedAssertion.swift` / `FaceSeedBuilder.swift` / `FaceStore+Rebuild.swift` /
   `PeopleGroups.swift` / `PeopleEngine.swift` / `PeopleEngine+Generation.swift` /
   `NameCarryoverTests.swift` / `FaceClusteringSetupTests.swift` / `PeopleGroupsTests.swift`。

@@ -64,6 +64,38 @@ struct PeopleGroupSelectionTests {
         #expect(PeopleGroupSelection.personCount(in: [10, 999], among: [person(10)]) == 1)
     }
 
+    // MARK: - 編集画面に出す人
+
+    /// ⚠️ メンバーの写真が減って表示フロアを割ると、一覧から消えて**外せなくなる**
+    /// ——見えない・触れないメンバーがグループに居座る。
+    @Test("表示フロアで隠れた人でも、既にメンバーなら一覧に出す")
+    func selectableKeepsHiddenMembers() {
+        let shownPerson = person(10)
+        let hiddenMember = person(7)
+        let hiddenStranger = person(99)
+        let list = PeopleGroupSelection.selectable(
+            shown: [shownPerson], all: [shownPerson, hiddenMember, hiddenStranger],
+            selected: [10, 7])
+        #expect(list.map(\.clusterID) == [10, 7], "隠れたメンバーが出ていない: \(list.map(\.clusterID))")
+    }
+
+    @Test("メンバーでない人はフロアどおり隠したまま（1,300 人を並べない）")
+    func selectableDoesNotShowNonMembers() {
+        let shownPerson = person(10)
+        let hiddenStranger = person(99)
+        let list = PeopleGroupSelection.selectable(
+            shown: [shownPerson], all: [shownPerson, hiddenStranger], selected: [10])
+        #expect(list.map(\.clusterID) == [10])
+    }
+
+    @Test("同じ人を 2 回並べない（表示側にも居るメンバー）")
+    func selectableDoesNotDuplicate() {
+        let shownPerson = person(10, bundled: [10, 42])
+        let list = PeopleGroupSelection.selectable(
+            shown: [shownPerson], all: [shownPerson], selected: [42])
+        #expect(list.count == 1)
+    }
+
     /// ⚠️ 母数は**表示フロアで隠した人も含む一覧**（`allPeople`）でなければならない。
     /// フロア未満のメンバーが入っているグループを編集したとき、母数が `people`（フロア済み）だと
     /// その人が数えられず、**2 人選んでいるのに保存できなくなる**。

@@ -122,6 +122,24 @@ public enum PeopleGroupSelection {
     public static func personCount(in selected: Set<Int>, among people: [PersonInfo]) -> Int {
         people.reduce(into: 0) { $0 += isSelected($1, in: selected) ? 1 : 0 }
     }
+
+    /// 編集画面に出す人の一覧（表示フロアで隠した人のうち、**既にメンバーの人は必ず出す**）。
+    ///
+    /// ⚠️ `shown`（= `PeopleEngine.people`）は「ピープルに載せるか」だけの線
+    /// （ADR-125・無名でフロア未満を隠す）。メンバーの写真が減ってフロアを割ると、その人は
+    /// 一覧から消えて**外せなくなる**——見えない・触れないメンバーがグループに居座る。
+    /// 無名のメンバーを守るようにした（ADR-231）ぶん、この状態は起きやすい。
+    /// - Parameters:
+    ///   - shown: 通常出す人（表示フロア適用済み）。
+    ///   - all: 全員（`PeopleEngine.allPeople`）。
+    ///   - selected: いま選ばれている clusterID の集合。
+    public static func selectable(shown: [PersonInfo], all: [PersonInfo],
+                                 selected: Set<Int>) -> [PersonInfo] {
+        let shownIDs = Set(shown.map(\.clusterID))
+        return shown + all.filter {
+            !shownIDs.contains($0.clusterID) && isSelected($0, in: selected)
+        }
+    }
 }
 
 // MARK: - FaceStore CRUD
