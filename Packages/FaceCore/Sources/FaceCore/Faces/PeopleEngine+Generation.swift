@@ -71,9 +71,13 @@ extension PeopleEngine {
         tagger = FaceTagger(store: shadow, provider: faceProvider)
         UserDefaults.standard.set(modelID, forKey: Self.activeFaceModelKey)
         UserDefaults.standard.set(effectiveScanVersion, forKey: Self.faceScanVersionKey)
+        // ⚠️ **メンバーが入ったグループの数**まで出す（F7 の確認）。器の数だけ出していると、
+        // 全部空のまま切り替わっても「groups 3」と見えて成功と読めてしまう。
+        let filledGroups = await shadow.allPeopleGroupRecords()
+            .filter { !$0.memberClusterIDs.isEmpty }.count
         Diagnostics.mark("faces: promoted shadow generation → \(modelID) "
                          + "(assertions \(asserted.count - remaining.count)/\(asserted.count) carried, "
-                         + "groups \(oldGroups.count))")
+                         + "groups \(filledGroups)/\(oldGroups.count) with members)")
         // clusterID が変わった＝外部が持つ人物参照（共有の sourceKey 等）は当てにならない。
         await onPersonIdentitiesInvalidated?()
         await loadPeople()

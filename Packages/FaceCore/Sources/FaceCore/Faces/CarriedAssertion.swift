@@ -35,8 +35,42 @@ public struct CarriedAssertion: Codable, Sendable, Equatable {
     }
 
     /// 名前・束ね・グループ所属のどれかがあるか（無ければ持ち越す意味がない）。
-    public var isEmpty: Bool {
-        (name?.isEmpty ?? true) && personGroupID == nil && peopleGroupIDs.isEmpty
+    /// `FaceSeedBuilder.ClusterRef.isAsserted` と同じ語（同じ「表明」の判定）。
+    ///
+    /// ⚠️ **`== false`**（名前があって、かつ空でない）。`name` は `String?` なので
+    /// `== true` と書くと「空文字が入っている」を意味し、判定が丸ごと裏返る
+    /// ——レビュー中にここを一度間違えた（`isEmpty` からの言い換えで符号を落とした）。
+    /// `FaceSeedBuilder.ClusterRef.isNamed` も同じ形。
+    public var isAsserted: Bool {
+        (name?.isEmpty == false) || personGroupID != nil || !peopleGroupIDs.isEmpty
+    }
+
+    /// 控え（戻り待ち）と新しいスナップショットを重ねる（ADR-232・純ロジック）。
+    ///
+    /// ⚠️ **新しいスナップショットを先に置く**。上限で切るときに落ちるのは後ろなので、
+    /// 順番が「どちらを諦めるか」を決めてしまう。戻り待ちは既に一度戻せなかったもの、
+    /// スナップショットは**今まさに消そうとしている**ものなので、後者を優先する。
+    /// ⚠️ 重複判定は `memberRefKeys` を**並べてから**比べる。元が `Set` なので、
+    /// アプリを開き直すと同じ写真の集合でも並びが変わる（Swift の Set の走査順はプロセスごと）。
+    /// 並べずに比べると、開き直したあとの再スキャンで同じ表明がもう 1 件積まれる。
+    /// - Parameters:
+    ///   - snapshot: これから消すストアから取った表明。
+    ///   - pending: ディスクに残っている戻り待ち（ストアには居ない人たち）。
+    ///   - limit: 積む上限（1 件あたり最大 500 の refKey を持つのでファイルが大きくなる）。
+    public static func merged(snapshot: [CarriedAssertion], pending: [CarriedAssertion],
+                             limit: Int) -> [CarriedAssertion] {
+        var seen = Set<String>()
+        return (snapshot + pending)
+            .filter { seen.insert($0.identity).inserted }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// 重複判定キー（同じ表明を 2 度積まない）。
+    var identity: String {
+        "\(name ?? "")|\(personGroupID.map(String.init) ?? "")|"
+            + "\(peopleGroupIDs.map(\.uuidString).sorted().joined(separator: ","))|"
+            + memberRefKeys.sorted().joined(separator: ",")
     }
 
     /// 束ねの札を**世代を跨いで**持ち越すときの値。

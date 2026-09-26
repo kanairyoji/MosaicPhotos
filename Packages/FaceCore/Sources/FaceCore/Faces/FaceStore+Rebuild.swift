@@ -323,7 +323,7 @@ extension FaceStore {
                 name: c.name, personGroupID: c.personGroupID,
                 peopleGroupIDs: groupsByCluster[c.clusterID] ?? [],
                 memberRefKeys: Array((refKeysByCluster[c.clusterID] ?? []).prefix(maxMembers)))
-            guard !entry.isEmpty else { continue }
+            guard entry.isAsserted else { continue }
             out.append(entry)
         }
         return out

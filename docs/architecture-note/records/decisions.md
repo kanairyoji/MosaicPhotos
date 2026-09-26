@@ -96,6 +96,12 @@
 - 結果: 家族グループのメンバーは再クラスタを跨いで残る。トレードオフ: グループに入れた無名の
   人物は「機械が配り直してよいクラスタ」から外れるため、その人物の純度は自動では改善されなくなる
   （ユーザーが外すまで固定）。これは名前付き人物と同じ扱いなので一貫している。
+- **精度の計測について**: 「精度系はデータセットで測ってから採用」が原則だが、この仕組みは
+  **利用者が作ったグループにしか反応しない**（`PeopleGroupRecord` が 1 件も無ければ
+  `inPeopleGroup` は常に false）。FG-NET / LFW / PIPA にはグループが無いので、
+  ハーネスの数値は**構造上まったく動かない**——測れないのではなく、測る対象が無い。
+  実際、`FaceAccuracyEvalTests` / `FaceAgglomerationEvalTests` は差分前と同じ値で通る。
+  代わりに固定したのは「グループのメンバーなら種になる／ならない」の対称なユニットテスト。
 - 関連: `FaceSeedBuilder.swift` / `FaceStore+Rebuild.swift`（`buildSeeds`）/
   `PeopleGroups.swift`（`peopleGroupMemberClusterIDs` / `resolve`）/
   `FaceClusteringSetupTests.swift` / `PeopleGroupsTests.swift`。ADR-119/130/132/134/232。
@@ -125,6 +131,11 @@
 - 結果: 反映は最新の版に追いつく。実体化の回数はほぼ変わらない（古い合流を掴んだ呼び手だけが
   1 回追加で走る）。トレードオフ: 版が毎秒進む局面（バックアップ中の delta）では追いかけが
   1 本入り得るが、間引き（ADR-224）と無風の窓が上限を押さえている。
+  ⚠️ **「2 本は絶対に走らない」ではない**（レビューで言い過ぎを直した）。上限
+  （`maxReflectJoins`）に当たった稀な場合だけ、走っている反映と重なり得る——実体化が 1 回
+  余分に走るだけで結果は正しく、`HeavyLoad` は同じ札の再入を数で持つので札も壊れない。
+  完全に直列化するには鎖を持つ必要があるが、正しさは版の判定が担保しているので、
+  そのための仕掛けは増やさない（ADR-197）。
 - 関連: `DropboxPhotoStore.swift`（`reflectCachedItems` / `performReflectCachedItems` /
   `canJoinReflect` / `startSync` のルート変更枝）/
   `DropboxPhotoStoreReflectCoalesceTests.swift`。ADR-95/205/206/222/224。

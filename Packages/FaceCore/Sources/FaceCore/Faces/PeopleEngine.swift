@@ -646,27 +646,12 @@ public final class PeopleEngine {
     ///
     /// `internal`: 「戻り待ちを踏み潰さない」ことをテストから確かめるため。
     func snapshotAssertionsForRescan() async -> [CarriedAssertion] {
-        let snapshot = await store.assertedClusterEntries()
-        let pending = loadCarryover()?.entries ?? []
-        var seen = Set<String>()
-        let merged = (pending + snapshot).filter { entry in
-            seen.insert(Self.carryoverIdentity(entry)).inserted
-        }.prefix(Self.maxCarryoverEntries)
-        if !merged.isEmpty {
-            saveCarryover(NameCarryover(savedAt: Date(), entries: Array(merged)))
-        }
-        return Array(merged)
-    }
-
-    /// 控えの重複判定キー（同じ表明を 2 度積まない）。
-    ///
-    /// ⚠️ **並べてから比べる**。`memberRefKeys` の元は `Set` なので、同じ写真の集合でも
-    /// **プロセスが変わると並びが変わる**（Swift の Set の走査順はプロセスごと）。
-    /// 並べずに比べると、アプリを開き直したあとの再スキャンで同じ表明がもう 1 件積まれる。
-    private static func carryoverIdentity(_ e: CarriedAssertion) -> String {
-        "\(e.name ?? "")|\(e.personGroupID.map(String.init) ?? "")|"
-            + "\(e.peopleGroupIDs.map(\.uuidString).sorted().joined(separator: ","))|"
-            + e.memberRefKeys.sorted().joined(separator: ",")
+        let merged = CarriedAssertion.merged(
+            snapshot: await store.assertedClusterEntries(),
+            pending: loadCarryover()?.entries ?? [],
+            limit: Self.maxCarryoverEntries)
+        if !merged.isEmpty { saveCarryover(NameCarryover(savedAt: Date(), entries: merged)) }
+        return merged
     }
 
     /// 控えに積む上限。戻り待ちを足していく仕組みなので、際限なく膨らませない

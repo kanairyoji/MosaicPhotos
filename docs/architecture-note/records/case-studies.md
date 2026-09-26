@@ -70,6 +70,14 @@
   - 原因 4（代表クラスタ）は、持ち越しを書いている途中で**気づいて足した**——戻した ID が
     代表になるとは限らないので、直さないと持ち越し自体が成立しなかった。
     `PersonInfo.clusterIDs` を足し、構成クラスタのどれでも引けるようにした。
+- レビューループで自分が入れたバグ（同じ回のうちに、足したテストが捕まえた）:
+  `CarriedAssertion.isEmpty` を `isAsserted`（`FaceSeedBuilder.ClusterRef` と同じ語）へ
+  言い換えたときに、`name?.isEmpty ?? true` の否定を `name?.isEmpty == true` と書いた
+  ——`String?` なので**これは「空文字が入っている」**で、判定が丸ごと裏返っていた
+  （名前付きの人物が控えから消える＝この修正の目的そのものを壊す）。
+  ⚠️ **`Optional` の `== true` / `== false` は、否定を書き換えるときに符号を落としやすい。**
+  捕まえたのは「表明が何も無い控えは持ち越さない」という**対称に並べたテスト**で、
+  片方向だけ（「名前があれば持ち越す」）書いていたら通り抜けていた。
 - 関連: `CarriedAssertion.swift` / `FaceSeedBuilder.swift` / `FaceStore+Rebuild.swift` /
   `PeopleGroups.swift` / `PeopleEngine.swift` / `PeopleEngine+Generation.swift` /
   `NameCarryoverTests.swift` / `FaceClusteringSetupTests.swift` / `PeopleGroupsTests.swift`。

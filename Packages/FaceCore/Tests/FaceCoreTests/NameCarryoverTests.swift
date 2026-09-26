@@ -169,7 +169,50 @@ struct CarriedAssertionTests {
         #expect(entry.peopleGroupIDs.isEmpty)
     }
 
-    // MARK: - 控えの重ね方
+    // MARK: - 控えの重ね方（純）
+
+    @Test("戻り待ちと新しい控えを重ねる（重複は 1 件）")
+    func mergedKeepsBothAndDedupes() {
+        let a = CarriedAssertion(name: "現役", memberRefKeys: ["L-a0", "L-a1"])
+        let b = CarriedAssertion(name: "戻り待ち", memberRefKeys: ["L-gone0"])
+        let merged = CarriedAssertion.merged(snapshot: [a], pending: [b, a], limit: 100)
+        #expect(merged.count == 2, "重複が落ちていない: \(merged.compactMap(\.name))")
+        #expect(merged.compactMap(\.name).contains("戻り待ち"))
+        #expect(merged.compactMap(\.name).contains("現役"))
+    }
+
+    /// ⚠️ `memberRefKeys` の元は `Set` なので、アプリを開き直すと同じ写真の集合でも
+    /// 並びが変わる。並べずに比べると、開き直したあとの再スキャンで同じ表明がもう 1 件積まれる。
+    @Test("写真の並びが違うだけの控えは同じものとして 1 件に畳む")
+    func mergedIgnoresRefKeyOrder() {
+        let a = CarriedAssertion(name: "太郎", memberRefKeys: ["L-a0", "L-a1", "L-a2"])
+        let shuffled = CarriedAssertion(name: "太郎", memberRefKeys: ["L-a2", "L-a0", "L-a1"])
+        #expect(CarriedAssertion.merged(snapshot: [a], pending: [shuffled], limit: 100).count == 1)
+    }
+
+    /// ⚠️ **上限で落ちるのは後ろ**なので、順番が「どちらを諦めるか」を決めてしまう。
+    /// 戻り待ちは既に一度戻せなかったもの、スナップショットは**今まさに消そうとしている**もの
+    /// ——後者を優先しないと、異常時に「今の人物が丸ごと控えられない」ことになる。
+    @Test("上限を超えるときは、今のスナップショットを先に残す")
+    func mergedPrefersTheFreshSnapshotOnOverflow() {
+        let pending = (0..<5).map { CarriedAssertion(name: "旧\($0)", memberRefKeys: ["L-p\($0)"]) }
+        let snapshot = (0..<5).map { CarriedAssertion(name: "新\($0)", memberRefKeys: ["L-s\($0)"]) }
+        let merged = CarriedAssertion.merged(snapshot: snapshot, pending: pending, limit: 5)
+        #expect(merged.count == 5)
+        #expect(merged.allSatisfy { ($0.name ?? "").hasPrefix("新") },
+                "上限で今のスナップショットが落ちた: \(merged.compactMap(\.name))")
+    }
+
+    @Test("表明が何も無い控えは持ち越さない（refKey だけでは意味がない）")
+    func assertionlessEntryIsNotCarried() {
+        #expect(!CarriedAssertion(name: nil, memberRefKeys: ["L-a0"]).isAsserted)
+        #expect(!CarriedAssertion(name: "", memberRefKeys: ["L-a0"]).isAsserted)
+        #expect(CarriedAssertion(name: "太郎", memberRefKeys: []).isAsserted)
+        #expect(CarriedAssertion(name: nil, personGroupID: 3, memberRefKeys: []).isAsserted)
+        #expect(CarriedAssertion(name: nil, peopleGroupIDs: [UUID()], memberRefKeys: []).isAsserted)
+    }
+
+    // MARK: - 控えの重ね方（ストア）
 
     /// ⚠️ **戻り待ちを踏み潰さない**（ADR-232）。控えに残っているのは「まだ戻せていない人」で、
     /// ストアには存在しない＝スナップショットには入らない。上書きすると、再スキャンの途中で
