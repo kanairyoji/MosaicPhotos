@@ -35,6 +35,12 @@ jobs:
         run: swift --version
       - name: Run fast tests (swift test)
         run: scripts/test.sh fast
+      # ⚠️ 消した名前を指す説明が残っていないか数える。1 回のレビューで **4 回**
+      # 繰り返した（実機確認の手順に紛れて「確認が永久に素通りする」まで起きた）ので、
+      # 教訓ではなく手順にした。Sources のコメントだけを失敗にする
+      # （Tests と記録の「以前は〜だった」は残すべき経緯）。
+      - name: Check for stale references to removed symbols
+        run: python3 scripts/check_removed_symbols.py origin/main
 
   ios:
     name: iOS simulator tests (best-effort)
