@@ -62,3 +62,7 @@ MosaicPhotos/VLM/
 .smolvlm500/
 .auraface_build/
 .screenshot_assets/
+
+# Python のビルド生成物（scripts/ のチェックスクリプト実行で出る）
+__pycache__/
+*.pyc
