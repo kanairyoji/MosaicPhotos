@@ -1189,7 +1189,7 @@
   この規模では計算量は問題にならない。⚠️ 最大**枚数**（総重なり）の厳密最大化まではしていない
   ——最大**件数**を優先し、その中で重なりの大きい対を選ぶ近似（実データでは同数の割り当てが
   複数生じること自体が稀）。
-- 関連: `NameCarryoverMatching.swift` / `FaceStore+Rebuild.swift`（`reapplyNames`）/
+- 関連: `NameCarryoverMatching.swift` / `FaceStore+Rebuild.swift`（`reapplyNames`→ ADR-232 で `reapplyAssertions` に改名）/
   `NameCarryoverTests` / ADR-51（命名の持ち越し）。
 
 ## ADR-170 人物の統合はピープルグループの参照も付け替え、取り消しで戻す
@@ -5248,7 +5248,7 @@
 - 決定: (1) **顔アライメント**: 両目ランドマーク（ADR-48 で取得済み）から「回転角＋切り抜き位置」を計画する純ロジック `FaceAlignment.plan`（目線を水平に回転・両目中点を上から 35%・横中央へ・辺は bbox 長辺×1.6＝従来と同画角。目が近すぎ/傾き>45°/顔<16px は nil）を新設し、adapter が CGContext の回転描画で切り抜く。**計画不能な顔は従来の bbox 切り抜きへフォールバック**（シミュレータ・ランドマーク欠落でも動く）。(2) **処理解像度**: 端末写真を 640→**1024px**（メモリ増 ~2.6 倍/枚は夜間・1 枚ずつ＋メモリ圧迫ゲートで吸収。クラウドはキャッシュサムネのまま）。(3) **スキャン版数機構（今回の肝）**: 埋め込みの作り方が変わると新旧の埋め込みでコサイン類似度が壊れるため、`PeopleEngine.faceScanVersion`（v2 採番）を新設。版上げ検知で**命名クラスタのスナップショット**（名前＋メンバー refKey・最大500）を Application Support に永続化 → 全消去 → 通常の夜間スキャンで再構築 → セッション末尾ごとに**写真の重なり（≥ max(2, 旧メンバーの20%)）で名前を新クラスタへ段階的に再適用**（数晩に跨る再スキャンでも名前が戻る・90 日で失効）。修正ジャーナル（FaceCorrection）は残す（同一モデルのため負例・校正は引き続き有効。アライメントで埋め込みは多少ずれるが照合しきい値内と判断）。
 - 結果: 同一人物の埋め込みが近づき（アライメント）、小さい顔の品質が上がる（1024px）＝分裂・混入の双方に効く。版数機構により今後のパイプライン変更（ArcFace 換装等）も「版を上げるだけ」で命名を失わずに移行できる。トレードオフ: (1) 全写真の再スキャン 1 巡（夜間・数晩）。(2) 再スキャン中は人物アルバムが一時的に未命名で再構築されていく（名前は進行に応じて自動復帰）。(3) 確認済みアンカー（confirmedAt）は顔行の作り直しで失われる（faceID の index が変わり得るため持ち越さない・レビューで再蓄積）。
 - 保留（本資料の未実施案・値と論点の控え）: **ArcFace 換装**＝標準 ArcFace は入力 112×112・5 点アライメント前提（本 ADR のアライメントが前提条件）。insightface のコードは許諾的だが**学習済み重みは非商用限定が多く配布前にライセンス確認必須**（EdgeFace 等の代替も検討）。変換は PyTorch→coremltools 経路。**クラウド重要写真の高解像度補完**＝お気に入り＋命名クラスタのメンバーに限り w640h640 を夜間取得して再スキャン（サイズ指定サムネ取得と refKey 単位の再スキャン API が必要）。**連絡先ピッカー**＝既存の名前変更フローに CNContactPicker を追加（権限はピッカー表示まで遅延）。**再クラスタ発火条件の拡張＋same-photo cannot-link**＝「修正増」に加え「新規顔 500 件/30 日」でも発火・同一写真内の顔は同一クラスタへ入れない制約（フル DBSCAN は O(n²) で端末夜間には過大のため不採用）。
-- 関連: `FaceAlignment.swift`（純ロジック）・`FacePerceptionAdapter`（alignedCrop/1024px/regionCenter）・`FaceStore`（namedClusterEntries/reapplyNames）・`PeopleEngine`（faceScanVersion/migrateScanVersionIfNeeded/名前持ち越し永続化）・`FaceAlignmentTests`。ADR-45/46/48 の続き。
+- 関連: `FaceAlignment.swift`（純ロジック）・`FacePerceptionAdapter`（alignedCrop/1024px/regionCenter）・`FaceStore`（namedClusterEntries/reapplyNames → ADR-232 で assertedClusterEntries/reapplyAssertions に改名）・`PeopleEngine`（faceScanVersion/migrateScanVersionIfNeeded/名前持ち越し永続化）・`FaceAlignmentTests`。ADR-45/46/48 の続き。
 
 ## ADR-50 認識・検索パラメーターのチューニング（タグ 2 段化・OCR 足切り・カバーの利用シグナル）
 - 状態: 採用
