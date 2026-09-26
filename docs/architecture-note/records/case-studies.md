@@ -21,6 +21,42 @@
 
 ---
 
+## CI が 3 日間赤かったのに気づけなかった（非ブロッキングのジョブが隠していた）
+
+2026-09-26。
+
+- 症状: 「GitHub Actions でエラーが出ている」との報告。ところが `gh run list` の
+  **run レベルの `conclusion` は全て success**。CodeQL のアラートも 0 件。
+  最初の調査では「現在のエラーは無い」と結論してしまった。
+- 原因は 2 つ重なっていた。
+  1. **`ios` ジョブは `continue-on-error: true`**（ランナーの iOS SDK 事情に依存するため
+     非ブロッキング・意図的）。ジョブが failure でも **run 全体は success** になるので、
+     `conclusion` を見ただけでは気づけない。⚠️ **ジョブ単位で見る必要があった**
+     （`gh api .../runs/<id>/jobs`）。実際には **09-23 の `ab83dcc` から 3 日間 failure** だった。
+  2. その失敗が**テストのレース**だった。`DropboxPhotoStoreReflectCoalesceTests` の
+     「変化が連続している間は、反映を 1 回にまとめる」が
+     `items.count → 4` == 11 で落ちていた（`materialized == 1` は通るので
+     「まとめすぎ」に見えて紛らわしい）。
+- 真因: 反映の間隔は **「直近の作り直しの 4 倍」**（ADR-224 / diagnostics-92）で、
+  **遅いマシンでは自分で伸びる**。CI（macos-15）では 1 回目の作り直しが重く間隔が数秒へ伸び、
+  テストの最終待ち 0.6 秒では最終反映が間に合わなかった。手元では 1.3 秒で通る。
+  ⚠️ **製品側の取りこぼしではない**ことを実験で確かめた——早期発火させても
+  最終反映は来る（`materialized=6, itemsCount=11`）。
+- 対処: テストを**機械の速さに依存しない形**へ。
+  - 既存の seam `refreshIntervalOverrideForTesting` で間隔を固定する（間隔そのものは
+    純ロジックのテスト `intervalScalesWithCost` が見ているので、ここは「まとめる挙動」だけ見る）。
+  - 変化の**合間に sleep を挟まない**（挟むと「変化の間隔 > 静かの窓」がマシンの速さで決まる）。
+  - 静かの窓を 1.0 秒に上げ、待ちを 2.5 秒に。
+  - `materialized == 1` → **`<= 2`**。窓が満ちた時点で走るのは正しい挙動で、遅い環境では
+    バースト中に 1 回入り得る。見たいのは「変化 1 回につき 1 回」でないこと（10 回に対して 2 回まで）。
+- 教訓: **`continue-on-error` のジョブは「見なくてよい」ではなく「見えない」。**
+  run の緑は「ブロッキングなジョブが緑」しか意味しない。CI を確認するときは
+  `gh api repos/:owner/:repo/actions/runs/<id>/jobs` でジョブ単位の conclusion を見る。
+- ⚠️ 未解決: `ios` ジョブが赤いままでも誰も気づかない構造はそのまま。通知か、
+  「best-effort だが 2 回続けて落ちたら知らせる」仕組みが要る（`unresolved-problems.md` へ）。
+- 関連: `DropboxPhotoStoreReflectCoalesceTests.swift` / `DropboxPhotoStore.refreshInterval`
+  （ADR-224）/ `.github/workflows/ci.yml`。
+
 ## 解放を「セッションを終わらせる 1 行前」で呼んでいて、何も解放されていなかった
 
 2026-09-24（ADR-228 のレビューループ・`/code-review` の指摘）。

@@ -54,26 +54,41 @@ struct DropboxPhotoStoreReflectCoalesceTests {
                                added: [DropboxFileItem(path: "/b/0.jpg", name: "0.jpg", contentHash: "h0")],
                                removed: [], newCursor: "c0")
         let store = makeStore(cache: cache, accountId: "acct-burst")
-        store.quietWindow = 0.20          // テストは短く
+        // ⚠️ **間隔を固定する**（CI が赤かった原因・2026-09-26）。本番の間隔は
+        // 「直近の作り直しの 4 倍」（ADR-224 / diagnostics-92）なので、**遅いマシンでは
+        // 自分で伸びる**。CI（macos-15）では 1 回目の作り直しが重く、間隔が数秒へ伸びて
+        // 下の待ちでは最終反映が間に合わず、`items.count → 4` で落ちていた
+        // （`materialized == 1` は通るので「まとめすぎ」に見えて紛らわしい）。
+        // 間隔そのものは `intervalScalesWithCost` が純ロジックとして見ているので、
+        // ここは**まとめる挙動だけ**を見る。
+        store.refreshIntervalOverrideForTesting = 0.05
+        // 静かの窓は、1 回の書き込みが遅い環境でも「変化の合間」と誤認されない長さにする。
+        store.quietWindow = 1.0
         let before = await cache.materializeCallsForTesting
 
         // バックアップ中と同じ形: 変化が立て続けに届く。
+        // ⚠️ **間に sleep を挟まない**。挟むと「変化の間隔 > 静かの窓」が
+        // マシンの速さで決まってしまい、速い手元では通って遅い CI で落ちる。
         for i in 1...10 {
             await cache.applyDelta(accountId: "acct-burst",
                                    added: [DropboxFileItem(path: "/b/\(i).jpg", name: "\(i).jpg",
                                                            contentHash: "h\(i)")],
                                    removed: [], newCursor: "c\(i)")
             store.refreshItemsFromCacheSoon()
-            try await Task.sleep(nanoseconds: 50_000_000)   // 0.05 秒間隔（静かにならない）
         }
-        // 静かになってから 1 回走る。
-        try await Task.sleep(nanoseconds: 600_000_000)
+        // 静かになってから走る（窓 1.0 秒＋余裕）。
+        try await Task.sleep(nanoseconds: 2_500_000_000)
 
         let materialized = await cache.materializeCallsForTesting - before
-        #expect(materialized == 1, """
+        // ⚠️ `== 1` ではなく `<= 2`。窓が満ちた時点で走るのは**正しい挙動**で、遅い環境では
+        // バースト中に 1 回入り得る。見たいのは「変化 1 回につき 1 回」になっていないこと
+        // （実機では 73,936 行 × 21 回＝27 秒になった）。10 回に対して 2 回までなら
+        // まとまっていると言える。
+        #expect(materialized <= 2, """
             変化 10 回で実体化が \(materialized) 回走った。静かになるまでまとめていない
             （実機では 73,936 行 × 21 回＝27 秒になった）。
             """)
+        #expect(materialized >= 1, "1 回も反映されていない（一覧が永久に古いまま）")
         #expect(store.items.count == 11, "まとめた結果が最新を反映していない")
     }
 
