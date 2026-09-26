@@ -31,6 +31,16 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     /// （569MB まで伸び、しかも直後に `cancelPrewarm` で捨てられていた＝完全な無駄）。
     /// 判定は `shouldYield()` に集約されている（`HeavyLoad` の札も含む）。
     public nonisolated func prewarm() async {
+        // ⚠️ **キャッシュが在るならゲートを待たない**（diagnostics-96 の対処）。ディスクから
+        // 628KB を読むだけならモデルは不要＝重い処理と食い合わない。ここでゲートに従って
+        // 降りてしまうと、忙しい起動では**安い経路まで見送られて**表が作られず、
+        // タグが出ないまま次の機会を待つことになる。ゲートが守りたいのは
+        // 「中断できないモデルのロード」なので、それが起きない経路は通してよい。
+        if ConceptEmbeddingCache.hasCachedTable(prompts: Self.concepts.map(ConceptEmbeddingCache.promptText),
+                                                expectedCount: Self.concepts.count) {
+            _ = await ensureEmbeddings()
+            return
+        }
         if await MainActor.run(body: { BackgroundYield.shouldYield() }) {
             Diagnostics.mark("labeler: prewarm deferred — heavy work paused before model load")
             return
@@ -99,6 +109,12 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
     }
 
     private static func buildEmbeddings() async -> [(tag: String, vector: [Float])]? {
+        // ⚠️ **まずディスクを見る**（diagnostics-96）。314 語と同梱モデルは固定なので答えは毎回同じ
+        // なのに、以前は**起動ごとに作り直して** CLIP テキスト塔（13 秒・+260MB）を載せていた。
+        // ここで返せればモデルは載らない＝窓のピークも起動の待ちも消える。
+        // 何が変わったら捨てるかは `ConceptEmbeddingCache` の鍵が決める（人の採番に頼らない）。
+        if let cached = ConceptEmbeddingCache.load(tags: concepts) { return cached }
+
         guard MobileCLIPRuntime.shared.isAvailable, let tokenizer = CLIPTokenizer.shared else { return nil }
         let started = Date()
         var built: [(tag: String, vector: [Float])] = []
@@ -119,7 +135,8 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
                 Diagnostics.mark("labeler: prewarm yielded at \(built.count)/\(concepts.count)")
                 return nil
             }
-            let tokens = tokenizer.encode("a photo of \(concept)")
+            // ⚠️ 鍵と同じ関数を通す（書き写すと、テンプレート変更時に鍵だけ古く残る）。
+            let tokens = tokenizer.encode(ConceptEmbeddingCache.promptText(for: concept))
             if let vector = await MobileCLIPRuntime.shared.encodeText(tokens), !vector.isEmpty {
                 built.append((tag: concept, vector: vector))
             }
@@ -128,6 +145,8 @@ public final class CLIPDisplayLabeler: LabelProvider, @unchecked Sendable {
         PerfTrace.logSpan("labeler.prewarm", ms: ms)
         let secs = String(format: "%.1f", ms / 1000)
         log.notice("CLIPDisplayLabeler: built \(built.count, privacy: .public) concept embeddings in \(secs, privacy: .public)s")
+        // 次の起動でモデルを載せずに済むよう置いておく（完全な表だけ保存される）。
+        ConceptEmbeddingCache.save(built, tags: concepts)
         return built
     }
 

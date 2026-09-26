@@ -17,7 +17,11 @@ Packages/MobileCLIPKit/            ← CLIP/翻訳ランタイム＋AutoAlbumCor
     CLIPTokenizer.swift            BPE トークナイザ
     AIPerceptionAdapters.swift     PhotoPerceptionProvider（refKey→ローカル/クラウド画像→CLIP 埋め込み）/ MobileCLIPTextEmbedder
     AILanguageAdapters.swift       AppQueryTranslator（FM 英訳）/ loadLocalCGImage（共通画像ローダ）
-    CLIPDisplayLabeler.swift       表示タグ補完：約300語に対する CLIP ゼロショット（保存済み clipVector を使用）
+    CLIPDisplayLabeler.swift       表示タグ補完：314 語に対する CLIP ゼロショット（保存済み clipVector を使用）
+    ConceptEmbeddingCache.swift    その 314 語の埋め込みをディスクへ（起動ごとの 13 秒・+260MB を無くす）。
+                                   **いつ捨てるか**の鍵は `MosaicSupport.ConceptTableFingerprint`（純ロジック・テスト有）
+    MobileCLIPConfig.swift         同梱 CLIP の設定（`mobileclip_config.json`）。顔側 `FaceModelConfig` と同方針。
+                                   キャッシュの鍵に使う `model` / `pretrained` / `embedDim` / `contextLength`
     VisionTagAdapter.swift         シーンタグ（OS 内蔵 VNClassifyImageRequest・精度校正済み足切り）
   ※ アプリの AutoAlbumAdapters がこれらを AutoAlbumEngine の seam に注入する
 ```

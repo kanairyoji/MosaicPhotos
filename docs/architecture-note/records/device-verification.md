@@ -159,6 +159,24 @@
   「この端末で公開する」を押すと公開が始まり、`<root>/.mosaic-analysis-owner.json` の
   `deviceFolder` がこの端末に変わること。
 
+### 概念表がディスクから読まれること（ADR-229）
+
+1. アプリを入れ直す（または `Application Support/MosaicPhotos/ConceptEmbeddings` を消す）→ 起動。
+   初回は従来どおり `model loading… CLIP text tower` → `model loaded …（13 秒級）`が出て、
+   そのあと `labeler: concept table cached (314 tags, 628KB)` が出ること。
+2. **アプリを再起動**する。今度は
+   `labeler: concept table loaded from cache (314 tags, 628KB) — CLIP text tower not needed` が出て、
+   **`model loading… CLIP text tower` が出ないこと**（ここが本題）。
+3. 夜の窓を 1 回回し、`PERF TICK footprint=` のピークを見る。**617MB より明確に下がること**
+   （テキスト塔 +260MB が載らなくなるため。見込み 360MB 前後）。測った値を ADR-229 の「結果」へ書く。
+4. フル画像を開いてタグが出ること（**起動直後でも**出るのが従来との違い）。
+
+⚠️ **捨てる側も見る**。`MosaicPhotos/MobileCLIP/mobileclip_config.json` の `model` を手で書き換えて
+ビルドし直すと、`labeler: removed stale concept table concepts-….f32` が出て作り直しになること。
+出ないなら鍵にモデルが入っていない＝**古いモデルのベクトルで比較して静かに変なタグが出る**状態。
+
+---
+
 ### 前面で放置したときに手放すこと（ADR-228）
 
 シミュレータでは背景埋め込みを走らせず、モデルも `.cpuOnly` なので**実機でしか確かめられない**。
