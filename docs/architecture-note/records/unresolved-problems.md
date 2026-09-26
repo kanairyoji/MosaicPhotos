@@ -254,8 +254,12 @@
   あとで写真を外すと 1 枚ごとに単位ベクトルを引き `count` を減らすので、
   4 枚外したところで `count` が尽きる（`FaceClustering.removing` の `count > 1` ガード）。
   - 名前/代表顔/束ねがある → `sum` が零ベクトルになり、次の再クラスタまで誰も合流しない。
-  - **確認顔だけの無名クラスタ** → `isUserClaimed` は `confirmedAt` を見ないので**行が消える**。
-    残った顔は孤児になり、`repairOrphanFaces` が未割り当てへ戻す＝人物が消える。
+  - **確認顔だけの無名クラスタ** → 静的版の `isUserClaimed` は `confirmedAt` を見ないので
+    **行が消える**。残った顔は孤児になり、`repairOrphanFaces` が未割り当てへ戻す＝人物が消える。
+    ⚠️ **2026-09-26 追記**: `isUserClaimed` には `peopleGroupMembers:` が足された
+    （ADR-231・家族グループの所属）ので、この項の「表明」の一覧は
+    「名前・代表顔・束ね・**グループ所属**」＋（インスタンス版のみ）確認顔になった。
+    残っている穴は**確認顔が静的版に入っていない**ことだけ。
   - 種のピン留めが全員フロア未満だと `count = max(1, count)` で 1 になり、**最初の 1 枚で消える**。
 - なぜ設計判断が要るか: 素直に書き戻しを `quality >= floor` だけにすると計算とは揃うが、
   `contributes` は `contributesToCentroid ?? (quality >= qualityFloor)` なので、
