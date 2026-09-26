@@ -133,6 +133,21 @@ public enum PeopleGroupSelection {
         return personCount(in: selected, among: people) + selected.subtracting(covered).count
     }
 
+    /// グループに要るメンバーの数（作成・メンバー変更の下限）。
+    public static let minMembers = 2
+
+    /// 保存してよいか（ADR-232・純ロジック）。
+    ///
+    /// ⚠️ 「2 人以上」は**メンバーを変えるとき**の決まりで、**名前だけ直すのを止める理由は無い**。
+    /// 止めると、再スキャンの最中（`reset()` がメンバーを空にする・世代切り替えが空の器を作る）に
+    /// **数晩ずっと改名できない**——「保存ボタンが永久に灰色」を別の入口から作ってしまう。
+    /// - Parameters:
+    ///   - memberCount: `memberCount(in:among:)` の結果（解決できない記録上の ID も 1 人）。
+    ///   - isRenameOnly: メンバーを 1 つも変えていないか（既存グループの編集時のみ真になり得る）。
+    public static func allowsSave(memberCount: Int, isRenameOnly: Bool) -> Bool {
+        isRenameOnly || memberCount >= minMembers
+    }
+
     /// 編集画面に出す人の一覧（表示フロアで隠した人のうち、**元からメンバーの人は必ず出す**）。
     ///
     /// ⚠️ `shown`（= `PeopleEngine.people`）は「ピープルに載せるか」だけの線
@@ -172,7 +187,16 @@ extension FaceStore {
     /// ADR-119）。グループは数個なので、集合にして `contains` で引く。
     func peopleGroupMemberClusterIDs() -> Set<Int> {
         if let cached = peopleGroupMembersCache { return cached }
-        let records = (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? []
+        // ⚠️⚠️ **失敗を「グループなし」として覚えない**（レビュー 5 周目）。
+        // `countedFetchOptional` は throw で nil を返すので、`?? []` で畳むと
+        // **1 回の読み取り失敗が「メンバーは 1 人も居ない」という結論としてキャッシュに残る**
+        // ——次にグループを書き換えるまで誰も捨てないので、その間の掃除・夜の再クラスタが
+        // 「守るべき行は無い」と判断して消してしまう（この一連の修正が防ごうとしたものそのもの）。
+        // 読めなかったときは**覚えずに**空を返す（次の呼び出しでやり直す）。
+        guard let records = countedFetchOptional(FetchDescriptor<PeopleGroupRecord>()) else {
+            Self.log.error("faces: peopleGroupMemberClusterIDs — fetch failed (キャッシュしない)")
+            return []
+        }
         var out = Set<Int>()
         for record in records { out.formUnion(record.memberClusterIDs) }
         peopleGroupMembersCache = out

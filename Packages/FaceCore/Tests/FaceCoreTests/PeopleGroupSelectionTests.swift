@@ -127,6 +127,18 @@ struct PeopleGroupSelectionTests {
         #expect(PeopleGroupSelection.memberCount(in: [10, 42], among: [grouped]) == 1)
     }
 
+    /// ⚠️ 「2 人以上」は**メンバーを変えるとき**の決まり。名前だけ直すのを止めると、
+    /// 再スキャンの最中（`reset()` がメンバーを空にする・世代切り替えが空の器を作る）に
+    /// **数晩ずっと改名できない**——「保存ボタンが永久に灰色」を別の入口から作ってしまう。
+    @Test("名前だけ直すときは人数を問わない（メンバーを変えるときだけ 2 人以上）")
+    func allowsRenameRegardlessOfMemberCount() {
+        #expect(PeopleGroupSelection.allowsSave(memberCount: 0, isRenameOnly: true))
+        #expect(PeopleGroupSelection.allowsSave(memberCount: 1, isRenameOnly: true))
+        #expect(!PeopleGroupSelection.allowsSave(memberCount: 1, isRenameOnly: false))
+        #expect(!PeopleGroupSelection.allowsSave(memberCount: 0, isRenameOnly: false))
+        #expect(PeopleGroupSelection.allowsSave(memberCount: 2, isRenameOnly: false))
+    }
+
     /// ⚠️ 母数は**表示フロアで隠した人も含む一覧**（`allPeople`）でなければならない。
     /// フロア未満のメンバーが入っているグループを編集したとき、母数が `people`（フロア済み）だと
     /// その人が数えられず、**2 人選んでいるのに保存できなくなる**。

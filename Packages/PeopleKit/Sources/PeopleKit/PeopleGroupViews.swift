@@ -107,6 +107,24 @@ public struct PeopleGroupEditorSheet: View {
         peopleEngine.peopleGroupNameExists(name, excluding: editing?.id)
     }
 
+    /// メンバーを 1 つも変えていない（名前だけ直す）か。
+    private var isRenameOnly: Bool { editing != nil && selected == initialMembers }
+
+    /// 保存してよいか（規則は `PeopleGroupSelection.allowsSave`・テスト対象）。
+    ///
+    /// ⚠️ 母数は `allPeople`（**表示フロアで隠した人も数える**）。`people` は「一覧に出すか」
+    /// だけの線（ADR-125）なので、フロア未満のメンバーが入っているグループを編集すると
+    /// 保存できなくなる。数えるのは ID でなく**人物**で、解決できない記録上の ID も 1 人。
+    private var canSave: Bool {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nameIsTaken else {
+            return false
+        }
+        return PeopleGroupSelection.allowsSave(
+            memberCount: PeopleGroupSelection.memberCount(in: selected,
+                                                          among: peopleEngine.allPeople),
+            isRenameOnly: isRenameOnly)
+    }
+
     /// 選べる人の一覧（規則は `PeopleGroupSelection.selectable`・テスト対象）。
     private var selectableMembers: [PersonInfo] {
         PeopleGroupSelection.selectable(shown: peopleEngine.people,
@@ -178,14 +196,19 @@ public struct PeopleGroupEditorSheet: View {
                     } else {
                         Button(editing == nil ? L("Create") : L("Save")) {
                             isSaving = true
+                            let renameOnly = isRenameOnly
                             Task {
                                 // 記録上のメンバー順を保ちつつ、追加分を末尾へ。
                                 let base = (editing?.memberClusterIDs ?? []).filter { selected.contains($0) }
                                 let added = selected.subtracting(base).sorted()
                                 let members = base + added
                                 if let editing {
+                                    // ⚠️ 名前だけ直すときは**メンバーを渡さない**（nil = 変更しない）。
+                                    // 渡すと `updatePeopleGroup` の「2 人以上」ガードに当たり、
+                                    // 再スキャン中（メンバーが空/1 人）は改名が黙って捨てられる。
                                     await peopleEngine.updatePeopleGroup(
-                                        id: editing.id, name: name, memberClusterIDs: members)
+                                        id: editing.id, name: name,
+                                        memberClusterIDs: renameOnly ? nil : members)
                                 } else {
                                     await peopleEngine.createPeopleGroup(
                                         name: name, memberClusterIDs: members)
@@ -193,16 +216,7 @@ public struct PeopleGroupEditorSheet: View {
                                 dismiss()
                             }
                         }
-                        // ⚠️ 母数は `allPeople`（**表示フロアで隠した人も数える**）。
-                        // `people` は「一覧に出すか」だけの線（ADR-125）なので、フロア未満の
-                        // メンバーが入っているグループを編集すると**保存できなくなる**。
-                        // ⚠️ 数えるのは ID でなく**人物**（記録が同じ人物を 2 通りで指していても 1 人）。
-                        // ⚠️ `memberCount` は**解決できない記録上の ID も 1 人と数える**
-                        // ——数えないと、ライブラリが変わった瞬間に名前も変えられなくなる。
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || PeopleGroupSelection.memberCount(
-                                        in: selected, among: peopleEngine.allPeople) < 2
-                                  || nameIsTaken)
+                        .disabled(!canSave)
                     }
                 }
             }

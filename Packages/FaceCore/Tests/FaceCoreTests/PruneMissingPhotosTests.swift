@@ -107,6 +107,31 @@ struct PruneMissingPhotosTests {
         #expect(info.members.count == 2)
     }
 
+    /// ⚠️ 免除は**無条件にしない**（レビュー 5 周目）。名前を付けた人の写真が全部消えたときに
+    /// 一覧へ出してしまうと、「Alice・0 枚」の行が**永久に居座る**（人物を消す操作は無いので、
+    /// 名前を消すしか逃げ道が無い）。0 枚で出すのは**家族グループのメンバーだけ**
+    /// ——それはグループから外せば消える。
+    @Test("写真が 0 枚の「名前だけ」の人物は一覧に出さない（消す手段が無いので）")
+    func namedButPhotolessPersonStaysHidden() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let aPhotos = (0..<40).map { ("L-a\($0)", [signal(unit(0))]) }
+        _ = await store.recordScans(aPhotos + [("L-b1", [signal(unit(3))])])
+        let ids = await store.allClusters().map(\.clusterID).sorted()
+        let refKeysByCluster = await store.memberRefKeysByCluster()
+        guard let bID = ids.first(where: { refKeysByCluster[$0] == ["L-b1"] }) else {
+            #expect(Bool(false), "fixture: 写真 1 枚の人物が見つからない"); return
+        }
+        await store.rename(clusterID: bID, name: "Alice")   // 名前だけ（グループには入れない）
+        // 名前があって 1 枚なら出る（宣言どおり「名前を付けた人は枚数に関係なく出す」）。
+        #expect(await store.peopleClusters(minFaces: 3).map(\.clusterID).contains(bID))
+
+        _ = await store.pruneMissingPhotos(existingRefKeys: Set(aPhotos.map(\.0)))
+        let after = await store.peopleClusters(minFaces: 3).map(\.clusterID)
+        #expect(!after.contains(bID), "0 枚の「名前だけ」が一覧に居座る（消す手段が無い）")
+        // 行そのものは残る（名前は守る＝次に本人の顔が来れば同じ名前で復活する）。
+        #expect(await store.allClusters().map(\.clusterID).contains(bID), "行まで消した")
+    }
+
     @Test("欠けが多すぎる（候補が揃っていない）ときは何も消さない")
     func refusesWhenCandidatesLookIncomplete() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

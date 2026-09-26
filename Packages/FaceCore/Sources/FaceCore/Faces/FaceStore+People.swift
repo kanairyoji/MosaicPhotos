@@ -93,10 +93,20 @@ extension FaceStore {
             var seen = Set<String>()
             var members: [String] = []
             for f in allFaces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
-            let isAsserted = clustersInGroup.contains {
-                Self.isUserClaimed($0, peopleGroupMembers: groupMembers)
-            }
-            guard members.count >= minFaces || isAsserted else { continue }
+            // ⚠️ 免除は**2 段**にする（レビュー 5 周目）。無条件に免除すると、名前を付けた人の
+            // 写真が全部消えたとき「Alice・0 枚」の行が一覧に**永久に居座る**
+            // ——人物を消す操作は無いので、名前を消すしか逃げ道が無い。
+            //  - 写真が 1 枚でも在る表明済みの人物 → 出す
+            //    （`people` の定義は元から「名前を付けた人は枚数に関係なく出す」なのに、
+            //     ここで黙って落としていた＝宣言と実装の食い違いを直す）。
+            //  - 写真が 0 枚 → **家族グループのメンバーだけ**出す。グループが解決できないと
+            //    「消えたまま永久に未解決」になる。逃げ道はグループから外すこと（外せば消える）。
+            let exempt = members.isEmpty
+                ? clustersInGroup.contains { groupMembers.contains($0.clusterID) }
+                : clustersInGroup.contains {
+                    Self.isUserClaimed($0, peopleGroupMembers: groupMembers)
+                }
+            guard members.count >= minFaces || exempt else { continue }
             // 主クラスタ: **名前つきを最優先**し、同条件ならメンバー最多 → clusterID 昇順。
             // ⚠️ 以前は `first { 名前つき }` だったが、`allClusters()` の取得順は不定なので
             //    名前つきが複数あると**毎回違う名前が表示され**、ユーザーには「付けた名前が消えた」

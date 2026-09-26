@@ -390,7 +390,7 @@ extension FaceStore {
                 restoredGroupMembers[groupID, default: []].append(clusterID)
             }
         }
-        remapPeopleGroupMembers(restored: restoredGroupMembers)
+        remapPeopleGroupMembers(restored: restoredGroupMembers, live: Set(clusters.map(\.clusterID)))
         try? modelContext.save()
         if !unmatched.isEmpty {
             Self.log.info("faces: carryover — \(assignments.count) 件を再適用 / "
@@ -412,9 +412,9 @@ extension FaceStore {
     /// この回に戻せたのはメンバーの一部でしかない。毎回上書きすると前の晩に戻した人が消える。
     /// 生きていない ID（旧世代の残骸）は落とす——落としても、対応するエントリは
     /// 「残り」として持ち越しに積まれたままなので、後の晩に新しい ID で戻ってくる。
-    private func remapPeopleGroupMembers(restored: [UUID: [Int]]) {
+    /// - Parameter live: いま在るクラスタ ID（呼び出し側が既に引いた集合を渡す・ADR-119）。
+    private func remapPeopleGroupMembers(restored: [UUID: [Int]], live: Set<Int>) {
         guard !restored.isEmpty else { return }
-        let live = Set(allClusters().map(\.clusterID))
         for record in (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
             guard let added = restored[record.id] else { continue }
             var seen = Set<Int>()
