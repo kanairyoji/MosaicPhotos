@@ -461,7 +461,14 @@ public final class DropboxPhotoStore {
             lastReflectedRevision = nil
             Task {
                 await cache.clearAll(accountId: accountId)
-                items = []; lastItemsSignature = nil
+                // ⚠️ **消したあとにもう一度進める**。ここは `clearCache` と違って消去が非同期なので、
+                // 「消す前の 1 回」では**消している間に始まった読み込み**を捨てられない
+                // ——その読み込みは新しい世代の札を持っているので素通りし、消した直後に
+                // 古いルートの一覧を items へ書き戻す（次の周期で直るが、そのぶん見えてしまう）。
+                loadGeneration &+= 1
+                loadTask?.cancel()
+                loadTask = nil
+                items = []; lastItemsSignature = nil; lastReflectedRevision = nil
                 UserDefaults.standard.set(rootsMarker, forKey: rootsMarkerKey)
                 syncEngine?.start(accountId: accountId, roots: roots)
             }
