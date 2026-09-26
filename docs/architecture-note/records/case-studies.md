@@ -78,6 +78,22 @@
   ⚠️ **`Optional` の `== true` / `== false` は、否定を書き換えるときに符号を落としやすい。**
   捕まえたのは「表明が何も無い控えは持ち越さない」という**対称に並べたテスト**で、
   片方向だけ（「名前があれば持ち越す」）書いていたら通り抜けていた。
+- レビューループ 1 周目が見つけた**別の経路 2 つと、直しの穴 3 つ**（同じ回で対処）:
+  - **行を消してよいかの判定にグループ所属が無かった**（`FaceStore.isUserClaimed`）。
+    種の条件だけ直しても、**写真を整理しただけで**無名のメンバーの行が消え
+    （`pruneMissingPhotos`）、最後の 1 顔を外したときにも消える（`FaceStore+Edit`）。
+    ⚠️ 同じ「ユーザーの表明」の判定が**2 か所に別々に**あり、片方だけ直していた。
+  - **編集シートが代表 ID だけを見ていた**。表示（`resolve`）だけ直したので、アルバムには
+    出ているのに編集画面ではチェックが付かず、押すと**同じ人物が 2 回**記録に入る。
+  - **束ねの札を `-(old + 1)` の式で写していた**——「新しい札とぶつからない」だけを保証し、
+    **2 回持ち越すと壊れる**（世代 1 の -4 と、新しい束ねの札 3 → -4 が衝突）。
+    値から値への写像では「旧世代と新世代の番号が同じ空間に住んでいる」ことは直せない。
+    復元時に**台帳の実状を見て空きを取る**形にし、決めた札は残りへ書き戻す。
+  - **`promoteShadow` が戻り待ちの控えを上書き（空なら削除）していた**。
+    `snapshotAssertionsForRescan` では直したのに、同じ穴が世代切り替え側に残っていた。
+  - **無音をやめた記録が、記録そのものを押し流す**。`reloadPeopleGroups` は `loadPeople` から
+    毎分 30 回走り、診断ログは末尾 256KB しか残らない。二度と一致しないメンバーが 1 人居座ると
+    同じ行で埋まる。⚠️ **「残すために書く」ログは、頻度を決めないと逆に消す側になる。**
 - 関連: `CarriedAssertion.swift` / `FaceSeedBuilder.swift` / `FaceStore+Rebuild.swift` /
   `PeopleGroups.swift` / `PeopleEngine.swift` / `PeopleEngine+Generation.swift` /
   `NameCarryoverTests.swift` / `FaceClusteringSetupTests.swift` / `PeopleGroupsTests.swift`。

@@ -55,14 +55,17 @@ extension FaceStore {
         try? modelContext.save()
 
         // 顔が 1 つも残らなかった人物は消す（membership だけの顔も含めて数える）。
-        // ⚠️ ユーザーが表明した人物（名前・束ね・代表写真）は空でも残す（ADR-187）。
+        // ⚠️ ユーザーが表明した人物（名前・束ね・代表写真・家族グループの所属）は空でも残す
+        // （ADR-187/231）。⚠️ グループの集合は**ループの外で 1 回**作る（ADR-119）。
+        // これが無いと、写真を消しただけで**家族グループから無名のメンバーが黙って消える**。
+        let groupMembers = peopleGroupMemberClusterIDs()
         var clustersRemoved = 0
         for clusterID in touched {
             guard let c = cluster(clusterID) else { clustersRemoved += 1; continue }
             let cid = clusterID
             let remaining = (try? modelContext.fetchCount(FetchDescriptor<DetectedFace>(
                 predicate: #Predicate { $0.clusterID == cid }))) ?? 0
-            if remaining == 0, !FaceStore.isUserClaimed(c) {
+            if remaining == 0, !FaceStore.isUserClaimed(c, peopleGroupMembers: groupMembers) {
                 modelContext.delete(c)
                 clustersRemoved += 1
             }

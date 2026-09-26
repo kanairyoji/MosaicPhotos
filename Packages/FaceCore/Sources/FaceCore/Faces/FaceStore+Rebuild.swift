@@ -370,15 +370,19 @@ extension FaceStore {
 
         // ⚠️ **一対一で解く**（貪欲だと、局所的な最良ペアが別エントリ唯一の対応先を奪う）。
         let (assignments, unmatched) = NameCarryoverMatching.match(candidates)
+        // 束ねの札を割り当てる（ADR-232）。**いま台帳に在る札を見て空きを取る**ので、
+        // 旧世代の番号と新しい束ねの番号がぶつからない。負の札は持ち越し済みなのでそのまま。
+        let bundleTags = CarriedAssertion.carriedBundleTags(
+            for: entries.compactMap(\.personGroupID),
+            usedTags: Set(allClusters().compactMap(\.personGroupID)))
         // グループ id → この回に決まった新クラスタ ID（あとでメンバーを書き直す）。
         var restoredGroupMembers: [UUID: [Int]] = [:]
         for (index, clusterID) in assignments {
             guard let c = cluster(clusterID) else { continue }
             let entry = entries[index]
             if let name = entry.name, !name.isEmpty, c.name?.isEmpty ?? true { c.name = name }
-            // 束ねの札は持ち越し専用の並びへ写す（新しい束ねとぶつからせない）。
             if let old = entry.personGroupID, c.personGroupID == nil {
-                c.personGroupID = CarriedAssertion.carriedPersonGroupID(old)
+                c.personGroupID = bundleTags[old] ?? old
             }
             for groupID in entry.peopleGroupIDs {
                 restoredGroupMembers[groupID, default: []].append(clusterID)
@@ -391,7 +395,13 @@ extension FaceStore {
                           + "\(unmatched.count) 件は対応先未確定（次回へ持ち越し）")
         }
         // 対応先が決まらなかったものは**必ず**残りとして返す（次のスキャンで再評価）。
-        return unmatched.map { entries[$0] }
+        // ⚠️ **割り当てた札を書き戻して返す**。書き戻さないと、次の晩にもう一度
+        // 「空いている札」を取りに行って**別の札**になり、同じ子の時期クラスタが 2 人に割れる。
+        return unmatched.map { index in
+            var entry = entries[index]
+            if let old = entry.personGroupID, let tag = bundleTags[old] { entry.personGroupID = tag }
+            return entry
+        }
     }
 
     /// ピープルグループのメンバーを新しい clusterID に書き直す（ADR-232）。

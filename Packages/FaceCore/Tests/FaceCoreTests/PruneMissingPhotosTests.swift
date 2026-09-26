@@ -38,6 +38,38 @@ struct PruneMissingPhotosTests {
         #expect(await store.faceCount() == 40)
     }
 
+    /// ⚠️ **家族グループに入れた無名の人物は、写真が全部消えても行を残す**（ADR-231）。
+    /// 残さないと、写真を整理しただけで**家族グループからその人が黙って消える**
+    /// （`PeopleGroupInfo.resolve` が解決できないメンバーを落とす）。
+    /// 名前・束ね・代表写真は既に守られていたが、グループ所属だけが漏れていた。
+    @Test("家族グループのメンバーは、写真が全部無くなっても行が残る")
+    func keepsPeopleGroupMembersWhenTheirPhotosVanish() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        // 人物 A: 40 枚（残る）。人物 B: 1 枚だけで**無名**——ただし家族グループのメンバー。
+        let aPhotos = (0..<40).map { ("L-a\($0)", [signal(unit(0))]) }
+        _ = await store.recordScans(aPhotos + [("L-b1", [signal(unit(3))])])
+        let ids = await store.allClusters().map(\.clusterID).sorted()
+        #expect(ids.count == 2, "fixture: 2 人物になっていない")
+        // B（写真 1 枚の側）を特定する。
+        let refKeysByCluster = await store.memberRefKeysByCluster()
+        guard let bID = ids.first(where: { refKeysByCluster[$0] == ["L-b1"] }) else {
+            #expect(Bool(false), "fixture: 写真 1 枚の人物が見つからない"); return
+        }
+        _ = await store.createPeopleGroup(name: "家族", memberClusterIDs: ids)
+        #expect(await store.allClusters().first(where: { $0.clusterID == bID })?.name == nil,
+                "fixture: B に名前が付いてしまっている（無名で確かめたい）")
+
+        // B の写真だけが無くなった。
+        let result = await store.pruneMissingPhotos(existingRefKeys: Set(aPhotos.map(\.0)))
+        #expect(result?.faces == 1, "顔は消えるべき")
+        #expect(result?.clusters == 0, "グループのメンバーの行を消した（\(result?.clusters ?? -1)）")
+        let after = await store.allClusters().map(\.clusterID)
+        #expect(after.contains(bID), "家族グループのメンバーが行ごと消えた")
+        // グループの記録も欠けていないこと。
+        let record = await store.allPeopleGroupRecords().first
+        #expect(record?.memberClusterIDs.contains(bID) == true)
+    }
+
     @Test("欠けが多すぎる（候補が揃っていない）ときは何も消さない")
     func refusesWhenCandidatesLookIncomplete() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

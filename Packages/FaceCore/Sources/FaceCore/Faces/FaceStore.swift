@@ -284,9 +284,17 @@ actor FaceStore {
         Dictionary(uniqueKeysWithValues: allClusters().map { ($0.clusterID, $0.count) })
     }
 
-    /// ユーザーが「この人物」と表明した行か（名前・束ね・代表写真）。機械の都合で消してはいけない。
-    static func isUserClaimed(_ c: PersonCluster) -> Bool {
+    /// ユーザーが「この人物」と表明した行か（名前・束ね・代表写真・**家族グループの所属**）。
+    /// 機械の都合で消してはいけない。
+    ///
+    /// ⚠️ `peopleGroupMembers` に**既定値を置かない**（ADR-231/232）。置くと呼び出し側が
+    /// 何も考えずに省略でき、「グループに入れた人だけが保護から漏れる」がまた起きる
+    /// ——それがこの引数を足した理由そのもの。**渡す集合は必ずループの外で 1 回作る**
+    /// （人物ごとに引き直すと 1,316 人＝1,316 往復・ADR-119）。
+    /// 集合の作り方は `peopleGroupMemberClusterIDs()`。
+    static func isUserClaimed(_ c: PersonCluster, peopleGroupMembers: Set<Int>) -> Bool {
         (c.name?.isEmpty == false) || c.personGroupID != nil || c.coverFaceID != nil
+            || peopleGroupMembers.contains(c.clusterID)
     }
 
     /// 上に**確認顔**（「この顔はこの人」・ADR-46）を加えた判定（ADR-210）。
@@ -294,9 +302,10 @@ actor FaceStore {
     /// ⚠️ 確認顔も ADR-132 の言う「ユーザーの表明」なのに、行の保護対象から漏れていた。
     /// 名前も代表写真も付けず、レビューで「はい」とだけ答えて育てた人物は、
     /// 最後の 1 顔を外した瞬間に**行ごと消える**（残った顔は孤児になる）。
-    /// ⚠️ 顔を 1 回引くので、**最後の 1 顔の経路でだけ**呼ぶ（毎回の削除で引かない）。
+    /// ⚠️ 顔とグループを 1 回ずつ引くので、**最後の 1 顔の経路でだけ**呼ぶ
+    /// （毎回の削除で引かない）。ループから呼ぶなら静的版に集合を渡すこと。
     func isUserClaimed(_ c: PersonCluster) -> Bool {
-        if Self.isUserClaimed(c) { return true }
+        if Self.isUserClaimed(c, peopleGroupMembers: peopleGroupMemberClusterIDs()) { return true }
         return anchorCount(clusterID: c.clusterID) > 0
     }
 

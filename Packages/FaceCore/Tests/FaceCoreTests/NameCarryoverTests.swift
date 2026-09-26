@@ -135,24 +135,49 @@ struct CarriedAssertionTests {
         }
     }
 
-    // MARK: - 札の並び（純）
+    // MARK: - 札の割り当て（純）
 
     /// 札は `linkClusters` が「束ねたクラスタ ID の最小値」＝ 0 以上を使う。持ち越した札が
     /// その並びに入ると、再スキャンで生まれた無関係な束ねと**同じ値**になり得る（別人が 1 人になる）。
     @Test("持ち越した束ねの札は必ず負（新しい束ねとぶつからない）")
-    func carriedGroupIDNeverCollidesWithClusterIDs() {
-        for old in 0...50 {
-            #expect(CarriedAssertion.carriedPersonGroupID(old) < 0, "札 \(old) が正のまま")
-        }
-        // 違う札は違う値のまま（別々の束ねが 1 つに混ざらない）。
-        let mapped = Set((0...50).map { CarriedAssertion.carriedPersonGroupID($0) })
-        #expect(mapped.count == 51)
+    func carriedTagsAreAlwaysNegative() {
+        let tags = CarriedAssertion.carriedBundleTags(for: Array(0...50), usedTags: [])
+        #expect(tags.count == 51)
+        #expect(tags.values.allSatisfy { $0 < 0 }, "正のままの札がある: \(tags)")
+        #expect(Set(tags.values).count == 51, "別々の束ねが同じ札になった")
     }
 
-    @Test("何度持ち越しても札は動かない（世代を 2 回跨いでも束ねが割れない）")
-    func carriedGroupIDIsStableUnderRecarry() {
-        let once = CarriedAssertion.carriedPersonGroupID(7)
-        #expect(CarriedAssertion.carriedPersonGroupID(once) == once)
+    @Test("既に持ち越した札（負）はそのまま（何度持ち越しても動かない）")
+    func carriedTagsKeepAlreadyCarriedValues() {
+        let tags = CarriedAssertion.carriedBundleTags(for: [-4, -1], usedTags: [-4, -1])
+        #expect(tags == [-4: -4, -1: -1])
+    }
+
+    /// ⚠️ **これが `-(old + 1)` 式では壊れていたところ**（レビュー指摘）。
+    /// 世代 1 で札 3 を持ち越して -4 にしたあと、利用者の新しい束ねの最小クラスタ ID が
+    /// たまたま 3 なら札は 3 になる。式だと世代 2 で -4（そのまま）と 3（→ -4）が
+    /// **同じ値**になり、別人が 1 人に融合していた。
+    @Test("2 世代跨いでも、旧札と新しい束ねが同じ札にならない")
+    func carriedTagsDoNotCollideAcrossTwoGenerations() {
+        // 台帳には前の世代で持ち越した -4 が居る。新しい束ねの札は 3。
+        let tags = CarriedAssertion.carriedBundleTags(for: [-4, 3], usedTags: [-4, 3])
+        #expect(tags[-4] == -4, "持ち越し済みの札が動いた")
+        #expect(tags[3] != -4, "旧札とぶつかった（別人が 1 人に融合する）")
+        #expect((tags[3] ?? 0) < 0, "新しい札が負でない")
+    }
+
+    @Test("台帳に在る札は避ける（空いている番号から取る）")
+    func carriedTagsAvoidTagsAlreadyInTheLedger() {
+        let tags = CarriedAssertion.carriedBundleTags(for: [5, 6], usedTags: [-1, -2, -4])
+        #expect(Set(tags.values).isDisjoint(with: [-1, -2, -4]), "在る札とぶつかった: \(tags)")
+        #expect(Set(tags.values).count == 2)
+    }
+
+    @Test("同じ入力なら同じ札（呼ぶ順で変わらない）")
+    func carriedTagsAreDeterministic() {
+        let a = CarriedAssertion.carriedBundleTags(for: [9, 4, 9], usedTags: [-1])
+        let b = CarriedAssertion.carriedBundleTags(for: [9, 4], usedTags: [-1])
+        #expect(a == b)
     }
 
     // MARK: - 旧形式の互換
@@ -272,6 +297,40 @@ struct CarriedAssertionTests {
         #expect(gids.count == 2, "束ねが戻っていない（\(gids.count)/\(after.count)）")
         #expect(Set(gids).count == 1, "同じ 1 人に束ね直されていない: \(gids)")
         #expect(gids.allSatisfy { $0 < 0 }, "持ち越しの札が新しい束ねの並びに入っている: \(gids)")
+    }
+
+    /// ⚠️ **札は晩を跨いで同じでなければならない**（ADR-232）。1 晩目に割り当てた札を
+    /// 残りのエントリへ書き戻さないと、2 晩目にもう一度「空いている札」を取りに行って
+    /// **別の札**になり、同じ子の時期クラスタが 2 人に割れる。
+    @Test("束ねが数晩に分かれて戻っても、同じ札になる")
+    func bundleTagIsStableAcrossNights() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        await seedTwoClusters(store, vecA: [1, 0, 0], vecB: [0, 1, 0])
+        let before = await store.allClusters().map(\.clusterID).sorted()
+        #expect(before.count == 2, "fixture: 2 クラスタになっていない")
+        await store.linkClusters(before)
+        let snapshot = await store.assertedClusterEntries()
+        #expect(snapshot.allSatisfy { $0.personGroupID != nil }, "fixture: 束ねが控えに乗っていない")
+        await store.reset()
+
+        // 1 晩目: A 群だけ再スキャン。
+        for i in 0..<4 { await store.recordScan(refKey: "L-a\(i)", faces: [signal([0, 0, 1])]) }
+        let night1 = await store.reapplyAssertions(snapshot)
+        #expect(night1.count == 1, "1 晩目で戻るのは 1 つだけのはず（\(night1.count)）")
+        let tagsAfterNight1 = await store.allClusters().compactMap(\.personGroupID)
+        #expect(tagsAfterNight1.count == 1, "1 晩目で札が付いていない")
+        // ⚠️ 残りのエントリに、割り当てた札が書き戻されていること。
+        let carriedTag = night1[0].personGroupID
+        #expect(carriedTag == tagsAfterNight1[0],
+                "残りに札が書き戻されていない（\(carriedTag as Int?) ≠ \(tagsAfterNight1[0])）")
+
+        // 2 晩目: B 群。
+        for i in 0..<4 { await store.recordScan(refKey: "L-b\(i)", faces: [signal([1, 1, 0])]) }
+        let night2 = await store.reapplyAssertions(night1)
+        #expect(night2.isEmpty, "2 晩目でも戻っていない（\(night2.count) 件）")
+        let tags = await store.allClusters().compactMap(\.personGroupID)
+        #expect(tags.count == 2, "札が 2 つ付いていない: \(tags)")
+        #expect(Set(tags).count == 1, "晩を跨いで札が変わった＝同じ子が 2 人に割れた: \(tags)")
     }
 
     // MARK: - ピープルグループの所属（ADR-231/232）

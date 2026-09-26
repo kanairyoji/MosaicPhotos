@@ -128,8 +128,13 @@ public struct PeopleGroupEditorSheet: View {
                 Section(L("Members")) {
                     ForEach(peopleEngine.people) { person in
                         Button {
-                            if selected.contains(person.clusterID) {
-                                selected.remove(person.clusterID)
+                            // ⚠️ **記録が代表以外のクラスタを指していることがある**（ADR-232）。
+                            // 代表は束ねの中で入れ替わるので、外すときは**その人物の全 ID**を
+                            // 落とす。代表 ID だけ見ていると、チェックが付いていない人を
+                            // 「追加」して**同じ人物が 2 回**記録に入る（表示は重複排除で
+                            // 隠れるが、共有の写真キーは同じ束ねを 2 度展開する）。
+                            if PeopleGroupSelection.isSelected(person, in: selected) {
+                                selected.subtract(PeopleGroupSelection.ids(of: person))
                             } else {
                                 selected.insert(person.clusterID)
                             }
@@ -142,7 +147,7 @@ public struct PeopleGroupEditorSheet: View {
                                 Text(person.displayName)
                                     .foregroundStyle(.primary)
                                 Spacer()
-                                if selected.contains(person.clusterID) {
+                                if PeopleGroupSelection.isSelected(person, in: selected) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(Color.accentColor)
                                 }
@@ -179,7 +184,9 @@ public struct PeopleGroupEditorSheet: View {
                             }
                         }
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || selected.count < 2 || nameIsTaken)
+                                  || PeopleGroupSelection.personCount(
+                                        in: selected, among: peopleEngine.people) < 2
+                                  || nameIsTaken)
                     }
                 }
             }

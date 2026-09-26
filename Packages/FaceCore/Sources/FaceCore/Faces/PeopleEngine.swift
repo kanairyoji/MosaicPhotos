@@ -37,6 +37,9 @@ public final class PeopleEngine {
 
     /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
+    /// 最後に診断ログへ書いた「解決できなかったメンバー」の内容（ADR-231）。
+    /// ⚠️ **同じ行で 256KB の記録を埋めないため**の札。`reloadPeopleGroups` は毎分 30 回走る。
+    @ObservationIgnored var lastUnresolvedGroupSignature: String?
     public private(set) var isLoaded = false
     /// 顔スキャンが走っているか。**状態は `scan` が持つ**（ADR-198）——`SingleFlightTask` は
     /// `@Observable` なので、この計算プロパティ越しでも SwiftUI が追従する。
@@ -640,7 +643,9 @@ public final class PeopleEngine {
     /// ⚠️ **既にある控えを踏み潰さない**。控えに残っているのは「まだ戻せていない人」＝
     /// **ストアには存在しない**のでスナップショットには入らない。上書きすると、
     /// 前の再スキャンの途中でもう一度やり直したときに、戻り待ちの名前が丸ごと消える。
-    /// 戻り待ちを先に置いて足す（重複は落とす）。
+    /// 重ね方（**新しいスナップショットを先に置く**・重複は落とす・上限で切る）は
+    /// `CarriedAssertion.merged` が持つ——順番が「上限で何を諦めるか」を決めるので、
+    /// 理由はそこに書いてある。
     /// 期限（90 日）は作り直す——やり直した今が、その人たちに次の機会を与える時でもある。
     /// - Returns: 控えた件数（ログ用）。
     ///
@@ -691,7 +696,8 @@ public final class PeopleEngine {
         return dir.appendingPathComponent("face-name-carryover.json")
     }
 
-    private func loadCarryover() -> NameCarryover? {
+    /// `internal`: 世代切り替え（`PeopleEngine+Generation`）も戻り待ちを重ねるために読む。
+    func loadCarryover() -> NameCarryover? {
         guard let data = try? Data(contentsOf: carryoverURL) else { return nil }
         return try? JSONDecoder().decode(NameCarryover.self, from: data)
     }

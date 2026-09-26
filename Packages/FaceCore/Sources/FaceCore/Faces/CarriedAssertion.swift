@@ -73,14 +73,39 @@ public struct CarriedAssertion: Codable, Sendable, Equatable {
             + memberRefKeys.sorted().joined(separator: ",")
     }
 
-    /// 束ねの札を**世代を跨いで**持ち越すときの値。
+    /// 束ねの札を**世代を跨いで**持ち越すときの割り当て（ADR-232・純ロジック）。
     ///
-    /// 札はただの目印で、値そのものに意味はない（同じ札なら同じ 1 人）。ただし `linkClusters` は
-    /// 新しい札に「束ねたクラスタ ID の最小値」＝**0 以上**を使う。旧世代の札をそのまま持ち込むと、
-    /// 再スキャンで生まれた無関係な束ねと**同じ値になり得る**＝別人が 1 人に束ねられる。
-    /// 負の側を持ち越し専用の並びにして、ぶつからないようにする。
-    /// 既に負なら（前の世代で持ち越した札）そのまま——何度持ち越しても値が動かない。
-    public static func carriedPersonGroupID(_ old: Int) -> Int { old < 0 ? old : -(old + 1) }
+    /// 札（`personGroupID`）はただの目印で、値そのものに意味はない（同じ札なら同じ 1 人）。
+    /// ただし `linkClusters` は新しい札に「束ねたクラスタ ID の最小値」＝**0 以上**を使うので、
+    /// 旧世代の札をそのまま持ち込むと**再スキャンで生まれた無関係な束ねと同じ値になり得る**
+    /// ＝別人が 1 人に束ねられる。そこで持ち越しの札は**負の側**を使う。
+    ///
+    /// ⚠️ **`-(old + 1)` のような式では足りない**（レビュー指摘）。それは「新しい札とぶつからない」
+    /// だけを保証し、**2 回持ち越すと壊れる**: 世代 1 で札 3 を持ち越して -4 にしたあと、
+    /// 利用者が作った新しい束ねの最小クラスタ ID がたまたま 3 なら札は 3 になり、
+    /// 世代 2 では -4（そのまま）と 3（→ -4）が**同じ値**になって別人が 1 人に融合する。
+    /// 値から値への写像では、旧世代の番号と新世代の番号が同じ空間に住んでいることを直せない。
+    ///
+    /// なので**いま台帳に在る札を見て空いている番号を取る**。負の札はもう持ち越し済みなので
+    /// そのまま（何度持ち越しても動かない）。
+    ///
+    /// - Parameters:
+    ///   - rawGIDs: 札を要する値（重複可・順序は問わない。負なら持ち越し済み）。
+    ///   - usedTags: いま台帳に在る札の全部（`PersonCluster.personGroupID`）。ここへぶつけない。
+    /// - Returns: 入力の札 → 割り当てた札（負のものは自分自身）。
+    public static func carriedBundleTags(for rawGIDs: [Int], usedTags: Set<Int>) -> [Int: Int] {
+        var used = usedTags
+        var out: [Int: Int] = [:]
+        // 並べてから割り当てる（同じ入力なら同じ結果＝呼ぶ順で札が変わらない）。
+        for raw in Set(rawGIDs).sorted() {
+            if raw < 0 { out[raw] = raw; continue }
+            var candidate = -1
+            while used.contains(candidate) { candidate -= 1 }
+            used.insert(candidate)
+            out[raw] = candidate
+        }
+        return out
+    }
 
     // MARK: - 旧形式との互換
     //

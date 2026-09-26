@@ -94,6 +94,36 @@ public struct PeopleGroupInfo: Identifiable, Sendable, Equatable {
     }
 }
 
+/// グループのメンバー選択の判定（純ロジック・テスト対象・ADR-232）。
+///
+/// ⚠️ グループの記録は人物を **clusterID（代表クラスタ）** で指しているが、代表は
+/// 「名前つき → 写真の多い順 → ID 昇順」で**そのとき決まる**ので、束ねの中で入れ替わる。
+/// `PeopleGroupInfo.resolve` は構成クラスタのどれでも引けるようにしたので、
+/// **編集画面も同じ見方をしないと食い違う**——アルバムには出ているのに編集画面では
+/// チェックが付いておらず、「直そう」として押すと同じ人物が 2 回記録に入る。
+///
+/// ⚠️ UI ではなくここ（ロジック層）に置く。判定は `PersonInfo` と ID 集合だけで決まり、
+/// SwiftUI に依存しない——UI 層に置くと macOS の `swift test` から見えず、
+/// `#if canImport(UIKit)` の内側で**テストが 1 度も走らない**ことになる。
+public enum PeopleGroupSelection {
+
+    /// その人物を指す可能性のある clusterID すべて（代表＋束ねの構成クラスタ）。
+    public static func ids(of person: PersonInfo) -> Set<Int> {
+        Set(person.clusterIDs + [person.clusterID])
+    }
+
+    /// 記録（選択集合）がその人物を指しているか。
+    public static func isSelected(_ person: PersonInfo, in selected: Set<Int>) -> Bool {
+        !ids(of: person).isDisjoint(with: selected)
+    }
+
+    /// 選択集合が指している**人物の数**（記録に同じ人物の ID が 2 つ入っていても 1 人と数える）。
+    /// 「2 人以上」を ID の数で見ると、1 人を 2 通りで指しただけで作成できてしまう。
+    public static func personCount(in selected: Set<Int>, among people: [PersonInfo]) -> Int {
+        people.reduce(into: 0) { $0 += isSelected($1, in: selected) ? 1 : 0 }
+    }
+}
+
 // MARK: - FaceStore CRUD
 
 extension FaceStore {
@@ -193,19 +223,34 @@ extension PeopleEngine {
                                     memberClusterIDs: $0.memberClusterIDs,
                                     createdAt: $0.createdAt, people: current)
         }
-        // ⚠️ **解決できなかったメンバーを必ず記録に残す**（dataLoss の可視化）。
-        // 「家族グループから人が黙って消える」は利用者には気づきにくく、こちらからも
-        // 無音だった。出たら原因は 2 つ——再クラスタで ID が振り直された（種にならなかった）か、
-        // パイプライン版を上げて再スキャンした（持ち越しに載っていなかった）。
-        // ⚠️ **人物一覧が空のうちは黙る**（起動直後・再スキャン中は全メンバーが未解決に見える）。
-        // ここで鳴らすと「本当に消えた」ときの記録が偽の警告に埋もれる。
-        let lost = current.isEmpty ? [] : peopleGroups.filter { !$0.unresolvedClusterIDs.isEmpty }
-        if !lost.isEmpty {
-            let detail = lost.map { "\($0.name):\($0.unresolvedClusterIDs.count)" }
-                .joined(separator: " ")
-            Diagnostics.mark("peopleGroups: unresolved members — \(detail) "
-                             + "(再クラスタで ID が変わった／再スキャンで持ち越せなかった)")
-        }
+        reportUnresolvedGroupMembers(peopleAvailable: !current.isEmpty)
+    }
+
+    /// 解決できなかったメンバーを診断ログへ出す（dataLoss の可視化・ADR-231）。
+    ///
+    /// 「家族グループから人が黙って消える」は利用者には気づきにくく、こちらからも無音だった。
+    /// 出たら原因は 2 つ——再クラスタで ID が振り直された（種にならなかった）か、
+    /// パイプライン版を上げて再スキャンした（持ち越しに載っていなかった）。
+    ///
+    /// ⚠️ **人物一覧が空のうちは黙る**（起動直後・再スキャン中は全メンバーが未解決に見える）。
+    /// ⚠️ **同じ内容は 1 回だけ書く**（レビュー指摘）。`reloadPeopleGroups` は `loadPeople` から
+    /// 呼ばれ、実機では**毎分 30 回**走る。診断ログは末尾 256KB しか残らないので、
+    /// 解決できないメンバーが 1 人でも居座ると——写真を消したなど、二度と一致しない場合は
+    /// まさにそうなる——**同じ行で記録を埋め尽くし、残したかった証拠を押し出してしまう**。
+    /// 中身（どのグループが何人）が変わったときだけ書く。
+    private func reportUnresolvedGroupMembers(peopleAvailable: Bool) {
+        guard peopleAvailable else { return }
+        let lost = peopleGroups.filter { !$0.unresolvedClusterIDs.isEmpty }
+        let signature = lost
+            .map { "\($0.id.uuidString):\($0.unresolvedClusterIDs.sorted().map(String.init).joined(separator: ","))" }
+            .sorted().joined(separator: "|")
+        guard signature != lastUnresolvedGroupSignature else { return }
+        lastUnresolvedGroupSignature = signature
+        guard !lost.isEmpty else { return }   // 直った（＝空になった）ことも覚えるが書かない
+        let detail = lost.map { "\($0.name):\($0.unresolvedClusterIDs.count)" }
+            .joined(separator: " ")
+        Diagnostics.mark("peopleGroups: unresolved members — \(detail) "
+                         + "(再クラスタで ID が変わった／再スキャンで持ち越せなかった)")
     }
 
     /// 同じ名前のグループが既にあるか（大小・前後空白を無視。`excluding` は自分自身の編集用）。
