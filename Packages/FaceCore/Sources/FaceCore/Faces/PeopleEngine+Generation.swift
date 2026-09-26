@@ -56,17 +56,18 @@ extension PeopleEngine {
         //    以後のスキャン完了ごとに段階的に戻す（既存の仕組み）。
         //    ⚠️ 以前は名前だけを移し、グループは**名前で結び直して**いた——無名のメンバーは
         //    落ち、同名の別人は混ざった。写真の重なりは名前を要らなくする。
-        let asserted = await old.assertedClusterEntries()
-        let remaining = await shadow.reapplyAssertions(asserted)
-        // ⚠️ **ディスクに残っている戻り待ちを踏み潰さない**（レビュー指摘・ADR-232）。
-        // 戻り待ちは「どちらのストアにも居ない人」（写真がまだ再スキャンされていない）なので、
-        // `asserted` には入らない。ここで上書きすると——特に空なら**ファイルごと消える**ので
-        // ——版上げの途中で新しいモデルが来た瞬間に、戻り待ちの名前・束ね・グループ所属が
-        // 全部消えて二度と戻らない。`snapshotAssertionsForRescan` と同じ重ね方を通す。
-        let carried = CarriedAssertion.merged(snapshot: remaining,
+        // ⚠️ **ディスクに残っている戻り待ちも一緒に渡す**（レビュー・ADR-232）。戻り待ちは
+        // 「どちらのストアにも居ない人」（写真がまだ再スキャンされていない）なので `asserted` に
+        // 入らない。渡さずに結果で上書きすると——特に空なら**ファイルごと消える**ので——
+        // 版上げの途中で新しいモデルが来た瞬間に、戻り待ちの名前・束ね・グループ所属が
+        // 全部消えて二度と戻らない。
+        // ⚠️ **重ねるのは復元の前**（レビュー 2 周目）。後で重ねると、束ねの札の割り当てが
+        // 戻り待ちの札を見ないまま決まり、**別の束ねに同じ札を配り得る**。1 つの入力にする。
+        let toCarry = CarriedAssertion.merged(snapshot: await old.assertedClusterEntries(),
                                               pending: loadCarryover()?.entries ?? [],
                                               limit: Self.maxCarryoverEntries)
-        saveCarryover(carried.isEmpty ? nil : NameCarryover(savedAt: Date(), entries: carried))
+        let remaining = await shadow.reapplyAssertions(toCarry)
+        saveCarryover(remaining.isEmpty ? nil : NameCarryover(savedAt: Date(), entries: remaining))
         // 3. 切り替え（旧コンテナは消さない）。
         // ⚠️ **控えを捨ててから差し替える**（レビュー指摘）。`undoStack` は `FaceStore` が
         // メモリに持つので、差し替えると空になるのに **`undoLabel` は published のまま残る**
@@ -83,8 +84,8 @@ extension PeopleEngine {
         let filledGroups = await shadow.allPeopleGroupRecords()
             .filter { !$0.memberClusterIDs.isEmpty }.count
         Diagnostics.mark("faces: promoted shadow generation → \(modelID) "
-                         + "(assertions \(asserted.count - remaining.count)/\(asserted.count) carried, "
-                         + "\(carried.count) pending, "
+                         + "(assertions \(toCarry.count - remaining.count)/\(toCarry.count) carried, "
+                         + "\(remaining.count) pending, "
                          + "groups \(filledGroups)/\(oldGroups.count) with members)")
         // clusterID が変わった＝外部が持つ人物参照（共有の sourceKey 等）は当てにならない。
         await onPersonIdentitiesInvalidated?()

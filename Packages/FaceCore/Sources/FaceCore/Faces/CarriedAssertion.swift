@@ -94,7 +94,11 @@ public struct CarriedAssertion: Codable, Sendable, Equatable {
     ///   - usedTags: いま台帳に在る札の全部（`PersonCluster.personGroupID`）。ここへぶつけない。
     /// - Returns: 入力の札 → 割り当てた札（負のものは自分自身）。
     public static func carriedBundleTags(for rawGIDs: [Int], usedTags: Set<Int>) -> [Int: Int] {
-        var used = usedTags
+        // ⚠️ **入力に居る負の札も避ける**（レビュー 2 周目）。持ち越し済みの札は台帳に
+        // まだ現れていないことがある（その束ねのクラスタがまだ再スキャンされていない）。
+        // 台帳だけを見て空きを取ると、**まだ戻っていない束ねの札を新しい束ねに配ってしまう**
+        // ——後で両方が戻ってきたとき、別人が 1 人に融合する。
+        var used = usedTags.union(rawGIDs.filter { $0 < 0 })
         var out: [Int: Int] = [:]
         // 並べてから割り当てる（同じ入力なら同じ結果＝呼ぶ順で札が変わらない）。
         for raw in Set(rawGIDs).sorted() {

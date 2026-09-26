@@ -173,6 +173,18 @@ struct CarriedAssertionTests {
         #expect(Set(tags.values).count == 2)
     }
 
+    /// ⚠️ 持ち越し済みの札は**台帳にまだ現れていない**ことがある（その束ねのクラスタが
+    /// まだ再スキャンされていない）。台帳だけを見て空きを取ると、**まだ戻っていない束ねの札を
+    /// 新しい束ねに配ってしまい**、後で両方が戻ってきたときに別人が 1 人に融合する。
+    @Test("台帳に無くても、入力に居る持ち越し済みの札は避ける")
+    func carriedTagsAvoidPendingTagsNotYetInTheLedger() {
+        // -1 は戻り待ち（台帳にはまだ無い）。9 は新しく札を要る束ね。
+        let tags = CarriedAssertion.carriedBundleTags(for: [-1, 9], usedTags: [])
+        #expect(tags[-1] == -1)
+        #expect(tags[9] != -1, "戻り待ちの札を新しい束ねに配った（別人が融合する）")
+        #expect((tags[9] ?? 0) < 0)
+    }
+
     @Test("同じ入力なら同じ札（呼ぶ順で変わらない）")
     func carriedTagsAreDeterministic() {
         let a = CarriedAssertion.carriedBundleTags(for: [9, 4, 9], usedTags: [-1])

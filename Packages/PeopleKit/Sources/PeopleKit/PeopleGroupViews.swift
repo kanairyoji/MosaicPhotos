@@ -183,9 +183,13 @@ public struct PeopleGroupEditorSheet: View {
                                 dismiss()
                             }
                         }
+                        // ⚠️ 母数は `allPeople`（**表示フロアで隠した人も数える**）。
+                        // `people` は「一覧に出すか」だけの線（ADR-125）なので、フロア未満の
+                        // メンバーが入っているグループを編集すると**保存できなくなる**。
+                        // ⚠️ 数えるのは ID でなく**人物**（記録が同じ人物を 2 通りで指していても 1 人）。
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   || PeopleGroupSelection.personCount(
-                                        in: selected, among: peopleEngine.people) < 2
+                                        in: selected, among: peopleEngine.allPeople) < 2
                                   || nameIsTaken)
                     }
                 }

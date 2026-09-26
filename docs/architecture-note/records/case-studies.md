@@ -94,6 +94,18 @@
   - **無音をやめた記録が、記録そのものを押し流す**。`reloadPeopleGroups` は `loadPeople` から
     毎分 30 回走り、診断ログは末尾 256KB しか残らない。二度と一致しないメンバーが 1 人居座ると
     同じ行で埋まる。⚠️ **「残すために書く」ログは、頻度を決めないと逆に消す側になる。**
+- レビューループ 2 周目（1 周目で入れた直しの穴）:
+  - **札の割り当てが「まだ台帳に現れていない札」を避けていなかった**。持ち越し済みの札は、
+    その束ねのクラスタがまだ再スキャンされていなければ台帳に無い。台帳だけを見て空きを取ると
+    **戻り待ちの札を新しい束ねに配る**——後で両方が戻ると別人が 1 人に融合する。
+    ⚠️ 1 周目で直したのと**同じ形の見落とし**（見るべき集合が 1 つ足りない）。
+  - **`promoteShadow` が重ねる順番を間違えていた**。復元の**後**で戻り待ちと重ねると、
+    札の割り当てが戻り待ちを見ないまま決まる。重ねてから復元する（入力を 1 つにする）。
+  - **「2 人以上」の母数を `people`（表示フロア済み）にしていた**。フロア未満のメンバーが
+    入っているグループを編集すると**保存できなくなる**。母数は `allPeople`
+    ——ADR-125 の線は「一覧に出すか」だけで、内部の判定の母数は変えない
+    （`reloadPeopleGroups` が同じ理由で既にそうしていた）。
+  - `allClusters()` を 1 回の呼び出しに畳んだ（ADR-119）。
 - 関連: `CarriedAssertion.swift` / `FaceSeedBuilder.swift` / `FaceStore+Rebuild.swift` /
   `PeopleGroups.swift` / `PeopleEngine.swift` / `PeopleEngine+Generation.swift` /
   `NameCarryoverTests.swift` / `FaceClusteringSetupTests.swift` / `PeopleGroupsTests.swift`。

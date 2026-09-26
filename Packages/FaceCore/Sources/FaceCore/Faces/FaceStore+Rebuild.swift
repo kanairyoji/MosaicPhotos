@@ -345,7 +345,9 @@ extension FaceStore {
         // ⚠️ 見るのは名前だけではない（ADR-232）。前の晩に束ね／グループ所属だけを
         // 戻した行を候補に残すと、別のエントリがその行を**上書き**してしまう。
         let groupMembers = peopleGroupMemberClusterIDs()
-        let claimed = Set(allClusters().filter {
+        // ⚠️ `allClusters()` は**1 回だけ**引く（この下の札の割り当てでも要る・ADR-119）。
+        let clusters = allClusters()
+        let claimed = Set(clusters.filter {
             $0.name?.isEmpty == false || $0.personGroupID != nil
                 || groupMembers.contains($0.clusterID)
         }.map(\.clusterID))
@@ -374,7 +376,7 @@ extension FaceStore {
         // 旧世代の番号と新しい束ねの番号がぶつからない。負の札は持ち越し済みなのでそのまま。
         let bundleTags = CarriedAssertion.carriedBundleTags(
             for: entries.compactMap(\.personGroupID),
-            usedTags: Set(allClusters().compactMap(\.personGroupID)))
+            usedTags: Set(clusters.compactMap(\.personGroupID)))
         // グループ id → この回に決まった新クラスタ ID（あとでメンバーを書き直す）。
         var restoredGroupMembers: [UUID: [Int]] = [:]
         for (index, clusterID) in assignments {

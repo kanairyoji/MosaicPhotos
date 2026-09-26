@@ -63,4 +63,20 @@ struct PeopleGroupSelectionTests {
     func staleIDsDoNotCount() {
         #expect(PeopleGroupSelection.personCount(in: [10, 999], among: [person(10)]) == 1)
     }
+
+    /// ⚠️ 母数は**表示フロアで隠した人も含む一覧**（`allPeople`）でなければならない。
+    /// フロア未満のメンバーが入っているグループを編集したとき、母数が `people`（フロア済み）だと
+    /// その人が数えられず、**2 人選んでいるのに保存できなくなる**。
+    /// 呼び出し側の選択は UI にあるが、規則としてここで固定しておく。
+    @Test("母数に居ない人物は数えられない（フロア済み一覧を渡すと数が足りなくなる）")
+    func countDependsOnTheDenominator() {
+        let shown = person(10)
+        let hiddenByFloor = person(7)
+        let selected: Set<Int> = [10, 7]
+        #expect(PeopleGroupSelection.personCount(in: selected, among: [shown]) == 1,
+                "フロア済みの母数では 1 人しか数えられない（＝保存できなくなる側）")
+        #expect(PeopleGroupSelection.personCount(in: selected,
+                                                among: [shown, hiddenByFloor]) == 2,
+                "全件の母数なら 2 人と数えられる")
+    }
 }
