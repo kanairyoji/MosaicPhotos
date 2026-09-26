@@ -37,6 +37,10 @@ public final class PeopleEngine {
 
     /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
+    /// 全消去の直前に取った表明の国勢調査（ADR-233）。持ち越しが全部戻ったところで突き合わせる。
+    /// ⚠️ メモリに置くので**アプリを閉じると失われる**（数晩に跨る再スキャンでは突き合わせを
+    /// 諦める）。永続化すると「いつの控えか」の管理が増えるので、そこまではしない。
+    @ObservationIgnored var censusBeforeRescan: AssertionCensus?
     /// 最後に診断ログへ書いた「解決できなかったメンバー」の内容（ADR-231）。
     /// ⚠️ **同じ行で 256KB の記録を埋めないため**の札。`reloadPeopleGroups` は毎分 30 回走る。
     @ObservationIgnored var lastUnresolvedGroupSignature: String?
@@ -592,6 +596,10 @@ public final class PeopleEngine {
         let current = effectiveScanVersion
         guard stored < current else { return }
         if await store.scannedCount() > 0 {
+            // ⚠️ 表明の国勢調査（ADR-233）。ここは全消去なので**必ず全部消える**——見たいのは
+            // 「持ち越しで戻ってきたか」なので、控えは持っておいて `reapplyCarryoverNames` の
+            // あとで突き合わせる。取るのは消す前。
+            censusBeforeRescan = await store.assertionCensus()
             let snapshot = await snapshotAssertionsForRescan()
             await store.reset()
             // ⚠️ **控えも捨てる**（レビュー指摘）。`reset()` は `undoStack` を消さないので、
@@ -680,6 +688,12 @@ public final class PeopleEngine {
         carryover.entries = remaining
         saveCarryover(carryover.entries.isEmpty ? nil : carryover)
         await loadPeople()
+        // ⚠️ **持ち越しが全部消化できたときだけ**突き合わせる（ADR-233）。途中だと
+        // 「まだ戻っていない」を「失った」と報告してしまい、本当の損失が埋もれる。
+        if carryover.entries.isEmpty, let before = censusBeforeRescan {
+            await store.reportAssertionCensus("rescan", before: before)
+            censusBeforeRescan = nil
+        }
     }
 
     /// 表明の持ち越しの永続化（Application Support・再起動/数晩に跨る再スキャンに耐える）。
@@ -900,6 +914,7 @@ public final class PeopleEngine {
         scan.stop()
         await scan.waitUntilIdle()
         await clearUndoHistory()   // 消したあとの世界には戻す先が無い
+        censusBeforeRescan = await store.assertionCensus()   // ADR-233
         // ⚠️ **手動の再スキャンでも表明を控える**（ADR-232）。ここは版上げと同じ「全消去して
         // 作り直す」なのに控えを取っておらず、名前・束ね・家族グループが丸ごと消えていた
         // （版上げの経路だけが守られていた）。消すのは学習（負例・確認）の側で、

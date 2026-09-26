@@ -47,6 +47,10 @@ extension FaceStore {
         // ⚠️ **名前付き人物が痩せたら記録する**（ADR-144）。実フィードバック「ピープルアルバムの
         // 写真の全数が減っている気がする」。再クラスタの前後で名前付き人物の枚数を突き合わせる。
         let namedBefore = Self.namedPhotoCounts(existing, facesByCluster: facesByCluster)
+        // ⚠️ **表明の国勢調査を前後で取る**（ADR-233）。ここは「消えてはいけないものが消える」
+        // 不具合が最も出る場所で、しかも定常状態では走らない（夜だけ）。誰も見ていない時間に
+        // 壊れても記録が残るようにする。
+        let censusBefore = assertionCensus()
 
         // ⚠️ **作り直す前に、今の記録が壊れていないかを見る**（ADR-210）。全顔はもう手元に
         // あるので追加の読み出しは要らない。ここで出しておかないと、このあと重心を作り直した
@@ -86,6 +90,7 @@ extension FaceStore {
         try? modelContext.save()
         clusteringCache = nil
         reportNamedShrink(before: namedBefore)
+        reportAssertionCensus("rebuild", before: censusBefore)
         Self.log.info("faces: rebuild — clusters=\(state.clustering.clusters.count) moved=\(moved) "
                       + "thr=\(thr)")
         return (state.clustering.clusters.count, moved)

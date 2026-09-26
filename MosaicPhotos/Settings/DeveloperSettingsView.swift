@@ -32,6 +32,10 @@ struct DeveloperSettingsView: View {
     /// デバッグ: 重い処理のゲートを全面無効化（ランタイムのみ・再起動でリセット）。
     @State private var forceHeavyWork = (BackgroundYield.exemption == .debug)
     @State private var heavyWorking = false
+    /// 顔の台帳の控え（ADR-234）。控えの情報・書き出したフォルダ・再起動の案内。
+    @State private var ledgerSnapshot = FaceLedgerBackup.manualSnapshotInfo()
+    @State private var ledgerExport: URL?
+    @State private var ledgerNeedsRestart = false
     /// BG タスク検証: 予約状態と「その場実行」中フラグ。
     @State private var bgPendingStatus = "…"
     @State private var bgDebugRunning = false
@@ -58,6 +62,7 @@ struct DeveloperSettingsView: View {
             heavyWorkDebugSection
             backgroundTaskDebugSection
             peopleDebugSection
+            faceLedgerSection
             albumsDebugSection
             faceYieldSection
             placesDebugSection
@@ -257,6 +262,59 @@ struct DeveloperSettingsView: View {
             Text("顔クラスタ（人物）の再スキャン・再構築を行います。「修正内容は保持」は、あなたが直した"
                  + "名前や誤りの学習（負例）を残したまま顔を検出し直します。「学習を破棄」はそれらも消します。"
                  + "※ シミュレータの顔スキャンは既定で無効です（CPU のみで遅いため）。上のトグルで有効にできます。")
+        }
+    }
+
+    // MARK: - 顔の台帳（控え・書き出し・ADR-234）
+
+    /// 顔の台帳（FacesV1）を**控える／戻す／書き出す**。
+    ///
+    /// ⚠️ なぜ要るか: 顔まわりの不具合は**遷移のとき**にだけ出る（夜の再クラスタ・版上げの
+    /// 再スキャン・世代の切り替え・写真の整理）。ところが実機のライブラリは 10 万枚あり、
+    /// 遷移を 1 回試すのに数晩、しかも**本物の名前と家族グループを賭ける**ことになる。
+    ///  - 控えがあれば「再スキャン」を押すのが怖くなくなる（数分で戻せる）
+    ///  - 書き出せば Mac で何度でも回せる（`FaceLedgerReplayTests`。**写真本体は要らない**
+    ///    ——埋め込みは台帳の中にある）
+    private var faceLedgerSection: some View {
+        Section {
+            if let info = ledgerSnapshot {
+                LabeledContent("控えの日時",
+                               value: info.takenAt.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent("控えの大きさ",
+                               value: ByteCountFormatter.string(fromByteCount: Int64(info.bytes),
+                                                                countStyle: .file))
+            } else {
+                Text("控えはまだありません").foregroundStyle(.secondary)
+            }
+            Button("いまの台帳を控える") {
+                FaceLedgerBackup.takeManualSnapshot()
+                ledgerSnapshot = FaceLedgerBackup.manualSnapshotInfo()
+            }
+            Button("控えから戻す（要・再起動）", role: .destructive) {
+                ledgerNeedsRestart = FaceLedgerBackup.restoreManualSnapshot()
+            }
+            .disabled(ledgerSnapshot == nil)
+            if ledgerNeedsRestart {
+                // ⚠️ SwiftData はストアを掴んだままなので、差し替えは再起動までは効かない
+                //（そのまま使い続けると書き戻しで壊し得る）。
+                Label("戻しました。アプリを終了して開き直してください。",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            Button("Mac で回すために書き出す") {
+                ledgerExport = FaceLedgerBackup.exportForReplay()
+            }
+            if let url = ledgerExport {
+                ShareLink(item: url) { Label("書き出したフォルダを共有", systemImage: "square.and.arrow.up") }
+            }
+        } header: {
+            Text("AI 解析：顔の台帳（控え・書き出し）")
+        } footer: {
+            Text("「控える」は、いまの人物・名前・束ね・家族グループをアプリ内に控えます"
+                 + "（再スキャンを試す前に押しておくと数分で戻せます）。"
+                 + "「書き出す」は台帳を Mac へ持ち出して、遷移（再クラスタ・再スキャン）を"
+                 + "何度でも試すためのものです（写真そのものは含みません）。"
+                 + "⚠️ 書き出したファイルには顔の特徴量と人物名が入ります。共有先に注意してください。")
         }
     }
 

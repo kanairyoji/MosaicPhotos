@@ -47,6 +47,7 @@ extension PeopleEngine {
         let old = store
         // 1. グループの器を先に作る（**id を引き継いだ空の行**）。メンバーは次の手で入る。
         //    ⚠️ 器が無いと、持ち越しがメンバーを書き込む先を失う（＝家族グループが消える）。
+        let censusBefore = await old.assertionCensus()   // ADR-233（旧世代の表明を数える）
         let oldGroups = await old.allPeopleGroupRecords()
         for g in oldGroups {
             await shadow.importPeopleGroupShell(id: g.id, name: g.name, createdAt: g.createdAt)
@@ -87,6 +88,9 @@ extension PeopleEngine {
                          + "(assertions \(toCarry.count - remaining.count)/\(toCarry.count) carried, "
                          + "\(remaining.count) pending, "
                          + "groups \(filledGroups)/\(oldGroups.count) with members)")
+        // ⚠️ 新世代で表明がどれだけ残ったかを突き合わせる（ADR-233）。ここは戻り待ちが
+        // 残っていても報告する——世代の切り替えは年に数回で、次の機会が無いため。
+        await shadow.reportAssertionCensus("promote", before: censusBefore)
         // clusterID が変わった＝外部が持つ人物参照（共有の sourceKey 等）は当てにならない。
         await onPersonIdentitiesInvalidated?()
         await loadPeople()

@@ -54,6 +54,9 @@ extension FaceStore {
         }
         try? modelContext.save()
 
+        // ⚠️ 表明の国勢調査（ADR-233）。写真の整理は**利用者が意図していない副作用**で
+        // 人物が消える経路なので、ここも前後で突き合わせる。
+        let censusBefore = assertionCensus()
         // 顔が 1 つも残らなかった人物は消す（membership だけの顔も含めて数える）。
         // ⚠️ ユーザーが表明した人物（名前・束ね・代表写真・家族グループの所属）は空でも残す
         // （ADR-187/231）。⚠️ グループの集合は**ループの外で 1 回**作る（ADR-119）。
@@ -74,6 +77,7 @@ extension FaceStore {
         clusteringCache = nil
         Self.log.info("faces: pruned \(facesRemoved) face(s) of \(missing.count) missing photo(s), "
                       + "\(clustersRemoved) empty cluster(s)")
+        reportAssertionCensus("prune", before: censusBefore)
         return (facesRemoved, missing.count, clustersRemoved)
     }
 

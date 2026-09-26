@@ -25,8 +25,7 @@ actor FaceStore {
     static func makeContainer(isStoredInMemoryOnly: Bool = false,
                               modelID: String = ModelGeneration.legacyFace) -> ModelContainer {
         // FaceCorrection は追加テーブル（ADR-45）＝加算的マイグレーション（既存の顔データは保持）。
-        let schema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self,
-                             FaceCorrection.self, PeopleGroupRecord.self])
+        let schema = Self.ledgerSchema
         if isStoredInMemoryOnly {
             // ⚠️ **名前を必ず変える**。同名（既定名）のインメモリ構成は、コンテナを作り直しても
             // プロセス内で**同じストアを共有**する——テストが並列に走ると別スイートの顔が
@@ -42,6 +41,12 @@ actor FaceStore {
         // 採番し直さない（採番＝旧ストアの破棄）。モデル更新は別コンテナの影の世代で行う（ADR-186）。
         return resilientModelContainer(name: Self.containerName(for: modelID), schema: schema, policy: .ledger) { Self.log.error($0) }
     }
+
+    /// 台帳のスキーマ。⚠️ **1 か所に置く**（ADR-234）。台帳ファイルの場所を算出する
+    /// （`FaceLedgerBackup`）のと、Mac で書き出した台帳を開く（`FaceLedgerReplayTests`）のに
+    /// 同じスキーマが要る。書き写すと、列を足したときに片方だけ古くなって開けなくなる。
+    static let ledgerSchema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self,
+                                      FaceCorrection.self, PeopleGroupRecord.self])
 
     /// 世代（顔モデル ID）ごとのコンテナ名（ADR-186）。既存データの世代は名前 "FacesV1" を据え置き、
     /// 新しいモデルは `Faces-<id>`（影の世代）。同じ ID なら同じコンテナ＝アプリ更新で消えない。
