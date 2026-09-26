@@ -97,8 +97,15 @@ public enum FaceLedgerBackup {
     /// ⚠️ **開いている台帳をそのままコピーする**ので、`-wal` に書き込み途中の分が残り得る。
     /// Mac 側で開けば SQLite が WAL を取り込むので読めるが、**書き込みが静かなとき**
     /// （夜間バッチが走っていないとき）に取るのが確実。
+    ///
+    /// - Parameter redacted: **既定で本名と写真のパスを外す**（`FaceLedgerRedaction`）。
+    ///   ⚠️ 外しても**顔の埋め込みは残る**——それが再生に要るものなので消せない。
+    ///   つまりこのファイルは名前の有無に関わらず**生体情報**で、扱いの注意は変わらない。
+    ///   外すのは「再生に要らないのに読める」ぶんだけ（読み違えを防ぐ効果はある）。
+    ///   `false` にすると本名のまま出る（特定の人物を追うときだけ使う）。
     /// - Returns: 集めたフォルダ（`FacesV1-export/`）。失敗したら nil。
-    public static func exportForReplay(containerName: String = currentContainerName) -> URL? {
+    public static func exportForReplay(containerName: String = currentContainerName,
+                                      redacted: Bool = true) -> URL? {
         let src = storeURL(containerName: containerName)
         let fm = FileManager.default
         guard fm.fileExists(atPath: src.path) else {
@@ -114,10 +121,26 @@ public enum FaceLedgerBackup {
                 guard fm.fileExists(atPath: from.path) else { continue }
                 try fm.copyItem(at: from, to: dir.appendingPathComponent(src.lastPathComponent + suffix))
             }
+            if redacted {
+                // ⚠️ **外すのは書き出す時点**。テストのあとで消しても、ファイルは既に
+                // 本名を持って端末を出ている。
+                let removed = redactLedger(at: dir.appendingPathComponent(src.lastPathComponent))
+                guard removed else {
+                    try? fm.removeItem(at: dir)   // 中途半端に外れたものを残さない
+                    Diagnostics.mark("faces: ledger export aborted — redaction failed")
+                    return nil
+                }
+            }
             // 何を持ち出したのかが後から分かるように、読み方を同梱する。
             let readme = """
-                \(containerName) の台帳（顔の埋め込み・人物・名前・束ね・家族グループ）。
-                ⚠️ 個人データです。git に入れないでください。
+                \(containerName) の台帳（顔の埋め込み・人物・束ね・家族グループ）。
+                本名と写真のパス: \(redacted ? "外してあります（仮名とハッシュ）" : "⚠️ そのまま入っています")
+
+                ⚠️⚠️ **顔の埋め込み（512 次元の identity ベクトル）は外せません**。
+                    それが再生に要るものなので、このファイルは名前の有無に関わらず
+                    **生体情報**です。git に入れず、共有先に注意してください。
+                    （リポジトリは公開なので、.gitignore で `*-export/` と `*.store` を
+                     弾くようにしてあります＝うっかりコミットはできません。）
 
                 Mac で回す:
                   mkdir -p ~/DEV/tmp/face-ledger && cp -R <このフォルダ>/* ~/DEV/tmp/face-ledger/
@@ -125,10 +148,11 @@ public enum FaceLedgerBackup {
                   FACE_LEDGER_DIR=~/DEV/tmp/face-ledger swift test --filter FaceLedgerReplayTests
 
                 写真本体は要りません（埋め込みは台帳の中にあります）。
-                出力は診断ログと同じ形で標準出力に出ます。
+                使い終わったらフォルダごと消してください。
                 """
             try Data(readme.utf8).write(to: dir.appendingPathComponent("README.txt"))
-            Diagnostics.mark("faces: ledger exported for replay (\(dir.lastPathComponent))")
+            Diagnostics.mark("faces: ledger exported for replay "
+                             + "(\(dir.lastPathComponent), redacted=\(redacted))")
             return dir
         } catch {
             Diagnostics.mark("faces: ledger export failed — \(error.localizedDescription)")
@@ -161,5 +185,50 @@ extension FaceStore {
                 hasSmile: face.hasSmile, captureDate: face.captureDate))
         }
         return order.map { (refKey: $0, faces: byRefKey[$0] ?? []) }
+    }
+}
+
+
+// MARK: - 書き出したコピーから読める個人情報を外す
+
+extension FaceLedgerBackup {
+
+    /// 書き出した**コピー**の台帳から本名と写真のパスを外す（ADR-234 追補）。
+    ///
+    /// ⚠️ 触るのは必ずコピー（`exportForReplay` が作ったフォルダの中）。原本に対して呼ぶと
+    /// **台帳そのものを壊す**（人物名が仮名に、refKey がハッシュに置き換わる＝写真と結び付かなくなる）。
+    /// - Returns: 外せたか。
+    static func redactLedger(at storeURL: URL) -> Bool {
+        let salt = FaceLedgerRedaction.newSalt()
+        do {
+            let config = ModelConfiguration(schema: FaceStore.ledgerSchema, url: storeURL)
+            let container = try ModelContainer(for: FaceStore.ledgerSchema, configurations: [config])
+            let context = ModelContext(container)
+            // ⚠️ **refKey と faceID を同じ置き換えで作り直す**（faceID は "<refKey>#<連番>" なので
+            // 片方だけ変えるとパスが faceID 側から漏れ、参照（coverFaceID）も壊れる）。
+            for face in (try? context.fetch(FetchDescriptor<DetectedFace>())) ?? [] {
+                face.faceID = FaceLedgerRedaction.redactedFaceID(face.faceID, salt: salt)
+                face.refKey = FaceLedgerRedaction.redactedRefKey(face.refKey, salt: salt)
+            }
+            for photo in (try? context.fetch(FetchDescriptor<ScannedPhoto>())) ?? [] {
+                photo.refKey = FaceLedgerRedaction.redactedRefKey(photo.refKey, salt: salt)
+            }
+            for cluster in (try? context.fetch(FetchDescriptor<PersonCluster>())) ?? [] {
+                if let name = cluster.name {
+                    cluster.name = FaceLedgerRedaction.pseudonym(for: name, salt: salt)
+                }
+                if let cover = cluster.coverFaceID {
+                    cluster.coverFaceID = FaceLedgerRedaction.redactedFaceID(cover, salt: salt)
+                }
+            }
+            for group in (try? context.fetch(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
+                group.name = FaceLedgerRedaction.pseudonym(for: group.name, salt: salt)
+            }
+            try context.save()
+            return true
+        } catch {
+            Diagnostics.mark("faces: redaction failed — \(error.localizedDescription)")
+            return false
+        }
     }
 }

@@ -66,3 +66,12 @@ MosaicPhotos/VLM/
 # Python のビルド生成物（scripts/ のチェックスクリプト実行で出る）
 __pycache__/
 *.pyc
+
+# 顔の台帳の書き出し（ADR-234）。
+# ⚠️ **中身は生体情報**（顔の 512 次元 identity 埋め込み）で、本名を外しても消せない
+#    ——再生テストが使うものそのものなので。リポジトリは公開なので、うっかりコミットを
+#    構造的に防ぐ（「気をつける」に頼らない）。置き場は ~/DEV/tmp/face-ledger。
+*-export/
+*.store
+*.store-wal
+*.store-shm

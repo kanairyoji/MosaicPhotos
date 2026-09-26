@@ -301,8 +301,12 @@ struct DeveloperSettingsView: View {
                       systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             }
-            Button("Mac で回すために書き出す") {
-                ledgerExport = FaceLedgerBackup.exportForReplay()
+            Button("Mac で回すために書き出す（本名を外す）") {
+                ledgerExport = FaceLedgerBackup.exportForReplay(redacted: true)
+            }
+            // ⚠️ 本名のまま出すのは「特定の人物を追う」ときだけ。既定は外す側。
+            Button("本名のまま書き出す（特定の人物を追うとき）", role: .destructive) {
+                ledgerExport = FaceLedgerBackup.exportForReplay(redacted: false)
             }
             if let url = ledgerExport {
                 ShareLink(item: url) { Label("書き出したフォルダを共有", systemImage: "square.and.arrow.up") }
@@ -314,7 +318,9 @@ struct DeveloperSettingsView: View {
                  + "（再スキャンを試す前に押しておくと数分で戻せます）。"
                  + "「書き出す」は台帳を Mac へ持ち出して、遷移（再クラスタ・再スキャン）を"
                  + "何度でも試すためのものです（写真そのものは含みません）。"
-                 + "⚠️ 書き出したファイルには顔の特徴量と人物名が入ります。共有先に注意してください。")
+                 + "既定では人物名を仮名に、写真のパスをハッシュに置き換えて書き出します。"
+                 + "⚠️ ただし顔の特徴量（512 次元）は再生に必要なので外せません"
+                 + "——名前を外してもファイルは生体情報です。共有先に注意し、使い終わったら削除してください。")
         }
     }
 
