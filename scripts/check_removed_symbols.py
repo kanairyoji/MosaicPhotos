@@ -133,7 +133,17 @@ def main() -> int:
         diff = git("diff", "--cached", "--", "*.swift")
     else:
         base = args[0] if args else "origin/main"
-        diff = git("diff", f"{base}..HEAD", "--", "*.swift")
+        try:
+            diff = git("diff", f"{base}..HEAD", "--", "*.swift")
+        except subprocess.CalledProcessError:
+            # ⚠️ traceback を出さない。浅いクローン（CI）では比較元が手元に無いことがあり、
+            # そこで落ちると**このチェック自体が CI のエラー**になる。
+            print(f"比較元 '{base}' が見つかりません。"
+                  f"浅いクローンなら先に取得してください（CI は github.event.before を使う）。")
+            return 0
+        if not diff.strip():
+            print(f"'{base}..HEAD' に Swift の差分がありません（比較元が正しいか確認）。")
+            return 0
 
     symbols = sorted(removed_symbols(diff))
     # まだコードに宣言が残っているものは「消していない」＝対象外。
