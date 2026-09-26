@@ -1,4 +1,5 @@
 import Foundation
+import MosaicSupport
 import SwiftData
 
 /// ピープルグループ（複数の人物を束ねた名前付きアルバム＝家族・チーム・組織などの単位）。
@@ -37,25 +38,49 @@ public struct PeopleGroupInfo: Identifiable, Sendable, Equatable {
     public let memberRefKeys: [String]
     public let createdAt: Date
 
+    /// **現在の人物一覧に解決できなかった**メンバーの clusterID（記録順）。
+    ///
+    /// ⚠️ ここが本項の要（dataLoss の可視化）。以前は `compactMap` で**黙って落として**いた。
+    /// 落ちる原因は「再クラスタで ID が振り直された」「パイプライン版を上げて再スキャンした」で、
+    /// どちらも**利用者から見ると家族グループから人が消える**。無音だと、直したあとも
+    /// 効いているか分からない——数えて記録に残す。
+    public let unresolvedClusterIDs: [Int]
+
     public var photoCount: Int { memberRefKeys.count }
 
     public init(id: UUID, name: String, memberClusterIDs: [Int],
-                members: [PersonInfo], memberRefKeys: [String], createdAt: Date) {
+                members: [PersonInfo], memberRefKeys: [String], createdAt: Date,
+                unresolvedClusterIDs: [Int] = []) {
         self.id = id
         self.name = name
         self.memberClusterIDs = memberClusterIDs
         self.members = members
         self.memberRefKeys = memberRefKeys
         self.createdAt = createdAt
+        self.unresolvedClusterIDs = unresolvedClusterIDs
     }
 
     /// 記録メンバーと現在の人物一覧から解決済み Info を作る（純ロジック・テスト対象）。
     /// 現在の一覧に居ない clusterID（再クラスタで消えた等）は表示から外すが記録には残す。
     public static func resolve(id: UUID, name: String, memberClusterIDs: [Int],
                                createdAt: Date, people: [PersonInfo]) -> PeopleGroupInfo {
+        // ⚠️ **代表クラスタだけで引かない**（ADR-232）。グループは代表 clusterID を持つが、
+        // 代表は束ねの中で入れ替わる（別のクラスタに名前が付く・枚数が変わる・再スキャンで
+        // 並びが変わる）。入れ替わった瞬間に、その人が家族グループから消えていた。
         var byCluster: [Int: PersonInfo] = [:]
-        for person in people { byCluster[person.clusterID] = person }
-        let members = memberClusterIDs.compactMap { byCluster[$0] }
+        for person in people {
+            byCluster[person.clusterID] = person
+            for id in person.clusterIDs where byCluster[id] == nil { byCluster[id] = person }
+        }
+        // 同じ人物を 2 回入れない（構成クラスタが 2 つ記録に載っている場合）。
+        var seenClusters = Set<Int>()
+        let members = memberClusterIDs.compactMap { id -> PersonInfo? in
+            guard let person = byCluster[id] else { return nil }
+            return seenClusters.insert(person.clusterID).inserted ? person : nil
+        }
+        // ⚠️ **落ちたメンバーを数える**（無音をやめる）。`compactMap` は解決できない ID を
+        // 黙って捨てるので、家族グループから人が消えても誰も気づけなかった。
+        let unresolved = memberClusterIDs.filter { byCluster[$0] == nil }
         var seen = Set<String>()
         var refKeys: [String] = []
         for member in members {
@@ -64,7 +89,8 @@ public struct PeopleGroupInfo: Identifiable, Sendable, Equatable {
             }
         }
         return PeopleGroupInfo(id: id, name: name, memberClusterIDs: memberClusterIDs,
-                               members: members, memberRefKeys: refKeys, createdAt: createdAt)
+                               members: members, memberRefKeys: refKeys, createdAt: createdAt,
+                               unresolvedClusterIDs: unresolved)
     }
 }
 
@@ -76,6 +102,17 @@ extension FaceStore {
         let records = (try? modelContext.fetch(FetchDescriptor<PeopleGroupRecord>(
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]))) ?? []
         return records.map { ($0.id, $0.name, $0.memberClusterIDs, $0.createdAt) }
+    }
+
+    /// 全グループのメンバー clusterID（種の判定用・ADR-231）。
+    ///
+    /// ⚠️ **1 回で読む**。再クラスタは人物ごとに引き直してはいけない（1,316 人＝1,316 往復・
+    /// ADR-119）。グループは数個なので、集合にして `contains` で引く。
+    func peopleGroupMemberClusterIDs() -> Set<Int> {
+        let records = (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? []
+        var out = Set<Int>()
+        for record in records { out.formUnion(record.memberClusterIDs) }
+        return out
     }
 
     /// 人物の統合でメンバーの clusterID が変わったとき、グループの参照を付け替える。
@@ -97,6 +134,22 @@ extension FaceStore {
             touched += 1
         }
         return touched
+    }
+
+    /// 世代の切り替えで**グループの器だけ**を新しいコンテナへ持ち込む（ADR-232）。
+    /// メンバーは持ち越し（`reapplyAssertions`）が写真の重なりで埋めるので、ここでは空で作る。
+    /// id と作成日時を引き継ぐ（グループの同一性は UUID で、世代を跨いで変わらない）。
+    /// 同じ id が既にあれば名前だけ合わせる（何度呼んでも増えない）。
+    func importPeopleGroupShell(id: UUID, name: String, createdAt: Date) {
+        let groupID = id
+        if let existing = try? modelContext.fetch(FetchDescriptor<PeopleGroupRecord>(
+            predicate: #Predicate { $0.id == groupID })).first {
+            existing.name = name
+        } else {
+            modelContext.insert(PeopleGroupRecord(id: id, name: name,
+                                                  memberClusterIDs: [], createdAt: createdAt))
+        }
+        try? modelContext.save()
     }
 
     func createPeopleGroup(name: String, memberClusterIDs: [Int]) -> UUID {
@@ -139,6 +192,19 @@ extension PeopleEngine {
             PeopleGroupInfo.resolve(id: $0.id, name: $0.name,
                                     memberClusterIDs: $0.memberClusterIDs,
                                     createdAt: $0.createdAt, people: current)
+        }
+        // ⚠️ **解決できなかったメンバーを必ず記録に残す**（dataLoss の可視化）。
+        // 「家族グループから人が黙って消える」は利用者には気づきにくく、こちらからも
+        // 無音だった。出たら原因は 2 つ——再クラスタで ID が振り直された（種にならなかった）か、
+        // パイプライン版を上げて再スキャンした（持ち越しに載っていなかった）。
+        // ⚠️ **人物一覧が空のうちは黙る**（起動直後・再スキャン中は全メンバーが未解決に見える）。
+        // ここで鳴らすと「本当に消えた」ときの記録が偽の警告に埋もれる。
+        let lost = current.isEmpty ? [] : peopleGroups.filter { !$0.unresolvedClusterIDs.isEmpty }
+        if !lost.isEmpty {
+            let detail = lost.map { "\($0.name):\($0.unresolvedClusterIDs.count)" }
+                .joined(separator: " ")
+            Diagnostics.mark("peopleGroups: unresolved members — \(detail) "
+                             + "(再クラスタで ID が変わった／再スキャンで持ち越せなかった)")
         }
     }
 

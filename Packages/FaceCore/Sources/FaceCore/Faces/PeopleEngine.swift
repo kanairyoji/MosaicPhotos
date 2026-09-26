@@ -589,9 +589,7 @@ public final class PeopleEngine {
         let current = effectiveScanVersion
         guard stored < current else { return }
         if await store.scannedCount() > 0 {
-            let snapshot = await store.namedClusterEntries()
-            if !snapshot.isEmpty { saveCarryover(NameCarryover(savedAt: Date(), entries:
-                snapshot.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) })) }
+            let snapshot = await snapshotAssertionsForRescan()
             await store.reset()
             // ⚠️ **控えも捨てる**（レビュー指摘）。`reset()` は `undoStack` を消さないので、
             // 「戻す」の行が残ったまま押せてしまう。押すと消えたはずのクラスタ ID の行を
@@ -601,7 +599,7 @@ public final class PeopleEngine {
             // clusterID が振り直される＝外部が持つ人物参照は当てにならない。
             await onPersonIdentitiesInvalidated?()
             Diagnostics.mark("faces: scan pipeline v\(stored == 0 ? 1 : stored)→v\(current) "
-                             + "— full rescan (carrying \(snapshot.count) names)")
+                             + "— full rescan (carrying \(snapshot.count) assertions)")
             await loadPeople()
         }
         UserDefaults.standard.set(current, forKey: Self.faceScanVersionKey)
@@ -636,7 +634,48 @@ public final class PeopleEngine {
         UserDefaults.standard.set(Self.cloudAnalysisVersion, forKey: Self.cloudAnalysisVersionKey)
     }
 
-    /// 持ち越し名の再適用（スキャンセッションの末尾で呼ぶ）。全件消化したらファイルを消す。
+    /// 全消去の**前に**表明（名前・束ね・ピープルグループの所属）を控える（ADR-232）。
+    /// clusterID は振り直されるので、控えは写真（refKey）の重なりで戻す。
+    ///
+    /// ⚠️ **既にある控えを踏み潰さない**。控えに残っているのは「まだ戻せていない人」＝
+    /// **ストアには存在しない**のでスナップショットには入らない。上書きすると、
+    /// 前の再スキャンの途中でもう一度やり直したときに、戻り待ちの名前が丸ごと消える。
+    /// 戻り待ちを先に置いて足す（重複は落とす）。
+    /// 期限（90 日）は作り直す——やり直した今が、その人たちに次の機会を与える時でもある。
+    /// - Returns: 控えた件数（ログ用）。
+    ///
+    /// `internal`: 「戻り待ちを踏み潰さない」ことをテストから確かめるため。
+    func snapshotAssertionsForRescan() async -> [CarriedAssertion] {
+        let snapshot = await store.assertedClusterEntries()
+        let pending = loadCarryover()?.entries ?? []
+        var seen = Set<String>()
+        let merged = (pending + snapshot).filter { entry in
+            seen.insert(Self.carryoverIdentity(entry)).inserted
+        }.prefix(Self.maxCarryoverEntries)
+        if !merged.isEmpty {
+            saveCarryover(NameCarryover(savedAt: Date(), entries: Array(merged)))
+        }
+        return Array(merged)
+    }
+
+    /// 控えの重複判定キー（同じ表明を 2 度積まない）。
+    ///
+    /// ⚠️ **並べてから比べる**。`memberRefKeys` の元は `Set` なので、同じ写真の集合でも
+    /// **プロセスが変わると並びが変わる**（Swift の Set の走査順はプロセスごと）。
+    /// 並べずに比べると、アプリを開き直したあとの再スキャンで同じ表明がもう 1 件積まれる。
+    private static func carryoverIdentity(_ e: CarriedAssertion) -> String {
+        "\(e.name ?? "")|\(e.personGroupID.map(String.init) ?? "")|"
+            + "\(e.peopleGroupIDs.map(\.uuidString).sorted().joined(separator: ","))|"
+            + e.memberRefKeys.sorted().joined(separator: ",")
+    }
+
+    /// 控えに積む上限。戻り待ちを足していく仕組みなので、際限なく膨らませない
+    /// （1 件あたり最大 500 の refKey を持つ＝ファイルが大きくなる）。
+    /// 名前付きの人物は実運用で数百人なので、ここで落ちるのは異常時だけ。
+    static let maxCarryoverEntries = 1_000
+
+    /// 持ち越した表明（名前・束ね・グループ所属）の再適用（スキャンセッションの末尾で呼ぶ）。
+    /// 全件消化したらファイルを消す。
     private func reapplyCarryoverNames() async {
         guard var carryover = loadCarryover() else { return }
         // 90 日消化されない残り（写真削除等で照合不能）は破棄する。
@@ -645,22 +684,20 @@ public final class PeopleEngine {
             return
         }
         let before = carryover.entries.count
-        let remaining = await store.reapplyNames(carryover.entries.map { ($0.name, $0.memberRefKeys) })
+        let remaining = await store.reapplyAssertions(carryover.entries)
         guard remaining.count != before else { return }
-        Diagnostics.mark("faces: carryover names applied \(before - remaining.count)/\(before)")
-        carryover.entries = remaining.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) }
+        Diagnostics.mark("faces: carryover assertions applied \(before - remaining.count)/\(before)")
+        carryover.entries = remaining
         saveCarryover(carryover.entries.isEmpty ? nil : carryover)
         await loadPeople()
     }
 
-    /// 名前持ち越しの永続化（Application Support・再起動/数晩に跨る再スキャンに耐える）。
+    /// 表明の持ち越しの永続化（Application Support・再起動/数晩に跨る再スキャンに耐える）。
+    /// 中身は `CarriedAssertion`＝名前・束ね・グループ所属（ADR-232）。
+    /// ファイル名は旧版と同じ（`CarriedAssertion` が旧形式も読める）。
     struct NameCarryover: Codable {
         var savedAt: Date
-        var entries: [Entry]
-        struct Entry: Codable {
-            var name: String
-            var memberRefKeys: [String]
-        }
+        var entries: [CarriedAssertion]
     }
 
     private var carryoverURL: URL {
@@ -872,6 +909,11 @@ public final class PeopleEngine {
         scan.stop()
         await scan.waitUntilIdle()
         await clearUndoHistory()   // 消したあとの世界には戻す先が無い
+        // ⚠️ **手動の再スキャンでも表明を控える**（ADR-232）。ここは版上げと同じ「全消去して
+        // 作り直す」なのに控えを取っておらず、名前・束ね・家族グループが丸ごと消えていた
+        // （版上げの経路だけが守られていた）。消すのは学習（負例・確認）の側で、
+        // ユーザーが付けた名前やグループはそれとは別のもの。
+        let snapshot = await snapshotAssertionsForRescan()
         if includingCorrections {
             await store.resetIncludingCorrections()
         } else {
@@ -880,7 +922,8 @@ public final class PeopleEngine {
         // clusterID は 0 から振り直される。人物を指す外部参照を無効化させる。
         await onPersonIdentitiesInvalidated?()
         await loadPeople()
-        Diagnostics.mark("faces: reset(corrections=\(includingCorrections)) — rescanning \(lastCandidates.count) candidates")
+        Diagnostics.mark("faces: reset(corrections=\(includingCorrections)) — rescanning "
+                         + "\(lastCandidates.count) candidates (carrying \(snapshot.count) assertions)")
         if !lastCandidates.isEmpty {
             startScan(candidateRefKeys: lastCandidates, allowSimulator: lastAllowSimulator)
         }

@@ -65,14 +65,14 @@ struct FaceAlignmentTests {
         await store.rename(clusterID: people[0].clusterID, name: "山田太郎")
 
         // 版上げ: スナップショット → 全消去 → 再スキャン（同じ写真・埋め込みは変わった想定）。
-        let snapshot = await store.namedClusterEntries()
+        let snapshot = await store.assertedClusterEntries()
         #expect(snapshot.count == 1)
         #expect(snapshot[0].memberRefKeys.count == 5)
         await store.reset()
         for i in 0..<5 {
             await store.recordScan(refKey: "L-a\(i)", faces: [signal([0, 1, 0])])   // 新パイプラインの埋め込み
         }
-        let remaining = await store.reapplyNames(snapshot)
+        let remaining = await store.reapplyAssertions(snapshot)
         #expect(remaining.isEmpty)
         let after = await store.peopleClusters(minFaces: 3)
         #expect(after.first?.name == "山田太郎")
@@ -86,15 +86,15 @@ struct FaceAlignmentTests {
         }
         let people = await store.peopleClusters(minFaces: 3)
         await store.rename(clusterID: people[0].clusterID, name: "山田太郎")
-        let snapshot = await store.namedClusterEntries()
+        let snapshot = await store.assertedClusterEntries()
         await store.reset()
         // まだ 1 枚しか再スキャンされていない（必要重なり = max(2, 5/5) = 2 に届かない）。
         await store.recordScan(refKey: "L-a0", faces: [signal([0, 1, 0])])
-        let remaining = await store.reapplyNames(snapshot)
+        let remaining = await store.reapplyAssertions(snapshot)
         #expect(remaining.count == 1)
         // 追加で 1 枚進めば適用される。
         await store.recordScan(refKey: "L-a1", faces: [signal([0, 1, 0])])
-        let remaining2 = await store.reapplyNames(remaining)
+        let remaining2 = await store.reapplyAssertions(remaining)
         #expect(remaining2.isEmpty)
     }
 

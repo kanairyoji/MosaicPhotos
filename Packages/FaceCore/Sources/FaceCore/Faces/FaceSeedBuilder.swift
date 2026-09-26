@@ -11,6 +11,7 @@ import PerceptionCore
 /// - ADR-132「名前を付けたアルバムの中身が毎晩入れ替わる」
 /// - ADR-140「診断画面で数枚を『この人ではない』にしたら、その人物のアルバムが激減した」
 /// - ADR-141「確立した人物が、再クラスタの瞬間だけ生まれたての 1 顔クラスタとして扱われる」
+/// - ADR-231「家族グループに入れた人が、夜のあいだにグループから消える」
 ///
 /// ## 埋め込みはクロージャで 1 枚ずつ取り出す
 /// ⚠️ 全顔の `[Float]` を値型にして渡すと、86k 件 × 512 次元 × 4 バイト ≒ **176MB** を
@@ -52,18 +53,31 @@ public enum FaceSeedBuilder {
         /// 束ね（`personGroupID`）があるか。**束ねもユーザーの表明**なので種にする（ADR-134）
         /// ——種にしないと再クラスタで行が削除され、束ねが黙って消える。
         public let hasPersonGroup: Bool
+        /// ピープルグループ（家族・チーム）のメンバーとして指名されているか。
+        ///
+        /// ⚠️ **グループに入れる行為も、名前を付けるのと同じ表明**（ADR-134 の範囲を広げた
+        /// ＝ADR-231）。グループは clusterID で人物を指しているので、種にしないと再クラスタで
+        /// その行が消え、**家族グループからその人が黙って消える**（`PeopleGroupInfo.resolve` が
+        /// 現存しないメンバーを落とす）。無名でもグループに入っていれば種にする。
+        public let inPeopleGroup: Bool
         public let members: [FaceRef]
 
         public init(clusterID: Int, name: String? = nil, coverFaceID: String? = nil,
-                    hasPersonGroup: Bool = false, members: [FaceRef] = []) {
+                    hasPersonGroup: Bool = false, inPeopleGroup: Bool = false,
+                    members: [FaceRef] = []) {
             self.clusterID = clusterID
             self.name = name
             self.coverFaceID = coverFaceID
             self.hasPersonGroup = hasPersonGroup
+            self.inPeopleGroup = inPeopleGroup
             self.members = members
         }
 
         var isNamed: Bool { name?.isEmpty == false }
+
+        /// ユーザーが何かを表明した人物か（＝行を消してはいけない人物）。
+        /// アンカー（確認顔・代表写真）は呼び出し側が別に見る。
+        var isAsserted: Bool { isNamed || hasPersonGroup || inPeopleGroup }
     }
 
     public struct Result: Sendable {
@@ -102,8 +116,9 @@ public enum FaceSeedBuilder {
             if let cover, !anchors.contains(where: { $0.faceID == cover.faceID }) {
                 anchors.append(cover)
             }
-            // 種になるのは「ユーザーが何かを表明した人物」だけ（名前・確認顔・代表写真・束ね）。
-            guard cluster.isNamed || !anchors.isEmpty || cluster.hasPersonGroup else { continue }
+            // 種になるのは「ユーザーが何かを表明した人物」だけ
+            //（名前・確認顔・代表写真・束ね・**ピープルグループのメンバー**）。
+            guard cluster.isAsserted || !anchors.isEmpty else { continue }
 
             // アンカーは**代表顔を先頭**に、確認の新しい順から上限まで。
             // ⚠️ 見本（prototypes）は増やすほど悪くなる（ADR-151・FG-NET 実測で純度 0.877→0.509）

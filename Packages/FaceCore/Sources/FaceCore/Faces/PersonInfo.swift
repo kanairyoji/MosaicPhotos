@@ -13,6 +13,15 @@ public struct PersonInfo: Identifiable, Sendable, Equatable {
     public let memberRefKeys: [String]
     /// 2 階層で複数クラスタを束ねた人物か（ADR-61）。true なら「束ねを解除」を提示できる。
     public var isGrouped: Bool = false
+    /// この人物を構成する**全クラスタ ID**（束ねていなければ `[clusterID]` 1 個）。
+    /// 既定は空で、そのときは `clusterID` だけで引く（一覧を作る `peopleClusters` が必ず埋める）。
+    ///
+    /// ⚠️ ピープルグループ（家族）は人物を **`clusterID`（＝代表クラスタ）** で指しているが、
+    /// 代表は「名前つき → 写真の多い順 → ID 昇順」で**そのとき決まる**ので、束ねの中で入れ替わる
+    /// （別のクラスタに名前が付く・枚数が変わる・再スキャンで並びが変わる）。入れ替わると、
+    /// グループが持っている ID は代表ではなくなり、**家族グループからその人が黙って消えた**。
+    /// 解決は代表だけでなく構成クラスタのどれでも引けるようにする（ADR-232）。
+    public var clusterIDs: [Int] = []
     /// 一覧での通し番号（1 始まり）。**表示専用**で、同一性は `clusterID` が持つ。
     ///
     /// ⚠️ 以前は `clusterID + 1` をそのまま出していたが、クラスタ ID は再クラスタのたびに

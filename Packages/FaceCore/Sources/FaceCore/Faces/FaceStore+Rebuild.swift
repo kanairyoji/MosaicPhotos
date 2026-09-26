@@ -134,10 +134,15 @@ extension FaceStore {
         func ref(_ f: DetectedFace) -> FaceSeedBuilder.FaceRef {
             .init(faceID: f.faceID, quality: Float(f.quality), confirmedAt: f.confirmedAt)
         }
+        // ⚠️ **グループのメンバーも種にする**（ADR-231）。グループは clusterID で人物を指すので、
+        // 種にしないと再クラスタで行が消え、家族グループからその人が黙って消える。
+        // 全グループを 1 回だけ読んで集合にする（人物ごとに引き直さない・ADR-119）。
+        let groupMembers = peopleGroupMemberClusterIDs()
         let clusterRefs = existing.map { c in
             FaceSeedBuilder.ClusterRef(
                 clusterID: c.clusterID, name: c.name, coverFaceID: c.coverFaceID,
                 hasPersonGroup: c.personGroupID != nil,
+                inPeopleGroup: groupMembers.contains(c.clusterID),
                 members: (facesByCluster[c.clusterID] ?? []).map(ref))
         }
         let storedCentroids = Dictionary(uniqueKeysWithValues:
@@ -293,36 +298,57 @@ extension FaceStore {
     /// 全消去（再スキャン用）。
     /// ⚠️ 修正ジャーナル（FaceCorrection）は**消さない**（ADR-45）。負例は埋め込みキーなので、
     /// 再スキャン中の割り当てで自動的に再適用され、既知の誤りが再発しない。
-    // MARK: - スキャン版数移行（名前の持ち越し・ADR-51）
+    // MARK: - スキャン版数移行（表明の持ち越し＝名前・束ね・グループ所属・ADR-51/232）
 
-    /// 命名済みクラスタのスナップショット（版上げ再スキャンの前に取得）。
+    /// ユーザーが表明した人物のスナップショット（版上げ再スキャンの前に取得）。
     /// メンバー refKey は照合に十分な数（既定 500）に丸める。
-    func namedClusterEntries(maxMembers: Int = 500) -> [(name: String, memberRefKeys: [String])] {
-        var out: [(name: String, memberRefKeys: [String])] = []
+    ///
+    /// ⚠️ **名前だけではない**（ADR-232）。束ね（`personGroupID`）とピープルグループの所属も
+    /// 同じ重みの表明なので一緒に持ち越す。無名でもそれらがあれば対象にする
+    /// ——以前は `name` が空の行を弾いていたため、無名のまま家族グループに入れた人物が
+    /// 再スキャンで**グループから黙って消えて**いた。
+    func assertedClusterEntries(maxMembers: Int = 500) -> [CarriedAssertion] {
+        var out: [CarriedAssertion] = []
         // ⚠️ クラスタごとに引かない（ADR-119）。必要なのは refKey だけなので射影 1 回で取る。
         let refKeysByCluster = memberRefKeysByCluster()
+        // グループの所属も 1 回だけ読む（clusterID → 属する group の id）。
+        var groupsByCluster: [Int: [UUID]] = [:]
+        for record in (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
+            for clusterID in record.memberClusterIDs {
+                groupsByCluster[clusterID, default: []].append(record.id)
+            }
+        }
         for c in allClusters() {
-            guard let name = c.name, !name.isEmpty else { continue }
-            let keys = Array(refKeysByCluster[c.clusterID] ?? [])
-            out.append((name, Array(keys.prefix(maxMembers))))
+            let entry = CarriedAssertion(
+                name: c.name, personGroupID: c.personGroupID,
+                peopleGroupIDs: groupsByCluster[c.clusterID] ?? [],
+                memberRefKeys: Array((refKeysByCluster[c.clusterID] ?? []).prefix(maxMembers)))
+            guard !entry.isEmpty else { continue }
+            out.append(entry)
         }
         return out
     }
 
-    /// 再スキャン後の名前の再適用。旧クラスタのメンバー写真（refKey）との重なりが最大の
-    /// 新クラスタへ名前を戻す（写真は再スキャンしても変わらない＝安定キー）。
+    /// 再スキャン後の**表明の再適用**（名前・束ね・グループ所属・ADR-51/169/232）。
+    /// 旧クラスタのメンバー写真（refKey）との重なりが最大の新クラスタへ戻す
+    /// （写真は再スキャンしても変わらない＝安定キー）。
     /// 一致条件: 重なり ≥ max(2, 旧メンバーの 20%)。スキャンが数晩に分かれても、
     /// 条件を満たした分から段階的に戻る。戻り値は**未適用の残り**（次回セッションで再試行）。
-    func reapplyNames(_ entries: [(name: String, memberRefKeys: [String])])
-        -> [(name: String, memberRefKeys: [String])] {
+    func reapplyAssertions(_ entries: [CarriedAssertion]) -> [CarriedAssertion] {
         guard !entries.isEmpty else { return [] }
 
         // ⚠️ **同名クラスタがあることを理由にエントリを捨てない**（ADR-169）。
         // 「太郎」が 2 人いるのは普通で、捨てると 2 人目の名前と旧メンバーの対応が
         // **永久に失われる**（残りにも積まれないので再試行もされない）。
-        // 既に名前が付いているクラスタは「割り当て先の候補から外す」だけにする
+        // 既に表明を持つクラスタは「割り当て先の候補から外す」だけにする
         // ——エントリ自体は必ず生き残らせ、対応先が無ければ残りとして返す。
-        let named = Set(allClusters().filter { $0.name?.isEmpty == false }.map(\.clusterID))
+        // ⚠️ 見るのは名前だけではない（ADR-232）。前の晩に束ね／グループ所属だけを
+        // 戻した行を候補に残すと、別のエントリがその行を**上書き**してしまう。
+        let groupMembers = peopleGroupMemberClusterIDs()
+        let claimed = Set(allClusters().filter {
+            $0.name?.isEmpty == false || $0.personGroupID != nil
+                || groupMembers.contains($0.clusterID)
+        }.map(\.clusterID))
 
         // 各エントリの候補（新クラスタ → 重なり枚数）を作る。足切りは従来どおり
         // 「重なり ≥ max(2, 旧メンバーの 20%)」。
@@ -334,20 +360,31 @@ extension FaceStore {
             d.propertiesToFetch = [\.clusterID, \.refKey]
             let rows = (countedFetchOptional(d)) ?? []
             var overlap: [Int: Set<String>] = [:]
-            for f in rows where !named.contains(f.clusterID) {
+            for f in rows where !claimed.contains(f.clusterID) {
                 overlap[f.clusterID, default: []].insert(f.refKey)
             }
             let need = max(2, entry.memberRefKeys.count / 5)
             let viable = overlap.compactMapValues { $0.count >= need ? $0.count : nil }
-            candidates.append(.init(name: entry.name, candidates: viable))
+            candidates.append(.init(name: entry.name ?? "", candidates: viable))
         }
 
         // ⚠️ **一対一で解く**（貪欲だと、局所的な最良ペアが別エントリ唯一の対応先を奪う）。
         let (assignments, unmatched) = NameCarryoverMatching.match(candidates)
+        // グループ id → この回に決まった新クラスタ ID（あとでメンバーを書き直す）。
+        var restoredGroupMembers: [UUID: [Int]] = [:]
         for (index, clusterID) in assignments {
-            guard let c = cluster(clusterID), c.name?.isEmpty ?? true else { continue }
-            c.name = entries[index].name
+            guard let c = cluster(clusterID) else { continue }
+            let entry = entries[index]
+            if let name = entry.name, !name.isEmpty, c.name?.isEmpty ?? true { c.name = name }
+            // 束ねの札は持ち越し専用の並びへ写す（新しい束ねとぶつからせない）。
+            if let old = entry.personGroupID, c.personGroupID == nil {
+                c.personGroupID = CarriedAssertion.carriedPersonGroupID(old)
+            }
+            for groupID in entry.peopleGroupIDs {
+                restoredGroupMembers[groupID, default: []].append(clusterID)
+            }
         }
+        remapPeopleGroupMembers(restored: restoredGroupMembers)
         try? modelContext.save()
         if !unmatched.isEmpty {
             Self.log.info("faces: carryover — \(assignments.count) 件を再適用 / "
@@ -357,10 +394,36 @@ extension FaceStore {
         return unmatched.map { entries[$0] }
     }
 
+    /// ピープルグループのメンバーを新しい clusterID に書き直す（ADR-232）。
+    ///
+    /// ⚠️ **足すだけにする**（既に生きている ID は残す）。再スキャンは数晩に分かれるので、
+    /// この回に戻せたのはメンバーの一部でしかない。毎回上書きすると前の晩に戻した人が消える。
+    /// 生きていない ID（旧世代の残骸）は落とす——落としても、対応するエントリは
+    /// 「残り」として持ち越しに積まれたままなので、後の晩に新しい ID で戻ってくる。
+    private func remapPeopleGroupMembers(restored: [UUID: [Int]]) {
+        guard !restored.isEmpty else { return }
+        let live = Set(allClusters().map(\.clusterID))
+        for record in (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
+            guard let added = restored[record.id] else { continue }
+            var seen = Set<Int>()
+            let members = (record.memberClusterIDs.filter { live.contains($0) } + added)
+                .filter { seen.insert($0).inserted }
+            if members != record.memberClusterIDs { record.memberClusterIDs = members }
+        }
+    }
+
     func reset() {
         try? modelContext.delete(model: DetectedFace.self)
         try? modelContext.delete(model: PersonCluster.self)
         try? modelContext.delete(model: ScannedPhoto.self)
+        // ⚠️ **グループのメンバーを空にする**（ADR-232）。メンバーは clusterID なので、
+        // ここで意味を失う（ID は 0 から振り直される）。残すと、再スキャンで同じ番号を
+        // 割り当てられた**別人**が家族グループに居座る——「消える」より悪い。
+        // 空にして、持ち越し（`reapplyAssertions`）に写真の重なりで入れ直させる。
+        // グループの行そのものは消さない（id・名前はユーザーが付けたもの）。
+        for record in (try? modelContext.fetch(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
+            record.memberClusterIDs = []
+        }
         try? modelContext.save()
         clusteringCache = nil
         negativesCache = nil   // 次スキャンで DB から読み直す（ジャーナルは残存）

@@ -103,11 +103,14 @@ extension FaceStore {
                 ?? Self.bestCoverFace(primaryFaces)
                 ?? Self.bestCoverFace(allFaces)
             let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
-            result.append(PersonInfo(
+            var info = PersonInfo(
                 clusterID: primary.clusterID, name: primary.name, count: members.count,
                 coverRefKey: cover?.refKey, coverBoundingBox: box,
                 memberRefKeys: includeMembers ? members : [],
-                isGrouped: clustersInGroup.count > 1))
+                isGrouped: clustersInGroup.count > 1)
+            // 束ねの構成クラスタ（代表が入れ替わってもグループから引けるように・ADR-232）。
+            info.clusterIDs = clustersInGroup.map(\.clusterID).sorted()
+            result.append(info)
         }
         // 通し番号は**並べ替え後**に振る（ADR-68）。
         // 並び（実フィードバック）: **名前つきが先**（ユーザーが関心を示した人）→ それぞれの中は

@@ -192,6 +192,25 @@ struct FaceSeedBuilderTests {
         #expect(r.seeds.map(\.id) == [5])
     }
 
+    /// ADR-231: ピープルグループ（家族）に入れる行為も、名前を付けるのと同じ表明。
+    /// 種にしないと再クラスタで行が消え、**家族グループからその人が黙って消える**。
+    @Test("ピープルグループのメンバーなら、無名でも種になる（ADR-231）")
+    func peopleGroupMemberIsASeed() {
+        let r = build([.init(clusterID: 7, inPeopleGroup: true, members: [face("a")])],
+                      embeddings: ["a": vector(1)])
+        #expect(r.seeds.map(\.id) == [7])
+        #expect(r.pinned == ["a": 7], "メンバーもその人物に固定される")
+    }
+
+    /// 念のための対称確認: グループにも束ねにも居ない無名は、やはり種にならない
+    /// （「とりあえず全部種にする」に倒れていないこと）。
+    @Test("グループ所属が無ければ、無名は種にならない")
+    func nonMemberUnnamedIsStillNotASeed() {
+        let r = build([.init(clusterID: 7, inPeopleGroup: false, members: [face("a")])],
+                      embeddings: ["a": vector(1)])
+        #expect(r.seeds.isEmpty)
+    }
+
     /// ADR-130: 代表写真の顔が別クラスタへ流れていても、この人物のアンカーとして扱う。
     @Test("代表写真の顔は、別クラスタへ流れていてもアンカーになる")
     func coverFaceWorksAsAnAnchorEvenWhenItDrifted() {

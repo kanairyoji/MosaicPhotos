@@ -8,8 +8,9 @@ import PerceptionCore
 // 1 つの台帳に混ぜることはできない（新旧の埋め込みは同じ空間に無い）。そこで:
 //   - 同梱モデルの ID が現行世代と違えば、新モデル用の**別コンテナ**（`Faces-<id>`）を作り、
 //     スキャンはそちらへ（`FaceTagger` の store を差し替える）。表示・編集は旧世代のまま。
-//   - 影の世代の網羅（候補に対するスキャン済み）が閾値（90%）に達したら、名前を写真の重なりで移し
-//     （既存の持ち越し・ADR-51/169）、ピープルグループを名前で作り直し、現行世代を差し替える。
+//   - 影の世代の網羅（候補に対するスキャン済み）が閾値（90%）に達したら、表明（名前・束ね・
+//     ピープルグループの所属）を写真の重なりで移し（既存の持ち越し・ADR-51/169/232）、
+//     現行世代を差し替える。
 //   - 旧世代のコンテナは**消さない**（1 リリース残す）。切り替えは診断ログに残す。
 // 持ち越せないもの: 埋め込みで記録した修正（`FaceCorrection` の負例・確認）。空間が違うので意味を
 // 持たない。旧コンテナに残るが新世代には効かない（同じ誤りが再び出ることがある）。
@@ -40,32 +41,25 @@ extension PeopleEngine {
         return true
     }
 
-    /// 影の世代を現行世代にする（名前・グループを移す・旧世代は残す）。
+    /// 影の世代を現行世代にする（表明を移す・旧世代は残す）。
     func promoteShadow() async {
         guard let shadow = shadowStore, let modelID = faceProvider?.modelID else { return }
         let old = store
-        // 1. 名前: 旧世代の命名済みクラスタ（メンバー写真つき）を新世代へ写真の重なりで移す。
+        // 1. グループの器を先に作る（**id を引き継いだ空の行**）。メンバーは次の手で入る。
+        //    ⚠️ 器が無いと、持ち越しがメンバーを書き込む先を失う（＝家族グループが消える）。
+        let oldGroups = await old.allPeopleGroupRecords()
+        for g in oldGroups {
+            await shadow.importPeopleGroupShell(id: g.id, name: g.name, createdAt: g.createdAt)
+        }
+        // 2. 表明（名前・束ね・グループ所属）を新世代へ**写真の重なりで**移す（ADR-232）。
         //    足りない分（まだスキャンされていない写真の人物）は持ち越しファイルに残し、
         //    以後のスキャン完了ごとに段階的に戻す（既存の仕組み）。
-        let named = await old.namedClusterEntries()
-        let remaining = await shadow.reapplyNames(named)
+        //    ⚠️ 以前は名前だけを移し、グループは**名前で結び直して**いた——無名のメンバーは
+        //    落ち、同名の別人は混ざった。写真の重なりは名前を要らなくする。
+        let asserted = await old.assertedClusterEntries()
+        let remaining = await shadow.reapplyAssertions(asserted)
         saveCarryover(remaining.isEmpty ? nil
-                      : NameCarryover(savedAt: Date(), entries: remaining.map { .init(name: $0.name, memberRefKeys: $0.memberRefKeys) }))
-        // 2. グループ: メンバーは clusterID なので世代をまたげない。名前で新世代の人物へ結び直す。
-        //    名前の無いメンバーは落ちる（グループは名前付きの人物で作るのが普通）。
-        let oldGroups = await old.allPeopleGroupRecords()
-        if !oldGroups.isEmpty {
-            let oldNames = await old.allClusters().reduce(into: [Int: String]()) { acc, c in
-                if let n = c.name, !n.isEmpty { acc[c.clusterID] = n }
-            }
-            let newByName = await shadow.allClusters().reduce(into: [String: Int]()) { acc, c in
-                if let n = c.name, !n.isEmpty, acc[n] == nil { acc[n] = c.clusterID }
-            }
-            for g in oldGroups {
-                let members = g.memberClusterIDs.compactMap { oldNames[$0] }.compactMap { newByName[$0] }
-                if !members.isEmpty { _ = await shadow.createPeopleGroup(name: g.name, memberClusterIDs: members) }
-            }
-        }
+                      : NameCarryover(savedAt: Date(), entries: remaining))
         // 3. 切り替え（旧コンテナは消さない）。
         // ⚠️ **控えを捨ててから差し替える**（レビュー指摘）。`undoStack` は `FaceStore` が
         // メモリに持つので、差し替えると空になるのに **`undoLabel` は published のまま残る**
@@ -77,7 +71,9 @@ extension PeopleEngine {
         tagger = FaceTagger(store: shadow, provider: faceProvider)
         UserDefaults.standard.set(modelID, forKey: Self.activeFaceModelKey)
         UserDefaults.standard.set(effectiveScanVersion, forKey: Self.faceScanVersionKey)
-        Diagnostics.mark("faces: promoted shadow generation → \(modelID) (names \(named.count - remaining.count)/\(named.count) carried, groups \(oldGroups.count))")
+        Diagnostics.mark("faces: promoted shadow generation → \(modelID) "
+                         + "(assertions \(asserted.count - remaining.count)/\(asserted.count) carried, "
+                         + "groups \(oldGroups.count))")
         // clusterID が変わった＝外部が持つ人物参照（共有の sourceKey 等）は当てにならない。
         await onPersonIdentitiesInvalidated?()
         await loadPeople()

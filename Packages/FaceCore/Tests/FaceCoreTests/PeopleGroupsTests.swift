@@ -33,6 +33,44 @@ struct PeopleGroupsTests {
         #expect(info.members.map(\.clusterID) == [1])
         #expect(info.memberClusterIDs == [1, 99], "記録上のメンバーが失われた")
         #expect(info.memberRefKeys == ["L-a"])
+        #expect(info.unresolvedClusterIDs == [99], "落としたメンバーを数えていない（無音のまま）")
+    }
+
+    /// ⚠️ 落ちたメンバーを**数えられる**こと（無音をやめた・ADR-231）。
+    /// 家族グループから人が消えるのは利用者には気づきにくく、こちら側も無音だった。
+    /// ⚠️ **代表クラスタは束ねの中で入れ替わる**（ADR-232）。グループは代表 ID を持つので、
+    /// 入れ替わった瞬間にその人が家族グループから消えていた（`resolve` が引けない）。
+    @Test("束ねの代表が入れ替わっても、構成クラスタの ID で引ける")
+    func resolveFindsGroupedPersonByAnyOfItsClusters() {
+        var grouped = person(10, refKeys: ["L-a", "L-b"])
+        grouped.isGrouped = true
+        grouped.clusterIDs = [10, 42]      // 42 が代表だった頃にグループへ入れられた
+        let info = PeopleGroupInfo.resolve(
+            id: UUID(), name: "Family", memberClusterIDs: [42], createdAt: Date(),
+            people: [grouped])
+        #expect(info.members.map(\.clusterID) == [10], "構成クラスタの ID で引けていない")
+        #expect(info.unresolvedClusterIDs.isEmpty)
+    }
+
+    @Test("構成クラスタが 2 つ記録に載っていても、同じ人物を 2 回入れない")
+    func resolveDoesNotDuplicateAGroupedPerson() {
+        var grouped = person(10, refKeys: ["L-a"])
+        grouped.isGrouped = true
+        grouped.clusterIDs = [10, 42]
+        let info = PeopleGroupInfo.resolve(
+            id: UUID(), name: "Family", memberClusterIDs: [10, 42], createdAt: Date(),
+            people: [grouped])
+        #expect(info.members.count == 1, "同じ人物が 2 回入っている")
+        #expect(info.memberRefKeys == ["L-a"])
+        #expect(info.unresolvedClusterIDs.isEmpty, "重複は「未解決」ではない")
+    }
+
+    @Test("全員解決できれば未解決は空（偽の警告を出さない）")
+    func resolveReportsNoLossWhenComplete() {
+        let info = PeopleGroupInfo.resolve(
+            id: UUID(), name: "Family", memberClusterIDs: [1, 2], createdAt: Date(),
+            people: [person(1, refKeys: ["L-a"]), person(2, refKeys: ["L-b"])])
+        #expect(info.unresolvedClusterIDs.isEmpty)
     }
 
     // MARK: - ストア連携

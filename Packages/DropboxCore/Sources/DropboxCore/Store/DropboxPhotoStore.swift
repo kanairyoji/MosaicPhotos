@@ -22,7 +22,10 @@ public final class DropboxPhotoStore {
     /// 実行中の `loadItems()`。起動直後に複数の呼び手が同時に来ても fetch は 1 回に集約する。
     @ObservationIgnored private var loadTask: Task<Int, Never>?
     /// 実行中のキャッシュ反映（同じアカウントの呼び出しはここへ合流する）。
-    @ObservationIgnored private var reflectTask: (accountId: String, task: Task<Int, Never>)?
+    /// 結果に**反映できた版**を含める——合流してよいかは
+    /// 「終わったか」ではなく「**こちらが見た版まで進んでいるか**」で決まる（ADR-230）。
+    @ObservationIgnored private var reflectTask:
+        (accountId: String, task: Task<(count: Int, revision: Int?), Never>)?
     /// 読み込みの世代。リセット（切断/キャッシュ消去/アカウント切替）のたびに進める。
     /// ⚠️ `loadTask?.cancel()` だけでは進行中の読み込みを止められない——`cache` は actor 呼び出しで
     /// キャンセルを見ず、変換の `Task.detached` は親のキャンセルを継承しないため、
@@ -290,19 +293,52 @@ public final class DropboxPhotoStore {
     /// 合流点は呼び出し口ではなく**この関数**に置く（呼び手が増えても漏れない）。
     @discardableResult
     private func reflectCachedItems(accountId: String) async -> Int {
-        if let inFlight = reflectTask, inFlight.accountId == accountId {
-            return await inFlight.task.value
+        // ⚠️ **合流は「同じ版を読んでいるとき」だけ正しい**（ADR-230・データ落ち）。
+        // 走っている反映は「始めた時点のスナップショット」しか持たない。こちらが呼ばれたのは
+        // その後に版が進んだからなのに、無条件に合流すると**進んだぶんが一覧に出ないまま
+        // 確定**する（`lastReflectedRevision` も古い版で更新されるので、次の周期でも
+        // 「変わっていない」と判断されて直らない）。初回同期の最後の数千枚・バックアップ直後の
+        // 数枚がこれで消えていた。合流してよいのは**こちらが見た版以上を反映した**ときだけ。
+        let wanted = await cache.currentItemsRevision()
+        // 古い合流先を掴んだら、もう一度上から見る（別の呼び手が既に追いかけを登録していれば
+        // それに合流する＝**2 本は走らせない**）。版は増える一方なので、後から始まった反映は
+        // 必ず `wanted` 以上を読む＝この輪は数回で必ず抜ける。上限は念のための保険。
+        var joins = 0
+        while joins < Self.maxReflectJoins,
+              let inFlight = reflectTask, inFlight.accountId == accountId {
+            joins += 1
+            let result = await inFlight.task.value
+            if Self.canJoinReflect(reflected: result.revision, wanted: wanted) { return result.count }
         }
         let task = Task { await performReflectCachedItems(accountId: accountId) }
         reflectTask = (accountId: accountId, task: task)
-        let count = await task.value
+        let result = await task.value
         // 待っている間に別の反映が登録されていたら、それは消さない（合流先を失わせない）。
         if reflectTask?.task == task { reflectTask = nil }
-        return count
+        return result.count
     }
 
+    /// 合流を試す回数の上限（超えたら自分で反映する）。理屈では 2 回で足りるが、
+    /// アクターの割り込み順に頼った上限は事故になるので明示的に切る。
+    static let maxReflectJoins = 3
+
+    /// 走っている反映へ**合流してよいか**（ADR-230・純ロジック・テスト対象）。
+    ///
+    /// 判断は「終わったか」ではなく「**こちらが見た版まで進んでいるか**」。実際の競合は
+    /// アクターの割り込み順で決まる＝テストで再現できないので、規則だけを取り出して固定する。
+    /// - Parameters:
+    ///   - reflected: 合流先が**反映できた**版。`nil` はリセット/アカウント切替で中断した
+    ///     （＝何も反映していない）ので、合流してはいけない。
+    ///   - wanted: こちらが呼ばれた時点でキャッシュが持っていた版。
+    static func canJoinReflect(reflected: Int?, wanted: Int) -> Bool {
+        guard let reflected else { return false }
+        return reflected >= wanted
+    }
+
+    /// - Returns: 反映後の件数と、**反映できた版**（`nil` = リセット/アカウント切替で
+    ///   中断＝何も反映していない。合流してきた呼び手にはやり直させる）。
     @discardableResult
-    private func performReflectCachedItems(accountId: String) async -> Int {
+    private func performReflectCachedItems(accountId: String) async -> (count: Int, revision: Int?) {
         // ⚠️ **変わっていなければ fetch すらしない**（ADR-95）。署名比較は「取ってから捨てる」ので、
         //    無変更でも 68,200 行の fetch＋値型生成＋刻印コピーの代金を毎回払っていた。
         //    実機 diagnostics-38 では起動直後の 3 秒間にこれが 2 回走り、`cache.fetchItems` が
@@ -311,17 +347,17 @@ public final class DropboxPhotoStore {
         //    リセット・アカウント切替が挟まったら**何も代入せずに**捨てる。
         let stamp = LoadStamp(generation: loadGeneration, accountId: accountId)
         let revision = await cache.currentItemsRevision()
-        guard isCurrentLoad(stamp) else { return items.count }
+        guard isCurrentLoad(stamp) else { return (items.count, nil) }
         if revision == lastReflectedRevision, !items.isEmpty {
             updateLoadStatus()
-            return items.count
+            return (items.count, revision)
         }
         // ⚠️ 73k 件の実体化＋刻印はメモリを大きく積む。**札を立てて**背景の重いロードと
         // 重ならないようにする（`HeavyLoad`・diagnostics-66）。
         HeavyLoad.begin("cache.items")
         defer { HeavyLoad.end("cache.items") }
         let raw = await cache.cachedItems(accountId: accountId)   // actor＝off-main フェッチ
-        guard isCurrentLoad(stamp) else { return items.count }
+        guard isCurrentLoad(stamp) else { return (items.count, nil) }
         let favPaths = cloudFavoritePaths
         let excluded = excludedPathPrefixes
         // ⚠️ 署名計算**と刻印（68,200 件の map）を同じ detached でまとめて**行う（ADR-88）。
@@ -337,7 +373,7 @@ public final class DropboxPhotoStore {
             return (Self.itemsSignature(visible, favoritePaths: favPaths),
                     favPaths.isEmpty ? visible : visible.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
         }.value
-        guard isCurrentLoad(stamp) else { return items.count }
+        guard isCurrentLoad(stamp) else { return (items.count, nil) }
         lastReflectedRevision = revision
         if sig != lastItemsSignature {
             lastItemsSignature = sig
@@ -345,7 +381,7 @@ public final class DropboxPhotoStore {
         }
         updateLoadStatus()
         updateDebugInfo()
-        return raw.count
+        return (raw.count, revision)
     }
 
     /// 捕まえた札が今も有効か（`shouldApplyLoad` へ現在値を渡すだけの薄い橋渡し）。
@@ -411,6 +447,14 @@ public final class DropboxPhotoStore {
         let rootsMarker = roots.joined(separator: "\u{1F}")
         if let stored = UserDefaults.standard.string(forKey: rootsMarkerKey), stored != rootsMarker {
             DropboxLogger.info("startSync() — sync roots changed; resetting cache for rescan")
+            // ⚠️ **世代を進めるのはキャッシュを消す前**（`clearCache` / アカウント切替と同じ作法）。
+            // 進めないと、消去前のスナップショットを持った読み込みが着地して**古いルートの
+            // 一覧が items へ戻り**、しかも `lastReflectedRevision` まで新しい版で更新されるので、
+            // 以後は「変わっていない」と判断されてアプリを再起動するまで直らない。
+            loadGeneration &+= 1
+            loadTask?.cancel()
+            loadTask = nil
+            lastReflectedRevision = nil
             Task {
                 await cache.clearAll(accountId: accountId)
                 items = []; lastItemsSignature = nil

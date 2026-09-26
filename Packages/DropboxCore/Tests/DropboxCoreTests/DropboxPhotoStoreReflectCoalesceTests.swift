@@ -97,6 +97,29 @@ struct DropboxPhotoStoreReflectCoalesceTests {
         #expect(store.items.count == 11, "まとめた結果が最新を反映していない")
     }
 
+    /// ⚠️ **合流は「同じ版を読んでいるとき」だけ正しい**（ADR-230・データ落ち）。
+    ///
+    /// 走っている反映は「始めた時点のスナップショット」しか持たない。こちらが呼ばれたのは
+    /// その後に版が進んだからなのに、無条件に合流すると**進んだぶんが一覧に出ないまま確定**する。
+    /// しかも `lastReflectedRevision` が古い版で更新されるので、次の周期でも「変わっていない」と
+    /// 判断されて**アプリを再起動するまで直らない**（初回同期の最後の数千枚・
+    /// バックアップ直後の数枚がこれで消えていた）。
+    ///
+    /// 実際の競合はアクターの割り込み順で決まる＝壁時計では再現できないので、規則を固定する。
+    @Test("合流してよいのは、合流先がこちらの版以上を反映したときだけ")
+    func joinsOnlyWhenTheInFlightReflectIsCurrent() {
+        typealias Store = DropboxPhotoStore
+        #expect(Store.canJoinReflect(reflected: 7, wanted: 7), "同じ版なら合流してよい")
+        #expect(Store.canJoinReflect(reflected: 9, wanted: 7), "先に進んでいるなら当然よい")
+        #expect(!Store.canJoinReflect(reflected: 6, wanted: 7),
+                "古い版しか読んでいない反映へ合流している（進んだぶんが落ちる）")
+        // 中断（リセット・アカウント切替）は**何も反映していない**ので、合流は必ず誤り。
+        #expect(!Store.canJoinReflect(reflected: nil, wanted: 0))
+        #expect(!Store.canJoinReflect(reflected: nil, wanted: 7))
+        // 合流を諦めて自分で反映するまでの回数に、上限があること（無限に待たない）。
+        #expect(Store.maxReflectJoins >= 1 && Store.maxReflectJoins <= 5)
+    }
+
     /// 間引きの間隔は**作り直しの実測時間から決まる**（純ロジック・実機ログ diagnostics-92）。
     ///
     /// ⚠️ 前面 0.4 秒固定では、バックアップ中の delta（3 秒おき）に対して**毎回**作り直していた

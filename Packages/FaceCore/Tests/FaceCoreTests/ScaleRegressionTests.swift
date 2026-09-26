@@ -204,8 +204,8 @@ struct ScaleRegressionTests {
         let small = await makeStore(people: 40)
         let large = await makeStore(people: 160)
 
-        let smallCount = await fetchCount(small) { _ = await small.namedClusterEntries() }
-        let largeCount = await fetchCount(large) { _ = await large.namedClusterEntries() }
+        let smallCount = await fetchCount(small) { _ = await small.assertedClusterEntries() }
+        let largeCount = await fetchCount(large) { _ = await large.assertedClusterEntries() }
 
         #expect(smallCount > 0)
         #expect(largeCount <= smallCount * 2,
