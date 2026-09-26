@@ -11,7 +11,12 @@ import Testing
 /// はそこを素通り**し、起動直後に 2 回走る状態が残っていた（`cache.fetchItems` 1109ms + 1012ms）。
 /// 合流は呼び出し口ではなく反映関数そのものに置く——このテストは「別々の入口から同時に来ても
 /// 実体化は 1 回」を固定する。
-@Suite("DropboxPhotoStore の反映は合流する")
+/// ⚠️ **`.serialized`**（2026-09-26）。ここは実時間で「何回走ったか」を数えるテストなので、
+/// 並列に走らせると**互いの CPU を奪ってループの壁時計が伸び**、回数の上限を超える。
+/// 実際に踏んだ——バースト側の待ちを 0.6 秒から 2.5 秒へ延ばしたら、同時に走る背面側の
+/// ループが伸びて 1 秒間隔の区間が 3 つ入り、`materialized → 3` で CI が落ちた。
+/// 時間を測るテストは、他のテストと時間を共有してはいけない。
+@Suite("DropboxPhotoStore の反映は合流する", .serialized)
 @MainActor
 struct DropboxPhotoStoreReflectCoalesceTests {
 
@@ -124,12 +129,14 @@ struct DropboxPhotoStoreReflectCoalesceTests {
                                removed: [], newCursor: "c0")
         let store = makeStore(cache: cache, accountId: "acct-bg")
         store.quietWindow = 0.05
-        store.refreshIntervalOverrideForTesting = 1.0   // 背面の「30 秒に 1 回」をテスト用に 1 秒へ
+        let interval: TimeInterval = 1.0
+        store.refreshIntervalOverrideForTesting = interval   // 背面の「30 秒に 1 回」をテスト用に 1 秒へ
         BackgroundYield.setScenePhase(.background)
         defer { BackgroundYield.setScenePhase(.active) }
         let before = await cache.materializeCallsForTesting
 
         // 実機と同じ形: 0.15 秒おきに変化が届く（無風 0.05 秒は毎回満たす）。
+        let startedAt = Date()
         for i in 1...8 {
             await cache.applyDelta(accountId: "acct-bg",
                                    added: [DropboxFileItem(path: "/g/\(i).jpg", name: "\(i).jpg",
@@ -139,12 +146,23 @@ struct DropboxPhotoStoreReflectCoalesceTests {
             try await Task.sleep(nanoseconds: 150_000_000)
         }
         try await Task.sleep(nanoseconds: 300_000_000)
+        let elapsed = Date().timeIntervalSince(startedAt)
 
         let materialized = await cache.materializeCallsForTesting - before
-        #expect(materialized <= 2, """
-            1.2 秒の間に作り直しが \(materialized) 回走った（上限 1 秒に 1 回のはず）。
+        // ⚠️ **上限は経過時間から導く**（2026-09-26・CI が赤かった原因）。
+        // 「1.2 秒だから 2 回まで」と書いていたが、**ループの壁時計はマシンの速さで決まる**
+        // ——CI では 8 回の書き込みが延びて 1 秒の区間が 3 つ入り、正しい挙動（1 秒に 1 回）
+        // なのに落ちていた。見たいのは「変化のたびに走っていないこと」なので、
+        // 経過時間に入る区間の数＋端の 1 回を上限にする。
+        let allowed = Int(ceil(elapsed / interval)) + 1
+        #expect(materialized <= allowed, """
+            \(String(format: "%.2f", elapsed)) 秒の間に作り直しが \(materialized) 回走った
+            （上限 \(interval) 秒に 1 回＝許容 \(allowed) 回）。
             無風だけを見ていると、実機のように 3 秒おきの変化で毎回走る。
             """)
+        // ⚠️ 変化 8 回に対して「回数で抑えている」ことも押さえる（上限が経過時間で伸びても、
+        // 変化の数ぶん走るようになったら退行）。
+        #expect(materialized < 8, "変化 8 回に対して \(materialized) 回＝抑えられていない")
         #expect(materialized >= 1, "背面でも最低 1 回は反映すること（解析候補が古いままになる）")
     }
 }
