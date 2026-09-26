@@ -75,7 +75,7 @@ struct PeopleGroupSelectionTests {
         let hiddenStranger = person(99)
         let list = PeopleGroupSelection.selectable(
             shown: [shownPerson], all: [shownPerson, hiddenMember, hiddenStranger],
-            selected: [10, 7])
+            initialMembers: [10, 7])
         #expect(list.map(\.clusterID) == [10, 7], "隠れたメンバーが出ていない: \(list.map(\.clusterID))")
     }
 
@@ -84,7 +84,7 @@ struct PeopleGroupSelectionTests {
         let shownPerson = person(10)
         let hiddenStranger = person(99)
         let list = PeopleGroupSelection.selectable(
-            shown: [shownPerson], all: [shownPerson, hiddenStranger], selected: [10])
+            shown: [shownPerson], all: [shownPerson, hiddenStranger], initialMembers: [10])
         #expect(list.map(\.clusterID) == [10])
     }
 
@@ -92,8 +92,39 @@ struct PeopleGroupSelectionTests {
     func selectableDoesNotDuplicate() {
         let shownPerson = person(10, bundled: [10, 42])
         let list = PeopleGroupSelection.selectable(
-            shown: [shownPerson], all: [shownPerson], selected: [42])
+            shown: [shownPerson], all: [shownPerson], initialMembers: [42])
         #expect(list.count == 1)
+    }
+
+    /// ⚠️ 基準を**いまのチェック状態**にすると、隠れていたメンバーを外した瞬間に行が消えて
+    /// 戻せなくなる（名前も打ち直していたら「やめる」で全部捨てるしかない）。
+    @Test("隠れていたメンバーを外しても、一覧から消えない（戻せる）")
+    func selectableKeepsHiddenMemberAfterUnchecking() {
+        let shownPerson = person(10)
+        let hiddenMember = person(7)
+        // 開いた時点のメンバーは {10, 7}。7 を外した状態でも一覧には残る。
+        let list = PeopleGroupSelection.selectable(
+            shown: [shownPerson], all: [shownPerson, hiddenMember], initialMembers: [10, 7])
+        #expect(list.map(\.clusterID) == [10, 7])
+    }
+
+    // MARK: - メンバー数（保存の可否）
+
+    /// ⚠️ 解決できない記録上の ID を数えないと、ライブラリが変わった瞬間に
+    /// **保存ボタンが永久に灰色**になり、名前も変えられずメンバーも外せなくなる。
+    @Test("解決できない記録上の ID も 1 人として数える")
+    func memberCountCountsUnresolvedRecords() {
+        let alive = person(10)
+        // 999 はもう誰にも解決しない記録上のメンバー。
+        #expect(PeopleGroupSelection.memberCount(in: [10, 999], among: [alive]) == 2)
+        #expect(PeopleGroupSelection.personCount(in: [10, 999], among: [alive]) == 1,
+                "personCount は解決できたものだけ（役割の違いを固定する）")
+    }
+
+    @Test("束ねの 2 つの ID は、解決できる 1 人として数える（2 人に見せない）")
+    func memberCountDoesNotDoubleCountABundledPerson() {
+        let grouped = person(10, bundled: [10, 42])
+        #expect(PeopleGroupSelection.memberCount(in: [10, 42], among: [grouped]) == 1)
     }
 
     /// ⚠️ 母数は**表示フロアで隠した人も含む一覧**（`allPeople`）でなければならない。

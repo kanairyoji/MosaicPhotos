@@ -63,6 +63,35 @@ struct ScaleRegressionTests {
         return await store.fetchCountForTesting - before
     }
 
+    /// 家族グループのメンバー集合は、**何度聞かれても 1 回しか引かない**（ADR-119/231）。
+    ///
+    /// ⚠️ この集合は「行を消してよいか」（`isUserClaimed`）と「枚数フロアを免除するか」
+    /// （`peopleClusters`）の両方が見るので、**1 顔ごと・1 クラスタごとに呼ばれる**
+    /// ——毎回引くと、写真を 1 枚消すだけでクラスタ数ぶんの往復になる。
+    /// 検証するのは**回数**（時間は CI で揺れるが回数は決定的）。
+    @Test("グループの集合は何度聞いても 1 回しか引かない（書き換えたら引き直す）")
+    func peopleGroupMembersAreFetchedOnce() async {
+        let store = await makeStore(people: 40)
+        let ids = await store.allClusters().map(\.clusterID).sorted()
+        #expect(ids.count == 40, "fixture: 40 人になっていない（\(ids.count)）")
+        _ = await store.createPeopleGroup(name: "家族", memberClusterIDs: Array(ids.prefix(2)))
+
+        // 1 回目は引く。
+        let first = await fetchCount(store) { _ = await store.peopleGroupMemberClusterIDs() }
+        #expect(first >= 1, "そもそも引いていない（fixture が空？）")
+        // 40 回聞いても増えない。
+        let repeated = await fetchCount(store) {
+            for _ in 0..<40 { _ = await store.peopleGroupMemberClusterIDs() }
+        }
+        #expect(repeated == 0, "聞くたびに引いている（\(repeated) 回）")
+
+        // ⚠️ **書き換えたら引き直す**こと（キャッシュが古いと、消してはいけない行を消す）。
+        await store.updatePeopleGroup(id: await store.allPeopleGroupRecords()[0].id,
+                                      name: nil, memberClusterIDs: Array(ids.prefix(3)))
+        let members = await store.peopleGroupMemberClusterIDs()
+        #expect(members.count == 3, "書き換えが見えていない（古い集合を返した）: \(members.sorted())")
+    }
+
     /// 1 対 1 の確認カード生成。**人物が増えても fetch 回数は増えない**こと。
     ///
     /// 直った経路: 以前はクラスタごとに 2 本（メンバー refKey ＋ 代表顔）引いており、

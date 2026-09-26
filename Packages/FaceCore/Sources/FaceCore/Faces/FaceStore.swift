@@ -153,6 +153,14 @@ actor FaceStore {
     var negativesCache: [FaceClustering.NegativePair]?
     /// 校正済みしきい値のキャッシュ（B1・ADR-46）。修正追加で無効化。
     var thresholdCache: Float?
+    /// 家族グループのメンバー集合のキャッシュ（ADR-119/231）。
+    ///
+    /// ⚠️ 「行を消してよいか」（`isUserClaimed`）と「枚数フロアを免除するか」
+    /// （`peopleClusters`）の両方がこれを見るので、**1 顔ごと・1 クラスタごとに呼ばれる**
+    /// ——毎回引くと写真の削除 1 回につきクラスタ数ぶんの往復になる。
+    /// グループは数個で、変わるのは CRUD のときだけなので持っておく。
+    /// 捨てるのは `invalidatePeopleGroupMembersCache()`（グループを書き換える全経路で呼ぶ）。
+    var peopleGroupMembersCache: Set<Int>?
 
     /// 校正の材料（修正ジャーナルから作った (類似度, 重み) の並び）。
     ///
@@ -302,8 +310,8 @@ actor FaceStore {
     /// ⚠️ 確認顔も ADR-132 の言う「ユーザーの表明」なのに、行の保護対象から漏れていた。
     /// 名前も代表写真も付けず、レビューで「はい」とだけ答えて育てた人物は、
     /// 最後の 1 顔を外した瞬間に**行ごと消える**（残った顔は孤児になる）。
-    /// ⚠️ 顔とグループを 1 回ずつ引くので、**最後の 1 顔の経路でだけ**呼ぶ
-    /// （毎回の削除で引かない）。ループから呼ぶなら静的版に集合を渡すこと。
+    /// ⚠️ 顔を 1 回引くので、**最後の 1 顔の経路でだけ**呼ぶ（毎回の削除で引かない）。
+    /// グループの集合はキャッシュ（`peopleGroupMembersCache`）なので往復しない。
     func isUserClaimed(_ c: PersonCluster) -> Bool {
         if Self.isUserClaimed(c, peopleGroupMembers: peopleGroupMemberClusterIDs()) { return true }
         return anchorCount(clusterID: c.clusterID) > 0

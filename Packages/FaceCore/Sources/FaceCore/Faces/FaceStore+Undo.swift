@@ -158,6 +158,7 @@ extension FaceStore {
                 guard let before = record.groups[group.id],
                       group.memberClusterIDs != before else { continue }
                 group.memberClusterIDs = before
+                invalidatePeopleGroupMembersCache()
             }
         }
         // 3) この操作で記録した学習（負例・正例）を消す。

@@ -67,6 +67,14 @@ extension FaceStore {
         for f in (countedFetchOptional(faceQuery)) ?? [] where f.clusterID >= 0 {
             facesByCluster[f.clusterID, default: []].append(f)
         }
+        // ⚠️ **枚数フロアはユーザーが表明した人物には効かせない**（ADR-231/232）。
+        // フロア（既定 3 枚）は「たまたま写り込んだ人を人物として扱わない」ための機械の線だが、
+        // 名前を付けた／家族グループに入れた／代表写真を選んだ人物は機械の都合で消せない。
+        // 実害: 写真を整理してメンバーの写真が 0 枚になると、`pruneMissingPhotos` が行を残しても
+        // ここで落ちるので `allPeople` に居なくなり、**家族グループからその人が消えたまま**
+        // 「解決できないメンバー」として永久に記録され続ける（編集画面からも外せない）。
+        // ⚠️ グループの集合は**1 回だけ**引く（人物ごとに引き直さない・ADR-119）。
+        let groupMembers = peopleGroupMemberClusterIDs()
         // 2 階層（ADR-61）: personGroupID が同じクラスタを 1 人物に束ねる（子供の時期クラスタ）。
         // nil のクラスタは従来どおり単独（1 クラスタ=1 人物）＝全 nil なら旧挙動と一致。
         var groups: [String: [PersonCluster]] = [:]
@@ -85,7 +93,10 @@ extension FaceStore {
             var seen = Set<String>()
             var members: [String] = []
             for f in allFaces where seen.insert(f.refKey).inserted { members.append(f.refKey) }
-            guard members.count >= minFaces else { continue }
+            let isAsserted = clustersInGroup.contains {
+                Self.isUserClaimed($0, peopleGroupMembers: groupMembers)
+            }
+            guard members.count >= minFaces || isAsserted else { continue }
             // 主クラスタ: **名前つきを最優先**し、同条件ならメンバー最多 → clusterID 昇順。
             // ⚠️ 以前は `first { 名前つき }` だったが、`allClusters()` の取得順は不定なので
             //    名前つきが複数あると**毎回違う名前が表示され**、ユーザーには「付けた名前が消えた」

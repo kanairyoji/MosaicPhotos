@@ -420,7 +420,10 @@ extension FaceStore {
             var seen = Set<Int>()
             let members = (record.memberClusterIDs.filter { live.contains($0) } + added)
                 .filter { seen.insert($0).inserted }
-            if members != record.memberClusterIDs { record.memberClusterIDs = members }
+            if members != record.memberClusterIDs {
+                record.memberClusterIDs = members
+                invalidatePeopleGroupMembersCache()
+            }
         }
     }
 
@@ -437,6 +440,7 @@ extension FaceStore {
             record.memberClusterIDs = []
         }
         try? modelContext.save()
+        invalidatePeopleGroupMembersCache()
         clusteringCache = nil
         negativesCache = nil   // 次スキャンで DB から読み直す（ジャーナルは残存）
         calibrationSamplesCache = nil

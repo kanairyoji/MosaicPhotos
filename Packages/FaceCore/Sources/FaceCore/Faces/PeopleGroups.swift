@@ -123,21 +123,35 @@ public enum PeopleGroupSelection {
         people.reduce(into: 0) { $0 += isSelected($1, in: selected) ? 1 : 0 }
     }
 
-    /// 編集画面に出す人の一覧（表示フロアで隠した人のうち、**既にメンバーの人は必ず出す**）。
+    /// 記録が指している「メンバーの数」。**解決できない記録上の ID も 1 人として数える**。
+    ///
+    /// ⚠️ `personCount` だけで「2 人以上」を判定すると、ライブラリが変わって片方が解決できなく
+    /// なった瞬間に**保存ボタンが永久に灰色**になり、グループの名前も変えられず、居なくなった
+    /// メンバーも外せなくなる。記録上のメンバーは、解決できなくても**メンバーではある**。
+    public static func memberCount(in selected: Set<Int>, among people: [PersonInfo]) -> Int {
+        let covered = people.reduce(into: Set<Int>()) { $0.formUnion(ids(of: $1)) }
+        return personCount(in: selected, among: people) + selected.subtracting(covered).count
+    }
+
+    /// 編集画面に出す人の一覧（表示フロアで隠した人のうち、**元からメンバーの人は必ず出す**）。
     ///
     /// ⚠️ `shown`（= `PeopleEngine.people`）は「ピープルに載せるか」だけの線
     /// （ADR-125・無名でフロア未満を隠す）。メンバーの写真が減ってフロアを割ると、その人は
     /// 一覧から消えて**外せなくなる**——見えない・触れないメンバーがグループに居座る。
     /// 無名のメンバーを守るようにした（ADR-231）ぶん、この状態は起きやすい。
+    ///
+    /// ⚠️ 基準は**シートを開いた時点のメンバー**（`initialMembers`）で、いまのチェック状態では
+    /// ない。チェック状態で絞ると、隠れていたメンバーを外した瞬間に**行が消えて戻せなくなる**
+    /// ——名前も打ち直していたら、やり直すには「やめる」で全部捨てるしかない。
     /// - Parameters:
     ///   - shown: 通常出す人（表示フロア適用済み）。
     ///   - all: 全員（`PeopleEngine.allPeople`）。
-    ///   - selected: いま選ばれている clusterID の集合。
+    ///   - initialMembers: シートを開いた時点の記録上のメンバー clusterID。
     public static func selectable(shown: [PersonInfo], all: [PersonInfo],
-                                 selected: Set<Int>) -> [PersonInfo] {
+                                 initialMembers: Set<Int>) -> [PersonInfo] {
         let shownIDs = Set(shown.map(\.clusterID))
         return shown + all.filter {
-            !shownIDs.contains($0.clusterID) && isSelected($0, in: selected)
+            !shownIDs.contains($0.clusterID) && isSelected($0, in: initialMembers)
         }
     }
 }
@@ -157,11 +171,18 @@ extension FaceStore {
     /// ⚠️ **1 回で読む**。再クラスタは人物ごとに引き直してはいけない（1,316 人＝1,316 往復・
     /// ADR-119）。グループは数個なので、集合にして `contains` で引く。
     func peopleGroupMemberClusterIDs() -> Set<Int> {
+        if let cached = peopleGroupMembersCache { return cached }
         let records = (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? []
         var out = Set<Int>()
         for record in records { out.formUnion(record.memberClusterIDs) }
+        peopleGroupMembersCache = out
         return out
     }
+
+    /// グループを書き換えたら必ず呼ぶ（キャッシュを捨てる）。
+    /// ⚠️ **`PeopleGroupRecord` を触る全経路**で呼ぶこと。忘れると「行を消してよいか」の判定が
+    /// 古い集合で動き、消してはいけない行を消す（＝この一連の修正が守ろうとしたもの）。
+    func invalidatePeopleGroupMembersCache() { peopleGroupMembersCache = nil }
 
     /// 人物の統合でメンバーの clusterID が変わったとき、グループの参照を付け替える。
     ///
@@ -181,6 +202,7 @@ extension FaceStore {
             record.memberClusterIDs = ids
             touched += 1
         }
+        if touched > 0 { invalidatePeopleGroupMembersCache() }
         return touched
     }
 
@@ -198,12 +220,14 @@ extension FaceStore {
                                                   memberClusterIDs: [], createdAt: createdAt))
         }
         try? modelContext.save()
+        invalidatePeopleGroupMembersCache()
     }
 
     func createPeopleGroup(name: String, memberClusterIDs: [Int]) -> UUID {
         let record = PeopleGroupRecord(name: name, memberClusterIDs: memberClusterIDs)
         modelContext.insert(record)
         try? modelContext.save()
+        invalidatePeopleGroupMembersCache()
         return record.id
     }
 
@@ -213,6 +237,7 @@ extension FaceStore {
             predicate: #Predicate { $0.id == groupID })).first else { return }
         modelContext.delete(record)
         try? modelContext.save()
+        invalidatePeopleGroupMembersCache()
     }
 
     /// 名前・メンバーの更新（nil の引数は変更しない）。
@@ -223,6 +248,7 @@ extension FaceStore {
         if let name { record.name = name }
         if let memberClusterIDs { record.memberClusterIDs = memberClusterIDs }
         try? modelContext.save()
+        invalidatePeopleGroupMembersCache()
     }
 }
 

@@ -70,6 +70,43 @@ struct PruneMissingPhotosTests {
         #expect(record?.memberClusterIDs.contains(bID) == true)
     }
 
+    /// ⚠️ **行を残すだけでは足りなかった**（レビュー 4 周目）。`peopleClusters` は枚数フロア
+    /// （既定 3 枚）でクラスタを落とすので、0 枚になった行は `allPeople` に現れず、
+    /// **家族グループからはやはり消えたまま**「解決できないメンバー」として永久に記録され続ける
+    /// （編集画面からも外せない）。表明した人物はフロアを免除する。
+    @Test("写真が 0 枚になっても、グループのメンバーは人物一覧に残る")
+    func peopleGroupMembersSurviveTheDisplayFloor() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let aPhotos = (0..<40).map { ("L-a\($0)", [signal(unit(0))]) }
+        _ = await store.recordScans(aPhotos + [("L-b1", [signal(unit(3))])])
+        let ids = await store.allClusters().map(\.clusterID).sorted()
+        #expect(ids.count == 2, "fixture: 2 人物になっていない")
+        let refKeysByCluster = await store.memberRefKeysByCluster()
+        guard let bID = ids.first(where: { refKeysByCluster[$0] == ["L-b1"] }) else {
+            #expect(Bool(false), "fixture: 写真 1 枚の人物が見つからない"); return
+        }
+        // fixture: グループに入れる前は、1 枚しかないので人物一覧に出ない（フロア 3 枚）。
+        let beforeJoin = await store.peopleClusters(minFaces: 3).map(\.clusterID)
+        #expect(!beforeJoin.contains(bID), "fixture: フロアが効いていない（免除を確かめられない）")
+
+        _ = await store.createPeopleGroup(name: "家族", memberClusterIDs: ids)
+        _ = await store.pruneMissingPhotos(existingRefKeys: Set(aPhotos.map(\.0)))
+
+        let people = await store.peopleClusters(minFaces: 3)
+        #expect(people.map(\.clusterID).contains(bID),
+                "グループのメンバーが人物一覧から消えた（グループ表示・編集から辿れない）")
+        #expect(people.first(where: { $0.clusterID == bID })?.count == 0,
+                "写真 0 枚として出るはず")
+        // `resolve` が「解決できないメンバー」と言わないこと（無音をやめたログが永久に鳴らない）。
+        let record = await store.allPeopleGroupRecords()[0]
+        let info = PeopleGroupInfo.resolve(id: record.id, name: record.name,
+                                          memberClusterIDs: record.memberClusterIDs,
+                                          createdAt: record.createdAt, people: people)
+        #expect(info.unresolvedClusterIDs.isEmpty,
+                "永久に「解決できないメンバー」と記録され続ける: \(info.unresolvedClusterIDs)")
+        #expect(info.members.count == 2)
+    }
+
     @Test("欠けが多すぎる（候補が揃っていない）ときは何も消さない")
     func refusesWhenCandidatesLookIncomplete() async {
         let store = FaceStore(isStoredInMemoryOnly: true)

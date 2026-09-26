@@ -97,6 +97,9 @@ public struct PeopleGroupEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var selected: Set<Int> = []
+    /// シートを開いた時点の記録上のメンバー（一覧に出す基準）。
+    /// ⚠️ いまのチェック状態で絞ると、隠れていたメンバーを外した瞬間に行が消えて戻せなくなる。
+    @State private var initialMembers: Set<Int> = []
     @State private var isSaving = false
 
     /// 同じ名前のグループが既にあるか（自分自身の編集は除く）。
@@ -107,7 +110,8 @@ public struct PeopleGroupEditorSheet: View {
     /// 選べる人の一覧（規則は `PeopleGroupSelection.selectable`・テスト対象）。
     private var selectableMembers: [PersonInfo] {
         PeopleGroupSelection.selectable(shown: peopleEngine.people,
-                                       all: peopleEngine.allPeople, selected: selected)
+                                       all: peopleEngine.allPeople,
+                                       initialMembers: initialMembers)
     }
 
 
@@ -193,8 +197,10 @@ public struct PeopleGroupEditorSheet: View {
                         // `people` は「一覧に出すか」だけの線（ADR-125）なので、フロア未満の
                         // メンバーが入っているグループを編集すると**保存できなくなる**。
                         // ⚠️ 数えるのは ID でなく**人物**（記録が同じ人物を 2 通りで指していても 1 人）。
+                        // ⚠️ `memberCount` は**解決できない記録上の ID も 1 人と数える**
+                        // ——数えないと、ライブラリが変わった瞬間に名前も変えられなくなる。
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || PeopleGroupSelection.personCount(
+                                  || PeopleGroupSelection.memberCount(
                                         in: selected, among: peopleEngine.allPeople) < 2
                                   || nameIsTaken)
                     }
@@ -204,6 +210,7 @@ public struct PeopleGroupEditorSheet: View {
                 guard let editing, name.isEmpty, selected.isEmpty else { return }
                 name = editing.name
                 selected = Set(editing.memberClusterIDs)
+                initialMembers = selected
             }
         }
     }
