@@ -230,6 +230,33 @@ extension FaceStore {
         return touched
     }
 
+    /// 記録に残っているが**もう誰も指していない**メンバーを落とす（ADR-235）。
+    ///
+    /// ⚠️ なぜ要るか: 実機ログ diagnostics-97 で、家族グループに**解決できないメンバーが 1 件
+    /// 残り続けている**のが見つかった。ADR-231/232 は**これから**失われるのを防ぐもので、
+    /// 既に失われた分は直さない。放っておくと (1) 表示は永久に 1 人足りないまま、
+    /// (2) 監査が毎回それを報告し続ける（診断ログを同じ行で埋める）。
+    ///
+    /// ⚠️⚠️ **持ち越しが残っている間は呼んではいけない**。再スキャンの最中は「まだ戻っていない」
+    /// だけで、数晩かけて戻ってくる——そこで落とすと**本当に失う**。呼ぶ側が確かめること。
+    /// - Returns: 落とした（グループ id, 件数）の一覧。
+    @discardableResult
+    func pruneStaleGroupMembers() -> [(name: String, dropped: Int)] {
+        let live = Set(allClusters().map(\.clusterID))
+        var out: [(name: String, dropped: Int)] = []
+        for record in (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
+            let kept = record.memberClusterIDs.filter { live.contains($0) }
+            guard kept.count != record.memberClusterIDs.count else { continue }
+            out.append((record.name, record.memberClusterIDs.count - kept.count))
+            record.memberClusterIDs = kept
+        }
+        if !out.isEmpty {
+            try? modelContext.save()
+            invalidatePeopleGroupMembersCache()
+        }
+        return out
+    }
+
     /// 世代の切り替えで**グループの器だけ**を新しいコンテナへ持ち込む（ADR-232）。
     /// メンバーは持ち越し（`reapplyAssertions`）が写真の重なりで埋めるので、ここでは空で作る。
     /// id と作成日時を引き継ぐ（グループの同一性は UUID で、世代を跨いで変わらない）。
@@ -291,7 +318,7 @@ extension PeopleEngine {
                                     memberClusterIDs: $0.memberClusterIDs,
                                     createdAt: $0.createdAt, people: current)
         }
-        reportUnresolvedGroupMembers(peopleAvailable: !current.isEmpty)
+        await reportUnresolvedGroupMembers(peopleAvailable: !current.isEmpty)
     }
 
     /// 解決できなかったメンバーを診断ログへ出す（dataLoss の可視化・ADR-231）。
@@ -306,7 +333,7 @@ extension PeopleEngine {
     /// 解決できないメンバーが 1 人でも居座ると——写真を消したなど、二度と一致しない場合は
     /// まさにそうなる——**同じ行で記録を埋め尽くし、残したかった証拠を押し出してしまう**。
     /// 中身（どのグループが何人）が変わったときだけ書く。
-    private func reportUnresolvedGroupMembers(peopleAvailable: Bool) {
+    private func reportUnresolvedGroupMembers(peopleAvailable: Bool) async {
         guard peopleAvailable else { return }
         let lost = peopleGroups.filter { !$0.unresolvedClusterIDs.isEmpty }
         let signature = lost
@@ -319,6 +346,30 @@ extension PeopleEngine {
             .joined(separator: " ")
         Diagnostics.mark("peopleGroups: unresolved members — \(detail) "
                          + "(再クラスタで ID が変わった／再スキャンで持ち越せなかった)")
+        // ⚠️ **持ち越しが残っていないなら、もう戻ってこないので記録から落とす**（ADR-235）。
+        // 実機ログ diagnostics-97 で、解決できないメンバーが 1 件**残り続けている**のが見つかった。
+        // ADR-231/232 は「これから失われる」のを防ぐもので、既に失われた分は直さない。
+        // 放っておくと表示は永久に 1 人足りず、監査も毎回それを報告する。
+        // ⚠️⚠️ **持ち越しが残っている間は落とさない**——再スキャンの最中は「まだ戻っていない」
+        // だけで、数晩かけて戻ってくる。そこで落とすと本当に失う。
+        guard loadCarryover()?.entries.isEmpty ?? true else {
+            Diagnostics.mark("peopleGroups: 解決できないメンバーは残す（持ち越しが進行中）")
+            return
+        }
+        let dropped = await store.pruneStaleGroupMembers()
+        guard !dropped.isEmpty else { return }
+        let summary = dropped.map { "\($0.name):\($0.dropped)" }.joined(separator: " ")
+        Diagnostics.mark("peopleGroups: 戻ってこないメンバーを記録から落とした — \(summary)")
+        // 落とした結果を一覧へ反映する（⚠️ ここで `reloadPeopleGroups` を呼ぶと無限に回るので、
+        // 記録から解決し直すだけにする）。
+        let records = await store.allPeopleGroupRecords()
+        let current = allPeople
+        peopleGroups = records.map {
+            PeopleGroupInfo.resolve(id: $0.id, name: $0.name,
+                                    memberClusterIDs: $0.memberClusterIDs,
+                                    createdAt: $0.createdAt, people: current)
+        }
+        lastUnresolvedGroupSignature = ""   // 次に壊れたら必ず書く
     }
 
     /// 同じ名前のグループが既にあるか（大小・前後空白を無視。`excluding` は自分自身の編集用）。

@@ -70,6 +70,9 @@ final class AnalysisDriver {
     private var kicking = false
     /// 走行中に来た契機（1 つだけ畳んで拾い直す）。
     private var pendingTrigger: Trigger?
+    /// 前回この枠で起こしたもの（ADR-237）。顔とタグ/埋め込みを**交互に**する札。
+    /// ⚠️ 起動を跨いで覚えなくてよい（飢えないための交互で、公平さの厳密な保証は要らない）。
+    private var lastTurn: AnalysisTurn.Choice = .none
 
     init(engine: AutoAlbumEngine, people: FaceScanControl,
          dropboxStore: DropboxPhotoStore, session: AnalysisSession) {
@@ -129,18 +132,40 @@ final class AnalysisDriver {
 
     /// 残作業を起こす**唯一の前口上**。戻り値＝実際に何かが走り始めたか。
     private func runPrologue(trigger: Trigger, now: Date) async -> Bool {
+        // ⚠️⚠️ **顔とタグ/埋め込みを同じ枠で同時に起こさない**（ADR-237・diagnostics-97）。
+        // 以前はタグ/埋め込みを起こした直後に顔スキャンも起こしていた。ANE ゲートが**推論**を
+        // 直列化するので動作は正しいが、**モデルは両方載ったまま**になる——CLIP の画像塔と
+        // 顔モデルと Vision が同時に常駐し、14 秒で +248MB・最大 823MB まで上がっていた。
+        // ANE ゲートは「同時に 1 つ推論しない」ための仕掛けで、「同時に 1 つ**載せる**」は
+        // 誰も見ていなかった（ADR-223/226/228 は手放す側で、使い始めを重ねない側が抜けていた）。
+        // 両方に残作業があるときは**前回と違う方**にして、どちらも飢えないようにする。
+        // ⚠️⚠️ **残作業の数で顔を止めてはいけない**（自分で一度そう書いて気づいた）。
+        // `faceBacklog` は `measureBacklogIfUnknown` が **nil のときだけ**測り、あとはスキャン側が
+        // 更新する。つまり 1 度 0 になると、新しい写真が入っても 0 のままで——
+        // それを「仕事が無い」と読むと**顔スキャンが永久に走らなくなる**。
+        // 見るのは「もう片方が走っているか」だけにする（それがこの決まりの目的そのもの）。
+        let turn = AnalysisTurn.next(facesRunning: people.isScanning,
+                                    tagsRunning: engine.isTagging,
+                                    faceScanPossible: people.isFaceModelAvailable,
+                                    lastChoice: lastTurn)
+        if turn != .none { lastTurn = turn }
+
         // タグ → 埋め込み。処理枠は滞留した前面の実行を明け渡させてから始める（ADR-95）——
         // 眠ったまま実行中フラグを握られていると、窓が丸ごと空転する（diagnostics-38）。
         // ブーストの終了も同じ：`stop()` が直前にキャンセルした実行がまだフラグを持っている
         // （`scheduleBackgroundFill` は `isTagging` を見て素通りするので、起こし直せない）。
-        if trigger == .window || trigger == .boostEnded {
-            engine.restartBackgroundFill()
-        } else {
-            engine.scheduleBackgroundFill()
+        if turn == .tags {
+            if trigger == .window || trigger == .boostEnded {
+                engine.restartBackgroundFill()
+            } else {
+                engine.scheduleBackgroundFill()
+            }
         }
 
         // 顔（候補の列挙は短時間だけ使い回す）。
-        if people.isFaceModelAvailable, !people.isScanning {
+        // ⚠️ **順番が顔でなければ、候補の列挙もしない**。列挙は 8.5 万件・約 11 秒で、
+        // 走らせない回にやると丸ごと無駄（しかも 8 万件級のコレクションが一時的に積み上がる）。
+        if turn == .faces, people.isFaceModelAvailable, !people.isScanning {
             let candidates = await candidatesReusingCache(now: now)
             let allowSim = BackgroundYield.exemption == .debug
                 || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)

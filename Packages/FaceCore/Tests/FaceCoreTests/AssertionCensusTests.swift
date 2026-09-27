@@ -102,6 +102,33 @@ struct AssertionCensusTests {
                 "\(findings)")
     }
 
+    /// ⚠️⚠️ **実機ログ diagnostics-97 で踏んだ**。最初は「after で解決できない ID」を数えていたので、
+    /// **遷移が起こしていない既存の壊れ**も毎回報告していた——実機では家族グループに 1 件そういう
+    /// ID が残っており、**毎晩同じ行が出続ける**状態になった。診断ログは末尾 256KB しか残らないので、
+    /// これは ADR-231 で直したはずの「同じ行で記録を押し流す」を別の入口から作り直していた。
+    @Test("前から解決できなかったメンバーは、この遷移の損失として報告しない")
+    func doesNotBlameTheTransitionForPreExistingBreakage() {
+        // 記録は 1 と 99 を指しているが、99 は**前から**居ない。
+        let g = AssertionCensus.Group(id: UUID(), name: "家族", memberClusterIDs: [1, 99])
+        let before = census([person(1, name: "父", photos: ["a", "b"])], [g])
+        let after = census([person(1, name: "父", photos: ["a", "b"])], [g])
+        #expect(AssertionCensus.diff(before: before, after: after).isEmpty,
+                "既存の壊れを毎回報告している（毎晩同じ行が診断ログを埋める）")
+    }
+
+    @Test("この遷移で解決できなくなったメンバーは報告する（区別できている）")
+    func stillReportsWhatTheTransitionLost() {
+        let g = AssertionCensus.Group(id: UUID(), name: "家族", memberClusterIDs: [1, 2, 99])
+        // 2 は**前は在った**のに後で居ない。99 は前から居ない（報告しない）。
+        let before = census([person(1, name: "父", photos: ["a"]),
+                             person(2, name: "母", photos: ["b"])], [g])
+        let after = census([person(1, name: "父", photos: ["a"])], [g])
+        let findings = AssertionCensus.diff(before: before, after: after)
+        let lost = findings.filter { $0.kind == .groupMemberLost }
+        #expect(lost.count == 1, "\(findings)")
+        #expect(lost.first?.detail.contains("解決できなくなった 1") == true, "\(lost)")
+    }
+
     @Test("グループの行ごと消えたら報告する")
     func reportsLostGroups() {
         let g = AssertionCensus.Group(id: UUID(), name: "家族", memberClusterIDs: [1])

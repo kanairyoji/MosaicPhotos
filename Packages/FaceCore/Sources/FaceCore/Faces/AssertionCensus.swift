@@ -134,6 +134,8 @@ public struct AssertionCensus: Sendable, Equatable {
         // --- 人物ごとの表明 ---
         for old in before.people {
             // 写真の重なりで「移った先」を探す（ID は当てにできない）。
+            // ⚠️ 見るのは **before に在ったものが after で失われたか**だけ。
+            // 「前から無かったもの」は、この遷移の責任ではない（毎回報告すると本当の損失が埋もれる）。
             let successor = bestSuccessor(of: old, in: after.people, minOverlap: swapOverlap)
             let label = old.name ?? "cluster \(old.clusterID)"
             if old.isNamed, successor?.isNamed != true {
@@ -155,6 +157,7 @@ public struct AssertionCensus: Sendable, Equatable {
         // --- 家族グループ ---
         let afterGroups = Dictionary(after.groups.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let liveAfter = Set(after.people.map(\.clusterID))
+        let liveBeforeAll = Set(before.people.map(\.clusterID))
         let beforePeopleByID = Dictionary(before.people.map { ($0.clusterID, $0) },
                                          uniquingKeysWith: { a, _ in a })
         for oldGroup in before.groups {
@@ -162,13 +165,24 @@ public struct AssertionCensus: Sendable, Equatable {
                 findings.append(.init(kind: .groupLost, subject: oldGroup.name))
                 continue
             }
-            // 解決できなくなったメンバー（記録に残っていても人物として居ない）。
-            let lost = newGroup.memberClusterIDs.filter { !liveAfter.contains($0) }
+            // 解決できなくなったメンバー。
+            //
+            // ⚠️⚠️ **「この遷移が失わせたぶん」だけを数える**（実機ログ diagnostics-97 で踏んだ）。
+            // 最初は「after で解決できない ID」を数えていたが、それだと**遷移が起こしていない
+            // 既存の壊れ**（前から解決できない ID）も毎回報告してしまう
+            // ——実機では家族グループに 1 件そういう ID が残っており、**毎晩同じ行が出続ける**
+            // 状態になった。診断ログは末尾 256KB しか残らないので、これは
+            // ADR-231 で直したはずの「同じ行で記録を押し流す」を別の入口から作り直していた。
+            // 既存の壊れは `PeopleEngine.reportUnresolvedGroupMembers`（内容が変わったときだけ
+            // 書く札つき）が受け持つので、ここでは**変化だけ**を見る。
+            let lost = newGroup.memberClusterIDs.filter {
+                !liveAfter.contains($0) && liveBeforeAll.contains($0)   // 前は在ったのに、後で居ない
+            }
             let vanished = oldGroup.memberClusterIDs.filter { !newGroup.memberClusterIDs.contains($0) }
             if !lost.isEmpty || !vanished.isEmpty {
                 findings.append(.init(
                     kind: .groupMemberLost, subject: oldGroup.name,
-                    detail: "解決できない \(lost.count)・記録から消えた \(vanished.count)"))
+                    detail: "解決できなくなった \(lost.count)・記録から消えた \(vanished.count)"))
             }
             // ⚠️ **数が同じでも中身が別人**を捕まえる。前は在って後も在る ID について、
             // その人物の写真が入れ替わっていたら「別人が居座った」。

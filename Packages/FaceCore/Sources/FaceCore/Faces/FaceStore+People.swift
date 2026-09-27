@@ -60,13 +60,25 @@ extension FaceStore {
         //    実機 diagnostics-42 では `people.load.clusters` が 725〜3585ms かかり、
         //    同じ長さのフォアグラウンドハングと 1 対 1 に対応していた（671/725・2028/2188・896/997）。
         //    ADR-88 が `memberRefKeys(inCluster:)` に入れた射影を、人物一覧の本体にも適用する。
-        var facesByCluster: [Int: [DetectedFace]] = [:]
-        var faceQuery = FetchDescriptor<DetectedFace>()
-        faceQuery.propertiesToFetch = [\.faceID, \.refKey, \.clusterID,
-                                       \.bx, \.by, \.bw, \.bh, \.quality, \.hasSmile]
-        for f in (countedFetchOptional(faceQuery)) ?? [] where f.clusterID >= 0 {
-            facesByCluster[f.clusterID, default: []].append(f)
+        // ⚠️⚠️ **`@Model` を辞書に溜めない**（ADR-236・実機ログ diagnostics-97）。
+        // 以前はここで全顔（実機 31,570 件）を**本体のコンテキストで**1 回 fetch し、
+        // `DetectedFace` のまま `facesByCluster` に溜めていた。本体のコンテキストは実体化した行を
+        // 登録し続けるので**そのまま常駐**し、`people.load.clusters` が **8.6 秒**・
+        // footprint が 800MB 級になっていた（人物は 239 しか無いのに）。
+        // ⚠️ 回数の問題ではない（fetch は 1 回）——**1 回が重い**。ADR-119 の「回数を数える」
+        // では捕まらない形で、ADR-122/227 の「実体化した行を抱えない」側の問題だった。
+        // 使い捨てコンテキストのページ読み（`forEachFacePage`・ADR-227）に載せ替え、
+        // 値（`FaceRow`）へ写してページごとに手放す。道具は既にあったのに、ここだけ繋がっていなかった。
+        let t0 = PerfTrace.nowNs()
+        var facesByCluster: [Int: [FaceRow]] = [:]
+        forEachFacePage { page in
+            for f in page where f.clusterID >= 0 {
+                facesByCluster[f.clusterID, default: []].append(FaceRow(f))
+            }
         }
+        PerfTrace.logSpan("people.load.faces", ms: PerfTrace.msSince(t0))
+        let tAssemble = PerfTrace.nowNs()
+        defer { PerfTrace.logSpan("people.load.assemble", ms: PerfTrace.msSince(tAssemble)) }
         // ⚠️ **枚数フロアはユーザーが表明した人物には効かせない**（ADR-231/232）。
         // フロア（既定 3 枚）は「たまたま写り込んだ人を人物として扱わない」ための機械の線だが、
         // 名前を付けた／家族グループに入れた／代表写真を選んだ人物は機械の都合で消せない。
@@ -88,7 +100,7 @@ extension FaceStore {
         for key in order {
             let clustersInGroup = groups[key]!
             // 束ね内の全クラスタの顔を集約し、写真キーを重複排除。
-            var allFaces: [DetectedFace] = []
+            var allFaces: [FaceRow] = []
             for c in clustersInGroup { allFaces += facesByCluster[c.clusterID] ?? [] }
             var seen = Set<String>()
             var members: [String] = []
@@ -120,10 +132,10 @@ extension FaceStore {
             let primaryFaces = facesByCluster[primary.clusterID] ?? []
             // 自動選択は「笑顔＋高品質＋大きく写っている」顔を優先（face-info-expansion 優先度 5）。
             let cover = primary.coverFaceID.flatMap { fid in allFaces.first { $0.faceID == fid } }
-                ?? Self.bestCoverFace(allFaces.filter { favoriteRefKeys.contains($0.refKey) })
-                ?? Self.bestCoverFace(primaryFaces)
-                ?? Self.bestCoverFace(allFaces)
-            let box = cover.map { CGRect(x: $0.bx, y: $0.by, width: $0.bw, height: $0.bh) }
+                ?? Self.bestCoverRow(allFaces.filter { favoriteRefKeys.contains($0.refKey) })
+                ?? Self.bestCoverRow(primaryFaces)
+                ?? Self.bestCoverRow(allFaces)
+            let box = cover.map(\.boundingBox)
             var info = PersonInfo(
                 clusterID: primary.clusterID, name: primary.name, count: members.count,
                 coverRefKey: cover?.refKey, coverBoundingBox: box,

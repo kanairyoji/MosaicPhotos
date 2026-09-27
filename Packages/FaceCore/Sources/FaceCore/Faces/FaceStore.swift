@@ -376,6 +376,42 @@ actor FaceStore {
         }
     }
 
+    /// 人物一覧を組むのに要る値だけを写した顔 1 件（`@Model` を持ち回さないため・ADR-227/236）。
+    ///
+    /// ⚠️ **`@Model` を辞書に溜めない**。以前は全顔（実機 31,570 件）の `DetectedFace` を
+    /// `facesByCluster` に入れたまま一覧を組んでいた——本体のコンテキストが実体化した行を
+    /// 登録し続けるので**そのまま常駐**し、実機で `people.load.clusters` が 8.6 秒・
+    /// footprint が 800MB 級になっていた（diagnostics-97）。値へ写せばページごとに手放せる。
+    struct FaceRow: Sendable {
+        let faceID: String
+        let refKey: String
+        let clusterID: Int
+        let quality: Double
+        let hasSmile: Bool?
+        let bx: Double, by: Double, bw: Double, bh: Double
+
+        init(_ f: DetectedFace) {
+            faceID = f.faceID
+            refKey = f.refKey
+            clusterID = f.clusterID
+            quality = f.quality
+            hasSmile = f.hasSmile
+            bx = f.bx; by = f.by; bw = f.bw; bh = f.bh
+        }
+
+        var boundingBox: CGRect { CGRect(x: bx, y: by, width: bw, height: bh) }
+    }
+
+    /// 値だけで代表を選ぶ（`bestCoverFace` と**同じ規則**＝同点なら faceID の小さい方）。
+    static func bestCoverRow(_ rows: [FaceRow]) -> FaceRow? {
+        rows.max { a, b in
+            let sa = coverScore(quality: a.quality, hasSmile: a.hasSmile, bw: a.bw)
+            let sb = coverScore(quality: b.quality, hasSmile: b.hasSmile, bw: b.bw)
+            if sa != sb { return sa < sb }
+            return a.faceID > b.faceID
+        }
+    }
+
     /// 代表選びに要る値だけを写したもの（`@Model` を持ち回さないため・ADR-227）。
     struct CoverRank: Sendable {
         let faceID: String
