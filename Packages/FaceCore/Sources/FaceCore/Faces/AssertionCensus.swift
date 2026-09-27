@@ -276,6 +276,30 @@ extension FaceStore {
         return AssertionCensus(people: people, groups: groups)
     }
 
+    /// **台帳の健全さ**を安価に数えて診断ログへ出す（ADR-238）。
+    ///
+    /// ⚠️ なぜ要るか: `census[...]` は**遷移のときだけ**出る。ところがライブラリの解析が
+    /// 終わった利用者では、夜間の再クラスタの条件（修正が増えた／スキャンが増えた／30 日経過／
+    /// しきい値や規則の版が変わった）が**何週間も満たされない**——実機ログ diagnostics-99 では
+    /// 13.5 時間で 0 回だった。つまり「壊れたら勝手に分かる」は
+    /// **「壊れる機会があったときに分かる」**でしかなかった。
+    ///
+    /// ⚠️ **顔は読まない**（全顔の走査は実機で 4.5〜9 秒）。クラスタ行とグループ行だけで数えられる
+    /// ものに絞る——`confirmed`（確認顔の数）は顔が要るので出さない。起動ごとに 1 回で足りる。
+    func reportLedgerHealth() {
+        let clusters = allClusters()
+        let live = Set(clusters.map(\.clusterID))
+        let groups = (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? []
+        let named = clusters.filter { $0.name?.isEmpty == false }.count
+        let bundles = Set(clusters.compactMap(\.personGroupID)).count
+        let covers = clusters.filter { $0.coverFaceID != nil }.count
+        let recorded = groups.reduce(0) { $0 + $1.memberClusterIDs.count }
+        let stale = groups.reduce(0) { $0 + $1.memberClusterIDs.filter { !live.contains($0) }.count }
+        Diagnostics.mark("faces: ledger clusters=\(clusters.count) named=\(named) "
+                         + "bundles=\(bundles) covers=\(covers) groups=\(groups.count) "
+                         + "groupMembers=\(recorded - stale)/\(recorded) stale=\(stale)")
+    }
+
     /// 遷移の前後を突き合わせて診断ログへ出す（ADR-233）。
     ///
     /// ⚠️ **何も減っていなくても 1 行は出す**。「出ていない」と「そもそも走っていない」を

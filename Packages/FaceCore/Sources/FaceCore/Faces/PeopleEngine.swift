@@ -37,6 +37,9 @@ public final class PeopleEngine {
 
     /// ピープルグループ（複数人物の名前付き束＝家族・チームなど）。人物一覧と同時に再解決する。
     public internal(set) var peopleGroups: [PeopleGroupInfo] = []
+    /// 台帳の健全さを起動ごとに 1 回だけ記録したか（ADR-238）。
+    /// ⚠️ 遷移（再クラスタ）は何週間も来ないことがあるので、遷移に頼らず出す。
+    @ObservationIgnored var reportedLedgerHealth = false
     /// 全消去の直前に取った表明の国勢調査（ADR-233）。持ち越しが全部戻ったところで突き合わせる。
     /// ⚠️ メモリに置くので**アプリを閉じると失われる**（数晩に跨る再スキャンでは突き合わせを
     /// 諦める）。永続化すると「いつの控えか」の管理が増えるので、そこまではしない。
@@ -271,6 +274,11 @@ public final class PeopleEngine {
                          + "(>= \(minPhotosForList) photos or named; scanned floor \(minFaces), favs=\(favorites.count))")
         // グループは人物一覧に対する解決なので、一覧が変わったときだけ作り直せば足りる。
         await reloadPeopleGroups()
+        // ⚠️ 台帳の健全さは**遷移に頼らず**起動ごとに 1 回出す（ADR-238）。顔は読まない。
+        if !reportedLedgerHealth {
+            reportedLedgerHealth = true
+            await store.reportLedgerHealth()
+        }
     }
 
     /// 連続する変更（顔スキャンのバッチ完了・レビューの連続回答）を**1 回の再読込にまとめる**。
