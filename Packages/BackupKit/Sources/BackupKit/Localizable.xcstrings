@@ -1,1438 +1,1451 @@
 {
-  "sourceLanguage": "en",
-  "strings": {
-    "Swipe to remove a photo from this set (the copy in the shared folder is removed on the next sync; the original is kept).": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "スワイプでこのセットから写真を外せます（共有フォルダ側のコピーは次回の同期で削除され、元の写真は残ります）。"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "(waiting for backup)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（バックアップ待ち）"
           }
         }
       }
     },
-    "Share this folder with others in the Dropbox app (inviting them as view-only is recommended). It sits under your backup folder, next to your backups, so everything for this device is in one place.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このフォルダを Dropbox アプリで共有できます（閲覧のみで招待することをおすすめします）。バックアップ用フォルダの下にあるので、この端末のものが 1 か所にまとまります。"
+    "%d failed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失敗 %d"
           }
         }
       }
     },
-    "Photo on this device": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この端末の写真"
+    "%d folders" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d フォルダ"
           }
         }
       }
     },
-    "%d failed": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "失敗 %d"
+    "%d offloaded photo(s) are no longer in Dropbox. Those photos only existed there, so they cannot be recovered. Auto offload has been turned off." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロード済みの写真 %d 枚が Dropbox で見つかりません。これらの写真は Dropbox 上にしか無かったため、取り戻せません。自動オフロードを停止しました。"
           }
         }
       }
     },
-    "%d folders": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d フォルダ"
+    "%d photos" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d 枚"
           }
         }
       }
     },
-    "%d offloaded photo(s) are no longer in Dropbox. Those photos only existed there, so they cannot be recovered. Auto offload has been turned off.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロード済みの写真 %d 枚が Dropbox で見つかりません。これらの写真は Dropbox 上にしか無かったため、取り戻せません。自動オフロードを停止しました。"
+    "%d photos remaining — runs automatically at night (charging, Wi-Fi)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "残り %d 枚 — 夜間（充電＋Wi-Fi 時）に自動で進みます"
           }
         }
       }
     },
-    "%d photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚"
+    "%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so receiving devices don't re-analyze them." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d 枚の写真が、共有フォルダ内のこの名前のフォルダへコピーされます。原本とバックアップは移動しません。AI 解析（タグ・検索索引・顔）も同梱されるため、受け取った端末で再解析は不要です。"
           }
         }
       }
     },
-    "%d photos remaining — runs automatically at night (charging, Wi-Fi)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "残り %d 枚 — 夜間（充電＋Wi-Fi 時）に自動で進みます"
+    "%d sets" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d セット"
           }
         }
       }
     },
-    "%d photos will be copied into a folder with this name inside your shared folder. Originals and backups are not moved. AI analysis (tags, search index, faces) is included so receiving devices don't re-analyze them.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚の写真が、共有フォルダ内のこの名前のフォルダへコピーされます。原本とバックアップは移動しません。AI 解析（タグ・検索索引・顔）も同梱されるため、受け取った端末で再解析は不要です。"
+    "%d shared" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有済み %d"
           }
         }
       }
     },
-    "%d sets": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d セット"
+    "%d waiting for backup" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップ待ち %d"
           }
         }
       }
     },
-    "%d shared": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有済み %d"
-          }
-        }
-      }
+    "%lld" : {
+      "comment" : "A number.",
+      "isCommentAutoGenerated" : true
     },
-    "%d waiting for backup": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップ待ち %d"
+    "%lld GB" : {
+      "comment" : "1024 以上の場合は「GB」、それ以外は「MB」",
+      "isCommentAutoGenerated" : true
+    },
+    "%lld MB" : {
+      "comment" : "1024 以上の場合は「GB」、それ以外は「MB」",
+      "isCommentAutoGenerated" : true
+    },
+    "%lld uploaded · %lld already backed up" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld枚アップロード · %2$lld枚はバックアップ済み"
           }
         }
       }
     },
-    "%lld": {
-      "comment": "A number.",
-      "isCommentAutoGenerated": true
+    "10" : {
+      "comment" : "A label for a 10-photo upload limit.",
+      "isCommentAutoGenerated" : true
     },
-    "%lld GB": {
-      "comment": "1024 以上の場合は「GB」、それ以外は「MB」",
-      "isCommentAutoGenerated": true
+    "50" : {
+      "comment" : "A label for a 50-photo option in the backup limit picker.",
+      "isCommentAutoGenerated" : true
     },
-    "%lld MB": {
-      "comment": "1024 以上の場合は「GB」、それ以外は「MB」",
-      "isCommentAutoGenerated": true
+    "100" : {
+      "comment" : "A label for a 100-photo upload limit.",
+      "isCommentAutoGenerated" : true
     },
-    "%lld uploaded · %lld already backed up": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$lld枚アップロード · %2$lld枚はバックアップ済み"
+    "500" : {
+      "comment" : "A label for a 500-photo-limit option.",
+      "isCommentAutoGenerated" : true
+    },
+    "A shared set keeps the photos it had when you created it. Use this to match it to the album or person as it is now (photos removed from the source are also removed from the shared folder)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有セットは作成した時点の写真を保持します。これを使うと、アルバムや人物の現在の内容に合わせ直せます（元から外れた写真は共有フォルダからも削除されます）。"
           }
         }
       }
     },
-    "(waiting for backup)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "（バックアップ待ち）"
+    "Add" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "追加"
           }
         }
       }
-    },
-    "10": {
-      "comment": "A label for a 10-photo upload limit.",
-      "isCommentAutoGenerated": true
     },
-    "100": {
-      "comment": "A label for a 100-photo upload limit.",
-      "isCommentAutoGenerated": true
-    },
-    "50": {
-      "comment": "A label for a 50-photo option in the backup limit picker.",
-      "isCommentAutoGenerated": true
-    },
-    "500": {
-      "comment": "A label for a 500-photo-limit option.",
-      "isCommentAutoGenerated": true
+    "Add folder path (e.g. /MosaicShare)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォルダパスを追加（例: /MosaicShare）"
+          }
+        }
+      }
     },
-    "A shared set keeps the photos it had when you created it. Use this to match it to the album or person as it is now (photos removed from the source are also removed from the shared folder).": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有セットは作成した時点の写真を保持します。これを使うと、アルバムや人物の現在の内容に合わせ直せます（元から外れた写真は共有フォルダからも削除されます）。"
+    "Affected files" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該当するファイル"
           }
         }
       }
     },
-    "Add": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "追加"
+    "All photos are backed up." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべての写真がバックアップ済みです。"
           }
         }
       }
     },
-    "Add folder path (e.g. /MosaicShare)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "フォルダパスを追加（例: /MosaicShare）"
+    "and %d more" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ほか %d 件"
           }
         }
       }
     },
-    "Affected files": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "該当するファイル"
+    "Another device is already sharing analysis" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "別の端末がすでに解析結果を共有しています"
           }
         }
       }
     },
-    "All photos are backed up.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すべての写真がバックアップ済みです。"
+    "Auto offload" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動オフロード"
           }
         }
       }
     },
-    "Auto offload": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動オフロード"
+    "Auto offload is locked until you acknowledge the problem above." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上の内容を確認するまで、自動オフロードは設定できません。"
           }
         }
       }
     },
-    "Auto offload is locked until you acknowledge the problem above.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上の内容を確認するまで、自動オフロードは設定できません。"
+    "Auto offload is not available yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動オフロードはまだ利用できません"
           }
         }
       }
     },
-    "Auto offload is not available yet": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動オフロードはまだ利用できません"
+    "Automatic offloading is not implemented yet. The setting has been reset to “Don't offload”." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動オフロードは未実装です。設定を「オフロードしない」に戻しました。"
           }
         }
       }
     },
-    "Automatic offloading is not implemented yet. The setting has been reset to “Don't offload”.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動オフロードは未実装です。設定を「オフロードしない」に戻しました。"
+    "Back Up Now" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今すぐバックアップ"
           }
         }
       }
     },
-    "Back Up Now": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今すぐバックアップ"
+    "Backed up" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップ済み"
           }
         }
       }
     },
-    "Backed up": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップ済み"
+    "Backup" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップ"
           }
         }
       }
     },
-    "Backup": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップ"
+    "Backup cancelled." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップを中止しました。"
           }
         }
       }
     },
-    "Backup Destination": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップ先"
+    "Backup Destination" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップ先"
           }
         }
       }
     },
-    "Backup cancelled.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップを中止しました。"
+    "Cancel" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "キャンセル"
           }
         }
       }
     },
-    "Cancel": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "キャンセル"
+    "Cancel Backup" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップを中止"
           }
         }
       }
     },
-    "Cancel Backup": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップを中止"
+    "Check candidates (nothing is deleted)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "候補を確認（何も削除されません）"
           }
         }
       }
     },
-    "Check candidates (nothing is deleted)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "候補を確認（何も削除されません）"
+    "Check whether the files were deleted from Dropbox by another device or from the web. Auto offload stays off until you turn it back on yourself." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "別の端末や Web から Dropbox 上のファイルが削除されていないか確認してください。自動オフロードは、ご自分で設定し直すまで停止したままです。"
           }
         }
       }
     },
-    "Check whether the files were deleted from Dropbox by another device or from the web. Auto offload stays off until you turn it back on yourself.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "別の端末や Web から Dropbox 上のファイルが削除されていないか確認してください。自動オフロードは、ご自分で設定し直すまで停止したままです。"
+    "Checking status…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状況を確認中…"
           }
         }
       }
     },
-    "Checking status…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "状況を確認中…"
+    "Cloud Share" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クラウド共有"
           }
         }
       }
     },
-    "Cloud Share": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "クラウド共有"
+    "Cloud Sharing" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クラウド共有"
           }
         }
       }
     },
-    "Cloud Sharing": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "クラウド共有"
+    "Copy selected photos into a shared folder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選んだ写真を共有フォルダへコピーする"
           }
         }
       }
     },
-    "Copy selected photos into a shared folder": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選んだ写真を共有フォルダへコピーする"
+    "Could not check the shared folder." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有フォルダを確認できませんでした。"
           }
         }
       }
     },
-    "Could not check the shared folder.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有フォルダを確認できませんでした。"
+    "Could not prepare the shared folder." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有フォルダを準備できませんでした。"
           }
         }
       }
     },
-    "Could not prepare the shared folder.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有フォルダを準備できませんでした。"
+    "Could not remove the shared folder." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有フォルダを削除できませんでした。"
           }
         }
       }
     },
-    "Could not remove the shared folder.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有フォルダを削除できませんでした。"
+    "Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アルバム・人物・グループから共有セットを作成します。端末写真の共有にはバックアップが必要です（クラウド写真は不要）。このスイッチは「受け取る」機能には影響しません。"
           }
         }
       }
     },
-    "Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アルバム・人物・グループから共有セットを作成します。端末写真の共有にはバックアップが必要です（クラウド写真は不要）。このスイッチは「受け取る」機能には影響しません。"
+    "Delete %d photo(s) from this device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d 枚をこの端末から削除"
           }
         }
       }
     },
-    "Delete %d photo(s) from this device": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚をこの端末から削除"
+    "Delete Set" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セットを削除"
           }
         }
       }
     },
-    "Delete Set": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "セットを削除"
+    "Delete This Set" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このセットを削除"
           }
         }
       }
     },
-    "Delete This Set": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このセットを削除"
+    "Delete this shared set? The folder is removed from the shared area, so people you share with will no longer see these photos. Copies they already saved cannot be removed. Originals and backups are kept." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この共有セットを削除しますか？共有エリアからフォルダが削除され、共有相手はこれらの写真を見られなくなります。相手が既に保存したコピーは削除できません。原本とバックアップは残ります。"
           }
         }
       }
     },
-    "Delete this shared set? The folder is removed from the shared area, so people you share with will no longer see these photos. Copies they already saved cannot be removed. Originals and backups are kept.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この共有セットを削除しますか？共有エリアからフォルダが削除され、共有相手はこれらの写真を見られなくなります。相手が既に保存したコピーは削除できません。原本とバックアップは残ります。"
+    "Deleted %d photo(s), skipped %d." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d 枚を削除、%d 枚をスキップしました。"
           }
         }
       }
     },
-    "Deleted %d photo(s), skipped %d.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%d 枚を削除、%d 枚をスキップしました。"
+    "Deleting…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除中…"
           }
         }
       }
     },
-    "Deleting…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "削除中…"
+    "Deletion asks for system confirmation and can be undone from Recently Deleted for 30 days." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除時はシステムの確認ダイアログが表示され、30 日間は「最近削除した項目」から戻せます。"
           }
         }
       }
     },
-    "Deletion asks for system confirmation and can be undone from Recently Deleted for 30 days.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "削除時はシステムの確認ダイアログが表示され、30 日間は「最近削除した項目」から戻せます。"
+    "Deletion is disabled. Enable it in Developer Options to delete for real." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実削除は無効です。実際に削除するには Developer Options で有効にしてください。"
           }
         }
       }
     },
-    "Deletion is disabled. Enable it in Developer Options to delete for real.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "実削除は無効です。実際に削除するには Developer Options で有効にしてください。"
+    "Destination" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存先"
           }
         }
       }
     },
-    "Destination": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存先"
+    "Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末の写真はバックアップ済みのものだけ共有できます。共有するには設定でバックアップを有効にしてください（クラウド写真はバックアップ不要で共有されます）。"
           }
         }
       }
     },
-    "Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup).": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "端末の写真はバックアップ済みのものだけ共有できます。共有するには設定でバックアップを有効にしてください（クラウド写真はバックアップ不要で共有されます）。"
+    "Device: %@ (last published %@)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末: %@（最終公開 %@）"
           }
         }
       }
     },
-    "Don't offload": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロードしない"
+    "Don't offload" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロードしない"
           }
         }
       }
     },
-    "Dropbox Folder": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dropbox フォルダー"
+    "Dropbox Folder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dropbox フォルダー"
           }
         }
       }
     },
-    "Dropbox is not connected. Connect from Settings → Dropbox.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dropbox に未接続です。設定 → Dropbox から接続してください。"
+    "Dropbox is not connected. Connect from Settings → Dropbox." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dropbox に未接続です。設定 → Dropbox から接続してください。"
           }
         }
       }
     },
-    "Dropbox と照合（記録を検証）": {
-      "comment": "A button to reconcile Dropbox and DropboxBackupMetadata.",
-      "isCommentAutoGenerated": true
+    "Dropbox と照合（記録を検証）" : {
+      "comment" : "A button to reconcile Dropbox and DropboxBackupMetadata.",
+      "isCommentAutoGenerated" : true
     },
-    "Failed — will retry": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "失敗 — 再試行します"
+    "Earlier versions shared into “%@”. Those files were left in place — you can delete that folder in Dropbox once your family has switched to the new location." : {
+
+    },
+    "Failed — will retry" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失敗 — 再試行します"
           }
         }
       }
     },
-    "Folder": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "フォルダー"
+    "Folder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォルダー"
           }
         }
       }
     },
-    "Folders Shared with You": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有されたフォルダ（受け取り側）"
+    "Folders others shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有されたフォルダです。写真はクラウド/すべての写真に表示され、共有された AI 解析（タグ・検索・顔）は自動で取り込まれるため、この端末での再解析は不要です。"
           }
         }
       }
     },
-    "Folders others shared with you. Their photos appear in Cloud/All Photos, and shared AI analysis (tags, search, faces) is imported automatically so this device does not re-analyze them.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有されたフォルダです。写真はクラウド/すべての写真に表示され、共有された AI 解析（タグ・検索・顔）は自動で取り込まれるため、この端末での再解析は不要です。"
+    "Folders Shared with You" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有されたフォルダ（受け取り側）"
           }
         }
       }
     },
-    "I understand": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "確認した"
+    "I understand" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認した"
           }
         }
       }
     },
-    "Import Shared Analysis Now": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有された解析を今すぐ取り込む"
+    "Import Shared Analysis Now" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有された解析を今すぐ取り込む"
           }
         }
       }
     },
-    "Importing…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "取り込み中…"
+    "Importing…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取り込み中…"
           }
         }
       }
     },
-    "Include People Names": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "人物名も共有する"
+    "Include People Names" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "人物名も共有する"
           }
         }
       }
     },
-    "Last result": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前回の結果"
+    "Last result" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前回の結果"
           }
         }
       }
     },
-    "Last synced": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最終反映"
+    "Last synced" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最終反映"
           }
         }
       }
     },
-    "Loading photo library…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真ライブラリを読み込み中…"
+    "Loading photo library…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真ライブラリを読み込み中…"
           }
         }
       }
     },
-    "Maximum number of photos uploaded in a single backup run.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1回のバックアップでアップロードする写真の最大数。"
+    "Maximum number of photos uploaded in a single backup run." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1回のバックアップでアップロードする写真の最大数。"
           }
         }
       }
     },
-    "No backup": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップしない"
+    "never" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "なし"
           }
         }
       }
     },
-    "No photos passed verification.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "検証に合格した写真はありません。"
+    "No backup" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップしない"
           }
         }
       }
     },
-    "No shared sets yet. Open an album and choose “Cloud Share…” to create one.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有セットはまだありません。アルバムを開いて「クラウド共有…」から作成してください。"
+    "No photos passed verification." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検証に合格した写真はありません。"
           }
         }
       }
     },
-    "Not connected to Dropbox.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dropbox に接続されていません。"
+    "No shared sets yet. Open an album and choose “Cloud Share…” to create one." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有セットはまだありません。アルバムを開いて「クラウド共有…」から作成してください。"
           }
         }
       }
     },
-    "OK": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "OK"
+    "Not connected to Dropbox." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dropbox に接続されていません。"
           }
         }
       }
     },
-    "Off": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフ"
+    "Off" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフ"
           }
         }
       }
     },
-    "Offload": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロード"
+    "Offload" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロード"
           }
         }
       }
     },
-    "Offload (free up device storage)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロード（端末の空き容量を増やす）"
+    "Offload (free up device storage)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロード（端末の空き容量を増やす）"
           }
         }
       }
     },
-    "Offload removes photos from this device after verifying that an identical copy exists in Dropbox (content hash match). Deleted photos remain in Recently Deleted for 30 days.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロードは、同一の内容（content hash 一致）が Dropbox に実在することを検証してから、この端末の写真を削除します。削除した写真は 30 日間「最近削除した項目」に残ります。"
+    "Offload removes photos from this device after verifying that an identical copy exists in Dropbox (content hash match). Deleted photos remain in Recently Deleted for 30 days." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロードは、同一の内容（content hash 一致）が Dropbox に実在することを検証してから、この端末の写真を削除します。削除した写真は 30 日間「最近削除した項目」に残ります。"
           }
         }
       }
     },
-    "Offload stopped": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロードを停止しました"
+    "Offload stopped" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロードを停止しました"
           }
         }
       }
     },
-    "On": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オン"
+    "OK" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
           }
         }
       }
     },
-    "Per run": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1回あたり"
+    "On" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オン"
           }
         }
       }
     },
-    "Photos per run": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1 回あたりの枚数"
+    "Per run" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1回あたり"
           }
         }
       }
     },
-    "Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真は Dropbox のこのフォルダーにバックアップされます。フォルダーが無ければ作成されます。"
+    "Photo on this device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末の写真"
           }
         }
       }
     },
-    "Preview which backed-up photos could be safely removed from this device.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップ済みの写真のうち、安全に端末から削除できるものを確認できます。"
+    "Photos per run" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 回あたりの枚数"
           }
         }
       }
     },
-    "Provide": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提供する"
+    "Photos will be backed up to this folder in your Dropbox. The folder will be created if it doesn't exist." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真は Dropbox のこのフォルダーにバックアップされます。フォルダーが無ければ作成されます。"
           }
         }
       }
     },
-    "Reading albums and people…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アルバムと人物を読み込み中…"
+    "Preview which backed-up photos could be safely removed from this device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップ済みの写真のうち、安全に端末から削除できるものを確認できます。"
           }
         }
       }
     },
-    "Ready to offload (verified)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフロード可能（検証済み）"
+    "Provide" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供する"
           }
         }
       }
     },
-    "Receive": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "受ける"
+    "Publish Analysis Now" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今すぐ公開"
           }
         }
       }
     },
-    "Receive Shared Albums": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有アルバムを受け取る"
+    "Publish from This Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末で公開する"
           }
         }
       }
     },
-    "Requesting photo library access…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真ライブラリへのアクセスを要求中…"
+    "Publishing from two devices stores the same analysis twice in Dropbox. Turn this off on the other device, or take over here if that device is gone." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2 台から公開すると、同じ解析が Dropbox に二重に保存されます。もう一方の端末でオフにするか、その端末が無い場合はこの端末で引き継いでください。"
           }
         }
       }
     },
-    "Saving metadata…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "メタデータを保存中…"
+    "Publishing…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公開中…"
           }
         }
       }
     },
-    "Selected photos are copied into the shared folder. Originals and backups are never touched.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選んだ写真は共有フォルダへコピーされます。原本とバックアップには一切触れません。"
+    "Reading albums and people…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アルバムと人物を読み込み中…"
           }
         }
       }
     },
-    "Set name": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "セット名"
+    "Ready to offload (verified)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフロード可能（検証済み）"
           }
         }
       }
     },
-    "Sets also sync automatically after each backup. Copies are made on the Dropbox server, so no photo data is re-uploaded.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "セットはバックアップ完了後にも自動で反映されます。コピーは Dropbox サーバー上で行われるため、写真データの再アップロードは発生しません。"
+    "Receive" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "受ける"
           }
         }
       }
     },
-    "Share": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有"
+    "Receive Shared Albums" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有アルバムを受け取る"
           }
         }
       }
     },
-    "Share Your Photos": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自分の写真を共有する"
+    "Requesting photo library access…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真ライブラリへのアクセスを要求中…"
           }
         }
       }
     },
-    "Share this folder with others in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このフォルダを Dropbox アプリで共有相手に共有してください（閲覧のみでの招待を推奨）。セットはこの中に作成されます。"
+    "Saving metadata…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メタデータを保存中…"
           }
         }
       }
     },
-    "Shared": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有済み"
+    "Selected photos are copied into the shared folder. Originals and backups are never touched." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選んだ写真は共有フォルダへコピーされます。原本とバックアップには一切触れません。"
           }
         }
       }
     },
-    "Shared Folder (yours)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有フォルダ（自分）"
+    "Set name" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セット名"
           }
         }
       }
     },
-    "Shared Set": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有セット"
+    "Sets also sync automatically after each backup. Copies are made on the Dropbox server, so no photo data is re-uploaded." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セットはバックアップ完了後にも自動で反映されます。コピーは Dropbox サーバー上で行われるため、写真データの再アップロードは発生しません。"
           }
         }
       }
     },
-    "Shared Sets": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有セット"
+    "Share" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有"
           }
         }
       }
     },
-    "Shared folder": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有フォルダ"
+    "Share Photo Analysis" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真の解析結果を共有"
           }
         }
       }
     },
-    "Shares the names you gave to people, so the same person is already named on your family's devices. Faces are always shared (that is how people are grouped) — this only controls the names. Turning it off does not remove names already shared.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "あなたが付けた人物名も一緒に共有します。家族の端末でも同じ人に名前が付いた状態になります。顔そのものは常に共有されます（人物のまとまりを作るために必要です）。この設定は名前だけを切り替えます。オフにしても、すでに共有済みの名前は消えません。"
+    "Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じ Dropbox に接続している人へ、Dropbox 上の写真のタグ・顔・名前・撮影日を共有します。相手の端末が同じ写真を解析し直さずに済みます。写真はコピーされません。"
           }
         }
       }
     },
-    "Skipped (kept on device)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "スキップ（端末に保持）"
+    "Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\n⚠️ Turn this on for ONE device only. Each device that publishes stores its own full copy of the analysis (100–200MB for 68,000 photos), so two devices means paying twice for the same thing." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じ Dropbox に接続している人へ、Dropbox 上の写真のタグ・顔・名前・撮影日を共有します。相手の端末が同じ写真を解析し直さずに済みます。写真はコピーされません。\n\n⚠️ オンにするのは 1 台だけにしてください。公開する端末はそれぞれ解析の完全なコピー（写真 6.8 万枚で 100〜200MB）を保存するので、2 台だと同じものに二重の容量がかかります。"
           }
         }
       }
     },
-    "Some photos are not backed up yet. They are prioritized in the next backup and will be shared right after.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "まだバックアップされていない写真があります。次回のバックアップで優先的に処理され、完了しだい共有されます。"
+    "Share this folder with others in the Dropbox app (inviting them as view-only is recommended). It sits under your backup folder, next to your backups, so everything for this device is in one place." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このフォルダを Dropbox アプリで共有できます（閲覧のみで招待することをおすすめします）。バックアップ用フォルダの下にあるので、この端末のものが 1 か所にまとまります。"
           }
         }
       }
     },
-    "Stop Sharing": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有を停止"
+    "Share this folder with others in the Dropbox app (inviting them as view-only is recommended). Sets are created inside it." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このフォルダを Dropbox アプリで共有相手に共有してください（閲覧のみでの招待を推奨）。セットはこの中に作成されます。"
           }
         }
       }
     },
-    "Stop cloud sharing? The folder is removed from your shared area, so people you share with will no longer see these photos. Copies they already saved can't be removed. The album or person, your photos, and your backup are all kept.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "クラウド共有を停止しますか？ 共有フォルダから削除されるので、共有相手にはこれらの写真が見えなくなります。相手が既に保存したコピーは取り消せません。アルバムや人物、端末の写真、バックアップはそのまま残ります。"
+    "Share Your Photos" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自分の写真を共有する"
           }
         }
       }
     },
-    "Swipe to remove a photo from this set (the copy in the shared folder is deleted; the original is kept).": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "スワイプでこのセットから写真を外せます（共有フォルダのコピーは削除・原本は残ります）。"
+    "Shared" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有済み"
           }
         }
       }
     },
-    "Sync Now": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今すぐ反映"
+    "Shared folder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有フォルダ"
           }
         }
       }
     },
-    "Syncing is still running. Try again in a moment.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "反映が実行中です。少し待ってからもう一度お試しください。"
+    "Shared Folder (yours)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有フォルダ（自分）"
           }
         }
       }
     },
-    "Syncing…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "反映中…"
+    "Shared Set" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有セット"
           }
         }
       }
     },
-    "The album or person this set came from no longer exists, so it can't be updated automatically. The shared photos stay until you delete the set.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このセットの作成元（アルバム・人物）が見つからないため、自動更新できません。共有中の写真はセットを削除するまで残ります。"
+    "Shared Sets" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有セット"
           }
         }
       }
     },
-    "This set has an invalid folder name.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このセットのフォルダ名が正しくありません。"
+    "Shares the names you gave to people, so the same person is already named on your family's devices. Faces are always shared (that is how people are grouped) — this only controls the names. Turning it off does not remove names already shared." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "あなたが付けた人物名も一緒に共有します。家族の端末でも同じ人に名前が付いた状態になります。顔そのものは常に共有されます（人物のまとまりを作るために必要です）。この設定は名前だけを切り替えます。オフにしても、すでに共有済みの名前は消えません。"
           }
         }
       }
     },
-    "Unlimited": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無制限"
+    "Skipped (kept on device)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキップ（端末に保持）"
           }
         }
       }
     },
-    "Update to Current Contents": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今の内容に更新"
+    "Some photos are not backed up yet. They are prioritized in the next backup and will be shared right after." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだバックアップされていない写真があります。次回のバックアップで優先的に処理され、完了しだい共有されます。"
           }
         }
       }
     },
-    "Updating…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更新中…"
+    "Stop cloud sharing? The folder is removed from your shared area, so people you share with will no longer see these photos. Copies they already saved can't be removed. The album or person, your photos, and your backup are all kept." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クラウド共有を停止しますか？ 共有フォルダから削除されるので、共有相手にはこれらの写真が見えなくなります。相手が既に保存したコピーは取り消せません。アルバムや人物、端末の写真、バックアップはそのまま残ります。"
           }
         }
       }
     },
-    "Upload Limit": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アップロード上限"
+    "Stop Sharing" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有を停止"
           }
         }
       }
     },
-    "Uploading %lld of %lld": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アップロード中 %1$lld / %2$lld"
+    "Swipe to remove a photo from this set (the copy in the shared folder is deleted; the original is kept)." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スワイプでこのセットから写真を外せます（共有フォルダのコピーは削除・原本は残ります）。"
           }
         }
       }
     },
-    "Verifying…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "検証中…"
+    "Swipe to remove a photo from this set (the copy in the shared folder is removed on the next sync; the original is kept)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スワイプでこのセットから写真を外せます（共有フォルダ側のコピーは次回の同期で削除され、元の写真は残ります）。"
           }
         }
       }
     },
-    "View albums others shared with you": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共有されたアルバムを見る"
+    "Sync Now" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今すぐ反映"
           }
         }
       }
     },
-    "Waiting for backup": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックアップ待ち"
+    "Syncing is still running. Try again in a moment." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映が実行中です。少し待ってからもう一度お試しください。"
           }
         }
       }
     },
-    "Waiting to sync": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "反映待ち"
+    "Syncing…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映中…"
           }
         }
       }
     },
-    "When free space on this device drops below the selected amount, verified old photos will be offloaded automatically.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "端末の空き容量が選んだ値を下回ったら、検証済みの古い写真から自動的にオフロードします。"
+    "The album or person this set came from no longer exists, so it can't be updated automatically. The shared photos stay until you delete the set." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このセットの作成元（アルバム・人物）が見つからないため、自動更新できません。共有中の写真はセットを削除するまで残ります。"
           }
         }
       }
     },
-    "Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この機能は単独で動きます。バックアップや自分の写真の共有は不要で、必要なのは Dropbox 接続だけです。"
+    "This set has an invalid folder name." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このセットのフォルダ名が正しくありません。"
           }
         }
       }
     },
-    "and %d more": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ほか %d 件"
+    "Unlimited" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無制限"
           }
         }
       }
-    },
-    "まだ記録がありません。先にバックアップを実行してください。": {
-      "comment": "A message displayed when there are no backup records.",
-      "isCommentAutoGenerated": true
-    },
-    "アップロード済み ID": {
-      "comment": "A label for the number of uploaded IDs.",
-      "isCommentAutoGenerated": true
-    },
-    "オフロード：実削除を許可": {
-      "comment": "A toggle to enable or disable the real deletion of backed-up files.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップのメタデータが読み込まれていません。": {
-      "comment": "A message displayed when Dropbox metadata is not yet loaded.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ記録": {
-      "comment": "A label for the backup record count.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ記録をすべて消去（進捗＋記録）": {
-      "comment": "A button that deletes all backup records (progress and actual files) permanently.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：オフロード": {
-      "comment": "A section of the Dropbox backup debug section.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：フォルダ確認": {
-      "comment": "A section that checks if the Dropbox backup folder is correct.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：メタデータ": {
-      "comment": "A section in the backup debug section that shows the number of metadata entries, people, albums, and favorites.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：ログ": {
-      "comment": "A section that displays the backup log.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：端末ライブラリ": {
-      "comment": "A section in the debug section of the SwiftData backup.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：記録（ローカル DB）": {
-      "comment": "A section in the backup debug view that shows the number of backup records in the local database.",
-      "isCommentAutoGenerated": true
-    },
-    "バックアップ：進捗": {
-      "comment": "A section title for the backup progress debugging section.",
-      "isCommentAutoGenerated": true
-    },
-    "パスはフォルダでなくファイルです": {
-      "comment": "A label displayed when a path is found to be a file instead of a folder.",
-      "isCommentAutoGenerated": true
-    },
-    "フォルダあり": {
-      "comment": "A label indicating that a folder exists.",
-      "isCommentAutoGenerated": true
     },
-    "フォルダを確認": {
-      "comment": "A button that checks the Dropbox folder.",
-      "isCommentAutoGenerated": true
-    },
-    "メタデータのパス": {
-      "comment": "A label for the path to the metadata file.",
-      "isCommentAutoGenerated": true
-    },
-    "写真はバックアップ済みですが、ユーザー作成アルバムに属するものはありません。": {
-      "comment": "A message displayed in the backup debug section if the user has no albums.",
-      "isCommentAutoGenerated": true
-    },
-    "照合中…": {
-      "comment": "A label displayed while Dropbox と照合（記録を検証）のボタンが動作中。",
-      "isCommentAutoGenerated": true
-    },
-    "確認中…": {
-      "comment": "A label displayed while Dropbox is checking the backup folder.",
-      "isCommentAutoGenerated": true
-    },
-    "見つかりません（作成されます）": {
-      "comment": "A label that indicates that a folder is either not found or will be created.",
-      "isCommentAutoGenerated": true
-    },
-    "読み込み中…": {
-      "comment": "A placeholder text displayed when loading the local database.",
-      "isCommentAutoGenerated": true
-    },
-    "Share Photo Analysis": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写真の解析結果を共有"
+    "Update to Current Contents" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今の内容に更新"
           }
         }
       }
     },
-    "Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "同じ Dropbox に接続している人へ、Dropbox 上の写真のタグ・顔・名前・撮影日を共有します。相手の端末が同じ写真を解析し直さずに済みます。写真はコピーされません。"
+    "Updating…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新中…"
           }
         }
       }
     },
-    "Publish Analysis Now": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今すぐ公開"
+    "Upload Limit" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アップロード上限"
           }
         }
       }
     },
-    "Publishing…": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "公開中…"
+    "Uploading %lld of %lld" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アップロード中 %1$lld / %2$lld"
           }
         }
       }
     },
-    "Another device is already sharing analysis": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "別の端末がすでに解析結果を共有しています"
+    "Verifying…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検証中…"
           }
         }
       }
     },
-    "Device: %@ (last published %@)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "端末: %@（最終公開 %@）"
+    "View albums others shared with you" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有されたアルバムを見る"
           }
         }
       }
     },
-    "never": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "なし"
+    "Waiting for backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックアップ待ち"
           }
         }
       }
     },
-    "Publishing from two devices stores the same analysis twice in Dropbox. Turn this off on the other device, or take over here if that device is gone.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "2 台から公開すると、同じ解析が Dropbox に二重に保存されます。もう一方の端末でオフにするか、その端末が無い場合はこの端末で引き継いでください。"
+    "Waiting to sync" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映待ち"
           }
         }
       }
     },
-    "Publish from This Device": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この端末で公開する"
+    "When free space on this device drops below the selected amount, verified old photos will be offloaded automatically." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末の空き容量が選んだ値を下回ったら、検証済みの古い写真から自動的にオフロードします。"
           }
         }
       }
     },
-    "Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\n⚠️ Turn this on for ONE device only. Each device that publishes stores its own full copy of the analysis (100–200MB for 68,000 photos), so two devices means paying twice for the same thing.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "同じ Dropbox に接続している人へ、Dropbox 上の写真のタグ・顔・名前・撮影日を共有します。相手の端末が同じ写真を解析し直さずに済みます。写真はコピーされません。\n\n⚠️ オンにするのは 1 台だけにしてください。公開する端末はそれぞれ解析の完全なコピー（写真 6.8 万枚で 100〜200MB）を保存するので、2 台だと同じものに二重の容量がかかります。"
+    "Works on its own — no backup and no sharing of your photos required. Only a Dropbox connection is needed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この機能は単独で動きます。バックアップや自分の写真の共有は不要で、必要なのは Dropbox 接続だけです。"
           }
         }
       }
+    },
+    "アップロード済み ID" : {
+      "comment" : "A label for the number of uploaded IDs.",
+      "isCommentAutoGenerated" : true
+    },
+    "オフロード：実削除を許可" : {
+      "comment" : "A toggle to enable or disable the real deletion of backed-up files.",
+      "isCommentAutoGenerated" : true
+    },
+    "パスはフォルダでなくファイルです" : {
+      "comment" : "A label displayed when a path is found to be a file instead of a folder.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：オフロード" : {
+      "comment" : "A section of the Dropbox backup debug section.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：フォルダ確認" : {
+      "comment" : "A section that checks if the Dropbox backup folder is correct.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：メタデータ" : {
+      "comment" : "A section in the backup debug section that shows the number of metadata entries, people, albums, and favorites.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：ログ" : {
+      "comment" : "A section that displays the backup log.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：端末ライブラリ" : {
+      "comment" : "A section in the debug section of the SwiftData backup.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：記録（ローカル DB）" : {
+      "comment" : "A section in the backup debug view that shows the number of backup records in the local database.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ：進捗" : {
+      "comment" : "A section title for the backup progress debugging section.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップのメタデータが読み込まれていません。" : {
+      "comment" : "A message displayed when Dropbox metadata is not yet loaded.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ記録" : {
+      "comment" : "A label for the backup record count.",
+      "isCommentAutoGenerated" : true
+    },
+    "バックアップ記録をすべて消去（進捗＋記録）" : {
+      "comment" : "A button that deletes all backup records (progress and actual files) permanently.",
+      "isCommentAutoGenerated" : true
+    },
+    "フォルダあり" : {
+      "comment" : "A label indicating that a folder exists.",
+      "isCommentAutoGenerated" : true
+    },
+    "フォルダを確認" : {
+      "comment" : "A button that checks the Dropbox folder.",
+      "isCommentAutoGenerated" : true
+    },
+    "まだ記録がありません。先にバックアップを実行してください。" : {
+      "comment" : "A message displayed when there are no backup records.",
+      "isCommentAutoGenerated" : true
+    },
+    "メタデータのパス" : {
+      "comment" : "A label for the path to the metadata file.",
+      "isCommentAutoGenerated" : true
+    },
+    "写真はバックアップ済みですが、ユーザー作成アルバムに属するものはありません。" : {
+      "comment" : "A message displayed in the backup debug section if the user has no albums.",
+      "isCommentAutoGenerated" : true
+    },
+    "照合中…" : {
+      "comment" : "A label displayed while Dropbox と照合（記録を検証）のボタンが動作中。",
+      "isCommentAutoGenerated" : true
+    },
+    "確認中…" : {
+      "comment" : "A label displayed while Dropbox is checking the backup folder.",
+      "isCommentAutoGenerated" : true
+    },
+    "見つかりません（作成されます）" : {
+      "comment" : "A label that indicates that a folder is either not found or will be created.",
+      "isCommentAutoGenerated" : true
+    },
+    "読み込み中…" : {
+      "comment" : "A placeholder text displayed when loading the local database.",
+      "isCommentAutoGenerated" : true
     }
   },
-  "version": "1.1"
+  "version" : "1.1"
 }

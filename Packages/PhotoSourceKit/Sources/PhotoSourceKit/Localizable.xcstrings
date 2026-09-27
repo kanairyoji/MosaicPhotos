@@ -1,26 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "On this device" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この端末"
-          }
-        }
-      }
-    },
-    "More" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "その他"
-          }
-        }
-      }
-    },
     "" : {
 
     },
@@ -123,6 +103,7 @@
       }
     },
     "AI description" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
@@ -323,6 +304,7 @@
       }
     },
     "Generating while charging…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
@@ -378,6 +360,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ハートを付けた写真がここに表示されます。"
+          }
+        }
+      }
+    },
+    "More" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "その他"
           }
         }
       }
@@ -448,6 +440,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未バックアップ"
+          }
+        }
+      }
+    },
+    "On this device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末"
           }
         }
       }
