@@ -71,7 +71,10 @@ extension FaceStore {
         // 値（`FaceRow`）へ写してページごとに手放す。道具は既にあったのに、ここだけ繋がっていなかった。
         let t0 = PerfTrace.nowNs()
         var facesByCluster: [Int: [FaceRow]] = [:]
-        forEachFacePage { page in
+        // ⚠️ 読む列は**表示に要るものだけ**（ADR-88/96）。`embedding`（1 顔 1KB）と
+        // `torsoEmbedding` は一覧に**一切使わない**のに、入れると 30MB 超を毎回読む。
+        forEachFacePage(columns: [\.faceID, \.refKey, \.clusterID,
+                                 \.bx, \.by, \.bw, \.bh, \.quality, \.hasSmile]) { page in
             for f in page where f.clusterID >= 0 {
                 facesByCluster[f.clusterID, default: []].append(FaceRow(f))
             }

@@ -347,7 +347,9 @@ extension FaceStore {
         // 1) 値だけ集めて違反を見つける（使い捨てコンテキストのページ読み）
         // 2) 直す顔だけを本体のコンテキストで引いて書き換える
         var ranksByPhotoCluster: [String: [FaceStore.CoverRank]] = [:]
-        forEachFacePage { page in
+        // ⚠️ 読む列は `CoverRank` が要るものだけ（埋め込みは使わない）。
+        forEachFacePage(columns: [\.faceID, \.refKey, \.clusterID,
+                                 \.quality, \.hasSmile, \.bw]) { page in
             for f in page where f.clusterID >= 0 {
                 ranksByPhotoCluster["\(f.refKey)|\(f.clusterID)", default: []].append(
                     FaceStore.CoverRank(f))

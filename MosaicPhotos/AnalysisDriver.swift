@@ -149,6 +149,12 @@ final class AnalysisDriver {
                                     faceScanPossible: people.isFaceModelAvailable,
                                     lastChoice: lastTurn)
         if turn != .none { lastTurn = turn }
+        // ⚠️ **判断は必ず記録に出す**（実機ログ diagnostics-98 で踏んだ）。この行を書いたあと
+        // 実装を整理する過程で消してしまい、実機確認の手順（G8「`driver: turn=` で交互に
+        // なっている」）が**確かめられない状態**になっていた。
+        // 見る手順が指している文字列は、消してはいけない。
+        Diagnostics.mark("driver: turn=\(turn.rawValue) "
+                         + "(scanning=\(people.isScanning) tagging=\(engine.isTagging))")
 
         // タグ → 埋め込み。処理枠は滞留した前面の実行を明け渡させてから始める（ADR-95）——
         // 眠ったまま実行中フラグを握られていると、窓が丸ごと空転する（diagnostics-38）。
@@ -169,8 +175,16 @@ final class AnalysisDriver {
             let candidates = await candidatesReusingCache(now: now)
             let allowSim = BackgroundYield.exemption == .debug
                 || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
-            if !Task.isCancelled, BackgroundYield.allows(.localTrickle) {
+            // ⚠️⚠️ **始める直前にもう一度見る**（実機ログ diagnostics-98 で踏んだ・ADR-196 と同じ形）。
+            // 順番を決めた時点ではタグ/埋め込みは止まっていたが、この下の候補の列挙に**11 秒**
+            // かかるので、その間に向こうが始まっていることがある。実機ではまさにそうなり、
+            // 顔モデルと CLIP が同時に載って footprint が **942MB** まで上がった。
+            // ADR-196 が言っている「入口の判定と 1 単位ごとの譲り判定は同じ式を使う」の通り
+            // ——入口で「入ってよい」と言われたまま、長い準備のあとに確かめずに踏み込んでいた。
+            if !Task.isCancelled, BackgroundYield.allows(.localTrickle), !engine.isTagging {
                 people.startScan(candidateRefKeys: candidates.ordered, allowSimulator: allowSim)
+            } else if engine.isTagging {
+                Diagnostics.mark("driver: 顔の開始を見送る（列挙中にタグ/埋め込みが始まった）")
             }
             // ⚠️ **起こせなかった回こそ、残作業を測っておく**（ADR-207）。測らないと
             // 「終わったから 0」と「始められなかったから 0」が区別できず、完了の表示が嘘になる。

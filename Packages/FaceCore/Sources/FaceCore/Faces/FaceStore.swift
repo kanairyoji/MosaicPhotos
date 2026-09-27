@@ -449,7 +449,17 @@ actor FaceStore {
     /// テスト用: ページ読みで読んだ**行数**（本体のコンテキストに登録していない行）。
     var pagedFaceRowsForTesting = 0
 
-    func forEachFacePage(_ body: ([DetectedFace]) -> Void) {
+    /// - Parameter columns: **読む列**（`propertiesToFetch`）。
+    ///
+    /// ⚠️⚠️ **既定値を置かない**（実機ログ diagnostics-98 で踏んだ）。ここは列を省略できたので、
+    /// ページ読みが**全列＝埋め込み（1 顔 1KB）と胴体埋め込みまで**読んでいた。
+    /// ADR-227 が減らしたのは**常駐**（ページごとに手放す）だけで、**I/O は減っていなかった**
+    /// ——31,640 顔なら 1 回の走査で 30MB 超を読む。しかも ADR-88/96 が人物一覧に入れた
+    /// 射影を、ページ読みへ載せ替えたときに**そのまま落として**しまった
+    /// （`people.load.faces` が実機で 9.4 秒＝所要の 90%）。
+    /// 省略できる引数は省略される。**必須にして、呼び出し側に毎回決めさせる**。
+    func forEachFacePage(columns: [PartialKeyPath<DetectedFace>],
+                        _ body: ([DetectedFace]) -> Void) {
         var cursor: String?
         while true {
             let ctx = ModelContext(modelContainer)
@@ -461,6 +471,8 @@ actor FaceStore {
             } else {
                 descriptor = FetchDescriptor<DetectedFace>(sortBy: [SortDescriptor(\.faceID)])
             }
+            // ⚠️ 並べ替えと続きの判定に `faceID` を使うので、必ず含める。
+            descriptor.propertiesToFetch = columns.contains(\.faceID) ? columns : columns + [\.faceID]
             descriptor.fetchLimit = Self.readPageSize
             guard let page = try? ctx.fetch(descriptor), !page.isEmpty else { return }
             pagedFaceRowsForTesting += page.count

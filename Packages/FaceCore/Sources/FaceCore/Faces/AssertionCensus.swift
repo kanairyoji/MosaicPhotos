@@ -83,6 +83,19 @@ public struct AssertionCensus: Sendable, Equatable {
         return groups.reduce(0) { $0 + $1.memberClusterIDs.filter(live.contains).count }
     }
 
+    /// 記録に残っているが**もう誰も指していない**メンバーの数（＝既存の壊れ）。
+    ///
+    /// ⚠️ **警告ではなく数として出す**（ADR-235 の続き）。実機ログ diagnostics-97 で監査が
+    /// 「金居家に解決できないメンバー 1」と言ったのに、掃除の入口
+    /// （`peopleGroups: unresolved members`）は出なかった——監査は台帳のクラスタ行を見て、
+    /// 表示側（`PeopleGroupInfo.resolve`）は人物一覧を見るので、**母数が違う**。
+    /// どちらが正しいか log だけでは決められなかったので、毎回の 1 行に数として載せる
+    /// （警告にすると毎晩鳴って記録を埋める＝ADR-235 で直したことの繰り返しになる）。
+    public var staleGroupMemberCount: Int {
+        let live = Set(people.map(\.clusterID))
+        return groups.reduce(0) { $0 + $1.memberClusterIDs.filter { !live.contains($0) }.count }
+    }
+
     // MARK: - 突き合わせ
 
     /// 見つかったこと 1 件。
@@ -226,7 +239,8 @@ public struct AssertionCensus: Sendable, Equatable {
             + "covers=\(pair(before.coverCount, after.coverCount)) "
             + "confirmed=\(pair(before.confirmedCount, after.confirmedCount)) "
             + "groupMembers=\(pair(before.resolvedGroupMemberCount, after.resolvedGroupMemberCount)) "
-            + "groups=\(pair(before.groups.count, after.groups.count))"
+            + "groups=\(pair(before.groups.count, after.groups.count)) "
+            + "stale=\(pair(before.staleGroupMemberCount, after.staleGroupMemberCount))"
     }
 }
 

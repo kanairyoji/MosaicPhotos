@@ -129,6 +129,18 @@ struct AssertionCensusTests {
         #expect(lost.first?.detail.contains("解決できなくなった 1") == true, "\(lost)")
     }
 
+    /// ⚠️ **既存の壊れは警告ではなく数**（ADR-235）。警告にすると毎晩鳴って記録を埋める。
+    @Test("解決できない記録上のメンバーは、警告ではなく数で出る")
+    func staleMembersAreCountedNotWarned() {
+        let g = AssertionCensus.Group(id: UUID(), name: "家族", memberClusterIDs: [1, 99])
+        let c = census([person(1, name: "父", photos: ["a"])], [g])
+        #expect(c.staleGroupMemberCount == 1)
+        #expect(c.resolvedGroupMemberCount == 1)
+        // 前後で変わっていないので、警告（findings）にはならない。
+        #expect(AssertionCensus.diff(before: c, after: c).isEmpty)
+        #expect(AssertionCensus.summary(before: c, after: c).contains("stale=1"))
+    }
+
     @Test("グループの行ごと消えたら報告する")
     func reportsLostGroups() {
         let g = AssertionCensus.Group(id: UUID(), name: "家族", memberClusterIDs: [1])
@@ -180,6 +192,7 @@ struct AssertionCensusTests {
         #expect(line.contains("confirmed=3→0"), "\(line)")
         #expect(line.contains("groupMembers=2→1"), "\(line)")
         #expect(line.contains("groups=1"), "変わっていない項目も数を出す: \(line)")
+        #expect(line.contains("stale="), "既存の壊れの数が出ていない: \(line)")
     }
 
     // MARK: - 台帳から数える（ストア連携）
