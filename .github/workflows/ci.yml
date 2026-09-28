@@ -62,6 +62,12 @@ jobs:
           fi
           python3 scripts/check_removed_symbols.py "$BASE"
 
+      # ⚠️ 実機確認の手順が指している診断ログが、コードに実在するかを確かめる。
+      # 実際に踏んだ（2026-09-27）: 手順は「`driver: turn=` で交互になっている」と書いてあるのに
+      # 実装整理でその行を消しており、実機で 1 晩かけても何も確かめられない状態だった。
+      - name: Check diagnostics referenced by device-verification
+        run: python3 scripts/check_diagnostic_strings.py
+
   ios:
     name: iOS simulator tests (best-effort)
     runs-on: macos-15

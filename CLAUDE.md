@@ -157,6 +157,30 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
 - **AI アルバム検索は「タグ台帳＋LLM審査」の多層構成（ADR-23/24）**: 解釈（LLM・`FoundationModelsQueryUnderstanding`）は**作成/編集時に 1 回だけ**実行し `AIAlbumInterpretationStore`（JSONFileStore・版管理）へ永続化する（起動時・写真追加時に LLM は走らない）。小型 LLM の構造化出力は信用せず、`QuerySpecSanitizer`（プレースホルダ除去・カタログ丸写し検出・include/exclude 衝突解消）＋**決定的レイヤー**（日付=`RelativeDateParser` が唯一の出典・place/people はカタログ/原文接地・`JapaneseVisualLexicon` で頻出視覚語と人物否定を抽出）で必ず接地する。検索は「ハード条件（`QueryEvaluator`）→ **Vision シーンタグ一致（離散・閾値レス）**＋ CLIP 対比（除外は肯定/否定ベクトルの相対判定のみ・絶対閾値なし）＋字句（`LexicalSearch`）の RRF 融合（`HybridFusion`）→ **証拠ゲート**（除外つきはタグ/顔実測/人数実測の証拠必須）→ **FM LLM 審査**（`AlbumVerifier`・keep/drop/unsure・unsure は最大2回再判定の多数決）→ 空振り時はプローブ拡張で 1 回だけ再検索」。再評価は増分（新規埋め込み分のみ採点しスコアプールへマージ）＋ドリフト検知のフル再評価。旧フラット `AIAlbumQuery` は解釈フォールバック（RuleBased/FM flat）用に残る（検索 API は撤去済み）。**検索の精度はクエリ集ハーネスのデータセット計測で決める**（ADR-104・`docs/architecture-note/records/search-quality.md`＝台帳・COCO/Caltech・`SearchEvalTests`/`SearchEvalCaltechTests`。解釈・照合・接地・証拠まわりを変えたら両ハーネスを回して差分を台帳へ記す。体感・個別事例では決めない）
 - **知覚 seam はプロトコル＋`MobileCLIPKit` 実装**: `PhotoPerceptionProvider`(refKey→CLIP 埋め込み・ローカル/クラウド両対応) / `TextEmbedder` / `QueryTranslator`(Foundation Models) / `LabelProvider`(表示タグ) は `AutoAlbumCore` のプロトコルで、実体は `MobileCLIPKit`（`AIPerceptionAdapters` / `AILanguageAdapters` / `CLIPDisplayLabeler`）が `MobileCLIPRuntime`・`FoundationModels` で実装する。アプリの `AutoAlbumAdapters`（Composition Root）が `AutoAlbumEngine` の seam に注入する。`PhotoSourceKit` は `AutoAlbumCore` に依存せず、フル画像の付加情報は `photoInsight` 環境クロージャ経由で受け取る（レイヤー分離）
 - **表示タグ＝検索と同一の台帳**: フル画像のタグ欄（常時表示）は **Vision シーンタグ（`TagStore`・検索の一次ランキングと同一ソース）を第一**に、`CLIPDisplayLabeler`（約300語ゼロショット）で補完する。タグは **TagsV1 別コンテナ**（`PhotoTagRecord`）で、夜間バッチ（`TagTagger`）が Vision タグ → CLIP 埋め込みの順に付与する。※ VLM キャプション（AI description）は廃止（ADR-108・`PhotoTagRecord.caption` フィールドはスキーマ互換のため残置）
+- **同じ判断を 2 か所で書いたら、1 つの関数へ寄せる（ADR-196 の一般形・2026-09-28）**:
+  実機で繰り返し出ている不具合の**最多の形**がこれ——「同じ規則が複数の場所に散っていて、
+  片方だけ直す」。1 セッションで 6 件出た（`isUserClaimed` / グループ編集シート / 枚数フロア /
+  ログの間引き / `promoteShadow` の控え / ページ読みの射影）。
+  ⚠️ **テストを増やしても捕まらない**。各所のテストは通る。壊れているのは「規則が 1 つでない」こと。
+  - 判断を関数にして、**必要な入力を必須の引数にする**。⚠️ **既定値を置かない**
+    ——置くと呼び出し側が何も考えずに省略でき、それが漏れの入口になる
+    （`isUserClaimed(_:peopleGroupMembers:)` と `forEachFacePage(columns:)` が実例。
+    どちらも既定値があったせいで 1 か所だけ古い規則のまま動いていた）。
+  - 「ユーザーの表明」「読む列」「走ってよいか」のような**横断概念**は、読む場所を増やすたびに
+    漏れる。増やすときは**既存の読み手を全部 grep して数える**。
+  - ADR-196 は「ゲートの表」の話として書いたが、**表に限らない**。
+- **観測（ログ・監査）にもテストを書く（2026-09-28）**: 実機で見つかる不具合の 1/3 は
+  「入れた観測が働いていない」だった。⚠️ コードにはテストがあるのに、**ログの行と
+  「それを見る手順」にはテストが無かった**——実機確認の手順が指すログを実装整理で消し、
+  1 晩かけて何も確かめられない状態を作った。
+  `scripts/check_diagnostic_strings.py`（CI・ブロッキング）が
+  `device-verification.md` の `<!-- expected-diagnostics -->` に挙げた文字列をコードから探す。
+  **手順を足したらこの一覧にも 1 行足す**（補間の手前まで）。
+- **「実機で確かめる」と書くなら、答えが出る計測点を同じコミットに入れる（2026-09-28）**:
+  規模と同時実行は原理的に実機でしか出ないので、**1 往復を無駄にしない**ことが効率の全部。
+  `people.load.faces` / `.assemble` を足したら 1 往復で原因が分かった（成功例）。
+  ⚠️ 分析にも同じ規律を: **「相関がある」と書く前に外れる側のサンプルを探す**
+  （8 サンプルで footprint との相関を主張し、14 サンプルで否定された）。
 - **規模で壊れるコードを、規模のテストで止める（ADR-119）**: 実機で繰り返した性能バグ
   （18 秒・27.8 秒のハング、1GB でのクラッシュ）は**すべて同じ形**だった——
   **「1 回ぶんに見える呼び出し」が、実はライブラリ規模に比例していた**。

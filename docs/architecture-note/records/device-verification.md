@@ -287,6 +287,38 @@
 
 ---
 
+## 手順が頼っている診断ログ（機械で確かめる）
+
+⚠️ **この一覧は `scripts/check_diagnostic_strings.py` が読む**。下のどれかがコードから消えたら
+CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=` で交互になっている」と
+書いてあるのに、実装を整理する過程で**その行を消して**いた。ログに 0 件なので、実機で 1 晩
+かけても何も確かめられない＝**手順が静かに死んでいた**。しかも前日に
+「ログの文字列を変えたら、それを見る手順も一緒に直す」と記録へ書いた直後だった。
+人間の注意では守れなかったので、機械で確かめる。
+
+⚠️ 書くのは**補間の手前まで**（`\(...)` の後ろは grep で当てられない）。
+手順（上の表）を足すときは、その手順が頼る文字列をここへ 1 行足す。
+
+<!-- expected-diagnostics -->
+```
+driver: turn=
+driver: 顔の開始を見送る
+faces: census[
+faces: ledger clusters=
+peopleGroups: unresolved members
+peopleGroups: 戻ってこないメンバーを記録から落とした
+peopleGroups: 解決できないメンバーは残す（持ち越しが進行中）
+faces: carryover assertions applied
+faces: promoted shadow generation →
+faces: manual snapshot
+faces: ledger exported for replay
+CLIP released
+face model released
+startSync() — sync roots changed; resetting cache for rescan
+```
+
+---
+
 ## 見るべき診断ログ
 
 Developer Options → 診断ログ。目印になる行:
