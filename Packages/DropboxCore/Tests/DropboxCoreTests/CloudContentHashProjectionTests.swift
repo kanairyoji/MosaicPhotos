@@ -117,6 +117,31 @@ struct CloudContentHashProjectionTests {
         #expect(await store.itemIndexBuildsForTesting == 1, "ページごとに作り直している")
     }
 
+    /// 表はキーセット・ページング（「前回の最後より大きいもの」）で作るので、
+    /// **並びと `>` の順序が食い違うと継ぎ目で行が飛ぶ**（ADR-178。別の経路で
+    /// 「160 件中 100 件しか読めない」を踏んでいる）。ゼロ詰めしないパスで固定する。
+    ///
+    /// ⚠️ **正直な但し書き**: この経路では ADR-178 の食い違いを**再現できなかった**
+    /// ——比較子を既定（`SortDescriptor(\.path)`）に戻してもこのテストは通る。
+    /// SwiftData/SQLite 側で `>` と同じ照合になっているらしい。
+    /// つまりこれは「踏んだ形を固定するテスト」ではなく、**比較子が将来変わったときに
+    /// 継ぎ目の欠落を捕まえる番人**。`.lexical` を明示しているのは ADR-143 の姉妹実装
+    /// （`AutoAlbumStore.enrichmentVectorPage`）と規則を 1 つに保つため。
+    @Test("数字を含むパスでも、ページの継ぎ目で行が飛ばない（比較子が変わったときの番人）")
+    func indexSurvivesNumericPathsAcrossPages() async {
+        // ゼロ詰めしない＝既定の並び（数字順）と辞書順が食い違う。
+        let count = DropboxCacheStore.indexPageSize + 37
+        let items = (0..<count).map { item("/p\($0).jpg", hash: "h\($0)") }
+        let store = await store(items)
+
+        let hashes = await store.cachedContentHashes()
+        #expect(hashes.count == count,
+                "並びと `>` が食い違って継ぎ目で落ちている: \(hashes.count)/\(count)")
+        // 端の値が両方そろっていること（片側だけ落ちる形を捕まえる）。
+        #expect(hashes["/p0.jpg"] != nil, "先頭が落ちている")
+        #expect(hashes["/p\(count - 1).jpg"] != nil, "末尾が落ちている")
+    }
+
     /// ⚠️ **消したら表も捨てる**（レビュー指摘）。捨てないと、アカウント切替・キャッシュ消去・
     /// **同期ルートの変更**のあとも、解析候補と公開が古いライブラリを指したままになる
     /// （増減しか当てないので、アプリを再起動するまで直らない）。

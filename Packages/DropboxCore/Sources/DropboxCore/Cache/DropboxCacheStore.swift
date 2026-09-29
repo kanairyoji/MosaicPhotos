@@ -539,21 +539,41 @@ actor DropboxCacheStore {
         itemIndexBuildsForTesting += 1
         var out: [String: IndexedItem] = [:]
         out.reserveCapacity(4096)
-        var offset = 0
+        // ⚠️⚠️ **オフセットで送らない**（ADR-143・実機ログ diagnostics-98〜100 で踏んだ）。
+        // ここだけ `fetchOffset` のままだった——`AutoAlbumStore` は ADR-143 で直っているのに。
+        // 2 つの実害がある:
+        //  1. **O(n²)**。SQLite は毎ページで offset 行を読み捨てるので、10.8 万行では
+        //     実測 **16 → 24 → 32 → 35 秒**（ライブラリが育つほど悪化）。この actor は
+        //     その間ずっと塞がる。
+        //  2. ⚠️ **行が黙って飛ぶ**。この表を作っている 35 秒の間にも `applyDelta` は
+        //     行を挿入する（longpoll は数秒おき）。カーソルより前に 1 行入るだけで以降の
+        //     全ページが 1 つずれ、**入っていたはずの写真が表から落ちる**。
+        //     しかも表は版で覚えるので、**欠落は次に版が変わるまで直らない**
+        //     ——すぐ下のコメントが「欠けた表を完成品として保存してしまう」と言っているのと
+        //     同じ事故が、失敗していなくても起きていた。
+        // `path` は `@Attribute(.unique)`（＝索引つき）なので、キーセット・ページングが効く。
+        // ⚠️ 並びは `.lexical`（ADR-178）。`>` と同じ順序でないと継ぎ目で行が飛ぶ。
+        var cursor: String?
         while true {
             // ⚠️ ページごとに**別の `ModelContext`** を使う。長生きのコンテキストは実体化した行を
             // 登録し続けるので、ページ分けしてもメモリは減らない。
             let context = ModelContext(modelContainer)
-            var descriptor = FetchDescriptor<CachedDropboxItem>(
-                sortBy: [SortDescriptor(\.path, order: .forward)])
-            descriptor.fetchOffset = offset
+            var descriptor: FetchDescriptor<CachedDropboxItem>
+            if let cursor {
+                descriptor = FetchDescriptor<CachedDropboxItem>(
+                    predicate: #Predicate { $0.path > cursor },
+                    sortBy: [SortDescriptor(\.path, comparator: .lexical)])
+            } else {
+                descriptor = FetchDescriptor<CachedDropboxItem>(
+                    sortBy: [SortDescriptor(\.path, comparator: .lexical)])
+            }
             descriptor.fetchLimit = Self.indexPageSize
             // ⚠️ **失敗を「終わり」と読み違えない**（レビュー指摘）。`try?` で潰すと空ページに
             // 見えるので、そこで打ち切った**欠けた表**を「完成品」として保存してしまう。
             // 以後は版が変わるまで引き直さないので、欠落は永久に直らない
             // （公開が一部の写真だけになる・候補から恒久的に漏れる）。
             guard let page = try? context.fetch(descriptor) else {
-                DropboxLogger.error("buildItemIndex: fetch failed at offset \(offset) — 表は作らない")
+                DropboxLogger.error("buildItemIndex: fetch failed after \(out.count) rows — 表は作らない")
                 return out   // 保存しない＝次の要求でやり直す
             }
             for row in page {
@@ -562,7 +582,7 @@ actor DropboxCacheStore {
                                                          probed: row.captureDateProbedAt != nil)
             }
             if page.count < Self.indexPageSize { break }
-            offset += page.count
+            cursor = page.last?.path
         }
         cachedItemIndex = out
         cachedItemIndexRevision = itemsRevision
