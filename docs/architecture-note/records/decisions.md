@@ -21,6 +21,27 @@
 
 ---
 
+## ADR-240 1 つの版が 2 つのキャッシュを兼ねていた（撮影地の解決で表を作り直す）
+- 状態: 採用
+- 文脈: ADR-239（オフセット）を直しても、`cache.buildItemIndex` が**何度も**走る理由が残っていた
+  （1 セッションに 6 回）。原因は `itemsRevision` が**2 つの別のもの**を兼ねていたこと——
+  一覧（`items` の作り直し）と、軽い表（`cachedItemIndex`）。
+  ⚠️ `updateLocation`（撮影地の解決・写真ごとに走る）が版だけ進めて表を直していなかったので、
+  **撮影地が 1 枚解決するたびに 10.8 万行を丸ごと作り直して**いた。
+  ⚠️ 版を進める場所は 4 つあり、**表を直す／捨てる のどちらかを必ず対にする**決まりだったのに、
+  ここだけ対になっていなかった（撮影日は `updateIndexCaptureDate`、増減は
+  `updateContentHashIndex`、全消去は `dropContentHashIndex` と対になっている）。
+  ⚠️⚠️ **また「同じ規則が複数の場所に散っていて、1 か所だけ抜けている」**。
+- 決定: 表に載っていない値を変えたときは `bumpItemsRevisionKeepingIndex()` を使う
+  （一覧の版は進め、表の版は追いつかせる＝作り直させない）。
+  新しく版を進める場所を足すときは、**3 つのうちどれかを必ず選ぶ**。
+- 結果: 撮影地の解決で表を作り直さなくなる。`candidates.cloudRefs`（3.7 秒 → 38 秒に育っていた）は
+  ほぼこの待ち時間だったので、そちらも戻る見込み（実機で確認＝G13）。
+  ⚠️ 逆向きの退行（版だけ追いつかせて中身を古いままにする）を `captureDateProbeReachesTheIndex`
+  で固定した。**片方だけのテストにしない**。
+- 関連: `DropboxCacheStore.updateLocation` / `bumpItemsRevisionKeepingIndex` /
+  `CloudContentHashProjectionTests`。ADR-143/201/222/239。
+
 ## ADR-239 クラウドの「軽い表」もキーセット・ページングにする（ADR-143 の取りこぼし）
 - 状態: 採用
 - 文脈: 実機ログ diagnostics-98〜100 で `cache.buildItemIndex` が

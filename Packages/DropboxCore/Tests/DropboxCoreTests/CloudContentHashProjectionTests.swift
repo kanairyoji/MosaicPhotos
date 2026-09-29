@@ -142,6 +142,42 @@ struct CloudContentHashProjectionTests {
         #expect(hashes["/p\(count - 1).jpg"] != nil, "末尾が落ちている")
     }
 
+    /// ⚠️⚠️ **表に無い値を変えても、表を作り直さない**（ADR-240・実機ログ diagnostics-98〜100）。
+    ///
+    /// `itemsRevision` は 2 つを兼ねている——一覧の作り直しと、軽い表の版。
+    /// 撮影地（緯度経度）は**表に載っていない**のに版だけ進めていたので、撮影地を解決するたびに
+    /// **10.8 万行を丸ごと作り直して**いた（実測 1 回 35 秒 × 1 セッション 6 回）。
+    /// しかもその間この actor は塞がるので、解析候補の列挙も 3.7 秒 → 38 秒に膨れていた。
+    @Test("撮影地を解決しても、表は作り直さない")
+    func locationUpdateDoesNotRebuildTheIndex() async {
+        let store = await store([item("/a.jpg", hash: "h1"), item("/b.jpg", hash: "h2")])
+        _ = await store.cachedContentHashes()          // ここで 1 回作る
+        #expect(await store.itemIndexBuildsForTesting == 1, "fixture: まだ作られていない")
+
+        await store.updateLocation(path: "/a.jpg", latitude: 35.0, longitude: 139.0)
+        _ = await store.cachedContentHashes()
+
+        #expect(await store.itemIndexBuildsForTesting == 1,
+                "撮影地を解決しただけで表を作り直している（実機では 1 回 35 秒）")
+    }
+
+    /// ⚠️ 逆に、**表に載っている値を変えたら反映されること**。
+    /// 「常に版を追いつかせる」に倒すと、撮影日の変更が表へ反映されなくなる
+    /// ——そちらは `updateIndexCaptureDate` と対になっているので効くはず、を固定する。
+    @Test("撮影日を訊いたら、表に反映される（版だけ進めて中身を放置していない）")
+    func captureDateProbeReachesTheIndex() async {
+        let store = await store([item("/a.jpg", hash: "h1")])
+        _ = await store.cachedContentHashes()
+        let when = Date(timeIntervalSince1970: 1_600_000_000)
+
+        _ = await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: when,
+                                               latitude: nil, longitude: nil)
+        let refs = await store.cachedPhotoRefs()
+
+        #expect(refs.first(where: { $0.path == "/a.jpg" })?.captureDate == when,
+                "表が古いまま（版だけ進めて中身を直していない）")
+    }
+
     /// ⚠️ **消したら表も捨てる**（レビュー指摘）。捨てないと、アカウント切替・キャッシュ消去・
     /// **同期ルートの変更**のあとも、解析候補と公開が古いライブラリを指したままになる
     /// （増減しか当てないので、アプリを再起動するまで直らない）。

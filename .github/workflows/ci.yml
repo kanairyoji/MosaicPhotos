@@ -68,6 +68,12 @@ jobs:
       - name: Check diagnostics referenced by device-verification
         run: python3 scripts/check_diagnostic_strings.py
 
+      # ⚠️ 一度「やらない」と決めた書き方が、別の場所で生き残っていないか。
+      # ADR-143 が「オフセットで送らない」と決めたのに DropboxCacheStore だけ残り、
+      # 実機で 1 回 35 秒の作り直し＋行の取りこぼしになっていた（ADR-239）。
+      - name: Check forbidden patterns
+        run: python3 scripts/check_forbidden_patterns.py
+
   ios:
     name: iOS simulator tests (best-effort)
     runs-on: macos-15

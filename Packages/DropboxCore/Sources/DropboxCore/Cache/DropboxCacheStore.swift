@@ -336,7 +336,26 @@ actor DropboxCacheStore {
         existing.latitude = latitude
         existing.longitude = longitude
         try? modelContext.save()
+        // ⚠️ 一覧は作り直す（場所は一覧に出る）が、**表は作り直さない**（ADR-240）。
+        bumpItemsRevisionKeepingIndex()
+    }
+
+    /// 一覧の版だけを進める（**表に載っている値は変えていない**とき）。
+    ///
+    /// ⚠️⚠️ **`itemsRevision` は 2 つの別のものを兼ねている**——一覧（`items` の作り直し）と
+    /// 軽い表（`cachedItemIndex`）。表は版で覚えるので、表に無い値（緯度経度）を変えたときに
+    /// 版だけ進めると、**次の要求で 10.8 万行を丸ごと作り直す**。
+    /// 実機ログ diagnostics-98〜100 でこれが起きていた: 撮影地の解決は写真ごとに走るので、
+    /// 1 セッションに 6 回・**1 回 35 秒**（`cache.buildItemIndex`）。しかもその間この actor は
+    /// 塞がるので、`candidates.cloudRefs` も 3.7 秒 → 38 秒に膨れていた（ほぼ待ち時間）。
+    /// ⚠️ 版を進める場所は 4 つあり、**表を直す／捨てる のどちらかを必ず対にする**決まりだったのに、
+    /// ここだけ対になっていなかった（撮影日は `updateIndexCaptureDate`、増減は
+    /// `updateContentHashIndex`、全消去は `dropContentHashIndex` と対になっている）。
+    /// 新しく版を進める場所を足すときは、**この 3 つのうちどれかを必ず選ぶ**。
+    private func bumpItemsRevisionKeepingIndex() {
         itemsRevision &+= 1
+        // 表の中身は変わっていないので、版だけ追いつかせる（作り直させない）。
+        if cachedItemIndex != nil { cachedItemIndexRevision = itemsRevision }
     }
 
     /// Applies a delta from `list_folder` / `list_folder/continue` to the cache:

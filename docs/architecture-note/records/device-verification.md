@@ -299,6 +299,10 @@ CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=
 ⚠️ 書くのは**補間の手前まで**（`\(...)` の後ろは grep で当てられない）。
 手順（上の表）を足すときは、その手順が頼る文字列をここへ 1 行足す。
 
+| G13 | **クラウドの表を作り直さなくなったか**（ADR-239/240） | 1 晩置いて `python3 scripts/triage_diagnostics.py <新ログ> <前回ログ>` | `cache.buildItemIndex` が**数回 → 1 回**、かつ **35 秒 → 数秒**。`candidates.cloudRefs` が **38 秒 → 数秒**（ほぼ待ち時間だった）。⚠️ `screen.app.startup` も 6.1 秒から戻っているはず——戻っていなければ別の原因 |
+
+---
+
 <!-- expected-diagnostics -->
 ```
 driver: turn=
