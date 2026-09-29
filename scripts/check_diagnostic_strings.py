@@ -14,6 +14,7 @@
 
 `device-verification.md` の `<!-- expected-diagnostics -->` に続くフェンスに 1 行 1 文字列で
 書いた「手順が頼っているログの断片」を、`Sources/` と `MosaicPhotos/` から探す。
+**コメント行は数えない**（説明文だけが残っていても、ログには出ない）。
 見つからなければ **失敗**（手順が死んでいる）。
 
 ⚠️ 文字列は**補間の手前まで**を書く（`"driver: turn="` のように）。
@@ -58,10 +59,19 @@ def main() -> int:
         p for p in (ROOT / "Packages").glob("*/Sources"))
     missing = []
     for needle in needles:
+        # ⚠️⚠️ **コメントに書いてあっても「在る」ことにしない**（レビューで見つけた・2026-09-29）。
+        # `-rlF`（ファイル名だけ）で数えていたので、`AnalysisDriver.swift` の
+        # 「この行を消してはいけない」という**説明文**が当たってしまい、
+        # `Diagnostics.mark` 本体を消してもこの検査は通っていた
+        # ——**このスクリプトが書かれた理由そのものの退行を、このスクリプトが見逃す**状態だった
+        # （同じ露出が `peopleGroups: unresolved members` / `CLIP released` /
+        #  `face model released` にもあった）。
         found = subprocess.run(
-            ["grep", "-rlF", "--include=*.swift", needle, *map(str, haystacks)],
+            ["grep", "-rnF", "--include=*.swift", needle, *map(str, haystacks)],
             capture_output=True, text=True)
-        if found.returncode != 0:
+        code_hits = [line for line in found.stdout.splitlines()
+                     if not line.split(":", 2)[-1].lstrip().startswith("//")]
+        if not code_hits:
             missing.append(needle)
     if missing:
         print("❌ 実機確認の手順が指しているのに、コードに無い診断ログ:")

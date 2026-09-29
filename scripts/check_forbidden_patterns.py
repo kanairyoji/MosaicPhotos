@@ -39,6 +39,37 @@ RULES: list[tuple[str, str, tuple[str, ...]]] = [
 SEARCH = [ROOT / "MosaicPhotos"] + sorted((ROOT / "Packages").glob("*/Sources"))
 
 
+# ⚠️ 行ごとの正規表現では見えない規則は、関数で見る。
+def check_keyset_sort_comparator() -> list[str]:
+    """キーセット・ページングの並びは `.lexical` でなければならない（ADR-178/143/239）。
+
+    続きの判定を `$0.X > cursor` で書くなら、並べ替えも `>` と**同じ順序**でないと
+    継ぎ目で行が飛ぶ／同じ行を 2 度読む。`AutoAlbumStore` / `TagStore` /
+    `DropboxCacheStore` / `FaceStore+Explain` は `.lexical` を明示しているのに、
+    `FaceStore.forEachFacePage` だけ抜けていた（2026-09-29 のレビューで発見）。
+
+    見方: **キーセットの述語を持つファイル**では、その列の `SortDescriptor` に
+    必ず `comparator: .lexical` が付いていること。
+    """
+    keyset = re.compile(r"#Predicate\s*\{\s*\$0\.(\w+)\s*>\s*\w+")
+    out: list[str] = []
+    for base in SEARCH:
+        for path in base.rglob("*.swift"):
+            text = path.read_text(encoding="utf-8")
+            keys = set(keyset.findall(text))
+            if not keys:
+                continue
+            for lineno, line in enumerate(text.splitlines(), 1):
+                body = line.lstrip()
+                if body.startswith("//"):
+                    continue
+                for key in keys:
+                    if re.search(r"SortDescriptor\(\\\." + key + r"\b", line) \
+                            and "comparator: .lexical" not in line:
+                        out.append(f"{path}:{lineno}:{body}")
+    return out
+
+
 def main() -> int:
     failed = False
     for pattern, why, allowed in RULES:
@@ -62,11 +93,20 @@ def main() -> int:
             for line in real[:10]:
                 print(f"   {line}")
             print()
+    strays = check_keyset_sort_comparator()
+    if strays:
+        failed = True
+        print("❌ キーセット・ページングの並びに `comparator: .lexical` が付いていません:")
+        print("   理由: 続きの判定が `$0.X > cursor` なので、並べ替えが `>` と違う順序だと")
+        print("         継ぎ目で行が飛ぶ／同じ行を 2 度読む（ADR-178/143/239）。")
+        for line in strays[:10]:
+            print(f"   {line}")
+        print()
     if failed:
         print("⚠️ 「同じ規則が複数の場所に散っていて片方だけ直す」は、")
         print("   実機で繰り返し出ている不具合の最多の形です（2026-09-28 に数えた）。")
         return 1
-    print(f"✅ 使わないと決めた書き方 {len(RULES)} 件は、どこにも残っていません。")
+    print(f"✅ 使わないと決めた書き方 {len(RULES)} 件＋キーセットの並び 1 件は、どこにも残っていません。")
     return 0
 
 

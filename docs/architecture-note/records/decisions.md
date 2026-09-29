@@ -21,6 +21,32 @@
 
 ---
 
+## ADR-242 「読めなかった」を「1 つも無い」と読まない——消す判断は必ず nil を見る
+- 状態: 採用
+- 文脈: レビューで、**利用者が作ったものを消す**関数が 2 つとも
+  `allClusters()`（`countedFetchOptional` の nil を `[]` に畳むヘルパ）を根拠にしていた。
+  fetch が 1 度失敗するだけで、`pruneStaleGroupMembers` は**家族グループの構成を全消し**、
+  `repairOrphanFaces` は**ライブラリ全体の顔を未割当へ戻す**。どちらも save まで進み、
+  消した後は表示も監査も静かになるので**永久に気づけない**。
+  ⚠️ 同じ形はこの会でもう 1 度踏んでいる（`peopleGroupMemberClusterIDs()` が
+  「失敗＝グループ無し」を**キャッシュ**していた。⚠️ あちらは直してあり、残っていたのがこの 2 つ）。3 度目。
+- 決定: **消す・戻す・上書きする判断に、失敗を畳むヘルパを使わない。**
+  `countedFetchOptional` を直接呼び、`nil`（＝読めなかった）なら**何もせずに見送って記録に残す**。
+  ヘルパ（`allClusters()`）の宣言にもそう書く——次に書く人が見るのは ADR ではなく宣言。
+- 結果: 失敗時は「今回は掃除しない」で済む（次の機会に直る）。
+  ⚠️ **0 件の扱いは一律にしない**。判断の分かれ目は「失うものが戻せるか」:
+  - `pruneStaleGroupMembers` は **0 件も見送る**。世代の切り替え・`reset()` の直後は本当に空で、
+    そこで落とすと**持ち越しが埋める前に**利用者の表明を失う（戻せない）。
+  - `repairOrphanFaces` は **0 件では見送らない**。0 件は「最後のクラスタが消えて顔が宙に浮いた」
+    ＝直すべき状態そのもので、結果は再クラスタで作り直せる（戻せる）。
+  ⚠️ 最初は両方に「0 件も見送る」を書いて、既存テストが落ちて気づいた——
+  **安全側に倒す向きは、対象ごとに考える**。
+- 関連: `PeopleGroups.pruneStaleGroupMembers` / `FaceStore+Prune.repairOrphanFaces` /
+  `FaceStore.allClusters`（注記）/ `PruneStaleGroupMembersTests`（3 本・負の検証済み）。
+  ADR-235（掃除そのもの）。事例「レビューで見つけた 3 件」。
+
+---
+
 ## ADR-241 テストは「時間」ではなく「出来事」を待つ（固定 sleep を置かない）
 - 状態: 採用
 - 文脈: `DropboxPhotoStoreReflectCoalesceTests` が **3 度目**の CI 赤を出した。
@@ -162,8 +188,18 @@
   「ユーザーが待っている処理を、誰も待っていない処理のために遅らせない」の向きには反しない。
   ⚠️ 残作業が無い側に順番が回った回は空振りになる（`scheduleBackgroundFill` が即 return）。
   `lastTurn` は空振りでも更新するので、次の回でもう片方に回る＝自己修正する。
+  ⚠️⚠️ **追補 2（レビューで発見・2026-09-29）**: この決定が、**夜間の枠の「逃げ道」を塞いでいた**。
+  `restartBackgroundFill()` は「走っているように見えて**眠っている**実行を明け渡させる」ための
+  もの（ADR-95・diagnostics-38）なのに、`turn == .tags` の内側へ入れてしまった——
+  `next` はタグが走っていれば `.none` を返すので、**まさにその状況でだけ呼ばれなくなる**。
+  前面で始まった実行が `waitWhilePaused`（最大 60 秒）で `isTagging` を握ったままだと、
+  枠（約 77 秒）が丸ごと空転し、しかも顔も起きない（`turn != .faces`）。
+  → **明け渡しは順番の外**（`AnalysisTurn.preemptsStalledTags`・純ロジック・テスト 4 本）。
+  明け渡しは**置き換え**なので 2 つ目のモデルは載らない＝この ADR と矛盾しない。
+  ⚠️ 教訓: **「条件を足す」は「既存の例外を消す」ことがある。** 新しいゲートを通したとき、
+  その下にあった例外（窓は通す）が一緒に閉じていないかを必ず見る。
 - 関連: `AnalysisTurn.swift`（新規・純）/ `AnalysisTurnTests.swift`（新規）/
-  `AnalysisDriver.runPrologue`。ADR-122/196/207/223/226/228。
+  `AnalysisDriver.runPrologue`。ADR-95/122/196/207/223/226/228。
 
 ## ADR-236 人物一覧は `@Model` を抱えない（使い捨てコンテキストのページ読みへ載せる）
 - 状態: 採用（ADR-227 の道具を、繋がっていなかった場所へ繋ぐ）
@@ -2343,8 +2379,17 @@
   （欠けていた写真が戻る）。
 - 教訓: **変異検証は書いた本人の思い込みを壊す。** 「fetch 回数が 4 倍以下」という緩い assert は
   1 顔 1 fetch の変異にも通ってしまい、そこから本物の欠陥まで辿り着いた。
-- 関連: `AutoAlbumStore.swift` / `FaceStore+Explain.swift` / `EmbeddingPagingOrderTests` /
-  `ScaleRegressionTests.outlierScanIsPaged` / ADR-143 / ADR-119。
+- ⚠️ **追記（2026-09-29・レビュー）**: 「3 箇所すべて」では足りなかった。その後に増えた
+  4 つ目・5 つ目・6 つ目のうち、`FaceStore.forEachFacePage` **だけ `.lexical` が抜けていた**
+  ——同じパッケージの隣（`FaceStore+Explain`）は正しく書いてあるのに。
+  **規約に書くだけでは止まらない**（ここに書いてあった）ので、
+  `scripts/check_forbidden_patterns.py` に機械の検査を足した:
+  「`$0.X > cursor` を持つファイルでは、その列の `SortDescriptor` に `comparator: .lexical` が要る」。
+  CI のブロッキング。散る規則は、散った先を機械が数えられる形にして初めて止まる。
+- 関連: `AutoAlbumStore.swift` / `TagStore.swift` / `DropboxCacheStore.swift` /
+  `FaceStore+Explain.swift` / `FaceStore.forEachFacePage` / `EmbeddingPagingOrderTests` /
+  `ScaleRegressionTests.outlierScanIsPaged` / `scripts/check_forbidden_patterns.py` /
+  ADR-143 / ADR-119 / ADR-239。
 
 ## ADR-177 「別の人かもしれない写真」は人物の大きさで諦めない
 - 状態: 採用

@@ -299,6 +299,8 @@ CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=
 ⚠️ 書くのは**補間の手前まで**（`\(...)` の後ろは grep で当てられない）。
 手順（上の表）を足すときは、その手順が頼る文字列をここへ 1 行足す。
 
+| G14 | **夜間の枠が空転しないか**（ADR-237 追補・レビュー 2026-09-29） | 1 晩置いて診断ログを見る | 枠で `driver: turn=none (scanning=false tagging=true)` が出た回に、**`driver: 滞留していたタグ/埋め込みを明け渡させた` が続く**こと。⚠️ 続かずに次の枠まで何も動かないなら、明け渡しがまた順番の内側へ入っている（77 秒の枠が丸ごと空転する・diagnostics-38 の再来）。※ 前面の実行が眠って残っていないと再現しないので、**出ない晩があるのは正常**——出たときに続いているかを見る |
+
 | G13 | **クラウドの表を作り直さなくなったか**（ADR-239/240） | 1 晩置いて `python3 scripts/triage_diagnostics.py <新ログ> <前回ログ>` | `cache.buildItemIndex` が**数回 → 1 回**、かつ **35 秒 → 数秒**。`candidates.cloudRefs` が **38 秒 → 数秒**（ほぼ待ち時間だった）。⚠️ `screen.app.startup` も 6.1 秒から戻っているはず——戻っていなければ別の原因 |
 
 ---
@@ -307,6 +309,7 @@ CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=
 ```
 driver: turn=
 driver: 顔の開始を見送る
+driver: 滞留していたタグ/埋め込みを明け渡させた
 faces: census[
 faces: ledger clusters=
 peopleGroups: unresolved members

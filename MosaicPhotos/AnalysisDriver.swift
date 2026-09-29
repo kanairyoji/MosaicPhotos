@@ -160,12 +160,22 @@ final class AnalysisDriver {
         // 眠ったまま実行中フラグを握られていると、窓が丸ごと空転する（diagnostics-38）。
         // ブーストの終了も同じ：`stop()` が直前にキャンセルした実行がまだフラグを持っている
         // （`scheduleBackgroundFill` は `isTagging` を見て素通りするので、起こし直せない）。
+        let privileged = (trigger == .window || trigger == .boostEnded)
         if turn == .tags {
-            if trigger == .window || trigger == .boostEnded {
+            if privileged {
                 engine.restartBackgroundFill()
             } else {
                 engine.scheduleBackgroundFill()
             }
+        } else if AnalysisTurn.preemptsStalledTags(isPrivilegedTrigger: privileged, turn: turn,
+                                                   tagsRunning: engine.isTagging) {
+            // ⚠️ **明け渡しは順番の外**（レビューで見つけた・2026-09-29）。`next` はタグが
+            // 走っていれば `.none` を返すので、`turn == .tags` でだけ restart していると
+            // 「眠ったままフラグを握っている実行を明け渡させる」という窓の逃げ道が
+            // **まさにその状況で消える**——枠（約 77 秒）が丸ごと空転する（diagnostics-38 の再来）。
+            // 明け渡しは**置き換え**なので、モデルが 2 つ載ることはない（ADR-237 と矛盾しない）。
+            engine.restartBackgroundFill()
+            Diagnostics.mark("driver: 滞留していたタグ/埋め込みを明け渡させた（順番の外・窓/ブースト終了）")
         }
 
         // 顔（候補の列挙は短時間だけ使い回す）。

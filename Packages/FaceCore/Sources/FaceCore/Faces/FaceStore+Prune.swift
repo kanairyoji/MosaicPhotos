@@ -86,7 +86,19 @@ extension FaceStore {
     /// 別人のアルバムへ黙って合流していた。未割当に戻せば次の再クラスタで正しい場所へ入る。
     /// - Returns: 戻した顔の数。
     func repairOrphanFaces() -> Int {
-        let live = Set(allClusters().map(\.clusterID))
+        // ⚠️⚠️ **「読めなかった」を「1 つも無い」と読まない**（`pruneStaleGroupMembers` と同じ形）。
+        // `allClusters()` は fetch の失敗を `[]` に畳む。それをそのまま「生きているクラスタ」と
+        // すると、**読めなかった瞬間に全部の顔が孤児と判定され、ライブラリ全体が未割当へ戻る**
+        // ——人物は全員 0 枚になり、重心の寄与記録まで落ちる。直す関数が一番大きく壊す。
+        // ⚠️ ただし **0 件は見送らない**。`pruneStaleGroupMembers` は「0 件＝世代の切り替え中」と
+        // 見て見送るが、こちらは 0 件が**直すべき状態そのもの**（最後のクラスタが消えて、
+        // その顔が宙に浮いている）。しかも直した結果は再クラスタで作り直せる＝取り返しがつく。
+        // 見送ってよいのは「読めなかった」ときだけで、その唯一の手掛かりが nil。
+        guard let clusters = countedFetchOptional(FetchDescriptor<PersonCluster>()) else {
+            Self.log.error("faces: repairOrphanFaces 見送り（クラスタが読めない。失敗＝全消えではない）")
+            return 0
+        }
+        let live = Set(clusters.map(\.clusterID))
         var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.clusterID >= 0 })
         d.propertiesToFetch = [\.clusterID]
         let faces = (try? modelContext.fetch(d)) ?? []

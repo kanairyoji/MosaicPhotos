@@ -57,4 +57,24 @@ enum AnalysisTurn {
         // ——新しい写真が毎日入る——でタグ/埋め込みが永久に走らない）。
         return lastChoice == .faces ? .tags : .faces
     }
+
+    /// **滞留している実行を明け渡させる**契機か（ADR-95 / diagnostics-38・純ロジック）。
+    ///
+    /// ⚠️⚠️ **順番の外に置く**（レビューで見つけた・2026-09-29）。ADR-237 で「順番が `.tags` の
+    /// ときだけ `restartBackgroundFill()` を呼ぶ」と書いたが、`next` は**タグが走っていれば
+    /// `.none` を返す**ので、「走っているように見えて眠っている実行を明け渡させる」という
+    /// 窓の逃げ道が**まさにその状況で消えていた**——
+    /// 前面で始まった実行が `waitWhilePaused`（最大 60 秒）で止まったまま `isTagging` を握り、
+    /// 夜間の枠（約 77 秒）が丸ごと空転する。diagnostics-38 で踏んだ形そのものに戻る。
+    ///
+    /// ⚠️ ADR-237（モデルを同時に載せない）とは矛盾しない——**明け渡しは置き換え**であって、
+    /// 2 つ目のモデルを載せるわけではない。顔はこの回も起こさない。
+    /// - Parameters:
+    ///   - isPrivilegedTrigger: 夜間の処理枠、またはブーストの終了か。
+    ///   - turn: `next(...)` が返した順番。
+    ///   - tagsRunning: タグ/埋め込みが実行中フラグを握っているか。
+    static func preemptsStalledTags(isPrivilegedTrigger: Bool, turn: Choice,
+                                    tagsRunning: Bool) -> Bool {
+        isPrivilegedTrigger && turn != .tags && tagsRunning
+    }
 }

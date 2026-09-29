@@ -94,3 +94,21 @@ jobs:
         # **テストが 1 つも走らないまま**ジョブが落ちる（実際にこれで落ちた）。
         # SIM を渡さなければ `scripts/test.sh` がその場で使える iPhone を UDID で選ぶ。
         run: scripts/test.sh ios
+
+      # ⚠️ **落ちたことを run のページに出す**（2026-09-29 に踏んだ）。
+      # このジョブは `continue-on-error: true` なので、**run 全体の結論は `success` のまま**
+      # ——ジョブ単位で見ないと赤に気づけない。実際に、iOS のテストが 1 本落ちているのに
+      # 「CI 緑」と報告してしまった。非ブロッキングのままで、見落とせなくする。
+      - name: Say it loudly (non-blocking job still failed)
+        if: failure()
+        run: |
+          {
+            echo "## iOS simulator tests FAILED"
+            echo ""
+            echo "このジョブは非ブロッキング (continue-on-error) なので、"
+            echo "**run 全体の結論は success のまま**です。中身を見てください。"
+            echo ""
+            echo "ジョブ単位で見る:"
+            echo ""
+            echo "    gh api repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs --jq '.jobs[]|.name+\" \"+.conclusion'"
+          } >> "$GITHUB_STEP_SUMMARY"

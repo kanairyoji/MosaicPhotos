@@ -242,7 +242,23 @@ extension FaceStore {
     /// - Returns: 落とした（グループ id, 件数）の一覧。
     @discardableResult
     func pruneStaleGroupMembers() -> [(name: String, dropped: Int)] {
-        let live = Set(allClusters().map(\.clusterID))
+        // ⚠️⚠️ **「読めなかった」を「1 つも無い」と読まない**（この会で 2 度目・レビュー指摘）。
+        // `allClusters()` は失敗を `[]` に畳むので、ここでそれを使うと**fetch が失敗した瞬間に
+        // 全グループのメンバーが「もう居ない」と判定され、記録ごと消えて save される**
+        // ——しかも消した後は誰も気づけない（表示も監査も静かになる）。
+        // 同じ形は `peopleGroupMemberClusterIDs()` でも踏んだ（失敗を「グループ無し」と覚えた）が、
+        // ⚠️ **あちらは既に直してある**（すぐ上・nil なら覚えずに空を返す）。ここだけ残っていた。
+        guard let clusters = countedFetchOptional(FetchDescriptor<PersonCluster>()) else {
+            Diagnostics.mark("peopleGroups: クラスタを読めないので掃除を見送る（失敗＝全消えではない）")
+            return []
+        }
+        let live = Set(clusters.map(\.clusterID))
+        // ⚠️ **1 つも無いときも掃除しない**。世代の切り替え・リセットの直後は本当に空になり得るが、
+        // そこで落とすと「持ち越しが埋める前に消す」ことになる（この関数が一番やってはいけない形）。
+        guard !live.isEmpty else {
+            Diagnostics.mark("peopleGroups: クラスタが 0 件なので掃除を見送る（世代の切り替え中）")
+            return []
+        }
         var out: [(name: String, dropped: Int)] = []
         for record in (countedFetchOptional(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
             let kept = record.memberClusterIDs.filter { live.contains($0) }

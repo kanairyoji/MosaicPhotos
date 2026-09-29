@@ -322,6 +322,13 @@ actor FaceStore {
         return anchorCount(clusterID: c.clusterID) > 0
     }
 
+    /// 全クラスタ。⚠️⚠️ **fetch の失敗を `[]` に畳む**。
+    ///
+    /// 読むだけなら「空に見える」で済むが、**この結果を「もう居ない」の根拠にして消す側**
+    /// （掃除・孤児の付け替え）で使うと、**読めなかった瞬間に全部消す**ことになる。
+    /// 実際に 2 か所で踏みかけた——`pruneStaleGroupMembers`（家族グループのメンバーが全消え）と
+    /// `repairOrphanFaces`（ライブラリ全体の顔が未割当へ戻る）。
+    /// **消す判断に使うなら、ここではなく `countedFetchOptional` を直接呼んで nil を見ること。**
     func allClusters() -> [PersonCluster] {
         (countedFetchOptional(FetchDescriptor<PersonCluster>())) ?? []
     }
@@ -467,10 +474,16 @@ actor FaceStore {
             if let cursor {
                 descriptor = FetchDescriptor<DetectedFace>(
                     predicate: #Predicate { $0.faceID > cursor },
-                    sortBy: [SortDescriptor(\.faceID)])
+                    sortBy: [SortDescriptor(\.faceID, comparator: .lexical)])
             } else {
-                descriptor = FetchDescriptor<DetectedFace>(sortBy: [SortDescriptor(\.faceID)])
+                descriptor = FetchDescriptor<DetectedFace>(
+                    sortBy: [SortDescriptor(\.faceID, comparator: .lexical)])
             }
+            // ⚠️⚠️ 並びは **`.lexical`**（ADR-178）。続きの判定が `faceID > cursor` なので、
+            // 並べ替えが `>` と違う順序だと**継ぎ目で行が飛ぶ／同じ行を 2 度読む**。
+            // 同じ形の場所（`AutoAlbumStore` / `TagStore` / `DropboxCacheStore` /
+            // `FaceStore+Explain`）は全部 `.lexical` で、**ここだけ抜けていた**
+            // ——「同じ規則が散っていて 1 か所だけ抜ける」の 7 例目（`scripts/check_forbidden_patterns.py`）。
             // ⚠️ 並べ替えと続きの判定に `faceID` を使うので、必ず含める。
             descriptor.propertiesToFetch = columns.contains(\.faceID) ? columns : columns + [\.faceID]
             descriptor.fetchLimit = Self.readPageSize

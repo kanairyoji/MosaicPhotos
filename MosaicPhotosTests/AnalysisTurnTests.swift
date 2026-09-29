@@ -72,4 +72,39 @@ struct AnalysisTurnTests {
         #expect(counts[.faces] == 5, "\(counts)")
         #expect(counts[.tags] == 5, "\(counts)")
     }
+
+    /// ⚠️⚠️ **明け渡しは順番の外**（レビューで見つけた・2026-09-29）。
+    /// ADR-237 で「順番が `.tags` のときだけ `restartBackgroundFill()`」と書いたが、
+    /// `next` は**タグが走っていれば `.none`** を返すので、「眠ったままフラグを握っている実行を
+    /// 明け渡させる」という夜間の枠の逃げ道が、**まさにその状況で消えていた**
+    /// ——前面で始まった実行が `waitWhilePaused`（最大 60 秒）で止まったまま `isTagging` を握り、
+    /// 枠（約 77 秒）が丸ごと空転する（diagnostics-38 で踏んだ形そのもの）。
+    @Test("窓・ブースト終了は、順番が .none でも滞留したタグを明け渡させる")
+    func privilegedTriggerPreemptsStalledTags() {
+        // 枠が来た。タグは走っている（ように見えるが眠っている）＝ next は .none。
+        let turn = AnalysisTurn.next(facesRunning: false, tagsRunning: true,
+                                    faceScanPossible: true, lastChoice: .faces)
+        #expect(turn == .none, "fixture: この状況で .none にならないと、このテストは何も見ていない")
+        #expect(AnalysisTurn.preemptsStalledTags(isPrivilegedTrigger: true, turn: turn,
+                                                 tagsRunning: true),
+                "枠が来たのに明け渡させない（77 秒の枠が丸ごと空転する）")
+    }
+
+    @Test("普通の契機では明け渡させない（走っている実行を横から止めない）")
+    func ordinaryTriggerDoesNotPreempt() {
+        #expect(!AnalysisTurn.preemptsStalledTags(isPrivilegedTrigger: false, turn: .none,
+                                                  tagsRunning: true))
+    }
+
+    @Test("順番がタグなら二重に明け渡させない（通常の経路が restart を呼ぶ）")
+    func noDoublePreemptWhenTurnIsTags() {
+        #expect(!AnalysisTurn.preemptsStalledTags(isPrivilegedTrigger: true, turn: .tags,
+                                                  tagsRunning: true))
+    }
+
+    @Test("タグが走っていないなら明け渡すものが無い")
+    func nothingToPreemptWhenTagsAreIdle() {
+        #expect(!AnalysisTurn.preemptsStalledTags(isPrivilegedTrigger: true, turn: .faces,
+                                                  tagsRunning: false))
+    }
 }
