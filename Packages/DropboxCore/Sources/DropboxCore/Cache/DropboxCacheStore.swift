@@ -223,6 +223,16 @@ actor DropboxCacheStore {
     private var cachedItemIndexRevision = -1
     /// 表を作るときのページの大きさ（実体化した行をページごとに手放す）。
     static let indexPageSize = 5_000
+    /// テスト用に小さくするための穴（既定は `indexPageSize`）。
+    ///
+    /// ⚠️ **継ぎ目のテストに本番の大きさを使わない**（CI が赤くなった・2026-09-29）。
+    /// キーセット・ページングの継ぎ目を確かめるのに 5,037 行の fixture を 2 つ作っていたので、
+    /// このスイートだけで 1 万行の挿入になり、**同じ実行で並行に走る時間依存のテストを飢餓させた**
+    /// （`DropboxPhotoStoreReflectCoalesceTests` が `materialized → 0` で落ちた）。
+    /// 継ぎ目の理屈はページの大きさに依らないので、テストは小さいページで跨げばよい。
+    private var indexPageSizeOverrideForTesting: Int?
+    private var effectiveIndexPageSize: Int { indexPageSizeOverrideForTesting ?? Self.indexPageSize }
+    func setIndexPageSizeForTesting(_ size: Int) { indexPageSizeOverrideForTesting = size }
     /// テスト用: `cachedItems`（全列の実体化）を呼んだ回数。本番では読まれない。
     private(set) var materializeCallsForTesting = 0
     /// テスト用: 射影を**実際に引いた**回数（表が効いていれば増えない）。
@@ -586,7 +596,7 @@ actor DropboxCacheStore {
                 descriptor = FetchDescriptor<CachedDropboxItem>(
                     sortBy: [SortDescriptor(\.path, comparator: .lexical)])
             }
-            descriptor.fetchLimit = Self.indexPageSize
+            descriptor.fetchLimit = effectiveIndexPageSize
             // ⚠️ **失敗を「終わり」と読み違えない**（レビュー指摘）。`try?` で潰すと空ページに
             // 見えるので、そこで打ち切った**欠けた表**を「完成品」として保存してしまう。
             // 以後は版が変わるまで引き直さないので、欠落は永久に直らない
@@ -600,7 +610,7 @@ actor DropboxCacheStore {
                                                          captureDate: row.captureDate,
                                                          probed: row.captureDateProbedAt != nil)
             }
-            if page.count < Self.indexPageSize { break }
+            if page.count < effectiveIndexPageSize { break }
             cursor = page.last?.path
         }
         cachedItemIndex = out

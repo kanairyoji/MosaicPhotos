@@ -15,7 +15,14 @@ import Testing
 /// 並列に走らせると**互いの CPU を奪ってループの壁時計が伸び**、回数の上限を超える。
 /// 実際に踏んだ——バースト側の待ちを 0.6 秒から 2.5 秒へ延ばしたら、同時に走る背面側の
 /// ループが伸びて 1 秒間隔の区間が 3 つ入り、`materialized → 3` で CI が落ちた。
-/// 時間を測るテストは、他のテストと時間を共有してはいけない。
+///
+/// ⚠️⚠️ **`.serialized` では足りなかった**（3 度目・2026-09-29）。Swift Testing が直列にするのは
+/// **このスイートの中だけ**で、*別の*スイートは同じ実行で並行に走る。5,037 行の fixture を 2 つ
+/// 作るテストが別スイートに加わっただけで、ここの固定待ち（2.5 秒）では反映が間に合わず
+/// `materialized → 0`＝「1 回も反映されない」で CI が落ちた。
+/// **結論: 壁時計で待つのをやめる**。待ち方を「時間」から「出来事」へ変え、
+/// 条件が満たされるまで短く刻んで待つ（`waitUntil`）。速い環境では待たず、遅い環境では待つ。
+/// 固定の `Task.sleep` を「たぶん足りるだろう」で置くのは、このファイルでは禁じ手。
 @Suite("DropboxPhotoStore の反映は合流する", .serialized)
 @MainActor
 struct DropboxPhotoStoreReflectCoalesceTests {
@@ -26,6 +33,21 @@ struct DropboxPhotoStoreReflectCoalesceTests {
                                             accountId: accountId, connectedAt: Date(),
                                             lastRefreshedAt: nil)
         return DropboxPhotoStore(auth: auth, cache: cache)
+    }
+
+    /// 条件が満たされるまで待つ（満たされなければ `false`）。
+    ///
+    /// マシンの速さに依らずに「出来事が起きたか」を見るための待ち方。上限は**寛容に**取る
+    /// ——上限を切り詰めても検出力は上がらず（起きない不具合は上限まで待っても起きない）、
+    /// 混んだ CI で誤検知が出るだけになる。
+    private func waitUntil(timeout: TimeInterval = 30,
+                           _ condition: () async -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return await condition()
     }
 
     @Test("別々の入口から同時に来ても、全列の実体化は 1 回だけ")
@@ -81,10 +103,16 @@ struct DropboxPhotoStoreReflectCoalesceTests {
                                    removed: [], newCursor: "c\(i)")
             store.refreshItemsFromCacheSoon()
         }
-        // 静かになってから走る（窓 1.0 秒＋余裕）。
-        try await Task.sleep(nanoseconds: 2_500_000_000)
+        // 静かになってから 1 回走る。**時間ではなく出来事を待つ**（上のスイート注記）。
+        // 反映が済んだ印は「一覧が最新（11 件）になったこと」＝実体化の**後**に立つので、
+        // これを待てば下の回数は確定した値を読める。
+        let reflected = await waitUntil { store.items.count == 11 }
 
         let materialized = await cache.materializeCallsForTesting - before
+        #expect(reflected, """
+            30 秒待っても一覧が最新（11 件）にならない: \(store.items.count) 件・
+            実体化 \(materialized) 回。静かになっても反映していない（一覧が永久に古いまま）。
+            """)
         // ⚠️ `== 1` ではなく `<= 2`。窓が満ちた時点で走るのは**正しい挙動**で、遅い環境では
         // バースト中に 1 回入り得る。見たいのは「変化 1 回につき 1 回」になっていないこと
         // （実機では 73,936 行 × 21 回＝27 秒になった）。10 回に対して 2 回までなら
@@ -94,7 +122,6 @@ struct DropboxPhotoStoreReflectCoalesceTests {
             （実機では 73,936 行 × 21 回＝27 秒になった）。
             """)
         #expect(materialized >= 1, "1 回も反映されていない（一覧が永久に古いまま）")
-        #expect(store.items.count == 11, "まとめた結果が最新を反映していない")
     }
 
     /// ⚠️ **合流は「同じ版を読んでいるとき」だけ正しい**（ADR-230・データ落ち）。
@@ -168,10 +195,13 @@ struct DropboxPhotoStoreReflectCoalesceTests {
             store.refreshItemsFromCacheSoon()
             try await Task.sleep(nanoseconds: 150_000_000)
         }
-        try await Task.sleep(nanoseconds: 300_000_000)
+        // ⚠️ ここも固定待ちにしない（スイート注記）。最初の 1 回が立つまで待って、
+        // **その時点の経過時間**から上限を出す（待った分は上限にも入るので不公平にならない）。
+        let reflected = await waitUntil { await cache.materializeCallsForTesting > before }
         let elapsed = Date().timeIntervalSince(startedAt)
 
         let materialized = await cache.materializeCallsForTesting - before
+        #expect(reflected, "背面でも最低 1 回は反映すること（解析候補が古いままになる）")
         // ⚠️ **上限は経過時間から導く**（2026-09-26・CI が赤かった原因）。
         // 「1.2 秒だから 2 回まで」と書いていたが、**ループの壁時計はマシンの速さで決まる**
         // ——CI では 8 回の書き込みが延びて 1 秒の区間が 3 つ入り、正しい挙動（1 秒に 1 回）
@@ -186,7 +216,6 @@ struct DropboxPhotoStoreReflectCoalesceTests {
         // ⚠️ 変化 8 回に対して「回数で抑えている」ことも押さえる（上限が経過時間で伸びても、
         // 変化の数ぶん走るようになったら退行）。
         #expect(materialized < 8, "変化 8 回に対して \(materialized) 回＝抑えられていない")
-        #expect(materialized >= 1, "背面でも最低 1 回は反映すること（解析候補が古いままになる）")
     }
 }
 #endif

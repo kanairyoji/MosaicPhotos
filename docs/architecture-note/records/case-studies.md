@@ -21,6 +21,45 @@
 
 ---
 
+## CI が初めて赤くなった——「重いテストを足した」だけで、別スイートの時間依存テストが飢餓した
+
+2026-09-29。push 後の GitHub Actions で `iOS simulator tests (best-effort)` が失敗
+（`macOS unit tests (fast)` は成功）。⚠️ **run 単位の conclusion は `success`** のまま——
+この job は `continue-on-error: true` なので、job 単位で見ないと赤に気づけない。
+
+- 症状: `DropboxCore` の「変化が連続している間は、反映を 1 回にまとめる」が
+  `(materialized → 0) >= 1`＝**1 回も反映されていない**で失敗。`-retry-tests-on-failure` の
+  再試行でも同じ。直前の緑（c635289）から**製品側は `DropboxPhotoStore` を 1 行も触っていない**。
+- 原因: 同じコミット（ADR-239）で足した `CloudContentHashProjectionTests` が、
+  ページの継ぎ目を跨ぐために **本番のページ幅（5,000）＋37 行の fixture を 2 つ**作っていた
+  ＝このスイートだけで 1 万行の挿入。Swift Testing は**スイートどうしを並行に走らせる**ので、
+  その CPU が、壁時計で待っていた時間依存テスト（`quietWindow 1.0` に対して固定 `sleep 2.5s`）の
+  余裕 1.5 秒を食い潰した。
+  ⚠️ このファイルには「時間を測るテストは他のテストと時間を共有してはいけない」と書いて
+  `.serialized` を付けてあったが、**`.serialized` が直列にするのはそのスイートの中だけ**で、
+  別スイートとの並行は止まらない。**注記は正しく、対策だけが足りていなかった。**
+- 対処: 2 つ。
+  1. **壁時計で待つのをやめる**（本命）。`waitUntil { 条件 }`（20ms 刻み・上限 30 秒）で
+     「出来事」を待つ。速い環境では待たず、遅い環境では待ち、**起きなければその場で落ちる**
+     ——検出力は落ちない。上限を切り詰めても検出力は上がらず、混んだ CI で誤検知が増えるだけ。
+  2. **継ぎ目のテストに本番のページ幅を使わない**。`indexPageSizeOverrideForTesting` を足し、
+     継ぎ目は 25+7 行で跨ぐ。キーセット・ページングの継ぎ目は「前ページの最後より大きいもの」の
+     規則の問題で、ページの大きさには依らない。1 万行 → 64 行。
+- 教訓: **固定の `sleep` は「たぶん足りるだろう」という定数**で、他のテストが増えるたびに
+  黙って足りなくなる。このファイルだけで **3 回**（2026-09-26 に 2 回、今回で 3 回目）。
+  1 回目は「待ちを延ばす」、2 回目は「上限を経過時間から導く」、3 回目でようやく
+  「**時間で待たない**」に到達した。定数を調整する対処を 2 回続けたら、待ち方そのものを疑う。
+  併せて、**重い fixture は「そのテストの中だけの話」ではない**——同じ実行の全テストから
+  CPU を奪う。fixture の規模は「何を確かめたいか」から決める。
+- 関連: `Packages/DropboxCore/Tests/DropboxCoreTests/DropboxPhotoStoreReflectCoalesceTests.swift`
+  （`waitUntil`）/ `.../CloudContentHashProjectionTests.swift`（`pageSize = 25`）/
+  `Packages/DropboxCore/Sources/DropboxCore/Cache/DropboxCacheStore.swift`
+  （`indexPageSizeOverrideForTesting`）。CI run 36559927015。
+- 残課題: `continue-on-error: true` の job は run 単位では緑に見える。CI の確認は
+  **必ず job 単位**（`gh api .../runs/<id>/jobs`）で行う。
+
+---
+
 ## 「なぜこんなにバグが頻発するのか」— 3 回続けて一番遅い処理を見ていなかった
 
 2026-09-29。利用者:「テストを強化したのにまたバグがあった。なぜ頻発するのか」。

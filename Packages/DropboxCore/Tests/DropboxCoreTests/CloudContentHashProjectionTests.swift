@@ -17,11 +17,21 @@ import Testing
 @Suite("クラウド写真の content_hash（射影・ADR-222）")
 struct CloudContentHashProjectionTests {
 
-    private func store(_ items: [DropboxFileItem]) async -> DropboxCacheStore {
+    private func store(_ items: [DropboxFileItem], pageSize: Int? = nil) async -> DropboxCacheStore {
         let store = DropboxCacheStore(isStoredInMemoryOnly: true)
+        if let pageSize { await store.setIndexPageSizeForTesting(pageSize) }
         await store.applyDelta(accountId: "acc1", added: items, removed: [], newCursor: "c1")
         return store
     }
+
+    /// 継ぎ目を跨ぐための小さなページ。
+    ///
+    /// ⚠️ **本番の 5,000 を使わない**（CI が赤くなった・2026-09-29）。5,037 行の fixture を
+    /// 2 つ作ると、このスイートだけで 1 万行の挿入になり、**同じ実行で並行に走る時間依存の
+    /// テストを飢餓させた**（`DropboxPhotoStoreReflectCoalesceTests` が `materialized → 0`）。
+    /// キーセット・ページングの継ぎ目は「前ページの最後より大きいもの」という規則の問題で、
+    /// ページの大きさには依らない。小さいページで跨げば同じ形を同じだけ確かめられる。
+    private static let pageSize = 25
 
     private func item(_ path: String, hash: String?) -> DropboxFileItem {
         DropboxFileItem(path: path, name: (path as NSString).lastPathComponent, contentHash: hash,
@@ -105,9 +115,9 @@ struct CloudContentHashProjectionTests {
     /// 表はページ分けして作るので、境界をまたぐ規模で全件そろうことを固定する。
     @Test("ページの大きさを超えても全件そろう")
     func indexCoversEveryPage() async {
-        let count = DropboxCacheStore.indexPageSize + 37
+        let count = Self.pageSize + 7
         let items = (0..<count).map { item(String(format: "/p%06d.jpg", $0), hash: "h\($0)") }
-        let store = await store(items)
+        let store = await store(items, pageSize: Self.pageSize)
 
         let hashes = await store.cachedContentHashes()
         let refs = await store.cachedPhotoRefs()
@@ -130,9 +140,9 @@ struct CloudContentHashProjectionTests {
     @Test("数字を含むパスでも、ページの継ぎ目で行が飛ばない（比較子が変わったときの番人）")
     func indexSurvivesNumericPathsAcrossPages() async {
         // ゼロ詰めしない＝既定の並び（数字順）と辞書順が食い違う。
-        let count = DropboxCacheStore.indexPageSize + 37
+        let count = Self.pageSize + 7
         let items = (0..<count).map { item("/p\($0).jpg", hash: "h\($0)") }
-        let store = await store(items)
+        let store = await store(items, pageSize: Self.pageSize)
 
         let hashes = await store.cachedContentHashes()
         #expect(hashes.count == count,
