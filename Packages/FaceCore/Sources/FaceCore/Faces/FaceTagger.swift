@@ -73,21 +73,34 @@ final class FaceTagger {
         }
 
         let done = await store.scannedRefKeys()
+        // ⚠️⚠️ **何度やっても画像が取れない写真は候補から外す**（ADR-243・実機ログ diagnostics-101）。
+        // ADR-92 は「取れないのは一時的」を前提に記録せず次の窓へ回す決まりにしたが、実機には
+        // **status=200 で 0 バイト**のサムネを返す写真があった——`loaded=0 nil=1` のまま
+        // スキャン済みにならないので、6 時間ぶん毎回候補に戻り、その 1 枚のために
+        // 86,772 件の列挙（約 11 秒）と人物一覧の作り直しが走り続けていた。
+        let unreadable = await store.unreadableRefKeys()
         // ローカル("L-")を必ず先に、クラウド("C-")は後回し（母数が巨大で細切れ窓では終わらないため）。
         // 回線が許可されない（例: Wi-Fi 待ち）ときはクラウド分を今回は対象から外す＝端末内写真だけ
         // 進める（Wi-Fi 復帰時の次回スキャンでクラウドを拾う。顔検出はキャッシュ済みサムネDLを要する）。
         let cloudOK = networkAllowed()
-        let localTodo = candidateRefKeys.filter { $0.hasPrefix("L-") && !done.contains($0) }
-        let cloudTodo = cloudOK ? candidateRefKeys.filter { $0.hasPrefix("C-") && !done.contains($0) } : []
+        let localTodo = candidateRefKeys.filter {
+            $0.hasPrefix("L-") && !done.contains($0) && !unreadable.contains($0)
+        }
+        let cloudTodo = cloudOK ? candidateRefKeys.filter {
+            $0.hasPrefix("C-") && !done.contains($0) && !unreadable.contains($0)
+        } : []
         let todo = localTodo + cloudTodo
         // ⚠️ **回線待ちで外したぶんも数える**（ADR-207）。クラウド分を対象から外した回は
         // `todo` が実際の残作業より少なくなる。Wi-Fi が無い端末で端末内写真を配り終えると
         // `todo` が空になり、「もう無い」と読めてしまう——クラウドの顔は残っているのに。
-        deferredNow = cloudOK ? 0 : candidateRefKeys.filter { $0.hasPrefix("C-") && !done.contains($0) }.count
+        deferredNow = cloudOK ? 0 : candidateRefKeys.filter {
+            $0.hasPrefix("C-") && !done.contains($0) && !unreadable.contains($0)
+        }.count
         remainingNow = todo.count
         onBacklog(remainingNow, deferredNow)
         Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(done.count) "
-                         + "todo=\(todo.count) (local=\(localTodo.count) cloud=\(cloudTodo.count)\(cloudOK ? "" : " deferred:no-wifi=\(deferredNow)"))")
+                         + "todo=\(todo.count) (local=\(localTodo.count) cloud=\(cloudTodo.count)\(cloudOK ? "" : " deferred:no-wifi=\(deferredNow)"))"
+                         + (unreadable.isEmpty ? "" : " unreadable=\(unreadable.count)"))
         guard !todo.isEmpty else {
             Diagnostics.mark("faces: nothing to scan (all done\(deferredNow > 0 ? ", \(deferredNow) waiting for Wi-Fi" : ""))")
             return
@@ -99,6 +112,12 @@ final class FaceTagger {
         var processed = 0
         var facesFound = 0
         var emptyStreak = 0   // 連続で 1 枚も解析できなかったバッチ数（ADR-179）
+        // ⚠️⚠️ **実際に試して取れなかった写真だけ**を入れる（ADR-243・自己レビューで気づいた）。
+        // `batch` から引き算してはいけない——`BackgroundTrickle` は譲りの打ち切り・取り消しで
+        // **バッチの途中で抜ける**ので、`results` は `batch` より短くなる。差分を取ると
+        // **一度も試していない写真を「取れなかった」と数える**ことになり、しかも todo の順番は
+        // 安定しているので、毎回同じ写真が打ち切り位置に来て**本物の写真が外れる**。
+        var attemptedButFailed: [String] = []
         // ⚠️ 停止判定は 1 枚単位（検出+埋め込みは 1 枚数百 ms〜。バッチ一括だと
         // ロック解除直後の譲りが遅れる）。保存はバッチ 1 回（T3）を維持。
         await BackgroundTrickle.run(
@@ -128,12 +147,32 @@ final class FaceTagger {
                 // これを「顔ゼロで走査済み」として記録すると、版を上げるまで二度と見直されない。
                 // 閲覧中の譲り・回線・バッチ失敗はいずれも一時的なので、記録せず次の窓へ回す。
                 // 解析できた場合は顔ゼロ（空配列）でも記録する＝再スキャンしない。
-                guard let faces = one[refKey] else { return nil }
+                guard let faces = one[refKey] else {
+                    attemptedButFailed.append(refKey)   // 試した上で取れなかった（ADR-243）
+                    return nil
+                }
                 return (refKey: refKey, faces: faces)
             },
             commitBatch: { batchIndex, batch, results in
                 // 解析できた写真だけを記録する（nil＝画像が取れず未解析なので記録しない）。
                 let records = results.compactMap { $0 }
+                // ⚠️ **取れなかった写真を数える**（ADR-243）。取れた写真は記録を忘れる
+                //    ——一時的な失敗（譲り・回線）を溜め込まないため。
+                //    数えるのは 1 時間に 1 回まで（`FaceStore.scanFailureCooldown`）なので、
+                //    1 つの窓で何千枚が巻き込まれても、それぞれ 1 回しか増えない。
+                // ⚠️ 数えるのは**試した上で取れなかったもの**だけ（`batch` との差分ではない。
+                //    上の `attemptedButFailed` の注記を参照）。
+                let loaded = Set(records.map(\.refKey))
+                let failed = attemptedButFailed
+                attemptedButFailed.removeAll(keepingCapacity: true)
+                if !failed.isEmpty {
+                    let exhausted = await store.recordScanLoadFailures(failed)
+                    if !exhausted.isEmpty {
+                        Diagnostics.mark("faces: \(exhausted.count) 枚を候補から外す"
+                                         + "（\(FaceStore.maxScanLoadFailures) 回・別の窓で画像が取れなかった）")
+                    }
+                }
+                if !loaded.isEmpty { await store.clearScanLoadFailures(Array(loaded)) }
                 guard !records.isEmpty else {
                     // 全件が未解析（画像が取れなかった＝譲った／回線／バッチ失敗）。
                     // ⚠️ **空のまま何バッチも進めない**（ADR-179）。以前は「進めて次へ」だったので、

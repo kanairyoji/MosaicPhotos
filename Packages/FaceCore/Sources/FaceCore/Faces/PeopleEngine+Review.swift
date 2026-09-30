@@ -247,12 +247,46 @@ extension PeopleEngine {
     }
 
     /// 撮影日が空のクラウドの顔へ、EXIF の撮影日時を埋める（ADR-218）。ネットには出ない。
-    func fillCloudCaptureDates() async {
+    ///
+    /// ⚠️⚠️ **入力が動いていなければ走らせない**（ADR-243・実機ログ diagnostics-101）。
+    /// 実機では 5 時間ぶん、まったく同じ行が並んでいた:
+    /// ```
+    /// faces: cloud capture dates — 空の写真 22061 / 分かった 0 / 埋めた顔 0
+    /// ```
+    /// 成果ゼロなのに毎時 `cloudPathsMissingCaptureDate()`（顔の全走査）＋ キャッシュ側 45 fetch を
+    /// 払っていた。ADR-82「無いものを繰り返し探さない」がここに来ていなかった。
+    ///
+    /// 答えが変わり得る入力は **2 つだけ**:
+    /// 1. クラウド側の EXIF の知識（`cloudExifProgress`）——進めば新しい日付が分かる
+    /// 2. スキャン済み写真の数（`store.scannedCount()`）——増えれば撮影日が空の顔が増える
+    ///
+    /// どちらも動いていなければ結果は前回と同じなので、**訊かない**。
+    /// ⚠️ `cloudExifProgress` が nil（判断材料が無い）なら従来どおり毎回走る＝安全側。
+    /// - Parameter force: 手動の再解析など、必ず走らせたいとき。
+    func fillCloudCaptureDates(force: Bool = false) async {
         guard let cloudCaptureDates else { return }
+        let defaults = UserDefaults.standard
+        let progressKey = "faceCloudExifProgressMark"
+        let scannedKey = "faceCloudCaptureDateScannedMark"
+        let progress = await cloudExifProgress?()
+        let scanned = await store.scannedCount()
+        if !force, let progress,
+           CaptureDateFillGate.canSkip(progress: progress, scanned: scanned,
+                                       lastProgress: defaults.object(forKey: progressKey) as? Int,
+                                       lastScanned: defaults.object(forKey: scannedKey) as? Int) {
+            return
+        }
         let paths = await store.cloudPathsMissingCaptureDate()
-        guard !paths.isEmpty else { return }
+        guard !paths.isEmpty else {
+            // ⚠️ 空でも札は進める（次回また全走査しないため）。
+            if let progress { defaults.set(progress, forKey: progressKey) }
+            defaults.set(scanned, forKey: scannedKey)
+            return
+        }
         let dates = await cloudCaptureDates(paths)
         let filled = await store.fillCloudCaptureDates(dates)
+        if let progress { defaults.set(progress, forKey: progressKey) }
+        defaults.set(scanned, forKey: scannedKey)
         Diagnostics.mark("faces: cloud capture dates — 空の写真 \(paths.count) / 分かった \(dates.count) / 埋めた顔 \(filled)")
     }
 

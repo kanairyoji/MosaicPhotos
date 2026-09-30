@@ -136,3 +136,38 @@ func pruneQuarantines(of storeURL: URL, keep: Int) {
         for url in urls { try? fm.removeItem(at: url) }
     }
 }
+
+// MARK: - テスト用インメモリコンテナ（1 か所に集める）
+
+/// インメモリ容器の生成を直列にする錠（下の注記を参照）。
+private let inMemoryContainerLock = NSLock()
+
+/// **テスト用のインメモリ `ModelContainer` を作る唯一の入口**。
+///
+/// ⚠️⚠️ **2 つの決まりが要る**。片方だけだと、どちらの形でも壊れる。
+/// 1. **名前を必ず変える**。同名（既定名）のインメモリ構成は、コンテナを作り直しても
+///    プロセス内で**同じストアを共有**する——テストが並列に走ると別スイートの行が流れ込み、
+///    しきい値ぎりぎりの検証が実行のたびに違う結果になる（単体では通るのに一括実行で落ちる）。
+/// 2. **生成そのものを直列にする**。並列の Suite が同時に `ModelContainer` を作ると、まれに
+///    CoreData の `-[NSSQLEntity_DerivedAttributesExtension _generateTriggerSQL]` の中で
+///    **SIGSEGV** する（`createTriggersForEntities:` → `addPersistentStore`）。
+///    ⚠️ 症状が分かりにくい: **テストの実行体だけが消え**、`swift-test` は 0% CPU で待ち続けるので
+///    「ハングした」ように見える。ログは途中でぶつ切れ、失敗は 1 件も報告されない。
+///    2026-09-18 / 09-20（`BackupStore`）と 2026-09-30（`FaceCore` の評価テスト）で観測。
+///    原因は推定のままだが、**同時に作らなければ当たらない**。
+///
+/// ⚠️ なぜ 1 か所にまとめたか: この 2 つの決まりは 6 つのストアに**コピーされていて**、
+/// 錠を持っているのは 2 つだけだった（`DropboxCacheStore` / `BackupStore`）。
+/// おかげでローカルの `swift test` が評価テストの途中で何度も黙って死んでいた。
+/// **散る規則は 1 つの関数に畳む**——`scripts/check_forbidden_patterns.py` が
+/// 「`isStoredInMemoryOnly: true` はこのファイルにしか書かない」を検査する。
+///
+/// テスト専用なので失敗は致命的（本番の自己修復とは別扱い）。
+public func makeInMemoryModelContainer(for schema: Schema) -> ModelContainer {
+    inMemoryContainerLock.withLock {
+        let config = ModelConfiguration(UUID().uuidString, schema: schema,
+                                        isStoredInMemoryOnly: true)
+        return (try? ModelContainer(for: schema, configurations: [config]))
+            ?? (try! ModelContainer(for: schema))
+    }
+}

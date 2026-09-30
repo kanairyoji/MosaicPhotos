@@ -22,19 +22,16 @@ actor FaceStore {
 
     static let log = LogChannel(subsystem: "com.mosaicphotos.AutoAlbum", label: "Faces")
 
+
     static func makeContainer(isStoredInMemoryOnly: Bool = false,
                               modelID: String = ModelGeneration.legacyFace) -> ModelContainer {
         // FaceCorrection は追加テーブル（ADR-45）＝加算的マイグレーション（既存の顔データは保持）。
         let schema = Self.ledgerSchema
-        if isStoredInMemoryOnly {
-            // ⚠️ **名前を必ず変える**。同名（既定名）のインメモリ構成は、コンテナを作り直しても
-            // プロセス内で**同じストアを共有**する——テストが並列に走ると別スイートの顔が
-            // 流れ込み、しきい値ぎりぎりの検証が実行のたびに違う結果になる（実際に、単体では
-            // 通るのに一括実行では別のテストが落ちる、という形で表に出た）。
-            let memory = ModelConfiguration(UUID().uuidString, schema: schema,
-                                            isStoredInMemoryOnly: true)
-            return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
-        }
+        // ⚠️ テスト用の容器は **`makeInMemoryModelContainer` だけ**が作る（MosaicSupport）。
+        // 名前を毎回変える／生成を直列にする の 2 つが要る理由はそちらに書いてある
+        // ——錠が無いと CoreData の `_generateTriggerSQL` で SIGSEGV し、**テストの実行体だけが
+        // 消えて「ハング」に見える**（2026-09-30 に FaceCore の評価テストで観測）。
+        if isStoredInMemoryOnly { return makeInMemoryModelContainer(for: schema) }
         // ⚠️ **台帳**扱い（ADR-186）: 人物名・束ね・修正はユーザーの学習結果で作り直せない。
         // 壊れても削除せず退避し、アプリの版が変わった最初の起動では開く前に控えを取る。
         // スキーマ変更は optional 列の追加だけ（軽量マイグレーション）。コンテナ名 "FacesV1" は
@@ -46,7 +43,8 @@ actor FaceStore {
     /// （`FaceLedgerBackup`）のと、Mac で書き出した台帳を開く（`FaceLedgerReplayTests`）のに
     /// 同じスキーマが要る。書き写すと、列を足したときに片方だけ古くなって開けなくなる。
     static let ledgerSchema = Schema([DetectedFace.self, PersonCluster.self, ScannedPhoto.self,
-                                      FaceCorrection.self, PeopleGroupRecord.self])
+                                      FaceCorrection.self, PeopleGroupRecord.self,
+                                      FaceScanAttempt.self])
 
     /// 世代（顔モデル ID）ごとのコンテナ名（ADR-186）。既存データの世代は名前 "FacesV1" を据え置き、
     /// 新しいモデルは `Faces-<id>`（影の世代）。同じ ID なら同じコンテナ＝アプリ更新で消えない。

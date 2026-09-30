@@ -64,4 +64,51 @@ struct CloudCaptureDateFillTests {
         #expect(small.count == 2)
         #expect(large.count == small.count)
     }
+
+    // MARK: - 「訊き直しても答えが同じなら訊かない」（ADR-243）
+
+    /// ⚠️⚠️ **この観点が丸ごと無かった**（実機ログ diagnostics-101）。
+    /// 既存のテストは「日付を渡したら顔に入るか」＝**中身の正しさ**だけを見ていた。
+    /// ところが実機で問題になったのは**呼ばれる頻度**で、5 時間ぶんまったく同じ行が並んでいた:
+    /// ```
+    /// faces: cloud capture dates — 空の写真 22061 / 分かった 0 / 埋めた顔 0
+    /// ```
+    /// 成果ゼロなのに毎時、顔の全走査＋キャッシュ側 45 fetch を払っていた。
+    /// 「**正しく動くか**」のテストは、「**無駄に動いていないか**」を一切見ない。
+    @Suite("撮影日の埋め直しを走らせる条件（ADR-243）")
+    struct CaptureDateFillGateTests {
+
+        @Test("一度も走らせていないなら必ず走る")
+        func firstRunAlwaysRuns() {
+            #expect(!CaptureDateFillGate.canSkip(progress: 100, scanned: 10,
+                                                 lastProgress: nil, lastScanned: nil))
+            // 片方だけ覚えている（版の途中で足した）場合も走る＝安全側。
+            #expect(!CaptureDateFillGate.canSkip(progress: 100, scanned: 10,
+                                                 lastProgress: 100, lastScanned: nil))
+            #expect(!CaptureDateFillGate.canSkip(progress: 100, scanned: 10,
+                                                 lastProgress: nil, lastScanned: 10))
+        }
+
+        @Test("どちらも動いていなければ飛ばす（実機で毎時払っていた分）")
+        func skipsWhenNothingMoved() {
+            #expect(CaptureDateFillGate.canSkip(progress: 22_061, scanned: 86_771,
+                                                lastProgress: 22_061, lastScanned: 86_771))
+        }
+
+        @Test("EXIF の知識が進んだら走る（新しい日付が分かり得る）")
+        func runsWhenExifProgressed() {
+            #expect(!CaptureDateFillGate.canSkip(progress: 22_000, scanned: 86_771,
+                                                 lastProgress: 22_061, lastScanned: 86_771))
+            // 同期で写真が増えて pending が増えた場合も「動いた」＝走る（向きは問わない）。
+            #expect(!CaptureDateFillGate.canSkip(progress: 22_100, scanned: 86_771,
+                                                 lastProgress: 22_061, lastScanned: 86_771))
+        }
+
+        /// ⚠️ 新しくスキャンした写真には撮影日が空の顔が入るので、こちらも走る理由になる。
+        @Test("スキャン済みが増えたら走る")
+        func runsWhenMorePhotosScanned() {
+            #expect(!CaptureDateFillGate.canSkip(progress: 22_061, scanned: 86_800,
+                                                 lastProgress: 22_061, lastScanned: 86_771))
+        }
+    }
 }

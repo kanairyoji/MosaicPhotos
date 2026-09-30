@@ -102,7 +102,31 @@ struct FaceLedgerRedactionTests {
                              faceID: "C-/家族/2019/沖縄旅行/IMG_0.jpg#0")
         await store.linkClusters(ids)
         _ = await store.createPeopleGroup(name: "山田家", memberClusterIDs: ids)
+        // ⚠️⚠️ **台帳にモデルを足したら、この fixture にも 1 行入れる**（ADR-243 で踏んだ）。
+        // 下のバイト検査は「fixture に入っていないもの」は当然見つけない——
+        // `FaceScanAttempt`（refKey を持つ）を足した直後、匿名化の対象から漏れていたのに
+        // **このテストは通っていた**。空でも通る assert を書かない（root CLAUDE.md）。
+        _ = await store.recordScanLoadFailures(["C-/家族/2019/沖縄旅行/IMG_9.jpg"])
         return (dir, store)
+    }
+
+
+    /// 本番と同じ形にする: **原本には触らず、コピーを匿名化する**（`exportForReplay` と同じ）。
+    ///
+    /// ⚠️ ここを「原本に対して呼ぶ」にしていると、原本を開いている接続が居るために
+    /// WAL の畳み込み（`wal_checkpoint(TRUNCATE)`）が効かず、本番では通る形が
+    /// テストでだけ落ちる。本番は必ずコピーに対して呼ぶ。
+    private func copyLedger(from dir: URL) throws -> URL {
+        let copyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("redact-copy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: copyDir, withIntermediateDirectories: true)
+        for suffix in ["", "-wal", "-shm"] {
+            let from = URL(fileURLWithPath: dir.appendingPathComponent("FacesV1.store").path + suffix)
+            guard FileManager.default.fileExists(atPath: from.path) else { continue }
+            try FileManager.default.copyItem(
+                at: from, to: URL(fileURLWithPath: copyDir.appendingPathComponent("FacesV1.store").path + suffix))
+        }
+        return copyDir.appendingPathComponent("FacesV1.store")
     }
 
     /// ⚠️ **これが肝心**。書き出したファイルを**バイト列として**調べて、本名とパスが
@@ -110,9 +134,14 @@ struct FaceLedgerRedactionTests {
     /// 別の列や索引に残っていても気づけない。
     @Test("書き出したファイルのどこにも本名とフォルダ名が残らない")
     func exportedBytesContainNoNamesOrPaths() async throws {
-        let (dir, _) = try await makeLedger()
+        let (dir, store) = try await makeLedger()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let storeURL = dir.appendingPathComponent("FacesV1.store")
+        // ⚠️ fixture の前提を assert する（この行が無いと、下の検査は「入っていないから見つからない」
+        // で通ってしまう——実際にそれで匿名化の漏れを見逃した）。
+        #expect(await store.scanLoadFailureCounts().tracked == 1,
+                "fixture: 取れなかった写真の記録が入っていない")
+        let storeURL = try copyLedger(from: dir)
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
         #expect(FaceLedgerBackup.redactLedger(at: storeURL), "外す処理が失敗した")
 
         // ⚠️ `-wal` も含めて全部見る（本体だけ見ると WAL に残った分を見落とす）。
@@ -138,10 +167,13 @@ struct FaceLedgerRedactionTests {
         #expect(censusBefore.bundleCount == 1)
         #expect(censusBefore.groups.count == 1)
 
-        let storeURL = dir.appendingPathComponent("FacesV1.store")
+        // ⚠️ 本番と同じくコピーを匿名化する（原本には触らない）。
+        let storeURL = try copyLedger(from: dir)
+        let copyDir = storeURL.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: copyDir) }
         #expect(FaceLedgerBackup.redactLedger(at: storeURL))
 
-        guard let (store, work) = try FaceLedgerReplayTests.openCopy(in: dir.path) else {
+        guard let (store, work) = try FaceLedgerReplayTests.openCopy(in: copyDir.path) else {
             #expect(Bool(false), "外した台帳を開けなかった"); return
         }
         defer { try? FileManager.default.removeItem(at: work) }

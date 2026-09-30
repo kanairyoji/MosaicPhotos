@@ -48,3 +48,26 @@ extension FaceStore {
         return out
     }
 }
+
+/// 「撮影日の埋め直しを走らせてよいか」の純ロジック（ADR-243）。
+///
+/// ⚠️ 実機ログ diagnostics-101 で、成果ゼロの全走査が毎時走っていた。答えが変わり得る入力は
+/// 「クラウド側の EXIF の知識」と「スキャン済み写真の数」の 2 つだけなので、
+/// **どちらも動いていなければ走らせない**。
+/// ⚠️ 判断を実時間や DB から切り離してここに置く——実機で 5 時間ぶん同じ行が並んでから
+/// 気づいた種類なので、規則そのものをテストで固定する。
+public enum CaptureDateFillGate {
+
+    /// 前回と同じ入力なら飛ばしてよい。
+    /// - Parameters:
+    ///   - progress: いまのクラウド EXIF 探索の進み具合。
+    ///   - scanned: いまのスキャン済み写真の数。
+    ///   - lastProgress: 前回走らせたときの `progress`（nil＝一度も走らせていない）。
+    ///   - lastScanned: 前回走らせたときの `scanned`。
+    public static func canSkip(progress: Int, scanned: Int,
+                               lastProgress: Int?, lastScanned: Int?) -> Bool {
+        // ⚠️ **一度も走らせていないなら必ず走る**。nil を「同じ」と読むと初回から飛ばしてしまう。
+        guard let lastProgress, let lastScanned else { return false }
+        return progress == lastProgress && scanned == lastScanned
+    }
+}

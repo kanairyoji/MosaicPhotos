@@ -58,8 +58,6 @@ actor DropboxCacheStore {
     /// 無効化記録の上限。超えたら記録を捨てて全体世代を進める（安全側）。
     static let maxTrackedInvalidations = 5_000
 
-    /// インメモリ容器の生成を直列にする錠（上の注記を参照）。
-    private static let inMemoryContainerLock = NSLock()
 
     init(
         thumbnailByteLimit: Int = DropboxInternalConstants.defaultThumbnailByteLimit,
@@ -71,22 +69,10 @@ actor DropboxCacheStore {
         // ⚠️ 名前を明示して "DropboxCache.store" を使う。
         // 名前なし ModelConfiguration は "default.store" になり、
         // BackupEngine の ModelContainer と衝突してスキーマエラーになる（過去に発生）。
+        // ⚠️ テスト用の容器は **`makeInMemoryModelContainer` だけ**が作る（MosaicSupport）。
+        // 名前を毎回変える／生成を直列にする の 2 つが要る理由はそちらに書いてある。
         if isStoredInMemoryOnly {
-            // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
-            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
-            //
-            // ⚠️ さらに**生成そのものを直列にする**。並列の Suite が同時に `ModelContainer` を
-            // 作ると、まれに SwiftData（CoreData の `_generateTriggerSQL`）の中で落ちる——
-            // 実機ログ調査中のテスト実行で 136 件が道連れになった（`BackupStore` でも同じ形を
-            // 3 回観測している）。原因の特定ではないが、同時に作らなければ当たらない。
-            // インメモリ＝テスト専用の経路なので、直列化の代償は無い。
-            let memory = Self.inMemoryContainerLock.withLock { () -> ModelContainer in
-                let config = ModelConfiguration(UUID().uuidString, schema: schema,
-                                                isStoredInMemoryOnly: true)
-                return (try? ModelContainer(for: schema, configurations: [config]))
-                    ?? (try! ModelContainer(for: schema))
-            }
-            modelContainer = memory
+            modelContainer = makeInMemoryModelContainer(for: schema)
         } else {
             // 壊れた/非互換ストアは削除して作り直し、それでも駄目ならインメモリへ
             // （自己修復＝MosaicSupport の共通ロジック。キャッシュは再同期で回復する）。

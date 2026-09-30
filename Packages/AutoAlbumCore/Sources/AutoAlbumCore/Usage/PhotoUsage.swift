@@ -59,13 +59,9 @@ actor UsageStore {
 
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoUsageRecord.self])
-        if isStoredInMemoryOnly {
-            // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
-            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
-            let memory = ModelConfiguration(UUID().uuidString, schema: schema,
-                                            isStoredInMemoryOnly: true)
-            return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
-        }
+        // ⚠️ テスト用の容器は **`makeInMemoryModelContainer` だけ**が作る（MosaicSupport）。
+        // 名前を毎回変える／生成を直列にする の 2 つが要る理由はそちらに書いてある。
+        if isStoredInMemoryOnly { return makeInMemoryModelContainer(for: schema) }
         return resilientModelContainer(name: "UsageV1", schema: schema) { Self.log.error($0) }
     }
 

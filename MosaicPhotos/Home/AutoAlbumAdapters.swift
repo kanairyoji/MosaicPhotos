@@ -80,6 +80,11 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
     let cloudCaptureDates: @Sendable ([String]) async -> [String: Date] = { [weak dropboxStore] paths in
         await dropboxStore?.exifCaptureDates(paths: paths) ?? [:]
     }
+    // ⚠️ 上の問い合わせを**毎回走らせないため**の札（ADR-243）。この数が動いていなければ
+    // 訊き直しても答えは前回と同じ（実機では 5 時間ぶん「空の写真 22061 / 分かった 0」が並んだ）。
+    let cloudExifProgress: @Sendable () async -> Int = { [weak dropboxStore] in
+        await dropboxStore?.exifProbePendingCount() ?? 0
+    }
     // FaceStore も同様にオフメイン生成（コンテナを開く I/O をメインから外す）。
     return await PeopleEngine.makeWithOffMainStore(
         faceProvider: FacePerceptionAdapter(
@@ -110,7 +115,8 @@ func makePeopleEngine(dropboxStore: DropboxPhotoStore) async -> PeopleEngine {
             },
             cloudCaptureDates: cloudCaptureDates),
         favoriteRefKeysProvider: { await favoriteImageRefKeys(dropboxStore: dropboxStore) },
-        cloudCaptureDates: cloudCaptureDates)
+        cloudCaptureDates: cloudCaptureDates,
+        cloudExifProgress: cloudExifProgress)
 }
 
 /// `DropboxPhotoStore.items` を AutoAlbumCore の中立メタデータへ写像する CloudPhotoProvider 実体。

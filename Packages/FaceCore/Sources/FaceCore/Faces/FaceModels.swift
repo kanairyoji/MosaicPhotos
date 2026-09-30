@@ -182,3 +182,31 @@ final class ScannedPhoto {
         self.faceCount = faceCount
     }
 }
+
+/// **画像が取れずに解析できなかった回数**（ADR-243・実機ログ diagnostics-101）。
+///
+/// ⚠️⚠️ ADR-92 は「画像が取れないのは**一時的**（閲覧中の譲り・回線・バッチ失敗）だから
+/// 記録せず次の窓へ回す」と決めた。実機はその前提が成り立たない例を出した——
+/// Dropbox が **status=200 で 0 バイト**のサムネを返す写真が 1 枚あり、
+/// 何時間経っても `loaded=0 nil=1` で、**スキャン済みにならないので永久に候補へ戻る**。
+/// その 1 枚のために毎回 86,772 件の列挙（約 11 秒）と人物一覧の作り直しが走っていた。
+///
+/// ⚠️ かといって「1 回失敗したら諦める」にはできない——譲りや回線での失敗は本当に一時的で、
+/// そこで諦めると**閲覧しながら寝た晩に数千枚が永久に落ちる**。
+/// だから **回数**（`failures`）で区別し、しかも `lastFailureAt` で **1 時間に 1 回しか数えない**
+/// ——一時的な原因は 1 つの窓で何千枚も巻き込むが、時間を跨いでは続かない。
+/// 成功したら行ごと消す（`clearScanFailures`）。
+@Model
+final class FaceScanAttempt {
+    @Attribute(.unique) var refKey: String
+    /// 画像が取れなかった回数（1 時間に最大 1）。
+    var failures: Int
+    /// 最後に数えた時刻（同じ窓で何度も数えないための間隔判定）。
+    var lastFailureAt: Date
+
+    init(refKey: String, failures: Int = 1, lastFailureAt: Date = Date()) {
+        self.refKey = refKey
+        self.failures = failures
+        self.lastFailureAt = lastFailureAt
+    }
+}

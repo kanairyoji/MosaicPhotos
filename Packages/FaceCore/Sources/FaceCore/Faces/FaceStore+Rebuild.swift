@@ -436,6 +436,9 @@ extension FaceStore {
         try? modelContext.delete(model: DetectedFace.self)
         try? modelContext.delete(model: PersonCluster.self)
         try? modelContext.delete(model: ScannedPhoto.self)
+        // ⚠️ **忘れる経路をセットで**（ADR-82/243）。「何度やっても取れない」の記録を残すと、
+        // 版を上げて全部やり直すときに、外した写真だけ戻ってこない。
+        try? modelContext.delete(model: FaceScanAttempt.self)
         // ⚠️ **グループのメンバーを空にする**（ADR-232）。メンバーは clusterID なので、
         // ここで意味を失う（ID は 0 から振り直される）。残すと、再スキャンで同じ番号を
         // 割り当てられた**別人**が家族グループに居座る——「消える」より悪い。
@@ -467,6 +470,10 @@ extension FaceStore {
         let cloudMarkers = (try? modelContext.fetch(FetchDescriptor<ScannedPhoto>(
             predicate: #Predicate { $0.refKey.starts(with: "C-") }))) ?? []
         for marker in cloudMarkers { modelContext.delete(marker) }
+        // ⚠️ クラウドを測り直すなら、「取れなかった」記録もクラウド分だけ忘れる（ADR-243）。
+        let cloudAttempts = (try? modelContext.fetch(FetchDescriptor<FaceScanAttempt>(
+            predicate: #Predicate { $0.refKey.starts(with: "C-") }))) ?? []
+        for row in cloudAttempts { modelContext.delete(row) }
         try? modelContext.save()
         // ⚠️ **クラスタを組み直す**。顔を消しただけでは `PersonCluster.sum/count` に
         // 消した顔の寄与が残り、次スキャンでその古い重心へクラウド顔が再加算されて

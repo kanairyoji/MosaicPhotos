@@ -86,6 +86,12 @@ public final class PeopleEngine {
     /// クラウド path 群 → **EXIF の撮影日時**（ADR-218・アップロード時刻は返さない）。
     /// 先にスキャンした顔の撮影日を、分かった分から埋め直すのに使う。
     @ObservationIgnored let cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])?
+    /// **クラウド側の EXIF 探索がどこまで進んだか**（ADR-243・実機ログ diagnostics-101）。
+    ///
+    /// ⚠️ `fillCloudCaptureDates` を毎回走らせないための「忘れる経路」。この数が動いていなければ、
+    /// 訊き直しても答えは前回と同じ（実機では 5 時間ぶん `空の写真 22061 / 分かった 0` が並んだ）。
+    /// nil なら判断材料が無いので**従来どおり毎回走る**（安全側）。
+    @ObservationIgnored let cloudExifProgress: (@Sendable () async -> Int)?
     /// 顔スキャン。二重起動の抑止・世代ガード・明け渡しは `SingleFlightTask` が持つ（ADR-198。
     /// 以前は `scanTask` / `scanGeneration` / `isScanning` の 3 つを手で管理していた）。
     @ObservationIgnored let scan = SingleFlightTask()
@@ -162,6 +168,7 @@ public final class PeopleEngine {
     init(faceProvider: FacePerceptionProvider?,
          favoriteRefKeysProvider: (() async -> Set<String>)? = nil,
          cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])? = nil,
+         cloudExifProgress: (@Sendable () async -> Int)? = nil,
          store: FaceStore? = nil,
          shadowStore: FaceStore? = nil) {
         let store = store ?? FaceStore()
@@ -169,6 +176,7 @@ public final class PeopleEngine {
         self.faceProvider = faceProvider
         self.favoriteRefKeysProvider = favoriteRefKeysProvider
         self.cloudCaptureDates = cloudCaptureDates
+        self.cloudExifProgress = cloudExifProgress
         self.shadowStore = shadowStore
         // スキャンは影の世代があればそちらへ（新モデルの埋め込みを旧世代のクラスタに混ぜない）。
         self.tagger = FaceTagger(store: shadowStore ?? store, provider: faceProvider)
@@ -199,7 +207,8 @@ public final class PeopleEngine {
     public static func makeWithOffMainStore(
         faceProvider: FacePerceptionProvider?,
         favoriteRefKeysProvider: (() async -> Set<String>)? = nil,
-        cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])? = nil
+        cloudCaptureDates: (@Sendable ([String]) async -> [String: Date])? = nil,
+        cloudExifProgress: (@Sendable () async -> Int)? = nil
     ) async -> PeopleEngine {
         let active = activeFaceModelID()
         let bundled = faceProvider?.modelID ?? active
@@ -217,6 +226,7 @@ public final class PeopleEngine {
         return PeopleEngine(faceProvider: faceProvider,
                             favoriteRefKeysProvider: favoriteRefKeysProvider,
                             cloudCaptureDates: cloudCaptureDates,
+                            cloudExifProgress: cloudExifProgress,
                             store: store, shadowStore: shadow)
     }
 

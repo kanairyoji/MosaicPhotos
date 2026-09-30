@@ -24,13 +24,8 @@ actor AutoAlbumStore {
     /// OCR/固定語彙タグ列を撤去し CLIP 埋め込み中心へ移行したスキーマ変更に伴う再構築）。失敗時はインメモリ。
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoEnrichment.self, GeneratedAlbum.self, PhotoEmbedding.self])
-        if isStoredInMemoryOnly {
-            // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
-            // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
-            let memory = ModelConfiguration(UUID().uuidString, schema: schema,
-                                            isStoredInMemoryOnly: true)
-            return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
-        }
+        // ⚠️ テスト用の容器は **`makeInMemoryModelContainer` だけ**が作る（MosaicSupport）。
+        if isStoredInMemoryOnly { return makeInMemoryModelContainer(for: schema) }
         // "AutoAlbumV10" は破棄採番：CLIP 埋め込みを PhotoEnrichment から別テーブル PhotoEmbedding
         // （Float16）へ分離したスキーマ変更に伴う再構築。旧 V9 ストアは破棄され埋め込みは再生成される。
         return resilientModelContainer(name: "AutoAlbumV10", schema: schema) { Self.log.error($0) }

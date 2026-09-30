@@ -110,6 +110,16 @@ extension DropboxPhotoStore {
         await cache.exifCaptureDates(paths: paths)
     }
 
+    /// **EXIF の問い合わせがどこまで進んだか**（ADR-243）。まだ訊いていない写真の数。
+    ///
+    /// ⚠️ 「進んだか」を判定するためだけの数。減る（訊いた）ぶんでも増える（同期で写真が増えた）
+    /// ぶんでも**変わったことが分かれば十分**なので、向きは問わない。
+    /// 顔側（`PeopleEngine.cloudExifProgress`）が「訊き直しても答えは同じ」を判断するのに使う
+    /// ——実機では成果ゼロの全走査が毎時走っていた（diagnostics-101）。
+    public func exifProbePendingCount() async -> Int {
+        await cache.captureDateProbePendingCount()
+    }
+
     /// 解析候補に渡す **パスと撮影日だけ**の一覧（ADR-224）。
     ///
     /// ⚠️ `items`（表示用）を使わないこと。あちらは全列の実体化を伴い、実機では

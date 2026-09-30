@@ -58,12 +58,10 @@ public actor BackupStore {
         defer { testContainerLock.unlock() }
         let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
                              ShareSet.self, ShareItem.self])
-        // ⚠️ インメモリ構成は**名前を変えないとプロセス内で同じストアを共有する**
-        // （テストが並列に走ると別スイートの行が流れ込む・FaceStore で実際に踏んだ）。
-        let config = ModelConfiguration(UUID().uuidString, schema: schema,
-                                        isStoredInMemoryOnly: true)
-        // テスト専用なので失敗は致命的（本番の自己修復とは別扱い）。
-        return try! ModelContainer(for: schema, configurations: [config])
+        // ⚠️ テスト用の容器は **`makeInMemoryModelContainer` だけ**が作る（MosaicSupport）。
+        // 上の錠はこの型固有の事情（同じ入口の再入を防ぐ）で残す——容器の生成そのものの
+        // 直列化は共通ヘルパ側が持つ。
+        return makeInMemoryModelContainer(for: schema)
     }
 
     /// 名前付き永続コンテナ（自己修復）。壊れた/非互換ストアは削除して再構築し、

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import MosaicSupport
+import SQLite3
 import SwiftData
 
 /// **顔の台帳（FacesV1）の控えと書き出し**（ADR-234）。
@@ -200,6 +201,23 @@ extension FaceLedgerBackup {
     /// - Returns: 外せたか。
     static func redactLedger(at storeURL: URL) -> Bool {
         let salt = FaceLedgerRedaction.newSalt()
+        guard rewriteLedgerInPlace(at: storeURL, salt: salt) else { return false }
+        // ⚠️⚠️ **`-wal` を畳んでから渡す**（2026-09-30）。匿名化は本体（`.store`）の行を
+        // 書き換えるが、**書き換える前のページは `-wal` に残り得る**。実測で、まだ誰かが開いている
+        // 台帳を匿名化すると 1MB の `-wal` に本名（山田太郎）・グループ名・Dropbox のフォルダ名が
+        // **そのまま**残った（本体は綺麗なのに WAL が汚い）。
+        //
+        // ⚠️ **正直な但し書き**: 本番は必ず**コピー**を匿名化するので、その形では実測上
+        // `-wal` も綺麗になっていた（＝観測された漏れは、テストが原本を匿名化していたせい）。
+        // ここで畳むのは、それを**偶然から保証へ**変えるため——畳めなければ `false` を返し、
+        // 「たぶん大丈夫」で個人情報入りのファイルを渡さない。
+        // 畳めないのは「他の接続が開いている」＝まさに出力が安全でない状況なので、失敗が正しい。
+        return truncateWAL(at: storeURL)
+    }
+
+    /// 匿名化の本体。⚠️ **コンテナをこのスコープで閉じる**（次の checkpoint が読み取りロックに
+    /// 邪魔されないように）。
+    private static func rewriteLedgerInPlace(at storeURL: URL, salt: String) -> Bool {
         do {
             let config = ModelConfiguration(schema: FaceStore.ledgerSchema, url: storeURL)
             let container = try ModelContainer(for: FaceStore.ledgerSchema, configurations: [config])
@@ -224,11 +242,50 @@ extension FaceLedgerBackup {
             for group in (try? context.fetch(FetchDescriptor<PeopleGroupRecord>())) ?? [] {
                 group.name = FaceLedgerRedaction.pseudonym(for: group.name, salt: salt)
             }
+            // ⚠️⚠️ **台帳にモデルを足したら、ここにも行を足す**（ADR-243 で自分が踏んだ）。
+            // `FaceScanAttempt` は refKey（＝Dropbox のフォルダ名を含むパス）を持つのに、
+            // 足した直後はここに無かった——書き出した台帳から**実フォルダ名が漏れる**状態だった。
+            // 見落とせないように `scripts/check_forbidden_patterns.py` が
+            // 「`ledgerSchema` の各モデルがこのファイルに出てくること」を検査する。
+            for attempt in (try? context.fetch(FetchDescriptor<FaceScanAttempt>())) ?? [] {
+                attempt.refKey = FaceLedgerRedaction.redactedRefKey(attempt.refKey, salt: salt)
+            }
             try context.save()
             return true
         } catch {
             Diagnostics.mark("faces: redaction failed — \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// `-wal` を本体へ畳んで空にする。
+    ///
+    /// ⚠️ SwiftData には journal を触る API が無いので SQLite を直に開く。書き出し用のコピーに
+    /// 対してだけ呼ぶ（原本には触らない）。畳めなければ**失敗として返す**——「たぶん大丈夫」で
+    /// 個人情報入りのファイルを渡さない。
+    private static func truncateWAL(at storeURL: URL) -> Bool {
+        var db: OpaquePointer?
+        guard sqlite3_open(storeURL.path, &db) == SQLITE_OK, let db else {
+            Diagnostics.mark("faces: redaction — WAL を畳めない（開けない）")
+            sqlite3_close(db)
+            return false
+        }
+        defer { sqlite3_close(db) }
+        var log: Int32 = 0, checkpointed: Int32 = 0
+        let rc = sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, &log, &checkpointed)
+        guard rc == SQLITE_OK else {
+            Diagnostics.mark("faces: redaction — WAL を畳めない（rc=\(rc)）")
+            return false
+        }
+        // ⚠️ 畳めたことを**ファイルの大きさで**確かめる（rc だけ見ると、ロックで何もせずに
+        // OK が返るケースを見逃す）。
+        let walPath = storeURL.path + "-wal"
+        let attrs = try? FileManager.default.attributesOfItem(atPath: walPath)
+        let size = (attrs?[.size] as? Int) ?? 0   // ファイルが無ければ 0（畳めている）
+        guard size == 0 else {
+            Diagnostics.mark("faces: redaction — WAL がまだ \(size) バイト残っている")
+            return false
+        }
+        return true
     }
 }
