@@ -299,6 +299,8 @@ CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=
 ⚠️ 書くのは**補間の手前まで**（`\(...)` の後ろは grep で当てられない）。
 手順（上の表）を足すときは、その手順が頼る文字列をここへ 1 行足す。
 
+| G18 | **アセット索引が作り直され続けないか**（ADR-249） | 1 晩置いて診断ログを見る | `assetIndex: built 18204` の回数が**大きく減る**こと（103 では 36 回・`invalidated` 33 回）。⚠️ `invalidated` が連続しても `built` は 1 回にまとまること。footprint の最大が **857MB から下がる**こと。※ `invalidated` 自体は PhotoKit 由来なので減らない |
+
 | G17 | **窓が「安い数を数えて終わる」ようになったか**（ADR-247） | 1 晩置いて診断ログを見る | ⚠️ 解析が終わっている状態なら、`driver: 候補の列挙を見送る（前回から変わっていない）` が出て **`candidates.cloudRefs` / `candidates.hidden` が出なくなる**こと。`tags` の手番では `tags: finished` が出ず、footprint の跳ねが **+341MB → ほぼ 0** になること。⚠️ **逆向きも見る**: 写真を撮った／クラウドに追加した翌日は、ちゃんと列挙が走って `faces: start` が出ること（出なければ「変わったのに気づかない」側の不具合） |
 
 | G16 | **背面でメモリ圧迫に落とされなくなったか**（ADR-246） | 1 晩置いて診断ログの `EXIT-METRIC` を見る | `背面終了[メモリ圧迫=N]` の N が**増えなくなる**こと（102 では 11 回）。⚠️ あわせて 80MB 以上の跳ねを数える（`python3 scripts/triage_diagnostics.py` の footprint と、`faces: cloud capture dates` の前後差）。`faces: cloud capture dates` の前後で **+231MB 跳ねない**こと。※ `tags` の手番の +341MB は**まだ残る**——別の一手 |

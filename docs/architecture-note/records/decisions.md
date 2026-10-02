@@ -21,6 +21,40 @@
 
 ---
 
+## ADR-249 アセット索引も「静かになってから 1 回」（ADR-224/225 の 12 例目）
+- 状態: 採用
+- 文脈: 実機ログ diagnostics-103。⚠️ `LocalAssetIndex.invalidate()` が PhotoKit の変更通知を
+  受けるたびに**その場で** `rebuild()` を呼んでいた。通知が続く間（iCloud 同期・バックアップの
+  書き込み中）**2〜3 秒おきに 18,204 件を列挙し直し**、1 セッションで
+  **built 36 回 / invalidated 33 回**、footprint は 592 → **857MB**（このログの最大）。
+  ```
+  07:00:44 assetIndex: built 18204 in 694ms   (592MB)
+  07:00:45 assetIndex: invalidated by library change (697MB)
+  07:00:46 assetIndex: invalidated by library change (712MB)
+  07:00:47 assetIndex: built 18204 in 1010ms  (783MB)
+  07:00:48 TICK footprint=857MB (background) bgStalls=1
+  ```
+  ⚠️ しかも `buildTask?.cancel()` は走っている `enumerateObjects` を止められない
+  （協調的キャンセルの確認点が無い）ので、**列挙が重なって**積み上がる。
+  ⚠️⚠️ **同じ規則は `DropboxPhotoStore` に在った**（ADR-224/225: 静かになってから 1 回＋
+  間隔は直近の所要の 4 倍）。ここだけ抜けていた——「同じ規則が散って 1 か所だけ抜ける」の **12 例目**。
+- 決定: `invalidate()` は印を立てて**予約するだけ**にし、`AssetIndexRebuildPolicy`（純ロジック）が
+  「静かになった」と「間隔が空いた」の**遅い方**まで待ってから 1 回だけ作り直す。
+  静かの窓 2 秒・間隔は `min(max(5 秒, 直近の所要 × 4), 60 秒)`。
+  ⚠️ **初回は間隔で待たせない**（`lastRebuildAt` が遠い過去なら静かになりしだい走る）
+  ——起動直後の索引構築が 5 秒遅れると体感に出る。
+- 結果: 変化が続く間の作り直しが 1 回に畳まれる見込み（実機で確認＝G18）。
+  ⚠️ **遅らせても正しさは落ちない**——`needsRevalidation` が立っている間は要求のたびに
+  現存を確かめるので、古い索引から削除済みを返すことはない。
+  **ここは体感のための最適化であって、正しさの境界ではない**（この性質が無ければ遅らせられなかった）。
+- ⚠️ 教訓: 「変化のたびにやり直す」を 5 回直した（クラウド一覧・人物一覧・タグの手番・
+  候補の列挙・アセット索引）。**新しく「変更通知を受けて作り直す」コードを書いたら、
+  その場で間引きを入れる**——後から足すと、必ず実機ログで見つけることになる。
+- 関連: `PhotosFeatureKit/LocalAssetIndex.swift` / `AssetIndexRebuildPolicy` /
+  `AssetIndexRebuildPolicyTests`（5 本・負の検証済み）。ADR-224 / 225 / 230。
+
+---
+
 ## ADR-248 テストの中で「1 つ選ぶ」をしない（候補が複数なら全部見る）
 - 状態: 採用（ADR-94/139 の規則を、製品コードからテストへ持ち越す）
 - 文脈: CI の fast が、**何も関係ないコミット**で落ちた。原因は PeopleKit の文字列検査が
