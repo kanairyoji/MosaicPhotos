@@ -41,7 +41,12 @@ struct CloudCaptureDateFillTests {
     }
 
     /// ADR-119: 顔の数に比例して読み出し回数が増えない（数えるのは回数）。
-    @Test("顔を 4 倍にしても、読み出しは 2 回のまま")
+    ///
+    /// ⚠️ **2 回 → 1 回になった**（ADR-246）。洗い出し側を使い捨てコンテキストのページ読みへ
+    /// 移したので、本体のコンテキストで引くのは「直す顔だけ」の 1 回（chunk）になった。
+    /// 期待値を緩めたのではなく**強くなった**——ページ読みを通っているかは
+    /// `missingCaptureDateScanUsesPagedReads` が別に見ている。
+    @Test("顔を 4 倍にしても、読み出しは 1 回のまま")
     func fetchCountDoesNotGrowWithFaces() async {
         func fetches(photos: Int) async -> (count: Int, filled: Int) {
             let store = FaceStore(isStoredInMemoryOnly: true)
@@ -61,8 +66,66 @@ struct CloudCaptureDateFillTests {
         // ⚠️ fixture の前提: 実際に顔が埋まっている（空振りで通る assert にしない）。
         #expect(small.filled == 10)
         #expect(large.filled == 40)
-        #expect(small.count == 2)
-        #expect(large.count == small.count)
+        #expect(small.count == 1, "本体のコンテキストで引くのは「直す顔だけ」の 1 回で足りる")
+        #expect(large.count == small.count, "顔の数に比例して読み出しが増えている")
+    }
+
+    /// ⚠️⚠️ **本体のコンテキストに全顔を抱えない**（ADR-246・実機ログ diagnostics-102）。
+    ///
+    /// 実機では撮影日の埋め直しが **1 ステップで +231MB（575MB → 806MB）**跳ね、背面では
+    /// メモリ圧迫で 11 回落とされていた。原因は `captureDate == nil` を本体のコンテキストで
+    /// 全件 fetch していたこと——`propertiesToFetch` は列を絞らない（ADR-236）ので、
+    /// 埋め込み（1 顔 1KB）ごと実体化し、本体のコンテキストが登録し続ける。
+    ///
+    /// ⚠️ **回数で見る**（ADR-119）。常駐メモリはテストで測れないが、
+    /// 「使い捨てコンテキストのページ読みを通っているか」「本体のコンテキストで全件 fetch して
+    /// いないか」は数えられる。
+    @Test("撮影日の洗い出しは、使い捨てコンテキストのページ読みを通る")
+    func missingCaptureDateScanUsesPagedReads() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<30 {
+            await store.recordScan(refKey: PhotoRef.cloud("/photo/\(i).jpg").encoded,
+                                   faces: [signal([Float(i), 1, 0])])
+        }
+        let pagedBefore = await store.pagedFaceRowsForTesting
+        let fetchesBefore = await store.fetchCountForTesting
+
+        let paths = await store.cloudPathsMissingCaptureDate()
+
+        let pagedAfter = await store.pagedFaceRowsForTesting
+        let fetchesAfter = await store.fetchCountForTesting
+        #expect(paths.count == 30, "fixture: 撮影日が空のクラウド写真が集まっていない: \(paths.count)")
+        #expect(pagedAfter > pagedBefore, """
+            ページ読みを通っていない（本体のコンテキストで全件 fetch している）。
+            実機ではこれが 1 ステップ +231MB になり、背面でメモリ圧迫に落とされていた。
+            """)
+        #expect(fetchesAfter == fetchesBefore, """
+            本体のコンテキストで fetch している（\(fetchesAfter - fetchesBefore) 回）。
+            読むだけの走査は使い捨てコンテキストに寄せること。
+            """)
+    }
+
+    /// ⚠️ 書き込み側も同じ。**読みはページ・書きは対象だけ**。
+    @Test("埋め直しは、直す顔だけを本体のコンテキストで引く")
+    func fillOnlyFetchesTheFacesItChanges() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        for i in 0..<30 {
+            await store.recordScan(refKey: PhotoRef.cloud("/photo/\(i).jpg").encoded,
+                                   faces: [signal([Float(i), 1, 0])])
+        }
+        let shot = Date(timeIntervalSince1970: 1_400_000_000)
+        let fetchesBefore = await store.fetchCountForTesting
+
+        // 30 枚のうち 1 枚だけ日付が分かった。
+        let filled = await store.fillCloudCaptureDates(["/photo/7.jpg": shot])
+
+        #expect(filled == 1, "1 枚だけ埋まるはずが \(filled) 枚")
+        let fetchesAfter = await store.fetchCountForTesting
+        let fetches = fetchesAfter - fetchesBefore
+        #expect(fetches <= 2, """
+            本体のコンテキストでの fetch が \(fetches) 回。
+            直す顔だけを引くなら 1 回（chunk）で足りる——全件を引いていないか。
+            """)
     }
 
     // MARK: - 「訊き直しても答えが同じなら訊かない」（ADR-243）

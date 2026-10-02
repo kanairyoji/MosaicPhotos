@@ -12,28 +12,58 @@ import SwiftData
 extension FaceStore {
 
     /// 撮影日が空の**クラウドの**顔がある写真の path（重複なし・並びは決定的）。
+    ///
+    /// ⚠️⚠️ **使い捨てコンテキストのページ読みで数える**（ADR-246・実機ログ diagnostics-102）。
+    /// 以前は `captureDate == nil` の述語＋`propertiesToFetch = [\.refKey]` で**本体のコンテキスト**
+    /// から 1 回 fetch していた。ADR-236 で分かっているとおり **`propertiesToFetch` は列を絞らない**
+    /// （あれはヒント）ので、埋め込み（1 顔 1KB）ごと全行が実体化し、本体のコンテキストは
+    /// それを登録し続ける——実機で **1 ステップ +231MB（575MB → 806MB）**。
+    /// 背面では 11 回メモリ圧迫で落とされていた。
+    /// ⚠️ ページ読みは「nil の顔」だけに絞れない（キーセットの述語と合成できない）ので**全顔を読む**。
+    /// それでも常駐は 1 ページぶんで有界——ADR-236 と同じ判断（絞り込みより手放すほうが効く）。
     func cloudPathsMissingCaptureDate() -> [String] {
-        var d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.captureDate == nil })
-        d.propertiesToFetch = [\.refKey]
         var paths = Set<String>()
-        for face in countedFetchOptional(d) ?? [] {
-            if let path = PhotoRef.decode(face.refKey)?.cloudPath { paths.insert(path) }
+        forEachFacePage(columns: [\.faceID, \.refKey, \.captureDate]) { page in
+            for face in page where face.captureDate == nil {
+                if let path = PhotoRef.decode(face.refKey)?.cloudPath { paths.insert(path) }
+            }
         }
         return paths.sorted()
     }
 
     /// path → 撮影日時 を、撮影日が空のクラウドの顔へ書き込む。
+    ///
+    /// ⚠️ **読みはページ・書きは対象だけ**（ADR-227/246）。以前は本体のコンテキストで
+    /// `captureDate == nil` を**射影なしで**全件 fetch していた（埋め込みごと常駐）。
+    /// 直す顔は普通 0 件なのに、読むだけで数百 MB を積んでいた。
     /// - Returns: 埋めた顔の数。
     @discardableResult
     func fillCloudCaptureDates(_ datesByPath: [String: Date]) -> Int {
         guard !datesByPath.isEmpty else { return 0 }
-        let d = FetchDescriptor<DetectedFace>(predicate: #Predicate { $0.captureDate == nil })
+        // 1) 直す顔を**値で**拾う（使い捨てコンテキスト・ページごとに手放す）。
+        var targets: [String: Date] = [:]
+        forEachFacePage(columns: [\.faceID, \.refKey, \.captureDate]) { page in
+            for face in page where face.captureDate == nil {
+                guard let path = PhotoRef.decode(face.refKey)?.cloudPath,
+                      let date = datesByPath[path] else { continue }
+                targets[face.faceID] = date
+            }
+        }
+        guard !targets.isEmpty else { return 0 }
+        // 2) 直す顔**だけ**を本体のコンテキストで引いて書き換える（まとめて・chunk）。
         var filled = 0
-        for face in countedFetchOptional(d) ?? [] {
-            guard let path = PhotoRef.decode(face.refKey)?.cloudPath,
-                  let date = datesByPath[path] else { continue }
-            face.captureDate = date
-            filled += 1
+        let ids = Array(targets.keys)
+        var start = 0
+        while start < ids.count {
+            let chunk = Array(ids[start..<min(start + Self.readPageSize, ids.count)])
+            start += chunk.count
+            let rows = countedFetchOptional(FetchDescriptor<DetectedFace>(
+                predicate: #Predicate { chunk.contains($0.faceID) })) ?? []
+            for face in rows {
+                guard let date = targets[face.faceID] else { continue }
+                face.captureDate = date
+                filled += 1
+            }
         }
         if filled > 0 { try? modelContext.save() }
         return filled
