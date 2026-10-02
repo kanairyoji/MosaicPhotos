@@ -38,9 +38,24 @@ echo "adding $(ls "$ASSETS" | wc -l | tr -d ' ') photos…"
 xcrun simctl addmedia "$UDID" "$ASSETS"/*.jpg
 
 # 3. アプリをインストール・起動
-APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/MosaicPhotos.app" -newer MosaicPhotos.xcodeproj/project.pbxproj 2>/dev/null | head -1)
+# ⚠️ `Index.noindex` 配下を拾わない（2026-10-02 に踏んだ）。あちらは Xcode の
+# インデックス用ビルドで **Info.plist に bundle ID が無い**ため、
+# `simctl install` が "Missing bundle ID" で失敗する。
+# 新しい順に候補を見て、**bundle ID が読めた最初のもの**を使う。
+pick_app() {
+  while IFS= read -r candidate; do
+    [[ "$candidate" == *"/Index.noindex/"* ]] && continue
+    if /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" \
+         "$candidate/Info.plist" >/dev/null 2>&1; then
+      echo "$candidate"; return 0
+    fi
+  done
+  return 1
+}
+APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/MosaicPhotos.app" \
+        -newer MosaicPhotos.xcodeproj/project.pbxproj 2>/dev/null | pick_app)
 if [[ -z "$APP" ]]; then
-  APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/MosaicPhotos.app" 2>/dev/null | head -1)
+  APP=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/MosaicPhotos.app" 2>/dev/null | pick_app)
 fi
 if [[ -z "$APP" ]]; then
   echo "MosaicPhotos.app not found — build for iphonesimulator first"

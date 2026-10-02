@@ -94,6 +94,20 @@ final class ScreenshotCaptureTests: XCTestCase {
         if tapFirst(["設定", "Settings"], timeout: 5) {
             sleep(4)
             capture("05-settings")
+            // 4-b. AI 解析の状況（ADR-207 以降・トグル 2 つ＋残りの内訳）。
+            // ⚠️ help/ai-search.html が参照する画面。3 択ピッカーの頃の画像が残っていたので
+            //    撮影対象に足した（それまでは撮っていなかった）。
+            if tapFirst(["アルバムと検索", "Albums & Search"], timeout: 4) {
+                sleep(2)
+                if tapFirst(["AI 解析の状況", "AI Analysis Status"], timeout: 4) {
+                    sleep(4)
+                    capture("05b-ai-analysis")
+                    tapFirst(["Back", "戻る"], timeout: 3)
+                    sleep(1)
+                }
+                tapFirst(["Back", "戻る"], timeout: 3)
+                sleep(1)
+            }
             // シートを閉じる（左上の戻る）。
             tapFirst(["Back", "戻る"], timeout: 3)
             sleep(2)

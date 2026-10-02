@@ -33,12 +33,17 @@ python3 scripts/export_screenshots.py       # xcresult attachments -> named PNGs
 | `settings.jpg` | Settings root (Albums & Search incl. Cloud Sharing) | **auto (safe)** | help/settings |
 | `grid-months.jpg` | Photo grid (month layout with packed date-range headers) | legacy (real photos) | README, help/basics |
 | `ai-albums.jpg` | Home — People (face clusters) + AI albums | legacy (real photos) | README, help/folder-albums |
-| `ai-analysis.jpg` | AI analysis status screen | legacy (real photos) | help/ai-search |
+| `ai-analysis.jpg` | AI analysis status screen | **auto (safe)** | help/ai-search |
 | `cloud.jpg` | Cloud (Dropbox photo grid) | legacy (real photos) | README, help/basics, help/dropbox |
 
-> ⚠️ **The four `legacy` captures still contain real photos from the developer's library.**
+> ⚠️ **The three remaining `legacy` captures still contain real photos from the developer's library.**
 > They cannot be reproduced by the automated pipeline yet, because they require things the
 > throwaway simulator does not have: **faces** (no faces in the free-license set — and putting
 > real people's faces in public docs needs a separate decision), a **connected Dropbox account**,
-> and a **finished AI analysis pass** (CLIP embedding is skipped on the simulator by design).
+> and a **connected Dropbox account**.
 > Replace them when those become available.
+>
+> `ai-analysis.jpg` **was** in that list and is now automated (2026-10-02): the status screen itself
+> does not need a finished analysis pass — the honest "待機中 / 意味検索 0%" state is exactly what the
+> help page needs to show. The capture step is `05b-ai-analysis` in `ScreenshotCaptureTests`.
+> ⚠️ The old image predated ADR-195/207 and still showed a 3-way picker that no longer exists.
