@@ -389,6 +389,20 @@ public final class PeopleEngine {
         return true
     }
 
+    /// スキャン台帳の安い指紋（ADR-247）。⚠️ **スキャンが走る側の台帳**で測る
+    /// （影の世代があるとスキャンはそちらへ向かうので、現行世代だと動かない）。
+    public func scanLedgerFingerprint() async -> (scanned: Int, unreadable: Int) {
+        let target = shadowStore ?? store
+        let scanned = await target.scannedCount()
+        let unreadable = await target.scanLoadFailureCounts().exhausted
+        return (scanned, unreadable)
+    }
+
+    /// 候補のうちまだスキャンしていない枚数（ADR-247）。⚠️ スキャンが走る側の台帳で数える。
+    public func pendingCount(candidateRefKeys: [String]) async -> Int {
+        await (shadowStore ?? store).pendingCount(candidateRefKeys: candidateRefKeys)
+    }
+
     public func startScan(candidateRefKeys: [String], allowSimulator: Bool = false) {
         // 診断: startScan がなぜ走らない/走るのかを可視化する（実機で faces:start が一切出ない事例の切り分け）。
         guard isFaceModelAvailable else {

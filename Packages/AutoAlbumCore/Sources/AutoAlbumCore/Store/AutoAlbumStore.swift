@@ -22,6 +22,10 @@ actor AutoAlbumStore {
 
     /// 名前付き設定でコンテナを作る（他コンテナとの衝突回避・"AutoAlbumV9" は破棄採番＝
     /// OCR/固定語彙タグ列を撤去し CLIP 埋め込み中心へ移行したスキーマ変更に伴う再構築）。失敗時はインメモリ。
+    /// テスト用: 使い捨てコンテキストのページ読みを**何ページ**通ったか（ADR-246）。
+    /// ⚠️ 常駐メモリはテストで測れないが「ページ読みを通っているか」は数えられる（ADR-119）。
+    var enrichmentPagesForTesting = 0
+
     static func makeContainer(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = Schema([PhotoEnrichment.self, GeneratedAlbum.self, PhotoEmbedding.self])
         // ⚠️ テスト用の容器は **`makeInMemoryModelContainer` だけ**が作る（MosaicSupport）。
@@ -397,13 +401,65 @@ actor AutoAlbumStore {
 
     /// 取り込み済み写真の refKey を**撮影日降順**（新しい順・日付なしは最後）で返す。
     /// シーンタグ付与など「新しい写真から先に解析する」パスの候補列挙に使う。
+    /// ⚠️⚠️ **`propertiesToFetch` では実体化は減らない**（ADR-236/246・実機ログ diagnostics-102）。
+    /// 以前はこのストアのコンテキストで 8.6 万行を 1 回 fetch していた（「2 列だけ」のつもりで）。
+    /// 実機では直後の `TagStore.taggedRefKeys()` と合わせて **1 ステップで +341MB**
+    /// （430MB → 771MB）積み、しかも `tags: start` も出ないまま「やることが無い」と
+    /// 分かって畳んでいた。背面ではメモリ圧迫で 11 回落とされていた。
+    /// → **使い捨てコンテキストのページ読み**で (refKey, captureDate) の**値**だけ集め、
+    ///   並べ替えは Swift 側で 1 回行う（値の配列なら 8.6 万件でも数 MB）。
+    /// ⚠️ ページはキーセット（`refKey` 昇順・`.lexical`）で送る。並べ替えたい順（撮影日降順）とは
+    ///   別なので、**読み終えてから**並べ替える。
     func enrichedRefKeysNewestFirst() -> [String] {
-        var descriptor = FetchDescriptor<PhotoEnrichment>(
-            sortBy: [SortDescriptor(\.captureDate, order: .reverse)])
-        descriptor.propertiesToFetch = [\.refKey, \.captureDate]
-        let records = (try? modelContext.fetch(descriptor)) ?? []
-        return records.map(\.refKey)
+        var rows: [(refKey: String, captureDate: Date?)] = []
+        rows.reserveCapacity(4096)
+        forEachEnrichmentPage { page in
+            for record in page { rows.append((record.refKey, record.captureDate)) }
+        }
+        // 撮影日降順・日付なしは最後。⚠️ 同日は refKey で決定的に（実行ごとに並びが変わらない）。
+        rows.sort { a, b in
+            switch (a.captureDate, b.captureDate) {
+            case let (x?, y?): return x == y ? a.refKey < b.refKey : x > y
+            case (nil, _?): return false
+            case (_?, nil): return true
+            case (nil, nil): return a.refKey < b.refKey
+            }
+        }
+        return rows.map(\.refKey)
     }
+
+    /// 取り込み済み写真の件数（安い・`fetchCount`）。
+    /// ⚠️ 「やることがあるか」を全件を実体化せずに判断するための数（ADR-247）。
+    func enrichedCount() -> Int {
+        (try? modelContext.fetchCount(FetchDescriptor<PhotoEnrichment>())) ?? 0
+    }
+
+    /// `PhotoEnrichment` を**使い捨てコンテキストでページ読み**する（ADR-227/246）。
+    /// ⚠️ 並びと続きの判定は `refKey`（`.lexical`・ADR-178）。
+    private func forEachEnrichmentPage(_ body: ([PhotoEnrichment]) -> Void) {
+        var cursor: String?
+        while true {
+            let ctx = ModelContext(modelContainer)
+            var descriptor: FetchDescriptor<PhotoEnrichment>
+            if let cursor {
+                descriptor = FetchDescriptor<PhotoEnrichment>(
+                    predicate: #Predicate { $0.refKey > cursor },
+                    sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
+            } else {
+                descriptor = FetchDescriptor<PhotoEnrichment>(
+                    sortBy: [SortDescriptor(\.refKey, comparator: .lexical)])
+            }
+            descriptor.fetchLimit = Self.enrichmentPageSize
+            guard let page = try? ctx.fetch(descriptor), !page.isEmpty else { return }
+            enrichmentPagesForTesting += 1
+            body(page)
+            cursor = page.last?.refKey
+            if page.count < Self.enrichmentPageSize { return }
+        }
+    }
+
+    /// ページの大きさ（実体化した行をページごとに手放す）。
+    static let enrichmentPageSize = 5_000
 
     /// 指定 refKey 群を**撮影日降順**（新しい順）に並べ替えて返す。未取り込みの refKey は末尾。
     /// キャプション（お気に入り限定）の処理順に使う。

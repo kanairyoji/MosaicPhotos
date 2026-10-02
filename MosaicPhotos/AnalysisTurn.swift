@@ -78,3 +78,39 @@ enum AnalysisTurn {
         isPrivilegedTrigger && turn != .tags && tagsRunning
     }
 }
+
+/// **候補を列挙する前に「変わり得たか」を見る**（ADR-247・純ロジック・実機ログ diagnostics-102）。
+///
+/// ⚠️⚠️ 候補の列挙（`analysisCandidates`）は 8.6 万件で**約 11 秒**、12 万件の refKey と
+/// クラウド 10.8 万行を一時的に積む。ところが解析が終わった端末では、その 11 秒は毎回
+/// **「やることは無い」と知るためだけ**に払われていた（実機 102 では 11 回ぶん）。
+///
+/// ⚠️ ADR-243 でこれを「次の一手」として残したときの懸念は
+/// 「半端にやると**変わったのに気づかない**側の不具合になる」だった。だから指紋は
+/// **候補の母集合が動いたら必ず動く**ものだけで作る:
+/// 1. クラウドの一覧の版（増減・内容変化で進む）
+/// 2. 端末写真（スクショ以外の画像）の枚数
+/// 3. スキャン済みの件数（版を上げて台帳を捨てれば減る／進めば増える）
+/// 4. 候補から外した件数（ADR-243 の「取れない写真」が増えたら減る）
+///
+/// ⚠️⚠️ **`faceBacklog` は入れない**（ADR-237 で一度書いて気づいた罠）。あれはスキャン側しか
+/// 更新しないので 0 に張り付き、新しい写真が入っても 0 のまま——「仕事が無い」と読むと
+/// **顔スキャンが永久に走らなくなる**。
+enum CandidateEnumerationGate {
+
+    /// 指紋（4 つの数）。
+    struct Fingerprint: Equatable, Codable, Sendable {
+        var cloudRevision: Int
+        var localCount: Int
+        var scanned: Int
+        var unreadable: Int
+    }
+
+    /// 前回「やることが無い」と分かったときと**全部同じ**なら、列挙ごと飛ばしてよい。
+    /// - Parameter last: 前回そう分かったときの指紋（nil＝未記録＝必ず走る）。
+    static func canSkip(_ now: Fingerprint, last: Fingerprint?) -> Bool {
+        // ⚠️ 未記録なら必ず走る（nil を「同じ」と読むと初回から飛ばしてしまう）。
+        guard let last else { return false }
+        return now == last
+    }
+}

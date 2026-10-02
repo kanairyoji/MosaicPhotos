@@ -358,6 +358,22 @@ extension AutoAlbumEngine {
             }
 
         case .tagScenes(let maxBatches, let localOnly):
+            // ⚠️⚠️ **やることがあるか先に安い数で見る**（ADR-247・実機ログ diagnostics-102）。
+            // この下の準備——8.6 万行の列挙 ×2（取り込み台帳・タグ台帳）＋ 8.6 万件の安定ソート——は
+            // **1 ステップで +341MB**（430MB → 771MB）積み、しかも `tags: start` も出ないまま
+            // 「やることが無い」と分かって畳んでいた。背面ではメモリ圧迫で 11 回落とされていた。
+            // ⚠️ すぐ上のコメントが「やる気が無いときに準備だけしていた」と言っているのは
+            // *ゲートの順番*の話で、*仕事が無い場合*は直っていなかった——別の問いだった。
+            let enriched = await store.enrichedCount()
+            let taggedNow = await tagStore.taggedCountCurrentVersion()
+            let defaults = UserDefaults.standard
+            let enrichedKey = "tagWorkGateEnriched"
+            let taggedKey = "tagWorkGateTagged"
+            if TagWorkGate.canSkip(enriched: enriched, tagged: taggedNow,
+                                   lastEnriched: defaults.object(forKey: enrichedKey) as? Int,
+                                   lastTagged: defaults.object(forKey: taggedKey) as? Int) {
+                return
+            }
             // 候補は **お気に入り(ローカル→クラウド)→その他(ローカル→クラウド)・各新→古**（AnalysisOrder）。
             let pool = await store.enrichedRefKeysNewestFirst()
             // ⚠️ 絞り込みと並べ替えは**メインから降ろす**（ADR-95 追記）。`AnalysisOrder.ordered` は
@@ -367,9 +383,16 @@ extension AutoAlbumEngine {
                 AnalysisOrder.ordered(localOnly ? pool.filter { $0.hasPrefix("L-") } : pool,
                                       favorites: favorites)
             }.value
-            await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
-                                           maxBatches: maxBatches,
-                                           shouldPause: { BackgroundYield.shouldYield() })
+            let remaining = await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
+                                                           maxBatches: maxBatches,
+                                                           shouldPause: { BackgroundYield.shouldYield() })
+            // ⚠️ 札を立てるのは「**本当にやることが無かった**」ときだけ。
+            // 上限で打ち切った回（remaining > 0）に立てると、残りが永久に処理されない。
+            // `nil`＝走れなかった（provider 無し・二重起動）も立てない（0 と混ぜない）。
+            if remaining == 0 {
+                defaults.set(enriched, forKey: enrichedKey)
+                defaults.set(await tagStore.taggedCountCurrentVersion(), forKey: taggedKey)
+            }
 
         case .embed:
             let embedPause: @MainActor () -> Bool = { [weak self] in

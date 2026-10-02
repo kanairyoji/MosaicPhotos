@@ -182,6 +182,16 @@ final class AnalysisDriver {
         // ⚠️ **順番が顔でなければ、候補の列挙もしない**。列挙は 8.5 万件・約 11 秒で、
         // 走らせない回にやると丸ごと無駄（しかも 8 万件級のコレクションが一時的に積み上がる）。
         if turn == .faces, people.isFaceModelAvailable, !people.isScanning {
+            // ⚠️⚠️ **列挙する前に「変わり得たか」を見る**（ADR-247・実機ログ diagnostics-102）。
+            // 下の列挙は 8.6 万件で約 11 秒・12 万件の refKey（約 12MB）を積むのに、解析が
+            // 終わった端末では毎回「やることは無い」と知るためだけに払われていた。
+            // 指紋は**母集合が動いたら必ず動く**ものだけ（クラウドの版・端末の枚数・
+            // スキャン済み・候補から外した数）。⚠️ `faceBacklog` は入れない（ADR-237 の罠）。
+            let fp = await currentCandidateFingerprint()
+            if CandidateEnumerationGate.canSkip(fp, last: Self.storedCandidateFingerprint()) {
+                Diagnostics.mark("driver: 候補の列挙を見送る（前回から変わっていない）")
+                return engine.isTagging || people.isScanning
+            }
             let candidates = await candidatesReusingCache(now: now)
             let allowSim = BackgroundYield.exemption == .debug
                 || UserDefaults.standard.bool(forKey: AppSettingsKeys.faceScanOnSimulator)
@@ -207,6 +217,13 @@ final class AnalysisDriver {
             // 「まだ終わっていない」ではなく「ここでは行わない」なので、0 が正しい。
             if canScanFacesHere(allowSimulator: allowSim) {
                 await people.measureBacklogIfUnknown(candidateRefKeys: candidates.ordered)
+            }
+            // ⚠️ 札を立てるのは「**本当にやることが無かった**」ときだけ（ADR-247）。
+            // 判断は **DB の実数**で行う——⚠️⚠️ `faceBacklog` は使わない（ADR-237 の罠。
+            // スキャン側しか更新しないので 0 に張り付き、札を立てたら永久に走らなくなる）。
+            // 指紋は**列挙のあとに取り直す**（列挙中に写真が増えていたら、その版では覚えない）。
+            if await people.pendingCount(candidateRefKeys: candidates.ordered) == 0 {
+                Self.storeCandidateFingerprint(await currentCandidateFingerprint())
             }
         }
         return engine.isTagging || people.isScanning
@@ -271,6 +288,26 @@ final class AnalysisDriver {
     }
 
     // MARK: - 候補
+
+    /// いまの候補の指紋（ADR-247・安い＝列挙を伴わない）。
+    private func currentCandidateFingerprint() async -> CandidateEnumerationGate.Fingerprint {
+        let photos = await analysisCandidateFingerprint(dropboxStore: dropboxStore)
+        let ledger = await people.scanLedgerFingerprint()
+        return .init(cloudRevision: photos.cloudRevision, localCount: photos.localCount,
+                     scanned: ledger.scanned, unreadable: ledger.unreadable)
+    }
+
+    private static let fingerprintKey = "analysisCandidateFingerprint"
+
+    static func storedCandidateFingerprint() -> CandidateEnumerationGate.Fingerprint? {
+        guard let data = UserDefaults.standard.data(forKey: fingerprintKey) else { return nil }
+        return try? JSONDecoder().decode(CandidateEnumerationGate.Fingerprint.self, from: data)
+    }
+
+    static func storeCandidateFingerprint(_ fp: CandidateEnumerationGate.Fingerprint) {
+        guard let data = try? JSONEncoder().encode(fp) else { return }
+        UserDefaults.standard.set(data, forKey: fingerprintKey)
+    }
 
     private func candidatesReusingCache(now: Date) async -> AnalysisCandidateSet {
         if let cached = candidateCache {

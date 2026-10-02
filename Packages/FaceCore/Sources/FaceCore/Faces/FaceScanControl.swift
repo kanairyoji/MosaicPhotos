@@ -35,6 +35,21 @@ public protocol FaceScanControl: AnyObject {
     @discardableResult
     func measureBacklogIfUnknown(candidateRefKeys: [String]) async -> Bool
 
+    /// **スキャン台帳の安い指紋**（ADR-247）: (スキャン済み, 候補から外した) の件数。
+    ///
+    /// ⚠️ `fetchCount` 2 回なので窓の入口で毎回読んでよい。候補の列挙（約 11 秒）を
+    /// 「やることが無い」と知るためだけに払わないための材料。
+    /// ⚠️⚠️ **`faceBacklog` を代わりに使ってはいけない**（ADR-237 で一度書いて気づいた罠）。
+    /// あれはスキャン側しか更新しないので 0 に張り付き、新しい写真が入っても 0 のまま
+    /// ——「仕事が無い」と読むと**顔スキャンが永久に走らなくなる**。
+    /// こちらは DB の実数なので、版を上げて台帳を捨てれば減り、スキャンが進めば増える。
+    func scanLedgerFingerprint() async -> (scanned: Int, unreadable: Int)
+
+    /// 候補のうち**まだスキャンしていない**枚数（ADR-247）。
+    /// ⚠️ 台帳を実際に引くので安くない——**列挙した回にだけ**呼ぶこと
+    /// （「やることが無かった」の札を立ててよいかの、唯一の確かな根拠）。
+    func pendingCount(candidateRefKeys: [String]) async -> Int
+
     /// 未スキャン分を背景で処理する。走行中なら何もしない。
     func startScan(candidateRefKeys: [String], allowSimulator: Bool)
     /// 進行中のスキャンを明示的に止める（前面復帰・ADR-79）。

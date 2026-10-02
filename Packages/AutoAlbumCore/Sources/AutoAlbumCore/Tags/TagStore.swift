@@ -112,12 +112,31 @@ actor TagStore {
     static let readPageSize = 5_000
 
     /// タグ付け済み（現行版）の refKey 集合。
+    /// ⚠️⚠️ **`propertiesToFetch` では実体化は減らない**（ADR-236/246・実機ログ diagnostics-102）。
+    /// ここには「8 万件のタグ配列を実体化しない（射影）」というコメントが付いていたが、
+    /// **それは誤り**——あの指定はヒントで、`PersistentModel` は結局まるごと実体化され、
+    /// しかも**このストアのコンテキストが登録し続ける**。実機では `tags` の手番で
+    /// `enrichedRefKeysNewestFirst()` とここを続けて呼び、**1 ステップで +341MB**
+    /// （430MB → 771MB）積んでから「やることが無い」と分かって畳んでいた。
+    /// 背面ではメモリ圧迫で 11 回落とされていた。
+    /// → **使い捨てコンテキストのページ読み**（`forEachRecordPage`）で値だけ集める。
     func taggedRefKeys() -> Set<String> {
         let v = Self.currentVersion
-        var descriptor = FetchDescriptor<PhotoTagRecord>(predicate: #Predicate { $0.version >= v })
-        descriptor.propertiesToFetch = [\.refKey]   // 8 万件のタグ配列を実体化しない（射影）
-        let records = (try? modelContext.fetch(descriptor)) ?? []
-        return Set(records.map(\.refKey))
+        var out = Set<String>()
+        forEachRecordPage { page in
+            for record in page where record.version >= v { out.insert(record.refKey) }
+        }
+        return out
+    }
+
+    /// **現行版でタグ付け済みの件数**（安い・`fetchCount`）。
+    ///
+    /// ⚠️ 「やることがあるか」を**全件を実体化せずに**判断するための数（ADR-247）。
+    /// `taggedCount()` は版を問わないので、進捗の印には使えない（旧版の記録が混ざる）。
+    func taggedCountCurrentVersion() -> Int {
+        let v = Self.currentVersion
+        return (try? modelContext.fetchCount(FetchDescriptor<PhotoTagRecord>(
+            predicate: #Predicate { $0.version >= v }))) ?? 0
     }
 
     /// 台帳の記録数（診断用）。⚠️ 進捗の分子に使わない——削除・移動した写真の記録や旧版の記録が
@@ -299,5 +318,36 @@ actor TagStore {
     func reset() {
         try? modelContext.delete(model: PhotoTagRecord.self)
         try? modelContext.save()
+    }
+}
+
+/// 「シーンタグ付けを走らせてよいか」の純ロジック（ADR-247）。
+///
+/// ⚠️⚠️ 実機ログ diagnostics-102 で、`tags` の手番が**毎回**
+/// `enrichedRefKeysNewestFirst()`（8.6 万行）＋ `taggedRefKeys()`（8.6 万行）＋ 8.6 万件の
+/// 安定ソートを**先に**やってから、`tags: start` も出ないまま「やることが無い」と分かって
+/// 畳んでいた——**1 ステップで +341MB**。背面ではメモリ圧迫で 11 回落とされていた。
+///
+/// ⚠️ コードのコメントは既に「**やる気が無いときに準備だけしていた**」と書いてあり、
+/// *ゲートの順番*（譲りを先に見る）は直してあったが、*仕事が無い場合*は直っていなかった。
+/// 「入ってよいか」と「やることがあるか」は別の問いで、後者は**安い数**で答えられる。
+///
+/// 答えが変わり得る入力は 2 つだけ:
+/// 1. 取り込み済み写真の数（増えればタグ付けすべき写真が増える）
+/// 2. 現行版でタグ付け済みの数（進めば残りが減る）
+/// どちらも動いていなければ、前回「やることが無い」と分かった結論は変わらない。
+public enum TagWorkGate {
+
+    /// 前回と同じ入力なら、重い準備ごと飛ばしてよい。
+    /// - Parameters:
+    ///   - enriched: いまの取り込み済み写真の数。
+    ///   - tagged: いまの現行版タグ付け済みの数。
+    ///   - lastEnriched: **前回「やることが無い」と分かったとき**の `enriched`（nil＝未記録）。
+    ///   - lastTagged: 同じときの `tagged`。
+    public static func canSkip(enriched: Int, tagged: Int,
+                               lastEnriched: Int?, lastTagged: Int?) -> Bool {
+        // ⚠️ 未記録なら必ず走る（nil を「同じ」と読むと初回から飛ばしてしまう）。
+        guard let lastEnriched, let lastTagged else { return false }
+        return enriched == lastEnriched && tagged == lastTagged
     }
 }

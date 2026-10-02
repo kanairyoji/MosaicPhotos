@@ -299,6 +299,8 @@ CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=
 ⚠️ 書くのは**補間の手前まで**（`\(...)` の後ろは grep で当てられない）。
 手順（上の表）を足すときは、その手順が頼る文字列をここへ 1 行足す。
 
+| G17 | **窓が「安い数を数えて終わる」ようになったか**（ADR-247） | 1 晩置いて診断ログを見る | ⚠️ 解析が終わっている状態なら、`driver: 候補の列挙を見送る（前回から変わっていない）` が出て **`candidates.cloudRefs` / `candidates.hidden` が出なくなる**こと。`tags` の手番では `tags: finished` が出ず、footprint の跳ねが **+341MB → ほぼ 0** になること。⚠️ **逆向きも見る**: 写真を撮った／クラウドに追加した翌日は、ちゃんと列挙が走って `faces: start` が出ること（出なければ「変わったのに気づかない」側の不具合） |
+
 | G16 | **背面でメモリ圧迫に落とされなくなったか**（ADR-246） | 1 晩置いて診断ログの `EXIT-METRIC` を見る | `背面終了[メモリ圧迫=N]` の N が**増えなくなる**こと（102 では 11 回）。⚠️ あわせて 80MB 以上の跳ねを数える（`python3 scripts/triage_diagnostics.py` の footprint と、`faces: cloud capture dates` の前後差）。`faces: cloud capture dates` の前後で **+231MB 跳ねない**こと。※ `tags` の手番の +341MB は**まだ残る**——別の一手 |
 
 | G15 | **30 分ごとの空回りが消えたか**（ADR-243） | 1 晩置いて診断ログを見る | ⚠️ `faces: start` の `todo=` が **0** になり、`net.get_thumbnail_batch … 0KB` と `faces.detect: nil=1` が**出なくなる**こと（外れるまでに別の窓で 5 回失敗が要るので、最初の 5 時間は出続ける。`faces: N 枚を候補から外す` が 1 回出たら以後は出ない）。⚠️ `faces: cloud capture dates` が**毎時ではなく、写真が増えたときだけ**出ること。⚠️ `people.load.faces` の 7〜9 秒（背面）が消えていること。※ 列挙（`candidates.hidden` 約 5.5 秒）は**まだ残る**——これは別の一手 |
@@ -315,6 +317,7 @@ driver: turn=
 driver: 顔の開始を見送る
 driver: 滞留していたタグ/埋め込みを明け渡させた
 faces: cloud capture dates
+driver: 候補の列挙を見送る
 枚を候補から外す
 faces: census[
 faces: ledger clusters=

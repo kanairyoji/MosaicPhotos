@@ -143,6 +143,33 @@ public func localImageRefKeys() async -> [String] {
     }.value
 }
 
+/// **候補が変わり得たかの安い指紋**（ADR-247・実機ログ diagnostics-102）。
+///
+/// ⚠️⚠️ `analysisCandidates` は 8.6 万件の列挙＋並べ替えで**約 11 秒**かかり、12 万件の refKey
+/// （約 12MB）とクラウド 10.8 万行を一時的に積む。ところが解析が終わった端末では、
+/// その 11 秒は毎回**「やることは無い」と知るためだけ**に払われていた。
+/// 「候補が変わり得たか」は、列挙せずに **2 つの数**で答えられる:
+/// 1. クラウドの一覧の版（増減・内容変化で進む）
+/// 2. 端末写真（スクショ以外の画像）の枚数
+/// ⚠️ どちらも `fetchCount` 相当で、列挙は伴わない（`fetchAssets(...).count` は遅延評価）。
+///
+/// ⚠️ **`faceBacklog` を指紋に入れてはいけない**（ADR-237 で一度書いて気づいた罠）。
+/// あれはスキャン側しか更新しないので 0 に張り付き、「仕事が無い」と読むと**永久に走らなくなる**。
+public func analysisCandidateFingerprint(dropboxStore: DropboxPhotoStore) async
+    -> (cloudRevision: Int, localCount: Int) {
+    let cloudRevision = await dropboxStore.cacheItemsRevision()
+    let localCount = await Task.detached(priority: .utility) { () -> Int in
+        let opts = PHFetchOptions()
+        // ⚠️ `localImageRefKeys()` と**同じ条件**にする（スクショ除外）。
+        // ずれると「候補は変わっていないのに指紋が動く／動かない」になる。
+        opts.predicate = NSPredicate(
+            format: "mediaType == %d && (mediaSubtypes & %d) == 0",
+            PHAssetMediaType.image.rawValue, PHAssetMediaSubtype.photoScreenshot.rawValue)
+        return PHAsset.fetchAssets(with: opts).count
+    }.value
+    return (cloudRevision, localCount)
+}
+
 /// 端末写真（画像）の総数。顔スキャンの進捗の分母（AI 解析の状況画面）に使う。
 /// `fetchAssets(...).count` は遅延評価なので列挙より軽い。取得はメインスレッド外。
 public func localImagePhotoCount() async -> Int {

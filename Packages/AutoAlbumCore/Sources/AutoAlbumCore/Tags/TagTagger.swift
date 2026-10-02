@@ -58,20 +58,25 @@ final class TagTagger {
     /// Vision 分類は CPU/ANE で軽い（数十 ms/枚）ため CLIP 埋め込みより速く全量に行き渡る。
     /// - Parameter maxBatches: 1 回の呼び出しで処理するバッチ数の上限（ADR-85）。
     ///   既定は無制限だが、背景実行では上限を設けて CLIP 埋め込み・キャプションへ順番を回す。
+    /// - Returns: この回の**やることの件数**（0＝もう無い）。
+    ///   ⚠️ 呼び手が「次からは重い準備ごと飛ばしてよい」の札を立てるのに使う（ADR-247）。
+    ///   走れなかった（provider 無し・二重起動）ときは `nil`＝**分からない**を返す
+    ///   ——0 と混ぜると「仕事が無い」と誤って覚えてしまう。
+    @discardableResult
     func tagUnprocessed(candidateRefKeys: [String],
                         batchSize: Int = 8,
                         betweenBatchNs: UInt64 = 500_000_000,
                         maxBatches: Int = .max,
                         shouldPause: @MainActor () -> Bool = { false },
-                        onProgress: @MainActor (Int) -> Void = { _ in }) async {
-        guard let provider, provider.isTaggingAvailable else { return }
-        guard !isRunning else { return }
+                        onProgress: @MainActor (Int) -> Void = { _ in }) async -> Int? {
+        guard let provider, provider.isTaggingAvailable else { return nil }
+        guard !isRunning else { return nil }
         isRunning = true
         defer { isRunning = false; onProgress(0) }
 
         let already = await store.taggedRefKeys()
         let todo = candidateRefKeys.filter { !already.contains($0) }
-        guard !todo.isEmpty else { return }
+        guard !todo.isEmpty else { return 0 }
         Diagnostics.mark("tags: start — \(todo.count) photos to tag")
 
         var index = 0
@@ -125,7 +130,9 @@ final class TagTagger {
                 return .proceed
             })
         // 残数も出す（上限で打ち切ったのか、本当に終わったのかをログだけで区別するため・ADR-85）。
-        Diagnostics.mark("tags: finished — \(processed) tagged (remaining=\(max(0, todo.count - processed)))")
+        let remaining = max(0, todo.count - processed)
+        Diagnostics.mark("tags: finished — \(processed) tagged (remaining=\(remaining))")
+        return remaining
     }
 
 }

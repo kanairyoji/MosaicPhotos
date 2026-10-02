@@ -108,3 +108,61 @@ struct AnalysisTurnTests {
                                                   tagsRunning: false))
     }
 }
+
+/// **候補を列挙する前に「変わり得たか」を見る**（ADR-247・実機ログ diagnostics-102）。
+///
+/// ⚠️⚠️ **なぜテストで見逃したか**（ここが本題）。
+/// 候補の列挙は `analysisCandidates`（PhotosFeatureKit）、呼ぶのは `AnalysisDriver`（アプリ層）。
+/// どちらにもテストはあるが、**費用は 2 つの境界をまたいだ向こう側**に居た:
+/// - `AnalysisDriverPolicy` のテストは「起こしてよいか」を見る＝*入口の可否*。
+/// - 顔側のテストは「渡された候補」に対する振る舞いを見る＝*候補を作る費用はテストの外*。
+/// - ⚠️ そして `analysisCandidates` は `@MainActor` の top-level 関数で、PHPhotoLibrary に
+///   触るためユニットテストが書かれていない。**誰の責任範囲でもない場所に 11 秒が居た。**
+///
+/// 1 回の呼び出しとしてはどれも正しく、「**毎回払う必要があるのか**」を問うテストが無かった。
+/// ADR-244 の「2 回目をテストする」と同じ穴の、*費用*版。
+/// → だから判断（指紋が同じなら飛ばす）を純 enum へ出して、ここで固定する。
+@Suite("候補の列挙を飛ばしてよい条件（ADR-247）")
+struct CandidateEnumerationGateTests {
+
+    private func fp(cloud: Int = 7, local: Int = 18_204,
+                    scanned: Int = 86_771, unreadable: Int = 1)
+        -> CandidateEnumerationGate.Fingerprint {
+        .init(cloudRevision: cloud, localCount: local, scanned: scanned, unreadable: unreadable)
+    }
+
+    @Test("記録が無ければ必ず列挙する（初回から飛ばさない）")
+    func firstRunAlwaysEnumerates() {
+        #expect(!CandidateEnumerationGate.canSkip(fp(), last: nil))
+    }
+
+    /// ⚠️ 実機で 11 回ぶん払っていたぶん（1 回 約 11 秒）。
+    @Test("4 つの数が全部同じなら飛ばす")
+    func skipsWhenNothingMoved() {
+        #expect(CandidateEnumerationGate.canSkip(fp(), last: fp()))
+    }
+
+    /// ⚠️⚠️ **ここが本丸**。ADR-243 でこれを「次の一手」に残したときの懸念は
+    /// 「半端にやると**変わったのに気づかない**側の不具合になる」だった。
+    /// 母集合が動く 4 つの経路すべてで、必ず列挙し直すことを固定する。
+    @Test("どれか 1 つでも動いたら列挙する")
+    func enumeratesWhenAnythingMoved() {
+        let last = fp()
+        #expect(!CandidateEnumerationGate.canSkip(fp(cloud: 8), last: last),
+                "クラウドに写真が増えた（一覧の版が進んだ）のに飛ばした")
+        #expect(!CandidateEnumerationGate.canSkip(fp(local: 18_205), last: last),
+                "端末で写真を撮ったのに飛ばした")
+        #expect(!CandidateEnumerationGate.canSkip(fp(scanned: 0), last: last),
+                "版を上げて台帳を捨てた（スキャン済みが減った）のに飛ばした")
+        #expect(!CandidateEnumerationGate.canSkip(fp(scanned: 86_772), last: last),
+                "スキャンが進んだのに飛ばした")
+        #expect(!CandidateEnumerationGate.canSkip(fp(unreadable: 0), last: last),
+                "候補から外した写真が戻った（忘れた）のに飛ばした")
+    }
+
+    /// ⚠️ クラウドの写真が**減った**ときも列挙する（版は増減どちらでも進む）。
+    @Test("クラウドの写真が減っても列挙する")
+    func enumeratesWhenCloudShrank() {
+        #expect(!CandidateEnumerationGate.canSkip(fp(local: 18_000), last: fp()))
+    }
+}

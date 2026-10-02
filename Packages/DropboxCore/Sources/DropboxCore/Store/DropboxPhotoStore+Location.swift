@@ -120,6 +120,14 @@ extension DropboxPhotoStore {
         await cache.captureDateProbePendingCount()
     }
 
+    /// **クラウドの一覧の版**（ADR-247・安い＝fetch を伴わない）。
+    ///
+    /// ⚠️ 「候補が変わり得たか」を、8.6 万件を列挙せずに判断するための数。
+    /// 増減・内容の変化で進む（`DropboxCacheStore.itemsRevision`）。
+    public func cacheItemsRevision() async -> Int {
+        await cache.currentItemsRevision()
+    }
+
     /// 解析候補に渡す **パスと撮影日だけ**の一覧（ADR-224）。
     ///
     /// ⚠️ `items`（表示用）を使わないこと。あちらは全列の実体化を伴い、実機では
