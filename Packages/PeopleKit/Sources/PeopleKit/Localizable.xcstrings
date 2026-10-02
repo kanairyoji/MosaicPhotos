@@ -92,9 +92,7 @@
         }
       }
     },
-    "%lld" : {
-
-    },
+    "%lld" : {},
     "%lld answers" : {
       "localizations" : {
         "ja" : {
@@ -126,7 +124,32 @@
       }
     },
     "%lld photos" : {
-
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld photo"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld photos"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 枚"
+          }
+        }
+      }
     },
     "%lld photos ・ %lld confirmed" : {
       "localizations" : {
@@ -299,7 +322,14 @@
       }
     },
     "Both already have names (%@). Grouping keeps one name for all their photos. If they are different people, stop here." : {
-
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "どちらにも名前が付いています（%@）。束ねると、両方の写真が 1 つの名前にまとまります。別の人なら、ここでやめてください。"
+          }
+        }
+      }
     },
     "Both faces appear in the same photo, so they can’t be the same person. Tap the row to see the overlapping photos — if the same face was picked up twice, remove one of them." : {
       "localizations" : {
@@ -741,9 +771,7 @@
         }
       }
     },
-    "Found %lld groups" : {
-
-    },
+    "Found %lld groups" : {},
     "From “Are these the same person?” answers. The app never combines two people on its own — it only asks." : {
       "localizations" : {
         "ja" : {
