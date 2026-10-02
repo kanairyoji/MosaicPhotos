@@ -47,6 +47,77 @@ xcodebuild -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -sdk iphonesimul
         ローカルパッケージに<strong>新規ファイル</strong>を足すと、依存先の <code>.build</code> が stale になり「型が見つからない」で <code>swift test</code> が落ちることがある。<code>rm -rf Packages/*/.build</code> で解消。
       </div>
 
+      <h2>⚠️ 機械で守る規約（CI ブロッキング）</h2>
+      <p>規約を文章で書くだけでは守られない——というのが、この台帳で<strong>最多の不具合の形</strong>だった。
+        「<strong>同じ規則が複数の場所に散っていて、1 か所だけ抜けている</strong>」を 2026-09 以降に数え始めたら
+        <strong>11 例</strong>あった。そこで「決めたら機械に数えさせる」ことにしている。
+        下の 3 本は <code>.github/workflows/ci.yml</code> の <code>fast</code> ジョブで<strong>落ちると止まる</strong>。</p>
+      <table>
+        <tr><th>スクリプト</th><th>何を見るか</th><th>踏んだ事故</th></tr>
+        <tr>
+          <td><code>scripts/check_forbidden_patterns.py</code></td>
+          <td>一度「やらない」と決めた書き方が残っていないか。現行の規則:
+            <ul>
+              <li><code>.fetchOffset =</code> を使わない（キーセット・ページングにする）</li>
+              <li><code>ObservableObject</code> / <code>import Combine</code> を使わない</li>
+              <li><code>isStoredInMemoryOnly: true</code> は <code>MosaicSupport.makeInMemoryModelContainer</code> だけ</li>
+              <li>キーセットの述語（<code>$0.X &gt; cursor</code>）を持つファイルでは、その列の
+                <code>SortDescriptor</code> に <code>comparator: .lexical</code> が要る</li>
+              <li>人を指す文字列（refKey / faceID / coverFaceID / name）を持つ台帳モデルは、
+                書き出しの匿名化に載っていること</li>
+            </ul>
+          </td>
+          <td>ADR-143 が「オフセットで送らない」と決めたのに <code>DropboxCacheStore</code> だけ残り、
+            実機で 1 回 35 秒＋行の取りこぼし（ADR-239）。並列テストの <code>ModelContainer</code> 競合で
+            <strong>テストの実行体だけが消える</strong>（ADR-245）。新テーブルが匿名化から漏れ、
+            書き出した台帳に実フォルダ名が残る状態（ADR-243 の副産物）</td>
+        </tr>
+        <tr>
+          <td><code>scripts/check_diagnostic_strings.py</code></td>
+          <td>実機確認の手順（<code>device-verification.md</code> の
+            <code>&lt;!-- expected-diagnostics --&gt;</code>）が指している診断ログの文字列が、
+            コードに実在するか。⚠️ <strong>コメント行は数えない</strong></td>
+          <td>手順は「<code>driver: turn=</code> で交互になっている」と書いてあるのに、実装整理で
+            <strong>その行を消していた</strong>——実機で 1 晩かけても何も確かめられない＝手順が静かに死んでいた。
+            ⚠️ しかも最初の版は <code>grep -rlF</code> だったので「この行を消すな」という<strong>説明コメントが当たってしまい</strong>、
+            本体を消しても通っていた（ADR-248 と同じ回で発見）</td>
+        </tr>
+        <tr>
+          <td><code>scripts/check_removed_symbols.py</code></td>
+          <td>公開シンボルを消したときに、参照が残っていないか（差分ベース）</td>
+          <td>—</td>
+        </tr>
+      </table>
+      <div class="box note">
+        <span class="box-h">⚠️ 足すときの決まり</span>
+        <p>新しい規則を決めたら<strong>呼び出し側に <code>if</code> を足すのではなく、ここに行を 1 つ足す</strong>。
+          それが「11 の述語に増えた」経緯そのものだった（ADR-196）。</p>
+        <p>⚠️ <strong>検査を書いたら、それが捕まえるはずの退行を実際に起こして確かめる</strong>（負の検証）。
+          書いた直後は「捕まえるつもり」と「捕まえる」の区別が付かない——
+          上の 2 本はどちらも<strong>書かれた理由そのものの退行を見逃していた</strong>。</p>
+        <p>⚠️ <strong>規則は「モデルの数」ではなく「持っている列」で書く</strong>。
+          匿名化の検査を最初「台帳の全モデルが載っていること」と書いたら、
+          id が UUID で埋め込みしか持たない <code>FaceCorrection</code> で誤検知した。</p>
+      </div>
+
+      <h2>⚠️ テストの規律（ADR-119/241/244/245/248）</h2>
+      <p>詳細は <a href="../testing/strategy.html">テスト戦略</a> にあるが、規約として要点だけ。</p>
+      <ul>
+        <li><strong>規模で壊れるコードは、規模のテストで止める</strong>（ADR-119）。
+          検証するのは<strong>時間ではなく回数</strong>。形は「規模を 4 倍にして、回数が比例して増えないこと」。</li>
+        <li><strong>時間ではなく出来事を待つ</strong>（ADR-241）。固定の <code>Task.sleep</code> は
+          「たぶん足りるだろう」という定数で、他のテストが増えるたびに黙って足りなくなる。
+          ⚠️ <strong>定数を調整する対処を 2 回続けたら、待ち方そのものを疑う。</strong></li>
+        <li><strong>繰り返し走る処理は「2 回目」をテストする</strong>（ADR-244）。
+          ⚠️ 無限ループは繰り返しの性質なので、1 回のテストからは原理的に見えない。
+          同時に「<strong>まだ諦めない</strong>」側も固定する（片方だけだと逆の不具合になる）。</li>
+        <li><strong>テストの中で「1 つ選ぶ」をしない</strong>（ADR-248）。
+          <code>first</code> / <code>randomElement</code> / 辞書やセットの走査順は<strong>テストを確率的にする</strong>。
+          候補が複数なら全部見る。</li>
+        <li>⚠️ <strong>fixture の前提を assert する。</strong>「空でも通る assert」を書かない。
+          fixture に入っていないものは、どんな検査も見つけない。</li>
+      </ul>
+
       <h2>検証ポリシー</h2>
       <ul>
         <li><strong>個人写真が入った環境のアプリ画面スクショは撮らない</strong>（個人写真が写り得る）。日常の検証はビルド・ログ・ユニットテスト・コンテナ内ファイル件数で行う。<br>ただし資料・ヘルプ用のスクリーンショットには回避策が確立している（<strong>ADR-114</strong>）——使い捨ての<strong>専用シミュレータ「MosaicShots」</strong>を <code>simctl create</code> で作り、<strong>フリーライセンス素材</strong>（Lorem Picsum・Unsplash License）だけを <code>addmedia</code> し、<strong>EXIF 注入</strong>（GPS・撮影日）で旅行/場所/日付グリッドまで実データで埋めて撮る。個人写真が 1 枚も入らないので禁止事項に抵触しない。スクリプトは <code>scripts/{fetch_screenshot_photos.sh, inject_screenshot_exif.swift, make_screenshot_sim.sh, export_screenshots.py}</code>＋<code>MosaicPhotosUITests/ScreenshotCaptureTests</code>。落とし穴: <code>simctl privacy grant photos</code> は iOS 26 で効かない（UITest でダイアログをタップして許可する）／<code>xcodebuild test</code> の既定のデバイスクローンでは写真も権限も無いので <code>-parallel-testing-enabled NO</code> が必須。</li>

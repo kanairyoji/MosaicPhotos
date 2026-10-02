@@ -27,7 +27,10 @@
       <ul>
         <li><strong>純ロジックへの分離</strong> — 検索の融合（<code>AIAlbumSearcher</code>）・語彙接地（<code>VocabularyGrounding</code>）・顔クラスタリング（<code>FaceClustering</code>）・日付解釈（<code>RelativeDateParser</code>）などは Foundation だけで動く純関数/値型。モデルも DB もネットワークも無しでテストできる。</li>
         <li><strong>seam（プロトコル注入）</strong> — 外部依存はプロトコルで抽象化しデフォルト引数で本番実装を注入する。<code>HTTPClient</code>（URLSession）/ <code>DateProvider</code> / <code>AccessTokenProvider</code> / 知覚系（<code>TextEmbedder</code> / <code>ConceptExpander</code> / <code>FacePerceptionProvider</code>…）。テストはスタブを渡す。CLIP の「近さ」も seam なので、<strong>接地の規則は固定ベクトルで完全にテストできる</strong>。</li>
-        <li><strong>@ModelActor はインメモリで</strong> — SwiftData のストア（<code>TagStore</code> / <code>FaceStore</code> 等）は <code>isStoredInMemoryOnly: true</code> で生成してストア連携までテストする。</li>
+        <li><strong>@ModelActor はインメモリで</strong> — SwiftData のストア（<code>TagStore</code> / <code>FaceStore</code> 等）はインメモリで生成してストア連携までテストする。
+          ⚠️ <strong>生成は <code>MosaicSupport.makeInMemoryModelContainer(for:)</code> だけが行う</strong>（ADR-245）。
+          <code>isStoredInMemoryOnly: true</code> の直書きは禁止で、<code>scripts/check_forbidden_patterns.py</code> が CI で止める。
+          理由は下記「⚠️ テストが落ちているのに『重い』に見える」。</li>
       </ul>
 
       <h2>何をテストしているか（代表マップ）</h2>
@@ -54,7 +57,7 @@
       </table>
       <p>対処は 2 つのどちらか——<strong>(1) 使い捨ての状態を注入する</strong>（<code>TestDefaults.scratch</code> / <code>PendingMetadataStore(directory:)</code> のように seam を用意する）か、<strong>(2) 触るテストを 1 つの <code>.serialized</code> Suite に集める</strong>。(1) が取れるなら (1) が良い（並列のまま速い）。本番コードが <code>.standard</code> を直接読む場合は (2) になる。</p>
 
-      <h2>⚠️ 非同期を「時間」で待たない</h2>
+      <h2>⚠️ 非同期を「時間」で待たない（ADR-241）</h2>
       <p>背景処理のテストで <code>Task.sleep(200ms)</code> のような固定の待ちを置くと、<strong>込み合った回だけ何も起きないまま緑になる</strong>。単体では落ちるのに全体実行では通る——いちばん見つけにくい形の偽陽性で、ADR-119 の「空でも通る assert を書かない」が非同期の待ちでも出る。</p>
       <table>
         <tr><th>やりたいこと</th><th>× 時間で待つ</th><th>○ 事実で待つ</th></tr>
@@ -64,6 +67,21 @@
       </table>
       <p>⚠️ 観測点の選び方にも同じ罠がある。偽 Dropbox の <code>callCounts()</code> は<strong>応答を返した後</strong>に積むので、<strong>飛行中のリクエストが見えない</strong>——「同時に走っていないこと」を見たいのに、遅い応答ほど数えられなくなる（最初にこれで 0 件と出た）。入口で積む <code>requestLog</code> を使う。</p>
       <p>⚠️ 仕込みの当たり先も確かめる。<code>FakeDropboxServer</code> のエンドポイント指定は<strong>部分一致</strong>なので、<code>files/list_folder</code> は <code>list_folder/longpoll</code> にも <code>get_latest_cursor</code> にも当たる。確かめたい経路の前提まで壊していないか見る。</p>
+      <p>⚠️ <strong>この罠は 3 回踏んだ</strong>（ADR-241）。1 回目は「待ちを延ばす」、2 回目は「上限を経過時間から
+        導く」と<strong>定数を調整する対処を 2 回続け</strong>、3 回目でようやく「<strong>時間で待たない</strong>」に到達した。
+        <strong>定数を調整する対処を 2 回続けたら、待ち方そのものを疑う。</strong></p>
+      <ul>
+        <li>道具は <code>waitUntil(timeout:_:)</code>（短い刻みで条件を見る・上限は<strong>寛容に</strong>）。
+          ⚠️ 上限を切り詰めても検出力は上がらない——起きない不具合は上限まで待っても起きない。
+          短い上限は混んだ CI での誤検知を増やすだけ。</li>
+        <li>⚠️ <code>.serialized</code> では足りない。Swift Testing が直列にするのは<strong>そのスイートの中だけ</strong>で、
+          別のスイートは同じ実行で並行に走る。実際、<strong>別スイートに重い fixture を足しただけ</strong>で
+          時間依存のテストが飢餓して落ちた。</li>
+        <li>⚠️ <strong>fixture の規模は「何を確かめたいか」から決める</strong>。
+          キーセット・ページングの継ぎ目を確かめるのに本番のページ幅（5,000）を使っていたので
+          1 スイートで 1 万行の挿入になり、同じ実行の他のテストから CPU を奪っていた。
+          継ぎ目は規則の問題でページの大きさに依らないので <strong>25 行</strong>で跨げばよい。</li>
+      </ul>
 
       <h2>⚠️ 何度も呼ばれる seam は「最後の 1 回」で見ない</h2>
       <p>スタブが受け取った値を <code>asked = refKeys</code> のように<strong>上書きで</strong>覚えると、その seam が 1 回の操作で複数回呼ばれるとき<strong>最後の呼び出ししか見えない</strong>。途中の 1 回だけが間違っている状態を、まるごと見逃す。</p>
@@ -78,6 +96,65 @@
       <h2>⚠️ 「待つ側」の上限もテストから縮める</h2>
       <p>譲り待ち・再試行・タイムアウトの上限が定数のままだと、その経路を通るテストが<strong>その秒数だけかかる</strong>。実際に「譲ったまま畳む」顔スキャンのテストが 1 本 <strong>61.6 秒</strong>かかっていた（既定の譲り待ち上限が 60 秒）。<code>maxPauseNs</code> を引数に出して 30ms を渡したら <strong>0.33 秒</strong>になった。</p>
       <p>判断の閾値（<code>batchSize</code> / <code>betweenBatchNs</code> / <code>maxPauseNs</code>）は既定値つきの引数にしておく。本番の呼び出しは変わらず、テストだけが現実的な速さになる。⚠️ 逆に、<strong>閾値を跨ぐことに意味があるテストでは縮めない</strong>（ADR-119 の「打ち切り上限を入れたなら、テストの規模はその上限を跨ぐこと」）。</p>
+
+      <h2>⚠️ 繰り返し走る処理は「2 回目」をテストする（ADR-244）</h2>
+      <p>背景で繰り返し走る処理のバグは、<strong>1 回の実行としては全部正しい</strong>ことがある。
+        実機で「読めない写真 1 枚のために毎時 11 秒の列挙が永久に続く」を見逃したとき、
+        <code>FaceTaggerRecordingTests</code> は不変条件を 5 本で守り、
+        「何も解析できない provider」まで用意してあった。
+        ⚠️ それでも見逃した理由は<strong>どのテストも <code>scan</code> を 1 回しか回していなかった</strong>から。
+        「記録しない」は 1 回で確かめられるが、「<strong>次の窓でまた来るか</strong>」は 2 回目が無いと見えない。
+        <strong>無限ループは繰り返しの性質なので、1 回のテストからは原理的に見えない。</strong></p>
+      <ul>
+        <li>見るのは<strong>回数</strong>（provider に訊いた回数・記録の行数）。
+          ADR-119 の「規模を 4 倍にして回数が比例しないこと」の姉妹形＝
+          「<strong>窓を 2 回にして仕事が増えないこと</strong>」。</li>
+        <li>⚠️ 同時に「<strong>まだ諦めない</strong>」側も固定する。片方だけ書くと、
+          一時的な失敗を永久に捨てる<strong>逆の不具合</strong>になる
+          （譲り・回線断は 1 つの窓で何千枚も巻き込むため）。</li>
+        <li>⚠️ 負のキャッシュを足したら<strong>忘れる経路のテストも対で</strong>書く（ADR-82）。</li>
+        <li>⚠️ <strong>費用も問う</strong>（ADR-247）。「2 回目は何もしない」が正しくても、
+          <strong>毎回払っている準備の費用</strong>は別の問い。実機では「やることが無い」と正しく
+          判断する前に 8.6 万行を 2 回読んでいた（+341MB）。判断を純 enum に出してテストする。</li>
+      </ul>
+
+      <h2>⚠️ テストが落ちているのに「重い」に見える（ADR-245）</h2>
+      <p>並列のスイートが同時に <code>ModelContainer</code> を作ると、まれに CoreData の
+        <code>_generateTriggerSQL</code> の中で <strong>SIGSEGV</strong> する。
+        ⚠️ 症状が分かりにくい——<strong>テストの実行体だけが消え</strong>、<code>swift-test</code> は
+        0% CPU で待ち続けるので「<strong>ハングした</strong>」ように見える。
+        ログは途中でぶつ切れ、失敗は 1 件も報告されない。</p>
+      <ul>
+        <li>対策は 2 つ必要: <strong>名前を毎回変える</strong>（同名のインメモリ構成はプロセス内で同じストアを共有する）
+          ＋<strong>生成を直列にする</strong>。両方を <code>makeInMemoryModelContainer(for:)</code> に閉じ込めた。</li>
+        <li>⚠️ <strong>見分け方</strong>: 「重いから遅い」と「落ちている」は
+          プロセスの CPU と <code>~/Library/Logs/DiagnosticReports</code> を見れば 1 分で分かる。
+          0% CPU で伸びないログは後者。<strong>これを 2 回「評価テストは長いから」と誤診した。</strong></li>
+        <li>⚠️ この症状は半年で 5 回観測され、<code>unresolved-problems.md</code> に
+          <strong>同じスタックトレースと同じ対策が 12 日前から書かれていた</strong>のに、読まずに再発見した。
+          <strong>症状で台帳を引く</strong>（<code>grep -i "signal 11" docs/architecture-note/records/</code>）。</li>
+      </ul>
+
+      <h2>⚠️ テストの中で「1 つ選ぶ」をしない（ADR-248）</h2>
+      <p>文字列カタログの検査が、当たるキーを <code>catalog.keys.first { … }</code> で<strong>1 つだけ</strong>
+        選んでいた。<code>Int</code> の補間は実行時に <code>%lld</code> にも <code>%d</code> にもなり得るので
+        カタログには両方が載っており、片方だけ訳があった。
+        <code>Dictionary.keys</code> の順序は<strong>プロセスごとに変わる</strong>（Hasher の種）ので、
+        <strong>同じコードで通る回と落ちる回</strong>になっていた。</p>
+      <ul>
+        <li>⚠️⚠️ <strong>落ちた回が正しかった</strong>: 本番で引かれるのは未翻訳の側で、
+          人物一覧の枚数が実機で英語のまま出ていた。通った回を見て「問題なし」としていた。</li>
+        <li>規則: <strong>候補が複数なら全部見る</strong>（どれが実行時のキーになるかソースからは決まらない）。
+          <code>first</code> / <code>randomElement</code> / 辞書やセットの走査順は<strong>テストを確率的にする</strong>。
+          製品コードには「取得順は不定なので決定的に選ぶ」（ADR-94/139）と書いてあったが、
+          同じ規則がテスト側に無かった。</li>
+        <li>⚠️ <strong>「通る回と落ちる回がある」を flaky として流さない。</strong>
+          まず「どちらが正しいか」を決める。</li>
+        <li>⚠️ <strong>fixture に入っていないものは、どんな検査も見つけない。</strong>
+          台帳の書き出しのバイト検査は「本名とフォルダ名が残らない」を見ているのに、
+          新しく足したモデルの行が fixture に無かったので漏れを見逃して通っていた。
+          <strong>fixture の前提を assert する。</strong></li>
+      </ul>
 
       <h2>実機ログも「テスト」の一部</h2>
       <p>シミュレータ・macOS では再現しない問題（ANE デッドロック・メモリ飢餓・OS スロットル・Core ML の fp16 破綻）があるため、<strong>実機の診断ログ（<code>Diagnostics</code>・<code>PerfTrace</code>・MetricKit）を継続的に読む運用</strong>を検証の最終段に置いている。「Mac で正常＝実機で正常」ではない、が繰り返し得られた教訓（詳細は<a href="../features/diagnostics.html">診断と堅牢性</a>）。</p>

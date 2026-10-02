@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>大きな表をどう読むか | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "dd-reading-at-scale";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / 大きな表をどう読むか</nav>
+      <h1>大きな表をどう読むか</h1>
+      <p class="lead">このアプリの台帳は 10 万行級になる（写真 8.6 万・顔 3.1 万・クラウド一覧 10.8 万）。実機で繰り返した性能バグは<strong>どれも同じ形</strong>だった——<strong>「1 回ぶんに見える読み出し」が、実はライブラリ規模に比例していた</strong>。このページは「読み方」の規律だけを集める。</p>
+
+      <div class="box why">
+        <span class="box-h">3 つの規律（これだけ）</span>
+        <ol>
+          <li><strong>読みはページ・書きは対象だけ</strong>（使い捨ての <code>ModelContext</code> で送る）</li>
+          <li><strong>重い準備の前に、安い数で「やることがあるか」を答える</strong></li>
+          <li><strong>ページの継ぎ目はキーセットで送る</strong>（オフセットは使わない）</li>
+        </ol>
+      </div>
+
+      <h2>1. ⚠️ <code>propertiesToFetch</code> は列を絞らない（ADR-236）</h2>
+      <p>最初に片付けるべき誤解。SwiftData の <code>propertiesToFetch</code> は<strong>ヒント</strong>で、
+        <code>PersistentModel</code> は結局まるごと実体化される。実測（diagnostics-94）では
+        「2 列だけの射影」のつもりで書いた <code>cachedPhotoRefs</code> が
+        <strong>16.3 秒・フットプリント 831MB</strong>——全列を読む <code>cachedItems</code> と変わらなかった。</p>
+      <div class="box note">
+        <span class="box-h">⚠️ この誤解は注記として残り、見直しの対象から外れていた</span>
+        <p><code>propertiesToFetch</code> が付いているコードは、読む側に<strong>「軽い」と伝わる</strong>。
+          実際、次の 2 つには「軽い」と読めるコメントが付いていた:</p>
+        <ul>
+          <li><code>AutoAlbumStore.enrichedRefKeysNewestFirst()</code> — 「2 列だけ」</li>
+          <li><code>TagStore.taggedRefKeys()</code> — 「8 万件のタグ配列を実体化しない（射影）」</li>
+        </ul>
+        <p>この 2 つが続けて呼ばれる <code>tags</code> の手番で、実機は<strong>1 ステップで +341MB</strong>
+          （430MB → 771MB）積んでいた。
+          <strong>規約を直したら、その規約を信じて書かれた注記を探す。</strong></p>
+      </div>
+      <p><strong>だから</strong>: 絞り込みで減らそうとせず、<strong>ページごとに手放す</strong>。
+        <code>propertiesToFetch</code> は I/O を減らす目的では今も付けるが、<strong>常駐を減らす手段ではない</strong>。</p>
+
+      <h2>2. 読みはページ・書きは対象だけ（ADR-227/246）</h2>
+      <p><code>@ModelActor</code> のコンテキストは、実体化した行を<strong>登録し続ける</strong>。
+        つまり「1 回 fetch して捨てる」つもりでも、アクターが生きている間ずっと常駐する。
+        対策は<strong>ページごとに使い捨ての <code>ModelContext</code> を作る</strong>こと。</p>
+      <table>
+        <tr><th>部品</th><th>対象</th><th>ページの大きさ</th></tr>
+        <tr><td><code>FaceStore.forEachFacePage(columns:_:)</code></td><td><code>DetectedFace</code></td><td>5,000</td></tr>
+        <tr><td><code>TagStore.forEachRecordPage</code></td><td><code>PhotoTagRecord</code></td><td>5,000</td></tr>
+        <tr><td><code>AutoAlbumStore.forEachEnrichmentPage</code></td><td><code>PhotoEnrichment</code></td><td>5,000</td></tr>
+        <tr><td><code>DropboxCacheStore.itemIndex()</code></td><td><code>CachedDropboxItem</code></td><td>5,000（＋版で覚える）</td></tr>
+      </table>
+      <ul>
+        <li>⚠️ <code>columns:</code> は<strong>必須にする</strong>（既定値を置かない）。省略できるようにしていたため、
+          ページ読みが<strong>全列＝埋め込み 1KB/顔と胴体埋め込みまで</strong>読んでいた
+          ——ADR-227 が減らしたのは<strong>常駐</strong>だけで、<strong>I/O は減っていなかった</strong>
+          （実機で <code>people.load.faces</code> が 9.4 秒＝所要の 90%）。
+          <strong>省略できる引数は省略される。</strong></li>
+        <li><strong>書くときは対象だけ</strong>: 値で対象の id を集めてから、その行だけを chunk で引いて書き換える。
+          <code>fillCloudCaptureDates</code> は直す顔が普通 0 件なのに、射影なしの全件 fetch をしていた。</li>
+        <li>⚠️ <strong>述語とキーセットは合成できない</strong>。「<code>captureDate == nil</code> の顔だけ」を
+          ページで送ることはできないので<strong>全顔を読む</strong>ことになる。それでも常駐は 1 ページぶんで有界
+          ——<strong>絞り込みより手放すほうが効く</strong>。</li>
+      </ul>
+
+      <h2>3. 重い準備の前に、安い数で答える（ADR-243/246/247）</h2>
+      <p>解析が終わった端末では、枠の仕事はほぼ<strong>「終わったことを確かめ直す費用」</strong>になる。
+        実機ログ diagnostics-101/102 で、30 分ごとに次を払って<strong>成果ゼロ</strong>だった。</p>
+      <table>
+        <tr><th>払っていたもの</th><th>実測</th><th>安い判定に置き換えた</th></tr>
+        <tr><td>候補の列挙（12 万件の refKey ≒ 12MB）</td><td>約 11 秒</td><td><code>CandidateEnumerationGate</code>（クラウド一覧の版・端末写真の枚数・スキャン済み・候補から外した数の 4 つ）</td></tr>
+        <tr><td>取り込み台帳＋タグ台帳 各 8.6 万行＋ソート</td><td><strong>+341MB</strong></td><td><code>TagWorkGate</code>（取り込み済みの数・現行版タグ付け済みの数＝どちらも <code>fetchCount</code>）</td></tr>
+        <tr><td>撮影日が空の顔の全走査</td><td><strong>+231MB</strong>・成果 0 件</td><td><code>CaptureDateFillGate</code>（EXIF 探索の進み・スキャン済みの数）</td></tr>
+      </table>
+      <div class="box note">
+        <span class="box-h">⚠️ 「入ってよいか」と「やることがあるか」は別の問い</span>
+        <p>前者はゲートの表（<a href="../features/background.html">ADR-196</a>）が答える。
+          後者は<strong>安い数</strong>で答えられる——答えが変わり得る入力を数え上げ、
+          <strong>どれも動いていなければ走らせない</strong>。</p>
+        <p>⚠️ 札を立てるのは「<strong>本当に残り無し</strong>」と分かったときだけ。
+          上限で畳んだ回に立てると<strong>残りが永久に処理されない</strong>。
+          走れなかった回は <code>nil</code>（分からない）を返して <strong>0 と混ぜない</strong>。</p>
+        <p>⚠️⚠️ 指紋に<strong>「残作業の数」を入れてはいけない</strong>。
+          <code>faceBacklog</code> はスキャン側しか更新しないので 0 に張り付き、
+          それを根拠に札を立てると<strong>顔スキャンが永久に走らなくなる</strong>
+          （ADR-237 の実装中に 1 度そう書いて気づいた）。
+          指紋は<strong>母集合が動いたら必ず動く</strong>ものだけで作る。</p>
+      </div>
+      <p><strong>「取れない」は一時的とは限らない</strong>（ADR-243）。
+        画像が取れない写真はスキャン済みにならないので次の窓でまた候補に入る。
+        実機では Dropbox が <strong>status=200 で 0 バイト</strong>のサムネを返す写真が 1 枚あり、
+        6 時間ぶん <code>todo=1</code> が並んで毎回 11 秒の列挙を引き連れていた。
+        → <strong>回数で区別する</strong>（別の窓で 5 回・<strong>1 時間に 1 回しか数えない</strong>）。
+        ⚠️ 譲りや回線断は 1 つの窓で何千枚も巻き込むので、窓を跨いだ回数でないと
+        <strong>閲覧しながら寝た晩に数千枚が永久に落ちる</strong>。忘れる経路は再スキャンと対で置く。</p>
+
+      <h2>4. ページの継ぎ目はキーセットで送る（ADR-143/178/239）</h2>
+      <p><code>fetchOffset</code> は 2 つの理由で使わない。</p>
+      <ol>
+        <li><strong>O(n²)</strong>。SQLite は毎ページで offset 行を読み捨てる。10.8 万行では
+          実測 <strong>16 → 24 → 32 → 35 秒</strong>（ライブラリが育つほど悪化）。</li>
+        <li>⚠️ <strong>行が黙って飛ぶ</strong>。表を作っている 35 秒の間にも <code>applyDelta</code> は行を挿入する。
+          カーソルより前に 1 行入るだけで以降の全ページが 1 つずれ、
+          <strong>入っていたはずの写真が表から落ちる</strong>。表は版で覚えるので
+          <strong>欠落は次に版が変わるまで直らない</strong>。</li>
+      </ol>
+      <p>代わりに「前ページの最後より大きいもの」で送る。キーは <code>@Attribute(.unique)</code>（索引つき）の列。</p>
+      <div class="box note">
+        <span class="box-h">⚠️ 並びと <code>&gt;</code> の順序を揃える（ADR-178）</span>
+        <p><code>SortDescriptor(\.refKey)</code> の既定は<strong>数字を意識した順</strong>（"dsc5" &lt; "dsc49"）だが、
+          <code>#Predicate</code> の <code>&gt;</code> は単純な文字列比較。
+          食い違うと<strong>継ぎ目で行が飛ぶ／同じ行を 2 度読む</strong>
+          （実測で 160 顔中 100 顔しか読めず 5 顔が二重）。
+          だから必ず <code>comparator: .lexical</code> を明示する。</p>
+        <p>⚠️ 「3 箇所すべて」と書いたのに、その後増えた 6 つ目（<code>FaceStore.forEachFacePage</code>）だけ
+          抜けていた——<strong>同じパッケージの隣のファイルは正しく書いてあった</strong>。
+          規約に書くだけでは止まらないので、
+          <code>scripts/check_forbidden_patterns.py</code> が
+          「<code>$0.X &gt; cursor</code> を持つファイルでは、その列の <code>SortDescriptor</code> に
+          <code>comparator: .lexical</code> が要る」を CI で検査する。</p>
+      </div>
+      <p>⚠️ <strong>失敗を「終わり」と読み違えない</strong>。<code>try?</code> で潰すと空ページに見えるので、
+        そこで打ち切った<strong>欠けた表</strong>を「完成品」として保存してしまう。
+        以後は版が変わるまで引き直さないので、欠落は永久に直らない。</p>
+
+      <h2>5. 版と表は、必ず対で動かす（ADR-240）</h2>
+      <p><code>DropboxCacheStore.itemsRevision</code> は<strong>2 つの別のもの</strong>を兼ねている
+        ——一覧（<code>items</code> の作り直し）と、軽い表（<code>cachedItemIndex</code>）。
+        表は版で覚えるので、<strong>表に無い値を変えて版だけ進めると、次の要求で 10.8 万行を丸ごと作り直す</strong>。</p>
+      <p>実機（diagnostics-98〜100）では撮影地の解決が写真ごとに走るので、
+        1 セッションに 6 回・<strong>1 回 35 秒</strong>。しかもその間アクターが塞がるので、
+        解析候補の列挙も 3.7 秒 → 38 秒に膨れていた（ほぼ待ち時間）。</p>
+      <p><strong>規律</strong>: 版を進める場所では、<strong>表を直す／表を捨てる／版だけ追いつかせる</strong> の
+        3 つのうち<strong>どれかを必ず選ぶ</strong>。</p>
+      <table>
+        <tr><th>変えたもの</th><th>対にする操作</th></tr>
+        <tr><td>撮影日（表に載っている）</td><td><code>updateIndexCaptureDate</code>（表を直す）</td></tr>
+        <tr><td>写真の増減</td><td><code>updateContentHashIndex</code>（表を直す）</td></tr>
+        <tr><td>全消去</td><td><code>dropContentHashIndex</code>（表を捨てる）</td></tr>
+        <tr><td>撮影地（表に載っていない）</td><td><code>bumpItemsRevisionKeepingIndex</code>（版だけ追いつかせる）</td></tr>
+      </table>
+
+      <h2>6. 作り直せる表はディスクに置いて、鍵で捨てる（ADR-229）</h2>
+      <p>約 300 語の概念表は CLIP テキスト塔で作るので、作るのに<strong>塔の常駐（+260MB）</strong>が要る。
+        けれど表そのものは小さく（628KB）、<strong>入力が同じなら結果も同じ</strong>。
+        → ディスクに置き、<strong>鍵は入力から作る</strong>（語彙とモデル ID の指紋）。
+        入力が変われば鍵が変わって自然に捨てられるので、無効化のコードが要らない。</p>
+      <p>⚠️ 副作用として<strong>起動直後からタグが出る</strong>ようになった（従来は表ができるまで Vision タグのみ）。</p>
+
+      <h2>7. テストは時間ではなく回数で見る（ADR-119 の適用）</h2>
+      <p>常駐メモリはテストで測れない。測れるのは<strong>回数</strong>。</p>
+      <ul>
+        <li>「ページ読みを通っているか」— <code>pagedFaceRowsForTesting</code> / <code>enrichmentPagesForTesting</code></li>
+        <li>「このストアのコンテキストで fetch していないか」— <code>fetchCountForTesting</code></li>
+        <li>「表を引き直していないか」— <code>itemIndexBuildsForTesting</code></li>
+        <li>形は「<strong>規模を 4 倍にして、回数が比例して増えないこと</strong>」。
+          ⚠️ 取得<strong>結果の件数</strong>を検証しても、1 件ずつ引く実装に戻して通ってしまう。</li>
+        <li>⚠️ <strong>fixture が本当にその状態になっているかを assert する。</strong>
+          「空でも通る assert」を書かない。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">正本・関連</span>
+        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>
+        の ADR-119 / 122 / 143 / 178 / 227 / 229 / 236 / 239 / 240 / 243 / 246 / 247。
+        事例は
+        <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">case-studies.md</a>
+        の「背面で 11 回落とされていた」「クラウドの『軽い表』がオフセットで O(n²)」。
+        機械の検査: <code>scripts/check_forbidden_patterns.py</code>。
+      </div>
+      <p>背景: <a href="./data-model.html">データ構造詳細</a> / <a href="../features/background.html">バックグラウンドと省電力</a> / <a href="../testing/strategy.html">テスト戦略</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

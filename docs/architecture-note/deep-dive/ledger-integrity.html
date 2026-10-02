@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>台帳の守り方（ユーザーの表明） | MosaicPhotos 設計資料</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script>window.DOCROOT = "../"; window.PAGE = "dd-ledger";</script>
+</head>
+<body>
+  <div id="sidebar"></div>
+  <main>
+    <article>
+      <nav class="breadcrumb"><a href="../index.html">設計資料</a> / 詳細実装 / 台帳の守り方</nav>
+      <h1>台帳の守り方（ユーザーの表明）</h1>
+      <p class="lead">このアプリのデータは <strong>2 種類しかない</strong>——<strong>作り直せるもの</strong>（タグ・埋め込み・サムネ・クラスタの重心）と、<strong>二度と作れないもの</strong>（人物に付けた名前、束ね、ピープルグループの所属、「はい／いいえ」の答え）。後者を<strong>ユーザーの表明</strong>と呼び、別の規律で扱う。このページはその規律をまとめる。</p>
+
+      <div class="box why">
+        <span class="box-h">なぜ別扱いが必要か</span>
+        作り直せるものは、壊れたら捨てて作り直せばよい——<strong>起動を止めないことが最優先</strong>。
+        いっぽう表明は<strong>利用者の時間そのもの</strong>で、消えたら復元できない。
+        それなのに、表明は「作り直せるもの」と<strong>同じテーブル・同じ遷移の中に居る</strong>
+        （名前は <code>PersonCluster</code> の列で、クラスタは夜ごとに作り直される）。
+        だから「全部捨てて作り直す」操作のたびに、表明だけを<strong>意識して救い出す</strong>必要がある。
+      </div>
+
+      <h2>1. 壊れたときの方針を型で分ける（ADR-186）</h2>
+      <p><code>resilientModelContainer(name:schema:policy:)</code> は、開けなかったときの振る舞いを
+        <strong>方針</strong>で切り替える。</p>
+      <table>
+        <tr><th>方針</th><th>対象</th><th>開けなかったら</th></tr>
+        <tr><td><code>.rebuildable</code></td><td>AutoAlbumV10・TagsV1・DropboxCache・UsageV1</td><td>ストアファイル（<code>.store</code>/<code>-wal</code>/<code>-shm</code>）を<strong>削除して作り直す</strong>。再解析で回復する</td></tr>
+        <tr><td><code>.ledger</code></td><td><strong>FacesV1</strong>・BackupKit</td><td>⚠️ <strong>削除しない</strong>。開く前に控え（<code>StoreSnapshot</code>）を取っておき、失敗したら控えから戻して 1 回だけ開き直す。なお駄目ならインメモリで起動だけ通す</td></tr>
+      </table>
+      <p>⚠️ <strong>スキーマの進め方も違う</strong>。作り直せるストアは名前を採番して旧ストアを捨ててよい
+        （現行 <code>"AutoAlbumV10"</code>）。台帳は<strong>採番しない</strong>——optional 列の追加と
+        テーブルの追加だけで進める。コンテナ名 <code>"FacesV1"</code> は固定。</p>
+
+      <h2>2. 表明とは何か（一覧）</h2>
+      <p>「これはユーザーが決めたことか」を 1 か所で判定する（<code>FaceStore.isUserClaimed</code>）。
+        散らすと必ず 1 か所抜ける。</p>
+      <ul>
+        <li><strong>名前</strong>（<code>PersonCluster.name</code>）</li>
+        <li><strong>束ね</strong>（<code>personGroupID</code>・ADR-61。成長した子供を 1 人として扱う）</li>
+        <li><strong>ピープルグループの所属</strong>（<code>PeopleGroupRecord.memberClusterIDs</code>・ADR-231）
+          — ⚠️ <strong>無名でもグループに入れていれば表明</strong>。枚数フロアも免除する
+          （1 枚でも表示／0 枚でもグループメンバーなら表示）</li>
+        <li><strong>確認済みの顔</strong>（<code>confirmedAt</code>）と<strong>修正</strong>（<code>FaceCorrection</code>・負例を埋め込みで永続化）</li>
+        <li><strong>代表写真の指定</strong>（<code>coverFaceID</code>）
+          — ⚠️ これだけは<strong>全体の再スキャンを跨げない</strong>（顔 ID が変わるため。既知の制約）</li>
+      </ul>
+
+      <h2>3. 全消去して作り直すときは、表明を持ち越す（ADR-232）</h2>
+      <p>モデル世代の切り替え・パイプライン版の更新・手動の再スキャンでは、顔もクラスタも全部消える。
+        このとき<strong>名前だけ</strong>を持ち越していた時期があり、<strong>束ねとグループ所属が黙って失われていた</strong>。</p>
+      <ul>
+        <li>持ち越しは <code>CarriedAssertion</code>（名前／<code>personGroupID</code>／所属グループ／代表的な写真キー）に
+          まとめ、<strong>写真の重なり</strong>で新しいクラスタへ割り当て直す。</li>
+        <li>⚠️ <strong>束ねのタグは番号を振り直す</strong>。旧世代の <code>personGroupID</code> をそのまま使うと、
+          新世代で同じ番号を割り当てられた<strong>別人</strong>と合流する。衝突しない負の番号を台帳から採る。</li>
+        <li>⚠️ <strong>上限に当たったら「いま」を残す</strong>。持ち越しの件数に上限を置いたとき、
+          控えより先に保留分を並べたため<strong>溢れたときに現在の表明が落ちていた</strong>（レビューで発見）。
+          順序は <code>snapshot + pending</code>。</li>
+        <li>⚠️ <strong>世代を切り替える前に、保留中の持ち越しを混ぜる</strong>。<code>promoteShadow</code> が
+          持ち越しを上書き・削除していた。</li>
+      </ul>
+      <p><code>reset()</code> は<strong>グループのメンバーを空にする</strong>（clusterID は意味を失うため）。
+        ⚠️ 行そのものは消さない——グループの id と名前はユーザーが付けたもの。
+        空にしてから持ち越しに入れ直させる。</p>
+
+      <h2>4. 「読めなかった」を「1 つも無い」と読まない（ADR-242）</h2>
+      <div class="box note">
+        <span class="box-h">⚠️ 同じ形を 3 回踏んだ</span>
+        <p><code>countedFetchOptional</code> は fetch の失敗で <code>nil</code> を返す。
+          これを <code>?? []</code> で畳んだ値を<strong>「もう居ない」の根拠にして消す</strong>と、
+          <strong>読めなかった瞬間に全部消す</strong>ことになる。しかも消したあとは表示も監査も静かになるので
+          <strong>誰も気づけない</strong>。</p>
+        <ul>
+          <li><code>peopleGroupMemberClusterIDs()</code> — 失敗を「グループ無し」として<strong>キャッシュ</strong>していた</li>
+          <li><code>pruneStaleGroupMembers()</code> — 家族グループのメンバーが全消え＋save</li>
+          <li><code>repairOrphanFaces()</code> — ライブラリ全体の顔が未割当へ戻る（<strong>直す関数が一番大きく壊す</strong>）</li>
+        </ul>
+        <p><strong>規律</strong>: 消す・戻す・上書きする判断に、失敗を畳むヘルパを使わない。
+          <code>nil</code> なら<strong>何もせずに見送って記録に残す</strong>。
+          ヘルパ（<code>allClusters()</code>）の宣言にもそう書く——次に書く人が見るのは ADR ではなく宣言。</p>
+        <p>⚠️ <strong>0 件の扱いは一律にしない</strong>。分かれ目は「失うものが戻せるか」:
+          掃除は 0 件も見送る（世代切り替え直後は本当に空で、そこで落とすと持ち越しが埋める前に失う）。
+          孤児の修復は 0 件でも走る（0 件が直すべき状態そのもので、再クラスタで作り直せる）。</p>
+      </div>
+
+      <h2>5. 表明の国勢調査（ADR-233/235）</h2>
+      <p>「失っていないこと」を<strong>遷移の前後で数えて突き合わせる</strong>。
+        <code>AssertionCensus</code> は純ロジックで、人物ごとの (名前・束ね・代表の有無・確認顔の数・写真キー) と
+        グループを数える。</p>
+      <ul>
+        <li>遷移（<code>rebuild</code> / <code>rescan</code> / <code>promote</code> / <code>prune</code>）の前後で
+          <code>diff</code> を取り、減っていたら種類ごとにまとめて診断ログへ出す。</li>
+        <li>⚠️ <strong>何も減っていなくても 1 行は出す</strong>。「出ていない」と「そもそも走っていない」を
+          区別できないログは後から役に立たない。</li>
+        <li>⚠️ <strong>再スキャン中は言わない</strong>。持ち越しが進行中は「まだ戻っていない」だけで、
+          それを「失った」と呼ぶと毎晩誤報になる。</li>
+        <li>⚠️ <strong>戻らない記録は掃除する</strong>（<code>pruneStaleGroupMembers</code>）。
+          ADR-231/232 は「これから失われる」のを防ぐもので、既に失われた分は直さない。
+          放っておくと表示が永久に 1 人足りず、監査も毎回それを報告して 256KB のログを埋める。</li>
+      </ul>
+
+      <h2>6. 遷移が来なくても分かるようにする（ADR-238）</h2>
+      <p>⚠️ 国勢調査は<strong>遷移のときだけ</strong>出る。ところが解析が終わった端末では夜間の再クラスタの条件が
+        <strong>何週間も満たされない</strong>（実機ログで 13.5 時間に 0 回）。
+        つまり「壊れたら勝手に分かる」は<strong>「壊れる機会があったときに分かる」</strong>でしかなかった。</p>
+      <p>そこで <code>reportLedgerHealth()</code> を<strong>起動ごとに 1 回</strong>出す。</p>
+      <pre><code>faces: ledger clusters=… named=… bundles=… covers=… groups=… groupMembers=N/M stale=K</code></pre>
+      <p>⚠️ <strong>顔は読まない</strong>（全顔の走査は実機で 4.5〜9 秒）。クラスタ行とグループ行だけで数えられるものに絞る。
+        <code>stale=K</code> が増えていくなら記録が壊れている。</p>
+
+      <h2>7. 実機の台帳を Mac で回す（ADR-234）</h2>
+      <p>遷移の検証は<strong>数晩の再解析と、本物の名前・グループを賭ける</strong>ので実機では試せない。
+        だから台帳を持ち出して Mac で再演する。</p>
+      <ul>
+        <li><strong>控え</strong>（<code>takeManualSnapshot</code>）— 再スキャンを試す前に押しておけば数分で戻せる。
+          ⚠️ 戻したら<strong>アプリを終了して開き直す</strong>（SwiftData がストアを掴んだままなので、
+          そのまま使うと書き戻しで壊し得る）。画面にも「要・再起動」を出す。</li>
+        <li><strong>書き出し</strong>（<code>exportForReplay(redacted:)</code>）→
+          Mac で <code>FACE_LEDGER_DIR=… swift test --filter FaceLedgerReplayTests</code>。</li>
+        <li>⚠️ <strong>本名とパスを外す</strong>（<code>FaceLedgerRedaction</code>・塩つき SHA256）。
+          refKey と faceID は<strong>同じ置き換え</strong>で作り直す（faceID は <code>&lt;refKey&gt;#&lt;連番&gt;</code> なので
+          片方だけ変えるとパスが faceID 側から漏れ、参照も壊れる）。</li>
+        <li>⚠️ <strong>台帳にモデルを足したら、匿名化にも行を足す</strong>。
+          <code>FaceScanAttempt</code>（refKey を持つ）を足した直後、匿名化の対象から漏れていた。
+          バイト検査は<strong>前から在ったのに通っていた</strong>——fixture にその行が無いので当然見つからない。
+          いまは <code>scripts/check_forbidden_patterns.py</code> が
+          「<strong>人を指す文字列（refKey/faceID/coverFaceID/name）を持つ台帳モデルは匿名化されていること</strong>」を
+          CI で検査する。</li>
+        <li>⚠️ <strong><code>-wal</code> まで見る</strong>。匿名化は本体の行を書き換えるが、
+          書き換える前のページは <code>-wal</code> に残り得る。
+          匿名化のあとに <code>wal_checkpoint(TRUNCATE)</code> で畳み、畳めなければ<strong>失敗として返す</strong>
+          ——「たぶん大丈夫」で個人情報入りのファイルを渡さない。</li>
+        <li>⚠️ 外しても<strong>顔の特徴量は入ったまま</strong>。使い終わったらフォルダごと消す
+          （<code>.gitignore</code> がコミットは弾く）。</li>
+      </ul>
+
+      <div class="box refs">
+        <span class="box-h">正本・関連</span>
+        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">records/decisions.md</a>
+        の ADR-186 / 187 / 231 / 232 / 233 / 234 / 235 / 238 / 242。
+        実装: <code>MosaicSupport/ResilientModelContainer.swift</code>（方針つきコンテナ・<code>StoreSnapshot</code>）/
+        <code>FaceCore/Faces/CarriedAssertion.swift</code> / <code>AssertionCensus.swift</code> /
+        <code>FaceLedgerBackup.swift</code> / <code>FaceLedgerRedaction.swift</code> /
+        <code>FaceStore+Rebuild.swift</code>。
+        実機で確かめる手順は
+        <a class="srclink" data-path="docs/architecture-note/records/device-verification.md">device-verification.md</a> の G1〜G12。
+      </div>
+      <p>背景: <a href="./data-model.html">データ構造詳細</a> / <a href="../features/diagnostics.html">診断と堅牢性</a></p>
+    </article>
+    <div id="pager"></div>
+  </main>
+  <script src="../assets/nav.js"></script>
+</body>
+</html>

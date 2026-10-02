@@ -53,6 +53,38 @@ graph TD
         破棄していいのは<strong>再生成できるもの</strong>（付加情報・埋め込み・Dropbox キャッシュ＝<code>.rebuildable</code>）だけ。人物名やユーザー修正のように<strong>作り直せない台帳</strong>（FacesV1・BackupKit＝<code>.ledger</code>）は、アプリの版が変わった最初の起動で<strong>開く前に控えを取り</strong>（<code>StoreSnapshot</code>）、マイグレーションに失敗したら控えから戻して 1 回だけ開き直す。台帳側はスキーマの採番（破棄）ではなく optional 列の追加だけで進める。
       </div>
 
+      <h2>⚠️ 台帳の健全さは、遷移に頼らず起動ごとに記録する（ADR-233/235/238）</h2>
+      <p>「ユーザーの表明（名前・束ね・グループ所属）を失っていないこと」は、
+        遷移（再クラスタ・再スキャン・世代切り替え・掃除）の<strong>前後で数えて突き合わせる</strong>
+        （<code>AssertionCensus</code>）。</p>
+      <ul>
+        <li>⚠️ <strong>何も減っていなくても 1 行は出す</strong>——「出ていない」と「そもそも走っていない」を
+          区別できないログは、後から見て役に立たない。</li>
+        <li>⚠️ <strong>遷移は何週間も来ないことがある</strong>。解析が終わった端末では夜間の再クラスタの条件が
+          満たされず、実機ログでは 13.5 時間に 0 回だった。つまり「壊れたら勝手に分かる」は
+          <strong>「壊れる機会があったときに分かる」</strong>でしかなかった。
+          → <code>reportLedgerHealth()</code> を<strong>起動ごとに 1 回</strong>出す
+          （<code>faces: ledger clusters=… named=… groupMembers=N/M stale=K</code>）。
+          ⚠️ 顔は読まない（全顔の走査は 4.5〜9 秒）。</li>
+        <li>⚠️ <strong>再スキャン中は言わない</strong>。持ち越しが進行中は「まだ戻っていない」だけで、
+          それを「失った」と呼ぶと毎晩誤報になる。</li>
+      </ul>
+      <p>詳細は <a href="../deep-dive/ledger-integrity.html">台帳の守り方</a>。
+        実機の台帳を控えて <strong>Mac で遷移を再演する</strong>仕組み（ADR-234）もそちらにある。</p>
+
+      <h2>⚠️ テストが「ハング」に見えるクラッシュ（ADR-245）</h2>
+      <p>診断の読み方として覚えておくべき形。並列のスイートが同時に <code>ModelContainer</code> を作ると、
+        まれに CoreData の <code>_generateTriggerSQL</code> の中で <strong>SIGSEGV</strong> する。</p>
+      <ul>
+        <li>⚠️ <strong>テストの実行体だけが消え</strong>、<code>swift-test</code> は 0% CPU で待ち続けるので
+          <strong>ハングに見える</strong>。ログは途中でぶつ切れ、失敗は 1 件も報告されない。</li>
+        <li><strong>見分け方</strong>: プロセスの CPU と <code>~/Library/Logs/DiagnosticReports</code> を見る。
+          0% CPU で伸びないログは「重い」ではなく「落ちている」。</li>
+        <li>⚠️ この症状は半年で 5 回観測され、<code>unresolved-problems.md</code> に
+          <strong>同じスタックトレースと同じ対策が書かれていた</strong>のに、読まずに再発見した。
+          <strong>症状で台帳を引く</strong>（<code>grep -i "signal 11" docs/architecture-note/records/</code>）。</li>
+      </ul>
+
       <h2>メモリ圧迫への対応</h2>
       <p><code>MosaicSupport.MemoryPressureMonitor</code> が圧迫フラグを保持し、<code>Diagnostics</code> のメモリ圧迫ソースが warning/critical で立てる（一定時間後に自動解除）。背景の CLIP 埋め込みはこのフラグを見て一時停止し、jetsam を避ける。</p>
 

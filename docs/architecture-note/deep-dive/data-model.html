@@ -82,6 +82,29 @@ graph LR
   GA -. asInfo .-> AI["AutoAlbumInfo（値）"]
       </div>
 
+      <h2>⚠️ 読み方には別の規律がある</h2>
+      <div class="box note">
+        <span class="box-h">このページは「何があるか」、読み方は別ページ</span>
+        <p>10 万行級の台帳を<strong>どう読むか</strong>は、スキーマとは別の規律になる。要点だけ:</p>
+        <ul>
+          <li>⚠️ <strong><code>propertiesToFetch</code> は列を絞らない</strong>（ADR-236）。あれはヒントで、
+            <code>PersistentModel</code> はまるごと実体化される。「2 列だけ」と書いたコードが
+            実機で 16.3 秒・831MB だった。</li>
+          <li><strong>読みはページ・書きは対象だけ</strong>（ADR-227/246）。
+            <code>@ModelActor</code> のコンテキストは実体化した行を登録し続けるので、
+            <strong>使い捨ての <code>ModelContext</code></strong> でページごとに手放す。</li>
+          <li><strong>継ぎ目はキーセットで送る</strong>（ADR-143/178/239）。
+            <code>fetchOffset</code> は O(n²) になり、走査中の挿入で<strong>行が黙って飛ぶ</strong>。
+            並びは <code>comparator: .lexical</code>（<code>&gt;</code> と同じ順序）。</li>
+          <li><strong>版と表は対で動かす</strong>（ADR-240）。表に無い値を変えて版だけ進めると、
+            次の要求で 10.8 万行を丸ごと作り直す。</li>
+          <li>⚠️ <strong><code>nil</code> を「1 つも無い」と読まない</strong>（ADR-242）。
+            fetch の失敗を畳んだ値を「もう居ない」の根拠にして消すと、
+            <strong>読めなかった瞬間に全部消す</strong>。</li>
+        </ul>
+        <p>→ <a href="./reading-at-scale.html">大きな表をどう読むか</a>（実測つき）</p>
+      </div>
+
       <h2>スキーマのバージョニング</h2>
       <p>スキーマを変えたら <code>ModelConfiguration</code> 名を採番して旧ストアを破棄→再構築する（現行 <code>"AutoAlbumV10"</code>）。マイグレーションを書かず<strong>破棄採番</strong>にしているのは、付加情報は再生成可能（写真本体が真実の源）だから。軽微な追加列は SwiftData の軽量マイグレーションに任せる（例: 座標列の追加）。</p>
 

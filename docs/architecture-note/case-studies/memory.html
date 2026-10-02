@@ -100,7 +100,57 @@ graph LR
           <li><a class="srclink" data-path="Packages/LocalPhotoCore/Sources/LocalPhotoCore/ThumbnailMemoryBudget.swift">ThumbnailMemoryBudget.swift</a> — Auto 予算</li>
         </ul>
       </div>
-      <p>背景: <a href="../tech/swiftdata.html">SwiftData</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a></p>
+      <h2>続編3: 常駐メモリの棚卸し（2026-09〜10・1061MB → 505MB）</h2>
+      <p>実機ログを 10 本ぶん追って、<strong>フットプリントの山を 1 つずつ崩した</strong>記録。
+        数字は実機（写真 8.6 万枚・顔 3.1 万・クラウド 10.8 万行）の実測。</p>
+      <table>
+        <tr><th>山</th><th>正体</th><th>直し方</th></tr>
+        <tr><td><strong>1061MB</strong></td><td>背面でサムネのメモリ層を抱えたまま眠っていた</td><td>背面でメモリ上限を絞る（ADR-226・<code>setBackgroundMode</code>）</td></tr>
+        <tr><td><strong>823MB</strong>（14 秒で +248MB）</td><td>CLIP の画像塔・顔モデル・Vision が<strong>同時に常駐</strong>。⚠️ ANE ゲートは「同時に 1 つ<strong>推論</strong>しない」仕掛けで、「同時に 1 つ<strong>載せる</strong>」は誰も見ていなかった</td><td>1 つの枠では顔かタグのどちらか片方だけ（ADR-237）</td></tr>
+        <tr><td><strong>806MB</strong>（1 ステップ +231MB・成果 0 件）</td><td>撮影日が空の顔を<strong>本体のコンテキストで全件 fetch</strong>。⚠️ <code>propertiesToFetch</code> を付けていたが<strong>列は絞られない</strong></td><td>使い捨てコンテキストのページ読み（ADR-246）</td></tr>
+        <tr><td><strong>771MB</strong>（1 ステップ +341MB）</td><td>タグの手番が、取り込み台帳 8.6 万行＋タグ台帳 8.6 万行＋8.6 万件のソートを<strong>やることが無いのに先に</strong>払っていた</td><td>安い数で先に判定（ADR-247・<code>TagWorkGate</code>）</td></tr>
+        <tr><td><strong>617MB</strong></td><td>CLIP テキスト塔（+260MB）と顔モデル（+85MB）の同時常駐</td><td>概念表をディスクに置いて鍵で捨てる（ADR-229）／枠の終わりに手放す（ADR-223）／前面でも 5 分アイドルで手放す（ADR-228）</td></tr>
+        <tr><td><strong>505MB</strong></td><td>（現在の目標水準）</td><td>—</td></tr>
+      </table>
+
+      <h3>⚠️ 背面で 11 回落とされていた</h3>
+      <p>この一連の作業の決定打は、見ようとしていなかった 1 行だった。</p>
+      <pre><code>EXIT-METRIC: 背面終了[メモリ圧迫=11] 前面終了[なし]</code></pre>
+      <p>⚠️ <strong>背面で落とされると夜間の処理が途中で切れる</strong>——つまり
+        「解析が進まない」の原因そのものだった。それまでは遅い処理の一覧
+        （<code>candidates.hidden 12.0s</code> 等）を上から見ていて、
+        <strong>一番重いものを素通りしていた</strong>。</p>
+      <div class="box why">
+        <span class="box-h">やり方を変えた: 跳ねを機械的に全部出す</span>
+        <p>「見たいところだけ見る」をやめ、<code>footprint=</code> の差分を取って
+          <strong>80MB 以上跳ねた区間を全部列挙</strong>した。上位 4 つはどれも
+          <strong>200〜360MB を 1 ステップで積み、しかも直後に「やることが無い」と分かって畳んでいた</strong>。
+          共通の形は<strong>「仕事があるか確かめるために、全行を実体化する」</strong>。
+          個別に見ていたら、この共通点には気づけなかった。</p>
+      </div>
+
+      <h3>学び</h3>
+      <ul>
+        <li><strong>ANE ゲートは「載せる」を守らない。</strong>手放す側（ADR-223/226/228/229）と
+          使い始めを重ねない側（ADR-237）の<strong>両方</strong>が要る。</li>
+        <li>⚠️ <strong><code>propertiesToFetch</code> を付けたコードは「軽い」と読まれる。</strong>
+          ADR-236 で「あれは列を絞らない」と分かったのに、<strong>同じ誤解で書かれた既存の場所を探さなかった</strong>。
+          <strong>規約を直したら、その規約を信じて書かれた注記を数える。</strong></li>
+        <li><strong>「1 回の呼び出しとして正しい」と「毎回払う必要がある」は別の問い。</strong>
+          上の 4 つはどれも 1 回としては正しく動いていた。</li>
+        <li>⚠️ <strong>一覧の上から見ない。</strong>跳ねや伸びを<strong>機械的に全部出してから</strong>読む。
+          3 回続けて「そのログで一番遅い処理」を調べていなかったのが、見落としの最大の原因だった。</li>
+      </ul>
+      <div class="box refs">
+        <span class="box-h">正本</span>
+        <a class="srclink" data-path="docs/architecture-note/records/decisions.md">decisions.md</a>
+        の ADR-223 / 226 / 227 / 228 / 229 / 236 / 237 / 243 / 246 / 247、
+        <a class="srclink" data-path="docs/architecture-note/records/case-studies.md">case-studies.md</a>
+        の「背面で 11 回落とされていた」「なぜこんなにバグが頻発するのか」。
+        読み方の規律は <a href="../deep-dive/reading-at-scale.html">大きな表をどう読むか</a>。
+      </div>
+
+      <p>背景: <a href="../tech/swiftdata.html">SwiftData</a> / <a href="../tech/clip-embeddings.html">CLIP と埋め込み</a> / <a href="../deep-dive/reading-at-scale.html">大きな表をどう読むか</a></p>
     </article>
     <div id="pager"></div>
   </main>

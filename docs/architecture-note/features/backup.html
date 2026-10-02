@@ -105,6 +105,54 @@ flowchart LR
       <h2>照合（Reconcile）— 記録を実態に合わせる修復</h2>
       <p>「済み」記録・台帳が Dropbox の実態とズレたとき（Dropbox 側でファイルを削除した・旧 409 誤記録など）のために、<code>files/list_folder</code>（再帰）で<strong>実ファイル一覧（path → content_hash）</strong>を取得し、実在しない/hash が矛盾する記録を削除して台帳を「照合に合格した記録」へ置き換える <strong>Reconcile</strong> を Developer Options に用意している。通信エラー時は記録を消さず中断（安全側）。記録の全消去（Clear ALL）も同居し、全消去しても実在ファイルは次回バックアップの 409→hash 照合で再アップロードなしに「済み」へ復帰する。</p>
 
+      <h2>⚠️ 唯一のコピーが失われたら、止めてから知らせる（ADR-202）</h2>
+      <p>オフロードは「Dropbox に実体がある」ことを検証してから端末の写真を消す。
+        ところが<strong>あとから Dropbox 側で消された・移動された</strong>場合、
+        端末にもクラウドにも無い状態になり得る。これは<strong>取り返しがつかない</strong>。</p>
+      <ul>
+        <li>気づいた時点で<strong>自動オフロードを止めてから</strong>知らせる（順番が逆だと、
+          知らせている間にもう 1 枚消える）。</li>
+        <li>写真一覧の上に<strong>赤い帯</strong>（<code>SourceNotice</code>）、設定画面に
+          「オフロードを停止しました」＋影響を受けたファイルの一覧。</li>
+        <li>⚠️ <strong>「確認した」を押すまで自動オフロードのピッカーを無効化</strong>する。
+          押しても<strong>自動では再開しない</strong>——内容を確かめた人が選び直す。</li>
+      </ul>
+
+      <h2>⚠️ 「そこに無い」は一時エラーではない（ADR-205）／差分カーソルの失効（ADR-203）</h2>
+      <ul>
+        <li>Dropbox の <code>path/not_found</code> を一時エラーとしてリトライしていたため、
+          共有フォルダが消えた後も<strong>一覧には出るがタップすると「ファイルがありません」</strong>が
+          永久に残った。<strong>恒久の失敗</strong>として扱い、記録ごと落として<strong>自力で直る</strong>ようにした
+          （代償: 戻ってきたときに初回同期をやり直す通信）。</li>
+        <li>差分カーソルの失効（<code>reset</code>）も<strong>「やり直し」であって一時エラーではない</strong>（ADR-203）。
+          リトライし続けると<strong>新しい写真がいつまでも出てこない</strong>。カーソルを捨てて取り直す。</li>
+      </ul>
+
+      <h2>⚠️ 照合は「いちばん要る端末でいちばん走らない」ようになっていた（ADR-206）</h2>
+      <p>記録と実態を合わせる照合（上記）は、<strong>写真が多い端末ほど必要</strong>なのに、
+        枠の後ろに置かれていたため<strong>多い端末ほど順番が回ってこなかった</strong>。
+        順番を前に出し、同じ仕組みをクラウド側の一覧にも広げた。</p>
+
+      <h2>メタデータ台帳の「唯一の書き手」（ADR-200）</h2>
+      <p>オフロードの印（どの写真がバックアップ済みか）は<strong>複数の経路から書かれていた</strong>ので、
+        書き込みが競合して印が食い違った。<strong>書き手を 1 つに決める</strong>設計へ直し、
+        後方互換は<strong>捨てた</strong>（過去の試用で作られた空の <code>.mosaic</code> フォルダが残ることがあるが、
+        手で消してよい）。</p>
+
+      <h2>クラウド写真の撮影日時（ADR-201/218）</h2>
+      <p>⚠️ Dropbox は <code>list_folder</code> / <code>get_thumbnail_batch</code> で
+        <strong><code>media_info</code> を返さない</strong>（2019-12-02 以降）。
+        一覧から得られる日付は <code>client_modified</code>＝<strong>アップロード時刻</strong>で、撮影日ではない。
+        撮影日時の唯一の出典は <code>files/get_metadata</code> を<strong>1 枚ずつ</strong>叩くこと。</p>
+      <ul>
+        <li>だから撮影日は<strong>遅延取得</strong>し、⚠️ <strong>「無かった」ことも記録する</strong>
+          （記録しないと 6.8 万枚ぶん毎回往復する）。</li>
+        <li>⚠️ <strong>アップロード時刻を混ぜない</strong>（ADR-218）。顔の撮影日も EXIF の撮影日時だけを使い、
+          無ければ<strong>空のまま</strong>にする（推し量らない）。
+          時期グループ（ADR-61）の材料なので、嘘の日付は人物の分け方を狂わせる。</li>
+        <li>⚠️ 後続の同期が、訊いて得た撮影日時を<strong>上書きしない</strong>こと。中身が変わったら訊き直す。</li>
+      </ul>
+
       <h2>純ロジックの切り出し</h2>
       <div class="box why">
         <span class="box-h">設計判断</span>

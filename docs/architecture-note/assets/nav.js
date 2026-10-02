@@ -37,6 +37,8 @@
       { id: "dd-background-window", href: "deep-dive/background-window.html", label: "バックグラウンド処理枠（夜間処理）のパイプライン" },
       { id: "dd-cache",       href: "deep-dive/cache-internals.html",       label: "キャッシュ実装詳細" },
       { id: "dd-data-model",  href: "deep-dive/data-model.html",            label: "データ構造詳細" },
+      { id: "dd-reading-at-scale", href: "deep-dive/reading-at-scale.html",  label: "大きな表をどう読むか" },
+      { id: "dd-ledger",      href: "deep-dive/ledger-integrity.html",       label: "台帳の守り方（ユーザーの表明）" },
       { id: "dd-ai-album",    href: "deep-dive/ai-album-internals.html",    label: "AI アルバム実装詳細" },
     ]},
     { title: "テストと評価", items: [
@@ -65,7 +67,7 @@
       { id: "ai-evaluation",href: "ai/09-evaluation.html",        label: "9. 評価指標と実験設計" },
     ]},
     { title: "設計判断・事例", items: [
-      { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト（重要トップ13）" },
+      { id: "adr",            href: "design-decisions/adr.html",            label: "ハイライト" },
       { id: "case-memory",    href: "case-studies/memory.html",             label: "事例: メモリ枯渇と圧縮" },
       { id: "case-launch",    href: "case-studies/launch-performance.html", label: "事例: 起動の高速化" },
     ]},

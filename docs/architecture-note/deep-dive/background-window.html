@@ -71,10 +71,9 @@ gantt
   axisFormat %M:%S
   section 準備
   HomeStores.shared（温: 0.1s / 冷: 数秒）        :done, s1, 00:00, 00:03
-  顔スキャン候補の列挙（85k refKey・detached）  :done, s2, 00:03, 00:12
+  顔スキャン候補の列挙（85k refKey・detached。⚠️ 変化が無ければ飛ばす） :done, s2, 00:03, 00:12
   section 起こす（並行・処理枠の間ずっと）
-  顔スキャン（ANE ゲート越し・16 枚/0.5s）        :active, f1, 00:12, 04:00
-  シーンタグ → CLIP 埋め込み（同上・8 枚/0.5〜2.5s） :active, t1, 00:14, 04:00
+  顔スキャン（この枠の順番が「顔」のときだけ・16 枚/0.5s） :active, f1, 00:12, 04:00
   バックアップ（読む→spool→OS へ・ADR-181）       :crit, b1, 00:16, 01:30
   section 判断（直列・短い）
   沈黙検出 logStalledPasses                        :s3, 00:14, 00:16
@@ -84,13 +83,14 @@ gantt
   section 待つ
   10 秒ごとに「まだ働いているか」を見る            :w1, 00:50, 04:00
   section 期限切れ
-  cancel → 顔/タグ/埋め込み停止・spool を OS へ・完了通知 :milestone, e1, 04:00, 0s
+  cancel → 顔/タグ/埋め込み停止・同梱モデルを手放す・spool を OS へ・完了通知 :milestone, e1, 04:00, 0s
       </div>
       <p>順序の要点（矢印は「先に起こす理由」）:</p>
       <div class="mermaid">
 flowchart TD
-  ST[HomeStores.shared] --> FACE[顔スキャン startScan]
-  ST --> FILL[restartBackgroundFill<br/>タグ → 埋め込み]
+  ST[HomeStores.shared] --> TURN{AnalysisTurn.next<br/>この枠はどちら?}
+  TURN -->|faces| FACE[顔スキャン startScan]
+  TURN -->|tags| FILL[restartBackgroundFill<br/>タグ → 埋め込み]
   FACE -. ANE ゲートで直列 .- FILL
   ST --> BK[バックアップ startNightlyIfEnabled]
   FILL --> GEN{生成の可否<br/>embed/face 残 = 0<br/>or 4 回見送った?}
@@ -103,7 +103,8 @@ flowchart TD
         <tr><th>#</th><th>工程</th><th>起こす／待つ</th><th>使う資源</th><th>止め方</th><th>1 単位の所要（実測）</th></tr>
         <tr><td>0</td><td>ストア群の用意 <code>HomeStores.shared()</code></td><td>待つ</td><td>CPU・ディスク（SwiftData）</td><td>—</td><td>温 0.1s／冷（背面起動）数秒</td></tr>
         <tr><td>0.5</td><td>幽霊の掃除 <code>pruneMissingPhotos</code></td><td>待つ（短い）</td><td>DB（集合の差）</td><td>—</td><td>候補（端末＋クラウド・原本のあるバックアップコピーと自分の共有コピーは除外）に無い写真の顔と走査記録を消す。欠けが 5% 超なら候補不備とみなして何もしない</td></tr>
-        <tr><td>1</td><td>顔スキャン <code>PeopleEngine.startScan</code></td><td>起こす</td><td><strong>ANE</strong>（Vision＋AuraFace）・画像デコード</td><td><code>stopScan</code>（1 枚単位で降りる）</td><td>16 枚バッチ・0.5s 休止。クラウドはキャッシュ済みサムネ（ADR-179 後は再計測待ち）</td></tr>
+        <tr><td>1</td><td>顔スキャン <code>PeopleEngine.startScan</code></td><td>起こす</td><td><strong>ANE</strong>（Vision＋AuraFace）・画像デコード</td><td><code>stopScan</code>（1 枚単位で降りる）</td><td>16 枚バッチ・0.5s 休止。クラウドはキャッシュ済みサムネ（ADR-179 後は再計測待ち）。
+          ⚠️ <strong>タグ/埋め込みと同じ枠で起こさない</strong>（ADR-237）</td></tr>
         <tr><td>2</td><td>シーンタグ → CLIP 埋め込み <code>restartBackgroundFill</code></td><td>起こす</td><td><strong>ANE</strong>（Vision 分類・CLIP）</td><td><code>stopBackgroundWork</code></td><td>タグ 8 枚/0.5s（~2 枚/s）、埋め込み 192 枚を 16〜33s（85〜170ms/枚）</td></tr>
         <tr><td>3</td><td>沈黙検出 <code>logStalledPasses</code></td><td>待つ（短い）</td><td>DB カウント</td><td>—</td><td>&lt;1s</td></tr>
         <tr><td>4</td><td>バックアップ <code>startNightlyIfEnabled</code>（ADR-180/181）</td><td>起こす</td><td><strong>ディスク</strong>（読む・spool に書く）。転送は<strong>処理枠の外</strong>で OS</td><td><code>cancel</code>（積んだ分は OS へ渡してから降りる）</td><td>旧: 1 枚 1〜2s（HTTP 込み）。新: 読む＋書くだけ＝数十〜数百 ms/枚（上限 400 枚／1GB）</td></tr>
@@ -117,7 +118,9 @@ flowchart TD
       <p>処理枠の中では画面が無いので UI への譲りは要らない（ADR-179）。残るゲートは<strong>資源保護</strong>だけ。</p>
       <table>
         <tr><th>ゲート</th><th>見る側</th><th>意味</th><th>根拠</th></tr>
-        <tr><td><code>MLInferenceGate</code>（ANE の直列化）</td><td>顔・タグ・埋め込みの推論</td><td>ANE を使う重い処理は同時に 1 つ。合計スループットは ANE で決まるので<strong>並行起動しても損はしない</strong></td><td>diagnostics-19（デッドロック）</td></tr>
+        <tr><td><code>MLInferenceGate</code>（ANE の直列化）</td><td>顔・タグ・埋め込みの推論</td><td>ANE を使う重い処理は同時に 1 つ<strong>推論</strong>する。
+          ⚠️⚠️ <strong>「同時に 1 つ載せる」は守らない</strong>——モデルは両方常駐したままになり、
+          実機で 14 秒で +248MB（最大 823MB）になった。使い始めを重ねない側は ADR-237 が持つ</td><td>diagnostics-19（デッドロック）</td></tr>
         <tr><td><code>isGeneratingAlbums</code></td><td>解析すべて（<code>heavyShouldPause</code>）</td><td>生成はピーク 550〜880MB。解析と重ねると jetsam。<strong>生成中だけ</strong>解析が止まる</td><td>ADR-163 / diagnostics-72</td></tr>
         <tr><td><code>HeavyLoad.isInFlight</code></td><td>解析すべて</td><td>数万件の実体化・モデルロードが重なる瞬間を避ける</td><td>ADR-122 / diagnostics-66</td></tr>
         <tr><td><code>ThermalGate</code></td><td>解析すべて</td><td>熱で止める（デバッグ全開でも効く）</td><td>—</td></tr>
