@@ -350,4 +350,16 @@ public enum TagWorkGate {
         guard let lastEnriched, let lastTagged else { return false }
         return enriched == lastEnriched && tagged == lastTagged
     }
+
+    /// **札を立ててよいか**（＝「やることが無かった」と覚えてよいか）。
+    ///
+    /// ⚠️⚠️ ゲートで本当に危ないのはこちら側。`canSkip` を間違えれば「無駄に +341MB 払う」だけだが、
+    /// **札を立てる条件を間違えると、残りが永久にタグ付けされない**（次からずっと飛ばす）。
+    /// それなのにこの判断は呼び出し側にインラインで書かれていて、テストが無かった
+    /// ——台帳（gates.md）の宿題に挙がっていた分（ADR-253）。
+    /// - Parameter remaining: `tagUnprocessed` の戻り。
+    ///   - 0: 本当に終わった → 立ててよい
+    ///   - 0 より大: **上限で打ち切った** → 立てない（残りが永久に残る）
+    ///   - nil: **走れなかった**（provider 無し・二重起動）→ 立てない。⚠️ 0 と混ぜない
+    public static func shouldRecord(remaining: Int?) -> Bool { remaining == 0 }
 }

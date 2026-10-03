@@ -67,7 +67,13 @@
       （スキャン側しか更新しないので 0 に張り付き、札を立てると永久に走らなくなる）
     - テスト: `ScanAttemptTests`（外した件数が実数で動くこと）
 - 規則のテスト: `CandidateEnumerationGateTests`（5 本・母集合が動く 4 経路すべて）
-- 呼び出し側のテスト: （未・`AnalysisDriver` は実機ログで見る）
+- **札を立ててよいかの規則**: `shouldRecord(pending:)`（ADR-253 で呼び出し側から寄せた）
+  - ⚠️⚠️ ゲートで**本当に危ないのはこちら**。`canSkip` の誤りは「無駄に 11 秒払う」だけだが、
+    札の条件の誤りは「**残りが永久にスキャンされない**」になる。
+  - 約束: `pending` は台帳の実数。**nil＝数えられなかった**で、0（やることが無い）と混ぜない
+  - テスト: `AnalysisTurnTests.recordsOnlyWhenNothingPending` /
+    `.doesNotRecordWhenCountUnavailable`
+- 呼び出し側のテスト: 札の条件は上の純ロジックへ出した（`AnalysisDriver` は値を渡すだけ）
 - 効きを見るログ: `driver: 候補の列挙を見送る`
 
 ## TagWorkGate（ADR-247）
@@ -81,9 +87,15 @@
     - 約束: タグを付けなければ動かない／付けたら増える／⚠️ **版を上げたら減る**
       （「増えたときだけ走る」にすると版を上げた晩に 1 枚も進まない）
     - テスト: `GateInputContractTests.taggedCountIsStableWithoutTagging` ほか
-- 規則のテスト: `TagWorkGateTests`（6 本）
-- 呼び出し側のテスト: （未）⚠️ 札を立てるのは `tagUnprocessed` が **0（本当に残り無し）** を
-  返したときだけ。走れなかった回は `nil` を返して **0 と混ぜない**
+- 規則のテスト: `TagWorkGateTests`（8 本）
+- **札を立ててよいかの規則**: `shouldRecord(remaining:)`（ADR-253 で呼び出し側から寄せた）
+  - ⚠️⚠️ ゲートで**本当に危ないのはこちら**。`canSkip` の誤りは「無駄に +341MB 払う」だけだが、
+    札の条件の誤りは「**残りが永久にタグ付けされない**」になる。
+  - 約束: `tagUnprocessed` の戻りは 0＝本当に残り無し／0 より大＝上限で打ち切った／
+    **nil＝走れなかった**（provider 無し・二重起動）。⚠️ nil と 0 を混ぜない
+  - テスト: `TagWorkGateTests.recordsOnlyWhenTrulyDone` / `.doesNotRecordWhenTruncated` /
+    `.doesNotRecordWhenItCouldNotRun`
+- 呼び出し側のテスト: 札の条件は上の純ロジックへ出した（engine は値を渡すだけ）
 - 効きを見るログ: `tags: 重い準備を見送る（前回から変わっていない enriched=… tagged=…）`
 
 ## CaptureDateFillGate（ADR-243）
@@ -368,8 +380,15 @@ StoreRecoveryPolicy — ストアの種別の札（rebuildable / ledger）。判
 - ~~`TagWorkGate` に効きが見えるログが無い~~ → **済**（`tags: 重い準備を見送る`。
   `device-verification.md` の一覧にも載せたので、消すと CI が落ちる）。
 - `AssetIndexRebuildPolicy` の材料（`lastChangeAt` / `lastRebuildSeconds`）の約束が未テスト。
-- `CandidateEnumerationGate` / `TagWorkGate` の**呼び出し側**のテストが無い
-  （札を立てる条件を間違えると、残りが永久に処理されない）。
+- ~~`CandidateEnumerationGate` / `TagWorkGate` の**呼び出し側**のテストが無い~~
+  → **済**（ADR-253。札を立てる条件を `shouldRecord(...)` として純ロジックへ出し、
+  nil と 0 を分ける形でテストした。⚠️ 呼び出し側にインラインで書かれていたから
+  テストが無かったので、「テストを足す」ではなく「判断を出す」で閉じた）。
+- ⚠️ **counts は revision ではない**（`TagWorkGate` / `CandidateEnumerationGate` の
+  `enriched` / `localCount` に残る理屈上の穴）。1 枚消して 1 枚入れると数が戻るので、
+  「消えた側が未処理（＝ADR-243 で諦めた読めない写真）」のときだけ**集合が動いたのに
+  数が動かない**。次に 1 枚でも増減すれば開くので自己修復するが、厳密には
+  `photoSetRevision`（ADR-250）と同じ単調な版にすべき。**まだ測っていない**ので直していない。
 - `AnalysisStallCheck` の `lastActivity` の約束（**1 枚以上処理したときだけ進む**）が未テスト。
   `AnalysisActivityTests` は読み書きの往復しか見ていない。⚠️ ここが「起こしたとき」に
   進む実装に変わると、飢餓しているパスが永久に健全に見える——**沈黙の検出器が沈黙する**

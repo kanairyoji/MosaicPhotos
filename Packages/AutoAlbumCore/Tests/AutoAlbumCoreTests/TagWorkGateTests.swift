@@ -58,4 +58,31 @@ struct TagWorkGateTests {
         #expect(!TagWorkGate.canSkip(enriched: 86_772, tagged: 40,
                                      lastEnriched: 86_772, lastTagged: 0))
     }
+
+    // MARK: - 札を立ててよいか（ADR-253・台帳の宿題）
+
+    /// ⚠️⚠️ **ゲートで本当に危ないのはこちら**。`canSkip` の誤りは「無駄に +341MB 払う」だけだが、
+    /// 札を立てる条件の誤りは「**残りが永久にタグ付けされない**」になる。
+    /// それなのにこの判断は呼び出し側にインラインで書かれていて、テストが無かった。
+    @Test("本当に終わった回だけ札を立てる（remaining == 0）")
+    func recordsOnlyWhenTrulyDone() {
+        #expect(TagWorkGate.shouldRecord(remaining: 0))
+    }
+
+    /// 上限（`maxBatches`）で打ち切った回に立てると、次からずっと飛ばす。
+    @Test("上限で打ち切った回は札を立てない")
+    func doesNotRecordWhenTruncated() {
+        #expect(!TagWorkGate.shouldRecord(remaining: 1))
+        #expect(!TagWorkGate.shouldRecord(remaining: 24_505))
+    }
+
+    /// ⚠️ **nil（走れなかった）を 0（終わった）と混ぜない**（ADR-207/242/253）。
+    /// provider 無し・二重起動で 1 枚も処理していないのに札が立つと、
+    /// その端末ではタグ付けが二度と始まらない。
+    @Test("走れなかった回（nil）は札を立てない — 0 と混ぜない")
+    func doesNotRecordWhenItCouldNotRun() {
+        #expect(!TagWorkGate.shouldRecord(remaining: nil))
+        // 0 と nil は別の意味であること（取り違えると向きが逆になる）。
+        #expect(TagWorkGate.shouldRecord(remaining: 0))
+    }
 }

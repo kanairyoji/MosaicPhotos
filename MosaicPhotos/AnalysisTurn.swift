@@ -113,4 +113,14 @@ enum CandidateEnumerationGate {
         guard let last else { return false }
         return now == last
     }
+
+    /// **札を立ててよいか**（＝「やることが無かった」と覚えてよいか）。
+    ///
+    /// ⚠️⚠️ ゲートで本当に危ないのはこちら側。`canSkip` を間違えれば「無駄に 11 秒払う」だけだが、
+    /// **札を立てる条件を間違えると、残りが永久に処理されない**（次からずっと飛ばす）。
+    /// それなのにこの判断は呼び出し側にインラインで書かれていて、テストが無かった
+    /// ——台帳（gates.md）の宿題に挙がっていた分（ADR-253）。
+    /// - Parameter pending: 候補のうち**まだスキャンしていない**枚数。
+    ///   **nil＝数えられなかった**（「0 件だった」と混ぜない。ADR-207/242）。
+    static func shouldRecord(pending: Int?) -> Bool { pending == 0 }
 }

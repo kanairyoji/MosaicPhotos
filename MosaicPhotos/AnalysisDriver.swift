@@ -218,11 +218,13 @@ final class AnalysisDriver {
             if canScanFacesHere(allowSimulator: allowSim) {
                 await people.measureBacklogIfUnknown(candidateRefKeys: candidates.ordered)
             }
-            // ⚠️ 札を立てるのは「**本当にやることが無かった**」ときだけ（ADR-247）。
+            // ⚠️ 札を立てるのは「**本当にやることが無かった**」ときだけ（ADR-247）
+            // （判断は `CandidateEnumerationGate.shouldRecord` ＝純ロジック・テスト対象）。
             // 判断は **DB の実数**で行う——⚠️⚠️ `faceBacklog` は使わない（ADR-237 の罠。
             // スキャン側しか更新しないので 0 に張り付き、札を立てたら永久に走らなくなる）。
             // 指紋は**列挙のあとに取り直す**（列挙中に写真が増えていたら、その版では覚えない）。
-            if await people.pendingCount(candidateRefKeys: candidates.ordered) == 0 {
+            let pending = await people.pendingCount(candidateRefKeys: candidates.ordered)
+            if CandidateEnumerationGate.shouldRecord(pending: pending) {
                 Self.storeCandidateFingerprint(await currentCandidateFingerprint())
             }
         }

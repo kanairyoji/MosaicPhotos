@@ -391,10 +391,11 @@ extension AutoAlbumEngine {
             let remaining = await tagTagger.tagUnprocessed(candidateRefKeys: candidates,
                                                            maxBatches: maxBatches,
                                                            shouldPause: { BackgroundYield.shouldYield() })
-            // ⚠️ 札を立てるのは「**本当にやることが無かった**」ときだけ。
+            // ⚠️ 札を立てるのは「**本当にやることが無かった**」ときだけ
+            // （判断は `TagWorkGate.shouldRecord` ＝純ロジック・テスト対象）。
             // 上限で打ち切った回（remaining > 0）に立てると、残りが永久に処理されない。
             // `nil`＝走れなかった（provider 無し・二重起動）も立てない（0 と混ぜない）。
-            if remaining == 0 {
+            if TagWorkGate.shouldRecord(remaining: remaining) {
                 defaults.set(enriched, forKey: enrichedKey)
                 defaults.set(await tagStore.taggedCountCurrentVersion(), forKey: taggedKey)
             }

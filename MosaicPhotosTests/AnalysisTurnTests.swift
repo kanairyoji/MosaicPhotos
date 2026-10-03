@@ -165,4 +165,24 @@ struct CandidateEnumerationGateTests {
     func enumeratesWhenCloudShrank() {
         #expect(!CandidateEnumerationGate.canSkip(fp(local: 18_000), last: fp()))
     }
+
+    // MARK: - 札を立ててよいか（ADR-253・台帳の宿題）
+
+    /// ⚠️⚠️ **ゲートで本当に危ないのはこちら**。`canSkip` の誤りは「無駄に 11 秒払う」だけだが、
+    /// 札を立てる条件の誤りは「**残りが永久にスキャンされない**」になる。
+    /// それなのにこの判断は `AnalysisDriver` にインラインで書かれていて、テストが無かった。
+    @Test("未スキャンが 0 の回だけ札を立てる")
+    func recordsOnlyWhenNothingPending() {
+        #expect(CandidateEnumerationGate.shouldRecord(pending: 0))
+        #expect(!CandidateEnumerationGate.shouldRecord(pending: 1))
+        #expect(!CandidateEnumerationGate.shouldRecord(pending: 57))
+    }
+
+    /// ⚠️ **数えられなかった（nil）を「0 件だった」と混ぜない**（ADR-207/242/253）。
+    /// 台帳の取得に失敗した回に札が立つと、その端末では顔スキャンが二度と始まらない。
+    @Test("数えられなかった回（nil）は札を立てない — 0 と混ぜない")
+    func doesNotRecordWhenCountUnavailable() {
+        #expect(!CandidateEnumerationGate.shouldRecord(pending: nil))
+        #expect(CandidateEnumerationGate.shouldRecord(pending: 0))
+    }
 }
