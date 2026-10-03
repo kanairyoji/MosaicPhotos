@@ -31,6 +31,17 @@ public protocol FaceScanControl: AnyObject {
     /// 回線待ちで今回は外したクラウド分も含む。nil＝この起動でまだ測っていない。
     var faceBacklog: Int? { get }
 
+    /// **前の起動までに分かっていた**顔の残作業（ADR-252/253）。nil＝一度も測ったことがない。
+    ///
+    /// ⚠️⚠️ **残作業を「判断の材料」にする側は、`faceBacklog` ではなくこちらを読む。**
+    /// `faceBacklog` が nil なのは「この起動でまだ測っていない」だけで、
+    /// しかも nil は珍しくない——`measureBacklogIfUnknown` は順番が顔の回しか呼ばれない
+    /// （ADR-237 で顔とタグが交互になった）ので、タグの回では必ず nil。
+    /// そこを `?? 0` や `?? scanProgressRemaining` で埋めると、毎回**同じ向きの嘘**になる:
+    /// 夜間の窓は「生成を見送らない」、停滞検出は「顔は健全」、
+    /// ブーストの終わりは「すべて解析済みです」。3 か所で実際に起きた（ADR-252/253）。
+    var lastKnownFaceBacklog: Int? { get }
+
     /// まだ測っていなければ測る（走査済みの refKey を 1 回引くので、毎回は呼ばない）。
     @discardableResult
     func measureBacklogIfUnknown(candidateRefKeys: [String]) async -> Bool

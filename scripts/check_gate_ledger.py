@@ -30,8 +30,14 @@ ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "docs/architecture-note/records/gates.md"
 NOT_GATES_MARKER = "<!-- not-gates -->"
 
-# 判断の純ロジックの命名（この 3 つで統一してある）。
-DECL = re.compile(r"^[ \t]*(?:public )?enum ([A-Za-z][A-Za-z0-9]*(?:Gate|Policy|Turn))\b")
+# 判断の純ロジックの命名。
+# ⚠️⚠️ **名前の一覧は、この検査自身の「材料」**（ADR-253）。最初は `Gate|Policy|Turn` の
+#    3 つだけを見ていたので、`AnalysisStallCheck` という名前の判断が**網の外**にあり、
+#    材料の約束が誰にも書かれず、**顔の停滞検出が一度も効かない**まま残っていた。
+#    ゲートの台帳を作る検査自身が、材料の穴で空振りしていたことになる。
+#    判断に使う名前を増やしたら、ここにも足す。
+DECL = re.compile(
+    r"^[ \t]*(?:public )?enum ([A-Za-z][A-Za-z0-9]*(?:Gate|Policy|Turn|Check|Decision|Plan))\b")
 # 台帳に載せてよいのは「コードに実在する enum」全部（`NightlyPlan` のように命名が
 # 揃っていない判断も手で足せる）。取り残された項を見つけるのに使う。
 ANY_ENUM = re.compile(r"^(?:public )?enum ([A-Za-z][A-Za-z0-9]*)\b")

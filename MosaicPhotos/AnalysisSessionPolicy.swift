@@ -48,9 +48,15 @@ enum AnalysisSessionPolicy {
     /// ⚠️ 以前は `blockers.isEmpty ? .finished : .blocked(blockers)` だけで、
     /// **`.blocked([])` が画面側で「すべて解析済みです」に落ちていた**——理由の無い
     /// 未完了を表す道が無かったので、嘘に丸められていた。
+    /// ⚠️⚠️ `faceBacklog` は **`Int?`**（nil＝分からない）。ADR-253 で `Int` から変えた。
+    /// 呼び出し側が `?? 0` で潰していて、**「分からない」のときに「すべて解析済みです」と
+    /// 表示していた**——この関数のすぐ上のコメントが禁じている、まさにその嘘。
+    /// 顔モデルが無い端末では呼び出し側が 0 を渡す（起こり得ない処理を未完了と言わない）。
     static func stopReason(blockers: [BackgroundYield.Blocker],
-                           faceBacklog: Int) -> AnalysisSession.StopReason {
+                           faceBacklog: Int?) -> AnalysisSession.StopReason {
         if let _ = blockers.first { return .blocked(blockers) }
+        // 分からないなら「終わった」とは言わない（残数は画面に出さないので 0 で足りる）。
+        guard let faceBacklog else { return .incomplete(remaining: 0) }
         if faceBacklog > 0 { return .incomplete(remaining: faceBacklog) }
         return .finished
     }

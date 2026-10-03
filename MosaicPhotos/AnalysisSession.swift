@@ -302,8 +302,12 @@ final class AnalysisSession {
             // **それは「終わった」ではなく「止められている」**——ゲートに理由を聞いて区別する。
             if AnalysisSessionPolicy.isFinished(remaining: rem, tagging: engine.isTagging,
                                                 scanning: people.isScanning) {
+                // ⚠️ **`?? 0` にしない**（ADR-253）。nil は「この起動でまだ測っていない」で、
+                // 「残っていない」ではない。潰すと「すべて解析済みです」と嘘を表示する。
+                // 顔モデルが無い端末だけ 0（＝顔の処理は起こり得ない）。
+                let backlog = people.isFaceModelAvailable ? people.lastKnownFaceBacklog : 0
                 stop(AnalysisSessionPolicy.stopReason(blockers: blocking,
-                                                      faceBacklog: people.faceBacklog ?? 0)); return
+                                                      faceBacklog: backlog)); return
             }
         }
     }

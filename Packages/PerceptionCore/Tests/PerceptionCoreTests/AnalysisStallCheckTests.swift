@@ -10,7 +10,7 @@ struct AnalysisStallCheckTests {
     private let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
     private func daysAgo(_ d: Double) -> Date { now.addingTimeInterval(-d * 86_400) }
 
-    private func state(_ pass: AnalysisActivity.Pass, pending: Int, lastDaysAgo: Double?)
+    private func state(_ pass: AnalysisActivity.Pass, pending: Int?, lastDaysAgo: Double?)
         -> AnalysisStallCheck.PassState {
         .init(pass: pass, pending: pending, lastActivity: lastDaysAgo.map(daysAgo))
     }
@@ -65,6 +65,39 @@ struct AnalysisStallCheckTests {
     func unknownBaselineIsNotStalled() {
         let states = [state(.embeddings, pending: 100, lastDaysAgo: nil)]
         #expect(AnalysisStallCheck.stalled(states, now: now, installedAt: nil).isEmpty)
+    }
+
+    /// ADR-253 の実バグ: 顔の残作業は「この起動でまだ測っていない」ことが普通にあるのに、
+    /// 呼び出し側が `?? scanProgressRemaining`（スキャン中以外 0）で潰していたため、
+    /// **顔の停滞は一度も検出できなかった**。分からないなら「分からない」と言えること。
+    @Test("実バグ再現(ADR-253): 残作業が分からない(nil)まま放置されていれば停滞として出す")
+    func unknownPendingAndIdleIsStalled() {
+        let states = [state(.faces, pending: nil, lastDaysAgo: 21)]
+        #expect(AnalysisStallCheck.stalled(states, now: now) == [.faces])
+    }
+
+    @Test("残作業が分からなくても、最近動いていれば停滞ではない")
+    func unknownPendingButRecentIsNotStalled() {
+        let states = [state(.faces, pending: nil, lastDaysAgo: 0.5)]
+        #expect(AnalysisStallCheck.stalled(states, now: now).isEmpty)
+    }
+
+    /// ⚠️ 0 と nil は**別の意味**。顔モデルが無い端末では呼び出し側が 0 を渡すので、
+    /// 「起こり得ない処理」を永久に停滞と言い続けない。
+    @Test("残作業 0（やることが無い）と nil（分からない）を同じ扱いにしない")
+    func zeroAndUnknownAreNotTheSame() {
+        let idle = 30.0
+        #expect(AnalysisStallCheck.stalled([state(.faces, pending: 0, lastDaysAgo: idle)],
+                                          now: now).isEmpty)
+        #expect(AnalysisStallCheck.stalled([state(.faces, pending: nil, lastDaysAgo: idle)],
+                                          now: now) == [.faces])
+    }
+
+    @Test("ログ行: 分からない残作業は pending=? と出す（0 と書かない）")
+    func logLineShowsUnknownPending() {
+        let states = [state(.faces, pending: nil, lastDaysAgo: 21)]
+        #expect(AnalysisStallCheck.logLine(states, now: now)
+                == "analysis STALLED — faces(pending=? idle=21d)")
     }
 
     @Test("ログ行: 停滞が無ければ nil（ログを汚さない）")

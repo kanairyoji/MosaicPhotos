@@ -21,6 +21,45 @@
 
 ---
 
+## 沈黙を検出する仕組みが沈黙し、それを止めるガードも沈黙していた（2026-10-03・ADR-253）
+- 症状: 見た目は何も起きない。`analysis STALLED` の行が**顔について一度も出ていなかった**が、
+  「出ていない＝健全」と区別がつかないので、誰も気づけなかった。
+  さらに、それを止めるために足したガード（`check_forbidden_patterns.py` の禁止規則）が
+  **一度も当たらないまま**「✅ 残っていません」と出続けた。
+- 原因: 3 つが重なった。
+  1. **直し漏れ**: ADR-252 が `gatherInputs` で直した
+     `faceBacklog ?? scanProgressRemaining` が、**同じファイルの `logStalledPasses` に残っていた**。
+     `scanProgressRemaining` はスキャン中以外 0 なので `pending = 0` になり、
+     `AnalysisStallCheck` は `pending > 0` を入口にしていたため**顔を一度も見なかった**。
+     ⚠️ すぐ上のコメントに「`remaining` は使わない（ADR-207）」と書いてある、その 2 行下。
+  2. **ガードの方言**: 禁止規則を `[\w.]` で書いた。スクリプトが呼ぶのは POSIX の
+     `/usr/bin/grep -E` で、**ブラケットの中の `\w` は「`\`・`w`・`.` の 3 文字」**になる。
+     ⚠️ 対話シェルの `grep` は別物（ugrep）なので、**手で試すと当たる**。
+     実際に当たっていたのは `?? scanProgressRemaining` が隣接する**コメント行だけ**で、
+     肝心の `?? stores.peopleEngine.scanProgressRemaining` には当たっていなかった。
+  3. **台帳の網**: ゲート台帳の突き合わせが `*Gate` / `*Policy` / `*Turn` しか見ておらず、
+     `AnalysisStallCheck`（`*Check`）が対象外。材料の約束が誰にも書かれていなかった。
+     **ゲートの台帳を作る検査自身が、材料の穴で空振りしていた。**
+- 対処:
+  - `AnalysisStallCheck.PassState.pending` を **`Int?`**（0＝やることが無い / nil＝分からない）。
+    `stalled` は **0 だけを外し nil は通す**。ログは `pending=?`。
+    呼び出し側は顔モデルが無いときだけ 0 を渡す。
+  - 禁止規則に**当たるべき見本**を持たせ、走るたびに**走査と同じ grep で**確認（死んだ規則は落ちる）。
+  - 台帳の網を `*Check` / `*Decision` / `*Plan` へ広げ、
+    `AnalysisStallCheck` / `NightlyPlan` / `TricklePlan` の 3 項を追記。
+  - **負の検証を 2 方向で**: 悪い式を戻すと落ちる／規則を方言バグへ戻すと落ちる。
+- 関連: `Packages/PerceptionCore/Sources/PerceptionCore/AnalysisStallCheck.swift` /
+  `MosaicPhotos/HeavyWorkScheduler.swift`（`logStalledPasses`）/
+  `scripts/check_forbidden_patterns.py` / `scripts/check_gate_ledger.py` /
+  `AnalysisStallCheckTests`（13 本）/ `docs/architecture-note/records/gates.md`。ADR-253。
+- 残課題: `lastActivity` の約束（**1 枚以上処理したときだけ進む**）が未テスト。
+  ここが「起こしたとき」に進む実装に変わると、同じ沈黙が再発する。
+  ⚠️ **見つけ方の教訓**: この欠陥は実機ログでもレビューでもなく、
+  **前の回の報告を自分で検証しにいったら出てきた**（「修正した」と報告された箇所の
+  *周辺*を grep した）。同じ式が同じファイルに 2 つあった。
+
+---
+
 ## 「テストが足りない」のではなく「テストが欠陥の無い場所にあった」（2026-10-03）
 - 症状: 修正しても別の不具合が出る、が続いた。利用者の言葉は
   「なかなか収束しません。テストケースが不十分なのでしょうか？」。

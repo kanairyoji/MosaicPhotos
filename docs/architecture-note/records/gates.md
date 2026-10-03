@@ -84,7 +84,7 @@
 - 規則のテスト: `TagWorkGateTests`（6 本）
 - 呼び出し側のテスト: （未）⚠️ 札を立てるのは `tagUnprocessed` が **0（本当に残り無し）** を
   返したときだけ。走れなかった回は `nil` を返して **0 と混ぜない**
-- 効きを見るログ: （未・`tags: finished` が出ないことで間接的に見る。ログを足すのが宿題）
+- 効きを見るログ: `tags: 重い準備を見送る（前回から変わっていない enriched=… tagged=…）`
 
 ## CaptureDateFillGate（ADR-243）
 - 置き場: `Packages/FaceCore/Sources/FaceCore/Faces/FaceStore+CaptureDates.swift`
@@ -271,6 +271,80 @@
 
 ---
 
+## AnalysisStallCheck（ADR-87 / 253）
+
+⚠️⚠️ **この項が無かったために、顔の停滞は一度も検出できなかった**（ADR-253）。
+台帳の突き合わせが `*Gate` / `*Policy` / `*Turn` の 3 つの名前しか見ていなかったので、
+`*Check` という名前のこれだけが**網の外**にあり、材料の約束が誰にも書かれていなかった。
+（いまは `*Check` / `*Decision` / `*Plan` も見る。）
+
+- 置き場: `Packages/PerceptionCore/Sources/PerceptionCore/AnalysisStallCheck.swift`
+- 問い: 動くべき解析パスが、長期間動いていないか（＝**沈黙そのものを検出する**）
+- 材料:
+  - `pending`（**`Int?`**）← タグ/埋め込みは `AutoAlbumEngine.analysisProgress()`、
+    顔は `PeopleEngine.lastKnownFaceBacklog`
+    - 約束: ⚠️⚠️ **0（やることが無い）と nil（分からない）を分けて渡す**。
+      `scanProgressRemaining` で埋めない——あれはスキャン中以外 0 なので、
+      「分からない」が静かに「終わった」になり、`pending > 0` を入口にしていた
+      この検査は**顔について一度も発火しなかった**。顔モデルが無い端末は 0（起こり得ない）。
+    - テスト: `FaceBacklogTests`（nil と 0 の区別・前の起動の記録を読む）＋
+      `check_forbidden_patterns.py` の `?? scanProgressRemaining` 禁止（見本つき）
+  - `lastActivity` ← `AnalysisActivity.lastActivity(_:)`
+    - 約束: **1 枚以上処理したときだけ**進む（起こしただけでは進めない）。
+      ⚠️ ここが「起こしたとき」に進むと、飢餓しているパスが永久に健全に見える
+    - テスト: **未**（`AnalysisActivityTests` は読み書きの往復だけ。宿題に記載）
+  - `installedAt` ← `AppSettingsKeys.firstLaunchAt`
+    - 約束: 一度も動いていないパスの基準。新規インストール直後に誤検知させない
+    - テスト: `AnalysisStallCheckTests`
+- 規則のテスト: `AnalysisStallCheckTests`（13 本。ADR-85/86/253 の実バグをシナリオで固定）
+- 呼び出し側のテスト: **未**（宿題に記載）
+- 効きを見るログ: `analysis STALLED — <pass>(pending=<n|?> idle=<n>d)`
+  （⚠️ 分からない残作業は `?` と出す。`0` と書くと「pending=0 なのに停滞」で読めなくなる）
+
+---
+
+## NightlyPlan（ADR-180 / 206 / 222 / 252）
+- 置き場: `MosaicPhotos/NightlyWorkPolicy.swift`
+- 問い: 処理枠（BGProcessingTask）で**何を・どの順でやるか**
+- 材料（すべて `HeavyWorkScheduler.gatherInputs` が測って渡す）:
+  - `faceBacklog`（**`Int?`**）← `PeopleEngine.lastKnownFaceBacklog`
+    - 約束: ADR-252 と同じ——nil は「分からない」。0 に丸めない
+    - テスト: `FaceBacklogTests`
+  - `backupReconcileDue` ← `BackupEngine.isReconcileDue()`
+    - 約束: ⚠️ **これで手順の位置が変わる**（来ている週だけバックアップの前に出す）
+    - テスト: `NightlyPlanTests`
+  - `embedBacklog` / `availableMB` / `networkAllowed` / `boostActive` /
+    `generateDeferrals` / `provideShareEnabled` / `publishAnalysisEnabled`
+    - 約束: `availableMB` は generate のピーク（実測 550〜880MB）と比べる値であること
+    - テスト: `NightlyPlanTests`
+- 規則のテスト: `NightlyPlanTests`（順序は**実機の失敗が出典**＝窓の食い潰し・
+  生成と解析の共倒れ・バックアップの飢餓。変えるときはここを見る）
+- 効きを見るログ: 窓の手順ラベル（`analysis` / `generate` / `publishAnalysis` / `backup` …）
+
+---
+
+## TricklePlan（ADR-198 / 85 / 80）
+- 置き場: `Packages/AutoAlbumCore/Sources/AutoAlbumCore/Perception/TricklePlan.swift`
+- 問い: 背景トリクルで**何を・どの順で・どこまで**やるか（タグ → 埋め込み）
+- 材料:
+  - `networkAllowed` ← 回線ポリシー（ブーストの免除は `BackgroundYield` の表が答える）
+    - 約束: false なら**候補を端末内写真だけに絞る**（クラウドのタグ付けはサムネ DL を伴う）。
+      ローカルは通信不要なので常に進む
+    - テスト: `TricklePlanTests`
+  - `gateOpen` ← 入口の時点でゲートが開いているか
+    - 約束: ⚠️ ラベラのウォームは**ゲートの内側だけ**で起こす（ADR-80。外にあったため
+      起動直後でも CLIP テキストタワーのロード＝新規インストールで実測 23 秒が走っていた）
+    - テスト: `TricklePlanTests`
+  - `labelerNeedsWarming` ← 表示ラベラがあり、まだ温まっていないか
+    - 約束: ディスクに表があるなら温め直さない（`ConceptEmbeddingCache.hasCachedTable`）
+    - テスト: `ConceptTableFingerprintTests`（鍵の方）
+- 規則のテスト: `TricklePlanTests`。固定したい不変条件は
+  **P1（シーンタグ）に必ず有限の上限がある**こと（無いとタグが窓を独占し埋め込みが永久に飢餓＝ADR-85）と
+  **手順は必ず埋め込みで終わる**こと
+- 効きを見るログ: `tags(<n>[,local])` / `embed` / `warmLabeler`
+
+---
+
 ## 判断ではないもの
 
 ここに並ぶのは「名前は `*Policy` だが、やるかやらないかを決めていない」もの。
@@ -291,7 +365,15 @@ StoreRecoveryPolicy — ストアの種別の札（rebuildable / ledger）。判
 - ~~`CandidateEnumerationGate` の `localCount` が述語を 2 か所に書き写していた~~
   → **済**（`faceScanCandidateFetchOptions(newestFirst:)` が唯一の出典。
   書き写しは `check_forbidden_patterns.py` が止める）。
-- `TagWorkGate` に**効きが見えるログ**が無い（飛ばした回が記録に出ない）。
+- ~~`TagWorkGate` に効きが見えるログが無い~~ → **済**（`tags: 重い準備を見送る`。
+  `device-verification.md` の一覧にも載せたので、消すと CI が落ちる）。
 - `AssetIndexRebuildPolicy` の材料（`lastChangeAt` / `lastRebuildSeconds`）の約束が未テスト。
 - `CandidateEnumerationGate` / `TagWorkGate` の**呼び出し側**のテストが無い
   （札を立てる条件を間違えると、残りが永久に処理されない）。
+- `AnalysisStallCheck` の `lastActivity` の約束（**1 枚以上処理したときだけ進む**）が未テスト。
+  `AnalysisActivityTests` は読み書きの往復しか見ていない。⚠️ ここが「起こしたとき」に
+  進む実装に変わると、飢餓しているパスが永久に健全に見える——**沈黙の検出器が沈黙する**
+  形（ADR-253 で一度踏んだ）なので、優先度は高い。
+- `AnalysisStallCheck` の**呼び出し側**のテストが無い（`logStalledPasses` が顔に
+  `lastKnownFaceBacklog` を渡していること。いまは `check_forbidden_patterns.py` の
+  禁止規則だけが守っている）。

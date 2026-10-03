@@ -320,6 +320,7 @@ driver: 顔の開始を見送る
 driver: 滞留していたタグ/埋め込みを明け渡させた
 faces: cloud capture dates
 driver: 候補の列挙を見送る
+tags: 重い準備を見送る
 枚を候補から外す
 faces: census[
 faces: ledger clusters=
@@ -369,3 +370,20 @@ Developer Options → 診断ログ。目印になる行:
   `groupMemberSwapped`（**別人が居座った**＝数では見えない）/ `groupLost`
 - `faces: manual snapshot taken|restored` / `faces: ledger exported for replay` —
   台帳の控えと書き出し（ADR-234）
+
+---
+
+## H. 顔の停滞が「検出され得る」ようになったことの確認（ADR-253）
+
+⚠️ これは**出ない行が正しい**種類の確認ではない——ADR-253 の修正前は
+`logStalledPasses` が顔について**構造的に何も出せなかった**（`pending` が常に 0）。
+修正後は「分からない」が通るので、**停滞しているなら出る**ようになった。
+
+- **H1**: 健全な端末では `analysis STALLED` の行が**出ない**（ノイズを増やしていないこと）。
+  ⚠️ ここだけ見ると修正前と区別がつかないので、必ず H2 と組にして見る。
+- **H2**: 顔の残作業が残っている端末で、顔の処理が 3 日以上動かなかった場合に
+  `analysis STALLED — faces(pending=<n|?> idle=<n>d)` が出る。
+  ⚠️ **`pending=?` でも正しい**（「分からないまま放置されている」の表示）。
+  修正前は顔がこの行に**一度も現れなかった**ので、`faces(...)` が現れること自体が証拠。
+- **H3**: 顔モデルを同梱していないビルドでは、顔について `analysis STALLED` が**出ない**
+  （起こり得ない処理を永久に停滞と言わないこと）。

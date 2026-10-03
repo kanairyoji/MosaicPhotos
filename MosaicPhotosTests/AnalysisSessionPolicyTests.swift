@@ -43,6 +43,18 @@ final class AnalysisSessionPolicyTests: XCTestCase {
                        "理由があるときは理由を優先する（利用者が直せるのはこちら）")
     }
 
+    /// ⚠️⚠️ ADR-253 の実バグ: 呼び出し側が `people.faceBacklog ?? 0` と書いていたので、
+    /// 「この起動でまだ測っていない（nil）」が「残っていない（0）」になり、
+    /// **ブーストの終わりに「すべて解析済みです」と嘘を表示していた**。
+    /// 直前のテストが禁じている嘘を、材料の側から通していたことになる。
+    func testStopReasonDoesNotClaimDoneWhenFaceBacklogIsUnknown() {
+        XCTAssertEqual(AnalysisSessionPolicy.stopReason(blockers: [], faceBacklog: nil),
+                       .incomplete(remaining: 0),
+                       "残作業が分からないのに『すべて解析済み』と言っている")
+        // 0 と nil は別の意味（顔モデルが無い端末では呼び出し側が 0 を渡す）。
+        XCTAssertEqual(AnalysisSessionPolicy.stopReason(blockers: [], faceBacklog: 0), .finished)
+    }
+
     func testRemainingClampsNegatives() {
         XCTAssertEqual(AnalysisSessionPolicy.remaining(faces: -1, tagsPending: 2, embedPending: -5), 2)
     }

@@ -368,11 +368,21 @@ enum HeavyWorkScheduler {
                   lastActivity: AnalysisActivity.lastActivity(.embeddings)),
             // ⚠️ **`remaining` は使わない**（ADR-207・レビュー 7 周目）。あれはスキャン中しか
             // 書かれないので、`kick` の直後に走るこの検査からは**常に 0**に見える。
-            // `stalled` は `pending > 0` を入口にしているので、顔の停滞は
-            // **一度も検出できなかった**——沈黙を検出しにいく仕組みが、それ自体沈黙していた
+            // `stalled` は 0 を入口で外すので、顔の停滞は**一度も検出できなかった**
+            // ——沈黙を検出しにいく仕組みが、それ自体沈黙していた
             // （ADR-87 が守りたかったのはまさにこの形の飢餓バグ）。
+            //
+            // ⚠️⚠️ **`?? scanProgressRemaining` も同じ丸めだった**（ADR-253）。ADR-252 は
+            // 隣の `gatherInputs` で同じ式を直したのに、**この検査だけ直し漏れていた**
+            // ——「同じ規則が複数の場所に散っていて片方だけ直す」の再発（ADR-143/250）。
+            // いまは `check_forbidden_patterns.py` が `?? scanProgressRemaining` を禁じる。
+            //
+            // 顔モデルが無い端末では顔の処理が起こり得ないので **0**（＝やることが無い）。
+            // 在るのにまだ測っていなければ **nil**（＝分からない）を渡し、猶予を超えて
+            // 動いていなければ `pending=?` で停滞として出す。
             .init(pass: .faces,
-                  pending: stores.peopleEngine.faceBacklog ?? stores.peopleEngine.scanProgressRemaining,
+                  pending: stores.peopleEngine.isFaceModelAvailable
+                      ? stores.peopleEngine.lastKnownFaceBacklog : 0,
                   lastActivity: AnalysisActivity.lastActivity(.faces)),
         ]
         // 一度も動いていないパスは「この端末で解析が始まり得た時刻」からの経過で判定する。

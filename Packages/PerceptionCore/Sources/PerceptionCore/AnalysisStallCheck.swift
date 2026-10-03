@@ -11,12 +11,19 @@ public enum AnalysisStallCheck {
     /// 1 パス分の状態（残作業と最終処理時刻）。
     public struct PassState: Sendable, Equatable {
         public let pass: AnalysisActivity.Pass
-        /// 残っている枚数（0 なら「やることが無い」＝停滞ではない）。
-        public let pending: Int
+        /// 残っている枚数。
+        /// - 0: やることが無い（＝停滞ではない）
+        /// - nil: **分からない**（まだ測っていない）
+        ///
+        /// ⚠️ **nil と 0 を同じ扱いにしない**（ADR-207/252/253）。ここが `Int` だったとき、
+        /// 呼び出し側は「分からない」を渡す手段が無いので `?? 0` で潰すほかなく、
+        /// **顔の停滞は一度も検出できなかった**——沈黙を検出しにいく仕組みが、
+        /// それ自体沈黙していた。分からないなら「分からない」と言えるようにする。
+        public let pending: Int?
         /// 最後に 1 枚以上処理した時刻（一度も処理していなければ nil）。
         public let lastActivity: Date?
 
-        public init(pass: AnalysisActivity.Pass, pending: Int, lastActivity: Date?) {
+        public init(pass: AnalysisActivity.Pass, pending: Int?, lastActivity: Date?) {
             self.pass = pass
             self.pending = pending
             self.lastActivity = lastActivity
@@ -33,7 +40,10 @@ public enum AnalysisStallCheck {
                                installedAt: Date? = nil,
                                grace: TimeInterval = defaultGrace) -> [AnalysisActivity.Pass] {
         states.compactMap { state in
-            guard state.pending > 0 else { return nil }              // やることが無ければ停滞ではない
+            // ⚠️ 「やることが無い（0）」だけを除く。**「分からない（nil）」は通す**
+            // ——分からないまま猶予を超えて動いていないのは、まさに検出したい沈黙そのもの
+            // （ADR-253）。呼び出し側は「work が起こり得ない」ときに 0 を渡す責任を持つ。
+            guard state.pending != 0 else { return nil }
             let reference = state.lastActivity ?? installedAt
             guard let reference else { return nil }                  // 基準が無い＝判定しない
             return now.timeIntervalSince(reference) > grace ? state.pass : nil
@@ -46,13 +56,14 @@ public enum AnalysisStallCheck {
                                grace: TimeInterval = defaultGrace) -> String? {
         let bad = stalled(states, now: now, installedAt: installedAt, grace: grace)
         guard !bad.isEmpty else { return nil }
-        let detail = bad.map { pass -> String in
-            let state = states.first { $0.pass == pass }
-            let days = state.flatMap { s -> Int? in
-                let reference = s.lastActivity ?? installedAt
-                return reference.map { Int(now.timeIntervalSince($0) / 86_400) }
-            }
-            return "\(pass.rawValue)(pending=\(state?.pending ?? 0) idle=\(days.map(String.init) ?? "?")d)"
+        let detail = bad.compactMap { pass -> String? in
+            guard let state = states.first(where: { $0.pass == pass }) else { return nil }
+            let reference = state.lastActivity ?? installedAt
+            let days = reference.map { Int(now.timeIntervalSince($0) / 86_400) }
+            // ⚠️ 分からない残作業は `?` と出す。`?? 0` にすると「pending=0 なのに停滞」という
+            // 読めない行になり、原因を追う側が「検査が壊れている」と誤解する（ADR-253）。
+            let pending = state.pending.map(String.init) ?? "?"
+            return "\(pass.rawValue)(pending=\(pending) idle=\(days.map(String.init) ?? "?")d)"
         }
         return "analysis STALLED — " + detail.joined(separator: " ")
     }
