@@ -372,6 +372,11 @@ extension AutoAlbumEngine {
             if TagWorkGate.canSkip(enriched: enriched, tagged: taggedNow,
                                    lastEnriched: defaults.object(forKey: enrichedKey) as? Int,
                                    lastTagged: defaults.object(forKey: taggedKey) as? Int) {
+                // ⚠️ **効いた回数が見えるログを必ず付ける**（ADR-250/251）。
+                // ADR-247 で入れた同じ形のゲート（候補の列挙）は実機で 1 回も効いていなかったのに、
+                // ログがあったおかげで「0 件」で気づけた。こちらには無く、宿題に残っていた。
+                Diagnostics.mark("tags: 重い準備を見送る（前回から変わっていない"
+                                 + " enriched=\(enriched) tagged=\(taggedNow)）")
                 return
             }
             // 候補は **お気に入り(ローカル→クラウド)→その他(ローカル→クラウド)・各新→古**（AnalysisOrder）。
