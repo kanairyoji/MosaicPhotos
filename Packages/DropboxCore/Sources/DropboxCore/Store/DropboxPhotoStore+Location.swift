@@ -128,6 +128,15 @@ extension DropboxPhotoStore {
         await cache.currentItemsRevision()
     }
 
+    /// **写真の集合が変わった回数**（増えた／減った のみ・ADR-250・安い＝fetch を伴わない）。
+    ///
+    /// ⚠️ 「解析候補が変わり得たか」を訊きたいときは**こちら**を使う。
+    /// `cacheItemsRevision()` は撮影日の問い合わせ・撮影地の解決でも進むので、
+    /// 候補の判定に使うと**いつも『変わった』**になる（実機で実際にそうなった）。
+    public func cachePhotoSetRevision() async -> Int {
+        await cache.currentPhotoSetRevision()
+    }
+
     /// 解析候補に渡す **パスと撮影日だけ**の一覧（ADR-224）。
     ///
     /// ⚠️ `items`（表示用）を使わないこと。あちらは全列の実体化を伴い、実機では

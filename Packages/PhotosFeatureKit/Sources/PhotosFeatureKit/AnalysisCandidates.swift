@@ -157,7 +157,10 @@ public func localImageRefKeys() async -> [String] {
 /// あれはスキャン側しか更新しないので 0 に張り付き、「仕事が無い」と読むと**永久に走らなくなる**。
 public func analysisCandidateFingerprint(dropboxStore: DropboxPhotoStore) async
     -> (cloudRevision: Int, localCount: Int) {
-    let cloudRevision = await dropboxStore.cacheItemsRevision()
+    // ⚠️ **集合の版**を使う（ADR-250）。`cacheItemsRevision()` は撮影日の問い合わせ・
+    // 撮影地の解決でも進むので、候補の判定に使うと**いつも『変わった』**になる
+    // ——実機で `候補の列挙を見送る` が 1 回も出なかった（diagnostics-104）。
+    let cloudRevision = await dropboxStore.cachePhotoSetRevision()
     let localCount = await Task.detached(priority: .utility) { () -> Int in
         let opts = PHFetchOptions()
         // ⚠️ `localImageRefKeys()` と**同じ条件**にする（スクショ除外）。

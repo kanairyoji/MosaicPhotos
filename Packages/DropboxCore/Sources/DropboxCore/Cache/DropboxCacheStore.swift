@@ -234,6 +234,18 @@ actor DropboxCacheStore {
     /// 変更リビジョンを読む（表示側の早期リターン用・fetch を伴わない）。
     func currentItemsRevision() -> Int { itemsRevision }
 
+    /// **写真の集合が変わった回数**（増えた／減った のみ・ADR-250）。
+    ///
+    /// ⚠️ `itemsRevision` と**別に持つ**理由: あちらは「一覧を作り直す必要があるか」の札で、
+    /// 撮影日の問い合わせ・撮影地の解決でも進む（1 枚ずつ走るのでほぼ常に動く）。
+    /// 「解析候補が変わったか」を訊きたい側がそれを使うと、**いつも『変わった』**と答えてしまう。
+    /// ⚠️⚠️ これは ADR-240 と**同じ過ち**——1 つの版に 2 つ目の意味を兼ねさせた。
+    /// **新しい問いには新しい札を立てる。**
+    private(set) var photoSetRevision = 0
+
+    /// 写真の集合の版を読む（fetch を伴わない）。
+    func currentPhotoSetRevision() -> Int { photoSetRevision }
+
     /// 同期状態の Sendable スナップショット（`@Model` を actor 外へ漏らさない）。
     struct SyncStateInfo: Sendable, Equatable {
         let cursor: String?
@@ -443,6 +455,14 @@ actor DropboxCacheStore {
             itemsRevision &+= 1
             updateContentHashIndex(added: added, removed: removed, newRevision: itemsRevision)
         }
+        // ⚠️⚠️ **「写真が増減したか」は別の札で数える**（ADR-250・実機ログ diagnostics-104）。
+        // `itemsRevision` は「一覧を作り直す必要があるか」の札で、**撮影日の問い合わせ**や
+        // **撮影地の解決**でも進む（どちらも 1 枚ずつ走るので、ほぼ常に動いている）。
+        // それを「解析候補が変わったか」の判定に流用したら、**ゲートが一度も効かなかった**
+        // ——実機で `候補の列挙を見送る` が 0 件、11 回とも 8.6 万件を列挙していた。
+        // 候補の集合が変わるのは**増えたか減ったか**だけなので、専用の札を持つ。
+        // ⚠️ `updateCount`（中身の差し替え）では進めない——同じ写真のままなので候補は変わらない。
+        if insertCount > 0 || !removed.isEmpty { photoSetRevision &+= 1 }
         insertedForTesting += insertCount
         updatedForTesting += updateCount
         DropboxLogger.verbose("applyDelta() saved — inserted=\(insertCount), updated=\(updateCount), removed=\(removed.count)")
