@@ -41,6 +41,12 @@ RULES: list[tuple[str, str, tuple[str, ...]]] = [
      "**テストの実行体だけが消える**（ハングに見える・2026-09-30 に観測）。"
      "6 つのストアにコピーされて錠を持つのは 2 つだけ、という状態だった。",
      ("MosaicSupport/ResilientModelContainer.swift",)),
+    (r"mediaSubtypes\s*&\s*%d",
+     "顔スキャンの候補の条件は `faceScanCandidateFetchOptions(newestFirst:)` **だけ**が持つ"
+     "（ADR-252 の宿題）。以前は同じ NSPredicate を「候補を数える側」と「列挙する側」の"
+     "2 か所に書き写していた——ずれると「変わっていないのに指紋が動く」か"
+     "「変わったのに動かない」のどちらかになり、どちらもゲートが静かに壊れる（ADR-250/251）。",
+     ("PhotosFeatureKit/AnalysisCandidates.swift",)),
 ]
 
 SEARCH = [ROOT / "MosaicPhotos"] + sorted((ROOT / "Packages").glob("*/Sources"))

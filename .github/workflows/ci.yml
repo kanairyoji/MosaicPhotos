@@ -74,6 +74,13 @@ jobs:
       - name: Check forbidden patterns
         run: python3 scripts/check_forbidden_patterns.py
 
+      # ⚠️ ゲート（やるかやらないかを決める純ロジック）の**材料の約束**が書かれているか。
+      # 規則そのものは一度も間違えていない——間違いは材料で起きた。ADR-250 は指紋の材料が
+      # 撮影日の問い合わせでも動いて実機で 1 回も効かず、ADR-252 は「分からない」を 0 に
+      # 丸めていた。純ロジックのテストはこの穴を原理的に見つけられないので、台帳で縛る。
+      - name: Check gate ledger
+        run: python3 scripts/check_gate_ledger.py
+
   ios:
     name: iOS simulator tests (best-effort)
     runs-on: macos-15

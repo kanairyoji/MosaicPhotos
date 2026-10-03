@@ -123,16 +123,8 @@ public func analysisCandidates(dropboxStore: DropboxPhotoStore) async
 /// `Task.detached` で**メインスレッド外**へ逃がす（起動直後のホーム描画を固めない）。
 public func localImageRefKeys() async -> [String] {
     await Task.detached(priority: .utility) {
-        let opts = PHFetchOptions()
-        // 顔スキャンはスクリーンショットを対象外にする（(a)・顔がまず写らないのに 1 枚 ~1s かかり
-        // backlog を膨らませる）。この候補パスは顔スキャン専用（CLIP 埋め込み/タグは別の候補経路）
-        // なので、除外しても検索/タグ付けには影響しない。除外分は「スキャン済み」記録も作らない
-        // ＝候補に上がらないだけ（将来スクショに人物が必要になれば設定で戻せる）。
-        opts.predicate = NSPredicate(
-            format: "mediaType == %d && (mediaSubtypes & %d) == 0",
-            PHAssetMediaType.image.rawValue, PHAssetMediaSubtype.photoScreenshot.rawValue)
         // 新しい写真から先に解析する（全解析パス共通の方針＝撮りたての写真が最速で反映される）。
-        opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let opts = faceScanCandidateFetchOptions(newestFirst: true)
         let assets = PHAsset.fetchAssets(with: opts)
         var keys: [String] = []
         keys.reserveCapacity(assets.count)
@@ -162,15 +154,35 @@ public func analysisCandidateFingerprint(dropboxStore: DropboxPhotoStore) async
     // ——実機で `候補の列挙を見送る` が 1 回も出なかった（diagnostics-104）。
     let cloudRevision = await dropboxStore.cachePhotoSetRevision()
     let localCount = await Task.detached(priority: .utility) { () -> Int in
-        let opts = PHFetchOptions()
-        // ⚠️ `localImageRefKeys()` と**同じ条件**にする（スクショ除外）。
-        // ずれると「候補は変わっていないのに指紋が動く／動かない」になる。
-        opts.predicate = NSPredicate(
-            format: "mediaType == %d && (mediaSubtypes & %d) == 0",
-            PHAssetMediaType.image.rawValue, PHAssetMediaSubtype.photoScreenshot.rawValue)
-        return PHAsset.fetchAssets(with: opts).count
+        // ⚠️ 条件は `localImageRefKeys()` と**同じ関数から**取る（ADR-252 の宿題）。
+        // 以前は同じ `NSPredicate` を 2 か所に書き写していた——ずれると
+        // 「候補は変わっていないのに指紋が動く／動かない」になる。並びは数に効かないので要らない。
+        PHAsset.fetchAssets(with: faceScanCandidateFetchOptions(newestFirst: false)).count
     }.value
     return (cloudRevision, localCount)
+}
+
+/// **顔スキャンの候補の条件（唯一の出典）**。
+///
+/// ⚠️ スクリーンショットは対象外にする（顔がまず写らないのに 1 枚 ~1s かかり backlog を
+/// 膨らませる）。この候補パスは顔スキャン専用（CLIP 埋め込み/タグは別の候補経路）なので、
+/// 除外しても検索/タグ付けには影響しない。除外分は「スキャン済み」記録も作らない
+/// ＝候補に上がらないだけ（将来スクショに人物が必要になれば設定で戻せる）。
+///
+/// ⚠️⚠️ **この条件を書き写さないこと**。候補を**数える**側（`analysisCandidateFingerprint` の
+/// `localCount`）と**列挙する**側（`localImageRefKeys`）で条件がずれると、
+/// 「変わっていないのに指紋が動く」か「変わったのに動かない」のどちらかになる
+/// ——どちらもゲートが静かに壊れる形（ADR-250/251/252）。
+/// `scripts/check_forbidden_patterns.py` が書き写しを CI で止める。
+public func faceScanCandidateFetchOptions(newestFirst: Bool) -> PHFetchOptions {
+    let opts = PHFetchOptions()
+    opts.predicate = NSPredicate(
+        format: "mediaType == %d && (mediaSubtypes & %d) == 0",
+        PHAssetMediaType.image.rawValue, PHAssetMediaSubtype.photoScreenshot.rawValue)
+    if newestFirst {
+        opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    }
+    return opts
 }
 
 /// 端末写真（画像）の総数。顔スキャンの進捗の分母（AI 解析の状況画面）に使う。

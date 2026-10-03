@@ -18,9 +18,14 @@ enum NightlyWorkPolicy {
         case run(afterDeferrals: Int)
     }
 
-    static func generateDecision(embedBacklog: Int, faceBacklog: Int,
+    /// - Parameter faceBacklog: 顔の残作業。**nil＝分からない**（ADR-252）。
+    ///   ⚠️ nil を 0 に丸めてはいけない。以前 `gatherInputs` が
+    ///   `faceBacklog ?? scanProgressRemaining` と書いていて、`scanProgressRemaining` は
+    ///   スキャン中以外 0 なので——**「分からない」が「終わった」になっていた**。
+    ///   分からないときは「あるかもしれない」側に倒す（見送りには上限があるので飢えない）。
+    static func generateDecision(embedBacklog: Int, faceBacklog: Int?,
                                  deferrals: Int, maxDeferrals: Int) -> GenerateDecision {
-        let hasBacklog = embedBacklog > 0 || faceBacklog > 0
+        let hasBacklog = embedBacklog > 0 || (faceBacklog ?? 1) > 0
         guard hasBacklog, deferrals < maxDeferrals else { return .run(afterDeferrals: deferrals) }
         return .defer_(streak: deferrals + 1)
     }
@@ -50,7 +55,9 @@ enum NightlyPlan {
         /// ブースト（「今すぐ解析」）が走っているか。走っていれば解析は重ねて起こさない。
         var boostActive: Bool
         var embedBacklog: Int
-        var faceBacklog: Int
+        /// 顔の残作業。**nil＝分からない**（この起動で一度も測っておらず、前の起動の記録も無い）。
+        /// ⚠️ 0 と混ぜない（ADR-207/252）。
+        var faceBacklog: Int?
         var generateDeferrals: Int
         var maxGenerateDeferrals: Int
         /// 空きメモリ（MB）。generate はピークが大きい（実測 550〜880MB）。
@@ -63,7 +70,7 @@ enum NightlyPlan {
         /// 同じ Dropbox の人へ解析を公開するか（ADR-222・既定 ON）。
         var publishAnalysisEnabled: Bool
 
-        init(boostActive: Bool = false, embedBacklog: Int = 0, faceBacklog: Int = 0,
+        init(boostActive: Bool = false, embedBacklog: Int = 0, faceBacklog: Int? = 0,
              generateDeferrals: Int = 0, maxGenerateDeferrals: Int = 4,
              availableMB: Int = 2048, networkAllowed: Bool = true,
              provideShareEnabled: Bool = false, backupReconcileDue: Bool = false,

@@ -499,7 +499,14 @@ enum HeavyWorkScheduler {
             // は `kick` の直後に走るので、新しい窓では**常に 0**だった（ADR-163 の修正が
             // 効いていなかった）。埋め込みが 0 で顔だけ残っている窓に生成が入り、
             // diagnostics-72 の共倒れが再発し得る。
-            faceBacklog: stores.peopleEngine.faceBacklog ?? stores.peopleEngine.scanProgressRemaining,
+            //
+            // ⚠️⚠️ **`?? scanProgressRemaining` も同じ丸めだった**（ADR-252）。あれはスキャン中
+            // 以外 0 なので、`faceBacklog` が nil の窓では結局 0 になっていた——そして nil は
+            // 珍しくない：`measureBacklogIfUnknown` は**順番が顔の回しか**呼ばれないので
+            // （ADR-237 で交互になった）、タグの回の窓では必ず nil。つまり ADR-207 で禁じた
+            // 「分からないを 0 に丸める」を、その修正を書いた本人が隣の行でやっていた。
+            // `lastKnownFaceBacklog` は前の起動の記録まで見て、本当に分からないときだけ nil。
+            faceBacklog: stores.peopleEngine.lastKnownFaceBacklog,
             generateDeferrals: UserDefaults.standard.integer(forKey: AppSettingsKeys.generateDeferralStreak),
             maxGenerateDeferrals: maxGenerateDeferrals,
             availableMB: Int(MemoryBudget.availableBytes() / 1_048_576),

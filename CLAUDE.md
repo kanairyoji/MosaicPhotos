@@ -215,6 +215,28 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
     （レビュー指摘）。件数は「取りこぼしていないこと」の確認用で、規模比例の検出にはならない。
   - ⚠️ 打ち切り上限を入れたなら、テストの規模は**その上限を跨ぐ**こと。下回る範囲だけで測ると
     上限が効いているのか元から少ないのか区別できない。
+- **判断を純ロジックに出したら、「材料の約束」も書く（ADR-251）**: 規則を純 enum
+  （`*Gate` / `*Policy` / `*Turn`）へ出してテストするのは正しい方法だが、
+  ⚠️⚠️ **出した瞬間、材料（入力）の正しさは型にも検査にも現れなくなる**——材料は引数で
+  与えられるので、「その引数が現実にどう動くか」は**テストの外**にある。
+  実際、直近 10 件の修正で**規則そのものは一度も間違っていなかった**。間違いは呼び出し側・
+  材料・テスト自身にあり、**出荷後まで残った 1 件はどちらも材料**だった
+  （ADR-250＝版が別の理由でも進んでゲートが 1 回も効かない、ADR-252＝`??` で
+  「分からない」が 0 になる）。
+  - ゲートを足したら `docs/architecture-note/records/gates.md` に 1 項書く
+    （**材料／材料に求める性質／その性質を守るテスト**の 3 つだけ）。
+    `scripts/check_gate_ledger.py` が CI で突き合わせる。
+  - **材料の約束は実物に対してテストする**（`GateInputContractTests` /
+    `FaceBacklogMaterialTests` / `PhotoSetRevisionTests` が実例）。
+    検証するのは「規則が正しいか」ではなく「**この材料は本当にそう振る舞うか**」。
+  - ⚠️ **`Int?` を `Int` にする `??` を書いたら、右側が「分からない」と同じ意味か問う。**
+    ADR-252 は `faceBacklog ?? scanProgressRemaining` で、右側は別の問いの答えなのに
+    たまたま同じ 0 を返していた。**型で分けたものを `??` で元に戻していた。**
+  - ⚠️ **ゲートを足したら、効いた回数が見えるログを必ず付ける**（ADR-250）。
+    「安全側に倒した」が「一度も効かない」になっていても、ログが無いと誰も気づけない。
+  - ⚠️ **同じ母集合を「数える側」と「列挙する側」で条件を書き写さない**。
+    ずれると「変わっていないのに動く」か「変わったのに動かない」のどちらかになる
+    （`faceScanCandidateFetchOptions` が唯一の出典。書き写しは CI が止める）。
 - **性能設計の既定原則（重い処理を書く/直すときは必ず通す）**: 遅さの相談を受けたら、**まず 1 単位あたりの内訳を実測**（I/O・通信・推論・DB のどれが支配的か）してから手を入れる。そのうえで以下を**言われる前に**適用する。
   1. **I/O と計算は重ねる**（最重要）。通信・ディスク読み・デコードと、推論・計算が交互に来る逐次ループは、待ち時間がまるごと無駄になる。**次の単位の取得を、現在の単位の処理中に始める**（1 バッチ先読み）。ANE ゲートは推論だけを直列化し通信は縛らないので、通信は推論の裏に完全に隠せる（ADR-83 の実例＝クラウド解析の 85〜90% が DL 待ちだった）。
   2. **往復はまとめる**。1 件ずつの API 呼び出しはバッチ API の利点を消す（Dropbox サムネは 25 枚/リクエスト・並列）。ループの中で単発リクエストを見たら疑う。
@@ -305,7 +327,7 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
   「以前は〜だった」は**残すべき経緯**なので一覧だけ出す。ログの文言のような
   文字列リテラルは拾えないので、そこは `--literal '<文字列>'` で足す。
 - **設計判断・事例の記録（必須・マスターは Markdown）**: 設計上の判断、埋め込んだバグ、原因が非自明だった不具合、性能/メモリ/起動などの大きめの課題対応を行ったら、**必ず** Markdown のマスターに 1 項追記して網羅する。これらの記録はチャット履歴に頼らず、リポジトリ内に確実に残す。
-  - マスター（正本）: `docs/architecture-note/records/decisions.md`（設計判断＝ADR）/ `docs/architecture-note/records/case-studies.md`（事例・バグ・課題対応）/ `docs/architecture-note/records/background-behavior.md`（**どの設定だと何が動くかの早見表**＝ゲートを足す/変えるたびに更新）/ `docs/architecture-note/records/complexity-scoreboard.md`（**どこが複雑か・次にどこを直すか**＝大きめの整理をしたら `python3 scripts/complexity_scoreboard.py` を回して更新。**レビューの対象を選ぶときは「どこをまだ見ていないか」の台帳としても使う**） / `docs/architecture-note/records/device-verification.md`（**実機でしか確かめられないこと**＝シミュレータ・ユニットテストで届かない変更を入れたら 1 行足す）。各ファイル冒頭の「運用ルール」と「テンプレート」に従う（ADR は `## ADR-N` 連番＋文脈/決定/結果、事例は症状/原因/対処/関連/残課題）。
+  - マスター（正本）: `docs/architecture-note/records/decisions.md`（設計判断＝ADR）/ `docs/architecture-note/records/case-studies.md`（事例・バグ・課題対応）/ `docs/architecture-note/records/background-behavior.md`（**どの設定だと何が動くかの早見表**＝ゲートを足す/変えるたびに更新）/ `docs/architecture-note/records/complexity-scoreboard.md`（**どこが複雑か・次にどこを直すか**＝大きめの整理をしたら `python3 scripts/complexity_scoreboard.py` を回して更新。**レビューの対象を選ぶときは「どこをまだ見ていないか」の台帳としても使う**） / `docs/architecture-note/records/device-verification.md`（**実機でしか確かめられないこと**＝シミュレータ・ユニットテストで届かない変更を入れたら 1 行足す）/ `docs/architecture-note/records/gates.md`（**ゲートの材料の約束**＝「やるかやらないか」を決める純ロジックを足したら 1 項足す。`scripts/check_gate_ledger.py` が CI で突き合わせる）。各ファイル冒頭の「運用ルール」と「テンプレート」に従う（ADR は `## ADR-N` 連番＋文脈/決定/結果、事例は症状/原因/対処/関連/残課題）。
   - HTML（`docs/architecture-note/design-decisions/adr.html` / `case-studies/*.html`）は MD からの**派生物**で、**指示に応じて取捨選択**して記載する（全件転記しない）。HTML 目次の定義は `docs/architecture-note/assets/nav.js` の `NAV` 配列が唯一の出典。
   - 順序: まず MD に追記（網羅）→ 必要なら HTML 化（選択）。撤回・変更時は MD の項を消さず状態を追記して経緯を残す。
 

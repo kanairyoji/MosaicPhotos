@@ -29,6 +29,30 @@ final class NightlyWorkPolicyTests: XCTestCase {
         XCTAssertEqual(d, .run(afterDeferrals: 0))
     }
 
+    /// ⚠️⚠️ **「分からない」を「終わった」として扱わない**（ADR-252）。
+    ///
+    /// 呼び出し側は `faceBacklog ?? scanProgressRemaining` と書いていて、
+    /// `scanProgressRemaining` はスキャン中以外 0 なので——nil の窓では結局 0 になり、
+    /// 「顔だけ残っている窓に生成が入らない」という ADR-163 の決めが効いていなかった。
+    /// しかも nil は珍しくない: `measureBacklogIfUnknown` は**順番が顔の回しか**呼ばれない
+    /// ので（ADR-237 で交互になった）、タグの回の窓では必ず nil。
+    ///
+    /// ADR-207 が「分からないを 0 に丸めるな」と言ったのと**同じ間違い**を、
+    /// その修正を書いた本人が隣の行でやっていた。だから規則の側でも倒れる向きを固定する。
+    func testUnknownFaceBacklogIsNotTreatedAsFinished() {
+        let unknown = NightlyWorkPolicy.generateDecision(embedBacklog: 0, faceBacklog: nil,
+                                                         deferrals: 0, maxDeferrals: maxDeferrals)
+        XCTAssertEqual(unknown, .defer_(streak: 1),
+                       "顔の残作業が分からないのに「終わった」と見なして生成を走らせている")
+
+        // ⚠️ それでも飢えない（上限は分からない場合にも効く）。
+        let atLimit = NightlyWorkPolicy.generateDecision(embedBacklog: 0, faceBacklog: nil,
+                                                         deferrals: maxDeferrals,
+                                                         maxDeferrals: maxDeferrals)
+        XCTAssertEqual(atLimit, .run(afterDeferrals: maxDeferrals),
+                       "分からないを理由に永久に見送っている＝生成が飢える")
+    }
+
     /// ⚠️ ここが「生成を飢えさせない」保険。上限に達したら**残作業があっても**回す。
     func testGenerationGetsItsTurnAfterMaxDeferrals() {
         let atLimit = NightlyWorkPolicy.generateDecision(embedBacklog: 5_000, faceBacklog: 5_000,

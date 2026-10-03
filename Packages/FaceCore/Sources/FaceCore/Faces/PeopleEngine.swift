@@ -65,7 +65,30 @@ public final class PeopleEngine {
     /// 完了の判定にそのまま使うと**残作業を抱えたまま「すべて解析済み」と表示する**。
     /// こちらは最後に測った値を保ち、回線待ちで外したぶん（クラウド）も足して持つ。
     /// - nil: この起動でまだ一度も測っていない（＝分からない。0 と区別すること）
-    public private(set) var faceBacklog: Int?
+    public private(set) var faceBacklog: Int? {
+        didSet {
+            // 次の起動でも「分からない」にならないよう、分かった値は残す（ADR-252）。
+            if let faceBacklog { UserDefaults.standard.set(faceBacklog, forKey: Self.lastKnownBacklogKey) }
+        }
+    }
+
+    /// **前の起動までに分かっていた顔の残作業**（ADR-252）。
+    ///
+    /// ⚠️ `faceBacklog` が nil なのは「この起動でまだ測っていない」だけで、
+    /// 「残っていない」とは限らない。にもかかわらず夜間の窓は
+    /// `faceBacklog ?? scanProgressRemaining` と書いていて——`scanProgressRemaining` は
+    /// スキャン中以外は 0 なので、**「分からない」が静かに 0（＝終わった）になっていた**。
+    /// ADR-207 がまさに禁じた丸め方を、それを書いた本人が別の場所でやっていた。
+    ///
+    /// 測り直すのは高い（候補の列挙が 8.6 万件・約 11 秒）ので、**前回分かった値を使う**。
+    /// 古くて困る向きではない——多めに出れば生成を見送るだけで、見送りには上限がある。
+    /// - nil: 一度も測ったことがない（本当に初回。このときは埋め込みの残作業が必ずある）
+    public var lastKnownFaceBacklog: Int? {
+        faceBacklog ?? (UserDefaults.standard.object(forKey: Self.lastKnownBacklogKey) as? Int)
+    }
+
+    static let lastKnownBacklogKey = "faces.lastKnownBacklog"
+
     /// **今ここで進められる残り**（回線待ちのクラウド分を含まない）。nil＝この実行では測っていない。
     /// ⚠️ 「分からない」を 0（＝終わった）に丸めない（ADR-207）。モデルの解放はこれを見る。
     @ObservationIgnored private var faceRemainingHere: Int?
