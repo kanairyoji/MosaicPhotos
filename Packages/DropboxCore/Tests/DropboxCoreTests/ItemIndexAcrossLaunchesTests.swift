@@ -240,6 +240,30 @@ struct ItemIndexAcrossLaunchesTests {
                 "控えに「訊いた」印が乗っていない（次の起動で食い違いが戻る）")
     }
 
+    /// ⚠️⚠️ **キャッシュを丸ごと消したら、控えも消す**（ADR-263）。
+    /// `dropContentHashIndex` が捨てるのはメモリの表だけなので、控えを残すと
+    /// 前のアカウントの写真で作った表がディスクに居続ける。
+    @Test("キャッシュを丸ごと消すと、ディスクの控えも消える")
+    func clearAllRemovesTheSnapshot() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1", added: [item("/a.jpg"), item("/b.jpg")],
+                               removed: [], newCursor: "c1")
+        _ = await store.cachedPhotoRefs()
+        let snapshot = fx.dir.appendingPathComponent("item-index.bin")
+        #expect(FileManager.default.fileExists(atPath: snapshot.path),
+                "前提: 控えが書かれていない（以降の assert が空振りする）")
+
+        await store.clearAll(accountId: "acc1")
+
+        #expect(!FileManager.default.fileExists(atPath: snapshot.path), """
+                前のアカウントの写真で作った控えがディスクに残っている。
+                """)
+        // 消したあとの起動は、空の表を作る（控えから古い 2 枚が戻らない）。
+        let next = fx.relaunch()
+        #expect(await next.cachedPhotoRefs().isEmpty, "消したはずの写真が控えから戻った")
+    }
+
     /// ⚠️ 控えが**無い**初回起動でも当然動く（控えは最適化であって前提ではない）。
     @Test("控えが無ければ作る（初回起動）")
     func firstLaunchBuildsNormally() async throws {

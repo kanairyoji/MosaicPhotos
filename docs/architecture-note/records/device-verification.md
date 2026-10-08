@@ -325,6 +325,7 @@ driver: 候補の札を立てない
 bgtask: 撮影日時を訊いた
 itemIndex: 控えから復元
 itemIndex: 控えが使えない
+itemIndex: 控えを書き直せなかった
 tags: 重い準備を見送る
 枚を候補から外す
 faces: census[

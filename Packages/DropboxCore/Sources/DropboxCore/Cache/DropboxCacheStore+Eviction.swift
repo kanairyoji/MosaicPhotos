@@ -149,6 +149,11 @@ extension DropboxCacheStore {
         // **同期ルートの変更**のあと、解析候補と公開が**古いライブラリを指したまま**になる
         // （アプリを再起動するまで直らない）。版も進めて、表と一覧の両方を作り直させる。
         dropContentHashIndex()
+        // ⚠️ **ディスクの控えも捨てる**（ADR-263・レビューループ 4 周目）。
+        // `dropContentHashIndex` が捨てるのは**メモリの表**だけ。控え（ADR-258）を
+        // 残すと、前のアカウントの写真で作った表がディスクに居続ける。
+        // 鍵は DB 由来なので普通は合わずに弾かれるが、**合い得る設計にしない**。
+        removeIndexSnapshot()
         bumpItemsRevision()
         DropboxLogger.info("clearAll() complete")
     }

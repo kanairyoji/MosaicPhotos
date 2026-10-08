@@ -754,8 +754,16 @@ actor DropboxCacheStore {
     /// ⚠️ 表がそろっていないときは**何もしない**（ここで作り始めると 9 秒を払う）。
     /// ⚠️ 呼ぶのは**枠の中で 1 回**（前面の 3 秒ごとの trickle から呼ぶと 10MB を書き続ける）。
     func refreshIndexSnapshotIfReady() {
-        guard !isEphemeral, let index = cachedItemIndex,
-              cachedItemIndexRevision == itemsRevision else { return }
+        guard !isEphemeral else { return }
+        // ⚠️ **見送った回も記録に出す**（独立レビューの指摘・ADR-250 の自分の決め）。
+        // 黙って返すと「書き直せていない」が見えない——ADR-254 で札が立つようになると
+        // 枠で `cloudPhotoRefs()` が呼ばれなくなり、公開もオフなら**表が載らないまま**
+        // 撮影日だけ進む＝鍵が変わって控えが古くなり、次の起動で 9 秒を払う。
+        // それが起きていることは、この 1 行でしか分からない。
+        guard let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision else {
+            Diagnostics.mark("itemIndex: 控えを書き直せなかった（表が載っていない）")
+            return
+        }
         writeIndexSnapshot(index, key: snapshotKey())
     }
 
@@ -769,12 +777,20 @@ actor DropboxCacheStore {
     /// テスト用: 控えの鍵（材料の約束を縛るため・ADR-251/258）。
     func snapshotKeyForTesting() -> UInt64 { snapshotKey() }
 
-    /// テスト用: 控えを消す。
-    func removeIndexSnapshotForTesting() {
+    /// **ディスクの控えを捨てる**（ADR-263）。
+    ///
+    /// ⚠️ キャッシュを丸ごと消すとき（アカウント切替・同期ルートの変更）に**必ず呼ぶ**。
+    /// 呼ばないと、前のアカウントの写真で作った控えがディスクに残る。
+    /// 鍵（行数・未問い合わせ数・差し替え回数）は DB 由来なので普通は合わず弾かれるが、
+    /// **合ってしまう可能性を残す設計にしない**——消せるものは消す。
+    func removeIndexSnapshot() {
         try? FileManager.default.removeItem(at: snapshotURL)
         writtenSnapshotKey = nil
         triedSnapshotLoad = false
     }
+
+    /// テスト用（名前で意図が分かるように残す）。
+    func removeIndexSnapshotForTesting() { removeIndexSnapshot() }
 
     /// 軽い表（パス小文字 → パス・hash・撮影日）を返す。無ければ 1 回だけ作る。
     ///
