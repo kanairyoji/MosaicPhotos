@@ -202,6 +202,41 @@ final class NightlyPlanTests: XCTestCase {
         XCTAssertTrue(labels(.init(provideShareEnabled: true)).contains("shareSync"))
     }
 
+    // MARK: - 撮影日時の問い合わせ（ADR-257）
+
+    /// ⚠️ 実機では 25 時間・11 起動で **12 枚**しか進んでいなかった（diagnostics-105）。
+    /// 前面のループは「背面でない」が条件なので、BGTask で起きた回は必ず素通りする。
+    /// 残り 105,662 枚に対して 1 回 12 枚＝事実上一巡しない。
+    /// 撮影日時が無いとクラウド写真で顔の時期グループ（ADR-218）と Time&Place が機能しない。
+    func testProbesCaptureDatesInTheWindowWhenAnyAreUnprobed() {
+        XCTAssertFalse(labels(.init()).contains(where: { $0.hasPrefix("captureDates") }),
+                       "訊くものが無いのに手を入れている")
+        let steps = labels(.init(captureDateBacklog: 105_662))
+        XCTAssertTrue(steps.contains("captureDates(\(NightlyPlan.captureDateProbeLimit))"),
+                      "残っているのに枠で訊いていない＝永久に埋まらない: \(steps)")
+    }
+
+    /// ⚠️ 回線が要る（1 枚 1 往復の `get_metadata`）。「Wi-Fi のみ」を破らないこと。
+    func testCaptureDateProbeNeedsTheNetwork() {
+        XCTAssertFalse(labels(.init(networkAllowed: false, captureDateBacklog: 1000))
+                        .contains(where: { $0.hasPrefix("captureDates") }),
+                       "回線が許されないのに 1 枚ずつ問い合わせている")
+    }
+
+    /// ⚠️⚠️ **窓を使い切る手より前**（ADR-257）。`shareSync` は実機でコピー待ち 9,265 件・
+    /// 1 回 500 件ずつなので、後ろに置いた手は一度も順番が回ってこない
+    /// （ADR-222 追補で公開が同じ理由で前へ出ている）。
+    func testCaptureDateProbeComesBeforeTheStepsThatEatTheWindow() {
+        let steps = labels(.init(provideShareEnabled: true, captureDateBacklog: 1000))
+        guard let probe = steps.firstIndex(where: { $0.hasPrefix("captureDates") }),
+              let sync = steps.firstIndex(of: "shareSync"),
+              let drain = steps.firstIndex(of: "drain") else {
+            return XCTFail("手が揃っていない: \(steps)")
+        }
+        XCTAssertLessThan(probe, sync, "反映より後に置くと順番が回ってこない: \(steps)")
+        XCTAssertLessThan(probe, drain, "drain より後ろに手は無い")
+    }
+
     /// ADR-222: 解析の公開も回線の中。設定がオフなら 1 バイトも上げない。
     func testPublishAnalysisFollowsTheNetworkAndItsSetting() {
         XCTAssertFalse(labels(.init()).contains("publishAnalysis"), "設定がオフなら公開しない")

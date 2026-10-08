@@ -427,8 +427,21 @@ final class DropboxSyncEngine {
                             isPrimary: isPrimary)
                 return false
             } catch {
-                DropboxLogger.error("SyncEngine: poll error — \(error.localizedDescription)")
-                reportState(.error(error.localizedDescription), isPrimary: isPrimary)
+                // ⚠️ **中断で切れた longpoll を「エラー」として残さない**（ADR-256・diagnostics-105）。
+                // longpoll は 30 秒以上ぶら下がるので、プロセスが中断されれば必ず切れる。
+                // 実機では 1 本のログに 37 回 ERROR が出て、**このログの ERROR はこれだけ**だった
+                // ——本物のエラーが埋もれているのか無いのかが読み手に分からない。
+                // UI を失敗状態にしていたのも誤り（何も壊れていない）。
+                // 再試行は共通なので、違うのは記録と表示だけ。判断は純ロジックへ。
+                switch SyncPollErrorPolicy.classify(error) {
+                case .expected:
+                    DropboxLogger.info("SyncEngine: poll interrupted (expected) — "
+                                       + error.localizedDescription)
+                    reportState(.idle, isPrimary: isPrimary)
+                case .reportable:
+                    DropboxLogger.error("SyncEngine: poll error — \(error.localizedDescription)")
+                    reportState(.error(error.localizedDescription), isPrimary: isPrimary)
+                }
                 do {
                     try await Task.sleep(nanoseconds: DropboxInternalConstants.retryDelayNs)
                 } catch {

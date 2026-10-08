@@ -79,14 +79,27 @@ extension DropboxPhotoStore {
     /// 積み上がる（6.8 万枚 × 数秒）。互いに独立した RPC なので少数を並行させる。
     /// 並行数は Dropbox のレート制限に配慮して小さく固定する（サムネのバッチャと同じ考え方）。
     /// - Returns: 実際に問い合わせた枚数（0＝もう残っていない）。
+    /// - Parameters:
+    ///   - limit: この呼び出しで訊く上限。既定 12＝**前面のついで**の値。
+    ///   - deadline: これを過ぎたら切り上げる（夜間の枠で使う）。nil＝`limit` だけで決める。
+    ///
+    /// ⚠️⚠️ **既定の 12 枚では終わらない**（ADR-257・実機ログ diagnostics-105）。
+    /// 実機は `remaining=105662` で、しかも前面のループは
+    /// 「背面でない ＋ `.cloudTrickle` が開く」が条件なので、BGTask で起きた回は必ず素通りする
+    /// ——1 本のログ（11 起動・25 時間）で**実行は 1 回・12 枚だけ**だった。
+    /// 撮影日が無いと顔の時期グループ（ADR-218）と Time&Place がクラウド写真で機能しないので、
+    /// 夜間の枠から**時間を区切って**呼ぶ（`NightlyPlan` の `.probeCaptureDates`）。
     @discardableResult
-    public func fillMissingCaptureDates(limit: Int = 12) async -> Int {
+    public func fillMissingCaptureDates(limit: Int = 12, deadline: Date? = nil) async -> Int {
         let paths = await cache.pathsNeedingCaptureDateProbe(limit: limit)
         guard !paths.isEmpty else { return 0 }
         let concurrency = 4
         var probed = 0
         var index = 0
         while index < paths.count {
+            // ⚠️ 期限は**次の塊を始める前**に見る（始めた塊は投げ出さない＝記録が中途半端に
+            // ならないように）。1 塊は 4 枚・約 0.2 秒なので、超過は無視できる。
+            if let deadline, Date() >= deadline { break }
             let slice = Array(paths[index..<min(index + concurrency, paths.count)])
             index += slice.count
             await withTaskGroup(of: Void.self) { group in

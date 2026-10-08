@@ -1,6 +1,8 @@
 import AutoAlbumCore
 import BackgroundTasks
 import BackupKit
+// 撮影日時の問い合わせ（ADR-257）は DropboxCore の API を直に呼ぶ。
+import DropboxCore
 import MobileCLIPKit
 import MosaicSupport
 import SwiftUI
@@ -523,8 +525,14 @@ enum HeavyWorkScheduler {
             networkAllowed: NetworkStateMonitor.shared.networkAllowed(),
             provideShareEnabled: ShareSettingsKeys.isProvideEnabled(),
             backupReconcileDue: stores.backupEngine.isReconcileDue(),
-            publishAnalysisEnabled: ShareSettingsKeys.isPublishAnalysisEnabled())
+            publishAnalysisEnabled: ShareSettingsKeys.isPublishAnalysisEnabled(),
+            // ⚠️ `fetchCount` 1 回（`exifProbedAt == nil`）＝安い。実機で 105,662 件（ADR-257）。
+            captureDateBacklog: await stores.dropboxStore.exifProbePendingCount())
     }
+
+    /// 撮影日時の問い合わせにこの枠で使ってよい秒数（ADR-257）。
+    /// ⚠️ 上限（枚）だけだと、通信が遅い夜に 1 手が枠を食い潰す。時間でも切る。
+    static let captureDateProbeSeconds: TimeInterval = 40
 
     /// 1 手を実行する。**ここに判断を書かない**（書くと窓を起こさないと確かめられなくなる）。
     private static func perform(_ step: NightlyPlan.Step, stores: HomeStores) async {
@@ -560,6 +568,16 @@ enum HeavyWorkScheduler {
         case .publishAnalysis:
             // 写真はコピーせず解析だけを置く（同じ Dropbox に繋いだだけの人にも届く・ADR-222）。
             await stores.analysisPublisher.runIfNeeded()
+        case .probeCaptureDates(let limit):
+            // ⚠️ クラウド写真の撮影日時は 1 枚 1 往復しか手が無い（ADR-201）。前面のループは
+            // 「背面でない」が条件なので BGTask で起きた回は素通りし、実機では 25 時間で
+            // **12 枚**しか進んでいなかった（ADR-257・diagnostics-105）。枠からも進める。
+            // 時間で区切る＝枠を他の手と分け合う（枚数だけだと通信が遅い夜に枠を食う）。
+            let deadline = Date().addingTimeInterval(captureDateProbeSeconds)
+            let probed = await stores.dropboxStore.fillMissingCaptureDates(limit: limit,
+                                                                           deadline: deadline)
+            let remaining = await stores.dropboxStore.exifProbePendingCount()
+            Diagnostics.mark("bgtask: 撮影日時を訊いた probed=\(probed) remaining=\(remaining)")
         case .reconcileBackup:
             // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない（ADR-166）。
             await stores.backupEngine.reconcileIfDueWeekly()

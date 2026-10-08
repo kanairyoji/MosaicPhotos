@@ -163,6 +163,22 @@
 - 効きを見るログ: `assetIndex: built` の**回数**（103 では 36 回）
 - ⚠️ 前提: 遅らせても正しさは落ちない（`needsRevalidation` が立っている間は要求のたびに現存を確かめる）
 
+## SyncPollErrorPolicy（ADR-256）
+- 置き場: `Packages/DropboxCore/Sources/DropboxCore/Sync/SyncPollErrorPolicy.swift`
+- 問い: 差分ポーリングの失敗を**記録に残し、UI を失敗にするか**（再試行はどちらも同じ）
+- 材料:
+  - `error` ← `list_folder/longpoll` / `continue` が投げたもの
+    - 約束: ⚠️ **中断で切れたもの**（`timedOut` / `cancelled` / 回線断）と
+      **利用者が何かしないと直らないもの**（認証・権限・パス）を分ける。
+      longpoll は 30 秒以上ぶら下がるので、プロセスが中断されれば**必ず**切れる
+      ——実機では 1 本のログに ERROR が 37 回出て、しかも**そのログの ERROR はこれだけ**
+      だった（本物のエラーが埋もれているのか無いのか読み手に分からない）
+    - テスト: `SyncPollErrorPolicyTests`（4 本・⚠️ **逆向きも縛る**＝全部 expected にしても
+      通ってしまわないよう、認証切れ・`cannotFindHost`・`badURL` は reportable を assert）
+- 規則のテスト: `SyncPollErrorPolicyTests`
+- 効きを見るログ: `SyncEngine: poll interrupted (expected)`（info・DEBUG のみ）と、
+  **ERROR が出ないこと**。⚠️ 「出ないこと」で見る類なので、`error` 側を消さないこと。
+
 ## FaceQualityGate（ADR-48/52/53）
 - 置き場: `Packages/FaceCore/Sources/FaceCore/Faces/FaceSeams.swift`
 - 問い: 検出した顔を**クラスタへ入れてよいか**（品質の足切り）
@@ -188,7 +204,13 @@
   - `generateDeferrals` ← `UserDefaults`（連続見送り回数）
     - 約束: 見送った回だけ増え、実行した回に 0 へ戻る（戻さないと生成が飢える）
     - テスト: `NightlyWorkPolicyTests.testDeferralStreakCyclesInsteadOfStalling`
-- 規則のテスト: `NightlyWorkPolicyTests`（nil を「終わった」にしない 1 本を含む）
+  - `captureDateBacklog` ← `DropboxPhotoStore.exifProbePendingCount()`（ADR-257）
+    - 約束: `exifProbedAt == nil` の `fetchCount` ＝**まだ訊いていない**ものだけ。
+      ⚠️ 「訊いたが EXIF が無かった」を含めない（含めると毎晩同じ写真を訊き続ける）
+    - テスト: `CaptureDateProbeTests`（「二度目は訊かない」）＋
+      `ItemIndexSnapshotKeyTests.keyChangesWhenTheProbeFoundNothing`（記録されること）
+- 規則のテスト: `NightlyWorkPolicyTests`（nil を「終わった」にしない 1 本を含む）＋
+  `NightlyPlanTests`（撮影日時の手＝残りがあるときだけ・回線の中・窓を食う手より前）
 - 効きを見るログ: `window plan: …→generate(defer:N)→…`（`RunTimeline`）
 
 ## AnalysisDriverPolicy（ADR-195 / 196）

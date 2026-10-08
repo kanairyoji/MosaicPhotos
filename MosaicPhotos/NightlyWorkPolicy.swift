@@ -69,12 +69,16 @@ enum NightlyPlan {
         var backupReconcileDue: Bool
         /// 同じ Dropbox の人へ解析を公開するか（ADR-222・既定 ON）。
         var publishAnalysisEnabled: Bool
+        /// 撮影日時を**まだ訊いていない**クラウド写真の枚数（ADR-257）。
+        /// ⚠️ 材料の約束: `exifProbedAt == nil` の `fetchCount` ＝**訊いていない**ものだけ。
+        /// 「訊いたが無かった」は含めない（含めると毎晩同じ写真を訊き続ける）。
+        var captureDateBacklog: Int
 
         init(boostActive: Bool = false, embedBacklog: Int = 0, faceBacklog: Int? = 0,
              generateDeferrals: Int = 0, maxGenerateDeferrals: Int = 4,
              availableMB: Int = 2048, networkAllowed: Bool = true,
              provideShareEnabled: Bool = false, backupReconcileDue: Bool = false,
-             publishAnalysisEnabled: Bool = false) {
+             publishAnalysisEnabled: Bool = false, captureDateBacklog: Int = 0) {
             self.boostActive = boostActive
             self.embedBacklog = embedBacklog
             self.faceBacklog = faceBacklog
@@ -85,6 +89,7 @@ enum NightlyPlan {
             self.provideShareEnabled = provideShareEnabled
             self.backupReconcileDue = backupReconcileDue
             self.publishAnalysisEnabled = publishAnalysisEnabled
+            self.captureDateBacklog = captureDateBacklog
         }
     }
 
@@ -105,6 +110,8 @@ enum NightlyPlan {
         case shareSync
         /// クラウド写真の解析を `<root>/<端末>/Analysis` へ公開（ADR-222）。
         case publishAnalysis
+        /// クラウド写真の**撮影日時**を少しずつ訊く（ADR-257）。値は この枠の上限（枚）。
+        case probeCaptureDates(limit: Int)
         /// バックアップ台帳と実体の照合（週 1・内部で期限を見る）。
         case reconcileBackup
         /// 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。
@@ -123,11 +130,21 @@ enum NightlyPlan {
             case .shareImport:                     return "shareImport"
             case .shareSync:                       return "shareSync"
             case .publishAnalysis:                 return "publishAnalysis"
+            case .probeCaptureDates(let n):        return "captureDates(\(n))"
             case .reconcileBackup:                 return "reconcile"
             case .drainUntilIdle:                  return "drain"
             }
         }
     }
+
+    /// **1 つの枠で訊く撮影日時の上限**（ADR-257）。
+    ///
+    /// ⚠️ 1 枚 1 往復（`get_metadata`・実測 200ms 前後）で 4 並列なので、500 枚＝約 25 秒。
+    /// 枠は数分あるが、ここは**解析・バックアップと同じ枠を分け合う**ので欲張らない。
+    /// 実機の残り 105,662 枚なら 1 晩 3〜4 枠で 1,500〜2,000 枚＝**2 か月ほどで一巡**する。
+    /// ⚠️ それでも遅いが、1 枚ずつしか訊けない API（ADR-201）なので上限は通信量の問題。
+    /// 増やすなら Dropbox のレート制限を実測してからにする。
+    static let captureDateProbeLimit = 500
 
     /// generate を動かすのに要る空きメモリ（MB）。
     /// 足りないと BG の厳しい jetsam 上限に触れてアプリごと kill され、進捗が振り出しに戻る。
@@ -191,6 +208,14 @@ enum NightlyPlan {
             // **一度も順番が回ってこなかった**（窓は 5 分で期限切れ）。公開は上限つき
             // （8 シャード）で軽いので、長く走る手より前に出す。
             if i.publishAnalysisEnabled { out.append(.publishAnalysis) }
+            // ⚠️ **撮影日時は反映（`shareSync`）より前**（ADR-257・ADR-222 追補と同じ理由）。
+            // `shareSync` は窓を使い切る（実機でコピー待ち 9,265 件・1 回 500 件）。
+            // 後ろに置いた手は**一度も順番が回ってこない**ので、上限つきで軽いものを前へ出す。
+            // ⚠️ 撮影日時が無いとクラウド写真で顔の時期グループ（ADR-218）と
+            // Time&Place が機能しない＝**他の機能の前提**なので、飢えさせない。
+            if i.captureDateBacklog > 0 {
+                out.append(.probeCaptureDates(limit: captureDateProbeLimit))
+            }
             if i.provideShareEnabled { out.append(.shareSync) }
             // ⚠️ **週次の照合も回線の中**（レビュー 11 周目）。Dropbox の全件一覧を引くので
             // 通信が要るのに、ここだけ外にあった——「Wi-Fi のみ」でもセルラーで

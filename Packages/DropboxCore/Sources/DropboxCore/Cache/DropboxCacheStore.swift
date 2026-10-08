@@ -93,6 +93,7 @@ actor DropboxCacheStore {
         // ADR-185: 個別上限は安全弁（名目予算の 2 倍）に格下げ。合計は協調役が予算に収める。
         let safety = 2 * CacheBudget.nominalBytes(setting: CacheBudget.setting(),
                                                   totalCapacity: CacheBudget.volumeCapacity().total ?? 0)
+        self.isEphemeral = isStoredInMemoryOnly
         self.thumbnailByteLimit = isStoredInMemoryOnly ? thumbnailByteLimit : max(thumbnailByteLimit, safety)
         self.fullImageByteLimit = isStoredInMemoryOnly ? fullImageByteLimit : max(fullImageByteLimit, safety)
         // メモリ常駐を有界化：Dropbox サムネは固定サイズ（thumbnailAPISize＝w256h256・デコード約256KB）。
@@ -204,6 +205,18 @@ actor DropboxCacheStore {
     }
     /// パス小文字 → 軽い行の表（ADR-222/224）。作り直さず増減で直す。
     /// ⚠️ 9.9 万件で 20〜30MB 前後。メモリ圧迫では捨てる（次の要求で作り直せる）。
+    /// ⚠️ **インメモリの店（テスト）は控えを使わない**（ADR-258）。
+    /// 控えは `Caches` の**1 つの固定ファイル**なので、並行して走るテストが互いのものを
+    /// 上書きし得る。しかも鍵は「行数・未問い合わせ数・差し替え回数」なので、小さな
+    /// fixture どうしでは**たまたま一致する**（2 行・2 件・0 回 など）——他のテストの控えを
+    /// 読み込んでしまう。インメモリの店は起動を跨がないので、そもそも控える意味が無い。
+    /// （`FaceStore.isEphemeral` が同じ理由で高水位を持たないのと同じ扱い）
+    private let isEphemeral: Bool
+    /// ディスクの控えを**この起動で一度でも読もうとしたか**（読めなくても二度は探さない＝ADR-82）。
+    private var triedSnapshotLoad = false
+    /// 最後にディスクへ書いた控えの鍵（同じ鍵で何度も書かない）。
+    private var writtenSnapshotKey: UInt64?
+
     private var cachedItemIndex: [String: IndexedItem]?
     /// 表が対応している `itemsRevision`（合わなければ作り直す）。
     private var cachedItemIndexRevision = -1
@@ -463,6 +476,9 @@ actor DropboxCacheStore {
         // 候補の集合が変わるのは**増えたか減ったか**だけなので、専用の札を持つ。
         // ⚠️ `updateCount`（中身の差し替え）では進めない——同じ写真のままなので候補は変わらない。
         if insertCount > 0 || !removed.isEmpty { photoSetRevision &+= 1 }
+        // ⚠️ **件数では捕まえられない変化**（同じパスのまま hash が変わる）だけを数える
+        // ＝軽い表のディスク控えの鍵に使う（ADR-258）。増減は行数で分かるので含めない。
+        if updateCount > 0 { bumpHashUpdateCount() }
         insertedForTesting += insertCount
         updatedForTesting += updateCount
         DropboxLogger.verbose("applyDelta() saved — inserted=\(insertCount), updated=\(updateCount), removed=\(removed.count)")
@@ -552,6 +568,126 @@ actor DropboxCacheStore {
             .sorted { ($0.captureDate ?? .distantPast, $0.path) > ($1.captureDate ?? .distantPast, $1.path) }
     }
 
+    // MARK: - 軽い表のディスク控え（ADR-258）
+
+    /// 控えの置き場。⚠️ `Caches`（OS が消してよい＝作り直せる表にふさわしい）。
+    private static var snapshotURL: URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("DropboxKit", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("item-index.bin")
+    }
+
+    /// 中身差し替えの回数を持つ**予約行**（ADR-258）。
+    ///
+    /// ⚠️ 本物のアカウント ID と衝突しない名前にする（`accountId` は `.unique`）。
+    /// ⚠️⚠️ 最初は `UserDefaults` に置いたが、**プロセスで 1 つしかない**ので別のストアの
+    /// 更新がこちらの鍵を動かした（並行テストが落ちて気づいた）。
+    /// 鍵の材料は**その容器から導けるもの**でなければならない。
+    private static let indexVersionRowKey = "__mosaic.itemIndexContentVersion__"
+
+    /// 同じパスのまま中身が差し替わった回数（件数では捕まえられない唯一の変化）。
+    /// ⚠️ `#Predicate` は `Self.` のメンバをたためない（マクロ展開で型が合わない）。
+    /// 必ず**ローカルの `let` に写してから**使う。
+    private func indexVersionRow() -> DropboxSyncState? {
+        let key = Self.indexVersionRowKey
+        var d = FetchDescriptor<DropboxSyncState>(predicate: #Predicate { $0.accountId == key })
+        d.fetchLimit = 1
+        return (try? modelContext.fetch(d))?.first
+    }
+
+    private func hashUpdateCount() -> Int {
+        indexVersionRow()?.indexContentVersion ?? 0
+    }
+
+    private func bumpHashUpdateCount() {
+        if let row = indexVersionRow() {
+            row.indexContentVersion = (row.indexContentVersion ?? 0) + 1
+        } else {
+            let row = DropboxSyncState(accountId: Self.indexVersionRowKey)
+            row.indexContentVersion = 1
+            modelContext.insert(row)
+        }
+        try? modelContext.save()
+    }
+
+    /// **控えを使ってよいかの鍵**（ADR-258）。
+    ///
+    /// ⚠️⚠️ `itemsRevision` は使えない——**メモリだけの値で起動ごとに 0 に戻る**ので、
+    /// 鍵にすると前の起動の控えを「同じ版」と誤って受け入れる（ADR-250 の流用と同じ罠）。
+    /// カーソルも使えない——**変化の無いポーリングでも進む**（applyDelta が毎回書く）ので、
+    /// 鍵が常に変わって控えが一度も当たらない。
+    ///
+    /// だから **DB から導ける 2 つの数 ＋ 中身差し替えの回数**にする:
+    /// 1. 全行数（増減を捕まえる。`fetchCount`＝安い）
+    /// 2. まだ EXIF を訊いていない行数（撮影日の問い合わせを捕まえる。probe は必ずこれを減らす）
+    /// 3. 中身が差し替わった回数（件数が変わらない変化を捕まえる）
+    ///
+    /// 3 つとも**同じ容器（DB）から導ける**こと。⚠️ 最初は 3 を `UserDefaults` に置いたが、
+    /// あれはプロセスで 1 つしかないので**別のストアの更新がこちらの鍵を動かす**
+    /// （並行テストが落ちて気づいた）。容器が作り直されたら鍵も一緒に消えるのが正しい。
+    ///
+    /// ⚠️ 残る穴（書いておく・ADR-250 と同じ作法）: 1・2・3 が全部一致して中身だけ違う状況
+    /// ——「同数の入れ替えが起き、しかも hash は変わらない」——は理屈上あり得る。
+    /// その場合に当たる害は「控えが 1 周期ぶん古い」だけで、次の変化で直る。
+    private func snapshotKey() -> UInt64 {
+        let all = (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>())) ?? -1
+        let unprobed = (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>(
+            predicate: #Predicate { $0.exifProbedAt == nil }))) ?? -1
+        let updates = hashUpdateCount()
+        // FNV-1a（決まった値になればよいだけ・暗号用途ではない）。
+        var h: UInt64 = 0xcbf29ce484222325
+        for part in [all, unprobed, updates] {
+            withUnsafeBytes(of: Int64(part).littleEndian) { bytes in
+                for byte in bytes { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+            }
+        }
+        return h
+    }
+
+    /// 控えから表を復元する。鍵が合わなければ nil（＝作り直す）。
+    private func loadIndexSnapshot(key: UInt64) -> [String: IndexedItem]? {
+        guard let data = try? Data(contentsOf: Self.snapshotURL),
+              let payload = DropboxItemIndexSnapshot.decode(data),
+              payload.contentVersion == key else { return nil }
+        var out: [String: IndexedItem] = [:]
+        out.reserveCapacity(payload.rows.count)
+        for row in payload.rows {
+            out[row.path.lowercased()] = IndexedItem(path: row.path, hash: row.hash,
+                                                     captureDate: row.captureDate,
+                                                     probed: row.probed)
+        }
+        return out
+    }
+
+    private func writeIndexSnapshot(_ index: [String: IndexedItem], key: UInt64) {
+        guard !isEphemeral, writtenSnapshotKey != key else { return }
+        let rows = index.values.map {
+            DropboxItemIndexSnapshot.Row(path: $0.path, hash: $0.hash,
+                                         captureDate: $0.captureDate, probed: $0.probed)
+        }
+        let data = DropboxItemIndexSnapshot.encode(
+            .init(contentVersion: key, rows: rows))
+        // ⚠️ `.atomic`（途中で死んでも半端なファイルを残さない＝次の起動が壊れた控えを読む）。
+        do {
+            try data.write(to: Self.snapshotURL, options: .atomic)
+            writtenSnapshotKey = key
+            DropboxLogger.info("itemIndex: 控えを書いた（\(rows.count) 行・\(data.count / 1024)KB）")
+        } catch {
+            DropboxLogger.error("itemIndex: 控えを書けなかった — \(error.localizedDescription)")
+        }
+    }
+
+    /// テスト用: 控えの鍵（材料の約束を縛るため・ADR-251/258）。
+    func snapshotKeyForTesting() -> UInt64 { snapshotKey() }
+
+    /// テスト用: 控えを消す。
+    func removeIndexSnapshotForTesting() {
+        try? FileManager.default.removeItem(at: Self.snapshotURL)
+        writtenSnapshotKey = nil
+        triedSnapshotLoad = false
+    }
+
     /// 軽い表（パス小文字 → パス・hash・撮影日）を返す。無ければ 1 回だけ作る。
     ///
     /// ⚠️ **SwiftData の `propertiesToFetch` は列を絞らない**（実機ログ diagnostics-94）。
@@ -562,6 +698,23 @@ actor DropboxCacheStore {
     /// ページ分け**して、実体化した行をページごとに手放す（ADR-119 の常套手段）。
     private func itemIndex() -> [String: IndexedItem] {
         if let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision { return index }
+        // ⚠️ **起動のたびに 10.8 万行を歩き直さない**（ADR-258・実機ログ diagnostics-105 で
+        // `cache.buildItemIndex` が 9.0 秒 × 毎起動。その間この actor は塞がる）。
+        // 控えは Caches に置き、鍵（DB 由来の 2 つの数＋中身差し替えの回数）が合えばそのまま使う。
+        let key = snapshotKey()
+        if !isEphemeral, !triedSnapshotLoad {
+            triedSnapshotLoad = true
+            let t = PerfTrace.nowNs()
+            if let restored = loadIndexSnapshot(key: key) {
+                PerfTrace.logSpan("cache.loadItemIndexSnapshot", ms: PerfTrace.msSince(t))
+                Diagnostics.mark("itemIndex: 控えから復元（\(restored.count) 行・作り直しを省いた）")
+                cachedItemIndex = restored
+                cachedItemIndexRevision = itemsRevision
+                writtenSnapshotKey = key
+                return restored
+            }
+            Diagnostics.mark("itemIndex: 控えが使えない（作り直す）")
+        }
         let t0 = PerfTrace.nowNs()
         // ⚠️ 表の作り直しは 9.9 万行を触る（実測 16 秒）。この actor は**その間ずっと塞がる**ので、
         // 重い一括ロードとして申告する（ADR-122・`cachedItems` の呼び出し側と同じ扱い）。
@@ -621,6 +774,9 @@ actor DropboxCacheStore {
         }
         cachedItemIndex = out
         cachedItemIndexRevision = itemsRevision
+        // ⚠️ **完成した表だけを控える**。上の `return out`（fetch 失敗）は控えない
+        //    ——欠けた表を控えると、次の起動が欠けたまま走る。
+        writeIndexSnapshot(out, key: key)
         return out
     }
 
