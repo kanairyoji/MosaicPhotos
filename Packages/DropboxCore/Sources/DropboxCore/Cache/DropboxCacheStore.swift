@@ -372,8 +372,27 @@ actor DropboxCacheStore {
         if changed {
             itemsRevision &+= 1
             updateIndexCaptureDate(path: path, captureDate: captureDate, newRevision: itemsRevision)
+        } else {
+            // ⚠️⚠️ **「訊いた」印だけは必ず表へ反映する**（ADR-262・レビューループで見つけた）。
+            // 表示に関わる値（日付・座標）が変わらなかった回は版を進めない——それは正しい
+            // （進めると 10.8 万件の一覧を作り直す）。だが `probed` の印を表へ移さないと、
+            // **DB は「訊いた」・表は「まだ」**という食い違いが残る。
+            // 以前はそれでも**毎起動の作り直しが消してくれていた**が、
+            // 控え（ADR-258）を入れた今は**起動を跨いで残る**——
+            // その印は「一覧の日付（アップロード時刻）で上書きしてよいか」の判断に使うので、
+            // 残ると EXIF で確かめた日付が上書きされ得る（顔の時期グループ＝ADR-218 が狂う）。
+            // ⚠️ 版は進めない（表の中身は表示の上では変わっていない）。
+            markIndexProbed(path: path)
         }
         return changed
+    }
+
+    /// 「訊いた」印だけを表へ移す（版は進めない・ADR-262）。
+    private func markIndexProbed(path: String) {
+        let key = path.lowercased()
+        guard let existing = cachedItemIndex?[key], !existing.probed else { return }
+        cachedItemIndex?[key] = IndexedItem(path: existing.path, hash: existing.hash,
+                                            captureDate: existing.captureDate, probed: true)
     }
 
     /// 未問い合わせの件数（進捗表示・テスト用）。
@@ -738,6 +757,13 @@ actor DropboxCacheStore {
         guard !isEphemeral, let index = cachedItemIndex,
               cachedItemIndexRevision == itemsRevision else { return }
         writeIndexSnapshot(index, key: snapshotKey())
+    }
+
+    /// テスト用: 表が持っている「訊いた」印（ADR-262）。
+    /// ⚠️ これを直に見るのは、`applyDelta` 経由では**行が変わらない回に表を触らない**ので
+    /// 食い違いが観測できないから（最初に書いたテストが両方の実装で通ってしまった）。
+    func indexProbedForTesting(path: String) -> Bool? {
+        cachedItemIndex?[path.lowercased()]?.probed
     }
 
     /// テスト用: 控えの鍵（材料の約束を縛るため・ADR-251/258）。

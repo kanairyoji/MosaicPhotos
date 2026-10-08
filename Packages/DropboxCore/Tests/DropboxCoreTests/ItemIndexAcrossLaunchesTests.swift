@@ -189,6 +189,57 @@ struct ItemIndexAcrossLaunchesTests {
                 "表が無いのに控えを書いた（空の表を控えると次の起動が空で走る）")
     }
 
+    /// ⚠️⚠️ **控えは「毎起動の作り直し」という自己修復を取り上げる**（ADR-262）。
+    ///
+    /// 表示に関わる値が変わらなかった問い合わせ（EXIF が無かった写真）は版を進めない
+    /// ——それは正しい（進めると 10.8 万件の一覧を作り直す）。だが「訊いた」印を表へ
+    /// 移さないと **DB は「訊いた」・表は「まだ」**の食い違いが残る。
+    /// 以前は毎起動の作り直しが消していたが、控えを入れた今は**起動を跨いで残る**。
+    /// その印は「一覧の日付（アップロード時刻）で上書きしてよいか」の判断に使う。
+    ///
+    /// ⚠️ **印を直に見る**。`applyDelta` 経由で確かめようとしたら、
+    /// 行が変わらない回は表を触らないので**どちらの実装でも通ってしまった**（空振り）。
+    /// 観測できる一番近いところを見る。
+    @Test("EXIF が無かった写真でも、表の「訊いた」印は立つ")
+    func theProbedMarkReachesTheIndexEvenWhenNothingWasFound() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
+                               removed: [], newCursor: "c1")
+        _ = await store.cachedPhotoRefs()           // 表を作る
+        #expect(await store.indexProbedForTesting(path: "/a.jpg") == false, "前提: まだ訊いていない")
+
+        let changed = await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: nil,
+                                                         latitude: nil, longitude: nil)
+        #expect(!changed, "前提: 表示に関わる値は変わっていない（この経路を通っていない）")
+        #expect(await store.captureDateProbePendingCount() == 0, "前提: DB は「訊いた」")
+
+        #expect(await store.indexProbedForTesting(path: "/a.jpg") == true, """
+                DB は「訊いた」なのに表は「まだ」のまま。
+                以前は毎起動の作り直しが消していたが、控え（ADR-258）を入れた今は
+                起動を跨いで残り、EXIF で確かめた日付が一覧の日付で上書きされ得る。
+                """)
+    }
+
+    /// ⚠️ 印が控えにも乗ること（表だけ直しても、控えが古ければ次の起動で戻る）。
+    @Test("立った「訊いた」印は、控えにも乗って次の起動へ渡る")
+    func theProbedMarkSurvivesIntoTheNextLaunch() async throws {
+        let fx = try Fixture()
+        let first = fx.relaunch()
+        await first.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
+                               removed: [], newCursor: "c1")
+        _ = await first.cachedPhotoRefs()
+        _ = await first.recordCaptureDateProbe(path: "/a.jpg", captureDate: nil,
+                                               latitude: nil, longitude: nil)
+        await first.refreshIndexSnapshotIfReady()
+
+        let second = fx.relaunch()
+        _ = await second.cachedPhotoRefs()
+        #expect(await second.itemIndexBuildsForTesting == 0, "前提: 控えから戻せていない")
+        #expect(await second.indexProbedForTesting(path: "/a.jpg") == true,
+                "控えに「訊いた」印が乗っていない（次の起動で食い違いが戻る）")
+    }
+
     /// ⚠️ 控えが**無い**初回起動でも当然動く（控えは最適化であって前提ではない）。
     @Test("控えが無ければ作る（初回起動）")
     func firstLaunchBuildsNormally() async throws {
