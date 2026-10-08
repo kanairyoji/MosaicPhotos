@@ -143,11 +143,18 @@ def main() -> int:
         except subprocess.CalledProcessError:
             # ⚠️ traceback を出さない。浅いクローン（CI）では比較元が手元に無いことがあり、
             # そこで落ちると**このチェック自体が CI のエラー**になる。
-            print(f"比較元 '{base}' が見つかりません。"
+            # ⚠️ `検査対象なし:` は `check_all.sh` が読む印（green と区別させるため）。
+            print(f"検査対象なし: 比較元 '{base}' が見つかりません。"
                   f"浅いクローンなら先に取得してください（CI は github.event.before を使う）。")
             return 0
         if not diff.strip():
-            print(f"'{base}..HEAD' に Swift の差分がありません（比較元が正しいか確認）。")
+            # ⚠️⚠️ **ここは「問題なし」ではなく「何も見ていない」**。
+            # push 直後は `origin/main..HEAD` が空になるので、この検査は毎回ここへ来る。
+            # 以前は普通のメッセージだったので `check_all.sh` が ✅ と表示し、
+            # **検査していないことが green と見分けられなかった**
+            # ——ADR-253（当たらない規則が ✅ の顔で居座る）と同じ形を、報告の側でやっていた。
+            print(f"検査対象なし: '{base}..HEAD' に Swift の差分がありません"
+                  f"（比較元が正しいか確認）。")
             return 0
 
     symbols = sorted(removed_symbols(diff))
