@@ -195,5 +195,57 @@ struct CaptureDateProbeNetworkTests {
         #expect(await store.fillMissingCaptureDates(limit: 10) == 2, "続きを処理できていない")
         #expect(await store.fillMissingCaptureDates(limit: 10) == 0, "終わったのに走り続ける")
     }
+
+    // MARK: - 背面の枠から呼ぶとき（ADR-261・レビューループで見つけた）
+
+    /// ⚠️⚠️ **一覧の作り直しは 10.8 万件の実体化**（ADR-90 で footprint 821MB）。
+    /// しかも早期 return の条件が「版が同じ **かつ** items が空でない」なので、
+    /// **背面では items が空＝必ず素通りして実体化する**。
+    /// 前面のついでだけだった頃は items が埋まっていたので起きなかったが、
+    /// 枠から呼ぶようにした（ADR-257）とたんに毎窓 10.8 万件になる。
+    /// 一覧は画面のためのもので、背面には見ている人が居ない。
+    @Test("背面の枠から呼んだら、表示用の一覧を作り直さない")
+    func doesNotMaterializeTheDisplayListWhenAskedNotTo() async {
+        let cache = await seeded()
+        let store = makeStore(cache, responder: Self.json("""
+            {"media_info":{"metadata":{"time_taken":"2015-05-12T15:50:38Z"}}}
+            """))
+        let before = await cache.materializeCallsForTesting
+
+        let probed = await store.fillMissingCaptureDates(limit: 5, refreshDisplayList: false)
+        #expect(probed == 1, "前提: 問い合わせが走っていない（以降の assert が空振りする）")
+        // 記録はされていること（作り直さないのは「表示用の一覧」だけ）。
+        #expect(await cache.captureDateProbePendingCount() == 0, "記録まで止めてしまっている")
+
+        // ⚠️⚠️ **待つ長さが足りないと、このテストは空振りする**（自分で踏んだ）。
+        // 最初 600ms で書いたら、退行を戻しても通った——間引きの待ち
+        // （`currentRefreshInterval` は初回同期中 5 秒）より短く、
+        // **どちらの実装でも実体化が起きていなかった**だけだった。
+        // だから「作り直す側がちゃんと作り直す時間」を基準にする:
+        // 下の `refreshesTheDisplayListInTheForeground` は 2 秒ほどで増える。
+        // ここでは**その倍以上**待って、増えないことを確かめる。
+        try? await Task.sleep(for: .seconds(6))
+        #expect(await cache.materializeCallsForTesting == before, """
+                背面なのに 10.8 万件を実体化した（毎窓・ADR-90 の 821MB と同じ経路）。
+                """)
+    }
+
+    /// ⚠️ 逆向き。前面では作り直すこと（撮影日が変われば並び順が変わる）。
+    @Test("前面からは、終わったら一覧を作り直す")
+    func refreshesTheDisplayListInTheForeground() async {
+        let cache = await seeded()
+        let store = makeStore(cache, responder: Self.json("""
+            {"media_info":{"metadata":{"time_taken":"2015-05-12T15:50:38Z"}}}
+            """))
+        let before = await cache.materializeCallsForTesting
+        _ = await store.fillMissingCaptureDates(limit: 5)   // 既定＝作り直す
+        // 間引き（静かになってから 1 回）の待ちを跨いで確かめる。
+        var grew = false
+        for _ in 0..<20 where !grew {
+            try? await Task.sleep(for: .milliseconds(200))
+            grew = await cache.materializeCallsForTesting > before
+        }
+        #expect(grew, "前面なのに一覧を作り直していない（撮影日が変わっても並びが古いまま）")
+    }
 }
 #endif

@@ -130,6 +130,65 @@ struct ItemIndexAcrossLaunchesTests {
         #expect(await second.itemIndexBuildsForTesting == 1, "作り直していない")
     }
 
+    /// ⚠️⚠️ **ADR-257 と ADR-258 の相互作用**（レビューループで見つけた・ADR-260）。
+    ///
+    /// 控えは「表を**作り直した**回」にしか書いていなかった。ところが撮影日の問い合わせは
+    /// 表を作り直さず中身だけ直すので、鍵（未問い合わせ数を含む）は変わるのに控えは古いまま
+    /// ——**次の起動で必ず鍵が合わず作り直す**。1 枠 500 枚訊く設計（ADR-257）なので、
+    /// 撮影日が埋まり切るまで（実機で約 2 か月）ADR-258 はほとんど効かなかった。
+    ///
+    /// ⚠️ 2 つの正しい修正が、組み合わせると片方を無効にする——
+    /// **単体のテストでは原理的に見つからない**（どちらも単体では通る）。
+    @Test("撮影日を訊いたあとでも、次の起動は控えから復元できる")
+    func snapshotStaysUsableAfterCaptureDateProbes() async throws {
+        let fx = try Fixture()
+        let first = fx.relaunch()
+        await first.applyDelta(accountId: "acc1",
+                               added: (0..<20).map { item("/p/\($0).jpg") },
+                               removed: [], newCursor: "c1")
+        _ = await first.cachedPhotoRefs()           // 表を作る＝控えが書かれる
+        #expect(await first.itemIndexBuildsForTesting == 1, "前提: 1 回目は作る")
+
+        // 枠が撮影日を訊いた（表は作り直さず中身だけ変わる＝鍵が動く）。
+        for i in 0..<5 {
+            _ = await first.recordCaptureDateProbe(
+                path: "/p/\(i).jpg",
+                captureDate: Date(timeIntervalSince1970: 1_500_000_000 + Double(i)),
+                latitude: nil, longitude: nil)
+        }
+        #expect(await first.itemIndexBuildsForTesting == 1,
+                "前提: 問い合わせで表を作り直してはいない（中身だけ直す）")
+        // 枠の終わりに控えを書き直す（これが無いと次の起動で作り直しになる）。
+        await first.refreshIndexSnapshotIfReady()
+
+        let second = fx.relaunch()
+        let refs = await second.cachedPhotoRefs()
+        #expect(await second.itemIndexBuildsForTesting == 0, """
+                撮影日を訊いたあとの起動で 10.8 万行を歩き直している。
+                1 枠 500 枚訊く設計（ADR-257）なので、これだと ADR-258 は
+                撮影日が埋まり切るまで（約 2 か月）ほとんど効かない。
+                """)
+        #expect(refs.count == 20)
+        // 控えから戻した表に、訊いた撮影日が入っていること（古い表を使っていない）。
+        let probed = refs.filter { $0.captureDate != nil }
+        #expect(probed.count == 5, "控えが問い合わせ前の古い中身だった（\(probed.count) 件）")
+    }
+
+    /// ⚠️ 表がそろっていないときに書き直しを頼まれても、**作り始めない**
+    /// （ここで 9 秒を払ったら本末転倒）。
+    @Test("表がまだ無いときの書き直しは、何もしない")
+    func refreshDoesNothingWhenTheIndexIsNotLoaded() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
+                               removed: [], newCursor: "c1")
+        await store.refreshIndexSnapshotIfReady()
+        #expect(await store.itemIndexBuildsForTesting == 0, "書き直しのために表を作り始めた")
+        let snapshot = fx.dir.appendingPathComponent("item-index.bin")
+        #expect(!FileManager.default.fileExists(atPath: snapshot.path),
+                "表が無いのに控えを書いた（空の表を控えると次の起動が空で走る）")
+    }
+
     /// ⚠️ 控えが**無い**初回起動でも当然動く（控えは最適化であって前提ではない）。
     @Test("控えが無ければ作る（初回起動）")
     func firstLaunchBuildsNormally() async throws {

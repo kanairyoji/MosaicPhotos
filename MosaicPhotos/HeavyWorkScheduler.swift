@@ -574,10 +574,16 @@ enum HeavyWorkScheduler {
             // **12 枚**しか進んでいなかった（ADR-257・diagnostics-105）。枠からも進める。
             // 時間で区切る＝枠を他の手と分け合う（枚数だけだと通信が遅い夜に枠を食う）。
             let deadline = Date().addingTimeInterval(captureDateProbeSeconds)
-            let probed = await stores.dropboxStore.fillMissingCaptureDates(limit: limit,
-                                                                           deadline: deadline)
+            // ⚠️ `refreshDisplayList: false`＝表示用の一覧を作り直させない（ADR-261）。
+            // 作り直しは 10.8 万件の実体化で、しかも背面では `items` が空なので
+            // 早期 return が効かず**必ず**走る。背面に見ている人は居ない。
+            let probed = await stores.dropboxStore.fillMissingCaptureDates(
+                limit: limit, deadline: deadline, refreshDisplayList: false)
             let remaining = await stores.dropboxStore.exifProbePendingCount()
             Diagnostics.mark("bgtask: 撮影日時を訊いた probed=\(probed) remaining=\(remaining)")
+            // ⚠️ **控えを書き直す**（ADR-260）。訊いた結果は表の中身を変える＝控えの鍵も変わるので、
+            // ここで書き直さないと次の起動で必ず 10.8 万行を歩き直す（ADR-258 が効かない）。
+            if probed > 0 { await stores.dropboxStore.refreshCloudIndexSnapshot() }
         case .reconcileBackup:
             // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない（ADR-166）。
             await stores.backupEngine.reconcileIfDueWeekly()

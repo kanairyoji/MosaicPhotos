@@ -89,8 +89,19 @@ extension DropboxPhotoStore {
     /// ——1 本のログ（11 起動・25 時間）で**実行は 1 回・12 枚だけ**だった。
     /// 撮影日が無いと顔の時期グループ（ADR-218）と Time&Place がクラウド写真で機能しないので、
     /// 夜間の枠から**時間を区切って**呼ぶ（`NightlyPlan` の `.probeCaptureDates`）。
+    /// - Parameter refreshDisplayList: 終わったら**表示用の一覧を作り直す**か（既定 true）。
+    ///
+    /// ⚠️⚠️ **背面の枠からは false にする**（ADR-261・レビューループで見つけた）。
+    /// 一覧の作り直し（`reflectCachedItems`）は 10.8 万件を実体化する。
+    /// しかも早期 return の条件が `版が同じ **かつ** items が空でない` なので、
+    /// **背面では `items` が空＝必ず素通りして実体化する**。
+    /// 前面のついでだけだった頃は `items` が埋まっていたので起きなかったが、
+    /// 枠から呼ぶようにした（ADR-257）とたんに**毎窓 10.8 万件**になる
+    /// ——ADR-90 で footprint が 821MB に跳ねたのと同じ経路で、背面の jetsam は厳しい。
+    /// 一覧は**画面のためのもの**で、背面には見ている人が居ない。
     @discardableResult
-    public func fillMissingCaptureDates(limit: Int = 12, deadline: Date? = nil) async -> Int {
+    public func fillMissingCaptureDates(limit: Int = 12, deadline: Date? = nil,
+                                        refreshDisplayList: Bool = true) async -> Int {
         let paths = await cache.pathsNeedingCaptureDateProbe(limit: limit)
         guard !paths.isEmpty else { return 0 }
         let concurrency = 4
@@ -111,7 +122,8 @@ extension DropboxPhotoStore {
             if Task.isCancelled { break }
         }
         // 日付が変われば並び順も変わる＝一覧を作り直す（キャッシュの版で判断される）。
-        refreshItemsFromCacheSoon()
+        // ⚠️ 背面では作り直さない（10.8 万件の実体化・上の注記）。
+        if refreshDisplayList { refreshItemsFromCacheSoon() }
         Diagnostics.mark("dropbox: capture dates probed=\(probed) "
                          + "remaining=\(await cache.captureDateProbePendingCount())")
         return probed
@@ -165,6 +177,15 @@ extension DropboxPhotoStore {
     /// **持たない**し、`items` は画面を開いたときだけ作られる（背景の窓では空）。
     public func cloudContentHashes() async -> [String: String] {
         await cache.cachedContentHashes()
+    }
+
+    /// **夜間の枠の終わりに、軽い表の控えを書き直す**（ADR-260）。
+    ///
+    /// ⚠️ 撮影日の問い合わせは表を作り直さず中身だけ直すので、控えの鍵は変わるのに
+    /// ディスクの控えは古いまま——次の起動で必ず作り直すことになる（9 秒）。
+    /// ⚠️ 呼ぶのは**枠の中で 1 回**（前面の 3 秒ごとの trickle から呼ぶと 10MB を書き続ける）。
+    public func refreshCloudIndexSnapshot() async {
+        await cache.refreshIndexSnapshotIfReady()
     }
 
     /// ISO 8601（`time_taken` は "2015-05-12T15:50:38Z" 形式）。

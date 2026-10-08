@@ -724,6 +724,22 @@ actor DropboxCacheStore {
         }
     }
 
+    /// **いまの表で控えを書き直す**（ADR-260）。
+    ///
+    /// ⚠️ なぜ要るか: 控えは「表を作り直した回」にしか書いていなかった。ところが
+    /// 撮影日の問い合わせ（ADR-257・1 枠 500 枚）は**表を作り直さず中身だけ直す**ので、
+    /// 鍵（未問い合わせ数を含む）は変わるのに控えは古いまま——
+    /// **次の起動で鍵が合わず、必ず作り直す**。つまり ADR-258 は撮影日が埋まり切るまで
+    /// （実機で約 2 か月）ほとんど効かない。1 枠の終わりに 1 回だけ書き直す。
+    ///
+    /// ⚠️ 表がそろっていないときは**何もしない**（ここで作り始めると 9 秒を払う）。
+    /// ⚠️ 呼ぶのは**枠の中で 1 回**（前面の 3 秒ごとの trickle から呼ぶと 10MB を書き続ける）。
+    func refreshIndexSnapshotIfReady() {
+        guard !isEphemeral, let index = cachedItemIndex,
+              cachedItemIndexRevision == itemsRevision else { return }
+        writeIndexSnapshot(index, key: snapshotKey())
+    }
+
     /// テスト用: 控えの鍵（材料の約束を縛るため・ADR-251/258）。
     func snapshotKeyForTesting() -> UInt64 { snapshotKey() }
 
