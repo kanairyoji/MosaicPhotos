@@ -38,6 +38,21 @@ public final class LocalAssetIndex {
     /// テスト用: 実際に作り直した回数（ADR-119＝回数で見る）。
     public private(set) var rebuildCountForTesting = 0
 
+    /// テスト用: 間引きの**材料**（ADR-251/264）。
+    ///
+    /// ⚠️ 規則（`AssetIndexRebuildPolicy`）にはテストが 5 本あるのに、**材料の約束**
+    /// （「変更のたびに `lastChangeAt` が進む」「**実際に作り直した回だけ**
+    /// `lastRebuildAt` を記録する」）は誰も確かめていなかった＝台帳 `gates.md` の宿題。
+    /// 材料は引数で渡るので、規則のテストでは原理的に見えない。
+    public var rebuildMaterialsForTesting: (lastChangeAt: Date, lastRebuildAt: Date,
+                                            lastRebuildSeconds: TimeInterval) {
+        (lastChangeAt, lastRebuildAt, lastRebuildSeconds)
+    }
+
+    /// テスト用: 変更通知の入口。PhotoKit の通知は実機/シミュレータでも任意に起こせないので、
+    /// **本番と同じ `invalidate()` を呼ぶ**（別の経路を作ると材料の約束を確かめたことにならない）。
+    public func simulateLibraryChangeForTesting() { invalidate() }
+
     /// 全ライブラリの索引を（未構築なら）バックグラウンドで構築する。utility 優先度＝
     /// 画面遷移・スクロールと CPU を奪い合わない。
     public func buildIfNeeded() {

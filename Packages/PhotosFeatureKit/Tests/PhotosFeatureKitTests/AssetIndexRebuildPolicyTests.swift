@@ -87,4 +87,60 @@ struct AssetIndexRebuildPolicyTests {
         #expect(wait <= 0, "初回の索引構築まで間隔で待たせている: \(wait)")
     }
 }
+
+/// **間引きの材料の約束**（ADR-264・台帳 `gates.md` の宿題）。
+///
+/// ⚠️⚠️ 上の 5 本は**規則**を縛っている（時計を引数にして `secondsToWait` だけを見る）。
+/// しかし ADR-251 で数えたとおり、**出荷後まで残った欠陥はどれも規則ではなく材料**だった。
+/// 材料は引数で渡るので、規則のテストでは**原理的に見えない**。
+/// ここで縛るのは「`LocalAssetIndex` が渡してくる値は本当にその性質を持つか」。
+@Suite("アセット索引の間引き・材料の約束（ADR-264）")
+@MainActor
+struct AssetIndexRebuildMaterialTests {
+
+    /// 約束: 変更通知のたびに `lastChangeAt` が更新される
+    /// （＝「変化が続いている間は待ってよい」の根拠が新しくなる）。
+    /// ⚠️ ここが止まると、変化が続いていても静かになったと見なして毎回作り直す。
+    @Test("変更を受けるたびに lastChangeAt が進む")
+    func changeTimestampAdvancesOnEveryChange() {
+        let index = LocalAssetIndex()
+        let before = index.rebuildMaterialsForTesting.lastChangeAt
+        index.simulateLibraryChangeForTesting()
+        let first = index.rebuildMaterialsForTesting.lastChangeAt
+        #expect(first > before, "変更通知を受けても lastChangeAt が動いていない")
+        index.simulateLibraryChangeForTesting()
+        #expect(index.rebuildMaterialsForTesting.lastChangeAt >= first,
+                "2 回目の変更で lastChangeAt が戻っている")
+    }
+
+    /// ⚠️⚠️ 約束: **実際に作り直した回だけ** `lastRebuildAt` / `lastRebuildSeconds` を記録する。
+    /// 変更を受けただけ（＝予約しただけ）で触ると、**間隔のバックオフが毎回リセットされ**、
+    /// 変化が続く間ずっと「間隔は空いた」と見なして 18,204 件を列挙し直す
+    /// ——ADR-249 で直したはずの実機 diagnostics-103（built 36 回・857MB）に戻る。
+    @Test("変更を受けただけでは、作り直しの記録に触らない（バックオフをリセットしない）")
+    func pendingChangeDoesNotResetTheBackoff() {
+        let index = LocalAssetIndex()
+        index.simulateLibraryChangeForTesting()
+        let m = index.rebuildMaterialsForTesting
+        #expect(m.lastRebuildAt == .distantPast,
+                "作り直していないのに lastRebuildAt を記録している")
+        #expect(m.lastRebuildSeconds == 0,
+                "作り直していないのに所要を記録している（間隔が所要 × 4 で伸びてしまう）")
+        #expect(index.rebuildCountForTesting == 0, "変更を受けただけで作り直している")
+    }
+
+    /// ⚠️ 材料と規則が**噛み合っている**こと。上の 2 本は値を見ただけなので、
+    /// その値を規則に渡したときに意図した答えになるかまで確かめる
+    /// ——材料が正しくても、単位や基準点がずれていれば規則は別の答えを返す。
+    @Test("変更の直後は『まだ待て』になる（材料をそのまま規則へ渡して確かめる）")
+    func freshChangeMeansWait() {
+        let index = LocalAssetIndex()
+        index.simulateLibraryChangeForTesting()
+        let m = index.rebuildMaterialsForTesting
+        let wait = AssetIndexRebuildPolicy.secondsToWait(
+            now: Date(), lastChangeAt: m.lastChangeAt,
+            lastRebuildAt: m.lastRebuildAt, lastRebuildSeconds: m.lastRebuildSeconds)
+        #expect(wait > 0, "変更の直後なのに『すぐ作り直してよい』と答えている: \(wait)")
+    }
+}
 #endif

@@ -154,11 +154,15 @@
 - 問い: アセット索引（18,204 件）を**いつ作り直すか**
 - 材料:
   - `lastChangeAt` ← PhotoKit の変更通知
-    - 約束: 通知のたびに更新される（＝変化が続いている間は待てる）
-    - テスト: （未・宿題）
+    - 約束: 通知のたびに更新される（＝変化が続いている間は待てる）。
+      ⚠️ ここが止まると、変化が続いていても「静かになった」と見なして毎回作り直す
+    - テスト: `AssetIndexRebuildMaterialTests.changeTimestampAdvancesOnEveryChange`
   - `lastRebuildAt` / `lastRebuildSeconds` ← 直近の作り直しの実測
-    - 約束: **実際に作り直した回だけ**記録する（空振りを混ぜるとバックオフが毎回リセットされる）
-    - テスト: （未・宿題）
+    - 約束: **実際に作り直した回だけ**記録する（空振りを混ぜるとバックオフが毎回リセットされ、
+      変化が続く間ずっと 18,204 件を列挙し直す＝ADR-249 で直した実機 103 に戻る）
+    - テスト: `AssetIndexRebuildMaterialTests.pendingChangeDoesNotResetTheBackoff`
+      ＋ `.freshChangeMeansWait`（材料をそのまま規則へ渡して噛み合いを見る）
+      ⚠️ 負の検証済み（`invalidate()` で `lastRebuildAt` を触る形に戻すと落ちる）
 - 規則のテスト: `AssetIndexRebuildPolicyTests`（5 本）
 - 効きを見るログ: `assetIndex: built` の**回数**（103 では 36 回）
 - ⚠️ 前提: 遅らせても正しさは落ちない（`needsRevalidation` が立っている間は要求のたびに現存を確かめる）
@@ -412,7 +416,10 @@ StoreRecoveryPolicy — ストアの種別の札（rebuildable / ledger）。判
   書き写しは `check_forbidden_patterns.py` が止める）。
 - ~~`TagWorkGate` に効きが見えるログが無い~~ → **済**（`tags: 重い準備を見送る`。
   `device-verification.md` の一覧にも載せたので、消すと CI が落ちる）。
-- `AssetIndexRebuildPolicy` の材料（`lastChangeAt` / `lastRebuildSeconds`）の約束が未テスト。
+- ~~`AssetIndexRebuildPolicy` の材料（`lastChangeAt` / `lastRebuildSeconds`）の約束が未テスト~~
+  → **済**（ADR-264。`AssetIndexRebuildMaterialTests` 3 本。材料を読む入口
+  （`rebuildMaterialsForTesting`）と本番と同じ変更の入口
+  （`simulateLibraryChangeForTesting` → `invalidate()`）を足して、実物に対して縛った）。
 - ~~`CandidateEnumerationGate` / `TagWorkGate` の**呼び出し側**のテストが無い~~
   → **済**（ADR-253。札を立てる条件を `shouldRecord(...)` として純ロジックへ出し、
   nil と 0 を分ける形でテストした。⚠️ 呼び出し側にインラインで書かれていたから
