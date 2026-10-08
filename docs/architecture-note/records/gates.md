@@ -51,7 +51,7 @@
 
 ---
 
-## CandidateEnumerationGate（ADR-247 / 250）
+## CandidateEnumerationGate（ADR-247 / 250 / 253 / 254）
 - 置き場: `MosaicPhotos/AnalysisTurn.swift`
 - 問い: 顔スキャンの候補（8.6 万件・約 11 秒）を**列挙する必要があるか**
 - 材料:
@@ -73,8 +73,19 @@
   - 約束: `pending` は台帳の実数。**nil＝数えられなかった**で、0（やることが無い）と混ぜない
   - テスト: `AnalysisTurnTests.recordsOnlyWhenNothingPending` /
     `.doesNotRecordWhenCountUnavailable`
+  - ⚠️⚠️ **材料の約束（ADR-254・実機で 3 本ぶん踏んだ）**: `pending` ←
+    `PeopleEngine.pendingCount` は、**スキャンが実際に歩く対象と同じ定義**で数えること。
+    `FaceStore.pendingRefKeys` が唯一の出典（スキャン済み ∪ 取れない写真を除く）。
+    以前は `pendingCount` だけが `unreadable` を引いておらず、取れない写真が 1 枚でもある端末では
+    スキャンが `todo=0` と言っているのに 1 を返し——**札が永久に立たなかった**。
+    取れない写真は恒久的なので、ゲートは原理的に一度も効かない状態だった。
+    - テスト: `FaceBacklogMaterialTests`（数える側と列挙する側が一致すること・両方向 2 本。
+      ⚠️ 直す前のコードで落ちることを確認済み）
 - 呼び出し側のテスト: 札の条件は上の純ロジックへ出した（`AnalysisDriver` は値を渡すだけ）
-- 効きを見るログ: `driver: 候補の列挙を見送る`
+- 効きを見るログ: `driver: 候補の列挙を見送る`（効いた回）＋
+  `driver: 候補の札を立てた` / `driver: 候補の札を立てない（残り N 枚）`（ADR-254）。
+  ⚠️ **前提つきのゲートは、前提が満たされたかも記録する**——効いた回数だけでは
+  「なぜ 0 件なのか」が 2 本のログを跨いでも分からなかった。
 
 ## TagWorkGate（ADR-247）
 - 置き場: `Packages/AutoAlbumCore/Sources/AutoAlbumCore/Tags/TagStore.swift`

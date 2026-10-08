@@ -104,6 +104,72 @@ struct FaceBacklogTests {
         let pending = await store.pendingCount(candidateRefKeys: ["L-a", "L-b", "L-c"])
         #expect(pending == 2, "走査済みを差し引けていない")
     }
+
+    // MARK: - 数える側と列挙する側が一致すること（ADR-254）
+
+    /// ⚠️⚠️ **これが本丸**（実機ログ diagnostics-105）。
+    ///
+    /// スキャンは「何度やっても取れない写真」を `todo` から外すのに、`pendingCount` は
+    /// 外していなかった。取れない写真が 1 枚でもある端末では、スキャンが
+    /// `todo=0`（all done）と言っているのに `pendingCount` は 1 を返す。
+    /// その 1 を「まだ仕事がある」と読む側（候補の列挙を飛ばす札を立てる条件）が
+    /// **永久に札を立てられず**、8.6 万件の列挙（約 11 秒）が 1 セッションに 24 回走っていた。
+    ///
+    /// ⚠️ ADR-250 と ADR-252 で同じゲートを 2 度「直した」のに効かなかったのは、
+    /// **原因が 3 つあって 1 つずつしか潰していなかった**から。
+    /// 「同じ母集合を数える側と列挙する側で条件を書き写すな」（CLAUDE.md）の実例。
+    @Test("取れない写真は、数える側でも残作業に数えない（スキャンの todo と一致する）")
+    @MainActor
+    func pendingCountAgreesWithScanTodoAboutUnreadablePhotos() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        let candidates = ["L-ok", "L-broken"]
+        // 1 枚はスキャン済み、もう 1 枚は「何度やっても取れない」。
+        await store.recordScans([(refKey: "L-ok", faces: [])])
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        for _ in 0..<FaceStore.maxScanLoadFailures {
+            await store.recordScanLoadFailures(["L-broken"], now: now)
+            now.addTimeInterval(FaceStore.scanFailureCooldown + 1)
+        }
+
+        // ⚠️ fixture が本当にその状態か確かめる（空でも通る assert を書かない・ADR-119）。
+        let unreadable = await store.unreadableRefKeys()
+        #expect(unreadable == ["L-broken"],
+                "前提: 取れない写真として記録できていない（以降の assert が空振りする）")
+
+        // 列挙する側（スキャンが実際に歩く対象）。
+        let pending = await store.pendingRefKeys(candidateRefKeys: candidates)
+        #expect(pending.refKeys.isEmpty, "スキャンは歩くものが無いと言うべき")
+        #expect(pending.scanned == 1)
+        #expect(pending.unreadable == 1)
+
+        // 数える側。⚠️ ここが 1 を返していたのが欠陥。
+        let count = await store.pendingCount(candidateRefKeys: candidates)
+        #expect(count == 0, """
+                スキャンは todo=0（all done）なのに、数える側は \(count) 枚残っていると答えた。
+                この食い違いで「候補の列挙を飛ばす札」が永久に立たない。
+                """)
+        #expect(count == pending.refKeys.count,
+                "数える側と列挙する側で「残っている」の定義が違う（ADR-254）")
+    }
+
+    /// ⚠️ 逆向きも縛る——取れない写真を理由に、本物の残作業まで消してはいけない。
+    @Test("取れない写真を外しても、本物の残作業は数え続ける")
+    @MainActor
+    func stillCountsRealWorkAlongsideUnreadablePhotos() async {
+        let store = FaceStore(isStoredInMemoryOnly: true)
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        for _ in 0..<FaceStore.maxScanLoadFailures {
+            await store.recordScanLoadFailures(["L-broken"], now: now)
+            now.addTimeInterval(FaceStore.scanFailureCooldown + 1)
+        }
+        #expect(await store.unreadableRefKeys() == ["L-broken"], "前提")
+
+        let candidates = ["L-broken", "L-new1", "L-new2"]
+        let count = await store.pendingCount(candidateRefKeys: candidates)
+        #expect(count == 2, "取れない 1 枚だけを外すべきなのに \(count) 枚と答えた")
+        let pending = await store.pendingRefKeys(candidateRefKeys: candidates)
+        #expect(pending.refKeys.sorted() == ["L-new1", "L-new2"])
+    }
 }
 
 // MARK: - 材料の約束（ADR-252）

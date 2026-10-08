@@ -650,9 +650,39 @@ actor FaceStore {
     /// ⚠️ `scannedCount()`（記録の総数）を分子にすると、削除済み写真の記録が分子に残り、
     /// 分母（ライブラリ総数）にはスクリーンショット等の候補外が混ざって、**存在しない残作業**が
     /// 表示される（実機: 実際は残 27 枚なのに「残り 1 万枚」）。集合の差で数える。
+    ///
+    /// ⚠️⚠️ **「残っている」の定義はスキャン側と 1 つ**（ADR-254・実機ログ diagnostics-105）。
+    /// 以前はここだけ `unreadable` を引いておらず、取れない写真が 1 枚でもある端末では
+    /// スキャンが `todo=0`（all done）と言っているのに、こちらは 1 を返していた。
+    /// その 1 が「まだ仕事がある」と読まれて**候補の列挙を飛ばす札が永久に立たず**、
+    /// 8.6 万件の列挙（約 11 秒）が 1 セッションに 24 回走り続けていた。
     func pendingCount(candidateRefKeys: [String]) -> Int {
+        let skip = scannedRefKeys().union(unreadableRefKeys())
+        return candidateRefKeys.reduce(0) { $0 + (skip.contains($1) ? 0 : 1) }
+    }
+
+    /// `pendingRefKeys` の結果。⚠️ 件数も**同じ呼び出しで**返す——スキャンの記録は
+    /// 8.6 万件あり、`scannedRefKeys()` / `unreadableRefKeys()` を別に引き直すと
+    /// 1 回のスキャン開始で同じ全件 fetch を 2 往復ぶん払う（ADR-119）。
+    struct PendingScan: Sendable {
+        var refKeys: [String]
+        /// 既にスキャン済みの記録の数（ログの `already=`）。
+        var scanned: Int
+        /// 何度やっても画像が取れないと分かっている数（ログの `unreadable=`）。
+        var unreadable: Int
+    }
+
+    /// **まだ顔スキャンが残っている候補**（スキャン済みと「何度やっても取れない」を除く）。
+    /// 数える側（`pendingCount`）と列挙する側（`FaceTagger.scan`）が
+    /// **同じ定義を使うための唯一の出典**（ADR-254）。
+    /// ⚠️ 回線待ちで外すクラウド分の扱いは呼び出し側の都合なので、ここでは分けない
+    /// （`FaceTagger` が接頭辞で分ける）。
+    func pendingRefKeys(candidateRefKeys: [String]) -> PendingScan {
         let done = scannedRefKeys()
-        return candidateRefKeys.reduce(0) { $0 + (done.contains($1) ? 0 : 1) }
+        let unreadable = unreadableRefKeys()
+        let skip = done.union(unreadable)
+        return PendingScan(refKeys: candidateRefKeys.filter { !skip.contains($0) },
+                           scanned: done.count, unreadable: unreadable.count)
     }
 
     /// 全スキャン済み写真の refKey → 顔数（実測）。AI アルバムの「人が写っていない」判定に使う。

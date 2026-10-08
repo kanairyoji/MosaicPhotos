@@ -226,6 +226,14 @@ final class AnalysisDriver {
             let pending = await people.pendingCount(candidateRefKeys: candidates.ordered)
             if CandidateEnumerationGate.shouldRecord(pending: pending) {
                 Self.storeCandidateFingerprint(await currentCandidateFingerprint())
+                Diagnostics.mark("driver: 候補の札を立てた（残り 0・次からは列挙を飛ばせる）")
+            } else {
+                // ⚠️⚠️ **「効いた回数」だけでは足りなかった**（ADR-254・実機ログ 3 本ぶん）。
+                // ADR-250 で「ゲートを足したら効いた回数が見えるログを付ける」と決めたが、
+                // このゲートは**札が立っていないと絶対に効かない**種類で、
+                // 「立たなかった」が記録に出ないため *なぜ* 効かないかが 2 回分からなかった。
+                // 立たなかった回とその理由（残り枚数）も出す。
+                Diagnostics.mark("driver: 候補の札を立てない（残り \(pending) 枚）")
             }
         }
         return engine.isTagging || people.isScanning

@@ -72,35 +72,35 @@ final class FaceTagger {
             onBacklog(remainingNow, deferredNow)
         }
 
-        let done = await store.scannedRefKeys()
         // ⚠️⚠️ **何度やっても画像が取れない写真は候補から外す**（ADR-243・実機ログ diagnostics-101）。
         // ADR-92 は「取れないのは一時的」を前提に記録せず次の窓へ回す決まりにしたが、実機には
         // **status=200 で 0 バイト**のサムネを返す写真があった——`loaded=0 nil=1` のまま
         // スキャン済みにならないので、6 時間ぶん毎回候補に戻り、その 1 枚のために
         // 86,772 件の列挙（約 11 秒）と人物一覧の作り直しが走り続けていた。
-        let unreadable = await store.unreadableRefKeys()
+        //
+        // ⚠️ **「残っている」の定義は台帳の 1 か所から取る**（ADR-254）。以前はここで
+        // `!done.contains && !unreadable.contains` を 3 回書き写していて、`pendingCount` 側は
+        // `unreadable` を引いていなかった——数える側と列挙する側で答えが食い違い、
+        // 札が永久に立たなかった（実機ログ diagnostics-105・列挙 11 秒 × 24 回/セッション）。
+        // 件数も同じ呼び出しで受け取る（8.6 万件の fetch を 2 往復払わない＝ADR-119）。
+        let pending = await store.pendingRefKeys(candidateRefKeys: candidateRefKeys)
         // ローカル("L-")を必ず先に、クラウド("C-")は後回し（母数が巨大で細切れ窓では終わらないため）。
         // 回線が許可されない（例: Wi-Fi 待ち）ときはクラウド分を今回は対象から外す＝端末内写真だけ
         // 進める（Wi-Fi 復帰時の次回スキャンでクラウドを拾う。顔検出はキャッシュ済みサムネDLを要する）。
         let cloudOK = networkAllowed()
-        let localTodo = candidateRefKeys.filter {
-            $0.hasPrefix("L-") && !done.contains($0) && !unreadable.contains($0)
-        }
-        let cloudTodo = cloudOK ? candidateRefKeys.filter {
-            $0.hasPrefix("C-") && !done.contains($0) && !unreadable.contains($0)
-        } : []
+        let localTodo = pending.refKeys.filter { $0.hasPrefix("L-") }
+        let cloudPending = pending.refKeys.filter { $0.hasPrefix("C-") }
+        let cloudTodo = cloudOK ? cloudPending : []
         let todo = localTodo + cloudTodo
         // ⚠️ **回線待ちで外したぶんも数える**（ADR-207）。クラウド分を対象から外した回は
         // `todo` が実際の残作業より少なくなる。Wi-Fi が無い端末で端末内写真を配り終えると
         // `todo` が空になり、「もう無い」と読めてしまう——クラウドの顔は残っているのに。
-        deferredNow = cloudOK ? 0 : candidateRefKeys.filter {
-            $0.hasPrefix("C-") && !done.contains($0) && !unreadable.contains($0)
-        }.count
+        deferredNow = cloudOK ? 0 : cloudPending.count
         remainingNow = todo.count
         onBacklog(remainingNow, deferredNow)
-        Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(done.count) "
+        Diagnostics.mark("faces: start — candidates=\(candidateRefKeys.count) already=\(pending.scanned) "
                          + "todo=\(todo.count) (local=\(localTodo.count) cloud=\(cloudTodo.count)\(cloudOK ? "" : " deferred:no-wifi=\(deferredNow)"))"
-                         + (unreadable.isEmpty ? "" : " unreadable=\(unreadable.count)"))
+                         + (pending.unreadable == 0 ? "" : " unreadable=\(pending.unreadable)"))
         guard !todo.isEmpty else {
             Diagnostics.mark("faces: nothing to scan (all done\(deferredNow > 0 ? ", \(deferredNow) waiting for Wi-Fi" : ""))")
             return

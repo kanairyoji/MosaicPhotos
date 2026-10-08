@@ -320,6 +320,8 @@ driver: 顔の開始を見送る
 driver: 滞留していたタグ/埋め込みを明け渡させた
 faces: cloud capture dates
 driver: 候補の列挙を見送る
+driver: 候補の札を立てた
+driver: 候補の札を立てない
 tags: 重い準備を見送る
 枚を候補から外す
 faces: census[
