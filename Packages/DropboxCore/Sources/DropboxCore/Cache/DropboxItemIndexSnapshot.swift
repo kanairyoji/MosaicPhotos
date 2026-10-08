@@ -38,7 +38,20 @@ enum DropboxItemIndexSnapshot {
 
     // MARK: - 書き出し
 
+    /// ⚠️⚠️ 桁に収まらない行が 1 つでもあれば**空を返す**（＝控えを作らない）。
+    /// 以前は `continue` で**その行だけ飛ばして**いたが、前置きの `count` は
+    /// `rows.count` のまま書いてあるので**件数が合わない**。しかも hash の判定は
+    /// path を書いた**後**なので、**半端な行がファイルに残る**。
+    /// 読み側は厳格（件数一致＋余り無し）なので実害は出ないが、
+    /// 「万一超えたら控えない」とコメントが言っている振る舞いと**コードが違っていた**
+    /// ——`guard` の `continue` は「1 行だけ無かったことにする」であって「控えない」ではない。
+    /// Dropbox のパスは 1,000 文字未満・content_hash は 64 文字なので実際には起きない。
     static func encode(_ payload: Payload) -> Data {
+        // 先に全部見る（書きながら諦めると、半端なものが残る）。
+        for row in payload.rows {
+            guard row.path.utf8.count <= Int(UInt16.max),
+                  (row.hash ?? "").utf8.count <= Int(UInt8.max) else { return Data() }
+        }
         var out = Data()
         out.reserveCapacity(payload.rows.count * 96 + 16)
         out.append(contentsOf: magic)
@@ -47,13 +60,9 @@ enum DropboxItemIndexSnapshot {
         appendLE(&out, UInt32(payload.rows.count))
         for row in payload.rows {
             let path = Array(row.path.utf8)
-            // ⚠️ 長さの桁に収まらないものは**落とさず切らず、控え自体を作らない**方が安全だが、
-            // Dropbox のパスは 1,000 文字未満なので UInt16 で足りる。万一超えたら控えない。
-            guard path.count <= Int(UInt16.max) else { continue }
             appendLE(&out, UInt16(path.count))
             out.append(contentsOf: path)
             let hash = Array((row.hash ?? "").utf8)
-            guard hash.count <= Int(UInt8.max) else { continue }
             appendLE(&out, UInt8(hash.count))
             out.append(contentsOf: hash)
             // ⚠️ 「無し」は NaN で表す（0 は 1970-01-01 という**実在する日付**）。

@@ -668,6 +668,12 @@ actor DropboxCacheStore {
         }
         let data = DropboxItemIndexSnapshot.encode(
             .init(contentVersion: key, rows: rows))
+        // ⚠️ 空＝桁に収まらない行があって控えを作らなかった（`encode` のコメント参照）。
+        // 0 バイトのファイルを置くと、次の起動が「控えはある」と思って読んで失敗する。
+        guard !data.isEmpty else {
+            DropboxLogger.info("itemIndex: 控えを作れなかった（桁に収まらない行がある）")
+            return
+        }
         // ⚠️ `.atomic`（途中で死んでも半端なファイルを残さない＝次の起動が壊れた控えを読む）。
         do {
             try data.write(to: Self.snapshotURL, options: .atomic)

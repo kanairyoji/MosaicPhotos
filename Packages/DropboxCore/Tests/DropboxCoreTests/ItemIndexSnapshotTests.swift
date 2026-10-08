@@ -81,4 +81,23 @@ struct ItemIndexSnapshotTests {
         let payload = DropboxItemIndexSnapshot.Payload(contentVersion: 3, rows: [])
         #expect(DropboxItemIndexSnapshot.decode(DropboxItemIndexSnapshot.encode(payload)) == payload)
     }
+
+    /// ⚠️⚠️ 桁に収まらない行があったら、**その行だけ飛ばさず控え自体を作らない**。
+    /// 以前は `continue` で飛ばしていたが、前置きの件数は `rows.count` のままなので
+    /// **件数が合わない**（しかも hash の判定は path を書いた後なので半端な行が残る）。
+    /// 読み側が厳格なので実害は出ないが、コメントが言う振る舞いとコードが違っていた。
+    /// 実際の Dropbox では起きない（パスは 1,000 文字未満・content_hash は 64 文字）ので、
+    /// ここは**意図を固定するためのテスト**。
+    @Test("桁に収まらない行があれば、控えを作らない（半端な控えを残さない）")
+    func refusesToSnapshotOversizedRows() {
+        let longHash = String(repeating: "a", count: Int(UInt8.max) + 1)
+        let payload = DropboxItemIndexSnapshot.Payload(contentVersion: 7, rows: [
+            .init(path: "/ok.jpg", hash: "h1", captureDate: nil, probed: true),
+            .init(path: "/bad.jpg", hash: longHash, captureDate: nil, probed: true),
+        ])
+        let data = DropboxItemIndexSnapshot.encode(payload)
+        #expect(data.isEmpty, "半端な控えを書こうとしている（1 行だけ飛ばすと件数が合わない）")
+        // ⚠️ 空は「控えが無い」と同じ扱いで読めること（0 バイトを控えとして読まない）。
+        #expect(DropboxItemIndexSnapshot.decode(data) == nil)
+    }
 }
