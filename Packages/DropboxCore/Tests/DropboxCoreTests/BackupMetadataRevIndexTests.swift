@@ -182,5 +182,62 @@ struct BackupMetadataRevIndexTests {
         #expect(store.backupMetadata != nil,
                 "一覧が取れなかっただけで、在るメタデータを読めなくなっている")
     }
+
+    /// ⚠️⚠️ **ADR-82 の退行**（レビュー指摘）。バックアップを使っていない利用者には
+    /// `<root>/.mosaic` が無い。ADR-255 の最初の形は一覧を**無条件に**呼んでいたので、
+    /// 以前は往復 0 だったのが**毎起動 409 ×ルート数**になっていた
+    /// （ADR-82 の実測で 1 回 2.8〜3.3 秒）。「無い」と分かっているなら一覧もしない。
+    @Test("バックアップを使っていない端末では、2 回目以降は往復ゼロ")
+    func doesNotListWhenMetadataIsKnownAbsent() async {
+        let root = uniqueRoot()
+        // 何も無い（Dropbox は 409 を返す）。
+        let notFound: @Sendable (URLRequest) -> (Data, URLResponse) = { request in
+            (Data("{\"error_summary\":\"path/not_found/\"}".utf8),
+             HTTPURLResponse(url: request.url!, statusCode: 409,
+                             httpVersion: nil, headerFields: nil)!)
+        }
+        let (first, firstClient) = makeStore(responder: notFound)
+        await first.loadBackupMetadata(from: root)
+        // 1 回目は探す（記録が無いので当然）。
+        #expect(await firstClient.recordedRequests().count > 0)
+
+        let (second, client) = makeStore(responder: notFound)
+        await second.loadBackupMetadata(from: root)
+
+        let requests = await client.recordedRequests()
+        let endpoints = requests.compactMap { $0.url?.lastPathComponent }.joined(separator: ",")
+        #expect(requests.isEmpty,
+                "「無い」と分かっているのに毎起動探している（ADR-82 の退行）: \(endpoints)")
+    }
+
+    /// ⚠️ ページ上限（10）を使い切ったら**部分的な索引を返さない**（レビュー指摘）。
+    /// 返すと読めなかったシャードが「存在しない」と扱われ、24 時間「無い」ことにされる
+    /// ——その月の写真が「バックアップ済み」でなくなる。
+    @Test("ページ上限を使い切ったら、部分的な索引を返さず 1 本ずつ訊き直す")
+    func doesNotReturnPartialIndexWhenPagesRunOut() async {
+        let root = uniqueRoot()
+        let catalog = catalogJSON()
+        let (store, client) = makeStore { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("list_folder") {
+                // ⚠️ 常に「まだ続きがある」と答える＝上限に当たる経路。
+                return Self.ok("{\"entries\":[],\"has_more\":true,\"cursor\":\"c\"}", request)
+            }
+            if url.contains("get_metadata") { return Self.ok("{\"rev\":\"r-x\"}", request) }
+            if url.contains("files/download") {
+                let path = Self.downloadedPath(request)
+                return Self.ok(path.hasSuffix("catalog.json") ? catalog
+                               : Self.metadataJSON(path), request)
+            }
+            return Self.ok("{}", request)
+        }
+
+        await store.loadBackupMetadata(from: root)
+
+        let requests = await client.recordedRequests()
+        #expect(countRequests(requests, containing: "get_metadata") > 0,
+                "部分的な索引を「分かった」として使っている（読めなかった分が『無い』になる）")
+        #expect(store.backupMetadata != nil, "1 本ずつ訊き直せば読めるはずのものが読めていない")
+    }
 }
 #endif

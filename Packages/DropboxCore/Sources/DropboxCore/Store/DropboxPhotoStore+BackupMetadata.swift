@@ -38,16 +38,28 @@ extension DropboxPhotoStore {
         // ADR-119（1 回ぶんに見える呼び出しが規模に比例していた）と同じ構造。
         var targets: [(path: String, rev: RevSource)] = []
         for folderPath in folderPaths {
+            let v1Path = folderPath + DropboxInternalConstants.backupMetadataSuffix
+            let catalogPath = folderPath + BackupMetadataV2.catalogSuffix
+            // ⚠️⚠️ **「無い」と分かっているなら一覧もしない**（ADR-82 の退行をレビューで指摘された）。
+            // ADR-255 の最初の形はここで無条件に `list_folder` を呼んでいた。バックアップを
+            // 使っていない利用者には `<root>/.mosaic` が無いので、**以前は往復 0 だったのが
+            // 毎起動 409 ×ルート数**になる（ADR-82 の実測で 1 回 2.8〜3.3 秒）。
+            // ADR-82 が直したのとまったく同じ形の退行だった。
+            // ⚠️ 判定は**既にある記録を読むだけ**（新しい状態を増やさない）。v1 もカタログも
+            // 「無い」なら `.mosaic` は空か無いので、一覧しても何も分からない。
+            // 記録は 24 時間で切れる（`BackupMetadataAbsence.ttl`）ので、他端末が
+            // 後からバックアップを書いても 1 日以内に気づく。
+            let knownEmpty = !force
+                && BackupMetadataAbsence.isAbsent(path: v1Path)
+                && BackupMetadataAbsence.isAbsent(path: catalogPath)
             // `.mosaic/` 配下（v1・カタログ・`meta/` のシャード）を 1 回の一覧で把握する。
             // 取れなければ `.ask`＝従来どおり 1 本ずつ訊く（通信不可・権限なしでも挙動を変えない）。
-            let index = await metadataRevIndex(root: folderPath)
+            let index = knownEmpty ? nil : await metadataRevIndex(root: folderPath)
             func source(_ path: String) -> RevSource {
                 guard let index else { return .ask }
                 return .known(index[path.lowercased()])
             }
-            let v1Path = folderPath + DropboxInternalConstants.backupMetadataSuffix
             targets.append((v1Path, source(v1Path)))
-            let catalogPath = folderPath + BackupMetadataV2.catalogSuffix
             if let catalog: BackupCatalog = await fetchCachedJSON(path: catalogPath, force: force,
                                                                   rev: source(catalogPath)) {
                 for shard in catalog.shards {
@@ -164,7 +176,13 @@ extension DropboxPhotoStore {
             guard page.has_more == true, let next = page.cursor else { return out }
             cursor = next
         }
-        return out
+        // ⚠️⚠️ **上限を使い切ったら nil**（＝分からない。レビュー指摘）。
+        // ここで `out` を返すと**部分的な索引**になり、読めなかったシャードは
+        // `.known(nil)`＝存在しない と扱われて 24 時間「無い」ことにされる
+        // ——その月の写真が「バックアップ済み」でなくなる。
+        // この関数は上の `guard` で「部分的な索引を返さない」と自分で決めているのに、
+        // **ループを抜ける経路だけ破っていた**（1 語の差で嘘が混ざる形）。
+        return nil
     }
 
     private func fetchCachedJSON<T: Decodable & Sendable>(path: String, force: Bool = false,
