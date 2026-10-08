@@ -81,6 +81,12 @@ jobs:
       - name: Check gate ledger
         run: python3 scripts/check_gate_ledger.py
 
+      # ⚠️ 夜間の枠の手が「どの設定だと何が動くか」の早見表に書かれているか。
+      # 撮影日時の問い合わせはどちらの表にも載っておらず、だから「背面の駆動役が無い」ことに
+      # 誰も気づかなかった（実機で 25 時間に 12 枚＝ADR-257/259）。表に無い処理は視界に入らない。
+      - name: Check window plan is documented
+        run: python3 scripts/check_window_plan_doc.py
+
   ios:
     name: iOS simulator tests (best-effort)
     runs-on: macos-15

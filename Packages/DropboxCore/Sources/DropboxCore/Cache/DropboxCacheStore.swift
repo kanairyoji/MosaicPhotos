@@ -59,6 +59,35 @@ actor DropboxCacheStore {
     static let maxTrackedInvalidations = 5_000
 
 
+    /// **起動を跨ぐふるまいを試すための入口**（ADR-259）。
+    ///
+    /// ⚠️ なぜ要るか: 既存のテストはどれも店を 1 つ作って
+    /// 「`itemIndexBuildsForTesting == 1`（＝1 回しか作っていない）」を確かめていた。
+    /// だが**店 1 つ＝1 回の起動**なので、「毎起動 1 回作り直す」は
+    /// **テストが望ましい性質として固定していた**——それがまさに実機の 9 秒だった
+    /// （diagnostics-105・ADR-258）。起動を跨ぐ性質は、容器を共有した 2 つ目の店で見る。
+    ///
+    /// ⚠️ 控えの置き場も渡すこと（テストごとに別の一時ディレクトリ）。
+    /// 固定パスだと並行するテストが互いの控えを上書きする。
+    init(testContainer: ModelContainer, snapshotDirectory: URL) {
+        modelContainer = testContainer
+        modelContext = ModelContext(testContainer)
+        self.snapshotDirectory = snapshotDirectory
+        // ⚠️ `isEphemeral = false`＝控えを使う側の挙動を試す（在庫の目的そのもの）。
+        isEphemeral = false
+        let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let baseURL = cachesURL.appendingPathComponent("DropboxKitTests", isDirectory: true)
+        thumbnailStore = DiskImageStore(directory: baseURL.appendingPathComponent("thumbnails", isDirectory: true))
+        fullImageStore = DiskImageStore(directory: baseURL.appendingPathComponent("fullimages", isDirectory: true))
+        thumbnailByteLimit = DropboxInternalConstants.defaultThumbnailByteLimit
+        fullImageByteLimit = DropboxInternalConstants.defaultFullImageByteLimit
+        thumbnailMemory = MemoryImageCache(
+            totalCostLimit: DropboxInternalConstants.thumbnailMemoryCostLimit,
+            countLimit: DropboxInternalConstants.thumbnailMemoryCountLimit,
+            purgeOnCritical: false,
+            pressureFloor: DropboxInternalConstants.thumbnailMemoryPressureFloor)
+    }
+
     init(
         thumbnailByteLimit: Int = DropboxInternalConstants.defaultThumbnailByteLimit,
         fullImageByteLimit: Int = DropboxInternalConstants.defaultFullImageByteLimit,
@@ -93,6 +122,7 @@ actor DropboxCacheStore {
         // ADR-185: 個別上限は安全弁（名目予算の 2 倍）に格下げ。合計は協調役が予算に収める。
         let safety = 2 * CacheBudget.nominalBytes(setting: CacheBudget.setting(),
                                                   totalCapacity: CacheBudget.volumeCapacity().total ?? 0)
+        self.snapshotDirectory = Self.defaultSnapshotDirectory
         self.isEphemeral = isStoredInMemoryOnly
         self.thumbnailByteLimit = isStoredInMemoryOnly ? thumbnailByteLimit : max(thumbnailByteLimit, safety)
         self.fullImageByteLimit = isStoredInMemoryOnly ? fullImageByteLimit : max(fullImageByteLimit, safety)
@@ -571,11 +601,21 @@ actor DropboxCacheStore {
     // MARK: - 軽い表のディスク控え（ADR-258）
 
     /// 控えの置き場。⚠️ `Caches`（OS が消してよい＝作り直せる表にふさわしい）。
-    private static var snapshotURL: URL {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    ///
+    /// ⚠️ **テストでは必ず差し替える**（`init(testContainer:snapshotDirectory:)`）。
+    /// 本番は 1 プロセス 1 ファイルでよいが、テストは並行に走るので固定パスだと
+    /// 互いの控えを上書きし合う（しかも小さな fixture では鍵がたまたま一致する）。
+    private let snapshotDirectory: URL
+
+    private var snapshotURL: URL {
+        try? FileManager.default.createDirectory(at: snapshotDirectory,
+                                                 withIntermediateDirectories: true)
+        return snapshotDirectory.appendingPathComponent("item-index.bin")
+    }
+
+    static var defaultSnapshotDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("DropboxKit", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("item-index.bin")
     }
 
     /// 中身差し替えの回数を持つ**予約行**（ADR-258）。
@@ -647,7 +687,7 @@ actor DropboxCacheStore {
 
     /// 控えから表を復元する。鍵が合わなければ nil（＝作り直す）。
     private func loadIndexSnapshot(key: UInt64) -> [String: IndexedItem]? {
-        guard let data = try? Data(contentsOf: Self.snapshotURL),
+        guard let data = try? Data(contentsOf: snapshotURL),
               let payload = DropboxItemIndexSnapshot.decode(data),
               payload.contentVersion == key else { return nil }
         var out: [String: IndexedItem] = [:]
@@ -676,7 +716,7 @@ actor DropboxCacheStore {
         }
         // ⚠️ `.atomic`（途中で死んでも半端なファイルを残さない＝次の起動が壊れた控えを読む）。
         do {
-            try data.write(to: Self.snapshotURL, options: .atomic)
+            try data.write(to: snapshotURL, options: .atomic)
             writtenSnapshotKey = key
             DropboxLogger.info("itemIndex: 控えを書いた（\(rows.count) 行・\(data.count / 1024)KB）")
         } catch {
@@ -689,7 +729,7 @@ actor DropboxCacheStore {
 
     /// テスト用: 控えを消す。
     func removeIndexSnapshotForTesting() {
-        try? FileManager.default.removeItem(at: Self.snapshotURL)
+        try? FileManager.default.removeItem(at: snapshotURL)
         writtenSnapshotKey = nil
         triedSnapshotLoad = false
     }
