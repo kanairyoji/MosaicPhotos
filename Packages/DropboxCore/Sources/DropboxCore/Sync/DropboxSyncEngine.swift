@@ -437,7 +437,10 @@ final class DropboxSyncEngine {
                 case .expected:
                     DropboxLogger.info("SyncEngine: poll interrupted (expected) — "
                                        + error.localizedDescription)
-                    reportState(.idle, isPrimary: isPrimary)
+                    // ⚠️ **状態は触らない**（ADR-256 追補・レビューループ 3 周目）。
+                    // この輪は先頭で毎周 `.polling` を報せる＝ここで `.idle` を挟むと
+                    // 「待機中 → 何もしていない → 待機中」と**ちらつく**だけ。
+                    // ぶら下がりが切れても輪は続いているので、報せ直す必要が無い。
                 case .reportable:
                     DropboxLogger.error("SyncEngine: poll error — \(error.localizedDescription)")
                     reportState(.error(error.localizedDescription), isPrimary: isPrimary)
