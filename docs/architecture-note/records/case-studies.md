@@ -44,7 +44,7 @@
   - 起動を跨ぐテストの型（`init(testContainer:snapshotDirectory:)` ＋
     `ItemIndexAcrossLaunchesTests` 5 本）。⚠️ 直す前のコードで落ちることを確認済み
     （`itemIndexBuildsForTesting == 0` が 1 になる）。
-  - 往復を数えるテスト（`BackupMetadataRevIndexTests`・別セッション）。
+  - 往復を数えるテスト（`BackupMetadataRevIndexTests`・ADR-255 側で実施）。
   - `scripts/check_window_plan_doc.py`（CI）＝夜間の手と早見表の照合。
     ⚠️ 撮影日時の問い合わせは `background-behavior.md` の**どちらの表にも無かった**
     ——だから「背面の駆動役が無い」ことがレビューの視界に入らなかった。
@@ -80,7 +80,7 @@
      **ライブラリが育つほど増える**＝ADR-119 の形。`list_folder` 1〜2 往復で全シャードの
      rev が取れるので、そこへ寄せるべき（CLAUDE.md「往復はまとめる」）。
      実測: `net.get_metadata` 1408 回／11 起動＝**きっちり 127 回/起動**。
-     → **対処済み（ADR-255・別セッションが実装）**。
+     → **対処済み（ADR-255）**。
   2. ⚠️ **クラウド写真の撮影日が実質埋まらない**。`fillMissingCaptureDates(limit: 12)` に対し
      `remaining=105662`、ログ中の実行は **1 回（probed=12）**だけ。結果
      `faces: cloud capture dates — 空の写真 22061 / 分かった 0 / 埋めた顔 0`。
