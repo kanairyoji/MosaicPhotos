@@ -115,6 +115,9 @@ enum NightlyPlan {
         /// バックアップ台帳と実体の照合（週 1・内部で期限を見る）。
         case reconcileBackup
         /// 残作業が続く限り待つ（期限切れ＝キャンセルで抜ける）。
+        /// クラウドの軽い表の控えを、いまの表で書き直す（ADR-266）。
+        /// ⚠️ **毎回入れる**（崩す経路が 2 つあるので、崩れたかを条件にしない）。
+        case refreshCloudIndexSnapshot
         case drainUntilIdle
 
         /// 台帳・診断ログ用の短い名前。
@@ -132,6 +135,7 @@ enum NightlyPlan {
             case .publishAnalysis:                 return "publishAnalysis"
             case .probeCaptureDates(let n):        return "captureDates(\(n))"
             case .reconcileBackup:                 return "reconcile"
+            case .refreshCloudIndexSnapshot:       return "indexSnapshot"
             case .drainUntilIdle:                  return "drain"
             }
         }
@@ -223,6 +227,15 @@ enum NightlyPlan {
             // 利用者の実費の問題）。`background-behavior.md` の表も回線 ○ と書いている。
             // 位置は上へ移した（ADR-206）。回線の条件はそちらにも書いてある。
         }
+        // ⚠️⚠️ **控えの書き直しは毎回**（ADR-266・実機ログ diagnostics-106）。
+        // 控え（ADR-258）の鍵を崩す経路は **2 つ**ある——撮影日の問い合わせと**差分の取り込み**。
+        // 最初は「撮影日を訊いた回」だけ書き直していたので、差分だけが入った晩は
+        // 控えが古いまま残り、次の起動で 10.8 万行を作り直していた（実機で 6 起動中 1 回・8.9 秒）。
+        // ⚠️ 自分で書いた決まり（「前提を崩し得る書き込み経路を**全部**数える」＝CLAUDE.md）を
+        // 守らず、1 つしか数えていなかった。
+        // 条件にしないのが正解——**崩れたかは控え側が鍵で判断する**（同じ鍵なら書かない）ので、
+        // 毎回呼んでも無駄な書き出しは起きない。
+        out.append(.refreshCloudIndexSnapshot)
         out.append(.drainUntilIdle)
         return out
     }

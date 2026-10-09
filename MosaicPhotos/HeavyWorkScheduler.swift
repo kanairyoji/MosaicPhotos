@@ -581,12 +581,15 @@ enum HeavyWorkScheduler {
                 limit: limit, deadline: deadline, refreshDisplayList: false)
             let remaining = await stores.dropboxStore.exifProbePendingCount()
             Diagnostics.mark("bgtask: 撮影日時を訊いた probed=\(probed) remaining=\(remaining)")
-            // ⚠️ **控えを書き直す**（ADR-260）。訊いた結果は表の中身を変える＝控えの鍵も変わるので、
-            // ここで書き直さないと次の起動で必ず 10.8 万行を歩き直す（ADR-258 が効かない）。
-            if probed > 0 { await stores.dropboxStore.refreshCloudIndexSnapshot() }
+            // ⚠️ 控えの書き直しは**独立した手**に移した（ADR-266）。ここで
+            // `if probed > 0` と条件を付けていたので、差分だけが入った晩は書き直されず、
+            // 次の起動で 10.8 万行を作り直していた。
         case .reconcileBackup:
             // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない（ADR-166）。
             await stores.backupEngine.reconcileIfDueWeekly()
+        case .refreshCloudIndexSnapshot:
+            // 鍵が同じなら書かない（控え側が判断する）ので、毎回呼んで構わない。
+            await stores.dropboxStore.refreshCloudIndexSnapshot()
         case .drainUntilIdle:
             await drainUntilIdle(stores: stores)
         }

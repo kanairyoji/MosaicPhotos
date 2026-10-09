@@ -161,8 +161,9 @@ final class NightlyPlanTests: XCTestCase {
     func testDefaultOrderIsAnalysisThenBackupThenGenerate() {
         let steps = labels(.init())
         // 既定の `Inputs` は回線あり・照合の期限は来ていない。共有はその中に並ぶ。
+        // ⚠️ `indexSnapshot` は**毎回**入る（ADR-266・崩す経路が 2 つあるので条件にしない）。
         XCTAssertEqual(steps, ["analysis", "stallCheck", "backup", "generate",
-                               "shareImport", "drain"])
+                               "shareImport", "indexSnapshot", "drain"])
         XCTAssertTrue(steps.firstIndex(of: "analysis")! < steps.firstIndex(of: "generate")!,
                       "generate を先に await すると窓を食い潰して顔/埋め込みが開始すらしない（Fix C）")
         XCTAssertTrue(steps.firstIndex(of: "backup")! < steps.firstIndex(of: "generate")!,
@@ -235,6 +236,35 @@ final class NightlyPlanTests: XCTestCase {
         }
         XCTAssertLessThan(probe, sync, "反映より後に置くと順番が回ってこない: \(steps)")
         XCTAssertLessThan(probe, drain, "drain より後ろに手は無い")
+    }
+
+    // MARK: - 控えの書き直し（ADR-266）
+
+    /// ⚠️⚠️ **崩す経路が 2 つあるので、崩れたかを条件にしない**（実機ログ diagnostics-106）。
+    /// 控え（ADR-258）の鍵を崩すのは「撮影日の問い合わせ」と「差分の取り込み」の 2 つ。
+    /// 最初は前者だけを条件に書き直していたので、差分だけ入った晩は控えが古いまま残り、
+    /// 次の起動で 10.8 万行を作り直していた（6 起動中 1 回・8.9 秒）。
+    /// ⚠️ 無駄打ちにはならない——同じ鍵なら控え側が書かないと判断する。
+    func testRefreshesTheIndexSnapshotEveryWindow() {
+        // 撮影日の残りが無くても（＝訊く手が入らなくても）書き直す。
+        let noBacklog = labels(.init())
+        XCTAssertTrue(noBacklog.contains("indexSnapshot"),
+                      "訊く手が無い窓では書き直さない＝差分だけ入った晩に控えが古くなる: \(noBacklog)")
+        // 回線が無くても書き直す（ローカルのファイル書き出しだけで通信しない）。
+        XCTAssertTrue(labels(.init(networkAllowed: false)).contains("indexSnapshot"),
+                      "回線と関係ないのに回線で止めている")
+    }
+
+    /// ⚠️ 位置は `drain` の**前**（drain は期限まで待つので、後ろに置くと順番が回ってこない）。
+    func testIndexSnapshotRefreshComesBeforeDrain() {
+        let steps = labels(.init(captureDateBacklog: 1000))
+        guard let snap = steps.firstIndex(of: "indexSnapshot"),
+              let drain = steps.firstIndex(of: "drain"),
+              let probe = steps.firstIndex(where: { $0.hasPrefix("captureDates") }) else {
+            return XCTFail("手が揃っていない: \(steps)")
+        }
+        XCTAssertLessThan(snap, drain, "drain の後ろに置くと順番が回ってこない: \(steps)")
+        XCTAssertLessThan(probe, snap, "訊く前に書き直しても意味が無い（訊いた結果を含めたい）")
     }
 
     /// ADR-222: 解析の公開も回線の中。設定がオフなら 1 バイトも上げない。
