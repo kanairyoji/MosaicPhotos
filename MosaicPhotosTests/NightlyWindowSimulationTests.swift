@@ -153,4 +153,61 @@ final class NightlyWindowSimulationTests: XCTestCase {
         XCTAssertTrue(declared.contains(.backup), "バックアップは毎窓（ADR-180）")
         XCTAssertTrue(declared.contains(.indexSnapshot), "控えの書き直しは毎窓（ADR-266）")
     }
+
+    // MARK: - 模型が過去の欠陥を捕まえられること（ADR-274 追補）
+
+    /// ⚠️⚠️ **模型の有効性そのものを固定する。**
+    ///
+    /// 「この模型は ADR-273 を捕まえる」ことは**手で壊して確かめた**が、手の確認は 1 回で消える。
+    /// あとで所要の導き方を変えて「`.unbounded` でも飢えない」ようにしてしまったら、
+    /// 模型は**黙って green を返し続ける**——このセッションで繰り返した
+    /// ADR-253（当たらない規則が ✅ の顔で居座る）と同じ形。
+    ///
+    /// 導出方式（ADR-272）では**位置の誤りは宣言の誤りとしてしか現れない**ので、
+    /// 宣言を偽る形で過去の欠陥を再現するのが正しい再現になる。
+    func testTheSimulatorStarvesWhenBackupIsMisdeclaredAsUnbounded() {
+        // ADR-273 の実バグ: `startBackup` は即座に返るのに「上限なし」と宣言していた。
+        NightlyWindowSimulator.withSpecOverride({ kind in
+            guard kind == .backup else { return nil }
+            var faked = NightlyPlan.spec(for: .backup)
+            faked.cost = .unbounded
+            return faked
+        }) {
+            var sim = self.simulator(provideShare: true, publishAnalysis: true)
+            _ = sim.runWindow(seconds: 21)
+            XCTAssertFalse(sim.starvedEveryWindowSteps().isEmpty,
+                           "`backup` を上限なしと偽ったのに飢餓が出ない＝模型が ADR-273 を見られない")
+        }
+    }
+
+    /// 同じく ADR-270（控えの書き直しが窓を食う手の後ろに回り、一度も走らない）。
+    func testTheSimulatorStarvesWhenTheSnapshotRefreshIsMisdeclaredAsCostly() {
+        NightlyWindowSimulator.withSpecOverride({ kind in
+            guard kind == .indexSnapshot else { return nil }
+            var faked = NightlyPlan.spec(for: .indexSnapshot)
+            faked.cost = .unbounded
+            return faked
+        }) {
+            var sim = self.simulator(provideShare: true, publishAnalysis: true)
+            _ = sim.runWindow(seconds: 21)
+            XCTAssertFalse(sim.starvedEveryWindowSteps().isEmpty,
+                           "控えの書き直しを上限なしと偽ったのに飢餓が出ない＝模型が ADR-270 を見られない")
+        }
+    }
+
+    /// ⚠️ 偽りが**元に戻る**こと（スコープを抜けたら本番の宣言）。
+    /// 戻らないと、後続のテストが偽りの世界で回って静かに意味を失う。
+    func testSpecOverrideIsScoped() {
+        NightlyWindowSimulator.withSpecOverride({ kind in
+            guard kind == .backup else { return nil }
+            var faked = NightlyPlan.spec(for: .backup)
+            faked.cost = .unbounded
+            return faked
+        }) {
+            XCTAssertEqual(NightlyWindowSimulator.effectiveSpec(for: .backup).cost, .unbounded)
+        }
+        XCTAssertEqual(NightlyWindowSimulator.effectiveSpec(for: .backup).cost,
+                       NightlyPlan.spec(for: .backup).cost,
+                       "スコープを抜けても偽りが残っている")
+    }
 }

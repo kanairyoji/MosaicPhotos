@@ -40,8 +40,34 @@ struct NightlyWindowSimulator {
     /// ⚠️ `.bounded` の実際の秒数は手ごとに違うが、**結論に効くのは
     /// 「上限つきは窓より小さい」という性質**なので、分かっているものだけ本番の定数を読み、
     /// 他は小さい既定値にする（ここに表を作らない＝速さの第 2 の出典を作らない）。
+    /// ⚠️⚠️ **宣言を偽るための入口**（模型自身の有効性を固定するため）。
+    ///
+    /// なぜ要るか: 模型が過去の欠陥を捕まえられることは**手で壊して確かめた**が、
+    /// 手の確認は 1 回で消える。あとで模型の所要の導き方を変えて
+    /// 「`.unbounded` でも飢えない」ようにしてしまったら、模型は**黙って green を返し続ける**
+    /// ——ADR-253（当たらない規則が ✅ の顔で居座る）と同じ形。
+    /// だから「偽ったら飢餓が出る」ことを**テストとして**持つ。
+    ///
+    /// ⚠️ 置き場所はテスト側だけ（本番の `spec(for:)` は差し替え不能のまま）。
+    /// ⚠️ 必ず `withSpecOverride` のスコープで入れる（直接代入して後始末しない）。
+    private static var specOverride: ((NightlyPlan.Kind) -> NightlyPlan.Spec?)?
+
+    /// 宣言を偽った世界で `body` を回す（抜けるとき必ず戻す）。
+    static func withSpecOverride(_ override: @escaping (NightlyPlan.Kind) -> NightlyPlan.Spec?,
+                                 _ body: () -> Void) {
+        let saved = specOverride
+        specOverride = override
+        defer { specOverride = saved }
+        body()
+    }
+
+    /// 宣言を読む**唯一の口**（偽りを通すため）。
+    static func effectiveSpec(for kind: NightlyPlan.Kind) -> NightlyPlan.Spec {
+        specOverride?(kind) ?? NightlyPlan.spec(for: kind)
+    }
+
     static func seconds(for kind: NightlyPlan.Kind, remaining: TimeInterval) -> TimeInterval {
-        switch NightlyPlan.spec(for: kind).cost {
+        switch effectiveSpec(for: kind).cost {
         case .nonblocking:
             // 投げっぱなし（即座に返る）。仕事は裏で続くが、窓は塞がない。
             return 0
@@ -151,6 +177,6 @@ struct NightlyWindowSimulator {
 
     /// `everyWindow` を宣言した手のうち、計画に載っていたのに**順番が回らなかった**もの。
     func starvedEveryWindowSteps() -> Set<NightlyPlan.Kind> {
-        world.missedLastWindow.filter { NightlyPlan.spec(for: $0).everyWindow }
+        world.missedLastWindow.filter { Self.effectiveSpec(for: $0).everyWindow }
     }
 }
