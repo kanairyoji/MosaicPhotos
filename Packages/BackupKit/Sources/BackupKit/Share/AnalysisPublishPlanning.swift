@@ -23,6 +23,44 @@ public enum AnalysisPublishPlanning {
     /// 1 回の実行で見るシャードの数（背景の回線とメモリを占有しない）。
     public static let defaultBudget = 8
 
+    /// **公開に渡す写真**（ADR-276）。クラウド写真のうち、**この端末の Backup のコピー**
+    /// （原本が端末にある）は端末写真の refKey（"L-<localIdentifier>"）にする。
+    ///
+    /// ⚠️ なぜ要るか: Backup のコピーは二重解析を防ぐため解析の候補から外れていて
+    /// （`AnalysisCandidates.hiddenBackupCopyRefKeys`）、解析は**端末写真の側**にしか無い。
+    /// クラウドの refKey（"C-<path>"）で引くと空になり、**自分の写真の解析が 1 枚も公開されなかった**。
+    /// 鍵は Dropbox の `content_hash` のままなので、受け取る側はこれまでどおり突き合わせられる。
+    ///
+    /// - Parameters:
+    ///   - cloud: 同期しているクラウド写真（パス → content_hash）。パスの大小は問わない。
+    ///   - hiddenBackupCopies: **解析の候補から外した** Backup のコピー（パス小文字 → localIdentifier）。
+    ///     ⚠️ 記録の全部ではない——原本が端末から消えた（オフロード済み）コピーは外されず、
+    ///     クラウド写真として解析されている。全部を "L-" にするとその解析を引けなくなる。
+    ///     アプリは `AnalysisCandidates.hiddenBackupCopyRefKeys`（外す規則の唯一の出典）で決める。
+    ///     ⚠️ 既定値を置かない（渡し忘れると黙って元に戻る）。
+    public static func publishablePhotos(cloud: [String: String],
+                                         hiddenBackupCopies: [String: String]) -> [AnalysisPublisher.CloudPhoto] {
+        cloud.map { path, hash in
+            if let localID = hiddenBackupCopies[path.lowercased()] {
+                return AnalysisPublisher.CloudPhoto(refKey: "L-\(localID)", contentHash: hash)
+            }
+            return AnalysisPublisher.CloudPhoto(refKey: "C-\(path)", contentHash: hash)
+        }
+        .sorted { $0.refKey < $1.refKey }
+    }
+
+    /// 名乗っている別の端末があるときに、**それでも公開してよい写真**（ADR-276）。
+    ///
+    /// 「公開は 1 台だけ」（ADR-222 追補）は、**同じ写真の解析が台数ぶん積まれる**のを防ぐため。
+    /// ところが**自分の写真**（原本がこの端末にある）を解析したのはこの端末だけなので、
+    /// 何台が公開しても重ならない。止めると、その写真の解析は**どこにも出ない**
+    /// （同じ Dropbox を 2 台で使う家族で、相手の端末が写真を解析し直していた）。
+    /// Dropbox にしか無い写真（どの端末でも解析し得る）だけを、名乗った 1 台に任せる。
+    public static func photosWhileAnotherDevicePublishes(
+        _ photos: [AnalysisPublisher.CloudPhoto]) -> [AnalysisPublisher.CloudPhoto] {
+        photos.filter(\.isOwnPhoto)
+    }
+
     /// この回に見るシャードと、次回の再開位置。
     public struct Window: Equatable, Sendable {
         /// この回に組み立てて指紋を比べるシャード（シャード名の昇順・続きから一巡）。

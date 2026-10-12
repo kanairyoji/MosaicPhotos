@@ -104,7 +104,7 @@ public struct ShareHubView: View {
                                     } ?? L("never")))
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(L("Publishing from two devices stores the same analysis twice in Dropbox. Turn this off on the other device, or take over here if that device is gone."))
+                        Text(L("This device still shares the analysis of its own photos. Photos that exist only in Dropbox are shared by the other device, so the same analysis is not stored twice. If that device is gone, take over here."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if let onTakeOverPublishing {
@@ -146,7 +146,7 @@ public struct ShareHubView: View {
                     }
                 }
             } footer: {
-                Text(L("Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\n⚠️ Turn this on for ONE device only. Each device that publishes stores its own full copy of the analysis (100–200MB for 68,000 photos), so two devices means paying twice for the same thing."))
+                Text(L("Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\nEach device shares the analysis of its own photos. Photos that exist only in Dropbox are shared by one device (the first one to turn this on), so the same analysis is not stored twice."))
             }
         }
         .navigationTitle(L("Cloud Sharing"))

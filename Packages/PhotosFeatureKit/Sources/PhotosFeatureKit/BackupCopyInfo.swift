@@ -9,9 +9,14 @@ import Foundation
 public struct BackupCopyInfo: Sendable, Equatable {
     public let localIdentifier: String?
     public let captureDate: Date?
+    /// **同じ中身が別の場所にもあるコピー**なら、代わりに残すコピーのパス（小文字・ADR-276）。
+    /// 同じ Dropbox の他の端末の共有コピー（`ShareCopyDuplicates`）がこれになる。
+    /// nil＝重複ではない（隠す理由にならない＝安全側）。
+    public let duplicateOf: String?
 
-    public init(localIdentifier: String?, captureDate: Date?) {
+    public init(localIdentifier: String?, captureDate: Date?, duplicateOf: String? = nil) {
         self.localIdentifier = localIdentifier
         self.captureDate = captureDate
+        self.duplicateOf = duplicateOf
     }
 }

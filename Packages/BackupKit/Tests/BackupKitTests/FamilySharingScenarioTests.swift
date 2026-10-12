@@ -123,14 +123,28 @@ extension StandardSettingsSuite {
                 share.analysisSource = tags
                 let ownIDs = Set(library.map(\.id))
                 let shareRootLower = shareRoot.lowercased()
-                tags.hasAnalysis = { [store] key in
+                let identity = identity
+                tags.hasAnalysis = { [store, account] key in
                     if key.hasPrefix("L-") { return ownIDs.contains(String(key.dropFirst(2))) }
                     guard key.hasPrefix("C-") else { return false }
                     let path = String(key.dropFirst(2)).lowercased()
                     if path == shareRootLower || path.hasPrefix(shareRootLower + "/") { return false }
                     // 自分の Backup のコピー（原本が端末にある）は解析しない。
                     let own = await store.allRecordsLite().map { $0.dropboxPath.lowercased() }
-                    return !own.contains(path)
+                    if own.contains(path) { return false }
+                    // 同じ Dropbox の他の端末の共有コピー（同じ中身が Share の外にもある）も解析しない
+                    // （ADR-276・`hiddenDuplicates` と同じ規則）。
+                    var hashes: [String: String] = [:]
+                    for file in await account.visibleFiles() where file.hasSuffix(".jpg") {
+                        if let hash = await account.contentHash(at: file) { hashes[file] = hash }
+                    }
+                    let duplicates = BackupDeviceIdentity.$testingIdentity.withValue(identity) {
+                        ShareCopyDuplicates.otherDevicesShareCopies(
+                            hashesByPath: hashes, backupRoot: Person.root,
+                            ownDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+                            ownDeviceID: BackupDeviceIdentity.currentID())
+                    }
+                    return duplicates[path] == nil
                 }
                 // 受け取った写真（"C-"）を共有し直すときの hash の表（アプリは同期キャッシュから引く）。
                 let account = account
@@ -228,7 +242,14 @@ extension StandardSettingsSuite {
                         fetch.markImported(fetched)
                     }
                     shards = shards.filter { listedShards.contains($0.key) }   // 消えたシャードは数えない
-                    return SharedAlbumDiscovery.albums(itemPaths: items, familyRoots: familyRoots)
+                    // アプリ（HomeView）と同じく、同期しているパス（自分の Dropbox の `/MosaicPhotos`
+                    // ＋家族フォルダ）から、家族フォルダと同じ Dropbox の他の端末の共有セットを見つける。
+                    let own = await copier.listFolder(path: Person.root, token: "t", recursive: true) ?? []
+                    items += own.filter { !$0.isFolder && $0.pathLower.hasSuffix(".jpg") }.map(\.pathLower)
+                    return SharedAlbumDiscovery.receivedAlbums(
+                        itemPaths: items, familyRoots: familyRoots, backupRoot: Person.root,
+                        ownDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+                        ownDeviceID: BackupDeviceIdentity.currentID())
                 }
             }
 
@@ -240,16 +261,18 @@ extension StandardSettingsSuite {
             @discardableResult
             func publishAnalysis() async -> AnalysisPublisher.Outcome {
                 await asCurrentDevice {
-                    var photos: [AnalysisPublisher.CloudPhoto] = []
+                    var cloud: [String: String] = [:]
                     let copier = DropboxShareCopier(httpClient: account)
                     for root in [Person.root] + familyRoots {
                         for file in await copier.listFolder(path: root, token: "t", recursive: true) ?? []
                         where !file.isFolder && file.pathLower.hasSuffix(".jpg") {
-                            if let hash = file.contentHash {
-                                photos.append(.init(refKey: "C-\(file.pathLower)", contentHash: hash))
-                            }
+                            if let hash = file.contentHash { cloud[file.pathLower] = hash }
                         }
                     }
+                    // 解析の候補から外した Backup のコピー＝自分の記録すべて（この世界では原本は
+                    // 全部端末に残っている＝`hiddenBackupCopyRefKeys` が全部を外す）。
+                    let hidden = await store.backupCopyIndex()
+                    let photos = AnalysisPublishPlanning.publishablePhotos(cloud: cloud, hiddenBackupCopies: hidden)
                     let publisher = AnalysisPublisher(tokenProvider: FakeTokenProvider(), analysisSource: tags,
                                                       httpClient: account, defaults: publishDefaults)
                     return await publisher.publish(photos: photos)

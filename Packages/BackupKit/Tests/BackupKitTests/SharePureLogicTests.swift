@@ -813,3 +813,90 @@ struct ShareDisplayNameTests {
         }
     }
 }
+
+// MARK: - 同じ Dropbox の他端末の共有コピー（ADR-276）
+
+@Suite("ShareCopyDuplicates（同じ Dropbox の他端末の共有コピー）")
+struct ShareCopyDuplicatesTests {
+    private func run(_ hashes: [String: String]) -> [String: String] {
+        ShareCopyDuplicates.otherDevicesShareCopies(hashesByPath: hashes, backupRoot: "/MosaicPhotos",
+                                                    ownDeviceFolder: "iPhone-AAAAAA", ownDeviceID: "AAAAAA")
+    }
+
+    @Test("他の端末の共有コピーは、同じ中身が Share の外にあれば重複（残す方を返す）")
+    func otherDeviceCopyWithBackupIsDuplicate() {
+        let out = run(["/MosaicPhotos/iPhone-BBBBBB/Backup/2020/2020-09/b1.jpg": "H1",
+                       "/MosaicPhotos/iPhone-BBBBBB/Share/Trip/b1--1234.jpg": "h1"])
+        #expect(out == ["/mosaicphotos/iphone-bbbbbb/share/trip/b1--1234.jpg":
+                            "/mosaicphotos/iphone-bbbbbb/backup/2020/2020-09/b1.jpg"])
+    }
+
+    @Test("Share の外に同じ中身が無ければ隠さない（写真が消えるより重複する方がよい）")
+    func onlyCopyIsKept() {
+        #expect(run(["/MosaicPhotos/iPhone-BBBBBB/Share/Trip/x.jpg": "h9"]).isEmpty)
+        // 2 台の Share にだけある（どちらも共有コピー）→ どちらも隠さない。
+        #expect(run(["/MosaicPhotos/iPhone-BBBBBB/Share/Trip/x.jpg": "h9",
+                     "/MosaicPhotos/iPhone-CCCCCC/Share/Fwd/x.jpg": "h9"]).isEmpty)
+    }
+
+    @Test("自分の端末の共有コピーは対象外（別の仕組みで外している）・名前が変わっても ID で自分と分かる")
+    func ownDeviceIsIgnored() {
+        let hashes = ["/MosaicPhotos/iPhone-AAAAAA/Backup/a.jpg": "h1",
+                      "/MosaicPhotos/iPhone-AAAAAA/Share/Trip/a.jpg": "h1",
+                      "/MosaicPhotos/iPad-AAAAAA/Share/Trip/a.jpg": "h1"]   // 端末名を変えた自分
+        #expect(run(hashes).isEmpty)
+    }
+
+    @Test("家族フォルダ・バックアップのルートの外は対象外")
+    func outsideTheBackupRootIsIgnored() {
+        #expect(run(["/Share (1)/Trip/x.jpg": "h1", "/Camera Uploads/x.jpg": "h1"]).isEmpty)
+    }
+
+    @Test("残す方は決定的（パスの小さい方）")
+    func keptCopyIsDeterministic() {
+        let hashes = ["/MosaicPhotos/iPhone-BBBBBB/Share/Trip/x.jpg": "h1",
+                      "/MosaicPhotos/iPhone-BBBBBB/Backup/2/x.jpg": "h1",
+                      "/MosaicPhotos/iPhone-BBBBBB/Backup/1/x.jpg": "h1"]
+        for _ in 0..<5 {
+            #expect(run(hashes).values.first == "/mosaicphotos/iphone-bbbbbb/backup/1/x.jpg")
+        }
+    }
+}
+
+@Suite("SharedAlbumDiscovery.receivedAlbums（同じ Dropbox の他端末の共有セット）")
+struct ReceivedAlbumsTests {
+    private func albums(_ paths: [String], family: [String] = []) -> [SharedAlbumDiscovery.Album] {
+        SharedAlbumDiscovery.receivedAlbums(itemPaths: paths, familyRoots: family, backupRoot: "/MosaicPhotos",
+                                            ownDeviceFolder: "iPhone-AAAAAA", ownDeviceID: "AAAAAA")
+    }
+
+    @Test("他の端末の Share のセットがアルバムになり、提供者は端末フォルダ名")
+    func otherDevicesSetsBecomeAlbums() {
+        let out = albums(["/MosaicPhotos/iPhone-BBBBBB/Share/Trip/b1.jpg",
+                          "/MosaicPhotos/iPhone-BBBBBB/Share/Trip/b2.jpg",
+                          "/MosaicPhotos/iPhone-BBBBBB/Backup/2020/b9.jpg"])
+        #expect(out.map(\.name) == ["Trip"])
+        #expect(out.first?.photoCount == 2)
+        #expect(out.first?.providerName == "iPhone-BBBBBB")
+    }
+
+    @Test("自分の端末の Share はアルバムにしない（名前が変わっても ID で自分と分かる）")
+    func ownSetsAreNotReceived() {
+        #expect(albums(["/MosaicPhotos/iPhone-AAAAAA/Share/Trip/a.jpg",
+                        "/MosaicPhotos/iPad-AAAAAA/Share/Trip/a.jpg"]).isEmpty)
+    }
+
+    @Test("家族フォルダとして登録済みなら二重に数えない")
+    func familyRootIsNotDoubled() {
+        let out = albums(["/MosaicPhotos/iPhone-BBBBBB/Share/Trip/b1.jpg"], family: ["/MosaicPhotos"])
+        #expect(out.count == 1)
+        #expect(out.first?.providerName == "iPhone-BBBBBB")
+    }
+
+    @Test("家族フォルダだけなら従来どおり（同じ Dropbox の他端末が居なくても壊れない）")
+    func familyOnlyIsUnchanged() {
+        let paths = ["/Share/Trip/a.jpg", "/Share/Trip/b.jpg"]
+        #expect(albums(paths, family: ["/Share"]) ==
+                SharedAlbumDiscovery.albums(itemPaths: paths, familyRoots: ["/Share"]))
+    }
+}

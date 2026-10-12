@@ -45,4 +45,21 @@ public enum BackupCopyHiding {
         }
         return hidden
     }
+
+    /// **重複のコピー**（`BackupCopyInfo.duplicateOf`）のうち、隠すもの（パス小文字・ADR-276）。
+    ///
+    /// ⚠️ 隠すのは**残す方がその画面に出るときだけ**。受け取ったアルバムは共有コピーだけを
+    /// メンバーに持つ（残す方＝相手の Backup のコピーは入っていない）ので、ここで無条件に隠すと
+    /// **アルバムが空になる**。
+    /// - Parameter visiblePaths: その画面に出し得るパス（小文字）。nil＝絞り込み無し（全部出る）。
+    public static func hiddenDuplicates(backupCopies: [String: BackupCopyInfo],
+                                        visiblePaths: Set<String>?) -> Set<String> {
+        var hidden = Set<String>()
+        for (path, info) in backupCopies {
+            guard let kept = info.duplicateOf else { continue }
+            if let visiblePaths, !visiblePaths.contains(kept) { continue }
+            hidden.insert(path)
+        }
+        return hidden
+    }
 }

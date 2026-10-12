@@ -38,6 +38,8 @@ public final class AnalysisPublisher {
             self.refKey = refKey
             self.contentHash = contentHash
         }
+        /// この端末に原本がある写真か（`AnalysisPublishPlanning.publishablePhotos` が "L-" にしたもの）。
+        public var isOwnPhoto: Bool { refKey.hasPrefix("L-") }
     }
 
     private let tokenProvider: AccessTokenProvider
@@ -90,11 +92,22 @@ public final class AnalysisPublisher {
         // ⚠️ **承諾は引き継いだ時点で役目を終える**（レビュー指摘）。残したままだと、相手が
         // あとでまた名乗っても黙って公開を続ける（2 台とも「引き継いだ」状態になり得る）。
         if case .ours = decision { defaults.removeObject(forKey: ShareSettingsKeys.acknowledgedAnalysisOwner) }
-        guard AnalysisOwnership.allowsPublishing(decision) else {
+        // ⚠️ 別の端末が名乗っていても、**自分の写真**の解析は公開する（ADR-276）。
+        // 止めるのは「Dropbox にしか無い写真」（どの端末でも解析し得る＝重なる）だけ。
+        let isOwner = AnalysisOwnership.allowsPublishing(decision)
+        var blockedBy: AnalysisOwnership.Owner?
+        var photos = photos
+        if !isOwner {
             guard case .otherDevice(let owner) = decision else { return bail("公開できない") }
-            var outcome = bail("別の端末（\(owner.deviceFolder)）が公開している — 設定で確認して下さい")
-            outcome.blockedBy = owner
-            return outcome
+            blockedBy = owner
+            photos = AnalysisPublishPlanning.photosWhileAnotherDevicePublishes(photos)
+            Diagnostics.mark("share.publishAnalysis: 別の端末（\(owner.deviceFolder)）が公開している — "
+                             + "自分の写真 \(photos.count) 枚だけ公開する")
+            guard !photos.isEmpty else {
+                var outcome = bail("別の端末（\(owner.deviceFolder)）が公開している — 設定で確認して下さい")
+                outcome.blockedBy = owner
+                return outcome
+            }
         }
         // ⚠️ **この回に見るシャードぶんだけ**を組み立てる（実機ログ diagnostics-85）。
         // 全シャードを一度に作って全部を JSON にしていた頃はフットプリントが 637MB まで上がり、
@@ -121,7 +134,8 @@ public final class AnalysisPublisher {
         // シャードと名乗りで並んでいた）。名乗りが無いままだと、次の端末は「誰も名乗って
         // いない」と見て**二重に公開を始める**——この仕組みが防ぎたかったことそのもの。
         // まだ自分のものでないときだけ先に書く（自分のものなら最後の更新で足りる）。
-        if case .ours = decision {} else {
+        // ⚠️ 名乗っていない端末（自分の写真だけを公開する回）は名乗りに触らない。
+        if isOwner, decision != .ours {
             await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
                              photoCount: photos.count, token: token, published: false)
         }
@@ -200,8 +214,10 @@ public final class AnalysisPublisher {
         defaults.set(cursorAfter(lastDone: skipStuck ? failed : lastDone, shards: allShards),
                      forKey: ShareSettingsKeys.publishAnalysisCursor)
         // 変更が無い回も名乗りは更新する（「この端末は生きている」を残す＝引き継ぎの判断材料）。
-        await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
-                         photoCount: photos.count, token: token, published: uploaded > 0)
+        if isOwner {
+            await writeOwner(copier: copier, path: ownerPath, previous: remoteOwner,
+                             photoCount: photos.count, token: token, published: uploaded > 0)
+        }
         let failure = failed.map { "・\($0) で失敗したので次回はそこから" } ?? ""
         let message = uploaded == 0 && window.stale.isEmpty && failed == nil
             ? "変更なし（見たシャード \(window.shards.count)・写真 \(publishedPhotos)）"
@@ -209,7 +225,7 @@ public final class AnalysisPublisher {
                 + "（見ていないシャード \(window.remaining)・消した \(window.stale.count)"
                 + "・写真 \(publishedPhotos)\(failure)）"
         Diagnostics.mark("share.publishAnalysis: " + message)
-        return Outcome(uploaded: uploaded, remaining: window.remaining, message: message)
+        return Outcome(uploaded: uploaded, remaining: window.remaining, blockedBy: blockedBy, message: message)
     }
 
     /// 次回の再開位置。**済んだところまで**で決める（失敗した shard は次回そこから引き直す）。

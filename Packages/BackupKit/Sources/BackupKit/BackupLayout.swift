@@ -105,6 +105,17 @@ public enum BackupLayout {
         return backupRoot + "/" + year + "/" + shard
     }
 
+    /// **このフォルダ名は自分の端末のものか**（同じ Dropbox の他の端末と見分ける唯一の規則）。
+    ///
+    /// ⚠️ 名前だけで比べない（レビュー指摘・ADR-222）。フォルダ名は「表示名-ID」で、表示名は
+    /// 端末名の変更や機種変更の復元で**変わる**。名前だけだと、名前を変えた瞬間に**自分の解析・
+    /// 自分の共有を「他の端末のもの」として取り込み**始める。安定 ID（末尾）でも見る。
+    /// ⚠️ 既定値を置かない（呼び出し側が自分の名前と ID を必ず渡す）。
+    public static func isOwnDeviceFolder(_ name: String, ownDeviceFolder: String, ownDeviceID: String) -> Bool {
+        let lower = name.lowercased()
+        return lower == ownDeviceFolder.lowercased() || lower.hasSuffix("-" + ownDeviceID.lowercased())
+    }
+
     /// 末尾が既にその要素なら足さない（大小は Dropbox に合わせて無視）。
     static func appendingOnce(_ base: String, _ component: String) -> String {
         let suffix = "/" + component

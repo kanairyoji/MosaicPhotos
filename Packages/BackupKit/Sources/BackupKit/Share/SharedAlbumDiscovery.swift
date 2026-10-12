@@ -106,6 +106,44 @@ public enum SharedAlbumDiscovery {
         }
     }
 
+    /// **受け取ったアルバム**（ADR-276）: 家族フォルダに加えて、**同じ Dropbox の他の端末**の
+    /// `Share`（`<root>/<端末>/Share`）も受け取ったものとして扱う。
+    ///
+    /// ⚠️ なぜ要るか: 同じ Dropbox を 2 台（2 人）で使うと、相手の共有セットは写真としては
+    /// 見えるのに、家族フォルダに登録していないので**アルバムにならなかった**。
+    /// 他の端末の `Share` は同期しているパス（`itemPaths`）から見つける（一覧を引き直さない）。
+    /// 自分の端末は `BackupLayout.isOwnDeviceFolder` で外す（解析の発見と同じ規則）。
+    /// 提供者名には端末フォルダ名を入れる（同じ名前のセットを 2 台が作っても見分けられる）。
+    public static func receivedAlbums(itemPaths: [String], familyRoots: [String], backupRoot: String,
+                                      ownDeviceFolder: String, ownDeviceID: String) -> [Album] {
+        let root = backupRoot.lowercased().hasSuffix("/") ? String(backupRoot.dropLast()) : backupRoot
+        let rootLower = root.lowercased()
+        let share = BackupLayout.shareSubfolder.lowercased()
+        var deviceRoots: [String: String] = [:]   // Share のパス（小文字）→ 端末フォルダ名（表示）
+        for path in itemPaths {
+            let lower = path.lowercased()
+            guard lower.hasPrefix(rootLower + "/") else { continue }
+            let parts = path.dropFirst(root.count + 1).split(separator: "/", maxSplits: 2)
+            guard parts.count == 3, parts[1].lowercased() == share else { continue }
+            let device = String(parts[0])
+            guard !BackupLayout.isOwnDeviceFolder(device, ownDeviceFolder: ownDeviceFolder, ownDeviceID: ownDeviceID)
+            else { continue }
+            deviceRoots[rootLower + "/" + device.lowercased() + "/" + share] = device
+        }
+        // 家族フォルダとして登録済みのもの（`/MosaicPhotos` ごと等）と重ねない。
+        let family = familyRoots.map { $0.lowercased() }
+        let extra = deviceRoots.keys.filter { candidate in
+            !family.contains { candidate == $0 || candidate.hasPrefix($0 + "/") }
+        }.sorted()
+        return albums(itemPaths: itemPaths, familyRoots: familyRoots + extra).map { album in
+            guard album.providerName == nil,
+                  let device = deviceRoots.first(where: { album.id.hasPrefix($0.key + "/") })?.value
+            else { return album }
+            return Album(folderPath: album.folderPath, name: album.name, photoCount: album.photoCount,
+                         coverPath: album.coverPath, providerName: device)
+        }
+    }
+
     /// パスがバックアップ側（`…/<端末>/Backup/…`）にあるか（共有セットとして扱わない）。
     /// 端末フォルダの直下に `Backup` があり、その配下なら真。`Share` 配下・旧配置は偽。
     static func isUnderBackupSubfolder(_ folderLower: String, root: String) -> Bool {

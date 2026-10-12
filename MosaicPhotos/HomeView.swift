@@ -235,16 +235,23 @@ struct HomeView: View {
         }
         // 受信共有アルバムの発見。同期の進行（items の増減）と家族フォルダ設定に追従する。
         // 68k 件の走査なのでオフメインで行い、メインへは結果だけ返す。
+        // 家族フォルダに加えて、同じ Dropbox の他の端末の共有セットもアルバムにする（ADR-276）。
         .task(id: dropboxStore.items.count) {
-            let items = dropboxStore.items
-            let roots = ShareSettingsKeys.isReceiveEnabled()
-                ? ShareSettingsKeys.currentFamilyFolders() : []
-            guard !roots.isEmpty else {
+            guard ShareSettingsKeys.isReceiveEnabled() else {
                 if !sharedAlbums.isEmpty { sharedAlbums = [] }
                 return
             }
+            let items = dropboxStore.items
+            let roots = ShareSettingsKeys.currentFamilyFolders()
+            let backupRoot = backupNormalizedPath(
+                UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                    ?? BackupSettingsKeys.defaultDropboxFolder)
+            let ownFolder = BackupDeviceIdentity.currentFolderName()
+            let ownID = BackupDeviceIdentity.currentID()
             let albums = await Task.detached(priority: .utility) {
-                SharedAlbumDiscovery.albums(itemPaths: items.map(\.path), familyRoots: roots)
+                SharedAlbumDiscovery.receivedAlbums(itemPaths: items.map(\.path), familyRoots: roots,
+                                                    backupRoot: backupRoot, ownDeviceFolder: ownFolder,
+                                                    ownDeviceID: ownID)
             }.value
             if albums != sharedAlbums { sharedAlbums = albums }
         }

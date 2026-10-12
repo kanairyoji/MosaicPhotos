@@ -22,7 +22,7 @@
 ---
 
 ## ADR-276 同じ Dropbox を 2 台で使い、別々の写真を共有し合う — いまの振る舞いを確かめた
-- 状態: **確認済み・直しは未着手**（2026-10-12）。直す方針は下の「次にやること」（利用者の判断待ち）
+- 状態: **採用**（2026-10-12）。確認（下の前半）→ 直した（末尾の「直したこと」）
 - 文脈: 利用者の使い方「2 人が**同じ Dropbox アカウント**を**別々の端末**で使い、別々の写真を
   お互いに共有する。端末で解析した情報も相手に届けたい」。コードを読むと 4 つの問題が
   ありそうだったので、直す前にテストで確かめた（推測で直さない）。
@@ -60,6 +60,44 @@
 - 次にやること（利用者の判断待ち）: 解析は「自分が原本を持つ写真の解析は端末ごとに常に公開
   （端末ごとに写真が違うので重複しない）＋ Dropbox にしか無い写真だけを 1 台が公開」／
   アルバムは同じ Dropbox の別端末の `Share` を自動で見つける／二重はどちらかのコピーを隠す。
+- 直したこと（利用者の了承のうえ・確かめた 4 つすべて）:
+  1. **自分の写真の解析を公開する**: `AnalysisPublishPlanning.publishablePhotos` が、解析の候補から
+     外した Backup のコピー（原本が端末にある）を端末写真の refKey（"L-"）にする。どれを外したかは
+     `AnalysisCandidates.hiddenBackupCopyRefKeys`（外す規則の唯一の出典）で決める——⚠️ 記録の全部に
+     すると、オフロード済み（クラウド写真として解析されている）の解析を引けなくなる。
+  2. **名乗りがあっても自分の写真は公開する**: 別の端末が名乗っている回は
+     `photosWhileAnotherDevicePublishes`（自分の写真だけ）にして公開し、**名乗りには触らない**。
+     重なるのは Dropbox にしか無い写真だけなので、そこだけを名乗った 1 台に任せる。
+     設定画面の文言も「1 台だけ ON に」から「各端末が自分の写真を・Dropbox にしか無い写真は 1 台が」へ。
+  3. **同じ Dropbox の他の端末の共有セットを受け取る**: アルバムは
+     `SharedAlbumDiscovery.receivedAlbums`（同期しているパスから `<root>/<他の端末>/Share` を見つける・
+     提供者は端末フォルダ名）。解析の取り込みは `accountAnalysisRoots` が `Analysis` に加えて `Share` も
+     返す＝**相手が「写真の解析結果を共有」を OFF にしていても、共有セットの写真の解析は届く**。
+     「自分の端末か」は `BackupLayout.isOwnDeviceFolder` の 1 か所（名前と安定 ID の両方で見る）。
+  4. **二重を 1 枚に**: `ShareCopyDuplicates`（BackupKit・純）が、他の端末の共有コピーのうち
+     同じ中身が Share の外にもあるものを求め、`BackupCopyInfo.duplicateOf` として表示と解析候補の
+     共通の索引に入れる。`BackupCopyHiding.hiddenDuplicates` は**残す方がその画面に出るときだけ**隠す
+     ——⚠️ 受け取ったアルバムは共有コピーだけをメンバーに持つので、無条件に隠すと**アルバムが空になる**。
+     Share の外に同じ中身が無ければ隠さない（消えるより重複の方がよい）。
+     重複の判定は画面のストアが立ち上がるたびに引かれるので、写真の増減の版
+     （`cachePhotoSetRevision`）ごとに 1 回だけ求める（`ShareDuplicateCache`）。
+- テスト: 確かめた 6 本の `withKnownIssue` は**直した時点で全部 known issue が起きなくなって落ち**、
+  書き換えを強制した（仕掛けが働いた）。いまは平叙の assert。足したもの:
+  2d（相手が公開 OFF でも共有セットの解析は届く）／純ロジック 11 本（`PublishablePhotosTests` /
+  `ShareCopyDuplicatesTests` / `ReceivedAlbumsTests`）／PhotosFeatureKit の
+  `DuplicateCopyHidingTests` 5 本（受け取ったアルバムを空にしない）。
+  変異 6 つ（名乗りがあると全部公開する／"L-" にしない／自分のセットを受け取る／
+  取り込みが他端末の Share を見ない／Share の外が無くても隠す／残す方が出なくても隠す）は**すべて落ちる**。
+  BackupKit 455 本・PhotosFeatureKit 60 本が通る。
+- 結果 / 限界:
+  - ⚠️ 名乗った端末（Alice）は、他の端末（Bob）の Backup のコピーを**自分でも解析して公開する**
+    （Bob の写真は Alice にとってクラウド写真）。同じ写真の解析が Alice と Bob の両方の Analysis に
+    載り得る。鍵は同じ content_hash なので取り込みは同じ写真に当たるだけだが、容量は 2 重になる。
+    「相手の端末が公開しているなら、その端末の Backup は飛ばす」にすれば消せる（宿題）。
+  - ⚠️ 重複の表は**画面のストアが立ち上がるとき**に引かれる。開いたままの画面には、相手の新しい共有が
+    閉じて開き直すまで反映されない（既存の撮影日の表と同じ制約・`unresolved-problems.md`）。
+  - 表示と解析候補への**効き**（`MergedPhotoStore` の再構築・`analysisCandidates`）は iOS の
+    パッケージにあり、通しのテストは「同じ規則で組んだ材料」まで。実機は `device-verification.md` 章 L。
 - 関連: `BackupDeviceIdentity.swift` / `SameAccountDevicesScenarioTests` /
   `FamilySharingScenarioTests.Person` / ADR-222（解析の公開）/ ADR-275。
 

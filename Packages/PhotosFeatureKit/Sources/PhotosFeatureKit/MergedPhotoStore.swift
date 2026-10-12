@@ -129,9 +129,14 @@ public final class MergedPhotoStore {
             // （原本が有るのに出すと 1 枚の写真が二重に並ぶ・実機 diagnostics-57/58）。
             // ⚠️ `.lazy` で中間配列を作らない（レビュー 7 周目）。`Set(...map(\.id))` は
             // 1.8 万件の String 配列を一度作ってから Set に詰め直していた。
-            let hidden = BackupCopyHiding.hiddenPaths(
+            var hidden = BackupCopyHiding.hiddenPaths(
                 backupCopies: backupIndex,
                 localIdentifiers: Set(localSnapshot.lazy.map(\.id)))
+            // 同じ Dropbox の他の端末の共有コピー（同じ中身が相手の Backup にもある）は 1 枚にする
+            // （ADR-276）。⚠️ 残す方がこの画面に出るときだけ隠す（受け取ったアルバムを空にしない）。
+            hidden.formUnion(BackupCopyHiding.hiddenDuplicates(
+                backupCopies: backupIndex,
+                visiblePaths: filter.map { Set($0.lazy.map { $0.lowercased() }) }))
             // ⚠️ **撮影日は台帳を正とする**（ADR-128 追補・実フィードバック「時系列にならない」）。
             // Dropbox 側の日付は `time_taken ?? client_modified` で、EXIF から media_info が
             // 付かない（または同期時に pending だった）写真では**アップロード時刻**になる。

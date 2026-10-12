@@ -385,20 +385,41 @@ final class CloudAnalysisPublisher {
         // 64 桁の文字列を載せないため）ので、毎回 0 件になっていた。さらに `items` は
         // 画面を開いたときだけ作られるので、背景の窓では空のこともある。台帳から射影で取る。
         let hashes = await dropboxStore.cloudContentHashes()
+        // ⚠️ **自分の Backup のコピー**（原本が端末にある）は、端末写真の refKey で解析を引く
+        // （ADR-276）。そのコピーは二重解析を防ぐため解析の候補から外れていて、解析は端末写真の
+        // 側にしか無い——クラウドの refKey で引くと、自分の写真の解析が 1 枚も公開されなかった。
+        // どれを外したかは解析の候補と**同じ関数**で決める（外す規則を 2 か所に書かない）。
+        let hiddenCopies = await hiddenBackupCopies(paths: Array(hashes.keys))
         // ⚠️ 9.9 万件の map を**メインで回さない**（CLAUDE.md 性能原則 4）。ここはアプリ層＝
         // 既定 MainActor なので、書かないとホーム描画を直撃する。重い一括なので札も立てる（ADR-122）。
         let photos = await Task.detached(priority: .utility) {
             await HeavyLoad.span("share.publishAnalysis.photos") {
-                hashes.map { path, hash in
-                    AnalysisPublisher.CloudPhoto(refKey: PhotoRef.cloud(path).encoded,
-                                                 contentHash: hash)
-                }
+                AnalysisPublishPlanning.publishablePhotos(cloud: hashes, hiddenBackupCopies: hiddenCopies)
             }
         }.value
+        Diagnostics.mark("share.publishAnalysis: 自分の写真 \(hiddenCopies.count) 枚を端末の解析で公開する")
         guard !photos.isEmpty else { return mark("クラウド写真が 0 件") }
         let outcome = await publisher.publish(photos: photos)
         blockedBy = outcome.blockedBy
         return outcome.message
+    }
+
+    /// 解析の候補から外した Backup のコピー（パス小文字 → localIdentifier）。
+    /// 外す規則は `AnalysisCandidates.hiddenBackupCopyRefKeys` だけが持つ（原本が端末にあるもの）。
+    private func hiddenBackupCopies(paths: [String]) async -> [String: String] {
+        let index = await AnalysisCandidates.backupCopyIndexProvider?() ?? [:]
+        guard !index.isEmpty else { return [:] }
+        let local = await localImageRefKeys()
+        let hidden = await AnalysisCandidates.hiddenBackupCopyRefKeys(
+            cloudItems: paths.map { CloudPhotoRef(path: $0, captureDate: nil) }, localRefKeys: local)
+        // ⚠️ 9.9 万件の照合なのでメインで回さない（性能原則 4）。
+        return await Task.detached(priority: .utility) {
+            var out: [String: String] = [:]
+            for path in paths where hidden.contains(PhotoRef.cloud(path).encoded) {
+                if let localID = index[path.lowercased()]?.localIdentifier { out[path.lowercased()] = localID }
+            }
+            return out
+        }.value
     }
 
     /// **別の端末が公開している**ときの相手（設定画面が注意を出すために見る）。
@@ -431,3 +452,39 @@ final class CloudAnalysisPublisher {
         return reason
     }
 }
+
+// MARK: - 同じ Dropbox の他の端末の共有コピー（ADR-276）
+
+/// `ShareCopyDuplicates` の結果を**写真の増減の版ごとに 1 回だけ**求める。
+///
+/// ⚠️ この表は画面のストアが立ち上がるたび（人物・場所・アルバムを開くたび）に引かれるので、
+/// 毎回 9.9 万件の hash を舐めると開くたびに遅くなる。重複かどうかは写真が増えた／減ったときにしか
+/// 変わらないので、`cachePhotoSetRevision`（増減でだけ進む版・ADR-250）で覚える。
+/// 中身の差し替え（版が進まない）では古い判定が残るが、隠す方向にしか働かない誤りは
+/// 「同じ中身が別の場所にある」ときだけなので、写真が消えることはない。
+actor ShareDuplicateCache {
+    static let shared = ShareDuplicateCache()
+    private var key: String?
+    private var value: [String: String] = [:]
+
+    func duplicates(dropboxStore: DropboxPhotoStore) async -> [String: String] {
+        let backupRoot = backupNormalizedPath(
+            UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                ?? BackupSettingsKeys.defaultDropboxFolder)
+        let ownFolder = BackupDeviceIdentity.currentFolderName()
+        let ownID = BackupDeviceIdentity.currentID()
+        let revision = await dropboxStore.cachePhotoSetRevision()
+        let currentKey = "\(revision)|\(backupRoot.lowercased())|\(ownID)"
+        if key == currentKey { return value }
+        let hashes = await dropboxStore.cloudContentHashes()
+        let computed = await Task.detached(priority: .utility) {
+            ShareCopyDuplicates.otherDevicesShareCopies(hashesByPath: hashes, backupRoot: backupRoot,
+                                                        ownDeviceFolder: ownFolder, ownDeviceID: ownID)
+        }.value
+        key = currentKey
+        value = computed
+        Diagnostics.mark("share.duplicates: 他の端末の共有コピー \(computed.count) 枚を 1 枚として扱う")
+        return computed
+    }
+}
+

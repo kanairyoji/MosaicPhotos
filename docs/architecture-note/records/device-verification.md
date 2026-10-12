@@ -154,8 +154,10 @@
 - 受け取り側で `share import:` が家族フォルダの**外**の写真にも当たること（タグ・顔・人物名）。
 - 設定「写真の解析結果を共有」を OFF にしたら、窓でアップロードが 1 件も出ないこと（既定 OFF）。
 - **2 台目で ON にしたとき**: 設定画面に「別の端末がすでに解析結果を共有しています」と
-  相手の端末名・最終公開日が出ること。その状態で「今すぐ公開」しても
-  `share.publishAnalysis: 別の端末（…）が公開している` で 1 バイトも上がらないこと。
+  相手の端末名・最終公開日が出ること。その状態で「今すぐ公開」すると
+  `share.publishAnalysis: 別の端末（…）が公開している — 自分の写真 N 枚だけ公開する` が出て、
+  **この端末の写真（原本がこの端末にあるもの）の解析だけ**が上がること（ADR-276。以前は
+  1 バイトも上がらないのが正しかった）。名乗り（`.mosaic-analysis-owner.json`）は変わらないこと。
   「この端末で公開する」を押すと公開が始まり、`<root>/.mosaic-analysis-owner.json` の
   `deviceFolder` がこの端末に変わること。
 
@@ -341,6 +343,8 @@ faces: manual snapshot
 backup: start for Cloud Sharing
 backup: shared photos only — awaited=
 offload: skip — backup scope is shared photos only
+share.publishAnalysis: 自分の写真 
+share.duplicates: 他の端末の共有コピー 
 faces: ledger exported for replay
 CLIP released
 face model released
@@ -519,3 +523,18 @@ Developer Options → 診断ログ。目印になる行:
 
 ⚠️ 通しのテスト（`SharedOnlyBackupScenarioTests`）は runner の**写し**で回しているので、
 「共有メンバーだけを PhotoKit から引く」「上げるものが無ければ索引を作らない」は**ここでしか確かめられない**。
+
+---
+
+## L. 同じ Dropbox を 2 台で使い、別々の写真を共有し合う（ADR-276）
+
+2 台を同じ Dropbox に接続し、どちらも「共有する写真だけ」にして、それぞれ別の写真で共有セットを作る。
+
+| 見るもの | 期待 |
+|---|---|
+| 相手の端末のホーム | 「受け取ったアルバム」に相手のセットが出て、提供者に相手の端末名が出る。自分のセットは出ない |
+| 相手の写真の枚数（すべての写真） | 相手が共有した写真が **1 枚**に見える（以前は Backup と Share のコピーで 2 枚） |
+| 受け取ったアルバムの中 | 写真が空になっていない（重複を隠す規則がアルバムでは効かないこと） |
+| 両方の端末の診断ログ | `share.publishAnalysis: 自分の写真 N 枚を端末の解析で公開する` の N が共有した枚数以上。後から ON にした端末にも `自分の写真 N 枚だけ公開する` が出る |
+| 相手の写真の解析 | 受け取った側で `share import:` が相手の写真に当たり、タグ・顔・人物名が付く。相手の写真を**自分で解析し直さない**（解析の残数が相手の写真の分だけ増えない） |
+| `share.duplicates:` | 相手が共有した枚数とおおよそ同じ数が出る。写真を増やさない限り、画面を開くたびには出ない（版ごとに 1 回） |

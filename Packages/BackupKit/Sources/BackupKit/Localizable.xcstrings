@@ -891,12 +891,12 @@
         }
       }
     },
-    "Publishing from two devices stores the same analysis twice in Dropbox. Turn this off on the other device, or take over here if that device is gone." : {
+    "This device still shares the analysis of its own photos. Photos that exist only in Dropbox are shared by the other device, so the same analysis is not stored twice. If that device is gone, take over here." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "2 台から公開すると、同じ解析が Dropbox に二重に保存されます。もう一方の端末でオフにするか、その端末が無い場合はこの端末で引き継いでください。"
+            "value" : "この端末の写真の解析は、この端末から引き続き共有します。Dropbox にしか無い写真は、もう一方の端末が共有するので、同じ解析が 2 重に保存されることはありません。その端末をもう使っていない場合は、ここで引き継いでください。"
           }
         }
       }
@@ -1033,12 +1033,12 @@
         }
       }
     },
-    "Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\n⚠️ Turn this on for ONE device only. Each device that publishes stores its own full copy of the analysis (100–200MB for 68,000 photos), so two devices means paying twice for the same thing." : {
+    "Share tags, faces, names, and dates for your Dropbox photos with others connected to the same Dropbox, so their devices don't analyze the same photos again. No photos are copied.\n\nEach device shares the analysis of its own photos. Photos that exist only in Dropbox are shared by one device (the first one to turn this on), so the same analysis is not stored twice." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "同じ Dropbox に接続している人へ、Dropbox 上の写真のタグ・顔・名前・撮影日を共有します。相手の端末が同じ写真を解析し直さずに済みます。写真はコピーされません。\n\n⚠️ オンにするのは 1 台だけにしてください。公開する端末はそれぞれ解析の完全なコピー（写真 6.8 万枚で 100〜200MB）を保存するので、2 台だと同じものに二重の容量がかかります。"
+            "value" : "Dropbox の写真のタグ・顔・名前・撮影日を、同じ Dropbox につないでいる人と共有し、相手の端末が同じ写真を解析し直さずに済むようにします。写真はコピーしません。\n\nそれぞれの端末が、自分の写真の解析を共有します。Dropbox にしか無い写真は 1 台（最初にオンにした端末）が共有するので、同じ解析が 2 重に保存されることはありません。"
           }
         }
       }

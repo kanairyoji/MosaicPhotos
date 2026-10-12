@@ -87,7 +87,7 @@ extension StandardSettingsSuite {
 
         // MARK: - 2. 解析
 
-        @Test("2a. 自分の写真の解析は「写真の解析結果を共有」で公開されない")
+        @Test("2a. 自分の写真の解析は、端末で解析したものが「写真の解析結果を共有」で公開される")
         func ownPhotosAnalysisIsNotPublished() async {
             let (_, _, bob) = await household()
             let outcome = await bob.publishAnalysis()
@@ -99,13 +99,12 @@ extension StandardSettingsSuite {
             #expect(!published.isEmpty, "Bob の公開が空（前提が崩れている）: \(outcome.message)")
             // Bob は Alice の写真を自分で解析して公開している（クラウド写真として見えるため）。
             #expect(published.values.contains { $0.first?.hasPrefix("bob:C-") == true })
-            withKnownIssue("ADR-276: 自分の写真（原本が端末にある）の解析も公開されるべき") {
-                #expect(published[bob.hash("bob-1")] == ["bob:L-bob-1"],
-                        "Bob の端末で解析した bob-1 が Bob の Analysis に無い")
-            }
+            // ADR-276 で直した（以前は Backup のコピーの refKey で引いて空だった）。
+            #expect(published[bob.hash("bob-1")] == ["bob:L-bob-1"],
+                    "Bob の端末で解析した bob-1 が Bob の Analysis に無い")
         }
 
-        @Test("2b. 公開できるのは 1 台だけ: 先に Alice が公開すると、Bob は止められる")
+        @Test("2b. 別の端末が名乗っていても、自分の写真の解析だけは公開する（名乗りには触らない）")
         func onlyOneDeviceMayPublish() async {
             let (_, alice, bob) = await household()
             let first = await alice.publishAnalysis()
@@ -113,12 +112,18 @@ extension StandardSettingsSuite {
             let second = await bob.publishAnalysis()
             #expect(second.blockedBy?.deviceID == Self.aliceDevice.id,
                     "Bob を止めた相手が Alice でない: \(second.message)")
-            withKnownIssue("ADR-276: Bob の自分の写真の解析は、別の端末が名乗っていても公開されるべき") {
-                #expect(second.uploaded > 0, "Bob の公開が丸ごと止まった")
-            }
+            // ADR-276 で直した（以前は Bob の公開が丸ごと止まっていた）。
+            #expect(second.uploaded > 0, "Bob の公開が丸ごと止まった: \(second.message)")
+            let bobPublished = await analysis(
+                under: bob.backupRoot.replacingOccurrences(of: "/Backup", with: "/Analysis"), as: bob)
+            #expect(bobPublished.keys.sorted() == [bob.hash("bob-1")],
+                    "Bob が自分の写真以外も公開した（Dropbox にしか無い写真は名乗った 1 台に任せる）: \(bobPublished)")
+            let owner = await alice.account.body(at: BackupLayout.analysisOwnerPath(root: Person.root))
+                .flatMap(AnalysisOwnership.decode)
+            #expect(owner?.deviceID == Self.aliceDevice.id, "Bob の公開で名乗りが書き換わった")
         }
 
-        @Test("2c. Bob の端末で解析した bob-1 の解析は、Alice の端末に届かない（Dropbox には在るのに）")
+        @Test("2c. Bob の端末で解析した bob-1 の解析が、Alice の端末に届く")
         func bobsAnalysisNeverReachesAlice() async {
             let (_, alice, bob) = await household()
             _ = await alice.publishAnalysis()
@@ -128,32 +133,45 @@ extension StandardSettingsSuite {
             // 情報は Dropbox に在る: Bob の共有セットの解析データに、Bob の端末の解析が載っている。
             let inShare = await analysis(under: bob.shareRoot, as: alice)
             #expect(inShare[bob.hash("bob-1")] == ["bob:L-bob-1"], "Bob の共有セットに解析が無い（前提が崩れている）")
-            // Alice が取りに行く先は「同じ Dropbox の他の端末の Analysis」と家族フォルダだけ。
-            #expect(!alice.analysisRoots.contains { $0.hasPrefix(bob.shareRoot.lowercased()) })
+            // Alice は同じ Dropbox の他の端末の Analysis と Share の両方から取る（ADR-276）。
+            #expect(alice.analysisRoots.contains(bob.shareRoot.lowercased()),
+                    "Alice が Bob の Share を解析の取り込み先にしていない: \(alice.analysisRoots)")
 
-            withKnownIssue("ADR-276: 同じ Dropbox の別端末が解析した写真は、その端末の解析を取り込むべき") {
-                #expect(alice.receivedTags[bob.hash("bob-1")] == ["bob:L-bob-1"],
-                        "Alice に届いた bob-1 の解析: \(String(describing: alice.receivedTags[bob.hash("bob-1")]))")
-            }
-            // その代わり、Alice の端末は bob-1 を自分で解析する（下の 4 も参照）。
-            let bobCopies = await paths(of: bob.hash("bob-1"), on: alice)
-            var analyzedByAlice = 0
-            for path in bobCopies where await alice.tags.hasAnalysis("C-\(path)") { analyzedByAlice += 1 }
-            #expect(analyzedByAlice >= 1, "Alice が bob-1 を解析しない（解析がどこからも来ないことになる）")
+            // ADR-276 で直した（Bob の Analysis に載るようになり、Alice はそこから取り込む）。
+            #expect(alice.analysisRoots.contains { $0.hasPrefix(bob.backupRoot.lowercased()
+                .replacingOccurrences(of: "/backup", with: "/analysis")) },
+                    "Alice が Bob の Analysis を見つけていない: \(alice.analysisRoots)")
+            #expect(alice.receivedTags[bob.hash("bob-1")] == ["bob:L-bob-1"],
+                    "Alice に届いた bob-1 の解析: \(String(describing: alice.receivedTags[bob.hash("bob-1")]))")
+        }
+
+        @Test("2d. Bob が「写真の解析結果を共有」を使っていなくても、共有セットに入れた写真の解析は Alice に届く")
+        func shareSetAnalysisReachesWithoutPublishing() async {
+            let (_, alice, bob) = await household()
+            // Bob は公開しない（publishAnalysis を呼ばない＝OFF と同じ）。
+            _ = await alice.receive()
+            #expect(!alice.analysisRoots.contains { $0.hasSuffix("/analysis") && $0.contains(Self.bobDevice.id.lowercased()) },
+                    "Bob の Analysis があることになっている（前提が崩れている）: \(alice.analysisRoots)")
+            #expect(alice.receivedTags[bob.hash("bob-1")] == ["bob:L-bob-1"],
+                    "Bob の共有セットの解析が Alice に届かない")
         }
 
         // MARK: - 3. アルバム
 
-        @Test("3. Bob の共有セットは、Alice の「受け取ったアルバム」に出ない")
+        @Test("3. Bob の共有セットが、Alice の「受け取ったアルバム」に出る（提供者は Bob の端末）")
         func setsAreNotReceivedAlbums() async {
             let (_, alice, bob) = await household()
             #expect(bob.share.sets.contains { $0.name == "Trip" }, "Bob のセットが無い（前提）")
             #expect(await paths(of: bob.hash("bob-1"), on: alice).contains { $0.hasPrefix(bob.shareRoot.lowercased()) },
                     "Bob の共有コピーが Dropbox に無い（前提が崩れている）")
             let albums = await alice.receive()
-            withKnownIssue("ADR-276: 同じ Dropbox の別端末の共有セットは、受け取ったアルバムとして見つかるべき") {
-                #expect(albums.contains { $0.name.lowercased() == "trip" }, "Alice に見えるアルバム: \(albums.map(\.name))")
-            }
+            // ADR-276 で直した（以前は家族フォルダからしかアルバムを作らなかった）。
+            let trip = albums.filter { $0.name.lowercased() == "trip" }
+            #expect(trip.count == 1 && trip.first?.photoCount == 1, "Alice に見えるアルバム: \(albums.map(\.name))")
+            // 同期一覧のパスの綴りをそのまま使う（テストは小文字のパスで回している）。
+            #expect(trip.first?.providerName?.lowercased() == Self.bobDevice.folderName.lowercased())
+            #expect(!albums.contains { $0.name.lowercased() == "album" }, "Alice 自身のセットを受け取ったアルバムにした")
+            #expect(await bob.receive().map { $0.name.lowercased() } == ["album"], "Bob に Alice のセットが届かない")
         }
 
         // MARK: - 4. 二重
@@ -161,13 +179,25 @@ extension StandardSettingsSuite {
         /// 表示から外す規則（本番）: 自分の共有ルート（`ShareVisibility`）と、原本が端末にある
         /// 自分の Backup のコピー（`BackupCopyHiding`）。解析の候補から外す規則も同じ
         /// （`AnalysisCandidates.hiddenBackupCopyRefKeys`）。⚠️ どちらも**自分の**ものしか知らない。
+        /// ADR-276 で 3 つ目の規則を足した: 他の端末の共有コピーのうち同じ中身が Share の外にもあるもの
+        /// （`ShareCopyDuplicates` → `BackupCopyHiding.hiddenDuplicates`・残す方が出る画面だけ）。
         private func shown(_ paths: [String], on person: Person) async -> [String] {
             let own = Set(await person.store.allRecordsLite().map { $0.dropboxPath.lowercased() })
             let shareRoot = person.shareRoot.lowercased()
-            return paths.filter { !own.contains($0) && !$0.hasPrefix(shareRoot + "/") }
+            var hashes: [String: String] = [:]
+            for file in await person.account.visibleFiles() where file.hasSuffix(".jpg") {
+                if let hash = await person.account.contentHash(at: file) { hashes[file] = hash }
+            }
+            let duplicates = await person.asCurrentDevice {
+                ShareCopyDuplicates.otherDevicesShareCopies(
+                    hashesByPath: hashes, backupRoot: Person.root,
+                    ownDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+                    ownDeviceID: BackupDeviceIdentity.currentID())
+            }
+            return paths.filter { !own.contains($0) && !$0.hasPrefix(shareRoot + "/") && duplicates[$0] == nil }
         }
 
-        @Test("4. Bob の写真は Alice の端末で 2 枚に見え、2 回解析される（Backup と Share のコピー）")
+        @Test("4. Bob の写真は Alice の端末で 1 枚に見え、1 回だけ解析される（Backup と Share のコピーがあっても）")
         func otherDevicesPhotosAreDuplicated() async {
             let (_, alice, bob) = await household()
             let copies = await paths(of: bob.hash("bob-1"), on: alice)
@@ -181,10 +211,10 @@ extension StandardSettingsSuite {
             #expect(ownCopies.count == 2, "前提: alice-0 も Backup と Share の 2 か所")
             #expect(await shown(ownCopies, on: alice).isEmpty, "自分の写真のコピーが見えている（規則の写しが本番と違う）")
 
-            withKnownIssue("ADR-276: 同じ写真は 1 枚として見え、1 回だけ解析されるべき") {
-                #expect(shownOnAlice.count == 1, "Alice に見える bob-1: \(shownOnAlice)")
-                #expect(analyzedOnAlice <= 1, "Alice が bob-1 を \(analyzedOnAlice) 回解析する")
-            }
+            // ADR-276 で直した。残すのは Share の外（Bob の Backup）のコピー。
+            #expect(shownOnAlice == copies.filter { $0.hasPrefix(bob.backupRoot.lowercased()) },
+                    "Alice に見える bob-1: \(shownOnAlice)")
+            #expect(analyzedOnAlice == 1, "Alice が bob-1 を \(analyzedOnAlice) 回解析する")
         }
     }
 }

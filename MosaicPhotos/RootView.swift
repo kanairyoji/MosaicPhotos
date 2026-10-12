@@ -179,7 +179,7 @@ final class HomeStores {
         // バックアップコピーの二重表示を防ぐ（実機 diagnostics-57/58）。バックアップフォルダは
         // オフロード写真のクラウド代替のため同期対象に入れているが、**端末に原本が有る写真まで
         // 二重に出ていた**。台帳（パス → localIdentifier）を渡し、原本が有るものは隠す。
-        mergedStore.backupCopyIndexProvider = { [weak backupEngine] in
+        mergedStore.backupCopyIndexProvider = { [weak backupEngine, weak dropboxStore] in
             guard let store = await backupEngine?.sharedBackupStore() else { return [:] }
             // ⚠️ 全カラムを取らない（射影クエリ）。重複判定に要るのは 2 列だけで、
             // 起動時に全記録を materialize するとメモリの山になる。
@@ -198,6 +198,17 @@ final class HomeStores {
                 SharedCaptureDateStore().load()
             }).value where index[path] == nil {
                 index[path] = BackupCopyInfo(localIdentifier: nil, captureDate: date)
+            }
+            // ⚠️ **同じ Dropbox の他の端末の共有コピー**は、同じ中身が相手の Backup にもあるので
+            // 1 枚として扱う（ADR-276）。表示（残す方が出る画面だけ）と解析の候補の両方が
+            // この表を読む。判断は `ShareCopyDuplicates`（BackupKit）だけが持つ。
+            if let dropboxStore {
+                let duplicates = await ShareDuplicateCache.shared.duplicates(dropboxStore: dropboxStore)
+                for (path, kept) in duplicates {
+                    index[path] = BackupCopyInfo(localIdentifier: nil,
+                                                 captureDate: index[path]?.captureDate ?? index[kept]?.captureDate,
+                                                 duplicateOf: kept)
+                }
             }
             return index
         }

@@ -62,8 +62,10 @@ public enum AnalysisCandidates {
         guard !index.isEmpty || !prefixes.isEmpty else { return [] }
         return await Task.detached(priority: .utility) {
             let localIDs = Set(localRefKeys.compactMap { PhotoRef.decode($0)?.localIdentifier })
-            let hidden = BackupCopyHiding.hiddenPaths(
+            var hidden = BackupCopyHiding.hiddenPaths(
                 backupCopies: index, localIdentifiers: localIDs)
+            // 同じ Dropbox の他の端末の共有コピーも、残す方を解析するので外す（ADR-276）。
+            hidden.formUnion(BackupCopyHiding.hiddenDuplicates(backupCopies: index, visiblePaths: nil))
             var keys = Set<String>()
             for item in cloudItems {
                 let lower = item.path.lowercased()

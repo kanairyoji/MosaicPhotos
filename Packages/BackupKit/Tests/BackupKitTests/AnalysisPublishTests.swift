@@ -539,3 +539,32 @@ private actor SequencedClient: HTTPClient {
 
     func count() -> Int { requests }
 }
+
+// MARK: - 自分の写真の解析（ADR-276）
+
+@Suite("公開に渡す写真（自分の写真は端末の解析で）")
+struct PublishablePhotosTests {
+
+    @Test("外した Backup のコピーだけ端末写真の refKey になり、鍵（content_hash）は変わらない")
+    func hiddenCopiesUseTheDeviceRefKey() {
+        let photos = AnalysisPublishPlanning.publishablePhotos(
+            cloud: ["/MosaicPhotos/dev/Backup/2020/2020-09/IMG_1.jpg": "h1",
+                    "/MosaicPhotos/dev/Backup/2020/2020-09/IMG_2.jpg": "h2",   // オフロード済み（外していない）
+                    "/Camera Uploads/x.jpg": "h3"],
+            hiddenBackupCopies: ["/mosaicphotos/dev/backup/2020/2020-09/img_1.jpg": "LOCAL-1"])
+        #expect(photos.contains(.init(refKey: "L-LOCAL-1", contentHash: "h1")))
+        #expect(photos.contains(.init(refKey: "C-/MosaicPhotos/dev/Backup/2020/2020-09/IMG_2.jpg", contentHash: "h2")),
+                "外していないコピー（オフロード済み）まで端末写真にした＝クラウドとしての解析を引けなくなる")
+        #expect(photos.contains(.init(refKey: "C-/Camera Uploads/x.jpg", contentHash: "h3")))
+        #expect(photos.count == 3)
+        #expect(photos.filter(\.isOwnPhoto).map(\.contentHash) == ["h1"])
+    }
+
+    @Test("別の端末が名乗っている回は、自分の写真だけ（Dropbox にしか無い写真は名乗った 1 台に任せる）")
+    func onlyOwnPhotosWhileAnotherDevicePublishes() {
+        let photos = [AnalysisPublisher.CloudPhoto(refKey: "L-a", contentHash: "h1"),
+                      AnalysisPublisher.CloudPhoto(refKey: "C-/x.jpg", contentHash: "h2")]
+        #expect(AnalysisPublishPlanning.photosWhileAnotherDevicePublishes(photos).map(\.refKey) == ["L-a"])
+        #expect(AnalysisPublishPlanning.photosWhileAnotherDevicePublishes([]).isEmpty)
+    }
+}

@@ -192,18 +192,22 @@ public struct ShareAnalysisFetch {
         // ⚠️ 自分の端末は**安定 ID**（Keychain・フォルダ名の末尾）で外す（レビュー指摘）。
         // フォルダ名は「表示名-ID」で、表示名は端末名の変更や機種変更の復元で**変わる**。
         // 名前だけで比べていると、名前を変えた瞬間に**自分の解析を自分で取り込み**始める。
-        let ownSuffix = "-" + BackupDeviceIdentity.currentID().lowercased()
+        let ownID = BackupDeviceIdentity.currentID()
         for device in devices where device.isFolder {
-            let name = device.name.lowercased()
-            guard name != ownDeviceFolder.lowercased(), !name.hasSuffix(ownSuffix) else { continue }
+            guard !BackupLayout.isOwnDeviceFolder(device.name, ownDeviceFolder: ownDeviceFolder,
+                                                  ownDeviceID: ownID) else { continue }
             guard let children = await copier.listFolder(path: device.pathLower, token: token) else {
                 listedAll = false
                 continue
             }
-            if let analysis = children.first(where: {
-                $0.isFolder && $0.name.lowercased() == BackupLayout.analysisSubfolder.lowercased()
-            }) {
-                roots.append(analysis.pathLower)
+            // `Analysis`（写真の解析結果を共有・ADR-222）に加えて `Share`（共有セットの解析データ）も
+            // 見る（ADR-276）。同じ Dropbox の別端末が「写真の解析結果を共有」を OFF にしていても、
+            // その端末が共有セットに入れた写真の解析は届く。同じ写真の解析が両方にあっても
+            // 鍵は content_hash なので、取り込みは同じ写真に当たるだけ。
+            for sub in [BackupLayout.analysisSubfolder, BackupLayout.shareSubfolder] {
+                if let folder = children.first(where: { $0.isFolder && $0.name.lowercased() == sub.lowercased() }) {
+                    roots.append(folder.pathLower)
+                }
             }
         }
         return (roots, listedAll)
