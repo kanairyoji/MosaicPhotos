@@ -719,8 +719,11 @@ actor DropboxCacheStore {
         return out
     }
 
-    private func writeIndexSnapshot(_ index: [String: IndexedItem], key: UInt64) {
-        guard !isEphemeral, writtenSnapshotKey != key else { return }
+    /// - Returns: 実際に書いたか（ADR-270）。⚠️ `data.isEmpty`・書き込み失敗でも
+    ///   「書いた」と報せないため。鍵の判定も**ここだけ**が持つ（同じ判定を 2 か所に置かない）。
+    @discardableResult
+    private func writeIndexSnapshot(_ index: [String: IndexedItem], key: UInt64) -> Bool {
+        guard !isEphemeral, writtenSnapshotKey != key else { return false }
         let rows = index.values.map {
             DropboxItemIndexSnapshot.Row(path: $0.path, hash: $0.hash,
                                          captureDate: $0.captureDate, probed: $0.probed)
@@ -730,42 +733,59 @@ actor DropboxCacheStore {
         // ⚠️ 空＝桁に収まらない行があって控えを作らなかった（`encode` のコメント参照）。
         // 0 バイトのファイルを置くと、次の起動が「控えはある」と思って読んで失敗する。
         guard !data.isEmpty else {
-            DropboxLogger.info("itemIndex: 控えを作れなかった（桁に収まらない行がある）")
-            return
+            // ⚠️ **Release でも残す**（ADR-270）。`DropboxLogger.info` は Release で消えるので、
+            // 「控えを一度も書けない端末」が**何も言わずに毎起動 9 秒を払う**ことになる。
+            Diagnostics.mark("itemIndex: 控えを作れなかった（桁に収まらない行がある）")
+            return false
         }
         // ⚠️ `.atomic`（途中で死んでも半端なファイルを残さない＝次の起動が壊れた控えを読む）。
         do {
             try data.write(to: snapshotURL, options: .atomic)
             writtenSnapshotKey = key
             DropboxLogger.info("itemIndex: 控えを書いた（\(rows.count) 行・\(data.count / 1024)KB）")
+            return true
         } catch {
-            DropboxLogger.error("itemIndex: 控えを書けなかった — \(error.localizedDescription)")
+            // ⚠️ Release でも残す（上と同じ理由）。
+            Diagnostics.mark("itemIndex: 控えを書けなかった — \(error.localizedDescription)")
+            return false
         }
     }
 
-    /// **いまの表で控えを書き直す**（ADR-260）。
-    ///
-    /// ⚠️ なぜ要るか: 控えは「表を作り直した回」にしか書いていなかった。ところが
-    /// 撮影日の問い合わせ（ADR-257・1 枠 500 枚）は**表を作り直さず中身だけ直す**ので、
-    /// 鍵（未問い合わせ数を含む）は変わるのに控えは古いまま——
-    /// **次の起動で鍵が合わず、必ず作り直す**。つまり ADR-258 は撮影日が埋まり切るまで
-    /// （実機で約 2 か月）ほとんど効かない。1 枠の終わりに 1 回だけ書き直す。
-    ///
-    /// ⚠️ 表がそろっていないときは**何もしない**（ここで作り始めると 9 秒を払う）。
-    /// ⚠️ 呼ぶのは**枠の中で 1 回**（前面の 3 秒ごとの trickle から呼ぶと 10MB を書き続ける）。
+    /// ディスクの控えが持っている鍵（18 バイトだけ読む・ADR-270）。無い／壊れていれば nil。
+    private func snapshotKeyOnDisk() -> UInt64? {
+        guard let handle = try? FileHandle(forReadingFrom: snapshotURL) else { return nil }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: DropboxItemIndexSnapshot.headerSize)
+        else { return nil }
+        return DropboxItemIndexSnapshot.peekContentVersion(header)
+    }
+
     /// 書き直しの結果。⚠️ **テストはこれを見る**（ログを読むテストは
     /// `Diagnostics.append` が非同期なので揺れる＝ADR-241 の罠）。
     enum SnapshotRefresh: Equatable {
         /// 書いた。
         case wrote
-        /// 鍵が同じなので書くものが無い。
+        /// ディスクの控えが既にいまの鍵＝書くものが無い。
         case upToDate
-        /// 表が載っていない。`hasSnapshot`＝古くなり得る控えが在るか（報せるべきか）。
-        case indexNotLoaded(hasSnapshot: Bool)
+        /// 表が載っていない。`snapshotIsStale`＝**ディスクの控えが古い**か（報せるべきか）。
+        /// ⚠️ 「控えが在るか」ではない——最新の控えを持つ利用者に毎窓ノイズを出さないため。
+        case indexNotLoaded(snapshotIsStale: Bool)
+        /// 書こうとしたが書けなかった（桁に収まらない行・書き込み失敗）。
+        case writeFailed
         /// インメモリの店（控えを使わない）。
         case notApplicable
     }
 
+    /// **いまの表で控えを書き直す**（ADR-260/266/270）。
+    ///
+    /// ⚠️ なぜ要るか: 控えは「表を作り直した回」にしか書いていなかった。ところが
+    /// 撮影日の問い合わせ（ADR-257・1 枠 500 枚）と**差分の取り込み**（`applyDelta`）は
+    /// **表を作り直さず中身だけ直す**ので、鍵は変わるのに控えは古いまま——
+    /// 次の起動で鍵が合わず作り直す（実機 9 秒）。崩す経路が 2 つあるので
+    /// **毎窓・無条件に呼ぶ**（崩れたかはここが鍵で判断する＝ADR-266）。
+    ///
+    /// ⚠️ 表がそろっていないときは**何もしない**（ここで作り始めると 9 秒を払う）。
+    /// ⚠️ 鍵が同じなら書かない（毎窓呼ばれる手なので、16MB を無駄に書き続けない）。
     @discardableResult
     func refreshIndexSnapshotIfReady() -> SnapshotRefresh {
         guard !isEphemeral else { return .notApplicable }
@@ -774,23 +794,26 @@ actor DropboxCacheStore {
         // 枠で `cloudPhotoRefs()` が呼ばれなくなり、公開もオフなら**表が載らないまま**
         // 撮影日だけ進む＝鍵が変わって控えが古くなり、次の起動で 9 秒を払う。
         // それが起きていることは、この 1 行でしか分からない。
-        guard let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision else {
-            // ⚠️ **控えが在るときだけ報せる**（ADR-269・レビューループで見つけた）。
-            // この手は**毎窓**走る（ADR-266）。無条件に記録すると、Dropbox を繋いでいない
-            // 利用者の診断ログに 30 分ごとにこの行が**永久に**並ぶ——しかも
-            // 「書き直せなかった」は失敗のように読める。控えが無い＝古くなり得るものが無い
-            // ＝報せることが何も無い。
-            // 控えが在るのに表が載っていない回だけが、本当に見たい事象（ADR-263 の動機）。
-            let hasSnapshot = FileManager.default.fileExists(atPath: snapshotURL.path)
-            if hasSnapshot {
-                Diagnostics.mark("itemIndex: 控えを書き直せなかった（表が載っていない）")
-            }
-            return .indexNotLoaded(hasSnapshot: hasSnapshot)
-        }
         let key = snapshotKey()
-        guard writtenSnapshotKey != key else { return .upToDate }
-        writeIndexSnapshot(index, key: key)
-        return .wrote
+        guard let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision else {
+            // ⚠️ **控えが「古い」ときだけ報せる**（ADR-269/270・独立レビューの指摘）。
+            // この手は**毎窓**走る（ADR-266）。無条件に記録すると 30 分ごとに永久に並び、
+            // しかも「書き直せなかった」は失敗のように読める——ADR-256 で
+            // `poll error` 37 件が本物のエラーを埋めたのと同じ形を自分で作ることになる。
+            // ⚠️ 判定の材料は「**控えが在るか**」では足りない（最初そう書いた）。
+            // 繋いでいる利用者が、その窓で表を実体化しなかっただけの回は**控えは最新**で、
+            // 報せることが何も無いのにノイズが出ていた。**鍵を 18 バイト覗いて比べる**。
+            let onDisk = snapshotKeyOnDisk()
+            let stale = onDisk != nil && onDisk != key
+            if stale {
+                Diagnostics.mark("itemIndex: 控えが古いまま（表が載っていないので書き直せない）")
+            }
+            return .indexNotLoaded(snapshotIsStale: stale)
+        }
+        // ⚠️ ディスクも確かめる（`Caches` は OS が消す）。覚えだけ見ると、
+        // 消されたのに「最新」と報せて控えを残さないまま窓が終わる。
+        if writtenSnapshotKey == key, snapshotKeyOnDisk() == key { return .upToDate }
+        return writeIndexSnapshot(index, key: key) ? .wrote : .writeFailed
     }
 
     /// テスト用: 表が持っている「訊いた」印（ADR-262）。

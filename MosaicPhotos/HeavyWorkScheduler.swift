@@ -581,9 +581,14 @@ enum HeavyWorkScheduler {
                 limit: limit, deadline: deadline, refreshDisplayList: false)
             let remaining = await stores.dropboxStore.exifProbePendingCount()
             Diagnostics.mark("bgtask: 撮影日時を訊いた probed=\(probed) remaining=\(remaining)")
-            // ⚠️ 控えの書き直しは**独立した手**に移した（ADR-266）。ここで
-            // `if probed > 0` と条件を付けていたので、差分だけが入った晩は書き直されず、
-            // 次の起動で 10.8 万行を作り直していた。
+            // ⚠️⚠️ **訊いた直後に、この手の中で書き直す**（ADR-270・独立レビューの指摘）。
+            // 独立した手（`.refreshCloudIndexSnapshot`）にも置いてあるが、
+            // 窓の輪は `guard !Task.isCancelled else { break }` で抜ける。
+            // `Task.isCancelled` は期限切れだけでなく**前面復帰でも真**になるので、
+            // 訊いたあとに利用者が端末を手に取ると、後続の手まで届かず
+            // **書き直しを丸ごと失う**（その晩の 8.9 秒が戻る）。
+            // 条件は付けない（同じ鍵なら控え側が書かないと判断する）。
+            await stores.dropboxStore.refreshCloudIndexSnapshot()
         case .reconcileBackup:
             // 実体が消えていても台帳は「済み」のままなので、放っておくと気づけない（ADR-166）。
             await stores.backupEngine.reconcileIfDueWeekly()

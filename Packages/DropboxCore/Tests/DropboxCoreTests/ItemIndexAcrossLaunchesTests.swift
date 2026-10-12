@@ -310,7 +310,7 @@ struct ItemIndexAcrossLaunchesTests {
         #expect(!FileManager.default.fileExists(atPath: snapshot.path), "前提: 控えが無い")
 
         let result = await store.refreshIndexSnapshotIfReady()
-        #expect(result == .indexNotLoaded(hasSnapshot: false), """
+        #expect(result == .indexNotLoaded(snapshotIsStale: false), """
                 控えが無いのに「報せる」と判断した（\(result)）
                 ——毎窓走る手なので、繋いでいない利用者のログに永久に並ぶ。
                 """)
@@ -325,13 +325,36 @@ struct ItemIndexAcrossLaunchesTests {
         await store.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
                                removed: [], newCursor: "c1")
         _ = await store.cachedPhotoRefs()       // 控えが書かれる
-        await store.dropContentHashIndex()      // 表だけ捨てる（控えは残る）
+        // ⚠️ **控えを実際に古くする**（鍵を動かす）。捨てるだけでは鍵は一致したままで、
+        // それは「古くない＝報せることが無い」が正しい（最初そこを取り違えてテストが落ちた）。
+        _ = await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: nil,
+                                               latitude: nil, longitude: nil)
+        await store.dropContentHashIndex()      // 表だけ捨てる（控えは残るが古い）
         #expect(FileManager.default.fileExists(
             atPath: fx.dir.appendingPathComponent("item-index.bin").path), "前提: 控えが在る")
 
         let result = await store.refreshIndexSnapshotIfReady()
-        #expect(result == .indexNotLoaded(hasSnapshot: true),
-                "控えが古くなり得るのに黙る判断をした（\(result)）")
+        #expect(result == .indexNotLoaded(snapshotIsStale: true),
+                "控えが古いのに黙る判断をした（\(result)）＝次の起動の 9 秒が誰にも分からない")
+    }
+
+    /// ⚠️ 逆向き（独立レビューの指摘 #3）。**控えが最新なら、表が載っていなくても黙る**。
+    /// 繋いでいる利用者が、その窓で表を実体化しなかっただけの回がこれ
+    /// ——「控えが在るか」で判断していた頃は、ここで毎窓ノイズが出ていた。
+    @Test("控えが最新なら、表が載っていなくても黙る")
+    func refreshIsSilentWhenTheSnapshotIsAlreadyCurrent() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
+                               removed: [], newCursor: "c1")
+        _ = await store.cachedPhotoRefs()       // 控えが書かれる（＝最新）
+        await store.dropContentHashIndex()      // 表だけ捨てる（鍵は動かさない）
+
+        let result = await store.refreshIndexSnapshotIfReady()
+        #expect(result == .indexNotLoaded(snapshotIsStale: false), """
+                控えは最新なのに「古い」と判断した（\(result)）
+                ——毎窓走る手なので、繋いでいる利用者にも永久にノイズが出る。
+                """)
     }
 
     /// ⚠️ 鍵が同じなら書かない（毎窓呼んでも 16MB を書き続けない＝ADR-266 の前提）。

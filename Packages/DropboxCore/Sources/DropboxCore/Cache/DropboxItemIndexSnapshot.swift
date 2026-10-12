@@ -72,6 +72,20 @@ enum DropboxItemIndexSnapshot {
         return out
     }
 
+    /// 前置きの大きさ（magic 4 ＋ 形式の版 2 ＋ 鍵 8 ＋ 件数 4）。
+    static let headerSize = 18
+
+    /// **鍵だけを覗く**（ADR-270）。全体（16MB）を読まずに 18 バイトで足りる。
+    /// ⚠️ 「控えが在るか」ではなく「**控えが古いか**」を判断するために要る
+    /// ——在るだけで報せると、最新の控えを持つ利用者にも毎窓ノイズが出る。
+    static func peekContentVersion(_ header: Data) -> UInt64? {
+        var r = Reader(header)
+        guard let magicBytes = r.bytes(magic.count), Array(magicBytes) == magic,
+              let version: UInt16 = r.read(), version == formatVersion,
+              let contentVersion: UInt64 = r.read() else { return nil }
+        return contentVersion
+    }
+
     // MARK: - 読み込み
 
     /// ⚠️⚠️ **壊れていたら nil**（＝控えが無いのと同じ扱い）。

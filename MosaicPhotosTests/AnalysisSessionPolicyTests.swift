@@ -162,8 +162,10 @@ final class NightlyPlanTests: XCTestCase {
         let steps = labels(.init())
         // 既定の `Inputs` は回線あり・照合の期限は来ていない。共有はその中に並ぶ。
         // ⚠️ `indexSnapshot` は**毎回**入る（ADR-266・崩す経路が 2 つあるので条件にしない）。
-        XCTAssertEqual(steps, ["analysis", "stallCheck", "backup", "generate",
-                               "shareImport", "indexSnapshot", "drain"])
+        // ⚠️⚠️ 位置は **窓を使い切る手より前**（ADR-270）——最初は `drain` の直前に置いていて、
+        // 提供オンの端末では `shareSync` に食われて一度も走らなかった。
+        XCTAssertEqual(steps, ["analysis", "stallCheck", "indexSnapshot", "backup",
+                               "generate", "shareImport", "drain"])
         XCTAssertTrue(steps.firstIndex(of: "analysis")! < steps.firstIndex(of: "generate")!,
                       "generate を先に await すると窓を食い潰して顔/埋め込みが開始すらしない（Fix C）")
         XCTAssertTrue(steps.firstIndex(of: "backup")! < steps.firstIndex(of: "generate")!,
@@ -256,15 +258,37 @@ final class NightlyPlanTests: XCTestCase {
     }
 
     /// ⚠️ 位置は `drain` の**前**（drain は期限まで待つので、後ろに置くと順番が回ってこない）。
-    func testIndexSnapshotRefreshComesBeforeDrain() {
-        let steps = labels(.init(captureDateBacklog: 1000))
+    /// ⚠️⚠️ **窓を使い切る手より前に置く**（ADR-270・独立レビューの指摘で直した）。
+    ///
+    /// 最初は `drain` の直前＝`shareSync` の**後ろ**に置いていた。だが `NightlyPlan` は
+    /// 2 か所で「`shareSync` は窓を使い切る」「後ろに置いた手は一度も順番が回ってこない」と
+    /// 書いている（それを理由に公開と撮影日を前へ出した）。提供オンでコピー待ちのある端末では
+    /// **この手が一度も走らず、ADR-266 が何もしない**。
+    ///
+    /// ⚠️ **私の最初のテストはこれを見られなかった**——`Inputs.provideShareEnabled` の既定が
+    /// `false` で、どちらの assert にも `shareSync` が現れなかったから。
+    /// **既定値で隠れる並びは、既定を変えたテストでしか見えない。**
+    func testIndexSnapshotRefreshComesBeforeTheStepsThatEatTheWindow() {
+        // 提供オン＝`shareSync` が並ぶ構成（実機でコピー待ち 9,265 件・1 回 500 件）。
+        let steps = labels(.init(provideShareEnabled: true, captureDateBacklog: 1000))
         guard let snap = steps.firstIndex(of: "indexSnapshot"),
-              let drain = steps.firstIndex(of: "drain"),
-              let probe = steps.firstIndex(where: { $0.hasPrefix("captureDates") }) else {
+              let sync = steps.firstIndex(of: "shareSync"),
+              let backup = steps.firstIndex(of: "backup"),
+              let generate = steps.firstIndex(of: "generate"),
+              let drain = steps.firstIndex(of: "drain") else {
             return XCTFail("手が揃っていない: \(steps)")
         }
-        XCTAssertLessThan(snap, drain, "drain の後ろに置くと順番が回ってこない: \(steps)")
-        XCTAssertLessThan(probe, snap, "訊く前に書き直しても意味が無い（訊いた結果を含めたい）")
+        XCTAssertLessThan(snap, sync,
+                          "反映より後ろだと一度も順番が回ってこない＝ADR-266 が何もしない: \(steps)")
+        XCTAssertLessThan(snap, backup, "バックアップも窓を使い切る（毎窓・上限なし）: \(steps)")
+        XCTAssertLessThan(snap, generate, "生成も長い（550〜880MB・数十秒）: \(steps)")
+        XCTAssertLessThan(snap, drain, "drain は期限まで待つ: \(steps)")
+    }
+
+    /// ⚠️ 回線は要らない（ローカルの書き出しだけ）。回線の網の中に入れてはいけない。
+    func testIndexSnapshotRefreshDoesNotNeedTheNetwork() {
+        XCTAssertTrue(labels(.init(networkAllowed: false)).contains("indexSnapshot"),
+                      "回線と関係ないのに回線で止めている")
     }
 
     /// ADR-222: 解析の公開も回線の中。設定がオフなら 1 バイトも上げない。
