@@ -483,11 +483,31 @@ enum HeavyWorkScheduler {
             await perform(analysis, stores: stores)
             guard !Task.isCancelled else { return }
 
-            let rest = NightlyPlan.remainingSteps(await gatherInputs(stores))
+            let inputs = await gatherInputs(stores)
+            let rest = NightlyPlan.remainingSteps(inputs)
             RunTimeline.record("window plan: " + ([analysis] + rest).map(\.label).joined(separator: "→"))
+            var ran: Set<NightlyPlan.Kind> = [analysis.kind]
             for step in rest {
                 guard !Task.isCancelled else { break }
                 await perform(step, stores: stores)
+                ran.insert(step.kind)
+            }
+            // ⚠️⚠️ **ゲートの効きを見るログ**（ADR-250: ゲートを足したら効いた回数が見える
+            // ログを必ず付ける）。`everyWindow` と宣言した手に順番が回らなかったら 1 行残す。
+            // これが無いと「毎窓のはずの手が実は毎晩飢えている」を**誰も気づけない**
+            // ——`NightlyWindowSimulationTests` は模型の中でしか見られないので、
+            // **実機と模型が同じ定義で話せる**ようにここで測る（ADR-274 追補 2）。
+            // ⚠️ `Task.isCancelled` は期限切れでも**前面復帰でも**真になるので、
+            // この行は「飢餓」と「利用者が端末を触った」の両方で出る。数で見る。
+            // ⚠️ 判断は本番の `requiredEveryWindowKinds` に寄せてある（模型と同じ出典）。
+            //    ここに条件を書き足さない——照合の週の免除などが片方だけに入る（ADR-196）。
+            let starved = NightlyPlan
+                .requiredEveryWindowKinds(in: [analysis] + rest,
+                                          networkAllowed: inputs.networkAllowed)
+                .subtracting(ran)
+            if !starved.isEmpty {
+                Diagnostics.mark("bgtask: 毎窓の手に順番が回らなかった: "
+                                 + starved.map(\.rawValue).joined(separator: ","))
             }
             // ⚠️ **ここでバックアップを止めない**（レビュー 11 周目）。`Task.isCancelled` は
             // 期限切れでも**前面復帰でも**真になるので、ここで止めると

@@ -67,7 +67,9 @@ enum NightlyPlan {
         /// バックアップ台帳の週次照合の期限が来ているか（ADR-206）。
         /// ⚠️ **手順の位置がこれで変わる**（来ている週だけバックアップの前に出す）。
         var backupReconcileDue: Bool
-        /// 同じ Dropbox の人へ解析を公開するか（ADR-222・既定 ON）。
+        /// 同じ Dropbox の人へ解析を公開するか（ADR-222）。
+        /// ⚠️ **既定は OFF**（`ShareSettingsKeys.publishAnalysisDefault == false`）。
+        /// 以前ここと早見表に「既定 ON」と書いてあった（ADR-222 追補 3 で変えたのに直し忘れ）。
         var publishAnalysisEnabled: Bool
         /// 撮影日時を**まだ訊いていない**クラウド写真の枚数（ADR-257）。
         /// ⚠️ 材料の約束: `exifProbedAt == nil` の `fetchCount` ＝**訊いていない**ものだけ。
@@ -269,16 +271,51 @@ enum NightlyPlan {
         /// ⚠️ これは**製品の要件**で、性質（`cost`）から導けない
         /// ——「毎窓バックアップする」（ADR-180）「毎窓控えを書き直す」（ADR-266）は
         /// 速さの話ではなく「そうでないと機能が成り立たない」という決めだから。
-        /// ⚠️ **この値を読むのは `NightlyWindowSimulator`（テスト）だけ**。
-        /// 窓を模して回し、**実測で最短の窓（21 秒）でも順番が回るか**を確かめる。
-        /// 並びの誤り（ADR-270）も性質の誤り（ADR-273）も、ここで飢餓として現れる。
-        var everyWindow: Bool = false
+        /// ⚠️ 逆に**速さの話はここに入れない**。撮影日時（ADR-257）は
+        /// 「2 か月で一巡する**見込み**」＝throughput なので `false` にして、
+        /// 「残作業が減り続ける」側で測る（ADR-274 追補 2・独立レビューの指摘で降格）。
+        /// ⚠️⚠️ **既定値を置かない**（ADR-196）——置いた版では 11 の手のうち 6 つが
+        /// 「答えずに済む」ことになり、実際その穴から `publishAnalysis` が漏れた。
+        /// ⚠️ 読み手は 2 つ——`requiredEveryWindowKinds` 経由で
+        /// **本番の飢餓ログ**（`HeavyWorkScheduler`・ADR-250 の「効いた回数が見えるログ」）と
+        /// `NightlyWindowSimulator`（テスト）。
+        /// ⚠️ 当初は「読むのはテストだけ」にしていたが、**本番が読まない宣言は
+        /// 実態とずれても検出できない**（ADR-273 で消した `needsNetwork` と同じ形）。
+        /// ⚠️ ただし
+        /// **「`after` の相手が上限なしで、同じ窓に居る」ときは免除**される
+        /// （＝照合の週のバックアップ・ADR-206 が認めた遅れ）。免除は `after` と `cost` から
+        /// **導出**するので、ここに例外のリストを書き足さない（ADR-196）。
+        var everyWindow: Bool
     }
 
+    #if DEBUG
+    /// ⚠️ **テスト専用の差し替え**（Release には存在しない）。
+    /// `BackgroundYield.environmentOverrideForTesting` と同じ作法で、
+    /// `NightlyWindowSimulator.withSpecOverride` のスコープからだけ入れる。
+    ///
+    /// ⚠️⚠️ **`spec(for:)` の中に置くのが要点**。模型の側に「宣言を読む別の口」を作った版では、
+    /// 偽りが `order` / `applicableSteps` に**届かず並びが変わらなかった**ため、
+    /// 「過去の欠陥を再現する」はずのテストが**別の仕組みで通っていた**
+    /// （ADR-274 追補 2・独立レビュー 2 件が同時に指摘）。宣言を読む口は 1 つ（ADR-196）。
+    static var specOverrideForTesting: ((Kind) -> Spec?)?
+    #endif
+
     static func spec(for kind: Kind) -> Spec {
+        #if DEBUG
+        if let overridden = specOverrideForTesting?(kind) { return overridden }
+        #endif
+        return declaredSpec(for: kind)
+    }
+
+    /// 宣言の**唯一の出典**。⚠️ 直接呼ぶのは `spec(for:)` だけ
+    /// （ここを直接読むと、テストの偽りが届かない口がもう 1 つできる）。
+    private static func declaredSpec(for kind: Kind) -> Spec {
         switch kind {
         case .analysis:
             // 投げっぱなし（`kick` は背景の Task を起こすだけ）。他の手の裏で走らせたい。
+            // 毎窓（解析が進まなければアプリの売りが成り立たない）。⚠️ ただし `phase: .kick` で
+            // **常に先頭**なので、飢餓としては原理的に出ない——「宣言したから守られている」のではなく
+            // 「段で守られている」。模型側は宣言の集合を**そのまま**assert する（数ではなく集合）。
             return Spec(phase: .kick, cost: .nonblocking, dropWhenOffline: false, everyWindow: true)
         case .stallCheck:
             // 毎回（ADR-87）。「動くべきなのに動いていない」を見つける唯一の経路。
@@ -289,7 +326,8 @@ enum NightlyPlan {
             return Spec(cost: .bounded, dropWhenOffline: false, everyWindow: true)
         case .reconcile:
             // Dropbox の全件一覧（ADR-206）＝上限なし。回線が無ければやることが無い。
-            return Spec(cost: .unbounded, dropWhenOffline: true)
+            // 週 1 なので毎窓ではない（内部で期限を見る）。
+            return Spec(cost: .unbounded, dropWhenOffline: true, everyWindow: false)
         case .backup:
             // 毎窓・1 回あたりの上限なし＝窓の期限が上限（ADR-180）。
             // ⚠️ **照合の後**——`.startBackup` は `isRunning` を立て、照合は
@@ -305,23 +343,43 @@ enum NightlyPlan {
         case .generate:
             // 550〜880MB・数十秒（`minimumGenerateMB` が在る理由）。
             // ⚠️ **回線が無くても並べる**（クラウド一覧はキャッシュから読める・内部で判定）。
-            return Spec(cost: .unbounded, dropWhenOffline: false)
+            // 毎窓ではない——ADR-163 が「`maxGenerateDeferrals + 1` 窓以内に順番が来る」
+            // という**順番の公平さ**で保証する（毎窓は要件でない）。
+            return Spec(cost: .unbounded, dropWhenOffline: false, everyWindow: false)
         case .shareImport:
             // 共有ルート／家族フォルダごとに再帰一覧＋コピー＝上限なし。
-            return Spec(cost: .unbounded, dropWhenOffline: true)
+            // 毎窓ではない（ADR-166 の要件は「開かない日が続いても夜に走る」）。
+            return Spec(cost: .unbounded, dropWhenOffline: true, everyWindow: false)
         case .publishAnalysis:
             // 1 回 8 シャード（ADR-222）＝上限つき。
             // ⚠️ **取り込みの後**——受け取った解析が台帳に入ってから公開したい（意味の順序）。
-            return Spec(cost: .bounded, dropWhenOffline: true, after: [.shareImport])
+            // ⚠️⚠️ `everyWindow: false` は**消極的な決め**。ADR-222 追補は「反映の後では
+            // 一度も順番が回ってこなかった」ので取り込みの後・反映の前へ移した＝要件は
+            // 「ふだん順番が回る」。だが `after: [.shareImport]` が**上限なしの手の後ろ**へ
+            // 連れて行くので、構造的には飢え得る（模型では 21〜284 秒のどの窓でも走らない）。
+            // ⚠️ ここを `true` にすると模型は落ちる。それは**本物の設計の問いで、実機でしか
+            // 答えが出ない**（`shareImport` は空なら即返るので、模型の悲観が過剰かもしれない）。
+            // 答えが出るまでの間、宣言を偽らずに「上限つきなのに上限なしの後ろに居る唯一の手」
+            // として`NightlyWindowSimulationTests` が**集合で固定**する（新しく増えたら落ちる）。
+            // 実機の手順は `device-verification.md` 章 J-2。
+            return Spec(cost: .bounded, dropWhenOffline: true, after: [.shareImport],
+                        everyWindow: false)
         case .captureDates:
             // 500 枚かつ 40 秒（ADR-257）＝上限つき。1 枚 1 往復なので回線が無ければ何も進まない。
-            // 残りがあるうちは**毎窓**（2 か月かけて一巡する前提が崩れる）。
-            return Spec(cost: .bounded, dropWhenOffline: true, everyWindow: true)
+            // ⚠️ `everyWindow: false`——ADR-257 が述べたのは「1 晩 3〜4 枠で 2 か月ほどで
+            // 一巡する**見込み**」＝throughput で、「毎窓でないと機能が成り立たない」ではない
+            // （独立レビューの指摘で降格）。要件は「残作業が減り続ける」側で測る。
+            // ⚠️ この手は**上限つきなのに 40 秒**＝実測最短の窓（21 秒）より長い唯一の手。
+            // 後ろに置かれた毎窓の手は実際に飢えるが、並びのテストは `windowEating` に
+            // この手が入っていないので素通りする——模型がそこを見る（ADR-274 追補 2）。
+            return Spec(cost: .bounded, dropWhenOffline: true, everyWindow: false)
         case .shareSync:
             // 実機でコピー待ち 9,265 件・1 回 500 件（ADR-222 追補）＝窓を使い切る。
-            return Spec(cost: .unbounded, dropWhenOffline: true)
+            // 窓を使い切るのが仕事なので毎窓ではない。
+            return Spec(cost: .unbounded, dropWhenOffline: true, everyWindow: false)
         case .drain:
-            return Spec(phase: .drain, cost: .unbounded, dropWhenOffline: false)
+            // 残作業が続く限り待つ＝最後の段。毎窓ではない（順番が回れば回るだけ）。
+            return Spec(phase: .drain, cost: .unbounded, dropWhenOffline: false, everyWindow: false)
         }
     }
 
@@ -387,6 +445,39 @@ enum NightlyPlan {
     /// 解析を起こしたあとの手順。並びは `order(_:)` が性質の宣言から導く（ADR-272）。
     static func remainingSteps(_ i: Inputs) -> [Step] {
         order(applicableSteps(i))
+    }
+
+    /// この窓で**順番が回らなければならない**手（`everyWindow` の宣言から導く）。
+    ///
+    /// ⚠️⚠️ **「計画に載った手」から引かない。** 手が計画から黙って落ちたら飢餓に数えられず、
+    /// ADR-266（条件つきで落ちる）と ADR-273 #3（段のリテラル配列から落ちる）が
+    /// まるごと死角になる——`out.append(.refreshCloudIndexSnapshot)` を 1 行消すと
+    /// 「計画基準」の版は黙って green になった（ADR-274 追補 2・独立レビューの実証）。
+    /// だから**宣言から導いて**、そこから走った手を引く。
+    ///
+    /// ⚠️ `after` の相手が**上限なしで同じ窓に居る**なら免除する——照合の週は
+    /// バックアップの**開始が遅れる**（ADR-206 が認めた 52 回に 1 回の代償）。
+    /// 免除は `after` と `cost` から**導出**する（例外のリストを書かない・ADR-196）。
+    ///
+    /// ⚠️⚠️ **読み手は 2 つ**——`HeavyWorkScheduler` の飢餓ログ（実機）と
+    /// `NightlyWindowSimulator`（テスト）。だからここが**唯一の出典**でなければならない。
+    /// 以前は模型の側だけに同じ導出を持っていて、**本番のログには照合週の免除が無く**、
+    /// 「毎窓なのに回らなかった」を照合の週に毎回出すところだった（ADR-196 の形）。
+    static func requiredEveryWindowKinds(in plan: [Step], networkAllowed: Bool) -> Set<Kind> {
+        let planned = Set(plan.map(\.kind))
+        var required: Set<Kind> = []
+        for kind in Kind.allCases {
+            let s = spec(for: kind)
+            guard s.everyWindow else { continue }
+            // 回線が無い窓で落とす手は、落ちていて正しい。
+            if !networkAllowed, s.dropWhenOffline { continue }
+            let blockedByPrerequisite = s.after.contains { prerequisite in
+                planned.contains(prerequisite) && spec(for: prerequisite).cost == .unbounded
+            }
+            if blockedByPrerequisite { continue }
+            required.insert(kind)
+        }
+        return required
     }
 
     /// この窓で**当てはまる**手（順不同）。

@@ -101,7 +101,14 @@ final class NightlyPlanOrderingTests: XCTestCase {
     /// 40 秒の撮影日時の問い合わせが前に出て、短い窓（実測 21 秒）では
     /// バックアップが**その晩まったく進まない**ところだった。
     /// **「仕事が長い」と「手が窓を塞ぐ」は別**。
-    private static let windowEating = ["generate", "shareSync", "reconcile", "drain"]
+    /// ⚠️⚠️ **宣言から導く**（手で並べない・ADR-274 追補 2）。
+    /// 以前は文字列の一覧を手で持っていて、`backup` を入れてしまったのが ADR-273 だった。
+    /// その反省で `backup` は外したが、**今数えると `shareImport` が漏れていた**
+    /// ——`.unbounded` と宣言されているのに一覧に無く、この制約の検査から外れていた
+    /// （独立レビューの指摘）。手で持つ一覧は、直した直後からまた古くなる。
+    private static var windowEatingKinds: [NightlyPlan.Kind] {
+        NightlyPlan.Kind.allCases.filter { NightlyPlan.spec(for: $0).cost == .unbounded }
+    }
 
     /// ⚠️⚠️ **ADR-270 で踏んだ制約**。控えの書き直しは軽く・回線も要らないので、
     /// 窓を使い切る手より**前**でなければ、提供オンの端末で一度も走らない。
@@ -111,10 +118,12 @@ final class NightlyPlanOrderingTests: XCTestCase {
             guard let snap = steps.firstIndex(of: "indexSnapshot") else {
                 return XCTFail("控えの書き直しが手順に無い [\(name)]: \(steps)")
             }
-            for prefix in Self.windowEating {
-                guard let other = index(steps, startingWith: prefix) else { continue }
-                XCTAssertLessThan(snap, other, """
-                    控えの書き直しが「\(prefix)」より後ろにある＝一度も順番が回ってこない。
+            let kinds = NightlyPlan.steps(inputs).map(\.kind)
+            for eating in Self.windowEatingKinds {
+                guard let other = kinds.firstIndex(of: eating) else { continue }
+                let snapByKind = kinds.firstIndex(of: .indexSnapshot) ?? snap
+                XCTAssertLessThan(snapByKind, other, """
+                    控えの書き直しが「\(eating)」より後ろにある＝一度も順番が回ってこない。
                     [\(name)]
                     \(steps)
                     """)
@@ -149,11 +158,13 @@ final class NightlyPlanOrderingTests: XCTestCase {
             guard let backup = steps.firstIndex(of: "backup") else {
                 return XCTFail("バックアップの手が無い [\(name)]: \(steps)")
             }
-            for prefix in Self.windowEating where prefix != "reconcile" {
-                guard let blocking = index(steps, startingWith: prefix) else { continue }
+            let kinds = NightlyPlan.steps(inputs).map(\.kind)
+            let backupByKind = kinds.firstIndex(of: .backup) ?? backup
+            for eating in Self.windowEatingKinds where eating != .reconcile {
+                guard let blocking = kinds.firstIndex(of: eating) else { continue }
                 checked += 1
-                XCTAssertLessThan(backup, blocking, """
-                    バックアップが「\(prefix)」より後ろ＝短い窓ではその晩 1 枚も進まない。
+                XCTAssertLessThan(backupByKind, blocking, """
+                    バックアップが「\(eating)」より後ろ＝短い窓ではその晩 1 枚も進まない。
                     [\(name)] \(steps)
                     """)
             }

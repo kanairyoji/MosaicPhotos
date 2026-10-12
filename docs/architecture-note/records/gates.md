@@ -366,9 +366,27 @@
     `generateDeferrals` / `provideShareEnabled` / `publishAnalysisEnabled`
     - 約束: `availableMB` は generate のピーク（実測 550〜880MB）と比べる値であること
     - テスト: `NightlyPlanTests`
-- 規則のテスト: `NightlyPlanTests`（順序は**実機の失敗が出典**＝窓の食い潰し・
+  - ⚠️⚠️ **各手の宣言**（`spec(for:)` の `phase` / `cost` / `dropWhenOffline` / `after` /
+    `everyWindow`）も材料（ADR-272/273/274）。`order(_:)` が `phase`/`cost`/`after` を、
+    飢餓の検査が `everyWindow` を消費する。
+    - 約束 1: `cost` は「**手が返るまで**」で、仕事の長さではない（ADR-273）。
+      ⚠️ 投げっぱなしの手（`startBackup`）を「仕事が長いから」と `.unbounded` と書くと、
+      導出が窓を食う束へ移して**その晩 1 枚も進まない**。
+      ⚠️ 既知の破れ: `.analysis` は `.nonblocking` だが `await kick(.window)` は
+      8.5 万件の列挙を待つ（実測 11〜38 秒）＝**宣言が実態より小さい**。
+      模型は宣言を信じるので見えない（`device-verification.md` 章 J-3 で実機確認）。
+    - 約束 2: `everyWindow` は**毎窓走らねばならない手を一つも落としていない**こと。
+      ⚠️ 既定値を置かない（ADR-196）。既定があった版では 11 のうち 6 つが答えずに済み、
+      その穴から `publishAnalysis` が漏れた。
+    - テスト: `NightlyPlanOrderingTests`（並び）/ `NightlyWindowSimulationTests`
+      （飢餓・宣言の集合・免除が全構成で効いていないこと・模型の歯）
+- 規則のテスト: `NightlyPlanTests` ＋ `NightlyPlanOrderingTests` ＋
+  `NightlyWindowSimulationTests`（順序は**実機の失敗が出典**＝窓の食い潰し・
   生成と解析の共倒れ・バックアップの飢餓。変えるときはここを見る）
-- 効きを見るログ: 窓の手順ラベル（`analysis` / `generate` / `publishAnalysis` / `backup` …）
+- 効きを見るログ: 窓の手順ラベル（`analysis` / `generate` / `publishAnalysis` / `backup` …）＋
+  ⚠️ **`bgtask: 毎窓の手に順番が回らなかった: …`**（ADR-250/274 追補 2）。
+  `everyWindow` の宣言が実機で守られているかは、この行の**数**でしか分からない
+  （`Task.isCancelled` は前面復帰でも真なので、ときどき出るのは正常・毎晩なら設計の問題）。
 
 ---
 
