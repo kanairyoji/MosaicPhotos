@@ -59,7 +59,8 @@ struct DropboxHubView: View {
                                          },
                                          onTakeOverPublishing: analysisPublisher.map { publisher in
                                              { publisher.takeOverPublishing() }
-                                         })
+                                         },
+                                         onUploadAwaited: { backupEngine.startUploadingForSharing() })
                         } label: {
                             Label("Cloud Sharing", systemImage: "icloud.and.arrow.up")
                         }

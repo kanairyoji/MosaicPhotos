@@ -45,19 +45,89 @@ import DropboxCore
 ///   非同期ジョブ（diagnostics-52 の暴走の引き金そのもの）。
 /// - `rateLimitEveryNthRequest`: 429（diagnostics-54 で疑われたレート制限）。
 /// - `failCopyPaths`: 特定のコピーだけ失敗させる（部分失敗の扱いを検証）。
+/// - `setMaxConcurrentWrites`: 同じ名前空間への同時書き込みが多すぎると 429
+///   `too_many_write_operations`（diagnostics-74 の「背景転送の最中にメタデータが全滅」）。
+///
+/// ## 本物と同じに振る舞うこと（2026-10-12 に強化・ADR-275）
+/// 偽物が本物と違うと、**その違いの上に乗った経路はテストされない**。以下は本物に合わせてある:
+/// - **日付はファイルごと**: `client_modified` は upload の引数（無ければ受けた時刻）、
+///   `copy_batch` のコピーは**コピーした時刻**（共有の日付が「反映した時刻」に落ちる実フィードバック
+///   の形）。`server_modified` は書いた時刻。時刻はサーバーの時計（書くたびに 1 秒進む）。
+/// - `client_modified` は**秒精度の UTC だけ**を受け付ける（小数秒は 400）。
+/// - **rev は書くたびに新しい**（同じパスに書き直すと変わる）。同じ中身の upload は
+///   **新しい版を作らない**（rev も差分も変わらない）。
+/// - **コピー・削除・移動・フォルダ作成も差分に載る**（以前は upload だけだった）。
+/// - コピー先・フォルダ作成の**中間フォルダは自動で作られる**。
+/// - `copy_batch_v2` / `delete_batch` は **1 回 1,000 件まで**（超えると 400）。
+/// - `get_metadata` はファイル／フォルダで形が違い、`include_media_info` なら撮影日時・撮影地を返す。
+/// - ファイルのパスを `list_folder` すると `path/not_folder`。
 public actor FakeDropboxServer: HTTPClient {
 
     public struct Entry: Equatable {
-        var contentHash: String
-        var isFolder: Bool
-        var rev: String
+        public internal(set) var contentHash: String
+        public internal(set) var isFolder: Bool
+        public internal(set) var rev: String
         /// 表示名（**元の大文字小文字を保つ**）。本物の `name` は path_lower と違う。
         public var displayName: String = ""
         /// ファイルサイズ（`get_metadata` が返す）。
         /// ⚠️ **本物と同じ値を返すこと**。ここを固定値にしていたため、オフロードの照合
         /// （hash ＋ **サイズ**の完全一致）がこの偽サーバーでは必ず落ち、オフロードの流れを
         /// 一度も通せなかった（「印を書いて、読み直す」の検証ができなかった）。
-        var size: Int = 1
+        public internal(set) var size: Int = 1
+        /// `client_modified`（ファイルだけ）。upload の引数、無ければ受けた時刻。
+        public var clientModified: Date?
+        /// `server_modified`（ファイルだけ）。書いた時刻。
+        public var serverModified: Date?
+        /// `get_metadata(include_media_info)` が返す撮影情報（seed で与える）。
+        public var mediaInfo: MediaInfo?
+    }
+
+    /// 写真の撮影情報（本物は EXIF から作る）。⚠️ **一覧系 API は返さない**（2019-12-02 以降）。
+    public struct MediaInfo: Equatable, Sendable {
+        public var timeTaken: Date?
+        public var latitude: Double?
+        public var longitude: Double?
+        public init(timeTaken: Date? = nil, latitude: Double? = nil, longitude: Double? = nil) {
+            self.timeTaken = timeTaken
+            self.latitude = latitude
+            self.longitude = longitude
+        }
+    }
+
+    // MARK: - サーバーの時計と版
+
+    /// サーバーの時計。書き込みのたびに 1 秒進む（同じ時刻のファイルを作らない＝並びが決まる）。
+    private var clock = Date(timeIntervalSince1970: 1_700_000_000)
+    private func stamp() -> Date {
+        clock = clock.addingTimeInterval(1)
+        return clock
+    }
+    /// いまのサーバー時刻。
+    public func now() -> Date { clock }
+    /// 時計を進める（「1 日後の反映」を作る）。
+    public func advanceClock(by seconds: TimeInterval) { clock = clock.addingTimeInterval(seconds) }
+
+    private var revCounter = 0
+    /// 新しい版。本物の rev は 16 進の不透明な文字列で、**書くたびに変わる**。
+    /// ⚠️ 以前は `"r\(files.count)"` で、同じパスを書き直しても同じ rev になり得た
+    /// （rev の差分で取り直す受信側の経路が、偽物の上では「変わっていない」に見える）。
+    private func nextRev() -> String {
+        revCounter += 1
+        return String(format: "%09x0000000001", revCounter)
+    }
+
+    private static let timestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+    private static func timestamp(_ date: Date) -> String { timestampFormatter.string(from: date) }
+
+    /// 本物が受け付ける `client_modified` の形（`%Y-%m-%dT%H:%M:%SZ`・小数秒なし）。
+    private static func parseClientModified(_ raw: String) -> Date? {
+        guard raw.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"#, options: .regularExpression) != nil
+        else { return nil }
+        return timestampFormatter.date(from: raw)
     }
 
     /// path_lower → エントリ。
@@ -298,14 +368,20 @@ public actor FakeDropboxServer: HTTPClient {
     public func expireCursors() { cursorsExpired = true }
     public func restoreCursors() { cursorsExpired = false }
 
-    /// B5: 一覧が返す `server_modified` をこの時刻にする（端末との時計のずれを作る）。
-    public private(set) var serverModified = Date(timeIntervalSince1970: 1_700_000_000)
-    public func setServerModified(_ date: Date) { serverModified = date }
-    private var serverModifiedString: String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.string(from: serverModified)
-    }
+    /// B5: サーバーの時計をこの時刻にする（端末との時計のずれを作る）。以後の書き込みに効く。
+    public func setServerModified(_ date: Date) { clock = date }
+
+    /// 同じ名前空間へ同時に走ってよい書き込みの数（0＝無制限）。超えた分は 429
+    /// `too_many_write_operations`。⚠️ 応答の遅延（`setResponseDelay`）と組み合わせて使う
+    /// ——遅延が無いと要求は 1 つずつ終わるので、同時にならない。
+    public private(set) var maxConcurrentWrites = 0
+    public func setMaxConcurrentWrites(_ value: Int) { maxConcurrentWrites = max(0, value) }
+    private var inFlightWrites = 0
+    private static let writeEndpoints = ["files/upload", "copy_batch_v2", "delete_batch",
+                                         "files/move_v2", "create_folder_v2"]
+
+    /// 1 回のバッチに載せられる件数（本物は 1,000）。
+    public static let maxBatchEntries = 1_000
 
     /// B2: すべての応答をこのミリ秒だけ遅らせる。
     public private(set) var responseDelay = 0
@@ -362,24 +438,34 @@ public actor FakeDropboxServer: HTTPClient {
         }
     }
 
-    public func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1) {
+    public func seed(_ path: String, hash: String, isFolder: Bool = false, size: Int = 1,
+                     clientModified: Date? = nil, mediaInfo: MediaInfo? = nil) {
         ensureParents(of: path)
+        let at = stamp()
         files[path.lowercased()] = Entry(contentHash: hash, isFolder: isFolder,
-                                         rev: "r\(files.count)",
+                                         rev: isFolder ? "" : nextRev(),
                                          displayName: (path as NSString).lastPathComponent,
-                                         size: size)
+                                         size: size,
+                                         clientModified: isFolder ? nil : (clientModified ?? at),
+                                         serverModified: isFolder ? nil : at,
+                                         mediaInfo: mediaInfo)
     }
 
     /// 中身つきでファイルを置く（他端末がアップロードした解析データ等を模す）。content_hash は本物と同じ計算。
-    public func upload(path: String, data: Data) {
+    public func upload(path: String, data: Data, clientModified: Date? = nil) {
         let key = path.lowercased()
         ensureParents(of: path)
         note(key, deleted: false)
         bodies[key] = data
+        let at = stamp()
         files[key] = Entry(contentHash: DropboxContentHash.hash(of: data), isFolder: false,
-                           rev: "r\(files.count)",
-                           displayName: (path as NSString).lastPathComponent, size: data.count)
+                           rev: nextRev(),
+                           displayName: (path as NSString).lastPathComponent, size: data.count,
+                           clientModified: clientModified ?? at, serverModified: at)
     }
+
+    /// そのパスのいまの状態（rev・日付を確かめるテスト用）。
+    public func entry(at path: String) -> Entry? { files[path.lowercased()] }
 
     /// 外部（他端末・Dropbox の Web UI）からの削除を模す。
     public func remove(_ path: String) {
@@ -475,6 +561,19 @@ public actor FakeDropboxServer: HTTPClient {
                 truncate = true
             }
         }
+        // 同時書き込みの上限（本物は名前空間の書き込みを直列化し、溢れると 429）。
+        let isWrite = Self.writeEndpoints.contains { endpoint.contains($0) }
+        if isWrite, maxConcurrentWrites > 0, inFlightWrites >= maxConcurrentWrites {
+            let body = Data(#"{"error_summary":"too_many_write_operations/.."}"#.utf8)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil,
+                                           headerFields: ["Retry-After": "1"])!
+            exchanges.append(Exchange(endpoint: endpoint, path: path, status: 429,
+                                      sentBytes: (request.httpBody ?? Data()).count,
+                                      receivedBytes: body.count))
+            return (body, response)
+        }
+        if isWrite { inFlightWrites += 1 }
+        defer { if isWrite { inFlightWrites -= 1 } }
         var result = try await route(request)
         if truncate {
             // 「HTTP 200 なのに中身が途中で切れている」＝hash 照合が働くかを見るため。
@@ -563,8 +662,11 @@ public actor FakeDropboxServer: HTTPClient {
         }
         let key = parsed.path.lowercased()
         if files[key] != nil { return resp(409, #"{"error_summary":"path/conflict/folder/"}"#) }
-        files[key] = Entry(contentHash: "", isFolder: true, rev: "d\(files.count)")
-        return resp(200, "{}")
+        ensureParents(of: parsed.path)   // 本物は中間フォルダも作る
+        files[key] = Entry(contentHash: "", isFolder: true, rev: "",
+                           displayName: (parsed.path as NSString).lastPathComponent)
+        note(key, deleted: false)
+        return resp(200, #"{"metadata":{"name":"\#((parsed.path as NSString).lastPathComponent)","path_lower":"\#(key)","path_display":"\#(parsed.path)"}}"#)
     }
 
     /// `files/move_v2`。フォルダ移動は配下ごと動く（本番と同じ）。
@@ -583,9 +685,15 @@ public actor FakeDropboxServer: HTTPClient {
         guard files[to] == nil else {
             return resp(409, #"{"error_summary":"to/conflict/folder/"}"#)
         }
+        ensureParents(of: parsed.to_path)
         for (path, entry) in files where path == from || path.hasPrefix(from + "/") {
+            let moved = to + String(path.dropFirst(from.count))
             files.removeValue(forKey: path)
-            files[to + String(path.dropFirst(from.count))] = entry
+            files[moved] = entry
+            if let body = bodies.removeValue(forKey: path) { bodies[moved] = body }
+            // 本物の差分は「元が消えて、先に現れた」として届く。
+            note(path, deleted: true)
+            note(moved, deleted: false)
         }
         return resp(200, #"{"metadata":{"path_lower":"\#(to)"}}"#)
     }
@@ -596,6 +704,10 @@ public actor FakeDropboxServer: HTTPClient {
         struct Body: Decodable { let entries: [Path]; let autorename: Bool }
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(400, "{}")
+        }
+        // 本物は 1 回 1,000 件まで（入力検査で 400・本文はテキスト）。
+        if parsed.entries.count > Self.maxBatchEntries {
+            return resp(400, "Error in call to API function \"files/copy_batch_v2\": request body: entries: list has more than \(Self.maxBatchEntries) items")
         }
 
         var results: [String] = []
@@ -618,9 +730,18 @@ public actor FakeDropboxServer: HTTPClient {
                 }
                 to = Self.autorenamed(to, existing: Set(files.keys))
             }
+            ensureParents(of: to)   // 本物はコピー先の中間フォルダも作る
+            // ⚠️ コピーの `client_modified` は**コピーした時刻**（共有の日付が「反映した時刻」に
+            // 落ちる＝アップロード順に並ぶ、という実フィードバックの形）。撮影情報は中身から
+            // 作られるので引き継ぐ。
+            let at = stamp()
             files[to] = Entry(contentHash: source.contentHash, isFolder: false,
-                              rev: "r\(files.count)")
+                              rev: nextRev(),
+                              displayName: (entry.to_path as NSString).lastPathComponent,
+                              size: source.size, clientModified: at, serverModified: at,
+                              mediaInfo: source.mediaInfo)
             bodies[to] = bodies[from]
+            note(to, deleted: false)
             results.append(#"{".tag":"success","success":{".tag":"file","path_lower":"\#(to)","content_hash":"\#(source.contentHash)"}}"#)
         }
         return finishBatch(results: results, resp: resp)
@@ -632,6 +753,9 @@ public actor FakeDropboxServer: HTTPClient {
         struct Body: Decodable { let entries: [Arg] }
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(400, "{}")
+        }
+        if parsed.entries.count > Self.maxBatchEntries {
+            return resp(400, "Error in call to API function \"files/delete_batch\": request body: entries: list has more than \(Self.maxBatchEntries) items")
         }
         var results: [String] = []
         for entry in parsed.entries {
@@ -650,10 +774,12 @@ public actor FakeDropboxServer: HTTPClient {
                 for path in files.keys where path == key || path.hasPrefix(key + "/") {
                     files.removeValue(forKey: path)
                     bodies.removeValue(forKey: path)
+                    note(path, deleted: true)
                 }
             } else {
                 files.removeValue(forKey: key)
                 bodies.removeValue(forKey: key)
+                note(key, deleted: true)
             }
             results.append(#"{".tag":"success","success":{"metadata":{".tag":"file","path_lower":"\#(key)"}}}"#)
         }
@@ -707,6 +833,9 @@ public actor FakeDropboxServer: HTTPClient {
         if !root.isEmpty, files[root] == nil {
             return resp(409, #"{"error_summary":"path/not_found/"}"#)
         }
+        if !root.isEmpty, files[root]?.isFolder == false {
+            return resp(409, #"{"error":{".tag":"path","path":{".tag":"not_folder"}},"error_summary":"path/not_folder/"}"#)
+        }
         // 直下のみ（非再帰）／配下ごと（再帰・ADR-183）。
         var listed = files.filter { path, _ in
             guard path != root, path.hasPrefix(root + "/") else { return false }
@@ -724,12 +853,7 @@ public actor FakeDropboxServer: HTTPClient {
             }
         }
         let entries = listed.sorted { $0.key < $1.key }
-            .map { path, entry -> String in
-                let name = entry.displayName.isEmpty
-                    ? (path as NSString).lastPathComponent : entry.displayName
-                let tag = entry.isFolder ? "folder" : "file"
-                return #"{".tag":"\#(tag)","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry.rev)","content_hash":"\#(entry.contentHash)","server_modified":"\#(serverModifiedString)"}"#
-            }
+            .map { path, entry in Self.metadataJSON(path: path, entry: entry, includeMediaInfo: false) }
         return page(entries, resp)
     }
 
@@ -755,10 +879,12 @@ public actor FakeDropboxServer: HTTPClient {
                 latest[change.path] = change.deleted
             }
             let entries = latest.sorted { $0.key < $1.key }.map { path, deleted -> String in
-                if deleted { return #"{".tag":"deleted","path_lower":"\#(path)"}"# }
-                let entry = files[path]
                 let name = (path as NSString).lastPathComponent
-                return #"{".tag":"file","name":"\#(name)","path_lower":"\#(path)","rev":"\#(entry?.rev ?? "r")","content_hash":"\#(entry?.contentHash ?? "")"}"#
+                // 消えた／いまは無い（同じ番号の範囲で作って消した）ものは deleted として届く。
+                guard !deleted, let entry = files[path] else {
+                    return #"{".tag":"deleted","name":"\#(name)","path_lower":"\#(path)"}"#
+                }
+                return Self.metadataJSON(path: path, entry: entry, includeMediaInfo: false)
             }
             return resp(200, #"{"entries":[\#(entries.joined(separator: ","))],"cursor":"rev-\#(revision)|\#(root)","has_more":false}"#)
         }
@@ -781,14 +907,16 @@ public actor FakeDropboxServer: HTTPClient {
 
     private func handleGetMetadata(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
-        struct Body: Decodable { let path: String }
+        struct Body: Decodable { let path: String; let include_media_info: Bool? }
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(400, "{}")
         }
-        guard let entry = files[parsed.path.lowercased()] else {
-            return resp(409, #"{"error_summary":"path/not_found/"}"#)
+        let key = parsed.path.lowercased()
+        guard let entry = files[key] else {
+            return resp(409, #"{"error":{".tag":"path","path":{".tag":"not_found"}},"error_summary":"path/not_found/"}"#)
         }
-        return resp(200, #"{"content_hash":"\#(entry.contentHash)","size":\#(entry.size)}"#)
+        return resp(200, Self.metadataJSON(path: key, entry: entry,
+                                           includeMediaInfo: parsed.include_media_info == true))
     }
 
     private func handleUpload(_ request: URLRequest, _ resp: (Int, String) -> (Data, URLResponse))
@@ -797,6 +925,7 @@ public actor FakeDropboxServer: HTTPClient {
             let path: String
             let mode: String?
             let autorename: Bool?
+            let client_modified: String?
         }
         guard let header = request.value(forHTTPHeaderField: "Dropbox-API-Arg"),
               let arg = try? JSONDecoder().decode(Arg.self, from: Data(header.utf8)) else {
@@ -809,8 +938,20 @@ public actor FakeDropboxServer: HTTPClient {
         if freeSpaceBytes >= 0, body.count > freeSpaceBytes {
             return resp(507, #"{"error_summary":"path/insufficient_space/.."}"#)
         }
+        // 本物は `client_modified` を秒精度の UTC でしか受け付けない（小数秒・時差つきは 400）。
+        var clientModified: Date?
+        if let raw = arg.client_modified {
+            guard let parsed = Self.parseClientModified(raw) else {
+                return resp(400, "Error in call to API function \"files/upload\": HTTP header \"Dropbox-API-Arg\": client_modified: time data '\(raw)' does not match format '%Y-%m-%dT%H:%M:%SZ'")
+            }
+            clientModified = parsed
+        }
         // 本物と同じ content_hash を返す（アップロードの検証経路をそのまま通せる）。
         let hash = DropboxContentHash.hash(of: body)
+        // ⚠️ **同じ中身なら新しい版を作らない**（rev も日付も差分も変わらない・本物と同じ）。
+        if let existing = files[key], !existing.isFolder, existing.contentHash == hash {
+            return resp(200, Self.metadataJSON(path: key, entry: existing, includeMediaInfo: false))
+        }
         // ⚠️ **`mode=add` の衝突を本物どおりに返す**。以前は常に上書きしていたため、
         // バックアップの「409 → 同一性確認 → autorename で再試行」という現実の経路を
         // 一度も通せなかった（別名保存された写真の**実際の保存先**を台帳が持てているか、
@@ -821,12 +962,16 @@ public actor FakeDropboxServer: HTTPClient {
             }
             key = Self.autorenamed(key, existing: Set(files.keys)).lowercased()
         }
+        ensureParents(of: key)
         bodies[key] = body
-        files[key] = Entry(contentHash: hash, isFolder: false, rev: "r\(files.count)",
-                           displayName: (arg.path as NSString).lastPathComponent,
-                           size: body.count)
+        let at = stamp()
+        let entry = Entry(contentHash: hash, isFolder: false, rev: nextRev(),
+                          displayName: (key as NSString).lastPathComponent,
+                          size: body.count, clientModified: clientModified ?? at,
+                          serverModified: at)
+        files[key] = entry
         note(key, deleted: false)
-        return resp(200, #"{"path_lower":"\#(key)","content_hash":"\#(hash)"}"#)
+        return resp(200, Self.metadataJSON(path: key, entry: entry, includeMediaInfo: false))
     }
 
     private func handleDownload(_ request: URLRequest, _ resp: (Int, String) -> (Data, URLResponse))
@@ -841,6 +986,33 @@ public actor FakeDropboxServer: HTTPClient {
         guard let body = bodies[arg.path.lowercased()] else { return resp(200, "{}") }
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200,
                                       httpVersion: nil, headerFields: nil)!)
+    }
+
+    /// 本物の `Metadata` の形（ファイルとフォルダで項目が違う）。一覧・差分・get_metadata・
+    /// upload の応答で**同じ形**を返す（口ごとに項目が違うと、片方だけで通る経路ができる）。
+    private static func metadataJSON(path: String, entry: Entry, includeMediaInfo: Bool) -> String {
+        let name = entry.displayName.isEmpty ? (path as NSString).lastPathComponent : entry.displayName
+        let display = ((path as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent(name)
+        if entry.isFolder {
+            return #"{".tag":"folder","name":"\#(name)","path_lower":"\#(path)","path_display":"\#(display)","id":"id:\#(path)"}"#
+        }
+        var fields = [
+            #"".tag":"file""#, #""name":"\#(name)""#, #""path_lower":"\#(path)""#,
+            #""path_display":"\#(display)""#, #""rev":"\#(entry.rev)""#, #""size":\#(entry.size)"#,
+            #""content_hash":"\#(entry.contentHash)""#,
+        ]
+        if let at = entry.clientModified { fields.append(#""client_modified":"\#(timestamp(at))""#) }
+        if let at = entry.serverModified { fields.append(#""server_modified":"\#(timestamp(at))""#) }
+        if includeMediaInfo, let media = entry.mediaInfo {
+            var inner = [#"".tag":"photo""#]
+            if let lat = media.latitude, let lon = media.longitude {
+                inner.append(#""location":{"latitude":\#(lat),"longitude":\#(lon)}"#)
+            }
+            if let taken = media.timeTaken { inner.append(#""time_taken":"\#(timestamp(taken))""#) }
+            fields.append(#""media_info":{".tag":"metadata","metadata":{\#(inner.joined(separator: ","))}}"#)
+        }
+        return "{" + fields.joined(separator: ",") + "}"
     }
 
     /// Dropbox の autorename 相当（"a.jpg" → "a (1).jpg"）。

@@ -249,6 +249,7 @@ public final class BackupEngine {
                 uploader: self.uploader,
                 progressStore: self.progressStore,
                 uploadLimit: { self.effectiveUploadLimit },
+                scope: { BackupScope.current(.standard) },
                 delegate: GenerationScopedRunnerDelegate(base: self, generation: generation),
                 peopleNamesProvider: self.peopleNamesProvider,
                 backgroundUploads: self.backgroundUploads,
@@ -398,9 +399,9 @@ public final class BackupEngine {
     /// ⚠️ **`isBusy` は見ない**。手順を組む側は「期限が来ているか」だけを知りたい
     /// （busy かどうかは実行する時点の話で、そのために照合を前へ出すのだから）。
     public func isReconcileDue(now: Date = Date()) -> Bool {
-        let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
-            .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
-        guard destination == .dropbox else { return false }
+        guard BackupScopePolicy.allowsReconcile(
+            scope: BackupScope.current(.standard),
+            hasUploads: { !progressStore.loadUploadedIDs().isEmpty }) else { return false }
         let last = (UserDefaults.standard.object(forKey: BackupSettingsKeys.lastReconcileAt) as? Double)
             .map { Date(timeIntervalSinceReferenceDate: $0) }
         return BackupReconcilePolicy.isDue(lastRun: last, now: now,
@@ -425,18 +426,30 @@ public final class BackupEngine {
             Diagnostics.mark("backup: skip — already running (reconciling: \(isReconciling))")
             return
         }
-        let destination = UserDefaults.standard.string(forKey: BackupSettingsKeys.destination)
-            .flatMap(BackupDestination.init(rawValue:)) ?? .disabled
-        guard destination == .dropbox else {
-            Diagnostics.mark("backup: skip — destination is \(destination.rawValue) (not Dropbox)")
-            return
-        }
-        Diagnostics.mark("backup: nightly start (no per-run limit; the window is the limit)")
+        // ⚠️ 共有する写真だけの設定（ADR-275）でも走らせる。上げるものが無いかは runner が
+        // ライブラリを列挙する**前に**判断する（共有メンバー − 済み が空なら即終わる）。
+        let scope = BackupScope.current(.standard)
+        Diagnostics.mark("backup: nightly start (scope: \(scope == .everything ? "all photos" : "shared photos only"); "
+                         + "no per-run limit; the window is the limit)")
         let folder = backupNormalizedPath(
             UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
                 ?? BackupSettingsKeys.defaultDropboxFolder)
         addLog("Nightly backup starting…")
         isNightlyRun = true
+        start(folder: folder)
+    }
+
+    /// 共有で待たれている端末写真を、いま上げる（クラウド共有の「今すぐ反映」から・ADR-275）。
+    ///
+    /// 手動の実行と同じ経路。対象は `BackupScopePolicy.uploadTargets` が決めるので、
+    /// 共有で待たれている写真は上限に数えず先頭に来る（自動バックアップ ON なら残りも上限まで）。
+    /// 実行中なら何もしない（走っている回が同じ写真を先に上げる）。
+    public func startUploadingForSharing() {
+        guard !isBusy else { return }
+        let folder = backupNormalizedPath(
+            UserDefaults.standard.string(forKey: BackupSettingsKeys.dropboxFolder)
+                ?? BackupSettingsKeys.defaultDropboxFolder)
+        Diagnostics.mark("backup: start for Cloud Sharing (user request)")
         start(folder: folder)
     }
 
@@ -600,8 +613,11 @@ extension BackupEngine: BackupRunnerDelegate {
         return true
     }
 
+    /// 共有セットの端末写真。⚠️ 「提供する」が OFF なら空（共有しないので上げる理由が無い・ADR-275）。
+    /// 共有で待たれている写真の読み手はここだけ（実行の対象・夜間に走るかの両方がここを通る）。
     func runnerShareMemberLocalIdentifiers() async -> Set<String> {
-        await store().shareMemberLocalIdentifiers()
+        guard ShareSettingsKeys.isProvideEnabled(.standard) else { return [] }
+        return await store().shareMemberLocalIdentifiers()
     }
 
     /// 現在のアカウントの指紋（生の accountId は保存しない）。

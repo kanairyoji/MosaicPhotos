@@ -338,7 +338,7 @@ struct BackupRunnerBackgroundPlanTests {
         spool.write(job: makeJob("b", localID: "L-b", conflict: true), body: Data("x".utf8))
         let runner = BackupRunner(tokenProvider: StubToken(),
                                   uploader: DropboxBackupUploader(httpClient: URLSessionHTTPClient()),
-                                  progressStore: BackupProgressStore(), uploadLimit: { 0 },
+                                  progressStore: BackupProgressStore(), uploadLimit: { 0 }, scope: { .everything },
                                   delegate: NoopRunnerDelegate(),
                                   backgroundUploads: RecordingEnqueuer(), spool: spool,
                                   useBackgroundUploads: { true })
@@ -353,7 +353,7 @@ struct BackupRunnerBackgroundPlanTests {
         let enqueuer = RecordingEnqueuer()
         let runner = BackupRunner(tokenProvider: StubToken(),
                                   uploader: DropboxBackupUploader(httpClient: URLSessionHTTPClient()),
-                                  progressStore: BackupProgressStore(), uploadLimit: { 0 },
+                                  progressStore: BackupProgressStore(), uploadLimit: { 0 }, scope: { .everything },
                                   delegate: NoopRunnerDelegate(),
                                   backgroundUploads: enqueuer, spool: UploadSpool(directory: tempDir()),
                                   useBackgroundUploads: { true })

@@ -338,6 +338,9 @@ peopleGroups: 解決できないメンバーは残す（持ち越しが進行中
 faces: carryover assertions applied
 faces: promoted shadow generation →
 faces: manual snapshot
+backup: start for Cloud Sharing
+backup: shared photos only — awaited=
+offload: skip — backup scope is shared photos only
 faces: ledger exported for replay
 CLIP released
 face model released
@@ -499,3 +502,20 @@ Developer Options → 診断ログ。目印になる行:
 **模型と実機が同じ定義で話せる**。⚠️ `Task.isCancelled` は期限切れでも**前面復帰でも**真に
 なるので、この行は「飢餓」と「利用者が端末を触った」の両方で出る——**数で見る**
 （毎晩・毎窓で出るなら設計の問題、ときどきなら前面復帰）。
+
+---
+
+## K. 共有する写真だけのバックアップ（ADR-275）
+
+設定 → Dropbox → バックアップで「**共有する写真だけ**」を選び、端末写真を 2〜3 枚入れた共有セットを作る。
+
+| 見るもの | 期待 |
+|---|---|
+| 共有の画面で「今すぐ同期」 | `backup: start for Cloud Sharing` が出て、待ちの数が 0 になったあと共有済みが増える |
+| Dropbox の `<端末>/Backup` | **共有に入れた写真だけ**がある（他の写真が 1 枚も無い） |
+| 夜間の診断ログ | `backup: shared photos only — awaited=0` の夜は `Total assets` が出ない（ライブラリを列挙していない）／`awaited=N` の夜だけ `Total assets: N (shared photos only)` |
+| 写真を共有から外して同期 | Share のコピーは消え、Backup のファイルは**残る** |
+| オフロードの画面 | 「共有する写真だけ」ではバックアップ画面にオフロードの入口が出ない |
+
+⚠️ 通しのテスト（`SharedOnlyBackupScenarioTests`）は runner の**写し**で回しているので、
+「共有メンバーだけを PhotoKit から引く」「上げるものが無ければ索引を作らない」は**ここでしか確かめられない**。

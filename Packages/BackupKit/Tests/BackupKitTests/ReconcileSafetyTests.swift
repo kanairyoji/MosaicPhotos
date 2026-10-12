@@ -58,8 +58,9 @@ struct ReconcileSafetyTests {
 
         // 台帳（＝verified）に載るので、次回バックアップでは済みとして除外される
         //（記録が消えていた場合は「済み ID なのに記録なし」で永久に脱落していた）。
-        let pending = BackupPlanning.pendingUploads(
-            allIdentifiers: ["id-old", "id-new"], alreadyUploaded: verified, limit: 0)
+        let pending = BackupScopePolicy.uploadTargets(
+            library: ["id-old", "id-new"], alreadyUploaded: verified, awaitedByShare: [],
+            scope: .everything, limit: 0)
         #expect(pending.pending.isEmpty)
     }
 

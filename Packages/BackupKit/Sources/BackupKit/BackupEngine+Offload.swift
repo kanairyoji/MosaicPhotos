@@ -1,5 +1,6 @@
 import DropboxCore
 import Foundation
+import MosaicSupport
 import Photos
 import SwiftData
 
@@ -87,6 +88,10 @@ extension BackupEngine {
 
     /// オフロードのドライラン：候補を検証して削除可否と理由の一覧を返す。**何も削除しない**。
     public func planOffload(limit: Int) async -> OffloadPlan {
+        // 共有する写真だけの設定ではオフロードしない（ADR-275）。
+        guard BackupScopePolicy.allowsOffload(scope: BackupScope.current(.standard)) else {
+            return OffloadPlan(items: [])
+        }
         let service = makeOffloadService()
         return await service.plan(assets: await offloadCandidateAssets(), limit: limit)
     }
@@ -95,6 +100,13 @@ extension BackupEngine {
     /// （OS 確認ダイアログ）→ metadata マーカー。キャンセル時は台帳をロールバック。
     /// 呼び出し側（UI）は Developer Options のゲートを確認してから呼ぶこと。
     public func executeOffload(limit: Int) async -> (deleted: [String], skipped: [(String, String)]) {
+        // ⚠️ 共有する写真だけの設定ではオフロードしない（ADR-275）。共有のために上げただけの
+        // 写真が、端末から消える候補になってしまうため。UI も止めるが、ここが最後の砦。
+        guard BackupScopePolicy.allowsOffload(scope: BackupScope.current(.standard)) else {
+            addLog("Offload: skipped — Backup is set to shared photos only")
+            Diagnostics.mark("offload: skip — backup scope is shared photos only")
+            return ([], [])
+        }
         // 前回書けなかったマーカーを先に片付ける（対象の写真はもう端末に無いので、
         // 候補走査には現れない＝ここで面倒を見ないと永久に未送信のまま）。
         await retryPendingOffloadMarkers()

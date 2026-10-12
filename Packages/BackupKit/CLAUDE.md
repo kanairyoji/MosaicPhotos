@@ -18,14 +18,17 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
     BackupAssetReader.swift        PHAsset 本体データの取得（編集済みは fullSizePhoto＝今の見た目）
     BackupRenditionNaming.swift    どのレンディションを上げるか＋名前づけの純ロジック（ADR-168・テスト対象）
     BackupIndexing.swift           People/Album インデックス構築（top-level・Task.detached 用）
-    BackupPlanning.swift           アップロード差分算出・エラー要約の純ロジック（テスト対象）
+    BackupPlanning.swift           エラー要約の純ロジック（差分算出は `BackupScopePolicy` へ・ADR-275）
     BackupMetadataPlanning.swift   メタデータ v2（カタログ＋撮影月シャード・ADR-38）の分割/マージ純ロジック
     BackupMetadataStore.swift      **メタデータ v2 の唯一の書き手**（ADR-200）。`root` を持ち、
                                    シャードを書いたら必ずカタログへ登録する。印の書き先を
                                    パスから推測しない。バックアップもオフロードもここを通る
     PendingMetadataStore.swift     再送キュー（本体 JSON ＋ 追記ジャーナル）。消費口は `takeAll` の
                                    1 つだけ（追記と同じ錠の下・ADR-200）
-    BackupSettingsKeys.swift / BackupDestination.swift  設定キー / 値オブジェクト
+    BackupSettingsKeys.swift       設定キー
+    BackupDestination.swift        宛先の設定値と **`BackupScope`／`BackupScopePolicy`**（ADR-275）。
+                                   何を上げるか・実行/オフロード/照合をやるかはここの 1 か所で決める
+                                   （`.disabled`＝「共有する写真だけ」と読む。`destination` を直接比べない）
     BackupSettingsView.swift       バックアップ通常設定ビュー（#if canImport(UIKit)）
     BackupDebugSection.swift       Developer Options 向け詳細診断セクション（進捗/フォルダ確認/統計/ログ・public）
     BackgroundUpload/              夜間の背景アップロード（ADR-181・fire-and-forget）

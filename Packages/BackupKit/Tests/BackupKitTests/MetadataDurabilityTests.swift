@@ -464,7 +464,7 @@ struct PendingMetadataDrainTests {
         BackupRunner(tokenProvider: DrainToken(),
                      uploader: DropboxBackupUploader(httpClient: server),
                      progressStore: BackupProgressStore(),
-                     uploadLimit: { 0 }, delegate: delegate)
+                     uploadLimit: { 0 }, scope: { .everything }, delegate: delegate)
     }
 
     private func queue(_ payload: PendingMetadataStore.Payload) -> PendingMetadataStore {
@@ -590,7 +590,7 @@ struct CatalogDurabilityTests {
         let runner = BackupRunner(tokenProvider: DrainToken(),
                                   uploader: DropboxBackupUploader(httpClient: server),
                                   progressStore: BackupProgressStore(),
-                                  uploadLimit: { 0 }, delegate: delegate)
+                                  uploadLimit: { 0 }, scope: { .everything }, delegate: delegate)
         await runner.writeMetadata(
             newEntries: [BackupMetadataPlanning.NewEntry(
                 path: "\(folder)/a.jpg",

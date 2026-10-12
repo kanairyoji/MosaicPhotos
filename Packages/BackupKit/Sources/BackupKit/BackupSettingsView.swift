@@ -25,15 +25,22 @@ public struct BackupSettingsView: View {
 
     public var body: some View {
         Group {
-            Section(L("Backup Destination")) {
-                Picker(L("Destination"), selection: $destination) {
-                    Text(L("No backup")).tag(BackupDestination.disabled)
-                    Text(verbatim: "Dropbox").tag(BackupDestination.dropbox)
+            // ADR-275: 仕組みは 1 つで、選ぶのは「どの写真を上げるか」だけ。
+            // `.disabled` は「共有する写真だけ」と読む（キーと値は据え置き）。
+            Section {
+                Picker(L("Photos to Upload"), selection: $destination) {
+                    Text(L("Shared photos only")).tag(BackupDestination.disabled)
+                    Text(L("All photos")).tag(BackupDestination.dropbox)
                 }
+            } header: {
+                Text(L("Backup to Dropbox"))
+            } footer: {
+                Text(L("All photos: every photo on this device is backed up automatically. Shared photos only: only the device photos you add to Cloud Sharing are uploaded, so they can be shared. Photos you stop sharing stay in the Backup folder."))
             }
 
-            if destination == .dropbox {
-                dropboxFolderSection
+            dropboxFolderSection
+
+            if BackupScope(destination) == .everything {
                 uploadLimitSection
                 backupSection
                 Section {

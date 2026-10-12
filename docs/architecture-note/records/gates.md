@@ -412,6 +412,28 @@
 
 ---
 
+## BackupScopePolicy（ADR-275）
+- 置き場: `Packages/BackupKit/Sources/BackupKit/BackupDestination.swift`
+- 問い: どの端末写真を Dropbox へ上げるか／実行・オフロード・照合をやるか
+- 材料:
+  - `scope` ← `BackupScope.current(.standard)`（`backupDestination`）
+    - 約束: `.dropbox` だけが全部。未設定・`.disabled`・壊れた値は `.sharedOnly`（勝手に全部上げない）
+    - テスト: `BackupScopePolicyGateTests.scopeFromSettings`
+  - `awaitedByShare` ← `BackupEngine.runnerShareMemberLocalIdentifiers()` − 済み
+    - 約束: 「提供する」が OFF なら空。共有セットの端末写真（`L-`）だけ
+    - テスト: `SharedOnlyBackupScenarioTests.provideOffUploadsNothing` / `onlySharedPhotosReachDropbox`
+  - `alreadyUploaded` ← 台帳 ∪ 記録（`computePending`）
+    - 約束: **確かに上がった**写真だけ（429・hash 不一致は入らない＝次の回にやり直す）
+    - テスト: `SharedOnlyBackupScenarioTests.writeContentionConverges` /
+      `BackupUploadScenarioTests.persistentRateLimitIsNotTreatedAsDone`
+  - `hasUploads` ← `progressStore.loadUploadedIDs()`（照合）
+    - 約束: 上げた写真があれば空でない
+    - テスト: ⚠️ 無し（`uploadedLocalIDs` はプロセスに 1 つで、照合の別テストが並列に書く・宿題）
+- 規則のテスト: `UploadTargetsTests` / `BackupScopePolicyGateTests`
+- 呼び出し側のテスト: `SharedOnlyBackupScenarioTests`（runner の写し・判断は本番の関数）＋
+  `device-verification.md` 章 K（runner の配管は実機）
+- 効きを見るログ: `backup: shared photos only — awaited=` / `offload: skip — backup scope is shared photos only`
+
 ## 判断ではないもの
 
 ここに並ぶのは「名前は `*Policy` だが、やるかやらないかを決めていない」もの。

@@ -99,6 +99,8 @@ final class BackupRunner {
     private let progressStore: BackupProgressStore
     /// 実効アップロード上限。設定変更を実行直前に読むためクロージャで受ける（0 以下で無制限）。
     private let uploadLimit: () -> Int
+    /// どの写真を上げるか（ADR-275）。実行直前に読むためクロージャで受ける。
+    private let scope: () -> BackupScope
     /// 通知先。runner は engine の Task ローカルにのみ生存するため強参照でも循環しない。
     private let delegate: BackupRunnerDelegate
     /// 人物名（localIdentifier → 命名済み顔クラスタのフルネーム）。アプリが PeopleEngine を結線する。
@@ -115,6 +117,7 @@ final class BackupRunner {
         uploader: DropboxBackupUploader,
         progressStore: BackupProgressStore,
         uploadLimit: @escaping () -> Int,
+        scope: @escaping () -> BackupScope,
         delegate: BackupRunnerDelegate,
         peopleNamesProvider: (@Sendable () async -> [String: [String]])? = nil,
         backgroundUploads: BackgroundUploadEnqueuing? = nil,
@@ -126,6 +129,7 @@ final class BackupRunner {
         self.uploader = uploader
         self.progressStore = progressStore
         self.uploadLimit = uploadLimit
+        self.scope = scope
         self.delegate = delegate
         self.peopleNamesProvider = peopleNamesProvider
         self.backgroundUploads = backgroundUploads
@@ -180,18 +184,13 @@ final class BackupRunner {
         guard await requestPhotoAccess() else { return false }
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
 
-        // 2. 索引構築（人物＝顔クラスタ・アルバム・アルバム ID）
-        let indexes = await buildIndexes()
-        guard !Task.isCancelled else { setPhase(.cancelled); return false }
-
         // 再送キューの名前空間はアカウント＋保存先で決まる。1 枚ごとに await しないよう控える。
         cachedAccountFingerprint = await delegate.runnerAccountFingerprint()
         cachedPendingStore = nil
 
-        // 3-4. 全アセット取得 → 差分算出（済み＝台帳∪記録・上限適用）
-        let assets = fetchAssetsSorted()
+        // 2-3. 候補の取得 → 差分算出（済み＝台帳∪記録・対象は `BackupScopePolicy` が決める）
+        var (pending, alreadySkipped, doneIDs) = await computePending()
         guard !Task.isCancelled else { setPhase(.cancelled); return false }
-        var (pending, alreadySkipped, doneIDs) = await computePending(assets: assets)
         // ADR-181: 背景セッションが転送中の写真は対象から外し、409 を受けた写真は前面経路へ回す。
         let background = backgroundUploads != nil && useBackgroundUploads()
         if background { backgroundUploads?.beginRun() }
@@ -213,6 +212,12 @@ final class BackupRunner {
             setPhase(.completed(uploaded: 0, skipped: alreadySkipped))
             return false
         }
+
+        // 4. 索引構築（人物＝顔クラスタ・アルバム・アルバム ID）。
+        // ⚠️ 上げる写真があるときだけ作る（ADR-275）。共有する写真だけの設定では大半の夜が
+        // 「上げるもの無し」なので、そのたびにライブラリ全体の索引を作らない。
+        let indexes = await buildIndexes()
+        guard !Task.isCancelled else { setPhase(.cancelled); return false }
 
         // 5. Dropbox 認証
         addLog("Fetching Dropbox access token…")
@@ -346,21 +351,35 @@ final class BackupRunner {
 
     // MARK: - フェーズ 3-4: 全アセット取得と差分算出
 
-    private func fetchAssetsSorted() -> [PHAsset] {
+    /// 候補の写真（撮影日の昇順）。`only` を渡すとその写真だけを引く（共有する写真だけの設定で、
+    /// 全ライブラリ＝数万件を列挙しないため・ADR-275）。
+    private func fetchAssetsSorted(only identifiers: Set<String>?) -> [PHAsset] {
         setPhase(.fetchingAssets)
+        if let identifiers, identifiers.isEmpty {
+            addLog("Total assets: 0 (shared photos only)")
+            return []
+        }
         let fetchOpts = PHFetchOptions()
         fetchOpts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-        let result = PHAsset.fetchAssets(with: .image, options: fetchOpts)
+        let result: PHFetchResult<PHAsset>
+        if let identifiers {
+            fetchOpts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+            result = PHAsset.fetchAssets(withLocalIdentifiers: Array(identifiers), options: fetchOpts)
+        } else {
+            result = PHAsset.fetchAssets(with: .image, options: fetchOpts)
+        }
         var assets: [PHAsset] = []
         result.enumerateObjects { a, _, _ in assets.append(a) }
-        addLog("Total assets: \(assets.count)")
+        addLog("Total assets: \(assets.count)\(identifiers == nil ? "" : " (shared photos only)")")
         return assets
     }
 
     /// 済み判定は「UserDefaults 台帳 ∪ SwiftData 記録」。記録は実アップロード成功時のみ
     /// 追加される確かな出典で、台帳が消えた場合の自己修復を担う（重複アップロード防止）。
-    private func computePending(assets: [PHAsset]) async -> (pending: [PHAsset], alreadySkipped: Int, doneIDs: Set<String>) {
+    /// 何を上げるかは `BackupScopePolicy.uploadTargets` だけが決める（ADR-275）。
+    private func computePending() async -> (pending: [PHAsset], alreadySkipped: Int, doneIDs: Set<String>) {
         let limit = uploadLimit()
+        let scope = scope()
         let ledgerIDs = progressStore.loadUploadedIDs()
         let recordIDs = await delegate.runnerRecordedLocalIdentifiers()
         let doneIDs = ledgerIDs.union(recordIDs)
@@ -368,26 +387,30 @@ final class BackupRunner {
             addLog("Restored \(doneIDs.count - ledgerIDs.count) backed-up ID(s) from records")
             progressStore.saveUploadedIDs(doneIDs)   // 台帳側も修復
         }
-        let plan = BackupPlanning.pendingUploads(
-            allIdentifiers: assets.map(\.localIdentifier),
-            alreadyUploaded: doneIDs,
-            limit: limit
-        )
-        let pendingSet = Set(plan.pending)
-        var pending = assets.filter { pendingSet.contains($0.localIdentifier) }
-        // クラウド共有で待たれている写真を先頭へ（安定・相対順は維持）。共有セットの
-        // 「バックアップ待ち」が夜間バックアップの進行を何日も待たされるのを防ぐ（ADR-112）。
         // ⚠️ 「待たれている」＝**共有メンバー − バックアップ済み**。差し引きはここで行う——
         // `doneIDs` は既に手元にあるので、ストア側で引き直すと数万行を 2 度読むことになる。
-        let priority = await delegate.runnerShareMemberLocalIdentifiers().subtracting(doneIDs)
-        if !priority.isEmpty {
-            let first = pending.filter { priority.contains($0.localIdentifier) }
-            if !first.isEmpty {
-                pending = first + pending.filter { !priority.contains($0.localIdentifier) }
-                addLog("Prioritizing \(first.count) photo(s) awaited by Cloud Sharing")
-            }
+        let awaited = await delegate.runnerShareMemberLocalIdentifiers().subtracting(doneIDs)
+        // 効きを見るログ（ADR-250）: 共有する写真だけの回に、何枚が待たれていたか。
+        // `addLog` はアプリ内の表示にしか残らないので、診断ログへも 1 行出す。
+        if scope == .sharedOnly {
+            Diagnostics.mark("backup: shared photos only — awaited=\(awaited.count)")
         }
-        addLog("Pending: \(pending.count) (already backed up: \(plan.skipped)\(limit > 0 ? ", limit \(limit)" : ""))")
+        guard BackupScopePolicy.hasWork(scope: scope, awaitedCount: awaited.count) else {
+            addLog("Pending: 0 (shared photos only — nothing awaited by Cloud Sharing)")
+            return ([], 0, doneIDs)
+        }
+        let assets = fetchAssetsSorted(
+            only: BackupScopePolicy.candidateRestriction(scope: scope, awaitedByShare: awaited))
+        let plan = BackupScopePolicy.uploadTargets(
+            library: assets.map(\.localIdentifier), alreadyUploaded: doneIDs,
+            awaitedByShare: awaited, scope: scope, limit: limit)
+        let byID = Dictionary(assets.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { a, _ in a })
+        let pending = plan.pending.compactMap { byID[$0] }
+        if plan.prioritized > 0 {
+            addLog("Prioritizing \(plan.prioritized) photo(s) awaited by Cloud Sharing")
+        }
+        addLog("Pending: \(pending.count) (already backed up: \(plan.skipped)"
+               + "\(limit > 0 ? ", limit \(limit)" : "")\(scope == .everything ? "" : ", shared photos only"))")
         return (pending, plan.skipped, doneIDs)
     }
 

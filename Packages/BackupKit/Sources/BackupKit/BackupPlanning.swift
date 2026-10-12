@@ -4,22 +4,7 @@ import Foundation
 /// 単体テスト可能にする。
 enum BackupPlanning {
 
-    /// 未アップロードの localIdentifier を算出する。
-    /// - Parameters:
-    ///   - allIdentifiers: 全アセットの localIdentifier（表示順を保持）
-    ///   - alreadyUploaded: アップロード済み ID 集合
-    ///   - limit: 1 回でアップロードする上限（0 以下で無制限）
-    /// - Returns: アップロード対象 `pending`（順序保持・上限適用後）と、スキップ済み件数 `skipped`
-    static func pendingUploads(
-        allIdentifiers: [String],
-        alreadyUploaded: Set<String>,
-        limit: Int
-    ) -> (pending: [String], skipped: Int) {
-        let notUploaded = allIdentifiers.filter { !alreadyUploaded.contains($0) }
-        let skipped = allIdentifiers.count - notUploaded.count
-        let pending = limit > 0 ? Array(notUploaded.prefix(limit)) : notUploaded
-        return (pending, skipped)
-    }
+    // 何を上げるか（差分・上限・共有の優先）は `BackupScopePolicy.uploadTargets`（ADR-275）。
 
     /// Dropbox のエラーレスポンス JSON から `error_summary` を抽出する。
     /// JSON でない / フィールドが無い場合は本文の先頭 300 文字を返す。

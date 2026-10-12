@@ -100,7 +100,8 @@ struct SettingsView: View {
                                  },
                                  onTakeOverPublishing: {
                                      stores.analysisPublisher.takeOverPublishing()
-                                 })
+                                 },
+                                 onUploadAwaited: { stores.backupEngine.startUploadingForSharing() })
                 } label: {
                     row(L("Cloud Sharing"), systemImage: "icloud.and.arrow.up")
                 }

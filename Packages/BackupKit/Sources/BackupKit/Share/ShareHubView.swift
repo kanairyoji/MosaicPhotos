@@ -17,6 +17,9 @@ public struct ShareHubView: View {
     private let onCheckPublishingDevice: (@MainActor () async -> AnalysisOwnership.Owner?)?
     /// 「この端末で公開する」（引き継ぎの承諾）。
     private let onTakeOverPublishing: (@MainActor () -> Void)?
+    /// 共有で待たれている端末写真を、いま Dropbox へ上げる（ADR-275・バックアップと同じ経路）。
+    /// 上がり終わると HomeView が反映し直す。未設定なら夜間の実行を待つ。
+    private let onUploadAwaited: (@MainActor () -> Void)?
 
     @AppStorage(ShareSettingsKeys.receiveEnabled) private var receiveEnabled = true
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
@@ -33,13 +36,15 @@ public struct ShareHubView: View {
                 onImportNow: (@MainActor () async -> Void)? = nil,
                 onPublishNow: (@MainActor () async -> String)? = nil,
                 onCheckPublishingDevice: (@MainActor () async -> AnalysisOwnership.Owner?)? = nil,
-                onTakeOverPublishing: (@MainActor () -> Void)? = nil) {
+                onTakeOverPublishing: (@MainActor () -> Void)? = nil,
+                onUploadAwaited: (@MainActor () -> Void)? = nil) {
         self.engine = engine
         self.onFamilyFoldersChanged = onFamilyFoldersChanged
         self.onImportNow = onImportNow
         self.onPublishNow = onPublishNow
         self.onCheckPublishingDevice = onCheckPublishingDevice
         self.onTakeOverPublishing = onTakeOverPublishing
+        self.onUploadAwaited = onUploadAwaited
     }
 
     public var body: some View {
@@ -64,7 +69,8 @@ public struct ShareHubView: View {
 
             Section {
                 NavigationLink {
-                    ShareProvideView(engine: engine, onShareRootChanged: onFamilyFoldersChanged)
+                    ShareProvideView(engine: engine, onShareRootChanged: onFamilyFoldersChanged,
+                                     onUploadAwaited: onUploadAwaited)
                 } label: {
                     featureRow(icon: "icloud.and.arrow.up", tint: .blue,
                                title: L("Share Your Photos"),
@@ -72,7 +78,7 @@ public struct ShareHubView: View {
                                status: provideStatus)
                 }
             } footer: {
-                Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
+                Text(L("Create shared sets from albums, people, and groups. Device photos you share are uploaded to your Dropbox Backup folder first, even if automatic backup is off. Receiving is not affected by this switch."))
             }
 
             // 写真はコピーせず、解析結果だけを置く（ADR-222）。同じ Dropbox に繋いでいる
@@ -200,20 +206,20 @@ struct ShareProvideView: View {
     let engine: ShareSyncEngine
     /// 共有ルートを変えたときに、表示の除外パスを更新してもらうための通知。
     var onShareRootChanged: @MainActor () -> Void = {}
+    /// 共有で待たれている端末写真をいま上げる（`ShareHubView.onUploadAwaited`）。
+    var onUploadAwaited: (@MainActor () -> Void)?
 
     @AppStorage(ShareSettingsKeys.provideEnabled) private var provideEnabled = true
     @AppStorage(ShareSettingsKeys.shareNamesEnabled) private var shareNames = true
     /// 共有の置き場（表示のみ・ADR-175）。バックアップと同じルートの端末フォルダ配下 `Share/`。
     private var shareRoot: String { ShareSettingsKeys.currentShareRoot() }
-    @AppStorage(BackupSettingsKeys.destination)
-    private var backupDestination: BackupDestination = .disabled
 
     var body: some View {
         List {
             Section {
                 Toggle(L("Share Your Photos"), isOn: $provideEnabled)
             } footer: {
-                Text(L("Create shared sets from albums, people, and groups. Device photos need Backup to be shared (cloud photos don't). Receiving is not affected by this switch."))
+                Text(L("Create shared sets from albums, people, and groups. Device photos you share are uploaded to your Dropbox Backup folder first, even if automatic backup is off. Receiving is not affected by this switch."))
             }
             if provideEnabled {
                 Section {
@@ -265,7 +271,7 @@ struct ShareProvideView: View {
             parts.append(String(format: L("%d shared"), set.copied))
         }
         if set.waitingBackup > 0 {
-            parts.append(String(format: L("%d waiting for backup"), set.waitingBackup))
+            parts.append(String(format: L("%d waiting for upload"), set.waitingBackup))
         }
         // ⚠️ 「失敗」の欄は無くした（ADR-209）。失敗はただの「まだ望ましい状態でない」で、
         // 次の反映が同じ差分を見て投げ直す——利用者に区別して見せる意味が無い。
@@ -282,6 +288,9 @@ struct ShareProvideView: View {
                 Task {
                     await engine.refreshAllFromSource()
                     await engine.syncNow()
+                    // 端末写真が上がっていなければ、同じ操作で上げ始める（ADR-275）。
+                    // 上がり終わったら HomeView がもう一度反映する。
+                    if engine.sets.contains(where: { $0.waitingBackup > 0 }) { onUploadAwaited?() }
                 }
             } label: {
                 if engine.isSyncing {
@@ -302,20 +311,13 @@ struct ShareProvideView: View {
                     .foregroundStyle(.orange)
                     .font(.footnote)
             }
-            // 端末写真の共有はバックアップ実体からのコピーなので、バックアップ前は進まない。
-            // 原因をその場で案内する（実フィードバック: 案内が無いと「動かない」ように見える）。
+            // 端末写真の共有はバックアップ実体からのコピーなので、上がるまでは進まない。
+            // 自動バックアップの有無に関わらず同じ経路で上げる（ADR-275）ので、案内は 1 つ。
             if engine.sets.contains(where: { $0.waitingBackup > 0 }) {
-                if backupDestination == .disabled {
-                    Label(L("Device photos can be shared only after they are backed up. Turn on Backup in Settings to share them (cloud photos are shared without backup)."),
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .font(.footnote)
-                } else {
-                    Label(L("Some photos are not backed up yet. They are prioritized in the next backup and will be shared right after."),
-                          systemImage: "clock")
-                        .foregroundStyle(.secondary)
-                        .font(.footnote)
-                }
+                Label(L("Some device photos are not in Dropbox yet. They are uploaded first (tonight, or now with Sync Now) and shared right after."),
+                      systemImage: "clock")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
             }
         } footer: {
             Text(L("Sets also sync automatically after each backup. Copies are made on the Dropbox server, so no photo data is re-uploaded."))
