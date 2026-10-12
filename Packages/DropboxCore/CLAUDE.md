@@ -26,6 +26,10 @@ Packages/DropboxCore/              ← Dropbox のロジック層（ImageCacheKi
                                    DropboxPhotoStore+Location.swift（**media_info の解決**＝撮影日時と
                                    撮影地を 1 往復で取り、「無かった」ことも記録する・ADR-201）
     Support/                       DateProvider / AccessTokenProvider / DropboxLogger(→LogChannel)
+  Sources/DropboxTestSupport/      **テスト専用**の偽 Dropbox（本番ターゲットは依存しない）。
+                                   FakeDropboxServer（状態を持つ 1 アカウント・障害注入）/
+                                   FakeDropboxCloud（複数アカウント・共有フォルダ・閲覧/編集・共有の解除）。
+                                   偽物は 1 つに保つ（新しい振る舞いはここへ足す）
   Tests/DropboxCoreTests/          APIClient/AuthService/PKCE/SyncEngine/DeltaParser/Batcher/Cache/Naming/MediaInfo/Metadata（iOS Sim）
 
 ```

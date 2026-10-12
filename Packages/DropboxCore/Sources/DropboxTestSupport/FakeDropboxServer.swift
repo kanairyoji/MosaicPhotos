@@ -503,6 +503,11 @@ public actor FakeDropboxServer: HTTPClient {
         files.filter { !$0.value.isFolder }.keys.sorted()
     }
 
+    /// フォルダも含めたパス一覧（`FakeDropboxCloud` がルート直下の名前の衝突を見るため）。
+    public func filePaths(includingFolders: Bool) -> [String] {
+        includingFolders ? files.keys.sorted() : filePaths()
+    }
+
     /// そのパスに**いま置かれている中身**（アップロードされたもの・seed した本体）。
     /// 「書いた JSON が意図どおりか」を確かめるのに使う。
     public func body(at path: String) -> Data? { bodies[path.lowercased()] }
