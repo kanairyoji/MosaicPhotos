@@ -358,6 +358,19 @@ PhotoSourceContentView は全状態（grid / 未接続 / 空 / 失敗）の最�
   - テストは `BackgroundYield.environmentOverrideForTesting` で環境を組み立てる
     （実行マシンの低電力モード等に判定が左右されるため）。表の正本は
     `docs/architecture-note/records/background-behavior.md`。
+- **夜間の枠の並びは「性質を宣言して導く」（ADR-272）**: 手を並べるのをやめ、各手が
+  `phase`（kick/work/drain）・`bounded`（**上限を持つか**）・`needsNetwork`・`after` を宣言し、
+  `NightlyPlan.order(_:)` が「段ごとに**上限つき → 上限なし**」で並びを導く。
+  ⚠️⚠️ 並びの誤りで**同じ形の欠陥が 4 回**出たから（ADR-206/222追補/257/270）
+  ——どれも「上限のない手の後ろに、上限のある軽い手を置いた」＝後ろの手は窓が尽きて
+  **一度も走らない**。うち 2 回は「ここに置くな」を**書いた本人が書いた直後に**破った。
+  - 新しい手は `Kind` と `spec(for:)` に 1 行ずつ足すだけ。
+    ⚠️ **`applicableSteps` の `append` の順番に意味は無い**（同じ性質どうしの並びだけ）。
+  - ⚠️ `bounded` は迷ったら **`false`**（上限があると偽ると、本当に上限のある手を飢えさせる）。
+  - ⚠️ **性質に還元できない前提は `after` で明示**（資源の競合・意味の順序）。消さない（ADR-197）。
+  - ⚠️ **時間で詰め込む方式は採らない**——iOS は残り時間を教えず、窓は実測 21〜284 秒
+    （13.5 倍）、1 手の所要も 3〜10 倍振れる。飢餓対策は連続見送りの上限（ADR-163/72）で足りる。
+  - 導出の結果は `window plan:` のログと `NightlyPlanOrderingTests`（192 通り＋全部入りの 1 本）で読む。
 - **夜間の処理枠で「何を・どの順でやるか」は `NightlyPlan.steps`（純ロジック）**: `HeavyWorkScheduler`
   は反映するだけ。順序は実機の失敗が出典（窓の食い潰し・生成と解析の共倒れ・バックアップの飢餓）
   なので、**変えるときは `NightlyPlanTests` を見る**。判断を `runHeavyWork` に直書きすると

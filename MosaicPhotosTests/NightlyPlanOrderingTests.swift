@@ -204,6 +204,33 @@ final class NightlyPlanOrderingTests: XCTestCase {
         }
     }
 
+    /// ⚠️ **導出された並びを目に見える形で固定する**（ADR-272）。
+    ///
+    /// 性質から導くようにすると、並びは `applicableSteps` を読んでも分からなくなる
+    /// （そこは「どの手が当てはまるか」しか書いていない）。だから**全部入りの構成**で
+    /// 結果を 1 本に書き出しておく——設計を変えたらここが落ちて、差分が目に入る。
+    ///
+    /// 読み方: `kick` → `work`（**上限つき** → 上限なし）→ `drain`。
+    /// `publishAnalysis` は上限つきだが `after: [.shareImport]` で後ろへ送られている。
+    func testDerivedOrderForTheFullConfiguration() {
+        var inputs = NightlyPlan.Inputs(
+            networkAllowed: true, provideShareEnabled: true,
+            backupReconcileDue: true, publishAnalysisEnabled: true,
+            captureDateBacklog: 1_000)
+        inputs.embedBacklog = 0
+        inputs.faceBacklog = 0
+        inputs.availableMB = 2048
+        XCTAssertEqual(labels(inputs), [
+            "analysis",                                 // kick（投げっぱなし）
+            "stallCheck", "indexSnapshot",              // work・上限つき
+            "captureDates(\(NightlyPlan.captureDateProbeLimit))",
+            "reconcile", "backup", "generate",          // work・上限なし
+            "shareImport", "publishAnalysis",           // publish は after で import の直後へ
+            "shareSync",
+            "drain"                                     // drain（期限まで待つ）
+        ])
+    }
+
     /// ⚠️ **網羅していることを assert する**（空でも通るテストを書かない・ADR-119）。
     /// 組み合わせを作る側が壊れたら、上の全テストが静かに空振りする。
     func testTheConfigurationSpaceIsActuallyCovered() {
