@@ -263,18 +263,30 @@ enum NightlyPlan {
         var dropWhenOffline: Bool
         /// ⚠️ **性質に還元できない前提**（資源の競合・意味の順序）。ここだけは明示する。
         var after: [Kind] = []
+
+        /// **どんなに短い窓でも、この手には順番が回らなければならないか**（ADR-274）。
+        ///
+        /// ⚠️ これは**製品の要件**で、性質（`cost`）から導けない
+        /// ——「毎窓バックアップする」（ADR-180）「毎窓控えを書き直す」（ADR-266）は
+        /// 速さの話ではなく「そうでないと機能が成り立たない」という決めだから。
+        /// ⚠️ **この値を読むのは `NightlyWindowSimulator`（テスト）だけ**。
+        /// 窓を模して回し、**実測で最短の窓（21 秒）でも順番が回るか**を確かめる。
+        /// 並びの誤り（ADR-270）も性質の誤り（ADR-273）も、ここで飢餓として現れる。
+        var everyWindow: Bool = false
     }
 
     static func spec(for kind: Kind) -> Spec {
         switch kind {
         case .analysis:
             // 投げっぱなし（`kick` は背景の Task を起こすだけ）。他の手の裏で走らせたい。
-            return Spec(phase: .kick, cost: .nonblocking, dropWhenOffline: false)
+            return Spec(phase: .kick, cost: .nonblocking, dropWhenOffline: false, everyWindow: true)
         case .stallCheck:
-            return Spec(cost: .bounded, dropWhenOffline: false)
+            // 毎回（ADR-87）。「動くべきなのに動いていない」を見つける唯一の経路。
+            return Spec(cost: .bounded, dropWhenOffline: false, everyWindow: true)
         case .indexSnapshot:
             // 16MB を 1 回書くだけ（鍵が同じなら書かない）。回線は要らない。
-            return Spec(cost: .bounded, dropWhenOffline: false)
+            // **毎窓**（ADR-266: 鍵を崩す経路が 2 つあるので「崩れたか」を条件にしない）。
+            return Spec(cost: .bounded, dropWhenOffline: false, everyWindow: true)
         case .reconcile:
             // Dropbox の全件一覧（ADR-206）＝上限なし。回線が無ければやることが無い。
             return Spec(cost: .unbounded, dropWhenOffline: true)
@@ -288,7 +300,8 @@ enum NightlyPlan {
             // 窓を塞がないので最初に出す——ここを `.unbounded` と偽ったせいで、
             // 40 秒の撮影日時の問い合わせが前に出て、短い窓（21 秒）では
             // バックアップが**その晩まったく進まない**ところだった（独立レビューの指摘）。
-            return Spec(cost: .nonblocking, dropWhenOffline: false, after: [.reconcile])
+            return Spec(cost: .nonblocking, dropWhenOffline: false, after: [.reconcile],
+                        everyWindow: true)   // 毎窓（ADR-180）
         case .generate:
             // 550〜880MB・数十秒（`minimumGenerateMB` が在る理由）。
             // ⚠️ **回線が無くても並べる**（クラウド一覧はキャッシュから読める・内部で判定）。
@@ -302,7 +315,8 @@ enum NightlyPlan {
             return Spec(cost: .bounded, dropWhenOffline: true, after: [.shareImport])
         case .captureDates:
             // 500 枚かつ 40 秒（ADR-257）＝上限つき。1 枚 1 往復なので回線が無ければ何も進まない。
-            return Spec(cost: .bounded, dropWhenOffline: true)
+            // 残りがあるうちは**毎窓**（2 か月かけて一巡する前提が崩れる）。
+            return Spec(cost: .bounded, dropWhenOffline: true, everyWindow: true)
         case .shareSync:
             // 実機でコピー待ち 9,265 件・1 回 500 件（ADR-222 追補）＝窓を使い切る。
             return Spec(cost: .unbounded, dropWhenOffline: true)
