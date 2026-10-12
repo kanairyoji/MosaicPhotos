@@ -292,6 +292,66 @@ struct ItemIndexAcrossLaunchesTests {
         #expect(Set(again.map(\.path)) == Set(built.map(\.path)), "戻した表が元と違う")
     }
 
+    /// ⚠️⚠️ **毎窓走る手は、報せることが無い回に黙る**（ADR-269）。
+    ///
+    /// 控えの書き直しは毎窓走る（ADR-266）。Dropbox を繋いでいない利用者には表が無いので、
+    /// 無条件に記録すると診断ログに 30 分ごとにこの行が**永久に**並ぶ
+    /// ——しかも「書き直せなかった」は失敗のように読める。
+    /// 控えが無い＝古くなり得るものが無い＝報せることが何も無い。
+    ///
+    /// ⚠️ **ログを読むテストにしない**。`Diagnostics.append` は非同期なので、
+    /// ファイルを直後に読むと**どちらの実装でも空**になり得る（ADR-241 の罠。
+    /// 実際そう書いて負の検証で気づいた）。報せるかどうかは戻り値で見る。
+    @Test("控えが無いときは、報せることが無い（記録しない）")
+    func refreshIsSilentWhenThereIsNoSnapshotToRefresh() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        let snapshot = fx.dir.appendingPathComponent("item-index.bin")
+        #expect(!FileManager.default.fileExists(atPath: snapshot.path), "前提: 控えが無い")
+
+        let result = await store.refreshIndexSnapshotIfReady()
+        #expect(result == .indexNotLoaded(hasSnapshot: false), """
+                控えが無いのに「報せる」と判断した（\(result)）
+                ——毎窓走る手なので、繋いでいない利用者のログに永久に並ぶ。
+                """)
+    }
+
+    /// ⚠️ 逆向き。控えが**在る**のに表が載っていない回は、本当に見たい事象なので報せる
+    /// （ADR-263 の動機＝次の起動で 9 秒を払うことが他に分からない）。
+    @Test("控えが在るのに表が載っていなければ、報せる")
+    func refreshReportsWhenASnapshotExistsButTheIndexIsNotLoaded() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
+                               removed: [], newCursor: "c1")
+        _ = await store.cachedPhotoRefs()       // 控えが書かれる
+        await store.dropContentHashIndex()      // 表だけ捨てる（控えは残る）
+        #expect(FileManager.default.fileExists(
+            atPath: fx.dir.appendingPathComponent("item-index.bin").path), "前提: 控えが在る")
+
+        let result = await store.refreshIndexSnapshotIfReady()
+        #expect(result == .indexNotLoaded(hasSnapshot: true),
+                "控えが古くなり得るのに黙る判断をした（\(result)）")
+    }
+
+    /// ⚠️ 鍵が同じなら書かない（毎窓呼んでも 16MB を書き続けない＝ADR-266 の前提）。
+    @Test("鍵が同じなら書き直さない（毎窓呼んでも無駄打ちしない）")
+    func refreshDoesNotRewriteWhenTheKeyIsUnchanged() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1", added: [item("/a.jpg")],
+                               removed: [], newCursor: "c1")
+        _ = await store.cachedPhotoRefs()       // 1 回目の書き出し
+        #expect(await store.refreshIndexSnapshotIfReady() == .upToDate,
+                "鍵が同じなのに 16MB を書き直している（毎窓呼ぶ手なので効く）")
+
+        // 中身が変われば書く。
+        _ = await store.recordCaptureDateProbe(path: "/a.jpg", captureDate: nil,
+                                               latitude: nil, longitude: nil)
+        #expect(await store.refreshIndexSnapshotIfReady() == .wrote,
+                "中身が変わったのに書き直していない（次の起動で作り直しになる）")
+    }
+
     /// ⚠️ 控えが**無い**初回起動でも当然動く（控えは最適化であって前提ではない）。
     @Test("控えが無ければ作る（初回起動）")
     func firstLaunchBuildsNormally() async throws {

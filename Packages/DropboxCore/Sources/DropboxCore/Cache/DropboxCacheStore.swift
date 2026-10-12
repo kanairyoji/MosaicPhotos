@@ -753,18 +753,44 @@ actor DropboxCacheStore {
     ///
     /// ⚠️ 表がそろっていないときは**何もしない**（ここで作り始めると 9 秒を払う）。
     /// ⚠️ 呼ぶのは**枠の中で 1 回**（前面の 3 秒ごとの trickle から呼ぶと 10MB を書き続ける）。
-    func refreshIndexSnapshotIfReady() {
-        guard !isEphemeral else { return }
+    /// 書き直しの結果。⚠️ **テストはこれを見る**（ログを読むテストは
+    /// `Diagnostics.append` が非同期なので揺れる＝ADR-241 の罠）。
+    enum SnapshotRefresh: Equatable {
+        /// 書いた。
+        case wrote
+        /// 鍵が同じなので書くものが無い。
+        case upToDate
+        /// 表が載っていない。`hasSnapshot`＝古くなり得る控えが在るか（報せるべきか）。
+        case indexNotLoaded(hasSnapshot: Bool)
+        /// インメモリの店（控えを使わない）。
+        case notApplicable
+    }
+
+    @discardableResult
+    func refreshIndexSnapshotIfReady() -> SnapshotRefresh {
+        guard !isEphemeral else { return .notApplicable }
         // ⚠️ **見送った回も記録に出す**（独立レビューの指摘・ADR-250 の自分の決め）。
         // 黙って返すと「書き直せていない」が見えない——ADR-254 で札が立つようになると
         // 枠で `cloudPhotoRefs()` が呼ばれなくなり、公開もオフなら**表が載らないまま**
         // 撮影日だけ進む＝鍵が変わって控えが古くなり、次の起動で 9 秒を払う。
         // それが起きていることは、この 1 行でしか分からない。
         guard let index = cachedItemIndex, cachedItemIndexRevision == itemsRevision else {
-            Diagnostics.mark("itemIndex: 控えを書き直せなかった（表が載っていない）")
-            return
+            // ⚠️ **控えが在るときだけ報せる**（ADR-269・レビューループで見つけた）。
+            // この手は**毎窓**走る（ADR-266）。無条件に記録すると、Dropbox を繋いでいない
+            // 利用者の診断ログに 30 分ごとにこの行が**永久に**並ぶ——しかも
+            // 「書き直せなかった」は失敗のように読める。控えが無い＝古くなり得るものが無い
+            // ＝報せることが何も無い。
+            // 控えが在るのに表が載っていない回だけが、本当に見たい事象（ADR-263 の動機）。
+            let hasSnapshot = FileManager.default.fileExists(atPath: snapshotURL.path)
+            if hasSnapshot {
+                Diagnostics.mark("itemIndex: 控えを書き直せなかった（表が載っていない）")
+            }
+            return .indexNotLoaded(hasSnapshot: hasSnapshot)
         }
-        writeIndexSnapshot(index, key: snapshotKey())
+        let key = snapshotKey()
+        guard writtenSnapshotKey != key else { return .upToDate }
+        writeIndexSnapshot(index, key: key)
+        return .wrote
     }
 
     /// テスト用: 表が持っている「訊いた」印（ADR-262）。
