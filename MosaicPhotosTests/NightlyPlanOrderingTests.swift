@@ -88,13 +88,20 @@ final class NightlyPlanOrderingTests: XCTestCase {
 
     // MARK: - 制約（文書化されているものを全部）
 
-    /// ⚠️ **窓を使い切る手**。どれも「始めたら長い」ので、後ろに置いた手は順番が回ってこない。
-    /// - `backup`: 毎窓・1 回あたりの上限なし（ADR-180）＝窓の期限が上限
+    /// ⚠️ **窓を塞ぐ手**＝`perform` が返るまで長い手。後ろに置いた手は順番が回ってこない。
     /// - `generate`: 550〜880MB・数十秒（`minimumGenerateMB` が在る理由）
     /// - `shareSync`: 実機でコピー待ち 9,265 件・1 回 500 件（ADR-222 追補）
     /// - `reconcile`: Dropbox の全件一覧（ADR-206）
     /// - `drain`: 期限まで待つ
-    private static let windowEating = ["backup", "generate", "shareSync", "reconcile", "drain"]
+    ///
+    /// ⚠️⚠️ **`backup` は入らない**（独立レビューの指摘で直した）。
+    /// `startBackup` は `backupEngine.startNightlyIfEnabled()` を呼ぶだけで**即座に返る**
+    /// ——仕事は engine が裏で続ける。ADR-180 の「毎窓・上限なし」は**仕事**の話で、
+    /// **手**は窓を塞がない。ここに入れていたので `backup` を `.unbounded` と宣言してしまい、
+    /// 40 秒の撮影日時の問い合わせが前に出て、短い窓（実測 21 秒）では
+    /// バックアップが**その晩まったく進まない**ところだった。
+    /// **「仕事が長い」と「手が窓を塞ぐ」は別**。
+    private static let windowEating = ["generate", "shareSync", "reconcile", "drain"]
 
     /// ⚠️⚠️ **ADR-270 で踏んだ制約**。控えの書き直しは軽く・回線も要らないので、
     /// 窓を使い切る手より**前**でなければ、提供オンの端末で一度も走らない。
@@ -123,6 +130,56 @@ final class NightlyPlanOrderingTests: XCTestCase {
             XCTAssertEqual(steps.filter { $0 == "indexSnapshot" }.count, 1,
                            "控えの書き直しが 1 回でない [\(name)]: \(steps)")
         }
+    }
+
+    /// ⚠️⚠️ **投げっぱなしの手は、塞ぐ手より前に出す**（独立レビューの指摘・ADR-272 追補）。
+    ///
+    /// `startBackup` は即座に返り、仕事は engine が裏で続ける（ADR-180「毎窓」）。
+    /// だから**窓の最初のうちに蹴っておけば、他の手が走っている間ずっと進む**。
+    /// 逆に塞ぐ手（40 秒の撮影日時の問い合わせなど）の後ろに置くと、
+    /// 短い窓（実測 **21 秒**）では `Task.isCancelled` が先に立って**その晩 1 枚も進まない**。
+    ///
+    /// ⚠️ 照合の期限が来た週だけは例外（`after: [.reconcile]`）——`.startBackup` が
+    /// `isRunning` を立てると照合が `guard !isBusy` で門前払いされるので、照合を先にやる
+    /// （52 回に 1 回・ADR-206）。
+    func testBackupIsKickedBeforeAnyBlockingStepWhenReconcileIsNotDue() {
+        var checked = 0
+        for (name, inputs) in allInputs() where !inputs.backupReconcileDue {
+            let steps = labels(inputs)
+            guard let backup = steps.firstIndex(of: "backup") else {
+                return XCTFail("バックアップの手が無い [\(name)]: \(steps)")
+            }
+            for prefix in Self.windowEating where prefix != "reconcile" {
+                guard let blocking = index(steps, startingWith: prefix) else { continue }
+                checked += 1
+                XCTAssertLessThan(backup, blocking, """
+                    バックアップが「\(prefix)」より後ろ＝短い窓ではその晩 1 枚も進まない。
+                    [\(name)] \(steps)
+                    """)
+            }
+            // 上限つきの塞ぐ手（撮影日時の問い合わせ）より前であること。
+            if let probe = index(steps, startingWith: "captureDates") {
+                checked += 1
+                XCTAssertLessThan(backup, probe, """
+                    バックアップが撮影日時の問い合わせ（40 秒）より後ろ。
+                    [\(name)] \(steps)
+                    """)
+            }
+        }
+        XCTAssertGreaterThan(checked, 0, "照合の期限が来ていない構成を 1 つも見ていない")
+    }
+
+    /// ⚠️ 照合の期限が来た週は、照合 → バックアップの順（資源の競合・ADR-206）。
+    func testBackupFollowsReconcileWhenDue() {
+        var checked = 0
+        for (name, inputs) in allInputs() where inputs.backupReconcileDue && inputs.networkAllowed {
+            let steps = labels(inputs)
+            guard let reconcile = steps.firstIndex(of: "reconcile"),
+                  let backup = steps.firstIndex(of: "backup") else { continue }
+            checked += 1
+            XCTAssertLessThan(reconcile, backup, "照合が後ろ [\(name)]: \(steps)")
+        }
+        XCTAssertGreaterThan(checked, 0, "照合の期限が来た構成を 1 つも見ていない")
     }
 
     /// ADR-222 追補: 公開は**取り込みの後・反映の前**。
@@ -229,6 +286,34 @@ final class NightlyPlanOrderingTests: XCTestCase {
             "shareSync",
             "drain"                                     // drain（期限まで待つ）
         ])
+    }
+
+    /// ⚠️⚠️ **導出が収束していること**（ADR-272 追補・自分で見つけた穴）。
+    ///
+    /// `order(_:)` の `after` の解決は**回数に上限**を置いてある（回り続けないため）。
+    /// つまり循環した前提（`A after B` と `B after A`）を宣言すると、
+    /// **静かに誤った並びを返す**——例外も記録も出ない。
+    /// だから「宣言した前提が、出てきた並びで全部満たされているか」を全組み合わせで確かめる。
+    /// ⚠️ これは「どの `after` を書いたか」を**知らずに**働くので、
+    /// 新しい前提を足しても自動的に見張られる（制約の一覧を書き写さない）。
+    func testEveryDeclaredPrerequisiteIsSatisfiedInEveryConfiguration() {
+        var checked = 0
+        for (name, inputs) in allInputs() {
+            let steps = NightlyPlan.steps(inputs)
+            for (idx, step) in steps.enumerated() {
+                for required in NightlyPlan.spec(for: step.kind).after {
+                    guard let at = steps.firstIndex(where: { $0.kind == required }) else { continue }
+                    checked += 1
+                    XCTAssertLessThan(at, idx, """
+                        宣言した前提が満たされていない（導出が収束していない）。
+                        「\(step.label)」は \(required) の後ろでなければならない。
+                        [\(name)] \(steps.map(\.label))
+                        """)
+                }
+            }
+        }
+        // ⚠️ 前提が 1 つも現れない構成だけを見ていたら、このテストは空振りする。
+        XCTAssertGreaterThan(checked, 0, "`after` の前提が 1 度も確かめられていない")
     }
 
     /// ⚠️ **網羅していることを assert する**（空でも通るテストを書かない・ADR-119）。

@@ -164,7 +164,8 @@ final class NightlyPlanTests: XCTestCase {
         // ⚠️ `indexSnapshot` は**毎回**入る（ADR-266・崩す経路が 2 つあるので条件にしない）。
         // ⚠️⚠️ 位置は **窓を使い切る手より前**（ADR-270）——最初は `drain` の直前に置いていて、
         // 提供オンの端末では `shareSync` に食われて一度も走らなかった。
-        XCTAssertEqual(steps, ["analysis", "stallCheck", "indexSnapshot", "backup",
+        // ⚠️ `backup` は**投げっぱなし**（即座に返る）なので最初のうちに蹴る（ADR-272 追補）。
+        XCTAssertEqual(steps, ["analysis", "backup", "stallCheck", "indexSnapshot",
                                "generate", "shareImport", "drain"])
         XCTAssertTrue(steps.firstIndex(of: "analysis")! < steps.firstIndex(of: "generate")!,
                       "generate を先に await すると窓を食い潰して顔/埋め込みが開始すらしない（Fix C）")
@@ -280,7 +281,9 @@ final class NightlyPlanTests: XCTestCase {
         }
         XCTAssertLessThan(snap, sync,
                           "反映より後ろだと一度も順番が回ってこない＝ADR-266 が何もしない: \(steps)")
-        XCTAssertLessThan(snap, backup, "バックアップも窓を使い切る（毎窓・上限なし）: \(steps)")
+        // ⚠️ `backup` との前後は**縛らない**（投げっぱなしなので窓を塞がない＝ADR-272 追補）。
+        // 縛っていたせいで `backup` を「上限なし」と宣言してしまい、40 秒の問い合わせが
+        // その前に出て、短い窓ではバックアップがその晩 1 枚も進まないところだった。
         XCTAssertLessThan(snap, generate, "生成も長い（550〜880MB・数十秒）: \(steps)")
         XCTAssertLessThan(snap, drain, "drain は期限まで待つ: \(steps)")
     }
