@@ -264,6 +264,34 @@ struct ItemIndexAcrossLaunchesTests {
         #expect(await next.cachedPhotoRefs().isEmpty, "消したはずの写真が控えから戻った")
     }
 
+    /// ⚠️⚠️ **メモリ圧迫で捨てたあと、控えから戻せること**（ADR-267）。
+    ///
+    /// 表はメモリ圧迫で捨てる（15〜20MB・作り直せるので保持する理由がない）。
+    /// だが `triedSnapshotLoad`（控えを探すのは 1 回だけ）が立ったままだと、
+    /// 次の要求は控えを飛ばして 10.8 万行の作り直し（実機 9 秒）に行く
+    /// ——**最も払いたくない場面でいちばん高い道**を選ぶことになる。
+    @Test("メモリ圧迫で表を捨てても、控えから戻す（作り直さない）")
+    func droppingTheIndexUnderPressureStillRestoresFromTheSnapshot() async throws {
+        let fx = try Fixture()
+        let store = fx.relaunch()
+        await store.applyDelta(accountId: "acc1",
+                               added: (0..<30).map { item("/p/\($0).jpg") },
+                               removed: [], newCursor: "c1")
+        let built = await store.cachedPhotoRefs()
+        #expect(built.count == 30, "前提: 表が作れていない")
+        #expect(await store.itemIndexBuildsForTesting == 1, "前提: 1 回目は作る")
+
+        // メモリ圧迫で捨てる（`MemoryPressureMonitor` が呼ぶのと同じ入口）。
+        await store.dropContentHashIndex()
+
+        let again = await store.cachedPhotoRefs()
+        #expect(await store.itemIndexBuildsForTesting == 1, """
+                圧迫で捨てたあと、控えを飛ばして 10.8 万行を作り直している（実機 9 秒）。
+                控えが在れば 1.7 秒で戻せる——最も払いたくない場面で最も高い道を選んでいる。
+                """)
+        #expect(Set(again.map(\.path)) == Set(built.map(\.path)), "戻した表が元と違う")
+    }
+
     /// ⚠️ 控えが**無い**初回起動でも当然動く（控えは最適化であって前提ではない）。
     @Test("控えが無ければ作る（初回起動）")
     func firstLaunchBuildsNormally() async throws {

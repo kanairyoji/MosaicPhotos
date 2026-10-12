@@ -921,9 +921,18 @@ actor DropboxCacheStore {
     func bumpItemsRevision() { itemsRevision &+= 1 }
 
     /// 表を捨てる（メモリ圧迫・アカウント切替・リセット）。次の要求で作り直す。
+    ///
+    /// ⚠️⚠️ **控えを読み直せるように戻す**（ADR-267）。`triedSnapshotLoad` は
+    /// 「この起動で一度でも控えを探したか」で、探すのを 1 回に絞るために在る。
+    /// だが**捨てたあとも立ったまま**だと、次の要求は控えを飛ばして
+    /// 10.8 万行の作り直し（実機 9 秒）に行く——**最も払いたくない場面**（メモリ圧迫の直後）で
+    /// いちばん高い道を選ぶことになる。控えが在れば 1.7 秒で戻せる。
+    /// ⚠️ ADR-82 の「無いものを繰り返し探さない」は**通信の往復**（1 回 3 秒）の話で、
+    /// こちらはローカルのファイル 1 つ。捨てるのは稀なので、読み直しを許して損はない。
     func dropContentHashIndex() {
         cachedItemIndex = nil
         cachedItemIndexRevision = -1
+        triedSnapshotLoad = false
     }
 
     /// テスト用: 「`exifProbedAt` の列ができる前に訊いた行」を作る。
