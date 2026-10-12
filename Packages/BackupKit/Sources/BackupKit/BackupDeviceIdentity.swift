@@ -75,6 +75,9 @@ public enum BackupDeviceIdentity {
     /// そこで (1) プロセス内メモ化、(2) Keychain が駄目なら UserDefaults へ退避、で二重に守る。
     /// （短 ID は端末の識別子でありクレデンシャルではないので UserDefaults 保存は問題ない。）
     public static func currentID() -> String {
+        #if DEBUG
+        if let testing = testingIdentity { return testing.id }
+        #endif
         cacheLock.lock()
         defer { cacheLock.unlock() }
         if let cachedID, !cachedID.isEmpty { return cachedID }
@@ -118,12 +121,36 @@ public enum BackupDeviceIdentity {
 
     /// 表示名（"iPhone"/"iPad"）。catalog.json の deviceName にも記録する。
     public static func currentDisplayName() -> String {
+        #if DEBUG
+        if let testing = testingIdentity { return testing.displayName }
+        #endif
         #if canImport(UIKit)
         return UIDevice.current.model
         #else
         return "device"
         #endif
     }
+
+    #if DEBUG
+    /// **テスト専用**: このタスクの中だけ、別の端末として振る舞う。
+    ///
+    /// 同じ Dropbox に 2 台がつながる構成（家族が 1 つのアカウントを使う・ADR-222）は、
+    /// 端末フォルダ名がプロセスに 1 つ（Keychain 由来）なので、テストで 2 台を作れなかった。
+    /// 端末の名前を読む口は `currentID()` と `currentDisplayName()` の 2 つだけ（フォルダ名・
+    /// 名乗り・自分を除く判定はすべてここを通る）なので、ここで差し替えれば全部に効く。
+    /// ⚠️ `@TaskLocal` は `Task {}` には引き継がれるが、`Task.detached` には引き継がれない。
+    public struct TestingIdentity: Sendable, Equatable {
+        public let displayName: String
+        public let id: String
+        public init(displayName: String, id: String) {
+            self.displayName = displayName
+            self.id = id
+        }
+        /// この端末のフォルダ名（`<表示名>-<ID>`）。
+        public var folderName: String { BackupDeviceIdentity.folderName(displayName: displayName, id: id) }
+    }
+    @TaskLocal public static var testingIdentity: TestingIdentity?
+    #endif
 
     // MARK: - Keychain（識別子の保存・クレデンシャルではない）
 

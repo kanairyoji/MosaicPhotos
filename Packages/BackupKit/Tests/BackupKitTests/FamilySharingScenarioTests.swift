@@ -35,13 +35,26 @@ extension StandardSettingsSuite {
         struct Photo { let id: String; let data: Data; let taken: Date }
 
         /// 解析の出どころ（refKey → タグ）。受ける側で「誰の何の写真の解析か」を読めるようにする。
+        ///
+        /// ⚠️ **「その端末に解析があるか」は本番の規則に合わせる**（`hasAnalysis`）。端末は
+        /// 自分の端末写真（"L-"）を解析し、クラウド写真（"C-"）は**自分の Backup のコピーと
+        /// 自分の Share の下を除いて**解析する——`AnalysisCandidates.hiddenBackupCopyRefKeys`
+        /// （PhotosFeatureKit・`AnalysisCandidatesTests` が固定）と同じ規則。全部に解析があることに
+        /// すると、「自分の写真の解析が公開されない」が偽物の上では見えなくなる。
         final class TagSource: ShareAnalysisSource {
             let owner: String
+            var hasAnalysis: @MainActor (String) async -> Bool = { _ in true }
             init(owner: String) { self.owner = owner }
             func analysisEntries(forRefKeys refKeys: [String]) async
                 -> (versions: ShareAnalysisData.Versions, entries: [String: ShareAnalysisData.Entry]) {
-                (ShareAnalysisData.Versions(tag: 1),
-                 Dictionary(uniqueKeysWithValues: refKeys.map { ($0, ShareAnalysisData.Entry(tags: ["\(owner):\($0)"])) }))
+                var entries: [String: ShareAnalysisData.Entry] = [:]
+                for key in refKeys where await hasAnalysis(key) {
+                    // ⚠️ タグは短く（受信側の検証が長いタグを捨てる＝`maxTagLength`）。
+                    // クラウド写真はパスが長いので、ファイル名だけを載せる。
+                    let label = key.hasPrefix("C-") ? "C-" + (key as NSString).lastPathComponent : key
+                    entries[key] = ShareAnalysisData.Entry(tags: ["\(owner):\(label)"])
+                }
+                return (ShareAnalysisData.Versions(tag: 1), entries)
             }
         }
 
@@ -64,16 +77,33 @@ extension StandardSettingsSuite {
             private var shards: [String: [String: ShareAnalysisData.Entry]] = [:]
 
             static let root = "/MosaicPhotos"
-            let backupRoot = BackupEngine.deviceBackupRoot(for: Person.root)
-            let shareRoot = BackupLayout.shareRoot(root: Person.root,
-                                                   deviceFolder: BackupDeviceIdentity.currentFolderName())
+            /// この人の端末（nil＝プロセスの端末）。同じ Dropbox に 2 台をつなぐときに分ける。
+            let identity: BackupDeviceIdentity.TestingIdentity?
+            let backupRoot: String
+            let shareRoot: String
+            let publishDefaults: UserDefaults
 
+            /// - Parameters:
+            ///   - accountID: 使う Dropbox アカウント（nil＝この人の名前のアカウント）。
+            ///     同じ ID を 2 人に渡すと「同じ Dropbox を 2 台で使う」構成になる。
+            ///   - identity: この人の端末（同じアカウントで 2 台にするときは別々に渡す）。
             init(_ name: String, cloud: FakeDropboxCloud, photos: Int,
-                 destination: BackupDestination, provide: Bool = true) async {
+                 destination: BackupDestination, provide: Bool = true,
+                 accountID: String? = nil,
+                 identity: BackupDeviceIdentity.TestingIdentity? = nil) async {
                 self.name = name
                 self.destination = destination
                 self.provide = provide
-                account = await cloud.account(name)
+                self.identity = identity
+                (backupRoot, shareRoot) = BackupDeviceIdentity.$testingIdentity.withValue(identity) {
+                    (BackupEngine.deviceBackupRoot(for: Person.root),
+                     BackupLayout.shareRoot(root: Person.root,
+                                            deviceFolder: BackupDeviceIdentity.currentFolderName()))
+                }
+                publishDefaults = TestDefaults.scratch("family-publish-\(name)")
+                publishDefaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+                publishDefaults.set(Person.root, forKey: BackupSettingsKeys.dropboxFolder)
+                account = await cloud.account(accountID ?? name)
                 library = (0..<photos).map {
                     Photo(id: "\(name)-\($0)", data: Data("\(name)-photo-\($0)".utf8),
                           taken: Date(timeIntervalSince1970: 1_600_000_000 + Double($0) * 86_400))
@@ -91,6 +121,17 @@ extension StandardSettingsSuite {
                 share.maxPollAttempts = 3
                 tags = TagSource(owner: name)
                 share.analysisSource = tags
+                let ownIDs = Set(library.map(\.id))
+                let shareRootLower = shareRoot.lowercased()
+                tags.hasAnalysis = { [store] key in
+                    if key.hasPrefix("L-") { return ownIDs.contains(String(key.dropFirst(2))) }
+                    guard key.hasPrefix("C-") else { return false }
+                    let path = String(key.dropFirst(2)).lowercased()
+                    if path == shareRootLower || path.hasPrefix(shareRootLower + "/") { return false }
+                    // 自分の Backup のコピー（原本が端末にある）は解析しない。
+                    let own = await store.allRecordsLite().map { $0.dropboxPath.lowercased() }
+                    return !own.contains(path)
+                }
                 // 受け取った写真（"C-"）を共有し直すときの hash の表（アプリは同期キャッシュから引く）。
                 let account = account
                 share.cloudSourceHashProvider = {
@@ -116,7 +157,7 @@ extension StandardSettingsSuite {
                     if let p = previous.1 { defaults.set(p, forKey: ShareSettingsKeys.provideEnabled) }
                     else { defaults.removeObject(forKey: ShareSettingsKeys.provideEnabled) }
                 }
-                return await body()
+                return await BackupDeviceIdentity.$testingIdentity.withValue(identity) { await body() }
             }
 
             /// バックアップの 1 回（`BackupRunner.run` の写し・判断は本番の関数）。
@@ -160,23 +201,59 @@ extension StandardSettingsSuite {
             }
 
             /// 受け取り: 家族フォルダを一覧してアルバムを見つけ、解析を取りに行く。
+            /// アプリの取り込み（`SharedAnalysisImporter`）と同じく、家族フォルダに加えて
+            /// **同じ Dropbox の他の端末の `Analysis`**（ADR-222）からも解析を取る。
             func receive() async -> [SharedAlbumDiscovery.Album] {
-                var items: [String] = []
-                let copier = DropboxShareCopier(httpClient: account)
-                var listedShards: Set<String> = []
-                for root in familyRoots {
-                    guard let listed = await copier.listFolder(path: root, token: "t", recursive: true) else { continue }
-                    items += listed.filter { !$0.isFolder && $0.pathLower.hasSuffix(".jpg") }.map(\.pathLower)
-                    listedShards.formUnion(listed.filter { ShareAnalysisData.isAnalysisFileName($0.name) }
-                        .map(\.pathLower))
+                await asCurrentDevice {
+                    var items: [String] = []
+                    let copier = DropboxShareCopier(httpClient: account)
+                    let fetch = ShareAnalysisFetch(httpClient: account, defaults: fetchDefaults)
+                    let discovered = await fetch.accountAnalysisRoots(
+                        backupRoot: Person.root, ownDeviceFolder: BackupDeviceIdentity.currentFolderName(),
+                        token: "t")
+                    analysisRoots = discovered.roots
+                    var listedShards: Set<String> = []
+                    for root in familyRoots + discovered.roots {
+                        guard let listed = await copier.listFolder(path: root, token: "t", recursive: true)
+                        else { continue }
+                        if familyRoots.contains(root) {
+                            items += listed.filter { !$0.isFolder && $0.pathLower.hasSuffix(".jpg") }.map(\.pathLower)
+                        }
+                        listedShards.formUnion(listed.filter { ShareAnalysisData.isAnalysisFileName($0.name) }
+                            .map(\.pathLower))
+                    }
+                    for fetched in await fetch.fetchUpdated(roots: familyRoots + discovered.roots, token: "t",
+                                                            discoveryComplete: discovered.listedAll) {
+                        shards[fetched.analysisPathLower] = fetched.file.entries
+                        fetch.markImported(fetched)
+                    }
+                    shards = shards.filter { listedShards.contains($0.key) }   // 消えたシャードは数えない
+                    return SharedAlbumDiscovery.albums(itemPaths: items, familyRoots: familyRoots)
                 }
-                let fetch = ShareAnalysisFetch(httpClient: account, defaults: fetchDefaults)
-                for fetched in await fetch.fetchUpdated(roots: familyRoots, token: "t") {
-                    shards[fetched.analysisPathLower] = fetched.file.entries
-                    fetch.markImported(fetched)
+            }
+
+            /// 直近の受け取りで見つけた、同じ Dropbox の他の端末の `Analysis`。
+            private(set) var analysisRoots: [String] = []
+
+            /// 「写真の解析結果を共有」（ADR-222）の 1 回。渡す写真はアプリ（`CloudAnalysisPublisher`）と
+            /// 同じく**この端末が同期しているクラウド写真すべて**（`/MosaicPhotos` ＋家族フォルダ）。
+            @discardableResult
+            func publishAnalysis() async -> AnalysisPublisher.Outcome {
+                await asCurrentDevice {
+                    var photos: [AnalysisPublisher.CloudPhoto] = []
+                    let copier = DropboxShareCopier(httpClient: account)
+                    for root in [Person.root] + familyRoots {
+                        for file in await copier.listFolder(path: root, token: "t", recursive: true) ?? []
+                        where !file.isFolder && file.pathLower.hasSuffix(".jpg") {
+                            if let hash = file.contentHash {
+                                photos.append(.init(refKey: "C-\(file.pathLower)", contentHash: hash))
+                            }
+                        }
+                    }
+                    let publisher = AnalysisPublisher(tokenProvider: FakeTokenProvider(), analysisSource: tags,
+                                                      httpClient: account, defaults: publishDefaults)
+                    return await publisher.publish(photos: photos)
                 }
-                shards = shards.filter { listedShards.contains($0.key) }   // 消えたシャードは数えない
-                return SharedAlbumDiscovery.albums(itemPaths: items, familyRoots: familyRoots)
             }
 
             /// いま届いている解析（content_hash → タグ）。
