@@ -53,4 +53,43 @@ struct DiagnosticsLogReadTests {
         let lines = await log.recentLines()
         #expect(lines.count <= 1)
     }
+
+    /// ⚠️ **切り詰めが文字の途中で切っても、ログが空にならない**（2026-10-13 にテストで踏んだ）。
+    ///
+    /// 上限を超えたら末尾 `maxBytes` を**バイト数で**残していた。日本語（3 バイト）の行が多いと
+    /// 切り口が文字の途中に落ち、ファイル全体が UTF-8 として読めなくなる——読み出しは
+    /// `String(contentsOf:encoding: .utf8)` が失敗して**空**を返し、次に切り詰めるまで
+    /// Developer Options のログ画面が空、ログを検査するテストが全部空振りした。
+    /// 切り口を 3 通りずらして、どれかが必ず文字の途中に落ちるようにする。
+    /// ⚠️ ずらすのは**末尾の行の長さ**（切り口は末尾から測る）。最初は先頭に詰め物をしていて、
+    /// 切り口が 1 バイトも動かず、直す前の実装でも通った（ADR-268 の「実験が空振りする」形）。
+    @Test("切り詰めの切り口が文字の途中でも、行が読める", arguments: [0, 1, 2])
+    func trimKeepsUTF8Readable(padding: Int) async throws {
+        let log = makeLog()
+        let line = Data("あいうえお\n".utf8)   // 16 バイト（3 バイト × 5 ＋ 改行）
+        var body = Data()
+        while body.count <= log.maxBytes * 2 { body.append(line) }
+        try body.write(to: log.fileURL)
+
+        log.append("tail-marker" + String(repeating: "x", count: padding))   // ここで切り詰める
+        // ⚠️ 全行を読む（既定の 3,000 行だと先頭＝切り口が見えず、行の途中から始まっても通った）。
+        let lines = await log.recentLines(maxLines: .max)
+
+        #expect(lines.last?.contains("tail-marker") == true, "切り詰めのあと読めない: \(lines.suffix(2))")
+        #expect(lines.count > 1000, "切り詰めで行を失いすぎた（\(lines.count) 行）")
+        #expect(lines.first == "あいうえお", "先頭が行の途中から始まっている: \(lines.first ?? "nil")")
+        let size = try #require(try FileManager.default.attributesOfItem(atPath: log.fileURL.path)[.size] as? Int)
+        #expect(size <= log.maxBytes, "切り詰めていない（\(size) バイト）")
+    }
+
+    /// 以前の切り詰めが作った傷（先頭が文字の途中）が残ったファイルも、空にせず読む。
+    @Test("壊れたバイトが混じったファイルも、空にせず読む")
+    func readsFileWithBrokenBytes() async throws {
+        let log = makeLog()
+        var body = Data(Array("あ".utf8).dropFirst())   // 文字の途中から始まる
+        body.append(Data("\nalpha\nbeta\n".utf8))
+        try body.write(to: log.fileURL)
+        let lines = await log.recentLines()
+        #expect(lines.suffix(2) == ["alpha", "beta"], "1 バイトの傷で全文を読めなくなった: \(lines)")
+    }
 }

@@ -11,7 +11,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.mosaicphotos.diagnostics")
     let fileURL: URL
     /// この2倍を超えたら末尾 maxBytes に切り詰める（ログの肥大を防ぐ）。
-    private let maxBytes = 256 * 1024
+    let maxBytes = 256 * 1024
 
     private init() {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -57,9 +57,21 @@ public final class DiagnosticsLog: @unchecked Sendable {
             // サイズ上限：大きくなりすぎたら末尾だけ残す。
             if let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size]) as? Int,
                size > maxBytes * 2, let all = try? Data(contentsOf: fileURL) {
-                try? Data(all.suffix(maxBytes)).write(to: fileURL)
+                try? Self.trimmedTail(all, maxBytes: maxBytes).write(to: fileURL)
             }
         }
+    }
+
+    /// 末尾 `maxBytes` を、**行の頭から**残す。
+    ///
+    /// ⚠️ バイト数だけで切ると、日本語（3 バイト）の文字の途中に切り口が落ち、ファイル全体が
+    /// UTF-8 として読めなくなる——`recentLines` が空を返し、次に切り詰めるまで（さらに 256KB 書くまで）
+    /// ログ画面が空になっていた（2026-10-13・テストのログ検査が全部空振りして発覚）。
+    /// 切り口の後ろの最初の改行まで捨てれば、残りは必ず文字の境目から始まる。
+    static func trimmedTail(_ all: Data, maxBytes: Int) -> Data {
+        let tail = all.suffix(maxBytes)
+        guard let newline = tail.firstIndex(of: UInt8(ascii: "\n")) else { return Data(tail) }
+        return Data(tail[tail.index(after: newline)...])
     }
 
     /// 直近のログを**行単位**で返す（Developer Options 表示用）。
@@ -74,7 +86,9 @@ public final class DiagnosticsLog: @unchecked Sendable {
     public func recentLines(maxLines: Int = 3000) async -> [String] {
         await withCheckedContinuation { continuation in
             queue.async { [fileURL] in
-                let text = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+                // ⚠️ 壊れたバイトがあっても読む（置換文字にする）。厳密に読むと 1 バイトの傷で全文が空になる
+                // ——以前の切り詰めが作った傷は、古いファイルに残っている。
+                let text = (try? Data(contentsOf: fileURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
                 var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
                 if lines.last?.isEmpty == true { lines.removeLast() }
                 if lines.count > maxLines { lines = Array(lines.suffix(maxLines)) }
