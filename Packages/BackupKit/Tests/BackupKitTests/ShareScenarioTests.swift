@@ -94,27 +94,33 @@ struct ShareScenarioTests {
         #expect(afterMore == afterFirst, "反映のたびにファイルが増減する: \(afterMore)")
     }
 
-    /// ⚠️ **旧配置のフォルダは差分が片付ける**（ADR-209）。以前は「移行」という専用の手が
-    /// あり、記録を `pending` へ戻して配置の版を進めていた。いまはフォルダも差分なので、
-    /// どのセットも持たないフォルダは自然に消え、望ましい場所へコピーし直される。
-    @Test("どのセットも持たないフォルダは、次の反映で消える")
-    func unownedFolderIsRemoved() async {
+    /// ⚠️ **持ち主の分からないフォルダは、中身がいまのセットに在るときだけ消す**（ADR-278）。
+    /// 以前（ADR-209）は「どのセットも持たないフォルダ」を全部消していた。旧配置の残骸を
+    /// 片付けるには便利だったが、台帳が空に見えた起動では**全セットのフォルダ**が当たる。
+    /// いまは、中の写真が全部いまのセットのフォルダにも在る（＝家族から見える写真が減らない）
+    /// ときだけ消し、そうでなければ残してログに出す。
+    @Test("どのセットも持たないフォルダは、中身がいまのセットに在るときだけ消える")
+    func unownedFolderIsRemovedOnlyWhenDuplicated() async {
         let (engine, _, server) = await makeStack(backup: [("a", "/mosaicphotos/a.jpg", "hA")])
-        // 誰のものでもないフォルダが共有ルート直下に在る状態を作る。
-        let stray = "\(Self.shareRoot.lowercased())/Group"
-        await server.seed(stray, hash: "", isFolder: true)
-        await server.seed("\(stray)/leftover.jpg", hash: "hOld")
+        // 誰のものでもないフォルダが共有ルート直下に 2 つ在る状態を作る。
+        let duplicate = "\(Self.shareRoot.lowercased())/Group"
+        await server.seed("\(duplicate)/a-old.jpg", hash: "hA")        // Trip にも在る中身
+        let foreign = "\(Self.shareRoot.lowercased())/other"
+        await server.seed("\(foreign)/leftover.jpg", hash: "hOld")     // どこにも無い中身
 
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
+        await engine.syncNow()   // 1 回目は Trip へのコピー前の一覧で判定するので、もう 1 回
 
-        let folders = await server.filePaths()
-        #expect(!folders.contains("\(stray)/leftover.jpg"),
-                "どのセットも持たないフォルダが残っている: \(folders)")
-        let mine = await sharedFiles(server)
+        let paths = await server.filePaths()
+        #expect(!paths.contains("\(duplicate)/a-old.jpg"),
+                "中身がいまのセットにも在るフォルダが残っている: \(paths)")
+        #expect(paths.contains("\(foreign)/leftover.jpg"),
+                "持ち主の分からない写真を消した（中身はどこにも無い）: \(paths)")
+        #expect(await server.deletedLastCopies == 0)
+        let mine = await sharedFiles(server).filter { !$0.hasPrefix(foreign + "/") }
         #expect(mine.count == 1, "自分のセットのコピーが作られていない: \(mine)")
     }
-
 
     // MARK: - 人物 ID の振り直し（レビュー指摘）
 
@@ -928,9 +934,11 @@ struct ShareDifferentialDetailTests {
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
-        // `Other` は直下なので消える。その中身も一緒に消える（フォルダごと）。
+        // `Other` は直下だが、中身（深い階層の keep.txt）がいまのセットに無いので消さない（ADR-278）。
+        // ⚠️ 以前はフォルダごと消していた——深い階層は 1 枚も確かめずに。
         let files = await server.filePaths()
-        #expect(!files.contains { $0.contains("/other/") }, "直下の孤児フォルダが残っている: \(files)")
+        #expect(files.contains { $0.hasSuffix("/other/deep/keep.txt") },
+                "確かめていない深い階層ごとフォルダを消した: \(files)")
         // 共有ルート自体は消さない。
         #expect(await server.filePaths().contains { $0.hasPrefix(Self.shareRoot.lowercased() + "/") },
                 "共有ルートごと消した")

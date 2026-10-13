@@ -76,6 +76,25 @@ public actor BackupStore {
         return makeInMemoryModelContainer(for: schema)
     }
 
+    /// 本番の容器の名前（`makeContainer`）。
+    static let containerName = "BackupKit"
+
+    /// **台帳がこの起動だけインメモリに落ちているか**（ADR-278）。
+    /// 一時的な失敗（容量不足・ファイル保護）で開けなかった起動は、共有セットも記録も空に見える。
+    /// 共有の反映はこれを見て止まる——空を真実として読むと、全セットのフォルダを消しに行く。
+    public nonisolated var isTemporaryFallback: Bool {
+        isResilientMemoryFallback(modelContainer, name: Self.containerName)
+    }
+
+    /// テスト用: 自己修復がインメモリへ落ちたときと同じ構成の容器。
+    public static func memoryFallbackContainerForTesting() -> ModelContainer {
+        testContainerLock.lock()
+        defer { testContainerLock.unlock() }
+        let schema = Schema([BackupAssetRecord.self, OffloadRecord.self,
+                             ShareSet.self, ShareItem.self])
+        return makeMemoryFallbackContainerForTesting(for: schema, name: containerName)
+    }
+
     /// 名前付き永続コンテナ（自己修復）。壊れた/非互換ストアは削除して再構築し、
     /// それでも駄目ならインメモリ（起動を止めない・記録は 409→hash 照合で自然復元）。
     private static func makeContainer() -> ModelContainer {
@@ -83,7 +102,7 @@ public actor BackupStore {
                              ShareSet.self, ShareItem.self])
         // 台帳（バックアップ記録・オフロード・共有状態）。壊れても**消さずに退避**する。
         return makeResilientModelContainer(
-            name: "BackupKit", schema: schema, policy: .ledger,
+            name: containerName, schema: schema, policy: .ledger,
             openFailedMessage: "BackupStore: 'BackupKit' store open failed; quarantining and rebuilding.",
             memoryFallbackMessage: "BackupStore: 'BackupKit' store still failing; using in-memory store.",
             log: { BackupLogger.error($0) })

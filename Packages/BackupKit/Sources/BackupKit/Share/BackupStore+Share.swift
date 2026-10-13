@@ -215,3 +215,24 @@ extension BackupStore {
         return out
     }
 }
+
+extension BackupStore {
+    /// 中身（content_hash）が `hashes` のどれかであるバックアップ記録のパス。
+    /// **nil は「読めなかった」**（消す前の確認で「どこにも無い」と読まない・ADR-278）。
+    ///
+    /// 共有から外す写真の中身が Backup に残っているかを確かめる**候補の場所**を挙げるだけで、
+    /// 在るかどうかは呼び出し側が Dropbox に訊く（記録は照合の時点の姿でしかない）。
+    func backupPaths(withContentHashes hashes: Set<String>) -> [(path: String, hash: String)]? {
+        #if DEBUG
+        if failingShareReadForTesting == .backupRecords { return nil }
+        #endif
+        guard !hashes.isEmpty else { return [] }
+        var descriptor = FetchDescriptor<BackupAssetRecord>()
+        descriptor.propertiesToFetch = [\.dropboxPath, \.contentHash]
+        guard let records = try? modelContext.fetch(descriptor) else { return nil }
+        return records.compactMap { record in
+            guard let hash = record.contentHash, hashes.contains(hash) else { return nil }
+            return (record.dropboxPath, hash)
+        }
+    }
+}

@@ -55,6 +55,14 @@ extension ShareSyncEngine {
         lastError = nil
 
         let store = await storeProvider()
+        // ⚠️⚠️ **台帳がこの起動だけインメモリに落ちていたら、何も書かない**（ADR-278）。
+        // 一時的な失敗（容量不足・ファイル保護）で開けなかった台帳は、セットも記録も**空として
+        // 読めてしまう**——読めなかった（ADR-277）とは違い、読む側からは区別がつかない。
+        if store.isTemporaryFallback {
+            lastError = .ledgerUnavailable
+            Diagnostics.mark("share sync: 台帳が一時的にインメモリで開いている — この起動では反映しない")
+            return
+        }
         let copier = makeCopier()
         let shareRoot = ShareSettingsKeys.currentShareRoot(defaults)
         let sets = await store.allShareSets()
@@ -93,6 +101,13 @@ extension ShareSyncEngine {
             }
         }
         let remote = RemoteShareIndex(listing: listing)
+        // クラウド原本の中身（10 万行の射影）は**反映 1 回に 1 度だけ**引く。宛先名と、
+        // 消す前の確認（中身が他に在るか）の両方に使う。
+        let cloudHashes = await cloudSourceHashProvider?()
+        let removal = RemovalContext(shareRoot: shareRoot,
+                                     holdingRoot: ShareSettingsKeys.currentShareRemovedRoot(defaults),
+                                     cloudHashes: cloudHashes, store: store,
+                                     copier: copier, token: token)
 
         // ⚠️ メンバー数は**1 回だけ数えて使い回す**（ADR-119）。セットごとに数え直すと
         // 「メンバー総数 × セット数」行を 1 回の反映で射影することになる。
@@ -103,7 +118,7 @@ extension ShareSyncEngine {
                 break
             }
             await sync(set: set, shareRoot: shareRoot, store: store,
-                       copier: copier, token: token, remote: remote)
+                       copier: copier, token: token, remote: remote, removal: removal)
             await refresh(totals: totals)   // 進捗（共有済み N/M）を UI へ（変化なしなら無通知）
         }
         // ⚠️ **フォルダの掃除は最後**（紛らわしい名前のテストが捕まえた）。
@@ -111,8 +126,7 @@ extension ShareSyncEngine {
         // ことになり、コピーが永久に失敗する（クラウド写真は共有ルートの中にも在り得る）。
         // 掃除は「どのセットも持たないフォルダを消す」だけなので、後回しにしても
         // 判断は変わらない——変わるのは「元を取り終わってから消す」ことだけ。
-        await sweepUnwantedFolders(sets: sets, shareRoot: shareRoot, remote: remote,
-                                   copier: copier, token: token)
+        await sweepRetiredFolders(sets: sets, remote: remote, removal: removal)
 
         lastSyncAt = Date()
         await refresh()
@@ -125,33 +139,9 @@ extension ShareSyncEngine {
         }
     }
 
-    /// **望ましくないフォルダを消す**（ADR-209）。
-    ///
-    /// 共有ルートの直下にあってよいのは、いまあるセットのフォルダだけ。それ以外は
-    /// - 削除したセットの残骸
-    /// - 名前を変えた前のフォルダ
-    /// - 消したあとに遅れて完走したコピーが復活させたフォルダ
-    /// のいずれかで、どれも消してよい。
-    ///
-    /// ⚠️ これが**墓標を不要にした**（旧実装は「消したフォルダ」を 15 分覚えて消し直していた。
-    /// Dropbox にジョブ取り消しの API が無いため、発行済みのコピーが後から完走するのを
-    /// 待ち構える必要があった）。差分なら、いつ復活しても次の反映で消える。
-    private func sweepUnwantedFolders(sets: [ShareSetLite], shareRoot: String,
-                                      remote: RemoteShareIndex,
-                                      copier: DropboxShareCopier, token: String) async {
-        let wanted = Set(sets.compactMap {
-            SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: $0.folderName,
-                                        deviceFolder: nil)?.lowercased()
-        })
-        let unwanted = remote.directSubfolders(of: shareRoot).filter { !wanted.contains($0) }
-        guard !unwanted.isEmpty else { return }
-        let budget = Array(unwanted.sorted().prefix(Self.maxDeletesPerRun))
-        BackupLogger.info("Share sync: removing \(budget.count) folder(s) that no set owns")
-        _ = await copier.deleteBatch(paths: budget, token: token)
-    }
-
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,
-                      copier: DropboxShareCopier, token: String, remote: RemoteShareIndex) async {
+                      copier: DropboxShareCopier, token: String, remote: RemoteShareIndex,
+                      removal: RemovalContext) async {
         // ⚠️ 読めなかったら**このセットは見送る**（ADR-277）。空として進むと「メンバー 0」と読んで
         // フォルダの中身を全部消す（差分方式では「望ましい集合が空」も正しい答えなので）。
         guard let items = await store.readShareItems(setID: set.id) else {
@@ -204,24 +194,53 @@ extension ShareSyncEngine {
             return
         }
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
-                                      cloudHashByPath: await cloudSourceHashProvider(),
+                                      cloudHashByPath: removal.cloudHashes,
                                       setFolder: setFolder, remoteFiles: remoteFiles)
 
         BackupLogger.info("Share sync: '\(set.folderName)' items=\(items.count) "
             + "copy=\(plan.copies.count) present=\(plan.present) "
-            + "delete=\(plan.deletions.count) waitingBackup=\(plan.waitingBackup.count)")
-        if plan.skippedDeletionsForSafety {
+            + "delete=\(plan.deletions.count) waitingBackup=\(plan.waitingBackup.count) "
+            + "waitingCloud=\(plan.waitingCloudHash.count)")
+        if plan.noSourceResolved {
             // ⚠️ 黙って何もしない状態を作らない（実機で「詰まっているのにログが無い」を何度も踏んだ）。
-            Diagnostics.mark("share: '\(set.name)' 元が 1 件も解決できないため掃除を見送りました "
-                             + "（メンバー \(items.count) 件）")
+            Diagnostics.mark("share: '\(set.name)' 元が 1 件も解決できない（メンバー \(items.count) 件）"
+                             + " — メンバーのコピーは消す前の確認で残す")
         }
 
         // 解析データは**コピーの前に**、いま置かれている分で揃える（ADR-183）。
         // コピーは数分かかるので、後回しだと「反映を押しても解析データが何分も更新されない」。
         let presentPaths = Set(remoteFiles.map(\.pathLower))
             .subtracting(plan.deletions)
+        // 消す候補のうち**メンバーのコピーとして残すもの**（ADR-278）。家族からは見えているので、
+        // 解析データにも載せる（載せないと、記録が消えた写真のタグ・顔が家族の側で消える）。
+        let deletionSet = Set(plan.deletions)
+        let candidates = remoteFiles.filter { deletionSet.contains($0.pathLower) }
+        let hashByPath = Dictionary(remoteFiles.map { ($0.pathLower, $0.contentHash ?? "") },
+                                    uniquingKeysWith: { first, _ in first })
+        let presentHashes = Set(presentPaths.compactMap { hashByPath[$0] }.filter { !$0.isEmpty })
+        func review(presentAfterCopy: Set<String>) -> [String: ShareDeletionReview.Verdict] {
+            guard !candidates.isEmpty else { return [:] }
+            return ShareDeletionReview.classify(
+                candidates: candidates, members: items.map(\.refKey),
+                destinationByRefKey: plan.sourceByRefKey.mapValues(\.destinationLower),
+                presentAfterCopy: presentAfterCopy, presentHashes: presentHashes)
+        }
+        func analysisInputs(present: Set<String>, verdicts: [String: ShareDeletionReview.Verdict])
+            -> (present: Set<String>, sources: [String: SharePlanning.SourceRef]) {
+            var present = present
+            var sources = plan.sourceByRefKey
+            for (path, verdict) in verdicts.sorted(by: { $0.key < $1.key }) {
+                guard case .keptForMember(let refKey) = verdict else { continue }
+                if let current = sources[refKey], present.contains(current.destinationLower) { continue }
+                sources[refKey] = SharePlanning.SourceRef(fromPath: path, contentHash: hashByPath[path],
+                                                          destinationLower: path)
+                present.insert(path)
+            }
+            return (present, sources)
+        }
+        let early = analysisInputs(present: presentPaths, verdicts: review(presentAfterCopy: presentPaths))
         await updateAnalysisData(set: set, setFolder: setFolder, items: items,
-                                 presentPathsLower: presentPaths, sourceByRefKey: plan.sourceByRefKey,
+                                 presentPathsLower: early.present, sourceByRefKey: early.sources,
                                  copier: copier, token: token,
                                  remoteAnalysisFiles: remote.analysisFiles(inSetFolder: setFolder))
 
@@ -254,15 +273,15 @@ extension ShareSyncEngine {
             BackupLogger.info("Share: '\(set.folderName)' copied \(copied)/\(plan.copies.count)")
         }
 
-        // 掃除。**コピーの成否に関係なく消してよい**（ADR-209）——消す対象は「望ましくない
-        // 名前のファイル」で、コピーが失敗しても望ましくないことは変わらない。
-        // ⚠️ 旧実装は「コピーが全部成功した回だけ掃除」だった。宛先名を採番していた頃は
-        // 掃除対象が「正規ファイルの重複」だったので、正規が作れていない状態で消すと
-        // 空回りになったため（diagnostics-55）。いまは対象が別物なのでその制約は要らない。
-        if !plan.deletions.isEmpty {
-            let deleteBudget = Array(plan.deletions.prefix(Self.maxDeletesPerRun))
-            BackupLogger.info("Share sync: '\(set.folderName)' deleting \(deleteBudget.count) stale file(s)")
-            _ = await copier.deleteBatch(paths: deleteBudget, token: token)
+        // 掃除。⚠️ **消す前に、消す理由と中身の行き先を確かめる**（ADR-278）。
+        // 以前は「望ましくない」＝引き算の結果をそのまま消していた（ADR-209）。材料が欠けた回
+        // （記録が照合で消えた・中身がまだ分からない・新しいコピーが失敗した）は、それが
+        // **最後の 1 枚**でも消えた。コピーの後に確かめるのは、置き換え先が在るかを見るため。
+        let verdicts = review(presentAfterCopy: presentPaths.union(copiedDestinations))
+        if !candidates.isEmpty {
+            await removeReviewed(candidates: candidates, verdicts: verdicts, label: set.name,
+                                 holdingFolder: set.folderName, baseFolder: setFolder,
+                                 wholeFolder: nil, removal: removal)
         }
 
         await store.recordShareSyncCounts(setID: set.id,
@@ -271,9 +290,9 @@ extension ShareSyncEngine {
 
         // コピーした分の解析データを足す（一覧はコピー前のものなので、ここで補う）。
         if copied > 0 {
-            let nowPresent = presentPaths.union(copiedDestinations)
+            let late = analysisInputs(present: presentPaths.union(copiedDestinations), verdicts: verdicts)
             await updateAnalysisData(set: set, setFolder: setFolder, items: items,
-                                     presentPathsLower: nowPresent, sourceByRefKey: plan.sourceByRefKey,
+                                     presentPathsLower: late.present, sourceByRefKey: late.sources,
                                      copier: copier, token: token,
                                      remoteAnalysisFiles: remote.analysisFiles(inSetFolder: setFolder)
                                         + uploadedShardNames.map {
@@ -392,6 +411,14 @@ struct RemoteShareIndex {
             guard file.pathLower.hasPrefix(prefix) else { return false }
             return !file.pathLower.dropFirst(prefix.count).contains("/")
         }
+    }
+
+    /// フォルダの下の**すべての**ファイル（深い階層も含む・解析データのフォルダは除く）。
+    /// フォルダごと消す前に、中身を 1 つ残らず確かめるため（ADR-278）。
+    func filesOutsideAnalysis(under folder: String) -> [DropboxShareCopier.ListedFile] {
+        let prefix = folder.lowercased() + "/"
+        let analysis = prefix + ShareAnalysisData.subfolderName + "/"
+        return files.filter { $0.pathLower.hasPrefix(prefix) && !$0.pathLower.hasPrefix(analysis) }
     }
 
     /// セットの解析データファイル（シャード・旧形式）。

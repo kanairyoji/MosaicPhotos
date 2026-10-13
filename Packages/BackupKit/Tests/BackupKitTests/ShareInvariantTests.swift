@@ -25,6 +25,12 @@ import DropboxTestSupport
 /// 5. **受信側が復元できる**: 全メンバーに解析データが届く。
 /// 6. **実在を知らずに書かない**（ADR-277）: 操作列の**途中も含めて**、既に在る宛先へ
 ///    コピーを投げない（`FakeDropboxServer.conflictedCopyEntries == 0`）。
+/// 7. **最後の 1 枚を消さない**（ADR-278）: 操作列の途中も含めて、中身がアカウントのどこにも
+///    残らない削除をしない（`FakeDropboxServer.deletedLastCopies == 0`）。
+///    操作に `backupVanishes`（Backup の実物が消え、照合が記録を消す）を入れたのはこのため
+///    ——それまでの操作では、共有コピーが最後の 1 枚になる状態が作られなかった。
+///    ⚠️ 記録が消えた写真は、2 は「記録のあるメンバー」だけに求め、4 は「どのメンバーでもない」で見る
+///    （記録が消えたメンバーのコピーは**残すのが正しい**）。
 ///
 /// ## ⚠️ 1〜5 だけでは見えなかったもの（実機ログ diagnostics-108・ADR-277）
 /// 一覧が取れなかった回に「共有ルートはまだ無い → 作れた → **空**」と読み、置き済みの写真を
@@ -90,6 +96,10 @@ struct ShareInvariantTests {
         let defaults: UserDefaults
         /// 端末にある写真（refKey → content_hash）。バックアップ済みのものだけ共有できる。
         var photos: [String: String]
+        /// refKey → Backup の実物のパス。
+        var backupPaths: [String: String] = [:]
+        /// Backup の実物が消えた写真（`backupVanishes`）。
+        var vanished: Set<String> = []
     }
 
     private func makeWorld(photoCount: Int, seed: UInt64) async -> World {
@@ -100,6 +110,7 @@ struct ShareInvariantTests {
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
         var photos: [String: String] = [:]
+        var backupPaths: [String: String] = [:]
         for index in 0..<photoCount {
             // ⚠️ **同名の別写真を混ぜる**。宛先名の衝突は実障害の温床だった（diagnostics-52）。
             let name = "IMG_\(index % max(1, photoCount / 2)).jpg"
@@ -110,6 +121,7 @@ struct ShareInvariantTests {
                                      filename: name, creationDate: nil, contentHash: hash,
                                      people: [], albums: [], isFavorite: false)
             photos["L-p\(index)"] = hash
+            backupPaths["L-p\(index)"] = path
         }
         let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(),
                                      storeProvider: { store }, httpClient: server,
@@ -118,7 +130,7 @@ struct ShareInvariantTests {
         engine.maxPollAttempts = 3
         engine.analysisSource = StubAnalysisSource(photos: photos)
         return World(engine: engine, store: store, server: server,
-                     defaults: defaults, photos: photos)
+                     defaults: defaults, photos: photos, backupPaths: backupPaths)
     }
 
     /// 解析データの出どころ（全メンバーにタグを 1 つ返すだけ）。
@@ -142,6 +154,20 @@ struct ShareInvariantTests {
         for path in await world.server.filePaths() where path.hasPrefix(root) {
             guard !path.contains("/\(ShareAnalysisData.subfolderName)/") else { continue }
             out[path] = await world.server.contentHash(at: path) ?? ""
+        }
+        return out
+    }
+
+    /// いまセットに入っていて、**記録がある**写真（共有できるはずのもの）の中身。
+    private func resolvableMemberHashes(_ world: World) async -> Set<String> {
+        var out = Set<String>()
+        for set in await world.store.allShareSets() {
+            let items = await world.store.shareItems(setID: set.id)
+            let ids = items.map { String($0.refKey.dropFirst(2)) }
+            let refs = await world.store.backupRefs(forLocalIdentifiers: ids)
+            for item in items where refs[String(item.refKey.dropFirst(2))] != nil {
+                if let hash = world.photos[item.refKey] { out.insert(hash) }
+            }
         }
         return out
     }
@@ -181,6 +207,7 @@ struct ShareInvariantTests {
         case copyFailure         // コピーが一時的に失敗する
         case slowJob             // ジョブがタイムアウト後に完走する（diagnostics-52 の形）
         case listFailure         // 一覧が取れない（通信断）
+        case backupVanishes      // Backup の実物が消え、照合が記録を消した（ADR-278）
     }
 
     private func apply(_ op: Operation, world: inout World, rng: inout Seeded) async {
@@ -222,6 +249,16 @@ struct ShareInvariantTests {
         case .listFailure:
             await world.server.inject(.init(endpoint: "files/list_folder", times: 1,
                                             effect: .status(503)))
+        case .backupVanishes:
+            guard let key = rng.pick(allKeys.filter { !world.vanished.contains($0) }),
+                  let path = world.backupPaths[key] else { return }
+            await world.server.remove(path)
+            world.vanished.insert(key)
+            var remote: [String: String] = [:]
+            for (other, otherPath) in world.backupPaths where !world.vanished.contains(other) {
+                remote[otherPath.lowercased()] = world.photos[other]
+            }
+            _ = await world.store.reconcile(remote: remote, listedAt: Date().addingTimeInterval(60))
         }
     }
 
@@ -265,7 +302,8 @@ struct ShareInvariantTests {
             通信: copy=\(await world.server.requestLog.filter { $0.contains("copy_batch") }.count)             delete=\(await world.server.requestLog.filter { $0.contains("delete_batch") }.count)             list=\(await world.server.requestLog.filter { $0.contains("files/list_folder") }.count)             mkdir=\(await world.server.requestLog.filter { $0.contains("create_folder") }.count)
             """
         let membersBySet = await members(world)
-        let wantedHashes = Set(membersBySet.values.flatMap { $0.values }.filter { !$0.isEmpty })
+        let memberHashes = Set(membersBySet.values.flatMap { $0.values }.filter { !$0.isEmpty })
+        let wantedHashes = await resolvableMemberHashes(world)
         let shared = await sharedPhotos(world)
         let presentHashes = shared.values.filter { !$0.isEmpty }
 
@@ -276,7 +314,7 @@ struct ShareInvariantTests {
         }
         // 4. 孤児が無い（メンバーでない写真が残っていない）。
         for (path, hash) in shared where !hash.isEmpty {
-            #expect(wantedHashes.contains(hash),
+            #expect(memberHashes.contains(hash),
                     "どのセットのメンバーでもない写真が残っている（\(path)）\(context)")
         }
         // 3. 重複が無い（セットごとに同じ hash は 1 つ）。
@@ -296,6 +334,12 @@ struct ShareInvariantTests {
         let conflicts = await world.server.conflictedCopyEntries
         #expect(conflicts == 0,
                 "既に在る宛先へコピーを投げた（\(conflicts) 件）——一覧の失敗を空と読んでいないか\(context)")
+
+        // 7. 最後の 1 枚を消さない（途中の回も含めて・ADR-278）。
+        let lastCopies = await world.server.deletedLastCopies
+        let lastCopyPaths = await world.server.deletedLastCopyPaths
+        #expect(lastCopies == 0,
+                "中身がどこにも残らない削除をした（\(lastCopyPaths)）\(context)")
 
         // 1. 収束（もう 1 回反映しても書き込みが起きない）。
         let before = await writeCount(world)

@@ -441,6 +441,40 @@
 - 効きを見るログ: `backup: shared photos only — awaited=` / `offload: skip — backup scope is shared photos only` /
   `backup: 共有が待つ写真 `（内訳: この回に上げる・端末に無い・台帳だけに載っていた）/ `backup: ended — `（どの出口からも 1 行）
 
+## ShareDeletionReview（ADR-278）
+- 置き場: `Packages/BackupKit/Sources/BackupKit/Share/ShareDeletionReview.swift`（呼び出しは `ShareSyncEngine+Removal.swift`）
+- 問い: 共有フォルダの「望ましくない」ファイルを、消す／退避する／残す のどれにするか
+- 材料:
+  - `candidates` ← `SharePlanning.plan` の `deletions`（共有ルートの再帰一覧の content_hash つき）
+    - 約束: 一覧が**取れた**回だけ（取れない回は ADR-277 で反映ごと見送る）。content_hash は一覧の値
+    - テスト: `ShareReadFailureTests`（一覧の失敗）
+  - `members` ← `readShareItems`（**解決できたかどうかに関わらず全員**）
+    - 約束: 読めなければ nil でセットごと見送る。⚠️ 解決できたメンバーだけを渡すと、記録が消えた写真の
+      コピーが持ち主なしに見えて確かめに回る（退避されて家族から消える）
+    - テスト: `ShareDeletionSafetyTests`（`backupVanished`）/ 変異 M5
+  - `presentAfterCopy` ← 一覧 − 候補 ∪ **この回にコピーできた**宛先（投げた分ではない）
+    - 約束: コピーが失敗した宛先は入らない（古い版を残す根拠）
+    - テスト: `ShareDeletionSafetyTests`（`editedButCopyFails`）/ 変異 M6
+  - 証拠（`Evidence`）← バックアップ記録（`backupPaths(withContentHashes:)`）と同期一覧から挙げた場所を、
+    `get_metadata` / 親フォルダの一覧で**いま**訊いた答え
+    - 約束: 記録が読めない・訊けない・上限は **`unknown`**（「無い」と読まない）。共有のコピーと
+      退避先は場所に入れない（2 台が互いを当てにして両方消さない）
+    - テスト: `ShareDeletionReviewTests.evidenceFromAnswers` / `shareCopiesAreNotEvidence` /
+      `ShareDeletionSafetyTests.unreadableRecordsDuringReviewLeaveEverything` / 変異 M4・M8・M9
+  - `cloudHashByPath` ← `cloudSourceHashProvider`（**nil＝引く手段が無い**）
+    - 約束: 手段があるのに載っていない写真は「中身がまだ分からない」＝コピーしない（`waitingCloudHash`）
+    - テスト: `ShareDeletionReviewTests.unknownCloudHashWaits` / 変異 M7
+  - フォルダの印 ← `ShareSettingsKeys.retiredFolders`（`deleteSet` が書く・**台帳の外**）
+    - 約束: 台帳が空に見える起動でも残る。猶予 24 時間は捨てない（遅れて完走したコピー）
+    - テスト: `ShareDeletionSafetyTests.resurrectedRetiredFolderIsSwept` / 変異 M10
+  - `isTemporaryFallback` ← `isResilientMemoryFallback(modelContainer, name: "BackupKit")`
+    - 約束: 自己修復の最後のインメモリ代替のときだけ真（テスト用のインメモリ容器は偽）
+    - テスト: `ShareDeletionSafetyTests`（`ledgerFellBackToMemory`）/ 変異 M1
+- 規則のテスト: `ShareDeletionReviewTests`
+- 呼び出し側のテスト: `ShareDeletionSafetyTests`（欠け方の表）/ `ShareInvariantTests`（不変条件 7・`backupVanishes`）
+- 効きを見るログ: `消す前の確認で残した`（内訳つき）/ `中身が Dropbox のどこにも無い N 枚を ShareRemoved へ退避` /
+  `持ち主の分からないフォルダ N 個は消さない` / `share sync: 台帳が一時的にインメモリで開いている`
+
 ## 判断ではないもの
 
 ここに並ぶのは「名前は `*Policy` だが、やるかやらないかを決めていない」もの。

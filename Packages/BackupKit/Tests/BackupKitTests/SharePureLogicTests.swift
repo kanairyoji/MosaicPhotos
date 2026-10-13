@@ -89,7 +89,7 @@ struct SharePlanningTests {
 
     private func plan(items: [ShareItemLite],
                       backup: [String: SharePlanning.BackupRef] = [:],
-                      cloudHashes: [String: String] = [:],
+                      cloudHashes: [String: String]? = nil,
                       remoteFiles: [SharePlanning.RemoteFile]?) -> SharePlanning.Plan {
         SharePlanning.plan(items: items, backupByLocalID: backup, cloudHashByPath: cloudHashes,
                            setFolder: setFolder, remoteFiles: remoteFiles)
@@ -191,13 +191,20 @@ struct SharePlanningTests {
         #expect(p.deletions.count == 2, "望ましくないファイルを残している: \(p.deletions)")
     }
 
-    /// ⚠️ 元が 1 件も解決できない回に全部消さない（バックアップ記録の読み出し失敗など）。
-    @Test("望ましい集合が空でメンバーが居る回は、何も消さない")
-    func doesNotWipeWhenResolutionFails() {
+    /// ⚠️ 元が 1 件も解決できない回も、計画は**消す候補**を挙げるだけ（ADR-278）。
+    /// メンバーのコピーを残すのは消す前の確認（`ShareDeletionReview`）の役目で、
+    /// 計画で全部を止めると、利用者が外した写真まで家族から見えたままになる。
+    @Test("望ましい集合が空でメンバーが居る回は、それを記録し、候補は確かめに回す")
+    func flagsWhenResolutionFails() {
         let existing = destination(refKey: "L-a", sourcePath: "/backup/a.jpg", hash: "hA")
         let p = plan(items: [item("L-a")], backup: [:], remoteFiles: remote([existing]))
-        #expect(p.deletions.isEmpty, "解決できない回に共有フォルダを空にしている")
-        #expect(p.skippedDeletionsForSafety, "見送ったことを記録していない")
+        #expect(p.noSourceResolved, "解決できない回だと記録していない")
+        #expect(p.deletions == [existing.lowercased()])
+        let verdicts = ShareDeletionReview.classify(
+            candidates: [.init(pathLower: existing.lowercased(), contentHash: "hA")],
+            members: ["L-a"], destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
+        #expect(verdicts[existing.lowercased()] == .keptForMember(refKey: "L-a"),
+                "解決できないメンバーのコピーを消す側に回した")
     }
 
     /// ⚠️ 一覧が取れなかった回は**何も決めない**（実在が分からないまま動くのが最悪）。

@@ -335,6 +335,8 @@ struct ShareProvideView: View {
         case .folderRemoveFailed:  return L("Could not remove the shared folder.")
         case .invalidFolderName:   return L("This set has an invalid folder name.")
         case .syncBusy:            return L("Syncing is still running. Try again in a moment.")
+        case .ledgerUnavailable:
+            return L("The backup records could not be opened this time. Sharing resumes after the app restarts.")
         }
     }
 

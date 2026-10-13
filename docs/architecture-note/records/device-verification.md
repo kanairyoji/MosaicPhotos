@@ -348,6 +348,12 @@ share.duplicates: 他の端末の共有コピー
 share sync: 共有ルートの一覧が取れない
 backup: ended — 
 backup: 共有が待つ写真 
+share sync: 台帳が一時的にインメモリで開いている
+share sync: 持ち主の分からないフォルダ 
+share: 消す前の確認でバックアップ記録が読めない
+ 消す前の確認で残した 
+ 中身が Dropbox のどこにも無い 
+Share sync: removing retired folder 
 faces: ledger exported for replay
 CLIP released
 face model released
@@ -552,3 +558,16 @@ Developer Options → 診断ログ。目印になる行:
 | 共有の反映が `waitingBackup=N`（N>0）の夜 | 同じ窓に `backup: 共有が待つ写真 N 枚（…）` が出る。`台帳だけに載っていた` が 1 以上なら次の窓で `waitingBackup` が減る。`端末に無い` だけが残るなら、その写真は端末から消えている |
 | 停止からの復帰直後の窓 | `Share sync: … copy=<メンバー数> present=0` が**出ない**。一覧が取れなかった回は `share sync: 共有ルートの一覧が取れない — この回は見送る` が出て、`copying 500 of` が続かない |
 | フル画像を開いてすぐ閉じる | `ERROR: fullImage() download failed — キャンセルしました` が**出ない**（DEBUG では `download cancelled` の info） |
+
+---
+
+## N. 共有コピーを消す前に確かめること（ADR-278）
+
+| 見るもの | 期待 |
+|---|---|
+| セットから写真を 1 枚外して「今すぐ反映」 | 家族の側で消える。診断ログに `deleting 1 stale file(s)` が出る（Backup に在る写真なら `ShareRemoved` へは行かない） |
+| Dropbox アプリで Backup から 1 枚消し、照合（週 1・Developer Options）の後に反映 | その写真の共有コピーが**残る**。`share: '<セット>' 消す前の確認で残した 1 枚（メンバーのコピー 1・…）` が出る |
+| 上の写真をセットから外して反映 | 家族の側で消え、`<端末>/ShareRemoved/<セット>/` に移っている。`中身が Dropbox のどこにも無い 1 枚を ShareRemoved へ退避` が出る |
+| セットを削除して反映 | `Share sync: removing retired folder '<セット>'` が出てフォルダが消える。中身がどこにも無い写真だけ `ShareRemoved` に残る |
+| 毎回の反映のログ | `持ち主の分からないフォルダ N 個は消さない` が出ていたら、どのフォルダかを Dropbox で見る（ADR-278 より前に消したセットの残骸なら手で消してよい） |
+| 起動直後に `store: 'BackupKit' transient open failure` が出た起動 | `share sync: 台帳が一時的にインメモリで開いている — この起動では反映しない` が出て、共有フォルダに書き込みが無い |

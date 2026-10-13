@@ -71,11 +71,20 @@ public enum SharePlanning {
         public var deletions: [String] = []
         /// バックアップ完了待ちの refKey（ローカル写真でバックアップ記録なし）。
         public var waitingBackup: [String] = []
+        /// 中身（content_hash）がまだ分からないクラウド写真の refKey（ADR-278）。
+        /// この回はコピーしない——印は中身から決まるので、分からないまま組むと別の名前になり、
+        /// 置き済みのコピーを「望ましくない」と読んで消し、別名でコピーし直していた。
+        public var waitingCloudHash: [String] = []
         /// 既に望ましい状態で置かれている件数（画面の「共有済み N/M」に使う）。
         public var present: Int = 0
-        /// ⚠️ 削除を見送ったか（望ましい集合が空なのにメンバーが居る＝解決に失敗している回）。
+        /// 望ましい集合が空なのにメンバーが居る（＝出どころが 1 つも解決できない）回か。
         /// 記録に残して、黙って何もしない状態が続かないようにする。
-        public var skippedDeletionsForSafety: Bool = false
+        ///
+        /// ⚠️ 以前はこの回の削除を**全部**見送っていた（安全弁）。ADR-278 で、消す候補は 1 つずつ
+        /// 「メンバーのコピーか」「中身が他に在るか」を確かめるようにしたので、弁は要らなくなった。
+        /// 残すと、記録が消えた写真が 1 枚残っているだけで、**利用者が外した写真がいつまでも
+        /// 家族から見えたまま**になる（不変条件テストが捕まえた）。
+        public var noSourceResolved: Bool = false
         /// refKey → 解決したコピー元と宛先。解析データ（キーは写真の content_hash）を
         /// 組むときに、**いま共有フォルダに在る写真だけ**を選ぶために使う。
         public var sourceByRefKey: [String: SourceRef] = [:]
@@ -96,12 +105,14 @@ public enum SharePlanning {
     ///   - items: セットのメンバー（refKey だけ・状態は持たない）。
     ///   - backupByLocalID: localIdentifier → バックアップ記録（"L-" 写真の実体解決）。
     ///   - cloudHashByPath: クラウド原本（"C-"）のパス小文字 → content_hash（分かるものだけ）。
+    ///     **nil は「引く手段が無い」**（refKey だけで名前を決める・旧来の振る舞い）。
+    ///     非 nil なのに載っていない写真は「中身がまだ分からない」＝この回はコピーしない（ADR-278）。
     ///   - setFolder: セットフォルダの絶対パス。
     ///   - remoteFiles: セットフォルダ直下の実在ファイル。**nil は「一覧が取れなかった」**
     ///     ＝削除もコピーもしない（実在不明のまま動くと壊す）。
     public static func plan(items: [ShareItemLite],
                             backupByLocalID: [String: BackupRef],
-                            cloudHashByPath: [String: String] = [:],
+                            cloudHashByPath: [String: String]? = nil,
                             setFolder: String,
                             remoteFiles: [RemoteFile]?) -> Plan {
         var plan = Plan()
@@ -113,7 +124,13 @@ public enum SharePlanning {
         // 削除とコピーが無駄に走る。順序に依存しない規則にする。
         var desired: [String: (refKey: String, fromPath: String, toPath: String)] = [:]
         var waiting: [String] = []
+        var waitingCloud: [String] = []
         for item in items.sorted(by: { $0.refKey < $1.refKey }) {
+            if item.refKey.hasPrefix("C-"), let cloudHashByPath,
+               cloudHashByPath[String(item.refKey.dropFirst(2)).lowercased()] == nil {
+                waitingCloud.append(item.refKey)
+                continue
+            }
             guard let source = resolveSource(refKey: item.refKey,
                                              backupByLocalID: backupByLocalID,
                                              cloudHashByPath: cloudHashByPath) else {
@@ -137,6 +154,7 @@ public enum SharePlanning {
                                                          destinationLower: toPath.lowercased())
         }
         plan.waitingBackup = waiting.sorted()
+        plan.waitingCloudHash = waitingCloud.sorted()
 
         // 一覧が取れなかった回は何も決めない（実在が分からないまま消す/コピーするのが最悪）。
         guard let remoteFiles else { return plan }
@@ -162,13 +180,12 @@ public enum SharePlanning {
         //    守るのは「フォルダ」と「解析データ」——直下のファイルだけを対象にするので、
         //    家族が作ったサブフォルダと `.mosaic-share/` は触らない。
         //
-        // ⚠️ **安全弁**: 望ましい集合が空なのに**メンバーは居る**回は何も消さない。
-        //    バックアップ記録の読み出しに失敗したような回に、共有フォルダを空にしないため
-        //    （作り直すので失われはしないが、家族には「全部消えて戻る」が見える）。
-        //    メンバーも 0 なら本当に空が正しいので、そのまま全部消す。
+        // ⚠️ ここで挙げるのは**消す候補**で、消すかどうかは `ShareDeletionReview` が 1 つずつ
+        //    確かめて決める（ADR-278）。メンバーのコピー（記録が消えた・中身がまだ分からない・
+        //    新しい版がまだ無い）は残り、中身が他に無いものは消さずに退避する。
+        //    以前は「望ましい集合が空なのにメンバーは居る回は何も消さない」安全弁がここにあった。
         if desired.isEmpty && !items.isEmpty {
-            plan.skippedDeletionsForSafety = true
-            return plan
+            plan.noSourceResolved = true
         }
         for file in remoteFiles where !desired.keys.contains(file.pathLower) {
             plan.deletions.append(file.pathLower)
@@ -180,11 +197,11 @@ public enum SharePlanning {
     /// refKey → コピー元（解決できなければ nil＝バックアップ待ち）。
     private static func resolveSource(refKey: String,
                                       backupByLocalID: [String: BackupRef],
-                                      cloudHashByPath: [String: String]) -> BackupRef? {
+                                      cloudHashByPath: [String: String]?) -> BackupRef? {
         if refKey.hasPrefix("C-") {
             // クラウド写真: 原本パスから直接コピー（バックアップ不要）。
             let path = String(refKey.dropFirst(2))
-            return BackupRef(dropboxPath: path, contentHash: cloudHashByPath[path.lowercased()])
+            return BackupRef(dropboxPath: path, contentHash: cloudHashByPath?[path.lowercased()])
         }
         if refKey.hasPrefix("L-") {
             return backupByLocalID[String(refKey.dropFirst(2))]

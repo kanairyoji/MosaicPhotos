@@ -401,6 +401,16 @@
         }
       }
     },
+    "The backup records could not be opened this time. Sharing resumes after the app restarts." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今回の起動ではバックアップの記録を開けませんでした。アプリを再起動すると共有の反映を再開します。"
+          }
+        }
+      }
+    },
     "Could not check the shared folder." : {
       "localizations" : {
         "ja" : {

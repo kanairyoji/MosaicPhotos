@@ -146,6 +146,30 @@ public actor FakeDropboxServer: HTTPClient {
     /// 1 回ごとの反映の後に見る。
     public private(set) var conflictedCopyEntries = 0
 
+    /// **最後の 1 枚を消した回数**（`delete_batch` で消したファイルのうち、同じ中身がアカウントの
+    /// どこにも残らなかったもの。フォルダごとの削除は配下を 1 枚ずつ数える）。
+    ///
+    /// ⚠️ なぜ数えるか（ADR-278）: 共有の差分は「望ましくない」ものを消すが、材料が欠けた回
+    /// （記録が照合で消えた・中身がまだ分からない）は**写真がそこにしか無い**のに消すことがある。
+    /// 終わりの状態からは「最初から無かった」と区別できないので、消した瞬間に数える。
+    public private(set) var deletedLastCopies = 0
+    /// 最後の 1 枚を消したパス（落ちたときに読む）。
+    public private(set) var deletedLastCopyPaths: [String] = []
+
+    private func countLastCopy(removing paths: Set<String>) {
+        for path in paths.sorted() {
+            guard let entry = files[path], !entry.isFolder, !entry.contentHash.isEmpty else { continue }
+            let survives = files.contains { other in
+                !paths.contains(other.key) && !other.value.isFolder
+                    && other.value.contentHash == entry.contentHash
+            }
+            if !survives {
+                deletedLastCopies += 1
+                deletedLastCopyPaths.append(path)
+            }
+        }
+    }
+
     // MARK: - 観測（テストが落ちたときに「何が起きたか」を読めるように）
 
     /// 1 往復の記録。`transcript()` で人が読める形にする。
@@ -685,18 +709,22 @@ public actor FakeDropboxServer: HTTPClient {
     /// `files/move_v2`。フォルダ移動は配下ごと動く（本番と同じ）。
     private func handleMove(_ body: Data, _ resp: (Int, String) -> (Data, URLResponse))
         -> (Data, URLResponse) {
-        struct Body: Decodable { let from_path: String; let to_path: String }
+        struct Body: Decodable { let from_path: String; let to_path: String; let autorename: Bool? }
         guard let parsed = try? JSONDecoder().decode(Body.self, from: body) else {
             return resp(400, "{}")
         }
         if failMove { return resp(500, "{}") }
         let from = parsed.from_path.lowercased()
-        let to = parsed.to_path.lowercased()
+        var to = parsed.to_path.lowercased()
         guard files[from] != nil else {
             return resp(409, #"{"error_summary":"from_lookup/not_found/"}"#)
         }
-        guard files[to] == nil else {
-            return resp(409, #"{"error_summary":"to/conflict/folder/"}"#)
+        if files[to] != nil {
+            // 本物と同じく、`autorename` なら " (1)" を付けて衝突を避ける。
+            guard parsed.autorename == true else {
+                return resp(409, #"{"error_summary":"to/conflict/folder/"}"#)
+            }
+            to = Self.autorenamed(to, existing: Set(files.keys))
         }
         ensureParents(of: parsed.to_path)
         for (path, entry) in files where path == from || path.hasPrefix(from + "/") {
@@ -784,6 +812,7 @@ public actor FakeDropboxServer: HTTPClient {
                 continue
             }
             // フォルダ削除は配下ごと消える（本番と同じ）。
+            countLastCopy(removing: Set(files.keys.filter { $0 == key || $0.hasPrefix(key + "/") }))
             if files[key]?.isFolder == true {
                 for path in files.keys where path == key || path.hasPrefix(key + "/") {
                     files.removeValue(forKey: path)

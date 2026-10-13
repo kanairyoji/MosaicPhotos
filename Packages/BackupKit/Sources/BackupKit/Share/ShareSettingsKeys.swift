@@ -88,6 +88,35 @@ public enum ShareSettingsKeys {
                                       deviceFolder: BackupDeviceIdentity.currentFolderName())
     }
 
+    /// 共有から外した写真の退避先（ADR-278）。`currentShareRoot` と同じ端末フォルダの下。
+    public static func currentShareRemovedRoot(_ defaults: UserDefaults = .standard) -> String {
+        let backupRoot = defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
+            ?? BackupSettingsKeys.defaultDropboxFolder
+        return BackupLayout.shareRemovedRoot(root: backupRoot,
+                                             deviceFolder: BackupDeviceIdentity.currentFolderName())
+    }
+
+    /// 利用者が**消したセット**のフォルダ（[パス小文字: 消した時刻] の JSON・ADR-278）。
+    ///
+    /// ⚠️ フォルダを消してよいのは**ここに載っているものだけ**。以前は「どのセットも持たない
+    /// フォルダ」を全部消していたので、台帳が空に見えた起動（一時的な失敗でインメモリに落ちた・
+    /// 壊れて作り直した）では**全セットのフォルダ**を消しに行く作りだった。
+    /// 台帳（SwiftData）の外に置くのは、台帳が失われたときにも「消したのは利用者」だと分かるため。
+    public static let retiredShareFolders = "shareRetiredFolders"
+
+    public static func retiredFolders(_ defaults: UserDefaults = .standard) -> [String: Date] {
+        guard let data = defaults.data(forKey: retiredShareFolders),
+              let raw = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+        return raw.mapValues { Date(timeIntervalSince1970: $0) }
+    }
+
+    static func setRetiredFolders(_ value: [String: Date], _ defaults: UserDefaults = .standard) {
+        let raw = value.mapValues(\.timeIntervalSince1970)
+        if raw.isEmpty { defaults.removeObject(forKey: retiredShareFolders); return }
+        guard let data = try? JSONEncoder().encode(raw) else { return }
+        defaults.set(data, forKey: retiredShareFolders)
+    }
+
     /// 旧配置の共有ルート（`/MosaicShare`）が設定に残っているか。
     /// 移行しない方針（ADR-175）なので、**旧フォルダが残っていることを案内する**ためだけに使う。
     public static func legacyShareRootIfAny(_ defaults: UserDefaults = .standard) -> String? {

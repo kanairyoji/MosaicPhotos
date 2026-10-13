@@ -143,6 +143,15 @@ public enum ShareNaming {
         return tail.allSatisfy { $0.isHexDigit && ($0.isNumber || $0.isLowercase) }
     }
 
+    /// このアプリが置いた名前の**印**（`--` の後ろ・小文字）。印の無い名前は nil。
+    /// 消す前の確認（`ShareDeletionReview`）が「このファイルは誰のコピーか」を引き当てるのに使う。
+    static func identityTail(of filename: String) -> String? {
+        guard isShareManagedFileName(filename) else { return nil }
+        let stem = (filename as NSString).deletingPathExtension
+        guard let range = stem.range(of: identitySeparator, options: .backwards) else { return nil }
+        return String(stem[range.upperBound...])
+    }
+
     /// セット名 → フォルダ名。空になった場合は "Shared" にフォールバック。
     /// `existing`（小文字比較）と衝突したら " 2", " 3", … を付ける。
     public static func sanitize(_ name: String, existing: [String] = []) -> String {

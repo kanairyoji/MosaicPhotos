@@ -50,6 +50,10 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
       AnalysisPublisher.swift         公開の本体（設定チェック → 解析を 2,000 枚ずつ集める →
                                       シャード → 計画 → アップロード/掃除 → 指紋と続きを保存）
       SharePlanning.swift / ShareImportPlanning.swift  コピー計画 / 受信側の突合（純ロジック）
+      ShareDeletionReview.swift       **消す前の確認**（純ロジック・ADR-278）。印からメンバーを引き当てる／
+                                      中身が Dropbox の他の場所に在るか（共有のコピーは証拠にしない）
+      ShareSyncEngine+Removal.swift   確かめて・`ShareRemoved` へ移して・消す。フォルダは利用者が消したセット
+                                      （`retiredShareFolders`）か、中身が全部いまのセットに在るものだけ消す
       ShareCopyDuplicates.swift       同じ Dropbox の他の端末の共有コピーのうち、同じ中身が Share の外にも
                                       あるもの（表示・解析候補で 1 枚にする・ADR-276）。受け取ったアルバムの
                                       発見は `SharedAlbumDiscovery.receivedAlbums`（他の端末の Share も含める）

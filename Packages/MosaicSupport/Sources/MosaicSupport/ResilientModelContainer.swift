@@ -70,8 +70,22 @@ public func makeResilientModelContainer(
         log(memoryFallbackMessage)
         // ⚠️ 名前を分ける。既定名のインメモリ構成はプロセス内で共有されるので、別々の台帳
         // （FacesV1 / TagsV1 …）が同時にフォールバックすると 1 つの箱に混ざる。
-        let memory = ModelConfiguration("\(name)-memory", schema: schema, isStoredInMemoryOnly: true)
+        let memory = ModelConfiguration(resilientMemoryFallbackName(name), schema: schema,
+                                        isStoredInMemoryOnly: true)
         return (try? ModelContainer(for: schema, configurations: [memory])) ?? (try! ModelContainer(for: schema))
+    }
+}
+
+/// 自己修復が最後にインメモリへ落としたときの構成名（ADR-278）。
+public func resilientMemoryFallbackName(_ name: String) -> String { "\(name)-memory" }
+
+/// この容器が**自己修復のインメモリ代替**か（＝台帳が、この起動のあいだだけ空に見えている）。
+///
+/// ⚠️ 中身が空でも「読めた」ので、読む側は失敗に気づけない。空の台帳を真実として
+/// Dropbox を書き換える処理（共有の反映など）は、これを見て止まる。
+public func isResilientMemoryFallback(_ container: ModelContainer, name: String) -> Bool {
+    container.configurations.contains {
+        $0.isStoredInMemoryOnly && $0.name == resilientMemoryFallbackName(name)
     }
 }
 
@@ -169,5 +183,18 @@ public func makeInMemoryModelContainer(for schema: Schema) -> ModelContainer {
                                         isStoredInMemoryOnly: true)
         return (try? ModelContainer(for: schema, configurations: [config]))
             ?? (try! ModelContainer(for: schema))
+    }
+}
+
+/// テスト用: **自己修復がインメモリへ落ちたとき**と同じ構成の容器（`isResilientMemoryFallback` が真になる）。
+///
+/// ⚠️ 名前は `resilientMemoryFallbackName(name)` に固定なので、上の決まり 1（名前を変える）を
+/// 満たさない＝同じプロセスの中で中身を共有する。「台帳が空に見える起動」を作るためだけに使い、
+/// 行を書き込むテストには使わない。生成は同じ錠で直列にする（決まり 2）。
+public func makeMemoryFallbackContainerForTesting(for schema: Schema, name: String) -> ModelContainer {
+    inMemoryContainerLock.withLock {
+        let config = ModelConfiguration(resilientMemoryFallbackName(name), schema: schema,
+                                        isStoredInMemoryOnly: true)
+        return try! ModelContainer(for: schema, configurations: [config])
     }
 }

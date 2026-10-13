@@ -15,6 +15,8 @@ struct DropboxShareCopier {
     private static let deleteBatchCheckURL = "https://api.dropboxapi.com/2/files/delete_batch/check"
     private static let listFolderURL = "https://api.dropboxapi.com/2/files/list_folder"
     private static let listFolderContinueURL = "https://api.dropboxapi.com/2/files/list_folder/continue"
+    private static let getMetadataURL = "https://api.dropboxapi.com/2/files/get_metadata"
+    private static let moveURL = "https://api.dropboxapi.com/2/files/move_v2"
 
     /// 非同期ジョブのポーリング設定。通常は数秒で完了するが、アカウント負荷が高いと
     /// 100 件バッチが 1 分を超えることがある（diagnostics-52）。タイムアウト＝失敗扱いは
@@ -47,6 +49,8 @@ struct DropboxShareCopier {
     // （サーバーサイドコピーなので転送は起きない）。
     // 移動は `to/conflict/folder` で永久に収束しない経路を作り、実機で実際に詰まった
     // （diagnostics-64〜66）。動かさない方が単純で、壊れ方も少ない。
+    // ※ ファイル 1 枚を退避先へ移す `moveToHolding` は別物（ADR-278）。`autorename` で
+    //   衝突を起こさず、移したあとは共有ルートの外なので差分の対象にならない。
 
     /// Dropbox のエラー本文から要点だけを取り出す（長い JSON をログに流し込まない）。
     static func errorSummary(_ text: String, limit: Int = 200) -> String {
@@ -165,6 +169,47 @@ struct DropboxShareCopier {
                 + "entries failed (\(failed.compactMap { $0.failure?.tag }.joined(separator: ",")))")
             return false
         }
+        return true
+    }
+
+    // MARK: - 消す前の確認と退避（ADR-278）
+
+    /// 1 か所に何があるか（`get_metadata`）。⚠️ **「無い」と「訊けなかった」を分ける**
+    /// ——訊けなかったのを「無い」と読むと、在る写真を最後の 1 枚と思い込む（逆向きは消し過ぎ）。
+    func lookup(path: String, token: String) async -> ShareDeletionReview.Lookup {
+        struct Body: Encodable { let path: String }
+        struct Meta: Decodable {
+            let tag: String?
+            let content_hash: String?
+            enum CodingKeys: String, CodingKey { case tag = ".tag", content_hash }
+        }
+        var req = Self.rpcRequest(url: Self.getMetadataURL, token: token)
+        guard let body = try? JSONEncoder().encode(Body(path: path)) else { return .failed }
+        req.httpBody = body
+        guard let (data, resp) = try? await httpClient.data(for: req),
+              let status = (resp as? HTTPURLResponse)?.statusCode else { return .failed }
+        if status == 200, let meta = try? JSONDecoder().decode(Meta.self, from: data) {
+            return meta.tag == "folder" ? .notFound : .file(contentHash: meta.content_hash)
+        }
+        if status == 409, String(data: data, encoding: .utf8)?.contains("not_found") == true {
+            return .notFound
+        }
+        return .failed
+    }
+
+    /// ファイル 1 枚を退避先へ移す。**同名があれば別名にする**（退避は失敗させない）。
+    /// - Returns: 移せたか。
+    func moveToHolding(from: String, to: String, token: String) async -> Bool {
+        struct Body: Encodable {
+            let from_path: String
+            let to_path: String
+            let autorename = true
+        }
+        var req = Self.rpcRequest(url: Self.moveURL, token: token)
+        guard let body = try? JSONEncoder().encode(Body(from_path: from, to_path: to)) else { return false }
+        req.httpBody = body
+        // 再試行は 1 回だけにする（失敗した分は次の反映でもう一度確かめて移す）。
+        guard await sendWithRetry(req, label: "move_v2 (holding)", maxAttempts: 1) != nil else { return false }
         return true
     }
 

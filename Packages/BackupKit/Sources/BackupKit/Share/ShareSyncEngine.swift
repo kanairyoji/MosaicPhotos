@@ -63,6 +63,9 @@ public final class ShareSyncEngine {
         case invalidFolderName
         /// 反映を止められず、変更操作を安全に行えなかった（再試行で解消する）。
         case syncBusy
+        /// 台帳（SwiftData）がこの起動だけインメモリに落ちている。空に見える台帳で
+        /// Dropbox を書き換えないよう、反映をしない（ADR-278）。
+        case ledgerUnavailable
     }
 
     @ObservationIgnored let tokenProvider: AccessTokenProvider
@@ -197,6 +200,11 @@ public final class ShareSyncEngine {
         let set = await store.createShareSet(
             name: displayName.isEmpty ? folderName : displayName, folderName: folderName,
             sourceKey: sourceKey)
+        // 以前に消したセットと同じフォルダ名なら、「消したフォルダ」の印を外す（ADR-278）。
+        if let path = SharePlanning.setFolderPath(shareRoot: ShareSettingsKeys.currentShareRoot(defaults),
+                                                  folderName: folderName, deviceFolder: nil) {
+            reviveFolder(path)
+        }
         _ = await store.addShareItems(setID: set.id, refKeys: refKeys)
         BackupLogger.info("Share: created set '\(folderName)' with \(refKeys.count) items")
         await refresh()
@@ -244,7 +252,11 @@ public final class ShareSyncEngine {
     /// `DropboxPhotoStore.items` を舐めて hash を集めていた——ところが表示用のアイテムは
     /// content_hash を**わざと持たない**ので、この表は**常に空**だった。台帳を引くには
     /// actor をまたぐ必要があるので型を async にする。
-    @ObservationIgnored public var cloudSourceHashProvider: @MainActor () async -> [String: String] = { [:] }
+    ///
+    /// ⚠️ **nil は「引く手段が無い」**（refKey だけで名前を決める）。差してあるのに載っていない
+    /// クラウド写真は「中身がまだ分からない」として、その回はコピーも削除もしない（ADR-278）
+    /// ——以前は `{ [:] }` が既定で、「手段が無い」と「まだ分からない」の区別がつかなかった。
+    @ObservationIgnored public var cloudSourceHashProvider: (@MainActor () async -> [String: String])?
 
     /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
     @ObservationIgnored var syncTask: Task<Void, Never>?
@@ -335,6 +347,12 @@ public final class ShareSyncEngine {
                                        folderName: set.folderName, deviceFolder: nil) == nil {
             BackupLogger.error("Share: set has an invalid folder name — removing the record only")
             lastError = .invalidFolderName
+        }
+        // ⚠️ **フォルダを消してよいのは、利用者が消したセットだけ**（ADR-278）。印は台帳の外に置く
+        // ——台帳が空に見える起動でも「どのフォルダを消したのは利用者か」が分かるように。
+        if let path = SharePlanning.setFolderPath(shareRoot: ShareSettingsKeys.currentShareRoot(defaults),
+                                                  folderName: set.folderName, deviceFolder: nil) {
+            retireFolder(path)
         }
         await store.deleteShareSet(id: id)
         BackupLogger.info("Share: deleted set '\(set.folderName)'")

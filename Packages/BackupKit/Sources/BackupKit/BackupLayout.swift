@@ -81,6 +81,17 @@ public enum BackupLayout {
         return appendingOnce(device, shareSubfolder)
     }
 
+    /// 共有から外したが、**中身が Dropbox のどこにも無かった**写真の退避先:
+    /// `<root>/<端末>/ShareRemoved`（ADR-278）。
+    ///
+    /// ⚠️ 共有ルート（`Share`）の**外**に置く。家族から見えなくする（外した写真を見せ続けない）
+    /// ためと、共有の差分の対象にしない（ここへ移したものをまた「望ましくない」と読まない）ため。
+    /// アプリは自動では消さない——ここに在るのは「消したら写真が無くなる」ものだけ。
+    public static let shareRemovedSubfolder = "ShareRemoved"
+    public static func shareRemovedRoot(root: String, deviceFolder: String) -> String {
+        appendingOnce(deviceRoot(root: root, deviceFolder: deviceFolder), shareRemovedSubfolder)
+    }
+
     // MARK: - 写真本体の置き場（撮影年月・ADR-176）
 
     /// 撮影日不明の写真を入れるフォルダ名。
