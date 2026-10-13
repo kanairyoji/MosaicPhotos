@@ -42,9 +42,56 @@ public final class DiagnosticsLog: @unchecked Sendable {
         }
     }
 
+    // MARK: - テストの聞き耳（この実行で書かれた行だけを見る）
+
+    /// `tap()` が返す聞き耳。**作った後に `append` された行だけ**を、ファイルを介さず覚える。
+    ///
+    /// ⚠️ なぜ要るか（2026-10-14・ADR-278 のレビューで 2 回踏んだ）: テストがログを
+    /// `recentLines` で読むと、**Mac に残った前の実行の行**にも当たる。行が出なくなっても
+    /// 前回の行で通り続け、検査が空振りしていた。前後の数を比べる形にも穴があり、
+    /// ファイルの切り詰め（256KB）や読む行数の窓（`maxLines`）で数が減ると、書いたのに
+    /// 「増えていない」と読む。聞き耳はファイルの状態に左右されない。
+    /// ⚠️ 並列の他のテストの行も入るので、探す文字列にはテストごとに一意の名前を含める。
+    public final class Tap: @unchecked Sendable {
+        fileprivate let log: DiagnosticsLog
+        fileprivate let id: UUID
+        fileprivate init(log: DiagnosticsLog, id: UUID) { self.log = log; self.id = id }
+        deinit { log.removeTap(id) }
+
+        /// 聞き耳を立ててから書かれた行（`append` の予約が全部終わってから読む）。
+        public func lines() async -> [String] {
+            await withCheckedContinuation { continuation in
+                log.queue.async { [log, id] in continuation.resume(returning: log.taps[id] ?? []) }
+            }
+        }
+
+        /// `fragment` を含む行の数。
+        public func count(_ fragment: String) async -> Int {
+            await lines().filter { $0.contains(fragment) }.count
+        }
+    }
+
+    /// `queue` の上でだけ触る。
+    private var taps: [UUID: [String]] = [:]
+
+    /// 聞き耳を立てる（テスト用）。
+    public func tap() -> Tap {
+        let id = UUID()
+        queue.sync { taps[id] = [] }
+        return Tap(log: self, id: id)
+    }
+
+    fileprivate func removeTap(_ id: UUID) {
+        queue.async { self.taps[id] = nil }
+    }
+
+    /// 立っている聞き耳の数（捨てた聞き耳が溜まり続けないことのテスト用）。
+    func tapCountForTesting() -> Int { queue.sync { taps.count } }
+
     /// 1 行追記（タイムスタンプ付き）。複数スレッドから呼ばれるため直列キューで処理する。
     public func append(_ line: String) {
         queue.async { [fileURL, maxBytes] in
+            for id in self.taps.keys { self.taps[id]?.append(line) }
             let stamped = "\(Self.timestamp()) \(line)\n"
             guard let data = stamped.data(using: .utf8) else { return }
             if let handle = try? FileHandle(forWritingTo: fileURL) {

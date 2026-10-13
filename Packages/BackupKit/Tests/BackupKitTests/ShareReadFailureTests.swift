@@ -163,6 +163,8 @@ struct ShareReadFailureTests {
             await world.store.setFailingShareReadForTesting(.backupRecords)
         }
 
+        // ⚠️ ログは聞き耳で読む（ファイルを読むと、前の実行の行に当たって通る）。
+        let tap = DiagnosticsLog.shared.tap()
         await world.engine.syncNow()
         await quiesce(world.engine)
 
@@ -170,7 +172,7 @@ struct ShareReadFailureTests {
         #expect(await world.server.pendingFaults().isEmpty, "仕込んだ失敗が使われていない")
         // ⚠️ 見送ったことも名指しで確かめる（「別の仕組みで通っている」を隠さない・ADR-274 追補 2）。
         // 診断ログは並列のテストも書くので、セット名（テストごとに一意）で探す。
-        let lines = await DiagnosticsLog.shared.recentLines(maxLines: 50_000)
+        let lines = await tap.lines()
         let setName = await world.store.allShareSets().first?.name ?? "?"
         switch testCase.read {
         case .firstPage, .nextPage:

@@ -159,6 +159,7 @@ public actor FakeDropboxServer: HTTPClient {
     private func countLastCopy(removing paths: Set<String>) {
         for path in paths.sorted() {
             guard let entry = files[path], !entry.isFolder, !entry.contentHash.isEmpty else { continue }
+            if rebuildableLocation?(path) == true { continue }
             let survives = files.contains { other in
                 !paths.contains(other.key) && !other.value.isFolder
                     && other.value.contentHash == entry.contentHash
@@ -167,7 +168,107 @@ public actor FakeDropboxServer: HTTPClient {
                 deletedLastCopies += 1
                 deletedLastCopyPaths.append(path)
             }
+            // 消えてよい場所（他の端末の共有コピーなど）にしか残らないなら、それも最後の 1 枚。
+            if let isDisposable = disposableLocation {
+                let durable = files.contains { other in
+                    !paths.contains(other.key) && !other.value.isFolder
+                        && other.value.contentHash == entry.contentHash && !isDisposable(other.key)
+                }
+                if !durable {
+                    deletedLastDurableCopies += 1
+                    deletedLastDurableCopyPaths.append(path)
+                }
+            }
         }
+    }
+
+    // MARK: - 厳しい監査（テストが「何を守るべきか」を教える）
+
+    /// **消えてよい場所**の判定（小文字パス → true なら、そこにある写真は残っている数に入れない）。
+    ///
+    /// ⚠️ なぜ要るか（ADR-278 追補 1）: `deletedLastCopies` は「アカウントのどこかに同じ中身が
+    /// 残るか」で数える。他の端末の共有コピーも「残っている」に入るので、2 台が**お互いの
+    /// 共有コピーを当てにして両方消す**形が 0 件のまま通っていた。共有コピーは持ち主の端末が
+    /// いつ消してもよいものなので、それしか残らない削除は「最後の 1 枚」と同じ重さで数える。
+    /// 判定はテストが書く（本番の規則を借りると、本番の誤りがそのまま写る）。
+    private var disposableLocation: (@Sendable (String) -> Bool)?
+    public func setDisposableLocation(_ predicate: (@Sendable (String) -> Bool)?) {
+        disposableLocation = predicate
+    }
+    /// **作り直せるもの**の判定（解析データの JSON など）。ここの削除は「最後の 1 枚」に数えない。
+    /// ⚠️ 写真ではないものを数えると、古いシャードの正しい掃除まで違反に見える。
+    private var rebuildableLocation: (@Sendable (String) -> Bool)?
+    public func setRebuildableLocation(_ predicate: (@Sendable (String) -> Bool)?) {
+        rebuildableLocation = predicate
+    }
+    /// 消えてよい場所の外に同じ中身が残らない削除の回数（`setDisposableLocation` を設定したときだけ数える）。
+    public private(set) var deletedLastDurableCopies = 0
+    public private(set) var deletedLastDurableCopyPaths: [String] = []
+
+    /// **守るべき中身**（フォルダの小文字パス → そのフォルダに在るべき content_hash）。
+    ///
+    /// ⚠️ なぜ要るか（ADR-278 追補 2・3）: 反映の途中で利用者がセットを作り直す・写真を入れ直すと、
+    /// 古い計画のまま**いまのメンバー**を消していた。次の反映がコピーし直すので、
+    /// **終わりの状態はいつも正しい**——終わりだけを見る不変条件には原理的に見えない
+    /// （ADR-277 の「自然に直る誤り」と同じ形）。そこで、消した**その瞬間**に
+    /// 「このフォルダはこの中身を失ってよかったか」をテストの教えた表と突き合わせる。
+    /// 表はテストが利用者の操作のたびに書き直す（その時点のメンバー）。
+    private var protectedContents: [String: Set<String>] = [:]
+    public func setProtectedContents(_ table: [String: Set<String>]) {
+        protectedContents = Dictionary(uniqueKeysWithValues: table.map { ($0.key.lowercased(), $0.value) })
+    }
+    /// **守るべきファイル**（小文字パス）。中身で守れない写真（記録が消えて、アプリが中身を知らない
+    /// メンバー）は、そのメンバーが置いたコピーそのものを守る。
+    private var protectedPaths: Set<String> = []
+    public func setProtectedPaths(_ paths: Set<String>) {
+        protectedPaths = Set(paths.map { $0.lowercased() })
+    }
+    /// 守るべき中身を、そのフォルダから失わせた回数（消す・移すのどちらでも）。
+    public private(set) var removedProtectedCopies = 0
+    public private(set) var removedProtectedCopyPaths: [String] = []
+    /// それぞれを失わせた往復の番号（`requestLog` の件数・落ちたときに前後の往復を読むため）。
+    public private(set) var removedProtectedAtRequest: [Int] = []
+
+    private typealias ProtectedProbe = [(path: String, hash: String, folder: String)]
+
+    /// 消す・移す**前**に、守るべき中身を持つ対象を控える。
+    private func protectedProbe(removing paths: Set<String>) -> ProtectedProbe {
+        guard !protectedContents.isEmpty || !protectedPaths.isEmpty else { return [] }
+        var out: ProtectedProbe = []
+        for path in paths.sorted() {
+            guard let entry = files[path], !entry.isFolder else { continue }
+            let folder = (path as NSString).deletingLastPathComponent
+            if protectedContents[folder]?.contains(entry.contentHash) == true || protectedPaths.contains(path) {
+                out.append((path, entry.contentHash, folder))
+            }
+        }
+        return out
+    }
+
+    /// 消す・移した**後**に、そのフォルダに同じ中身がまだ在るかを見る（無ければ数える）。
+    private func auditProtected(_ probe: ProtectedProbe) {
+        for item in probe {
+            let remains = files.contains { key, entry in
+                !entry.isFolder && entry.contentHash == item.hash
+                    && (key as NSString).deletingLastPathComponent == item.folder
+            }
+            if !remains {
+                removedProtectedCopies += 1
+                removedProtectedCopyPaths.append(item.path)
+                removedProtectedAtRequest.append(requestLog.count)
+            }
+        }
+    }
+
+    /// **1 往復ごとに呼ぶ口**（応答を返す直前・エンドポイント名つき）。
+    ///
+    /// ⚠️ なぜ要るか: 偽のサーバーは、反映の途中で**誰も何も書かない静かな世界**だった。
+    /// 本物では、反映（数分）の途中に利用者がセットを消して作り直し、家族が写真を置く。
+    /// ここで割り込めば、反映が「計画を立ててから書くまで」の間に世界を変えられる。
+    /// 呼ばれている間、クライアントはこの応答を待っている（＝この往復の直後に割り込んだことになる）。
+    private var requestHook: (@Sendable (String) async -> Void)?
+    public func setRequestHook(_ hook: (@Sendable (String) async -> Void)?) {
+        requestHook = hook
     }
 
     // MARK: - 観測（テストが落ちたときに「何が起きたか」を読めるように）
@@ -612,6 +713,7 @@ public actor FakeDropboxServer: HTTPClient {
         if isWrite { inFlightWrites += 1 }
         defer { if isWrite { inFlightWrites -= 1 } }
         var result = try await route(request)
+        if let requestHook { await requestHook(endpoint) }
         if truncate {
             // 「HTTP 200 なのに中身が途中で切れている」＝hash 照合が働くかを見るため。
             result.0 = result.0.prefix(max(0, result.0.count / 2))
@@ -727,6 +829,8 @@ public actor FakeDropboxServer: HTTPClient {
             to = Self.autorenamed(to, existing: Set(files.keys))
         }
         ensureParents(of: parsed.to_path)
+        let probe = protectedProbe(removing: Set(files.keys.filter { $0 == from || $0.hasPrefix(from + "/") }))
+        defer { auditProtected(probe) }
         for (path, entry) in files where path == from || path.hasPrefix(from + "/") {
             let moved = to + String(path.dropFirst(from.count))
             files.removeValue(forKey: path)
@@ -812,7 +916,10 @@ public actor FakeDropboxServer: HTTPClient {
                 continue
             }
             // フォルダ削除は配下ごと消える（本番と同じ）。
-            countLastCopy(removing: Set(files.keys.filter { $0 == key || $0.hasPrefix(key + "/") }))
+            let removing = Set(files.keys.filter { $0 == key || $0.hasPrefix(key + "/") })
+            countLastCopy(removing: removing)
+            let probe = protectedProbe(removing: removing)
+            defer { auditProtected(probe) }
             if files[key]?.isFolder == true {
                 for path in files.keys where path == key || path.hasPrefix(key + "/") {
                     files.removeValue(forKey: path)

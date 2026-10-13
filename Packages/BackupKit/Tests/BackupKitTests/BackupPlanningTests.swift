@@ -224,10 +224,9 @@ struct CancelWritesEndLineTests {
                                   httpClient: FakeDropboxServer(),
                                   store: BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting()),
                                   tokenProvider: FakeTokenProvider())
-        func count() async -> Int {
-            await DiagnosticsLog.shared.recentLines(maxLines: 50_000)
-                .filter { $0.contains("backup: ended — cancelled") }.count
-        }
+        // ⚠️ 聞き耳で数える（ファイルを読むと、切り詰めや前の実行の行で数がずれる）。
+        let tap = DiagnosticsLog.shared.tap()
+        func count() async -> Int { await tap.count("backup: ended — cancelled") }
         let idleBefore = await count()
         engine.cancel()
         try? await Task.sleep(for: .milliseconds(50))

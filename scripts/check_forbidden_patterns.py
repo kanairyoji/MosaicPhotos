@@ -97,6 +97,20 @@ RULES: list[tuple[str, str, tuple[str, ...], str]] = [
 
 SEARCH = [ROOT / "MosaicPhotos"] + sorted((ROOT / "Packages").glob("*/Sources"))
 
+# テストのコードだけに効く規則（形は RULES と同じ）。
+# ⚠️ テストの書き方の誤りは本番のコードに現れないので、`SEARCH` では見えない。
+TEST_RULES: list[tuple[str, str, tuple[str, ...], str]] = [
+    (r"DiagnosticsLog\.shared\.recentLines\(",
+     "テストは診断ログを**ファイルから読まない**。`DiagnosticsLog.shared.tap()` の聞き耳で、"
+     "立てた後に書かれた行だけを見る。ファイルには Mac に残った前の実行の行があり、"
+     "行が出なくなっても前回の行で通り続ける（ADR-278 のレビューで 2 回踏んだ）。"
+     "前後の数を比べる形も、切り詰め（256KB）と読む行数の窓で数が減ると壊れる。",
+     ("MosaicSupportTests/DiagnosticsLog",),
+     "let lines = await DiagnosticsLog.shared.recentLines(maxLines: 50_000)"),
+]
+
+TEST_SEARCH = [ROOT / "MosaicPhotosTests"] + sorted((ROOT / "Packages").glob("*/Tests"))
+
 
 def grep(pattern: str, targets: list[str]) -> list[str]:
     """走査に使う唯一の口。⚠️ **見本の確認もここを通す**——別の正規表現エンジン
@@ -112,7 +126,7 @@ def check_rules_can_fire(tmp: Path) -> list[str]:
     「✅ 残っていません」の顔で居座る（ADR-253 で実際にそうなった）。
     """
     out: list[str] = []
-    for pattern, _why, _allowed, sample in RULES:
+    for pattern, _why, _allowed, sample in RULES + TEST_RULES:
         probe = tmp / "Probe.swift"
         probe.write_text(sample + "\n", encoding="utf-8")
         if not grep(pattern, [str(probe)]):
@@ -206,8 +220,9 @@ def main() -> int:
         print("   ⚠️ ここで走る grep は POSIX の `/usr/bin/grep -E` で、"
               "ブラケットの中の `\\w` は使えません（`[A-Za-z0-9_.]` と書く）。")
         print()
-    for pattern, why, allowed, _sample in RULES:
-        hits = grep(pattern, [str(p) for p in SEARCH])
+    scans = [(r, SEARCH) for r in RULES] + [(r, TEST_SEARCH) for r in TEST_RULES]
+    for (pattern, why, allowed, _sample), where in scans:
+        hits = grep(pattern, [str(p) for p in where if p.exists()])
         real = []
         for line in hits:
             path = line.split(":", 1)[0]
@@ -245,7 +260,7 @@ def main() -> int:
         print("⚠️ 「同じ規則が複数の場所に散っていて片方だけ直す」は、")
         print("   実機で繰り返し出ている不具合の最多の形です（2026-09-28 に数えた）。")
         return 1
-    print(f"✅ 使わないと決めた書き方 {len(RULES)} 件（いずれも見本に当たることを確認済み）＋キーセットの並び＋台帳の匿名化は、どこにも残っていません。")
+    print(f"✅ 使わないと決めた書き方 {len(RULES) + len(TEST_RULES)} 件（いずれも見本に当たることを確認済み）＋キーセットの並び＋台帳の匿名化は、どこにも残っていません。")
     return 0
 
 

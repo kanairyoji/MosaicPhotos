@@ -248,12 +248,12 @@ extension ShareSyncEngine {
         // ⚠️ 退避を 1 枚ずつ続けると数分かかる。**消す直前にもう一度**前提を見る（独立レビュー 3 回目）。
         guard await stillApplies() else { return }
         var folderIsClear = false
+        let checked = Set(candidates.map(\.pathLower))
         if let wholeFolder, keptForMember == 0, undecided == 0, movesLeft == 0 {
             // ⚠️ **フォルダごと消す前に一覧を取り直す**（独立レビュー 3 回目）。確かめたのは反映の頭の一覧で、
             // その後に届いたファイル（遅れて完走したコピー・家族が置いた写真）や、解析データの置き場にある
             // シャード以外のファイルは 1 枚も確かめていない。確かめた以外のものが 1 つでも在れば、
             // フォルダは消さず、確かめた分だけを消す。
-            let checked = Set(candidates.map(\.pathLower))
             let analysisPrefix = wholeFolder.lowercased() + "/" + ShareAnalysisData.subfolderName + "/"
             if let fresh = await removal.copier.listFolder(path: wholeFolder, token: removal.token,
                                                            recursive: true) {
@@ -269,9 +269,9 @@ extension ShareSyncEngine {
             }
         }
         if let wholeFolder, folderIsClear {
-            // 中の写真は全部「他に在る」か「退避した」——フォルダごと消してよい（解析データも一緒に）。
-            Diagnostics.mark("Share sync: removing retired folder '\(label)'")
-            _ = await removal.copier.deleteBatch(paths: [wholeFolder], token: removal.token)
+            // 中の写真は全部「他に在る」か「退避した」——フォルダごと片付けてよい（解析データも一緒に）。
+            await retireFolder(wholeFolder, checked: checked, label: label,
+                               holdingFolder: holdingFolder, removal: removal)
         } else if !deletes.isEmpty {
             let budget = Array(deletes.prefix(Self.maxDeletesPerRun))
             // ⚠️ 実機確認の手順が見る行なので、Release でも残る `Diagnostics.mark` にする（info は DEBUG のみ）。
@@ -279,6 +279,52 @@ extension ShareSyncEngine {
             _ = await removal.copier.deleteBatch(paths: budget, token: removal.token)
         }
 
+    }
+
+    /// 消したセットのフォルダを**退避先へ移してから**確かめて消す（ADR-278 追補 7）。
+    ///
+    /// ⚠️⚠️ 一覧を取り直してから元の場所でフォルダごと消す形（追補 3）は、窓を数分から
+    /// 「一覧の往復 ＋ 1 往復」に縮めただけで、**閉じてはいなかった**。取り直しの直後に家族が置いた
+    /// 写真は、確かめられないままフォルダごと消える（不変条件の網が反映の途中に割り込めるように
+    /// なって、初めて出た）。移した先には誰も書かないので、移した後の一覧は**その後も変わらない**
+    /// ——確かめたものだけなら消し、それ以外があればそれだけを残す（中身は退避先に在る）。
+    private func retireFolder(_ folder: String, checked: Set<String>, label: String,
+                              holdingFolder: String, removal: RemovalContext) async {
+        let staging = "\(removal.holdingRoot)/.retiring/\(holdingFolder)-\(UUID().uuidString.prefix(8))"
+        guard await removal.copier.moveToHolding(from: folder, to: staging, token: removal.token) else {
+            Diagnostics.mark("share sync: '\(label)' のフォルダを片付けに移せない — 次の回にする")
+            return
+        }
+        guard let listed = await removal.copier.listFolder(path: staging, token: removal.token,
+                                                           recursive: true) else {
+            // 一覧が取れなければ消さない（退避先に残るだけで、中身は失われない）。
+            Diagnostics.mark("share sync: '\(label)' を片付けに移したが一覧が取れない — 退避先に残す")
+            return
+        }
+        let base = folder.lowercased() + "/"
+        let analysisPrefix = staging.lowercased() + "/" + ShareAnalysisData.subfolderName + "/"
+        let stagingPrefix = staging.lowercased() + "/"
+        let unchecked = listed.filter { file in
+            guard !file.isFolder else { return false }
+            if file.pathLower.hasPrefix(analysisPrefix) { return !ShareAnalysisData.isAnalysisFileName(file.name) }
+            let relative = file.pathLower.hasPrefix(stagingPrefix)
+                ? String(file.pathLower.dropFirst(stagingPrefix.count)) : file.pathLower
+            return !checked.contains(base + relative)
+        }
+        if unchecked.isEmpty {
+            Diagnostics.mark("Share sync: removing retired folder '\(label)'")
+            _ = await removal.copier.deleteBatch(paths: [staging], token: removal.token)
+        } else {
+            // 確かめたものだけ消し、片付けの途中に届いたものは退避先に残す。
+            let keep = Set(unchecked.map(\.pathLower))
+            let stale = listed.filter { !$0.isFolder && !keep.contains($0.pathLower) }.map(\.pathLower)
+            Diagnostics.mark("share sync: '\(label)' の片付けの途中に届いたファイル \(unchecked.count) 個を "
+                             + "\(BackupLayout.shareRemovedSubfolder) に残した")
+            if !stale.isEmpty {
+                _ = await removal.copier.deleteBatch(paths: Array(stale.prefix(Self.maxDeletesPerRun)),
+                                                     token: removal.token)
+            }
+        }
     }
 
     /// 「持ち主がいない／古い版」の候補について、中身が Dropbox の他の場所に在るかを訊く。

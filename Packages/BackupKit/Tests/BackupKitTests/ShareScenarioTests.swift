@@ -176,7 +176,9 @@ struct ShareScenarioTests {
         _ = await engine.createSet(name: "Trip", refKeys: ["L-a"])
         await engine.syncNow()
 
-        await server.setFailDeletePaths([setFolder("Trip")])
+        // ⚠️ 消したセットのフォルダは、退避先へ**移してから**確かめて消す（ADR-278 追補 7）。
+        // 片付けの最初の一手が移動なので、「消せない回」は移動の失敗で作る。
+        await server.setFailMove(true)
         let setID = await store.allShareSets().first!.id
         #expect(await engine.deleteSet(id: setID), "記録の削除は即座に成立する")
         #expect(await store.allShareSets().isEmpty, "記録が残っている")
@@ -184,7 +186,7 @@ struct ShareScenarioTests {
         #expect(await sharedFiles(server).count == 1, "前提: まだ消せていない")
 
         // 権限が戻れば、次の反映が消す（再試行のための記録は要らない）。
-        await server.setFailDeletePaths([])
+        await server.setFailMove(false)
         await engine.syncNow()
         #expect(await sharedFiles(server).isEmpty, "権限が戻っても掃除されない")
     }

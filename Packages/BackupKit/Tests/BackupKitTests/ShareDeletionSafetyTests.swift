@@ -129,14 +129,17 @@ struct ShareDeletionSafetyTests {
         #expect(count == 0, "最後の 1 枚を消した: \(paths)", sourceLocation: sourceLocation)
     }
 
-    /// ⚠️ ログの検査は**この実行で書かれた行**だけを見る。名前を含まない断片は
-    /// `logCount` で前後の数を比べる（並列の他のテスト・前の実行の行を数えない）。
+    /// ⚠️ ログの検査は**この実行で書かれた行**だけを見る（聞き耳はテストごとに立つ＝
+    /// Swift Testing はテストごとに suite を作り直す）。名前を含まない断片は
+    /// `logCount` で前後の数を比べる（並列の他のテストの行を数えない）。
+    private let tap = DiagnosticsLog.shared.tap()
+
     private func logged(_ fragment: String) async -> Bool {
         await logCount(fragment) > 0
     }
 
     private func logCount(_ fragment: String) async -> Int {
-        await DiagnosticsLog.shared.recentLines(maxLines: 50_000).filter { $0.contains(fragment) }.count
+        await tap.count(fragment)
     }
 
     /// 照合（`reconcileWithDropbox`）と同じ形で、Backup の実物が消えた写真の記録を消す。
@@ -222,7 +225,7 @@ struct ShareDeletionSafetyTests {
             #expect(after == before)
         case .ledgerRebuiltEmpty:
             #expect(after == before, "空の台帳を真実として共有フォルダを消した")
-            let named = await DiagnosticsLog.shared.recentLines(maxLines: 50_000).contains {
+            let named = await tap.lines().contains {
                 $0.contains("share sync: 持ち主の分からないフォルダ") && $0.contains(world.setName.lowercased())
             }
             #expect(named, "持ち主の分からないフォルダの行（フォルダ名つき）が無い")
