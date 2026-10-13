@@ -56,21 +56,41 @@ struct DropboxShareCopier {
 
     // MARK: - フォルダ作成
 
-    /// フォルダを作成する。既存（conflict）は成功扱い。
-    func createFolder(path: String, token: String) async -> Bool {
+    /// フォルダ作成の結果。
+    ///
+    /// ⚠️⚠️ **「作った」と「既にあった」を分ける**（実機ログ diagnostics-108・ADR-277）。
+    /// 以前は 409（既にある）も `true` で返していた。フォルダが在ってほしいだけの呼び手には
+    /// それで足りるが、反映は「一覧が取れない → ルートがまだ無いのだろう → 作れたので**空**」と
+    /// 読んでいた。ルートが**在るのに**一覧だけ失敗した回（停止からの復帰直後）、
+    /// 置き済みの 21,191 枚を全部「未コピー」と判断して 500 件のコピーを投げた。
+    /// 「空」と言えるのは**いま作った**ときだけ。
+    enum FolderCreation: Equatable {
+        /// いま作った（＝中身は空）。
+        case created
+        /// 既にあった（中身は分からない）。
+        case alreadyExisted
+        /// 作れなかった。
+        case failed
+
+        /// フォルダが在る（作った／既にあった）。中身を問わない呼び手はこれを見る。
+        var exists: Bool { self != .failed }
+    }
+
+    /// フォルダを作成する。
+    func createFolder(path: String, token: String) async -> FolderCreation {
         struct Body: Encodable { let path: String; let autorename = false }
         var req = Self.rpcRequest(url: Self.createFolderURL, token: token)
-        guard let body = try? JSONEncoder().encode(Body(path: path)) else { return false }
+        guard let body = try? JSONEncoder().encode(Body(path: path)) else { return .failed }
         req.httpBody = body
         guard let (data, resp) = try? await httpClient.data(for: req),
-              let status = (resp as? HTTPURLResponse)?.statusCode else { return false }
-        if status == 200 { return true }
-        // 409 conflict/folder = 既に存在 → 成功扱い。
+              let status = (resp as? HTTPURLResponse)?.statusCode else { return .failed }
+        if status == 200 { return .created }
+        // 409 conflict/folder = 既に存在。
         if status == 409, String(data: data, encoding: .utf8)?.contains("conflict") == true {
-            return true
+            return .alreadyExisted
         }
         BackupLogger.error("ShareCopier: create_folder failed (\(status)) — \(path)")
-        return false
+        return .failed
     }
 
     // MARK: - 一括コピー（サーバーサイド）

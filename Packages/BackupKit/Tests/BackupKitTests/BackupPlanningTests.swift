@@ -59,9 +59,14 @@ struct UploadTargetsTests {
         #expect(targets(["a", "b"], scope: .sharedOnly).pending.isEmpty)
     }
 
-    @Test("共有する写真だけ: 上げ済みの共有メンバーは上げ直さない")
+    /// ⚠️ 入力は本番と同じく `progress` から作る（ADR-277）。以前は「待ち」と「済み」の両方に
+    /// 同じ写真を手で入れていたが、本番ではその 2 つが別の材料から引かれていたことこそが
+    /// 不具合だった（台帳にだけ載った写真が永久に待たされる）。
+    @Test("共有する写真だけ: 上げ済み（記録あり）の共有メンバーは上げ直さない")
     func sharedOnlySkipsUploadedMembers() {
-        let result = targets(["a", "b"], uploaded: ["a"], awaited: ["a", "b"], scope: .sharedOnly)
+        let (done, awaited) = BackupScopePolicy.progress(ledger: ["a"], recorded: ["a"],
+                                                         shareMembers: ["a", "b"])
+        let result = targets(["a", "b"], uploaded: done, awaited: awaited, scope: .sharedOnly)
         #expect(result.pending == ["b"])
     }
 
@@ -130,6 +135,78 @@ struct BackupScopePolicyGateTests {
         #expect(asked == 0, "全部のときに記録を読みに行っている（数万件の台帳を無駄に読む）")
         #expect(BackupScopePolicy.allowsReconcile(scope: .sharedOnly, hasUploads: { true }))
         #expect(!BackupScopePolicy.allowsReconcile(scope: .sharedOnly, hasUploads: { false }))
+    }
+}
+
+/// 「バックアップ済み」と「共有が待っている」の定義（ADR-277・実機ログ diagnostics-108）。
+///
+/// ⚠️ 2 つの定義が別々の材料（台帳 ∪ 記録／記録だけ）で引かれていたので、台帳にだけ載って
+/// 記録が無い写真は「済み」かつ「待ち」になり、何晩も `waitingBackup=1` のまま動かなかった。
+@Suite("BackupScopePolicy.progress（済みと待ちの唯一の定義）")
+struct BackupProgressDefinitionTests {
+
+    @Test("済み＝台帳 ∪ 記録、共有が待つ＝メンバー − 記録（台帳では引かない）")
+    func definitions() {
+        let (done, awaited) = BackupScopePolicy.progress(
+            ledger: ["ledgerOnly", "both"], recorded: ["both", "recordOnly"],
+            shareMembers: ["ledgerOnly", "both", "recordOnly", "new"])
+        #expect(done == ["ledgerOnly", "both", "recordOnly"])
+        #expect(awaited == ["ledgerOnly", "new"],
+                "台帳にだけ載った共有メンバーが待ちから外れた（共有側は記録で待ちを判断する）")
+    }
+
+    @Test("台帳にだけ載った共有メンバーは、済みでも上げ直す（記録を作るため）")
+    func ledgerOnlyMemberIsUploadedAgain() {
+        let (done, awaited) = BackupScopePolicy.progress(
+            ledger: ["a", "b"], recorded: ["b"], shareMembers: ["a"])
+        for scope in [BackupScope.everything, .sharedOnly] {
+            let plan = BackupScopePolicy.uploadTargets(
+                library: ["a", "b", "c"], alreadyUploaded: done, awaitedByShare: awaited,
+                scope: scope, limit: 0)
+            #expect(plan.pending.first == "a", "\(scope): 共有が待つ写真が上がらない \(plan.pending)")
+            #expect(!plan.pending.contains("b"), "\(scope): 記録のある写真を上げ直している")
+        }
+    }
+
+    /// ⚠️ 逆向きも縛る: 共有メンバーでなければ、台帳だけでも「済み」のまま（上げ直さない）。
+    /// 全部を上げ直すと、記録の作り直しのたびに数万枚を読み直すことになる。
+    @Test("共有メンバーでない写真は、台帳だけでも上げ直さない")
+    func ledgerOnlyNonMemberStaysDone() {
+        let (done, awaited) = BackupScopePolicy.progress(
+            ledger: ["a"], recorded: [], shareMembers: [])
+        let plan = BackupScopePolicy.uploadTargets(
+            library: ["a", "b"], alreadyUploaded: done, awaitedByShare: awaited,
+            scope: .everything, limit: 0)
+        #expect(plan.pending == ["b"])
+    }
+}
+
+/// 実行の終わりに残す 1 行（ADR-277）。⚠️ どの出口からも 1 行出す——3 晩とも
+/// `backup: nightly start` の後に何も出ず、走ったかどうかも分からなかった。
+@Suite("BackupEngine.Phase.endOfRunLine")
+struct EndOfRunLineTests {
+
+    static let all: [BackupEngine.Phase] = [
+        .idle, .requestingPermission, .buildingPeopleIndex, .fetchingAssets,
+        .uploading(current: 1, total: 2, filename: "x.jpg"), .uploadingMetadata,
+        .completed(uploaded: 0, skipped: 5), .failed("HTTP 401\ndetail"), .cancelled,
+    ]
+
+    @Test("どの状態でも 1 行出し、終わりの状態でないまま帰ったらそう読める")
+    func everyPhaseHasALine() {
+        for phase in Self.all {
+            let line = phase.endOfRunLine
+            #expect(line.hasPrefix("backup: ended — "), "\(phase): \(line)")
+            #expect(!line.contains("\n"), "1 行に収まっていない: \(line)")
+            let terminal: Bool
+            switch phase {
+            case .completed, .failed, .cancelled: terminal = true
+            default: terminal = false
+            }
+            #expect(line.contains("without a final state") == !terminal, "\(phase): \(line)")
+        }
+        #expect(BackupEngine.Phase.completed(uploaded: 0, skipped: 5).endOfRunLine
+                == "backup: ended — completed (uploaded=0, already backed up=5)")
     }
 }
 

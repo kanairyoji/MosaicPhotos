@@ -29,13 +29,13 @@ enum SyncPollErrorPolicy {
     /// ⚠️ **ここに並ぶのは「アプリの外の事情で、黙って再試行すればよいもの」だけ**。
     /// 認証切れ・権限・パスの不整合などは `reportable`（利用者が何かしないと直らない）。
     static func classify(_ error: Error) -> Verdict {
-        // ⚠️ `Task` の取り消し（前面復帰・窓の期限切れ）。こちらが止めたのだから失敗ではない。
-        if error is CancellationError { return .expected }
+        // ⚠️ 取り消し（前面復帰・窓の期限切れ・URLSession 側）。こちらが止めたのだから失敗ではない。
+        // 判定は `RequestCancellation` の 1 か所（フル画像の取得も同じものを使う）。
+        if RequestCancellation.matches(error) { return .expected }
         let ns = error as NSError
         guard ns.domain == NSURLErrorDomain else { return .reportable }
         switch ns.code {
         case NSURLErrorTimedOut,                 // longpoll がぶら下がったまま中断された
-             NSURLErrorCancelled,                // URLSession 側の取り消し
              NSURLErrorNetworkConnectionLost,    // 圏外へ入る・Wi-Fi が切れる
              NSURLErrorNotConnectedToInternet,
              NSURLErrorDataNotAllowed,           // モバイルデータが許可されていない

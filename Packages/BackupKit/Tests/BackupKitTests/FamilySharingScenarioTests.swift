@@ -174,35 +174,21 @@ extension StandardSettingsSuite {
                 return await BackupDeviceIdentity.$testingIdentity.withValue(identity) { await body() }
             }
 
-            /// バックアップの 1 回（`BackupRunner.run` の写し・判断は本番の関数）。
+            /// 進捗台帳の写し（本番の `BackupProgressStore`）。
+            var ledger: Set<String> = []
+
+            /// バックアップの 1 回（写しは `BackupPassForTesting` の 1 つだけ・ADR-277）。
             @discardableResult
             func backupPass() async -> [String] {
-                await asCurrentDevice {
-                    let scope = BackupScope.current(.standard)
-                    let done = await store.recordedLocalIdentifiers()
-                    let awaited = await engine.runnerShareMemberLocalIdentifiers().subtracting(done)
-                    guard BackupScopePolicy.hasWork(scope: scope, awaitedCount: awaited.count) else { return [] }
-                    let restriction = BackupScopePolicy.candidateRestriction(scope: scope, awaitedByShare: awaited)
-                    let candidates = library.filter { restriction?.contains($0.id) ?? true }
-                    let plan = BackupScopePolicy.uploadTargets(
-                        library: candidates.map(\.id), alreadyUploaded: done, awaitedByShare: awaited,
-                        scope: scope, limit: 0)
-                    let uploader = DropboxBackupUploader(httpClient: account)
-                    var uploaded: [String] = []
-                    for id in plan.pending {
-                        guard let photo = library.first(where: { $0.id == id }) else { continue }
-                        let result = await uploader.upload(
-                            data: photo.data, to: "\(backupRoot)/2020/2020-09/\(id).jpg", token: "t",
-                            expectedHash: DropboxContentHash.hash(of: photo.data), clientModified: photo.taken)
-                        guard case .uploaded(let saved, let hash) = result else { continue }
-                        _ = await store.upsertRecord(dropboxPath: saved, localIdentifier: id,
-                                                     filename: "\(id).jpg", creationDate: photo.taken,
-                                                     contentHash: hash, people: [], albums: [],
-                                                     isFavorite: false)
-                        uploaded.append(id)
-                    }
-                    return uploaded
+                var ledger = ledger
+                let uploaded = await asCurrentDevice {
+                    await BackupPassForTesting.run(
+                        library: library.map { .init(id: $0.id, data: $0.data, taken: $0.taken) },
+                        ledger: &ledger, store: store, engine: engine, http: account,
+                        path: { "\(backupRoot)/2020/2020-09/\($0.id).jpg" })
                 }
+                self.ledger = ledger
+                return uploaded
             }
 
             func syncShares() async { await asCurrentDevice { await share.syncNow() } }

@@ -419,20 +419,27 @@
   - `scope` ← `BackupScope.current(.standard)`（`backupDestination`）
     - 約束: `.dropbox` だけが全部。未設定・`.disabled`・壊れた値は `.sharedOnly`（勝手に全部上げない）
     - テスト: `BackupScopePolicyGateTests.scopeFromSettings`
-  - `awaitedByShare` ← `BackupEngine.runnerShareMemberLocalIdentifiers()` − 済み
-    - 約束: 「提供する」が OFF なら空。共有セットの端末写真（`L-`）だけ
-    - テスト: `SharedOnlyBackupScenarioTests.provideOffUploadsNothing` / `onlySharedPhotosReachDropbox`
-  - `alreadyUploaded` ← 台帳 ∪ 記録（`computePending`）
-    - 約束: **確かに上がった**写真だけ（429・hash 不一致は入らない＝次の回にやり直す）
+  - `awaitedByShare` ← `BackupScopePolicy.progress`＝`runnerShareMemberLocalIdentifiers()` − **記録**（ADR-277）
+    - 約束: 「提供する」が OFF なら空。共有セットの端末写真（`L-`）だけ。
+      ⚠️ **記録で引く**（台帳で引かない）——共有の反映が「バックアップ待ち」と判断する材料が記録なので、
+      ここも同じ材料で引く。台帳で引いていた頃は、台帳にだけ載った写真が両方から永久に動かなかった
+    - テスト: `SharedOnlyBackupScenarioTests.provideOffUploadsNothing` / `onlySharedPhotosReachDropbox` /
+      `ledgerOnlyShareMemberIsNotStuck` / `BackupProgressDefinitionTests`
+  - `alreadyUploaded` ← `BackupScopePolicy.progress`＝台帳 ∪ 記録
+    - 約束: **確かに上がった**写真だけ（429・hash 不一致は入らない＝次の回にやり直す）。
+      `awaitedByShare` に入っている写真は、ここに入っていても上げる（`uploadTargets` が先に見る）
     - テスト: `SharedOnlyBackupScenarioTests.writeContentionConverges` /
       `BackupUploadScenarioTests.persistentRateLimitIsNotTreatedAsDone`
+    - ⚠️ テストの「バックアップの 1 回」の写しは `BackupPassForTesting` の 1 つだけ（台帳も写す）。
+      2 つあった写しがどちらも「済み」を記録だけで引いていて、食い違いを作れなかった
   - `hasUploads` ← `progressStore.loadUploadedIDs()`（照合）
     - 約束: 上げた写真があれば空でない
     - テスト: ⚠️ 無し（`uploadedLocalIDs` はプロセスに 1 つで、照合の別テストが並列に書く・宿題）
 - 規則のテスト: `UploadTargetsTests` / `BackupScopePolicyGateTests`
 - 呼び出し側のテスト: `SharedOnlyBackupScenarioTests`（runner の写し・判断は本番の関数）＋
   `device-verification.md` 章 K（runner の配管は実機）
-- 効きを見るログ: `backup: shared photos only — awaited=` / `offload: skip — backup scope is shared photos only`
+- 効きを見るログ: `backup: shared photos only — awaited=` / `offload: skip — backup scope is shared photos only` /
+  `backup: 共有が待つ写真 `（内訳: この回に上げる・端末に無い・台帳だけに載っていた）/ `backup: ended — `（どの出口からも 1 行）
 
 ## 判断ではないもの
 

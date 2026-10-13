@@ -173,7 +173,13 @@ extension DropboxPhotoStore {
             data = try await apiClient.contentDownload(
                 url: DropboxInternalConstants.downloadFileURL, apiArg: argString)
         } catch {
-            DropboxLogger.error("fullImage() download failed — \(item.name): \(error.localizedDescription)")
+            // ⚠️ 開いてすぐ閉じた・次の写真へ送った＝こちらが止めた（ADR-277）。失敗ではないので
+            // ERROR に残さない（本物のエラーが埋もれる・ADR-256）。
+            if RequestCancellation.matches(error) {
+                DropboxLogger.info("fullImage() download cancelled — \(item.name)")
+            } else {
+                DropboxLogger.error("fullImage() download failed — \(item.name): \(error.localizedDescription)")
+            }
             return nil
         }
         // ★ 元バイト列のままキャッシュ（EXIF 保持）。表示用は画面相当へダウンサンプルして

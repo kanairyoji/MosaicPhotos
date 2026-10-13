@@ -40,6 +40,25 @@ public enum BackupScope: Sendable, Equatable {
 /// ⚠️ 呼び出し側で `scope == .everything` を書かない。判断が散ると片方だけ直す形になる（ADR-196）。
 enum BackupScopePolicy {
 
+    /// **「バックアップ済み」と「共有が待っている」の唯一の定義**（ADR-277）。
+    ///
+    /// - `done`（もう上げない）＝ 進捗台帳 ∪ 記録。台帳は記録より先に書かれないので、
+    ///   ふつうは記録の部分集合だが、記録の作り直し・照合で食い違うことがある。
+    /// - `awaitedByShare`（共有が待っている）＝ 共有メンバー − **記録**。
+    ///   ⚠️⚠️ 台帳で引かない。共有の反映が「バックアップ待ち」と判断する材料は**記録**
+    ///   （`SharePlanning.plan` の `waitingBackup`）なので、ここも記録で引く。
+    ///   以前は `done`（台帳 ∪ 記録）で引いていたので、**台帳にだけ載って記録が無い**写真は
+    ///   バックアップ側では「済み」、共有側では「待ち」になり、**どちらからも永久に動かなかった**
+    ///   （実機ログ diagnostics-108: 毎回 `waitingBackup=1`・バックアップは毎回「上げるもの無し」）。
+    ///   もう一度通せば、Dropbox に在るので 409 → 中身の照合 → 記録だけが作られる。
+    ///
+    /// ⚠️ テストの「バックアップの 1 回」の写しも**これを呼ぶ**——写しが「済み」を
+    /// 記録だけで引いていたので、台帳と記録の食い違いはテストの世界に存在しなかった。
+    static func progress(ledger: Set<String>, recorded: Set<String>,
+                         shareMembers: Set<String>) -> (done: Set<String>, awaitedByShare: Set<String>) {
+        (ledger.union(recorded), shareMembers.subtracting(recorded))
+    }
+
     /// このバックアップ実行で上げる写真（順序つき）。
     ///
     /// - `library`: 候補の localIdentifier（表示順）。`.sharedOnly` では共有メンバーだけを
@@ -56,9 +75,11 @@ enum BackupScopePolicy {
         var rest: [String] = []
         var skipped = 0
         for id in library {
+            // ⚠️ 共有が待っている写真は「済み」より先に見る（`progress` の注記）。
+            // 共有が待つ＝記録が無いので、台帳に載っていても上げ直して記録を作る。
+            if awaitedByShare.contains(id) { awaited.append(id); continue }
             if alreadyUploaded.contains(id) { skipped += 1; continue }
-            if awaitedByShare.contains(id) { awaited.append(id) }
-            else if scope == .everything { rest.append(id) }
+            if scope == .everything { rest.append(id) }
         }
         if limit > 0, rest.count > limit { rest = Array(rest.prefix(limit)) }
         return (awaited + rest, skipped, awaited.count)

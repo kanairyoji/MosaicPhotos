@@ -345,6 +345,9 @@ backup: shared photos only — awaited=
 offload: skip — backup scope is shared photos only
 share.publishAnalysis: 自分の写真 
 share.duplicates: 他の端末の共有コピー 
+share sync: 共有ルートの一覧が取れない
+backup: ended — 
+backup: 共有が待つ写真 
 faces: ledger exported for replay
 CLIP released
 face model released
@@ -538,3 +541,14 @@ Developer Options → 診断ログ。目印になる行:
 | 両方の端末の診断ログ | `share.publishAnalysis: 自分の写真 N 枚を端末の解析で公開する` の N が共有した枚数以上。後から ON にした端末にも `自分の写真 N 枚だけ公開する` が出る |
 | 相手の写真の解析 | 受け取った側で `share import:` が相手の写真に当たり、タグ・顔・人物名が付く。相手の写真を**自分で解析し直さない**（解析の残数が相手の写真の分だけ増えない） |
 | `share.duplicates:` | 相手が共有した枚数とおおよそ同じ数が出る。写真を増やさない限り、画面を開くたびには出ない（版ごとに 1 回） |
+
+---
+
+## M. 読めなかった回に書かないこと・バックアップ待ちが詰まらないこと（ADR-277）
+
+| 見るもの | 期待 |
+|---|---|
+| 夜間の診断ログ（毎窓） | `backup: nightly start` の後に必ず `backup: ended — ` が 1 行出る（上げるものが無い夜も `completed (uploaded=0, …)`）。`without a final state` が出たら不具合 |
+| 共有の反映が `waitingBackup=N`（N>0）の夜 | 同じ窓に `backup: 共有が待つ写真 N 枚（…）` が出る。`台帳だけに載っていた` が 1 以上なら次の窓で `waitingBackup` が減る。`端末に無い` だけが残るなら、その写真は端末から消えている |
+| 停止からの復帰直後の窓 | `Share sync: … copy=<メンバー数> present=0` が**出ない**。一覧が取れなかった回は `share sync: 共有ルートの一覧が取れない — この回は見送る` が出て、`copying 500 of` が続かない |
+| フル画像を開いてすぐ閉じる | `ERROR: fullImage() download failed — キャンセルしました` が**出ない**（DEBUG では `download cancelled` の info） |

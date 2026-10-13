@@ -138,6 +138,14 @@ public actor FakeDropboxServer: HTTPClient {
     /// 発行済みリクエストの記録（呼ばれ方の検証用）。
     public private(set) var requestLog: [String] = []
 
+    /// **既に在る宛先へ投げられたコピーの件数**（autorename 無しで `to/conflict` になったもの）。
+    ///
+    /// ⚠️ なぜ数えるか（実機ログ diagnostics-108・ADR-277）: 一覧が取れなかった回に「空」と読んで
+    /// 置き済みの写真を全部コピーし直しに行っても、衝突で全部失敗するので**終わりの状態は正しい**。
+    /// 終わりの状態だけを見るテストには原理的に見えない。「実在を知らずに書いた」回数として、
+    /// 1 回ごとの反映の後に見る。
+    public private(set) var conflictedCopyEntries = 0
+
     // MARK: - 観測（テストが落ちたときに「何が起きたか」を読めるように）
 
     /// 1 往復の記録。`transcript()` で人が読める形にする。
@@ -730,6 +738,7 @@ public actor FakeDropboxServer: HTTPClient {
             if files[to] != nil {
                 guard parsed.autorename else {
                     // autorename 無効なら衝突は失敗（本番と同じ挙動）。
+                    conflictedCopyEntries += 1
                     results.append(#"{".tag":"failure","failure":{".tag":"to/conflict/file/"}}"#)
                     continue
                 }

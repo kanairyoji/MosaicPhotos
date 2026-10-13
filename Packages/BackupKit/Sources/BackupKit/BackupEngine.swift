@@ -77,6 +77,26 @@ public final class BackupEngine {
         case failed(String)
         case cancelled
 
+        /// 実行が終わったときに診断ログへ残す 1 行（ADR-277）。
+        ///
+        /// ⚠️ `default` を書かない——状態を足したら、ここで何と書くかを決めないと
+        /// コンパイルが通らないようにしておく（書き忘れると、その出口がまた無言になる）。
+        /// 終わりの状態でない（`uploading` など）まま帰ったなら、それ自体が不具合なので
+        /// そう読める文言にする。
+        var endOfRunLine: String {
+            switch self {
+            case .completed(let uploaded, let skipped):
+                return "backup: ended — completed (uploaded=\(uploaded), already backed up=\(skipped))"
+            case .failed(let message):
+                return "backup: ended — failed: \(message.split(whereSeparator: \.isNewline).first ?? "")"
+            case .cancelled:
+                return "backup: ended — cancelled"
+            case .idle, .requestingPermission, .buildingPeopleIndex, .fetchingAssets,
+                 .uploading, .uploadingMetadata:
+                return "backup: ended — without a final state (phase=\(self))"
+            }
+        }
+
         /// 実ネットワークアップロード中か（写真/メタデータ送信）。アクティビティ計測用。
         var isUploadingNetwork: Bool {
             switch self {
@@ -262,6 +282,11 @@ public final class BackupEngine {
             // 自分が現行世代のときだけ後始末する。旧タスクがここで nil を書くと、
             // **新しい実行のハンドルまで消えて**キャンセルできなくなる。
             guard self.isCurrentRun(generation) else { return }
+            // ⚠️ **どの出口から帰っても 1 行残す**（ADR-277・実機ログ diagnostics-108）。
+            // 「完了」の行は上げた回にしか出ていなかったので、3 晩とも `nightly start` の後に
+            // 何も出ず、走ったのか・止まったのか・上げるものが無かったのかを区別できなかった。
+            // 出口ごとに書き足すと、出口が増えたときにまた漏れる——だからここ 1 か所で書く。
+            Diagnostics.mark(self.phase.endOfRunLine)
             if completed {
                 await self.loadAlbums()
                 // 通信できている今のうちに、未送信のオフロードマーカーを片付ける

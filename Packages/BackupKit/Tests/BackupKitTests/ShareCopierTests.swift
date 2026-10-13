@@ -34,17 +34,26 @@ struct DropboxShareCopierTests {
 
     // MARK: - createFolder
 
-    @Test("フォルダ作成は 200 で成功・409 conflict は成功扱い")
-    func createFolderTreatsConflictAsSuccess() async {
+    /// ⚠️⚠️ 以前のこのテストは「409 conflict は**成功扱い**」を固定していた（`Bool` で `true`）。
+    /// フォルダが在ってほしいだけならそれで正しいが、反映はその `true` を「いま作った＝中身は空」と
+    /// 読んでいた——**望ましくない性質を、望ましい性質として固定していた**（ADR-258 と同じ形）。
+    /// 実機では在るフォルダの一覧だけが失敗した回に、置き済みの写真を全部コピーし直しに行った
+    /// （diagnostics-108・ADR-277）。だから 3 つを**別の値**で返すことを固定する。
+    @Test("フォルダ作成は「作った／既にあった／失敗」を分けて返す（409 を「作った」にしない）")
+    func createFolderDistinguishesCreatedFromExisting() async {
         let ok = SequencedHTTPClient([(200, "{}")])
-        #expect(await makeCopier(ok).createFolder(path: "/s/x", token: "t"))
+        #expect(await makeCopier(ok).createFolder(path: "/s/x", token: "t") == .created)
 
         let conflict = SequencedHTTPClient([
             (409, #"{"error_summary": "path/conflict/folder/..", "error": {}}"#)])
-        #expect(await makeCopier(conflict).createFolder(path: "/s/x", token: "t"))
+        let existing = await makeCopier(conflict).createFolder(path: "/s/x", token: "t")
+        #expect(existing == .alreadyExisted, "既にあったフォルダを「作った（空）」と言っている")
+        #expect(existing.exists)
 
         let denied = SequencedHTTPClient([(401, "{}")])
-        #expect(await makeCopier(denied).createFolder(path: "/s/x", token: "t") == false)
+        let failed = await makeCopier(denied).createFolder(path: "/s/x", token: "t")
+        #expect(failed == .failed)
+        #expect(!failed.exists)
     }
 
     // MARK: - copyBatch

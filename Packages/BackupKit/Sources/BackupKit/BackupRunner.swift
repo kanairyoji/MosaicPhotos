@@ -382,14 +382,16 @@ final class BackupRunner {
         let scope = scope()
         let ledgerIDs = progressStore.loadUploadedIDs()
         let recordIDs = await delegate.runnerRecordedLocalIdentifiers()
-        let doneIDs = ledgerIDs.union(recordIDs)
+        // ⚠️ 「済み」と「共有が待っている」は `BackupScopePolicy.progress` だけが決める（ADR-277）。
+        // 差し引きはここで行う——記録の集合は既に手元にあるので、ストア側で引き直すと
+        // 数万行を 2 度読むことになる。
+        let (doneIDs, awaited) = BackupScopePolicy.progress(
+            ledger: ledgerIDs, recorded: recordIDs,
+            shareMembers: await delegate.runnerShareMemberLocalIdentifiers())
         if doneIDs.count > ledgerIDs.count {
             addLog("Restored \(doneIDs.count - ledgerIDs.count) backed-up ID(s) from records")
             progressStore.saveUploadedIDs(doneIDs)   // 台帳側も修復
         }
-        // ⚠️ 「待たれている」＝**共有メンバー − バックアップ済み**。差し引きはここで行う——
-        // `doneIDs` は既に手元にあるので、ストア側で引き直すと数万行を 2 度読むことになる。
-        let awaited = await delegate.runnerShareMemberLocalIdentifiers().subtracting(doneIDs)
         // 効きを見るログ（ADR-250）: 共有する写真だけの回に、何枚が待たれていたか。
         // `addLog` はアプリ内の表示にしか残らないので、診断ログへも 1 行出す。
         if scope == .sharedOnly {
@@ -406,6 +408,15 @@ final class BackupRunner {
             awaitedByShare: awaited, scope: scope, limit: limit)
         let byID = Dictionary(assets.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { a, _ in a })
         let pending = plan.pending.compactMap { byID[$0] }
+        if !awaited.isEmpty {
+            // ⚠️ 共有が待っている写真の**内訳**を残す（ADR-277）。実機では `waitingBackup=1` が
+            // 何晩も続いたのに、バックアップ側は「上げるもの無し」をアプリ内にしか書かず、
+            // 2 つの食い違いをログから確かめる手段が無かった。
+            let notInLibrary = awaited.subtracting(byID.keys).count
+            let ledgerOnly = awaited.intersection(ledgerIDs).count
+            Diagnostics.mark("backup: 共有が待つ写真 \(awaited.count) 枚（この回に上げる \(awaited.count - notInLibrary)"
+                             + "・端末に無い \(notInLibrary)・台帳だけに載っていた \(ledgerOnly)）")
+        }
         if plan.prioritized > 0 {
             addLog("Prioritizing \(plan.prioritized) photo(s) awaited by Cloud Sharing")
         }

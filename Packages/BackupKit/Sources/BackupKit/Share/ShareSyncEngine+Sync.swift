@@ -70,13 +70,27 @@ extension ShareSyncEngine {
             // **毎回の反映でエラーが出る**（画面に赤字が出たまま消えない）。
             lastSyncAt = Date()
             return
-        } else if await copier.createFolder(path: shareRoot, token: token) {
-            // ルートがまだ無かった（初回）。作れたなら空として進む。
-            listing = []
         } else {
-            lastError = .folderCheckFailed
-            BackupLogger.error("Share sync: list_folder(recursive) failed — \(shareRoot)")
-            return
+            // ⚠️⚠️ **「空」と言えるのは、いま作ったときだけ**（ADR-277・diagnostics-108）。
+            // 一覧が取れない理由は「ルートがまだ無い（初回）」と「通信がこけた」の 2 つあり、
+            // 作成の応答で見分ける。以前は 409（既にある）も成功として**空**で進んだので、
+            // 停止からの復帰直後に一覧だけ失敗した回、置き済みの 21,191 枚を全部
+            // 「未コピー」と読んで 500 件のコピーを投げ、「共有済み」を 0 に書き換えていた。
+            // 計画（`SharePlanning.plan`）の「一覧が無ければ何も決めない」が、ここで
+            // 空の一覧に化けて**効かなくなっていた**。
+            switch await copier.createFolder(path: shareRoot, token: token) {
+            case .created:
+                listing = []   // ルートがまだ無かった（初回）。いま作ったので中身は空。
+            case .alreadyExisted:
+                // ルートは在るのに一覧が取れなかった＝実在が分からない。この回は何も決めない。
+                lastError = .folderCheckFailed
+                Diagnostics.mark("share sync: 共有ルートの一覧が取れない — この回は見送る（\(sets.count) セット）")
+                return
+            case .failed:
+                lastError = .folderCheckFailed
+                BackupLogger.error("Share sync: list_folder(recursive) failed — \(shareRoot)")
+                return
+            }
         }
         let remote = RemoteShareIndex(listing: listing)
 
@@ -138,7 +152,12 @@ extension ShareSyncEngine {
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,
                       copier: DropboxShareCopier, token: String, remote: RemoteShareIndex) async {
-        let items = await store.shareItems(setID: set.id)
+        // ⚠️ 読めなかったら**このセットは見送る**（ADR-277）。空として進むと「メンバー 0」と読んで
+        // フォルダの中身を全部消す（差分方式では「望ましい集合が空」も正しい答えなので）。
+        guard let items = await store.readShareItems(setID: set.id) else {
+            Diagnostics.mark("share sync: '\(set.name)' のメンバーが読めない — この回は見送る")
+            return
+        }
         guard let setFolder = SharePlanning.setFolderPath(
                 shareRoot: shareRoot, folderName: set.folderName,
                 deviceFolder: nil /* ADR-175: shareRoot は端末フォルダ込み */) else {
@@ -159,7 +178,16 @@ extension ShareSyncEngine {
         // セットのフォルダが無ければ作る（初回か外部削除）。実在はルートの再帰一覧から分かる
         // ＝セットごとの往復は無い（ADR-183）。
         if !folderExists {
-            guard await copier.createFolder(path: setFolder, token: token) else {
+            switch await copier.createFolder(path: setFolder, token: token) {
+            case .created:
+                break
+            case .alreadyExisted:
+                // ⚠️ 一覧には無かったのに在った＝**一覧がこのフォルダを取りこぼしている**
+                // （一覧の後に作られた・一覧が古い）。実在が分からないので、このセットは見送る
+                // ——進めると、在るファイルを全部「未コピー」と読む（ルートと同じ形・ADR-277）。
+                Diagnostics.mark("share sync: '\(set.name)' のフォルダが一覧に無いのに在った — この回は見送る")
+                return
+            case .failed:
                 lastError = .folderPrepareFailed
                 BackupLogger.error("Share sync: create_folder failed — \(setFolder)")
                 return
@@ -171,7 +199,10 @@ extension ShareSyncEngine {
         // 計画（純ロジック）: 望ましい集合と実在の差分。
         let localIDs = items.filter { $0.refKey.hasPrefix("L-") }
             .map { String($0.refKey.dropFirst(2)) }
-        let backupRefs = await store.backupRefs(forLocalIdentifiers: localIDs)
+        guard let backupRefs = await store.readBackupRefs(forLocalIdentifiers: localIDs) else {
+            Diagnostics.mark("share sync: '\(set.name)' のバックアップ記録が読めない — この回は見送る")
+            return
+        }
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
                                       cloudHashByPath: await cloudSourceHashProvider(),
                                       setFolder: setFolder, remoteFiles: remoteFiles)
@@ -309,7 +340,7 @@ extension ShareSyncEngine {
 
         let analysisFolder = "\(setFolder)/\(ShareAnalysisData.subfolderName)"
         if !plan.upload.isEmpty {
-            guard await copier.createFolder(path: analysisFolder, token: token) else { return }
+            guard await copier.createFolder(path: analysisFolder, token: token).exists else { return }
         }
         var uploaded = 0
         for shard in plan.upload.sorted() {

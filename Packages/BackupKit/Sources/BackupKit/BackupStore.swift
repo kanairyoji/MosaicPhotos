@@ -34,6 +34,18 @@ public actor BackupStore {
     /// （`unownedExecutor` の回帰検証。`ModelActorExecutorTests` から呼ぶ）。
     func runsOnMainThreadForTesting() -> Bool { Thread.isMainThread }
 
+    #if DEBUG
+    /// テスト用: 共有の反映が読む記録の fetch を**失敗させる**（ADR-277）。
+    /// SwiftData の fetch はテストから壊せないので、失敗の経路を通すための穴。
+    ///
+    /// ⚠️ **読みごとに分ける**。1 つの旗で両方を壊していた最初の版では、メンバーの読みを
+    /// 空に潰す変異が**通った**——メンバーが空でも、次の記録の読みが失敗して見送られたから。
+    /// 片方ずつ壊さないと、片方の守りが消えても気づけない（ADR-268）。
+    enum ShareRead: Sendable { case members, backupRecords }
+    var failingShareReadForTesting: ShareRead?
+    func setFailingShareReadForTesting(_ value: ShareRead?) { failingShareReadForTesting = value }
+    #endif
+
 
     /// オフメイン生成ファクトリ。コンテナを開く（＝ストアファイルを触る）ディスク I/O を
     /// メインから外す。実行スレッドの分離は `unownedExecutor` の役目で、生成側では決まらない。

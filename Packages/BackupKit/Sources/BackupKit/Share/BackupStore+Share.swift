@@ -130,11 +130,28 @@ extension BackupStore {
         return added
     }
 
+    /// セットのメンバー（表示用）。読めなかったら空。
+    ///
+    /// ⚠️ **反映（Dropbox へ書く側）は使わない**——`readShareItems` を使う。
+    /// 表示なら「読めなかった＝何も出ない」で済むが、反映では「メンバー 0」が
+    /// **フォルダの中身を全部消す**理由になる（ADR-277）。
     public func shareItems(setID: UUID) -> [ShareItemLite] {
+        readShareItems(setID: setID) ?? []
+    }
+
+    /// セットのメンバー。**nil は「読めなかった」**（0 人とは別・ADR-277）。
+    ///
+    /// ⚠️ 「分からない」を空配列に潰さない。潰すと、反映の計画が「メンバーが居ない」と読んで
+    /// 共有フォルダの写真を全部消しに行く（計画の安全弁は「メンバーは居るのに出どころが 1 つも
+    /// 解決しない」回しか止めない）。
+    func readShareItems(setID: UUID) -> [ShareItemLite]? {
+        #if DEBUG
+        if failingShareReadForTesting == .members { return nil }
+        #endif
         let id = setID
-        let items = (try? modelContext.fetch(FetchDescriptor<ShareItem>(
+        guard let items = try? modelContext.fetch(FetchDescriptor<ShareItem>(
             predicate: #Predicate { $0.setID == id },
-            sortBy: [SortDescriptor(\.addedAt, order: .forward)]))) ?? []
+            sortBy: [SortDescriptor(\.addedAt, order: .forward)])) else { return nil }
         return items.map { ShareItemLite(refKey: $0.refKey, addedAt: $0.addedAt) }
     }
 
@@ -169,6 +186,18 @@ extension BackupStore {
 
     /// localIdentifier → バックアップ記録（パス・ハッシュ）。共有計画の入力。
     public func backupRefs(forLocalIdentifiers ids: [String]) -> [String: SharePlanning.BackupRef] {
+        readBackupRefs(forLocalIdentifiers: ids) ?? [:]
+    }
+
+    /// localIdentifier → バックアップ記録。**nil は「読めなかった」**（ADR-277）。
+    ///
+    /// ⚠️ 空の辞書に潰すと、端末写真のメンバーが全員「バックアップ待ち」になり、
+    /// セットにクラウド写真が 1 枚でも居れば計画の安全弁が効かず、
+    /// 端末写真の共有コピーが**全部消される**。
+    func readBackupRefs(forLocalIdentifiers ids: [String]) -> [String: SharePlanning.BackupRef]? {
+        #if DEBUG
+        if failingShareReadForTesting == .backupRecords { return nil }
+        #endif
         guard !ids.isEmpty else { return [:] }
         let wanted = Set(ids)
         // localIdentifier は #Predicate の contains(Set) が組めないため全件から絞る
@@ -176,7 +205,7 @@ extension BackupStore {
         // メタ 3 列だけ取り出す（@Model 全体のマテリアライズは数万行でメモリを食う）。
         var descriptor = FetchDescriptor<BackupAssetRecord>()
         descriptor.propertiesToFetch = [\.localIdentifier, \.dropboxPath, \.contentHash]
-        let records = (try? modelContext.fetch(descriptor)) ?? []
+        guard let records = try? modelContext.fetch(descriptor) else { return nil }
         var out: [String: SharePlanning.BackupRef] = [:]
         for record in records {
             guard let localID = record.localIdentifier, wanted.contains(localID) else { continue }

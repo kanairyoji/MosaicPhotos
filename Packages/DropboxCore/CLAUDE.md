@@ -15,7 +15,8 @@ Packages/DropboxCore/              ← Dropbox のロジック層（ImageCacheKi
     Auth/                          DropboxAuthService（OAuth2 + PKCE）/ PKCEGenerator(純)/
                                    DropboxCredential / CredentialStore / DropboxKeychainStore
     Networking/                    HTTPClient(抽象)/ DropboxAPIClient(RPC・DL 集約)/
-                                   DropboxAPIArgEncoder / DropboxInternalConstants
+                                   DropboxAPIArgEncoder / DropboxInternalConstants /
+                                   RequestCancellation（「こちらが止めた要求か」の唯一の判定・ADR-277）
     Sync/                          DropboxSyncEngine(差分同期)/ DeltaPageParser(解析・純)/
                                    DropboxSyncState(@Model カーソル)
     Cache/                         DropboxCacheStore(actor・SwiftData+ImageCacheKit)/

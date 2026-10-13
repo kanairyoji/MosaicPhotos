@@ -64,34 +64,18 @@ extension StandardSettingsSuite {
                 await server.seed(SharedOnlyBackupScenarioTests.root, hash: "", isFolder: true)
             }
 
-            /// バックアップの 1 回（`BackupRunner.run` の写し・判断は本番の関数）。上げた ID を返す。
+            /// 進捗台帳の写し（本番の `BackupProgressStore`）。記録と食い違う状態を作れるように持つ。
+            var ledger: Set<String> = []
+
+            /// バックアップの 1 回（写しは `BackupPassForTesting` の 1 つだけ・ADR-277）。上げた ID を返す。
             @discardableResult
             func backupPass(limit: Int = 0) async -> [String] {
-                let scope = BackupScope.current(.standard)
-                let done = await store.recordedLocalIdentifiers()
-                let awaited = await engine.runnerShareMemberLocalIdentifiers().subtracting(done)
-                guard BackupScopePolicy.hasWork(scope: scope, awaitedCount: awaited.count) else { return [] }
-                let restriction = BackupScopePolicy.candidateRestriction(scope: scope, awaitedByShare: awaited)
-                let candidates = library.filter { restriction?.contains($0.id) ?? true }
-                let plan = BackupScopePolicy.uploadTargets(
-                    library: candidates.map(\.id), alreadyUploaded: done, awaitedByShare: awaited,
-                    scope: scope, limit: limit)
-                let uploader = DropboxBackupUploader(httpClient: server)
-                var uploaded: [String] = []
-                for id in plan.pending {
-                    guard let photo = library.first(where: { $0.id == id }) else { continue }
-                    let path = backupPath(of: photo)
-                    let result = await uploader.upload(
-                        data: photo.data, to: path, token: "t",
-                        expectedHash: DropboxContentHash.hash(of: photo.data), clientModified: photo.taken)
-                    // 本番と同じく、確かに上がったときだけ記録する（429 などは次の回に回る）。
-                    guard case .uploaded(let saved, let hash) = result else { continue }
-                    _ = await store.upsertRecord(dropboxPath: saved, localIdentifier: id,
-                                                 filename: "\(id).jpg", creationDate: photo.taken,
-                                                 contentHash: hash, people: [], albums: [],
-                                                 isFavorite: false)
-                    uploaded.append(id)
-                }
+                var ledger = ledger
+                let uploaded = await BackupPassForTesting.run(
+                    library: library.map { .init(id: $0.id, data: $0.data, taken: $0.taken) },
+                    ledger: &ledger, store: store, engine: engine, http: server, limit: limit,
+                    path: { "\(backupRoot)/2020/2020-09/\($0.id).jpg" })
+                self.ledger = ledger
                 return uploaded
             }
 
@@ -177,6 +161,34 @@ extension StandardSettingsSuite {
                 let after = await world.server.uploadCount()
                 #expect(after == uploads, "上げ済みの写真を上げ直している（\(uploads) → \(after)）")
                 #expect(await world.server.filePaths() == files, "何もしていないのにファイルが増減した")
+            }
+        }
+
+        /// 実機ログ diagnostics-108（ADR-277）: 共有の反映が何晩も `waitingBackup=1` を出し、
+        /// バックアップは毎回「上げるもの無し」だった。台帳にだけ載って記録が無い写真は、
+        /// バックアップから見ると「済み」、共有から見ると「待ち」で、どちらも動かない。
+        /// ⚠️ 以前の写しは「済み」を記録だけで引いていたので、この状態を**作れなかった**。
+        @Test("台帳にだけ載って記録の無い共有メンバーは、もう一度通して記録を作り、共有に届く",
+              arguments: [BackupDestination.dropbox, .disabled])
+        func ledgerOnlyShareMemberIsNotStuck(_ destination: BackupDestination) async {
+            await with(scope: destination) {
+                let world = await World(photos: 3)
+                // 前提の状態: P0 は Dropbox に在り、台帳にも載っているが、記録が無い。
+                let photo = world.library[0]
+                await world.server.seed(world.backupPath(of: photo),
+                                        hash: DropboxContentHash.hash(of: photo.data))
+                world.ledger = ["P0"]
+                #expect(await world.store.recordedLocalIdentifiers().isEmpty, "前提: 記録が無い")
+                _ = await world.share.createSet(name: "Trip", refKeys: ["L-P0"])
+
+                await world.backupPass()
+                await world.share.syncNow()
+
+                #expect(await world.store.recordedLocalIdentifiers().contains("P0"),
+                        "記録が作られない（台帳を見て「済み」と判断している）")
+                #expect(await world.sharedHashes() == world.hashes(["P0"]), "共有に届かない")
+                let counts = await world.store.shareSyncedCounts().values.first
+                #expect(counts?.waiting == 0, "まだバックアップ待ちになっている: \(String(describing: counts))")
             }
         }
 
