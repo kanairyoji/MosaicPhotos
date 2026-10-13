@@ -269,6 +269,10 @@ public final class ShareSyncEngine {
     /// （原本が差し替わった・戻ってきた・別のアカウントの答えを使い続けない・独立レビュー 3 回目）。
     @ObservationIgnored var cloudLookupCacheStartedAt = Date.distantPast
     @ObservationIgnored var cloudLookupCacheAccount: String?
+    /// この反映でまだ訊いてよいクラウド原本の数（反映 1 回ぶんの上限）。
+    @ObservationIgnored var cloudLookupsLeftThisSync = 0
+    /// 同じ状態の行を繰り返し書かないための、最後に書いた行（鍵 → 行）。
+    @ObservationIgnored var lastMarks: [String: String] = [:]
     /// 消す前の確認で、何番目の候補から見るか（回ごとにずらす）。
     /// ⚠️ 起動ごとに**乱数で始める**（独立レビュー 3 回目）。0 から数えると、夜間の起動のたびに
     /// 1 回目が同じ候補から始まり、ずらす意味が無かった。

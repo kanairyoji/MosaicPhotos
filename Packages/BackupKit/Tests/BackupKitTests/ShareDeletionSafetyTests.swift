@@ -403,6 +403,24 @@ struct ShareDeletionSafetyTests {
         #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"])
     }
 
+    @Test("確かめている間に、中身がどこにも無い写真を入れ直したら、退避しない")
+    func memberReAddedDuringReviewIsNotHeld() async {
+        let world = await makeSettledWorld("readd-held")
+        await backupVanishes(2, world)
+        _ = await world.engine.removeItems(setID: world.setID, refKeys: ["L-p2"])
+        await quiesce(world.engine)
+        let store = world.store
+        let setID = world.setID
+        world.engine.beforeRemovalWritesForTesting = {
+            _ = await store.addShareItems(setID: setID, refKeys: ["L-p2"])
+        }
+        await world.engine.syncNow()
+        await quiesce(world.engine)
+        world.engine.beforeRemovalWritesForTesting = nil
+        #expect(await heldHashes(world).isEmpty, "入れ直した写真を退避した（家族から消えた）")
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"])
+    }
+
     @Test("確かめている間に同じ名前でセットを作り直したら、そのフォルダは消さない")
     func setRecreatedDuringSweepIsNotRemoved() async {
         let world = await makeSettledWorld("recreate-mid-sweep")

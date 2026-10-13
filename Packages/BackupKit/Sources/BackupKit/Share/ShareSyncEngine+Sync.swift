@@ -102,7 +102,8 @@ extension ShareSyncEngine {
         }
         let remote = RemoteShareIndex(listing: listing)
         let account = accountFingerprint()
-        if Date().timeIntervalSince(cloudLookupCacheStartedAt) > 3_600 || account != cloudLookupCacheAccount {
+        cloudLookupsLeftThisSync = Self.maxCloudHashLookupsPerSync
+        if Date().timeIntervalSince(cloudLookupCacheStartedAt) > 24 * 3_600 || account != cloudLookupCacheAccount {
             learnedCloudHashes.removeAll()
             missingCloudOriginals.removeAll()
             cloudLookupCacheStartedAt = Date()
@@ -224,7 +225,10 @@ extension ShareSyncEngine {
             // 回ごとに始める位置をずらす（訊けなかった原本が毎回同じ 50 枠を埋めないように）。
             let ordered = missing.sorted()
             let begin = ordered.isEmpty ? 0 : (reviewRotation % ordered.count + ordered.count) % ordered.count
-            for path in (ordered[begin...] + ordered[..<begin]).prefix(Self.maxCloudHashLookupsPerSet) {
+            // ⚠️ 上限は**反映 1 回ぶん**（セットごとに 50 だと、セットが多いと短い窓を食い潰す・独立レビュー 4 回目）。
+            for path in (ordered[begin...] + ordered[..<begin]).prefix(max(0, cloudLookupsLeftThisSync)) {
+                guard !Task.isCancelled else { break }
+                cloudLookupsLeftThisSync -= 1
                 switch await copier.lookup(path: path, token: token) {
                 case .file(let hash?):
                     known[path.lowercased()] = hash
@@ -250,12 +254,12 @@ extension ShareSyncEngine {
             + "delete=\(plan.deletions.count) waitingBackup=\(plan.waitingBackup.count) "
             + "waitingCloud=\(plan.waitingCloudHash.count)")
         if !plan.waitingCloudHash.isEmpty {
-            Diagnostics.mark("share: '\(set.name)' 中身が分からないクラウド写真 \(plan.waitingCloudHash.count) 枚は"
+            markOnChange(key: "waitingCloud-\(set.id)", "share: '\(set.name)' 中身が分からないクラウド写真 \(plan.waitingCloudHash.count) 枚は"
                              + "この回コピーしない（原本が同期の外か、消えている）")
         }
         if plan.noSourceResolved {
             // ⚠️ 黙って何もしない状態を作らない（実機で「詰まっているのにログが無い」を何度も踏んだ）。
-            Diagnostics.mark("share: '\(set.name)' 元が 1 件も解決できない（メンバー \(items.count) 件）"
+            markOnChange(key: "noSource-\(set.id)", "share: '\(set.name)' 元が 1 件も解決できない（メンバー \(items.count) 件）"
                              + " — メンバーのコピーは消す前の確認で残す")
         }
 

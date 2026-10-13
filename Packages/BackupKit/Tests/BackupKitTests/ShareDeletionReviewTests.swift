@@ -198,12 +198,18 @@ struct ShareDeletionReviewTests {
     func verificationPlanGroupsByParent() {
         let many = (0..<ShareDeletionReview.listThreshold).map { "/b/2020/p\($0).jpg" }
         let plan = ShareDeletionReview.verificationPlan(
-            locations: ["h": many, "k": ["/c/x.jpg", "/c/y.jpg"]])
+            locations: ["h": many, "k": ["/c/x.jpg", "/c/y.jpg"]], listableRoot: "/b", startOffset: 0)
         #expect(plan.listFolders == ["/b/2020"])
+        // 自分のバックアップの配置の外（クラウドの大きなフォルダ）は、多くても一覧しない。
+        let cloud = ShareDeletionReview.verificationPlan(
+            locations: ["h": many], listableRoot: "/other", startOffset: 0)
+        #expect(cloud.listFolders.isEmpty, "配置の外のフォルダを丸ごと一覧した")
+        #expect(cloud.metadataPaths.count == many.count)
         #expect(plan.metadataPaths == ["/c/x.jpg", "/c/y.jpg"])
 
         let capped = ShareDeletionReview.verificationPlan(
-            locations: ["k": ["/c/x.jpg", "/c/y.jpg"], "m": ["/d/z.jpg"]], maxRequests: 2)
+            locations: ["k": ["/c/x.jpg", "/c/y.jpg"], "m": ["/d/z.jpg"]], listableRoot: "/b",
+            startOffset: 0, maxRequests: 2)
         #expect(capped.metadataPaths == ["/c/x.jpg", "/c/y.jpg"], "上限を超えて訊いた")
     }
 

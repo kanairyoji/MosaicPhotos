@@ -37,7 +37,15 @@ extension ShareSyncEngine {
     /// 1 回の反映で片付ける「消したセットのフォルダ」の数の上限（1 つごとに確かめる往復がある）。
     static let maxRetiredFoldersPerRun = 5
     /// 1 セット・1 回の反映で、同期一覧に無いクラウド写真の中身を訊く数の上限。
-    static let maxCloudHashLookupsPerSet = 50
+    static let maxCloudHashLookupsPerSync = 50
+
+    /// **変わったときだけ**診断ログに書く（独立レビュー 4 回目）。毎回の反映で同じ状態の行を書くと、
+    /// 1 日に数百行が溜まり、上限のある診断ログから役に立つ履歴を押し出す。
+    func markOnChange(key: String, _ line: String) {
+        guard lastMarks[key] != line else { return }
+        lastMarks[key] = line
+        Diagnostics.mark(line)
+    }
     /// 消したフォルダの印を、フォルダが無くなってからも持っておく時間。発行済みのコピーが
     /// 遅れて完走してフォルダを作り直すことがある（Dropbox にジョブを取り消す API が無い）。
     static let retiredFolderGrace: TimeInterval = 24 * 60 * 60
@@ -129,7 +137,7 @@ extension ShareSyncEngine {
         }
         if !unknown.isEmpty {
             // フォルダ名も出す（どれを手で見ればよいかが分かるように・先頭の数個だけ）。
-            Diagnostics.mark("share sync: 持ち主の分からないフォルダ \(unknown.count) 個は消さない"
+            markOnChange(key: "unknownFolders", "share sync: 持ち主の分からないフォルダ \(unknown.count) 個は消さない"
                              + "（消したセットの記録に無く、いまのセットに無い写真を含む）: "
                              + unknown.prefix(5).joined(separator: ", "))
         }
@@ -173,8 +181,6 @@ extension ShareSyncEngine {
         #if DEBUG
         await beforeRemovalWritesForTesting?()
         #endif
-        // ⚠️ 確かめる往復（最大 200）のあいだに前提が変わっていないか、**書く直前に**見る。
-        guard await stillApplies() else { return }
         var deletes: [String] = []
         var moves: [SharePlanning.RemoteFile] = []
         var keptForMember = 0
@@ -190,10 +196,28 @@ extension ShareSyncEngine {
             }
         }
 
+        func reportKept(moveFailed: Int) {
+            if keptForMember > 0 || undecided > 0 || moveFailed > 0 {
+                // ⚠️ 黙って残さない（「消えないのにログが無い」を作らない）。同じ内容は繰り返さない。
+                markOnChange(key: "kept-\(label)",
+                             "share: '\(label)' 消す前の確認で残した \(keptForMember + undecided + moveFailed) 枚"
+                             + "（メンバーのコピー \(keptForMember)・確かめきれない \(undecided)・"
+                             + "退避の失敗 \(moveFailed)）")
+            }
+        }
+        // 書くものが無ければ、読み直しもしない（メンバー 1 万行を毎回 2 度読まない・独立レビュー 4 回目）。
+        guard !deletes.isEmpty || !moves.isEmpty || wholeFolder != nil else {
+            reportKept(moveFailed: 0)
+            return
+        }
+        // ⚠️ 確かめる往復（最大 200）のあいだに前提が変わっていないか、**書く直前に**見る。
+        guard await stillApplies() else { return }
+
         // 退避（1 枚ずつ・上限は削除と同じ）。
         var moved = 0
         var moveFailed = 0
         for file in moves.prefix(Self.maxDeletesPerRun) {
+            guard !Task.isCancelled else { break }
             let prefix = baseFolder.lowercased() + "/"
             let relative = file.pathLower.hasPrefix(prefix)
                 ? String(file.pathLower.dropFirst(prefix.count))
@@ -207,6 +231,12 @@ extension ShareSyncEngine {
             }
         }
         let movesLeft = moves.count - moved
+        // ⚠️ 退避したことは、この先で見送っても必ず書く（移したのにログが無い、を作らない）。
+        if moved > 0 {
+            Diagnostics.mark("share: '\(label)' 中身が Dropbox のどこにも無い \(moved) 枚を "
+                             + "\(BackupLayout.shareRemovedSubfolder) へ退避（消さずに残す）")
+        }
+        reportKept(moveFailed: moveFailed)
 
         // ⚠️ 退避を 1 枚ずつ続けると数分かかる。**消す直前にもう一度**前提を見る（独立レビュー 3 回目）。
         guard await stillApplies() else { return }
@@ -242,16 +272,6 @@ extension ShareSyncEngine {
             _ = await removal.copier.deleteBatch(paths: budget, token: removal.token)
         }
 
-        if moved > 0 {
-            Diagnostics.mark("share: '\(label)' 中身が Dropbox のどこにも無い \(moved) 枚を "
-                             + "\(BackupLayout.shareRemovedSubfolder) へ退避（消さずに残す）")
-        }
-        if keptForMember > 0 || undecided > 0 || moveFailed > 0 {
-            // ⚠️ 黙って残さない（「消えないのにログが無い」を作らない）。
-            Diagnostics.mark("share: '\(label)' 消す前の確認で残した \(keptForMember + undecided + moveFailed) 枚"
-                             + "（メンバーのコピー \(keptForMember)・確かめきれない \(undecided)・"
-                             + "退避の失敗 \(moveFailed)）")
-        }
     }
 
     /// 「持ち主がいない／古い版」の候補について、中身が Dropbox の他の場所に在るかを訊く。
@@ -277,7 +297,8 @@ extension ShareSyncEngine {
             excludingPrefixes: [removal.shareRoot, removal.holdingRoot,
                                 ShareSettingsKeys.legacyDefaultShareRootFolder]
                 + [ShareSettingsKeys.legacyShareRootIfAny(defaults)].compactMap { $0 })
-        let plan = ShareDeletionReview.verificationPlan(locations: locations)
+        let plan = ShareDeletionReview.verificationPlan(locations: locations, listableRoot: removal.layoutRoot,
+                                                        startOffset: reviewRotation)
 
         var answers: [String: ShareDeletionReview.Lookup] = [:]
         let wantedPaths = Set(locations.values.joined())

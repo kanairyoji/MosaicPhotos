@@ -220,17 +220,26 @@ public enum ShareDeletionReview {
     /// 1 回の反映で確かめに使う往復の上限。超えた分は「分からない」（次の回へ）。
     public static let maxVerificationRequests = 200
 
+    /// - Parameter listableRoot: **一覧を取ってよいフォルダの根**（自分のバックアップの配置＝月ごとのフォルダで、
+    ///   大きさに上限がある）。それ以外（クラウドの「カメラアップロード」など 10 万件のフォルダ）は一覧せず
+    ///   1 件ずつ訊く（独立レビュー 4 回目: 1 回の確認で 10 万件を数十秒かけて一覧し、毎回やり直していた）。
     public static func verificationPlan(locations: [String: [String]],
+                                        listableRoot: String,
+                                        startOffset: Int,
                                         maxRequests: Int = maxVerificationRequests) -> VerificationPlan {
+        let root = listableRoot.lowercased().hasSuffix("/") ? listableRoot.lowercased() : listableRoot.lowercased() + "/"
         var byParent: [String: Set<String>] = [:]
         for path in locations.values.joined() {
             byParent[(path as NSString).deletingLastPathComponent, default: []].insert(path)
         }
         var plan = VerificationPlan()
         var requests = 0
-        for parent in byParent.keys.sorted() {
+        // 回ごとに始める親をずらす（上限で、いつも同じ親だけが確かめられることを無くす）。
+        let parents = byParent.keys.sorted()
+        let begin = parents.isEmpty ? 0 : (startOffset % parents.count + parents.count) % parents.count
+        for parent in parents[begin...] + parents[..<begin] {
             let paths = byParent[parent]!.sorted()
-            if paths.count >= listThreshold {
+            if paths.count >= listThreshold, (parent + "/").hasPrefix(root) {
                 guard requests + 1 <= maxRequests else { break }
                 requests += 1
                 plan.listFolders.append(parent)
