@@ -248,7 +248,9 @@ public enum ShareDeletionReview {
                 // ・独立レビュー 5 回目）。上限に達したら止める。
                 let room = maxRequests - requests
                 guard room > 0 else { break }
-                let taken = Array(paths.prefix(room))
+                // 親の中でも回ごとに始める位置をずらす（いつも先頭の同じ 200 件だけを訊かない）。
+                let inner = paths.isEmpty ? 0 : (startOffset % paths.count + paths.count) % paths.count
+                let taken = Array((paths[inner...] + paths[..<inner]).prefix(room))
                 requests += taken.count
                 plan.metadataPaths.append(contentsOf: taken)
             }

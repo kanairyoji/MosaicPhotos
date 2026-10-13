@@ -193,6 +193,10 @@
   実機確認の章 N の 2 行目が、前の手順の行に隠れて出ないことがあった）。消す前に残した行の鍵はフォルダのパスに
   （同じ表示名のセットで混ざらない）。クラウド原本を訊く 50 枠はセット数で割る（先頭のセットが毎回使い切っていた）。
   BackupKit 500 本が通る。
+- 追補 6（2026-10-13・独立レビュー 6 回目）: 大きな親の中でも訊く位置を回ごとにずらす（先頭の 200 件だけを
+  毎回訊いていた）。持ち主の分からないフォルダの行は、上限で掃除を打ち切った回には覚えを捨てない（出たり消えたり
+  しない）。クラウド原本を訊く枠は「残りの枠 ÷ まだ回っていないセット」で配る。BackupKit 500 本が通る。
+  ⚠️ 残り（記録だけ）: 途中で見送ったセットは取り分を返さない。50 を超えるセットでは後ろのセットが 1 枠ずつになる。
 - 関連: `ShareDeletionReview.swift` / `ShareSyncEngine+Removal.swift` / `ShareSyncEngine+Sync.swift` /
   `SharePlanning.swift` / `BackupLayout.shareRemovedRoot` / `ShareSettingsKeys.retiredShareFolders` /
   `ResilientModelContainer.swift` / ADR-209 / ADR-277 / ADR-202。

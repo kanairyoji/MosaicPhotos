@@ -228,7 +228,9 @@ extension ShareSyncEngine {
             let begin = ordered.isEmpty ? 0 : (reviewRotation % ordered.count + ordered.count) % ordered.count
             // ⚠️ 上限は**反映 1 回ぶん**（セットごとに 50 だと、セットが多いと短い窓を食い潰す・独立レビュー 4 回目）。
             // セットごとの取り分（先頭のセットが毎回 50 を使い切って、後ろのセットが永久に訊かれない、を無くす）。
-            let share = max(1, Self.maxCloudHashLookupsPerSync / max(1, cloudLookupSetCount))
+            // 残りの枠を、まだ回っていないセットで割る（使わないセットの取り分を無駄にしない）。
+            let share = max(1, cloudLookupsLeftThisSync / max(1, cloudLookupSetCount))
+            cloudLookupSetCount = max(1, cloudLookupSetCount - 1)
             for path in (ordered[begin...] + ordered[..<begin]).prefix(max(0, min(share, cloudLookupsLeftThisSync))) {
                 guard !Task.isCancelled else { break }
                 cloudLookupsLeftThisSync -= 1

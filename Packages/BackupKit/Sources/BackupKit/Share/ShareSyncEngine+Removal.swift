@@ -138,7 +138,8 @@ extension ShareSyncEngine {
                                  baseFolder: folder, wholeFolder: folder, removal: removal,
                                  stillApplies: stillUnwanted)
         }
-        if unknown.isEmpty { clearMark(key: "unknownFolders") }
+        // 上限で打ち切った回は数えきれていないので、覚えた行を捨てない（毎回出たり消えたりしないように）。
+        if unknown.isEmpty, budget > 0 { clearMark(key: "unknownFolders") }
         if !unknown.isEmpty {
             // フォルダ名も出す（どれを手で見ればよいかが分かるように・先頭の数個だけ）。
             markOnChange(key: "unknownFolders", "share sync: 持ち主の分からないフォルダ \(unknown.count) 個は消さない"
