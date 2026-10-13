@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import BackupKit
@@ -27,7 +28,7 @@ struct ShareDeletionReviewTests {
     func duplicateOfPresentIsDeletable() {
         let stale = path("C-/x.jpg", hash: nil)   // 中身が分からなかった頃の名前
         let verdicts = ShareDeletionReview.classify(
-            candidates: [file(stale, "h1")], members: ["C-/x.jpg"],
+            candidates: [file(stale, "h1")], members: ["C-/x.jpg"], sourceFileNames: [:],
             destinationByRefKey: ["C-/x.jpg": path("C-/x.jpg", hash: "h1")],
             presentAfterCopy: [path("C-/x.jpg", hash: "h1")], presentHashes: ["h1"])
         #expect(verdicts[stale] == .duplicateOfPresent)
@@ -37,7 +38,7 @@ struct ShareDeletionReviewTests {
     func unresolvedMembersCopyIsKept() {
         let copy = path("L-p0", hash: "h0")
         let verdicts = ShareDeletionReview.classify(
-            candidates: [file(copy, "h0")], members: ["L-p0"],
+            candidates: [file(copy, "h0")], members: ["L-p0"], sourceFileNames: [:],
             destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
         #expect(verdicts[copy] == .keptForMember(refKey: "L-p0"))
     }
@@ -46,7 +47,7 @@ struct ShareDeletionReviewTests {
     func hashlessIdentityIsRecognized() {
         let copy = path("C-/x.jpg", hash: nil)
         let verdicts = ShareDeletionReview.classify(
-            candidates: [file(copy, "h9")], members: ["C-/x.jpg"],
+            candidates: [file(copy, "h9")], members: ["C-/x.jpg"], sourceFileNames: [:],
             destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
         #expect(verdicts[copy] == .keptForMember(refKey: "C-/x.jpg"))
     }
@@ -56,12 +57,12 @@ struct ShareDeletionReviewTests {
         let old = path("L-p1", hash: "h1")
         let new = path("L-p1", hash: "h1v2")
         let waiting = ShareDeletionReview.classify(
-            candidates: [file(old, "h1")], members: ["L-p1"],
+            candidates: [file(old, "h1")], members: ["L-p1"], sourceFileNames: [:],
             destinationByRefKey: ["L-p1": new], presentAfterCopy: [], presentHashes: [])
         #expect(waiting[old] == .keptForMember(refKey: "L-p1"))
 
         let replaced = ShareDeletionReview.classify(
-            candidates: [file(old, "h1")], members: ["L-p1"],
+            candidates: [file(old, "h1")], members: ["L-p1"], sourceFileNames: [:],
             destinationByRefKey: ["L-p1": new], presentAfterCopy: [new], presentHashes: ["h1v2"])
         #expect(replaced[old] == .needsEvidence(ownerRefKey: "L-p1"))
     }
@@ -71,7 +72,7 @@ struct ShareDeletionReviewTests {
         let removed = path("L-gone", hash: "hg")
         let legacy = "\(folder)/img_0001.jpg"
         let verdicts = ShareDeletionReview.classify(
-            candidates: [file(removed, "hg"), file(legacy, "hl")], members: ["L-p0"],
+            candidates: [file(removed, "hg"), file(legacy, "hl")], members: ["L-p0"], sourceFileNames: [:],
             destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
         #expect(verdicts[removed] == .needsEvidence(ownerRefKey: nil))
         #expect(verdicts[legacy] == .needsEvidence(ownerRefKey: nil))
@@ -81,14 +82,51 @@ struct ShareDeletionReviewTests {
     func overBudgetIsDeferred() {
         let members = (0..<10).map { "L-m\($0)" }
         let candidates = (0..<3).map { file(path("L-gone\($0)", hash: "g\($0)"), "g\($0)") }
-        // 中身の分からない表（10）＋ 1 つ目の中身（10）で使い切る上限。
+        // 元の名前が分からないメンバー 10 人 × 2 通りの印（中身あり／なし）で 1 候補ぶんの上限。
         let verdicts = ShareDeletionReview.classify(
-            candidates: candidates, members: members, destinationByRefKey: [:],
+            candidates: candidates, members: members, sourceFileNames: [:], destinationByRefKey: [:],
             presentAfterCopy: [], presentHashes: [], hashBudget: 20)
         let sorted = candidates.map(\.pathLower).sorted()
         #expect(verdicts[sorted[0]] == .needsEvidence(ownerRefKey: nil))
         #expect(verdicts[sorted[1]] == .deferred)
         #expect(verdicts[sorted[2]] == .deferred)
+    }
+
+    @Test("照合はファイル名の幹で絞る（メンバー数 × 候補で総当たりしない）")
+    func stemNarrowsTheSearch() {
+        // メンバー 20,000 枚（元の名前が分かる）・外した写真 300 枚。総当たりなら 1,200 万回で上限を越える。
+        let members = (0..<20_000).map { "L-m\($0)" }
+        var names: [String: String] = [:]
+        for (index, key) in members.enumerated() { names[key] = "IMG_\(index).jpg" }
+        let removed = (0..<300).map { file(path("L-gone\($0)", hash: "g\($0)", name: "IMG_\($0).jpg"), "g\($0)") }
+        let kept = file(path("L-m7", hash: "old", name: "IMG_7.jpg"), "old")
+        let verdicts = ShareDeletionReview.classify(
+            candidates: removed + [kept], members: members, sourceFileNames: names,
+            destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
+        #expect(!verdicts.values.contains(.deferred), "幹で絞らずに上限を使い切った")
+        #expect(verdicts[kept.pathLower] == .keptForMember(refKey: "L-m7"))
+        #expect(removed.allSatisfy { verdicts[$0.pathLower] == .needsEvidence(ownerRefKey: nil) })
+    }
+
+    @Test("元の名前が分からないメンバー（記録が消えた）は総当たりで引き当てる")
+    func unnamedMembersAreSearched() {
+        let copy = path("L-lost", hash: "hl", name: "anything.jpg")
+        let verdicts = ShareDeletionReview.classify(
+            candidates: [file(copy, "hl")], members: ["L-lost", "L-other"],
+            sourceFileNames: ["L-other": "anything.jpg"],
+            destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
+        #expect(verdicts[copy] == .keptForMember(refKey: "L-lost"))
+    }
+
+    @Test("印の 16 進は以前の作り方と同じ（置き済みのファイル名が変わらない）")
+    func identityHexIsUnchanged() {
+        // ⚠️ 16 進化を速くしたので、以前の `String(format: "%02x")` と 1 文字でも違うと、
+        // 置き済みの全ファイルが「望ましくない名前」に見えて作り直しになる。
+        for (refKey, hash) in [("L-p0", "h0"), ("C-/Camera Uploads/写真.jpg", nil), ("L-", "")] as [(String, String?)] {
+            let seed = "\(refKey)|\(hash ?? "")"
+            let legacy = SHA256.hash(data: Data(seed.utf8)).map { String(format: "%02x", $0) }.joined()
+            #expect(ShareNaming.identity(refKey: refKey, contentHash: hash) == legacy)
+        }
     }
 
     // MARK: - やること
@@ -117,8 +155,19 @@ struct ShareDeletionReviewTests {
                     "/root/other/share/trip/p0--abcdef0123.jpg": "h0",
                     "/root/dev/shareremoved/trip/x.jpg": "h0",
                     "/camera uploads/p0.jpg": "h0"],
+            layoutRoot: "/root",
             excludingPrefixes: ["/root/dev/share", "/root/dev/ShareRemoved"])
         #expect(locations["h0"] == ["/camera uploads/p0.jpg", "/root/dev/backup/2020/p0.jpg"])
+
+        // 他の端末の共有コピーは、**印の無い名前**（旧方式・`(1)` 付き）でも証拠にしない。
+        let others = ShareDeletionReview.locations(
+            for: ["h0"], records: [],
+            cloud: ["/root/other/share/trip/IMG_0001.jpg": "h0",
+                    "/root/other/shareremoved/trip/x--abcd1234 (1).jpg": "h0",
+                    "/mosaicshare/trip/IMG_0001.jpg": "h0",
+                    "/root/other/backup/2020/IMG_0001.jpg": "h0"],
+            layoutRoot: "/Root", excludingPrefixes: ["/MosaicShare"])
+        #expect(others["h0"] == ["/root/other/backup/2020/img_0001.jpg"])
     }
 
     @Test("多い親フォルダは一覧 1 回、少なければ 1 件ずつ・往復の上限を守る")

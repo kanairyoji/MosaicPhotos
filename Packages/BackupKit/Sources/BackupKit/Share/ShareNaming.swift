@@ -109,22 +109,37 @@ public enum ShareNaming {
     ///   検知できないが、一意性と冪等性は保たれる）。
     public static func identity(refKey: String, contentHash: String?) -> String {
         let seed = "\(refKey)|\(contentHash ?? "")"
-        return SHA256.hash(data: Data(seed.utf8)).map { String(format: "%02x", $0) }.joined()
+        // ⚠️ `String(format:)` を 32 回呼ぶ形は 1 回数十 µs かかる。消す前の確認はこれを
+        // メンバー数ぶん回すので、表引きで 16 進にする（結果は同じ小文字 64 桁）。
+        var hex = [UInt8]()
+        hex.reserveCapacity(64)
+        for byte in SHA256.hash(data: Data(seed.utf8)) {
+            hex.append(hexDigits[Int(byte >> 4)])
+            hex.append(hexDigits[Int(byte & 0x0f)])
+        }
+        return String(decoding: hex, as: UTF8.self)
+    }
+    private static let hexDigits = Array("0123456789abcdef".utf8)
+
+    /// 共有フォルダでのファイル名の**幹**（印と拡張子を除いた部分）。`sharedFileName` と同じ規則。
+    static func sharedStem(sourceFileName: String) -> String {
+        var stem = (sourceFileName as NSString).deletingPathExtension
+        stem = String(stem.unicodeScalars.map { forbidden.contains($0) ? "_" : Character($0) })
+        stem = stem.trimmingCharacters(in: .whitespacesAndNewlines)
+        while stem.hasSuffix(".") { stem.removeLast() }
+        if stem.count > 80 { stem = String(stem.prefix(80)) }
+        if stem.isEmpty { stem = "photo" }
+        return stem
     }
 
     /// 印と元のファイル名から、共有フォルダでのファイル名を作る。
     /// 例: `IMG_1234.jpg` ＋ 64 桁の印 → `IMG_1234--<64 桁>.jpg`
     public static func sharedFileName(sourceFileName: String, identity: String) -> String {
         let ext = (sourceFileName as NSString).pathExtension
-        var stem = (sourceFileName as NSString).deletingPathExtension
-        stem = String(stem.unicodeScalars.map { forbidden.contains($0) ? "_" : Character($0) })
-        stem = stem.trimmingCharacters(in: .whitespacesAndNewlines)
-        while stem.hasSuffix(".") { stem.removeLast() }
         // ⚠️ 長い名前は切る（Dropbox のパス長 260 文字制限）。
         // 印 64 桁＋区切り 2＋拡張子で約 70 文字使うので、幹は 80 文字までにする
         // （セットフォルダのパスが 60〜80 文字あっても収まる）。
-        if stem.count > 80 { stem = String(stem.prefix(80)) }
-        if stem.isEmpty { stem = "photo" }
+        let stem = sharedStem(sourceFileName: sourceFileName)
         return ext.isEmpty ? "\(stem)\(identitySeparator)\(identity)"
                            : "\(stem)\(identitySeparator)\(identity).\(ext)"
     }
@@ -145,6 +160,14 @@ public enum ShareNaming {
 
     /// このアプリが置いた名前の**印**（`--` の後ろ・小文字）。印の無い名前は nil。
     /// 消す前の確認（`ShareDeletionReview`）が「このファイルは誰のコピーか」を引き当てるのに使う。
+    /// このアプリが置いた名前の**幹**（印と拡張子を除く・小文字）。印の無い名前は nil。
+    static func managedStem(of filename: String) -> String? {
+        guard isShareManagedFileName(filename) else { return nil }
+        let stem = (filename as NSString).deletingPathExtension
+        guard let range = stem.range(of: identitySeparator, options: .backwards) else { return nil }
+        return String(stem[..<range.lowerBound]).lowercased()
+    }
+
     static func identityTail(of filename: String) -> String? {
         guard isShareManagedFileName(filename) else { return nil }
         let stem = (filename as NSString).deletingPathExtension

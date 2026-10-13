@@ -89,8 +89,10 @@ struct DropboxShareCopier {
         guard let (data, resp) = try? await httpClient.data(for: req),
               let status = (resp as? HTTPURLResponse)?.statusCode else { return .failed }
         if status == 200 { return .created }
-        // 409 conflict/folder = 既に存在。
-        if status == 409, String(data: data, encoding: .utf8)?.contains("conflict") == true {
+        // 409 conflict/folder = 既に存在。⚠️ `conflict/file`（同じパスに**ファイル**がある）は
+        // フォルダが在るのではない——既にあったと読むと、そのセットを毎回見送り続ける（レビュー指摘）。
+        let text = String(data: data, encoding: .utf8) ?? ""
+        if status == 409, text.contains("conflict"), !text.contains("conflict/file") {
             return .alreadyExisted
         }
         BackupLogger.error("ShareCopier: create_folder failed (\(status)) — \(path)")
@@ -208,8 +210,10 @@ struct DropboxShareCopier {
         var req = Self.rpcRequest(url: Self.moveURL, token: token)
         guard let body = try? JSONEncoder().encode(Body(from_path: from, to_path: to)) else { return false }
         req.httpBody = body
-        // 再試行は 1 回だけにする（失敗した分は次の反映でもう一度確かめて移す）。
-        guard await sendWithRetry(req, label: "move_v2 (holding)", maxAttempts: 1) != nil else { return false }
+        // 429・5xx は 2 回まで待って再試行する（短い窓を食わないよう、それ以上は次の反映へ）。
+        // ⚠️ 1 回で諦めていた版は、退避を 1 枚ずつ続けると出やすい too_many_write_operations で
+        // 毎回止まり、消したセットのフォルダがなかなか片付かなかった（レビュー指摘）。
+        guard await sendWithRetry(req, label: "move_v2 (holding)", maxAttempts: 2) != nil else { return false }
         return true
     }
 
@@ -256,7 +260,11 @@ struct DropboxShareCopier {
             else { return nil }
             req.httpBody = contBody
         }
-        return out
+        // ⚠️ 上限で打ち切った一覧は**取れなかった**のと同じ（ADR-277 の形・レビュー指摘）。
+        // 部分の一覧を返すと、載っていない写真を「無い」と読み、消したセットのフォルダごと
+        // 確かめていない写真まで消す（`removeReviewed` の `wholeFolder`）。
+        BackupLogger.error("ShareCopier: list_folder hit the page cap — treating as unavailable (\(path))")
+        return nil
     }
 
     // MARK: - 解析データのアップロード（上書き）

@@ -52,30 +52,41 @@ public enum ShareDeletionReview {
         case leave
     }
 
-    /// 印の照合に使う SHA-256 の計算回数の上限（1 回の反映あたり）。
-    /// メンバー 12,941 枚 × 候補の中身の種類なので、候補が多い回は続きを次の回へ回す。
-    public static let identityHashBudget = 2_000_000
+    /// 印の照合に使う SHA-256 の計算回数の上限（1 回の反映あたり）。超えた候補は次の回へ持ち越す。
+    ///
+    /// ⚠️ 照合は**ファイル名の幹で絞る**（元のファイル名が分かるメンバーだけと照らす）ので、
+    /// 総当たりになるのは元の名前が分からないメンバー（記録が消えた端末写真）だけ。
+    /// 最初の版は全メンバー × 候補の中身ごとに表を作り、上限 200 万回をメインスレッドで回していた
+    /// （外した写真 500 枚 × メンバー 12,941 枚で 1 分・表だけで数百 MB・レビュー指摘）。
+    public static let identityHashBudget = 200_000
 
-    /// 候補を分類する。
+    /// 候補を分類する。**重いので MainActor から直接呼ばない**（`Task.detached` で回す）。
     /// - Parameters:
     ///   - candidates: 消す候補（`SharePlanning.Plan.deletions` に当たる実在ファイル）。
     ///   - members: いまのメンバーの refKey（解決できたかどうかに関わらず全員）。
+    ///   - sourceFileNames: メンバー → 元のファイル名（分かるものだけ。幹で照合を絞る）。
     ///   - destinationByRefKey: 解決できたメンバー → 望ましい宛先（小文字）。
     ///   - presentAfterCopy: この回のコピーの後に在る宛先（小文字）。
     ///   - presentHashes: このフォルダに望ましいファイルとして在る中身。
     public static func classify(candidates: [SharePlanning.RemoteFile],
                                 members: [String],
+                                sourceFileNames: [String: String],
                                 destinationByRefKey: [String: String],
                                 presentAfterCopy: Set<String>,
                                 presentHashes: Set<String>,
                                 hashBudget: Int = identityHashBudget) -> [String: Verdict] {
         var verdicts: [String: Verdict] = [:]
-        let sortedMembers = Array(Set(members)).sorted()
+        // 幹 → その幹になるメンバー。元の名前が分からないメンバーは総当たりの側へ。
+        var byStem: [String: [String]] = [:]
+        var unnamed: [String] = []
+        for refKey in Array(Set(members)).sorted() {
+            if let name = sourceFileNames[refKey] {
+                byStem[ShareNaming.sharedStem(sourceFileName: name).lowercased(), default: []].append(refKey)
+            } else {
+                unnamed.append(refKey)
+            }
+        }
         var spent = 0
-        // 中身が分からない名前（content_hash 不明で組んだ印）は 1 回だけ作る。
-        var hashlessIdentity: [String: String]?
-        // 中身 → (印 → refKey)。候補の中身ごとに 1 回だけ作る。
-        var identitiesByHash: [String: [String: String]] = [:]
 
         for candidate in candidates.sorted(by: { $0.pathLower < $1.pathLower }) {
             if let hash = candidate.contentHash, !hash.isEmpty, presentHashes.contains(hash) {
@@ -83,32 +94,26 @@ public enum ShareDeletionReview {
                 continue
             }
             let filename = (candidate.pathLower as NSString).lastPathComponent
-            guard let tail = ShareNaming.identityTail(of: filename) else {
+            guard let tail = ShareNaming.identityTail(of: filename),
+                  let stem = ShareNaming.managedStem(of: filename) else {
                 // 印の無い名前（旧方式のコピー・家族が置いたファイル）＝持ち主は引けない。
                 verdicts[candidate.pathLower] = .needsEvidence(ownerRefKey: nil)
                 continue
             }
-            if hashlessIdentity == nil {
-                guard spent + sortedMembers.count <= hashBudget else {
-                    verdicts[candidate.pathLower] = .deferred
-                    continue
-                }
-                spent += sortedMembers.count
-                hashlessIdentity = identityTable(members: sortedMembers, contentHash: nil)
+            let hash = candidate.contentHash.flatMap { $0.isEmpty ? nil : $0 }
+            func owns(_ refKey: String) -> Bool {
+                spent += hash == nil ? 1 : 2
+                if ShareNaming.identity(refKey: refKey, contentHash: nil) == tail { return true }
+                if let hash, ShareNaming.identity(refKey: refKey, contentHash: hash) == tail { return true }
+                return false
             }
-            var owner = hashlessIdentity?[tail]
-            if owner == nil, let hash = candidate.contentHash, !hash.isEmpty {
-                if identitiesByHash[hash] == nil {
-                    guard spent + sortedMembers.count <= hashBudget else {
-                        verdicts[candidate.pathLower] = .deferred
-                        continue
-                    }
-                    spent += sortedMembers.count
-                    identitiesByHash[hash] = identityTable(members: sortedMembers, contentHash: hash)
-                }
-                owner = identitiesByHash[hash]?[tail]
+            let named = byStem[stem] ?? []
+            let cost = (named.count + unnamed.count) * (hash == nil ? 1 : 2)
+            guard spent + cost <= hashBudget else {
+                verdicts[candidate.pathLower] = .deferred
+                continue
             }
-            guard let owner else {
+            guard let owner = named.first(where: owns) ?? unnamed.first(where: owns) else {
                 verdicts[candidate.pathLower] = .needsEvidence(ownerRefKey: nil)
                 continue
             }
@@ -119,14 +124,6 @@ public enum ShareDeletionReview {
             }
         }
         return verdicts
-    }
-
-    private static func identityTable(members: [String], contentHash: String?) -> [String: String] {
-        var table: [String: String] = [:]
-        for refKey in members {
-            table[ShareNaming.identity(refKey: refKey, contentHash: contentHash)] = refKey
-        }
-        return table
     }
 
     /// 分類と実物の確認から、やることを決める。
@@ -152,17 +149,32 @@ public enum ShareDeletionReview {
     /// 材料は「バックアップ記録」と「クラウドの同期一覧」の 2 つ。⚠️ **どちらも Dropbox の今の姿ではない**
     /// （記録は照合の時点、同期一覧は差分の時点）ので、ここで挙げた場所は `verificationPlan` で
     /// 実際に問い合わせて確かめる。
-    /// ⚠️ **共有のコピーは証拠にしない**（このアプリが置いた名前・共有ルートと退避先の下）。
-    /// 2 台がお互いの共有コピーを「他に在る」と数えると、両方が消して中身が無くなる。
+    /// ⚠️ **共有のコピーは証拠にしない**。2 台がお互いの共有コピーを「他に在る」と数えると、
+    /// 両方が消して中身が無くなる。共有のコピーとは:
+    /// - **どの端末の** `Share` / `ShareRemoved` の下にあるもの（`layoutRoot/<端末>/Share/…`）
+    ///   ⚠️ 最初の版は**この端末の**共有ルートだけを外し、他の端末の分は名前の印で見分けていた。
+    ///   印の無い古いコピーや `(1)` の付いた名前は印に当たらず、証拠に数えていた（レビュー指摘）。
+    /// - `excludingPrefixes` の下（旧配置の `/MosaicShare` など）
+    /// - このアプリの印の付いた名前
     public static func locations(for hashes: Set<String>,
                                  records: [(path: String, hash: String)],
                                  cloud: [String: String],
+                                 layoutRoot: String,
                                  excludingPrefixes: [String]) -> [String: [String]] {
         let prefixes = excludingPrefixes.map { $0.lowercased().hasSuffix("/") ? $0.lowercased()
                                                                               : $0.lowercased() + "/" }
+        let root = layoutRoot.lowercased().hasSuffix("/") ? layoutRoot.lowercased() : layoutRoot.lowercased() + "/"
+        let shareAreas: Set<String> = [BackupLayout.shareSubfolder.lowercased(),
+                                       BackupLayout.shareRemovedSubfolder.lowercased()]
         func admissible(_ path: String) -> Bool {
             let lower = path.lowercased()
             if prefixes.contains(where: { lower.hasPrefix($0) }) { return false }
+            if lower.hasPrefix(root) {
+                let parts = lower.dropFirst(root.count).split(separator: "/")
+                // `<端末>/Share/…` と、端末フォルダを挟まない旧配置の `Share/…`。
+                if parts.count >= 2, shareAreas.contains(String(parts[1])) { return false }
+                if let first = parts.first, shareAreas.contains(String(first)) { return false }
+            }
             return !ShareNaming.isShareManagedFileName((lower as NSString).lastPathComponent)
         }
         var out: [String: Set<String>] = [:]

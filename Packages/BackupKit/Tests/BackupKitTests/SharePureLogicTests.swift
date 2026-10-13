@@ -202,7 +202,7 @@ struct SharePlanningTests {
         #expect(p.deletions == [existing.lowercased()])
         let verdicts = ShareDeletionReview.classify(
             candidates: [.init(pathLower: existing.lowercased(), contentHash: "hA")],
-            members: ["L-a"], destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
+            members: ["L-a"], sourceFileNames: [:], destinationByRefKey: [:], presentAfterCopy: [], presentHashes: [])
         #expect(verdicts[existing.lowercased()] == .keptForMember(refKey: "L-a"),
                 "解決できないメンバーのコピーを消す側に回した")
     }

@@ -457,15 +457,18 @@
     - テスト: `ShareDeletionSafetyTests`（`editedButCopyFails`）/ 変異 M6
   - 証拠（`Evidence`）← バックアップ記録（`backupPaths(withContentHashes:)`）と同期一覧から挙げた場所を、
     `get_metadata` / 親フォルダの一覧で**いま**訊いた答え
-    - 約束: 記録が読めない・訊けない・上限は **`unknown`**（「無い」と読まない）。共有のコピーと
-      退避先は場所に入れない（2 台が互いを当てにして両方消さない）
+    - 約束: 記録が読めない・訊けない・上限・同期一覧が空は **`unknown`**（「無い」と読まない）。
+      **どの端末の** `Share` / `ShareRemoved` と旧 `/MosaicShare` は場所に入れない（2 台が互いを当てにして
+      両方消さない）。一覧は打ち切ったら nil（部分の一覧で「無い」と読まない）
     - テスト: `ShareDeletionReviewTests.evidenceFromAnswers` / `shareCopiesAreNotEvidence` /
       `ShareDeletionSafetyTests.unreadableRecordsDuringReviewLeaveEverything` / 変異 M4・M8・M9
   - `cloudHashByPath` ← `cloudSourceHashProvider`（**nil＝引く手段が無い**）
     - 約束: 手段があるのに載っていない写真は「中身がまだ分からない」＝コピーしない（`waitingCloudHash`）
     - テスト: `ShareDeletionReviewTests.unknownCloudHashWaits` / 変異 M7
   - フォルダの印 ← `ShareSettingsKeys.retiredFolders`（`deleteSet` が書く・**台帳の外**）
-    - 約束: 台帳が空に見える起動でも残る。猶予 24 時間は捨てない（遅れて完走したコピー）
+    - 約束: 台帳が空に見える起動でも残る。掃除は印を外さない（外すのは同名で作り直す `createSet`）。
+      猶予 24 時間は**フォルダを最後に見た時刻**から。書き戻しは読み直してから（走行中の `deleteSet` を消さない）
+    - テスト: `ShareScenarioTests.deleteDuringSyncStaysConsistent`（走行中の削除）
     - テスト: `ShareDeletionSafetyTests.resurrectedRetiredFolderIsSwept` / 変異 M10
   - `isTemporaryFallback` ← `isResilientMemoryFallback(modelContainer, name: "BackupKit")`
     - 約束: 自己修復の最後のインメモリ代替のときだけ真（テスト用のインメモリ容器は偽）

@@ -20,6 +20,8 @@ import MosaicSupport
 
 /// 反映 1 回ぶんの、消す前の確認に要る材料。
 struct RemovalContext {
+    /// バックアップのルート（`<root>`）。どの端末の `Share` / `ShareRemoved` かを見分けるのに使う。
+    let layoutRoot: String
     let shareRoot: String
     /// 退避先（`<root>/<端末>/ShareRemoved`）。
     let holdingRoot: String
@@ -34,6 +36,8 @@ extension ShareSyncEngine {
 
     /// 1 回の反映で片付ける「消したセットのフォルダ」の数の上限（1 つごとに確かめる往復がある）。
     static let maxRetiredFoldersPerRun = 5
+    /// 1 セット・1 回の反映で、同期一覧に無いクラウド写真の中身を訊く数の上限。
+    static let maxCloudHashLookupsPerSet = 50
     /// 消したフォルダの印を、フォルダが無くなってからも持っておく時間。発行済みのコピーが
     /// 遅れて完走してフォルダを作り直すことがある（Dropbox にジョブを取り消す API が無い）。
     static let retiredFolderGrace: TimeInterval = 24 * 60 * 60
@@ -62,16 +66,18 @@ extension ShareSyncEngine {
     ///   家族から見える写真は 1 枚も減らない。台帳が空に見える起動では「いまのセット」が無いので、
     ///   写真の入ったフォルダはこちらにも当たらない。
     /// どちらでもないフォルダは消さずに数えて出す。
-    func sweepRetiredFolders(sets: [ShareSetLite], remote: RemoteShareIndex,
+    func sweepRetiredFolders(remote: RemoteShareIndex,
                              removal: RemovalContext) async {
-        let wanted = Set(sets.compactMap {
+        // ⚠️ セットは**ここで読み直す**（レビュー指摘）。反映の頭で読んだ `sets` は数分前のもので、
+        // その間に消したセットのフォルダを「いまのセット」と読み、消した直後の印を無効にしていた。
+        let current = await removal.store.allShareSets()
+        let wanted = Set(current.compactMap {
             SharePlanning.setFolderPath(shareRoot: removal.shareRoot, folderName: $0.folderName,
                                         deviceFolder: nil)?.lowercased()
         })
-        var retired = ShareSettingsKeys.retiredFolders(defaults)
-        let before = retired
-        // 同じ名前のセットがいまある＝もう消したフォルダではない。
-        for path in retired.keys where wanted.contains(path) { retired.removeValue(forKey: path) }
+        let retired = ShareSettingsKeys.retiredFolders(defaults)
+        // ⚠️ 印は**ここでは外さない**。同じ名前でセットを作り直したときは `createSet` が外す
+        // （ここで外すと、古い `sets` で読んだ回に、消した直後の印を消してしまう）。
 
         let holding = removal.holdingRoot.lowercased()
         let unwanted = remote.directSubfolders(of: removal.shareRoot)
@@ -81,13 +87,16 @@ extension ShareSyncEngine {
         let visibleHashes = Set(wanted.flatMap { remote.photoFiles(inSetFolder: $0) }
             .compactMap(\.contentHash).filter { !$0.isEmpty })
         var budget = Self.maxRetiredFoldersPerRun
-        var unknown = 0
+        var unknown: [String] = []
         for folder in unwanted {
             let files = remote.filesOutsideAnalysis(under: folder)
                 .map { SharePlanning.RemoteFile(pathLower: $0.pathLower, contentHash: $0.contentHash) }
             let isRetired = retired[folder] != nil
             let duplicatesOnly = files.allSatisfy { ($0.contentHash).map(visibleHashes.contains) ?? false }
-            guard isRetired || duplicatesOnly else { unknown += 1; continue }
+            guard isRetired || duplicatesOnly else {
+                unknown.append((folder as NSString).lastPathComponent)
+                continue
+            }
             guard budget > 0 else { break }
             budget -= 1
             let verdicts = Dictionary(uniqueKeysWithValues: files.map {
@@ -99,17 +108,31 @@ extension ShareSyncEngine {
                                  holdingFolder: (folder as NSString).lastPathComponent,
                                  baseFolder: folder, wholeFolder: folder, removal: removal)
         }
-        if unknown > 0 {
-            Diagnostics.mark("share sync: 持ち主の分からないフォルダ \(unknown) 個は消さない（消したセットの記録に無く、いまのセットに無い写真を含む）")
+        if !unknown.isEmpty {
+            // フォルダ名も出す（どれを手で見ればよいかが分かるように・先頭の数個だけ）。
+            Diagnostics.mark("share sync: 持ち主の分からないフォルダ \(unknown.count) 個は消さない"
+                             + "（消したセットの記録に無く、いまのセットに無い写真を含む）: "
+                             + unknown.prefix(5).joined(separator: ", "))
         }
-        // フォルダが無くなって猶予が過ぎた印は捨てる。
+        // 印の手入れ。⚠️ **猶予は「フォルダを最後に見た時刻」から数える**（レビュー指摘）。
+        // 大きなフォルダは片付けに何晩もかかるので、消した時刻から数えると、片付け終わった直後に
+        // 印が切れ、遅れて完走したコピーが作り直したフォルダが「持ち主不明」で残る。
+        // ⚠️ **読み直してから、触る印だけを書き換える**（上の await のあいだに `deleteSet` が
+        // 新しい印を書くことがあり、手元の写しで上書きするとそれが消える）。
         let present = Set(unwanted)
         let now = Date()
-        for (path, at) in retired where !present.contains(path)
-            && now.timeIntervalSince(at) > Self.retiredFolderGrace {
-            retired.removeValue(forKey: path)
+        var latest = ShareSettingsKeys.retiredFolders(defaults)
+        var changed = false
+        for (path, at) in latest {
+            if present.contains(path) {
+                latest[path] = now
+                changed = true
+            } else if now.timeIntervalSince(at) > Self.retiredFolderGrace, retired[path] != nil {
+                latest.removeValue(forKey: path)
+                changed = true
+            }
         }
-        if retired != before { ShareSettingsKeys.setRetiredFolders(retired, defaults) }
+        if changed { ShareSettingsKeys.setRetiredFolders(latest, defaults) }
     }
 
     // MARK: - 確かめて、移して、消す
@@ -161,11 +184,12 @@ extension ShareSyncEngine {
 
         if let wholeFolder, keptForMember == 0, undecided == 0, movesLeft == 0 {
             // 中の写真は全部「他に在る」か「退避した」——フォルダごと消してよい（解析データも一緒に）。
-            BackupLogger.info("Share sync: removing retired folder '\(label)'")
+            Diagnostics.mark("Share sync: removing retired folder '\(label)'")
             _ = await removal.copier.deleteBatch(paths: [wholeFolder], token: removal.token)
         } else if !deletes.isEmpty {
             let budget = Array(deletes.prefix(Self.maxDeletesPerRun))
-            BackupLogger.info("Share sync: '\(label)' deleting \(budget.count) stale file(s)")
+            // ⚠️ 実機確認の手順が見る行なので、Release でも残る `Diagnostics.mark` にする（info は DEBUG のみ）。
+            Diagnostics.mark("Share sync: '\(label)' deleting \(budget.count) stale file(s)")
             _ = await removal.copier.deleteBatch(paths: budget, token: removal.token)
         }
 
@@ -200,7 +224,10 @@ extension ShareSyncEngine {
         }
         let locations = ShareDeletionReview.locations(
             for: hashes, records: records, cloud: removal.cloudHashes ?? [:],
-            excludingPrefixes: [removal.shareRoot, removal.holdingRoot])
+            layoutRoot: removal.layoutRoot,
+            excludingPrefixes: [removal.shareRoot, removal.holdingRoot,
+                                ShareSettingsKeys.legacyDefaultShareRootFolder]
+                + [ShareSettingsKeys.legacyShareRootIfAny(defaults)].compactMap { $0 })
         let plan = ShareDeletionReview.verificationPlan(locations: locations)
 
         var answers: [String: ShareDeletionReview.Lookup] = [:]
@@ -220,8 +247,12 @@ extension ShareSyncEngine {
         for path in plan.metadataPaths {
             answers[path] = await removal.copier.lookup(path: path, token: removal.token)
         }
+        // ⚠️ 同期一覧が**空**（起動直後で表がまだ無い）なら、クラウドの原本はまだ数えられない
+        // ——「どこにも無い」ではなく「分からない」（退避してしまうと家族から消える・レビュー指摘）。
+        let cloudIndexMissing = removal.cloudHashes?.isEmpty == true
         return Dictionary(uniqueKeysWithValues: hashes.map {
-            ($0, ShareDeletionReview.evidence(for: $0, locations: locations, answers: answers))
+            let found = ShareDeletionReview.evidence(for: $0, locations: locations, answers: answers)
+            return ($0, cloudIndexMissing && found == .absentEverywhere ? .unknown : found)
         })
     }
 }

@@ -104,7 +104,9 @@ extension ShareSyncEngine {
         // クラウド原本の中身（10 万行の射影）は**反映 1 回に 1 度だけ**引く。宛先名と、
         // 消す前の確認（中身が他に在るか）の両方に使う。
         let cloudHashes = await cloudSourceHashProvider?()
-        let removal = RemovalContext(shareRoot: shareRoot,
+        let removal = RemovalContext(layoutRoot: defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
+                                        ?? BackupSettingsKeys.defaultDropboxFolder,
+                                     shareRoot: shareRoot,
                                      holdingRoot: ShareSettingsKeys.currentShareRemovedRoot(defaults),
                                      cloudHashes: cloudHashes, store: store,
                                      copier: copier, token: token)
@@ -126,7 +128,7 @@ extension ShareSyncEngine {
         // ことになり、コピーが永久に失敗する（クラウド写真は共有ルートの中にも在り得る）。
         // 掃除は「どのセットも持たないフォルダを消す」だけなので、後回しにしても
         // 判断は変わらない——変わるのは「元を取り終わってから消す」ことだけ。
-        await sweepRetiredFolders(sets: sets, remote: remote, removal: removal)
+        await sweepRetiredFolders(remote: remote, removal: removal)
 
         lastSyncAt = Date()
         await refresh()
@@ -193,14 +195,33 @@ extension ShareSyncEngine {
             Diagnostics.mark("share sync: '\(set.name)' のバックアップ記録が読めない — この回は見送る")
             return
         }
+        // 同期一覧に載っていないクラウド写真の中身は、**少しだけ** Dropbox に訊く（レビュー指摘）。
+        // 載っていないまま待つと、取り込み元のフォルダを変えた写真などは永久にコピーされない。
+        // 一覧そのものが空（起動直後で表がまだ無い）なら訊かない——全員が欠けて見えるので。
+        var cloudHashes = removal.cloudHashes
+        if var known = cloudHashes, !known.isEmpty {
+            let missing = items.map(\.refKey).filter { $0.hasPrefix("C-") }
+                .map { String($0.dropFirst(2)) }
+                .filter { known[$0.lowercased()] == nil }
+            for path in missing.sorted().prefix(Self.maxCloudHashLookupsPerSet) {
+                if case .file(let hash?) = await copier.lookup(path: path, token: token) {
+                    known[path.lowercased()] = hash
+                }
+            }
+            cloudHashes = known
+        }
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
-                                      cloudHashByPath: removal.cloudHashes,
+                                      cloudHashByPath: cloudHashes,
                                       setFolder: setFolder, remoteFiles: remoteFiles)
 
         BackupLogger.info("Share sync: '\(set.folderName)' items=\(items.count) "
             + "copy=\(plan.copies.count) present=\(plan.present) "
             + "delete=\(plan.deletions.count) waitingBackup=\(plan.waitingBackup.count) "
             + "waitingCloud=\(plan.waitingCloudHash.count)")
+        if !plan.waitingCloudHash.isEmpty {
+            Diagnostics.mark("share: '\(set.name)' 中身が分からないクラウド写真 \(plan.waitingCloudHash.count) 枚は"
+                             + "この回コピーしない（原本が同期の外か、消えている）")
+        }
         if plan.noSourceResolved {
             // ⚠️ 黙って何もしない状態を作らない（実機で「詰まっているのにログが無い」を何度も踏んだ）。
             Diagnostics.mark("share: '\(set.name)' 元が 1 件も解決できない（メンバー \(items.count) 件）"
@@ -218,12 +239,26 @@ extension ShareSyncEngine {
         let hashByPath = Dictionary(remoteFiles.map { ($0.pathLower, $0.contentHash ?? "") },
                                     uniquingKeysWith: { first, _ in first })
         let presentHashes = Set(presentPaths.compactMap { hashByPath[$0] }.filter { !$0.isEmpty })
-        func review(presentAfterCopy: Set<String>) -> [String: ShareDeletionReview.Verdict] {
+        // 元のファイル名が分かるメンバー（解決できた写真・クラウド写真）。照合をファイル名の幹で絞る。
+        var sourceFileNames: [String: String] = [:]
+        for item in items {
+            if let source = plan.sourceByRefKey[item.refKey] {
+                sourceFileNames[item.refKey] = (source.fromPath as NSString).lastPathComponent
+            } else if item.refKey.hasPrefix("C-") {
+                sourceFileNames[item.refKey] = (String(item.refKey.dropFirst(2)) as NSString).lastPathComponent
+            }
+        }
+        let memberKeys = items.map(\.refKey)
+        let destinations = plan.sourceByRefKey.mapValues(\.destinationLower)
+        func review(presentAfterCopy: Set<String>) async -> [String: ShareDeletionReview.Verdict] {
             guard !candidates.isEmpty else { return [:] }
-            return ShareDeletionReview.classify(
-                candidates: candidates, members: items.map(\.refKey),
-                destinationByRefKey: plan.sourceByRefKey.mapValues(\.destinationLower),
-                presentAfterCopy: presentAfterCopy, presentHashes: presentHashes)
+            // ⚠️ メインから外す（SHA-256 をメンバー数ぶん回し得る・レビュー指摘）。
+            return await Task.detached(priority: .utility) {
+                ShareDeletionReview.classify(
+                    candidates: candidates, members: memberKeys, sourceFileNames: sourceFileNames,
+                    destinationByRefKey: destinations,
+                    presentAfterCopy: presentAfterCopy, presentHashes: presentHashes)
+            }.value
         }
         func analysisInputs(present: Set<String>, verdicts: [String: ShareDeletionReview.Verdict])
             -> (present: Set<String>, sources: [String: SharePlanning.SourceRef]) {
@@ -238,7 +273,7 @@ extension ShareSyncEngine {
             }
             return (present, sources)
         }
-        let early = analysisInputs(present: presentPaths, verdicts: review(presentAfterCopy: presentPaths))
+        let early = analysisInputs(present: presentPaths, verdicts: await review(presentAfterCopy: presentPaths))
         await updateAnalysisData(set: set, setFolder: setFolder, items: items,
                                  presentPathsLower: early.present, sourceByRefKey: early.sources,
                                  copier: copier, token: token,
@@ -277,7 +312,7 @@ extension ShareSyncEngine {
         // 以前は「望ましくない」＝引き算の結果をそのまま消していた（ADR-209）。材料が欠けた回
         // （記録が照合で消えた・中身がまだ分からない・新しいコピーが失敗した）は、それが
         // **最後の 1 枚**でも消えた。コピーの後に確かめるのは、置き換え先が在るかを見るため。
-        let verdicts = review(presentAfterCopy: presentPaths.union(copiedDestinations))
+        let verdicts = await review(presentAfterCopy: presentPaths.union(copiedDestinations))
         if !candidates.isEmpty {
             await removeReviewed(candidates: candidates, verdicts: verdicts, label: set.name,
                                  holdingFolder: set.folderName, baseFolder: setFolder,

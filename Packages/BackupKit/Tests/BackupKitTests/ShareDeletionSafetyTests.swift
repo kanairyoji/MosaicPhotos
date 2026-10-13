@@ -62,7 +62,10 @@ struct ShareDeletionSafetyTests {
         }
         await server.seed(Self.cloudPhoto, hash: "hc")
         let engine = makeEngine(store: store, server: server, defaults: defaults)
-        let name = "Safety-\(label)"
+        // ⚠️ 名前は**実行ごとに一意**にする。診断ログはプロセス（と Mac の Caches）で共有され、
+        // 前の実行の行が残っているので、決まった名前だとログの検査が前の実行の行に当たって
+        // 必ず通っていた（レビュー指摘）。
+        let name = "Safety-\(label)-\(UUID().uuidString.prefix(8))"
         let setID = await engine.createSet(name: name,
                                            refKeys: ["L-p0", "L-p1", "L-p2", "C-\(Self.cloudPhoto)"])!
         for _ in 0..<3 { await quiesce(engine); await engine.syncNow() }
@@ -126,8 +129,14 @@ struct ShareDeletionSafetyTests {
         #expect(count == 0, "最後の 1 枚を消した: \(paths)", sourceLocation: sourceLocation)
     }
 
+    /// ⚠️ ログの検査は**この実行で書かれた行**だけを見る。名前を含まない断片は
+    /// `logCount` で前後の数を比べる（並列の他のテスト・前の実行の行を数えない）。
     private func logged(_ fragment: String) async -> Bool {
-        await DiagnosticsLog.shared.recentLines(maxLines: 50_000).contains { $0.contains(fragment) }
+        await logCount(fragment) > 0
+    }
+
+    private func logCount(_ fragment: String) async -> Int {
+        await DiagnosticsLog.shared.recentLines(maxLines: 50_000).filter { $0.contains(fragment) }.count
     }
 
     /// 照合（`reconcileWithDropbox`）と同じ形で、Backup の実物が消えた写真の記録を消す。
@@ -168,6 +177,7 @@ struct ShareDeletionSafetyTests {
         let before = await sharedHashes(world)
         #expect(before == ["h0", "h1", "h2", "hc"], "前提: 共有が落ち着いていない \(before)")
         let writesBefore = await writes(world.server)
+        let fallbackLinesBefore = await logCount("share sync: 台帳が一時的にインメモリで開いている")
         var engine = world.engine
 
         switch gap {
@@ -196,8 +206,6 @@ struct ShareDeletionSafetyTests {
             _ = await world.engine.removeItems(setID: world.setID, refKeys: ["L-p2"])
             await quiesce(world.engine)
             await world.server.inject(.init(endpoint: "get_metadata", times: 100, effect: .status(503)))
-            await world.server.inject(.init(endpoint: "list_folder", pathContains: "/backup",
-                                            times: 100, effect: .status(503)))
         }
         world = World(engine: engine, store: world.store, server: world.server,
                       defaults: world.defaults, setID: world.setID, setName: world.setName)
@@ -210,11 +218,14 @@ struct ShareDeletionSafetyTests {
         case .ledgerFellBackToMemory:
             #expect(await writes(world.server) == writesBefore, "一時的な台帳で書き込んだ")
             #expect(engine.lastError == .ledgerUnavailable)
-            #expect(await logged("share sync: 台帳が一時的にインメモリで開いている"))
+            #expect(await logCount("share sync: 台帳が一時的にインメモリで開いている") > fallbackLinesBefore)
             #expect(after == before)
         case .ledgerRebuiltEmpty:
             #expect(after == before, "空の台帳を真実として共有フォルダを消した")
-            #expect(await logged("share sync: 持ち主の分からないフォルダ"))
+            let named = await DiagnosticsLog.shared.recentLines(maxLines: 50_000).contains {
+                $0.contains("share sync: 持ち主の分からないフォルダ") && $0.contains(world.setName.lowercased())
+            }
+            #expect(named, "持ち主の分からないフォルダの行（フォルダ名つき）が無い")
         case .backupVanished:
             #expect(after == before, "記録が消えた写真の共有コピーを消した")
             #expect(await logged("share: '\(world.setName)' 消す前の確認で残した"))
@@ -226,6 +237,11 @@ struct ShareDeletionSafetyTests {
             #expect(after == before, "新しい版のコピーが失敗した回に、古い版を消した")
         case .evidenceLookupFails:
             #expect(after == ["h0", "h1", "h2", "hc"], "確かめきれないのに消した（または退避した）")
+            // ⚠️ 確かめに行ったことも見る（確かめずに残しても上の 2 行は通る・レビュー指摘）。
+            // 失敗を仕込んだ要求は `requestLog` に載らないので、仕込みを踏んだかで見る。
+            #expect(await world.server.pendingFaults().first?.times ?? 100 < 100,
+                    "Dropbox に訊いていない（確かめる手順が走っていない）")
+            #expect(await logged("share: '\(world.setName)' 消す前の確認で残した 1 枚（メンバーのコピー 0・確かめきれない 1"))
             #expect(await heldHashes(world).isEmpty, "確かめきれないのに退避した")
         }
 
@@ -296,12 +312,13 @@ struct ShareDeletionSafetyTests {
         await quiesce(world.engine)
         await world.store.setFailingShareReadForTesting(.backupRecords)
         let writesBefore = await writes(world.server)
+        let unreadableBefore = await logCount("share: 消す前の確認でバックアップ記録が読めない")
         await sync(world.engine)
         #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"],
                 "記録が読めないのに、消したセットの写真を片付けた")
         #expect(await heldHashes(world).isEmpty, "記録が読めないのを「どこにも無い」と読んで退避した")
         #expect(await writes(world.server) == writesBefore)
-        #expect(await logged("share: 消す前の確認でバックアップ記録が読めない"))
+        #expect(await logCount("share: 消す前の確認でバックアップ記録が読めない") > unreadableBefore)
         await world.store.setFailingShareReadForTesting(nil)
         await sync(world.engine)
         #expect(await sharedHashes(world).isEmpty)
@@ -320,6 +337,51 @@ struct ShareDeletionSafetyTests {
         await sync(world.engine)
         #expect(await sharedHashes(world).isEmpty, "遅れて作り直されたフォルダが残っている")
         await expectNoLastCopyDeleted(world.server)
+    }
+
+    @Test("外したクラウド写真は、原本が在れば消える（退避しない）")
+    func removedCloudPhotoIsDeleted() async {
+        let world = await makeSettledWorld("remove-cloud")
+        _ = await world.engine.removeItems(setID: world.setID, refKeys: ["C-\(Self.cloudPhoto)"])
+        await sync(world.engine)
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2"], "外したクラウド写真が家族から消えない")
+        #expect(await heldHashes(world).isEmpty, "原本が在るのに退避した（中身の行き先を引けていない）")
+        await expectNoLastCopyDeleted(world.server)
+    }
+
+    @Test("同期一覧が空の回は、外したクラウド写真を退避しない（分からない）")
+    func emptyCloudIndexDoesNotHold() async {
+        let world = await makeSettledWorld("remove-cloud-cold")
+        world.engine.cloudSourceHashProvider = { [:] }
+        _ = await world.engine.removeItems(setID: world.setID, refKeys: ["C-\(Self.cloudPhoto)"])
+        await sync(world.engine)
+        #expect(await heldHashes(world).isEmpty, "一覧がまだ無いだけなのに、どこにも無いと読んで退避した")
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"])
+        world.engine.cloudSourceHashProvider = { [Self.cloudPhoto: "hc"] }
+        await sync(world.engine)
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2"])
+        #expect(await heldHashes(world).isEmpty)
+    }
+
+    @Test("同期一覧に無いクラウド写真の中身は Dropbox に訊いてコピーする")
+    func missingCloudHashIsLookedUp() async {
+        let world = await makeSettledWorld("cloud-lookup")
+        await world.server.seed("/elsewhere/new.jpg", hash: "hn")
+        _ = await world.engine.addItems(setID: world.setID, refKeys: ["C-/elsewhere/new.jpg"])
+        await sync(world.engine)
+        #expect(await sharedHashes(world).contains("hn"), "同期一覧に無いクラウド写真が永久に待つ")
+    }
+
+    @Test("上限で打ち切った一覧は「取れなかった」扱い（部分の一覧で消さない）")
+    func truncatedListingIsUnavailable() async {
+        let server = FakeDropboxServer()
+        for index in 0..<201 { await server.seed("/big/f\(index).jpg", hash: "h\(index)") }
+        await server.setPageSize(1)
+        let copier = DropboxShareCopier(httpClient: server)
+        #expect(await copier.listFolder(path: "/big", token: "t") == nil,
+                "200 ページで打ち切った一覧を完全な一覧として返した")
+        await server.setPageSize(500)
+        #expect(await copier.listFolder(path: "/big", token: "t")?.count == 201)
     }
 
     @Test("最後の 1 枚の数え方（偽 Dropbox）")
