@@ -46,6 +46,9 @@ extension ShareSyncEngine {
         lastMarks[key] = line
         Diagnostics.mark(line)
     }
+
+    /// 状態が解消したら覚えた行を捨てる（次に同じ状態になったとき、**新しい出来事として**書く）。
+    func clearMark(key: String) { lastMarks.removeValue(forKey: key) }
     /// 消したフォルダの印を、フォルダが無くなってからも持っておく時間。発行済みのコピーが
     /// 遅れて完走してフォルダを作り直すことがある（Dropbox にジョブを取り消す API が無い）。
     static let retiredFolderGrace: TimeInterval = 24 * 60 * 60
@@ -135,6 +138,7 @@ extension ShareSyncEngine {
                                  baseFolder: folder, wholeFolder: folder, removal: removal,
                                  stillApplies: stillUnwanted)
         }
+        if unknown.isEmpty { clearMark(key: "unknownFolders") }
         if !unknown.isEmpty {
             // フォルダ名も出す（どれを手で見ればよいかが分かるように・先頭の数個だけ）。
             markOnChange(key: "unknownFolders", "share sync: 持ち主の分からないフォルダ \(unknown.count) 個は消さない"
@@ -197,9 +201,11 @@ extension ShareSyncEngine {
         }
 
         func reportKept(moveFailed: Int) {
-            if keptForMember > 0 || undecided > 0 || moveFailed > 0 {
+            let key = "kept-\(baseFolder.lowercased())"
+            guard keptForMember > 0 || undecided > 0 || moveFailed > 0 else { clearMark(key: key); return }
+            do {
                 // ⚠️ 黙って残さない（「消えないのにログが無い」を作らない）。同じ内容は繰り返さない。
-                markOnChange(key: "kept-\(label)",
+                markOnChange(key: key,
                              "share: '\(label)' 消す前の確認で残した \(keptForMember + undecided + moveFailed) 枚"
                              + "（メンバーのコピー \(keptForMember)・確かめきれない \(undecided)・"
                              + "退避の失敗 \(moveFailed)）")

@@ -244,9 +244,13 @@ public enum ShareDeletionReview {
                 requests += 1
                 plan.listFolders.append(parent)
             } else {
-                guard requests + paths.count <= maxRequests else { break }
-                requests += paths.count
-                plan.metadataPaths.append(contentsOf: paths)
+                // ⚠️ 入りきらない親も**入るだけ**訊く（丸ごと飛ばすと、200 を超える親は永久に確かめられない
+                // ・独立レビュー 5 回目）。上限に達したら止める。
+                let room = maxRequests - requests
+                guard room > 0 else { break }
+                let taken = Array(paths.prefix(room))
+                requests += taken.count
+                plan.metadataPaths.append(contentsOf: taken)
             }
         }
         return plan

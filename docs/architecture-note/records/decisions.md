@@ -187,6 +187,12 @@
   - ⚠️ 直していない（記録だけ）: 10 万件のクラウド同期一覧をセットごとに MainActor で写す・走査する（数十 ms）。
     記録の古い `contentHash == nil` の持ち主は、重複写真の別の持ち主として 1 回だけ落ちる（もう一度 409 で戻る）。
     `.mosaic-share/` にアプリ以外が置いたファイルがあると、消したセットのフォルダは片付かない（ログは出る）。
+- 追補 5（2026-10-13・独立レビュー 5 回目）: 確かめる往復の上限（200）より大きい親は、丸ごと飛ばしていたので
+  **永久に確かめられなかった**（追補 4 で一覧をやめた大きなクラウドフォルダが当たる）→ 入るだけ訊く。
+  変わったときだけ書くログは、状態が解消したら覚えた行を捨てる（次に同じ状態になったら新しい出来事として書く・
+  実機確認の章 N の 2 行目が、前の手順の行に隠れて出ないことがあった）。消す前に残した行の鍵はフォルダのパスに
+  （同じ表示名のセットで混ざらない）。クラウド原本を訊く 50 枠はセット数で割る（先頭のセットが毎回使い切っていた）。
+  BackupKit 500 本が通る。
 - 関連: `ShareDeletionReview.swift` / `ShareSyncEngine+Removal.swift` / `ShareSyncEngine+Sync.swift` /
   `SharePlanning.swift` / `BackupLayout.shareRemovedRoot` / `ShareSettingsKeys.retiredShareFolders` /
   `ResilientModelContainer.swift` / ADR-209 / ADR-277 / ADR-202。

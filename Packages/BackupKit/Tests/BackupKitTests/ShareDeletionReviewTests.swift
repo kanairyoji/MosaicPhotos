@@ -211,6 +211,13 @@ struct ShareDeletionReviewTests {
             locations: ["k": ["/c/x.jpg", "/c/y.jpg"], "m": ["/d/z.jpg"]], listableRoot: "/b",
             startOffset: 0, maxRequests: 2)
         #expect(capped.metadataPaths == ["/c/x.jpg", "/c/y.jpg"], "上限を超えて訊いた")
+
+        // 上限より大きい親（配置の外の大きなフォルダ）も、入るだけ訊く（丸ごと飛ばすと永久に確かめられない）。
+        let huge = (0..<300).map { "/camera uploads/p\($0).jpg" }
+        let big = ShareDeletionReview.verificationPlan(
+            locations: ["h": huge], listableRoot: "/b", startOffset: 0)
+        #expect(big.metadataPaths.count == ShareDeletionReview.maxVerificationRequests,
+                "上限より大きい親を 1 件も訊いていない")
     }
 
     @Test("証拠: 同じ中身が在れば在る・全部訊いて無ければ無い・訊けなければ分からない")

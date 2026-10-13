@@ -103,6 +103,7 @@ extension ShareSyncEngine {
         let remote = RemoteShareIndex(listing: listing)
         let account = accountFingerprint()
         cloudLookupsLeftThisSync = Self.maxCloudHashLookupsPerSync
+        cloudLookupSetCount = sets.count
         if Date().timeIntervalSince(cloudLookupCacheStartedAt) > 24 * 3_600 || account != cloudLookupCacheAccount {
             learnedCloudHashes.removeAll()
             missingCloudOriginals.removeAll()
@@ -226,7 +227,9 @@ extension ShareSyncEngine {
             let ordered = missing.sorted()
             let begin = ordered.isEmpty ? 0 : (reviewRotation % ordered.count + ordered.count) % ordered.count
             // ⚠️ 上限は**反映 1 回ぶん**（セットごとに 50 だと、セットが多いと短い窓を食い潰す・独立レビュー 4 回目）。
-            for path in (ordered[begin...] + ordered[..<begin]).prefix(max(0, cloudLookupsLeftThisSync)) {
+            // セットごとの取り分（先頭のセットが毎回 50 を使い切って、後ろのセットが永久に訊かれない、を無くす）。
+            let share = max(1, Self.maxCloudHashLookupsPerSync / max(1, cloudLookupSetCount))
+            for path in (ordered[begin...] + ordered[..<begin]).prefix(max(0, min(share, cloudLookupsLeftThisSync))) {
                 guard !Task.isCancelled else { break }
                 cloudLookupsLeftThisSync -= 1
                 switch await copier.lookup(path: path, token: token) {
@@ -253,6 +256,8 @@ extension ShareSyncEngine {
             + "copy=\(plan.copies.count) present=\(plan.present) "
             + "delete=\(plan.deletions.count) waitingBackup=\(plan.waitingBackup.count) "
             + "waitingCloud=\(plan.waitingCloudHash.count)")
+        if plan.waitingCloudHash.isEmpty { clearMark(key: "waitingCloud-\(set.id)") }
+        if !plan.noSourceResolved { clearMark(key: "noSource-\(set.id)") }
         if !plan.waitingCloudHash.isEmpty {
             markOnChange(key: "waitingCloud-\(set.id)", "share: '\(set.name)' 中身が分からないクラウド写真 \(plan.waitingCloudHash.count) 枚は"
                              + "この回コピーしない（原本が同期の外か、消えている）")

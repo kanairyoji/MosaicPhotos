@@ -271,6 +271,8 @@ public final class ShareSyncEngine {
     @ObservationIgnored var cloudLookupCacheAccount: String?
     /// この反映でまだ訊いてよいクラウド原本の数（反映 1 回ぶんの上限）。
     @ObservationIgnored var cloudLookupsLeftThisSync = 0
+    /// この反映のセット数（訊く数の取り分を決める）。
+    @ObservationIgnored var cloudLookupSetCount = 1
     /// 同じ状態の行を繰り返し書かないための、最後に書いた行（鍵 → 行）。
     @ObservationIgnored var lastMarks: [String: String] = [:]
     /// 消す前の確認で、何番目の候補から見るか（回ごとにずらす）。
