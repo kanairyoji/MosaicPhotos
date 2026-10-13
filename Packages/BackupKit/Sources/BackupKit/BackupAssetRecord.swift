@@ -10,6 +10,14 @@ public final class BackupAssetRecord {
     @Attribute(.unique) public var dropboxPath: String
     /// PHAsset.localIdentifier。削除後は参照不能になるが、バックアップ時の記録として保持する。
     public var localIdentifier: String?
+    /// **同じファイルを指す、ほかの端末写真**の localIdentifier（ADR-278 追補 2）。
+    ///
+    /// 記録はパスにつき 1 件で、`localIdentifier` は「最後に確かめた写真」に付け替わる。中身も名前も
+    /// 同じ重複写真が 2 枚あると、片方は記録を失い、共有が待つ写真（記録の無いメンバー）として
+    /// **毎回上げ直されていた**——上げると 409 で持ち主がもう片方へ移り、次はそちらが待つ。
+    /// 付け替えるとき前の持ち主をここへ残し、「済み」と共有の解決はこちらも見る。
+    /// ⚠️ 台帳なので**省略可能な列の追加**だけで進める（ADR-186）。
+    public var otherLocalIdentifiers: [String]?
     public var filename: String
     public var creationDate: Date?
     /// Dropbox content_hash（バックアップ完了後に設定）。

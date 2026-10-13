@@ -66,6 +66,8 @@ extension StandardSettingsSuite {
 
             /// 進捗台帳の写し（本番の `BackupProgressStore`）。記録と食い違う状態を作れるように持つ。
             var ledger: Set<String> = []
+            /// 写真 ID → Backup でのファイル名（既定は ID）。中身も名前も同じ重複写真を作るのに使う。
+            var fileStem: [String: String] = [:]
 
             /// バックアップの 1 回（写しは `BackupPassForTesting` の 1 つだけ・ADR-277）。上げた ID を返す。
             @discardableResult
@@ -74,7 +76,7 @@ extension StandardSettingsSuite {
                 let uploaded = await BackupPassForTesting.run(
                     library: library.map { .init(id: $0.id, data: $0.data, taken: $0.taken) },
                     ledger: &ledger, store: store, engine: engine, http: server, limit: limit,
-                    path: { "\(backupRoot)/2020/2020-09/\($0.id).jpg" })
+                    path: { [fileStem] in "\(backupRoot)/2020/2020-09/\(fileStem[$0.id] ?? $0.id).jpg" })
                 self.ledger = ledger
                 return uploaded
             }
@@ -161,6 +163,30 @@ extension StandardSettingsSuite {
                 let after = await world.server.uploadCount()
                 #expect(after == uploads, "上げ済みの写真を上げ直している（\(uploads) → \(after)）")
                 #expect(await world.server.filePaths() == files, "何もしていないのにファイルが増減した")
+            }
+        }
+
+        /// ⚠️ 記録は Dropbox のパスにつき 1 件で、同じパスを別の写真が 409 で「済み」と確かめると
+        /// 持ち主が付け替わる（再取り込みで ID が変わった写真のため）。ADR-277 で「記録の無い共有メンバーは
+        /// 上げ直す」にしたので、中身も名前も同じ重複写真を 2 枚とも共有すると、**毎回交互に上げ直していた**
+        /// （独立レビューの指摘・ADR-278 追補 2）。
+        @Test("中身も名前も同じ重複写真を 2 枚とも共有しても、毎回上げ直さない")
+        func identicalDuplicatesDoNotPingPong() async {
+            await with(scope: .disabled) {
+                let world = await World(photos: 2)
+                world.library[1] = (id: "P1", data: world.library[0].data, taken: world.library[0].taken)
+                world.fileStem = ["P0": "IMG_0001", "P1": "IMG_0001"]
+                _ = await world.share.createSet(name: "Dup", refKeys: ["L-P0", "L-P1"])
+                await world.backupPass()
+                await world.backupPass()
+                let uploads = await world.server.uploadCount()
+                for _ in 0..<3 {
+                    #expect(await world.backupPass().isEmpty, "重複写真をまた上げ直した")
+                }
+                #expect(await world.server.uploadCount() == uploads, "重複写真を上げ直し続けている")
+                await world.share.syncNow()
+                let counts = await world.store.shareSyncedCounts().values.first
+                #expect(counts?.waiting == 0, "片方がバックアップ待ちのまま: \(String(describing: counts))")
             }
         }
 

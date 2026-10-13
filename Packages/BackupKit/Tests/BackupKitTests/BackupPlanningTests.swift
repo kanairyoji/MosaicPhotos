@@ -1,4 +1,7 @@
+import DropboxCore
+import DropboxTestSupport
 import Foundation
+import MosaicSupport
 import Testing
 @testable import BackupKit
 
@@ -207,6 +210,33 @@ struct EndOfRunLineTests {
         }
         #expect(BackupEngine.Phase.completed(uploaded: 0, skipped: 5).endOfRunLine
                 == "backup: ended — completed (uploaded=0, already backed up=5)")
+    }
+}
+
+/// ⚠️ 止めた回にも 1 行出る（独立レビュー 2 回目）。`cancel` が世代を進めるので、走っていたタスクは
+/// 後始末で弾かれて何も書かない——夜間の枠の期限切れが、ログに 1 行も残らなかった。
+@Suite("BackupEngine.cancel は終わりの 1 行を書く", .serialized)
+@MainActor
+struct CancelWritesEndLineTests {
+    @Test("走っている実行を止めたら backup: ended — cancelled が 1 行増える／走っていなければ書かない")
+    func cancelWritesEndLine() async {
+        let engine = BackupEngine(auth: DropboxAuthService(appKey: "k", redirectURI: "app://cb"),
+                                  httpClient: FakeDropboxServer(),
+                                  store: BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting()),
+                                  tokenProvider: FakeTokenProvider())
+        func count() async -> Int {
+            await DiagnosticsLog.shared.recentLines(maxLines: 50_000)
+                .filter { $0.contains("backup: ended — cancelled") }.count
+        }
+        let idleBefore = await count()
+        engine.cancel()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await count() == idleBefore, "走っていないのに書いた")
+        engine.setRunningTaskForTesting()
+        let before = await count()
+        engine.cancel()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await count() > before, "止めた回に終わりの行が出ない")
     }
 }
 

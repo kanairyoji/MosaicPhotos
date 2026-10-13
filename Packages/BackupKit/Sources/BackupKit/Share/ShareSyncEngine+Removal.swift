@@ -70,7 +70,11 @@ extension ShareSyncEngine {
                              removal: RemovalContext) async {
         // ⚠️ セットは**ここで読み直す**（レビュー指摘）。反映の頭で読んだ `sets` は数分前のもので、
         // その間に消したセットのフォルダを「いまのセット」と読み、消した直後の印を無効にしていた。
-        let current = await removal.store.allShareSets()
+        // ⚠️ 読めなければ掃除しない（空と読むと、写真がまだ無いセットのフォルダを丸ごと消す）。
+        guard let current = await removal.store.readShareSets() else {
+            Diagnostics.mark("share sync: 共有セットが読めない — フォルダの掃除を見送る")
+            return
+        }
         let wanted = Set(current.compactMap {
             SharePlanning.setFolderPath(shareRoot: removal.shareRoot, folderName: $0.folderName,
                                         deviceFolder: nil)?.lowercased()
@@ -99,6 +103,20 @@ extension ShareSyncEngine {
             }
             guard budget > 0 else { break }
             budget -= 1
+            // ⚠️ **消す直前に読み直す**（独立レビュー 2 回目）。確かめる往復のあいだに、利用者が同じ名前で
+            // セットを作り直す（印が外れる）ことがある。古い写しのまま消すと、新しいセットのフォルダを消す。
+            let shareRoot = removal.shareRoot
+            let defaults = defaults
+            let stillUnwanted: @MainActor () async -> Bool = {
+                guard let latest = await removal.store.readShareSets() else { return false }
+                let nowWanted = latest.contains {
+                    SharePlanning.setFolderPath(shareRoot: shareRoot, folderName: $0.folderName,
+                                                deviceFolder: nil)?.lowercased() == folder
+                }
+                if nowWanted { return false }
+                if isRetired, ShareSettingsKeys.retiredFolders(defaults)[folder] == nil { return false }
+                return true
+            }
             let verdicts = Dictionary(uniqueKeysWithValues: files.map {
                 ($0.pathLower, isRetired ? ShareDeletionReview.Verdict.needsEvidence(ownerRefKey: nil)
                                          : .duplicateOfPresent)
@@ -106,7 +124,8 @@ extension ShareSyncEngine {
             await removeReviewed(candidates: files, verdicts: verdicts,
                                  label: (folder as NSString).lastPathComponent,
                                  holdingFolder: (folder as NSString).lastPathComponent,
-                                 baseFolder: folder, wholeFolder: folder, removal: removal)
+                                 baseFolder: folder, wholeFolder: folder, removal: removal,
+                                 stillApplies: stillUnwanted)
         }
         if !unknown.isEmpty {
             // フォルダ名も出す（どれを手で見ればよいかが分かるように・先頭の数個だけ）。
@@ -125,8 +144,8 @@ extension ShareSyncEngine {
         var changed = false
         for (path, at) in latest {
             if present.contains(path) {
-                latest[path] = now
-                changed = true
+                // 毎回書かない（1 時間より古いときだけ時刻を進める）。
+                if now.timeIntervalSince(at) > 3_600 { latest[path] = now; changed = true }
             } else if now.timeIntervalSince(at) > Self.retiredFolderGrace, retired[path] != nil {
                 latest.removeValue(forKey: path)
                 changed = true
@@ -142,13 +161,20 @@ extension ShareSyncEngine {
     ///   - holdingFolder: 退避先の下に作るフォルダ名（セットのフォルダ名）。
     ///   - baseFolder: 候補のパスの基準。退避先では、ここからの相対パスを保つ。
     ///   - wholeFolder: 消したセットのフォルダ。**全部を片付けられた回だけ**フォルダごと消す。
+    ///   - stillApplies: 書く直前に、分類の前提（メンバー・セットの有無）が変わっていないかを見る。
     func removeReviewed(candidates: [SharePlanning.RemoteFile],
                         verdicts: [String: ShareDeletionReview.Verdict],
                         label: String, holdingFolder: String, baseFolder: String,
                         wholeFolder: String?,
-                        removal: RemovalContext) async {
+                        removal: RemovalContext,
+                        stillApplies: @MainActor () async -> Bool) async {
         let evidenceByHash = await gatherEvidence(candidates: candidates, verdicts: verdicts,
                                                   removal: removal)
+        #if DEBUG
+        await beforeRemovalWritesForTesting?()
+        #endif
+        // ⚠️ 確かめる往復（最大 200）のあいだに前提が変わっていないか、**書く直前に**見る。
+        guard await stillApplies() else { return }
         var deletes: [String] = []
         var moves: [SharePlanning.RemoteFile] = []
         var keptForMember = 0

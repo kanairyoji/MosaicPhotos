@@ -68,12 +68,15 @@ public enum ShareDeletionReview {
     ///   - destinationByRefKey: 解決できたメンバー → 望ましい宛先（小文字）。
     ///   - presentAfterCopy: この回のコピーの後に在る宛先（小文字）。
     ///   - presentHashes: このフォルダに望ましいファイルとして在る中身。
+    ///   - startOffset: 何番目の候補から見るか。**回ごとにずらす**（上限で持ち越した候補が、毎回同じ
+    ///     先頭の候補に上限を食われて永久に見られない、を無くす・独立レビュー 2 回目）。
     public static func classify(candidates: [SharePlanning.RemoteFile],
                                 members: [String],
                                 sourceFileNames: [String: String],
                                 destinationByRefKey: [String: String],
                                 presentAfterCopy: Set<String>,
                                 presentHashes: Set<String>,
+                                startOffset: Int,
                                 hashBudget: Int = identityHashBudget) -> [String: Verdict] {
         var verdicts: [String: Verdict] = [:]
         // 幹 → その幹になるメンバー。元の名前が分からないメンバーは総当たりの側へ。
@@ -81,14 +84,16 @@ public enum ShareDeletionReview {
         var unnamed: [String] = []
         for refKey in Array(Set(members)).sorted() {
             if let name = sourceFileNames[refKey] {
-                byStem[ShareNaming.sharedStem(sourceFileName: name).lowercased(), default: []].append(refKey)
+                byStem[stemKey(ShareNaming.sharedStem(sourceFileName: name)), default: []].append(refKey)
             } else {
                 unnamed.append(refKey)
             }
         }
         var spent = 0
 
-        for candidate in candidates.sorted(by: { $0.pathLower < $1.pathLower }) {
+        let ordered = candidates.sorted(by: { $0.pathLower < $1.pathLower })
+        let start = ordered.isEmpty ? 0 : ((startOffset % ordered.count) + ordered.count) % ordered.count
+        for candidate in ordered[start...] + ordered[..<start] {
             if let hash = candidate.contentHash, !hash.isEmpty, presentHashes.contains(hash) {
                 verdicts[candidate.pathLower] = .duplicateOfPresent
                 continue
@@ -107,7 +112,7 @@ public enum ShareDeletionReview {
                 if let hash, ShareNaming.identity(refKey: refKey, contentHash: hash) == tail { return true }
                 return false
             }
-            let named = byStem[stem] ?? []
+            let named = byStem[stemKey(stem)] ?? []
             let cost = (named.count + unnamed.count) * (hash == nil ? 1 : 2)
             guard spent + cost <= hashBudget else {
                 verdicts[candidate.pathLower] = .deferred
@@ -124,6 +129,21 @@ public enum ShareDeletionReview {
             }
         }
         return verdicts
+    }
+
+    /// 照合に使う幹の鍵。**名前が変わる 2 つの理由を畳む**（独立レビュー 2 回目）:
+    /// 編集した写真はバックアップで `<幹>-edited` に、Dropbox の自動改名で `<幹> (1)` になる。
+    /// 畳まないと、上げ直しで名前が変わったメンバーの古い版が「持ち主なし」に見え、
+    /// 新しい版のコピーが失敗した回に家族から消えていた。
+    static func stemKey(_ stem: String) -> String {
+        var key = stem.lowercased()
+        while true {
+            if key.hasSuffix("-edited") { key.removeLast("-edited".count); continue }
+            if let range = key.range(of: #" \(\d+\)$"#, options: .regularExpression) {
+                key.removeSubrange(range); continue
+            }
+            return key
+        }
     }
 
     /// 分類と実物の確認から、やることを決める。

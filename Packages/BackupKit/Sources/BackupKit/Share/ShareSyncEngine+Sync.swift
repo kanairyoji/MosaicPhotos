@@ -104,8 +104,11 @@ extension ShareSyncEngine {
         // クラウド原本の中身（10 万行の射影）は**反映 1 回に 1 度だけ**引く。宛先名と、
         // 消す前の確認（中身が他に在るか）の両方に使う。
         let cloudHashes = await cloudSourceHashProvider?()
-        let removal = RemovalContext(layoutRoot: defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
-                                        ?? BackupSettingsKeys.defaultDropboxFolder,
+        // ⚠️ 設定は自由入力なので、配置と同じ正規化を通す（先頭の / の有無・末尾の Backup / Share・
+        // 前後の空白で前方一致が外れ、他の端末の共有コピーを証拠に数えていた・独立レビュー 2 回目）。
+        let rawRoot = defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
+            ?? BackupSettingsKeys.defaultDropboxFolder
+        let removal = RemovalContext(layoutRoot: BackupLayout.deviceRoot(root: rawRoot, deviceFolder: ""),
                                      shareRoot: shareRoot,
                                      holdingRoot: ShareSettingsKeys.currentShareRemovedRoot(defaults),
                                      cloudHashes: cloudHashes, store: store,
@@ -198,18 +201,31 @@ extension ShareSyncEngine {
         // 同期一覧に載っていないクラウド写真の中身は、**少しだけ** Dropbox に訊く（レビュー指摘）。
         // 載っていないまま待つと、取り込み元のフォルダを変えた写真などは永久にコピーされない。
         // 一覧そのものが空（起動直後で表がまだ無い）なら訊かない——全員が欠けて見えるので。
+        // ⚠️ 訊いた答えは覚える（毎回同じ 50 枚を訊かない・51 枚目以降が永久に訊かれないことも無くす）。
+        // 無かった原本はこのプロセスのあいだ訊き直さない（無いものを繰り返し探さない）。
         var cloudHashes = removal.cloudHashes
         if var known = cloudHashes, !known.isEmpty {
+            known.merge(learnedCloudHashes) { current, _ in current }
             let missing = items.map(\.refKey).filter { $0.hasPrefix("C-") }
                 .map { String($0.dropFirst(2)) }
-                .filter { known[$0.lowercased()] == nil }
+                .filter { known[$0.lowercased()] == nil && !missingCloudOriginals.contains($0.lowercased()) }
             for path in missing.sorted().prefix(Self.maxCloudHashLookupsPerSet) {
-                if case .file(let hash?) = await copier.lookup(path: path, token: token) {
+                switch await copier.lookup(path: path, token: token) {
+                case .file(let hash?):
                     known[path.lowercased()] = hash
+                    learnedCloudHashes[path.lowercased()] = hash
+                case .notFound:
+                    missingCloudOriginals.insert(path.lowercased())
+                case .file(nil), .failed:
+                    break
                 }
             }
             cloudHashes = known
         }
+        // 覚えた中身は、消す前の確認の証拠にも使う（原本が在るのに「どこにも無い」と読まない）。
+        let removal = RemovalContext(layoutRoot: removal.layoutRoot, shareRoot: removal.shareRoot,
+                                     holdingRoot: removal.holdingRoot, cloudHashes: cloudHashes,
+                                     store: removal.store, copier: removal.copier, token: removal.token)
         let plan = SharePlanning.plan(items: items, backupByLocalID: backupRefs,
                                       cloudHashByPath: cloudHashes,
                                       setFolder: setFolder, remoteFiles: remoteFiles)
@@ -238,6 +254,8 @@ extension ShareSyncEngine {
         let candidates = remoteFiles.filter { deletionSet.contains($0.pathLower) }
         let hashByPath = Dictionary(remoteFiles.map { ($0.pathLower, $0.contentHash ?? "") },
                                     uniquingKeysWith: { first, _ in first })
+        /// 中身の分からないファイルは nil（空文字を鍵にした解析データを作らない・独立レビュー 2 回目）。
+        func knownHash(_ path: String) -> String? { hashByPath[path].flatMap { $0.isEmpty ? nil : $0 } }
         let presentHashes = Set(presentPaths.compactMap { hashByPath[$0] }.filter { !$0.isEmpty })
         // 元のファイル名が分かるメンバー（解決できた写真・クラウド写真）。照合をファイル名の幹で絞る。
         var sourceFileNames: [String: String] = [:]
@@ -250,6 +268,8 @@ extension ShareSyncEngine {
         }
         let memberKeys = items.map(\.refKey)
         let destinations = plan.sourceByRefKey.mapValues(\.destinationLower)
+        reviewRotation &+= 1
+        let rotation = reviewRotation
         func review(presentAfterCopy: Set<String>) async -> [String: ShareDeletionReview.Verdict] {
             guard !candidates.isEmpty else { return [:] }
             // ⚠️ メインから外す（SHA-256 をメンバー数ぶん回し得る・レビュー指摘）。
@@ -257,7 +277,8 @@ extension ShareSyncEngine {
                 ShareDeletionReview.classify(
                     candidates: candidates, members: memberKeys, sourceFileNames: sourceFileNames,
                     destinationByRefKey: destinations,
-                    presentAfterCopy: presentAfterCopy, presentHashes: presentHashes)
+                    presentAfterCopy: presentAfterCopy, presentHashes: presentHashes,
+                    startOffset: rotation * 97)
             }.value
         }
         func analysisInputs(present: Set<String>, verdicts: [String: ShareDeletionReview.Verdict])
@@ -267,7 +288,7 @@ extension ShareSyncEngine {
             for (path, verdict) in verdicts.sorted(by: { $0.key < $1.key }) {
                 guard case .keptForMember(let refKey) = verdict else { continue }
                 if let current = sources[refKey], present.contains(current.destinationLower) { continue }
-                sources[refKey] = SharePlanning.SourceRef(fromPath: path, contentHash: hashByPath[path],
+                sources[refKey] = SharePlanning.SourceRef(fromPath: path, contentHash: knownHash(path),
                                                           destinationLower: path)
                 present.insert(path)
             }
@@ -313,10 +334,28 @@ extension ShareSyncEngine {
         // （記録が照合で消えた・中身がまだ分からない・新しいコピーが失敗した）は、それが
         // **最後の 1 枚**でも消えた。コピーの後に確かめるのは、置き換え先が在るかを見るため。
         let verdicts = await review(presentAfterCopy: presentPaths.union(copiedDestinations))
+        // ⚠️ **消す直前に、セットとメンバーを読み直す**（独立レビュー 2 回目）。この関数は数分かかり、
+        // その間に利用者がセットを消して同じ名前で作り直したり、写真を入れ直したりできる。
+        // 古いメンバーで分類したまま消すと、入れ直した写真のコピーを「持ち主なし」と読む。
+        // 変わっていたら、この回は消さない（次の回が新しいメンバーで決め直す）。
+        let setID = set.id
+        let folderName = set.folderName
+        let label = set.name
+        let memberSet = Set(memberKeys)
+        let unchanged: @MainActor () async -> Bool = {
+            guard let sets = await store.readShareSets(),
+                  sets.contains(where: { $0.id == setID && $0.folderName == folderName }),
+                  let fresh = await store.readShareItems(setID: setID),
+                  Set(fresh.map(\.refKey)) == memberSet else {
+                Diagnostics.mark("share: '\(label)' 反映の途中でセットかメンバーが変わった — この回は消さない")
+                return false
+            }
+            return true
+        }
         if !candidates.isEmpty {
             await removeReviewed(candidates: candidates, verdicts: verdicts, label: set.name,
                                  holdingFolder: set.folderName, baseFolder: setFolder,
-                                 wholeFolder: nil, removal: removal)
+                                 wholeFolder: nil, removal: removal, stillApplies: unchanged)
         }
 
         await store.recordShareSyncCounts(setID: set.id,

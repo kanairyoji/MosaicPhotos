@@ -260,6 +260,17 @@ public final class ShareSyncEngine {
 
     /// 進行中の反映（キャンセル可能にするため保持する）。`syncNow` が張り替える。
     @ObservationIgnored var syncTask: Task<Void, Never>?
+    /// 同期一覧に無かったクラウド原本について、Dropbox に訊いて分かった中身（パス小文字 → hash）。
+    /// プロセスのあいだ覚える（ADR-278 追補 2）。
+    @ObservationIgnored var learnedCloudHashes: [String: String] = [:]
+    /// Dropbox に訊いたら無かったクラウド原本（パス小文字）。プロセスのあいだ訊き直さない。
+    @ObservationIgnored var missingCloudOriginals: Set<String> = []
+    /// 消す前の確認で、何番目の候補から見るか（回ごとにずらす）。
+    @ObservationIgnored var reviewRotation = 0
+    #if DEBUG
+    /// テスト用: 消す前の確認で、Dropbox に訊き終えてから書くまでの間に呼ぶ（利用者の操作が割り込む形を作る）。
+    @ObservationIgnored var beforeRemovalWritesForTesting: (@MainActor () async -> Void)?
+    #endif
     /// 直近の `updateAnalysisData` で上げたシャード（名前 → content_hash）。同じ反映の後半で
     /// もう一度組むとき、一覧に無い「上げた直後」の状態を補うため。
     @ObservationIgnored var uploadedShardNames: [(name: String, hash: String)] = []

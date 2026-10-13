@@ -18,6 +18,16 @@ extension BackupStore {
                             createdAt: set.createdAt, sourceKey: sourceKey)
     }
 
+    /// 共有セット。**nil は「読めなかった」**（0 件とは別・ADR-278 追補 2）。消す判断の直前に使う。
+    func readShareSets() -> [ShareSetLite]? {
+        guard let sets = try? modelContext.fetch(FetchDescriptor<ShareSet>(
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)])) else { return nil }
+        return sets.map {
+            ShareSetLite(id: $0.id, name: $0.name, folderName: $0.folderName,
+                         createdAt: $0.createdAt, sourceKey: $0.sourceKey)
+        }
+    }
+
     public func allShareSets() -> [ShareSetLite] {
         let sets = (try? modelContext.fetch(FetchDescriptor<ShareSet>(
             sortBy: [SortDescriptor(\.createdAt, order: .forward)]))) ?? []
@@ -204,13 +214,17 @@ extension BackupStore {
         // （バックアップ記録は数万件・メタのみで軽い。BackupStore actor 上なのでメインは塞がない）。
         // メタ 3 列だけ取り出す（@Model 全体のマテリアライズは数万行でメモリを食う）。
         var descriptor = FetchDescriptor<BackupAssetRecord>()
-        descriptor.propertiesToFetch = [\.localIdentifier, \.dropboxPath, \.contentHash]
+        descriptor.propertiesToFetch = [\.localIdentifier, \.otherLocalIdentifiers,
+                                        \.dropboxPath, \.contentHash]
         guard let records = try? modelContext.fetch(descriptor) else { return nil }
         var out: [String: SharePlanning.BackupRef] = [:]
         for record in records {
-            guard let localID = record.localIdentifier, wanted.contains(localID) else { continue }
-            out[localID] = SharePlanning.BackupRef(dropboxPath: record.dropboxPath,
-                                                   contentHash: record.contentHash)
+            let ref = SharePlanning.BackupRef(dropboxPath: record.dropboxPath, contentHash: record.contentHash)
+            // 持ち主を先に入れる（重複写真の別の持ち主は、持ち主の記録が無いときだけ使う）。
+            if let localID = record.localIdentifier, wanted.contains(localID) { out[localID] = ref }
+            for other in record.otherLocalIdentifiers ?? [] where wanted.contains(other) && out[other] == nil {
+                out[other] = ref
+            }
         }
         return out
     }

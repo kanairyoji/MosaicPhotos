@@ -304,6 +304,9 @@ public final class BackupEngine {
     /// テスト用: 照合中フラグだけを立てる（実際の通信・SwiftData 更新は行わない）。
     func setReconcilingForTesting(_ value: Bool) { isReconciling = value }
 
+    /// テスト用: 走っている実行があるように見せる（`cancel` の後始末を確かめるため）。
+    func setRunningTaskForTesting() { backupTask = Task {} }
+
     /// テスト用: 夜間実行の印だけを立てる。
     func setNightlyRunForTesting(_ value: Bool) { isNightlyRun = value }
 
@@ -314,6 +317,10 @@ public final class BackupEngine {
     }
 
     public func cancel() {
+        // ⚠️ **止めた側が終わりの 1 行を書く**（独立レビュー 2 回目）。下で世代を進めるので、
+        // 走っていたタスクは `isCurrentRun` で弾かれて何も書かない——夜間の枠の期限切れ
+        // （いちばん多い終わり方）が、ログに 1 行も残らなかった。
+        if backupTask != nil { Diagnostics.mark(Phase.cancelled.endOfRunLine) }
         // 世代を進めて、旧タスクからの更新・後始末を以後すべて無効にする。
         runGeneration &+= 1
         backupTask?.cancel()

@@ -384,6 +384,51 @@ struct ShareDeletionSafetyTests {
         #expect(await copier.listFolder(path: "/big", token: "t")?.count == 201)
     }
 
+    @Test("確かめている間に写真を入れ直したら、その回は消さない")
+    func memberReAddedDuringReviewIsNotRemoved() async {
+        let world = await makeSettledWorld("readd-mid-run")
+        _ = await world.engine.removeItems(setID: world.setID, refKeys: ["L-p2"])
+        await quiesce(world.engine)
+        let store = world.store
+        let setID = world.setID
+        world.engine.beforeRemovalWritesForTesting = {
+            _ = await store.addShareItems(setID: setID, refKeys: ["L-p2"])
+        }
+        await world.engine.syncNow()
+        await quiesce(world.engine)
+        world.engine.beforeRemovalWritesForTesting = nil
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"], "入れ直した写真のコピーを消した")
+        #expect(await logged("share: '\(world.setName)' 反映の途中でセットかメンバーが変わった"))
+        await sync(world.engine)
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"])
+    }
+
+    @Test("確かめている間に同じ名前でセットを作り直したら、そのフォルダは消さない")
+    func setRecreatedDuringSweepIsNotRemoved() async {
+        let world = await makeSettledWorld("recreate-mid-sweep")
+        _ = await world.engine.deleteSet(id: world.setID)
+        await quiesce(world.engine)
+        let engine = world.engine
+        let name = await world.store.allShareSets().isEmpty ? world.setName : world.setName
+        var recreated = false
+        engine.beforeRemovalWritesForTesting = {
+            guard !recreated else { return }
+            recreated = true
+            engine.beforeRemovalWritesForTesting = nil
+            _ = await engine.createSet(name: name, refKeys: ["L-p0", "L-p1", "L-p2", "C-\(Self.cloudPhoto)"])
+        }
+        let deletesBefore = await world.server.requestLog.filter { $0.contains("delete_batch") }.count
+        await engine.syncNow()
+        await quiesce(engine)
+        #expect(recreated, "前提: 掃除の確認の途中で作り直していない")
+        await sync(engine)
+        // ⚠️ 終わりの状態では見えない（消しても次の回にコピーし直す）ので、**消しに行ったか**を数える。
+        let deletesAfter = await world.server.requestLog.filter { $0.contains("delete_batch") }.count
+        #expect(deletesAfter == deletesBefore, "作り直したセットのフォルダを消しに行った")
+        #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"])
+        await expectNoLastCopyDeleted(world.server)
+    }
+
     @Test("最後の 1 枚の数え方（偽 Dropbox）")
     func fakeCountsLastCopies() async {
         let server = FakeDropboxServer()

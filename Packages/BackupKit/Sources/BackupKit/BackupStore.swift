@@ -137,7 +137,15 @@ public actor BackupStore {
             // 「生きている PHAsset」は**最後に検証できた方**が正しい、という規則にする。
             // （バイト列も名前も同一の重複写真が 2 枚ある場合は last-writer-wins になる。
             //   従来は first-writer-wins だったが、どちらでも記録は 1 件のまま。）
-            if let localIdentifier { existing.localIdentifier = localIdentifier }
+            if let localIdentifier {
+                // ⚠️ 前の持ち主は**捨てずに残す**（ADR-278 追補 2）。重複写真の片方が記録を失うと、
+                // 共有が待つ写真として毎回上げ直されていた。
+                var others = Set(existing.otherLocalIdentifiers ?? [])
+                if let previous = existing.localIdentifier, previous != localIdentifier { others.insert(previous) }
+                others.remove(localIdentifier)
+                existing.otherLocalIdentifiers = others.isEmpty ? nil : others.sorted()
+                existing.localIdentifier = localIdentifier
+            }
             existing.filename     = filename
             existing.creationDate = creationDate
         } else {
@@ -212,7 +220,8 @@ public actor BackupStore {
         // ⚠️ 読み取り専用なので**使い捨てのコンテキスト**で（ADR-224）。長生きのコンテキストに
         // 数万行（1 行 700〜900B）を登録させると、そのまま常駐する。
         let records = (try? ModelContext(modelContainer).fetch(FetchDescriptor<BackupAssetRecord>())) ?? []
-        return Set(records.compactMap(\.localIdentifier))
+        // 同じファイルを指す、ほかの写真（重複写真）も「済み」（ADR-278 追補 2）。
+        return Set(records.flatMap { [$0.localIdentifier].compactMap { $0 } + ($0.otherLocalIdentifiers ?? []) })
     }
 
     /// 「ローカル localIdentifier → Dropbox path」対応（自動アルバムの重複排除用）。
@@ -244,12 +253,14 @@ public actor BackupStore {
         var verifiedIDs: Set<String> = []
         for record in records {
             let path = record.dropboxPath.lowercased()
+            // 同じファイルを指す、ほかの写真（重複写真）も合格に数える（ADR-278 追補 2）。
+            let ids = [record.localIdentifier].compactMap { $0 } + (record.otherLocalIdentifiers ?? [])
             if let remoteHash = remote[path],
                record.contentHash == nil || record.contentHash == remoteHash {
-                if let id = record.localIdentifier { verifiedIDs.insert(id) }
+                verifiedIDs.formUnion(ids)
             } else if record.backedUpAt > listedAt {
                 // 一覧の取得後に上がった記録＝この一覧では判定できない。次回の照合に委ねる。
-                if let id = record.localIdentifier { verifiedIDs.insert(id) }
+                verifiedIDs.formUnion(ids)
             } else {
                 modelContext.delete(record)
                 removed += 1
