@@ -409,7 +409,7 @@ struct ShareDeletionSafetyTests {
         _ = await world.engine.deleteSet(id: world.setID)
         await quiesce(world.engine)
         let engine = world.engine
-        let name = await world.store.allShareSets().isEmpty ? world.setName : world.setName
+        let name = world.setName
         var recreated = false
         engine.beforeRemovalWritesForTesting = {
             guard !recreated else { return }
@@ -427,6 +427,60 @@ struct ShareDeletionSafetyTests {
         #expect(deletesAfter == deletesBefore, "作り直したセットのフォルダを消しに行った")
         #expect(await sharedHashes(world) == ["h0", "h1", "h2", "hc"])
         await expectNoLastCopyDeleted(world.server)
+    }
+
+    @Test("フォルダごと消す前に一覧を取り直し、確かめていないファイルが在れば消さない")
+    func lateArrivalBlocksWholeFolderDelete() async {
+        let world = await makeSettledWorld("late-arrival")
+        let server = world.server
+        let folder = world.setFolder
+        world.engine.beforeRemovalWritesForTesting = {
+            // 確かめ終えた後に、家族が写真を 1 枚置いた（中身はどこにも無い）。
+            await server.seed("\(folder)/from-family.jpg", hash: "hFamily")
+            await server.seed("\(folder)/\(ShareAnalysisData.subfolderName)/notes.txt", hash: "hNotes")
+        }
+        _ = await world.engine.deleteSet(id: world.setID)
+        await sync(world.engine)
+        world.engine.beforeRemovalWritesForTesting = nil
+        let paths = await server.filePaths()
+        // 次の回で確かめられて退避されるのは正しい（中身はどこにも無い）。消えていないことを見る。
+        #expect(paths.contains { $0.hasSuffix("/from-family.jpg") }, "確かめていない写真をフォルダごと消した")
+        #expect(paths.contains("\(folder.lowercased())/\(ShareAnalysisData.subfolderName)/notes.txt"))
+        await expectNoLastCopyDeleted(server)
+    }
+
+    @Test("消したフォルダの印は、フォルダを最後に見た時刻から 24 時間持つ")
+    func retiredMarkGraceCountsFromLastSeen() async {
+        let world = await makeSettledWorld("grace")
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        world.engine.removalClock = { clock }
+        await backupVanishes(1, world)   // 1 枚は退避になる
+        await world.server.setFailMove(true)   // 退避できない＝フォルダは何日も残る
+        _ = await world.engine.deleteSet(id: world.setID)
+        await sync(world.engine)
+        let key = world.setFolder.lowercased()
+        #expect(ShareSettingsKeys.retiredFolders(world.defaults)[key] != nil)
+        // 消してから 30 時間、フォルダはまだ在る（退避が失敗し続けている）。
+        clock = clock.addingTimeInterval(30 * 3_600)
+        await sync(world.engine)
+        #expect(ShareSettingsKeys.retiredFolders(world.defaults)[key] == clock,
+                "フォルダが在るのに、最後に見た時刻へ進めていない")
+        // 退避できるようになり、フォルダが片付く。直後の回では印を捨てない。
+        await world.server.setFailMove(false)
+        await sync(world.engine)
+        #expect(await sharedHashes(world).isEmpty)
+        clock = clock.addingTimeInterval(3_600)
+        await sync(world.engine)
+        #expect(ShareSettingsKeys.retiredFolders(world.defaults)[key] != nil,
+                "フォルダが消えた直後に印を捨てた（消した時刻から数えている）")
+        // 遅れて完走したコピーが作り直しても片付く。
+        await world.server.seed("\(world.setFolder)/late.jpg", hash: "h0")
+        await sync(world.engine)
+        #expect(await sharedHashes(world).isEmpty)
+        // 最後に見てから 24 時間を過ぎたら捨てる。
+        clock = clock.addingTimeInterval(25 * 3_600)
+        await sync(world.engine)
+        #expect(ShareSettingsKeys.retiredFolders(world.defaults)[key] == nil, "印を捨てない")
     }
 
     @Test("最後の 1 枚の数え方（偽 Dropbox）")

@@ -125,6 +125,10 @@ public actor BackupStore {
             existing.albums     = albums
             existing.isFavorite = isFavorite
             existing.backedUpAt = Date()
+            // ⚠️ 中身が変わった（または前の中身が分からない）なら、前の持ち主は**同じ写真ではない**
+            // ——別の持ち主として残すと、中身がどこにも無い写真を「済み」と言い続ける（独立レビュー 3 回目）。
+            let sameContent = contentHash == nil || (existing.contentHash != nil && existing.contentHash == contentHash)
+            if !sameContent { existing.otherLocalIdentifiers = nil }
             if let contentHash { existing.contentHash = contentHash }
             // ⚠️ **実体の対応も現在の PHAsset へ付け替える**（レビュー指摘）。
             // 同じ写真を端末から削除して再取り込みすると localIdentifier が変わる。実体は
@@ -141,7 +145,9 @@ public actor BackupStore {
                 // ⚠️ 前の持ち主は**捨てずに残す**（ADR-278 追補 2）。重複写真の片方が記録を失うと、
                 // 共有が待つ写真として毎回上げ直されていた。
                 var others = Set(existing.otherLocalIdentifiers ?? [])
-                if let previous = existing.localIdentifier, previous != localIdentifier { others.insert(previous) }
+                if sameContent, let previous = existing.localIdentifier, previous != localIdentifier {
+                    others.insert(previous)
+                }
                 others.remove(localIdentifier)
                 existing.otherLocalIdentifiers = others.isEmpty ? nil : others.sorted()
                 existing.localIdentifier = localIdentifier

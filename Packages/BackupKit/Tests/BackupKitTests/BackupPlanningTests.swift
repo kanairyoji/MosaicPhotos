@@ -240,6 +240,40 @@ struct CancelWritesEndLineTests {
     }
 }
 
+/// 記録の「別の持ち主」（ADR-278 追補 2）は、**同じ中身**のときだけ残す（独立レビュー 3 回目）。
+@Suite("BackupStore: 同じファイルを指す別の持ち主")
+struct OtherOwnersTests {
+    private func upsert(_ store: BackupStore, id: String, hash: String?) async {
+        _ = await store.upsertRecord(dropboxPath: "/b/2020/img.jpg", localIdentifier: id, filename: "img.jpg",
+                                     creationDate: nil, contentHash: hash, people: [], albums: [],
+                                     isFavorite: false)
+    }
+
+    @Test("同じ中身なら前の持ち主も「済み」・共有で解決できる")
+    func sameContentKeepsPreviousOwner() async {
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        await upsert(store, id: "A", hash: "H")
+        await upsert(store, id: "B", hash: "H")
+        #expect(await store.recordedLocalIdentifiers() == ["A", "B"])
+        #expect(await store.backupRefs(forLocalIdentifiers: ["A", "B"]).count == 2)
+        let verified = await store.reconcile(remote: ["/b/2020/img.jpg": "H"],
+                                             listedAt: Date().addingTimeInterval(60)).verified
+        #expect(verified == ["A", "B"], "照合が前の持ち主を合格に数えない（次の照合で台帳から落ちる）")
+    }
+
+    @Test("中身が変わったら前の持ち主は残さない（中身がどこにも無い写真を「済み」と言わない）")
+    func changedContentDropsPreviousOwner() async {
+        let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
+        await upsert(store, id: "A", hash: "H")
+        await upsert(store, id: "C", hash: "H")
+        await upsert(store, id: "B", hash: "H2")
+        #expect(await store.recordedLocalIdentifiers() == ["B"], "中身の違う前の持ち主が残っている")
+        let verified = await store.reconcile(remote: ["/b/2020/img.jpg": "H2"],
+                                             listedAt: Date().addingTimeInterval(60)).verified
+        #expect(verified == ["B"])
+    }
+}
+
 @Suite("BackupPlanning.dropboxErrorSummary")
 struct DropboxErrorSummaryTests {
 

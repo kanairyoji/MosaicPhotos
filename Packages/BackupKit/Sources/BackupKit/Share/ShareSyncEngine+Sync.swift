@@ -101,6 +101,13 @@ extension ShareSyncEngine {
             }
         }
         let remote = RemoteShareIndex(listing: listing)
+        let account = accountFingerprint()
+        if Date().timeIntervalSince(cloudLookupCacheStartedAt) > 3_600 || account != cloudLookupCacheAccount {
+            learnedCloudHashes.removeAll()
+            missingCloudOriginals.removeAll()
+            cloudLookupCacheStartedAt = Date()
+            cloudLookupCacheAccount = account
+        }
         // クラウド原本の中身（10 万行の射影）は**反映 1 回に 1 度だけ**引く。宛先名と、
         // 消す前の確認（中身が他に在るか）の両方に使う。
         let cloudHashes = await cloudSourceHashProvider?()
@@ -131,7 +138,12 @@ extension ShareSyncEngine {
         // ことになり、コピーが永久に失敗する（クラウド写真は共有ルートの中にも在り得る）。
         // 掃除は「どのセットも持たないフォルダを消す」だけなので、後回しにしても
         // 判断は変わらない——変わるのは「元を取り終わってから消す」ことだけ。
-        await sweepRetiredFolders(remote: remote, removal: removal)
+        // 掃除にも、セットごとの反映で覚えたクラウド原本の中身を渡す（同じ判断に同じ材料・ADR-196）。
+        let sweepRemoval = RemovalContext(
+            layoutRoot: removal.layoutRoot, shareRoot: removal.shareRoot, holdingRoot: removal.holdingRoot,
+            cloudHashes: removal.cloudHashes.map { $0.merging(learnedCloudHashes) { current, _ in current } },
+            store: removal.store, copier: removal.copier, token: removal.token)
+        await sweepRetiredFolders(remote: remote, removal: sweepRemoval)
 
         lastSyncAt = Date()
         await refresh()
@@ -209,7 +221,10 @@ extension ShareSyncEngine {
             let missing = items.map(\.refKey).filter { $0.hasPrefix("C-") }
                 .map { String($0.dropFirst(2)) }
                 .filter { known[$0.lowercased()] == nil && !missingCloudOriginals.contains($0.lowercased()) }
-            for path in missing.sorted().prefix(Self.maxCloudHashLookupsPerSet) {
+            // 回ごとに始める位置をずらす（訊けなかった原本が毎回同じ 50 枠を埋めないように）。
+            let ordered = missing.sorted()
+            let begin = ordered.isEmpty ? 0 : (reviewRotation % ordered.count + ordered.count) % ordered.count
+            for path in (ordered[begin...] + ordered[..<begin]).prefix(Self.maxCloudHashLookupsPerSet) {
                 switch await copier.lookup(path: path, token: token) {
                 case .file(let hash?):
                     known[path.lowercased()] = hash
@@ -344,8 +359,11 @@ extension ShareSyncEngine {
         let memberSet = Set(memberKeys)
         let unchanged: @MainActor () async -> Bool = {
             guard let sets = await store.readShareSets(),
-                  sets.contains(where: { $0.id == setID && $0.folderName == folderName }),
-                  let fresh = await store.readShareItems(setID: setID),
+                  let fresh = await store.readShareItems(setID: setID) else {
+                Diagnostics.mark("share: '\(label)' 消す直前にセットかメンバーが読めない — この回は消さない")
+                return false
+            }
+            guard sets.contains(where: { $0.id == setID && $0.folderName == folderName }),
                   Set(fresh.map(\.refKey)) == memberSet else {
                 Diagnostics.mark("share: '\(label)' 反映の途中でセットかメンバーが変わった — この回は消さない")
                 return false

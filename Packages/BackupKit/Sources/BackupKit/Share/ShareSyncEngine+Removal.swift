@@ -46,7 +46,7 @@ extension ShareSyncEngine {
 
     func retireFolder(_ path: String) {
         var retired = ShareSettingsKeys.retiredFolders(defaults)
-        retired[path.lowercased()] = Date()
+        retired[path.lowercased()] = removalClock()
         ShareSettingsKeys.setRetiredFolders(retired, defaults)
     }
 
@@ -139,7 +139,7 @@ extension ShareSyncEngine {
         // ⚠️ **読み直してから、触る印だけを書き換える**（上の await のあいだに `deleteSet` が
         // 新しい印を書くことがあり、手元の写しで上書きするとそれが消える）。
         let present = Set(unwanted)
-        let now = Date()
+        let now = removalClock()
         var latest = ShareSettingsKeys.retiredFolders(defaults)
         var changed = false
         for (path, at) in latest {
@@ -208,7 +208,30 @@ extension ShareSyncEngine {
         }
         let movesLeft = moves.count - moved
 
+        // ⚠️ 退避を 1 枚ずつ続けると数分かかる。**消す直前にもう一度**前提を見る（独立レビュー 3 回目）。
+        guard await stillApplies() else { return }
+        var folderIsClear = false
         if let wholeFolder, keptForMember == 0, undecided == 0, movesLeft == 0 {
+            // ⚠️ **フォルダごと消す前に一覧を取り直す**（独立レビュー 3 回目）。確かめたのは反映の頭の一覧で、
+            // その後に届いたファイル（遅れて完走したコピー・家族が置いた写真）や、解析データの置き場にある
+            // シャード以外のファイルは 1 枚も確かめていない。確かめた以外のものが 1 つでも在れば、
+            // フォルダは消さず、確かめた分だけを消す。
+            let checked = Set(candidates.map(\.pathLower))
+            let analysisPrefix = wholeFolder.lowercased() + "/" + ShareAnalysisData.subfolderName + "/"
+            if let fresh = await removal.copier.listFolder(path: wholeFolder, token: removal.token,
+                                                           recursive: true) {
+                let unchecked = fresh.filter { file in
+                    guard !file.isFolder else { return false }
+                    if file.pathLower.hasPrefix(analysisPrefix) { return !ShareAnalysisData.isAnalysisFileName(file.name) }
+                    return !checked.contains(file.pathLower)
+                }
+                folderIsClear = unchecked.isEmpty
+                if !folderIsClear {
+                    Diagnostics.mark("share sync: '\(label)' に確かめていないファイル \(unchecked.count) 個 — フォルダごとは消さない")
+                }
+            }
+        }
+        if let wholeFolder, folderIsClear {
             // 中の写真は全部「他に在る」か「退避した」——フォルダごと消してよい（解析データも一緒に）。
             Diagnostics.mark("Share sync: removing retired folder '\(label)'")
             _ = await removal.copier.deleteBatch(paths: [wholeFolder], token: removal.token)

@@ -265,8 +265,16 @@ public final class ShareSyncEngine {
     @ObservationIgnored var learnedCloudHashes: [String: String] = [:]
     /// Dropbox に訊いたら無かったクラウド原本（パス小文字）。プロセスのあいだ訊き直さない。
     @ObservationIgnored var missingCloudOriginals: Set<String> = []
+    /// 上の 2 つを最後に空にした時刻と、そのときのアカウント。**1 時間・アカウントの切り替えで捨てる**
+    /// （原本が差し替わった・戻ってきた・別のアカウントの答えを使い続けない・独立レビュー 3 回目）。
+    @ObservationIgnored var cloudLookupCacheStartedAt = Date.distantPast
+    @ObservationIgnored var cloudLookupCacheAccount: String?
     /// 消す前の確認で、何番目の候補から見るか（回ごとにずらす）。
-    @ObservationIgnored var reviewRotation = 0
+    /// ⚠️ 起動ごとに**乱数で始める**（独立レビュー 3 回目）。0 から数えると、夜間の起動のたびに
+    /// 1 回目が同じ候補から始まり、ずらす意味が無かった。
+    @ObservationIgnored var reviewRotation = Int.random(in: 0..<1_000_000)
+    /// 消したフォルダの印の時刻（テストが差し替える）。
+    @ObservationIgnored var removalClock: @MainActor () -> Date = { Date() }
     #if DEBUG
     /// テスト用: 消す前の確認で、Dropbox に訊き終えてから書くまでの間に呼ぶ（利用者の操作が割り込む形を作る）。
     @ObservationIgnored var beforeRemovalWritesForTesting: (@MainActor () async -> Void)?
