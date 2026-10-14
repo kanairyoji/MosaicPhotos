@@ -481,7 +481,16 @@ enum HeavyWorkScheduler {
             // 見送る」が永久に効かなくなる（生成と解析の共倒れ＝diagnostics-72 の再発）。
             let analysis = NightlyPlan.analysisStep(boostActive: stores.analysisSession.isActive)
             await perform(analysis, stores: stores)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                // ⚠️⚠️ **この出口を黙らせない**（ADR-274 追補 2・独立レビュー 2 周目）。
+                // `.analysis` は `.nonblocking` と宣言しているが `kick` は 8.5 万件の列挙を待つ
+                // （実測 11〜38 秒）。21 秒の窓では**ここで尽きる**——つまり模型が予測した
+                // 飢餓の世界は、まさにこの `return` で起きる。黙って帰ると `window plan:` も
+                // 下の飢餓ログも出ず、**実機確認の手順（章 J-3）は「正常」と読んでしまう**。
+                Diagnostics.mark("bgtask: 毎窓の手に順番が回らなかった: "
+                                 + "1手目で窓が尽きた（analysis 以降は未着手）")
+                return
+            }
 
             let inputs = await gatherInputs(stores)
             let rest = NightlyPlan.remainingSteps(inputs)

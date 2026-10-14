@@ -165,18 +165,23 @@ final class NightlyWindowSimulationTests: XCTestCase {
 
     // MARK: - 3. 模型の歯（これが無いと変異で全部 green になる）
 
-    /// ⚠️⚠️ **模型の識別力は「上限つきの秒数」だけから来る。**
+    /// ⚠️⚠️ **模型の識別力は所要の導出から来る。折れても静かなので、ここで全部 pin する。**
     ///
-    /// 独立レビューの変異テストで分かったこと: 撮影日時の本番定数の読みを落とすと**全部 green**、
-    /// 上限つきを 0 秒にしても**全部 green**。つまり ADR-274 が謳う
-    /// 「所要を宣言から導くので宣言が自己検査になる」を**何も守っていなかった**。
-    /// ADR-253（当たらない規則が ✅ の顔で居座る）そのものなので、ここで pin する。
+    /// 独立レビューの変異テストで分かったこと（**2 周ぶん**）:
+    /// - 上限つきを 0 秒にする → 当時**全部 green**
+    /// - 撮影日時の本番定数の読みを落とす → 当時**全部 green**
+    /// - ⚠️⚠️ **上限なしを「残り全部」から 1 秒に変える → 2 周目でも全部 green だった**。
+    ///   つまり `order` の費用模型が存在する理由そのもの（「上限なしの手は後ろに何も残さない」）が
+    ///   **どこにも assert されていなかった**。1 周目の直しは `.bounded` だけ pin していた。
+    /// ADR-253（当たらない規則が ✅ の顔で居座る）そのものなので、3 つとも pin する。
     func testTheModelsDiscriminatingPowerIsPinned() {
-        // (a) 撮影日時は**本番の定数**を読むこと（書き写しでも 0 でもないこと）。
+        // (a) 撮影日時は本番の定数と**一致**すること。
+        //     ⚠️ これは「読んでいる」ことの証明にはならない（`return 40` と書き写しても通る）。
+        //     検出できるのは「読みを落とした」ことと、後から定数がずれたこと。
         XCTAssertEqual(
             NightlyWindowSimulator.seconds(for: .probeCaptureDates(limit: 500), remaining: 10_000),
             HeavyWorkScheduler.captureDateProbeSeconds,
-            "撮影日時の所要が本番の定数から来ていない（模型の歯が折れている）")
+            "撮影日時の所要が本番の定数と違う（模型の歯が折れている）")
 
         // (b) 上限つきは 0 秒ではないこと（0 にすると窓が尽きず飢餓が出なくなる）。
         XCTAssertGreaterThan(
@@ -195,6 +200,51 @@ final class NightlyWindowSimulationTests: XCTestCase {
         XCTAssertEqual(NightlyWindowSimulator.seconds(for: .deferGenerate(streak: 1),
                                                       remaining: 10_000), 0,
                        "生成の見送りが窓を食っている＝`Kind` で丸めている（ADR-163 の常態を誤る）")
+
+        // (e) ⚠️⚠️ **上限なしの手は窓の残りを食い切ること**。
+        //     これを 1 秒に変えても 2 周目のレビューまで**全部 green** だった——
+        //     「上限なしの後ろは順番が回らない」は `order` が存在する理由そのものなのに、
+        //     今まで**どこにも assert が無かった**。しかも歯のある上限つき（撮影日時 40 秒）は
+        //     2 か月で消える見込みなので、そのとき模型は識別力 0 で静かに緑になる。
+        XCTAssertEqual(NightlyWindowSimulator.seconds(for: .shareSync, remaining: 123), 123,
+                       "上限なしの手が窓の残りを食わない＝上限なしの後ろの飢餓を一切検出できない")
+    }
+
+    /// ⚠️⚠️ **必要な集合は「宣言」から導くこと。「計画」から引かないこと。**
+    ///
+    /// `required.insert(kind)` を `if planned.contains(kind)` で囲む（＝1 周目に壊れていた形に
+    /// 戻す）変異は、2 周目のレビューまで**全部 green** だった。つまり追補 2 の直しの
+    /// **肝心の性質にテストが無かった**——将来の「単純化」で穴がそのまま戻る。
+    /// ⚠️ 空の計画に対して全部要求されること、が一番短い検査になる。
+    func testTheRequiredSetComesFromDeclarationsNotFromThePlan() {
+        XCTAssertEqual(NightlyPlan.requiredEveryWindowKinds(in: [], networkAllowed: true),
+                       [.analysis, .stallCheck, .indexSnapshot, .backup], """
+            必要な集合が**計画から**引かれている＝計画から落ちた手が飢餓に数えられない
+            （ADR-266 / ADR-273 #3 の死角がそのまま戻る・ADR-274 追補 2 の穴 2）。
+            """)
+    }
+
+    /// ⚠️ **回線で落とす毎窓の手を、飢餓に数えないこと。**
+    ///
+    /// ⚠️⚠️ `if !networkAllowed, s.dropWhenOffline { continue }` を no-op にしても**全部 green**
+    /// だった——いま毎窓と宣言した 4 手はどれも `dropWhenOffline: false` なので、
+    /// この分岐は**死んでいた**。`testOfflineWindows…` も
+    /// 「回線で落ちた手を数えない」ではなく「回線に依る毎窓の手が無い」で通っていた
+    /// （名前が持っていない網羅を主張していた）。偽りの seam で本物の材料を作る。
+    func testNetworkGatedEveryWindowStepsAreNotCountedAsStarvedOffline() {
+        NightlyWindowSimulator.withSpecOverride({ kind in
+            guard kind == .captureDates else { return nil }
+            return NightlyPlan.Spec(cost: .bounded, dropWhenOffline: true, everyWindow: true)
+        }) {
+            XCTAssertTrue(
+                NightlyPlan.requiredEveryWindowKinds(in: [], networkAllowed: true)
+                    .contains(.captureDates),
+                "回線がある窓では要求されるはず")
+            XCTAssertFalse(
+                NightlyPlan.requiredEveryWindowKinds(in: [], networkAllowed: false)
+                    .contains(.captureDates),
+                "回線が無い窓で落とす毎窓の手を飢餓に数えている（誤報になる）")
+        }
     }
 
     /// ⚠️ **窓が本当に打ち切っていること**を、打ち切りの位置で pin する。
@@ -208,8 +258,11 @@ final class NightlyWindowSimulationTests: XCTestCase {
                        [.analysis, .backup, .stallCheck, .indexSnapshot],
                        "打ち切りの位置が変わった（ガード・時計・手の所要のどれかが壊れている）")
 
+        let shortRan = sim.runWindow(seconds: 2)
         var long = simulator(provideShare: true, publishAnalysis: true)
-        XCTAssertGreaterThan(long.runWindow(seconds: 284).count, sim.windowsRun + 3,
+        // ⚠️ 以前は `sim.windowsRun`（**窓の数**）と比べていた＝手の数と窓の数の比較で、
+        //    しきい値が偶然 4 になっていた（独立レビューの指摘）。手の数どうしで比べる。
+        XCTAssertGreaterThan(long.runWindow(seconds: 284).count, shortRan.count,
                              "長い窓の方が多くの手に順番が回るはず（模型が逆向き）")
     }
 

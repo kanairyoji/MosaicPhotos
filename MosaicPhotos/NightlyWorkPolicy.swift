@@ -452,7 +452,9 @@ enum NightlyPlan {
     /// ⚠️⚠️ **「計画に載った手」から引かない。** 手が計画から黙って落ちたら飢餓に数えられず、
     /// ADR-266（条件つきで落ちる）と ADR-273 #3（段のリテラル配列から落ちる）が
     /// まるごと死角になる——`out.append(.refreshCloudIndexSnapshot)` を 1 行消すと
-    /// 「計画基準」の版は黙って green になった（ADR-274 追補 2・独立レビューの実証）。
+    /// 「計画基準」の版では**飢餓の掃きが黙って green** になった（ADR-274 追補 2・
+    /// 独立レビューの実証。⚠️ 並びのテストは落ちていたので、黙っていたのは
+    /// 飢餓の機構であってスイート全体ではない＝2 周目で訂正した）。
     /// だから**宣言から導いて**、そこから走った手を引く。
     ///
     /// ⚠️ `after` の相手が**上限なしで同じ窓に居る**なら免除する——照合の週は
@@ -471,6 +473,11 @@ enum NightlyPlan {
             guard s.everyWindow else { continue }
             // 回線が無い窓で落とす手は、落ちていて正しい。
             if !networkAllowed, s.dropWhenOffline { continue }
+            // ⚠️ 前提の費用は **`Kind`** で見ている。`seconds(for:)`（模型）は **`Step`** で見る
+            //    （`.deferGenerate` は種類が上限なしでも 0 秒）ので、`after: [.generate]` を
+            //    足すと「見送られた窓でも免除される」ずれが出る。いまは `after` の相手が
+            //    `.reconcile` だけなので実害は無いが、相手を増やすときはここを `Step` 側に
+            //    寄せる必要がある（独立レビューの指摘・ADR-196 の同型）。
             let blockedByPrerequisite = s.after.contains { prerequisite in
                 planned.contains(prerequisite) && spec(for: prerequisite).cost == .unbounded
             }

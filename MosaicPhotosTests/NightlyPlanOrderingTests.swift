@@ -115,13 +115,14 @@ final class NightlyPlanOrderingTests: XCTestCase {
     func testIndexSnapshotRefreshPrecedesEveryWindowEatingStepInEveryConfiguration() {
         for (name, inputs) in allInputs() {
             let steps = labels(inputs)
-            guard let snap = steps.firstIndex(of: "indexSnapshot") else {
+            let kinds = NightlyPlan.steps(inputs).map(\.kind)
+            // ⚠️ `??` の退避は消した——`labels` と `kinds` は同じ `steps(inputs)` の射影なので
+            //    到達しない枝だった（独立レビューの指摘）。無い枝は「疑いがある」と誤読させる。
+            guard let snapByKind = kinds.firstIndex(of: .indexSnapshot) else {
                 return XCTFail("控えの書き直しが手順に無い [\(name)]: \(steps)")
             }
-            let kinds = NightlyPlan.steps(inputs).map(\.kind)
             for eating in Self.windowEatingKinds {
                 guard let other = kinds.firstIndex(of: eating) else { continue }
-                let snapByKind = kinds.firstIndex(of: .indexSnapshot) ?? snap
                 XCTAssertLessThan(snapByKind, other, """
                     控えの書き直しが「\(eating)」より後ろにある＝一度も順番が回ってこない。
                     [\(name)]
@@ -155,11 +156,10 @@ final class NightlyPlanOrderingTests: XCTestCase {
         var checked = 0
         for (name, inputs) in allInputs() where !inputs.backupReconcileDue {
             let steps = labels(inputs)
-            guard let backup = steps.firstIndex(of: "backup") else {
+            let kinds = NightlyPlan.steps(inputs).map(\.kind)
+            guard let backupByKind = kinds.firstIndex(of: .backup) else {
                 return XCTFail("バックアップの手が無い [\(name)]: \(steps)")
             }
-            let kinds = NightlyPlan.steps(inputs).map(\.kind)
-            let backupByKind = kinds.firstIndex(of: .backup) ?? backup
             for eating in Self.windowEatingKinds where eating != .reconcile {
                 guard let blocking = kinds.firstIndex(of: eating) else { continue }
                 checked += 1
@@ -171,7 +171,7 @@ final class NightlyPlanOrderingTests: XCTestCase {
             // 上限つきの塞ぐ手（撮影日時の問い合わせ）より前であること。
             if let probe = index(steps, startingWith: "captureDates") {
                 checked += 1
-                XCTAssertLessThan(backup, probe, """
+                XCTAssertLessThan(backupByKind, probe, """
                     バックアップが撮影日時の問い合わせ（40 秒）より後ろ。
                     [\(name)] \(steps)
                     """)
