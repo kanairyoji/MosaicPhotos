@@ -29,7 +29,8 @@ struct RemovalContext {
     let cloudHashes: [String: String]?
     let store: BackupStore
     let copier: DropboxShareCopier
-    let token: String
+    /// ⚠️ `var`＝区切りごとに取り直したものへ差し替える（`ShareSyncEngine.reissuedToken`）。
+    var token: String
 }
 
 extension ShareSyncEngine {

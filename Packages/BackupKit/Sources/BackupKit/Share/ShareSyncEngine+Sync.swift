@@ -70,7 +70,7 @@ extension ShareSyncEngine {
         // 停止を跨いだ回を見分けるために、始めた時点の中断の世代を控える（diagnostics-109）。
         let suspensionEpoch = ProcessSuspension.epoch
 
-        guard let token = try? await tokenProvider.freshAccessToken() else {
+        guard var token = try? await tokenProvider.freshAccessToken() else {
             lastError = .notConnected
             BackupLogger.info("Share sync: skipped (no token)")
             return
@@ -93,6 +93,7 @@ extension ShareSyncEngine {
         // ⚠️ 共有ルートは**無いときだけ**作る。毎回投げると 1 往復を捨て続けることになる
         //（409＝既存で無害だが、落ち着いた反映は 1 往復も書かないのが正しい）。
         let listing: [DropboxShareCopier.ListedFile]
+        token = await reissuedToken(token)   // 台帳を開く間に止められていても、期限切れで投げない
         if let fetched = await copier.listFolder(path: shareRoot, token: token, recursive: true) {
             listing = fetched
         } else if sets.isEmpty {
@@ -150,7 +151,7 @@ extension ShareSyncEngine {
         // 前後の空白で前方一致が外れ、他の端末の共有コピーを証拠に数えていた・独立レビュー 2 回目）。
         let rawRoot = defaults.string(forKey: BackupSettingsKeys.dropboxFolder)
             ?? BackupSettingsKeys.defaultDropboxFolder
-        let removal = RemovalContext(layoutRoot: BackupLayout.deviceRoot(root: rawRoot, deviceFolder: ""),
+        var removal = RemovalContext(layoutRoot: BackupLayout.deviceRoot(root: rawRoot, deviceFolder: ""),
                                      shareRoot: shareRoot,
                                      holdingRoot: ShareSettingsKeys.currentShareRemovedRoot(defaults),
                                      cloudHashes: cloudHashes, store: store,
@@ -162,6 +163,8 @@ extension ShareSyncEngine {
         var finishedSets = 0
         for set in sets {
             guard !shouldStopAtBreak else { break }
+            token = await reissuedToken(token)
+            removal.token = token
             await sync(set: set, shareRoot: shareRoot, store: store,
                        copier: copier, token: token, remote: remote, removal: removal)
             await refresh(totals: totals)   // 進捗（共有済み N/M）を UI へ（変化なしなら無通知）
@@ -184,7 +187,7 @@ extension ShareSyncEngine {
         let sweepRemoval = RemovalContext(
             layoutRoot: removal.layoutRoot, shareRoot: removal.shareRoot, holdingRoot: removal.holdingRoot,
             cloudHashes: removal.cloudHashes.map { $0.merging(learnedCloudHashes) { current, _ in current } },
-            store: removal.store, copier: removal.copier, token: removal.token)
+            store: removal.store, copier: removal.copier, token: await reissuedToken(token))
         await sweepRetiredFolders(remote: remote, removal: sweepRemoval)
 
         lastSyncAt = Date()
@@ -196,6 +199,19 @@ extension ShareSyncEngine {
             isSyncing = false
             await syncNow()
         }
+    }
+
+    /// いま使うトークン（**区切りごとに取り直す**・diagnostics-110）。
+    ///
+    /// ⚠️ 反映は始めた時点のトークンを最後まで使い回していた。背面・窓の期限切れで
+    /// プロセスが止められると、戻ったときにはトークンの期限（4 時間）が過ぎていて、
+    /// 続きの要求が全部 401 になる（実機: 6 時間の停止のあと `create_folder failed (401)`、
+    /// その回は丸ごと見送り）。
+    /// `freshAccessToken` は期限が近くなければ手元の値を返すだけなので、**無条件で呼ぶ**
+    /// ——「停止を跨いだか」を呼ぶ側で判断しない（条件を呼ぶ側に置くと、置き忘れが穴になる）。
+    /// 取れなければ手元の値で続ける（その回の要求が落ちるだけで、何も決めずに抜ける）。
+    func reissuedToken(_ current: String) async -> String {
+        (try? await tokenProvider.freshAccessToken()) ?? current
     }
 
     /// 停止を跨いだ回なら、ログの末尾に添える一言（跨いでいなければ空）。
