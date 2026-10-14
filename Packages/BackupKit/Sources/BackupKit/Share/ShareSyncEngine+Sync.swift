@@ -44,8 +44,28 @@ extension ShareSyncEngine {
         await task.value
     }
 
+    /// 走行中の反映を**次の区切りで**止める（夜間の窓の期限切れ・diagnostics-109）。
+    ///
+    /// 反映は構造化されていない Task で走るので、窓の `cancel()` は届かない。期限切れの窓の
+    /// 反映は投げた通信ごと 30 分止まり、次の窓の頭で失敗と飢餓を出していた。
+    /// ⚠️ **通信の途中では止めない**（`Task.cancel` にしない）。区切りは「セットとセットの間」
+    /// 「コピーの塊の間」「原本への問い合わせの間」の 3 つで、止まった回は**消さない**
+    /// （そのセットの掃除・フォルダの掃除・再走をしない）。次の回が続きから決め直す。
+    /// 前面復帰では呼ばない（利用者が始めた反映と区別できない・バックアップと同じ扱い）。
+    public func stopAtNextBreak() {
+        guard isSyncing, !stopRequested else { return }
+        stopRequested = true
+        Diagnostics.mark("share sync: 区切りで止めるよう頼んだ（窓の期限切れ）")
+    }
+
+    /// 区切りで止まるべきか。
+    var shouldStopAtBreak: Bool { stopRequested || Task.isCancelled }
+
     private func performSync() async {
-        defer { isSyncing = false }
+        defer {
+            isSyncing = false
+            stopRequested = false
+        }
         // 停止を跨いだ回を見分けるために、始めた時点の中断の世代を控える（diagnostics-109）。
         let suspensionEpoch = ProcessSuspension.epoch
 
@@ -138,14 +158,21 @@ extension ShareSyncEngine {
         // ⚠️ メンバー数は**1 回だけ数えて使い回す**（ADR-119）。セットごとに数え直すと
         // 「メンバー総数 × セット数」行を 1 回の反映で射影することになる。
         let totals = await store.shareItemTotals()
+        var finishedSets = 0
         for set in sets {
-            guard !Task.isCancelled else {
-                needsAnotherPass = true
-                break
-            }
+            guard !shouldStopAtBreak else { break }
             await sync(set: set, shareRoot: shareRoot, store: store,
                        copier: copier, token: token, remote: remote, removal: removal)
             await refresh(totals: totals)   // 進捗（共有済み N/M）を UI へ（変化なしなら無通知）
+            finishedSets += 1
+        }
+        // ⚠️ 止まった回は**フォルダの掃除をしない**（消す判断は材料が揃った回だけ）。再走もしない
+        // ——止めたのは窓が尽きたからで、続きは次の回（次の窓・バックアップ後・起動）が拾う。
+        if shouldStopAtBreak {
+            needsAnotherPass = false
+            Diagnostics.mark("share sync: 区切りで止めた（\(finishedSets)/\(sets.count) セットの後・掃除は次の回）")
+            await refresh()
+            return
         }
         // ⚠️ **フォルダの掃除は最後**（紛らわしい名前のテストが捕まえた）。
         // 先にやると、**コピー元が掃除対象のフォルダに在る**場合に元を消してからコピーする
@@ -250,7 +277,7 @@ extension ShareSyncEngine {
             let share = max(1, cloudLookupsLeftThisSync / max(1, cloudLookupSetCount))
             cloudLookupSetCount = max(1, cloudLookupSetCount - 1)
             for path in (ordered[begin...] + ordered[..<begin]).prefix(max(0, min(share, cloudLookupsLeftThisSync))) {
-                guard !Task.isCancelled else { break }
+                guard !shouldStopAtBreak else { break }
                 cloudLookupsLeftThisSync -= 1
                 switch await copier.lookup(path: path, token: token) {
                 case .file(let hash?):
@@ -288,6 +315,12 @@ extension ShareSyncEngine {
                              + " — メンバーのコピーは消す前の確認で残す")
         }
 
+        // ⚠️ 止まった回は、ここから先（解析データ・コピー・掃除）をしない（`stopAtNextBreak`）。
+        if shouldStopAtBreak {
+            await store.recordShareSyncCounts(setID: set.id, present: plan.present,
+                                              waiting: plan.waitingBackup.count)
+            return
+        }
         // 解析データは**コピーの前に**、いま置かれている分で揃える（ADR-183）。
         // コピーは数分かかるので、後回しだと「反映を押しても解析データが何分も更新されない」。
         let presentPaths = Set(remoteFiles.map(\.pathLower))
@@ -357,7 +390,7 @@ extension ShareSyncEngine {
         for chunk in stride(from: 0, to: budget, by: Self.copyChunkSize).map({
             Array(plan.copies[$0..<min($0 + Self.copyChunkSize, budget)])
         }) {
-            guard !Task.isCancelled else { needsAnotherPass = true; break }
+            guard !shouldStopAtBreak else { break }
             let entries = chunk.map { (from: $0.fromPath, to: $0.toPath) }
             let result = await copier.copyBatch(entries: entries, token: token)
             for (index, copy) in chunk.enumerated() {
@@ -371,6 +404,12 @@ extension ShareSyncEngine {
         }
         if copied > 0 {
             BackupLogger.info("Share: '\(set.folderName)' copied \(copied)/\(plan.copies.count)")
+        }
+        // ⚠️ 止まった回は**消さない**（`stopAtNextBreak`）。数えた分だけ控えて抜ける。
+        if shouldStopAtBreak {
+            await store.recordShareSyncCounts(setID: set.id, present: plan.present + copied,
+                                              waiting: plan.waitingBackup.count)
+            return
         }
 
         // 掃除。⚠️ **消す前に、消す理由と中身の行き先を確かめる**（ADR-278）。

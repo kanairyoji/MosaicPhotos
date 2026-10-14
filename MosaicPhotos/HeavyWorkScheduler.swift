@@ -170,6 +170,9 @@ enum HeavyWorkScheduler {
             stores.autoAlbumEngine.stopBackgroundWork()
         }
         if cancelBackup, stores.backupEngine.isRunning { stores.backupEngine.cancel() }
+        // 共有の反映も同じ扱い（期限切れだけ・区切りで止める）。構造化されていないので
+        // `work.cancel()` は届かず、止めないと次の窓の頭で失敗を出す（diagnostics-109）。
+        if cancelBackup { stores.shareEngine.stopAtNextBreak() }
     }
 
     // MARK: - フォアグラウンド復帰（ADR-79）

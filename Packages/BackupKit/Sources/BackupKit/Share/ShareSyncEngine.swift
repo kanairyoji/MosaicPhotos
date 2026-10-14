@@ -46,6 +46,8 @@ public final class ShareSyncEngine {
     public internal(set) var isSyncing = false
     /// 走行中に来た反映要求（終わったら 1 回だけ再走する）。
     @ObservationIgnored var needsAnotherPass = false
+    /// 走行中の反映に「区切りで止まれ」と頼まれた（`stopAtNextBreak`・窓の期限切れ）。
+    @ObservationIgnored var stopRequested = false
     /// 削除系（セット削除・単枚解除）の実行中フラグ。反映と**相互排他**にする。
     ///
     /// ⚠️ 排他しないと「削除 → 走行中の反映が続きのチャンクをコピー」で、消したはずの
