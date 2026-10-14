@@ -105,6 +105,39 @@ public enum AnalysisPublishPlanning {
         return shards[cursor - 1]
     }
 
+    /// 写真をシャード（content_hash の先頭 2 桁）で束ねる。
+    /// 戻り値は (シャード → refKey 群, refKey → content_hash（小文字）)。
+    public static func groupByShard(_ photos: [AnalysisPublisher.CloudPhoto])
+        -> (refKeysByShard: [String: [String]], hashByRefKey: [String: String]) {
+        var refKeysByShard: [String: [String]] = [:]
+        var hashByRefKey: [String: String] = [:]
+        for photo in photos {
+            let hash = photo.contentHash.lowercased()
+            refKeysByShard[ShareAnalysisData.shardName(forHash: hash), default: []].append(photo.refKey)
+            hashByRefKey[photo.refKey] = hash
+        }
+        return (refKeysByShard, hashByRefKey)
+    }
+
+    /// refKey ごとの解析を、content_hash ごとのエントリにする。
+    ///
+    /// ⚠️ **同じ content_hash に複数の refKey が当たる**（原本・バックアップのコピー・
+    /// 共有のコピーは中身が同じ）。`entries` は辞書なので反復順が毎回変わり、
+    /// 勝つ refKey が変わると**中身が変わっていないのに指紋が変わる**＝毎回上げ直す。
+    /// refKey の小さい方を決定的に選ぶ（レビュー指摘）。
+    public static func entriesByHash(_ entries: [String: ShareAnalysisData.Entry],
+                                     hashByRefKey: [String: String]) -> [String: ShareAnalysisData.Entry] {
+        var out: [String: ShareAnalysisData.Entry] = [:]
+        var winnerRefKey: [String: String] = [:]
+        for (refKey, entry) in entries {
+            guard let hash = hashByRefKey[refKey] else { continue }
+            if let current = winnerRefKey[hash], current <= refKey { continue }
+            winnerRefKey[hash] = refKey
+            out[hash] = entry
+        }
+        return out
+    }
+
     /// 公開する JSON を作る。
     ///
     /// ⚠️ **鍵を並べて書く**（`.sortedKeys`）。`Entry` の辞書は順序を持たないので、

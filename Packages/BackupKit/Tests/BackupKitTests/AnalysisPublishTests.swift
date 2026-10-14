@@ -437,6 +437,34 @@ struct AnalysisPublishFailureTests {
         withExtendedLifetime(source) {}
     }
 
+    /// ⚠️ 逆向きも縛る（上のテストだけだと「記録を一度も落とさない」でも通る）。
+    /// 落とさないと、写真が戻って同じ中身のシャードになったとき「変わっていない」と読んで
+    /// **上げ直さない**——Dropbox からは消したのに記録だけ残り、そのシャードは公開されないまま。
+    @Test("消えたシャードを消せたら、記録も落とす")
+    func dropsDigestWhenDeleteSucceeds() async {
+        let defaults = TestDefaults.scratch("publish-stale-ok")
+        defaults.set(true, forKey: ShareSettingsKeys.publishAnalysisEnabled)
+        let digests = try! JSONEncoder().encode(["zz": "old"])
+        defaults.set(digests, forKey: ShareSettingsKeys.publishedAnalysisDigests)
+        let photos = [AnalysisPublisher.CloudPhoto(refKey: "C-/a.jpg",
+                                                   contentHash: String(repeating: "a", count: 64))]
+        let source = StubAnalysisSource()
+        // 名乗り確認 → 名乗り → シャード → 削除（成功）→ 名乗り。
+        // ⚠️ 削除の成功は**エントリ単位**で見る（`{}` だけでは成功と読まない）。
+        let deleted = #"{".tag": "complete", "entries": [{".tag": "success", "metadata": {}}]}"#
+        let stub = SequencedClient([(409, "{}"), (200, "{}"), (200, "{}"), (200, deleted), (200, "{}")])
+        let publisher = AnalysisPublisher(tokenProvider: StubPublishToken(), analysisSource: source,
+                                          httpClient: stub, defaults: defaults)
+
+        _ = await publisher.publish(photos: photos, budget: 8)
+
+        let stored = (defaults.data(forKey: ShareSettingsKeys.publishedAnalysisDigests))
+            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        #expect(stored["zz"] == nil, "消せたのに記録を残した（戻った写真のシャードを上げ直さない）")
+        #expect(stored.count == 1, "前提: 上げたシャードの記録はある（空振りしていない）")
+        withExtendedLifetime(source) {}
+    }
+
     /// ⚠️ 既定は 1 か所にしか書かない（画面の `@AppStorage` も同じ値を使う）。
     /// 画面側だけ `= true` のままだったので、**トグルは ON に見えるのに公開は「設定がオフ」**
     /// という食い違いが実機で出た。
