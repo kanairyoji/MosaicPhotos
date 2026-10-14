@@ -41,6 +41,7 @@ struct ShareAfterBackupGateTests {
                                      httpClient: server, defaults: defaults)
         engine.pollIntervalNs = 1_000_000
         engine.maxPollAttempts = 3
+        engine.networkAllowed = { true }
         let setID = await engine.createSet(name: "Family-\(label)", refKeys: ["L-p0", "L-p1"])!
         return World(engine: engine, store: store, server: server, setID: setID)
     }
@@ -87,7 +88,7 @@ struct ShareAfterBackupGateTests {
         let requestsBefore = await world.server.requestLog.count
         let tap = DiagnosticsLog.shared.tap()
 
-        await world.engine.syncAfterBackup()
+        await world.engine.sync(.afterBackup)
 
         #expect(await world.server.requestLog.count == requestsBefore, "待ちが無いのに反映した")
         #expect(await tap.count("share sync: バックアップ後の反映を見送る") == 1)
@@ -101,7 +102,7 @@ struct ShareAfterBackupGateTests {
         await backUp(1, store: world.store, server: world.server)   // バックアップが上げた
         let tap = DiagnosticsLog.shared.tap()
 
-        await world.engine.syncAfterBackup()
+        await world.engine.sync(.afterBackup)
 
         #expect(await tap.count("share sync: バックアップ後の反映を見送る") == 0)
         #expect(await world.store.shareSyncedCounts()[world.setID]?.present == 2, "上がった写真が共有されない")

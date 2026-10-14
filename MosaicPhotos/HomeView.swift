@@ -476,17 +476,14 @@ private struct HomeLifecycleTasks: ViewModifier {
                 try? await Task.sleep(for: .seconds(25))
                 guard NetworkStateMonitor.shared.networkAllowed() else { return }
                 await shareImporter.runIfNeeded()
-                if await hasShareSets() { await shareEngine.syncNow() }
+                await shareEngine.sync(.launch)
             }
             // バックアップ完走後: waitingBackup だった共有アイテムを反映する。
-            // ⚠️ 待ちが無ければ起こさない（判断は `ShareAfterBackupGate`）。無条件だった頃は、
+            // ⚠️ 待ちが無ければ起こさない（決まりは `ShareSyncTrigger.afterBackup`）。無条件だった頃は、
             // 夜間の手の反映と合わせて毎窓 2 回、全件の一覧を取り直していた（diagnostics-109）。
             .onChange(of: backupEngine.isRunning) { wasRunning, running in
                 guard wasRunning, !running else { return }
-                Task {
-                    guard NetworkStateMonitor.shared.networkAllowed() else { return }
-                    if await hasShareSets() { await shareEngine.syncAfterBackup() }
-                }
+                Task { await shareEngine.sync(.afterBackup) }
             }
             .onChange(of: dropboxStore.auth.connectionStatus) { _, newStatus in
                 switch newStatus {
@@ -526,12 +523,6 @@ private struct HomeLifecycleTasks: ViewModifier {
 
     /// 電源・回線ポリシーに応じて Dropbox 差分同期を起動/停止する。接続中のみ対象。
     /// 「電源OK かつ 回線OK」なら同期を開始、そうでなければ停止して通信・電池を抑える。
-    /// 共有セットが 1 つでもあるか（無ければ反映のネットワーク往復を丸ごと省く）。
-    /// ⚠️ 判定のためだけに `refresh()`（全セット集計）を呼ばない——件数だけ数える。
-    private func hasShareSets() async -> Bool {
-        await shareEngine.hasAnySet()
-    }
-
     private func evaluateSync() {
         guard case .connected = dropboxStore.auth.connectionStatus else { return }
         if PowerStateMonitor.shared.backgroundAllowed() && NetworkStateMonitor.shared.networkAllowed() {

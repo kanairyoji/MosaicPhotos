@@ -286,8 +286,7 @@ struct ShareProvideView: View {
                 // 作成元（人物・AI アルバム）のいまのメンバーに追従してから反映する（ADR-183 C）。
                 // 処理枠と同じ順序＝「押せば夜間と同じことが今すぐ起きる」。
                 Task {
-                    await engine.refreshAllFromSource()
-                    await engine.syncNow()
+                    await engine.sync(.manual)
                     // 端末写真が上がっていなければ、同じ操作で上げ始める（ADR-275）。
                     // 上がり終わったら HomeView がもう一度反映する。
                     if engine.sets.contains(where: { $0.waitingBackup > 0 }) { onUploadAwaited?() }

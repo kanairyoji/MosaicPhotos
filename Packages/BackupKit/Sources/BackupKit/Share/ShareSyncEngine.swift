@@ -82,6 +82,11 @@ public final class ShareSyncEngine {
     @ObservationIgnored public weak var analysisSource: ShareAnalysisSource?
     /// 作成元の現在メンバー解決（未設定なら「今の内容に更新」を出さない）。
     @ObservationIgnored public weak var sourceResolver: ShareSourceResolver?
+    /// 回線ポリシー（Wi-Fi のみ等）を満たすか。自動で起こす反映（`ShareSyncTrigger.rule`）が読む。
+    /// 既定は端末の状態、テストは差し替える。
+    @ObservationIgnored public var networkAllowed: @MainActor () -> Bool = {
+        NetworkStateMonitor.shared.networkAllowed()
+    }
     /// 非同期ジョブのポーリング設定（テストで短縮する。本番は既定値）。
     @ObservationIgnored var pollIntervalNs: UInt64?
     @ObservationIgnored var maxPollAttempts: Int?
@@ -238,7 +243,7 @@ public final class ShareSyncEngine {
 
     /// 反映をバックグラウンドで開始する（進捗はハブの isSyncing / セット状態で見える）。
     private func scheduleSync() {
-        Task { await syncNow() }
+        Task { await sync(.edited) }
     }
 
     /// **クラウド原本（"C-"）の content_hash** を引く seam（パス小文字 → hash）。

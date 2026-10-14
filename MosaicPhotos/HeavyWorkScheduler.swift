@@ -613,8 +613,7 @@ enum HeavyWorkScheduler {
             await stores.shareImporter.runIfNeeded()
         case .shareSync:
             // ADR-183 C: 共有セットを作成元（人物・AI アルバム）のいまのメンバーに追従させてから反映。
-            await stores.shareEngine.refreshAllFromSource()
-            await stores.shareEngine.syncNow()
+            await stores.shareEngine.sync(.nightly)
         case .publishAnalysis:
             // 写真はコピーせず解析だけを置く（同じ Dropbox に繋いだだけの人にも届く・ADR-222）。
             await stores.analysisPublisher.runIfNeeded()

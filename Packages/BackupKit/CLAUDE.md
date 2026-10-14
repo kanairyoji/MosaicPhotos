@@ -38,6 +38,7 @@ Packages/BackupKit/               ← 端末写真→Dropbox バックアップ�
       BackupEngine+Settle.swift      応答 → ジャーナル → 記録（`BackgroundSettlement.perform` で順序を固定）
     Share/                         家族共有（ADR-112/166/183）
       ShareSyncEngine.swift          @MainActor @Observable。セット CRUD・作成元追従（`refreshAllFromSource`）
+      ShareSyncTrigger.swift         反映を起こす唯一の入口 `sync(_:)` と、起こし方（起動・バックアップ後・夜間・手動・編集）ごとの決まりの表
       ShareSyncEngine+Sync.swift     反映本体（共有ルートの再帰一覧 1 回 → copy_batch/delete_batch → シャードの差分同期）。`RemoteShareIndex` / `ShareAnalysisPlanning`（純ロジック）
       ShareAnalysisData.swift             解析データの形式（content_hash キー・`shard-<xx>.json`・防御的検証）
       ShareAnalysisFetch.swift        受信側の取得（家族フォルダの再帰一覧 1 回・rev 差分）＋

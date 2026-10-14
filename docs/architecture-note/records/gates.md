@@ -479,7 +479,7 @@
   `持ち主の分からないフォルダ N 個は消さない` / `share sync: 台帳が一時的にインメモリで開いている`
 
 ## ShareAfterBackupGate（diagnostics-109）
-- 置き場: `Packages/BackupKit/Sources/BackupKit/Share/ShareAfterBackupGate.swift`（呼び出しは `ShareSyncEngine.syncAfterBackup`・`HomeView` の `backupEngine.isRunning` の変化）
+- 置き場: `Packages/BackupKit/Sources/BackupKit/Share/ShareAfterBackupGate.swift`（呼び出しは `ShareSyncEngine.sync(.afterBackup)`＝`ShareSyncTrigger` の表・`HomeView` の `backupEngine.isRunning` の変化）
 - 問い: バックアップが終わったとき、共有の反映を起こすか
 - 材料:
   - `waitingBackup` ← `BackupStore.shareWaitingBackupCounts()`（セットごとの `lastSyncedWaiting`）

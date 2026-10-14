@@ -21,7 +21,7 @@ import MosaicSupport
 extension ShareSyncEngine {
 
     /// 全セットを反映する（コピー・掃除・解析データ更新）。
-    /// バックアップ完走後・手動「今すぐ反映」・夜間枠から呼ばれる。
+    /// ⚠️ アプリからは `sync(_:)`（起こし方ごとの決まりを通る入口）を呼ぶ。これは 1 回ぶんの本体。
     public func syncNow() async {
         // 「提供する」が OFF なら反映しない（受信・バックアップとは独立・ADR-112 追記）。
         guard ShareSettingsKeys.isProvideEnabled(defaults) else { return }
@@ -42,19 +42,6 @@ extension ShareSyncEngine {
         let task = Task { await performSync() }
         syncTask = task
         await task.value
-    }
-
-    /// バックアップが終わったときに呼ぶ。待っていた共有写真が無ければ反映しない（`ShareAfterBackupGate`）。
-    public func syncAfterBackup() async {
-        guard ShareSettingsKeys.isProvideEnabled(defaults) else { return }
-        let waiting = await storeProvider().shareWaitingBackupCounts()
-        guard ShareAfterBackupGate.shouldSync(waitingBackup: waiting) else {
-            // ⚠️ 効いた回数が見えるログ（ADR-250）。無いと「一度も効かない」に気づけない。
-            Diagnostics.mark("share sync: バックアップ後の反映を見送る（待っている共有写真が無い・"
-                             + "\(waiting?.count ?? 0) セット）")
-            return
-        }
-        await syncNow()
     }
 
     private func performSync() async {
