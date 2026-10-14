@@ -17,9 +17,13 @@ import Foundation
 ///
 /// 「中断で切れた」と「本当に繋がらない」を**型で分ける**。どちらも次の周回で再試行するので、
 /// 違いは**記録と表示**だけ——だからこそ純ロジックに出してテストで固定する。
-enum SyncPollErrorPolicy {
+///
+/// ⚠️ ポーリング以外の通信（週 1 の照合・共有のコピー／一覧／解析の公開）も**この判定を使う**
+/// （diagnostics-110: 停止を跨いだ要求の失敗が 6 件とも ERROR で残っていた）。
+/// 「想定どおりの切れ方」を別の場所に書き写さない（ADR-196 の一般形）。
+public enum SyncPollErrorPolicy {
 
-    enum Verdict: Equatable {
+    public enum Verdict: Equatable, Sendable {
         /// 想定どおり（中断・回線の瞬断）。記録は info、UI は失敗にしない。
         case expected
         /// 本当に報せるべき。記録は error、UI も失敗にする。
@@ -28,7 +32,7 @@ enum SyncPollErrorPolicy {
 
     /// ⚠️ **ここに並ぶのは「アプリの外の事情で、黙って再試行すればよいもの」だけ**。
     /// 認証切れ・権限・パスの不整合などは `reportable`（利用者が何かしないと直らない）。
-    static func classify(_ error: Error) -> Verdict {
+    public static func classify(_ error: Error) -> Verdict {
         // ⚠️ 取り消し（前面復帰・窓の期限切れ・URLSession 側）。こちらが止めたのだから失敗ではない。
         // 判定は `RequestCancellation` の 1 か所（フル画像の取得も同じものを使う）。
         if RequestCancellation.matches(error) { return .expected }

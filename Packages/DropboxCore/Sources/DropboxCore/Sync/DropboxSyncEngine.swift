@@ -295,7 +295,16 @@ final class DropboxSyncEngine {
         } catch is CancellationError {
             reportState(.idle, isPrimary: isPrimary)
         } catch {
-            DropboxLogger.error("SyncEngine[\(root.isEmpty ? "/" : root)]: \(isReconcile ? "weekly reconcile" : "initial sync") error — \(error.localizedDescription)")
+            let label = "SyncEngine[\(root.isEmpty ? "/" : root)]: \(isReconcile ? "weekly reconcile" : "initial sync")"
+            // ⚠️ 照合の途中でプロセスが止められると、戻ったときに要求が timeout で落ちる
+            // （diagnostics-110: 窓の期限切れ → 45 分後の再開で `weekly reconcile error`）。
+            // 照合は次の起動でやり直すだけで、利用者にも開発者にもすることが無い＝info。
+            // ⚠️ 初回同期は画面を失敗にする（下の `reportState`）ので、記録も error のまま。
+            if isReconcile, SyncPollErrorPolicy.classify(error) == .expected {
+                DropboxLogger.info("\(label) interrupted (expected) — \(error.localizedDescription)")
+            } else {
+                DropboxLogger.error("\(label) error — \(error.localizedDescription)")
+            }
             // ⚠️ **見直しの失敗で、動いていたポーリングまで止めない**（ADR-206 のレビュー 1 周目）。
             // 週次の見直しは利用者が頼んだ処理ではなく、キャッシュは既に揃っている。
             // ここで `false` を返すと `syncLoop` が抜けて**そのルートの同期がアプリを

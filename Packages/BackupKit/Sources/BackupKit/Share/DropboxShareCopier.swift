@@ -222,6 +222,35 @@ struct DropboxShareCopier {
     /// フォルダの一覧（ページング追従）。取得失敗は nil（「空」と区別する）。
     /// - Parameter recursive: true なら配下を丸ごと（ADR-183: 共有ルート 1 回でセット全部の実在が分かる）。
     func listFolder(path: String, token: String, recursive: Bool = false) async -> [ListedFile]? {
+        await listFolderOutcome(path: path, token: token, recursive: recursive).files
+    }
+
+    /// 一覧の結果。取れなかった理由で**記録の重さ**を変えたい呼び手のため。
+    enum ListOutcome: Equatable {
+        case listed([ListedFile])
+        /// 回線の瞬断・プロセスの中断・取り消しで切れた（想定どおり・次の回でやり直す）。
+        case interrupted
+        /// それ以外（HTTP のエラー・応答が読めない・ページの上限）。
+        case failed
+
+        var files: [ListedFile]? {
+            if case .listed(let files) = self { return files }
+            return nil
+        }
+    }
+
+    /// 通信が**想定どおりに切れた**か（記録は info にする・ADR-256）。
+    ///
+    /// ⚠️ 夜の窓は期限切れでプロセスごと止められるので、ぶら下がっていた要求は
+    /// 戻ったときに timeout・接続断で落ちる（diagnostics-110: ERROR 6 件が全部これだった）。
+    /// 次の回でやり直すだけで、することが無い。ERROR に残すと本物が埋もれる。
+    /// 判定は `SyncPollErrorPolicy` の 1 か所（書き写さない）。取り消しは `Task.isCancelled` も見る
+    /// ——窓の期限切れで取り消された回は、URLSession が別の理由（timeout）で返すことがある。
+    static func isInterruption(_ error: Error) -> Bool {
+        Task.isCancelled || SyncPollErrorPolicy.classify(error) == .expected
+    }
+
+    func listFolderOutcome(path: String, token: String, recursive: Bool = false) async -> ListOutcome {
         struct Body: Encodable { let path: String; let recursive: Bool }
         struct ContinueBody: Encodable { let cursor: String }
         struct RawEntry: Decodable {
@@ -242,29 +271,35 @@ struct DropboxShareCopier {
 
         var out: [ListedFile] = []
         var req = Self.rpcRequest(url: Self.listFolderURL, token: token)
-        guard let body = try? JSONEncoder().encode(Body(path: path, recursive: recursive)) else { return nil }
+        guard let body = try? JSONEncoder().encode(Body(path: path, recursive: recursive)) else { return .failed }
         req.httpBody = body
 
         for _ in 0..<200 {   // 200 ページ（1 ページ最大 2,000 件）＝再帰でも十分な上限
-            guard let (data, resp) = try? await httpClient.data(for: req),
-                  (resp as? HTTPURLResponse)?.statusCode == 200,
-                  let page = try? JSONDecoder().decode(Page.self, from: data) else { return nil }
+            let data: Data
+            let resp: URLResponse
+            do {
+                (data, resp) = try await httpClient.data(for: req)
+            } catch {
+                return Self.isInterruption(error) ? .interrupted : .failed
+            }
+            guard (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let page = try? JSONDecoder().decode(Page.self, from: data) else { return .failed }
             for e in page.entries {
                 guard let pathLower = e.path_lower else { continue }
                 out.append(ListedFile(pathLower: pathLower, name: e.name, rev: e.rev,
                                       contentHash: e.content_hash, isFolder: e.tag == "folder"))
             }
-            guard page.has_more else { return out }
+            guard page.has_more else { return .listed(out) }
             req = Self.rpcRequest(url: Self.listFolderContinueURL, token: token)
             guard let contBody = try? JSONEncoder().encode(ContinueBody(cursor: page.cursor))
-            else { return nil }
+            else { return .failed }
             req.httpBody = contBody
         }
         // ⚠️ 上限で打ち切った一覧は**取れなかった**のと同じ（ADR-277 の形・レビュー指摘）。
         // 部分の一覧を返すと、載っていない写真を「無い」と読み、消したセットのフォルダごと
         // 確かめていない写真まで消す（`removeReviewed` の `wholeFolder`）。
         BackupLogger.error("ShareCopier: list_folder hit the page cap — treating as unavailable (\(path))")
-        return nil
+        return .failed
     }
 
     // MARK: - 解析データのアップロード（上書き）
@@ -296,12 +331,20 @@ struct DropboxShareCopier {
         // Dropbox が 429 を返す。1 回の失敗で畳むと、そのシャードは次の窓（30 分後）まで来ない。
         // 待ち時間は `Retry-After` に従う（無ければ 1 秒）。長すぎる指定は窓を食うので頭打ち。
         for attempt in 0...1 {
-            guard let (_, resp) = try? await httpClient.data(for: req) else {
+            let resp: URLResponse
+            do {
+                (_, resp) = try await httpClient.data(for: req)
+            } catch {
                 // ⚠️ **1 回だけやり直す**（実機ログ diagnostics-91）。夜の窓では回線が切れたり
                 // 背面遷移で要求が落ちたりして、単発の transport 失敗が出る。1 回で畳むと、
                 // そのシャードは次の窓（30 分後）まで来ない。だめなら素直に諦める。
                 guard attempt == 0, !Task.isCancelled else {
-                    BackupLogger.error("ShareCopier: upload failed (transport) — \(path)")
+                    // 窓の期限切れ・停止を跨いだ要求は想定どおり（diagnostics-110）。
+                    if Self.isInterruption(error) {
+                        BackupLogger.info("ShareCopier: upload interrupted (expected) — \(path)")
+                    } else {
+                        BackupLogger.error("ShareCopier: upload failed (transport) — \(path)")
+                    }
                     return false
                 }
                 BackupLogger.info("ShareCopier: upload transport error — retrying once — \(path)")
@@ -444,8 +487,19 @@ struct DropboxShareCopier {
         var attempt = 0
         while attempt < maxAttempts {
             attempt += 1
-            guard let (data, resp) = try? await httpClient.data(for: req),
-                  let http = resp as? HTTPURLResponse else {
+            let data: Data
+            let resp: URLResponse
+            do {
+                (data, resp) = try await httpClient.data(for: req)
+            } catch {
+                if Self.isInterruption(error) {
+                    BackupLogger.info("ShareCopier: \(label) interrupted (expected, attempt \(attempt))")
+                } else {
+                    BackupLogger.error("ShareCopier: \(label) transport error (attempt \(attempt))")
+                }
+                return nil
+            }
+            guard let http = resp as? HTTPURLResponse else {
                 BackupLogger.error("ShareCopier: \(label) transport error (attempt \(attempt))")
                 return nil
             }

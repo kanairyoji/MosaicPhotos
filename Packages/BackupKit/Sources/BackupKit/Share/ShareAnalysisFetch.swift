@@ -183,8 +183,14 @@ public struct ShareAnalysisFetch {
     public func accountAnalysisRoots(backupRoot: String, ownDeviceFolder: String,
                                      token: String) async -> (roots: [String], listedAll: Bool) {
         let copier = DropboxShareCopier(httpClient: httpClient)
-        guard let devices = await copier.listFolder(path: backupRoot, token: token) else {
-            BackupLogger.error("ShareAnalysisFetch: cannot list backup root — \(backupRoot)")
+        let rootListing = await copier.listFolderOutcome(path: backupRoot, token: token)
+        guard let devices = rootListing.files else {
+            // 停止を跨いで切れた回は想定どおり（diagnostics-110）。次の回でやり直す。
+            if rootListing == .interrupted {
+                BackupLogger.info("ShareAnalysisFetch: backup root listing interrupted (expected) — \(backupRoot)")
+            } else {
+                BackupLogger.error("ShareAnalysisFetch: cannot list backup root — \(backupRoot)")
+            }
             return ([], false)
         }
         var roots: [String] = []
@@ -228,12 +234,18 @@ public struct ShareAnalysisFetch {
         // ⚠️ 一覧には**必ず**入れる（打ち切っても記録の掃除が狂わないように）。
         var candidates: [(path: String, rev: String, setFolder: String)] = []
         for root in roots {
-            guard let listing = await copier.listFolder(path: root, token: token, recursive: true) else {
+            let rootListing = await copier.listFolderOutcome(path: root, token: token, recursive: true)
+            guard let listing = rootListing.files else {
                 allListed = false   // 一覧が取れない回は記録を捨てない（全部の再取得を誘発する）
                 // ⚠️ **黙って諦めない**（diagnostics-82）。家族フォルダが消えていると
                 // 取り込みは永久に 0 件だが、ログが 1 行も出ないので実機で気づけなかった。
-                BackupLogger.error("ShareAnalysisFetch: cannot list family folder — \(root) "
-                    + "(deleted, renamed, or no longer shared?)")
+                // ただし回線・中断で切れた回は「消えた」の疑いではない（diagnostics-110）。
+                if rootListing == .interrupted {
+                    BackupLogger.info("ShareAnalysisFetch: family folder listing interrupted (expected) — \(root)")
+                } else {
+                    BackupLogger.error("ShareAnalysisFetch: cannot list family folder — \(root) "
+                        + "(deleted, renamed, or no longer shared?)")
+                }
                 continue
             }
             let marker = "/" + ShareAnalysisData.subfolderName + "/"
