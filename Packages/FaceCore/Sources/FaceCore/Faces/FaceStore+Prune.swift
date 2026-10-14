@@ -41,8 +41,7 @@ extension FaceStore {
             for face in faces {
                 if face.clusterID >= 0, let vec = ClipMath.decodeHalf(face.embedding) {
                     // 前面の付け替えと同じ規則で重心から引く（寄与していない顔は引かない・ADR-66）。
-                    removeFromCluster(clusterID: face.clusterID, vec: vec, quality: Float(face.quality),
-                                      faceID: face.faceID, contributes: FaceStore.contributesToCentroid(face))
+                    detachFace(face, vec: vec)
                     touched.insert(face.clusterID)
                 }
                 modelContext.delete(face)
@@ -104,8 +103,7 @@ extension FaceStore {
         let faces = (try? modelContext.fetch(d)) ?? []
         var fixed = 0
         for f in faces where !live.contains(f.clusterID) {
-            f.clusterID = FaceClustering.unassigned
-            f.contributesToCentroid = false
+            markUnassigned(f)
             fixed += 1
         }
         if fixed > 0 {

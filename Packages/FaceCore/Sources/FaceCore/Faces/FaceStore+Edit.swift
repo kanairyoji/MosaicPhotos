@@ -80,22 +80,9 @@ extension FaceStore {
             face.confirmedAt = Date()
         }
 
-        // 寄与していた顔だけ重心から引く（membership だけの顔を引くと重心が壊れる）。
-        let contributed = FaceStore.contributesToCentroid(face)
-        removeFromCluster(clusterID: oldCID, vec: vec, quality: quality, faceID: faceID,
-                          contributes: contributed)
-        let targetCID = toClusterID ?? nextClusterID()
-        // ⚠️ **新しいクラスタを作る場合は、品質に関わらず種にする**。
-        // 低品質顔は通常 membership だけ（重心を汚さない）だが、それを新規クラスタへ入れると
-        // `addToCluster` はクラスタを作らずに返り、顔だけが**存在しないクラスタ ID** を指す
-        // （人物一覧に出ない・迷子になる・レビュー指摘）。ユーザーが明示的に分離した顔なので、
-        // 種にするだけの根拠もある。
-        let isNewCluster = toClusterID == nil || cluster(targetCID) == nil
-        let contributesNow = isNewCluster || quality >= FaceStore.qualityFloor
-        addToCluster(clusterID: targetCID, vec: vec, quality: quality, faceID: faceID,
-                     contributes: contributesNow)
-        face.clusterID = targetCID
-        face.contributesToCentroid = contributesNow
+        detachFace(face, vec: vec)
+        attachFace(face, vec: vec, to: toClusterID ?? nextClusterID(),
+                   contributes: quality >= FaceStore.qualityFloor)
         face.linkSource = FaceLinkSource.user.rawValue
         try? modelContext.save()
         clusteringCache = nil   // 重心が変わったのでインメモリ状態を捨てる（次回に再構築）
@@ -188,6 +175,41 @@ extension FaceStore {
         let id = clusterIDHighWater() + 1
         noteClusterIDs(upTo: id)
         return id
+    }
+
+    // MARK: - 顔の所属を書き換える（唯一の手順）
+
+    /// 顔を**いまの人物から**外す（重心から引く）。`clusterID` はまだ書き換えない。
+    ///
+    /// ⚠️ 引くかどうかは**記録された寄与**（`contributesToCentroid`）で決める——品質から推し量らない
+    /// （ADR-210）。以前は付け替え・分割・違反の修復・写真の整理の 5 か所が、この 1 行を
+    /// それぞれ書き写していた（ADR-196）。
+    func detachFace(_ face: DetectedFace, vec: [Float]) {
+        removeFromCluster(clusterID: face.clusterID, vec: vec, quality: Float(face.quality),
+                          faceID: face.faceID, contributes: FaceStore.contributesToCentroid(face))
+    }
+
+    /// 顔を `clusterID` の人物へ入れ、所属と寄与を記録する（`detachFace` の後に呼ぶ）。
+    /// `contributes` は「品質の上で重心に寄与させたいか」。
+    ///
+    /// ⚠️ **まだ無い人物へ入れる場合は、品質に関わらず種にする**。
+    /// 低品質顔は通常 membership だけ（重心を汚さない）だが、それを新規クラスタへ入れると
+    /// `addToCluster` はクラスタを作らずに返り、顔だけが**存在しないクラスタ ID** を指す
+    /// （人物一覧に出ない・迷子になる・レビュー指摘）。ユーザーが明示的に分離した顔なので、
+    /// 種にするだけの根拠もある。以前は付け替え（`isNewCluster ||`）と分割（`!seeded ||`）が
+    /// この規則を別々の書き方で持っていた。
+    func attachFace(_ face: DetectedFace, vec: [Float], to clusterID: Int, contributes: Bool) {
+        let contributesNow = contributes || cluster(clusterID) == nil
+        addToCluster(clusterID: clusterID, vec: vec, quality: Float(face.quality), faceID: face.faceID,
+                     contributes: contributesNow)
+        face.clusterID = clusterID
+        face.contributesToCentroid = contributesNow
+    }
+
+    /// 顔をどの人物にも属さない状態にする（重心は触らない＝先に `detachFace` するか、人物が既に無い）。
+    func markUnassigned(_ face: DetectedFace) {
+        face.clusterID = FaceClustering.unassigned
+        face.contributesToCentroid = false
     }
 
     /// クラスタからこの顔を外す。
@@ -288,8 +310,7 @@ extension FaceStore {
         guard !moving.isEmpty, let src = cluster(clusterID),
               let srcSum = ClipMath.decodeHalf(src.sum) else { return nil }
         let newID = nextClusterID()
-        // 分離先クラスタの種になる 1 枚目（全員が低品質でも必ず種を作る・上と同じ理由）。
-        var seeded = false
+        // 分離先クラスタの種になる 1 枚目は、全員が低品質でも必ず種になる（`attachFace` の規則）。
         for f in moving {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
             // 「この顔はこのクラスタではない」＝負例（1 対 1 の確認なので確度は高い）。
@@ -298,15 +319,8 @@ extension FaceStore {
             recordCorrection(kind: "reassign", faceEmbedding: f.embedding,
                              wrongEmbedding: ClipMath.encodeHalf(srcSum), similarity: sim,
                              confidence: .high, linkSource: f.linkSource)
-            let contributed = FaceStore.contributesToCentroid(f)
-            removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
-                              faceID: f.faceID, contributes: contributed)
-            let contributesNow = !seeded || Float(f.quality) >= FaceStore.qualityFloor
-            addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID,
-                         contributes: contributesNow)
-            seeded = true
-            f.clusterID = newID
-            f.contributesToCentroid = contributesNow
+            detachFace(f, vec: vec)
+            attachFace(f, vec: vec, to: newID, contributes: Float(f.quality) >= FaceStore.qualityFloor)
         }
         try? modelContext.save()
         clusteringCache = nil
@@ -386,12 +400,9 @@ extension FaceStore {
                                      linkSource: f.linkSource)
                     // ⚠️ 重心からも寄与を除く。外すだけだと sum/count に抜いた顔が残り、
                     // 夜間の再クラスタまで重心が汚れたままになる（reassignFace と同じ規則）。
-                    removeFromCluster(clusterID: f.clusterID, vec: vec,
-                                      quality: Float(f.quality), faceID: f.faceID,
-                                      contributes: FaceStore.contributesToCentroid(f))
+                    detachFace(f, vec: vec)
                 }
-                f.clusterID = FaceClustering.unassigned
-                f.contributesToCentroid = false
+                markUnassigned(f)
                 repaired += 1
             }
         }
@@ -459,13 +470,8 @@ extension FaceStore {
         let newID = nextClusterID()
         for f in moving {
             guard let vec = ClipMath.decodeHalf(f.embedding) else { continue }
-            let contributed = FaceStore.contributesToCentroid(f)
-            removeFromCluster(clusterID: clusterID, vec: vec, quality: Float(f.quality),
-                              faceID: f.faceID, contributes: contributed)
-            addToCluster(clusterID: newID, vec: vec, quality: Float(f.quality), faceID: f.faceID,
-                         contributes: true)
-            f.clusterID = newID
-            f.contributesToCentroid = true
+            detachFace(f, vec: vec)
+            attachFace(f, vec: vec, to: newID, contributes: true)
         }
         try? modelContext.save()
         clusteringCache = nil
