@@ -376,6 +376,15 @@ private struct HomeLifecycleTasks: ViewModifier {
         return secs > 0 ? secs : PlacesSettingsKeys.defaultRescanIntervalSeconds
     }
 
+    /// 前面の定期ループの判断材料（毎回読み直す）。
+    private func tickEnvironment() -> ForegroundTick.Environment {
+        let connected: Bool
+        if case .connected = dropboxStore.auth.connectionStatus { connected = true } else { connected = false }
+        return .init(isInBackground: BackgroundYield.scenePhase == .background,
+                     allowsCloudTrickle: BackgroundYield.allows(.cloudTrickle),
+                     isDropboxConnected: connected)
+    }
+
     func body(content: Content) -> some View {
         content
             // アルバムスキャン：キャッシュがあれば即ロード、なければバックグラウンドでスキャン。
@@ -386,23 +395,28 @@ private struct HomeLifecycleTasks: ViewModifier {
                 await peopleEngine.loadPeople()
                 await analysisDriver.kick(.launch)
             }
+            // 前面の定期ループ 3 本。「走ってよいか・次にどれだけ眠るか」は `ForegroundTick`（純ロジック）。
+            //
             // 場所スキャン：ローカル＋Dropbox（同期済みの位置情報）をグルーピング。
             // 初回ロード後は一定間隔で差分チェックし、Dropbox 側の座標が増えたら動的に再スキャンする
             // （バックグラウンド同期や写真閲覧で座標が補完されると Places アルバムが増える）。
+            // 起動直後の同時スパイクを避けるため初回 place スキャンを少し遅らせる（ホームの初回描画を優先）。
+            // 定期再スキャンは重い処理の中央ゲート（電源＋Wi-Fi＋ロック中）＋回線ポリシーを満たすときだけ
+            // （逆ジオコーディングは通信。回線ポリシーは `.cloudTrickle` の判定に含まれる）。
             .task {
-                // 起動直後の同時スパイクを避けるため初回 place スキャンを少し遅らせる（ホームの初回描画を優先）。
-                try? await Task.sleep(for: .seconds(1.5))
-                await placeScanner.loadOrScan(dropboxItems: dropboxStore.items)
-                Diagnostics.mark("places loaded")
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
-                    // 重い処理の中央ゲート（電源＋Wi-Fi＋ロック中）＋回線ポリシーを満たすときだけ
-                    // 定期再スキャンする（操作中は動かさない方針・逆ジオコーディングは通信）。
-                    // 回線ポリシーは `.cloudTrickle` の判定に含まれる（逆ジオコーディングは通信）。
-                    guard BackgroundYield.scenePhase != .background,   // 背面の判断は処理枠側（上と同じ理由）
-                          BackgroundYield.allows(.cloudTrickle) else { continue }
-                    await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
-                }
+                await ForegroundTick.run(.init(
+                    initialDelay: 1.5,
+                    start: {
+                        await placeScanner.loadOrScan(dropboxItems: dropboxStore.items)
+                        Diagnostics.mark("places loaded")
+                    },
+                    sleepsBeforeFirstTick: true,
+                    requires: [.cloudTrickle],
+                    busyInterval: nil,
+                    tick: {
+                        await placeScanner.refreshIfNeeded(dropboxItems: dropboxStore.items)
+                        return false
+                    }), interval: { rescanIntervalSeconds }, environment: tickEnvironment)
             }
             // クラウド写真の**撮影日時の穴埋め**（ADR-201）。
             //
@@ -411,33 +425,36 @@ private struct HomeLifecycleTasks: ViewModifier {
             // `get_metadata` を叩くしかない（数秒/枚）。前面の操作を邪魔しないよう、
             // 場所スキャンと同じ条件（電源＋回線＋非操作＝`.cloudTrickle`）でだけ少しずつ進める。
             // 訊いた結果は「無かった」も含めて記録されるので、一巡すれば止まる。
+            // 残っていないなら急がない。残っていれば短い間隔（3 秒）で次の塊へ進む。
             .task {
-                try? await Task.sleep(for: .seconds(8))   // 起動直後の山を避ける
-                while !Task.isCancelled {
-                    guard BackgroundYield.scenePhase != .background,
-                          BackgroundYield.allows(.cloudTrickle),
-                          case .connected = dropboxStore.auth.connectionStatus else {
-                        try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
-                        continue
-                    }
-                    let probed = await dropboxStore.fillMissingCaptureDates()
-                    // 残っていないなら急がない。残っていれば短い間隔で次の塊へ進む。
-                    try? await Task.sleep(for: .seconds(probed > 0 ? 3 : rescanIntervalSeconds))
-                }
+                await ForegroundTick.run(.init(
+                    initialDelay: 8,   // 起動直後の山を避ける
+                    start: nil,
+                    sleepsBeforeFirstTick: false,
+                    requires: [.cloudTrickle, .dropboxConnected],
+                    busyInterval: 3,
+                    tick: { await dropboxStore.fillMissingCaptureDates() > 0 }),
+                    interval: { rescanIntervalSeconds }, environment: tickEnvironment)
             }
             // 自動アルバム（時間＋場所）：キャッシュ即ロード→無ければ生成。以降は写真追加で再生成。
+            // ⚠️ 背面では判断しない（`ForegroundTick.shouldRun` が見る）。吊るされていたこのループは
+            // BGTask がプロセスを起こした瞬間に「期限超過」で発火し、処理枠側の見送り判断
+            // （NightlyWorkPolicy）を素通りして生成を始めていた（diagnostics-74: 枠の開始と同時に
+            // generate 25.6s・その間 顔スキャンが停止）。背面の生成は HeavyWorkScheduler だけが起こす。
             .task {
-                await autoAlbumEngine.loadOrGenerate()
-                Diagnostics.mark("autoAlbum loadOrGenerate done")
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(rescanIntervalSeconds))
-                    // ⚠️ 背面では判断しない。吊るされていたこのループは BGTask がプロセスを起こした
-                    // 瞬間に「期限超過」で発火し、処理枠側の見送り判断（NightlyWorkPolicy）を
-                    // 素通りして生成を始めていた（diagnostics-74: 枠の開始と同時に generate 25.6s・
-                    // その間 顔スキャンが停止）。背面の生成は HeavyWorkScheduler だけが起こす。
-                    guard BackgroundYield.scenePhase != .background else { continue }
-                    await autoAlbumEngine.refreshIfNeeded()
-                }
+                await ForegroundTick.run(.init(
+                    initialDelay: 0,
+                    start: {
+                        await autoAlbumEngine.loadOrGenerate()
+                        Diagnostics.mark("autoAlbum loadOrGenerate done")
+                    },
+                    sleepsBeforeFirstTick: true,
+                    requires: [],
+                    busyInterval: nil,
+                    tick: {
+                        await autoAlbumEngine.refreshIfNeeded()
+                        return false
+                    }), interval: { rescanIntervalSeconds }, environment: tickEnvironment)
             }
             // BackupSettingsView のデバッグ表示用のバックアップ記録ロードは起動表示に不要なので、
             // 起動スパイクを避けるため大きく遅延する（設定を開く頃には間に合う）。

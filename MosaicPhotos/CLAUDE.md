@@ -21,6 +21,7 @@ MosaicPhotos/                      ← メインアプリターゲット（合�
     HomeSections.swift             HomeView の各セクション（Sources / Albums / Places）を分割
     HomeRows.swift                 SourceRow / LibraryRow / AlbumRow / PlaceRow ＋共通カバーローダ
     AlbumCarousel.swift            アルバムの横スクロールカルーセル表示
+    ForegroundTick.swift           ホームの前面の定期ループ（場所・撮影日時・自動アルバム）の判断と骨格（純ロジック＋run）
     PlacePhotosView.swift          場所アルバム表示（メンバー限定 MergedPhotoStore）
     AutoAlbumPhotosView.swift      生成アルバム（旅行/フォルダ/AI）の写真表示
     AutoAlbumAdapters.swift        Composition Root。AutoAlbumEngine に各 seam（Cloud/Backup/People/CLIP/翻訳/ラベラ）を結線
