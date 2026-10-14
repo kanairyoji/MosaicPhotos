@@ -247,5 +247,46 @@ struct CaptureDateProbeNetworkTests {
         }
         #expect(grew, "前面なのに一覧を作り直していない（撮影日が変わっても並びが古いまま）")
     }
+
+    // MARK: - 前面のループの間引き（diagnostics-110）
+
+    /// 前面のループは 12 枚ごとに回るので、塊ごとに作り直すと 5 秒おきに 10.8 万件を実体化する。
+    @Test("前面の穴埋め: 作り直しは 1 分に 1 回まで・最後の塊は必ず")
+    func probeRefreshRule() {
+        let last = Date(timeIntervalSince1970: 1_000)
+        typealias Store = DropboxPhotoStore
+        #expect(!Store.shouldRefreshAfterProbe(now: last.addingTimeInterval(10), lastRefresh: last,
+                                               finished: false), "塊ごとに作り直している")
+        #expect(Store.shouldRefreshAfterProbe(now: last.addingTimeInterval(Store.probeListRefreshInterval),
+                                              lastRefresh: last, finished: false), "間隔が過ぎても作り直さない")
+        #expect(Store.shouldRefreshAfterProbe(now: last.addingTimeInterval(10), lastRefresh: last,
+                                              finished: true), "最後の塊の日付を一覧に出さないまま終わる")
+        #expect(Store.shouldRefreshAfterProbe(now: last, lastRefresh: .distantPast, finished: false),
+                "起動して最初の塊を作り直さない")
+    }
+
+    /// ⚠️ 規則だけでなく呼び手も縛る（規則が正しくても、呼び手が規則を見ていなければ意味が無い）。
+    @Test("前面の穴埋め: 直前に作り直していて、まだ続きがあるなら作り直さない")
+    func foregroundProbeSkipsRefreshWithinInterval() async {
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let items = (0..<3).map {
+            DropboxFileItem(path: "/cloud/\($0).jpg", name: "\($0).jpg",
+                            contentHash: "h\($0)", captureDate: uploadedAt)
+        }
+        await cache.applyDelta(accountId: "acc1", added: items, removed: [], newCursor: "c1")
+        let store = makeStore(cache, responder: Self.json("""
+            {"media_info":{"metadata":{"time_taken":"2015-05-12T15:50:38Z"}}}
+            """))
+        store.lastProbeListRefresh = Date()   // いま作り直したところ
+        let before = await cache.materializeCallsForTesting
+
+        let probed = await store.fillMissingCaptureDates(limit: 1)   // 3 枚中 1 枚＝続きがある
+        #expect(probed == 1, "前提: 問い合わせが走っていない（以降の assert が空振りする）")
+        #expect(await cache.captureDateProbePendingCount() == 2, "前提: 続きが残っていない")
+        // ⚠️ 待つ長さは、作り直す側（`refreshesTheDisplayListInTheForeground`）が増えるまでの
+        // 時間（約 2 秒）の倍以上——短いとどちらの実装でも増えず、空振りする（ADR-268）。
+        try? await Task.sleep(for: .seconds(6))
+        #expect(await cache.materializeCallsForTesting == before, "塊ごとに 10.8 万件を作り直した")
+    }
 }
 #endif

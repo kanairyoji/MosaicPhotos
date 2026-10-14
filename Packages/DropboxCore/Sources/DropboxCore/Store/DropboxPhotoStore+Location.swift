@@ -123,11 +123,33 @@ extension DropboxPhotoStore {
         }
         // 日付が変われば並び順も変わる＝一覧を作り直す（キャッシュの版で判断される）。
         // ⚠️ 背面では作り直さない（10.8 万件の実体化・上の注記）。
-        if refreshDisplayList { refreshItemsFromCacheSoon() }
+        // ⚠️ 前面でも**塊ごとには作り直さない**（`shouldRefreshAfterProbe`・diagnostics-110）。
+        let finished = paths.count < limit   // 訊く写真が尽きた＝最後の塊
+        if refreshDisplayList,
+           Self.shouldRefreshAfterProbe(now: Date(), lastRefresh: lastProbeListRefresh,
+                                        finished: finished) {
+            lastProbeListRefresh = Date()
+            refreshItemsFromCacheSoon()
+        }
         Diagnostics.mark("dropbox: capture dates probed=\(probed) "
                          + "remaining=\(await cache.captureDateProbePendingCount())")
         return probed
     }
+
+    /// 撮影日時の穴埋めのあと、表示用の一覧を作り直すか（純ロジック・テスト対象）。
+    ///
+    /// ⚠️ 前面のループは 12 枚ごとに 3 秒おきで回るので、塊ごとに作り直すと
+    /// **5 秒おきに 10.8 万件を実体化**していた（diagnostics-110: 1 回 0.9 秒・footprint +200MB、
+    /// 残り 7.7 万枚＝充電中に開いている間ずっと）。12 枚の日付で並びはほとんど変わらない。
+    /// 作り直しは `probeListRefreshInterval` に 1 回まで、ただし**最後の塊**（訊く写真が尽きた）は
+    /// 必ず作り直す——間引いたぶんを一覧に出さないまま終わらないように。
+    /// 間引いた回の日付も失われない（キャッシュの版は進んでいるので、次に作り直すときに入る）。
+    static func shouldRefreshAfterProbe(now: Date, lastRefresh: Date, finished: Bool) -> Bool {
+        finished || now.timeIntervalSince(lastRefresh) >= probeListRefreshInterval
+    }
+
+    /// 撮影日時の穴埋めで一覧を作り直す間隔の下限。
+    static let probeListRefreshInterval: TimeInterval = 60
 
     /// パスの束 → **EXIF の撮影日時**（アップロード時刻は含まない・ADR-218）。
     /// 顔の撮影日（時期グループ・赤ちゃんの時期の決まり）はこれを使う。ネットには出ない。

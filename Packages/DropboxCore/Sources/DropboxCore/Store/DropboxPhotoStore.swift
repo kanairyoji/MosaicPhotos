@@ -136,6 +136,8 @@ public final class DropboxPhotoStore {
     /// 最後に「キャッシュが変わった」と言われた時刻（静かになったかの判定用）。
     @ObservationIgnored private var lastCacheChange = Date.distantPast
     @ObservationIgnored private var trailingRefreshTask: Task<Void, Never>?
+    /// 撮影日時の穴埋めで最後に一覧の作り直しを頼んだ時刻（`shouldRefreshAfterProbe`）。
+    @ObservationIgnored var lastProbeListRefresh = Date.distantPast
     private static let cacheRefreshInterval: TimeInterval = 0.4
     /// テストから読む用（既定の下限）。
     static var cacheRefreshIntervalForTesting: TimeInterval { cacheRefreshInterval }
