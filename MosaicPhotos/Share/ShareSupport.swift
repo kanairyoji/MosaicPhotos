@@ -191,116 +191,82 @@ final class SharedAnalysisImporter {
         // 台帳の表から取る＝公開側と同じ出典。
         let hashesByPath = await dropboxStore.cloudContentHashes()
         let prepared = await Task.detached(priority: .utility) { () -> [PreparedImport] in
-            // 突合の対象は**手元のクラウド写真すべて**（ADR-222）。家族フォルダの外にも
-            // 相手の写真はある——鍵は content_hash（同じ中身＝同じ写真）なので置き場所で絞らない。
-            let localItems = hashesByPath.map { path, hash in
-                ShareImportPlanning.LocalItem(refKey: PhotoRef.cloud(path).encoded,
-                                              contentHash: hash)
-            }
-            // 索引は 1 回だけ作って解析データ間で使い回す。
-            let index = ShareImportPlanning.index(of: localItems)
-            let hashSet = Set(index.keys)
-
+            let index = ShareImportPreparation.index(hashesByPath: hashesByPath)
             return fetched.map { analysisData in
-                let batch = ShareImportPlanning.plan(analysisData: analysisData.file, index: index,
-                                                     versions: versions)
-                let tags = batch.tags.map {
-                    (refKey: $0.refKey,
-                     info: PhotoSenseInfo(tags: $0.entry.tags ?? [], ocrText: $0.entry.ocr,
-                                          humanCount: $0.entry.human, aesthetic: $0.entry.aes))
-                }
-                var faces: [(refKey: String, faces: [DetectedFaceSignal])] = []
-                for (refKey, rawFaces) in batch.faces {
-                    let signals = rawFaces.compactMap { face -> DetectedFaceSignal? in
-                        guard let embedding = Data(base64Encoded: face.e) else { return nil }
-                        return DetectedFaceSignal(
-                            boundingBox: CGRect(x: face.x, y: face.y, width: face.w, height: face.h),
-                            embedding: embedding, quality: face.q, hasSmile: face.s,
-                            captureDate: face.d.map { Date(timeIntervalSince1970: $0) },
-                            personName: face.n)
-                    }
-                    if !signals.isEmpty { faces.append((refKey, signals)) }
-                }
-                // まだ同期されていない写真が残っている解析データは rev を記録しない
-                // （次回の実行で残りを取り込む。取り込みは既存レコードをスキップするので冪等）。
-                let fullyMatched = analysisData.file.entries.keys.allSatisfy { hashSet.contains($0) }
-                // 撮影日は refKey（"C-<path>"）で来るので、表示側が引く形（パス小文字）へ戻す。
-                var captureDates: [String: Date] = [:]
-                for (refKey, date) in batch.captureDates {
-                    guard case .cloud(let path)? = PhotoRef.decode(refKey) else { continue }
-                    captureDates[path.lowercased()] = date
-                }
-                return PreparedImport(analysisData: analysisData, tags: tags,
-                                      embeddings: batch.embeddings, faces: faces,
-                                      captureDates: captureDates, fullyMatched: fullyMatched)
+                PreparedImport(analysisData: analysisData,
+                               pieces: ShareImportPreparation.pieces(of: analysisData.file, index: index,
+                                                                     versions: versions))
             }
         }.value
 
-        // ⚠️ **撮影日はここで先に確定させる**（ADR-199）。取り込み（タグ/埋め込み/顔）とは
-        // 独立した表示用の事実で、モデル版が合わず本体の取り込みが 1 件も起きない相手でも、
-        // 並び順だけは直せる。
-        //
+        let captureDateSaveFailed = await landCaptureDates(prepared, hashesByPath: hashesByPath,
+                                                           fetcher: fetcher)
+        await commit(prepared, captureDateSaveFailed: captureDateSaveFailed, fetcher: fetcher)
+    }
+
+    /// 撮影日を先に確定させる。戻り値は「保存そのものに失敗した（やり直す価値がある）」か。
+    ///
+    /// ⚠️ **撮影日はここで先に確定させる**（ADR-199）。取り込み（タグ/埋め込み/顔）とは
+    /// 独立した表示用の事実で、モデル版が合わず本体の取り込みが 1 件も起きない相手でも、
+    /// 並び順だけは直せる。
+    private func landCaptureDates(_ prepared: [PreparedImport], hashesByPath: [String: String],
+                                  fetcher: ShareAnalysisFetch) async -> Bool {
         // ⚠️ 掃除は**全部の解析データが突合できた回だけ**。同期が途中だと「まだ手元に無いだけ」の
         // 写真まで一覧から消えて見え、その記録を捨ててしまう（解析データの rev は突合が済むまで
         // 記録されないので再取得はされるが、それまでの間、並びが黙って壊れる）。
         // ⚠️ 掃除の基準が信用できるのは、**手元の一覧が出そろっているとき**だけ。
         // 初回同期の途中だと「まだ手元に無いだけ」の写真が一覧から消えて見え、その記録を捨てる。
         // 捨てた写真の解析データは rev が記録済みなら二度と取り直せない（レビュー指摘）。
-        let cacheSettled: Bool
-        switch dropboxStore.syncState {
-        case .initialSync, .error: cacheSettled = false
-        case .idle, .polling, .fetchingDelta: cacheSettled = true
-        }
-        let fullyMatchedAll = cacheSettled && prepared.allSatisfy(\.fullyMatched)
+        let fullyMatchedAll = dropboxStore.syncState.isListingSettled
+            && prepared.allSatisfy(\.pieces.fullyMatched)
         // 掃除の基準も突合と同じ広さ（クラウド写真すべて）にする。狭いままだと、
         // 共有フォルダの外の写真の撮影日を「もう無い写真のもの」と見て捨ててしまう。
         let syncedSharedPaths: Set<String>? = fullyMatchedAll ? Set(hashesByPath.keys) : nil
         let incomingDates = prepared.reduce(into: [String: Date]()) { acc, item in
-            acc.merge(item.captureDates) { _, new in new }
+            acc.merge(item.pieces.captureDates) { _, new in new }
         }
+        guard !incomingDates.isEmpty else { return false }
         // 保存そのものに失敗した回だけ「取り込み済み」を見送る（やり直す価値がある）。
         // ⚠️ 上限に当たって入らなかったぶんで見送ってはいけない——やり直しても同じ結果なので、
         // その解析データは永久に取り込み済みにならず、1 回あたりの取得上限を食い潰して
         // **その先のシャードが一つも取れなくなる**（レビュー指摘）。
-        var captureDateSaveFailed = false
-        if !incomingDates.isEmpty {
-            let outcome = await Task.detached(priority: .utility) {
-                SharedCaptureDateStore().record(incomingDates, keeping: syncedSharedPaths)
-            }.value
-            // ⚠️ 見送るのは**数回まで**。容量不足のように直らない失敗だと毎回見送られ、
-            // 取り込みが一度も記録されないまま毎回同じシャードを取り直し続ける（レビュー指摘）。
-            captureDateSaveFailed = outcome.saveFailed
-                && fetcher.shouldRetryCaptureDateSave()
-            if !outcome.saveFailed { fetcher.resetCaptureDateSaveFailures() }
-            Diagnostics.mark("share import: capture dates — +\(incomingDates.count), "
-                + "total \(outcome.table.count), overCap \(outcome.droppedByCap.count), "
-                + "evicted \(outcome.evictedExisting), saveFailed \(outcome.saveFailed)")
-            if !outcome.droppedByCap.isEmpty || outcome.evictedExisting > 0 {
-                // 表の上限。押し出された既存ぶんは**既に取り込み済み＝再取得されない**ので、
-                // その写真の並びは戻らない。黙って起きないよう必ず残す。
-                Diagnostics.mark("share import: capture-date table is full "
-                    + "(cap \(SharedCaptureDateStore.maxEntries)) — "
-                    + "\(outcome.droppedByCap.count) incoming did not fit, "
-                    + "\(outcome.evictedExisting) existing evicted (ordering lost for those)")
-            }
-            // 開きっぱなしの一覧にも効かせる（次に開き直すまで古い並びのままにしない）。
-            await onCaptureDatesChanged?()
+        let outcome = await Task.detached(priority: .utility) {
+            SharedCaptureDateStore().record(incomingDates, keeping: syncedSharedPaths)
+        }.value
+        // ⚠️ 見送るのは**数回まで**。容量不足のように直らない失敗だと毎回見送られ、
+        // 取り込みが一度も記録されないまま毎回同じシャードを取り直し続ける（レビュー指摘）。
+        let saveFailed = outcome.saveFailed && fetcher.shouldRetryCaptureDateSave()
+        if !outcome.saveFailed { fetcher.resetCaptureDateSaveFailures() }
+        Diagnostics.mark("share import: capture dates — +\(incomingDates.count), "
+            + "total \(outcome.table.count), overCap \(outcome.droppedByCap.count), "
+            + "evicted \(outcome.evictedExisting), saveFailed \(outcome.saveFailed)")
+        if !outcome.droppedByCap.isEmpty || outcome.evictedExisting > 0 {
+            // 表の上限。押し出された既存ぶんは**既に取り込み済み＝再取得されない**ので、
+            // その写真の並びは戻らない。黙って起きないよう必ず残す。
+            Diagnostics.mark("share import: capture-date table is full "
+                + "(cap \(SharedCaptureDateStore.maxEntries)) — "
+                + "\(outcome.droppedByCap.count) incoming did not fit, "
+                + "\(outcome.evictedExisting) existing evicted (ordering lost for those)")
         }
+        // 開きっぱなしの一覧にも効かせる（次に開き直すまで古い並びのままにしない）。
+        await onCaptureDatesChanged?()
+        return saveFailed
+    }
 
+    /// 各ストアへ取り込み、全部コミットできた解析データだけ「取り込み済み」を記録する。
+    private func commit(_ prepared: [PreparedImport], captureDateSaveFailed: Bool,
+                        fetcher: ShareAnalysisFetch) async {
         for prepared in prepared {
+            let pieces = prepared.pieces
             let counts = await autoAlbumEngine.importSharedAnalysis(
-                tags: prepared.tags, embeddings: prepared.embeddings)
-            let faces = await peopleEngine.importFaceScans(prepared.faces)
+                tags: pieces.tags, embeddings: pieces.embeddings)
+            let faces = await peopleEngine.importFaceScans(pieces.faces)
             Diagnostics.mark("share import: \(prepared.analysisData.setFolderPathLower) — "
                 + "tags \(counts.tags), embeddings \(counts.embeddings), faces \(faces.photos) photos")
-            // ⚠️ 「取り込み済み」を記録するのは、**全部コミットできたとき**だけ。
-            // 保存に失敗した回に記録すると、同じ解析データは以後ダウンロードされず、
-            // 欠けた解析結果を再取得できない（レビュー指摘）。
-            // 未同期の写真が残っている場合（fullyMatched=false）も同様に記録しない。
-            // 撮影日の**保存に失敗した**回は見送る（次回やり直せる）。
-            let datesLanded = prepared.captureDates.isEmpty || !captureDateSaveFailed
             let committed = counts.saved && faces.saved
-            if prepared.fullyMatched && committed && datesLanded {
+            if ShareImportPreparation.shouldMarkImported(
+                fullyMatched: pieces.fullyMatched, committed: committed,
+                datesLanded: pieces.captureDates.isEmpty || !captureDateSaveFailed) {
                 fetcher.markImported(prepared.analysisData)
             } else if !committed {
                 Diagnostics.mark("share import: \(prepared.analysisData.setFolderPathLower) — "
@@ -313,13 +279,7 @@ final class SharedAnalysisImporter {
 /// オフメインで組み立てた取り込み材料（メインへはこれだけ返す）。
 private struct PreparedImport: Sendable {
     let analysisData: ShareAnalysisFetch.Fetched
-    let tags: [(refKey: String, info: PhotoSenseInfo)]
-    let embeddings: [(refKey: String, vectorHalf: Data)]
-    let faces: [(refKey: String, faces: [DetectedFaceSignal])]
-    /// Dropbox パス（小文字）→ 撮影日（ADR-199・表示の並び替え用）。
-    let captureDates: [String: Date]
-    /// 解析データの全エントリが手元の写真に突合できたか（rev 記録の可否）。
-    let fullyMatched: Bool
+    let pieces: ShareImportPreparation.Pieces
 }
 
 // MARK: - 共有の表示ポリシー（送信側の二重表示対策）
@@ -376,9 +336,8 @@ final class CloudAnalysisPublisher {
         defer { isRunning = false }
         // ⚠️ 一覧が出そろう前に公開しない。途中の一覧で作ったシャードは「消えた写真」の
         // 掃除（stale）に引っかかり、次の窓で上げ直す空回りになる。
-        switch dropboxStore.syncState {
-        case .initialSync, .error: return mark("クラウドの一覧が同期中 — 出そろってから公開する")
-        case .idle, .polling, .fetchingDelta: break
+        guard dropboxStore.syncState.isListingSettled else {
+            return mark("クラウドの一覧が同期中 — 出そろってから公開する")
         }
         // ⚠️ **`dropboxStore.items` から hash を拾わない**（実機ログ diagnostics-84）。
         // 表示用の `DropboxFileItem` は content_hash を**わざと持たない**（67k 件の長寿命配列に

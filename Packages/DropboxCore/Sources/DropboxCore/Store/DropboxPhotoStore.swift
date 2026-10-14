@@ -211,6 +211,16 @@ public final class DropboxPhotoStore {
         case fetchingDelta
         case error(String)
 
+        /// クラウドの一覧が出そろっているか（初回同期の途中・失敗のときは偽）。
+        /// ⚠️ 「手元の一覧に無い＝もう無い写真」と読んでよいかは、**これだけ**で決める
+        /// （解析データの取り込みの掃除・解析の公開）。以前は 2 か所に同じ `switch` を書き写していた。
+        public var isListingSettled: Bool {
+            switch self {
+            case .initialSync, .error: false
+            case .idle, .polling, .fetchingDelta: true
+            }
+        }
+
         /// アクティビティ計測用の軽量マッピング。
         var activityKind: DropboxActivityMonitor.SyncActivity {
             switch self {
