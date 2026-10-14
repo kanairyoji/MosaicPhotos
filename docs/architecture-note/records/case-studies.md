@@ -21,6 +21,44 @@
 
 ---
 
+## ERROR 6 件が全部「停止を跨いだ通信」だった／6 時間の停止で 401／前面で 5 秒おきに 10.8 万件（diagnostics-110・2026-10-15）
+- 症状: 一晩のログ（2 ビルド・11 起動）で ERROR が 6 件。`ShareCopier: upload failed (transport)` ×3、
+  `ShareAnalysisFetch: cannot list backup root`、`SyncEngine[/]: weekly reconcile error — タイムアウト`、
+  `ShareCopier: create_folder failed (401)`。**6 件とも直前に `PROCESS SUSPENDED` があり、その後すべて回復していた**
+  （照合は次の回で完了・公開は失敗したシャードから再開・共有の反映は次の回で通った）。
+  別に、前面で撮影日時を埋めるループが走っている間、`cache.fetchItems`（10.8 万件・0.9 秒）が
+  **約 5 秒おき**に出て、footprint が 272MB → 497MB を往復していた（メインは止まっていない）。
+- 原因:
+  - ERROR: ポーリングは ADR-256 で「中断で切れた」を info に分けたが、**同じ判断が他の通信に無かった**。
+    共有のコピー／一覧／解析の公開、週 1 の照合は、停止で落ちた要求も本物の失敗も同じ ERROR で書いていた。
+    一覧は `nil` しか返さないので、呼び手には理由が分からなかった。
+  - 401: 共有の反映は**始めた時点のトークンを最後まで使い回していた**。反映を始めた直後に背面で 6 時間
+    吊るされ、戻ったときにはトークンの期限（4 時間）が過ぎていた。その回は一覧も作成も 401 で丸ごと見送り。
+  - 5 秒おき: 穴埋めは 12 枚の塊ごとに `refreshItemsFromCacheSoon` を呼ぶ。間引きは作り直しの所要
+    （0.9 秒）の 4 倍しか空けないので、塊ごとにほぼ毎回 10.8 万件を実体化していた。12 枚の日付で並びは
+    ほとんど変わらない。残り 7.7 万枚なので、充電中に開いている間ずっと続く。
+- 対処:
+  - 「想定どおりの切れ方」の判定を `SyncPollErrorPolicy`（public にした）の 1 か所のまま、共有のコピー
+    （`DropboxShareCopier.isInterruption`＝取り消しも見る）と週 1 の照合からも使う。一覧は
+    `listFolderOutcome`（`listed` / `interrupted` / `failed`）で理由を返し、解析の発見は切れた回を info にする。
+    本物の失敗は ERROR のまま（`ShareCopierInterruptionTests` が両方の向きを縛る）。
+    ⚠️ 初回同期は画面を失敗にするので、記録も ERROR のまま（照合だけ info）。
+  - 共有の反映はトークンを**区切りごとに無条件で取り直す**（一覧の前・セットごと・掃除の前）。
+    `freshAccessToken` は期限が近くなければ手元の値を返すだけなので、「停止を跨いだか」を呼ぶ側で判断しない
+    （`ShareTokenReissueTests`: 始めたときのトークンと、一覧の直後のトークンを期限切れにする。
+    一覧の前・セットごとの取り直しは、外すとそれぞれ落ちる。掃除の前の 1 回はテストで縛っていない）。
+  - 穴埋めのあとの作り直しは **1 分に 1 回まで・最後の塊は必ず**（`shouldRefreshAfterProbe`）。間引いた回の
+    日付はキャッシュの版が進んでいるので、次の作り直しで入る。
+- 関連: `SyncPollErrorPolicy.swift` / `DropboxSyncEngine.swift` / `DropboxShareCopier.swift` /
+  `ShareAnalysisFetch.swift` / `ShareSyncEngine+Sync.swift` / `ShareSyncEngine+Removal.swift` /
+  `DropboxPhotoStore+Location.swift` / `CaptureDateProbeNetworkTests`。
+- 残課題:
+  - 期限切れで共有の反映を区切りで止める変更（ADR-280 の A2）は、このログでは確かめられなかった
+    （期限切れの 3 回とも、反映はもう終わっていた）。
+  - 1 セットの中で停止を跨いだら、そのセットの残りは古いトークンのまま（区切りはセットの間まで）。
+  - 古い方のビルドの窓で 828MB（照合の失敗をきっかけに背面で一覧と統合一覧を作り直した）が 1 回。
+    新しい方のビルドの窓は最大 385〜587MB。再現したら追う。
+
 ## 期限切れの窓の続きが、30 分後の窓の頭で ERROR と飢餓を出していた（diagnostics-109・2026-10-14）
 - 症状: 一晩のログ（diagnostics-109）で、`Share sync: list_folder(recursive) failed`（ERROR）と
   `bgtask: 毎窓の手に順番が回らなかった: indexSnapshot` が 2 回ずつ、**05:37 と 10:51 の窓の頭**に出た。
