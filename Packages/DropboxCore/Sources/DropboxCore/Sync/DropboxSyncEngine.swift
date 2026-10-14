@@ -301,7 +301,7 @@ final class DropboxSyncEngine {
             // ここで `false` を返すと `syncLoop` が抜けて**そのルートの同期がアプリを
             // 開き直すまで止まる**——通信が一瞬切れただけで、新しい写真が出てこなくなる。
             // `.error` を画面へ出すのも筋が違う（利用者から見れば何も起きていない。
-            // しかも `.error` は共有の取り込みの掃除まで止める＝`cacheSettled`）。
+            // しかも `.error` は共有の取り込みの掃除まで止める＝`SyncState.isListingSettled`）。
             if isReconcile {
                 reconcileFailedRoots.insert(scopeKey)
                 let state = await cache.syncStateInfo(accountId: scopeKey)
