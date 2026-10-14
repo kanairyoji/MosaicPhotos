@@ -24,7 +24,7 @@ python3 scripts/export_screenshots.py       # xcresult attachments -> named PNGs
 
 | File | Screen | Source | Referenced by |
 |---|---|---|---|
-| `home.jpg` | Home — Sources + Trips + People + AI albums | **auto (safe)** | README, help/index, help/basics |
+| `home.jpg` | Home — Sources + Trips + People + AI albums (⚠️ old section order; the order changed in f894e29 — recapture) | **auto (safe)** | README, help/index, help/basics |
 | `places.jpg` | Home — place albums (Naha, Kyoto, …) | **auto (safe)** | help/places |
 | `grid-dense.jpg` | Photo grid (dense layout, scrubber, bottom bar) | **auto (safe)** | help/basics |
 | `fullscreen.jpg` | Full-screen photo | **auto (safe)** | help/basics |
