@@ -196,8 +196,8 @@ extension FaceStore {
     /// 低品質顔は通常 membership だけ（重心を汚さない）だが、それを新規クラスタへ入れると
     /// `addToCluster` はクラスタを作らずに返り、顔だけが**存在しないクラスタ ID** を指す
     /// （人物一覧に出ない・迷子になる・レビュー指摘）。ユーザーが明示的に分離した顔なので、
-    /// 種にするだけの根拠もある。以前は付け替え（`isNewCluster ||`）と分割（`!seeded ||`）が
-    /// この規則を別々の書き方で持っていた。
+    /// 種にするだけの根拠もある。以前は付け替えと分割が、この規則を別々の書き方で持っていた
+    /// （経緯は ADR-280 の E）。
     func attachFace(_ face: DetectedFace, vec: [Float], to clusterID: Int, contributes: Bool) {
         let contributesNow = contributes || cluster(clusterID) == nil
         addToCluster(clusterID: clusterID, vec: vec, quality: Float(face.quality), faceID: face.faceID,
