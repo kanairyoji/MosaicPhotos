@@ -478,6 +478,19 @@
 - 効きを見るログ: `消す前の確認で残した`（内訳つき）/ `中身が Dropbox のどこにも無い N 枚を ShareRemoved へ退避` /
   `持ち主の分からないフォルダ N 個は消さない` / `share sync: 台帳が一時的にインメモリで開いている`
 
+## ShareAfterBackupGate（diagnostics-109）
+- 置き場: `Packages/BackupKit/Sources/BackupKit/Share/ShareAfterBackupGate.swift`（呼び出しは `ShareSyncEngine.syncAfterBackup`・`HomeView` の `backupEngine.isRunning` の変化）
+- 問い: バックアップが終わったとき、共有の反映を起こすか
+- 材料:
+  - `waitingBackup` ← `BackupStore.shareWaitingBackupCounts()`（セットごとの `lastSyncedWaiting`）
+    - 約束: 反映がセットを数えるたびに書く（記録の無い端末写真の数）。**まだ数えていないセットは nil**、
+      読めなければ全体が nil（表示用の `shareSyncedCounts` のように 0 へ丸めない）。
+      ⚠️ バックアップの「上がった枚数」は材料にしない——OS へ預けた分（spool）を数えない
+    - テスト: `ShareAfterBackupGateTests.materialIsWrittenBySync`
+- 規則のテスト: `ShareAfterBackupGateTests.rule`
+- 呼び出し側のテスト: `ShareAfterBackupGateTests.noWaitingSkipsTheSync` / `waitingRunsTheSync`
+- 効きを見るログ: `share sync: バックアップ後の反映を見送る`
+
 ## 判断ではないもの
 
 ここに並ぶのは「名前は `*Policy` だが、やるかやらないかを決めていない」もの。

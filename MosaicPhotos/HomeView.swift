@@ -460,11 +460,13 @@ private struct HomeLifecycleTasks: ViewModifier {
                 if await hasShareSets() { await shareEngine.syncNow() }
             }
             // バックアップ完走後: waitingBackup だった共有アイテムを反映する。
+            // ⚠️ 待ちが無ければ起こさない（判断は `ShareAfterBackupGate`）。無条件だった頃は、
+            // 夜間の手の反映と合わせて毎窓 2 回、全件の一覧を取り直していた（diagnostics-109）。
             .onChange(of: backupEngine.isRunning) { wasRunning, running in
                 guard wasRunning, !running else { return }
                 Task {
                     guard NetworkStateMonitor.shared.networkAllowed() else { return }
-                    if await hasShareSets() { await shareEngine.syncNow() }
+                    if await hasShareSets() { await shareEngine.syncAfterBackup() }
                 }
             }
             .onChange(of: dropboxStore.auth.connectionStatus) { _, newStatus in

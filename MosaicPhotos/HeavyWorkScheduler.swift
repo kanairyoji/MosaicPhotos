@@ -463,6 +463,10 @@ enum HeavyWorkScheduler {
     /// 抱え、テストが 1 本も無かった。窓の使い方は実機で繰り返し失敗している領域なので、
     /// 順序と条件は `NightlyPlan` に出してテストで固定する。
     private static func runHeavyWork() async {
+        // 期限切れの窓は手順の終わりを待たない（`end (expired)` を出して返る）ので、この関数は
+        // 停止を跨いで**次の窓の頭で**続きを走り、飢餓の行もそこで出す（diagnostics-109）。
+        // どの窓の話かを行に添えられるよう、始めた時刻と中断の世代を控える。
+        let window = WindowStamp(began: Date(), suspensionEpoch: ProcessSuspension.epoch)
         // 背面起動では scenePhase の変化が来ないことがあり、初期値（active）のままだと中央ゲートが
         // 開かない。処理枠の間は「背面」を明示して、前面の定期ループ（HomeView）に判断させない
         // （diagnostics-74）。
@@ -488,7 +492,7 @@ enum HeavyWorkScheduler {
                 // 飢餓の世界は、まさにこの `return` で起きる。黙って帰ると `window plan:` も
                 // 下の飢餓ログも出ず、**実機確認の手順（章 J-3）は「正常」と読んでしまう**。
                 Diagnostics.mark("bgtask: 毎窓の手に順番が回らなかった: "
-                                 + "1手目で窓が尽きた（analysis 以降は未着手）")
+                                 + "1手目で窓が尽きた（analysis 以降は未着手）" + window.staleNote())
                 return
             }
 
@@ -516,7 +520,7 @@ enum HeavyWorkScheduler {
                 .subtracting(ran)
             if !starved.isEmpty {
                 Diagnostics.mark("bgtask: 毎窓の手に順番が回らなかった: "
-                                 + starved.map(\.rawValue).joined(separator: ","))
+                                 + starved.map(\.rawValue).joined(separator: ",") + window.staleNote())
             }
             // ⚠️ **ここでバックアップを止めない**（レビュー 11 周目）。`Task.isCancelled` は
             // 期限切れでも**前面復帰でも**真になるので、ここで止めると
@@ -527,6 +531,23 @@ enum HeavyWorkScheduler {
             // **利用者が設定画面から始めたバックアップ**を横から止め得る。
             // 止めるべき経路（期限切れ・デバッグ実行の打ち切り）は
             // `stopBackgroundProcessing(cancelBackup: true)` で明示的に止めている。
+        }
+    }
+
+    /// 窓の手順を始めた時点の控え（飢餓の行を、どの窓の話か読めるようにする）。
+    struct WindowStamp {
+        let began: Date
+        let suspensionEpoch: Int
+
+        /// 停止を跨いでいたら「HH:mm に始まった窓」を添える（跨いでいなければ空）。
+        /// ⚠️ 跨いだ行は**前の窓**の報告——期限切れで 5〜9 秒しか無かった窓の続きが、
+        /// 30 分後の窓の頭に出る。数えるときに今の窓の飢餓と混ぜない。
+        func staleNote() -> String {
+            guard ProcessSuspension.didSuspend(since: suspensionEpoch) else { return "" }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "HH:mm"
+            return "（停止を跨いだ＝\(f.string(from: began)) に始まった窓）"
         }
     }
 

@@ -65,6 +65,21 @@ public enum ProcessSuspension {
             return delta
         }
 
+        /// 復帰したのに、タイマーがまだ中断を数えていないか（発火が予定より大幅に遅れている）。
+        func isOverdue(interval: TimeInterval, tolerance: TimeInterval) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard let lastFire else { return false }   // 監視していない（install 前）
+            return Date().timeIntervalSince(lastFire) > interval + tolerance
+        }
+
+        /// テスト用: タイマーの最後の発火を差し替え、元の値を返す（戻すのは呼び手）。
+        func swapLastFireForTesting(_ date: Date?) -> Date? {
+            lock.lock(); defer { lock.unlock() }
+            let previous = lastFire
+            lastFire = date
+            return previous
+        }
+
         /// テスト用: いま中断から復帰したことにする。
         func markResumeForTesting() {
             lock.lock(); defer { lock.unlock() }
@@ -108,7 +123,14 @@ public enum ProcessSuspension {
     public static var epoch: Int { state.currentEpoch }
 
     /// `epoch` を控えた時点から今までの間に中断があったか。true ならその計測値は壁時計汚染されている。
-    public static func didSuspend(since epoch: Int) -> Bool { state.currentEpoch != epoch }
+    ///
+    /// ⚠️ **復帰した直後の一瞬も「跨いだ」と答える**（diagnostics-109）。中断を数えるのは
+    /// 復帰後のタイマーの発火なので、復帰と同時に届いた失敗（停止の前に投げた通信が
+    /// 復帰で落ちる）を調べる時点では、まだ `epoch` が進んでいないことがある。
+    /// 発火が予定より大幅に遅れているなら、それは「いま復帰したところ」なので跨いだと読む。
+    public static func didSuspend(since epoch: Int) -> Bool {
+        state.currentEpoch != epoch || state.isOverdue(interval: interval, tolerance: tolerance)
+    }
 
     /// **開始時の epoch を控えていない計測**（`PerfTrace.logSpan(_:ms:)` のような後追い報告）向け。
     /// 所要 `ms` から開始時刻を逆算し、その後に復帰していれば「中断を跨いだ」と判定する。
@@ -119,5 +141,14 @@ public enum ProcessSuspension {
     public static func spanned(lastMs ms: Double) -> Bool { state.spanned(lastMs: ms) }
 
     /// テスト用: 中断→復帰を再現する（実際の suspend はテストから起こせない）。
-    static func simulateSuspensionForTesting() { state.markResumeForTesting() }
+    /// テスト用: 「復帰したが、タイマーはまだ中断を数えていない」一瞬の中で `body` を走らせる。
+    /// 終わったら元に戻す（共有の状態なので、他のテストへ漏らさない）。
+    static func withOverdueTimerForTesting<T>(_ body: () throws -> T) rethrows -> T {
+        let previous = state.swapLastFireForTesting(Date().addingTimeInterval(-60))
+        defer { _ = state.swapLastFireForTesting(previous) }
+        return try body()
+    }
+
+    /// ⚠️ 他のパッケージのテスト（BackupKit の共有の反映）からも使うので public。
+    public static func simulateSuspensionForTesting() { state.markResumeForTesting() }
 }

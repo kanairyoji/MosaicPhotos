@@ -44,6 +44,8 @@ struct ShareReadFailureTests {
         let server: FakeDropboxServer
         let setID: UUID
         let shareRoot: String
+        /// `interruptible: true` のときだけ在る（共有ルートの通信を落とす口）。
+        var client: InterruptingClient? = nil
     }
 
     /// 端末写真 3 枚（バックアップ済み）＋クラウド写真 1 枚のセットを作り、落ち着くまで反映する。
@@ -51,12 +53,13 @@ struct ShareReadFailureTests {
     /// ⚠️ **クラウド写真を混ぜるのが要点**。端末写真だけだと、記録が読めない回は
     /// 「望ましい集合が空なのにメンバーは居る」で計画の安全弁が止めてしまい、
     /// 記録の読みを空に潰す実装と正しい実装を**区別できない**（fixture が 2 つの結果を分けない）。
-    private func makeSettledWorld(_ label: String) async -> World {
+    private func makeSettledWorld(_ label: String, interruptible: Bool = false) async -> World {
         let defaults = TestDefaults.scratch("share-read-failure-\(label)")
         defaults.set(true, forKey: ShareSettingsKeys.provideEnabled)
         defaults.set(Self.backupRoot, forKey: BackupSettingsKeys.dropboxFolder)
         let store = BackupStore(modelContainer: BackupStore.inMemoryContainerForTesting())
         let server = FakeDropboxServer()
+        let client = interruptible ? InterruptingClient(base: server) : nil
         for index in 0..<3 {
             let path = "/mosaicphotos/backup/2020/p\(index).jpg"
             await server.seed(path, hash: "h\(index)")
@@ -66,7 +69,8 @@ struct ShareReadFailureTests {
         }
         await server.seed(Self.cloudPhoto, hash: "hc")
         let engine = ShareSyncEngine(tokenProvider: FakeTokenProvider(), storeProvider: { store },
-                                     httpClient: server, defaults: defaults)
+                                     httpClient: client.map { $0 as any HTTPClient } ?? server,
+                                     defaults: defaults)
         engine.pollIntervalNs = 1_000_000
         engine.maxPollAttempts = 3
         engine.cloudSourceHashProvider = { [Self.cloudPhoto: "hc"] }
@@ -77,7 +81,7 @@ struct ShareReadFailureTests {
         for _ in 0..<3 { await quiesce(engine); await engine.syncNow() }
         await quiesce(engine)
         return World(engine: engine, store: store, server: server, setID: setID,
-                     shareRoot: ShareSettingsKeys.currentShareRoot(defaults))
+                     shareRoot: ShareSettingsKeys.currentShareRoot(defaults), client: client)
     }
 
     private func quiesce(_ engine: ShareSyncEngine) async {
@@ -232,5 +236,71 @@ struct ShareReadFailureTests {
         #expect(engine.lastError == nil)
         #expect(await store.shareSyncedCounts()[setID]?.present == 1, "初回の共有が始まらない")
         #expect(await server.conflictedCopyEntries == 0)
+    }
+
+    // MARK: - 停止を跨いだ回（diagnostics-109）
+
+    /// 共有ルートの一覧と作成を、通信ごと落とす口（停止で投げた通信が復帰で落ちるのを模す）。
+    actor InterruptingClient: HTTPClient {
+        let base: FakeDropboxServer
+        /// nil＝素通し。true＝中断から復帰したことにしてから落とす。false＝ただ落とす。
+        private var failRootSuspending: Bool?
+        private(set) var failedRequests = 0
+        init(base: FakeDropboxServer) { self.base = base }
+        func failRoot(suspending: Bool?) { failRootSuspending = suspending }
+
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            let url = request.url?.absoluteString ?? ""
+            if let suspending = failRootSuspending,
+               url.hasSuffix("/files/list_folder") || url.hasSuffix("/files/create_folder_v2") {
+                if suspending { ProcessSuspension.simulateSuspensionForTesting() }
+                failedRequests += 1
+                throw URLError(.networkConnectionLost)
+            }
+            return try await base.data(for: request)
+        }
+    }
+
+    /// ⚠️ 期限切れの窓は反映の終わりを待たないので、投げた通信ごと 30 分止まり、
+    /// 次の窓で起こされた瞬間に一覧も作成も落ちる。何も決めずに抜けるのは正しい（ADR-277）が、
+    /// それを error に残すと本物の通信障害が埋もれる（ADR-256）。
+    /// ⚠️ 逆向きも縛る——跨いでいない失敗まで「想定どおり」にしても通る形にしない。
+    @Test("一覧も作成も落ちた回: 停止を跨いでいれば error にしない／跨いでいなければ error",
+          arguments: [true, false])
+    func rootFailureAcrossSuspensionIsNotAnError(suspending: Bool) async {
+        let world = await makeSettledWorld("suspend-\(suspending)", interruptible: true)
+        let server = world.server
+        guard let client = world.client else { Issue.record("口が無い"); return }
+        #expect(world.engine.lastError == nil, "前提: 落ち着いていない")
+        let writesBefore = await writes(server)
+
+        await client.failRoot(suspending: suspending)
+        let tap = DiagnosticsLog.shared.tap()
+        await world.engine.syncNow()
+        await quiesce(world.engine)
+
+        // 仕込んだ失敗を両方踏んだか（一覧 → 作成）。踏んでいなければ別の出口を見ている。
+        #expect(await client.failedRequests == 2)
+        let lines = await tap.lines()
+        let errors = lines.filter { $0.contains("Share sync: list_folder(recursive) failed") }
+        let skipped = lines.filter { $0.contains("share sync: 共有ルートの一覧も作成も落ちた") }
+        if suspending {
+            #expect(errors.isEmpty, "停止を跨いだ回を error に残した: \(errors)")
+            #expect(skipped.count == 1 && skipped[0].contains("停止を跨いだ回"),
+                    "見送ったことと、その理由が残っていない: \(skipped)")
+        } else {
+            #expect(errors.count == 1, "本物の通信障害が error に出ない")
+            #expect(skipped.isEmpty)
+        }
+        // どちらでも、何も決めずに抜けて失敗は見える（ADR-277）。
+        #expect(world.engine.lastError == .folderCheckFailed)
+        #expect(await writes(server) == writesBefore, "一覧が取れない回に書き込んだ")
+        #expect(await world.store.shareSyncedCounts()[world.setID]?.present == 4)
+
+        // 次の回で元どおりになる。
+        await client.failRoot(suspending: nil)
+        await world.engine.syncNow()
+        await quiesce(world.engine)
+        #expect(world.engine.lastError == nil)
     }
 }

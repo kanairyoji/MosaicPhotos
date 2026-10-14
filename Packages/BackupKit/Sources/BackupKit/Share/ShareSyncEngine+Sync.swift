@@ -44,8 +44,23 @@ extension ShareSyncEngine {
         await task.value
     }
 
+    /// バックアップが終わったときに呼ぶ。待っていた共有写真が無ければ反映しない（`ShareAfterBackupGate`）。
+    public func syncAfterBackup() async {
+        guard ShareSettingsKeys.isProvideEnabled(defaults) else { return }
+        let waiting = await storeProvider().shareWaitingBackupCounts()
+        guard ShareAfterBackupGate.shouldSync(waitingBackup: waiting) else {
+            // ⚠️ 効いた回数が見えるログ（ADR-250）。無いと「一度も効かない」に気づけない。
+            Diagnostics.mark("share sync: バックアップ後の反映を見送る（待っている共有写真が無い・"
+                             + "\(waiting?.count ?? 0) セット）")
+            return
+        }
+        await syncNow()
+    }
+
     private func performSync() async {
         defer { isSyncing = false }
+        // 停止を跨いだ回を見分けるために、始めた時点の中断の世代を控える（diagnostics-109）。
+        let suspensionEpoch = ProcessSuspension.epoch
 
         guard let token = try? await tokenProvider.freshAccessToken() else {
             lastError = .notConnected
@@ -92,11 +107,21 @@ extension ShareSyncEngine {
             case .alreadyExisted:
                 // ルートは在るのに一覧が取れなかった＝実在が分からない。この回は何も決めない。
                 lastError = .folderCheckFailed
-                Diagnostics.mark("share sync: 共有ルートの一覧が取れない — この回は見送る（\(sets.count) セット）")
+                Diagnostics.mark("share sync: 共有ルートの一覧が取れない — この回は見送る（\(sets.count) セット）"
+                                 + Self.suspensionNote(since: suspensionEpoch))
                 return
             case .failed:
                 lastError = .folderCheckFailed
-                BackupLogger.error("Share sync: list_folder(recursive) failed — \(shareRoot)")
+                // ⚠️ **停止を跨いだ回は error にしない**（diagnostics-109・ADR-256）。
+                // 期限切れの窓は反映の終わりを待たないので、投げた通信ごと 30 分止まり、
+                // 次の窓で起こされた瞬間に一覧も作成も落ちる。何も決めずに抜けるのは
+                // 正しく（ADR-277）、次の回で直る——これを error に残すと本物の障害が埋もれる。
+                if ProcessSuspension.didSuspend(since: suspensionEpoch) {
+                    Diagnostics.mark("share sync: 共有ルートの一覧も作成も落ちた — この回は見送る"
+                                     + Self.suspensionNote(since: suspensionEpoch))
+                } else {
+                    BackupLogger.error("Share sync: list_folder(recursive) failed — \(shareRoot)")
+                }
                 return
             }
         }
@@ -156,6 +181,12 @@ extension ShareSyncEngine {
             isSyncing = false
             await syncNow()
         }
+    }
+
+    /// 停止を跨いだ回なら、ログの末尾に添える一言（跨いでいなければ空）。
+    /// ⚠️ 前の窓が残した反映は**次の窓の頭**に失敗を出すので、窓を取り違えないように書く。
+    static func suspensionNote(since epoch: Int) -> String {
+        ProcessSuspension.didSuspend(since: epoch) ? "（停止を跨いだ回＝停止の前に始めた反映）" : ""
     }
 
     private func sync(set: ShareSetLite, shareRoot: String, store: BackupStore,

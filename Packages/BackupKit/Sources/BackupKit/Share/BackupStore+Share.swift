@@ -64,6 +64,14 @@ extension BackupStore {
         return out
     }
 
+    /// セットごとの「バックアップ待ち」の控え（`ShareAfterBackupGate` の材料）。
+    /// ⚠️ **丸めない**: まだ一度も数えていないセットは nil、読めなければ全体が nil
+    /// （`shareSyncedCounts` は表示用なので 0 に丸めている。判断には使わない）。
+    public func shareWaitingBackupCounts() -> [Int?]? {
+        guard let sets = try? modelContext.fetch(FetchDescriptor<ShareSet>()) else { return nil }
+        return sets.map(\.lastSyncedWaiting)
+    }
+
     /// 反映の結果を控える（表示用）。
     public func recordShareSyncCounts(setID: UUID, present: Int, waiting: Int) {
         let id = setID
