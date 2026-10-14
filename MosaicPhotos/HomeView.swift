@@ -101,14 +101,16 @@ struct HomeView: View {
     /// ホームの土台（一覧そのもの）。
     private var homeStack: some View {
         NavigationStack {
+            // 並びは写真アプリに倣う: 全体 → 自分で作ったアルバム（共有を含む）→ 人 →
+            // 機械が作るまとまり（旅行）→ 場所。
             List {
                 sourceSection
-                autoAlbumsSection
-                peopleSection
-                cloudSharedSection
                 aiAlbumsSection
-                pathAlbumsSection
                 albumsSection
+                pathAlbumsSection
+                cloudSharedSection
+                peopleSection
+                autoAlbumsSection
                 placesSection
             }
             .listStyle(.insetGrouped)
