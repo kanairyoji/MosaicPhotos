@@ -75,8 +75,9 @@ actor DropboxCacheStore {
         self.snapshotDirectory = snapshotDirectory
         // ⚠️ `isEphemeral = false`＝控えを使う側の挙動を試す（在庫の目的そのもの）。
         isEphemeral = false
-        let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let baseURL = cachesURL.appendingPathComponent("DropboxKitTests", isDirectory: true)
+        // バイナリも控えと同じ置き場の下へ（同じテストの 2 つの店＝再起動は共有し、
+        // 別のテストどうしは分かれる。固定パスだと並行するテストの `clearAll` が消し合う）。
+        let baseURL = snapshotDirectory.appendingPathComponent("binaries", isDirectory: true)
         thumbnailStore = DiskImageStore(directory: baseURL.appendingPathComponent("thumbnails", isDirectory: true))
         fullImageStore = DiskImageStore(directory: baseURL.appendingPathComponent("fullimages", isDirectory: true))
         thumbnailByteLimit = DropboxInternalConstants.defaultThumbnailByteLimit
@@ -114,8 +115,17 @@ actor DropboxCacheStore {
         modelContext = ModelContext(modelContainer)
         // テスト用の累計（本番では読まれない）。
 
-        let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let baseURL = cachesURL.appendingPathComponent("DropboxKit", isDirectory: true)
+        // ⚠️ インメモリ（＝テスト）の店は**バイナリの置き場もインスタンスごとに分ける**。
+        // 本番と同じ固定パスを共有すると、並行する別のテストの `clearAll`（置き場を丸ごと消す）が
+        // 書いたばかりのサムネを消し、「保存したのに無い」で落ちていた（CI・0edc7fc）。
+        let baseURL: URL
+        if isStoredInMemoryOnly {
+            baseURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("DropboxKitTests-\(UUID().uuidString)", isDirectory: true)
+        } else {
+            let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            baseURL = cachesURL.appendingPathComponent("DropboxKit", isDirectory: true)
+        }
         thumbnailStore = DiskImageStore(directory: baseURL.appendingPathComponent("thumbnails", isDirectory: true))
         fullImageStore = DiskImageStore(directory: baseURL.appendingPathComponent("fullimages", isDirectory: true))
 

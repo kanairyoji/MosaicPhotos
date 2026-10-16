@@ -21,6 +21,42 @@
 
 ---
 
+## 「CI 緑」と報告したのに iOS ジョブが落ちていた／テストの店がバイナリの置き場を共有していた（v1.17・0edc7fc・2026-10-16）
+- 症状: v1.17 をリリースする前に、私は CI を「緑」と報告した。だが 0edc7fc の
+  `iOS simulator tests (best-effort)` は落ちていた。落ちたのは DropboxCore の
+  「prune は消えたファイルを取り除く」で、許容時間の 5 分を超えていた。
+  1 つ前の b50d47a はコードが同じで、そこでは通っている。
+  手元で全テストを繰り返し回すと、別のテストもたまに落ちた。
+  「無効化されていなければ通常どおり保存される」が、6 周目に「保存したのにサムネが無い」で落ちた。
+- 原因:
+  - 報告の誤り: iOS ジョブは `continue-on-error` なので、落ちても run の conclusion は success のまま。
+    私は `gh run list` の conclusion だけを見ていた。
+    ⚠️ **同じ誤りの 2 回目**。1 回目（2026-09-29）の教訓は ci.yml のコメントに書いてあったが、
+    コメントは見る手順に入っていなかった。
+  - サムネのテスト: インメモリの `DropboxCacheStore`（テスト専用）でも、バイナリの置き場は本番と同じ
+    固定パス（`Caches/DropboxKit/…`）だった。`init(testContainer:)` も共有の `DropboxKitTests` を使っていた。
+    並行する別のテストの `clearAll` は置き場を丸ごと消すので、書いたばかりのファイルが消えていた。
+  - prune のタイムアウト: **原因は分かっていない**。
+    - `waitUntil` は約 3 秒で打ち切る。prune の経路にも、終わらない繰り返しは無い。
+    - 手元では、単独 40 周・全体 31 周で一度も再現しなかった。
+    - CI は xcresult を残していないので、止まった場所のスタックが取れなかった。
+- 対処:
+  - インメモリの店は、置き場をインスタンスごとの一時ディレクトリにする。`testContainer` 版は、控えの
+    置き場の下を使う（同じテストの 2 つの店＝再起動の模擬は共有し、別のテストどうしは分かれる）。
+    本番の経路（`isStoredInMemoryOnly == false`）は変えていない。
+    回帰テスト `clearAllDoesNotReachOtherStores` を足した。片方の店の `clearAll` が、もう片方のサムネを消さないことを確かめる。
+    並行の偶然に頼らないので、直す前のコードでは毎回落ちる（負の検証済み・8 件実行）。
+  - iOS ジョブが落ちたら、xcresult を成果物として残す（`ios-xcresult`・14 日）。
+    Xcode はテストのタイムアウトでスパインダンプを付けるので、次に止まったら場所が分かる。
+  - `scripts/ci_status.sh <sha>`: コミットのジョブを**ジョブ単位で**出す。緑でないジョブが
+    1 つでもあれば exit 1。リリース手順（`docs/release-notes/README.md` の 0.）から呼ぶ。
+    0edc7fc で exit 1、b50d47a で exit 0 を確かめた。
+- 関連: `DropboxCacheStore.swift` / `DropboxCacheStoreCacheTests.swift` / `.github/workflows/ci.yml` /
+  `scripts/ci_status.sh` / `docs/release-notes/README.md`。
+- 残課題:
+  - prune のタイムアウトの原因。次に CI で止まったら、`ios-xcresult` のスパインダンプを見る。
+  - v1.17 はこの修正の前のビルドで提出済み。修正はテストの置き場だけなので、アプリの動作には関係しない。
+
 ## ERROR 6 件が全部「停止を跨いだ通信」だった／6 時間の停止で 401／前面で 5 秒おきに 10.8 万件（diagnostics-110・2026-10-15）
 - 症状: 一晩のログ（2 ビルド・11 起動）で ERROR が 6 件。`ShareCopier: upload failed (transport)` ×3、
   `ShareAnalysisFetch: cannot list backup root`、`SyncEngine[/]: weekly reconcile error — タイムアウト`、

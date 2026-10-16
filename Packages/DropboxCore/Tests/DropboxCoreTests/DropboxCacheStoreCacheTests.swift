@@ -66,6 +66,24 @@ struct DropboxCacheStoreCacheTests {
         await store.invalidate(path: path)   // 後片付け
     }
 
+    /// ⚠️ テストの店どうしはバイナリの置き場を共有しない。共有すると、並行する別のテストの
+    /// `clearAll`（置き場を丸ごと消す）が上の `validWriteIsStored` のサムネを消して、
+    /// CI でたまに落ちていた（0edc7fc）。並行の偶然に頼らず、2 つの店で決定的に作る。
+    @Test("別の店の clearAll は、この店のバイナリを消さない")
+    func clearAllDoesNotReachOtherStores() async {
+        let mine = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let other = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let path = "/isolated-\(UUID().uuidString).jpg"
+        let data = makeImage().jpegData(compressionQuality: 0.8)!
+
+        await mine.commitBinary(kind: .thumbnail, data: data, path: path,
+                                token: await mine.writeToken(for: path))
+        #expect(await mine.thumbnailExists(for: path), "前提: 書けていない")
+        await other.clearAll(accountId: "acc-other")
+
+        #expect(await mine.thumbnailExists(for: path), "別の店の clearAll がこの店のサムネを消した")
+    }
+
     // MARK: - Invalidation
 
     @Test("invalidate でサムネイルがメモリ・ディスクから消える")

@@ -108,6 +108,17 @@ jobs:
         # SIM を渡さなければ `scripts/test.sh` がその場で使える iPhone を UDID で選ぶ。
         run: scripts/test.sh ios
 
+      # ⚠️ **落ちた回の xcresult を残す**（0edc7fc で踏んだ）。テストが許容時間を超えると
+      # Xcode は xcresult にスパインダンプ（その瞬間の全スレッドのスタック）を付けるが、
+      # ログには「5 分を超えた」しか出ない。残さないと、どこで止まったかが分からない。
+      - name: Keep test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-xcresult
+          path: Packages/*/.build/TestResults-*.xcresult
+          retention-days: 14
+
       # ⚠️ **落ちたことを run のページに出す**（2026-09-29 に踏んだ）。
       # このジョブは `continue-on-error: true` なので、**run 全体の結論は `success` のまま**
       # ——ジョブ単位で見ないと赤に気づけない。実際に、iOS のテストが 1 本落ちているのに
