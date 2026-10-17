@@ -19,6 +19,7 @@ Packages/PhotoSourceKit/           ← 写真ソース共通基盤（表示イ�
                                    PhotoGridView / PhotoCollectionView（UICollectionView グリッド・diffable・プリフェッチ・
                                    contentOffset ベースのスクラバー）/ GridThumbnailCell / GridSectionHeaderView /
                                    GridScrubberView / FullPhotoView / PhotoInfoPanel / PhotoPageView /
+                                   VideoPlaybackView（動画のページ・表示中のページだけが再生・ADR-281）/
                                    ZoomableImageView（ピンチ/ダブルタップ拡大＋ZoomMath 純計算・ADR-77）/
                                    PhotoSourceEnvironment（dismissToHome / showSettings）/ GridSettingsKeys
     Places/                        GeoGridKey(純)/ PlaceAlbumInfo / PlaceGrouping(純)/

@@ -8,6 +8,8 @@ struct PhotoFilterSheet: View {
     /// ソース（端末/クラウド）の絞り込み欄を出すか。混在ソースのビュー（MergedPhotoStore）のみ true。
     /// 単一ソース（写真タブ・クラウドタブ等）では意味がないため欄ごと出さない。
     let showsSourceOptions: Bool
+    /// 写真／動画の絞り込み欄を出すか。動画を含み得るソース（`PhotoStore.includesVideos`）のみ true。
+    let showsMediaOptions: Bool
     /// ベストショット欄を出すか。判定プロバイダ（AI 台帳）が注入されているビューのみ true。
     var showsQualityOption: Bool = false
     @Environment(\.dismiss) private var dismiss
@@ -25,6 +27,23 @@ struct PhotoFilterSheet: View {
                     }
                 } footer: {
                     Text(L("Show only photos marked as favorites. Cloud photos have no favorites and will be hidden."))
+                }
+                if showsMediaOptions {
+                    Section {
+                        Picker(selection: $filter.media) {
+                            Text(L("All")).tag(PhotoFilter.Media.all)
+                            Label(L("Photos"), systemImage: "photo").tag(PhotoFilter.Media.photosOnly)
+                            Label(L("Videos"), systemImage: "video").tag(PhotoFilter.Media.videosOnly)
+                        } label: {
+                            Label {
+                                Text(L("Type"))
+                            } icon: {
+                                Image(systemName: "photo.on.rectangle").foregroundStyle(.green)
+                            }
+                        }
+                    } footer: {
+                        Text(L("Show only photos or only videos."))
+                    }
                 }
                 if showsQualityOption {
                     Section {

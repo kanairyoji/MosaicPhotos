@@ -11,6 +11,13 @@ public struct PhotoFilter: Equatable, Sendable {
         case cloudOnly  // クラウド（Dropbox）のみ
     }
 
+    /// 写真／動画の絞り込み。動画を含むソース（`PhotoStore.includesVideos`）でだけ欄を出す。
+    public enum Media: String, CaseIterable, Sendable {
+        case all         // 絞り込みなし
+        case photosOnly  // 写真のみ
+        case videosOnly  // 動画のみ
+    }
+
     /// お気に入り（ハート）を付けた写真だけに絞る。
     public var favoritesOnly: Bool = false
     /// ベストショット（美的スコアが高い写真）だけに絞る。判定は `apply` の `isBeautiful` で
@@ -18,11 +25,13 @@ public struct PhotoFilter: Equatable, Sendable {
     public var beautifulOnly: Bool = false
     /// 画像のソース（端末のみ／クラウドのみ）。ピープル等の混在ビューで使う。
     public var source: Source = .all
+    /// 写真のみ／動画のみ。
+    public var media: Media = .all
 
     public init() {}
 
     /// 何らかの絞り込みが有効か（フィルタボタンの強調表示に使う）。
-    public var isActive: Bool { favoritesOnly || beautifulOnly || source != .all }
+    public var isActive: Bool { favoritesOnly || beautifulOnly || source != .all || media != .all }
 
     /// アイテム列へフィルタを適用する（未フィルタなら配列をそのまま返す）。
     /// - Parameter isBeautiful: ベストショット判定（`beautifulOnly` のときだけ使う）。
@@ -33,6 +42,11 @@ public struct PhotoFilter: Equatable, Sendable {
         return items.filter { item in
             if favoritesOnly && !item.isFavorite { return false }
             if beautifulOnly, let isBeautiful, !isBeautiful(item) { return false }
+            switch media {
+            case .all:        break
+            case .photosOnly: if item.mediaKind != .photo { return false }
+            case .videosOnly: if item.mediaKind != .video { return false }
+            }
             switch source {
             case .all:       return true
             case .localOnly: return !item.isCloudSource

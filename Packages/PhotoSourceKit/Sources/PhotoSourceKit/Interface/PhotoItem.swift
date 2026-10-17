@@ -45,6 +45,31 @@ public protocol PhotoItem: Identifiable, Hashable, Sendable {
     /// 「知らない写真が一覧に出る」類の不具合を実機で切り分けられない（実測: どのフォルダ由来かを
     /// 特定できず、ログからも判断できなかった）。表示できる形で必ず持たせる。
     var sourceLocation: PhotoSourceLocation { get }
+    /// 写真か動画か。グリッドの再生時間・全画面のプレーヤー・「写真／動画」の絞り込みに使う。
+    /// ⚠️ プロトコル**要件**であること（extension の既定だけだと、ジェネリック経由の呼び出しが
+    /// 既定に静的束縛され、`MergedPhotoItem` が中身へ委譲しても無視される——`isMixedSource` と同じ罠）。
+    var mediaKind: PhotoMediaKind { get }
+    /// 動画の長さ（秒）。写真は nil。
+    var videoDuration: TimeInterval? { get }
+}
+
+/// 写真か動画か。
+public enum PhotoMediaKind: Sendable, Equatable {
+    case photo
+    case video
+}
+
+/// 動画の再生時間の表示（グリッドのセル右下・写真アプリと同じ書式）。
+public enum VideoDurationText {
+    /// `0:05` / `1:02` / `1:02:03`。秒は四捨五入する（写真アプリは 0.6 秒を `0:01` と出す）。
+    /// 負・非有限は nil（表示しない）。
+    public static func format(_ seconds: TimeInterval) -> String? {
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        let total = Int(seconds.rounded())
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%d:%02d", m, s)
+    }
 }
 
 /// 写真の実体の所在（端末 / クラウド＋パス）。
@@ -72,6 +97,9 @@ public extension PhotoItem {
     var isFavorite: Bool { false }
     var supportsFavorite: Bool { false }
     var isCloudSource: Bool { false }
+    /// 既定は写真（動画を出せるのは今のところ端末の写真ライブラリだけ）。
+    var mediaKind: PhotoMediaKind { .photo }
+    var videoDuration: TimeInterval? { nil }
     /// 既定は id をそのまま所在として出す（種別だけは `isCloudSource` から決まる）。
     /// パスを持つソースは必ず上書きすること。
     var sourceLocation: PhotoSourceLocation {

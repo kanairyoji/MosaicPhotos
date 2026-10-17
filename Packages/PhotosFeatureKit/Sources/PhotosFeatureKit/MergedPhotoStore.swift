@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import AVFoundation
 import CoreLocation
 import DropboxKit
 import LocalPhotoKit
@@ -54,11 +55,13 @@ public final class MergedPhotoStore {
 
     public init(
         dropboxStore: DropboxPhotoStore,
-        localStore: LocalPhotoStore? = nil,
+        localStore: LocalPhotoStore,
         cloudPathFilter: Set<String>? = nil
     ) {
         self.dropboxStore = dropboxStore
-        self.localStore = localStore ?? LocalPhotoStore()
+        // ⚠️ 端末側のストアは呼ぶ側が必ず作って渡す（既定値を置かない）。ホームの「すべて」は
+        // 写真と動画、メンバー画面は解析が拾った写真の ID だけ——どちらにするかは呼ぶ側の判断。
+        self.localStore = localStore
         self.cloudPathFilter = cloudPathFilter
         // ⚠️ ここで observeStores() を張らないこと。監視の開始は `start()`（＝実際に画面に出たとき）まで
         // 遅らせる。SwiftUI のビューは再評価のたびに init が走るため、`State(initialValue: .forMembers(…))`
@@ -236,6 +239,8 @@ extension MergedPhotoStore: PhotoStore {
 
     /// ローカル＋Dropbox の混在ソース＝フィルタの「ソース」欄（端末のみ/クラウドのみ）を出す。
     public var isMixedSource: Bool { true }
+    /// 端末側が動画を含むなら、統合ビューも動画を含む（クラウドは画像だけ）。
+    public var includesVideos: Bool { localStore.includesVideos }
 
     public var state: PhotoLoadState {
         Self.resolveState(
@@ -398,6 +403,12 @@ extension MergedPhotoStore: PhotoStore {
     public func fullImage(for item: MergedPhotoItem) async -> UIImage? {
         await forward(item, local: { await localStore.fullImage(for: $0) },
                             cloud: { await dropboxStore.fullImage(for: $0) })
+    }
+
+    /// 動画の再生は端末側だけ（クラウドは画像だけを同期する）。
+    public func playerItem(for item: MergedPhotoItem) async -> AVPlayerItem? {
+        await forward(item, local: { await localStore.playerItem(for: $0) },
+                            cloud: { _ in nil })
     }
 
     /// 共有用の原本は、それぞれのストアの実装へ委譲する。

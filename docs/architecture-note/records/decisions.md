@@ -21,6 +21,42 @@
 
 ---
 
+## ADR-281 端末の動画を、ホームの「すべて」「端末」にだけ出す
+- 状態: 採用（2026-10-17）
+- 文脈: これまで写真だけを扱っていた。利用者の要望で動画にも対応する。まず端末の動画を、
+  ソースの画面（ホームの「すべて」「端末」）に出す。AI アルバム等は今後考える。
+  「写真だけ」の絞り込み（`mediaType == image`）は 6 パッケージ・約 15 か所に別々に書いてある
+  （ソースの一覧・場所・解析の候補・旅行アルバム・バックアップ・数の表示）。
+  `LocalPhotoStore` は、ホームの 2 画面のほかに、アルバム・ピープル・AI アルバムの中身の表示にも使われる。
+- 決定:
+  - **`LocalPhotoStore.init(media:)` に範囲（`LocalMediaScope`＝写真だけ／写真と動画）を必須で渡す。**
+    既定値は置かない（ADR-196 の一般形）。省略できると作る側が何も考えずに片方へ倒れ、
+    動画が解析・アルバムへ漏れるか、ホームから消える。`MergedPhotoStore` も端末側のストアを必須にした
+    （以前は `LocalPhotoStore()` を既定で作っていた）。
+  - 動画を含むのはホームの「すべて」（`RootView` の統合ストア）と「端末」だけ。ID 指定・構築済みの
+    ストア（アルバム等）は、渡された ID だけを出す（ID は解析が拾った写真なので動画は来ない）。
+  - **解析・場所・バックアップ・旅行アルバムは写真だけのまま変えない。** それぞれが自分で絞っているので、
+    範囲を変えても効かない（効かせるときは各所を数えて直す）。全画面の AI 情報（insight）は動画では引かない。
+    動画の共有も利用の台帳に記録しない（台帳は解析・アルバムが読む）。
+  - `PhotoItem` に `mediaKind` / `videoDuration` を、`PhotoStore` に `includesVideos` を、
+    **プロトコル要件として**足した（既定だけだとジェネリック経由で既定に静的束縛される＝`isMixedSource` の罠。
+    `mediaFilters` のテストが、要件を外すと「動画のみ」が空になることで落ちる＝負の検証済み）。
+  - 全画面は `VideoPlaybackView`（AVKit の `VideoPlayer`）。**表示中のページだけ**がプレーヤーを持ち、
+    開いたら自動で再生（音あり・既定のオーディオセッション＝消音スイッチに従う）、ページを送ったら止めて捨てる。
+    取得は `PHImageManager.requestPlayerItem`（iCloud も取りに行く・タスクの取り消しで要求も取り消す）。
+  - グリッドのセル右下に再生時間（`VideoDurationText`）。フィルタに「種類（写真／ビデオ）」を足し、
+    動画を含み得るソースでだけ出す。ホームと設定の表示名は「すべて」「端末」に揃えた。
+- 結果: クラウド（Dropbox）は今のところ画像だけを同期するので、統合ビューの動画は端末のものだけ。
+  動画の共有は原本（`.fullSizeVideo` → `.video`）が取れないときは何もしない（静止画で代用しない）。
+  実機でしか確かめられないこと（再生の待ち・iCloud・AVKit の操作部の重なり）は device-verification.md の
+  「端末の動画」と `video: player item …` のログで見る。
+- 関連: `LocalMediaScope.swift` / `LocalPhotoStore.swift` / `LocalPhotoStore+PhotoStore.swift` /
+  `PhotoItem.swift` / `PhotoFilter.swift` / `PhotoLoading.swift`（`PhotoVideoProviding`）/
+  `VideoPlaybackView.swift` / `FullPhotoView.swift` / `GridThumbnailCell.swift` / `MergedPhotoStore.swift` /
+  `LocalMediaScopeTests` / `VideoDurationTextTests` / `PhotoFilterTests`。
+
+---
+
 ## ADR-280 リファクタリングの 1 周（入口を 1 つに・前面のループ・共有の手順を段に・顔の所属の手順）
 - 状態: 採用（2026-10-14）
 - 文脈: 利用者の依頼でリファクタリングの候補を洗い出し（スコアボード第 8 回・関数ごとの分岐数・

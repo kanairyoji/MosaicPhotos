@@ -60,7 +60,8 @@ public final class LocalPhotoStore {
     }
 
     private enum Source {
-        case all
+        /// ライブラリ全体（何を含めるかは `LocalMediaScope`）。
+        case all(LocalMediaScope)
         /// BackupAssetRecord から集計した localIdentifier リストで取得する。
         /// PHAssetCollection は使わない（アルバム情報はバックアップ収集データに依存する）。
         case identifiers([String])
@@ -68,6 +69,11 @@ public final class LocalPhotoStore {
         case preloaded
     }
     @ObservationIgnored private let source: Source
+    /// ライブラリ全体を一覧するときの範囲（ID 指定・構築済みのストアは nil＝渡された写真だけ）。
+    var mediaScope: LocalMediaScope? {
+        if case .all(let scope) = source { return scope }
+        return nil
+    }
 
     // MARK: - 写真ライブラリの変更追従（ADR: 表示中の撮影・削除・限定アクセス変更）
 
@@ -132,8 +138,11 @@ public final class LocalPhotoStore {
     }
 
     /// ライブラリ全体を対象にするイニシャライザ。
-    public init() {
-        source = .all
+    /// - Parameter media: 写真だけか、動画も含めるか。⚠️ 既定値を置かない——動画を出すのは
+    ///   ホームの「すべて」「端末」だけで、解析・場所・アルバムは写真だけを前提にしている。
+    ///   省略できると、作る側が何も考えずに片方へ倒れる（ADR-196 の一般形）。
+    public init(media: LocalMediaScope) {
+        source = .all(media)
         authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
 
@@ -184,11 +193,11 @@ public final class LocalPhotoStore {
         let (list, mapped) = await Task.detached(priority: .userInitiated) { () -> ([PHAsset], [LocalPhotoItem]) in
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-            options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
 
             let list: [PHAsset]
             switch source {
-            case .all:
+            case .all(let scope):
+                options.predicate = scope.predicate
                 let result = PHAsset.fetchAssets(with: options)
                 var acc: [PHAsset] = []
                 acc.reserveCapacity(result.count)

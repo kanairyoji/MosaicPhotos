@@ -117,7 +117,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         ZStack {
             TabView(selection: $currentID) {
                 ForEach(windowItems) { item in
-                    FullPhotoView(store: store, item: item, showFaceHighlights: showFaceHighlights,
+                    FullPhotoView(store: store, item: item, isCurrent: item.id == currentID,
+                                  showFaceHighlights: showFaceHighlights,
                                   onTap: { isImmersive.toggle() })
                         .tag(item.id)
                 }
@@ -142,7 +143,8 @@ public struct PhotoPageView<Store: PhotoStore>: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $shareItem) { item in
             ActivityShareSheet(activityItems: item.activityItems) { completed in
-                guard completed, let photoUsageEvent else { return }
+                // ⚠️ 動画の共有は記録しない（利用の台帳は写真の解析・アルバムが読む。動画は対象外）。
+                guard completed, !item.isVideo, let photoUsageEvent else { return }
                 // 利用記録も**共有した写真**に付ける（閉じるまでにページを送られ得るため）。
                 let id = item.id
                 Task { await photoUsageEvent(.share, id) }
@@ -337,13 +339,16 @@ public struct PhotoPageView<Store: PhotoStore>: View {
             if let original = await store.originalForSharing(item) {
                 // 別ページへ移っていたら出さない（取り違え防止）。書いたファイルは次回の準備時に片付く。
                 guard PageBoundResult.shouldPresent(startedOn: pageID, current: currentID) else { return }
-                shareItem = ShareImageItem(id: "\(pageID)", url: original.fileURL, image: nil)
+                shareItem = ShareImageItem(id: "\(pageID)", url: original.fileURL, image: nil,
+                                           isVideo: item.mediaKind == .video)
                 return
             }
+            // ⚠️ 動画は静止画へ落とさない（1 コマを「その動画」として送ってしまう）。
+            guard item.mediaKind != .video else { return }
             // 原本が取れない（クラウド未取得・非対応）ときは表示用画像で共有する。
             guard let image = await store.fullImage(for: item),
                   PageBoundResult.shouldPresent(startedOn: pageID, current: currentID) else { return }
-            shareItem = ShareImageItem(id: "\(pageID)", url: nil, image: image)
+            shareItem = ShareImageItem(id: "\(pageID)", url: nil, image: image, isVideo: false)
         }
     }
 
@@ -368,6 +373,8 @@ private struct ShareImageItem: Identifiable {
     let url: URL?
     /// 原本が取れなかったときの表示用画像。
     let image: UIImage?
+    /// 動画を共有したか（利用の記録から外す）。
+    let isVideo: Bool
 
     var activityItems: [Any] {
         if let url { return [url] }

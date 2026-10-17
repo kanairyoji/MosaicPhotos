@@ -10,6 +10,7 @@
 import CoreLocation
 import DropboxKit
 import Foundation
+import LocalPhotoKit
 import PhotoSourceKit
 import Testing
 @testable import PhotosFeatureKit
@@ -221,7 +222,8 @@ struct MergedPhotoStoreGenerationTests {
 
     private func makeStore() -> MergedPhotoStore {
         MergedPhotoStore(dropboxStore: DropboxPhotoStore(
-            auth: DropboxAuthService(appKey: "k", redirectURI: "app://cb")))
+            auth: DropboxAuthService(appKey: "k", redirectURI: "app://cb")),
+                         localStore: LocalPhotoStore(media: .photosOnly))
     }
 
     private func item(_ path: String) -> MergedPhotoItem {

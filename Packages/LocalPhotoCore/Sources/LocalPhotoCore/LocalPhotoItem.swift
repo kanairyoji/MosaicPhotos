@@ -15,6 +15,10 @@ public struct LocalPhotoItem: PhotoItem {
     public var isFavorite: Bool { asset.isFavorite }
     /// 端末写真なのでお気に入りの付け外しに対応する。
     public var supportsFavorite: Bool { true }
+    /// 写真か動画か（PHAsset から即時取得）。
+    public var mediaKind: PhotoMediaKind { asset.mediaType == .video ? .video : .photo }
+    /// 動画の長さ（秒）。写真は nil。
+    public var videoDuration: TimeInterval? { asset.mediaType == .video ? asset.duration : nil }
 
     public static func == (lhs: LocalPhotoItem, rhs: LocalPhotoItem) -> Bool {
         lhs.asset.localIdentifier == rhs.asset.localIdentifier

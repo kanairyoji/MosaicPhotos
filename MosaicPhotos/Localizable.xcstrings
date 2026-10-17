@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "All" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべて"
+          }
+        }
+      }
+    },
+    "On Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末"
+          }
+        }
+      }
+    },
+    "Photos and videos on this device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末の写真とビデオ"
+          }
+        }
+      }
+    },
     "“%@” and “%@” will be shown as the same person. You can separate them later." : {
       "extractionState" : "stale",
       "localizations" : {

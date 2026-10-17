@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import AVFoundation
 import ImageCacheKit
 import MosaicSupport
 import Photos
@@ -28,6 +29,8 @@ extension LocalPhotoStore: PhotoStore {
             return .idle
         }
     }
+
+    public var includesVideos: Bool { mediaScope?.includesVideos ?? false }
 
     public func start() async {
         await requestAccess()
@@ -228,11 +231,13 @@ extension LocalPhotoStore: PhotoStore {
     /// メモリには溜めない。タスクがキャンセルされたら PhotoKit の取得も取り消す
     /// （ページ移動やビュー破棄のあとも iCloud 取得が走り続けないように・レビュー指摘）。
     /// ※ Live Photo の動画部分は含めない（静止画のみ共有する）。
+    /// 動画は動画の資源（編集済み → 原本）を同じ方法で書き出す。
     nonisolated public func originalForSharing(_ item: LocalPhotoItem) async -> SharedOriginal? {
         let resources = PHAssetResource.assetResources(for: item.asset)
-        // 編集済み（fullSizePhoto）→ 原本（photo）の順に選ぶ。どちらも無ければ諦める。
-        guard let resource = resources.first(where: { $0.type == .fullSizePhoto })
-            ?? resources.first(where: { $0.type == .photo }),
+        // 編集済み（fullSize…）→ 原本の順に選ぶ。どちらも無ければ諦める。
+        let preferred: [PHAssetResourceType] = item.asset.mediaType == .video
+            ? [.fullSizeVideo, .video] : [.fullSizePhoto, .photo]
+        guard let resource = preferred.lazy.compactMap({ type in resources.first { $0.type == type } }).first,
             let destination = ShareTempFile.destination(filename: resource.originalFilename),
             FileManager.default.createFile(atPath: destination.path, contents: nil),
             let handle = try? FileHandle(forWritingTo: destination)
@@ -268,6 +273,29 @@ extension LocalPhotoStore: PhotoStore {
             return nil
         }
         return SharedOriginal(fileURL: destination)
+    }
+
+    /// 動画の再生用 `AVPlayerItem`。iCloud 上の動画は取りに行く。
+    /// タスクが取り消されたら PhotoKit の要求も取り消す（ページを送ったあとも取得が続かないように）。
+    nonisolated public func playerItem(for item: LocalPhotoItem) async -> AVPlayerItem? {
+        guard item.asset.mediaType == .video else { return nil }
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.deliveryMode = .automatic
+        let box = PHImageRequestBox()
+        let manager = PHImageManager.default()
+        let result: PlayerItemBox? = await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<PlayerItemBox?, Never>) in
+                let requestID = manager.requestPlayerItem(forVideo: item.asset, options: options) { playerItem, _ in
+                    guard box.markFinished() else { return }
+                    continuation.resume(returning: playerItem.map(PlayerItemBox.init))
+                }
+                if box.register(requestID) { manager.cancelImageRequest(requestID) }
+            }
+        } onCancel: {
+            if let id = box.cancel() { manager.cancelImageRequest(id) }
+        }
+        return result?.item
     }
 
     nonisolated public func fullImage(for item: LocalPhotoItem) async -> UIImage? {
@@ -344,5 +372,10 @@ extension LocalPhotoStore: PhotoStore {
             manager.cancelImageRequest(box.id)
         }
     }
+}
+/// `AVPlayerItem` を PhotoKit のコールバックから受け渡すための箱（`AVPlayerItem` は Sendable でない）。
+/// 受け取ったあとは MainActor のプレーヤーだけが触る。
+private struct PlayerItemBox: @unchecked Sendable {
+    let item: AVPlayerItem
 }
 #endif

@@ -10,6 +10,8 @@ import SwiftUI
 struct FullPhotoView<Store: PhotoStore>: View {
     let store: Store
     let item: Store.Item
+    /// ページャで今見えているページか。動画はこれが真のときだけ再生する（隣のページで鳴らさない）。
+    let isCurrent: Bool
     /// 顔ハイライトの表示指示（PhotoPageView の左上トグル）。ページ送りしても状態を保つよう
     /// 親が持つ。**既定 OFF**・ON のときだけ矩形を取得して枠を描く。
     var showFaceHighlights: Bool = false
@@ -85,6 +87,8 @@ struct FullPhotoView<Store: PhotoStore>: View {
         // T1: 取得 nil（一時的なネットワーク断 -1005 等）は数回リトライし、
         // 全滅したときだけ failed を立てる。読み込み中は "Loading…" を見せる。
         .task(id: ImageKey(id: "\(item.id)", retry: retryToken)) {
+            // 動画はプレーヤー（`VideoPlaybackView`）が自分で読む。静止画のフル画像は取らない。
+            guard !isVideo else { return }
             failed = false
             // センサー: ページ表示要求→サムネ即表示（体感）→フル画像確定の遅延。
             let t0 = PerfTrace.nowNs()
@@ -110,11 +114,14 @@ struct FullPhotoView<Store: PhotoStore>: View {
         // AI 解析欄が空のまま（insight=nil でパネルが丸ごと非表示）にならないようにする。
         .task(id: infoRequested) {
             guard infoRequested else { return }
+            // ⚠️ 動画は解析しない（AI アルバム等の対応は未定）ので insight を引かない。
+            // 引くと「未解析」と出て、いずれ解析されるように見えてしまう。EXIF も画像だけのもの。
+            let isVideo = isVideo
             async let insightLoad: Void = {
-                if let photoInsight { insight = await photoInsight("\(item.id)") }
+                if !isVideo, let photoInsight { insight = await photoInsight("\(item.id)") }
             }()
             async let metaLoad: Void = {
-                exif = await store.metadata(for: item)
+                if !isVideo { exif = await store.metadata(for: item) }
                 let resolved = await store.location(for: item)
                 coordinate = resolved
                 if let resolved {
@@ -125,9 +132,16 @@ struct FullPhotoView<Store: PhotoStore>: View {
         }
     }
 
+    private var isVideo: Bool { item.mediaKind == .video }
+
     @ViewBuilder
     private func photo(containerSize: CGSize) -> some View {
-        if let image {
+        if isVideo {
+            // 上は日付ラベル、下は操作バー（49pt＋ホームインジケータ）に AVKit の操作部が
+            // 隠れないよう余白を取る。タップは AVKit が操作部の表示に使うので没入モードには回さない。
+            VideoPlaybackView(store: store, item: item, isCurrent: isCurrent,
+                              insets: EdgeInsets(top: 64, leading: 0, bottom: 88, trailing: 0))
+        } else if let image {
             // ピンチ/ダブルタップ拡大（UIScrollView ベース）。1x のときはパンを消費しないので、
             // ページ送り・縦スクロール・下引っ張り閉じは従来どおり動く。ズーム状態は isZoomed へ。
             ZoomableImageView(

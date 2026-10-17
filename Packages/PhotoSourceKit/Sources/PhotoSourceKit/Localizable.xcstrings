@@ -1,6 +1,46 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Photos" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真"
+          }
+        }
+      }
+    },
+    "Videos" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ビデオ"
+          }
+        }
+      }
+    },
+    "Type" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "種類"
+          }
+        }
+      }
+    },
+    "Show only photos or only videos." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真だけ、またはビデオだけを表示します。"
+          }
+        }
+      }
+    },
     "" : {
 
     },

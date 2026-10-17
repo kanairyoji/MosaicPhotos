@@ -22,7 +22,7 @@ extension HomeView {
             SourceRow(
                 systemImage: "photo.stack",
                 tint: .indigo,
-                title: L("All Photos"),
+                title: L("All"),
                 subtitle: L("Device + Dropbox combined")
             ) {
                 destination = .source(.all)
@@ -32,8 +32,8 @@ extension HomeView {
             SourceRow(
                 systemImage: "iphone",
                 tint: .blue,
-                title: L("On-Device Photos"),
-                subtitle: L("Photos stored on this device")
+                title: L("On Device"),
+                subtitle: L("Photos and videos on this device")
             ) {
                 destination = .source(.local)
             }

@@ -83,6 +83,21 @@ public enum MergedPhotoItem: PhotoItem {
         }
     }
 
+    /// 写真か動画か（中身へ委譲。クラウドは今のところ画像だけを同期する）。
+    public var mediaKind: PhotoMediaKind {
+        switch self {
+        case .local(let item): return item.mediaKind
+        case .cloud(let item): return item.mediaKind
+        }
+    }
+
+    public var videoDuration: TimeInterval? {
+        switch self {
+        case .local(let item): return item.videoDuration
+        case .cloud(let item): return item.videoDuration
+        }
+    }
+
     /// ⚠️ **id を作らずにハッシュする**（常駐メモリの棚卸し）。一覧の指紋は全件に対して
     /// これを呼ぶので、`hasher.combine(id)` だと 1 回の指紋計算で 12 万本の String を
     /// 確保して捨てることになる（`hasID` と同じ理由・ADR-119 が名指しする形）。

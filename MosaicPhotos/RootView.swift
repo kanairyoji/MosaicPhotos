@@ -110,7 +110,9 @@ final class HomeStores {
         // 送信側: 自分の共有ルートを表示から除外（原本と共有コピーの重複表示を防ぐ）。
         ShareVisibility.apply(to: dropboxStore)
         await Task.yield()
-        let mergedStore = MergedPhotoStore(dropboxStore: dropboxStore)
+        // ホームの「すべて」: 端末は写真と動画（2026-10-17）。クラウドは画像だけを同期する。
+        let mergedStore = MergedPhotoStore(dropboxStore: dropboxStore,
+                                           localStore: LocalPhotoStore(media: .photosAndVideos))
         await Task.yield()
         let backupEngine = BackupEngine(auth: auth)
         // ADR-175: 配置の版が変わっていれば台帳をリセット（新配置 `Backup/` へ上げ直す）。

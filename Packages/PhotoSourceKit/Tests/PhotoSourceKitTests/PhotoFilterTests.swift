@@ -10,6 +10,7 @@ struct PhotoFilterTests {
         var captureDate: Date? { nil }
         var isFavorite: Bool
         var isCloudSource: Bool = false
+        var mediaKind: PhotoMediaKind = .photo
     }
 
     @Test("既定（未フィルタ）は素通し・isActive=false")
@@ -44,6 +45,26 @@ struct PhotoFilterTests {
         #expect(filter.apply(items).map(\.id) == ["local1", "local2"])
         filter.source = .cloudOnly
         #expect(filter.apply(items).map(\.id) == ["cloud1", "cloud2"])
+    }
+
+    /// ⚠️ `apply` はジェネリック。`mediaKind` がプロトコル要件でないと、ここでは既定の `.photo` に
+    /// 静的束縛されて「動画のみ」が常に空になる（`isMixedSource` で踏んだ罠）。このテストがそれを止める。
+    @Test("種類の絞り込み: 写真のみ／動画のみ（順序維持・他の条件と重ねられる）")
+    func mediaFilters() {
+        let items = [StubItem(id: "p1", isFavorite: false),
+                     StubItem(id: "v1", isFavorite: true, mediaKind: .video),
+                     StubItem(id: "p2", isFavorite: true),
+                     StubItem(id: "v2", isFavorite: false, mediaKind: .video)]
+        var filter = PhotoFilter()
+        filter.media = .videosOnly
+        #expect(filter.isActive)
+        #expect(filter.apply(items).map(\.id) == ["v1", "v2"])
+        filter.media = .photosOnly
+        #expect(filter.apply(items).map(\.id) == ["p1", "p2"])
+        filter.favoritesOnly = true
+        #expect(filter.apply(items).map(\.id) == ["p2"])
+        filter.media = .all
+        #expect(filter.apply(items).map(\.id) == ["v1", "p2"])
     }
 
     @Test("ベストショットのみ: 判定クロージャで残す（順序維持）")

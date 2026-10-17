@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import AVFoundation
 import CoreLocation
 import UIKit
 
@@ -95,13 +96,23 @@ public protocol PhotoFavoriting: AnyObject {
     func setFavorite(_ item: Item, _ isFavorite: Bool) async -> Bool
 }
 
+/// 動画の再生。
+@MainActor
+public protocol PhotoVideoProviding: AnyObject {
+    associatedtype Item: PhotoItem
+    /// 再生する `AVPlayerItem`。写真・非対応・取得できないときは nil。既定は nil。
+    /// iCloud 上の動画は取りに行く（届くまで待つ）。呼び出しのたびに新しいものを返す
+    /// （`AVPlayerItem` は 1 つのプレーヤーにしか付けられない）。
+    func playerItem(for item: Item) async -> AVPlayerItem?
+}
+
 /// 上記の合成。`PhotoStore` が精緻化するため、`Store: PhotoStore` の既存コードはそのまま
 /// 全メソッドを利用できる。コレクション/状態/ライフサイクル（`items` / `state` / `start` 等）
 /// からローディング関心を分離し、責務を明確にするためのプロトコル群。
 @MainActor
 public protocol PhotoLoading: PhotoThumbnailing, PhotoFullImaging, PhotoLocating,
                               PhotoMetadataProviding, PhotoFavoriting,
-                              PhotoOriginalProviding {}
+                              PhotoOriginalProviding, PhotoVideoProviding {}
 
 // MARK: - Defaults
 
@@ -128,6 +139,10 @@ public extension PhotoThumbnailing {
 public extension PhotoFullImaging {
     /// 既定: フル画像の先読みは何もしない（ローカルは PHImageManager が高速なため不要）。
     func prefetchFullImage(for item: Item) {}
+}
+
+public extension PhotoVideoProviding {
+    func playerItem(for item: Item) async -> AVPlayerItem? { nil }
 }
 
 public extension PhotoOriginalProviding {

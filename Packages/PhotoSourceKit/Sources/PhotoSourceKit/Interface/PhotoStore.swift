@@ -27,6 +27,9 @@ public protocol PhotoStore: PhotoLoading, Observable, AnyObject {
     /// ⚠️ プロトコル**要件**であること（extension のデフォルトのみだと、ジェネリック経由の呼び出しが
     /// 常にデフォルト false に静的束縛され、MergedPhotoStore の true が無視される実障害）。
     var isMixedSource: Bool { get }
+    /// 動画を含み得るソースか（フィルタの「写真／動画」欄の表示可否）。
+    /// ⚠️ `isMixedSource` と同じ理由で要件にする（既定だけだと `MergedPhotoStore` の値が無視される）。
+    var includesVideos: Bool { get }
 
     func start() async
     func retry() async
@@ -43,5 +46,7 @@ public extension PhotoStore {
     /// ローカル＋クラウドの**混在ソース**か。フィルタの「ソース」欄は混在ビューでのみ意味があるため、
     /// 単一ソース（写真タブ＝端末のみ・クラウドタブ＝Dropbox のみ）では非表示にする。既定 false。
     var isMixedSource: Bool { false }
+    /// 既定は写真だけ（動画を出すのはホームの「すべて」「端末」だけ）。
+    var includesVideos: Bool { false }
 }
 #endif

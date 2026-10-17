@@ -130,9 +130,9 @@ struct HomeView: View {
     private func destinationView(_ dest: HomeDestination) -> some View {
         switch dest {
         case .source(.all):
-            PhotoSourceContentView(store: mergedStore, title: L("All Photos"))
+            PhotoSourceContentView(store: mergedStore, title: L("All"))
         case .source(.local):
-            LocalPhotoContentView()
+            LocalPhotoContentView(media: .photosAndVideos, title: L("On Device"))
         case .source(.cloud):
             DropboxContentView(store: dropboxStore)
         case .localAlbum(let album):

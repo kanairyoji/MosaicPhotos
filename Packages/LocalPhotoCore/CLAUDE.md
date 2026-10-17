@@ -18,7 +18,8 @@ Packages/LocalPhotoCore/           ← 端末写真のロジック層（PhotoSou
     （ピープル＝旧 subtype-1000 方式は撤去。PhotoKit に公開 People API が無いため、
                                    Vision 顔検出＋同梱顔モデルの自前クラスタリングへ作り直した＝AutoAlbumCore/Faces）
     LocalAlbumInfo.swift           アルバム情報値オブジェクト
-    LocalPhotoItem.swift           PHAsset を束ねる PhotoItem
+    LocalPhotoItem.swift           PHAsset を束ねる PhotoItem（写真／動画・動画の長さ）
+    LocalMediaScope.swift          ライブラリ全体の一覧に動画を含めるか（init(media:) に必須・ADR-281）
     ThumbnailCache.swift           actor。MemoryImageCache + DiskImageStore による LRU キャッシュ
     MetadataCache.swift / MetadataPreloader.swift  PHAsset メタデータの先読み
     CacheSettingsKeys.swift        サムネイルキャッシュの永続設定キー（public）

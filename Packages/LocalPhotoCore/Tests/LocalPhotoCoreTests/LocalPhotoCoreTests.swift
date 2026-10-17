@@ -6,14 +6,14 @@ import Testing
 struct LocalPhotoStoreTests {
     @Test("authorization status reflects PHPhotoLibrary status on init")
     @MainActor func initialAuthorizationStatus() {
-        let store = LocalPhotoStore()
+        let store = LocalPhotoStore(media: .photosOnly)
         let expected = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         #expect(store.authorizationStatus == expected)
     }
 
     @Test("assets is empty on init")
     @MainActor func initialAssetsEmpty() {
-        let store = LocalPhotoStore()
+        let store = LocalPhotoStore(media: .photosOnly)
         #expect(store.assets.isEmpty)
     }
 }

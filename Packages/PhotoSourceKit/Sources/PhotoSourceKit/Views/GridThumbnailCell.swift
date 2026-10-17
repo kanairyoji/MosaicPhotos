@@ -9,6 +9,8 @@ final class GridThumbnailCell: UICollectionViewCell {
     /// お気に入り（端末写真）のとき左下に出す小さなハート。明暗どちらの写真でも視認できるよう
     /// 白＋影で描く（Apple 写真アプリと同様）。
     private let heartView = UIImageView()
+    /// 動画のとき右下に出す再生時間（写真アプリと同じ位置・白＋影）。
+    private let durationLabel = UILabel()
     private var loadTask: Task<Void, Never>?
     /// 顔ハイライト（人物アルバムの「顔を表示」トグル中のみ）。単位座標（原点左上）を黄枠で描く。
     private let faceLayer = CAShapeLayer()
@@ -37,6 +39,16 @@ final class GridThumbnailCell: UICollectionViewCell {
         heartView.layer.shadowOffset = .zero
         contentView.addSubview(heartView)
 
+        durationLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        durationLabel.textColor = .white
+        durationLabel.translatesAutoresizingMaskIntoConstraints = false
+        durationLabel.isHidden = true
+        durationLabel.layer.shadowColor = UIColor.black.cgColor
+        durationLabel.layer.shadowOpacity = 0.6
+        durationLabel.layer.shadowRadius = 1.5
+        durationLabel.layer.shadowOffset = .zero
+        contentView.addSubview(durationLabel)
+
         faceLayer.strokeColor = UIColor.systemYellow.cgColor
         faceLayer.fillColor = nil
         faceLayer.lineWidth = 1.5
@@ -50,6 +62,9 @@ final class GridThumbnailCell: UICollectionViewCell {
 
             heartView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
             heartView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+
+            durationLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            durationLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -3),
         ])
     }
 
@@ -57,8 +72,12 @@ final class GridThumbnailCell: UICollectionViewCell {
 
     /// 2段階ロード：`stages` から届いた画像を順に差し替える（低解像度プレビュー → 最終画質）。
     /// 「まず何か見える」を優先し、後から高品質へ置き換わる（プログレッシブ表示）。
-    func configure(isFavorite: Bool = false, stages: @escaping () -> AsyncStream<UIImage>) {
+    /// - Parameter videoDuration: 動画なら再生時間の表示文字列（`VideoDurationText`）。写真は nil。
+    func configure(isFavorite: Bool = false, videoDuration: String?,
+                   stages: @escaping () -> AsyncStream<UIImage>) {
         heartView.isHidden = !isFavorite
+        durationLabel.text = videoDuration
+        durationLabel.isHidden = videoDuration == nil
         loadTask?.cancel()
         imageView.image = nil
         loadTask = Task { @MainActor in
@@ -113,6 +132,8 @@ final class GridThumbnailCell: UICollectionViewCell {
         loadTask = nil
         imageView.image = nil
         heartView.isHidden = true
+        durationLabel.text = nil
+        durationLabel.isHidden = true
         faceTask?.cancel()
         faceTask = nil
         faceRects = []

@@ -152,7 +152,9 @@ public struct PhotoSourceContentView<Store: PhotoStore, Header: View>: View {
         .sheet(isPresented: $showFilterSheet) {
             // ソース欄は混在ソースのビューのみ（単一ソースでは意味がないため出さない）。
             // ベストショット欄は判定プロバイダが注入されているときのみ（AI 台帳が背後に必要）。
+            // 写真／動画欄は動画を含み得るソース（ホームの「すべて」「端末」）のみ。
             PhotoFilterSheet(filter: $filter, showsSourceOptions: store.isMixedSource,
+                             showsMediaOptions: store.includesVideos,
                              showsQualityOption: photoQualityProvider != nil)
         }
     }

@@ -42,9 +42,9 @@ struct SettingsView: View {
         List {
             Section("Photo Sources") {
                 NavigationLink {
-                    detail(L("On-Device Photos")) { LocalPhotoSettingsView() }
+                    detail(L("On Device")) { LocalPhotoSettingsView() }
                 } label: {
-                    row(L("On-Device Photos"), systemImage: "iphone")
+                    row(L("On Device"), systemImage: "iphone")
                 }
                 NavigationLink {
                     DropboxHubView(dropboxAuth: dropboxAuth, store: store,
