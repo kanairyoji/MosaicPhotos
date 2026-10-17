@@ -87,10 +87,14 @@ public actor FakeDropboxServer: HTTPClient {
         public var timeTaken: Date?
         public var latitude: Double?
         public var longitude: Double?
-        public init(timeTaken: Date? = nil, latitude: Double? = nil, longitude: Double? = nil) {
+        /// 動画の長さ（ミリ秒）。入っていれば本物と同じく `.tag` が `video` になる（ADR-282）。
+        public var durationMs: Int64?
+        public init(timeTaken: Date? = nil, latitude: Double? = nil, longitude: Double? = nil,
+                    durationMs: Int64? = nil) {
             self.timeTaken = timeTaken
             self.latitude = latitude
             self.longitude = longitude
+            self.durationMs = durationMs
         }
     }
 
@@ -1155,7 +1159,8 @@ public actor FakeDropboxServer: HTTPClient {
         if let at = entry.clientModified { fields.append(#""client_modified":"\#(timestamp(at))""#) }
         if let at = entry.serverModified { fields.append(#""server_modified":"\#(timestamp(at))""#) }
         if includeMediaInfo, let media = entry.mediaInfo {
-            var inner = [#"".tag":"photo""#]
+            var inner = [media.durationMs == nil ? #"".tag":"photo""# : #"".tag":"video""#]
+            if let ms = media.durationMs { inner.append(#""duration":\#(ms)"#) }
             if let lat = media.latitude, let lon = media.longitude {
                 inner.append(#""location":{"latitude":\#(lat),"longitude":\#(lon)}"#)
             }

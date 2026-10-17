@@ -29,3 +29,15 @@ struct VideoDurationTextTests {
         #expect(VideoDurationText.format(.infinity) == nil)
     }
 }
+
+/// グリッドのセル右下の印（ADR-282）。長さを訊く前のクラウドの動画にも印を出す。
+@Suite("GridVideoBadge")
+struct GridVideoBadgeTests {
+    @Test("写真には何も出さない・長さが分かれば時間・分からなければ印だけ")
+    func badges() {
+        #expect(GridVideoBadge.badge(mediaKind: .photo, duration: 12) == nil)
+        #expect(GridVideoBadge.badge(mediaKind: .video, duration: 62) == .duration("1:02"))
+        #expect(GridVideoBadge.badge(mediaKind: .video, duration: nil) == .unknownLength)
+        #expect(GridVideoBadge.badge(mediaKind: .video, duration: -1) == .unknownLength)
+    }
+}

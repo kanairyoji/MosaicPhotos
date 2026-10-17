@@ -32,6 +32,8 @@ enum DropboxInternalConstants {
     /// 単発サムネイル取得（任意サイズ）。歩留まり計測（ADR-89）でのみ使う。
     static let getThumbnailV2URL = "https://content.dropboxapi.com/2/files/get_thumbnail_v2"
     static let downloadFileURL = "https://content.dropboxapi.com/2/files/download"
+    /// 動画を流す一時リンク（4 時間有効・認証ヘッダ不要の URL を返す・ADR-282）。
+    static let getTemporaryLinkURL = "https://api.dropboxapi.com/2/files/get_temporary_link"
 
     // MARK: - Token management
 

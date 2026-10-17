@@ -14,7 +14,12 @@ extension DropboxPhotoStore {
     /// サムネイルを返す。取得は `DropboxThumbnailBatcher` に委譲する
     /// （キャッシュ確認・バッチ集約・キャンセル耐性はバッチャ側に集約）。
     public func thumbnail(for item: DropboxFileItem) async -> UIImage? {
-        await thumbnailBatcher.thumbnail(for: item, purpose: .display)
+        let image = await thumbnailBatcher.thumbnail(for: item, purpose: .display)
+        // 動画は Dropbox がサムネを返さないことがある（形式による）。そのときは手元で 1 コマ作る（ADR-282）。
+        if image == nil, item.isVideo, !Task.isCancelled {
+            return await generatedVideoThumbnail(for: item)
+        }
+        return image
     }
 
     /// **解析（夜間・セッション）用**のサムネ取得。表示用と同じキャッシュに乗るが、
@@ -118,6 +123,8 @@ extension DropboxPhotoStore {
     /// 低優先で、すでにバイトがあれば何もしない。`beginFullImage` は立てない（背景埋め込みを
     /// 過度に止めないため）。表示時の `fullImage` がこのキャッシュを即ヒットして体感が軽くなる。
     public func prefetchFullImage(for item: DropboxFileItem) {
+        // ⚠️ 動画は丸ごと落とさない（ADR-282）。ページを送るたびに隣の動画を落とすことになる。
+        guard !item.isVideo else { return }
         // サムネ先読みと同じ理由で回線ポリシーに従う（ADR-81）。フル画像は 1 枚が重いので
         // モバイル通信での取りこぼしは特に効く。表示中の写真の取得（`fullImage`）はゲートしない。
         guard NetworkStateMonitor.shared.speculativeFetchAllowed() else { return }
@@ -139,6 +146,7 @@ extension DropboxPhotoStore {
     /// 元画像の生データ（EXIF を含む）を返す。キャッシュ済みファイル優先、無ければダウンロード。
     /// EXIF 解析（PhotoSourceKit の PhotoExifInfo）は SwiftUI 層（DropboxKit）側で行う。
     public func originalImageData(for item: DropboxFileItem) async -> Data? {
+        guard !item.isVideo else { return nil }   // 動画をメモリへ丸ごと載せない（ADR-282）
         if let cached = await cache.fullImageData(for: item.path) {
             return cached
         }
@@ -153,6 +161,7 @@ extension DropboxPhotoStore {
     // MARK: - Full image
 
     public func fullImage(for item: DropboxFileItem) async -> UIImage? {
+        guard !item.isVideo else { return nil }   // 動画はプレーヤーが流す（ADR-282）
         let t0 = PerfTrace.nowNs()   // 計測: フル画像取得（キャッシュヒット or ダウンロード+デコード）
         if let cached = await cache.fullImage(for: item.path) {
             DropboxLogger.verbose("fullImage() cache hit — \(item.name)")
@@ -214,6 +223,7 @@ extension DropboxPhotoStore {
     /// 表示用の `fullImage(for:)` は約 2048px へ縮小した UIImage なので、共有には使わない
     /// （解像度・EXIF・元の形式が失われる・レビュー指摘）。
     public func originalData(for item: DropboxFileItem) async -> (data: Data, filename: String)? {
+        guard !item.isVideo else { return nil }   // 動画は `videoFileForSharing`（ファイルへ直接）
         if let cached = await cache.fullImageData(for: item.path) {
             return (cached, item.name)
         }
@@ -239,6 +249,7 @@ extension DropboxPhotoStore {
     /// `maxPixel` へダウンサンプルして生成するため粗くならない。フル画像バイトはキャッシュ優先で取得し、
     /// 無ければダウンロードして保存（ビューアと共用）。表示サイズ相当へ落とすので常駐メモリも軽い。
     public func coverImage(for item: DropboxFileItem, maxPixel: CGFloat) async -> UIImage? {
+        guard !item.isVideo else { return await thumbnail(for: item) }   // 動画を丸ごと落とさない
         let data: Data
         if let cached = await cache.fullImageData(for: item.path) {
             data = cached

@@ -104,6 +104,29 @@ public protocol PhotoVideoProviding: AnyObject {
     /// iCloud 上の動画は取りに行く（届くまで待つ）。呼び出しのたびに新しいものを返す
     /// （`AVPlayerItem` は 1 つのプレーヤーにしか付けられない）。
     func playerItem(for item: Item) async -> AVPlayerItem?
+    /// **ネット越しに流す**動画なら、その情報（端末の動画・写真は nil）。既定は nil。
+    /// 非 nil のとき、プレーヤーはモバイル通信では自動で流さず、大きさを見せてタップを待つ（ADR-282）。
+    func streamingInfo(for item: Item) -> VideoStreamingInfo?
+    /// このアプリで再生できない形式のときに示す逃げ道（nil＝無し）。既定は nil。
+    func externalViewer(for item: Item) -> ExternalVideoViewer?
+}
+
+/// ネット越しに流す動画の情報。
+public struct VideoStreamingInfo: Sendable, Equatable {
+    /// ファイルの大きさ（バイト・分からなければ nil）。
+    public let byteSize: Int64?
+    public init(byteSize: Int64?) { self.byteSize = byteSize }
+}
+
+/// 再生できない動画を開く先（例: Dropbox の Web / アプリ）。
+public struct ExternalVideoViewer: Sendable, Equatable {
+    public let url: URL
+    /// ボタンの文言（翻訳済み）。
+    public let title: String
+    public init(url: URL, title: String) {
+        self.url = url
+        self.title = title
+    }
 }
 
 /// 上記の合成。`PhotoStore` が精緻化するため、`Store: PhotoStore` の既存コードはそのまま
@@ -143,6 +166,8 @@ public extension PhotoFullImaging {
 
 public extension PhotoVideoProviding {
     func playerItem(for item: Item) async -> AVPlayerItem? { nil }
+    func streamingInfo(for item: Item) -> VideoStreamingInfo? { nil }
+    func externalViewer(for item: Item) -> ExternalVideoViewer? { nil }
 }
 
 public extension PhotoOriginalProviding {

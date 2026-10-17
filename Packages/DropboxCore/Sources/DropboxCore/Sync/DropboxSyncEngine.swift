@@ -138,8 +138,11 @@ final class DropboxSyncEngine {
         // その行が永久に残るので、掃除しに来る経路が要る。掃除の処理は初回同期が持っている
         // ので、期限が来たらそれをやり直すだけでよい。
         // ⚠️ **前面では走らせない**。8 万件の一覧は一枚岩の通信処理（ADR-107）。
+        let needsRelisting = CloudListingVersion.needsRelisting(
+            lastFullScan: state?.initialSyncCompletedAt, listingVersion: state?.listingVersion)
         let reconcileDue = shouldReconcileNow(scopeKey: scopeKey,
-                                              lastFullScan: state?.initialSyncCompletedAt)
+                                              lastFullScan: state?.initialSyncCompletedAt,
+                                              needsRelisting: needsRelisting)
         // ⚠️ **確保は判定の直後**（`await` を挟まない）。挟むと、その中断のあいだに
         // 別のルートが同じ判定を通り抜けて、2 本同時に全件一覧を引く。
         // ルートは 3 本とも同じ日に初回同期を終えている＝期限も同じ日に来るので、
@@ -149,13 +152,19 @@ final class DropboxSyncEngine {
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: cursor found (\(String(cursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))...), \(itemCount) items — entering poll loop")
             return await pollLoop(scopeKey: scopeKey, root: root, startCursor: cursor,
                                   isPrimary: isPrimary,
-                                  lastFullScan: state?.initialSyncCompletedAt)
+                                  lastFullScan: state?.initialSyncCompletedAt,
+                                  needsRelisting: needsRelisting)
         } else {
             let reason = cursor == nil ? "no cursor"
                 : itemCount == 0 ? "cursor present but 0 items"
+                : reconcileDue && needsRelisting ? "listing scope widened (videos) — re-listing once"
                 : reconcileDue ? "weekly reconcile due"
                 : "initial sync never completed (interrupted or pre-upgrade)"
             DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: \(reason) — starting initial sync")
+            // 実機で「取り直しが 1 回で終わったか」を見るための印（Release でも残る）。
+            if reconcileDue && needsRelisting {
+                Diagnostics.mark("dropbox: re-listing for videos root=\(root.isEmpty ? "/" : root)")
+            }
             return await initialSync(accountId: accountId, root: root, scopeKey: scopeKey,
                                      isPrimary: isPrimary, isReconcile: reconcileDue)
         }
@@ -166,9 +175,13 @@ final class DropboxSyncEngine {
     /// ⚠️ 判定を 1 か所に置く（`syncOnce` と `pollLoop` が同じ式を使う）。別々に書くと、
     /// 片方が「やり直せ」と言って片方が「まだ」と言う状態になり、やり直しの合図だけが
     /// 空回りする——ADR-196 で畳んだ「入口と譲りで違う条件」と同じ形。
-    private func shouldReconcileNow(scopeKey: String, lastFullScan: Date?,
+    /// - Parameter needsRelisting: 一覧の対象が広がった（動画・ADR-282）ので 1 回取り直すか。
+    ///   ⚠️ **これは前面でも走らせる**（週次の見直しと違う）。待つと「動画が出てこない」が
+    ///   次の背面の窓まで続く。1 回きりで、1 ルートずつなのは同じ。
+    private func shouldReconcileNow(scopeKey: String, lastFullScan: Date?, needsRelisting: Bool,
                                     now: Date = Date()) -> Bool {
         guard !isReconcilingAnyRoot, !reconcileFailedRoots.contains(scopeKey) else { return false }
+        if needsRelisting { return true }
         return CloudReconcilePolicy.isDue(lastFullScan: lastFullScan, now: now)
             && BackgroundYield.allows(.cloudMonolith)
     }
@@ -290,7 +303,8 @@ final class DropboxSyncEngine {
             releaseReconcileSlot()   // 走査はここで終わり。次のルートへ譲る。
             return await pollLoop(scopeKey: scopeKey, root: root,
                                   startCursor: baselineCursor, isPrimary: isPrimary,
-                                  lastFullScan: completedAt)
+                                  lastFullScan: completedAt,
+                                  needsRelisting: false)   // いまの対象で見終えたところ
 
         } catch is CancellationError {
             reportState(.idle, isPrimary: isPrimary)
@@ -320,7 +334,10 @@ final class DropboxSyncEngine {
                     releaseReconcileSlot()   // 失敗でも走査は終わり。次のルートへ譲る。
                     return await pollLoop(scopeKey: scopeKey, root: root, startCursor: cursor,
                                           isPrimary: isPrimary,
-                                          lastFullScan: state?.initialSyncCompletedAt)
+                                          lastFullScan: state?.initialSyncCompletedAt,
+                                          needsRelisting: CloudListingVersion.needsRelisting(
+                                            lastFullScan: state?.initialSyncCompletedAt,
+                                            listingVersion: state?.listingVersion))
                 }
             }
             reportState(.error(error.localizedDescription), isPrimary: isPrimary)
@@ -334,7 +351,7 @@ final class DropboxSyncEngine {
     ///   ポーリング中は変わらないので、入るときに 1 度もらって持っておく。
     /// - Returns: **やり直しが要るか**（カーソル失効・ルート消失・週次の見直し）。
     private func pollLoop(scopeKey: String, root: String, startCursor: String,
-                          isPrimary: Bool, lastFullScan: Date?) async -> Bool {
+                          isPrimary: Bool, lastFullScan: Date?, needsRelisting: Bool) async -> Bool {
         var cursor = startCursor
         /// 「変化あり」と言われたのに**表示対象の増減が 0 だった**周の連続数（diagnostics-81）。
         /// 自分のバックアップ・共有コピーが同じルートへ落ちると延々と立つので、ここで間隔を空ける。
@@ -351,9 +368,11 @@ final class DropboxSyncEngine {
                 // 「まだ動かしてよい時間ではない」と判断して poll へ戻した瞬間に
                 // ここがまた true を返し、通信を 1 度もせずに回り続ける（タイトループ）。
                 // 後ろに置けば、最悪でも 1 周 1 longpoll のコストが入る。
-                if shouldReconcileNow(scopeKey: scopeKey, lastFullScan: lastFullScan) {
+                if shouldReconcileNow(scopeKey: scopeKey, lastFullScan: lastFullScan,
+                                      needsRelisting: needsRelisting) {
                     DropboxLogger.info("SyncEngine[\(root.isEmpty ? "/" : root)]: "
-                        + "weekly reconcile due — re-listing to drop anything that is gone")
+                        + (needsRelisting ? "listing scope widened (videos) — re-listing once"
+                           : "weekly reconcile due — re-listing to drop anything that is gone"))
                     return true
                 }
 

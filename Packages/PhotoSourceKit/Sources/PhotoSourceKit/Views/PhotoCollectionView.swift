@@ -217,9 +217,9 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 // セルが小さい高密度表示（15列以上）ではハートが画像を覆って見えなくなるため出さない。
                 let showFavorite = self.currentColumns < gridFavoriteColumnThreshold
                 // 再生時間も同じ理由で高密度では出さない（数字がセルより広くなる）。
-                let duration = showFavorite && item.mediaKind == .video
-                    ? item.videoDuration.flatMap(VideoDurationText.format) : nil
-                cell.configure(isFavorite: item.isFavorite && showFavorite, videoDuration: duration) {
+                let video = showFavorite
+                    ? GridVideoBadge.badge(mediaKind: item.mediaKind, duration: item.videoDuration) : nil
+                cell.configure(isFavorite: item.isFavorite && showFavorite, video: video) {
                     store.thumbnailStages(for: item, targetSize: px)
                 }
                 if let faceHighlight = self.faceHighlight {

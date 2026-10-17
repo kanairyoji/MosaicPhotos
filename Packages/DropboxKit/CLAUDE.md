@@ -14,6 +14,7 @@ Packages/DropboxKit/               ← Dropbox の UI 層（DropboxCore / PhotoS
   Sources/DropboxKit/
     DropboxCore.swift              @_exported import DropboxCore（再エクスポート）
     DropboxContentView.swift       「クラウド」タブルートビュー
+    DropboxMediaStore.swift        「クラウド」画面のストア（写真＋動画を撮影日時順に並べる・取得は DropboxPhotoStore へ委譲・ADR-282）
     DropboxSettingsView.swift      Dropbox 通常設定ビュー（接続・サムネ並列数・キャッシュ上限）
     DropboxDebugSection.swift      Developer Options 向け詳細診断（トークン/キャッシュ状態/再同期/定数・public）
     DropboxThumbnailView.swift     Dropbox ファイルサムネイルセル

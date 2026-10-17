@@ -1,36 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "All" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべて"
-          }
-        }
-      }
-    },
-    "On Device" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "端末"
-          }
-        }
-      }
-    },
-    "Photos and videos on this device" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "この端末の写真とビデオ"
-          }
-        }
-      }
-    },
     "“%@” and “%@” will be shown as the same person. You can separate them later." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -584,6 +554,16 @@
         }
       }
     },
+    "All" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべて"
+          }
+        }
+      }
+    },
     "All at once" : {
       "localizations" : {
         "ja" : {
@@ -615,6 +595,7 @@
       }
     },
     "All Photos" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
@@ -781,6 +762,7 @@
       }
     },
     "Analyzing photos" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
@@ -1877,6 +1859,7 @@
       }
     },
     "Faces, tags, and the search index" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
@@ -3275,6 +3258,16 @@
         }
       }
     },
+    "On Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端末"
+          }
+        }
+      }
+    },
     "On this iPhone" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3322,6 +3315,7 @@
       }
     },
     "On-Device Photos" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
@@ -3575,7 +3569,18 @@
         }
       }
     },
+    "Photos and videos on this device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末の写真とビデオ"
+          }
+        }
+      }
+    },
     "Photos stored on this device" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ja" : {
           "stringUnit" : {

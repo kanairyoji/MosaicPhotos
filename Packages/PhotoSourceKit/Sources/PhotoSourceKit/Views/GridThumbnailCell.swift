@@ -1,3 +1,4 @@
+import Foundation
 #if canImport(UIKit)
 import UIKit
 
@@ -72,12 +73,24 @@ final class GridThumbnailCell: UICollectionViewCell {
 
     /// 2段階ロード：`stages` から届いた画像を順に差し替える（低解像度プレビュー → 最終画質）。
     /// 「まず何か見える」を優先し、後から高品質へ置き換わる（プログレッシブ表示）。
-    /// - Parameter videoDuration: 動画なら再生時間の表示文字列（`VideoDurationText`）。写真は nil。
-    func configure(isFavorite: Bool = false, videoDuration: String?,
+    /// - Parameter video: 動画なら右下に出すもの（写真は nil）。
+    func configure(isFavorite: Bool = false, video: GridVideoBadge?,
                    stages: @escaping () -> AsyncStream<UIImage>) {
         heartView.isHidden = !isFavorite
-        durationLabel.text = videoDuration
-        durationLabel.isHidden = videoDuration == nil
+        switch video {
+        case .duration(let text):
+            durationLabel.attributedText = nil
+            durationLabel.text = text
+        case .unknownLength:
+            // 長さをまだ訊いていない（クラウドの動画・ADR-282）。写真と見分けがつくように印だけ出す。
+            let attachment = NSTextAttachment(image: UIImage(systemName: "video.fill") ?? UIImage())
+            durationLabel.text = nil
+            durationLabel.attributedText = NSAttributedString(attachment: attachment)
+        case nil:
+            durationLabel.text = nil
+            durationLabel.attributedText = nil
+        }
+        durationLabel.isHidden = video == nil
         loadTask?.cancel()
         imageView.image = nil
         loadTask = Task { @MainActor in
@@ -133,6 +146,7 @@ final class GridThumbnailCell: UICollectionViewCell {
         imageView.image = nil
         heartView.isHidden = true
         durationLabel.text = nil
+        durationLabel.attributedText = nil
         durationLabel.isHidden = true
         faceTask?.cancel()
         faceTask = nil
@@ -140,4 +154,19 @@ final class GridThumbnailCell: UICollectionViewCell {
         faceLayer.path = nil
     }
 }
+
 #endif
+
+/// グリッドのセル右下に出す動画の印。
+enum GridVideoBadge: Equatable {
+    /// 再生時間（`VideoDurationText` で整形済み）。
+    case duration(String)
+    /// 長さが分からない動画（まだ訊いていない）。
+    case unknownLength
+
+    /// 動画なら印、写真なら nil（判断を 1 か所に置く）。
+    static func badge(mediaKind: PhotoMediaKind, duration: TimeInterval?) -> GridVideoBadge? {
+        guard mediaKind == .video else { return nil }
+        return duration.flatMap(VideoDurationText.format).map(GridVideoBadge.duration) ?? .unknownLength
+    }
+}

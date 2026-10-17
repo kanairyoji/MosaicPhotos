@@ -29,3 +29,21 @@ enum CloudReconcilePolicy {
         return elapsed < 0 || elapsed >= interval
     }
 }
+
+/// **一覧に載せる対象の版**（ADR-282）。対象を広げたら 1 つ上げる。
+///
+/// 版が古いまま見終えたルートは、差分では足りない（カーソルは通り過ぎたファイルを返さない）
+/// ので、1 回だけ全件を取り直す。
+enum CloudListingVersion {
+    /// 1＝写真だけ（列が無かった時代も同じ扱い）、2＝写真と動画。
+    static let current = 2
+
+    /// 全件の取り直しが要るか（純ロジック・テスト対象）。
+    /// - Parameters:
+    ///   - lastFullScan: 最後に全件を見終えた時刻（nil＝まだ。初回同期が全件を取るので要らない）。
+    ///   - listingVersion: そのときの版（nil＝列より前＝写真だけ）。
+    static func needsRelisting(lastFullScan: Date?, listingVersion: Int?) -> Bool {
+        guard lastFullScan != nil else { return false }
+        return (listingVersion ?? 1) < current
+    }
+}

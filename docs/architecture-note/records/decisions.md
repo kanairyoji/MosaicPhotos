@@ -21,6 +21,58 @@
 
 ---
 
+## ADR-282 Dropbox の動画を「すべて」「クラウド」に出す（別の表・流して見る・モバイル通信ではタップを待つ）
+- 状態: 採用（2026-10-17）
+- 文脈: ADR-281 で端末の動画に対応した。続けて Dropbox の動画にも対応する。スマホで使う前提で、
+  拡張子は幅広く拾う。これまでの Dropbox は一覧を拡張子で画像だけに絞っていて
+  （`DeltaPageParser.imageExtensions`）、動画は一覧の時点で捨てていた（キャッシュに行も無い）。
+  写真の表（`CachedDropboxItem`）と `DropboxPhotoStore.items` は、解析候補・軽い表（content_hash）・
+  撮影日の問い合わせ・場所・共有アルバム・顔の計測・バックアップの突き合わせが全件を読む。
+- 決定:
+  - **動画は別の表（`CachedDropboxVideo`）と別の一覧（`DropboxPhotoStore.videoItems`）に入れる。**
+    同じ表に入れると、上の読み手全部に「動画を除く」を足して回ることになり、1 か所漏れれば
+    動画が解析や顔に紛れ込む（ADR-196 の形）。分ければ、動画を読むのは「出す」と決めた画面だけになる。
+    `applyDelta` が入口で振り分け、写真の処理（軽い表・写真の集合の版・撮影日の保持規則）には写真だけを通す。
+    動画の版（`videosRevision`）も分けた——動画 1 本で写真 10 万件の一覧を作り直さないため。
+    掃除の対象（`cachedPaths`）と件数（`cachedItemCount`）だけは動画も含める（消えた動画を残さない・
+    動画しか無い Dropbox を「0 件＝不整合」と読まない）。
+  - 種類は**一覧の解析で拡張子から決め**、`DropboxFileItem.video`（参照型・写真は nil）の有無に表す。
+    拡張子の唯一の出典は `DeltaPageParser.videoExtensions`（mov/mp4/m4v/3gp/3g2/avi/mkv/webm/wmv/
+    mts/m2ts/mpg ほか 30 種）。⚠️ `ts`（TypeScript）と `mod`（音楽のモジュール）は他の用途と衝突するので入れない。
+    写真と動画の拡張子が重ならないことをテストで固定した。
+  - **既にある動画を拾うため、写真だけの時代に見終えたルートは 1 回だけ全件を取り直す**
+    （`DropboxSyncState.listingVersion` と `CloudListingVersion`）。差分のカーソルは通り過ぎたファイルを
+    返さないので、待っても届かない。取り直しは週次の見直し（ADR-206）の経路を使う（画面に「同期中」を出さない・
+    失敗してもポーリングへ戻る・1 ルートずつ）が、**前面でも走らせる**——待つと次の背面の窓まで動画が出ない。
+    変わっていない写真の行は書かない（既存の規則）ので、取り直しの費用は一覧の往復だけ。
+  - **再生は流す**（`files/get_temporary_link` を `AVPlayer` に渡す）。丸ごと落とさず、ディスクにも残さない。
+    フル画像・原本・先読み・カバーの経路は動画を**入口で弾く**——ページを送るたびの先読みが、
+    隣の動画を丸ごと落とすところだった。共有だけは原本のファイルが要るので、一時リンクから
+    **ファイルへ直接**落とす（`Data` でメモリに載せない）。
+  - **自動で流してよいかは先読みと同じ規則**（`NetworkStateMonitor.speculativeFetchAllowed`＝設定の通信ポリシー
+    × 低電力モード）。許さないとき（既定ではモバイル通信）はサムネと大きさ（`list_folder` の `size`）を見せて
+    タップを待つ。端末の動画（ADR-281）は今までどおり自動で再生する。
+  - **再生できるかは拡張子で決め打ちしない**（`AVAsset.isPlayable` で確かめる）。iOS が再生できない形式は
+    「このアプリでは再生できない」と出し、Dropbox の Web／アプリで開くボタンを出す（`ExternalVideoViewer`）。
+  - サムネは Dropbox の `get_thumbnail_batch` を先に試し、返らなければ一時リンクから 1 コマだけ手元で作る
+    （同時 2 本・作れなかった動画はその起動の間は二度と試さない）。
+  - 長さ・撮影日時は一覧に無い（ADR-201）ので `get_metadata` で 1 本ずつ訊く。写真の穴埋め（10 万件規模）の
+    後ろに並ぶと何日も先になるので別に回し、**前面にいる間だけ**、長さの分からない動画があれば輪を 1 本走らせる。
+    記録できた本数を返す（訊いた本数を返すと、通信できない間に同じ動画を延々と訊き直す）。
+    長さが分かるまでのセルには動画の印だけを出す（`GridVideoBadge.unknownLength`）。
+  - 出す画面は**端末の動画と同じ**: 「すべて」（`MergedPhotoStore` は端末側が動画を含むときだけクラウドの動画も混ぜる）
+    と「クラウド」（`DropboxMediaStore` が写真と動画を並べる。`DropboxPhotoStore.items` は写真のまま）。
+- 結果: 解析・顔・場所・旅行アルバム・共有アルバム・バックアップは写真だけのまま。
+  キャッシュの表の追加は軽量移行で開ける（開けなくても作り直せるキャッシュなので自己修復が拾う）。
+  実機でしか確かめられないこと（Dropbox が動画のサムネを返すか・流し始めまでの待ち・形式ごとの再生可否・
+  取り直しが 1 回で終わるか）は device-verification.md の「Dropbox の動画」で見る。
+- 関連: `CachedDropboxVideo.swift` / `DropboxCacheStore+Videos.swift` / `DropboxPhotoStore+Videos.swift` /
+  `DeltaPageParser.swift` / `CloudReconcilePolicy.swift`（`CloudListingVersion`）/ `DropboxMediaStore.swift` /
+  `VideoPlaybackView.swift` / `PhotoLoading.swift`（`streamingInfo` / `externalViewer`）/ `MergedPhotoStore.swift` /
+  `DropboxVideoTests` / `CloudReconcileTests`（取り直し）/ `GridVideoBadgeTests` / `MergedCloudVideoTests` / ADR-281。
+
+---
+
 ## ADR-281 端末の動画を、ホームの「すべて」「端末」にだけ出す
 - 状態: 採用（2026-10-17）
 - 文脈: これまで写真だけを扱っていた。利用者の要望で動画にも対応する。まず端末の動画を、
@@ -46,7 +98,8 @@
     取得は `PHImageManager.requestPlayerItem`（iCloud も取りに行く・タスクの取り消しで要求も取り消す）。
   - グリッドのセル右下に再生時間（`VideoDurationText`）。フィルタに「種類（写真／ビデオ）」を足し、
     動画を含み得るソースでだけ出す。ホームと設定の表示名は「すべて」「端末」に揃えた。
-- 結果: クラウド（Dropbox）は今のところ画像だけを同期するので、統合ビューの動画は端末のものだけ。
+- 結果: クラウド（Dropbox）は今のところ画像だけを同期するので、統合ビューの動画は端末のものだけ
+  （→ ADR-282 で Dropbox の動画にも対応した）。
   動画の共有は原本（`.fullSizeVideo` → `.video`）が取れないときは何もしない（静止画で代用しない）。
   実機でしか確かめられないこと（再生の待ち・iCloud・AVKit の操作部の重なり）は device-verification.md の
   「端末の動画」と `video: player item …` のログで見る。

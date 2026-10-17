@@ -121,3 +121,37 @@ struct MergedSignatureTests {
         #expect(early != none)
     }
 }
+
+#if canImport(UIKit)
+import PhotoSourceKit
+
+// MARK: - クラウドの動画（ADR-282）
+
+/// ⚠️ `mediaKind` / `videoDuration` はプロトコル要件。統合アイテムが中身へ委譲していても、
+/// どこかで既定（写真）に静的束縛されると、クラウドの動画が写真として全画面で開かれる。
+@Suite("統合アイテム: クラウドの動画")
+struct MergedCloudVideoTests {
+
+    private func kind<Item: PhotoItem>(_ item: Item) -> PhotoMediaKind { item.mediaKind }
+    private func duration<Item: PhotoItem>(_ item: Item) -> TimeInterval? { item.videoDuration }
+
+    @Test("クラウドの動画は、ジェネリック経由でも動画として長さつきで見える")
+    func cloudVideoKeepsKindThroughGenerics() {
+        let video = DropboxFileItem(path: "/c/v.mov", name: "v.mov",
+                                    video: DropboxVideoInfo(duration: 61, byteSize: 9))
+        let merged = MergedPhotoItem.cloud(video)
+        #expect(kind(merged) == .video)
+        #expect(duration(merged) == 61)
+        #expect(kind(MergedPhotoItem.cloud(DropboxFileItem(path: "/c/p.jpg", name: "p.jpg"))) == .photo)
+    }
+
+    /// 撮影日を台帳で差し替えても（ADR-128 追補）、動画の印が落ちないこと。
+    @Test("撮影日の差し替えで動画の印が落ちない")
+    func captureDateOverrideKeepsVideo() {
+        let video = DropboxFileItem(path: "/c/v.mov", name: "v.mov",
+                                    video: DropboxVideoInfo(duration: 5, byteSize: 9))
+        #expect(video.withCaptureDate(Date()).isVideo)
+        #expect(video.withFavorite(true).isVideo)
+    }
+}
+#endif

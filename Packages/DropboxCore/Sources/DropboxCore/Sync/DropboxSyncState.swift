@@ -30,6 +30,13 @@ final class DropboxSyncState {
     /// optional 列の追加だけなので既存データは壊れない（ADR-186）。
     var indexContentVersion: Int?
 
+    /// 最後に全件を見終えたときの**一覧の対象の版**（`CloudListingVersion.current`・ADR-282）。
+    ///
+    /// ⚠️ 対象を広げても（写真だけ → 写真と動画）、差分のカーソルは**既に通り過ぎた**
+    /// ファイルを二度と返さない。版が古いルートは 1 回だけ全件を取り直す。
+    /// nil＝この列より前に見終えた（写真だけの時代）。optional 列の追加だけ（ADR-186）。
+    var listingVersion: Int?
+
     init(accountId: String, cursor: String? = nil, lastSyncedAt: Date? = nil,
          initialSyncCompletedAt: Date? = nil) {
         self.accountId = accountId

@@ -21,11 +21,14 @@ Packages/DropboxCore/              ← Dropbox のロジック層（ImageCacheKi
                                    DropboxSyncState(@Model カーソル)
     Cache/                         DropboxCacheStore(actor・SwiftData+ImageCacheKit)/
                                    DropboxCacheNaming(純)/ CachedDropboxItem / CacheUsageEntry(@Model)/
-                                   DropboxCacheDebugModel
+                                   DropboxCacheDebugModel /
+                                   CachedDropboxVideo + DropboxCacheStore+Videos（**動画は写真と別の表**・ADR-282）
     Models/                        DropboxFileItem / DropboxMediaInfo / DropboxBackupMetadata
     Store/                         DropboxPhotoStore(@Observable)/ DropboxThumbnailBatcher /
                                    DropboxPhotoStore+Location.swift（**media_info の解決**＝撮影日時と
                                    撮影地を 1 往復で取り、「無かった」ことも記録する・ADR-201）
+                                   DropboxPhotoStore+Videos.swift（動画の一時リンク再生・サムネの手元生成・
+                                   長さの問い合わせ・共有はファイルへ直接・ADR-282）
     Support/                       DateProvider / AccessTokenProvider / DropboxLogger(→LogChannel)
   Sources/DropboxTestSupport/      **テスト専用**の偽 Dropbox（本番ターゲットは依存しない）。
                                    FakeDropboxServer（状態を持つ 1 アカウント・障害注入）/

@@ -89,13 +89,19 @@ actor DropboxCacheStore {
             pressureFloor: DropboxInternalConstants.thumbnailMemoryPressureFloor)
     }
 
+    /// 容器のスキーマ（本番とテストの容器で 1 つ）。
+    /// 動画の表（ADR-282）は**表の追加だけ**なので軽量移行で開ける。開けなくても
+    /// 作り直せるキャッシュなので自己修復が拾う（再同期で戻る）。
+    static let schema = Schema([CachedDropboxItem.self, CachedDropboxVideo.self,
+                                DropboxSyncState.self, CacheUsageEntry.self])
+
     init(
         thumbnailByteLimit: Int = DropboxInternalConstants.defaultThumbnailByteLimit,
         fullImageByteLimit: Int = DropboxInternalConstants.defaultFullImageByteLimit,
         thumbnailMemoryCountLimit: Int = 0,
         isStoredInMemoryOnly: Bool = false
     ) {
-        let schema = Schema([CachedDropboxItem.self, DropboxSyncState.self, CacheUsageEntry.self])
+        let schema = Self.schema
         // ⚠️ 名前を明示して "DropboxCache.store" を使う。
         // 名前なし ModelConfiguration は "default.store" になり、
         // BackupEngine の ModelContainer と衝突してスキーマエラーになる（過去に発生）。
@@ -215,13 +221,19 @@ actor DropboxCacheStore {
         var descriptor = FetchDescriptor<CachedDropboxItem>()
         descriptor.propertiesToFetch = [\.path]
         guard let items = try? modelContext.fetch(descriptor) else { return [] }
-        guard !prefix.isEmpty else { return items.map(\.path) }
-        return items.map(\.path).filter { $0.lowercased().hasPrefix(prefix) }
+        // ⚠️ **動画の表のパスも含める**（ADR-282）。呼び手は「一覧に無いものを消す」と
+        // 「ルートが消えたら配下を落とす」で、どちらも動画を取り残してはいけない。
+        let paths = items.map(\.path) + cachedVideoPaths()
+        guard !prefix.isEmpty else { return paths }
+        return paths.filter { $0.lowercased().hasPrefix(prefix) }
     }
 
     /// キャッシュ済みアイテム数（全件ロードせず件数だけ）。同期の自己修復判定に使う。
+    /// ⚠️ 動画も数える（動画しか無い Dropbox で「0 件＝キャッシュ不整合」と読まれ、
+    /// 毎起動で初回同期をやり直さないように・ADR-282）。
     func cachedItemCount(accountId: String) -> Int {
-        (try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>())) ?? 0
+        ((try? modelContext.fetchCount(FetchDescriptor<CachedDropboxItem>())) ?? 0)
+            + cachedVideoCount()
     }
 
     /// アイテム集合の変更リビジョン。`applyDelta` / `updateLocation` のたびに進む。
@@ -296,6 +308,10 @@ actor DropboxCacheStore {
     /// **新しい問いには新しい札を立てる。**
     private(set) var photoSetRevision = 0
 
+    /// **動画の一覧の版**（ADR-282）。動画の表が変わったときだけ進む。
+    /// ⚠️ `itemsRevision` と分けるのは、動画 1 本の追加で写真 10 万件の一覧を作り直さないため。
+    var videosRevision = 0
+
     /// 写真の集合の版を読む（fetch を伴わない）。
     func currentPhotoSetRevision() -> Int { photoSetRevision }
 
@@ -305,6 +321,8 @@ actor DropboxCacheStore {
         let lastSyncedAt: Date?
         /// 初回スキャンを完走した時刻（nil＝未完了）。起動時に poll へ直行してよいかの判断に使う。
         var initialSyncCompletedAt: Date?
+        /// 完走したときの一覧の対象の版（`CloudListingVersion`・ADR-282）。
+        var listingVersion: Int?
 
         var isInitialSyncCompleted: Bool { initialSyncCompletedAt != nil }
     }
@@ -312,7 +330,8 @@ actor DropboxCacheStore {
     func syncStateInfo(accountId: String) -> SyncStateInfo? {
         guard let state = fetchSyncState(accountId: accountId) else { return nil }
         return SyncStateInfo(cursor: state.cursor, lastSyncedAt: state.lastSyncedAt,
-                             initialSyncCompletedAt: state.initialSyncCompletedAt)
+                             initialSyncCompletedAt: state.initialSyncCompletedAt,
+                             listingVersion: state.listingVersion)
     }
 
     /// **カーソルを捨てて、初回同期からやり直せる状態に戻す**（ADR-203）。
@@ -337,6 +356,8 @@ actor DropboxCacheStore {
                 return created
             }()
         state.initialSyncCompletedAt = date
+        // 全件を見終えた＝いまの対象（写真と動画）で一覧が揃った（ADR-282）。
+        state.listingVersion = CloudListingVersion.current
         try? modelContext.save()
     }
 
@@ -453,6 +474,11 @@ actor DropboxCacheStore {
     func applyDelta(accountId: String, added: [DropboxFileItem], removed: [String], newCursor: String) {
         DropboxLogger.info("applyDelta() — added=\(added.count), removed=\(removed.count), cursor=\(String(newCursor.prefix(DropboxInternalConstants.cursorLogPrefixLong)))")
 
+        // ⚠️ **動画は別の表へ**（ADR-282）。以下の写真の処理（軽い表・写真の集合の版・
+        // 撮影日の保持規則）には写真だけを通す——動画を通すと解析候補に紛れ込む。
+        let images = added.filter { !$0.isVideo }
+        applyVideoDelta(added: added.filter(\.isVideo), removed: removed)
+
         for path in removed {
             if let existing = fetchCachedItem(path: path) {
                 modelContext.delete(existing)
@@ -462,7 +488,7 @@ actor DropboxCacheStore {
 
         var insertCount = 0
         var updateCount = 0
-        for item in added {
+        for item in images {
             if let existing = fetchCachedItem(path: item.path) {
                 // ⚠️ **変わっていない行は書かない**（実機の disk writes 警告）。
                 // 以前は一致していても全項目を代入し、さらに `cachedAt = Date()` で必ず
@@ -525,7 +551,7 @@ actor DropboxCacheStore {
         // 表示側が 68,200 件の再取得を丸ごと省ける・ADR-95）。
         if insertCount > 0 || updateCount > 0 || !removed.isEmpty {
             itemsRevision &+= 1
-            updateContentHashIndex(added: added, removed: removed, newRevision: itemsRevision)
+            updateContentHashIndex(added: images, removed: removed, newRevision: itemsRevision)
         }
         // ⚠️⚠️ **「写真が増減したか」は別の札で数える**（ADR-250・実機ログ diagnostics-104）。
         // `itemsRevision` は「一覧を作り直す必要があるか」の札で、**撮影日の問い合わせ**や

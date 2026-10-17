@@ -314,5 +314,72 @@ struct CloudReconcileSyncTests {
         #expect(await cachedPaths(cache).count == 3,
                 "前面なのに全件の一覧を引き始めた（ADR-107: 一枚岩は前面で動かさない）")
     }
+
+    // MARK: - 一覧の対象を広げたとき（動画・ADR-282）
+
+    /// 写真だけを載せていた版で見終えたルートに、**最初から置いてあった動画**を作る。
+    /// `seed` は変更ログに載らない＝差分では二度と届かない（旧版が読み飛ばしたファイルと同じ）。
+    private func seedOldListingWithSkippedVideo(_ server: FakeDropboxServer,
+                                                cache: DropboxCacheStore,
+                                                recorder: Recorder,
+                                                listingVersion: Int?) async {
+        await server.seed(root, hash: "", isFolder: true)
+        await server.upload(path: "\(root)/p0.jpg", data: Data("photo".utf8))
+        let engine = makeEngine(server, cache: cache, recorder: recorder)
+        engine.start(accountId: account, roots: [root])
+        await waitUntil {
+            await cache.syncStateInfo(accountId: self.scope)?.isInitialSyncCompleted == true
+        }
+        engine.stop()
+        await server.seed("\(root)/clip.mov", hash: "hv", size: 4_000)
+        await cache.setListingVersionForTesting(accountId: scope, listingVersion)
+    }
+
+    /// ⚠️ **前面でも 1 回だけ取り直す**。週次の見直しと同じく前面を避けると、
+    /// 更新してから次の背面の窓が来るまで「Dropbox の動画が出てこない」が続く。
+    @Test("写真だけの時代に見終えたルートは、前面でも 1 回だけ取り直して動画を拾う")
+    func relistsOnceToPickUpExistingVideos() async {
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .active)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
+        let server = FakeDropboxServer()
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let recorder = Recorder()
+        await seedOldListingWithSkippedVideo(server, cache: cache, recorder: recorder,
+                                             listingVersion: nil)
+        #expect(await cache.cachedVideos().isEmpty, "前提: 動画はまだ載っていない")
+
+        let relisting = Recorder()
+        let engine = makeEngine(server, cache: cache, recorder: relisting)
+        engine.start(accountId: account, roots: [root])
+        await waitUntil { await !cache.cachedVideos().isEmpty }
+        engine.stop()
+
+        #expect(await cache.cachedVideos().map(\.path) == ["\(root.lowercased())/clip.mov"],
+                "既にあった動画が載らない（差分のカーソルは通り過ぎたファイルを返さない）")
+        #expect(await cache.syncStateInfo(accountId: scope)?.listingVersion
+                == CloudListingVersion.current, "取り直したのに版が古いまま（毎起動で取り直す）")
+        #expect(await cachedPaths(cache) == ["\(root.lowercased())/p0.jpg"], "写真を落としている")
+        // 画面には「同期中」を出さない（キャッシュは既に揃っていて、利用者には何も起きていない）。
+        #expect(!relisting.states.contains { if case .initialSync = $0 { true } else { false } },
+                "取り直しで「同期中」を出している")
+    }
+
+    /// ⚠️ **上の結果が取り直しによるものだと分かる**こと。版が新しければ拾わない
+    /// ——拾うなら別の経路（差分）が届けていて、上のテストは何も確かめていない。
+    @Test("版が新しければ取り直さない（拾ったのは取り直しだと分かる）")
+    func currentListingDoesNotRelist() async {
+        BackgroundYield.environmentOverrideForTesting = .init(scenePhase: .active)
+        defer { BackgroundYield.environmentOverrideForTesting = nil }
+        let server = FakeDropboxServer()
+        let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
+        let recorder = Recorder()
+        await seedOldListingWithSkippedVideo(server, cache: cache, recorder: recorder,
+                                             listingVersion: CloudListingVersion.current)
+        let engine = makeEngine(server, cache: cache, recorder: recorder)
+        engine.start(accountId: account, roots: [root])
+        try? await Task.sleep(for: .milliseconds(400))
+        engine.stop()
+        #expect(await cache.cachedVideos().isEmpty)
+    }
 }
 #endif

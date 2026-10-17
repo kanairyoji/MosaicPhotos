@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import DropboxCore
+import Foundation
 import PhotoSourceKit
 
 extension DropboxFileItem: PhotoItem {
@@ -12,5 +13,9 @@ extension DropboxFileItem: PhotoItem {
     public var sourceLocation: PhotoSourceLocation {
         PhotoSourceLocation(kind: .cloud, identifier: path)
     }
+    /// 動画か（ADR-282）。一覧の解析で拡張子から決まり、`video` の有無に表れる。
+    public var mediaKind: PhotoMediaKind { isVideo ? .video : .photo }
+    /// 動画の長さ（まだ訊いていなければ nil）。
+    public var videoDuration: TimeInterval? { video?.duration }
 }
 #endif

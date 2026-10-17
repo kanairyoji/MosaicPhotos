@@ -131,6 +131,9 @@ extension DropboxCacheStore {
         if let items = try? modelContext.fetch(FetchDescriptor<CachedDropboxItem>()) {
             for item in items { modelContext.delete(item) }
         }
+        if let videos = try? modelContext.fetch(FetchDescriptor<CachedDropboxVideo>()) {
+            for video in videos { modelContext.delete(video) }
+        }
         // SyncState は素の accountId 行に加え、フォルダスコープの複合キー行
         //（"accountId|/path"・ADR-44）も持ち得るため、全行を削除する（単一アカウント運用）。
         if let states = try? modelContext.fetch(FetchDescriptor<DropboxSyncState>()) {
@@ -155,6 +158,7 @@ extension DropboxCacheStore {
         // 鍵は DB 由来なので普通は合わずに弾かれるが、**合い得る設計にしない**。
         removeIndexSnapshot()
         bumpItemsRevision()
+        videosRevision &+= 1
         DropboxLogger.info("clearAll() complete")
     }
 

@@ -80,6 +80,7 @@ public final class MergedPhotoStore {
         withObservationTracking {
             _ = localStore.items
             _ = dropboxStore.items
+            _ = dropboxStore.videoItems
         } onChange: {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -115,6 +116,9 @@ public final class MergedPhotoStore {
     func rebuildItems() {
         let localSnapshot = localStore.items                  // [LocalPhotoItem]（Sendable）
         let cloudSnapshot = dropboxStore.items                // [DropboxFileItem]（Sendable）
+        // クラウドの動画は、端末側が動画を含むときだけ混ぜる（＝ホームの「すべて」だけ・ADR-282）。
+        // ⚠️ 写真の配列と `+` でつながない（10 万件のコピーが再構築のたびに立つ）。
+        let cloudVideoSnapshot = includesVideos ? dropboxStore.videoItems : []
         let filter = cloudPathFilter
         let backupIndex = backupCopyIndex
         rebuildTask?.cancel()
@@ -159,11 +163,14 @@ public final class MergedPhotoStore {
             // AI アルバム）は `cloudSnapshot` に全 10.2 万件を受け取り、`filter` で数十件だけ
             // 通す。ここで `cloudSnapshot.count` を確保すると、アルバムを 1 つ開くたびに
             // 9MB の空き領域を掴むことになる（開いている画面ぶん積み上がる）。
-            merged.reserveCapacity(localSnapshot.count + (filter?.count ?? cloudSnapshot.count))
+            merged.reserveCapacity(localSnapshot.count
+                                   + (filter?.count ?? cloudSnapshot.count + cloudVideoSnapshot.count))
             // ⚠️ ここも `.lazy`。`localSnapshot.map(MergedPhotoItem.local)` を一度受けると、
             // 1.8 万件ぶん（約 1.6MB）の配列が `merged` と別に立つ。
             merged.append(contentsOf: localSnapshot.lazy.map(MergedPhotoItem.local))
             MergedPhotoStore.appendVisibleCloudItems(cloudSnapshot, filter: filter, hidden: hidden,
+                                                     backupIndex: backupIndex, to: &merged)
+            MergedPhotoStore.appendVisibleCloudItems(cloudVideoSnapshot, filter: filter, hidden: hidden,
                                                      backupIndex: backupIndex, to: &merged)
             // グリッドは下が新しい（昇順＋ defaultScrollAnchor(.bottom)）。
             // ⚠️ **その場で並べ替える**（`sort`・戻り値版は置いていない）。結果を別配列で返すと、
@@ -239,14 +246,15 @@ extension MergedPhotoStore: PhotoStore {
 
     /// ローカル＋Dropbox の混在ソース＝フィルタの「ソース」欄（端末のみ/クラウドのみ）を出す。
     public var isMixedSource: Bool { true }
-    /// 端末側が動画を含むなら、統合ビューも動画を含む（クラウドは画像だけ）。
+    /// 端末側が動画を含むなら、統合ビューも動画を含む（クラウドの動画もそのときだけ混ぜる・ADR-282）。
     public var includesVideos: Bool { localStore.includesVideos }
 
     public var state: PhotoLoadState {
         Self.resolveState(
             localState: localStore.state,
             hasLocalAssets: !localStore.assets.isEmpty,
-            hasDropbox: !dropboxStore.items.isEmpty,
+            hasDropbox: !dropboxStore.items.isEmpty
+                || (includesVideos && !dropboxStore.videoItems.isEmpty),
             dropboxBusy: dropboxBusy
         )
     }
@@ -405,10 +413,20 @@ extension MergedPhotoStore: PhotoStore {
                             cloud: { await dropboxStore.fullImage(for: $0) })
     }
 
-    /// 動画の再生は端末側だけ（クラウドは画像だけを同期する）。
     public func playerItem(for item: MergedPhotoItem) async -> AVPlayerItem? {
         await forward(item, local: { await localStore.playerItem(for: $0) },
-                            cloud: { _ in nil })
+                            cloud: { await dropboxStore.playerItem(for: $0) })
+    }
+
+    /// ネット越しに流すのはクラウドの動画だけ（端末の動画は nil＝自動で再生してよい）。
+    public func streamingInfo(for item: MergedPhotoItem) -> VideoStreamingInfo? {
+        if case .cloud(let cloud) = item { return dropboxStore.streamingInfo(for: cloud) }
+        return nil
+    }
+
+    public func externalViewer(for item: MergedPhotoItem) -> ExternalVideoViewer? {
+        if case .cloud(let cloud) = item { return dropboxStore.externalViewer(for: cloud) }
+        return nil
     }
 
     /// 共有用の原本は、それぞれのストアの実装へ委譲する。

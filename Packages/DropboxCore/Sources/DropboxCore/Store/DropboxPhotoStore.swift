@@ -10,7 +10,24 @@ import UIKit
 @MainActor
 @Observable
 public final class DropboxPhotoStore {
+    /// 表示用の**写真**の一覧。⚠️ 動画は入らない（`videoItems`・ADR-282）——解析候補・場所・
+    /// 共有アルバムなど、ここを読む側はどれも写真を前提にしている。
     public private(set) var items: [DropboxFileItem] = []
+    /// 表示用の**動画**の一覧（ADR-282）。読むのは「動画も出す」と決めた画面
+    /// （ホームの「すべて」「クラウド」）だけ。
+    public private(set) var videoItems: [DropboxFileItem] = []
+    /// 最後に `videoItems` へ反映した動画の表の版。
+    @ObservationIgnored private var lastReflectedVideosRevision: Int?
+    /// 動画を流す一時リンク（`files/get_temporary_link`・4 時間有効）の控え（パス → リンクと期限）。
+    /// ⚠️ アカウントが変わったら使えない——`forgetDisplayedItems` で捨てる。
+    @ObservationIgnored var temporaryLinks: [String: (url: URL, expires: Date)] = [:]
+    /// この起動で**サムネを作れなかった**動画（Dropbox も手元の生成も失敗）。二度は試さない
+    /// （CLAUDE.md 性能原則 3。再起動で忘れる＝形式に対応した OS への更新などで戻れる）。
+    @ObservationIgnored var videoThumbnailUnavailable: Set<String> = []
+    /// 手元でのサムネ生成（動画の先頭を取りに行く）の同時数。スクロールで通信が積み上がらないように。
+    @ObservationIgnored let videoThumbnailLimiter = AsyncSemaphore(value: 2)
+    /// 動画の長さの穴埋め（前面で 1 本だけ走らせる・`startVideoInfoFillIfNeeded`）。
+    @ObservationIgnored var videoInfoFillTask: Task<Void, Never>?
     /// 2-b: 直近反映した items の内容署名（off-main 計算・メインの全比較を避ける）。
     @ObservationIgnored private var lastItemsSignature: Int?
     /// 最後に `items` へ反映したキャッシュの変更リビジョン（`DropboxCacheStore.itemsRevision`）。
@@ -324,14 +341,48 @@ public final class DropboxPhotoStore {
               let inFlight = reflectTask, inFlight.accountId == accountId {
             joins += 1
             let result = await inFlight.task.value
-            if Self.canJoinReflect(reflected: result.revision, wanted: wanted) { return result.count }
+            if Self.canJoinReflect(reflected: result.revision, wanted: wanted) {
+                await reflectCachedVideos(accountId: accountId)
+                return result.count
+            }
         }
         let task = Task { await performReflectCachedItems(accountId: accountId) }
         reflectTask = (accountId: accountId, task: task)
         let result = await task.value
         // 待っている間に別の反映が登録されていたら、それは消さない（合流先を失わせない）。
         if reflectTask?.task == task { reflectTask = nil }
+        await reflectCachedVideos(accountId: accountId)
         return result.count
+    }
+
+    /// 動画の表を `videoItems` へ反映する（版が変わったときだけ・ADR-282）。
+    ///
+    /// ⚠️ 写真の反映（合流・間引き・10 万件の実体化）とは**版を分けて**判断する。
+    /// 動画 1 本の追加で写真の一覧を作り直さないため。動画は少ない前提なので合流の仕掛けは持たない。
+    private func reflectCachedVideos(accountId: String) async {
+        let stamp = LoadStamp(generation: loadGeneration, accountId: accountId)
+        let revision = await cache.currentVideosRevision()
+        guard isCurrentLoad(stamp), revision != lastReflectedVideosRevision else { return }
+        let raw = await cache.cachedVideos()
+        guard isCurrentLoad(stamp) else { return }
+        let visible = Self.excludingPaths(raw, prefixes: excludedPathPrefixes)
+        let favPaths = cloudFavoritePaths
+        let stamped = favPaths.isEmpty ? visible
+            : visible.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 }
+        lastReflectedVideosRevision = revision
+        if stamped != videoItems { videoItems = stamped }
+        updateLoadStatus()
+        if stamped.contains(where: { $0.video?.duration == nil }) { startVideoInfoFillIfNeeded() }
+    }
+
+    /// 表示から除外するパス（ADR-112）を落とす。写真と動画で同じ規則を使う。
+    nonisolated static func excludingPaths(_ items: [DropboxFileItem],
+                                           prefixes: [String]) -> [DropboxFileItem] {
+        guard !prefixes.isEmpty else { return items }
+        return items.filter { item in
+            let path = item.path.lowercased()
+            return !prefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
+        }
     }
 
     /// 合流を試す回数の上限（超えたら自分で反映する）。実際には 2 周で抜けるが、
@@ -382,10 +433,7 @@ public final class DropboxPhotoStore {
         // メインは完成した配列を代入するだけにする。
         let (sig, stamped) = await Task.detached(priority: .utility) {
             // 除外フィルタ（ADR-112）も 68k 件の走査なのでオフメインでまとめて行う。
-            let visible = excluded.isEmpty ? raw : raw.filter { item in
-                let path = item.path.lowercased()
-                return !excluded.contains { path == $0 || path.hasPrefix($0 + "/") }
-            }
+            let visible = Self.excludingPaths(raw, prefixes: excluded)
             return (Self.itemsSignature(visible, favoritePaths: favPaths),
                     favPaths.isEmpty ? visible : visible.map { favPaths.contains($0.path) ? $0.withFavorite(true) : $0 })
         }.value
@@ -422,8 +470,21 @@ public final class DropboxPhotoStore {
     /// 表示中 items 内の 1 アイテムのお気に入り刻印を更新する（+Favorites 拡張が private setter を
     /// 跨がないための橋渡し）。グリッド/情報パネルの★表示へ即反映する。
     func updateDisplayedFavorite(path: String, isFavorite: Bool) {
-        guard let idx = items.firstIndex(where: { $0.path == path }) else { return }
-        items[idx] = items[idx].withFavorite(isFavorite)
+        if let idx = items.firstIndex(where: { $0.path == path }) {
+            items[idx] = items[idx].withFavorite(isFavorite)
+        } else if let idx = videoItems.firstIndex(where: { $0.path == path }) {
+            videoItems[idx] = videoItems[idx].withFavorite(isFavorite)
+        }
+    }
+
+    /// 表示中の一覧（写真と動画）を空にして、次の反映で必ず読み直させる。
+    /// ⚠️ 空にする場所（切断・アカウント切替・ルート変更・キャッシュ消去）は**必ずここを通す**
+    /// ——写真だけ空にして動画を残すと、前のアカウントの動画が「すべて」に出続ける。
+    private func forgetDisplayedItems() {
+        items = []; lastItemsSignature = nil
+        videoItems = []; lastReflectedVideosRevision = nil
+        temporaryLinks = [:]; videoThumbnailUnavailable = []
+        videoInfoFillTask?.cancel(); videoInfoFillTask = nil
     }
 
     /// バックグラウンド差分同期ループを開始する。Dropbox 接続時に呼び出す。
@@ -480,7 +541,7 @@ public final class DropboxPhotoStore {
                 loadGeneration &+= 1
                 loadTask?.cancel()
                 loadTask = nil
-                items = []; lastItemsSignature = nil; lastReflectedRevision = nil
+                forgetDisplayedItems(); lastReflectedRevision = nil
                 UserDefaults.standard.set(rootsMarker, forKey: rootsMarkerKey)
                 syncEngine?.start(accountId: accountId, roots: roots)
             }
@@ -584,7 +645,9 @@ public final class DropboxPhotoStore {
             // 合流先は「始めた時点のスナップショット」なので、その後に届いた delta
             // （初回同期の最後の数千枚など）が一覧に出ないまま確定する。反映が終わった時点で
             // 版が進んでいたら、もう 1 回だけ入れ直す。
-            if await self.cache.currentItemsRevision() != self.lastReflectedRevision {
+            let itemsBehind = await self.cache.currentItemsRevision() != self.lastReflectedRevision
+            let videosBehind = await self.cache.currentVideosRevision() != self.lastReflectedVideosRevision
+            if itemsBehind || videosBehind {
                 self.scheduleCacheRefresh(immediate: true)
             }
         }
@@ -633,6 +696,7 @@ public final class DropboxPhotoStore {
         excludedPathPrefixes = normalized
         lastReflectedRevision = nil
         lastItemsSignature = nil
+        lastReflectedVideosRevision = nil
         forceCacheRefreshSoon()
     }
 
@@ -676,7 +740,7 @@ public final class DropboxPhotoStore {
         loadTask?.cancel()
         loadTask = nil
         loadStatus = .idle
-        items = []; lastItemsSignature = nil
+        forgetDisplayedItems()
         debugInfo = ""
         backupMetadata = nil
         // ⚠️ キャッシュの持ち主（永続の指紋）は消さない。消すと次に別アカウントで接続したとき
@@ -753,14 +817,15 @@ public final class DropboxPhotoStore {
             loadTask?.cancel()
             loadTask = nil
             if let currentAccountId { await cache.clearAll(accountId: currentAccountId) }
-            items = []; lastItemsSignature = nil
+            forgetDisplayedItems()
             backupMetadata = nil
             defaults.set(fingerprint, forKey: Self.cacheOwnerKey)
         }
     }
 
     private func updateLoadStatus() {
-        if items.isEmpty {
+        // 動画しか無い Dropbox も「読み込み済み」になるように両方を見る（ADR-282）。
+        if items.isEmpty && videoItems.isEmpty {
             switch syncState {
             // ⚠️ .idle のまま返すと PhotoSourceContentView の onChange(.idle) が
             // start() を繰り返し呼ぶ無限ループになる。接続済みで呼ばれるため .loading を返す。
@@ -787,7 +852,7 @@ public final class DropboxPhotoStore {
         case .fetchingDelta:            syncSummary = "updating"
         case .error:                    syncSummary = "error"
         }
-        debugInfo = "images: \(items.count) · sync: \(syncSummary)"
+        debugInfo = "images: \(items.count) · videos: \(videoItems.count) · sync: \(syncSummary)"
     }
 }
 #endif

@@ -8,6 +8,12 @@ extension DropboxPhotoStore: PhotoStore {
     /// 共有には**原本**（フル解像度・EXIF・元のファイル名）を渡す。
     /// 表示用の `fullImage` は約 2048px へ縮小した UIImage なので共有には使わない。
     public func originalForSharing(_ item: DropboxFileItem) async -> SharedOriginal? {
+        if item.isVideo {
+            // 動画はファイルへ直接落とす（メモリに載せない・ADR-282）。
+            guard let destination = ShareTempFile.destination(filename: item.name),
+                  await videoFileForSharing(item, destination: destination) else { return nil }
+            return SharedOriginal(fileURL: destination)
+        }
         guard let original = await originalData(for: item),
               let url = ShareTempFile.write(original.data, filename: original.filename)
         else { return nil }
@@ -40,7 +46,7 @@ extension DropboxPhotoStore: PhotoStore {
         case .loaded:
             // T2: キャッシュが空でも初回同期・差分取得が進行中なら「読み込み中」を維持し、
             // 取得完了前に "No photos" を一瞬出さない。
-            if items.isEmpty {
+            if items.isEmpty && videoItems.isEmpty {
                 switch syncState {
                 case .initialSync, .fetchingDelta: result = .loading
                 default:                            result = .empty
@@ -80,6 +86,18 @@ extension DropboxPhotoStore: PhotoStore {
         return await Task.detached(priority: .userInitiated) {
             PhotoExifInfo.parse(from: data, fileName: name)
         }.value
+    }
+
+    /// Dropbox の動画はネット越しに流す（モバイル通信ではタップを待つ・ADR-282）。
+    public func streamingInfo(for item: DropboxFileItem) -> VideoStreamingInfo? {
+        guard let video = item.video else { return nil }
+        return VideoStreamingInfo(byteSize: video.byteSize)
+    }
+
+    /// 再生できない形式は Dropbox（Web／アプリ）で開く。
+    public func externalViewer(for item: DropboxFileItem) -> ExternalVideoViewer? {
+        guard item.isVideo, let url = webPreviewURL(for: item) else { return nil }
+        return ExternalVideoViewer(url: url, title: L("Open in Dropbox"))
     }
 
     // hasMore / isLoadingMore / loadMore() は PhotoStore プロトコルのデフォルト実装を使用。

@@ -326,6 +326,12 @@ CI が落ちる——実際に踏んだ（2026-09-27）: G8 は「`driver: turn=
 ```
 video: player item ready in
 video: player item unavailable after
+dropbox: re-listing for videos
+video: cloud thumbnail generated in
+video: cloud thumbnail unavailable
+dropbox: video info probed=
+video: waiting for tap (metered network)
+video: format not playable
 driver: turn=
 driver: 顔の開始を見送る
 driver: 滞留していたタグ/埋め込みを明け渡させた
@@ -621,6 +627,21 @@ Developer Options → 診断ログ。目印になる行:
 | 再生中に横へページを送る | 前の動画の音が止まる。隣のページの動画は送るまで鳴らない |
 | AVKit の再生バー | 下の操作バー・上の日付ラベルに隠れない |
 | 動画の共有 | 動画ファイルで共有される（静止画にならない） |
-| フィルタ → 種類 | 「写真」「ビデオ」で絞れる。「クラウド」「アルバム」「ピープル」「場所」の画面には種類の欄が出ない |
+| フィルタ → 種類 | 「写真」「ビデオ」で絞れる。「アルバム」「ピープル」「場所」の画面には種類の欄が出ない（「クラウド」は ADR-282 で出るようになった） |
 | アルバム・ピープル・場所・AI アルバム | 動画は出ない（今回の対象外） |
 | 「今すぐ解析」の残り件数・バックアップの対象数 | 動画を足す前と変わらない（解析・バックアップは写真だけ） |
+
+## O. Dropbox の動画（2026-10-17・ADR-282）
+
+| 見るもの | 期待 |
+|---|---|
+| 更新して最初の起動 | Dropbox に前からあった動画が「すべて」「クラウド」に出てくる。診断ログに `dropbox: re-listing for videos` がルートごとに 1 回だけ（2 回目の起動では出ない）。画面に「同期中」は出ない |
+| グリッドのクラウドの動画 | サムネが出る。Dropbox が返さない形式は手元で作る（`video: cloud thumbnail generated in Nms`）。作れなければ空のまま（`video: cloud thumbnail unavailable (拡張子)`） |
+| セル右下 | 最初は動画の印だけ、少しして再生時間に変わる（`dropbox: video info probed=…/… remaining=…`。remaining が 0 まで進む） |
+| Wi-Fi で動画を開く | 自動で再生が始まる（`video: player item ready in Nms`。N が流し始めまでの待ち） |
+| モバイル通信で開く（既定の通信ポリシー＝Wi-Fi のみ） | 自動では流れず、再生ボタンと大きさ（例「48.2 MB」）が出る（`video: waiting for tap (metered network)`）。タップで再生 |
+| mov / mp4 / 3gp 以外（avi・mkv・wmv など） | 「このアプリでは再生できません」と「Dropbox で開く」が出る（`video: format not playable`）。ボタンで Dropbox のアプリか Web が開く |
+| 隣の写真から動画へページを送る | 動画を丸ごと落とさない（通信量が跳ねない） |
+| クラウドの動画の共有 | 元のファイル名の動画ファイルで共有される |
+| フィルタ → 種類（「クラウド」画面） | 「写真」「ビデオ」で絞れる |
+| AI 解析の残り件数・場所・共有アルバム | 動画を足す前と変わらない |

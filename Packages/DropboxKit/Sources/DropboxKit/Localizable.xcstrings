@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Open in Dropbox" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dropbox で開く"
+          }
+        }
+      }
+    },
     "Activity Indicator" : {
       "localizations" : {
         "ja" : {
