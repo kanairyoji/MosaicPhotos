@@ -34,9 +34,12 @@ This file provides guidance to Claude Code when working with code in this reposi
 # ビルド
 xcodebuild -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -sdk iphonesimulator build
 
-# 全テストを一括実行（推奨）。パッケージのテスト（macOS swift test + iOS シミュレータ）を回す。
-#   fast = macOS swift test のみ / ios = シミュレータのみ / all = 両方
-scripts/test.sh all
+# テストは 2 段。変更ごとは quick、一区切り・リリース前は full。
+#   quick = パッケージのテスト（macOS swift test + iOS シミュレータ）。データセットの精度評価は外す
+#   full  = quick ＋ アプリ本体の単体テスト（MosaicPhotosTests）＋ 精度評価（手元にデータがあれば・30 分超）
+#   fast = macOS swift test のみ / ios = シミュレータのみ（CI が使う）
+scripts/test.sh quick
+scripts/test.sh full
 
 # 個別パッケージ（純ロジックは macOS で高速実行）
 cd Packages/PhotoSourceKit && swift test
@@ -56,7 +59,8 @@ xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos \
 > テストは2系統に分かれる: Foundation のみの純ロジックは macOS `swift test` で高速実行
 > （`scripts/test.sh` の FAST_PACKAGES）、UIKit / SwiftData / Photos に依存するものは
 > `#if canImport(UIKit)` で囲い iOS シミュレータの `xcodebuild test` で実行する（IOS_PACKAGES =
-> `DropboxCore` / `PhotosFeatureKit`）。`scripts/test.sh all` が両者を一括で走らせる。
+> `DropboxCore` / `PhotosFeatureKit`）。`scripts/test.sh quick` が両者を一括で走らせる
+> （`full` はさらにアプリ本体の単体テストとデータセットの精度評価を足す）。
 >
 > - **`AutoAlbumCore`** は SwiftData/Foundation のみの純ロジックなので macOS `swift test`（FAST）で回る
 >   （`ClipMath` / `AIAlbumSearcher` / `LexicalSearch` / `BackgroundProcessing` など）。

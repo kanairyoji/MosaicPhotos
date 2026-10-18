@@ -20,7 +20,8 @@ struct QualityFloorEvalTests {
     typealias Face = FaceAgglomerationEvalTests.Face
     static let outputPath = FaceAgglomerationEvalTests.root + "/quality-floor-latest.txt"
     static var available: Bool {
-        FileManager.default.fileExists(atPath: FaceAgglomerationEvalTests.root + "/fgnet/os-quality.json")
+        !TestTier.isQuick
+            && FileManager.default.fileExists(atPath: FaceAgglomerationEvalTests.root + "/fgnet/os-quality.json")
     }
 
     static func emit(_ line: String) {

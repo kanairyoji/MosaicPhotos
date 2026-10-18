@@ -7,9 +7,17 @@
 #  2) UIKit / SwiftData / Photos 依存（要 iOS）   → iOS シミュレータ `xcodebuild test`
 #
 # 使い方:
-#   scripts/test.sh            # 全部
+#   scripts/test.sh quick      # 通常: パッケージのテスト（macOS＋iOS）。データセットの精度評価は外す
+#   scripts/test.sh full       # 完全: 通常＋アプリ本体の単体テスト（MosaicPhotosTests）＋精度評価
+#   scripts/test.sh            # = full（以前の「全部」）
 #   scripts/test.sh fast       # macOS swift test のみ
 #   scripts/test.sh ios        # iOS シミュレータのみ
+#
+# ⚠️ 段を分けた理由: データセットで精度を測るテストは、手元にデータがあると自動で走り、
+# FaceCore だけで 30 分を超える（1 本 2〜4 分）。変更ごとの関門で毎回待つと、関係のない
+# 評価の時間が件数ぶん積み上がる。外し方は `MOSAIC_TEST_TIER=quick`（各テストの `TestTier`）。
+# アプリ本体の単体テスト（夜間の窓の模型・解析の判断など）は以前どの段でも走っていなかったので、
+# 完全の段に入れた。UI テストは入れない（アプリ画面を動かすとシミュレータの写真が写り得る）。
 #   SIM='platform=iOS Simulator,name=iPhone 16' scripts/test.sh   # シミュレータ指定（任意）
 #
 # ⚠️ シミュレータは**名前で決め打ちしない**。Xcode が上がると古い機種のデバイスは作られなくなり
@@ -20,7 +28,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MODE="${1:-all}"
+MODE="${1:-full}"
 
 # macOS で `swift test` を実行する高速パッケージ（純ロジック）。
 # LocalPhotoCore はロジック層（旧 LocalPhotoKit のテストを含む）。UI 層 LocalPhotoKit は
@@ -72,7 +80,9 @@ boot_sim() {
   xcrun simctl bootstatus "$id" -b 2>/dev/null || true
 }
 
-run_ios() {
+# 使うシミュレータを決めて起動する（SIM・SIM_ID を設定）。iOS のパッケージとアプリの単体テストで共有。
+ensure_sim() {
+  [ -n "${SIM_ID+set}" ] && return 0
   local picked id
   if [ -n "${SIM:-}" ]; then
     echo "▶ simulator (SIM で指定): $SIM"
@@ -89,6 +99,11 @@ run_ios() {
     echo "▶ simulator (自動選択): $(printf '%s' "$picked" | cut -d' ' -f2-)  [$id]"
   fi
   boot_sim "$id"
+  SIM_ID="$id"
+}
+
+run_ios() {
+  ensure_sim
   for pkg in "${IOS_PACKAGES[@]}"; do
     echo "▶ xcodebuild test: $pkg ($SIM)"
     # -retry-tests-on-failure: 遅いシミュレータでのフレークなタイムアウトを吸収（失敗分のみ再試行）。
@@ -124,11 +139,27 @@ except Exception as e:
   done
 }
 
+# アプリ本体の単体テスト（MosaicPhotosTests）。UI テスト（MosaicPhotosUITests）は含めない。
+run_app() {
+  ensure_sim
+  echo "▶ xcodebuild test: MosaicPhotosTests ($SIM)"
+  local bundle=".build/TestResults-MosaicPhotosTests.xcresult"
+  rm -rf "$bundle"
+  if ! xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -destination "$SIM" \
+      -only-testing:MosaicPhotosTests \
+      -test-timeouts-enabled YES -default-test-execution-time-allowance 600 \
+      -resultBundlePath "$bundle" -quiet; then
+    echo "❌ MosaicPhotosTests: TEST FAILED（$bundle）"
+    exit 1
+  fi
+}
+
 case "$MODE" in
-  fast) run_fast ;;
-  ios)  run_ios ;;
-  all)  run_fast; run_ios ;;
-  *) echo "usage: scripts/test.sh [all|fast|ios]"; exit 2 ;;
+  fast)  run_fast ;;
+  ios)   run_ios ;;
+  quick) export MOSAIC_TEST_TIER=quick; run_fast; run_ios ;;
+  full|all) run_fast; run_ios; run_app ;;
+  *) echo "usage: scripts/test.sh [quick|full|fast|ios]"; exit 2 ;;
 esac
 
 echo "✅ All test suites passed."

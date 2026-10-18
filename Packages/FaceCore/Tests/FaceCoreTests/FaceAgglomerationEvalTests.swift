@@ -17,7 +17,7 @@ struct FaceAgglomerationEvalTests {
         ?? (NSHomeDirectory() + "/DEV/tmp/face-eval")
     static let pipaRoot = NSHomeDirectory() + "/DEV/tmp/face-eval-pipa"
     static var available: Bool {
-        FileManager.default.fileExists(atPath: root + "/fgnet/embeddings-v5.json")
+        !TestTier.isQuick && FileManager.default.fileExists(atPath: root + "/fgnet/embeddings-v5.json")
     }
     static let outputPath = root + "/agglomeration-latest.txt"
 
@@ -206,7 +206,7 @@ struct FaceAgglomerationEvalTests {
 
     /// 旧モデル（facenet・v4 キャッシュ）のプロファイル値を決めるための掃引。
     @Test("facenet（旧モデル）でも、まとめる線を決める",
-          .enabled(if: FileManager.default.fileExists(atPath: root + "/fgnet/embeddings-v4.json")))
+          .enabled(if: !TestTier.isQuick && FileManager.default.fileExists(atPath: root + "/fgnet/embeddings-v4.json")))
     func compareFacenet() throws {
         Self.tuning = .facenet
         defer { Self.tuning = .arcFace }

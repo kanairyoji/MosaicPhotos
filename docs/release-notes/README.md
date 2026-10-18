@@ -40,7 +40,7 @@
 - `MARKETING_VERSION` がリリースするバージョンになっているか（アプリターゲットの Debug/Release 両方）。
 - `CURRENT_PROJECT_VERSION`（ビルド番号）は**同一バージョン内で一意**である必要がある。
   同じバージョンで再アップロードするときは必ず上げる。
-- `scripts/test.sh all` とアプリターゲットのテストが通っているか。
+- `scripts/test.sh full`（アプリ本体の単体テストと精度評価を含む）が通っているか。
 - リリースするコミットの CI が**ジョブ単位で**緑か: `scripts/ci_status.sh <sha>`（exit 0 であること）。
   ⚠️ `gh run list` の conclusion では判断しない——iOS ジョブは非ブロッキングなので、
   落ちていても run は success になる（v1.17 で見落とした）。

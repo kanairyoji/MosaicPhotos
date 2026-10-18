@@ -21,7 +21,8 @@ enum SearchEvalCorpus {
         return url.appendingPathComponent(".search_eval/coco_val2017_labels.json")
     }
 
-    static var isAvailable: Bool { FileManager.default.fileExists(atPath: labelsURL.path) }
+    /// ⚠️ 通常の段（`MOSAIC_TEST_TIER=quick`）では外す（精度評価は完全の段だけ・`TestTier`）。
+    static var isAvailable: Bool { !TestTier.isQuick && FileManager.default.fileExists(atPath: labelsURL.path) }
 
     struct Labels: Decodable {
         let classes: [String]

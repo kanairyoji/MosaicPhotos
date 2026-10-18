@@ -182,8 +182,9 @@ AI はすべて **`AutoAlbumCore`**（SwiftUI 非依存）にあり、アプリ�
 # ビルド（iOS シミュレータ）
 xcodebuild -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -sdk iphonesimulator build
 
-# テスト一式（パッケージ: macOS fast ＋ iOS シミュレータ）
-scripts/test.sh all
+# テスト: 変更ごとは quick、リリース前は full
+scripts/test.sh quick  # パッケージ: macOS fast ＋ iOS シミュレータ（データセットの精度評価は外す）
+scripts/test.sh full   # quick ＋ アプリ本体の単体テスト（MosaicPhotosTests）＋ 精度評価
 
 # サブセット
 scripts/test.sh fast   # macOS swift test（純ロジック）

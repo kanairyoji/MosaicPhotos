@@ -183,8 +183,9 @@ An in-depth internal **architecture note** — design rationale (ADR), deep-dive
 # Build (iOS Simulator)
 xcodebuild -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -sdk iphonesimulator build
 
-# Run the full test suite (packages: macOS fast + iOS Simulator)
-scripts/test.sh all
+# Tests: quick for every change, full before a release
+scripts/test.sh quick  # packages: macOS fast + iOS Simulator (dataset accuracy evals skipped)
+scripts/test.sh full   # quick + app unit tests (MosaicPhotosTests) + dataset accuracy evals
 
 # Subsets
 scripts/test.sh fast   # macOS swift test (pure logic)
