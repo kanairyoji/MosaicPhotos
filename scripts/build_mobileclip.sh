@@ -45,10 +45,10 @@ gunzip -c "$WORK/bpe_simple_vocab_16e6.txt.gz" > "$OUT/bpe_simple_vocab_16e6.txt
 
 # INT8 重み量子化（既定 ON・容量を約半分に／精度ほぼ不変・ADR-31）。QUANTIZE=none で無効化可。
 QUANTIZE="${QUANTIZE:-int8}"
-echo "==> 4) Core ML へ変換（OpenCLIP $OC_MODEL / $OC_PRETRAINED・QUANTIZE=$QUANTIZE）"
+echo "==> 4) Core ML へ変換（OpenCLIP ${OC_MODEL} / ${OC_PRETRAINED}・QUANTIZE=${QUANTIZE}）"
 OC_MODEL="$OC_MODEL" OC_PRETRAINED="$OC_PRETRAINED" OUT="$OUT" CONTEXT=77 QUANTIZE="$QUANTIZE" \
   python "$ROOT/scripts/convert_clip.py"
 
 echo ""
-echo "✅ 完了: $OUT に .mlpackage / 語彙 / config を出力しました（OpenCLIP $OC_MODEL/$OC_PRETRAINED・MIT・量子化=$QUANTIZE）。"
+echo "✅ 完了: $OUT に .mlpackage / 語彙 / config を出力しました（OpenCLIP ${OC_MODEL}/${OC_PRETRAINED}・MIT・量子化=${QUANTIZE}）。"
 echo "   認識率の確認: scripts/eval_recognition.sh"

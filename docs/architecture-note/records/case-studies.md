@@ -21,6 +21,18 @@
 
 ---
 
+## シェルの「（$VAR）」が、macOS の bash 3.2 で変数名を壊していた（2026-10-18）
+- 症状: `scripts/test.sh full` の失敗時、「どのテストが落ちたか」を出す行が
+  `bundle?: unbound variable` で落ちた。`scripts/build_mobileclip.sh` の完了表示では、モデル名と量子化の値が黙って空になっていた。
+- 原因: macOS 既定の bash 3.2 は、`$VAR` の直後の多バイト文字（`）`・`・` など）の先頭バイトを
+  変数名の一部として読む。`bash -n` は通るので、その行を実行するまで気づけない。
+  同じ日に別の道具（review-loop）でも同じ書き間違いを入れたが、あちらは検査が止めた——
+  検査が無い側だけ素通りした。
+- 対処: `scripts/check_shell_vars.py`（CI・ブロッキング）が、追跡しているシェルスクリプトの
+  「多バイト文字の直前の `$VAR`」を探す。当たるべき見本・当たってはいけない見本を自分で確かめる（ADR-253）。
+  既存の 4 か所（build_mobileclip.sh）を `${VAR}` に直した。
+- 関連: `scripts/check_shell_vars.py` / `.github/workflows/ci.yml` / `scripts/test.sh` / `scripts/build_mobileclip.sh`。
+
 ## 取得した動画の長さが、表示中のセルと「すべて」に反映されなかった（ADR-282 のレビュー・2026-10-18）
 - 症状: Dropbox の動画の長さが問い合わせで分かっても、表示中のセルは動画の印のまま（スクロールするまで）。
   「すべて」では長さも大きさも古い item のままで、再生前に古い大きさを見せる。

@@ -87,6 +87,12 @@ jobs:
       - name: Check window plan is documented
         run: python3 scripts/check_window_plan_doc.py
 
+      # ⚠️ シェルの「多バイト文字の直前の変数」を ${VAR} で囲っているか。macOS の bash 3.2 は
+      # `（$VAR）` の `）` を変数名に食い込ませ、set -u では落ち、無ければ黙って空になる。
+      # bash -n は通るので踏むまで気づけない（2026-10-18: test.sh の失敗表示が落ちた）。
+      - name: Check shell variable bracing
+        run: python3 scripts/check_shell_vars.py
+
   ios:
     name: iOS simulator tests (best-effort)
     runs-on: macos-15
