@@ -140,6 +140,10 @@ except Exception as e:
 }
 
 # アプリ本体の単体テスト（MosaicPhotosTests）。UI テスト（MosaicPhotosUITests）は含めない。
+# ⚠️ FaceAccuracyEvalTests（FG-NET / LFW で顔の精度を測る計測）は外す。1 本で 10 分を超え、
+# 許容時間で必ず打ち切られる（2026-10-18 の初回の full で実測）。手で回す計測の道具なので、
+# 測るときは `xcodebuild test ... -only-testing:MosaicPhotosTests/FaceAccuracyEvalTests` を直接使う。
+# ⚠️ 多バイト文字の直前の変数は ${VAR} で囲う（macOS の bash 3.2 が変数名に食い込ませる）。
 run_app() {
   ensure_sim
   echo "▶ xcodebuild test: MosaicPhotosTests ($SIM)"
@@ -147,9 +151,10 @@ run_app() {
   rm -rf "$bundle"
   if ! xcodebuild test -project MosaicPhotos.xcodeproj -scheme MosaicPhotos -destination "$SIM" \
       -only-testing:MosaicPhotosTests \
+      -skip-testing:MosaicPhotosTests/FaceAccuracyEvalTests \
       -test-timeouts-enabled YES -default-test-execution-time-allowance 600 \
       -resultBundlePath "$bundle" -quiet; then
-    echo "❌ MosaicPhotosTests: TEST FAILED（$bundle）"
+    echo "❌ MosaicPhotosTests: TEST FAILED（${bundle}）"
     exit 1
   fi
 }
