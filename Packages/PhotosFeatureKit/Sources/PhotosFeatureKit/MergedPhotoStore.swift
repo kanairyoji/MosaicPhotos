@@ -201,6 +201,11 @@ public final class MergedPhotoStore {
     /// ——月の見出しと情報パネルはアップロード時刻のままで、開き直すまで直らない。
     /// 共有フォルダは撮影順にアップロードされることが多いので、
     /// 「日付だけ直って並びは同じ」は ADR-199 がいちばん効いてほしい場面そのもの。
+    ///
+    /// ⚠️ **クラウド動画の長さ・大きさも入れる**（ADR-282 のレビュー指摘）。長さは一覧の後から
+    /// 1 本ずつ問い合わせて埋まるので、id・撮影日・並びは同じまま変わる。入れないと「すべて」は
+    /// 古い item を持ち続け、長さの代わりに動画の印が残る（再生前の大きさも古いまま）。
+    /// 写真・端末の項目は何も足さない（12 万件の指紋の費用を増やさない）。
     nonisolated static func signature(of items: [MergedPhotoItem]) -> Int {
         var hasher = Hasher()
         for item in items {
@@ -209,6 +214,10 @@ public final class MergedPhotoStore {
             // String を確保して捨てていた。
             item.hashIdentity(into: &hasher)
             hasher.combine(item.captureDate)
+            if case .cloud(let cloud) = item, let video = cloud.video {
+                hasher.combine(video.duration)
+                hasher.combine(video.byteSize)
+            }
         }
         hasher.combine(items.count)
         return hasher.finalize()

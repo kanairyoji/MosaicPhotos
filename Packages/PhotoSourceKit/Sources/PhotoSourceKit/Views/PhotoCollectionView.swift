@@ -95,6 +95,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
         private var didInitialScroll = false
         /// 非同期スナップショット構築の世代。古い構築結果を破棄するため。
         private var snapshotToken = 0
+        /// 構築中のスナップショットの世代（反映し終えたら nil）。
+        private var snapshotInFlight: Int?
         /// A1: ユーザーがスクロール/スクラブ中か。中は内容更新（snapshot 反映＝メイン ~150ms）を
         /// 保留し、終了時に最新分だけ反映する（Dropbox 同期の差分が到着してもカクつかせない）。
         private var isUserScrolling = false
@@ -310,6 +312,12 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             if signature != appliedSignature {
                 appliedSignature = signature
                 applySnapshot(items: items, grouping: grouping, coalesce: coalesce)
+            } else if snapshotInFlight != nil {
+                // ⚠️ 構築中に「並びは同じで中身だけ変わった」更新が来たら、構築をやり直す
+                // （ADR-282 のレビュー指摘）。ここで参照だけ差し替えても、あとで完了する**古い構築結果**が
+                // `self.items` を上書きし、長さ・お気に入りが古い値へ戻る。やり直しは構築中に
+                // 中身の更新が重なったときだけ（まれ）なので、68k の再構築が続けて走ることは無い。
+                applySnapshot(items: items, grouping: grouping, coalesce: coalesce)
             } else {
                 // 構成（枚数・並び）が同じでも中身は変わり得る（例: クラウドお気に入りの付け外し＝
                 // ID 不変で isFavorite だけ変わる）。68k の snapshot は作り直さず、参照だけ差し替えて
@@ -322,8 +330,8 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             }
         }
 
-        /// 構成不変の更新（同じ ID 列）で items を差し替え、可視セルのお気に入りが変わっていれば
-        /// 再構成する。配列の差し替えは COW の参照交換＝O(1)、比較は可視セル数のみ＝軽い。
+        /// 構成不変の更新（同じ ID 列）で items を差し替え、可視セルの見た目に効く項目
+        /// （お気に入り・動画の長さ＝`GridCellRefresh`）が変わっていれば再構成する。配列の差し替えは COW の参照交換＝O(1)、比較は可視セル数のみ＝軽い。
         private func refreshVisibleFavoritesIfChanged(_ newItems: [Store.Item]) {
             let old = items
             items = newItems   // 以後にリサイクルされるセルは新しい内容で構成される
@@ -331,7 +339,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             let visibleChanged = collectionView.indexPathsForVisibleItems.contains { indexPath in
                 guard let id = dataSource.itemIdentifier(for: indexPath), let idx = idToIndex[id],
                       idx < old.count, idx < newItems.count else { return false }
-                return old[idx].isFavorite != newItems[idx].isFavorite
+                return GridCellRefresh.needsReconfigure(old: old[idx], new: newItems[idx])
             }
             if visibleChanged { reconfigureVisibleItems() }
         }
@@ -341,6 +349,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
             // 反映（applySnapshotUsingReloadData）と参照テーブル代入のみ。68k で ~0.9s の UI 固まりを解消する。
             snapshotToken += 1
             let token = snapshotToken
+            snapshotInFlight = token
             let t0 = CFAbsoluteTimeGetCurrent()
             Task.detached(priority: .userInitiated) { [weak self] in
                 // --- オフメイン構築（純データのみ） ---
@@ -401,6 +410,7 @@ struct PhotoCollectionView<Store: PhotoStore>: UIViewRepresentable {
                 // --- メインで反映（古い世代は破棄） ---
                 await MainActor.run { [weak self] in
                     guard let self, token == self.snapshotToken else { return }
+                    self.snapshotInFlight = nil
                     self.items = unique
                     self.idToIndex = index
                     self.sectionTitles = snapshot.sectionIdentifiers

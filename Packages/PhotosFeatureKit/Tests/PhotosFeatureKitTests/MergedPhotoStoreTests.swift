@@ -120,6 +120,24 @@ struct MergedSignatureTests {
         #expect(early != late, "日付の値が効いていない（有無しか見ていない）")
         #expect(early != none)
     }
+
+    /// 回帰: **動画の長さ・大きさだけが変わった更新も別の指紋**（ADR-282 のレビュー指摘）。
+    /// 長さは一覧の後から 1 本ずつ問い合わせて埋まるので、id・撮影日・並びは同じまま
+    /// 長さだけが nil → 値になる。指紋が同じだと「すべて」は古い item を持ち続け、
+    /// 長さの代わりに動画の印が残る（再生前の大きさも古いまま）。
+    @Test("動画の長さ・大きさだけが変わっても違う指紋")
+    func videoInfoIsMixedIn() {
+        let date = Date(timeIntervalSince1970: 1_600_000_000)
+        func video(_ duration: TimeInterval?, _ size: Int64?) -> Int {
+            MergedPhotoStore.signature(of: [.cloud(DropboxFileItem(
+                path: "/c/v.mov", name: "v.mov", contentHash: "h", captureDate: date,
+                video: DropboxVideoInfo(duration: duration, byteSize: size)))])
+        }
+        #expect(video(nil, 9) != video(65, 9), "長さが分かった更新を取りこぼす")
+        #expect(video(65, 9) != video(70, 9), "長さの値が効いていない（有無しか見ていない）")
+        #expect(video(65, 9) != video(nil, 9), "長さが分からなくなった更新を取りこぼす")
+        #expect(video(65, 9) != video(65, 10), "大きさだけの更新を取りこぼす")
+    }
 }
 
 #if canImport(UIKit)
