@@ -366,7 +366,11 @@ public final class DropboxPhotoStore {
     private func reflectCachedVideos(accountId: String) async {
         let stamp = LoadStamp(generation: loadGeneration, accountId: accountId)
         let revision = await cache.currentVideosRevision()
-        guard isCurrentLoad(stamp), revision != lastReflectedVideosRevision else { return }
+        guard isCurrentLoad(stamp) else { return }
+        // ⚠️ 版が同じでも、長さの問い合わせは**いまの一覧で**判断する（ADR-282 のレビュー指摘）。
+        // 版のガードの内側に置くと、背面で反映した回（問い合わせは前面条件で断られる）のあとは
+        // 動画が増減するまで二度と始まらなかった。
+        guard revision != lastReflectedVideosRevision else { resumeVideoInfoFillIfNeeded(); return }
         let raw = await cache.cachedVideos()
         guard isCurrentLoad(stamp) else { return }
         let visible = Self.excludingPaths(raw, prefixes: excludedPathPrefixes)
@@ -376,7 +380,7 @@ public final class DropboxPhotoStore {
         lastReflectedVideosRevision = revision
         if stamped != videoItems { videoItems = stamped }
         updateLoadStatus()
-        if stamped.contains(where: { $0.video?.duration == nil }) { startVideoInfoFillIfNeeded() }
+        resumeVideoInfoFillIfNeeded()
     }
 
     /// 表示から除外するパス（ADR-112）を落とす。写真と動画で同じ規則を使う。
@@ -668,6 +672,9 @@ public final class DropboxPhotoStore {
     /// **最大 30 秒ぶん古い一覧**を見せたままになっていた（バックアップ中にアプリを開くと、
     /// 上げたばかりの写真が出てこない）。予約を取り消して、前面の間隔で入れ直す。
     public func wakeForForeground() {
+        // 背面で断られた・通信に失敗して止まった長さの問い合わせを、前面へ来たら再開する
+        // （一覧の反映が予約されていなくても）。輪は 1 本だけ（`startVideoInfoFillIfNeeded` のガード）。
+        resumeVideoInfoFillIfNeeded()
         guard trailingRefreshTask != nil else { return }
         trailingRefreshTask?.cancel()
         trailingRefreshTask = nil

@@ -344,4 +344,108 @@ struct DropboxVideoStoreTests {
     }
 }
 
+// MARK: - 問い合わせの再開（ADR-282 のレビュー指摘）
+
+/// ⚠️ **直列で回す**。`BackgroundYield.scenePhase` はプロセスで 1 つなので、背面へ切り替える
+/// テストと並行すると、もう片方の問い合わせが「背面だから」と断られて結果が乱れる（実際に乱れた）。
+@Suite("Dropbox の動画: 問い合わせの再開", .serialized)
+@MainActor
+struct DropboxVideoFillRestartTests {
+
+    private let base = DropboxVideoStoreTests()
+    private let videoPath = "/c/v.mov"
+
+    /// ⚠️ 背面で一覧を反映すると、版だけが「反映済み」になり問い合わせは前面条件で断られる。
+    /// その後は前面で反映しても版が同じなので起動箇所に届かず、動画の追加が起きるまで止まっていた。
+    @Test("背面で反映した未取得の動画は、前面へ戻ったら問い合わせを始める")
+    func fillStartsAfterReturningToForeground() async {
+        let cache = await base.seeded()
+        let stub = StubHTTPClient(responder: DropboxVideoStoreTests.json(Self.probedBody))
+        let store = base.makeStore(cache, stub: stub)
+        await BackgroundYield.withScenePhase(.background) {
+            await store.refreshItemsFromCache()
+        }
+        #expect(await stub.recordedRequests().isEmpty, "背面で問い合わせている")
+        store.wakeForForeground()
+        #expect(await Self.eventually { await cache.pathsNeedingVideoProbe(limit: 10).isEmpty },
+                "前面へ戻っても問い合わせが始まらない")
+    }
+
+    @Test("通信に失敗して止まった問い合わせは、前面へ戻ったら再開する")
+    func fillResumesAfterFailure() async {
+        let cache = await base.seeded()
+        let online = Switch()
+        let stub = StubHTTPClient(responder: { request in
+            online.isOn ? DropboxVideoStoreTests.json(Self.probedBody)(request) : StubHTTPClient.status(500)(request)
+        })
+        let store = base.makeStore(cache, stub: stub)
+        await store.refreshItemsFromCache()
+        #expect(await Self.eventually { await stub.recordedRequests().count >= 1 && store.videoInfoFillTask == nil },
+                "1 回目の問い合わせが走っていない")
+        // 失敗の後、待ちなしに訊き直し続けない。
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(await stub.recordedRequests().count == 1, "失敗のたびに待ちなしで訊き直している")
+
+        online.isOn = true
+        store.wakeForForeground()
+        #expect(await Self.eventually { await cache.pathsNeedingVideoProbe(limit: 10).isEmpty },
+                "通信が戻って前面へ来ても再開しない")
+    }
+
+    /// 前面復帰の通知を経ずに、前面で一覧を反映し直しただけ（動画の表は変わっていない）でも再開する。
+    @Test("背面で反映した未取得の動画は、前面で一覧を反映し直したら問い合わせを始める")
+    func fillStartsOnSameRevisionReflect() async {
+        let cache = await base.seeded()
+        let stub = StubHTTPClient(responder: DropboxVideoStoreTests.json(Self.probedBody))
+        let store = base.makeStore(cache, stub: stub)
+        await BackgroundYield.withScenePhase(.background) {
+            await store.refreshItemsFromCache()
+        }
+        #expect(await stub.recordedRequests().isEmpty, "背面で問い合わせている")
+        await store.refreshItemsFromCache()   // 動画の版は同じまま
+        #expect(await Self.eventually { await cache.pathsNeedingVideoProbe(limit: 10).isEmpty },
+                "版が同じ反映では問い合わせが始まらない")
+    }
+
+    /// 再開の契機（反映・前面復帰）が重なっても、問い合わせの輪は 1 本だけ。
+    @Test("前面復帰が続けて来ても、問い合わせは重ならない")
+    func fillLoopIsSingle() async {
+        let cache = await base.seeded()
+        // 応答を遅らせ、1 本目の問い合わせが飛んでいる間に契機を重ねる。
+        let stub = StubHTTPClient(responder: { request in
+            Thread.sleep(forTimeInterval: 0.3)
+            return DropboxVideoStoreTests.json(Self.probedBody)(request)
+        })
+        let store = base.makeStore(cache, stub: stub)
+        await store.refreshItemsFromCache()
+        store.wakeForForeground(); store.wakeForForeground(); store.wakeForForeground()
+        #expect(await Self.eventually { await cache.pathsNeedingVideoProbe(limit: 10).isEmpty })
+        #expect(await stub.recordedRequests().count == 1, "同じ動画を重ねて訊いている（輪が 2 本以上）")
+    }
+
+    private nonisolated static let probedBody = """
+    {"name":"v.mov","path_lower":"/c/v.mov",
+     "media_info":{".tag":"metadata","metadata":{".tag":"video","duration":12345}}}
+    """
+
+    /// 条件が成り立つまで待つ（時間ではなく事実で待つ。上限 5 秒）。
+    private static func eventually(_ condition: @MainActor () async -> Bool) async -> Bool {
+        for _ in 0..<100 {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return await condition()
+    }
+
+    private final class Switch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isOn: Bool {
+            get { lock.withLock { value } }
+            set { lock.withLock { value = newValue } }
+        }
+    }
+
+}
+
 #endif

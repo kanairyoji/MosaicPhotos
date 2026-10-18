@@ -144,6 +144,14 @@ extension DropboxPhotoStore {
         return recorded
     }
 
+    /// 表示中の動画に長さの分からないものがあれば、問い合わせの輪を（走っていなければ）始める。
+    /// 契機は一覧の反映（版が同じでも）と前面復帰。通信に失敗した輪は記録 0 で抜けるので、
+    /// 再試行はこの契機ごとにしか起きない（待ちなしで訊き直し続けない）。
+    func resumeVideoInfoFillIfNeeded() {
+        guard videoItems.contains(where: { $0.video?.duration == nil }) else { return }
+        startVideoInfoFillIfNeeded()
+    }
+
     /// 長さの分からない動画があれば、**前面にいる間だけ**順に訊いていく（1 本の輪だけ）。
     ///
     /// ⚠️ 写真の撮影日の穴埋めのように `.cloudTrickle`（充電中など）を待たせない。
