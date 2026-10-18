@@ -28,6 +28,10 @@ public final class DropboxPhotoStore {
     @ObservationIgnored let videoThumbnailLimiter = AsyncSemaphore(value: 2)
     /// 動画の長さの穴埋め（前面で 1 本だけ走らせる・`startVideoInfoFillIfNeeded`）。
     @ObservationIgnored var videoInfoFillTask: Task<Void, Never>?
+    /// 長さを訊いて「まだ分からない」（`pending`・読めない応答）と返った動画と、次に訊いてよい時刻。
+    /// ⚠️ **永続しない**——次の起動では必ず訊き直す（取得済みと記録すると二度と訊かない）。
+    /// 同じ起動の中で待ちなしに訊き直し続けないための控え。
+    @ObservationIgnored var videoProbeRetryAfter: [String: Date] = [:]
     /// 2-b: 直近反映した items の内容署名（off-main 計算・メインの全比較を避ける）。
     @ObservationIgnored private var lastItemsSignature: Int?
     /// 最後に `items` へ反映したキャッシュの変更リビジョン（`DropboxCacheStore.itemsRevision`）。
@@ -485,6 +489,7 @@ public final class DropboxPhotoStore {
         videoItems = []; lastReflectedVideosRevision = nil
         temporaryLinks = [:]; videoThumbnailUnavailable = []
         videoInfoFillTask?.cancel(); videoInfoFillTask = nil
+        videoProbeRetryAfter = [:]
     }
 
     /// バックグラウンド差分同期ループを開始する。Dropbox 接続時に呼び出す。

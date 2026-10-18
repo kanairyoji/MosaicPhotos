@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MosaicSupport
 @testable import DropboxCore
 
 // MARK: - 一覧の解析（純ロジック）
@@ -182,7 +183,7 @@ struct DropboxVideoStoreTests {
 
     private let videoPath = "/c/v.mov"
 
-    private func makeStore(_ cache: DropboxCacheStore, stub: StubHTTPClient) -> DropboxPhotoStore {
+    func makeStore(_ cache: DropboxCacheStore, stub: StubHTTPClient) -> DropboxPhotoStore {
         let auth = DropboxAuthService(appKey: "k", redirectURI: "app://cb")
         auth.credential = DropboxCredential(accessToken: "t", refreshToken: nil,
                                             expiresAt: Date().addingTimeInterval(3600),
@@ -191,7 +192,7 @@ struct DropboxVideoStoreTests {
         return DropboxPhotoStore(auth: auth, httpClient: stub, cache: cache)
     }
 
-    private func seeded() async -> DropboxCacheStore {
+    func seeded() async -> DropboxCacheStore {
         let cache = DropboxCacheStore(isStoredInMemoryOnly: true)
         await cache.applyDelta(accountId: "acc1", added: [
             DropboxFileItem(path: "/c/p.jpg", name: "p.jpg", contentHash: "hp"),
@@ -201,7 +202,7 @@ struct DropboxVideoStoreTests {
         return cache
     }
 
-    private static func json(_ body: String, status: Int = 200)
+    nonisolated static func json(_ body: String, status: Int = 200)
         -> @Sendable (URLRequest) -> (Data, URLResponse) {
         { request in
             (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status,
@@ -259,6 +260,81 @@ struct DropboxVideoStoreTests {
         #expect(await cache.pathsNeedingVideoProbe(limit: 10) == [videoPath], "失敗を「訊いた」にしている")
     }
 
+    // MARK: 未確定・読めない応答（ADR-282 のレビュー指摘）
+
+    /// ⚠️ Dropbox はアップロード直後の動画に `media_info: {".tag": "pending"}` を返す。
+    /// これを「訊いた」と記録すると、`probedAt == nil` だけを候補にしているので**二度と訊かない**
+    /// ——解析が終わっても長さは出ず、撮影日時もアップロード時刻のまま、再起動しても戻らない。
+    @Test("解析中（pending）の応答は「訊いた」にせず、次の起動で訊き直して取り込む")
+    func pendingProbeIsRetriedLater() async {
+        let cache = await seeded()
+        let pending = makeStore(cache, stub: StubHTTPClient(responder: Self.json("""
+        {"name":"v.mov","path_lower":"/c/v.mov","media_info":{".tag":"pending"}}
+        """)))
+        #expect(await pending.fillMissingVideoInfo() == 0)
+        #expect(await cache.pathsNeedingVideoProbe(limit: 10) == [videoPath], "pending を取得済みにしている")
+
+        // 次の起動（同じキャッシュ・新しいストア）で、確定した情報が取れる。
+        let next = makeStore(cache, stub: StubHTTPClient(responder: Self.json("""
+        {"name":"v.mov","path_lower":"/c/v.mov",
+         "media_info":{".tag":"metadata","metadata":{".tag":"video","duration":65000,
+           "time_taken":"2014-05-13T16:53:20Z"}}}
+        """)))
+        #expect(await next.fillMissingVideoInfo() == 1)
+        let video = await cache.cachedVideos().first
+        #expect(video?.video?.duration == 65)
+        #expect(video?.captureDate == Date(timeIntervalSince1970: 1_400_000_000))
+    }
+
+    @Test("読めない応答も「訊いた」にしない")
+    func unreadableProbeIsNotRecorded() async {
+        let cache = await seeded()
+        let store = makeStore(cache, stub: StubHTTPClient(responder: Self.json("<html>oops</html>")))
+        #expect(await store.fillMissingVideoInfo() == 0)
+        #expect(await cache.pathsNeedingVideoProbe(limit: 10) == [videoPath], "読めなかった応答を取得済みにしている")
+    }
+
+    /// 逆向きの縛り: `media_info` が無い＝Dropbox が「情報は無い」と言い切った応答は、
+    /// 訊いたと記録する（毎回訊き直す輪にしない）。
+    @Test("media_info が無い応答は、情報が無いと確定したものとして訊き直さない")
+    func absentMediaInfoIsFinal() async {
+        let cache = await seeded()
+        let store = makeStore(cache, stub: StubHTTPClient(responder: Self.json("""
+        {"name":"v.mov","path_lower":"/c/v.mov"}
+        """)))
+        #expect(await store.fillMissingVideoInfo() == 1)
+        #expect(await cache.pathsNeedingVideoProbe(limit: 10).isEmpty)
+    }
+
+    /// 応答の形の見分け（純ロジック）。⚠️ 「まだ分からない」と「無いと確定」を取り違えると、
+    /// 前者は永久に訊かなくなり、後者は毎回訊き直す輪になる。
+    @Test("get_metadata の応答を、取れた／無いと確定／まだ分からない、に分ける")
+    func probeReplyClassification() {
+        func reply(_ json: String) -> DropboxPhotoStore.VideoProbeReply {
+            DropboxPhotoStore.videoProbeReply(Data(json.utf8))
+        }
+        let info = reply(#"{"media_info":{".tag":"metadata","metadata":{".tag":"video","duration":1000}}}"#)
+        guard case .info(let m) = info else { Issue.record("取れた応答を取りこぼした: \(info)"); return }
+        #expect(m.durationSeconds == 1)
+        #expect(reply(#"{"name":"v.mov"}"#) == .noInfo)
+        #expect(reply(#"{"media_info":{".tag":"metadata"}}"#) == .noInfo)
+        #expect(reply(#"{"media_info":{".tag":"pending"}}"#) == .notReady)
+        #expect(reply("<html>") == .notReady)
+    }
+
+    /// pending が続いても、同じ起動の中で待ちなしに訊き直し続けない。
+    @Test("pending の動画を、同じ起動の中で続けて訊き直さない")
+    func pendingIsNotHammered() async {
+        let cache = await seeded()
+        let stub = StubHTTPClient(responder: Self.json("""
+        {"name":"v.mov","path_lower":"/c/v.mov","media_info":{".tag":"pending"}}
+        """))
+        let store = makeStore(cache, stub: stub)
+        _ = await store.fillMissingVideoInfo()
+        _ = await store.fillMissingVideoInfo()
+        #expect(await stub.recordedRequests().count == 1, "pending を待ちなしに訊き直している")
+    }
+
     @Test("再生できない形式の逃げ道は、Dropbox の Web のプレビュー")
     func webPreviewURL() {
         let url = DropboxPhotoStore.webPreviewURL(path: "/family/2009/movie.avi", name: "Movie.AVI")
@@ -267,4 +343,5 @@ struct DropboxVideoStoreTests {
         #expect(root?.absoluteString == "https://www.dropbox.com/home?preview=clip.mkv")
     }
 }
+
 #endif

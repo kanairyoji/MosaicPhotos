@@ -21,6 +21,24 @@
 
 ---
 
+## Dropbox が「まだ解析中」と返した動画を、取得済みとして永久に外していた（ADR-282 のレビュー・2026-10-18）
+- 症状: アップロード直後の動画は、Dropbox 側の解析が終わっても再生時間が出ず、撮影日時も
+  一覧の日時のまま残る。再起動しても直らない。
+- 原因: `get_metadata` はアップロード直後の動画に `media_info: {".tag": "pending"}` を返す。
+  デコードすると `metadata` が nil になり、「情報が無い」と同じ経路で `probedAt` を記録していた。
+  次の候補は `probedAt == nil` だけなので**二度と訊かない**。応答を読めなかった回も同じ nil に畳まれていた。
+  「通信できなかった回は記録しない」は守っていたが、「通信できたが答えがまだ無い」を区別していなかった。
+- 対処: 応答を純関数 `videoProbeReply` で 3 つに分けた——取れた／無いと確定（`media_info` が無い）／
+  まだ分からない（`pending`・読めない）。最後のものは記録せず、この起動の間だけ 10 分候補から外す
+  （永続しない＝次の起動で必ず訊き直す・同じ起動で待ちなしに訊き直し続けない）。診断ログの
+  `dropbox: video info probed=` に `notReady=` を足した。
+- 関連: `DropboxPhotoStore+Videos.swift`（`videoProbeReply` / `videoProbeRetryAfter`）/
+  `DropboxMediaInfo.tag` / `DropboxVideoTests`（`pendingProbeIsRetriedLater` ほか）。
+  Codex のレビュー（範囲 da54b31..9b8d53b）が挙げ、修正前に再現テストが落ちることを確かめてから直した。
+  負の検証: `pending` の分岐・読めない応答の分岐・控えの除外の 3 か所を戻すと、それぞれ落ちる。
+- 残課題: 同じパスの動画を差し替えた直後に、古い動画への問い合わせ結果が遅れて届くと新しい動画に
+  書かれる（`recordVideoProbe` がパスだけで行を選ぶ・P2 で後回し）。
+
 ## 新しいテストが、シミュレータに残る「キャッシュの持ち主」を書き換えて、別のテストを落としていた（ADR-282・2026-10-18）
 - 症状: Dropbox の動画のテストを足したら、既存の `DropboxPhotoStoreReflectCoalesceTests`
   （「別々の入口から同時に来ても、全列の実体化は 1 回だけ」）が**ときどき**

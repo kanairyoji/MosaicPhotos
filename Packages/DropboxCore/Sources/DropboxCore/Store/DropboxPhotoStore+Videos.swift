@@ -116,7 +116,12 @@ extension DropboxPhotoStore {
     ///   ⚠️ 訊いた本数を返すと、通信できない間は同じ動画を延々と訊き直す輪になる。
     @discardableResult
     public func fillMissingVideoInfo(limit: Int = 12) async -> Int {
-        let paths = await cache.pathsNeedingVideoProbe(limit: limit)
+        // 「まだ分からない」と返った動画は、控えの時刻まで候補から外す（同じ起動の中で訊き直し続けない）。
+        let now = Date()
+        videoProbeRetryAfter = videoProbeRetryAfter.filter { $0.value > now }
+        let waiting = Set(videoProbeRetryAfter.keys)
+        let paths = Array(await cache.pathsNeedingVideoProbe(limit: limit + waiting.count)
+            .filter { !waiting.contains($0) }.prefix(limit))
         guard !paths.isEmpty else { return 0 }
         var recorded = 0
         for chunk in stride(from: 0, to: paths.count, by: 4).map({
@@ -134,6 +139,7 @@ extension DropboxPhotoStore {
         }
         if recorded > 0 { refreshItemsFromCacheSoon() }
         Diagnostics.mark("dropbox: video info probed=\(recorded)/\(paths.count) "
+                         + "notReady=\(videoProbeRetryAfter.count) "
                          + "remaining=\(await cache.videoProbePendingCount())")
         return recorded
     }
@@ -152,7 +158,7 @@ extension DropboxPhotoStore {
         }
     }
 
-    /// - Returns: 記録したか（通信できなかった回は false＝次回訊き直す）。
+    /// - Returns: 記録したか（通信できなかった回・まだ分からない回は false＝後で訊き直す）。
     private func probeVideoInfo(path: String) async -> Bool {
         struct Arg: Encodable { let path: String; let include_media_info = true }
         guard let body = try? JSONEncoder().encode(Arg(path: path)) else { return false }
@@ -169,8 +175,15 @@ extension DropboxPhotoStore {
         } catch {
             return false   // 通信できなかった回は記録しない（次回訊き直す）
         }
-        struct Meta: Decodable { let media_info: DropboxMediaInfo? }
-        let metadata = (try? JSONDecoder().decode(Meta.self, from: data))?.media_info?.metadata
+        let metadata: DropboxMediaInfo.MediaMetadata?
+        switch Self.videoProbeReply(data) {
+        case .info(let m): metadata = m
+        case .noInfo: metadata = nil
+        case .notReady:
+            // ⚠️ 記録しない（記録すると `probedAt == nil` の候補から外れ、二度と訊かない）。
+            videoProbeRetryAfter[path] = Date().addingTimeInterval(Self.videoProbeRetryInterval)
+            return false
+        }
         let captureDate = CaptureDate.meaningful(
             metadata?.time_taken.flatMap { DropboxPhotoStore.iso8601.date(from: $0) })
         await cache.recordVideoProbe(path: path, duration: metadata?.durationSeconds,
@@ -178,6 +191,27 @@ extension DropboxPhotoStore {
                                      latitude: metadata?.location?.latitude,
                                      longitude: metadata?.location?.longitude)
         return true
+    }
+
+    /// 「まだ分からない」と返った動画を、同じ起動の中で次に訊くまでの間隔。
+    static let videoProbeRetryInterval: TimeInterval = 10 * 60
+
+    /// `get_metadata` の応答の 3 つの形（純ロジック・テスト対象）。
+    enum VideoProbeReply: Equatable {
+        /// 情報が取れた。
+        case info(DropboxMediaInfo.MediaMetadata)
+        /// Dropbox が「情報は無い」と言い切った（`media_info` が無い）。訊き直しても変わらない。
+        case noInfo
+        /// まだ分からない（`pending`＝解析中、または応答を読めなかった）。後で訊けば取れ得る。
+        case notReady
+    }
+
+    nonisolated static func videoProbeReply(_ data: Data) -> VideoProbeReply {
+        struct Meta: Decodable { let media_info: DropboxMediaInfo? }
+        guard let meta = try? JSONDecoder().decode(Meta.self, from: data) else { return .notReady }
+        guard let info = meta.media_info else { return .noInfo }
+        if info.tag == "pending" { return .notReady }
+        return info.metadata.map(VideoProbeReply.info) ?? .noInfo
     }
 
     // MARK: - 共有
